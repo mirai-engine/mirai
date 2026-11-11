@@ -3,6 +3,7 @@ package rhi
 import "base:runtime"
 import "core:math/rand"
 import "core:testing"
+import "mirai:std/base"
 
 // Ranges fill a block from its start, aligned; given back they join their
 // neighbours, so the block ends whole and empty, and a structure larger than
@@ -33,7 +34,7 @@ arena_takes_aligned_ranges_and_joins_what_comes_back :: proc(t: ^testing.T) {
 	testing.expect(t, !arena_give(&arena, block, offsets[0], 1024))
 	testing.expect(t, !arena_give(&arena, block, offsets[3], 512))
 	testing.expect(t, arena_give(&arena, block, offsets[1], 256), "the last range leaves the block empty")
-	testing.expect(t, len(arena.blocks[block].free) == 1 && arena.blocks[block].free[0] == Arena_Free{0, ACCEL_BLOCK_BYTES})
+	testing.expect(t, len(arena.blocks[block].free) == 1 && arena.blocks[block].free[0] == base.Range{0, ACCEL_BLOCK_BYTES})
 	// Larger than a block: a block of its own, in the slot an empty one left.
 	arena_drop(&arena, block)
 	huge := ACCEL_BLOCK_BYTES * 3 + 1
@@ -71,7 +72,7 @@ arena_refuses_what_is_no_range :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, arena_give(&arena, block, held, 4096))
 	testing.expect(t, !arena_give(&arena, block, held, 4096), "a range goes back once")
-	testing.expect(t, len(arena.blocks[block].free) == 1 && arena.blocks[block].free[0] == Arena_Free{0, BLOCK})
+	testing.expect(t, len(arena.blocks[block].free) == 1 && arena.blocks[block].free[0] == base.Range{0, BLOCK})
 }
 
 @(private)
@@ -130,7 +131,7 @@ arena_random_takes_and_gives_never_overlap :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, len(arena.blocks) > 1, "the ranges took more than a block")
 	for b, i in arena.blocks {
-		testing.expectf(t, b.used == 0 && b.live == 0 && len(b.free) == 1 && b.free[0] == Arena_Free{0, BLOCK}, "block %d is not whole: %v", i, b.free[:])
+		testing.expectf(t, b.used == 0 && b.live == 0 && len(b.free) == 1 && b.free[0] == base.Range{0, BLOCK}, "block %d is not whole: %v", i, b.free[:])
 	}
 }
 
@@ -158,6 +159,6 @@ arena_gives_back_without_memory :: proc(t: ^testing.T) {
 	// Every other range first: each leaves a free range of its own.
 	for offset, i in offsets {if i % 2 == 0 {arena_give(&arena, block, offset, 64)}}
 	for offset, i in offsets {if i % 2 == 1 {arena_give(&arena, block, offset, 64)}}
-	testing.expect(t, arena.blocks[block].used == 0 && len(arena.blocks[block].free) == 1 && arena.blocks[block].free[0] == Arena_Free{0, BLOCK})
+	testing.expect(t, arena.blocks[block].used == 0 && len(arena.blocks[block].free) == 1 && arena.blocks[block].free[0] == base.Range{0, BLOCK})
 	limit.remaining = max(int)
 }

@@ -202,7 +202,7 @@ Gpu_Emitter :: struct {
     world,previous:[3][4]f32,
     range:[4]u32,       // first slot of the pool, capacity, births this frame, FLAG_*
     random:[4]u32,      // seed, event target slot+1 (0: none), particles per event, groups of births
-    program:[4]u32,     // Vfx program (0: none), first slot of the drawn lists, Particle_Event its reports tell, radius of its neighbors (bits of an f32)
+    program:[4]u32,     // Vfx program (0: none), first slot of the drawn lists, Particle_Event its reports tell, bytes of the world buffer to the copy of the reports channel the frame writes (INVALID: it reports nothing)
     shape:[4]f32,       // size, w cone half-angle
     kinds:[4]u32,       // Particle_Shape, Particle_Render, Particle_Collision, Particle_Event
     lifetime_speed:[4]f32,
@@ -252,14 +252,13 @@ Pool_Buffer :: enum u8 {Particles,Lists,State,Events,Data}
 
 EVENTS_AT :: 256 // bytes of the events buffer before the events
 
-@(private)
 pool_buffer :: proc "contextless" (pool:^Pool,b:Pool_Buffer) -> erender.Buffer_Desc {
     count:=u64(max(pool.capacity,1))
     switch b {
     case .Particles: return {"vfx particles",count*size_of(Gpu_Particle)}
     case .Lists:     return {"vfx particle lists",3*count*size_of(u32)}
     case .State:     return {"vfx particle state",EMITTER_CAPACITY*size_of(Gpu_State)}
-    case .Events:    return {"vfx particle events",REPORTS_AT+REPORTS_BYTES}
+    case .Events:    return {"vfx particle events",EVENTS_AT+2*EVENT_CAPACITY*size_of(Gpu_Event)}
     case .Data:      return {"vfx particle data",pool_data_bytes(pool.capacity)}
     }
     return {}
@@ -302,10 +301,8 @@ Pool :: struct {
     slots:[]Pool_Slot,
     order:[]u16,             // live slots by id
     order_count:int,
-    free:[][2]u32,           // gaps of the pool by offset: first slot, count
-    free_count:int,
-    attribute_free:[][2]u32, // gaps of the Attributes of the pool by offset: bytes to the first, bytes
-    attribute_free_count:int,
+    free:base.Ranges,           // the slots of the pool the emitters' ranges take
+    attribute_free:base.Ranges, // the bytes of the Attributes of the pool their ranges take
     slot_end:int,            // slots ever used, live or not
     pool_end:u32,            // end of the pool in use
     regroup:bool,            // a range, a program or an event target changed since the spans of the programs were found
@@ -330,7 +327,6 @@ Pool :: struct {
     birth_max:u32,           // most births of a channel an emitter takes this frame
     reset_max:u32,           // largest range that starts this frame
     sprites,meshes:bool,     // some live emitter draws them
-    reports:bool,            // some live emitter tells the game of its particles
     grids_at:u32,            // bytes of the rows of the frame to those of the grids
     volumes_at:u32,          // and to those of the volumes
     fields_at:u32,           // and to the gravity and the wind of the world (Gpu_Fields)
@@ -347,32 +343,25 @@ pool_make :: proc(pool:^Pool,capacity:u32,allocator:=context.allocator) -> bool 
     previous,refused:=pool.capacity,pool.refused
     pool_free(pool,allocator)
     pool^={capacity=capacity,previous=previous,refused=refused}
-    errors:[6]runtime.Allocator_Error
+    errors:[4]runtime.Allocator_Error
     pool.slots,errors[0]=make([]Pool_Slot,EMITTER_CAPACITY,allocator)
     pool.order,errors[1]=make([]u16,EMITTER_CAPACITY,allocator)
-    pool.free,errors[2]=make([][2]u32,EMITTER_CAPACITY+1,allocator)
-    pool.attribute_free,errors[3]=make([][2]u32,EMITTER_CAPACITY+1,allocator)
-    pool.gpu,errors[4]=make([]Gpu_Emitter,EMITTER_CAPACITY,allocator)
-    pool.draws,errors[5]=make([]Pool_Draw,EMITTER_CAPACITY,allocator)
-    starved:=false
+    pool.gpu,errors[2]=make([]Gpu_Emitter,EMITTER_CAPACITY,allocator)
+    pool.draws,errors[3]=make([]Pool_Draw,EMITTER_CAPACITY,allocator)
+    starved:=!base.ranges_reset(&pool.free,u64(capacity),EMITTER_CAPACITY,allocator) || !base.ranges_reset(&pool.attribute_free,pool_attribute_bytes(capacity),EMITTER_CAPACITY,allocator)
     for error in errors {starved||=error!=nil}
     if starved {
         pool_free(pool,allocator)
         return false
     }
-    pool.free[0]={0,capacity}
-    pool.free_count=capacity>0?1:0
-    pool.attribute_free[0]={0,u32(pool_attribute_bytes(capacity))}
-    pool.attribute_free_count=1
     return true
 }
 
 pool_free :: proc(pool:^Pool,allocator:=context.allocator) {
-    delete(pool.slots,allocator);delete(pool.order,allocator);delete(pool.free,allocator);delete(pool.attribute_free,allocator)
-    delete(pool.gpu,allocator);delete(pool.draws,allocator)
+    delete(pool.slots,allocator);delete(pool.order,allocator);delete(pool.gpu,allocator);delete(pool.draws,allocator)
+    base.ranges_free(&pool.free);base.ranges_free(&pool.attribute_free)
     delete(pool.frame_bytes)
     pool^={capacity=pool.capacity,previous=pool.previous,refused=pool.refused}
-    pool.slots,pool.order,pool.free,pool.attribute_free,pool.gpu,pool.draws=nil,nil,nil,nil,nil,nil
 }
 
 // The emitters of a world for the next frame, and the seconds it simulates.
@@ -500,16 +489,23 @@ pool_slot_find :: proc(p:^Pool,id:u64) -> int {
 pool_slot_take :: proc(p:^Pool,id:u64,capacity:u32,stride:u32=0) -> int {
     if capacity==0 || p.order_count>=len(p.order) {return -1}
     bytes:=u64(capacity)*u64(stride)
-    if bytes>u64(max(u32)) || !gaps_fit(p.free[:p.free_count],capacity) || !gaps_fit(p.attribute_free[:p.attribute_free_count],u32(bytes)) {return -1}
+    if bytes>u64(max(u32)) {return -1}
+    offset,fits:=base.ranges_take(&p.free,u64(capacity))
+    if !fits {return -1}
+    attributes:u64
+    if bytes>0 {
+        if attributes,fits=base.ranges_take(&p.attribute_free,bytes);!fits {
+            base.ranges_give(&p.free,offset,u64(capacity))
+            return -1
+        }
+    }
     at:=-1
     for slot,i in p.slots[:p.slot_end] {
         if !slot.live {at=i;break}
     }
     if at<0 {at=p.slot_end;p.slot_end+=1}
-    offset:=gaps_take(p.free,&p.free_count,capacity)
-    attributes:=gaps_take(p.attribute_free,&p.attribute_free_count,u32(bytes))
-    p.slots[at]={id=id,offset=offset,capacity=capacity,attributes=attributes,stride=stride,live=true,fresh=true}
-    p.pool_end=max(p.pool_end,offset+capacity)
+    p.slots[at]={id=id,offset=u32(offset),capacity=capacity,attributes=u32(attributes),stride=stride,live=true,fresh=true}
+    p.pool_end=max(p.pool_end,u32(offset)+capacity)
     p.regroup=true
     low,high:=0,p.order_count
     for low<high {
@@ -530,61 +526,14 @@ pool_slot_release :: proc(p:^Pool,at:int) {
         p.order_count-=1
         break
     }
-    gaps_give(p.free,&p.free_count,slot.offset,slot.capacity)
-    gaps_give(p.attribute_free,&p.attribute_free_count,slot.attributes,slot.capacity*slot.stride)
+    base.ranges_give(&p.free,u64(slot.offset),u64(slot.capacity))
+    base.ranges_give(&p.attribute_free,u64(slot.attributes),u64(slot.capacity)*u64(slot.stride))
     slot.live=false
     p.regroup=true
     for p.slot_end>0 && !p.slots[p.slot_end-1].live {p.slot_end-=1}
     p.pool_end=0
     for s in p.slots[:p.slot_end] {
         if s.live {p.pool_end=max(p.pool_end,s.offset+s.capacity)}
-    }
-}
-
-// Whether a gap of a list ordered by offset takes size.
-@(private)
-gaps_fit :: proc(gaps:[][2]u32,size:u32) -> bool {
-    if size==0 {return true}
-    for g in gaps {if g[1]>=size {return true}}
-    return false
-}
-
-// The first gap that takes size gives its start (gaps_fit says there is one).
-@(private)
-gaps_take :: proc(gaps:[][2]u32,count:^int,size:u32) -> u32 {
-    if size==0 {return 0}
-    for g in 0..<count^ {
-        if gaps[g][1]<size {continue}
-        offset:=gaps[g][0]
-        gaps[g][0]+=size
-        gaps[g][1]-=size
-        if gaps[g][1]==0 {
-            copy(gaps[g:count^-1],gaps[g+1:count^])
-            count^-=1
-        }
-        return offset
-    }
-    return 0
-}
-
-// A gap goes back in order, joined to its neighbours.
-@(private)
-gaps_give :: proc(gaps:[][2]u32,count:^int,offset,size:u32) {
-    if size==0 {return}
-    g:=0
-    for g<count^ && gaps[g][0]<offset {g+=1}
-    copy(gaps[g+1:count^+1],gaps[g:count^])
-    gaps[g]={offset,size}
-    count^+=1
-    if g+1<count^ && gaps[g][0]+gaps[g][1]==gaps[g+1][0] {
-        gaps[g][1]+=gaps[g+1][1]
-        copy(gaps[g+1:count^-1],gaps[g+2:count^])
-        count^-=1
-    }
-    if g>0 && gaps[g-1][0]+gaps[g-1][1]==gaps[g][0] {
-        gaps[g-1][1]+=gaps[g][1]
-        copy(gaps[g:count^-1],gaps[g+1:count^])
-        count^-=1
     }
 }
 
@@ -602,10 +551,13 @@ rows_of :: proc "contextless" (m:matrix[4,4]f32,origin:[3]f32) -> [3][4]f32 {
 pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool {
     pool:=&sync.pool
     if pool.rows_frame==pass.frame && !reset {return true}
-    pool.spawn_max,pool.birth_max,pool.reset_max,pool.sprites,pool.meshes,pool.reports,pool.steps=0,0,0,false,false,false,0
+    pool.spawn_max,pool.birth_max,pool.reset_max,pool.sprites,pool.meshes,pool.steps=0,0,0,false,false,0
     pool.births_max,pool.prepares=0,false
     pool.stage_count,pool.plan=0,{}
     if pool.slot_end==0 {return false}
+    // Where the reports of the frame go: the copy of their channel it writes.
+    reports_at:=max(u32)
+    if at:=data_find(&sync.data,REPORTS_CHANNEL);at>=0 {reports_at=data_base(sync)+sync.data.entries[at].offset+u32(pool.frame&1)*data_copy_bytes(REPORT_WORDS)}
     clear(&pool.frame_bytes)
     // The bones of the frame first, then the grids: the resources that read them name their bytes.
     append(&pool.frame_bytes,..([^]u8)(raw_data(sync.segments))[:len(sync.segments)*size_of(Gpu_Segment)])
@@ -683,8 +635,7 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         g.previous=rows_of(d.previous,origin)
         g.range={s.offset,s.capacity,spawn,flags}
         g.random.y,g.random.w=target,groups
-        g.program.w=0
-        if d.report!=.None {pool.reports=true}
+        g.program.w=reports_at if d.report!=.None else max(u32)
         g.step={pool.dt,step_dt,f32(pool.steps),pass.time}
         g.frame={max(u32),0,0,0}
         g.lights=light_share(d.lights,d.shadows,&lights_taken,pool.lights)
@@ -711,10 +662,10 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
                 case .Emitter:
                     if other:=pool_slot_find(pool,resource.emitter);other>=0 {row.head={u32(Resource_Kind.Emitter),0,u32(other),0}}
                 case .Data:
-                    // The bytes of the channel, the words of an entry, and the copy the frame writes over what games pushed.
+                    // The bytes of the channel, the words of an entry, and the copy the frame writes.
                     if at:=data_find(&sync.data,resource.emitter);at>=0 {
                         entry:=&sync.data.entries[at]
-                        row.head={u32(Resource_Kind.Data),data_base(sync)+entry.offset,entry.words,u32(len(entry.pushed))/max(entry.words,1)|u32(pool.frame&1)<<31}
+                        row.head={u32(Resource_Kind.Data),data_base(sync)+entry.offset,entry.words,u32(pool.frame&1)}
                     }
                 }
                 append(&pool.frame_bytes,..([^]u8)(&row)[:size_of(row)])
@@ -723,7 +674,6 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
             if d.stages>0 && int(d.stages-1)+erender.PROGRAM_STAGES<=len(sync.stage_rows) {
                 stages:=sync.stage_rows[d.stages-1:][:erender.PROGRAM_STAGES]
                 append(&pool.frame_bytes,..([^]u8)(raw_data(stages))[:len(stages)*size_of(Gpu_Stage)])
-                radius:f32
                 for stage,k in stages {
                     plan:=&pool.plan[k]
                     for resource in 0..<u32(RESOURCES) {
@@ -736,8 +686,6 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
                     case .Particles:
                         plan.particles=true
                         plan.iterations=max(plan.iterations,stage.iterations)
-                        plan.neighbors||=stage.neighbors>0
-                        radius=max(radius,stage.neighbors)
                     case .Cells:
                         grid:=sync.resources[d.resources-1+stage.row]
                         if grid.kind!=.Grid {continue}
@@ -747,7 +695,6 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
                     }
                     pool.stage_count=max(pool.stage_count,u32(k)+1)
                 }
-                g.program.w=transmute(u32)radius
             }
         }
     }
@@ -920,6 +867,11 @@ programs_span :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) -> (left_o
 // False while the shaders in use have no stages of the plugin.
 particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
     pool:=&sync.pool
+    // The data channels the programs asked for, and that of the reports while a live emitter reports.
+    for s in pool.slots[:pool.slot_end] {
+        if s.live && s.desc.report!=.None {data_need(&sync.data,REPORTS_CHANNEL,REPORT_WORDS,nil,core.NONE);break}
+    }
+    data_place(&sync.data)
     if pool.slot_end==0 {return true}
     p:=&sync.pipelines
     simulate:=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_simulate",name="particle simulate"})
@@ -1025,10 +977,6 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
         erender.pass_dispatch(pass,groups(pool.reset_max,64),u32(pool.slot_end))
     }
     events:=pool_buffer(pool,.Events)
-    if pool.reports {
-        head:=Reports_Head{origin=pass.origin}
-        erender.pass_buffer_write(pass,events,REPORTS_AT,&head,size_of(head))
-    }
     world:=world_buffer(sync)
     for step in 0..<pool.steps {
         params.parity,params.step,params.last=u32(pool.step&1),step,u32(step+1==pool.steps)
@@ -1067,10 +1015,7 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
             }
         }
         params.program,params.emitter_first=0,0
-        if pool.stage_count>0 {
-            stages_step(sync,pass,&params)
-            erender.pass_surface_read(pass,7,.Linear_Depth)
-        }
+        if pool.stage_count>0 {stages_step(sync,pass,&params)}
         for group in program_groups(p,&all) {
             params.program,params.first,params.count=group.program,group.first,group.end
             erender.pass_pipeline(pass,group.simulate)
@@ -1088,10 +1033,7 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
     particles_lights(sync,pass)
     volumes_light(sync,pass,&params)
     world_textures_write(sync,pass)
-    grid_bake_read(sync,pass)
-    if pool.reports {erender.pass_readback(pass,events,REPORTS_AT,reports_readback())}
     data_readback(sync,pass,u32(pool.frame&1))
-    watch_copy(sync,pass)
     // Started: a frame simulated without a new list moves what there is and starts nothing.
     for &s in pool.slots[:pool.slot_end] {
         if !s.live {continue}
@@ -1314,6 +1256,5 @@ particles_meshes :: proc(pass:^erender.Pass,user:rawptr) {
 // Lets go of the buffers of the pool of a world.
 pool_release :: proc(renderer:^erender.Renderer,world:core.World_Id,pool:^Pool) {
     for b in Pool_Buffer {erender.buffer_release(renderer,world,pool_buffer(pool,b).name)}
-    erender.buffer_release(renderer,world,neighbors_buffer(pool).name)
     pool.made=false
 }
