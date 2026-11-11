@@ -29,6 +29,7 @@ Table_Info :: struct {
     single:bool, // @(component,single): the world uses one at a time; its table keeps one row on
     far:bool,    // @(component,far): its entity draws a far form of its own, which stays when its section unloads
     derived:bool, // @(component,derived): only code adds it and nobody authors it: a save, a copy and the undo leave it out
+    was:string,   // @(component,was="Old Older"): the names it had; a table of a document under one of them is its table
     base:bool,   // a component of core, the base of every entity: on while its entity is disabled
     locks:[]Lock, // @(component,locks="..."): the rows of other tables of its struct a row on of this one owns
     flat:bool,   // world_info_index found that a value holds nothing behind a pointer: a copy of its bytes is a copy

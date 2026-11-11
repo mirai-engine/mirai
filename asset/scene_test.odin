@@ -3,6 +3,7 @@ package asset
 import "base:runtime"
 import "core:mem"
 import "core:fmt"
+import "core:strings"
 import "core:testing"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -1130,3 +1131,56 @@ scene_calls_without_memory_fail_whole :: proc(t:^testing.T) {
     }
 }
 
+
+@(private="file") Glow_V1 :: struct {color:[3]f32,range:f32}
+@(private="file") Glow_V2 :: struct {tint:[3]f32 `mirai:"was=color"`,range:f32}
+
+@(private="file")
+glow_prefab :: proc(prefab:^Scene,types:^Types,name:string,value:^$T) {
+    scene_init(prefab,types,{0xa,0xa})
+    prefab.doc.flags+={.Prefab}
+    scene_entity_add(prefab,1,0,"Lamp")
+    scene_set(prefab,1,name,value)
+}
+
+// A field renamed with was= and a component renamed (@(component,was=)) are the same field and
+// component to an instance, whichever of the two documents was written first: what it overrides
+// stays, and the rest follows the prefab.
+@(test)
+an_override_of_a_renamed_field_or_component_survives_an_update_of_its_stale_instance :: proc(t:^testing.T) {
+    types:Types;types_init(&types);defer types_destroy(&types)
+    first:Scene;glow_prefab(&first,&types,"Glow",&Glow_V1{color={1,0,0},range=2});defer scene_destroy(&first)
+    scene:Scene;scene_init(&scene,&types,{0xb,0xb});defer scene_destroy(&scene)
+    painted,_:=scene_instantiate(&scene,&first,{0xa,0xa},0)
+    plain,_:=scene_instantiate(&scene,&first,{0xa,0xa},0)
+    scene_set(&scene,painted,"Glow",&Glow_V1{color={0,0,1},range=2})
+    testing.expect_value(t,scene_override_add(&scene,painted,base.name_hash("Glow"),"color"),Error.None)
+    // The prefab is saved after the rename of the field; the scene is not.
+    renamed:Scene;glow_prefab(&renamed,&types,"Glow",&Glow_V2{tint={0,1,0},range=5});defer scene_destroy(&renamed)
+    // Then the scene takes the new layout, with its override still named color.
+    retyped:Scene;glow_prefab(&retyped,&types,"Glow",&Glow_V2{tint={1,1,1},range=7});defer scene_destroy(&retyped)
+    // Then the component is renamed Halo.
+    halo:Scene;glow_prefab(&halo,&types,"Halo",&Glow_V2{tint={1,1,0},range=9});defer scene_destroy(&halo)
+    halo_table,_:=scene_component(&halo,"Halo")
+    halo.doc.schema.types[halo.doc.tables[halo_table].columns[1].type].was=strings.clone("Glow",halo.doc.schema.allocator)
+    Step :: struct {prefab:^Scene,name:string,painted,plain:Glow_V2}
+    steps:=[]Step{
+        {&renamed,"Glow",{{0,0,1},5},{{0,1,0},5}},
+        {&retyped,"Glow",{{0,0,1},7},{{1,1,1},7}},
+        {&halo,"Halo",{{0,0,1},9},{{1,1,0},9}},
+    }
+    for step,at in steps {
+        if at==1 {
+            table,_:=scene_component(&scene,"Glow")
+            source,_:=scene_component(&retyped,"Glow")
+            testing.expect_value(t,document_column_retype(&scene.doc,table,1,&retyped.doc.schema,retyped.doc.tables[source].columns[1].type),Error.None)
+        }
+        for root in ([]base.Entity_Id{painted,plain}) {testing.expect_value(t,scene_instance_update(&scene,root,step.prefab),Error.None)}
+        painted_glow,_:=scene_get(&scene,painted,step.name,Glow_V2)
+        plain_glow,_:=scene_get(&scene,plain,step.name,Glow_V2)
+        testing.expectf(t,painted_glow==step.painted && plain_glow==step.plain,"step %d: %v %v",at,painted_glow,plain_glow)
+        testing.expect(t,len(scene.overrides)==1 && scene.overrides[0].component==base.name_hash(step.name))
+    }
+    _,old_name:=scene_component(&scene,"Glow")
+    testing.expect(t,!old_name)
+}

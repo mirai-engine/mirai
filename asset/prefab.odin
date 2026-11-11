@@ -285,7 +285,9 @@ components_copy :: proc(scene:^Scene,prefab:^Scene,remap:^map[base.Entity_Id]bas
     for at in 1..<len(prefab.doc.tables) {
         source:=&prefab.doc.tables[at]
         if len(source.columns)!=2 || source.columns[0].name!=COLUMN_ENTITY || source.columns[0].ref!=0 || source.columns[1].name!=COLUMN_VALUE || membership_hash(source.name_hash) {continue}
-        table:=scene_component_add(scene,source.name,&prefab.doc.schema,source.columns[1].type) or_return
+        table,twin:=scene_component_twin(scene,source.name,&prefab.doc.schema,source.columns[1].type)
+        if !twin {table=scene_component_add(scene,source.name,&prefab.doc.schema,source.columns[1].type) or_return}
+        hash:=scene.doc.tables[table].name_hash
         type:=scene.doc.tables[table].columns[1].type
         size:=scene.doc.tables[table].columns[1].size
         migration:serial.Migration
@@ -296,11 +298,11 @@ components_copy :: proc(scene:^Scene,prefab:^Scene,remap:^map[base.Entity_Id]bas
         if !serial.refs_collect(&scene.doc.schema,type,&refs,MAX_REFS) {return .Invalid}
         if resize(&image,size)!=nil {return .Out_Of_Memory}
         ids:=scene_ids(prefab)
-        placement:=keep && source.name_hash==base.name_hash(INSTANCE_PLACEMENT)
+        placement:=keep && hash==base.name_hash(INSTANCE_PLACEMENT)
         for entity_row,row in mem_rows(source) {
             entity,present:=remap[ids[entity_row]]
             if !present || placement && entity==root {continue}
-            if keep && override_find(scene,entity,source.name_hash,.Removed) {continue}
+            if keep && override_find(scene,entity,hash,.Removed) {continue}
             serial.migration_apply(&migration,image[:],source.columns[1].data[row*source.columns[1].size:],1)
             for ref in refs {
                 if ref.kind==.Asset {continue}
@@ -313,14 +315,14 @@ components_copy :: proc(scene:^Scene,prefab:^Scene,remap:^map[base.Entity_Id]bas
                 // What the instance holds on its own stays over what the prefab says.
                 if current,has:=scene_component_get(scene,table,entity);has {
                     for &override in scene.overrides {
-                        if override.entity!=entity || override.component!=source.name_hash || override.kind!=.Field {continue}
+                        if override.entity!=entity || override.component!=hash || override.kind!=.Field {continue}
                         override_keep(&scene.doc.schema,type,current,image[:],override_text(&override))
                     }
                 }
             }
             scene_component_set(scene,table,entity,image[:]) or_return
-            if !keep || !override_find(scene,entity,source.name_hash,.Turned) {
-                scene_component_turn(scene,entity,source.name_hash,scene_component_off(prefab,ids[entity_row],source.name_hash)) or_return
+            if !keep || !override_find(scene,entity,hash,.Turned) {
+                scene_component_turn(scene,entity,hash,scene_component_off(prefab,ids[entity_row],source.name_hash)) or_return
             }
         }
     }
@@ -460,12 +462,19 @@ scene_instance_update :: proc(scene:^Scene,root:base.Entity_Id,prefab:^Scene,rep
             copy(scene_names(scene)[target][:ENTITY_NAME_BYTES-1],source.name)
         }
     }
+    // A component renamed since one of the two was written is one component (was=).
+    for &source,at in prefab.doc.tables {
+        if component_table(prefab,at) {_,_=scene_component_twin(scene,source.name,&prefab.doc.schema,source.columns[1].type)}
+    }
     // A component the prefab no longer has leaves with it, unless the instance added it.
     placement:=base.name_hash(INSTANCE_PLACEMENT)
     for table in 1..<len(scene.doc.tables) {
         target:=&scene.doc.tables[table]
         if _,is_component:=scene_component(scene,target.name);!is_component || membership_hash(target.name_hash) {continue}
         source,in_prefab:=scene_component_by_hash(prefab,target.name_hash)
+        for candidate,at in prefab.doc.tables {
+            if !in_prefab && component_table(prefab,at) && serial.names_hold(scene.doc.schema.types[target.columns[1].type].was,candidate.name) {source,in_prefab=at,true}
+        }
         for source_id,entity in remap {
             if entity==root && target.name_hash==placement {continue}
             if _,has:=scene_component_get(scene,table,entity);!has {continue}

@@ -1,5 +1,6 @@
 package core
 
+import "core:slice"
 import "core:testing"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -53,6 +54,20 @@ an_indexed_world_info_finds_what_its_lists_hold_and_describes_its_values_once ::
         at,found=world_table_index_of_hash(world_ref(&w,info,.Editor),base.name_hash("Editor_Only"))
         testing.expect(t,found && at==2)
     }
+    // A component renamed with @(component,was=) is found by every name it had, and its type
+    // carries them into the files written with it.
+    renamed:=listed
+    renamed.tables=slice.clone(listed.tables,context.temp_allocator)
+    renamed.tables[1].was="Placed Global_Transform"
+    for indexed_too in ([]bool{false,true}) {
+        if indexed_too {renamed.schema=world_schema_make(&renamed)}
+        for name in ([]string{"World_Transform","Placed","Global_Transform"}) {
+            at,found:=world_table_index_of_hash(world_ref(&w,&renamed),base.name_hash(name))
+            testing.expectf(t,found && at==1,"%s",name)
+        }
+    }
+    testing.expect_value(t,renamed.schema.schema.types[renamed.schema.tables[1].type].was,"Placed Global_Transform")
+    world_schema_destroy(renamed.schema)
 
     schema:=indexed.schema
     parent:=schema.tables[0]

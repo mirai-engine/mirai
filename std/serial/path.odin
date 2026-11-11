@@ -79,9 +79,14 @@ path_resolve :: proc(s:^Schema,type:Type_Index,path:string) -> (target:Path_Targ
         if name=="" {return target,.Syntax,start}
         #partial switch text_kind(current) {
         case .Struct:
+            // A path written before a field was renamed names it by a name it had (was=).
             found:^Field
-            for &field in s.fields[current.first:][:current.count] {
+            fields:=s.fields[current.first:][:current.count]
+            for &field in fields {
                 if field.name==name {found=&field;break}
+            }
+            for &field in fields {
+                if found==nil && names_hold(field.was,name) {found=&field}
             }
             if found==nil {return target,.Unknown_Field,start}
             target.offset+=int(found.offset)

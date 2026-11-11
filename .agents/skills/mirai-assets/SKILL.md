@@ -59,9 +59,14 @@ registry).
 3. **Changing a serialized struct.** A component or a record of a game changes without a version
    or a converter: the reader migrates its rows by field name.
    - Renaming a field keeps its values only when it says the names it had:
-     `mirai:"was=<earlier name> <one before>"`. A stored field the type has under no name is a
-     loss, never silent: the editor's console says it on load (`engine.diagnostics` for an
-     agent) and `mirai asset verify` prints it, with the scene, the component and the field.
+     `mirai:"was=<earlier name> <one before>"`; a renamed component says them on its type,
+     `@(component,was="<earlier name>")`. A path (an override, a `@field/` target) names a field
+     by any name it had, a table under an earlier name is the component's, and the names travel
+     in the schema of every file written since, so a newer file also reads into an older layout
+     (a prefab saved after the rename, a scene before it). A stored field the type has under no
+     name is a loss, never silent: the editor's console says it on load (`engine.diagnostics`
+     for an agent) and `mirai asset verify` prints it, with the scene, the component and the
+     field.
    - A change in what an asset type stores (a field of its rows too) or in what a value means
      raises its `*_VERSION`: files of another version fail with `Version` and are made again
      ([version rule](references/formats.md#versions)).
