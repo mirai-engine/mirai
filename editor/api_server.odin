@@ -17,28 +17,6 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-// The methods that went in the simplification of the API, and what does what each did: whoever
-// still calls one is told. To delete at the next phase.
-@(private,rodata)
-API_MOVED := [?]api.Moved{
-    {"play.set","scene.write with world Game"},
-    {"play.spawn","scene.write with world Game and prefab on a new entity"},
-    {"play.destroy","scene.write with world Game and delete on the entity"},
-    {"play.inspect","scene.inspect with world Game"},
-    {"play.get","scene.inspect with world Game, entity, components and _select, or play.check, which answers the value it read"},
-    {"physics.collision.get","scene.inspect with components Collider"},
-    {"physics.collision.set","scene.write with components Collider: preset, or preset custom with sensor, belongs and collides as lists of names"},
-    {"cinematics.add","scene.write: preset cinematic for a timeline, components Animation_Target with animation the timeline for an actor"},
-    {"scene.group","scene.write with group on a new entity"},
-    {"editor.view","preferences.set of Layout for panels and tabs, settings.get and project.get for what the dialogs show, editor.tool for a tool; the rest is the interface of a person: editor.input and capture with ui"},
-    {"editor.copy","scene.write with copy"},
-    {"play.release","editor.input: the keys are of the game of the user"},
-    {"camera.preview","camera.set with entity"},
-    {"profile.panel","profile.capture and profile.summary: the panel is the interface of a person"},
-    {"animation.tracks.show","editor.tool with tool tracks, then animation.request with seek"},
-    {"physics.drop","physics.settle"},
-}
-
 // The agent API of the editor: the server of editor/api (JSON-RPC and MCP on
 // 127.0.0.1) with the methods of the editor registered on it. The server is
 // polled once per frame between frames, so every handler runs on the main
@@ -301,7 +279,6 @@ api_registrations :: proc(s:^Session,st:^Api_State) {
     api_schema_build(s,st)
     st.server.assets={s,asset_text_resolve}
     st.server.pause,st.server.transaction,st.server.user=api_server_pause,api_server_transaction,s
-    st.server.moved=API_MOVED[:]
     api_plugins_set(s,st)
     api_methods_register(s,st)
     commands_register(s,st)

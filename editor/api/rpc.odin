@@ -213,14 +213,11 @@ process_one :: proc(s:^Server,r:^serial.Text_Reader,route:Route,comma:bool) -> b
     return true
 }
 
-// What an error adds about a method that is not there: what does what it did when it is one that
-// went (Server.moved), else the methods whose names look like name; "" without one.
+// What an error adds about a method that is not there: the methods whose names look like name;
+// "" without one.
 @(private)
 methods_similar :: proc(s:^Server,name:string) -> string {
     allocator:=base.arena_allocator(&s.scratch)
-    for moved in s.moved {
-        if moved.was==name {return format_text(allocator,"; it is gone: use %s",moved.now)}
-    }
     names:=make([]string,s.method_count,allocator)
     for &method,i in s.methods[:s.method_count] {names[i]=method.name}
     similar:=names_similar(names,name,allocator)

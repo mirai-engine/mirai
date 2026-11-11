@@ -294,11 +294,9 @@ a_method_says_in_one_place_that_it_cannot_be_called_now :: proc(t:^testing.T) {
         testing.expectf(t,!ran && strings.contains(error.message,c.want),"%s %s: %s",c.method,c.params,error.message)
     }
     testing.expect(t,core.world_entities(w).alive==alive && history.edits_undo_count(&f.edits)==0 && len(s.copied)==0)
-    // A method that went says what does what it did, to whoever still calls it.
-    _,batched:=execute(st,&out,"batch",`{"calls":[{"method":"play.set","params":{}}]}`)
-    testing.expect(t,!batched)
-    gone,_:=execute(st,&out,"batch",`{"calls":[{"method":"physics.collision.set"}]}`)
-    testing.expect(t,strings.contains(gone.message,"it is gone: use scene.write with components Collider"),gone.message)
+    // A method that went is a method that is not there, like any other name.
+    gone,batched:=execute(st,&out,"batch",`{"calls":[{"method":"play.set","params":{}}]}`)
+    testing.expect(t,!batched && !strings.contains(gone.message,"scene.write"),gone.message)
     // An entry needs a method that is registered, or a procedure, and a name no other has; a session without the registry runs none.
     testing.expect(t,!command_bind(s,{name="orphan",label="Orphan"}) && !command_bind(s,{name="save",method="scene.save",label="Save"}) && !command_bind(s,{name="lost",method="no.such.method",label="Lost"}))
     testing.expect(t,tool_entry(s,"brush","Brush",.Edit) && !tool_entry(s,"brush","Brush",.Edit))

@@ -111,9 +111,6 @@ Method_Desc :: struct {
     writes_result:bool,   // the handler writes the result as JSON into call.out; result only gives its schema
 }
 
-// A method that went and what does what it did, for whoever still calls it.
-Moved :: struct {was,now:string}
-
 // Why a method cannot be called with these params as things are now; "" when it can. params is
 // the value of its params type, or nil for whatever they are. The server asks before it runs the
 // handler, and engine.describe tells what holds for any params.
@@ -249,7 +246,6 @@ Server :: struct {
     assets:serial.Text_Assets, // how params take a path where an Asset_Id goes
     pause:proc(s:^Server,seconds:f64)->bool, // keeps what owns the server going between two calls of _wait_until; false: it is ending
     transaction:proc(s:^Server,call:^Call,open:bool)->bool, // opens the one step of undo the calls of a batch edit in, or closes it: a step when the call did not fail, nothing otherwise; false after failing the call
-    moved:[]Moved, // methods that went, with what does what each did: an unknown method that is one of them says it
     user:rawptr,                             // of pause and transaction
 }
 
