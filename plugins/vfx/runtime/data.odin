@@ -68,6 +68,7 @@ Data_Entry :: struct {
     words:u32,
     offset:u32, // bytes of its counters and copies among the channels
     watched:bool, // a game reads it back this frame
+    readback:[32]u8, // the name of its readback, written once
 }
 
 Data_Channels :: struct {
@@ -104,7 +105,9 @@ data_need :: proc(d:^Data_Channels,name:u64,words:u32,used:^[DATA_CHANNELS]bool,
         return
     }
     used[len(d.entries)]=true
-    append(&d.entries,Data_Entry{name=name,words=words})
+    entry:=Data_Entry{name=name,words=words}
+    base.text_set(entry.readback[:],fmt.tprintf("vfx data %x",name))
+    append(&d.entries,entry)
     d.made=false
 }
 
@@ -160,15 +163,15 @@ data_readback :: proc(sync:^Particle_Sync,pass:^erender.Pass,parity:u32) {
     d:=&sync.data
     if !d.made {return}
     base_at:=u64(data_base(sync))
-    for entry in d.entries {
+    for &entry in d.entries {
         if !entry.watched {continue}
-        erender.pass_readback(pass,world_buffer(sync),base_at+u64(entry.offset)+u64(parity)*u64(data_copy_bytes(entry.words)),data_readback_desc(entry.name,entry.words))
+        erender.pass_readback(pass,world_buffer(sync),base_at+u64(entry.offset)+u64(parity)*u64(data_copy_bytes(entry.words)),data_readback_desc(&entry))
     }
 }
 
 @(private)
-data_readback_desc :: proc(name:u64,words:u32) -> erender.Buffer_Desc {
-    return {fmt.tprintf("vfx data %x",name),u64(data_copy_bytes(words))}
+data_readback_desc :: proc(entry:^Data_Entry) -> erender.Buffer_Desc {
+    return {base.text_get(entry.readback[:]),u64(data_copy_bytes(entry.words))}
 }
 
 // What the GPU brought back of the watched channels since the last frame,
@@ -177,9 +180,9 @@ data_readback_desc :: proc(name:u64,words:u32) -> erender.Buffer_Desc {
 data_read :: proc(read:^Particle_Data_Read,reports:^Particle_Reports,sync:^Particle_Sync,renderer:^erender.Renderer,id:core.World_Id,problems:^core.Problems) {
     if read!=nil {for &channel in read.channels {channel.fresh=false}}
     if reports!=nil {clear(&reports.reports)}
-    for entry in sync.data.entries {
+    for &entry in sync.data.entries {
         if !entry.watched {continue}
-        bytes,frame,ok:=erender.readback(renderer,id,data_readback_desc(entry.name,entry.words).name)
+        bytes,frame,ok:=erender.readback(renderer,id,data_readback_desc(&entry).name)
         if !ok {continue}
         if entry.name==REPORTS_CHANNEL {
             if reports!=nil {reports_take(reports,&sync.pool,bytes,frame)}

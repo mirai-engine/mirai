@@ -322,7 +322,7 @@ particles_release :: proc(sync:^Particle_Sync,id:core.World_Id,renderer:^erender
         pool_release(renderer,id,&sync.pool)
         erender.buffer_release(renderer,id,world_buffer(sync).name)
         for name in sync.world_textures[:sync.world_texture_count] {erender.table_texture_release(renderer,id,world_texture_key(name))}
-        for entry in sync.data.entries {erender.readback_release(renderer,id,data_readback_desc(entry.name,entry.words).name)}
+        for &entry in sync.data.entries {erender.readback_release(renderer,id,data_readback_desc(&entry).name)}
     }
     pool_free(&sync.pool)
     surfaces_free(&sync.surfaces)
