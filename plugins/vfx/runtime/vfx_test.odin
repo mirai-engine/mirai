@@ -75,7 +75,7 @@ fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
 
 @(private="file")
 fixture_sync :: proc(f:^Emitters_Fixture,id:core.World_Id,time:core.Time,frame:=FRAME) {
-    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.parameters),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{})
+    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.parameters),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{})
 }
 
 @(private="file")
@@ -287,7 +287,7 @@ the_values_particles_slang_copies_are_those_of_the_plugin :: proc(t:^testing.T) 
         {"PARTICLE_EVENT_CAPACITY",EVENT_CAPACITY},{"PARTICLE_EVENTS_AT",EVENTS_AT/4},{"PARTICLE_EVENT_WORDS",size_of(Gpu_Event)/4},
         {"PARTICLE_REPORT_CAPACITY",REPORT_CAPACITY},{"PARTICLE_REPORT_WORDS",size_of(Gpu_Report)/4},
         {"PARTICLE_RESOURCES",RESOURCE_ROWS},{"PARTICLE_RESOURCE_BYTES",size_of(Gpu_Resource)},
-        {"PARTICLE_DATA_ENTRIES",DATA_ENTRIES},{"PARTICLE_DATA_GAME_ENTRIES",DATA_GAME_ENTRIES},{"PARTICLE_SEGMENT_BYTES",size_of(Gpu_Segment)},
+        {"PARTICLE_DATA_ENTRIES",DATA_ENTRIES},{"PARTICLE_SEGMENT_BYTES",size_of(Gpu_Segment)},
         {"PARTICLE_STAGES",erender.PROGRAM_STAGES},{"PARTICLE_STAGE_BYTES",size_of(Gpu_Stage)},{"PARTICLE_BIRTH_BYTES",size_of(Gpu_Birth)},
         {"PARTICLE_SORT_MAX",SORT_MAX},
     }) {expect(t,defines,each.name,each.value)}

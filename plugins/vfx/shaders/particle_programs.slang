@@ -389,16 +389,16 @@ int mirai_vfx_emitter_birth(Mirai_Vfx_Context ctx, uint resource, uint birth, ou
 }
 
 // A data channel (vfx/runtime/data.odin): its bytes in the world buffer, the
-// words of an entry, what games pushed and the copy the frame writes.
-struct Particle_Data_Channel { uint at; uint words; uint game; uint parity; };
+// words of an entry and the copy the frame writes.
+struct Particle_Data_Channel { uint at; uint words; uint parity; };
 
 bool particle_data_of(Mirai_Vfx_Context ctx, uint resource, out Particle_Data_Channel d) {
     Particle_Resource r = particle_resource(ctx.emitter, 1u + resource);
-    d.at = r.mesh; d.words = r.first; d.game = r.count & 0x7FFFFFFFu; d.parity = r.count >> 31;
+    d.at = r.mesh; d.words = r.first; d.parity = r.count;
     return r.kind == PARTICLE_RESOURCE_DATA && d.words > 0u;
 }
 
-// Where a copy is: its counter, padding, then its entries; after both, what games pushed.
+// Where a copy is: its counter, padding, then its entries.
 uint particle_data_copy(Particle_Data_Channel d, uint parity) { return d.at + parity * (16u + PARTICLE_DATA_ENTRIES * d.words * 4u); }
 
 uint particle_data_written(Particle_Data_Channel d) {
@@ -408,17 +408,14 @@ uint particle_data_written(Particle_Data_Channel d) {
 uint mirai_vfx_data_count(Mirai_Vfx_Context ctx, uint resource) {
     Particle_Data_Channel d;
     if (!particle_data_of(ctx, resource, d)) return 0u;
-    return particle_data_written(d) + d.game;
+    return particle_data_written(d);
 }
 
 uint mirai_vfx_data_word(Mirai_Vfx_Context ctx, uint resource, uint entry, uint word) {
     Particle_Data_Channel d;
     if (!particle_data_of(ctx, resource, d) || word >= d.words) return 0u;
-    uint written = particle_data_written(d);
-    if (entry < written) return particle_world_bytes.Load(particle_data_copy(d, 1u - d.parity) + 16u + (entry * d.words + word) * 4u);
-    entry -= written;
-    if (entry >= d.game) return 0u;
-    return particle_world_bytes.Load(particle_data_copy(d, 2u) + (entry * d.words + word) * 4u);
+    if (entry >= particle_data_written(d)) return 0u;
+    return particle_world_bytes.Load(particle_data_copy(d, 1u - d.parity) + 16u + (entry * d.words + word) * 4u);
 }
 
 // Updates and stages append to data channels in the last step of the frame

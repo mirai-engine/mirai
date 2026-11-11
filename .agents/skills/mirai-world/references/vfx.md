@@ -256,9 +256,9 @@ resource.
 
 A program reads and writes entries of words in the world's data channel of a name
 (`//! resource name data words`, `data.odin`): what the programs add in a frame is read in the next
-(`update` and the stages add only in the last step of the frame, so as not to repeat entries), and
-what a game pushes (`data_push` over `Particle_Data`) is read in the frame that reaches the GPU,
-after those of the programs. A game reads back a channel it watches (`data_watch` on each frame,
+(`update` and the stages add only in the last step of the frame, so as not to repeat entries). A
+game does not write a channel: it gives programs data through the `values` of its
+[births](#channels). A game reads back a channel it watches (`data_watch` on each frame,
 `data_entries` over `Particle_Data_Read`): what the programs added in a frame arrives once, frames
 later and without waiting for the GPU; like the reports, it is presentation. The channel exists
 while some program of the world uses it, with the most words that any asks for; remaking it empties

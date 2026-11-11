@@ -182,7 +182,7 @@ particles_sync :: proc(
     emitters:core.Read(Particle_Emitter),overrides:core.Read(Particle_Override),parameters:core.Read(Particle_Parameters),
     worlds:core.Read(core.World_Transform),hidden:core.Read(erender.Hidden),parents:core.Read(core.Parent),
     bindings:core.Read(Particle_Bindings),meshes:core.Read(erender.Mesh_Renderer),drawn:core.Ref(erender.Render_Sync),listeners:core.Read(Particle_Channel),grids:core.Read(Particle_Grid),volumes:core.Read(Particle_Volume),textures:core.Read(Particle_World_Texture),
-    clocks:core.Ref(Particle_Clocks),settings:core.Ref(Particle_Settings),sync:^Particle_Sync,reports:^Particle_Reports,data:^Particle_Data,watch:^Particle_Data_Watch,read:^Particle_Data_Read,ui_effects:^UI_Particles,ui_requests:core.Ref(gui.UI_Effects),id:core.World_Id,time:core.Time,frame:core.Frame_Time,
+    clocks:core.Ref(Particle_Clocks),settings:core.Ref(Particle_Settings),sync:^Particle_Sync,reports:^Particle_Reports,watch:^Particle_Data_Watch,read:^Particle_Data_Read,ui_effects:^UI_Particles,ui_requests:core.Ref(gui.UI_Effects),id:core.World_Id,time:core.Time,frame:core.Frame_Time,
     view:core.View,problems:^core.Problems,app:^host.App,
     winds:core.Read(volume.Wind),places:core.Read(volume.Volume),gravities:core.Read(volume.Gravity),
 ) {
@@ -282,11 +282,9 @@ particles_sync :: proc(
         append(&sync.owners,e)
     }
     grids_release(&sync.grids,&sync.pool)
-    pushed:[]Data_Push
-    if data!=nil {pushed=core.take(&data.queue)}
     watched:[]u64
     if watch!=nil {watched=core.take(&watch.queue)}
-    data_place(&sync.data,used,pushed,watched)
+    data_place(&sync.data,used,watched)
     asked:[]gui.UI_Effect
     if ui_requests.ptr!=nil {asked=ui_requests.items[:]}
     if ui_effects!=nil && (ui_effects.count>0 || len(asked)>0) {

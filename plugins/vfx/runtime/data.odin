@@ -6,11 +6,11 @@ import "mirai:std/base"
 import erender "mirai:engine/render"
 
 // Data channels: entries of words, by the name of their channel, that the
-// programs of the world write and read (`//! resource name data words`) and
-// that games push. What the programs append in a frame is read in the next:
-// each channel keeps two copies, the one the frame writes and the one it
-// reads, which change places each frame. What a game pushes is read in the
-// frame it reaches the GPU, after the entries of the programs. A channel is
+// programs of the world write and read (`//! resource name data words`). What
+// the programs append in a frame is read in the next: each channel keeps two
+// copies, the one the frame writes and the one it reads, which change places
+// each frame. A game gives programs data through births (core.Births, their
+// values), not through a data channel. A channel is
 // made when some program of the world reads it, with the most words any of
 // them asks; making the channels again is a load transaction: their entries
 // start empty. A game reads back the entries of the channels it watches
@@ -19,29 +19,8 @@ import erender "mirai:engine/render"
 // reports are: no function of fixed reads it.
 
 DATA_ENTRIES :: 4096      // that the programs write to a channel in a frame
-DATA_GAME_ENTRIES :: 256  // that games push to a channel in a frame
 DATA_CHANNELS :: 32       // of a world
 DATA_WORDS :: 32          // of an entry: render.PROGRAM_DATA_WORDS
-
-// An entry a game pushes to the data channel of its name: words of it, as
-// the programs that read it lay them out.
-Data_Push :: struct {
-    channel:u64, // base.name_hash of its name
-    words:[DATA_WORDS]f32,
-    count:u32,
-}
-
-@(storage,queue)
-Particle_Data :: struct {
-    queue:core.Queue(Data_Push),
-}
-
-// Pushes an entry to the data channel of its name; the words past those the channel keeps are let go.
-data_push :: proc(data:^Particle_Data,name:string,words:[]f32) {
-    push:=Data_Push{channel=base.name_hash(name),count=u32(min(len(words),DATA_WORDS))}
-    copy(push.words[:],words)
-    core.push(&data.queue,push)
-}
 
 // The channels a game reads back, named each frame it reads them.
 @(storage,queue)
@@ -88,7 +67,6 @@ Data_Entry :: struct {
     name:u64,
     words:u32,
     offset:u32, // bytes of its counters and copies among the channels
-    pushed:[dynamic]f32, // what games pushed this frame, words each
     watched:bool, // a game reads it back this frame
 }
 
@@ -100,14 +78,13 @@ Data_Channels :: struct {
 }
 
 data_free :: proc(d:^Data_Channels) {
-    for &entry in d.entries {delete(entry.pushed)}
     delete(d.entries)
     d^={}
 }
 
-// The bytes of a channel: the two copies the programs write, then what games pushed.
+// The bytes of a channel: the two copies the programs write.
 @(private)
-data_bytes :: proc "contextless" (words:u32) -> u32 {return 2*data_copy_bytes(words)+DATA_GAME_ENTRIES*words*4}
+data_bytes :: proc "contextless" (words:u32) -> u32 {return 2*data_copy_bytes(words)}
 
 // The bytes of a copy: its counter, padding, then its entries.
 @(private)
@@ -131,12 +108,11 @@ data_need :: proc(d:^Data_Channels,name:u64,words:u32,used:^[DATA_CHANNELS]bool,
     d.made=false
 }
 
-// Keeps the channels used this frame, places them, and takes what games pushed and which they watch.
+// Keeps the channels used this frame, places them, and takes which games watch.
 @(private)
-data_place :: proc(d:^Data_Channels,used:[DATA_CHANNELS]bool,pushed:[]Data_Push,watched:[]u64=nil) {
+data_place :: proc(d:^Data_Channels,used:[DATA_CHANNELS]bool,watched:[]u64=nil) {
     for i:=len(d.entries)-1;i>=0;i-=1 {
         if used[i] {continue}
-        delete(d.entries[i].pushed)
         ordered_remove(&d.entries,i)
         d.made=false
     }
@@ -146,21 +122,11 @@ data_place :: proc(d:^Data_Channels,used:[DATA_CHANNELS]bool,pushed:[]Data_Push,
         entry.offset=offset
         offset+=data_bytes(entry.words)
         layout=base.hash_combine(layout,base.hash_combine(entry.name,u64(entry.words)))
-        clear(&entry.pushed)
         entry.watched=false
         for name in watched {entry.watched||=name==entry.name}
     }
     if layout!=d.layout {d.made=false}
     d.layout,d.bytes=layout,offset
-    for push in pushed {
-        for &entry in d.entries {
-            if entry.name!=push.channel || u32(len(entry.pushed))>=DATA_GAME_ENTRIES*entry.words {continue}
-            row:[DATA_WORDS]f32
-            words:=push.words
-            copy(row[:],words[:push.count])
-            append(&entry.pushed,..row[:entry.words])
-        }
-    }
 }
 
 @(private)
@@ -170,8 +136,7 @@ data_find :: proc(d:^Data_Channels,name:u64) -> int {
 }
 
 // The channels in the world buffer this frame: the counter of the copy it
-// writes (parity) at zero, and what games pushed after the copies. Made
-// again, they start empty.
+// writes (parity) at zero. Made again, they start empty.
 @(private)
 data_frame :: proc(sync:^Particle_Sync,pass:^erender.Pass,parity:u32) {
     d:=&sync.data
@@ -182,13 +147,8 @@ data_frame :: proc(sync:^Particle_Sync,pass:^erender.Pass,parity:u32) {
         erender.pass_buffer_fill(pass,world,base_at,u64(d.bytes))
         d.made=true
     }
-    for &entry in d.entries {
-        at:=base_at+u64(entry.offset)
-        copy_bytes:=u64(data_copy_bytes(entry.words))
-        erender.pass_buffer_fill(pass,world,at+u64(parity)*copy_bytes,4)
-        if len(entry.pushed)>0 {
-            erender.pass_buffer_write(pass,world,at+2*copy_bytes,raw_data(entry.pushed),len(entry.pushed)*4)
-        }
+    for entry in d.entries {
+        erender.pass_buffer_fill(pass,world,base_at+u64(entry.offset)+u64(parity)*u64(data_copy_bytes(entry.words)),4)
     }
 }
 

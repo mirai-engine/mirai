@@ -26,8 +26,8 @@
 // emitter binds by the name of the resource (vfx.Particle_Bindings). data,
 // `//! resource name data words`: the data channel of the world of that name,
 // entries of words words that programs append (mirai_vfx_data_append, then
-// mirai_vfx_data_store) and games push (vfx.data_push); a frame reads what
-// the programs appended in the frame before and what games pushed for it.
+// mirai_vfx_data_store); a frame reads what the programs appended in the
+// frame before.
 //
 // A line `//! stage name over particles|grid [iterations N] [neighbors
 // radius] [writes grid,grid]` names a stage, a function of the namespace that

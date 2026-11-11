@@ -133,7 +133,6 @@ struct Particle_Event {
 #define PARTICLE_RESOURCE_EMITTER 5u
 #define PARTICLE_RESOURCE_DATA 6u
 #define PARTICLE_DATA_ENTRIES 4096u      // vfx.DATA_ENTRIES
-#define PARTICLE_DATA_GAME_ENTRIES 256u  // vfx.DATA_GAME_ENTRIES
 #define PARTICLE_SEGMENT_BYTES 64u
 // The stages of an emitter after its resources (vfx.Gpu_Stage).
 #define PARTICLE_STAGES 32u

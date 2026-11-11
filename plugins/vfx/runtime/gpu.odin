@@ -715,10 +715,10 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
                 case .Emitter:
                     if other:=pool_slot_find(pool,resource.emitter);other>=0 {row.head={u32(Resource_Kind.Emitter),0,u32(other),0}}
                 case .Data:
-                    // The bytes of the channel, the words of an entry, and the copy the frame writes over what games pushed.
+                    // The bytes of the channel, the words of an entry, and the copy the frame writes.
                     if at:=data_find(&sync.data,resource.emitter);at>=0 {
                         entry:=&sync.data.entries[at]
-                        row.head={u32(Resource_Kind.Data),data_base(sync)+entry.offset,entry.words,u32(len(entry.pushed))/max(entry.words,1)|u32(pool.frame&1)<<31}
+                        row.head={u32(Resource_Kind.Data),data_base(sync)+entry.offset,entry.words,u32(pool.frame&1)}
                     }
                 }
                 append(&pool.frame_bytes,..([^]u8)(&row)[:size_of(row)])
