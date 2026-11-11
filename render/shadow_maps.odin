@@ -6,7 +6,7 @@ import "mirai:render/abi"
 import "mirai:rhi"
 
 // Shadow maps in place of the rays of the direct light for the lights that
-// light much of the view and for the sun (Settings.shadow_maps), drawn again
+// light much of the view and for the sun, drawn again
 // every frame: the cost of a frame is the same whatever moves. Each frame,
 // from the camera and the lights alone, the lights whose sphere covers
 // SHADOW_RASTER_SHARE of the view (and keep SHADOW_RASTER_KEEP once they do)
@@ -413,7 +413,7 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 	r, cmd, t := p.r, p.cmd, p.t
 	s := &r.scene
 	maps.sun = max(u32)
-	if !r.settings.shadow_maps || !p.draw {return}
+	if !p.draw {return}
 	planned, ok := shadow_maps_plan(p)
 	if !ok || planned.on == 0 {return}
 	b := &t.shadow_buffers

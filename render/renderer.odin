@@ -68,7 +68,6 @@ Settings :: struct {
 	light_budget:         u32,    // shadow rays of a point that traces its own (glass, overlays, the other side of a surface that lets light through; probes and reflections take theirs from it), each to a light or to a group of far ones that stands for them (at most LIGHT_CUT_MAX)
 	direct_samples:       u32,    // samples of the direct light of a pixel, spread over the lights by what each gives it, one of them traced through the whole scene (1 to DIRECT_SAMPLES_MAX)
 	direct_half_resolution: bool, // the samples of the direct light are taken at one pixel of each 2x2 and the filter takes them to the others by their surfaces
-	shadow_maps:          bool,   // the direct light takes the shadows of the lights that light much of the view, and of the sun, from maps of depth drawn from them every frame (shadow_maps_pass): the hard shadow of the maps at each point, averaged over the points of its surface within its penumbra (direct_samples.comp, direct_spread.comp); the other lights trace rays
 	firefly_clamp:        f32,    // the brightest a ray of a traced reflection or of glass counts, in render units (Scene.light_scale)
 	texture_max_size:     u32,    // larger images are loaded at the first mip level that fits
 	texture_pool_megabytes: u32,  // GPU memory for textures; past it they load without their largest levels (0: no limit)
@@ -106,7 +105,7 @@ DEFAULT_HIGHLIGHT_STYLE :: Highlight_Style{
 DEFAULT_SETTINGS :: Settings{
 	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, resolution = 1080, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 5, probe_rays = 128, probe_budget = 512,
-	gi_max_distance = 1e4, sun_shadows = true, light_budget = 8, direct_samples = 15, shadow_maps = true,
+	gi_max_distance = 1e4, sun_shadows = true, light_budget = 8, direct_samples = 15,
 	firefly_clamp = 20, texture_max_size = 2048,
 	texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
 	reflection_roughness = 0.3, reflection_light_budget = 8, glass_layers = 1,
