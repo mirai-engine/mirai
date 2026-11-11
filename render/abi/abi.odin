@@ -246,16 +246,17 @@ PROGRAMS_DISPATCH :: 2 // three words a phase
 PROGRAMS_HEADER   :: 8
 
 // What an instance gives over the rows of its materials, in the index pool:
-// how many values, how much it fades every row out, then INSTANCE_VALUE_WORDS
-// each: its row, the first word of the row it gives with how many of the four
-// from it from INSTANCE_VALUE_COUNT_SHIFT, and the words.
-INSTANCE_VALUES_MAX         :: 16
-INSTANCE_VALUES_HEADER      :: 2
-INSTANCE_VALUE_WORDS        :: 6
-INSTANCE_VALUE_COUNT_SHIFT  :: 16
-// The words of a row of the material table (render.Gpu_Material_Row) the
-// shaders put those over: the values shading holds, then the blocks of its
-// layers, and from MATERIAL_PARAMETERS_WORD the parameters of its program.
+// how many rows it shows otherwise than the table holds them, how much it
+// fades every row out, then INSTANCE_ROW_WORDS each: the row and its words
+// as the instance shows them, whole: the values shading holds
+// (MATERIAL_WORDS), the blocks of its layers (MATERIAL_BLOCK_WORDS) and the
+// parameters of its program. A shader reads of them what it reads of a row.
+INSTANCE_VALUES_MAX    :: 16
+INSTANCE_VALUES_HEADER :: 2
+INSTANCE_ROW_WORDS     :: 1 + MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + PROGRAM_PARAMETER_BYTES / 4
+// The words of a row of the material table (render.Gpu_Material_Row): the
+// values shading holds, then the blocks of its layers, and from
+// MATERIAL_PARAMETERS_WORD the parameters of its program.
 MATERIAL_WORDS           :: 28 + len(asset.Material_Map_Kind)
 MATERIAL_BLOCK_WORDS     :: 19
 MATERIAL_PARAMETERS_WORD :: MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + 4 + 8 * len(asset.Material_Map_Kind)

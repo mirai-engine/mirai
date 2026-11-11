@@ -1450,41 +1450,37 @@ scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, values:
 }
 
 // What an instance gives over its rows in the index pool
-// (Gpu_Instance.material_values): its header and its values; none for 0.
+// (Gpu_Instance.material_values): its header and the rows it shows otherwise
+// than the table holds them; none for 0.
 @(private)
 instance_material_values_block :: proc "contextless" (s: ^Scene_State, values: u32) -> []u32 {
 	if values == 0 || int(values) + INSTANCE_VALUES_HEADER - 1 > len(s.indices) {return nil}
-	size := INSTANCE_VALUES_HEADER + int(min(s.indices[values - 1], INSTANCE_VALUES_MAX)) * INSTANCE_VALUE_WORDS
+	size := INSTANCE_VALUES_HEADER + int(min(s.indices[values - 1], INSTANCE_VALUES_MAX)) * INSTANCE_ROW_WORDS
 	if int(values) - 1 + size > len(s.indices) {return nil}
 	return s.indices[values - 1:][:size]
 }
 
-// The words of its values alone.
+// The words of a row as an instance shows it, in its block: the values
+// shading holds, the blocks of its layers and its parameters; none for a row
+// it shows as the table holds it.
 @(private)
-instance_material_values_words :: proc "contextless" (s: ^Scene_State, values: u32) -> []u32 {
+instance_row_words :: proc "contextless" (s: ^Scene_State, values, row: u32) -> []u32 {
 	block := instance_material_values_block(s, values)
-	return block[INSTANCE_VALUES_HEADER:] if len(block) > 0 else nil
+	for at := INSTANCE_VALUES_HEADER; at < len(block); at += INSTANCE_ROW_WORDS {
+		if block[at] == row {return block[at + 1:][:INSTANCE_ROW_WORDS - 1]}
+	}
+	return nil
 }
 
 // The values of a row shading holds as an instance shows them, as the
-// shaders read them (material_row(row, block)): with the words the instance
-// gives it, and its fade.
+// shaders read them (material_row(row, block)): its own of the row, and its
+// fade.
 @(private)
 instance_material :: proc "contextless" (s: ^Scene_State, values, row: u32) -> (m: Gpu_Material) {
 	m = s.materials[row].shared
-	block := instance_material_values_block(s, values)
-	if len(block) == 0 {return}
-	words := (cast([^]u32)&m)[:size_of(m) / 4]
-	entries := block[INSTANCE_VALUES_HEADER:]
-	for at := 0; at + INSTANCE_VALUE_WORDS <= len(entries); at += INSTANCE_VALUE_WORDS {
-		if entries[at] != row {continue}
-		first := int(entries[at + 1] & (1 << INSTANCE_VALUE_COUNT_SHIFT - 1))
-		for given, c in entries[at + 2:][:min(entries[at + 1] >> INSTANCE_VALUE_COUNT_SHIFT, 4)] {
-			if first + c < len(words) {words[first + c] = given}
-		}
-	}
-	if fade := transmute(f32)block[1]; fade > 0 {
-		m.opacity *= 1 - fade
+	if shown := instance_row_words(s, values, row); shown != nil {m = (cast(^Gpu_Material)raw_data(shown))^}
+	if block := instance_material_values_block(s, values); len(block) > 0 && transmute(f32)block[1] > 0 {
+		m.opacity *= 1 - transmute(f32)block[1]
 		if m.alpha_mode == u32(asset.Alpha_Mode.Opaque) {m.alpha_mode = u32(asset.Alpha_Mode.Blend)}
 	}
 	return
@@ -1493,9 +1489,9 @@ instance_material :: proc "contextless" (s: ^Scene_State, values, row: u32) -> (
 // Whether what an instance gives changes the emission of a row it shows: its glow reaches as far as that of a tint.
 @(private = "file")
 instance_material_values_glow :: proc "contextless" (s: ^Scene_State, values: u32) -> bool {
-	words := instance_material_values_words(s, values)
-	for at := 0; at + INSTANCE_VALUE_WORDS <= len(words); at += INSTANCE_VALUE_WORDS {
-		if row := words[at]; int(row) < len(s.materials) && instance_material(s, values, row).emission != s.materials[row].emission {return true}
+	block := instance_material_values_block(s, values)
+	for at := INSTANCE_VALUES_HEADER; at < len(block); at += INSTANCE_ROW_WORDS {
+		if row := block[at]; int(row) < len(s.materials) && (cast(^Gpu_Material)&block[at + 1]).emission != s.materials[row].emission {return true}
 	}
 	return false
 }
@@ -1522,6 +1518,42 @@ instance_material_values_hold :: proc(r: ^Renderer, held: ^Instance_Material_Val
 	}
 }
 
+// What an instance is given over its rows as the pool holds it, in `block`:
+// each row it changes whole, as the table holds it now with the words the
+// instance gives in place of its own, so that a shader reads the row of an
+// instance as it reads one of the table. Nothing for one that gives nothing.
+// A row the table changes after is the instance's to be given again.
+@(private = "file")
+instance_material_values_rows :: proc "contextless" (s: ^Scene_State, given: ^Instance_Material_Values, block: []u32) -> []u32 {
+	size := INSTANCE_VALUES_HEADER
+	for &entry in given.entries[:min(int(given.count), len(given.entries))] {
+		if int(entry.row) >= len(s.materials) {continue}
+		at := INSTANCE_VALUES_HEADER
+		for at < size && block[at] != entry.row {at += INSTANCE_ROW_WORDS}
+		words := block[at + 1:][:INSTANCE_ROW_WORDS - 1]
+		if at == size {
+			held := cast([^]u32)&s.materials[entry.row]
+			block[at] = entry.row
+			copy(words, held[:PARAMETERS_AT])
+			copy(words[PARAMETERS_AT:], held[abi.MATERIAL_PARAMETERS_WORD:][:PROGRAM_PARAMETER_BYTES / 4])
+			size += INSTANCE_ROW_WORDS
+		}
+		for word, c in entry.words[:min(entry.word >> INSTANCE_VALUE_COUNT_SHIFT, 4)] {
+			// Of a row, an instance shows its own of what the shaders read of it by the point: not where its maps are placed.
+			to := int(entry.word & (1 << INSTANCE_VALUE_COUNT_SHIFT - 1)) + c
+			if to >= abi.MATERIAL_PARAMETERS_WORD {to -= abi.MATERIAL_PARAMETERS_WORD - PARAMETERS_AT} else if to >= PARAMETERS_AT {continue}
+			if to < len(words) {words[to] = word}
+		}
+	}
+	fade := min(given.fade, 1) if given.fade > 0 else 0
+	if size == INSTANCE_VALUES_HEADER && fade == 0 {return nil}
+	block[0], block[1] = u32((size - INSTANCE_VALUES_HEADER) / INSTANCE_ROW_WORDS), transmute(u32)fade
+	return block[:size]
+}
+// Where the parameters of the program of a row start in the words an instance holds of it.
+@(private)
+PARAMETERS_AT :: abi.MATERIAL_WORDS + abi.MATERIAL_BLOCK_WORDS
+
 // Puts what an instance gives over its rows in the index pool in place of
 // what it had: over it when it is as much, else in room of its own. False
 // when it is what it had, or without room for it (stats.problem says what is
@@ -1529,10 +1561,8 @@ instance_material_values_hold :: proc(r: ^Renderer, held: ^Instance_Material_Val
 @(private)
 instance_material_values_give :: proc(r: ^Renderer, inst: ^Gpu_Instance, given: ^Instance_Material_Values) -> (changed: bool) {
 	s := &r.scene
-	given.count = min(given.count, len(given.entries))
-	given.fade = min(given.fade, 1) if given.fade > 0 else 0
-	block := (cast([^]u32)given)[:INSTANCE_VALUES_HEADER + int(given.count) * INSTANCE_VALUE_WORDS]
-	if given.count == 0 && given.fade == 0 {block = nil}
+	rows: [INSTANCE_VALUES_HEADER + INSTANCE_VALUES_MAX * INSTANCE_ROW_WORDS]u32 = ---
+	block := instance_material_values_rows(s, given, rows[:])
 	held := instance_material_values_block(s, inst.material_values)
 	if slice.equal(held, block) {return false}
 	if len(held) == len(block) {

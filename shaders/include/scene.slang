@@ -444,31 +444,39 @@ uint material_values_of(uint instance_index) {
     return instance_index == INVALID ? 0u : scene_instance(instance_index).material_values;
 #endif
 }
-// `value`, the N words of row `row` from the word `first`, with those of
-// them the instance gives in their place.
-T material_given<T, let N : int>(T value, uint block, uint row, uint first) {
+// Where the words of row `row` as an instance shows it start in the pool: 0
+// for a row it shows as the table holds it. The CPU makes them whole when
+// the instance is given what it gives (render.instance_material_values_give).
+uint material_given(uint block, uint row) {
 #ifndef MIRAI_NO_INSTANCES
-    if (block == 0u) return value;
-    uint words[N] = reinterpret<uint[N]>(value);
-    uint given = min(indices[block - 1u], INSTANCE_VALUES_MAX);
-    for (uint i = 0u; i < given; i++) {
-        uint at = block - 1u + INSTANCE_VALUES_HEADER + i * INSTANCE_VALUE_WORDS;
-        if (indices[at] != row) continue;
-        uint key = indices[at + 1u];
-        uint count = min(key >> INSTANCE_VALUE_COUNT_SHIFT, 4u);
-        for (uint c = 0u; c < count; c++) {
-            uint word = (key & ((1u << INSTANCE_VALUE_COUNT_SHIFT) - 1u)) + c - first;
-            if (word < uint(N)) words[word] = indices[at + 2u + c];
+    if (block != 0u) {
+        uint rows = min(indices[block - 1u], INSTANCE_VALUES_MAX);
+        for (uint i = 0u; i < rows; i++) {
+            uint at = block - 1u + INSTANCE_VALUES_HEADER + i * INSTANCE_ROW_WORDS;
+            if (indices[at] == row) return at + 1u;
         }
     }
-    value = reinterpret<T>(words);
 #endif
-    return value;
+    return 0u;
 }
-// A row as an instance shows it: with the words the instance gives it, and
-// its fade.
+// The N words of the pool from `at`, as a T: a stage loads those it reads.
+T material_words<T, let N : int>(uint at) {
+    uint words[N];
+    [ForceUnroll] for (int k = 0; k < N; k++) {
+#ifdef MIRAI_NO_INSTANCES
+        words[k] = 0u;
+#else
+        words[k] = indices[at + uint(k)];
+#endif
+    }
+    return reinterpret<T>(words);
+}
+// A row as an instance shows it: its own of it, and its fade.
 Material material_row(uint row, uint block) {
-    Material m = material_given<Material, MATERIAL_WORDS>(material_row(row), block, row, 0u);
+    uint at = material_given(block, row);
+    Material m;
+    if (at == 0u) m = material_row(row);
+    else m = material_words<Material, MATERIAL_WORDS>(at);
     m.row = row;
 #ifndef MIRAI_NO_INSTANCES
     if (block != 0u) {
@@ -480,9 +488,11 @@ Material material_row(uint row, uint block) {
     return m;
 }
 // The parameters the program of a row reads at a point of an instance: those
-// of the row, under the ones the instance gives.
+// of the row, or the instance's own of it.
 void material_parameters(uint row, uint block, out float4 parameters[16]) {
-    parameters = material_given<float4[16], PROGRAM_PARAMETER_BYTES / 4>(materials[row].custom_params, block, row, MATERIAL_PARAMETERS_WORD);
+    uint at = material_given(block, row);
+    if (at == 0u) parameters = materials[row].custom_params;
+    else parameters = material_words<float4[16], PROGRAM_PARAMETER_BYTES / 4>(at + MATERIAL_WORDS + MATERIAL_BLOCK_WORDS);
 }
 #ifdef MIRAI_TEXTURE_FEEDBACK
 // The finest level a stage that shades surfaces samples of each texture, for
@@ -674,7 +684,10 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
     l.bits = bits;
     if (bits == 0u || (bits & MATERIAL_LAYER_UNLIT) != 0u) return l;
     float2 lod = float2(ctx.lod, ctx.lod1);
-    Material_Blocks blocks = material_given<Material_Blocks, MATERIAL_BLOCK_WORDS>(materials[m.row].blocks, ctx.material_values, m.row, MATERIAL_WORDS);
+    uint given = material_given(ctx.material_values, m.row);
+    Material_Blocks blocks;
+    if (given == 0u) blocks = materials[m.row].blocks;
+    else blocks = material_words<Material_Blocks, MATERIAL_BLOCK_WORDS>(given + MATERIAL_WORDS);
     Material_Coat coat = blocks.coat;
     Material_Fuzz fuzz = blocks.fuzz;
     Material_Diffuse_Transmission transmission = blocks.diffuse_transmission;
