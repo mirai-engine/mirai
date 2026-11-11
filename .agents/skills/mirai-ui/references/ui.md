@@ -316,7 +316,10 @@ All take the context, an id and their state by parameter.
     measures `Theme.control` and the icon column (`MENU_ICON`) exists only if some item has an icon
     (according to the previous frame). A menu without icons starts its text where its titles start.
   - Every tooltip appears after the pointer rests `TOOLTIP_DELAY` on the same element.
-  - A click outside a popup only closes it; Escape closes the last (the submenu first).
+  - A press outside the popups closes them and still reaches what it lands on (another button, the
+    scene), except on the widget whose click opened one (`Popup_Entry.opener`), which it only
+    closes; a dialog does not close by the press that closed a popup of it. Escape closes the last
+    (the submenu first).
   - A `modal` with `close` is dismissed with its cross or a click outside, and whoever opened it
     closes it. The questions (save, recover) are not dismissed.
 - **Scroll** (`scroll.odin`): the offset belongs to the caller. `list_begin` and `rows_begin` build

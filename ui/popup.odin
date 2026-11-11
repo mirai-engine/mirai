@@ -13,6 +13,7 @@ POPUP_DEPTH :: 4
 Popup_Entry :: struct {
     id:Id,
     anchor:Rect,  // what it hangs from
+    opener:Id,    // the widget a click opened it from; 0: none
     layer:i16,
     cursor:int,   // row the keyboard is on; -1: none
     keys:bool,    // Up, Down and Enter in its search move over its rows and take one (row)
@@ -37,7 +38,8 @@ Popup_State :: struct {
     depth:int,    // popups being built around the current element
     rows:[POPUP_DEPTH]int, // items each popup being built has so far
     building:[POPUP_DEPTH]int, // the entry of the stack of each popup being built
-    closed:u64,   // the frame a press closed popups: that press opens none
+    closed:u64,   // the frame a press on what opened a popup closed it: that press opens none
+    dismissed:u64,// the frame a press closed popups
 }
 
 @(private)
@@ -53,7 +55,8 @@ popup_open :: proc(ctx:^Context,id:Id,anchor:Rect) {
     p.count=min(p.depth,p.count)
     if p.count>=POPUP_DEPTH {return}
     base:=LAYER_POPUP if ctx.layer<LAYER_MODAL else ctx.layer+2
-    p.stack[p.count]={id=id,anchor=anchor,layer=base+i16(p.count)*2,cursor=-1,opened=ctx.stats.frame}
+    clicked:=ctx.input.pressed&{.Left,.Right}!={} || ctx.input.released&{.Left,.Right}!={}
+    p.stack[p.count]={id=id,anchor=anchor,opener=ctx.hot if clicked else 0,layer=base+i16(p.count)*2,cursor=-1,opened=ctx.stats.frame}
     p.count+=1
 }
 popup_is_open :: proc(ctx:^Context,id:Id) -> bool {return popup_find(ctx,id)!=nil}
@@ -65,8 +68,9 @@ popup_close :: proc(ctx:^Context,id:Id=0) {
 }
 
 // Before the frame is built: a press outside the open popups closes them and
-// does nothing else, and Escape closes the last one. A press on a menu keeps
-// its submenus open.
+// still reaches what it lands on, except on what opened one of them, which it
+// only closes; Escape closes the last one. A press on a menu keeps its
+// submenus open.
 @(private)
 popup_route :: proc(ctx:^Context) {
     p:=&ctx.popup
@@ -78,9 +82,14 @@ popup_route :: proc(ctx:^Context) {
         // A press on a menu leaves its submenus to its items: the one that opened it chooses or closes it.
         for keep>0 && keep<p.count && p.stack[keep].side {keep+=1}
         if keep<p.count {
+            on_opener:=false
+            for entry in p.stack[keep:p.count] {on_opener||=ctx.hot!=0 && entry.opener==ctx.hot || entry.anchor.w>0 && entry.anchor.h>0 && rect_contains(entry.anchor,ctx.pointer)}
             p.count=keep
-            p.closed=ctx.stats.frame
-            ctx.press_used=true;ctx.right_press_used=true
+            p.dismissed=ctx.stats.frame
+            if on_opener {
+                p.closed=ctx.stats.frame
+                ctx.press_used=true;ctx.right_press_used=true
+            }
         }
     }
     if p.count>0 && ctx.edit.id==0 && !ctx.escape_used && (.Escape in in_.keys_pressed || .Cancel in in_.pad) {
@@ -276,7 +285,7 @@ menu :: proc(ctx:^Context,id:Id,title:string,height:f32=26,look:Button={}) -> bo
         popup_open(ctx,list,anchor)
         p.stack[p.count-1].menu=true
     } else if !open && p.count==1 && p.stack[0].menu && it.hot && p.depth==0 {
-        p.stack[0]={id=list,anchor=anchor,layer=p.stack[0].layer,cursor=-1,opened=ctx.stats.frame,menu=true}
+        p.stack[0]={id=list,anchor=anchor,opener=id,layer=p.stack[0].layer,cursor=-1,opened=ctx.stats.frame,menu=true}
     }
     return popup_begin(ctx,list,{min_width=MENU_WIDTH})
 }
@@ -751,8 +760,8 @@ modal :: proc(ctx:^Context,id:Id,m:Modal={}) -> bool {
         float={to=.Surface,anchor=.Center,pivot=.Center,layer=LAYER_MODAL+1},fill=m.fill if m.fill[3]>0 else th.popup,stroke=th.border,radius=th.radius_panel,shadow=true,block=true})
     widget_add(ctx,id,{.Passive,.Scroll})
     if m.close!=nil {
-        // A press outside the dialog closes it, unless a popup of the dialog takes it.
-        if rect,found:=widget_rect(ctx,id);found && .Left in ctx.input.pressed && !ctx.press_used && ctx.popup.count==0 && !rect_contains(rect,ctx.pointer) {
+        // A press outside the dialog closes it, unless a popup of the dialog takes it or it closed one.
+        if rect,found:=widget_rect(ctx,id);found && .Left in ctx.input.pressed && !ctx.press_used && ctx.popup.count==0 && ctx.popup.dismissed!=ctx.stats.frame && !rect_contains(rect,ctx.pointer) {
             m.close^=true
             ctx.press_used=true
         }

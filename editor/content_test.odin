@@ -452,6 +452,8 @@ content_test_frame :: proc(s:^Session,input:ui.Input,content_view:bool=true) -> 
     ui.frame_begin(ctx,input)
     ui.id_push(ctx,ui.Id(100))
     if ui.box(ctx,{width=ui.fixed(CONTENT_TEST_WIDTH),height=ui.fixed(420),direction=.Column,gap=6}) {
+        // The gear of the header of the panel, which the shell builds.
+        content_settings_button(s,ui.id(ctx,"content_settings_open"),PANEL_HEADER)
         content_build(s,core.World_Ref{},388,CONTENT_TEST_WIDTH)
         content_settings_build(s,content_view)
     }

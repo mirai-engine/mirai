@@ -20,14 +20,13 @@ Content_Categories :: bit_set[Content_Category;u16]
 CONTENT_STRIP_CATEGORIES :: [?]Content_Category{.Prefab,.Mesh,.Material,.Scene,.Plugin}
 CONTENT_MENU_CATEGORIES :: [?]Content_Category{.Texture,.Animation,.Sound,.Ui}
 CONTENT_CATEGORY_LABELS :: [Content_Category]string{.Prefab="Prefab",.Mesh="Model",.Material="Material",.Scene="Scene",.Plugin="Plugins",.Texture="Texture",.Animation="Animation",.Sound="Sound",.Ui="UI"}
-// The kind whose color a filter carries; the Plugins filter has its own.
+// The kind whose glyph a filter carries; the Plugins filter, that of plugins.
 CONTENT_CATEGORY_KINDS :: [Content_Category]asset.Fourcc{.Prefab=asset.KIND_PREFAB,.Mesh=asset.KIND_MESH,.Material=asset.KIND_MATERIAL,.Scene=asset.KIND_SCENE,.Plugin=0,.Texture=asset.KIND_TEXTURE,.Animation=asset.KIND_ANIMATION,.Sound=asset.KIND_SOUND,.Ui=asset.KIND_UI}
 CONTENT_PLUGIN_COLOR :: ui.Color{214,107,255,255} // of every kind of a plugin
 
 CONTENT_ROW :: f32(28)        // a row of the list
 CONTENT_CONTROL :: f32(28)    // the row of the search and its buttons
 CONTENT_STRIP_ROW :: f32(22)  // the row of the filters of kinds and the zoom
-CONTENT_STRIP_BAR :: f32(6)   // the bar of a filter inside its row
 CONTENT_FILTERS_GAP :: f32(4) // around the button that clears them
 CONTENT_FILTERS :: f32(22)    // the button of the menu of filters
 CONTENT_FILTERS_CLEAR :: f32(22) // the room of the button that clears them
@@ -120,25 +119,29 @@ asset_file_color :: proc(s:^Session,file:^asset.Registry_File) -> ui.Color {
 asset_icon :: proc(s:^Session,kind:asset.Fourcc) -> (icon:ui.Icon,color:ui.Color) {
     color=asset_kind_color(s,kind)
     if declared:=asset_plugin_kind(s,kind);declared!=nil {return declared.icon,color}
+    return asset_engine_icon(kind),color
+}
+
+// The icon of a kind of the engine.
+asset_engine_icon :: proc "contextless" (kind:asset.Fourcc) -> ui.Icon {
     switch kind {
-    case asset.KIND_PREFAB:        icon=.Prefab
-    case asset.KIND_MESH:          icon=.Mesh
-    case asset.KIND_MATERIAL:      icon=.Sphere
-    case asset.KIND_TEXTURE:       icon=.Texture
-    case asset.KIND_SCENE:         icon=.Scene
-    case asset.KIND_ANIMATION:     icon=.Rotate
-    case asset.KIND_SOUND,asset.KIND_SOUND_SET: icon=.Sound
-    case asset.KIND_SKELETON:      icon=.Axis
-    case asset.KIND_UI:            icon=.Layers
-    case asset.KIND_FRACTURE:      icon=.Collider
-    case asset.KIND_PHYSICS_CACHE: icon=.History
-    case asset.KIND_FONT:          icon=.Edit
-    case asset.KIND_STRINGS:       icon=.Split
-    case asset.KIND_PROMPTS:       icon=.Target
-    case asset.KIND_RECORDS:       icon=.Rows
-    case:                          icon=.Cube
+    case asset.KIND_PREFAB:        return .Prefab
+    case asset.KIND_MESH:          return .Mesh
+    case asset.KIND_MATERIAL:      return .Sphere
+    case asset.KIND_TEXTURE:       return .Texture
+    case asset.KIND_SCENE:         return .Scene
+    case asset.KIND_ANIMATION:     return .Rotate
+    case asset.KIND_SOUND,asset.KIND_SOUND_SET: return .Sound
+    case asset.KIND_SKELETON:      return .Axis
+    case asset.KIND_UI:            return .Layers
+    case asset.KIND_FRACTURE:      return .Collider
+    case asset.KIND_PHYSICS_CACHE: return .History
+    case asset.KIND_FONT:          return .Edit
+    case asset.KIND_STRINGS:       return .Split
+    case asset.KIND_PROMPTS:       return .Target
+    case asset.KIND_RECORDS:       return .Rows
     }
-    return
+    return .Cube
 }
 
 // The type of an asset as a tooltip says it, of the engine or of a plugin.
@@ -1343,7 +1346,7 @@ content_create_items :: proc(s:^Session,folder:string) {
             records:[]core.Record_Info
             if s.app.info!=nil {records=s.app.info.records}
             for &r,at in records {
-                if ui.menu_item(ctx,ui.id(ctx,"create_records",at+1),fmt.tprintf("Records: %s",r.name),{icon=icon,icon_color=color,disabled=disabled}) {
+                if ui.menu_item(ctx,ui.id(ctx,"create_records",at+1),fmt.tprintf("Records: %s",readable(r.name)),{icon=icon,icon_color=color,disabled=disabled}) {
                     s.content.create_record=at
                     content_create_begin(s,kind,folder)
                 }
@@ -1757,7 +1760,7 @@ asset_card_float :: proc(s:^Session) -> ui.Float {
 // cut and the pointer on the cell shows it whole.
 @(private)
 content_name_cut :: proc(ctx:^ui.Context,name:string,cell:f32,names:u8=2) -> bool {
-    lines:=ui.text_lines(&ctx.font,name,ctx.theme.font_small,cell-2,.Words)
+    lines:=ui.text_lines(&ctx.font,content_name_breaks(ctx,name,cell-2,names),ctx.theme.font_small,cell-2,.Words)
     count:=0
     for {
         _,_,ok:=ui.text_lines_next(&lines)
@@ -1777,8 +1780,36 @@ content_name :: proc(ctx:^ui.Context,name:string,selected:bool,cell:f32,names:u8
     if color=={} {color=th.text if selected else th.text_muted}
     if ui.box(ctx,{width=ui.fixed(cell),height=ui.fixed(f32(names if names>0 else 2)*CONTENT_NAME_LINE),padding={1,0,1,0}}) {
         style:=ui.Text_Style{font=ui.FONT_MEDIUM if selected else 0,size=th.font_small,color=color,wrap=.Words,ellipsis=true,line_height=CONTENT_NAME_LINE/th.font_small}
-        ui.text(ctx,name,style,ui.GROW,ui.GROW)
+        ui.text(ctx,content_name_breaks(ctx,name,cell-2,names),style,ui.GROW,ui.GROW)
     }
+}
+
+// A name of up to lines lines with its words too wide for width broken where
+// a name breaks: after a _ or a -, and between a small letter and a capital.
+// In one line it is cut at its end instead.
+@(private)
+content_name_breaks :: proc(ctx:^ui.Context,name:string,width:f32,lines:u8) -> string {
+    font,size:=&ctx.font,ctx.theme.font_small
+    if lines==1 || ui.text_width(font,name,size)<=width {return name}
+    b:=strings.builder_make(context.temp_allocator)
+    words:=name
+    for word in strings.split_iterator(&words," ") {
+        if len(b.buf)>0 {strings.write_byte(&b,' ')}
+        rest:=word
+        for ui.text_width(font,rest,size)>width {
+            cut:=0
+            for i in 1..<len(rest) {
+                a,c:=rest[i-1],rest[i]
+                if (a=='_' || a=='-' || a>='a' && a<='z' && c>='A' && c<='Z') && ui.text_width(font,rest[:i],size)<=width {cut=i}
+            }
+            if cut==0 {break}
+            strings.write_string(&b,rest[:cut])
+            strings.write_byte(&b,'\n')
+            rest=rest[cut:]
+        }
+        strings.write_string(&b,rest)
+    }
+    return strings.to_string(b)
 }
 
 // The border of a thumbnail and its width: faint, lighter under the
@@ -2135,7 +2166,7 @@ content_more_menu :: proc(s:^Session) {
             id:=ui.id(ctx,"category",int(category)+1)
             it:=ui.interact(ctx,id,{.Focusable})
             if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(th.control),padding={8,0,8,0},gap=8,align_y=.Center,fill=ui.color_hover(th) if it.hot else {},radius=th.radius_control}) {
-                if ui.box(ctx,{width=ui.fixed(10),height=ui.fixed(10),fill=content_category_color(category)}) {}
+                ui.icon(ctx,content_category_icon(category),th.text_muted,13)
                 ui.label(ctx,labels[category],th.font,th.text,0)
                 if category in c.categories {ui.icon(ctx,.Check,th.text_muted,10)}
             }
@@ -2147,14 +2178,16 @@ content_more_menu :: proc(s:^Session) {
     }
 }
 
+// The glyph of a filter: that of the cards of its kind.
 @(private)
-content_category_color :: proc "contextless" (category:Content_Category) -> ui.Color {
+content_category_icon :: proc "contextless" (category:Content_Category) -> ui.Icon {
+    if category==.Plugin {return ui.icon_user(u8(User_Icon.Plugin))}
     kinds:=CONTENT_CATEGORY_KINDS
-    return CONTENT_PLUGIN_COLOR if category==.Plugin else asset_color(kinds[category])
+    return asset_engine_icon(kinds[category])
 }
 
-// The search, what the selection of the viewport uses, Create and the gear.
-// Returns whether Enter took the first result of the search.
+// The search and what the selection of the viewport uses. Returns whether
+// Enter took the first result of the search.
 @(private)
 content_search_row :: proc(s:^Session,filter_id:ui.Id) -> (take_first:bool) {
     c:=s.content
@@ -2175,8 +2208,6 @@ content_search_row :: proc(s:^Session,filter_id:ui.Id) -> (take_first:bool) {
             c.scroll=0
             c.revision+=1
         }
-        content_create_button(s,ui.id(ctx,"content_create_open"),CONTENT_CONTROL)
-        content_settings_button(s,ui.id(ctx,"content_settings_open"),CONTENT_CONTROL)
     }
     return
 }
@@ -2197,17 +2228,10 @@ content_strip_row :: proc(s:^Session) {
     th:=&ctx.theme
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(CONTENT_STRIP_ROW),gap=CONTENT_RAIL_GAP,align_y=.Center}) {
         labels:=CONTENT_CATEGORY_LABELS
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(CONTENT_STRIP_ROW),gap=CONTENT_GAP}) {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(CONTENT_STRIP_ROW),gap=CONTENT_FILTERS_GAP}) {
             for category in CONTENT_STRIP_CATEGORIES {
-                id:=ui.id(ctx,"content_category",int(category)+1)
-                it:=ui.interact(ctx,id,{.Focusable})
                 on:=category in c.categories
-                alpha:=u8(235) if c.categories=={} else (u8(255) if on else u8(46))
-                if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(CONTENT_STRIP_ROW),align_y=.Center}) {
-                    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(CONTENT_STRIP_BAR),fill=ui.color_alpha(content_category_color(category),alpha)}) {}
-                }
-                if it.hot {ui.tooltip(ctx,labels[category])}
-                if it.clicked {
+                if ui.button(ctx,ui.id(ctx,"content_category",int(category)+1),{icon=content_category_icon(category),icon_size=14,icon_color=th.text if on else th.text_muted,tip=labels[category],style=.Toggle,active=on,width=CONTENT_STRIP_ROW+4,height=CONTENT_STRIP_ROW}).clicked {
                     c.categories~={category}
                     c.scroll=0
                 }

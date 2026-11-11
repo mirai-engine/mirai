@@ -500,11 +500,8 @@ settings_panels_card :: proc(s:^Session) {
         value:=int(l.right_mode)
         if ui.tabs(ctx,ui.id(ctx,"right"),modes,&value,ui.fixed(column),th.control) {l.right_mode=Panel_Mode(value)}
     }
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.End}) {
-        if ui.box(ctx,{width=ui.fixed(th.label_width),height=ui.FIT}) {ui.label(ctx,"BY DOCUMENT",th.font_caption,th.text_caption,font=ui.FONT_SEMIBOLD)}
-        ui.label(ctx,"Right",th.font_caption,th.text_faint,column)
-    }
-    names:=#partial [Document_Type]string{.Scene="Scene",.Prefab="Prefab"}
+    // Each type of document follows the panel above (Global) or has its own.
+    names:=#partial [Document_Type]string{.Scene="In scenes",.Prefab="In prefabs"}
     for type in Document_Type {
         if type==.Asset {continue}
         if ui.property(ctx,names[type]) {
@@ -623,7 +620,7 @@ settings_nav :: proc(s:^Session,categories:[]Settings_Category,shown:int,needle:
                 ui.label(ctx,"Project settings",th.font,th.text,0,font=ui.FONT_SEMIBOLD)
                 ui.label(ctx,project_name(s),th.font_small,th.text_muted,0)
             }
-            if ui.button(ctx,shell_id(g,"settings_unfold"),{icon=any_open?ui.icon_user(u8(User_Icon.Collapse)):.Plus,icon_size=13,icon_color=th.text_muted,style=.Ghost,width=25,height=ctx.theme.control,disabled=!foldable || needle!=""}).clicked {
+            if ui.button(ctx,shell_id(g,"settings_unfold"),{icon=ui.icon_user(u8(any_open?User_Icon.Collapse:User_Icon.Expand)),icon_size=13,icon_color=th.text_muted,style=.Ghost,width=25,height=ctx.theme.control,disabled=!foldable || needle!=""}).clicked {
                 for c in categories {
                     if slot:=settings_fold_slot(c.storage);slot>=0 && slot<len(d.unfolded) {d.unfolded[slot]=!any_open}
                 }
@@ -721,8 +718,7 @@ settings_cards :: proc(s:^Session,category:Settings_Category,needle:string,heigh
         }
     }
     d.jump=-1
-    // The bands of the sections reach both edges; their rows are set in.
-    if ui.scroll_area(ctx,area,&d.scroll,{height=ui.fixed(height),padding={0,14,0,18},gap=10,fade=th.panel}) {
+    if ui.scroll_area(ctx,area,&d.scroll,{height=ui.fixed(height),padding={8,14,8,18},gap=18,fade=th.panel}) {
         // The fields read at the size of the rest of the dialog, with the room
         // it has for the column of labels.
         theme:=ctx.theme

@@ -45,10 +45,11 @@ lands on Close. In a narrow window the bar drops its dividers and some labels (`
   the glyph and color of its [figure](editor.md#figures-of-whoever-works); a click opens its menu.
   While watching, the bar says "Watching", hides the edit tools and shows Stop.
 
-**Rail and left panel:** the rail (44 points, under the bar, colored like it) has the tabs Editor,
-Content Browser (the startup one), Hierarchy, World ([world](#world)), AI and Source control as
-icons. A click on the one shown folds the panel, on another shows that one. The panel is fixed at
-the side of the rail, the height of the window, 320 points wide and with its right corners rounded;
+**Rail and left panel:** the rail (44 points, under the bar, colored like it) has the tabs Create
+([create](#create)), Content Browser (the startup one), Hierarchy, World ([world](#world)), AI
+and Source control as icons. A click on the one shown folds the panel, on another shows that one.
+The panel is fixed at the side of the rail, the height of the window, 320 points wide and with its
+right corners rounded;
 the scene runs 16 points under it, so those corners show the scene (with the panel folded it starts
 at the rail). It folds like Tab in Edit; with the chat folded, the AI action of View shows it again,
 and in Play it stays minimized; the chat opens only in the pause, where the rail holds only it
@@ -86,9 +87,10 @@ Other panels:
 - On startup Content Browser is shown. Every tab has the height of the window under the bar: the
   panel does not change size when the tab changes.
 - Cards: 32-point icons in 40 squares, four columns; with names, 10-point labels and rows of 62.
-- Only the tabs with controls of their own have a slim row at the top of the panel: the
-  presentation gear of Editor and the chat buttons and settings of AI. Content Browser draws its
-  own in its search row. All are `ui` menus: a chosen item closes them.
+- Every tab heads the panel with a slim row: its name (`LIBRARY_TAB_NAMES`, the tooltips of the
+  rail say the same) and, at its right, its own controls: the presentation gear of Create, the
+  **+** and the gear of Content Browser and the chat buttons and settings of AI. All are `ui`
+  menus: a chosen item closes them.
 - **Hierarchy** (list icon, also Hierarchy in View) shows the scene's outliner; with an asset
   document in front, the hierarchy its plugin builds in `hierarchy_room`
   (`Asset_Document_Provider.hierarchy`), or that the document has none.
@@ -465,7 +467,8 @@ The Content Browser tab shows the registry of the assets of the project and its 
 **Search and filters:**
 
 - **Search** always in view, with the magnifier inside and its x, in one row with the toggle of the
-  selection of the viewport, the **+** and the gear. Choosing the tab gives it the keyboard
+  selection of the viewport; the **+** and the gear are in the row of the tab's name. Choosing the
+  tab gives it the keyboard
   (`Content.focus_search`, from `library_select`), as AI gives it to the message, except when Find
   in Content Browser opens it. Escape clears it. What is typed while a card has the keyboard goes to
   the search and does not trigger shortcuts (`content_typing`, which `content_build` and
@@ -478,8 +481,9 @@ The Content Browser tab shows the registry of the assets of the project and its 
 - **Selection of the viewport**: its toggle shows only what the selected entities hold and what
   that uses (`content_selection_read`, `host.entity_asset_ids`), read again when the selection, the
   registry or the document change.
-- **Strip** under the search: a bar per family (Prefab, Model, Material, Scene, Plugins), each named
-  only in its tooltip; a funnel opens the rest (Texture, Animation, Sound, UI) and lights up while
+- **Strip** under the search: a toggle per family (Prefab, Model, Material, Scene, Plugins) with the
+  glyph of its cards and no color, each named only in its tooltip; a funnel opens the rest
+  (Texture, Animation, Sound, UI), with their glyphs too, and lights up while
   one of them is on, and a cross by it, there only while a filter is on, clears them and the
   viewport selection. They combine; none active shows everything. Model gathers meshes, fractures
   and physics caches; Sound, sounds and sound sets; Plugins, every kind of a plugin ([types of a

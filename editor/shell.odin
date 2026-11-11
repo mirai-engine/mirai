@@ -27,7 +27,7 @@ import "mirai:ui"
 @(private) LEFT_UNDER :: f32(16) // of the left panel, what the scene runs under: its rounded corners show the scene
 @(private) LEFT_RADIUS :: f32(12)
 @(private) DETAILS_MARGIN :: f32(8)
-@(private) PANEL_HEADER :: f32(24) // the row of a tab of the left panel that has controls
+@(private) PANEL_HEADER :: f32(24) // the row of the name of a tab of the left panel and its controls
 @(private) WINDOW_CONTROL_WIDTH :: f32(28)
 @(private) PANEL_PADDING :: f32(8)
 @(private) SPLITTER_WIDTH :: f32(6)
@@ -40,6 +40,7 @@ BOTTOM_HEIGHT :: f32(220)
 BOTTOM_MIN :: f32(120)
 
 Library_Tab :: enum u8 {Editor,Content,Ai,Hierarchy,Git,World}
+LIBRARY_TAB_NAMES :: [Library_Tab]string{.Editor="Create",.Content="Content Browser",.Ai="AI",.Hierarchy="Hierarchy",.Git="Source control",.World="World"}
 Library_Tabs :: bit_set[Library_Tab]
 
 // The tabs of the left panel each type of document has: what can be shown
@@ -717,14 +718,22 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
         style:=ui.Panel_Float{width=ui.fixed(left_width),height=ui.fixed(height),padding=ui.padding_all(PANEL_PADDING),gap=8,anchor=.Top_Left,pivot=.Top_Left,offset={RAIL_WIDTH,bars},docked=true,corners={0,LEFT_RADIUS,LEFT_RADIUS,0}}
         if expanded {style.padding,style.gap,style.corners={},0,{}}
         if ui.panel(ctx,id,style) {
-            // Only the tabs with controls of their own take a row for them.
-            header:=shown_tab==.Ai && !expanded || shown_tab==.Editor
+            // Every tab heads the panel with its name, and its own controls at the right.
+            header:=!expanded
             if header {
-                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(PANEL_HEADER),gap=shown_tab==.Ai?2:3,align_x=.End,align_y=.Center}) {
-                    if shown_tab==.Ai {
+                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(PANEL_HEADER),padding={4,0,0,0},gap=2,align_y=.Center}) {
+                    names:=LIBRARY_TAB_NAMES
+                    ui.label(ctx,names[shown_tab],th.font,th.text,font=ui.FONT_SEMIBOLD)
+                    ui.spacer(ctx)
+                    #partial switch shown_tab {
+                    case .Ai:
                         ai_chat_bar_buttons(s)
                         ai_chat_settings_button(s)
-                    } else {content_settings_button(s,shell_id(g,"library_settings"),22)}
+                    case .Editor: content_settings_button(s,shell_id(g,"library_settings"),PANEL_HEADER)
+                    case .Content:
+                        content_create_button(s,shell_id(g,"content_create_open"),PANEL_HEADER)
+                        content_settings_button(s,shell_id(g,"content_settings_open"),PANEL_HEADER)
+                    }
                 }
             }
             room:=height-2*PANEL_PADDING
@@ -834,8 +843,8 @@ rail_build :: proc(s:^Session,shown_tab:Library_Tab,bars:f32) {
     l:=&g.layout
     play:=play_shown(s)
     tabs:=library_tabs(s)
-    icons:=[Library_Tab]ui.Icon{.Editor=ui.icon_user(u8(User_Icon.Puzzle)),.Content=ui.icon_user(u8(User_Icon.Folder)),.Hierarchy=ui.icon_user(u8(User_Icon.List)),.World=.Layers,.Ai=.Sparkle,.Git=ui.icon_user(u8(User_Icon.Branch))}
-    tips:=[Library_Tab]string{.Editor="Editor",.Content="Content Browser",.Hierarchy="Hierarchy",.World="World",.Ai="AI",.Git="Source control"}
+    icons:=[Library_Tab]ui.Icon{.Editor=.Cube,.Content=ui.icon_user(u8(User_Icon.Folder)),.Hierarchy=ui.icon_user(u8(User_Icon.List)),.World=.Layers,.Ai=.Sparkle,.Git=ui.icon_user(u8(User_Icon.Branch))}
+    tips:=LIBRARY_TAB_NAMES
     if ui.box(ctx,{id=shell_id(g,"rail"),width=ui.fixed(RAIL_WIDTH),height=ui.fixed(max(ctx.size.y-bars,1)),padding={0,8,0,8},gap=4,direction=.Column,align_x=.Center,float={to=.Surface,offset={0,bars},layer=ui.LAYER_BAR},fill=th.bar_top,block=true}) {
         for tab in ([]Library_Tab{.Editor,.Content,.Hierarchy,.World,.Ai,.Git}) {
             if tab not_in tabs {continue}
@@ -1626,20 +1635,32 @@ modal_build :: proc(s:^Session) {
     case .Shortcuts:
         closed:=false
         defer if closed {g.modal=.None}
-        if ui.modal(ctx,shell_id(g,"shortcuts"),{width=440,scroll=&g.modal_scroll,close=&closed}) {
+        if ui.modal(ctx,shell_id(g,"shortcuts"),{width=SHORTCUTS_WIDTH,scroll=&g.modal_scroll,close=&closed}) {
             ui.label(ctx,"Keyboard shortcuts",th.font_title,th.text,font=ui.FONT_SEMIBOLD)
             labels,shortcuts:=ACTION_LABELS,ACTION_SHORTCUTS
-            row :: proc(ctx:^ui.Context,name,keys:string) {
-                th:=&ctx.theme
-                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),align_y=.Center}) {
-                    ui.label(ctx,name,th.font_small,th.text)
-                    ui.spacer(ctx)
-                    ui.label(ctx,keys,th.font_small,th.text_muted)
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=28}) {
+                for column in 0..<2 {
+                    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=2}) {
+                        for group,k in SHORTCUT_GROUPS {
+                            if k%2!=column {continue}
+                            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),padding={0,8,0,0},align_y=.End}) {
+                                ui.label(ctx,group.name,th.font_caption,th.text_faint,font=ui.FONT_SEMIBOLD)
+                            }
+                            for action in group.first..=group.last {
+                                if !shortcuts[action].set {continue}
+                                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
+                                    ui.label(ctx,labels[action],th.font_small,th.text)
+                                    ui.spacer(ctx)
+                                    for key in strings.split(shortcut_text(shortcuts[action]),"+",context.temp_allocator) {
+                                        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(20),padding={6,0,6,0},align_y=.Center,fill=th.field,stroke=th.border,radius=4}) {
+                                            ui.label(ctx,key,th.font_caption,th.text_muted)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-            }
-            for action in Action {
-                if !shortcuts[action].set {continue}
-                row(ctx,labels[action],shortcut_text(shortcuts[action]))
             }
         }
     case .Settings: settings_modal(s)

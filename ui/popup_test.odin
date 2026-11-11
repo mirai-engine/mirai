@@ -151,7 +151,7 @@ pointing_at_another_title_switches_menus_and_a_checked_item_shows_its_check :: p
 }
 
 @(test)
-a_press_outside_a_popup_closes_it_and_does_nothing_else :: proc(t:^testing.T) {
+a_press_outside_a_popup_closes_it_and_reaches_what_it_lands_on :: proc(t:^testing.T) {
     ctx:Context
     testing.expect(t,context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
@@ -168,12 +168,12 @@ a_press_outside_a_popup_closes_it_and_does_nothing_else :: proc(t:^testing.T) {
     test_menus_frame(&ctx,&input,&s)
     test_release(&input)
     test_menus_frame(&ctx,&input,&s)
-    testing.expect(t,ctx.popup.count==0 && s.under==0,"The press that closes a popup reaches nothing")
-    test_press(&input)
-    test_menus_frame(&ctx,&input,&s)
-    test_release(&input)
-    test_menus_frame(&ctx,&input,&s)
-    testing.expect_value(t,s.under,1)
+    testing.expect(t,ctx.popup.count==0 && s.under==1,"The press that closes a popup also presses what it is on")
+    // A press on what opened the popup only closes it.
+    test_click(&ctx,&input,test_menus_build,&s,id(&ctx,"file"))
+    testing.expect_value(t,ctx.popup.count,1)
+    test_click(&ctx,&input,test_menus_build,&s,id(&ctx,"file"))
+    testing.expect_value(t,ctx.popup.count,0)
     // Escape closes it too, before anything else hears the key.
     test_click(&ctx,&input,test_menus_build,&s,id(&ctx,"file"))
     test_key(&input,.Escape)
@@ -657,8 +657,7 @@ a_disabled_button_shows_no_fill_of_its_own_and_a_faded_glyph :: proc(t:^testing.
         case .Play: testing.expect(t,p.fill==Color{} && p.stroke==Color{} && p.icon_color==color_faded(th.text),"A ghost shows its glyph alone, without the border of the pointer")
         case .Stop: testing.expect(t,p.fill==Color{} && p.icon_color==color_faded(th.accent),"A segment keeps the color of its glyph, faded")
         }
-        if p.text=="Field" {testing.expect(t,p.fill==color_faded(th.field) && p.text_color==color_faded(th.text))}
-        if p.text=="Accent" {testing.expect(t,p.fill==color_faded(th.accent) && p.text_color==color_faded(th.on_accent))}
+        if p.text=="Field" || p.text=="Accent" {testing.expect(t,p.fill==color_faded(th.field) && p.text_color==color_faded(th.text),"A field and an accent button that cannot run look alike")}
     }
 }
 

@@ -598,6 +598,7 @@ api_editor_select :: proc(s:^Session,call:^api.Call) {
     if !known {return}
     tools_release(s)
     if len(picked)==0 && !params.add {history.selection_clear(s.selection)} else {history.selection_set(s.selection,picked,params.add)}
+    if active:=history.selection_active(s.selection);active!=core.NONE {outliner_reveal(s.outliner,w,active)}
     api.call_result(call,Api_Select_Result)^={len(s.selection.entities),api_entity_id(w,history.selection_active(s.selection))}
 }
 

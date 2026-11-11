@@ -200,7 +200,7 @@ cinematics_panel :: proc(s:^editor.Session,c:^Cinematic_Editor) {
     if !g.begun || editor.playing(s) {return}
     ctx:=g.ctx;th:=&ctx.theme
     active:=editor.tool_on(s,TOOL)
-    if editor.tool_button(g,ui.id_derive(ctx,SCOPE,"tool"),.Play,"Cinematics","",active) {
+    if editor.tool_button(g,ui.id_derive(ctx,SCOPE,"tool"),ui.icon_user(u8(editor.User_Icon.Camera)),"Cinematics","",active) {
         editor.tool_set(s,TOOL,!active)
         if !active {c.previewing,c.shown=true,-1}
     }

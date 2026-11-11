@@ -36,6 +36,11 @@ Action :: enum u8 {
 
 Shortcut :: struct {key:core.Key,modifiers:ui.Modifiers,set:bool}
 
+// The sections of Keyboard shortcuts, each a run of the actions in their order;
+// they fill the two columns of the dialog by turns.
+Shortcut_Group :: struct {name:string,first,last:Action}
+SHORTCUT_GROUPS :: [?]Shortcut_Group{{"File",.New,.Quit},{"Edit",.Undo,.Group},{"Tools",.Tool_Move,.Snap},{"Play",.Play,.Release_Input},{"View",.Focus,.Library_Panel},{"General",.Shortcuts,.Camera_Discard}}
+SHORTCUTS_WIDTH :: f32(640)
 
 ACTION_LABELS :: [Action]string{
     .New="New scene",.Open="Open...",.Save="Save",.Save_All="Save all",.Save_As="Save as...",.Build="Build",.Quit="Quit",
@@ -79,7 +84,8 @@ action_icon :: proc(action:Action) -> ui.Icon {
     case .Reset_Camera,.Scene_Thumbnail,.Output_Frame: return user(.Camera)
     case .Indicators:      return .Eye
     case .Studio_Light:    return .Sun
-    case .Graphics,.Inspector_Panel: return user(.Graphics)
+    case .Graphics:        return user(.Graphics)
+    case .Inspector_Panel: return .Rows
     case .Hierarchy_Panel: return user(.List)
     case .Library_Panel:   return .Layers
     case .Console_Panel:   return user(.Terminal)
@@ -483,7 +489,8 @@ editor_begin :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^history.Sele
     app.scene={x0,top,x1-x0,max(app.drawable.y-top,1)}
     app.scene_shift={f32(view_x0-x0)/f32(x1-x0),0}
     viewport_update(v,{left,bars},{max(ctx.size.x-left-right,1),max(ctx.size.y-bars,1)},ctx.size,frame,input.modifiers)
-    v.hovered=frame.mouse_inside && !ctx.over && ctx.active==0 && popups==0 && !modal && s.mode!=.Play && !camera_previewing(s) && !player_processes_view(s) && g.drag.kind==.None && !scene_covered(s)
+    // After frame_begin: a press that closed a popup out here reaches the scene.
+    v.hovered=frame.mouse_inside && !ctx.over && ctx.active==0 && ctx.popup.count==0 && !modal && s.mode!=.Play && !camera_previewing(s) && !player_processes_view(s) && g.drag.kind==.None && !scene_covered(s)
     drag_update(g,frame)
     events_input(s,frame)
     editor_shortcuts(s,g,v,frame.keys_pressed,input.modifiers,popups,modal)

@@ -187,7 +187,9 @@ inspector_section_toggle :: proc(ins:^Inspector,key:u64) {
 
 CARD_HEADER :: f32(26)    // height of the line with the title of a section
 SECTION_INDENT :: f32(10) // of the rows of a section from the edge of its title
-BAND_INSET :: f32(16)     // from the edge of the panel to the title of a band and to the end of its rows
+BAND_INSET :: f32(16)     // at the right of the rows of a section_card: where the arrows that revert a field go
+CARD_INSET :: f32(12)     // from the edge of a dialog or a popup to a section_card
+SLIDER_VALUES_MAX :: 256  // an integer field with more values has no slider
 ENUM_SEGMENTS :: 4        // the most names of an enum shown as segments
 INSPECTOR_HEAD :: f32(40) // the line of the entity, over the scroll
 INSPECTOR_VARIANT :: f32(18) // the line under it that names the base of a variant
@@ -281,13 +283,12 @@ scroll_shadow :: proc(s:^Session,shown:bool) {
 }
 
 // The band of a section whose open state its caller keeps.
-section_band :: proc(s:^Session,id:ui.Id,title:string,open:bool,icon:ui.Icon=.None,on:^bool=nil,buttons:[]Section_Button=nil,pressed:^int=nil,banded:=false) -> ui.Interaction {
+section_band :: proc(s:^Session,id:ui.Id,title:string,open:bool,icon:ui.Icon=.None,on:^bool=nil,buttons:[]Section_Button=nil,pressed:^int=nil) -> ui.Interaction {
     ctx:=s.gui.ctx
     th:=&ctx.theme
     it:=ui.interact(ctx,id,{.Focusable})
     if pressed!=nil {pressed^=-1}
-    // In a block the title sits on it; a section on the panel heads it with a band.
-    if banded {band_begin(ctx,id,it.hot)} else {ui.box_begin(ctx,{id=id,width=ui.GROW,height=ui.fixed(CARD_HEADER),padding={9,0,7,0},gap=7,align_y=.Center,fill=ui.color_alpha({255,255,255,255},it.hot?10:0),radius=4})}
+    ui.box_begin(ctx,{id=id,width=ui.GROW,height=ui.fixed(CARD_HEADER),padding={9,0,7,0},gap=7,align_y=.Center,fill=ui.color_alpha({255,255,255,255},it.hot?10:0),radius=4})
     {
         if on!=nil {ui.checkbox(ctx,ui.id_derive(ctx,id,"on"),on)}
         if icon!=.None {ui.icon(ctx,icon,th.text_muted,14)}
@@ -297,23 +298,9 @@ section_band :: proc(s:^Session,id:ui.Id,title:string,open:bool,icon:ui.Icon=.No
         }
         ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,th.text_muted,13)
     }
-    if banded {band_end(ctx)} else {ui.box_end(ctx,{})}
+    ui.box_end(ctx,{})
     if pressed!=nil && pressed^>=0 {it.clicked=false}
     return it
-}
-
-// A band that heads a section on a panel, from one edge to the other between
-// two rules; id takes the pointer. What it holds goes before band_end.
-band_begin :: proc(ctx:^ui.Context,id:ui.Id,hot:=false) {
-    th:=&ctx.theme
-    ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(CARD_HEADER),direction=.Column})
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.border}) {}
-    ui.box_begin(ctx,{id=id,width=ui.GROW,height=ui.GROW,padding={BAND_INSET,0,BAND_INSET,0},gap=7,align_y=.Center,fill=th.field_hover if hot else th.band})
-}
-band_end :: proc(ctx:^ui.Context) {
-    ui.box_end(ctx,{})
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ctx.theme.border}) {}
-    ui.box_end(ctx,{})
 }
 
 @(private)
@@ -640,6 +627,7 @@ hierarchy_section :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32) {
             clicked,unlink:=hierarchy_square(s,w,parent,0,editable)
             if clicked {selected=parent}
             if unlink {release=e}
+            ui.label(ctx,entity_name(w,parent),th.font_small,th.text_muted,0)
         } else if ui.button(ctx,ui.id(ctx,"parent_pick"),plus).clicked {
             s.gui.placement={}
             s.viewport.pick={active=true,kind=.Parent,owner=e}
@@ -1079,25 +1067,40 @@ names_matrix :: proc(ctx:^ui.Context,info:^core.World_Info,of:typeid,id:ui.Id,ti
     return
 }
 
-// A section of a setting, as one of a component: its title in a band that
-// folds it, when what is above it does not say it, and its rows under it. The
-// right padding holds the arrows that revert a field. False: it is closed.
+// A section of a setting: its title, which folds it, when what is above it
+// does not say it, over a card that holds its rows. The right padding of the
+// card holds the arrows that revert a field. False: it is closed.
 @(private,deferred_in=section_card_end)
 section_card :: proc(s:^Session,id:ui.Id,title:string) -> (open:bool) {
     ctx:=s.gui.ctx
-    ui.box_begin(ctx,{id=id,width=ui.GROW,height=ui.FIT,direction=.Column,track=true})
+    th:=&ctx.theme
+    ui.box_begin(ctx,{id=id,width=ui.GROW,height=ui.FIT,direction=.Column,padding={CARD_INSET,0,CARD_INSET,0},gap=2,track=true})
     open=true
     if title!="" {
         key:=base.hash_combine(u64(id),0x63617264)
         open=inspector_section_open(s.inspector,key)
-        if section_band(s,ui.id_derive(ctx,id,"fold"),title,open,banded=true).clicked {
+        if section_heading(s,ui.id_derive(ctx,id,"fold"),title,open).clicked {
             inspector_section_toggle(s.inspector,key)
             open=!open
         }
     }
-    // Its rows, set in under the band; empty and without room while it is folded.
-    ui.box_begin(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,padding={BAND_INSET+SECTION_INDENT,7,BAND_INSET,8} if open else {},gap=3})
+    // Empty and without room while it is folded.
+    ui.box_begin(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,padding={SECTION_INDENT,6,BAND_INSET,6} if open else {},gap=3,fill=th.band if open else {},radius=th.radius_popup})
     return
+}
+
+// The title of a section_card: the name, and the arrow that folds it at the end.
+@(private)
+section_heading :: proc(s:^Session,id:ui.Id,title:string,open:bool) -> ui.Interaction {
+    ctx:=s.gui.ctx
+    th:=&ctx.theme
+    it:=ui.interact(ctx,id,{.Focusable})
+    if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(CARD_HEADER),padding={SECTION_INDENT,0,SECTION_INDENT,0},gap=6,align_y=.Center}) {
+        ui.label(ctx,title,th.font,th.text if it.hot else th.text_caption,font=ui.FONT_SEMIBOLD)
+        ui.spacer(ctx)
+        ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,th.text_muted if it.hot else th.text_faint,12)
+    }
+    return it
 }
 @(private)
 section_card_end :: proc(s:^Session,id:ui.Id,title:string) {ui.box_end(s.gui.ctx,{});ui.box_end(s.gui.ctx,{})}
@@ -1687,7 +1690,9 @@ number_cell :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,id
     if axis_label!="" && strip[3]==0 {desc.label=axis_label}
     value:=number_read(&c.value[offset],info)*scale
     r:ui.Number_Result
-    if axis_label=="" {r=ui.slider_field(c.s.gui.ctx,id,&value,desc)} else {r=ui.number_field(c.s.gui.ctx,id,&value,desc)}
+    // An integer with more values than a track has points is typed or scrubbed, not slid.
+    slid:=axis_label=="" && !(desc.integer && desc.has_min && desc.has_max && desc.max-desc.min>SLIDER_VALUES_MAX)
+    if slid {r=ui.slider_field(c.s.gui.ctx,id,&value,desc)} else {r=ui.number_field(c.s.gui.ctx,id,&value,desc)}
     // The values a panel holds are no step of the document.
     stepped:=inspect_stepped(c)
     if stepped {gesture_follow(c.s,key,r,readable(c.name))}

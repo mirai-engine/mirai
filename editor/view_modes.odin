@@ -266,7 +266,7 @@ view_mode_build :: proc(s: ^Session) {
 				view_mode_group_build(s, entries, entry.group, current)
 			}
 		}
-		ui.menu_header(ctx, "Light")
+		ui.menu_header(ctx, "Preview")
 		if ui.menu_item(ctx, ui.id(ctx, "studio_light"), "Studio light", {icon = .Sun, checked = s.viewport.studio_light}) {s.viewport.studio_light = !s.viewport.studio_light}
 		viewport_exposure_build(s)
 	}

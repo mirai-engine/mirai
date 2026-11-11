@@ -624,14 +624,30 @@ entity_offsets :: proc(type:^runtime.Type_Info,allocator:=context.temp_allocator
 readable :: proc(name:string,allocator:=context.temp_allocator) -> string {
     text,error:=make([]u8,len(name),allocator)
     if error!=nil {return name}
-    for i in 0..<len(name) {
-        c:=name[i]
-        switch {
-        case c=='_':                 c=' '
-        case i==0 && c>='a' && c<='z': c-=32
-        case i>0 && c>='A' && c<='Z':  c+=32
+    start:=0
+    for start<len(name) {
+        end:=start
+        for end<len(name) && name[end]!='_' {end+=1}
+        word:=name[start:end]
+        // A word written in capitals, or one of the abbreviations, keeps them: ACES 2, UI, FPS.
+        capitals:=len(word)>1
+        for c in transmute([]u8)word {capitals&&=!(c>='a' && c<='z')}
+        for known in READABLE_ABBREVIATIONS {capitals||=strings.equal_fold(word,known)}
+        for i in start..<end {
+            c:=name[i]
+            switch {
+            case capitals && c>='a' && c<='z': c-=32
+            case capitals:
+            case i==0 && c>='a' && c<='z': c-=32
+            case i>0 && c>='A' && c<='Z':  c+=32
+            }
+            text[i]=c
         }
-        text[i]=c
+        if end<len(name) {text[end]=' '}
+        start=end+1
     }
     return string(text)
 }
+
+// Words that read as their capitals wherever a name of the code is shown.
+READABLE_ABBREVIATIONS :: [?]string{"ai","api","cpu","fps","fsr","gi","gpu","hdr","hud","id","ik","lod","mcp","rgb","rgba","sdr","taa","ui","uv"}

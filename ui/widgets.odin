@@ -94,8 +94,8 @@ Button :: struct {
 
 // What the theme draws a button of a style with in a state. Disabled, a
 // button that has no fill of its own shows neither fill nor border, not even
-// under the pointer, and every other one keeps its fill faded: only its glyph
-// says it is there.
+// under the pointer, a Field or an Accent one the faded box of a field, and
+// every other one keeps its fill faded: only its glyph says it is there.
 button_look :: proc "contextless" (th:^Theme,style:Button_Style,hot,active,disabled:bool) -> (look:Node_Style) {
     fill,stroke:Color;text:=th.text
     switch style {
@@ -113,7 +113,7 @@ button_look :: proc "contextless" (th:^Theme,style:Button_Style,hot,active,disab
     if disabled {
         switch style {
         case .Ghost,.Tab,.Toggle: fill,stroke={},{}
-        case .Field,.Accent: fill=color_faded(th.field if style==.Field else th.accent);if style==.Field {stroke=color_faded(th.border)}
+        case .Field,.Accent: fill,stroke,text=color_faded(th.field),color_faded(th.border),th.text
         case .Danger: fill=color_faded(th.danger)
         case .Well: stroke=th.well_stroke
         }

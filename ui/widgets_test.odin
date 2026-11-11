@@ -152,10 +152,10 @@ disabled_buttons_show_their_state_and_do_nothing :: proc(t:^testing.T) {
     test_press(&input)
     test_frame(&ctx,&input,test_buttons_build,&s)
     testing.expect_value(t,s.clicks[1],0)
-    // An accent button keeps its fill and its text at 40 % of their opacity.
+    // An accent button that cannot run loses the accent: the box of a field and its text, faded.
     paint:=test_paint(&ctx,"Beta")
-    testing.expect_value(t,paint.fill,color_faded(THEME_EDITOR.accent))
-    testing.expect_value(t,paint.text_color,color_faded(THEME_EDITOR.on_accent))
+    testing.expect_value(t,paint.fill,color_faded(THEME_EDITOR.field))
+    testing.expect_value(t,paint.text_color,color_faded(THEME_EDITOR.text))
     test_release(&input)
     s.disabled=false
     test_frame(&ctx,&input,test_buttons_build,&s)
