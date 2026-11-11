@@ -125,16 +125,18 @@ the left and **Effect** with the rows on the right, in the editor's document col
 
 ## Debugging
 
-Code: `watch.odin`, over `runtime/inspect.odin`: the rows of one emitter (its range, Attributes
-and counters) and the counters of every emitter, read back from a `Simulate` pass; Attributes go
-by the names of the fields the catalog reflects (`Program.attribute_fields`).
+Code: `watch.odin` and `inspect.odin`, over the ranges of the pool the runtime gives
+(`vfx.emitter_ranges`, which alone knows its layout): the rows of one emitter (its range,
+Attributes and counters) and the counters of every emitter, read back from a `Simulate` pass;
+Attributes go by the names of the fields the catalog reflects (`Program.attribute_fields`).
 
 - One world is watched at a time (`Particle_Watch`): the one `particle.instance.inspect` or
   `particle.pool.inspect` names, the document or the caller's Play. Each frame its `Simulate` pass
   asks for what is watched: the rows of one emitter (`WATCH_MAX`) and the counters of every
-  emitter. A world that goes (the end of a Play) stops it.
+  emitter, until `WATCH_FRAMES` frames go by without a call or the world goes (the end of a Play).
 - Rows that come back are scanned: values that are not finite are the `vfx.nan` problem of the
-  entity, which names the fields.
+  entity, which names the fields. A particle lives as the passes tell (a lifetime that is not a
+  number lives on), for the count and the scan alike.
 
 ## Thumbnails
 
@@ -157,7 +159,8 @@ without `file`) it is the default effect. They are stored in `.mirai/thumbs` lik
   `the_preview_of_a_document_shows_what_its_rows_hold_and_frames_where_its_particles_reach`
   (unwritten values like those of an instance, framing). The rows that write through `write`:
   `curves_show_as_keys_and_held_values_take_what_a_popup_chose` (`editor`). Debugging:
-  `instance_inspect_names_the_attributes_of_its_program`.
+  `instance_inspect_names_the_attributes_of_its_program` and
+  `rows_name_their_attributes_and_report_the_fields_that_are_not_finite`.
 - In an open editor with `vfx` enabled (the demo): `editor.document` with `Open` and the path of a
   `.particle`, `capture` with the UI and the content browser filtered by Particle,
   `particle.inspect` and `particle.instance.inspect`. The preview (document and thumbnails) is

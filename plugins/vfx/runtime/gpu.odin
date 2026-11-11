@@ -934,7 +934,8 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
     erender.pass_surface_read(pass,7,.Linear_Depth)
     erender.pass_surface_read(pass,8,.Normal)
     data_frame(sync,pass,u32(pool.frame&1))
-    // An interval of the profiler per pass, each to the next mark.
+    // An interval of the profiler per kind of pass, each to the next mark: those of the first
+    // step, then the steps after it together.
     erender.pass_timestamp(pass,"particle begin")
     if pool.reset_max>0 {
         params.mode=0
@@ -945,7 +946,7 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
     events:=pool_buffer(pool,.Events)
     world:=world_buffer(sync)
     for step in 0..<pool.steps {
-        if step>0 {erender.pass_timestamp(pass,"particle begin")}
+        if step==1 {erender.pass_timestamp(pass,"particle steps")}
         params.parity,params.step,params.last=u32(pool.step&1),step,u32(step+1==pool.steps)
         // What the particles of the step splat starts at zero.
         if g:=&sync.grids;len(g.entries)>0 {erender.pass_buffer_fill(pass,world,u64(grids_base(sync)+g.splats),u64(g.bytes-g.splats))}
@@ -953,7 +954,7 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
         erender.pass_pipeline(pass,p.begin)
         erender.pass_params(pass,&params,size_of(params))
         erender.pass_dispatch(pass,groups(u32(pool.slot_end),64))
-        erender.pass_timestamp(pass,"particle emit")
+        if step==0 {erender.pass_timestamp(pass,"particle emit")}
         // Each pass once for the emitters without a program and once for each program.
         all:[PROGRAMS_IN_USE+1]Program_Group
         for group in program_groups(p,&all) {
@@ -984,10 +985,10 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
         }
         params.program,params.emitter_first=0,0
         if pool.stage_count>0 {
-            erender.pass_timestamp(pass,"particle stage")
+            if step==0 {erender.pass_timestamp(pass,"particle stage")}
             stages_step(sync,pass,&params)
         }
-        erender.pass_timestamp(pass,"particle simulate")
+        if step==0 {erender.pass_timestamp(pass,"particle simulate")}
         for group in program_groups(p,&all) {
             params.program,params.first,params.count=group.program,group.first,group.end
             erender.pass_pipeline(pass,group.simulate)
