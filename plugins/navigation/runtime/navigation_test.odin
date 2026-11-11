@@ -1,10 +1,13 @@
 package navigation
 
+import "base:intrinsics"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:slice"
 import "core:testing"
+import "core:thread"
+import "core:time"
 import "mirai:asset"
 import "mirai:core"
 import input "mirai:engine/input"
@@ -71,11 +74,11 @@ Nav_Test :: struct {
 }
 
 @(private)
-nav_test_init :: proc(t:^testing.T,f:^Nav_Test) -> bool {
+nav_test_init :: proc(t:^testing.T,f:^Nav_Test,threads:=0) -> bool {
     if !core.test_world_init(t,&f.w,test_types) {return false}
     f.settings={bodies=64,shapes=64,contacts=256,joints=4,characters=8}
     f.nav_settings.tile_cells=48
-    jobs.system_init(&f.app.jobs,{threads=0})
+    jobs.system_init(&f.app.jobs,{threads=threads})
     f.ground.open=proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
         f:=cast(^Nav_Test)w.data
         return {unloaded=f.unloaded[:]},true
@@ -226,6 +229,33 @@ a_floor_with_a_box_gets_a_mesh_that_goes_around_the_box :: proc(t:^testing.T) {
     length:=corners_length(corners.items[:corners.count])
     testing.expect(t,corners.count>=3 && length>11)
     for c in corners.items[:corners.count] {testing.expect(t,!(abs(c.position.x)<1.2 && abs(c.position.z)<4.2))}
+}
+
+@(test)
+a_tile_is_published_on_the_tick_after_its_build_whatever_the_threads :: proc(t:^testing.T) {
+    built :: proc(t:^testing.T,threads:int) -> (ticks:[16]u64) {
+        f:Nav_Test
+        if !nav_test_init(t,&f,threads) {return}
+        defer nav_test_destroy(&f)
+        // A worker busy with a long job: the builds stay queued unless the tick waits for them.
+        busy:jobs.Counter
+        started:bool
+        defer if threads>0 {jobs.wait(&f.app.jobs,jobs.OWNER,&busy)}
+        if threads>0 {
+            jobs.run(&f.app.jobs,jobs.OWNER,.Background,proc(data:rawptr,worker:int) {
+                intrinsics.atomic_store((^bool)(data),true)
+                time.sleep(300*time.Millisecond)
+            },&started,&busy)
+            for !intrinsics.atomic_load(&started) {thread.yield()}
+        }
+        nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
+        nav_test_box(&f,{0,1,0},{1,1,4})
+        for &tick in ticks {nav_test_step(&f);tick=f.nav.stats.built}
+        return
+    }
+    alone:=built(t,0)
+    testing.expect(t,alone[len(alone)-1]>0)
+    testing.expect_value(t,built(t,1),alone)
 }
 
 @(test)

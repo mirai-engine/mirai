@@ -56,8 +56,9 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   - **How.** The input of each marked tile is collected on the loop thread and hashed, whatever
     the order of its triangles, so a bake holds in a world that added its shapes in another order;
     if the hash is that of the tile it has, it is not built. A tile with no input at all is empty
-    without a job. If not, a job builds it and the tile is published
-    on a later tick only if nobody marked it again. Publishing does not allocate; a replaced tile
+    without a job. If not, a frame job builds it and the next tick waits for it and publishes the
+    tile, only if nobody marked it again: the tick of a tile never depends on how fast the threads
+    ran. Publishing does not allocate; a replaced tile
     expires its references.
   - **Carving.** A build from the collision leaves the heightfield of its tile with
     `Navigation_Builds`, which keeps those of the last `NAV_FIELDS` tiles. A tile marked only by a

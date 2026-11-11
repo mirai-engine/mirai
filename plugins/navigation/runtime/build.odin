@@ -844,8 +844,7 @@ build_launch :: proc(build:^Build,job_system:^jobs.Job_System) {
         build_job(build,0)
         return
     }
-    jobs.run(job_system,jobs.OWNER,.Background,build_job,build,&build.counter)
-    if jobs.worker_count(job_system)==1 {jobs.wait(job_system,jobs.OWNER,&build.counter)}
+    jobs.run(job_system,jobs.OWNER,.Frame,build_job,build,&build.counter)
 }
 
 // The triangles of the static collision in a box that block filter (the
@@ -984,12 +983,15 @@ build_job :: proc(build:^Build,worker:int) {
     build.status=ai.nav_build_tile(build.config,build.coord,{vertices=build.vertices[:],indices=build.indices[:],volumes=build.volumes[:]},&build.scratch,&build.result,field=&build.field)
 }
 
-// Puts the tiles of finished builds in their meshes, when they are still
-// what the tile needs: how many builds ended and what their jobs took.
+// Puts the tiles of the builds of the tick before in their meshes, when they
+// are still what the tile needs: how many builds ended and what their jobs
+// took. It waits for their jobs, so a world publishes the same tiles at the
+// same tick however fast its threads run.
 @(private)
 builds_publish :: proc(n:^Navigation,b:^Navigation_Builds,problems:^core.Problems) -> (ended:int,ns:i64) {
     for build in b.builds {
-        if !build.busy || jobs.pending(&build.counter) {continue}
+        if !build.busy {continue}
+        if jobs.pending(&build.counter) {jobs.wait(b.jobs,jobs.OWNER,&build.counter)}
         build.busy=false
         ended+=1
         b.looked+=1
