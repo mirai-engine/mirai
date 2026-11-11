@@ -7,7 +7,7 @@
 // then collision against the traced scene: a hit, or a contact that keeps it
 // on the surface without one. It
 // dies into the free list of its emitter, with an event for the emitter that
-// follows it. In the last step of the frame it goes on the list that is
+// follows it, as a hit does and, for a trail, every period of its life. In the last step of the frame it goes on the list that is
 // drawn, and a lit one keeps the light it receives: the sun with its shadow
 // ray, the local lights and the probe volume, renewed for half of the
 // particles each frame. A paused emitter keeps its particles as they are.
@@ -53,7 +53,7 @@ float3 curl_noise(int3 base, float3 p) {
     return float3(z.y - y.z, x.z - z.x, y.x - x.y);
 }
 
-void event_push(uint slot, uint trigger, float3 position, float3 velocity, uint color) {
+void event_push(uint slot, uint trigger, float3 position, float3 velocity, uint color, uint seed) {
     uint2 target = particle_emitters[slot].random.yz;
     if (target.x == 0u || particle_emitters[slot].kinds.w != trigger || target.y == 0u) return;
     uint at;
@@ -64,6 +64,7 @@ void event_push(uint slot, uint trigger, float3 position, float3 velocity, uint 
     ev.velocity = velocity;
     ev.target = (target.x - 1u) | (target.y << 16u);
     ev.color = color;
+    ev.ribbon = particle_own_ribbon(seed);
     particle_event_store(params.parity, at, ev);
 }
 
@@ -137,7 +138,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     Mirai_Vfx_Particle v = particle_program_value(slot, p);
     if (h > 0.0) particle_program_update(slot, index, time, h, v);
     if (v.age >= v.lifetime) {
-        event_push(slot, PARTICLE_EVENT_DEATH, v.position, v.velocity, p.color);
+        event_push(slot, PARTICLE_EVENT_DEATH, v.position, v.velocity, p.color, v.seed);
         particle_report(slot, PARTICLE_EVENT_DEATH, v.position, v.velocity, float3(0.0));
         release(index, slot, range.xy);
         return;
@@ -184,7 +185,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         float4 collide = particle_emitters[slot].collide;
         if (hit && respond(velocity, normal, acceleration, h, collide.xy)) {
             v.age += collide.z * v.lifetime;
-            event_push(slot, PARTICLE_EVENT_COLLISION, next, velocity, p.color);
+            event_push(slot, PARTICLE_EVENT_COLLISION, next, velocity, p.color, v.seed);
             particle_report(slot, PARTICLE_EVENT_COLLISION, next, velocity, normal);
         }
         v.rotation += v.spin * h;
@@ -192,6 +193,8 @@ void main(uint3 id : SV_DispatchThreadID) {
         v.velocity = velocity;
     }
     particle_program_store(slot, v, program.x != 0u, p);
+    // A trail: an event each time its age passes a period, where it is now.
+    if (h > 0.0 && floor(v.age * float(TRAILS_PER_SECOND)) != floor((v.age - h) * float(TRAILS_PER_SECOND))) event_push(slot, PARTICLE_EVENT_TRAIL, v.position, v.velocity, p.color, v.seed);
     if (params.last != 0u && (range.w & PARTICLE_FLAG_LIT) != 0u && ((p.flags & 1u) == 0u || ((index + frame.frame_index) & 1u) == 0u)) {
         float3 view = to_eye(v.position);
         float radius = v.size * 0.5;

@@ -576,6 +576,7 @@ Mirai_Vfx_Particle particle_program_value(uint slot, Particle p) {
     v.age = p.age; v.lifetime = p.lifetime;
     v.size = p.size; v.rotation = p.rotation; v.spin = p.spin; v.seed = p.seed;
     v.color = particle_emitters[slot].program.x != 0u ? particle_color(p) : float4(0.0);
+    v.ribbon = particle_ribbon(p);
     return v;
 }
 
@@ -593,6 +594,7 @@ void particle_program_store(uint slot, Mirai_Vfx_Particle v, bool color, inout P
     }
     p.age = v.age; p.lifetime = v.lifetime;
     p.size = max(v.size, 0.0); p.rotation = v.rotation; p.spin = v.spin; p.seed = v.seed;
+    p.flags = (p.flags & ((1u << RIBBON_SHIFT) - 1u)) | ((v.ribbon & PARTICLE_RIBBON_MASK) << RIBBON_SHIFT);
     if (color) p.color = particle_color_pack(v.color);
 }
 

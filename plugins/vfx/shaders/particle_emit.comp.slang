@@ -5,7 +5,7 @@
 // as old as the step has left it, or on its surface where the surface was
 // then. A birth before the frame starts as far in its life as it got (a
 // prewarm). Mode 1: a thread per event of the step before, which starts the
-// particles it asks for in its target emitter. A particle takes a free slot
+// particles it asks for in its target emitter, in the ribbon it names. A particle takes a free slot
 // of its emitter; one that finds none is not started. The program of the
 // emitter starts it after its effect. Mode 2: a thread per birth a game gave
 // the channel of each emitter (y), which starts its particles if it falls in
@@ -93,7 +93,7 @@ void shape_sample(Particle_Emitter e, inout uint seed, out float3 position, out 
 // with what velocity, how far into the step (age: the seconds the step does
 // not move it, as a negative age) and how much of its life it already lived.
 // False when its emitter has no free slot or it would be dead already.
-bool particle_start(uint slot, Particle_Emitter e, uint seed, uint birth, float3 world_position, float3 world_velocity, float age, float lived, float time, float4 tint = float4(1.0), float scale = 1.0, float4 values = float4(0.0)) {
+bool particle_start(uint slot, Particle_Emitter e, uint seed, uint birth, float3 world_position, float3 world_velocity, float age, float lived, float time, float4 tint = float4(1.0), float scale = 1.0, float4 values = float4(0.0), uint ribbon = 0u) {
     float lifetime = lerp(e.lifetime_speed.x, e.lifetime_speed.y, random01(seed));
     if (lived >= lifetime) return false;
     uint previous;
@@ -113,6 +113,7 @@ bool particle_start(uint slot, Particle_Emitter e, uint seed, uint birth, float3
     v.velocity = world_velocity;
     v.position = world_position;
     v.age = age + lived;
+    v.ribbon = ribbon;
     if (lived > 0.0) {
         float3 acceleration = e.acceleration.xyz + particle_fields(slot, params.fields, v.position);
         v.position += v.velocity * lived + 0.5 * acceleration * lived * lived;
@@ -269,6 +270,6 @@ void main(uint3 id : SV_DispatchThreadID) {
         float speed = lerp(e.lifetime_speed.z, e.lifetime_speed.w, random01(seed));
         float3 local_velocity = lerp(e.velocity_a.xyz, e.velocity_b.xyz, float3(random01(seed), random01(seed), random01(seed)));
         float3 velocity = normalize(transform_vector(e.world, direction)) * speed + transform_vector(e.world, local_velocity);
-        if (!particle_start(slot, e, seed, INVALID, ev.position + offset, velocity + ev.velocity * e.spin.w, 0.0, 0.0, e.step.w - e.step.x + float(params.step) * e.step.y)) break;
+        if (!particle_start(slot, e, seed, INVALID, ev.position + offset, velocity + ev.velocity * e.spin.w, 0.0, 0.0, e.step.w - e.step.x + float(params.step) * e.step.y, float4(1.0), 1.0, float4(0.0), ev.ribbon)) break;
     }
 }

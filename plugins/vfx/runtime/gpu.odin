@@ -35,7 +35,7 @@ import "plugins:vfx/runtime/effect"
 //              probes) and the list that is drawn
 //
 // and once a frame, finish: a group per emitter, its indirect draw and the
-// list sorted back to front (or by age for a ribbon) where it asks. Before
+// list sorted back to front (or by ribbon and age for a ribbon) where it asks. Before
 // the steps, the areas of the surfaces the world reads for the first time
 // (resources.odin).
 //
@@ -53,6 +53,8 @@ SORT_MAX :: 2048 // particles of a sorted emitter or a ribbon
 EVENT_SPAWN_MAX :: 64
 SPAWNS :: 8 // groups of births an emitter gives in a frame
 STEP :: f32(1.0/30) // the longest step a simulation takes
+TRAILS_PER_SECOND :: 30 // Trail events of a particle in each second of its life
+RIBBON_PIECES :: 8 // most pieces a ribbon cuts the curve between two of its particles into
 STEPS :: 8
 FRAME_MAX :: f32(0.25) // seconds a frame simulates at most
 
@@ -155,9 +157,10 @@ Gpu_Particle :: struct {
     color:u32,          // rgba8 of the mix it started with
     light:u32,          // rgb with a shared exponent: the light it receives
     emitter:u32,        // slot
-    flags:u32,          // 1: light holds a value
+    flags:u32,          // 1: light holds a value; above RIBBON_SHIFT, the ribbon it joins (0: that of its emitter)
 }
 #assert(size_of(Gpu_Particle)==64)
+RIBBON_SHIFT :: 8
 
 Gpu_Emitter :: struct {
     world,previous:[3][4]f32,
@@ -196,15 +199,18 @@ Gpu_State :: struct {
     dead,alive:u32, // free slots on its list, and particles on the one drawn
     births,born:u32, // of an emitter whose program gives its births: those of the frame, and all it started
     draw:[5]u32,    // index count, instance count, first index, vertex offset, first instance; of a mesh: vertex count, instance count, first vertex, first instance
-    pad1:[3]u32,
+    pieces:u32,     // of a ribbon: the pieces each segment is cut into this frame, and the frames after can lower by one a frame
+    pad1:[2]u32,
 }
 #assert(size_of(Gpu_State)==48)
 
 Gpu_Event :: struct {
     position:[3]f32, target:u32, // relative to the origin of the pool
     velocity:[3]f32, color:u32,
+    ribbon:u32,          // that the particles it starts join: one of the particle that made it
+    pad:[3]u32,
 }
-#assert(size_of(Gpu_Event)==32)
+#assert(size_of(Gpu_Event)==48)
 
 // The buffers of the pool of a world. Events: the event counts of the two
 // halves and the dispatches that consume them, then from EVENTS_AT the
@@ -1203,6 +1209,7 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
     erender.pass_surface_read(pass,7,.Linear_Depth)
     erender.pass_surface_read(pass,8,.Glass_Depth)
     state:=pool_buffer(pool,.State)
+    erender.pass_buffer(pass,2,state)
     Params :: struct {emitter,pass,pad0,pad1:u32,media:erender.Media_Grid}
     for draw in draws {
         // The stage of its program, with the fragment of the Surface program of its material.

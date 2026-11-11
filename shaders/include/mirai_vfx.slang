@@ -90,6 +90,11 @@ struct Mirai_Vfx_Particle {
     float3 velocity; float lifetime;
     float size; float rotation; float spin; uint seed;
     float4 color;      // linear rgba it started with; the effect multiplies it over its life
+    // The ribbon a Ribbon particle joins: those of one ribbon are laid in the
+    // order of their age, apart from the others. It starts as that of the
+    // particle whose event started it, or 0, the ribbon of the emitter; the
+    // low 24 bits are kept.
+    uint ribbon;
 };
 struct Mirai_Vfx_Visual {
     float4 color;      // linear rgba, intensity included

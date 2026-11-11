@@ -35,7 +35,10 @@ Particle_Shape :: enum u32 {Point,Sphere,Hemisphere,Cone,Box,Circle,Line,Surface
 Particle_Render :: enum u32 {Billboard,Velocity,Horizontal,Ribbon,Mesh}
 Particle_Blend :: enum u32 {Additive,Alpha}
 Particle_Collision :: enum u32 {None,World}
-Particle_Event :: enum u32 {None,Death,Collision}
+// Trail: vfx.TRAILS_PER_SECOND times each second of its life, where it is.
+// The particles an event starts join a ribbon of the particle that made it:
+// those of Trail are a trail behind it.
+Particle_Event :: enum u32 {None,Death,Collision,Trail}
 
 // Particles started at once, when the cycle reaches time. cycles above one
 // repeat it every interval seconds.
@@ -221,8 +224,8 @@ particle_validate :: proc(desc:Particle_Desc) -> Particle_Problem {
     if p.render>max(Particle_Render) {return {"render","Use Billboard, Velocity, Horizontal, Ribbon or Mesh"}}
     if p.blend>max(Particle_Blend) {return {"blend","Use Additive or Alpha"}}
     if p.collision>max(Particle_Collision) {return {"collision","Use None or World"}}
-    if p.trigger>max(Particle_Event) {return {"trigger","Use None, Death or Collision"}}
-    if p.report>max(Particle_Event) {return {"report","Use None, Death or Collision"}}
+    if p.trigger>max(Particle_Event) {return {"trigger","Use None, Death, Collision or Trail"}}
+    if p.report>max(Particle_Event) || p.report==.Trail {return {"report","Use None, Death or Collision"}}
     if p.emission_mode>max(asset.Emission_Mode) {return {"emission_mode","Use Physical or Relative"}}
     if len(serial.text_field(p.program[:]))==len(p.program) {return {"program","Name the program in fewer than 64 bytes"}}
     if p.duration<0 {return {"duration","Use a duration of zero or more seconds"}}
