@@ -14,7 +14,7 @@ import "mirai:std/jobs"
 import mm "mirai:std/math"
 
 // The chunks of the terrains: entities terrain makes under each one, whose
-// meshes, tints and colliders it writes (shared tables). Their Transform and
+// meshes, material values and colliders it writes (shared tables). Their Transform and
 // Parent it gives through commands: those tables have other writers.
 @(private)
 Chunk_Tables :: struct {
@@ -25,8 +25,7 @@ Chunk_Tables :: struct {
     ids:^core.Table(core.Id,.Read),
     colliders:^core.Table(phys.Collider),
     meshes:^core.Table(render.Mesh_Renderer),
-    tints:^core.Table(render.Tint),
-    overrides:^core.Table(render.Material_Override),
+    looks:^core.Table(render.Material_Values),
 }
 
 // The slots of Physics_Settings the colliders of terrain chunks can still
@@ -69,10 +68,10 @@ terrain_chunks_prune :: proc(c:^Chunk_Tables,terrains:^core.Table(Terrain),resid
     return true
 }
 
-// Whether Terrain, Tint or Material_Override changed since shown, which it moves to now.
+// Whether Terrain or Material_Values changed since shown, which it moves to now.
 @(private)
-shown_touched :: proc "contextless" (terrains:^core.Table(Terrain),c:^Chunk_Tables,shown:^[3]core.Seen) -> bool {
-    return core.touched(terrains,&shown[0]) | core.touched(c.tints,&shown[1]) | core.touched(c.overrides,&shown[2])
+shown_touched :: proc "contextless" (terrains:^core.Table(Terrain),c:^Chunk_Tables,shown:^[2]core.Seen) -> bool {
+    return core.touched(terrains,&shown[0]) | core.touched(c.looks,&shown[1])
 }
 
 @(private)
@@ -430,7 +429,7 @@ pages_leave :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_So
 // The layers of a source as each chunk shows them, made again when its layers
 // or the assets change.
 @(private)
-resident_layers_override :: proc(resident:^Terrain_Resident,source:^Resident_Source,s:^Source) -> render.Material_Override {
+resident_layers_override :: proc(resident:^Terrain_Resident,source:^Resident_Source,s:^Source) -> render.Material_Values {
     a:=resident.assets
     stamp:=[2]u64{a.revision,a.structure}
     if source.override_info.layer_count!=s.layer_count || source.override_info.layers!=s.layers || source.override_assets!=stamp {
@@ -447,11 +446,11 @@ resident_layers_override :: proc(resident:^Terrain_Resident,source:^Resident_Sou
 owner_publish :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resident_Owner,entry:^Data_Source,source:^Resident_Source,marker:Terrain,physics:phys.Physics_Settings,problems:^core.Problems,seen:bool) {
     tint:=owner.tint
     if !seen || owner.full {
-        tint=render.TINT_DEFAULT
-        if value,ok:=core.get(c.tints,owner.entity);ok {tint=value}
+        tint=render.MATERIAL_VALUES_DEFAULT
+        if value,ok:=core.get(core.read(c.looks),owner.entity);ok {tint.color,tint.emission=value.color,value.emission}
     }
     // A program of its own reads its parameters from its material.
-    override:=entry.source.layers_material=={}?resident_layers_override(resident,source,&entry.source):{}
+    override:=entry.source.layers_material=={}?resident_layers_override(resident,source,&entry.source):render.MATERIAL_VALUES_DEFAULT
     materials:=chunk_materials(&entry.source)
     solid:=marker.solid && !owner.far
     appearance:=materials!=owner.materials || tint!=owner.tint || override!=owner.override || solid!=owner.solid
@@ -541,8 +540,9 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
         } else if has {room_give(resident,collider.kind)}
     }
     core.add(c.meshes,e,render.Mesh_Renderer{mesh=chunk.mesh,materials=owner.materials})
-    core.add(c.tints,e,owner.tint)
-    if !render.material_override_empty(&owner.override) {core.add(c.overrides,e,owner.override)} else if core.has(c.overrides,e) {core.remove(c.overrides,e)}
+    look:=owner.tint
+    render.material_values_over(&look,&owner.override)
+    core.add(c.looks,e,look)
     if wants {
         made:=phys.COLLIDER_DEFAULT
         made.kind=collider_kind(s.kind)
@@ -681,12 +681,12 @@ brush_pages_read :: proc(entry:^Data_Source,brush:Brush) -> bool {
 terrain_update :: proc(
     commands:core.Commands,terrains:^core.Table(Terrain),chunks:^core.Table(Terrain_Chunk),
     locals:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),ids:^core.Table(core.Id,.Read),colliders:^core.Table(phys.Collider),
-    meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Tint),overrides:^core.Table(render.Material_Override),
+    meshes:^core.Table(render.Mesh_Renderer),looks:^core.Table(render.Material_Values),
     data:^Terrain_Data,resident:^Terrain_Resident,requests:^Terrain_Requests,digs:^Terrain_Digs,settings:Terrain_Settings,app:^host.App,time:core.Time,frame:core.Frame_Time,
     view:core.View,worlds:^core.Table(core.World_Transform,.Read),sources:core.Ref(scene.Streaming_Sources),kept:^core.Table(scene.Far_Kept,.Read),physics:phys.Physics_Settings,
     loads:core.Ref(scene.Section_Loads),waits:^scene.Load_Waits,problems:^core.Problems,focus:Terrain_Focus,queries:^core.Ground_Queries,
 ) {
-    c:=Chunk_Tables{commands,chunks,locals,parents,ids,colliders,meshes,tints,overrides}
+    c:=Chunk_Tables{commands,chunks,locals,parents,ids,colliders,meshes,looks}
     if queries.open==nil {queries.open=ground_open}
     if resident==nil || app.assets==nil {return}
     if !data_ready(data,settings,app.allocator) || !work_ready(data,&app.jobs,app.allocator) {

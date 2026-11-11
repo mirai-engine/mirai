@@ -230,10 +230,11 @@ curves_pass_through_their_points :: proc(t:^testing.T) {
 }
 
 // A path sampled by length goes through its points, its samples about a piece
-// apart, and fits what holds them, whatever the points are.
+// apart, never rises between two points that do not rise, stays in its box,
+// and fits what holds them, whatever the points are.
 @(test)
 a_sampled_path_goes_through_its_points_and_fits :: proc(t:^testing.T) {
-    points:=[]Path_Point{{{0,0,0},2,1},{{0,0,-10},4,1},{{10,0,-10},4,3}}
+    points:=[]Path_Point{{{0,0,0},2,1,1},{{0,0,-10},4,1,3},{{10,-1,-10},4,3,1}}
     out:[64]Path_Point
     count:=path_sample(points,1,out[:])
     testing.expect(t,count>=21 && count<=23,"about a piece apart")
@@ -241,11 +242,14 @@ a_sampled_path_goes_through_its_points_and_fits :: proc(t:^testing.T) {
     through:=false
     for p in out[:count] {through||=p==points[1]}
     testing.expect(t,through,"through every point")
+    box:=path_box(points)
     for i in 1..<count {
         gap:=linalg.length(out[i].position-out[i-1].position)
         testing.expectf(t,gap>0.5 && gap<1.3,"a gap of %v",gap)
+        testing.expectf(t,out[i].position.y<=out[i-1].position.y,"it falls at %d: %v after %v",i,out[i].position.y,out[i-1].position.y)
+        testing.expectf(t,aabb_contains_point(aabb_expand(box,1e-4),out[i].position),"%v in its box %v",out[i].position,box)
     }
-    testing.expect(t,abs(out[5].width-3)<1e-5 && out[5].height==1,"width and height in proportion")
+    testing.expect(t,abs(out[5].width-3)<1e-5 && out[5].height==1 && abs(out[5].speed-2)<1e-5,"width, height and speed in proportion")
     // Too few samples for a piece: they spread out, and the ends stay.
     short:[8]Path_Point
     count=path_sample(points,1,short[:])
@@ -253,10 +257,14 @@ a_sampled_path_goes_through_its_points_and_fits :: proc(t:^testing.T) {
     nan:=math.nan_f32()
     for c in ([]struct{points:[]Path_Point,piece:f32,room:int}{
         {points[:1],1,64},{points,0,64},{points,nan,64},{points,1,3},
-        {{{{nan,0,0},1,1},{{0,0,1},1,1}},1,64},{{{{0,0,0},1,1},{{1e38,0,0},1,1}},1,64},{{{{0,0,0},1,1},{{0,0,0},1,1}},1,64},
+        {{{{nan,0,0},1,1,0},{{0,0,1},1,1,0}},1,64},{{{{0,0,0},1,1,0},{{1e38,0,0},1,1,0}},1,64},{{{{0,0,0},1,1,0},{{0,0,0},1,1,0}},1,64},
     }) {
         written:=path_sample(c.points,c.piece,out[:c.room])
         testing.expect(t,written==0 || written>=len(c.points) && written<=c.room)
+    }
+    for segment in ([]int{-1,2,max(int)}) {
+        p,_:=path_at(points,segment,0.5)
+        testing.expect_value(t,p,Path_Point{})
     }
 }
 

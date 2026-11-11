@@ -403,14 +403,17 @@ frame and the current one:
   the renderer's scene: it lasts the frame, it is not the instance's identity. From
   `frame.instance_count` it is an instance of a [batch](scene.md#instance-batches); `scene_instance`
   reads any.
-- `instance_values_set(renderer, index, values)` gives four numbers to an instance of the
-  renderer (by its index, that of `instance_object`), which the shaders read with
-  `instance_values(instance)` of `scene.slang`: the instance's row carries them, they continue
-  while the instance keeps its identity and they change neither its light nor its rays.
-- `instance_wet_set(renderer, index, wet)` says how wet an instance of the renderer is, from 0
-  to 1, with the same rules of identity, light and rays; every material applies it
+- `instance_wet_set(renderer, index, wet)` says how wet an instance of the renderer is (by its
+  index, that of `instance_object`), from 0 to 1: it continues while the instance keeps its
+  identity and changes neither its light nor its rays; every material applies it
   ([wet](materials.md#evaluation)). It has a single writer, the
   [water](../../mirai-world/references/water.md#what-physics-shows) plugin.
+- `colors_load(renderer, colors)` puts one color per vertex of a mesh, by index in the mesh
+  (cluster order, every level), in the vertex pool, and `instance_colors_set(renderer, index,
+  colors)` (the index of `instance_of`) makes an instance show them in place of the mesh's, at
+  every level and in rays, while it keeps its identity and a mesh of as many vertices; other
+  instances of the mesh keep theirs. Its single writer is the
+  [paint](../../mirai-plugins/references/plugins.md#paint) plugin.
 - `pass_scissor` limits the pixels (without size: the whole view); `pass_draw` and `pass_dispatch`
   execute. After a stage the renderer binds the scene tables again.
 - `pass_timestamp(pass, name)`: the GPU time of what the pass records from there counts under that

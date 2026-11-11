@@ -338,16 +338,29 @@ Components that describe the scene and `render_sync`, which carries it to the re
   each player of a split screen runs those of where they are, in their slot
   (`view_postprocess_sync`, `render.Camera.slot`), and they are given to the renderer only when
   they change. Sky and sun light does not change by volume.
-- **`Material_Override`**: entity values for the slots of its mesh (each value and texture carries
-  its own), by `base.name_hash` of a name of `MATERIAL_VALUE_NAMES` (`base_color`, `opacity`,
-  `metallic`, `roughness`, `emission`, `specular`, `ior`, `transmission`, `alpha_mode`, `coat`,
-  `coat_roughness`, `coat_color`, `coat_ior`, `fuzz`, `fuzz_color`, `fuzz_roughness`, `anisotropy`,
-  `anisotropy_rotation`, `unlit`, `emission_mode`) or of a non-texture parameter of the program;
-  textures by the name of a map of `MATERIAL_MAP_NAMES` or of a texture of the program; and, with
-  `own_overlays`, its overlays instead of those of the first slot's material. It is `shared`:
-  several game functions animate values of one entity, each setting and dropping only its own names
-  with `material_override_value_set` and `material_override_value_drop` instead of writing the
-  whole override over what another gave.
+- **`Material_Values`** is the one way an entity changes what it shows of its materials
+  ([game page](../../../../docs/game/world/look.md)): `color` (its alpha fades the entity) and
+  `emission` over every slot, and by name, each for a slot of its mesh, a value
+  (`material_value`: a name of `MATERIAL_VALUE_FIELDS` or a non-texture parameter of the program),
+  a texture (`material_texture`: a map of `MATERIAL_MAP_NAMES` or a texture of the program, an
+  asset or one the renderer made at run time) and, with `own_overlays`, its overlays instead of
+  those of the first slot's material.
+  - **What the instance holds.** The color, the emission, the parameters of a program and the
+    values of the standard model an instance holds (`material_value_instanced`) go to the
+    instance of the entity
+    ([values of an instance](../../mirai-rendering/references/materials.md#material-row)):
+    `render_sync` gives them in place when they change (`values_settle`), without making the
+    instance again or deriving a row. A texture, overlays, an alpha below 1 or a value of the
+    standard model that chooses passes (`ior`, `transmission`, `alpha_mode`) make the entity show
+    a derived row, shared by content. What an instance
+    holds is for a row: the slots of a mesh that show the same material share it.
+  - It is `shared`: several game functions animate values of one entity, each setting and dropping
+    only its own names with `material_value` and `material_value_drop` instead of writing the
+    whole component over what another gave. A zero value is black and hidden: start from
+    what the entity has or from `MATERIAL_VALUES_DEFAULT`.
+  - `values_show` asks, through the `Frame_Values_Requests` queue that `render_sync` takes, for
+    values of one frame that no table holds (the texture a world panel is drawn into): what draws
+    the entity that frame shows them over its own.
 - **`Highlight`**: the editor's selection outline; it replaces the entity's `Outline`.
 - **`Outline`**: the game's outline, with one of the 15 styles of `Outline_Styles`, a project
   setting (the same in all its scenes) with the color, the fill and what is seen behind another
@@ -589,10 +602,11 @@ one per local player that has screens or sees a `World_Widget`.
   - `target` `Mesh`: the panel is drawn into a renderer texture of `size` by `pixels` texels per
     unit, which the slot `slot` of the material of the entity's mesh shows as base color, lit and
     covered like the scene, or as emission of `emission` nits; what the entity draws (its mesh, or
-    the skinned copy from `animation`) uses that copy of its material (`host.Slot_Texture`; the
-    standard model: a surface program does not read the map). It is built only once, in the
-    window's context, with the ray of the player who has the keyboard, while the camera of some
-    local player sees the mesh's box as it was drawn; out of view the texture keeps the last one.
+    the skinned copy from `animation`) shows it over its material for that frame
+    (`render.values_show`; the standard model: a surface program does not read the map). It is built
+    only once, in the window's context, with the ray of the player who has the keyboard, while the
+    camera of some local player sees the mesh's box as it was drawn; out of view the texture keeps
+    the last one.
   - Each player's ray leaves their camera: through the pointer while it is seen over their part;
     through the center of their view with the mouse captured, without a keyboard or if they play
     with a gamepad. It reaches a `Mesh` where it touches its triangles as the previous frame drew

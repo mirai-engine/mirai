@@ -18,7 +18,7 @@ numbers of two checkouts compare.
   simulation    floor, collider-only wall and dynamic box
   physics       native CCD or destruction wall benchmark without editor or GPU
   netpublish    entity state publication without solver, GPU or connected clients
-  fade          one Tint.alpha changed in a grid of --cubes cubes
+  fade          one Material_Values.color alpha changed in a grid of --cubes cubes
   particles     four emitters of 25 000 particles a second, additive and unlit, then blended and lit
   particlelights  four emitters of 256 particle lights each, casting shadows and then not
   terrain       hover and held sculpt on a terrain fixture supplied by --scene
@@ -557,7 +557,7 @@ def grid_position(b: Bench, index: int) -> list[float]:
 def grid_cubes(b: Bench, first: int) -> list[dict]:
     return [{
         "preset": "cube", "name": f"Cube {i + 1}", "position": grid_position(b, i),
-        "components": {"Mesh_Renderer": {"materials": [MATERIALS[i % 4][1]]}, "Tint": {"color": [0.7, 0.7, 0.7, 1]}},
+        "components": {"Mesh_Renderer": {"materials": [MATERIALS[i % 4][1]]}, "Material_Values": {"color": [0.7, 0.7, 0.7, 1]}},
     } for i in range(first, min(first + 64, b.args.cubes))]
 
 
@@ -940,7 +940,7 @@ def scenario_fade(b: Bench):
             for i in range(args.samples + 16):
                 if phase == "fade":
                     alpha = 0.25 if i % 2 == 0 else 0.75
-                    rpc(b, "scene.write", merge({"id": entity, "components": {"Tint": {"color": [0.7, 0.7, 0.7, alpha]}}}))
+                    rpc(b, "scene.write", merge({"id": entity, "components": {"Material_Values": {"color": [0.7, 0.7, 0.7, alpha]}}}))
                 step(b, 1)
                 status = rpc(b, "engine.status")
                 if i < 16:

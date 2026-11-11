@@ -1371,7 +1371,7 @@ assets_program_value :: proc(a:^Assets,program:^render.Program,params:^[16]rende
 
 // The row of the renderer for a material, loading its textures. A Surface
 // program replaces the standard model: of its maps only the normal map is
-// read. A texture that failed is only shown as base color.
+// read, unless it builds on that model (render.Program.standard). A texture that failed is only shown as base color.
 @(private="file")
 assets_material_desc :: proc(a:^Assets,material:^Assets_Material,id:base.Asset_Id) -> render.Material_Desc {
     desc:=render.Material_Desc{info=material.info}
@@ -1380,7 +1380,7 @@ assets_material_desc :: proc(a:^Assets,material:^Assets_Material,id:base.Asset_I
         assets_fail(a,id,.Material,.Unsupported)
     }
     for source,which in asset.material_maps(&desc.maps) {
-        if program!=nil && which!=.Normal {continue}
+        if program!=nil && which!=.Normal && !program.standard {continue}
         texture:=assets_texture_image(a,source.texture)
         if texture!=nil && (!texture.failed || which==.Base_Color) {desc.textures[which]=texture.handle}
     }

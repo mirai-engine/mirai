@@ -45,18 +45,57 @@ b_spline :: proc "contextless" (p0,p1,p2,p3:$T,t:f32) -> T {
     return (p0*(u*u*u)+p1*(3*t3-6*t2+4)+p2*(-3*t3+3*t2+3*t+1)+p3*t3)*(1.0/6)
 }
 
-// A point of a path, with the width and the height of what lies along it there.
+// A point of a path, with what lies along it there: its width and height, and
+// the speed of what goes along it (water, a walker).
 Path_Point :: struct {
     position:Vec3,
     width,height:f32,
+    speed:f32, // m/s toward the last point
+}
+
+// The point of a path at t, from 0 to 1, of its segment from points[segment]
+// to the next, and the derivative of its position by t. x and z go along the
+// Catmull-Rom curve through the points, whose ends go on straight; y goes
+// between the heights of the two points without passing them (the monotone
+// cubic of Fritsch and Carlson), so a path that never rises from point to point
+// never rises between them; width, height and speed go in proportion. Zero for
+// a segment the points do not have.
+path_at :: proc "contextless" (points:[]Path_Point,segment:int,t:f32) -> (p:Path_Point,tangent:Vec3) #no_bounds_check {
+    if segment<0 || segment>=len(points)-1 {return}
+    a,b:=points[segment],points[segment+1]
+    before,_,_,after:=path_span(points,segment)
+    // The slope of y at a point between two rises, zero where it turns or
+    // stops, and at most three times the lesser rise, which keeps it monotone.
+    slope :: proc "contextless" (y0,y1,y2:f32) -> f32 {
+        d0,d1:=y1-y0,y2-y1
+        if !(d0*d1>0) {return 0}
+        return clamp(0.5*(d0+d1),-3*min(abs(d0),abs(d1)),3*min(abs(d0),abs(d1)))
+    }
+    m0:=slope(before.y,a.position.y,b.position.y)
+    m1:=slope(a.position.y,b.position.y,after.y)
+    p={catmull_rom(before,a.position,b.position,after,t),a.width+(b.width-a.width)*t,a.height+(b.height-a.height)*t,a.speed+(b.speed-a.speed)*t}
+    // Hermite from the rise, so a level segment stays exactly level.
+    p.position.y=a.position.y+(b.position.y-a.position.y)*(3*t*t-2*t*t*t)+m0*(t*t*t-2*t*t+t)+m1*(t*t*t-t*t)
+    tangent=catmull_rom_tangent(before,a.position,b.position,after,t)
+    tangent.y=(a.position.y-b.position.y)*(6*t*t-6*t)+m0*(3*t*t-4*t+1)+m1*(3*t*t-2*t)
+    return
+}
+
+// The four points of the Catmull-Rom span of a path from points[segment] to the
+// next, the ends going on straight. Zero for a segment the points do not have.
+path_span :: proc "contextless" (points:[]Path_Point,segment:int) -> (before,a,b,after:Vec3) #no_bounds_check {
+    if segment<0 || segment>=len(points)-1 {return}
+    a,b=points[segment].position,points[segment+1].position
+    before=segment>0?points[segment-1].position:2*a-b
+    after=segment+2<len(points)?points[segment+2].position:2*b-a
+    return
 }
 
 // A path through its points sampled by length: the points and, between two,
-// more on the Catmull-Rom curve through them about piece apart, or farther
-// when out cannot hold that many, with width and height in proportion. The
-// ends go on straight. Returns how many it wrote: zero for fewer than two
-// points, a piece that is not above zero, or an out with no room for one more
-// sample than the points.
+// more on its curve (path_at) about piece apart, or farther when out cannot
+// hold that many. Returns how many it wrote: zero for fewer than two points, a
+// piece that is not above zero, or an out with no room for one more sample
+// than the points.
 path_sample :: proc "contextless" (points:[]Path_Point,piece:f32,out:[]Path_Point) -> int {
     n:=len(points)
     room:=len(out)-n
@@ -67,18 +106,38 @@ path_sample :: proc "contextless" (points:[]Path_Point,piece:f32,out:[]Path_Poin
     piece:=max(piece,whole/f32(room))
     count:=0
     for i in 0..<n-1 {
-        a,b:=points[i],points[i+1]
-        before:=i>0?points[i-1].position:2*a.position-b.position
-        after:=i+2<n?points[i+2].position:2*b.position-a.position
-        steps:=clamp(int(min(math.ceil(linalg.length(b.position-a.position)/piece),1<<30)),1,len(out)-1-count-(n-2-i))
+        steps:=clamp(int(min(math.ceil(linalg.length(points[i+1].position-points[i].position)/piece),1<<30)),1,len(out)-1-count-(n-2-i))
         for k in 0..<steps {
-            t:=f32(k)/f32(steps)
-            out[count]={catmull_rom(before,a.position,b.position,after,t),a.width+(b.width-a.width)*t,a.height+(b.height-a.height)*t}
+            out[count],_=path_at(points,i,f32(k)/f32(steps))
             count+=1
         }
     }
     out[count]=points[n-1]
     return count+1
+}
+
+// The box of the curve of a path (path_at) from points[segment] to the next.
+// Its x and z are a cubic Bezier through those two points, so they stay within
+// the box of the two and its two inner control points; y stays between their
+// heights. Zero for a segment the points do not have.
+path_segment_box :: proc "contextless" (points:[]Path_Point,segment:int) -> Aabb #no_bounds_check {
+    if segment<0 || segment>=len(points)-1 {return {}}
+    before,a,b,after:=path_span(points,segment)
+    inner:=[2]Vec3{a+(b-before)/6,b-(after-a)/6}
+    box:=Aabb{vec3_min(vec3_min(a,b),vec3_min(inner[0],inner[1])),vec3_max(vec3_max(a,b),vec3_max(inner[0],inner[1]))}
+    box.min.y,box.max.y=min(a.y,b.y),max(a.y,b.y)
+    return box
+}
+
+// The box of the curve of a path, as wide as the path on each side.
+path_box :: proc "contextless" (points:[]Path_Point) -> Aabb {
+    box:=path_segment_box(points,0)
+    for i in 0..<len(points)-1 {
+        half:=max(points[i].width,points[i+1].width)*0.5
+        span:=path_segment_box(points,i)
+        box=aabb_merge(box,{span.min-{half,0,half},span.max+{half,0,half}})
+    }
+    return box
 }
 
 

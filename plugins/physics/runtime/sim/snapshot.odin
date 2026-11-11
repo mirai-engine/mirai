@@ -12,7 +12,7 @@ import "mirai:std/spatial"
 
 // The arrays of the state, which world_state_copy copies and world_hash hashes up to their counts.
 @(private)
-state_arrays :: proc(w:^World) -> [12]State_Array {
+state_arrays :: proc(w:^World) -> [13]State_Array {
     return {
         {mem.slice_to_bytes(w.bodies),type_info_of(Body),w.body_high,.Bodies},
         {mem.slice_to_bytes(w.shapes),type_info_of(Shape),w.shape_high,.Shapes},
@@ -23,6 +23,7 @@ state_arrays :: proc(w:^World) -> [12]State_Array {
         {mem.slice_to_bytes(w.joint_axes),type_info_of(Joint_Axes),w.joint_high,.Joints},
         {mem.slice_to_bytes(w.islands),type_info_of(Island),w.island_high,.Islands},
         {mem.slice_to_bytes(w.fluids),type_info_of(Fluid),w.fluid_high,.Fluids},
+        {mem.slice_to_bytes(w.fluid_paths),type_info_of([FLUID_PATH_POINTS]Path_Point),w.fluid_high,.Fluids},
         {mem.slice_to_bytes(w.breakables),type_info_of(Breakable),w.breakable_high,.Breakables},
         {mem.slice_to_bytes(w.pieces),type_info_of(Piece),w.piece_high,.Pieces},
         {mem.slice_to_bytes(w.bonds),type_info_of(Bond),w.bond_high,.Bonds},

@@ -65,6 +65,7 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
         previous = mesh.part_word + mesh.vertex_count * POSED_WORDS;
     }
     Mesh_Point v = cluster_point_at(mesh, c, local, posed);
+    v.color = instance_vertex_color(inst, c.vertex_first + local, v.color);
     float3 world = transform_point(inst.world, v.position);
     float3 prev_world = transform_point(inst.prev_world, cluster_position_previous(mesh, c, local, previous));
     float fade = view_body_fade(inst.meta.w);

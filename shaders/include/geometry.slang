@@ -107,6 +107,12 @@ float4 mesh_vertex_color(Mesh mesh, uint vertex) {
     return unpack_rgba8(vertex_words[page_layout(mesh, p).colors + vertex - p.first_vertex]);
 }
 
+// The color of a vertex of an instance by its index in its mesh: of the
+// colors the instance was given, else the one its mesh has.
+float4 instance_vertex_color(Instance inst, uint vertex, float4 color) {
+    return vertex < inst.color_count ? unpack_rgba8(vertex_words[inst.colors + vertex]) : color;
+}
+
 // Where the streams of a cluster start in the vertex pool: its first vertex
 // in each, and its first word of triangles.
 struct Cluster_Block {
@@ -215,20 +221,24 @@ float3 cluster_position_previous(Mesh mesh, Cluster c, uint local, uint previous
 uint primitive_cluster(uint primitive) { return primitive >> PRIMITIVE_TRIANGLE_BITS; }
 uint primitive_triangle(uint primitive) { return primitive & ((1u << PRIMITIVE_TRIANGLE_BITS) - 1u); }
 
-// A triangle of a mesh where it is now: its corners and the material word of its slot.
+// A triangle of the mesh of an instance where it is now: its corners, with
+// the colors of the instance, and the material word of its slot.
 struct Mesh_Triangle {
     Mesh_Point a;
     Mesh_Point b;
     Mesh_Point c;
     uint material;
 };
-Mesh_Triangle mesh_triangle(Mesh mesh, uint primitive) {
+Mesh_Triangle mesh_triangle(Instance inst, Mesh mesh, uint primitive) {
     Cluster c = mesh_cluster(mesh, primitive_cluster(primitive));
     uint3 corners = cluster_triangle(mesh, c, primitive_triangle(primitive));
     Mesh_Triangle t;
     t.a = cluster_point(mesh, c, corners.x);
     t.b = cluster_point(mesh, c, corners.y);
     t.c = cluster_point(mesh, c, corners.z);
+    t.a.color = instance_vertex_color(inst, c.vertex_first + corners.x, t.a.color);
+    t.b.color = instance_vertex_color(inst, c.vertex_first + corners.y, t.b.color);
+    t.c.color = instance_vertex_color(inst, c.vertex_first + corners.z, t.c.color);
     t.material = cluster_material(mesh, c);
     return t;
 }

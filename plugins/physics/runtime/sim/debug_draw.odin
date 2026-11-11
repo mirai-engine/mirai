@@ -77,13 +77,13 @@ world_debug_draw :: proc(w:^World,out:^Debug_Draw,flags:Debug_Draw_Flags,region:
         }
     }
     if .Fluids in flags {
-        for &f in w.fluids[:w.fluid_high] {
+        for &f,i in w.fluids[:w.fluid_high] {
             if f.generation&1==0 {continue}
             if f.shape==.Plane {
-                debug_fluid_plane(out,w,&f,region,everywhere)
-            } else if !meets(fluid_aabb(&f),region,everywhere) {
+                debug_fluid_plane(out,w,i32(i),region,everywhere)
+            } else if !meets(f.bounds,region,everywhere) {
             } else if f.shape==.Path {
-                debug_fluid_path(out,&f)
+                debug_fluid_path(out,fluid_points(w,i32(i)))
             } else {
                 debug_fluid_box(out,&f,f.density>0?.Fluid:.Dry)
             }
@@ -131,21 +131,27 @@ debug_kind :: proc "contextless" (shape:^Shape,body:^Body) -> Debug_Kind {
 @(private) DEBUG_PLANE_LINES :: 32 // across each axis of the surface of a plane
 @(private) DEBUG_PLANE_PIECES :: 8 // of each line, which follow the height of the surface
 
-// The banks of water along a path.
+@(private) DEBUG_PATH_PIECES :: 8 // of the banks of each segment of a path
+
+// The banks of water along a path, across at its ends.
 @(private)
-debug_fluid_path :: proc "contextless" (out:^Debug_Draw,f:^Fluid) {
-    count:=int(f.path_count)
-    bank :: proc "contextless" (f:^Fluid,j,count:int,side:f32) -> Vec3 {
-        a,b:=f.path[max(j-1,0)].position,f.path[min(j+1,count-1)].position
-        across:=normalize(Vec3{a.z-b.z,0,b.x-a.x})
-        return f.path[j].position+across*(side*0.5*f.path[j].width)
+debug_fluid_path :: proc "contextless" (out:^Debug_Draw,points:[]Path_Point) {
+    bank :: proc "contextless" (points:[]Path_Point,j,piece:int) -> [2]Vec3 {
+        p,tangent:=math.path_at(points,j,f32(piece)/DEBUG_PATH_PIECES)
+        across:=0.5*p.width*normalize(Vec3{-tangent.z,0,tangent.x})
+        return {p.position+across,p.position-across}
     }
-    for j in 0..<count-1 {
-        debug_line(out,bank(f,j,count,1),bank(f,j+1,count,1),.Fluid)
-        debug_line(out,bank(f,j,count,-1),bank(f,j+1,count,-1),.Fluid)
+    last:=len(points)-2
+    for j in 0..=last {
+        for piece in 0..<DEBUG_PATH_PIECES {
+            a,b:=bank(points,j,piece),bank(points,j,piece+1)
+            debug_line(out,a[0],b[0],.Fluid)
+            debug_line(out,a[1],b[1],.Fluid)
+        }
     }
-    debug_line(out,bank(f,0,count,1),bank(f,0,count,-1),.Fluid)
-    debug_line(out,bank(f,count-1,count,1),bank(f,count-1,count,-1),.Fluid)
+    first,end:=bank(points,0,0),bank(points,last,DEBUG_PATH_PIECES)
+    debug_line(out,first[0],first[1],.Fluid)
+    debug_line(out,end[0],end[1],.Fluid)
 }
 
 @(private)
@@ -165,24 +171,24 @@ debug_fluid_box :: proc "contextless" (out:^Debug_Draw,f:^Fluid,kind:Debug_Kind)
 
 // A grid on the surface of a plane, each line in pieces that follow its height.
 @(private)
-debug_fluid_plane :: proc "contextless" (out:^Debug_Draw,w:^World,f:^Fluid,region:Aabb,everywhere:bool) {
+debug_fluid_plane :: proc "contextless" (out:^Debug_Draw,w:^World,index:i32,region:Aabb,everywhere:bool) {
+    f:=&w.fluids[index]
     lo:=Vec3{f.position.x-DEBUG_PLANE_REACH,0,f.position.z-DEBUG_PLANE_REACH}
     hi:=Vec3{f.position.x+DEBUG_PLANE_REACH,0,f.position.z+DEBUG_PLANE_REACH}
     if !everywhere {
         if region.min.y>f.position.y+f.reach {return}
         lo,hi=region.min,region.max
     }
-    at :: proc "contextless" (w:^World,f:^Fluid,x,z:f32) -> Vec3 {
-        height,_:=fluid_surface_at(w,f,x,z)
-        return {x,height,z}
+    at :: proc "contextless" (w:^World,f:i32,x,z:f32) -> Vec3 {
+        return {x,fluid_spot(w,f,{x,0,z}).top,z}
     }
     for line in 0..=DEBUG_PLANE_LINES {
         t:=f32(line)/DEBUG_PLANE_LINES
         x,z:=lo.x+(hi.x-lo.x)*t,lo.z+(hi.z-lo.z)*t
         for piece in 0..<DEBUG_PLANE_PIECES {
             a,b:=f32(piece)/DEBUG_PLANE_PIECES,f32(piece+1)/DEBUG_PLANE_PIECES
-            debug_line(out,at(w,f,x,lo.z+(hi.z-lo.z)*a),at(w,f,x,lo.z+(hi.z-lo.z)*b),.Fluid)
-            debug_line(out,at(w,f,lo.x+(hi.x-lo.x)*a,z),at(w,f,lo.x+(hi.x-lo.x)*b,z),.Fluid)
+            debug_line(out,at(w,index,x,lo.z+(hi.z-lo.z)*a),at(w,index,x,lo.z+(hi.z-lo.z)*b),.Fluid)
+            debug_line(out,at(w,index,lo.x+(hi.x-lo.x)*a,z),at(w,index,lo.x+(hi.x-lo.x)*b,z),.Fluid)
         }
     }
 }

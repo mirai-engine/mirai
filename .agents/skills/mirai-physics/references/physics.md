@@ -291,12 +291,15 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
 
 - `fluid_create`, `fluid_set` and `fluid_destroy` (`Fluid_Desc`): a `Plane` (everything below the
   height of its position, an ocean), a `Box` rotated only in yaw whose top face is the surface (a
-  lake, a pool), or a `Path` (a river): the samples of a curve that `fluid_create` and `fluid_set`
-  copy, each with its width and its height as depth, level across, ending at its ends. Density,
-  current (in the frame of the box, or of the path: -Z along it toward its end) and priority. The
-  integration makes a `Fluid` with a `volume.Spline` on its entity a path: it samples the spline
-  and lays it on the ground with the procedures of the `Spline`, and does it again when the spline
-  or its place changes, or when a box of `core.Ground_Queries.changed` overlaps its reach.
+  lake, a pool), or a `Path` (a river): the points of a curve (`math.path_at`) that `fluid_create`
+  and `fluid_set` copy (`World.fluid_paths`, beside the slots), each with its width, its height as
+  depth and its speed along, level across, ending at its ends. Each point is lowered to the one
+  before it, and the curve keeps y monotone between points: the surface never rises downstream.
+  Every query evaluates the curve, so its length does not cap its detail. Density, current (in the
+  frame of the box; of a path, across and up, with z zero) and priority. The integration makes a
+  `Fluid` with a `volume.Spline` on its entity a path: it lays the points of the spline on the
+  ground with the procedures of the `Spline`, and does it again when the spline or its place
+  changes, or when a box of `core.Ground_Queries.changed` overlaps its reach.
   - With zero density it is a dry box: it removes the lowest-priority fluid where it is (a base
     under the sea). Flooding a room is raising the floor of its air with `fluid_set`.
   - A fluid does not overlap another one, nor a dry box another dry box; where they would, the one
@@ -305,9 +308,12 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
   - Fluids are a block of the snapshot. The scratch of the step is reserved with the first fluid
     (or when restoring a world that has them): a world without fluids neither has it nor pays for
     it.
-- **A single surface query.** `fluid_surface_at` (private) is the only place that knows the shape of
-  the surface: the height and the normal over (x, z), with the waves of the plane at the world's
-  time. All readers follow it.
+- **A single surface query.** `fluid_spot` (private) is the only place that knows the shape of a
+  fluid: over (x, z), whether its column holds the point, the height and the normal of the surface
+  (with the waves of the plane at the world's time), its bottom and its current. All readers follow
+  it. Over a path it finds the nearest point of the curve (chords, then Newton); from the segment
+  of the last query it looks at that one and its two neighbours, and at all when the nearest is at
+  the edge of those.
   - **Waves** (`Fluid_Desc.waves`, of a plane or a box): a sum of
     Gerstner waves (`fluid_waves.odin`). The time is `world_time`, the seconds the world advanced,
     which go in the snapshot: a rollback returns to the same waves. `wave_terms` gives each wave at
@@ -337,8 +343,14 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
     its significant height from `wind`; `spread`, `steepness`, `speed` and `seed` are the artistic
     options. Changing the wind or the component redoes the waves of the volume. On a box it is a
     `physics.fluid_waves` problem.
-- **Bodies.** In each substep, in the velocity integration, for each awake dynamic whose box swept
-  by its velocity of the step touches a fluid:
+- **Bodies.** A body takes its water by the rule of `fluid_find` (the column that holds the point,
+  then priority) at its center, the lowest point of its box and the corners of its bottom, among
+  the fluids its box swept by its velocity of the step meets; never by the box of a fluid. It keeps
+  up to two: the second, across a border (a river into a lake), counts without what the first
+  holds, and a dry box over either in priority takes itself out of each. A character is in its
+  first. Two fluids meet (`fluids_meet`, the `physics.fluid_overlap` problem) by the same column
+  rule, never by their boxes. In each substep, in the velocity integration, for each awake
+  dynamic in a water:
   - The surface of a body in a step is the plane tangent to the waves over its center, at the start
     of the step: its waves lift it and tilt it.
   - Submerged volume and its center, exact per shape: boxes and hulls clipped by the planes of the

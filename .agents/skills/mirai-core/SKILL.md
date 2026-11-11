@@ -174,7 +174,8 @@ A game is a struct in memory and a list of functions that transform it
   the function ends, or with `writable`, every row; by reflection, `raw_edit` or `raw_touch`. The
   row takes a stamp and its readers process it ([stamps](references/core.md#tables)). A direct
   write into `values` is seen by nobody; there is no compare-and-set: what may leave the row as it
-  is asks for it all the same.
+  is asks for it all the same. An edit holds until its table settles: code that can settle (an
+  editor file write, a scene load, `world_settle`) asks for the row after it, where it writes.
 - **A `@(params)` is only a way of writing the signature.** It counts as its loose fields: it gives
   the same write rights, with one writer per datum, and what the function writes reaches it only
   once among its parameters and groups.
@@ -259,7 +260,9 @@ A game is a struct in memory and a list of functions that transform it
   `plugins/vfx/runtime`, `plugins/animation/runtime` (child bind) and `editor`.
 - Writes without requesting the row: `"defines": ["MIRAI_CHECK_WRITES=true"]` in the manifest of a
   project; after each function, `core.fail` names the function, component and entity that changed
-  without being requested. It copies tables on every function: it is not for measuring.
+  without being requested, and every settle names a row written since the last one without a
+  request (an edit pointer kept past a settle). It copies tables on every function and settle,
+  and settles every table: it is not for measuring.
 - CPU copies of meshes (`host/assets_geometry_test.odin`, `assets_generated_test.odin`): repeat with
   `--release` only if a failure may depend on optimization.
 - Fonts, texts and prompts of the content: `host/content_interface_test.odin`.

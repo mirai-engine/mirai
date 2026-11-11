@@ -150,14 +150,17 @@ bool hit_mean(Instance inst, float t) {
 // of its program (surface_coverage.slang), which is that of the default
 // material when the program does not change it.
 float hit_alpha(Instance inst, Material m, Mesh_Triangle tri, float3 weights, float2 uv, float2 uv1, float2 lod, float t) {
-    if (m.program_id == 0u) return material_base_color(m, uv, uv1, lod, float3(1), true).a;
+    if (m.program_id == 0u) return material_base_color(material_instanced(m, inst.material_values), uv, uv1, lod, float3(1), true).a;
     float3 normal = transform_normal(inst.world_inv, tri.a.normal * weights.x + tri.b.normal * weights.y + tri.c.normal * weights.z);
     normal = material_ray_normal(m, inst, normal, weights, tri, uv, uv1, lod);
     float3 position = transform_point(inst.world, tri.a.position * weights.x + tri.b.position * weights.y + tri.c.position * weights.z);
     float4 vertex_color = tri.a.color * weights.x + tri.b.color * weights.y + tri.c.color * weights.z;
     Mirai_Surface_Context ctx = material_context_cone(material_context_instance(material_context(position, normal, uv, uv1, lod, true), inst, vertex_color), t * 0.004);
+    ctx.material = m.row;
     float alpha;
-    return mirai_program_alpha(m.program_id, materials[m.row].custom_params, ctx, alpha) ? alpha : MATERIAL_DEFAULT_OPACITY;
+    float4 parameters[16];
+    material_parameters(m.row, inst.material_values, parameters);
+    return mirai_program_alpha(m.program_id, parameters, ctx, alpha) ? alpha : MATERIAL_DEFAULT_OPACITY;
 }
 
 // What a ray that finds this triangle at distance t does: stop, or go through
@@ -174,7 +177,7 @@ bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, uint 
     if (m.alpha_mode == ALPHA_BLEND) {
 #ifdef MIRAI_RAY_FILTERS
         if (blend == BLEND_FILTERS) {
-            Mesh_Triangle tri = mesh_triangle(mesh, primitive);
+            Mesh_Triangle tri = mesh_triangle(inst, mesh, primitive);
             // The ray leaves a solid where its face looks along it.
             float3 face = transform_normal(inst.world_inv, cross(tri.b.position - tri.a.position, tri.c.position - tri.a.position));
             bool exit = dot(face, ray_filter_direction) >= 0.0;
@@ -201,7 +204,7 @@ bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, uint 
         return blend == BLEND_STOPS;
     }
     if (m.alpha_mode == ALPHA_OPAQUE) return true;
-    Mesh_Triangle tri = mesh_triangle(mesh, primitive);
+    Mesh_Triangle tri = mesh_triangle(inst, mesh, primitive);
     float3 weights = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
     float3 edge1 = transform_vector(inst.world, tri.b.position - tri.a.position);
     float3 edge2 = transform_vector(inst.world, tri.c.position - tri.a.position);

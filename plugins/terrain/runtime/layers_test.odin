@@ -178,7 +178,7 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     terrain_test_update(&w,&resident,&app)
     // A new source shows its one layer in every chunk.
     testing.expect(t,core.count(&w.statics)>0)
-    testing.expect_value(t,len(w.overrides.values),16)
+    testing.expect_value(t,layered_chunks(&w),16)
     for row in 0..<core.count(&w.statics) {
         if w.statics.entities[row]!=owner {testing.expect_value(t,w.statics.values[row].materials[0],LAYERS_MATERIAL)}
     }
@@ -190,13 +190,13 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     terrain_test_update(&w,&resident,&app)
     testing.expect(t,core.problem_find(&w.problems,owner,"terrain.layer_invalid")!=nil)
     testing.expect_value(t,w.data.entries[0].source.layer_count,u32(2))
-    testing.expect_value(t,len(w.overrides.values),16)
+    testing.expect_value(t,layered_chunks(&w),16)
     for row in 0..<core.count(&w.statics) {
         e:=w.statics.entities[row]
         if e==owner {continue}
         shown:=w.statics.values[row]
         testing.expect_value(t,shown.materials[0],LAYERS_MATERIAL)
-        override,_:=core.get(&w.overrides,e)
+        override,_:=core.get(&w.looks,e)
         testing.expect_value(t,override.values[3].x,f32(8))
     }
     before:[16]base.Asset_Id
@@ -217,7 +217,7 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     terrain_test_update(&w,&resident,&app)
     testing.expect_value(t,w.data.entries[0].source.layer_count,u32(1))
     testing.expect(t,core.problem_find(&w.problems,owner,"terrain.layer_invalid")!=nil)
-    testing.expect_value(t,len(w.overrides.values),16)
+    testing.expect_value(t,layered_chunks(&w),16)
 }
 
 // A source whose layers a program of its own blends keeps it in its file,
@@ -253,7 +253,7 @@ a_program_of_the_source_blends_its_layers_in_place_of_terrain_layers :: proc(t:^
     terrain_test_update(&w,&resident,&app)
     testing.expect(t,core.count(&w.statics)>0)
     for row in 0..<core.count(&w.statics) {testing.expect_value(t,w.statics.values[row].materials[0],blend)}
-    testing.expect_value(t,len(w.overrides.values),0)
+    testing.expect_value(t,layered_chunks(&w),0)
     // Without it, the layers blend their materials again.
     read.layers_material={}
     testing.expect_value(t,chunk_materials(&read)[0],LAYERS_MATERIAL)

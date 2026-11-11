@@ -45,7 +45,7 @@ one grammar, with or without an editor.
 {"entities": [
   {"name": "Sun", "preset": "sun"},
   {"name": "Floor", "preset": "cube", "position": [0, -0.05, 0], "scale": [20, 0.1, 20],
-   "components": {"Tint": {"color": [0.35, 0.38, 0.42, 1]}, "Collider": {}}},
+   "components": {"Material_Values": {"color": [0.35, 0.38, 0.42, 1]}, "Collider": {}}},
   {"name": "Lamp", "preset": "point_light", "position": [2, 3, 0],
    "components": {"Point_Light": {"intensity": 7}}},
   {"name": "Hero", "prefab": "player/Player.scene", "position": [0, 1, 4]},

@@ -205,7 +205,7 @@ drop_frame :: proc(s:^editor.Session,tool:^Drop_Tool,world:core.World_Ref,frame:
     }
     // The mesh that would drop, its box and its line down to the point.
     pose:=mm.transform_matrix(drop_pose(tool,hit.position))
-    if instance,ok:=erender.mesh_instance(s.app.assets,tool.mesh,pose,erender.TINT_DEFAULT,{});ok {
+    if instance,ok:=erender.mesh_instance(s.app.assets,tool.mesh,pose);ok {
         instance.copy_owner,instance.copy_variant=0x64726f70,1
         host.extras_instance_add(&s.app.extras,instance)
     }

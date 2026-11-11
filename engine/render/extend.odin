@@ -47,6 +47,7 @@ PARTICLE_ATTRIBUTE_BYTES :: gpu.PARTICLE_ATTRIBUTE_BYTES
 Nested_View :: gpu.Nested_View
 NESTED_VIEW_CAPACITY :: gpu.NESTED_VIEW_CAPACITY
 Mesh_Handle :: gpu.Mesh_Handle
+Colors_Handle :: gpu.Colors_Handle
 Texture_Handle :: gpu.Texture_Handle
 Material_Handle :: gpu.Material_Handle
 Instance_Desc :: gpu.Instance_Desc
@@ -360,14 +361,6 @@ instance_placed :: proc(renderer:^Renderer,index:int) -> (mesh:Mesh_Handle,trans
     if renderer==nil || index<0 {return}
     return gpu.scene_instance_placed(renderer,u32(index))
 }
-// Four numbers of an instance of the renderer, by its index (instance_object), that
-// the shaders of the plugin read with instance_values (scene.slang): they
-// stay while the instance keeps its identity and change neither its light
-// nor its rays. False for an index the renderer does not have or a value that
-// is not finite.
-instance_values_set :: proc(renderer:^Renderer,index:int,values:[4]f32) -> bool {
-    return renderer!=nil && index>=0 && gpu.scene_set_instance_values(renderer,u32(index),values)
-}
 // How wet an instance of the renderer is, by its index (instance_object): 0 dry to 1
 // soaked. Every material darkens and smooths by it what is not metal, glass
 // or unlit, and a program reads it in Mirai_Surface_Context.wet. It stays
@@ -376,6 +369,24 @@ instance_values_set :: proc(renderer:^Renderer,index:int,values:[4]f32) -> bool 
 // not have or a value that is not finite.
 instance_wet_set :: proc(renderer:^Renderer,index:int,wet:f32) -> bool {
     return renderer!=nil && index>=0 && gpu.scene_set_instance_wet(renderer,u32(index),wet)
+}
+// Colors of every vertex of a mesh, by index in the mesh (the order of the
+// vertices of its clusters, every level), that instances of it show in place
+// of its own (instance_colors_set). False for none or without room.
+colors_load :: proc(renderer:^Renderer,colors:[]u32) -> (Colors_Handle,bool) {
+    if renderer==nil {return 0,false}
+    return gpu.colors_load(renderer,colors)
+}
+// The instances that show them go back to the colors of their mesh.
+colors_remove :: proc(renderer:^Renderer,colors:Colors_Handle) -> bool {
+    return renderer!=nil && gpu.colors_remove(renderer,colors)
+}
+// The colors an instance of the renderer shows, by its index (instance_of),
+// while it keeps its identity and its mesh; 0 gives it back those of its
+// mesh. False for an index or colors the renderer does not have, or colors
+// of another number of vertices than its mesh has.
+instance_colors_set :: proc(renderer:^Renderer,index:int,colors:Colors_Handle) -> bool {
+    return renderer!=nil && index>=0 && gpu.scene_set_instance_colors(renderer,u32(index),colors)
 }
 // A visual instance for this frame, without an entity of its own in the renderer.
 instance_add :: proc(extras:^host.Frame_Extras,instance:Instance_Desc) -> bool {return host.extras_instance_add(extras,instance)}
@@ -486,27 +497,17 @@ Batch_Info :: gpu.Batch_Info
 Batch_Hit :: gpu.Batch_Hit
 
 // Changes when a batch comes, goes or is set again: what an extension that
-// gives batches values (batch_values_set) compares to know when to go
-// through them again.
+// goes through the batches compares to know when to go through them again.
 batches_revision :: proc(renderer:^Renderer) -> u64 {return renderer!=nil?gpu.batches_revision(renderer):0}
 
 // The records of the batches, to go through them with batch_info.
 batch_records :: proc(renderer:^Renderer) -> int {return renderer!=nil?gpu.batch_records(renderer):0}
 
-// The batch of a record: its handle, world, object id, values and
+// The batch of a record: its handle, world, object id, mesh and
 // instances. False for a record that holds none.
 batch_info :: proc(renderer:^Renderer,index:int) -> (info:Batch_Info,ok:bool) {
     if renderer==nil {return}
     return gpu.batch_info(renderer,index)
-}
-
-// Four numbers of a batch that the shaders of a plugin read with
-// instance_values (scene.slang), as Batch_Desc.values, given by an
-// extension that does not own the batch: they stay until its owner sets it
-// again, and change neither its light nor its rays. False for a handle
-// that names no batch or a value that is not finite.
-batch_values_set :: proc(renderer:^Renderer,handle:Batch_Handle,values:[4]f32) -> bool {
-    return renderer!=nil && gpu.batch_values_set(renderer,handle,values)
 }
 
 // The instance of a batch of a world a ray of the world meets first within
@@ -518,8 +519,8 @@ batch_ray :: proc(renderer:^Renderer,world:core.World_Id,origin,direction:[3]f32
 
 // The mesh and materials of a batch from what a Mesh_Renderer shows, as an
 // entity with it would be drawn. False while its mesh is not loaded.
-batch_desc :: proc(a:^host.Assets,static:Mesh_Renderer,tint:=TINT_DEFAULT) -> (desc:Batch_Desc,ok:bool) {
-    instance:=mesh_instance(a,static,1,tint) or_return
+batch_desc :: proc(a:^host.Assets,static:Mesh_Renderer) -> (desc:Batch_Desc,ok:bool) {
+    instance:=mesh_instance(a,static,1) or_return
     return {mesh=instance.mesh,material=instance.material,slot_materials=instance.slot_materials,tint=instance.tint},true
 }
 

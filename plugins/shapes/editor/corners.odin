@@ -92,7 +92,7 @@ corner_apply :: proc(c:^Corners,op:Corner_Op,index:int,at:[2]f32) -> shapes.Shap
         a,b:=p.points[index],p.points[index+1]
         along:=segment_along(a.position.xz,b.position.xz,at)
         copy(p.points[index+2:count+1],p.points[index+1:count])
-        p.points[index+1]={linalg.lerp(a.position,b.position,along),math.lerp(a.width,b.width,along),math.lerp(a.height,b.height,along)}
+        p.points[index+1]={linalg.lerp(a.position,b.position,along),math.lerp(a.width,b.width,along),math.lerp(a.height,b.height,along),math.lerp(a.speed,b.speed,along)}
         p.points[index+1].position.xz=at
         p.count+=1
     case .Remove:

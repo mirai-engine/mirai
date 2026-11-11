@@ -124,15 +124,13 @@ far_texture_destroy :: proc(texture:^Far_Texture,allocator:=context.allocator) {
 // (nil for one that is not there). A relative emission is left out: it is
 // an exposed value, not a light the section gives.
 far_material :: proc(info:Material_Info,base,metallic_roughness,emission:^Far_Texture) -> Far_Material {
-    placed :: proc(info:Material_Info,m:Material_Map,texture:^Far_Texture) -> Far_Map {
+    placed :: proc(m:Material_Map,texture:^Far_Texture) -> Far_Map {
         if texture==nil {return {}}
         sine,cosine:=math.sin(m.rotation),math.cos(m.rotation)
-        scale:=info.uv_scale*m.scale
-        shift:=info.uv_offset*m.scale
         return {
             texture=texture,
-            linear={cosine*scale.x,-sine*scale.y,sine*scale.x,cosine*scale.y},
-            offset={cosine*shift.x-sine*shift.y+m.offset.x,sine*shift.x+cosine*shift.y+m.offset.y},
+            linear={cosine*m.scale.x,-sine*m.scale.y,sine*m.scale.x,cosine*m.scale.y},
+            offset=m.offset,
             uv_set=m.uv_set,
         }
     }
@@ -143,9 +141,9 @@ far_material :: proc(info:Material_Info,base,metallic_roughness,emission:^Far_Te
         roughness=info.roughness,metallic=info.metallic,
     }
     if info.emission_mode==.Physical {out.emission=info.emission}
-    out.base_map=placed(info,info.maps.base_color,base)
-    out.metallic_roughness_map=placed(info,info.maps.metallic_roughness,metallic_roughness)
-    out.emission_map=placed(info,info.maps.emission,emission)
+    out.base_map=placed(info.maps.base_color,base)
+    out.metallic_roughness_map=placed(info.maps.metallic_roughness,metallic_roughness)
+    out.emission_map=placed(info.maps.emission,emission)
     return out
 }
 

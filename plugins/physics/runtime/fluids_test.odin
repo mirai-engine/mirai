@@ -59,19 +59,25 @@ fluids_follow_their_rows_their_volumes_and_their_entities :: proc(t:^testing.T) 
     core.remove(&f.fluids,room)
     physics_test_step(&f,0)
     testing.expect_value(t,f.state.world.fluid_count,1)
-    // A Spline makes its Fluid water along it, as deep as its height, with the current in its frame.
+    // A Spline makes its Fluid water along it, as deep as the height of its points, flowing at their speed.
     river:=core.create(&f.entities)
-    core.add(&f.fluids,river,Fluid{density=1000,current={0,0,-1.5}})
-    core.add(&f.splines,river,volume.Spline{count=2,points={0={{100,4,0},3,1},1={{88,3,0},3,1}}})
+    core.add(&f.fluids,river,Fluid{density=1000,current={0.5,0,0}})
+    core.add(&f.splines,river,volume.Spline{count=2,points={0={{100,4,0},3,1,1.5},1={{88,3,0},3,1,1.5}}})
     physics_test_step(&f,0)
     sample,entity,ok=fluid_at({&f.state},{94,4,0})
     testing.expect(t,ok && entity==river && abs(sample.height-4.5)<0.05 && sample.density==1000)
-    testing.expectf(t,sample.current.x< -1.4,"it flows down its path: %v",sample.current)
+    testing.expectf(t,abs(sample.current.x+1.5)<0.05 && abs(sample.current.z+0.5)<0.01,"it flows down its path and across to its right: %v",sample.current)
     _,entity,_=fluid_at({&f.state},{94,4,3})
     testing.expect(t,entity!=river,"past its banks")
     core.edit(&f.splines,river).points[1].width=0
+    along:=core.create(&f.entities)
+    core.add(&f.fluids,along,Fluid{density=1000,current={0,0,-1}})
+    core.add(&f.splines,along,volume.Spline{count=2,points={0={{200,4,0},3,1,0},1={{188,3,0},3,1,0}}})
     physics_test_step(&f,0)
-    testing.expect(t,core.problem_find(&f.problems,river,"physics.fluid_path")!=nil && f.state.world.fluid_count==1,"a sample without width is a problem")
+    for e in ([2]core.Entity{river,along}) {
+        testing.expectf(t,core.problem_find(&f.problems,e,"physics.fluid_path")!=nil,"a point without width, or a current along the path, is a problem: %v",e)
+    }
+    testing.expect_value(t,f.state.world.fluid_count,1)
 }
 
 // A fluid fills a plane or a box: without a Volume, in one of another shape, dry in a plane or in a box
@@ -112,6 +118,31 @@ a_fluid_that_cannot_be_made_or_meets_another_of_its_priority_is_a_problem :: pro
     testing.expect(t,core.problem_find(&f.problems,b,"physics.fluid_overlap")!=nil)
     testing.expect(t,core.problem_find(&f.problems,over,"physics.fluid_overlap")==nil,"a higher priority decides where they meet")
     testing.expect_value(t,f.state.world.fluid_count,i32(made+3))
+    // They meet where a column holds both, not where their boxes do: a river that winds around a lake.
+    Meeting :: struct {name:string,river:[4][3]f32,meets:bool}
+    meetings:=[?]Meeting{
+        {"winds around the lake",{{-20,0,0},{-20,0,-40},{20,0,-40},{20,0,0}},false},
+        {"crosses the lake",{{-20,0,-20},{-6,0,-20},{6,0,-20},{20,0,-20}},true},
+    }
+    pairs:[len(meetings)][2]core.Entity
+    for m,i in meetings {
+        at:=[3]f32{300+100*f32(i),0,0}
+        lake,river:=core.create(&f.entities),core.create(&f.entities)
+        core.add(&f.fluids,lake,FLUID_DEFAULT)
+        core.add(&f.volumes,lake,volume.box({8,1,8}))
+        core.add(&f.transforms,lake,core.Transform{at+{0,0,-20},1,{1,1,1}})
+        spline:=volume.Spline{count=4}
+        for p,k in m.river {spline.points[k]={p,4,1,1}}
+        core.add(&f.fluids,river,FLUID_DEFAULT)
+        core.add(&f.splines,river,spline)
+        core.add(&f.transforms,river,core.Transform{at,1,{1,1,1}})
+        pairs[i]={lake,river}
+    }
+    physics_test_step(&f,0)
+    for m,i in meetings {
+        reported:=core.problem_find(&f.problems,pairs[i][0],"physics.fluid_overlap")!=nil || core.problem_find(&f.problems,pairs[i][1],"physics.fluid_overlap")!=nil
+        testing.expectf(t,reported==m.meets,"a river that %s: reported %v",m.name,reported)
+    }
 }
 
 @(test)

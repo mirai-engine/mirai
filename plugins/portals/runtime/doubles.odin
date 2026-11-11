@@ -15,7 +15,7 @@ import mm "mirai:std/math"
 @(step="render",loops="game editor",before="render_sync")
 portals_doubles :: proc(
     portals:^core.Table(Portal,.Read),travelers:^core.Table(Traveler,.Read),worlds:^core.Table(core.World_Transform,.Read),
-    meshes:^core.Table(erender.Mesh_Renderer,.Read),tints:^core.Table(erender.Tint,.Read),hidden:^core.Table(erender.Hidden,.Read),
+    meshes:^core.Table(erender.Mesh_Renderer,.Read),tints:^core.Table(erender.Material_Values,.Read),hidden:^core.Table(erender.Hidden,.Read),
     parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),assets:^host.Assets,extras:^host.Frame_Extras,frame:core.Frame_Time,
 ) {
     if assets==nil || core.count(portals)==0 || core.count(travelers)==0 {return}
@@ -40,7 +40,7 @@ portals_doubles :: proc(
 // The copy of the mesh of an entity behind the exit of a portal, when the mesh reaches across its opening.
 @(private)
 double_draw :: proc(
-    meshes:^core.Table(erender.Mesh_Renderer,$A),tints:^core.Table(erender.Tint,$B),hidden:^core.Table(erender.Hidden,$C),
+    meshes:^core.Table(erender.Mesh_Renderer,$A),tints:^core.Table(erender.Material_Values,$B),hidden:^core.Table(erender.Hidden,$C),
     parents:^core.Table(core.Parent,$D),worlds:^core.Table(core.World_Transform,$E),assets:^host.Assets,extras:^host.Frame_Extras,frame:core.Frame_Time,
     e,portal:core.Entity,entrance:mm.Transform,through:mm.Mat4,
 ) {
@@ -61,7 +61,7 @@ double_draw :: proc(
         low,high=linalg.min(low,local),linalg.max(high,local)
     }
     if !(low.z<0 && high.z>0) || high.x< -0.5*size.x || low.x>0.5*size.x || high.y< -0.5*size.y || low.y>0.5*size.y {return}
-    tint:=erender.TINT_DEFAULT
+    tint:=erender.MATERIAL_VALUES_DEFAULT
     if value,tinted:=core.get(tints,e);tinted {tint=value}
     instance,ok:=erender.mesh_instance(assets,shown,through*mm.transform_matrix(drawn),tint)
     if !ok {return}

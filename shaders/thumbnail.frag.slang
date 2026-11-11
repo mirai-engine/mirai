@@ -4,6 +4,7 @@
 //! variant impostor MIRAI_THUMBNAIL_IMPOSTOR
 #include "native.slang"
 #define MIRAI_RASTER_STUDIO
+#define MIRAI_NO_INSTANCES
 #include "raster.slang"
 #include "studio.slang"
 #include "display.slang"
@@ -62,6 +63,7 @@ Thumbnail_Values thumbnail_values(Raster_Input raster, Fragment surface) {
     v.surface = float4(sample.roughness, sample.metallic, sample.occlusion, 0.0);
     v.emission = sample.emission;
     v.alpha = sample.alpha;
+    ctx.material = m.row;
     Mirai_Surface written = mirai_surface_default(ctx);
     if (m.program_id != 0u && mirai_evaluate_program(m.program_id, materials[m.row].custom_params, ctx, written)) {
         v.base_color = written.base_color * raster.in_color;

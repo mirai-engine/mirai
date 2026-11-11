@@ -32,10 +32,16 @@ submerged :: proc(w:^World,h:Body_Handle) -> (load:Fluid_Load,center:Vec3) {
     body,_:=body_get(w,h)
     wet:Wet
     wet_find(w,body,{},&wet)
-    if wet.fluid<0 {return}
     clip:=new(Clip_Scratch)
     defer free(clip)
-    load=body_load(w,body,body.center,body.rotation,&wet,{},clip)
+    if wet.water_count==0 {return}
+    load=body_load(w,body,body.center,body.rotation,&wet,0,{},clip)
+    if wet.water_count>1 {
+        other:=body_load(w,body,body.center,body.rotation,&wet,1,{},clip)
+        load.volume+=other.volume
+        load.moment+=other.moment
+        load.area+=other.area
+    }
     if load.volume>0 {center=body.center+load.moment/load.volume}
     return
 }
@@ -76,39 +82,32 @@ the_fluid_at_a_point_gives_the_surface_over_or_under_it_through_the_dry_boxes ::
     testing.expect_value(t,world_stats(&w).fluids,2)
 }
 
-// The samples of the curve through points, as the plugin of a path hands them over (math.path_sample).
-@(private="file")
-path_of :: proc(points:[]Path_Point) -> []Path_Point {
-    out:=make([]Path_Point,FLUID_PATH_SAMPLES,context.temp_allocator)
-    return out[:math.path_sample(points,1,out)]
-}
-
-// Water along a path: its surface goes through its samples, it ends at its
-// banks and its ends, and what floats in it drifts with its current.
+// Water along a path: its surface goes along the curve of its points, it ends
+// at its banks and its ends, and what floats in it drifts with its current.
 @(test)
 water_along_a_path_holds_between_its_banks_and_carries_what_floats :: proc(t:^testing.T) {
     w:World
     testing.expect(t,test_world(&w))
     defer world_destroy(&w)
     // 40 m toward -z falling 2 m, 4 m wide and 2 m deep, at 1 m/s; then 20 m toward -x, level.
-    desc:=Fluid_Desc{shape=.Path,density=1000,current={0,0,-1}}
-    path:=path_of({{{0,2,0},4,2},{{0,0,-40},4,2},{{-20,0,-40},4,2}})
+    desc:=Fluid_Desc{shape=.Path,density=1000}
+    path:=[]Path_Point{{{0,2,0},4,2,1},{{0,0,-40},4,2,1},{{-20,0,-40},4,2,1}}
     river:=fluid_create(&w,desc,path)
     testing.expect(t,river!={})
     back,_:=fluid_desc(&w,river)
-    samples:[FLUID_PATH_SAMPLES]Path_Point
-    count:=fluid_path(&w,river,&samples)
-    testing.expect(t,count==len(path) && samples[count-1]==path[count-1] && back==desc,"its samples and description come back as they were given")
+    points:[FLUID_PATH_POINTS]Path_Point
+    count:=fluid_path(&w,river,&points)
+    testing.expect(t,count==len(path) && points[count-1]==path[count-1] && back==desc,"its points and description come back as they were given")
     Case :: struct {p:Vec3,inside:bool,height,density:f32}
     for c in ([]Case{
-        {{0,1.5,0},true,2,1000},      // at its first point the surface is at that point
-        {{0,0.5,-20},true,1,1000},    // half way down
-        {{1.5,0.5,-20},true,1,1000},  // near a bank
-        {{0,1.5,-20},true,1,0},       // over the surface
-        {{4,0.5,-20},false,0,0},      // past a bank, where the curve bends out before the turn
-        {{0,1,5},false,0,0},          // before its first point
-        {{-25,-0.5,-40},false,0,0},   // past its last point
-        {{-10,-0.5,-42},true,-0.12,1000}, // after the turn, where the curve swings past the points
+        {{0,1.5,0},true,2,1000},       // at its first point the surface is at that point
+        {{0,0.5,-20},true,0.89,1000},  // half way down, easing into the level stretch
+        {{1.5,0.5,-20},true,0.89,1000}, // near a bank
+        {{0,1.5,-20},true,0.89,0},     // over the surface
+        {{4,0.5,-20},false,0,0},       // past a bank, where the curve bends out before the turn
+        {{0,1,5},false,0,0},           // before its first point
+        {{-25,-0.5,-40},false,0,0},    // past its last point
+        {{-10,-0.5,-42},true,0,1000},  // after the turn, where the curve swings past the points, level
     }) {
         sample,ok:=fluid_sample(&w,c.p)
         testing.expectf(t,ok==c.inside,"at %v",c.p)
@@ -128,17 +127,87 @@ water_along_a_path_holds_between_its_banks_and_carries_what_floats :: proc(t:^te
     testing.expectf(t,at.z< -12 && drift.z< -0.5,"it drifts downstream: at %v at %v m/s",at,drift)
     height,_,_:=fluid_surface(&w,river,at.x,at.z)
     testing.expectf(t,abs(at.y-height)<0.4,"and floats on the surface at %v, %v",at,height)
-    many:[FLUID_PATH_SAMPLES+1]Path_Point
-    for &p,i in many {p={{0,0,-f32(i)},1,1}}
+    nan:=cmath.nan_f32()
+    many:[FLUID_PATH_POINTS+1]Path_Point
+    for &p,i in many {p={{0,0,-f32(i)},1,1,0}}
     for refused in ([][]Path_Point{
-        {{{0,0,0},1,1}},
-        {{{0,0,0},1,1},{{0,1,0},1,1}},
-        {{{0,0,0},0,1},{{0,0,4},1,1}},
-        {{{0,0,0},1,0},{{0,0,4},1,1}},
-        {{{cmath.nan_f32(),0,0},1,1},{{0,0,4},1,1}},
+        {{{0,0,0},1,1,0}},
+        {{{0,0,0},1,1,0},{{0,1,0},1,1,0}},
+        {{{0,0,0},0,1,0},{{0,0,4},1,1,0}},
+        {{{0,0,0},1,0,0},{{0,0,4},1,1,0}},
+        {{{nan,0,0},1,1,0},{{0,0,4},1,1,0}},
+        {{{0,0,0},1,1,nan},{{0,0,4},1,1,0}},
         many[:],
     }) {testing.expect_value(t,fluid_create(&w,{shape=.Path,density=1000},refused),Fluid_Handle{})}
-    testing.expect_value(t,fluid_create(&w,{shape=.Path},{{{0,0,0},1,1},{{0,0,4},1,1}}),Fluid_Handle{})
+    testing.expect_value(t,fluid_create(&w,{shape=.Path},path),Fluid_Handle{})
+    testing.expect_value(t,fluid_create(&w,{shape=.Path,density=1000,current={0,0,-1}},path),Fluid_Handle{})
+    for p in ([]Vec3{{nan,0,0},{0,0,nan},{max(f32),0,-max(f32)}}) {
+        _,ok:=fluid_sample(&w,p)
+        testing.expectf(t,!ok,"no water at %v",p)
+    }
+}
+
+// A river 1 km long of eleven points over bumpy ground, fast at its middle
+// point: its banks follow its curve all along however far apart its points
+// are, its surface never rises from its first point to its last, and a body
+// drifts faster where it is faster.
+@(test)
+a_long_river_never_rises_and_flows_at_the_speed_of_its_points :: proc(t:^testing.T) {
+    w:World
+    testing.expect(t,test_world(&w))
+    defer world_destroy(&w)
+    bumps:=[11]f32{0,3,-1,2,-2,1,-3,0,-4,-1,-5}
+    points:[11]Path_Point
+    for &p,i in points {p={{30*cmath.sin(f32(i)),bumps[i],-100*f32(i)},6,2,i==5?4:1}}
+    river:=fluid_create(&w,{shape=.Path,density=1000},points[:])
+    testing.expect(t,river!={})
+    last:=max(f32)
+    for k in 0..<1000 {
+        at,_:=math.path_at(points[:],k/100,f32(k%100)/100)
+        height,_,_:=fluid_surface(&w,river,at.position.x,at.position.z)
+        testing.expectf(t,height<=last+1e-5,"the surface rises at %v: %v after %v",at.position,height,last)
+        last=height
+        sample,ok:=fluid_sample(&w,{at.position.x,height-0.5,at.position.z})
+        testing.expectf(t,ok && sample.density==1000,"water under its surface at %v",at.position)
+    }
+    drift :: proc(w:^World,body:Body_Handle) -> f32 {
+        v:=body_linear_velocity(w,body)
+        return cmath.sqrt(v.x*v.x+v.z*v.z)
+    }
+    slow:=solid(&w,Box{{0.4,0.4,0.4}},{points[1].position.x,0.2,-100},500)
+    fast:=solid(&w,Box{{0.4,0.4,0.4}},{points[5].position.x,-1.8,-500},500)
+    test_steps(&w,240)
+    testing.expectf(t,drift(&w,fast)>2.5 && drift(&w,slow)<1.5,"it drifts at %v m/s where it flows at 4, at %v where at 1",drift(&w,fast),drift(&w,slow))
+}
+
+// A body takes the water whose column holds it, not one whose box it is in:
+// a box in a lake that a river winds around stays afloat, a plank across two
+// pools floats level on both, and the air of a dry box over the plank keeps
+// both out of it.
+@(test)
+a_body_floats_in_the_water_it_is_in_and_in_both_across_a_border :: proc(t:^testing.T) {
+    w:World
+    testing.expect(t,test_world(&w))
+    defer world_destroy(&w)
+    river:=fluid_create(&w,{shape=.Path,density=1000},{{{-20,0,0},4,1,1},{{-20,0,-40},4,1,1},{{20,0,-40},4,1,1},{{20,0,0},4,1,1}})
+    lake:=fluid_create(&w,{shape=.Box,position={0,-1,-20},half_extents={8,1,8},density=1000})
+    left:=fluid_create(&w,{shape=.Box,position={-2,-1,40},half_extents={2,1,2},density=1000})
+    right:=fluid_create(&w,{shape=.Box,position={2,-1,40},half_extents={2,1,2},density=1000})
+    testing.expect(t,river!={} && lake!={} && left!={} && right!={})
+    raft:=solid(&w,Box{{0.4,0.4,0.4}},{0,0.2,-20},500)
+    plank:=solid(&w,Box{{1.5,0.1,0.5}},{0,0.1,40},500)
+    test_steps(&w,600)
+    at:=body_center(&w,raft)
+    testing.expectf(t,abs(at.y)<0.05,"the raft floats in the lake at %v",at)
+    level:=body_center(&w,plank)
+    body,_:=body_get(&w,plank)
+    up:=q_rotate(body.rotation,UP)
+    testing.expectf(t,abs(level.y)<0.02 && up.y>0.999,"the plank floats level across the two pools at %v, up %v",level,up)
+    wet,_:=submerged(&w,plank)
+    testing.expectf(t,abs(wet.volume-0.3)<0.01,"half of it is in the water of the two: %v m3",wet.volume)
+    dry_box(&w,{0,0,40},{2,1,1})
+    dry,_:=submerged(&w,plank)
+    testing.expectf(t,abs(dry.volume)<1e-5,"none of it is in either under the air: %v m3",dry.volume)
 }
 
 // Two paths whose ends meet, the second going on the way the first ends: across
@@ -149,8 +218,8 @@ two_paths_whose_ends_meet_hold_water_across_the_join :: proc(t:^testing.T) {
     testing.expect(t,test_world(&w))
     defer world_destroy(&w)
     water:=Fluid_Desc{shape=.Path,density=1000}
-    up:=fluid_create(&w,water,path_of({{{0,3,0},4,1},{{10,2,-10},4,1},{{10,1,-30},4,1}}))
-    down:=fluid_create(&w,water,path_of({{{10,1,-30},4,1},{{10,0,-50},4,1}}))
+    up:=fluid_create(&w,water,{{{0,3,0},4,1,0},{{10,2,-10},4,1,0},{{10,1,-30},4,1,0}})
+    down:=fluid_create(&w,water,{{{10,1,-30},4,1,0},{{10,0,-50},4,1,0}})
     testing.expect(t,up!={} && down!={})
     for x in ([]f32{8.1,9,10,11,11.9}) {
         for z in ([]f32{-29.9,-30,-30.1}) {

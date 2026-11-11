@@ -26,8 +26,8 @@ Stroke_Params :: struct {
 
 Stroke_Result :: struct {
     id:base.Entity_Id,
-    mesh:base.Asset_Id `mirai:"label=The painted copy the entity shows now; unsaved until saved"`,
-    path:[128]u8 `mirai:"text,label=Of the painted copy under the asset root"`,
+    colors:base.Asset_Id `mirai:"label=The .paint the entity shows now over its mesh; unsaved until saved"`,
+    path:[128]u8 `mirai:"text,label=Of the .paint under the asset root"`,
     vertices:u32 `mirai:"label=Of the mesh"`,
     changed:u32 `mirai:"label=Vertices whose color the stroke changed"`,
 }
@@ -42,8 +42,8 @@ Clear_Result :: struct {cleared:u32}
 api_register :: proc(s:^editor.Session) {
     editor.tool_entry(s,"paint","Paint",.Edit,{key=.B,set=true})
     defaults:=Stroke_Params{radius=RADIUS_DEFAULT,strength=STRENGTH_DEFAULT,color=COLOR_DEFAULT}
-    editor.api_method_register(s,{params=type_info_of(Stroke_Params),result=type_info_of(Stroke_Result),name="paint.stroke",summary="Paints the vertex colors of the mesh of an entity with the brush of the Paint tool along world points. One step of undo; the entity shows a painted copy of its mesh that stays unsaved until saved.",defaults=&defaults,run=api_stroke})
-    editor.api_method_register(s,{params=type_info_of(Clear_Params),result=type_info_of(Clear_Result),name="paint.clear",summary="Gives painted entities back the mesh or primitive they showed before their first stroke. One step of undo.",run=api_clear})
+    editor.api_method_register(s,{params=type_info_of(Stroke_Params),result=type_info_of(Stroke_Result),name="paint.stroke",summary="Paints the vertex colors of an entity over the mesh it shows with the brush of the Paint tool along world points, at every level of detail; other entities of the mesh keep theirs. One step of undo; the colors are a .paint that stays unsaved until saved.",defaults=&defaults,run=api_stroke})
+    editor.api_method_register(s,{params=type_info_of(Clear_Params),result=type_info_of(Clear_Result),name="paint.clear",summary="Gives painted entities back the vertex colors of their mesh. One step of undo.",run=api_clear})
 }
 
 @(private)
@@ -52,23 +52,24 @@ api_stroke :: proc(s:^editor.Session,call:^api.Call) {
     count,_:=api.params_array_count(call,"points")
     if count==0 {api.call_fail(call,api.INVALID_PARAMS,"points must list at least one world point of the stroke");return}
     app:=s.app
-    if app.assets==nil {api.call_fail(call,api.SERVER_ERROR,"The editor has no asset registry to write the painted mesh to");return}
+    if app.assets==nil {api.call_fail(call,api.SERVER_ERROR,"The editor has no asset registry to write the painted colors to");return}
     w:=editor.edited_world(s)
     e,named:=editor.api_call_entity(call,w,p.entity[:])
     if !named {return}
     given:=base.text_get(p.entity[:])
     source,shown:=editor.entity_get(w,e,erender.Mesh_Renderer)
+    painted,_:=editor.entity_get(w,e,paint.Painted)
     if !shown || (source.mesh=={} && source.shape==.None) {api.call_failf(call,api.INVALID_PARAMS,"entity %s shows no mesh; give it a Mesh_Renderer with a mesh asset or a shape",given);return}
     tool:=Paint_Tool{radius=p.radius,strength=p.strength,color=p.color}
     defer paint_tool_free(&tool)
     stroke:=&tool.stroke
-    if !stroke_load(stroke,app.assets,e,source,editor.entity_world(w,e),app.allocator) {
+    if !stroke_load(stroke,app.assets,e,source,painted.colors,editor.entity_world(w,e),app.allocator) {
         api.call_failf(call,api.INVALID_PARAMS,"the mesh of entity %s cannot be painted: it is not a mesh asset with vertices and valid indices",given)
         return
     }
-    touched:=stamp(stroke.positions,stroke.weights,p.points[0],tool.radius)
+    touched:=stamp(stroke.canvas.positions,stroke.weights,p.points[0],tool.radius)
     for at in 1..<count {
-        if stamp_segment(stroke.positions,stroke.weights,p.points[at-1],p.points[at],tool.radius) {touched=true}
+        if stamp_segment(stroke.canvas.positions,stroke.weights,p.points[at-1],p.points[at],tool.radius) {touched=true}
     }
     if !touched {
         api.call_failf(call,api.INVALID_PARAMS,"points: no vertex of entity %x is within %g m of the stroke; give points on its surface or a larger radius",p.entity,tool.radius)
@@ -76,13 +77,13 @@ api_stroke :: proc(s:^editor.Session,call:^api.Call) {
     }
     if !editor.api_edit_begin(s,call,"Paint") {return}
     written:=stroke_apply(s,stroke,w,app.assets,app.allocator,tool.color,tool.strength)
-    if !written {api.call_fail(call,api.SERVER_ERROR,"The painted mesh could not be written under the asset root")}
+    if !written {api.call_fail(call,api.SERVER_ERROR,"The painted colors could not be written under the asset root")}
     if !editor.api_edit_end(s,call,written) {return}
     out:=api.call_result(call,Stroke_Result)
-    out.id,out.mesh,out.vertices=editor.api_entity_id(w,e),stroke.id,u32(len(stroke.before))
-    fmt.bprintf(out.path[:],"%s/%016x.mesh",FOLDER,stroke.id[0])
-    for vertex,at in stroke.canvas.vertices {
-        if vertex.color!=stroke.before[at] {out.changed+=1}
+    out.id,out.colors,out.vertices=editor.api_entity_id(w,e),stroke.id,u32(len(stroke.before))
+    fmt.bprintf(out.path[:],"%s/%016x%s",FOLDER,stroke.id[0],paint.PAINT_EXTENSION)
+    for color,at in stroke.canvas.colors {
+        if color!=stroke.before[at] {out.changed+=1}
     }
 }
 

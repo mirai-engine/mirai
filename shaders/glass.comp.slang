@@ -49,7 +49,7 @@ float pane_thickness(uint instance, float3 normal, out float3 across) {
 Glass_Walk glass_entry(Material m, Glass g, uint instance, float3 direction, float bias) {
     float3 across;
     float pane = pane_thickness(instance, g.normal, across);
-    float3 outside = refract(direction, across, material_ior(m));
+    float3 outside = refract(direction, across, m.ior);
     if (pane > 0.0 && dot(outside, outside) > 0.0) {
         // Between parallel faces the view leaves through the far face, moved aside by its way through.
         float path = pane / max(dot(direction, -across), 1e-3);
@@ -89,7 +89,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
     // The light of the layer, then what comes through it of the scene behind:
     // what a solid absorbed of it on the way and scattered towards the eye on it.
     float bias = 1e-3 + 2e-4 * depth;
-    float3 direction = refract(-g.view, g.normal, 1.0 / material_ior(m));
+    float3 direction = refract(-g.view, g.normal, 1.0 / m.ior);
     Glass_Walk w;
     bool shade = false;
     Surface shown;

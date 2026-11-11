@@ -247,10 +247,8 @@ instances.
   to fix it and changes nothing. **`batch_remove`** removes it; a removed handle no longer names
   anything (generation). `batch_count` counts batches and instances.
 - **For extensions.** `batch_records` and `batch_info` traverse the batches (handle, world,
-  `object_id`, values, mesh, instances) and `batches_revision` rises when a batch arrives, leaves
-  or is set again. `batch_values_set` gives the `values` of a batch as an extension that is not
-  its owner would: it changes its row in place, without rebuilding the tables or raising the
-  revision, and they last until its owner sets it again.
+  `object_id`, mesh, instances) and `batches_revision` rises when a batch arrives, leaves or is
+  set again.
 - **CPU rays.** `batch_ray(r, world, origin, direction, distance)` gives the batch, the instance,
   the distance and the normal of the first thing a ray finds: the batch box, that of each instance
   and the level 0 triangles of its mesh at rest, from the renderer's CPU copies. It is what the
@@ -259,7 +257,7 @@ instances.
   `flags`, fade and cull distances, `vertex` (four numbers for the
   [vertex hook](views.md#extension-hooks-and-constants)), `reach` (the most that hook moves a
   point, in meters: the boxes of its instances and clusters with which the views clip grow by
-  that), `values` (those of `instance_values`) and `object_id`. `engine/render.batch_desc` builds
+  that) and `object_id`. `engine/render.batch_desc` builds
   it from a `Mesh_Renderer`. The material rows it derives (fade, override) live as long as the
   batch lives: `render_sync` retains them in each round of derived rows, so whoever publishes
   batches does not publish them again because what the entities show changes.

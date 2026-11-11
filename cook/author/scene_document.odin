@@ -54,7 +54,7 @@ component_default :: proc(type:typeid,out:[]u8) {
     switch type {
     case core.Transform:          put(out,core.TRANSFORM_IDENTITY)
     case erender.Mesh_Renderer:     put(out,erender.Mesh_Renderer{shape=.Cube})
-    case erender.Tint:            put(out,erender.TINT_DEFAULT)
+    case erender.Material_Values:            put(out,erender.MATERIAL_VALUES_DEFAULT)
     case erender.Camera:          put(out,erender.CAMERA_DEFAULT)
     case erender.Exposure:        put(out,erender.EXPOSURE_DEFAULT)
     case erender.Draw_Offset:     put(out,erender.Draw_Offset{rotation=1})
@@ -75,7 +75,7 @@ COMPONENT_LINKS_TEXT :: "%s: %s is what links an entity to its prefab, which a d
 component_listed :: proc(t:^core.Table_Info) -> bool {
     if t.derived {return false}
     switch t.type {
-    case core.Transform,core.Name,core.Id,core.Parent,core.Disabled,erender.Hidden,erender.Material_Override,
+    case core.Transform,core.Name,core.Id,core.Parent,core.Disabled,erender.Hidden,
          escene.Prefab_Instance,escene.Prefab_Member,escene.Section_Member: return false
     }
     return true
