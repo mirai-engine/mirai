@@ -12,14 +12,11 @@ import CA "vendor:darwin/QuartzCore"
 metal_unpaced_frames_keep_rendering_until_a_drawable_is_ready :: proc(t:^testing.T) {
 	NS.scoped_autoreleasepool()
 	shared_device.hold(t)
-	d,error:=rhi.device_create({validation=true,upload_bytes_per_frame=1<<20})
+	layer:=CA.MetalLayer.layer()
+	d,error:=rhi.device_create({validation=true,upload_bytes_per_frame=1<<20,surface={metal_layer=layer,width=8,height=8}})
 	testing.expect(t,d!=nil,error)
 	if d==nil {return}
 	defer rhi.device_destroy(d)
-	layer:=CA.MetalLayer.layer()
-	created:=rhi.swapchain_create(d,{metal_layer=layer,width=8,height=8})
-	testing.expect(t,created,rhi.device_error(d))
-	if !created {return}
 	// Holds the request until the GPU work without a drawable finishes.
 	a:=&d.swapchain.acquire
 	sync.mutex_lock(&a.mutex)

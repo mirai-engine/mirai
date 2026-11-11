@@ -30,6 +30,7 @@ Mtl_Texture :: struct {
 	format:    MTL.PixelFormat,
 	swapchain: bool, // handle is the current drawable texture, not owned
 	surface:   rawptr, // the IOSurface of a shared texture, owned
+	table:     Table_Refs,
 }
 
 Mtl_Slot :: struct {
@@ -322,6 +323,8 @@ device_create :: proc(desc: Device_Desc) -> (device: ^Device, error: string) {
 	d.capacities = device_capacities(desc.capacities)
 	d.on_message, d.message_user = desc.on_message, desc.message_user
 	ok := mtl_create_pools(d) && mtl_create_device(d, desc)
+	// Every Metal device of a Mac presents to the layer of its windows.
+	if ok && desc.surface != {} {ok = mtl_swapchain_create(d, desc.surface)}
 	if !ok {
 		error = strings.clone(d.error, context.temp_allocator)
 		device_destroy(d)
@@ -991,10 +994,10 @@ immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {
 
 // Surface_Desc.metal_layer is the CAMetalLayer of the window (for example from
 // SDL_Metal_GetLayer). The layer is retained until device_destroy.
-swapchain_create :: proc(d: ^Device, surface: Surface_Desc) -> bool {
+@(private)
+mtl_swapchain_create :: proc(d: ^Device, surface: Surface_Desc) -> bool {
 	NS.scoped_autoreleasepool()
-	if surface.metal_layer == nil {set_error(d, "Surface_Desc.metal_layer is nil"); return false}
-	if d.has_swapchain {set_error(d, "the device already has a swapchain"); return false}
+	if surface.metal_layer == nil {set_error(d, "a window needs Surface_Desc.metal_layer, the CAMetalLayer the platform layer gives"); return false}
 	sc := &d.swapchain
 	sc.layer = cast(^CA.MetalLayer)surface.metal_layer
 	mtl_retain(sc.layer)

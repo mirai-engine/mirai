@@ -126,6 +126,27 @@ table_take :: proc "contextless" (changes: ^Table_Changes, copy: int, out: []u32
 	return
 }
 
+// What the table knows of a texture: how many entries name it and the last one
+// it was put in, so destroying it looks at that entry alone in the common case.
+@(private)
+Table_Refs :: struct {count, last: u32}
+
+// An entry moves from the texture it named to the one it names now (nil: the default).
+@(private)
+table_refs_move :: proc "contextless" (before, after: ^Table_Refs, index: u32) {
+	if before != nil {before.count -= 1}
+	if after != nil {after.count += 1; after.last = index}
+}
+
+// The entries to look at for a texture that goes: none when no entry names it,
+// the last one it was put in when that is its only one, else the whole table.
+@(private)
+table_refs_range :: proc "contextless" (entries: []Texture, texture: Texture, refs: Table_Refs) -> (from, to: int) {
+	if refs.count == 0 {return 0, 0}
+	if refs.count == 1 && int(refs.last) < len(entries) && entries[refs.last] == texture {return int(refs.last), int(refs.last) + 1}
+	return 0, len(entries)
+}
+
 // The copy of the table a list reads: that of its frame slot, or the last
 // one for an immediate list.
 @(private)
@@ -592,6 +613,9 @@ Device_Desc :: struct {
 	vulkan_instance_extensions: []cstring, // window system extensions from the platform layer
 	upload_bytes_per_frame:     u64,      // transient ring capacity per frame in flight
 	preferred_device:           string,   // substring of the adapter name; MIRAI_GPU overrides
+	// The window the device presents to, made with the device: only a GPU that
+	// presents to it is chosen. Zero: no window, frames draw only into textures.
+	surface:                    Surface_Desc,
 	pipeline_cache_path:        string,   // Vulkan: compiled pipelines persisted across runs ("" = memory only)
 	capacities:                 Device_Capacities,
 	allocator:                  runtime.Allocator, // of the device and its tables; context.allocator when unset
@@ -680,6 +704,7 @@ Device_Stats :: struct {
 	buffers, textures, samplers, pipelines, accels: int, // alive, of those the user made: what it has to destroy
 	exhausted:          int, // creations refused because a pool or the frame ring was full
 	deletion_overflows: int, // times a frame slot held more destroyed objects than its capacity
+	host_memory:        int, // Vulkan: resources of GPU memory placed in system memory because device memory was full
 }
 
 @(private)
