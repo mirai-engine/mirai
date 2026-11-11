@@ -25,8 +25,10 @@ depends on `core:`, `std/base` and `std/math`.
 - `Keyframe` is the only key of the engine and `track_evaluate` the only reader of a keyed value:
   clips, the cinematics they play and the animations of an interface store and read the same.
 - The interpolation and easing of a `Keyframe` say how the value arrives at it from the previous
-  one; the comment of `Keyframe` defines the tangents of `Cubic` (Hermite). Outside the keys the
-  track holds its value; a NaN time gives the first one.
+  one; the comment of `Keyframe` defines the tangents of `Cubic` (Hermite). Without tangents a
+  `Cubic` segment never passes the value of a key: the slope is flat at the ends, at a peak and
+  beside an equal key (one key type for clips, fields and interfaces, with no overshoot to undo).
+  Outside the keys the track holds its value; a NaN time gives the first one.
 - In `Rotation`, `Cubic` is Shoemake's spherical spline (`squad`): it passes through each key, the
   turning speed does not jump and it does not use the slopes. `Cubic_Spline` is glTF's: it keeps the
   imported tangents per component.
