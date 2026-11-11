@@ -8,9 +8,10 @@ attributes and writes the code that joins the libraries. `mirai generate <projec
 `stage`, `after`, `before`, `server`, `shared`, `locks`, `host`, `by_world`, `copy`, `swap`, `free`,
 `replicated`, `setting`, `scene`, `description`, `queue`, `keep`, `reset`, `net_message`,
 `from`, `reliable`, `params`, `names`, `name_bits`, `name`, `name_requires`, `presentation`,
-`record`, `actions`, `draw`, `mind` and `act`. The CLI and `cook/build` pass it on their own; a
-hand-compiled program needs it. The `mirai` tool is compiled with `-ignore-unknown-attributes`: it
-does not use them, and one compiled before a new attribute does not know it.
+`record`, `actions`, `draw`, `mind`, `act`, `test_world` and `editor`. The CLI and `cook/build`
+pass it on their own; a hand-compiled program needs it. The `mirai` tool is compiled with
+`-ignore-unknown-attributes`: it does not use them, and one compiled before a new attribute does
+not know it.
 
 ## Which packages it reads
 
@@ -490,14 +491,19 @@ return.
   ([binaries](../../mirai-projects/references/projects.md#engine-binaries)) and loaded by
   `mirai-editor` and `mirai-player` ([host](host.md#project-libraries)).
 - `editor` imports `generated:editor_world` and `game`, `generated:shipped_world`, as `world`.
+- `worlds_gen_test.odin`, in the folder of each package whose tests declare a `@(test_world)`:
+  the `World_Info` of each, with the header and the procedures that make a world of one
+  ([test worlds](core.md#test-worlds)). `test_worlds_write` writes it for the packages a check or
+  a build of tests reads with their tests.
 
 ## Changing the generator
 
 - A new attribute goes into `CUSTOM_ATTRIBUTES`, the attribute reader and the list of
   [attributes](#attributes); the consumers of the `World_Info` are updated in the same task.
-- What an attribute says of a component or a storage is read in `core.declared_read`, which the
-  [test worlds](core.md#test-worlds) read too; what the generated world does with it (init, copy,
-  swap, clear) is done as well by the builder of `core/test_world.odin`.
+- What an attribute says of a component or a storage is read once, in `type_read`, and its row of
+  the `World_Info` is written once (`type_procs_write`, `table_row`, `storage_row`): the world of a
+  game and the [test worlds](core.md#test-worlds) (`test_worlds_write`) go through them, so a new
+  attribute reaches both.
 - Error messages say what to do, not only what failed.
 - The generator does not run code of the project or of the engine: it reads syntax. Sizes and
   alignments are computed by the compiler when it compiles the written world.

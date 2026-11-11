@@ -15,8 +15,9 @@ import mm "mirai:std/math"
 @(private) Loading_Model :: struct {mesh:base.Asset_Id}
 
 @(private)
+@(test_world)
 Loading_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -45,7 +46,7 @@ Loading_Project :: struct {
 loading_open :: proc(t:^testing.T,p:^Loading_Project,name:string,threads:int) -> bool {
     p.folder=base.test_folder(t,fmt.tprintf("loading-%s",name))
     if p.folder=="" {return false}
-    p.info=core.test_info(t,Loading_World,test_types) or_return
+    p.info=test_info(t,Loading_World) or_return
     asset.types_init(&p.types)
     if !testing.expect(t,host.assets_init(&p.assets,{root=p.folder,capacity=64})) {return false}
     p.app={info=&p.info,assets=&p.assets,allocator=context.allocator}
@@ -64,7 +65,7 @@ loading_close :: proc(p:^Loading_Project) {
     host.assets_marks_free(&p.app.asset_marks)
     host.assets_destroy(&p.assets)
     asset.types_destroy(&p.types)
-    core.test_info_destroy(&p.info)
+    test_info_destroy(&p.info)
 }
 
 // A mesh of about bytes of clusters, with the material of its slot.
@@ -385,6 +386,9 @@ the_sections_loading_tell_how_far_they_are :: proc(t:^testing.T) {
     defer {for l in loads.items {if l.job!=nil {load_free(l.job)}}}
     step :: proc(p:^Loading_Project,world:core.World_Ref,requests:^Section_Requests,loads:^Section_Loads,loading:^Section_Loading,problems:^core.Problems) {
         p.app.stats.frames+=1
+        // A frame with time to spare: what it takes is decided by bytes, not by how loaded the machine is.
+        b:=&p.assets.loads
+        b.frame,b.seconds,b.bytes,b.served=p.app.stats.frames,-3600,0,0
         w:=cast(^Loading_World)world.data
         scene_sections(world,&p.app,&w.references,requests,loads,loading,{},{},nil,problems)
         core.settle(&p.info,w,nil)

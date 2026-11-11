@@ -60,9 +60,10 @@ fixture_destroy :: proc(f:^Fixture) {
     host.assets_destroy(&f.assets)
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Audio_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     sources:core.Table(Audio_Source),
     states:core.Table(Audio_Source_State),
     worlds:core.Table(core.World_Transform),
@@ -84,27 +85,27 @@ Heard_World :: struct {
 
 @(private="file")
 world_init :: proc(t:^testing.T,w:^Heard_World,source:Audio_Source,position:[3]f32={}) -> (e:core.Entity,ok:bool) {
-    core.test_world_init(t,&w.data,test_types) or_return
+    test_world_init(t,&w.data) or_return
     e=core.create(&w.entities)
     core.add(&w.sources,e,source)
     placed:=mm.TRANSFORM_IDENTITY
     placed.position=position
     core.add(&w.worlds,e,core.World_Transform{placed,placed})
-    core.test_world_settle(&w.data)
+    test_world_settle(&w.data)
     return e,true
 }
 
 @(private="file")
 world_destroy :: proc(w:^Heard_World) {
     core.value_free(&w.voices,type_info_of(Voices))
-    core.test_world_destroy(&w.data)
+    test_world_destroy(&w.data)
 }
 
 @(private="file")
 world_run :: proc(w:^Heard_World,listener:^Mixer_Listener,app:^host.App,dt:f32=1.0/60) {
     hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),w.query}
     sources_update(core.read(&w.sources),&w.states,hearing,dt,&w.voices,listener,app,nil)
-    core.test_world_settle(&w.data)
+    test_world_settle(&w.data)
 }
 
 // A Play beside the world it was copied from, or the run of an agent stepped
@@ -148,7 +149,7 @@ each_world_keeps_its_voices_and_freeing_one_stops_only_its_own :: proc(t:^testin
 
     // A source that goes takes its voice with it.
     core.remove(&shown.sources,e)
-    core.test_world_settle(&shown.data)
+    test_world_settle(&shown.data)
     world_run(&shown,&listener,&f.app)
     testing.expect_value(t,len(shown.voices.entries.values),0)
 }
@@ -326,7 +327,7 @@ without_a_listener_the_view_hears_and_moving_gives_it_a_velocity :: proc(t:^test
     placed:=mm.TRANSFORM_IDENTITY
     placed.position={0,2,0}
     core.add(&w.worlds,hearer,core.World_Transform{placed,placed})
-    core.test_world_settle(&w.data)
+    test_world_settle(&w.data)
     world_run(&w,&listener,&f.app,0.5)
     testing.expect(t,listener.position==[3]f32{0,2,0})
     testing.expect(t,!math.is_nan(listener.velocity.x))
@@ -352,7 +353,7 @@ a_source_behind_a_wall_is_muffled_and_comes_back_over_its_fade :: proc(t:^testin
     wall:=true
     w.query={user=&wall,probe=wall_probe}
     core.add(&w.occlusions,e,Audio_Occlusion{radius=0,fade=0.5})
-    core.test_world_settle(&w.data)
+    test_world_settle(&w.data)
     world_run(&w,&listener,&f.app,0.1)
     entry:=core.entity_map_get(&w.voices.entries,e)
     testing.expect(t,entry!=nil && core.at(&w.states,core.row_of(&w.states,e)).occlusion==1,"a voice that starts hidden is hidden at once")
@@ -400,7 +401,7 @@ a_wide_source_behind_the_edge_of_a_wall_is_partly_hidden :: proc(t:^testing.T) {
     core.add(&w.materials,wall,Audio_Material{transmission={0.5,0.25,0.04}})
     w.query={user=&wall,probe=half_wall_probe}
     core.add(&w.occlusions,e,Audio_Occlusion{radius=1,fade=0})
-    core.test_world_settle(&w.data)
+    test_world_settle(&w.data)
     world_run(&w,&listener,&f.app)
     state,_:=core.get(&w.states,e)
     testing.expectf(t,state.occlusion>0.2 && state.occlusion<0.95,"part of it is hidden: %v",state.occlusion)
@@ -426,8 +427,8 @@ the_reverb_is_that_of_the_volumes_the_listener_is_in :: proc(t:^testing.T) {
     if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     w:Audio_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     place :: proc(p:^Audio_World,reverb:Audio_Reverb,v:Maybe(volume.Volume),position,scale:[3]f32) {
         e:=core.create(&p.entities)
         core.add(&p.reverbs,e,reverb)
@@ -438,13 +439,14 @@ the_reverb_is_that_of_the_volumes_the_listener_is_in :: proc(t:^testing.T) {
     }
     level,hall,cave,closet:=Audio_Reverb{room_size=0.5,wet=0.25},AUDIO_REVERB_DEFAULT,AUDIO_REVERB_DEFAULT,AUDIO_REVERB_DEFAULT
     hall.room_size,cave.room_size,closet.room_size=0.9,0.3,0.1
+    hall.zone,cave.zone={},{}
     place(&w,level,nil,{},{1,1,1})
     place(&w,hall,volume.Volume{shape=.Box,extents={20,10,20}},{},{1,1,1})
     place(&w,cave,volume.Volume{shape=.Box,extents={2,2,2}},{10,0,0},{2,1,1}) // 4 m along x once scaled
-    place(&w,closet,volume.Volume{shape=.Box,extents={1,1,1},priority=-1},{13,0,0},{1,1,1})
-    core.test_world_settle(&w)
+    place(&w,{room_size=closet.room_size,zone={priority=-1}},volume.box({1,1,1}),{13,0,0},{1,1,1})
+    test_world_settle(&w)
     at :: proc(p:^Audio_World,point:[3]f32) -> f32 {
-        return volume.at(core.read(&p.volumes),core.read(&p.worlds),&p.reverbs,point,Audio_Reverb{},reverb_mix).room_size
+        return volume.at({volumes=core.read(&p.volumes),worlds=core.read(&p.worlds)},core.read(&p.reverbs),point,Audio_Reverb{},reverb_mix).room_size
     }
     testing.expect_value(t,at(&w,{0,0,0}),f32(0.9))
     testing.expect_value(t,at(&w,{13.5,0,0}),f32(0.3))
@@ -454,18 +456,18 @@ the_reverb_is_that_of_the_volumes_the_listener_is_in :: proc(t:^testing.T) {
     w.view=core.View{position={0,15,0},rotation=1}
     mixer_reverb:Mixer_Reverb
     run :: proc(p:^Audio_World,settings:^Audio_Settings,dt:f32,r:^Mixer_Reverb,app:^host.App) {
-        audio_reverb(core.read(&p.reverbs),core.read(&p.volumes),core.read(&p.worlds),core.read(&p.listeners),core.ref(&p.view),core.ref(settings),{},{dt=dt},r,app.mixer)
+        audio_reverb(core.read(&p.reverbs),core.read(&p.volumes),core.read(&p.worlds),nil,nil,core.read(&p.listeners),core.ref(&p.view),core.ref(settings),{},{dt=dt},r,app.mixer)
     }
     run(&w,&settings,0.1,&mixer_reverb,&f.app)
     got,_:=mixer.reverb_get(f.app.mixer)
-    testing.expect(t,got==transmute(Reverb)level,"outside of every box, the level; the first one at once")
+    testing.expect(t,got==(^Reverb)(&level)^,"outside of every box, the level; the first one at once")
     w.view.position={0,0,0}
     run(&w,&settings,0.1,&mixer_reverb,&f.app)
     got,_=mixer.reverb_get(f.app.mixer)
     testing.expect(t,got.room_size>0.5 && got.room_size<0.9,"it goes toward the hall")
     for _ in 0..<40 {run(&w,&settings,0.1,&mixer_reverb,&f.app)}
     got,_=mixer.reverb_get(f.app.mixer)
-    testing.expect(t,got==transmute(Reverb)hall,"and gets there")
+    testing.expect(t,got==(^Reverb)(&hall)^,"and gets there")
 }
 
 // Under the water the master loses its highs, by the lower of its own cutoff
@@ -493,17 +495,17 @@ the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb :: proc(t:^
     testing.expect_value(t,mixer.bus_lowpass(m,mixer.BUS_MASTER),f32(4000))
 
     room:Audio_World
-    if !core.test_world_init(t,&room,test_types) {return}
-    defer core.test_world_destroy(&room)
+    if !test_world_init(t,&room) {return}
+    defer test_world_destroy(&room)
     level:=Audio_Reverb{room_size=0.5,damping=0.1,wet=0.2,width=1}
     e:=core.create(&room.entities)
     core.add(&room.reverbs,e,level)
     core.add(&room.worlds,e,core.World_Transform{mm.TRANSFORM_IDENTITY,mm.TRANSFORM_IDENTITY})
-    core.test_world_settle(&room)
+    test_world_settle(&room)
     room.view=core.View{position={0,-2,0},rotation=1}
     mixed:Mixer_Reverb
     hear :: proc(r:^core.Table(Audio_Reverb,$A),v:^core.Table(volume.Volume,$B),w:^core.Table(core.World_Transform,$C),l:^core.Table(Audio_Listener,$D),view:^core.View,settings:^Audio_Settings,medium:^Audio_Medium,mixed:^Mixer_Reverb,app:^host.App) -> Reverb {
-        for _ in 0..<60 {audio_reverb(r,v,w,l,core.ref(view),core.ref(settings),core.ref(medium),{dt=0.1},mixed,app.mixer)}
+        for _ in 0..<60 {audio_reverb(r,v,w,nil,nil,l,core.ref(view),core.ref(settings),core.ref(medium),{dt=0.1},mixed,app.mixer)}
         got,_:=mixer.reverb_get(app.mixer)
         return got
     }
@@ -513,7 +515,7 @@ the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb :: proc(t:^
     water.weight=0.5
     half:=Reverb{0.4,0.5,0.4,0.75}
     testing.expect(t,near(hear(core.read(r),core.read(v),core.read(w),core.read(l),&room.view,&settings,&water,&mixed,&f.app),half),"half of each")
-    testing.expect(t,near(hear(core.read(r),core.read(v),core.read(w),core.read(l),&room.view,&settings,&air,&mixed,&f.app),transmute(Reverb)level),"in the air, the room")
+    testing.expect(t,near(hear(core.read(r),core.read(v),core.read(w),core.read(l),&room.view,&settings,&air,&mixed,&f.app),(^Reverb)(&level)^),"in the air, the room")
     position,found:=listener_position(core.read(w),core.read(l),core.ref(&room.view))
     testing.expect(t,found && position==room.view.position,"without an Audio_Listener the View hears")
 }
@@ -696,7 +698,7 @@ the_loudest_sources_hold_the_voices_and_the_others_keep_their_time :: proc(t:^te
         placed.position={0,0,-(1+f32(i)*0.2)}
         core.add(&w.worlds,e,core.World_Transform{placed,placed})
     }
-    core.test_world_settle(&w.data)
+    test_world_settle(&w.data)
     frame :: proc(w:^Heard_World,listener:^Mixer_Listener,app:^host.App) {
         out:[mixer.CHUNK_FRAMES*2]f32
         world_run(w,listener,app)
@@ -722,7 +724,7 @@ the_loudest_sources_hold_the_voices_and_the_others_keep_their_time :: proc(t:^te
             context.allocator,context.temp_allocator=mem.tracking_allocator(&track),mem.tracking_allocator(&track)
             sources_update(core.read(&w.sources),&w.states,hearing,1.0/60,&w.voices,&listener,&f.app,nil)
         }
-        core.test_world_settle(&w.data)
+        test_world_settle(&w.data)
         out:[mixer.CHUNK_FRAMES*2]f32
         for _ in 0..<3 {mixer.mixer_render(m,out[:])}
         mixer.mixer_update(m)

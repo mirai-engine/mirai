@@ -2,13 +2,11 @@ package input
 
 import "mirai:core"
 
-// What the declarations of this library name: core.Test_Types.
-test_types :: proc(types:^[dynamic]core.Test_Type) {}
-
 // The world the tests of this library share.
 @(private)
+@(test_world)
 Test_Seats :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     seats:core.Table(Seat),
     moves:core.Table(Move_Input),
     worlds:core.Table(core.World_Transform),

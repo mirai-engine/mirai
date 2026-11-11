@@ -12,9 +12,10 @@ import gpu "mirai:render"
 import mm "mirai:std/math"
 import phys "plugins:physics/runtime"
 
-@(private="file")
+@(private)
+@(test_world)
 Preview_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     fields:core.Table(phys.Force_Field),
     volumes:core.Table(volume.Volume),
     transforms:core.Table(core.Transform),
@@ -32,8 +33,8 @@ preview_run :: proc(w:^Preview_World,session:^editor.Session,preview:^Force_Fiel
 @(test)
 selected_force_fields_show_where_they_push_in_their_volume :: proc(t:^testing.T) {
     w:Preview_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     parent,entity,other:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     field:=phys.FORCE_FIELD_DEFAULT
     field.force,field.along=-20,{1,0,0}
@@ -42,7 +43,7 @@ selected_force_fields_show_where_they_push_in_their_volume :: proc(t:^testing.T)
     core.add(&w.transforms,parent,core.Transform{{3,4,5},mm.quat_axis_angle({0,1,0},mm.PI*.5),{2,1,.5}})
     core.add(&w.transforms,entity,core.Transform{{1,0,0},1,{1,2,3}})
     core.add(&w.transforms,other,core.TRANSFORM_DEFAULT);core.add(&w.parents,entity,{entity=parent})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     selection:history.Selection;defer delete(selection.entities)
     history.selection_set(&selection,{entity})
     session:=editor.Session{selection=&selection}

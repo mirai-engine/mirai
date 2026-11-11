@@ -13,16 +13,17 @@ import "mirai:std/base"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
 
-@(private="file")
+@(private)
+@(test_world)
 Cache_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using rows:destruct.Test_Destruct,
 }
 
 @(private="file")
 cache_test_step :: proc(w:^Cache_Test_World,h:^destruct.Test_Destruct_Host,tick:u64) {
-    destruct.test_step(&w.rows,h,core.commands_of(core.test_world_ref(w)),{playing=true,dt=1.0/60,tick=tick})
-    core.test_world_settle(w)
+    destruct.test_step(&w.rows,h,core.commands_of(test_world_ref(w)),{playing=true,dt=1.0/60,tick=tick})
+    test_world_settle(w)
 }
 
 @(test)
@@ -36,15 +37,15 @@ destructible_geometry_and_detached_group_poses_play_after_the_source_world_is_de
     testing.expect(t,jobs.system_init(&h.app.jobs,{threads=0}))
     defer jobs.system_destroy(&h.app.jobs)
     world:Cache_Test_World
-    if !core.test_world_init(t,&world,destruct.test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     if !testing.expect(t,phys.test_state_make(&world.physics,{bodies=32,shapes=64,contacts=128,joints=8,hulls=64,events=32,breakables=2,pieces=16,bonds=64})) {return}
     defer destruct.cache_destroy(h.app.assets,&h.app.jobs,&h.cache)
     owner:=core.create(&world.entities)
     core.add(&world.transforms,owner,core.Transform{position={3,2,-4},rotation=1,scale={1,1,1}})
     core.add(&world.meshes,owner,render.Mesh_Renderer{shape=.Cube})
     core.add(&world.configs,owner,destruct.destructible(pieces=4,seed=55))
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     for tick in 0..<4 {cache_test_step(&world,&h,u64(tick))}
     state,has:=core.get(&world.states,owner)
     if !testing.expect(t,has && phys.breakable_valid(core.ref(&world.physics),state.handle)) {return}

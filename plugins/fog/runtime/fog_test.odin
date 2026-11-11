@@ -10,7 +10,7 @@ import mm "mirai:std/math"
 fog_volumes_go_to_the_shaders_relative_to_the_origin :: proc(t:^testing.T) {
     state:Fog_Gpu
     pose:=mm.Transform{position={-18000.5,250,9000},rotation=1,scale=1}
-    state.volumes[0]={volume=volume.gpu_volume(volume.Volume{shape=.Box,extents={10,5,10}},pose),medium={0.1,0.1,0.1,0.1},params={0,0.5,0.2,245}}
+    state.volumes[0]={volume=volume.gpu_volume(volume.box({10,5,10}),pose,{}),medium={0.1,0.1,0.1,0.1},params={0,0.5,0.2,245}}
     state.count=1
     origin:=[3]f32{-17408,0,9216}
     got:=volumes_relative(&state,origin)[0]

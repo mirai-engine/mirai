@@ -9,18 +9,18 @@ import mm "mirai:std/math"
 @(test)
 set_hidden_gives_and_takes_hidden_once :: proc(t:^testing.T) {
     w:Render_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     e:=core.create(&w.entities)
     set_hidden(&w.hidden,e,true)
     set_hidden(&w.hidden,core.NONE,true)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     testing.expect(t,core.has(&w.hidden,e) && core.count(&w.hidden)==1)
     set_hidden(&w.hidden,e,true)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     testing.expect_value(t,core.count(&w.hidden),1)
     set_hidden(&w.hidden,e,false)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     testing.expect(t,!core.has(&w.hidden,e))
 }
 

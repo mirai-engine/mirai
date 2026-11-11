@@ -4,8 +4,9 @@ import "core:testing"
 import "mirai:core"
 import "mirai:platform"
 
+@(test_world)
 Input_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     time:core.Time,
     input:core.Input,
     frame:core.Frame_Input,
@@ -27,9 +28,9 @@ frame_input_is_immediate_without_consuming_or_repeating_tick_input :: proc(t:^te
     if p==nil {return}
     defer platform.destroy(p)
     w:Input_Test_World
-    if !core.test_world_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
-    info:=core.test_world_info(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    info:=test_world_info(&w)
     info.loops[.Game][.Fixed]=input_test_tick
     app:=App{info=info,platform=p,tick_dt=1.0/60,max_ticks=8}
     defer delete(app.worlds)

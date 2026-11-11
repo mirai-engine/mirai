@@ -56,6 +56,7 @@ finite_block :: #force_inline proc "contextless" (values:[]$T) -> bool {
 
 @(private) q_rotate :: #force_inline proc "contextless" (q:Quat,v:Vec3) -> Vec3 {return math.quat_rotate(q,v)}
 @(private) q_inv_rotate :: #force_inline proc "contextless" (q:Quat,v:Vec3) -> Vec3 {return math.quat_rotate(conj(q),v)}
+@(private) q_dot :: #force_inline proc "contextless" (a,b:Quat) -> f32 {return a.w*b.w+a.x*b.x+a.y*b.y+a.z*b.z}
 @(private) q_normalize :: #force_inline proc "contextless" (q:Quat) -> Quat {
     l:=cmath.sqrt(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w)
     if l<1e-20 {return QUAT_IDENTITY}

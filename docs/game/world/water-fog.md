@@ -29,16 +29,16 @@ $P scene.write '{"merge":true,"entities":[
   the spline lies on the ground, and its water is the `height` of each point deep over it and as
   wide as the point, level across. The `current` of the `Fluid` is in the frame of the path: `-z`
   flows toward its last point, and what floats drifts with it. It ends at its first and last point.
-  Where it runs into a lake or the sea, the one the physics takes there by `priority` is drawn (a
-  `Volume` on the river gives only its priority).
+  Where it runs into a lake or the sea, the one the physics takes there by the `priority` of each
+  `Fluid` is drawn.
 - Density 1000 is fresh water, 1025 the sea; 0 is a dry box, the air of a room under the sea: give
-  its `Volume` a higher `priority` than that of the water it cuts.
+  its `Fluid` a higher `priority` than that of the water it cuts.
 - `Fluid_Waves` makes waves on a sea, from the `Wind` of the world (a `Wind` with no
   `Volume` blows everywhere) and its own trains; bodies float on them and swimmers ride them.
 - `Water` changes the look: its `material` (a `.mat`), how it absorbs and scatters light, shafts
   and caustics. Through the API, `{}` adds it at its starting value, `water.WATER_DEFAULT`.
 - Code: `phys.Fluid{density=1025}` with `volume.plane()` is a sea, `phys.FLUID_DEFAULT` with
-  `volume.box(half)` a pool, and `phys.Fluid{}` with `volume.box(half,priority=1)` a dry box.
+  `volume.box(half)` a pool, and `phys.Fluid{priority=1}` with `volume.box(half)` a dry box.
 
 ## Fog and haze
 

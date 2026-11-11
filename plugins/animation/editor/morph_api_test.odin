@@ -14,9 +14,10 @@ import "mirai:std/base"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
-@(private="file")
+@(private)
+@(test_world,host="Morph_Api_Test_Shared")
 Morph_Api_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     parents:core.Table(core.Parent),
     meshes:core.Table(erender.Mesh_Renderer),
@@ -26,7 +27,7 @@ Morph_Api_Test_World :: struct {
     sources:core.Table(anim.Pose_Source),
     morphs:anim.Morph_Playback,
 }
-@(private="file")
+@(private)
 Morph_Api_Test_Shared :: struct {skin:anim.Skin_Runtime}
 
 @(test)
@@ -38,9 +39,9 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
     vertices:=[3]asset.Vertex{{position={0,0,0}},{position={1,0,0}},{position={0,1,0}}}
     if !testing.expect_value(t,source_mesh_save(fmt.tprintf("%s/face.mesh",f.root),&f.assets.types,{id=id},{vertices=vertices[:],morphs=targets[:]},{0,1,2}),asset.Error.None) {return}
     testing.expect(t,host.assets_scan(&f.assets))
-    info,described:=core.test_info(t,Morph_Api_Test_World,Morph_Api_Test_Shared,core.Test_None,anim.test_types)
+    info,described:=test_info(t,Morph_Api_Test_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     document,play:Morph_Api_Test_World
     defer for world in ([2]^Morph_Api_Test_World{&document,&play}) {core.world_destroy(&info,.World,world)}
     for world in ([2]^Morph_Api_Test_World{&document,&play}) {

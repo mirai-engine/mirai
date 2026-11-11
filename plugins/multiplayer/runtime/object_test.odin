@@ -10,9 +10,10 @@ import wire "mirai:net"
 @(component,replicated="object")
 Net_Test_Object :: struct {count:u32}
 
-@(private="file")
+@(private)
+@(test_world)
 Object_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using net:Net_Test_Tables,
     taken:core.Table(Net_Test_Object),
 }
@@ -22,9 +23,9 @@ Object_World :: struct {
 // its component and what changes in it later.
 @(test)
 an_entity_with_a_replicated_object_component_reaches_a_client :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Object_World,net_test_types)
+    info,described:=test_info(t,Object_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.loops[.Game][.Fixed]=net_test_fixed
     worlds:[2]Object_World
     shares:[2]Net_Test_Shared

@@ -21,8 +21,8 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
     defer host.app_destroy(app)
     gpu.renderer_set_display_transform(app.renderer,.ACES_2) // the pixels below are calibrated to it
     w:Render_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     sync:Render_Sync;defer sync_free(&sync)
     w.view.position,w.view.rotation,w.view.size={0,0,5},1,{160,120}
     entities:=[2]core.Entity{core.create(&w.entities),core.create(&w.entities)}
@@ -32,7 +32,7 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
         core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
         core.add(&w.tints,e,Tint{color=i==0?[4]f32{1,0,0,1}:{0,1,0,1},emission=i==0?[3]f32{3,0,0}:{0,3,0}})
     }
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     draw :: proc(sync:^Render_Sync,app:^host.App,w:^Render_World) {
         host.app_camera_set(app,host.camera_from_view(w.view),w.view.cut,w.view.carried)
         world_sync(w,sync,app)
@@ -86,13 +86,13 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
     testing.expect_value(t,tracking.total_allocation_count,allocations)
     testing.expect_value(t,len(app.assets.material_descs),material_rows)
     testing.expect(t,app.assets.stats.derived<=1)
-    core.remove(&w.meshes,entities[1]);core.test_world_settle(&w)
+    core.remove(&w.meshes,entities[1]);test_world_settle(&w)
     host.app_frame_begin(app)
     draw(&sync,app,&w)
     host.app_frame_end(app)
     testing.expect_value(t,len(app.renderer.scene.instances),1)
     testing.expect_value(t,sync.drawn.entities[0],entities[0])
-    core.add(&w.meshes,entities[1],Mesh_Renderer{shape=.Cube});core.test_world_settle(&w)
+    core.add(&w.meshes,entities[1],Mesh_Renderer{shape=.Cube});test_world_settle(&w)
     host.app_frame_begin(app)
     draw(&sync,app,&w)
     host.app_frame_end(app)

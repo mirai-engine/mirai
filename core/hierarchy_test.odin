@@ -5,7 +5,8 @@ import "core:math/linalg"
 import "core:testing"
 import mm "mirai:std/math"
 
-@(private="file")
+@(private)
+@(test_world)
 Tree_World :: struct {
     using world:Test_World,
     disabled:Table(Disabled),

@@ -19,8 +19,9 @@ import anim "plugins:animation/runtime"
 import phys "plugins:physics/runtime"
 import rag "plugins:ragdoll/runtime"
 
+@(test_world)
 Setup_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -101,7 +102,7 @@ setup_test_rig :: proc(f:^Setup_Test,t:^testing.T,name:string,id:base.Entity_Id,
     e:=core.create(&w.entities)
     core.add(&w.ids,e,core.Id{id});core.add(&w.names,e,core.name_make(name));core.add(&w.transforms,e,core.from_math(pose))
     core.add(&w.meshes,e,erender.Mesh_Renderer{mesh=mesh_id});core.add(&w.animations,e,anim.ANIMATION_DEFAULT)
-    core.test_world_settle(w)
+    test_world_settle(w)
     return e
 }
 
@@ -112,10 +113,10 @@ setup_test_init :: proc(f:^Setup_Test,t:^testing.T,name:string) -> bool {
     if !testing.expect(t,host.assets_init(&f.assets,{root=f.root,capacity=8,error_capacity=8})) {return false}
     f.app.assets,f.app.allocator=&f.assets,context.allocator
     w:=&f.world
-    if !core.test_world_init(t,w,rag.test_types) {return false}
+    if !test_world_init(t,w) {return false}
     f.document=new(editor.Document)
-    f.session=editor.Session{app=&f.app,assets_root=f.root,mode=.Edit,headless=true,info=core.test_world_info(w),edit_world=&f.world,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui,document=f.document,id_state=977}
-    history.edits_reset(&f.edits,core.test_world_ref(&f.world))
+    f.session=editor.Session{app=&f.app,assets_root=f.root,mode=.Edit,headless=true,info=test_world_info(w),edit_world=&f.world,selection=&f.selection,edits=&f.edits,viewport=&f.viewport,gui=&f.gui,document=f.document,id_state=977}
+    history.edits_reset(&f.edits,test_world_ref(&f.world))
     if !testing.expect_value(t,api.server_init(&f.server,{max_connections=1,max_methods=4}),api.Init_Error.None) {return false}
     serial.writer_init(&f.out,1<<20)
     defaults:=new(Ragdoll_Setup_Params,context.temp_allocator);defaults^={mode=rag.RAGDOLL_DEFAULT.mode}
@@ -123,13 +124,13 @@ setup_test_init :: proc(f:^Setup_Test,t:^testing.T,name:string) -> bool {
     turned:=mm.Transform{{2,0,3},mm.quat_axis_angle({0,1,0},.5),{1,1,1}}
     f.figure=setup_test_rig(f,t,"figure",0x11,701,true,turned)
     f.plain=setup_test_rig(f,t,"plain",0x12,702,false,mm.TRANSFORM_IDENTITY)
-    history.edits_reset(&f.edits,core.test_world_ref(&f.world))
+    history.edits_reset(&f.edits,test_world_ref(&f.world))
     return true
 }
 
 @(private)
 setup_test_destroy :: proc(f:^Setup_Test) {
-    core.test_world_destroy(&f.world)
+    test_world_destroy(&f.world)
     history.edits_free(&f.edits);delete(f.selection.entities);free(f.document)
     host.app_content_destroy(&f.app)
     serial.writer_destroy(&f.out);api.server_destroy(&f.server);host.assets_destroy(&f.assets)
@@ -230,7 +231,7 @@ ragdoll_setup_builds_a_body_and_limited_joint_per_part_of_a_humanoid_in_one_step
     }
     testing.expect(t,abs(mass-70)<.01)
 
-    ref:=core.test_world_ref(&f.world)
+    ref:=test_world_ref(&f.world)
     testing.expect(t,history.undo(&f.edits,ref,&f.selection))
     testing.expect(t,len(w.bones.values)==0 && len(w.rigids.values)==0 && len(w.joints.values)==0 && !core.has(&w.configs,f.figure))
     testing.expect(t,history.redo(&f.edits,ref,&f.selection))
@@ -247,7 +248,7 @@ ragdoll_setup_finds_a_body_the_skeleton_does_not_store_and_leaves_the_skeleton_a
     testing.expect(t,core.has(&f.world.configs,f.plain))
     testing.expect_value(t,f.edits.cursor,1)
     testing.expect_value(t,len(host.assets_unsaved(&f.assets)),0)
-    core.remove(&f.world.animations,f.figure);core.test_world_settle(&f.world)
+    core.remove(&f.world.animations,f.figure);test_world_settle(&f.world)
     result,_=setup_test_call(f,`{"entity":"0000000000000011"}`)
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Missing_Component"`))
     f.session.mode=.Play
@@ -271,6 +272,6 @@ ragdoll_setup_replaces_the_ragdoll_of_a_rig_in_one_step_of_undo :: proc(t:^testi
     for _,e in first {testing.expect(t,!core.alive(&w.entities,e))}
     testing.expectf(t,len(w.bones.values)==16 && len(w.rigids.values)==16 && len(w.joints.values)==15,"%v %v %v",len(w.bones.values),len(w.rigids.values),len(w.joints.values))
     testing.expect(t,core.at(&w.configs,core.row_of(&w.configs,f.figure)).mode==.Driven && f.edits.cursor==2)
-    testing.expect(t,history.undo(&f.edits,core.test_world_ref(&f.world),&f.selection))
+    testing.expect(t,history.undo(&f.edits,test_world_ref(&f.world),&f.selection))
     testing.expect(t,len(w.bones.values)==16 && core.at(&w.configs,core.row_of(&w.configs,f.figure)).mode==.Simulated)
 }

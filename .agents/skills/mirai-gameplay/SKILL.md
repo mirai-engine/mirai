@@ -144,11 +144,14 @@ the same attributes and no private paths. Declaration and parameter binding:
   `Spawn_Point`s with `players` on of the `spawn` plugin when a player prefab is named, not through
   game code; a point with `players` off serves what the game spawns (enemies) and never gives a
   seat its body. The number of local players is of the run ([control](references/control.md)).
-- **Volumes: one algorithm and an unbounded base value.** Gravity, wind, reverb, view and fog
-  change per zone with a single algorithm: each volume has a priority and says whether it adds to
-  or replaces what is below, and the base value is a volume without bounds. An unbounded volume of
-  a referenced section applies only inside the box of its section. No `@(storage,scene)`: level
-  rules are components of a root entity, which are replicated and saved.
+- **Volumes: a shape only, one algorithm and an unbounded base value.** A `Volume` is a shape and
+  its extents, nothing else. Gravity, wind, reverb, view and fog change per zone with a single
+  algorithm: each value carries its `Zone` (blend, priority, whether it adds to or replaces what is
+  below), and the base value is a value without bounds. An unbounded volume under a referenced
+  section applies only inside the box of that section, read from its `Scene_Reference`. With
+  physics a box or sphere `Volume` reports the bodies that go in and out: that event is the one
+  way a zone tells the game something entered. No `@(storage,scene)`: level rules are components
+  of a root entity, which are replicated and saved.
 - **What draws the far shape of an entity is not unloaded with its section.** An entity with a
   `@(component,far)` component (a terrain, a foliage) stays on with what hangs from it, and the
   library that draws it keeps only its far shape, without colliders or the near part.

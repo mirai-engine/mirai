@@ -17,7 +17,7 @@ a_client_that_cannot_join_is_told_what_to_do :: proc(t:^testing.T) {
     typo[0]=typo[0]=='Z'?'Y':'Z'
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
     app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60}

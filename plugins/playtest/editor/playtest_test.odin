@@ -16,20 +16,21 @@ import "mirai:platform"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-@(private="file") Probe_Health :: struct {points:f32,target:core.Entity}
-@(private="file") Probe_State :: enum u8 {Waiting,Playing,Won}
-@(private="file") Probe_Score :: struct {points:int,state:Probe_State,seen:core.Seen}
-@(private="file") Probe_Ping :: struct {entity:core.Entity,amount:int}
-@(private="file") Probe_Pings :: struct {queue:core.Queue(Probe_Ping)}
+@(private) Probe_Health :: struct {points:f32,target:core.Entity}
+@(private) Probe_State :: enum u8 {Waiting,Playing,Won}
+@(private) Probe_Score :: struct {points:int,state:Probe_State,seen:core.Seen}
+@(private) Probe_Ping :: struct {entity:core.Entity,amount:int}
+@(private) Probe_Pings :: struct {queue:core.Queue(Probe_Ping)}
 // What a plugin that moves bodies says of the hero.
-@(private="file") Probe_Stance :: struct {hero:editor.Stance,routes:int}
+@(private) Probe_Stance :: struct {hero:editor.Stance,routes:int}
 @(private="file") PROBE_MOVE :: input.Action(0)
 @(private="file") PROBE_JUMP :: input.Action(2)
 
 // A game whose tick adds a point to its score, and what its pings push.
-@(private="file")
+@(private)
+@(test_world,host="Probe_Shared",editor="Probe_Editor")
 Probe_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -52,10 +53,12 @@ Probe_World :: struct {
     quit_at:int, // the points at which the game asks to quit; 0: never
     stance:Probe_Stance,
 }
-@(private="file") Probe_Shared :: struct {problems:core.By_World(core.Problems)}
-@(private="file") Probe_Bodies :: struct {provider:editor.Body_Provider}
-@(private="file") Probe_Routes :: struct {provider:editor.Route_Provider}
-@(private="file") Probe_Editor :: struct {api:editor.Api,playtest:Playtest,provider:Playtest_Api,listener:Playtest_Listener,bodies:Probe_Bodies,routes:Probe_Routes}
+@(private) Probe_Shared :: struct {problems:core.By_World(core.Problems)}
+@(private) Probe_Bodies :: struct {provider:editor.Body_Provider}
+@(private) probe_bodies_default :: proc() -> Probe_Bodies {return {provider={standing=probe_standing}}}
+@(private) Probe_Routes :: struct {provider:editor.Route_Provider}
+@(private) probe_routes_default :: proc() -> Probe_Routes {return {provider={next=probe_route}}}
+@(private) Probe_Editor :: struct {api:editor.Api,playtest:Playtest,provider:Playtest_Api,listener:Playtest_Listener,bodies:Probe_Bodies,routes:Probe_Routes}
 
 // A plugin that knows no way and counts the times a drive asks it for one.
 @(private="file")
@@ -68,15 +71,6 @@ probe_route :: proc(s:^editor.Session,w:core.World_Ref,body:core.Entity,goal:[3]
 probe_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known:bool) {
     stance:=(cast(^Probe_World)w.data).stance.hero
     return stance==.Standing,stance!=.Unknown
-}
-
-@(private="file")
-probe_types :: proc(types:^[dynamic]core.Test_Type) {
-    test_types(types)
-    append(types,
-        core.test_type(Probe_Bodies,default=proc(dst:^Probe_Bodies) {dst^={provider={standing=probe_standing}}}),
-        core.test_type(Probe_Routes,default=proc(dst:^Probe_Routes) {dst^={provider={next=probe_route}}}),
-    )
 }
 
 // The seats take their holds and the devices of the tick, as engine/input runs them.
@@ -130,10 +124,10 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     error:platform.Error
     f.p,error=platform.create({headless=true,fixed_dt=0.1,pacing=platform.Frame_Pacing{}})
     if !testing.expect_value(t,error,platform.Error.None) || f.p==nil {return false}
-    f.info=core.test_info(t,Probe_World,Probe_Shared,Probe_Editor,probe_types) or_return
+    f.info=test_info(t,Probe_World) or_return
     f.names={{type=input.Action,value=i64(PROBE_MOVE),name="move"},{type=input.Action,value=i64(PROBE_JUMP),name="jump"}}
     f.info.names=f.names[:]
-    core.test_info_index(&f.info)
+    test_info_index(&f.info)
     f.info.loops[.Game][.Fixed]=probe_tick
     f.app={info=&f.info,shared=&f.shared,platform=f.p,allocator=context.allocator,tick_dt=1.0/60,max_ticks=8}
     f.data=host.app_world_create(&f.app)
@@ -174,7 +168,7 @@ probe_close :: proc(f:^Probe) {
     host.app_world_free(&f.app,f.data)
     delete(f.app.worlds)
     core.world_destroy(&f.info,.Shared,&f.shared)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
     platform.destroy(f.p)
 }
 

@@ -27,9 +27,9 @@ host_calls_without_memory_fail_whole :: proc(t:^testing.T) {
     if !testing.expect(t,assets_init(&assets,{root=root,capacity=8})) {return}
     defer assets_destroy(&assets)
 
-    info,described:=core.test_info(t,Marks_World)
+    info,described:=test_info(t,Marks_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
 
     Call :: enum {Assets_Init,Content,Ui_Context,Marks}
     for call in Call {

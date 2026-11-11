@@ -3,6 +3,7 @@ package camera
 import "core:math"
 import "core:math/linalg"
 import "mirai:core"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import input "mirai:engine/input"
 import render "mirai:engine/render"
@@ -245,7 +246,7 @@ Local_Views :: struct {
 camera_local_views :: proc(
     views:^Local_Views,seat_state:core.Ref(input.Seats),slots:core.Ref(Camera_Views),
     cameras:^core.Table(render.Camera,.Read),exposures:^core.Table(render.Exposure,.Read),worlds:^core.Table(core.World_Transform,.Read),app:^host.App,
-    view_volumes:^core.Table(render.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),
+    view_volumes:^core.Table(render.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),
 ) {
     n:=seat_state.local_count
     if n<2 {return}
@@ -255,7 +256,7 @@ camera_local_views :: proc(
         seen:=&slots.slots[slot]
         view:=&views.items[slot]
         render.view_of_camera(view,cameras,exposures,worlds,seen.camera,{f32(rects[slot].z),f32(rects[slot].w)},seen.blending?&seen.pose:nil,seen.cut)
-        look:=render.view_volume_at(view_volumes,volumes,worlds,view.position)
+        look:=render.view_volume_at(view_volumes,{volumes,worlds,parents,sections},view.position)
         if !view.exposure.own {view.exposure=render.view_exposure_of(look)}
         render.view_postprocess_sync(app.assets,app.renderer,slot,look.layers,&views.effects[slot])
         view.own,view.slot=u8(slot+1),u8(slot+1)

@@ -11,9 +11,10 @@ import input "mirai:engine/input"
 import erender "mirai:engine/render"
 import "mirai:std/serial"
 
-@(private="file")
+@(private)
+@(test_world)
 View_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     seats:core.Table(input.Seat),
     lenses:core.Table(erender.Camera),
@@ -48,8 +49,8 @@ view_number :: proc(value:json.Value) -> f64 {
 @(test)
 play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(t:^testing.T) {
     w:View_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     seat,body,camera:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.names,body,core.name_make("Hero"))
     core.add(&w.names,camera,core.name_make("Hero camera"))
@@ -61,12 +62,12 @@ play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(
     follow.state.ready,follow.state.pivot.position=true,{0,2,-1}
     follow.looking={0.5,-0.25}
     core.add(&w.follows,camera,follow)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     w.players.local_count=1
     w.view={position={0,2,6},rotation=1,fov=60*math.RAD_PER_DEG,near=0.1,size={1600,900},camera=camera}
     w.views.slots[0]={camera=camera,blending=true,blend={seconds=0.5,ease=.Linear},elapsed=0.125}
     w.time.tick,w.time.seconds=30,0.5
-    ref:=core.test_world_ref(&w)
+    ref:=test_world_ref(&w)
     targets:=[3]Play_View_Target{{entity=body,named=true},{point={0,2,10}},{point={20,2,-4}}}
     text,problem:=play_view_json(ref,targets[:])
     testing.expect_value(t,problem,"")
@@ -98,7 +99,7 @@ play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(
     testing.expect(t,(aside["in_front"].(json.Boolean) or_else false) && !(aside["on_screen"].(json.Boolean) or_else true) && view_number(across[0])>1,"off the right edge")
 
     // Conditions and traces read the same document with view.
-    s:=Session{info=core.test_world_info(&w)}
+    s:=Session{info=test_world_info(&w)}
     conditions:=[4]Api_Play_Condition{{view=true,compare=.At_Most,number=7.5},{view=true,compare=.Above,number=0.45},{view=true,compare=.Equal},{view=true,compare=.Gone}}
     copy(conditions[0].field[:],"follow.pivot_distance")
     copy(conditions[1].entity[:],"Hero");copy(conditions[1].field[:],"points.0.normalized.0")

@@ -2,10 +2,11 @@ package core
 
 import "core:testing"
 
-@(private="file")
+@(private)
 Made :: struct {value:i32}
 
-@(private="file")
+@(private)
+@(test_world)
 Made_World :: struct {
     using world:Test_World,
     transforms:Table(Transform),
