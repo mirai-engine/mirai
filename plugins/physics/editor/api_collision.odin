@@ -1,10 +1,8 @@
 package physics_editor
 
 import "mirai:editor"
-import "base:runtime"
 import "core:fmt"
 import "core:mem"
-import "core:reflect"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor/api"
@@ -129,45 +127,40 @@ api_collision_request :: proc(call:^api.Call,target:Physics_Collision_Get_Params
 }
 
 @(private)
-api_collision_member :: proc(info:^runtime.Type_Info,name:string,origin:int,set:bool) -> (type:^runtime.Type_Info,offset:int,ok:bool) {
-    record,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
-    if !is_struct {return}
-    for field in 0..<int(record.field_count) {
-        if record.names[field]!=name {continue}
-        tag:=reflect.Struct_Tag(record.tags[field])
-        if tagged,_:=serial.field_tag(string(tag));.Hidden in tagged.flags {return}
-        if tagged,_:=serial.field_tag(string(tag));.Transient in tagged.flags {return}
-        if tagged,_:=serial.field_tag(string(tag));set && .Read_Only in tagged.flags {return}
-        return record.types[field],origin+int(record.offsets[field]),true
+api_collision_member :: proc(s:^serial.Schema,type:serial.Type_Index,name:string,origin:int,set:bool) -> (member:serial.Type_Index,offset:int,ok:bool) {
+    for field in serial.schema_fields(s,type) {
+        if field.name!=name {continue}
+        if field.flags&{.Hidden,.Transient}!={} || set && .Read_Only in field.flags {return}
+        return field.type,origin+int(field.offset),true
     }
     return
 }
 
 // The collision fields of a struct: those of a collider, or the struct is a Query_Filter.
 @(private)
-api_collision_fields :: proc(info:^runtime.Type_Info,origin:int,set:bool,target:^Api_Collision_Target) -> bool {
-    if info.id==phys.Query_Filter {
+api_collision_fields :: proc(s:^serial.Schema,type:serial.Type_Index,origin:int,set:bool,target:^Api_Collision_Target) -> bool {
+    if s.types[type].id==phys.Query_Filter {
         target.kind,target.query=.Query,origin
         return true
     }
-    pt,po,has_preset:=api_collision_member(info,"preset",origin,set)
-    st,so,has_sensor:=api_collision_member(info,"sensor",origin,set)
-    bt,bo,has_belongs:=api_collision_member(info,"belongs",origin,set)
-    ct,co,has_collides:=api_collision_member(info,"collides",origin,set)
+    pt,po,has_preset:=api_collision_member(s,type,"preset",origin,set)
+    st,so,has_sensor:=api_collision_member(s,type,"sensor",origin,set)
+    bt,bo,has_belongs:=api_collision_member(s,type,"belongs",origin,set)
+    ct,co,has_collides:=api_collision_member(s,type,"collides",origin,set)
     if !has_preset || !has_sensor || !has_belongs || !has_collides {return false}
-    if pt.id!=phys.Collision_Preset || st.id!=bool || bt.id!=phys.Collision_Layers || ct.id!=phys.Collision_Layers {return false}
+    if s.types[pt].id!=phys.Collision_Preset || s.types[st].id!=bool || s.types[bt].id!=phys.Collision_Layers || s.types[ct].id!=phys.Collision_Layers {return false}
     target.kind,target.preset,target.sensor,target.belongs,target.collides,target.group=.Collider,po,so,bo,co,-1
-    if gt,go,has_group:=api_collision_member(info,"group",origin,false);has_group && gt.id==core.Entity {target.group=go}
+    if gt,go,has_group:=api_collision_member(s,type,"group",origin,false);has_group && s.types[gt].id==core.Entity {target.group=go}
     return true
 }
 
 // Whether a component holds a collision: at its root or in its filter field.
 @(private)
-api_collision_holds :: proc(info:^runtime.Type_Info,set:bool) -> bool {
+api_collision_holds :: proc(s:^serial.Schema,type:serial.Type_Index,set:bool) -> bool {
     probe:Api_Collision_Target
-    if api_collision_fields(info,0,set,&probe) {return true}
-    type,origin,found:=api_collision_member(info,"filter",0,set)
-    return found && api_collision_fields(type,origin,set,&probe)
+    if api_collision_fields(s,type,0,set,&probe) {return true}
+    filter,origin,found:=api_collision_member(s,type,"filter",0,set)
+    return found && api_collision_fields(s,filter,origin,set,&probe)
 }
 
 // Names in the request the only collision component of its entity; several, or none, fail listing them.
@@ -177,7 +170,7 @@ api_collision_component :: proc(s:^editor.Session,call:^api.Call,w:core.World_Re
     found:=make([dynamic]string,0,4,call.allocator)
     for &table in w.info.tables {
         if table.place!=.World || !editor.inspector_listed(s,&table) || core.raw_find(core.world_table_at(w,&table),table.info,entity)==nil {continue}
-        if api_collision_holds(table.info,set) {append(&found,table.name)}
+        if schema,type,typed:=core.world_value_type(w.info,table.type);typed && api_collision_holds(schema,type,set) {append(&found,table.name)}
     }
     switch len(found) {
     case 0:
@@ -206,20 +199,22 @@ api_collision_target :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,r
         api.call_failf(call,api.INVALID_PARAMS,"entity %q has no %s component",base.text_get(request.entity[:]),name);return
     }
     target.table,target.entity=table,entity
-    type,origin:=table.info,0
+    schema,type,typed:=core.world_value_type(w.info,table.type)
+    if !typed {api.call_failf(call,api.INVALID_PARAMS,"component %q is not plain data",name);return}
+    origin:=0
     prefix:=base.text_get(request.prefix[:])
-    if !request.has_prefix && !api_collision_fields(type,0,set,&target) {prefix="filter"}
+    if !request.has_prefix && !api_collision_fields(schema,type,0,set,&target) {prefix="filter"}
     if prefix!="" {
         start:=0
         for at in 0..=len(prefix) {
             if at<len(prefix) && prefix[at]!='.' {continue}
-            next,offset,found:=api_collision_member(type,prefix[start:at],origin,set)
+            next,offset,found:=api_collision_member(schema,type,prefix[start:at],origin,set)
             if !found {api.call_failf(call,api.INVALID_PARAMS,"%s.%s is not a public collision field",name,prefix);return}
             type,origin=next,offset
             start=at+1
         }
     }
-    if (prefix!="" || request.has_prefix) && !api_collision_fields(type,origin,set,&target) {
+    if (prefix!="" || request.has_prefix) && !api_collision_fields(schema,type,origin,set,&target) {
         api.call_failf(call,api.INVALID_PARAMS,"%s%s is neither a collider collision (preset, sensor, belongs, collides) nor a Query_Filter",name,prefix!=""?strings.concatenate({".",prefix},call.allocator):"");return
     }
     target.prefix=prefix

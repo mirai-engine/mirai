@@ -121,6 +121,8 @@ Inspect :: struct {
     panel:^Project_Panel,  // a row of a panel of the project: held takes what its popups chose, it writes the document and Restore keeps what it changes
     name:string,           // of the type
     type:typeid,
+    schema:^serial.Schema, // the description of the fields the rows show (inspect_schema)
+    of:serial.Type_Index,  // the type of value in schema
     value:[^]u8,           // of the active entity, the setting or the panel
     defaults:[^]u8,
     size:int,
@@ -165,6 +167,37 @@ inspect_entity_set :: proc(c:^Inspect,offset:int,e:core.Entity) {
     value:=e
     inspect_write(c,offset,mem.ptr_to_bytes(&value))
 }
+
+// Gives the rows the description of the type of what they show: the world's
+// for its components and the values it saves, or one made for this frame for
+// another value (a setting, what a panel holds). False when it is not plain data.
+inspect_schema :: proc(c:^Inspect,info:^runtime.Type_Info) -> bool {
+    c.schema,c.of=type_schema(c.w.info,info)
+    return c.schema!=nil
+}
+
+@(private)
+type_schema :: proc(world:^core.World_Info,info:^runtime.Type_Info) -> (^serial.Schema,serial.Type_Index) {
+    if s,index,found:=core.world_value_type(world,info.id);found {return s,index}
+    s:=new(serial.Schema,context.temp_allocator)
+    serial.schema_init(s,context.temp_allocator)
+    if _,named:=core.schema_named(s,world,context.temp_allocator);!named {return nil,serial.TYPE_NONE}
+    index,added:=serial.schema_add_type_info(s,info)
+    if !added {return nil,serial.TYPE_NONE}
+    return s,index
+}
+
+// The fields of a type as the rows show them; none when it is not plain data.
+type_fields :: proc(world:^core.World_Info,info:^runtime.Type_Info) -> []serial.Field {
+    s,index:=type_schema(world,info)
+    return serial.schema_fields(s,index) if s!=nil else nil
+}
+
+// The label a field shows: its tag's, or its name made readable.
+field_label :: proc(field:serial.Field) -> string {return field.label if field.label!="" else readable(field.name)}
+
+// Whether the rows show a field: neither hidden nor transient.
+field_shown :: proc(field:serial.Field) -> bool {return field.flags&{.Hidden,.Transient}=={}}
 
 inspector_section_open :: proc(ins:^Inspector,key:u64,folded:=false) -> bool {
     for changed in ins.folded {
@@ -249,23 +282,11 @@ SEARCH_BAR :: f32(40) // the search of Details, under the line of the entity
 @(private)
 inspector_needle :: proc(ins:^Inspector) -> string {return string(ins.search[:ins.search_length])}
 
-// Whether a field of a struct, outside those it holds, has needle in its name.
+// Whether a field of the value, outside those it holds, has needle in its name.
 @(private)
-fields_match :: proc(info:^runtime.Type_Info,needle:string) -> bool {
-    v,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
-    if !is_struct {return false}
-    for i in 0..<int(v.field_count) {
-        tag:=reflect.Struct_Tag(v.tags[i])
-        tagged:=field_tagged(v.tags[i])
-        if .Hidden in tagged.flags {continue}
-        if .Transient in tagged.flags {continue}
-        if v.usings[i] {
-            if fields_match(v.types[i],needle) {return true}
-            continue
-        }
-        label:=readable(v.names[i])
-        if custom:=tagged.label;custom!="" {label=custom}
-        if base.contains_fold(label,needle) {return true}
+fields_match :: proc(c:^Inspect,needle:string) -> bool {
+    for field in serial.schema_fields(c.schema,c.of) {
+        if field_shown(field) && base.contains_fold(field_label(field),needle) {return true}
     }
     return false
 }
@@ -449,9 +470,10 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
                 if !all {continue}
                 append(&entities,active)
                 c:=Inspect{s=s,w=w,t=&t,index=index,table=table,entities=entities[:],name=t.name,type=t.type,value=cast([^]u8)core.raw_find(table,t.info,active),size=t.info.size}
+                if !inspect_schema(&c,t.info) {continue}
                 // A card whose title the search finds shows whole; another, the fields it finds.
                 if needle!="" && !base.contains_fold(readable(t.name),needle) {
-                    if !fields_match(t.info,needle) {continue}
+                    if !fields_match(&c,needle) {continue}
                     c.needle=needle
                 }
                 component_section(&c,inner)
@@ -828,14 +850,14 @@ component_section :: proc(c:^Inspect,width:f32) {
     card_body(s)
     ui.id_push(ctx,ui.id(ctx,c.t.name))
     defer ui.id_pop(ctx)
-    if live && inspector_extension(c) {return}
+    if live && inspector_extension(c,nil) {return}
     if c.size>INSPECTOR_COMPONENT_BYTES {return}
     switch c.t.type {
     case erender.Mesh_Renderer: geometry_row(c);skeleton_row(c);material_rows(c)
     case erender.Camera:
         if live && len(c.entities)==1 {camera_preview_button(c,c.entities[0])}
-        fields_rows(c,c.t.info,0,0,"")
-    case: fields_rows(c,c.t.info,0,0,"")
+        fields_rows(c,c.of,0,0,"")
+    case: fields_rows(c,c.of,0,0,"")
     }
 }
 
@@ -939,37 +961,27 @@ geometry_set :: proc(s:^Session,t:^core.Table_Info,entities:[]core.Entity,shape:
 }
 
 // The rows of the fields of a struct at an offset of the component.
-fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,prefix:string) {
-    v,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
-    if !is_struct {return}
+fields_rows :: proc(c:^Inspect,type:serial.Type_Index,origin:uintptr,depth:int,prefix:string) {
+    fields:=serial.schema_fields(c.schema,type)
     current,titled:="",""
     first:=true
     skip:=-1
     folded:=false // in a section that is closed
     banded:=false // the fold_band of the section of the fields is open
     defer if banded {fold_band_end(c.s)}
-    for i in 0..<int(v.field_count) {
+    for field,i in fields {
         if i==skip {continue}
-        tag:=reflect.Struct_Tag(v.tags[i])
-        tagged:=field_tagged(v.tags[i])
-        if title:=tagged.section;title!="" && depth==0 {current=title}
-        if .Hidden in tagged.flags {continue}
-        if .Transient in tagged.flags {continue}
-        if modes:=tagged.mode;modes!="" && !mode_shows(c,v,origin,modes) {continue}
+        if title:=field.section;title!="" && depth==0 {current=title}
+        if !field_shown(field) {continue}
+        if modes:=field.mode;modes!="" && !mode_shows(c,fields,origin,modes) {continue}
         if c.sections && depth==0 && current!=c.section {continue}
-        if c.type==erender.Mesh_Renderer && v.names[i]=="materials" {continue}
-        offset:=origin+v.offsets[i]
-        if v.usings[i] {
-            fields_rows(c,v.types[i],offset,depth,prefix)
-            continue
-        }
-        if c.sections && depth==0 && (.Advanced in tagged.hints)!=c.advanced {continue}
-        label:=readable(v.names[i])
-        if custom:=tagged.label;custom!="" {
-            label=custom
-        } else if prefix!="" && info.id==mm.Transform {
-            if v.names[i]=="position" {label="Pos"}
-            if v.names[i]=="rotation" {label="Rot"}
+        if c.type==erender.Mesh_Renderer && field.name=="materials" {continue}
+        offset:=origin+uintptr(field.offset)
+        if c.sections && depth==0 && (.Advanced in field.hints)!=c.advanced {continue}
+        label:=field_label(field)
+        if field.label=="" && prefix!="" && c.schema.types[type].id==mm.Transform {
+            if field.name=="position" {label="Pos"}
+            if field.name=="rotation" {label="Rot"}
         }
         if prefix!="" {label=fmt.tprintf("%s %s",prefix,strings.to_lower(label,context.temp_allocator))}
         if depth==0 && c.needle!="" && !base.contains_fold(label,c.needle) {continue}
@@ -988,7 +1000,7 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
         }
         if folded {continue}
         description:=""
-        if prefix=="" && c.t!=nil && info==c.t.info && c.storage==0 {description=core.field_description(c.t,v.names[i])}
+        if prefix=="" && c.t!=nil && type==c.of && c.storage==0 {description=core.field_description(c.t,field.name)}
         if c.ruled && depth==0 {
             if !first {
                 if ui.box(c.s.gui.ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(c.s.gui.ctx,"row_rule")}) {}
@@ -996,26 +1008,29 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
             first=false
         }
         // Two masks of the same names in a row are one table, a column each.
-        if i+1<int(v.field_count) && v.types[i+1].id==v.types[i].id && core.name_bits_of(c.w.info,v.types[i].id)!=nil && !v.usings[i+1] {
+        if id:=c.schema.types[field.type].id;i+1<len(fields) && fields[i+1].type==field.type && core.name_bits_of(c.w.info,id)!=nil {
             skip=i+1
-            if !inspector_extension(c,v.types[i],offset,label) {names_matrix_row(c,v.types[i],[2]string{label,readable(v.names[i+1])},[2]uintptr{offset,origin+v.offsets[i+1]})}
+            if !inspector_extension(c,id,offset,label) {names_matrix_row(c,c.schema.types[field.type],[2]string{label,readable(fields[i+1].name)},[2]uintptr{offset,origin+uintptr(fields[i+1].offset)})}
             continue
         }
-        field_row(c,v.types[i],tag,v.names[i],label,offset,depth,description)
+        field_row(c,field,label,offset,depth,description)
     }
 }
 
 // Whether a field tagged mode=A|B shows: while the field mode of its struct,
 // an enum, is one of those values.
 @(private)
-mode_shows :: proc(c:^Inspect,v:runtime.Type_Info_Struct,origin:uintptr,modes:string) -> bool {
-    for i in 0..<int(v.field_count) {
-        if v.names[i]!="mode" {continue}
-        name,named:=reflect.enum_name_from_value_any(any{rawptr(&c.value[origin+v.offsets[i]]),v.types[i].id})
-        if !named {return true}
+mode_shows :: proc(c:^Inspect,fields:[]serial.Field,origin:uintptr,modes:string) -> bool {
+    for field in fields {
+        if field.name!="mode" {continue}
+        type:=c.schema.types[field.type]
+        if type.kind!=.Enum {return true}
+        choices:=c.schema.choices[type.first:][:type.count]
+        at:=choice_at(&c.value[origin+uintptr(field.offset)],int(type.size),choices)
+        if at<0 {return true}
         rest:=modes
         for want in strings.split_iterator(&rest,"|") {
-            if want==name {return true}
+            if want==choices[at].name {return true}
         }
         return false
     }
@@ -1024,16 +1039,16 @@ mode_shows :: proc(c:^Inspect,v:runtime.Type_Info_Struct,origin:uintptr,modes:st
 
 // Two masks of the same names as one table, with one arrow that reverts both.
 @(private)
-names_matrix_row :: proc(c:^Inspect,info:^runtime.Type_Info,titles:[2]string,offsets:[2]uintptr) {
+names_matrix_row :: proc(c:^Inspect,type:serial.Type,titles:[2]string,offsets:[2]uintptr) {
     ctx:=c.s.gui.ctx
     titles:=titles
-    size:=info.size
+    size:=int(type.size)
     bits:[2][16]u8
     if size>len(bits[0]) {return}
     for &b,i in bits {mem.copy(&b,&c.value[offsets[i]],size)}
     masks:=[2][]u8{bits[0][:size],bits[1][:size]}
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4}) {
-        changed:=names_matrix(ctx,c.w.info,core.name_bits_of(c.w.info,info.id),ui.id(ctx,"matrix",int(offsets[0])+1),titles[:],masks[:])
+        changed:=names_matrix(ctx,c.w.info,core.name_bits_of(c.w.info,type.id),ui.id(ctx,"matrix",int(offsets[0])+1),titles[:],masks[:])
         for i in 0..<2 {
             if changed[i] {inspect_write(c,int(offsets[i]),masks[i])}
         }
@@ -1142,66 +1157,59 @@ fold_section :: proc(s:^Session,id:ui.Id,key:u64,title:string,folded:=false,sear
 }
 
 @(private)
-field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name,label:string,offset:uintptr,depth:int,description:="") {
+field_row :: proc(c:^Inspect,field:serial.Field,label:string,offset:uintptr,depth:int,description:="") {
     s:=c.s
     ctx:=s.gui.ctx
-    if int(offset)+info.size>c.size {return}
-    tagged:=field_tagged(string(tag))
-    readonly:=.Read_Only in tagged.flags
-    unit:=tagged.unit
-    shown:=unit!=""?fmt.tprintf("%s (%s)",label,unit):label
+    type:=c.schema.types[field.type]
+    size:=int(type.size)
+    if int(offset)+size>c.size {return}
+    readonly:=.Read_Only in field.flags
+    shown:=field.unit!=""?fmt.tprintf("%s (%s)",label,field.unit):label
     key:=base.hash_combine(u64(c.index)<<32|u64(offset),0x6669656c64~c.held)|1
     p:=rawptr(&c.value[offset])
-    if inspector_extension(c,info,offset,shown) {return}
+    if inspector_extension(c,type.id,offset,shown) {return}
+    elem:=c.schema.types[type.elem] if type.kind==.Array else {}
+    numbers:=elem.kind==.Float || elem.kind==.Int || elem.kind==.Uint
     leaf:=true
-    #partial switch v in runtime.type_info_base(info).variant {
-    case runtime.Type_Info_Struct: leaf=info.id==base.Asset_Id
-    case runtime.Type_Info_Array:
-        text:=.Text in tagged.flags
-        _,number:=runtime.type_info_base(v.elem).variant.(runtime.Type_Info_Float)
-        _,integer:=runtime.type_info_base(v.elem).variant.(runtime.Type_Info_Integer)
-        record,is_record:=runtime.type_info_base(v.elem).variant.(runtime.Type_Info_Struct)
-        leaf=text || (number || integer) && v.count>=2 && v.count<=4 || is_record && numbers_only(record)
+    #partial switch type.kind {
+    case .Struct: leaf=false
+    case .Array:  leaf=.Text in field.flags || numbers && type.count>=2 && type.count<=4 || elem.kind==.Struct && numbers_only(c.schema,type.elem)
     }
     if leaf && !readonly {
         fill:ui.Color
-        if task,ok:=inspect_agent(c,int(offset),info.size);ok {fill=ui.color_alpha(ai_agent_color(task),28)}
+        if task,ok:=inspect_agent(c,int(offset),size);ok {fill=ui.color_alpha(ai_agent_color(task),28)}
         row:=ui.id(ctx,"field_row",int(offset)+1)
         // The arrow stays by the first line of a field its label opens.
         ui.box_begin(ctx,{id=row,width=ui.GROW,height=ui.FIT,gap=4,align_y=.Start,fill=fill,track=description!=""})
-        if c.storage==0 && c.t!=nil && c.panel==nil {value_menu_row(s,row,{kind=.Field,table=c.index,offset=int(offset),info=info},label)}
+        if c.storage==0 && c.t!=nil && c.panel==nil {value_menu_row(s,row,{kind=.Field,table=c.index,offset=int(offset),type=field.type},label)}
         row_description(s,row,description)
         ui.box_begin(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column})
     }
     defer if leaf && !readonly {
         ui.box_end(ctx,{})
-        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(ui.metric(ctx,"row")),align_y=.Center}) {field_reset_button(c,int(offset),info.size)}
+        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(ui.metric(ctx,"row")),align_y=.Center}) {field_reset_button(c,int(offset),size)}
         ui.box_end(ctx,{})
     }
     if readonly {ui.disabled_begin(ctx)}
     defer if readonly {ui.disabled_end(ctx)}
-    if record:=core.record_of_ref(c.w.info,info.id);record>=0 {
+    if record:=core.record_of_ref(c.w.info,type.id);record>=0 {
         record_row(c,shown,record,int(offset))
         return
     }
-    switch info.id {
-    case core.Entity:
+    if core.named_type_of(c.w.info,type.id)!=nil {
+        named_row(c,type,shown,offset,key)
+        return
+    }
+    if of:=core.name_bits_of(c.w.info,type.id);of!=nil {
+        named_bits_row(c,type,of,shown,offset)
+        return
+    }
+    #partial switch type.kind {
+    case .Entity:
         entity_row(c,shown,int(offset),key)
-        return
-    case base.Asset_Id:
-        asset_row(c,shown,field_asset_kinds(s,tag,name),int(offset),key)
-        return
-    }
-    if core.named_type_of(c.w.info,info.id)!=nil {
-        named_row(c,info,shown,offset,key)
-        return
-    }
-    if of:=core.name_bits_of(c.w.info,info.id);of!=nil {
-        named_bits_row(c,info,of,shown,offset)
-        return
-    }
-    #partial switch v in runtime.type_info_base(info).variant {
-    case runtime.Type_Info_Boolean:
+    case .Asset:
+        asset_row(c,shown,field_asset_kinds(s,field),int(offset),key)
+    case .Bool:
         row_begin(ctx,shown)
         value:=(cast(^bool)p)^
         if kit.toggle_switch(ctx,ui.id(ctx,"bool",int(offset)+1),&value) {
@@ -1209,133 +1217,125 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
             inspect_write(c,int(offset),mem.ptr_to_bytes(&stored))
         }
         row_end(ctx)
-    case runtime.Type_Info_Integer,runtime.Type_Info_Float:
-        if inspector_number_extension(c,info,shown,offset,key) {return}
-        if integer,is_integer:=v.(runtime.Type_Info_Integer);is_integer && !integer.signed && info.size==8 && .Hex in tagged.hints {
+    case .Int,.Uint,.Float,.Entity_Id:
+        if inspector_number_extension(c,type.id,shown,offset,key) {return}
+        if type.kind!=.Int && type.kind!=.Float && size==8 && .Hex in field.hints {
             hex_row(c,shown,offset)
             return
         }
         // The unit goes inside the box, after the value.
         row_begin(ctx,label)
-        number_cell(c,info,tag,ui.id(ctx,"number",int(offset)+1),key,label,offset,"",{})
+        number_cell(c,field,type,ui.id(ctx,"number",int(offset)+1),key,label,offset,"",{})
         row_end(ctx)
-    case runtime.Type_Info_Enum:
+    case .Enum:
         row_begin(ctx,shown)
-        current:=i64(number_read(p,v.base))
-        selected:=-1
-        for value,at in v.values {
-            if i64(value)==current {selected=at;break}
+        choices:=c.schema.choices[type.first:][:type.count]
+        selected:=choice_at(p,size,choices)
+        write :: proc(c:^Inspect,type:serial.Type,offset:uintptr,value:i64) {
+            value:=value
+            inspect_write(c,int(offset),mem.ptr_to_bytes(&value)[:type.size])
         }
         // A few short names are a segmented control; more, a list. icons: the
         // name of a ui.Icon for each value, which its segment shows instead.
         icons:[ENUM_SEGMENTS]ui.Icon
         iconed:=false
-        if names:=tagged.icons;names!="" && len(v.names)<=ENUM_SEGMENTS {
+        if names:=field.icons;names!="" && len(choices)<=ENUM_SEGMENTS {
             iconed=true
             words:=strings.fields(names,context.temp_allocator)
-            for at in 0..<len(v.names) {
+            for at in 0..<len(choices) {
                 icon,known:=reflect.enum_from_name(ui.Icon,words[at] if at<len(words) else "")
                 icons[at]=icon if known else .None
                 iconed&=known
             }
         }
         need:=f32(0)
-        for name in v.names {need+=ui.text_width(&ctx.font,readable(name),ui.metric(ctx,"font_small"))+16}
+        for choice in choices {need+=ui.text_width(&ctx.font,readable(choice.name),ui.metric(ctx,"font_small"))+16}
         if iconed {
             if kit.segments(ctx,ui.GROW,ui.metric(ctx,"row")) {
-                for name,at in v.names {
-                    if ui.button(ctx,ui.id(ctx,"enum_choice",int(offset)*8+at+1),{icon=icons[at],icon_size=16,tip=readable(name),variant="tab",active=at==selected,width=-1,height=ui.metric(ctx,"row")-4,center=true,padding=2}).clicked && at!=selected {
-                        buffer:[8]u8
-                        number_write(raw_data(buffer[:]),v.base,f64(v.values[at]))
-                        inspect_write(c,int(offset),buffer[:info.size])
-                    }
+                for choice,at in choices {
+                    if ui.button(ctx,ui.id(ctx,"enum_choice",int(offset)*8+at+1),{icon=icons[at],icon_size=16,tip=readable(choice.name),variant="tab",active=at==selected,width=-1,height=ui.metric(ctx,"row")-4,center=true,padding=2}).clicked && at!=selected {write(c,type,offset,choice.value)}
                 }
             }
-        } else if len(v.names)<=ENUM_SEGMENTS && need<=c.width-ui.metric(ctx,"label_width")-REVERT_SIDE-16 {
+        } else if len(choices)<=ENUM_SEGMENTS && need<=c.width-ui.metric(ctx,"label_width")-REVERT_SIDE-16 {
             if kit.segments(ctx,ui.GROW,ui.metric(ctx,"row")) {
-                for name,at in v.names {
-                    if ui.button(ctx,ui.id(ctx,"enum_choice",int(offset)*8+at+1),{label=readable(name),variant="tab",active=at==selected,width=-1,height=ui.metric(ctx,"row")-4,size=ui.metric(ctx,"font_small"),center=true,padding=2}).clicked && at!=selected {
-                        buffer:[8]u8
-                        number_write(raw_data(buffer[:]),v.base,f64(v.values[at]))
-                        inspect_write(c,int(offset),buffer[:info.size])
-                    }
+                for choice,at in choices {
+                    if ui.button(ctx,ui.id(ctx,"enum_choice",int(offset)*8+at+1),{label=readable(choice.name),variant="tab",active=at==selected,width=-1,height=ui.metric(ctx,"row")-4,size=ui.metric(ctx,"font_small"),center=true,padding=2}).clicked && at!=selected {write(c,type,offset,choice.value)}
                 }
             }
-        } else if ui.dropdown(ctx,ui.id(ctx,"enum",int(offset)+1),{list=v.names},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=true}) {
-            buffer:[8]u8
-            number_write(raw_data(buffer[:]),v.base,f64(v.values[selected]))
-            inspect_write(c,int(offset),buffer[:info.size])
+        } else {
+            names:=make([]string,len(choices),context.temp_allocator)
+            for choice,at in choices {names[at]=choice.name}
+            if ui.dropdown(ctx,ui.id(ctx,"enum",int(offset)+1),{list=names},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=true}) {write(c,type,offset,choices[selected].value)}
         }
         row_end(ctx)
-    case runtime.Type_Info_Bit_Set:
+    case .Bit_Set:
         buffer:[16]u8
-        if info.size>len(buffer) {readonly_row(ctx,shown,"bit set");return}
-        mem.copy(&buffer,p,info.size)
-        if bit_set_field(ctx,ui.id(ctx,"bits",int(offset)+1),shown,buffer[:info.size],v) {
-            inspect_write(c,int(offset),buffer[:info.size])
+        if size>len(buffer) {readonly_row(ctx,shown,"bit set");return}
+        mem.copy(&buffer,p,size)
+        if bit_set_field(ctx,ui.id(ctx,"bits",int(offset)+1),shown,buffer[:size],c.schema.choices[type.first:][:type.count]) {
+            inspect_write(c,int(offset),buffer[:size])
         }
-    case runtime.Type_Info_Quaternion:
-        q:=(cast(^mm.Quat)p)^
-        degrees:=mm.quat_to_euler(q)*mm.DEG_PER_RAD
-        values:=[3]f64{f64(degrees.x),f64(degrees.y),f64(degrees.z)}
-        row_begin(ctx,shown)
-        id:=ui.id(ctx,"rotation",int(offset)+1)
-        r,axis:=kit.vector_field(ctx,id,values[:],{number={decimals=1,speed=0.5,unit="°"}})
-        if axis>=0 {
-            if inspect_stepped(c) {gesture_follow(c.s,key+u64(axis),r,readable(c.name))}
-            if r.changed {
-                rotation:=mm.quat_from_euler({f32(values[0]),f32(values[1]),f32(values[2])}*mm.RAD_PER_DEG)
-                inspect_write(c,int(offset),mem.ptr_to_bytes(&rotation))
+    case .Array:
+        if .Rotation in field.flags {
+            // Three angles in degrees.
+            degrees:=mm.quat_to_euler((cast(^mm.Quat)p)^)*mm.DEG_PER_RAD
+            values:=[3]f64{f64(degrees.x),f64(degrees.y),f64(degrees.z)}
+            row_begin(ctx,shown)
+            r,axis:=kit.vector_field(ctx,ui.id(ctx,"rotation",int(offset)+1),values[:],{number={decimals=1,speed=0.5,unit="°"}})
+            if axis>=0 {
+                if inspect_stepped(c) {gesture_follow(s,key+u64(axis),r,readable(c.name))}
+                if r.changed {
+                    rotation:=mm.quat_from_euler({f32(values[0]),f32(values[1]),f32(values[2])}*mm.RAD_PER_DEG)
+                    inspect_write(c,int(offset),mem.ptr_to_bytes(&rotation))
+                }
+                if r.ended && inspect_stepped(c) {gesture_end(s,key+u64(axis))}
             }
-            if r.ended && inspect_stepped(c) {gesture_end(s,key+u64(axis))}
+            row_end(ctx)
+            return
         }
-        row_end(ctx)
-    case runtime.Type_Info_Array:
-        if inspector_array_extension(c,info,name,shown,offset) {return}
-        elem:=runtime.type_info_base(v.elem)
-        text:=.Text in tagged.flags
-        if text && v.elem.size==1 {
+        if inspector_array_extension(c,type.id,field.name,shown,offset) {return}
+        text:=.Text in field.flags
+        if text && elem.size==1 {
             switch {
-            case .Data in tagged.hints:     data_row(c,shown,offset,v.count)
-            case tagged.asset_kinds!="":    asset_path_row(c,shown,field_asset_kinds(c.s,tag,name),int(offset),v.count,key)
-            case:                                      text_row(c,shown,offset,v.count,key)
+            case .Data in field.hints:  data_row(c,shown,offset,int(type.count))
+            case field.asset_kinds!="": asset_path_row(c,shown,field_asset_kinds(c.s,field),int(offset),int(type.count),key)
+            case:                       text_row(c,shown,offset,int(type.count),key)
             }
             return
         }
-        _,is_number:=elem.variant.(runtime.Type_Info_Float)
-        _,is_integer:=elem.variant.(runtime.Type_Info_Integer)
-        if (is_number || is_integer) && v.count>=2 && v.count<=4 {
-            if .Color in tagged.flags && is_number && v.elem.size==4 && v.count>=3 {
-                color_row(c,shown,name,offset,v.count,key)
+        if numbers && type.count>=2 && type.count<=4 {
+            if .Color in field.flags && elem.kind==.Float && elem.size==4 && type.count>=3 {
+                color_row(c,shown,field.name,offset,int(type.count),key)
                 return
             }
-            vector_row(c,info,v,tag,shown,offset,key)
+            vector_row(c,field,type,shown,offset,key)
             return
         }
-        if fields,is_record:=elem.variant.(runtime.Type_Info_Struct);is_record && numbers_only(fields) {
-            record_rows(c,v,fields,shown,offset,key)
+        if elem.kind==.Struct && numbers_only(c.schema,type.elem) {
+            record_rows(c,type,shown,offset,key)
             return
         }
-        shown_count:=min(v.count,INSPECTOR_ARRAY_ROWS)
-        if texts,is_texts:=elem.variant.(runtime.Type_Info_Array);v.elem.id==base.Asset_Id || text && is_texts && texts.elem_size==1 || .Trim in tagged.hints {
+        count:=int(type.count)
+        shown_count:=min(count,INSPECTOR_ARRAY_ROWS)
+        texts:=elem.kind==.Array && c.schema.types[elem.elem].size==1
+        if elem.kind==.Asset || text && texts || .Trim in field.hints {
             // References, texts and what the file trims: those set and one more.
             last:=-1
-            for at in 0..<v.count {
-                if !mem.check_zero(c.value[offset+uintptr(at*v.elem_size):][:v.elem_size]) {last=at}
+            for at in 0..<count {
+                if !mem.check_zero(c.value[offset+uintptr(at*int(elem.size)):][:elem.size]) {last=at}
             }
-            shown_count=min(last+2,v.count)
+            shown_count=min(last+2,count)
         }
-        if _,is_record:=elem.variant.(runtime.Type_Info_Struct);is_record && v.elem.id!=base.Asset_Id && depth<INSPECTOR_FIELD_DEPTH {
-            records_rows(c,v,label,offset,shown_count,depth)
+        if elem.kind==.Struct && depth<INSPECTOR_FIELD_DEPTH {
+            records_rows(c,type,label,offset,shown_count,depth)
             return
         }
-        for at in 0..<shown_count {
-            element:=fmt.tprintf("%s %d",label,at+1)
-            field_row(c,v.elem,tag,name,element,offset+uintptr(at*v.elem_size),depth)
-        }
-    case runtime.Type_Info_Struct:
-        if count:=keys_count(v);count>0 {
-            keys_rows(c,info,v,count,shown,offset,key)
+        element:=field
+        element.type=type.elem
+        for at in 0..<shown_count {field_row(c,element,fmt.tprintf("%s %d",label,at+1),offset+uintptr(at*int(elem.size)),depth)}
+    case .Struct:
+        if count:=keys_count(c.schema,field.type);count>0 {
+            keys_rows(c,field.type,count,shown,offset,key)
             return
         }
         if depth>=INSPECTOR_FIELD_DEPTH {
@@ -1343,10 +1343,21 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
             return
         }
         // Under a section of its own name its fields need not repeat it.
-        fields_rows(c,info,offset,depth+1,"" if strings.equal_fold(tagged.section,label) else label)
-    case:
-        readonly_row(ctx,shown,serial.type_label(info))
+        fields_rows(c,field.type,offset,depth+1,"" if strings.equal_fold(field.section,label) else label)
     }
+}
+
+// The choice of an enum whose value the bytes at p hold; -1 for none. A
+// negative value is held in its bits.
+@(private)
+choice_at :: proc(p:rawptr,size:int,choices:[]serial.Choice) -> int {
+    held:u64
+    mem.copy(&held,p,min(size,8))
+    mask:=~u64(0)>>u64(64-8*min(size,8))
+    for choice,at in choices {
+        if u64(choice.value)&mask==held {return at}
+    }
+    return -1
 }
 
 // A core.Record: a row of the tables of its type, by name.
@@ -1364,7 +1375,7 @@ record_row :: proc(c:^Inspect,label:string,record,offset:int) {
 // A value of a type @(names): its name in a list of them. Typing a name that
 // is not there creates it, and the pencil renames one the project declared.
 @(private)
-named_row :: proc(c:^Inspect,info:^runtime.Type_Info,label:string,offset:uintptr,key:u64) {
+named_row :: proc(c:^Inspect,info:serial.Type,label:string,offset:uintptr,key:u64) {
     s:=c.s
     ctx:=s.gui.ctx
     ins:=s.inspector
@@ -1386,10 +1397,9 @@ named_row :: proc(c:^Inspect,info:^runtime.Type_Info,label:string,offset:uintptr
         options[i]=readable(entry.name)
         if entry.value==current {selected=i}
     }
-    write :: proc(c:^Inspect,info:^runtime.Type_Info,offset:uintptr,value:i64) {
-        buffer:[8]u8
-        number_write(raw_data(buffer[:]),info,f64(value))
-        inspect_write(c,int(offset),buffer[:info.size])
+    write :: proc(c:^Inspect,info:serial.Type,offset:uintptr,value:i64) {
+        value:=value
+        inspect_write(c,int(offset),mem.ptr_to_bytes(&value)[:info.size])
     }
     row_begin(ctx,label)
     if ins.naming==key && selected>=0 {
@@ -1426,15 +1436,16 @@ named_row :: proc(c:^Inspect,info:^runtime.Type_Info,label:string,offset:uintptr
 
 // A mask whose bits are the values of a type @(names): a box for each of them.
 @(private)
-named_bits_row :: proc(c:^Inspect,info:^runtime.Type_Info,of:typeid,label:string,offset:uintptr) {
+named_bits_row :: proc(c:^Inspect,info:serial.Type,of:typeid,label:string,offset:uintptr) {
+    size:=int(info.size)
     ctx:=c.s.gui.ctx
     bits:[16]u8
-    if info.size>len(bits) {readonly_row(ctx,label,"mask");return}
-    mem.copy(&bits,&c.value[offset],info.size)
+    if size>len(bits) {readonly_row(ctx,label,"mask");return}
+    mem.copy(&bits,&c.value[offset],size)
     ui.label(ctx,label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
     changed:=false
     for entry,i in core.names_of(c.w.info,of) {
-        if entry.value<0 || entry.value>=i64(info.size*8) {continue}
+        if entry.value<0 || entry.value>=i64(size*8) {continue}
         byte,mask:=entry.value/8,u8(1)<<u8(entry.value%8)
         on:=bits[byte]&mask!=0
         ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center})
@@ -1445,33 +1456,32 @@ named_bits_row :: proc(c:^Inspect,info:^runtime.Type_Info,of:typeid,label:string
         }
         ui.box_end(ctx,{})
     }
-    if changed {inspect_write(c,int(offset),bits[:info.size])}
+    if changed {inspect_write(c,int(offset),bits[:size])}
 }
 
 @(private)
-bit_set_axis_group :: proc(names:[]string,first:int) -> (group:string,count:int) {
-    if first+2>=len(names) {return}
-    name:=names[first]
+bit_set_axis_group :: proc(members:[]serial.Choice,first:int) -> (group:string,count:int) {
+    if first+2>=len(members) {return}
+    name:=members[first].name
     if len(name)<3 || !strings.has_suffix(name,"_X") {return}
     group=name[:len(name)-2]
-    y,z:=names[first+1],names[first+2]
+    y,z:=members[first+1].name,members[first+2].name
     if strings.has_suffix(y,"_Y") && y[:len(y)-2]==group && strings.has_suffix(z,"_Z") && z[:len(z)-2]==group {return group,3}
     return "",0
 }
 
 @(private)
-bit_set_field :: proc(ctx:^ui.Context,id:ui.Id,label:string,bits:[]u8,type:runtime.Type_Info_Bit_Set) -> (changed:bool) {
-    elements,is_enum:=runtime.type_info_base(type.elem).variant.(runtime.Type_Info_Enum)
-    if !is_enum {readonly_row(ctx,label,"bit set");return}
+bit_set_field :: proc(ctx:^ui.Context,id:ui.Id,label:string,bits:[]u8,members:[]serial.Choice) -> (changed:bool) {
+    if len(members)==0 {readonly_row(ctx,label,"bit set");return}
     axes:=kit.AXIS_NAMES
     ui.label(ctx,label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
-    for first:=0;first<len(elements.names); {
-        group,count:=bit_set_axis_group(elements.names,first)
+    for first:=0;first<len(members); {
+        group,count:=bit_set_axis_group(members,first)
         if count==0 {count=1}
         ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center})
         if group!="" {ui.label(ctx,readable(group),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),ui.metric(ctx,"label_width"))}
         for at in first..<first+count {
-            bit:=int(i64(elements.values[at])-type.lower)
+            bit:=int(members[at].value)
             if bit<0 || bit>=len(bits)*8 {continue}
             byte,mask:=bit/8,u8(1)<<u8(bit%8)
             on:=bits[byte]&mask!=0
@@ -1480,7 +1490,7 @@ bit_set_field :: proc(ctx:^ui.Context,id:ui.Id,label:string,bits:[]u8,type:runti
                 axis:=at-first
                 clicked=kit.toggle(ctx,ui.id_derive(ctx,id,"member",at+1),axes[axis],&on)
             } else {
-                ui.label(ctx,readable(elements.names[at]),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0)
+                ui.label(ctx,readable(members[at].name),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0)
                 clicked=ui.checkbox(ctx,ui.id_derive(ctx,id,"member",at+1),&on)
             }
             if clicked {
@@ -1497,7 +1507,8 @@ bit_set_field :: proc(ctx:^ui.Context,id:ui.Id,label:string,bits:[]u8,type:runti
 // The elements of an array of records, each folded under a button with its
 // name: opened, its fields follow in a band under it.
 @(private)
-records_rows :: proc(c:^Inspect,v:runtime.Type_Info_Array,label:string,offset:uintptr,count,depth:int) {
+records_rows :: proc(c:^Inspect,array:serial.Type,label:string,offset:uintptr,count,depth:int) {
+    elem_size:=int(c.schema.types[array.elem].size)
     s:=c.s
     ctx:=s.gui.ctx
     one:=label
@@ -1508,7 +1519,7 @@ records_rows :: proc(c:^Inspect,v:runtime.Type_Info_Array,label:string,offset:ui
         one=label[:len(label)-1]
     }
     for at in 0..<count {
-        at_offset:=offset+uintptr(at*v.elem_size)
+        at_offset:=offset+uintptr(at*elem_size)
         key:=base.hash_combine(u64(c.index)<<32|u64(at_offset),0x7265636f7264)
         open:=inspector_section_open(s.inspector,key,true)
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
@@ -1516,12 +1527,12 @@ records_rows :: proc(c:^Inspect,v:runtime.Type_Info_Array,label:string,offset:ui
                 inspector_section_toggle(s.inspector,key)
                 open=!open
             }
-            field_reset_button(c,int(at_offset),v.elem_size)
+            field_reset_button(c,int(at_offset),elem_size)
         }
         if !open {continue}
         // Under its button, short of the column of the arrows that revert.
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4}) {
-            if fold_band(s) {fields_rows(c,v.elem,at_offset,depth+1,"")}
+            if fold_band(s) {fields_rows(c,array.elem,at_offset,depth+1,"")}
             ui.spacer(ctx,REVERT_SIDE,1)
         }
     }
@@ -1586,74 +1597,67 @@ readonly_row :: proc(ctx:^ui.Context,label,value:string) {
     row_end(ctx)
 }
 
-number_read :: proc(p:rawptr,info:^runtime.Type_Info) -> f64 {
-    #partial switch v in runtime.type_info_base(info).variant {
-    case runtime.Type_Info_Float:
-        switch info.size {
+// The value of a number, a bool or an id as a float.
+number_read :: proc(p:rawptr,type:serial.Type) -> f64 {
+    #partial switch type.kind {
+    case .Float:
+        switch type.size {
         case 2: return f64((cast(^f16)p)^)
         case 4: return f64((cast(^f32)p)^)
         case 8: return (cast(^f64)p)^
         }
-    case runtime.Type_Info_Integer:
-        if v.signed {
-            switch info.size {
-            case 1: return f64((cast(^i8)p)^)
-            case 2: return f64((cast(^i16)p)^)
-            case 4: return f64((cast(^i32)p)^)
-            case 8: return f64((cast(^i64)p)^)
-            }
-        } else {
-            switch info.size {
-            case 1: return f64((cast(^u8)p)^)
-            case 2: return f64((cast(^u16)p)^)
-            case 4: return f64((cast(^u32)p)^)
-            case 8: return f64((cast(^u64)p)^)
-            }
+    case .Int:
+        switch type.size {
+        case 1: return f64((cast(^i8)p)^)
+        case 2: return f64((cast(^i16)p)^)
+        case 4: return f64((cast(^i32)p)^)
+        case 8: return f64((cast(^i64)p)^)
         }
-    case runtime.Type_Info_Boolean:
+    case .Uint,.Entity,.Entity_Id,.Enum:
+        switch type.size {
+        case 1: return f64((cast(^u8)p)^)
+        case 2: return f64((cast(^u16)p)^)
+        case 4: return f64((cast(^u32)p)^)
+        case 8: return f64((cast(^u64)p)^)
+        }
+    case .Bool:
         return (cast(^bool)p)^?1:0
     }
     return 0
 }
 
-number_write :: proc(p:rawptr,info:^runtime.Type_Info,value:f64) {
-    #partial switch v in runtime.type_info_base(info).variant {
-    case runtime.Type_Info_Float:
-        switch info.size {
+number_write :: proc(p:rawptr,type:serial.Type,value:f64) {
+    rounded:=math.round(value)
+    #partial switch type.kind {
+    case .Float:
+        switch type.size {
         case 2: (cast(^f16)p)^=f16(value)
         case 4: (cast(^f32)p)^=f32(value)
         case 8: (cast(^f64)p)^=value
         }
-    case runtime.Type_Info_Integer:
-        rounded:=math.round(value)
-        if v.signed {
-            switch info.size {
-            case 1: (cast(^i8)p)^=i8(clamp(rounded,-128,127))
-            case 2: (cast(^i16)p)^=i16(clamp(rounded,-32768,32767))
-            case 4: (cast(^i32)p)^=i32(clamp(rounded,-2147483648,2147483647))
-            case 8: (cast(^i64)p)^=i64(rounded)
-            }
-        } else {
-            switch info.size {
-            case 1: (cast(^u8)p)^=u8(clamp(rounded,0,255))
-            case 2: (cast(^u16)p)^=u16(clamp(rounded,0,65535))
-            case 4: (cast(^u32)p)^=u32(clamp(rounded,0,4294967295))
-            case 8: (cast(^u64)p)^=u64(max(rounded,0))
-            }
+    case .Int:
+        switch type.size {
+        case 1: (cast(^i8)p)^=i8(clamp(rounded,-128,127))
+        case 2: (cast(^i16)p)^=i16(clamp(rounded,-32768,32767))
+        case 4: (cast(^i32)p)^=i32(clamp(rounded,-2147483648,2147483647))
+        case 8: (cast(^i64)p)^=i64(rounded)
+        }
+    case .Uint,.Entity,.Entity_Id,.Enum:
+        switch type.size {
+        case 1: (cast(^u8)p)^=u8(clamp(rounded,0,255))
+        case 2: (cast(^u16)p)^=u16(clamp(rounded,0,65535))
+        case 4: (cast(^u32)p)^=u32(clamp(rounded,0,4294967295))
+        case 8: (cast(^u64)p)^=u64(max(rounded,0))
         }
     }
 }
 
-// What the tag of a field says of its number field, and the units it is shown in.
-field_number :: proc(info:^runtime.Type_Info,tag:reflect.Struct_Tag) -> (desc:ui.Number_Field,scale:f64) {
+// What a field says of its number field, and the units it is shown in.
+field_number :: proc(field:serial.Field,type:serial.Type) -> (desc:ui.Number_Field,scale:f64) {
     scale=1
-    _,is_float:=runtime.type_info_base(info).variant.(runtime.Type_Info_Float)
-    desc.integer=!is_float
-    field:=field_tagged(string(tag))
+    desc.integer=type.kind!=.Float
     desc.min,desc.has_min,desc.max,desc.has_max=field.min,field.has_min,field.max,field.has_max
-    if !is_float {
-        if v,ok:=runtime.type_info_base(info).variant.(runtime.Type_Info_Integer);ok && !v.signed && !desc.has_min {desc.min,desc.has_min=0,true}
-    }
+    if desc.integer && type.kind!=.Int && !desc.has_min {desc.min,desc.has_min=0,true}
     desc.unit=field.unit
     switch {
     case .Angle in field.flags:
@@ -1669,22 +1673,16 @@ field_number :: proc(info:^runtime.Type_Info,tag:reflect.Struct_Tag) -> (desc:ui
     return
 }
 
-// What the tag of a field says, as std/serial reads it.
-field_tagged :: proc(tag:string) -> serial.Field {
-    field,_:=serial.field_tag(tag)
-    return field
-}
-
-// One number of a component as a field.
+// One number of a component as a field: of type, with what field says of it.
 @(private)
-number_cell :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,id:ui.Id,key:u64,label:string,offset:uintptr,axis_label:string,strip:ui.Color,icon:=ui.Icon.None) {
-    desc,scale:=field_number(info,tag)
+number_cell :: proc(c:^Inspect,field:serial.Field,type:serial.Type,id:ui.Id,key:u64,label:string,offset:uintptr,axis_label:string,strip:ui.Color,icon:=ui.Icon.None) {
+    desc,scale:=field_number(field,type)
     desc.strip,desc.icon=strip,icon
     // A cell of a vector is narrow: its name says the unit, and only degrees go inside.
     if axis_label!="" && desc.unit!="°" {desc.unit=""}
     // An axis without a color of its own says its name inside.
     if axis_label!="" && strip[3]==0 {desc.label=axis_label}
-    value:=number_read(&c.value[offset],info)*scale
+    value:=number_read(&c.value[offset],type)*scale
     r:ui.Number_Result
     if axis_label=="" {r=kit.slider_field(c.s.gui.ctx,id,&value,desc)} else {r=ui.number_field(c.s.gui.ctx,id,&value,desc)}
     // The values a panel holds are no step of the document.
@@ -1692,8 +1690,8 @@ number_cell :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,id
     if stepped {gesture_follow(c.s,key,r,readable(c.name))}
     if r.changed {
         buffer:[8]u8
-        number_write(raw_data(buffer[:]),info,value/scale)
-        inspect_write(c,int(offset),buffer[:info.size])
+        number_write(raw_data(buffer[:]),type,value/scale)
+        inspect_write(c,int(offset),buffer[:type.size])
     }
     if r.ended && stepped {gesture_end(c.s,key)}
 }
@@ -1706,22 +1704,23 @@ number_cell :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,id
 @(private) BOX_CORNER_NAMES :: [4]string{"Top left","Top right","Bottom right","Bottom left"}
 
 @(private)
-vector_row :: proc(c:^Inspect,info:^runtime.Type_Info,v:runtime.Type_Info_Array,tag:reflect.Struct_Tag,label:string,offset:uintptr,key:u64) {
+vector_row :: proc(c:^Inspect,field:serial.Field,array:serial.Type,label:string,offset:uintptr,key:u64) {
     ctx:=c.s.gui.ctx
     // axes: the name of each, a letter (`axes=LTRB`) or words (`axes=Min Max Step`); X, Y, Z and W otherwise.
     names:=kit.AXIS_NAMES
-    axes:=field_tagged(string(tag)).axes
+    axes:=field.axes
     lettered:=axes!=""
     words:=strings.fields(axes,context.temp_allocator) if strings.contains(axes," ") else nil
-    if v.count==4 && (axes=="LTRB" || axes=="TL TR BR BL") {
-        box_row(c,v,tag,label,offset,key,axes=="LTRB")
+    if array.count==4 && (axes=="LTRB" || axes=="TL TR BR BL") {
+        box_row(c,field,array,label,offset,key,axes=="LTRB")
         return
     }
+    elem:=c.schema.types[array.elem]
     row_begin(ctx,label)
-    for at in 0..<v.count {
+    for at in 0..<int(array.count) {
         letter:=names[at]
         if at<len(words) {letter=words[at]} else if lettered && words==nil && at<len(axes) {letter=axes[at:at+1]}
-        number_cell(c,v.elem,tag,ui.id(ctx,"axis",int(offset)*8+at+1),key+u64(at)*2,label,offset+uintptr(at*v.elem_size),letter,lettered?{}:ui.tone(ctx,kit.AXIS_TOKENS[at]))
+        number_cell(c,field,elem,ui.id(ctx,"axis",int(offset)*8+at+1),key+u64(at)*2,label,offset+uintptr(at*int(elem.size)),letter,lettered?{}:ui.tone(ctx,kit.AXIS_TOKENS[at]))
     }
     row_end(ctx)
 }
@@ -1729,8 +1728,9 @@ vector_row :: proc(c:^Inspect,info:^runtime.Type_Info,v:runtime.Type_Info_Array,
 // The four values of the sides or the corners of a box, each with its arrow;
 // the label opens a row for each, with its name, as a color opens its channels.
 @(private)
-box_row :: proc(c:^Inspect,v:runtime.Type_Info_Array,tag:reflect.Struct_Tag,label:string,offset:uintptr,key:u64,sides:bool) {
+box_row :: proc(c:^Inspect,field:serial.Field,array:serial.Type,label:string,offset:uintptr,key:u64,sides:bool) {
     s:=c.s
+    elem:=c.schema.types[array.elem]
     ctx:=s.gui.ctx
     icons:=BOX_SIDE_ICONS if sides else BOX_CORNER_ICONS
     names:=BOX_SIDE_NAMES if sides else BOX_CORNER_NAMES
@@ -1742,14 +1742,14 @@ box_row :: proc(c:^Inspect,v:runtime.Type_Info_Array,tag:reflect.Struct_Tag,labe
         open=!open
     }
     for at in 0..<4 {
-        number_cell(c,v.elem,tag,ui.id(ctx,"axis",int(offset)*8+at+1),key+u64(at)*2,label,offset+uintptr(at*v.elem_size),"·",{},ui.icon_user(u8(icons[at])))
+        number_cell(c,field,elem,ui.id(ctx,"axis",int(offset)*8+at+1),key+u64(at)*2,label,offset+uintptr(at*int(elem.size)),"·",{},ui.icon_user(u8(icons[at])))
     }
     ui.box_end(ctx,{})
     if !open {return}
     if fold_band(s) {
         for at in 0..<4 {
             row_begin(ctx,names[at])
-            number_cell(c,v.elem,tag,ui.id(ctx,"side",int(offset)*8+at+1),key+u64(at)*2,label,offset+uintptr(at*v.elem_size),"",{},ui.icon_user(u8(icons[at])))
+            number_cell(c,field,elem,ui.id(ctx,"side",int(offset)*8+at+1),key+u64(at)*2,label,offset+uintptr(at*int(elem.size)),"",{},ui.icon_user(u8(icons[at])))
             row_end(ctx)
         }
     }
@@ -1758,30 +1758,32 @@ box_row :: proc(c:^Inspect,v:runtime.Type_Info_Array,tag:reflect.Struct_Tag,labe
 // An array of records of a few numbers as a table, a column per field: the
 // records set, each with its remove, and an empty one to fill.
 @(private)
-record_rows :: proc(c:^Inspect,v:runtime.Type_Info_Array,fields:runtime.Type_Info_Struct,label:string,offset:uintptr,key:u64) {
+record_rows :: proc(c:^Inspect,type:serial.Type,label:string,offset:uintptr,key:u64) {
     ctx:=c.s.gui.ctx
-    array:=c.value[offset:][:v.count*v.elem_size]
+    fields:=serial.schema_fields(c.schema,type.elem)
+    count,elem_size:=int(type.count),int(c.schema.types[type.elem].size)
+    array:=c.value[offset:][:count*elem_size]
     used:=0
-    for at in 0..<v.count {
-        if !mem.check_zero(array[at*v.elem_size:][:v.elem_size]) {used=at+1}
+    for at in 0..<count {
+        if !mem.check_zero(array[at*elem_size:][:elem_size]) {used=at+1}
     }
     row_begin(ctx,label)
-    for i in 0..<int(fields.field_count) {ui.label(ctx,readable(fields.names[i]),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)}
+    for field in fields {ui.label(ctx,readable(field.name),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)}
     ui.spacer(ctx,ui.metric(ctx,"row"))
     row_end(ctx)
-    for at in 0..<min(used+1,v.count) {
-        at_offset:=offset+uintptr(at*v.elem_size)
+    for at in 0..<min(used+1,count) {
+        at_offset:=offset+uintptr(at*elem_size)
         row_begin(ctx,"")
-        for i in 0..<int(fields.field_count) {
-            cell:=at*int(fields.field_count)+i
-            number_cell(c,fields.types[i],reflect.Struct_Tag(fields.tags[i]),ui.id(ctx,"record",int(offset)*64+cell+1),key+u64(cell)*2,label,at_offset+fields.offsets[i],"",{})
+        for field,i in fields {
+            cell:=at*len(fields)+i
+            number_cell(c,field,c.schema.types[field.type],ui.id(ctx,"record",int(offset)*64+cell+1),key+u64(cell)*2,label,at_offset+uintptr(field.offset),"",{})
         }
         if at>=used {
             ui.spacer(ctx,ui.metric(ctx,"row"))
         } else if ui.button(ctx,ui.id(ctx,"record_remove",int(offset)*64+at+1),{icon=.Cross,variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {
             next:=make([]u8,len(array),context.temp_allocator)
-            copy(next,array[:at*v.elem_size])
-            copy(next[at*v.elem_size:],array[(at+1)*v.elem_size:])
+            copy(next,array[:at*elem_size])
+            copy(next[at*elem_size:],array[(at+1)*elem_size:])
             inspect_write(c,int(offset),next)
         }
         row_end(ctx)
@@ -1791,17 +1793,18 @@ record_rows :: proc(c:^Inspect,v:runtime.Type_Info_Array,fields:runtime.Type_Inf
 // The keys of a struct of two to four arrays of one length above four, of
 // numbers or of colors, as a curve keeps them; 0 for another struct.
 @(private)
-keys_count :: proc(fields:runtime.Type_Info_Struct) -> (count:int) {
-    if fields.field_count<2 || fields.field_count>4 {return 0}
-    for i in 0..<int(fields.field_count) {
-        array,is_array:=runtime.type_info_base(fields.types[i]).variant.(runtime.Type_Info_Array)
-        if !is_array || array.count<=4 || array.count>INSPECTOR_ARRAY_ROWS || i>0 && array.count!=count {return 0}
-        count=array.count
-        #partial switch element in runtime.type_info_base(array.elem).variant {
-        case runtime.Type_Info_Float,runtime.Type_Info_Integer:
-        case runtime.Type_Info_Array:
-            _,float:=runtime.type_info_base(element.elem).variant.(runtime.Type_Info_Float)
-            if !float || element.elem.size!=4 || element.count<3 || element.count>4 || .Color not_in field_tagged(fields.tags[i]).flags {return 0}
+keys_count :: proc(s:^serial.Schema,type:serial.Type_Index) -> (count:int) {
+    fields:=serial.schema_fields(s,type)
+    if len(fields)<2 || len(fields)>4 {return 0}
+    for field,i in fields {
+        array:=s.types[field.type]
+        if array.kind!=.Array || array.count<=4 || array.count>INSPECTOR_ARRAY_ROWS || i>0 && int(array.count)!=count {return 0}
+        count=int(array.count)
+        element:=s.types[array.elem]
+        #partial switch element.kind {
+        case .Float,.Int,.Uint:
+        case .Array:
+            if channel:=s.types[element.elem];channel.kind!=.Float || channel.size!=4 || element.count<3 || element.count>4 || .Color not_in field.flags {return 0}
         case: return 0
         }
     }
@@ -1811,31 +1814,31 @@ keys_count :: proc(fields:runtime.Type_Info_Struct) -> (count:int) {
 // The keys of a curve as a table: its name and one arrow for all of it, a
 // title per array, and a row per key with a cell per array.
 @(private)
-keys_rows :: proc(c:^Inspect,info:^runtime.Type_Info,fields:runtime.Type_Info_Struct,count:int,label:string,offset:uintptr,key:u64) {
+keys_rows :: proc(c:^Inspect,type:serial.Type_Index,count:int,label:string,offset:uintptr,key:u64) {
     ctx:=c.s.gui.ctx
-    columns:=int(fields.field_count)
+    fields:=serial.schema_fields(c.schema,type)
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
         ui.label(ctx,label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
         ui.spacer(ctx)
-        field_reset_button(c,int(offset),info.size)
+        field_reset_button(c,int(offset),int(c.schema.types[type].size))
     }
     row_begin(ctx,"")
-    for i in 0..<columns {
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),align_y=.Center}) {ui.label(ctx,readable(fields.names[i]),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)}
+    for field in fields {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),align_y=.Center}) {ui.label(ctx,readable(field.name),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)}
     }
     ui.spacer(ctx,REVERT_SIDE,1)
     row_end(ctx)
     for at in 0..<count {
         row_begin(ctx,"")
-        for i in 0..<columns {
-            array:=runtime.type_info_base(fields.types[i]).variant.(runtime.Type_Info_Array)
-            at_offset:=offset+fields.offsets[i]+uintptr(at*array.elem_size)
-            cell:=at*columns+i
+        for field,i in fields {
+            element:=c.schema.types[c.schema.types[field.type].elem]
+            at_offset:=offset+uintptr(int(field.offset)+at*int(element.size))
+            cell:=at*len(fields)+i
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
-                if color,is_color:=runtime.type_info_base(array.elem).variant.(runtime.Type_Info_Array);is_color {
-                    color_cell(c,label,fields.names[i],at_offset,color.count,key+u64(cell)*2)
+                if element.kind==.Array {
+                    color_cell(c,label,field.name,at_offset,int(element.count),key+u64(cell)*2)
                 } else {
-                    number_cell(c,array.elem,reflect.Struct_Tag(fields.tags[i]),ui.id(ctx,"key",int(offset)*64+cell+1),key+u64(cell)*2,label,at_offset,"",{})
+                    number_cell(c,field,element,ui.id(ctx,"key",int(offset)*64+cell+1),key+u64(cell)*2,label,at_offset,"",{})
                 }
             }
         }
@@ -1845,11 +1848,12 @@ keys_rows :: proc(c:^Inspect,info:^runtime.Type_Info,fields:runtime.Type_Info_St
 }
 
 @(private)
-numbers_only :: proc(fields:runtime.Type_Info_Struct) -> bool {
-    if fields.field_count>4 {return false}
-    for i in 0..<int(fields.field_count) {
-        #partial switch _ in runtime.type_info_base(fields.types[i]).variant {
-        case runtime.Type_Info_Integer,runtime.Type_Info_Float:
+numbers_only :: proc(s:^serial.Schema,type:serial.Type_Index) -> bool {
+    fields:=serial.schema_fields(s,type)
+    if len(fields)>4 {return false}
+    for field in fields {
+        #partial switch s.types[field.type].kind {
+        case .Int,.Uint,.Float:
         case: return false
         }
     }
@@ -1938,12 +1942,12 @@ color_row :: proc(c:^Inspect,label,name:string,offset:uintptr,channels:int,key:u
     ui.box_end(ctx,{})
     if !open {return}
     // Light can be brighter than 1: its color is not bounded.
-    tag:=reflect.Struct_Tag(`mirai:"min=0"` if strings.contains(name,"emission") else `mirai:"min=0,max=1"`)
+    bounded:=!strings.contains(name,"emission")
     names:=[4]string{"R","G","B","A"}
     if fold_band(s) {
         for at in 0..<channels {
             row_begin(ctx,names[at])
-            number_cell(c,type_info_of(f32),tag if at<3 else reflect.Struct_Tag(`mirai:"min=0,max=1"`),ui.id(ctx,"channel",int(offset)*4+at+1),key+u64(at+1)*2,label,offset+uintptr(at*4),"",ui.tone(ctx,kit.CHANNEL_TOKENS[at]))
+            number_cell(c,{has_min=true,has_max=bounded || at==3,max=1},CHANNEL,ui.id(ctx,"channel",int(offset)*4+at+1),key+u64(at+1)*2,label,offset+uintptr(at*4),"",ui.tone(ctx,kit.CHANNEL_TOKENS[at]))
             row_end(ctx)
         }
     }
@@ -1962,11 +1966,11 @@ color_cell :: proc(c:^Inspect,label,name:string,offset:uintptr,channels:int,key:
         alpha:=channels>3?(cast(^[4]f32)&c.value[offset])^.w:1
         picker_open(s,{key=key,table=c.index,storage=c.storage,held=c.held,stepped=c.write!=nil,offset=int(offset),channels=channels,alpha=alpha,emission=emission},linear,rect)
     }
-    if channels>3 {
-        alpha_info:=type_info_of(f32)
-        number_cell(c,alpha_info,`mirai:"min=0,max=1"`,ui.id(ctx,"alpha",int(offset)+1),key+1,label,offset+12,"A",ui.tone(ctx,kit.CHANNEL_TOKENS[3]))
-    }
+    if channels>3 {number_cell(c,{has_min=true,has_max=true,max=1},CHANNEL,ui.id(ctx,"alpha",int(offset)+1),key+1,label,offset+12,"A",ui.tone(ctx,kit.CHANNEL_TOKENS[3]))}
 }
+
+// A channel of a color.
+@(private) CHANNEL :: serial.Type{kind=.Float,size=4,align=4}
 
 // The swatch of a linear color: brighter than 1, normalized to its brightest channel.
 @(private)
@@ -2328,8 +2332,8 @@ asset_kind_takes :: proc "contextless" (field:Asset_Kinds,kind:asset.Fourcc) -> 
 // The kinds of asset a field takes: the extensions its tag names, apart by
 // spaces (`kind=.anim .character`), each of the engine or one a plugin declares
 // in its plugin.mirai; without one known, what its name suggests.
-field_asset_kinds :: proc(s:^Session,tag:reflect.Struct_Tag,name:string) -> (kinds:Asset_Kinds) {
-    if extensions:=field_tagged(string(tag)).asset_kinds;extensions!="" {
+field_asset_kinds :: proc(s:^Session,field:serial.Field) -> (kinds:Asset_Kinds) {
+    if extensions:=field.asset_kinds;extensions!="" {
         count:=0
         for extension in strings.fields_iterator(&extensions) {
             kind,known:=asset.kind_of_extension(extension)
@@ -2340,7 +2344,7 @@ field_asset_kinds :: proc(s:^Session,tag:reflect.Struct_Tag,name:string) -> (kin
         }
         if count>0 {return}
     }
-    kinds[0]=asset_kind_of_field(s,name)
+    kinds[0]=asset_kind_of_field(s,field.name)
     return
 }
 

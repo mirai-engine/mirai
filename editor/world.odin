@@ -311,7 +311,7 @@ entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",
         table:=core.world_table_at(w,&t)
         info:=t.info
         offsets:=entity_offsets(t.info)
-        transient:=history.transient_ranges(t.info)
+        transient:=history.transient_ranges(w.info,t.info)
         buffer:=make([]u8,max(info.size,1),context.temp_allocator)
         for source,at in sources {
             value:=core.raw_find(table,t.info,source)

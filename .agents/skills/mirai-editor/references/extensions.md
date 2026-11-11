@@ -435,7 +435,7 @@ and joins them with the engine's.
   with a component the editor added (the `Collider` of a new `Character`).
 - The callbacks are read from the default of the current metadata, without pointers to a reloaded
   library. `Inspector_Context` delivers session, world, table, entities and width.
-- `inspector_fields` reuses generic fields, gestures and resets for a struct inside the component.
+- `inspector_fields` draws the generic rows, gestures and resets of the component under its own.
   Writes go through `field_write`, with the common undo.
 - The `animation` plugin uses it to choose `Bone_Ref` by path;
   `vfx`, for the `Particle_Emitter` section: its fields with `inspector_fields`, its effect's with

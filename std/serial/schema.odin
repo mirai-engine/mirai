@@ -56,6 +56,7 @@ Type :: struct {
     was:string,      // Struct: the names it had, separated by spaces (@(component,was=)): a table of a document under one of them is its table
     first,count:u32, // Struct: fields; Enum, Bit_Set and a named integer: choices; Array: count is its length
     elem:Type_Index, // Array
+    id:typeid,       // the Odin type it describes, for what is keyed by it; nil in a schema read from a file
 }
 
 Field_Flag :: enum u8 {
@@ -372,6 +373,8 @@ schema_fail :: proc(s:^Schema,path:string,info:^runtime.Type_Info) -> (Type_Inde
 @(private)
 schema_push :: proc(s:^Schema,id:typeid,type:Type) -> (Type_Index,bool) {
     index:=Type_Index(len(s.types))
+    type:=type
+    type.id=id
     // The type goes in first and comes out when the map has no room for it:
     // delete_key on a map[typeid] keeps odin -o:speed from ending (ODIN_WORKAROUNDS).
     if _,error:=append(&s.types,type);error==nil {

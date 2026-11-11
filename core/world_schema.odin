@@ -122,6 +122,14 @@ world_schema_make :: proc(info:^World_Info,allocator:=context.allocator) -> ^Wor
     return ws
 }
 
+// The schema of a world and the type in it of one of its values: of a table,
+// a persist storage or a record, or of what they hold. ok is false for another.
+world_value_type :: proc(info:^World_Info,type:typeid) -> (s:^serial.Schema,index:serial.Type_Index,ok:bool) {
+    if info==nil || info.schema==nil {return}
+    index,ok=info.schema.schema.lookup[type]
+    return &info.schema.schema,index,ok
+}
+
 // The index in w.info.tables of the table of the place of w whose name has
 // the hash a document names it by (base.name_hash).
 world_table_index_of_hash :: proc(w:World_Ref,hash:u64) -> (int,bool) {
