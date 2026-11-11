@@ -10,7 +10,7 @@
 #include "gbuffer_vertex.slang"
 #include "particle_programs.slang"
 
-struct Params_Block { uint emitter; uint pass; uint choice; uint pad1; };
+struct Params_Block { uint emitter; uint pass; uint mesh; uint pad1; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 
 // What particle_sprite.frag reads (particle_sprite.vert gives the same).
@@ -34,16 +34,17 @@ struct Stage_Output {
 Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_VulkanInstanceID) {
     Stage_Output output = (Stage_Output)0;
     Particle_Emitter e = particle_emitters[params.emitter];
-    uint index = particle_drawn(params.emitter, instance_id);
-    Particle p = particles[index];
-    Mesh mesh = meshes[particle_mesh_of(params.emitter, params.choice)];
+    Mesh mesh = meshes[params.mesh];
     Cluster c = mesh_cluster(mesh, vertex_id / CLUSTER_DRAW_VERTICES);
     uint corner = vertex_id % CLUSTER_DRAW_VERTICES;
-    if (particle_mesh_choice(params.emitter, p) != params.choice || corner >= cluster_triangle_count(c) * 3u || !cluster_resident(mesh, c)) {
+    if (corner >= cluster_triangle_count(c) * 3u || !cluster_resident(mesh, c)) {
         output.position = float4(2.0, 2.0, 2.0, 1.0);
         return output;
     }
     Mesh_Point v = cluster_point(mesh, c, cluster_corner(mesh, c, corner));
+    // The first instance of the draw is where the run of its mesh starts in the list.
+    uint index = particle_drawn(params.emitter, instance_id);
+    Particle p = particles[index];
     Particle_Look look = particle_program_look(params.emitter, index, p);
     float3x3 rotation = particle_mesh_rotation(params.emitter, p);
     float3 world = particle_world(params.emitter, p.position) + particle_mesh_vector(params.emitter, rotation, v.position * look.size);

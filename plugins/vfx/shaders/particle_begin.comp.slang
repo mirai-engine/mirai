@@ -23,6 +23,16 @@ void main(uint3 id : SV_DispatchThreadID) {
         particle_lists[2u * e.program.y + e.range.x + id.x] = 0xFFFFFFFFu;
         return;
     }
+    if (params.mode == 2u) {
+        // After the last step: the dispatch that takes its events now.
+        if (id.x != 0u) return;
+        uint events = min(particle_queue[params.parity], PARTICLE_EVENT_CAPACITY);
+        uint base = 4u + 4u * params.parity;
+        particle_queue[base] = (events + 63u) / 64u;
+        particle_queue[base + 1u] = 1u;
+        particle_queue[base + 2u] = 1u;
+        return;
+    }
     if (id.x == 0u) {
         uint read = 1u - params.parity;
         uint events = min(particle_queue[read], PARTICLE_EVENT_CAPACITY);

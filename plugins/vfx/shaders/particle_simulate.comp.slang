@@ -53,7 +53,7 @@ float3 curl_noise(int3 base, float3 p) {
     return float3(z.y - y.z, x.z - z.x, y.x - x.y);
 }
 
-void event_push(uint slot, uint trigger, float3 position, float3 velocity, uint color, uint seed) {
+void event_push(uint slot, uint trigger, float3 position, float3 velocity, uint color, uint seed, uint leader = 0u) {
     uint2 target = particle_emitters[slot].random.yz;
     if (target.x == 0u || particle_emitters[slot].kinds.w != trigger || target.y == 0u) return;
     uint at;
@@ -62,7 +62,7 @@ void event_push(uint slot, uint trigger, float3 position, float3 velocity, uint 
     Particle_Event ev;
     ev.position = position;
     ev.velocity = velocity;
-    ev.target = (target.x - 1u) | (target.y << 16u);
+    ev.target = (target.x - 1u) | (target.y << 16u) | leader;
     ev.color = color;
     ev.ribbon = particle_own_ribbon(seed);
     particle_event_store(params.parity, at, ev);
@@ -143,6 +143,8 @@ void main(uint3 id : SV_DispatchThreadID) {
         release(index, slot, range.xy);
         return;
     }
+    // Its age before a hit takes life from it: what its trail counts.
+    float lived = v.age;
     if (h > 0.0 && !moved) {
         float4 drag = particle_emitters[slot].acceleration;
         float3 acceleration = drag.xyz + particle_fields(slot, params.fields, v.position);
@@ -193,8 +195,13 @@ void main(uint3 id : SV_DispatchThreadID) {
         v.velocity = velocity;
     }
     particle_program_store(slot, v, program.x != 0u, p);
-    // A trail: an event each time its age passes a period, where it is now.
-    if (h > 0.0 && floor(v.age * float(TRAILS_PER_SECOND)) != floor((v.age - h) * float(TRAILS_PER_SECOND))) event_push(slot, PARTICLE_EVENT_TRAIL, v.position, v.velocity, p.color, v.seed);
+    if (particle_emitters[slot].kinds.y == PARTICLE_RENDER_MESH && particle_emitters[slot].mesh.y == PARTICLE_FACING_VELOCITY && length(v.velocity) > PARTICLE_MESH_FACING_SPEED) {
+        p.flags = (p.flags & ((1u << RIBBON_SHIFT) - 1u)) | particle_heading_pack(normalize(v.velocity));
+    }
+    // A trail: an event each time its age passes a period, where it is now, and
+    // at the end of the frame one whose point leads it to where its head is.
+    if (h > 0.0 && floor(lived * float(TRAILS_PER_SECOND)) != floor((lived - h) * float(TRAILS_PER_SECOND))) event_push(slot, PARTICLE_EVENT_TRAIL, v.position, v.velocity, p.color, v.seed);
+    else if (params.last != 0u) event_push(slot, PARTICLE_EVENT_TRAIL, v.position, v.velocity, p.color, v.seed, PARTICLE_EVENT_LEADER);
     if (params.last != 0u && (range.w & PARTICLE_FLAG_LIT) != 0u && ((p.flags & 1u) == 0u || ((index + frame.frame_index) & 1u) == 0u)) {
         float3 view = to_eye(v.position);
         float radius = v.size * 0.5;
@@ -213,6 +220,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
     particles[index] = p;
     if (params.last == 0u) return;
+    if (particle_emitters[slot].kinds.y == PARTICLE_RENDER_RIBBON) particle_ribbon_look_store(slot, index, particle_program_look(slot, index, p));
     uint at;
     InterlockedAdd(particle_states[slot].alive, 1u, at);
     if (at < range.y) particle_lists[program.y + range.x + at] = index;

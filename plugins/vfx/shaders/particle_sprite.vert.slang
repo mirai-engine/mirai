@@ -51,10 +51,18 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     float half_size;
     float3 light;
     if (ribbon) {
-        uint pieces = max(particle_states[params.emitter].pieces, 1u);
-        uint alive = min(particle_states[params.emitter].alive, e.range.y);
-        uint segment = instance_id / pieces;
-        float along_t = float(instance_id % pieces + (vertex_id >> 1u)) / float(pieces);
+        // The segment of the instance: the last whose quads start at or before it.
+        uint alive = min(particle_states[params.emitter].alive, min(e.range.y, PARTICLE_SORT_MAX));
+        uint starts = 3u * e.program.y + e.range.x;
+        uint low = 0u, high = max(alive, 1u) - 1u;
+        while (high - low > 1u) {
+            uint middle = (low + high) >> 1u;
+            if (particle_lists[starts + middle] <= instance_id) low = middle; else high = middle;
+        }
+        uint segment = low;
+        uint first = particle_lists[starts + segment];
+        uint pieces = max(particle_pieces(particles[particle_drawn(params.emitter, segment)]), 1u);
+        float along_t = float(instance_id - first + (vertex_id >> 1u)) / float(pieces);
         index = particle_drawn(params.emitter, segment);
         uint next = particle_drawn(params.emitter, segment + 1u);
         p = particles[index];
@@ -85,9 +93,10 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
         float3 center = (2.0 * u3 - 3.0 * u2 + 1.0) * a + (u3 - 2.0 * u2 + u) * m0 + (3.0 * u2 - 2.0 * u3) * b + (u3 - u2) * m1;
         float3 along = (6.0 * u2 - 6.0 * u) * a + (3.0 * u2 - 4.0 * u + 1.0) * m0 + (6.0 * u - 6.0 * u2) * b + (3.0 * u2 - 2.0 * u) * m1;
         if (length(along) <= 1e-6) along = b - a;
-        Particle_Look la = particle_program_look(params.emitter, index, p);
-        Particle_Look lb = particle_program_look(params.emitter, next, q);
-        look = la;
+        // What both ends show, as the frame kept it: no program runs per vertex.
+        Particle_Look la = particle_ribbon_look(params.emitter, index);
+        Particle_Look lb = particle_ribbon_look(params.emitter, next);
+        look = along_t < 0.5 ? la : lb;
         look.color = lerp(la.color, lb.color, along_t);
         look.size = lerp(la.size, lb.size, along_t);
         half_size = look.size * 0.5;

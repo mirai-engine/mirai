@@ -46,7 +46,7 @@ Operation :: enum u8 {None,Check,Refresh,Init,Commit,Commit_Push,Push,Pull,Abort
 Roots :: struct {engine,project:string}
 
 Repository :: struct {
-    checked:bool,    // git --version ran once
+    checked:bool,    // git answered once whether the project is in a repository, or is not there
     available:bool,
     repository:bool, // the project is inside a work tree
     root:[PATH_BYTES]u8,   // of the work tree, with forward slashes
@@ -341,14 +341,15 @@ step_done :: proc(r:^Repository,roots:Roots,code:int) -> bool {
         r.base_found=code==0 && len(r.out)<OUTPUT_LIMIT-8192
         return true
     case .Check:
-        r.checked,r.available=true,code==0
-        if code!=0 {r.operation=.None;return false}
+        r.available=code==0
+        if code!=0 {r.checked=true;r.operation=.None;return false}
         // Then what the repository holds.
         r.operation,r.step=.Refresh,-1
         return true
     case .Refresh:
         switch r.step {
         case 0:
+            r.checked=true
             if code!=0 {
                 r.repository,r.merging=false,false
                 clear(&r.changes);clear(&r.history)

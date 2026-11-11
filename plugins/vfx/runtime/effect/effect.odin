@@ -233,6 +233,11 @@ particle_validate :: proc(desc:Particle_Desc) -> Particle_Problem {
     if p.collision>max(Particle_Collision) {return {"collision","Use None or World"}}
     if p.facing>max(Particle_Facing) {return {"facing","Use Tumble or Velocity"}}
     for weight in p.mesh_weights {if weight<0 {return {"mesh_weights","Use weights of zero or more"}}}
+    if p.render==.Mesh && p.sort {
+        meshes:=0
+        for id in p.meshes {meshes+=1 if id!={} else 0}
+        if meshes>1 {return {"sort","A sorted effect draws one mesh back to front: keep one of meshes, or turn sort off"}}
+    }
     if p.trigger>max(Particle_Event) {return {"trigger","Use None, Death, Collision or Trail"}}
     if p.report>max(Particle_Event) || p.report==.Trail {return {"report","Use None, Death or Collision"}}
     if p.emission_mode>max(asset.Emission_Mode) {return {"emission_mode","Use Physical or Relative"}}

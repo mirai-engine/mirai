@@ -1,5 +1,8 @@
 //! mirai constant PARTICLE_CURVE_KEYS uint ../runtime/effect/effect.odin
 //! mirai constant RIBBON_SHIFT uint ../runtime/gpu.odin
+//! mirai constant RIBBON_PIECES_SHIFT uint ../runtime/gpu.odin
+//! mirai constant RIBBON_LOOK_BYTES uint ../runtime/gpu.odin
+//! mirai constant SORT_SLOT_BITS uint ../runtime/gpu.odin
 //! mirai constant RIBBON_PIECES uint ../runtime/gpu.odin
 //! mirai constant TRAILS_PER_SECOND uint ../runtime/gpu.odin
 //! mirai constant MESH_CHOICE_SHIFT uint ../runtime/gpu.odin
@@ -19,7 +22,7 @@ struct Particle {
     uint color;                     // rgba8 of the square root of the linear color
     uint light;                     // rgb with a shared exponent: the light it receives
     uint emitter;                   // slot
-    uint flags;                     // 1: light holds a value; from MESH_CHOICE_SHIFT, its mesh; above RIBBON_SHIFT, the ribbon it joins
+    uint flags;                     // 1: light holds a value; from MESH_CHOICE_SHIFT, the mesh of a Mesh particle; from RIBBON_PIECES_SHIFT, the pieces of the segment it starts; above RIBBON_SHIFT, the ribbon it joins
 };
 
 #define PARTICLE_SPAWNS 8u
@@ -57,6 +60,8 @@ struct Particle_Emitter {
     float4 light;         // intensity (cd), range, radius (0: half the size of the particle)
     uint4 lights;         // its share of the room of the frame: x the first of its lights with shadows, y how many; z, w those without
     uint4 data;           // bytes of particle_data to the Attributes of its range, bytes of those of a particle, its age (bits), particles it started before the frame
+    float4 mesh_weights;  // of Mesh particles: the weights of its meshes added up
+    uint4 mesh_vertices;  // and the vertices of a draw of each
 };
 
 struct Particle_State {
@@ -65,9 +70,7 @@ struct Particle_State {
     uint births; uint born; // of an emitter whose program gives its births: those of the frame, and all it started
     // An indexed draw; that of a mesh, without indices: vertex count, instance count, first vertex, first instance.
     uint index_count; uint instance_count; uint first_index; int vertex_offset; uint first_instance;
-    uint pieces;          // of a ribbon: those each segment is cut into this frame
-    uint pad3; uint pad4;
-    uint4 meshes[PARTICLE_MESHES]; // of Mesh particles, a draw of each mesh without indices
+    uint pad2; uint pad3; uint pad4;
 };
 
 struct Particle_Event {
@@ -75,6 +78,9 @@ struct Particle_Event {
     float3 velocity; uint color;
     uint ribbon;                  // that the particles it starts join
 };
+// An event a trail makes at the end of each frame: the point it starts lives
+// until the next step, drawn where its head is now.
+#define PARTICLE_EVENT_LEADER 0x80000000u
 
 #define PARTICLE_FLAG_ACTIVE 1u
 #define PARTICLE_FLAG_RESET 2u
@@ -116,7 +122,9 @@ struct Particle_Event {
 
 #define PARTICLE_EVENT_CAPACITY 16384u
 #define PARTICLE_EVENTS_AT 64u // words of particle_queue before the events: their counts and dispatches
-#define PARTICLE_EVENT_WORDS 12u
+#define PARTICLE_EVENT_WORDS 9u
+// Words of particle_queue to a draw of each mesh of each emitter (vfx.MESH_DRAWS_AT).
+#define PARTICLE_MESH_DRAWS_AT (PARTICLE_EVENTS_AT + 2u * PARTICLE_EVENT_CAPACITY * PARTICLE_EVENT_WORDS)
 
 // The resources of an emitter in particle_frame: the surface of its shape,
 // then those of its program, in the order it declares them.
@@ -357,23 +365,6 @@ Particle_Stage particle_stage_of(uint slot, uint k) {
     return s;
 }
 
-// What the rows of the frame hold of a Mesh emitter (vfx.Gpu_Mesh_Row): the mesh of the
-// scene of each choice, their weights added up and the vertices of a draw of each.
-#define PARTICLE_MESH_ROW_WEIGHTS 16u
-#define PARTICLE_MESH_ROW_VERTICES 32u
-uint particle_mesh_of(uint slot, uint choice) { return particle_frame.Load(particle_emitters[slot].mesh.z + choice * 4u); }
-uint particle_mesh_vertices(uint slot, uint choice) { return particle_frame.Load(particle_emitters[slot].mesh.z + PARTICLE_MESH_ROW_VERTICES + choice * 4u); }
-
-// Which of the meshes of an emitter a particle shows, by a number from 0 to 1 against their weights.
-uint particle_mesh_pick(uint slot, float u) {
-    uint count = max(particle_emitters[slot].mesh.x, 1u);
-    float4 weights = particle_frame_row(particle_emitters[slot].mesh.z + PARTICLE_MESH_ROW_WEIGHTS);
-    for (uint c = 0u; c + 1u < count; c++) {
-        if (u < weights[c]) return c;
-    }
-    return count - 1u;
-}
-
 // The row-th resource of an emitter; kind NONE when it has none.
 Particle_Resource particle_resource(uint slot, uint row) {
     Particle_Resource r = (Particle_Resource)0;
@@ -420,6 +411,10 @@ uint particle_emitter_of(Particle p) { return p.emitter; }
 #define PARTICLE_RIBBON_MASK (0xFFFFFFFFu >> RIBBON_SHIFT)
 uint particle_ribbon(Particle p) { return p.flags >> RIBBON_SHIFT; }
 uint particle_own_ribbon(uint seed) { return max(hash_u32(seed) & PARTICLE_RIBBON_MASK, 1u); }
+
+// The pieces of the segment of a ribbon a particle starts, last frame.
+#define PARTICLE_PIECES_MASK 15u
+uint particle_pieces(Particle p) { return (p.flags >> RIBBON_PIECES_SHIFT) & PARTICLE_PIECES_MASK; }
 
 // The direction a ribbon leaves a particle at here in, between those it came
 // from before and goes on to after: the mean of both.
@@ -554,6 +549,36 @@ float particle_puff(float2 tile, float seed) {
     return disc * disc * saturate(0.35 + n * 1.1);
 }
 
+// Which of the meshes of an emitter a particle shows, by a number from 0 to 1 against their weights.
+uint particle_mesh_pick(uint slot, float u) {
+    uint count = max(particle_emitters[slot].mesh.x, 1u);
+    float4 weights = particle_emitters[slot].mesh_weights;
+    for (uint c = 0u; c + 1u < count; c++) {
+        if (u < weights[c]) return c;
+    }
+    return count - 1u;
+}
+
+// Where a Mesh particle that faces its velocity last went faster than
+// PARTICLE_MESH_FACING_SPEED, in the bits of flags a ribbon has: two of 10
+// over an octahedron and whether they hold it. Slower, it keeps it, so that
+// what rests does not jitter.
+#define PARTICLE_MESH_FACING_SPEED 0.1
+#define PARTICLE_HEADING_HELD 0x80000000u
+uint particle_heading_pack(float3 d) {
+    float2 o = d.xy / (abs(d.x) + abs(d.y) + abs(d.z));
+    if (d.z < 0.0) o = (1.0 - abs(o.yx)) * float2(o.x >= 0.0 ? 1.0 : -1.0, o.y >= 0.0 ? 1.0 : -1.0);
+    uint2 q = uint2(saturate(o * 0.5 + 0.5) * 1023.0 + 0.5);
+    return (q.x | (q.y << 10u)) << RIBBON_SHIFT | PARTICLE_HEADING_HELD;
+}
+float3 particle_heading(uint flags) {
+    uint bits = flags >> RIBBON_SHIFT;
+    float2 o = float2(float(bits & 1023u), float((bits >> 10u) & 1023u)) / 1023.0 * 2.0 - 1.0;
+    float3 d = float3(o, 1.0 - abs(o.x) - abs(o.y));
+    if (d.z < 0.0) d.xy = (1.0 - abs(d.yx)) * float2(d.x >= 0.0 ? 1.0 : -1.0, d.y >= 0.0 ? 1.0 : -1.0);
+    return normalize(d);
+}
+
 // The mesh a Mesh particle shows among those of its emitter.
 uint particle_mesh_choice(uint slot, Particle p) {
     return min((p.flags >> MESH_CHOICE_SHIFT) & (PARTICLE_MESHES - 1u), max(particle_emitters[slot].mesh.x, 1u) - 1u);
@@ -577,7 +602,7 @@ float3x3 particle_rotation(uint seed, float angle) {
 float3x3 particle_mesh_rotation(uint slot, Particle p) {
     if (particle_emitters[slot].mesh.y != PARTICLE_FACING_VELOCITY) return particle_rotation(p.seed, p.rotation);
     float3 v = particle_world_vector(slot, p.velocity);
-    float3 forward = length(v) > 1e-5 ? normalize(v) : float3(0.0, 1.0, 0.0);
+    float3 forward = (p.flags & PARTICLE_HEADING_HELD) != 0u ? particle_heading(p.flags) : length(v) > 1e-5 ? normalize(v) : float3(0.0, 1.0, 0.0);
     float3 up = abs(forward.y) > 0.99 ? float3(0.0, 0.0, forward.y > 0.0 ? 1.0 : -1.0) : float3(0.0, 1.0, 0.0);
     float3 z = -forward;
     float3 x = normalize(cross(up, z));
@@ -588,9 +613,13 @@ float3x3 particle_mesh_rotation(uint slot, Particle p) {
 }
 
 // A vector of the space of its mesh in the world: one that tumbles turns in
-// the space of its emitter; one that faces its velocity, in the world.
+// the space of its emitter; one that faces its velocity, in the world, grown
+// by the scale of its emitter along each axis.
 float3 particle_mesh_vector(uint slot, float3x3 rotation, float3 v) {
-    return particle_emitters[slot].mesh.y == PARTICLE_FACING_TUMBLE ? particle_world_vector(slot, mul(rotation, v)) : mul(rotation, v);
+    float4 w[3] = particle_emitters[slot].world;
+    if (particle_emitters[slot].mesh.y == PARTICLE_FACING_TUMBLE) return particle_world_vector(slot, mul(rotation, v));
+    float3 scale = float3(length(float3(w[0].x, w[1].x, w[2].x)), length(float3(w[0].y, w[1].y, w[2].y)), length(float3(w[0].z, w[1].z, w[2].z)));
+    return mul(rotation, v * scale);
 }
 
 #endif

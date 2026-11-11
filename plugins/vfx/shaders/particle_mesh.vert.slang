@@ -1,7 +1,7 @@
 //! per vfx program
 #include "native.slang"
-// A mesh per particle of the list an emitter draws that shows the mesh of the
-// draw (params.choice; the others are collapsed), in the G-buffer with the
+// A mesh per particle of the run of the list an emitter draws for one of its
+// meshes (params.mesh), in the G-buffer with the
 // fragment of the engine: lit, shadowed and reflected like the scene. It
 // turns as its effect says and moves by its velocity. The draw gives each
 // cluster of level 0 of the mesh CLUSTER_DRAW_VERTICES vertices: those past
@@ -10,25 +10,26 @@
 // takes (render.pass_mesh_programs).
 #include "gbuffer_vertex.slang"
 #include "particle_programs.slang"
-struct Params_Block { uint emitter; uint program; uint choice; uint pad1; };
+struct Params_Block { uint emitter; uint program; uint mesh; uint pad1; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 
 [shader("vertex")]
 Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_VulkanInstanceID) {
     Gbuffer_Vertex output = (Gbuffer_Vertex)0;
     Particle_Emitter e = particle_emitters[params.emitter];
-    uint index = particle_drawn(params.emitter, instance_id);
-    Particle p = particles[index];
-    Mesh mesh = meshes[particle_mesh_of(params.emitter, params.choice)];
+    Mesh mesh = meshes[params.mesh];
     Cluster c = mesh_cluster(mesh, vertex_id / CLUSTER_DRAW_VERTICES);
     uint corner = vertex_id % CLUSTER_DRAW_VERTICES;
     uint material = e.mesh.w != 0u ? e.mesh.w : (cluster_material(mesh, c) & 0xffffffu);
     bool shown = params.program == INVALID || material_row(material).program_id == params.program;
-    if (particle_mesh_choice(params.emitter, p) != params.choice || corner >= cluster_triangle_count(c) * 3u || !cluster_resident(mesh, c) || !shown) {
+    if (corner >= cluster_triangle_count(c) * 3u || !cluster_resident(mesh, c) || !shown) {
         output.position = float4(2.0, 2.0, 2.0, 1.0);
         return output;
     }
     Mesh_Point v = cluster_point(mesh, c, cluster_corner(mesh, c, corner));
+    // The first instance of the draw is where the run of its mesh starts in the list.
+    uint index = particle_drawn(params.emitter, instance_id);
+    Particle p = particles[index];
     Particle_Look look = particle_program_look(params.emitter, index, p);
     float3x3 rotation = particle_mesh_rotation(params.emitter, p);
     float3 world = particle_world(params.emitter, p.position) + particle_mesh_vector(params.emitter, rotation, v.position * look.size);
