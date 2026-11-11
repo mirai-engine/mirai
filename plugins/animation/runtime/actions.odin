@@ -50,7 +50,7 @@ Body_Motion :: struct {translation:mm.Vec3,move:Action_Body_Move,vertical:bool}
 // parameters too.
 Stack_Layer :: struct {
     name:[64]u8 `mirai:"text"`,
-    over:Bone_Ref `mirai:"optional"`,       // the bone, @part or @region of the body whose branch it moves; empty: the whole pose
+    over:[LAYER_BRANCHES]Layer_Branch `mirai:"optional"`, // the branches of the body it moves, each fading in over its depth; none: the whole pose
     mode:Layer_Mode `mirai:"optional"`,
     curves:Curve_Blend `mirai:"optional"`,
     mesh_space:bool `mirai:"optional"`,     // Override: the rotations of its branch blend in the space of the rig, so it keeps the turn its clip gives them whatever the base turns above it
@@ -100,7 +100,8 @@ action_layer_find :: proc(profile:Action_Profile,name:[64]u8) -> (index:int,ok:b
 action_profile_check :: proc(profile:Action_Profile) -> bool {
     if len(profile.actions)>ACTION_CAPACITY || len(profile.layers)>STACK_LAYERS || len(profile.sections)>ACTION_ROWS {return false}
     for &layer,i in profile.layers {
-        if !blend_text_valid(layer.name[:],false) || !blend_text_valid(layer.clip[:],true) || !blend_text_valid(layer.reference_clip[:],true) || !blend_text_valid(layer.space[:],true) || !profile_bone(layer.over) || layer.mode>max(Layer_Mode) || layer.curves>max(Curve_Blend) || !profile_weight(layer.weight) {return false}
+        if !blend_text_valid(layer.name[:],false) || !blend_text_valid(layer.clip[:],true) || !blend_text_valid(layer.reference_clip[:],true) || !blend_text_valid(layer.space[:],true) || layer.mode>max(Layer_Mode) || layer.curves>max(Curve_Blend) || !profile_weight(layer.weight) {return false}
+        for branch in layer.over {if !profile_bone(branch.bone) {return false}}
         for number in ([?]f32{layer.fade,layer.reference}) {if !finite(number) || number<0 {return false}}
         if !finite(layer.speed) || layer.clip[0]!=0 && layer.space[0]!=0 || layer.sync && layer.clip[0]==0 || layer.animation!={} && layer.clip[0]==0 {return false}
         for previous in profile.layers[:i] {if previous.name==layer.name {return false}}
@@ -109,7 +110,7 @@ action_profile_check :: proc(profile:Action_Profile) -> bool {
         if !blend_text_valid(value.name[:],false) || !blend_text_valid(value.clip[:],false) || !blend_text_valid(value.layer[:],true) || !blend_text_valid(value.exit_marker[:],true) || value.root_motion>max(Root_Motion_Policy) || value.cancel>max(Action_Cancel_Policy) || value.entry>max(Action_Entry) || !profile_weight(value.weight) || !finite(value.speed) || value.speed<=0 || value.clock>max(Action_Clock) || value.body_move>max(Action_Body_Move) || !finite(value.exit) || value.exit<=0 || value.exit>1 {return false}
         layer,found:=action_layer_find(profile,value.layer)
         if !found {return false}
-        if value.root_motion!=.None && layer>=0 && (profile.layers[layer].over!={} || profile.layers[layer].mode!=.Override) {return false}
+        if value.root_motion!=.None && layer>=0 && (layer_over(profile.layers[layer].over)!={} || profile.layers[layer].mode!=.Override) {return false}
         if value.body_move!=.None && value.root_motion==.None || value.body_vertical && value.body_move==.None {return false}
         for number in ([?]f32{value.fade_in,value.fade_out}) {if !finite(number) || number<0 {return false}}
         for previous in profile.actions[:i] {if previous.name==value.name {return false}}
@@ -120,6 +121,11 @@ action_profile_check :: proc(profile:Action_Profile) -> bool {
         for previous in profile.sections[:i] {if previous.action==section.action && previous.name==section.name {return false}}
     }
     return true
+}
+// The branches of a layer as its asks carry them.
+layer_over :: proc(over:[LAYER_BRANCHES]Layer_Branch) -> (hashed:Layer_Over) {
+    for branch,i in over {if hash:=bone_ref_hash(branch.bone);hash!=0 {hashed[i]={hash,branch.depth}}}
+    return
 }
 action_profile_free :: proc(profile:^Action_Profile,allocator:=context.allocator) {delete(profile.layers,allocator);delete(profile.actions,allocator);delete(profile.sections,allocator);profile^={}}
 @(private)
@@ -219,10 +225,9 @@ action_plan_bind :: proc(plan:^Action_Plan,set:Character_Set) {
     plan.animation=set.info.animation
     plan.slots,plan.layers,plan.layer_names={},{},{}
     for &layer,i in plan.profile.layers {
-        over,_:=bone_ref_hash(layer.over)
         plan.layer_names[i]=base.name_hash(base.text_get(layer.name[:]))
         plan.layers[i]={
-            clip=base.name_hash(base.text_get(layer.clip[:])) if layer.clip[0]!=0 else 0,over=over,weight=layer.weight,speed=layer.speed,fade=layer.fade,loop=layer.loop,sync=layer.sync,
+            clip=base.name_hash(base.text_get(layer.clip[:])) if layer.clip[0]!=0 else 0,over=layer_over(layer.over),weight=layer.weight,speed=layer.speed,fade=layer.fade,loop=layer.loop,sync=layer.sync,
             mode=layer.mode,reference=layer.reference,reference_clip=base.name_hash(base.text_get(layer.reference_clip[:])) if layer.reference_clip[0]!=0 else 0,curves=layer.curves,mesh_space=layer.mesh_space,space=u8(character_space(set,layer.space)+1) if layer.space[0]!=0 else 0,
         }
     }

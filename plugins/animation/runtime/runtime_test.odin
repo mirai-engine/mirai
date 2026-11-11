@@ -226,41 +226,82 @@ layers_play_over_the_clip_inside_their_branch_by_weight_and_fade_out :: proc(t:^
     testing.expect(t,core.problem_find(&problems,state.entity,"animation.layer_reference")!=nil && state.local[3].position==0,"a reference clip the animation does not have is reported and the layer adds nothing")
 }
 
+// A chain of bones below the entity, each the parent of the next, at rest where its parent is,
+// and clips that hold a rotation on some of them.
+@(private="file")
+Chain_Clip :: struct {name:string,turns:[]struct {bone:string,turn:mm.Quat}}
+@(private="file")
+chain_fixture :: proc(t:^testing.T,content:^host.Content_Animation,bones:[]string,clips:[]Chain_Clip) -> (state:Playing) {
+    content.id={1,3}
+    testing.expect(t,lib.library_init(&content.lib,{max_keys=32,max_tracks=32,max_clips=2*len(clips),max_markers=0}))
+    for clip in clips {
+        desc:lib.Clip_Desc;desc.name=base.name_hash(clip.name)
+        tracks:=make([]lib.Track_Desc,len(clip.turns),context.temp_allocator)
+        for turn,i in clip.turns {
+            keys:=make([]lib.Keyframe,1,context.temp_allocator);q:=turn.turn;keys[0].value={imag(q),jmag(q),kmag(q),real(q)}
+            tracks[i]={target=base.name_hash(turn.bone),property=.Rotation,keys=keys}
+        }
+        desc.tracks=tracks
+        added,_:=lib.clip_add(&content.lib,desc);testing.expect(t,added!=0)
+    }
+    for i in 0..<len(clips) {content.lib.clips[len(clips)+i]=content.lib.clips[i];content.lib.clips[len(clips)+i].loop=.Loop}
+    content.lib.clip_count=2*len(clips);content.clip_count=len(clips)
+    state=Playing{entity=core.entity_make(1,1),clip=-1}
+    for i in 0..=len(bones) {
+        target:=base.name_hash(bones[i-1]) if i>0 else 0;parent:=i32(i-1)
+        append(&state.bindings,Binding{target=target,entity=core.NONE,driven={.Position,.Rotation},rest=mm.TRANSFORM_IDENTITY,parent=parent})
+        append(&state.parents,parent);append(&state.targets,target);append(&state.rest,mm.TRANSFORM_IDENTITY)
+    }
+    resize(&state.local,len(bones)+1);resize(&state.world,len(bones)+1)
+    return
+}
+
+// A layer over a branch with a depth fades in along it: the change it makes from the base grows by
+// a step each bone instead of all of it at the bone where the branch starts.
 @(test)
-a_layer_in_the_space_of_the_rig_keeps_the_turn_of_its_clip_whatever_the_base_turns_above :: proc(t:^testing.T) {
-    content:host.Content_Animation;content.id={1,3}
-    testing.expect(t,lib.library_init(&content.lib,{max_keys=16,max_tracks=8,max_clips=4,max_markers=0}))
-    defer lib.library_destroy(&content.lib)
-    hip,arm:=base.name_hash("hip"),base.name_hash("arm")
+a_layer_fades_in_along_its_branch_over_its_depth :: proc(t:^testing.T) {
+    bent:=mm.quat_axis_angle({1,0,0},mm.PI/6)
+    bones:=[]string{"pelvis","spine_1","spine_2","spine_3"}
+    content:host.Content_Animation
+    state:=chain_fixture(t,&content,bones,{{"still",{{"pelvis",1}}},{"bend",{{"pelvis",bent},{"spine_1",bent},{"spine_2",bent},{"spine_3",bent}}}})
+    defer lib.library_destroy(&content.lib);defer playing_free(&state)
+    playback:Playback;defer playback_free(&playback)
+    testing.expect(t,tracks_bind(&playback,&state,&content))
+    events:Animation_Events;defer delete(events.items)
+    edges:[2]f32
+    for depth,i in ([2]u8{0,3}) {
+        animation:=ANIMATION_DEFAULT
+        testing.expect(t,animation_clip(&animation,"still",fade=0) && test_layer(&state,1,"bend",over="spine_1",depth=depth))
+        layer_step(&playback,&state,&content,animation,&events,0)
+        changes:[5]f32
+        for b in 1..=4 {changes[b]=mm.quat_angle(state.local[b].rotation,1)}
+        for b in 2..=4 {edges[i]=max(edges[i],abs(changes[b]-changes[b-1]))}
+        testing.expectf(t,changes[1]<1e-5 && abs(changes[4]-mm.PI/6)<1e-4,"depth %d: the pelvis keeps the base and the last spine bone takes the layer: %v",depth,changes)
+    }
+    testing.expectf(t,abs(edges[0]-mm.PI/6)<1e-4 && abs(edges[1]-mm.PI/18)<1e-4,"the step between neighbouring bones at the edge: %v cut, %v over a depth of 3",edges[0],edges[1])
+}
+
+// In the space of the rig an Override layer holds the turn its clip gives a bone whatever the base
+// turns above it.
+@(test)
+a_layer_in_the_space_of_the_rig_keeps_its_clip_whatever_the_base_turns_above :: proc(t:^testing.T) {
     side:=mm.quat_axis_angle({0,1,0},mm.PI/2)
-    turned:=[1]lib.Keyframe{{value={imag(side),jmag(side),kmag(side),real(side)}}}
-    straight:=[1]lib.Keyframe{{value={0,0,0,1}}}
-    // The base turns the hip sideways; the layer holds hip and arm straight, over the arm alone.
-    clips:=[2]lib.Clip_Desc{
-        {name=base.name_hash("turn"),tracks={{target=hip,property=.Rotation,keys=turned[:]}}},
-        {name=base.name_hash("pose"),tracks={{target=hip,property=.Rotation,keys=straight[:]},{target=arm,property=.Rotation,keys=straight[:]}}},
-    }
-    for clip in clips {added,_:=lib.clip_add(&content.lib,clip);testing.expect(t,added!=0)}
-    for i in 0..<2 {content.lib.clips[2+i]=content.lib.clips[i];content.lib.clips[2+i].loop=.Loop}
-    content.lib.clip_count=4;content.clip_count=2
-    state:=Playing{entity=core.entity_make(1,1),clip=-1};defer playing_free(&state)
-    targets:=[3]u64{0,hip,arm};parents:=[3]i32{-1,0,1}
-    for target,i in targets {
-        append(&state.bindings,Binding{target=target,entity=core.NONE,driven={.Position,.Rotation},rest=mm.TRANSFORM_IDENTITY,parent=parents[i]})
-        append(&state.parents,parents[i]);append(&state.targets,target);append(&state.rest,mm.TRANSFORM_IDENTITY)
-    }
-    resize(&state.local,3);resize(&state.world,3)
+    content:host.Content_Animation
+    state:=chain_fixture(t,&content,{"hip","arm"},{{"turn",{{"hip",side}}},{"pose",{{"hip",1},{"arm",1}}}})
+    defer lib.library_destroy(&content.lib);defer playing_free(&state)
     playback:Playback;defer playback_free(&playback)
     testing.expect(t,tracks_bind(&playback,&state,&content))
     events:Animation_Events;defer delete(events.items)
     turns:[2]f32
     for mesh,i in ([2]bool{false,true}) {
+        // The base turns the hip sideways; the layer holds hip and arm straight, over the arm alone.
         animation:=ANIMATION_DEFAULT
         testing.expect(t,animation_clip(&animation,"turn",fade=0) && test_layer(&state,1,"pose",over="arm",mesh_space=mesh))
         layer_step(&playback,&state,&content,animation,&events,0)
         turns[i]=mm.quat_angle(state.local[1].rotation*state.local[2].rotation,1)
+        testing.expect(t,mm.quat_angle(state.local[1].rotation,side)<1e-4)
     }
-    testing.expectf(t,abs(turns[0]-mm.PI/2)<1e-4 && turns[1]<1e-4 && mm.quat_angle(state.local[1].rotation,side)<1e-4,"in its own space the arm turns with the hip, in the space of the rig it stays straight: %v",turns)
+    testing.expectf(t,abs(turns[0]-mm.PI/2)<1e-4 && turns[1]<1e-4,"in its own space the arm turns with the hip, in the space of the rig it stays straight: %v",turns)
 }
 
 @(test)

@@ -54,8 +54,8 @@ ANIMATION_DEFAULT :: Animation{speed=1,weight=1,loop=true,playing=true,fade=0.2,
 // itself, or the clip of the action that plays in it.
 Layer_Ask :: struct {
     clip:u64,   // name in the library of the clip; 0: none, and without a space the layer fades out
-    over:u64,   // base.name_hash of the path or name of the bone whose branch it moves; 0: the whole pose
-    weight:f32, // over what is below it
+    over:Layer_Over, // the branches of the body it moves
+    weight:f32,      // over what is below it
     speed:f32,
     fade:f32,   // seconds to reach its weight, and of a change of clip
     loop:bool,
@@ -185,6 +185,10 @@ Playing :: struct {
     asked:[STACK_SLOTS]Layer_Ask,           // what each slot plays in this tick
     stack:u8,                               // slots its .character gives it; 0: none
     parameters:[STACK_PARAMETERS]Stack_Parameter, // what set gave it; name 0: free
+    masks:[dynamic]f32,                // by slot of the stack and binding: the share of its layer each bone takes (layer_mask)
+    masks_over:[STACK_SLOTS]Layer_Over, // the branches each row of masks was made for
+    masks_made:u16,                    // a bit a row made for the bindings of masks_bound
+    masks_bound:u64,
     program:Program_Playing,
     curves:[dynamic]Curve_Output,
     curves_ready:bool,
@@ -789,8 +793,18 @@ layer_space_advance :: proc(state:^Playing,layer:^Layer_Playing,asked:Layer_Ask,
 @(private)
 layers_advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,events:^Animation_Events,dt:f32,problems:^core.Problems,characters:^Character_Assets=nil,app:^host.App=nil,actions:^Action_Runtime=nil) {
     library:=&content.lib
+    n:=len(state.bindings)
+    if state.masks_bound!=state.bound {state.masks_made,state.masks_bound=0,state.bound}
     for &layer,i in state.layers[:state.stack] {
         asked:=state.asked[i]
+        // The share each bone takes, made again only when the branches or the bindings change.
+        if bit:=u16(1)<<u16(i);asked.over!={} && (state.masks_made&bit==0 || state.masks_over[i]!=asked.over) {
+            if len(state.masks)<STACK_SLOTS*n && resize(&state.masks,STACK_SLOTS*n)!=nil {memory_problem(problems,state.entity,"the masks of its layers");continue}
+            state.masks_over[i]=asked.over;state.masks_made|=bit
+            if !layer_mask(state,asked.over,state.masks[i*n:][:n]) {
+                core.report(problems,state.entity,"animation.layer_bone","layer '%s' of the .character of this entity plays over a bone, or a part or region of the body, that this rig does not have, so it plays nothing; give each branch of its over one of its bones, a part or region of its body (@upper_body), or none",stack_slot_name(actions,state.entity,i))
+            }
+        }
         if asked.space!=0 {
             if app==nil || !layer_space_advance(state,&layer,asked,content,animation,characters,app,dt) {
                 core.report(problems,state.entity,"animation.layer_space","layer '%s' of the .character of this entity samples a space that names a clip its animation does not have; check it with animation.asset.inspect, and fix it with animation.space.set",stack_slot_name(actions,state.entity,i))
@@ -976,7 +990,8 @@ pose_layer_mesh_rotation :: proc(rotations:[]mm.Quat,state:^Playing,blend:lib.Bo
 }
 
 // The slots of the stack of state over its local pose, in order: each moves only what its clips
-// animate, inside its branch, replacing by its weight or adding its change from its reference.
+// animate, by the share of its weight each bone of its branches takes, replacing by it or adding its
+// change from its reference.
 @(private)
 pose_layers :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,transforms:^core.Table(core.Transform,.Read)=nil,worker:=0) -> (faults:Pose_Faults) {
     if state.stack==0 {return}
@@ -988,10 +1003,10 @@ pose_layers :: proc(playback:^Playback,state:^Playing,content:^host.Content_Anim
         players:[LAYER_PLAYERS]lib.Player
         count:=layer_players(&layer,&players)
         if count==0 {continue}
-        selection:Bone_Selection;masked:=asked.over!=0
-        if masked {
-            found:bool
-            if selection,found=bone_select(state,asked.over);!found {faults.layer_bone|=u16(1)<<u16(i);continue}
+        mask:[]f32
+        if asked.over!={} {
+            if state.masks_made&(u16(1)<<u16(i))==0 || state.masks_over[i]!=asked.over || len(state.masks)<(i+1)*n {continue}
+            mask=state.masks[i*n:][:n]
         }
         additive:=asked.mode==.Additive
         from:lib.Clip
@@ -1001,6 +1016,7 @@ pose_layers :: proc(playback:^Playback,state:^Playing,content:^host.Content_Anim
         scratch,bones,shared,ready:=pose_room(playback,state,worker)
         if !ready {faults.memory=true;continue}
         tracks:=shared.bones[:]
+        mesh:=!additive && asked.mesh_space && len(state.parents)==n
         for player in players[:count] {
             if additive {lib.bones_blend_additive(bones,tracks,library,player,asked.reference,1,from,scratch.references[:])} else {lib.bones_blend(bones,tracks,library,player)}
         }
@@ -1009,10 +1025,8 @@ pose_layers :: proc(playback:^Playback,state:^Playing,content:^host.Content_Anim
         root:=clip_root(content,layer.fader.current.clip);root.in_place=layer.root_motion==.In_Place
         root_bone:=bone_resolve(state,root.bone) if root.in_place else -1
         reference:=root_reference(state,root_bone,transforms) if root_bone>=0 else mm.TRANSFORM_IDENTITY
-        mesh:=!additive && asked.mesh_space && len(state.parents)==n
         for b in 0..<n {
-            share:=layer.weight*mm.saturate(animation.weight)
-            if masked && !bone_selected(state,selection,b) {share=0}
+            share:=layer.weight*mm.saturate(animation.weight)*(mask[b] if mask!=nil else 1)
             if mesh && !pose_layer_mesh_rotation(scratch.rig_rotations[:3*n],state,bones[b],b,share) {continue}
             if share<=0 {continue}
             turned:=state.local[b].rotation
@@ -1201,7 +1215,7 @@ playback_free :: proc(playback:^Playback) {
 playing_free :: proc(state:^Playing) {
     program_free(&state.program)
     delete(state.curves);delete(state.bindings);delete(state.parents);delete(state.targets);delete(state.aliases);delete(state.previous)
-    delete(state.mirror_pairs);delete(state.mirror_corrections);delete(state.mirror_scratch);delete(state.regions)
+    delete(state.mirror_pairs);delete(state.mirror_corrections);delete(state.mirror_scratch);delete(state.regions);delete(state.masks)
     delete(state.rest);delete(state.local);delete(state.world);delete(state.sampled)
     delete(state.follow);delete(state.retarget);delete(state.retarget_rest);delete(state.retarget_world);delete(state.driven);delete(state.driven_own);delete(state.driven_leader)
     state^={}

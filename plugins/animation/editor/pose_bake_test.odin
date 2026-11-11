@@ -154,7 +154,7 @@ pose_bake_samples_final_constraints_curves_markers_root_and_exact_partial_endpoi
     testing.expect(t,host.assets_scan(&a.assets))
     // The walk carries the root; a layer under it plays the run of the other source in step, at half its weight.
     authoring_test_register(a,t,"set",Action_Write_Params,authoring_action_set,action_write_defaults())
-    result:=authoring_test_execute(a,"set",fmt.tprintf(`{{"path":"blend.character","animation":"%s","layers":[{{"name":"Run","clip":"run","animation":"%s","over":{{"path":"joint2"}},"sync":true,"weight":0.5,"fade":0}}]}}`,authoring_test_id_text(source_id),authoring_test_id_text(other_id)))
+    result:=authoring_test_execute(a,"set",fmt.tprintf(`{{"path":"blend.character","animation":"%s","layers":[{{"name":"Run","clip":"run","animation":"%s","over":[{{"bone":{{"path":"joint2"}}}}],"sync":true,"weight":0.5,"fade":0}}]}}`,authoring_test_id_text(source_id),authoring_test_id_text(other_id)))
     if !testing.expect(t,result.code==0,result.message) {return}
     animation:=anim.ANIMATION_DEFAULT;animation.asset=pose_id;base.text_set(animation.clip[:],"walk");animation.root_motion=.In_Place;core.add(&f.world.animations,f.rig,animation);core.settle(&f.info,&f.world,nil)
     before:=f.world.transforms.values[1]
