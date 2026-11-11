@@ -96,7 +96,7 @@ a_strain_asked_of_a_volume_in_a_tick_breaks_what_its_filter_meets_after_the_step
     testing.expect(t,simulate(&state,&requests,&job_system,1.0/60))
     testing.expect_value(t,len(breakable_events(view)),0)
     // A weakening strains and breaks nothing; the blend of the volume is that of the event.
-    strain_area(&requests,volume.sphere(5,blend=2),{position={0,1,0}},1e6,weakening=true)
+    strain_area(&requests,volume.sphere(5),{position={0,1,0}},1e6,weakening=true,blend=2)
     testing.expect(t,simulate(&state,&requests,&job_system,1.0/60))
     events:=breakable_events(view)
     testing.expect(t,len(events)==1 && events[0].kind==.Weaken && events[0].radius==5 && events[0].blend==2 && breakable_revision(view,wall)==0)

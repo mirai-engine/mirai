@@ -11,13 +11,16 @@ import math "mirai:std/math"
 TRIANGLE_SEGMENTS :: 16
 TRIANGLE_BANDS :: 4
 
-// Where static collision changed: a ring of world boxes and how many were ever written. Scratch outside
-// snapshots and hashes: nothing in the simulation reads it.
+// Where static collision changed: a ring of world boxes and how many were ever written, and the box around
+// that collision as of some change. Scratch outside snapshots and hashes: nothing in the simulation reads it.
 @(private)
 Static_Log :: struct {
     boxes:[]Aabb,
-    head:u64,  // changes written: the cursor of the next one
-    floor:u64, // a cursor below it missed boxes the ring no longer holds
+    head:u64,     // changes written: the cursor of the next one
+    floor:u64,    // a cursor below it missed boxes the ring no longer holds
+    solid:Aabb,   // around the static shapes that block, when head was solid_at-1
+    solid_at:u64, // 0: never made
+    solid_ok:bool,
 }
 
 @(private)
@@ -29,14 +32,15 @@ static_log_push :: proc "contextless" (w:^World,box:Aabb) {
     if log.head>capacity {log.floor=max(log.floor,log.head-capacity)}
 }
 
-// One change with the boxes of every shape of the body.
+// One change with the boxes of every shape of the body that blocks; none for a body of sensors.
 @(private)
 static_log_body :: proc "contextless" (w:^World,index:i32) {
-    body:=&w.bodies[index]
-    if body.shape_list<0 {return}
-    box:=w.shapes[body.shape_list].aabb
-    for s:=w.shapes[body.shape_list].next;s>=0;s=w.shapes[s].next {box=math.aabb_merge(box,w.shapes[s].aabb)}
-    static_log_push(w,box)
+    box,blocks:=math.AABB_EMPTY,false
+    for s:=w.bodies[index].shape_list;s>=0;s=w.shapes[s].next {
+        if w.shapes[s].filter.block==0 {continue}
+        box,blocks=math.aabb_merge(box,w.shapes[s].aabb),true
+    }
+    if blocks {static_log_push(w,box)}
 }
 
 // Anything may have changed: every cursor falls behind.
@@ -52,7 +56,9 @@ static_log_restart :: proc "contextless" (w:^World) {
 // `out` leaves the rest for the next call.
 // A change is a shape made or destroyed on a static body, a static body moved, destroyed or turned to or
 // from static, or the filter of a static shape changed; one of a body is one box around all its shapes. A
-// fluid made, changed or destroyed is the box it covers, which for a plane is everything under it.
+// sensor (a shape that blocks no layer) is no collision: made, moved or destroyed it changes nothing, and
+// its filter only when it turns to block or stops. A fluid made, changed or destroyed is the box it covers,
+// which for a plane is everything under it.
 // overflow, writing nothing and with next at the newest change: the reader fell behind more than
 // World_Desc.static_change_capacity changes, its cursor is not one of this log, or a snapshot was restored
 // since. It takes everything as changed.
@@ -280,9 +286,24 @@ heightfield_triangles :: proc "contextless" (out:^Triangle_Out,field:^Heightfiel
     return true
 }
 
-// The box around every static shape, as the broad phase holds it (with its margin); false without any.
-static_bounds :: proc "contextless" (w:^World) -> (box:Aabb,ok:bool) {
+// Makes the box of static_bounds again when the static collision changed since it was made (static_changes):
+// one pass over the static shapes, none while nothing changed.
+static_bounds_update :: proc(w:^World) {
+    log:=&w.static_log
+    if log.solid_at==log.head+1 {return}
+    log.solid,log.solid_ok,log.solid_at=math.AABB_EMPTY,false,log.head+1
     tree:=&w.trees[STATIC_TREE]
     if tree.root==spatial.NULL_NODE || int(tree.root)>=len(tree.nodes) {return}
-    return tree.nodes[tree.root].aabb,true
+    query:=spatial.dynamic_tree_query(tree,tree.nodes[tree.root].aabb)
+    for _,user in spatial.tree_query_next(&query) {
+        shape:=&w.shapes[user]
+        if shape.filter.block==0 {continue}
+        log.solid,log.solid_ok=math.aabb_merge(log.solid,shape.aabb),true
+    }
+}
+
+// The box around every static shape that blocks, without the sensors, as of the last static_bounds_update;
+// false without any.
+static_bounds :: proc "contextless" (w:^World) -> (box:Aabb,ok:bool) {
+    return w.static_log.solid,w.static_log.solid_ok
 }

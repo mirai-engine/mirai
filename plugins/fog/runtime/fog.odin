@@ -3,6 +3,7 @@ package fog
 import "core:math"
 import "core:math/linalg"
 import "mirai:core"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import render "mirai:engine/render"
 import "mirai:host"
@@ -39,9 +40,10 @@ Fog_Volume :: struct {
     variable:bool,                               // its density varies from place to place, in wisps and banks that drift and change by themselves; density is their mean
     wisp_size:f32 `mirai:"min=0.1,unit=m"`,      // about how big its largest wisps are
     drift:[3]f32 `mirai:"unit=m/s"`,             // how fast its wisps move, and where to
+    zone:volume.Zone,
 }
 
-FOG_VOLUME_DEFAULT :: Fog_Volume{density=0.05,color={1,1,1},anisotropy=0.5,wisp_size=1.5,drift={0.5,0.05,0.2}}
+FOG_VOLUME_DEFAULT :: Fog_Volume{density=0.05,color={1,1,1},anisotropy=0.5,wisp_size=1.5,drift={0.5,0.05,0.2},zone=volume.ZONE_DEFAULT}
 
 // The wisps of a variable volume are WISP_OCTAVES layers of noise, each
 // smaller than the one before (fog.slang FOG_WISP_SIZES). Each moves with
@@ -180,19 +182,20 @@ medium_add :: proc(media:^Fog_Media,medium:Medium) {core.push(&media.queue,mediu
 @(step="render",loops="game editor",after="render_sync")
 fog_render :: proc(
     state:^Fog_Gpu,volumes:^core.Table(Fog_Volume,.Read),places:^core.Table(volume.Volume,.Read),media:^Fog_Media,worlds:^core.Table(core.World_Transform,.Read),
-    hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),settings:core.Ref(Fog_Settings),app:^host.App,problems:^core.Problems,
+    hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),settings:core.Ref(Fog_Settings),app:^host.App,problems:^core.Problems,
 ) {
+    zones:=volume.Where{places,worlds,parents,sections}
     state.count,state.dry,state.shade=0,false,false
     state.hidden=settings.hidden==.Every_Fourth?4:1
     added:=core.take(&media.queue)
     if app.renderer==nil || core.count(volumes)==0 && len(added)==0 {return}
     // The media keep their room: the lowest priorities of the world are left out first.
     rows:[CAPACITY]i32
-    for row in rows[:volume.ordered(places,worlds,volumes,rows[:CAPACITY-min(len(added),CAPACITY)])] {
+    for row in rows[:volume.ordered(zones,volumes,rows[:CAPACITY-min(len(added),CAPACITY)])] {
         e:=core.entity_at(volumes,int(row))
         fog:=core.at(volumes,int(row))
         if !(fog.density>0) || render.is_hidden(hidden,parents,e) {continue}
-        place,at,_:=volume.placed(places,worlds,e)
+        place,at,_:=volume.placed(zones,e)
         if place.shape==.Unbounded {
             core.report(problems,e,"fog.volume","its Fog_Volume fills nothing: a fog fills a Volume of shape Box, Sphere or Plane; give its entity one, or for a haze over the whole world raise the mie of the air of the Sky")
             continue
@@ -209,7 +212,7 @@ volume_gpu :: proc(state:^Fog_Gpu,fog:Fog_Volume,place:volume.Volume,at:mm.Trans
     if state.count>=CAPACITY {return}
     color:=linalg.clamp(fog.color,0,1)
     entry:=Gpu_Volume{
-        volume=volume.gpu_volume(place,at),
+        volume=volume.gpu_volume(place,at,fog.zone),
         medium={color.r*fog.density,color.g*fog.density,color.b*fog.density,fog.density},
         params={fog.variable?1/max(fog.wisp_size,0.1):0,clamp(fog.anisotropy,-0.95,0.95),max(fog.falloff,0),at.position.y},
     }
@@ -262,7 +265,7 @@ medium_gpu :: proc(state:^Fog_Gpu,medium:Medium) -> bool {
     }
     state.drift[state.count]={}
     state.volumes[state.count]={
-        volume=volume.gpu_volume({shape=.Box,extents={0.5,0.5,0.5},mode=.Add},medium.box),
+        volume=volume.gpu_volume(volume.box({0.5,0.5,0.5}),medium.box,{mode=.Add}),
         medium={color.r*density,color.g*density,color.b*density,density},
         params={0,clamp(medium.anisotropy,-0.95,0.95),0,low},
         carve={f32(medium.priority),f32((medium.dry?u32(CARVE_DRY):0)|(medium.carved?u32(CARVE_CARVED):0)|(medium.sun_only?u32(CARVE_SUN_ONLY):0)),medium.dry?0:max(medium.shade,0),0},

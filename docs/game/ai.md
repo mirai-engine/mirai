@@ -29,8 +29,8 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
 `navigation.agent_class` says what size is missing.
 
 - The navmesh builds itself from the world's static collision (a `Nav_Bounds` limits it). A mover
-  that blocks ways is a `Nav_Obstacle`, a costlier or forbidden zone a `Nav_Area`: each a `Box`
-  `Volume` on its entity ([regions](world/regions.md)). Jumps, ladders, doors: `Nav_Link`s.
+  that blocks ways is a `Nav_Obstacle`, a costlier or forbidden zone a `Nav_Area`: each a `Box` or
+  `Sphere` `Volume` on its entity ([regions](world/regions.md)). Jumps, ladders, doors: `Nav_Link`s.
 - Perception: `Perceiver.notices` is a `Teams` mask; the subject has a `Perceivable` with a team
   and a collider, so the sight ray reaches it. Sight is a cone along the body's -Z.
 

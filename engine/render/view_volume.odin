@@ -22,9 +22,10 @@ View_Volume :: struct {
     exposure:Exposure `mirai:"section=Exposure"`,
     tint:[3]f32 `mirai:"color"`, // multiplies the image before the display: white leaves it as it is
     layers:[POST_PROCESS_CAPACITY]Post_Process_Layer `mirai:"section=Effects"`, // the effects of the image, in order
+    zone:volume.Zone,
 }
 
-VIEW_VOLUME_DEFAULT :: View_Volume{exposure=EXPOSURE_DEFAULT,tint={1,1,1}}
+VIEW_VOLUME_DEFAULT :: View_Volume{exposure=EXPOSURE_DEFAULT,tint={1,1,1},zone=volume.ZONE_DEFAULT}
 
 // A volume that replaces blends the numbers of what is below into its own by
 // its weight, and takes its modes and effects past half; one that adds adds
@@ -58,8 +59,8 @@ view_volume_mix :: proc(value:^View_Volume,by:View_Volume,weight:f32,add:bool) {
 }
 
 // How a view looks at point.
-view_volume_at :: proc(views:^core.Table(View_Volume,$A),volumes:^core.Table(volume.Volume,$B),worlds:^core.Table(core.World_Transform,$C),point:[3]f32) -> View_Volume {
-    return volume.at(volumes,worlds,views,point,VIEW_VOLUME_DEFAULT,view_volume_mix)
+view_volume_at :: proc(views:^core.Table(View_Volume,$A),at:volume.Where,point:[3]f32) -> View_Volume {
+    return volume.at(at,views,point,VIEW_VOLUME_DEFAULT,view_volume_mix)
 }
 
 // The exposure of a view that looks as v says.
@@ -70,9 +71,9 @@ view_exposure_of :: proc "contextless" (v:View_Volume) -> core.View_Exposure {
 }
 
 // A view through a camera without its own Exposure takes that of where it is.
-view_volume_expose :: proc(view:^core.View,views:^core.Table(View_Volume,$A),volumes:^core.Table(volume.Volume,$B),worlds:^core.Table(core.World_Transform,$C)) {
+view_volume_expose :: proc(view:^core.View,views:^core.Table(View_Volume,$A),at:volume.Where) {
     if view.exposure.own {return}
-    view.exposure=view_exposure_of(view_volume_at(views,volumes,worlds,view.position))
+    view.exposure=view_exposure_of(view_volume_at(views,at,view.position))
 }
 
 // The effects of layers as the renderer runs them: those on whose material

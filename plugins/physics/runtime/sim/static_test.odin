@@ -373,6 +373,18 @@ static_changes_log_static_shapes_made_destroyed_moved_retyped_and_refiltered_but
     body_destroy(&w,ground)
     testing.expect_value(t,read(&w,&cursor,&boxes),1)
     testing.expect_value(t,boxes[0],Aabb{{9,-1,-1},{14,1,1}})
+
+    // A sensor is no collision: made, moved, refiltered among sensors or destroyed, it logs nothing; turned
+    // to block and back, it does.
+    sensor,sensor_shape:=test_static_box(&w,{0,0,0},{layers=1,overlap=~Collision_Layers(0)})
+    body_set_transform(&w,sensor,{10,0,0},QUAT_IDENTITY)
+    shape_set_filter(&w,sensor_shape,{layers=2,overlap=~Collision_Layers(0)})
+    testing.expect_value(t,read(&w,&cursor,&boxes),0)
+    shape_set_filter(&w,sensor_shape,{layers=2,block=~Collision_Layers(0)})
+    shape_set_filter(&w,sensor_shape,{layers=2,overlap=~Collision_Layers(0)})
+    testing.expect_value(t,read(&w,&cursor,&boxes),2)
+    body_destroy(&w,sensor)
+    testing.expect_value(t,read(&w,&cursor,&boxes),0)
 }
 
 @(test)

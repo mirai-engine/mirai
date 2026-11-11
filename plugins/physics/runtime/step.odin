@@ -11,6 +11,7 @@ import "mirai:host"
 import "mirai:std/base"
 import render "mirai:engine/render"
 import sim "plugins:physics/runtime/sim"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
@@ -51,6 +52,7 @@ Sync :: struct {
     rigids:^core.Table(Rigid_Body,.Read),
     colliders:^core.Table(Collider,.Read),
     characters:^core.Table(Character,.Read),
+    volumes:^core.Table(volume.Volume,.Read),
     statics:^core.Table(render.Mesh_Renderer,.Read),
     parents:^core.Table(core.Parent,.Read),
     hierarchy:core.Ref(core.Hierarchy), // without it every sync is whole
@@ -64,7 +66,7 @@ Sync :: struct {
     character_states:^core.Table(Character_State),
     jumps:^core.Jumps, // nil for whoever steps the simulation by hand
     problems:^core.Problems,
-    changes:[3]core.Changes, // of Rigid_Body, Collider and Character since Physics_State.rows_seen
+    changes:[4]core.Changes, // of Rigid_Body, Collider, Character and Volume since Physics_State.rows_seen
     written:core.Changes,    // of Transform since the last tick: what another function wrote
     budget:int,   // what the tick may still make or let go
     waiting:bool, // something waits for the next tick
@@ -93,14 +95,16 @@ physics_step :: proc(
     gravities:^core.Table(volume.Gravity,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),
     fluid_waves:^core.Table(Fluid_Waves,.Read),winds:^core.Table(volume.Wind,.Read),
     hierarchy:core.Ref(core.Hierarchy),splines:^core.Table(volume.Spline,.Read),ground:core.Ref(core.Ground_Queries),world:core.World_Ref,
+    sections:^core.Table(scene.Scene_Reference,.Read),
 ) {
     if !state_make(state,settings.ptr,&app.jobs,problems) {
         core.queue_clear(&requests.queue)
         return
     }
     w:=&state.world
+    defer sim.static_bounds_update(w)
     lying:=splines!=nil && core.count(splines)>0
-    fluids_sync(state,fluids,volumes,transforms,parents,problems,fluid_waves,winds,worlds,splines,lying?core.ground_query(world,ground):{},lying && ground.ptr!=nil?ground.changed.items[:]:nil)
+    fluids_sync(state,fluids,volumes,transforms,parents,problems,fluid_waves,winds,worlds,splines,lying?core.ground_query(world,ground):{},lying && ground.ptr!=nil?ground.changed.items[:]:nil,sections)
     if !events_reserve(events,w.desc.event_capacity) {
         memory_problem(problems,core.NONE,"the events of the physics, so nothing is simulated in this tick")
         core.queue_clear(&requests.queue)
@@ -109,7 +113,7 @@ physics_step :: proc(
     state.pass+=1
     s:=Sync{
         state=state,app=app,meshes=meshes,playing=time.playing && time.dt>0,dt=time.dt,
-        rigids=rigids,colliders=colliders,characters=characters,statics=statics,parents=parents,hierarchy=hierarchy,names=names,
+        rigids=rigids,colliders=colliders,characters=characters,volumes=volumes,statics=statics,parents=parents,hierarchy=hierarchy,names=names,
         transforms=transforms,motions=motions,targets=targets,character_states=character_states,jumps=jumps,problems=problems,
         budget=BODIES_PER_TICK,
     }
@@ -142,7 +146,7 @@ physics_step :: proc(
         }
     }
     seen,transforms_seen:=state.rows_seen,state.transforms_seen
-    s.changes={core.changes(rigids,&seen[0]),core.changes(colliders,&seen[1]),core.changes(characters,&seen[2])}
+    s.changes={core.changes(rigids,&seen[0]),core.changes(colliders,&seen[1]),core.changes(characters,&seen[2]),volumes!=nil?core.changes(volumes,&seen[3]):{}}
     s.written=core.changes(s.transforms,&transforms_seen)
     // Nothing the bodies are made from was written: they are as they were.
     structure:=sync_structure(&s)
@@ -157,7 +161,7 @@ physics_step :: proc(
         state.touched_all=true
         #reverse for &link,at in state.links.values {
             e:=state.links.entities[at]
-            if link.kind==.Proxy || core.has(rigids,e) || core.has(colliders,e) || core.has(characters,e) {continue}
+            if link.kind==.Proxy || core.has(rigids,e) || core.has(colliders,e) || core.has(characters,e) || zone_collider(&s,e).kind!=.External {continue}
             if link.kind!=.None {
                 if s.budget==0 {
                     s.waiting=true
@@ -177,12 +181,17 @@ physics_step :: proc(
             for row in 0..<core.count(rigids) {
                 if core.at(rigids,row).type==.Static {entity_sync(&s,core.entity_at(rigids,row))}
             }
+            if volumes!=nil {
+                for row in 0..<core.count(volumes) {
+                    if e:=core.entity_at(volumes,row);zone_collider(&s,e).kind!=.External {entity_sync(&s,e)}
+                }
+            }
             for row in 0..<core.count(rigids) {entity_sync(&s,core.entity_at(rigids,row))}
             for row in 0..<core.count(colliders) {entity_sync(&s,core.entity_at(colliders,row))}
             for row in 0..<core.count(characters) {entity_sync(&s,core.entity_at(characters,row))}
             synced=!s.waiting
             // Without them sealed_sync and poses_write have no room and every tick looks at all the bodies.
-            if reserve(&state.sealed,core.count(rigids)+core.count(colliders)+core.count(characters))!=nil || reserve(&state.touched,2*len(state.links.values))!=nil {
+            if reserve(&state.sealed,core.count(rigids)+core.count(colliders)+core.count(characters)+(volumes!=nil?core.count(volumes):0))!=nil || reserve(&state.touched,2*len(state.links.values))!=nil {
                 memory_problem(problems,core.NONE,"the bodies whose Transform changes, so every tick looks at all of them")
             }
         } else {memory_problem(problems,core.NONE,"the links from entities to the simulation, so no body changes in this tick")}
@@ -235,7 +244,7 @@ physics_step :: proc(
     }
     parallel:=Parallel{&app.jobs}
     w.desc.parallel_user=&parallel
-    if gravities!=nil {gravity_apply(state,gravities,volumes,worlds,problems)}
+    if gravities!=nil {gravity_apply(state,gravities,{volumes,worlds,parents,sections},problems)}
     sim.world_step(w,time.dt)
     w.desc.parallel_user=nil
     strains_apply(w,asked)
@@ -296,6 +305,7 @@ sync_seen :: proc(s:^Sync,structure:u64) -> u64 {return structure+core.version(s
 sync_structure :: proc(s:^Sync) -> u64 {
     seen:=core.version(s.rigids)+core.layout(s.rigids)+core.version(s.colliders)+core.layout(s.colliders)+core.version(s.characters)+core.layout(s.characters)
     seen+=core.version(s.statics)+core.layout(s.statics)+core.version(s.parents)+core.layout(s.parents)+core.layout(s.transforms)
+    if s.volumes!=nil {seen+=core.version(s.volumes)+core.layout(s.volumes)}
     return seen+u64(s.state.epoch)+(s.app.assets!=nil?s.app.assets.structure:0)
 }
 
@@ -362,7 +372,26 @@ sync_order :: proc(s:^Sync,e:core.Entity) -> (order:u64,body:bool) {
     case rigid>=0:                                          return 2<<32|u64(rigid),true
     case collider>=0:                                       return 3<<32|u64(collider),true
     case character>=0:                                      return 4<<32|u64(character),true
+    case zone_collider(s,e).kind!=.External:                return 5<<32|u64(core.row_of(s.volumes,e)),true
     }
+    return
+}
+
+// The sensor the Volume of an entity without a Collider, Rigid_Body or Character makes: a box or a sphere
+// that blocks nothing and reports the bodies that go in and out of it (Physics_Events.overlap_begin and
+// overlap_end). External without one: a plane or the whole world has no end the simulation can hold.
+@(private)
+zone_collider :: proc(s:^Sync,e:core.Entity) -> (collider:Collider) {
+    collider.kind=.External
+    if s.volumes==nil || core.has(s.colliders,e) || core.has(s.rigids,e) || core.has(s.characters,e) {return}
+    v,found:=core.get(s.volumes,e)
+    if !found || !volume.valid(v,mm.TRANSFORM_IDENTITY) {return}
+    #partial switch v.shape {
+    case .Box:    collider=collider_box(v.extents)
+    case .Sphere: collider=collider_sphere(v.extents.x)
+    case:         return
+    }
+    collider.preset,collider.density=PRESET_TRIGGER,0
     return
 }
 
@@ -518,6 +547,7 @@ entity_sync :: proc(s:^Sync,e:core.Entity) {
     collider,has_collider:=core.get(s.colliders,e)
     config,has_character:=core.get(s.characters,e)
     collider_changed:=row_changed(s.colliders,s.changes[1],e)
+    if zone:=zone_collider(s,e);zone.kind!=.External {collider,has_collider,collider_changed=zone,true,row_changed(s.volumes,s.changes[3],e)}
     if has_collider && collider.kind==.External {has_collider=false}
     owner:=core.NONE
     if !has_rigid && !has_character && has_collider {owner=compound_owner(s,e)}
@@ -1061,6 +1091,7 @@ jumped :: proc(s:^Sync,e:core.Entity,from:[3]f32,turn:mm.Quat,to:[3]f32) {
 Area_Place :: struct {
     area:volume.Volume,
     pose:mm.Transform,
+    blend:f32,
 }
 
 // Applies a request of an area, which names no entity; false for any other request.
@@ -1068,12 +1099,12 @@ Area_Place :: struct {
 area_apply :: proc(s:^Sync,request:Body_Request) -> bool {
     if request.kind==.Area_Strain {return true}
     if request.kind!=.Area_Force && request.kind!=.Area_Impulse {return false}
-    place:=Area_Place{request.area,{request.position,request.rotation==0?mm.QUAT_IDENTITY:request.rotation,request.scale=={}?[3]f32{1,1,1}:request.scale}}
+    place:=Area_Place{request.area,{request.position,request.rotation==0?mm.QUAT_IDENTITY:request.rotation,request.scale=={}?[3]f32{1,1,1}:request.scale},request.blend}
     weight :: proc "contextless" (user:rawptr,point:[3]f32) -> f32 {
         p:=(^Area_Place)(user)
-        return volume.weight(p.area,p.pose,point)
+        return volume.weight(p.area,p.pose,point,p.blend)
     }
-    ok:=volume.valid(place.area,place.pose) && request.strength>=-max(f32) && request.strength<=max(f32)
+    ok:=volume.valid(place.area,place.pose) && request.blend>=0 && request.blend<=max(f32) && request.strength>=-max(f32) && request.strength<=max(f32)
     for value in request.linear {ok=ok && value>=-max(f32) && value<=max(f32)}
     if ok {
         radial:=request.linear=={}
@@ -1201,7 +1232,7 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
 // A force or impulse over a volume that the simulation refused.
 @(private)
 area_problem :: proc(s:^Sync,request:Body_Request) {
-    core.report(s.problems,core.NONE,"physics.request_area","a %v request of Body_Requests did nothing: its volume has no size or a pose that is not finite, its strength or its direction is not finite, a velocity change is not an impulse, its falloff is not a Radial_Falloff, or its noise scale is negative; send apply_area a volume of volume.box, volume.sphere or volume.plane with a positive size, finite values and a falloff and noise of physics",request.kind)
+    core.report(s.problems,core.NONE,"physics.request_area","a %v request of Body_Requests did nothing: its volume has no size or a pose that is not finite, its blend, its strength or its direction is not finite, a velocity change is not an impulse, its falloff is not a Radial_Falloff, or its noise scale is negative; send apply_area a volume of volume.box, volume.sphere or volume.plane with a positive size, finite values and a falloff and noise of physics",request.kind)
 }
 
 // Brings back into the rows what the step left: the pose, the Motion and the state of the bodies it moved or
