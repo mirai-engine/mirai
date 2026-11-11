@@ -871,7 +871,10 @@ one set by whoever tests those functions by hand).
   `a_client_follows_the_pause_and_the_time_scale_of_its_server` and
   `the_connections_and_the_messages_that_arrive_reach_the_first_tick_after_them`; a typed message
   with 4 KB of bytes:
-  `a_typed_message_of_6_kb_with_4_kb_of_bytes_reaches_the_inbox_of_its_type_whole`. Sections:
+  `a_typed_message_of_6_kb_with_4_kb_of_bytes_reaches_the_inbox_of_its_type_whole`; order and
+  reach: `a_message_about_an_entity_is_read_after_the_state_of_its_tick`,
+  `a_status_that_comes_and_goes_on_a_lent_object_keeps_its_type_and_its_holder` and
+  `a_ball_thrown_at_a_driven_body_turns_predicted_before_it_hits`. Sections:
   `what_is_in_a_section_reaches_a_client_while_it_has_the_section_loaded`,
   `a_replica_of_a_section_that_is_not_loaded_waits_for_it`,
   `what_is_in_sections_that_overlap_reaches_a_client_that_has_either` and
