@@ -1,7 +1,6 @@
 package editor
 
 import "base:runtime"
-import "core:encoding/json"
 import "core:fmt"
 import "core:log"
 import "core:os"
@@ -12,7 +11,6 @@ import "mirai:cook/build"
 import "mirai:core"
 import "mirai:editor/api"
 import "mirai:editor/history"
-import escene "mirai:engine/scene"
 import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
@@ -26,7 +24,7 @@ import "mirai:std/serial"
 // method that edits the scene is one transaction of the history: one step of
 // undo, or nothing at all when any part of it fails.
 
-API_VERSION :: "15"
+API_VERSION :: "16"
 API_INSTRUCTIONS :: "Mirai editor. The tools are the basics of a scene; call runs any other method, of the editor or of a plugin, by its name with its params. engine.describe lists the methods and the plugins of the project, and with methods, prefix or plugin gives their schemas; mirai mcp --plugins <names> lists the tools of those plugins too. Every method takes _select, the fields of its result to keep (a.b,c[0].d), and a read-only one _wait_until, a condition (phase=Built) it is called again until; a method that changes things is called once, and the wait goes on its status method. scene.inspect gives the ids of the entities."
 API_METHOD_CAPACITY :: 384 // methods registered by the editor and its plugins; the server adds engine.describe
 API_PATH_BYTES :: 1024
@@ -59,8 +57,8 @@ Api_State :: struct {
     entries:[API_METHOD_CAPACITY]Api_Entry,
     count:int,
     refused:int,                // methods that were not registered
-    refusal:string,             // why the first one was not, in refusal_buffer
-    refusal_buffer:[256]u8,
+    refusal:string,             // why each was not, separated by "; ", in refusal_buffer
+    refusal_buffer:[4096]u8,
     poll_temp:runtime.Allocator,
     allocator:runtime.Allocator,
     in_call:int,
@@ -128,16 +126,16 @@ Api_Open_Error :: enum {None,No_Storage,Server,Methods}
 // Opens the registry of the methods, which the menus, the shortcuts and the
 // buttons of the editor call too, and with listen the server that answers
 // agents. port 0 lets the system choose. A method that cannot be registered
-// stops the opening with the reason.
-api_open :: proc(s:^Session,port:int,manual:bool,listen:=true) -> Api_Open_Error {
+// stops the opening; problem names it and why, as it names what else failed.
+api_open :: proc(s:^Session,port:int,manual:bool,listen:=true) -> (error:Api_Open_Error,problem:string) {
     a:=api_of(s)
-    if a==nil {return .No_Storage}
+    if a==nil {return .No_Storage,"the editor world has no Api storage"}
     st:=new(Api_State)
     st.allocator=context.allocator
     st.manual=manual
     if error:=api.server_init(&st.server,{port=port,local=!listen,name="mirai",version=API_VERSION,instructions=API_INSTRUCTIONS,docs_root=s.engine_root,max_methods=API_METHOD_CAPACITY+1,max_response=4<<20,allocator=context.allocator});error!=.None {
         free(st)
-        return .Server
+        return .Server,fmt.tprintf("the server could not start on port %d: %v",port,error)
     }
     st.port=api.server_port(&st.server)
     a.state=st
@@ -145,13 +143,13 @@ api_open :: proc(s:^Session,port:int,manual:bool,listen:=true) -> Api_Open_Error
     api.server_guides_set(&st.server,guides[:])
     api_registrations(s,st)
     if st.refused>0 {
-        fmt.eprintfln("mirai: the API does not open: %d methods did not register, the first: %s",st.refused,st.refusal)
+        problem=fmt.tprintf("%d methods did not register: %s",st.refused,st.refusal)
         api_close(s)
-        return .Methods
+        return .Methods,problem
     }
     api_disk_baseline(s)
     if listen {api_port_file_write(s,st.port)}
-    return .None
+    return .None,""
 }
 
 api_close :: proc(s:^Session) {
@@ -174,8 +172,9 @@ api_port_file_path :: proc(s:^Session) -> string {
 api_port_file_write :: proc(s:^Session,port:int) {
     if !s.has_project {return}
     engine:=engine_folder_here(s)
-    data,error:=json.marshal(api.Port_File{port,os.get_pid(),s.project_root,engine,s.engine_stamp,s.library_stamp,s.headless},{pretty=true},context.temp_allocator)
-    if error!=nil {return}
+    file:=api.Port_File{port,os.get_pid(),s.project_root,engine,s.engine_stamp,s.library_stamp,s.headless}
+    data,encoded:=serial.text_encode(file,.Pretty,context.temp_allocator)
+    if !encoded {return}
     path:=api_port_file_path(s)
     _=os.make_directory_all(path[:strings.last_index_byte(path,'/')])
     _=serial.file_write_atomic(path,data)
@@ -195,7 +194,7 @@ api_port_file_remove :: proc(s:^Session) {
     data,error:=os.read_entire_file(path,context.temp_allocator)
     if error!=nil {return}
     written:api.Port_File
-    if json.unmarshal(data,&written,allocator=context.temp_allocator)==nil && written.pid==os.get_pid() {_=os.remove(path)}
+    if serial.text_decode(string(data),&written,context.temp_allocator)=="" && written.pid==os.get_pid() {_=os.remove(path)}
 }
 
 // The schema of every component of the world, to read and write their values as JSON.
@@ -252,7 +251,7 @@ api_poll :: proc(s:^Session) {
     if st.library_generation!=s.library_generation {
         if !api.server_methods_reset(&st.server) {return}
         api_registrations(s,st)
-        if st.refused>0 {log.errorf("%d methods of the API were not registered after the reload, the first: %s",st.refused,st.refusal)}
+        if st.refused>0 {log.errorf("%d methods of the API were not registered after the reload: %s",st.refused,st.refusal)}
     }
     st.server.instance={os.get_pid(),project.ENGINE_VERSION,project_name(s),s.project_root}
     api.server_poll(&st.server)
@@ -261,7 +260,7 @@ api_poll :: proc(s:^Session) {
 // Every procedure the API keeps, of the libraries in use: again after each swap (api_poll).
 @(private)
 api_registrations :: proc(s:^Session,st:^Api_State) {
-    st.count,st.refused,st.commands,st.library_generation=0,0,{},s.library_generation
+    st.count,st.refused,st.refusal,st.commands,st.library_generation=0,0,"",{},s.library_generation
     api_schema_free(st)
     api_schema_build(s,st)
     st.server.assets={s,asset_text_resolve}
@@ -404,21 +403,12 @@ api_disk_sync :: proc(s:^Session,call:^api.Call) -> bool {
     if sources==s.build.shader_sources {return true}
     s.build.shader_sources=sources
     programs_publish_request(s)
-    if !api_call_draws(call) {return true}
+    if .Draws not_in call.method.flags {return true}
     if ok,message:=programs_wait(s,API_SHADERS_SECONDS,true);!ok {
         api.call_fail(call,api.SERVER_ERROR,message)
         return false
     }
     return true
-}
-
-// Whether a method draws the scene or starts what draws it.
-@(private)
-api_call_draws :: proc(call:^api.Call) -> bool {
-    switch call.method.name {
-    case "capture","play.start","play.record","view.viewport","material.preview.capture","animation.capture","ui.capture": return true
-    }
-    return false
 }
 
 // Whether an agent drives the editor: a call runs, or one arrived within API_ACTIVE.
@@ -497,7 +487,7 @@ api_trampoline :: proc(call:^api.Call) {
     if task!=nil && base.text_get(task.name[:])!=call.client_tag {task=nil}
     if external_id!=0 {task=ai_task_find(entry.session.ai,external_id)}
     if task!=nil {ai_tool_note(entry.session,task,call.method.name,target,refs,call.failed?call.error.message:"",time.tick_since(started))}
-    if task!=nil && !call.failed && .Read_Only not_in call.method.flags && !strings.has_prefix(call.method.name,"engine.") && entry.session.edits!=nil && entry.session.edits.serial!=serial_before {
+    if task!=nil && !call.failed && call.method.flags&{.Read_Only,.As_User}=={} && entry.session.edits!=nil && entry.session.edits.serial!=serial_before {
         ai_review_record(entry.session,task,serial_before)
         ai_task_dirty(task)
         ai_task_persist(entry.session,task)
@@ -505,24 +495,20 @@ api_trampoline :: proc(call:^api.Call) {
 }
 
 // Whether a method may edit the document: not one that only reads, runs
-// frames, input or captures of the editor, moves its camera or selection, or
-// ends a turn.
+// frames, input or captures of the editor as the user would, moves its camera
+// or selection, or ends a turn. Its flags say so.
 @(private)
 api_call_edits :: proc(call:^api.Call) -> bool {
-    switch call.method.name {
-    case "finish","editor.select","camera.set","editor.section_view","editor.section_travel": return false
-    }
-    return .Read_Only not_in call.method.flags && !api_call_as_user(call)
+    return call.method.flags&{.Read_Only,.View}=={} && !api_call_as_user(call)
 }
 
 // Whether a method runs frames, input or captures of the editor as the user
-// would, or the user ran it from a menu, a shortcut or a button: what they
-// change is the user's.
+// would (its flag says so), or the user ran it from a menu, a shortcut or a
+// button: what they change is the user's.
 @(private)
 api_call_as_user :: proc(call:^api.Call) -> bool {
     if entry:=(^Api_Entry)(call.user);entry!=nil && entry.state.person {return true}
-    name:=call.method.name
-    return name=="editor.input" || name=="capture" || strings.has_prefix(name,"engine.")
+    return .As_User in call.method.flags
 }
 
 // Whether the call that runs is a gesture of the person at the editor (a
@@ -541,13 +527,11 @@ api_asks :: proc(s:^Session,text:string) -> bool {return text==COMMAND_ASK && ap
 
 Api_Method :: struct {
     name,summary:string,
-    params,result:typeid,
-    params_info,result_info:^runtime.Type_Info,
+    params,result:^runtime.Type_Info, // type_info_of in the library that declares them: each library has its own table
     defaults:rawptr,
     run:Api_Handler,
     flags:api.Method_Flags,
-    params_schema,result_schema:string,
-    writes_result:bool, // the handler writes the result into call.out; result only gives its schema
+    writes_result:bool, // the handler writes the result into call.out, in the shape of result
     entry:Binding,      // with a label: its menu entry, shortcut or button (commands.odin); its method is this one
 }
 
@@ -567,30 +551,24 @@ api_plugins_set :: proc(s:^Session,st:^Api_State) {
     api.server_plugins_set(&st.server,plugins)
 }
 
-// Registers a method of a plugin, with P its params and R its result: their
-// type info comes from the library that declares them, where the procedure
-// instantiates.
-api_method_register :: proc{api_method_register_free,api_method_register_params,api_method_register_typed}
-
-api_method_register_free :: proc(s:^Session,m:Api_Method) -> bool {
+// Registers a method of a plugin.
+api_method_register :: proc(s:^Session,m:Api_Method) -> bool {
     st:=api_state(s)
     return st!=nil && api_register(s,st,m)
 }
-api_method_register_params :: proc(s:^Session,$P:typeid,m:Api_Method) -> bool {
-    m:=m
-    m.params,m.params_info=P,type_info_of(P)
-    return api_method_register_free(s,m)
-}
-api_method_register_typed :: proc(s:^Session,$P,$R:typeid,m:Api_Method) -> bool {
-    m:=m
-    m.result,m.result_info=R,type_info_of(R)
-    return api_method_register_params(s,P,m)
+
+// Counts a method or an entry that did not register and adds why to the refusal.
+api_refuse :: proc(st:^Api_State,why:string) {
+    st.refused+=1
+    used:=len(st.refusal)
+    if used>0 {used+=copy(st.refusal_buffer[used:],"; ")}
+    used+=copy(st.refusal_buffer[used:],why)
+    st.refusal=string(st.refusal_buffer[:used])
 }
 
 api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
     refuse :: proc(st:^Api_State,format:string,args:..any) -> bool {
-        st.refused+=1
-        if st.refused==1 {st.refusal=fmt.bprintf(st.refusal_buffer[:],format,..args)}
+        api_refuse(st,fmt.tprintf(format,..args))
         return false
     }
     if st.count>=len(st.entries) {
@@ -598,14 +576,9 @@ api_register :: proc(s:^Session,st:^Api_State,m:Api_Method) -> bool {
     }
     entry:=&st.entries[st.count]
     entry^={state=st,session=s,run=m.run}
-    // The types of the editor are known here: the library of the API has its own type table.
-    params_info,result_info:=m.params_info,m.result_info
-    if params_info==nil && m.params!=nil {params_info=type_info_of(m.params)}
-    if result_info==nil && m.result!=nil {result_info=type_info_of(m.result)}
     result:=api.method_register(&st.server,{
         name=m.name,summary=m.summary,plugin=st.plugin,params=m.params,result=m.result,defaults=m.defaults,
-        params_info=params_info,result_info=result_info,
-        params_schema=m.params_schema,result_schema=m.result_schema,handler=api_trampoline,user=entry,flags=m.flags,writes_result=m.writes_result,
+        handler=api_trampoline,user=entry,flags=m.flags,writes_result=m.writes_result,
     })
     if result!=.None {
         return refuse(st,"%s could not be registered: %v %s",m.name,result,st.server.schema.error)

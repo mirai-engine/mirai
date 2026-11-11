@@ -7,11 +7,9 @@ import "core:strings"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
-import "mirai:host"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 Program_Blend_Sample :: struct {position:mm.Vec2 `mirai:"label=In the units of the axes"`,clip:[64]u8 `mirai:"text,label=A clip of its animation"`,speed:f32 `mirai:"optional"`,animation:base.Asset_Id `mirai:"optional,label=Empty is that of the .character"`}
@@ -25,9 +23,8 @@ Blend_Write_Params :: struct {
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
 }
 Blend_Sample_Params :: struct {asset:base.Asset_Id `mirai:"label=The .character"`,space:[32]u8 `mirai:"text"`,position:mm.Vec2 `mirai:"label=Outside the hull it projects to the nearest edge"`}
-Blend_Contribution :: struct {index:u32 `mirai:"label=The sample"`,clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id,weight:f32}
-Blend_Sample_Result :: struct {samples:[3]Blend_Contribution}
-Modifier_Inspect_Params :: struct {entity:editor.Api_Entity_Text `mirai:"text,entity"`,handle:core.Entity `mirai:"transient"`,offset:u32 `mirai:"optional"`,limit:u32 `mirai:"optional,min=1,max=256,clamp"`,diagnostics:bool `mirai:"optional"`}
+Blend_Contribution :: struct {index:u32 `mirai:"label=The sample"`,clip:string,animation:base.Asset_Id,weight:f32}
+Blend_Sample_Result :: struct {samples:[]Blend_Contribution}
 Modifier_Goal_Kind :: enum u8 {IK,Look,Grounding,Chain_IK,Spring,Multi_IK,Spline_IK,Follow}
 MODIFIER_GOAL_KINDS :: [Modifier_Goal_Kind]anim.Modifier_Kind{.IK=.IK,.Look=.Look,.Grounding=.Grounding,.Chain_IK=.Chain_IK,.Spring=.Spring,.Multi_IK=.Multi_IK,.Spline_IK=.Spline_IK,.Follow=.Follow}
 @(private)
@@ -43,12 +40,10 @@ program_blend_defaults :: proc() -> ^Blend_Write_Params {
 }
 @(private)
 program_register :: proc(s:^editor.Session) {
-    inspect:=Authoring_Inspect_Params{limit=128}
     blend:=program_blend_defaults()
     if blend==nil {return}
-    modifiers:=Modifier_Inspect_Params{limit=128}
-    editor.api_method_register(s,Blend_Write_Params,Authoring_Write_Result,{name="animation.space.set",summary="Replaces, adds or removes a space of a .character by its name: clips placed on one or two axes. A layer of the set that names it (animation.action.set) samples it: aim offsets or additive poses its axes sample, set by name. An invalid one changes nothing. In Edit.",defaults=blend,run=program_blend_set,writes_result=true})
-    editor.api_method_register(s,Blend_Sample_Params,Blend_Sample_Result,{name="animation.space.sample",summary="The samples of a space of a .character that contribute at a position and their weights, without advancing the world.",flags={.Read_Only},run=program_blend_sample,writes_result=true})
+    editor.api_method_register(s,{params=type_info_of(Blend_Write_Params),result=type_info_of(Authoring_Write_Result),name="animation.space.set",summary="Replaces, adds or removes a space of a .character by its name: clips placed on one or two axes. A layer of the set that names it (animation.action.set) samples it: aim offsets or additive poses its axes sample, set by name. An invalid one changes nothing. In Edit.",defaults=blend,run=program_blend_set})
+    editor.api_method_register(s,{params=type_info_of(Blend_Sample_Params),result=type_info_of(Blend_Sample_Result),name="animation.space.sample",summary="The samples of a space of a .character that contribute at a position and their weights, without advancing the world.",flags={.Read_Only},run=program_blend_sample})
 }
 
 @(private)
@@ -72,17 +67,6 @@ program_clip_reference :: proc(s:^editor.Session,call:^api.Call,default:asset.An
     if source!={} {loaded:bool;view,loaded=program_animation_open(s,call,source,&file);if !loaded {return false}}
     if !program_clip_exists(view,name) {authoring_failure(call,path,"Missing_Clip","a clip in its selected animation",base.text_get(name),"The source animation has no clip with this name");return false}
     return true
-}
-
-@(private)
-program_rows :: proc(call:^api.Call,name:string,rows:[]$T,offset,limit:u32) {
-    api.write_key(call.out,name);serial.text_write_raw(call.out,"[")
-    start:=min(int(offset),len(rows));end:=min(start+int(limit),len(rows))
-    for &row,i in rows[start:end] {
-        if i>0 {serial.text_write_raw(call.out,",")}
-        serial.text_write_raw(call.out,"{");api.write_uint(call.out,"index",u64(start+i),true);api.write_key(call.out,"value");authoring_write_value(call,&row,type_info_of(T));serial.text_write_raw(call.out,"}")
-    }
-    serial.text_write_raw(call.out,"]")
 }
 
 @(private)
@@ -145,13 +129,12 @@ program_blend_sample :: proc(s:^editor.Session,call:^api.Call) {
     space,prepared:=lib.blend_space_prepare(points[:count],info.dimension,call.allocator);defer lib.blend_space_destroy(&space)
     weights,sampled:=lib.blend_space_sample(space,anim.blend_position(info,p.position))
     if !prepared || !sampled {authoring_failure(call,"position","Invalid_Value","a finite position",fmt.tprintf("%v",p.position),"The position in the space must be finite");return}
-    serial.text_write_raw(call.out,`{"samples":[`)
+    samples:=make([]Blend_Contribution,weights.count,call.allocator)
     for weight,i in weights.weights[:weights.count] {
-        if i>0 {serial.text_write_raw(call.out,",")}
         sample:=set.space_samples[first+int(weights.samples[i])]
-        serial.text_write_raw(call.out,"{");api.write_uint(call.out,"index",u64(weights.samples[i]),true);api.write_text(call.out,"clip",base.text_get(sample.clip[:]));api.write_key(call.out,"animation");serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,sample.animation if sample.animation!={} else set.info.animation);serial.write_u8(call.out,'"');api.write_key(call.out,"weight");api.write_number(call.out,weight);serial.text_write_raw(call.out,"}")
+        samples[i]={u32(weights.samples[i]),strings.clone(base.text_get(sample.clip[:]),call.allocator),sample.animation if sample.animation!={} else set.info.animation,weight}
     }
-    serial.text_write_raw(call.out,"]}")
+    api.call_result(call,Blend_Sample_Result).samples=samples
 }
 
 // Checks that the .character of the Animation declares a parameter with this name: a layer, whose
@@ -286,47 +269,48 @@ program_grounding_diagnostic :: proc(world:core.World_Ref,entity:core.Entity,slo
 }
 
 @(private)
-program_modifier_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Modifier_Inspect_Params)
-    world,entity,ok:=subject(s,call,p.entity[:],p.handle);if !ok {return}
+program_modifier_inspect :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity,p:^Instance_Inspect_Params) -> (r:Instance_Modifiers) {
     file:Authoring_File;defer asset.asset_close(&file.file)
     profile,id,loaded:=program_modifier_profile(s,call,world,entity,&file);if !loaded {return}
     runtime:=core.world_storage_of(world,anim.Modifier_Runtime)
     total:=0;for kind in anim.Modifier_Kind {total+=program_modifier_count(profile,kind)}
-    serial.text_write_raw(call.out,"{");api.write_key(call.out,"id",true);api.write_id(call.out,editor.api_entity_id(world,entity))
-    api.write_key(call.out,"character");serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,id);serial.write_u8(call.out,'"')
-    api.write_uint(call.out,"total",u64(total));api.write_key(call.out,"last_request_error");request_error:=anim.modifier_request_error(runtime,entity);authoring_write_value(call,&request_error,type_info_of(anim.Modifier_Request_Error));api.write_key(call.out,"modifiers");serial.text_write_raw(call.out,"[")
-    offset,written:=0,0
+    r.id,r.character,r.total=editor.api_entity_id(world,entity),id,u32(total)
+    r.last_request_error=anim.modifier_request_error(runtime,entity)
+    rows:=make([dynamic]Instance_Modifier,call.allocator)
+    offset:=0
     for kind in anim.Modifier_Kind {
         for slot in 0..<program_modifier_count(profile,kind) {
             index:=offset;offset+=1
-            if index<int(p.offset) || written>=int(p.limit) {continue}
+            if index<int(p.offset) || len(rows)>=int(p.limit) {continue}
             definition,_:=program_modifier_definition(profile,kind,u16(slot));weight,enabled:=definition.weight,definition.enabled
             alpha,target:f32=1,1;requested:=true;remaining:f32
             if state:=anim.modifier_control_state(runtime,entity,kind,u16(slot));state!=nil {
                 weight,enabled=state.base_weight*state.weight,state.base_enabled && (state.enabled || state.weight>0)
                 alpha,target,requested,remaining=state.weight,state.target,state.enabled,max(0,state.duration-state.elapsed)
             }
-            if written>0 {serial.text_write_raw(call.out,",")};written+=1
-            tag:=kind
-            serial.text_write_raw(call.out,"{");api.write_key(call.out,"kind",true);authoring_write_value(call,&tag,type_info_of(anim.Modifier_Kind))
-            api.write_text(call.out,"name",base.text_get(definition.name[:]))
-            api.write_key(call.out,"weight");api.write_number(call.out,weight);api.write_bool(call.out,"enabled",enabled)
+            row:=Instance_Modifier{kind=kind,weight=weight,enabled=enabled}
+            base.text_set(row.name[:],base.text_get(definition.name[:]))
             if p.diagnostics {
-                api.write_key(call.out,"alpha");api.write_number(call.out,alpha);api.write_key(call.out,"target_alpha");api.write_number(call.out,target);api.write_bool(call.out,"requested_enabled",requested);api.write_key(call.out,"fade_remaining");api.write_number(call.out,remaining)
+                row.alpha,row.target_alpha,row.requested_enabled,row.fade_remaining=alpha,target,requested,remaining
                 diagnostic,_:=anim.animation_rig_diagnostic(runtime,entity,kind,u16(slot),core.world_storage_of(world,anim.Animation_Constraints))
-                result:=Modifier_Diagnostic_Result{valid=diagnostic.valid,reached=diagnostic.reached,residual=diagnostic.residual,angular_error=diagnostic.angular_error,iterations=diagnostic.iterations}
-                if kind==.Grounding {result=program_grounding_diagnostic(world,entity,u16(slot),profile.grounding)}
-                api.write_key(call.out,"diagnostic");authoring_write_value(call,&result,type_info_of(Modifier_Diagnostic_Result))
+                row.diagnostic={valid=diagnostic.valid,reached=diagnostic.reached,residual=diagnostic.residual,angular_error=diagnostic.angular_error,iterations=diagnostic.iterations}
+                if kind==.Grounding {row.diagnostic=program_grounding_diagnostic(world,entity,u16(slot),profile.grounding)}
             }
-            api.write_key(call.out,"effectors");serial.write_u8(call.out,'[')
-            if kind==.Multi_IK {for &effector,e in profile.multi_ik[slot].effectors[:profile.multi_ik[slot].effector_count] {if e>0 {serial.write_u8(call.out,',')};item:=Modifier_Effector_Result{effector.name};authoring_write_value(call,&item,type_info_of(Modifier_Effector_Result))}}
-            if kind==.Spline_IK {for name,e in anim.SPLINE_CONTROLS {if e>0 {serial.write_u8(call.out,',')};item:Modifier_Effector_Result;base.text_set(item.name[:],name);authoring_write_value(call,&item,type_info_of(Modifier_Effector_Result))}}
-            serial.write_u8(call.out,']')
-            serial.text_write_raw(call.out,"}")
+            if kind==.Multi_IK {
+                multi:=&profile.multi_ik[slot]
+                row.effectors=make([]Modifier_Effector_Result,multi.effector_count,call.allocator)
+                for &item,e in row.effectors {item.name=multi.effectors[e].name}
+            }
+            if kind==.Spline_IK {
+                controls:=anim.SPLINE_CONTROLS
+                row.effectors=make([]Modifier_Effector_Result,len(controls),call.allocator)
+                for &item,e in row.effectors {base.text_set(item.name[:],controls[e])}
+            }
+            append(&rows,row)
         }
     }
-    serial.text_write_raw(call.out,"]}")
+    r.modifiers=rows[:]
+    return
 }
 
 

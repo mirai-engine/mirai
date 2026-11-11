@@ -1,6 +1,5 @@
 package editor
 
-import "core:fmt"
 import "core:strings"
 import "mirai:asset"
 import "mirai:editor/api"
@@ -43,70 +42,70 @@ Api_Git_Status :: struct {
     available:bool `mirai:"label=Whether git was found"`,
     checked:bool `mirai:"label=Whether the repository was read once"`,
     repository:bool `mirai:"label=Whether the project is in a repository"`,
-    busy:[16]u8 `mirai:"text,label=The operation that runs (init commit push pull fetch discard abort finish...); empty when none"`,
-    error:[512]u8 `mirai:"text,label=What the last operation that failed said"`,
-    root:[git.PATH_BYTES]u8 `mirai:"text,label=The work tree"`,
-    branch:[96]u8 `mirai:"text"`,
+    busy:string `mirai:"label=The operation that runs (init commit push pull fetch discard abort finish...); empty when none"`,
+    error:string `mirai:"label=What the last operation that failed said"`,
+    root:string `mirai:"label=The work tree"`,
+    branch:string,
     upstream:bool `mirai:"label=Whether the branch has an upstream; ahead and behind count against it"`,
     ahead,behind:int,
-    remote:[git.PATH_BYTES]u8 `mirai:"text,label=The url of origin"`,
+    remote:string `mirai:"label=The url of origin"`,
     merging:bool `mirai:"label=A pull left conflicts: git.conflicts lists them"`,
-    changes:[1]Api_Git_Change `mirai:"list,label=Every file changed under the project"`,
-    history:[1]Api_Git_Commit `mirai:"list,label=The last commits"`,
+    changes:[]Api_Git_Change `mirai:"label=Every file changed under the project"`,
+    history:[]Api_Git_Commit `mirai:"label=The last commits"`,
 }
 Api_Git_Change :: struct {
-    path:[git.PATH_BYTES]u8 `mirai:"text,label=From the root of the repository; git.discard takes it"`,
-    status:[1]u8 `mirai:"text,label=M changed; A added; D removed; U in conflict"`,
+    path:string `mirai:"label=From the root of the repository; git.discard takes it"`,
+    status:string `mirai:"label=M changed; A added; D removed; U in conflict"`,
     included:bool `mirai:"label=Whether the next commit takes it"`,
 }
 Api_Git_Commit :: struct {
-    hash:[16]u8 `mirai:"text"`,
-    author:[48]u8 `mirai:"text"`,
-    age:[32]u8 `mirai:"text,label=How long ago as git says it"`,
-    subject:[128]u8 `mirai:"text"`,
+    hash:string,
+    author:string,
+    age:string `mirai:"label=How long ago as git says it"`,
+    subject:string,
 }
 
 Api_Git_Conflicts :: struct {
     merging:bool,
     loaded:bool `mirai:"label=Whether the conflicts of the merge were read"`,
-    items:[1]Api_Git_Item `mirai:"list"`,
+    items:[]Api_Git_Item,
 }
 Api_Git_Item :: struct {
-    file:[git.PATH_BYTES]u8 `mirai:"text,label=From the folder of the project; what git.choose and git.accept take as file"`,
-    name:[64]u8 `mirai:"text"`,
+    file:string `mirai:"label=From the folder of the project; what git.choose and git.accept take as file"`,
+    name:string,
     entity:base.Entity_Id `mirai:"optional,label=The entity of a scene the item merges"`,
     accepted:bool,
-    whole:[8]u8 `mirai:"text,optional,label=Of a file merged whole: the version chosen (ours theirs or folder)"`,
+    whole:string `mirai:"optional,label=Of a file merged whole: the version chosen (ours theirs or folder)"`,
     text:bool `mirai:"optional,label=Of a file merged whole: whether it is text"`,
-    conflicts:[1]Api_Git_Conflict `mirai:"list"`,
+    conflicts:[]Api_Git_Conflict,
 }
 Api_Git_Conflict :: struct {
-    kind:[8]u8 `mirai:"text,label=value: both changed it; removed: one side removed the row; table: both changed a table"`,
-    path:[git.PATH_BYTES]u8 `mirai:"text,label=Where in the asset; what git.choose and git.accept take as path"`,
-    component:[64]u8 `mirai:"text,label=The component or the table"`,
-    field:[160]u8 `mirai:"text"`,
-    ours:u8 `mirai:"any,optional,label=Of a value: ours as JSON"`,
-    theirs:u8 `mirai:"any,optional,label=Of a value: theirs as JSON"`,
+    kind:string `mirai:"label=value: both changed it; removed: one side removed the row; table: both changed a table"`,
+    path:string `mirai:"label=Where in the asset; what git.choose and git.accept take as path"`,
+    component:string `mirai:"label=The component or the table"`,
+    field:string,
+    ours:serial.Json `mirai:"optional,label=Of a value: ours as JSON"`,
+    theirs:serial.Json `mirai:"optional,label=Of a value: theirs as JSON"`,
     ours_has:bool `mirai:"optional,label=Of a row: whether ours has it"`,
     theirs_has:bool `mirai:"optional,label=Of a row: whether theirs has it"`,
-    choice:[8]u8 `mirai:"text,label=ours or theirs; theirs until chosen"`,
+    choice:string `mirai:"label=ours or theirs; theirs until chosen"`,
 }
 
 @(private)
 git_api_register :: proc(s:^Session,st:^Api_State) {
     init:Api_Git_Init_Params
     commit:Api_Git_Commit_Params
-    api_register(s,st,{name="git.status",summary="The repository of the project as the Git tab shows it: branch, remote, changed files, last commits and the operation that runs. Reading it refreshes it.",result=Api_Git_Status,writes_result=true,flags={.Read_Only},run=api_git_status})
-    api_register(s,st,{name="git.init",summary="Makes the project a repository whose assets merge entity by entity with Mirai, with Git LFS for heavy binaries when asked.",params=Api_Git_Init_Params,result=Api_Git_Done,defaults=&init,run=api_git_init})
-    api_register(s,st,{name="git.commit",summary="Commits the included changes of the project as they are saved and pushes them when asked. Fails with unsaved changes.",params=Api_Git_Commit_Params,result=Api_Git_Done,defaults=&commit,run=api_git_commit})
-    api_register(s,st,{name="git.push",summary="Pushes the commits of the branch to origin, setting its upstream the first time.",result=Api_Git_Done,run=api_git_push})
-    api_register(s,st,{name="git.pull",summary="Merges origin into the branch, assets entity by entity; what both sides changed leaves a merge with conflicts. Needs every change committed.",result=Api_Git_Done,run=api_git_pull})
-    api_register(s,st,{name="git.conflicts",summary="The items of a merge that waits (an entity of a scene or a whole file) with their conflicts. Every conflict takes theirs until chosen.",result=Api_Git_Conflicts,writes_result=true,flags={.Read_Only},run=api_git_conflicts})
-    api_register(s,st,{name="git.choose",summary="Chooses the side of a conflict or the version of a file merged whole; its item waits to be accepted again.",params=Api_Git_Choose_Params,result=Api_Git_Chosen,run=api_git_choose})
-    api_register(s,st,{name="git.accept",summary="Accepts an item as chosen, or every item; with reject, keeps ours for its conflicts.",params=Api_Git_Accept_Params,result=Api_Git_Accept_Result,run=api_git_accept})
-    api_register(s,st,{name="git.finish",summary="Once every item is accepted: writes each file as chosen and commits the merge.",result=Api_Git_Done,run=api_git_finish})
-    api_register(s,st,{name="git.discard",summary="Puts a changed file, or every change, back as the last commit has it; an untracked file goes to the trash. Refused with unsaved work or in a merge.",params=Api_Git_Discard_Params,result=Api_Git_Done,flags={.Destructive},run=api_git_discard})
-    api_register(s,st,{name="git.abort",summary="Leaves a merge with conflicts: the files go back to the commit before the pull.",result=Api_Git_Done,flags={.Destructive},run=api_git_abort})
+    api_register(s,st,{name="git.status",summary="The repository of the project as the Git tab shows it: branch, remote, changed files, last commits and the operation that runs. Reading it refreshes it.",result=type_info_of(Api_Git_Status),flags={.Read_Only},run=api_git_status})
+    api_register(s,st,{name="git.init",summary="Makes the project a repository whose assets merge entity by entity with Mirai, with Git LFS for heavy binaries when asked.",params=type_info_of(Api_Git_Init_Params),result=type_info_of(Api_Git_Done),defaults=&init,run=api_git_init})
+    api_register(s,st,{name="git.commit",summary="Commits the included changes of the project as they are saved and pushes them when asked. Fails with unsaved changes.",params=type_info_of(Api_Git_Commit_Params),result=type_info_of(Api_Git_Done),defaults=&commit,run=api_git_commit})
+    api_register(s,st,{name="git.push",summary="Pushes the commits of the branch to origin, setting its upstream the first time.",result=type_info_of(Api_Git_Done),run=api_git_push})
+    api_register(s,st,{name="git.pull",summary="Merges origin into the branch, assets entity by entity; what both sides changed leaves a merge with conflicts. Needs every change committed.",result=type_info_of(Api_Git_Done),run=api_git_pull})
+    api_register(s,st,{name="git.conflicts",summary="The items of a merge that waits (an entity of a scene or a whole file) with their conflicts. Every conflict takes theirs until chosen.",result=type_info_of(Api_Git_Conflicts),flags={.Read_Only},run=api_git_conflicts})
+    api_register(s,st,{name="git.choose",summary="Chooses the side of a conflict or the version of a file merged whole; its item waits to be accepted again.",params=type_info_of(Api_Git_Choose_Params),result=type_info_of(Api_Git_Chosen),run=api_git_choose})
+    api_register(s,st,{name="git.accept",summary="Accepts an item as chosen, or every item; with reject, keeps ours for its conflicts.",params=type_info_of(Api_Git_Accept_Params),result=type_info_of(Api_Git_Accept_Result),run=api_git_accept})
+    api_register(s,st,{name="git.finish",summary="Once every item is accepted: writes each file as chosen and commits the merge.",result=type_info_of(Api_Git_Done),run=api_git_finish})
+    api_register(s,st,{name="git.discard",summary="Puts a changed file, or every change, back as the last commit has it; an untracked file goes to the trash. Refused with unsaved work or in a merge.",params=type_info_of(Api_Git_Discard_Params),result=type_info_of(Api_Git_Done),flags={.Destructive},run=api_git_discard})
+    api_register(s,st,{name="git.abort",summary="Leaves a merge with conflicts: the files go back to the commit before the pull.",result=type_info_of(Api_Git_Done),flags={.Destructive},run=api_git_abort})
 }
 
 @(private)
@@ -125,45 +124,20 @@ api_git_ended :: proc(s:^Session,call:^api.Call,message:string) {
 api_git_status :: proc(s:^Session,call:^api.Call) {
     g:=s.git
     if !git.busy(g) && (!g.checked || platform.clock_seconds()-g.refreshed>1) {git_refresh(s)}
-    out:=call.out
-    serial.write_u8(out,'{')
-    api.write_bool(out,"available",g.available,true)
-    api.write_bool(out,"checked",g.checked)
-    api.write_bool(out,"repository",g.repository)
     operations:=[git.Operation]string{.None="",.Check="check",.Refresh="refresh",.Init="init",.Commit="commit",.Commit_Push="commit",.Push="push",.Pull="pull",.Abort="abort",.Finish="finish",.Load="load",.Fetch="fetch",.Discard="discard"}
-    api.write_text(out,"busy",operations[g.operation])
-    api.write_text(out,"error",base.text_get(g.error[:]))
-    api.write_text(out,"root",base.text_get(g.root[:]))
-    api.write_text(out,"branch",base.text_get(g.branch[:]))
-    api.write_bool(out,"upstream",g.upstream)
-    api.write_int(out,"ahead",i64(g.ahead))
-    api.write_int(out,"behind",i64(g.behind))
-    api.write_text(out,"remote",base.text_get(g.remote[:]))
-    api.write_bool(out,"merging",g.merging)
-    api.write_key(out,"changes")
-    serial.write_u8(out,'[')
+    r:=api.call_result(call,Api_Git_Status)
+    r^={
+        available=g.available,checked=g.checked,repository=g.repository,busy=operations[g.operation],
+        error=base.text_get(g.error[:]),root=base.text_get(g.root[:]),branch=base.text_get(g.branch[:]),
+        upstream=g.upstream,ahead=g.ahead,behind=g.behind,remote=base.text_get(g.remote[:]),merging=g.merging,
+        changes=make([]Api_Git_Change,len(g.changes),call.allocator),history=make([]Api_Git_Commit,len(g.history),call.allocator),
+    }
     for &change,i in g.changes {
-        if i>0 {serial.write_u8(out,',')}
-        serial.write_u8(out,'{')
-        api.write_text(out,"path",git.change_path(g,&change),true)
-        status:=[1]u8{change.status}
-        api.write_text(out,"status",string(status[:]))
-        api.write_bool(out,"included",!change.left_out)
-        serial.write_u8(out,'}')
+        r.changes[i]={git.change_path(g,&change),strings.clone_from_bytes({change.status},call.allocator),!change.left_out}
     }
-    serial.text_write_raw(out,"]")
-    api.write_key(out,"history")
-    serial.write_u8(out,'[')
     for &commit,i in g.history {
-        if i>0 {serial.write_u8(out,',')}
-        serial.write_u8(out,'{')
-        api.write_text(out,"hash",base.text_get(commit.hash[:]),true)
-        api.write_text(out,"author",base.text_get(commit.author[:]))
-        api.write_text(out,"age",base.text_get(commit.age[:]))
-        api.write_text(out,"subject",base.text_get(commit.subject[:]))
-        serial.write_u8(out,'}')
+        r.history[i]={base.text_get(commit.hash[:]),base.text_get(commit.author[:]),base.text_get(commit.age[:]),base.text_get(commit.subject[:])}
     }
-    serial.text_write_raw(out,"]}")
 }
 
 @(private)
@@ -207,48 +181,27 @@ api_git_discard :: proc(s:^Session,call:^api.Call) {
 api_git_conflicts :: proc(s:^Session,call:^api.Call) {
     g:=s.git
     m:=&g.merge
-    out:=call.out
-    serial.write_u8(out,'{')
-    api.write_bool(out,"merging",g.merging,true)
-    api.write_bool(out,"loaded",m.loaded)
-    api.write_key(out,"items")
-    serial.write_u8(out,'[')
+    r:=api.call_result(call,Api_Git_Conflicts)
+    r.merging,r.loaded=g.merging,m.loaded
+    r.items=make([]Api_Git_Item,len(m.items),call.allocator)
+    wholes:=[Git_Whole]string{.Theirs="theirs",.Ours="ours",.Folder="folder"}
+    kinds:=[asset.Merge_Kind]string{.Value="value",.Removed="removed",.Table="table"}
     for &item,i in m.items {
-        if i>0 {serial.write_u8(out,',')}
         file:=&m.files[item.file]
-        serial.write_u8(out,'{')
-        api.write_text(out,"file",strings.trim_prefix(base.text_get(file.path[:]),base.text_get(g.prefix[:])),true)
-        api.write_text(out,"name",base.text_get(item.name[:]))
-        if item.key!=0 {api.write_text(out,"entity",fmt.tprintf("0x%016x",u64(item.key)))}
-        api.write_bool(out,"accepted",item.accepted)
-        if file.merged==nil {
-            wholes:=[Git_Whole]string{.Theirs="theirs",.Ours="ours",.Folder="folder"}
-            api.write_text(out,"whole",wholes[file.whole])
-            api.write_bool(out,"text",file.text)
-        }
-        api.write_key(out,"conflicts")
-        serial.write_u8(out,'[')
+        out:=&r.items[i]
+        out^={file=strings.trim_prefix(base.text_get(file.path[:]),base.text_get(g.prefix[:])),name=base.text_get(item.name[:]),entity=base.Entity_Id(item.key),accepted=item.accepted}
+        if file.merged==nil {out.whole,out.text=wholes[file.whole],file.text}
+        out.conflicts=make([]Api_Git_Conflict,item.count,call.allocator)
         for &conflict,c in m.conflicts[item.first:][:item.count] {
-            if c>0 {serial.write_u8(out,',')}
-            kinds:=[asset.Merge_Kind]string{.Value="value",.Removed="removed",.Table="table"}
-            serial.write_u8(out,'{')
-            api.write_text(out,"kind",kinds[conflict.kind],true)
-            api.write_text(out,"path",base.text_get(conflict.path[:]))
-            api.write_text(out,"component",base.text_get(conflict.table[:]))
-            api.write_text(out,"field",base.text_get(conflict.field[:]))
+            row:=&out.conflicts[c]
+            row^={kind=kinds[conflict.kind],path=base.text_get(conflict.path[:]),component=base.text_get(conflict.table[:]),field=base.text_get(conflict.field[:]),choice=conflict.take_ours?"ours":"theirs"}
             if conflict.kind==.Value {
-                api.write_key(out,"ours");serial.text_write_raw(out,base.text_get(conflict.ours[:]))
-                api.write_key(out,"theirs");serial.text_write_raw(out,base.text_get(conflict.theirs[:]))
+                row.ours,row.theirs=serial.Json(base.text_get(conflict.ours[:])),serial.Json(base.text_get(conflict.theirs[:]))
             } else {
-                api.write_bool(out,"ours_has",conflict.ours_has)
-                api.write_bool(out,"theirs_has",conflict.theirs_has)
+                row.ours_has,row.theirs_has=conflict.ours_has,conflict.theirs_has
             }
-            api.write_text(out,"choice",conflict.take_ours?"ours":"theirs")
-            serial.write_u8(out,'}')
         }
-        serial.text_write_raw(out,"]}")
     }
-    serial.text_write_raw(out,"]}")
 }
 
 @(private)

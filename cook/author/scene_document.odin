@@ -3,7 +3,6 @@ package author
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
-import "core:reflect"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
@@ -316,7 +315,7 @@ scene_apply :: proc(target:^Scene_Target,reading:^Reading,text:string) -> (appli
             return
         }
     }
-    if entities=="" {reading_fail(reading,"entities is required: the entities at the top of the scene, or root alone, as scene.inspect with root and mirai scene read give them");return}
+    if entities=="" {reading_fail(reading,"entities is required: the entities at the top of the scene, or root alone, as the tree of scene.inspect with root and mirai scene read give them");return}
     read:=make([dynamic]Scene_Entity,reading.allocator)
     scene_entities_read(reading,entities,-1,"entities",&read) or_return
     declared:=make(map[base.Entity_Id]bool,reading.allocator)

@@ -4,7 +4,6 @@ import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:os"
-import "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
@@ -12,7 +11,6 @@ import "mirai:host"
 import anim "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 import aed "plugins:animation/editor"
 import eanim "plugins:animation/runtime"
 
@@ -49,18 +47,18 @@ PREVIEWS_API_DEFAULT :: Previews_Api{provider={register=previews_register}}
 
 Animation_Capture_Result :: struct {
     id:base.Entity_Id,
-    image:[1024]u8 `mirai:"text,label=The PNG written; MCP also returns the image"`,
+    image:string `mirai:"label=The PNG written; MCP also returns the image"`,
     size:int `mirai:"label=Pixels of a side of a frame"`,
     short:bool `mirai:"label=The copy of the character shows only part of what the entity does"`,
-    frames:[1]f32 `mirai:"list,unit=s,label=The time of each frame of the strip"`,
-    views:[1][16]u8 `mirai:"text,list,label=The view of each row"`,
+    frames:[]f32 `mirai:"unit=s,label=The time of each frame of the strip"`,
+    views:[]Capture_View `mirai:"label=The view of each row"`,
 }
 
 @(private)
 previews_register :: proc(s:^editor.Session) {
     defaults:=Animation_Capture_Params{frames=6,seconds=1,size=256,views={.Three_Quarter}}
     aed.request_rows_defaults(&defaults)
-    editor.api_method_register(s,Animation_Capture_Params,Animation_Capture_Result,{name="animation.capture",summary="Shows how an animated entity moves as a PNG: a strip of frames over seconds with a row per view at one scale, from a copy run with the fields of animation.preview.",writes_result=true,defaults=&defaults,flags={.Read_Only},run=capture})
+    editor.api_method_register(s,{name="animation.capture",summary="Shows how an animated entity moves as a PNG: a strip of frames over seconds with a row per view at one scale, from a copy run with the fields of animation.preview.",params=type_info_of(Animation_Capture_Params),result=type_info_of(Animation_Capture_Result),defaults=&defaults,flags={.Read_Only,.Draws},run=capture})
 }
 
 @(private)
@@ -214,14 +212,9 @@ capture :: proc(s:^editor.Session,call:^api.Call) {
     write:host.Png_Write
     host.app_png_write_start(app,&write,path,image,width,height)
     if error:=host.app_png_write_wait(app,&write);error!=nil {api.call_failf(call,api.SERVER_ERROR,"%s could not be written: %s",path,os.error_string(error));return}
-    report:=call.out
-    serial.write_u8(report,'{');api.write_key(report,"id",true);api.write_id(report,captured_id);api.write_text(report,"image",path)
-    api.write_int(report,"size",i64(side));api.write_bool(report,"short",st.sub.short)
-    api.write_key(report,"frames");serial.write_u8(report,'[')
-    for frame in 0..<frames {if frame>0 {serial.write_u8(report,',')};api.write_number(report,p.time+f32(st.ticks[frame])/CAPTURE_RATE)}
-    serial.write_u8(report,']')
-    api.write_key(report,"views");serial.write_u8(report,'[')
-    for view,v in views {if v>0 {serial.write_u8(report,',')};serial.write_u8(report,'"');serial.text_write_raw(report,fmt.tprintf("%v",view));serial.write_u8(report,'"')}
-    serial.text_write_raw(report,"]}")
+    r:=api.call_result(call,Animation_Capture_Result)
+    r^={id=captured_id,image=path,size=side,short=st.sub.short,views=views[:]}
+    r.frames=make([]f32,frames,call.allocator)
+    for &time,frame in r.frames {time=p.time+f32(st.ticks[frame])/CAPTURE_RATE}
     api.call_image(call,path)
 }

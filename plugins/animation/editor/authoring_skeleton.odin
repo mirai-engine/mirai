@@ -5,7 +5,6 @@ import aa "mirai:asset"
 import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:std/base"
-import "mirai:std/serial"
 import mm "mirai:std/math"
 
 Authoring_Bone :: struct {
@@ -45,14 +44,13 @@ Socket_Set_Params :: struct {
 
 @(private)
 authoring_skeleton_register :: proc(s:^editor.Session) {
-    inspect:=Authoring_Inspect_Params{limit=128}
     create:=authoring_skeleton_create_defaults();if create==nil {return}
     bone:=Skeleton_Bone_Set_Params{bone={rotation={0,0,0,1},scale={1,1,1}}}
     socket:=Socket_Set_Params{offset=mm.TRANSFORM_IDENTITY}
-    editor.api_method_register(s,Skeleton_Create_Params,Authoring_Write_Result,{name="skeleton.create",summary="Creates a .skeleton from its bones, parents before children, and its named sockets; an omitted transform of a bone is identity.",defaults=create,run=authoring_skeleton_create,writes_result=true})
-    editor.api_method_register(s,Skeleton_Bone_Set_Params,Authoring_Write_Result,{name="skeleton.bone.set",summary="Replaces the name and rest pose of a bone; its path and parent stay, since meshes and tracks refer to them.",defaults=&bone,run=authoring_bone_set,writes_result=true})
+    editor.api_method_register(s,{params=type_info_of(Skeleton_Create_Params),result=type_info_of(Authoring_Write_Result),name="skeleton.create",summary="Creates a .skeleton from its bones, parents before children, and its named sockets; an omitted transform of a bone is identity.",defaults=create,run=authoring_skeleton_create})
+    editor.api_method_register(s,{params=type_info_of(Skeleton_Bone_Set_Params),result=type_info_of(Authoring_Write_Result),name="skeleton.bone.set",summary="Replaces the name and rest pose of a bone; its path and parent stay, since meshes and tracks refer to them.",defaults=&bone,run=authoring_bone_set})
     authoring_bone_add_register(s)
-    editor.api_method_register(s,Socket_Set_Params,Authoring_Write_Result,{name="skeleton.socket.set",summary="Creates, replaces or removes a named socket of a .skeleton.",defaults=&socket,run=authoring_socket_set,writes_result=true})
+    editor.api_method_register(s,{params=type_info_of(Socket_Set_Params),result=type_info_of(Authoring_Write_Result),name="skeleton.socket.set",summary="Creates, replaces or removes a named socket of a .skeleton.",defaults=&socket,run=authoring_socket_set})
 }
 
 @(private)
@@ -81,30 +79,23 @@ authoring_skeleton_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_I
 authoring_skeleton_save :: proc(s:^editor.Session,call:^api.Call,target:Authoring_File,id:base.Asset_Id,view:aa.Skeleton_View) {
     doc:aa.Document;defer aa.document_destroy(&doc)
     if error:=aa.skeleton_document(&doc,&s.app.assets.types,{id=id,bones=view.bones,sockets=view.sockets,body=view.body,body_parts=view.body_parts,source=view.source},s.app.allocator);error!=.None {authoring_failure(call,"bones","Out_Of_Memory" if error==.Out_Of_Memory else "Invalid_Definition","valid paths, hierarchy, rotations, scales and socket references",fmt.tprintf("%v",error),"The skeleton edit could not be prepared",api.SERVER_ERROR if error==.Out_Of_Memory else api.INVALID_PARAMS);return}
-    _=authoring_publish(s,call,target,&doc)
+    _=authoring_publish(s,call,target,&doc,api.call_result(call,Authoring_Write_Result))
 }
 
 @(private)
-authoring_skeleton_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Authoring_Inspect_Params)
+authoring_skeleton_inspect :: proc(s:^editor.Session,call:^api.Call,p:^Asset_Inspect_Params,r:^Asset_Inspect_Result) {
     file:Authoring_File;defer aa.asset_close(&file.file)
     view,ok:=authoring_skeleton_open(s,call,p.asset,&file);if !ok {return}
-    out:=call.out
-    serial.text_write_raw(out,"{");authoring_result(call,p.asset,file.path)
-    api.write_uint(out,"bones_total",u64(len(view.bones)));api.write_uint(out,"sockets_total",u64(len(view.sockets)))
-    api.write_key(out,"bones");serial.text_write_raw(out,"[")
-    start:=min(int(p.offset),len(view.bones));end:=min(start+int(p.limit),len(view.bones))
-    for &bone,i in view.bones[start:end] {
-        if i>0 {serial.text_write_raw(out,",")}
-        value:=Authoring_Bone{name=bone.name,path=bone.path,position=bone.translation,rotation={bone.rotation.x,bone.rotation.y,bone.rotation.z,bone.rotation.w},scale=bone.scale}
+    base.text_set(r.path[:],file.path)
+    r.bones_total,r.sockets_total=u32(len(view.bones)),u32(len(view.sockets))
+    first:=min(int(p.offset),len(view.bones))
+    r.bones=make([]Authoring_Bone,min(first+int(p.limit),len(view.bones))-first,call.allocator)
+    for &value,i in r.bones {
+        bone:=view.bones[first+i]
+        value={name=bone.name,path=bone.path,position=bone.translation,rotation={bone.rotation.x,bone.rotation.y,bone.rotation.z,bone.rotation.w},scale=bone.scale}
         if bone.parent>=0 {value.parent=view.bones[bone.parent].path}
-        authoring_write_value(call,&value,type_info_of(Authoring_Bone))
     }
-    serial.text_write_raw(out,"]")
-    api.write_key(out,"sockets");serial.text_write_raw(out,"[")
-    start=min(int(p.offset),len(view.sockets));end=min(start+int(p.limit),len(view.sockets))
-    for &socket,i in view.sockets[start:end] {if i>0 {serial.text_write_raw(out,",")};authoring_write_value(call,&socket,type_info_of(aa.Skeleton_Socket))}
-    serial.text_write_raw(out,"]}")
+    r.sockets=authoring_page(call,view.sockets,p.offset,p.limit)
 }
 
 @(private)

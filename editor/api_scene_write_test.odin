@@ -4,7 +4,6 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:slice"
-import "core:strconv"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -14,7 +13,6 @@ import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:editor/api"
 import "mirai:std/base"
-import "mirai:std/serial"
 
 @(private="file")
 write_fixture_init :: proc(t:^testing.T,f:^Prefab_Fixture,state:^Api_State,name:string) -> bool {
@@ -32,33 +30,27 @@ write_entity :: proc(f:^Prefab_Fixture,name:string,parent:=core.NONE) -> core.En
     return e
 }
 
+// What a write answers besides the entities it made.
 @(private="file")
-write_scene :: proc(f:^Prefab_Fixture,raw:string) -> (result:Api_Write_Result,failure:string,ok:bool) {
+Write_Answer :: struct {id:base.Entity_Id,made,removed,disabled:int}
+
+@(private="file")
+write_scene :: proc(f:^Prefab_Fixture,raw:string) -> (result:Write_Answer,failure:string,ok:bool) {
     result,_,failure,ok=write_scene_made(f,raw)
     return
 }
 
 // A write with what its result names as made: "name id" of each, in order.
 @(private="file")
-write_scene_made :: proc(f:^Prefab_Fixture,raw:string) -> (result:Api_Write_Result,created:[]string,failure:string,ok:bool) {
-    method:=api.Method{result_id=Api_Write_Result,writes_result=true}
-    out:serial.Writer
-    serial.writer_init(&out,0,context.temp_allocator)
-    call:=api.Call{method=&method,raw=raw,out=&out,allocator=context.temp_allocator}
+write_scene_made :: proc(f:^Prefab_Fixture,raw:string) -> (result:Write_Answer,created:[]string,failure:string,ok:bool) {
+    method:=api.Method{result_id=Api_Write_Result}
+    written:Api_Write_Result
+    call:=api.Call{method=&method,raw=raw,result=&written,allocator=context.temp_allocator}
     api_scene_write(&f.s,&call)
     if call.failed {return {},nil,call.error.message,false}
-    text:=string(serial.writer_bytes(&out))
-    if shape:=api.result_mismatch(Api_Write_Result,text);shape!="" {return {},nil,shape,false}
-    value,error:=json.parse_string(text,parse_integers=true,allocator=context.temp_allocator)
-    if error!=nil {return {},nil,text,false}
-    answer:=value.(json.Object)
-    id,_:=strconv.parse_u64_maybe_prefixed(answer["id"].(json.String))
-    result={id=base.Entity_Id(id),made=int(answer["made"].(json.Integer)),removed=int(answer["removed"].(json.Integer)),disabled=int(answer["disabled"].(json.Integer))}
+    result={written.id,written.made,written.removed,written.disabled}
     names:=make([dynamic]string,context.temp_allocator)
-    for made in answer["created"].(json.Array) {
-        entry:=made.(json.Object)
-        append(&names,fmt.tprintf("%s %s",entry["name"].(json.String),entry["id"].(json.String)))
-    }
+    for made in written.created {append(&names,fmt.tprintf("%s 0x%016x",made.name,u64(made.id)))}
     return result,names[:],"",true
 }
 
@@ -67,19 +59,16 @@ write_scene_made :: proc(f:^Prefab_Fixture,raw:string) -> (result:Api_Write_Resu
 write_tree :: proc(t:^testing.T,f:^Prefab_Fixture,root:base.Entity_Id,components:=true) -> (tree:json.Object,entities:string) {
     params:=Api_Inspect_Params{limit=API_INSPECT_DEFAULT}
     copy(params.root[:],fmt.tprintf("0x%016x",u64(root)))
-    method:=api.Method{params_id=Api_Inspect_Params}
-    out:serial.Writer
-    serial.writer_init(&out,0,context.temp_allocator)
-    call:=api.Call{method=&method,raw=components?"{}":`{"components":[]}`,params=&params,out=&out,allocator=context.temp_allocator}
-    api_scene_inspect(&f.s,&call)
+    method:=api.Method{params_id=Api_Inspect_Params,result_id=Api_Inspect_Result}
+    call:=api.Call{method=&method,raw=components?"{}":`{"components":[]}`,params=&params,allocator=context.temp_allocator}
+    text:=api_inspect_text(&f.s,&call,false)
     if !testing.expect(t,!call.failed,call.error.message) {return}
-    text:=string(serial.writer_bytes(&out))
     api_result_shape_expect(t,text,Api_Inspect_Result)
     value,error:=json.parse_string(text,allocator=context.temp_allocator)
     if error!=nil {return}
-    start:=strings.index(text,`"entities":`)+len(`"entities":`)
-    tree=value.(json.Object)["entities"].(json.Array)[0].(json.Object)
-    return tree,text[start:strings.last_index(text,`,"shown":`)]
+    start:=strings.index(text,`"tree": `)+len(`"tree": `)
+    tree=value.(json.Object)["tree"].(json.Array)[0].(json.Object)
+    return tree,text[start:strings.last_index(text,`}`)]
 }
 
 @(private="file")
@@ -124,7 +113,7 @@ a_write_matches_by_id_name_and_place_and_inspect_gives_back_what_it_wrote :: pro
     document:=fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Root","children":[{{"name":"B","position":[1,0,0]}},{{"id":"0x%016x","name":"A2","components":{{"Prefab_Test_Lamp":{{"intensity":5}}}}}},{{}},{{"name":"New","children":[{{"name":"Leaf"}}]}}]}}]}}`,u64(ids[0]),u64(ids[1]))
     result,failure,ok:=write_scene(f,document)
     if !testing.expect(t,ok,failure) {return}
-    testing.expect_value(t,result,Api_Write_Result{id=ids[0],made=2,removed=2})
+    testing.expect_value(t,result,Write_Answer{id=ids[0],made=2,removed=2})
     testing.expect_value(t,len(f.edits.steps),steps+1)
     for id in ids {testing.expect(t,api_entity(w,id)!=core.NONE)}
     testing.expect(t,api_entity(w,d_id)==core.NONE)
@@ -147,7 +136,7 @@ a_write_matches_by_id_name_and_place_and_inspect_gives_back_what_it_wrote :: pro
     // What inspect gives, written back, changes nothing.
     result,failure,ok=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":%s}}`,u64(ids[0]),entities))
     testing.expect(t,ok,failure)
-    testing.expect_value(t,result,Api_Write_Result{id=ids[0]})
+    testing.expect_value(t,result,Write_Answer{id=ids[0]})
     testing.expect_value(t,len(f.edits.steps),steps+1)
 
     // One step: undone, the subtree is what it was.
@@ -192,7 +181,7 @@ a_write_turns_off_the_members_of_an_instance_it_leaves_out_and_keeps_their_place
 
     result,write_failure,written:=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Root","children":[{{"name":"A","children":[{{"name":"Added"}}]}}]}}]}}`,u64(root_id)))
     if !testing.expect(t,written,write_failure) {return}
-    testing.expect_value(t,result,Api_Write_Result{id=root_id,made=1,disabled=2})
+    testing.expect_value(t,result,Write_Answer{id=root_id,made=1,disabled=2})
     for id in ([]base.Entity_Id{b_id,c_id}) {
         e:=api_entity(w,id)
         testing.expect(t,e!=core.NONE && entity_has(w,e,core.Disabled))
@@ -210,7 +199,7 @@ a_write_turns_off_the_members_of_an_instance_it_leaves_out_and_keeps_their_place
     testing.expect_value(t,write_names(tree),"A,B")
     result,write_failure,written=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":%s}}`,u64(root_id),entities))
     testing.expect(t,written,write_failure)
-    testing.expect_value(t,result,Api_Write_Result{id=root_id})
+    testing.expect_value(t,result,Write_Answer{id=root_id})
     testing.expect_value(t,len(f.edits.steps),steps+1)
 }
 
@@ -251,7 +240,7 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
     document:=fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Level","children":[{{"name":"North","prefab":"crate.scene","position":[4,0,0],"children":[{{"name":"Lid","children":[{{"name":"Lamp","components":{{"Prefab_Test_Lamp":{{"intensity":9}}}}}}]}}]}}]}}]}}`,u64(level_id))
     result,named,failure,ok:=write_scene_made(f,document)
     if !testing.expect(t,ok,failure) {return}
-    testing.expect_value(t,result,Api_Write_Result{id=level_id,made=3})
+    testing.expect_value(t,result,Write_Answer{id=level_id,made=3})
     testing.expect_value(t,len(f.edits.steps),steps+1)
     testing.expect_value(t,core.world_entities(w).alive,alive+3)
     north,lamp:=placed_lamp(f,level_id)
@@ -269,12 +258,12 @@ a_write_places_a_prefab_as_a_linked_instance_with_what_the_document_says_of_it :
 
     // The document that placed it, and the one inspect gives of it, written again change nothing.
     result,failure,ok=write_scene(f,document)
-    testing.expect(t,ok && result==Api_Write_Result{id=level_id} && len(f.edits.steps)==steps+1,failure)
+    testing.expect(t,ok && result==Write_Answer{id=level_id} && len(f.edits.steps)==steps+1,failure)
     tree,entities:=write_tree(t,f,level_id)
     placed:=tree["children"].(json.Array)[0].(json.Object)["prefab"].(json.Object)
     testing.expect(t,placed["root"].(json.Boolean) && len(placed["asset"].(json.String))>0)
     result,failure,ok=write_scene(f,fmt.tprintf(`{{"root":"0x%016x","entities":%s}}`,u64(level_id),entities))
-    testing.expect(t,ok && result==Api_Write_Result{id=level_id} && len(f.edits.steps)==steps+1,failure)
+    testing.expect(t,ok && result==Write_Answer{id=level_id} && len(f.edits.steps)==steps+1,failure)
 
     // One step: undone, the instance is gone with its link; done again, it is linked as before.
     testing.expect(t,history.undo(&f.edits,w,&f.selection))

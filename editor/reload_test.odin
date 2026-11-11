@@ -27,7 +27,8 @@ nothing_registered_before_a_swap_runs_after_it :: proc(t:^testing.T) {
     defer test_info_destroy(&info)
     provider:=&info.storages[info.storages_by_type[Api_Test_Provider]]
     session:=Session{info=&info,editor_world=&world,edits=&edits}
-    if !testing.expect_value(t,api_open(&session,0,true),Api_Open_Error.None) {return}
+    api_opened,api_problem:=api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return}
     defer api_close(&session)
     st:=api_state(&session)
     st.poll_temp=context.temp_allocator

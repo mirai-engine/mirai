@@ -3,7 +3,6 @@ package api
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
-import "core:reflect"
 import "core:strings"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -50,94 +49,27 @@ tool_find :: proc(s:^Server,name:string) -> ^Method {
     return nil
 }
 
-// Adds the params and result types of a method to the schema and records the
-// tags of their fields.
-schema_register :: proc(s:^Server,id:typeid,info:^runtime.Type_Info=nil) -> (index:serial.Type_Index,ok:bool) {
-    if id==nil {return serial.TYPE_NONE,true}
-    // Without its information the type is of this binary. One of another, with
-    // its own type table, is not in the table of this one.
-    root:=info!=nil?info:type_info_of(id)
-    if root.id!=id {
-        delete(s.schema.error,s.schema.allocator)
-        s.schema.error=format_text(s.schema.allocator,"a type of another library without its information: pass type_info_of of it (params_info, result_info)")
-        return serial.TYPE_NONE,false
-    }
+// Adds the params or the result type of a method to the schema: a struct. A
+// result may also be serial.Json, when only the world knows its shape.
+schema_register :: proc(s:^Server,info:^runtime.Type_Info,result:=false) -> (index:serial.Type_Index,ok:bool) {
+    if info==nil {return serial.TYPE_NONE,true}
+    root:=info
     first_type:=len(s.schema.types)
     index=serial.schema_add_type_info(&s.schema,root) or_return
-    infos:=make(map[typeid]^runtime.Type_Info,context.temp_allocator)
-    type_infos_collect(root,&infos)
-    for len(s.tags)<len(s.schema.fields) {append(&s.tags,Field_Tags{})}
-    for len(s.keys)<len(s.schema.fields) {append(&s.keys,"")}
-    for type_id,type_index in s.schema.lookup {
-        if int(type_index)<first_type {continue}
-        type:=s.schema.types[type_index]
-        if type.kind!=.Struct {continue}
-        if type.count>MAX_STRUCT_FIELDS {
-            s.schema.error=format_text(s.schema.allocator,"%v has more than %d fields",type_id,MAX_STRUCT_FIELDS)
+    for type in s.schema.types[first_type:] {
+        if type.kind==.Struct && type.count>MAX_STRUCT_FIELDS {
+            delete(s.schema.error,s.schema.allocator)
+            s.schema.error=format_text(s.schema.allocator,"%s has more than %d fields",type.name,MAX_STRUCT_FIELDS)
             return serial.TYPE_NONE,false
         }
-        found:=infos[type_id] or_else type_info_of(type_id)
-        if found.id!=type_id {continue}
-        info,is_struct:=runtime.type_info_base(found).variant.(runtime.Type_Info_Struct)
-        if !is_struct {continue}
-        at:=int(type.first)
-        field_tags_record(s,info,&at)
     }
-    if s.schema.types[index].kind!=.Struct {
+    kind:=s.schema.types[index].kind
+    if kind!=.Struct && !(result && kind==.Json) {
         delete(s.schema.error,s.schema.allocator)
-        s.schema.error=format_text(s.schema.allocator,"%v is not a struct",id)
+        s.schema.error=format_text(s.schema.allocator,"%v is not a struct",info.id)
         return serial.TYPE_NONE,false
     }
     return index,true
-}
-
-// The tags and keys of the fields of a struct, from the field at; the fields of
-// a field tagged inline stand in its place, as in the schema.
-@(private)
-field_tags_record :: proc(s:^Server,info:runtime.Type_Info_Struct,at:^int) {
-    names:=[Field_Tag]string{.Optional="optional",.List="list",.Any="any",.Clamp="clamp"}
-    for i in 0..<int(info.field_count) {
-        if nested,inlined:=serial.field_inlined(info,i);inlined {
-            field_tags_record(s,nested,at)
-            continue
-        }
-        tags:Field_Tags
-        for name,tag in names {
-            if tag_has(info.tags[i],name) {tags+={tag}}
-        }
-        s.tags[at^]=tags
-        s.keys[at^]=clone_text(s.allocator,tag_value(info.tags[i],"key"))
-        at^+=1
-    }
-}
-
-@(private)
-tag_has :: proc(tag:string,flag:string) -> bool {
-    options,found:=reflect.struct_tag_lookup(reflect.Struct_Tag(tag),"mirai")
-    if !found {return false}
-    rest:=options
-    for option in strings.split_iterator(&rest,",") {
-        if strings.trim_space(option)==flag {return true}
-    }
-    return false
-}
-
-// The value of a key=value option of the tag; "" without it.
-@(private)
-tag_value :: proc(tag:string,key:string) -> string {
-    options,found:=reflect.struct_tag_lookup(reflect.Struct_Tag(tag),"mirai")
-    if !found {return ""}
-    rest:=options
-    for option in strings.split_iterator(&rest,",") {
-        name,_,value:=strings.partition(strings.trim_space(option),"=")
-        if strings.trim_space(name)==key {return strings.trim_space(value)}
-    }
-    return ""
-}
-
-// The key of a field in JSON.
-field_key :: proc(s:^Server,field:^serial.Field,index:int) -> string {
-    return s.keys[index]!=""?s.keys[index]:field.name
 }
 
 field_visible :: #force_inline proc(field:^serial.Field) -> bool {
@@ -150,16 +82,15 @@ method_register :: proc(s:^Server,desc:Method_Desc) -> Register_Error {
     if s.method_count>=len(s.methods) {s.stats.methods_refused+=1;return .Full}
     if method_find(s,desc.name)!=nil || tool_find(s,desc.name)!=nil {return .Duplicate}
     if desc.writes_result && desc.result==nil {return .Invalid_Type}
-    method:=Method{name_hash=base.name_hash(desc.name),params_id=desc.params,result_id=desc.result,handler=desc.handler,user=desc.user,flags=desc.flags,writes_result=desc.writes_result}
+    method:=Method{name_hash=base.name_hash(desc.name),handler=desc.handler,user=desc.user,flags=desc.flags,writes_result=desc.writes_result}
     ok:bool
-    method.params,ok=schema_register(s,desc.params,desc.params_info)
+    if desc.params!=nil {method.params_id=desc.params.id}
+    if desc.result!=nil {method.result_id=desc.result.id}
+    method.params,ok=schema_register(s,desc.params)
     if !ok {return .Invalid_Type}
     method.clamps=type_clamps(s,method.params)
-    method.result,ok=schema_register(s,desc.result,desc.result_info)
+    method.result,ok=schema_register(s,desc.result,result=true)
     if !ok {return .Invalid_Type}
-    for pair in ([2]struct{text:string,type:typeid}{{desc.params_schema,desc.params},{desc.result_schema,desc.result}}) {
-        if pair.text!="" && (pair.type!=nil || !json_valid(context.temp_allocator,pair.text)) {return .Invalid_Schema}
-    }
     limit:=u32(s.scratch.arena.data!=nil?len(s.scratch.arena.data)/4:0)
     if method.params!=serial.TYPE_NONE && s.schema.types[method.params].size>limit {return .Too_Large}
     if method.result!=serial.TYPE_NONE && !method.writes_result && s.schema.types[method.result].size>limit {return .Too_Large}
@@ -171,8 +102,6 @@ method_register :: proc(s:^Server,desc:Method_Desc) -> Register_Error {
     method.name=clone_text(s.allocator,desc.name)
     method.summary=clone_text(s.allocator,desc.summary)
     method.plugin=clone_text(s.allocator,desc.plugin)
-    method.params_schema=clone_text(s.allocator,desc.params_schema)
-    method.result_schema=clone_text(s.allocator,desc.result_schema)
     s.methods[s.method_count]=method
     s.method_count+=1
     return .None
@@ -186,26 +115,9 @@ type_clamps :: proc(s:^Server,index:serial.Type_Index) -> bool {
     #partial switch type.kind {
     case .Array: return type_clamps(s,type.elem)
     case .Struct:
-        for &f,i in s.schema.fields[type.first:][:type.count] {
-            if .Clamp in s.tags[int(type.first)+i] || type_clamps(s,f.type) {return true}
+        for &f in s.schema.fields[type.first:][:type.count] {
+            if .Clamp in f.hints || type_clamps(s,f.type) {return true}
         }
     }
     return false
-}
-
-// The information of every type reachable from info, by typeid: what a
-// library declares is known only through the information it passes.
-@(private)
-type_infos_collect :: proc(info:^runtime.Type_Info,infos:^map[typeid]^runtime.Type_Info) {
-    if info==nil || info.id in infos {return}
-    infos[info.id]=info
-    #partial switch v in info.variant {
-    case runtime.Type_Info_Named: type_infos_collect(v.base,infos)
-    case runtime.Type_Info_Struct:
-        for i in 0..<int(v.field_count) {type_infos_collect(v.types[i],infos)}
-    case runtime.Type_Info_Array: type_infos_collect(v.elem,infos)
-    case runtime.Type_Info_Enumerated_Array: type_infos_collect(v.elem,infos)
-    case runtime.Type_Info_Slice: type_infos_collect(v.elem,infos)
-    case runtime.Type_Info_Dynamic_Array: type_infos_collect(v.elem,infos)
-    }
 }

@@ -26,9 +26,9 @@ Skeleton_Bone_Add_Params :: struct {
 }
 Skeleton_Bone_Add_Result :: struct {
     asset:base.Asset_Id,
-    path:[1024]u8 `mirai:"text"`,
-    bone:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,label=Its canonical path: the target its tracks name"`,
-    clips:[1]Skeleton_Bone_Add_Clip `mirai:"list,label=The clips given: how many tracks now drive the bone"`,
+    path:string,
+    bone:string `mirai:"label=Its canonical path: the target its tracks name"`,
+    clips:[]Skeleton_Bone_Add_Clip `mirai:"label=The clips given: how many tracks now drive the bone"`,
     dry_run:bool `mirai:"optional,label=Only on a dry run: nothing was written"`,
 }
 Skeleton_Bone_Add_Clip :: struct {
@@ -40,7 +40,7 @@ Skeleton_Bone_Add_Clip :: struct {
 @(private)
 authoring_bone_add_register :: proc(s:^editor.Session) {
     added:=Skeleton_Bone_Add_Params{bone={rotation={0,0,0,1},scale={1,1,1}}}
-    editor.api_method_register(s,Skeleton_Bone_Add_Params,Skeleton_Bone_Add_Result,{name="skeleton.bone.add",summary="Adds a bone under a parent of a .skeleton, after the others so meshes and tracks keep theirs, and has the tracks of the clips given that animate a node of its name drive it.",defaults=&added,run=authoring_bone_add,writes_result=true})
+    editor.api_method_register(s,{params=type_info_of(Skeleton_Bone_Add_Params),result=type_info_of(Skeleton_Bone_Add_Result),name="skeleton.bone.add",summary="Adds a bone under a parent of a .skeleton, after the others so meshes and tracks keep theirs, and has the tracks of the clips given that animate a node of its name drive it.",defaults=&added,run=authoring_bone_add})
 }
 
 // The last segment of a canonical path, unescaped: the name of its node.
@@ -152,22 +152,11 @@ authoring_bone_add :: proc(s:^editor.Session,call:^api.Call) {
         append(&written,entry)
     }
 
-    out:=call.out
-    serial.text_write_raw(out,"{")
-    authoring_result(call,p.asset,file.path)
-    api.write_text(out,"bone",path)
-    api.write_key(out,"clips");serial.text_write_raw(out,"[")
-    for entry,i in written[1:] {
-        if i>0 {serial.text_write_raw(out,",")}
-        serial.text_write_raw(out,"{");api.write_key(out,"asset",true);serial.write_u8(out,'"');serial.text_write_asset_id(out,entry.id);serial.write_u8(out,'"')
-        api.write_uint(out,"renamed",u64(entry.renamed));api.write_uint(out,"driving",u64(entry.driving))
-        serial.text_write_raw(out,"}")
-    }
-    serial.text_write_raw(out,"]")
-    dry_run:=authoring_dry_run(call)
-    if dry_run {api.write_bool(out,"dry_run",true)}
-    serial.text_write_raw(out,"}")
-    if dry_run {return}
+    r:=api.call_result(call,Skeleton_Bone_Add_Result)
+    r.asset,r.path,r.bone,r.dry_run=p.asset,strings.clone(file.path,call.allocator),strings.clone(path,call.allocator),authoring_dry_run(call)
+    r.clips=make([]Skeleton_Bone_Add_Clip,len(written)-1,call.allocator)
+    for entry,i in written[1:] {r.clips[i]={entry.id,u32(entry.renamed),u32(entry.driving)}}
+    if r.dry_run {return}
     label:=call.method.name if call.method!=nil else "Add bone"
     if s.edits!=nil && !editor.api_edit_begin(s,call,label) {return}
     done:=true

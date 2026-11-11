@@ -72,7 +72,7 @@ Manifest :: struct {
     icon:Path `mirai:"text"`,                 // a PNG of the window of the game, relative to the project, with forward slashes. Empty: none
     thumbnail:Path `mirai:"text"`,            // a PNG the list of projects shows it with, relative to the project, with forward slashes. Empty: the view of its start scene
     start_scene:Path `mirai:"text,kind=.scene"`, // relative to the assets folder of the project, with forward slashes. Empty: none
-    plugins:[MAX_PLUGINS]Name `mirai:"text,hidden"`, // active plugins, of the project or of the engine
+    plugins:[MAX_PLUGINS]Name `mirai:"text,trim,hidden"`, // active plugins, of the project or of the engine
     sources:[MAX_SOURCES]Source `mirai:"trim,hidden"`, // plugins of its plugins/ that come from git
     window:Window `mirai:"section=Window"`,
     build:Build_Options `mirai:"section=Build"`,
@@ -626,7 +626,7 @@ struct_write :: proc(w:^serial.Writer,s:^serial.Schema,type:serial.Type_Index,da
                 written+=1
             }
             serial.write_u8(w,']')
-        case field.keyed:
+        case .Keyed in field.hints:
             // The entries that differ from the one with their name in the layer below, or that it lacks, each whole.
             size:=int(serial.schema_type(s,field_type.elem).size)
             written:=0
@@ -658,7 +658,7 @@ struct_write :: proc(w:^serial.Writer,s:^serial.Schema,type:serial.Type_Index,da
             }
             serial.text_write_break(w,depth+1)
             serial.write_u8(w,']')
-        case field.trim && field_type.kind==.Array:
+        case .Trim in field.hints && field_type.kind==.Array:
             // Up to its last element with a byte set, each on its lines.
             size:=int(serial.schema_type(s,field_type.elem).size)
             used:=int(field_type.count)
@@ -715,7 +715,7 @@ struct_read :: proc(r:^serial.Text_Reader,s:^serial.Schema,type:serial.Type_Inde
         switch {
         case field_type.kind==.Struct:
             struct_read(r,s,found.type,part,lenient) or_return
-        case found.keyed:
+        case .Keyed in found.hints:
             // Each entry replaces the one with its name, or takes a free one.
             size:=int(serial.schema_type(s,field_type.elem).size)
             if !serial.text_accept(r,'[') {return serial.text_fail(r,.Expected_Array)}
