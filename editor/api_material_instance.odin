@@ -51,7 +51,7 @@ Api_Material_Instance_Set_Params :: struct {
 Api_Material_Overlay_Param :: struct {
     material:string `mirai:"label=A material other than the one it is drawn over, by its path or id"`,
     blend:asset.Overlay_Blend `mirai:"optional"`,
-    enabled:bool,
+    enabled:bool `mirai:"optional,label=Left out: true"`,
 }
 
 @(private)
@@ -286,17 +286,20 @@ material_given_read :: proc(s:^Session,call:^api.Call,program:^gpu.Program,mater
         if r.failed {return false}
     }
 
-    switch api.json_member(call.raw,"overlays") {
+    switch text:=api.json_member(call.raw,"overlays");text {
     case "":
     case "null": next.own_overlays,next.overlay_count,next.overlays=false,0,{}
     case:
+        elements,_:=api.json_elements(text)
         if len(overlays)>asset.MATERIAL_MAX_OVERLAYS {
             api.call_failf(call,api.INVALID_PARAMS,"%s up to %d overlays",who,asset.MATERIAL_MAX_OVERLAYS)
             return false
         }
         list:[asset.MATERIAL_MAX_OVERLAYS]asset.Material_Overlay
         for &given,i in overlays {
-            layer:=asset.Material_Overlay{id=u32(i+1),blend=given.blend,enabled=given.enabled}
+            // A layer that does not say so is enabled.
+            enabled:=given.enabled || i<len(elements) && api.json_member(elements[i],"enabled")==""
+            layer:=asset.Material_Overlay{id=u32(i+1),blend=given.blend,enabled=enabled}
             named:bool
             if layer.material,named=asset_named(s,call,given.material,asset.KIND_MATERIAL,".mat","a material");!named {return false}
             if layer.material==material {
