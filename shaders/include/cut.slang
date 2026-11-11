@@ -60,6 +60,42 @@ Cluster_Cut cluster_cut(Instance inst, float scale, Mesh mesh, Cluster c, float 
 bool cluster_in_cut(Instance inst, float scale, Mesh mesh, Cluster c, float threshold) {
     return cluster_cut(inst, scale, mesh, c, threshold).drawn;
 }
+// The instance passes of a cull (cull.comp, shadow_maps.comp) hand the
+// clusters of an instance to their cluster passes in chunks of up to
+// CULL_CHUNK, a group each, in rows of CULL_DISPATCH_X groups.
+#define CULL_CHUNK 64u
+#define CULL_DISPATCH_X 32768u
+// The clusters of the levels of a mesh the cut can take under an instance:
+// those whose least error a pixel of the threshold spans at the far side of
+// its box, and whose greatest parent error none spans at the near side. Of a
+// streamed mesh, up to its coarsest level: a coarser cluster stands for
+// children whose page is not in the pools.
+uint2 instance_clusters(Instance inst, Mesh mesh) {
+    if ((mesh.flags & MESH_FLAG_LEVEL0) != 0u) return mesh_level_clusters(mesh, 0u);
+    float scale = instance_scale(inst);
+    float3 eye = frame.detail_eye.xyz;
+    float3 low = inst.bounds_min.xyz, high = inst.bounds_max.xyz;
+    float near = max(length(eye - clamp(eye, low, high)) - mesh.lod_reach * scale, frame.detail_eye.w);
+    float far = length(select(eye * 2.0 < low + high, high, low) - eye);
+    float threshold = frame.cut.x;
+    float least = threshold * (frame.detail_footprint.x + frame.detail_footprint.y * near) / scale * 0.999;
+    float most = threshold * (frame.detail_footprint.x + frame.detail_footprint.y * far) / scale * 1.001;
+    uint first = mesh.level_count, last = 0u;
+    for (uint level = 0u; level < mesh.level_count; level++) {
+        float2 errors = mesh_level_errors(mesh, level);
+        if (errors.x <= most && errors.y > least) {
+            first = min(first, level);
+            last = level;
+        }
+    }
+    if ((mesh.flags & MESH_FLAG_STREAMED) != 0u) {
+        last = mesh.level_count - 1u;
+        first = min(first, last);
+    }
+    if (first > last) return mesh_level_clusters(mesh, 0u);
+    uint2 begin = mesh_level_clusters(mesh, first), end = mesh_level_clusters(mesh, last);
+    return uint2(begin.x, end.x + end.y - begin.x);
+}
 
 // The finest of a mesh the pools hold: level 0 where it is there, else the
 // clusters whose children's page is not. A mesh that does not stream draws

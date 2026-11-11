@@ -48,31 +48,14 @@ void light_weight_rows(Light l, out uint4 center, out uint4 shape) {
     shape = uint4(asuint(luminance(l.color_intensity.rgb) * l.color_intensity.w), extent, direction, cone);
 }
 
-// About what the light of a record gives a point with that normal, with
-// nothing in its way: none only where it gives nothing, out of its range, with
-// all of the sphere that holds it below the horizon, out of the cone of a spot
-// or behind a rectangle.
+// The light of a record at a point, as light_weight_at weighs it.
 float light_weight(uint4 center, uint4 shape, float3 position, float3 normal) {
     float4 c = asfloat(center);
     float3 to = c.xyz - position;
-    float d2 = dot(to, to);
-    if (d2 >= c.w * c.w) return 0.0;
-    float inverse = rsqrt(max(d2, 1e-12));
-    float extent = float(shape.y & 0xFFFFu) / 65535.0 * c.w;
-    float facing = saturate((dot(normal, to) + extent) * inverse);
-    if (!(facing > 0.0)) return 0.0;
-    float cone = 1.0;
-    if (shape.w != LIGHT_WEIGHT_NONE) {
-        float3 axis = oct_decode(unpackSnorm2x16(shape.z));
-        float along = -dot(to, axis) * inverse;
-        if (shape.w == LIGHT_WEIGHT_RECT) {
-            if (!(along > 0.0)) return 0.0;
-            cone = saturate(along + extent * inverse);
-        } else {
-            cone = smoothstep(light_weight_cosine(shape.w & 0xFFFFu), light_weight_cosine(shape.w >> 16u), along);
-            if (!(cone > 0.0)) return 0.0;
-        }
-    }
-    return asfloat(shape.x) * facing * cone * light_window(d2 * inverse, c.w) / max(d2, extent * extent);
+    if (dot(to, to) >= c.w * c.w) return 0.0;
+    uint cone = shape.w == LIGHT_WEIGHT_NONE ? LIGHT_CONE_NONE : shape.w == LIGHT_WEIGHT_RECT ? LIGHT_CONE_RECT : LIGHT_CONE_SPOT;
+    float3 axis = cone != LIGHT_CONE_NONE ? oct_decode(unpackSnorm2x16(shape.z)) : float3(0.0);
+    float2 cosines = float2(light_weight_cosine(shape.w & 0xFFFFu), light_weight_cosine(shape.w >> 16u));
+    return light_weight_at(c.xyz, c.w, asfloat(shape.x), float(shape.y & 0xFFFFu) / 65535.0 * c.w, cone, axis, cosines, position, normal);
 }
 #endif
