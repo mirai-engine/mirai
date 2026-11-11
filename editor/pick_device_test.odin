@@ -13,7 +13,7 @@ import mm "mirai:std/math"
 pick_device_open :: proc(t:^testing.T,d:^Pick_Device) -> bool {
     device:=shared_device.take_or_skip(t,hardware_rt=false)
     if device==nil {return false}
-    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections=false,false
+    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled=false
     if !testing.expect(t,gpu.renderer_init(&d.renderer,{device=device,width=64,height=64,settings=settings}),d.renderer.error) {return false}
     if !testing.expect(t,host.assets_init(&d.assets,{root="assets",capacity=8,renderer=&d.renderer})) {
         gpu.renderer_destroy(&d.renderer)

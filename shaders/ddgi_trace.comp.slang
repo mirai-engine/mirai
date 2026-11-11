@@ -13,6 +13,8 @@
 #define MIRAI_DIFFUSE_HITS
 // Small instances are not in the light this pass gathers (render.INSTANCE_FLAG_SMALL).
 #define MIRAI_TRACE_NO_SMALL
+// It reports the levels it samples of each texture (texture_feedback in scene.slang).
+#define MIRAI_TEXTURE_FEEDBACK
 #define POINTS_SLOT SLOT_POINTS
 #include "lighting.slang"
 #include "probe_update.slang"

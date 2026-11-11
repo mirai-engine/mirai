@@ -19,7 +19,7 @@ Area_Fixture :: struct {
 @(private)
 area_init :: proc(t: ^testing.T, f: ^Area_Fixture, loc := #caller_location) -> bool {
 	settings := DEFAULT_SETTINGS
-	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
+	settings.gi_enabled, settings.taa = false, false
 	if !fixture_init(t, f, 96, 96, settings, programs = true, loc = loc) {return false}
 	vertices: [24]Mesh_Vertex
 	indices: [36]u32
@@ -46,7 +46,7 @@ area_scene :: proc(f: ^Area_Fixture, lights: []Light_Desc, extra: []Instance_Des
 	instances := make([dynamic]Instance_Desc, context.temp_allocator)
 	append(&instances, Instance_Desc{object_id = 1, mesh = f.cube, transform = floor, tint = {1, 1, 1}})
 	append(&instances, ..extra)
-	scene_set(f.renderer, instances[:], lights, {}, {sky = {0, 0, 0}})
+	scene_given(f.renderer, instances[:], lights, {}, {sky = {0, 0, 0}})
 }
 
 // The direct light of every pixel, as a mean over `frames` frames, of the

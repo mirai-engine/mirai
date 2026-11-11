@@ -180,14 +180,14 @@ document_holds_file :: proc(s:^Session,path:string) -> bool {
 document_scene_tab :: proc(s:^Session) -> int {
     for &tab,index in s.documents {
         d:=index==s.active_document?s.document:&tab.document
-        if d.previous==nil || .One_Root not_in d.previous.doc.flags {return index}
+        if !d.prefab {return index}
     }
     return -1
 }
 
-// Whether the file a path names is a prefab, as the registry has it; a path that names no file yet is none.
+// Whether the file a path names is a prefab, as its header says; a path that names no file yet is none.
 path_is_prefab :: proc(s:^Session,path:string) -> bool {
-    if s.app.assets==nil {return false}
+    if s.app==nil || s.app.assets==nil {return false}
     file,found:=asset.registry_find_path(&s.app.assets.registry,scene_path(s,scene_file(s,path)))
     return found && asset.registry_prefab(file)
 }
@@ -322,7 +322,7 @@ strip_tab :: proc(s:^Session,index:int) -> (tab:Strip_Tab) {
     d,e:=s.document,s.edits
     if index!=s.active_document && index<len(s.documents) {d,e=&s.documents[index].document,&s.documents[index].edits}
     tab.label=document_title(d)
-    tab.icon=d.previous!=nil && .One_Root in d.previous.doc.flags?.Prefab:.Scene
+    tab.icon=d.prefab?.Prefab:.Scene
     tab.dirty=d.unsaved || history.edits_scene_state(e)!=d.saved || document_uses_unsaved(s,index)
     tab.active=index==s.active_document && !scene_covered(s)
     return
@@ -433,7 +433,7 @@ documents_build :: proc(s:^Session) {
 }
 
 document_is_prefab :: proc(s:^Session) -> bool {
-    return s.document!=nil && s.document.previous!=nil && .One_Root in s.document.previous.doc.flags
+    return s.document!=nil && s.document.prefab
 }
 
 // Who loses what they do when the scene changes, for the question that asks

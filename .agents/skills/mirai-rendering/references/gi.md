@@ -50,8 +50,8 @@ Each technique states its status; what is listed as prepared is not implemented.
     it, and only then does it have GPU buffers.
   - A device makes only the pipelines of the tracer in use (`tracer_settle`): the other one's are
     made when settings switch to it, or at start when hardware RT falls back. Hardware RT requires
-    all the `_hw` variants of the passes (`tracer_missing`): with it no pass traverses the
-    software BVH.
+    the `hw` variant of every stage that traces rays (`tracer_missing`): with it no pass traverses
+    the software BVH.
 - **Hardware ray tracing** (implemented). Inline ray queries in the `_hw` variants of direct
   light, probes, contact occlusion and reflections; SPIRV-Cross translates them to Metal. The
   self-test protects it, with the fallback to software on Vulkan

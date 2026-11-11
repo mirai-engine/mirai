@@ -5,8 +5,9 @@ import "core:mem"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-// .scene: entities and their components, independent of any ECS. One with
-// exactly one root is a prefab (Header_Flag.One_Root), which copies place.
+// .scene: entities and their components, independent of any ECS. Its header
+// says whether it is a prefab (Header_Flag.Prefab), which copies place by its
+// one root, or a scene, shown and loaded whole.
 //
 //   entities     columns id (the key), parent, order and name
 //   <component>  one table per component type, named as the component:
@@ -32,7 +33,7 @@ import "mirai:std/serial"
 // places in its hierarchy an instance set itself as of that file; updating
 // it from its prefab replaces everything else.
 
-SCENE_VERSION :: 4
+SCENE_VERSION :: 5
 ENTITY_NAME_BYTES :: 64
 OVERRIDE_PATH_BYTES :: 96
 
@@ -132,18 +133,6 @@ scene_parents :: #force_inline proc(scene:^Scene) -> []base.Entity_Id {return me
 scene_orders :: #force_inline proc(scene:^Scene) -> []u32 {return mem.slice_data_cast([]u32,scene.doc.tables[0].columns[COLUMN_ORDER].data)}
 scene_names :: #force_inline proc(scene:^Scene) -> []Entity_Name {return mem.slice_data_cast([]Entity_Name,scene.doc.tables[0].columns[COLUMN_NAME].data)}
 scene_entity_count :: #force_inline proc(scene:^Scene) -> int {return scene.doc.tables[0].rows}
-
-// Whether the entities of the document of a scene hang from one root: what its header says when it is written.
-@(private)
-document_one_root :: proc(doc:^Document) -> bool {
-    table,found:=document_table(doc,TABLE_ENTITIES)
-    if !found || len(doc.tables[table].columns)<=COLUMN_PARENT || doc.tables[table].columns[COLUMN_PARENT].size!=size_of(base.Entity_Id) {return false}
-    roots:=0
-    for at:=0;at<len(doc.tables[table].columns[COLUMN_PARENT].data);at+=size_of(base.Entity_Id) {
-        roots+=int(intrinsics.unaligned_load((^base.Entity_Id)(&doc.tables[table].columns[COLUMN_PARENT].data[at]))==0)
-    }
-    return roots==1
-}
 
 scene_entity_find :: proc(scene:^Scene,id:base.Entity_Id) -> (row:int,found:bool) {
     at,ok:=scene.index[id]
@@ -684,8 +673,8 @@ Scene_View :: struct {
     off:[]Component_Off,
 }
 
-// Columns of equal length, entity rows inside the entity table and in order, and a header that
-// says One_Root of the scene that has one. Whether ids repeat or parents exist is left to scene_view_check.
+// Columns of equal length and entity rows inside the entity table and in order. Whether ids
+// repeat or parents exist is left to scene_view_check.
 // The asset keeps the view it read with types, so reading it again does not
 // take more of its memory; the view is read only.
 scene_view :: proc(a:^Asset,types:^Types) -> (view:Scene_View,error:Error) {
@@ -703,9 +692,6 @@ scene_view_read :: proc(a:^Asset,types:^Types) -> (view:Scene_View,error:Error) 
     view.parents=asset_rows(a,types,TABLE_ENTITIES,"parent",base.Entity_Id) or_return
     view.orders=asset_rows(a,types,TABLE_ENTITIES,"order",u32) or_return
     view.names=asset_rows(a,types,TABLE_ENTITIES,"name",Entity_Name) or_return
-    roots:=0
-    for parent in view.parents {roots+=int(parent==0)}
-    if (roots==1)!=(.One_Root in a.blob.header.flags) {return {},.Corrupt}
     if info,info_error:=table_rows(a,types,TABLE_SCENE,Scene_Info);info_error!=.None {return {},info_error}
     else if len(info)==1 {view.info=info[0]}
     view.instances=table_rows(a,types,COMPONENT_INSTANCE,Prefab_Instance,COLUMN_VALUE) or_return

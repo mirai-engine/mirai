@@ -673,7 +673,7 @@ profile_notes :: proc(c:^Profile_Capture,out:Profile_Summary_Out) -> []string {
     k:=c.conditions
     n:=f64(out.frame.count)
     if k.optimization!="Speed" && k.optimization!="Aggressive" {
-        append(&notes,fmt.tprintf("The engine is built with -o:%s: times are not those of a release; mirai build engine (without --dev) builds it at Speed before measuring",strings.to_lower(k.optimization)))
+        append(&notes,fmt.tprintf("The engine is built with -o:%s: times are not those of a release; mirai build engine --release builds it at Speed before measuring",strings.to_lower(k.optimization)))
     }
     if k.write_checks {append(&notes,"MIRAI_CHECK_WRITES is on: every function of the loops checks what it writes")}
     if k.validation {append(&notes,"Graphics API validation is on: CPU and GPU times are inflated; measure without it")}

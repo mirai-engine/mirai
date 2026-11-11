@@ -142,7 +142,7 @@ each_world_keeps_its_voices_and_freeing_one_stops_only_its_own :: proc(t:^testin
     core.edit(&shown.sources,e).bus=BUS_MUSIC
     world_run(&shown,&listener,&f.app)
     moved:=core.entity_map_get(&shown.voices.entries,e)
-    testing.expect(t,moved!=nil && moved.voice!=voice && moved.bus==BUS_MUSIC && mixer.bus_count(m)>int(BUS_MUSIC))
+    testing.expect(t,moved!=nil && moved.voice!=voice && moved.kind.bus==BUS_MUSIC && mixer.bus_count(m)>int(BUS_MUSIC))
 
     // A source that goes takes its voice with it.
     core.remove(&shown.sources,e)
@@ -357,17 +357,13 @@ a_source_behind_a_wall_is_muffled_and_comes_back_over_its_fade :: proc(t:^testin
     // Both sides of one wall without a material: the default one, once.
     want:=AUDIO_MATERIAL_DEFAULT.transmission
     for band in 0..<mixer.BANDS {testing.expect(t,abs(entry.transmission[band]-want[band])<1e-5)}
-    testing.expect(t,entry.occlusion==1 && entry.volume==1,"it is muffled through the wall, not turned down")
 
     wall=false
     world_run(&w,&listener,&f.app,0.1)
     amount:=core.at(&w.states,core.row_of(&w.states,e)).occlusion
     testing.expect(t,abs(amount-0.8)<1e-4,"it comes back a fifth of the way in a tenth of its fade")
-    entry=core.entity_map_get(&w.voices.entries,e)
-    testing.expect(t,abs(entry.occlusion-0.8)<1e-4)
     for _ in 0..<5 {world_run(&w,&listener,&f.app,0.1)}
-    entry=core.entity_map_get(&w.voices.entries,e)
-    testing.expect(t,core.at(&w.states,core.row_of(&w.states,e)).occlusion==0 && entry.occlusion==0,"in sight it plays as it is")
+    testing.expect(t,core.at(&w.states,core.row_of(&w.states,e)).occlusion==0,"in sight it plays as it is")
 
     // Near the listener nothing hides it: that is its own body.
     wall=true
@@ -407,7 +403,7 @@ a_wide_source_behind_the_edge_of_a_wall_is_partly_hidden :: proc(t:^testing.T) {
     state,_:=core.get(&w.states,e)
     testing.expectf(t,state.occlusion>0.2 && state.occlusion<0.95,"part of it is hidden: %v",state.occlusion)
     entry:=core.entity_map_get(&w.voices.entries,e)
-    testing.expect(t,entry!=nil && entry.occlusion==state.occlusion)
+    testing.expect(t,entry!=nil)
     testing.expectf(t,abs(entry.transmission[0]-0.5)<1e-5 && abs(entry.transmission[2]-0.04)<1e-5,"the material of the wall: %v",entry.transmission)
     // Each frame tests a few of its points again: it stays where it is while nothing moves.
     before:=state.occlusion
@@ -553,10 +549,10 @@ the_output_follows_the_setting_and_one_the_system_does_not_list_plays_the_defaul
     testing.expect_value(t,core.problem_find(&problems,core.NONE,"audio.output").count,u64(1))
 }
 
-// What a voice is given is its source by what its set drew, also after the
-// source changes its pitch and its volume.
+// A voice draws its variation from its set once: the source tunes it in
+// place, and a source that changed nothing writes nothing.
 @(test)
-a_voice_is_given_its_source_by_what_its_set_drew :: proc(t:^testing.T) {
+a_voice_is_tuned_in_place_and_a_quiet_source_writes_nothing :: proc(t:^testing.T) {
     set:=asset.SOUND_SET_DEFAULTS
     set.volume_min,set.volume_max,set.pitch_min,set.pitch_max=0.5,0.75,0.9,1.2
     f:Fixture
@@ -570,15 +566,49 @@ a_voice_is_given_its_source_by_what_its_set_drew :: proc(t:^testing.T) {
     world_run(&w,&listener,&f.app)
     entry:=core.entity_map_get(&w.voices.entries,e)
     if !testing.expect(t,entry!=nil) {return}
-    volume,pitch:=voice_entry_given(entry^)
-    testing.expect(t,abs(volume-0.8*entry.pick[0])<1e-5 && abs(pitch-2*entry.pick[1])<1e-5)
     testing.expect(t,entry.pick[0]>=0.5 && entry.pick[0]<=0.75 && entry.pick[1]>=0.9 && entry.pick[1]<=1.2)
+    voice,pick:=entry.voice,entry.pick
+    seen:core.Seen
+    _=core.changes(&w.states,&seen)
+    world_run(&w,&listener,&f.app)
+    testing.expect(t,!core.changes(&w.states,&seen).written,"a source that changed nothing writes nothing")
     changed:=core.edit(&w.sources,e)
     changed.pitch,changed.volume=0.5,0.4
     world_run(&w,&listener,&f.app)
     entry=core.entity_map_get(&w.voices.entries,e)
-    volume,pitch=voice_entry_given(entry^)
-    testing.expect(t,abs(volume-0.4*entry.pick[0])<1e-5 && abs(pitch-0.5*entry.pick[1])<1e-5)
+    testing.expect(t,entry.voice==voice && entry.pick==pick && w.voices.stats.started==1,"the same voice, with the same variation")
+}
+
+// A sound without loop that ended plays again from its start by one more in
+// plays, and so does one that still plays.
+@(test)
+one_more_play_plays_a_source_again :: proc(t:^testing.T) {
+    f:Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
+    m:=f.app.mixer
+    listener:Mixer_Listener
+    source:=AUDIO_SOURCE_DEFAULT;source.sound=HUM
+    w:Heard_World
+    e,made:=world_init(t,&w,source);defer world_destroy(&w)
+    if !made {return}
+    world_run(&w,&listener,&f.app)
+    out:=make([]f32,mixer.CHUNK_FRAMES*8*2,context.temp_allocator)
+    for _ in 0..<8 {mixer.mixer_render(m,out)}
+    mixer.mixer_update(m)
+    world_run(&w,&listener,&f.app)
+    world_run(&w,&listener,&f.app)
+    state,_:=core.get(&w.states,e)
+    testing.expect(t,state.ended && state.voice=={} && w.voices.stats.started==1 && w.voices.stats.ended==1,"it ended and stays ended")
+    core.edit(&w.sources,e).plays+=1
+    world_run(&w,&listener,&f.app)
+    state,_=core.get(&w.states,e)
+    testing.expect(t,!state.ended && state.voice!={} && w.voices.stats.started==2,"one more play plays it again")
+    voice:=state.voice
+    core.edit(&w.sources,e).plays+=1
+    world_run(&w,&listener,&f.app)
+    state,_=core.get(&w.states,e)
+    testing.expect(t,state.voice!=voice && mixer.voice_valid(m,state.voice) && w.voices.stats.started==3,"while it plays it starts over")
 }
 
 // A placed request is the voice of a source there: on speakers, near and in

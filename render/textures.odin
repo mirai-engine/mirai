@@ -134,7 +134,7 @@ alpha_coverage_keep :: proc(pixels: []u8, cutoff, wanted: f32) {
 // A texture ready for the GPU: its levels to the last, the largest first, in
 // the format it will be sampled in, each with its layers one after another.
 // A texture of one layer whose loader can read other levels of its source
-// names the source: its levels follow its distance (texture_residency.odin).
+// names the source: its levels follow what the GPU samples (texture_residency.odin).
 // An array or a cube takes its entry, which shaders sample as a 2D texture:
 // the table shows the white default in it, and a pass binds the texture of
 // the entry itself.
@@ -243,7 +243,6 @@ textures_init :: proc(r: ^Renderer) {
 	state.stored = make([dynamic]u64, r.allocator)
 	state.partial = make([dynamic]bool, r.allocator)
 	state.residency.streams = make([dynamic]Texture_Stream, r.allocator)
-	state.residency.seen_near = make([dynamic]f32, r.allocator)
 }
 
 @(private)
@@ -255,7 +254,7 @@ textures_destroy :: proc(r: ^Renderer) {
 	delete(state.stored)
 	delete(state.partial)
 	delete(state.residency.streams)
-	delete(state.residency.seen_near)
+	textures_feedback_release(r)
 }
 
 // Makes room for the texture of handle index + 1 in what the renderer keeps
@@ -275,6 +274,10 @@ textures_room :: proc(r: ^Renderer, index: int, name: string) -> bool {
 		size := max(2 * cap(state.textures), rhi.TEXTURE_TABLE_FIRST, index + 1)
 		fits = reserve(&state.textures, size) == nil && reserve(&state.keys, size) == nil && reserve(&state.sizes, size) == nil &&
 			reserve(&state.stored, size) == nil && reserve(&state.partial, size) == nil && reserve(&state.residency.streams, size) == nil
+		if fits && !textures_feedback_reserve(r, size) {
+			set_error(r, "texture %s: the GPU has no memory for the feedback of %d textures: %s", name, size, rhi.device_error(r.device))
+			return false
+		}
 	}
 	fits = fits && resize(&state.textures, index + 1) == nil && resize(&state.keys, index + 1) == nil && resize(&state.sizes, index + 1) == nil &&
 		resize(&state.stored, index + 1) == nil && resize(&state.partial, index + 1) == nil && resize(&state.residency.streams, index + 1) == nil
@@ -324,7 +327,7 @@ texture_add_data :: proc(r: ^Renderer, data: Texture_Data, name: string, key:u64
 	state.sizes[index]={data.width,data.height}
 	state.stored[index]=bytes
 	texture_stream_set(&state.residency.streams[index], data, first)
-	state.residency.stale = true
+	state.residency.retarget, state.residency.changed = true, r.frame + 1
 	streamed := state.residency.streams[index].levels > 0
 	state.partial[index]=first>0 && !streamed
 	if state.partial[index] {state.reduced += 1}

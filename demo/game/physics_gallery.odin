@@ -226,7 +226,7 @@ physics_gallery_hud :: proc(huds:^core.Table(Physics_Gallery_Hud),views:core.Rea
                 if ready && state.broken {next.note=.Released} else if item.activations>0 {next.note=.Strained}
             case PHYSICS_CACHE_STATION:
                 if player,ready:=core.get(players,item.target);ready {
-                    next.line,next.playing,next.forward,next.seconds=.Playback,player.playing,player.rate>=0,math.round(player.time*100)/100
+                    next.line,next.playing,next.forward,next.seconds=.Playback,player.playing,player.rate>=0,player.time
                 }
             case PHYSICS_RAGDOLL_STATION:
                 if config,ready:=core.get(ragdolls,item.target);ready {next.line,next.ragdoll=.Ragdoll,config.mode}

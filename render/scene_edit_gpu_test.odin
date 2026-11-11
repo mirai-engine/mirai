@@ -9,7 +9,7 @@ import mm "mirai:std/math"
 @(private = "file")
 edit_fixture :: proc(t: ^testing.T, f: ^Fixture, loc := #caller_location) -> bool {
 	settings := DEFAULT_SETTINGS
-	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
+	settings.gi_enabled, settings.taa = false, false
 	// Images are compared pixel by pixel: every pixel traces its own rays.
 	return fixture_init(t, f, 160, 120, settings, hardware_rt = false, reference = {.Lights}, loc = loc)
 }
@@ -48,7 +48,7 @@ shared_grid_instances_keep_all_quadrants_after_scene_rebuild_and_preview_retirem
 		descs[i+4].transform[0,3]=72
 		descs[i+4].tint={0,1,0}
 	}
-	scene_set(r,descs[:4],nil,{},Environment{})
+	scene_given(r,descs[:4],nil,{},Environment{})
 	for _ in 0..<3 {if !testing.expect(t,fixture_frame(&f, {camera=camera}),r.error) {return}}
 	reference,_,_,captured:=golden_capture(r)
 	defer delete(reference)
@@ -75,7 +75,7 @@ shared_grid_instances_keep_all_quadrants_after_scene_rebuild_and_preview_retirem
 				descs[i].mesh,descs[i+4].mesh=meshes[i],meshes[i]
 			}
 		}
-		scene_set(r,descs[:],nil,{},Environment{})
+		scene_given(r,descs[:],nil,{},Environment{})
 		if pass==1 || pass==3 {
 			preview:Mesh_Handle
 			for revision in 0..<2 {
@@ -144,7 +144,7 @@ removed_meshes_and_textures_leave_the_image_of_a_scene_without_them :: proc(t: ^
 			material := DEFAULT_MATERIAL
 			material.textures[.Base_Color] = textures[0]
 			materials_set(r, {material})
-			scene_set(r, []Instance_Desc{{object_id = 1, mesh = meshes[0], transform = Mat4(1), tint = {1, 1, 1}}, {object_id = 2, mesh = meshes[1], transform = Mat4(1), tint = {1, 1, 1}}, {object_id = 3, mesh = meshes[2], transform = Mat4(1), tint = {1, 1, 1}}}, nil, sun, environment)
+			scene_given(r, []Instance_Desc{{object_id = 1, mesh = meshes[0], transform = Mat4(1), tint = {1, 1, 1}}, {object_id = 2, mesh = meshes[1], transform = Mat4(1), tint = {1, 1, 1}}, {object_id = 3, mesh = meshes[2], transform = Mat4(1), tint = {1, 1, 1}}}, nil, sun, environment)
 			testing.expect(t, fixture_frame(&f, {camera=camera}), r.error)
 			kept:=r.scene.meshes[meshes[2]]
 			testing.expect(t, mesh_remove(r, meshes[1]))
@@ -169,7 +169,7 @@ removed_meshes_and_textures_leave_the_image_of_a_scene_without_them :: proc(t: ^
 		material.textures[.Base_Color] = textures[2]
 		materials_set(r, {material})
 		if pass==1 {
-			scene_set(r, []Instance_Desc{{object_id = 1, mesh = meshes[0], transform = Mat4(1), tint = {1, 1, 1}}, {object_id = 3, mesh = meshes[2], transform = Mat4(1), tint = {1, 1, 1}}}, nil, sun, environment)
+			scene_given(r, []Instance_Desc{{object_id = 1, mesh = meshes[0], transform = Mat4(1), tint = {1, 1, 1}}, {object_id = 3, mesh = meshes[2], transform = Mat4(1), tint = {1, 1, 1}}}, nil, sun, environment)
 			testing.expect(t,fixture_frame(&f, {camera=camera}),r.error)
 		}
 		for _ in 0 ..< 3 {testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)}

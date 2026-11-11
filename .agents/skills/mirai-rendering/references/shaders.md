@@ -72,10 +72,14 @@
 - **Constants and variants.** What a pass chooses of a stage is a constant:
   `//! constant <name> <DEFINE>` makes `DEFINE` a boolean the code reads as `if (DEFINE)`, false
   unless the pipeline sets it ([rhi](rhi.md#shader-constants)), and the driver folds it. One code
-  serves every combination: a constant adds no compilation. Its id is the order of its line, the
-  manifest names it and `render/shaders_gen.odin` gives it as `<STAGE>_<NAME>`
-  (`REFLECT_COMP_COLOR`). The stage includes `native.slang`, which declares them; a source shared
-  with stages that do not declare the constant asks `#ifdef DEFINE` before reading it. What the
+  serves every combination: a constant adds no compilation of the stage. Its id is the order of its
+  line, the manifest names it and `render/shaders_gen.odin` gives it as `<STAGE>_<NAME>`
+  (`REFLECT_COMP_COLOR`). The renderer has one `Pipeline_Id` per stage: a pass asks
+  `pipeline_of` for the stage with its constants, and the pipeline of each set of constants, and of
+  the tracer in use for one that traces rays, is made the first time a frame asks for it; when
+  the renderer starts it makes those without constants of the tracer in use. The stage includes
+  `native.slang`, which declares them; a source shared with stages that do not declare the
+  constant asks `#ifdef DEFINE` before reading it. What the
   constants of a stage read is bound for every pipeline of it (a stand-in where it is off).
 - `//! variant <name> <DEFINE>...` is another compilation of the stage, `<stage>_<name>`, with
   those defines: only for what a constant cannot choose, because it changes what the stage declares

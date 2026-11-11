@@ -42,12 +42,13 @@ a_test_executable_is_current_by_the_content_of_what_its_build_read :: proc(t:^te
     if !testing.expect(t,len(planned.command)>0,"without an executable it compiles") {return}
     // What the compiler would leave.
     if !testing.expect(t,os.make_directory_all(file(root,"tests"))==nil) {return}
-    if !testing.expect(t,os.write_entire_file(planned.staging,"executable")==nil) {return}
+    if !testing.expect(t,os.write_entire_file(planned.compile.staged,"executable")==nil) {return}
     export:=struct {source_files,load_files:[]string}{source_files=sources}
     data,_:=json.marshal(export)
     if !testing.expect(t,os.write_entire_file(planned.sources_staged,data)==nil) {return}
-    planned.started=time.now()
-    if !testing.expect(t,test_build_publish(&planned)) {return}
+    listed,_:=dependencies_read(planned.sources_staged,context.temp_allocator)
+    published,stamped:=publish_and_stamp(planned.compile.staged,executable,strings.concatenate({executable,".old"}),listed,{file=test_stamp_file(executable),sources_file=test_sources_file(executable),sources_staged=planned.sources_staged,root=root,compiler=compiler,flags=planned.flags,tests=true,started=time.now()})
+    if !testing.expect(t,published && stamped) {return}
     current :: proc(root,compiler,executable:string,flags:[]string) -> bool {
         return len(test_build_plan(root,compiler,project.path(root,"pkg",allocator=context.temp_allocator),executable,flags).command)==0
     }
@@ -97,7 +98,7 @@ not_asked :: proc(t:^testing.T) {testing.expect(t,false,"ran without being asked
     b:=test_build_plan(root,compiler,folder,test_executable(project.path(root,"tests"),root,folder),{"-o:minimal"})
     if !testing.expect(t,test_build_start(&b),b.said) {return}
     for !test_build_poll(&b,50*time.Millisecond) {}
-    if !testing.expectf(t,!b.failed,"%s %v",b.said,b.diagnostics) {return}
+    if !testing.expectf(t,b.failure==.None,"%s %v",b.said,b.diagnostics) {return}
     r:Test_Run
     if !testing.expect(t,test_run_start(&r,&b,"project/game",{names={"sees_the_root","fails_on_purpose"},timeout=TEST_TIMEOUT,quiet=true})) {return}
     for !test_run_poll(&r,50*time.Millisecond) {}

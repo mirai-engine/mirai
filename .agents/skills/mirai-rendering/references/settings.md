@@ -23,7 +23,7 @@
     either, the worlds not shown lose the light they kept;
   - the histories that hold what the change alters: shadows with `sun_shadows`; reflections,
     glass and TAA with `colored_shadows`, `sun_shadows`, `reflection_light_budget` and
-    `reflection_detail_roughness`;
+    `reflections`;
   - the texture levels with `texture_max_size` and `texture_pool_megabytes`.
 - `page_pool_bytes` recreates nothing: the
   [pages](scene.md#scene-and-instances) region is reserved once, with the first mesh that uses

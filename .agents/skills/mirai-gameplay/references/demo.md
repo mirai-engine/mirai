@@ -27,7 +27,7 @@ badge and the hum); `mirai content <project>` runs it. It does not go into the g
 
 - `project.mirai`: start scene `control/control.scene`; plugins `spawn`, `cinematics`,
   `physics`, `destruct`, `multiplayer`, `paint`, `terrain`, `animation`, `previews`,
-  `physics_placement`, `navigation`, `behavior` and others. The `destruct_multiplayer` bridge
+  `navigation`, `behavior` and others. The `destruct_multiplayer` bridge
   activates on its own.
 - `settings.mirai`: `Spawn_Settings` with `"players": true` and `UI_Settings` in English and
   Spanish, with the prompt pack of `prompts_kenney`.
@@ -331,8 +331,8 @@ The `control` scene walks through the contract of [control](control.md) and of
 - `camera_mode` passes the body's camera through the presets, each time with a transition.
 - `aim` brings the prefab's `Person aim camera`, a camera with the `Aim` preset and a
   `Camera_Activation`; the person walks sideways looking toward it.
-- The intro is a `Cinematic`: a clip with two cameras as actors, a marker and two shots; its
-  viewer (without a seat: the focused player) blocks its input.
+- The intro is a `Cinematic`: a clip with two cameras as actors, a marker and two shots (a cut and
+  a blend, markers on the cameras); it blocks the input of the focused player.
 
 ## Networking
 

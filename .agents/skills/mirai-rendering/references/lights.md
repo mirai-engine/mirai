@@ -40,7 +40,7 @@
 
 `render/light_tree.odin`:
 
-- `scene_set_lights` sorts the lights along a Z curve, point ones before spots, and builds a
+- `light_tree_build` sorts the lights along a Z curve, point ones before spots, and builds a
   binary tree split where the curve passes from one half of the space to the other. It travels in
   a buffer (`SLOT_LIGHT_TREE`) in depth order: the two children of a group go after it, and no
   traversal opens a group that does not satisfy this (`light_node_opens`), so none goes back even
@@ -51,10 +51,11 @@
   the group: without the cone, a group of downlights that the cut could not open lit the ceiling.
 - A group that contains a spot opens before the others; when the budget is not enough, it
   represents its spots with their cone.
-- **Changes.** While the lights keep their number and each its class, `scene_set_lights` refits
-  the leaves that changed and the groups above them (`light_tree_refit`), rebuilds the tree only
-  when it inflates beyond `LIGHT_TREE_REFIT_SLACK` and uploads only the changed ranges. Another
-  number or another class is another set (`light_revision`): it is rebuilt and uploaded whole.
+- **Changes.** While the lights keep their number and each its class, `scene_light_update` refits
+  the leaf that changed and the groups above it (`light_tree_refit`), past `LIGHT_REFITS_MAX` in a
+  frame the whole tree once, and only the changed ranges go; `scene_lights_settle` rebuilds the
+  tree once a frame when it inflates beyond `LIGHT_TREE_REFIT_SLACK`. Another number or another
+  class is another set (`light_revision`): it is rebuilt and uploaded whole.
 - A group that mixes very different reaches reaches as far as its longest-reach light, and the
   points it reaches traverse more nodes.
 
@@ -224,9 +225,9 @@ Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_t
   once, where the ray enters.
 - Native geometry is built without duplicate candidates per primitive: a surface does not filter
   twice.
-- `color` and `color_hw` variants of the same Slang, with the filter of each texel
-  (`MIRAI_COLORED_SHADOWS`) or the mean one (`MIRAI_GLASS_MEANS`); they are used only with the
-  option active and blend in the scene, and without the option the shader does not contain those
+- The `color` constant of the same Slang, with the filter of each texel
+  (`MIRAI_COLORED_SHADOWS`) or the mean one (`MIRAI_GLASS_MEANS`); its pipelines are made and used
+  only with the option active and blend in the scene, and without it the code skips those
   traversals. The reflection pass always includes the per-texel one, for its sharp rays.
 - Changing the option invalidates the histories and restarts the probes.
 - Software tracing admits a tolerance in barycentrics at the edges: an oblique ray does not leak

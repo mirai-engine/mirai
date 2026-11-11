@@ -24,7 +24,10 @@ data folder (`host.app_user_folder`).
 }
 ```
 
-One section per setting, named by its type; enums by name. Never hand-write `input.mirai`.
+One section per setting, named by its type; enums by name. `Input_Settings` holds the bindings
+the project or the player changed, an entry per action by its name
+([actions](../character/actions-seats.md#declare)); a project with an `input.mirai` of before is
+told to move its bindings there.
 `mirai build game` writes next to the executable one `settings.mirai` that merges the machine
 sections of the engine file with the project's: the shipped game reads no engine file.
 
@@ -68,5 +71,8 @@ field of `Audio_Volumes` ([audio](../audio.md)); language and interface scale ar
 - `settings.set` with `"layer":"engine"` changes every project on this machine.
 - A fixed `Graphics_Settings` in `settings.mirai` of the project hides the machine's default for
   the GPU; the player's own options still override it. Leave quality to the player.
+- Traced reflections are off unless `Graphics_Settings.reflections` chooses them, and no preset
+  turns them on: `Traced` shares a ray among 2x2 pixels on rough surfaces, `Detailed` traces every
+  pixel. Without them smooth surfaces reflect the probe volume.
 - A settings file names no preset: `Graphics_Settings` holds the fields of one, which
   `graphics_preset` of `settings.set` or `render.graphics_preset_apply` write.

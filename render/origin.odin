@@ -8,8 +8,8 @@ import "mirai:render/abi"
 // their histories) and every place its shaders see is the place of the world
 // minus the origin, so that far from the centre of the world vertices and
 // views do not shake. Places come in as the world has them, through the
-// procedures that take them (scene_set, scene_update, scene_move, batch_set,
-// scene_set_lights, the cameras of a frame, its panels and debug lines), and
+// procedures that take them (scene_update, scene_move, batch_set,
+// scene_light_update, the cameras of a frame, its panels and debug lines), and
 // are kept relative. The origin follows in steps the eye of the window, and
 // that of a world drawn between frames while it is drawn (a preview): while
 // the eye stays within ORIGIN_REACH of it nothing moves on the GPU; past it,

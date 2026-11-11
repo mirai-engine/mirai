@@ -478,30 +478,38 @@ play_ui_names_of :: proc(records:ui.Tree_Data,imports:[]ui.Tree_Data,tree:^ui.Wi
 play_audio_write :: proc(s:^Session,out:^serial.Writer,voices:^eaudio.Voices,w:core.World_Ref,m:^mixer.Mixer) {
     serial.text_write_raw(out,`{"voices":[`)
     stats:eaudio.Audio_Stats
+    // What a voice was given is its source by what its set drew.
+    sources:^core.Table(eaudio.Audio_Source)
+    states:^core.Table(eaudio.Audio_Source_State)
+    if w.data!=nil {sources,states=core.world_table_of(w,eaudio.Audio_Source),core.world_table_of(w,eaudio.Audio_Source_State)}
     if voices!=nil {
         stats=voices.stats
         for &entry,at in voices.entries.values {
             e:=voices.entries.entities[at]
+            source:eaudio.Audio_Source
+            state:eaudio.Audio_Source_State
+            if sources!=nil {source,_=core.get(sources,e)}
+            if states!=nil {state,_=core.get(states,e)}
             if at>0 {serial.write_u8(out,',')}
             serial.write_u8(out,'{')
             play_entity_write(out,"entity",e,true)
             play_entity_id_write(out,w,e)
             api.write_text(out,"name",w.data!=nil && w.info!=nil?entity_name(w,e):"")
-            play_asset_write(out,"sound",entry.sound)
-            api.write_text(out,"path",asset_path(s,entry.sound))
+            kind:=entry.kind
+            play_asset_write(out,"sound",kind.sound)
+            api.write_text(out,"path",asset_path(s,kind.sound))
             bus:string
-            if s.info!=nil {bus,_=core.name_of(s.info,eaudio.Audio_Bus,i64(entry.bus))}
-            api.write_text(out,"bus",bus if bus!="" else fmt.tprintf("%d",int(entry.bus)))
-            volume,pitch:=eaudio.voice_entry_given(entry)
-            api.write_key(out,"volume");api.write_number(out,volume)
-            api.write_key(out,"pitch");api.write_number(out,pitch)
-            if !entry.spatial {api.write_key(out,"pan");api.write_number(out,entry.pan)}
-            api.write_bool(out,"loop",entry.loop)
+            if s.info!=nil {bus,_=core.name_of(s.info,eaudio.Audio_Bus,i64(kind.bus))}
+            api.write_text(out,"bus",bus if bus!="" else fmt.tprintf("%d",int(kind.bus)))
+            api.write_key(out,"volume");api.write_number(out,source.volume*entry.pick[0])
+            api.write_key(out,"pitch");api.write_number(out,(source.pitch>0?source.pitch:1)*entry.pick[1])
+            if !kind.spatial {api.write_key(out,"pan");api.write_number(out,source.pan)}
+            api.write_bool(out,"loop",source.loop)
             api.write_bool(out,"playing",m!=nil && mixer.voice_valid(m,entry.voice))
-            api.write_bool(out,"spatial",entry.spatial)
-            if entry.spatial {api.write_numbers(out,"position",entry.position)}
-            if entry.spatial {api.write_key(out,"occlusion");api.write_number(out,entry.occlusion)}
-            api.write_key(out,"reverb");api.write_number(out,entry.reverb)
+            api.write_bool(out,"spatial",kind.spatial)
+            if kind.spatial {api.write_numbers(out,"position",entry.position)}
+            if kind.spatial {api.write_key(out,"occlusion");api.write_number(out,state.occlusion)}
+            api.write_key(out,"reverb");api.write_number(out,source.reverb)
             serial.write_u8(out,'}')
         }
     }

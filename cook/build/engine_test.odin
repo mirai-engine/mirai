@@ -1,6 +1,8 @@
 package build
 
 import "core:fmt"
+import "core:odin/ast"
+import "core:odin/parser"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
@@ -633,14 +635,14 @@ a_library_needs_the_libraries_it_reaches_and_names_what_it_writes :: proc(t:^tes
         if mode==.Dev {
             testing.expect(t,reach.needs[render][core] && !reach.needs[cook][host] && !reach.needs[cook][asset],"a package is a library, and a literal outside an import imports nothing")
             names:=reach.names[render]
-            testing.expect(t,"core.count" in names && "core.more" in names && "core.rest" in names,"what follows the name of the import")
-            testing.expect(t,"render.frames" in reach.names[cook],"under the name it is imported with")
-            for name in reach.names[cook] {testing.expectf(t,!strings.has_prefix(name,"editor.") && !strings.has_prefix(name,"host.") && !strings.has_prefix(name,"asset."),"%s is of no import",name)}
+            testing.expect(t,"mirai:core.count" in names && "mirai:core.more" in names && "mirai:core.rest" in names,"what follows the name of the import")
+            testing.expect(t,"mirai:render.frames" in reach.names[cook],"under the name it is imported with")
+            for name in reach.names[cook] {testing.expectf(t,!strings.has_prefix(name,"mirai:editor.") && !strings.has_prefix(name,"mirai:host.") && !strings.has_prefix(name,"mirai:asset."),"%s is of no import",name)}
             // With no declaration moved only the libraries whose sources changed are read, and they link in order.
             only:=make([]bool,len(libraries))
             only[core],only[cook]=true,true
             read:=engine_reach(root,libraries,only)
-            testing.expect(t,"render.frames" in read.names[cook] && len(read.names[render])==0 && len(read.names[editor])==0,"the others name what they named")
+            testing.expect(t,"mirai:render.frames" in read.names[cook] && len(read.names[render])==0 && len(read.names[editor])==0,"the others name what they named")
             testing.expect(t,read.needs[cook][core] && !read.needs[cook][render] && !slice.contains(read.needs[editor],true))
         } else {
             // In release render and core are one library: the first compiles the second from the stage.
@@ -680,12 +682,8 @@ what_names_a_declaration_follows_it_and_what_it_reaches :: proc(t:^testing.T) {
         if !declared_ok(t,errors) {return}
         testing.expect(t,declared_write(desc.decl,index))
         declared:=declared_read(index,context.temp_allocator)
-        testing.expect(t,"core.Entity" in declared && "render.draw" in declared)
-        for source,consumer in consumers {
-            names:=make(map[string]bool,context.temp_allocator)
-            declared_names(source,nil,&names)
-            keys[consumer]=declared_key(declared,names)
-        }
+        testing.expect(t,"mirai:core.Entity" in declared && "mirai:render.draw" in declared)
+        for source,consumer in consumers {keys[consumer]=declared_key(declared,named_of(source))}
         return
     }
     before:=keys(t,root,desc,index,consumers,{},"")
@@ -710,8 +708,7 @@ what_names_a_declaration_follows_it_and_what_it_reaches :: proc(t:^testing.T) {
     // Without the index nothing is known, and what is not declared yet moves a key once it is.
     missing:=declared_read(project.path(root,"none"),context.temp_allocator)
     testing.expect_value(t,len(missing),0)
-    names:=make(map[string]bool,context.temp_allocator)
-    declared_names("package game\n\nimport \"mirai:core\"\n\nrun :: proc() {core.extra()}\n",nil,&names)
+    names:=named_of("package game\n\nimport \"mirai:core\"\n\nrun :: proc() {core.extra()}\n")
     declared:=declared_read(index,context.temp_allocator)
     without:=declared_key(declared,names)
     _=keys(t,root,desc,index,consumers,{7="\nextra :: proc() {}\n"},"")
@@ -738,28 +735,6 @@ the_packages_of_a_library_import_each_other_from_the_stage :: proc(t:^testing.T)
     testing.expect(t,strings.contains(staged,"import below \"staged:thing/nested\"") && strings.contains(staged,"import \"mirai:other\"") && strings.contains(staged,"import \"core:fmt\""),staged)
     testing.expect(t,strings.contains(declaration,"import below \"mirai:thing/nested\""),declaration)
     testing.expect_value(t,strings.count(staged[:strings.index(staged,"value_of")],"\n"),6)
-}
-
-// A stage gets the declarations it compiles against as they are, copying
-// only what changed.
-@(test)
-decl_mirror_copies_what_changed_and_drops_what_went :: proc(t:^testing.T) {
-    context.allocator=context.temp_allocator
-    folder:=base.test_folder(t,"mirror")
-    if folder=="" {return}
-    decl,stage:=project.path(folder,"decl"),project.path(folder,"stage")
-    testing.expect(t,os.make_directory_all(project.path(decl,"core"))==nil)
-    testing.expect(t,os.write_entire_file(project.path(decl,"core","a.odin"),"package core\na :: 1\n")==nil)
-    testing.expect(t,os.write_entire_file(project.path(decl,"core","b.odin"),"package core\nb :: 1\n")==nil)
-    testing.expect(t,decl_mirror(stage,decl,{"core"}))
-    data,_:=os.read_entire_file(project.path(stage,"core","b.odin"),context.temp_allocator)
-    testing.expect_value(t,string(data),"package core\nb :: 1\n")
-    testing.expect(t,os.remove(project.path(decl,"core","b.odin"))==nil)
-    testing.expect(t,os.write_entire_file(project.path(decl,"core","a.odin"),"package core\na :: 22\n")==nil)
-    testing.expect(t,decl_mirror(stage,decl,{"core"}))
-    data,_=os.read_entire_file(project.path(stage,"core","a.odin"),context.temp_allocator)
-    testing.expect_value(t,string(data),"package core\na :: 22\n")
-    testing.expect(t,!os.exists(project.path(stage,"core","b.odin")))
 }
 
 // A library of the engine is kept in the shared cache by what it is built
@@ -830,5 +805,46 @@ a_source_without_a_package_clause_names_its_file :: proc(t:^testing.T) {
     for errors,who in ([][]string{generated,declared}) {
         text:=strings.join(errors,"\n")
         testing.expectf(t,strings.contains(text,"probe.odin(") && strings.contains(text,"Expected a package declaration"),"%s: %s",who==0?"generator":"declare",text)
+    }
+}
+
+// The keys of the declarations a source names (declared_named), from its parse.
+@(private="file")
+named_of :: proc(source:string) -> map[string]bool {
+    file:=new(ast.File,context.temp_allocator)
+    file^={src=source,fullpath="game.odin"}
+    p:=parser.default_parser()
+    names:=make(map[string]bool,context.temp_allocator)
+    if !parser.parse_file(&p,file) {return names}
+    declared_named({file},nil,&names)
+    return names
+}
+
+// What a library loads with #load is part of what it is built from, and a
+// declaration made of a loaded file changes with it: changing only the loaded
+// file builds again the library that loads it and what names that declaration.
+@(test)
+a_loaded_file_is_part_of_what_loads_it :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    root:=base.test_folder(t,"declare-load")
+    if root=="" {return}
+    source_write(t,root,"kit","kit.odin","package kit\n\nTHEME :: #load(\"theme.ui\")\n\nFONTS :: #load_directory(\"fonts\")\n")
+    source_write(t,root,"kit/fonts","a.txt","first")
+    desc:=describe(root,[]string{"kit"})
+    desc.names=true
+    key :: proc(t:^testing.T,root:string,desc:Declare_Desc,theme,font:string) -> (library,declaration:u64) {
+        testing.expect(t,os.write_entire_file(project.path(root,"kit","theme.ui"),theme)==nil)
+        testing.expect(t,os.write_entire_file(project.path(root,"kit","fonts","a.txt"),font)==nil)
+        library,_=fingerprint(root,"",nil,engine_sources(root,{"kit"}))
+        errors,changed:=declaring(desc)
+        declared_ok(t,errors)
+        return library,changed.declared
+    }
+    library,declaration:=key(t,root,desc,"one","first")
+    for c in ([]struct{what,theme,font:string}{{"the loaded file","two","first"},{"a file of the loaded folder","two","second"}}) {
+        now_library,now_declaration:=key(t,root,desc,c.theme,c.font)
+        testing.expectf(t,now_library!=library,"%s builds the library again",c.what)
+        testing.expectf(t,now_declaration!=declaration,"%s moves the declaration",c.what)
+        library,declaration=now_library,now_declaration
     }
 }
