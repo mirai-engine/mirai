@@ -11,7 +11,7 @@ test_password_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 password_fields_mask_paint_and_keep_the_editable_value :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL));defer context_destroy(&ctx)
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL));defer context_destroy(&ctx)
     s:Test_Password
     s.length=copy(s.value[:],"sk-example")
     input:=test_input()

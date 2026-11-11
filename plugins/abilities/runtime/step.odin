@@ -14,7 +14,6 @@ import phys "plugins:physics/runtime"
 Ability_World :: struct {
     time:core.Time,
     seats:core.Read(inp.Seat),
-    drivables:core.Read(inp.Drivable),
     characters:core.Read(phys.Character),
     locomotions:core.Read(locomotion.Locomotion_State), // the modes the characters are in
     worlds:core.Read(core.World_Transform),
@@ -369,7 +368,7 @@ sheet_valid :: proc(t:^Tick,e:core.Entity,ref:core.Record(Ability)) -> ^Ability 
 
 @(private)
 input_state :: proc(t:^Tick,e:core.Entity,input:Ability_Input) -> inp.Action_State {
-    return inp.body_action({t.w.seats,t.w.drivables},e,input.action)
+    return inp.body_action(t.w.seats,e,input.action)
 }
 
 @(private)

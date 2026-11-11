@@ -15,6 +15,7 @@ import "mirai:platform"
 import paint "plugins:paint/runtime"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The paint tool of the paint plugin: a brush that paints the colors of the
@@ -305,15 +306,15 @@ paint_panel :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,inpu
     if ui.panel(ctx,id,editor.tool_panel(g,id)) {
         ui.id_push(ctx,id)
         defer ui.id_pop(ctx)
-        ui.section(ctx,"Paint")
+        kit.section(ctx,"Paint")
         radius,strength:=f64(tool.radius),f64(tool.strength)
-        if ui.property(ctx,"Radius") {
+        if kit.property(ctx,"Radius") {
             if ui.number_field(ctx,ui.id(ctx,"radius"),&radius,{min=f64(RADIUS_MIN),max=f64(RADIUS_MAX),has_min=true,has_max=true,speed=0.01}).changed {tool.radius=f32(radius)}
         }
-        if ui.property(ctx,"Strength") {
+        if kit.property(ctx,"Strength") {
             if ui.number_field(ctx,ui.id(ctx,"strength"),&strength,{min=0,max=1,has_min=true,has_max=true,speed=0.005}).changed {tool.strength=f32(strength)}
         }
-        if ui.property(ctx,"Color") {ui.color_field(ctx,ui.id(ctx,"color"),&tool.color)}
-        if ui.button(ctx,ui.id(ctx,"clear"),{label="Clear paint",style=.Field,width=-1,center=true,disabled=!clear_enabled(s,world)}).clicked {paint_clear(s,world)}
+        if kit.property(ctx,"Color") {kit.color_field(ctx,ui.id(ctx,"color"),&tool.color)}
+        if ui.button(ctx,ui.id(ctx,"clear"),{label="Clear paint",variant="field",width=-1,center=true,disabled=!clear_enabled(s,world)}).clicked {paint_clear(s,world)}
     }
 }

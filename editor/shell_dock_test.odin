@@ -8,7 +8,7 @@ import "mirai:ui"
 @(test)
 the_rail_and_a_docked_details_take_their_edges_and_the_left_panel_does_not_move_the_scene :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     ui.frame_begin(&ctx,{size={1600,900},pointer_absent=true})
     _=ui.frame_end(&ctx)
     g:=Editor_Ui{ctx=&ctx,layout=LAYOUT_DEFAULT}
@@ -48,12 +48,12 @@ the_rail_and_a_docked_details_take_their_edges_and_the_left_panel_does_not_move_
 @(test)
 an_asset_document_fills_the_window_from_under_the_left_panel :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     ui.frame_begin(&ctx,{size={1600,900},pointer_absent=true})
     defer ui.frame_end(&ctx)
     g:=Editor_Ui{ctx=&ctx,layout=LAYOUT_DEFAULT}
     s:=Session{gui=&g}
-    bars:=ctx.theme.bar_height+toolbar_height(&g)
+    bars:=ui.metric(&ctx,"bar_height")+toolbar_height(&g)
     g.rects.left={RAIL_WIDTH,bars,LEFT_WIDTH.max,900-bars}
     x0:=RAIL_WIDTH+LEFT_WIDTH.max-LEFT_UNDER
     testing.expect_value(t,asset_workspace_rect(&g),ui.Rect{x0,bars,1600-x0,900-bars})
@@ -79,7 +79,7 @@ an_asset_document_fills_the_window_from_under_the_left_panel :: proc(t:^testing.
 @(test)
 the_editor_settings_list_the_modes_of_the_panels_first :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx,layout=LAYOUT_DEFAULT}
     info:core.World_Info
     s:=Session{gui=&g,info=&info}
@@ -98,7 +98,7 @@ the_editor_settings_list_the_modes_of_the_panels_first :: proc(t:^testing.T) {
 @(test)
 each_type_of_document_has_its_tabs_of_the_left_panel :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx,layout=LAYOUT_DEFAULT}
     m:=new(Ai);defer free(m)
     s:=Session{gui=&g,ai=m}

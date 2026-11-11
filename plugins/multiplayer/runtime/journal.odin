@@ -4,6 +4,7 @@ import "core:mem"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:engine/scene"
+import wire "mirai:net"
 import "mirai:std/compressor"
 import "mirai:std/compressor/lz"
 
@@ -25,14 +26,18 @@ import "mirai:std/compressor/lz"
 //
 // What a client cannot follow (a check that differs, a missing operation, a
 // refused prediction) asks for the parts of the key: bytes the library writes
-// on the server, in LZ, sent within JOURNAL_BUDGET bytes a tick and applied
-// in their place among the operations. A base stands for every operation up
-// to it. A scene that replaces the world forgets what the journal knew.
+// on the server, each told in its place among the operations and its LZ bytes
+// streamed whole on the channel of parts as fast as the connection carries,
+// and applied in that place. A base stands for every operation up to it. A
+// scene that replaces the world forgets what the journal knew.
 
 JOURNAL_BODY :: 168
-JOURNAL_PIECE :: 192
 JOURNAL_PART_BYTES :: 4<<20 // raw bytes of a part at most
-JOURNAL_BUDGET :: 4096      // bytes of parts a server sends a tick
+JOURNAL_CHANNEL :: 0        // of the host: the channel of parts
+JOURNAL_QUEUE :: 64<<10     // bytes of parts a connection has waiting for the channel before the journal hands it more
+// The channels of a session's host. The window of parts holds 256 KiB in flight: what 2.5 MiB/s keep
+// in flight over 100 ms.
+JOURNAL_CHANNELS :: []wire.Channel_Desc{{kind=.Reliable,window=1024,queue_bytes=JOURNAL_QUEUE}}
 JOURNAL_ASK_TICKS :: 30     // a client asks for parts again after this long without an answer, and for a base after a gap this long
 JOURNAL_AHEAD_TICKS :: 240  // server: an ask for a tick further ahead than this is let out at once (Journal_Held.ahead)
 JOURNAL_LOG :: 4096         // operations of a key a client holds ahead of where it stands
@@ -62,19 +67,28 @@ Net_Journal_Op :: struct {
     using op:Journal_Op,
 }
 
-// A piece of a part of a key: total bytes of LZ of raw bytes, written by the
-// server once it had applied after operations of the key.
+// A part of a key, in its place among the operations: total bytes of LZ of
+// raw bytes, written by the server once it had applied after operations of
+// the key. Its bytes follow whole on the channel of parts.
 @(net_message,reliable)
 Net_Journal_Part :: struct {
     journal:u32,
     key:Journal_Key,
+    number:u32,      // of the part among those the journal of the server handed
     after:u32,
     first,last:bool, // of the parts of one answer
     base:bool,       // the answer stands for every operation up to after
     whole:bool,      // the answer holds all of the key, not only what changed since the since of the client
-    raw,total,offset:u32,
-    count:u16,
-    bytes:[JOURNAL_PIECE]u8,
+    raw,total:u32,
+}
+
+// What the bytes of a part carry before them on the channel of parts.
+Journal_Part_Head :: struct #packed {journal,number:u32le}
+
+// Client: the bytes of a part that arrived whole, until its journal takes them.
+Journal_Arrived :: struct {
+    head:Journal_Part_Head,
+    bytes:[]u8,
 }
 
 // A client: the parts of a key over low..high, or a base of it. since: what
@@ -109,12 +123,11 @@ Net_Journal_Refused :: struct {
     error:u8,
 }
 
-// A part a client received, or is receiving: its LZ bytes until they are all
-// here, then its raw bytes.
+// A part a client heard of: its raw bytes once they arrived.
 Journal_Part :: struct {
-    after:u32,
+    number,after:u32,
     first,last,base,whole:bool,
-    raw,total,have:u32,
+    raw,total:u32,
     complete,broken:bool,
     bytes:[]u8,
     placed,done:u64, // the tick + 1 it was first handed at and that it was done at; 0 until then
@@ -144,8 +157,8 @@ Journal_Held :: struct {
 }
 
 // Server: the parts a connection asked for of a key, or that the server
-// offers it, sent in their order, each in as many pieces as the budget of a
-// tick lets. The library reads what to write and keeps where it is in cursor.
+// offers it, handed in their order while the connection has room for them.
+// The library reads what to write and keeps where it is in cursor.
 Journal_Serve :: struct {
     connection:Connection,
     key:Journal_Key,
@@ -154,10 +167,10 @@ Journal_Serve :: struct {
     since:u64,
     started:bool,
     cursor:[4]u64,
-    parts,bytes:int, // sent
-    piece:Net_Journal_Part,
-    packed:[dynamic]u8,
-    sending,ended,offered:bool,
+    parts:int,     // handed
+    message:[]u8,  // the bytes of the part handed last, until the outbox takes them with heard
+    heard:Net_Journal_Part,
+    ended,offered:bool,
 }
 
 // Client: an operation of its game it applied before the server answered.
@@ -235,9 +248,11 @@ Journal :: struct {
     refused:[dynamic]Journal_Refusal,     // client
     applying:[dynamic]Journal_Applying,   // what the library applies in this tick, by tag
     applying_tick:u64,
-    serving,budget:int,
+    serving:int,
     served_tick:u64,
-    raw:[dynamic]u8,
+    handed:u32,                          // server: the number of the last part handed
+    early:[dynamic]Journal_Arrived,      // client: bytes of parts it has not heard of yet
+    raw,packed:[dynamic]u8,
     decoder:compressor.Decoder, // client: of the parts received
     encoder:lz.Encoder,         // server: of the parts sent
     stats:Journal_Stats,
@@ -245,7 +260,7 @@ Journal :: struct {
 
 journal_free :: proc(j:^Journal) {
     journal_forget(j)
-    delete(j.streams);delete(j.held);delete(j.serves);delete(j.entered);delete(j.predictions);delete(j.refused);delete(j.applying);delete(j.raw)
+    delete(j.streams);delete(j.held);delete(j.serves);delete(j.entered);delete(j.predictions);delete(j.refused);delete(j.applying);delete(j.early);delete(j.raw);delete(j.packed)
     compressor.decoder_destroy(&j.decoder)
     lz.encoder_destroy(&j.encoder)
     j^={}
@@ -257,7 +272,9 @@ journal_forget :: proc(j:^Journal) {
         for part in s.parts {delete(part.bytes)}
         delete(s.log);delete(s.parts)
     }
-    for &sv in j.serves {delete(sv.packed)}
+    for &sv in j.serves {delete(sv.message)}
+    for early in j.early {delete(early.bytes)}
+    clear(&j.early)
     clear(&j.streams);clear(&j.held);clear(&j.serves);clear(&j.entered);clear(&j.predictions);clear(&j.refused);clear(&j.applying)
 }
 
@@ -342,6 +359,7 @@ refused_has :: proc(j:^Journal,key:Journal_Key,tick:u32,index:u8) -> bool {
 Journal_Inbox :: struct {
     ops:core.Inbox(Net_Journal_Op),
     parts:core.Inbox(Net_Journal_Part),
+    session:core.Ref(Net_Session), // the bytes of parts that arrived
     refused:core.Inbox(Net_Journal_Refused),
     asks:core.Inbox(Net_Journal_Ask),
     resyncs:core.Inbox(Net_Journal_Resync),
@@ -369,7 +387,12 @@ journal_receive :: proc(j:^Journal,inbox:Journal_Inbox,server:bool,own:Connectio
         }
     }
     for item in inbox.parts.items {
-        if item.value.journal==j.id && !server {part_piece(j,item.value,problems)}
+        if item.value.journal==j.id && !server {part_heard(j,item.value,problems)}
+    }
+    if inbox.session.ptr!=nil && !server {
+        for arrived in inbox.session.parts {
+            if u32(arrived.head.journal)==j.id {part_bytes(j,arrived,problems)}
+        }
     }
     for item in inbox.refused.items {
         if item.value.journal!=j.id || server {continue}
@@ -407,48 +430,80 @@ log_put :: proc(s:^Journal_Stream,op:Journal_Op) -> (put,enough:bool) {
     return true,true
 }
 
-// A piece of a part. The first starts the part in the order of its key,
-// which waits for it until the rest is here.
+// Client: a piece of the bytes of a part on the channel of parts. Whole, they
+// wait in the session for the next tick.
 @(private)
-part_piece :: proc(j:^Journal,piece:Net_Journal_Part,problems:^core.Problems) {
-    s:=journal_stream(j,piece.key,true)
+part_arrive :: proc(s:^Net_Session,command:^wire.Command) {
+    if int(command.channel)!=JOURNAL_CHANNEL {return}
+    if !s.incoming_over && len(s.incoming)+len(command.data)<=size_of(Journal_Part_Head)+asset.pack_bound(JOURNAL_PART_BYTES) {
+        if _,error:=append(&s.incoming,..command.data);error!=nil {s.incoming_over=true}
+    } else {
+        s.incoming_over=true
+    }
+    if command.more {return}
+    defer {clear(&s.incoming);s.incoming_over=false}
+    head:Journal_Part_Head
+    if s.incoming_over || len(s.incoming)<size_of(head) {return}
+    mem.copy(&head,raw_data(s.incoming),size_of(head))
+    bytes,error:=make([]u8,len(s.incoming)-size_of(head))
+    if error==nil {
+        copy(bytes,s.incoming[size_of(head):])
+        if _,error=append(&s.parts_next,Journal_Arrived{head,bytes});error==nil {return}
+        delete(bytes)
+    }
+    journal_memory(s.problems)
+}
+
+// A part the server handed, in the order of its key, which waits for it
+// until its bytes are here.
+@(private)
+part_heard :: proc(j:^Journal,heard:Net_Journal_Part,problems:^core.Problems) {
+    s:=journal_stream(j,heard.key,true)
     if s==nil {journal_memory(problems);return}
-    if piece.offset==0 {
-        part:=Journal_Part{after=piece.after,first=piece.first,last=piece.last,base=piece.base,whole=piece.whole,raw=piece.raw,total=piece.total}
-        if piece.raw>JOURNAL_PART_BYTES || int(piece.total)>asset.pack_bound(int(piece.raw)) {
-            part.complete,part.broken=true,true
-        } else {
+    part:=Journal_Part{number=heard.number,after=heard.after,first=heard.first,last=heard.last,base=heard.base,whole=heard.whole,raw=heard.raw,total=heard.total}
+    if heard.raw>JOURNAL_PART_BYTES || int(heard.total)>asset.pack_bound(int(heard.raw)) {part.complete,part.broken=true,true}
+    if _,error:=append(&s.parts,part);error!=nil {
+        journal_memory(problems)
+        return
+    }
+    for early,i in j.early {
+        if u32(early.head.number)!=heard.number {continue}
+        part_bytes(j,early,problems)
+        delete(early.bytes)
+        unordered_remove(&j.early,i)
+        break
+    }
+}
+
+// The bytes of a part, to the part they are of; a copy of those of one the
+// client has not heard of yet waits for it.
+@(private)
+part_bytes :: proc(j:^Journal,arrived:Journal_Arrived,problems:^core.Problems) {
+    for &s in j.streams {
+        for &part in s.parts {
+            if part.number!=u32(arrived.head.number) || part.complete {continue}
+            part.complete=true
+            if len(arrived.bytes)!=int(part.total) {part.broken=true;return}
+            if part.raw==0 {return}
             error:mem.Allocator_Error
-            if part.bytes,error=make([]u8,int(piece.total));error!=nil {part.complete,part.broken=true,true}
-        }
-        if _,error:=append(&s.parts,part);error!=nil {
-            delete(part.bytes)
-            journal_memory(problems)
+            if part.bytes,error=make([]u8,int(part.raw));error!=nil {
+                part.broken=true
+                journal_memory(problems)
+            } else if len(j.decoder.scratch)==0 && compressor.decoder_init(&j.decoder)!=.None || asset.unpack(&j.decoder,arrived.bytes,part.bytes)!=.None {
+                delete(part.bytes)
+                part.bytes,part.broken=nil,true
+            }
             return
         }
     }
-    if len(s.parts)==0 {return}
-    a:=&s.parts[len(s.parts)-1]
-    if a.complete {return}
-    if piece.after!=a.after || piece.total!=a.total || piece.offset!=a.have || int(piece.count)>JOURNAL_PIECE || int(piece.offset)+int(piece.count)>int(a.total) {
-        delete(a.bytes);a.bytes=nil
-        a.complete,a.broken=true,true
-        return
+    early:=Journal_Arrived{head=arrived.head}
+    error:mem.Allocator_Error
+    if early.bytes,error=make([]u8,len(arrived.bytes));error==nil {
+        copy(early.bytes,arrived.bytes)
+        if _,error=append(&j.early,early);error==nil {return}
+        delete(early.bytes)
     }
-    piece:=piece
-    copy(a.bytes[piece.offset:][:piece.count],piece.bytes[:piece.count])
-    a.have+=u32(piece.count)
-    if a.have<a.total {return}
-    a.complete=true
-    packed:=a.bytes
-    defer delete(packed)
-    a.bytes=nil
-    if a.raw==0 {return}
-    values,error:=make([]u8,int(a.raw))
-    if error!=nil {a.broken=true;journal_memory(problems);return}
-    if len(j.decoder.scratch)==0 && compressor.decoder_init(&j.decoder)!=.None {delete(values);a.broken=true;return}
-    if asset.unpack(&j.decoder,packed,values)!=.None {delete(values);a.broken=true;return}
-    a.bytes=values
+    journal_memory(problems)
 }
 
 // Where an entry stands at the tick now - 1: not handed yet, of a later tick
@@ -537,8 +592,9 @@ journal_due :: proc(j:^Journal,key:Journal_Key,time:core.Time,own:Connection) ->
             append(&due,Journal_Due{tag=applying_tag(j,{key=key,number=number},time),op=op})
             continue
         }
-        if part!=nil && part.base && part.complete && (part.placed==0 || part.placed<=now) {
-            // A base stands for every operation up to it.
+        if part!=nil && part.base && (part.placed==0 || part.placed<=now) {
+            // A base stands for every operation up to it; one whose bytes still come is waited for.
+            if !part.complete {break}
             for q in number..=part.after {
                 if l:=entry_at(s,q);l!=nil && l.placed==0 {l.placed,l.done,l.skipped=now,now,true}
             }
@@ -669,7 +725,9 @@ journal_flush :: proc(j:^Journal,outbox:^Net_Outbox,time:core.Time,session:core.
         ordered_remove(&j.predictions,i)
     }
     for &s in j.streams {
-        if !s.ask && !s.ask_base || s.answering && now-s.asked<JOURNAL_ASK_TICKS {continue}
+        // A part told whose bytes still come is an answer on its way.
+        arriving:=len(s.parts)>0 && !s.parts[len(s.parts)-1].complete
+        if !s.ask && !s.ask_base || s.answering && (now-s.asked<JOURNAL_ASK_TICKS || arriving) {continue}
         if session.ptr!=nil && session.status!=.Connected {continue}
         resync:=Net_Journal_Resync{journal=j.id,key=s.key,low={0,0,0},high={-1,-1,-1},base=s.ask_base,since=s.ask_since}
         if s.ask {resync.low,resync.high=s.ask_low,s.ask_high}
@@ -767,7 +825,7 @@ journal_connections :: proc(j:^Journal,connections:core.Ref(Net_Connections)) {
         if event.kind!=.Disconnected {continue}
         if at>=0 {unordered_remove(&j.entered,at)}
         for i:=len(j.serves)-1;i>=0;i-=1 {
-            if j.serves[i].connection==event.connection {delete(j.serves[i].packed);ordered_remove(&j.serves,i)}
+            if j.serves[i].connection==event.connection {delete(j.serves[i].message);ordered_remove(&j.serves,i)}
         }
     }
 }
@@ -791,46 +849,37 @@ journal_offer :: proc(j:^Journal,connection:Connection,key:Journal_Key,base:bool
     append(&j.serves,Journal_Serve{connection=connection,key=key,low=low,high=high,base=base,since=since})
 }
 
-// Server, as the iterator of a for: each answer that needs its next part,
-// while the budget of the tick lasts, to the connections in its world. The
-// library writes the part and gives it to journal_part, or leaves the answer
-// for the next tick; what it gives goes in pieces within the budget.
+// Server, as the iterator of a for: each answer that needs its next part, to
+// the connections in its world with less than JOURNAL_QUEUE bytes of parts
+// waiting, so what a connection takes follows what it carries. The library
+// writes the part and gives it to journal_part, or leaves the answer for the
+// next tick; the outbox streams each part whole on the channel of parts.
 journal_serves :: proc(j:^Journal,outbox:^Net_Outbox,time:core.Time) -> (sv:^Journal_Serve,ok:bool) {
     if j.served_tick!=time.tick+1 {
-        j.served_tick,j.serving,j.budget=time.tick+1,0,JOURNAL_BUDGET
+        j.served_tick,j.serving=time.tick+1,0
         for &other in j.serves {other.offered=false}
     }
-    for j.serving<len(j.serves) && j.budget>0 {
+    for j.serving<len(j.serves) {
         sv=&j.serves[j.serving]
+        // What the library handed: where the part goes among the operations, and its bytes.
+        if sv.message!=nil {
+            if outbox.replaying {return nil,false}
+            if _,error:=append(&outbox.parts,Outgoing_Part{to=sv.connection,bytes=sv.message});error!=nil {return nil,false}
+            send(outbox,sv.heard,core.NONE,sv.connection)
+            sv.message=nil
+        }
         entered:=false
         for c in j.entered {entered ||= c==sv.connection}
         if !entered {j.serving+=1;continue}
-        if !sv.sending {
-            if sv.ended {
-                delete(sv.packed)
-                ordered_remove(&j.serves,j.serving)
-                continue
-            }
-            if sv.offered {j.serving+=1;continue}
-            sv.offered=true
-            return sv,true
+        if sv.ended {
+            ordered_remove(&j.serves,j.serving)
+            continue
         }
-        for j.budget>0 && sv.sending {
-            count:=min(int(sv.piece.total)-int(sv.piece.offset),JOURNAL_PIECE)
-            piece:=sv.piece
-            piece.count=u16(count)
-            copy(piece.bytes[:count],sv.packed[piece.offset:][:count])
-            if !send(outbox,piece,core.NONE,sv.connection) {return nil,false}
-            j.budget-=count+64
-            j.stats.bytes_sent+=u64(count)
-            sv.bytes+=count
-            sv.piece.offset+=u32(count)
-            if sv.piece.offset<sv.piece.total {continue}
-            sv.sending=false
-            sv.parts+=1
-            sv.ended=sv.piece.last
-            j.stats.parts_sent+=1
-        }
+        waiting:=0
+        for part in outbox.parts {if part.to==sv.connection {waiting+=len(part.bytes)-part.sent}}
+        if sv.offered || waiting>=JOURNAL_QUEUE {j.serving+=1;continue}
+        sv.offered=true
+        return sv,true
     }
     return nil,false
 }
@@ -840,15 +889,26 @@ journal_serves :: proc(j:^Journal,outbox:^Net_Outbox,time:core.Time) -> (sv:^Jou
 journal_part :: proc(j:^Journal,sv:^Journal_Serve,raw:[]u8,last:bool) -> bool {
     s:=journal_stream(j,sv.key,true)
     if s==nil || len(raw)>JOURNAL_PART_BYTES {return false}
-    if resize(&sv.packed,asset.pack_bound(len(raw)))!=nil {return false}
+    HEAD :: size_of(Journal_Part_Head)
+    if resize(&j.packed,HEAD+asset.pack_bound(len(raw)))!=nil {return false}
     total:=0
     if len(raw)>0 {
         error:asset.Error
-        if total,error=asset.pack(&j.encoder,asset.PACK_EDIT,raw,sv.packed[:]);error!=.None {return false}
+        if total,error=asset.pack(&j.encoder,asset.PACK_EDIT,raw,j.packed[HEAD:]);error!=.None {return false}
     }
+    message,error:=make([]u8,HEAD+total)
+    if error!=nil {return false}
+    j.handed+=1
+    head:=Journal_Part_Head{journal=u32le(j.id),number=u32le(j.handed)}
+    mem.copy(raw_data(message),&head,HEAD)
+    copy(message[HEAD:],j.packed[HEAD:][:total])
+    sv.message=message
+    sv.heard={journal=j.id,key=sv.key,number=j.handed,after=s.sequence,first=sv.parts==0,last=last,base=sv.base,whole=sv.whole,raw=u32(len(raw)),total=u32(total)}
     sv.started,sv.offered=true,false
-    sv.piece={journal=j.id,key=sv.key,after=s.sequence,first=sv.parts==0,last=last,base=sv.base,whole=sv.whole,raw=u32(len(raw)),total=u32(total)}
-    sv.sending=true
+    sv.parts+=1
+    sv.ended=last
+    j.stats.parts_sent+=1
+    j.stats.bytes_sent+=u64(total)
     return true
 }
 

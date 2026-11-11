@@ -104,8 +104,7 @@ and the types of its tables, so the methods here and
   templates and overrides of that style (`records_variant_rename`).
 - Each state, and each combination of states, is a rule of the style for that variant that sets
   only the fields that differ from what the node has without it (`look_begin` resolves it with
-  the other rules) and goes away when nothing changes. In a rule, each color chooses a theme color
-  (`Style_Patch.tokens`) or a literal value.
+  the other rules) and goes away when nothing changes.
 - In Edit, the preview shows the selected node in the states of the last opened fold.
 
 ### Node, layout, events and image

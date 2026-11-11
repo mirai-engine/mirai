@@ -30,7 +30,7 @@ test_axes_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 an_area_scrolls_across_with_the_wheel_shift_and_its_bar :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Axes
     input:=test_input()
@@ -73,7 +73,7 @@ an_area_scrolls_across_with_the_wheel_shift_and_its_bar :: proc(t:^testing.T) {
 @(test)
 page_keys_and_the_stick_scroll_an_area_that_holds_nothing_focusable :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Axes
     input:=test_input()
@@ -114,7 +114,7 @@ navigation_reaches_what_an_area_scrolled_away_and_brings_it_into_sight :: proc(t
     ctx:Context
     desc:=TEST_SMALL
     desc.navigation=true
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     s:=Test_Axes{focusable=true}
     input:=test_input()

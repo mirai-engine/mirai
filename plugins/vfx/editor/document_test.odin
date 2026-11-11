@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:mem"
 import "core:testing"
 import "mirai:editor"
+import "mirai:editor/kit"
 import "mirai:host"
 import "mirai:project"
 import gpu "mirai:render"
@@ -106,7 +107,7 @@ particle_document_parameters_take_the_kind_the_program_declares_and_go_back_to_t
 @(test)
 particle_document_builds_the_rows_of_every_field_and_its_eyes_hide_them :: proc(t:^testing.T) {
     ctx:ui.Context
-    if !testing.expect(t,ui.context_init(&ctx,{})) {return}
+    if !testing.expect(t,ui.context_init(&ctx,{}) && kit.theme_set(&ctx)) {return}
     defer ui.context_destroy(&ctx)
     g:=editor.Editor_Ui{ctx=&ctx}
     inspector:editor.Inspector

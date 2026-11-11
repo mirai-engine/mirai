@@ -23,7 +23,6 @@ End_World :: struct {
     using world:core.Test_World,
     using ground:terrain.Test_Terrain,
     seats:core.Table(input.Seat),
-    drivables:core.Table(input.Drivable),
     replays:terrain.Terrain_Replays,
     replayed:terrain.Terrain_Replay_Events,
     net_settings:Terrain_Net_Settings,
@@ -139,7 +138,18 @@ end_init :: proc(t:^testing.T,e:^End,f:^Fixture,role:core.Network_Role,connectio
 @(private="file")
 end_destroy :: proc(e:^End) {
     terrain.terrain_resident_free(&e.resident);net_free(&e.net)
+    parts_forget(e)
+    delete(e.session.parts);e.session.parts=nil
+    for part in e.outbox.parts {delete(part.bytes)}
+    delete(e.outbox.parts);e.outbox.parts=nil
     core.test_world_destroy(&e.w)
+}
+
+// What the parts the session of a client held for its tick were.
+@(private="file")
+parts_forget :: proc(e:^End) {
+    for part in e.session.parts {delete(part.bytes)}
+    clear(&e.session.parts)
 }
 
 // A seat of the server for the player of a connection.
@@ -154,8 +164,9 @@ end_seat :: proc(e:^End,connection:multiplayer.Connection) {
 @(private="file")
 end_receive :: proc(e:^End) {
     h:=&e.inbox
-    terrain_net_receive({{h.ops[:]},{h.parts[:]},{h.refused[:]},{h.asks[:]},{h.resyncs[:]}},core.ref(&e.authority),&e.net,core.ref(&e.session),{dt=1.0/60,tick=e.tick+1},&e.rewinds,core.ref(&e.root),&e.problems)
+    terrain_net_receive({{h.ops[:]},{h.parts[:]},core.ref(&e.session),{h.refused[:]},{h.asks[:]},{h.resyncs[:]}},core.ref(&e.authority),&e.net,core.ref(&e.session),{dt=1.0/60,tick=e.tick+1},&e.rewinds,core.ref(&e.root),&e.problems)
     clear(&h.ops);clear(&h.parts);clear(&h.refused);clear(&h.asks);clear(&h.resyncs)
+    parts_forget(e)
 }
 
 // A tick of the fixed loop: this library, terrain and this library again.
@@ -166,7 +177,7 @@ end_tick :: proc(e:^End,_:^Fixture,resimulating:=false) {
     time:=core.Time{dt=1.0/60,playing=true,tick=e.tick,resimulating=resimulating}
     e.outbox.replaying=resimulating // as a correction of the network leaves it
     terrain_net_follow(core.ref(&e.authority),&e.net,time,&e.replays,&e.outbox,core.ref(&e.session),core.ref(&e.data),core.read(&e.terrains),
-        core.read(&e.seats),core.read(&e.drivables),core.read(&e.worlds),e.net_settings,core.ref(&e.root),f.app.assets,&e.problems)
+        core.read(&e.seats),core.read(&e.worlds),e.net_settings,core.ref(&e.root),f.app.assets,&e.problems)
     clear(&e.replayed.results.items);clear(&e.digs.digs.items) // the logs of a tick, as their readers are handed them
     terrain.terrain_replay(&e.replays,&e.replayed,&e.digs,&e.terrain_requests,&e.data,core.read(&e.terrains),core.read(&e.worlds),f.app.assets,&e.problems)
     terrain_net_send(core.ref(&e.authority),&e.net,time,&e.outbox,core.ref(&e.connections),core.ref(&e.replayed),core.ref(&e.data),core.ref(&e.session),core.ref(&e.root))
@@ -184,6 +195,18 @@ server_deliver :: proc(server:^End,clients:..^End) {
         }
     }
     clear(&server.outbox.queue.items)
+    HEAD :: size_of(multiplayer.Journal_Part_Head)
+    for part in server.outbox.parts {
+        for c in clients {
+            if part.to!=c.connection {continue}
+            arrived:=multiplayer.Journal_Arrived{bytes=make([]u8,len(part.bytes)-HEAD)}
+            mem.copy(&arrived.head,raw_data(part.bytes),HEAD)
+            copy(arrived.bytes,part.bytes[HEAD:])
+            append(&c.session.parts,arrived)
+        }
+        delete(part.bytes)
+    }
+    clear(&server.outbox.parts)
 }
 
 // What a client sent, to the server, from its connection.

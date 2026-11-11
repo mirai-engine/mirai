@@ -37,7 +37,7 @@ address on its network and the one its router mapped, so one `--connect <code>` 
 same network and from the internet. Every connection is encrypted either way. `--until-empty` ends
 a server with nobody, `--status <file>` logs. `--server` with `--connect` is refused. Settings,
 read when the session opens, go in `settings.mirai`:
-`{"Net_Settings": {"max_clients": 8}, "Spawn_Settings": {"players": true}}`.
+`{"Net_Settings": {"max_clients": 8}, "Spawn_Settings": {"prefab": "<Asset_Id>"}}`.
 
 ## Replicate
 

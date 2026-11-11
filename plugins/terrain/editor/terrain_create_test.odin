@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/kit"
 import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -96,7 +97,7 @@ terrain_panel_hides_creation_while_a_terrain_is_selected_and_reaches_it_on_short
     core.world_settle(ref)
     // On the heap: with the session and the app, a context on the stack of a test thread overflows it.
     ctx:=new(ui.Context);defer free(ctx)
-    if !testing.expect(t,ui.context_init(ctx,{})) {return}
+    if !testing.expect(t,ui.context_init(ctx,{}) && kit.theme_set(ctx)) {return}
     defer ui.context_destroy(ctx)
     app:=host.App{allocator=context.allocator,platform=p}
     selection:history.Selection;defer delete(selection.entities)
@@ -128,11 +129,11 @@ terrain_panel_hides_creation_while_a_terrain_is_selected_and_reaches_it_on_short
             tool.scroll=0
             for _ in 0..<2 {create_test_tool_panel_frame(t,&s,&tool,ref,&input)}
             panel,found:=ui.widget_rect(ctx,id)
-            testing.expect(t,found && panel.y==328 && panel.y+panel.h<=height-ctx.theme.margin+0.01)
+            testing.expect(t,found && panel.y==328 && panel.y+panel.h<=height-ui.metric(ctx,"margin")+0.01)
             tool.scroll=1e6
             create_test_tool_panel_frame(t,&s,&tool,ref,&input)
             button,button_found:=ui.widget_rect(ctx,ui.id_derive(ctx,id,"create"))
-            testing.expectf(t,button_found && button.y>=panel.y && button.y+button.h<=height-ctx.theme.margin,"%v at %g: New terrain is outside viewport: %v",kind,height,button)
+            testing.expectf(t,button_found && button.y>=panel.y && button.y+button.h<=height-ui.metric(ctx,"margin"),"%v at %g: New terrain is outside viewport: %v",kind,height,button)
             if height==600 {testing.expect(t,tool.scroll.y>0)}
         }
     }
@@ -171,7 +172,7 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     defer core.test_world_destroy(&world)
     ref:=core.test_world_ref(&world)
     ctx:=new(ui.Context);defer free(ctx)
-    if !testing.expect(t,ui.context_init(ctx,{})) {return}
+    if !testing.expect(t,ui.context_init(ctx,{}) && kit.theme_set(ctx)) {return}
     defer ui.context_destroy(ctx)
     app:=host.App{allocator=context.allocator,assets=&assets,platform=p}
     selection:history.Selection;defer delete(selection.entities)
@@ -316,7 +317,7 @@ create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     defer core.test_world_destroy(&world)
     ref:=core.test_world_ref(&world)
     ctx:=new(ui.Context);defer free(ctx)
-    if !testing.expect(t,ui.context_init(ctx,{})) {return}
+    if !testing.expect(t,ui.context_init(ctx,{}) && kit.theme_set(ctx)) {return}
     defer ui.context_destroy(ctx)
     app:=host.App{allocator=context.allocator,assets=&assets,platform=p}
     selection:history.Selection;defer delete(selection.entities)

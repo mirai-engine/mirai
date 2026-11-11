@@ -20,7 +20,7 @@ ai_connections_test_frame :: proc(s:^Session,pointer:[2]f32={},pressed:bool=fals
 @(test)
 ai_connections_keep_runtime_advanced_and_only_offer_bun_when_none_is_available :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     m.initialized=true
@@ -90,7 +90,7 @@ esac
         testing.expect_value(t,platform_error,platform.Error.None);if p==nil {return}
         defer platform.destroy(p)
         ctx:ui.Context
-        testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+        testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
         g:=Editor_Ui{ctx=&ctx};app:=host.App{platform=p}
         s:=Session{gui=&g,ai=m,app=&app,engine_root=root,project_root=root,has_project=true}
         defer ai_destroy(&s)

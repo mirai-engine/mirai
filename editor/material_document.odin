@@ -15,6 +15,7 @@ import "mirai:project"
 import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The document of a material: its preview takes the workspace, lit or showing
@@ -198,14 +199,14 @@ material_pick_toggle :: proc(w:^Material_Document,name:string,add:bool) {
 // Ctrl or Shift beside the others; picked, it is lit.
 @(private)
 material_value_label :: proc(s:^Session,w:^Material_Document,name,label:string,index:int) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     id:=ui.id(ctx,"pick",index+1)
     it:=ui.interact(ctx,id,{})
     picked:=material_pick_index(w,name)>=0
-    color:=th.text_label
-    if it.hot {color=th.text}
-    if picked {color=th.accent}
-    if ui.box(ctx,{id=id,width=ui.fixed(th.label_width),height=ui.GROW,align_y=.Center}) {ui.column_label(ctx,label,color)}
+    color:=ui.tone(ctx,"text_label")
+    if it.hot {color=ui.tone(ctx,"text")}
+    if picked {color=ui.tone(ctx,"accent")}
+    if ui.box(ctx,{id=id,width=ui.fixed(ui.metric(ctx,"label_width")),height=ui.GROW,align_y=.Center}) {kit.column_label(ctx,label,color)}
     if it.clicked {material_pick_toggle(w,name,.Primary in ctx.input.modifiers || .Shift in ctx.input.modifiers)}
 }
 
@@ -236,7 +237,7 @@ material_document_parameters :: proc(s:^Session,w:^Material_Document) {
         if !material_card(s,title,.Material) {continue}
         for &parameter,index in program.parameters {
             if parameter.kind==.Texture || parameter.group!=group {continue}
-            ui.box_begin(s.gui.ctx,{width=ui.GROW,height=ui.fixed(s.gui.ctx.theme.row),gap=4,align_y=.Center})
+            ui.box_begin(s.gui.ctx,{width=ui.GROW,height=ui.fixed(ui.metric(s.gui.ctx,"row")),gap=4,align_y=.Center})
             material_value_label(s,w,parameter.name,readable(parameter.name),index)
             material_parameter_field(s,w,&parameter,index,gpu.program_parameter_get(&desc.custom_params,&parameter))
             ui.box_end(s.gui.ctx,{})
@@ -268,13 +269,13 @@ material_card_end :: proc(s:^Session,title:string,icon:ui.Icon,open:bool) {
 // number and a field per component for more.
 @(private)
 material_parameter_field :: proc(s:^Session,w:^Material_Document,parameter:^gpu.Program_Parameter,index:int,numbers:[4]f64) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     count:=clamp(int(parameter.components),1,4)
     key:=base.hash_combine(base.hash_combine(w.material[0],w.material[1]),base.name_hash(parameter.name))
     if parameter.kind==.Bool {
         for axis in 0..<count {
             on:=numbers[axis]!=0
-            if ui.button(ctx,ui.id(ctx,"toggle",index*4+axis+1),{label=on?"On":"Off",style=.Tab,size=th.font_small,width=-1,center=true,active=on}).clicked {
+            if ui.button(ctx,ui.id(ctx,"toggle",index*4+axis+1),{label=on?"On":"Off",variant="tab",size=ui.metric(ctx,"font_small"),width=-1,center=true,active=on}).clicked {
                 next:=numbers
                 next[axis]=on?0:1
                 if !material_write(s,w.material,{kind=.Value,name=parameter.name,value=next,parameter=asset.Parameter_Kind(parameter.kind),components=parameter.components}) {notify(s,"The material could not be written")}
@@ -290,7 +291,7 @@ material_parameter_field :: proc(s:^Session,w:^Material_Document,parameter:^gpu.
     results:[4]ui.Number_Result
     axes:=numbers
     if count==1 {
-        results[0]=ui.slider_field(ctx,ui.id(ctx,"parameter",index+1),&axes[0],field)
+        results[0]=kit.slider_field(ctx,ui.id(ctx,"parameter",index+1),&axes[0],field)
     } else {
         results=number_fields(ctx,ui.id(ctx,"parameter",index+1),axes[:count],{number=field,channels=parameter.color})
     }
@@ -332,12 +333,12 @@ material_document_standard :: proc(s:^Session,w:^Material_Document,info:asset.Ma
         count:=len(row.values)
         axes:[4]f64
         for value,axis in row.values {axes[axis]=f64(value)}
-        ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(ctx.theme.row),gap=4,align_y=.Center})
+        ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center})
         material_value_label(s,w,row.path,row.label,index)
         results:[4]ui.Number_Result
         id:=ui.id(ctx,"standard",index+1)
         if count==1 {
-            results[0]=ui.slider_field(ctx,id,&axes[0],row.field)
+            results[0]=kit.slider_field(ctx,id,&axes[0],row.field)
         } else {
             results=number_fields(ctx,id,axes[:count],{number=row.field,channels=true})
         }
@@ -353,7 +354,7 @@ material_document_standard :: proc(s:^Session,w:^Material_Document,info:asset.Ma
             if r.ended {material_document_end(s,w,axis_key,r.cancelled)}
         }
         if imported!=nil {
-            if slice.equal(slice.to_bytes(row.values),slice.to_bytes(row.source)) {ui.spacer(ctx,22,1)} else if ui.button(ctx,ui.id(ctx,"standard_revert",index+1),{icon=.Revert,style=.Ghost,width=22,height=22}).clicked {
+            if slice.equal(slice.to_bytes(row.values),slice.to_bytes(row.source)) {ui.spacer(ctx,22,1)} else if ui.button(ctx,ui.id(ctx,"standard_revert",index+1),{icon=.Revert,variant="ghost",width=22,height=22}).clicked {
                 if !material_write(s,w.material,{kind=.Revert,paths={row.path}}) {notify(s,"The material could not be written")}
             }
         }
@@ -563,7 +564,7 @@ material_previews_draw :: proc(s:^Session,w:^Material_Document) {
 // shape it draws the material on.
 @(private)
 material_toolbar :: proc(s:^Session,w:^Material_Document) {
-    g:=s.gui;ctx:=g.ctx;th:=&ctx.theme
+    g:=s.gui;ctx:=g.ctx
     rect,found:=asset_toolbar_whole(g)
     if !found || rect.w<=0 || w.material=={} {return}
     if ui.box(ctx,{width=ui.fixed(rect.w),height=ui.fixed(rect.h),gap=8,align_x=.Center,align_y=.Center,float={to=.Surface,offset={rect.x,rect.y},layer=ui.LAYER_BAR}}) {
@@ -573,12 +574,12 @@ material_toolbar :: proc(s:^Session,w:^Material_Document) {
         labels:=make([]string,len(Material_Channel),context.temp_allocator)
         for channel in Material_Channel {labels[int(channel)]=names[channel]}
         current:=int(w.channel)
-        ui.tabs(ctx,ui.id(ctx,"channel"),labels,&current,ui.fixed(f32(len(labels))*80),th.control)
+        kit.tabs(ctx,ui.id(ctx,"channel"),labels,&current,ui.fixed(f32(len(labels))*80),ui.metric(ctx,"control"))
         w.channel=Material_Channel(current)
-        if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(18),fill=th.border}) {}
+        if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(18),fill=ui.tone(ctx,"border")}) {}
         icons,shapes:=MATERIAL_SHAPE_ICONS,MATERIAL_SHAPE_NAMES
         for shape in Material_Shape {
-            if ui.button(ctx,ui.id(ctx,"shape",int(shape)+1),{icon=icons[shape],tip=shapes[shape],style=.Tab,active=w.shape==shape,width=26,height=th.control}).clicked {w.shape=shape}
+            if ui.button(ctx,ui.id(ctx,"shape",int(shape)+1),{icon=icons[shape],tip=shapes[shape],variant="tab",active=w.shape==shape,width=26,height=ui.metric(ctx,"control")}).clicked {w.shape=shape}
         }
     }
 }
@@ -586,7 +587,7 @@ material_toolbar :: proc(s:^Session,w:^Material_Document) {
 // The workspace: the preview, with the variants under it, and Details at its
 // right; what the preview shows is chosen in the toolbar.
 material_document_build :: proc(s:^Session) {
-    g:=s.gui;ctx:=g.ctx;th:=&ctx.theme
+    g:=s.gui;ctx:=g.ctx
     w:=&s.materials.document
     a:=s.app.assets
     if w.material!={} && a!=nil {
@@ -604,7 +605,7 @@ material_document_build :: proc(s:^Session) {
         defer ui.id_pop(ctx)
         if w.material=={} {
             asset_heading(ctx,"Program")
-            if ui.box(ctx,{width=ui.GROW,height=ui.GROW,align_x=.Center,align_y=.Center,fill=th.well}) {ui.label(ctx,base.text_get(w.program[:]),th.font,th.text_muted)}
+            if ui.box(ctx,{width=ui.GROW,height=ui.GROW,align_x=.Center,align_y=.Center,fill=ui.tone(ctx,"well")}) {ui.label(ctx,base.text_get(w.program[:]),ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"))}
             return
         }
         preview:=&s.materials.preview
@@ -617,24 +618,24 @@ material_document_build :: proc(s:^Session) {
             defer ui.box_end(ctx,{})
             // A click shows a variant in the preview; Apply sets it on the material, Save as new writes it apart.
             if ui.box(ctx,asset_heading_box(ctx)) {
-                ui.label(ctx,"Variants",th.font,th.text,font=ui.FONT_MEDIUM)
+                ui.label(ctx,"Variants",ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_MEDIUM)
                 ui.spacer(ctx)
                 if w.chosen>0 {
-                    if ui.button(ctx,ui.id(ctx,"variant_save"),{label="Save as new",style=.Field,size=th.font_small,height=24,padding=10}).clicked {material_variant_save(s,w)}
-                    if ui.button(ctx,ui.id(ctx,"variant_apply"),{label="Apply",style=.Accent,size=th.font_small,height=24,padding=12}).clicked {material_variant_set(s,w)}
+                    if ui.button(ctx,ui.id(ctx,"variant_save"),{label="Save as new",variant="field",size=ui.metric(ctx,"font_small"),height=24,padding=10}).clicked {material_variant_save(s,w)}
+                    if ui.button(ctx,ui.id(ctx,"variant_apply"),{label="Apply",variant="accent",size=ui.metric(ctx,"font_small"),height=24,padding=12}).clicked {material_variant_set(s,w)}
                 }
             }
             asset_heading_end(ctx)
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(MATERIAL_VARIANT_CELL+38),gap=8,padding={12,8,12,8},fill=th.card}) {
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(MATERIAL_VARIANT_CELL+38),gap=8,padding={12,8,12,8},fill=ui.tone(ctx,"card")}) {
                 for &variant,i in w.variants[:w.variant_count] {
                     ui.id_push(ctx,ui.id(ctx,"variant",i+1))
                     chosen:=w.chosen==i+1
                     if ui.box(ctx,{width=ui.fixed(MATERIAL_VARIANT_CELL),height=ui.GROW,direction=.Column,gap=4,align_x=.Center}) {
-                        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(MATERIAL_VARIANT_CELL),stroke=chosen?th.accent:th.rule,stroke_width=chosen?2:1,radius=th.radius_control,padding=ui.padding_all(1)}) {
+                        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(MATERIAL_VARIANT_CELL),stroke=chosen?ui.tone(ctx,"accent"):ui.tone(ctx,"rule"),stroke_width=chosen?2:1,radius=ui.metric(ctx,"radius_control"),padding=ui.padding_all(1)}) {
                             cell,_:=asset_image_show(s,&variant.image)
                             if cell.clicked {w.chosen=chosen?0:i+1}
                         }
-                        ui.label(ctx,base.text_get(variant.label[:]),th.font_small,chosen?th.text:th.text_muted,MATERIAL_VARIANT_CELL)
+                        ui.label(ctx,base.text_get(variant.label[:]),ui.metric(ctx,"font_small"),chosen?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted"),MATERIAL_VARIANT_CELL)
                     }
                     ui.id_pop(ctx)
                 }
@@ -649,13 +650,13 @@ material_document_build :: proc(s:^Session) {
         ui.id_push(ctx,details_id)
         defer ui.id_pop(ctx)
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(INSPECTOR_HEAD),padding={11,0,7,0},gap=6,align_y=.Center}) {
-            ui.icon(ctx,.Material,th.text_muted,15)
+            ui.icon(ctx,.Material,ui.tone(ctx,"text_muted"),15)
             title:=""
             if d:=asset_document_active(s);d!=nil {title=asset_document_title(s,d)}
-            ui.label(ctx,title,th.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,title,ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
         }
         origin:=ai_provenance_asset_row(s)
-        if ui.scroll_area(ctx,ui.id(ctx,"details"),&w.details_scroll,{height=ui.FIT,max_height=max(room-INSPECTOR_HEAD-origin,40),padding={8,7,8,8},gap=7,fade=th.panel}) {
+        if ui.scroll_area(ctx,ui.id(ctx,"details"),&w.details_scroll,{height=ui.FIT,max_height=max(room-INSPECTOR_HEAD-origin,40),padding={8,7,8,8},gap=7,fade=ui.tone(ctx,"panel")}) {
             material_document_parameters(s,w)
         }
     }

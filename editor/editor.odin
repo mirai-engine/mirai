@@ -292,7 +292,7 @@ run_player :: proc "contextless" (s:^Session,owner,player:int) -> ^Run {
 }
 
 // What a new run asks of its world before its first tick: how many players
-// sit at it (0: what the scene says).
+// sit at it.
 run_configure :: proc(s:^Session,r:^Run,players:int) {
     if run:=core.world_storage_of(run_ref(s,r),input.Run_Players);run!=nil {run.count=players}
 }
@@ -837,8 +837,8 @@ play_start :: proc(s:^Session,simulate:=false,owner:int=0) -> bool {
         log.info("Play of an agent")
         return true
     }
-    // The players of Play share the screen , as many as the
-    // selector says, and a plugin readies the world for its game.
+    // The players of Play share the screen, as many as the selector says,
+    // and a plugin readies the world for its game.
     run_configure(s,r,s.play_players!=nil?s.play_players.players:PLAY_PLAYERS_DEFAULT.players)
     // Play starts with the environment that is on, not with the preview of a section.
     if preview:=core.world_storage_of(host.app_world_ref(s.app,r.world),erender.Environment_Preview);preview!=nil {preview^={}}

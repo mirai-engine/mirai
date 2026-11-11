@@ -88,6 +88,28 @@ walking_toward_plus_x_turns_the_front_of_the_body_to_plus_x_and_keeps_the_look :
     testing.expectf(t,near(phys.look_yaw_of(mm.QUAT_IDENTITY,pose.rotation),look,1e-4),"the look taken from the body %v",phys.look_yaw_of(mm.QUAT_IDENTITY,pose.rotation))
 }
 
+// The body turns toward the look it is asked at its turn_speed, wherever it goes meanwhile.
+@(test)
+the_body_turns_toward_its_look_at_its_turn_speed :: proc(t:^testing.T) {
+    f:Loco_Test
+    if !loco_test_init(t,&f,{0,0,0}) {return}
+    defer loco_test_destroy(&f)
+    loco_test_tick(&f,{})
+    testing.expect(t,near(loco_state(&f).yaw,0,1e-6))
+    core.edit(&f.characters,f.e).turn_speed=cmath.PI
+    dt:=f32(1.0/60)
+    core.edit(&f.inputs,f.e)^=input.Move_Input{move={1,0,0},look_yaw=-0.5*cmath.PI}
+    core.test_world_settle(&f.w)
+    locomotion_step(
+        core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),
+        core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),
+        core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.read(&f.paces),{base=TEST_WALK_BASE},&f.loco_requests,{playing=true,dt=dt},core.CLOCK_DEFAULT,&f.problems,
+    )
+    testing.expectf(t,near(loco_state(&f).yaw,-cmath.PI*dt,1e-5),"a tick turns it pi*dt: %v",loco_state(&f).yaw)
+    move,_:=core.get(&f.moves,f.e)
+    testing.expectf(t,near(move.value.yaw,loco_state(&f).yaw,1e-6),"it faces that yaw: %v",move.value.yaw)
+}
+
 @(test)
 a_jump_reaches_the_height_of_the_locomotion_once_per_press :: proc(t:^testing.T) {
     for height in ([2]f32{0.6,1.5}) {
@@ -324,7 +346,7 @@ a_requested_gravity_scale_holds_until_asked_again :: proc(t:^testing.T) {
     set_gravity_scale(&f.loco_requests,f.e,1)
     testing.expect_value(t,scale_of(&f),f32(1))
     authored,_:=core.get(&f.characters,f.e)
-    testing.expect_value(t,authored,phys.character_default())
+    testing.expect_value(t,authored.gravity_scale,phys.character_default().gravity_scale)
     for field in reflect.struct_fields_zipped(Locomotion_State) {
         testing.expectf(t,strings.contains(string(reflect.struct_tag_get(field.tag,"mirai")),"transient"),"Locomotion_State.%s is saved",field.name)
     }

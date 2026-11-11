@@ -28,7 +28,7 @@ Players_Test_World :: struct {
     parents:core.Table(core.Parent),
     meshes:core.Table(render.Mesh_Renderer),
     seats:core.Table(inp.Seat),
-    drivables:core.Table(inp.Drivable),
+    moves:core.Table(inp.Move_Input),
     cameras:core.Table(render.Camera),
     exposures:core.Table(render.Exposure),
     view_volumes:core.Table(render.View_Volume),
@@ -62,7 +62,7 @@ players_frame :: proc(f:^Players_Fixture) {
     w:=&f.w
     world:=core.test_world_ref(w)
     frame_begin(world,core.read(&w.screens),core.read(&w.widgets),core.read(&w.worlds),core.read(&w.hidden),core.read(&w.parents),core.read(&w.meshes),
-        UI_SETTINGS_DEFAULT,UI_PREFERENCES_DEFAULT,{},core.ref(&f.state),core.read(&w.seats),core.read(&w.drivables),core.ref(&f.bindings),core.ref(&f.actions),
+        UI_SETTINGS_DEFAULT,UI_PREFERENCES_DEFAULT,{},core.ref(&f.state),core.read(&w.seats),core.read(&w.moves),core.ref(&f.bindings),core.ref(&f.actions),
         {},core.read(&w.cameras),core.read(&w.exposures),core.read(&w.view_volumes),core.read(&w.volumes),&f.requests,&f.effects,&f.sounds,&f.gui,&f.app,&f.problems,false)
     widgets_build(world,&f.gui,&f.app,&f.problems)
 }
@@ -131,18 +131,16 @@ a_screen_on_the_body_of_a_player_shows_in_the_part_of_that_player :: proc(t:^tes
     bodies:[2]core.Entity
     for slot in 0..<2 {
         seats[slot],bodies[slot]=core.create(&w.entities),core.create(&w.entities)
-        core.add(&w.seats,seats[slot],inp.Seat{slot=u8(slot)})
-        core.add(&w.drivables,bodies[slot],inp.Drivable{seat=seats[slot]})
+        core.add(&w.seats,seats[slot],inp.Seat{slot=u8(slot),body=bodies[slot]})
         core.add(&w.screens,bodies[slot],UI_Screen{asset=HUD_ID})
         core.add(&w.huds,bodies[slot],Player_Test_Hud{coins=i32(3+4*slot)})
     }
     // A body nobody drives, one a player of another end drives, and the screen of the scene.
     empty,away,remote,scene:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
-    core.add(&w.drivables,empty,inp.Drivable{})
+    core.add(&w.moves,empty,inp.Move_Input{})
     core.add(&w.screens,empty,UI_Screen{asset=HUD_ID})
     core.add(&w.huds,empty,Player_Test_Hud{coins=50})
-    core.add(&w.seats,away,inp.Seat{slot=1,peer=9})
-    core.add(&w.drivables,remote,inp.Drivable{seat=away})
+    core.add(&w.seats,away,inp.Seat{slot=1,peer=9,body=remote})
     core.add(&w.screens,remote,UI_Screen{asset=HUD_ID})
     core.add(&w.huds,remote,Player_Test_Hud{coins=60})
     core.add(&w.screens,scene,UI_Screen{asset=HUD_ID})
@@ -150,7 +148,7 @@ a_screen_on_the_body_of_a_player_shows_in_the_part_of_that_player :: proc(t:^tes
     core.test_world_settle(w)
 
     owner :: proc(w:^Players_Test_World,e:core.Entity) -> (slot:int,owned,local:bool) {
-        return screen_owner(core.read(&w.seats),core.read(&w.drivables),core.read(&w.parents),e)
+        return screen_owner(core.read(&w.seats),core.read(&w.moves),core.read(&w.parents),e)
     }
     Case :: struct {e:core.Entity,slot:int,owned,local:bool}
     cases:=[]Case{{bodies[0],0,true,true},{bodies[1],1,true,true},{seats[1],1,true,true},{empty,0,true,false},{remote,1,true,false},{scene,0,false,false},{core.NONE,0,false,false},{core.entity_make(900,3),0,false,false}}

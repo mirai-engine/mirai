@@ -67,9 +67,11 @@ game_dogs :: proc(spawner:scene.Spawner,owners:core.Read(Owner)) {
 ## At spawn points
 
 A `spawn.Spawn_Point` (plugin `spawn`) is a place of the scene where its `prefab` appears. With
-`players` on it is one of the players': `Spawn_Settings.players` gives each seat its body there,
-with no code ([character](../character.md)). With `players` off only the game spawns there, so the
-point of an enemy never gives a player its body:
+`players` on it is one of the players': a player's body appears at the point asked for, or else at
+the next one of the players' in turn, of the prefab asked for, or else the point's, or else
+`Spawn_Settings.prefab`. While such a prefab is named, each seat gets its body there with no code
+([character](../character.md)). With `players` off only the game spawns there, so the point of an
+enemy never gives a player its body:
 
 ```odin
 import spawn "plugins:spawn/runtime"

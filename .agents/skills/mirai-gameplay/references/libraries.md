@@ -479,6 +479,15 @@ the reverb of the room where the listener is and what covers each source.
   `transforms_propagate` and `camera_view`) tunes, starts and stops voices from the source rows
   written since it looked, follows each live voice (its end, its place, what hides it) and writes
   `Audio_Source_State` only when it changes.
+  - Voices are the mixer's fixed count: each frame `voices_assign` ranks the sources that are heard
+    by `priority` and then by their gain at the listener (volume, bus, attenuation), and the first
+    as many as the mixer has free or the sources hold are mixed. The others, and those out of
+    range, are virtual: an entry without a voice whose time follows the mixer clock at its pitch,
+    so it comes back where it would be, and a sound without `loop` ends when its time passes it.
+    One that comes back takes only a free voice, never a stolen one, and a held voice ranks
+    `VOICE_KEEP` louder: a steady scene starts, stops and steals nothing.
+  - Values that are not numbers, or a spatial source without a range (`min_distance` above 0 and
+    `max_distance` above it), are refused with the problem `audio.source`.
   - `pitch` is the speed: it moves the tone with it, like a "slowed" song; with the reverb of its
     bus it gives "slowed + reverb". There is no speed change without a tone change.
   - Volume, pitch, pan and loop are applied to the voice that is sounding; another sound, another
@@ -492,8 +501,10 @@ the reverb of the room where the listener is and what covers each source.
     until it continues; one-shots are not.
 - **One-shots.** `audio.play(sounds, path_or_id, at, bus, volume, pitch)` pushes to
   `Sound_Requests`, from any step and from the interface sounds of `gui` (on `BUS_UI`). Each is
-  an `Audio_Source` of `AUDIO_SOURCE_DEFAULT` with those values and starts through the same
-  `voice_start` as a source, so the mixer takes the same path for both, without a handle.
+  an `Audio_Source` with those values and the hearing of its `.sound_set` (attenuation, range,
+  reverb send, priority; `SOUND_HEARING_DEFAULT` for a `.sound`), started through the same voice
+  description as a source, so the mixer takes the same path for both, without a handle. One placed
+  beyond its `max_distance` from the listener does not start.
   `audio_requests` (`fixed` and `late`, stage `end`) takes the queue: at the end of the tick that
   asked, a tick that runs again (`time.resimulating`) drops what it asks, since it played the first
   time, and the copies of the world for a rollback are made between ticks, after the take; what

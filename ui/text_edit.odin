@@ -329,17 +329,16 @@ field_edit_update :: proc(ctx:^Context,id:Id,it:Interaction,size:f32,label:strin
 
 @(private)
 field_paint :: proc(ctx:^Context,id:Id,it:Interaction,text:string,size:f32,label:string,strip:Color,placeholder:string,held,disabled:bool,icon:=Icon.None) -> ^Paint {
-    th:=&ctx.theme
     e:=&ctx.edit
     editing:=e.id==id && id!=0
     // A well with an outline that lightens under the pointer; editing keeps
     // the fill: the accent outline marks it and the selection shows on the text.
-    fill:=th.field_active if held else th.well
-    stroke:=th.well_stroke_hover if it.hot && !disabled else th.well_stroke
-    paint:=Paint{kind=.Field,fill=fill,stroke=stroke,text=text,text_color=th.text_faint if disabled else th.text,size=size,caret=-1,label=label,strip=strip,placeholder=placeholder,icon=icon}
+    fill:=tone(ctx,"field_active") if held else tone(ctx,"well")
+    stroke:=tone(ctx,"well_stroke_hover") if it.hot && !disabled else tone(ctx,"well_stroke")
+    paint:=Paint{kind=.Field,fill=fill,stroke=stroke,text=text,text_color=tone(ctx,"text_faint") if disabled else tone(ctx,"text"),size=size,caret=-1,label=label,strip=strip,placeholder=placeholder,icon=icon}
     if editing {
         lo,hi:=text_edit_selection(e)
-        paint.stroke=th.accent
+        paint.stroke=tone(ctx,"accent")
         paint.text=text_edit_value(e);paint.caret=e.cursor;paint.selection={lo,hi};paint.scroll=e.scroll
         paint.caret_hidden=int(max(ctx.time-e.caret_started,0)*2)%2!=0
     }
@@ -389,11 +388,10 @@ Text_Result :: struct {
 text_field :: proc(ctx:^Context,id:Id,buffer:[]u8,length:^int,field:Text_Field={}) -> (result:Text_Result) {
     field:=field
     field.disabled|=ctx.disabled_depth>0
-    th:=&ctx.theme
     e:=&ctx.edit
     look:=field.style
     if field.disabled && e.id==id && id!=0 {e^={};result.cancelled=true}
-    size:=field.size if field.size>0 else th.font_small
+    size:=field.size if field.size>0 else metric(ctx,"font_small")
     font:=field.font
     if look!=nil {
         if look.text.size>0 {size=look.text.size}
@@ -446,7 +444,7 @@ text_field :: proc(ctx:^Context,id:Id,buffer:[]u8,length:^int,field:Text_Field={
         }
         if !field.disabled && field.color[3]>0 {paint.text_color=field.color}
         if field.bare {paint.fill={};paint.stroke={}}
-        if field.inline && !result.editing {paint.fill={};paint.stroke=th.border if it.hot && !field.disabled else {}}
+        if field.inline && !result.editing {paint.fill={};paint.stroke=tone(ctx,"border") if it.hot && !field.disabled else {}}
         if look!=nil {field_paint_look(paint,look)}
     }
     height:=field.height
@@ -454,7 +452,7 @@ text_field :: proc(ctx:^Context,id:Id,buffer:[]u8,length:^int,field:Text_Field={
         line:=size*TEXT_LINE
         if look!=nil {
             height=f32(max(field.rows,1))*line+2*field.padding if field.multiline else line+2*field.padding
-        } else {height=f32(max(field.rows,1))*line+10 if field.multiline else th.row}
+        } else {height=f32(max(field.rows,1))*line+10 if field.multiline else metric(ctx,"row")}
     }
     element:=Element{id=id,layout={width=(field.width if field.width!={} else GROW),height=fixed(height)},custom=paint}
     if field.open {

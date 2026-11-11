@@ -12,6 +12,12 @@ import "mirai:std/base"
 // queues or waits takes the index of the worker calling it: the owner passes
 // OWNER, a job passes the index it received. Any other thread must not call in.
 //
+// A job is of a Class. A thread that waits outside a background job runs only
+// frame jobs, so a long job never lands inside a frame, and background jobs
+// take all threads but one at once (at least one), so frames keep a helper.
+// With threads the owner runs a background job only while it waits for that
+// job's counter and the job is the last it queued.
+//
 // Inside a job context.temp_allocator is Odin's temporary allocator of the
 // thread that runs it, so DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD scopes it there
 // too; what the job asked for is released when it returns.
@@ -19,6 +25,11 @@ import "mirai:std/base"
 CACHE_LINE :: 128
 OWNER :: 0
 THREADS_AUTO :: -1
+
+Class :: enum u8 {
+    Frame,      // a frame waits for it: physics, animation, render, what a frame reads back the next one
+    Background, // outlives frames: loads, bakes, builds, disk writes
+}
 
 Job_Proc :: #type proc(data:rawptr,worker:int)
 Range_Proc :: #type proc(data:rawptr,first,last:int,worker:int)
@@ -43,7 +54,11 @@ Stats :: struct {
 }
 
 @(private)
-Job :: struct {procedure:Job_Proc,data:rawptr,counter:^Counter}
+Job :: struct {
+    procedure:Job_Proc,data:rawptr,counter:^Counter,
+    class:Class,   // of the queue it came from; slots do not keep it
+    reserved:bool, // holds one of the background places of the system
+}
 
 @(private)
 Slot :: struct {procedure,data,counter:uintptr}
@@ -62,10 +77,11 @@ Deque :: struct {
 
 @(private)
 Worker :: struct #align(CACHE_LINE) {
-    deque:Deque,
+    deques:[Class]Deque,
     system:^Job_System,
     index:int,
     thread:^thread.Thread,
+    background:bool, // inside a background job: a wait there runs background jobs too
     temp_peak:int,
     random:u32,
     executed,stolen,queue_full,sleeps:u64,
@@ -82,6 +98,8 @@ Job_System :: struct {
     started:i32,  // threads with their temporary memory ready
     sleepers:i32, // threads blocked or about to block on wake_epoch
     waiters:i32,  // the ones among them that wait for a counter
+    background_running:i32, // threads that took a background job while idle, or are about to
+    background_places:i32,  // the most of them at once: all threads but one, at least one
     quit:bool,
     profile:^base.Profile, // optional: a zone per job and per range of parallel_for on the ring of the worker (ring = worker index); nil records nothing
 }
@@ -98,13 +116,16 @@ system_init :: proc(js:^Job_System,desc:Job_System_Desc) -> bool {
     for capacity<(desc.queue_capacity>0?desc.queue_capacity:1024) {capacity<<=1}
     js.temp_bytes=desc.temp_bytes>0?desc.temp_bytes:1<<20
     count:=threads+1
+    js.background_places=i32(max(threads-1,1))
 
     error:runtime.Allocator_Error
     if js.workers,error=make([]Worker,count,js.allocator);error!=nil {system_destroy(js);return false}
-    if js.slots,error=make([]Slot,count*capacity,js.allocator);error!=nil {system_destroy(js);return false}
+    if js.slots,error=make([]Slot,count*len(Class)*capacity,js.allocator);error!=nil {system_destroy(js);return false}
     for &w,i in js.workers {
         w.system=js;w.index=i
-        w.deque.slots=js.slots[i*capacity:][:capacity];w.deque.mask=i64(capacity-1)
+        for &d,class in w.deques {
+            d.slots=js.slots[(i*len(Class)+int(class))*capacity:][:capacity];d.mask=i64(capacity-1)
+        }
         w.random=u32(i)*0x9e3779b9+0x7f4a7c15
     }
     thread_context:=context
@@ -124,7 +145,9 @@ system_init :: proc(js:^Job_System,desc:Job_System_Desc) -> bool {
 system_destroy :: proc(js:^Job_System) {
     if len(js.workers)>0 {
         owner:=&js.workers[OWNER]
-        for job in work_find(js,owner) {job_execute(js,owner,job)}
+        for class in Class {
+            for job in own_pop(owner,class) {job_execute(js,owner,job)}
+        }
     }
     intrinsics.atomic_store(&js.quit,true)
     intrinsics.atomic_add(&js.wake_epoch,1)
@@ -182,33 +205,36 @@ worker_zone_begin :: #force_inline proc "contextless" (ref:Worker_Ref,name:strin
     return base.profile_begin(ref.profile,ref.worker,name)
 }
 
-// Queues a job. With a counter, wait(counter) returns after the job ran.
-// Without threads a job without counter runs before run returns. A job whose
-// worker has no room in its queue runs inside run.
+// Queues a job of class. With a counter, wait(counter) returns after the job
+// ran. Without threads a job without counter runs before run returns. A job
+// whose worker has no room in its queue runs inside run.
 run :: proc{run_raw,run_typed}
 
-run_raw :: proc(js:^Job_System,worker:int,procedure:Job_Proc,data:rawptr,counter:^Counter=nil) {
+run_raw :: proc(js:^Job_System,worker:int,class:Class,procedure:Job_Proc,data:rawptr,counter:^Counter=nil) {
     w:=&js.workers[worker]
-    if counter==nil && len(js.workers)==1 {job_execute(js,w,{procedure,data,nil});return}
+    job:=Job{procedure=procedure,data=data,counter=counter,class=class}
+    if counter==nil && len(js.workers)==1 {job_execute(js,w,job);return}
     if counter!=nil {intrinsics.atomic_add(&counter.pending,1)}
-    job_push(js,w,{procedure,data,counter})
-    wake(js,1)
+    job_push(js,w,job)
+    wake(js,class,1)
 }
 
-run_typed :: proc(js:^Job_System,worker:int,procedure:proc(data:^$T,worker:int),data:^T,counter:^Counter=nil) {
-    run_raw(js,worker,cast(Job_Proc)procedure,data,counter)
+run_typed :: proc(js:^Job_System,worker:int,class:Class,procedure:proc(data:^$T,worker:int),data:^T,counter:^Counter=nil) {
+    run_raw(js,worker,class,cast(Job_Proc)procedure,data,counter)
 }
 
 // Whether some job of the counter has not finished, without waiting for it.
 pending :: proc "contextless" (counter:^Counter) -> bool {return intrinsics.atomic_load(&counter.pending)>0}
 
-// Returns when every job of the counter has finished. The caller runs queued
-// jobs, its own first, while it waits.
+// Returns when every job of the counter has finished. Meanwhile the caller
+// runs queued frame jobs, its own first; background ones only inside a
+// background job, or the last one it queued when it is of this counter (a
+// thread that waits for its own job does not leave it queued behind others).
 wait :: proc(js:^Job_System,worker:int,counter:^Counter) {
     w:=&js.workers[worker]
     spins:=0
     for intrinsics.atomic_load(&counter.pending)>0 {
-        if job,found:=work_find(js,w);found {job_execute(js,w,job);spins=0;continue}
+        if job,found:=work_find(js,w,counter);found {job_execute(js,w,job);spins=0;continue}
         assert(len(js.workers)>1,"jobs.wait: the counter has pending jobs that were never queued")
         spins+=1
         if spins<=SPIN_LIMIT {intrinsics.cpu_relax();continue}
@@ -216,7 +242,7 @@ wait :: proc(js:^Job_System,worker:int,counter:^Counter) {
         epoch:=intrinsics.atomic_load(&js.wake_epoch)
         intrinsics.atomic_add(&js.sleepers,1)
         intrinsics.atomic_add(&js.waiters,1)
-        if intrinsics.atomic_load(&counter.pending)>0 && !work_available(js) {
+        if intrinsics.atomic_load(&counter.pending)>0 && !work_available(js,w.background) {
             stat_add(&w.sleeps)
             sync.futex_wait(&js.wake_epoch,u32(epoch))
         }
@@ -228,21 +254,23 @@ wait :: proc(js:^Job_System,worker:int,counter:^Counter) {
 
 // Calls procedure over [0,count) split in ranges of grain elements: range k is
 // [k*grain,min((k+1)*grain,count)) whatever the number of workers. Returns
-// when every range has run. Ranges must not depend on each other.
+// when every range has run. Ranges must not depend on each other. Its helpers
+// are of the class of the caller: background inside a background job.
 parallel_for :: proc{parallel_for_raw,parallel_for_typed}
 
 parallel_for_raw :: proc(js:^Job_System,worker:int,count,grain:int,procedure:Range_Proc,data:rawptr) {
     if count<=0 {return}
     state:=Range_State{js=js,procedure=procedure,data=data,count=count,grain=max(grain,1)}
     w:=&js.workers[worker]
+    class:=Class.Background if w.background else .Frame
     ranges:=(count+state.grain-1)/state.grain
     helpers:=min(ranges,len(js.workers))-1
     queued:=0
     for _ in 0..<helpers {
         intrinsics.atomic_add(&state.counter.pending,1)
-        if deque_push(&w.deque,{range_help,&state,&state.counter}) {queued+=1} else {intrinsics.atomic_sub(&state.counter.pending,1);break}
+        if deque_push(&w.deques[class],{procedure=range_help,data=&state,counter=&state.counter}) {queued+=1} else {intrinsics.atomic_sub(&state.counter.pending,1);break}
     }
-    if queued>0 {wake(js,queued)}
+    if queued>0 {wake(js,class,queued)}
     range_work(&state,w)
     if queued>0 {wait(js,worker,&state.counter)}
 }
@@ -301,14 +329,14 @@ worker_main :: proc(t:^thread.Thread) {
     intrinsics.atomic_add(&js.started,1)
     spins:=0
     for {
-        if job,found:=work_find(js,w);found {job_execute(js,w,job);spins=0;continue}
+        if job,found:=work_find(js,w,nil);found {job_execute(js,w,job);spins=0;continue}
         if intrinsics.atomic_load(&js.quit) {break}
         spins+=1
         if spins<=SPIN_LIMIT {intrinsics.cpu_relax();continue}
         if spins<=SPIN_LIMIT+YIELD_LIMIT {thread.yield();continue}
         epoch:=intrinsics.atomic_load(&js.wake_epoch)
         intrinsics.atomic_add(&js.sleepers,1)
-        if !intrinsics.atomic_load(&js.quit) && !work_available(js) {
+        if !intrinsics.atomic_load(&js.quit) && !work_available(js,intrinsics.atomic_load(&js.background_running)<js.background_places) {
             stat_add(&w.sleeps)
             sync.futex_wait(&js.wake_epoch,u32(epoch))
         }
@@ -323,9 +351,13 @@ job_execute :: proc(js:^Job_System,w:^Worker,job:Job) {
     arena:=&runtime.global_default_temp_allocator_data.arena
     scope:=runtime.arena_temp_begin(arena)
     used:=arena.total_used
+    outer:=w.background
+    w.background=outer || job.class==.Background
     zone:=base.profile_begin(intrinsics.atomic_load_explicit(&js.profile,.Relaxed),w.index,"job")
     job.procedure(job.data,w.index)
     base.profile_end(zone)
+    w.background=outer
+    if job.reserved {intrinsics.atomic_sub(&js.background_running,1)}
     temp_note(w,arena,used)
     runtime.arena_temp_end(scope)
     stat_add(&w.executed)
@@ -338,36 +370,71 @@ job_execute :: proc(js:^Job_System,w:^Worker,job:Job) {
 
 @(private)
 job_push :: proc(js:^Job_System,w:^Worker,job:Job) {
-    if deque_push(&w.deque,job) {return}
+    if deque_push(&w.deques[job.class],job) {return}
     stat_add(&w.queue_full)
     job_execute(js,w,job)
 }
 
+// A background job wakes every sleeper: one signal could reach a thread that
+// may not take it.
 @(private)
-wake :: proc(js:^Job_System,count:int) {
+wake :: proc(js:^Job_System,class:Class,count:int) {
     if intrinsics.atomic_load(&js.sleepers)==0 {return}
     intrinsics.atomic_add(&js.wake_epoch,1)
-    if count==1 {sync.futex_signal(&js.wake_epoch)} else {sync.futex_broadcast(&js.wake_epoch)}
+    if count==1 && class==.Frame {sync.futex_signal(&js.wake_epoch)} else {sync.futex_broadcast(&js.wake_epoch)}
+}
+
+// A job w may take. An idle thread (awaited nil) takes a background job first
+// while it gets one of the background places, so frames that never stop do
+// not starve them; then frame jobs. A waiter takes background jobs only inside
+// a background job, when it is the only worker, or the last one it queued
+// when that one is of awaited.
+@(private)
+work_find :: proc(js:^Job_System,w:^Worker,awaited:^Counter) -> (job:Job,ok:bool) {
+    alone:=len(js.workers)==1
+    if awaited==nil && !alone {
+        if intrinsics.atomic_add(&js.background_running,1)<js.background_places {
+            if job,ok=class_find(js,w,.Background);ok {job.reserved=true;return}
+        }
+        intrinsics.atomic_sub(&js.background_running,1)
+    }
+    if job,ok=class_find(js,w,.Frame);ok {return}
+    if w.background || alone {return class_find(js,w,.Background)}
+    if awaited==nil {return}
+    if job,ok=own_pop(w,.Background);ok && job.counter!=awaited {
+        deque_push(&w.deques[.Background],job)
+        return {},false
+    }
+    return
 }
 
 @(private)
-work_find :: proc(js:^Job_System,w:^Worker) -> (job:Job,ok:bool) {
-    if job,ok=deque_pop(&w.deque);ok {return}
+class_find :: proc(js:^Job_System,w:^Worker,class:Class) -> (job:Job,ok:bool) {
+    if job,ok=own_pop(w,class);ok {return}
     others:=len(js.workers)-1
     if others==0 {return}
     w.random~=w.random<<13;w.random~=w.random>>17;w.random~=w.random<<5
     start:=int(w.random%u32(others))
     for i in 0..<others {
         victim:=(w.index+1+(start+i)%others)%len(js.workers)
-        if job,ok=deque_steal(&js.workers[victim].deque);ok {stat_add(&w.stolen);return}
+        if job,ok=deque_steal(&js.workers[victim].deques[class]);ok {job.class=class;stat_add(&w.stolen);return}
     }
     return
 }
 
 @(private)
-work_available :: proc(js:^Job_System) -> bool {
+own_pop :: proc "contextless" (w:^Worker,class:Class) -> (job:Job,ok:bool) {
+    job,ok=deque_pop(&w.deques[class])
+    job.class=class
+    return
+}
+
+@(private)
+work_available :: proc(js:^Job_System,background:bool) -> bool {
     for &w in js.workers {
-        if intrinsics.atomic_load(&w.deque.top)<intrinsics.atomic_load(&w.deque.bottom) {return true}
+        for &d,class in w.deques {
+            if (class==.Frame || background) && intrinsics.atomic_load(&d.top)<intrinsics.atomic_load(&d.bottom) {return true}
+        }
     }
     return false
 }
@@ -388,9 +455,9 @@ slot_store :: #force_inline proc "contextless" (slot:^Slot,job:Job) {
 @(private)
 slot_load :: #force_inline proc "contextless" (slot:^Slot) -> Job {
     return {
-        transmute(Job_Proc)intrinsics.atomic_load_explicit(&slot.procedure,.Relaxed),
-        rawptr(intrinsics.atomic_load_explicit(&slot.data,.Relaxed)),
-        cast(^Counter)rawptr(intrinsics.atomic_load_explicit(&slot.counter,.Relaxed)),
+        procedure=transmute(Job_Proc)intrinsics.atomic_load_explicit(&slot.procedure,.Relaxed),
+        data=rawptr(intrinsics.atomic_load_explicit(&slot.data,.Relaxed)),
+        counter=cast(^Counter)rawptr(intrinsics.atomic_load_explicit(&slot.counter,.Relaxed)),
     }
 }
 

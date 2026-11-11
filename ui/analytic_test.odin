@@ -5,7 +5,7 @@ import "core:testing"
 @(test)
 analytic_shapes_keep_their_curves_gradients_and_borders_in_six_vertices :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,{no_font=true}))
+    testing.expect(t,test_context_init(&ctx,{no_font=true}))
     defer context_destroy(&ctx)
     frame_begin(&ctx,test_input())
     draw_shape(&ctx,{8,8,48,48},{fill={255,0,0,255},fill2={0,0,255,255},gradient=.Vertical,radii={16,16,16,16},stroke={0,255,0,255},stroke_width=2})
@@ -26,7 +26,7 @@ analytic_shapes_keep_their_curves_gradients_and_borders_in_six_vertices :: proc(
 @(test)
 analytic_shadows_fade_outside_the_box_without_nested_rectangles :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,{no_font=true}))
+    testing.expect(t,test_context_init(&ctx,{no_font=true}))
     defer context_destroy(&ctx)
     frame_begin(&ctx,test_input())
     draw_blurred_shadow(&ctx,{24,16,32,32},6,4,{0,0},{255,255,255,255})
@@ -44,7 +44,7 @@ analytic_shadows_fade_outside_the_box_without_nested_rectangles :: proc(t:^testi
 @(test)
 composition_applies_opacity_once_to_overlapping_children :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,{no_font=true}))
+    testing.expect(t,test_context_init(&ctx,{no_font=true}))
     defer context_destroy(&ctx)
     frame_begin(&ctx,test_input())
     composition_begin(&ctx,{0,0,64,64},{enabled=true,opacity=0.5})
@@ -65,7 +65,7 @@ composition_applies_opacity_once_to_overlapping_children :: proc(t:^testing.T) {
 @(test)
 nested_composition_masks_all_children_to_the_rounded_group :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,{no_font=true}))
+    testing.expect(t,test_context_init(&ctx,{no_font=true}))
     defer context_destroy(&ctx)
     frame_begin(&ctx,test_input())
     composition_begin(&ctx,{4,4,56,56},{enabled=true,opacity=1,radius=16})
@@ -87,7 +87,7 @@ nested_composition_masks_all_children_to_the_rounded_group :: proc(t:^testing.T)
 @(test)
 composition_backdrop_blurs_the_parent_and_preserves_pixels_outside_its_mask :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,{no_font=true}))
+    testing.expect(t,test_context_init(&ctx,{no_font=true}))
     defer context_destroy(&ctx)
     frame_begin(&ctx,test_input())
     for x in 0..<16 {draw_rect(&ctx,{f32(x*4),0,4,64},x%2==0 ? Color{255,0,0,255} : Color{0,0,255,255})}
@@ -106,7 +106,7 @@ composition_backdrop_blurs_the_parent_and_preserves_pixels_outside_its_mask :: p
 @(test)
 an_arc_is_one_analytic_shape_cut_from_the_top_clockwise :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,{no_font=true}))
+    testing.expect(t,test_context_init(&ctx,{no_font=true}))
     defer context_destroy(&ctx)
     frame_begin(&ctx,test_input())
     draw_arc(&ctx,{32,32},20,8,0.25,{255,200,0,255})

@@ -16,7 +16,7 @@ Interaction :: struct {
     focused:bool,
     pressed:bool,  // the left button went down on it this frame
     released:bool, // the left button it held came up this frame
-    clicked:bool,  // activated: by the pointer (on press or on release, as the theme says) or by navigation
+    clicked:bool,  // activated: by the pointer (on press, or on release with Context.release_activates) or by navigation
     double:bool,   // pressed with the second click of a double click
     right:bool,    // the right button went down on it this frame
 }
@@ -114,14 +114,14 @@ input_frame_end :: proc(ctx:^Context) {
 // A ring around the widget navigation is on, over everything else.
 @(private)
 focus_ring_draw :: proc(ctx:^Context,effect:u16=0) {
-    if ctx.focus==0 || !ctx.focus_ring || ctx.theme.focus[3]==0 {return}
+    if ctx.focus==0 || !ctx.focus_ring || tone(ctx,"focus")[3]==0 {return}
     for &w in ctx.widgets[:ctx.widget_count] {
         if w.id!=ctx.focus || .Passive in w.flags || .Disabled in w.flags || w.effect_clip!=effect || w.area.w<=0 || w.area.h<=0 {continue}
         visible:=true
         for index:=w.effect_clip;index!=0;index=ctx.effects[index].parent {e:=&ctx.effects[index];if e.opacity<=0 || e.suppressed {visible=false;break}}
         if !visible {continue}
         paint_select(ctx,w.surface,w.scope)
-        draw_rounded_stroke(ctx,{w.rect.x-2,w.rect.y-2,w.rect.w+4,w.rect.h+4},ctx.theme.radius_control+2,2,ctx.theme.focus)
+        draw_rounded_stroke(ctx,{w.rect.x-2,w.rect.y-2,w.rect.w+4,w.rect.h+4},metric(ctx,"radius_control")+2,2,tone(ctx,"focus"))
         return
     }
 }
@@ -150,7 +150,7 @@ interact :: proc(ctx:^Context,id:Id,flags:Widget_Flags={}) -> (it:Interaction) {
     }
     if it.hot && .Right in ctx.input.pressed && !ctx.right_press_used {it.right=true;ctx.right_press_used=true}
     it.focused=ctx.focus==id
-    it.clicked=it.pressed if ctx.theme.activate_on_press else it.released&&it.hot
+    it.clicked=it.released&&it.hot if ctx.release_activates else it.pressed
     if ctx.activate==id && ctx.activate!=0 {it.clicked=true}
     return
 }

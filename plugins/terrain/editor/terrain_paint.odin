@@ -9,6 +9,7 @@ import "mirai:editor"
 import "mirai:host"
 import terrain "plugins:terrain/runtime"
 import "mirai:std/base"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 @(private)
@@ -21,7 +22,7 @@ tool_holing :: proc "contextless" (t:^Terrain_Tool) -> bool {return t.brush==.Ho
 terrain_holes_panel :: proc(s:^editor.Session,tool:^Terrain_Tool) {
     ctx:=s.gui.ctx
     selected:=-1 if editor.tool_aside(s,"terrain") else 1 if tool.brush==.Fill else 0
-    if ui.tabs(ctx,ui.id(ctx,"holes"),{"Hole","Fill"},&selected) {tool.brush=selected==1?.Fill:.Hole;editor.tool_take(s,"terrain")}
+    if kit.tabs(ctx,ui.id(ctx,"holes"),{"Hole","Fill"},&selected) {tool.brush=selected==1?.Fill:.Hole;editor.tool_take(s,"terrain")}
     brush_fields(s,tool,false,false,true)
     slope_fields(s,tool)
 }
@@ -48,15 +49,15 @@ terrain_paint_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Worl
     layer:=source.layers[tool.layer]
     if layer_fields(s,tool,&layer) {terrain_layer_commit(s,tool,world,assets,tool.layer,layer,false)}
     if source.kind==.Volume {terrain_interior_panel(s,tool,world,assets)}
-    ui.section(ctx,"Brush","",80)
+    kit.section(ctx,"Brush","",80)
     selected:=-1 if editor.tool_aside(s,"terrain") else 1 if tool.brush==.Erase else 0
-    if ui.tabs(ctx,ui.id(ctx,"paint"),{"Paint","Erase"},&selected) {tool.brush=selected==1?.Erase:.Paint;editor.tool_take(s,"terrain")}
+    if kit.tabs(ctx,ui.id(ctx,"paint"),{"Paint","Erase"},&selected) {tool.brush=selected==1?.Erase:.Paint;editor.tool_take(s,"terrain")}
     brush_fields(s,tool,true,true,true)
     if tool.brush==.Paint {
-        if ui.property(ctx,"Up to a weight") {ui.checkbox(ctx,ui.id(ctx,"toward"),&tool.toward)}
+        if kit.property(ctx,"Up to a weight") {ui.checkbox(ctx,ui.id(ctx,"toward"),&tool.toward)}
         if tool.toward {
             percent:=f64(tool.target)*100
-            if ui.property(ctx,"Weight") {if ui.number_field(ctx,ui.id(ctx,"target"),&percent,{width=ui.fixed(FIELD_WIDTH),min=0,max=100,has_min=true,has_max=true,speed=0.5,decimals=0,unit="%"}).changed {tool.target=f32(percent/100)}}
+            if kit.property(ctx,"Weight") {if ui.number_field(ctx,ui.id(ctx,"target"),&percent,{width=ui.fixed(FIELD_WIDTH),min=0,max=100,has_min=true,has_max=true,speed=0.5,decimals=0,unit="%"}).changed {tool.target=f32(percent/100)}}
         }
     }
     if tool.stroke.source.kind==.Heightfield {slope_fields(s,tool)}
@@ -66,12 +67,11 @@ terrain_paint_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.Worl
 // the buttons that add one and take the chosen one out, while another stays.
 @(private)
 layers_heading :: proc(ctx:^ui.Context,count:int) -> (add,remove:bool) {
-    th:=&ctx.theme
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(22),gap=8,align_y=.End}) {
-        ui.label(ctx,"Layers",th.font_label,th.text_faint)
+        ui.label(ctx,"Layers",ui.metric(ctx,"font_label"),ui.tone(ctx,"text_faint"))
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(9),align_y=.Center}) {ui.divider(ctx)}
         note:=fmt.tprintf("%d of %d",count,terrain.LAYERS_MAX)
-        ui.label(ctx,note,th.font_label,th.text_muted,ui.text_width(&ctx.font,note,th.font_label)+1)
+        ui.label(ctx,note,ui.metric(ctx,"font_label"),ui.tone(ctx,"text_muted"),ui.text_width(&ctx.font,note,ui.metric(ctx,"font_label"))+1)
         add=ui.icon_button(ctx,ui.id(ctx,"add_layer"),.Plus,18,disabled=count>=terrain.LAYERS_MAX).clicked
         remove=ui.icon_button(ctx,ui.id(ctx,"remove_layer"),.Cross,18,disabled=count<=1).clicked
     }
@@ -106,31 +106,31 @@ layer_fields :: proc(s:^editor.Session,tool:^Terrain_Tool,layer:^terrain.Terrain
     settled :: proc(result:ui.Number_Result) -> bool {return result.ended && !result.cancelled || result.changed && !result.scrubbing && !result.editing}
     if material,picked:=material_field(s,u64(0x100+tool.layer),"Material",layer.material);picked {layer.material=material;changed=true}
     tiling,blend:=f64(layer.tiling),f64(layer.height_blend)
-    if ui.property(ctx,"Tiling") {
+    if kit.property(ctx,"Tiling") {
         result:=ui.number_field(ctx,ui.id(ctx,"tiling"),&tiling,{min=0.01,max=10000,has_min=true,has_max=true,speed=0.05,unit="m"})
         if result.changed {layer.tiling=f32(tiling)}
         changed|=settled(result)
     }
-    if ui.property(ctx,"Height blend") {
+    if kit.property(ctx,"Height blend") {
         result:=ui.number_field(ctx,ui.id(ctx,"blend"),&blend,{min=0,max=1,has_min=true,has_max=true,speed=0.01})
         if result.changed {layer.height_blend=f32(blend)}
         changed|=settled(result)
     }
     if tool.stroke.source.kind==.Heightfield {
-        if ui.property(ctx,"Displacement") {
+        if kit.property(ctx,"Displacement") {
             displacement:=f64(layer.displacement)
             result:=ui.number_field(ctx,ui.id(ctx,"displacement"),&displacement,{min=0,max=f64(terrain.DISPLACEMENT_MAX),has_min=true,has_max=true,speed=0.005,decimals=2,unit="m"})
             if result.changed {layer.displacement=f32(displacement)}
             changed|=settled(result)
         }
     }
-    if ui.property(ctx,"Automatic") {if ui.checkbox(ctx,ui.id(ctx,"auto"),&layer.auto.enabled) {changed=true}}
+    if kit.property(ctx,"Automatic") {if ui.checkbox(ctx,ui.id(ctx,"auto"),&layer.auto.enabled) {changed=true}}
     if !layer.auto.enabled {return}
     numbers:=[6]f64{f64(layer.auto.slope.x)*180/math.PI,f64(layer.auto.slope.y)*180/math.PI,f64(layer.auto.height.x),f64(layer.auto.height.y),f64(layer.auto.softness.x)*180/math.PI,f64(layer.auto.softness.y)}
     labels:=[6]string{"Slope from","Slope to","Height from","Height to","Slope softness","Height softness"}
     for label,i in labels {
         angle:=i==0 || i==1 || i==4
-        if !ui.property(ctx,label) {continue}
+        if !kit.property(ctx,label) {continue}
         low,high:=f64(0),f64(90)
         if !angle {low,high=f64(-terrain.HEIGHT_LIMIT),f64(terrain.HEIGHT_LIMIT)}
         if i==5 {low=0}
@@ -171,12 +171,12 @@ terrain_interior_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.W
     stroke:=&tool.stroke
     of:=Interior_Of{stroke.id,stroke.revision}
     if tool.interior_of!=of {tool.interior,tool.interior_of=stroke.source.interior,of}
-    ui.section(ctx,"Interior","",80)
+    kit.section(ctx,"Interior","",80)
     defaults:terrain.Interior
     held:=editor.Held_Values{key=u64(PANEL_SCOPE)<<32|0x300,info=type_info_of(terrain.Interior),value=&tool.interior,defaults=&defaults}
     for name in ([?]string{"strata_count","strata","vein_count","veins","wave","wave_scale","seed"}) {editor.held_field_row(s,held,name)}
     valid:=terrain.interior_valid(tool.interior,stroke.source.layer_count)
-    if ui.button(ctx,ui.id(ctx,"interior_apply"),{label="Apply",style=.Field,width=-1,center=true,disabled=!valid}).clicked {
+    if ui.button(ctx,ui.id(ctx,"interior_apply"),{label="Apply",variant="field",width=-1,center=true,disabled=!valid}).clicked {
         if !terrain_interior_commit(s,tool,world,assets,tool.interior) {return}
         tool.interior_of={stroke.id,stroke.revision}
     }
