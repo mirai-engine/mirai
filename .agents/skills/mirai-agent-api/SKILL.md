@@ -20,8 +20,8 @@ difference with the catalog, it rules.
 - Connecting a client, limits, errors, MCP: [the server](references/api.md#the-server),
   [method conventions](references/api.md#method-conventions) and
   [MCP over HTTP](references/api.md#mcp-over-http).
-- Calling from the terminal: [`mirai rpc`](references/api.md#mirai-rpc) (also `--batch`, many
-  calls as one `batch`, whose calls can name the results of earlier ones) and
+- Calling from the terminal: [`mirai rpc`](references/api.md#mirai-rpc) (`mirai rpc batch --file`: many
+  calls as one request, whose calls can name the results of earlier ones) and
   [`mirai mcp`](references/api.md#mirai-mcp); reading only some fields or waiting for a state
   without `sleep` loops: [`--select` and `--wait-until`](references/api.md#fields-and-waits); the
   params and result of a method, with an example, and the methods of a plugin:

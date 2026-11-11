@@ -66,5 +66,5 @@ $P scene.write '{"merge":true,"entities":[{"name":"Sea","position":[0,-1,0],"com
 $P scene.save '{}'
 ```
 
-Hills and trees in one `--batch` file: [whole-scene.md](assets/whole-scene.md). A moving platform
+Hills and trees in one `batch` file: [whole-scene.md](assets/whole-scene.md). A moving platform
 or a zone: [platforms-triggers.md](character/platforms-triggers.md).

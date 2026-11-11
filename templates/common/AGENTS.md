@@ -23,7 +23,7 @@ This is a Mirai game project.
 - A route or a chase is a scenario with the drive step of `play.step` (it steers the player to a
   point), never a bot script around `mirai rpc`.
 - Few turns: every turn pays for the whole context. Plan the change, make it in one edit, run
-  `mirai rpc --batch` for several calls, and verify once.
+  `mirai rpc batch --file` for several calls, and verify once.
 - While looking at state, read only what you need with `play.get` and `--select`.
 - Give `capture` a `path`: it answers only where the image is.
 
