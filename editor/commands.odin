@@ -562,6 +562,8 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="open",view=file_open,label="Open...",icon=user(.Scene),shortcut=key(.O,{.Primary}),menu=.File,group=0,modes=edit},
         {name="projects",view=projects_show,label="Open project...",icon=user(.Folder),menu=.File,group=0,modes=edit,state=state_projects},
         {name="keep_file",view=proc(s:^Session) {dialog_new(s,true)},label="Keep in a file...",icon=user(.Save),menu=.File,group=1,modes=edit,scene=true,state=state_keep_file},
+        {name="keep",view=proc(s:^Session) {if message:=git_keep_front(s);message!="" {notify(s,message)}},label="Keep",icon=.Check,shortcut=key(.S,{.Primary}),menu=.File,group=1,modes=edit},
+        {name="keep_all",method="git.keep",label="Keep all",icon=.Check,shortcut=key(.S,{.Primary,.Shift}),menu=.File,group=1,modes=edit},
         {name="make_prefab",method="scene.write",params=`{"kind":"Prefab","entities":[]}`,label="Make prefab",icon=.Prefab,menu=.File,group=1,modes=edit,scene=true},
         {name="make_scene",method="scene.write",params=`{"kind":"Scene","entities":[]}`,label="Make scene",icon=user(.Scene),menu=.File,group=1,modes=edit,scene=true},
         {name="import",view=import_ask,label="Import...",icon=.Import,menu=.File,group=2,modes=edit},

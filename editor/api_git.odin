@@ -54,9 +54,10 @@ Api_Git_Status :: struct {
     history:[]Api_Git_Commit `mirai:"label=The last commits"`,
 }
 Api_Git_Change :: struct {
-    path:string `mirai:"label=From the root of the repository; git.discard takes it"`,
+    path:string `mirai:"label=From the root of the repository; git.keep, git.unkeep and git.discard take it"`,
     status:string `mirai:"label=M changed; A added; D removed; U in conflict"`,
-    included:bool `mirai:"label=Whether the next commit takes it"`,
+    pending:bool `mirai:"label=Whether the file has what is not kept yet: git.keep keeps it and git.discard puts back what is kept"`,
+    kept:bool `mirai:"label=Whether the next commit takes it as it was kept"`,
 }
 Api_Git_Commit :: struct {
     hash:string,
@@ -97,14 +98,16 @@ git_api_register :: proc(s:^Session,st:^Api_State) {
     commit:Api_Git_Commit_Params
     api_register(s,st,{name="git.status",summary="The repository of the project as the Git tab shows it: branch, remote, changed files, last commits and the operation that runs. Reading it refreshes it.",result=type_info_of(Api_Git_Status),flags={.Read_Only},run=api_git_status})
     api_register(s,st,{name="git.init",summary="Makes the project a repository whose assets merge entity by entity with Mirai, with Git LFS for heavy binaries when asked.",params=type_info_of(Api_Git_Init_Params),result=type_info_of(Api_Git_Done),defaults=&init,run=api_git_init})
-    api_register(s,st,{name="git.commit",summary="Commits the included changes of the project and pushes them when asked.",params=type_info_of(Api_Git_Commit_Params),result=type_info_of(Api_Git_Done),defaults=&commit,run=api_git_commit})
+    api_register(s,st,{name="git.commit",summary="Commits what is kept of the project, or every change when nothing is kept, and pushes when asked.",params=type_info_of(Api_Git_Commit_Params),result=type_info_of(Api_Git_Done),defaults=&commit,run=api_git_commit})
     api_register(s,st,{name="git.push",summary="Pushes the commits of the branch to origin, setting its upstream the first time.",result=type_info_of(Api_Git_Done),run=api_git_push})
     api_register(s,st,{name="git.pull",summary="Merges origin into the branch, assets entity by entity; what both sides changed leaves a merge with conflicts. Needs every change committed.",result=type_info_of(Api_Git_Done),run=api_git_pull})
     api_register(s,st,{name="git.conflicts",summary="The items of a merge that waits (an entity of a scene or a whole file) with their conflicts. Every conflict takes theirs until chosen.",result=type_info_of(Api_Git_Conflicts),flags={.Read_Only},run=api_git_conflicts})
     api_register(s,st,{name="git.choose",summary="Chooses the side of a conflict or the version of a file merged whole; its item waits to be accepted again.",params=type_info_of(Api_Git_Choose_Params),result=type_info_of(Api_Git_Chosen),run=api_git_choose})
     api_register(s,st,{name="git.accept",summary="Accepts an item as chosen, or every item; with reject, keeps ours for its conflicts.",params=type_info_of(Api_Git_Accept_Params),result=type_info_of(Api_Git_Accept_Result),run=api_git_accept})
     api_register(s,st,{name="git.finish",summary="Once every item is accepted: writes each file as chosen and commits the merge.",result=type_info_of(Api_Git_Done),run=api_git_finish})
-    api_register(s,st,{name="git.discard",summary="Puts a changed file, or every change, back as the last commit has it; an untracked file goes to the trash. Refused in a merge.",params=type_info_of(Api_Git_Discard_Params),result=type_info_of(Api_Git_Done),flags={.Destructive},run=api_git_discard})
+    api_register(s,st,{name="git.keep",summary="Keeps the changes of some files, or of every one: the next commit takes them as they are now, and what changes after is pending again.",params=type_info_of(Api_Git_Paths_Params),result=type_info_of(Api_Git_Done),run=api_git_keep})
+    api_register(s,st,{name="git.unkeep",summary="Takes the changes of some files, or of every one, out of what is kept: they are pending again, and the files stay as they are.",params=type_info_of(Api_Git_Paths_Params),result=type_info_of(Api_Git_Done),run=api_git_unkeep})
+    api_register(s,st,{name="git.discard",summary="Puts some pending files, or every one, back as they were kept (as the last commit has them when nothing of them was kept); a file git does not track goes to the trash. Refused in a merge.",params=type_info_of(Api_Git_Paths_Params),result=type_info_of(Api_Git_Done),flags={.Destructive},run=api_git_discard})
     api_register(s,st,{name="git.abort",summary="Leaves a merge with conflicts: the files go back to the commit before the pull.",result=type_info_of(Api_Git_Done),flags={.Destructive},run=api_git_abort})
 }
 
@@ -124,7 +127,7 @@ api_git_ended :: proc(s:^Session,call:^api.Call,message:string) {
 api_git_status :: proc(s:^Session,call:^api.Call) {
     g:=s.git
     if !git.busy(g) && (!g.checked || platform.clock_seconds()-g.refreshed>1) {git_refresh(s)}
-    operations:=[git.Operation]string{.None="",.Check="check",.Refresh="refresh",.Init="init",.Commit="commit",.Commit_Push="commit",.Push="push",.Pull="pull",.Abort="abort",.Finish="finish",.Load="load",.Fetch="fetch",.Discard="discard"}
+    operations:=[git.Operation]string{.None="",.Check="check",.Refresh="refresh",.Init="init",.Commit="commit",.Commit_Push="commit",.Push="push",.Pull="pull",.Abort="abort",.Finish="finish",.Load="load",.Fetch="fetch",.Keep="keep",.Unkeep="unkeep",.Discard="discard"}
     r:=api.call_result(call,Api_Git_Status)
     r^={
         available=g.available,checked=g.checked,repository=g.repository,busy=operations[g.operation],
@@ -133,7 +136,7 @@ api_git_status :: proc(s:^Session,call:^api.Call) {
         changes=make([]Api_Git_Change,len(g.changes),call.allocator),history=make([]Api_Git_Commit,len(g.history),call.allocator),
     }
     for &change,i in g.changes {
-        r.changes[i]={git.change_path(g,&change),strings.clone_from_bytes({change.status},call.allocator),!change.left_out}
+        r.changes[i]={git.change_path(g,&change),strings.clone_from_bytes({change.status},call.allocator),change.pending,change.kept}
     }
     for &commit,i in g.history {
         r.history[i]={base.text_get(commit.hash[:]),base.text_get(commit.author[:]),base.text_get(commit.age[:]),base.text_get(commit.subject[:])}
@@ -166,16 +169,16 @@ api_git_pull :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git_pull(s
 @(private)
 api_git_abort :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git.abort(s.git,git_roots(s)))}
 
-Api_Git_Discard_Params :: struct {
-    path:[git.PATH_BYTES]u8 `mirai:"text,optional,label=The file to put back from the root of the repository as git.status lists it; every change without it"`,
+Api_Git_Paths_Params :: struct {
+    paths:[]string `mirai:"optional,label=Files from the root of the repository as git.status lists them; none: every change under the project"`,
 }
 
 @(private)
-api_git_discard :: proc(s:^Session,call:^api.Call) {
-    path:=base.text_get(api.call_params(call,Api_Git_Discard_Params).path[:])
-    paths:=[1]string{path}
-    api_git_ended(s,call,git_discard(s,path!=""?paths[:]:nil))
-}
+api_git_keep :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git_changes_run(s,.Keep,api.call_params(call,Api_Git_Paths_Params).paths))}
+@(private)
+api_git_unkeep :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git_changes_run(s,.Unkeep,api.call_params(call,Api_Git_Paths_Params).paths))}
+@(private)
+api_git_discard :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git_changes_run(s,.Discard,api.call_params(call,Api_Git_Paths_Params).paths))}
 
 @(private)
 api_git_conflicts :: proc(s:^Session,call:^api.Call) {

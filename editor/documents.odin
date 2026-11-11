@@ -217,9 +217,11 @@ document_close_active :: proc(s:^Session) {
 }
 
 // The editor ends, and the editor of the project asked for next starts;
-// while agents work it asks first.
-documents_quit :: proc(s:^Session,asked:=false) {
-    if !asked && ai_working_count(s)>0 {confirm_open(s,.Quit);return}
+// while agents work it asks first, and then about the pending changes, which
+// it keeps or discards before it ends.
+documents_quit :: proc(s:^Session,agents_asked:=false,pending_asked:=false) {
+    if !agents_asked && ai_working_count(s)>0 {confirm_open(s,.Quit);return}
+    if !pending_asked && git_quit_ask(s) {return}
     if projects_next_start(s) {s.quit=true}
 }
 
@@ -228,7 +230,7 @@ documents_quit :: proc(s:^Session,asked:=false) {
 Strip_Tab :: struct {
     label:string,
     icon:ui.Icon,
-    active:bool,
+    pending,active:bool, // pending: its file has what is not kept
     asset:int, // the index of its asset document; -1 for a scene
 }
 
@@ -243,12 +245,17 @@ strip_tab :: proc(s:^Session,index:int) -> (tab:Strip_Tab) {
         d:=&s.asset_documents[tab.asset]
         tab.label,tab.icon=asset_document_title(s,d),asset_document_icon(s,d)
         tab.active=s.asset_shown==tab.asset+1
+        if path:=asset_document_path(s,d);path!="" {
+            if r:=files_registry(s);r!=nil && !asset.registry_outside(path) {path=asset.registry_file_path(r,path,context.temp_allocator)}
+            tab.pending=git_pending(s,path)
+        }
         return
     }
     tab.asset=-1
     d:=s.document
     if index!=s.active_document && index<len(s.documents) {d=&s.documents[index].document}
     tab.label=document_title(d)
+    tab.pending=git_pending(s,document_file(d))
     tab.icon=d.prefab?.Prefab:.Scene
     tab.active=index==s.active_document && !scene_covered(s)
     return
@@ -257,6 +264,7 @@ strip_tab :: proc(s:^Session,index:int) -> (tab:Strip_Tab) {
 @(private)
 document_tab_width :: proc(s:^Session,tab:Strip_Tab,room:f32) -> f32 {
     width:=ui.text_width(&s.gui.ctx.font,tab.label,ui.metric(s.gui.ctx,"font"))+54
+    if tab.pending {width+=ui.text_width(&s.gui.ctx.font," •",ui.metric(s.gui.ctx,"font"))}
     return clamp(width,90,max(room,90))
 }
 
@@ -308,6 +316,7 @@ documents_build :: proc(s:^Session) {
                 tab:=strip_tab(s,index)
                 active:=tab.active
                 label:=tab.label
+                if tab.pending {label=ui.text_commit(ctx,fmt.bprintf(ui.text_reserve(ctx,len(label)+4),"%s •",label))}
                 width:=document_tab_width(s,tab,room)
                 tab_id:=shell_id(g,"document_tab",index+1)
                 close_id:=shell_id(g,"document_close",index+1)

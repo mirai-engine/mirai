@@ -51,7 +51,7 @@ DOCUMENT_LIBRARY_TABS :: [Document_Type]Library_Tabs{
     .Asset={.Content,.Ai,.Git},
 }
 Bottom_Tab :: enum u8 {Console,Build}
-Modal :: enum u8 {None,Confirm,Shortcuts,Settings,Delete_Asset,Git_Discard}
+Modal :: enum u8 {None,Confirm,Shortcuts,Settings,Delete_Asset,Git_Discard,Pending,No_Repository}
 
 Splitter :: enum u8 {None,Bottom,Right}
 
@@ -1545,6 +1545,8 @@ modal_build :: proc(s:^Session) {
     case .Settings: settings_modal(s)
     case .Delete_Asset: asset_delete_modal(s)
     case .Git_Discard:  git_discard_modal(s)
+    case .Pending:      git_pending_modal(s)
+    case .No_Repository: git_missing_modal(s)
     }
 }
 

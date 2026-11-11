@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strings"
 import "mirai:asset"
 import "mirai:editor/history"
+import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -164,10 +165,22 @@ collab_files_send :: proc(s:^Session,st:^Collab_State) {
 collab_files_join :: proc(s:^Session,st:^Collab_State,peer:^Collab_Peer) {
     r:=files_registry(s)
     if r==nil {return}
+    send :: proc(s:^Session,st:^Collab_State,peer:^Collab_Peer,relative:string) {
+        if len(relative)==0 || relative[0]=='.' {return}
+        payload,size,ok:=collab_file_payload(s,st,relative)
+        if ok {collab_queue(peer,payload)} else if size>COLLAB_FILE_BYTES {collab_unsent_add(s,st,relative,int(st.self),size)}
+    }
     for &held in r.memory {
-        if asset.registry_outside(held.path) || len(held.path)==0 || held.path[0]=='.' {continue}
-        payload,size,ok:=collab_file_payload(s,st,held.path)
-        if ok {collab_queue(peer,payload)} else if size>COLLAB_FILE_BYTES {collab_unsent_add(s,st,held.path,int(st.self),size)}
+        if !asset.registry_outside(held.path) {send(s,st,peer,held.path)}
+    }
+    // What the host changed since its last commit, which the checkout of the guest lacks.
+    if g:=s.git;g!=nil {
+        root:=base.text_get(g.root[:])
+        for &change in g.changes {
+            file:=project.path(root,base.text_get(change.path[:]),allocator=context.temp_allocator)
+            relative,inside:=asset.registry_relative(r,file)
+            if _,held:=asset.registry_memory_find(r,relative);inside && !held {send(s,st,peer,relative)}
+        }
     }
     for &unsent in st.unsent[:st.unsent_count] {collab_unsent_tell(st,&unsent,peer)}
 }

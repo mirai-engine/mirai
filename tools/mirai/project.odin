@@ -69,7 +69,18 @@ cmd_new :: proc(root:string,args:[]string) -> int {
     case .Copy_Failed:      fmt.eprintfln("mirai new: could not write to %s",folder);return 1
     case .Manifest_Failed:  fmt.eprintfln("mirai new: the name does not fit in %s (up to %d bytes)",project.PROJECT_FILE,len(project.Name)-1);return 1
     }
-    fmt.printfln("Project created in %s.",project.path_absolute(folder))
+    absolute:=project.path_absolute(folder)
+    fmt.printfln("Project created in %s.",absolute)
+    // The editor keeps the changes of a project with git: one in no repository becomes its own.
+    if _,repository,_:=build.git_wiring(root,absolute);repository=="" {
+        ignore:=project.path(absolute,".gitignore",allocator=context.temp_allocator)
+        if !os.exists(ignore) {_=serial.file_write_atomic(ignore,transmute([]u8)string(".mirai/\n"))}
+        if run(root,{"git","-C",absolute,"init","--quiet","-b","main"})!=0 {
+            fmt.eprintfln("mirai new: git did not make %s a repository, which the editor needs: install git, run `git init` there and `mirai setup git %s`",absolute,folder)
+            return 1
+        }
+        return setup_git(root,{absolute})
+    }
     return 0
 }
 

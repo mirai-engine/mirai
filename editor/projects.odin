@@ -95,7 +95,7 @@ Projects :: struct {
     templates:[PROJECTS_TEMPLATES][32]u8,
     template_count:int,
     template:int,
-    git,lfs:bool,
+    lfs:bool,
     remote:[256]u8,
     remote_length:int,
     plugins:[PROJECTS_PLUGINS]Projects_Plugin, // of the engine and the template the new project can get
@@ -506,7 +506,7 @@ projects_create :: proc(s:^Session) -> string {
     for i in 0..<p.link_count {
         if p.links_on[i] {append(&steps,install.Step{kind=.Add,text=base.text_get(p.links[i][:])})}
     }
-    return projects_open(s,folder,p.git,steps[:])
+    return projects_open(s,folder,true,steps[:])
 }
 
 // Fills the form of a new project; template: the one chosen, or the default when negative.
@@ -515,7 +515,7 @@ projects_new_start :: proc(s:^Session,template:int) {
     p:=s.projects
     p.creating=true
     p.name_length=copy(p.name[:],"new_project")
-    p.git,p.lfs,p.remote_length,p.template=true,true,0,0
+    p.lfs,p.remote_length,p.template=true,0,0
     p.picked,p.link_count,p.plugins_scroll={},0,0
     for i in 0..<p.template_count {
         if base.text_get(p.templates[i][:])==build.TEMPLATE_DEFAULT {p.template=i}
@@ -914,12 +914,9 @@ projects_new_build :: proc(s:^Session) {
                 }
             }
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=10,padding={14,12,14,12},fill=ui.tone(ctx,"well"),stroke=ui.tone(ctx,"divider"),stroke_width=1,radius=ui.metric(ctx,"radius_panel")}) {
-                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(20),gap=8,align_y=.Center}) {
-                    ui.checkbox(ctx,ui.id(ctx,"new_project_git"),&p.git)
-                    ui.label(ctx,"Initialize Git repository",ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
-                }
-                if p.git {
-                    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=10,padding={24,0,0,0}}) {
+                ui.label(ctx,"Git repository",ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
+                {
+                    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=10}) {
                         if kit.property(ctx,"Remote",30) {
                             ui.text_field(ctx,ui.id(ctx,"new_project_remote"),p.remote[:],&p.remote_length,{placeholder="https://github.com/user/repo.git",live=true,height=30,size=ui.metric(ctx,"font")})
                         }
