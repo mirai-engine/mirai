@@ -435,7 +435,7 @@ state_put :: proc(states:^core.Table(Audio_Source_State),e:core.Entity,state:Aud
 // over about REVERB_FADE.
 @(step="late",stage="end",after="camera_view")
 audio_reverb :: proc(
-    reverbs:^core.Table(Audio_Reverb,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),listeners:^core.Table(Audio_Listener,.Read),
+    reverbs:^core.Table(Audio_Reverb,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),listeners:^core.Table(Audio_Listener,.Read),
     view:core.Ref(core.View),settings:core.Ref(Audio_Settings),medium:core.Ref(Audio_Medium),frame:core.Frame_Time,reverb:^Mixer_Reverb,m:^Mixer,
 ) {
     if m==nil || reverb==nil {return}
@@ -443,7 +443,7 @@ audio_reverb :: proc(
     if settings.ptr!=nil {bus=settings.reverb_bus}
     hearing:=Hearing{worlds=worlds,listeners=listeners,view=view}
     room,silent:Audio_Reverb
-    if position,_,_,found:=listener_pose(&hearing);found {room=volume.at({volumes,worlds,parents,sections},reverbs,position,silent,reverb_mix)}
+    if position,_,_,found:=listener_pose(&hearing);found {room=volume.at({volumes,worlds,parents,sections,splines},reverbs,position,silent,reverb_mix)}
     target:=(^Reverb)(&room)^
     if medium.ptr!=nil {
         if weight:=clamp(medium.weight,0,1);weight>0 {

@@ -153,9 +153,9 @@ wind_set_free :: proc(renderer:^render.Renderer,set:^Wind_Set) {
 // sway with the wind at the first streaming source. The benders nearest that
 // source go to the hook too.
 @(step="render",loops="game editor")
-foliage_wind :: proc(resident:^Foliage_Resident,winds:^core.Table(volume.Wind,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),sources:core.Ref(scene.Streaming_Sources),benders:^core.Table(Foliage_Bender,.Read),frame:core.Frame_Time,renderer:^render.Renderer) {
+foliage_wind :: proc(resident:^Foliage_Resident,winds:^core.Table(volume.Wind,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),sources:core.Ref(scene.Streaming_Sources),benders:^core.Table(Foliage_Bender,.Read),frame:core.Frame_Time,renderer:^render.Renderer) {
     if resident==nil || len(resident.owners)==0 {return}
-    zones:=volume.Where{volumes,worlds,parents,sections}
+    zones:=volume.Where{volumes,worlds,parents,sections,splines}
     resident.wind=volume.gpu_wind(winds,zones)
     at:=[3]f32{}
     if sources.ptr!=nil && sources.ptr.count>0 {at=sources.ptr.items[0].position} else if len(resident.owners)>0 {at=resident.owners[0].transform.position}

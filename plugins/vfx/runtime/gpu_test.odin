@@ -1610,7 +1610,7 @@ particle_sprites_go_behind_the_fog_of_the_view :: proc(t: ^testing.T) {
 			front.spawns = behind.spawns
 			testing.expect(t, frame_emitters(f, &f.sync, {behind, front}, DT))
 			if foggy == 1 {fog.medium_add(&media, medium)}
-			fog.fog_render(&state, core.read(&volumes), core.read(&places), &media, core.read(&worlds), core.read(&hidden), core.read(&parents), {}, core.ref(&settings_fog), &f.app, nil)
+			fog.fog_render(&state, core.read(&volumes), core.read(&places), &media, core.read(&worlds), core.read(&hidden), core.read(&parents), {}, {}, core.ref(&settings_fog), &f.app, nil)
 			seconds += DT
 			testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = seconds}), r.error)
 		}

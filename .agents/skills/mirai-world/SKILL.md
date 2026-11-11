@@ -163,5 +163,3 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   `engine.describe`. Discovery, order or validation of manifests:
   [project verification](../mirai-projects/SKILL.md#verification). Editor tools:
   [mirai-editor](../mirai-editor/SKILL.md#verification).
-- Direct gestures (clicks on surfaces, drags, brushes) are tested by the user; the rest, by API and
-  captures.

@@ -312,8 +312,9 @@ contact_rules_of_a_collider_reach_its_shape_without_making_it_again :: proc(t:^t
     testing.expect(t,abs(physics_test_pose(&f,box).position.y-0.25)<0.03)
 }
 
-// A box or a sphere Volume without a Collider of its own reports the bodies that go in and out of it and
-// blocks nothing; a plane, which has no end, reports nothing.
+// A box, a sphere or an outline Volume without a Collider of its own reports the bodies that go in and out
+// of it and blocks nothing; a plane, which has no end, reports nothing. An outline reports by its loop: a
+// body that crosses the notch of an L, inside its box, is never in it.
 @(test)
 a_volume_reports_the_bodies_that_go_in_and_out :: proc(t:^testing.T) {
     f:Physics_Test
@@ -328,17 +329,36 @@ a_volume_reports_the_bodies_that_go_in_and_out :: proc(t:^testing.T) {
     core.add(&f.transforms,mover,core.Transform{{-3,0,0},1,{1,1,1}})
     core.add(&f.colliders,mover,collider_sphere(0.25))
     core.add(&f.rigids,mover,RIGID_BODY_DYNAMIC)
+    // The L: its arm from -1 to 1 on x, its foot from -3 to -1 on z out to x 4, its notch the rest of its box.
+    l:=core.create(&f.entities)
+    core.add(&f.transforms,l,core.Transform{{0,0,20},1,{1,1,1}})
+    core.add(&f.volumes,l,volume.outline(4))
+    core.add(&f.splines,l,volume.Spline{count=6,points={0={position={-1,0,-3}},1={position={4,0,-3}},2={position={4,0,-1}},3={position={1,0,-1}},4={position={1,0,3}},5={position={-1,0,3}}}})
+    notch,foot:=core.create(&f.entities),core.create(&f.entities)
+    for e,i in ([2]core.Entity{notch,foot}) {
+        core.add(&f.transforms,e,core.Transform{i==0?{2,0,21}:{-3,0,18},1,{1,1,1}})
+        core.add(&f.colliders,e,collider_sphere(0.25))
+        core.add(&f.rigids,e,RIGID_BODY_DYNAMIC)
+    }
     physics_test_step(&f,0)
     set_velocity(&f.requests,mover,{6,0,0})
+    set_velocity(&f.requests,notch,{9,0,0})
+    set_velocity(&f.requests,foot,{9,0,0})
     began,ended,plane:=0,0,0
+    in_l:[2][2]int // of the notch and the foot: begun and ended
     for _ in 0..<60 {
         physics_test_step(&f)
         for event in f.events.overlap_begin.items {
             if event.collider==zones[0] && event.other==mover {began+=1}
             if event.collider==zones[1] || event.other==zones[1] {plane+=1}
+            if event.collider==l {in_l[event.other==notch?0:1][0]+=1}
         }
-        for event in f.events.overlap_end.items {if event.collider==zones[0] && event.other==mover {ended+=1}}
+        for event in f.events.overlap_end.items {
+            if event.collider==zones[0] && event.other==mover {ended+=1}
+            if event.collider==l {in_l[event.other==notch?0:1][1]+=1}
+        }
     }
     testing.expect(t,began==1 && ended==1 && plane==0)
+    testing.expectf(t,in_l=={{0,0},{1,1}},"the L reports the body across its foot and not the one across its notch: %v",in_l)
     testing.expect(t,physics_test_pose(&f,mover).position.x>1.5,"the volume blocks nothing")
 }

@@ -142,5 +142,3 @@ project world. Layout, manifests and build:
   [mirai-editor](../mirai-editor/SKILL.md#verification).
 - Before declaring a method available, generate and build the demo editor and check it with
   `engine.describe`.
-- Direct gestures (clicks on surfaces, drags) are tested by the user; the rest, by API and
-  captures.
