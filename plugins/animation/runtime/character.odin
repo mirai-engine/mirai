@@ -14,7 +14,7 @@ import "base:runtime"
 // the modifiers of its pose (IK, look, grounding, rigs, faces). Animation.asset names it. Its
 // limbs are those of the body of the skeleton (@foot_l, @pelvis); the sections and windows of its
 // actions and its warp windows are spans of its clips.
-CHARACTER_VERSION :: 3
+CHARACTER_VERSION :: 4
 
 Character_Info :: struct {animation:base.Asset_Id} // the .anim of its clips; empty for a set that names none (the modifiers of a rope)
 // spaces: the aim offsets and additive poses its layers sample, each with its samples in
@@ -77,6 +77,7 @@ character_tables :: proc(doc:^asset.Document,types:^asset.Types,set:Character_Se
     asset.document_put_row(doc,types,"match",&locomotion) or_return
     asset.document_put(doc,types,"clips",set.match.clips) or_return
     asset.document_put(doc,types,"samples",set.match.samples) or_return
+    asset.document_put(doc,types,"spans",set.match.spans) or_return
     asset.document_put(doc,types,"layers",set.actions.layers) or_return
     asset.document_put(doc,types,"actions",set.actions.actions) or_return
     asset.document_put(doc,types,"sections",set.actions.sections) or_return
@@ -116,6 +117,7 @@ character_view :: proc(file:^asset.Asset,types:^asset.Types) -> (set:Character_S
     set.match.info=(asset.asset_row(file,types,"match",Match_Info) or_return)^
     set.match.clips=asset.asset_rows(file,types,"clips","",Match_Source) or_return
     set.match.samples=asset.asset_rows(file,types,"samples","",Match_Sample) or_return
+    set.match.spans=asset.asset_rows(file,types,"spans","",Match_Span) or_return
     set.actions.layers=asset.asset_rows(file,types,"layers","",Stack_Layer) or_return
     set.actions.actions=asset.asset_rows(file,types,"actions","",Action_Definition) or_return
     set.actions.sections=asset.asset_rows(file,types,"sections","",Action_Section) or_return
@@ -150,7 +152,7 @@ character_view :: proc(file:^asset.Asset,types:^asset.Types) -> (set:Character_S
 Space_Ready :: struct {space:lib.Blend_Space,first:int,names:[]u64,axis_names:[2]u64}
 // A database built for a library and a skeleton.
 @(private)
-Match_Built :: struct {key:[7]u64,database:lib.Match_Database,error:lib.Match_Build_Error,fault:Match_Fault}
+Match_Built :: struct {key:[7]u64,database:lib.Match_Database,error:lib.Match_Build_Error,fault:Match_Fault,span:Match_Span_Fault}
 // What a set reads into while it is the asset: the open file its tables are views into, its
 // spaces ready to sample and the motion matching databases built for it.
 Character_Content :: struct {

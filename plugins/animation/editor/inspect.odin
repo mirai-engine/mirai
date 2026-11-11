@@ -71,6 +71,7 @@ Asset_Inspect_Result :: struct {
     match:anim.Match_Info `mirai:"optional,label=.character: its locomotion: the rate of its database, the interval of its searches, the blend of a jump, its memory and weights"`,
     match_clips_total:u32 `mirai:"optional,label=.character"`,
     match_clips:[]Asset_Match_Clip `mirai:"optional,label=.character: a page of its locomotion clips with the Locomotion_Mode each serves"`,
+    match_spans:[]anim.Match_Span `mirai:"optional,label=.character: the rules over the rows of its locomotion clips inside the spans of each name"`,
     databases:[]Asset_Match_Database `mirai:"optional,label=.character: the database built for each skeleton a rig played it on"`,
     layers_total,actions_total,sections_total:u32 `mirai:"optional,label=.character"`,
     layers:[]Authoring_Page(anim.Stack_Layer) `mirai:"optional,label=.character: its stack over the base, in order"`,
@@ -168,7 +169,7 @@ Instance_Match_Candidate :: struct {
     rate:f32 `mirai:"label=It plays at to follow the trajectory, or to reach its landing marker"`,
     cost:f32,
     costs:Instance_Match_Costs,
-    reason:lib.Match_Reject `mirai:"label=None: the one it chose; Cost: it cost more; Mode, Entry, Stationary, Reselect, Event (no landing marker ahead) and Window (its marker is not reached at a landing rate, or its rows go back in the arc in the air): why it was left out"`,
+    reason:lib.Match_Reject `mirai:"label=None: the one it chose; Cost: it cost more; Mode, Entry, Stationary, Reselect, Event (no landing marker ahead), Window (its marker is not reached at a landing rate, or its rows go back in the arc in the air) and Span (spans of the set exclude or block its rows): why it was left out"`,
 }
 Instance_Match_Costs :: struct {foot_position,foot_velocity,hip_velocity,body_velocity,trajectory_position,trajectory_direction:f32}
 Instance_Pose :: struct {

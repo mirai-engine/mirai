@@ -18,7 +18,7 @@ match_test_rig :: proc(library:^Library) -> (rig:Match_Rig,clips:[3]Match_Clip,o
     body:=body_map_empty();body.up={0,1,0}
     body.bones[.Pelvis],body.bones[.Foot_L],body.bones[.Foot_R],body.bones[.Head]=1,2,3,4
     rig={skeleton={parents[:],names[:],rest[:]},body=body,left_foot=2,right_foot=3,hips=1}
-    if !library_init(library,{max_keys=64,max_tracks=16,max_clips=8,max_markers=2}) {return}
+    if !library_init(library,{max_keys=64,max_tracks=16,max_clips=8,max_markers=8}) {return}
     still:=[2]Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.95,0,0}}}
     other:=[2]Keyframe{{time=0,value={-.1,-.95,0,0}},{time=1,value={-.1,-.95,0,0}}}
     left:=[4]Keyframe{{time=0,value={.1,-.95,-.375,0}},{time=.5,value={.1,-.95,.375,0}},{time=.75,value={.1,-.8,0,0}},{time=1,value={.1,-.95,-.375,0}}}
@@ -516,4 +516,82 @@ an_event_searches_the_rows_that_reach_its_marker_in_time_at_the_rate_that_does :
     best,_,_=match_search(&db,request,candidates=&noted)
     reasons=match_test_reasons(&db,noted)
     testing.expectf(t,match_range_of(&db,best)==2 && reasons=={.Mode,.Mode,.None,.Entry},"the steady search of the air: %v",reasons)
+}
+
+// The walk again with three spans: 0 over .1..2 s, 1 over .4..5 s and 3 over all of it.
+@(private="file")
+match_test_marked :: proc(library:^Library,rig:Match_Rig) -> (clip:Clip,ok:bool) {
+    left:=[4]Keyframe{{time=0,value={.1,-.95,-.375,0}},{time=.5,value={.1,-.95,.375,0}},{time=.75,value={.1,-.8,0,0}},{time=1,value={.1,-.95,-.375,0}}}
+    right:=[4]Keyframe{{time=0,value={-.1,-.95,.375,0}},{time=.25,value={-.1,-.8,0,0}},{time=.5,value={-.1,-.95,-.375,0}},{time=1,value={-.1,-.95,.375,0}}}
+    spans:=[3]Marker{{time=0,id=3,duration=1},{time=.1,id=0,duration=.1},{time=.4,id=1,duration=.1}}
+    error:Clip_Error
+    clip,error=clip_add(library,{name=base.name_hash("walk marked"),loop=.Loop,tracks={{target=rig.skeleton.names[2],property=.Position,keys=left[:]},{target=rig.skeleton.names[3],property=.Position,keys=right[:]}},markers=spans[:]})
+    return clip,error==.None
+}
+
+@(test)
+spans_exclude_and_block_the_rows_inside_them :: proc(t:^testing.T) {
+    library:Library;defer library_destroy(&library)
+    rig,clips,ok:=match_test_rig(&library)
+    if !testing.expect(t,ok) {return}
+    marked,marked_ok:=match_test_marked(&library,rig)
+    if !testing.expect(t,marked_ok) {return}
+    all:=[4]Match_Clip{clips[0],clips[1],clips[2],{clips={0=marked},modes=1<<1}}
+    spans:=[2]Match_Span{{marker=0,kind=.Exclude},{marker=1,kind=.Block}}
+    db:Match_Database;defer match_database_free(&db)
+    if !testing.expect(t,match_database_build(&db,&library,rig,all[:],30,spans=spans[:])==.None) {return}
+    testing.expect(t,len(db.flags)==db.rows && match_database_size(db)==match_database_bytes(db.rows,4,spans=true),"the rows keep their spans")
+    walk:=db.ranges[3]
+    for frame in 0..<int(walk.count) {
+        flags:=db.flags[int(walk.first)+frame];at:=f32(frame)/db.rate
+        inside :: proc(at,from,to:f32) -> bool {return at>=from-1e-4 && at<=to+1e-4}
+        testing.expectf(t,(.Exclude in flags)==inside(at,.1,.2) && (.Block in flags)==inside(at,.4,.5),"row %d at %.3f s is %v",frame,at,flags)
+    }
+    for row in 0..<int(walk.first) {testing.expect(t,db.flags[row]=={},"a clip without spans has no flags")}
+    // No search gives a row a span keeps out, its own query least of all.
+    for row in 0..<db.rows {
+        request:=Match_Request{query=match_features(&db,row),trajectory=match_row_trajectory(&db,row),modes=1<<1}
+        best,cost,_:=match_search(&db,request)
+        testing.expectf(t,best>=0 && db.flags[best]=={},"row %d gives row %d, which its spans keep out",row,best)
+        if db.flags[row]=={} && db.ranges[match_range_of(&db,row)].modes&(1<<1)!=0 {testing.expect(t,cost<1e-6,"a row no span covers is its own best")}
+    }
+    testing.expect(t,!match_rows_flagged(&db,int(walk.first),int(walk.first+walk.count),.Exclude,all=true),"the marked walk is excluded in part")
+    // A span over the whole clip keeps it all out: the candidates say Span.
+    whole:=[1]Match_Span{{marker=3,kind=.Exclude}}
+    if !testing.expect(t,match_database_build(&db,&library,rig,all[:],30,spans=whole[:])==.None) {return}
+    request:=Match_Request{query=match_features(&db,int(db.ranges[1].first)+20),trajectory=match_row_trajectory(&db,int(db.ranges[1].first)+20),modes=1<<1}
+    noted:Match_Candidates
+    best,_,_:=match_search(&db,request,candidates=&noted)
+    reasons:=match_test_reasons(&db,noted)
+    testing.expectf(t,match_range_of(&db,best)==1 && reasons[3]==.Span && match_rows_flagged(&db,int(db.ranges[3].first),int(db.ranges[3].first+db.ranges[3].count),.Exclude,all=true),"the excluded walk: %v",reasons)
+    invalid:=[1]Match_Span{{marker=0,kind=Match_Span_Kind(7)}}
+    testing.expect(t,match_database_build(&db,&library,rig,all[:],30,spans=invalid[:])==.Invalid,"a span of no kind is refused")
+}
+
+@(test)
+bounded_search_with_spans_finds_the_row_the_whole_scan_finds :: proc(t:^testing.T) {
+    library:Library;defer library_destroy(&library)
+    rig,clips,ok:=match_test_rig(&library)
+    if !testing.expect(t,ok) {return}
+    marked,marked_ok:=match_test_marked(&library,rig)
+    if !testing.expect(t,marked_ok) {return}
+    // Past MATCH_LINEAR_ROWS, with the marked walk among the clips.
+    many:[9]Match_Clip
+    for &clip,i in many {clip=clips[i%3]}
+    many[4],many[7]={clips={0=marked},modes=1<<1},{clips={0=marked},modes=1<<1}
+    spans:=[2]Match_Span{{marker=0,kind=.Exclude},{marker=1,kind=.Block}}
+    db:Match_Database;defer match_database_free(&db)
+    if !testing.expect(t,match_database_build(&db,&library,rig,many[:],120,spans=spans[:])==.None) || !testing.expect(t,len(db.small)>0 && len(db.flags)==db.rows) {return}
+    for row in 0..<db.rows {
+        request:=Match_Request{query=match_features(&db,(row*7919)%db.rows),trajectory=match_row_trajectory(&db,row),modes=~u32(0),min_rate=.5,max_rate=1}
+        best,cost,_:=match_search(&db,request)
+        least:=max(f32)
+        for r,range in db.ranges {
+            query,weights,_:=match_query(&db,request,range)
+            for frame in 0..<int(r.count)-match_tail(&db,range) {
+                if db.flags[int(r.first)+frame]=={} {least=min(least,match_cost(&db,int(r.first)+frame,query,weights))}
+            }
+        }
+        testing.expectf(t,best>=0 && cost==least && db.flags[best]=={},"row %d: the bounded search gives %v, the whole scan %v",row,cost,least)
+    }
 }

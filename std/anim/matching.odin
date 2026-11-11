@@ -54,13 +54,23 @@ MATCH_TRAIL :: 8
 // Clips a search notes the best row of.
 MATCH_CANDIDATES :: 16
 
+// A rule over the rows of a clip inside a span of its own (a marker with a duration; both ends
+// in): Exclude keeps them out of every search, and a clip that plays into them searches at once;
+// Block keeps them out of every search, while a clip that plays on may play into them. marker: the
+// Marker.id of its spans, as each clip names its own. A blended sample has no spans.
+Match_Span_Kind :: enum u8 {Exclude,Block}
+Match_Span :: struct {marker:u32,kind:Match_Span_Kind}
+// The kinds of span a row is in.
+Match_Row_Flags :: bit_set[Match_Span_Kind;u8]
+
 // Why a search did not give the best row of a clip. None: it gave it; Cost: another cost less;
 // Mode: the clip serves none of the modes; Entry: an entry clip while not entering, or one that is
 // not while entering; Stationary: it travels while the body stands, or stands while it moves;
 // Reselect: its rows are near the one playing or among those just left; Event: none of its rows
 // has the marker of the event ahead; Window: none reaches its marker when the event comes at a rate
-// of the event, or within the arc the playing row is in (match_search).
-Match_Reject :: enum u8 {None,Cost,Mode,Entry,Stationary,Reselect,Event,Window}
+// of the event, or within the arc the playing row is in; Span: spans keep out the rows it could
+// give (match_search).
+Match_Reject :: enum u8 {None,Cost,Mode,Entry,Stationary,Reselect,Event,Window,Span}
 // The best row of a clip in a search, the rate it plays at, its cost split by kind of feature
 // (cost is their sum) and why the search did not give it.
 Match_Candidate :: struct {row:i32,cost,rate:f32,costs:[Match_Feature]f32,reason:Match_Reject}
@@ -99,6 +109,7 @@ Match_Database :: struct {
     rows:int,
     small,large:[]simd.f32x4,      // per run of MATCH_BOUND_SMALL or _LARGE rows: MATCH_LANES of its least, then of its greatest features; empty up to MATCH_LINEAR_ROWS rows
     events:[]f32,                  // per row, seconds of its clip to the next marker of the event (a landing); negative: none ahead. Empty: no clip has one
+    flags:[]Match_Row_Flags,       // per row; empty: no span covers a row
     // Bit m for each mode m with an entry clip, a clip with a marker of the event, a clip that is no
     // entry and stands (MATCH_STILL), and one that is no entry and travels.
     entry_modes,event_modes,still_modes,moving_modes:u32,
@@ -123,37 +134,40 @@ Match_Recent :: struct {rows:[MATCH_RECENT]i32,ages:[MATCH_RECENT]f32,count:i32}
 Match_Trail :: struct {spans:[MATCH_TRAIL]math.Vec3,current:math.Vec3,elapsed:f32,next,count:i32}
 
 match_database_free :: proc(db:^Match_Database) {
-    if db.allocator.procedure!=nil {delete(db.features,db.allocator);delete(db.ranges,db.allocator);delete(db.small,db.allocator);delete(db.large,db.allocator);delete(db.events,db.allocator)}
+    if db.allocator.procedure!=nil {delete(db.features,db.allocator);delete(db.ranges,db.allocator);delete(db.small,db.allocator);delete(db.large,db.allocator);delete(db.events,db.allocator);delete(db.flags,db.allocator)}
     db^={}
 }
 
 // Bytes the database keeps.
-match_database_size :: proc "contextless" (db:Match_Database) -> int {return (len(db.features)+len(db.small)+len(db.large))*size_of(simd.f32x4)+len(db.ranges)*size_of(Match_Range)+len(db.events)*size_of(f32)+size_of(Match_Database)}
-// Bytes a database of rows over ranges clips keeps, with the event of each row or without.
-match_database_bytes :: proc "contextless" (rows,ranges:int,events:=false) -> int {
+match_database_size :: proc "contextless" (db:Match_Database) -> int {return (len(db.features)+len(db.small)+len(db.large))*size_of(simd.f32x4)+len(db.ranges)*size_of(Match_Range)+len(db.events)*size_of(f32)+len(db.flags)*size_of(Match_Row_Flags)+size_of(Match_Database)}
+// Bytes a database of rows over ranges clips keeps, with the event of each row or without, and
+// the spans of each row or without.
+match_database_bytes :: proc "contextless" (rows,ranges:int,events:=false,spans:=false) -> int {
     lanes:=rows*MATCH_LANES
     if rows>MATCH_LINEAR_ROWS {lanes+=2*MATCH_LANES*((rows+MATCH_BOUND_SMALL-1)/MATCH_BOUND_SMALL+(rows+MATCH_BOUND_LARGE-1)/MATCH_BOUND_LARGE)}
-    return lanes*size_of(simd.f32x4)+ranges*size_of(Match_Range)+(rows*size_of(f32) if events else 0)+size_of(Match_Database)
+    return lanes*size_of(simd.f32x4)+ranges*size_of(Match_Range)+(rows*size_of(f32) if events else 0)+(rows*size_of(Match_Row_Flags) if spans else 0)+size_of(Match_Database)
 }
 
 // Samples every clip at about rate rows per second and keeps its features, refusing with
 // Memory_Limit a database that would keep more than limit bytes (0: any). event holds the Marker.id
 // of each marker of an event (a landing; each clip names it with one of its own; empty: none):
 // when a clip that is not a blend has one, each row keeps the
-// seconds to the next one of its clip. A clip that does not move the skeleton or lasts a single
-// pose, a blend whose clips do not loop, a rig without feet and hips, or a mirrored clip of a rig
-// that does not mirror gives Invalid; db is
+// seconds to the next one of its clip. spans are the rules over the rows inside the spans of a
+// clip that is not a blend (Match_Span). A clip that does not move the skeleton or lasts a single
+// pose, a blend whose clips do not loop, a rig without feet and hips, a mirrored clip of a rig
+// that does not mirror, or a span of no kind gives Invalid; db is
 // empty after an error.
-match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips:[]Match_Clip,rate:f32,weights:=MATCH_WEIGHTS_DEFAULT,limit:=0,event:[]u32={},allocator:=context.allocator) -> (error:Match_Build_Error) {
+match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips:[]Match_Clip,rate:f32,weights:=MATCH_WEIGHTS_DEFAULT,limit:=0,event:[]u32={},spans:[]Match_Span={},allocator:=context.allocator) -> (error:Match_Build_Error) {
     match_database_free(db)
     error=.Invalid
     n:=len(rig.skeleton.parents)
     if n==0 || len(clips)==0 || !anim_finite(rate) || rate<=0 || rate>FRAMES_MAX_RATE || !skeleton_validate(rig.skeleton) {return}
     for bone in ([3]i32{rig.left_foot,rig.right_foot,rig.hips}) {if bone<0 || int(bone)>=n {return}}
     for weight in weights {if !anim_finite(weight) || weight<0 {return}}
+    for span in spans {if span.kind>max(Match_Span_Kind) {return}}
     MAX_FRAMES :: 1<<20
     total,longest:=0,0
-    events,blended_any:=false,false
+    events,blended_any,ruled:=false,false,false
     for c in clips {
         if !anim_finite(c.speed) || c.speed<0 || !match_rates_valid(c.rates) || c.mirror && len(rig.pairs)!=n {return}
         duration,blended,valid:=match_clip_duration(lib,c)
@@ -163,11 +177,14 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
         total+=count;longest=max(longest,count)
         if blended {
             blended_any=true
-        } else if len(event)>0 {
-            for marker in clip_markers(lib,c.clips[0]) {if slice.contains(event,marker.id) {events=true}}
+        } else {
+            for marker in clip_markers(lib,c.clips[0]) {
+                if slice.contains(event,marker.id) {events=true}
+                if marker.duration>0 {for span in spans {if span.marker==marker.id {ruled=true}}}
+            }
         }
     }
-    if limit>0 && match_database_bytes(total,len(clips),events)>limit {return .Memory_Limit}
+    if limit>0 && match_database_bytes(total,len(clips),events,ruled)>limit {return .Memory_Limit}
     context.allocator=allocator
     ok:bool
     raw,e0:=make([][MATCH_LANES*4]f32,total);defer delete(raw)
@@ -279,7 +296,27 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
             }
         }
     }
-    db^={rate=rate,features=features,ranges=ranges,rows=total,small=small,large=large,events=times,allocator=allocator}
+    flags:[]Match_Row_Flags
+    if ruled {
+        e10:mem.Allocator_Error
+        flags,e10=make([]Match_Row_Flags,total)
+        if e10!=nil {delete(features);delete(small);delete(large);delete(times);return .Out_Of_Memory}
+        for c,i in clips {
+            r:=ranges[i]
+            if r.weights!={0=1} {continue}
+            markers:=clip_markers(lib,c.clips[0])
+            for frame in 0..<int(r.count) {
+                // Both ends of a span are in it, within what a time of f32 strays.
+                at:=f32(frame)/rate;near:=f32(1e-4)
+                for span in spans {
+                    for marker in markers {
+                        if marker.id==span.marker && marker.duration>0 && at>=marker.time-near && at<=marker.time+marker.duration+near {flags[int(r.first)+frame]+={span.kind}}
+                    }
+                }
+            }
+        }
+    }
+    db^={rate=rate,features=features,ranges=ranges,rows=total,small=small,large=large,events=times,flags=flags,allocator=allocator}
     for i in 0..<MATCH_LANES*4 {db.scale[i]=1}
     for r in ranges {
         if r.entry {db.entry_modes|=r.modes} else if r.speed>MATCH_STILL {db.moving_modes|=r.modes} else {db.still_modes|=r.modes}
@@ -374,6 +411,18 @@ match_cost_split :: proc "contextless" (db:^Match_Database,row:int,query,weights
     }
     for span,kind in MATCH_FEATURES {for i in span[0]..<span[1] {costs[kind]+=terms[i]}}
     return
+}
+
+// The kinds of span a row is in: none for a database without spans or a row out of it.
+match_row_flags :: #force_inline proc "contextless" (db:^Match_Database,row:int) -> Match_Row_Flags {
+    if row<0 || row>=len(db.flags) {return {}}
+    return db.flags[row]
+}
+// Whether spans keep out some row of first..<end, or every row of them with all.
+match_rows_flagged :: proc "contextless" (db:^Match_Database,first,end:int,kind:Match_Span_Kind,all:=false) -> bool {
+    if len(db.flags)!=db.rows || first<0 || end>db.rows || first>=end {return false}
+    for flags in db.flags[first:end] {if (kind in flags)!=all {return !all}}
+    return all
 }
 
 // The raw trajectory of a row.
@@ -532,7 +581,7 @@ match_behind :: #force_inline proc "contextless" (r:Match_Range,row,from,reach:i
 // plays (-1: none): rows of its clip within span seconds of it are left out, a jump that short is
 // a stutter, and all of them with whole. recent are rows the rig left: those it played in the span
 // seconds before it left them are left out too. With bounds, runs that cannot hold a better row
-// are skipped whole. With candidates, it notes the best row of each clip, which bounds each clip
+// are skipped whole. Rows that spans exclude or block are left out. With candidates, it notes the best row of each clip, which bounds each clip
 // by its own best row instead of the best of all, and that of each clip it leaves out, with why.
 match_search :: proc "contextless" (db:^Match_Database,request:Match_Request,current:=-1,whole:=false,span:f32=0,recent:^Match_Recent=nil,candidates:^Match_Candidates=nil) -> (best:int,cost,rate:f32) {
     best,cost,rate=-1,max(f32),1
@@ -541,6 +590,7 @@ match_search :: proc "contextless" (db:^Match_Database,request:Match_Request,cur
     rates:=request.event_rates
     event:=len(db.events)==db.rows && anim_finite(request.event) && request.event>0 && anim_finite(rates[0]) && anim_finite(rates[1]) && rates[0]>0 && rates[0]<=rates[1]
     bounded:=len(db.small)>0
+    spanned:=len(db.flags)==db.rows && db.rows>0
     seconds:=span if anim_finite(span) && span>0 else 0
     rows_in :: proc "contextless" (db:^Match_Database,seconds:f32) -> int {return int(min(cmath.ceil(seconds*db.rate),f32(db.rows)))}
     near:=current if current>=0 && current<db.rows else -1
@@ -581,6 +631,7 @@ match_search :: proc "contextless" (db:^Match_Database,request:Match_Request,cur
                 small_end:=min((row/MATCH_BOUND_SMALL+1)*MATCH_BOUND_SMALL,large_end)
                 if bounded && match_bound(db.small,row/MATCH_BOUND_SMALL,query,weights)>=(least if candidates!=nil else cost) {row=small_end;continue}
                 for ;row<small_end;row+=1 {
+                    if spanned && db.flags[row]!={} {continue}
                     value:=match_cost(db,row,query,weights)
                     if value>=(least if candidates!=nil else cost) {continue}
                     at_rate:=scaled
@@ -604,6 +655,8 @@ match_search :: proc "contextless" (db:^Match_Database,request:Match_Request,cur
             match_candidates_add(candidates,{row=i32(found),cost=least,rate=found_rate,costs=match_cost_split(db,found,query,weights),reason=.Cost})
         } else if skipped>=0 {
             match_candidates_add(candidates,{row=i32(skipped),cost=skipped_cost,rate=found_rate,costs=match_cost_split(db,skipped,query,weights),reason=.Reselect})
+        } else if match_rows_flagged(db,int(r.first),int(r.first)+last,.Exclude) || match_rows_flagged(db,int(r.first),int(r.first)+last,.Block) {
+            match_candidates_reject(db,candidates,int(r.first),int(r.first)+last,query,weights,scaled,.Span)
         } else if event {
             reached:=false
             for ahead in db.events[r.first:][:last] {if ahead>=0 {reached=true;break}}
