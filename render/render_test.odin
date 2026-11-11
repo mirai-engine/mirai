@@ -706,7 +706,7 @@ render_a_light_with_no_place_takes_no_shadow_map :: proc(t: ^testing.T) {
 	scene_given(r, []Instance_Desc{floor}, []Light_Desc{lamp, lost}, {}, {})
 	camera := Camera{position = {0, 6, 0.01}, forward = {0, -6, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
-	b := &r.targets.shadow_buffers
+	b := &r.targets.shadow_raster
 	testing.expectf(t, b.rastered == 1 && b.raster[0] == 0, "only the placed light takes maps: %v", b.raster[:b.rastered])
 	expect_clean(t, f.device)
 }

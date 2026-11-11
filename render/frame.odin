@@ -347,7 +347,7 @@ bind_light_maps :: proc(p: ^Pass, maps: bool) {
 	r, cmd, t := p.r, p.cmd, p.t
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.shadow_atlas if maps else r.dummy_texture)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.shadow_tint if maps && p.frame.sun_maps.w != 0 else r.dummy_texture)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS8, t.shadow_buffers.table if maps else r.dummy_buffer)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS8, r.shadow_buffers.table if maps else r.dummy_buffer)
 }
 
 // Farthest-depth mip chain of the linear depth target.
@@ -1243,7 +1243,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	points := [2]u32{(t.width + scale - 1) / scale, (t.height + scale - 1) / scale}
 	params.shadow = shadow_maps_pass(p)
 	atlas := t.shadow_atlas if params.shadow.on != 0 else r.dummy_texture
-	table := t.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer
+	table := r.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer
 	grid := or_dummy(r, s.light_grid_buffer)
 	unlayered := rhi.Shader_Constants{} if p.layered else {DIRECT_MAPS_COMP_UNLAYERED}
 	#assert(DIRECT_MAPS_COMP_UNLAYERED == DIRECT_SAMPLES_COMP_UNLAYERED && DIRECT_MAPS_COMP_UNLAYERED == DIRECT_FILTER_COMP_UNLAYERED)

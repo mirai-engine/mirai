@@ -285,7 +285,7 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 		rhi.cmd_bind_pipeline(cmd, light)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.shadow_atlas if maps else r.dummy_texture)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS8, t.shadow_buffers.table if maps else r.dummy_buffer)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS8, r.shadow_buffers.table if maps else r.dummy_buffer)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.display)
 		rhi.cmd_dispatch_indirect(cmd, p.view.glass_dispatch, 0)
 		rhi.cmd_bind_pipeline(cmd, pipeline)

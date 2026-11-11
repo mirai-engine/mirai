@@ -62,15 +62,20 @@ Shadow_Maps :: struct {
 	sun:  u32, // the first map of the sun | the count << 16; max(u32): none
 }
 
-// What the maps of a view keep: the buffers they are drawn from, and which
-// lights were rasterized the frame before (the margin between SHADOW_RASTER_KEEP
-// and SHADOW_RASTER_SHARE keeps a light from going back and forth).
+// The buffers the maps are drawn from, which each view writes before it reads
+// them, as it does the atlas they share.
 Shadow_Buffers :: struct {
 	entries, draw: rhi.Buffer,
 	table:         rhi.Buffer, // data copied for the passes to read
-	raster:        [SHADOW_RASTER_LIGHTS]i32, // the lights rasterized the frame before
-	rastered:      int,
-	data:          rhi.Transient, // of this frame
+}
+
+// What the maps of a view keep: which lights were rasterized the frame before
+// (the margin between SHADOW_RASTER_KEEP and SHADOW_RASTER_SHARE keeps a light
+// from going back and forth).
+Shadow_Raster :: struct {
+	raster:   [SHADOW_RASTER_LIGHTS]i32, // the lights rasterized the frame before
+	rastered: int,
+	data:     rhi.Transient, // of this frame
 }
 
 // A map the plan wants, before it has its square of the atlas.
@@ -271,7 +276,7 @@ shadow_sun_cascades :: proc(wants: ^[SHADOW_MAPS_MAX]Shadow_Want, count: ^int, t
 shadow_maps_plan :: proc(p: ^Pass) -> (maps: Shadow_Maps, ok: bool) {
 	r, t := p.r, p.t
 	s := &r.scene
-	b := &t.shadow_buffers
+	b := &t.shadow_raster
 	maps.sun = max(u32)
 	camera := p.camera
 	eye := p.frame.camera_position.xyz
@@ -288,7 +293,7 @@ shadow_maps_plan :: proc(p: ^Pass) -> (maps: Shadow_Maps, ok: bool) {
 	chosen: [SHADOW_RASTER_LIGHTS]int
 	shares: [SHADOW_RASTER_LIGHTS]f32
 	picked := 0
-	was :: proc(b: ^Shadow_Buffers, light: int) -> bool {
+	was :: proc(b: ^Shadow_Raster, light: int) -> bool {
 		for k in b.raster[:b.rastered] {if int(k) == light {return true}}
 		return false
 	}
@@ -412,11 +417,11 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 	if !p.draw {return}
 	planned, ok := shadow_maps_plan(p)
 	if !ok || planned.on == 0 {return}
-	b := &t.shadow_buffers
+	b, d := &t.shadow_raster, &r.shadow_buffers
 	good := target(r, cmd, &t.shadow_atlas, SHADOW_ATLAS, SHADOW_ATLAS, .D32_Float, {.Depth_Target, .Sampled}, "shadow atlas", shared = true)
-	entries_ok, _ := ensure_buffer(r, &b.entries, u64(SHADOW_ENTRIES) * 16, {.Storage}, "shadow map clusters")
-	draw_ok, _ := ensure_buffer(r, &b.draw, SHADOW_DRAWS * size_of(rhi.Draw_Indirect), {.Storage, .Indirect, .Transfer_Dst}, "shadow map draw")
-	table_ok, _ := ensure_buffer(r, &b.table, b.data.size, {.Storage, .Transfer_Dst}, "shadow maps")
+	entries_ok, _ := ensure_buffer(r, &d.entries, u64(SHADOW_ENTRIES) * 16, {.Storage}, "shadow map clusters")
+	draw_ok, _ := ensure_buffer(r, &d.draw, SHADOW_DRAWS * size_of(rhi.Draw_Indirect), {.Storage, .Indirect, .Transfer_Dst}, "shadow map draw")
+	table_ok, _ := ensure_buffer(r, &d.table, b.data.size, {.Storage, .Transfer_Dst}, "shadow maps")
 	if !good || !entries_ok || !draw_ok || !table_ok {return}
 	// While glass colors light: what the glass in front of the depth of each texel lets through, and the
 	// depth of the nearest glass (shadow_tint of shadow_maps.slang).
@@ -432,13 +437,13 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 	start, start_at := rhi.frame_alloc_typed(r.device, rhi.Draw_Indirect, SHADOW_DRAWS)
 	if start == nil {return}
 	for &draw in start {draw = {vertex_count = CLUSTER_DRAW_VERTICES}}
-	rhi.cmd_copy_buffer(cmd, start_at.buffer, start_at.offset, b.draw, 0, SHADOW_DRAWS * size_of(rhi.Draw_Indirect))
-	rhi.cmd_copy_buffer(cmd, b.data.buffer, b.data.offset, b.table, 0, b.data.size)
+	rhi.cmd_copy_buffer(cmd, start_at.buffer, start_at.offset, d.draw, 0, SHADOW_DRAWS * size_of(rhi.Draw_Indirect))
+	rhi.cmd_copy_buffer(cmd, b.data.buffer, b.data.offset, d.table, 0, b.data.size)
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Maps])
 	set_params(cmd, &params)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, b.table)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, b.entries)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, b.draw)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, d.table)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, d.entries)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, d.draw)
 	rhi.cmd_dispatch(cmd, groups(params.instances, SHADOW_GROUP), params.maps)
 	rhi.cmd_timestamp(cmd, "shadow atlas")
 	params.glass = 0
@@ -448,9 +453,9 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 	for pipeline, i in ([SHADOW_DRAWS]Pipeline_Id{.Shadow_Map, .Shadow_Map_Tested}) {
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[pipeline])
 		set_params(cmd, &params)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, b.entries)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, b.table)
-		rhi.cmd_draw_indirect(cmd, b.draw, u64(i) * size_of(rhi.Draw_Indirect), 1)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, d.entries)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, d.table)
+		rhi.cmd_draw_indirect(cmd, d.draw, u64(i) * size_of(rhi.Draw_Indirect), 1)
 	}
 	rhi.cmd_end_render_pass(cmd)
 	if tinted {
@@ -466,9 +471,9 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 			rhi.cmd_begin_render_pass(cmd, &desc)
 			rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Map_Tint if i == 0 else .Shadow_Map_Glass])
 			set_params(cmd, &params)
-			rhi.cmd_bind_buffer(cmd, SLOT_PASS0, b.entries)
-			rhi.cmd_bind_buffer(cmd, SLOT_PASS1, b.table)
-			rhi.cmd_draw_indirect(cmd, b.draw, size_of(rhi.Draw_Indirect), 1)
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS0, d.entries)
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS1, d.table)
+			rhi.cmd_draw_indirect(cmd, d.draw, size_of(rhi.Draw_Indirect), 1)
 			rhi.cmd_end_render_pass(cmd)
 		}
 	}
@@ -490,6 +495,5 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 @(private)
 destroy_shadow_maps :: proc(r: ^Renderer, t: ^Targets) {
 	shared_targets_release(r, targets_frame(&t.shadow_targets))
-	for x in targets_buffers(t) {if x != 0 {rhi.buffer_destroy(r.device, x)}}
-	t.shadow_buffers = {}
+	t.shadow_raster = {}
 }

@@ -387,7 +387,7 @@ Targets :: struct {
 	ui_blur:                 [2]rhi.Texture,
 	highlight:               rhi.Texture, // editor selection mask: level and depth of highlighted surfaces
 	highlight_depth:         rhi.Texture,
-	shadow_buffers:          Shadow_Buffers,
+	shadow_raster:           Shadow_Raster,
 	highlight_filtered:      rhi.Texture, // premultiplied editor coat, window-point resolution
 	highlight_width, highlight_height: u32,
 	gi_given:                rhi.Texture, // what a custom pass writes as Gi in place of the Indirect stage (Render_Resource.Gi); made when one first does
@@ -623,6 +623,7 @@ Renderer :: struct {
 	texture_views:   [TEXTURE_VIEW_CAPACITY]View_State, // those drawn into a texture, at each size they were
 	texture_view_bytes: u64, // what their targets held of the GPU when the last frame ended (texture_views_count)
 	shared_targets:  [SHARED_TARGET_CAPACITY]Shared_Target, // the targets of a frame of the views (targets_frame)
+	shadow_buffers:  Shadow_Buffers,
 	passes:          [FRAME_PASS_CAPACITY]Frame_Pass, // what extensions record in the next frame
 	pass_count:      int,
 	plans:           [RENDER_PIPELINE_CAPACITY]Render_Plan, // of the pipelines asked for
@@ -791,7 +792,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	for b in r.debug_buffers {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.font_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.stats_readback {if b != 0 {rhi.buffer_destroy(d, b)}}
-	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer}) {if b != 0 {rhi.buffer_destroy(d, b)}}
+	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.entries, r.shadow_buffers.draw, r.shadow_buffers.table}) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	if r.light_changes != 0 {rhi.buffer_destroy(d, r.light_changes)}
 	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
 	air_destroy(r)
@@ -1589,19 +1590,11 @@ shared_targets_release :: proc(r: ^Renderer, textures: []rhi.Texture) {
 	}
 }
 
-// Every buffer of the targets of a view, made or not.
-@(private)
-targets_buffers :: proc(t: ^Targets) -> [3]rhi.Buffer {
-	b := &t.shadow_buffers
-	return {b.entries, b.draw, b.table}
-}
-
 @(private)
 destroy_targets :: proc(r: ^Renderer, t: ^Targets) {
 	d := r.device
 	for tex in targets_textures(t) {if tex != 0 {rhi.texture_destroy(d, tex)}}
 	shared_targets_release(r, targets_frame(&t.frame))
-	for b in targets_buffers(t) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	destroy_glass_targets(r, t)
 	out_w, out_h := t.output_width, t.output_height
 	t^ = {}
