@@ -501,7 +501,7 @@ document_style_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,ro
     for &v in r.variants {
         if int(v.style)!=row || v.inherited {continue}
         name:=serial.text_field(v.variant[:])
-        single:=name=="" && card(v.states)==1 && v.patch.tokens=={}
+        single:=name=="" && card(v.states)==1
         if !single {append(&rules,&v);continue}
         key:=""
         for s in DOC_STATES {if s.states==v.states {key=s.key}}
@@ -512,7 +512,7 @@ document_style_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,ro
     variants:=false
     for v in rules {
         name:=serial.text_field(v.variant[:])
-        if name=="" || v.states!={} || v.patch.tokens!={} {continue}
+        if name=="" || v.states!={} {continue}
         if !variants {comma(out,&first);serial.json_key(out,"variants",true);serial.write_u8(out,'{')} else {serial.write_u8(out,',')}
         variants=true
         serial.json_key(out,name,true)
@@ -522,7 +522,7 @@ document_style_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,ro
     list:=false
     for v in rules {
         name:=serial.text_field(v.variant[:])
-        if name!="" && v.states=={} && v.patch.tokens=={} {continue}
+        if name!="" && v.states=={} {continue}
         if !list {comma(out,&first);serial.json_key(out,"rules",true);serial.write_u8(out,'[')} else {serial.write_u8(out,',')}
         list=true
         serial.write_u8(out,'{')
@@ -538,12 +538,6 @@ document_style_write :: proc(out:^serial.Writer,types:^asset.Types,r:^Records,ro
                 serial.text_write_string(out,fmt.tprintf("%v",state))
             }
             serial.write_u8(out,']')
-        }
-        if v.patch.tokens!={} {
-            none:ui.Style_Tokens
-            tokens_type,_:=asset.types_index(types,ui.Style_Tokens)
-            serial.json_key(out,"tokens",inner);inner=false
-            serial.text_write_changed(out,&types.schema,tokens_type,mem.ptr_to_bytes(&v.patch.tokens),mem.ptr_to_bytes(&none))
         }
         doc_look_write(out,types,r,&v.patch.values,nil,ui.rule_own_keys(v),row,name,v.states,a,&inner)
         serial.write_u8(out,'}')
@@ -1226,28 +1220,14 @@ document_style_apply :: proc(args:^Tree_Args,r:^Records,row:int,named:bool) -> b
             }
             look_keys:=make([dynamic]string,reading.allocator)
             look_values:=make([dynamic]string,reading.allocator)
-            tokens_text:=""
             for key,i in rule_keys {
                 switch key {
                 case "variant","states":
-                case "tokens": tokens_text=rule_values[i]
                 case: append(&look_keys,key);append(&look_values,rule_values[i])
                 }
             }
             rule:=doc_rule_row(r,row,variant,states)
             if !doc_rule_apply(args,r,row,rule,look_keys,look_values,what) {return document_failed(reading,what)}
-            if tokens_text!="" {
-                v:=&r.variants[rule]
-                if !tree_fields_read(reading,args.types,ui.Style_Tokens,&v.patch.tokens,tokens_text,"tokens") {return false}
-                t:=v.patch.tokens
-                if t.fill!=.Literal {v.patch.fields+={.Fill}}
-                if t.fill2!=.Literal {v.patch.fields+={.Fill2}}
-                if t.stroke!=.Literal {v.patch.fields+={.Stroke}}
-                if t.text!=.Literal {v.patch.fields+={.Text_Color}}
-                if t.track!=.Literal {v.patch.fields+={.Track}}
-                if t.knob!=.Literal {v.patch.fields+={.Knob}}
-                if t.mark!=.Literal {v.patch.fields+={.Mark}}
-            }
         }
     }
     return true

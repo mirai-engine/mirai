@@ -107,8 +107,7 @@ the tag choose the row:
   document. A field that does not take any asset says so in its tag: an engine type or that of a
   plugin whose editor declares it ([asset types](extensions.md#asset-types-of-a-plugin));
   several go separated by spaces (`kind=.anim .character`) and the first gives the empty
-  thumbnail. With `with=Component`, the list offers only the prefabs that have it (a player's
-  body: `with=Drivable`), read once on opening it. It receives a dropped asset of its types; one
+  thumbnail. It receives a dropped asset of its types; one
   of another type is warned about. A `.sound` field also takes a `.sound_set` (`asset_kind_takes`)
   and carries Play or Stop; that of an `Audio_Source` sounds as configured (`eaudio.play_source`,
   without a place even if spatial) and follows its changes.
@@ -141,6 +140,8 @@ Tags `mirai:"..."`:
   field that opens the section goes on its own line. A struct in a section of its same name does not
   repeat that name in its fields (`Compensation` under `Exposure`). Every section folds the same
   way (`editor.fold_section`); `Advanced` starts folded. When searching, sections are shown open.
+- `mode=A|B`: the field shows only while the enum field `mode` of its struct is one of those values
+  (the fields of one mode of `Camera_Follow`); a section starts at the first of its fields shown.
 
 A field whose initial value matters is declared with `NAME_DEFAULT` or `name_default()` in the
 component's package, which the inspector uses when adding it (`component_default`). Names are

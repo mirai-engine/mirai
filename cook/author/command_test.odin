@@ -304,6 +304,13 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     collider,has_table:=asset.scene_component(&after,"Collider")
     _,has_collider:=asset.scene_component_get(&after,collider,floor)
     testing.expect(t,has_table && has_collider,"a component the game of this build does not know stays")
+    taken,taken_why:=scene_write(&p,"arena/main.scene",fmt.tprintf(`{{"merge":true,"entities":[{{"id":"0x%016x","components":{{"Collider":null}}}}]}}`,u64(floor)))
+    testing.expect(t,taken_why=="" && !taken.same,taken_why)
+    stripped:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&stripped,&p.types,file,context.temp_allocator),asset.Error.None) {return}
+    gone,_:=asset.scene_component(&stripped,"Collider")
+    _,still:=asset.scene_component_get(&stripped,gone,floor)
+    testing.expect(t,!still,"a merge document takes it off by name")
     out:serial.Writer
     serial.writer_init(&out,0,context.temp_allocator)
     testing.expect_value(t,scene_read(&p,"arena/main.scene",&out),"")

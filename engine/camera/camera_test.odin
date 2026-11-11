@@ -39,6 +39,9 @@ test_place :: proc(f:^Camera_Test,e:core.Entity,position:[3]f32,rotation:=mm.Qua
 }
 
 @(private="file")
+first_of :: proc(camera:core.Entity,_:Camera_Blend) -> core.Entity {return camera}
+
+@(private="file")
 close :: proc(a,b:f32,epsilon:f32=1e-3) -> bool {return abs(a-b)<=epsilon}
 
 @(private="file")
@@ -105,7 +108,7 @@ a_mode_is_taken_once_keeps_the_target_and_counts_for_the_views :: proc(t:^testin
     testing.expect(t,follow.state.changes==1 && follow.state.blend.seconds==0.5)
     testing.expect(t,follow.state.handing && close(follow.state.handoff.x,1) && close(follow.state.handoff.y,0.2),"a free Orbit goes on from where the camera looked")
     lens,_:=core.get(&f.cameras,camera)
-    testing.expect(t,lens_of(lens)==third.lens)
+    testing.expect(t,lens_on(lens,third.lens)==lens)
 
     mode_take(&f.follows,&f.cameras,core.read(&f.worlds),{camera,third,{0.5,.Linear}},&f.problems)
     testing.expect(t,follow.state.changes==1,"the mode it has does nothing")
@@ -296,26 +299,27 @@ a_camera_with_an_activation_is_seen_while_its_player_holds_the_action :: proc(t:
     core.add(&f.follows,aim,Camera_Follow{mode=.Orbit,target=body})
     core.add(&f.activations,aim,Camera_Activation{action=AIM,blend={0.25,.Cubic_Out}})
     core.add(&f.activations,stray,CAMERA_ACTIVATION_DEFAULT)
-    core.add(&f.drivables,body,input.Drivable{seat=seat,camera=base})
-    core.add(&f.seats,seat,input.Seat{actions={count=input.ACTION_CAPACITY}})
+    core.add(&f.parents,base,core.Parent{entity=body})
+    core.add(&f.seats,seat,input.Seat{body=body,actions={count=input.ACTION_CAPACITY}})
     core.test_world_settle(&f.w)
+    core.hierarchy_settle(&f.hierarchy,core.read(&f.parents),&f.entities)
     select:=proc(f:^Camera_Test) {
-        camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.selected,&f.requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.drivables),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
+        camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.selected,&f.requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.parents),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
     }
 
     select(f)
-    testing.expect(t,camera_selected(&f.selected,core.read(&f.drivables),core.read(&f.cameras),seat)==base,"without the action, the camera of the body")
+    testing.expect(t,first_of(camera_selected(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat))==base,"without the action, the camera of the body")
     testing.expect(t,has_problem(&f.problems,"camera.activation"),"an activation without an action says so")
 
     held:=core.edit(&f.seats,seat)
     held.actions.states[AIM].down=true
     select(f)
-    chosen,blend:=seat_camera(&f.selected,core.read(&f.drivables),core.read(&f.cameras),seat)
+    chosen,blend:=camera_selected(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat)
     testing.expect(t,chosen==aim && blend.seconds==0.25,"while it is held, the camera it brings, with its blend")
 
     held.actions.states[AIM].down=false
     select(f)
-    testing.expect(t,camera_selected(&f.selected,core.read(&f.drivables),core.read(&f.cameras),seat)==base,"and back once it is let go")
+    testing.expect(t,first_of(camera_selected(&f.selected,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat))==base,"and back once it is let go")
 }
 
 // On the side of a planet, where the up of a character is +X, the eyes sit

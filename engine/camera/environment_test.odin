@@ -15,8 +15,7 @@ a_trigger_turns_its_sky_on_once_the_body_is_well_inside_its_volume :: proc(t:^te
     w.seat_state.local_count=1
 
     seat,body,box,sky:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
-    core.add(&w.seats,seat,input.Seat{})
-    core.add(&w.drivables,body,input.Drivable{seat=seat})
+    core.add(&w.seats,seat,input.Seat{body=body})
     core.add(&w.triggers,box,Environment_Trigger{sky=sky,seconds=1})
     core.add(&w.volumes,box,volume.box({2,2,2}))
     core.add(&w.worlds,box,core.World_Transform{transform={rotation=1,scale=1}})
@@ -24,7 +23,7 @@ a_trigger_turns_its_sky_on_once_the_body_is_well_inside_its_volume :: proc(t:^te
     core.test_world_settle(&w)
     step :: proc(w:^Test_Cameras,x:f32) {
         core.edit(&w.worlds,core.entity_at(&w.worlds,1)).position.x=x
-        environment_triggers(&w.triggers,core.read(&w.volumes),core.read(&w.worlds),core.ref(&w.seat_state),core.read(&w.seats),core.read(&w.drivables),&w.environment)
+        environment_triggers(&w.triggers,core.read(&w.volumes),core.read(&w.worlds),core.ref(&w.seat_state),core.read(&w.seats),&w.environment)
         core.test_world_settle(w)
     }
 

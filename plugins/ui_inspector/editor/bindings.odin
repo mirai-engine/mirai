@@ -13,6 +13,7 @@ import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The bindings of the nodes: a path of the data of the game (ui.tree_bind)
@@ -172,17 +173,16 @@ bindable :: proc(p:^Pane,label:string,field:[]u8,kind:author.Bind_Kind,about:=""
         ui.box_begin(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column})
         return true
     }
-    th:=&ctx.theme
     row:=ui.id(ctx,"bound")
-    ui.box_begin(ctx,{id=row,width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center,track=about!=""})
-    ui.column_label(ctx,label)
+    ui.box_begin(ctx,{id=row,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center,track=about!=""})
+    kit.column_label(ctx,label)
     editor.row_description(p.s,row,about)
     failing:=bind_failing(p.u,bind_binding(p,field))
     chip:=ui.id(ctx,"path")
-    if ui.button(ctx,chip,{label=path_shown(path),icon=.Link,icon_size=12,icon_color=th.danger if failing else th.accent,style=.Field,width=-1,height=th.row,size=th.font_small,padding=6}).clicked {
+    if ui.button(ctx,chip,{label=path_shown(path),icon=.Link,icon_size=12,icon_color=ui.tone(ctx,"danger") if failing else ui.tone(ctx,"accent"),variant="field",width=-1,height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small"),padding=6}).clicked {
         bind_pick_open(p,ctx,chip,kind)
     }
-    if ui.button(ctx,ui.id(ctx,"unbind"),{icon=.Cross,icon_size=10,icon_color=th.text_muted,tip="Unbind",style=.Ghost,width=editor.REVERT_SIDE,height=editor.REVERT_SIDE}).clicked {
+    if ui.button(ctx,ui.id(ctx,"unbind"),{icon=.Cross,icon_size=10,icon_color=ui.tone(ctx,"text_muted"),tip="Unbind",variant="ghost",width=editor.REVERT_SIDE,height=editor.REVERT_SIDE}).clicked {
         if n:=selected_node(p.u);n!=nil {author.node_unbind(n,field)} else {for &b in field {b=0}}
         changed(p.u,"Unbind")
     }
@@ -194,11 +194,10 @@ bindable_end :: proc(p:^Pane,label:string,field:[]u8,kind:author.Bind_Kind,about
     if !p.bind_open {return}
     p.bind_open=false
     ctx:=p.s.gui.ctx
-    th:=&ctx.theme
     if free {ui.box_end(ctx,{})}
     bound:=serial.text_field(field)!=""
     button:=ui.id(ctx,"pick")
-    if ui.button(ctx,button,{icon=.Link,icon_size=13,icon_color=th.accent if bound else th.text_muted,tip="Bind to a field of the game",style=.Ghost,width=th.row,height=th.row,active=ui.popup_is_open(ctx,bind_popup(ctx))}).clicked {
+    if ui.button(ctx,button,{icon=.Link,icon_size=13,icon_color=ui.tone(ctx,"accent") if bound else ui.tone(ctx,"text_muted"),tip="Bind to a field of the game",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row"),active=ui.popup_is_open(ctx,bind_popup(ctx))}).clicked {
         bind_pick_open(p,ctx,button,kind)
     }
     bind_pick(p,field,kind)
@@ -211,7 +210,7 @@ bindable_end :: proc(p:^Pane,label:string,field:[]u8,kind:author.Bind_Kind,about
 @(private)
 bind_only :: proc(p:^Pane,label:string,field:[]u8,kind:author.Bind_Kind,about:="") -> (changes:bool) {
     if bindable(p,label,field,kind,about) {
-        if row(p,label,about) {ui.label(p.s.gui.ctx,"Not bound",p.s.gui.ctx.theme.font_small,p.s.gui.ctx.theme.text_faint)}
+        if row(p,label,about) {ui.label(p.s.gui.ctx,"Not bound",ui.metric(p.s.gui.ctx,"font_small"),ui.tone(p.s.gui.ctx,"text_faint"))}
     }
     return
 }
@@ -244,7 +243,6 @@ bind_pick_open :: proc(p:^Pane,ctx:^ui.Context,anchor:ui.Id,kind:author.Bind_Kin
 bind_pick :: proc(p:^Pane,field:[]u8,kind:author.Bind_Kind) {
     s,u:=p.s,p.u
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     popup:=bind_popup(ctx)
     if !ui.popup_is_open(ctx,popup) {return}
     info:=s.app.info
@@ -257,7 +255,7 @@ bind_pick :: proc(p:^Pane,field:[]u8,kind:author.Bind_Kind) {
         if searched {u.pick_scroll=0}
         prefix:=string(u.pick_prefix[:u.pick_length])
         if !rooted {
-            ui.label(ctx,"Bind the List around it to an array first",th.font_small,th.text_muted)
+            ui.label(ctx,"Bind the List around it to an array first",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
             return
         }
         scope:=root
@@ -274,15 +272,15 @@ bind_pick :: proc(p:^Pane,field:[]u8,kind:author.Bind_Kind) {
             back:=prefix[:max(strings.last_index_byte(prefix,'.'),0)]
             if prefix=="@" || !strings.contains(prefix,".") && !strings.has_prefix(prefix,"@") {back=""}
             if strings.has_prefix(prefix,"@") && !strings.contains(prefix,".") && prefix!="@" {back="@"}
-            if ui.row(ctx,ui.id(ctx,"back"),{label=path_shown(prefix),icon=.Chevron_Up,icon_size=11,accent=true,height=th.row}).clicked {
+            if ui.row(ctx,ui.id(ctx,"back"),{label=path_shown(prefix),icon=.Chevron_Up,icon_size=11,accent=true,height=ui.metric(ctx,"row")}).clicked {
                 u.pick_length=copy(u.pick_prefix[:],back)
             }
             if kind==.Data && scope.kind!=.Sources {
-                if ui.row(ctx,ui.id(ctx,"use"),{label=fmt.tprintf("Use %s",path_shown(prefix)),icon=.Check,icon_size=11,accent=true,height=th.row}).clicked {pick(p,field,prefix)}
+                if ui.row(ctx,ui.id(ctx,"use"),{label=fmt.tprintf("Use %s",path_shown(prefix)),icon=.Check,icon_size=11,accent=true,height=ui.metric(ctx,"row")}).clicked {pick(p,field,prefix)}
             }
             ui.menu_separator(ctx)
         } else if data.kind!=.Sources {
-            if ui.row(ctx,ui.id(ctx,"widget_data"),{label="Data of this widget",icon=.Prefab,icon_size=12,accent=true,height=th.row}).clicked {
+            if ui.row(ctx,ui.id(ctx,"widget_data"),{label="Data of this widget",icon=.Prefab,icon_size=12,accent=true,height=ui.metric(ctx,"row")}).clicked {
                 u.pick_length=copy(u.pick_prefix[:],"@")
             }
         }
@@ -293,7 +291,7 @@ bind_pick :: proc(p:^Pane,field:[]u8,kind:author.Bind_Kind) {
                 ctx:=p.s.gui.ctx
                 for path,i in paths {
                     any=true
-                    if ui.row(ctx,ui.id(ctx,"leaf",from+i+1),{label=path_shown(path),icon=.Link,icon_size=12,icon_color=ctx.theme.accent,accent=true,height=ctx.theme.row}).clicked {
+                    if ui.row(ctx,ui.id(ctx,"leaf",from+i+1),{label=path_shown(path),icon=.Link,icon_size=12,icon_color=ui.tone(ctx,"accent"),accent=true,height=ui.metric(ctx,"row")}).clicked {
                         ui.tree_text_set(field,path)
                         changed(p.u,"Bind")
                         ui.popup_close(ctx)
@@ -341,7 +339,7 @@ bind_pick :: proc(p:^Pane,field:[]u8,kind:author.Bind_Kind) {
                     case e.next.kind==.Entity && e.navigable: icon=.Link
                     case e.navigable:              icon=.Chevron_Right
                     }
-                    if ui.row(ctx,ui.id(ctx,"entry",i+1),{label=e.name,detail="storage" if e.storage else "",icon=icon,icon_size=12,icon_color=th.accent if e.fits else th.text_muted,accent=true,height=th.row}).clicked {
+                    if ui.row(ctx,ui.id(ctx,"entry",i+1),{label=e.name,detail="storage" if e.storage else "",icon=icon,icon_size=12,icon_color=ui.tone(ctx,"accent") if e.fits else ui.tone(ctx,"text_muted"),accent=true,height=ui.metric(ctx,"row")}).clicked {
                         if e.fits && !(e.navigable && kind==.Data) {pick(p,field,author.path_join(prefix,e.name))} else if e.navigable {
                             u.pick_length=copy(u.pick_prefix[:],author.path_join(prefix,e.name))
                             u.pick_scroll=0
@@ -349,7 +347,7 @@ bind_pick :: proc(p:^Pane,field:[]u8,kind:author.Bind_Kind) {
                     }
                 }
             }
-            if !any {ui.label(ctx,"Nothing here this binding takes",th.font_small,th.text_muted)}
+            if !any {ui.label(ctx,"Nothing here this binding takes",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
         }
     }
 }
@@ -393,7 +391,7 @@ text_field_rows :: proc(p:^Pane,n:^ui.Tree_Node) {
         // The name takes a field the first time; nothing changes until a path is chosen.
         at:=author.text_field_of(&p.u.records,n,name,true)
         if at<0 {
-            if row(p,label) {ui.label(ctx,fmt.tprintf("At most %d names",ui.TREE_TEXT_FIELDS),ctx.theme.font_small,ctx.theme.danger)}
+            if row(p,label) {ui.label(ctx,fmt.tprintf("At most %d names",ui.TREE_TEXT_FIELDS),ui.metric(ctx,"font_small"),ui.tone(ctx,"danger"))}
             continue
         }
         bind_only(p,label,n.fields[at].path[:],.Shown,"The field of the game this name of the text shows; every language of its key names it as the text does")

@@ -9,6 +9,7 @@ SCROLL_GUTTER :: SCROLL_BAR+4 // the room at the right or the bottom of content 
 SCROLL_THUMB :: f32(20)    // shortest thumb
 SCROLL_FADE :: [2]f32{7,20} // how far the content fades into the edges of an area with fade, top and bottom
 SCROLL_STICK :: f32(1200)  // layout units a second the stick all the way over moves the content
+WHEEL_STEP :: f32(36)       // layout units a notch of the wheel scrolls
 SCROLL_PAGE :: f32(0.9)    // of the area, what Page Up and Page Down move the content
 
 // The axes an area scrolls in. Across, its content is as wide as it asks
@@ -17,25 +18,17 @@ Scroll_Axes :: enum u8 {Vertical,Horizontal,Both}
 
 Scroll :: struct {
     using layout:Layout, // of the content; width and height are those of the area. Vertical: always a column
-    step:f32,            // units per wheel notch; the theme's when 0
+    step:f32,            // units per wheel notch; WHEEL_STEP when 0
     max_height:f32,      // with a FIT height: the area stops growing here
     fade:Color,          // what is under the area: content scrolled past an edge fades into it there; transparent: none
     axes:Scroll_Axes,
 }
 
 @(private)
-scroll_content_id :: proc(ctx:^Context,id:Id) -> Id {
-    id_push(ctx,id)
-    defer id_pop(ctx)
-    return ui_id(ctx,"content")
-}
+scroll_content_id :: proc(ctx:^Context,id:Id) -> Id {return id_derive(ctx,id,"content")}
 
 @(private)
-scroll_bar_id :: proc(ctx:^Context,id:Id,vertical:bool) -> Id {
-    id_push(ctx,id)
-    defer id_pop(ctx)
-    return ui_id(ctx,"bar" if vertical else "bar_x")
-}
+scroll_bar_id :: proc(ctx:^Context,id:Id,vertical:bool) -> Id {return id_derive(ctx,id,"bar" if vertical else "bar_x")}
 
 @(private)
 scroll_moves :: #force_inline proc "contextless" (axes:Scroll_Axes) -> [2]bool {return {axes!=.Vertical,axes!=.Horizontal}}
@@ -83,7 +76,7 @@ scroll_follow_focus :: proc(ctx:^Context,id:Id,offset:^[2]f32,moves:[2]bool,view
 @(private)
 scroll_move :: proc(ctx:^Context,id:Id,offset:^[2]f32,moves:[2]bool,step:f32,view,content:[2]f32) {
     in_:=&ctx.input
-    step:=step if step>0 else ctx.theme.wheel_step
+    step:=step if step>0 else WHEEL_STEP
     if ctx.wheel_target==id && in_.wheel!={} {
         sideways:=moves.x && (.Shift in in_.modifiers || !moves.y)
         if moves.y && !sideways {offset.y-=in_.wheel.y*step}
@@ -153,7 +146,6 @@ scroll_bar :: proc(ctx:^Context,id:Id,offset:^f32,vertical:bool) {
     if !vertical {room,length=view.w,content.w}
     span:=max(length-room,offset^)
     if !found || span<=0.5 || room<=0 {return}
-    th:=&ctx.theme
     bar:=scroll_bar_id(ctx,id,vertical)
     thumb:=max(room*room/length,min(SCROLL_THUMB,room))
     travel:=max(room-thumb,0)
@@ -164,7 +156,7 @@ scroll_bar :: proc(ctx:^Context,id:Id,offset:^f32,vertical:bool) {
         offset^=clamp(ctx.scroll_grab+moved*span/travel,0,span)
     }
     along:=travel*(offset^/span if span>0 else 0)
-    color:=th.text_faint if it.active || it.hot else th.border
+    color:=tone(ctx,"text_faint") if it.active || it.hot else tone(ctx,"border")
     e:=Element{id=bar,custom=paint_add(ctx,{kind=.Rect,fill=color,radius=SCROLL_BAR*0.5})}
     if vertical {
         e.layout={width=fixed(SCROLL_BAR),height=fixed(thumb)}
@@ -321,34 +313,3 @@ rows_end :: proc(ctx:^Context,id:Id,offset:^f32,heights:[]f32,last:int) {
     box_end(ctx,{id=id,clip_y=true})
 }
 
-Tree_Row :: struct {
-    label:string,
-    depth:int,
-    folder:bool,     // shows a chevron: open tells which
-    open:bool,
-    icon:Icon,       // of a leaf
-    icon_color:Color,
-    quad:Quad,       // preview of a leaf, instead of its icon
-    selected:bool,
-    height:f32,      // 34 when 0
-    indent:f32,      // units per depth; 14 when 0
-}
-// A row of a tree of folders and items: a click on a folder is for the caller
-// to open or close it.
-tree_row :: proc(ctx:^Context,id:Id,r:Tree_Row) -> Interaction {
-    th:=&ctx.theme
-    height:=r.height if r.height>0 else 34
-    b:=Button{label=r.label,style=.Ghost,width=-1,height=height,size=th.font_small,icon_size=height-8,active=r.selected}
-    if r.folder {
-        b.icon=.Chevron_Down if r.open else .Chevron_Right
-        b.icon_color=th.text_muted;b.icon_size=10
-    } else if r.quad.kind!=.Solid {b.quad=r.quad} else {
-        b.icon=r.icon;b.icon_color=r.icon_color if r.icon_color!={} else th.text_muted
-    }
-    it:Interaction
-    if box(ctx,{width=GROW,height=fixed(height)}) {
-        if r.depth>0 {spacer(ctx,f32(r.depth)*(r.indent if r.indent>0 else 14),1)}
-        it=button(ctx,id,b)
-    }
-    return it
-}

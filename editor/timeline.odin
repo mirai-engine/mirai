@@ -150,7 +150,7 @@ timeline_steps :: proc(scale,rate:f32) -> (tick,label:f32) {
 }
 
 timeline_strip :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lanes:[]Timeline_Lane,id:ui.Id) -> (r:Timeline_Result) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     ui.id_push(ctx,id)
     defer ui.id_pop(ctx)
     r.lane,r.index=-1,-1
@@ -161,16 +161,16 @@ timeline_strip :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lanes:[]Timeline_
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(TIMELINE_TRANSPORT),padding={12,0,12,0},gap=2,align_y=.Center}) {
             if empty {ui.disabled_begin(ctx)}
             defer if empty {ui.disabled_end(ctx)}
-            transport :: proc(ctx:^ui.Context,name:string,icon:ui.Icon,tip:string,style:=ui.Button_Style.Ghost,active:=false,width:=f32(28)) -> bool {
-                return ui.button(ctx,ui.id(ctx,name),{icon=icon,icon_color=ctx.theme.text_muted,tip=tip,style=style,active=active,width=width,height=ctx.theme.control}).clicked
+            transport :: proc(ctx:^ui.Context,name:string,icon:ui.Icon,tip:string,variant:="",active:=false,width:=f32(28)) -> bool {
+                return ui.button(ctx,ui.id(ctx,name),{icon=icon,icon_color=ui.tone(ctx,"text_muted"),tip=tip,variant=variant,active=active,width=width,height=ui.metric(ctx,"control")}).clicked
             }
             if transport(ctx,"to_start",timeline_icon(.To_Start),"Go to start") {r.seek,r.frame=true,lo}
             if transport(ctx,"previous",timeline_icon(.Step_Back),"Previous frame") {r.seek,r.frame=true,max(math.ceil(c.frame)-1,0)}
-            if transport(ctx,"play",c.playing?timeline_icon(.Pause):.Play,c.playing?"Pause":"Play",.Tab,c.playing,34) {r.play=true}
+            if transport(ctx,"play",c.playing?timeline_icon(.Pause):.Play,c.playing?"Pause":"Play","tab",c.playing,34) {r.play=true}
             if transport(ctx,"next",timeline_icon(.Step_Forward),"Next frame") {r.seek,r.frame=true,min(math.floor(c.frame)+1,c.frames)}
             if transport(ctx,"to_end",timeline_icon(.To_End),"Go to end") {r.seek,r.frame=true,hi}
             timeline_divider(ctx)
-            if transport(ctx,"loop",timeline_icon(.Loop),"Loop",.Tab,c.loop) {r.loop=true}
+            if transport(ctx,"loop",timeline_icon(.Loop),"Loop","tab",c.loop) {r.loop=true}
             if c.speed>0 {
                 speeds:=TIMELINE_SPEEDS
                 labels:=TIMELINE_SPEED_LABELS
@@ -180,21 +180,21 @@ timeline_strip :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lanes:[]Timeline_
             }
             if c.here {
                 timeline_divider(ctx)
-                if ui.button(ctx,ui.id(ctx,"here"),{label="Play from here",icon=.Play,icon_color=th.text_muted,style=.Field,height=th.control}).clicked {r.here=true}
+                if ui.button(ctx,ui.id(ctx,"here"),{label="Play from here",icon=.Play,icon_color=ui.tone(ctx,"text_muted"),variant="field",height=ui.metric(ctx,"control")}).clicked {r.here=true}
             }
             ui.spacer(ctx)
             if c.ask && t.range && t.range_out>t.range_in {
                 if transport(ctx,"ask",.Sparkle,"Ask agent about the range") {r.ask=true}
             }
-            if transport(ctx,"range",timeline_icon(.Range),"Range",.Tab,t.range) {
+            if transport(ctx,"range",timeline_icon(.Range),"Range","tab",t.range) {
                 t.range=!t.range
                 if t.range {timeline_range_start(t,c.frame,c.frames)}
             }
             timeline_divider(ctx)
-            if ui.box(ctx,{width=ui.FIT,height=ui.fixed(th.control-2),padding={2,2,2,2},gap=2,fill=th.well,radius=th.radius_control,align_y=.Center}) {
+            if ui.box(ctx,{width=ui.FIT,height=ui.fixed(ui.metric(ctx,"control")-2),padding={2,2,2,2},gap=2,fill=ui.tone(ctx,"well"),radius=ui.metric(ctx,"radius_control"),align_y=.Center}) {
                 for unit in ([2]string{"f","s"}) {
                     on:=(unit=="s")==t.seconds
-                    if ui.button(ctx,ui.id(ctx,unit),{label=unit,style=on?.Field:.Ghost,width=26,height=th.control-6,size=th.font_small,center=true,tip=unit=="s"?"Seconds":"Frames"}).clicked {t.seconds=unit=="s"}
+                    if ui.button(ctx,ui.id(ctx,unit),{label=unit,variant=on?"field":"ghost",width=26,height=ui.metric(ctx,"control")-6,size=ui.metric(ctx,"font_small"),center=true,tip=unit=="s"?"Seconds":"Frames"}).clicked {t.seconds=unit=="s"}
                 }
             }
             if transport(ctx,"fit",timeline_icon(.Fit_Width),"Show all") {t.start,t.end=0,0}
@@ -219,35 +219,35 @@ timeline_icon :: proc(icon:User_Icon) -> ui.Icon {return ui.icon_user(u8(icon))}
 
 @(private)
 timeline_divider :: proc(ctx:^ui.Context) {
-    if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(18),fill=ctx.theme.border}) {}
+    if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(18),fill=ui.tone(ctx,"border")}) {}
     ui.spacer(ctx,14,1)
 }
 
 // The column at the left: the frame of the head over the names of the lanes.
 @(private)
 timeline_names :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lanes:[]Timeline_Lane,r:^Timeline_Result,empty:bool) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     if ui.box(ctx,{width=ui.fixed(TIMELINE_NAMES),height=ui.GROW,direction=.Column}) {
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(TIMELINE_RULER),padding={12,0,8,0},gap=6,align_y=.Center,fill=th.well}) {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(TIMELINE_RULER),padding={12,0,8,0},gap=6,align_y=.Center,fill=ui.tone(ctx,"well")}) {
             if empty {ui.disabled_begin(ctx)}
             defer if empty {ui.disabled_end(ctx)}
             rate:=max(c.rate,1)
             value:=f64(t.seconds?c.frame/rate:math.round(c.frame))
-            field:=ui.Number_Field{width=ui.fixed(56),height=th.control-4,integer=!t.seconds,decimals=2,has_min=true,has_max=true,max=f64(t.seconds?c.frames/rate:c.frames),speed=t.seconds?0.01:0.25}
+            field:=ui.Number_Field{width=ui.fixed(56),height=ui.metric(ctx,"control")-4,integer=!t.seconds,decimals=2,has_min=true,has_max=true,max=f64(t.seconds?c.frames/rate:c.frames),speed=t.seconds?0.01:0.25}
             if result:=ui.number_field(ctx,ui.id(ctx,"frame"),&value,field);result.changed {
                 r.seek,r.frame=true,clamp(t.seconds?f32(value)*rate:f32(value),0,c.frames)
             }
-            ui.label(ctx,fmt.tprintf("/ %s",timeline_text(t,c.frames,c.rate,false)),th.font_small,th.text_faint,0)
+            ui.label(ctx,fmt.tprintf("/ %s",timeline_text(t,c.frames,c.rate,false)),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)
         }
         for &lane,i in lanes {
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(TIMELINE_LANE),padding={12,0,6,0},align_y=.Center}) {
-                ui.label(ctx,lane.name,th.font_small,th.text_muted,0)
+                ui.label(ctx,lane.name,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
                 ui.spacer(ctx)
-                if lane.add && ui.button(ctx,ui.id(ctx,"add",i+1),{icon=.Plus,icon_color=th.text_muted,icon_size=12,tip="Add at the head",style=.Ghost,width=24,height=24,disabled=empty}).clicked {
+                if lane.add && ui.button(ctx,ui.id(ctx,"add",i+1),{icon=.Plus,icon_color=ui.tone(ctx,"text_muted"),icon_size=12,tip="Add at the head",variant="ghost",width=24,height=24,disabled=empty}).clicked {
                     r.add,r.lane,r.to=true,i,math.round(c.frame)
                 }
             }
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.row_rule}) {}
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"row_rule")}) {}
         }
     }
 }
@@ -255,7 +255,7 @@ timeline_names :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lanes:[]Timeline_
 // The ruler, the lanes and the bar of the view: where the time is.
 @(private)
 timeline_area :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lanes:[]Timeline_Lane,r:^Timeline_Result,empty:bool) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     // The ruler takes the width of the area: it measures the time for the lanes and the bar too.
     ruler:=ui.id(ctx,"ruler")
     width:=f32(400)
@@ -308,7 +308,7 @@ timeline_area :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lanes:[]Timeline_L
     }
 
     if ui.box(ctx,{id=ui.id(ctx,"area"),width=ui.GROW,height=ui.GROW,direction=.Column,clip_x=true,clip_floats=true}) {
-        if ui.box(ctx,{id=ruler,width=ui.GROW,height=ui.fixed(TIMELINE_RULER),fill=th.well,clip_x=true,clip_floats=true}) {
+        if ui.box(ctx,{id=ruler,width=ui.GROW,height=ui.fixed(TIMELINE_RULER),fill=ui.tone(ctx,"well"),clip_x=true,clip_floats=true}) {
             if !empty {
                 tick,label:=timeline_steps(scale,rate)
                 first:=math.floor(start/tick)*tick
@@ -317,19 +317,19 @@ timeline_area :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lanes:[]Timeline_L
                     labeled:=math.mod(frame,label)==0
                     second:=math.mod(frame,rate)==0
                     height:=second?f32(14):(labeled?f32(9):f32(5))
-                    color:=second?th.text_faint:(labeled?th.border:th.divider)
+                    color:=second?ui.tone(ctx,"text_faint"):(labeled?ui.tone(ctx,"border"):ui.tone(ctx,"divider"))
                     if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(height),fill=color,float={to=.Parent,offset={x(frame,start,scale),TIMELINE_RULER-height}}}) {}
                     if labeled {
                         text:=timeline_text(t,frame,c.rate,true)
                         left:=x(frame,start,scale)+3
-                        if size:=ui.text_width(&ctx.font,text,th.font_caption);left+size>width {left-=size+6}
+                        if size:=ui.text_width(&ctx.font,text,ui.metric(ctx,"font_caption"));left+size>width {left-=size+6}
                         if ui.box(ctx,{width=ui.FIT,height=ui.fixed(14),float={to=.Parent,offset={left,3}}}) {
-                            ui.label(ctx,text,th.font_caption,second?th.text_muted:th.text_faint)
+                            ui.label(ctx,text,ui.metric(ctx,"font_caption"),second?ui.tone(ctx,"text_muted"):ui.tone(ctx,"text_faint"))
                         }
                     }
                 }
                 bracket :: proc(ctx:^ui.Context,at:f32,left,hot:bool) {
-                    color:=hot?ctx.theme.text:ctx.theme.text_muted
+                    color:=hot?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted")
                     side:=left?f32(0):f32(-6)
                     if ui.box(ctx,{width=ui.fixed(2),height=ui.fixed(22),fill=color,float={to=.Parent,offset={left?at:at-2,9}}}) {}
                     for y in ([2]f32{9,29}) {if ui.box(ctx,{width=ui.fixed(6),height=ui.fixed(2),fill=color,float={to=.Parent,offset={at+side,y}}}) {}}
@@ -340,12 +340,12 @@ timeline_area :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lanes:[]Timeline_L
         }
         for &lane,i in lanes {
             timeline_lane(s,t,c,&lane,i,r,origin,start,scale,empty)
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.row_rule}) {}
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"row_rule")}) {}
         }
         timeline_overview(s,t,c,span,empty)
         if !empty {
             // Outside the range, dimmed while it bounds what plays.
-            shade:=ui.color_alpha(th.well,150)
+            shade:=ui.color_alpha(ui.tone(ctx,"well"),150)
             covered:=TIMELINE_RULER+lanes_height
             if t.range {
                 left:=x(range_lo,start,scale)
@@ -353,15 +353,15 @@ timeline_area :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lanes:[]Timeline_L
                 right:=x(range_hi,start,scale)
                 if right<width {if ui.box(ctx,{width=ui.fixed(width-right),height=ui.fixed(covered),fill=shade,float={to=.Parent,offset={right,0}}}) {}}
             }
-            fill:=it.hot || it.active?th.accent_hover:th.accent
+            fill:=it.hot || it.active?ui.tone(ctx,"accent_hover"):ui.tone(ctx,"accent")
             // A head out of the view is not drawn.
             if head>=0 && head<=width {
                 if ui.box(ctx,{width=ui.fixed(2),height=ui.fixed(covered-20),fill=fill,float={to=.Parent,offset={head-1,20}}}) {}
                 text:=timeline_text(t,c.frame,c.rate,false)
                 if t.drag==.Head && !t.seconds {text=fmt.tprintf("%s · %.2f s",text,c.frame/rate)}
-                handle:=max(ui.text_width(&ctx.font,text,th.font_caption)+12,30)
-                if ui.box(ctx,{width=ui.fixed(handle),height=ui.fixed(18),align_x=.Center,align_y=.Center,fill=fill,radius=th.radius_control,float={to=.Parent,offset={head-handle*0.5,2}}}) {
-                    ui.label(ctx,text,th.font_caption,th.on_accent,font=ui.FONT_SEMIBOLD)
+                handle:=max(ui.text_width(&ctx.font,text,ui.metric(ctx,"font_caption"))+12,30)
+                if ui.box(ctx,{width=ui.fixed(handle),height=ui.fixed(18),align_x=.Center,align_y=.Center,fill=fill,radius=ui.metric(ctx,"radius_control"),float={to=.Parent,offset={head-handle*0.5,2}}}) {
+                    ui.label(ctx,text,ui.metric(ctx,"font_caption"),ui.tone(ctx,"on_accent"),font=ui.FONT_SEMIBOLD)
                 }
             }
         }
@@ -372,7 +372,7 @@ timeline_area :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lanes:[]Timeline_L
 // from them moves the head, and the right button asks for the menu.
 @(private)
 timeline_lane :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lane:^Timeline_Lane,index:int,r:^Timeline_Result,origin:ui.Rect,start,scale:f32,empty:bool) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     x :: proc(frame,start,scale:f32) -> f32 {return TIMELINE_PAD+(frame-start)*scale}
     id:=ui.id(ctx,"lane",index+1)
     it:=ui.interact(ctx,id,empty?{.Disabled}:{})
@@ -410,10 +410,10 @@ timeline_lane :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lane:^Timeline_Lan
             frame:=chosen && t.drag==.Mark?t.dragged:mark.frame
             at:=x(frame,start,scale)
             if at<-6 || at>origin.w+6 {continue}
-            color:=chosen?th.accent:(i==under && it.hot?th.text:th.text_muted)
+            color:=chosen?ui.tone(ctx,"accent"):(i==under && it.hot?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted"))
             if ui.box(ctx,{width=ui.fixed(12),height=ui.fixed(12),float={to=.Parent,offset={at-6,10}}}) {ui.icon(ctx,ui.icon_user(u8(User_Icon.Marker)),color,12)}
             if mark.name!="" {
-                if ui.box(ctx,{width=ui.FIT,height=ui.fixed(16),float={to=.Parent,offset={at+9,8}}}) {ui.label(ctx,mark.name,th.font_small,chosen?th.text:th.text_muted)}
+                if ui.box(ctx,{width=ui.FIT,height=ui.fixed(16),float={to=.Parent,offset={at+9,8}}}) {ui.label(ctx,mark.name,ui.metric(ctx,"font_small"),chosen?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted"))}
             }
         }
     }
@@ -424,7 +424,7 @@ timeline_lane :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,lane:^Timeline_Lan
 // centers the view there.
 @(private)
 timeline_overview :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,span:f32,empty:bool) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     id:=ui.id(ctx,"overview")
     it:=ui.interact(ctx,id,empty?{.Disabled}:{})
     rect,_:=ui.widget_rect(ctx,id)
@@ -463,11 +463,11 @@ timeline_overview :: proc(s:^Session,t:^Timeline,c:Timeline_Clock,span:f32,empty
     }
     if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(TIMELINE_OVERVIEW),clip_x=true,clip_floats=true}) {
         if !empty {
-            if ui.box(ctx,{width=ui.fixed(span),height=ui.fixed(4),fill=th.field,radius=2,float={to=.Parent,offset={TIMELINE_PAD,7}}}) {}
-            edge:=it.hot || it.active?th.text:th.text_faint
-            if ui.box(ctx,{width=ui.fixed(max(right-left,8)),height=ui.fixed(10),fill=it.hot || it.active?th.raised:th.field_hover,radius=5,float={to=.Parent,offset={left,4}}}) {}
+            if ui.box(ctx,{width=ui.fixed(span),height=ui.fixed(4),fill=ui.tone(ctx,"field"),radius=2,float={to=.Parent,offset={TIMELINE_PAD,7}}}) {}
+            edge:=it.hot || it.active?ui.tone(ctx,"text"):ui.tone(ctx,"text_faint")
+            if ui.box(ctx,{width=ui.fixed(max(right-left,8)),height=ui.fixed(10),fill=it.hot || it.active?ui.tone(ctx,"raised"):ui.tone(ctx,"field_hover"),radius=5,float={to=.Parent,offset={left,4}}}) {}
             for side in ([2]f32{left,max(right,left+8)-2}) {if ui.box(ctx,{width=ui.fixed(2),height=ui.fixed(10),fill=edge,float={to=.Parent,offset={side,4}}}) {}}
-            if ui.box(ctx,{width=ui.fixed(2),height=ui.fixed(12),fill=th.accent,float={to=.Parent,offset={TIMELINE_PAD+c.frame*scale-1,3}}}) {}
+            if ui.box(ctx,{width=ui.fixed(2),height=ui.fixed(12),fill=ui.tone(ctx,"accent"),float={to=.Parent,offset={TIMELINE_PAD+c.frame*scale-1,3}}}) {}
         }
     }
 }

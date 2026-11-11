@@ -30,7 +30,7 @@ Test_Cameras :: struct {
     worlds:core.Table(core.World_Transform),
     parents:core.Table(core.Parent),
     moves:core.Table(input.Move_Input),
-    drivables:core.Table(input.Drivable),
+    hierarchy:core.Hierarchy,
     seats:core.Table(input.Seat),
     seat_state:input.Seats,
     selected:Cameras,
