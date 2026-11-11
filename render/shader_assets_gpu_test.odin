@@ -63,7 +63,7 @@ render_draws_the_same_image_with_a_generation_loaded_from_disk :: proc(t:^testin
     metadata,metadata_error:=shader_assets_load(GENERATION)
     testing.expect_value(t,metadata_error,"")
     if metadata_error!="" {return}
-    changed,_:=strings.replace(string(metadata.catalog),"\"default\": 1,","\"default\": 0.25,",1,metadata.allocator)
+    changed,_:=strings.replace(string(metadata.catalog),"\"defaults\": [1, 0, 0, 0]","\"defaults\": [0.25, 0, 0, 0]",1,metadata.allocator)
     delete(metadata.catalog,metadata.allocator);metadata.catalog=transmute([]u8)changed
     testing.expect(t,renderer_reload_shaders(r,&metadata),r.error)
     testing.expect_value(t,r.pipelines,pipelines)

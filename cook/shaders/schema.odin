@@ -1,7 +1,9 @@
 package shaders
 
 import "core:fmt"
+import "core:math"
 import "core:reflect"
+import "core:strconv"
 import "core:strings"
 import "mirai:asset"
 import "mirai:render/abi"
@@ -265,4 +267,51 @@ number :: proc(value:f32) -> string {
     b:=strings.builder_make(context.temp_allocator)
     float_text(&b,f64(value),32)
     return strings.to_string(b)
+}
+
+// The shortest decimal that reads back as the same float of `bits` bits:
+// "0.5", "100.0", "1e+20", "1e-05". Exponents below -4 or from 16 use
+// scientific notation.
+@(private)
+float_text :: proc(builder:^strings.Builder,value:f64,bits:=64) {
+    if math.is_nan(value) {strings.write_string(builder,"NaN");return}
+    if math.is_inf(value) {strings.write_string(builder,"-Infinity" if value<0 else "Infinity");return}
+    if value==0 {strings.write_string(builder,"-0.0" if math.sign_bit(value) else "0.0");return}
+    buffer:[64]u8
+    // "+d.ddddde+XX": the shortest digits, one of them before the point.
+    scientific:=string(strconv.generic_ftoa(buffer[:],value,'e',-1,bits,{.Plus}))
+    negative:=scientific[0]=='-'
+    scientific=scientific[1:]
+    at:=strings.index_byte(scientific,'e')
+    exponent,_:=strconv.parse_int(scientific[at+1:],10)
+    digits_buffer:[32]u8
+    count:=0
+    for c in transmute([]u8)scientific[:at] {
+        if c!='.' {digits_buffer[count]=c;count+=1}
+    }
+    for count>1 && digits_buffer[count-1]=='0' {count-=1}
+    digits:=string(digits_buffer[:count])
+    if negative {strings.write_byte(builder,'-')}
+    switch {
+    case exponent< -4 || exponent>=16:
+        strings.write_string(builder,digits[:1])
+        if count>1 {strings.write_byte(builder,'.');strings.write_string(builder,digits[1:])}
+        strings.write_byte(builder,'e')
+        strings.write_byte(builder,'-' if exponent<0 else '+')
+        magnitude:=abs(exponent)
+        if magnitude<10 {strings.write_byte(builder,'0')}
+        strings.write_int(builder,magnitude)
+    case exponent<0:
+        strings.write_string(builder,"0.")
+        for _ in 0..<(-exponent-1) {strings.write_byte(builder,'0')}
+        strings.write_string(builder,digits)
+    case count<=exponent+1:
+        strings.write_string(builder,digits)
+        for _ in 0..<(exponent+1-count) {strings.write_byte(builder,'0')}
+        strings.write_string(builder,".0")
+    case:
+        strings.write_string(builder,digits[:exponent+1])
+        strings.write_byte(builder,'.')
+        strings.write_string(builder,digits[exponent+1:])
+    }
 }

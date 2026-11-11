@@ -1,6 +1,5 @@
 package main
 
-import "core:encoding/json"
 import "core:crypto/sha2"
 import "core:encoding/hex"
 import "core:fmt"
@@ -9,6 +8,7 @@ import "core:strings"
 import "core:time"
 import "mirai:cook/workspace"
 import "mirai:project"
+import "mirai:std/serial"
 import "mirai:std/subprocess"
 import "mirai:std/base"
 
@@ -38,20 +38,6 @@ agent_exec :: proc(operation:^Agent_Operation,directory:string,command:[]string)
             return false
         }
     }
-}
-
-agent_metadata :: proc(path:string) -> (value:json.Value,ok:bool) {
-    bytes,error:=os.read_entire_file(path,context.allocator)
-    if error!=nil {return}
-    parsed,parse_error:=json.parse(bytes,allocator=context.allocator)
-    return parsed,parse_error==.None
-}
-
-agent_json_text :: proc(value:json.Value,key:string) -> string {
-    object,ok:=value.(json.Object)
-    if !ok {return ""}
-    text,_:=object[key].(string)
-    return text
 }
 
 agent_version_valid :: proc(version:string) -> bool {
@@ -153,12 +139,14 @@ cmd_agent :: proc(engine_root:string,args:[]string) -> int {
         for package_name,i in AGENT_PACKAGES {
             file:=join(home,fmt.aprintf(".latest-%d.json",i))
             if !agent_exec(&operation_state,home,{"curl","--fail","--location","--silent","--show-error","--output",file,fmt.aprintf("https://registry.npmjs.org/%s/latest",package_name)}) {os.remove(file);return 1}
-            value,ok:=agent_metadata(file);os.remove(file)
-            latest[i]=agent_json_text(value,"version")
-            if !ok || !agent_version_valid(latest[i]) {return 1}
+            // The latest version as the registry of npm gives it.
+            metadata:struct {version:string}
+            bytes,error:=os.read_entire_file(file,context.allocator);os.remove(file)
+            if error!=nil || serial.text_decode(string(bytes),&metadata,skip_unknown=true)!="" || !agent_version_valid(metadata.version) {return 1}
+            latest[i]=metadata.version
         }
-        data,error:=json.marshal(latest,{pretty=true},context.allocator)
-        if error!=nil || os.write_entire_file(join(home,"updates.json"),data)!=nil {return 1}
+        data,_:=serial.text_encode(latest,.Pretty)
+        if os.write_entire_file(join(home,"updates.json"),data)!=nil {return 1}
         fmt.println("Updates checked");return 0
     case "uninstall":
         if agent_cancelled(&operation_state) {return 1}
@@ -227,8 +215,8 @@ cmd_agent :: proc(engine_root:string,args:[]string) -> int {
         codex_binary:=index==0?agent_codex_binary(stage):""
         if index==0 && codex_binary=="" {fmt.eprintln("Codex native executable is missing");return 1}
         installed:=struct{version,runtime,codex_binary:string}{version,runtime,codex_binary}
-        data,marshal_error:=json.marshal(installed,{pretty=true},context.allocator)
-        if marshal_error!=nil || os.write_entire_file(join(stage,"installation.json"),data)!=nil {return 1}
+        data,_:=serial.text_encode(installed,.Pretty)
+        if os.write_entire_file(join(stage,"installation.json"),data)!=nil {return 1}
         previous:=join(home,fmt.aprintf(".previous-%s",name))
         if os.exists(previous) {
             if !os.exists(target) {if os.rename(previous,target)!=nil {return 1}} else {if base.remove_all(previous)!=nil {return 1}}

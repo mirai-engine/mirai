@@ -295,3 +295,95 @@ Shader_Entry :: struct {
     fingerprint,spv_hash,msl_hash:string,
     staged:bool `mirai:"transient"`, // of the generator: its files are in the staging folder, to be published
 }
+
+// What a generation of shaders says of its material programs and of what it
+// adds to the constants of every view, in SHADER_CATALOG of its folder. A
+// material, a post-process effect or an emitter of particles names a program
+// by its id and gives it up to PROGRAM_PARAMETER_BYTES of parameters, laid
+// out as the program reflects them.
+SHADER_CATALOG :: "catalog.json"
+SHADER_CATALOG_VERSION :: 2
+
+Shader_Catalog :: struct {
+    version:int,
+    fingerprint:string, // of the compiler, the shared includes and every program source
+    compiler:string,
+    programs:[]Program,
+    frame:Frame_Catalog,
+}
+
+// The constants of a view: Gpu_Frame, then the nested views when the
+// generation has them, then the struct each extension declared. size 0
+// without nested views: Gpu_Frame alone.
+Frame_Catalog :: struct {
+    size:int,
+    nested:bool,
+    instance_ids:bool, // the G-buffer keeps the instance that drew each pixel
+    extensions:[]Frame_Extension,
+}
+Frame_Extension :: struct {name:string,offset,size:int}
+
+Program_Domain :: enum u8 {Surface,Postprocess,Vfx,Ui}
+Program_Kind :: enum u8 {Float,Int,Uint,Bool,Texture}
+// The surface of a mesh or of what an entity draws, the births a game gives,
+// a grid of the world, the particles of another emitter, or a data channel.
+Program_Resource_Kind :: enum u8 {Surface,Channel,Grid,Emitter,Data}
+PROGRAM_STAGE_PARTICLES :: 255 // Program_Stage.over of a stage over the particles
+
+Program :: struct {
+    id:u32, // 1-based, in the order of the catalog
+    name:string,
+    domain:Program_Domain,
+    source:string, // builtin/<file>, project/<file> or plugins/<name>/<file>, below include/programs
+    size:int,
+    parameters:[]Program_Parameter,
+    layers:asset.Material_Layers, // of a Surface program: those of the OpenPBR model its source writes
+    coverage:bool,                // of a Surface program: its alpha is not that of the default material
+    standard:bool,                // of a Surface program: it builds on the standard model of its material (mirai_surface_standard), whose maps it reads
+    attributes:int,               // of a Vfx program: bytes of what it keeps of each particle
+    resources:[]Program_Resource, // of a Vfx program, in the order it declares them
+    stages:[]Program_Stage,       // of a Vfx program, in the order they run
+    moves:bool,                   // of a Vfx program: it moves and ages its particles itself
+    births:bool,                  // of a Vfx program: it gives how many particles its emitter starts
+    prepare:bool,                 // of a Vfx program: it prepares each frame what its emitter keeps
+    vertex:Program_Vertex,        // of a Surface program: its function vertex, which moves the vertices of what shows it
+}
+
+Program_Parameter :: struct {
+    name:string,
+    kind:Program_Kind,
+    components:u8,   // 1 to 4; a texture is one word
+    offset:u16,      // bytes into the parameters of the program
+    defaults:[4]f64, // a texture has none
+    min,max:f64,
+    srgb,normal,color:bool,
+    group:string, // the section of Details that shows it; empty: the first, without a title
+}
+
+// A resource of a Vfx program, which each emitter binds by its name: its
+// index is its place among those of the program. A grid that is cleared
+// starts at zero each stage that writes it.
+Program_Resource :: struct {
+    name:string,
+    kind:Program_Resource_Kind,
+    cleared:bool,
+    words:u32, // of an entry of a data channel
+}
+
+// A stage of a Vfx program: a pass of its own each step before update, over
+// the particles of its emitter or over the cells of one of its grids.
+Program_Stage :: struct {
+    name:string,
+    over:u8,         // the resource of the grid; PROGRAM_STAGE_PARTICLES: the particles
+    iterations:u8,   // each after the one before
+    writes:u32,      // the grid resources it writes besides the one it goes over, one bit each
+}
+
+// The function vertex of a Surface program (`//! vertex`). reach: how far it
+// moves a vertex from its rest, in the space of the mesh; with reach_offset,
+// the float parameter at those bytes gives it instead.
+Program_Vertex :: struct {
+    declared,animated:bool,
+    reach:f32,
+    reach_offset:i32, // -1: reach
+}

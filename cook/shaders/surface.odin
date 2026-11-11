@@ -824,7 +824,7 @@ sources_of :: proc(b:^Builder,e:int,out:^[dynamic]int) -> (facts:Facts) {
                 case "Parameters":
                     f:=UNKNOWN
                     if meta,has:=b.meta[expr.text];has {
-                        if bound,bounded:=json_bound(meta["max"]);bounded {f.upper=number_value(bound)}
+                        if bound,bounded:=json_bound(meta["max"]);bounded {f.upper=bound}
                     }
                     node:=input(b,fmt.aprintf("p.%s",expr.text,allocator=b.allocator),.Parameter,first,f)
                     append(out,node)

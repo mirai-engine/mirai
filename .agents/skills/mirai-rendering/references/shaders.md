@@ -149,7 +149,8 @@
   <parameter>]` and declares `vertex` ([vertex functions](materials.md#vertex-functions)): reach is
   a number from 0 or a parameter of one float; another word, a reach of another type or the line
   in another domain leave the program out, and the check asks for `vertex` with its signature. The
-  catalog gives it in `vertex` (`animated`, `reach`: a number or the name of the parameter).
+  catalog gives it in `vertex` (`animated`, `reach` in metres or `reach_offset`, the bytes of
+  the parameter that gives it).
 - `mirai_sample_texture(ctx,index,uv,lod)` receives the explicit context:
   - Surface in raster: derivatives and bias.
   - Surface with `ctx.ray` (also hits rebuilt in fragment shaders): LOD of the ray footprint.

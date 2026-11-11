@@ -32,31 +32,6 @@ float_is_written_as_the_shortest_decimal_that_reads_back :: proc(t:^testing.T) {
 }
 
 @(test)
-json_is_written_one_member_per_line_with_two_spaces :: proc(t:^testing.T) {
-    writer:=json_writer(context.temp_allocator)
-    json_object_begin(&writer)
-    json_key(&writer,"version");json_integer(&writer,1)
-    json_key(&writer,"name");json_string(&writer,"a \"quoted\"\\path\n\tñ")
-    json_key(&writer,"empty");json_array_begin(&writer);json_array_end(&writer)
-    json_key(&writer,"nothing");json_object_begin(&writer);json_object_end(&writer)
-    json_key(&writer,"list");json_array_begin(&writer)
-    json_integer(&writer,-3)
-    json_bool(&writer,true)
-    json_number(&writer,{is_float=true,float=0.25})
-    json_number(&writer,{integer=7})
-    json_object_begin(&writer)
-    json_key(&writer,"slot");json_integer(&writer,19)
-    json_object_end(&writer)
-    json_array_end(&writer)
-    json_object_end(&writer)
-    expected:="{\n  \"version\": 1,\n  \"name\": \"a \\\"quoted\\\"\\\\path\\n\\t\\u00f1\",\n  \"empty\": [],\n  \"nothing\": {},\n  \"list\": [\n    -3,\n    true,\n    0.25,\n    7,\n    {\n      \"slot\": 19\n    }\n  ]\n}\n"
-    text:=string(json_finish(&writer))
-    testing.expect_value(t,text,expected)
-    _,parse_error:=json.parse_string(text,allocator=context.temp_allocator)
-    testing.expect_value(t,parse_error,json.Error.None)
-}
-
-@(test)
 shader_entry_survives_the_manifest :: proc(t:^testing.T) {
     bindings:=[]Binding{{0,"Uniform_Buffer"},{2,"Sampler"},{35,"Texture_Table"}}
     shader:=Shader{id="Gbuffer_Plain_Frag",name="gbuffer_plain.frag",stage=.Fragment,spv="gbuffer_plain.frag.spv",msl="gbuffer_plain.frag.metal",entry="main0",bindings=bindings,constants={"nested","other"},fingerprint="f",spv_hash="s",msl_hash="m",staged=true}

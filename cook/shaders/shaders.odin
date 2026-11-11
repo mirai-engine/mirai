@@ -964,8 +964,8 @@ early_write :: proc(g:^Generation,folder:string,written:^bool,active:bool) {
             append(&entries[i],entry)
         }
     }
-    catalog,read_error:=os.read_entire_file(path_join(g.staging,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
-    if read_error!=nil || !write_file(path_join(folder,"catalog.json",allocator=context.temp_allocator),catalog) {return}
+    catalog,read_error:=os.read_entire_file(path_join(g.staging,abi.SHADER_CATALOG,allocator=context.temp_allocator),context.temp_allocator)
+    if read_error!=nil || !write_file(path_join(folder,abi.SHADER_CATALOG,allocator=context.temp_allocator),catalog) {return}
     if !write_file(path_join(folder,abi.SHADER_MANIFEST,allocator=context.temp_allocator),manifest_text(g,entries[0][:],entries[1][:],entries[2][:],nil)) {return}
     sync.atomic_store(written,true)
 }
@@ -1169,7 +1169,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     catalog.extensions=extensions
     result.refused=strings.join(catalog.refused,"\n",allocator)
     g.features=extensions_features(extensions)
-    if !write_file(path_join(staging,"catalog.json",allocator=scratch),catalog_json(catalog,scratch)) {fail(&result,allocator,"could not write catalog.json");return}
+    if !write_file(path_join(staging,abi.SHADER_CATALOG,allocator=scratch),catalog_text(catalog)) {fail(&result,allocator,"could not write %s",abi.SHADER_CATALOG);return}
     includes:=make([dynamic]string,scratch)
     append(&includes,path_join(staging,"include",allocator=scratch))
     for folder in ENGINE_INCLUDES {append(&includes,path_join(g.root,folder,allocator=scratch))}
@@ -1293,7 +1293,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         for other in extension_jobs[:i] {if other.result.name==job.result.name {fail(&result,allocator,"%s: another extension has a stage of that name",job.source);return}}
     }
     out_include:=path_join(g.output,"include",allocator=scratch)
-    if os.rename(path_join(staging,"include",allocator=scratch),path_join(staging_shaders,"include",allocator=scratch))!=nil || os.rename(path_join(staging,"catalog.json",allocator=scratch),path_join(staging_shaders,"catalog.json",allocator=scratch))!=nil {
+    if os.rename(path_join(staging,"include",allocator=scratch),path_join(staging_shaders,"include",allocator=scratch))!=nil || os.rename(path_join(staging,abi.SHADER_CATALOG,allocator=scratch),path_join(staging_shaders,abi.SHADER_CATALOG,allocator=scratch))!=nil {
         fail(&result,allocator,"could not prepare the catalog in %s",staging)
         return
     }
@@ -1354,7 +1354,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     }
     result.shaders,result.tests,result.programs=shader_count+program_count+extension_count,test_count,len(catalog.programs)
     result.engine=strings.clone(identity,allocator)
-    append(&outputs,manifest_path,path_join(g.output,"catalog.json",allocator=scratch))
+    append(&outputs,manifest_path,path_join(g.output,abi.SHADER_CATALOG,allocator=scratch))
     for name in ([]string{SURFACE_INCLUDE,SURFACE_COVERAGE_INCLUDE,POSTPROCESS_INCLUDE,VFX_INCLUDE,UI_INCLUDE,EXTENSIONS_INCLUDE,HOOKS_INCLUDE,SCHEMA_INCLUDE,CONSTANTS_INCLUDE}) {append(&outputs,path_join(out_include,name,allocator=scratch))}
     for job,at in g.jobs {
         folder:=tests_out if at>=test_first && at<test_first+test_count else g.output
