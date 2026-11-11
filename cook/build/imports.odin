@@ -7,13 +7,13 @@ import "mirai:std/subprocess"
 
 // Brings the imported folder of each root (a project, a plugin) up to date
 // with the sources of its assets folder (cook/import/sources.sync), with the
-// import program of the engine at engine_root, which reads the formats the
-// plugins of the project add from the library of its editor: the tool builds
-// without the importers. message, in the temp allocator: what it did, or why
-// it failed.
-imports_sync :: proc(engine_root:string,mode:Engine_Mode,roots:[]string) -> (ok:bool,message:string) {
+// import program of the engine (Engine_Paths.import_program, of the defines
+// the engine was built with), which reads the formats the plugins of the
+// project add from the library of its editor: the tool builds without the
+// importers. message, in the temp allocator: what it did, or why it failed.
+imports_sync :: proc(program:string,roots:[]string) -> (ok:bool,message:string) {
     command:=make([dynamic]string,context.temp_allocator)
-    append(&command,engine_paths(engine_root,mode,context.temp_allocator).import_program)
+    append(&command,program)
     for root in roots {append(&command,"--sync",root)}
     if len(roots)==0 {return true,""}
     state,output,errors,error:=subprocess.exec({command=command[:]},context.temp_allocator)

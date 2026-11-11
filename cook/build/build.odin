@@ -111,6 +111,7 @@ Job :: struct {
     root,engine_root:string,
     engine:Engine_Mode,
     imports:[]string,           // Build: the roots whose sources it imports once the target stands (imports_roots)
+    import_program:string,      // Build: that of the engine of the project's defines, which imports them
     compiler:string,
     flags:[]string,             // what identifies the build besides its sources
     staged:string,              // what the compiler writes
@@ -221,6 +222,7 @@ job_start :: proc(desc:Desc) -> ^Job {
         roots:=imports_roots(p)
         job.imports=make([]string,len(roots),a)
         for root,i in roots {job.imports[i]=strings.clone(root,a)}
+        job.import_program=project_engine(p,desc.engine,a).import_program
     }
     generated,written:=generated_write(p,desc.target)
     if !written {
@@ -865,7 +867,7 @@ job_run :: proc(desc:Desc) -> ^Job {
 @(private)
 job_imports :: proc(job:^Job) -> bool {
     if len(job.imports)==0 {return true}
-    ok,message:=imports_sync(job.engine_root,job.engine,job.imports)
+    ok,message:=imports_sync(job.import_program,job.imports)
     if !ok {
         job.result.text=strings.clone(message,virtual.arena_allocator(&job.arena))
         job_fail(job,.Import_Failed)
