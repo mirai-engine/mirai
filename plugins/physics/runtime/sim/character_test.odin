@@ -214,6 +214,26 @@ a_slope_steeper_than_the_limit_slides_the_character_down :: proc(t:^testing.T) {
     test_walk(&w,ch,{0,0,-1},45)
     testing.expect(t,character_velocity(&w,ch).z>2 && character_position(&w,ch).y<start.y-2)
     testing.expect(t,!test_standing(&w,ch))
+
+    // Two such faces in a V hold it: it stands in the groove within half a second, and jumps out of it.
+    v:World
+    testing.expect(t,test_character_world(&v))
+    defer world_destroy(&v)
+    for side in ([2]f32{-1,1}) {
+        n:=Vec3{-side*cmath.sin(angle),cmath.cos(angle),0}
+        along:=Vec3{side*cmath.cos(angle),cmath.sin(angle),0}
+        test_static_box(&v,{1.5,0.25,3},along*1.5-n*0.25,q_axis_angle({0,0,1},side*angle))
+    }
+    wedged:=test_character(&v,{0,1,0})
+    test_walk(&v,wedged,{},30)
+    held:=character_position(&v,wedged)
+    for _ in 0..<30 {
+        test_walk(&v,wedged,{},1)
+        testing.expectf(t,test_standing(&v,wedged),"it stands in the groove at %v",character_position(&v,wedged))
+    }
+    testing.expectf(t,length(character_position(&v,wedged)-held)<0.01,"it stays where the groove holds it: %v from %v",character_position(&v,wedged),held)
+    test_walk(&v,wedged,{},1,jump=true)
+    testing.expectf(t,character_velocity(&v,wedged).y>4,"it jumps out: %v",character_velocity(&v,wedged))
 }
 
 @(test)
