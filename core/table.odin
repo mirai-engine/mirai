@@ -85,9 +85,10 @@ raw_follow :: proc "contextless" (t:^Raw_Table,es:^Entities,index:int) {
 
 // Every change that waits for the settle goes through here.
 @(private)
-pending_push :: #force_inline proc(t:^Raw_Table,p:Pending) {
-    append(&t.pending,p)
+pending_push :: #force_inline proc(t:^Raw_Table,p:Pending) -> bool {
+    if _,error:=append(&t.pending,p);error!=nil {return false}
     table_waits(t)
+    return true
 }
 
 @(private)
@@ -398,10 +399,15 @@ version :: #force_inline proc "contextless" (t:^Table($T,$A)) -> u64 {return t.v
 layout :: #force_inline proc "contextless" (t:^Table($T,$A)) -> u64 {return t.layout}
 
 // Gives the entity the component, or replaces its value, at the end of the
-// function. A component that was off stays off.
-add :: proc(t:^Table($T),e:Entity,value:T) {
-    append(&t.added,value)
-    pending_push(raw(t),Pending{e,i32(len(t.added)-1)})
+// function. A component that was off stays off. False without memory: nothing
+// waits.
+add :: proc(t:^Table($T),e:Entity,value:T) -> bool {
+    if _,error:=append(&t.added,value);error!=nil {return false}
+    if !pending_push(raw(t),Pending{e,i32(len(t.added)-1)}) {
+        pop(&t.added)
+        return false
+    }
+    return true
 }
 
 // Takes the component from the entity at the end of the function.
@@ -1264,13 +1270,19 @@ raw_state :: proc "contextless" (t:^Raw_Table,e:Entity) -> (on,turned_off,found:
 }
 
 // As add, with the value at a pointer; nil: the component zeroed.
-raw_add :: proc(t:^Raw_Table,info:^runtime.Type_Info,e:Entity,value:rawptr) {
+raw_add :: proc(t:^Raw_Table,info:^runtime.Type_Info,e:Entity,value:rawptr) -> bool {
+    added:=t.added.len
     switch {
     case info.size==0: t.added.len+=1 // as append does for an empty type: there is no memory to copy into
     case value==nil:   runtime.__dynamic_array_append_nothing(&t.added,info.size,info.align)
     case:              runtime.__dynamic_array_append(&t.added,info.size,info.align,value,1)
     }
-    pending_push(t,Pending{e,i32(t.added.len-1)})
+    if t.added.len==added {return false}
+    if !pending_push(t,Pending{e,i32(added)}) {
+        t.added.len=added
+        return false
+    }
+    return true
 }
 
 raw_remove :: proc(t:^Raw_Table,e:Entity) {pending_push(t,Pending{e,PENDING_REMOVE})}

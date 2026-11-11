@@ -85,12 +85,13 @@ entities_clear :: proc(es:^Entities) -> bool {
     return true
 }
 
+// NONE without memory.
 entity_create :: proc(es:^Entities) -> Entity {
     index:int
     if len(es.free)>0 {
         index=int(pop(&es.free))
     } else {
-        append(&es.generation,1)
+        if _,error:=append(&es.generation,1);error!=nil {return NONE}
         index=len(es.generation)-1
     }
     es.alive+=1
@@ -98,12 +99,13 @@ entity_create :: proc(es:^Entities) -> Entity {
 }
 
 // The handle stops being alive at once; its rows go with the next settle.
+// False for one not alive, and without memory, when it stays alive.
 entity_destroy :: proc(es:^Entities,e:Entity) -> bool {
     if !alive(es,e) {return false}
+    if _,error:=append(&es.doomed,e);error!=nil {return false}
     i:=entity_index(e)
     es.generation[i]+=1
     if es.generation[i]==0 {es.generation[i]=1}
-    append(&es.doomed,e)
     es.alive-=1
     return true
 }
