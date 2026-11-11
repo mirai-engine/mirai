@@ -277,9 +277,10 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     float sun_part = -1.0, sun_wide = 0.0;
     uint sun_chain = INVALID;
     bool sun_given = false;
+    direct_maps_give = !maps || out_depth[p].y != DIRECT_MAPS_NONE;
     if (sun > 0.0) {
         Shadow_Map held;
-        sun_given = sun_map_of(pixel.position, held);
+        sun_given = direct_maps_give && sun_map_of(pixel.position, held);
         if (!sun_given) sun_glass = direct_glass(origin, frame.sun_direction.xyz, 1e5, float3(1.0));
 #ifdef MIRAI_FILTER_POINTS
         sun_chain = filter_chain;

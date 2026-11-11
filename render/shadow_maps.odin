@@ -15,7 +15,8 @@ import "mirai:rhi"
 // view; the atlas is shared among them by how much of the view each lights.
 // The other lights, small on the screen, trace rays (shadow_maps.slang,
 // shadow_maps.comp, shadow_map.vert, direct_samples.comp).
-SHADOW_ATLAS :: abi.SHADOW_ATLAS
+// The side of the atlas of the maps of a view, texels.
+SHADOW_ATLAS :: u32(4096)
 SHADOW_MAPS_MAX :: 96
 SHADOW_MAP_ROWS :: abi.SHADOW_MAP_ROWS
 SHADOW_ENTRIES :: abi.SHADOW_ENTRIES
@@ -28,9 +29,11 @@ SHADOW_RASTER_SHARE :: f32(0.02)
 SHADOW_RASTER_KEEP :: f32(0.01)
 SHADOW_RASTER_LIGHTS :: 32 // the most lights rasterized in a frame, those that light most of the view
 // The far end of each cascade of the sun, metres from the eye, and the side
-// of its map: the nearest, the sharpest.
-SHADOW_SUN_CASCADES :: [abi.SHADOW_SUN_MAPS]f32{8, 32, 128}
-SHADOW_SUN_SIDES :: [abi.SHADOW_SUN_MAPS]u32{2048, 2048, 1024}
+// of its map: the nearest, the sharpest. The far ones hold the ground and the
+// mountains out to the horizon of an open scene, whose points, each metres
+// wide, average their maps where samples would not agree.
+SHADOW_SUN_CASCADES :: [abi.SHADOW_SUN_MAPS]f32{8, 32, 128, 512, 2048, 16384}
+SHADOW_SUN_SIDES :: [abi.SHADOW_SUN_MAPS]u32{2048, 2048, 1024, 1024, 1024, 1024}
 SHADOW_MAP_ORTHOGRAPHIC :: abi.SHADOW_MAP_ORTHOGRAPHIC
 
 Gpu_Shadow_Map :: struct {
@@ -457,7 +460,7 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 		rows := ([^][4]u32)(b.data.ptr)[int(planned.rows) + first * SHADOW_MAP_ROWS:][:count * SHADOW_MAP_ROWS]
 		copy(p.frame.sun_map_rows[:], rows)
 	}
-	p.frame.sun_maps = {u32(count), planned.rows, 1, 1 if tinted else 0}
+	p.frame.sun_maps = {u32(count), planned.rows, SHADOW_ATLAS, 1 if tinted else 0}
 	constants := (^Gpu_Frame)(p.constants.ptr)
 	constants.sun_maps, constants.sun_map_rows = p.frame.sun_maps, p.frame.sun_map_rows
 	return planned

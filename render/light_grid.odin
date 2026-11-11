@@ -35,29 +35,38 @@ LIGHT_GRID_CELL :: f32(1)
 LIGHT_GRID_ROWS_MAX :: 1 << 21
 LIGHT_GRID_WEIGHT_ROWS :: abi.LIGHT_WEIGHT_ROWS
 
+// The farthest a light reaches for the grid, metres: past it the cells hold it whole.
+LIGHT_GRID_REACH_MAX :: f32(1e9)
+
 // The grid around the ranges of the lights; `count`, the lights the GPU holds,
 // those that a pass writes on it included, each with its record.
 light_grid_place :: proc(lights: []Gpu_Light, count: int) -> (grid: Light_Grid) {
 	lo, hi := Vec3{max(f32), max(f32), max(f32)}, Vec3{-max(f32), -max(f32), -max(f32)}
 	for l in lights {
 		if !light_placed(l) || !(l.position_range.w > 0) {continue}
-		reach := Vec3{l.position_range.w, l.position_range.w, l.position_range.w}
+		range := min(l.position_range.w, LIGHT_GRID_REACH_MAX)
+		reach := Vec3{range, range, range}
 		lo, hi = linalg.min(lo, l.position_range.xyz - reach), linalg.max(hi, l.position_range.xyz + reach)
 	}
 	if !(lo.x <= hi.x) {return}
-	grid.cell = LIGHT_GRID_CELL
+	// No smaller than the cells LIGHT_GRID_ROWS_MAX rows would leave, so that
+	// however far the lights reach their counts fit.
+	span := hi - lo
+	volume := f64(max(span.x, 1)) * f64(max(span.y, 1)) * f64(max(span.z, 1))
+	grid.cell = max(LIGHT_GRID_CELL, f32(math.cbrt(volume / LIGHT_GRID_ROWS_MAX)))
 	for {
 		// On a lattice of the cell: a light that moves the bounds does not move the cells of the others.
 		grid.origin = linalg.floor(lo / grid.cell) * grid.cell
 		extent := (hi - grid.origin) / grid.cell
-		grid.size = {max(u32(math.ceil(extent.x)), 1), max(u32(math.ceil(extent.y)), 1), max(u32(math.ceil(extent.z)), 1)}
+		grid.size = {u32(clamp(math.ceil(extent.x), 1, LIGHT_GRID_ROWS_MAX)), u32(clamp(math.ceil(extent.y), 1, LIGHT_GRID_ROWS_MAX)), u32(clamp(math.ceil(extent.z), 1, LIGHT_GRID_ROWS_MAX))}
 		cells := int(grid.size.x) * int(grid.size.y) * int(grid.size.z)
 		grid.rows = cells + LIGHT_GRID_WEIGHT_ROWS * count
 		last := Vec3{f32(grid.size.x - 1), f32(grid.size.y - 1), f32(grid.size.z - 1)}
 		for l in lights {
 			if !light_placed(l) || !(l.position_range.w > 0) {continue}
-			a := linalg.clamp(linalg.floor((l.position_range.xyz - l.position_range.w - grid.origin) / grid.cell), Vec3{}, last)
-			b := linalg.clamp(linalg.floor((l.position_range.xyz + l.position_range.w - grid.origin) / grid.cell), Vec3{}, last)
+			range := min(l.position_range.w, LIGHT_GRID_REACH_MAX)
+			a := linalg.clamp(linalg.floor((l.position_range.xyz - range - grid.origin) / grid.cell), Vec3{}, last)
+			b := linalg.clamp(linalg.floor((l.position_range.xyz + range - grid.origin) / grid.cell), Vec3{}, last)
 			box := b - a + 1
 			grid.rows += int(box.x) * int(box.y) * int(box.z)
 		}

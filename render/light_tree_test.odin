@@ -404,3 +404,17 @@ light_groups_face_the_directions_of_their_lights :: proc(t: ^testing.T) {
 	outside, _, _ := light_tree_faults(nodes[:], seen[:])
 	testing.expect_value(t, outside, 0)
 }
+
+// Whatever the lights reach, even past any scene, the grid of the lights fits
+// its rows and holds each placed light in some cell.
+@(test)
+the_grid_of_the_lights_fits_its_rows_however_far_they_reach :: proc(t: ^testing.T) {
+	ranges := [?]f32{0.5, 20, 1e4, 1e7, 1e30, math.inf_f32(1), math.nan_f32()}
+	for range in ranges {
+		lights := [2]Gpu_Light{{position_range = {0, 0, 0, range}}, {position_range = {500, 2, -300, 4}}}
+		for &l in lights {l.direction_cone.w = GPU_LIGHT_POINT}
+		grid := light_grid_place(lights[:], len(lights))
+		testing.expectf(t, grid.rows > 0 && grid.rows <= LIGHT_GRID_ROWS_MAX, "range %v: %d rows", range, grid.rows)
+		testing.expectf(t, grid.size.x >= 1 && grid.size.y >= 1 && grid.size.z >= 1 && grid.cell >= LIGHT_GRID_CELL, "range %v: %v cells of %v m", range, grid.size, grid.cell)
+	}
+}

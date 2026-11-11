@@ -158,11 +158,10 @@ LIGHT_WEIGHT_ROWS          :: 2
 // one; then SHADOW_MAP_ROWS for each map. The constants of a view hold those of
 // the cascades of the sun, SUN_MAP_ROWS. The maps draw SHADOW_ENTRIES clusters
 // at most, SHADOW_TESTED_ENTRIES of them of masked or blended materials.
-SHADOW_ATLAS               :: u32(4096)
 SHADOW_MAP_ROWS            :: 6
 SHADOW_LIGHT_FACES         :: 16
 SHADOW_MAP_ORTHOGRAPHIC    :: 1
-SHADOW_SUN_MAPS            :: 3
+SHADOW_SUN_MAPS            :: 6
 SUN_MAP_ROWS               :: SHADOW_SUN_MAPS * SHADOW_MAP_ROWS
 SHADOW_ENTRIES             :: u32(1 << 18)
 SHADOW_TESTED_ENTRIES      :: u32(1 << 16)

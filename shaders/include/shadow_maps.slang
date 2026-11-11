@@ -11,9 +11,10 @@
 #define MIRAI_SHADOW_MAPS_SLANG
 #include "scene.slang"
 
-// SHADOW_ATLAS, SHADOW_MAP_ROWS, SHADOW_LIGHT_FACES, SHADOW_ENTRIES: the
-// buffer of the maps and the clusters they draw (render/abi); those of the
-// instances with masked or blended materials are listed from the end.
+// SHADOW_MAP_ROWS, SHADOW_LIGHT_FACES, SHADOW_ENTRIES: the buffer of the maps
+// and the clusters they draw (render/abi); those of the instances with masked
+// or blended materials are listed from the end. The side of the atlas, texels,
+// is Frame.sun_maps.z.
 // The width of what a ray reads of a material over how far it came
 // (hit_covers): a fragment of a map reads its material as coarsely as a texel.
 #define SHADOW_TESTED_FOOTPRINT 0.004
@@ -124,7 +125,7 @@ float shadow_past(Shadow_Map m, float depth, float skip, float limit) {
 float shadow_hard_seen(Texture2D<float4> atlas, Shadow_Map m, float2 texel, float d, float bias, float skip) {
     float2 corner = texel - 0.5;
     float2 first = floor(corner), f = corner - first;
-    float4 depth = atlas.GatherRed(point_sampler, (float2(m.rect.xy) + first + 1.0) / float(SHADOW_ATLAS));
+    float4 depth = atlas.GatherRed(point_sampler, (float2(m.rect.xy) + first + 1.0) / float(frame.sun_maps.z));
     float limit = d - bias;
     float4 past = float4(shadow_past(m, depth.x, skip, limit), shadow_past(m, depth.y, skip, limit),
                          shadow_past(m, depth.z, skip, limit), shadow_past(m, depth.w, skip, limit));
@@ -245,7 +246,22 @@ float3 shadow_tint(Shadow_Map m, float3 position) {
 #ifdef SHADOW_GLASS_SLOT
     if (!(shadow_map_distance(m, view_shadow_glass.Load(int3(int2(m.rect.xy) + int2(floor(texel)), 0)).r) < local.z)) return float3(1.0);
 #endif
-    return view_shadow_tint.SampleLevel(linear_sampler, (float2(m.rect.xy) + texel) / float(SHADOW_ATLAS), 0.0).rgb;
+    return view_shadow_tint.SampleLevel(linear_sampler, (float2(m.rect.xy) + texel) / float(frame.sun_maps.z), 0.0).rgb;
+}
+
+// Whether a glass whose program gives its color stands in the way of the
+// light of map m to position: its tint keeps only the mean of the program,
+// and the rays of the samples of the direct light run the program instead.
+bool shadow_tint_programmed(Shadow_Map m, float3 position) {
+    if (frame.sun_maps.w == 0u) return false;
+    float3 local = shadow_map_local(m, position);
+    float2 unit = shadow_map_unit(m, local);
+    float side = float(m.rect.z);
+    int2 texel = int2(m.rect.xy) + int2(clamp(float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * side, float2(0.5), float2(side - 0.5)));
+#ifdef SHADOW_GLASS_SLOT
+    if (!(shadow_map_distance(m, view_shadow_glass.Load(int3(texel, 0)).r) < local.z)) return false;
+#endif
+    return view_shadow_tint.Load(int3(texel, 0)).a < 0.5;
 }
 #endif
 #endif

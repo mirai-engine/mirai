@@ -25,6 +25,8 @@ struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uin
 // What stopped the ray of each pixel (DIRECT_NONE, DIRECT_CHANGED).
 [[vk::binding(SLOT_PASS2, 0)]] [[vk::image_format("r32ui")]] RWTexture2D<uint> out_blockers : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
 [[vk::binding(SLOT_PASS6, 0)]] StructuredBuffer<uint4> light_grid : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);
+// The depth of each point as direct_maps.comp left it, while the view drew maps (DIRECT_MAPS_NONE).
+[[vk::binding(SLOT_PASS5, 0)]] Texture2D<float4> point_depth : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);
 #include "direct_grid.slang"
 
 [shader("compute")]
@@ -49,9 +51,10 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     uint4 row = direct_cell(pixel.position);
     uint count = direct_items(row);
     // The weights of the items and of the sun, the sun last; none for one a map holds here.
+    direct_maps_give = frame.sun_maps.z == 0u || point_depth.Load(int3(p, 0)).y != DIRECT_MAPS_NONE;
     float sun = direct_sun_weight(pixel.position, normal);
     Shadow_Map held;
-    if (sun > 0.0 && sun_map_of(pixel.position, held)) sun = 0.0;
+    if (sun > 0.0 && direct_maps_give && sun_map_of(pixel.position, held)) sun = 0.0;
     float total = sun;
     for (uint i = 0u; i < count; i++) {
         total += direct_sampled_weight(row, direct_item(row, i), pixel.position, normal);

@@ -65,8 +65,8 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     output.clip[2] = clip.w + clip.y;
     output.clip[3] = clip.w - clip.y;
     // From -1 to 1 over the map to its square of the atlas, row 0 on top.
-    float side = float(m.rect.z) / float(SHADOW_ATLAS);
-    float2 corner = float2(m.rect.xy) / float(SHADOW_ATLAS);
+    float side = float(m.rect.z) / float(frame.sun_maps.z);
+    float2 corner = float2(m.rect.xy) / float(frame.sun_maps.z);
     output.position = float4((2.0 * corner.x + side) * clip.w - clip.w + side * clip.x,
         clip.w - (2.0 * corner.y + side) * clip.w + side * clip.y, clip.z, clip.w);
 #ifdef MIRAI_SHADOW_TESTED

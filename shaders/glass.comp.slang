@@ -39,12 +39,16 @@ float pane_thickness(uint instance, float3 normal, out float3 across) {
     return slab && extent[thin] <= 0.2 * sides && dot(across, normal) >= 0.98 ? extent[thin] : 0.0;
 }
 
+// The faces at which the view turns back into a closed solid before it is let
+// out where it is.
+#define GLASS_INSIDE_BOUNCES 3u
+
 // Where the view goes into a solid at the layer, and from where it goes on:
 // through a pane, a solid much thinner than it is wide seen through one of its
 // large faces, from the far face, moved aside by its way through; through
-// another closed solid, from where it leaves its box, bent once as it went in;
-// a sheet (an open mesh, as the surface of water) it does not leave
-// (WALK_OPEN).
+// another closed solid, from the face where it leaves it, found on its own
+// mesh, bent out there (or turned back in where it cannot leave); a sheet (an
+// open mesh, as the surface of water) it does not leave (WALK_OPEN).
 Glass_Walk glass_entry(Material m, Glass g, uint instance, float3 direction, float bias) {
     float3 across;
     float pane = pane_thickness(instance, g.normal, across);
@@ -57,11 +61,31 @@ Glass_Walk glass_entry(Material m, Glass g, uint instance, float3 direction, flo
     }
     Instance inst = instances[instance];
     if ((meshes[instance_mesh(inst)].flags & MESH_FLAG_CLOSED) == 0u) return walk_start(g.position + direction * bias, direction, WALK_OPEN);
+    float3 origin = g.position + direction * bias;
+    float path = 0.0;
+    for (uint bounce = 0u; bounce < GLASS_INSIDE_BOUNCES; bounce++) {
+        Hit hit = trace_instance(instance, origin, direction);
+        if (hit.instance != instance) break;
+        bool blended;
+        float3 normal = hit_normal(hit.instance, hit.primitive, hit.bary, direction, blended);
+        origin += direction * hit.t;
+        path += hit.t;
+        if (!blended) break;
+        float3 out_direction = refract(direction, normal, material_ior(m));
+        if (dot(out_direction, out_direction) > 0.0) {
+            Glass_Walk w = walk_start(origin + out_direction * bias, out_direction, 0u);
+            w.path = path;
+            return w;
+        }
+        direction = reflect(direction, normal);
+        origin += direction * bias;
+    }
+    // Without a face of its own on the way, or past the bounces: from where it leaves the box.
     float3 inverse = 1.0 / select(abs(direction) > float3(1e-12), direction, float3(1e-12));
-    float3 far = max((inst.bounds_min.xyz - g.position) * inverse, (inst.bounds_max.xyz - g.position) * inverse);
-    float path = max(min(far.x, min(far.y, far.z)), 0.0);
-    Glass_Walk w = walk_start(g.position + direction * (path + bias), direction, 0u);
-    w.path = path;
+    float3 far = max((inst.bounds_min.xyz - origin) * inverse, (inst.bounds_max.xyz - origin) * inverse);
+    float leave = max(min(far.x, min(far.y, far.z)), 0.0);
+    Glass_Walk w = walk_start(origin + direction * (leave + bias), direction, 0u);
+    w.path = path + leave;
     return w;
 }
 

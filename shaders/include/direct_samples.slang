@@ -16,6 +16,9 @@
 // DIRECT_NONE; DIRECT_CHANGED where it met what changed (occluder_changed).
 #define DIRECT_NONE 0x7FFFFFFFu
 #define DIRECT_CHANGED 0x80000000u
+// The y of the depth of a point (direct_depth) where direct_maps.comp leaves
+// all of its light to the samples (direct_maps_give).
+#define DIRECT_MAPS_NONE -1.0
 
 // The place of a pixel in the pattern of 3x3: consecutive places stand apart,
 // as in an ordered dither, so that a window of 3x3 holds each once.

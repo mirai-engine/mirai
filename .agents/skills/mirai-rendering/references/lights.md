@@ -177,11 +177,16 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   under a map takes taps around it: all lit, lit; all blocked,
   hidden; where they disagree (a penumbra) it takes the hard shadow of the map at the point, and
   `direct_spread` averages that evenly over the points of its surface within the penumbra width
-  the blockers give. Lights without maps (small on the screen) trace their samples: raster for
-  near and large lights, rays for far ones. The constants of the view carry the cascades of the
-  sun it drew (`Gpu_Frame.sun_maps`), so that a pass after the direct light takes the shadow of
-  the sun from them and traces only where none holds the point (`sun_shadow_seen`; an extension
-  binds the atlas with `Surface_Source.Shadow_Atlas`): the fog lights its cells so.
+  the blockers give. A point wider on its surface than its penumbra (far ground seen at a grazing
+  angle) spreads its taps over its width and takes the share of them that is lit, which the
+  jitter of the view does not move; the cascades of the sun reach the horizon of an open scene for
+  that ground. Lights without maps (small on the screen) trace their samples: raster for
+  near and large lights, rays for far ones. Glass with a program keeps only its mean
+  in the tint of the maps: a point with such glass between it and a light a map holds takes all
+  of its light from samples, whose rays run the program. The constants of the view carry the
+  cascades of the sun it drew (`Gpu_Frame.sun_maps`), so that a pass after the direct light takes
+  the shadow of the sun from them and traces only where none holds the point (`sun_shadow_seen`;
+  an extension binds the atlas with `Surface_Source.Shadow_Atlas`): the fog lights its cells so.
 - **Skinned meshes.** The skin writes the posed box and normal cone of each cluster, grown by the
   reach of its vertex programs, so that the view cull and the shadow map cull leave posed clusters
   out like static ones.

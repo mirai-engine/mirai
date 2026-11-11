@@ -69,12 +69,18 @@ void direct_ray(uint light, float3 position, float3 origin, float point, float s
     reach = light_reach(lights[light], distance);
 }
 
+// Whether the maps of the view give the point the light they hold:
+// direct_maps.comp leaves to the samples, with no map, a point some glass with
+// a program stands in front of (shadow_tint_programmed). Each pass sets it for
+// its point.
+static bool direct_maps_give = true;
+
 // The weight of an item at a point for the samples: none for a light a map of
 // the view holds there, whose light direct_maps.comp gives.
 float direct_sampled_weight(uint4 row, uint item, float3 position, float3 normal) {
 #ifdef SHADOW_DATA_SLOT
     Shadow_Map m;
-    if (item != DIRECT_CELL_TABLE && light_map_of(item, position, m)) return 0.0;
+    if (direct_maps_give && item != DIRECT_CELL_TABLE && light_map_of(item, position, m)) return 0.0;
 #endif
     return direct_item_weight(row, item, position, normal);
 }

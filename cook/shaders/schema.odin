@@ -183,7 +183,6 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     i(&b,"LIGHT_TREE_DEPTH",abi.LIGHT_TREE_DEPTH)
     i(&b,"LIGHT_CUT_MAX",abi.LIGHT_CUT_MAX)
     u(&b,"LIGHT_WEIGHT_ROWS",abi.LIGHT_WEIGHT_ROWS)
-    u(&b,"SHADOW_ATLAS",abi.SHADOW_ATLAS)
     u(&b,"SHADOW_MAP_ROWS",abi.SHADOW_MAP_ROWS)
     u(&b,"SHADOW_LIGHT_FACES",abi.SHADOW_LIGHT_FACES)
     u(&b,"SHADOW_MAP_ORTHOGRAPHIC",abi.SHADOW_MAP_ORTHOGRAPHIC)

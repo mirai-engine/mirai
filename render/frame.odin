@@ -1315,6 +1315,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_blockers)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_depth)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
 	// A thread for each square of 2x2 points, and a group of the samples for

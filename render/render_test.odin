@@ -417,6 +417,7 @@ render_many_lights_match_their_reference :: proc(t: ^testing.T) {
 	if !cube_fixture_init(t, &f, 480, 300, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
+	renderer_set_display_transform(r, .ACES_2)
 	lights_field(&f, 1024, 8, radius = 0.1)
 	camera := Camera{position = {16, 12, 18}, forward = {-16, -12, -18}, up = {0, 1, 0}, fov_y = 50, near = 0.1, far = 100, exposure = UNIT_EXPOSURE}
 	reference, ok := reference_image(t, &f, camera, 8)

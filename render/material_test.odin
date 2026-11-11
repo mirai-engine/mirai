@@ -1408,7 +1408,8 @@ material_mirror_lighting_is_exact_with_four_local_lights :: proc(t:^testing.T) {
 @(test)
 material_rough_reflections_are_blurred_and_steady :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, material_settings()) {return}
+	// Wide enough that the tile a shared ray is filtered over, 8 pixels, is small beside the lobe.
+	if !fixture_init(t, &f, 192, 128, material_settings()) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	floor, lamp := DEFAULT_MATERIAL, DEFAULT_MATERIAL
@@ -1437,7 +1438,8 @@ material_rough_reflections_are_blurred_and_steady :: proc(t: ^testing.T) {
 	scene_set(r, instances, nil, {}, {})
 	mirror_inside := settled(t, &f, camera, inside)
 	mirror_beside := settled(t, &f, camera, beside)
-	floor.roughness = 0.3
+	// Rough, under the roughness reflections trace up to (Settings.reflection_roughness).
+	floor.roughness = 0.25
 	materials_set(r, {floor, lamp})
 	rough_inside := settled(t, &f, camera, inside)
 	rough_beside := settled(t, &f, camera, beside)

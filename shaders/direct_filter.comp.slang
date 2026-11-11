@@ -67,7 +67,7 @@ float3 filter_light(int2 p, float depth, float3 normal, float3 open, float part,
             float seen = sun.part < 0.0 ? sun_shadow_seen(pixel.position, normal, false) : sun.part;
             // The glass on its way: where a map holds the pixel, as its tint says there.
             Shadow_Map held;
-            float3 glass = sun_map_of(pixel.position, held) ? shadow_tint(held, pixel.position) : sun.glass;
+            float3 glass = sun_map_of(pixel.position, held) && !shadow_tint_programmed(held, pixel.position) ? shadow_tint(held, pixel.position) : sun.glass;
             light += radiance * glass * (seen < 0.0 ? 1.0 : seen);
         }
     }
