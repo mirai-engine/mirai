@@ -89,6 +89,7 @@ Nav_Path :: struct {
     kind:Nav_Link_Kind `mirai:"readonly,transient"`, // of the link it crosses
     manual:bool `mirai:"readonly,transient"`,       // the game crosses it
     corridor:ai.Nav_Corridor `mirai:"transient,hidden"`,
+    boundary:ai.Nav_Boundary `mirai:"transient,hidden"`, // the edges of its mesh it steps aside within
     link:ai.Nav_Ref `mirai:"transient,hidden"`,
     from,to:[3]f32 `mirai:"transient,hidden"`, // of the link it crosses
     time:f32 `mirai:"transient,hidden,unit=s"`,  // in the crossing; since the last plan while following
@@ -380,7 +381,7 @@ navigation_agents :: proc(
         }
         if int(p.class)!=class {
             // Its corridor was over the mesh or the volume of the other class.
-            p.class,p.corridor.count=i8(class),0
+            p.class,p.corridor.count,p.boundary=i8(class),0,{}
             switch {
             case p.state==.Moving: p.state=.Waiting
             // In the other space: it plans on from there; a take-off, once where it leads.
@@ -1064,12 +1065,14 @@ agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Pa
         self:=ai.Avoid_Agent(2){position={near.position.x,near.position.z},velocity={near.velocity.x,near.velocity.z},radius=near.radius}
         // The edges of its mesh it could reach are walls of the same program: a velocity that
         // steps aside does not leave the mesh, off a ledge or into a wall where others crowd.
+        // Gathered again only once it went on past those it holds, or a tile under them was built again.
         walls:[ai.AVOID_MAX_WALLS]ai.Avoid_Wall
         wall_count:=0
         if p.class>=0 && int(p.class)<n.count {
             filter:=ai.Nav_Filter{excluded=u64(near.excluded)}
             on:=p.corridor.position
-            wall_count=ai.nav_walls_near(&n.classes[p.class].mesh,ai.nav_corridor_first(&p.corridor),on,max(speed,0.01)*NAV_AGENT_WALL_HORIZON+ai.AVOID_WALL_TOUCH,&filter,walls[:])
+            near_walls,_:=ai.nav_boundary_update(&p.boundary,&n.classes[p.class].mesh,ai.nav_corridor_first(&p.corridor),on,max(speed,0.01)*NAV_AGENT_WALL_HORIZON+ai.AVOID_WALL_TOUCH,&filter)
+            wall_count=copy(walls[:],near_walls)
             // Seen from where it is on the mesh: its body may stand a little off it.
             off:=[2]f32{near.position.x-on.x,near.position.z-on.z}
             for &wall in walls[:wall_count] {wall.a+=off;wall.b+=off}
