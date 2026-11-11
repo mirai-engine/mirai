@@ -312,7 +312,7 @@ a_source_through_the_listener_crosses_between_ears_without_a_jump :: proc(t:^tes
         m:=test_mixer(t,{output=output})
         defer mixer_destroy(m)
         desc:=VOICE_DEFAULT
-        desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{-2,0,z},{model=.None,near_radius=near_radius}
+        desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{-2,0,z},{model=.None,min_distance=1,max_distance=100,near_radius=near_radius}
         voice:=voice_play(m,test_mono(t,m,RATE,test_noise),desc)
         test_render(m,CHUNK_FRAMES*2)
         first=balance(test_render(m,CHUNK_FRAMES))
@@ -351,7 +351,7 @@ a_voice_with_delay_starts_when_its_sound_arrives :: proc(t:^testing.T) {
         m:=test_mixer(t,{output=.Speakers})
         defer mixer_destroy(m)
         desc:=VOICE_DEFAULT
-        desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{0,0,-343},{model=.None,delay=delay}
+        desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{0,0,-343},{model=.None,min_distance=1,max_distance=1000,delay=delay}
         testing.expect(t,voice_play(m,test_mono(t,m,64,test_one),desc)!=0)
         out:=test_render(m,RATE+4)
         start:=-1
