@@ -7,8 +7,7 @@
 // one to the sun, to each node of its cut and to each light of extensions,
 // and one that lets light through traces those of its other side; those
 // pixels come from the list of lighting.comp and add to what it wrote.
-// Without blocks (render.Settings.reference_lights, or a view without soft
-// shadows) every pixel traces its own light.
+// Without blocks (a view without soft shadows) every pixel traces its own light.
 //
 // The filters of glass with a program wait for it (points.slang): the light
 // takes their means, and the resume (params.resume) adds what the exact ones
@@ -18,7 +17,6 @@
 #define GBUFFER_ALBEDO SLOT_PASS3
 #define GBUFFER_NORMAL SLOT_PASS0
 #include "lighting.slang"
-#include "reference.slang"
 #include "gbuffer.slang"
 #include <extension_hooks.slang>
 #include "pixel.slang"
@@ -27,17 +25,12 @@
 #define MIRAI_GROUP_Z 1
 
 // listed: the pixels of the list of lighting.comp; else every pixel.
-// reference: render.Settings.reference_lights. sun_radius: angular radius of
-// the sun, radians.
-struct Params_Block { uint light_budget; uint listed; uint reference; float sun_radius; uint resume; uint pad0; uint pad1; uint pad2; };
+struct Params_Block { uint light_budget; uint listed; uint pad0; uint pad1; uint resume; uint pad2; uint pad3; uint pad4; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 [[vk::binding(SLOT_PASS2, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_direct : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
 // The list of lighting.comp (DIRECT_TRACED_* in lighting.slang).
 [[vk::binding(SLOT_PASS4, 0)]] StructuredBuffer<uint> traced : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
-
-// Points of the sun and of each light every pixel traces to with reference_lights.
-static const uint REFERENCE_POINTS = 16u;
 
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
@@ -70,25 +63,11 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
     Shading s = gbuffer_shading(gbuffer_read(p), pixel);
     float bias = view_bias(pixel.distance);
     float3 direct = params.listed != 0u ? out_direct[p].rgb : float3(0.0);
-    // What the pixel traces goes through one call: the traversal of its rays
-    // is a copy in the source for each.
-    uint which = LIGHTS_ALL;
-    uint budget = params.light_budget;
-    float2 extension_point = float2(-1.0, 0.0);
     back = back && shading_transmits(s);
     Shading behind = shading_back(s);
-    if (params.reference != 0u) {
-        uint seed = seed_for(uint2(p), frame.frame_index, 1u);
-        direct = reference_lighting(s, bias, params.sun_radius, REFERENCE_POINTS, seed);
-        if (back) direct += reference_lighting(behind, bias, params.sun_radius, REFERENCE_POINTS, seed);
-        which = LIGHTS_EXTENSION;
-        budget = 0u;
-        // The lights of extensions, each to a point of it at random: over frames, their soft shadows.
-        extension_point = float2(random01(seed) * 16.0, random01(seed) * 2.0 * PI);
-    }
     // One call traces both sides: the traversal of its rays is a copy in the source for each call.
     for (uint side = front ? 0u : 1u; side < (back ? 2u : 1u); side++) {
-        direct += direct_lighting(side == 0u ? s : behind, bias, budget, which, extension_point);
+        direct += direct_lighting(side == 0u ? s : behind, bias, params.light_budget, LIGHTS_ALL, float2(-1.0, 0.0));
     }
     out_direct[p] = float4(direct, 1.0);
     if (MIRAI_COLORED_SHADOWS && filter_chain != INVALID) head_append(point_head(INVALID, filter_chain, uint(p.x) | (uint(p.y) << 16u)));

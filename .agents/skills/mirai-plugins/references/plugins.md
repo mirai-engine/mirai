@@ -211,14 +211,12 @@ demo enables. How an `editor/` adds steps, panels and tools:
   it and edits its nodes, layout, bindings and styles.
 - **`prompts_kenney`** (`Assets`): the Kenney prompt pack (CC0) for keyboard and mouse, Xbox and
   PlayStation, enabled in the demo.
-  - `source/` holds the PNGs of the `Double` variant of the package and `kenney.prompts.json`,
+  - `assets/` holds the PNGs of the `Double` variant of the package and `kenney.prompts.json`,
     which gives an image to each `core.Key`, to the mouse buttons and movement and to the faces,
     shoulders, triggers, sticks and their press, d-pad and its directions, Start and Back of each
-    gamepad (the colored buttons on the faces).
-  - `assets/` holds `kenney.prompts` and its atlases, imported with
-    `mirai import plugins/prompts_kenney/source/kenney.prompts.json --out
-    plugins/prompts_kenney/assets --root plugins/prompts_kenney`
-    ([prompts](../../mirai-imports/references/imports.md#prompts)).
+    gamepad (the colored buttons on the faces), and beside it `kenney.prompts`, imported with
+    `mirai import plugins/prompts_kenney/assets/kenney.prompts.json`; its atlases are of the
+    imported folder of the plugin ([prompts](../../mirai-imports/references/imports.md#prompts)).
 - **`playtest`** (`Editor`, development): `play.observe`, the monitors of `play.qa.*` with their
   repros and the bot of `play.explore`, over the ticks the API runs
   ([`Run_Provider`](../../mirai-editor/references/extensions.md#runs-the-api-drives)). The bot

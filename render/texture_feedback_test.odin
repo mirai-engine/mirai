@@ -4,12 +4,11 @@ import "core:math"
 import "core:testing"
 import "mirai:rhi"
 
-// No temporal jitter, GI or sampled lights: two frames of the same view are
-// the same image.
+// No temporal jitter or GI, and the scenes have no lights: two frames of the
+// same view are the same image.
 @(private = "file")
 feedback_settings :: proc() -> Settings {
 	s := DEFAULT_SETTINGS
-	s.reference_lights = true
 	s.reflections = .Detailed
 	s.gi_enabled = false
 	s.taa = false
