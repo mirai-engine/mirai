@@ -7,7 +7,7 @@ import anim "plugins:animation/runtime"
 @(component,description="Runs the three Jelly Jam examples: layered morph animation, skeletal combination and signed shape weights.")
 Morph_Playground :: struct {variant:u8}
 
-morph_playground_animate :: proc(items:core.Read(Morph_Playground),requests:^anim.Animation_Requests,weights:^core.Table(anim.Morph_Weights),time:core.Time) {
+morph_playground_animate :: proc(items:^core.Table(Morph_Playground,$A),requests:^anim.Animation_Requests,weights:^core.Table(anim.Morph_Weights),time:core.Time) {
     if !time.playing {return}
     for row in 0..<core.count(items) {
         entity:=core.entity_at(items,row);item:=core.at(items,row);seconds:=f32(time.seconds)+f32(item.variant)*.8

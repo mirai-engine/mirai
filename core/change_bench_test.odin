@@ -91,7 +91,7 @@ bench_join :: proc(t:^testing.T) {
     through_read,through_table:f64
     for round in 0..<ROUNDS {
         started:=time.tick_now()
-        m,w,ti:=read(&meshes),read(&worlds),read(&tints)
+        m,w,ti:=&meshes,&worlds,&tints
         for row in 0..<count(m) {
             e:=entity_at(m,row)
             world,found:=get(w,e)

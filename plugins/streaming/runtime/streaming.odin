@@ -33,7 +33,7 @@ Streaming_Seen :: struct {
 }
 
 @(step="frame",loops="game editor")
-streaming_sections :: proc(sources:core.Ref(scene.Streaming_Sources),references:core.Read(scene.Scene_Reference),worlds:core.Read(core.World_Transform),settings:core.Ref(Streaming_Settings),seen:^Streaming_Seen,requests:^scene.Section_Requests) {
+streaming_sections :: proc(sources:core.Ref(scene.Streaming_Sources),references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),settings:core.Ref(Streaming_Settings),seen:^Streaming_Seen,requests:^scene.Section_Requests) {
     s:=settings.ptr!=nil?settings.ptr^:STREAMING_SETTINGS_DEFAULT
     if sources.ptr==nil || s.load<=0 {return}
     moved:=core.changes(worlds,&seen.worlds)
@@ -86,7 +86,7 @@ Home :: struct {entity,section:core.Entity}
 // looked up again only when the hierarchy changed.
 @(step="frame",loops="game",before="streaming_sections")
 streaming_crossings :: proc(
-    motions:core.Read(core.Motion),references:core.Read(scene.Scene_Reference),worlds:core.Read(core.World_Transform),roaming:core.Read(scene.Roaming),
+    motions:^core.Table(core.Motion,.Read),references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),roaming:^core.Table(scene.Roaming,.Read),
     hierarchy:core.Ref(core.Hierarchy),parents:^core.Table(core.Parent),transforms:^core.Table(core.Transform),members:^core.Table(scene.Section_Member),
     crossings:^Streaming_Crossings,problems:^core.Problems,
 ) {
@@ -136,7 +136,7 @@ streaming_crossings :: proc(
         crossings.homes[index]={}
     }
     // What roams from the root, its rows on or off.
-    t:=core.raw(roaming.table)
+    t:=core.raw(roaming)
     for row in 0..<core.raw_count(t) {
         e:=t.entities[row]
         at:=core.row_of(worlds,e)
@@ -149,7 +149,7 @@ streaming_crossings :: proc(
 // is loaded and on and whose box holds it; when none does, from the root, or,
 // with root false, it stays where it hangs.
 @(private)
-crossing_hang :: proc(crossings:^Streaming_Crossings,worlds:core.Read(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),parents:^core.Table(core.Parent),transforms:^core.Table(core.Transform),e:core.Entity,at:int,from:core.Entity,root:=true) -> (hung:bool) {
+crossing_hang :: proc(crossings:^Streaming_Crossings,worlds:^core.Table(core.World_Transform,.Read),hierarchy:core.Ref(core.Hierarchy),parents:^core.Table(core.Parent),transforms:^core.Table(core.Transform),e:core.Entity,at:int,from:core.Entity,root:=true) -> (hung:bool) {
     target:=core.NONE
     target_pose:=mm.TRANSFORM_IDENTITY
     clear(&crossings.holding)

@@ -79,7 +79,7 @@ Shot :: struct {
 
 // The shot in force at a time of the clip a timeline plays and the one before it: its last two
 // markers on a camera at or before that time. What the seats see in play and the editor at its head.
-cinematic_shot :: proc(playback:^anim.Playback,sources:^anim.Source_Assets,app:^host.App,entities:^core.Entities,cameras:core.Read(render.Camera),timeline:core.Entity,time:f32) -> (shot,previous:Shot) {
+cinematic_shot :: proc(playback:^anim.Playback,sources:^anim.Source_Assets,app:^host.App,entities:^core.Entities,cameras:^core.Table(render.Camera,$A),timeline:core.Entity,time:f32) -> (shot,previous:Shot) {
     markers,content:=anim.animation_markers(playback,sources,app,timeline)
     for marker in markers {
         if !(marker.time<=time) {break}
@@ -107,7 +107,7 @@ clip_apart :: proc "contextless" (a,b,duration:f32,loop:bool) -> f32 {
 // On an end that does not decide a timeline, its clip goes where the anchor says it is at the end
 // of this tick: asked before animation_sample, which seeks and then advances a clip that plays.
 @(step="fixed")
-cinematic_follow :: proc(cinematics:core.Read(Cinematic),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),requests:^anim.Animation_Requests,time:core.Time,remotes:core.Read(core.Remote)) {
+cinematic_follow :: proc(cinematics:^core.Table(Cinematic,.Read),animations:^core.Table(anim.Animation,.Read),playback:core.Ref(anim.Playback),requests:^anim.Animation_Requests,time:core.Time,remotes:^core.Table(core.Remote,.Read)) {
     if !time.playing {return}
     for row in 0..<core.count(cinematics) {
         e:=core.entity_at(cinematics,row)
@@ -131,10 +131,10 @@ cinematic_follow :: proc(cinematics:core.Read(Cinematic),animations:core.Read(an
 // them in this tick, and the actions of the actors start and stop with the clip.
 @(step="fixed",stage="react",after="animation_advance")
 cinematic_advance :: proc(
-    entities:core.Ref(core.Entities),cinematics:^core.Table(Cinematic),cameras:core.Read(render.Camera),animations:core.Read(anim.Animation),
+    entities:core.Ref(core.Entities),cinematics:^core.Table(Cinematic),cameras:^core.Table(render.Camera,.Read),animations:^core.Table(anim.Animation,.Read),
     playback:core.Ref(anim.Playback),content_sources:core.Ref(anim.Source_Assets),app:^host.App,actions:core.Ref(anim.Action_Runtime),
     requests:^anim.Animation_Requests,shown:core.Ref(cam.Cameras),seat_state:core.Ref(input.Seats),camera_requests:^cam.Camera_Requests,
-    seat_requests:^input.Seat_Requests,seats:core.Read(input.Seat),time:core.Time,remotes:core.Read(core.Remote),problems:^core.Problems,
+    seat_requests:^input.Seat_Requests,seats:^core.Table(input.Seat,.Read),time:core.Time,remotes:^core.Table(core.Remote,.Read),problems:^core.Problems,
 ) {
     if !time.playing {return}
     for row in 0..<core.count(cinematics) {

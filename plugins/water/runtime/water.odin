@@ -185,7 +185,7 @@ waves_time :: proc(physics:core.Ref(phys.Physics_State),time:core.Time,frame:cor
 // the passes of the light under it and what goes over its glass.
 @(step="render",loops="game editor",before="render_sync")
 water_render :: proc(
-    state:^Water_Gpu,media:^fog.Fog_Media,waters:core.Read(Water),physics:core.Ref(phys.Physics_State),
+    state:^Water_Gpu,media:^fog.Fog_Media,waters:^core.Table(Water,.Read),physics:core.Ref(phys.Physics_State),
     settings:Water_Settings,view:core.View,app:^host.App,time:core.Time,frame:core.Frame_Time,
 ) {
     state.count,state.caustic,state.ior=0,false,WATER_IOR

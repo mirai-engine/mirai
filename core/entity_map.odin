@@ -113,7 +113,7 @@ entity_map_remove :: proc(m:^Entity_Map($T),e:Entity) -> bool {
 //
 //   c,at,left:=core.changes(sources,&voices.seen),0,Voice_Entry{}
 //   for e in core.entity_map_left(&voices.entries,sources,c,&at,&left) {...}
-entity_map_left :: proc(m:^Entity_Map($T),table:Read($C),c:Changes,at:^int,left:^T) -> (e:Entity,ok:bool) {
+entity_map_left :: proc(m:^Entity_Map($T),table:^Table($C,$A),c:Changes,at:^int,left:^T) -> (e:Entity,ok:bool) {
     found:=-1
     if c.all {
         // at counts the values kept at the end; the one before them is next.
@@ -135,7 +135,7 @@ entity_map_left :: proc(m:^Entity_Map($T),table:Read($C),c:Changes,at:^int,left:
 
 // Takes out the values of the entities that left a table, for values that
 // hold nothing to release; how many went.
-entity_map_prune :: proc(m:^Entity_Map($T),table:Read($C),c:Changes) -> (count:int) {
+entity_map_prune :: proc(m:^Entity_Map($T),table:^Table($C,$A),c:Changes) -> (count:int) {
     at:=0
     for _ in entity_map_left(m,table,c,&at,nil) {count+=1}
     return
