@@ -122,9 +122,10 @@ shadow_face_of :: proc(v: Vec3) -> u32 {
 
 // The faces of the cube of a light through which it lights what the view
 // sees, each fitted to the points of the view it lights: points spread over
-// the part of the view its sphere covers, at the depths it spans.
+// the part of the view its sphere covers, at the depths it spans within the
+// box of the scene (scene_low, scene_high), where its surfaces are.
 @(private)
-shadow_light_faces :: proc(wants: ^[SHADOW_MAPS_MAX]Shadow_Want, count: ^int, light: Gpu_Light, index: int, share: f32, eye, forward, right, up: Vec3, tan_x, tan_y, near: f32) {
+shadow_light_faces :: proc(wants: ^[SHADOW_MAPS_MAX]Shadow_Want, count: ^int, light: Gpu_Light, index: int, share: f32, eye, forward, right, up: Vec3, tan_x, tan_y, near: f32, scene_low, scene_high: Vec3, has_bounds: bool) {
 	ACROSS :: 7
 	DEPTHS :: 5
 	c, range := light.position_range.xyz, light.position_range.w
@@ -144,6 +145,15 @@ shadow_light_faces :: proc(wants: ^[SHADOW_MAPS_MAX]Shadow_Want, count: ^int, li
 		high = linalg.min(center + Vec2{radius / tan_x, radius / tan_y} * 1.2, Vec2{1, 1})
 	}
 	z0, z1 := max(depth - range, near), depth + range
+	if has_bounds {
+		nearest, farthest := max(f32), -max(f32)
+		for corner in 0 ..< 8 {
+			p := Vec3{scene_high.x if corner & 1 != 0 else scene_low.x, scene_high.y if corner & 2 != 0 else scene_low.y, scene_high.z if corner & 4 != 0 else scene_low.z}
+			along := linalg.dot(p - eye, forward)
+			nearest, farthest = min(nearest, along), max(farthest, along)
+		}
+		z0, z1 = max(z0, nearest), min(z1, farthest)
+	}
 	if z1 <= z0 {return}
 	// A spot no wider than a face: one map along its axis that holds the
 	// whole cone, with no seam between faces where the cone crosses them.
@@ -319,7 +329,7 @@ shadow_maps_plan :: proc(p: ^Pass) -> (maps: Shadow_Maps, ok: bool) {
 	}
 	suns := count
 	for k in 0 ..< picked {
-		shadow_light_faces(&wants, &count, s.lights[chosen[k]], chosen[k], shares[k], eye, forward, right, up, tan_x, tan_y, near)
+		shadow_light_faces(&wants, &count, s.lights[chosen[k]], chosen[k], shares[k], eye, forward, right, up, tan_x, tan_y, near, s.bounds_min, s.bounds_max, s.has_bounds)
 	}
 	if count == 0 {return maps, true}
 	// The atlas left after the sun, shared by how much of the view each map
