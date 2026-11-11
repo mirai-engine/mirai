@@ -853,6 +853,35 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
+// When programs get rows the pipelines of every stage those rows are drawn
+// with are asked for (programs_ask), before a frame draws with them: a camera
+// that turns to a mirror, or to layers, finds them made.
+@(test)
+material_program_pipelines_are_made_before_a_frame_draws_with_them :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 64, 48, material_settings(), desc = {pipeline_thread = true}, programs = true) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	programs := [2]^Program{program_find(r, "Grid", .Surface), program_find(r, "Pieces", .Surface)}
+	if !testing.expect(t, programs[0] != nil && programs[1] != nil, "the tests have the Grid and Pieces programs") {return}
+	rows: [2]Material_Desc
+	for &row, i in rows {
+		row = DEFAULT_MATERIAL
+		row.program_id, row.custom_params = programs[i].id, program_defaults(programs[i])
+	}
+	materials_set(r, rows[:])
+	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)
+	renderer_pipelines_wait(r, all = true)
+	for program in programs {
+		for id in ([]Pipeline_Id{.Gbuffer, .Gbuffer_Plain, .Gbuffer_Layers}) {
+			testing.expectf(t, program_graphics(r, &r.pipelines[id], program.id) != r.pipelines[id], "the pipeline of %s for %v is made before a frame draws with it", program.name, id)
+		}
+		testing.expectf(t, r.points.stages.pipelines[program.id] != 0, "and that of its points")
+	}
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
 // The surfaces the camera sees show what their programs give
 // (program_stages.odin), those of the G-buffer and those of the layers of
 // glass, not the values of their rows.

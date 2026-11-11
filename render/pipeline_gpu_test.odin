@@ -211,7 +211,7 @@ variants_are_made_as_the_settings_select_and_a_refused_one_once :: proc(t: ^test
 	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
 	unlayered := pipeline_slot(r, .Lighting, .Any, {LIGHTING_COMP_UNLAYERED})
 	testing.expect(t, unlayered^ != 0 && pipeline_slot(r, .Reflect, tracer, {REFLECT_COMP_UNLAYERED})^ != 0, "the renderer starts with the variants without layers")
-	renderer_pipelines_wait(r)
+	renderer_pipelines_wait(r, all = true)
 	testing.expect(t, pipeline_slot(r, .Shadow_Trace, tracer, {SHADOW_TRACE_COMP_COLOR})^ != 0 && pipeline_slot(r, .Translucent, tracer, {TRANSLUCENT_FRAG_COLOR})^ != 0, "and makes those of colored shadows, while they are off, behind the frames")
 
 	// As a change of the shaders that the driver fails to compile.

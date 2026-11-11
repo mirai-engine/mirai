@@ -194,10 +194,16 @@ pipeline_urgent :: proc(r: ^Renderer, owner: ^rhi.Pipeline) {
 	for &job in t.jobs {if job.state == .Asked && job.owner == owner {job.urgent = true}}
 }
 
-// Whether a pipeline of a program that was asked for is not in place: the
-// frames draw the materials of that program as their rows meanwhile.
+// Whether a pipeline a frame asked for is not in place: the frames draw the
+// materials of its program as their rows, or its pass without it, meanwhile.
+// Those asked ahead of time do not count.
 renderer_pipelines_pending :: proc(r: ^Renderer) -> bool {
-	return r != nil && r.pipeline_thread != nil && sync.atomic_load(&r.pipeline_thread.busy) > 0
+	t := r.pipeline_thread if r != nil else nil
+	if t == nil || sync.atomic_load(&t.busy) == 0 {return false}
+	sync.mutex_lock(&t.mutex)
+	defer sync.mutex_unlock(&t.mutex)
+	for job in t.jobs {if job.state != .Free && job.urgent {return true}}
+	return false
 }
 
 // Counts the times pipelines of programs went in place: what drew a program
@@ -206,16 +212,17 @@ renderer_pipelines_made :: proc(r: ^Renderer) -> u64 {
 	return r.pipeline_thread.installed if r != nil && r.pipeline_thread != nil else 0
 }
 
-// Waits for the pipelines asked for, or for that of owner, and puts them in
-// place: the next frame draws with them. What reads an image back (a capture)
+// Waits for the pipelines frames asked for (all: those asked ahead of time
+// too), or for that of owner, and puts them in place: the next frame draws
+// with them. What reads an image back (a capture)
 // draws again after it when renderer_pipelines_pending said so.
-renderer_pipelines_wait :: proc(r: ^Renderer, owner: ^rhi.Pipeline = nil) {
+renderer_pipelines_wait :: proc(r: ^Renderer, owner: ^rhi.Pipeline = nil, all := false) {
 	t := r.pipeline_thread if r != nil else nil
 	if t == nil {return}
 	sync.mutex_lock(&t.mutex)
 	for {
 		waiting := false
-		for job in t.jobs {waiting ||= (owner == nil || job.owner == owner) && (job.state == .Asked || job.state == .Making)}
+		for job in t.jobs {waiting ||= ((all || job.urgent) if owner == nil else job.owner == owner) && (job.state == .Asked || job.state == .Making)}
 		if !waiting {break}
 		sync.cond_wait(&t.made, &t.mutex)
 	}
