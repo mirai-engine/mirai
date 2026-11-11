@@ -6,6 +6,7 @@ import "core:os"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
+import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/history"
 import "mirai:platform"
@@ -24,7 +25,7 @@ import "mirai:std/serial"
 // project until Save.
 //
 // A log is a chain of generations, <Generated>/autosave-<slot>-<n>.log, each a
-// header (with the layout of every table it logs, so that a start on another
+// header (with the size and hash of the saved file it follows, and the layout of every table it logs, so that a start on another
 // build converts the rows by the names of their fields) and records of the bytes of an Edit message with their size and CRC:
 // a copy names the generation that follows it, a new copy makes the older
 // generations useless, and a record cut by a crash ends the chain. Writes
@@ -35,7 +36,7 @@ RECOVERY_LOG_SYNC :: u64(100_000_000)        // ns
 RECOVERY_COPY_INTERVAL :: u64(60_000_000_000) // ns: a copy follows a change it lacks after this
 RECOVERY_LOG_BYTES :: 16<<20                 // a log of the copy this long asks for a copy at once
 @(private) RECOVERY_LOG_MAGIC :: u32(0x4c52494d)
-@(private) RECOVERY_LOG_VERSION :: u32(3)
+@(private) RECOVERY_LOG_VERSION :: u32(4)
 
 // What a generation follows: a copy of recovery that names it, or the saved file of the document.
 Recovery_Base :: enum u8 {Copy,Source}
@@ -153,6 +154,9 @@ recovery_log_open :: proc(s:^Session,generation:u64,base:Recovery_Base) -> bool 
         source:=document_file(s.document)
         serial.write_scalar(&w,u16(len(source)))
         serial.write_bytes(&w,transmute([]u8)source)
+        stamp:=recovery_source_stamp(source)
+        serial.write_scalar(&w,stamp[0])
+        serial.write_scalar(&w,stamp[1])
     }
     serial.schema_write(&w,&ws.schema)
     st:=recovery_log_tables(s)
@@ -357,6 +361,7 @@ Recovery_Log_File :: struct {
     generation:u64,
     base:Recovery_Base,
     source:string,
+    stamp:[2]u64, // of source when the log began: recovery_source_stamp
     schema:serial.Schema,
     tables:[]Recovery_Log_Table,
     records:[dynamic][]u8,
@@ -381,6 +386,8 @@ recovery_log_read :: proc(s:^Session,slot:int,generation:u64) -> (file:Recovery_
     if file.base==.Source {
         size:=int(serial.read_u16(&r))
         file.source=string(serial.read_bytes(&r,size))
+        file.stamp[0]=serial.read_u64(&r)
+        file.stamp[1]=serial.read_u64(&r)
     }
     if r.failed || file.base>max(Recovery_Base) {return}
     if serial.schema_read(&r,&file.schema,context.temp_allocator)!=.None {return}
@@ -403,6 +410,18 @@ recovery_log_read :: proc(s:^Session,slot:int,generation:u64) -> (file:Recovery_
         append(&file.records,bytes)
     }
     return file,true
+}
+
+// The size and the content hash of an asset file, from its header; zero when
+// it cannot be read. A log over the saved file is put back only over the same.
+@(private)
+recovery_source_stamp :: proc(file:string) -> [2]u64 {
+    head:[asset.HEADER_SIZE]u8
+    bytes,_,error:=serial.file_read_head(file,head[:])
+    if error!=.None {return {}}
+    header,header_error:=asset.header_read(bytes)
+    if header_error!=.None {return {}}
+    return {header.total_size,header.content_hash}
 }
 
 // The chain of a slot a start after a crash puts back: from the generation

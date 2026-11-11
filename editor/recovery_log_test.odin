@@ -2,6 +2,7 @@ package editor
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -334,4 +335,50 @@ a_pending_recovery_stays_aside_while_the_document_is_edited_and_saved :: proc(t:
     testing.expect(t,len(recovery_log_generations(s,mine))>0,"the chain of this editor stays")
     resolved,reason=recovery_resolve(s,false)
     testing.expect(t,!resolved && reason=="","with nothing offered there is nothing to resolve, and no error")
+}
+
+// A saved file that changed between the crash and the start (a checkout, a write from outside)
+// is not what the log followed: its steps go over it in a copy under .mirai/tmp, and the file
+// stays as it is.
+@(test)
+a_log_over_a_saved_file_that_changed_goes_back_in_a_copy :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !prefab_fixture_init(t,f,"recovery-changed") {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    s.project_root=f.root
+    testing.expect(t,jobs.system_init(&f.app.jobs,{threads=1,allocator=context.allocator}))
+    defer jobs.system_destroy(&f.app.jobs)
+    defer recovery_log_destroy(s)
+    defer documents_free(s)
+    w:=edited_world(s)
+    plain:=entity_create(s,{name="Plain",named=true})
+    core.world_settle(w)
+    history.edits_reset(&f.edits,w)
+    plain_id:=api_entity_id(w,plain)
+    if !testing.expect_value(t,scene_save(s,"other.scene"),Document_Error.None) {return}
+    entity_rename(s,plain,"Saved")
+    prefab_fixture_step(f)
+    if !testing.expect_value(t,scene_save(s,"crashed.scene"),Document_Error.None) {return}
+    recovery_update(s)
+    entity_rename(s,plain,"Lost in the crash")
+    prefab_fixture_step(f)
+    recovery_update(s)
+    testing.expect(t,recovery_log_flush(s,true))
+
+    crashed:=scene_file(s,"crashed.scene")
+    other,_:=os.read_entire_file(scene_file(s,"other.scene"),context.temp_allocator)
+    testing.expect(t,os.write_entire_file(crashed,other)==nil)
+    recovery_chains_close(s,false)
+    documents_free(s)
+    s.active_document=0
+    s.recovery.chain={}
+    scene_new(s)
+    recovery_open(s)
+    resolved,reason:=recovery_resolve(s,false)
+    testing.expectf(t,resolved && strings.contains(reason,"changed since"),"%s",reason)
+    testing.expectf(t,strings.contains(document_file(s.document),".mirai/tmp/recovered-crashed.scene"),"%s",document_file(s.document))
+    testing.expect_value(t,entity_name(edited_world(s),api_entity(edited_world(s),plain_id)),"Lost in the crash")
+    now,_:=os.read_entire_file(crashed,context.temp_allocator)
+    testing.expect(t,string(now)==string(other),"the file stays as it is")
 }

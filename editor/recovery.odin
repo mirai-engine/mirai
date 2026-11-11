@@ -3,6 +3,7 @@ package editor
 import "core:fmt"
 import "core:log"
 import "core:os"
+import "core:path/filepath"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
@@ -548,6 +549,13 @@ recovery_found_restore :: proc(s:^Session,found:^Recovery_Found) -> (why,note:st
     r:=&s.recovery
     file,source:=recovery_file(s,found.slot),base.text_get(found.info.source[:])
     if !found.scene {file,source=base.text_get(found.source[:]),base.text_get(found.source[:])}
+    chain:[]Recovery_Log_File
+    if found.records>0 {chain,_=recovery_log_chain(s,found.slot,found.scene?found.info.log:0)}
+    // The saved file changed since the log began over it: its steps go over it in a copy.
+    if len(chain)>0 && chain[0].base==.Source && recovery_source_stamp(file)!=chain[0].stamp {
+        source=project.path(project.folder_path(s.project_root,.Generated,context.temp_allocator),"tmp",fmt.tprintf("recovered-%s",filepath.base(file)),allocator=context.temp_allocator)
+        note=fmt.tprintf("%s changed since the editor ended, so its recovered changes were put back over it as it is now in a copy, %s: compare them and Save what you keep; the file stays as it is",file,source)
+    }
     if error:=document_restore(s,file,source,true);error!=.None {
         return fmt.tprintf("%s could not be opened and is kept: %s",file,document_error_text(error)),""
     }
@@ -556,10 +564,9 @@ recovery_found_restore :: proc(s:^Session,found:^Recovery_Found) -> (why,note:st
             asset.document_table_remove(&s.document.previous.doc,table)
         }
     }
-    if found.records>0 {
-        chain,_:=recovery_log_chain(s,found.slot,found.scene?found.info.log:0)
+    if len(chain)>0 {
         if _,lost,names:=recovery_log_replay(s,chain);lost>0 {
-            note=fmt.tprintf("%d recovered changes of %s were not put back: the code built since has no such component (a renamed one names its old name with @(component,was=)), or one that is not plain data in another layout",lost,names)
+            note=fmt.tprintf("%s%s%d recovered changes of %s were not put back: the code built since has no such component (a renamed one names its old name with @(component,was=)), or one that is not plain data in another layout",note,note!=""?". ":"",lost,names)
         }
     }
     // The chain the tab had followed a document that is gone.
