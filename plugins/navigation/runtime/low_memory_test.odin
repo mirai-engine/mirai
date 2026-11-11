@@ -52,7 +52,7 @@ navigation_scratch_without_memory_reports_it_and_leaves_its_part :: proc(t:^test
                 seen,done=seen_reset(&builds,8,&problems)
                 done&&=len(seen)==8
             case .Avoid:
-                agents_avoid(nil,&agents,&w.paths,1.0/60,&problems)
+                agents_avoid(nil,&agents,&w.paths,nil,1.0/60,&problems)
                 done=len(agents.grid.items)>=len(agents.near)
             }
             context.allocator=owner

@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:math/linalg"
 import "core:testing"
 import "mirai:core"
+import scene "mirai:engine/scene"
 import "mirai:engine/volume"
 import "mirai:std/ai"
 import mm "mirai:std/math"
@@ -69,6 +70,7 @@ Behavior_World :: struct {
     moves:nav.Nav_Requests,
     navigation:nav.Navigation,
     physics:phys.Physics_State,
+    sources:scene.Streaming_Sources,
 }
 
 // A world whose perceivers look: with what the application keeps for them.
@@ -208,6 +210,87 @@ the_mind_of_an_agent_far_ticks_at_the_steps_of_what_is_far :: proc(t:^testing.T)
     ctx.tick,ctx.lease=100,31
     testing.expect(t,ai.claim(&a,7,1,1))
     testing.expect(t,!ai.reserve_open(&world.claims.reservations,{7,1},u64(near),1,130) && ai.reserve_open(&world.claims.reservations,{7,1},u64(near),1,132))
+}
+
+@(private="file")
+Hold_Act :: enum u8 {Hold}
+
+// Counts the decisions of each agent: its think, by the index of its entity.
+@(private="file")
+Holding :: struct {
+    world:Mind_World,
+    thinks:[8]int,
+}
+
+@(private="file")
+holding_think :: proc(t:^ai.Think(Hold_Act)) {
+    c:=(^Holding)(t.user)
+    c.thinks[core.entity_index(agent(t))%len(c.thinks)]+=1
+    ai.propose(t,.Hold,1)
+}
+
+// Holds a claim of its own for as long as it runs.
+@(private="file")
+holding_act :: proc(a:^ai.Act(Hold_Act)) -> ai.Status {
+    if a.phase==.Enter && !ai.claim(a,1000+u64(core.entity_index(agent(a))),1,1) {return .Failure}
+    return .Running
+}
+
+@(private="file")
+HOLDING_ACTS := [Hold_Act]proc(a:^ai.Act(Hold_Act)) -> ai.Status{.Hold=holding_act}
+
+// An agent decides less often the farther it is from the streaming sources,
+// on the ticks of its phase: what it claims lasts until it decides again, a
+// copy of the world decides the same ticks, and without sources every agent
+// decides every tick. A position, a source or a setting that is not a number
+// stays in range, and the ticks after the first do not allocate.
+@(test)
+a_mind_decides_less_often_far_from_the_sources :: proc(t:^testing.T) {
+    minds:=new(Minds)
+    defer free(minds)
+    world,copied:Behavior_World
+    if !test_world_init(t,&world) || !test_world_init(t,&copied) {return}
+    defer test_world_destroy(&world)
+    defer test_world_destroy(&copied)
+    nan:=f32(0h7FC00000)
+    // A source at the origin; within 2 near every tick, at 4.5 near every 4, unplaced every tick.
+    world.settings.think_near,world.settings.think_slowest=10,6.0/60
+    world.sources.items[0]={position={0,0,0}}
+    world.sources.count=1
+    near,far,lost,nowhere:=placed(&world,{5,0,0}),placed(&world,{0,0,45}),placed(&world,{nan,0,0}),core.create(&world.entities)
+    for e in ([]core.Entity{near,far,lost,nowhere}) {core.add(&world.mind_agents,e,Mind_Agent{mind=mind_name("holder")})}
+    test_world_settle(&world)
+    run :: proc(w:^Behavior_World,minds:^Minds,from,to:u64) -> (c:Holding,calls:int) {
+        c.world={minds=minds,agents=&w.mind_agents,worlds=core.read(&w.worlds),claims=&w.claims,sources=core.ref(&w.sources),settings=core.ref(&w.settings)}
+        for tick in from..<to {
+            saved:=context.allocator
+            if tick>from {context.allocator=refusing_allocator(&calls)}
+            c.world.time={tick=tick,dt=1.0/60,playing=true}
+            minds_tick(&c.world,"holder",&HOLDING_ACTS,holding_think)
+            context.allocator=saved
+        }
+        return
+    }
+    c,calls:=run(&world,minds,1,9)
+    testing.expect_value(t,calls,0)
+    Want :: struct {e:core.Entity,thinks:int}
+    for want in ([]Want{{near,8},{far,2},{lost,1},{nowhere,8}}) {
+        testing.expectf(t,c.thinks[core.entity_index(want.e)]==want.thinks,"%v thinks %d times",want.e,c.thinks[core.entity_index(want.e)])
+    }
+    // Its claim holds between its decisions: nobody else takes it.
+    for tick in u64(9)..<12 {testing.expectf(t,!ai.reserve_open(&world.claims.reservations,{1000+u64(core.entity_index(far)),1},999,1,tick),"tick %d",tick)}
+    // A copy decides the same ticks as the world it was copied from.
+    testing.expect(t,test_world_copy(&copied,&world))
+    a,_:=run(&world,minds,9,40)
+    b,_:=run(&copied,minds,9,40)
+    testing.expect(t,a.thinks==b.thinks && len(world.mind_agents.values)==len(copied.mind_agents.values))
+    for agent,row in world.mind_agents.values {testing.expectf(t,agent==copied.mind_agents.values[row],"row %d",row)}
+    // Without sources, or with a near that is not a number, all decide every tick.
+    for edit in 0..<2 {
+        if edit==0 {world.sources.count=0} else {world.sources.count,world.settings.think_near=1,nan}
+        c,_=run(&world,minds,40,44)
+        for e in ([]core.Entity{near,far,lost,nowhere}) {testing.expectf(t,c.thinks[core.entity_index(e)]==4,"%d: %v",edit,e)}
+    }
 }
 
 @(private="file")

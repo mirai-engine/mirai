@@ -325,6 +325,11 @@ no GOAP. What those models gave is written this way, without implementing them o
   `behavior.minds_tick` fills all of it.
 - Deterministic within a configuration, without allocating: copying the minds and the world
   halfway gives the same future.
+- **Cadence** (`cadence.odin`): `cadence_period` gives the ticks between two runs of something by
+  its distance to the nearest viewer and `cadence_due` whether it runs in a tick, by a phase (the
+  index of the agent) that spreads one period over its ticks. No state: a world and its copy run
+  the same ticks. Whatever spaces out work by distance (the minds of `behavior`) uses this one
+  rule.
 
 ### Actions
 

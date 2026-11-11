@@ -5,6 +5,7 @@ import "mirai:core"
 import "mirai:std/ai"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import scene "mirai:engine/scene"
 import "mirai:engine/volume"
 import nav "plugins:navigation/runtime"
 
@@ -123,28 +124,44 @@ Mind_World :: struct {
     patrols:^core.Table(Patrol),
     splines:^core.Table(volume.Spline,.Read),
     claims:^Claims,
+    sources:core.Ref(scene.Streaming_Sources),
+    settings:core.Ref(Behavior_Settings),
     problems:^core.Problems,
     time:core.Time,
 }
 
 // Ticks every agent of a mind, after registering it: ctx.holder is the agent,
 // as the holder of what it claims, and ctx.user is w, the start of the
-// context of the mind. An agent far
-// from the players (nav.Nav_Far) is off and decides on: its mind ticks once
-// every step of what is far (nav.nav_far_decide), and what it claims lasts
-// until its next tick. Only a world that plays decides, and a tick that runs
-// again (time.resimulating) does not: its actions would repeat what they did.
+// context of the mind. An agent decides less often the farther it is from
+// the streaming sources (the view, the bodies the seats drive): once every
+// ai.cadence_period ticks of Behavior_Settings.think_near, each on the ticks
+// of its own phase, and what it claims lasts until it decides again. An agent
+// far from the players (nav.Nav_Far) is off and decides on: its mind ticks
+// once every step of what is far (nav.nav_far_decide), and what it claims
+// lasts until its next tick. Only a world that plays decides, and a tick that
+// runs again (time.resimulating) does not: its actions would repeat what they
+// did.
 minds_tick :: proc(w:^Mind_World,name:string,acts:^[$A]$P,think:proc(t:^ai.Think(A))) {
     mind_register(w.minds,name,A)
     time:=w.time
     if !time.playing || time.resimulating || time.dt<=0 {return}
     key:=mind_name(name)
     agents:=w.agents
+    near:=w.settings.think_near if w.settings.ptr!=nil else 0
+    slowest:=core.ticks_of(time,w.settings.think_slowest) if w.settings.ptr!=nil else 0
     ctx:=ai.Mind_Context{user=w,tick=time.tick,dt=time.dt,keep=MIND_KEEP,lease=1}
     if w.claims!=nil {ctx.reservations=&w.claims.reservations}
     for row in 0..<core.count(agents) {
         if agents.values[row].mind!=key {continue}
-        mind_run(w,core.entity_at(agents,row),&core.edit_at(agents,row).state,acts,think,&ctx)
+        e:=core.entity_at(agents,row)
+        period:=u64(1)
+        if near>0 && w.worlds!=nil {
+            if at,ok:=core.get(w.worlds,e);ok {period=ai.cadence_period(nav.sources_distance(w.sources.ptr,at.position),near,slowest)}
+        }
+        if !ai.cadence_due(time.tick,u64(core.entity_index(e)),period) {continue}
+        // Until its next decision, also when it went a little farther: its period grows by little.
+        ctx.lease=1 if period<=1 else u32(min(2*period,u64(max(u32))))
+        mind_run(w,e,&core.edit_at(agents,row).state,acts,think,&ctx)
     }
     if w.fars==nil || !nav.nav_far_decide(time) {return}
     // Until its next tick, once every step of what is far.

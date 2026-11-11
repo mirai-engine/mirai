@@ -58,8 +58,8 @@ Perception :: struct {
     next:u32 `mirai:"transient,hidden"`, // row of the Perceivable it looks at first in its next turn
 }
 
-// The work of perception, of the queries of places and of the influence maps
-// in a tick, for all the agents, and where the maps are.
+// The work of perception, of the queries of places, of the influence maps and
+// of the minds in a tick, for all the agents, and where the maps are.
 @(storage,setting)
 Behavior_Settings :: struct {
     rays:i32 `mirai:"min=0,advanced"`,    // of sight
@@ -71,10 +71,13 @@ Behavior_Settings :: struct {
     influence_rays:i32 `mirai:"min=0,advanced"`,   // of cover in a tick
     influence_falloff:f32 `mirai:"min=0,max=1"`,   // of an influence, per metre
     influence_blend:f32 `mirai:"min=0,max=1"`,     // of the way to the new value a pass moves a cell
+    think_near:f32 `mirai:"min=0,unit=m"`,    // per this from a source, a tick less often an agent decides; 0: none
+    think_slowest:f32 `mirai:"min=0,unit=s"`, // between two decisions of an agent at most
 }
 BEHAVIOR_SETTINGS_DEFAULT :: Behavior_Settings{
     rays=256,queries=4,
     influence_cell=2,influence_size=128,influence_cells=8192,influence_rays=90,influence_falloff=0.15,influence_blend=0.6,
+    think_near=80,think_slowest=0.5,
 }
 
 // A noise the game makes: whoever hears within loudness times its hearing perceives its maker there.
