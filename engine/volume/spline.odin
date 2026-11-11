@@ -1,5 +1,6 @@
 package volume
 
+import "core:math/linalg"
 import "mirai:core"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -62,17 +63,47 @@ spline_reach :: proc(s:^Spline,place:mm.Transform) -> (mm.Aabb,bool) {
     // it stays within the box of those two and its two inner control points.
     local:=mm.Aabb{points[0].position,points[0].position}
     for i in 0..<len(points)-1 {
-        a,b:=points[i],points[i+1]
-        before:=i>0?points[i-1].position:2*a.position-b.position
-        after:=i+2<len(points)?points[i+2].position:2*b.position-a.position
-        half:=max(a.width,b.width)*0.5
-        for c in ([4][3]f32{a.position,a.position+(b.position-before)/6,b.position-(after-a.position)/6,b.position}) {
+        before,a,b,after:=spline_span(points,i)
+        half:=max(points[i].width,points[i+1].width)*0.5
+        for c in ([4][3]f32{a,a+(b-before)/6,b-(after-a)/6,b}) {
             local=mm.aabb_merge(local,{c-{half,0,half},c+{half,0,half}})
         }
     }
     box:=mm.aabb_transform(local,mm.transform_matrix(place))
     box.min.y,box.max.y=-max(f32),max(f32)
     return box,true
+}
+
+// The four points of the Catmull-Rom span from point i to point i+1, the
+// ends going on straight (mm.path_sample).
+@(private)
+spline_span :: proc "contextless" (points:[]mm.Path_Point,i:int) -> (before,a,b,after:[3]f32) {
+    a,b=points[i].position,points[i+1].position
+    before=i>0?points[i-1].position:2*a-b
+    after=i+2<len(points)?points[i+2].position:2*b-a
+    return
+}
+
+@(private) NEAREST_STEPS :: 8 // straight pieces of each span that spline_nearest measures
+
+// Where the curve of a spline placed at place passes nearest point, as a key:
+// i+f is f of the way along the span from its point i to its point i+1. False
+// for a spline that spline_sample does not sample or a point not finite.
+spline_nearest :: proc(s:^Spline,place:mm.Transform,point:[3]f32) -> (key:f32,ok:bool) {
+    points:=spline_points(s)
+    best:=max(f32)
+    for i in 0..<max(len(points)-1,0) {
+        before,a,b,after:=spline_span(points,i)
+        from:=mm.transform_point(place,a)
+        for k in 1..=NEAREST_STEPS {
+            to:=mm.transform_point(place,mm.catmull_rom(before,a,b,after,f32(k)/NEAREST_STEPS))
+            d:=to-from
+            f:=clamp(linalg.dot(point-from,d)/max(linalg.dot(d,d),1e-12),0,1)
+            if far:=linalg.length2(point-from-d*f);far<best {best,key=far,f32(i)+(f32(k-1)+f)/NEAREST_STEPS}
+            from=to
+        }
+    }
+    return key,best<max(f32)
 }
 
 // Whether e has a spline, placed at place, whose reach one of boxes overlaps:

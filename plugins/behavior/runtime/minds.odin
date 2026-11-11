@@ -4,6 +4,8 @@ import "base:runtime"
 import "mirai:core"
 import "mirai:std/ai"
 import "mirai:std/base"
+import mm "mirai:std/math"
+import "mirai:engine/volume"
 import nav "plugins:navigation/runtime"
 
 // The minds of a game and the agents that run them. A mind is an enum of
@@ -118,7 +120,10 @@ Mind_World :: struct {
     objects:^core.Table(Smart_Object,.Read),
     states:^core.Table(Smart_State,.Read),
     worlds:^core.Table(core.World_Transform,.Read),
+    patrols:^core.Table(Patrol),
+    splines:^core.Table(volume.Spline,.Read),
     claims:^Claims,
+    problems:^core.Problems,
     time:core.Time,
 }
 
@@ -179,10 +184,14 @@ world_of :: #force_inline proc "contextless" (a:^$T) -> ^Mind_World {return (^Mi
 
 // The Nav_Path of the agent of an action or a think procedure: on, or off
 // while it is far.
-agent_path :: proc(a:^$T) -> (p:nav.Nav_Path,ok:bool) {
-    w,e:=world_of(a),agent(a)
-    if p,ok=core.get(w.paths,e);ok || w.paths==nil {return}
-    found:=cast(^nav.Nav_Path)core.raw_find(core.raw(w.paths),type_info_of(nav.Nav_Path),e)
+agent_path :: proc(a:^$T) -> (nav.Nav_Path,bool) {return read_any(world_of(a).paths,agent(a))}
+
+// The row of e, on or off while it is far.
+@(private)
+read_any :: proc(r:^core.Table($T,$A),e:core.Entity) -> (v:T,ok:bool) {
+    if r==nil {return}
+    if v,ok=core.get(r,e);ok {return}
+    found:=cast(^T)core.raw_find(core.raw(r),type_info_of(T),e)
     if found==nil {return}
     return found^,true
 }
@@ -233,6 +242,103 @@ path_status :: proc(a:^$T) -> ai.Status {
     case .Arrived: return .Failure if p.partial else .Success
     case .Failed,.Idle: return .Failure
     }
+    return .Running
+}
+
+Patrol_Mode :: enum u8 {Loop,Back_And_Forth,Once}
+
+// An agent with a mind walks it while the mind's patrol_act runs; one without
+// a mind walks it by itself (patrols_walk). Shared: the step of each mind
+// writes those of its agents.
+@(component,shared,description="Walks the points of the Spline of the entity `path` in turn: around (Loop), to the last point and back (Back_And_Forth) or to the last point once (Once), from the point after where it is nearest the path. An agent with a mind walks it while its mind patrols; one without a mind, always.")
+Patrol :: struct {
+    path:core.Entity, // that has the Spline
+    mode:Patrol_Mode,
+    next:u16 `mirai:"transient,readonly"`,  // the point it walks to
+    back:bool `mirai:"transient,readonly"`, // toward the first point
+}
+
+// Walks the agent along the Spline of its Patrol (patrol_walk). An exit stops
+// the agent, unless it crosses a link: the crossing goes on.
+patrol_act :: proc(a:^ai.Act($A)) -> ai.Status {
+    w,e:=world_of(a),agent(a)
+    p,walking:=agent_path(a)
+    if a.phase==.Exit {
+        if a.cause==.Aborted && !(walking && p.state==.Crossing) {nav.nav_stop(w.requests,e)}
+        return .Success
+    }
+    if a.phase==.Update && !walking {return .Running}
+    patrol,found:=read_any(w.patrols,e)
+    if !found {return .Failure}
+    walked:=patrol
+    status:=patrol_walk(&walked,e,a.phase==.Enter,p,w.splines,w.worlds,w.requests,w.problems)
+    if walked==patrol {return status}
+    if row:=core.edit(w.patrols,e);row!=nil {row^=walked} else {(cast(^Patrol)core.raw_find(core.raw(w.patrols),type_info_of(Patrol),e))^=walked}
+    return status
+}
+
+// Walks the agents with a Patrol and no mind.
+@(step="fixed",server)
+patrols_walk :: proc(
+    patrols:^core.Table(Patrol),minds:^core.Table(Mind_Agent,.Read),paths:^core.Table(nav.Nav_Path,.Read),
+    splines:^core.Table(volume.Spline,.Read),worlds:^core.Table(core.World_Transform,.Read),requests:^nav.Nav_Requests,problems:^core.Problems,time:core.Time,
+) {
+    if !time.playing || time.resimulating {return}
+    for row in 0..<core.count(patrols) {
+        e:=core.entity_at(patrols,row)
+        if core.has(minds,e) {continue}
+        p,_:=core.get(paths,e)
+        walked:=patrols.values[row]
+        patrol_walk(&walked,e,false,p,splines,worlds,requests,problems)
+        if walked!=patrols.values[row] {core.edit_at(patrols,row)^=walked}
+    }
+}
+
+// Walks e along the Spline of patrol: from where it is when it starts, or
+// when navigation is idle, to the point after the span of the curve nearest
+// it; on to each next point when it gets there or cannot, and again to its
+// point when the path moves or is edited. Running while it patrols (on a path
+// of one point it stands there), Success at the end of a Once path, Failure
+// without a Spline to walk (the problem behavior.patrol).
+@(private)
+patrol_walk :: proc(patrol:^Patrol,e:core.Entity,start:bool,p:nav.Nav_Path,splines:^core.Table(volume.Spline,$A),worlds:^core.Table(core.World_Transform,$B),requests:^nav.Nav_Requests,problems:^core.Problems) -> ai.Status {
+    spline,_:=read_any(splines,patrol.path)
+    place,_:=read_any(worlds,patrol.path)
+    count,next:=int(spline.count),int(patrol.next)
+    goal:[3]f32
+    on:=!start && next<count
+    if on {goal=mm.transform_point(place,spline.points[next].position);on=goal-goal=={}}
+    if on {
+        #partial switch p.state {
+        case .Moving,.Waiting,.Crossing:
+            if p.state==.Moving && p.goal!=goal {nav.nav_move_to(requests,e,goal)}
+            return .Running
+        case .Arrived,.Failed:
+            // There, as near as it gets, or where it cannot get: the next point.
+            next+=-1 if patrol.back else 1
+            if next<0 || next>=count {
+                switch patrol.mode {
+                case .Once: return .Success
+                case .Loop: next=(next+count)%count
+                case .Back_And_Forth: patrol.back,next=!patrol.back,clamp(int(patrol.next)+(1 if patrol.back else -1),0,count-1)
+                }
+            }
+            if next==int(patrol.next) {return .Running}
+        }
+    }
+    if !on || p.state==.Idle {
+        pose,_:=read_any(worlds,e)
+        key,near:=volume.spline_nearest(&spline,place,pose.position)
+        if count==1 {key,near=0,true}
+        next=min(int(key)+(0 if patrol.back else 1),count-1) if near else -1
+    }
+    if next>=0 {goal=mm.transform_point(place,spline.points[next].position)}
+    if next<0 || !(goal-goal=={}) {
+        core.report(problems,e,"behavior.patrol","Its Patrol has no path to walk: name in path an entity with a Spline of finite points, each with a width (or of one point to stand at)")
+        return .Failure
+    }
+    patrol.next=u16(next)
+    nav.nav_move_to(requests,e,goal)
     return .Running
 }
 

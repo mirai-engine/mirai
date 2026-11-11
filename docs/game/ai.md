@@ -14,7 +14,7 @@ Plugin `behavior` (brings `navigation`, `physics`) in `project.mirai`; import
 
 ## Map
 
-- A mind: its `think` and its actions, which the engine runs: [mind.md](ai/mind.md).
+- A mind: its `think` and its actions, which the engine runs; patrols: [mind.md](ai/mind.md).
 - Smart objects (ammo, cover, turrets), fences the game crosses, place queries:
   [smart-objects.md](ai/smart-objects.md).
 - Animation an agent asks for: [animation](animation.md); over the network:
@@ -41,9 +41,9 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
   `keep` (or its `ai.commit`). Patrol: low score always on; chase: higher if it remembers someone
   (`ai.memory_best(&perception.memory, here)`); attack: highest if close.
 - **Act.** Each action procedure gets `Enter`, `Update`, `Exit` in `a.phase`. Walk with
-  `behavior.move_act(a, goal)`, chase with `behavior.chase_act(a, target, distance)` (it follows a
-  new target when it changes), wait with `ai.after(a, seconds)`,
-  sequence with `ai.next_stage(a)` and `ai.stage(a)`, or `ai.steps(a, .A, .B)` for a combo.
+  `behavior.move_act(a, goal)`, patrol with `behavior.patrol_act(a)`, chase with
+  `behavior.chase_act(a, target, distance)` (it follows a new target when it changes), wait with
+  `ai.after(a, seconds)`, sequence with `ai.next_stage(a)`, `ai.stage(a)`, `ai.steps(a, .A, .B)`.
   `a.memory` is zeroed on `Enter`. Return `.Running`, `.Success` or `.Failure`.
 - **Events** (damage, stun): a field of your component, written by whoever causes it; `think`
   proposes the reaction above the rest and the action clears the field on `Enter`.
@@ -70,7 +70,7 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
 - A `Mind_Agent` name that no `@(mind)` declares does nothing; `engine.diagnostics` lists the
   problem `behavior.mind`. A missing action, a wrong signature or a name too long fail the build
   with what to write.
-- `Exit` must release what `Enter` requested. `move_act` and `chase_act` stop the agent on abort;
+- `Exit` must release what `Enter` requested. The `behavior` acts stop the agent on abort;
   an action that calls `nav.nav_move_to` itself must `nav_stop` when `a.cause == .Aborted`.
 - `think` only reads and proposes; state changes go in the actions.
 - `behavior.PERCEIVER_DEFAULT` notices every team, its own included; set `notices`.
