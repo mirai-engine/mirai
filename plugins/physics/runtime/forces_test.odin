@@ -184,7 +184,7 @@ a_force_field_pushes_in_the_volume_of_its_entity :: proc(t:^testing.T) {
 }
 
 @(test)
-external_proxies_accept_impulses_forces_joints_and_manipulation :: proc(t:^testing.T) {
+external_proxies_replace_the_own_body_and_accept_impulses_forces_joints_and_manipulation :: proc(t:^testing.T) {
     f:Physics_Test
     if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
@@ -197,10 +197,18 @@ external_proxies_accept_impulses_forces_joints_and_manipulation :: proc(t:^testi
     shape.geometry=sim.Box{{0.5,0.5,0.5}}
     sim.shape_create(&f.state.world,body,shape)
     sim.body_set_mass_properties(&f.state.world,body,2,{},sim.Mat3{1,0,0,0,1,0,0,0,1})
+    // The body of its own Collider and Rigid_Body ends: the proxy stands for them, and no sync makes it again.
     e:=core.create(&f.entities)
     core.add(&f.transforms,e,core.Transform{{2,0,0},1,{1,1,1}})
-    physics_test_settle(&f)
-    testing.expect(t,proxy_set(&f.state,e,body,{2,0,0},1))
+    core.add(&f.rigids,e,RIGID_BODY_DYNAMIC);core.add(&f.colliders,e,collider_sphere(0.5))
+    physics_test_step(&f,0)
+    own:=body_of(core.ref(&f.state),e)
+    testing.expect(t,own!={} && own!=body)
+    testing.expect(t,proxy_set(&f.state,e,body))
+    testing.expect(t,!sim.body_valid(&f.state.world,own))
+    core.edit(&f.colliders,e).friction=0.3
+    physics_test_step(&f,0)
+    testing.expect_value(t,body_of(core.ref(&f.state),e),body)
     apply_impulse(&f.requests,e,{2,0,0})
     apply_force(&f.requests,e,{120,0,0})
     physics_test_step(&f)
@@ -244,4 +252,39 @@ the_push_force_of_a_character_reaches_the_simulation_without_making_it_again :: 
     physics_test_step(&f,0)
     testing.expect_value(t,sim.character_desc(&f.state.world,link_find(&f.state,e).character).push_force,f32(600))
     testing.expect_value(t,f.state.stats.characters_created,created)
+}
+
+// A compound of two pieces whose second becomes a proxy weighs and balances as a body made of the first alone,
+// with the mass its Rigid_Body gives or that of its shapes.
+@(test)
+a_compound_that_gives_a_piece_to_a_proxy_weighs_as_what_it_keeps :: proc(t:^testing.T) {
+    for mass in ([2]f32{0,4}) {
+        f:Physics_Test
+        if !physics_test_init(t,&f) {return}
+        defer physics_test_destroy(&f)
+        rigid:=RIGID_BODY_DYNAMIC
+        rigid.mass=mass
+        compound:=owner_of(&f,{0,5,0},rigid)
+        piece_of(&f,compound,{-1,0,0},{0.5,0.5,0.5})
+        given:=piece_of(&f,compound,{1,0,0},{0.5,1,0.5})
+        alone:=owner_of(&f,{0,5,10},rigid)
+        piece_of(&f,alone,{-1,0,0},{0.5,0.5,0.5})
+        other:=physics_test_box(&f,{5,5,0},{0.5,0.5,0.5},RIGID_BODY_DYNAMIC)
+        physics_test_step(&f,0)
+        testing.expect(t,proxy_set(&f.state,given,body_of(core.ref(&f.state),other)))
+        a,a_center,_:=sim.body_mass_properties(&f.state.world,body_of(core.ref(&f.state),compound))
+        b,b_center,_:=sim.body_mass_properties(&f.state.world,body_of(core.ref(&f.state),alone))
+        testing.expectf(t,abs(a-b)<1e-4 && linalg.length(a_center-b_center)<1e-4,"mass %v: %v kg at %v, alone %v kg at %v",mass,a,a_center,b,b_center)
+    }
+    owner_of :: proc(f:^Physics_Test,at:[3]f32,rigid:Rigid_Body) -> core.Entity {
+        e:=core.create(&f.entities)
+        core.add(&f.transforms,e,core.Transform{at,1,{1,1,1}})
+        core.add(&f.rigids,e,rigid)
+        return e
+    }
+    piece_of :: proc(f:^Physics_Test,owner:core.Entity,at,half:[3]f32) -> core.Entity {
+        e:=physics_test_box(f,at,half)
+        core.add(&f.parents,e,core.Parent{owner,0})
+        return e
+    }
 }

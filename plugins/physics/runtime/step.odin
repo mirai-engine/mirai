@@ -1,8 +1,10 @@
 package physics
 
+import "core:hash/xxhash"
 import "core:math/linalg"
 import "core:mem"
 import "core:slice"
+import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
 import "mirai:std/base"
@@ -62,6 +64,8 @@ Sync :: struct {
     character_states:^core.Table(Character_State),
     jumps:^core.Jumps, // nil for whoever steps the simulation by hand
     problems:^core.Problems,
+    changes:[3]core.Changes, // of Rigid_Body, Collider and Character since Physics_State.rows_seen
+    written:core.Changes,    // of Transform since the last tick: what another function wrote
     budget:int,   // what the tick may still make or let go
     waiting:bool, // something waits for the next tick
     unmade:bool,  // a body or character could not be made
@@ -136,6 +140,9 @@ physics_step :: proc(
             core.report(problems,core.NONE,"physics.collision_settings","Collision_Settings.%s[%d] configures the value %d, which no code declares (%d entries configure undeclared values); declare it as a constant of Collision_Category or Collision_Preset (CATEGORY_NAME :: physics.Collision_Category(%d)), or remove the entry",first_field,first_index,first_value,undeclared,first_value)
         }
     }
+    seen,transforms_seen:=state.rows_seen,state.transforms_seen
+    s.changes={core.changes(rigids,&seen[0]),core.changes(colliders,&seen[1]),core.changes(characters,&seen[2])}
+    s.written=core.changes(s.locals,&transforms_seen)
     // Nothing the bodies are made from was written: they are as they were.
     structure:=sync_structure(&s)
     synced:=sync_seen(&s,structure)==state.synced
@@ -158,7 +165,7 @@ physics_step :: proc(
                 s.budget-=1
             }
             link_release(&s,&link)
-            core.entity_map_remove_at(&state.links,at)
+            links_remove_at(state,at)
         }
         // Without room for their links the bodies wait for the next tick.
         if synced=links_reserve(&s);synced {
@@ -185,6 +192,7 @@ physics_step :: proc(
         structure=sync_structure(&s)
         state.synced=sync_seen(&s,structure)
         if ran {state.sealed_key,state.unmade=sealed_key(&s,structure),s.unmade}
+        state.rows_seen=seen
         _=core.changes(s.locals,&state.transforms_seen)
     }
 
@@ -198,23 +206,28 @@ physics_step :: proc(
             l:=link_find(state,e)
             if l==nil || l.kind!=.Character {continue}
             // One a following target leads does not walk: it is put at the pose.
-            if l.followed {
+            if h:=held_of(state,e);h!=nil && .Target in h.by {
                 sim.character_set_move(w,l.character,{})
                 continue
             }
             move,has:=core.get(moves,e)
             if has {sim.character_set_move(w,l.character,move.value)}
-            character_height_set(w,l,e,move.height)
+            character_height_set(&s,l,e,core.at(characters,row),move.height)
         }
     }
 
     events_forward(&s,events,&state.forwarded)
     if !s.playing {return}
 
-    // A held body heads for its pose in every step.
-    for &l in state.links.values {
-        if (l.kind==.Body || l.kind==.Proxy) && l.hold.by!={} && sim.body_valid(w,l.body) {
-            pose:=hold_pose(l.hold)
+    // A held body heads for its pose in every step; what nothing steers any more leaves the list.
+    #reverse for h,at in state.held {
+        l:=link_find(state,h.entity)
+        if l==nil || h.by=={} && h.placed==0 {
+            unordered_remove(&state.held,at)
+            continue
+        }
+        if (l.kind==.Body || l.kind==.Proxy) && h.by!={} && sim.body_valid(w,l.body) {
+            pose:=hold_pose(h)
             sim.body_set_kinematic_target(w,l.body,pose.p,pose.q,s.dt)
         }
     }
@@ -224,7 +237,16 @@ physics_step :: proc(
     sim.world_step(w,time.dt)
     w.desc.parallel_user=nil
     strains_apply(w,asked)
-    step_followed(state,characters)
+    step_followed(state)
+    // A manipulation that asked to let go does once its body reaches the pose.
+    for &h in state.held {
+        if !h.release || h.by!={.Manipulation} {continue}
+        l:=link_find(state,h.entity)
+        if l==nil || !sim.body_valid(w,l.body) || pose_differs(sim.body_transform(w,l.body),h.pose[.Manipulation]) {continue}
+        pose_write(&s,l,h.entity,sim.body_transform(w,l.body))
+        hold_end(state,&h,l,.Manipulation,h.keep_velocity,rigids)
+        link_touch(state,l)
+    }
 
     // What another owner places has to reach what touches it: its groups are kept while some entity has a target.
     s.grouped=core.count(targets)>0
@@ -356,8 +378,11 @@ link_touch :: proc(state:^Physics_State,l:^Link) {
         state.touched_all=true
         return
     }
-    append(&state.touched,u32(mem.ptr_sub(l,&state.links.values[0])))
+    append(&state.touched,u32(link_index(state,l)))
 }
+
+@(private)
+link_index :: proc "contextless" (state:^Physics_State,l:^Link) -> int {return int(mem.ptr_sub(l,&state.links.values[0]))}
 
 // The link of an entity; the one of another generation of its index is
 // released first. nil without memory.
@@ -366,8 +391,31 @@ link_at :: proc(s:^Sync,e:core.Entity) -> ^Link {
     links:=&s.state.links
     if l:=core.entity_map_get(links,e);l!=nil {return l}
     if held:=core.entity_map_held(links,e);held!=core.NONE {link_release(s,core.entity_map_get(links,held))}
-    l,_:=core.entity_map_put(links,e,Link{})
+    return links_put(s.state,e,Link{})
+}
+
+// Gives an entity a link, or replaces the one of its index, stamping what it writes. nil without memory.
+@(private)
+links_put :: proc(state:^Physics_State,e:core.Entity,link:Link) -> ^Link {
+    if !links_room(state,len(state.links.values)+1,core.entity_index(e)+1) {return nil}
+    l,ok:=core.entity_map_put(&state.links,e,link)
+    if !ok {return nil}
+    slot_stamp(state,state.link_stamps[:],link_index(state,l))
     return l
+}
+
+// Takes out the link at an index of the values: the last one takes its place. Stamps what it moves.
+@(private)
+links_remove_at :: proc(state:^Physics_State,at:int) {
+    slot_stamp(state,state.link_stamps[:],at)
+    slot_stamp(state,state.link_stamps[:],len(state.links.values)-1)
+    core.entity_map_remove_at(&state.links,at)
+}
+
+// Room for count links and for the entities of index below indices, with a stamp for each chunk of them.
+@(private)
+links_room :: proc(state:^Physics_State,count,indices:int) -> bool {
+    return core.entity_map_reserve(&state.links,count,indices) && resize(&state.link_stamps,max(len(state.link_stamps),base.chunks_of(cap(state.links.values))))==nil
 }
 
 // Room for a link for every row the tick can reach, so that no pointer to one
@@ -379,7 +427,15 @@ links_reserve :: proc(s:^Sync) -> bool {
     for row in 0..<core.count(s.colliders) {most=max(most,core.entity_index(core.entity_at(s.colliders,row)))}
     for row in 0..<core.count(s.characters) {most=max(most,core.entity_index(core.entity_at(s.characters,row)))}
     rows:=core.count(s.rigids)+core.count(s.colliders)+core.count(s.characters)
-    return core.entity_map_reserve(&s.state.links,len(s.state.links.values)+rows,most+1)
+    state:=s.state
+    return links_room(state,len(state.links.values)+rows,most+1) && resize(&state.visited,cap(state.links.values))==nil
+}
+
+// Whether the row of e in a table is among the changes.
+@(private)
+row_changed :: proc "contextless" (r:core.Read($T),c:core.Changes,e:core.Entity) -> bool {
+    row:=core.row_of(r,e)
+    return row>=0 && core.changed(r,c,row)
 }
 
 @(private)
@@ -403,32 +459,27 @@ pose_differs :: proc "contextless" (current:sim.Transform,target:sim.Transform) 
     return linalg.dot(offset,offset)>POSE_EPSILON*POSE_EPSILON || alignment<1-POSE_EPSILON
 }
 
-// Writes a world pose into the Transform of the entity and remembers it, so that a write of anybody else shows.
+// Writes a world pose into the Transform of the entity.
 @(private)
 pose_write :: proc(s:^Sync,l:^Link,e:core.Entity,pose:sim.Transform) {
     row:=core.row_of(s.transforms,e)
     if row<0 {return}
     position,rotation,ok:=local_of(s.locals,s.parents,e,pose)
     if !ok {return}
-    l.written_position,l.written_rotation=position,rotation
     local:=s.transforms.values[row]
     if local.position==position && local.rotation==rotation {return}
     written:=core.edit_at(s.transforms,row)
     written.position,written.rotation=position,rotation
 }
 
-// Whether another function wrote the Transform of e. A write that leaves it
-// where the simulation has it (moved: false) is no teleport: it hangs from
-// another parent, as a section that something left gives it to the next.
+// Whether another function moved e by its Transform since the last tick: it holds other than what the
+// simulation, at pose, writes. A write that leaves it where the simulation has it (moved: false) is no
+// teleport: it hangs from another parent, as a section that something left gives it to the next.
 @(private)
-foreign_write :: proc(s:^Sync,l:^Link,e:core.Entity,component:string,moved:bool) -> bool {
-    row:=core.row_of(s.transforms,e)
-    if row<0 {return false}
-    local:=s.transforms.values[row]
-    if local.position==l.written_position && local.rotation==l.written_rotation {return false}
-    if !moved {
-        l.written_position,l.written_rotation=local.position,local.rotation
-        return false
+foreign_write :: proc(s:^Sync,e:core.Entity,component:string,pose:sim.Transform,moved:bool) -> bool {
+    if !moved || !row_changed(s.locals,s.written,e) {return false}
+    if local,has:=core.get(s.locals,e);has {
+        if position,rotation,ok:=local_of(s.locals,s.parents,e,pose);ok && local.position==position && local.rotation==rotation {return false}
     }
     core.fail(
         "Entity %q has a %s, which owns its Transform, but another function wrote its position or rotation: use core.place(placer,entity,position,rotation) (physics.move_kinematic for a kinematic body)",
@@ -439,37 +490,46 @@ foreign_write :: proc(s:^Sync,l:^Link,e:core.Entity,component:string,moved:bool)
 
 @(private)
 entity_sync :: proc(s:^Sync,e:core.Entity) {
+    state:=s.state
     l:=link_at(s,e)
-    if l==nil || l.pass==s.state.pass {return}
-    if l.kind==.None && !l.refused {
+    // A proxy's body is another library's: a breakable replaces the Collider and Rigid_Body of its entity.
+    if l==nil || l.kind==.Proxy {return}
+    at:=link_index(state,l)
+    if at>=len(state.visited) && resize(&state.visited,len(state.links.values))!=nil || state.visited[at]==state.pass {return}
+    if l.kind==.None {
         if s.budget==0 {
             s.waiting=true
             return
         }
         s.budget-=1
     }
-    l.pass=s.state.pass
-    link_touch(s.state,l)
+    state.visited[at]=state.pass
+    link_touch(state,l)
+    was:=l^
+    defer if l^!=was {slot_stamp(state,state.link_stamps[:],at)}
     rigid,has_rigid:=core.get(s.rigids,e)
     collider,has_collider:=core.get(s.colliders,e)
     config,has_character:=core.get(s.characters,e)
+    collider_changed:=row_changed(s.colliders,s.changes[1],e)
     if has_collider && collider.kind==.External {has_collider=false}
     owner:=core.NONE
     if !has_rigid && !has_character && has_collider {owner=compound_owner(s,e)}
     switch {
     case has_character:
         if l.kind!=.Character && l.kind!=.None {link_release(s,l)}
-        character_sync(s,e,l,config,collider,has_collider)
+        character_sync(s,e,l,config,collider,has_collider,collider_changed || row_changed(s.characters,s.changes[2],e))
     case owner!=core.NONE:
-        compound_sync(s,e,l,collider,owner)
+        compound_sync(s,e,l,collider,owner,collider_changed)
     case has_rigid || has_collider:
         if l.kind==.Compound || l.kind==.Character {link_release(s,l)}
-        body_sync(s,e,l,rigid,has_rigid,collider,has_collider)
+        body_sync(s,e,l,rigid,has_rigid,row_changed(s.rigids,s.changes[0],e),collider,has_collider,collider_changed)
     }
 }
 
+// Taking a row again, as after a rollback that brings it back, leaves the simulation as it is: each setter acts
+// only where the simulation differs.
 @(private)
-body_sync :: proc(s:^Sync,e:core.Entity,l:^Link,rigid:Rigid_Body,has_rigid:bool,collider:Collider,has_collider:bool) {
+body_sync :: proc(s:^Sync,e:core.Entity,l:^Link,rigid:Rigid_Body,has_rigid,rigid_changed:bool,collider:Collider,has_collider,collider_changed:bool) {
     state:=s.state
     w:=&state.world
     world:=world_pose(s,e)
@@ -491,24 +551,26 @@ body_sync :: proc(s:^Sync,e:core.Entity,l:^Link,rigid:Rigid_Body,has_rigid:bool,
             core.report(s.problems,e,"physics.bodies","this entity has no body in the simulation: the %d bodies of Physics_Settings.bodies are in use; raise bodies, or remove bodies",w.desc.body_capacity)
             return
         }
-        l.kind,l.rigid,l.has_rigid=.Body,rigid,has_rigid
+        l.kind=.Body
         state.stats.bodies_created+=1
         created,mass_changed=true,true
         if linear,angular:=made_velocity(s,e);type!=.Static && (linear!={} || angular!={}) {
             sim.body_set_velocity(w,l.body,linear,angular)
         }
-        target_made(state,l,s.targets,e)
-    } else if l.rigid!=rigid || l.has_rigid!=has_rigid {
-        effective:=l.hold.by!={}?Body_Type.Kinematic:type
-        if sim.body_type(w,l.body)!=effective {sim.body_set_type(w,l.body,effective)}
-        if has_rigid {
-            sim.body_set_damping(w,l.body,rigid.linear_damping,rigid.angular_damping)
-            sim.body_set_gravity_scale(w,l.body,rigid.gravity_scale)
-            sim.body_set_locks(w,l.body,body_locks(rigid.locks))
-            sim.body_set_bullet(w,l.body,rigid.bullet)
+        target_made(s,l,e)
+    } else {
+        // A held body is kinematic until the last one that holds it lets go.
+        if sim.body_type(w,l.body)!=type && held_of(state,e)==nil {
+            sim.body_set_type(w,l.body,type)
+            mass_changed=true
         }
-        l.rigid,l.has_rigid=rigid,has_rigid
-        mass_changed=true
+        if has_rigid && rigid_changed {
+            sim.body_set_damping(w,l.body,rigid.linear_damping,rigid.angular_damping)
+            sim.body_set_bullet(w,l.body,rigid.bullet)
+            if sim.body_gravity_scale(w,l.body)!=rigid.gravity_scale {sim.body_set_gravity_scale(w,l.body,rigid.gravity_scale)}
+            if locks:=body_locks(rigid.locks);sim.body_locks(w,l.body)!=locks {sim.body_set_locks(w,l.body,locks)}
+            mass_changed=true
+        }
     }
 
     if !has_collider {
@@ -519,14 +581,14 @@ body_sync :: proc(s:^Sync,e:core.Entity,l:^Link,rigid:Rigid_Body,has_rigid:bool,
             mass_changed=true
         }
         geometry_release(s,l)
-        l.has_collider,l.collider,l.refused=false,{},false
+        l.made=0
     } else {
-        shown:=shown_of(s,e,collider,l.shown)
-        filter:=collision_of(s,e,l,collider)
-        same:=l.has_collider && collider_shape_same(l.collider,collider)
-        changed:=!same || l.scale!=scale || l.shown!=shown
-        if changed && same && l.scale==scale && l.shown.generated && shown.generated && sim.shape_valid(w,l.shape) && collider_geometry_unchanged(s,l,e) {
-            l.shown=shown
+        shown:=shown_of(s,e,collider)
+        filter:=collision_of(s,e,collider,collider_changed)
+        key:=shape_key(collider,scale,mm.TRANSFORM_IDENTITY,shown)
+        changed:=created || l.made!=key
+        if changed && !created && shown.generated && !collider_changed && sim.shape_valid(w,l.shape) && collider_geometry_unchanged(s,l,e,collider,scale) {
+            l.made=key
             changed=false
         }
         if changed || link_shapes_lost(s,l) {
@@ -536,29 +598,35 @@ body_sync :: proc(s:^Sync,e:core.Entity,l:^Link,rigid:Rigid_Body,has_rigid:bool,
             }
             geometry_release(s,l)
             if failure:=collider_shapes_make(s,l,e,l.body,collider,scale,filter);failure!=.None {shape_problem(s,e,collider,failure)}
-            l.has_collider,l.scale,l.shown=true,scale,shown
+            l.made=key
             mass_changed=true
-        } else {shapes_restyle(s,l,collider,filter)}
-        l.collider,l.filter=collider,filter
+        } else {shapes_restyle(s,l,collider,filter,collider_changed)}
     }
     if mass_changed {body_mass_update(w,l.body,rigid,has_rigid)}
 
-    local,has_local:=core.get(s.locals,e)
-    if created {
-        if has_local {l.written_position,l.written_rotation=local.position,local.rotation}
-    } else if s.playing && (has_rigid || l.hold.by!={}) {
-        if foreign_write(s,l,e,has_rigid?"Rigid_Body":"physics manipulation",pose_differs(sim.body_transform(w,l.body),pose)) {
+    switch {
+    case created:
+    case s.playing && (has_rigid || sim.body_type(w,l.body)!=.Static):
+        if at:=sim.body_transform(w,l.body);foreign_write(s,e,has_rigid?"Rigid_Body":"physics manipulation",at,pose_differs(at,pose)) {
             sim.body_set_transform(w,l.body,pose.p,pose.q)
-            l.written_position,l.written_rotation=local.position,local.rotation
             state.stats.teleports+=1
         }
-    } else if pose_differs(sim.body_transform(w,l.body),pose) {
+    case pose_differs(sim.body_transform(w,l.body),pose):
         sim.body_set_transform(w,l.body,pose.p,pose.q)
         state.stats.teleports+=1
     }
-    if !s.playing && has_local {l.written_position,l.written_rotation=local.position,local.rotation}
-    l.placed=pose
     if s.playing && has_rigid && type!=.Static && !core.has(s.motions,e) {core.add(s.motions,e,core.Motion{})}
+}
+
+// What the shapes of a collider are made from, all but their filter and surface: where the entity is in the
+// frame of its body, its scale and what it shows.
+@(private)
+shape_key :: proc(collider:Collider,scale:[3]f32,relative:mm.Transform,shown:Shown) -> u64 {
+    Key :: struct {kind:Collider_Kind,size:[3]f32,convex_radius:f32,center:[3]f32,friction,restitution,density:f32,scale:[3]f32,relative:mm.Transform,shown:Shown}
+    key:Key
+    key.kind,key.size,key.convex_radius,key.center=collider.kind,collider.size,collider.convex_radius,collider.center
+    key.friction,key.restitution,key.density,key.scale,key.relative,key.shown=collider.friction,collider.restitution,collider.density,scale,relative,shown
+    return xxhash.XXH3_64_with_seed(mem.ptr_to_bytes(&key),0)
 }
 
 @(private)
@@ -589,12 +657,12 @@ compound_relative :: proc(s:^Sync,e,owner:core.Entity) -> mm.Transform {
 }
 
 @(private)
-compound_sync :: proc(s:^Sync,e:core.Entity,l:^Link,collider:Collider,owner:core.Entity) {
+compound_sync :: proc(s:^Sync,e:core.Entity,l:^Link,collider:Collider,owner:core.Entity,collider_changed:bool) {
     state:=s.state
     w:=&state.world
     if l.kind==.Body || l.kind==.Character || l.kind==.Compound && l.owner!=owner {link_release(s,l)}
     holder:=link_at(s,owner)
-    if holder!=nil && holder.pass!=state.pass {entity_sync(s,owner)}
+    if holder!=nil {entity_sync(s,owner)}
     if holder==nil || holder.kind!=.Body || !sim.body_valid(w,holder.body) {
         link_release(s,l)
         s.unmade=true
@@ -602,17 +670,16 @@ compound_sync :: proc(s:^Sync,e:core.Entity,l:^Link,collider:Collider,owner:core
     }
     relative:=compound_relative(s,e,owner)
     scale:=linalg.abs(relative.scale)
-    shown:=shown_of(s,e,collider,l.shown)
-    filter:=collision_of(s,e,l,collider)
-    same:=l.kind==.Compound && l.has_collider && collider_shape_same(l.collider,collider)
-    changed:=!same || l.scale!=scale || l.relative!=relative || l.shown!=shown || l.body!=holder.body
-    if changed && same && l.scale==scale && l.relative==relative && l.body==holder.body && l.shown.generated && shown.generated && sim.shape_valid(w,l.shape) && collider_geometry_unchanged(s,l,e,relative) {
-        l.shown=shown
+    shown:=shown_of(s,e,collider)
+    filter:=collision_of(s,e,collider,collider_changed)
+    key:=shape_key(collider,scale,relative,shown)
+    changed:=l.kind!=.Compound || l.made!=key || l.body!=holder.body
+    if changed && l.kind==.Compound && l.body==holder.body && shown.generated && !collider_changed && sim.shape_valid(w,l.shape) && collider_geometry_unchanged(s,l,e,collider,scale,relative) {
+        l.made=key
         changed=false
     }
     if !changed && !link_shapes_lost(s,l) {
-        shapes_restyle(s,l,collider,filter)
-        l.collider,l.filter=collider,filter
+        shapes_restyle(s,l,collider,filter,collider_changed)
         return
     }
     if sim.shape_valid(w,l.shape) {
@@ -622,33 +689,27 @@ compound_sync :: proc(s:^Sync,e:core.Entity,l:^Link,collider:Collider,owner:core
     state.stats.shapes_destroyed+=pieces_shapes_destroy(s,l)
     geometry_release(s,l)
     if failure:=collider_shapes_make(s,l,e,holder.body,collider,scale,filter,&relative);failure!=.None {shape_problem(s,e,collider,failure)}
-    l.kind,l.owner,l.body=.Compound,owner,holder.body
-    l.has_collider,l.collider,l.filter,l.scale,l.relative,l.shown=true,collider,filter,scale,relative,shown
-    body_mass_update(w,holder.body,holder.rigid,holder.has_rigid)
+    l.kind,l.owner,l.body,l.made=.Compound,owner,holder.body,key
 }
 
+// What a Hull, Mesh or Heightfield collider shows. A mesh without a file is an immutable generated id, also
+// once its asset is freed: other asset changes do not make its shapes again.
 @(private)
-shown_of :: proc(s:^Sync,e:core.Entity,collider:Collider,previous:Shown) -> (shown:Shown) {
+shown_of :: proc(s:^Sync,e:core.Entity,collider:Collider) -> (shown:Shown) {
     if collider.kind!=.Hull && collider.kind!=.Mesh && collider.kind!=.Heightfield {return}
     if static,has:=core.get(s.statics,e);has {shown.mesh,shown.shape=static.mesh,static.shape}
-    shown.generated=host.assets_mesh_generated(s.app.assets,shown.mesh) || previous.generated && previous.mesh==shown.mesh
-    if s.app.assets!=nil && !shown.generated {shown.revision=s.app.assets.revision}
+    if s.app.assets==nil {return}
+    _,file:=asset.registry_find(&s.app.assets.registry,shown.mesh)
+    shown.generated=host.assets_mesh_generated(s.app.assets,shown.mesh) || shown.mesh!={} && !file
+    if !shown.generated {shown.revision=s.app.assets.revision}
     return
 }
 
-// The mass of a dynamic body from the shapes it has now: by their density, or scaled to the mass its Rigid_Body gives.
+// A dynamic body weighs what its Rigid_Body says, or what its shapes do; they place its center and inertia,
+// and the simulation keeps both as they change.
 @(private)
 body_mass_update :: proc(w:^sim.World,body:sim.Body_Handle,rigid:Rigid_Body,has_rigid:bool) {
-    if !has_rigid || rigid.type!=.Dynamic {return}
-    sim.body_reset_mass_properties(w,body)
-    if rigid.mass<=0 {return}
-    if mass,center,inertia:=sim.body_mass_properties(w,body);mass>0 {
-        factor:=rigid.mass/mass
-        for row in 0..<3 {
-            for column in 0..<3 {inertia[row,column]*=factor}
-        }
-        sim.body_set_mass_properties(w,body,rigid.mass,center,inertia)
-    }
+    if has_rigid && rigid.type==.Dynamic {sim.body_set_mass(w,body,rigid.mass)}
 }
 
 // Ends what the link holds: the body, or the shape of a compound, and the geometry made for it.
@@ -665,9 +726,6 @@ link_release :: proc(s:^Sync,l:^Link) {
             destroyed+=1
         }
         state.stats.shapes_destroyed+=destroyed
-        if destroyed>0 {
-            if holder:=link_find(state,l.owner);holder!=nil && holder.kind==.Body {body_mass_update(w,holder.body,holder.rigid,holder.has_rigid)}
-        }
         geometry_release(s,l)
     case .Body:
         // A body the simulation ended by itself (debris, the bodies of a destructible) took its shapes with it, not their geometry.
@@ -683,20 +741,25 @@ link_release :: proc(s:^Sync,l:^Link) {
             state.stats.characters_destroyed+=1
         }
     }
-    l^={pass=l.pass}
+    l^={}
 }
 
 HEIGHT_EPSILON :: f32(1e-4) // m of capsule height that are no change
 
 // Makes the capsule of a character as tall as its move asks (0: that of its Collider, which it is
 // never taller than) before it steps: shorter at once, taller when nothing over it is in the way.
+// Kept shorter than asked by what is over it, it is cramped.
 @(private)
-character_height_set :: proc(w:^sim.World,l:^Link,e:core.Entity,asked:f32) {
-    full:=character_desc(l.config,l.collider,l.scale,l.filter,e).height
+character_height_set :: proc(s:^Sync,l:^Link,e:core.Entity,config:Character,asked:f32) {
+    w:=&s.state.world
+    capsule,_:=core.get(s.colliders,e)
+    world,_:=core.world_of(s.locals,s.parents,e)
+    full:=character_desc(config,capsule,linalg.abs(world.scale),{},e).height
     want:=asked
     if !(want>0) || want>full {want=full}
-    l.height_asked=want
     if abs(sim.character_desc(w,l.character).height-want)>HEIGHT_EPSILON {_=sim.character_set_height(w,l.character,want)}
+    cramped:=sim.character_desc(w,l.character).height<want-HEIGHT_EPSILON
+    if row:=core.row_of(s.character_states,e);row>=0 && s.character_states.values[row].cramped!=cramped {core.edit_at(s.character_states,row).cramped=cramped}
 }
 
 // The capsule stands on the feet: its center and surface are those of the controller.
@@ -715,10 +778,10 @@ character_desc :: proc "contextless" (c:Character,capsule:Collider,scale:[3]f32,
     return desc
 }
 
-// The part of a character that is kept as it was made.
+// What a character is made from; the rest of its Character and its Collider changes it as it is.
 @(private)
-character_shape_same :: proc "contextless" (l:^Link,c:Character,capsule:Collider,scale:[3]f32) -> bool {
-    return l.config.mass==c.mass && l.config.step_height==c.step_height && collider_shape_same(l.collider,capsule) && l.scale==scale
+character_key :: proc(c:Character,capsule:Collider,scale:[3]f32) -> u64 {
+    return base.hash_mix(shape_key(capsule,scale,mm.TRANSFORM_IDENTITY,{}),u64(transmute(u32)c.mass)|u64(transmute(u32)c.step_height)<<32)
 }
 
 @(private)
@@ -734,55 +797,52 @@ look_yaw_of :: proc "contextless" (frame,rotation:mm.Quat) -> f32 {
 }
 
 @(private)
-character_sync :: proc(s:^Sync,e:core.Entity,l:^Link,config:Character,capsule:Collider,has_capsule:bool) {
+character_sync :: proc(s:^Sync,e:core.Entity,l:^Link,config:Character,capsule:Collider,has_capsule,changed:bool) {
     state:=s.state
     w:=&state.world
     if !has_capsule || capsule.kind!=.Capsule {
-        if !l.refused || l.config!=config || l.collider!=capsule {
+        link_release(s,l)
+        if changed {
             core.report(s.problems,e,"physics.character_capsule","its Character is not made: it moves as the Collider of kind Capsule of the entity, and it has %s; give it physics.collider_character() or a capsule of its own",has_capsule?"another kind":"none")
         }
-        l.refused,l.config,l.collider=true,config,capsule
         return
     }
     world:=world_pose(s,e)
     scale:=linalg.abs(world.scale)
-    filter:=collision_of(s,e,l,capsule)
+    filter:=collision_of(s,e,capsule,changed)
     desc:=character_desc(config,capsule,scale,filter,e)
-    local,has_local:=core.get(s.locals,e)
-    if l.kind==.Character && sim.character_valid(w,l.character) && character_shape_same(l,config,capsule,scale) {
-        if l.config!=config || l.collider.drag!=capsule.drag {sim.character_set_desc(w,l.character,desc)}
-        if l.config.locks!=config.locks {sim.character_set_locks(w,l.character,body_locks(config.locks))}
-        if l.filter!=filter {sim.character_set_filter(w,l.character,filter)}
-        if !collider_surface_same(l.collider,capsule) {surface_set(w,sim.character_shape(w,l.character),capsule)}
-        l.config,l.collider,l.filter=config,capsule,filter
+    key:=character_key(config,capsule,scale)
+    if l.kind==.Character && sim.character_valid(w,l.character) && l.made==key {
+        current:=sim.character_desc(w,l.character)
+        next:=desc
+        next.radius,next.height,next.mass,next.step_height,next.filter=current.radius,current.height,current.mass,current.step_height,current.filter
+        if next.drag==0 {next.drag=sim.CD_HUMAN}
+        if next!=current {sim.character_set_desc(w,l.character,desc)}
+        body:=sim.character_body(w,l.character)
+        // Its move turns it: the angular locks are always on.
+        if locks:=body_locks(config.locks);sim.body_locks(w,body)!=locks+{.Lock_Angular_X,.Lock_Angular_Y,.Lock_Angular_Z} {sim.character_set_locks(w,l.character,locks)}
+        if current.filter!=filter {sim.character_set_filter(w,l.character,filter)}
+        if changed {surface_set(w,sim.character_shape(w,l.character),capsule)}
+        held:=sim.body_rotation(w,body)
+        offset:=sim.character_position(w,l.character)-world.position
+        moved:=linalg.dot(offset,offset)>POSE_EPSILON*POSE_EPSILON
         if s.playing {
             character_rows(s,e)
-            offset:=sim.character_position(w,l.character)-world.position
-            moved:=linalg.dot(offset,offset)>POSE_EPSILON*POSE_EPSILON
             // A write that turns it where it is cannot be taken: its turn is that of its move and its vertical.
-            if !moved && has_local && (local.position!=l.written_position || local.rotation!=l.written_rotation) {
-                held:=sim.body_rotation(w,sim.character_body(w,l.character))
-                if pose_differs({world.position,held},{world.position,world.rotation}) {
-                    core.report(s.problems,e,"physics.character_turn","Character %q was turned by another function while it plays, and a Character turns with its move and its vertical: turn it with the look of its Move_Input, or put it turned with core.place(placer,entity,position,rotation)",core.name_get(s.names,e))
-                }
+            if !moved && row_changed(s.locals,s.written,e) && pose_differs({world.position,held},{world.position,world.rotation}) {
+                core.report(s.problems,e,"physics.character_turn","Character %q was turned by another function while it plays, and a Character turns with its move and its vertical: turn it with the look of its Move_Input, or put it turned with core.place(placer,entity,position,rotation)",core.name_get(s.names,e))
             }
-            if foreign_write(s,l,e,"Character",moved) {
+            if foreign_write(s,e,"Character",sim.body_transform(w,body),moved) {
                 sim.character_set_position(w,l.character,world.position)
-                l.written_position,l.written_rotation=local.position,local.rotation
                 state.stats.teleports+=1
             }
             return
         }
-        offset:=sim.character_position(w,l.character)-world.position
-        if linalg.dot(offset,offset)>POSE_EPSILON*POSE_EPSILON {
+        if moved {
             sim.character_set_position(w,l.character,world.position)
             state.stats.teleports+=1
         }
-        if l.placed.q!=world.rotation {
-            sim.character_set_rotation(w,l.character,world.rotation)
-            l.placed.q=world.rotation
-        }
-        if has_local {l.written_position,l.written_rotation=local.position,local.rotation}
+        if pose_differs({world.position,held},{world.position,world.rotation}) {sim.character_set_rotation(w,l.character,world.rotation)}
         return
     }
     position,rotation,frame:=world.position,world.rotation,mm.QUAT_IDENTITY
@@ -804,10 +864,8 @@ character_sync :: proc(s:^Sync,e:core.Entity,l:^Link,config:Character,capsule:Co
     if linear,_:=made_velocity(s,e);linear!={} {
         sim.body_set_linear_velocity(w,sim.character_body(w,l.character),linear)
     }
-    l.kind,l.config,l.collider,l.filter,l.scale=.Character,config,capsule,filter,scale
-    l.placed={position,world.rotation}
-    target_made(state,l,s.targets,e)
-    if has_local {l.written_position,l.written_rotation=local.position,local.rotation}
+    l.kind,l.made=.Character,key
+    target_made(s,l,e)
     if s.playing {character_rows(s,e)}
 }
 
@@ -831,19 +889,13 @@ body_locks :: proc "contextless" (locks:Body_Locks) -> (flags:sim.Body_Flags) {
     return
 }
 
-// Whether two colliders make the same shape; what differs in their collision is a new filter of that shape.
-@(private)
-collider_shape_same :: proc "contextless" (a,b:Collider) -> bool {
-    return a.kind==b.kind && a.size==b.size && a.convex_radius==b.convex_radius && a.center==b.center && a.friction==b.friction && a.restitution==b.restitution && a.density==b.density
-}
-
 // The filter of a collider under the settings of the world. A preset the code does not declare is
 // reported once, when the collider or the settings change; it is the Default category colliding with
 // every category.
 @(private)
-collision_of :: proc(s:^Sync,e:core.Entity,l:^Link,collider:Collider) -> sim.Filter {
+collision_of :: proc(s:^Sync,e:core.Entity,collider:Collider,changed:bool) -> sim.Filter {
     filter:=collision_filter(s.collision,collider)
-    if l.collider==collider && !s.collision_changed {return filter}
+    if !changed && !s.collision_changed {return filter}
     info:=s.app!=nil?s.app.info:nil
     if collider.preset!=PRESET_CUSTOM && !collision_declared(info,Collision_Preset,i64(collider.preset)) {
         core.report(s.problems,e,"physics.collision","its Collider uses collision preset %d, which no code declares; choose a declared preset, or declare it (PRESET_NAME :: physics.Collision_Preset(%d))",collider.preset,collider.preset)
@@ -934,16 +986,16 @@ link_shapes_lost :: proc(s:^Sync,l:^Link) -> bool {
     return false
 }
 
-// Gives the shapes of a link the filter and the surface of its collider.
+// Gives the shapes of a link the filter of its collider, and its surface when it changed.
 @(private)
-shapes_restyle :: proc(s:^Sync,l:^Link,collider:Collider,filter:sim.Filter) {
+shapes_restyle :: proc(s:^Sync,l:^Link,collider:Collider,filter:sim.Filter,changed:bool) {
     w:=&s.state.world
-    restyle :: proc(w:^sim.World,l:^Link,shape:sim.Shape_Handle,collider:Collider,filter:sim.Filter) {
-        if l.filter!=filter {sim.shape_set_filter(w,shape,filter)}
-        if !collider_surface_same(l.collider,collider) {surface_set(w,shape,collider)}
+    restyle :: proc(w:^sim.World,shape:sim.Shape_Handle,collider:Collider,filter:sim.Filter,changed:bool) {
+        if sim.shape_filter(w,shape)!=filter {sim.shape_set_filter(w,shape,filter)}
+        if changed {surface_set(w,shape,collider)}
     }
-    restyle(w,l,l.shape,collider,filter)
-    for piece in pieces_of(s.state,l) {restyle(w,l,piece.shape,collider,filter)}
+    restyle(w,l.shape,collider,filter,changed)
+    for piece in pieces_of(s.state,l) {restyle(w,piece.shape,collider,filter,changed)}
 }
 
 // Whether two colliders give their contacts the same rules; a change is applied to the shape as it is.
@@ -952,9 +1004,12 @@ collider_surface_same :: proc "contextless" (a,b:Collider) -> bool {
     return a.surface_speed==b.surface_speed && a.one_way==b.one_way && a.dominance==b.dominance && a.drag==b.drag
 }
 
+// Wakes the body only when the surface differs.
 @(private)
 surface_set :: proc(w:^sim.World,shape:sim.Shape_Handle,collider:Collider) {
-    sim.shape_set_surface(w,shape,collider.surface_speed,collider.one_way,collider.dominance)
+    if speed,one_way,dominance:=sim.shape_surface(w,shape);speed!=collider.surface_speed || one_way!=collider.one_way || dominance!=collider.dominance {
+        sim.shape_set_surface(w,shape,collider.surface_speed,collider.one_way,collider.dominance)
+    }
     sim.shape_set_drag(w,shape,collider.drag)
 }
 
@@ -1032,7 +1087,9 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
                 pose_write(s,l,e,{request.position,turned})
                 state.stats.teleports+=1
             case .Velocity:         sim.character_launch(w,l.character,request.linear,true)
-            case .Impulse:          sim.character_launch(w,l.character,request.linear/max(l.config.mass,1e-3))
+            case .Impulse:
+                config,_:=core.get(s.characters,e)
+                sim.character_launch(w,l.character,request.linear/max(config.mass,1e-3))
             case .Force:            sim.body_apply_force(w,sim.character_body(w,l.character),request.linear)
             case .Area_Force,.Area_Impulse,.Area_Strain:
             case .Kinematic,.Manipulate,.Release_Manipulation: request_problem(s,e,request.kind,"physics.request_character","a Character moves by its Character_Move","teleport it, give it a velocity or an impulse, or write its Character_Move")
@@ -1050,7 +1107,6 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
             jumped(s,e,was.p,rotation*conj(was.q),request.position)
             sim.body_set_transform(w,l.body,request.position,rotation)
             pose_write(s,l,e,{request.position,rotation})
-            l.placed={request.position,rotation}
             state.stats.teleports+=1
         case .Velocity:
             sim.body_set_velocity(w,l.body,request.linear,request.angular)
@@ -1080,17 +1136,20 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
             }
             qscale:=max(abs(rotation.x),abs(rotation.y),abs(rotation.z),abs(rotation.w))
             rotation=linalg.normalize(quaternion(x=rotation.x/qscale,y=rotation.y/qscale,z=rotation.z/qscale,w=rotation.w/qscale))
+            h:=held_take(state,e)
+            if h==nil {memory_problem(s.problems,e,"what physics holds, so the manipulation does not take the body");continue}
             // Another link of the same body hands over its manipulation, and the type the body had.
-            for &other in state.links.values {
-                if &other==l || other.body!=l.body || .Manipulation not_in other.hold.by {continue}
-                if l.hold.by=={} {l.hold.type_before=other.hold.type_before;l.hold.by+={.Manipulation}}
-                other.hold.by-={.Manipulation}
-                other.hold.release=false
+            for &other in state.held {
+                if &other==h || .Manipulation not_in other.by {continue}
+                if by:=link_find(state,other.entity);by==nil || by.body!=l.body {continue}
+                if h.by=={} {h.type_before=other.type_before;h.by+={.Manipulation}}
+                other.by-={.Manipulation}
+                other.release=false
             }
-            hold_begin(w,l,.Manipulation,{request.position,rotation})
-            l.hold.release,l.hold.keep_velocity=false,false
+            hold_begin(w,h,l,.Manipulation,{request.position,rotation})
+            h.release,h.keep_velocity=false,false
             // A body its pose target holds heads for the manipulation once the target lets it go.
-            if .Target in l.hold.by {continue}
+            if .Target in h.by {continue}
             if s.playing {
                 sim.body_set_kinematic_target(w,l.body,request.position,rotation,s.dt)
             } else {
@@ -1099,9 +1158,9 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
                 pose_write(s,l,e,sim.body_transform(w,l.body))
             }
         case .Release_Manipulation:
-            if .Manipulation in l.hold.by {
-                l.hold.release,l.hold.keep_velocity=true,request.override
-                if !s.playing || .Target in l.hold.by || !pose_differs(sim.body_transform(w,l.body),l.hold.pose[.Manipulation]) {hold_end(w,l,.Manipulation,l.hold.keep_velocity)}
+            if h:=held_of(state,e);h!=nil && .Manipulation in h.by {
+                h.release,h.keep_velocity=true,request.override
+                if !s.playing || .Target in h.by || !pose_differs(sim.body_transform(w,l.body),h.pose[.Manipulation]) {hold_end(state,h,l,.Manipulation,h.keep_velocity,s.rigids)}
             }
         }
     }
@@ -1163,13 +1222,10 @@ link_write :: proc(s:^Sync,l:^Link,e:core.Entity) -> (again:bool) {
     switch l.kind {
     case .None,.Compound:
     case .Body,.Proxy:
-        if l.kind==.Body && (!l.has_rigid || l.rigid.type==.Static) && l.hold.by=={} || !sim.body_valid(w,l.body) {return}
+        // A held body is kinematic: one static is as its rows say.
+        if !sim.body_valid(w,l.body) || l.kind==.Body && sim.body_type(w,l.body)==.Static {return}
         awake:=sim.body_is_awake(w,l.body)
         if awake {pose_write(s,l,e,sim.body_transform(w,l.body))}
-        if l.hold.release && l.hold.by=={.Manipulation} && !pose_differs(sim.body_transform(w,l.body),l.hold.pose[.Manipulation]) {
-            hold_end(w,l,.Manipulation,l.hold.keep_velocity)
-            awake=sim.body_is_awake(w,l.body)
-        }
         return motion_write(s,e,l.body,awake,l.kind==.Proxy)!=0 && !awake
     case .Character:
         if !sim.character_valid(w,l.character) {return}
@@ -1181,7 +1237,7 @@ link_write :: proc(s:^Sync,l:^Link,e:core.Entity) -> (again:bool) {
                 fluid=found.fluid,submersion=found.submersion,head_depth=found.head_depth,depth=found.depth,fluid_velocity=found.fluid_velocity,
                 height=sim.character_desc(w,l.character).height,velocity=sim.character_velocity(w,l.character),
             }
-            next.cramped=next.height<l.height_asked-HEIGHT_EPSILON
+            next.cramped=s.character_states.values[row].cramped
             if s.character_states.values[row]!=next {core.edit_at(s.character_states,row)^=next}
         }
         body:=sim.character_body(w,l.character)
@@ -1216,33 +1272,52 @@ character_rows :: proc(s:^Sync,e:core.Entity) {
     if !core.has(s.motions,e) {core.add(s.motions,e,core.Motion{})}
 }
 
-// A source holds the body as kinematic toward pose; the first one makes it kinematic.
+// What steers an entity; nil when nothing does.
 @(private)
-hold_begin :: proc(w:^sim.World,l:^Link,source:Hold_Source,pose:sim.Transform) {
-    if l.hold.by=={} {
-        l.hold.type_before=sim.body_type(w,l.body)
+held_of :: proc "contextless" (state:^Physics_State,e:core.Entity) -> ^Held {
+    for &h in state.held {
+        if h.entity==e {return &h}
+    }
+    return nil
+}
+
+// What steers an entity, listed now if nothing did. nil without memory.
+@(private)
+held_take :: proc(state:^Physics_State,e:core.Entity) -> ^Held {
+    if h:=held_of(state,e);h!=nil {return h}
+    if _,err:=append(&state.held,Held{entity=e});err!=nil {return nil}
+    return &state.held[len(state.held)-1]
+}
+
+// A source holds the body as kinematic toward pose, or leads the character there.
+@(private)
+hold_begin :: proc(w:^sim.World,h:^Held,l:^Link,source:Hold_Source,pose:sim.Transform) {
+    if h.by=={} && l.kind!=.Character {
+        h.type_before=sim.body_type(w,l.body)
         sim.body_set_type(w,l.body,.Kinematic)
     }
-    l.hold.by+={source}
-    l.hold.pose[source]=pose
+    h.by+={source}
+    h.pose[source]=pose
 }
 
 // A source lets go. When none holds the body any more it has its own type
 // again: moving as it was with keep_velocity, else at rest.
 @(private)
-hold_end :: proc(w:^sim.World,l:^Link,source:Hold_Source,keep_velocity:bool) {
-    if source not_in l.hold.by {return}
-    l.hold.by-={source}
-    if source==.Manipulation {l.hold.release,l.hold.keep_velocity=false,false}
-    if l.hold.by!={} || !sim.body_valid(w,l.body) {return}
+hold_end :: proc(state:^Physics_State,h:^Held,l:^Link,source:Hold_Source,keep_velocity:bool,rigids:core.Read(Rigid_Body)) {
+    if source not_in h.by {return}
+    h.by-={source}
+    if source==.Manipulation {h.release,h.keep_velocity=false,false}
+    w:=&state.world
+    if h.by!={} || l.kind==.Character || !sim.body_valid(w,l.body) {return}
     if !keep_velocity {sim.body_set_velocity(w,l.body,{},{})}
-    sim.body_set_type(w,l.body,l.kind==.Proxy?l.hold.type_before:(l.has_rigid?l.rigid.type:Body_Type.Static))
-    if l.kind!=.Proxy {body_mass_update(w,l.body,l.rigid,l.has_rigid)}
+    rigid,has_rigid:=core.get(rigids,h.entity)
+    sim.body_set_type(w,l.body,l.kind==.Proxy?h.type_before:(has_rigid?rigid.type:Body_Type.Static))
+    if l.kind!=.Proxy {body_mass_update(w,l.body,rigid,has_rigid)}
 }
 
 // Where a held body heads: its pose target first.
 @(private)
-hold_pose :: proc "contextless" (h:Hold) -> sim.Transform {return .Target in h.by?h.pose[.Target]:h.pose[.Manipulation]}
+hold_pose :: proc "contextless" (h:Held) -> sim.Transform {return .Target in h.by?h.pose[.Target]:h.pose[.Manipulation]}
 
 // Sends the events of the simulation not sent yet. The step clears them, so
 // what woke or slept between two steps is sent before the next one.

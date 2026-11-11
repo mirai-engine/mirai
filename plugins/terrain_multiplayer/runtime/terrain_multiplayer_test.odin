@@ -2,6 +2,7 @@ package terrain_multiplayer
 
 import "core:fmt"
 import "core:log"
+import "core:mem"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -27,11 +28,34 @@ End_World :: struct {
     replayed:terrain.Terrain_Replay_Events,
     net_settings:Terrain_Net_Settings,
     authority:core.Network,
-    inbox:multiplayer.Net_Events,
+    inbox:Heard,
     outbox:multiplayer.Net_Outbox,
     connections:multiplayer.Net_Connections,
     rewinds:multiplayer.Net_Rewinds,
     root:scene.Scene_Root,
+}
+
+// The messages of the journals an end heard, until its step receives them.
+@(private="file")
+Heard :: struct {
+    ops:[dynamic]core.Message(multiplayer.Net_Journal_Op),
+    parts:[dynamic]core.Message(multiplayer.Net_Journal_Part),
+    refused:[dynamic]core.Message(multiplayer.Net_Journal_Refused),
+    asks:[dynamic]core.Message(multiplayer.Net_Journal_Ask),
+    resyncs:[dynamic]core.Message(multiplayer.Net_Journal_Resync),
+}
+
+// What an outbox queued, as an end hears it from sender.
+@(private="file")
+hear :: proc(e:^End,outbox:^multiplayer.Net_Outbox,item:multiplayer.Outgoing,sender:multiplayer.Connection=0) {
+    heard :: proc(list:^[dynamic]core.Message($T),outbox:^multiplayer.Net_Outbox,item:multiplayer.Outgoing,sender:multiplayer.Connection) {
+        if item.type!=T {return}
+        m:=core.Message(T){sender=u64(sender)}
+        mem.copy(&m.value,&outbox.bytes[item.at],size_of(T))
+        append(list,m)
+    }
+    heard(&e.inbox.ops,outbox,item,sender);heard(&e.inbox.parts,outbox,item,sender);heard(&e.inbox.refused,outbox,item,sender)
+    heard(&e.inbox.asks,outbox,item,sender);heard(&e.inbox.resyncs,outbox,item,sender)
 }
 
 @(private="file")
@@ -129,8 +153,9 @@ end_seat :: proc(e:^End,connection:multiplayer.Connection) {
 // The messages an end is about to receive this frame, and the step of the input phase.
 @(private="file")
 end_receive :: proc(e:^End) {
-    terrain_net_receive(core.ref(&e.inbox),core.ref(&e.authority),&e.net,core.ref(&e.session),{dt=1.0/60,tick=e.tick+1},&e.rewinds,core.ref(&e.root),&e.problems)
-    core.queue_clear(&e.inbox.received)
+    h:=&e.inbox
+    terrain_net_receive({{h.ops[:]},{h.parts[:]},{h.refused[:]},{h.asks[:]},{h.resyncs[:]}},core.ref(&e.authority),&e.net,core.ref(&e.session),{dt=1.0/60,tick=e.tick+1},&e.rewinds,core.ref(&e.root),&e.problems)
+    clear(&h.ops);clear(&h.parts);clear(&h.refused);clear(&h.asks);clear(&h.resyncs)
 }
 
 // A tick of the fixed loop: this library, terrain and this library again.
@@ -145,7 +170,7 @@ end_tick :: proc(e:^End,_:^Fixture,resimulating:=false) {
     clear(&e.replayed.results.items);clear(&e.digs.digs.items) // the logs of a tick, as their readers are handed them
     terrain.terrain_replay(&e.replays,&e.replayed,&e.digs,&e.terrain_requests,&e.data,core.read(&e.terrains),core.read(&e.worlds),f.app.assets,&e.problems)
     terrain_net_send(core.ref(&e.authority),&e.net,time,&e.outbox,core.ref(&e.connections),core.ref(&e.replayed),core.ref(&e.data),core.ref(&e.session),core.ref(&e.root))
-    core.queue_clear(&e.connections.events)
+    clear(&e.connections.events.items)
 }
 
 // What a server sent, to each client it is for. keep: the items stay to be
@@ -155,7 +180,7 @@ server_deliver :: proc(server:^End,clients:..^End) {
     for item in server.outbox.queue.items {
         for c in clients {
             if item.to!=0 && item.to!=c.connection {continue}
-            core.push(&c.inbox.received,multiplayer.Received{type=item.type,size=item.size,data=item.data})
+            hear(c,&server.outbox,item)
         }
     }
     clear(&server.outbox.queue.items)
@@ -165,7 +190,7 @@ server_deliver :: proc(server:^End,clients:..^End) {
 @(private="file")
 client_deliver :: proc(client,server:^End) {
     for item in client.outbox.queue.items {
-        core.push(&server.inbox.received,multiplayer.Received{type=item.type,sender=client.connection,size=item.size,data=item.data})
+        hear(server,&client.outbox,item,client.connection)
     }
     clear(&client.outbox.queue.items)
 }
@@ -319,21 +344,21 @@ edits_that_arrive_out_of_order_wait_for_their_turn_and_a_lost_one_brings_a_base 
         clear(&s.outbox.queue.items)
     }
     a.tick,b.tick=s.tick,s.tick
-    deliver :: proc(e:^End,items:[]multiplayer.Outgoing) {
-        for item in items {core.push(&e.inbox.received,multiplayer.Received{type=item.type,size=item.size,data=item.data})}
+    deliver :: proc(e,from:^End,items:[]multiplayer.Outgoing) {
+        for item in items {hear(e,&from.outbox,item)}
     }
     // a hears the second and the third first: it waits for the first.
-    deliver(&a,sent[1][:]);deliver(&a,sent[2][:])
+    deliver(&a,&s,sent[1][:]);deliver(&a,&s,sent[2][:])
     end_receive(&a);end_tick(&a,&f)
     testing.expect_value(t,applied(&a),u32(0))
-    deliver(&a,sent[0][:])
+    deliver(&a,&s,sent[0][:])
     end_receive(&a);end_tick(&a,&f)
     testing.expect_value(t,applied(&a),u32(3))
     same,differ:=same_ground(&a,&s)
     testing.expectf(t,same,"edits applied in their order leave the ground of the server: %d samples differ",differ)
     testing.expect_value(t,a.net.journal.stats.desyncs,u64(0))
     // b never hears the second: after a while it asks for a base, and the pages bring it.
-    deliver(&b,sent[0][:]);deliver(&b,sent[2][:])
+    deliver(&b,&s,sent[0][:]);deliver(&b,&s,sent[2][:])
     end_receive(&b)
     for _ in 0..<multiplayer.JOURNAL_ASK_TICKS+2 {end_tick(&b,&f)}
     testing.expect_value(t,applied(&b),u32(1))
@@ -364,7 +389,7 @@ a_client_that_enters_late_gets_the_pages_the_edits_touched_and_converges :: proc
     core.push(&s.connections.events,multiplayer.Connection_Event{kind=.Entered,connection=3})
     c.tick=s.tick
     round(&f,&s,&c)
-    core.queue_clear(&s.connections.events)
+    clear(&s.connections.events.items)
     for _ in 0..<16 {round(&f,&s,&c)}
     same,differ:=same_ground(&c,&s)
     testing.expectf(t,same,"a client that came late holds the ground of the server: %d samples differ",differ)

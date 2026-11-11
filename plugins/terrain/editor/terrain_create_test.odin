@@ -208,7 +208,7 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     // Every kind starts with one layer that covers all of it.
     testing.expect_value(t,source.layer_count,u32(1))
     testing.expect_value(t,terrain.source_weights_at(&source,terrain.source_origin(&source)),[4]f32{1,0,0,0})
-    if kind==.Volume {testing.expect_value(t,source.distances.size,[3]int{5,5,5})} else {testing.expect_value(t,source.heights.size,[3]int{5,1,5})}
+    if kind==.Volume {testing.expect_value(t,source.field.size,[3]int{5,5,5})} else {testing.expect_value(t,source.field.size,[3]int{5,1,5})}
     testing.expect(t,history.undo(&edits,ref,&selection))
     testing.expect_value(t,len(world.terrains.values),0)
     testing.expect(t,!editor.file_exists(&s,path))
@@ -411,7 +411,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     if !testing.expect(t,stroke_baseline(&tool)) {return}
     change:=terrain.source_edit(&tool.stroke.source,{kind=.Raise,center={0,0,0},radius=1,amount=2})
     if !testing.expect(t,change.changed && change.error==.None) {return}
-    cached_values:=raw_data(tool.stroke.source.heights.pages[0].values)
+    cached_values:=raw_data(tool.stroke.source.field.pages[0].values)
     stroke_end(&s,&tool,ref,app.assets)
     if !testing.expect(t,history.edits_commit(&edits,ref,&selection)) {return}
     testing.expect_value(t,edits.cursor,1)
@@ -419,7 +419,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(2))
     testing.expect_value(t,tool.stroke.id,id)
     testing.expect_value(t,tool.stroke.revision,u32(2))
-    testing.expect_value(t,raw_data(tool.stroke.source.heights.pages[0].values),cached_values)
+    testing.expect_value(t,raw_data(tool.stroke.source.field.pages[0].values),cached_values)
     testing.expect(t,!tool.stroke.active && !tool.stroke.changed)
     committed:=test_held(t,&assets,relative)
     defer delete(committed)
@@ -441,7 +441,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     change=terrain.source_edit(&tool.stroke.source,{kind=.Raise,center={0,0,0},radius=1,amount=9})
     if !testing.expect(t,change.changed && change.error==.None) {return}
     // A height the format refuses: the file cannot be written.
-    terrain.grid_set(&tool.stroke.source.heights,0,0,2*terrain.HEIGHT_LIMIT)
+    terrain.grid_set(&tool.stroke.source.field,0,0,2*terrain.HEIGHT_LIMIT)
     stroke_end(&s,&tool,ref,app.assets,consume=operand,label="Subtract terrain")
     testing.expect_value(t,string(s.toast[:s.toast_length]),"The terrain could not be written")
     testing.expect_value(t,edits.cursor,0)
@@ -455,14 +455,14 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     testing.expect(t,core.alive(&world.entities,operand) && core.has(&world.meshes,operand))
     testing.expect_value(t,len(selection.entities),2)
     testing.expect_value(t,history.selection_active(&selection),operand)
-    testing.expect(t,tool.stroke.id=={} && len(tool.stroke.source.heights.pages)==0)
+    testing.expect(t,tool.stroke.id=={} && len(tool.stroke.source.field.pages)==0)
     // The step to revision 2 still holds what redo brings back.
     testing.expect_value(t,len(tool.steps),1)
     at:=editor.revision_find(&tool.history,id,1,2)
-    if !testing.expect(t,at>=0 && len(tool.steps[at].heights.pages)==1) {return}
+    if !testing.expect(t,at>=0 && len(tool.steps[at].field.pages)==1) {return}
     redo_step:=&tool.steps[at]
     testing.expect_value(t,redo_step.info.revision,u32(2))
-    for value,i in redo_values {testing.expect_value(t,redo_step.heights.pages[0].page.values[i],value)}
+    for value,i in redo_values {testing.expect_value(t,redo_step.field.pages[0].page.values[i],value)}
     after_failure:=test_held(t,&assets,relative)
     defer delete(after_failure)
     testing.expect_value(t,string(after_failure),string(original))

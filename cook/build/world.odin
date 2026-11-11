@@ -99,7 +99,7 @@ Message :: struct {
 }
 
 @(private="file")
-Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Storage_Stamp,Entities_Read,Commands,World_Ref,App,App_Part,Records}
+Param_Kind :: enum u8 {Table_Write,Table_Read,Storage_Write,Storage_Ref,Storage_Value,Storage_Stamp,Entities_Read,Commands,World_Ref,App,App_Part,Records,Inbox}
 
 // What host.App holds that a step receives by itself, bound by the type that
 // names it: the call hands out what the application owns.
@@ -125,13 +125,14 @@ APP_PARTS :: [?]App_Part{
 }
 
 @(private="file")
-PARAM_FORMS :: "^core.Table(T), core.Read(T), ^S, core.Ref(S), S, core.Stamp(S), core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator, ^core.Texts) or ^host.App"
+PARAM_FORMS :: "^core.Table(T), core.Read(T), ^S, core.Ref(S), S, core.Stamp(S), core.Inbox(M) of a @(net_message), core.Ref(core.Entities), core.Commands, core.World_Ref, a part of the application (^host.Assets, ^host.Frame_Extras, ^render.Renderer, ^audio.Mixer, ^jobs.Job_System, runtime.Allocator, ^core.Texts) or ^host.App"
 
 @(private="file")
 Param :: struct {
     kind:Param_Kind,
     type:^Type,
     record:^Record_Type, // Records
+    message:int,         // Inbox: its index in messages
     part:int,            // App_Part: its index in APP_PARTS
     actions:^Action_Enum, // the enum of the generic @(params) it is a field of
     bundle:^Bundle, // the @(params) the step receives it in; nil when it receives it by itself
@@ -1391,7 +1392,7 @@ mind_proc_bind :: proc(g:^Generator,pkg:^Package,s:^Step,d:Mind_Decl) -> (bound:
         }
         arg:=-1
         for other in s.params {
-            same:=param.bundle!=nil ? other.bundle==param.bundle && other.actions==param.actions : other.bundle==nil && other.kind==param.kind && other.type==param.type && other.record==param.record
+            same:=param.bundle!=nil ? other.bundle==param.bundle && other.actions==param.actions : other.bundle==nil && other.kind==param.kind && other.type==param.type && other.record==param.record && other.message==param.message
             if same {arg=other.arg;break}
         }
         if arg<0 {
@@ -1424,6 +1425,13 @@ param_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,expr:^ast.Expr) -> (
             return {kind=.Records,record=r},found && !pointer
         }
         if wrapper=="mirai:core.Ref" && inner_key=="mirai:core.Entities" {return {kind=.Entities_Read,type=nil},!pointer}
+        if wrapper=="mirai:core.Inbox" {
+            storage:=g.by_key["mirai:core.Net_Messages"] or_else nil
+            for m,index in g.messages {
+                if fmt.tprintf("%s.%s",m.pkg.path,m.name)==inner_key {return {kind=.Inbox,type=storage,message=index},!pointer && storage!=nil}
+            }
+            return
+        }
         inner,found:=g.by_key[inner_key]
         if !found {return}
         switch {
@@ -2058,6 +2066,9 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
                 parts:=APP_PARTS
                 value:=parts[param.part].value
                 if strings.has_prefix(value,"host.") {fmt.sbprintf(&args,"%s.%s",host_alias,value[5:])} else {fmt.sbprint(&args,value)}
+            case .Inbox:
+                m:=g.messages[param.message]
+                fmt.sbprintf(&args,"%s.inbox(&%s.%s,%d,%s.%s)",core_alias,holder,param.type.field,param.message,m.pkg.alias,m.name)
             case .Records:
                 index,_:=slice.linear_search(g.records[:],param.record)
                 fmt.sbprintf(&args,"%s.Records(%s.%s){{%s.app_record_set(app,%d)}}",core_alias,param.record.pkg.alias,param.record.name,host_alias,index)
@@ -2081,7 +2092,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             for param in step.params {
                 if param.arg==last {continue}
                 last=param.arg
-                fmt.sbprintf(w,",a%d:%s",param.arg,param_type(param,core_alias))
+                fmt.sbprintf(w,",a%d:%s",param.arg,param_type(g,param,core_alias))
                 fmt.sbprintf(&fields,",a%d=%s",param.arg,values[param.arg])
             }
             fmt.sbprint(w,"}\n")
@@ -2385,7 +2396,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
 // The type of an arg of a step as the generated world writes it; "" for a
 // part of the application, which a mind does not receive.
 @(private="file")
-param_type :: proc(param:Param,core_alias:string) -> string {
+param_type :: proc(g:^Generator,param:Param,core_alias:string) -> string {
     if b:=param.bundle;b!=nil {
         if param.actions!=nil {return fmt.tprintf("%s.%s(%s.%s)",b.pkg.alias,b.name,param.actions.pkg.alias,param.actions.name)}
         return fmt.tprintf("%s.%s",b.pkg.alias,b.name)
@@ -2401,6 +2412,7 @@ param_type :: proc(param:Param,core_alias:string) -> string {
     case .Commands: return fmt.tprintf("%s.Commands",core_alias)
     case .World_Ref: return fmt.tprintf("%s.World_Ref",core_alias)
     case .Records: return fmt.tprintf("%s.Records(%s.%s)",core_alias,param.record.pkg.alias,param.record.name)
+    case .Inbox: return fmt.tprintf("%s.Inbox(%s.%s)",core_alias,g.messages[param.message].pkg.alias,g.messages[param.message].name)
     }
     return ""
 }

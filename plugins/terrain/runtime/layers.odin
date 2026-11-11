@@ -144,7 +144,7 @@ weights_float :: #force_inline proc "contextless" (w:Weights) -> [4]f32 {
 // The samples of the weights of a source: x, y and z of a Volume, which holds
 // what is under its surface too (interior.odin); x and z otherwise.
 weights_size :: proc "contextless" (s:^Source) -> [3]int {
-    return {int(s.samples.x),s.kind==.Volume?int(s.samples.y):1,int(s.samples.z)}
+    return {int(s.samples.x),int(s.samples.y),int(s.samples.z)}
 }
 
 // The weights of a new source: all of its first layer.

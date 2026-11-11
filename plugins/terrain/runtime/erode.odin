@@ -31,7 +31,7 @@ source_erode :: proc(s:^Source,brush:Brush,low,high:[3]int) -> (change:Change) {
     n:=size.x*size.y
     if resize(&s.scratch,2*n)!=nil {return Change{error=.Out_Of_Memory}}
     h,before:=s.scratch[:n],s.scratch[n:2*n]
-    for z in 0..<size.y {for x in 0..<size.x {h[x+size.x*z]=grid_get(&s.heights,low.x+x,low.z+z)/s.cell}}
+    for z in 0..<size.y {for x in 0..<size.x {h[x+size.x*z]=grid_get(&s.field,low.x+x,low.z+z)/s.cell}}
     copy(before,h)
     origin:=source_origin(s)
     center:=[2]f32{(brush.center.x-origin.x)/s.cell-f32(low.x),(brush.center.z-origin.z)/s.cell-f32(low.z)}
@@ -70,7 +70,7 @@ source_erode :: proc(s:^Source,brush:Brush,low,high:[3]int) -> (change:Change) {
         value:=brush_way_keep(brush.way,false,old,old+(h[i]-before[i])*s.cell*fade)
         value=clamp(value,-HEIGHT_LIMIT,HEIGHT_LIMIT)
         if value==old {continue}
-        grid_set(&s.heights,gx,gz,value)
+        grid_set(&s.field,gx,gz,value)
         change.changed=true
         change.low.x,change.low.z=min(change.low.x,gx),min(change.low.z,gz)
         change.high.x,change.high.z=max(change.high.x,gx),max(change.high.z,gz)

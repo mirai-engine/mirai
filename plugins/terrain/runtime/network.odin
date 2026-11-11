@@ -186,26 +186,20 @@ source_check :: proc(s:^Source,low,high:[3]i32) -> u64 {
             append(bytes,..mem.ptr_to_bytes(&value))
         }}}
     }
-    samples:=[3]int{int(s.samples.x),int(s.samples.y),int(s.samples.z)}
-    if s.kind==.Heightfield {
-        values(&bytes,&s.heights,{samples.x,1,samples.z},low,high)
-        // An empty grid of holes reads none, as one whose cells are all filled.
-        values(&bytes,&s.holes,{samples.x-1,1,samples.z-1},low,high)
-    } else {
-        values(&bytes,&s.distances,samples,low,high)
-    }
-    values(&bytes,&s.weights,weights_size(s),low,high)
+    // An empty grid of holes reads none, as one whose cells are all filled.
+    values(&bytes,&s.field,grid_size(s,.Field),low,high)
+    values(&bytes,&s.holes,grid_size(s,.Holes),low,high)
+    values(&bytes,&s.weights,grid_size(s,.Weights),low,high)
     return base.hash64(bytes[:])
 }
 
-// The values of a grid of each kind of a source, and its size in samples.
+// The size in samples of a grid of a source; zero for one it has no values of.
 @(private)
 grid_size :: proc "contextless" (s:^Source,kind:Grid_Kind) -> [3]int {
     switch kind {
-    case .Heights:   return s.kind==.Heightfield?{int(s.samples.x),1,int(s.samples.z)}:{}
-    case .Holes:     return s.kind==.Heightfield?{int(s.samples.x)-1,1,int(s.samples.z)-1}:{}
-    case .Weights:   return weights_size(s)
-    case .Distances: return s.kind==.Volume?{int(s.samples.x),int(s.samples.y),int(s.samples.z)}:{}
+    case .Field:   return {int(s.samples.x),int(s.samples.y),int(s.samples.z)}
+    case .Holes:   return holes_size(s)
+    case .Weights: return weights_size(s)
     }
     return {}
 }
@@ -217,7 +211,7 @@ grid_size :: proc "contextless" (s:^Source,kind:Grid_Kind) -> [3]int {
 // those of the page or one is not valid, or without memory; then the grid
 // reads as before.
 @(private)
-grid_page_put :: proc(s:^Source,entry:^Data_Source,g:^Grid($T),size:[3]int,i:int,fill:T,values:[]u8,valid:proc "contextless" (value:T) -> bool,band:f32=0,span:=1) -> (low,high:[3]int,ok:bool) {
+grid_page_put :: proc(s:^Source,entry:^Data_Source,g:^Grid($T),size:[3]int,i:int,fill:T,values:[]u8,valid:proc "contextless" (value:T) -> bool,limit:f32=0,span:=1) -> (low,high:[3]int,ok:bool) {
     if size.x<=0 {return}
     if grid_none(g) {
         zero:T
@@ -226,8 +220,8 @@ grid_page_put :: proc(s:^Source,entry:^Data_Source,g:^Grid($T),size:[3]int,i:int
     }
     if g.size!=size || i<0 || i>=g.counts.x*g.counts.y*g.counts.z {return}
     if span>1 {
-        if len(values)>0 || !valid(fill) || span!=SLAB && span!=SLAB*TABLE {return}
-        when T==f32 {if band>0 && !(abs(fill)<=band) {return}}
+        if len(values)>0 || !valid(fill) || !g.sparse || span!=SLAB && span!=SLAB*TABLE {return}
+        when T==f32 {if limit>0 && !(abs(fill)<=limit) {return}}
         from:=grid_page_coord(g,i)
         to:=from+span-1
         for axis in 0..<3 {to[axis]=min(to[axis],g.counts[axis]-1)}
@@ -244,9 +238,9 @@ grid_page_put :: proc(s:^Source,entry:^Data_Source,g:^Grid($T),size:[3]int,i:int
     if len(values)>0 {
         if !page_uncode(values,mem.slice_to_bytes(held)) {return}
         if !page_valid(held,valid) {return}
-        when T==f32 {if band>0 && !distances_within(held,band) {return}}
+        when T==f32 {if limit>0 && !values_within(held,limit) {return}}
     } else if !valid(fill) {return}
-    when T==f32 {if band>0 && len(values)==0 && !(abs(fill)<=band) {return}}
+    when T==f32 {if limit>0 && len(values)==0 && !(abs(fill)<=limit) {return}}
     if !source_region_read(s,low,high,entry) || !grid_prepare(g,low,high,s.allocator) {return}
     page:=grid_page_ref(g,i,s.allocator)
     if page==nil || len(page.values)!=count {return}
@@ -268,29 +262,23 @@ replay_page :: proc(data:^Terrain_Data,entry:^Data_Source,replay:Replay) -> (cha
     fill:=replay.fill
     low,high:[3]int
     ok:bool
+    span:=max(int(replay.span),1)
     switch replay.grid {
-    case .Heights:
-        if s.kind!=.Heightfield {return {error=.Invalid}}
-        low,high,ok=grid_page_put(s,entry,&s.heights,grid_size(s,.Heights),i,transmute(f32)fill,replay.values,height_valid)
+    case .Field:
+        low,high,ok=grid_page_put(s,entry,&s.field,grid_size(s,.Field),i,transmute(f32)fill,replay.values,value_finite,field_limit(s.info),span)
     case .Holes:
-        if s.kind!=.Heightfield {return {error=.Invalid}}
-        low,high,ok=grid_page_put(s,entry,&s.holes,grid_size(s,.Holes),i,u8(fill),replay.values,hole_valid)
+        low,high,ok=grid_page_put(s,entry,&s.holes,grid_size(s,.Holes),i,u8(fill),replay.values,hole_valid,0,span)
         // The samples of the cells: their vertices, and the edges of the collider around them.
         if ok && high.x>=low.x {high+={1,0,1}}
     case .Weights:
-        low,high,ok=grid_page_put(s,entry,&s.weights,grid_size(s,.Weights),i,transmute(Weights)fill,replay.values,weights_full,0,max(int(replay.span),1))
-    case .Distances:
-        if s.kind!=.Volume {return {error=.Invalid}}
-        low,high,ok=grid_page_put(s,entry,&s.distances,grid_size(s,.Distances),i,transmute(f32)fill,replay.values,distance_finite,s.cell*SDF_BAND_CELLS,max(int(replay.span),1))
+        low,high,ok=grid_page_put(s,entry,&s.weights,grid_size(s,.Weights),i,transmute(Weights)fill,replay.values,weights_full,0,span)
     }
     data.samples=u32(max(int(data.samples)-before+source_cost(s),0))
     if !ok {return {error=.Invalid}}
     if high.x<low.x {return}
     change={changed=true,low=low,high=high}
-    if s.kind==.Heightfield {
-        if !source_coarse_update(s,low,high,entry.ranges[:entry.quad.first[1]]) {return {error=.Out_Of_Memory}}
-        data_errors_edit(entry,low,high)
-    }
+    if !source_coarse_update(s,low,high,entry.ranges[:entry.quad.first[1]]) {return {error=.Out_Of_Memory}}
+    data_errors_edit(entry,low,high)
     data_mark(entry,change)
     return
 }
@@ -486,7 +474,7 @@ terrain_origin :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id) -> (origin:
         for page in g.pages {if page.altered {return true}}
         return g.filled
     }
-    clean=!altered(&s.heights) && !altered(&s.holes) && !altered(&s.distances) && !altered(&s.weights)
+    clean=!altered(&s.field) && !altered(&s.holes) && !altered(&s.weights)
     return s.origin,clean,true
 }
 
@@ -513,10 +501,9 @@ terrain_grid_pages :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Gri
         return from,to,g.counts,true
     }
     switch kind {
-    case .Heights:   if s.kind==.Heightfield {return pages(&s.heights,low,high)}
-    case .Holes:     return pages(&s.holes,low,high)
-    case .Weights:   return pages(&s.weights,low,high)
-    case .Distances: if s.kind==.Volume {return pages(&s.distances,low,high)}
+    case .Field:   return pages(&s.field,low,high)
+    case .Holes:   return pages(&s.holes,low,high)
+    case .Weights: return pages(&s.weights,low,high)
     }
     return
 }
@@ -553,10 +540,9 @@ terrain_page_bytes :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Gri
         return size,0,true
     }
     switch kind {
-    case .Heights:   if s.kind==.Heightfield {return read(&s.heights,i,s.file,out)}
-    case .Holes:     return read(&s.holes,i,s.file,out)
-    case .Weights:   return read(&s.weights,i,s.file,out)
-    case .Distances: if s.kind==.Volume {return read(&s.distances,i,s.file,out)}
+    case .Field:   return read(&s.field,i,s.file,out)
+    case .Holes:   return read(&s.holes,i,s.file,out)
+    case .Weights: return read(&s.weights,i,s.file,out)
     }
     return
 }
@@ -569,10 +555,9 @@ terrain_grid_held :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Grid
     s:=terrain_source(data,id)
     if s==nil {return}
     switch kind {
-    case .Heights:   return len(s.heights.pages),false
-    case .Holes:     return len(s.holes.pages),false
-    case .Weights:   return len(s.weights.pages),s.weights.sparse
-    case .Distances: return len(s.distances.pages),s.distances.sparse
+    case .Field:   return len(s.field.pages),s.field.sparse
+    case .Holes:   return len(s.holes.pages),s.holes.sparse
+    case .Weights: return len(s.weights.pages),s.weights.sparse
     }
     return
 }
@@ -589,10 +574,9 @@ terrain_grid_held_page :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind
         return page,g.pages[slot].altered,page>=0
     }
     switch kind {
-    case .Heights:   return held(&s.heights,slot)
-    case .Holes:     return held(&s.holes,slot)
-    case .Weights:   return held(&s.weights,slot)
-    case .Distances: return held(&s.distances,slot)
+    case .Field:   return held(&s.field,slot)
+    case .Holes:   return held(&s.holes,slot)
+    case .Weights: return held(&s.weights,slot)
     }
     return
 }
@@ -626,9 +610,9 @@ terrain_grid_fill :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Grid
         return
     }
     switch kind {
-    case .Heights,.Holes:
-    case .Weights:   return fills(&s.weights,Weights{WEIGHT_FULL,0,0,0},cursor)
-    case .Distances: return fills(&s.distances,s.cell*SDF_BAND_CELLS,cursor)
+    case .Field:   return fills(&s.field,field_fill(s.info),cursor)
+    case .Holes:   return fills(&s.holes,0,cursor)
+    case .Weights: return fills(&s.weights,Weights{WEIGHT_FULL,0,0,0},cursor)
     }
     return
 }
@@ -638,7 +622,7 @@ terrain_grid_fill :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,kind:Grid
 // base of it sends all of it.
 terrain_filled :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id) -> bool {
     s:=terrain_source(data,id)
-    return s!=nil && (s.distances.filled || s.weights.filled)
+    return s!=nil && (s.field.filled || s.weights.filled)
 }
 
 // The terrain of a source whose problems name it, or none.

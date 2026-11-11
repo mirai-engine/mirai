@@ -223,7 +223,7 @@ Terrain_Resident :: struct {
     lod_view:[3]f32,  // where the view was at the last evaluation of levels
     lod_stamp:[3]u64, // the revision of the streaming sources, the count of owners, marks
     lod_seen:[2]core.Seen, // the transforms and the colliders
-    marks:u64,        // advances when what the levels are chosen from changes: a page, a source, a chunk that empties or fills
+    marks:u64,        // advances when what the levels or the unloaded ground are chosen from changes: a page, a source, an owner, a chunk that empties, fills or goes
     lod_distances:[3]f32, // of Terrain_Settings then
     focus:Terrain_Focus,  // then
     room:Collider_Room,
@@ -766,18 +766,17 @@ source_compare :: proc(next,s:^Source) -> (change:Change,ok:bool) {
     writer:Page_Writer
     if !page_writer_init(&writer,context.temp_allocator) {return}
     defer page_writer_destroy(&writer)
-    low,high,differ:=grid_take(&next.heights,&s.heights,&writer,true)
+    low,high,differ:=grid_take(&next.field,&s.field,&writer,next.kind==.Heightfield)
     if differ {widen(&change,low,high)}
     if grid_none(&next.holes)!=grid_none(&s.holes) {
         widen(&change,{},{last.x,0,last.z})
     } else if low,high,differ=grid_take(&next.holes,&s.holes,&writer,false);differ {
         widen(&change,low,high+{1,0,1})
     }
-    if low,high,differ=grid_take(&next.distances,&s.distances,&writer,false);differ {widen(&change,low,high)}
     if layers_reshape(next.info,s.info) {
         widen(&change,{},last)
     } else if low,high,differ=grid_take(&next.weights,&s.weights,&writer,false);differ {
-        if next.kind==.Volume {widen(&change,low,high)} else {widen(&change,{low.x,0,low.z},{high.x,last.y,high.z})}
+        widen(&change,low,high)
     }
     return change,true
 }

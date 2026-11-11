@@ -81,10 +81,14 @@ Chunks:
 `terrain:Source_Info` row (type, samples, cell, chunk, revision and layers) whose limits
 `source.odin` validates. A file of another `VERSION` is refused.
 
-- **Paged grids** (`Grid`, `grid.odin`): Heightfield heights, layer weights and holes in pages of
-  `PAGE` samples per side over X/Z; Volume distances and weights in blocks of `BLOCK` samples per
-  side in X/Y/Z. Every page has `PAGE_VALUES` values, so reading, copying, releasing and the format
-  are one for both shapes. A page is named by its id, its place among every page of the grid.
+- **Paged grids** (`Grid`, `grid.odin`): a source holds three, `field`, `weights` and `holes`
+  (`Grid_Kind`), which paging, network pages, residency and saves go through alike, without
+  asking the kind. The field is the heights of a Heightfield, in pages of `PAGE` samples per side
+  over X/Z, or the distances of a Volume, in blocks of `BLOCK` samples per side in X/Y/Z; weights
+  follow the field, and holes, only of a Heightfield, are none in a Volume. What each kind does its
+  own way (sampling, rays, the field of a new Volume, levels of detail) is in `heightfield.odin`
+  and `volume.odin`. Every page has `PAGE_VALUES` values, so reading, copying, releasing and the
+  format are one for both shapes. A page is named by its id, its place among every page of the grid.
 - **A grid in blocks is sparse.** Its directory names what is not one value: a top level of parts
   (`Tile`), each a fill value or a table of slabs, each slab a fill value or its `SLAB_PAGES`
   pages. Air and solid far from a surface cost a `Tile` however large the box; a page takes a
@@ -113,7 +117,7 @@ Chunks:
   hold them. Writing a page that another grid holds copies it first (`grid_page_own`, inside
   `grid_prepare`): every writer prepares the region before writing. The coarse grid of a Heightfield
   is another grid of pages and is shared the same way.
-- **Volume**: `f32` distances (`distances`); negative is solid and positive air, limited to
+- **Volume**: `f32` distances (`field`); negative is solid and positive air, limited to
   `SDF_BAND_CELLS` cells, as an approximate distance that does not recompute a global SDF after
   each brush. The initial block keeps an outer layer of air, and the brushes write only interior
   samples. A chunk gathers its samples and its halo from the blocks in a window of the field
@@ -498,14 +502,17 @@ a line; a Heightfield read straight down takes its coarse grid when asked or whe
 not in memory, so far from every viewer it still answers, coarser; a Volume there answers
 `Unloaded`, and the page that comes marks its chunks, which announces them. A hole, or the region of
 a stroke the editor holds (not in `Terrain_Data` until confirmed), answers `Empty`. At the end of
-each `terrain_update` the views are made again when the terrains, their places or the data
-changed, and each change is announced as a box of the world: a terrain that comes, goes, moves or
-shows another source (its whole box), the chunks whose version passed the change last seen
-(`terrain_changed`, with a cell around them) and a stroke that begins, grows or ends. The revision
-starts anew with each epoch of `Terrain_Data`, so a copied, swapped or reloaded world makes its
-readers read everything again. `unloaded` names the runs of chunks of each solid terrain that have
-no collider now (not resident, beyond `collision_distance`, waiting for a slot or a build); a chunk
-shown empty has nothing to load.
+each `terrain_update` the views are made again when the terrains or their places changed
+(`core.touched`) or the data did, and each change is pushed to `changed` as a box of the world: a
+terrain that comes, goes, moves or shows another source (its whole box), the chunks whose version
+passed the change last seen (`terrain_changed`, with a cell around them) and a stroke that begins,
+grows or ends. Another epoch of `Terrain_Data` (a copied, swapped or reloaded world) starts the
+resident meshes anew, and with them the box of every terrain is pushed. `unloaded` names the runs
+of chunks of each solid terrain that have no collider now (not resident, beyond
+`collision_distance`, waiting for a slot or a build); a chunk shown empty has nothing to load. They
+are made again only when the colliders, the terrains or the data change or `Terrain_Resident.marks`
+moves (an owner or a chunk comes, goes or turns empty or not), never by looking at every chunk;
+where they changed is pushed to `unloaded`.
 
 ## Network
 

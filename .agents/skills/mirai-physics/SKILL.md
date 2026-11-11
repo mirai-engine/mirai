@@ -162,6 +162,9 @@ tables and is the only package that imports it. The game and the other plugins, 
   one six-axis record as its only description; the solver chooses its kernel from the axes.
 - The step walks the lists of the awake bodies and of the moved shapes, which are state; no stage
   of a step walks every slot of a pool.
+- A link holds only the handles of what was made; the sync learns what changed from row stamps and
+  calls a setter only where the simulation differs, so taking a restored row again changes nothing.
+  Holds live in `Physics_State.held`, which the step walks instead of the links.
 - A tool that moves bodies uses `manipulation_target`/`manipulation_end`; a preview that only needs
   physics uses `step_world`
   ([requests](references/engine.md#requests),
@@ -171,7 +174,8 @@ tables and is the only package that imports it. The game and the other plugins, 
   `physics_step` writes `Joint` and `Joint_State`. The world rotation is converted to the frames
   after reconciling them.
 - Proxies accept the same forces, manipulation and constraints; whoever owns the body removes it
-  before destroying it.
+  before destroying it. A proxy stands for the entity's own `Collider` and `Rigid_Body`: physics
+  ends the body it made of them and makes none while the proxy lasts.
 - Everything that influences a future step is in a table (`core.Motion`, `Character_State`,
   `Character_Move`, `Character`, `Locomotion_State`, `Joint_State`, `Destructible_State`) or in
   the snapshot of `Physics_State`: this allows copying the world for rollback and saves. The
@@ -181,8 +185,8 @@ tables and is the only package that imports it. The game and the other plugins, 
   correction.
 - What the simulation rejects (a body, a shape, a joint, a destructible, a request) is a
   [problem](../mirai-core/references/core.md#problems) of the entity with the cause and the field
-  of `Physics_Settings` that fixes it; `Physics_State.stats` and `Destruct_Cache.stats` count only
-  what was created and removed.
+  of `Physics_Settings` that fixes it; `Physics_State.stats` counts only what was created and
+  removed.
 - Collision belongs to the `Collider`: `Character` and `Destructible` do not repeat shape, surface
   or filter. Categories and presets are named ids declared in code; `Collision_Settings` says per
   preset only what differs from the defaults, and the solver only sees a bit `Filter`. A collision
