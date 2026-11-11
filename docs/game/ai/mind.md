@@ -1,7 +1,7 @@
 # A mind: think and its actions
 
-A zombie that patrols two points, chases what it remembers and bites it, two at a time per
-target. The entity that carries the mind: [what an enemy is](../ai.md#what-an-enemy-is).
+A zombie that patrols a path, chases what it remembers and bites it, two at a time per target.
+The entity that carries the mind: [what an enemy is](../ai.md#what-an-enemy-is).
 
 ```odin
 package game
@@ -12,8 +12,6 @@ import "mirai:std/ai"
 import behavior "plugins:behavior/runtime"
 
 BITERS :: 2
-@(component)
-Patrol :: struct {points:[2][3]f32, next:i32}
 Zombie_Act :: enum u8 {Patrol, Chase, Bite}
 
 // What the zombie reads of the world: a group of parameters, as for a step.
@@ -46,13 +44,7 @@ zombie_think :: proc(t:^ai.Think(Zombie_Act), w:Senses) { // only reads and prop
 }
 
 @(act="Patrol")
-zombie_patrol :: proc(a:^ai.Act(Zombie_Act), patrols:^core.Table(Patrol)) -> ai.Status {
-    p := core.edit(patrols, behavior.agent(a))
-    if p == nil {return .Failure if a.phase != .Exit else .Success}
-    status := behavior.move_act(a, p.points[p.next]) // Exit stops the agent
-    if a.phase == .Update && status != .Running {p.next = (p.next+1)%2}
-    return status
-}
+zombie_patrol :: proc(a:^ai.Act(Zombie_Act)) -> ai.Status {return behavior.patrol_act(a)}
 
 @(act="Chase")
 zombie_chase :: proc(a:^ai.Act(Zombie_Act), w:Senses) -> ai.Status {
@@ -76,4 +68,20 @@ zombie_bite :: proc(a:^ai.Act(Zombie_Act), w:Senses) -> ai.Status {
 - Every value of the enum has one `@(act)`; one procedure may run several (`@(act="Chase
   Circle")`, then `a.action` says which). The build fails with what to write otherwise.
 - `behavior.agent(a)` is the agent; the helpers of `behavior` (`move_act`, `chase_act`,
-  `path_status`, `agent_path`, `present_look`, smart objects) take only `a` or `t`.
+  `patrol_act`, `path_status`, `agent_path`, `present_look`, smart objects) take only `a` or `t`.
+
+## Patrol
+
+A path is a `Spline` ([splines](../world/splines.md)), drawn in the editor; the agent's
+`behavior.Patrol{path=e}` names its entity, with `mode` `.Loop`, `.Back_And_Forth` or `.Once`.
+An NPC that only patrols needs no mind: with `nav.Nav_Agent` and `Patrol` it walks the path by
+itself. With a mind it walks it while an action returns `behavior.patrol_act(a)`, as above.
+
+- It starts at the point after where it is nearest the path, so one pushed off or back from a
+  chase rejoins it, and walks from point to point; the curve between two is the navmesh's way.
+- A point it cannot reach (off the navmesh, no way there) is skipped for the next one.
+- A path moved or edited while walked: it goes to where its point is now.
+- A path of one point is a post: it walks there and stands.
+- An interrupted patrol stops the agent, except in the middle of a link it crosses.
+- No path to walk (no `Spline` on `path`, a point not finite): it fails with the problem
+  `behavior.patrol`.

@@ -369,3 +369,31 @@ a_spline_samples_only_valid_points_and_lies_on_the_ground :: proc(t:^testing.T) 
     flat :: proc(user:rawptr,origin,down:[3]f32,coarse:bool) -> (core.Ground_Hit,core.Ground_Found) {return {point={origin.x,-1,origin.z}},.Ground}
     testing.expect_value(t,spline_lay({probe=flat},place,{0,5,0},0.5),[3]f32{1,-0.5,3})
 }
+
+// The key of the curve nearest a point of the world: along a span, at the
+// ends beyond them, at each point of a turned and scaled curve, and none for
+// a spline that does not sample or a point or a place that is not finite.
+@(test)
+a_spline_finds_where_its_curve_passes_nearest_a_point :: proc(t:^testing.T) {
+    nan:=f32(0);nan=nan/nan
+    moved:=mm.Transform{{10,0,0},mm.QUAT_IDENTITY,{1,1,1}}
+    turned:=mm.Transform{{10,-3,5},mm.quat_axis_angle({0,1,0},0.7),{2,1,2}}
+    curve:=Spline{count=4,points={0={{0,0,0},2,0},1={{6,0,-4},1,0},2={{0,0,-8},1,0},3={{6,0,-12},4,0}}}
+    Case :: struct {name:string,spline:Spline,place:mm.Transform,point:[3]f32,key:f32,found:bool}
+    for c in ([]Case{
+        {"along",SPLINE_DEFAULT,moved,{10,5,-3},0.25,true},
+        {"before the first",SPLINE_DEFAULT,moved,{10,0,4},0,true},
+        {"after the last",SPLINE_DEFAULT,moved,{9,0,-30},1,true},
+        {"a point of a turned curve",curve,turned,mm.transform_point(turned,curve.points[2].position)+{0,2,0},2,true},
+        {"the last of a turned curve",curve,turned,mm.transform_point(turned,curve.points[3].position),3,true},
+        {"one point",{count=1,points={0={{0,0,0},1,0}}},moved,{},0,false},
+        {"too many",{count=SPLINE_POINTS+1},moved,{},0,false},
+        {"a point not a number",SPLINE_DEFAULT,moved,{nan,0,0},0,false},
+        {"a point too far",SPLINE_DEFAULT,moved,{max(f32),max(f32),0},0,false},
+        {"a place not a number",SPLINE_DEFAULT,{{nan,0,0},mm.QUAT_IDENTITY,{1,1,1}},{},0,false},
+    }) {
+        s:=c.spline
+        key,found:=spline_nearest(&s,c.place,c.point)
+        testing.expectf(t,found==c.found && (!found || abs(key-c.key)<0.02),"%s: %v %v",c.name,key,found)
+    }
+}

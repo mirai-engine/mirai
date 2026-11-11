@@ -165,7 +165,8 @@ An entity with `AI_Arena` builds in Play, where it is, agents that decide with
 [minds](../../mirai-world/references/behavior.md#enemies-with-minds), walk or fly through
 navigation and perceive through behavior, and its place (`arena_place`, in pieces), unless `place`
 is false because the scene has it, as the `ai` scene does, so that the navmesh exists in the
-editor.
+editor. The runner of `Horde` and `Swarm` and the guards of `Paths` patrol the `Spline` of the
+arena entity, which the scene holds.
 
 - `Horde` (`agents` zombies): a block of 3 by 3 buildings of 3.5 and 4.5 m with streets of 2.5 m.
   Zombies wander, chase the runner they see (`nav_follow`) jumping from roof to roof and falling to
@@ -186,7 +187,7 @@ editor.
 - `Swarm` (`agents` drones): a yard split by a wall that hangs from 3.5 m to 14 m and leaves the air
   on both sides, with pillars and an air `Nav_Bounds`. Drones with `Fly` and the zombies' mind fly
   after the runner and go down under the wall to cross; when wandering they also go up and down.
-- `Paths` (`agents` guards): they patrol their points; climb a platform by a ladder (a manual
+- `Paths` (`agents` guards): they patrol; climb a platform by a ladder (a manual
   `Nav_Link` of type `Ladder`, which asks for `ABILITY_LADDER`), go down by the drops the build
   generates, go around a blocked `Nav_Area` and the cart that parks in their lane, and vault one at
   a time a fence that crosses the yard (a `LINK_VAULT` link that the game crosses, with its smart
@@ -194,7 +195,7 @@ editor.
 - `Senses` (`agents` listeners): bells (`Arena_Bell`) ring in turns behind walls; the listeners,
   who barely see, go to the one they hear with the zombies' mind and forget it.
 - `arena_think` runs the minds of each kind (`zombie`, `soldier`, `boss`, `guard`) and carries the
-  boss's health; `arena_targets` moves the runner and the hero, and `arena_carts` moves the carts
+  boss's health; `arena_targets` moves the hero, and `arena_carts` moves the carts
   and rings the bells. The agents receive a `core.Id` so that `behavior.inspect` and `nav.agent` can
   name them.
 
