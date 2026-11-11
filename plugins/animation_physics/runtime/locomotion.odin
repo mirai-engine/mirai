@@ -29,7 +29,6 @@ animation_locomotion :: proc(characters:^core.Table(phys.Character,.Read),states
         asked,_:=core.get(inputs,entity)
         input:=locomotion.move_facing(asked,character.yaw,mm.QUAT_IDENTITY)
         placed,_:=core.get(worlds,entity)
-        wish:=locomotion.move_wish(input,mm.QUAT_IDENTITY)
         facing:=mm.quat_forward(mm.quat_axis_angle({0,1,0},asked.look_yaw))
         state,_:=core.get(found,entity)
         goal:=anim.Match_Goal{rig=entity,mode=u16(character.mode),velocity=going.linear,facing=facing,wall=state.wall_normal,turn_rate=body.turn_speed}
@@ -39,9 +38,9 @@ animation_locomotion :: proc(characters:^core.Table(phys.Character,.Read),states
         }
         switch character.mode {
         case locomotion.MODE_SWIMMING:
-            if swim,ok:=core.get(swims,entity);ok {goal.desired,goal.acceleration,goal.braking=wish*swim.speed,swim.acceleration,swim.acceleration}
+            if swim,ok:=core.get(swims,entity);ok {goal.desired,goal.acceleration,goal.braking=locomotion.move_wish(input,mm.QUAT_IDENTITY,swim.speed)*swim.speed,swim.acceleration,swim.acceleration}
         case locomotion.MODE_FLYING:
-            if fly,ok:=core.get(flights,entity);ok {goal.desired,goal.acceleration,goal.braking=wish*fly.speed,fly.acceleration,fly.acceleration}
+            if fly,ok:=core.get(flights,entity);ok {goal.desired,goal.acceleration,goal.braking=locomotion.move_wish(input,mm.QUAT_IDENTITY,fly.speed)*fly.speed,fly.acceleration,fly.acceleration}
         case locomotion.MODE_SLIDING,locomotion.MODE_MANTLING:
             // The slide keeps its course and the climb its way: what the body does is what it asks.
             if walk,ok:=core.get(walks,entity);ok {goal.desired,goal.acceleration,goal.braking={going.linear.x,0,going.linear.z},walk.acceleration,walk.braking}
@@ -52,7 +51,8 @@ animation_locomotion :: proc(characters:^core.Table(phys.Character,.Read),states
                 sprinting:=input.buttons&inp.action_bit(inp.action_of(walk_actions,.Sprint))!=0
                 boost:f32=1
                 if tactical,has:=core.get(tacticals,entity);has {boost,_=locomotion.tactical_boost(character,tactical)}
-                goal.desired,goal.acceleration,goal.braking=walk_goal(walk,character.mode==locomotion.MODE_FALLING,wish,going.linear,locomotion.walk_speed(walk,input,sprinting,character.mode==locomotion.MODE_CROUCHING,boost))
+                speed:=locomotion.walk_speed(walk,input,sprinting,character.mode==locomotion.MODE_CROUCHING,boost)
+                goal.desired,goal.acceleration,goal.braking=walk_goal(walk,character.mode==locomotion.MODE_FALLING,locomotion.move_wish(input,mm.QUAT_IDENTITY,speed),going.linear,speed)
             }
         }
         anim.match_goal(requests,goal)

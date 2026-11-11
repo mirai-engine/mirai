@@ -33,17 +33,17 @@ Action :: distinct u16
 
 Action_Kind :: enum u8 {
     Button, // down or up
-    Axis,   // a value from -1 to 1
-    Axis2,  // a vector of at most unit length, except from unbounded axes
+    Axis,   // a value from -1 to 1 times the scale of its binding
+    Axis2,  // a vector at most as long as the scale of its binding, except from unbounded axes
 }
 
 Binding_Kind :: enum u8 {
     Code,        // Button: down while the code is
     Axis_Above,  // Button: down while the axis, times `scale`, reaches `dead_zone` (a trigger used as a button)
     Code_Axis,   // Axis: from a negative and a positive code, times `scale`
-    Analog,      // Axis: an analog axis times `scale`, with a dead zone
-    Codes_2D,    // Axis2: left, right, down and up codes; diagonals keep unit length
-    Analog_2D,   // Axis2: two analog axes times `scale`, with a radial dead zone
+    Analog,      // Axis: an analog axis with a dead zone, times `scale`
+    Codes_2D,    // Axis2: left, right, down and up codes, times `scale`; diagonals keep its length
+    Analog_2D,   // Axis2: two analog axes with a radial dead zone, times `scale`
     Delta,       // Axis: an unbounded axis times `scale`, as is: mouse movement, a wheel
     Delta_2D,    // Axis2: two unbounded axes times `scale`; the vector is not limited to unit length
 }
@@ -166,11 +166,11 @@ input_bind_code :: proc "contextless" (in_:^Input,action:Action,code:Input_Code)
 input_bind_axis_button :: proc "contextless" (in_:^Input,action:Action,axis:Axis_Code,threshold:f32=0.5,scale:f32=1) -> bool {return input_bind(in_,action,.Axis_Above,{u16(axis),0,0,0},scale,threshold)}
 // An axis action reads -1 while `negative` is held and +1 while `positive` is, times `scale`.
 input_bind_codes_axis :: proc "contextless" (in_:^Input,action:Action,negative,positive:Input_Code,scale:f32=1) -> bool {return input_bind(in_,action,.Code_Axis,{u16(negative),u16(positive),0,0},scale,0)}
-// An axis action reads an analog axis times `scale`; values inside `dead_zone` read 0 and the rest is rescaled so the range stays continuous up to 1.
+// An axis action reads an analog axis: values inside `dead_zone` read 0 and the rest is rescaled so the range stays continuous up to 1, then times `scale`.
 input_bind_axis :: proc "contextless" (in_:^Input,action:Action,axis:Axis_Code,dead_zone:f32=0.15,scale:f32=1) -> bool {return input_bind(in_,action,.Analog,{u16(axis),0,0,0},scale,dead_zone)}
-// A 2D action built from four codes.
-input_bind_codes_2d :: proc "contextless" (in_:^Input,action:Action,left,right,down,up:Input_Code) -> bool {return input_bind(in_,action,.Codes_2D,{u16(left),u16(right),u16(down),u16(up)},1,0)}
-// A 2D action read from two analog axes with a radial dead zone.
+// A 2D action built from four codes, times `scale`.
+input_bind_codes_2d :: proc "contextless" (in_:^Input,action:Action,left,right,down,up:Input_Code,scale:f32=1) -> bool {return input_bind(in_,action,.Codes_2D,{u16(left),u16(right),u16(down),u16(up)},scale,0)}
+// A 2D action read from two analog axes with a radial dead zone, then times `scale`.
 input_bind_axes_2d :: proc "contextless" (in_:^Input,action:Action,x,y:Axis_Code,dead_zone:f32=0.2,scale:f32=1) -> bool {return input_bind(in_,action,.Analog_2D,{u16(x),u16(y),0,0},scale,dead_zone)}
 // An axis action reads an unbounded axis times `scale`, without dead zone or limit: the movement of the mouse or a wheel since the last tick.
 input_bind_delta :: proc "contextless" (in_:^Input,action:Action,axis:Axis_Code,scale:f32=1) -> bool {return input_bind(in_,action,.Delta,{u16(axis),0,0,0},scale,0)}
@@ -311,15 +311,15 @@ binding_read :: proc "contextless" (in_:^Input,binding:^Binding) -> (r:Accum) {
     case .Code_Axis:
         r.axis=binding.scale*(code_axis(in_,binding.codes[1])-code_axis(in_,binding.codes[0]))
     case .Analog:
-        r.axis=dead_zone_scalar(in_.axes[binding.codes[0]]*binding.scale,binding.dead_zone)
+        r.axis=dead_zone_scalar(in_.axes[binding.codes[0]],binding.dead_zone)*binding.scale
     case .Codes_2D:
         v:=math.Vec2{code_axis(in_,binding.codes[1])-code_axis(in_,binding.codes[0]),code_axis(in_,binding.codes[3])-code_axis(in_,binding.codes[2])}
         if v.x!=0 && v.y!=0 {v*=0.70710678}
-        r.vector=v
+        r.vector=v*binding.scale
     case .Analog_2D:
-        raw:=math.Vec2{in_.axes[binding.codes[0]],in_.axes[binding.codes[1]]}*binding.scale
+        raw:=math.Vec2{in_.axes[binding.codes[0]],in_.axes[binding.codes[1]]}
         length:=linalg.length(raw)
-        if length>binding.dead_zone {r.vector=raw/length*min((length-binding.dead_zone)/max(1-binding.dead_zone,1e-6),1)}
+        if length>binding.dead_zone {r.vector=raw/length*min((length-binding.dead_zone)/max(1-binding.dead_zone,1e-6),1)*binding.scale}
     case .Delta:
         r.axis=in_.axes[binding.codes[0]]*binding.scale
     case .Delta_2D:

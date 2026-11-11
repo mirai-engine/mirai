@@ -31,7 +31,7 @@ import uf "mirai:std/ui_format"
 // that links both reads and writes the file: runtime.ui_tree_document and
 // runtime.ui_tree_view.
 
-UI_VERSION :: 9
+UI_VERSION :: 10
 
 UI_TABLE_NODES :: "nodes"
 UI_TABLE_STYLES :: "styles"

@@ -12,13 +12,12 @@ import "mirai:std/serial"
 // the open editor what mirai texts does on the files. A change is a step of
 // history of each .strings it touches, which waits for Save.
 
-// The texts of the project and the codes of the languages of the game, the
-// one its texts are written in first.
-texts_open :: proc(s:^Session) -> (texts:author.Texts,languages:[]string) {
+// The texts of the project; their languages are those its .strings name,
+// the one its texts are written in (UI_Settings.source) first.
+texts_open :: proc(s:^Session) -> author.Texts {
     settings:=gui.UI_SETTINGS_DEFAULT
     if value:=cast(^gui.UI_Settings)setting_value(s,gui.UI_Settings);value!=nil {settings=value^}
-    languages=author.texts_languages(settings)
-    return author.texts_read(author.assets_of(s.app.assets),languages[0]),languages
+    return author.texts_read(author.assets_of(s.app.assets),serial.text_field(settings.source[:]))
 }
 
 // Writes the .strings the changes of texts touched; problem: why it could not.
@@ -41,7 +40,7 @@ Texts_File_Params :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,label=A CSV with the column key and one per language by its code, as texts.export writes it and mirai import reads it; an import changes nothing where a cell is empty"`,
 }
 Texts_List :: struct {
-    languages:[1][16]u8 `mirai:"list,text,label=The codes of the languages of the game (Project Settings > UI), the one its texts are written in first"`,
+    languages:[1][16]u8 `mirai:"list,text,label=The codes of the languages of the game: those its .strings name, the one its texts are written in first"`,
     texts:[1]Texts_Entry `mirai:"list"`,
 }
 Texts_Entry :: struct {
@@ -50,7 +49,7 @@ Texts_Entry :: struct {
     texts:u8 `mirai:"any,label=What it says by language code; a language it says nothing in is left out and shows the first"`,
 }
 Texts_Missing :: struct {
-    missing:[1][512]u8 `mirai:"list,text,label=Each says what lacks a text and how to write it: who shows a key no .strings has (its .ui and node; its .records; row and field); a key without a text in a language of the game; a key two files have"`,
+    missing:[1][512]u8 `mirai:"list,text,label=Each says what lacks a text and how to write it: who shows a key no .strings has (its .ui and node; its .records; row and field); a key without a text in a language of the game nor in that of its region; a key two files have; characters of a language the glyphs of the interfaces lack"`,
 }
 Texts_Count :: struct {
     texts:int `mirai:"label=The texts written or set"`,
@@ -60,17 +59,17 @@ Texts_Count :: struct {
 texts_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="texts.list",summary="Every text a player reads, by key: what each key of the .strings of the project says in each language. A node of a .ui, a core.Text of a row and the code show a text by its key.",result=Texts_List,writes_result=true,flags={.Read_Only},run=api_texts_list})
     api_register(s,st,{name="texts.set",summary="Makes a key say a text in a language: adds a text, or translates one. One step of history; its .strings waits for Save.",params=Texts_Set_Params,result=Texts_Count,run=api_texts_set})
-    api_register(s,st,{name="texts.missing",summary="What the texts lack: who shows a key no .strings has, and the keys that say nothing in a language of the game.",result=Texts_Missing,writes_result=true,flags={.Read_Only},run=api_texts_missing})
+    api_register(s,st,{name="texts.missing",summary="What the texts lack: who shows a key no .strings has, the keys that say nothing in a language of the game, and the characters the glyphs of the interfaces lack.",result=Texts_Missing,writes_result=true,flags={.Read_Only},run=api_texts_missing})
     api_register(s,st,{name="texts.export",summary="Writes every text of the project to a CSV for translators.",params=Texts_File_Params,result=Texts_Count,flags={.Read_Only},run=api_texts_export})
     api_register(s,st,{name="texts.import",summary="Makes the keys of a CSV say its texts, as texts.export writes it. One step of history per .strings, which waits for Save.",params=Texts_File_Params,result=Texts_Count,run=api_texts_import})
 }
 
 @(private="file")
 api_texts_list :: proc(s:^Session,call:^api.Call) {
-    texts,languages:=texts_open(s)
+    texts:=texts_open(s)
     out:=call.out
     serial.text_write_raw(out,`{"languages":[`)
-    for code,i in languages {
+    for code,i in texts.languages {
         if i>0 {serial.write_u8(out,',')}
         serial.text_write_string(out,code)
     }
@@ -104,16 +103,16 @@ api_texts_done :: proc(s:^Session,call:^api.Call,texts:^author.Texts,count:int,p
 @(private="file")
 api_texts_set :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Texts_Set_Params)
-    texts,_:=texts_open(s)
+    texts:=texts_open(s)
     api_texts_done(s,call,&texts,1,author.texts_set(&texts,serial.text_field(p.key[:]),serial.text_field(p.language[:]),serial.text_field(p.text[:])),"Text")
 }
 
 @(private="file")
 api_texts_missing :: proc(s:^Session,call:^api.Call) {
-    texts,languages:=texts_open(s)
+    texts:=texts_open(s)
     out:=call.out
     serial.text_write_raw(out,`{"missing":[`)
-    for line,i in author.texts_missing(&texts,author.texts_uses(author.assets_of(s.app.assets)),languages) {
+    for line,i in author.texts_missing(&texts,author.texts_uses(author.assets_of(s.app.assets))) {
         if i>0 {serial.write_u8(out,',')}
         serial.text_write_string(out,line)
     }
@@ -124,7 +123,7 @@ api_texts_missing :: proc(s:^Session,call:^api.Call) {
 api_texts_export :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Texts_File_Params)
     path:=serial.text_field(p.path[:])
-    texts,_:=texts_open(s)
+    texts:=texts_open(s)
     if path=="" || serial.file_write_atomic(path,transmute([]u8)author.texts_csv(&texts))!=.None {api.call_failf(call,api.INVALID_PARAMS,"path is the CSV to write, and '%s' could not be written",path);return}
     api.call_result(call,Texts_Count).texts=len(texts.rows)
 }
@@ -135,7 +134,7 @@ api_texts_import :: proc(s:^Session,call:^api.Call) {
     path:=serial.text_field(p.path[:])
     bytes,error:=os.read_entire_file(path,context.temp_allocator)
     if error!=nil {api.call_failf(call,api.INVALID_PARAMS,"path is the CSV to read, and '%s' could not be read",path);return}
-    texts,_:=texts_open(s)
+    texts:=texts_open(s)
     set,problem:=author.texts_csv_take(&texts,string(bytes))
     api_texts_done(s,call,&texts,set,problem,"Import texts")
 }

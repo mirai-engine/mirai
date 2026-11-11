@@ -24,6 +24,7 @@ Loco_World :: struct {
     remotes:core.Table(core.Remote),
     paces:core.Table(core.Own_Pace),
     loco_requests:Locomotion_Requests,
+    places:core.Places,
 }
 
 @(private)
@@ -101,8 +102,10 @@ loco_test_tick :: proc(f:^Loco_Test,move:[3]f32,ticks:=1,buttons:=input.Action_M
         locomotion_step(
             core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),
             core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),
-            core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.read(&f.paces),{base=TEST_WALK_BASE},&f.loco_requests,{playing=true,dt=dt},clock,&f.problems,
+            core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.ref(&f.places),core.read(&f.paces),{base=TEST_WALK_BASE},&f.loco_requests,{playing=true,dt=dt},clock,&f.problems,
         )
+        phys.physics_places(&f.places,&f.requests,core.ref(&f.state),core.read(&f.rigids),core.read(&f.characters))
+        clear(&f.places.queue.items)
         test_world_settle(&f.w)
         // The logs of a tick, as their readers are handed them.
         e:=&f.events

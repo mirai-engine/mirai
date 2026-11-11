@@ -31,23 +31,27 @@ saves.
 `vfx.Particle_Requests` is applied in the next fixed step, in order.
 ```odin
 // inside a fixed function, with requests:^vfx.Particle_Requests
-vfx.start(requests, e); vfx.stop(requests, e) // live particles finish
+vfx.start(requests, e); vfx.stop(requests, e) // set or clear active; live particles finish
 vfx.burst(requests, e, 30)
 ```
 
-Also `restart`, `pause`, `resume`, `authored` (back to the asset's fields). `vfx.status(clocks,
-emitter, e)` gives a `Particle_Status` with its `state` (`Playing`, `Done`).
+`start` and `stop` change the emitter's `active`, as writing the field does. Also `restart`,
+`pause` and `resume`. `vfx.status(clocks, emitter, e)` gives a `Particle_Status` with its `state`
+(`Playing`, `Done`).
 
 ## Values of one instance
 
 ```odin
-err:=vfx.request_override(requests, e, "colors.1", [4]f32{1, 0.2, 0, 1})
+err:=vfx.request_value(requests, e, "colors.1", [4]f32{1, 0.2, 0, 1})
 if err!=.None {core.report(problems, e, "game.vfx", "%s", vfx.error_message(err))}
-vfx.request_parameter(requests, e, "heat", f32(0.8)) // a parameter of the effect's program
+vfx.request_value(requests, e, "parameters.heat", f32(0.8)) // a parameter of its program
 ```
 
-Paths are field paths of the effect (`rate`, `bursts.0.count`), checked when asked. Also
-`request_override_remove` and `request_override_clear`. Assets belong to the effect.
+A name is a field path of the effect (`rate`, `bursts.0.count`) or `parameters.` and a parameter
+of its program, checked when asked; with a parameter its program does not declare, the emitter
+runs without the program and `particle.instance.inspect` says why. Also `request_value_remove`
+and `request_values_clear`. Assets belong to the effect.
+
 ## Author an effect
 
 Editor: the `.particle` document. Agent: `particle.set`, `particle.inspect`.
