@@ -27,10 +27,10 @@
 // (Probe.frames.w, as a share of its light), and a change within it moves the
 // probe by PROBE_BLEND only, so that it comes to the mean of that noise
 // instead of keeping the noise of its last trace. A probe whose light moved
-// by more than its noise, or PROBE_SETTLED, is traced again next frame: what
-// its rays meet is still settling (the probes around), and a
-// probe new to its cell is traced twice. One whose light stays is left alone
-// until a change reaches it. A probe that sees the inside of geometry with
+// by more than its noise, or PROBE_SETTLED, is traced again next frame with
+// the probes beside it, which read it: what its rays meet is still settling,
+// and a probe new to its cell is traced twice. One whose light stays is left
+// alone until a change reaches it, or one beside it moves. A probe that sees the inside of geometry with
 // more than a quarter of its rays keeps what it held, if it held the light of
 // this cell: something moved over it.
 #define PROBES_WRITABLE
@@ -186,5 +186,17 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
     irradiance[origin + local] = float4(probe_light_encode(value.rgb), value.a);
     if (local_index != 0u || buried) return;
     if (held && !marked) probes[probe].frames.w = asuint(lerp(noise, share, PROBE_NOISE_RATE));
-    if (!held || share > max(PROBE_SETTLED, PROBE_NOISE_CHANGE * noise)) probes[probe].frames.z = max(probes[probe].frames.z, params.frame_number + 1u);
+    if (held && share <= max(PROBE_SETTLED, PROBE_NOISE_CHANGE * noise)) return;
+    probes[probe].frames.z = max(probes[probe].frames.z, params.frame_number + 1u);
+    // What the probes beside it read of it moved: they are traced again next
+    // frame, and a change spreads through the volume while it moves them.
+    int3 corner = probe_corner_cell(cascade);
+    int3 steps[6] = {int3(1, 0, 0), int3(-1, 0, 0), int3(0, 1, 0), int3(0, -1, 0), int3(0, 0, 1), int3(0, 0, -1)};
+    for (int k = 0; k < 6; k++) {
+        int3 other_cell = cell + steps[k];
+        if (any(other_cell < corner) || any(other_cell >= corner + int3(frame.volume_counts.xyz))) continue;
+        uint other = probe_slot(cascade, other_cell);
+        if (!probe_holds(probes[other], other_cell)) continue;
+        InterlockedMax(probes[other].frames.z, params.frame_number + 1u);
+    }
 }

@@ -18,10 +18,12 @@ names the Surface program of a water without its own material (empty or unknown:
 - **Surface.** A [glass](../../mirai-rendering/references/materials.md#glass) solid: a sheet open
   underneath, a grid generated once (`surface_build`) that follows the camera in steps of
   `SURFACE_STEP`, with cells that double outward by rings and whose edges between levels share
-  vertices. That of a plane goes on to the horizon; that of a box ends at its walls (its vertices
-  past them go onto them), so a box is a lake that sits in its basin, and its walls are the ground
-  or the banks around it. Water along a path (a `volume.Spline` with a `Fluid`: a river) is a ribbon
-  along the curve of the points the physics follows (`phys.fluid_path`, sampled with
+  vertices. That of a plane goes on to the horizon; that of a prism (a lake of an `Outline`, a
+  pool of a `Box`) ends at its loop, which `water_sheet` reads with the bodies (`Sheet.loop`): its
+  vertices outside it go onto its nearest edge, so a lake sits in its basin and its walls are the
+  ground or the banks around it. Water along a path (a `volume.Spline` with a `Fluid`: a river) is
+  a ribbon along the curve of the points the physics follows (`phys.fluid_path`, sampled with
+
   `mm.path_sample`; `river.odin`), level across, made again only when they or the waters it meets
   change, ending where a water of higher priority takes it; its vertex colors carry the current
   of each sample (the speed of the points along it), which its small waves drift with. They are
@@ -30,7 +32,8 @@ names the Surface program of a water without its own material (empty or unknown:
   with each body its `wave_terms`, measured from the origin of each pass at the time the frame
   shows (that of physics between its last two steps, like the poses; without Play, the
   application clock), and `water_waves.slang`, twin of `wave_point` and `wave_surface`, evaluates
-  them. A box, a plane with waves or one that a dry box crosses is drawn through a deformable copy
+  them. A prism, a plane with waves or one that a dry box crosses is drawn through a deformable copy
+
   of its grid (`Sheet`) that the `water_sheet` step of `Geometry` writes each frame (without waves,
   only when the grid or the boxes move): each vertex goes where the water that rests on it is, on
   the slope of the still surface, and a
@@ -107,13 +110,16 @@ dry box, the master loses the highs (`UNDER_LOWPASS`) and the water reverb sound
 A scene with water has the `Fluid` entity with its `Volume` (with `Water` if its appearance
 changes and `Fluid_Waves` if it has waves) and, for splashes, bubbles and suspended particles, an
 emitter with a `Particle_Channel` `splashes`, `bubbles` or `motes`, as the `raft` scene of the
-demo has them. Station 22 of its physics gallery has a pool in its basin and a river that bends
-on open ground.
+demo has them. Station 23 of its physics gallery has an L-shaped pool (an `Outline`) in its basin
+and a river that bends on open ground.
 
 ## Limits
 
-- A box draws only its surface: the ground, a basin or banks around it are its walls. Its medium
-  does not follow its slope: upstream, the shafts of a sloped box start under its surface.
+- A prism draws only its surface: the ground, a basin or banks around it are its walls.
+- What is not the surface takes the box around a prism, not its loop: its medium and shafts, the
+  caustics and the test of which water a point is in (`water_inside`), and the air of a dry one.
+- Where its loop turns in, a triangle of water of at most one ring cell can remain over the notch.
+
 - In the corner of a dry box that crosses a water a triangle of water of at most one ring cell can
   remain, inclined between the two walls.
 - Far from the camera, the waves that the ring does not show fade from the drawing and not from

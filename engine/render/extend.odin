@@ -70,7 +70,6 @@ Render_Jitter :: gpu.Render_Jitter
 RENDER_MIPS_ALL :: gpu.RENDER_MIPS_ALL
 CUSTOM_PASS_SLOTS :: gpu.CUSTOM_PASS_SLOTS
 Pass_Camera :: gpu.Camera // what Pass.camera holds: the camera of the view a pass is for
-Direct_Mode :: gpu.Direct_Mode
 Standard_Pipeline :: gpu.Standard_Pipeline
 Format :: rhi.Format
 
@@ -170,6 +169,7 @@ pass_nested_add :: gpu.pass_nested_add
 pass_mask_begin :: gpu.pass_mask_begin
 pass_surface_begin :: gpu.pass_surface_begin
 pass_surface_read :: gpu.pass_surface_read
+pass_shadow_data :: gpu.pass_shadow_data
 pass_image_bind :: gpu.pass_image_bind
 pass_image_write :: gpu.pass_image_write
 pass_texture :: gpu.pass_texture
@@ -192,6 +192,7 @@ Table_Texture_Desc :: gpu.Table_Texture_Desc
 EXTENSION_TABLE_TEXTURE_CAPACITY :: gpu.EXTENSION_TABLE_TEXTURE_CAPACITY
 pass_table_texture_copy :: gpu.pass_table_texture_copy
 LIGHTS_ASKED_MAX :: gpu.LIGHT_REGION_MAX
+LIGHTS_ANYWHERE :: gpu.LIGHTS_ANYWHERE
 pass_lights :: gpu.pass_lights
 pass_buffer_held :: gpu.pass_buffer_held
 pass_buffer_write :: gpu.pass_buffer_write
@@ -588,10 +589,11 @@ vertices_made :: proc(renderer:^Renderer) -> u64 {return renderer!=nil?gpu.verti
 
 // Room for lights that a pass writes in the Simulate stage (pass_lights),
 // which light the scene as its lights do: count that cast shadows within
-// its budgets, and shadowless that light whatever stands in their way and
-// trace no rays. From the next frame, up to LIGHTS_ASKED_MAX of each. Ask in
-// each frame that uses it.
-lights_ask :: proc(renderer:^Renderer,count,shadowless:u32) {if renderer!=nil {gpu.lights_ask(renderer,count,shadowless)}}
+// its budgets, which lie within box and light up to reach metres from where
+// they lie (LIGHTS_ANYWHERE where the pass cannot tell), and shadowless that
+// light whatever stands in their way and trace no rays. From the next frame,
+// up to LIGHTS_ASKED_MAX of each. Ask in each frame that uses it.
+lights_ask :: proc(renderer:^Renderer,count,shadowless:u32,box:[2][3]f32,reach:f32) {if renderer!=nil {gpu.lights_ask(renderer,count,shadowless,box,reach)}}
 
 // An entry of the texture table for what a camera sees, which a material
 // shows as any other color texture. Black until view_texture_draw draws it.

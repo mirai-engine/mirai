@@ -223,9 +223,9 @@ nav_erode :: proc(s:^Nav_Build_Scratch,g:^Nav_Grid) -> Nav_Build_Status {
 nav_mark_volumes :: proc "contextless" (s:^Nav_Build_Scratch,g:^Nav_Grid,volumes:[]Nav_Area_Volume) {
     side:=i64(g.side)
     for volume in volumes {
-        count:=int(volume.count)
+        count:=min(int(volume.count),NAV_AREA_POINTS)
         if count<3 || !nav_finite(volume.min_y) || !nav_finite(volume.max_y) {continue}
-        points:[8][2]f32
+        points:[NAV_AREA_POINTS][2]f32
         low,high:=[2]f32{max(f32),max(f32)},[2]f32{-max(f32),-max(f32)}
         finite:=true
         for k in 0..<count {

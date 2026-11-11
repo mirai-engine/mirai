@@ -77,7 +77,7 @@ fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
 
 @(private="file")
 fixture_sync :: proc(f:^Emitters_Fixture,id:core.World_Id,time:core.Time,frame:=FRAME) {
-    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{})
+    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{})
 }
 
 @(private="file")
@@ -674,6 +674,30 @@ emitter_rows_are_relative_to_the_origin :: proc(t:^testing.T) {
     testing.expect_value(t,rows[0],[4]f32{2,0,0,544.5})
     testing.expect_value(t,rows[1],[4]f32{0,2,0,-3})
     testing.expect_value(t,rows[2],[4]f32{0,0,2,215.75})
+}
+
+// The lights with shadows of an emitter lie around it as far as its particles
+// may go in their life, and anywhere where they are born on a surface.
+@(test)
+emitter_lights_lie_around_it_or_anywhere :: proc(t:^testing.T) {
+    slots:[2]Pool_Slot
+    for &s in slots {
+        s.live,s.desc.lights,s.desc.shadows=true,4,true
+        s.desc.transform=1
+        s.desc.transform[0,3]=10
+        s.desc.previous=s.desc.transform
+        s.desc.lifetime,s.desc.speed,s.desc.gravity,s.desc.light={1,2},{0,3},1,{10,5,0}
+    }
+    slots[1].desc.shape=.Surface
+    fields:Gpu_Fields
+    fields.fallback.xyz={0,-10,0}
+    box,reach:=lights_box(slots[:1],fields,1.0/60)
+    // 3 m/s for 2 s, and the gravity over them.
+    far:=f32(3*2+0.5*10*2*2)
+    testing.expect_value(t,box,[2][3]f32{{10-far,-far,-far},{10+far,far,far}})
+    testing.expect_value(t,reach,5)
+    box,_=lights_box(slots[:],fields,1.0/60)
+    testing.expect_value(t,box,erender.LIGHTS_ANYWHERE)
 }
 
 // The room for the lights of the particles has two parts: an emitter takes

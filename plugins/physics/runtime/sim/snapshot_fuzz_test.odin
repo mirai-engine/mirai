@@ -120,7 +120,7 @@ test_fuzz_scene :: proc(w:^World,seed:u64) {
         shape_create(w,body_create(w,rest),box)
     }
     test_wall(w,12)
-    fluid_create(w,{shape=.Box,position={6,1,6},half_extents={2,1,2},density=1000})
+    box_prism(w,{6,1,6},{2,1,2})
     previous:Body_Handle
     for i in 0..<16+rand.int_max(16,gen) {
         p:=Vec3{rand.float32_range(-5,5,gen),rand.float32_range(0.5,6,gen),rand.float32_range(-5,8,gen)}
@@ -190,7 +190,9 @@ test_fuzz_edit :: proc(w:^World,seed:u64,tick:int) {
             breakables_strain(w,{point={v.x*0.4,1,0},radius=0.8},rand.float32_range(200,2000,gen),v)
         case 10: test_cannonball(w,{v.x*0.5,1,4},{0,0,-25})
         case 11: if found {body_set_awake(w,body,false)}
-        case 12: fluid_set(w,fluid_handle(w,0),{shape=.Box,position={6+v.x*0.2,1,6},half_extents={2,1,2},density=1000})
+        case 12:
+            loop:=box_loop({6+v.x*0.2,1,6},{2,1,2})
+            fluid_set(w,fluid_handle(w,0),{shape=.Prism,position={6+v.x*0.2,2,6},depth=2,density=1000},loop[:])
         case 13: if found {body_rest(w,body,body_position(w,body),QUAT_IDENTITY)}
         case 14:
             if !found {break}
