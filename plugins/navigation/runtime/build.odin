@@ -482,7 +482,7 @@ tile_inside :: proc "contextless" (c:^Class_Mesh,coord:[2]i32,limits:[]mm.Aabb) 
 navigation_build :: proc(
     n:^Navigation,b:^Navigation_Builds,settings:core.Ref(Navigation_Settings),bakes:^core.Table(Navigation_Bake,.Read),physics:core.Ref(phys.Physics_State),requests:^Nav_Build_Requests,
     bounds:^core.Table(Nav_Bounds,.Read),areas:^core.Table(Nav_Area,.Read),links:^core.Table(Nav_Link,.Read),obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),time:core.Time,transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),
-    ground:core.Ref(core.Ground_Queries),sources:core.Ref(scene.Simulation_Sources),world:core.World_Ref,references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),ids:^core.Table(core.Id,.Read),app:^host.App,problems:^core.Problems,
+    ground:core.Ref(core.Ground_Queries),sources:core.Ref(scene.Simulation_Sources),paths:^core.Table(Nav_Path,.Read),world:core.World_Ref,references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),ids:^core.Table(core.Id,.Read),app:^host.App,problems:^core.Problems,
 ) {
     if ground.ptr!=nil && len(ground.unloaded.items)>0 {b.unloaded+=1}
     if physics.ptr==nil || !physics.ready || settings.ptr==nil {return}
@@ -560,7 +560,7 @@ navigation_build :: proc(
     b.ticks+=1
     published,spent:=builds_publish(n,b,problems)
     if published>0 {host.load_phase_add(app,.Nav_Tiles,spent,published)}
-    builds_start(n,b,physics,limits,gone,time.playing,sources.ptr,&app.jobs,problems)
+    builds_start(n,b,physics,limits,gone,time.playing,sources.ptr,paths,worlds,&app.jobs,problems)
     // Tiles building keep a load from being resident.
     building:=false
     for build in b.builds {building||=build.busy}
@@ -730,11 +730,12 @@ areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:^core.Table(Nav_Ar
 }
 
 // Gathers, hashes and starts the builds of marked tiles, up to the free jobs:
-// with simulation sources, those nearest them first, in metres past what each
-// keeps around it (scene.sources_distance); without, in the order of the marks.
-// With no build free it looks at no mark.
+// first those a waiting agent stands on or goes to, as it finds no way until
+// they are built; then those nearest the simulation sources, in metres past
+// what each keeps around it (scene.sources_distance); without sources, in the
+// order of the marks. With no build free it looks at no mark.
 @(private)
-builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),limits:Limits,unloaded:Unloaded,playing:bool,sources:^scene.Simulation_Sources,job_system:^jobs.Job_System,problems:^core.Problems) {
+builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),limits:Limits,unloaded:Unloaded,playing:bool,sources:^scene.Simulation_Sources,paths:^core.Table(Nav_Path,.Read),worlds:^core.Table(core.World_Transform,.Read),job_system:^jobs.Job_System,problems:^core.Problems) {
     b.jobs=job_system
     per_tick:=int(n.settings.builds) if n.settings.builds>0 else 4
     for len(b.builds)<per_tick*NAV_BUILD_TICKS {
@@ -744,7 +745,7 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
     }
     start:=Build_Start{n=n,b=b,physics=physics,limits=limits,jobs=job_system,problems=problems,per_tick=per_tick,due=b.ticks+NAV_BUILD_TICKS}
     if build_free(&start)==nil {return}
-    ordered:=sources!=nil && sources.count>0
+    marks_wanted(n,paths,worlds)
     // The marks nearest the sources, nearest first: no tick gathers more than NAV_CHECKS_PER_TICK.
     nearest:[NAV_CHECKS_PER_TICK]Build_Near
     count:=0
@@ -773,23 +774,19 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
                 kept:=ai.nav_volume_zone_at(&c.volume,zone_of_key(key))!=nil if volume else ai.nav_mesh_tile_at(&c.mesh,coord_of_key(key))!=nil
                 if !kept && (sections_covered(&b.sections,box,!volume) || boxes_cover(paging,box,!volume) && paged_put(&b.paged[i],key,0)) {
                     next:=mark^
-                    next.dirty,next.unloaded=false,false
+                    next.dirty,next.unloaded,next.wanted=false,false,false
                     mark_set(c,mark,next)
                 }
                 continue
             }
-            if !ordered {
-                if !build_start(&start,i,key,mark) {return}
-                continue
-            }
-            // Kept in order, the farthest of a full list giving its place.
-            at:=mark_distance(c,key,volume,sources)
+            // Kept in order, the last of a full list giving its place.
+            at:=Build_Near{mark_distance(c,key,volume,sources),mark.wanted,i,key}
             slot:=count
-            for slot>0 && nearest[slot-1].distance>at {slot-=1}
+            for slot>0 && near_before(at,nearest[slot-1]) {slot-=1}
             if slot>=len(nearest) {continue}
             last:=min(count,len(nearest)-1)
             copy(nearest[slot+1:last+1],nearest[slot:last])
-            nearest[slot]={at,i,key}
+            nearest[slot]=at
             count=last+1
         }
     }
@@ -801,7 +798,46 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
 }
 
 @(private)
-Build_Near :: struct {distance:f32,class:int,key:u64}
+Build_Near :: struct {distance:f32,wanted:bool,class:int,key:u64}
+
+@(private)
+near_before :: #force_inline proc "contextless" (a,b:Build_Near) -> bool {
+    return a.wanted && !b.wanted || a.wanted==b.wanted && a.distance<b.distance
+}
+
+// Marks wanted the dirty tiles or zones on the way of each agent that waits
+// for a path, from where it stands straight to its goal: it finds no way, or
+// one cut short, until they are built.
+@(private)
+marks_wanted :: proc(n:^Navigation,paths:^core.Table(Nav_Path,.Read),worlds:^core.Table(core.World_Transform,.Read)) {
+    for row in 0..<core.count(paths) {
+        p:=core.at(paths,row)
+        if p.state!=.Waiting || p.class<0 || int(p.class)>=n.count {continue}
+        c:=&n.classes[p.class]
+        if c.ready==0 {continue}
+        pose,placed:=core.get(worlds,core.entity_at(paths,row))
+        if !placed {continue}
+        air:=class_in_volume(n,int(p.class))
+        width:=c.volume.zone_size if air else c.mesh.tile_width
+        // Every half a tile: no tile the line crosses is skipped by more than a corner.
+        span:=linalg.length(p.goal-pose.position)/(width*0.5)
+        if !(span<f32(4*len(c.marks.keys))) {span=0}
+        steps:=int(span)+1
+        last:=~u64(0)
+        for step in 0..=steps {
+            point:=linalg.lerp(pose.position,p.goal,f32(step)/f32(steps))
+            key:=coord_key(ai.nav_mesh_coord(&c.mesh,point))
+            if air {key=zone_key(ai.nav_volume_coord(&c.volume,point))}
+            if key==last {continue}
+            last=key
+            mark:=base.hash_map_ptr(&c.marks,key)
+            if mark==nil || !mark.dirty || mark.building || mark.wanted {continue}
+            next:=mark^
+            next.wanted=true
+            mark_set(c,mark,next)
+        }
+    }
+}
 
 // m from a tile, or a zone, to the nearest simulation source.
 @(private)
@@ -852,7 +888,7 @@ build_start :: proc(s:^Build_Start,i:int,key:u64,mark:^Tile_Mark) -> bool {
     s.checks+=1
     next:=mark^
     collision:=mark.collision
-    next.dirty,next.collision=false,false
+    next.dirty,next.collision,next.wanted=false,false,false
     mark_set(c,mark,next)
     if class_in_volume(n,i) {
         zone:=zone_of_key(key)

@@ -59,11 +59,13 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
     without a job. If not, a background job builds it and the tile is published `NAV_BUILD_TICKS`
     ticks after its build started, only if nobody marked it again; a job not done by then is waited
     for, so the tick of a tile never depends on how fast the threads ran. `builds` of
-    `Navigation_Settings` is the builds a tick starts: with
-    [simulation sources](../../mirai-gameplay/references/libraries.md#sources-and-residency), the
-    marked tiles and zones nearest them first, in metres (`scene.sources_distance`); without, in
-    the order of the marks. A tick with no build free looks at no mark. Publishing does not
-    allocate; a replaced tile expires its references.
+    `Navigation_Settings` is the builds a tick starts: first the marked tiles and zones on the line
+    from each agent waiting for a path to its goal (`Tile_Mark.wanted`), as it finds no way or one
+    cut short until they are; then, with
+    [simulation sources](../../mirai-gameplay/references/libraries.md#sources-and-residency),
+    those nearest them, in metres (`scene.sources_distance`); without, in the order of the marks.
+    A tick with no build free looks at no mark. Publishing does not allocate; a replaced tile
+    expires its references.
   - **Carving.** A build from the collision leaves the heightfield of its tile with
     `Navigation_Builds`, which keeps those of the last `NAV_FIELDS` tiles. A tile marked only by a
     `Nav_Area` or an obstacle since its build began is built again from that heightfield

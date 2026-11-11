@@ -113,7 +113,7 @@ nav_test_step :: proc(f:^Nav_Test,ticks:=1) {
             &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),{},{},{},{},
         )
         nav_test_settle(f)
-        navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),f.time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),core.ref(&f.sources),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
+        navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),f.time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),core.ref(&f.sources),core.read(&f.paths),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
         clear(&f.ground.unloaded.items)
     }
 }
@@ -311,6 +311,31 @@ tiles_build_nearest_the_streaming_sources_first :: proc(t:^testing.T) {
         if f.nav.count>0 && f.nav.classes[0].pending==0 && count>0 {break}
     }
     testing.expect(t,count>16 && farthest>25)
+    testing.expect_value(t,f.problems.count,0)
+}
+
+// An agent that waits for its path far from the simulation sources gets the
+// tiles it stands on and goes to before the nearer ones: it walks while most
+// of the floor still waits for its build.
+@(test)
+the_tiles_a_waiting_agent_needs_build_before_those_nearer_the_sources :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{30,0.5,30})
+    f.nav_settings.builds=1
+    f.sources.items[0]={position={-26,0,-26}}
+    f.sources.count=1
+    e:=agents_test_walker(&f,{26,0,26})
+    nav_test_settle(&f)
+    nav_move_to(&f.nav_requests,e,{22,0,22})
+    left:=-1
+    for _ in 0..<400 {
+        agents_test_step(&f)
+        p,_:=core.get(&f.paths,e)
+        if f.nav.count>0 && p.state!=.Waiting {left=f.nav.classes[0].pending;break}
+    }
+    testing.expectf(t,left>20,"it found its path with %d tiles left to build",left)
     testing.expect_value(t,f.problems.count,0)
 }
 
@@ -856,7 +881,7 @@ agents_test_step :: proc(f:^Nav_Test) {
         if w:=core.edit(&f.worlds,e);w!=nil {w.transform=t} else {core.add(&f.worlds,e,core.World_Transform{transform=t})}
     }
     nav_test_settle(f)
-    navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),core.ref(&f.sources),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
+    navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),core.ref(&f.sources),core.read(&f.paths),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
     navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.seats),core.read(&f.characters),core.read(&f.loco_states),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
         &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,&f.nav_crossings,time,&f.problems)
     nav_test_settle(f)
