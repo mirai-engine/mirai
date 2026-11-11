@@ -165,13 +165,13 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
             testing.expectf(t,green>100,"the transient preview has geometry (%d green pixels)",green)
             if green>0 {testing.expect(t,pass==2?green_x/green>width/2:green_x/green<width/2)}
             testing.expect_value(t,len(app.renderer.scene.instances),2)
-            testing.expect(t,app.assets.stats.derived>0)
+            // Color, light and fade are of the instance: they derive no material row.
+            testing.expect_value(t,app.assets.stats.derived,0)
             testing.expect_value(t,len(sync.drawn.entities),1)
         } else {testing.expect_value(t,green,0)}
         testing.expect_value(t,w.entities.alive,2) // the mesh and the sky
     }
     testing.expect_value(t,len(app.renderer.scene.instances),1)
-    testing.expect_value(t,app.assets.stats.derived,0)
     positions:=[4]geom.Vec3{{-0.5,-0.5,0},{0.5,-0.5,0},{-0.5,0.5,0},{0.5,0.5,0}}
     indices:=[6]u32{0,1,2,2,1,3}
     uv0:=[4]geom.Vec2{{0.25,0.5},{0.25,0.5},{0.25,0.5},{0.25,0.5}}
