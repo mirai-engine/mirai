@@ -55,7 +55,7 @@ preview_free :: proc(p:^Effect_Preview) {
 // pixels square. info is what the emitter shows, for the camera to frame.
 // Between frames.
 @(private)
-preview_draw :: proc(s:^editor.Session,p:^Effect_Preview,id:base.Asset_Id,info:^effect.Particle_Info,override:^vfx.Particle_Override,given:^vfx.Particle_Parameters,time:f32,side:u32) -> bool {
+preview_draw :: proc(s:^editor.Session,p:^Effect_Preview,id:base.Asset_Id,info:^effect.Particle_Info,override:^vfx.Particle_Override,time:f32,side:u32) -> bool {
     app:=s.app
     if app.renderer==nil || app.assets==nil || s.editor_world==nil {return false}
     if p.world==nil && !preview_make(s,p) {return false}
@@ -70,18 +70,16 @@ preview_draw :: proc(s:^editor.Session,p:^Effect_Preview,id:base.Asset_Id,info:^
     keys:=[3]u64{base.hash_combine(id[0],id[1]),app.assets.revision,app.shaders.reloads}
     shows:=base.hash_combine(base.hash64(mem.slice_to_bytes(keys[:])),base.hash64(mem.ptr_to_bytes(info)))
     if override!=nil {shows=base.hash_combine(shows,base.hash64(mem.ptr_to_bytes(override)))}
-    if given!=nil {shows=base.hash_combine(shows,base.hash64(mem.ptr_to_bytes(given)))}
     shows|=1
     cut:=shows!=p.shows || time<p.time
     if cut {
-        emitters,overrides,parameters:=core.world_table_of(w,vfx.Particle_Emitter),core.world_table_of(w,vfx.Particle_Override),core.world_table_of(w,vfx.Particle_Parameters)
+        emitters,overrides:=core.world_table_of(w,vfx.Particle_Emitter),core.world_table_of(w,vfx.Particle_Override)
         requests,settings,view:=core.world_storage_of(w,vfx.Particle_Requests),core.world_storage_of(w,vfx.Particle_Settings),core.world_storage_of(w,core.View)
-        if emitters==nil || overrides==nil || parameters==nil || requests==nil || settings==nil || view==nil {return false}
+        if emitters==nil || overrides==nil || requests==nil || settings==nil || view==nil {return false}
         emitter:=vfx.PARTICLE_EMITTER_DEFAULT
         emitter.particle,emitter.active=id,true
         core.add(emitters,p.emitter,emitter)
         if override!=nil && override.count>0 {core.add(overrides,p.emitter,override^)} else if core.has(overrides,p.emitter) {core.remove(overrides,p.emitter)}
-        if given!=nil && given.count>0 {core.add(parameters,p.emitter,given^)} else if core.has(parameters,p.emitter) {core.remove(parameters,p.emitter)}
         settings.capacity=max(PREVIEW_CAPACITY,2*info.max_particles)
         view^=preview_view(app.assets,info,side)
         core.world_settle(w)
@@ -169,11 +167,11 @@ effect_reach :: proc(a:^host.Assets,info:^effect.Particle_Info) -> (low,high:[3]
     return
 }
 
-// The values of a document its file does not have yet, as those of an
-// instance: what the emitter of its preview shows over the file until they
-// are written. The assets and the program are written at once.
+// The values and parameters of a document its file does not have yet, as
+// those of an instance: what the emitter of its preview shows over the file
+// until they are written. The assets and the program are written at once.
 @(private)
-preview_values :: proc(held,file:^Effect_Values) -> (override:vfx.Particle_Override,given:vfx.Particle_Parameters) {
+preview_values :: proc(held,file:^Effect_Values) -> (override:vfx.Particle_Override) {
     Gather :: struct {held,file:^effect.Particle_Info,override:^vfx.Particle_Override}
     gather:=Gather{&held.info,&file.info,&override}
     visit :: proc(value:effect.Particle_Value,user:rawptr) -> bool {
@@ -181,16 +179,14 @@ preview_values :: proc(held,file:^Effect_Values) -> (override:vfx.Particle_Overr
         if value.kind==.Asset {return true}
         now:=span_of(g.held,value.offset,value.size)
         if mem.compare(now,span_of(g.file,value.offset,value.size))==0 {return true}
-        if int(g.override.count)>=vfx.PARTICLE_OVERRIDE_CAPACITY {return false}
-        g.override.names[g.override.count]=base.name_hash(value.path)
-        copy(g.override.values[g.override.count][:],now)
-        g.override.count+=1
-        return true
+        return vfx.value_put(g.override,base.name_hash(value.path),now)==.None
     }
     effect.particle_values_visit(visit,&gather)
-    if !parameters_same(held,file) {
-        given.count=u32(min(held.parameter_count,vfx.PARTICLE_PARAMETER_CAPACITY))
-        copy(given.values[:],held.parameters[:given.count])
+    for &parameter in held.parameters[:held.parameter_count] {
+        stored:=effect.particle_parameter_find(file.parameters[:file.parameter_count],base.text_get(parameter.name[:]))
+        if stored!=nil && parameter_same(stored,&parameter) {continue}
+        value:=vfx.parameter_value(&parameter)
+        if vfx.value_put(&override,base.name_hash(base.text_get(parameter.name[:])),value[:])!=.None {break}
     }
     return
 }
@@ -233,7 +229,7 @@ effect_image :: proc(s:^editor.Session,subject:^editor.Thumbnail_Subject,side:in
     shown:=(cast(^Effect_Shown)&subject.data)^
     drawn:=PREVIEW_THUMBNAIL
     n:=drawn/side
-    if !preview_draw(s,&v.thumbnail,shown.id,&shown.info,nil,nil,max(shown.info.lifetime[0],shown.info.lifetime[1])*0.5,u32(drawn)) {return false}
+    if !preview_draw(s,&v.thumbnail,shown.id,&shown.info,nil,max(shown.info.lifetime[0],shown.info.lifetime[1])*0.5,u32(drawn)) {return false}
     pixels,width,height,ok:=erender.view_texture_capture(s.app.renderer,v.thumbnail.texture,context.temp_allocator)
     if !ok || width!=drawn || height!=drawn {return false}
     for y in 0..<side {

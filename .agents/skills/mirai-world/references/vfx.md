@@ -10,8 +10,8 @@ editor (inspector, document, thumbnails and `particle.*`) is in [its reference](
 
 `plugins/vfx/runtime/effect` (`effect.KIND` `PART`, `.particle`, `effect.VERSION` 4; another
 version asks to write it again). An effect is like a material: entities name it
-(`vfx.Particle_Emitter`) and give it values of their own (`vfx.Particle_Override`, and
-`vfx.Particle_Parameters` for its program). Tables: `particle` (`Particle_Info`), `parameters`
+(`vfx.Particle_Emitter`) and give it values of their own (`vfx.Particle_Override`, fields and
+program parameters alike). Tables: `particle` (`Particle_Info`), `parameters`
 (`Particle_Parameter`) and `hidden` (`Particle_Field`).
 
 - `Particle_Info` is the destination of what is imported from other engines:
@@ -67,12 +67,15 @@ placed with `scene.spawn`.
 
 Values of an instance:
 
-- `Particle_Override`: effect values of the entity itself, by the hash of the field's path
-  (`effect.particle_fields`) and their bytes. `override_set(&o, "colors.1", [4]f32{...})`
-  validates path, type and range and returns an `Error`; `error_message` says how to fix it. The
-  effect's assets and program belong to the effect (`Effect_Field`).
-- `Particle_Parameters`: parameters of the effect's Vfx program belonging to the entity, by name
-  (`parameter_set`, `parameter_get`).
+- `Particle_Override`: the entity's own values, shaped like `erender.Material_Override`: one
+  table of `base.name_hash` names and 16-byte values, where a name is a field path of the effect
+  (`effect.particle_fields`, its bytes) or a parameter of its Vfx program (its numbers as
+  `[4]f32` or its texture's `Asset_Id`, `parameter_value`). A field path wins over a parameter
+  of the same name. `value_set(&o, "colors.1", [4]f32{...})` validates a field's type and range,
+  or a parameter's numbers, and returns an `Error`; `error_message` says how to fix it;
+  `value_remove` takes one away. The effect's assets and program belong to the effect
+  (`Effect_Field`). Whether the program declares a parameter is told when the emitter resolves
+  it (`particle_program_check`, `value_parameter`).
 - `particle_resolve(assets, particle, override)` gives what an entity shows;
   `particle_resolve_checked` also says what is wrong. `particle_program` resolves the effect's Vfx
   program in the catalog of the shaders in use (`erender.program_find`).
@@ -293,9 +296,10 @@ Clocks (`Particle_Clocks`, of the world):
 - `particles_tick` (`fixed`, both loops, after `transforms_propagate`) takes the requests and
   advances the clocks: while playing, with `time.dt`; while not playing (the editor), with
   `frame.dt` and `preview`. A mode change restarts them: Play starts without those of the preview.
-- `emission_step` adds the step's births: the rate, the bursts that the cycle reaches (the repetitions of a step in a group), the distance
-  traveled and, on starting a generation with `prewarm` and `loop`, a whole life of earlier births.
-  `emitter_capacity` gives the particles it needs.
+- `emission_step` adds the step's births: the rate, the bursts that the cycle reaches (the
+  repetitions of a step in a group), the distance traveled and, on starting a generation with
+  `prewarm` and `loop`, a whole life of earlier births. `emitter_capacity` gives the particles it
+  needs.
 - A copy, a Play and a rollback take the clocks.
 
 Requests (`Particle_Requests`, a `core.Queue` of the world; `particles_tick` takes them in order):
@@ -304,9 +308,8 @@ Requests (`Particle_Requests`, a `core.Queue` of the world; `particles_tick` tak
   for them (a stopped emitter lets its particles finish); `restart` (another generation: the GPU
   discards its particles), `pause`, `resume` and `burst(count)` (at the step's time) act on the
   clock. An emitter is emitting by its fields alone: `active` while playing, `preview` otherwise.
-- `request_override`, `request_override_remove`, `request_override_clear`, `request_parameter` and
-  their pairs validate when asked; applied, they write `Particle_Override` and
-  `Particle_Parameters`.
+- `request_value` validates when asked, like `value_set`; it, `request_value_remove` and
+  `request_values_clear`, applied, write `Particle_Override`.
 - One for an entity without an emitter, or that the emitter does not take, is the `vfx.request`
   problem of that entity, with the `Error` and its `error_message`.
 - `status(clocks, emitter, e)` gives state (`Idle`, `Playing`, `Paused`, `Finishing`, `Done`),

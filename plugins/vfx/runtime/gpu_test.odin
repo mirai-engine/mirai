@@ -620,11 +620,17 @@ particle_programs_move_and_keep_their_particles :: proc(t: ^testing.T) {
 	ring.capacity, ring.lifetime, ring.size = 256, {5, 5}, {0.15, 0.15}
 	ring.shape, ring.shape_size, ring.shell = .Circle, {1, 1, 1}, 1
 	ring.acceleration = {0, -9.8, 0}
-	parameters := erender.program_defaults(program)
+	// Its speed is a value of the instance, as a game gives it; a name the program does not declare is refused.
+	info := effect.PARTICLE_DEFAULTS
+	base.text_set(info.program[:], "Orbit")
+	override: Particle_Override
+	testing.expect_value(t, value_set(&override, "heat", f32(1)), Error.None)
+	testing.expect(t, particle_program_check(&f.assets, &info, nil, &override, &ring.program) != "")
+	value_remove(&override, "heat")
+	testing.expect_value(t, value_set(&override, "speed", f32(3)), Error.None)
+	testing.expect_value(t, particle_program_check(&f.assets, &info, nil, &override, &ring.program), "")
 	speed := erender.program_parameter(program, "speed")
-	testing.expect(t, speed != nil && gpu.program_parameter_set(&parameters, speed, {3, 0, 0, 0}))
-	ring.program = {id = program.id, parameters = transmute([16][4]f32)parameters, attributes = u32(program.attributes)}
-	base.text_set(ring.program.name[:], program.name)
+	testing.expect(t, speed != nil && ring.program.parameters[speed.offset / 16][(speed.offset % 16) / 4] == 3)
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 40 {
 		ring.spawns = test_burst(200) if i == 0 else {}

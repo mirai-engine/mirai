@@ -27,7 +27,7 @@ import "plugins:vfx/runtime/effect"
 PARTICLE_PARAMS_SCHEMA :: `{"type":"object","properties":{"particle":{"type":"string","description":"An effect: its path under the assets folder, or its id"},"path":{"type":"string","description":"particle.create: where the new effect goes, under the assets folder"},"values":{"type":"object","description":"Fields of the effect to change, as particle.inspect shows them"},"parameters":{"type":"object","description":"Parameters of its Vfx program by name: a number, a list, true or false, or a texture by path or id; null takes one away"},"hidden":{"type":"array","items":{"type":"string"},"description":"The fields its instances do not show; replaces the list"}},"additionalProperties":false}`
 
 @(private)
-PARTICLE_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"entity":{`+api.ENTITY_SCHEMA+`,"description":"The entity with the Particle_Emitter"},"values":{"type":"object","description":"Values it shows, as particle.instance.inspect gives them: those that differ from its effect become its own, at most 16 and not its assets or program"},"parameters":{"type":"object","description":"Parameters of the Vfx program of its effect for this entity, by name, at most 8; null takes one away"}},"required":["entity"],"additionalProperties":false}`
+PARTICLE_INSTANCE_SET_SCHEMA :: `{"type":"object","properties":{"entity":{`+api.ENTITY_SCHEMA+`,"description":"The entity with the Particle_Emitter"},"values":{"type":"object","description":"Values it shows, as particle.instance.inspect gives them: those that differ from its effect become its own, not its assets or program"},"parameters":{"type":"object","description":"Parameters of the Vfx program of its effect for this entity, by name; null takes one away. With its values, at most 16"}},"required":["entity"],"additionalProperties":false}`
 
 // The keys of the params of an effect besides its name, path and values.
 @(private)
@@ -74,7 +74,7 @@ api_register :: proc(s:^editor.Session) {
     inspect:=Api_Particle_Instance_Params{world=.Edit}
     control:=Api_Particle_Control_Params{world=.Play}
     editor.api_method_register(s,Api_Particle_Instance_Params,{name="particle.instance.inspect",defaults=&inspect,summary="What an emitter shows: the values of its effect with its own over them, its own values by path, the parameters of its program, why its program does not run, and its clock (state, seconds, generation, births).",flags={.Read_Only},run=api_particle_instance_inspect})
-    editor.api_method_register(s,{name="particle.instance.set",params_schema=PARTICLE_INSTANCE_SET_SCHEMA,summary="In Edit, one undo step: the values given that differ from the effect become the entity's own (at most 16, not its assets or program), and the parameters given its own (at most 8). The result is as particle.instance.inspect's.",run=api_particle_instance_set})
+    editor.api_method_register(s,{name="particle.instance.set",params_schema=PARTICLE_INSTANCE_SET_SCHEMA,summary="In Edit, one undo step: the values given that differ from the effect, and the parameters given, become the entity's own (at most 16 together, not its assets or program). The result is as particle.instance.inspect's.",run=api_particle_instance_set})
     editor.api_method_register(s,Api_Particle_Id_Params,{name="particle.instance.revert",summary="In Edit, one undo step: the entity takes back every value and parameter of its effect.",run=api_particle_instance_revert})
     editor.api_method_register(s,Api_Particle_Id_Params,{name="particle.instance.apply",summary="Writes the values and parameters the entity shows into its effect, for every entity that shows it, and reverts the entity, in one undo step.",run=api_particle_instance_apply})
     editor.api_method_register(s,Api_Particle_Control_Params,Api_Particle_Control_Result,{name="particle.instance.control",defaults=&control,summary="Asks an emitter in the Play of the caller to start or stop (its active), restart, pause, resume or burst count particles, or one in the preview of the document all of them but start and stop. It takes it in its next fixed step.",run=api_particle_instance_control})
@@ -396,7 +396,7 @@ particle_entity :: proc(w:core.World_Ref,call:^api.Call,named:[]u8) -> (e:core.E
     return e,true
 }
 
-// The text of each value of an instance, by the path of its field.
+// The text of each value of an instance that is a field of its effect, by its path.
 @(private)
 particle_overrides_write :: proc(out:^serial.Writer,override:^vfx.Particle_Override) {
     api.write_key(out,"overrides")
@@ -425,9 +425,10 @@ particle_instance_write :: proc(s:^editor.Session,call:^api.Call,w:core.World_Re
     a:=s.app.assets
     emitter,_:=editor.entity_get(w,e,vfx.Particle_Emitter)
     override,_:=editor.entity_get(w,e,vfx.Particle_Override)
-    given,_:=editor.entity_get(w,e,vfx.Particle_Parameters)
     info:effect.Particle_Info
     error:=vfx.particle_resolve_checked(a,emitter.particle,&override,&info)
+    given:=make([dynamic]effect.Particle_Parameter,context.temp_allocator)
+    instance_parameters(s,&info,&override,&given)
     out:=call.out
     serial.write_u8(out,'{')
     api.write_key(out,"id",first=true)
@@ -439,11 +440,11 @@ particle_instance_write :: proc(s:^editor.Session,call:^api.Call,w:core.World_Re
     serial.write_u8(out,'"')
     editor.asset_values_write(out,"values",&info)
     particle_overrides_write(out,&override)
-    particle_parameters_write(out,"parameters",given.values[:min(given.count,vfx.PARTICLE_PARAMETER_CAPACITY)])
+    particle_parameters_write(out,"parameters",given[:])
     problem:=vfx.error_message(error)
     if problem=="" {
         program:vfx.Program
-        problem=vfx.particle_program(a,emitter.particle,&info,&given,&program)
+        problem=vfx.particle_program(a,emitter.particle,&info,&override,&program)
     }
     api.write_text(out,"problem",problem)
     if clocks:=core.world_storage_of(w,vfx.Particle_Clocks);clocks!=nil {
@@ -541,7 +542,6 @@ api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
     if !found {return}
     emitter,_:=editor.entity_get(w,e,vfx.Particle_Emitter)
     override,_:=editor.entity_get(w,e,vfx.Particle_Override)
-    given,_:=editor.entity_get(w,e,vfx.Particle_Parameters)
     file:=particle_file(s,emitter.particle)
     // The values it shows, with those given over them; what differs from the effect is its own.
     shown:=vfx.particle_resolve(s.app.assets,emitter.particle,&override)
@@ -562,35 +562,31 @@ api_particle_instance_set :: proc(s:^editor.Session,call:^api.Call) {
             api.call_failf(call,api.INVALID_PARAMS,"values: %s: %s",field.path,vfx.error_message(.Effect_Field))
             return
         }
-        if next.count==vfx.PARTICLE_OVERRIDE_CAPACITY {
-            api.call_fail(call,api.INVALID_PARAMS,vfx.error_message(.Override_Capacity))
+        if error:=vfx.value_put(&next,base.name_hash(field.path),now);error!=.None {
+            api.call_failf(call,api.INVALID_PARAMS,"values: %s: %s",field.path,vfx.error_message(error))
             return
         }
-        next.names[next.count]=base.name_hash(field.path)
-        copy(next.values[next.count][:],now)
-        next.count+=1
     }
     list:=make([dynamic]effect.Particle_Parameter,context.temp_allocator)
-    append(&list,..given.values[:min(given.count,vfx.PARTICLE_PARAMETER_CAPACITY)])
+    instance_parameters(s,&file.info,&override,&list)
     if !particle_parameters_read(s,call,parameters,&file.info,&list) {return}
-    if len(list)>vfx.PARTICLE_PARAMETER_CAPACITY {
-        api.call_fail(call,api.INVALID_PARAMS,vfx.error_message(.Parameter_Capacity))
-        return
+    for &parameter in list {
+        value:=vfx.parameter_value(&parameter)
+        if error:=vfx.value_put(&next,base.name_hash(base.text_get(parameter.name[:])),value[:]);error!=.None {
+            api.call_failf(call,api.INVALID_PARAMS,"parameters: %s",vfx.error_message(error))
+            return
+        }
     }
     checked:vfx.Program
-    if problem:=vfx.particle_program_check(s.app.assets,&file.info,file.parameters[:],list[:],&checked);problem!="" {
+    if problem:=vfx.particle_program_check(s.app.assets,&file.info,file.parameters[:],&next,&checked);problem!="" {
         api.call_failf(call,api.INVALID_PARAMS,"parameters: %s",problem)
         return
     }
-    next_given:vfx.Particle_Parameters
-    next_given.count=u32(len(list))
-    copy(next_given.values[:],list[:])
     if !editor.api_edit_begin(s,call,"Particle values") {return}
     w=editor.edited_world(s)
-    values_table,parameters_table:=core.world_table_of(w,vfx.Particle_Override),core.world_table_of(w,vfx.Particle_Parameters)
-    if values_table==nil || parameters_table==nil {editor.api_edit_end(s,call,false);return}
+    values_table:=core.world_table_of(w,vfx.Particle_Override)
+    if values_table==nil {editor.api_edit_end(s,call,false);return}
     if next.count>0 {core.add(values_table,e,next)} else if core.has(values_table,e) {core.remove(values_table,e)}
-    if next_given.count>0 {core.add(parameters_table,e,next_given)} else if core.has(parameters_table,e) {core.remove(parameters_table,e)}
     if !editor.api_edit_end(s,call,true) {return}
     particle_instance_write(s,call,editor.edited_world(s),e,.Edit)
 }
@@ -607,11 +603,22 @@ api_particle_instance_revert :: proc(s:^editor.Session,call:^api.Call) {
     particle_instance_write(s,call,editor.edited_world(s),e,.Edit)
 }
 
-// Takes from the entity its values and its parameters for its effect.
+// Takes from the entity its values for its effect.
 @(private)
 instance_clear :: proc(w:core.World_Ref,e:core.Entity) {
-    for table in ([2]^core.Raw_Table{core.raw(core.world_table_of(w,vfx.Particle_Override)),core.raw(core.world_table_of(w,vfx.Particle_Parameters))}) {
-        if table!=nil && core.raw_row(table,e)>=0 {core.raw_remove(table,e)}
+    if table:=core.world_table_of(w,vfx.Particle_Override);table!=nil && core.has(table,e) {core.remove(table,e)}
+}
+
+// Puts the parameters an instance gives the program of info over list, as
+// the program declares them; what the program does not declare is left out.
+@(private)
+instance_parameters :: proc(s:^editor.Session,info:^effect.Particle_Info,override:^vfx.Particle_Override,list:^[dynamic]effect.Particle_Parameter) {
+    program,_:=particle_program_of(s,info)
+    if program==nil {return}
+    for name,at in override.names[:min(override.count,vfx.PARTICLE_OVERRIDE_CAPACITY)] {
+        parameter,declared:=vfx.value_parameter(program,name,override.values[at])
+        if !declared {continue}
+        if stored:=effect.particle_parameter_find(list[:],base.text_get(parameter.name[:]));stored!=nil {stored^=parameter} else {append(list,parameter)}
     }
 }
 
@@ -627,12 +634,9 @@ api_particle_instance_apply :: proc(s:^editor.Session,call:^api.Call) {
         return
     }
     override,_:=editor.entity_get(w,e,vfx.Particle_Override)
-    given,_:=editor.entity_get(w,e,vfx.Particle_Parameters)
     file:=particle_file(s,emitter.particle)
     file.info=vfx.particle_resolve(s.app.assets,emitter.particle,&override)
-    for &parameter in given.values[:min(given.count,vfx.PARTICLE_PARAMETER_CAPACITY)] {
-        if stored:=effect.particle_parameter_find(file.parameters[:],base.text_get(parameter.name[:]));stored!=nil {stored^=parameter} else {append(&file.parameters,parameter)}
-    }
+    instance_parameters(s,&file.info,&override,&file.parameters)
     a:=s.app.assets
     record,_:=asset.registry_find(&a.registry,emitter.particle)
     // The file and the entity in one step.

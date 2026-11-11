@@ -497,8 +497,8 @@ effect_document_between :: proc(s:^editor.Session,d:^editor.Asset_Document) {
     if p.due==0 || p.due==p.image.signature || p.id!=d.id {return}
     image:=&p.image
     image.signature=p.due
-    override,given:=preview_values(&p.held,&p.file)
-    image.ready=preview_draw(s,&p.preview,p.id,&p.held.info,&override,&given,p.playback.time,PARTICLE_SIDE)
+    override:=preview_values(&p.held,&p.file)
+    image.ready=preview_draw(s,&p.preview,p.id,&p.held.info,&override,p.playback.time,PARTICLE_SIDE)
     image.renderer,image.texture=s.app.renderer,p.preview.texture
     image.side,image.size,image.stretch=0,{},false
 }

@@ -1,9 +1,11 @@
 package vfx
 
+import "core:math"
 import "core:reflect"
 import "core:strconv"
 import "core:strings"
 import "core:testing"
+import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -17,7 +19,6 @@ Emitters_World :: struct {
     emitters:core.Table(Particle_Emitter),
     worlds:core.Table(core.World_Transform),
     overrides:core.Table(Particle_Override),
-    parameters:core.Table(Particle_Parameters),
     hidden:core.Table(erender.Hidden),
     parents:core.Table(core.Parent),
     bindings:core.Table(Particle_Bindings),
@@ -69,13 +70,13 @@ fixture_emitter :: proc(f:^Emitters_Fixture,emitter:Particle_Emitter,position:[3
 
 @(private="file")
 fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
-    particles_tick(&f.emitters,&f.overrides,&f.parameters,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.requests,&f.births,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
+    particles_tick(&f.emitters,&f.overrides,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.requests,&f.births,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
     fixture_settle(f)
 }
 
 @(private="file")
 fixture_sync :: proc(f:^Emitters_Fixture,id:core.World_Id,time:core.Time,frame:=FRAME) {
-    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.parameters),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{})
+    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{})
 }
 
 @(private="file")
@@ -342,10 +343,12 @@ clocks_keep_a_bounded_list_of_births_without_losing_any :: proc(t:^testing.T) {
 @(test)
 an_instance_shows_its_values_over_those_of_its_effect :: proc(t:^testing.T) {
     override:Particle_Override
-    testing.expect_value(t,override_set(&override,"rate",f32(55)),Error.None)
-    testing.expect_value(t,override_set(&override,"colors.1",[4]f32{1,0,0,1}),Error.None)
-    testing.expect_value(t,override_set(&override,"bursts.2.count",u32(7)),Error.None)
-    testing.expect_value(t,override_set(&override,"size_over_life.values.3",f32(2)),Error.None)
+    testing.expect_value(t,value_set(&override,"rate",f32(55)),Error.None)
+    testing.expect_value(t,value_set(&override,"colors.1",[4]f32{1,0,0,1}),Error.None)
+    testing.expect_value(t,value_set(&override,"bursts.2.count",u32(7)),Error.None)
+    testing.expect_value(t,value_set(&override,"size_over_life.values.3",f32(2)),Error.None)
+    // A parameter of its program is a value too, which the fields leave out.
+    testing.expect_value(t,value_set(&override,"heat",f32(0.8)),Error.None)
     info:=particle_resolve(nil,{},&override)
     testing.expect_value(t,info.rate,f32(55))
     testing.expect_value(t,info.colors[1],[4]f32{1,0,0,1})
@@ -353,56 +356,66 @@ an_instance_shows_its_values_over_those_of_its_effect :: proc(t:^testing.T) {
     testing.expect_value(t,info.bursts[2].count,u32(7))
     testing.expect_value(t,info.size_over_life.values[3],f32(2))
     testing.expect_value(t,info.lifetime,effect.PARTICLE_DEFAULTS.lifetime)
-    rate,error:=override_get(override,"rate",f32)
-    testing.expect(t,error==.None && rate==55)
-    testing.expect_value(t,override_remove(&override,"rate"),Error.None)
-    _,error=override_get(override,"rate",f32)
-    testing.expect_value(t,error,Error.Missing_Override)
-    // A hash of a path the effect does not have is left out.
-    override.names[override.count]=base.name_hash("not_a_field")
-    override.count+=1
-    testing.expect_value(t,particle_resolve(nil,{},&override).rate,effect.PARTICLE_DEFAULTS.rate)
     checked:effect.Particle_Info
-    testing.expect_value(t,particle_resolve_checked(nil,{},&override,&checked),Error.Unknown_Field)
+    testing.expect_value(t,particle_resolve_checked(nil,{},&override,&checked),Error.None)
+    value_remove(&override,"rate")
+    testing.expect_value(t,override.count,u32(4))
+    testing.expect_value(t,particle_resolve(nil,{},&override).rate,effect.PARTICLE_DEFAULTS.rate)
+    // Without a program, a parameter has nothing to give.
+    program:Program
+    testing.expect(t,particle_program_check(nil,&info,nil,&override,&program)!="")
 }
 
 @(test)
 invalid_instance_values_say_what_to_correct :: proc(t:^testing.T) {
     override:Particle_Override
-    testing.expect_value(t,override_set(&override,"rates",f32(1)),Error.Unknown_Field)
-    testing.expect_value(t,override_set(&override,"rate",u32(1)),Error.Type_Mismatch)
-    testing.expect_value(t,override_set(&override,"rate",f32(-1)),Error.Invalid_Value)
-    testing.expect_value(t,override_set(&override,"size_over_life.times.1",f32(2)),Error.Invalid_Value)
-    testing.expect_value(t,override_set(&override,"material",base.Asset_Id{1,2}),Error.Effect_Field)
-    testing.expect_value(t,override_set(&override,"render",effect.Particle_Render.Mesh),Error.None)
+    long:[effect.PARTICLE_NAME_BYTES]u8
+    for &c in long {c='a'}
+    testing.expect_value(t,value_set(&override,"",f32(1)),Error.Unknown_Field)
+    testing.expect_value(t,value_set(&override,string(long[:]),f32(1)),Error.Unknown_Field)
+    testing.expect_value(t,value_set(&override,"rate",u32(1)),Error.Type_Mismatch)
+    testing.expect_value(t,value_set(&override,"heat","hot"),Error.Type_Mismatch)
+    testing.expect_value(t,value_set(&override,"heat",[5]f32{}),Error.Type_Mismatch)
+    testing.expect_value(t,value_set(&override,"heat",[2]f32{1,math.nan_f32()}),Error.Invalid_Value)
+    testing.expect_value(t,value_set(&override,"rate",f32(-1)),Error.Invalid_Value)
+    testing.expect_value(t,value_set(&override,"rate",math.inf_f32(1)),Error.Invalid_Value)
+    testing.expect_value(t,value_set(&override,"size_over_life.times.1",f32(2)),Error.Invalid_Value)
+    testing.expect_value(t,value_set(&override,"material",base.Asset_Id{1,2}),Error.Effect_Field)
+    testing.expect_value(t,override.count,u32(0))
+    testing.expect_value(t,value_set(&override,"render",effect.Particle_Render.Mesh),Error.None)
     for path in ([?]string{"drag","shell","soft","stretch","bounce","friction","noise","gravity","intensity","inherit_velocity","duration","rate","noise_speed","collision_life","noise_frequency"}) {
-        testing.expect_value(t,override_set(&override,path,f32(0.5)),Error.None)
+        testing.expect_value(t,value_set(&override,path,f32(0.5)),Error.None)
     }
-    testing.expect_value(t,override_set(&override,"attractor_strength",f32(1)),Error.Override_Capacity)
+    testing.expect_value(t,value_set(&override,"attractor_strength",f32(1)),Error.Override_Capacity)
+    testing.expect_value(t,value_set(&override,"heat",f32(1)),Error.Override_Capacity)
     testing.expect(t,len(error_message(.Override_Capacity))>0)
+    // A hostile row: a count past the room is refused, not read past.
+    override.count=PARTICLE_OVERRIDE_CAPACITY+3
+    testing.expect_value(t,value_set(&override,"rate",f32(1)),Error.Invalid_Value)
 }
 
+// The parameters an instance gives come back as its program declares them:
+// numbers of their kind, or a texture.
 @(test)
-program_parameters_of_an_instance_keep_their_kind :: proc(t:^testing.T) {
-    parameters:Particle_Parameters
-    testing.expect_value(t,parameter_set(&parameters,"speed",f32(3)),Error.None)
-    testing.expect_value(t,parameter_set(&parameters,"tint",[3]f32{1,0.5,0}),Error.None)
-    testing.expect_value(t,parameter_set(&parameters,"count",u32(4)),Error.None)
-    testing.expect_value(t,parameter_set(&parameters,"pattern",base.Asset_Id{7,8}),Error.None)
-    testing.expect_value(t,parameter_set(&parameters,"speed",f32(5)),Error.None)
-    testing.expect_value(t,parameters.count,u32(4))
-    speed,error:=parameter_get(parameters,"speed")
-    testing.expect(t,error==.None && speed.kind==.Float && speed.value[0]==5 && speed.components==1)
-    tint,_:=parameter_get(parameters,"tint")
-    testing.expect(t,tint.components==3 && tint.value[1]==0.5)
-    pattern,_:=parameter_get(parameters,"pattern")
-    testing.expect(t,pattern.kind==.Texture && pattern.texture==base.Asset_Id{7,8})
-    parameter_remove(&parameters,"tint")
-    _,error=parameter_get(parameters,"tint")
-    testing.expect_value(t,error,Error.Missing_Override)
-    testing.expect_value(t,parameter_set(&parameters,"",f32(1)),Error.Invalid_Parameter)
-    for name in ([?]string{"a","b","c","d","e"}) {testing.expect_value(t,parameter_set(&parameters,name,f32(1)),Error.None)}
-    testing.expect_value(t,parameter_set(&parameters,"overflow",f32(1)),Error.Parameter_Capacity)
+program_parameters_of_an_instance_come_back_as_their_program_declares_them :: proc(t:^testing.T) {
+    override:Particle_Override
+    testing.expect_value(t,value_set(&override,"speed",f32(3)),Error.None)
+    testing.expect_value(t,value_set(&override,"tint",[3]f32{1,0.5,0}),Error.None)
+    testing.expect_value(t,value_set(&override,"count",u32(4)),Error.None)
+    testing.expect_value(t,value_set(&override,"pattern",base.Asset_Id{7,8}),Error.None)
+    testing.expect_value(t,value_set(&override,"speed",f32(5)),Error.None)
+    testing.expect_value(t,override.count,u32(4))
+    declared:=[?]erender.Program_Parameter{{name="speed",kind=.Float,components=1},{name="tint",kind=.Float,components=3},{name="count",kind=.Uint,components=1},{name="pattern",kind=.Texture,components=1}}
+    program:=erender.Program{name="Test",parameters=declared[:]}
+    Want :: struct {name:string,kind:asset.Parameter_Kind,components:u8,value:[4]f64,texture:base.Asset_Id}
+    for want in ([?]Want{{"speed",.Float,1,{5,0,0,0},{}},{"tint",.Float,3,{1,0.5,0,0},{}},{"count",.Uint,1,{4,0,0,0},{}},{"pattern",.Texture,1,{},{7,8}}}) {
+        at:=-1
+        for name,i in override.names[:override.count] {if name==base.name_hash(want.name) {at=i}}
+        parameter,ok:=value_parameter(&program,override.names[max(at,0)],override.values[max(at,0)])
+        testing.expectf(t,at>=0 && ok && base.text_get(parameter.name[:])==want.name && parameter.kind==want.kind && parameter.components==want.components && parameter.value==want.value && parameter.texture==want.texture,"%s comes back as %v",want.name,parameter)
+    }
+    _,undeclared:=value_parameter(&program,base.name_hash("heat"),{})
+    testing.expect(t,!undeclared)
 }
 
 @(test)
@@ -469,9 +482,9 @@ a_sorted_effect_past_its_room_is_a_problem :: proc(t:^testing.T) {
     for c in cases {
         e:=fixture_emitter(&f,PARTICLE_EMITTER_DEFAULT)
         override:Particle_Override
-        testing.expect_value(t,override_set(&override,"render",c.render),Error.None)
-        testing.expect_value(t,override_set(&override,"sort",c.sort),Error.None)
-        testing.expect_value(t,override_set(&override,"max_particles",c.max_particles),Error.None)
+        testing.expect_value(t,value_set(&override,"render",c.render),Error.None)
+        testing.expect_value(t,value_set(&override,"sort",c.sort),Error.None)
+        testing.expect_value(t,value_set(&override,"max_particles",c.max_particles),Error.None)
         core.add(&f.overrides,e,override)
         fixture_settle(&f)
         fixture_sync(&f,{0,1},TICK)
@@ -485,25 +498,23 @@ requests_change_the_values_of_an_instance :: proc(t:^testing.T) {
     if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     e:=fixture_emitter(&f,PARTICLE_EMITTER_DEFAULT)
-    testing.expect_value(t,request_override(&f.requests,e,"rate",f32(80)),Error.None)
-    testing.expect_value(t,request_override(&f.requests,e,"rate",f32(-1)),Error.Invalid_Value)
-    testing.expect_value(t,request_parameter(&f.requests,e,"speed",f32(4)),Error.None)
+    testing.expect_value(t,request_value(&f.requests,e,"rate",f32(80)),Error.None)
+    testing.expect_value(t,request_value(&f.requests,e,"rate",f32(-1)),Error.Invalid_Value)
+    testing.expect_value(t,request_value(&f.requests,e,"speed",f32(4)),Error.None)
     fixture_tick(&f,TICK)
     override,has:=core.get(&f.overrides,e)
-    testing.expect(t,has && override.count==1)
-    rate,_:=override_get(override,"rate",f32)
-    testing.expect_value(t,rate,f32(80))
-    given,has_given:=core.get(&f.parameters,e)
-    testing.expect(t,has_given && given.count==1)
+    testing.expect(t,has && override.count==2)
     // The clock follows the value of the instance from the next step.
     fixture_tick(&f,TICK)
     testing.expect_value(t,clock_find(&f.clocks,e).emission.rate,f32(80))
-    request_override_clear(&f.requests,e)
-    request_parameter_clear(&f.requests,e)
+    request_value_remove(&f.requests,e,"speed")
     fixture_tick(&f,TICK)
     override,_=core.get(&f.overrides,e)
-    given,_=core.get(&f.parameters,e)
-    testing.expect(t,override.count==0 && given.count==0)
+    testing.expect_value(t,override.count,u32(1))
+    request_values_clear(&f.requests,e)
+    fixture_tick(&f,TICK)
+    override,_=core.get(&f.overrides,e)
+    testing.expect_value(t,override.count,u32(0))
 }
 
 // The clocks of the editor's preview go with the frames and do not reach a

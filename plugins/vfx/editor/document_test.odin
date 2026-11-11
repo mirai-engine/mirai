@@ -173,15 +173,15 @@ the_preview_of_a_document_shows_what_its_rows_hold_and_frames_where_its_particle
     held:=file
     held.info.colors[1]={1,0,0,1}
     held.info.material={3,4}
-    override,given:=preview_values(&held,&file)
-    testing.expect_value(t,given.count,u32(0))
+    override:=preview_values(&held,&file)
+    testing.expect_value(t,override.count,u32(1))
     resolved:=vfx.particle_resolve(nil,{},&override)
     testing.expect_value(t,resolved.colors[1],[4]f32{1,0,0,1})
     testing.expect_value(t,resolved.material,base.Asset_Id{})
     tint:=gpu.Program_Parameter{name="tint",kind=.Float,components=1,max=1}
     effect_parameter_put(&held,&tint,{0.5,0,0,0},{})
-    _,given=preview_values(&held,&file)
-    testing.expect(t,given.count==1 && base.text_get(given.values[0].name[:])=="tint")
+    override=preview_values(&held,&file)
+    testing.expect(t,override.count==2 && override.names[1]==base.name_hash("tint"))
     // Up from a cone, then down where gravity pulls: the box holds both.
     info.speed,info.gravity={2,2},1
     low,high:=effect_reach(nil,&info)

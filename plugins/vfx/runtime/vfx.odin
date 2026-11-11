@@ -11,8 +11,8 @@ import "plugins:vfx/runtime/effect"
 
 // Particles, the plugin vfx. A Particle_Emitter at an entity shows a particle
 // effect, an asset (.particle) as a material is: the entities that show it name it, and
-// a Particle_Override (values of the effect) and Particle_Parameters (of its
-// Vfx program) give one of them values of its own. Effects of several
+// a Particle_Override (values of the effect and of its Vfx program) gives one
+// of them values of its own. Effects of several
 // emitters are prefabs, spawned with scene.spawn.
 //
 // The clock of each emitter is part of the world (Particle_Clocks): where it
@@ -61,7 +61,7 @@ PARTICLE_SETTINGS_DEFAULT :: Particle_Settings{capacity=CAPACITY}
 
 // What the renderer was told of an emitter.
 Emitter_Shown :: struct {
-    resolved:u64,                // what it was resolved from: the asset, its revision, the values and parameters of the entity, the shaders
+    resolved:u64,                // what it was resolved from: the asset, its revision, the values of the entity, the shaders
     info:effect.Particle_Info,    // the effect with the values of the entity over it
     sub:effect.Particle_Info,     // the effect its particles start in another emitter
     has_sub:bool,
@@ -132,7 +132,7 @@ particle_sync_free :: proc(sync:^Particle_Sync) {
 // what each starts and the entities of the effects that are done.
 @(step="fixed",loops="game editor",stage="end")
 particles_tick :: proc(
-    emitters:^core.Table(Particle_Emitter),overrides:^core.Table(Particle_Override),parameters:^core.Table(Particle_Parameters),
+    emitters:^core.Table(Particle_Emitter),overrides:^core.Table(Particle_Override),
     worlds:core.Read(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),entities:core.Commands,
     clocks:^Particle_Clocks,requests:^Particle_Requests,births:^core.Births,listeners:core.Read(Particle_Channel),
     time:core.Time,frame:core.Frame_Time,assets:^host.Assets,problems:^core.Problems,
@@ -148,7 +148,7 @@ particles_tick :: proc(
     core.entity_map_prune(&clocks.clocks,rows,core.changes(rows,&clocks.seen_emitters))
     core.entity_map_prune(&clocks.clocks,worlds,core.changes(worlds,&clocks.seen_worlds))
     dt:=time.playing?time.dt:max(frame.dt,0)
-    requests_apply(requests,emitters,overrides,parameters,clocks,problems)
+    requests_apply(requests,emitters,overrides,clocks,problems)
     a:=assets
     done:[dynamic]core.Entity
     done.allocator=context.temp_allocator
@@ -180,7 +180,7 @@ particles_tick :: proc(
 // not start yet, and where they are.
 @(step="render",loops="game editor",after="render_sync")
 particles_sync :: proc(
-    emitters:core.Read(Particle_Emitter),overrides:core.Read(Particle_Override),parameters:core.Read(Particle_Parameters),
+    emitters:core.Read(Particle_Emitter),overrides:core.Read(Particle_Override),
     worlds:core.Read(core.World_Transform),hidden:core.Read(erender.Hidden),parents:core.Read(core.Parent),
     bindings:core.Read(Particle_Bindings),meshes:core.Read(erender.Mesh_Renderer),drawn:core.Ref(erender.Render_Sync),listeners:core.Read(Particle_Channel),grids:core.Read(Particle_Grid),volumes:core.Read(Particle_Volume),textures:core.Read(Particle_World_Texture),
     clocks:core.Ref(Particle_Clocks),settings:core.Ref(Particle_Settings),sync:^Particle_Sync,reports:^Particle_Reports,data:^Particle_Data,watch:^Particle_Data_Watch,read:^Particle_Data_Read,ui_effects:^UI_Particles,ui_requests:core.Ref(gui.UI_Effects),id:core.World_Id,time:core.Time,frame:core.Frame_Time,
@@ -224,9 +224,9 @@ particles_sync :: proc(
         shown:=shown_of(sync,e)
         if shown==nil {continue}
         key:=base.hash_combine(base.hash_combine(emitter.particle[0],emitter.particle[1]),a!=nil?a.revision:0)
-        key=base.hash_combine(base.hash_combine(base.hash_combine(base.hash_combine(key,row_stamp(overrides,e)),row_stamp(parameters,e)),shaders),made)|1
+        key=base.hash_combine(base.hash_combine(base.hash_combine(key,row_stamp(overrides,e)),shaders),made)|1
         if shown.resolved!=key {
-            shown.resolved=shown_resolve(shown,app,emitter.particle,overrides,parameters,e)?key:0
+            shown.resolved=shown_resolve(shown,app,emitter.particle,overrides,e)?key:0
             shown.desc.revision,shown.sub_desc.revision=shown.resolved,shown.resolved
         }
         for info in ([2]^effect.Particle_Info{&shown.info,shown.has_sub?&shown.sub:nil}) {
@@ -363,14 +363,13 @@ births_since :: proc(clock:^Emitter_Clock,started:^u64) -> (spawns:[SPAWNS]Parti
 // GPU is told of them. False without assets, or while the renderer does not
 // have the triangles of its mesh: it is resolved again.
 @(private)
-shown_resolve :: proc(shown:^Emitter_Shown,app:^host.App,particle:base.Asset_Id,overrides:core.Read(Particle_Override),parameters:core.Read(Particle_Parameters),e:core.Entity) -> bool {
+shown_resolve :: proc(shown:^Emitter_Shown,app:^host.App,particle:base.Asset_Id,overrides:core.Read(Particle_Override),e:core.Entity) -> bool {
     a:=app.assets
     override,_:=core.get(overrides,e)
-    given,_:=core.get(parameters,e)
     shown.info=particle_resolve(a,particle,&override)
     shown.sub={}
     shown.has_sub=false
-    problem:=particle_program(a,particle,&shown.info,&given,&shown.program,&shown.needs)
+    problem:=particle_program(a,particle,&shown.info,&override,&shown.program,&shown.needs)
     channel_needs(a,&shown.program,&shown.needs)
     shown.sub_program={}
     if shown.info.trigger!=.None && shown.info.sub_particle!={} {
