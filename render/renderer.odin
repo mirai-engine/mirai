@@ -493,7 +493,7 @@ View_State :: struct {
 	generated:bool, // the frame being recorded generated the image shown before its own (Targets.generated)
 	frames:u64, // it was drawn: the turn of its histories
 	turn:u64,   // frames drawn since its last discontinuity (view_camera_cut): the turn of its jitter and of the pixels that share a ray, so what follows a cut does not depend on what was drawn before it
-	glass_dispatch,glass_seen:rhi.Buffer, // Gpu_Glass_Dispatch of the frame being recorded, and whether the glass passes ran in the one before
+	glass_dispatch:rhi.Buffer, // Gpu_Glass_Dispatch of the frame being recorded
 	dispatch_start:rhi.Buffer, // {0,1,1,0}: copied over an indirect dispatch whose groups in x the GPU counts, to start it each frame
 	prev_depth_plane:Vec4,
 	texture:Texture_Handle, // of a view drawn into a texture
@@ -693,7 +693,6 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.stats_buffer = rhi.buffer_create(device, {size = size_of(Gpu_Cull_Stats), usage = {.Storage}, name = "cull stats"})
 	r.scratch_buffer = rhi.buffer_create(device, {size = 256, usage = {.Storage}, name = "scratch"})
 	r.glass_dispatch = rhi.buffer_create(device, {size = size_of(Gpu_Glass_Dispatch), usage = {.Storage, .Indirect}, name = "glass dispatch"})
-	r.glass_seen = rhi.buffer_create(device, {size = 16, usage = {.Storage}, name = "glass seen"})
 	r.dispatch_start = rhi.buffer_create(device, {size = 16, usage = {.Storage}, name = "dispatch start"})
 	r.light_changes = rhi.buffer_create(device, {size = LIGHT_CHANGES_MAX * size_of(Vec4), usage = {.Storage}, name = "light changes"})
 	feedback := textures_feedback_reserve(r, rhi.TEXTURE_TABLE_FIRST)
@@ -707,7 +706,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	for &b in r.ui_shape_buffers {b=rhi.buffer_create(device,{size=u64(r.ui_shape_capacity*size_of(Ui_Shape)),usage={.Storage},memory=.Upload,name="ui shapes"})}
 	r.debug_capacity = desc.debug_vertex_capacity if desc.debug_vertex_capacity > 0 else DEBUG_VERTEX_CAPACITY
 	for &b in r.debug_buffers {b = rhi.buffer_create(device, {size = u64(r.debug_capacity * size_of(Debug_Vertex)), usage = {.Storage}, memory = .Upload, name = "debug lines"})}
-	if r.ui_shape_buffers[0]==0 || r.ui_shape_buffers[1]==0 || r.ui_buffers[0] == 0 || r.ui_buffers[1] == 0 || r.debug_buffers[0] == 0 || r.debug_buffers[1] == 0 || r.linear_sampler == 0 || r.point_sampler == 0 || r.material_sampler == 0 || r.dummy_buffer == 0 || r.dummy_texture == 0 || r.dummy_layers == 0 || r.stats_buffer == 0 || r.scratch_buffer == 0 || r.glass_dispatch == 0 || r.glass_seen == 0 || r.dispatch_start == 0 || r.light_changes == 0 || !feedback {
+	if r.ui_shape_buffers[0]==0 || r.ui_shape_buffers[1]==0 || r.ui_buffers[0] == 0 || r.ui_buffers[1] == 0 || r.debug_buffers[0] == 0 || r.debug_buffers[1] == 0 || r.linear_sampler == 0 || r.point_sampler == 0 || r.material_sampler == 0 || r.dummy_buffer == 0 || r.dummy_texture == 0 || r.dummy_layers == 0 || r.stats_buffer == 0 || r.scratch_buffer == 0 || r.glass_dispatch == 0 || r.dispatch_start == 0 || r.light_changes == 0 || !feedback {
 		set_error(r, "renderer resources: %s", rhi.device_error(device))
 		return false
 	}
@@ -778,7 +777,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	for b in r.debug_buffers {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.font_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.stats_readback {if b != 0 {rhi.buffer_destroy(d, b)}}
-	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.glass_seen, r.dispatch_start, r.dummy_buffer}) {if b != 0 {rhi.buffer_destroy(d, b)}}
+	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer}) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	if r.light_changes != 0 {rhi.buffer_destroy(d, r.light_changes)}
 	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
 	air_destroy(r)

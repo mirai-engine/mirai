@@ -1012,7 +1012,6 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	glass_groups := [4]u32{groups(t.width, 8), groups(t.height, 8), groups(t.half_width, 8), groups(t.half_height, 8)}
 	rhi.cmd_timestamp(cmd, "cull")
 	rhi.cmd_fill_buffer(cmd, r.stats_buffer, 0, size_of(Gpu_Cull_Stats), 0)
-	rhi.cmd_copy_buffer(cmd, p.view.glass_dispatch, u64(offset_of(Gpu_Glass_Dispatch, seen)), p.view.glass_seen, 0, size_of(u32))
 	rhi.cmd_fill_buffer(cmd, p.view.glass_dispatch, 0, size_of(Gpu_Glass_Dispatch), 0)
 	if !cull_reset(r, cmd) {return false}
 	if threads > 0 {

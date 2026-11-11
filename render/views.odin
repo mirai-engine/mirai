@@ -9,7 +9,6 @@ view_state_destroy :: proc(r:^Renderer,view:^View_State) {
     view_resources_free(r,view)
     extension_textures_release(r,view,all=true)
     if view.glass_dispatch!=0 {rhi.buffer_destroy(r.device,view.glass_dispatch)}
-    if view.glass_seen!=0 {rhi.buffer_destroy(r.device,view.glass_seen)}
     if view.wide!=0 {rhi.texture_destroy(r.device,view.wide)}
     view_exposure_release(r,view)
     view^={}
@@ -225,8 +224,7 @@ destroy_view_targets :: proc(r:^Renderer) {
 @(private)
 view_glass_buffers :: proc(r:^Renderer,view:^View_State) -> bool {
     if view.glass_dispatch==0 {view.glass_dispatch=rhi.buffer_create(r.device,{size=size_of(Gpu_Glass_Dispatch),usage={.Storage,.Indirect},name="glass dispatch"})}
-    if view.glass_seen==0 {view.glass_seen=rhi.buffer_create(r.device,{size=16,usage={.Storage},name="glass seen"})}
-    return view.glass_dispatch!=0 && view.glass_seen!=0
+    return view.glass_dispatch!=0
 }
 
 // The views of the window are those that name no texture: one is drawn with
