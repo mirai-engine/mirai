@@ -126,13 +126,12 @@ copy_marked :: proc(info:^World_Info,dst,src:rawptr,marks:[]Copy_Mark) -> bool {
     for &s,k in info.storages {
         if s.place!=.World || s.local {continue}
         a,b:=storage_of(dst,&s),storage_of(src,&s)
-        marked:=changed && from_revisions!=nil
-        if marked && !storage_changed(&marks[first+k],from_revisions[k]) {
+        if changed && !storage_changed(&marks[first+k],from_revisions[k]) {
             when CHECK_WRITES {if s.procs.copy==nil && s.procs.copy_kept==nil {storage_check(a,b,s.info,s.name)}}
             continue
         }
         if !storage_copy(&s,a,b,changed) {return false}
-        if marked {storage_copied(&marks[first+k],&to_revisions[k],from_revisions[k])}
+        if changed {storage_copied(&marks[first+k],&to_revisions[k],from_revisions[k])}
     }
     if !changed {revisions_copied(to_revisions,from_revisions)}
     if found.id>=0 {ids_moved(to,ids_of(info,dst,found.id),synced)}
@@ -148,7 +147,7 @@ table_kept :: #force_inline proc "contextless" (t:^Raw_Table,mark:Copy_Mark) -> 
 
 @(private="file")
 storage_kept :: #force_inline proc "contextless" (revisions:[]u64,k:int,mark:Copy_Mark) -> bool {
-    return revisions!=nil && mark.valid && mark.version==revisions[k]
+    return mark.valid && mark.version==revisions[k]
 }
 
 // Makes the World dst what src holds, for a src that world_copy_changed
@@ -157,12 +156,13 @@ storage_kept :: #force_inline proc "contextless" (revisions:[]u64,k:int,mark:Cop
 // move since, stay as they are, and their readers see no change. A table of
 // flat values that still holds the rows of the copy, on and off, takes back
 // in place the rows that differ (raw_restore): its readers see those rows
-// alone. The other tables and storages are copied into stage, a third World,
-// and then traded with dst without allocating, and their readers read them
-// whole. All or nothing: false without memory, with dst as it was. With
-// fewer marks than copy_marks_count all of it is copied and traded. mixed:
-// stage is left with parts of several Worlds, to stage another copy in or
-// to clear, never to run; false after all of it was traded.
+// alone; a storage of plain data takes back its bytes. The other tables and
+// storages are copied into stage, a third World, and then traded with dst
+// without allocating, and their readers read them whole. All or nothing:
+// false without memory, with dst as it was. With fewer marks than
+// copy_marks_count all of it is copied and traded. mixed: stage is left with
+// parts of several Worlds, to stage another copy in or to clear, never to
+// run; false after all of it was traded.
 world_restore :: proc(info:^World_Info,dst,src,stage:rawptr,marks:[]Copy_Mark) -> (ok,mixed:bool) {
     if dst==src {return true,false}
     if len(marks)<copy_marks_count(info) {
@@ -183,7 +183,7 @@ world_restore :: proc(info:^World_Info,dst,src,stage:rawptr,marks:[]Copy_Mark) -
         if !raw_copy(table_of(stage,&t),table_of(src,&t),t.info,t.flat) {return false,true}
     }
     for &s,k in info.storages {
-        if s.place!=.World || s.local || storage_kept(revisions,k,marks[first+k]) {continue}
+        if s.place!=.World || s.local || storage_kept(revisions,k,marks[first+k]) || s.flat && s.procs=={} {continue}
         if !storage_copy(&s,storage_of(stage,&s),storage_of(src,&s),false) {return false,true}
     }
     slice.ptr_swap_non_overlapping(to,held,size_of(Entities))
@@ -199,11 +199,9 @@ world_restore :: proc(info:^World_Info,dst,src,stage:rawptr,marks:[]Copy_Mark) -
     for &s,k in info.storages {
         if s.place!=.World || s.local || storage_kept(revisions,k,marks[first+k]) {continue}
         x,y:=storage_of(dst,&s),storage_of(stage,&s)
-        if s.procs.swap!=nil {s.procs.swap(x,y)} else {slice.ptr_swap_non_overlapping(x,y,s.info.size)}
-        if revisions!=nil {
-            revision:=max(revisions[k],staged[k])+1
-            revisions[k],staged[k]=revision,revision
-        }
+        if s.flat && s.procs=={} {mem.copy(x,storage_of(src,&s),s.info.size)} else if s.procs.swap!=nil {s.procs.swap(x,y)} else {slice.ptr_swap_non_overlapping(x,y,s.info.size)}
+        revisions[k]=max(revisions[k],staged[k])+1
+        staged[k]=revisions[k]
     }
     if found.id>=0 {
         ids_moved(to,ids_of(info,dst,found.id),synced)
