@@ -33,7 +33,7 @@ import "mirai:std/serial"
 // and the game/ of the project go into World and Shared; the editor and the
 // editor/ of plugins and of the project into Editor_World.
 
-CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw,mind,act,test_world,editor"
+CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,keep,persist,single,far,derived,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw,mind,act,test_world,editor"
 
 PHASES :: [7]string{"input","fixed","frame","late","ui","render","release"}
 UI_PHASE :: 4 // where the interfaces are built: the engine and the editor draw in it, a game shows .ui documents
@@ -2425,20 +2425,25 @@ of_game :: proc(t:^Type) -> bool {
 
 // The row of info.tables of a table of a type, after type_procs_write: name,
 // what the scene file and the API call it; offset, where it is in the struct
-// of its place.
+// of its place. named: its fields go by name, as those of a test world do:
+// the file git keeps for core, written by a build of before, still compiles
+// when core adds a field; the world of a game is refused until the generator
+// writes it.
 @(private="file")
-table_row :: proc(w:^strings.Builder,index:int,t:^Type,name,offset:string,place:core.Place,game:bool,locks:string) {
+table_row :: proc(w:^strings.Builder,index:int,t:^Type,name,offset:string,place:core.Place,game:bool,locks:string,named:=false) {
     type:=type_text(t)
     fields:=len(t.fields)>0?fmt.tprintf("fields_%s[:]",t.field):"nil"
     base:=t.pkg!=nil && t.pkg.path=="mirai:core" && t.file!=nil && !strings.has_suffix(t.file.fullpath,"_test.odin")
-    fmt.sbprintf(w,"    tables[%d]={{%q,%q,typeid_of(%s),type_info_of(%s),%s,.%v,%v,.%v,%v,%s,%q,%s,%v,%v,%v,%s,false}}\n",index,name,t.pkg!=nil?t.pkg.name:"",type,type,offset,place,t.shared,t.replication,game || of_game(t),t.default,t.description,fields,t.single,t.far,base,locks)
+    NAMED :: "    tables[%d]={{name=%q,library=%q,type=typeid_of(%s),info=type_info_of(%s),offset=%s,place=.%v,shared=%v,replicated=.%v,game=%v,default=%s,description=%q,fields=%s,single=%v,far=%v,derived=%v,base=%v,locks=%s}}\n"
+    fmt.sbprintf(w,named?NAMED:"    tables[%d]={{%q,%q,typeid_of(%s),type_info_of(%s),%s,.%v,%v,.%v,%v,%s,%q,%s,%v,%v,%v,%v,%s,false}}\n",index,name,t.pkg!=nil?t.pkg.name:"",type,type,offset,place,t.shared,t.replication,game || of_game(t),t.default,t.description,fields,t.single,t.far,t.derived,base,locks)
 }
 
 // The row of info.storages of a storage of a type, as table_row.
 @(private="file")
-storage_row :: proc(w:^strings.Builder,index:int,t:^Type,name,offset:string,place:core.Place,game:bool) {
+storage_row :: proc(w:^strings.Builder,index:int,t:^Type,name,offset:string,place:core.Place,game:bool,named:=false) {
     type:=type_text(t)
-    fmt.sbprintf(w,"    storages[%d]={{%q,%q,typeid_of(%s),type_info_of(%s),%s,.%v,.%v,%s,%v,%s,%v,%v,%q,%v,%v,{{%s}},false}}\n",index,name,t.pkg!=nil?t.pkg.name:"",type,type,offset,place,t.setting,t.default,t.by_world,t.for_device,t.persist,t.keep,t.pkg!=nil?project.import_plugin(t.pkg.path):"",game || of_game(t),t.copy=="false",t.procs)
+    NAMED :: "    storages[%d]={{name=%q,library=%q,type=typeid_of(%s),info=type_info_of(%s),offset=%s,place=.%v,setting=.%v,default=%s,by_world=%v,for_device=%s,persist=%v,keep=%v,plugin=%q,game=%v,local=%v,procs={{%s}}}}\n"
+    fmt.sbprintf(w,named?NAMED:"    storages[%d]={{%q,%q,typeid_of(%s),type_info_of(%s),%s,.%v,.%v,%s,%v,%s,%v,%v,%q,%v,%v,{{%s}},false}}\n",index,name,t.pkg!=nil?t.pkg.name:"",type,type,offset,place,t.setting,t.default,t.by_world,t.for_device,t.persist,t.keep,t.pkg!=nil?project.import_plugin(t.pkg.path):"",game || of_game(t),t.copy=="false",t.procs)
 }
 
 // A core.Lock: a row of the table at field own of a struct owns that of the
@@ -2800,7 +2805,7 @@ test_worlds_text :: proc(g:^Generator,pkg,core_package:^Package,worlds:[]^Test_W
         fmt.sbprint(w,"    if tables_error!=nil || storages_error!=nil {\n        delete(tables);delete(storages)\n        return\n    }\n")
         for f,i in tw.fields {
             if i>=tw.tables {
-                storage_row(w,i-tw.tables,f.type,f.name,f.offset,f.place,f.game)
+                storage_row(w,i-tw.tables,f.type,f.name,f.offset,f.place,f.game,true)
                 continue
             }
             locks:="nil"
@@ -2818,7 +2823,7 @@ test_worlds_text :: proc(g:^Generator,pkg,core_package:^Package,worlds:[]^Test_W
                     fmt.sbprintf(w,"    %s[%d]={{int(%s)-int(%s),%d,test_world_lock_names_%s[:],%q}}\n",locks,li,target.offset,f.offset,holder+1,id,target.name)
                 }
             }
-            table_row(w,i,f.type,f.name,f.offset,f.place,f.game,locks)
+            table_row(w,i,f.type,f.name,f.offset,f.place,f.game,locks,true)
         }
         for of in ([2]string{"size_of","align_of"}) {
             fmt.sbprintf(w,"    info.%ss={{",of[:len(of)-3])
@@ -2884,7 +2889,7 @@ test_world_destroy :: proc(w:^$W,allocator:=context.allocator) {
 
 test_world_info :: proc(w:^$W) -> ^C.World_Info {return &w.made_of}
 
-test_world_ref :: proc(w:^$W) -> C.World_Ref {return {w,&w.made_of,.World}}
+test_world_ref :: proc(w:^$W) -> C.World_Ref {return {data=w,info=&w.made_of,place=.World}}
 
 // The settle of a world test_world_init made: how many tables it came to.
 test_world_settle :: proc(w:^$W) -> int {return C.settle(&w.made_of,w,nil)}

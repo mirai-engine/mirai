@@ -213,9 +213,7 @@ plugin_flags :: proc(p:^project.Project,dev:bool,allocator:=context.allocator) -
 	flags:=make([dynamic]string,allocator)
 	append(&flags,"-build-mode:dll",fmt.aprintf("-custom-attribute:%s",CUSTOM_ATTRIBUTES,allocator=allocator))
 	library_optimization_append(&flags,p,dev)
-	for &define in p.manifest.build.defines {
-		if text:=base.text_get(define[:]);text!="" {append(&flags,fmt.aprintf("-define:%s",text,allocator=allocator))}
-	}
+	for define in manifest_defines(&p.manifest,context.temp_allocator) {append(&flags,fmt.aprintf("-define:%s",define,allocator=allocator))}
 	platform_flags(p.engine_root,&flags,false,allocator)
 	environment_flags(&flags,allocator)
 	return flags[:]
@@ -296,9 +294,9 @@ plugin_link_file :: proc(lib:^Plugin_Library) -> string {
 // STAGE_COLLECTION, through which its packages import each other, while the
 // others are their declarations. The errors say what keeps a source from being declared.
 @(private)
-plugin_library_prepare :: proc(lib:^Plugin_Library) -> []string {
+plugin_library_prepare :: proc(lib:^Plugin_Library,defines:[]string) -> []string {
 	_,decl:=plugin_folder_of(lib)
-	errors,_:=declare({root=lib.root,packages=lib.packages,binary=plugin_collection(lib),library=lib.linked,stage=lib.stage,decl=decl,staged=STAGE_COLLECTION,names=true,definition=plugin_definition(lib)})
+	errors,_:=declare({root=lib.root,packages=lib.packages,binary=plugin_collection(lib),library=lib.linked,stage=lib.stage,decl=decl,staged=STAGE_COLLECTION,names=true,definition=plugin_definition(lib),defines=defines})
 	if len(errors)>0 {return errors}
 	entry_write(lib.stage,PLUGIN_ENTRY,entry_imports(STAGE_COLLECTION,lib.packages)[:])
 	return nil
@@ -338,7 +336,7 @@ plugins_current :: proc(p:^project.Project,compiler:string,dev:bool,engine:Engin
 	libraries:=plugin_libraries(p,dev,context.temp_allocator)
 	if len(libraries)==0 {return true}
 	flags:=plugin_flags(p,dev,context.temp_allocator)
-	paths:=engine_paths(p.engine_root,engine,context.temp_allocator)
+	paths:=project_engine(p,engine,context.temp_allocator)
 	declared:=declared_read(paths.declared,context.temp_allocator)
 	for &lib,i in libraries {
 		saved,_,stamped:=stamp_read(lib.stamp)

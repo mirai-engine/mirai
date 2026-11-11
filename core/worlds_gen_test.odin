@@ -46,7 +46,7 @@ test_world_destroy :: proc(w:^$W,allocator:=context.allocator) {
 
 test_world_info :: proc(w:^$W) -> ^World_Info {return &w.made_of}
 
-test_world_ref :: proc(w:^$W) -> World_Ref {return {w,&w.made_of,.World}}
+test_world_ref :: proc(w:^$W) -> World_Ref {return {data=w,info=&w.made_of,place=.World}}
 
 // The settle of a world test_world_init made: how many tables it came to.
 test_world_settle :: proc(w:^$W) -> int {return settle(&w.made_of,w,nil)}
@@ -74,8 +74,8 @@ test_info_made_world :: proc(allocator:=context.allocator) -> (info:World_Info,o
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Transform","core",typeid_of(Transform),type_info_of(Transform),offset_of(Made_World,transforms),.World,true,.None,false,default_test_world_transform,"Position, rotation and scale relative to the parent entity.",nil,false,false,true,nil,false}
-    tables[1]={"Made","core",typeid_of(Made),type_info_of(Made),offset_of(Made_World,made),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
+    tables[0]={name="Transform",library="core",type=typeid_of(Transform),info=type_info_of(Transform),offset=offset_of(Made_World,transforms),place=.World,shared=true,replicated=.None,game=false,default=default_test_world_transform,description="Position, rotation and scale relative to the parent entity.",fields=nil,single=false,far=false,derived=false,base=true,locks=nil}
+    tables[1]={name="Made",library="core",type=typeid_of(Made),info=type_info_of(Made),offset=offset_of(Made_World,made),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
     info.sizes={.World=size_of(Made_World),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(Made_World),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(Made_World,entities),offset_of(Made_World,storage_revisions)
@@ -93,7 +93,7 @@ test_info_paced_world :: proc(allocator:=context.allocator) -> (info:World_Info,
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Own_Pace","core",typeid_of(Own_Pace),type_info_of(Own_Pace),offset_of(Paced_World,paces),.World,false,.All,false,default_test_world_own_pace,"This entity keeps its own pace while the clock of the world runs slower or faster: its locomotion and its animation run rate times as fast as the frames, whatever the time scale.",fields_test_world_own_pace[:],false,false,true,nil,false}
+    tables[0]={name="Own_Pace",library="core",type=typeid_of(Own_Pace),info=type_info_of(Own_Pace),offset=offset_of(Paced_World,paces),place=.World,shared=false,replicated=.All,game=false,default=default_test_world_own_pace,description="This entity keeps its own pace while the clock of the world runs slower or faster: its locomotion and its animation run rate times as fast as the frames, whatever the time scale.",fields=fields_test_world_own_pace[:],single=false,far=false,derived=false,base=true,locks=nil}
     info.sizes={.World=size_of(Paced_World),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(Paced_World),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(Paced_World,entities),offset_of(Paced_World,storage_revisions)
@@ -111,10 +111,10 @@ test_info_world_of_single :: proc(allocator:=context.allocator) -> (info:World_I
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Disabled","core",typeid_of(Disabled),type_info_of(Disabled),offset_of(World_Of_Single,disabled),.World,true,.None,false,nil,"Turns this entity and everything under it off: their components keep their values and no system sees them until it is removed.",nil,false,false,true,nil,false}
-    tables[1]={"Parent","core",typeid_of(Parent),type_info_of(Parent),offset_of(World_Of_Single,parents),.World,false,.None,false,nil,"The parent entity whose transform this entity follows.",fields_test_world_parent[:],false,false,true,nil,false}
-    tables[2]={"Single_Probe","core",typeid_of(Single_Probe),type_info_of(Single_Probe),offset_of(World_Of_Single,probes),.World,false,.None,false,nil,"",nil,true,false,false,nil,false}
-    storages[0]={"Hierarchy","core",typeid_of(Hierarchy),type_info_of(Hierarchy),offset_of(World_Of_Single,hierarchy),.World,.None,nil,false,nil,false,false,"",false,false,{reset=reset_test_world_hierarchy},false}
+    tables[0]={name="Disabled",library="core",type=typeid_of(Disabled),info=type_info_of(Disabled),offset=offset_of(World_Of_Single,disabled),place=.World,shared=true,replicated=.None,game=false,default=nil,description="Turns this entity and everything under it off: their components keep their values and no system sees them until it is removed.",fields=nil,single=false,far=false,derived=false,base=true,locks=nil}
+    tables[1]={name="Parent",library="core",type=typeid_of(Parent),info=type_info_of(Parent),offset=offset_of(World_Of_Single,parents),place=.World,shared=false,replicated=.None,game=false,default=nil,description="The parent entity whose transform this entity follows.",fields=fields_test_world_parent[:],single=false,far=false,derived=false,base=true,locks=nil}
+    tables[2]={name="Single_Probe",library="core",type=typeid_of(Single_Probe),info=type_info_of(Single_Probe),offset=offset_of(World_Of_Single,probes),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=true,far=false,derived=false,base=false,locks=nil}
+    storages[0]={name="Hierarchy",library="core",type=typeid_of(Hierarchy),info=type_info_of(Hierarchy),offset=offset_of(World_Of_Single,hierarchy),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={reset=reset_test_world_hierarchy}}
     info.sizes={.World=size_of(World_Of_Single),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(World_Of_Single),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(World_Of_Single,entities),offset_of(World_Of_Single,storage_revisions)
@@ -132,12 +132,12 @@ test_info_world_of_probes :: proc(allocator:=context.allocator) -> (info:World_I
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Disabled","core",typeid_of(Disabled),type_info_of(Disabled),offset_of(World_Of_Probes,disabled),.World,true,.None,false,nil,"Turns this entity and everything under it off: their components keep their values and no system sees them until it is removed.",nil,false,false,true,nil,false}
-    tables[1]={"Parent","core",typeid_of(Parent),type_info_of(Parent),offset_of(World_Of_Probes,parents),.World,false,.None,false,nil,"The parent entity whose transform this entity follows.",fields_test_world_parent[:],false,false,true,nil,false}
-    tables[2]={"Name","core",typeid_of(Name),type_info_of(Name),offset_of(World_Of_Probes,names),.World,false,.None,false,nil,"The entity name shown in the scene hierarchy.",nil,false,false,true,nil,false}
-    tables[3]={"Probe","core",typeid_of(Probe),type_info_of(Probe),offset_of(World_Of_Probes,probes),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
-    tables[4]={"Probe_Tag","core",typeid_of(Probe_Tag),type_info_of(Probe_Tag),offset_of(World_Of_Probes,tags),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
-    storages[0]={"Hierarchy","core",typeid_of(Hierarchy),type_info_of(Hierarchy),offset_of(World_Of_Probes,hierarchy),.World,.None,nil,false,nil,false,false,"",false,false,{reset=reset_test_world_hierarchy},false}
+    tables[0]={name="Disabled",library="core",type=typeid_of(Disabled),info=type_info_of(Disabled),offset=offset_of(World_Of_Probes,disabled),place=.World,shared=true,replicated=.None,game=false,default=nil,description="Turns this entity and everything under it off: their components keep their values and no system sees them until it is removed.",fields=nil,single=false,far=false,derived=false,base=true,locks=nil}
+    tables[1]={name="Parent",library="core",type=typeid_of(Parent),info=type_info_of(Parent),offset=offset_of(World_Of_Probes,parents),place=.World,shared=false,replicated=.None,game=false,default=nil,description="The parent entity whose transform this entity follows.",fields=fields_test_world_parent[:],single=false,far=false,derived=false,base=true,locks=nil}
+    tables[2]={name="Name",library="core",type=typeid_of(Name),info=type_info_of(Name),offset=offset_of(World_Of_Probes,names),place=.World,shared=false,replicated=.None,game=false,default=nil,description="The entity name shown in the scene hierarchy.",fields=nil,single=false,far=false,derived=false,base=true,locks=nil}
+    tables[3]={name="Probe",library="core",type=typeid_of(Probe),info=type_info_of(Probe),offset=offset_of(World_Of_Probes,probes),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    tables[4]={name="Probe_Tag",library="core",type=typeid_of(Probe_Tag),info=type_info_of(Probe_Tag),offset=offset_of(World_Of_Probes,tags),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    storages[0]={name="Hierarchy",library="core",type=typeid_of(Hierarchy),info=type_info_of(Hierarchy),offset=offset_of(World_Of_Probes,hierarchy),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={reset=reset_test_world_hierarchy}}
     info.sizes={.World=size_of(World_Of_Probes),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(World_Of_Probes),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(World_Of_Probes,entities),offset_of(World_Of_Probes,storage_revisions)
@@ -158,8 +158,8 @@ test_info_world_of_locks :: proc(allocator:=context.allocator) -> (info:World_In
     }
     locks_0:=make([]Lock,1)
     locks_0[0]={int(offset_of(World_Of_Locks,owner))-int(offset_of(World_Of_Locks,bodies)),1,test_world_lock_names_world_of_locks[:],"Lock_Owner"}
-    tables[0]={"Lock_Body","core",typeid_of(Lock_Body),type_info_of(Lock_Body),offset_of(World_Of_Locks,bodies),.World,false,.None,false,nil,"",nil,false,false,false,locks_0,false}
-    tables[1]={"Lock_Owner","core",typeid_of(Lock_Owner),type_info_of(Lock_Owner),offset_of(World_Of_Locks,owner),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
+    tables[0]={name="Lock_Body",library="core",type=typeid_of(Lock_Body),info=type_info_of(Lock_Body),offset=offset_of(World_Of_Locks,bodies),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=locks_0}
+    tables[1]={name="Lock_Owner",library="core",type=typeid_of(Lock_Owner),info=type_info_of(Lock_Owner),offset=offset_of(World_Of_Locks,owner),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
     info.sizes={.World=size_of(World_Of_Locks),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(World_Of_Locks),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(World_Of_Locks,entities),offset_of(World_Of_Locks,storage_revisions)
@@ -177,10 +177,10 @@ test_info_tree_world :: proc(allocator:=context.allocator) -> (info:World_Info,o
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Disabled","core",typeid_of(Disabled),type_info_of(Disabled),offset_of(Tree_World,disabled),.World,true,.None,false,nil,"Turns this entity and everything under it off: their components keep their values and no system sees them until it is removed.",nil,false,false,true,nil,false}
-    tables[1]={"Parent","core",typeid_of(Parent),type_info_of(Parent),offset_of(Tree_World,parents),.World,false,.None,false,nil,"The parent entity whose transform this entity follows.",fields_test_world_parent[:],false,false,true,nil,false}
-    tables[2]={"Transform","core",typeid_of(Transform),type_info_of(Transform),offset_of(Tree_World,locals),.World,true,.None,false,default_test_world_transform,"Position, rotation and scale relative to the parent entity.",nil,false,false,true,nil,false}
-    storages[0]={"Hierarchy","core",typeid_of(Hierarchy),type_info_of(Hierarchy),offset_of(Tree_World,hierarchy),.World,.None,nil,false,nil,false,false,"",false,false,{reset=reset_test_world_hierarchy},false}
+    tables[0]={name="Disabled",library="core",type=typeid_of(Disabled),info=type_info_of(Disabled),offset=offset_of(Tree_World,disabled),place=.World,shared=true,replicated=.None,game=false,default=nil,description="Turns this entity and everything under it off: their components keep their values and no system sees them until it is removed.",fields=nil,single=false,far=false,derived=false,base=true,locks=nil}
+    tables[1]={name="Parent",library="core",type=typeid_of(Parent),info=type_info_of(Parent),offset=offset_of(Tree_World,parents),place=.World,shared=false,replicated=.None,game=false,default=nil,description="The parent entity whose transform this entity follows.",fields=fields_test_world_parent[:],single=false,far=false,derived=false,base=true,locks=nil}
+    tables[2]={name="Transform",library="core",type=typeid_of(Transform),info=type_info_of(Transform),offset=offset_of(Tree_World,locals),place=.World,shared=true,replicated=.None,game=false,default=default_test_world_transform,description="Position, rotation and scale relative to the parent entity.",fields=nil,single=false,far=false,derived=false,base=true,locks=nil}
+    storages[0]={name="Hierarchy",library="core",type=typeid_of(Hierarchy),info=type_info_of(Hierarchy),offset=offset_of(Tree_World,hierarchy),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={reset=reset_test_world_hierarchy}}
     info.sizes={.World=size_of(Tree_World),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(Tree_World),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(Tree_World,entities),offset_of(Tree_World,storage_revisions)
@@ -198,8 +198,8 @@ test_info_id_world :: proc(allocator:=context.allocator) -> (info:World_Info,ok:
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Id","core",typeid_of(Id),type_info_of(Id),offset_of(Id_World,ids),.World,false,.None,false,nil,"Persistent identity used to save and reference this entity.",nil,false,false,true,nil,false}
-    tables[1]={"Name","core",typeid_of(Name),type_info_of(Name),offset_of(Id_World,names),.World,false,.None,false,nil,"The entity name shown in the scene hierarchy.",nil,false,false,true,nil,false}
+    tables[0]={name="Id",library="core",type=typeid_of(Id),info=type_info_of(Id),offset=offset_of(Id_World,ids),place=.World,shared=false,replicated=.None,game=false,default=nil,description="Persistent identity used to save and reference this entity.",fields=nil,single=false,far=false,derived=false,base=true,locks=nil}
+    tables[1]={name="Name",library="core",type=typeid_of(Name),info=type_info_of(Name),offset=offset_of(Id_World,names),place=.World,shared=false,replicated=.None,game=false,default=nil,description="The entity name shown in the scene hierarchy.",fields=nil,single=false,far=false,derived=false,base=true,locks=nil}
     info.sizes={.World=size_of(Id_World),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(Id_World),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(Id_World,entities),offset_of(Id_World,storage_revisions)
@@ -217,9 +217,9 @@ test_info_memory_from :: proc(allocator:=context.allocator) -> (info:World_Info,
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Kept","",typeid_of(type_of((^Memory_From)(nil).kept.values[0])),type_info_of(type_of((^Memory_From)(nil).kept.values[0])),offset_of(Memory_From,kept),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
-    tables[1]={"Gone","",typeid_of(type_of((^Memory_From)(nil).gone.values[0])),type_info_of(type_of((^Memory_From)(nil).gone.values[0])),offset_of(Memory_From,gone),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
-    storages[0]={"Score","",typeid_of(type_of((^Memory_From)(nil).score)),type_info_of(type_of((^Memory_From)(nil).score)),offset_of(Memory_From,score),.World,.None,nil,false,nil,false,false,"",false,false,{},false}
+    tables[0]={name="Kept",library="",type=typeid_of(type_of((^Memory_From)(nil).kept.values[0])),info=type_info_of(type_of((^Memory_From)(nil).kept.values[0])),offset=offset_of(Memory_From,kept),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    tables[1]={name="Gone",library="",type=typeid_of(type_of((^Memory_From)(nil).gone.values[0])),info=type_info_of(type_of((^Memory_From)(nil).gone.values[0])),offset=offset_of(Memory_From,gone),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    storages[0]={name="Score",library="",type=typeid_of(type_of((^Memory_From)(nil).score)),info=type_info_of(type_of((^Memory_From)(nil).score)),offset=offset_of(Memory_From,score),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={}}
     info.sizes={.World=size_of(Memory_From),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(Memory_From),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(Memory_From,entities),offset_of(Memory_From,storage_revisions)
@@ -237,9 +237,9 @@ test_info_memory_to :: proc(allocator:=context.allocator) -> (info:World_Info,ok
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Kept","",typeid_of(type_of((^Memory_To)(nil).kept.values[0])),type_info_of(type_of((^Memory_To)(nil).kept.values[0])),offset_of(Memory_To,kept),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
-    tables[1]={"Added","",typeid_of(type_of((^Memory_To)(nil).added.values[0])),type_info_of(type_of((^Memory_To)(nil).added.values[0])),offset_of(Memory_To,added),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
-    storages[0]={"Score","",typeid_of(type_of((^Memory_To)(nil).score)),type_info_of(type_of((^Memory_To)(nil).score)),offset_of(Memory_To,score),.World,.None,nil,false,nil,false,false,"",false,false,{},false}
+    tables[0]={name="Kept",library="",type=typeid_of(type_of((^Memory_To)(nil).kept.values[0])),info=type_info_of(type_of((^Memory_To)(nil).kept.values[0])),offset=offset_of(Memory_To,kept),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    tables[1]={name="Added",library="",type=typeid_of(type_of((^Memory_To)(nil).added.values[0])),info=type_info_of(type_of((^Memory_To)(nil).added.values[0])),offset=offset_of(Memory_To,added),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    storages[0]={name="Score",library="",type=typeid_of(type_of((^Memory_To)(nil).score)),info=type_info_of(type_of((^Memory_To)(nil).score)),offset=offset_of(Memory_To,score),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={}}
     info.sizes={.World=size_of(Memory_To),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(Memory_To),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(Memory_To,entities),offset_of(Memory_To,storage_revisions)
@@ -257,9 +257,9 @@ test_info_before_world :: proc(allocator:=context.allocator) -> (info:World_Info
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Spin","core",typeid_of(Before_Spin),type_info_of(Before_Spin),offset_of(Before_World,spin),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
-    tables[1]={"Kept_Tag","core",typeid_of(Kept_Tag),type_info_of(Kept_Tag),offset_of(Before_World,kept),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
-    storages[0]={"Score","core",typeid_of(Before_Score),type_info_of(Before_Score),offset_of(Before_World,score),.World,.None,nil,false,nil,false,false,"",false,false,{},false}
+    tables[0]={name="Spin",library="core",type=typeid_of(Before_Spin),info=type_info_of(Before_Spin),offset=offset_of(Before_World,spin),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    tables[1]={name="Kept_Tag",library="core",type=typeid_of(Kept_Tag),info=type_info_of(Kept_Tag),offset=offset_of(Before_World,kept),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    storages[0]={name="Score",library="core",type=typeid_of(Before_Score),info=type_info_of(Before_Score),offset=offset_of(Before_World,score),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={}}
     info.sizes={.World=size_of(Before_World),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(Before_World),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(Before_World,entities),offset_of(Before_World,storage_revisions)
@@ -277,10 +277,10 @@ test_info_after_world :: proc(allocator:=context.allocator) -> (info:World_Info,
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Kept_Tag","core",typeid_of(Kept_Tag),type_info_of(Kept_Tag),offset_of(After_World,kept),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
-    tables[1]={"Added_Tag","core",typeid_of(Added_Tag),type_info_of(Added_Tag),offset_of(After_World,added),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
-    tables[2]={"Spin","core",typeid_of(After_Spin),type_info_of(After_Spin),offset_of(After_World,spin),.World,false,.None,false,default_test_world_after_spin,"",nil,false,false,false,nil,false}
-    storages[0]={"Score","core",typeid_of(After_Score),type_info_of(After_Score),offset_of(After_World,score),.World,.None,default_test_world_after_score,false,nil,false,false,"",false,false,{},false}
+    tables[0]={name="Kept_Tag",library="core",type=typeid_of(Kept_Tag),info=type_info_of(Kept_Tag),offset=offset_of(After_World,kept),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    tables[1]={name="Added_Tag",library="core",type=typeid_of(Added_Tag),info=type_info_of(Added_Tag),offset=offset_of(After_World,added),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    tables[2]={name="Spin",library="core",type=typeid_of(After_Spin),info=type_info_of(After_Spin),offset=offset_of(After_World,spin),place=.World,shared=false,replicated=.None,game=false,default=default_test_world_after_spin,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    storages[0]={name="Score",library="core",type=typeid_of(After_Score),info=type_info_of(After_Score),offset=offset_of(After_World,score),place=.World,setting=.None,default=default_test_world_after_score,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={}}
     info.sizes={.World=size_of(After_World),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(After_World),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(After_World,entities),offset_of(After_World,storage_revisions)
@@ -298,8 +298,8 @@ test_info_aim_world :: proc(allocator:=context.allocator) -> (info:World_Info,ok
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Aim_Tag","core",typeid_of(Aim_Tag),type_info_of(Aim_Tag),offset_of(Aim_World,aim),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
-    tables[1]={"Kept_Tag","core",typeid_of(Kept_Tag),type_info_of(Kept_Tag),offset_of(Aim_World,kept),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
+    tables[0]={name="Aim_Tag",library="core",type=typeid_of(Aim_Tag),info=type_info_of(Aim_Tag),offset=offset_of(Aim_World,aim),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    tables[1]={name="Kept_Tag",library="core",type=typeid_of(Kept_Tag),info=type_info_of(Kept_Tag),offset=offset_of(Aim_World,kept),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
     info.sizes={.World=size_of(Aim_World),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(Aim_World),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(Aim_World,entities),offset_of(Aim_World,storage_revisions)
@@ -317,8 +317,8 @@ test_info_later_world :: proc(allocator:=context.allocator) -> (info:World_Info,
         delete(tables);delete(storages)
         return
     }
-    storages[0]={"Time","core",typeid_of(Time),type_info_of(Time),offset_of(Later_World,time),.World,.None,nil,false,nil,false,true,"",false,false,{},false}
-    storages[1]={"Clock_Requests","core",typeid_of(Clock_Requests),type_info_of(Clock_Requests),offset_of(Later_World,requests),.World,.None,nil,false,nil,false,true,"",false,false,{},false}
+    storages[0]={name="Time",library="core",type=typeid_of(Time),info=type_info_of(Time),offset=offset_of(Later_World,time),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=true,plugin="",game=false,local=false,procs={}}
+    storages[1]={name="Clock_Requests",library="core",type=typeid_of(Clock_Requests),info=type_info_of(Clock_Requests),offset=offset_of(Later_World,requests),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=true,plugin="",game=false,local=false,procs={}}
     info.sizes={.World=size_of(Later_World),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(Later_World),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(Later_World,entities),offset_of(Later_World,storage_revisions)
@@ -336,13 +336,13 @@ test_info_hierarchy_fixture :: proc(allocator:=context.allocator) -> (info:World
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Disabled","core",typeid_of(Disabled),type_info_of(Disabled),offset_of(Hierarchy_Fixture,disabled),.World,true,.None,false,nil,"Turns this entity and everything under it off: their components keep their values and no system sees them until it is removed.",nil,false,false,true,nil,false}
-    tables[1]={"Transform","core",typeid_of(Transform),type_info_of(Transform),offset_of(Hierarchy_Fixture,locals),.World,true,.None,false,default_test_world_transform,"Position, rotation and scale relative to the parent entity.",nil,false,false,true,nil,false}
-    tables[2]={"Parent","core",typeid_of(Parent),type_info_of(Parent),offset_of(Hierarchy_Fixture,parents),.World,false,.None,false,nil,"The parent entity whose transform this entity follows.",fields_test_world_parent[:],false,false,true,nil,false}
-    tables[3]={"World_Transform","core",typeid_of(World_Transform),type_info_of(World_Transform),offset_of(Hierarchy_Fixture,worlds),.World,false,.None,false,nil,"World position, rotation and scale computed from the entity hierarchy.",nil,false,false,true,nil,false}
-    storages[0]={"Hierarchy","core",typeid_of(Hierarchy),type_info_of(Hierarchy),offset_of(Hierarchy_Fixture,hierarchy),.World,.None,nil,false,nil,false,false,"",false,false,{reset=reset_test_world_hierarchy},false}
-    storages[1]={"Propagation","core",typeid_of(Propagation),type_info_of(Propagation),offset_of(Hierarchy_Fixture,propagation),.World,.None,nil,false,nil,false,false,"",false,false,{},false}
-    storages[2]={"Jumps","core",typeid_of(Jumps),type_info_of(Jumps),offset_of(Hierarchy_Fixture,jumps),.World,.None,nil,false,nil,false,false,"",false,false,{},false}
+    tables[0]={name="Disabled",library="core",type=typeid_of(Disabled),info=type_info_of(Disabled),offset=offset_of(Hierarchy_Fixture,disabled),place=.World,shared=true,replicated=.None,game=false,default=nil,description="Turns this entity and everything under it off: their components keep their values and no system sees them until it is removed.",fields=nil,single=false,far=false,derived=false,base=true,locks=nil}
+    tables[1]={name="Transform",library="core",type=typeid_of(Transform),info=type_info_of(Transform),offset=offset_of(Hierarchy_Fixture,locals),place=.World,shared=true,replicated=.None,game=false,default=default_test_world_transform,description="Position, rotation and scale relative to the parent entity.",fields=nil,single=false,far=false,derived=false,base=true,locks=nil}
+    tables[2]={name="Parent",library="core",type=typeid_of(Parent),info=type_info_of(Parent),offset=offset_of(Hierarchy_Fixture,parents),place=.World,shared=false,replicated=.None,game=false,default=nil,description="The parent entity whose transform this entity follows.",fields=fields_test_world_parent[:],single=false,far=false,derived=false,base=true,locks=nil}
+    tables[3]={name="World_Transform",library="core",type=typeid_of(World_Transform),info=type_info_of(World_Transform),offset=offset_of(Hierarchy_Fixture,worlds),place=.World,shared=false,replicated=.None,game=false,default=nil,description="World position, rotation and scale computed from the entity hierarchy.",fields=nil,single=false,far=false,derived=true,base=true,locks=nil}
+    storages[0]={name="Hierarchy",library="core",type=typeid_of(Hierarchy),info=type_info_of(Hierarchy),offset=offset_of(Hierarchy_Fixture,hierarchy),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={reset=reset_test_world_hierarchy}}
+    storages[1]={name="Propagation",library="core",type=typeid_of(Propagation),info=type_info_of(Propagation),offset=offset_of(Hierarchy_Fixture,propagation),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={}}
+    storages[2]={name="Jumps",library="core",type=typeid_of(Jumps),info=type_info_of(Jumps),offset=offset_of(Hierarchy_Fixture,jumps),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={}}
     info.sizes={.World=size_of(Hierarchy_Fixture),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(Hierarchy_Fixture),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(Hierarchy_Fixture,entities),offset_of(Hierarchy_Fixture,storage_revisions)
@@ -360,11 +360,11 @@ test_info_rev_world :: proc(allocator:=context.allocator) -> (info:World_Info,ok
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Disabled","core",typeid_of(Disabled),type_info_of(Disabled),offset_of(Rev_World,disabled),.World,true,.None,false,nil,"Turns this entity and everything under it off: their components keep their values and no system sees them until it is removed.",nil,false,false,true,nil,false}
-    tables[1]={"Parent","core",typeid_of(Parent),type_info_of(Parent),offset_of(Rev_World,parents),.World,false,.None,false,nil,"The parent entity whose transform this entity follows.",fields_test_world_parent[:],false,false,true,nil,false}
-    storages[0]={"Hierarchy","core",typeid_of(Hierarchy),type_info_of(Hierarchy),offset_of(Rev_World,hierarchy),.World,.None,nil,false,nil,false,false,"",false,false,{reset=reset_test_world_hierarchy},false}
-    storages[1]={"Rev_List","core",typeid_of(Rev_List),type_info_of(Rev_List),offset_of(Rev_World,list),.World,.None,nil,false,nil,false,false,"",false,false,{},false}
-    storages[2]={"Rev_Count","core",typeid_of(Rev_Count),type_info_of(Rev_Count),offset_of(Rev_World,count),.World,.None,nil,false,nil,false,false,"",false,false,{},false}
+    tables[0]={name="Disabled",library="core",type=typeid_of(Disabled),info=type_info_of(Disabled),offset=offset_of(Rev_World,disabled),place=.World,shared=true,replicated=.None,game=false,default=nil,description="Turns this entity and everything under it off: their components keep their values and no system sees them until it is removed.",fields=nil,single=false,far=false,derived=false,base=true,locks=nil}
+    tables[1]={name="Parent",library="core",type=typeid_of(Parent),info=type_info_of(Parent),offset=offset_of(Rev_World,parents),place=.World,shared=false,replicated=.None,game=false,default=nil,description="The parent entity whose transform this entity follows.",fields=fields_test_world_parent[:],single=false,far=false,derived=false,base=true,locks=nil}
+    storages[0]={name="Hierarchy",library="core",type=typeid_of(Hierarchy),info=type_info_of(Hierarchy),offset=offset_of(Rev_World,hierarchy),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={reset=reset_test_world_hierarchy}}
+    storages[1]={name="Rev_List",library="core",type=typeid_of(Rev_List),info=type_info_of(Rev_List),offset=offset_of(Rev_World,list),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={}}
+    storages[2]={name="Rev_Count",library="core",type=typeid_of(Rev_Count),info=type_info_of(Rev_Count),offset=offset_of(Rev_World,count),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={}}
     info.sizes={.World=size_of(Rev_World),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(Rev_World),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(Rev_World,entities),offset_of(Rev_World,storage_revisions)
@@ -382,12 +382,12 @@ test_info_roll_world :: proc(allocator:=context.allocator) -> (info:World_Info,o
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Disabled","core",typeid_of(Disabled),type_info_of(Disabled),offset_of(Roll_World,disabled),.World,true,.None,false,nil,"Turns this entity and everything under it off: their components keep their values and no system sees them until it is removed.",nil,false,false,true,nil,false}
-    tables[1]={"Parent","core",typeid_of(Parent),type_info_of(Parent),offset_of(Roll_World,parents),.World,false,.None,false,nil,"The parent entity whose transform this entity follows.",fields_test_world_parent[:],false,false,true,nil,false}
-    tables[2]={"Roll_Value","core",typeid_of(Roll_Value),type_info_of(Roll_Value),offset_of(Roll_World,values),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
-    tables[3]={"Roll_Ref","core",typeid_of(Roll_Ref),type_info_of(Roll_Ref),offset_of(Roll_World,refs),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
-    storages[0]={"Hierarchy","core",typeid_of(Hierarchy),type_info_of(Hierarchy),offset_of(Roll_World,hierarchy),.World,.None,nil,false,nil,false,false,"",false,false,{reset=reset_test_world_hierarchy},false}
-    storages[1]={"Roll_Log","core",typeid_of(Roll_Log),type_info_of(Roll_Log),offset_of(Roll_World,log),.World,.None,nil,false,nil,false,false,"",false,false,{},false}
+    tables[0]={name="Disabled",library="core",type=typeid_of(Disabled),info=type_info_of(Disabled),offset=offset_of(Roll_World,disabled),place=.World,shared=true,replicated=.None,game=false,default=nil,description="Turns this entity and everything under it off: their components keep their values and no system sees them until it is removed.",fields=nil,single=false,far=false,derived=false,base=true,locks=nil}
+    tables[1]={name="Parent",library="core",type=typeid_of(Parent),info=type_info_of(Parent),offset=offset_of(Roll_World,parents),place=.World,shared=false,replicated=.None,game=false,default=nil,description="The parent entity whose transform this entity follows.",fields=fields_test_world_parent[:],single=false,far=false,derived=false,base=true,locks=nil}
+    tables[2]={name="Roll_Value",library="core",type=typeid_of(Roll_Value),info=type_info_of(Roll_Value),offset=offset_of(Roll_World,values),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    tables[3]={name="Roll_Ref",library="core",type=typeid_of(Roll_Ref),info=type_info_of(Roll_Ref),offset=offset_of(Roll_World,refs),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    storages[0]={name="Hierarchy",library="core",type=typeid_of(Hierarchy),info=type_info_of(Hierarchy),offset=offset_of(Roll_World,hierarchy),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={reset=reset_test_world_hierarchy}}
+    storages[1]={name="Roll_Log",library="core",type=typeid_of(Roll_Log),info=type_info_of(Roll_Log),offset=offset_of(Roll_World,log),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={}}
     info.sizes={.World=size_of(Roll_World),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(Roll_World),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(Roll_World,entities),offset_of(Roll_World,storage_revisions)
@@ -405,9 +405,9 @@ test_info_run_world :: proc(allocator:=context.allocator) -> (info:World_Info,ok
         delete(tables);delete(storages)
         return
     }
-    storages[0]={"Time","core",typeid_of(Time),type_info_of(Time),offset_of(Run_World,time),.World,.None,nil,false,nil,false,true,"",false,false,{},false}
-    storages[1]={"Frame_Time","core",typeid_of(Frame_Time),type_info_of(Frame_Time),offset_of(Run_World,frame),.World,.None,default_test_world_frame_time,false,nil,false,false,"",false,true,{},false}
-    storages[2]={"seen","",typeid_of(type_of((^Run_World)(nil).seen)),type_info_of(type_of((^Run_World)(nil).seen)),offset_of(Run_World,seen),.World,.None,nil,false,nil,false,false,"",false,false,{},false}
+    storages[0]={name="Time",library="core",type=typeid_of(Time),info=type_info_of(Time),offset=offset_of(Run_World,time),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=true,plugin="",game=false,local=false,procs={}}
+    storages[1]={name="Frame_Time",library="core",type=typeid_of(Frame_Time),info=type_info_of(Frame_Time),offset=offset_of(Run_World,frame),place=.World,setting=.None,default=default_test_world_frame_time,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=true,procs={}}
+    storages[2]={name="seen",library="",type=typeid_of(type_of((^Run_World)(nil).seen)),info=type_info_of(type_of((^Run_World)(nil).seen)),offset=offset_of(Run_World,seen),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={}}
     info.sizes={.World=size_of(Run_World),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(Run_World),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(Run_World,entities),offset_of(Run_World,storage_revisions)
@@ -425,8 +425,8 @@ test_info_run_kept_world :: proc(allocator:=context.allocator) -> (info:World_In
         delete(tables);delete(storages)
         return
     }
-    storages[0]={"Run_Kept","core",typeid_of(Run_Kept),type_info_of(Run_Kept),offset_of(Run_Kept_World,kept),.World,.None,nil,false,nil,false,true,"",false,false,{},false}
-    storages[1]={"Run_Derived","core",typeid_of(Run_Derived),type_info_of(Run_Derived),offset_of(Run_Kept_World,derived),.World,.None,nil,false,nil,false,false,"",false,false,{},false}
+    storages[0]={name="Run_Kept",library="core",type=typeid_of(Run_Kept),info=type_info_of(Run_Kept),offset=offset_of(Run_Kept_World,kept),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=true,plugin="",game=false,local=false,procs={}}
+    storages[1]={name="Run_Derived",library="core",type=typeid_of(Run_Derived),info=type_info_of(Run_Derived),offset=offset_of(Run_Kept_World,derived),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={}}
     info.sizes={.World=size_of(Run_Kept_World),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(Run_Kept_World),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(Run_Kept_World,entities),offset_of(Run_Kept_World,storage_revisions)
@@ -444,13 +444,13 @@ test_info_indexed_world :: proc(allocator:=context.allocator) -> (info:World_Inf
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Parent","core",typeid_of(Parent),type_info_of(Parent),offset_of(Indexed_World,parents),.World,false,.None,false,nil,"The parent entity whose transform this entity follows.",fields_test_world_parent[:],false,false,true,nil,false}
-    tables[1]={"World_Transform","core",typeid_of(World_Transform),type_info_of(World_Transform),offset_of(Indexed_World,worlds),.World,false,.None,false,nil,"World position, rotation and scale computed from the entity hierarchy.",nil,false,false,true,nil,false}
-    tables[2]={"Editor_Only","core",typeid_of(Editor_Only),type_info_of(Editor_Only),offset_of(Indexed_Editor,only),.Editor,false,.None,false,nil,"",nil,false,false,false,nil,false}
-    storages[0]={"Jumps","core",typeid_of(Jumps),type_info_of(Jumps),offset_of(Indexed_World,jumps),.World,.None,nil,false,nil,false,false,"",false,false,{},false}
-    storages[1]={"World_Id","core",typeid_of(World_Id),type_info_of(World_Id),offset_of(Indexed_World,id),.World,.None,nil,false,nil,false,false,"",false,true,{},false}
-    storages[2]={"Progress","core",typeid_of(Progress),type_info_of(Progress),offset_of(Indexed_World,progress),.World,.None,nil,false,nil,true,true,"",false,false,{},false}
-    storages[3]={"Problems","core",typeid_of(Problems),type_info_of(Problems),offset_of(Indexed_Shared,problems),.Shared,.None,nil,true,nil,false,false,"",false,false,{},false}
+    tables[0]={name="Parent",library="core",type=typeid_of(Parent),info=type_info_of(Parent),offset=offset_of(Indexed_World,parents),place=.World,shared=false,replicated=.None,game=false,default=nil,description="The parent entity whose transform this entity follows.",fields=fields_test_world_parent[:],single=false,far=false,derived=false,base=true,locks=nil}
+    tables[1]={name="World_Transform",library="core",type=typeid_of(World_Transform),info=type_info_of(World_Transform),offset=offset_of(Indexed_World,worlds),place=.World,shared=false,replicated=.None,game=false,default=nil,description="World position, rotation and scale computed from the entity hierarchy.",fields=nil,single=false,far=false,derived=true,base=true,locks=nil}
+    tables[2]={name="Editor_Only",library="core",type=typeid_of(Editor_Only),info=type_info_of(Editor_Only),offset=offset_of(Indexed_Editor,only),place=.Editor,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    storages[0]={name="Jumps",library="core",type=typeid_of(Jumps),info=type_info_of(Jumps),offset=offset_of(Indexed_World,jumps),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={}}
+    storages[1]={name="World_Id",library="core",type=typeid_of(World_Id),info=type_info_of(World_Id),offset=offset_of(Indexed_World,id),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=false,keep=false,plugin="",game=false,local=true,procs={}}
+    storages[2]={name="Progress",library="core",type=typeid_of(Progress),info=type_info_of(Progress),offset=offset_of(Indexed_World,progress),place=.World,setting=.None,default=nil,by_world=false,for_device=nil,persist=true,keep=true,plugin="",game=false,local=false,procs={}}
+    storages[3]={name="Problems",library="core",type=typeid_of(Problems),info=type_info_of(Problems),offset=offset_of(Indexed_Shared,problems),place=.Shared,setting=.None,default=nil,by_world=true,for_device=nil,persist=false,keep=false,plugin="",game=false,local=false,procs={}}
     info.sizes={.World=size_of(Indexed_World),.Shared=size_of(Indexed_Shared),.Editor=size_of(Indexed_Editor)}
     info.aligns={.World=align_of(Indexed_World),.Shared=align_of(Indexed_Shared),.Editor=align_of(Indexed_Editor)}
     info.entities,info.revisions=offset_of(Indexed_World,entities),offset_of(Indexed_World,storage_revisions)
@@ -468,9 +468,9 @@ test_info_union_world :: proc(allocator:=context.allocator) -> (info:World_Info,
         delete(tables);delete(storages)
         return
     }
-    tables[0]={"Parent","core",typeid_of(Parent),type_info_of(Parent),offset_of(Union_World,parents),.World,false,.None,false,nil,"The parent entity whose transform this entity follows.",fields_test_world_parent[:],false,false,true,nil,false}
-    tables[1]={"Union_Link","core",typeid_of(Union_Link),type_info_of(Union_Link),offset_of(Union_World,links),.World,false,.None,false,nil,"",nil,false,false,false,nil,false}
-    tables[2]={"Union_Sky","core",typeid_of(Union_Sky),type_info_of(Union_Sky),offset_of(Union_World,skies),.World,false,.None,false,nil,"",nil,true,false,false,nil,false}
+    tables[0]={name="Parent",library="core",type=typeid_of(Parent),info=type_info_of(Parent),offset=offset_of(Union_World,parents),place=.World,shared=false,replicated=.None,game=false,default=nil,description="The parent entity whose transform this entity follows.",fields=fields_test_world_parent[:],single=false,far=false,derived=false,base=true,locks=nil}
+    tables[1]={name="Union_Link",library="core",type=typeid_of(Union_Link),info=type_info_of(Union_Link),offset=offset_of(Union_World,links),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,base=false,locks=nil}
+    tables[2]={name="Union_Sky",library="core",type=typeid_of(Union_Sky),info=type_info_of(Union_Sky),offset=offset_of(Union_World,skies),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=true,far=false,derived=false,base=false,locks=nil}
     info.sizes={.World=size_of(Union_World),.Shared=1,.Editor=1}
     info.aligns={.World=align_of(Union_World),.Shared=1,.Editor=1}
     info.entities,info.revisions=offset_of(Union_World,entities),offset_of(Union_World,storage_revisions)

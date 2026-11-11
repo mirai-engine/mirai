@@ -41,7 +41,7 @@ bvh_matches_brute_force :: proc(t: ^testing.T) {
 	defer delete(triangles)
 	for primitive, i in order {
 		a, b, c := tris[primitive][0], tris[primitive][1], tris[primitive][2]
-		triangles[i] = {v0 = a, primitive = primitive, e1 = {b.x - a.x, b.y - a.y, b.z - a.z, 0}, e2 = {c.x - a.x, c.y - a.y, c.z - a.z, 0}}
+		triangles[i] = {v0 = a, primitive = primitive, v1 = {b.x, b.y, b.z, 0}, v2 = {c.x, c.y, c.z, 0}}
 	}
 	// Depth bound required by the GPU traversal stack.
 	max_depth := 0
@@ -59,7 +59,7 @@ bvh_matches_brute_force :: proc(t: ^testing.T) {
 	brute :: proc(tris: [][3]Vec3, origin, dir: Vec3) -> (best: f32, best_p: int) {
 		best, best_p = 1e9, -1
 		for tri, i in tris {
-			one := []Gpu_Bvh_Triangle{{v0 = tri[0], primitive = u32(i), e1 = {tri[1].x - tri[0].x, tri[1].y - tri[0].y, tri[1].z - tri[0].z, 0}, e2 = {tri[2].x - tri[0].x, tri[2].y - tri[0].y, tri[2].z - tri[0].z, 0}}}
+			one := []Gpu_Bvh_Triangle{{v0 = tri[0], primitive = u32(i), v1 = {tri[1].x, tri[1].y, tri[1].z, 0}, v2 = {tri[2].x, tri[2].y, tri[2].z, 0}}}
 			leaf := []Gpu_Bvh_Node{{bounds_min = {-1e9, -1e9, -1e9}, bounds_max = {1e9, 1e9, 1e9}, count = 1}}
 			ht, hp := bvh_ray_triangles(leaf, one, origin, dir, best)
 			if hp >= 0 {best, best_p = ht, hp}

@@ -64,16 +64,13 @@ tool_find :: proc(root:string,tool:Tool,allocator:=context.allocator) -> (path:s
 @(private)
 RUNNER_CAPACITY :: 64
 
-// Starting a process hands it every inheritable handle of this one, the pipes
-// of the tools other threads are running among them. Starts are serialized so
-// a tool only ever holds the writing end of its own pipe. A runner that is
-// cancelled starts no tool and has killed those that ran.
+// A runner that is cancelled starts no tool and has killed those that ran.
 @(private)
 Runner :: struct {
     lock:     sync.Mutex,
     runs:     int,  // tools run since the runner was made (guarded by lock)
     cancelled:bool, // guarded by lock
-    running:  [RUNNER_CAPACITY]os.Process, // the tools started and not yet waited for (guarded by lock)
+    running:  [RUNNER_CAPACITY]subprocess.Process, // the tools started and not yet waited for (guarded by lock)
     running_count:int,
 }
 
@@ -81,22 +78,14 @@ Runner :: struct {
 // wrote it. ok: it could be started and exited with zero.
 @(private)
 tool_run :: proc(runner:^Runner,command:[]string,allocator:=context.allocator) -> (output:string,ok:bool) {
-    reader,writer:^os.File
-    process:os.Process
+    process:subprocess.Process
     {
         sync.guard(&runner.lock)
         if runner.cancelled {return strings.clone("the generation was cancelled",allocator),false}
         runner.runs+=1
-        pipe_error:os.Error
-        reader,writer,pipe_error=os.pipe()
-        if pipe_error!=nil {return strings.clone("could not create the pipe of the tool",allocator),false}
         start_error:os.Error
-        process,start_error=subprocess.start({command=command,stdout=writer,stderr=writer})
-        os.close(writer)
-        if start_error!=nil {
-            os.close(reader)
-            return strings.concatenate({"could not run ",command[0]},allocator),false
-        }
+        process,start_error=subprocess.start({command=command},pipes=.Merged)
+        if start_error!=nil {return strings.concatenate({"could not run ",command[0]},allocator),false}
         if runner.running_count<RUNNER_CAPACITY {
             runner.running[runner.running_count]=process
             runner.running_count+=1
@@ -105,11 +94,10 @@ tool_run :: proc(runner:^Runner,command:[]string,allocator:=context.allocator) -
     collected:=make([dynamic]u8,allocator)
     buffer:[4096]u8
     for {
-        count,read_error:=os.read(reader,buffer[:])
+        count,read_error:=os.read(process.stdout,buffer[:])
         if count>0 {append(&collected,..buffer[:count])}
         if read_error!=nil || count<=0 {break}
     }
-    os.close(reader)
     // Out of the list before it is waited for: a process waited for may give its id to another one.
     {
         sync.guard(&runner.lock)
@@ -120,7 +108,8 @@ tool_run :: proc(runner:^Runner,command:[]string,allocator:=context.allocator) -
             break
         }
     }
-    state,wait_error:=os.process_wait(process)
+    state,wait_error:=subprocess.wait(&process)
+    subprocess.release(&process)
     return string(lf_bytes(collected[:])),wait_error==nil && state.exited && state.exit_code==0
 }
 
@@ -129,7 +118,7 @@ tool_run :: proc(runner:^Runner,command:[]string,allocator:=context.allocator) -
 runner_cancel :: proc(runner:^Runner) {
     sync.guard(&runner.lock)
     runner.cancelled=true
-    for process in runner.running[:runner.running_count] {_=os.process_kill(process)}
+    for &process in runner.running[:runner.running_count] {_=subprocess.terminate(&process,force=true)}
 }
 
 @(private)

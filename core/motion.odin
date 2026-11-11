@@ -21,7 +21,7 @@ Motion :: struct {
 // along the ground. Only the library that simulates the entity writes it
 // (physics, for its characters), from the state it keeps; without it the up
 // is +Y of the world.
-@(component,description="The up of this entity and the frame its look turns in, as its simulation turns them.")
+@(component,derived,description="The up of this entity and the frame its look turns in, as its simulation turns them.")
 Vertical :: struct {
     frame:mm.Quat `mirai:"transient,readonly"`,
     turn:f32 `mirai:"transient,readonly"`, // radians the ground turned it about its up in the last step: whoever writes where it looks (input.Move_Input) adds it
@@ -42,7 +42,7 @@ vertical_of :: proc(verticals:^Table(Vertical,$A),e:Entity) -> mm.Quat {
 // of the entity takes it at the start of the tick: the library that
 // simulates it (physics, for a body), or pose_targets_place for a Transform
 // nobody owns.
-@(component,description="A pose another owner asks for this entity.")
+@(component,derived,description="A pose another owner asks for this entity.")
 Pose_Target :: struct {
     follow:bool `mirai:"transient,readonly"`,
     placed:u32 `mirai:"transient,readonly,hidden"`, // grows with every place asked

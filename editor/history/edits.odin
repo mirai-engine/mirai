@@ -4,7 +4,6 @@ import "base:runtime"
 import "core:mem"
 import "core:slice"
 import "mirai:asset"
-import "mirai:cook/author"
 import "mirai:core"
 
 // Undo and redo by rows, over the journal of the edited World (journal.odin).
@@ -357,7 +356,7 @@ edits_image_take :: proc(edits:^Edits,w:core.World_Ref) {
     ids:=core.world_table_of(w,core.Id)
     authors:=History_Authors{current=ids!=nil?core.raw(ids):nil}
     for &t,i in w.info.tables {
-        edits.saved[i]=t.place==.World && author.type_saved(t.info)
+        edits.saved[i]=t.place==.World && !t.derived
         if edits.saved[i] {journal_table_take(&edits.image[i],core.world_table_at(w,&t),t.info.size,authors,ids!=nil && t.type!=core.Id)} else {journal_table_free(&edits.image[i])}
     }
     journal_ranges(edits,w)

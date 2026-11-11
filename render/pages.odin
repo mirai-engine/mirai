@@ -20,8 +20,9 @@ import "mirai:render/abi"
 // page, which the publication uploads as any other range.
 //
 // The cull (cull_clusters.comp) asks for the page of the children of a
-// cluster it draws in their place and stamps the slot of every page it
-// draws; both come back MAX_FRAMES_IN_FLIGHT frames later. Each frame the
+// cluster it draws in their place, once a frame each in a table that keeps
+// its highest priority, and stamps the slot of every page it draws; both come
+// back MAX_FRAMES_IN_FLIGHT frames later. Each frame the
 // most wanted pages whose parents are in the pools load, up to
 // PAGE_LOAD_WORDS decoded words, into a free slot or that of the page drawn
 // least recently, not within PAGE_KEEP frames, with no children in the
@@ -35,8 +36,9 @@ PAGE_KEEP :: u64(60)
 // The decoded words of the pages one frame loads; the first page loads whatever it has.
 PAGE_LOAD_WORDS :: 1 << 19
 PAGE_LOADS_MAX :: 64
-// Requests the cull lists in a frame; past them they are counted and dropped.
-PAGE_REQUEST_CAPACITY :: 8192
+// Entries of the table of the pages the cull asks for, a power of two: it doubles
+// while a frame fills half of it or a request finds no entry (counted, dropped).
+PAGE_REQUEST_START :: 4096
 // Words before the first request: the first counts them (cull_clusters.comp).
 PAGE_REQUEST_FIRST :: abi.PAGE_REQUEST_FIRST
 // Frames in a row with pages that found no room before Stats.problem says so.
@@ -45,12 +47,13 @@ PAGE_SLOT_NONE :: max(u32)
 // The most slots a region takes: its words stay within the u32 words of the pool.
 PAGE_SLOTS_MAX :: 16384
 
-// A page the cull asks for: the mesh, the page and the pixels the error of the
-// cluster drawn in place of its children spans. Rays ask with priority 0.
+// A page the cull asks for: the mesh, the page, the most pixels the error of a
+// cluster drawn in place of its children spans, and its key in the table of
+// the cull (0: an empty entry). Rays ask with priority 0.
 Page_Request :: struct {
 	mesh, page: u32,
 	priority:   f32,
-	pad:        u32,
+	key:        u32,
 }
 #assert(size_of(Page_Request) == 4 * 4)
 
@@ -85,6 +88,13 @@ Page_Scratch :: struct {
 	stream, page: u32, // what it holds; stream 0: nothing
 }
 
+// A slot that may give its page up this frame, and the frame + 1 it was drawn.
+@(private)
+Page_Victim :: struct {
+	stamp: u64,
+	slot:  u32,
+}
+
 @(private)
 Page_Load :: struct {
 	stream:     ^Mesh_Stream,
@@ -98,7 +108,9 @@ Pages_State :: struct {
 	tried, refused:   bool, // the region was asked for, and the GPU had no memory for it
 	slots:            []Page_Slot,
 	free:             [dynamic]u32,
-	requests:         []Page_Request,
+	requests:         [dynamic]Page_Request,
+	victims:          [dynamic]Page_Victim, // the oldest last, sorted by the first eviction of a frame
+	victims_sorted:   bool,
 	loads:            [PAGE_LOADS_MAX]Page_Load,
 	load_count:       int,
 	scratch:          Page_Scratch,
@@ -107,7 +119,8 @@ Pages_State :: struct {
 	streamed:         [dynamic]u32, // the handles of the meshes with a Mesh_Stream
 	next_id:          u32,
 	jobs:             ^jobs.Job_System, // the pages decode in its jobs; nil: on the calling thread
-	request_buffer:   rhi.Buffer, // the requests of the frame (PAGE_REQUEST_FIRST, then Page_Request)
+	request_buffer:   rhi.Buffer, // the requests of the frame (PAGE_REQUEST_FIRST, then a table of Page_Request)
+	request_capacity: u32, // entries of the table
 	stamp_buffer:     rhi.Buffer, // the stamp of the last frame that drew each slot
 	request_readback: [rhi.MAX_FRAMES_IN_FLIGHT]rhi.Buffer,
 	stamp_readback:   [rhi.MAX_FRAMES_IN_FLIGHT]rhi.Buffer,
@@ -150,24 +163,22 @@ pages_region_ensure :: proc(r: ^Renderer) -> bool {
 	ok := false
 	defer if !ok {
 		pages_buffers_destroy(r)
-		delete(st.slots, a);delete(st.free);delete(st.requests, a)
-		st.slots, st.free, st.requests = nil, nil, nil
+		delete(st.slots, a);delete(st.free);delete(st.requests);delete(st.victims)
+		st.slots, st.free, st.requests, st.victims = nil, nil, nil, nil
 		st.refused = true
 	}
 	if !pool_room(r, .Vertex, words) {return false}
 	error: mem.Allocator_Error
 	if st.slots, error = make([]Page_Slot, slots, a); error != nil {return false}
 	if st.free, error = make([dynamic]u32, 0, slots, a); error != nil {return false}
-	if st.requests, error = make([]Page_Request, PAGE_REQUEST_CAPACITY, a); error != nil {return false}
+	if st.requests, error = make([dynamic]Page_Request, 0, PAGE_REQUEST_START, a); error != nil {return false}
+	if st.victims, error = make([dynamic]Page_Victim, 0, slots, a); error != nil {return false}
 	if d := r.device; d != nil {
-		request_bytes := u64(PAGE_REQUEST_FIRST * 4 + PAGE_REQUEST_CAPACITY * size_of(Page_Request))
-		st.request_buffer = rhi.buffer_create(d, {size = request_bytes, usage = {.Storage}, name = "page requests"})
 		st.stamp_buffer = rhi.buffer_create(d, {size = u64(slots) * 4, usage = {.Storage}, name = "page stamps"})
-		if st.request_buffer == 0 || st.stamp_buffer == 0 {return false}
-		for k in 0 ..< rhi.MAX_FRAMES_IN_FLIGHT {
-			st.request_readback[k] = rhi.buffer_create(d, {size = request_bytes, memory = .Readback, name = "page requests readback"})
-			st.stamp_readback[k] = rhi.buffer_create(d, {size = u64(slots) * 4, memory = .Readback, name = "page stamps readback"})
-			if st.request_readback[k] == 0 || st.stamp_readback[k] == 0 {return false}
+		if st.stamp_buffer == 0 || !page_table_make(r, PAGE_REQUEST_START) {return false}
+		for &b in st.stamp_readback {
+			b = rhi.buffer_create(d, {size = u64(slots) * 4, memory = .Readback, name = "page stamps readback"})
+			if b == 0 {return false}
 		}
 	}
 	at := len(s.vertices)
@@ -183,6 +194,26 @@ pages_region_ensure :: proc(r: ^Renderer) -> bool {
 	return true
 }
 
+// The table of the requests with entries entries and its readbacks, in place
+// of those there were, whose requests are dropped. False without memory: then
+// nothing asks for pages or stamps them.
+@(private)
+page_table_make :: proc(r: ^Renderer, entries: u32) -> bool {
+	st := &r.scene.pages
+	bytes := u64(PAGE_REQUEST_FIRST * 4) + u64(entries) * size_of(Page_Request)
+	if st.request_buffer != 0 {rhi.buffer_destroy(r.device, st.request_buffer)}
+	st.request_buffer = rhi.buffer_create(r.device, {size = bytes, usage = {.Storage}, name = "page requests"})
+	made := st.request_buffer != 0
+	for &b in st.request_readback {
+		if b != 0 {rhi.buffer_destroy(r.device, b)}
+		b = rhi.buffer_create(r.device, {size = bytes, memory = .Readback, name = "page requests readback"})
+		made &&= b != 0
+	}
+	st.request_capacity = entries if made else 0
+	st.readback_frame = {}
+	return made
+}
+
 @(private)
 pages_buffers_destroy :: proc(r: ^Renderer) {
 	st := &r.scene.pages
@@ -192,7 +223,7 @@ pages_buffers_destroy :: proc(r: ^Renderer) {
 		if st.request_readback[k] != 0 {rhi.buffer_destroy(r.device, st.request_readback[k])}
 		if st.stamp_readback[k] != 0 {rhi.buffer_destroy(r.device, st.stamp_readback[k])}
 	}
-	st.request_buffer, st.stamp_buffer, st.request_readback, st.stamp_readback = 0, 0, {}, {}
+	st.request_buffer, st.stamp_buffer, st.request_readback, st.stamp_readback, st.request_capacity = 0, 0, {}, {}, 0
 }
 
 @(private)
@@ -200,7 +231,7 @@ pages_destroy :: proc(r: ^Renderer) {
 	st := &r.scene.pages
 	pages_buffers_destroy(r)
 	a := r.allocator
-	delete(st.slots, a);delete(st.free);delete(st.requests, a);delete(st.scratch.words, a);delete(st.scratch.coded, a);delete(st.decode_scratch, a);delete(st.streamed)
+	delete(st.slots, a);delete(st.free);delete(st.requests);delete(st.victims);delete(st.scratch.words, a);delete(st.scratch.coded, a);delete(st.decode_scratch, a);delete(st.streamed)
 	compressor.decoder_destroy(&st.scratch.decoder)
 	for &d in st.decoders {compressor.decoder_destroy(&d)}
 	delete(st.decoders, a)
@@ -361,27 +392,36 @@ page_release :: proc(r: ^Renderer, slot: u32) {
 
 // A slot for a page of a mesh: a free one, or that of the page drawn least
 // recently, not within PAGE_KEEP frames, without children in the pools, not
-// in a ray cut traced and not a parent of the page. False when none is.
+// in a ray cut traced and not a parent of the page. False when none is. The
+// first eviction of a frame sorts by stamp the slots that may give theirs up,
+// and the next ones go on along that list.
 @(private)
 page_slot_take :: proc(r: ^Renderer, stream: ^Mesh_Stream, page: u32) -> (u32, bool) {
 	s := &r.scene
 	st := &s.pages
-	if len(st.free) == 0 {
-		victim, oldest := PAGE_SLOT_NONE, max(u64)
-		search: for held, k in st.slots {
-			if held.mesh == GPU_NONE || held.stamp >= oldest || held.stamp + PAGE_KEEP > r.frame + 1 {continue}
+	if len(st.free) > 0 {return pop(&st.free), true}
+	if !st.victims_sorted {
+		st.victims_sorted = true
+		clear(&st.victims)
+		for held, k in st.slots {
+			if held.mesh == GPU_NONE || held.stamp + PAGE_KEEP > r.frame + 1 {continue}
 			m := s.meshes[held.mesh]
-			if m.stream.children[held.page] > 0 || page_traced(r, m, held.page) || mesh_whole(r, m) {continue}
-			if m.stream == stream {
-				for parent in page_parents(stream, page) {if parent == held.page {continue search}}
-			}
-			victim, oldest = u32(k), held.stamp
+			if !page_traced(r, m, held.page) && !mesh_whole(r, m) {append(&st.victims, Page_Victim{held.stamp, u32(k)})}
 		}
-		if victim == PAGE_SLOT_NONE {return 0, false}
+		slice.sort_by(st.victims[:], proc(a, b: Page_Victim) -> bool {return a.stamp > b.stamp})
+	}
+	for len(st.victims) > 0 {
+		victim := pop(&st.victims).slot
+		// Children loaded this frame keep it, and so does being a parent of the
+		// page, which then holds it as a parent once it loads.
+		held := st.slots[victim]
+		m := s.meshes[held.mesh]
+		if m.stream.children[held.page] > 0 || m.stream == stream && slice.contains(page_parents(stream, page), held.page) {continue}
 		page_release(r, victim)
 		st.evicted += 1
+		return pop(&st.free), true
 	}
-	return pop(&st.free), true
+	return 0, false
 }
 
 // A page takes a slot: it counts in the pools for its parents and its cuts.
@@ -400,15 +440,16 @@ page_assign :: proc(r: ^Renderer, stream: ^Mesh_Stream, page, slot: u32) {
 	}
 }
 
-// Loads the pages requests ask for, which it reorders: once each, at its
-// highest priority, the most wanted first, while their parents are in the
-// pools and up to PAGE_LOAD_WORDS. Decoded in the jobs of the renderer when
-// it has them. How many it loaded.
+// Loads the pages requests ask for, which it reorders: the most wanted first
+// (a page asked twice loads once), while their parents are in the pools and
+// up to PAGE_LOAD_WORDS. Decoded in the jobs of the renderer when it has
+// them. How many it loaded.
 @(private)
 pages_load :: proc(r: ^Renderer, requests: []Page_Request) -> int {
 	s := &r.scene
 	st := &s.pages
 	if st.slot_count == 0 {return 0}
+	st.victims_sorted = false
 	kept := 0
 	for request in requests {
 		if int(request.mesh) >= len(s.meshes) {continue}
@@ -418,19 +459,11 @@ pages_load :: proc(r: ^Renderer, requests: []Page_Request) -> int {
 		kept += 1
 	}
 	wanted := requests[:kept]
-	slice.sort_by(wanted, proc(a, b: Page_Request) -> bool {return a.mesh < b.mesh || a.mesh == b.mesh && a.page < b.page})
-	unique := 0
-	for request in wanted {
-		if unique > 0 && wanted[unique - 1].mesh == request.mesh && wanted[unique - 1].page == request.page {
-			wanted[unique - 1].priority = max(wanted[unique - 1].priority, request.priority)
-			continue
-		}
-		wanted[unique] = request
-		unique += 1
-	}
-	wanted = wanted[:unique]
-	slice.sort_by(wanted, proc(a, b: Page_Request) -> bool {return a.priority > b.priority})
-	st.requested += u32(unique)
+	// Ties by page: the order the GPU listed them in does not matter.
+	slice.sort_by(wanted, proc(a, b: Page_Request) -> bool {
+		return a.priority > b.priority || a.priority == b.priority && (a.mesh < b.mesh || a.mesh == b.mesh && a.page < b.page)
+	})
+	st.requested += u32(kept)
 	st.load_count = 0
 	words := 0
 	loads: for request, at in wanted {
@@ -512,10 +545,10 @@ pages_decode :: proc(r: ^Renderer) {
 }
 
 // The pages of the ray cuts instances want that are not in the pools and
-// whose parents are, into out, with priority 0: rays trace a cut once all its
-// pages are there. How many.
+// whose parents are, to the requests, with priority 0: rays trace a cut once
+// all its pages are there.
 @(private)
-pages_ray_requests :: proc(r: ^Renderer, out: []Page_Request) -> (count: int) {
+pages_ray_requests :: proc(r: ^Renderer) {
 	s := &r.scene
 	for handle in s.pages.streamed {
 		m := s.meshes[handle]
@@ -525,13 +558,10 @@ pages_ray_requests :: proc(r: ^Renderer, out: []Page_Request) -> (count: int) {
 			if k == always || stream.cut_missing[k] == 0 || !ray_cut_wanted(r, m, k) {continue}
 			for page in 0 ..< stream.root {
 				if stream.cuts[page] & (1 << u8(k)) == 0 || stream.slots[page] != PAGE_SLOT_NONE || !page_parents_resident(stream, page) {continue}
-				if count == len(out) {return}
-				out[count] = {mesh = handle, page = page}
-				count += 1
+				append(&s.pages.requests, Page_Request{mesh = handle, page = page})
 			}
 		}
 	}
-	return
 }
 
 // Whether an extension drew the mesh whole within the frames a page in use
@@ -541,21 +571,17 @@ mesh_whole :: #force_inline proc "contextless" (r: ^Renderer, m: Mesh_Record) ->
 	return m.whole > 0 && r.frame + 1 - m.whole <= PAGE_KEEP
 }
 
-// The pages out of the pools of the meshes extensions draw whole.
+// The pages out of the pools of the meshes extensions draw whole, to the requests.
 @(private)
-pages_whole_requests :: proc(r: ^Renderer, out: []Page_Request) -> (count: int) {
+pages_whole_requests :: proc(r: ^Renderer) {
 	s := &r.scene
 	for handle in s.pages.streamed {
 		m := s.meshes[handle]
 		if !mesh_whole(r, m) {continue}
 		for page in 0 ..< m.stream.root {
-			if m.stream.slots[page] != PAGE_SLOT_NONE {continue}
-			if count == len(out) {return}
-			out[count] = {mesh = handle, page = page}
-			count += 1
+			if m.stream.slots[page] == PAGE_SLOT_NONE {append(&s.pages.requests, Page_Request{mesh = handle, page = page})}
 		}
 	}
-	return
 }
 
 // Reads what the cull of the frame that used slot last stamped and asked
@@ -565,7 +591,8 @@ pages_update :: proc(r: ^Renderer, slot: int) {
 	st := &r.scene.pages
 	st.requested, st.loaded, st.evicted, st.dropped = 0, 0, 0, 0
 	if st.slot_count == 0 {return}
-	count := 0
+	clear(&st.requests)
+	grow := false
 	if frame := st.readback_frame[slot]; frame > 0 && r.device != nil {
 		if mapped := rhi.buffer_mapped(r.device, st.stamp_readback[slot]); mapped != nil {
 			stamps := ([^]u32)(mapped)[:st.slot_count]
@@ -579,44 +606,47 @@ pages_update :: proc(r: ^Renderer, slot: int) {
 		}
 		if mapped := rhi.buffer_mapped(r.device, st.request_readback[slot]); mapped != nil {
 			words := ([^]u32)(mapped)
-			asked := words[0]
-			count = int(min(asked, PAGE_REQUEST_CAPACITY))
-			st.dropped += asked - u32(count)
-			copy(st.requests[:count], ([^]Page_Request)(&words[PAGE_REQUEST_FIRST])[:count])
+			for request in ([^]Page_Request)(&words[PAGE_REQUEST_FIRST])[:st.request_capacity] {
+				if request.key != 0 {append(&st.requests, request)}
+			}
+			// The pages listed, and the requests that found no entry.
+			st.dropped += words[1]
+			grow = words[1] > 0 || 2 * words[0] > st.request_capacity
 		}
 		st.readback_frame[slot] = 0
 	}
-	count += pages_ray_requests(r, st.requests[count:])
-	count += pages_whole_requests(r, st.requests[count:])
-	pages_load(r, st.requests[:count])
+	pages_ray_requests(r)
+	pages_whole_requests(r)
+	pages_load(r, st.requests[:])
 	st.short_frames = st.short_frames + 1 if st.dropped > 0 else 0
+	if grow {page_table_make(r, st.request_capacity * 2)}
 }
 
 // The parameters of the cull for the slots (Params_Block.pages of cull_common.slang).
 @(private)
 pages_cull_params :: proc "contextless" (r: ^Renderer) -> [4]u32 {
 	st := &r.scene.pages
-	if st.slot_count == 0 || st.request_buffer == 0 {return {}}
-	return {st.region, st.slot_count, u32(r.frame + 1), PAGE_REQUEST_CAPACITY}
+	if st.slot_count == 0 || st.request_capacity == 0 {return {}}
+	return {st.region, st.slot_count, u32(r.frame + 1), st.request_capacity}
 }
 
-// The list of the requests starts empty in each frame, before any cull.
+// The table of the requests starts empty in each frame, before any cull.
 @(private)
 pages_record_begin :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 	st := &r.scene.pages
-	if st.request_buffer == 0 {return}
+	if st.request_capacity == 0 {return}
 	if st.stamps_clear {
 		rhi.cmd_fill_buffer(cmd, st.stamp_buffer, 0, u64(st.slot_count) * 4, 0)
 		st.stamps_clear = false
 	}
-	rhi.cmd_fill_buffer(cmd, st.request_buffer, 0, PAGE_REQUEST_FIRST * 4, 0)
+	rhi.cmd_fill_buffer(cmd, st.request_buffer, 0, rhi.buffer_size(r.device, st.request_buffer), 0)
 }
 
 // What the cull of the frame asked for and stamped goes back to the CPU.
 @(private)
 pages_record_end :: proc(r: ^Renderer, cmd: ^rhi.Command_List, slot: int) {
 	st := &r.scene.pages
-	if st.request_buffer == 0 {return}
+	if st.request_capacity == 0 {return}
 	rhi.cmd_copy_buffer(cmd, st.request_buffer, 0, st.request_readback[slot], 0, rhi.buffer_size(r.device, st.request_buffer))
 	rhi.cmd_copy_buffer(cmd, st.stamp_buffer, 0, st.stamp_readback[slot], 0, u64(st.slot_count) * 4)
 	rhi.cmd_barrier_buffer(cmd, st.request_readback[slot], .Host_Read)

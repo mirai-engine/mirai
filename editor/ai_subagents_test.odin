@@ -78,7 +78,7 @@ fixture_worker :: proc(t:^testing.T,f:^Fixture,task:^Ai_Task,phase:acp.Phase) ->
 }
 
 @(private="file")
-fixture_worker_close :: proc(worker:^Ai_Worker) {acp.destroy(&worker.client,nil)}
+fixture_worker_close :: proc(worker:^Ai_Worker) {acp.destroy(&worker.client)}
 
 @(private="file")
 sent_text :: proc(worker:^Ai_Worker) -> string {return string(worker.client.tx[:worker.client.queued])}
