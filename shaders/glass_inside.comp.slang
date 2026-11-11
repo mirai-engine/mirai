@@ -111,7 +111,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint local : SV_GroupIndex) {
         if (out_way) {
             float3 out_direction = refract(-g.view, g.normal, material_ior(m));
             Glass_Walk w = walk_start(g.position + out_direction * bias, out_direction, 0u);
-            walk_show(w, m, depth, g.roughness, uv, seed);
+            walk_show(w, depth, g.roughness, uv, seed);
             seen += w.radiance * surface_filter(m, g.base_color, g.alpha, reflectance) * near_absorbed;
         }
         // Back in, its reflection, traced with the layer (reflect.comp), which takes what the solid

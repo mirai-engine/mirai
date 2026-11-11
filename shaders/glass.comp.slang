@@ -4,9 +4,10 @@
 //! variant color_hw MIRAI_GLASS_MEANS=1 MIRAI_HW_RT=1
 // What one layer of glass lets through of the scene behind it, over the light
 // of the layer that glass_light.comp left, once per pixel whatever the number
-// of surfaces drawn there, without rays. A sheet shows the scene where it is;
-// a solid bends the view where it enters and shows the scene where the bent
-// view meets it on screen (glass_pass.slang). It reads the scene from a copy
+// of surfaces drawn there, without rays. A sheet shows the scene where it is,
+// moved aside by its ripples (sheet_through); a solid bends the view where it
+// enters and shows the scene where the bent view meets it on screen
+// (glass_pass.slang). It reads the scene from a copy
 // made by a first dispatch of this pass (params.snapshot) and writes over the
 // pixels of the layer alone.
 // The back faces of the solid the camera is in are left to glass_inside.comp.
@@ -114,10 +115,20 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float bias = 1e-3 + 2e-4 * depth;
     float3 direction = refract(-g.view, g.normal, 1.0 / material_ior(m));
     Glass_Walk w = glass_entry(m, g, ids.y, direction, bias);
-    walk_show(w, m, depth, g.roughness, uv, seed);
-    float path = (w.flags & WALK_OPEN) != 0u ? w.path + w.travelled : w.path;
+    float3 radiance;
+    float path;
+    if ((w.flags & WALK_OPEN) != 0u) {
+        Sheet_Seen seen = sheet_through(m, g, uv, p);
+        radiance = seen.radiance;
+        path = seen.travelled;
+        direction = seen.direction;
+    } else {
+        walk_show(w, depth, g.roughness, uv, seed);
+        radiance = w.radiance;
+        path = w.path;
+    }
     float3 absorbed = material_absorption(m, path);
     // Through a top that faces up the view entered at the height of the top.
     float3 scattered = solid_scatter(m, ids.y, g.position, direction, path, g.normal.y > 0.7 ? g.position.y : SOLID_TOP_UNKNOWN);
-    out_color[p] = float4(finite_or_zero(color + (w.radiance * absorbed + scattered) * through), 1.0);
+    out_color[p] = float4(finite_or_zero(color + (radiance * absorbed + scattered) * through), 1.0);
 }

@@ -80,10 +80,8 @@ float3 opaque_plane(float2 uv, out float3 normal) {
 // far along it: it meets the plane of the surface the screen holds where it
 // starts, and, where the screen holds another surface at that point, the plane
 // of that one, up to CROSSING_TURNS times. What lies nearer the eye than
-// `nearest` (in front of the layer) hides the point; under a sheet (open),
-// what the screen holds at a point is under it only where the layer covers
-// that point and it lies behind the layer there. Off the screen it ends at its
-// edge. CROSSING_FAR where it goes past reach; CROSSING_LOST where it turns
+// `nearest` (in front of the layer) hides the point. Off the screen it ends at
+// its edge. CROSSING_FAR where it goes past reach; CROSSING_LOST where it turns
 // away from the planes or meets what is in front of the layer, and the screen
 // does not hold where it ends. first: how far it goes to the plane of the
 // surface where it starts, below 0 where it turns away from it.
@@ -91,16 +89,12 @@ float3 opaque_plane(float2 uv, out float3 normal) {
 #define CROSSING_MET 0u
 #define CROSSING_FAR 1u
 #define CROSSING_LOST 2u
-uint screen_crossing(float3 origin, float3 direction, float reach, float nearest, bool open, out float2 uv, out float travelled, out float first) {
+uint screen_crossing(float3 origin, float3 direction, float reach, float nearest, out float2 uv, out float travelled, out float first) {
     uv = project_uv(origin);
     travelled = 0.0;
     first = -1.0;
     for (int turn = 0; turn < CROSSING_TURNS; turn++) {
         if (opaque_depth(uv) < nearest) return CROSSING_LOST;
-        if (open) {
-            float layer = layer_depth.Load(int3(min(int2(uv * frame.resolution), int2(frame.resolution) - 1), 0)).r;
-            if (!(layer > 0.0) || opaque_depth(uv) < layer) return CROSSING_LOST;
-        }
         float3 normal;
         float3 surface = opaque_plane(uv, normal);
         float facing = dot(direction, normal);
@@ -146,12 +140,74 @@ float3 scene_through(float2 uv, float layer_distance, float roughness, inout uin
 }
 
 
+// A sheet the view does not leave (the surface of water): it shows what the
+// pixel holds behind it, moved aside by the part of its refraction the relief
+// of the surface gives, against that of its plane alone, by the way through
+// the medium. A rippling surface bends what lies under it smoothly, the more
+// the deeper it lies; the bend of the plane, alike at every pixel, is left
+// out, since it would look for what lies under the sheet where the screen
+// holds what stands over it. Where the pixel it lands on holds nothing behind
+// the sheet, the pixel shows its own. What it shows is softened over a disc
+// that grows with that way, as the scattering of the medium blurs what lies
+// deep. travelled: the way through the medium to what the pixel holds.
+#define SHEET_SHIFT_MOST 0.04 // of the height of the view
+#define SHEET_BLUR 0.03       // metres of blur on what lies behind for each metre of the way to it
+#define SHEET_TAPS 6
+struct Sheet_Seen {
+    float3 radiance;
+    float travelled;
+    float3 direction; // the way through the medium
+};
+
+// Whether the pixel at uv holds the layer, and so what lies under it: the
+// layer is drawn only in front of the opaque scene (glass_layer.frag).
+bool sheet_behind(float2 uv) {
+    return layer_depth.Load(int3(min(int2(uv * frame.resolution), int2(frame.resolution) - 1), 0)).r > 0.0;
+}
+
+Sheet_Seen sheet_through(Material m, Glass g, float2 uv, int2 p) {
+    Sheet_Seen seen;
+    float behind = opaque_depth(uv);
+    float3 held = position_from_depth(uv, behind);
+    seen.travelled = length(held - g.position);
+    float ior = material_ior(m);
+    float3 flat = abs(g.normal.y) > 0.3 ? float3(0.0, g.normal.y >= 0.0 ? 1.0 : -1.0, 0.0) : g.normal;
+    float3 bent = refract(-g.view, g.normal, 1.0 / ior);
+    float3 even = refract(-g.view, flat, 1.0 / ior);
+    bool turned = dot(bent, bent) > 0.0 && dot(even, even) > 0.0;
+    seen.direction = turned ? bent : -g.view;
+    float2 at = uv;
+    if (turned) {
+        float2 shift = project_uv(held + (bent - even) * seen.travelled) - uv;
+        float most = SHEET_SHIFT_MOST * frame.resolution.y;
+        float pixels = length(shift * frame.resolution);
+        if (pixels > most) shift *= most / pixels;
+        float2 moved = clamp(uv + shift, 0.5 * frame.inv_resolution, 1.0 - 0.5 * frame.inv_resolution);
+        if (sheet_behind(moved)) at = moved;
+    }
+    float3 sum = scene.SampleLevel(linear_sampler, at, 0.0).rgb;
+    float count = 1.0;
+    float radius = min(SHEET_BLUR * seen.travelled / max(frame.footprint.x + frame.footprint.y * max(behind, 1e-3), 1e-9), 0.08 * frame.resolution.y);
+    if (radius >= 0.75 && seen.travelled < material_clear_reach(m)) {
+        // Turned by a hash of the pixel, the same every frame.
+        float rotation = float(hash_u32(uint(p.x) * 73856093u ^ uint(p.y) * 19349663u)) * (2.0 * PI / 4294967296.0);
+        for (int i = 0; i < SHEET_TAPS; i++) {
+            float angle = rotation + float(i) * 2.399963;
+            float2 tap = at + float2(cos(angle), sin(angle)) * (radius * sqrt((float(i) + 0.5) / float(SHEET_TAPS))) * frame.inv_resolution;
+            if (any(tap < float2(0.0)) || any(tap > float2(1.0)) || !sheet_behind(tap)) continue;
+            sum += scene.SampleLevel(linear_sampler, tap, 0.0).rgb;
+            count += 1.0;
+        }
+    }
+    seen.radiance = sum / count;
+    return seen;
+}
+
 // The way of the view through a solid and out of it, without rays: it goes on
 // bent as it went in, and shows the scene where it meets it on screen
 // (screen_crossing). Behind what stands in front of the layer, or off the
-// screen, it shows what the pixel shows straight through; going on in a solid
-// that absorbs (WALK_OPEN, as under water), nothing that far in shows through.
-#define WALK_OPEN 1u // it goes on in the solid to what it shows: the solid has no way out (a sheet)
+// screen, it shows what the pixel shows straight through.
+#define WALK_OPEN 1u // a sheet, which the view does not leave (sheet_through)
 
 struct Glass_Walk {
     uint flags;      // WALK_OPEN
@@ -175,14 +231,11 @@ Glass_Walk walk_start(float3 origin, float3 direction, uint flags) {
 
 // What a walk shows, behind the layer. depth: of the layer, which rough glass
 // blurs the scene behind by; uv: of the pixel.
-void walk_show(inout Glass_Walk w, Material m, float depth, float roughness, float2 uv, inout uint seed) {
+void walk_show(inout Glass_Walk w, float depth, float roughness, float2 uv, inout uint seed) {
     float2 at;
-    // In a solid without a way out it goes no farther than what would still show through.
-    bool open = (w.flags & WALK_OPEN) != 0u && material_clear_reach(m) < params.max_distance;
-    float reach = open ? min(material_clear_reach(m), params.max_distance) : params.max_distance;
     float travelled;
     float first;
-    uint crossing = screen_crossing(w.origin, w.direction, reach, depth, (w.flags & WALK_OPEN) != 0u, at, travelled, first);
+    uint crossing = screen_crossing(w.origin, w.direction, params.max_distance, depth, at, travelled, first);
     if (crossing != CROSSING_MET) {
         // Past reach, or where the screen does not hold where the way ends,
         // what the pixel shows straight through, as far in as the way goes to
