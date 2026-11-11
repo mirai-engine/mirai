@@ -3,6 +3,7 @@ package host
 import "base:runtime"
 import "core:c"
 import "core:log"
+import "core:math"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -259,20 +260,30 @@ app_game_frame :: proc(app:^App,world:rawptr,phases:=ALL_PHASES,step:=false,dt:=
     speed:=max(1+f64(f.dilation),0)
     if clock:=core.world_storage_of(ref,core.Clock);clock!=nil {speed=clock.paused?0:speed*f64(clock.scale)}
     lasted:=dt>=0?dt:f64(frame.dt)
+    tick:=f64(app.tick_dt)
+    due:int
     if replay!=nil {
-        lasted=replay.dt
-        f.accumulator=replay.accumulator
-    } else if step {f.accumulator=f64(app.tick_dt)} else {f.accumulator+=lasted*speed}
-    due:=int(f.accumulator/f64(app.tick_dt))
-    if due>app.max_ticks {
-        app.stats.ticks_dropped+=u64(due-app.max_ticks)
-        f.accumulator-=f64(due-app.max_ticks)*f64(app.tick_dt)
-        due=app.max_ticks
+        lasted,f.accumulator,f.lag,due=replay.dt,replay.accumulator,replay.lag,replay.ticks
+    } else {
+        if step {f.accumulator=tick} else {f.accumulator+=lasted*speed}
+        due=int(f.accumulator/tick)
+        if due>app.max_ticks {
+            app.stats.ticks_dropped+=u64(due-app.max_ticks)
+            f.accumulator-=f64(due-app.max_ticks)*tick
+            due,f.lag=app.max_ticks,0
+        } else if step {f.lag=0} else {due=speed>0?ticks_steady(f,tick,lasted*speed):0}
+    }
+    // A paused frame leaves the counts of the frames that ran, so they hold after it.
+    if due>0 || speed>0 {
+        for i:=core.TICK_HISTORY-1;i>0;i-=1 {f.ran[i]=f.ran[i-1]+i32(due)}
+        f.ran[0]=i32(due)
+        f.seen=min(f.seen+1,core.TICK_HISTORY)
+        for &typical,i in f.typical {typical=clamp(typical,f.ran[i]-1,f.ran[i])}
     }
     if c:=app.content;c!=nil && replay!=nil {c.replay=replay.content}
     defer if c:=app.content;c!=nil {c.replay=nil}
     if record!=nil {
-        record.dt,record.accumulator=lasted,f.accumulator
+        record.dt,record.accumulator,record.lag,record.ticks=lasted,f.accumulator,f.lag,due
         record.content=content_generation(app)
     }
     tick_input:core.Input
@@ -313,17 +324,63 @@ app_game_frame :: proc(app:^App,world:rawptr,phases:=ALL_PHASES,step:=false,dt:=
     t.playing,f.dt=true,f32(lasted)
     if app.played_count<len(app.played) {app.played[app.played_count]={world,phases};app.played_count+=1}
     run_phase(app,loop,.Input,phases,world,nil)
-    for tick in 0..<due {
-        if input!=nil && tick>0 {input_settle(input)}
+    for n in 0..<due {
+        if input!=nil && n>0 {input_settle(input)}
         t.dt=app.tick_dt
         run_phase(app,loop,.Fixed,phases,world,nil)
-        f.accumulator-=f64(app.tick_dt)
+        f.accumulator-=tick
         core.time_advance(t)
         app.stats.ticks+=1
     }
-    f.alpha=f32(f.accumulator/f64(app.tick_dt))
+    f.alpha=f32(clamp((f.accumulator-f.lag)/tick,0,1))
     for phase in ([4]core.Phase{.Frame,.Late,.Ui,.Render}) {run_phase(app,loop,phase,phases,world,nil)}
     if app.info.events_age!=nil {app.info.events_age(world,due>0)}
+}
+
+// How far before or after its time, in ticks, a tick may run to keep the count of ticks per frame
+// steady: frames that last a tick, give or take the jitter of the clock, run one each.
+TICK_JITTER_FIX :: 0.5
+
+// The ticks a frame that added step to the accumulator runs: those it completes, unless the last
+// frames ran a steady count and the accumulator is within TICK_JITTER_FIX of a tick of keeping it.
+// Frame_Time.lag becomes how far the shown time trails the accumulator, so the shown time moves
+// at the typical rate and stays between the last two ticks. From Godot's MainTimerSync
+// advance_core, advance_checked and get_average_physics_steps (main/main_timer_sync.cpp, MIT).
+@(private)
+ticks_steady :: proc "contextless" (f:^core.Frame_Time,tick,step:f64) -> int {
+    exact:=f.accumulator/tick
+    due:=int(math.floor(exact))
+    // The counts that keep the ticks of the last 1 to seen frames typical.
+    low,high:=0,max(int)
+    for i in 0..<int(f.seen) {
+        left:=int(f.typical[i])-(i>0?int(f.ran[i-1]):0)
+        if left>high || left+1<low {break}
+        low,high=max(low,left),min(high,left+1)
+    }
+    if due<low {due=min(low,int(math.floor(exact+TICK_JITTER_FIX)))}
+    else if due>high {due=max(high,int(math.floor(exact-TICK_JITTER_FIX)))}
+    due=max(due,0)
+
+    owed:=step+f.lag
+    base:=owed-(f.accumulator-f64(due)*tick) // the shown step that leaves the shown time on the last tick
+    shown:=owed
+    // The ticks per frame the typical counts allow, while they agree over more than 3 frames.
+    least,most:=f64(f.typical[0]),f64(f.typical[0])+1
+    agree:=int(f.seen)
+    for i in 1..<int(f.seen) {
+        lower:=f64(f.typical[i])/f64(i+1)
+        if lower>most {agree=i;break}
+        least=max(least,lower)
+        upper:=(f64(f.typical[i])+1)/f64(i+1)
+        if upper<least {agree=i;break}
+        most=min(most,upper)
+    }
+    if agree>3 {shown=clamp(shown,least*tick,most*tick)}
+    shown=clamp(shown,owed-TICK_JITTER_FIX*tick,owed+TICK_JITTER_FIX*tick)
+    shown=max(clamp(shown,base,base+tick),step/8)
+    if over:=shown-base;over>tick {due+=int(over/tick)}
+    f.lag=owed-shown
+    return due
 }
 
 // A fixed tick of a world that already ran, again, from inside the phase that

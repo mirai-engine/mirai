@@ -113,7 +113,12 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   body, with the collider's surface, filter and density; otherwise it is the hull of all the points.
   It fits in the hull budget whole or not at all.
 - `size` is multiplied by the absolute world scale: the sphere takes the largest; capsule and
-  cylinder, the largest of XZ for the radius and Y for the height.
+  cylinder, the largest of XZ for the radius and Y for the height. A negative axis mirrors the
+  collider where it is drawn: its center, and the points of a mesh or hull, whose triangles turn
+  so they keep facing out. A heightfield cannot be mirrored (`physics.collider_mirrored`), and a
+  collider turned under a scale that is not uniform across the turn is sheared, which a shape
+  cannot be (`physics.collider_sheared`).
+- A world Transform that is not finite is `physics.transform`: the body keeps its last pose.
 - `convex_radius` rounds the edges of `Box`, `Cylinder` or `Hull` without changing their size
   ([geometry](physics.md#geometry)) and is scaled by the smallest axis. It must stay below the
   smallest half-axis, the radius and half the height of the cylinder, or the distance from the hull
@@ -192,10 +197,9 @@ Overlaps:
 - They are evaluated when at least one body is awake. A zone that appears over a sleeping dynamic
   body or an idle `Character` may not emit an entry until it wakes. Gameplay keeps its occupants
   if it needs to know who is still inside.
-- A `bullet` that crosses a trigger in one tick emits both events in that tick, with `crossed`:
-  whoever counts occupants processes the `overlap_begin` before the `overlap_end`. A body that is
-  not a bullet and travels in one tick more than the thickness of the trigger and its own can cross
-  it without events.
+- A dynamic body that crosses a static trigger in one tick emits both events in that tick, with
+  `crossed`: whoever counts occupants processes the `overlap_begin` before the `overlap_end`. Only
+  a `bullet` does it also for a trigger on a moving body.
 
 ## Binding and world step
 
@@ -360,14 +364,17 @@ zone; `gravity.odin` applies it to the simulation.
 
 Manipulation:
 
-- `manipulation_target` moves a body temporarily as kinematic without modifying its `Rigid_Body`,
-  also a collider without that component or a proxy. It chases the pose in fixed steps and transmits
-  velocity to contacts: a large jump needs several ticks because of the solver's velocity limits.
-  Afterwards it stays held at the pose reached.
-- `manipulation_end` releases it on reaching the pending destination and restores authoring type
-  and mass (or the previous type of the proxy); it sets the velocity to zero except with
-  `preserve_velocity` (animation-to-simulation transition). With `dt=0`, placing and releasing are
-  immediate and without contacts.
+- `manipulation_target` holds a body toward a world pose without modifying its `Rigid_Body`, also a
+  collider without that component or a proxy. A dynamic body stays dynamic: a joint from the world
+  body drives its six axes toward the pose with a soft spring (Box2D's mouse drag) whose force is
+  bounded by `PULL_WEIGHTS` times its weight, so it collides, stops at walls and pushes no more than
+  that force allows. A static or kinematic body, or any with `follow` (a pose by design: the
+  animated ragdoll), is held as kinematic: it chases the pose in fixed steps, pushes what it touches
+  as infinite mass and needs several ticks for a large jump because of the solver's velocity limits.
+- `manipulation_end` lets a pulled body go at once and a kinematic hold once it reaches the pending
+  pose, restoring the authored type and mass (or the previous type of the proxy). A body dynamic
+  again keeps its velocity (a throw, the ragdoll going limp); any other stops. With `dt=0`, placing
+  and releasing are immediate and without contacts.
 - Requests go to the owner that `manipulation_owner` gives (the ancestor of a compound collider;
   `NONE` for characters) and their poses are in its world frame: they do not move a child shape
   separately. Two proxies of the same body share a hold and the last request wins. The hold is
@@ -677,12 +684,12 @@ Physics does not know the network: both share `core` tables.
     touches moves it away from what the other owner shows. It does not push like a kinematic body:
     what it touches moves aside by itself.
   - Following and manipulation are two sources of the same hold (`Physics_State.held`, which lists
-    only what a manipulation or a pose target steers): the first that takes the body makes it
-    kinematic and stores its type, the last that releases it gives it back, and
-    the target's pose goes before that of manipulation. While the target continues,
-    `manipulation_target` stores the destination without moving the body and `manipulation_end`
-    releases the manipulation without changing its type or velocity; when following ends, a
-    manipulation that is still requested holds it.
+    only what a manipulation or a pose target steers): the first that holds the body as kinematic
+    stores its type, the last that releases it gives it back, and the target's pose goes before
+    that of manipulation. While the target continues, `manipulation_target` stores the destination
+    without moving the body (a pull has no spring) and `manipulation_end` releases the manipulation
+    without changing its type or velocity; when following ends, a manipulation that is still
+    requested holds or pulls it.
   - A body that is not yet made receives the pose in its `Transform` and the velocities in
     `core.Motion`, from where it takes them when made. An entity with a parent is left to the
     parent.

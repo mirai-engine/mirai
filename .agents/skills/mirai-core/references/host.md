@@ -134,11 +134,16 @@ spreads its work with `std/jobs`, as their owner (`jobs.OWNER`).
 **Game loop.**
 
 - It adds the `dt` of the frame times `1 + Frame_Time.dilation` and times the `core.Clock` of the
-  world (zero when paused) to `Frame_Time.accumulator` and simulates
-  `due = accumulator / tick_dt` ticks, at most `max_ticks_per_frame`; the rest is discarded and
-  counted in `ticks_dropped`. A world without `core.Time` or without `core.Frame_Time` does not run
-  the game loop. After each tick it subtracts `tick_dt` and advances the clock with
-  `core.time_advance`.
+  world (zero when paused) to `Frame_Time.accumulator` and simulates the ticks it completes, at
+  most `max_ticks_per_frame`; the rest is discarded and counted in `ticks_dropped`. A world
+  without `core.Time` or without `core.Frame_Time` does not run the game loop. After each tick it
+  subtracts `tick_dt` and advances the clock with `core.time_advance`.
+- The count of ticks per frame is kept steady (`ticks_steady`, after Godot's `MainTimerSync`):
+  while the last frames ran a typical count and the clock is within half a tick of it, a tick runs
+  that much early or late instead of frames alternating 0 and 2 ticks under timer jitter. Time is
+  never lost: the accumulator keeps the truth and `Frame_Time.lag` shifts the shown time so
+  `alpha` advances evenly between the last two ticks. Every world runs it, a server's too: what a
+  tick computes never depends on when it runs, and a recorded frame replays its count of ticks.
 - With `step=true`, `app_game_frame` runs one tick however long the frame lasts and without
   dilation: a world that advances only when asked (the steps of the editor and of agents).
 - The input of the ticks (`input_from_platform` plus that of the script) goes to `core.Input`: the

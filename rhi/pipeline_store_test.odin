@@ -155,6 +155,51 @@ pipeline_store_replaces_a_file_it_cannot_read :: proc(t: ^testing.T) {
 	}
 }
 
+// The file is written while a run adds to it, so a process that ends without
+// destroying its device leaves what it compiled; each write takes in what
+// another process wrote meanwhile, and one it cannot read is replaced.
+@(test)
+pipeline_store_is_written_as_it_grows_with_what_others_wrote :: proc(t: ^testing.T) {
+	folder := base.test_folder(t, "pipeline-store")
+	if folder == "" {return}
+	path := fmt.tprintf("%s/pipelines.bin", folder)
+	limit := PIPELINE_STORE_SAVE_PARTS * 1000
+	ours, theirs: Pipeline_Store
+	pipeline_store_init(&ours, TEST_DEVICE, limit)
+	pipeline_store_init(&theirs, TEST_DEVICE, limit)
+	defer pipeline_store_destroy(&ours)
+	defer pipeline_store_destroy(&theirs)
+	pipeline_store_load(&ours, path)
+	pipeline_store_load(&theirs, path)
+	put :: proc(s: ^Pipeline_Store, key: u64) -> bool {return pipeline_store_put(s, key, test_blob(key, 600, nil, context.temp_allocator))}
+	put(&theirs, 10)
+	testing.expect(t, pipeline_store_save(&theirs, path), "another process writes its own")
+	testing.expect(t, !put(&ours, 1), "a write waits for a part of the limit")
+	testing.expect(t, put(&ours, 2) && pipeline_store_save(&ours, path))
+	testing.expect_value(t, ours.unsaved, 0)
+	read :: proc(path: string, keys: []u64) -> (found: int) {
+		s: Pipeline_Store
+		pipeline_store_init(&s, TEST_DEVICE, PIPELINE_STORE_SAVE_PARTS * 1000)
+		defer pipeline_store_destroy(&s)
+		pipeline_store_load(&s, path)
+		for key in keys {
+			blob := pipeline_store_find(&s, key)
+			if blob != nil && string(blob) == string(test_blob(key, 600, nil, context.temp_allocator)) {found += 1}
+			delete(blob)
+		}
+		return
+	}
+	testing.expect_value(t, read(path, {1, 2, 10}), 3)
+	put(&theirs, 11)
+	testing.expect(t, put(&theirs, 12) && pipeline_store_save(&theirs, path))
+	testing.expect_value(t, read(path, {1, 2, 10, 11, 12}), 5)
+	garbage := [?]u8{0x4d, 0x49, 0x50, 0x53, 2, 0, 0, 0, 1}
+	testing.expect_value(t, os.write_entire_file(path, garbage[:]), nil)
+	put(&ours, 3)
+	testing.expect(t, put(&ours, 4) && pipeline_store_save(&ours, path), "a file it cannot read is replaced")
+	testing.expect_value(t, read(path, {1, 2, 3, 4, 10}), 5)
+}
+
 // What a process that ended left of its write goes when the store is read; the
 // write of a process that runs stays.
 @(test)

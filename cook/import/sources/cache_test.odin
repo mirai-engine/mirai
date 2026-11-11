@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import importer "mirai:cook/import"
+import "mirai:cook/prefab"
 import "mirai:std/base"
 
 @(test)
@@ -29,7 +30,7 @@ sources_are_known_by_their_content :: proc(t:^testing.T) {
         testing.expectf(t,source_kind(path)==c.kind,"%s is a %v source, not %v",c.name,c.kind,source_kind(path))
     }
     // A GLB is read as one whatever its name says.
-    report,error:=import_source(fmt.tprintf("%s/model.bin",folder),{})
+    report,error:=import_source(fmt.tprintf("%s/model.bin",folder),{world=prefab.import_world(t)})
     testing.expectf(t,error.code==.None && len(report.assets)>0,"%v %s",error.code,error.message)
     importer.report_destroy(&report)
     _,refused:=import_source(fmt.tprintf("%s/mesh.txt",folder))
@@ -73,6 +74,7 @@ an_import_keeps_what_its_cache_says_is_current_and_builds_again_what_changed :: 
     root,_:=test_project(t,"cache")
     if root=="" {return}
     source:=copy_in(root,DEMO,"gallery/vase.obj","gallery/vase.mtl","gallery/vase_color.png")
+    world:=prefab.import_world(t)
     import_kept :: proc(t:^testing.T,source:string,options:importer.Import_Options,loc:=#caller_location) -> (meshes,textures,others:int,mesh:string,id:base.Asset_Id,ok:bool) {
         report,error:=import_source(source,options)
         defer importer.report_destroy(&report)
@@ -81,26 +83,26 @@ an_import_keeps_what_its_cache_says_is_current_and_builds_again_what_changed :: 
         mesh,id=mesh_of(&report)
         return meshes,textures,others,mesh,id,true
     }
-    meshes,textures,others,mesh_path,mesh_id,ok:=import_kept(t,source,{})
+    meshes,textures,others,mesh_path,mesh_id,ok:=import_kept(t,source,{world=world})
     if !ok {return}
     testing.expect(t,meshes==0 && textures==0 && others==0,"a first import builds everything")
     built,_:=os.read_entire_file(mesh_path,context.temp_allocator)
 
     // Nothing changed: the mesh and the texture are kept; materials and the prefab, cheap, are written again.
     again_path:string
-    meshes,textures,others,again_path,_,ok=import_kept(t,source,{})
+    meshes,textures,others,again_path,_,ok=import_kept(t,source,{world=world})
     again,_:=os.read_entire_file(mesh_path,context.temp_allocator)
     testing.expect(t,ok && meshes==1 && textures==1 && others==0 && again_path==mesh_path && string(again)==string(built),"an unchanged source keeps its mesh and its texture")
 
     // A setting changes what everything is built from: built again, under a new name, with the same ids.
     hulled_path:string
     hulled_id:base.Asset_Id
-    meshes,textures,_,hulled_path,hulled_id,ok=import_kept(t,source,{collision=.Hull,ignore_stored=true})
+    meshes,textures,_,hulled_path,hulled_id,ok=import_kept(t,source,{world=world,collision=.Hull,ignore_stored=true})
     testing.expect(t,ok && meshes==0 && textures==0 && hulled_id==mesh_id && hulled_path!=mesh_path && !os.exists(mesh_path),"a setting builds again, and the file of before goes")
 
     // --rebuild keeps nothing; with the settings of the first import, it gives its bytes.
     rebuilt_path:string
-    meshes,textures,others,rebuilt_path,_,ok=import_kept(t,source,{rebuild=true,ignore_stored=true})
+    meshes,textures,others,rebuilt_path,_,ok=import_kept(t,source,{world=world,rebuild=true,ignore_stored=true})
     testing.expect(t,ok && meshes==0 && textures==0 && others==0 && rebuilt_path==mesh_path,"rebuild builds everything")
     rebuilt,_:=os.read_entire_file(mesh_path,context.temp_allocator)
     testing.expect(t,string(rebuilt)==string(built))
@@ -169,7 +171,7 @@ an_import_takes_a_mesh_that_another_import_built_from_the_mesh_cache :: proc(t:^
     root,_:=test_project(t,"mesh-cache")
     if root=="" {return}
     source:=copy_in(root,DEMO,"gallery/vase.obj","gallery/vase.mtl")
-    options:=importer.Import_Options{mesh_cache=fmt.tprintf("%s/cache",root)}
+    options:=importer.Import_Options{world=prefab.import_world(t),mesh_cache=fmt.tprintf("%s/cache",root)}
     colliders :: proc(t:^testing.T,types:^asset.Types,path:string) -> int {
         a:asset.Asset
         if !testing.expect_value(t,asset.asset_load(&a,path,context.temp_allocator),asset.Error.None) {return -1}

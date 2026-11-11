@@ -412,6 +412,27 @@ sdl_audio_device_pulls_from_the_mixer :: proc(t:^testing.T) {
     error,found:=audio_device_switch(p,"no such output")
     testing.expect(t,error==.None && !found && audio_device_is_open(p))
     testing.expect(t,clock_advances(mixer,2400))
+    // The output opened by its name leaves, another one is plugged in: the
+    // next frame takes both, once. What the last output lost does not outlive it.
+    if names:=audio_device_names(p,context.temp_allocator);testing.expect(t,len(names)>0) {
+        error,found=audio_device_switch(p,names[0])
+        testing.expect(t,error==.None && found)
+        lost,other,added:sdl.Event
+        lost.type=.AUDIO_DEVICE_REMOVED
+        lost.adevice.which=p.audio.output
+        other=lost
+        other.adevice.which+=1000
+        added.type=.AUDIO_DEVICE_ADDED
+        testing.expect(t,sdl.PushEvent(&other) && sdl.PushEvent(&lost) && sdl.PushEvent(&added))
+        frame_begin(p)
+        testing.expect_value(t,audio_device_changes(p),Audio_Device_Changes{.Lost,.Added})
+        testing.expect_value(t,audio_device_changes(p),Audio_Device_Changes{})
+        testing.expect(t,sdl.PushEvent(&lost))
+        frame_begin(p)
+        error,_=audio_device_switch(p,"")
+        testing.expect(t,error==.None && audio_device_changes(p)=={})
+        testing.expect(t,clock_advances(mixer,2400))
+    }
     audio_device_close(p)
     testing.expect_value(t,audio_device_open(p,mixer,{driver="dummy",device="no such output"}),Audio_Error.None)
     testing.expect(t,clock_advances(mixer,2400))
