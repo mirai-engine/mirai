@@ -3,7 +3,6 @@ package mirai_anim
 import cmath "core:math"
 import "core:testing"
 import "core:math/linalg"
-import "core:time"
 import math "mirai:std/math"
 
 @(test)
@@ -245,28 +244,23 @@ multi_ik_hinge_knee_reached_from_a_bent_pose_stays_on_its_axis :: proc(t:^testin
 
 @(test)
 multi_ik_recomposes_only_the_branch_of_each_joint :: proc(t:^testing.T) {
-    // The same chain under a root with few or with thousands of other bones: a solve costs about the
-    // same, as each turn of a joint recomposes its own branch and not the skeleton.
-    cost :: proc(t:^testing.T,count:int) -> time.Duration {
+    // The same chain under a root with few or with thousands of other bones: the bones outside the
+    // chain are composed once, as each turn of a joint recomposes its own branch.
+    recomposed :: proc(t:^testing.T,count:int) -> int {
         parents:=make([]i32,count);names:=make([]u64,count);rest:=make([]math.Transform,count);links:=make([]Pose_Link,count)
         local:=make([]math.Transform,count);world:=make([]math.Transform,count)
         defer {delete(parents);delete(names);delete(rest);delete(links);delete(local);delete(world)}
         for i in 0..<count {parents[i],names[i],rest[i]=i32(i-1) if i<5 else 0,u64(i+1),{{0,.5,0} if i>0 else {},1,{1,1,1}}}
+        copy(local,rest)
         hierarchy,_:=pose_hierarchy_prepare(parents,links)
         joints:=[3]Multi_IK_Joint{MULTI_IK_JOINT_DEFAULT,MULTI_IK_JOINT_DEFAULT,MULTI_IK_JOINT_DEFAULT}
         for &joint,i in joints {joint.bone=i32(i+2)}
         effectors:=[1]Multi_IK_Effector{{bone=4,position={9,9,0},rotation=1,position_weight=1}};residuals:[1]f32
-        settings:=MULTI_IK_DEFAULT;settings.root,settings.iterations=1,256
-        best:=time.Duration(max(i64))
-        for _ in 0..<5 {
-            copy(local,rest)
-            start:=time.tick_now()
-            result,ok:=multi_ik({parents,names,rest},hierarchy,local,world,joints[:],effectors[:],settings,residuals[:])
-            best=min(best,time.tick_since(start))
-            testing.expect(t,ok && result.iterations==256)
-        }
-        return best
+        settings:=MULTI_IK_DEFAULT;settings.root,settings.iterations=1,64
+        result,ok:=multi_ik({parents,names,rest},hierarchy,local,world,joints[:],effectors[:],settings,residuals[:])
+        testing.expect(t,ok && result.iterations==64)
+        return result.recomposed
     }
-    few,many:=cost(t,5),cost(t,4000)
-    testing.expectf(t,many<few*10,"a solve with 3995 more bones outside it costs %v against %v",many,few)
+    few,many:=recomposed(t,5),recomposed(t,4000)
+    testing.expectf(t,few>5 && many-few==4000-5,"a solve with 3995 more bones outside its chain recomposes %d bones against %d",many,few)
 }

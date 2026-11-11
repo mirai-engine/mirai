@@ -35,10 +35,10 @@ without clips or an assumed human rig.
   the stiffness of its bone if it is enumerated.
 - A turned joint recomposes only its own branch (`pose_world_branch` over the caller's
   `Pose_Hierarchy`), so a solve costs the same whatever the skeleton has outside the subtree.
-- The result gives the largest position residual, the largest angular error, the iterations, one
-  residual per effector and `reached`, which requires both tolerances. An incompatible target gives
-  a valid solution with `reached=false`; it is not a physical solver nor does it guarantee global
-  convergence.
+- The result gives the largest position residual, the largest angular error, the iterations, the
+  bones it recomposed, one residual per effector and `reached`, which requires both tolerances. An
+  incompatible target gives a valid solution with `reached=false`; it is not a physical solver nor
+  does it guarantee global convergence.
 - The membership of each effector in the subtree is checked on entry; the walk ends at the root and
   preserves its ancestors and the siblings of the subtree.
 

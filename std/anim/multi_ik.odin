@@ -26,7 +26,22 @@ Multi_IK :: struct {
     angular_tolerance:f32 `mirai:"optional,min=0,unit=rad"`,
 }
 MULTI_IK_DEFAULT :: Multi_IK{iterations=32,tolerance=.001,angular_tolerance=.001,relaxation=.7,max_root_translation=1}
-Multi_IK_Result :: struct {residual,angular_error:f32,iterations:int,reached:bool}
+// recomposed: the bone transforms the solve composed, its cost.
+Multi_IK_Result :: struct {residual,angular_error:f32,iterations,recomposed:int,reached:bool}
+
+// Recomposes the branch of bone and counts its bones, whose links pose_world_branch checked.
+@(private)
+multi_ik_refresh :: proc "contextless" (hierarchy:Pose_Hierarchy,local,world:[]math.Transform,bone:int,root_transform:math.Transform,recomposed:^int) -> bool {
+    if !pose_world_branch(hierarchy,local,world,bone,root_transform) {return false}
+    at:=bone
+    for {
+        recomposed^+=1
+        if child:=hierarchy.links[at].first_child;child>=0 {at=int(child);continue}
+        for at!=bone && hierarchy.links[at].next_sibling<0 {at=int(hierarchy.parents[at])}
+        if at==bone {return true}
+        at=int(hierarchy.links[at].next_sibling)
+    }
+}
 
 // The rotation of a bone in its parent's space that the limits allow, from `rotation`: each
 // component of its rotation vector from rest about the axes of frame kept in its range, 0 when
@@ -77,13 +92,14 @@ multi_ik :: proc "contextless" (skeleton:Skeleton,hierarchy:Pose_Hierarchy,local
     }
     for effector in effectors {if effector.bone<0 || int(effector.bone)>=len(local) || !multi_ik_descendant(skeleton,effector.bone,settings.root) || !anim_vec3_valid(effector.position) || !anim_rotation_valid(effector.rotation) || !anim_finite(effector.position_weight) || effector.position_weight<0 || effector.position_weight>1 || !anim_finite(effector.rotation_weight) || effector.rotation_weight<0 || effector.rotation_weight>1 {return}}
     if !pose_world(skeleton.parents,local,world,root_transform) {return}
+    result.recomposed=len(local)
     root_position:=world[settings.root].position
     for iteration in 0..<settings.iterations {
         for joint in joints {
             if joint.preferred_weight<=0 {continue}
             local[joint.bone].rotation=math.quat_slerp(local[joint.bone].rotation,joint.preferred,joint.preferred_weight*settings.relaxation/f32(settings.iterations))
         }
-        if !pose_world_branch(hierarchy,local,world,int(settings.root),root_transform) {return}
+        if !multi_ik_refresh(hierarchy,local,world,int(settings.root),root_transform,&result.recomposed) {return}
         if settings.root_policy==.Translate {
             correction:math.Vec3;total:f32
             for effector in effectors {correction+=(effector.position-world[effector.bone].position)*effector.position_weight;total+=effector.position_weight}
@@ -94,7 +110,7 @@ multi_ik :: proc "contextless" (skeleton:Skeleton,hierarchy:Pose_Hierarchy,local
                 parent:=skeleton.parents[settings.root]
                 parent_pose:=world[parent] if parent>=0 else root_transform
                 local[settings.root].position+=math.transform_inverse_vector(parent_pose,root_position+offset-world[settings.root].position)
-                if !pose_world_branch(hierarchy,local,world,int(settings.root),root_transform) {return}
+                if !multi_ik_refresh(hierarchy,local,world,int(settings.root),root_transform,&result.recomposed) {return}
             }
         }
         for effector in effectors {
@@ -110,7 +126,7 @@ multi_ik :: proc "contextless" (skeleton:Skeleton,hierarchy:Pose_Hierarchy,local
                         desired:=linalg.normalize0(conj(world[parent].rotation if parent>=0 else root_transform.rotation)*change*world[bone].rotation)
                         if multi_ik_limited(joint) {desired,ok=joint_limit_axes(desired,skeleton.rest[bone].rotation,joint.frame,joint.limits);if !ok {return result,false}}
                         local[bone].rotation=desired
-                        if !pose_world_branch(hierarchy,local,world,int(bone),root_transform) {return result,false}
+                        if !multi_ik_refresh(hierarchy,local,world,int(bone),root_transform,&result.recomposed) {return result,false}
                     }
                     break
                 }
@@ -122,7 +138,7 @@ multi_ik :: proc "contextless" (skeleton:Skeleton,hierarchy:Pose_Hierarchy,local
                 stiffness:f32
                 for joint in joints {if joint.bone==effector.bone {stiffness=joint.stiffness;if multi_ik_limited(joint) {desired,ok=joint_limit_axes(desired,skeleton.rest[effector.bone].rotation,joint.frame,joint.limits);if !ok {return result,false}};break}}
                 local[effector.bone].rotation=math.quat_slerp(local[effector.bone].rotation,desired,effector.rotation_weight*settings.relaxation*(1-stiffness))
-                if !pose_world_branch(hierarchy,local,world,int(effector.bone),root_transform) {return result,false}
+                if !multi_ik_refresh(hierarchy,local,world,int(effector.bone),root_transform,&result.recomposed) {return result,false}
             }
         }
         result.residual,result.angular_error=0,0
