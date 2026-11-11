@@ -213,7 +213,7 @@ it leaves) and applies what the journal hands it; the journal owns the rest:
   the parts of the key over a region, or a base (`journal_resync`, with what the client holds,
   `since`, in the library's terms); a server offers a base itself (`journal_offer`), as to each
   connection that enters its world. The library writes each part (`journal_serves`,
-  `journal_part`); the journal packs it in LZ, tells it in its place among the operations
+  `journal_part`); the journal compresses it, tells it in its place among the operations
   (`Net_Journal_Part`, numbered) and streams its bytes whole on the session's channel of parts
   (`JOURNAL_CHANNEL`), handing a connection more while less than `JOURNAL_QUEUE` of it waits, so
   a part goes as fast as the connection carries. The client applies it in that place once its

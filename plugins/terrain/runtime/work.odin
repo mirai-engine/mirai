@@ -148,7 +148,7 @@ work_build :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,owner:c
 @(private)
 work_page :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,grid:Grid_Kind,index:int,phase:core.Phase) -> bool {
     s:=&entry.source
-    if slot.read.block==nil && !page_reader_init(&slot.read,slot.allocator) {return false}
+    if slot.read.block==nil && !page_reader_init(&slot.read,slot.allocator,s.codecs) {return false}
     block:Page_Block
     size,count:=4,0
     switch grid {

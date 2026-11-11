@@ -14,8 +14,6 @@ import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
-import "mirai:std/compressor"
-import "mirai:std/compressor/lz"
 import "mirai:std/serial"
 import "mirai:ui"
 
@@ -62,14 +60,14 @@ THUMBNAIL_FILE_HEADER :: 24 // magic, version, key, side and the bytes of the LZ
 // A stored preview as its file holds it, and the coders of its image.
 Thumbnail_File :: struct {
     bytes:[dynamic]u8,
-    decoder:compressor.Decoder,
-    encoder:lz.Encoder,
+    decoder:asset.Stream_Decoder,
+    encoder:asset.Block_Encoder,
 }
 
 thumbnail_file_destroy :: proc(file:^Thumbnail_File) {
     delete(file.bytes)
-    compressor.decoder_destroy(&file.decoder)
-    lz.encoder_destroy(&file.encoder)
+    asset.stream_decoder_destroy(&file.decoder)
+    asset.block_encoder_destroy(&file.encoder)
     file^={}
 }
 
@@ -441,14 +439,14 @@ thumbnail_store_forget :: proc(folder:string,ids:[]base.Asset_Id) {
 @(private)
 thumbnail_load :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,file:^Thumbnail_File,image:^[dynamic]u8) -> bool {
     pixels:=side*side*4
-    resize(&file.bytes,THUMBNAIL_FILE_HEADER+asset.pack_bound(pixels))
+    resize(&file.bytes,THUMBNAIL_FILE_HEADER+asset.block_bound(nil,pixels,general=true))
     head,size,error:=serial.file_read_head(thumbnail_file(folder,id,side),file.bytes[:])
     if error!=.None || size!=i64(len(head)) || len(head)<THUMBNAIL_FILE_HEADER {return false}
     r:=serial.reader_init(head)
     if serial.read_u32(&r)!=THUMBNAIL_FILE_MAGIC || serial.read_u32(&r)!=THUMBNAIL_FILE_VERSION || serial.read_u64(&r)!=key || serial.read_u32(&r)!=u32(side) {return false}
     packed:=int(serial.read_u32(&r))
     if r.failed || packed!=len(head)-THUMBNAIL_FILE_HEADER {return false}
-    if len(file.decoder.scratch)==0 && compressor.decoder_init(&file.decoder)!=.None {return false}
+    if !file.decoder.made && asset.stream_decoder_init(&file.decoder)!=.None {return false}
     resize(image,pixels)
     return asset.unpack(&file.decoder,head[THUMBNAIL_FILE_HEADER:],image[:])==.None
 }
@@ -457,8 +455,8 @@ thumbnail_load :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,file:^Thu
 @(private)
 thumbnail_save :: proc(folder:string,id:base.Asset_Id,side:int,key:u64,image:[]u8,file:^Thumbnail_File) -> bool {
     if len(image)!=side*side*4 {return false}
-    resize(&file.bytes,THUMBNAIL_FILE_HEADER+asset.pack_bound(len(image)))
-    packed,error:=asset.pack(&file.encoder,asset.PACK_EDIT,image,file.bytes[THUMBNAIL_FILE_HEADER:])
+    resize(&file.bytes,THUMBNAIL_FILE_HEADER+asset.block_bound(nil,len(image),general=true))
+    packed,error:=asset.block_encode(&file.encoder,asset.PACK_EDIT,image,file.bytes[THUMBNAIL_FILE_HEADER:],general=true)
     if error!=.None {return false}
     w:serial.Writer
     serial.writer_init(&w,allocator=context.temp_allocator)

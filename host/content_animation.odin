@@ -6,6 +6,7 @@ import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:time"
+import "mirai:std/codec"
 import "mirai:asset"
 import anim "mirai:std/anim"
 import "mirai:std/base"
@@ -28,6 +29,7 @@ import "mirai:std/serial"
 @(private)
 Content_Animation_Load :: struct {
     allocator:runtime.Allocator,
+    codecs:^codec.Table, // of the App
     id:base.Asset_Id,
     file:asset.Asset, // the .anim, or its compression from the cache: view points into it
     view:asset.Animation_View,
@@ -137,7 +139,7 @@ content_animation_start :: proc(app:^App,entry:^Content_Animation) -> bool {
     c:=app.content
     load,error:=new(Content_Animation_Load,c.allocator)
     if error!=nil {return false}
-    load.allocator,load.id=c.allocator,entry.id
+    load.allocator,load.id,load.codecs=c.allocator,entry.id,&app.codecs
     started:=time.tick_now()
     if !content_animation_read(app,entry,load) {
         content_animation_load_free(c,load)
@@ -256,7 +258,7 @@ content_animation_read :: proc(
     no_path:runtime.Allocator_Error
     if load.path,no_path=strings.clone(fmt.tprintf("%s/%s-%s.anim",app.animation_cache,name,hex),load.allocator);no_path!=nil {return false}
     cached:asset.Asset
-    if asset.asset_load(&cached,load.path,a.allocator)!=.None {return true}
+    if asset.asset_load(&cached,load.path,a.allocator,codecs=a.codecs)!=.None {return true}
     header:=cached.blob.header
     view:asset.Animation_View
     error=.Corrupt
@@ -339,7 +341,7 @@ content_animation_build :: proc(load:^Content_Animation_Load,worker:int) {
     open :: proc(data:rawptr,id:base.Asset_Id,file:^asset.Asset) -> bool {
         for &skeleton in (^Content_Animation_Load)(data).skeletons {
             if skeleton.id!=id || skeleton.file.file==nil {continue}
-            return asset.asset_open(file,skeleton.file.file,context.temp_allocator)==.None
+            return asset.asset_open(file,skeleton.file.file,context.temp_allocator,codecs=(^Content_Animation_Load)(data).codecs)==.None
         }
         return false
     }

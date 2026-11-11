@@ -12,8 +12,8 @@ Container, typed tables, asset types, registry and text. By topic:
 
 Little endian (`asset/container.odin`): a fixed header (magic `MIRA`, type fourcc, container and
 type version, flags, id, `owner`, the `content_hash` of everything that follows), a directory of
-chunks (tag, compression `None` or `LZ`, alignment, offset and sizes) and the chunks, each at
-a multiple of its alignment.
+chunks (tag, compression `None`, `LZ` or `Codec`, alignment, offset and sizes) and the chunks,
+each at a multiple of its alignment.
 
 - **The header id is an asset's only identity**: nothing derives it from its path, name or source,
   and a moved or renamed asset remains the same.
@@ -23,52 +23,67 @@ a multiple of its alignment.
 - `header_read` validates only the header (what a scan uses). `blob_open` validates the whole file:
   exact size, each chunk inside the file and aligned, uncompressed size reachable by an LZ
   stream of that size (`pack_reach`) and a total memory limit (`DEFAULT_MEMORY_LIMIT`).
-- `blob_build` stores LZ only when it shrinks the chunk. The dependencies, names, schema and
-  table directory are stored as they are: a scan reads them without a decoder.
+- `blob_build` stores a chunk compressed only when that shrinks it. The dependencies, names,
+  schema and table directory are stored as they are: a scan reads them without a decoder.
 
 ### Compression
 
-LZ streams: `std/compressor` decodes them and `std/compressor/lz` encodes them, with
-`cook/compressor/lz` for the levels of a cook. `pack` and `unpack` are the only entry points
-of the formats, also for what compresses outside a chunk (mesh pages, terrain blocks, the parts the
-terrain sends over the network, editor thumbnails, the shaders the executables embed).
+A stream that is not LZ starts with a zero byte, the fourcc of its codec, its piece count and the
+size of each piece: a reader knows what decodes it from the stream (`codec_stream.odin`).
+`block_pack`, `Block_Encoder` and `unpack` are the entry points of what compresses outside a chunk
+(mesh pages, terrain blocks, the parts a journal sends over the network, editor thumbnails, the
+shaders the executables embed), and what a game's compression decides goes through them.
 
+- **The codecs of the engine** are Zstandard (`std/zstd`) for what loads once or travels and LZ4
+  HC (`std/lz4`) for what streams (`codec_open.odin`), with blocks by `cook/encoders`. A checkout
+  that holds the real `std/compressor` and `cook/compressor` packages writes LZ with BC7Split
+  instead and reads both; a checkout without them reads everything but LZ streams, which are
+  `Codec_Missing` there.
+- **Versioned assets hold no LZ.** `mirai asset repack <file>...` writes an asset again with the
+  codecs of the engine, a texture with its blocks as they are; a terrain is saved again by its
+  plugin, which writes the size of each block.
+- **What a game ships with** is `build.compression` of its project: `compression_mirai` is LZ and
+  BC7Split, `compression_open` the open codecs, `none` stores everything, and a plugin brings its
+  codecs (`std/codec`). Empty is the first of LZ and the open ones the checkout has. A cook writes
+  what is not LZ with `Pack_Codecs`, so that what stores blocks outside a chunk keeps its format.
+  A game without LZ is built with `ASSET_LZ=false` and its textures without BC7Split nor planes of
+  fields; one without the open codecs, with `ASSET_OPEN=false`.
+- **What a game writes** goes through `Types.writes`: a document takes it from the types it is
+  made with, so that a save compresses with the codecs of the plugin that compressed the game.
+- **Block tables.** A kind whose asset stores blocks it reads alone keeps them in `<name>_blocks`,
+  with the `Block_Record`s of its pages in `<name>_pages`. A cook that does not ship with LZ
+  compresses them again from what the records say; a record without its `raw` size is
+  `Blocks_Old`, and saving the asset again writes it.
 - **Packs.** A write says how hard it compresses (`Pack`): `PACK_EDIT` for what the editor,
   imports and the game save. A cook hands the packs of `cook/compressor/lz`: `SHIP` for the
-  cooking of a shipped game, which writes every asset again with `document_repack` (its chunks
-  and the pages of a mesh), and `QUICK` for the cook of a dev game, a few times faster and a
-  little larger. All decode the same way.
-- **Pieces.** A chunk over `PACK_PIECE` is a run of LZ streams of that many raw bytes, each
-  decoding without the others (the library's `seekChunkReset`): a scene load decodes them at once
-  on its workers (`Piece_Decoders`), and a write with a worker compresses them at once into the
-  same bytes.
-- **Decoders.** `Decoder` holds the scratch of the LZ and BC7Split decoders, made once by
+  cooking of a shipped game, which writes every asset again with `document_repack` (its chunks,
+  the pages of a mesh and its block tables), and `QUICK` for the cook of a dev game, a few times
+  faster and a little larger. A codec takes the level of each from its `codec.Encode`. All
+  decode the same way.
+- **Pieces.** A chunk over `PACK_PIECE` is a run of streams of that many raw bytes, each
+  decoding without the others: a scene load decodes them at once on its workers
+  (`Piece_Decoders`), and a write with a worker compresses them at once into the same bytes.
+- **Decoders.** `Decoder` holds the scratch of the decoders of the streams, made once by
   whoever reads (a job keeps one per thread) and lent to `asset_open`/`asset_load`; an asset opened
   without one makes its own the first time it decodes. A mesh page or a terrain block decodes with
-  an `compressor.Decoder` of its reader (the renderer keeps one per worker).
-- **Texture levels.** The `texels` column is LZ with the smallest level first: a read of the
-  small levels decodes only the start of the stream. A BC7 texture written by `cook/textures`
+  a `Stream_Decoder` of its reader (the renderer keeps one per worker).
+- **Texture levels.** The `texels` column holds the smallest level first: a read of the small
+  levels decodes only the start of the stream. With LZ, a BC7 texture written by `cook/textures`
   stores BC7Split streams of runs of levels (the `bc7split` table), and BC1, BC3 and BC5 may store
   planes of fields ([texture](kinds.md#texture)); `texture_decode` restores them into memory of the
   asset before the renderer takes them.
 
 #### Codec packages
 
-- `std/compressor` (runtime): the decoder of LZ streams (`decompress`), and
-  `format.odin`, the stream format both sides read: block, quantum and chunk headers, array types,
-  packet layouts, levels and the prediction of packed Huffman code lengths.
-- `std/compressor/bc7split` (runtime): restores BC7 blocks from a BC7Split stream (`decode`).
-- `std/compressor/lz` (runtime, since a game saves with `PACK_EDIT`): the encoder (`compress`) and
-  its block framing over the packages `entropy` (entropy arrays: Huffman, tANS, RLE, split; costs
-  and log2 tables), `match` (hash tables) and `parse` (the fast and lazy parsers). It allocates
-  its scratch on demand in the `Encoder`, kept across calls. A `Mode` is a level and, above
-  `Normal`, what parses it.
-- `cook/compressor/lz` (engine-time, package `lz_optimal`): the optimal parser, its find-all match
-  finders (cache table, suffix trie) and the long range matcher, as the `Mode` of each of its
-  levels. The framing and the entropy coding are those of `std/compressor/lz`.
-- `cook/compressor/bc7split` (engine-time, package `bc7split_encode`): the BC7Split encoder that
-  `cook/textures` runs on BC7 levels, on top of `std/compressor/bc7split` and the log2 table of
-  `entropy`.
+- `std/zstd` and `std/lz4` (runtime): Odin translations of Zstandard and LZ4 HC, with the license
+  and the commit each comes from beside them. A game saves with them, so the encoders are runtime.
+- `std/codec` (runtime): the shape of a compression plugin, by the C convention: how a game
+  decodes its streams and how a cook writes them and makes blocks.
+- `cook/encoders/{rgbcx,bc7enc,rdo,bc6h}` (engine-time): Odin translations of bc7enc_rdo and of
+  Intel's BC6H encoder, which `cook/textures` runs (`open.odin`) when the checkout has no private
+  encoders.
+- `std/compressor` and `cook/compressor`: optional, see [compression](#compression). Tracked here
+  are only the `placeholder.odin` that keep the API the engine compiles against.
 
 ## Typed tables
 
@@ -158,7 +173,7 @@ validated by their plugin without adding them to the core:
   `particle` (`Particle_Info`), `parameters` (`Particle_Parameter`), `hidden` (`Particle_Field`).
 - **`.fracture`** (`FRAC`, of the `destruct` plugin): `fracture` (`Fracture_Info`), `pieces`,
   `connections`, `clusters`, `vertices` (`Vertex`) and `indices` local to each piece.
-- **`.foliage`** (`FOLI`): `foliage` (`Foliage_Info`), `types`, `cells`, and LZ bulk `manual`
+- **`.foliage`** (`FOLI`): `foliage` (`Foliage_Info`), `types`, `cells`, and packed bulk `manual`
   and `overrides`; defined and validated by the
   [foliage](../../mirai-world/references/foliage.md#format) plugin.
 - **`.physics_cache`** (`PCAC`): format of the

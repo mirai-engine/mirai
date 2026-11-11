@@ -55,6 +55,11 @@ job_ship :: proc(job:^Job) -> Failure {
     folder:=job.published[:strings.last_index_byte(job.published,'/')]
     if os.write_entire_file(project.path(folder,project.SETTINGS_FILE,allocator=context.temp_allocator),job.settings)!=nil {return .Copy_Failed}
     if job.cook.assets=="" {return .None}
+    if problem:=compression_build(job.compression);problem!="" {
+        job.result.cook.error=Cook_Error.Compression_Failed
+        job.result.cook.detail=strings.clone(problem,job.cook.allocator)
+        return .Cook_Failed
+    }
     job.result.cook=cook_assets(job.cook)
     return job.result.cook.error==.None?.None:.Cook_Failed
 }
@@ -87,7 +92,7 @@ engine_time_packages :: proc(sources:[]string,root,engine_root:string,developmen
         if !strings.has_prefix(relative,"plugins/") {return false}
         rest:=relative[len("plugins/"):]
         slash:=strings.index_byte(rest,'/')
-        return slash>0 && strings.has_prefix(rest[slash+1:],"editor/")
+        return slash>0 && (strings.has_prefix(rest[slash+1:],"editor/") || strings.has_prefix(rest[slash+1:],"cook/"))
     }
     found:=make([dynamic]string,allocator)
     for source in sources {

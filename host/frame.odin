@@ -116,7 +116,7 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
     }
     if !render.renderer_init(renderer,{
         device=device,width=u32(app.drawable.x),height=u32(app.drawable.y),
-        settings=desc.render_settings,allocator=app.allocator,shaders=shaders,
+        settings=desc.render_settings,allocator=app.allocator,codecs=&app.codecs,shaders=shaders,
         // The pages of streamed meshes decode in the jobs of the app, from this thread, its owner.
         jobs=&app.jobs if jobs.worker_count(&app.jobs)>0 else nil,
         // A window or a surface shows each frame to someone, who would see one

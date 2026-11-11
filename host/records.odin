@@ -147,7 +147,7 @@ clone_string :: proc(text:string,allocator:=context.allocator) -> string {
 records_open :: proc(app:^App,path:string,file:^asset.Asset) -> (view:asset.Records_View,ok:bool) {
     a:=app.assets
     data,error:=asset.registry_read(&a.registry,path,a.allocator)
-    if error!=.None || asset.asset_take(file,data,a.allocator)!=.None {return}
+    if error!=.None || asset.asset_take(file,data,a.allocator,codecs=a.codecs)!=.None {return}
     if !asset.blob_verify_hash(&file.blob) {
         asset.asset_close(file)
         return

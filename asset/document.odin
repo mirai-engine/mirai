@@ -63,6 +63,7 @@ Document :: struct {
     hashes:[dynamic]u64,
     tables:[dynamic]Doc_Table,
     allocator:runtime.Allocator,
+    writes:^Pack_Codecs, // of the Types it was made with: what a write that names none compresses with
 }
 
 document_init :: proc(doc:^Document,kind:Fourcc,id:base.Asset_Id,allocator:=context.allocator) {
@@ -101,6 +102,7 @@ document_import :: proc(doc:^Document,link:^serial.Schema_Import,type:serial.Typ
 // The type of the document that describes T.
 document_type :: proc(doc:^Document,types:^Types,$T:typeid) -> (type:serial.Type_Index,ok:bool) {
     index:=types_index(types,T) or_return
+    if doc.writes==nil {doc.writes=types.writes}
     link:serial.Schema_Import
     document_import_begin(doc,&link,&types.schema)
     defer serial.schema_import_destroy(&link)
@@ -309,7 +311,8 @@ document_choice_rename :: proc(doc:^Document,old,name:string) -> int {
 }
 
 // Writes the document as a file into w, which has to be empty, compressed as p says.
-document_write :: proc(doc:^Document,w:^serial.Writer,p:=PACK_EDIT,worker:=jobs.Worker_Ref{}) -> Error {
+document_write :: proc(doc:^Document,w:^serial.Writer,p:=PACK_EDIT,worker:=jobs.Worker_Ref{},codecs:^Pack_Codecs=nil) -> Error {
+    codecs:=codecs if codecs!=nil else doc.writes
     document_check(doc) or_return
     allocator:=doc.allocator
     dependencies:=make([dynamic]base.Asset_Id,allocator);defer delete(dependencies)
@@ -383,21 +386,21 @@ document_write :: proc(doc:^Document,w:^serial.Writer,p:=PACK_EDIT,worker:=jobs.
     chunks[3].data=serial.writer_bytes(&directory)
     if names.overflow!=0 || schema.overflow!=0 || directory.overflow!=0 {return .Out_Of_Memory}
     scratch:=make([dynamic]u8,allocator);defer delete(scratch)
-    return blob_build(w,doc.kind,doc.kind_version,doc.id,doc.owner,doc.flags,chunks[:],&scratch,p,worker)
+    return blob_build(w,doc.kind,doc.kind_version,doc.id,doc.owner,doc.flags,chunks[:],&scratch,p,worker,codecs)
 }
 
 // Writes the document to a file, whole or not at all.
-document_save :: proc(doc:^Document,path:string,sync:=false,p:=PACK_EDIT) -> Error {
-    data:=document_bytes(doc,doc.allocator,p) or_return
+document_save :: proc(doc:^Document,path:string,sync:=false,p:=PACK_EDIT,codecs:^Pack_Codecs=nil) -> Error {
+    data:=document_bytes(doc,doc.allocator,p,codecs=codecs) or_return
     defer mem.free_bytes(data,doc.allocator)
     return serial.file_write_atomic(path,data,sync)==.None?.None:.IO
 }
 
 // The file the document is, as bytes from allocator, aligned for its chunks.
-document_bytes :: proc(doc:^Document,allocator:=context.allocator,p:=PACK_EDIT,worker:=jobs.Worker_Ref{}) -> (data:[]u8,error:Error) {
+document_bytes :: proc(doc:^Document,allocator:=context.allocator,p:=PACK_EDIT,worker:=jobs.Worker_Ref{},codecs:^Pack_Codecs=nil) -> (data:[]u8,error:Error) {
     w:serial.Writer
     serial.writer_init(&w,allocator=allocator)
-    if error=document_write(doc,&w,p,worker);error!=.None {
+    if error=document_write(doc,&w,p,worker,codecs);error!=.None {
         serial.writer_destroy(&w)
         return
     }
@@ -448,12 +451,13 @@ document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator)
 // chunks, and the pages of a mesh, compressed again. Cooking a shipped game
 // writes its assets with Ship; with a worker, the pieces of a large chunk are
 // compressed on the workers of its job system.
-document_repack :: proc(data:[]u8,p:Pack,allocator:=context.allocator,worker:=jobs.Worker_Ref{}) -> (repacked:[]u8,error:Error) {
+document_repack :: proc(data:[]u8,p:Pack,allocator:=context.allocator,worker:=jobs.Worker_Ref{},codecs:^Pack_Codecs=nil) -> (repacked:[]u8,error:Error) {
     doc:Document
     document_read(&doc,data,allocator) or_return
     defer document_destroy(&doc)
-    if doc.kind==KIND_MESH {mesh_pages_repack(&doc,p) or_return}
-    return document_bytes(&doc,allocator,p,worker)
+    if doc.kind==KIND_MESH {mesh_pages_repack(&doc,p,codecs) or_return}
+    if codecs!=nil || ASSET_LZ {document_blocks_repack(&doc,p,codecs) or_return}
+    return document_bytes(&doc,allocator,p,worker,codecs)
 }
 
 document_read :: proc(doc:^Document,data:[]u8,allocator:=context.allocator,limit:=u64(DEFAULT_MEMORY_LIMIT)) -> Error {

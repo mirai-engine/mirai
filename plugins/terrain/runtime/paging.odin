@@ -2,6 +2,7 @@ package terrain
 
 import "base:runtime"
 import "core:mem"
+import "mirai:asset"
 import "mirai:std/base"
 
 // The pages of the grids of a source, its field, weights and holes, read
@@ -93,11 +94,11 @@ source_region_held :: proc "contextless" (s:^Source,low,high:[3]int) -> bool {
 // A page whose values are in its block, into memory: false when the block
 // cannot be read or does not hold valid values, or without memory.
 @(private)
-grid_page_read :: proc(g:^Grid($T),id:int,file:string,valid:proc "contextless" (value:T) -> bool,allocator:runtime.Allocator) -> bool {
+grid_page_read :: proc(g:^Grid($T),id:int,file:string,valid:proc "contextless" (value:T) -> bool,allocator:runtime.Allocator,codecs:Page_Codecs) -> bool {
     if !grid_absent(g,id) {return true}
     _,count:=grid_page_extent(g,id)
     read:Page_Reader
-    read_ok:=page_reader_init(&read,context.temp_allocator)
+    read_ok:=page_reader_init(&read,context.temp_allocator,codecs)
     defer page_reader_destroy(&read,context.temp_allocator)
     values,made:=shared_make(T,count,allocator)
     if !read_ok || !made {shared_free(values);return false}
@@ -133,7 +134,7 @@ grid_page_install :: proc(g:^Grid($T),id:int,values:[]T) {
 // given, the chunks that read it (data_pages_arrived).
 source_region_read :: proc(s:^Source,low,high:[3]int,entry:^Data_Source=nil) -> bool {
     if !source_paged(s) {return true}
-    read :: proc(g:^Grid($T),low,high:[3]int,file:string,valid:proc "contextless" (value:T) -> bool,allocator:runtime.Allocator,entry:^Data_Source,limit:f32=0) -> bool {
+    read :: proc(g:^Grid($T),low,high:[3]int,file:string,valid:proc "contextless" (value:T) -> bool,allocator:runtime.Allocator,entry:^Data_Source,limit:f32=0,codecs:=Page_Codecs{}) -> bool {
         if !g.paged {return true}
         from,to:=grid_pages(g,low,high)
         for pz in from.z..=to.z {for py in from.y..=to.y {for px:=from.x;px<=to.x; {
@@ -146,7 +147,7 @@ source_region_read :: proc(s:^Source,low,high:[3]int,entry:^Data_Source=nil) -> 
             px+=1
             id:=grid_page_id(g,{px-1,py,pz})
             if !grid_absent(g,id) {continue}
-            if !grid_page_read(g,id,file,valid,allocator) {return false}
+            if !grid_page_read(g,id,file,valid,allocator,codecs) {return false}
             when T==f32 {
                 if limit>0 && !values_within(g.pages[slot].values,limit) {
                     shared_free(g.pages[slot].values)
@@ -161,7 +162,7 @@ source_region_read :: proc(s:^Source,low,high:[3]int,entry:^Data_Source=nil) -> 
         }}}
         return true
     }
-    return read(&s.field,low,high,s.file,value_finite,s.allocator,entry,field_limit(s.info)) && read(&s.weights,low,high,s.file,weights_full,s.allocator,entry) && read(&s.holes,low,high,s.file,hole_valid,s.allocator,entry)
+    return read(&s.field,low,high,s.file,value_finite,s.allocator,entry,field_limit(s.info),s.codecs) && read(&s.weights,low,high,s.file,weights_full,s.allocator,entry,codecs=s.codecs) && read(&s.holes,low,high,s.file,hole_valid,s.allocator,entry,codecs=s.codecs)
 }
 
 // What chunks read of the samples low..high came into memory: the chunks
@@ -191,7 +192,7 @@ source_weights_read_all :: proc(s:^Source) -> bool {
     g:=&s.weights
     if !g.paged {return true}
     for slot in 0..<len(g.pages) {
-        if id:=grid_id(g,slot);id>=0 && !grid_page_read(g,id,s.file,weights_full,s.allocator) {return false}
+        if id:=grid_id(g,slot);id>=0 && !grid_page_read(g,id,s.file,weights_full,s.allocator,s.codecs) {return false}
     }
     return true
 }
@@ -199,7 +200,7 @@ source_weights_read_all :: proc(s:^Source) -> bool {
 // Lets go of the values of the page a slot holds: with edits, they stay in a
 // block of its own first. False without memory, with the page as it was.
 @(private)
-grid_page_leave :: proc(g:^Grid($T),slot:int,allocator:runtime.Allocator) -> bool {
+grid_page_leave :: proc(g:^Grid($T),slot:int,allocator:runtime.Allocator,writes:^asset.Pack_Codecs) -> bool {
     page,block:=&g.pages[slot],&g.blocks[slot]
     if page.values==nil {return true}
     if block.edited || block.size==0 {
@@ -208,7 +209,7 @@ grid_page_leave :: proc(g:^Grid($T),slot:int,allocator:runtime.Allocator) -> boo
             page.fill,block^=page.values[0],{}
         } else {
             writer:Page_Writer
-            if !page_writer_init(&writer,context.temp_allocator) {return false}
+            if !page_writer_init(&writer,context.temp_allocator,writes) {return false}
             defer page_writer_destroy(&writer)
             extent,_:=grid_page_extent(g,grid_id(g,slot))
             encoded,ok:=page_encode(&writer,page.values,extent.x,false)
@@ -232,17 +233,17 @@ grid_page_leave :: proc(g:^Grid($T),slot:int,allocator:runtime.Allocator) -> boo
 @(private)
 source_pages_leave :: proc(s:^Source) -> (left:int) {
     if !source_paged(s) {return}
-    leave :: proc(g:^Grid($T),allocator:runtime.Allocator) -> (left:int) {
+    leave :: proc(g:^Grid($T),allocator:runtime.Allocator,writes:^asset.Pack_Codecs) -> (left:int) {
         if !g.paged {return}
         for &page,slot in g.pages {
             kept:=page.kept
             page.kept=false
             if kept || page.values==nil || grid_id(g,slot)<0 {continue}
-            if grid_page_leave(g,slot,allocator) {left+=1}
+            if grid_page_leave(g,slot,allocator,writes) {left+=1}
         }
         return
     }
-    return leave(&s.field,s.allocator)+leave(&s.weights,s.allocator)+leave(&s.holes,s.allocator)
+    return leave(&s.field,s.allocator,s.codecs.writes)+leave(&s.weights,s.allocator,s.codecs.writes)+leave(&s.holes,s.allocator,s.codecs.writes)
 }
 
 // Marks the pages of the grids of a source a build of chunk index reads, for

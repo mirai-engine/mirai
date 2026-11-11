@@ -5,6 +5,7 @@ import "base:runtime"
 import "core:hash/xxhash"
 import "core:mem"
 import "mirai:std/base"
+import "mirai:std/codec"
 import "mirai:std/jobs"
 import "mirai:std/compressor"
 import "mirai:std/compressor/bc7split"
@@ -17,7 +18,7 @@ import "mirai:std/serial"
 //   Chunk_Entry * chunk_count    the directory, right after the header
 //   chunks                       each at a multiple of its alignment
 //
-// A chunk is stored as it is or as one LZ stream. Reading the first bytes of
+// A chunk is stored as it is, as one LZ stream or as a stream of a codec (codec_stream.odin). Reading the first bytes of
 // a file is enough to know what it is, which asset it is and where each
 // chunk lies; blob_open validates all of it before anything is used.
 
@@ -47,7 +48,7 @@ fourcc_text :: proc "contextless" (value:Fourcc,buffer:^[4]u8) -> string {
     return string(buffer[:])
 }
 
-Compression :: enum u8 {None,LZ}
+Compression :: enum u8 {None,LZ,Codec}
 
 // How hard a write compresses. A program writes with PACK_EDIT, in the time of a save or an
 // import; a cook writes with the packs of cook/compressor/lz (SHIP and QUICK), which carry the
@@ -69,7 +70,7 @@ PACK_PIECE :: 4<<20
 // keeps one per thread and lends it to the assets it opens; an asset opened without one makes its
 // own the first time it needs it.
 Decoder :: struct {
-    lz:compressor.Decoder,
+    using stream:Stream_Decoder,
     bc7split:^bc7split.Decoder,
     allocator:runtime.Allocator,
     // With them, the pieces of a chunk decode at once on the workers of their job system: worker
@@ -78,17 +79,18 @@ Decoder :: struct {
     worker:int,
 }
 
-// An LZ decoder for each worker of a job system, by worker index, that decodes pieces of
+// A decoder for each worker of a job system, by worker index, that decodes pieces of
 // chunks: made the first time its worker decodes one, kept until destroyed.
 Piece_Decoders :: struct {
     system:^jobs.Job_System,
-    decoders:[]compressor.Decoder,
+    decoders:[]Stream_Decoder,
     allocator:runtime.Allocator,
+    codecs:^codec.Table,
 }
 
-piece_decoders_init :: proc(p:^Piece_Decoders,system:^jobs.Job_System,allocator:=context.allocator) -> Error {
-    p^={system=system,allocator=allocator}
-    decoders,allocation:=make([]compressor.Decoder,jobs.worker_count(system),allocator)
+piece_decoders_init :: proc(p:^Piece_Decoders,system:^jobs.Job_System,allocator:=context.allocator,codecs:^codec.Table=nil) -> Error {
+    p^={system=system,allocator=allocator,codecs=codecs}
+    decoders,allocation:=make([]Stream_Decoder,jobs.worker_count(system),allocator)
     if allocation!=nil {return .Out_Of_Memory}
     p.decoders=decoders
     return .None
@@ -96,25 +98,27 @@ piece_decoders_init :: proc(p:^Piece_Decoders,system:^jobs.Job_System,allocator:
 
 piece_decoders_destroy :: proc(p:^Piece_Decoders) {
     if p==nil || p.decoders==nil {return}
-    for &d in p.decoders {compressor.decoder_destroy(&d)}
+    for &d in p.decoders {stream_decoder_destroy(&d)}
     delete(p.decoders,p.allocator)
     p^={}
 }
 
-decoder_init :: proc(d:^Decoder,allocator:=context.allocator) -> Error {
+decoder_init :: proc(d:^Decoder,allocator:=context.allocator,codecs:^codec.Table=nil) -> Error {
     d^={allocator=allocator}
-    if compressor.decoder_init(&d.lz,allocator)!=.None {return .Out_Of_Memory}
-    allocation:mem.Allocator_Error
-    if d.bc7split,allocation=new(bc7split.Decoder,allocator);allocation!=nil {
-        decoder_destroy(d)
-        return .Out_Of_Memory
+    stream_decoder_init(&d.stream,allocator,codecs) or_return
+    when ASSET_LZ {
+        allocation:mem.Allocator_Error
+        if d.bc7split,allocation=new(bc7split.Decoder,allocator);allocation!=nil {
+            decoder_destroy(d)
+            return .Out_Of_Memory
+        }
     }
     return .None
 }
 
 decoder_destroy :: proc(d:^Decoder) {
     if d==nil || d.allocator.procedure==nil {return}
-    compressor.decoder_destroy(&d.lz)
+    stream_decoder_destroy(&d.stream)
     free(d.bc7split,d.allocator)
     d^={}
 }
@@ -189,7 +193,7 @@ pack_pieces :: proc(p:Pack,src,dst:[]u8,worker:jobs.Worker_Ref) -> (size:int,err
 }
 
 // An LZ stream of src into all of dst, which is its decoded size.
-unpack :: proc(d:^compressor.Decoder,src,dst:[]u8) -> Error {
+lz_unpack :: proc(d:^compressor.Decoder,src,dst:[]u8) -> Error {
     if d==nil {return .Invalid}
     if u64(len(dst))>pack_reach(u64(len(src))) {return .Corrupt}
     written,error:=compressor.decompress(d,src,dst)
@@ -203,12 +207,12 @@ unpack :: proc(d:^compressor.Decoder,src,dst:[]u8) -> Error {
 // unpack of a chunk, whose pieces decode at once with the piece decoders of d.
 @(private)
 unpack_chunk :: proc(d:^Decoder,src,dst:[]u8) -> Error {
-    if d.pieces==nil || len(dst)<=PACK_PIECE || d.worker<0 || d.worker>=len(d.pieces.decoders) {return unpack(&d.lz,src,dst)}
+    if d.pieces==nil || len(dst)<=PACK_PIECE || d.worker<0 || d.worker>=len(d.pieces.decoders) {return lz_unpack(&d.lz,src,dst)}
     if u64(len(dst))>pack_reach(u64(len(src))) {return .Corrupt}
     found:[PACK_MAX_PIECES]compressor.Piece
     count,error:=compressor.pieces(src,len(dst),found[:])
     if error!=.None {return .Corrupt}
-    if count<=1 {return unpack(&d.lz,src,dst)}
+    if count<=1 {return lz_unpack(&d.lz,src,dst)}
     // Pieces past those it holds decode with the last.
     work:=Piece_Work{src=src,dst=dst,pieces=found[:min(count,len(found))],decoders=d.pieces}
     jobs.parallel_for(d.pieces.system,d.worker,len(work.pieces),1,piece_decode,&work)
@@ -226,7 +230,7 @@ Piece_Work :: struct {
 @(private)
 piece_decode :: proc(work:^Piece_Work,first,last:int,worker:int) {
     d:=&work.decoders.decoders[worker]
-    if d.scratch==nil && compressor.decoder_init(d,work.decoders.allocator)!=.None {
+    if !d.made && stream_decoder_init(d,work.decoders.allocator,work.decoders.codecs)!=.None {
         intrinsics.atomic_store(&work.error,Error.Out_Of_Memory)
         return
     }
@@ -234,7 +238,7 @@ piece_decode :: proc(work:^Piece_Work,first,last:int,worker:int) {
         piece:=work.pieces[i]
         src_end,dst_end:=len(work.src),len(work.dst)
         if i+1<len(work.pieces) {src_end,dst_end=work.pieces[i+1].src,work.pieces[i+1].dst}
-        written,error:=compressor.decompress(d,work.src[piece.src:src_end],work.dst[piece.dst:dst_end])
+        written,error:=compressor.decompress(&d.lz,work.src[piece.src:src_end],work.dst[piece.dst:dst_end])
         if error!=.None || written!=dst_end-piece.dst {intrinsics.atomic_store(&work.error,Error.Corrupt)}
     }
 }
@@ -289,6 +293,8 @@ Error :: enum u8 {
     Not_Found,      // no such file, table or column
     IO,             // a file could not be read or written
     Invalid,        // an argument that the format cannot hold
+    Codec_Missing,  // a stream of a codec this program was not built with
+    Blocks_Old,     // blocks written before their records said their size: saving the asset again writes it
 }
 
 Blob :: struct {
@@ -336,6 +342,7 @@ chunk_entry_check :: proc(header:Header,entry:Chunk_Entry) -> bool {
     switch entry.compression {
     case .None: return entry.uncompressed_size==entry.size
     case .LZ: return entry.uncompressed_size<=pack_reach(entry.size) && entry.uncompressed_size<PACK_MAX
+    case .Codec: return entry.uncompressed_size<PACK_MAX && entry.size>=STREAM_HEAD
     }
     return false
 }
@@ -404,7 +411,10 @@ blob_read :: proc(blob:^Blob,entry:Chunk_Entry,dst:[]u8,decoder:^Decoder) -> Err
         copy(dst,stored)
     case .LZ:
         if decoder==nil {return .Invalid}
-        return unpack_chunk(decoder,stored,dst)
+        when ASSET_LZ {return unpack_chunk(decoder,stored,dst)} else {return .Codec_Missing}
+    case .Codec:
+        if decoder==nil {return .Invalid}
+        return stream_chunk(decoder,stored,dst)
     }
     return .None
 }
@@ -415,7 +425,7 @@ blob_verify_hash :: proc(blob:^Blob) -> bool {
     return blob_hash(blob.data)==blob.header.content_hash
 }
 
-// A chunk to store. LZ is kept only when it makes the chunk smaller.
+// A chunk to store. Compression is kept only when it makes the chunk smaller.
 Build_Chunk :: struct {
     tag:Fourcc,
     index:u16,
@@ -426,10 +436,12 @@ Build_Chunk :: struct {
 
 // Writes a whole file into w, which has to be empty. scratch holds a chunk
 // while it is compressed.
-blob_build :: proc(w:^serial.Writer,kind:Fourcc,kind_version:u16,id,owner:base.Asset_Id,flags:Header_Flags,chunks:[]Build_Chunk,scratch:^[dynamic]u8,p:=PACK_EDIT,worker:=jobs.Worker_Ref{}) -> Error {
-    encoder:lz.Encoder
-    lz.encoder_init(&encoder,scratch.allocator if scratch.allocator.procedure!=nil else context.allocator)
-    defer lz.encoder_destroy(&encoder)
+blob_build :: proc(w:^serial.Writer,kind:Fourcc,kind_version:u16,id,owner:base.Asset_Id,flags:Header_Flags,chunks:[]Build_Chunk,scratch:^[dynamic]u8,p:=PACK_EDIT,worker:=jobs.Worker_Ref{},codecs:^Pack_Codecs=nil) -> Error {
+    when ASSET_LZ {
+        encoder:lz.Encoder
+        lz.encoder_init(&encoder,scratch.allocator if scratch.allocator.procedure!=nil else context.allocator)
+        defer lz.encoder_destroy(&encoder)
+    }
     if w.count!=0 || len(chunks)>MAX_CHUNKS {return .Invalid}
     header:=Header{magic=MAGIC,kind=kind,version=VERSION,kind_version=kind_version,flags=flags,id=id,owner=owner,chunk_count=u32(len(chunks)),alignment=1,directory_offset=HEADER_SIZE}
     serial.write_zeros(w,HEADER_SIZE+len(chunks)*CHUNK_ENTRY_SIZE)
@@ -439,12 +451,33 @@ blob_build :: proc(w:^serial.Writer,kind:Fourcc,kind_version:u16,id,owner:base.A
         serial.write_align(w,chunk.alignment)
         entry:=Chunk_Entry{tag=chunk.tag,index=chunk.index,alignment_log2=u8(intrinsics.count_trailing_zeros(u32(chunk.alignment))),offset=u64(w.count),size=u64(len(chunk.data)),uncompressed_size=u64(len(chunk.data))}
         stored:=chunk.data
-        if chunk.compression==.LZ && len(chunk.data)>0 && len(chunk.data)<PACK_MAX {
-            if resize(scratch,pack_bound(len(chunk.data)))!=nil {return .Out_Of_Memory}
-            size:=pack(&encoder,p,chunk.data,scratch[:],worker) or_return
-            if size<len(chunk.data) {
-                stored=scratch[:size]
-                entry.compression,entry.size=.LZ,u64(size)
+        if chunk.compression!=.None && len(chunk.data)>0 && len(chunk.data)<PACK_MAX {
+            if codecs!=nil {
+                if !codecs.none {
+                    if resize(scratch,codec_pack_bound(&codecs.general,len(chunk.data)))!=nil {return .Out_Of_Memory}
+                    size:=codec_pack(&codecs.general,p,chunk.data,scratch[:],worker) or_return
+                    if size<len(chunk.data) {
+                        stored=scratch[:size]
+                        entry.compression,entry.size=.Codec,u64(size)
+                    }
+                }
+            } else {
+                when ASSET_LZ {
+                    if resize(scratch,pack_bound(len(chunk.data)))!=nil {return .Out_Of_Memory}
+                    size:=pack(&encoder,p,chunk.data,scratch[:],worker) or_return
+                    if size<len(chunk.data) {
+                        stored=scratch[:size]
+                        entry.compression,entry.size=.LZ,u64(size)
+                    }
+                } else when ASSET_OPEN {
+                    general:=open_general()
+                    if resize(scratch,codec_pack_bound(&general,len(chunk.data)))!=nil {return .Out_Of_Memory}
+                    size:=codec_pack(&general,p,chunk.data,scratch[:],worker) or_return
+                    if size<len(chunk.data) {
+                        stored=scratch[:size]
+                        entry.compression,entry.size=.Codec,u64(size)
+                    }
+                }
             }
         }
         serial.write_bytes(w,stored)

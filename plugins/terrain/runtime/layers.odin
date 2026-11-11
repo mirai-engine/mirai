@@ -278,7 +278,7 @@ source_weights_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,alloc
 @(private)
 source_weights_put :: proc(document:^asset.Document,types:^asset.Types,s:^Source,keep:=false) -> asset.Error {
     if s.weights.size!=weights_size(s) || !weights_all_used(s) {return .Invalid}
-    return grid_put_document(document,types,&s.weights,"weight_pages","weight_blocks",weights_full,s.file,s.allocator,keep)
+    return grid_put_document(document,types,&s.weights,"weight_pages","weight_blocks",weights_full,s.file,s.allocator,keep,codecs=s.codecs)
 }
 
 // Whether two sets of layers make other vertex weights: the count, or a rule.

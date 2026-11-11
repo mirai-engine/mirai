@@ -32,8 +32,8 @@ model that consumes it (hulls, hierarchy and limits) belongs to
   its cluster's minimum corner: a vertex that two clusters share decodes the same in both and no
   cracks open. The normal is octahedral and the tangent a signed angle
   (`math.tangent_angle_pack`); `uv1` and `color` are separate streams, only with `Has_Uv1` and
-  `Has_Colors`. Every bulk column goes in LZ, except `page_data`, which is LZ page by
-  page, each page coded or as its raw words, whichever is smaller (`coded_bytes`, 0 for raw).
+  `Has_Colors`. Every bulk column goes compressed, except `page_data`, which is compressed page
+  by page, each page coded or as its raw words, whichever is smaller (`coded_bytes`, 0 for raw).
 - Clusters go in pages (`Mesh_Page`): whole groups (the clusters that share a parent) of a single
   level, contiguous, up to `MESH_PAGE_WORDS`; a DAG group never crosses two pages. Their clusters,
   vertices and triangle words are contiguous ranges of the mesh's, from the finest to the coarsest.
@@ -42,7 +42,7 @@ model that consumes it (hulls, hierarchy and limits) belongs to
   preallocated scratch (`MESH_PAGE_SCRATCH_BYTES`) and without allocating. `page_data` stores each
   block coded (`asset/mesh_page_code.odin`) when that is smaller: each field split in low and high
   byte planes, tangent and normal kept as whole records so the repeats of a vertex that clusters
-  share stay for LZ, and triangle bytes relative to the vertices met. Any words code back
+  share stay for the codec, and triangle bytes relative to the vertices met. Any words code back
   exactly, and a damaged coding fails, it does not crash. Each
   cluster names its page (`page`) and that of the group it was simplified from (`child_page`, that
   of its children). The pages from `root_page` are the root, always loaded: the coarsest levels as
@@ -109,15 +109,15 @@ per bone.
 - 8-bit formats `RGBA8`, `BC1`, `BC3`, `BC5` and `BC7`; `RGBA16` (16 linear bits, data that keeps
   its precision), `RGBA16F` and `BC6H` (linear half floats: HDR, light above 1; BC6H unsigned and
   without alpha). `cook/textures` encodes them ([compression](formats.md#compression)).
-- **Levels, smallest first.** `texels` holds the levels from the smallest to level 0, in LZ:
+- **Levels, smallest first.** `texels` holds the levels from the smallest to level 0, compressed:
   `texture_open` reads a texture without its texels and `texture_decode` from a level decodes only
   the blocks of the stream that hold that level and the smaller ones (`texture_view` decodes all);
-  `texture_mip` gives the bytes of a level, empty for one before `first`. A BC7 texture that
+  `texture_mip` gives the bytes of a level, empty for one before `first`. With LZ, a BC7 texture
   `cook/textures` writes stores two BC7Split streams, which restore only whole: its tail (the levels
   of side `TEXTURE_TAIL` or less, which every read takes) and its larger levels; a stream per level
   compresses larger.
-- **Planes of fields.** A BC1, BC3 or BC5 texture whose blocks are not `Fast` stores each level as
-  planes of the fields of its blocks (`Fields`: endpoints and indices apart,
+- **Planes of fields.** With LZ, a BC1, BC3 or BC5 texture whose blocks are not `Fast` stores each
+  level as planes of the fields of its blocks (`Fields`: endpoints and indices apart,
   `asset/texture_fields.odin`) when that stream is smaller, which the writer decides per texture
   compressing both layouts at `TEXTURE_FIELDS_LEVEL`; the read joins them back.
 - `Srgb` says it is color: stored with the sRGB curve in `RGBA8`, `BC1`, `BC3` and `BC7`, linear in
@@ -201,7 +201,7 @@ of a shipped game keeps the stream `anim.library_compress` makes of each clip
 (a WAV or Ogg Vorbis as is in the bulk table `file`). Without the `Stream` flag the mixer keeps it
 in memory (lossless stays encoded and each voice decodes it); with it, it is decoded while it plays
 ([audio](../../mirai-platform/references/audio.md#sounds)). The
-lossless table is stored without LZ: the residual coding leaves it nothing to gain. What the
+lossless table is stored as it is: the residual coding leaves it nothing to gain. What the
 importer stores: [imports guide](../../mirai-imports/references/imports.md#sounds).
 
 ## Sound set

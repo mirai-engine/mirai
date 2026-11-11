@@ -79,7 +79,7 @@ blob_round_trips_chunks_with_alignment_and_compression :: proc(t:^testing.T) {
     first:=blob_chunk(&blob,0)
     testing.expect(t,first.tag==fourcc("AAAA") && first.compression==.None && first.size==3)
     packed:=blob_chunk(&blob,1)
-    testing.expect(t,packed.compression==.LZ && packed.size<100 && packed.uncompressed_size==5000 && packed.offset%4096==0)
+    testing.expect(t,packed.compression==COMPRESSION_PACKED && packed.size<100 && packed.uncompressed_size==5000 && packed.offset%4096==0)
     kept:=blob_chunk(&blob,2)
     testing.expect(t,kept.compression==.None && kept.size==300 && kept.offset%64==0) // noise does not shrink
     at,found:=blob_find(&blob,fourcc("BBBB"),2)
@@ -148,8 +148,10 @@ blob_open_rejects_files_that_contradict_themselves :: proc(t:^testing.T) {
     expect(t,work,good,.Corrupt,proc(header:^Header,entries:[^]Chunk_Entry) {entries[0].uncompressed_size+=1})
     expect(t,work,good,.Corrupt,proc(header:^Header,entries:[^]Chunk_Entry) {entries[0].alignment_log2=13})
     expect(t,work,good,.Corrupt,proc(header:^Header,entries:[^]Chunk_Entry) {entries[0].compression=Compression(9)})
+    if ASSET_LZ {
     expect(t,work,good,.Corrupt,proc(header:^Header,entries:[^]Chunk_Entry) {entries[1].uncompressed_size=pack_reach(entries[1].size)+1})
-    expect(t,work,good,.None,proc(header:^Header,entries:[^]Chunk_Entry) {entries[1].uncompressed_size=pack_reach(entries[1].size)})
+        expect(t,work,good,.None,proc(header:^Header,entries:[^]Chunk_Entry) {entries[1].uncompressed_size=pack_reach(entries[1].size)})
+    }
 
     // A decompressed size the block does not have is found when the chunk is read.
     copy(work,good)
@@ -193,7 +195,7 @@ document_writes_and_reads_back_the_same_tables :: proc(t:^testing.T) {
         }
     }
     points,_:=document_table(&back,"points")
-    testing.expect_value(t,back.tables[points].columns[0].compression,Compression.LZ)
+    testing.expect_value(t,back.tables[points].columns[0].compression,COMPRESSION_PACKED)
 
     again:serial.Writer;serial.writer_init(&again);defer serial.writer_destroy(&again)
     testing.expect_value(t,document_write(&back,&again),Error.None)
@@ -429,6 +431,7 @@ asset_open_survives_corrupted_files :: proc(t:^testing.T) {
 // once, to the bytes and the errors of a decode on one thread, also when the stream is mutated.
 @(test)
 a_large_chunk_decodes_its_pieces_on_the_job_workers :: proc(t:^testing.T) {
+    if !ASSET_LZ {return}
     data:=make([]u8,2*PACK_PIECE+5000);defer delete(data)
     state:=u64(9)
     for &b,i in data {b=i%7000<3000 ? u8(test_random(&state)>>61) : u8(i>>8)}
@@ -439,7 +442,7 @@ a_large_chunk_decodes_its_pieces_on_the_job_workers :: proc(t:^testing.T) {
     blob,error:=blob_open(serial.writer_bytes(&w))
     testing.expect_value(t,error,Error.None)
     entry:=blob_chunk(&blob,0)
-    testing.expect_value(t,entry.compression,Compression.LZ)
+    testing.expect_value(t,entry.compression,COMPRESSION_PACKED)
     stored:=blob_stored(&blob,entry)
     found:[4]compressor.Piece
     count,_:=compressor.pieces(stored,len(data),found[:])

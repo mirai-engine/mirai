@@ -705,3 +705,42 @@ plugins_order_without_memory_fails_whole :: proc(t:^testing.T) {
     }
     testing.expect(t,merged && no_field,"a merge without memory for a field says so, and with memory it is whole")
 }
+
+@(test)
+a_game_is_compressed_by_nothing_or_by_a_plugin_that_compresses :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"project")
+    if root=="" {return}
+    plugins:=path(root,"plugins",allocator=context.temp_allocator)
+    add :: proc(t:^testing.T,plugins,name:string,compression:Plugin_Compression) {
+        folder:=path(plugins,name,allocator=context.temp_allocator)
+        testing.expect(t,os.make_directory_all(folder)==nil)
+        m:Plugin_Manifest
+        base.text_set(m.name[:],name)
+        base.text_set(m.version[:],"0.1.0")
+        m.compression=compression
+        testing.expect_value(t,plugin_write(path(folder,PLUGIN_FILE,allocator=context.temp_allocator),&m).code,Error_Code.None)
+    }
+    add(t,plugins,"zipper",.Library)
+    add(t,plugins,"plain_plugin",.None)
+    Case :: struct {compression:string,error:Error_Code,active:string,kind:Compression_Kind}
+    cases:=[?]Case{
+        {COMPRESSION_OPEN,.None,"",.Open},
+        {COMPRESSION_NONE,.None,"",.None},
+        {"zipper",.None,"zipper",.Plugin},
+        {"plain_plugin",.Compression_Invalid,"",.None},
+        {"nobody",.Compression_Invalid,"",.None},
+    }
+    for c in cases {
+        m:=manifest_default("Test")
+        base.text_set(m.name[:],"Test")
+        base.text_set(m.build.compression[:],c.compression)
+        testing.expect_value(t,manifest_write(path(root,PROJECT_FILE,allocator=context.temp_allocator),&m).code,Error_Code.None)
+        p,error:=open(root)
+        testing.expect_value(t,error.code,c.error)
+        if c.error!=.None {continue}
+        defer close(&p)
+        testing.expect_value(t,active_names(&p),c.active)
+        kind,_:=compression_kind(&p)
+        testing.expect_value(t,kind,c.kind)
+    }
+}

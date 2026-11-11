@@ -5,15 +5,13 @@ import "core:os"
 import "core:strings"
 import "mirai:asset"
 import "mirai:std/jobs"
-import "mirai:std/compressor"
-import "mirai:std/compressor/lz"
 import lz_optimal "mirai:cook/compressor/lz"
 
 // The code the executables embed: that of the stages of the engine and then of
 // its program stages, in the order of the Odin table of render, as one file
 // per backend that render decodes once when it starts: how many stages it
 // holds and the size of the code of each (u32, little endian), then their
-// code as one LZ stream. The table of render says nothing of the code, so a
+// code as one stream (asset.unpack). The table of render says nothing of the code, so a
 // change of code alone leaves it, and whatever was built from it, as they are.
 // A generation
 // packs it as an edit; one asked to ship (Options.ship, the release builds of
@@ -25,19 +23,37 @@ EMBEDDED_NAMES :: [Backend]string{.Vulkan="shaders.spv.lz",.Metal="shaders.metal
 @(private)
 CACHE_EMBEDDED :: "embedded"
 
+// The file of the same code stored as it is: what a game compressed with something else embeds,
+// or compresses again (embedded_split).
+embedded_plain :: proc(name:string) -> string {return strings.concatenate({strings.trim_suffix(name,".lz"),".raw"},context.temp_allocator)}
+
+// The sizes, then the stream.
+@(private="file")
+embedded_whole :: proc(sizes:[]int,stream:[]u8,allocator:=context.allocator) -> []u8 {
+    file:=make([]u8,4*(len(sizes)+1)+len(stream),allocator)
+    endian.unchecked_put_u32le(file,u32(len(sizes)))
+    for size,at in sizes {endian.unchecked_put_u32le(file[4*(at+1):],u32(size))}
+    copy(file[4*(len(sizes)+1):],stream)
+    return file
+}
+
+// An embedded file as its sizes, which a file of the same code with another stream starts with,
+// its stream and the bytes the stream decodes to. False for bytes that are no such file.
+embedded_split :: proc(file:[]u8) -> (sizes,stream:[]u8,total:int,ok:bool) {
+    if len(file)<4 {return}
+    count:=int(endian.unchecked_get_u32le(file))
+    if count<0 || count>(len(file)-4)/4 {return}
+    sizes=file[:4*(count+1)]
+    for stage in 0..<count {total+=int(endian.unchecked_get_u32le(sizes[4*(stage+1):]))}
+    return sizes,file[len(sizes):],total,true
+}
+
 // The file of one backend for the code of the staged stages of groups, one
 // group after the other, its stream from the shared cache when it holds it,
-// else packed now. shipped: it is the one a generation asked to ship wants.
+// else packed now. plain: the file of the same code stored as it is. shipped:
+// file is the one a generation asked to ship wants.
 @(private)
-embedded_pack :: proc(g:^Generation,groups:[2][]Job,backend:Backend,ship:bool,allocator:=context.allocator) -> (file:[]u8,shipped:bool,problem:string) {
-    // The sizes, then the stream.
-    whole :: proc(sizes:[]int,stream:[]u8,allocator:=context.allocator) -> []u8 {
-        file:=make([]u8,4*(len(sizes)+1)+len(stream),allocator)
-        endian.unchecked_put_u32le(file,u32(len(sizes)))
-        for size,at in sizes {endian.unchecked_put_u32le(file[4*(at+1):],u32(size))}
-        copy(file[4*(len(sizes)+1):],stream)
-        return file
-    }
+embedded_pack :: proc(g:^Generation,groups:[2][]Job,backend:Backend,ship:bool,allocator:=context.allocator) -> (file,plain:[]u8,shipped:bool,problem:string) {
     hash:Sha256
     sha_begin(&hash)
     sha_text(&hash,GENERATOR_CONTRACT)
@@ -52,7 +68,7 @@ embedded_pack :: proc(g:^Generation,groups:[2][]Job,backend:Backend,ship:bool,al
         // A stage of the rays traced by software has no Metal code: its size is 0.
         if name=="" {sha_text(&hash,"\n");at+=1;continue}
         data,err:=os.read_entire_file(path_join(job.staging,name,allocator=context.temp_allocator),context.allocator)
-        if err!=nil {return nil,false,strings.concatenate({"could not read ",name," to embed it"},allocator)}
+        if err!=nil {return nil,nil,false,strings.concatenate({"could not read ",name," to embed it"},allocator)}
         append(&raw,..data)
         sizes[at]=len(data)
         at+=1
@@ -60,7 +76,13 @@ embedded_pack :: proc(g:^Generation,groups:[2][]Job,backend:Backend,ship:bool,al
         sha_text(&hash,code_hash)
         sha_text(&hash,"\n")
     }
-    if len(raw)==0 {return whole(sizes,nil,allocator),ship,""}
+    if len(raw)==0 {return embedded_whole(sizes,nil,allocator),embedded_whole(sizes,nil,allocator),ship,""}
+    none:=asset.Pack_Codecs{none=true}
+    packed:=make([]u8,max(asset.block_bound(nil,len(raw),general=true),asset.block_bound(&none,len(raw))))
+    defer delete(packed)
+    written,pack_error:=asset.block_pack(nil,asset.PACK_EDIT,&none,raw[:],packed)
+    if pack_error!=.None {return nil,nil,false,strings.clone("could not store the shaders to embed",allocator)}
+    plain=embedded_whole(sizes,packed[:written],allocator)
     digest:=sha_hex(&hash,context.temp_allocator)
     folder:=path_join(g.shared,CACHE_EMBEDDED,allocator=context.temp_allocator)
     names:=EMBEDDED_NAMES
@@ -70,9 +92,9 @@ embedded_pack :: proc(g:^Generation,groups:[2][]Job,backend:Backend,ship:bool,al
         level:="ship" if shipped==1 else "edit"
         entry=path_join(folder,strings.concatenate({digest,".",level,strings.trim_prefix(names[backend],"shaders")},context.temp_allocator),allocator=context.temp_allocator)
     }
-    decoder:compressor.Decoder
-    if compressor.decoder_init(&decoder)!=.None {return nil,false,strings.clone("out of memory to embed the shaders",allocator)}
-    defer compressor.decoder_destroy(&decoder)
+    decoder:asset.Stream_Decoder
+    if asset.stream_decoder_init(&decoder)!=.None {return nil,nil,false,strings.clone("out of memory to embed the shaders",allocator)}
+    defer asset.stream_decoder_destroy(&decoder)
     check:=make([]u8,len(raw))
     defer delete(check)
     // An entry is taken only when it decodes to this code.
@@ -83,23 +105,21 @@ embedded_pack :: proc(g:^Generation,groups:[2][]Job,backend:Backend,ship:bool,al
         defer delete(stored)
         if asset.unpack(&decoder,stored,check)==.None && string(check)==string(raw[:]) {
             cache_touch(entries[shipped])
-            return whole(sizes,stored,allocator),shipped==1,""
+            return embedded_whole(sizes,stored,allocator),plain,shipped==1,""
         }
     }
-    encoder:lz.Encoder
-    lz.encoder_init(&encoder)
-    defer lz.encoder_destroy(&encoder)
+    encoder:asset.Block_Encoder
+    asset.block_encoder_init(&encoder)
+    defer asset.block_encoder_destroy(&encoder)
     pack:=lz_optimal.SHIP if ship else asset.PACK_EDIT
-    packed:=make([]u8,asset.pack_bound(len(raw)))
-    defer delete(packed)
     // Its pieces compress at once on a job system of its own.
     js:jobs.Job_System
     on:jobs.Worker_Ref
     if len(raw)>asset.PACK_PIECE && jobs.system_init(&js,{threads=jobs.THREADS_AUTO}) {on={&js,jobs.OWNER,nil}}
     defer if on.system!=nil {jobs.system_destroy(&js)}
-    written,pack_error:=asset.pack(&encoder,pack,raw[:],packed,on)
-    if pack_error!=.None {return nil,false,strings.clone("could not compress the shaders to embed",allocator)}
+    written,pack_error=asset.block_encode(&encoder,pack,raw[:],packed,general=true,worker=on)
+    if pack_error!=.None {return nil,nil,false,strings.clone("could not compress the shaders to embed",allocator)}
     // A failure to store only costs packing it again.
     write_file_atomic(entries[int(ship)],packed[:written])
-    return whole(sizes,packed[:written],allocator),ship,""
+    return embedded_whole(sizes,packed[:written],allocator),plain,ship,""
 }

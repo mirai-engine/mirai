@@ -499,7 +499,7 @@ shipped_report :: proc(job:^build.Job) -> bool {
         for file in result.cook.files {
             if file.id=={} {continue}
             path:=fmt.tprintf("%s/%s",job.cook.output,file.path)
-            if reason:=verify(path,&types);reason!="" {
+            if reason:=verify(path,&types,result.cook.codecs);reason!="" {
                 bad+=1
                 fmt.eprintfln("FAIL %s: %s",path,reason)
             } else {

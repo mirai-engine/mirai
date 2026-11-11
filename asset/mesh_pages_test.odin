@@ -172,14 +172,14 @@ pages_round_trip_through_a_file_and_decode_one_by_one :: proc(t:^testing.T) {
         written:=g.pages[at]
         written.data_offset,written.data_bytes,written.coded_bytes=page.data_offset,page.data_bytes,page.coded_bytes
         testing.expect(t,page==written && page.data_bytes>0)
-        testing.expect(t,mesh_page_decode(view.flags,page,view.page_data,scratch,block,&decoder.lz) && mesh_page_gather(g,g.pages[at],want))
+        testing.expect(t,mesh_page_decode(view.flags,page,view.page_data,scratch,block,&decoder.stream) && mesh_page_gather(g,g.pages[at],want))
         layout:=mesh_page_layout(view.flags,page.vertex_count,page.triangle_words)
         testing.expect(t,same(block[:page.words],want[:page.words]))
         testing.expect(t,same(block[layout.vertices:layout.uv1s],mem.slice_data_cast([]u32,g.vertices[page.first_vertex:][:page.vertex_count])))
         testing.expect(t,same(block[layout.colors:layout.surfaces],g.colors[page.first_vertex:][:page.vertex_count]))
         testing.expect(t,same(block[layout.triangles:layout.words],g.triangles[page.first_triangle:][:page.triangle_words]))
     }
-    testing.expect(t,!mesh_page_decode(view.flags,view.pages[0],view.page_data[:view.pages[0].data_bytes-1],scratch,block,&decoder.lz),"a short block is refused")
+    testing.expect(t,!mesh_page_decode(view.flags,view.pages[0],view.page_data[:view.pages[0].data_bytes-1],scratch,block,&decoder.stream),"a short block is refused")
 }
 
 @(test)

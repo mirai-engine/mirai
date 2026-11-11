@@ -22,6 +22,7 @@ import "core:slice"
 import "core:strings"
 import "core:sync"
 import "core:time"
+import "mirai:asset"
 import "mirai:cook/workspace"
 import "mirai:rhi"
 import "mirai:std/base"
@@ -32,7 +33,8 @@ import "mirai:std/serial"
 // Names what the generator produces from a given source and compiler. It is
 // part of every fingerprint: raise it when the outputs change for a reason the
 // fingerprints do not see (another flag is already seen, as are the tools).
-GENERATOR_CONTRACT :: "mirai-shaders/6"
+// What packs the code they embed is part of it: the caches the checkouts share keep both apart.
+GENERATOR_CONTRACT :: "mirai-shaders/7-lz" when asset.ASSET_LZ else "mirai-shaders/7-open"
 
 // The folders of the engine every stage includes, under its root: the shaders
 // of the renderer and those engine/render gives the plugins that extend it.
@@ -1287,9 +1289,10 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         shipped=true
         names:=EMBEDDED_NAMES
         for backend in g.backends {
-            packed,packed_shipped,problem:=embedded_pack(g,{shader_jobs,program_jobs},backend,options.ship,scratch)
+            packed,plain,packed_shipped,problem:=embedded_pack(g,{shader_jobs,program_jobs},backend,options.ship,scratch)
             if problem!="" {fail(&result,allocator,"%s",problem);return}
             if !write_file(path_join(staging_shaders,names[backend],allocator=scratch),packed) {fail(&result,allocator,"could not write %s",names[backend]);return}
+            if !write_file(path_join(staging_shaders,embedded_plain(names[backend]),allocator=scratch),plain) {fail(&result,allocator,"could not write %s",embedded_plain(names[backend]));return}
             shipped&&=packed_shipped
         }
         render_table:=odin_table(shader_jobs,g.backends,g.output,path_join(g.root,"render",allocator=scratch),"mirai_render","mirai:rhi",identity,"",strings.to_string(assertions),scratch,program_jobs,true,true)
@@ -1435,7 +1438,8 @@ odin_table :: proc(jobs:[]Job,backends:Backends,out,target_folder,package_name,r
             fmt.sbprintf(&b,"\t#panic(\"the shaders were generated without %s code: run `mirai shaders --backends all`\")\n","Metal" if metal else "SPIR-V")
             continue
         }
-        if packed {fmt.sbprintf(&b,"\t@(private)\n\tshaders_packed :: proc \"contextless\" () -> []u8 {{return #load(\"%s/%s\")}}\n",relative,names[backend])}
+        // A game compressed with something else embeds the code as it is, or the file its build names.
+        if packed {fmt.sbprintf(&b,"\twhen #config(ASSET_LZ,true) {{\n\t\t@(private)\n\t\tshaders_packed :: proc \"contextless\" () -> []u8 {{return #load(\"%s/%s\")}}\n\t}} else {{\n\t\t@(private)\n\t\tshaders_packed :: proc \"contextless\" () -> []u8 {{return #load(#config(ASSET_SHADERS,\"%s/%s\"))}}\n\t}}\n",relative,names[backend],relative,embedded_plain(names[backend]))}
         fmt.sbprintf(&b,"\t@(rodata)\n\tSHADERS := [Shader_Id]%sShader_Code{{\n",prefix)
         for job in jobs {
             fmt.sbprintf(&b,"\t\t.%s = ",job.result.id)

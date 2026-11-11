@@ -102,7 +102,7 @@ plugin_libraries :: proc(p:^project.Project,dev:bool,allocator:=context.allocato
 		for part in ([2]project.Plugin_Part{.Runtime,.Editor}) {
 			for index in p.active {
 				plugin:=&p.plugins[index]
-				if plugin.origin!=origin || part not_in plugin.manifest.parts {continue}
+				if plugin.origin!=origin || part not_in plugin.manifest.parts || plugin.manifest.shipped_only {continue}
 				name:=strings.clone(base.text_get(plugin.manifest.name[:]),allocator)
 				root,path:=part_path(p,plugin,part,allocator)
 				needs,project_needs:=make([dynamic]string,allocator),make([dynamic]string,allocator)

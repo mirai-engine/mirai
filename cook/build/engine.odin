@@ -77,7 +77,7 @@ Engine_Package :: struct {
 ENGINE_PACKAGES :: [?]Engine_Package{
     {.Base,"std/base","std"},{.Base,"std/subprocess","std"},{.Base,"std/math","std"},{.Base,"std/geom","std"},{.Base,"std/serial","std"},
     {.Base,"std/spatial","std"},{.Base,"std/jobs","std"},{.Base,"std/anim","std"},{.Base,"std/ai","std"},{.Base,"std/input","std"},
-    {.Base,"std/ui_format","std"},{.Base,"std/compressor","std"},{.Base,"std/compressor/bc7split","std"},{.Base,"std/compressor/lz/entropy","std"},{.Base,"std/compressor/lz/match","std"},
+    {.Base,"std/ui_format","std"},{.Base,"std/codec","std"},{.Base,"std/zstd","std"},{.Base,"std/lz4","std"},{.Base,"std/compressor","std"},{.Base,"std/compressor/bc7split","std"},{.Base,"std/compressor/lz/entropy","std"},{.Base,"std/compressor/lz/match","std"},
     {.Base,"std/compressor/lz/parse","std"},{.Base,"std/compressor/lz","std"},{.Base,"audio","system"},{.Base,"platform","system"},{.Base,"rhi","system"},
     {.Base,"project","system"},{.Base,"core",""},
 
@@ -85,7 +85,8 @@ ENGINE_PACKAGES :: [?]Engine_Package{
     {.Engine,"ui","ui"},{.Engine,"host",""},{.Engine,"engine/input","engine"},{.Engine,"engine/scene","engine"},{.Engine,"engine/volume","engine"},
     {.Engine,"engine/render","engine"},{.Engine,"engine/audio","engine"},{.Engine,"engine/gui","engine"},{.Engine,"engine/camera","engine"},{.Engine,"engine/save","engine"},
 
-    {.Cook,"third_party/ufbx","ufbx"},{.Cook,"cook/workspace","cook"},{.Cook,"cook/cache","cook"},{.Cook,"cook/far","cook"},{.Cook,"cook/compressor/lz","cook"},{.Cook,"cook/compressor/bc7split","cook"},{.Cook,"cook/compressor/texture/common","cook"},
+    {.Cook,"third_party/ufbx","ufbx"},{.Cook,"cook/workspace","cook"},{.Cook,"cook/cache","cook"},{.Cook,"cook/far","cook"},{.Cook,"cook/encoders/rgbcx","cook"},{.Cook,"cook/encoders/bc7enc","cook"},{.Cook,"cook/encoders/rdo","cook"},{.Cook,"cook/encoders/bc6h","cook"},
+    {.Cook,"cook/compressor/lz","cook"},{.Cook,"cook/compressor/bc7split","cook"},{.Cook,"cook/compressor/texture/common","cook"},
     {.Cook,"cook/compressor/texture/bc67","cook"},{.Cook,"cook/compressor/texture/bc1","cook"},{.Cook,"cook/compressor/texture/bc4","cook"},{.Cook,"cook/compressor/texture/bc6","cook"},{.Cook,"cook/compressor/texture/bc7","cook"},
     {.Cook,"cook/compressor/texture","cook"},{.Cook,"cook/textures","cook"},{.Cook,"cook/image","cook"},{.Cook,"cook/movie","cook"},{.Cook,"cook/rig","cook"},
     {.Cook,"cook/import","cook"},{.Cook,"cook/import/obj","cook"},{.Cook,"cook/import/gltf","cook"},{.Cook,"cook/import/usd","cook"},

@@ -87,6 +87,7 @@ Texture_Desc :: struct {
     alpha_coverage:f32,
     mips:[][]u8,         // level 0 first, each with its layers one after another
     source:^Import_Info,
+    plain:bool, // the blocks as they are, without planes of their fields: for a stream that is not LZ
     bc7split:[]Texture_Bc7split, // of a BC7 texture, its streams by their largest level, from a writer with the encoder (cook/compressor/bc7split)
 }
 
@@ -188,7 +189,7 @@ texture_tables :: proc(doc:^Document,types:^Types,info:^Texture_Info,mips:[]Text
         #reverse for prep in desc.bc7split {at+=copy(data[at:],prep.payload)}
     } else {
         for level,i in desc.mips {copy(data[mips[i].offset:],level)}
-        if texture_fields_format(desc.format) && .Fast not_in desc.flags && (texture_fields_smaller(desc.format,mips,data,doc.allocator) or_return) {
+        if !desc.plain && texture_fields_format(desc.format) && .Fast not_in desc.flags && (texture_fields_smaller(desc.format,mips,data,doc.allocator) or_return) {
             info.flags+={.Fields}
             for level,i in desc.mips {texture_fields_split(desc.format,level,data[mips[i].offset:][:mips[i].size])}
         }
@@ -216,30 +217,53 @@ texture_fields_smaller :: proc(format:Texture_Format,mips:[]Texture_Mip,texels:[
     defer delete(split,allocator)
     copy(split,texels)
     for mip in mips {texture_fields_split(format,texels[mip.offset:][:mip.size],split[mip.offset:][:mip.size])}
-    out,out_error:=make([]u8,pack_bound(len(texels)),allocator)
-    if out_error!=nil {return false,.Out_Of_Memory}
-    defer delete(out,allocator)
-    encoder:lz.Encoder
-    lz.encoder_init(&encoder,allocator)
-    defer lz.encoder_destroy(&encoder)
-    sizes:[2]int
-    for bytes,i in ([2][]u8{texels,split}) {
-        size,compress_error:=lz.compress(&encoder,lz.mode(TEXTURE_FIELDS_LEVEL),bytes,out,PACK_PIECE)
-        switch compress_error {
-        case .None:
-        case .Out_Of_Memory: return false,.Out_Of_Memory
-        case .Output_Too_Small,.Invalid: return false,.Invalid
+    when ASSET_LZ {
+        out,out_error:=make([]u8,pack_bound(len(texels)),allocator)
+        if out_error!=nil {return false,.Out_Of_Memory}
+        defer delete(out,allocator)
+        encoder:lz.Encoder
+        lz.encoder_init(&encoder,allocator)
+        defer lz.encoder_destroy(&encoder)
+        sizes:[2]int
+        for bytes,i in ([2][]u8{texels,split}) {
+            size,compress_error:=lz.compress(&encoder,lz.mode(TEXTURE_FIELDS_LEVEL),bytes,out,PACK_PIECE)
+            switch compress_error {
+            case .None:
+            case .Out_Of_Memory: return false,.Out_Of_Memory
+            case .Output_Too_Small,.Invalid: return false,.Invalid
+            }
+            sizes[i]=size
         }
-        sizes[i]=size
+        return sizes[1]<sizes[0],.None
+    } else {
+        return false,.None
     }
-    return sizes[1]<sizes[0],.None
 }
 
-texture_save :: proc(path:string,types:^Types,desc:Texture_Desc,allocator:=context.allocator,p:=PACK_EDIT) -> Error {
+texture_save :: proc(path:string,types:^Types,desc:Texture_Desc,allocator:=context.allocator,p:=PACK_EDIT,codecs:^Pack_Codecs=nil) -> Error {
     doc:Document
     texture_document(&doc,types,desc,allocator) or_return
     defer document_destroy(&doc)
-    return document_save(&doc,path,p=p)
+    return document_save(&doc,path,p=p,codecs=codecs)
+}
+
+// The file of a texture with the blocks it stores as they are, without the BC7Split streams or
+// the planes of fields that only LZ reads smaller, compressed as codecs say: what a program
+// without LZ reads. data is the file it is now.
+texture_plain :: proc(data:[]u8,types:^Types,p:Pack,codecs:^Pack_Codecs,allocator:=context.allocator) -> (plain:[]u8,error:Error) {
+    file:Asset
+    asset_open(&file,data,context.temp_allocator) or_return
+    defer asset_close(&file)
+    view:=texture_view(&file,types) or_return
+    mips,mips_error:=make([][]u8,len(view.mips),context.temp_allocator)
+    if mips_error!=nil {return nil,.Out_Of_Memory}
+    for _,level in view.mips {mips[level]=texture_mip(view,level)}
+    info:=view.info
+    doc:Document
+    texture_document(&doc,types,{id=file.blob.header.id,owner=file.blob.header.owner,width=int(info.width),height=int(info.height),layers=int(info.layers),format=info.format,flags=info.flags,alpha_coverage=info.alpha_coverage,mips=mips,source=view.source,plain=true},context.temp_allocator) or_return
+    defer document_destroy(&doc)
+    doc.flags=file.blob.header.flags
+    return document_bytes(&doc,allocator,p,codecs=codecs)
 }
 
 TEXTURE_TABLE_BC7SPLIT :: "bc7split"
@@ -310,14 +334,18 @@ texture_decode :: proc(a:^Asset,types:^Types,view:^Texture_View,from:int) -> Err
     data,owned:=texels_read(a,table,column,stored) or_return
     switch {
     case streams!=nil:
-        restored:=asset_alloc(a,end,TEXTURE_BULK_ALIGNMENT) or_return
-        decoder:=asset_decoder(a) or_return
-        for stream,i in streams {
-            if int(stream.level)<from {continue}
-            _,decode_error:=bc7split.decode(decoder.bc7split,stream.header,data[payloads[i]:],restored[restores[i]:],cached_destination=true)
-            if decode_error!=.None {return .Corrupt}
+        when ASSET_LZ {
+            restored:=asset_alloc(a,end,TEXTURE_BULK_ALIGNMENT) or_return
+            decoder:=asset_decoder(a) or_return
+            for stream,i in streams {
+                if int(stream.level)<from {continue}
+                _,decode_error:=bc7split.decode(decoder.bc7split,stream.header,data[payloads[i]:],restored[restores[i]:],cached_destination=true)
+                if decode_error!=.None {return .Corrupt}
+            }
+            data=restored
+        } else {
+            return .Codec_Missing
         }
-        data=restored
     case .Fields in info.flags && owned:
         largest:=0
         for mip in mips[from:] {largest=max(largest,int(mip.size))}
@@ -353,11 +381,16 @@ texels_read :: proc(a:^Asset,table:^Asset_Table,column:int,size:int) -> (data:[]
     total:=int(entry.uncompressed_size)
     if total!=table.rows || size>total {return nil,false,.Corrupt}
     decoded:=total
-    if size<total {decoded=min(total,(size+compressor.BLOCK_LEN-1)/compressor.BLOCK_LEN*compressor.BLOCK_LEN)}
+    // A stream of a codec restores whole pieces; LZ, whole blocks.
+    granule:=PACK_PIECE if entry.compression==.Codec else compressor.BLOCK_LEN
+    if size<total {decoded=min(total,(size+granule-1)/granule*granule)}
     data=asset_alloc(a,decoded,TEXTURE_BULK_ALIGNMENT) or_return
     decoder:=asset_decoder(a) or_return
-    if decoded==total {blob_read(&a.blob,entry,data,decoder) or_return}
-    else {unpack(&decoder.lz,blob_stored(&a.blob,entry),data) or_return}
+    switch {
+    case decoded==total: blob_read(&a.blob,entry,data,decoder) or_return
+    case entry.compression==.Codec: stream_unpack(&decoder.stream,blob_stored(&a.blob,entry),data,total) or_return
+    case: unpack(&decoder.stream,blob_stored(&a.blob,entry),data) or_return
+    }
     return data[:size],true,.None
 }
 

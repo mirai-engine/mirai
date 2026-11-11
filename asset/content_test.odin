@@ -64,7 +64,7 @@ animation_round_trips_and_fills_a_library :: proc(t:^testing.T) {
     testing.expect(t,a.blob.header.kind==KIND_ANIMATION && a.blob.header.kind_version==ANIMATION_VERSION && a.blob.header.id==desc.id)
     // The track targets are mostly zeros: their table goes in LZ.
     packed:=false
-    for i in 0..<int(a.blob.header.chunk_count) {packed||=blob_chunk(&a.blob,i).compression==.LZ}
+    for i in 0..<int(a.blob.header.chunk_count) {packed||=blob_chunk(&a.blob,i).compression!=.None}
     testing.expect(t,packed,"the tables of an animation are compressed")
     view,error:=animation_view(&a,&types)
     testing.expect_value(t,error,Error.None)

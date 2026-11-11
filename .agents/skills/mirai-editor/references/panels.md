@@ -703,7 +703,7 @@ browser cards and asset fields):
   they show their icon.
 - **Stored.** The preview of an asset (mesh, prefab or a type of a project plugin, not that of an
   entity, a shape or the default of a type) stays in `.mirai/thumbs/<id>-<side>.thumb`, one per
-  asset and size, with premultiplied alpha in LZ and the key it was drawn with.
+  asset and size, with premultiplied alpha, compressed, and the key it was drawn with.
   - The key (`thumbnail_store_key`) combines `THUMBNAIL_RENDERER`, the size, the subject without
     the revision and the `content_hash` of the asset and of the whole dependency closure the
     subject names, as the registry has it. Changing the asset or a dependency

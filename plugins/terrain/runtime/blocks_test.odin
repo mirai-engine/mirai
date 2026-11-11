@@ -92,6 +92,18 @@ volume_blocks_all_air_or_all_solid_hold_no_values_through_brushes_and_the_file :
     testing.expect(t,ok && got==id)
     blocks_same(t,&loaded,&source,{},{96,96,96})
     testing.expect_value(t,grid_dense(&loaded.field),grid_dense(g))
+    // A game shipped without LZ stores its blocks as a cook writes them, and reads the same values.
+    saved,read_error:=os.read_entire_file(path,context.temp_allocator)
+    testing.expect(t,read_error==nil)
+    none:=asset.Pack_Codecs{none=true}
+    cooked,repack_error:=asset.document_repack(saved,asset.PACK_EDIT,context.temp_allocator,codecs=&none)
+    testing.expect_value(t,repack_error,asset.Error.None)
+    cooked_path:=fmt.tprintf("%s/cooked.terrain",root)
+    testing.expect(t,os.write_entire_file(cooked_path,cooked)==nil)
+    from_cook:Source;defer source_destroy(&from_cook)
+    _,cook_ok:=source_load(&from_cook,cooked_path,&types)
+    testing.expect(t,cook_ok)
+    blocks_same(t,&from_cook,&source,{},{96,96,96})
 }
 
 @(test)

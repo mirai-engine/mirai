@@ -14,6 +14,7 @@ Types :: struct {
     layouts:[dynamic]^serial.Layout, // how to save each type, built when first needed
     allocator:runtime.Allocator,
     error:Error,
+    writes:^Pack_Codecs,             // what the documents made with these types compress with; nil: LZ when the program has it
 }
 
 types_init :: proc(types:^Types,allocator:=context.allocator) {

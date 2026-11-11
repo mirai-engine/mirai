@@ -6,6 +6,7 @@ import "core:mem/virtual"
 import "core:path/filepath"
 import "core:strings"
 import "core:sync"
+import "mirai:std/codec"
 import "mirai:asset"
 import audio "mirai:audio"
 import "mirai:core"
@@ -134,6 +135,9 @@ App_Stats :: struct {
 
 App :: struct {
     allocator:runtime.Allocator,
+    codecs:codec.Table, // what decodes the assets of a game shipped with the codecs of a plugin
+    writes:asset.Pack_Codecs,   // what that game compresses what it writes with
+    writing:^asset.Pack_Codecs, // writes when a plugin gives them; nil: LZ when the program has it
     // What the window opened with, its title aside: what a choice of the
     // player left at zero goes back to. Before the field platform, which hides the package.
     window:platform.Window_Desc,
@@ -235,12 +239,35 @@ World_Slot :: struct {
     generation:u32,
 }
 
+// The codecs the plugins of the game bring, from their storages holding a codec.Provider alone.
+@(private="file")
+app_codecs_find :: proc(app:^App) {
+    if app.info==nil {return}
+    for &storage in app.info.storages {
+        if storage.default==nil || storage.info.size!=size_of(codec.Provider) {continue}
+        fields,ok:=runtime.type_info_base(storage.info).variant.(runtime.Type_Info_Struct)
+        if !ok || fields.field_count!=1 || fields.types[0].id!=codec.Provider {continue}
+        provider:codec.Provider
+        storage.default(&provider)
+        for i in 0..<min(provider.table.count,codec.MAX) {
+            if app.codecs.count==codec.MAX {return}
+            app.codecs.list[app.codecs.count]=provider.table.list[i]
+            app.codecs.count+=1
+        }
+        if provider.general.encode!=nil && provider.streamed.encode!=nil {
+            app.writes.general,app.writes.streamed=provider.general,provider.streamed
+            app.writing=&app.writes
+        }
+    }
+}
+
 app_create :: proc(desc:App_Desc) -> (app:^App,error:App_Error) {
     allocator:=desc.allocator.procedure!=nil?desc.allocator:context.allocator
     allocation_error:runtime.Allocator_Error
     if app,allocation_error=new(App,allocator);allocation_error!=nil {return nil,.Out_Of_Memory}
     app.allocator=allocator
     app.info=desc.info
+    app_codecs_find(app)
     if app.info!=nil {
         if app.step_ns,allocation_error=make([]u64,len(app.info.steps),allocator);allocation_error!=nil {
             app_destroy(app)

@@ -291,6 +291,13 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   section references its far mesh, `<scene>.far.mesh` with the id `asset.far_mesh_id` gives
   (`cook/far`): the game shows it and makes none
   ([far shape](../../mirai-gameplay/references/libraries.md#plugin-streaming)).
+- **Compression.** A project that does not ship with LZ writes with `Cook_Desc.compression`: the
+  open codecs of the engine, the Cook part of its plugin (built on its own and loaded by the
+  cook), or nothing. Its textures are written without BC7Split nor planes of fields, and what
+  makes blocks makes those of the RGBA8 textures the cook compresses; a texture that comes in
+  blocks keeps them. The shaders the game embeds are compressed before the game compiles
+  (`ASSET_SHADERS`) when the engine embeds them in another codec, and with `none` they go as they
+  are. What a cook compresses with is part of the key of each file it keeps.
 - Every other asset is written again compressed for shipping (`asset.document_repack` with
   `SHIP`, [compression](../../mirai-assets/references/formats.md#compression)), and so are the
   textures it writes in blocks; a file that is not an asset is copied byte by byte.

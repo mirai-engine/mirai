@@ -148,7 +148,7 @@ source_coarse_build :: proc(s:^Source,ranges:[][2]f32,errors:[]Lod_Errors=nil,js
     if js!=nil && jobs.worker_count(js)>1 && count>1 {jobs.parallel_for(js,worker,count,1,coarse_rows,&rows)} else {coarse_rows(&rows,0,count,worker)}
     if intrinsics.atomic_load(&rows.failed) {return false}
     read:Page_Reader
-    if !page_reader_init(&read,context.temp_allocator) {return false}
+    if !page_reader_init(&read,context.temp_allocator,s.codecs) {return false}
     defer page_reader_destroy(&read,context.temp_allocator)
     if !coarse_grid(&next.weights,size,s.allocator) || !coarse_weights_fill(s,&next,&read) {return false}
     coarse_destroy(&s.coarse,s.allocator)
@@ -208,7 +208,7 @@ coarse_rows :: proc(rows:^Coarse_Rows,first,last:int,worker:int) {
     // The rows of a row of chunks, from the line of the coarse grid below it to the one above.
     band_rows:=cells+2*COARSE+1
     read:Page_Reader
-    read_ok:=page_reader_init(&read,context.temp_allocator)
+    read_ok:=page_reader_init(&read,context.temp_allocator,s.codecs)
     defer page_reader_destroy(&read,context.temp_allocator)
     heights,heights_error:=make([]f32,PAGE*PAGE,context.temp_allocator)
     band,band_error:=make([]f32,band_rows*nx,context.temp_allocator)
@@ -258,7 +258,7 @@ source_coarse_weights :: proc(s:^Source) -> bool {
     if grid_none(&s.coarse.heights) {return true}
     c:=&s.coarse
     read:Page_Reader
-    if !page_reader_init(&read,context.temp_allocator) {return false}
+    if !page_reader_init(&read,context.temp_allocator,s.codecs) {return false}
     defer page_reader_destroy(&read,context.temp_allocator)
     return coarse_grid(&c.weights,c.size,s.allocator) && coarse_weights_fill(s,c,&read)
 }

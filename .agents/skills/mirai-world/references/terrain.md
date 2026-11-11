@@ -94,11 +94,11 @@ Chunks:
   slot when a brush, an import or a read first gives it values, and `grid_settle` gives back the
   slabs and tables a brush leaves with one value. An X/Z grid holds every page, in id order.
 - **In the file**, a `<grid>_pages` table holds runs (`Page_Run`) in the order of the directory:
-  many pages of one fill value, or one page with the place, size and XXH3 hash of its LZ block in
-  `<grid>_blocks`, stored uncompressed, so each page is read alone, by file range
-  ([residency](#jobs-publishing-and-residency)). The runs depend on the values, not on what a grid
-  happens to hold: two sources with the same samples write the same file.
-- **Page coding** (`page_code.odin`): before LZ a page goes in byte planes, or, f32 values on
+  many pages of one fill value, or one page with the place, the sizes and the XXH3 hash of its
+  compressed block in `<grid>_blocks`, stored uncompressed, so each page is read alone, by file
+  range ([residency](#jobs-publishing-and-residency)). The runs depend on the values, not on what a
+  grid happens to hold: two sources with the same samples write the same file.
+- **Page coding** (`page_code.odin`): before the codec a page goes in byte planes, or, f32 values on
   multiples of `HEIGHT_STEP`, as the zigzag distance in steps from the plane of each sample's
   neighbors left, above and above-left, in byte planes. Saving puts heights on that lattice, at
   most half a step away; a height read from a file is saved again as it is, so edits and saves do
@@ -376,7 +376,7 @@ Preview and confirmation:
   outside the history) and only afterwards publishes the step, the revisions and the removal of the
   operand in the undo step. If building or writing fails, the head goes back to what it was and
   scene, confirmed file and history, including redo, remain.
-- The head stores the LZ block of each page it wrote with the hash of its values
+- The head stores the compressed block of each page it wrote with the hash of its values
   (`source_bytes(...,keep=true)`): writing the file again only compresses the pages that changed.
 - The undo step stores the owners' revisions, not the file. `terrain_sync` takes the head to the
   revision restored by the steps and puts it in the registry, which the flush writes; one equal to
@@ -671,8 +671,8 @@ Residency by distance:
   `asset_load_front`) leaves its pages in the file and reads them in jobs, by range, when a
   resident chunk, or a node of a Volume being built, needs them with the halo that its
   construction and its collider read (`chunk_pages_region`, `node_pages_region`); it releases
-  them when none reads them and no job reads the source. A page with edits is first stored in an
-  LZ block of its own and comes back with them: unloading and reloading a dug zone keeps the
+  them when none reads them and no job reads the source. A page with edits is first stored in a
+  compressed block of its own and comes back with them: unloading and reloading a dug zone keeps the
   changes. A node whose border reads samples waits for the pages of that border. A Volume's
   weights come and go with its distances, block by block.
 - The residency of the pages is that of the chunks, which is the shared one of `scene`: the terrain

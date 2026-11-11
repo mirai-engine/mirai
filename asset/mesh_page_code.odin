@@ -89,7 +89,7 @@ page_streams :: proc "contextless" (flags:Mesh_Flags,layout:Mesh_Page_Layout) ->
 // its mesh (Mesh_Geometry.page_data), into out[:page.words], with scratch of
 // MESH_PAGE_SCRATCH_BYTES and the decoder of the reader. False for a page
 // whose block is not inside page_data or does not decode to its words.
-mesh_page_decode :: proc(flags:Mesh_Flags,page:Mesh_Page,page_data:[]u8,scratch:[]u8,out:[]u32,decoder:^compressor.Decoder) -> bool {
+mesh_page_decode :: proc(flags:Mesh_Flags,page:Mesh_Page,page_data:[]u8,scratch:[]u8,out:[]u32,decoder:^Stream_Decoder) -> bool {
     if !page_block_valid(flags,page,len(page_data)) || page.data_bytes==0 || len(out)<int(page.words) || int(page.coded_bytes)>len(scratch) {return false}
     block:=page_data[page.data_offset:][:page.data_bytes]
     if page.coded_bytes==0 {return unpack(decoder,block,mem.slice_to_bytes(out[:page.words]))==.None}
@@ -558,16 +558,17 @@ bit_width :: proc "contextless" (v:u32) -> u32 {return 32-intrinsics.count_leadi
 // smaller. coded is scratch of MESH_PAGE_SCRATCH_BYTES. Sets where page
 // finds it.
 @(private)
-page_pack :: proc(coder:^Page_Coder,encoder:^lz.Encoder,g:Mesh_Geometry,page:^Mesh_Page,block:[]u32,coded:[]u8,p:Pack,data:^[dynamic]u8) -> Error {
+page_pack :: proc(coder:^Page_Coder,encoder:^lz.Encoder,g:Mesh_Geometry,page:^Mesh_Page,block:[]u32,coded:[]u8,p:Pack,data:^[dynamic]u8,codecs:^Pack_Codecs=nil) -> Error {
     words:=mem.slice_to_bytes(block[:page.words])
     size,ok:=page_code(coder,g,page^,block,coded)
     at:=len(data)
-    if at+pack_bound(len(words))+(pack_bound(size) if ok else 0)>int(max(u32)) || resize(data,at+pack_bound(len(words))+(pack_bound(size) if ok else 0))!=nil {return .Out_Of_Memory}
-    packed:=pack(encoder,p,words,data[at:]) or_return
+    bound:=block_bound(codecs,len(words))+(block_bound(codecs,size) if ok else 0)
+    if at+bound>int(max(u32)) || resize(data,at+bound)!=nil {return .Out_Of_Memory}
+    packed:=block_pack(encoder,p,codecs,words,data[at:]) or_return
     page.data_offset,page.data_bytes,page.coded_bytes=u32(at),u32(packed),0
     if ok {
         tried:=at+packed
-        smaller:=pack(encoder,p,coded[:size],data[tried:]) or_return
+        smaller:=block_pack(encoder,p,codecs,coded[:size],data[tried:]) or_return
         if smaller<packed {
             copy(data[at:],data[tried:][:smaller])
             page.data_bytes,page.coded_bytes=u32(smaller),u32(size)
@@ -579,7 +580,7 @@ page_pack :: proc(coder:^Page_Coder,encoder:^lz.Encoder,g:Mesh_Geometry,page:^Me
 
 // The pages of g with the block of each, LZ as p says, one after the other in data.
 @(private)
-pages_compress :: proc(g:Mesh_Geometry,p:Pack,allocator:=context.allocator) -> (pages:[]Mesh_Page,data:[dynamic]u8,error:Error) {
+pages_compress :: proc(g:Mesh_Geometry,p:Pack,allocator:=context.allocator,codecs:^Pack_Codecs=nil) -> (pages:[]Mesh_Page,data:[dynamic]u8,error:Error) {
     allocation:mem.Allocator_Error
     pages,allocation=make([]Mesh_Page,len(g.pages),allocator)
     if allocation!=nil {return nil,nil,.Out_Of_Memory}
@@ -590,12 +591,14 @@ pages_compress :: proc(g:Mesh_Geometry,p:Pack,allocator:=context.allocator) -> (
     coder:=page_coder_make(context.temp_allocator)
     defer page_coder_destroy(&coder)
     encoder:lz.Encoder
-    lz.encoder_init(&encoder,context.temp_allocator)
-    defer lz.encoder_destroy(&encoder)
+    when ASSET_LZ {
+        lz.encoder_init(&encoder,context.temp_allocator)
+        defer lz.encoder_destroy(&encoder)
+    }
     copy(pages,g.pages)
     for &page in pages {
         mesh_page_gather(g,page,block)
-        if error=page_pack(&coder,&encoder,g,&page,block,coded,p,&data);error!=.None {
+        if error=page_pack(&coder,&encoder,g,&page,block,coded,p,&data,codecs);error!=.None {
             delete(pages,allocator);delete(data)
             return nil,nil,error
         }

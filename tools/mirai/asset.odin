@@ -6,6 +6,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
+import "mirai:std/codec"
 import "mirai:asset"
 import audio "mirai:audio"
 import "mirai:cook/build"
@@ -39,6 +40,7 @@ ASSET_COMMANDS :: [?]Asset_Command{
     {"merge","merge <base> <ours> <theirs> [--out <file>]","Three-way merge by row and field; writes into <ours> as a git merge driver",asset_merge},
     {"unpack","unpack <file> <folder>","asset.json and one file per bulk column",asset_unpack},
     {"pack","pack <folder> <file>","The binary file of an unpack folder",asset_pack},
+    {"repack","repack <file>...","Writes each file again with the codecs every checkout of the engine reads",asset_repack},
 }
 
 cmd_asset :: proc(root:string,args:[]string) -> int {
@@ -104,6 +106,8 @@ error_text :: proc(error:asset.Error) -> string {
     case .Hash: return "the content does not match its hash"
     case .Too_Large: return "needs more memory than the limit"
     case .Schema: return "the schema table is not valid"
+    case .Codec_Missing: return "it is compressed with a codec this program does not have"
+    case .Blocks_Old: return "its blocks do not say their size: save the asset again"
     case .Out_Of_Memory: return "out of memory"
     case .Not_Found: return "does not exist"
     case .IO: return "could not be read or written"
@@ -328,9 +332,9 @@ asset_deps :: proc(_:string,args:[]string) -> int {
 // Everything that can be checked of a file without knowing who will use it,
 // and the rules of its kind when it is one the engine defines.
 @(private)
-verify :: proc(path:string,types:^asset.Types) -> string {
+verify :: proc(path:string,types:^asset.Types,codecs:^codec.Table=nil) -> string {
     a:asset.Asset
-    if error:=asset.asset_load(&a,path);error!=.None {return error_text(error)}
+    if error:=asset.asset_load(&a,path,codecs=codecs);error!=.None {return error_text(error)}
     defer asset.asset_close(&a)
     return verify_asset(&a,path,types)
 }
@@ -744,4 +748,41 @@ imported_beside :: proc(folder:string) -> string {
     names:=project.FOLDER_NAMES
     if os.base(absolute)!=names[.Assets] {return ""}
     return project.imported_path(os.dir(absolute),context.temp_allocator)
+}
+
+// Writes each asset again compressed with the codecs of the engine, which every checkout
+// reads, in place of the ones only this one has; a texture, with its blocks as they are. A
+// file that already is so stays as it is.
+asset_repack :: proc(_:string,args:[]string) -> int {
+    if code:=positionals("repack",args);code!=0 {return code}
+    if len(args)==0 {return misuse("repack")}
+    types:asset.Types
+    asset.types_init(&types)
+    codecs:=asset.Pack_Codecs{general=asset.open_general(),streamed=asset.open_streamed()}
+    bad,written:=0,0
+    for path in args {
+        defer free_all(context.temp_allocator)
+        data,error:=asset.asset_file_read(path,context.temp_allocator)
+        header:asset.Header
+        if error==.None {header,error=asset.header_read(data)}
+        repacked:[]u8
+        switch {
+        case error!=.None:
+        case header.kind==asset.KIND_TEXTURE: repacked,error=asset.texture_plain(data,&types,asset.PACK_EDIT,&codecs,context.temp_allocator)
+        case: repacked,error=asset.document_repack(data,asset.PACK_EDIT,context.temp_allocator,codecs=&codecs)
+        }
+        if error!=.None {
+            bad+=failed("repack",path,error_text(error))
+            continue
+        }
+        if string(repacked)==string(data) {continue}
+        if serial.file_write_atomic(path,repacked)!=.None {
+            bad+=failed("repack",path,error_text(.IO))
+            continue
+        }
+        written+=1
+        fmt.println(path)
+    }
+    fmt.printfln("%d of %d files written again",written,len(args))
+    return bad==0?0:1
 }

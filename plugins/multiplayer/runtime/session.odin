@@ -9,10 +9,12 @@ import "core:mem"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "mirai:asset"
 import "mirai:core"
 import input "mirai:engine/input"
 import "mirai:host"
 import "mirai:std/base"
+import "mirai:std/codec"
 import "mirai:std/serial"
 import wire "mirai:net"
 
@@ -145,6 +147,8 @@ Net_Session :: struct {
     parts:[dynamic]Journal_Arrived,    // client: the parts of the tick, which journal_receive hands to each journal
     incoming:[dynamic]u8,              // client: the part arriving on the channel of parts, until its last piece
     incoming_over:bool,                // it is larger than a part can be: dropped when it ends
+    codecs:^codec.Table,               // of the App: what the parts of journals decode with
+    writes:^asset.Pack_Codecs,         // of the App: what they travel compressed with
     scratch:[]u8, // one event or one component
     placed:u32,   // the places it asked of core.Pose_Target: each a new number
     taken:u32,    // client: the last place asked before a tick began, which its simulation took

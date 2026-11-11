@@ -1,5 +1,6 @@
 package textures
 
+import "base:runtime"
 import "core:fmt"
 import "core:math"
 import "core:os"
@@ -107,14 +108,14 @@ a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^test
             testing.expectf(t,same_level(entry.format,asset.texture_mip(view,level),built.mips[level],side,side),"%s: the file holds the built level %d",entry.name,level)
         }
         _,prepped:=asset.asset_table(&a,asset.TEXTURE_TABLE_BC7SPLIT)
-        testing.expectf(t,prepped==(entry.format==.BC7),"%s: only BC7 stores its blocks as BC7Split",entry.name)
+        testing.expectf(t,prepped==(entry.format==.BC7 && ENCODERS_PRIVATE),"%s: only BC7 stores its blocks as BC7Split",entry.name)
         // The levels from the third, as a far texture reads them: all of the tail for BC7, whose
         // stream restores whole.
         far:asset.Asset
         if testing.expect_value(t,asset.asset_load(&far,path),asset.Error.None) {
             defer asset.asset_close(&far)
             tail,tail_error:=asset.texture_open(&far,&types)
-            testing.expect(t,tail_error==.None && asset.texture_decode(&far,&types,&tail,2)==.None && tail.first==(0 if entry.format==.BC7 else 2))
+            testing.expect(t,tail_error==.None && asset.texture_decode(&far,&types,&tail,2)==.None && tail.first==(0 if entry.format==.BC7 && ENCODERS_PRIVATE else 2))
             for level in 2..<int(view.info.mip_count) {
                 side:=max(SIZE>>uint(level),1)
                 testing.expectf(t,same_level(entry.format,asset.texture_mip(tail,level),built.mips[level],side,side),"%s: a read from level 2 holds level %d",entry.name,level)
@@ -141,7 +142,7 @@ a_compressed_texture_survives_the_file_within_what_a_block_keeps :: proc(t:^test
                     for channel in 0..<entry.channels {worst=max(worst,abs(int(decoded[at+channel])-int(plain.mips[level][at+channel])))}
                 }
             }
-            testing.expectf(t,worst<=entry.tolerance,"%s: level %d is off by %d",entry.name,level,worst)
+            testing.expectf(t,worst<=entry.tolerance+(0 if ENCODERS_PRIVATE else 18),"%s: level %d is off by %d",entry.name,level,worst)
         }
         testing.expect(t,!asset.texture_level_rgba8(view.info.format,asset.texture_mip(view,0),SIZE,SIZE,built.mips[1][:0]),"a slice of another size is refused")
     }
@@ -268,7 +269,7 @@ an_odd_sized_level_decodes_every_texel_of_its_last_blocks :: proc(t:^testing.T) 
         decoded:[5*3*4]u8
         testing.expect(t,asset.texture_level_rgba8(format,blocks,5,3,decoded[:]))
         for i in 0..<5*3 {
-            testing.expectf(t,abs(int(decoded[i*4])-90)<=4 && abs(int(decoded[i*4+1])-140)<=4 && decoded[i*4+3]==255,"%v texel %d is %v",format,i,decoded[i*4:i*4+4])
+            testing.expectf(t,abs(int(decoded[i*4])-90)<=4 && abs(int(decoded[i*4+1])-140)<=4 && decoded[i*4+3]>=(255 if ENCODERS_PRIVATE else 254),"%v texel %d is %v",format,i,decoded[i*4:i*4+4])
         }
     }
 }
@@ -286,6 +287,7 @@ same_level :: proc(format:asset.Texture_Format,a,b:[]u8,width,height:int) -> boo
 
 @(test)
 a_bc7_texture_restores_its_tail_without_its_larger_levels :: proc(t:^testing.T) {
+    if !ENCODERS_PRIVATE {return}
     SIZE :: 2*asset.TEXTURE_TAIL
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     pixels:=smooth_image(SIZE,false);defer delete(pixels)
@@ -310,4 +312,16 @@ a_bc7_texture_restores_its_tail_without_its_larger_levels :: proc(t:^testing.T) 
         asset.asset_close(&a)
     }
     free_all(context.temp_allocator)
+}
+
+@(test)
+the_open_encoders_leave_the_temporary_memory_of_who_calls_them :: proc(t:^testing.T) {
+    caller:=runtime.default_context()
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    before:=make([]u8,64,caller.temp_allocator)
+    pixels:=[4*4*4]u8{}
+    blocks:[8]u8
+    testing.expect(t,open_external().encode(.BC1,raw_data(pixels[:]),4,4,0,false,raw_data(blocks[:]),len(blocks)))
+    after:=make([]u8,64,caller.temp_allocator)
+    testing.expect(t,raw_data(before)!=raw_data(after),"what the caller holds in its temporary memory stays allocated")
 }

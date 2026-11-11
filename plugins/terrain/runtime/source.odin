@@ -5,6 +5,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:strings"
+import "mirai:std/codec"
 import "mirai:asset"
 import "mirai:std/base"
 import "mirai:std/geom"
@@ -40,6 +41,7 @@ Source_Info :: struct {
 
 Source :: struct {
     allocator:runtime.Allocator,
+    codecs:Page_Codecs, // of the game that holds it
     using info:Source_Info,
     field:Grid(f32),      // the heights of a Heightfield, samples.x by samples.z, or the distances of a Volume, samples.x by y by z in blocks: one all air or all solid holds no values
     holes:Grid(u8),       // Heightfield: 1 for each cell without surface; no pages without holes
@@ -132,9 +134,9 @@ source_clone :: proc(dst,src:^Source,allocator:=context.allocator) -> bool {
     return true
 }
 
-source_load :: proc(s:^Source,path:string,types:^asset.Types,allocator:=context.allocator) -> (id:base.Asset_Id,ok:bool) {
+source_load :: proc(s:^Source,path:string,types:^asset.Types,allocator:=context.allocator,codecs:^codec.Table=nil) -> (id:base.Asset_Id,ok:bool) {
     file:asset.Asset
-    if asset.asset_load(&file,path,allocator)!=.None {return}
+    if asset.asset_load(&file,path,allocator,codecs=codecs)!=.None {return}
     defer asset.asset_close(&file)
     return source_read(s,&file,types,allocator)
 }
@@ -190,7 +192,7 @@ source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=co
     info:=s.info
     asset.document_put_row(&document,types,"terrain",&info) or_return
     // Heights go on the lattice of their page coding; distances stay as they are.
-    grid_put_document(&document,types,&s.field,"field_pages","field_blocks",value_finite,s.file,s.allocator,keep,quantize=s.kind==.Heightfield) or_return
+    grid_put_document(&document,types,&s.field,"field_pages","field_blocks",value_finite,s.file,s.allocator,keep,quantize=s.kind==.Heightfield,codecs=s.codecs) or_return
     source_weights_put(&document,types,s,keep) or_return
     source_holes_put(&document,types,s,keep) or_return
     asset.import_put(&document,types,import_info) or_return

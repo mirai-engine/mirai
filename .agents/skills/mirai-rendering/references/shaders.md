@@ -256,7 +256,10 @@
   and `rhi/shaders_gen_test.odin`, `@(rodata)` tables.
 - The `render` table embeds the code of its stages and then of its program stages as one file
   per backend (`shaders/build/shaders.spv.lz`, `.metal.lz`, returned by `shaders_packed`): the
-  size of each stage, then the code as one LZ stream. Nothing in the table follows the code, so a
+  size of each stage, then the code as one stream, LZ or of the open codecs by what the checkout
+  holds (`GENERATOR_CONTRACT` tells them apart), and beside it the same file with the code
+  stored as it is (`.raw`), which a game compressed with something else embeds or compresses
+  again. Nothing in the table follows the code, so a
   change of code alone leaves the `render` table byte for byte and a dev engine is not rebuilt
   (the code it embeds is that of its last compile). It is packed `PACK_EDIT`, and `SHIP` when
   the generation is asked to ship (`Options.ship`: the release builds of the engine); either

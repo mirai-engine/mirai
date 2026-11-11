@@ -25,7 +25,7 @@ and stands it on the [ground](#ground) of the world.
 
 [Assets](../../mirai-assets/references/formats.md) container, Fourcc `FOLI`, with the rows of
 `source.odin`: `foliage` (seed, revision, next type id, ids given to manual instances), `types`,
-`cells` of `CELL_SIZE` in x and z, and in LZ bulk `manual` and `overrides`, by ranges of each
+`cells` of `CELL_SIZE` in x and z, and in packed bulk `manual` and `overrides`, by ranges of each
 cell.
 
 - `manual` and `overrides` are the byte planes of their records (byte j of every record, then

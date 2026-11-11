@@ -3,6 +3,7 @@ package asset
 import "base:intrinsics"
 import "base:runtime"
 import "core:mem"
+import "mirai:std/codec"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -93,12 +94,13 @@ Asset :: struct {
     decoder:^Decoder,     // lent by whoever reads, else made by asset_decoder and owned
     lacking:[2]string,    // the table and the field of a row a whole read refused: the file does not store that field
     decoder_owned:bool,
+    codecs:^codec.Table,  // what a decoder asset_decoder makes reads the streams of a plugin with
 }
 
 // Opens an asset held in memory. data is borrowed, and so is decoder, which
 // decodes its compressed chunks.
-asset_open :: proc(a:^Asset,data:[]u8,allocator:=context.allocator,limit:=u64(DEFAULT_MEMORY_LIMIT),decoder:^Decoder=nil) -> Error {
-    a^={allocator=allocator,decoder=decoder}
+asset_open :: proc(a:^Asset,data:[]u8,allocator:=context.allocator,limit:=u64(DEFAULT_MEMORY_LIMIT),decoder:^Decoder=nil,codecs:^codec.Table=nil) -> Error {
+    a^={allocator=allocator,decoder=decoder,codecs=codecs}
     a.owned=make([dynamic][]u8,allocator)
     a.hashes=make([dynamic]u64,allocator)
     error:=asset_parse(a,data,limit)
@@ -107,16 +109,16 @@ asset_open :: proc(a:^Asset,data:[]u8,allocator:=context.allocator,limit:=u64(DE
 }
 
 // Reads a file into memory aligned for its chunks and opens it.
-asset_load :: proc(a:^Asset,path:string,allocator:=context.allocator,limit:=u64(DEFAULT_MEMORY_LIMIT),decoder:^Decoder=nil) -> Error {
+asset_load :: proc(a:^Asset,path:string,allocator:=context.allocator,limit:=u64(DEFAULT_MEMORY_LIMIT),decoder:^Decoder=nil,codecs:^codec.Table=nil) -> Error {
     a^={}
     file:=asset_file_read(path,allocator,limit) or_return
-    return asset_take(a,file,allocator,limit,decoder)
+    return asset_take(a,file,allocator,limit,decoder,codecs)
 }
 
 // Opens an asset held in memory that it takes: asset_close frees data, and so
 // does a failure. data comes from allocator, aligned for its chunks.
-asset_take :: proc(a:^Asset,data:[]u8,allocator:=context.allocator,limit:=u64(DEFAULT_MEMORY_LIMIT),decoder:^Decoder=nil) -> Error {
-    error:=asset_open(a,data,allocator,limit,decoder)
+asset_take :: proc(a:^Asset,data:[]u8,allocator:=context.allocator,limit:=u64(DEFAULT_MEMORY_LIMIT),decoder:^Decoder=nil,codecs:^codec.Table=nil) -> Error {
+    error:=asset_open(a,data,allocator,limit,decoder,codecs)
     if error!=.None {
         mem.free_bytes(data,allocator)
         return error
@@ -176,7 +178,7 @@ asset_decoder :: proc(a:^Asset) -> (decoder:^Decoder,error:Error) {
     if a.decoder!=nil {return a.decoder,.None}
     allocation:mem.Allocator_Error
     if decoder,allocation=new(Decoder,a.allocator);allocation!=nil {return nil,.Out_Of_Memory}
-    if error=decoder_init(decoder,a.allocator);error!=.None {
+    if error=decoder_init(decoder,a.allocator,a.codecs);error!=.None {
         free(decoder,a.allocator)
         return nil,error
     }
@@ -214,8 +216,8 @@ asset_chunk :: proc(a:^Asset,index:int,alignment:int) -> (data:[]u8,error:Error)
 // Opens the front of an asset file: everything up to the chunks a caller
 // reads, which the bulk data follows. Reaching a chunk past it is Truncated.
 @(private)
-asset_open_front :: proc(a:^Asset,data:[]u8,allocator:=context.allocator,decoder:^Decoder=nil) -> Error {
-    a^={allocator=allocator,decoder=decoder}
+asset_open_front :: proc(a:^Asset,data:[]u8,allocator:=context.allocator,decoder:^Decoder=nil,codecs:^codec.Table=nil) -> Error {
+    a^={allocator=allocator,decoder=decoder,codecs=codecs}
     a.owned=make([dynamic][]u8,allocator)
     a.hashes=make([dynamic]u64,allocator)
     error:=asset_parse(a,data,DEFAULT_MEMORY_LIMIT,front=true)
@@ -226,7 +228,7 @@ asset_open_front :: proc(a:^Asset,data:[]u8,allocator:=context.allocator,decoder
 // Reads the front of an asset file, everything but its bulk columns: those
 // stay in the file, to be read by range at the offset of their chunk.
 // Reaching a bulk column is Truncated, and the content hash is not checked.
-asset_load_front :: proc(a:^Asset,path:string,allocator:=context.allocator,decoder:^Decoder=nil) -> Error {
+asset_load_front :: proc(a:^Asset,path:string,allocator:=context.allocator,decoder:^Decoder=nil,codecs:^codec.Table=nil) -> Error {
     a^={}
     head:[REGISTRY_HEAD]u8
     bytes,size,read_error:=serial.file_read_head(path,head[:])
@@ -234,7 +236,7 @@ asset_load_front :: proc(a:^Asset,path:string,allocator:=context.allocator,decod
     header:=header_read(bytes) or_return
     if header.total_size!=u64(size) {return .Truncated}
     front:=front_read(path,bytes,header,true,allocator) or_return
-    if error:=asset_open_front(a,front,allocator,decoder);error!=.None {mem.free_bytes(front,allocator);return error}
+    if error:=asset_open_front(a,front,allocator,decoder,codecs);error!=.None {mem.free_bytes(front,allocator);return error}
     a.file=front
     return .None
 }

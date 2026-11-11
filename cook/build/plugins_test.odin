@@ -163,6 +163,24 @@ plugin_job :: proc(p:^project.Project,compiler:string) -> ^Job {
     return job
 }
 
+// A plugin that is shipped_only is of the game that ships alone.
+@(test)
+a_plugin_only_a_shipped_game_has_stays_out_of_the_editor_and_the_player :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    folder:=base.test_folder(t,"plugin-shipped")
+    if folder=="" {return}
+    engine,game:=split_plugin_write(t,folder)
+    manifest:=project.path(engine,"plugins/thing/plugin.mirai",allocator=context.temp_allocator)
+    testing.expect(t,os.write_entire_file(manifest,`{"name": "thing", "version": "1.0.0", "parts": ["Runtime"], "shipped_only": true}`)==nil)
+    p,error:=project.open(game,engine)
+    if !testing.expectf(t,error.code==.None,"the project opens: %v",error) {return}
+    world:=world_generate(&p,context.temp_allocator,true)
+    if !testing.expectf(t,len(world.errors)==0,"%v",world.errors) {return}
+    testing.expect(t,!strings.contains(world.game_world,`"plugins:thing/runtime/sim"`) && !strings.contains(world.editor_world,`"plugins:thing/runtime/sim"`))
+    testing.expect(t,strings.contains(world.shipped_world,`"plugins:thing/runtime/sim"`))
+    for library in plugin_libraries(&p,true) {testing.expect(t,library.name!="thing","no library of the editor or the player is of it")}
+}
+
 // Every folder with sources under a part is a package of its library: it is
 // declared, staged and compiled into it, the world reads its attributes, and
 // what imports it through the declarations links against the library. The

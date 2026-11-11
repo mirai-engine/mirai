@@ -6,6 +6,7 @@ import "core:mem"
 import "core:slice"
 import "core:strings"
 import "core:time"
+import "mirai:std/codec"
 import "mirai:asset"
 import render "mirai:render"
 import "mirai:rhi"
@@ -192,6 +193,8 @@ Assets :: struct {
     registry:asset.Registry,
     indexed:bool, // the registry is the packed index of the folder: its files are not looked at
     types:asset.Types,
+    codecs:^codec.Table, // of the App
+    writes:^asset.Pack_Codecs, // of the App
     index:map[base.Asset_Id]Assets_Ref,
     regions:[7]base.Region, // of meshes, textures, materials, scenes, material_descs, row_marks and row_hashes
     meshes:[dynamic]Assets_Mesh,
@@ -456,7 +459,7 @@ assets_file :: proc(a:^Assets,id:base.Asset_Id,kind:asset.Fourcc,file:^asset.Ass
     if record.kind!=kind {return .Invalid}
     limit:=assets_byte_limit(a,record.path)
     data:=asset.registry_read(&a.registry,record.path,a.allocator,limit) or_return
-    assets_file_take(file,data,id,kind,a.allocator,limit) or_return
+    assets_file_take(file,data,id,kind,a.allocator,limit,codecs=a.codecs) or_return
     a.stats.loads+=1
     return .None
 }
@@ -474,8 +477,8 @@ assets_byte_limit :: proc(a:^Assets,path:string) -> u64 {
 // Opens the bytes of the file of an asset, which it takes: whole, matching its
 // hash, its id and its kind. Any thread.
 @(private="file")
-assets_file_take :: proc(file:^asset.Asset,data:[]u8,id:base.Asset_Id,kind:asset.Fourcc,allocator:mem.Allocator,limit:u64,decoder:^asset.Decoder=nil) -> asset.Error {
-    asset.asset_take(file,data,allocator,limit,decoder) or_return
+assets_file_take :: proc(file:^asset.Asset,data:[]u8,id:base.Asset_Id,kind:asset.Fourcc,allocator:mem.Allocator,limit:u64,decoder:^asset.Decoder=nil,codecs:^codec.Table=nil) -> asset.Error {
+    asset.asset_take(file,data,allocator,limit,decoder,codecs) or_return
     if !asset.blob_verify_hash(&file.blob) || file.blob.header.id!=id || file.blob.header.kind!=kind {
         asset.asset_close(file)
         return .Hash
@@ -494,6 +497,7 @@ Assets_Source :: struct {
     data:[]u8,
     allocator:mem.Allocator, // of path and data: one any thread can use
     limit:u64,               // the most its file may take; 0: asset.DEFAULT_MEMORY_LIMIT
+    codecs:^codec.Table,     // of the Assets it came from
 }
 
 // The source of an asset of the registry; false when the registry has none.
@@ -501,7 +505,7 @@ Assets_Source :: struct {
 assets_source :: proc(a:^Assets,id:base.Asset_Id,allocator:mem.Allocator) -> (source:Assets_Source,found:bool) {
     record:=asset.registry_find(&a.registry,id) or_return
     if record.state!=.Asset {return}
-    source={id=id,kind=record.kind,hash=record.content_hash,allocator=allocator,limit=assets_byte_limit(a,record.path)}
+    source={id=id,kind=record.kind,hash=record.content_hash,allocator=allocator,limit=assets_byte_limit(a,record.path),codecs=a.codecs}
     if held,in_memory:=asset.registry_memory_find(&a.registry,record.path);in_memory {
         if held.removed {return {},false}
         data,error:=asset.asset_bytes_clone(held.data,allocator)
@@ -520,7 +524,7 @@ assets_source_open :: proc(source:^Assets_Source,file:^asset.Asset,decoder:^asse
     source.data=nil
     limit:=source.limit!=0?source.limit:asset.DEFAULT_MEMORY_LIMIT
     if data==nil {data=asset.asset_file_read(source.path,source.allocator,limit) or_return}
-    return assets_file_take(file,data,source.id,source.kind,source.allocator,limit,decoder)
+    return assets_file_take(file,data,source.id,source.kind,source.allocator,limit,decoder,source.codecs)
 }
 
 assets_source_free :: proc(source:^Assets_Source) {

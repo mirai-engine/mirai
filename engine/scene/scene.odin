@@ -169,7 +169,7 @@ load_path :: proc(w:core.World_Ref,app:^host.App,path:string) -> (report:Report,
     if file,found:=asset.registry_find_path(&app.assets.registry,path);found {return load_id(w,app,file.id)}
     if !filepath.is_abs(path) || !os.is_file(path) {return {},.Not_Found}
     source:asset.Asset
-    if asset.asset_load(&source,path)!=.None {return {},.Invalid}
+    if asset.asset_load(&source,path,codecs=&app.codecs)!=.None {return {},.Invalid}
     defer asset.asset_close(&source)
     view,view_error:=asset.scene_view(&source,&app.assets.types)
     if view_error!=.None {return {},.Corrupt}
