@@ -76,7 +76,7 @@ marker `Shot` on `C` at 3 and a marker `Wave` on `Hero` at 3 lasting 2. The edit
 
 ```odin
 anim.animation_command(requests,intro,.Play)             // as any clip
-// cinematics:core.Read(cine.Cinematic), events:core.Ref(anim.Animation_Events)
+// cinematics:^core.Table(cine.Cinematic,.Read), events:core.Ref(anim.Animation_Events)
 if c,ok:=core.get(cinematics,intro);ok && c.status==.Completed {start_the_level()}
 for event in events.items {
     if event.entity==intro && event.name==base.name_hash("door_slam") {slam()}  // a .Marker

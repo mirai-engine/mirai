@@ -221,7 +221,7 @@ a_posed_mesh_is_the_instance_of_its_entity_and_a_visual_one_hides_it :: proc(t:^
     core.add(&f.world.offsets,root,Draw_Offset{offset={0,2,0}})
     core.add(&f.world.parents,b,core.Parent{entity=root})
     core.test_world_settle(&f.world)
-    core.hierarchy_settle(&f.world.hierarchy,core.read(&f.world.parents),&f.world.entities)
+    core.hierarchy_settle(&f.world.hierarchy,&f.world.parents,&f.world.entities)
     frame(f,&posed)
     testing.expect(t,mesh_of(s,1)==sphere && s.instances[1].world[1][3]==2 && s.instances[0].world[1][3]==0,"a posed mesh is drawn with the offset of what it hangs from")
     // Given again as it is, nothing is made; one the renderer does not have shows the mesh of the entity.

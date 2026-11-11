@@ -31,11 +31,11 @@ Remote_Axis :: struct {
 
 // The actions of a seat for another end; ok false when more axis actions are
 // away from zero than REMOTE_AXES, and the rest do not go.
-seat_remote :: proc(seats:core.Read(Seat),seat:core.Entity,bindings:^Input_Map) -> (sent:Remote_Actions,ok:bool) {
+seat_remote :: proc(seats:^core.Table(Seat,$A),seat:core.Entity,bindings:^Input_Map) -> (sent:Remote_Actions,ok:bool) {
     ok=true
     row:=core.row_of(seats,seat)
     if row<0 || bindings==nil {return}
-    source:=&seats.table.values[row]
+    source:=&seats.values[row]
     moved:=motion_actions(bindings)
     off:=source.blocked|source.rearm
     for state,i in source.actions.states[:min(int(source.actions.count),ACTION_CAPACITY)] {

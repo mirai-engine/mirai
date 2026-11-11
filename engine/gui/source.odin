@@ -29,12 +29,12 @@ Source :: struct {
     bindings:^inp.Input_Map,
     actions:^inp.Actions, // of the frame, for the window
     seat_state:^inp.Seats, // whose blocks the interface being built reads its actions past
-    seats:core.Read(inp.Seat),
-    cameras:core.Read(render.Camera),
-    exposures:core.Read(render.Exposure),
-    view_volumes:core.Read(render.View_Volume),
-    volumes:core.Read(volume.Volume),
-    worlds:core.Read(core.World_Transform),
+    seats:^core.Table(inp.Seat,.Read),
+    cameras:^core.Table(render.Camera,.Read),
+    exposures:^core.Table(render.Exposure,.Read),
+    view_volumes:^core.Table(render.View_Volume,.Read),
+    volumes:^core.Table(volume.Volume,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),
     pixels:f32,        // device pixels per layout unit
     pack:^host.Content_Prompts,  // of UI_Settings.prompts; nil: the prompts are drawn
 }
@@ -62,9 +62,9 @@ Particle_Texture :: struct {
 
 @(private)
 source_bind :: proc(
-    s:^Surface,gui:^Gui,app:^host.App,p:int,seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),bindings:core.Ref(inp.Input_Map),
-    actions:core.Ref(inp.Frame_Actions),cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),
-    view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),settings:UI_Settings,gamepad:int,effects:^UI_Effects,sounds:^audio.Sound_Requests,
+    s:^Surface,gui:^Gui,app:^host.App,p:int,seat_state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,$A),bindings:core.Ref(inp.Input_Map),
+    actions:core.Ref(inp.Frame_Actions),cameras:^core.Table(render.Camera,$B),exposures:^core.Table(render.Exposure,$C),
+    view_volumes:^core.Table(render.View_Volume,$D),volumes:^core.Table(volume.Volume,$E),worlds:^core.Table(core.World_Transform,$F),settings:UI_Settings,gamepad:int,effects:^UI_Effects,sounds:^audio.Sound_Requests,
 ) {
     seat:=p>0?inp.local_seat(seats,p-1):core.NONE
     settings:=settings

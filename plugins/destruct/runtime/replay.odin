@@ -124,7 +124,7 @@ state_apply :: proc(c:^Ctx,e:core.Entity,st:^Destructible_State,asked:State_Repl
 @(private)
 group_identify :: proc(c:^Ctx,owner,e:core.Entity,group:Scratch_Group) {
     if c.authority==.Standalone {return}
-    destructible:=core.id_of(core.read(c.ids),owner)
+    destructible:=core.id_of(c.ids,owner)
     if destructible==0 {return}
     state:=base.hash_combine(u64(destructible),u64(group.group)+1)
     id:=core.id_new(c.es,&state)
