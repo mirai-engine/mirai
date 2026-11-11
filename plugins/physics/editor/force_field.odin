@@ -80,9 +80,9 @@ force_field_arrows :: proc(lines:^erender.Debug_Lines,field:phys.Force_Field,are
 @(step="frame")
 force_field_preview :: proc(
     s:^editor.Session,preview:^Force_Field_Preview,id:core.World_Id,
-    fields:core.Read(phys.Force_Field),volumes:core.Read(volume.Volume),transforms:core.Read(core.Transform),parents:core.Read(core.Parent),extras:^host.Frame_Extras,
+    fields:^core.Table(phys.Force_Field,.Read),volumes:^core.Table(volume.Volume,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),extras:^host.Frame_Extras,
 ) {
-    if editor.playing(s) && !editor.simulating(s) || s.selection==nil || len(s.selection.entities)==0 || fields.table==nil {
+    if editor.playing(s) && !editor.simulating(s) || s.selection==nil || len(s.selection.entities)==0 || fields==nil {
         preview.ready=false
         preview.count,preview.dropped=0,0
         return
@@ -91,9 +91,9 @@ force_field_preview :: proc(
     lines:=erender.debug_lines_make(preview.vertices[:],depth_test=false)
     if !preview.ready || preview.source!=id || preview.selection_serial!=s.selection.serial || preview.versions!=versions {
         for entity in s.selection.entities {
-            on,_,present:=core.raw_state(core.raw(fields.table),entity)
+            on,_,present:=core.raw_state(core.raw(fields),entity)
             if !present {continue}
-            field:=fields.table.values[core.raw_row(core.raw(fields.table),entity)]
+            field:=fields.values[core.raw_row(core.raw(fields),entity)]
             pose,placed:=core.world_of(transforms,parents,entity)
             area,_:=core.get(volumes,entity)
             if placed {force_field_arrows(&lines,field,area,pose,on)}

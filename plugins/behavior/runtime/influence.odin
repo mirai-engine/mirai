@@ -37,8 +37,8 @@ influence_free :: proc(i:^Influence) {
 
 @(step="fixed",stage="input",server,after="perception_update")
 influence_update :: proc(
-    influence:^Influence,settings:core.Ref(Behavior_Settings),perceivables:core.Read(Perceivable),perceivers:core.Read(Perceiver),minds:core.Read(Mind_Agent),
-    queriers:core.Read(Place_Result),worlds:core.Read(core.World_Transform),physics:core.Ref(phys.Physics_State),time:core.Time,
+    influence:^Influence,settings:core.Ref(Behavior_Settings),perceivables:^core.Table(Perceivable,.Read),perceivers:^core.Table(Perceiver,.Read),minds:^core.Table(Mind_Agent,.Read),
+    queriers:^core.Table(Place_Result,.Read),worlds:^core.Table(core.World_Transform,.Read),physics:core.Ref(phys.Physics_State),time:core.Time,
 ) {
     if settings.ptr==nil || !time.playing || time.dt<=0 {return}
     used:=core.count(perceivables)>0 || core.count(perceivers)>0 || core.count(minds)>0 || core.count(queriers)>0
@@ -57,7 +57,7 @@ influence_update :: proc(
     g:=&influence.grid
     if !ai.influence_running(g) {
         for row in 0..<core.count(perceivables) {
-            p:=perceivables.table.values[row]
+            p:=perceivables.values[row]
             if int(p.team)>=INFLUENCE_TEAMS {continue}
             if pose,ok:=core.get(worlds,core.entity_at(perceivables,row));ok {ai.influence_stamp(g,int(p.team),pose.position,1)}
         }

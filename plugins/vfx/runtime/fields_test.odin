@@ -63,14 +63,14 @@ particles_take_the_gravity_of_their_place_as_the_bodies :: proc(t:^testing.T) {
     place(&w,{pull=.Center,acceleration=5,radius=2},volume.Volume{shape=.Sphere,extents={10,0,0},blend=2,priority=1},{10040,0,0})
     place(&w,{acceleration=3},volume.Volume{shape=.Box,extents={4,4,4},priority=2,mode=.Add},{10020,0,0},mm.quat_axis_angle({0,0,1},mm.PI/2))
     origin:=[3]f32{10032,0,0}
-    fields:=fields_relative(fields_of(core.read(&w.gravities),{},core.read(&w.volumes),core.read(&w.worlds)),origin)
-    Of :: struct {gravities:core.Read(volume.Gravity),worlds:core.Read(core.World_Transform),point:[3]f32}
+    fields:=fields_relative(fields_of(core.read(&w.gravities),nil,core.read(&w.volumes),core.read(&w.worlds)),origin)
+    Of :: struct {gravities:^core.Table(volume.Gravity,.Read),worlds:^core.Table(core.World_Transform,.Read),point:[3]f32}
     of :: proc(o:Of,row:i32) -> [3]f32 {
         world,_:=core.get(o.worlds,core.entity_at(o.gravities,int(row)))
         return volume.gravity_of(core.at(o.gravities,int(row)),world.transform,o.point)
     }
     for p in ([?][3]f32{{0,0,0},{10040,4,0},{10048,0,0},{10031,0,0},{10020,1,0},{10060,0,0}}) {
-        want:=volume.combine(volume.gather(core.read(&w.volumes),core.read(&w.worlds),core.read(&w.gravities),p),volume.GRAVITY_WORLD,Of{core.read(&w.gravities),core.read(&w.worlds),p},of,volume.mix_linear)
+        want:=volume.combine(volume.gather(core.read(&w.volumes),core.read(&w.worlds),&w.gravities,p),volume.GRAVITY_WORLD,Of{core.read(&w.gravities),core.read(&w.worlds),p},of,volume.mix_linear)
         got:=fields_gravity(fields,p-origin)
         testing.expectf(t,linalg.length(got-want)<1e-3,"at %v: %v on the GPU, %v for a body",p,got,want)
     }

@@ -64,7 +64,7 @@ play_seat :: proc(s:^Session,call:^api.Call,w:core.World_Ref,slot:int,on_client:
         api.call_failf(call,api.INVALID_PARAMS,"slot %d is not a local seat: the game has %d, slots 0 to %d; play.start with players gives it more",slot,state.local_count,state.local_count-1)
         return
     }
-    seat=input.local_seat(core.read(seats),at)
+    seat=input.local_seat(seats,at)
     if seat==core.NONE {
         api.call_failf(call,api.INVALID_PARAMS,"The local seat of slot %d is made on the first tick: play.step one tick first",at)
         return

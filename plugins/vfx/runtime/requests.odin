@@ -87,7 +87,7 @@ request_parameter_clear :: proc(requests:^Particle_Requests,e:core.Entity) {core
 // The requests since the last step, applied in order.
 @(private)
 requests_apply :: proc(
-    requests:^Particle_Requests,emitters:core.Read(Particle_Emitter),overrides:^core.Table(Particle_Override),
+    requests:^Particle_Requests,emitters:^core.Table(Particle_Emitter,$A),overrides:^core.Table(Particle_Override),
     parameters:^core.Table(Particle_Parameters),clocks:^Particle_Clocks,problems:^core.Problems,
 ) {
     for &request in core.take(&requests.queue) {

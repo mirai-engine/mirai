@@ -11,7 +11,7 @@ import phys "plugins:physics/runtime"
 // tick: the one multiplayer.rewind_tick gives for the connection that fired.
 // ignore is who fired.
 rewind_raycast :: proc(
-    history:^multiplayer.Rewind_History,physics:core.Ref(phys.Physics_State),marked:core.Read(multiplayer.Rewind),
+    history:^multiplayer.Rewind_History,physics:core.Ref(phys.Physics_State),marked:^core.Table(multiplayer.Rewind,$A),
     tick:f64,origin,direction:[3]f32,max_distance:f32=1000,ignore:=core.NONE,
 ) -> (hit:phys.Hit,ok:bool) {
     for row in 0..<core.count(marked) {

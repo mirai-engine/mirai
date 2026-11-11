@@ -180,8 +180,8 @@ play_view_axes :: proc(w:core.World_Ref) -> (right,forward:[3]f32) {
 play_focused :: proc(w:core.World_Ref) -> (seat,body:core.Entity) {
     state,seats:=core.world_storage_of(w,input.Seats),core.world_table_of(w,input.Seat)
     if state==nil || seats==nil {return}
-    seat=input.focused(state,core.read(seats))
-    body=input.body_of(core.read(seats),seat)
+    seat=input.focused(state,seats)
+    body=input.body_of(seats,seat)
     return
 }
 

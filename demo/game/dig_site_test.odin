@@ -61,11 +61,11 @@ the_inventory_of_the_dig_lives_on_a_root_that_keeps :: proc(t:^testing.T) {
         core.test_world_settle(w)
     }
     tick(w,commands)
-    root,made:=core.sole(core.read(&w.inventories))
-    testing.expect(t,made && core.has(core.read(&w.keeps),root),"the first tick makes the root of the run, kept")
+    root,made:=core.sole(&w.inventories)
+    testing.expect(t,made && core.has(&w.keeps,root),"the first tick makes the root of the run, kept")
     testing.expect(t,core.alive(&w.entities,drop),"nothing is counted before the root is there")
     tick(w,commands)
-    inventory,found:=core.get(core.read(&w.inventories),root)
+    inventory,found:=core.get(&w.inventories,root)
     testing.expect(t,found && inventory.count==1 && inventory.drops[0]==1 && inventory.materials[0]=={7,7})
     testing.expect(t,!core.alive(&w.entities,drop),"the drop walked over is taken")
 }
@@ -80,7 +80,7 @@ the_pit_digs_by_seconds_and_a_copy_digs_on :: proc(t:^testing.T) {
             dig_site(commands,&w.sites,core.read(&w.pickups),core.read(&w.players),dig_sight(w),{},core.read(&w.worlds),&w.requests,core.ref(&w.digs),&w.inventories,{},{tick=tick,dt=1/f32(hz),playing=true})
             core.test_world_settle(w)
         }
-        return core.at(core.read(&w.sites),0).dug
+        return core.at(&w.sites,0).dug
     }
     for hz in ([]u64{60,120}) {
         w:=new(Dig_World)

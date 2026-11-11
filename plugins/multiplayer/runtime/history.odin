@@ -169,7 +169,7 @@ driver_apply :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica,command:^wire.Co
     moves:=core.world_table_of(w,input.Move_Input)
     driver:Driver_State
     if t.driver<0 || moves==nil || !wire.object_read(&s.host,command,t.driver,&driver,max(u64)) || !driver.has_move {return}
-    if old,has:=core.get(core.read(moves),r.entity);!has || old!=driver.move {core.add(moves,r.entity,driver.move)}
+    if old,has:=core.get(moves,r.entity);!has || old!=driver.move {core.add(moves,r.entity,driver.move)}
 }
 
 // What another end drives and this client simulates runs each tick with the

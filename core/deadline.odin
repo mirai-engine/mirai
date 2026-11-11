@@ -36,7 +36,7 @@ elapsed :: proc "contextless" (time:Time,since:u64) -> f32 {return time.tick>sin
 // tick (Own_Pace). A deadline or an elapsed time asked of it counts the time
 // of e at the pace it has now; what must follow a pace that changes during
 // the wait adds its own time up tick by tick.
-own_time :: proc "contextless" (time:Time,clock:Clock,paces:Read(Own_Pace),e:Entity) -> Time {
+own_time :: proc "contextless" (time:Time,clock:Clock,paces:^Table(Own_Pace,$A),e:Entity) -> Time {
     own:=time
     own.dt*=pace_of(clock,paces,e)
     return own
