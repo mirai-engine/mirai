@@ -83,6 +83,7 @@ Audio_Source :: struct {
     max_distance:f32 `mirai:"min=0,unit=m"`,
     rolloff:f32 `mirai:"min=0"`, // how fast it falls: 1 is the curve as its model says it
     near_radius:f32 `mirai:"min=0,unit=m"`, // nearer, it is heard less from its direction, so passing through the listener does not jump between ears
+    spread:f32 `mirai:"min=0,unit=m"`, // of a stereo sound: how far apart its channels are heard across it, wide up close and a point far away; 0: one source
     delay:bool, // starts later by its distance over the speed of sound, as thunder after its flash
     doppler:f32 `mirai:"min=0"`, // 0: none; 1: the physical shift of pitch as it and the listener move
     reverb:f32 `mirai:"min=0,max=1"`, // share of it the room of the listener reverberates
@@ -91,7 +92,7 @@ Audio_Source :: struct {
     priority:u8, // when more sources play than the mixer has voices, the higher keep theirs before the louder
 }
 
-AUDIO_SOURCE_DEFAULT :: Audio_Source{bus=BUS_EFFECTS,volume=1,pitch=1,playing=true,attenuation=.Inverse,min_distance=1,max_distance=20,rolloff=1,near_radius=1,directivity_power=1}
+AUDIO_SOURCE_DEFAULT :: Audio_Source{bus=BUS_EFFECTS,volume=1,pitch=1,playing=true,attenuation=.Inverse,min_distance=1,max_distance=20,rolloff=1,near_radius=1,spread=2,directivity_power=1}
 
 // A spatial source that what collides between it and the listener hides:
 // Audio_Source_State.occlusion is the part of it out of sight, 0 to 1, which
@@ -742,7 +743,7 @@ transmission_through :: proc(h:^Hearing,source:core.Entity,from,listener:[3]f32)
 
 @(private)
 attenuation_of :: proc "contextless" (source:Audio_Source) -> mixer.Attenuation {
-    a:=mixer.Attenuation{model=source.attenuation,min_distance=source.min_distance,max_distance=source.max_distance,rolloff=source.rolloff,delay=source.delay}
+    a:=mixer.Attenuation{model=source.attenuation,min_distance=source.min_distance,max_distance=source.max_distance,rolloff=source.rolloff,spread=source.spread,delay=source.delay}
     a.near_radius=source.near_radius>0?source.near_radius:mixer.ATTENUATION_DEFAULT.near_radius
     return a
 }
@@ -750,8 +751,8 @@ attenuation_of :: proc "contextless" (source:Audio_Source) -> mixer.Attenuation 
 // Why a source cannot play, as how to correct it; "" when it can.
 @(private)
 source_problem :: proc "contextless" (s:Audio_Source) -> string {
-    for x in ([?]f32{s.volume,s.pitch,s.reverb,s.doppler,s.directivity,s.directivity_power,s.rolloff,s.near_radius}) {
-        if !(x>=0 && x<=max(f32)) {return "volume, pitch, reverb, doppler, directivity, directivity_power, rolloff and near_radius are numbers of 0 or more"}
+    for x in ([?]f32{s.volume,s.pitch,s.reverb,s.doppler,s.directivity,s.directivity_power,s.rolloff,s.near_radius,s.spread}) {
+        if !(x>=0 && x<=max(f32)) {return "volume, pitch, reverb, doppler, directivity, directivity_power, rolloff, near_radius and spread are numbers of 0 or more"}
     }
     if s.spatial && !(s.min_distance>0 && s.max_distance>s.min_distance && s.max_distance<=max(f32)) {
         return "a spatial one is heard from min_distance, above 0, to max_distance, above it"

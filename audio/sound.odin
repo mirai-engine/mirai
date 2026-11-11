@@ -12,8 +12,9 @@ import "mirai:std/base"
 
 Sound :: distinct base.Handle
 
-// Decoded audio: len(samples)/channels frames, interleaved.
-Pcm :: struct {samples:[]f32,channels,sample_rate:int}
+// Decoded audio: len(samples)/channels frames, interleaved. loop_start is
+// the frame a loop of it goes back to, as its file says; 0 when it does not.
+Pcm :: struct {samples:[]f32,channels,sample_rate,loop_start:int}
 
 pcm_destroy :: proc(pcm:^Pcm,allocator:=context.allocator) {
     delete(pcm.samples,allocator)
@@ -31,6 +32,7 @@ Sound_Slot :: struct {
     encoded:[]u8,   // owned: a sound kept encoded
     source:Decoder, // how a voice decodes a sound kept encoded; it points into encoded
     frames:u32,     // 0 for a stream of unknown length
+    loop_start:u32, // the frame a loop goes back to
     channels,rate:u32,
     feed:i32,       // the feed of a streamed sound; -1 for any other
 }
@@ -156,6 +158,16 @@ sound_destroy :: proc(m:^Mixer,sound:Sound) {
     slot.release_sent=command_push(m,{kind=.Sound_Release,index=base.handle_index(base.Handle(sound))})
 }
 sound_valid :: proc(m:^Mixer,sound:Sound) -> bool {return sound_slot(m,sound)!=nil}
+// The frame a loop of the sound goes back to when it reaches the end, so an
+// intro plays once and the body after it repeats; 0, the default, loops it
+// whole. Voices that start afterwards follow it. False for a frame outside
+// the sound.
+sound_set_loop_start :: proc(m:^Mixer,sound:Sound,frame:int) -> bool {
+    slot:=sound_slot(m,sound)
+    if slot==nil || frame<0 || frame>=int(max(u32)) || slot.frames>0 && frame>=int(slot.frames) {return false}
+    slot.loop_start=u32(frame)
+    return true
+}
 // Length in frames at its own sample rate; 0 for a stream of unknown length.
 sound_frames :: proc(m:^Mixer,sound:Sound) -> int {
     slot:=sound_slot(m,sound)
