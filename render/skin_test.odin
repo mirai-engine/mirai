@@ -314,6 +314,21 @@ gpu_skin_preserves_bind_source_motion_normals_bounds_and_refits_both_ray_paths :
             testing.expectf(t,linalg.length(previous[i].position-old.position)<1e-5,"previous skin position %d",i)
             for axis in 0..<3 {testing.expect(t,expected.position[axis]>=record.bounds_min[axis]-1e-5 && expected.position[axis]<=record.bounds_max[axis]+1e-5)}
         }
+        // The box of the cluster as posed now holds its vertices, and its cone
+        // holds the normal of each of its triangles.
+        bounds:[POSED_BOUNDS_WORDS]u32
+        testing.expect(t,rhi.buffer_read_slice(device,r.scene.vertex_buffer,u64(record.bounds_word)*4,bounds[:]))
+        testing.expect(t,bounds[3]&3==3,"a posed cluster has its box and its cone")
+        low:=transmute([3]f32)[3]u32{bounds[0],bounds[1],bounds[2]}
+        high:=transmute([3]f32)[3]u32{bounds[4],bounds[5],bounds[6]}
+        for v in actual {for axis in 0..<3 {testing.expectf(t,v.position[axis]>=low[axis]-1e-5 && v.position[axis]<=high[axis]+1e-5,"posed vertex %v out of its cluster box %v %v",v.position,low,high)}}
+        axis:=mm.octahedral_decode({mm.snorm8_unpack(i8(u8(bounds[7]))),mm.snorm8_unpack(i8(u8(bounds[7]>>8)))})
+        spread:=f32(i8(u8(bounds[3]>>8)))/127
+        for k:=0;k+2<len(indices);k+=3 {
+            a,b,c:=reference[indices[k]].position,reference[indices[k+1]].position,reference[indices[k+2]].position
+            face:=linalg.normalize(linalg.cross(b-a,c-a))
+            testing.expectf(t,linalg.dot(axis,face)>=math.sqrt(max(1-spread*spread,0))-1e-3,"the cone %v, %f holds the face %v",axis,spread,face)
+        }
         unchanged,read_unchanged:=test_posed(device,r,independent)
         testing.expect(t,read_unchanged)
         for v,i in rest {testing.expectf(t,linalg.length(unchanged[i].position-v.position)<1e-5,"a pose never updated keeps vertex %d at rest",i)}

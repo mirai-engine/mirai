@@ -417,6 +417,7 @@ render_many_lights_match_their_reference :: proc(t: ^testing.T) {
 	if !cube_fixture_init(t, &f, 480, 300, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
+	renderer_set_display_transform(r, .ACES_2)
 	lights_field(&f, 1024, 8, radius = 0.1)
 	camera := Camera{position = {16, 12, 18}, forward = {-16, -12, -18}, up = {0, 1, 0}, fov_y = 50, near = 0.1, far = 100, exposure = UNIT_EXPOSURE}
 	reference, ok := reference_image(t, &f, camera, 8)
@@ -450,6 +451,8 @@ render_lights_that_few_reach_at_a_time_are_each_lit :: proc(t: ^testing.T) {
 	f: Cube_Fixture
 	settings := test_settings()
 	settings.gi_enabled = false
+	// Without the jitter of the TAA, which the samples of a pixel follow: the two images differ by the budget alone.
+	settings.taa = false
 	if !cube_fixture_init(t, &f, 240, 150, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
@@ -833,7 +836,7 @@ split_screen_preserves_views_and_composes_global_ui :: proc(t:^testing.T) {
     testing.expect(t,renderer_apply_settings(r,settings))
     for _ in 0..<4 {testing.expect(t,renderer_frame(r,{views=views[:],ui=layers}),r.error)}
     for view in r.views {
-        testing.expect(t,view.targets.shadow.valid && view.targets.taa_valid)
+        testing.expect(t,view.targets.taa_valid)
     }
     for &view in views {view.disabled=true}
     testing.expect(t,renderer_frame(r,{views=views[:],ui=layers}),r.error)
@@ -864,12 +867,12 @@ camera_cuts_reset_screen_history_and_preserve_world_lighting_and_pipelines :: pr
     rhi.device_wait_idle(f.device)
     pipelines,probes,irradiance:=r.pipelines,r.ddgi.probes,r.ddgi.irradiance
     testing.expect(t,r.has_previous && r.targets.taa_valid)
-    r.targets.reflect_valid,r.targets.gi_reference_valid=true,true
-    r.targets.shadow.valid,r.targets.glass_valid,r.targets.hiz_valid=true,true,true
+    r.targets.gi_reference_valid=true
+    r.targets.glass_valid,r.targets.hiz_valid=true,true
     renderer_camera_cut(r)
     testing.expect(t,!r.has_previous && r.prev_jitter=={})
-    testing.expect(t,!r.targets.taa_valid && !r.targets.reflect_valid && !r.targets.gi_reference_valid)
-    testing.expect(t,!r.targets.shadow.valid && !r.targets.glass_valid && !r.targets.hiz_valid)
+    testing.expect(t,!r.targets.taa_valid && !r.targets.gi_reference_valid)
+    testing.expect(t,!r.targets.glass_valid && !r.targets.hiz_valid)
     testing.expect_value(t,r.pipelines,pipelines)
     testing.expect_value(t,r.ddgi.probes,probes)
     testing.expect_value(t,r.ddgi.irradiance,irradiance)

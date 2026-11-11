@@ -1,34 +1,55 @@
-// What the passes of glass share (glass.comp and glass_inside.comp): the
-// layer they light, the scene behind it, and the ways a ray takes through a
+// What the passes of glass share (glass_light.comp, glass.comp and
+// glass_inside.comp): the layer they light and, but in glass_light.comp
+// (GLASS_LIGHT), the scene behind it and the way the view takes through a
 // solid and out of it to what it shows.
 #ifndef MIRAI_GLASS_PASS_SLANG
 #define MIRAI_GLASS_PASS_SLANG
-#define POINTS_SLOT SLOT_POINTS
 #include "glass.slang"
 #include "gbuffer.slang"
 #include <extension_hooks.slang>
 #include "depth.slang"
 
-// medium: the instance plus one of the solid the camera may be in, 0 none; near_top: m over and under its top
+// light_budget: lights of a point of the layer (glass_light.comp); traced: its
+// reflection was traced; max_distance: the farthest the view goes; snapshot:
+// the dispatch copies the scene (glass.comp); medium: the instance plus one of
+// the solid the camera may be in, 0 none; near_top: m over and under its top
 // within which each pixel decides whether it starts in it (glass_inside.comp).
-// resume: a thread for each head of the round of the batch, instead of each pixel.
-struct Params_Block { uint light_budget; uint traced; float max_distance; float firefly_clamp; float pixel_spread; uint snapshot; uint medium; float near_top; uint resume; uint pad0; uint pad1; uint pad2; };
+struct Params_Block { uint light_budget; uint traced; float max_distance; uint snapshot; uint medium; float near_top; uint pad0; uint pad1; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] Texture2D<float4> layer_albedo : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);   // rgb base color, a metallic
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<float4> layer_normal : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);   // encoded as the normal target of the G-buffer
 [[vk::binding(SLOT_PASS2, 0)]] Texture2D<float4> layer_emission : register(MIRAI_REGISTER(t, SLOT_PASS2), space0); // rgb emission, a alpha
 [[vk::binding(SLOT_PASS3, 0)]] Texture2D<uint2> layer_ids : register(MIRAI_REGISTER(t, SLOT_PASS3), space0);     // material row, instance
 [[vk::binding(SLOT_PASS4, 0)]] Texture2D<float4> layer_depth : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
-[[vk::binding(SLOT_PASS5, 0)]] Texture2D<float4> scene : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);          // everything behind the layer, lit
 [[vk::binding(SLOT_PASS6, 0)]] Texture2D<float4> reflection : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);     // filtered radiance of the layer's reflection rays
 [[vk::binding(SLOT_PASS7, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_color : register(MIRAI_REGISTER(u, SLOT_PASS7), space0);
-[[vk::binding(SLOT_PASS8, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS8), space0);        // the opaque scene
-
 [[vk::binding(SLOT_PASS9, 0)]] Texture2D<float4> layer_specular : register(MIRAI_REGISTER(t, SLOT_PASS9), space0); // rgb F0, a F90
 
+// The surface of the layer at a pixel.
+Glass glass_of(int2 p, float2 uv, float depth, float4 albedo, float4 normal, float4 emission) {
+    Glass g;
+    g.position = position_from_depth(uv, depth);
+    g.normal = gbuffer_normal_unpack(normal);
+    g.view = -view_direction(uv);
+    g.base_color = albedo.rgb;
+    g.alpha = emission.a;
+    g.metallic = albedo.a;
+    g.roughness = normal.z;
+    g.emission = emission.rgb;
+    g.occlusion = 1.0;
+    float4 specular = specular_unpack(layer_specular.Load(int3(p, 0)));
+    g.f0 = specular.rgb;
+    g.f90 = specular.a;
+    // The layers target of the layer is bound in place of the G-buffer's.
+    g.layers = gbuffer_layers(p, gbuffer_bits_unpack(normal));
+    return g;
+}
+
+#ifndef GLASS_LIGHT
+[[vk::binding(SLOT_PASS5, 0)]] Texture2D<float4> scene : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);          // everything behind the layer, lit
+[[vk::binding(SLOT_PASS8, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS8), space0);        // the opaque scene
+
 #define SCATTER_TAPS 8
-// Bounces inside a solid before the ray is let out where it is.
-#define INSIDE_BOUNCES 3
 // Width of the lobe a rough surface scatters transmitted light into, per unit
 // of its GGX alpha.
 static const float SCATTER_SPREAD = 0.6;
@@ -38,24 +59,50 @@ float opaque_depth(float2 uv) {
     return depth_empty(depth) ? frame.camera_forward.w : depth_distance(depth);
 }
 
-// Where a ray that leaves the layer meets the opaque scene on screen. The
-// depth buffer is a height field seen from the camera, so going to the depth
-// found where the ray is now closes in on the crossing in a few steps. False
-// when the ray leaves the screen or turns towards the camera.
-bool screen_crossing(float3 origin, float3 direction, out float2 uv) {
-    uv = float2(0.0);
-    float along = dot(direction, frame.camera_forward.xyz);
-    if (along < 0.05) return false;
-    float start = dot(origin - frame.camera_position.xyz, frame.camera_forward.xyz);
+// The plane of the opaque surface at uv on screen: where it is, and its normal
+// towards the eye, from the depth of the pixels beside it, on each axis the
+// side nearer it, so that an edge does not bend it.
+float3 opaque_plane(float2 uv, out float3 normal) {
+    float3 center = position_from_depth(uv, opaque_depth(uv));
+    float2 step = frame.inv_resolution;
+    float3 right = position_from_depth(uv + float2(step.x, 0.0), opaque_depth(uv + float2(step.x, 0.0))) - center;
+    float3 left = center - position_from_depth(uv - float2(step.x, 0.0), opaque_depth(uv - float2(step.x, 0.0)));
+    float3 down = position_from_depth(uv + float2(0.0, step.y), opaque_depth(uv + float2(0.0, step.y))) - center;
+    float3 up = center - position_from_depth(uv - float2(0.0, step.y), opaque_depth(uv - float2(0.0, step.y)));
+    float3 across = dot(right, right) < dot(left, left) ? right : left;
+    float3 along = dot(down, down) < dot(up, up) ? down : up;
+    normal = normalize(cross(across, along));
+    if (dot(normal, frame.camera_position.xyz - center) < 0.0) normal = -normal;
+    return center;
+}
+
+// Where a ray that leaves the layer meets the opaque scene on screen: it meets
+// the plane of the surface the screen holds where it starts, and, where the
+// screen holds another surface at that point, the plane of that one, up to
+// CROSSING_TURNS times. What lies nearer the eye than `nearest` (in front of
+// the layer) hides the point. Off the screen it ends at its edge. False where
+// the screen does not hold where it ends: it goes past params.max_distance,
+// turns away from the planes or meets what is in front of the layer.
+#define CROSSING_TURNS 3
+bool screen_crossing(float3 origin, float3 direction, float nearest, out float2 uv) {
     uv = project_uv(origin);
-    for (int i = 0; i < 4; i++) {
-        if (any(((uv) < (float2(0.0)))) || any(((uv) > (float2(1.0))))) return false;
-        float2 next = project_uv(origin + direction * max((opaque_depth(uv) - start) / along, 0.0));
-        bool settled = all(((abs(next - uv) * frame.resolution) < (float2(0.5))));
-        uv = next;
-        if (settled) break;
+    for (int turn = 0; turn < CROSSING_TURNS; turn++) {
+        if (opaque_depth(uv) < nearest) return false;
+        float3 normal;
+        float3 surface = opaque_plane(uv, normal);
+        float facing = dot(direction, normal);
+        if (!(facing < -1e-4)) return false;
+        float travelled = dot(surface - origin, normal) / facing;
+        if (!(travelled > 0.0) || travelled > params.max_distance) return false;
+        float3 met = origin + direction * travelled;
+        float2 next = project_uv(met);
+        float2 inside = clamp(next, 0.5 * frame.inv_resolution, 1.0 - 0.5 * frame.inv_resolution);
+        uv = inside;
+        if (any(((inside) != (next)))) return true;
+        float z = view_depth(met);
+        if (abs(opaque_depth(uv) - z) <= 0.01 * z + 0.02) return true;
     }
-    return all(((uv) >= (float2(0.0)))) && all(((uv) <= (float2(1.0))));
+    return true;
 }
 
 // The scene around uv as a rough layer at layer_distance shows it: spread over
@@ -83,275 +130,101 @@ float3 scene_through(float2 uv, float layer_distance, float roughness, inout uin
     return sum / count;
 }
 
-// What a solid with a scatter color sends towards the eye from `path` of it
-// along direction from origin, on top of what it lets through of what lies
-// behind: the light around that reaches it inside, dimmed by the way through
-// the solid down from its top, times the share it scatters of what it stops
-// on that path. The light is taken at one point, half way along the path or
-// along the distance its attenuation is given for, whichever is nearer. The
-// sun in it, with the shadows of what stands in its way, is the shafts of fog.
-// top: the height of the top over the point when the caller knows it, as a
-// flat top it entered through or found over the camera; below SOLID_TOP_UNKNOWN,
-// a ray up in the solid finds it.
-#define SOLID_TOP_UNKNOWN -1e29
-float3 solid_scatter(Material m, uint instance, float3 origin, float3 direction, float path, float top) {
-    float3 scatter = materials[m.row].volume.scatter;
-    if (!any(scatter > 0.0) || !(path > 0.0)) return float3(0.0);
-    float3 at = origin + direction * (0.5 * min(path, max(m.attenuation_distance, 1.0)));
-    float under;
-    if (top > SOLID_TOP_UNKNOWN) {
-        under = max(top - at.y, 0.0);
-    } else {
-        Hit found = trace_instance(instance, at, float3(0.0, 1.0, 0.0));
-        under = found.instance == INVALID ? 0.0 : found.t;
-    }
-    float3 light = 0.5 * sky_irradiance(float3(0.0, 1.0, 0.0)) * material_absorption(m, under);
-    return scatter * light * (1.0 - material_absorption(m, path));
-}
 
-// The ways of a ray of the view through a solid and out of it, in rounds
-// (points.slang): one waits for the normal of a face with a program it meets
-// inside (WALK_INSIDE), or for the surface with a program it finds beyond
-// (WALK_SEEN); the resume (params.resume) goes on from there, and the pixel
-// adds what each way brings to the image as it ends.
-// Inside, a way also meets the rest of the scene where the stage says so (the
-// camera in the solid, glass_inside.comp): a constant, so the others carry
-// no ray for it.
-#ifndef GLASS_WALK_IN_SCENE
-#define GLASS_WALK_IN_SCENE 0
-#endif
-#define WALK_INSIDE 1u   // following the solid inside: a face to turn at
-#define WALK_SEEN 2u     // out of it: what it shows
-#define WALK_DONE 3u
-#define WALK_STOPPED 4u  // it met something solid of the mesh inside
-#define WALK_OPEN 8u     // it found no way out: it goes on as it was
-#define WALK_FOUND 16u   // it met something of the scene inside
-#define WALK_BOUNCE_SHIFT 8u
-#define WALK_LEG_SHIFT 12u
-
-struct Glass_Walk {
-    uint stage;     // WALK_INSIDE, WALK_SEEN or WALK_DONE
-    uint flags;     // WALK_STOPPED, WALK_OPEN, WALK_FOUND
-    uint bounce;    // inside, before the ray is let out where it is
-    uint leg;       // which way of the pass it is
-    float3 origin;
-    float3 direction;
-    float path;     // how far it went inside
-    float3 glass;   // what the glass it crossed on the way leaves of light
-    float travelled; // how far the ray went to what it shows
-    float3 radiance; // what it shows, at WALK_DONE
+// A sheet the view does not leave (the surface of water): it shows what the
+// pixel holds behind it, moved aside by the part of its refraction the relief
+// of the surface gives, against that of its plane alone, by the way through
+// the medium. A rippling surface bends what lies under it smoothly, the more
+// the deeper it lies; the bend of the plane, alike at every pixel, is left
+// out, since it would look for what lies under the sheet where the screen
+// holds what stands over it. Where the pixel it lands on holds nothing behind
+// the sheet, the pixel shows its own. What it shows is softened over a disc
+// that grows with that way, as the scattering of the medium blurs what lies
+// deep. travelled: the way through the medium to what the pixel holds.
+#define SHEET_SHIFT_MOST 0.04 // of the height of the view
+#define SHEET_BLUR 0.03       // metres of blur on what lies behind for each metre of the way to it
+#define SHEET_TAPS 6
+struct Sheet_Seen {
+    float3 radiance;
+    float travelled;
+    float3 direction; // the way through the medium
 };
 
-Glass_Walk walk_start(uint leg, uint stage, float3 origin, float3 direction, uint flags) {
+// Whether the pixel at uv holds the layer, and so what lies under it: the
+// layer is drawn only in front of the opaque scene (glass_layer.frag).
+bool sheet_behind(float2 uv) {
+    return layer_depth.Load(int3(min(int2(uv * frame.resolution), int2(frame.resolution) - 1), 0)).r > 0.0;
+}
+
+Sheet_Seen sheet_through(Material m, Glass g, float2 uv, int2 p) {
+    Sheet_Seen seen;
+    float behind = opaque_depth(uv);
+    float3 held = position_from_depth(uv, behind);
+    seen.travelled = length(held - g.position);
+    float ior = material_ior(m);
+    float3 flat = abs(g.normal.y) > 0.3 ? float3(0.0, g.normal.y >= 0.0 ? 1.0 : -1.0, 0.0) : g.normal;
+    float3 bent = refract(-g.view, g.normal, 1.0 / ior);
+    float3 even = refract(-g.view, flat, 1.0 / ior);
+    bool turned = dot(bent, bent) > 0.0 && dot(even, even) > 0.0;
+    seen.direction = turned ? bent : -g.view;
+    float2 at = uv;
+    if (turned) {
+        float2 shift = project_uv(held + (bent - even) * seen.travelled) - uv;
+        float most = SHEET_SHIFT_MOST * frame.resolution.y;
+        float pixels = length(shift * frame.resolution);
+        if (pixels > most) shift *= most / pixels;
+        float2 moved = clamp(uv + shift, 0.5 * frame.inv_resolution, 1.0 - 0.5 * frame.inv_resolution);
+        if (sheet_behind(moved)) at = moved;
+    }
+    float3 sum = scene.SampleLevel(linear_sampler, at, 0.0).rgb;
+    float count = 1.0;
+    float radius = min(SHEET_BLUR * seen.travelled / max(frame.footprint.x + frame.footprint.y * max(behind, 1e-3), 1e-9), 0.08 * frame.resolution.y);
+    if (radius >= 0.75 && seen.travelled < material_clear_reach(m)) {
+        // Turned by a hash of the pixel, the same every frame.
+        float rotation = float(hash_u32(uint(p.x) * 73856093u ^ uint(p.y) * 19349663u)) * (2.0 * PI / 4294967296.0);
+        for (int i = 0; i < SHEET_TAPS; i++) {
+            float angle = rotation + float(i) * 2.399963;
+            float2 tap = at + float2(cos(angle), sin(angle)) * (radius * sqrt((float(i) + 0.5) / float(SHEET_TAPS))) * frame.inv_resolution;
+            if (any(tap < float2(0.0)) || any(tap > float2(1.0)) || !sheet_behind(tap)) continue;
+            sum += scene.SampleLevel(linear_sampler, tap, 0.0).rgb;
+            count += 1.0;
+        }
+    }
+    seen.radiance = sum / count;
+    return seen;
+}
+
+// The way of the view through a solid and out of it, without rays: it goes on
+// bent as it went in, and shows the scene where it meets it on screen
+// (screen_crossing). Behind what stands in front of the layer, or off the
+// screen, it shows what the pixel shows straight through.
+#define WALK_OPEN 1u // a sheet, which the view does not leave (sheet_through)
+
+struct Glass_Walk {
+    uint flags;      // WALK_OPEN
+    float3 origin;
+    float3 direction;
+    float path;      // how far it went inside before origin
+    float3 radiance; // what it shows
+};
+
+Glass_Walk walk_start(float3 origin, float3 direction, uint flags) {
     Glass_Walk w;
-    w.stage = stage;
     w.flags = flags;
-    w.bounce = 0u;
-    w.leg = leg;
     w.origin = origin;
     w.direction = direction;
     w.path = 0.0;
-    w.glass = float3(1.0);
-    w.travelled = 0.0;
     w.radiance = float3(0.0);
     return w;
 }
 
-// A ray inside the solid turns at a face of the given normal: it bends out
-// where it can and is reflected back in where it cannot; something solid of
-// the mesh stops it.
-void walk_turn(inout Glass_Walk w, Material m, float3 normal, bool blended, float t, float bias) {
-    w.origin += w.direction * t;
-    w.path += t;
-    if (!blended) { w.flags |= WALK_STOPPED; w.stage = WALK_SEEN; return; }
-    float3 outside = refract(w.direction, normal, material_ior(m));
-    if (dot(outside, outside) > 0.0) {
-        w.direction = outside;
-        w.origin += outside * bias;
-        w.stage = WALK_SEEN;
-        return;
-    }
-    // Total internal reflection.
-    w.direction = reflect(w.direction, normal);
-    w.origin += w.direction * bias;
-    w.bounce++;
-    if (w.bounce >= INSIDE_BOUNCES) w.stage = WALK_SEEN;
-}
-
-// The head of a walk that waits for a point, with what the resume needs of it.
-bool walk_wait(Glass_Walk w, uint point, float t, int2 p) {
-    point_keep(point, float2(asfloat(record_oct(w.direction)), t));
-    Point_Head head = point_head(point, INVALID, uint(p.x) | (uint(p.y) << 16u));
-    if (w.stage == WALK_INSIDE) {
-        head.aux[0] = asuint(w.origin.x);
-        head.aux[1] = asuint(w.origin.y);
-        head.aux[2] = asuint(w.origin.z);
-    } else {
-        head.aux[0] = record_half2(w.glass.r, w.glass.g);
-        head.aux[1] = half_bits(w.glass.b);
-    }
-    head.aux[3] = asuint(w.path);
-    head.aux[4] = w.stage | w.flags | (w.bounce << WALK_BOUNCE_SHIFT) | (w.leg << WALK_LEG_SHIFT);
-    return head_append(head);
-}
-
-// The walk a head waits with, and the surface it waited for: a face whose
-// normal it turns at, or what it shows.
-Glass_Walk walk_resumed(Point_Head head, Material m, uint instance, float bias, out bool shade, out Surface s, out float t) {
-    Glass_Walk w;
-    uint packed = head.aux[4];
-    w.stage = packed & 3u;
-    w.flags = packed & (WALK_STOPPED | WALK_OPEN | WALK_FOUND);
-    w.bounce = (packed >> WALK_BOUNCE_SHIFT) & 15u;
-    w.leg = packed >> WALK_LEG_SHIFT;
-    w.path = asfloat(head.aux[3]);
-    w.travelled = 0.0;
-    w.radiance = float3(0.0);
-    float2 kept = point_kept(head.point);
-    w.direction = unpack_normal(asuint(kept.x));
-    t = kept.y;
-    Material_Point point = point_load(head.point);
-    s = surface_from_hit(hit_point(point.instance, point.primitive, point.bary, point.footprint), point_record_given(head.point), point_record_load(head.point));
-    shade = w.stage == WALK_SEEN;
-    if (shade) {
-        w.glass = float3(record_unhalf2(head.aux[0]), half_value(head.aux[1] & 0xffffu));
-        w.origin = float3(0.0);
-        return w;
-    }
-    w.glass = float3(1.0);
-    w.origin = float3(asfloat(head.aux[0]), asfloat(head.aux[1]), asfloat(head.aux[2]));
-    uint row;
-    float3 face = triangle_face(point.instance, point.primitive, row);
-    walk_turn(w, m, hit_normal_turned(face, s.normal, w.direction), material_row(row).alpha_mode == ALPHA_BLEND, t, bias);
-    return w;
-}
-
-// What the radiance of a surface a walk shows is, as the view sees it: lit,
-// through the glass on the way, without fireflies.
-float3 walk_shown(Surface s, Glass_Walk w, float t) {
-    float3 radiance = shade_hit(s, w.direction, t, params.light_budget) * w.glass;
-    float l = luminance(radiance);
-    return l > params.firefly_clamp ? radiance * (params.firefly_clamp / l) : radiance;
-}
-
-// Goes on with a walk until it ends (WALK_DONE, with what it shows) or it
-// waits for a point: then false, and the pixel stops here this round. A
-// surface without a program it meets is in s, to shade (shade): one call
-// site of the lighting for every way of a pass.
-bool walk_advance(inout Glass_Walk w, Material m, uint instance, float depth, float roughness, float bias, int2 p, inout uint seed, out bool shade, out Surface s, out float t) {
-    shade = false;
-    s = (Surface)0;
-    t = 0.0;
-    if (w.stage == WALK_INSIDE) {
-        while (w.stage == WALK_INSIDE) {
-            Hit hit = trace_instance(instance, w.origin, w.direction);
-#if GLASS_WALK_IN_SCENE
-            {
-                Ray_Path crossed;
-                // Past the face it found: with ray tracing hardware what that found can be what is met.
-                Hit met = trace_ray(w.origin, w.direction, 0.0, hit.instance == INVALID ? params.max_distance : hit.t + bias, false, crossed);
-                if (met.instance != INVALID && met.instance != instance) {
-                    w.flags |= WALK_FOUND;
-                    w.glass = crossed.glass;
-                    w.origin += w.direction * met.t;
-                    w.path += met.t;
-                    w.stage = WALK_SEEN;
-                    Hit_Point found = hit_point(met.instance, met.primitive, met.bary, (depth + w.path) * max(params.pixel_spread, roughness * roughness));
-                    t = met.t;
-                    if (found.m.program_id != 0u) {
-                        Material_Point point = {met.instance, met.primitive, met.bary, (depth + w.path) * max(params.pixel_spread, roughness * roughness), found.m.program_id, 0u, INVALID};
-                        uint index = point_append(point);
-                        if (index != INVALID && walk_wait(w, index, t, p)) return false;
-                    }
-                    s = surface_from_hit(found, false, (Mirai_Surface)0);
-                    shade = true;
-                    return true;
-                }
-            }
-#endif
-            if (hit.instance == INVALID) {
-                // No way out found: an open mesh, or a sheet the camera is under.
-                w.flags |= WALK_OPEN;
-                w.stage = WALK_SEEN;
-                break;
-            }
-            uint row;
-            float3 face = triangle_face(hit.instance, hit.primitive, row);
-            Material at = material_row(row);
-            if (at.program_id != 0u) {
-                Material_Point point = {hit.instance, hit.primitive, hit.bary, 1e-4, at.program_id, 0u, INVALID};
-                uint index = point_append(point);
-                if (index != INVALID && walk_wait(w, index, hit.t, p)) return false;
-            }
-            walk_turn(w, m, hit_normal_turned(face, surface_from_triangle(hit.instance, hit.primitive, hit.bary, 1e-4).normal, w.direction), at.alpha_mode == ALPHA_BLEND, hit.t, bias);
-        }
-        return true;
-    }
-    if (w.stage != WALK_SEEN) return true;
-    // What the ray shows: the scene on screen when it is there, else what it finds in the world.
+// What a walk shows, behind the layer. depth: of the layer, which rough glass
+// blurs the scene behind by; uv: of the pixel.
+void walk_show(inout Glass_Walk w, float depth, float roughness, float2 uv, inout uint seed) {
     float2 at;
-    bool on_screen;
-    if ((w.flags & WALK_STOPPED) != 0u) {
-        at = project_uv(w.origin);
-        on_screen = all(((at) >= (float2(0.0)))) && all(((at) <= (float2(1.0))));
-    } else {
-        on_screen = screen_crossing(w.origin, w.direction, at);
-    }
-    if (on_screen && opaque_depth(at) >= depth) {
-        w.travelled = length(position_from_depth(at, opaque_depth(at)) - w.origin);
-        w.radiance = scene_through(at, depth, roughness, seed);
-        w.stage = WALK_DONE;
-        return true;
-    }
-    Ray_Path arrival;
-    Hit hit = trace_ray(w.origin, w.direction, 0.0, params.max_distance, false, arrival);
-    w.direction = arrival.direction;
-    w.glass = arrival.glass;
-    if (hit.instance == INVALID) {
-        w.travelled = params.max_distance;
-        w.radiance = (frame.background.w > 0.5 ? frame.background.rgb : sky_seen(arrival.direction)) * arrival.glass;
-        w.stage = WALK_DONE;
-        return true;
-    }
-    w.travelled = hit.t;
-    t = hit.t;
-    float footprint = (depth + w.path + hit.t) * max(params.pixel_spread, roughness * roughness);
-    Hit_Point found = hit_point(hit.instance, hit.primitive, hit.bary, footprint);
-    if (found.m.program_id != 0u) {
-        Material_Point point = {hit.instance, hit.primitive, hit.bary, footprint, found.m.program_id, 0u, INVALID};
-        uint index = point_append(point);
-        if (index != INVALID && walk_wait(w, index, t, p)) return false;
-    }
-    s = surface_from_hit(found, false, (Mirai_Surface)0);
-    shade = true;
-    return true;
+    if (!screen_crossing(w.origin, w.direction, depth, at)) at = uv;
+    w.radiance = scene_through(at, depth, roughness, seed);
 }
-
-// A walk that shaded the surface it showed ends with it.
-void walk_shaded(inout Glass_Walk w, Surface s, float t) {
-    if ((w.flags & WALK_FOUND) == 0u) w.travelled = t;
-    w.radiance = walk_shown(s, w, t);
-    w.stage = WALK_DONE;
-}
-
-// The surface of the layer at a pixel.
-Glass glass_of(int2 p, float2 uv, float depth, float4 albedo, float4 normal, float4 emission) {
-    Glass g;
-    g.position = position_from_depth(uv, depth);
-    g.normal = gbuffer_normal_unpack(normal);
-    g.view = -view_direction(uv);
-    g.base_color = albedo.rgb;
-    g.alpha = emission.a;
-    g.metallic = albedo.a;
-    g.roughness = normal.z;
-    g.emission = emission.rgb;
-    g.occlusion = 1.0;
-    float4 specular = specular_unpack(layer_specular.Load(int3(p, 0)));
-    g.f0 = specular.rgb;
-    g.f90 = specular.a;
-    // The layers target of the layer is bound in place of the G-buffer's.
-    g.layers = gbuffer_layers(p, gbuffer_bits_unpack(normal));
-    return g;
-}
+#endif
 
 #endif

@@ -4,6 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "mirai:asset"
+import "mirai:render/abi"
 import "mirai:rhi"
 import "mirai:std/base"
 
@@ -36,7 +37,10 @@ SKIN_REBUILD_INTERVAL :: 120
 @(private) Skin_Joint :: struct {current,previous:[3]Vec4}
 // skin.comp: mesh is the row of the mesh table it reads clusters from,
 // clusters those it poses, output and previous words of the vertex pool.
-@(private) Skin_Params :: struct {mesh,clusters,output,previous,morph_count:u32,morph_step:f32,pad:[2]u32}
+// bounds: where the box and the cone of each cluster posed go (POSED_BOUNDS_WORDS each), GPU_NONE for none;
+// reach: how far programs move the vertices after the skin (Skin_State.reach), which grows the boxes.
+@(private) Skin_Params :: struct {mesh,clusters,output,previous,morph_count:u32,morph_step:f32,bounds:u32,reach:f32}
+POSED_BOUNDS_WORDS :: abi.POSED_BOUNDS_WORDS
 // How far the deltas of a target move the vertices of a joint, at weight 1.
 @(private) Morph_Joint_Bounds :: struct {joint,target:u32,lo,hi:Vec3}
 // The threads of a batched pass from start on work on one pose. Triangles:
@@ -338,7 +342,7 @@ pose_blocks :: proc(original:Mesh_Record) -> (blocks:int) {
 // buffers of a binding that is not on the GPU yet.
 @(private)
 pose_bytes :: proc(original:Mesh_Record,posed:u32,streams:int,binding:^Skin_Binding) -> (bytes:u64) {
-    bytes=u64(pose_blocks(original)+streams*int(posed)*POSED_WORDS+int(original.index_span))*size_of(u32)
+    bytes=u64(pose_blocks(original)+streams*int(posed)*POSED_WORDS+int(original.cluster_count)*POSED_BOUNDS_WORDS+int(original.index_span))*size_of(u32)
     bytes+=u64(original.rays[0].bvh_node_count)*size_of(Gpu_Bvh_Node)+u64(original.rays[0].triangle_count)*size_of(Gpu_Bvh_Triangle)
     if binding.uploading {bytes+=u64(len(slice_bytes(binding.influences))+len(slice_bytes(binding.morph.ranges))+len(slice_bytes(binding.morph.deltas)))}
     return
@@ -352,15 +356,16 @@ pose_bytes :: proc(original:Mesh_Record,posed:u32,streams:int,binding:^Skin_Bind
 pose_store :: proc(r:^Renderer,original:Mesh_Record,posed:u32,streams:int,skin:^Skin_State)->(Mesh_Handle,bool) {
     s:=&r.scene
     words:=int(posed)*POSED_WORDS
+    bounds:=int(original.cluster_count)*POSED_BOUNDS_WORDS
     // A streamed mesh has its pages out of the root elsewhere: its pose holds every one.
     blocks:=pose_blocks(original)
-    if !pool_room(r,.Vertex,blocks+streams*words) || !pool_room(r,.Index,int(original.index_span)) ||
+    if !pool_room(r,.Vertex,blocks+streams*words+bounds) || !pool_room(r,.Index,int(original.index_span)) ||
        !pool_room(r,.Node,int(original.rays[0].bvh_node_count)) || !pool_room(r,.Triangle,int(original.rays[0].triangle_count)) {
         s.refused.meshes+=1
         s.refused.triangles+=u64(original.triangle_count)
         return 0,false
     }
-    if reserve(&s.vertices,len(s.vertices)+blocks+streams*words)!=nil ||
+    if reserve(&s.vertices,len(s.vertices)+blocks+streams*words+bounds)!=nil ||
        reserve(&s.indices,len(s.indices)+int(original.index_span))!=nil ||
        reserve(&s.blas_nodes,len(s.blas_nodes)+int(original.rays[0].bvh_node_count))!=nil ||
        reserve(&s.blas_triangles,len(s.blas_triangles)+int(original.rays[0].triangle_count))!=nil ||
@@ -412,6 +417,9 @@ pose_store :: proc(r:^Renderer,original:Mesh_Record,posed:u32,streams:int,skin:^
     first:=u32(len(s.vertices))-vertex_start
     for _ in 0..<streams {append(&s.vertices,..mem.slice_data_cast([]u32,rest))}
     record.posed_word,record.previous_word=first,first+u32(words)
+    // The boxes and cones, none known until the skin writes them.
+    record.bounds_word=u32(len(s.vertices))-vertex_start
+    if resize(&s.vertices,len(s.vertices)+bounds)!=nil {base.truncate(&s.vertices,vertex_start);base.truncate(&s.indices,index_start);return 0,false}
     record.part_word,record.rest_word=GPU_NONE,GPU_NONE
     if skin.part_joints!=nil {record.part_word=first+2*u32(words)}
     if skin.external {record.rest_word=first+2*u32(words)}
@@ -732,13 +740,13 @@ poses_record :: proc(r:^Renderer,cmd:^rhi.Command_List)->bool {
             morph.ranges,morph.deltas,morph.weights,morph.weights_offset,morph.step=skin.binding.morph_ranges,skin.binding.morph_deltas,weights.buffer,weights.offset,skin.binding.morph.step
             rhi.cmd_barrier_buffer(cmd,morph.ranges,.Shader_Read);rhi.cmd_barrier_buffer(cmd,morph.deltas,.Shader_Read)
         } else {morph.count=0}
-        params:=Skin_Params{mesh=u32(handle),clusters=posed_clusters(s,mesh),output=mesh.posed_word,previous=mesh.previous_word}
+        params:=Skin_Params{mesh=u32(handle),clusters=posed_clusters(s,mesh),output=mesh.posed_word,previous=mesh.previous_word,bounds=mesh.bounds_word,reach=skin.reach if skin.moves else 0}
         skin_dispatch(r,cmd,skin.binding.source,palette.buffer,palette.offset,s.mesh_buffer,s.vertex_buffer,s.index_buffer,params,morph=morph)
         if skin.part_joints!=nil {
             part:=rhi.frame_alloc(r.device,u64(size),16)
             if part.ptr==nil {set_error(r,"transient ring exhausted uploading skin palette");return false}
             mem.copy(part.ptr,raw_data(skin.part_joints),size)
-            params.output,params.previous=mesh.part_word,mesh.part_word+mesh.vertices_posed*POSED_WORDS
+            params.output,params.previous,params.bounds=mesh.part_word,mesh.part_word+mesh.vertices_posed*POSED_WORDS,GPU_NONE
             skin_dispatch(r,cmd,skin.binding.source,part.buffer,part.offset,s.mesh_buffer,s.vertex_buffer,s.index_buffer,params,morph=morph)
         }
     }

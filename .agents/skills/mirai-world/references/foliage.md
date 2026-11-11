@@ -211,7 +211,7 @@ same function:
   own (`wind_variant`), and tilts with the wind within half a step. Raster and shadow rays see the
   same variant; reflections, GI and probes see the rest mesh (`Ray_Visible` and `Rays_Only`
   batch). The wind is that of the first streaming source, up to `WIND_SPEED_MAX`: the variants' box
-  contains it, so a frame of wind changes no boxes and marks no light, and the shadow history is
+  contains it, so a frame of wind changes no boxes and marks no light, and the direct light is
   not reset by it. Without wind the variants stay still without writing.
 - **Type without shadow: hook.** `foliage_vertex.slang` is the [vertex hook][hook] of its batches,
   with the wind of its place (`//! mirai frame Foliage_Wind_Frame foliage_wind`, written from the

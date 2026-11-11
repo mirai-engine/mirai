@@ -62,7 +62,9 @@
 
 An extension that asks for room for lights it writes on the GPU (`lights_ask`) has it from the
 next frame, before the scene tree (`light_region_first`), in two parts: those that cast shadows
-and those that do not, each rounded to a power of two, up to `LIGHT_REGION_MAX`:
+and those that do not, each rounded to a power of two, up to `LIGHT_REGION_MAX`. Those that cast
+shadows come with where they lie and how far they light, which the CPU does not see otherwise:
+the grid of the lights holds what of the scene they light.
 
 - Node 0 is the root of the lights with shadows; from 1, the tree of the leaves of that part, in
   the usual depth order; then, a leaf without light. The tree of the lights without shadows
@@ -74,10 +76,10 @@ and those that do not, each rounded to a power of two, up to `LIGHT_REGION_MAX`:
   rebuilds the root with the scene.
 - The lights without shadows do not enter the cut of a point or trace rays: the frame constants
   give the root of their tree (`shadowless_lights`) and `shadowless_lighting` adds what they give,
-  like the [unshadowed light](#unshadowed-light-of-a-pixel) of the others. The pixel adds it
-  without multiplying it by the fraction of its blocks; `direct_lighting` (hits, probes, glass,
-  overlays and the pixels that trace their rays), without rays; the media choose between the two
-  trees by what each root gives and do not trace the ray of a light without shadow, nor does the
+  like the [unshadowed light](#unshadowed-light-of-a-pixel) of the others. The direct filter adds
+  it to the pixel as it is, without a shadow; `direct_lighting` (hits, probes, glass, overlays and
+  the points that trace their own rays), without rays; the media choose between the two trees by
+  what each root gives and do not trace the ray of a light without shadow, nor does the
   reference.
 - `pass_lights` in `Simulate` links lights and nodes to write them and says where each part is
   (`Pass_Lights`); whoever links it writes the whole region and the root, which joins that of the
@@ -95,17 +97,18 @@ and those that do not, each rounded to a power of two, up to `LIGHT_REGION_MAX`:
 ### Unshadowed light of a pixel
 
 `local_lighting` traverses the tree from the root without entering the groups that do not reach
-it:
+it. The pixels of a view's direct light do not use it (they take the
+[grid](#direct-light-of-a-view)); hits, probes, glass, overlays and the points that trace their own
+rays do:
 
 - A group represents its lights as a sphere while its bounded error is small compared with the
   light that reaches the point: by the curvature of the falloff and of the cosine across its
   lights, by all its light where they are on both sides of the horizon, and by the variation of
   the reach window. Between the represent threshold and the open threshold, group and children add
   in gradual proportions. A group that is near relative to its size always opens.
-- The light that arrives is that of the shadow block's cut, smoothed over the surface in the
-  penumbra filter. Deterministic: it is the same every frame.
+- Deterministic: it is the same every frame.
 
-### Cutoff of a shadowed point
+### Cutoff of a point that traces its own rays
 
 `light_cut`:
 
@@ -114,11 +117,12 @@ it:
   widest seen from the point, those that contain a spot first). Every light that arrives lies
   under a node of the cut.
 - The ray of a group goes to one of its lights with probability proportional to the luminance the
-  point reflects from each toward whoever sees it, with its BRDF; in the blocks it is worth its
-  light over that probability.
-- Budgets: shadow blocks (`light_budget`), reflection hits (`reflection_light_budget`), volume
-  probes (up to `PROBE_LIGHT_BUDGET`), glass and overlays. Both settings go up to `LIGHT_CUT_MAX`
-  (32).
+  point reflects from each toward whoever sees it, with its BRDF; the ray is worth its light over
+  that probability.
+- Budgets: the points of the view that trace their own rays (`light_budget`: glass, overlays, the
+  other side of a surface that lets light through), reflection hits at sharp surfaces
+  (`reflection_light_budget`), volume probes (up to `PROBE_LIGHT_BUDGET`). Both settings go up to
+  `LIGHT_CUT_MAX`.
 - **Lit particles** ([`vfx`](../../mirai-world/references/vfx.md#passes)): the unshadowed light
   of both trees from all sides, with the estimate of the light that arrives from each.
 
@@ -127,97 +131,124 @@ it:
 - Sun and local lights have size: the sun `Settings.sun_radius`, the local ones their `radius`.
   The shadow opens with that size and the distance of the occluder, stays sharp where they touch
   and, seen from the side, stretches in the direction of the light.
-- **Tracing** (`shadow trace`). One pixel of each 2×2 block, different in each frame, traces a
-  shadow ray to the sun, to each node of its [cut](#cutoff-of-a-shadowed-point) and to each light
-  of [extensions](views.md#extension-hooks-and-constants).
-- **Light points.** The ray goes to one of a fixed set of points of the light's disc (or of
-  choices among the lights of a group, or of directions of the sun's disc). The point of each
-  block follows the Bayer order in each 4×4 of blocks (`block_turn`) and how the disc rotates
-  changes per 4×4, not per frame (`light_point_shift`): points that moved between frames made the
-  shadow of a flashlight or a flickering lamp flicker.
-- The block stores the fraction of light that arrives (per channel with `colored_shadows`), the
-  blur its penumbra asks for and the light that would arrive with nothing in between, with which
-  the pixels decide how much to open the tree.
-- **History.** `SHADOW_HISTORY_FRAMES`, reprojected and validated by normal and by the depth the
-  point had for the previous camera, and kept within what the frame's rays say in the surrounding
-  blocks. The more that clipping moves it beyond half the box width, the fewer frames it is
-  worth, as in NRD's SIGMA: one moved by `HISTORY_SLACK` or more is worth one frame, and what it
-  kept of a shadow that left does not remain. A clip within half the width is the dispersion of
-  the rays around a thin shadow and shortens nothing. Where the point stays still on screen,
-  `SHADOW_HISTORY_STILL_FRAMES`: one turn of what the block's ray sees, which repeats every
-  `TAA_JITTER_PHASES` frames (the block pixel that traces and the view jitter; the light points
-  are fixed). More frames gather nothing new and lag what is not marked.
-- Without history, the block takes the frame's ray only if it came from its surface: if it came
-  from another (the jitter takes the pixel to the other side of an edge), it keeps no frames and
-  its pixels trace their own rays. This way the face that no light looks at does not light the
-  edge of the one that is in shadow. It also keeps no frames if the traced pixel had no light
-  above its horizon: on a wall with its back to the sun, the side of a joint that the normal map
-  tilts toward the sun took the whole block (white dots on the bricks and columns of `church`).
-- Where the point moves on screen, what the history stores is shifted with the motion (a sun
-  patch through a stained-glass window drags): it keeps fewer frames the faster it moves.
+- The cost of a pixel depends on its samples, not on how many lights there are.
+
+### Direct light of a view
+
+The `direct` step ([frame graph](frame-graph.md#passes)) takes the light of each point from a
+fixed number of samples (`direct_samples`) spread over the lights that reach it:
+
+- **Grid of lights** (`render/light_grid.odin`, `light_grid.comp`). The world in cells whose lists
+  hold the lights that reach them; past `DIRECT_FEW` a cell holds an alias table to draw from.
+  The GPU rebuilds it in the frame the lights change; `light_weight.slang` weighs each light at a
+  point. It covers the ranges of the lights of the scene and the part of the scene that the lights
+  with shadows a pass writes on the GPU light, from the box and reach of `lights_ask` (all of the
+  scene for `LIGHTS_ANYWHERE`), held with a margin so that a moving box does not place it again
+  every frame. A cell whose entries would not fit the rows counted on the CPU lists none.
+- **Spread.** A point weighs the lights of its cell and spreads its samples over them by weight,
+  systematically (one at each m-th of the sum of weights, from the place of the pixel in a 3x3
+  pattern): a light that gives much takes many samples and none depends on chance. A light that
+  took samples gives its exact light with nothing in the way, with the material, once, times the
+  part of its samples that got there.
+- **Sun.** The points keep of the sun only how much of it gets there, and the pixels take its
+  light themselves, each with its own normal and material: at half resolution the shape of the
+  sun's light is still that of the pixels, and a light that few samples would reach gives no
+  noise. Where a map of the view holds a point, the map tells that part and the sun takes no
+  samples; elsewhere it takes them as one more light, for that alone. A pixel with no point of
+  its surface around it asks the map itself.
+- **Rays** (`direct_rays`, `direct_samples`). One pixel of each 2x2 traces one sample through the
+  whole scene and leaves what stopped it. The other samples meet only what stopped the rays of
+  their group and of the groups around (with hardware ray tracing, each is a ray query), and those
+  of a light only what lies in the cone from the point to it: the cost does not grow with the
+  scene.
+- **Points.** With `direct_half_resolution` the points are one pixel of each 2x2. Every frame
+  takes every point: the direct light keeps nothing from the frame before, so nothing trails
+  behind what moves.
+- **Filter** (`direct_points`, `direct_spread`, `direct_filter`). The light of the local lights
+  with nothing in the way is taken over a 3x3 window of the pattern on the surface of the point;
+  the part of it that got there, and the part of the sun that did, over the points of that window
+  within the noise of the samples, and then each spread over the penumbra radius that what hid it
+  gives. The pixels take them from the points around them of their surface. The last pass also
+  adds the [lights that cast no shadows](#gpu-lights) as they are, the lights of
+  [extensions](views.md#extension-hooks-and-constants) each with its hard ray, and the other side
+  of a surface that lets light through (`direct_lighting`).
+- **Shadow maps** (`render/shadow_maps.odin`, `Settings.shadow_maps`; the Graphics settings always
+  turn it on). Every frame, from the camera and the lights alone, the lights whose sphere covers a
+  share of the view, and the sun in cascades, get depth maps in one atlas, so the cost does not
+  depend on what moves. A light turned off takes none; a spot no wider than a face of the cube takes
+  one map along its cone; the cascades of the sun end where the scene ends. They draw the clusters
+  of the cut of the view, of the instances of the scene and of the batches that cast shadows: what
+  casts a shadow is what the view draws, at the detail its distance from the eye asks for. Those of
+  an instance with masked or blended materials are drawn apart, with their coverage as a shadow ray
+  asks it (`hit_covers`). A point under a map takes taps around it: all lit, lit; all blocked,
+  hidden; where they disagree (a penumbra) it takes the hard shadow of the map at the point, and
+  `direct_spread` averages that evenly over the points of its surface within the penumbra width the
+  blockers give, the wider of that of the point and that of each neighbour, so the penumbra is the
+  same seen from either side. A point wider on its surface than its penumbra (far ground seen at a
+  grazing angle) spreads its taps over its width and takes the share of them that is lit, which the
+  jitter of the view does not move; the cascades of the sun reach the horizon of an open scene for
+  that ground. Lights without maps (small on the screen) trace their samples: raster for near and
+  large lights, rays for far ones. Glass with a program keeps only its mean in the tint of the maps:
+  a point with such glass between it and a light a map holds takes all of its light from samples,
+  whose rays run the program. The constants of the view carry the cascades of the sun it drew
+  (`Gpu_Frame.sun_maps`), so that a pass after the direct light takes the shadow of the sun from
+  them and traces only where none holds the point (`sun_shadow_seen`; an extension binds the atlas
+  with `Surface_Source.Shadow_Atlas`): the fog lights its cells so.
+- **Skinned meshes.** The skin writes the posed box and normal cone of each cluster, grown by the
+  reach of its vertex programs, so that the view cull and the shadow map cull leave posed clusters
+  out like static ones.
+- **Shapes.** The points of a capsule or a rectangle cover their shape (`light_point`); those of a
+  rectangle go on the diagonals of the cells of a 4x4 grid. One below the surface horizon gives no
+  light.
+- **Points that trace their own rays.** Glass, overlays, the back side, probes and reflection
+  hits use `direct_lighting`: one hard shadow ray per node of their
+  [cut](#cutoff-of-a-point-that-traces-its-own-rays), and none where no light looks at them. With
+  `colored_shadows`, those of the hits cross the glass with its
+  [medium filter](materials.md#medium-filter).
+- **Reference.** `Settings.reference_lights` is the same system with many samples and without
+  maps or half resolution: its average over a few frames is the exact image.
 - **What changed.** The scene lists what casts shadows and changed since the last frame that drew
   it (`Scene_State.occluders`, `Gpu_Frame.moved`): each instance that moved, took another pose or
   shape, arrived or left, with the box it covers in both frames, the lights that moved or changed
   shape (not color or brightness) and the sun that turned more than its radius. Beyond the
   capacity, an instance joins the box that grows least, which then stands for several.
-  - A block's ray marks the block (`occluder_changed`) if an instance that changed stops it, or if
+  - A sample marks its point (`occluder_changed`) if an instance that changed stops it, or if
     without stopping it crosses one of those boxes (the shadow that left or arrived), or if it
-    goes to a light that moved. A ray stopped by something still does not mark: its result does
-    not change.
-  - The marked block starts its history over with the frame's ray and its penumbra width; the
-    filter blurs it like a newly uncovered one. The box of what changed joins where it was and
-    where it is, so the ray of the shadow that leaves crosses it in the frame in which it leaves.
-  - TAA treats the pixel of a marked block as one that moves
+    goes to a light that moved. A sample stopped by something still does not mark.
+  - TAA treats the pixel of a marked point as one that moves
     ([TAA](frame-graph.md#passes)), and the fog does not blend the history of a froxel whose
     ray crosses what changed ([`fog`](../../mirai-plugins/references/render-plugins.md)).
   - A batch that casts shadows marks its box when it arrives, leaves or changes (`batch_set`,
     `batch_remove`).
   - With the scene still there are no marks and the image is the same. The lights that the GPU
-    writes and the glass do not mark: the history clipping reaches them.
-- **Filter** (`shadow filter`). Separable, over the neighboring blocks of the same surface, with
-  distances in meters on its plane: it distributes the requested blur and the light that arrives
-  and blurs the fraction; a newly uncovered block is blurred more until it accumulates frames.
-- **Direct light.** Each pixel computes its unshadowed light, without rays, and multiplies it by
-  the fraction of the neighboring blocks of its surface; that of the
-  [lights that cast no shadows](#gpu-lights) it adds as is.
-- A pixel without blocks with frames of its surface that receives some light, the `Light`
-  pipeline and the ray hits trace their own hard shadows, one ray per node of their cut; without a
-  light looking at it, its direct light is zero without rays. With `colored_shadows`, those of the
-  hits cross the glass with its [medium filter](materials.md#medium-filter).
-- **Shapes.** The points of a capsule or a rectangle cover their shape (`light_point`); those of a
-  rectangle go on the diagonals of the cells of a 4×4 grid. One below the surface horizon gives no
-  light and the block uses the opposite one. The hard shadow of a shape goes to the point nearest
-  to the normal (`light_aim`).
-- **Reference.** `Settings.reference_lights` traces from each pixel to the whole set of points of
-  the sun and of each light, randomly rotated per frame, without tree, blocks or filter: its
-  average over a few frames is the exact image.
-- **Limits.**
-  - A block has one fraction for all its lights: the specular highlight of a covered light turns
-    off in proportion to what covers all of them.
-  - A penumbra narrower than two blocks joins the points of its blocks only in the filter; what
-    is uncovered samples the softer one for a few frames. The penumbra width has a maximum in
-    blocks.
-  - On a face two or three pixels wide the blocks sometimes fall on it and sometimes on the
-    neighbor: its light varies a little between frames.
+    writes and the glass do not mark: the validation of the history reaches them.
+- The debug view Shadows shows the part of the light that got there.
+- **Limits.** With few samples a penumbra shows the noise of its samples until the filter and the
+  frames smooth it; a light without map whose penumbra no ray of its group crosses is as soft as
+  the filter lets it.
 
 Tests: the shadow ones of `render/render_test.odin` (`render_sun_shadow_is_ray_traced`,
-`render_soft_shadow_*`, `render_a_low_sun_draws_out_the_end_of_a_shadow`,
+`render_soft_shadow_blurs_with_the_distance_to_its_caster`,
+`render_soft_shadow_leaves_with_its_caster`, `render_a_low_sun_draws_out_the_end_of_a_shadow`,
 `render_a_wider_light_casts_a_softer_shadow` and
-`render_an_edge_takes_no_light_from_the_face_beyond_it`).
+`render_an_edge_takes_no_light_from_the_face_beyond_it`) and, for the grid and the groups of
+lights, `render_many_lights_match_their_reference`,
+`render_lights_that_few_reach_at_a_time_are_each_lit` and
+`render_groups_of_lights_give_what_their_lights_give`.
 
 ## Colored shadow filters
 
 - `colored_shadows` (off by default): the shadow query also finds blend surfaces; each multiplies
   the ray's filter by `mix(white, linear_base_color, alpha)` and lets it continue. Rays are not
   deflected: no refraction or caustics in shadows.
-- The filter of each texel is that of the shadow rays of the view's direct light (blocks,
-  `direct rays`); those of what the volume and reflection rays find, and those of the blend
-  surfaces, take the [medium filter](materials.md#medium-filter) of each instance.
+- The filter of each texel is that of the samples of the view's direct light (the `color`
+  variants of `direct_samples`); those of what the volume and reflection rays find, and those of
+  the blend surfaces, take the [medium filter](materials.md#medium-filter) of each instance.
 - A single traversal with exit at the first blocker: opaque surface, coverage of a mask or a
   filter that lets no light through. It shares the color read of the visible material, with
   explicit ray mip. Alpha zero does not filter; black with alpha one blocks.
 - Glass with a program filters first by its mean and its exact filter arrives later, as a material
-  point: the shadow blocks and the `direct rays` add in the resumption what changes
+  point: the direct samples add in the resumption what changes
   ([deferred filters](materials.md#surface-programs-in-rays-and-raster)).
 - Glass also loses what it reflects head-on at each face; a solid counts color and absorption
   once, where the ray enters.

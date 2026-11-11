@@ -30,12 +30,6 @@ Render_Stage :: enum u8 {
 	Output,       // PostProcess stack, tonemap, selection outline and what is drawn over the image
 }
 
-// How the Direct stage shadows its lights.
-Direct_Mode :: enum u8 {
-	Blocks, // each block of 2x2 pixels traces the rays of the frame and the filters share them; thin geometry traces its own
-	Traced, // every pixel traces hard shadows of its own: for views shown small
-}
-
 // What the passes of a pipeline read and write. Custom0 to Custom47 are made
 // by the pipeline that declares them, for each view drawn with it.
 Render_Resource :: enum u8 {
@@ -52,7 +46,7 @@ Render_Resource :: enum u8 {
 	Highlight,    // the selection mask
 	Direct,       // reflected direct light
 	Reflections,  // the filtered traced reflections, for the share of each lobe they stand for
-	Gi,           // the indirect irradiance, half resolution
+	Gi,           // the light of the probe volume at each pixel: around the normal by its contact occlusion and around the specular lobe, packed (light_pack)
 	Probes,       // the irradiance of the probe volume, shared by every view
 	Hdr,          // the light of the opaque scene, kept for the next frame: without a relative emission
 	Display,      // the image before temporal resolve
@@ -108,7 +102,6 @@ Render_Jitter :: enum u8 {
 
 Render_Pass_Desc :: struct {
 	stage:  Render_Stage,
-	direct: Direct_Mode,  // Direct
 	name:   string,       // Custom: for its timing and its errors
 	uses:   []Render_Use, // Custom: everything it reads and writes; a stage of the renderer declares its own
 	record: Stage_Proc,   // Custom
@@ -144,7 +137,6 @@ RENDER_PASS_NAME_CAPACITY :: 32
 @(private)
 Plan_Pass :: struct {
 	stage:     Render_Stage,
-	direct:    Direct_Mode,
 	record:    Stage_Proc,
 	user:      rawptr,
 	uses:      [RENDER_USE_CAPACITY]Render_Use,
@@ -166,7 +158,6 @@ Render_Plan :: struct {
 	order:       [RENDER_PASS_CAPACITY]u8, // the passes recorded, in their order
 	order_count: int,
 	stages:      bit_set[Render_Stage],
-	direct:      Direct_Mode,
 	jitter:      Render_Jitter,
 	generates:   bool, // passes after the Output stage write Generated
 	resources:   [CUSTOM_RESOURCE_CAPACITY]Render_Resource_Desc,
@@ -314,7 +305,7 @@ plan_compile :: proc(plan: ^Render_Plan, desc: Render_Pipeline_Desc, buffer: []u
 	output_at := -1
 	for &pass, at in desc.passes {
 		target := &plan.passes[at]
-		target.stage, target.direct = pass.stage, pass.direct
+		target.stage = pass.stage
 		if pass.stage != .Custom {
 			if pass.stage in seen {return fail(buffer, "render pipeline: pass %d is a second %v stage; a pipeline has each stage once", at, pass.stage)}
 			if len(pass.uses) > 0 || pass.record != nil {
@@ -414,7 +405,6 @@ plan_compile :: proc(plan: ^Render_Plan, desc: Render_Pipeline_Desc, buffer: []u
 		plan.order[plan.order_count] = u8(at)
 		plan.order_count += 1
 		plan.stages += {pass.stage}
-		if pass.stage == .Direct {plan.direct = pass.direct}
 		for use in pass.uses[:pass.use_count] {plan.generates ||= use.resource == .Generated && use.access == .Write}
 		for use in pass.uses[:pass.use_count] {
 			if use.resource < .Custom0 {continue}
@@ -445,7 +435,6 @@ pipeline_key :: proc(desc: Render_Pipeline_Desc) -> u64 {
 	value :: proc(h: u64, v: ^$T) -> u64 {return hash.fnv64a(([^]u8)(v)[:size_of(T)], h)}
 	for &pass in desc.passes {
 		h = value(h, &pass.stage)
-		h = value(h, &pass.direct)
 		h = mix(h, transmute([]u8)pass.name)
 		for &use in pass.uses {h = value(h, &use)}
 		record := rawptr(pass.record)
@@ -513,7 +502,7 @@ standard_pipeline_passes :: proc(kind: Standard_Pipeline) -> []Render_Pass_Desc 
 		{stage = .Indirect}, {stage = .Composite}, {stage = .Lit}, {stage = .Transparency}, {stage = .Resolve}, {stage = .Output},
 	}
 	@(static, rodata) light := [?]Render_Pass_Desc{
-		{stage = .Geometry}, {stage = .Nested}, {stage = .Surface}, {stage = .Direct, direct = .Traced}, {stage = .World},
+		{stage = .Geometry}, {stage = .Nested}, {stage = .Surface}, {stage = .Direct}, {stage = .World},
 		{stage = .Composite}, {stage = .Lit}, {stage = .Transparency}, {stage = .Resolve}, {stage = .Output},
 	}
 	switch kind {

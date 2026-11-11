@@ -351,12 +351,19 @@ Scene_State :: struct {
 	light_tree_capacity:  int,
 	light_buffer:         rhi.Buffer,
 	light_tree_buffer:    rhi.Buffer,
+	light_grid:           Light_Grid,
+	light_grid_buffer:    rhi.Buffer,
+	light_grid_stale:     bool, // a light changed since the grid was placed
+	light_grid_dirty:     bool, // the grid was placed again and the GPU fills it in the next frame (light_grid_record)
 	lights_dirty:         bool,               // every light and node goes to the GPU
 	light_ranges:         [dynamic]Pool_Range, // else the lights that changed since the last upload
 	light_node_ranges:    [dynamic]Pool_Range, // and the nodes of the tree
 	lights_changed:       bool, // scene_set_lights ran since the last frame began
 	light_region:         Light_Region, // lights a pass writes on the GPU, in the room before the tree (light_region_first)
 	light_region_written: bool, // by a pass of the frame before (pass_lights)
+	light_region_box:     [2]Vec3, // what of the scene its lights with shadows light, grown so that they move a little before the grid is placed again; empty: none
+	light_region_reach:   f32,  // the farthest one of them lights, metres
+	light_region_asked:   u32,  // how many of them a pass asked for
 	light_revision:       u64,  // counts the sets of lights: an index means the same light while it holds
 	light_scale:          f32,  // render units per nit (light_scale_of)
 	light_key:            f32,  // of the local lights alone (light_key)
@@ -1978,6 +1985,7 @@ light_tree_rebuild :: proc(s: ^Scene_State) -> bool {
 scene_light_region :: proc(r: ^Renderer) -> bool {
 	s := &r.scene
 	asked := light_region_of(r.lights_asked, r.shadowless_asked)
+	scene_light_region_box(s, r.lights_asked, r.lights_asked_box, r.lights_asked_reach)
 	r.lights_asked, r.shadowless_asked = 0, 0
 	if asked != s.light_region {
 		previous := s.light_region
@@ -1997,6 +2005,37 @@ scene_light_region :: proc(r: ^Renderer) -> bool {
 	}
 	s.light_region_written = false
 	return true
+}
+
+// What of the scene the lights with shadows a pass asked for light: the
+// cells of the grid of the lights they need. The grid is placed again when
+// they leave the box it holds, light farther or are more, or the box is far
+// larger than they need.
+@(private)
+scene_light_region_box :: proc(s: ^Scene_State, count: u32, box: [2]Vec3, reach: f32) {
+	EMPTY :: [2]Vec3{{1, 1, 1}, {-1, -1, -1}}
+	needed := EMPTY
+	if count > 0 && s.has_bounds {
+		needed = {linalg.max(box[0] - reach, s.bounds_min), linalg.min(box[1] + reach, s.bounds_max)}
+		if !(needed[0].x <= needed[1].x && needed[0].y <= needed[1].y && needed[0].z <= needed[1].z) {needed = EMPTY}
+	}
+	held := s.light_region_box
+	if needed == EMPTY {
+		if s.light_region_asked > 0 {
+			s.light_region_box, s.light_region_reach, s.light_region_asked = EMPTY, 0, 0
+			s.light_grid_stale = true
+		}
+		return
+	}
+	span := needed[1] - needed[0]
+	inside := s.light_region_asked > 0 && linalg.min(held[0], needed[0]) == held[0] && linalg.max(held[1], needed[1]) == held[1]
+	held_span := held[1] - held[0]
+	wide := held_span.x > 4 * span.x + 4 || held_span.y > 4 * span.y + 4 || held_span.z > 4 * span.z + 4
+	if inside && !wide && reach <= s.light_region_reach && count <= s.light_region_asked {return}
+	grow := linalg.max(span * 0.25, Vec3{1, 1, 1})
+	s.light_region_box = {linalg.max(needed[0] - grow, s.bounds_min), linalg.min(needed[1] + grow, s.bounds_max)}
+	s.light_region_reach, s.light_region_asked = reach, count
+	s.light_grid_stale = true
 }
 
 // The light scale for the local lights of the scene with a sun and an
@@ -2044,8 +2083,8 @@ renderer_reset_history :: proc(r:^Renderer,reset_camera:bool=false) {
     scene_changed(&r.scene)
     r.gi_warm=true
     for view in views_all(r) {
-        view.targets.reflect_valid,view.targets.gi_reference_valid,view.targets.taa_valid=false,false,false
-        view.targets.glass_valid,view.targets.shadow.valid,view.targets.hiz_valid=false,false,false
+        view.targets.gi_reference_valid,view.targets.taa_valid=false,false
+        view.targets.glass_valid,view.targets.hiz_valid=false,false
         if reset_camera {view.has_previous=false}
     }
 }
@@ -2329,6 +2368,7 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 			} else {ok = false}
 		}
 	}
+	if s.lights_dirty || len(s.light_ranges) > 0 {s.light_grid_stale = true}
 	if s.lights_dirty {
 		if s.light_region.lights > 0 {rhi.cmd_fill_buffer(cmd, s.light_buffer, u64(len(s.lights) * size_of(Gpu_Light)), u64(light_region_lights(s.light_region) * size_of(Gpu_Light)), 0)}
 		if upload_transient(r, cmd, s.lights[:], s.light_buffer) && upload_transient(r, cmd, s.light_tree[:], s.light_tree_buffer) {
@@ -2344,6 +2384,7 @@ upload_scene :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	}
 	// The programs of the instances read the tables just uploaded.
 	if ok && !displaced_record(r, cmd) {ok = false}
+	ok &&= light_grid_update(r)
 	return ok
 }
 
@@ -2379,7 +2420,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	if s.tlas != 0 {rhi.accel_destroy(d, s.tlas)}
 	for b in s.geometry_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for move in s.pool_moves {if move.from != 0 {rhi.buffer_destroy(d, move.from)}}
-	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.cluster_candidate_buffer, s.program_bins, s.program_visible, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.tlas_instance_buffer}) {
+	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.cluster_candidate_buffer, s.program_bins, s.program_visible, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
 		if b != 0 {rhi.buffer_destroy(d, b)}
 	}
 	delete(s.vertices)

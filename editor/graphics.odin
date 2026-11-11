@@ -26,13 +26,13 @@ GRAPHICS_WIDTH :: f32(420)
 GRAPHICS_LABEL_WIDTH :: f32(108)
 GRAPHICS_ROW :: f32(25)
 
-Graphics_Option :: enum u8 {Resolution,Antialiasing,Frame_Generation,Indirect_Light,Probes,Reflections,Lights,Glass_Shadows,Glass_Layers,Textures,Detail,Frame_Limit,Vsync,Fps}
+Graphics_Option :: enum u8 {Resolution,Antialiasing,Frame_Generation,Indirect_Light,Probes,Reflections,Light_Samples,Light_Resolution,Glass_Shadows,Glass_Layers,Textures,Detail,Frame_Limit,Vsync,Fps}
 // The choice each option is at; -1 when its values are none of the choices.
 Graphics_Choices :: [Graphics_Option]i8
 
 GRAPHICS_OPTION_LABELS :: [Graphics_Option]string{
     .Resolution="Resolution",.Antialiasing="Antialiasing",.Frame_Generation="Frame generation",.Indirect_Light="Indirect light",.Probes="Light probes",.Reflections="Reflections",
-    .Lights="Shadowed lights",.Glass_Shadows="Glass shadows",.Glass_Layers="Glass layers",.Textures="Textures",.Detail="Detail",.Frame_Limit="Frame limit",.Vsync="VSync",.Fps="Show FPS",
+    .Light_Samples="Light samples",.Light_Resolution="Light resolution",.Glass_Shadows="Glass shadows",.Glass_Layers="Glass layers",.Textures="Textures",.Detail="Detail",.Frame_Limit="Frame limit",.Vsync="VSync",.Fps="Show FPS",
 }
 GRAPHICS_CHOICE_LABELS :: [Graphics_Option][]string{
     .Resolution={"Auto","50%","75%","100%"},
@@ -41,7 +41,8 @@ GRAPHICS_CHOICE_LABELS :: [Graphics_Option][]string{
     .Indirect_Light={"Off","Probes"},
     .Probes={"Low","Medium","High"},
     .Reflections={"Off","Traced","Detailed"},
-    .Lights={"2","4","8","16"},
+    .Light_Samples={"1 to 31"},
+    .Light_Resolution={"Full","Half"},
     .Glass_Shadows={"Off","Colored"},
     .Glass_Layers={"1","2"},
     .Textures={"1K","2K","4K","8K"},
@@ -52,7 +53,7 @@ GRAPHICS_CHOICE_LABELS :: [Graphics_Option][]string{
 }
 // The render_scale of each choice; 0: the target of the preset (Auto).
 GRAPHICS_RESOLUTIONS :: [?]f32{0,0.5,0.75,1}
-GRAPHICS_LIGHTS :: [?]u32{2,4,8,16}
+GRAPHICS_LIGHT_SAMPLES_MAX :: erender.GRAPHICS_LIGHT_SAMPLES_MAX
 GRAPHICS_FRAME_LIMITS :: [?]u32{30,60,120,144,240,0}
 GRAPHICS_QUALITY_LABELS :: [erender.Graphics_Quality]string{.Low="Low",.Medium="Medium",.High="High",.Ultra="Ultra",.Custom="Custom"}
 
@@ -64,7 +65,7 @@ Graphics :: struct {
 // offered: the techniques of antialiasing plugins offer. One the settings name
 // that none offers is the TAA, which draws then.
 graphics_choices :: proc(g:erender.Graphics_Settings,offered:[]erender.Antialiasing_Desc=nil) -> (c:Graphics_Choices) {
-    resolutions,lights_table,limits:=GRAPHICS_RESOLUTIONS,GRAPHICS_LIGHTS,GRAPHICS_FRAME_LIMITS
+    resolutions,limits:=GRAPHICS_RESOLUTIONS,GRAPHICS_FRAME_LIMITS
     for &choice in c {choice=-1}
     for scale,i in resolutions {
         if g.render_scale==scale {c[.Resolution]=i8(i)}
@@ -79,9 +80,9 @@ graphics_choices :: proc(g:erender.Graphics_Settings,offered:[]erender.Antialias
     c[.Indirect_Light]=i8(g.indirect_light)
     c[.Probes]=i8(g.light_probes)
     c[.Reflections]=i8(g.reflections)
-    for lights,i in lights_table {
-        if g.shadowed_lights==lights {c[.Lights]=i8(i)}
-    }
+    // The number itself: any from 1 to GRAPHICS_LIGHT_SAMPLES_MAX.
+    c[.Light_Samples]=i8(clamp(g.light_samples,1,GRAPHICS_LIGHT_SAMPLES_MAX))
+    c[.Light_Resolution]=i8(g.light_half_resolution)
     c[.Glass_Shadows]=i8(g.glass_shadows)
     if g.glass_layers>=1 && g.glass_layers<=2 {c[.Glass_Layers]=i8(g.glass_layers)-1}
     c[.Textures]=i8(g.textures)
@@ -106,7 +107,12 @@ graphics_labels :: proc(option:Graphics_Option,offered:[]erender.Antialiasing_De
 
 // Sets what a choice of an option stands for; false when the option has no such choice.
 graphics_choose :: proc(g:^erender.Graphics_Settings,option:Graphics_Option,choice:int,offered:[]erender.Antialiasing_Desc=nil) -> bool {
-    resolutions,lights,limits:=GRAPHICS_RESOLUTIONS,GRAPHICS_LIGHTS,GRAPHICS_FRAME_LIMITS
+    resolutions,limits:=GRAPHICS_RESOLUTIONS,GRAPHICS_FRAME_LIMITS
+    if option==.Light_Samples {
+        if choice<1 || choice>GRAPHICS_LIGHT_SAMPLES_MAX {return false}
+        g.light_samples=u32(choice)
+        return true
+    }
     if choice<0 || choice>=len(graphics_labels(option,offered)) {return false}
     switch option {
     case .Resolution:     g.render_scale=resolutions[choice]
@@ -121,7 +127,8 @@ graphics_choose :: proc(g:^erender.Graphics_Settings,option:Graphics_Option,choi
     case .Indirect_Light: g.indirect_light=erender.Indirect_Light(choice)
     case .Probes:         g.light_probes=erender.Light_Probes(choice)
     case .Reflections:    g.reflections=erender.Reflections(choice)
-    case .Lights:         g.shadowed_lights=lights[choice]
+    case .Light_Samples:
+    case .Light_Resolution: g.light_half_resolution=choice==1
     case .Glass_Shadows:  g.glass_shadows=choice==1
     case .Glass_Layers:   g.glass_layers=u32(choice)+1
     case .Textures:       g.textures=erender.Textures(choice)
@@ -257,7 +264,11 @@ graphics_build :: proc(s:^Session) {
                         if (option>=.Frame_Limit)!=rate {continue}
                         if ui.box(ctx,row) {
                             ui.label(ctx,option_labels[option],th.font_small,th.text_label,GRAPHICS_LABEL_WIDTH)
-                            if ui.segments(ctx,ui.GROW,th.row) {
+                            if option==.Light_Samples {
+                                samples:=f64(next.light_samples)
+                                field:=ui.Number_Field{integer=true,speed=0.25,min=1,max=GRAPHICS_LIGHT_SAMPLES_MAX,has_min=true,has_max=true,height=th.row}
+                                if ui.slider_field(ctx,ui.id(ctx,"light_samples"),&samples,field).changed {changed|=graphics_choose(&next,option,int(samples+0.5),offered)}
+                            } else if ui.segments(ctx,ui.GROW,th.row) {
                                 for label,choice in graphics_labels(option,offered) {
                                     button:=segment
                                     button.label,button.active=label,int(choices[option])==choice

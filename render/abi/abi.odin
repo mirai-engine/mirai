@@ -124,6 +124,14 @@ PAGE_SLOT_WORDS         :: asset.MESH_PAGE_WORDS
 PAGE_REQUEST_FIRST      :: 4
 BATCH_GROUP             :: 64
 BATCH_WORDS             :: 5
+// Of a pose, from Gpu_Mesh.bounds_word, POSED_BOUNDS_WORDS for each cluster it
+// poses as the skin wrote them this frame: the low corner of its box and its
+// flags (POSED_BOUNDS_BOX, POSED_BOUNDS_CONE, and in bits 8-15 the cutoff of
+// the cone, snorm8, as Cluster.counts holds it), then the high corner and the
+// axis of the cone (octahedral snorm8), in the space of the mesh.
+POSED_BOUNDS_WORDS      :: 8
+POSED_BOUNDS_BOX        :: 1
+POSED_BOUNDS_CONE       :: 2
 
 // The classes of instances for rays.
 RAY_SOLID       :: 1
@@ -141,8 +149,24 @@ GPU_LIGHT_NODE_SPOT        :: 2
 GPU_LIGHT_NODE_COUNT_SHIFT :: 2
 LIGHT_TREE_DEPTH           :: 48
 LIGHT_CUT_MAX              :: 32
-DIRECT_TRACED_FIRST        :: u32(1)
-DIRECT_TRACED_GROUP        :: u32(64)
+// The rows of the grid of the lights a light keeps for a pixel to weigh it by.
+LIGHT_WEIGHT_ROWS          :: 2
+
+// The maps of the shadows of a view. The buffer of the maps (uint4 rows): a
+// word for each light, four to a row, 0 for a light without maps, else its
+// first map + 1 and, from bit SHADOW_LIGHT_FACES, which faces of its cube have
+// one; then SHADOW_MAP_ROWS for each map. The constants of a view hold those of
+// the cascades of the sun, SUN_MAP_ROWS. The maps draw SHADOW_ENTRIES clusters
+// at most, SHADOW_TESTED_ENTRIES of them of masked or blended materials.
+SHADOW_MAP_ROWS            :: 6
+SHADOW_LIGHT_FACES         :: 16
+// The face of a spot whose one map lies along its cone, after the six of the cube.
+SHADOW_SPOT_FACE           :: 6
+SHADOW_MAP_ORTHOGRAPHIC    :: 1
+SHADOW_SUN_MAPS            :: 6
+SUN_MAP_ROWS               :: SHADOW_SUN_MAPS * SHADOW_MAP_ROWS
+SHADOW_ENTRIES             :: u32(1 << 18)
+SHADOW_TESTED_ENTRIES      :: u32(1 << 16)
 REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 
 // The probe volume, and the rays of its contact occlusion at each pixel.

@@ -13,6 +13,13 @@
 #define MIRAI_LIGHTING_SLANG
 #include "trace.slang"
 #include "probe_light.slang"
+// A pass with the maps of the view (SUN_SHADOW_SLOT and SHADOW_DATA_SLOT) that
+// takes the shadows of direct_lighting from them where they hold the point,
+// and traces the rays only where they do not; with SHADOW_TINT_SLOT, the glass
+// on the way from the tint the maps keep of it.
+#ifdef MIRAI_LIGHT_MAPS
+#include "shadow_maps.slang"
+#endif
 
 // No light is smaller than this, metres: closer to its center a point gets
 // the light of its surface.
@@ -263,25 +270,6 @@ float3 light_aim(Light light, float3 position, float3 normal) {
     }
     float along = clamp(dot(out_there - center, light.axis.xyz), -light.size.y, light.size.y);
     return center + light.axis.xyz * along;
-}
-
-// Which of the sixteen points of a light the shadow ray of a block of 2x2
-// goes to: the blocks of a 4x4 take all sixteen, in an order that keeps
-// neighbors far apart along it (Bayer), the same in every frame.
-static const uint LIGHT_POINT_ORDER[16] = {0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u};
-uint block_turn(int2 block) {
-    return LIGHT_POINT_ORDER[(uint(block.y) & 3u) * 4u + (uint(block.x) & 3u)];
-}
-
-// Where in its cell the point of a turn falls (x) and how a disc is turned
-// (y, radians): the same for the blocks of a 4x4, so that they take sixteen
-// points evenly spread, and another for each 4x4, so that a wide light gives
-// a graded penumbra after the filter instead of sixteen hard shadows. The
-// same in every frame: points that moved from frame to frame changed the
-// shadow of what is thinner than a block in every frame.
-float2 light_point_shift(int2 block) {
-    uint h = hash_u32(uint(block.x >> 2) * 73856093u ^ uint(block.y >> 2) * 19349663u);
-    return float2(float(h & 0xffffu) / 65536.0, float(h >> 16) / 65536.0 * 2.0 * PI);
 }
 
 // The shadow ray to the sun: to the point `k` of sixteen across its disc,
@@ -792,19 +780,6 @@ float3 extension_radiance(Shading s, Extension_Light light) {
 #define LIGHTS_EXTENSION 4u
 #define LIGHTS_ALL 7u
 
-// The pixels whose direct light traces rays of its own, which lighting.comp
-// lists for lighting_traced.comp: how many, at 0, then from
-// DIRECT_TRACED_FIRST each pixel as x | y << DIRECT_TRACED_Y_SHIFT, with
-// what it traces: the light of its side (DIRECT_TRACED_FRONT: thin geometry,
-// whose surface no block of shadows holds) and that of its other side
-// (DIRECT_TRACED_BACK: a thin surface that lets light through, whose blocks
-// hold the shadows of its side alone). Their dispatch counts groups of
-// DIRECT_TRACED_GROUP (render.DIRECT_TRACED_*).
-#define DIRECT_TRACED_Y_SHIFT 15u
-#define DIRECT_TRACED_X_MASK 0x7FFFu
-#define DIRECT_TRACED_FRONT (1u << 30u)
-#define DIRECT_TRACED_BACK (1u << 31u)
-
 // The direct light a point reflects towards its viewer: the sun, the local
 // lights and those of extensions, each through its shadow ray. The local
 // lights are the nodes of the cut of the point, at most `budget`: the lights
@@ -833,6 +808,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
         float3 radiance = float3(0.0);
         float3 direction = float3(0.0, 1.0, 0.0);
         float reach = 0.0;
+        float mapped = -1.0;
         if (item == 0u) {
             if (frame.sun_direction.w < 0.5) continue;
             float cosine = dot(s.normal, frame.sun_direction.xyz);
@@ -841,6 +817,13 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
             if (luminance(radiance) <= light_cutoff()) continue;
             direction = frame.sun_direction.xyz;
             reach = sun_reach(origin, direction);
+#ifdef MIRAI_LIGHT_MAPS
+            mapped = sun_shadow_seen(s.position, s.normal);
+#ifdef SHADOW_TINT_SLOT
+            Shadow_Map tinted;
+            if (mapped > 0.0 && sun_map_of(s.position, tinted)) radiance *= shadow_tint(tinted, s.position);
+#endif
+#endif
         } else if (item <= local_items) {
             Light_Node node = light_nodes[cut[item - 1u]];
             float distance;
@@ -862,6 +845,13 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
                 direction = toward / max(distance, 1e-6);
             }
             reach = light_reach(aimed, distance);
+#ifdef MIRAI_LIGHT_MAPS
+            mapped = light_shadow_seen(node.child, s.position, s.normal, light_extent(aimed));
+#ifdef SHADOW_TINT_SLOT
+            Shadow_Map tinted;
+            if (mapped > 0.0 && light_map_of(node.child, s.position, tinted)) radiance *= shadow_tint(tinted, s.position);
+#endif
+#endif
         }
 #ifdef MIRAI_HOOK_LIGHTS
         float3 from = origin;
@@ -883,20 +873,21 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
         filters_begin();
 #endif
         float3 through = float3(1.0);
-        for (uint segment = 0u; segment < 2u; segment++) {
+        for (uint segment = 0u; segment < 2u && mapped < 0.0; segment++) {
             through *= trace_transmission(from, direction, reach, item <= local_items);
             if (segment != 0u || beyond_reach <= 0.0 || max(through.r, max(through.g, through.b)) <= 0.0) break;
             from = beyond_origin;
             direction = beyond_direction;
             reach = beyond_reach;
         }
+        if (mapped >= 0.0) through = float3(mapped);
         if (item > local_items) extension += radiance * through;
         else
 #else
 #ifdef MIRAI_SHADOW_FILTER_POINTS
         filters_begin();
 #endif
-        float3 through = trace_transmission(origin, direction, reach);
+        float3 through = mapped >= 0.0 ? float3(mapped) : trace_transmission(origin, direction, reach);
 #endif
 #ifdef MIRAI_SHADOW_FILTER_POINTS
         filters_weigh(radiance);

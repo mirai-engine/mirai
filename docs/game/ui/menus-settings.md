@@ -46,8 +46,8 @@ One row of the document, no game code: a selector bound to a field of a setting
 `@(storage,setting)`) writes it, and the engine keeps it for the next run.
 
 ```json
-{"name": "settings_rays", "kind": "select_row", "label": "Rays", "options": "Low=4|High=16",
- "bind": "Graphics_Settings.shadowed_lights"}
+{"name": "settings_light", "kind": "select_row", "label": "Light", "options": "Low=7|High=15",
+ "bind": "Graphics_Settings.light_samples"}
 {"name": "settings_aa", "kind": "select_row", "label": "Anti-aliasing",
  "options": "Off=off|TAA=taa", "bind": "Graphics_Settings.antialiasing"}
 {"name": "settings_vsync", "kind": "check_row", "label": "VSync",

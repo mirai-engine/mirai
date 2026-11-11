@@ -128,8 +128,9 @@ inscribed ellipse).
   strongest lights of its exit's room (`PORTAL_LIGHT_CAPACITY`) through the light hook, as lights
   seen from behind the opening with the shape of their entity (`sphere_desc`, `rect_desc`): they
   light only through it, with the beam's edge soft according to the light's size, and carry two
-  shadow rays, to the opening and from the exit. They enter the shadow blocks like any light, and
-  the penumbra of what is on the other side continues on this side.
+  shadow rays, to the opening and from the exit. They enter the
+  [direct light](../../mirai-rendering/references/lights.md#direct-light-of-a-view) like any light,
+  and the penumbra of what is on the other side continues on this side.
 
 **Travel** (`portals.odin`):
 
@@ -297,7 +298,10 @@ boxes.
   volume, not that of this frame: it does not depend on where the wisps are. Where there is a medium
   that scatters, it lights it with the light of the engine's media (`shaders/include/media.slang`,
   the same as the volumes of [`vfx`](../../mirai-world/references/vfx.md#volumes)):
-  - the sun, `sun_light` of the place, with a shadow ray (`trace_transmission`);
+  - the sun, `sun_light` of the place, at four places of the cell, each by the
+    [maps of the sun](../../mirai-rendering/references/lights.md#direct-light-of-a-view) of the
+    view where one holds it (the glass on the way still colors it) and with a shadow ray
+    elsewhere (`media_sun`);
   - a local light chosen from the light tree according to what it gives the point, divided by the
     probability of choosing it, with another ray: two rays per froxel with any number of lights;
   - the ambient: the mean of what the probe volume gives to an upward-facing surface and a

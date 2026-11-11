@@ -49,7 +49,7 @@ debug_view_status :: proc(r: ^Renderer, plan: ^Render_Plan, mode: Debug_View) ->
 	s := &r.settings
 	#partial switch mode {
 	case .Shadows:
-		if plan.direct != .Blocks || s.reference_lights {return false, "The direct light of this pipeline has no blocks of shadows to show"}
+		if .Direct not_in plan.stages {return false, "This pipeline has no direct light"}
 	case .Reflections, .Reflections_Raw:
 		if .Reflections not_in plan.stages {return false, "This pipeline has no traced reflections"}
 		if !s.reflections {return false, "Traced reflections are off in the settings"}
@@ -81,8 +81,8 @@ debug_views_pass :: proc(p: ^Pass) {
 	available, _ := debug_view_status(r, p.plan, mode)
 	source := r.dummy_texture
 	#partial switch mode {
-	case .Shadows:             if t.shadow.valid {source = texture_or_dummy(r, t.shadow.raw)}
-	case .Reflections:         if p.use_reflections {source = texture_or_dummy(r, t.reflect_history[p.current])}
+	case .Shadows:             source = texture_or_dummy(r, t.direct_points)
+	case .Reflections:         if p.use_reflections {source = texture_or_dummy(r, t.reflections)}
 	case .Reflections_Raw:     if p.use_reflections {source = texture_or_dummy(r, t.reflect_raw)}
 	}
 	rhi.cmd_timestamp(cmd, "debug view")

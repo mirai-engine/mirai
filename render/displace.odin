@@ -200,7 +200,8 @@ displaced_prepare :: proc(r: ^Renderer) {
 		}
 		// A skin that starts or stops being moved is posed again.
 		if !skin.displaced && v.moves != skin.moves {skin.moves = v.moves; skin.dirty = true}
-		if v.reach != skin.reach {skin.reach = v.reach; skin.bounds_dirty = true}
+		// The skin grows the boxes of its clusters by it.
+		if v.reach != skin.reach {skin.reach = v.reach; skin.bounds_dirty = true; skin.dirty ||= !skin.displaced}
 		if !v.moves || v.inputs == skin.inputs {continue}
 		skin.inputs = v.inputs
 		skin.dirty = true

@@ -146,8 +146,8 @@ discarding them. Zero: there was none.
   `core.View` into the texture in this frame with a [pipeline](#render-pipelines)),
   `view_texture_pixels(renderer, texture)`, `view_texture_capture(renderer, texture)` and
   `view_texture_remove(renderer, texture)`.
-- The standard `Light` pipeline leaves out contact occlusion, traced reflections and per-block
-  shadows (hard per-pixel shadows), for views that are shown small.
+- The standard `Light` pipeline leaves out contact occlusion, traced reflections and the indirect
+  light, for views that are shown small.
 - What runs once per frame (probes, the extensions' `Simulate` stage, previews) goes with the first
   window view: a texture view reads the probes of the previous frame. In a textures-only frame,
   the `Simulate` stage goes with the first of them.
@@ -208,7 +208,7 @@ in the declared order. Each renderer stage (`Render_Stage`) declares what it rea
   requested leaves its place.
 - **Standard** (`Standard_Pipeline`, `standard_pipeline_passes`), always present:
   - `Full`: all the stages ([frame graph](frame-graph.md#passes)).
-  - `Light`: `Full` without `Reflections` or `Indirect`, with `Direct` in `Traced` mode.
+  - `Light`: `Full` without `Reflections` or `Indirect`.
 - **Use.** `Frame_View.pipeline` chooses a view's. 0 is the frame's main one
   (`renderer_main_pipeline`, which lasts that frame) in a window view, and `Full` in a texture one.
   Changing pipeline cuts the view's histories.
@@ -439,10 +439,11 @@ frame and the current one:
   - `pass_dispatch_indirect` and `pass_draw_indexed_indirect` take their arguments from a buffer;
     `pass_indices(pass, .Scene)` binds the scene indices (`mesh_draw_range` gives those of a mesh)
     and `.Quad`, the six of a quad.
-- **Lights.** `lights_ask(renderer, with_shadow, without_shadow)` asks for room for lights that
-  a `Simulate` pass writes with `pass_lights(pass, lights, nodes)`: they shine like those of the
-  scene; those of the first part cast shadows and those of the second trace no rays
-  ([GPU lights](lights.md#gpu-lights)).
+- **Lights.** `lights_ask(renderer, with_shadow, without_shadow, box, reach)` asks for room for
+  lights that a `Simulate` pass writes with `pass_lights(pass, lights, nodes)`: they shine like
+  those of the scene; those of the first part cast shadows, lie within `box` and light up to
+  `reach` metres from it (`LIGHTS_ANYWHERE` when the pass cannot tell), and those of the second
+  trace no rays ([GPU lights](lights.md#gpu-lights)).
 - **Table textures.** `table_texture(renderer, world, Table_Texture_Desc{name, width, height})`,
   between frames, gives the table place of an RGBA16F texture of the world under that name, which
   the extension fills each frame with `pass_table_texture_copy(pass, buffer, offset, desc)` from a
@@ -474,10 +475,11 @@ frame and the current one:
     writing it);
   - for `Geometry`, `Simulate`, `Lit`, `Post`, `Custom` and `Inspect`, and for `Surface` with
     `compute`, that of `<shader>.comp`. `Gbuffer` takes `pass_gbuffer_pipeline`. A stage that traces
-    declares the `hw`, `color` and `color_hw` variants (`//! variant`, like `shadow_trace.comp`) and
-    receives that of the rays the renderer traces: by hardware, and through the colored-shadow glass
-    filters (`colored_shadows` and some blend instance). Without the variant, the stage itself: one
-    that traces without `hw` does not see the scene with ray queries.
+    declares the `hw`, `color` and `color_hw` variants (`//! variant`, like
+    `direct_samples.comp`) and receives that of the rays the renderer traces: by hardware, and
+    through the colored-shadow glass filters (`colored_shadows` and some blend instance). Without
+    the variant, the stage itself: one that traces without `hw` does not see the scene with ray
+    queries.
   - with `program`, that of a graphics stage with the fragment of that Surface program, if the stage
     marks it `//! per surface program`; that of the stage without it while it is not made.
 - The renderer creates the pipeline at the first request, keeps it (up to `STAGE_PIPELINE_CAPACITY`
@@ -528,10 +530,10 @@ Hooks:
   `frame.time`; the G-buffer also calls it with the previous time for the motion vectors. It moves
   only what is rasterized: shadows and reflections see the mesh at rest.
 - **Lights** (`mirai_extension_light_count` and an `Extension_Light` per index, in
-  `lighting.slang`): they are lights like the others. The [shadow](lights.md#shadows) blocks trace
-  their ray (and the optional second) to a point of their disc and `direct` adds their unshadowed
-  light; `direct_lighting` adds them in a single loop on thin geometry and on reflection, GI and
-  probe hits.
+  `lighting.slang`): they are lights like the others. The
+  [direct filter](lights.md#direct-light-of-a-view) traces their ray (and the optional second) to
+  a point of their disc and adds their unshadowed light; `direct_lighting` adds them in a single
+  loop on thin geometry and on reflection, GI and probe hits.
 
 ## Batches
 

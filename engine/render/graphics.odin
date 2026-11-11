@@ -24,7 +24,7 @@ Textures :: enum u8 {Low,Medium,High,Ultra}
 Detail :: enum u8 {Low,Medium,High,Ultra}
 Reflections :: enum u8 {
     Off,      // the probe volume reflects
-    Traced,   // smooth surfaces trace their reflection
+    Traced,   // smooth surfaces trace their reflection; the rough ones take the light of what it meets from the probe volume
     Detailed, // and sharp ones show the glass and the gloss of what they reflect
 }
 
@@ -36,8 +36,9 @@ Graphics_Settings :: struct {
     indirect_light:Indirect_Light `mirai:"section=Lighting"`,
     light_probes:Light_Probes,
     reflections:Reflections,
-    sun_shadows:bool,                          // the sun casts shadows; off, no ray goes to it and it lights everything it faces
-    shadowed_lights:u32 `mirai:"min=1,max=32"`, // shadow rays of a place, each to a light that reaches it or to a group of far ones that stands for them
+    sun_shadows:bool,                          // the sun casts shadows; off, it lights everything it faces
+    light_samples:u32 `mirai:"min=1,max=31"`,   // samples of the direct light of a pixel, spread over its lights by what each gives it (GRAPHICS_LIGHT_SAMPLES_MAX)
+    light_half_resolution:bool,               // the samples of the direct light are taken at one pixel of each 2x2, and the others take theirs by their surfaces
     glass_shadows:bool,                        // blended surfaces color the light that crosses them
     glass_layers:u32 `mirai:"min=1,max=2"`,
     textures:Textures `mirai:"section=Detail"`,
@@ -53,7 +54,7 @@ Graphics_Settings :: struct {
 // Without a device: the High preset.
 GRAPHICS_SETTINGS_DEFAULT :: Graphics_Settings{
     preset_height=1080,antialiasing={0='t',1='a',2='a'},indirect_light=.Probes,light_probes=.High,reflections=.Detailed,
-    sun_shadows=true,shadowed_lights=8,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
+    sun_shadows=true,light_samples=15,light_half_resolution=true,glass_shadows=true,glass_layers=1,textures=.High,detail=.High,frame_limit=60,vsync=true,frame_generation=true,show_fps=true,
 }
 
 // The presets, in their order, and Custom: none. No setting stores one: a
@@ -63,10 +64,10 @@ Graphics_Quality :: enum u8 {Low,Medium,High,Ultra,Custom}
 // Of each preset only the fields of the quality count: graphics_preset_apply.
 // The technique of antialiasing is not one of them: it is the same in all.
 GRAPHICS_PRESETS :: #partial [Graphics_Quality]Graphics_Settings{
-    .Low   ={preset_height=720,sun_shadows=true,indirect_light=.Probes,light_probes=.Low,reflections=.Off,shadowed_lights=4,glass_layers=1,textures=.Low,detail=.Low},
-    .Medium={preset_height=900,sun_shadows=true,indirect_light=.Probes,light_probes=.Medium,reflections=.Traced,shadowed_lights=8,glass_layers=1,textures=.Medium,detail=.Medium},
-    .High  ={preset_height=1080,sun_shadows=true,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,shadowed_lights=8,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
-    .Ultra ={preset_height=1440,sun_shadows=true,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,shadowed_lights=16,glass_shadows=true,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
+    .Low   ={preset_height=720,sun_shadows=true,indirect_light=.Probes,light_probes=.Low,reflections=.Off,light_samples=7,light_half_resolution=true,glass_layers=1,textures=.Low,detail=.Low},
+    .Medium={preset_height=900,sun_shadows=true,indirect_light=.Probes,light_probes=.Medium,reflections=.Traced,light_samples=15,light_half_resolution=true,glass_layers=1,textures=.Medium,detail=.Medium},
+    .High  ={preset_height=1080,sun_shadows=true,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,light_samples=15,light_half_resolution=true,glass_shadows=true,glass_layers=1,textures=.High,detail=.High,frame_generation=true},
+    .Ultra ={preset_height=1440,sun_shadows=true,indirect_light=.Probes,light_probes=.High,reflections=.Detailed,light_samples=31,glass_shadows=true,glass_layers=2,textures=.Ultra,detail=.Ultra,frame_generation=true},
 }
 
 // The frames per second of its own a game needs under generated ones (AMD's
@@ -95,7 +96,8 @@ graphics_preset_apply :: proc(g:^Graphics_Settings,preset:Graphics_Quality) {
     g.render_scale,g.preset_height=0,p.preset_height
     g.sun_shadows=p.sun_shadows
     g.indirect_light,g.light_probes,g.reflections=p.indirect_light,p.light_probes,p.reflections
-    g.shadowed_lights,g.glass_shadows,g.glass_layers=p.shadowed_lights,p.glass_shadows,p.glass_layers
+    g.light_samples,g.glass_shadows,g.glass_layers=p.light_samples,p.glass_shadows,p.glass_layers
+    g.light_half_resolution=p.light_half_resolution
     g.textures,g.detail=p.textures,p.detail
     g.frame_generation=p.frame_generation
 }
@@ -121,6 +123,8 @@ graphics_settings_for_device :: proc(device:rhi.Device_Info) -> Graphics_Setting
 
 GRAPHICS_PROBES :: [Light_Probes][2]u32{.Low={128,64},.Medium={256,96},.High={512,256}} // probes traced per frame, rays of each
 GRAPHICS_REFLECTION_LIGHTS :: u32(8)
+// The most samples of the direct light of a pixel: past it the image of a thousand lights does not change.
+GRAPHICS_LIGHT_SAMPLES_MAX :: 31
 GRAPHICS_TEXTURE_SIZES :: [Textures]u32{.Low=1024,.Medium=2048,.High=4096,.Ultra=8192}
 GRAPHICS_DETAIL_PIXELS :: [Detail]f32{.Low=4,.Medium=2,.High=1,.Ultra=0.5} // of error on the screen before a mesh takes a simpler level
 // Of the memory of the device, what textures take; the rest is for the targets, the scene and its structures.
@@ -143,7 +147,9 @@ graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings
     s.reflections=quality.reflections!=.Off
     s.reflection_detail_roughness=quality.reflections==.Detailed?gpu.REFLECTION_SHARED_ROUGHNESS:0
     s.sun_shadows=quality.sun_shadows
-    s.light_budget=clamp(quality.shadowed_lights,1,gpu.LIGHT_CUT_MAX)
+    s.direct_samples=clamp(quality.light_samples,1,GRAPHICS_LIGHT_SAMPLES_MAX)
+    s.direct_half_resolution=quality.light_half_resolution
+    s.shadow_maps=true
     s.reflection_light_budget=min(s.light_budget,GRAPHICS_REFLECTION_LIGHTS)
     s.colored_shadows=quality.glass_shadows
     s.glass_layers=clamp(quality.glass_layers,1,gpu.GLASS_LAYERS_MAX)

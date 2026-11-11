@@ -961,7 +961,10 @@ particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
         for &entry in sync.surfaces.entries {entry.built=false}
     }
     pool.lights=lights_asked(pool.slots[:pool.slot_end])
-    if pool.lights!={} {erender.lights_ask(app.renderer,pool.lights[0],pool.lights[1])}
+    if pool.lights!={} {
+        box,reach:=lights_box(pool.slots[:pool.slot_end],sync.fields,pool.dt)
+        erender.lights_ask(app.renderer,pool.lights[0],pool.lights[1],box,reach)
+    }
     world_textures_make(sync,app.renderer)
     grids_load_prepare(sync,app.assets)
     if pool.made {erender.frame_pass(app.renderer,.Geometry,particles_shift,sync)}
@@ -1164,6 +1167,50 @@ lights_asked :: proc(slots:[]Pool_Slot) -> (asked:[2]u32) {
         if s.live {asked[0 if s.desc.shadows else 1]+=s.desc.lights}
     }
     return {min(asked[0],erender.LIGHTS_ASKED_MAX),min(asked[1],erender.LIGHTS_ASKED_MAX)}
+}
+
+// Where the lights with shadows of the live emitters of a pool lie, and how
+// far they light, for erender.lights_ask: around each emitter, as far as its
+// particles may go in their life at their fastest start or the fastest wind
+// with the strongest pull on them; anywhere where its particles are born
+// elsewhere (on a surface or bones, in its channel, at the events of another)
+// or a program moves them. dt: the seconds over which the emitter moved from
+// previous.
+@(private)
+lights_box :: proc(slots:[]Pool_Slot,fields:Gpu_Fields,dt:f32) -> (box:[2][3]f32,reach:f32) {
+    box={{max(f32),max(f32),max(f32)},{-max(f32),-max(f32),-max(f32)}}
+    anywhere:=false
+    gravity,wind:=fields_most(fields)
+    for &s in slots {
+        d:=&s.desc
+        if !s.live || !d.shadows || d.lights==0 {continue}
+        reach=max(reach,d.light[1])
+        if d.shape==.Surface || d.shape==.Bones || d.program.id!=0 || d.births[1]>0 {anywhere=true}
+        for &o in slots {
+            if o.live && o.desc.event!=.None && o.desc.event_target==s.id {anywhere=true}
+        }
+        if anywhere {continue}
+        here:=[3]f32{d.transform[0,3],d.transform[1,3],d.transform[2,3]}
+        before:=[3]f32{d.previous[0,3],d.previous[1,3],d.previous[2,3]}
+        scale:=max(linalg.length(d.transform[0].xyz),linalg.length(d.transform[1].xyz),linalg.length(d.transform[2].xyz))
+        extent:=f32(0)
+        #partial switch d.shape {
+        case .Box: extent=linalg.length(d.shape_size)
+        case .Point:
+        case: extent=abs(d.shape_size.x)
+        }
+        life:=max(d.lifetime[0],d.lifetime[1],0)
+        start:=max(abs(d.speed[0]),abs(d.speed[1]))+scale*max(linalg.length(d.velocity[0]),linalg.length(d.velocity[1]))+abs(d.inherit)*linalg.length(here-before)/max(dt,1e-3)
+        pull:=linalg.length(d.acceleration)+abs(d.gravity)*gravity+abs(d.noise_strength)+abs(d.attractor_strength)
+        far:=extent*scale+max(start,wind)*life+0.5*pull*life*life
+        if !(far<max(f32)) {
+            anywhere=true
+            continue
+        }
+        box={linalg.min(box[0],linalg.min(here,before)-far),linalg.max(box[1],linalg.max(here,before)+far)}
+    }
+    if anywhere {box=erender.LIGHTS_ANYWHERE}
+    return
 }
 
 // The share of the room of an emitter of lights, in the order of the slots
