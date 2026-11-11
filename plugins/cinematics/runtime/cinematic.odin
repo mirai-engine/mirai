@@ -117,7 +117,7 @@ cinematic_follow :: proc(cinematics:core.Read(Cinematic),animations:core.Read(an
         at,duration,_,clipped:=anim.animation_progress(playback.ptr,e)
         if !animated || !clipped {continue}
         playing:=c.status==.Playing
-        if anim.animation_playing(playback.ptr,e)!=playing {anim.animation_command(requests,e,.Resume if playing else .Pause)}
+        if anim.animation_playing(playback.ptr,e)!=playing {anim.animation_command(requests,e,.Resume if playing else .Pause,speed=animation.speed)}
         want:=cinematic_anchored(c,time.tick,time.dt,duration,animation.loop)
         step:=time.dt*animation.speed if playing else 0
         ahead:=Cinematic{anchor_time=at,anchor_rate=1}

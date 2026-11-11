@@ -29,7 +29,7 @@ imported_animation_prefab_preserves_targets_and_clip_asset :: proc(t:^testing.T)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     animation_id:=base.Asset_Id{17,29}
     assets:=importer.Import_Report{animation_id=animation_id}
-    report,write_error:=model_prefab(&model,&assets,&types,{1,2},"animated",path)
+    report,write_error:=model_prefab(&model,&assets,&types,import_world(t),{1,2},"animated",path)
     testing.expect_value(t,write_error,Error.None)
     testing.expect_value(t,report.entities,3)
     scene:asset.Scene
@@ -54,7 +54,7 @@ an_animated_source_root_keeps_a_separate_prefab_placement :: proc(t:^testing.T) 
     path:=fmt.tprintf("%s/animation-placement.scene",folder)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     assets:=importer.Import_Report{animation_id={1,3}}
-    report,error:=model_prefab(&model,&assets,&types,{1,2},"placed",path)
+    report,error:=model_prefab(&model,&assets,&types,import_world(t),{1,2},"placed",path)
     if !testing.expect_value(t,error,Error.None) {return}
     testing.expect_value(t,report.entities,2)
     scene:asset.Scene
@@ -85,7 +85,7 @@ a_skinned_source_without_clips_keeps_an_untargeted_placement_root :: proc(t:^tes
     mesh_ids:=[1]base.Asset_Id{{13,31}}
     skeleton_ids:=[1]base.Asset_Id{{17,37}}
     assets:=importer.Import_Report{mesh_ids=mesh_ids[:],skeleton_ids=skeleton_ids[:]}
-    report,error:=model_prefab(&model,&assets,&types,{1,2},"placed",path)
+    report,error:=model_prefab(&model,&assets,&types,import_world(t),{1,2},"placed",path)
     if !testing.expect_value(t,error,Error.None) {return}
     testing.expect_value(t,report.entities,1)
     scene:asset.Scene

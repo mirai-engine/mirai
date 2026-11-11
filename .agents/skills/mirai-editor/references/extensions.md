@@ -394,7 +394,7 @@ and joins them with the engine's.
   allocator)` it gives, before a model is imported, the format's options for that import
   (`Format.data`) from the registry of the project and the library of its plugins (for example
   what other providers give), with no session: the import program of the engine prepares it the
-  same way when a build syncs the project (`plugin_import_formats`). `release(data, allocator)`
+  same way when a build syncs the project (`import_library`). `release(data, allocator)`
   releases them on finishing.
 - `editor.Import_Source_Provider{source}` gives a `Source_Importer`, a source the plugin imports
   whole and that is not a model, without a folder. Its fields are `name` (the dialog's filter and

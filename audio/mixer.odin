@@ -41,7 +41,7 @@ Mixer_Desc :: struct {
     feed_frames:int,      // frames buffered ahead for each of them, rounded up to a power of two; two lossless blocks when zero. A lossless file of blocks longer than half of it is decoded whole when it loads
     decoder_thread:bool,  // decode on a thread of the mixer; false: voice_play and mixer_update decode on the calling thread
     command_capacity:int, // commands the game thread can queue between two chunks, rounded up to a power of two; 1024 when zero
-    speed_of_sound:f32,   // meters per second, for Doppler; 343 when zero
+    speed_of_sound:f32,   // meters per second, for Doppler and delay; 343 when zero
     output:Output_Kind,   // what the output plays on; mixer_set_output changes it
     allocator:runtime.Allocator, // context.allocator when unset
 }
@@ -398,6 +398,8 @@ command_pop :: proc "contextless" (m:^Mixer,command:^Command) -> bool {
 // under LIMITER_CEILING.
 // Safe to call from an audio thread: it takes no lock and allocates nothing.
 mixer_render :: proc "contextless" (m:^Mixer,out:[]f32) {
+    float_mode:=denormals_flush()
+    defer denormals_restore(float_mode)
     frames:=len(out)/m.channels
     done:=0
     for done<frames {

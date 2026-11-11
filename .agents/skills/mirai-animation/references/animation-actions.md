@@ -71,11 +71,14 @@ Play/Simulation. `animation_sample` serves them.
   without starting it again.
 - **In a layer** an action crossfades over what the layer plays (`fade_in`), at its weight, and
   when it ends the layer goes back to what it plays by itself over `fade_out`.
-- **Over the whole body of locomotion** it is the clip of the program: it leaves the search through
-  an inertial transition of `fade_in`, the action keeps its clock (sections, exit, markers), and
-  when it ends the search takes the rig back in the mode the body is in, through `fade_out`. It
-  does not depend on the locomotion mode: physics writes the mode, and the action goes on through
-  its changes. Over a clip it is a layer under the others, over the whole pose.
+- **Over the whole body** it is slot 0, a layer under the others over the whole pose, over a
+  matched base as over a clip: the search goes on under it in the mode the body is in, and the
+  action does not depend on that mode. One that ends plays its last part at its weight and fades
+  out from the next tick.
+- **Across the network** the end that decides the entity (`core.owned`) records each play, stop
+  and section it accepts in `Animation_Played`, by slot, with the tick; an entity another end
+  decides (`core.Remote`) plays a record it has not heard, forced, as far into its clip as the
+  ticks since say. A copy of the world from before it heard it plays it the same.
 - A rejected request is a problem of its entity (`animation.action_*`) that says how to fix it; an
   event that does not fit is `animation.events_lost`.
 
@@ -109,29 +112,27 @@ Discovery and memory:
 
 ## Root and movement
 
-- Extract and In_Place ask for the whole body, or an Override layer without `over`, root metadata
-  and a resolved bone. In a layer, bone and channels must be consistent with the base, the
-  outgoing clips and the other active root actions; an incompatibility interrupts the action and
-  reports why.
+- Extract and In_Place ask for the whole body, or an Override layer without `over`, and a clip with
+  root metadata whose bone is in the rig and is the root bone of the base when the base has one;
+  otherwise the action stops with `animation.action_clip`.
 - A rig that takes the sampled pose of another (`Pose_Source` of stage `Sampled`) shows what its
   source plays: its actions are asked of the source rig.
-- In a layer, Extract adds the played segments and blends with the base delta by the weight of
-  layer, component and fade. In_Place delivers the delta and removes only its contribution to the
-  internal root, without moving the gameplay transform; partial, it leaves the movement of the
-  base that it does not cover. The layers blend both policies with the weights of the pose, also
-  on exit. Over the whole body of locomotion the root delta is that of the program, by the policy
-  of the action, or of the component when the action has none.
+- **One channel:** each layer whose action has a root policy gives the root motion its clips moved
+  in the tick (from `Layer_Playing.from`, plus what it moved before a jump of section), by the
+  weights of its fader, and `stack_root` blends it over the delta of the base by the weight of the
+  layer and of the component, as the pose. A layer keeps the policy of its action while it fades
+  out. In_Place blends the reference of the root bone instead of where the clip takes it, so a
+  partial weight leaves the movement of what is under it.
 - **Any action moves its body by its root motion with `body_move`** (Additive or Override, with
   `root_motion`; In_Place keeps the pose on a moving body), in a layer or over the whole body.
-  `animation_body_motion` gives the share of the root delta of the tick that those actions have,
+  `animation_body_motion` gives the share of the root delta of the tick that those layers have,
   not what the base keeps, mirrored and warped with the root, with the mix of the one with the
-  most share; a finishing slot keeps the policy it was played with. With physics,
-  `animation_physics` makes it a one-tick layered move of that mix for its `Character`, in the
-  body's own time and across its up unless `body_vertical`, with the force that reaches it in that
-  tick for the mass of the body, except while it mantles (the climb has its own). A game does not
-  convert root motion itself, and passes no locomotion mode.
-- `action_clock` gives the `Motion_Clock` of the dominant root when it reaches at least half the
-  weight, for [motion warping](animation-motion.md). A discontinuous jump of section, or an action
+  most share. With physics, `animation_physics` makes it a one-tick layered move of that mix for
+  its `Character`, in the body's own time and across its up unless `body_vertical`, with the force
+  that reaches it in that tick for the mass of the body, except while it mantles (the climb has its
+  own). A game does not convert root motion itself, and passes no locomotion mode.
+- `action_clock` gives the `Motion_Clock` of the layer that leads the root when it has at least half
+  of it, for [motion warping](animation-motion.md). A discontinuous jump of section, or an action
   that ends or cancels while fading its root, suspends the warp without applying a window of the
   base to that delta.
 - Advance by distance modifies only the matching active clip: the positive advance drives its clock
@@ -146,13 +147,14 @@ Discovery and memory:
 - `actions_test.odin`: roundtrip of layers and actions, the table of what a set refuses, windows and
   sections as spans of the clip in one queue, cancellation, copies, queues, weighted extraction,
   clocks and distance; the query through play, section and stop; discovery by stamp, lack of memory
-  and generational recycling.
+  and generational recycling; what another end started
+  (`an_action_another_end_started_plays_once_as_far_into_it_as_that_end_is`).
 - `matching_test.odin`, over the locomotion of a `.character`:
   `an_aim_offset_adds_over_the_matched_pose_and_an_action_plays_over_both`,
   `a_play_gives_way_by_priority_and_cancel_policy_and_tells_each_change_once`,
   `a_whole_body_action_enters_at_its_start_time_or_phase_and_ends_at_its_exit_or_marker`,
   `a_whole_body_action_goes_on_when_the_body_changes_mode_and_stop_ends_it`,
-  `a_whole_body_action_blends_inertially_from_the_last_pose_and_stable_ticks_do_not_allocate` and
+  `a_whole_body_action_fades_in_over_the_pose_and_stable_ticks_do_not_allocate` and
   `the_root_motion_of_a_whole_body_action_moves_the_body`.
 - `runtime_test.odin`, `skeleton_test.odin`: layers by weight, branch,
   region, additive reference and space of the rig, on the owner thread and in jobs.

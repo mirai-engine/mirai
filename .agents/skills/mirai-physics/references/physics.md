@@ -26,6 +26,8 @@ constants and parameters: `types.odin` and the comments of each file.
   (`world_set_body_gravity`, `body_gravity`); the gravity scale multiplies either one.
 - Mass, center and inertia come from the shapes (`density` in kg/m³). A dynamic without mass
   receives 1 kg. `body_set_mass_properties` sets them by hand.
+- Every creation and setter refuses a value that is not finite (NaN or infinite), as Box2D checks
+  its inputs: it returns a null handle or false and changes nothing.
 - 3×3 matrices are inverted with a tolerance relative to their scale: a 1 mm steel ball spins and a
   joint holds a 1e8 kg block.
 - Forces (`body_apply_force*`, `body_apply_torque`) accumulate until the step; impulses change the
@@ -66,7 +68,10 @@ constants and parameters: `types.odin` and the comments of each file.
   (its core is its planes moved inward, with `std/geom`), smaller than the distance from the center
   of mass to its nearest face. A negative or non-finite value rejects the shape; zero is the shape
   with sharp edges, at no added cost.
-- `mesh_create` builds the BVH and marks flat or concave internal edges as non-colliding.
+- `mesh_create` drops triangles without area and repeats of a triangle (the same corners in the same
+  turn) as Jolt's `Sanitize` does, then builds the BVH and marks flat or concave internal edges as
+  non-colliding: a sliver along an edge would switch it off. `Mesh_Desc.inside_out` turns every
+  triangle of mirrored vertices so it still faces where it did.
   **Triangles collide only by their front**, also for [bullets](#bullets): what arrives from behind
   a face passes through it. A thin wall that must stop from both sides carries two opposite layers
   or volume; a floor or a terrain, only its top face. That way what ended up behind a face comes out
@@ -227,7 +232,12 @@ inside.
 
 ### Bullets
 
-An awake dynamic with `bullet` looks for its impacts inside the step (`ccd.odin`).
+Every awake dynamic whose farthest point moves in the step more than `CCD_SAFETY` of its smallest
+extent is swept against static shapes and stops at the first impact; the contacts of the next step
+answer it with every shape that touches (Box2D's fast bodies). If its shapes start the sweep
+touching, a sphere of `CCD_CORE` of that extent at its center of mass is swept instead: a body in
+contact still cannot go through. The rest of this section is what an awake dynamic with `bullet`
+adds (`ccd.odin`).
 
 - Only what moved is swept: the awake ones enter with their swept box in a scratch tree; sleeping
   and static ones are met in the world trees. It uses the relative trajectory and the rotation of
@@ -256,9 +266,10 @@ An awake dynamic with `bullet` looks for its impacts inside the step (`ccd.odin`
 
 ### Bullets and overlaps
 
-The same sweep looks for the convex shapes that only overlap with the bullet and that it was not
-touching at the start of the step, up to `CCD_OVERLAP_CAPACITY` per bullet and step (those that do
-not fit add to `Stats.ccd_overlaps_dropped`). Those it reaches before stopping and does not keep
+The same sweep looks for the convex shapes that only overlap with the swept body (static ones only,
+unless it is a bullet) and that it was not touching at the start of the step, up to
+`CCD_OVERLAP_CAPACITY` per body and step (those that do not fit add to
+`Stats.ccd_overlaps_dropped`). Those it reaches before stopping and does not keep
 touching at the end emit `overlap_begin` and `overlap_end` in that step, on both sides and with
 `crossed`: a trigger thinner than what the bullet travels is not lost. If it ends inside, the next
 step reports the entry as usual.
@@ -269,8 +280,13 @@ Water is not simulated: it is an analytic volume with a queryable surface, deter
 the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws it.
 
 - `fluid_create`, `fluid_set` and `fluid_destroy` (`Fluid_Desc`): a `Plane` (everything below the
-  height of its position, an ocean) or a `Box` rotated only in yaw, whose top face is the surface;
-  density, current in the volume frame and priority.
+  height of its position, an ocean), a `Box` rotated only in yaw whose top face is the surface (a
+  lake, a pool), or a `Path` (a river): the samples of a curve that `fluid_create` and `fluid_set`
+  copy, each with its width and its height as depth, level across, ending at its ends. Density,
+  current (in the frame of the box, or of the path: -Z along it toward its end) and priority. The
+  integration makes a `Fluid` with a `volume.Spline` on its entity a path: it samples the spline
+  and lays it on the ground with the procedures of the `Spline`, and does it again when the spline
+  or its place changes, or when a box of `core.Ground_Queries.changed` overlaps its reach.
   - With zero density it is a dry box: it removes the lowest-priority fluid where it is (a base
     under the sea). Flooding a room is raising the floor of its air with `fluid_set`.
   - A fluid does not overlap another one, nor a dry box another dry box; where they would, the one
@@ -282,7 +298,7 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
 - **A single surface query.** `fluid_surface_at` (private) is the only place that knows the shape of
   the surface: the height and the normal over (x, z), with the waves of the plane at the world's
   time. All readers follow it.
-  - **Waves** (`Fluid_Desc.waves`, only of a plane; a box with waves is not created): a sum of
+  - **Waves** (`Fluid_Desc.waves`, of a plane or a box): a sum of
     Gerstner waves (`fluid_waves.odin`). The time is `world_time`, the seconds the world advanced,
     which go in the snapshot: a rollback returns to the same waves. `wave_terms` gives each wave at
     a time, with the phase reduced in f64 from a nearby origin (near the world center or far, early
@@ -291,7 +307,8 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
     inclination (`steepness`) is clipped so that the sum of k·A does not pass `WAVE_FOLD`: the
     surface never folds and Newton converges. The water shaders evaluate their twin in Slang on the
     same terms.
-  - What the plane reaches with its crests enters its box (`fluid_bounds`).
+  - What the crests reach enters the box of the volume (`fluid_bounds`), and so does what the slope
+    of a box raises and lowers.
   - `fluid_sample(w,point)` gives over it the height, the normal, the current and the density at the
     point: the surface over a wet point, the one below for a dry one, or the underside of the water
     (normal downward) for a point under all of it.

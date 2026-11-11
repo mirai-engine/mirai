@@ -46,11 +46,11 @@ program_bench_step :: proc(state:^Playing,playback:^Playback,content:^host.Conte
     if output!=nil {
         if !program_buffers(state,content) || !program_players(state,output,content,animation,events,playback,1.0/60,-1,nil) || !program_pose(playback,state,content,animation,output) {return false}
         layers_advance(playback,state,content,animation,events,1.0/60,nil)
-        pose_layers(playback,state,&content.lib,animation)
+        pose_layers(playback,state,content,animation)
     } else {
         advance(playback,state,content,animation,events,1.0/60,nil)
         layers_advance(playback,state,content,animation,events,1.0/60,nil)
-        pose_sample(playback,state,&content.lib,animation,{},nil)
+        pose_sample(playback,state,content,animation,{})
         sample_curves(state,content,animation.weight)
     }
     return true

@@ -203,10 +203,11 @@ hrtf_weights :: proc "contextless" (h:^Hrtf,direction:[3]f32) -> (indices:[4]int
     return
 }
 
-// HRTFDatabase::interpolatedHRTF with full spatial blend: blends the log
-// magnitudes and unwrapped phases of the four measurements around direction
-// and writes, per ear, the spectrum of the blended HRIR at the size of conv.
-hrtf_interpolate :: proc "contextless" (h:^Hrtf,conv:^Fft,direction:[3]f32,out:[2][]f32) #no_bounds_check {
+// HRTFDatabase::interpolatedHRTF: blends the log magnitudes and unwrapped
+// phases of the four measurements around direction, takes them toward a flat
+// filter by spatial_blend (applySpatialBlend with HRTFPhaseType::None) and
+// writes, per ear, the spectrum of the blended HRIR at the size of conv.
+hrtf_interpolate :: proc "contextless" (h:^Hrtf,conv:^Fft,direction:[3]f32,spatial_blend:f32,out:[2][]f32) #no_bounds_check {
     indices,weights:=hrtf_weights(h,direction)
     bins:=h.interp.n/2+1
     for ear in 0..<2 {
@@ -218,6 +219,9 @@ hrtf_interpolate :: proc "contextless" (h:^Hrtf,conv:^Fft,direction:[3]f32,out:[
                 h.blend_magnitude[k]+=h.magnitude[row+k]*w
                 h.blend_phase[k]+=h.phase[row+k]*w
             }
+        }
+        if spatial_blend<1 {
+            for k in 0..<bins {h.blend_magnitude[k]*=spatial_blend;h.blend_phase[k]*=spatial_blend}
         }
         for k in 0..<bins {
             p:=h.blend_phase[k]

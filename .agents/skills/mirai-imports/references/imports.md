@@ -150,9 +150,10 @@ part ([extension](../../mirai-editor/references/extensions.md#importers-of-a-plu
   of the project and the library of its plugins, and `release` frees them when it ends.
 - The editor imports with the providers of its library; the import program of the engine
   (`mirai import`, the [sync](#sync) of every build) loads the editor library of the project and
-  takes the same providers from it (`editor.plugin_import_formats`, `sources.Plugin_Formats`),
-  only when a source is read by no format of the engine. A clone without that library built fails
-  those sources and says to build the editor.
+  takes the same providers from it (`editor.import_library`, `sources.Library`), only when a
+  source is read by no format of the engine or a model imports, whose prefab is written in the
+  types of the game the library has. A clone without that library built fails those sources and
+  says to build the editor.
 - `Import_Source_Provider{source}` is a source that the plugin imports whole, without a folder: it
   is not a model, and it writes what its importer says (a scene, its assets). It appears with its
   name as a filter of the dialog and claims a file with `claims(path, head)`. The Unreal content
@@ -923,7 +924,10 @@ The model importer writes no scenes (those of a whole source are written by the 
 imports it) and imports no USD blend shapes, model cameras or USDZ, and does not compile OpenUSD
 (`usdcat` is a precompiled external tool).
 
-The prefab that `import_source` writes (`cook/prefab.model_prefab`):
+The prefab that `import_source` writes (`cook/prefab.model_prefab`), in the types of the game
+(`Import_Options.world`) and through the writer of `mirai scene write` (`author.scene_file_bytes`),
+so every component is in the layout the game declares and a resave changes no byte; a component
+of a plugin the game lacks is left out:
 
 - Keeps rigid nodes with `Animation_Target.path`, meshes with `Mesh_Renderer` and shared pose
   (`Pose_Source.rig`), and omits bone entities.
