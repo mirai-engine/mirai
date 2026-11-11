@@ -95,6 +95,9 @@ struct Mirai_Vfx_Particle {
     // particle whose event started it, or 0, the ribbon of the emitter; the
     // low 24 bits are kept.
     uint ribbon;
+    // Which of the meshes of its effect a Mesh particle shows, from 0: one
+    // picked by their weights when it starts.
+    uint mesh;
 };
 struct Mirai_Vfx_Visual {
     float4 color;      // linear rgba, intensity included

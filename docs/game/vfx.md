@@ -55,7 +55,8 @@ and `request_values_clear`. Assets belong to the effect.
 
 ## Author an effect
 
-Editor: the `.particle` document. Agent: `particle.set`, `particle.inspect`.
+Editor: the `.particle` document. Agent: `particle.set`, `particle.inspect`. Debris: `Mesh` with
+up to four `meshes` and `mesh_weights`, `facing` `Velocity` for shards that point where they fly.
 Content tool, over the defaults ([assets](assets.md)):
 
 ```odin
@@ -66,9 +67,8 @@ err:=effect.particle_save("assets/particles/dust.particle", &types, {id=id, info
 
 ## Trails
 
-A trail behind each particle: a second effect drawn as `Ribbon` (`Point` shape, speed 0, the tail's
-lifetime), named by `sub_particle` of the first with `trigger` `Trail` and `sub_count` 1. Each
-spark gets a smooth band of its own; a program may set `particle.ribbon` in `initialize`.
+A trail behind each spark: a `Ribbon` effect (`Point`, speed 0) named by `sub_particle` of the
+first with `trigger` `Trail`, `sub_count` 1; a program may set `particle.ribbon` in `initialize`.
 
 ## Pitfalls
 

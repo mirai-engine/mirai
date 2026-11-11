@@ -23,7 +23,10 @@ program parameters alike). Tables: `particle` (`Particle_Info`), `parameters`
     volumes bodies and foliage read, evaluated on the GPU
     ([volumes](../../mirai-gameplay/references/libraries.md#volume)); those of an effect view fall
     with `GRAVITY`;
-  - a `Mesh` particle turns its mesh by its `rotation` (and `spin`) about an axis of its own;
+  - a `Mesh` particle shows one of `meshes`, picked by `mesh_weights` when it starts (a
+    program's `particle.mesh` may change it; `flags` from `MESH_CHOICE_SHIFT`), and turns as
+    `facing` says: by its `rotation` (and `spin`) about an axis of its own, or with its front
+    (-Z) along its velocity, its +Y up, rolled by its rotation;
   - its particles light the scene with `lights`, and cast shadows only with `light_shadows`
     ([lights](#particle-lights));
   - the editor shows each field in the group its `group` tag names, or in that of the field
@@ -502,16 +505,19 @@ In each view:
   world's views, and `Mesh` particles are not drawn in them but those whose material blends.
 - **meshes** (`Gbuffer`): `Mesh` particles (but those whose material blends) in the G-buffer with
   `particle_mesh.vert` and the
-  engine's fragment, or that of the Surface program of their materials, one draw per program
-  (`pass_mesh_programs`): turned by their rotation about an axis of their own
-  (`particle_rotation` of `particles.slang`), motion vectors from their velocity
+  engine's fragment, or that of the Surface program of their materials: a draw per mesh of the
+  emitter and program (`pass_mesh_programs`) of every particle alive, which collapses those that
+  show another mesh; turned as their effect says (`particle_mesh_rotation` of
+  `particles.slang`), motion vectors from their velocity
   and the emitter's material or the mesh's, which the plugin tells the renderer each frame
   (`frame_gbuffer_mesh`) so that the views store their reflectance and their layers. Everything
   that follows lights, shades and reflects them. Each one draws without indices the level 0
-  clusters of its mesh (`erender.mesh_draw_range`, `pass_draw_indirect`) and reads its vertices
+  clusters of its mesh (`erender.mesh_draw_range`, `pass_draw_indirect`, the draw `finish`
+  writes in `Gpu_State.meshes`) and reads its vertices
   only through `geometry.slang`: the plugin asks each frame for the whole mesh (`frame_mesh_whole`),
   and a mesh with pages outside its root loads them all and does not release them while it is
-  drawn, because the scene's cull does not see the particles.
+  drawn, because the scene's cull does not see the particles. What a program's `render` gives
+  does not reach a mesh in the G-buffer.
 
 ## Particle lights
 
@@ -552,7 +558,8 @@ they light everything within their reach, without shadow rays or a place in thos
   fall to the floor and slide according to their friction, sprites that run the Surface program of
   their material with what their particle gives, its random value and its radius
   (`hand_over.slang`, `particle_data.slang`), stages over cells with iterations (`tally.slang`),
-  splats that a stage stores (`spread.slang`), rays from a
+  splats that a stage stores (`spread.slang`), mesh particles that pick their meshes by weight
+  and face their velocity, rays from a
   stage against a cube (`probe.slang`), read back with `pass_readback`, a volume that glows
   (`puff.slang`), particle lights with shadow that light the floor within their reach and not
   behind a cube, and without shadow, also behind it, a floor whose Surface program reads a grid's

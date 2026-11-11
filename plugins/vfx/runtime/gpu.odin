@@ -118,7 +118,8 @@ Emitter_Desc :: struct {
     spawns:[SPAWNS]Particle_Spawn, // since the last list, in the order of their births
     paused:bool,         // its particles stay as they are
     material:erender.Material_Handle, // of info.material
-    mesh:[3]u32,              // of Mesh particles: the vertices of a draw of its clusters (erender.mesh_draw_range) and the mesh of the scene
+    meshes:[effect.PARTICLE_MESHES]Mesh_Choice, // of Mesh particles: what each mesh draws, mesh_count of them
+    mesh_count:u32,
     blended:bool,             // of Mesh particles: its material blends (alpha mode Blend), so they are drawn over the lit scene with the sprites
     view:erender.Texture_Handle, // drawn only into the effect view of this texture (gui.UI_Effects); 0: in the views of the world
     event_target:u64,         // id of the emitter info.trigger starts info.sub_count particles in; 0: none
@@ -157,10 +158,11 @@ Gpu_Particle :: struct {
     color:u32,          // rgba8 of the mix it started with
     light:u32,          // rgb with a shared exponent: the light it receives
     emitter:u32,        // slot
-    flags:u32,          // 1: light holds a value; above RIBBON_SHIFT, the ribbon it joins (0: that of its emitter)
+    flags:u32,          // 1: light holds a value; from MESH_CHOICE_SHIFT, its mesh; above RIBBON_SHIFT, the ribbon it joins (0: that of its emitter)
 }
 #assert(size_of(Gpu_Particle)==64)
 RIBBON_SHIFT :: 8
+MESH_CHOICE_SHIFT :: 1 // bits of Gpu_Particle.flags from it on: which of the meshes of its emitter a Mesh particle shows (PARTICLE_MESHES of them)
 
 Gpu_Emitter :: struct {
     world,previous:[3][4]f32,
@@ -179,7 +181,7 @@ Gpu_Emitter :: struct {
     collide:[4]f32,     // bounce, friction, life lost
     look:[4]f32,        // stretch, soft, intensity, flipbook speed
     attractor:[4]f32,
-    mesh:[4]u32,        // vertex count (index count of a sprite), the mesh, 0, material row
+    mesh:[4]u32,        // of Mesh particles: its meshes, Particle_Facing, bytes of the rows of the frame to its Gpu_Mesh_Row; material row
     flipbook:[4]u32,    // columns, rows
     size_curve,size_times:[2][4]f32,
     gradient:[effect.PARTICLE_CURVE_KEYS][4]f32,
@@ -194,15 +196,33 @@ Gpu_Emitter :: struct {
 }
 #assert(size_of(Gpu_Emitter)==864)
 
+// A mesh a Mesh particle can show: the mesh of the scene, the vertices of a
+// draw of its clusters (erender.mesh_draw_range) and its weight, the weights
+// before it added.
+Mesh_Choice :: struct {
+    handle:erender.Mesh_Handle,
+    vertices:u32,
+    weight:f32,
+}
+
 // Per emitter on the GPU: counters and its draw.
 Gpu_State :: struct {
     dead,alive:u32, // free slots on its list, and particles on the one drawn
     births,born:u32, // of an emitter whose program gives its births: those of the frame, and all it started
-    draw:[5]u32,    // index count, instance count, first index, vertex offset, first instance; of a mesh: vertex count, instance count, first vertex, first instance
+    draw:[5]u32,    // of sprites: index count, instance count, first index, vertex offset, first instance
     pieces:u32,     // of a ribbon: the pieces each segment is cut into this frame, and the frames after can lower by one a frame
     pad1:[2]u32,
+    meshes:[effect.PARTICLE_MESHES][4]u32, // of Mesh particles, a draw of each mesh: vertex count, instance count, first vertex, first instance
 }
-#assert(size_of(Gpu_State)==48)
+#assert(size_of(Gpu_State)==112)
+
+// What the frame tells the passes of a Mesh emitter, in its rows (Gpu_Emitter.mesh.z):
+// the mesh of each choice, their weights added up and the vertices of a draw of each.
+Gpu_Mesh_Row :: struct {
+    meshes:[effect.PARTICLE_MESHES]u32,
+    weights:[effect.PARTICLE_MESHES]f32,
+    vertices:[effect.PARTICLE_MESHES]u32,
+}
 
 Gpu_Event :: struct {
     position:[3]f32, target:u32, // relative to the origin of the pool
@@ -607,6 +627,12 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         g.frame={max(u32),0,0,0}
         g.lights=light_share(d.info.lights,d.info.light_shadows,&lights_taken,pool.lights)
         g.data.z,g.data.w=transmute(u32)d.age,d.born
+        if d.info.render==.Mesh {
+            g.mesh.z=u32(len(pool.frame_bytes))
+            row:=Gpu_Mesh_Row{}
+            for choice,c in d.meshes[:min(d.mesh_count,effect.PARTICLE_MESHES)] {row.meshes[c],row.weights[c],row.vertices[c]=u32(choice.handle),choice.weight,choice.vertices}
+            append(&pool.frame_bytes,..([^]u8)(&row)[:size_of(row)])
+        }
         if d.resources>0 && int(d.resources-1)+RESOURCE_ROWS<=len(sync.resources) {
             g.frame.x=u32(len(pool.frame_bytes))
             for resource in sync.resources[d.resources-1:][:RESOURCE_ROWS] {
@@ -695,8 +721,6 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
 @(private)
 emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
     d,m:=&s.desc,&s.desc.info
-    vertex_count,mesh:=u32(6),u32(0)
-    if m.render==.Mesh {vertex_count,mesh=d.mesh[0],d.mesh[1]}
     event:=m.trigger if d.event_target!=0 else .None
     g.random.x,g.random.z=u32(base.hash_combine(d.id,0x7061727469636c65)),min(m.sub_count,EVENT_SPAWN_MAX)
     g.program.xyz={d.program.id,capacity,u32(m.report)}
@@ -715,7 +739,7 @@ emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
     g.collide={clamp(m.bounce,0,1),clamp(m.friction,0,1),clamp(m.collision_life,0,1),0}
     g.look={max(m.stretch,0),max(m.soft,0),m.intensity,max(m.flipbook_speed,0)}
     g.attractor={m.attractor.x,m.attractor.y,m.attractor.z,m.attractor_strength}
-    g.mesh={vertex_count,mesh,0,u32(d.material)}
+    g.mesh={d.mesh_count,u32(m.facing),0,u32(d.material)}
     g.flipbook={max(m.flipbook[0],1),max(m.flipbook[1],1),0,0}
     g.size_curve=transmute([2][4]f32)m.size_over_life.values
     g.size_times=transmute([2][4]f32)m.size_over_life.times
@@ -886,8 +910,10 @@ particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
     // view, and their meshes stay whole: they draw every cluster of level 0.
     for &s in pool.slots[:pool.slot_end] {
         if !s.live || s.desc.info.render!=.Mesh {continue}
-        if !s.desc.blended {erender.frame_gbuffer_mesh(app.renderer,erender.Mesh_Handle(s.desc.mesh[1]),s.desc.material)}
-        erender.frame_mesh_whole(app.renderer,erender.Mesh_Handle(s.desc.mesh[1]))
+        for choice in s.desc.meshes[:min(s.desc.mesh_count,effect.PARTICLE_MESHES)] {
+            if !s.desc.blended {erender.frame_gbuffer_mesh(app.renderer,choice.handle,s.desc.material)}
+            erender.frame_mesh_whole(app.renderer,choice.handle)
+        }
     }
     erender.frame_pass(app.renderer,.Blend,particles_volumes,sync)
     erender.frame_pass(app.renderer,.Blend,particles_sprites,sync)
@@ -1210,7 +1236,7 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
     erender.pass_surface_read(pass,8,.Glass_Depth)
     state:=pool_buffer(pool,.State)
     erender.pass_buffer(pass,2,state)
-    Params :: struct {emitter,pass,pad0,pad1:u32,media:erender.Media_Grid}
+    Params :: struct {emitter,pass,choice,pad1:u32,media:erender.Media_Grid}
     for draw in draws {
         // The stage of its program, with the fragment of the Surface program of its material.
         desc:=&pool.slots[draw.slot].desc
@@ -1224,10 +1250,17 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
         if pipeline==0 {continue}
         erender.pass_pipeline(pass,pipeline)
         params:=Params{emitter=draw.slot,pass=u32(pass.glass),media=media}
-        erender.pass_params(pass,&params,size_of(params))
-        // A mesh draws its clusters without indices, as in the G-buffer.
-        at:=u64(draw.slot)*size_of(Gpu_State)+u64(offset_of(Gpu_State,draw))
-        if mesh {erender.pass_draw_indirect(pass,state,at)} else {erender.pass_draw_indexed_indirect(pass,state,at)}
+        if !mesh {
+            erender.pass_params(pass,&params,size_of(params))
+            erender.pass_draw_indexed_indirect(pass,state,u64(draw.slot)*size_of(Gpu_State)+u64(offset_of(Gpu_State,draw)))
+            continue
+        }
+        // A mesh draws its clusters without indices, as in the G-buffer, a draw for each of its meshes.
+        for c in 0..<min(desc.mesh_count,effect.PARTICLE_MESHES) {
+            params.choice=c
+            erender.pass_params(pass,&params,size_of(params))
+            erender.pass_draw_indirect(pass,state,mesh_draw(draw.slot,c))
+        }
     }
     erender.pass_end(pass)
 }
@@ -1248,25 +1281,33 @@ particles_meshes :: proc(pass:^erender.Pass,user:rawptr) {
     erender.pass_buffer(pass,3,pool_buffer(pool,.Lists))
     erender.pass_buffer(pass,9,pool_buffer(pool,.Data))
     state:=pool_buffer(pool,.State)
-    Params :: struct {emitter,program,pad0,pad1:u32}
+    Params :: struct {emitter,program,choice,pad1:u32}
     bound:=pipeline
     for draw in draw_list(pool,pass.eye,pass.origin,true) {
         desc:=&pool.slots[draw.slot].desc
         shader:="particle_mesh"
         if own:=program_pipelines(&sync.pipelines,desc.program.id);own!=nil {shader=base.text_get(own.mesh[:])}
-        // A draw for each Surface program of what its mesh shows, with the fragment of that program.
-        programs:[MESH_PROGRAMS]u32
-        count:=erender.pass_mesh_programs(pass,erender.Mesh_Handle(desc.mesh[1]),desc.material,programs[:])
-        for program in programs[:min(count,len(programs))] {
-            want:=erender.pass_gbuffer_pipeline(pass,shader,"particle meshes",program=program)
-            if want==0 {continue}
-            if want!=bound {erender.pass_pipeline(pass,want);bound=want}
-            params:=Params{emitter=draw.slot,program=program if count>1 else max(u32)}
-            erender.pass_params(pass,&params,size_of(params))
-            erender.pass_draw_indirect(pass,state,u64(draw.slot)*size_of(Gpu_State)+u64(offset_of(Gpu_State,draw)))
+        for choice,c in desc.meshes[:min(desc.mesh_count,effect.PARTICLE_MESHES)] {
+            // A draw for each Surface program of what the mesh shows, with the fragment of that program.
+            programs:[MESH_PROGRAMS]u32
+            count:=erender.pass_mesh_programs(pass,choice.handle,desc.material,programs[:])
+            for program in programs[:min(count,len(programs))] {
+                want:=erender.pass_gbuffer_pipeline(pass,shader,"particle meshes",program=program)
+                if want==0 {continue}
+                if want!=bound {erender.pass_pipeline(pass,want);bound=want}
+                params:=Params{emitter=draw.slot,program=program if count>1 else max(u32),choice=u32(c)}
+                erender.pass_params(pass,&params,size_of(params))
+                erender.pass_draw_indirect(pass,state,mesh_draw(draw.slot,u32(c)))
+            }
         }
     }
     erender.pass_end(pass)
+}
+
+// Bytes of the state buffer to the draw of a mesh of an emitter.
+@(private)
+mesh_draw :: proc "contextless" (slot,choice:u32) -> u64 {
+    return u64(slot)*size_of(Gpu_State)+u64(offset_of(Gpu_State,meshes))+u64(choice)*size_of([4]u32)
 }
 
 // Lets go of the buffers of the pool of a world.

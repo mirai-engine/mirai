@@ -3,9 +3,10 @@
 // an emitter that sorts its list back to front (a ribbon: by its ribbon, then
 // youngest first, the order it was laid along its path, the slot breaking
 // ties so a burst keeps one order), and for a ribbon the pieces each segment
-// is cut into to follow the curve through its particles.
+// is cut into to follow the curve through its particles. Mesh particles: a
+// draw of every alive one for each mesh of the emitter, which keeps those
+// that show that mesh.
 #define PARTICLES_WRITABLE
-#define PARTICLES_COUNTED
 #include "particles.slang"
 #define MIRAI_GROUP_X 512
 #define MIRAI_GROUP_Y 1
@@ -126,7 +127,11 @@ void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
     }
     if (t != 0u) return;
     bool mesh = e.kinds.y == PARTICLE_RENDER_MESH;
-    particle_states[slot].index_count = mesh ? e.mesh.x : 6u;
+    particle_states[slot].index_count = 6u;
+    for (uint c = 0u; c < PARTICLE_MESHES; c++) {
+        bool held = mesh && c < e.mesh.x;
+        particle_states[slot].meshes[c] = uint4(held ? particle_mesh_vertices(slot, c) : 0u, held ? alive : 0u, 0u, 0u);
+    }
     particle_states[slot].instance_count = ribbon ? (max(alive, 1u) - 1u) * pieces : alive;
     particle_states[slot].first_index = 0u;
     particle_states[slot].vertex_offset = 0;

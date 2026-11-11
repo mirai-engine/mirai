@@ -2,6 +2,8 @@
 //! mirai constant RIBBON_SHIFT uint ../runtime/gpu.odin
 //! mirai constant RIBBON_PIECES uint ../runtime/gpu.odin
 //! mirai constant TRAILS_PER_SECOND uint ../runtime/gpu.odin
+//! mirai constant MESH_CHOICE_SHIFT uint ../runtime/gpu.odin
+//! mirai constant PARTICLE_MESHES uint ../runtime/effect/effect.odin
 // Particles: the pool, the emitters and what the passes share. Layouts are
 // those of gpu.odin of the vfx plugin (sizes asserted there).
 #ifndef MIRAI_PARTICLES_SLANG
@@ -17,7 +19,7 @@ struct Particle {
     uint color;                     // rgba8 of the square root of the linear color
     uint light;                     // rgb with a shared exponent: the light it receives
     uint emitter;                   // slot
-    uint flags;                     // 1: light holds a value; above RIBBON_SHIFT, the ribbon it joins
+    uint flags;                     // 1: light holds a value; from MESH_CHOICE_SHIFT, its mesh; above RIBBON_SHIFT, the ribbon it joins
 };
 
 #define PARTICLE_SPAWNS 8u
@@ -65,6 +67,7 @@ struct Particle_State {
     uint index_count; uint instance_count; uint first_index; int vertex_offset; uint first_instance;
     uint pieces;          // of a ribbon: those each segment is cut into this frame
     uint pad3; uint pad4;
+    uint4 meshes[PARTICLE_MESHES]; // of Mesh particles, a draw of each mesh without indices
 };
 
 struct Particle_Event {
@@ -105,6 +108,8 @@ struct Particle_Event {
 #define PARTICLE_RENDER_MESH 4u
 
 #define PARTICLE_COLLISION_WORLD 1u
+#define PARTICLE_FACING_TUMBLE 0u
+#define PARTICLE_FACING_VELOCITY 1u
 #define PARTICLE_EVENT_DEATH 1u
 #define PARTICLE_EVENT_COLLISION 2u
 #define PARTICLE_EVENT_TRAIL 3u
@@ -352,6 +357,23 @@ Particle_Stage particle_stage_of(uint slot, uint k) {
     return s;
 }
 
+// What the rows of the frame hold of a Mesh emitter (vfx.Gpu_Mesh_Row): the mesh of the
+// scene of each choice, their weights added up and the vertices of a draw of each.
+#define PARTICLE_MESH_ROW_WEIGHTS 16u
+#define PARTICLE_MESH_ROW_VERTICES 32u
+uint particle_mesh_of(uint slot, uint choice) { return particle_frame.Load(particle_emitters[slot].mesh.z + choice * 4u); }
+uint particle_mesh_vertices(uint slot, uint choice) { return particle_frame.Load(particle_emitters[slot].mesh.z + PARTICLE_MESH_ROW_VERTICES + choice * 4u); }
+
+// Which of the meshes of an emitter a particle shows, by a number from 0 to 1 against their weights.
+uint particle_mesh_pick(uint slot, float u) {
+    uint count = max(particle_emitters[slot].mesh.x, 1u);
+    float4 weights = particle_frame_row(particle_emitters[slot].mesh.z + PARTICLE_MESH_ROW_WEIGHTS);
+    for (uint c = 0u; c + 1u < count; c++) {
+        if (u < weights[c]) return c;
+    }
+    return count - 1u;
+}
+
 // The row-th resource of an emitter; kind NONE when it has none.
 Particle_Resource particle_resource(uint slot, uint row) {
     Particle_Resource r = (Particle_Resource)0;
@@ -532,6 +554,11 @@ float particle_puff(float2 tile, float seed) {
     return disc * disc * saturate(0.35 + n * 1.1);
 }
 
+// The mesh a Mesh particle shows among those of its emitter.
+uint particle_mesh_choice(uint slot, Particle p) {
+    return min((p.flags >> MESH_CHOICE_SHIFT) & (PARTICLE_MESHES - 1u), max(particle_emitters[slot].mesh.x, 1u) - 1u);
+}
+
 // Rotation of a particle mesh: about an axis of its own.
 float3x3 particle_rotation(uint seed, float angle) {
     uint s = seed * 31u + 7u;
@@ -541,6 +568,29 @@ float3x3 particle_rotation(uint seed, float angle) {
         t * axis.x * axis.x + c, t * axis.x * axis.y - si * axis.z, t * axis.x * axis.z + si * axis.y,
         t * axis.x * axis.y + si * axis.z, t * axis.y * axis.y + c, t * axis.y * axis.z - si * axis.x,
         t * axis.x * axis.z - si * axis.y, t * axis.y * axis.z + si * axis.x, t * axis.z * axis.z + c);
+}
+
+// The rotation of a Mesh particle as its effect turns it (Particle_Facing):
+// Tumble, about an axis of its own; Velocity, its front (-Z) along its
+// velocity (up when still), its +Y as near the up of the world, rolled about
+// its front by its rotation.
+float3x3 particle_mesh_rotation(uint slot, Particle p) {
+    if (particle_emitters[slot].mesh.y != PARTICLE_FACING_VELOCITY) return particle_rotation(p.seed, p.rotation);
+    float3 v = particle_world_vector(slot, p.velocity);
+    float3 forward = length(v) > 1e-5 ? normalize(v) : float3(0.0, 1.0, 0.0);
+    float3 up = abs(forward.y) > 0.99 ? float3(0.0, 0.0, forward.y > 0.0 ? 1.0 : -1.0) : float3(0.0, 1.0, 0.0);
+    float3 z = -forward;
+    float3 x = normalize(cross(up, z));
+    float3 y = cross(z, x);
+    float s = sin(p.rotation), c = cos(p.rotation);
+    float3 rx = x * c + y * s, ry = y * c - x * s;
+    return float3x3(rx.x, ry.x, z.x, rx.y, ry.y, z.y, rx.z, ry.z, z.z);
+}
+
+// A vector of the space of its mesh in the world: one that tumbles turns in
+// the space of its emitter; one that faces its velocity, in the world.
+float3 particle_mesh_vector(uint slot, float3x3 rotation, float3 v) {
+    return particle_emitters[slot].mesh.y == PARTICLE_FACING_TUMBLE ? particle_world_vector(slot, mul(rotation, v)) : mul(rotation, v);
 }
 
 #endif

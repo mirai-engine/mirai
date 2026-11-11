@@ -295,6 +295,7 @@ the_values_particles_slang_copies_are_those_of_the_plugin :: proc(t:^testing.T) 
         {"PARTICLE_FLAG_ACTIVE",FLAG_ACTIVE},{"PARTICLE_FLAG_RESET",FLAG_RESET},{"PARTICLE_FLAG_LOCAL",FLAG_LOCAL},{"PARTICLE_FLAG_LIT",FLAG_LIT},
         {"PARTICLE_FLAG_SORT",FLAG_SORT},{"PARTICLE_FLAG_PAUSED",FLAG_PAUSED},{"PARTICLE_FLAG_ADDITIVE",FLAG_ADDITIVE},{"PARTICLE_FLAG_RELATIVE",FLAG_RELATIVE},
         {"PARTICLE_FLAG_MOVED",FLAG_MOVED},{"PARTICLE_FLAG_BIRTHS",FLAG_BIRTHS},{"PARTICLE_FLAG_PREPARE",FLAG_PREPARE},
+        {"PARTICLE_MESH_ROW_WEIGHTS",u64(offset_of(Gpu_Mesh_Row,weights))},{"PARTICLE_MESH_ROW_VERTICES",u64(offset_of(Gpu_Mesh_Row,vertices))},
         {"PARTICLE_STATE_BYTES",STATE_BYTES},{"PARTICLE_SPAWNS",SPAWNS},
         {"PARTICLE_EVENT_CAPACITY",EVENT_CAPACITY},{"PARTICLE_EVENTS_AT",EVENTS_AT/4},{"PARTICLE_EVENT_WORDS",size_of(Gpu_Event)/4},
         {"PARTICLE_REPORT_WORDS",REPORT_WORDS},
@@ -312,6 +313,7 @@ the_values_particles_slang_copies_are_those_of_the_plugin :: proc(t:^testing.T) 
     kinds(t,defines,effect.Particle_Shape,"PARTICLE_SHAPE_",true)
     kinds(t,defines,effect.Particle_Render,"PARTICLE_RENDER_",true)
     kinds(t,defines,effect.Particle_Collision,"PARTICLE_COLLISION_",false)
+    kinds(t,defines,effect.Particle_Facing,"PARTICLE_FACING_",true)
     kinds(t,defines,effect.Particle_Event,"PARTICLE_EVENT_",false)
     kinds(t,defines,Resource_Kind,"PARTICLE_RESOURCE_",true)
     kinds(t,defines,Stage_Kind,"PARTICLE_STAGE_",true)

@@ -114,6 +114,7 @@ bool particle_start(uint slot, Particle_Emitter e, uint seed, uint birth, float3
     v.position = world_position;
     v.age = age + lived;
     v.ribbon = ribbon;
+    v.mesh = e.kinds.y == PARTICLE_RENDER_MESH ? particle_mesh_pick(slot, random01(seed)) : 0u;
     if (lived > 0.0) {
         float3 acceleration = e.acceleration.xyz + particle_fields(slot, params.fields, v.position);
         v.position += v.velocity * lived + 0.5 * acceleration * lived * lived;
