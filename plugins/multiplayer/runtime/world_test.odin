@@ -174,12 +174,16 @@ a_scene_change_keeps_the_players_and_replicates_the_new_world_once_the_client_lo
     testing.expect(t,core.has(&client.links,adopted),"the replica takes the entity of the scene with its Id")
     if !testing.expect_value(t,core.count(&server.seats),1) {return}
     testing.expect_value(t,core.at(&server.seats,0).player,player_id({42,0}))
-    mirrored:=false
+    // Seat.peer and Seat.player stay on each end: on the client its replica is its one seat of this
+    // machine, slot 0.
+    mirrored,own:=false,0
     for row in 0..<core.count(&client.seats) {
         value:=core.at(&client.seats,row)
-        mirrored ||= value.peer==u64(connection) && value.player==0 && core.has(&client.links,core.entity_at(&client.seats,row))
+        if !input.seat_local(value) || value.slot!=0 {continue}
+        own+=1
+        mirrored ||= core.has(&client.links,core.entity_at(&client.seats,row))
     }
-    testing.expect(t,mirrored,"the seat of the player reaches the client with its peer, without its id")
+    testing.expect(t,mirrored && own==1,"the seat of the player reaches the client as its one seat of this machine, without its id")
 
     pair_load(p,0,LEVEL_B,2)
     // The client is still loading: the new world does not reach it.

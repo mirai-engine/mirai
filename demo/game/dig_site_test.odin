@@ -31,7 +31,12 @@ dig_sight :: proc(w:^Dig_World) -> cam.Sight {
 
 @(private="file")
 dig_types :: proc(types:^[dynamic]core.Test_Type) {
-    append(types,core.test_type(Dig_Site,default=proc(dst:^Dig_Site) {dst^=DIG_SITE_DEFAULT}))
+    // The test_types of engine/render are of its test files, which the libraries a project's tests
+    // link leave out.
+    append(types,
+        core.test_type(Dig_Site,default=proc(dst:^Dig_Site) {dst^=DIG_SITE_DEFAULT}),
+        core.test_type(render.Camera,default=proc(dst:^render.Camera) {dst^=render.CAMERA_DEFAULT}),
+    )
 }
 
 // What the players take is run state: a component on a core.Keep root, which
