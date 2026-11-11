@@ -26,6 +26,8 @@ constants and parameters: `types.odin` and the comments of each file.
   (`world_set_body_gravity`, `body_gravity`); the gravity scale multiplies either one.
 - Mass, center and inertia come from the shapes (`density` in kg/m³). A dynamic without mass
   receives 1 kg. `body_set_mass_properties` sets them by hand.
+- Every creation and setter refuses a value that is not finite (NaN or infinite), as Box2D checks
+  its inputs: it returns a null handle or false and changes nothing.
 - 3×3 matrices are inverted with a tolerance relative to their scale: a 1 mm steel ball spins and a
   joint holds a 1e8 kg block.
 - Forces (`body_apply_force*`, `body_apply_torque`) accumulate until the step; impulses change the
@@ -66,7 +68,10 @@ constants and parameters: `types.odin` and the comments of each file.
   (its core is its planes moved inward, with `std/geom`), smaller than the distance from the center
   of mass to its nearest face. A negative or non-finite value rejects the shape; zero is the shape
   with sharp edges, at no added cost.
-- `mesh_create` builds the BVH and marks flat or concave internal edges as non-colliding.
+- `mesh_create` drops triangles without area and repeats of a triangle (the same corners in the same
+  turn) as Jolt's `Sanitize` does, then builds the BVH and marks flat or concave internal edges as
+  non-colliding: a sliver along an edge would switch it off. `Mesh_Desc.inside_out` turns every
+  triangle of mirrored vertices so it still faces where it did.
   **Triangles collide only by their front**, also for [bullets](#bullets): what arrives from behind
   a face passes through it. A thin wall that must stop from both sides carries two opposite layers
   or volume; a floor or a terrain, only its top face. That way what ended up behind a face comes out

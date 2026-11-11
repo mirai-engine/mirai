@@ -85,9 +85,7 @@ Area :: struct {
 // the noise. count: the bodies pushed. ok is false, and nothing is pushed, for values that are not valid.
 world_apply_area :: proc(w:^World,area:Area,force:Vec3,radial:=false,impulse:=false,velocity_change:=false,falloff:Radial_Falloff=.Linear,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) -> (count:int,ok:bool) {
     if w==nil || len(w.bodies)==0 || area.weight==nil || falloff>.Logarithmic || !weight_range_valid(range) || !field_noise_valid(noise) || velocity_change && !impulse {return 0,false}
-    for value in area.center {if !(value>=-max(f32) && value<=max(f32)) {return 0,false}}
-    for value in force {if !(value>=-max(f32) && value<=max(f32)) {return 0,false}}
-    for value in ([4]f32{area.rotation.x,area.rotation.y,area.rotation.z,area.rotation.w}) {if !(value>=-max(f32) && value<=max(f32)) {return 0,false}}
+    if !finite(area.center,force) || !finite(area.rotation) {return 0,false}
     box:=area.bounds
     for axis in 0..<3 {if !(box.min[axis]>=-max(f32) && box.max[axis]<=max(f32) && box.min[axis]<=box.max[axis]) {return 0,false}}
     frame:=q_normalize(area.rotation)

@@ -113,7 +113,12 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   body, with the collider's surface, filter and density; otherwise it is the hull of all the points.
   It fits in the hull budget whole or not at all.
 - `size` is multiplied by the absolute world scale: the sphere takes the largest; capsule and
-  cylinder, the largest of XZ for the radius and Y for the height.
+  cylinder, the largest of XZ for the radius and Y for the height. A negative axis mirrors the
+  collider where it is drawn: its center, and the points of a mesh or hull, whose triangles turn
+  so they keep facing out. A heightfield cannot be mirrored (`physics.collider_mirrored`), and a
+  collider turned under a scale that is not uniform across the turn is sheared, which a shape
+  cannot be (`physics.collider_sheared`).
+- A world Transform that is not finite is `physics.transform`: the body keeps its last pose.
 - `convex_radius` rounds the edges of `Box`, `Cylinder` or `Hull` without changing their size
   ([geometry](physics.md#geometry)) and is scaled by the smallest axis. It must stay below the
   smallest half-axis, the radius and half the height of the cylinder, or the distance from the hull
