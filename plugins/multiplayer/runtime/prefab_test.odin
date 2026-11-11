@@ -24,6 +24,7 @@ a_replica_of_a_spawned_copy_is_filled_when_its_prefab_arrives :: proc(t:^testing
     asset.scene_entity_add(&crate,1,0,"Crate")
     asset.scene_entity_add(&crate,2,1,"Lid")
     asset.scene_set(&crate,1,"Net_Test_Late",&Net_Test_Late{level=3})
+    crate.doc.flags+={.Prefab}
     testing.expect_value(t,asset.scene_save(&crate,fmt.tprintf("%s/crate.scene",folder)),asset.Error.None)
     asset.scene_destroy(&crate)
 
