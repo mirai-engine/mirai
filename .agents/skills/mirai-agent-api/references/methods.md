@@ -978,7 +978,7 @@ of an instance" are `-32602`; the rest, `-32000`
   - `particle.programs`: the Vfx programs of the shaders, with `attributes` (bytes per particle),
     their parameters (`kind`, `components`, `default`, `min`, `max`), their resources (`name`,
     `kind` `Surface`, `Channel`, `Bones` or `Grid`) and their stages (`name`, `over`: `particles`
-    or a grid, `iterations`, `neighbors`).
+    or a grid, `iterations`).
   - `particle.set` leaves the `.particle` in an undo step (`history.undo`), attributed to the AI
     turn that calls them.
 - **Emitters** (`entity`; `world` `Edit`, the document, or `Play`, the caller's):

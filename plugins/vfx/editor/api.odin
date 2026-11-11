@@ -68,7 +68,7 @@ Api_Particle_Control_Result :: struct {
 api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="particle.inspect",params_schema=PARTICLE_PARAMS_SCHEMA,summary="The values of a particle effect (.particle), the parameters of its Vfx program and the fields its instances do not show; problem says why its program would not run.",flags={.Read_Only},run=api_particle_inspect})
     editor.api_method_register(s,{name="particle.set",params_schema=PARTICLE_PARAMS_SCHEMA,summary="Changes the values, Vfx parameters or hidden fields of a particle effect for every entity that shows it, or makes a new one at path over the defaults.",flags={.Idempotent},run=api_particle_set})
-    editor.api_method_register(s,{name="particle.programs",summary="The Vfx programs of the shaders: their parameters with kind, components, default and range, the bytes each keeps per particle, the resources it reads by name (surfaces, bones, channels, grids) and its stages: what each goes over, its iterations and the radius of its neighbors.",flags={.Read_Only},run=api_particle_programs})
+    editor.api_method_register(s,{name="particle.programs",summary="The Vfx programs of the shaders: their parameters with kind, components, default and range, the bytes each keeps per particle, the resources it reads by name (surfaces, bones, channels, grids) and its stages: what each goes over and its iterations.",flags={.Read_Only},run=api_particle_programs})
     inspect:=Api_Particle_Instance_Params{world=.Edit}
     control:=Api_Particle_Control_Params{world=.Play}
     editor.api_method_register(s,Api_Particle_Instance_Params,{name="particle.instance.inspect",defaults=&inspect,summary="What an emitter shows: the values of its effect with its own over them, its own values by path, the parameters of its program, why its program does not run, and its clock (state, control, seconds, generation, births).",flags={.Read_Only},run=api_particle_instance_inspect})
@@ -425,7 +425,6 @@ api_particle_programs :: proc(s:^editor.Session,call:^api.Call) {
                 if stage.over!=erender.PROGRAM_STAGE_PARTICLES && int(stage.over)<len(program.resources) {over=program.resources[stage.over].name}
                 api.write_text(out,"over",over)
                 api.write_uint(out,"iterations",u64(stage.iterations))
-                api.write_key(out,"neighbors");serial.text_write_float(out,transmute(u64)f64(stage.neighbors),8)
                 serial.write_u8(out,'}')
             }
             serial.text_write_raw(out,"]}")

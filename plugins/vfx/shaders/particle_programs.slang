@@ -272,22 +272,6 @@ void mirai_vfx_grid_splat(Mirai_Vfx_Context ctx, uint resource, float3 position,
 #endif
 }
 
-#ifdef PARTICLE_STAGE_PASS
-// The hash of the neighbors (vfx.neighbors_buffer): the count of each bucket, where each
-// starts among the entries, the sums of the blocks of buckets, then the entries.
-[[vk::binding(SLOT_PASS7, 0)]] RWStructuredBuffer<uint> particle_neighbors : register(MIRAI_REGISTER(u, SLOT_PASS7), space0);
-#define PARTICLE_NEIGHBOR_BUCKETS 65536u
-#define PARTICLE_NEIGHBOR_BLOCK 256u
-#define PARTICLE_NEIGHBOR_STARTS PARTICLE_NEIGHBOR_BUCKETS
-#define PARTICLE_NEIGHBOR_SUMS (2u * PARTICLE_NEIGHBOR_BUCKETS)
-#define PARTICLE_NEIGHBOR_ITEMS (2u * PARTICLE_NEIGHBOR_BUCKETS + PARTICLE_NEIGHBOR_BUCKETS / PARTICLE_NEIGHBOR_BLOCK)
-
-uint particle_neighbor_bucket(int3 cell, uint emitter) {
-    uint h = uint(cell.x) * 73856093u ^ uint(cell.y) * 19349663u ^ uint(cell.z) * 83492791u ^ emitter * 2654435761u;
-    return hash_u32(h) & (PARTICLE_NEIGHBOR_BUCKETS - 1u);
-}
-#endif
-
 // Where the Attributes of the particle at index of the pool are.
 uint particle_attributes(uint slot, uint index) {
     uint2 data = particle_emitters[slot].data.xy;
@@ -561,50 +545,6 @@ float mirai_vfx_scene_roughness(float2 uv) {
 #else
     return 1.0;
 #endif
-}
-
-Mirai_Vfx_Neighbors mirai_vfx_neighbors(Mirai_Vfx_Context ctx, float3 position) {
-    Mirai_Vfx_Neighbors walk = (Mirai_Vfx_Neighbors)0;
-    walk.position = position;
-    walk.emitter = ctx.emitter;
-    walk.particle = ctx.particle;
-    walk.radius = asfloat(particle_emitters[ctx.emitter].program.w);
-    walk.around = walk.radius > 0.0 ? 0u : 27u;
-    walk.cell = int3(floor(position / max(walk.radius, 1e-6)));
-    return walk;
-}
-
-bool mirai_vfx_neighbor_next(inout Mirai_Vfx_Neighbors walk, out Mirai_Vfx_Neighbor neighbor) {
-    neighbor = (Mirai_Vfx_Neighbor)0;
-#ifdef PARTICLE_STAGE_PASS
-    [loop]
-    while (true) {
-        while (walk.at < walk.end) {
-            uint index = particle_neighbors[PARTICLE_NEIGHBOR_ITEMS + walk.at];
-            walk.at++;
-            if (index == walk.particle) continue;
-            Particle p = particles[index];
-            if (p.lifetime <= 0.0 || particle_emitter_of(p) != walk.emitter) continue;
-            float3 at = particle_world(walk.emitter, p.position);
-            // Its own cell: another one of the same bucket is not around.
-            int3 offset = int3(int(walk.around - 1u) % 3 - 1, int((walk.around - 1u) / 3u) % 3 - 1, int((walk.around - 1u) / 9u) - 1);
-            if (any(int3(floor(at / walk.radius)) != walk.cell + offset)) continue;
-            float distance = length(at - walk.position);
-            if (distance > walk.radius) continue;
-            neighbor.position = at; neighbor.distance = distance;
-            neighbor.velocity = particle_world_vector(walk.emitter, p.velocity); neighbor.particle = index;
-            neighbor.values = particle_emitters[walk.emitter].data.y >= 16u ? asfloat(particle_data.Load4(particle_attributes(walk.emitter, index))) : float4(0.0);
-            return true;
-        }
-        if (walk.around >= 27u) return false;
-        int3 offset = int3(int(walk.around % 3u) - 1, int((walk.around / 3u) % 3u) - 1, int(walk.around / 9u) - 1);
-        walk.around++;
-        uint bucket = particle_neighbor_bucket(walk.cell + offset, walk.emitter);
-        walk.at = particle_neighbors[PARTICLE_NEIGHBOR_STARTS + bucket];
-        walk.end = walk.at + particle_neighbors[bucket];
-    }
-#endif
-    return false;
 }
 
 // The scene, for the shaders that trace it (trace.slang before this file): the

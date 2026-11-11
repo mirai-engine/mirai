@@ -29,16 +29,17 @@
 // mirai_vfx_data_store); a frame reads what the programs appended in the
 // frame before.
 //
-// A line `//! stage name over particles|grid [iterations N] [neighbors
-// radius] [writes grid,grid]` names a stage, a function of the namespace that
-// runs every step before update, in the order they are declared; writes names
+// A line `//! stage name over particles|grid [iterations N] [writes
+// grid,grid]` names a stage, a function of the namespace that runs every
+// step before update, in the order they are declared; writes names
 // the grids it leaves besides the one it goes over (mirai_vfx_grid_write and
 // the words of a grid), which take what it left after it. It runs iterations
 // times, each seeing what the one before left (ctx.iteration says which):
 //
 //   void name(Mirai_Vfx_Context ctx, Parameters p, inout Mirai_Vfx_Particle particle, inout Attributes a)
-//                      over the particles; with neighbors, those within the
-//                      radius (mirai_vfx_neighbors)
+//                      over the particles; the neighbours of a particle
+//                      are those in the cells around its own of a grid an
+//                      earlier stage added them to (mirai_vfx_grid_word_add)
 //   void name(Mirai_Vfx_Cell cell, Parameters p)
 //                      over the cells of a grid it declares: it reads the
 //                      grid as the iteration or stage before left it and
@@ -150,21 +151,6 @@ struct Mirai_Vfx_Cell {
     int3 index;
     float3 position;
 };
-// A particle of the emitter near a point, in a stage with neighbors: where
-// it is and how fast, how far, which one, and the first four words of its
-// Attributes as floats.
-struct Mirai_Vfx_Neighbor {
-    float3 position; float distance;
-    float3 velocity; uint particle;
-    float4 values;
-};
-// A walk over the neighbors of a point (mirai_vfx_neighbors and
-// mirai_vfx_neighbor_next): where it is among the cells around the point.
-struct Mirai_Vfx_Neighbors {
-    float3 position; float radius;
-    int3 cell; uint around;
-    uint at; uint end; uint emitter; uint particle;
-};
 // What a ray met in the scene: whether it met something, how far along the
 // ray, the normal there towards where the ray came from, and whether it met
 // the back of a face: it started inside a closed mesh.
@@ -210,9 +196,7 @@ float mirai_vfx_random(inout uint seed) {
 // (zero outside its region; an axis of one cell takes every index), and at a
 // point between its cells; what the particles of the step splatted into a
 // cell; the layer the stage leaves in its cell; and a value spread over the
-// cells around a point by how near they are. The neighbors of a point in a
-// stage with neighbors, the particle itself left out: start a walk, then
-// take the next one while there is one. The first opaque surface of the
+// cells around a point by how near they are. The first opaque surface of the
 // scene a ray meets from origin along direction within distance, as the
 // renderer traces it this frame (moving bodies too): in initialize, update
 // and the stages; render meets nothing.
@@ -243,8 +227,6 @@ float4 mirai_vfx_grid_sample(Mirai_Vfx_Context ctx, uint resource, float3 positi
 float4 mirai_vfx_grid_splatted(Mirai_Vfx_Context ctx, uint resource, int3 index, uint layer) { return float4(0.0); }
 void mirai_vfx_grid_store(Mirai_Vfx_Cell cell, uint layer, float4 value) {}
 void mirai_vfx_grid_splat(Mirai_Vfx_Context ctx, uint resource, float3 position, uint layer, float4 value) {}
-Mirai_Vfx_Neighbors mirai_vfx_neighbors(Mirai_Vfx_Context ctx, float3 position) { return (Mirai_Vfx_Neighbors)0; }
-bool mirai_vfx_neighbor_next(inout Mirai_Vfx_Neighbors walk, out Mirai_Vfx_Neighbor neighbor) { neighbor = (Mirai_Vfx_Neighbor)0; return false; }
 Mirai_Vfx_Hit mirai_vfx_trace(Mirai_Vfx_Context ctx, float3 origin, float3 direction, float distance) { return (Mirai_Vfx_Hit)0; }
 uint mirai_vfx_emitter_capacity(Mirai_Vfx_Context ctx, uint resource) { return 0u; }
 uint mirai_vfx_emitter_alive(Mirai_Vfx_Context ctx, uint resource) { return 0u; }
@@ -286,8 +268,6 @@ float4 mirai_vfx_grid_sample(Mirai_Vfx_Context ctx, uint resource, float3 positi
 float4 mirai_vfx_grid_splatted(Mirai_Vfx_Context ctx, uint resource, int3 index, uint layer);
 void mirai_vfx_grid_store(Mirai_Vfx_Cell cell, uint layer, float4 value);
 void mirai_vfx_grid_splat(Mirai_Vfx_Context ctx, uint resource, float3 position, uint layer, float4 value);
-Mirai_Vfx_Neighbors mirai_vfx_neighbors(Mirai_Vfx_Context ctx, float3 position);
-bool mirai_vfx_neighbor_next(inout Mirai_Vfx_Neighbors walk, out Mirai_Vfx_Neighbor neighbor);
 Mirai_Vfx_Hit mirai_vfx_trace(Mirai_Vfx_Context ctx, float3 origin, float3 direction, float distance);
 uint mirai_vfx_emitter_capacity(Mirai_Vfx_Context ctx, uint resource);
 uint mirai_vfx_emitter_alive(Mirai_Vfx_Context ctx, uint resource);

@@ -31,7 +31,7 @@ particle_program_check :: proc(a:^host.Assets,info:^effect.Particle_Info,stored,
         }
         for stage,at in found.stages[:min(len(found.stages),erender.PROGRAM_STAGES)] {
             if stage.over==erender.PROGRAM_STAGE_PARTICLES {
-                needs.stages[at]={kind=.Particles,iterations=stage.iterations,neighbors=stage.neighbors,writes=stage.writes}
+                needs.stages[at]={kind=.Particles,iterations=stage.iterations,writes=stage.writes}
             } else {
                 needs.stages[at]={kind=.Cells,over=stage.over,iterations=stage.iterations,writes=stage.writes}
             }

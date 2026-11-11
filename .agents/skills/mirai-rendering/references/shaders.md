@@ -137,10 +137,9 @@
   which include `trace.slang` and declare the `hw` variant; in `render` it finds nothing. Which
   mesh, which skin, which channel or which grid each one is is resolved by the
   [plugin](../../mirai-world/references/vfx.md#surfaces-bones-and-resources).
-- Its stages (`//! stage name over particles|resource [iterations N] [neighbors radius]`, up to
-  `MAX_STAGES`) are functions of the namespace: over particles with the signature of `update` (and
-  `mirai_vfx_neighbors` with `mirai_vfx_neighbor_next` if it declares `neighbors`), over the cells
-  of a grid `(Mirai_Vfx_Cell, Parameters)`. The generation dispatches them in
+- Its stages (`//! stage name over particles|resource [iterations N]`, up to `MAX_STAGES`) are
+  functions of the namespace: over particles with the signature of `update`, over the cells of a
+  grid `(Mirai_Vfx_Cell, Parameters)`. The generation dispatches them in
   `mirai_vfx_particle_stage` and `mirai_vfx_cell_stage` and the catalog lists them in `stages`; the
   [plugin](../../mirai-world/references/vfx.md#grids-and-stages) runs them.
 - A Surface program that moves vertices says `//! vertex [animated] [reach <metres>|reach

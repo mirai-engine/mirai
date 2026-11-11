@@ -204,7 +204,7 @@ Gpu_Emitter :: struct {
     world,previous:[3][4]f32,
     range:[4]u32,       // first slot of the pool, capacity, births this frame, FLAG_*
     random:[4]u32,      // seed, event target slot+1 (0: none), particles per event, groups of births
-    program:[4]u32,     // Vfx program (0: none), first slot of the drawn lists, Particle_Event its reports tell, radius of its neighbors (bits of an f32)
+    program:[4]u32,     // Vfx program (0: none), first slot of the drawn lists, Particle_Event its reports tell, unused
     shape:[4]f32,       // size, w cone half-angle
     kinds:[4]u32,       // Particle_Shape, Particle_Render, Particle_Collision, Particle_Event
     lifetime_speed:[4]f32,
@@ -687,7 +687,6 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         g.previous=rows_of(d.previous,origin)
         g.range={s.offset,s.capacity,spawn,flags}
         g.random.y,g.random.w=target,groups
-        g.program.w=0
         if d.report!=.None {pool.reports=true}
         g.step={pool.dt,step_dt,f32(pool.steps),pass.time}
         g.frame={max(u32),0,0,0}
@@ -727,7 +726,6 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
             if d.stages>0 && int(d.stages-1)+erender.PROGRAM_STAGES<=len(sync.stage_rows) {
                 stages:=sync.stage_rows[d.stages-1:][:erender.PROGRAM_STAGES]
                 append(&pool.frame_bytes,..([^]u8)(raw_data(stages))[:len(stages)*size_of(Gpu_Stage)])
-                radius:f32
                 for stage,k in stages {
                     plan:=&pool.plan[k]
                     for resource in 0..<u32(RESOURCES) {
@@ -740,8 +738,6 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
                     case .Particles:
                         plan.particles=true
                         plan.iterations=max(plan.iterations,stage.iterations)
-                        plan.neighbors||=stage.neighbors>0
-                        radius=max(radius,stage.neighbors)
                     case .Cells:
                         grid:=sync.resources[d.resources-1+stage.row]
                         if grid.kind!=.Grid {continue}
@@ -751,7 +747,6 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
                     }
                     pool.stage_count=max(pool.stage_count,u32(k)+1)
                 }
-                g.program.w=transmute(u32)radius
             }
         }
     }
@@ -1075,10 +1070,7 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
             }
         }
         params.program,params.emitter_first=0,0
-        if pool.stage_count>0 {
-            stages_step(sync,pass,&params)
-            erender.pass_surface_read(pass,7,.Linear_Depth)
-        }
+        if pool.stage_count>0 {stages_step(sync,pass,&params)}
         for group in program_groups(p,&all) {
             params.program,params.first,params.count=group.program,group.first,group.end
             erender.pass_pipeline(pass,group.simulate)
@@ -1320,6 +1312,5 @@ particles_meshes :: proc(pass:^erender.Pass,user:rawptr) {
 // Lets go of the buffers of the pool of a world.
 pool_release :: proc(renderer:^erender.Renderer,world:core.World_Id,pool:^Pool) {
     for b in Pool_Buffer {erender.buffer_release(renderer,world,pool_buffer(pool,b).name)}
-    erender.buffer_release(renderer,world,neighbors_buffer(pool).name)
     pool.made=false
 }

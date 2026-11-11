@@ -151,15 +151,13 @@ one cell is flat), the size of a cell and its layers of four floats.
   the previous frame, whatever the order of the rows; a new grid enters as an entry of its own,
   without what another entity's stored.
 
-A program declares stages (`//! stage name over particles|grid [iterations N] [neighbors
-radius]`): on each step, after the births and before `update`, stage k of each emitter that has it,
+A program declares stages (`//! stage name over particles|grid [iterations N]`): on each step, after the births and before `update`, stage k of each emitter that has it,
 k in order, `iterations` times in separate dispatches: each iteration sees what the previous one
 left (a constraint solver reads the other particles already moved).
 
-- Over particles: once per live particle, like `update`. With `neighbors`, a hash of the particles
-  of the emitters that read them, made once per step before the first stage that reads it, gives
-  those of its emitter within the radius (the largest of its stages) of where they were then,
-  without the particle itself.
+- Over particles: once per live particle, like `update`. Neighbours go through a grid: one stage
+  adds each particle to the words of its cell (`mirai_vfx_grid_word_add`) and a later one reads
+  the cells around it; the cook refuses a stage that declares `neighbors`.
 - Over a grid: once per cell of its region; each iteration reads what the previous one left and
   leaves its cell's layers in the other copy, which keeps those it does not leave.
   A single emitter walks a grid with its stages; another that does so in the same frame is the
@@ -451,8 +449,7 @@ In the `Simulate` stage, per step:
   - the frame's channel births, in the first step;
   - an indirect dispatch starts those of the previous step's events in their destination emitter.
 - **stage**: the programs' stages, k in order: over particles, one thread per slot; over cells, one
-  thread per cell of each emitter and, after each iteration, the copy swap of its grid; before the
-  first one with neighbors, the hash (count per bucket, sums per block and place of each particle).
+  thread per cell of each emitter and, after each iteration, the copy swap of its grid.
 - **simulate**: one thread per slot of each program's span; `_hw` variant.
   - Program, acceleration, value-noise rotor with analytic derivatives (no sources), attractor and
     drag.
@@ -551,7 +548,7 @@ they light everything within their reach, without shadow rays or a place in thos
   fall to the floor and slide according to their friction, sprites that run the Surface program of
   their material with what their particle gives, its random value and its radius
   (`hand_over.slang`, `particle_data.slang`), stages over cells with iterations (`tally.slang`),
-  splats that a stage stores (`spread.slang`) and neighbors per emitter (`crowd.slang`), rays from a
+  splats that a stage stores (`spread.slang`), rays from a
   stage against a cube (`probe.slang`), read back with `pass_readback`, a volume that glows
   (`puff.slang`), particle lights with shadow that light the floor within their reach and not
   behind a cube, and without shadow, also behind it, a floor whose Surface program reads a grid's

@@ -328,10 +328,10 @@ Particle_Volume_Row particle_volume_at(uint at) {
 }
 
 // A stage of an emitter (vfx.Gpu_Stage): its kind, the resource row of its grid, its
-// iterations, the radius of its neighbors, the grid resources it writes besides its
-// own and those of them that start the stage at zero, a bit each.
+// iterations, the grid resources it writes besides its own and those of them that
+// start the stage at zero, a bit each.
 struct Particle_Stage {
-    uint kind; uint row; uint iterations; float neighbors;
+    uint kind; uint row; uint iterations;
     uint writes; uint clears;
 };
 
@@ -341,9 +341,8 @@ Particle_Stage particle_stage_of(uint slot, uint k) {
     if (frame_at == INVALID || k >= PARTICLE_STAGES) return s;
     uint at = frame_at + PARTICLE_RESOURCES * PARTICLE_RESOURCE_BYTES + k * PARTICLE_STAGE_BYTES;
     uint4 w = particle_frame.Load4(at);
-    uint2 x = particle_frame.Load2(at + 16u);
-    s.kind = w.x; s.row = w.y; s.iterations = w.z; s.neighbors = asfloat(w.w);
-    s.writes = x.x; s.clears = x.y;
+    s.kind = w.x; s.row = w.y; s.iterations = w.z; s.writes = w.w;
+    s.clears = particle_frame.Load(at + 16u);
     return s;
 }
 

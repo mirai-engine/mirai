@@ -1124,52 +1124,6 @@ particle_splats_go_into_a_grid_that_particles_sample :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
-// A stage with neighbors finds the particles of its emitter within its
-// radius, itself and those of another emitter left out.
-@(test)
-particle_stages_count_the_neighbors_of_their_emitter :: proc(t: ^testing.T) {
-	f := new(Gpu_Fixture)
-	defer free(f)
-	settings := test_settings()
-	settings.taa = false
-	if !gpu_fixture_init(t, f, 64, 48, settings) {return}
-	defer gpu_fixture_destroy(f)
-	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	a := test_emitter(1, {0, 0.5, 0})
-	b := test_emitter(2, {0, 0.5, 0})
-	for &e, i in ([]^Emitter_Desc{&a, &b}) {
-		e.capacity, e.lifetime = 64, {5, 5}
-		if !test_program(t, f, e, "Crowd") {return}
-	}
-	DT :: f32(1.0 / 60)
-	read: [2][]u8
-	for i in 0 ..< 3 {
-		a.spawns = test_burst(20) if i == 0 else {}
-		b.spawns = test_burst(30) if i == 0 else {}
-		if i < 2 {
-			testing.expect(t, frame_emitters(f, &f.sync, {a, b}, DT))
-			testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = f32(i) * DT}), f.renderer.error)
-			continue
-		}
-		read = test_frame_read(t, f, {a, b}, DT, camera, f32(i) * DT, {pool_buffer(&f.sync.pool, .Particles), pool_buffer(&f.sync.pool, .Data)})
-	}
-	if read[0] == nil || read[1] == nil {return}
-	particles := ([^]Gpu_Particle)(raw_data(read[0]))[:len(read[0]) / size_of(Gpu_Particle)]
-	counted: [2]int
-	for p, index in particles {
-		if !(p.lifetime > 0) {continue}
-		slot := f.sync.pool.slots[p.emitter]
-		at := ATTRIBUTES_AT + int(slot.attributes) + (index - int(slot.offset)) * int(slot.stride)
-		near := (cast(^f32)&read[1][at])^
-		of := slot.desc.id
-		want: f32 = 19 if of == 1 else 29
-		testing.expectf(t, near == want, "a particle of emitter %d has %v neighbors, not %v", of, near, want)
-		counted[of - 1] += 1
-	}
-	testing.expect(t, counted == {20, 30}, "every particle lives")
-	expect_clean(t, f.device)
-}
-
 // A grid drawn as a volume: a ball of density that glows, over the scene.
 @(test)
 particle_volumes_draw_the_medium_of_a_grid :: proc(t: ^testing.T) {
