@@ -155,7 +155,7 @@ override_split :: proc "contextless" (o:^erender.Material_Values,slot:int) -> (g
     }
     for name,i in o.texture_names[:min(int(o.texture_count),len(o.texture_names))] {
         to:=int(o.texture_slots[i])==slot?&given:&rest
-        to.texture_slots[to.texture_count],to.texture_names[to.texture_count],to.textures[to.texture_count],to.shown[to.texture_count]=o.texture_slots[i],name,o.textures[i],o.shown[i]
+        to.texture_slots[to.texture_count],to.texture_names[to.texture_count],to.textures[to.texture_count]=o.texture_slots[i],name,o.textures[i]
         to.texture_count+=1
     }
     to:=slot==0?&given:&rest

@@ -431,71 +431,58 @@ Material material_row(uint row) {
 
 bool material_has(uint texture_index) { return texture_index != INVALID; }
 
-// The values an instance gives over the rows of its materials
+// What an instance gives over the rows of its materials
 // (render.Instance_Material_Values): `block` is Instance.material_values. A
 // stage that draws no instance of a scene (MIRAI_NO_INSTANCES: the previews)
 // reads none, and does not bind the pool they are in.
-uint material_values_count(uint block) {
+// Those the instance at an index gives; INVALID (a surface an extension
+// draws) gives none.
+uint material_values_of(uint instance_index) {
 #ifdef MIRAI_NO_INSTANCES
     return 0u;
 #else
-    return block == 0u ? 0u : min(indices[block - 1u], INSTANCE_VALUES_MAX);
+    return instance_index == INVALID ? 0u : scene_instance(instance_index).material_values;
 #endif
 }
-// The value at `i` of a block, when it is for `row`: its target, how many
-// words it gives and the words.
-bool material_value_at(uint block, uint i, uint row, out uint target, out uint count, out uint4 words) {
-    target = 0u; count = 0u; words = uint4(0u, 0u, 0u, 0u);
-#ifdef MIRAI_NO_INSTANCES
-    return false;
-#else
-    uint at = block + i * INSTANCE_VALUE_WORDS;
-    if (indices[at] != row) return false;
-    uint key = indices[at + 1u];
-    target = key & ((1u << INSTANCE_VALUE_COUNT_SHIFT) - 1u);
-    count = min(key >> INSTANCE_VALUE_COUNT_SHIFT, 4u);
-    words = uint4(indices[at + 2u], indices[at + 3u], indices[at + 4u], indices[at + 5u]);
-    return true;
-#endif
-}
-// A row with the values of the standard model an instance gives it.
-uint material_layer_given(uint layers, uint layer, bool on) {return on ? layers | layer : layers & ~layer;}
-Material material_instanced(Material m, uint block) {
-    uint given = material_values_count(block);
+// `value`, the N words of row `row` from the word `first`, with those of
+// them the instance gives in their place.
+T material_given<T, let N : int>(T value, uint block, uint row, uint first) {
+#ifndef MIRAI_NO_INSTANCES
+    if (block == 0u) return value;
+    uint words[N] = reinterpret<uint[N]>(value);
+    uint given = min(indices[block - 1u], INSTANCE_VALUES_MAX);
     for (uint i = 0u; i < given; i++) {
-        uint target, count;
-        uint4 words;
-        if (!material_value_at(block, i, m.row, target, count, words) || target < INSTANCE_VALUE_STANDARD) continue;
-        float4 value = asfloat(words);
-        if (target == INSTANCE_VALUE_BASE_COLOR) m.base_color = value.xyz;
-        else if (target == INSTANCE_VALUE_OPACITY) m.opacity = saturate(value.x);
-        else if (target == INSTANCE_VALUE_METALLIC) m.metallic = saturate(value.x);
-        else if (target == INSTANCE_VALUE_ROUGHNESS) m.roughness = saturate(value.x);
-        else if (target == INSTANCE_VALUE_EMISSION) m.emission = value.xyz;
-        else if (target == INSTANCE_VALUE_SPECULAR) m.specular_factor = value.x;
-        else if (target == INSTANCE_VALUE_EMISSION_MODE) m.emission_mode = value.x >= 0.5 ? EMISSION_RELATIVE : EMISSION_PHYSICAL;
-        else if (target == INSTANCE_VALUE_UNLIT) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_UNLIT, value.x >= 0.5);
-        else if (target == INSTANCE_VALUE_COAT) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_COAT, value.x > 0.0);
-        else if (target == INSTANCE_VALUE_FUZZ) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_FUZZ, value.x > 0.0);
-        else if (target == INSTANCE_VALUE_ANISOTROPY) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_ANISOTROPY, value.x > 0.0);
-        else if (target == INSTANCE_VALUE_DIFFUSE_TRANSMISSION) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_DIFFUSE_TRANSMISSION, value.x > 0.0);
+        uint at = block - 1u + INSTANCE_VALUES_HEADER + i * INSTANCE_VALUE_WORDS;
+        if (indices[at] != row) continue;
+        uint key = indices[at + 1u];
+        uint count = min(key >> INSTANCE_VALUE_COUNT_SHIFT, 4u);
+        for (uint c = 0u; c < count; c++) {
+            uint word = (key & ((1u << INSTANCE_VALUE_COUNT_SHIFT) - 1u)) + c - first;
+            if (word < uint(N)) words[word] = indices[at + 2u + c];
+        }
     }
+    value = reinterpret<T>(words);
+#endif
+    return value;
+}
+// A row as an instance shows it: with the words the instance gives it, and
+// its fade.
+Material material_row(uint row, uint block) {
+    Material m = material_given<Material, MATERIAL_WORDS>(material_row(row), block, row, 0u);
+    m.row = row;
+#ifndef MIRAI_NO_INSTANCES
+    if (block != 0u) {
+        float fade = asfloat(indices[block]);
+        m.opacity *= 1.0 - fade;
+        if (fade > 0.0 && m.alpha_mode == ALPHA_OPAQUE) m.alpha_mode = ALPHA_BLEND;
+    }
+#endif
     return m;
 }
 // The parameters the program of a row reads at a point of an instance: those
 // of the row, under the ones the instance gives.
 void material_parameters(uint row, uint block, out float4 parameters[16]) {
-    parameters = materials[row].custom_params;
-    uint given = material_values_count(block);
-    for (uint i = 0u; i < given; i++) {
-        uint target, count;
-        uint4 words;
-        if (!material_value_at(block, i, row, target, count, words) || target >= INSTANCE_VALUE_STANDARD) continue;
-        for (uint c = 0u; c < count; c++) {
-            uint word = min(target + c, PROGRAM_PARAMETER_BYTES / 4u - 1u);
-            parameters[word >> 2u][word & 3u] = asfloat(words[c]);
-        }
-    }
+    parameters = material_given<float4[16], PROGRAM_PARAMETER_BYTES / 4>(materials[row].custom_params, block, row, MATERIAL_PARAMETERS_WORD);
 }
 #ifdef MIRAI_TEXTURE_FEEDBACK
 // The finest level a stage that shades surfaces samples of each texture, for
@@ -687,28 +674,11 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
     l.bits = bits;
     if (bits == 0u || (bits & MATERIAL_LAYER_UNLIT) != 0u) return l;
     float2 lod = float2(ctx.lod, ctx.lod1);
-    Material_Coat coat = materials[m.row].coat;
-    Material_Fuzz fuzz = materials[m.row].fuzz;
-    Material_Diffuse_Transmission transmission = materials[m.row].diffuse_transmission;
-    Material_Anisotropy anisotropy = materials[m.row].anisotropy;
-    // Under the values the instance gives.
-    for (uint i = 0u; i < material_values_count(ctx.material_values); i++) {
-        uint target, count;
-        uint4 words;
-        if (!material_value_at(ctx.material_values, i, m.row, target, count, words)) continue;
-        float4 v = asfloat(words);
-        if (target == INSTANCE_VALUE_COAT) coat.weight = saturate(v.x);
-        else if (target == INSTANCE_VALUE_COAT_ROUGHNESS) coat.roughness = saturate(v.x);
-        else if (target == INSTANCE_VALUE_COAT_COLOR) coat.color = saturate(v.xyz);
-        else if (target == INSTANCE_VALUE_COAT_IOR) coat.ior = max(v.x, 1.0);
-        else if (target == INSTANCE_VALUE_FUZZ) fuzz.weight = saturate(v.x);
-        else if (target == INSTANCE_VALUE_FUZZ_COLOR) fuzz.color = saturate(v.xyz);
-        else if (target == INSTANCE_VALUE_FUZZ_ROUGHNESS) fuzz.roughness = saturate(v.x);
-        else if (target == INSTANCE_VALUE_ANISOTROPY) anisotropy.amount = saturate(v.x);
-        else if (target == INSTANCE_VALUE_ANISOTROPY_ROTATION) anisotropy.rotation = float2(cos(v.x), sin(v.x));
-        else if (target == INSTANCE_VALUE_DIFFUSE_TRANSMISSION) transmission.weight = saturate(v.x);
-        else if (target == INSTANCE_VALUE_DIFFUSE_TRANSMISSION_COLOR) transmission.color = saturate(v.xyz);
-    }
+    Material_Blocks blocks = material_given<Material_Blocks, MATERIAL_BLOCK_WORDS>(materials[m.row].blocks, ctx.material_values, m.row, MATERIAL_WORDS);
+    Material_Coat coat = blocks.coat;
+    Material_Fuzz fuzz = blocks.fuzz;
+    Material_Diffuse_Transmission transmission = blocks.diffuse_transmission;
+    Material_Anisotropy anisotropy = blocks.anisotropy;
     if ((bits & MATERIAL_LAYER_COAT) != 0u) {
         l.coat = coat.weight;
         l.coat_roughness = coat.roughness;
@@ -836,7 +806,7 @@ Material_Sample material_evaluate(Material m, Mirai_Surface_Context ctx, float3 
 Mirai_Surface mirai_surface_standard(Mirai_Surface_Context ctx) {
     if (ctx.material == INVALID) return mirai_surface_default(ctx);
     Material_Layers layers;
-    return material_standard(material_instanced(material_row(ctx.material), ctx.material_values), ctx, float3(1.0), layers);
+    return material_standard(material_row(ctx.material, ctx.material_values), ctx, float3(1.0), layers);
 }
 // The context of a point for its material. vertex_normal: the interpolated
 // normal of the surface, facing like `normal`; tangent: its MikkTSpace
@@ -964,7 +934,6 @@ Material_Sample material_sample_finish(Material_Sample values, Material m, Mirai
 }
 Material_Sample material_sample(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission, inout float3 normal) {
     Material_Sample values;
-    m = material_instanced(m, ctx.material_values);
     if (!material_program(m, ctx, tint, added_emission, values, normal)) values = material_evaluate(m, ctx, tint, added_emission);
     return material_sample_finish(values, m, ctx);
 }
@@ -1015,7 +984,6 @@ float3 hit_emission(Material_Sample m) {
 float material_alpha(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission) {
     float3 normal = ctx.normal;
     Material_Sample values;
-    m = material_instanced(m, ctx.material_values);
     if (material_program(m, ctx, tint, added_emission, values, normal)) return values.alpha;
     return material_base_color(m, ctx.uv0, ctx.uv1, float2(ctx.lod, ctx.lod1), tint, ctx.ray).a;
 }
@@ -1163,7 +1131,7 @@ float3 hit_normal_turned(float3 face, float3 n, float3 direction) {
 float3 hit_normal(uint instance_index, uint primitive, float2 bary, float3 direction, out bool blended) {
     uint material;
     float3 face = triangle_face(instance_index, primitive, material);
-    blended = material_row(material).alpha_mode == ALPHA_BLEND;
+    blended = material_row(material, material_values_of(instance_index)).alpha_mode == ALPHA_BLEND;
     return hit_normal_turned(face, surface_from_triangle(instance_index, primitive, bary, 1e-4).normal, direction);
 }
 
@@ -1231,7 +1199,7 @@ Hit_Point hit_point(uint instance_index, uint primitive, float2 bary, float foot
     float3 edge2 = tri.c.position - tri.a.position;
     float3 face = cross(edge1, edge2);
     h.geometric_normal = dot(face, face) > 1e-20 ? transform_normal(h.inst.world_inv, face) : h.normal;
-    h.m = material_row(material_of(h.inst, tri.material));
+    h.m = material_row(material_of(h.inst, tri.material), h.inst.material_values);
     float3 world_edge1 = transform_vector(h.inst.world, edge1);
     float3 world_edge2 = transform_vector(h.inst.world, edge2);
     float2 lod = float2(hit_lod(world_edge1, world_edge2, tri.b.uv - tri.a.uv, tri.c.uv - tri.a.uv, footprint), hit_lod(world_edge1, world_edge2, tri.b.uv1 - tri.a.uv1, tri.c.uv1 - tri.a.uv1, footprint));

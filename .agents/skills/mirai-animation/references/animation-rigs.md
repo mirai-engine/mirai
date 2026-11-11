@@ -89,13 +89,10 @@ its body animation; no solver evaluates it.
 - **Curve material**: a value of the material of the meshes of the rig (`parameter`: a value of the
   material or of its program, in `slot` or in every slot) is `offset` plus `scale` times the
   curve, rounded to multiples of `step` when it is positive: the frame of a flipbook face, a
-  switch, a blush. `animation_skin` draws it over the `Material_Values` of each mesh of the rig
-  (the rig and those that share its pose) without writing the component, whose writers stay the
-  game and the editor; past the capacity of the component it is the problem
-  `animation.curve_material`.
-- Each distinct material value is a derived material of the renderer, freed when no drawing uses
-  it: a stepped curve costs a few; one that changes in every frame makes one per frame and mesh,
-  which suits a few characters, not crowds (there are no per-instance parameters in the shader).
+  switch, a blush. `animation_skin` gives it to the `Material_Live` of each mesh of the rig (the
+  rig and those that share its pose) while the curve plays, over the value the entity authors
+  under that name, and takes it away when it does not. Past the capacity of the component it is
+  the problem `animation.curve_material`.
 - A face of a rig evaluator or of a control rig is baked to curves and poses or to morphs: the
   plugin has
   no rig evaluator. Poses driven by bone rotations are correctives (inverse distance), not an RBF

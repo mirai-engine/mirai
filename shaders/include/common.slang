@@ -270,12 +270,15 @@ struct Material_Fuzz { float3 color; float weight; float roughness; };
 struct Material_Anisotropy { float amount; float2 rotation; }; // rotation: cosine and sine
 struct Material_Diffuse_Transmission { float3 color; float weight; };
 struct Material_Volume { float3 scatter; float pad; }; // what a solid scatters of what it stops
-struct Material_Row {
-    Material shared;
+struct Material_Blocks {
     Material_Coat coat;
     Material_Fuzz fuzz;
     Material_Anisotropy anisotropy;
     Material_Diffuse_Transmission diffuse_transmission;
+};
+struct Material_Row {
+    Material shared;
+    Material_Blocks blocks;
     Material_Volume volume;
     Material_Map_Transform map_transforms[MATERIAL_MAPS];
     float4 custom_params[16];

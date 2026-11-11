@@ -245,23 +245,20 @@ PROGRAMS_COUNT    :: 0 // a word a phase
 PROGRAMS_DISPATCH :: 2 // three words a phase
 PROGRAMS_HEADER   :: 8
 
-// The values an instance gives over the rows of its materials, in the index
-// pool: how many, then INSTANCE_VALUE_WORDS each: its row, its target with how
-// many of its four words it gives from INSTANCE_VALUE_COUNT_SHIFT, and the
-// words. A target is a word of the parameters of the program of the row, or
-// from INSTANCE_VALUE_STANDARD a value of the standard model.
+// What an instance gives over the rows of its materials, in the index pool:
+// how many values, how much it fades every row out, then INSTANCE_VALUE_WORDS
+// each: its row, the first word of the row it gives with how many of the four
+// from it from INSTANCE_VALUE_COUNT_SHIFT, and the words.
 INSTANCE_VALUES_MAX         :: 16
+INSTANCE_VALUES_HEADER      :: 2
 INSTANCE_VALUE_WORDS        :: 6
-INSTANCE_VALUE_COUNT_SHIFT  :: 8
-INSTANCE_VALUE_STANDARD     :: 64
-// The values of the standard model an instance gives. A row holds the others
-// (the index of refraction, the transmission and the alpha mode), which choose
-// the passes that draw it and the media its glass leaves.
-Instance_Value :: enum u32 {
-	Base_Color = INSTANCE_VALUE_STANDARD, Opacity, Metallic, Roughness, Emission, Specular,
-	Coat, Coat_Roughness, Coat_Color, Coat_Ior, Fuzz, Fuzz_Color, Fuzz_Roughness, Anisotropy, Anisotropy_Rotation,
-	Unlit, Emission_Mode, Diffuse_Transmission, Diffuse_Transmission_Color,
-}
+INSTANCE_VALUE_COUNT_SHIFT  :: 16
+// The words of a row of the material table (render.Gpu_Material_Row) the
+// shaders put those over: the values shading holds, then the blocks of its
+// layers, and from MATERIAL_PARAMETERS_WORD the parameters of its program.
+MATERIAL_WORDS           :: 28 + len(asset.Material_Map_Kind)
+MATERIAL_BLOCK_WORDS     :: 19
+MATERIAL_PARAMETERS_WORD :: MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + 4 + 8 * len(asset.Material_Map_Kind)
 
 // The limits of a program of the catalog.
 PROGRAM_PARAMETER_BYTES  :: 256

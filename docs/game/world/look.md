@@ -34,12 +34,10 @@ heat :: proc(looks:^core.Table(render.Material_Values),e:core.Entity,amount:f32)
 
 ## What it costs
 
-A color, a light, a program parameter and those five values of the standard model are a few bytes
-the entity holds: change them every frame on a thousand entities. Anything else an entity gives
-(another value of the standard model as `ior`, `transmission`, `alpha_mode`, `coat`, `unlit`; an
-alpha below 1; a texture) changes how its surface is drawn, so it takes a copy of the material
-that the entities giving the same share: set those once, do not animate them on many entities.
-To show another material, change `Mesh_Renderer.materials`.
+A color and its alpha, a light, a program parameter and a value of the standard model are a few
+bytes the entity holds: change them every frame on a thousand entities. A texture takes a copy of
+the material that the entities giving the same share: set it once, do not animate it on many
+entities. To show another material, change `Mesh_Renderer.materials`.
 
 In the editor and through the API the same values are the entity's own in the material box of the
 inspector, `material.instance.set`; `material.instance.apply` writes them into the material.

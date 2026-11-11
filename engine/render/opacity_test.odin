@@ -9,7 +9,7 @@ import "mirai:rhi"
 import mm "mirai:std/math"
 
 @(test)
-tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocating :: proc(t:^testing.T) {
+a_fade_is_given_to_its_instance_alone_without_a_row_or_an_allocation :: proc(t:^testing.T) {
     tracking:mem.Tracking_Allocator
     mem.tracking_allocator_init(&tracking,context.allocator)
     defer mem.tracking_allocator_destroy(&tracking)
@@ -44,7 +44,7 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
         draw(&sync,app,&w)
         if pass>0 {
             touched:=app.renderer.scene.touched[0]
-            testing.expect(t,touched&1!=0 && touched&2==0,"the instance whose opacity changed goes alone")
+            testing.expect(t,touched&1!=0 && touched&2==0 && len(sync.made)==0,"the instance whose opacity changed goes alone, and is not made again")
             if pass==5 || pass==6 || pass==7 {testing.expect(t,!app.renderer.scene.tlas_dirty && !app.renderer.scene.tlas_nodes_dirty && !app.renderer.scene.tlas_refs_dirty)}
         }
         testing.expect_value(t,len(app.renderer.scene.translucent),alpha<1?1:0)
@@ -85,7 +85,7 @@ tint_opacity_updates_only_dirty_instances_and_reuses_materials_without_allocatin
     }
     testing.expect_value(t,tracking.total_allocation_count,allocations)
     testing.expect_value(t,len(app.assets.material_descs),material_rows)
-    testing.expect(t,app.assets.stats.derived<=1)
+    testing.expect_value(t,app.assets.stats.derived,0)
     core.remove(&w.meshes,entities[1]);test_world_settle(&w)
     host.app_frame_begin(app)
     draw(&sync,app,&w)

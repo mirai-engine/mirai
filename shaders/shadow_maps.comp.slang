@@ -29,7 +29,7 @@ struct Params_Block { uint instances; uint maps; uint rows; uint glass; };
 
 bool glass_sheet(Instance inst) {
     Mesh mesh = meshes[instance_mesh(inst)];
-    return (mesh.flags & MESH_FLAG_CLOSED) == 0u && material_solid(material_row(material_of(inst, 0u)));
+    return (mesh.flags & MESH_FLAG_CLOSED) == 0u && material_solid(material_row(material_of(inst, 0u), inst.material_values));
 }
 
 // Whether a map takes cluster k of an instance: in the cut of the view and,

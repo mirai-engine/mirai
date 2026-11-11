@@ -58,7 +58,7 @@ bool glass_face(Instance inst, Mesh mesh, uint k, uint triangles, float share, o
     uint at = min(uint(float(k) * share), triangles - 1u);
     Cluster c = mesh_cluster(mesh, at / CLUSTER_TRIANGLES);
     if (at % CLUSTER_TRIANGLES >= cluster_triangle_count(c) || !cluster_resident(mesh, c)) return false;
-    face.m = material_row(material_of(inst, cluster_material(mesh, c)));
+    face.m = material_row(material_of(inst, cluster_material(mesh, c)), inst.material_values);
     if (face.m.alpha_mode != ALPHA_BLEND) return false;
     face.primitive = ((at / CLUSTER_TRIANGLES) << PRIMITIVE_TRIANGLE_BITS) | (at % CLUSTER_TRIANGLES);
     face.t = mesh_triangle(inst, mesh, face.primitive);

@@ -441,12 +441,13 @@ Editor and skinning:
   does not.
 - The copy is the mesh the renderer draws its entity with, not another instance
   ([posed mesh](../../mirai-rendering/references/scene.md#visual-instances)): `render_sync` places,
-  tints, hides and outlines it as any mesh, and the skin only gives its palette, its weights and,
-  with curve materials, the values of its materials.
+  tints, hides and outlines it as any mesh, and the skin only gives its palette and its weights.
+  Curve materials are the `Material_Live` of each mesh of the rig while their curve plays: over
+  what the entity authors, never saved.
 - A rig whose palette leaves each vertex at its bind (`palette_at_bind`) is drawn with the world's
   shared mesh: a still character or one without animation copies no geometry or BLAS. The copy is
-  created the first time the palette leaves the bind and stays until the rig goes away; with morphs
-  or [curve materials](animation-rigs.md#curve-poses-and-drives), from the start. A copy larger than
+  created the first time the palette leaves the bind and stays until the rig goes away; with morphs,
+  from the start. A copy larger than
   what one frame uploads goes
   [over several frames](../../mirai-rendering/references/scene.md#geometry-over-several-frames): the
   entity is not drawn (no shadow, rays or outline) until it went up whole and appears already posed,
@@ -501,7 +502,8 @@ message that says how to fix it; `engine.diagnostics` lists them and `animation.
   `morph_*`) and rejected requests (`action_*`, `modifier_*`, `distance`, `match_goal`).
 - A rig that cannot follow its leader (`follow_rig`, `follow_bones`, `follow_pose`), curve poses
   of bones its skeleton lacks or with curves that are not finite (`curve_pose_bone`,
-  `curve_pose_value`) and curve materials past the capacity of the override (`curve_material`).
+  `curve_pose_value`) and curve materials past the capacity of the `Material_Values`
+  (`curve_material`).
 - Lost markers or events (`markers_lost`, `events_lost`) and lack of memory
   (`animation.memory`: the entity keeps its last pose and retries).
 - `Playback.stats.skipped` counts writes skipped because another component owns the transform: it is

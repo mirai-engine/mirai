@@ -1,8 +1,8 @@
 package render
 
-import "core:reflect"
-import "core:strings"
 import "core:testing"
+import "mirai:asset"
+import "mirai:core"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
@@ -39,39 +39,45 @@ each_writer_of_material_values_changes_only_the_names_it_gives :: proc(t:^testin
     testing.expect(t,material_value(&o,"strength",1))
 }
 
-// What makes an entity show a row of its own and what its instance holds:
-// a value of the standard model the instance holds, or one a program may
-// have, asks for no row; a texture, or a value that changes how the surface
-// is drawn, does.
+// What an entity gives its materials by name, and its fade, are held by its
+// instance, which is traced and drawn by them; only a texture makes it show
+// a row of its own.
 @(test)
-only_what_changes_how_a_surface_is_drawn_asks_for_a_row :: proc(t:^testing.T) {
-    Case :: struct {name:string,row:bool}
-    cases:=[?]Case{
-        {"base_color",false},{"opacity",false},{"metallic",false},{"roughness",false},{"emission",false},
-        {"dissolve",false},{"progress",false},
-        {"specular",false},{"coat",false},{"anisotropy_rotation",false},{"unlit",false},{"emission_mode",false},
-        {"ior",true},{"transmission",true},{"alpha_mode",true},
-    }
-    for c in cases {
-        o:=MATERIAL_VALUES_DEFAULT
-        testing.expect(t,material_value(&o,c.name,0.5,1))
-        testing.expectf(t,material_values_slot(&o,1) && material_values_slot(&o,1,true)==c.row && !material_values_slot(&o,0,true),"%s",c.name)
-        testing.expect(t,!material_values_plain(&o))
-        _,instanced:=material_value_instanced(base.name_hash(c.name))
-        testing.expectf(t,!(instanced && c.row),"%s",c.name)
-    }
-    for field in MATERIAL_VALUE_FIELDS {
-        if field.held=={} {continue}
-        target,_:=reflect.enum_name_from_value(field.held)
-        testing.expectf(t,strings.to_lower(target,context.temp_allocator)==field.name,"%s is held as %s",field.name,target)
-    }
+only_a_texture_makes_an_entity_show_a_row_of_its_own :: proc(t:^testing.T) {
+    f:=new(Sync_Fixture);defer free(f)
+    if !sync_fixture_init(t,f) {return}
+    defer sync_fixture_destroy(f)
+    e:=sync_cube(f,0)
+    values:=MATERIAL_VALUES_DEFAULT
+    for name in ([]string{"ior","transmission","opacity","roughness","coat","dissolve"}) {testing.expect(t,material_value(&values,name,0.5))}
+    core.add(&f.world.values,e,values)
+    sync_frame(f)
+    s:=&f.renderer.scene
+    testing.expect(t,f.assets.stats.derived==0 && s.instances[0].material_values!=0 && len(s.translucent)==1,"its transmission makes the instance glass")
+    testing.expect(t,material_value(core.edit(&f.world.values,e),"transmission",0))
+    sync_frame(f)
+    testing.expect(t,f.assets.stats.derived==0 && len(s.translucent)==0)
+    core.edit(&f.world.values,e).color.a=0.5
+    sync_frame(f)
+    testing.expect(t,f.assets.stats.derived==0 && len(s.translucent)==1,"a fade blends the instance, and derives no row")
+    testing.expect(t,material_value(core.edit(&f.world.values,e),"alpha_mode",f32(asset.Alpha_Mode.Mask)))
+    sync_frame(f)
+    testing.expect(t,f.assets.stats.derived==0 && len(s.translucent)==0,"a masked one stays masked as it fades")
+    material_screen(&f.world.lives,e,{texture=7})
+    sync_frame(f)
+    testing.expect_value(t,f.assets.stats.derived,1)
+}
+
+// The names an entity gives a slot, and the textures it gives and takes away.
+@(test)
+values_and_textures_are_of_their_slot :: proc(t:^testing.T) {
     o:=MATERIAL_VALUES_DEFAULT
     testing.expect(t,material_values_plain(&o))
     o.color.g=0.5
     testing.expect(t,!material_values_plain(&o) && !material_values_slot(&o,0),"a color is of no slot")
     emission,normal:=base.name_hash("maps.emission"),base.name_hash("maps.normal")
-    testing.expect(t,material_texture(&o,emission,2,{},7) && material_values_slot(&o,2,true))
-    testing.expect(t,material_texture(&o,emission,2,{},9) && o.texture_count==1 && o.shown[0]==9,"a texture given again takes its place")
+    testing.expect(t,material_texture(&o,emission,2,{7,7}) && material_values_slot(&o,2))
+    testing.expect(t,material_texture(&o,emission,2,{9,9}) && o.texture_count==1 && o.textures[0]==base.Asset_Id{9,9},"a texture given again takes its place")
     for i in 1..<MATERIAL_VALUES_TEXTURES {testing.expect(t,material_texture(&o,normal,i%MATERIAL_SLOTS,{3,3}))}
     testing.expect(t,!material_texture(&o,base.name_hash("maps.coat"),0,{3,3}) && !material_texture(&o,emission,MATERIAL_SLOTS,{3,3}))
     material_texture_drop(&o,emission,2)
@@ -87,39 +93,79 @@ values_given_over_those_of_an_entity_compose_with_them :: proc(t:^testing.T) {
     testing.expect(t,material_value(&own,"roughness",0.2) && material_value(&own,"metallic",1,1))
     over:=MATERIAL_VALUES_DEFAULT
     over.emission={0,2,0}
-    testing.expect(t,material_value(&over,"roughness",0.9) && material_value(&over,"emission",{4,4,4,0},2) && material_texture(&over,base.name_hash("maps.base_color"),2,{},5))
+    testing.expect(t,material_value(&over,"roughness",0.9) && material_value(&over,"emission",{4,4,4,0},2) && material_texture(&over,base.name_hash("maps.base_color"),2,{5,5}))
     material_values_over(&own,&over)
     testing.expect_value(t,own.color,[4]f32{0.5,1,1,0.5})
     testing.expect_value(t,own.emission,[3]f32{1,2,0})
     testing.expect_value(t,own.count,u32(3))
     testing.expect_value(t,own.values[material_value_find(&own,0,base.name_hash("roughness"))].x,f32(0.9))
     testing.expect_value(t,own.values[material_value_find(&own,1,base.name_hash("metallic"))].x,f32(1))
-    testing.expect(t,own.texture_count==1 && own.shown[0]==5 && own.texture_slots[0]==2)
+    testing.expect(t,own.texture_count==1 && own.textures[0]==base.Asset_Id{5,5} && own.texture_slots[0]==2)
 }
 
 // What shows a row through an instance without drawing it (the rectangle a
-// screen lights) is given the row with the values the instance holds for it:
-// the same row their values give derived from its material.
+// screen lights) is given the row with what the entity gives its slot: the
+// row those values derive from its material, and the row itself without any.
 @(test)
-the_values_an_instance_holds_give_the_row_they_derive :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"values-held")
-    if root=="" {return}
-    a:host.Assets
-    if !testing.expect(t,host.assets_init(&a,{root=root,capacity=8})) {return}
-    defer host.assets_destroy(&a)
-    material:=gpu.DEFAULT_MATERIAL
-    material.roughness=0.8
-    row,derived:=host.assets_material_derive(&a,material)
-    if !testing.expect(t,derived) {return}
-    held:gpu.Instance_Material_Values
-    held.entries[0]=gpu.instance_material_value(row,gpu.Instance_Material_Value_Target.Emission,{40,20,10,0})
-    held.entries[1]=gpu.instance_material_value(row,gpu.Instance_Material_Value_Target.Base_Color,{0,0,0,0})
-    held.entries[2]=gpu.instance_material_value(row+1,gpu.Instance_Material_Value_Target.Roughness,{0.1,0,0,0})
-    held.count=3
-    expected:=material
-    testing.expect(t,material_value_apply(&expected,nil,base.name_hash("emission"),{40,20,10,0}) && material_value_apply(&expected,nil,base.name_hash("base_color"),{}))
-    want,_:=host.assets_material_derive(&a,expected)
-    shown:=material_row_held(&a,row,&held)
-    testing.expect(t,shown!=row && shown==want,"the values for the row, and not those for another")
-    testing.expect_value(t,material_row_held(&a,row,&gpu.Instance_Material_Values{}),row)
+a_light_that_shows_the_row_of_an_instance_is_given_it_with_its_values :: proc(t:^testing.T) {
+    f:=new(Sync_Fixture);defer free(f)
+    if !sync_fixture_init(t,f) {return}
+    defer sync_fixture_destroy(f)
+    e:=sync_cube(f,0)
+    core.add(&f.world.rects,e,RECT_LIGHT_DEFAULT)
+    core.add(&f.world.emissions,e,Light_Emission{})
+    sync_frame(f)
+    s:=&f.renderer.scene
+    if !testing.expect_value(t,len(s.lights),1) {return}
+    plain:=transmute(u32)s.lights[0].size.w
+    values:=MATERIAL_VALUES_DEFAULT
+    testing.expect(t,material_value(&values,"emission",{40,20,10,0}))
+    core.add(&f.world.values,e,values)
+    sync_frame(f)
+    shown:=transmute(u32)s.lights[0].size.w
+    testing.expect(t,shown!=plain && host.assets_material_values(&f.assets,shown).emission==[3]f32{40,20,10},"the row its values derive")
+    core.remove(&f.world.values,e)
+    sync_frame(f)
+    testing.expect_value(t,transmute(u32)s.lights[0].size.w,plain)
+}
+
+// What a step gives an entity at run time is its Material_Live, over what
+// the entity authors: a value wins over the authored one of its name and
+// leaves it as it was, and a screen shows in its slot, also on an entity
+// without Material_Values, in a world that does not play. What stops takes
+// the component away with the last of it.
+@(test)
+what_is_live_goes_over_what_an_entity_authors_and_leaves_it :: proc(t:^testing.T) {
+    f:=new(Sync_Fixture);defer free(f)
+    if !sync_fixture_init(t,f) {return}
+    defer sync_fixture_destroy(f)
+    w:=&f.world
+    authored,bare:=sync_cube(f,0),sync_cube(f,2)
+    own:=MATERIAL_VALUES_DEFAULT
+    roughness:=base.name_hash("roughness")
+    testing.expect(t,material_value(&own,roughness,{0.2,0,0,0}))
+    core.add(&w.values,authored,own)
+    sync_frame(f)
+    // The row the instance of an entity shows.
+    row :: proc(f:^Sync_Fixture,e:core.Entity) -> gpu.Material_Desc {
+        sync_frame(f)
+        material,_,_,_:=gpu.scene_instance_materials(&f.renderer,u32(instance_of(&f.sync,e)))
+        return host.assets_material_values(&f.assets,u32(material))
+    }
+    testing.expect(t,material_value(material_live(&w.lives,authored),roughness,{0.9,0,0,0}))
+    material_screen(&w.lives,authored,{texture=9,lit=true,emission=200})
+    // A monitor on an entity that authors nothing: its instance shows a row with the image.
+    material_screen(&w.lives,bare,{texture=7,lit=true,emission=100})
+    testing.expect(t,row(f,authored).textures[.Emission]==9 && row(f,bare).textures[.Emission]==7,"each shows its screen, also the one without Material_Values")
+    look,_:=core.get(&w.values,authored)
+    live,_:=core.get(&w.lives,authored)
+    given:=gpu.DEFAULT_MATERIAL
+    material_values_apply(&f.assets,&given,&look,0,true,&live)
+    testing.expect(t,given.roughness==0.9 && given.base_color==[3]f32{} && given.emission==[3]f32{200,200,200},"what is live wins over what is authored")
+    testing.expect(t,look==own && !core.has(&w.values,bare),"what the entities author is as it was")
+    material_value_drop(material_live(&w.lives,authored),roughness)
+    material_screen(&w.lives,authored,{})
+    material_screen(&w.lives,bare,{})
+    testing.expect(t,row(f,authored).textures[.Emission]==0 && row(f,bare).textures[.Emission]==0,"without them their own show again")
+    testing.expect(t,!core.has(&w.lives,bare) && !core.has(&w.lives,authored),"what stops takes the component with it")
 }

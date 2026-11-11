@@ -57,7 +57,7 @@ void medium_find(uint instance) {
         if (hit.instance != instance) { origin += up * (hit.t + 1e-3); continue; }
         uint row;
         float3 face = triangle_face(hit.instance, hit.primitive, row);
-        Material m = material_row(row);
+        Material m = material_row(row, material_values_of(hit.instance));
         if (dot(face, up) > 0.0 && m.alpha_mode == ALPHA_BLEND && material_solid(m)) {
             float top = origin.y + hit.t;
             medium_inside = frame.camera_position.y < top ? 1u : 0u;
@@ -88,7 +88,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint local : SV_GroupIndex) {
             float far = length(position_from_depth(uv, opaque_depth(uv)) - lens);
             // A ray that starts under the top and goes up leaves the solid at it, unseen as a layer edge on.
             if (medium_near != 0u && eye.y > 1e-4) far = min(far, (medium_top - lens.y) / eye.y);
-            Material medium = material_row(medium_row);
+            Material medium = material_row(medium_row, material_values_of(params.medium - 1u));
             float3 seen = scene.Load(int3(p, 0)).rgb * material_absorption(medium, far) + solid_scatter(medium, params.medium - 1u, lens, eye, far, medium_top);
             out_color[p] = float4(finite_or_zero(seen), 1.0);
         }
@@ -100,7 +100,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint local : SV_GroupIndex) {
     if ((gbuffer_bits_unpack(normal) & GBUFFER_GLASS_EXIT) != 0u) {
         // The view leaves the solid it started in.
         uint2 ids = layer_ids.Load(int3(p, 0));
-        Material m = material_row(ids.x);
+        Material m = material_row(ids.x, material_values_of(ids.y));
         Glass g = glass_of(p, uv, depth, layer_albedo.Load(int3(p, 0)), normal, layer_emission.Load(int3(p, 0)));
         uint seed = seed_for(uint2(p), frame.frame_index, 23u);
         float bias = 1e-3 + 2e-4 * depth;
@@ -123,7 +123,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint local : SV_GroupIndex) {
         return;
     }
     if (inside) {
-        Material medium = material_row(medium_row);
+        Material medium = material_row(medium_row, material_values_of(params.medium - 1u));
         float3 seen = out_color[p].rgb * material_absorption(medium, near) + solid_scatter(medium, params.medium - 1u, frame.camera_position.xyz, view_direction(uv), near, medium_top);
         out_color[p] = float4(finite_or_zero(seen), 1.0);
     }

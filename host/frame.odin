@@ -35,7 +35,6 @@ FRAME_DEBUG_CAPACITY :: 8
 FRAME_INSTANCE_RESERVE :: 256
 FRAME_UI_TEXTURE_CAPACITY :: 32
 FRAME_EFFECT_VIEW_CAPACITY :: 16
-FRAME_MESH_SHOWN_CAPACITY :: 32
 TEXTURE_VIEW_CAPACITY :: 8
 PIPELINE_CACHE_FILE :: "pipelines.bin"
 
@@ -60,21 +59,9 @@ Frame_Extras :: struct {
     effect_view_count:int,
     probes:[render.DEPTH_PROBE_CAPACITY]render.Depth_Probe,
     probe_count:int,
-    meshes_shown:[FRAME_MESH_SHOWN_CAPACITY]Mesh_Shown, // of the last frame: render_sync writes them
-    meshes_shown_count:int,
     texture_views:[TEXTURE_VIEW_CAPACITY]render.Frame_View, // the views this frame draws into a texture
     texture_view_count:int,
     dropped:u64, // what did not fit in its frame and was not drawn, since the application started
-}
-
-// What drew, in the last frame, the mesh of an entity that showed values of
-// that frame alone (the texture of a panel on it), and where: the mesh the
-// renderer posed, if one replaced that of the world.
-Mesh_Shown :: struct {
-    object:u64, // render.Instance_Desc.object_id
-    mesh:render.Mesh_Handle,
-    anchor:[3]f32,
-    transform:render.Mat4, // relative to anchor
 }
 
 // The atlas the renderer holds: that of the font all the UI contexts of the
@@ -675,12 +662,6 @@ extras_instances :: proc(extras:^Frame_Extras) -> []render.Instance_Desc {return
 extras_free :: proc(extras:^Frame_Extras) {
     delete(extras.instances)
     extras.instances=nil
-}
-
-// What drew the mesh of object in the last frame, when it showed values of that frame alone.
-extras_mesh_shown :: proc(extras:^Frame_Extras,object:u64) -> (Mesh_Shown,bool) {
-    for shown in extras.meshes_shown[:extras.meshes_shown_count] {if shown.object==object {return shown,true}}
-    return {},false
 }
 
 // What the next frame is drawn from. cut: the view jumped and the history of

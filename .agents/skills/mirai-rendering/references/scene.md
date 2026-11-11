@@ -231,9 +231,8 @@ every frame.
   mesh a library poses on the GPU for an entity (a skin, a `Deform`, an imprint, a displaced
   terrain chunk) is the mesh of the instance of that entity, not a visual instance:
   `render_sync` places, tints, hides and outlines it as any mesh, and makes it again only when the
-  pose is given, changed or taken. With `materialed` it also
-  carries the values of its materials for the frame (the curves of an animation). The library
-  owns the mesh and takes the pose away before it removes it.
+  pose is given, changed or taken. The library owns the mesh and takes the pose away before it
+  removes it.
 
 ## Instance batches
 

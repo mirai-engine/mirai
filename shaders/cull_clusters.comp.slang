@@ -158,7 +158,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
         float scale = instance_scale(inst);
         Cluster_Cut cut = cluster_cut(inst, scale, mesh, c, frame.cut.x);
         if (!cut.drawn) return;
-        if (materials[material_of(inst, cluster_material(mesh, c))].shared.alpha_mode == ALPHA_BLEND) return;
+        if (material_row(material_of(inst, cluster_material(mesh, c)), inst.material_values).alpha_mode == ALPHA_BLEND) return;
         if (boxed) {
             bool away = posed ? pose.cone && cone_backfacing(inst, scale, mesh, pose.axis, pose.cutoff, low, high) : cluster_backfacing(inst, scale, mesh, c, low, high);
             if (!frustum_visible(low, high) || away) return;

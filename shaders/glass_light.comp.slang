@@ -26,7 +26,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     // The back faces of the solid the camera is in are left to glass_inside.comp.
     if ((gbuffer_bits_unpack(normal) & GBUFFER_GLASS_EXIT) != 0u) return;
     float2 uv = (float2(p) + 0.5) * frame.inv_resolution;
-    Material m = material_row(layer_ids.Load(int3(p, 0)).x);
+    uint2 ids = layer_ids.Load(int3(p, 0));
+    Material m = material_row(ids.x, material_values_of(ids.y));
     Glass g = glass_of(p, uv, depth, layer_albedo.Load(int3(p, 0)), normal, layer_emission.Load(int3(p, 0)));
     float traced = params.traced != 0u ? reflection_weight(g.roughness) : 0.0;
     float3 reflected = traced > 0.0 ? reflection.Load(int3(p, 0)).rgb : float3(0.0);

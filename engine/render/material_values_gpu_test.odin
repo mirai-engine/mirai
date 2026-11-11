@@ -1,6 +1,7 @@
 package render
 
 import "core:testing"
+import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
 import gpu "mirai:render"
@@ -10,7 +11,7 @@ import mm "mirai:std/math"
 // The values entities give their materials by name are held by their
 // instances: each one shows its own, no row of the material table is made for
 // them, and another value is given in place, without making the instance
-// again. What changes the passes that draw a surface still takes a row.
+// again: also one that chooses the passes that draw the surface.
 @(test)
 values_of_an_entity_show_from_its_instance_without_a_row_of_their_own :: proc(t:^testing.T) {
     settings:=gpu.DEFAULT_SETTINGS
@@ -84,13 +85,17 @@ values_of_an_entity_show_from_its_instance_without_a_row_of_their_own :: proc(t:
     shown=count(t,app)
     testing.expectf(t,shown.g>100 && shown.b>100,"%v",shown)
 
-    // A value that changes the passes that draw the surface makes the entity show a row of its own.
-    testing.expect(t,material_value(core.edit(&w.values,entities[1]),"ior",1.8))
+    // A value that chooses the passes that draw the surface is given in place too: masked, with no opacity, nothing of it is drawn.
+    testing.expect(t,material_value(core.edit(&w.values,entities[1]),"alpha_mode",f32(asset.Alpha_Mode.Mask)) && material_value(core.edit(&w.values,entities[1]),"opacity",0))
     draw(&sync,app,&w)
-    testing.expect_value(t,len(sync.made),1)
-    testing.expect_value(t,app.assets.stats.derived,1)
+    testing.expect(t,len(sync.made)==0 && len(sync.tinted)==1 && app.assets.stats.derived==0)
     shown=count(t,app)
-    testing.expectf(t,shown.g>100 && shown.b>100,"it keeps the color and the light its instance holds over that row: %v",shown)
+    testing.expectf(t,shown.g==0 && shown.b>100,"the mask its instance holds hides it: %v",shown)
+    testing.expect(t,material_value(core.edit(&w.values,entities[1]),"opacity",1))
+    draw(&sync,app,&w)
+    testing.expect(t,len(sync.made)==0 && app.assets.stats.derived==0)
+    shown=count(t,app)
+    testing.expectf(t,shown.g>100 && shown.b>100,"%v",shown)
 
     // Without its values an entity shows its material again.
     core.remove(&w.values,entities[0]);test_world_settle(&w)

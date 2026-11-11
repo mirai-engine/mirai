@@ -363,22 +363,23 @@ Components that describe the scene and `render_sync`, which carries it to the re
   a texture (`material_texture`: a map of `MATERIAL_MAP_NAMES` or a texture of the program, an
   asset or one the renderer made at run time) and, with `own_overlays`, its overlays instead of
   those of the first slot's material.
-  - **What the instance holds.** The color, the emission, the parameters of a program and the
-    values of the standard model an instance holds (`material_value_instanced`) go to the
-    instance of the entity
+  - **What the instance holds.** The color and its fade, the emission, the parameters of a
+    program and the values of the standard model go to the instance of the entity
     ([values of an instance](../../mirai-rendering/references/materials.md#material-row)):
     `render_sync` gives them in place when they change (`values_settle`), without making the
-    instance again or deriving a row. A texture, overlays, an alpha below 1 or a value of the
-    standard model that chooses passes (`ior`, `transmission`, `alpha_mode`) make the entity show
-    a derived row, shared by content. What an instance
-    holds is for a row: the slots of a mesh that show the same material share it.
+    instance again or deriving a row. A texture or overlays make the entity show a derived row,
+    shared by content. What an instance holds is for a row: the slots of a mesh that show the
+    same material share it.
   - It is `shared`: several game functions animate values of one entity, each setting and dropping
     only its own names with `material_value` and `material_value_drop` instead of writing the
     whole component over what another gave. A zero value is black and hidden: start from
     what the entity has or from `MATERIAL_VALUES_DEFAULT`.
-  - `values_show` asks, through the `Frame_Values_Requests` queue that `render_sync` takes, for
-    values of one frame that no table holds (the texture a world panel is drawn into): what draws
-    the entity that frame shows them over its own.
+  - What a step gives an entity at run time is not here: it is its `Material_Live`, a derived
+    component (no scene saves it, no undo holds it) that `render_sync` reads over this one:
+    values by name, which win over the authored ones of the same name (`material_live`: the
+    curve materials of `animation`), and one screen (`material_screen`: the texture a world
+    panel or a `Screen` of `monitors` is drawn into). A step gives it in any world, playing or
+    not, and whoever takes the last thing of it away removes it.
 - **`Highlight`**: the editor's selection outline; it replaces the entity's `Outline`.
 - **`Outline`**: the game's outline, with one of the 15 styles of `Outline_Styles`, a project
   setting (the same in all its scenes) with the color, the fill and what is seen behind another
@@ -619,9 +620,9 @@ one per local player that has screens or sees a `World_Widget`.
     (`UI_Settings.reference` and `UI_Preferences.scale`), so it keeps their size.
   - `target` `Mesh`: the panel is drawn into a renderer texture of `size` by `pixels` texels per
     unit, which the slot `slot` of the material of the entity's mesh shows as base color, lit and
-    covered like the scene, or as emission of `emission` nits; what the entity draws (its mesh, or
-    the skinned copy from `animation`) shows it over its material for that frame
-    (`render.values_show`; the standard model: a surface program does not read the map). It is built
+    covered like the scene, or as emission of `emission` nits; it is the screen of the entity's
+    `Material_Live` (`render.material_screen`; the standard model: a surface
+    program does not read the map). It is built
     only once, in the window's context, with the ray of the player who has the keyboard, while the
     camera of some local player sees the mesh's box as it was drawn; out of view the texture keeps
     the last one.

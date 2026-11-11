@@ -1,5 +1,6 @@
 package mirai_render
 
+import "mirai:render/abi"
 import "mirai:rhi"
 import "mirai:std/base"
 
@@ -47,10 +48,12 @@ instance_vertex :: proc(r: ^Renderer, mesh: Mesh_Record, material: u32, slots: [
 		reach := program.vertex.reach
 		if offset := program.vertex.reach_offset; offset >= 0 {
 			words := transmute([PROGRAM_PARAMETER_BYTES / 4]u32)values.custom_params
-			for at := 0; at + INSTANCE_VALUE_WORDS <= len(given); at += INSTANCE_VALUE_WORDS {
-				if given[at] == row && i32(given[at + 1] & 0xff) == offset / 4 {words[offset / 4] = given[at + 2]}
-			}
 			reach = transmute(f32)words[offset / 4]
+			word := u32(abi.MATERIAL_PARAMETERS_WORD + offset / 4)
+			for at := 0; at + INSTANCE_VALUE_WORDS <= len(given); at += INSTANCE_VALUE_WORDS {
+				first := given[at + 1] & (1 << INSTANCE_VALUE_COUNT_SHIFT - 1)
+				if given[at] == row && word >= first && word < first + min(given[at + 1] >> INSTANCE_VALUE_COUNT_SHIFT, 4) {reach = transmute(f32)given[at + 2 + int(word - first)]}
+			}
 			if !(reach >= 0) || reach > 1e30 {reach = 0}
 		}
 		v.reach = max(v.reach, reach)

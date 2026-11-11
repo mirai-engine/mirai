@@ -169,7 +169,7 @@ Widget_Candidate :: struct {
 // out of sight keeps its instance, and one on a mesh its texture, without
 // being built.
 @(private)
-plan_widgets :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,widgets:^core.Table(World_Widget,$A),worlds:^core.Table(core.World_Transform,$B),meshes_of:^core.Table(render.Mesh_Renderer,$C),hidden:^core.Table(render.Hidden,$D),parents:^core.Table(core.Parent,$E),time:core.Time,players:int,problems:^core.Problems,preview:=false) {
+plan_widgets :: proc(gui:^Gui,app:^host.App,drawn:^render.Render_Sync,world:core.World_Ref,widgets:^core.Table(World_Widget,$A),worlds:^core.Table(core.World_Transform,$B),meshes_of:^core.Table(render.Mesh_Renderer,$C),hidden:^core.Table(render.Hidden,$D),parents:^core.Table(core.Parent,$E),time:core.Time,players:int,problems:^core.Problems,preview:=false) {
     clear(&gui.candidates)
     split:=players>1 && gui.views[1].known
     for row in 0..<core.count(widgets) {
@@ -184,7 +184,7 @@ plan_widgets :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,widgets:^core.T
             // Built in the window's context, seen by the camera of any local player.
             nearest,seen:=max(f32),false
             for p in (1 if split else 0)..=(players if split else 0) {
-                distance,in_sight:=mesh_seen(app.renderer,&app.extras,&gui.views[p],e,position)
+                distance,in_sight:=mesh_seen(app.renderer,drawn,&gui.views[p],e,position)
                 if in_sight {nearest,seen=min(nearest,distance),true}
             }
             if seen {append(&gui.candidates,Widget_Candidate{entity=e,row=row,placed=placed,player=0,distance=nearest});continue}

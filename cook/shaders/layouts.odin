@@ -34,6 +34,7 @@ SHARED_STRUCTS :: []Shared_Struct{
     {slang="Material_Fuzz",odin="Gpu_Material_Fuzz"},
     {slang="Material_Anisotropy",odin="Gpu_Material_Anisotropy"},
     {slang="Material_Diffuse_Transmission",odin="Gpu_Material_Diffuse_Transmission"},
+    {slang="Material_Blocks",odin="Gpu_Material_Blocks"},
     {slang="Material_Row",odin="Gpu_Material_Row"},
     {slang="Light",odin="Gpu_Light"},
     {slang="Light_Node",odin="Gpu_Light_Node"},

@@ -173,17 +173,22 @@ ai_scene_figures_render_as_transient_geometry_and_reuse_descriptors :: proc(t:^t
     color:=agent_color(int(task.color_index))
     linear:=mm.srgb_to_linear([3]f32{f32(color[0])/255,f32(color[1])/255,f32(color[2])/255})
     // The instance holds the color of each colored part over the row of its material.
-    held :: proc(instance:gpu.Instance_Desc,row:u32,target:gpu.Instance_Material_Value_Target,value:[3]f32) -> bool {
-        given:=gpu.instance_material_value(row,target,{value.x,value.y,value.z,1})
-        values:=instance.material_values
-        for entry in values.entries[:values.count] {if entry==given {return true}}
-        return false
+    held :: proc(instance:gpu.Instance_Desc,row:u32,at:uintptr,value:[3]f32) -> bool {
+        values,want,found:=instance.material_values,transmute([3]u32)value,0
+        for entry in values.entries[:values.count] {
+            first,count:=entry.word&(1<<gpu.INSTANCE_VALUE_COUNT_SHIFT-1),entry.word>>gpu.INSTANCE_VALUE_COUNT_SHIFT
+            for c in u32(0)..<3 {
+                word:=u32(at/4)+c
+                if entry.row==row && word>=first && word<first+count && entry.words[word-first]==want[c] {found+=1}
+            }
+        }
+        return found==3
     }
     for slot in PRESENCE_COLOR_SLOTS {
         row:=instance.slot_materials[slot]
         if testing.expect(t,row>0,"each colored part shows the material of its slot") {
-            testing.expectf(t,held(instance,row-1,.Base_Color,linear),"slot %d holds its color",slot)
-            if slot==PRESENCE_STARS_SLOT {testing.expect(t,held(instance,row-1,.Emission,linear),"the stars glow in it")}
+            testing.expectf(t,held(instance,row-1,offset_of(gpu.Gpu_Material,base_color),linear),"slot %d holds its color",slot)
+            if slot==PRESENCE_STARS_SLOT {testing.expect(t,held(instance,row-1,offset_of(gpu.Gpu_Material,emission),linear),"the stars glow in it")}
         }
     }
     other:Presence
