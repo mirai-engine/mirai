@@ -22,9 +22,13 @@ import "mirai:std/serial"
 // not return a cookie, nor learn from it whether an invitation was right.
 // Requests and responses are padded to be larger than any answer to them.
 //
-// Data datagrams carry the low 16 bits of their sequence number and end in
-// the tag of the cipher that authenticates them and hides everything after
-// the sequence number (see secure.odin). Their body starts
+// Data datagrams carry the low 16 bits of their sequence number and the slot
+// of their connection at the receiver, and end in the tag of the cipher that
+// authenticates them and hides everything after the header (see secure.odin).
+// A connection follows its other end to a new address on the first datagram
+// from there that opens under its key and is newer than any it accepted, as
+// WireGuard roams: a router that changed the port loses nothing, and a
+// datagram replayed from elsewhere moves nothing. Their body starts
 // with the last sequence received and a bitfield of the ones before it, back
 // to the oldest the other end may still wait for: what it had not resolved
 // when it read the last acknowledgement it received, or SENT_WINDOW at most,
@@ -41,11 +45,11 @@ MAX_CONNECTIONS :: 1024
 @(private) COOKIE_SECONDS :: 10
 @(private) ACK_DELAY :: 0.03
 @(private) SECTION_RESERVE :: 4 // bits kept free for the terminators of the sections still to come
-@(private) DATA_HEADER :: 3     // bytes: type and sequence
+@(private) DATA_HEADER :: 5     // bytes: type, sequence and the slot of the connection at the receiver
 @(private) CHECKSUM_BYTES :: 4
-@(private) ACCEPT_BYTES :: 16   // server salt, object capacity and ticks of history, sealed
+@(private) ACCEPT_BYTES :: 18   // server salt, object capacity, ticks of history and the slot of the connection, sealed
 @(private) CANDIDATES :: 2      // addresses a client asks at once: those of an invitation
-@(private) TRANSPORT_VERSION :: 6 // of the layout of the handshake and of the datagrams after it: raised when it changes
+@(private) TRANSPORT_VERSION :: 7 // of the layout of the handshake and of the datagrams after it: raised when it changes
 
 Connection_Stats :: struct {
     rtt,rtt_variance,jitter:f32, // seconds
@@ -104,6 +108,7 @@ Attempt :: struct {
 Peer :: struct {
     state:Peer_State,
     index,generation:u32,
+    remote:u16, // the slot of the connection at the other end, which its datagrams carry
     address:Address,
     client_salt,server_salt,cookie:u64,
     stamp:u64, // milliseconds of the server's clock when it made the cookie
@@ -225,11 +230,18 @@ peer_unlist :: proc(b:^Back,p:^Peer) {
     key:=address_key(b,p.address)
     if index,listed:=base.hash_map_get(&b.by_address,key);listed && index==p.index {base.hash_map_remove(&b.by_address,key)}
 }
+@(private)
+peer_readdress :: proc(b:^Back,p:^Peer,address:Address) {
+    if address==p.address {return}
+    peer_unlist(b,p)
+    p.address=address
+    peer_list(b,p)
+}
 
 @(private)
 peer_reset :: proc(h:^Host,p:^Peer,address:Address) {
     now:=h.back.now
-    p.address=address
+    p.address,p.remote=address,0
     p.client_salt,p.server_salt,p.cookie,p.stamp=0,0,0,0
     p.started,p.last_send,p.last_receive,p.next_handshake=now,now,now,now
     p.send_counter,p.recv_counter,p.send_seq,p.sent_tail,p.recv_bits,p.late_bits,p.ack_known=0,0,0,0,{},0,0
@@ -404,7 +416,7 @@ checksum_check :: proc(bytes:[]u8,key:u64) -> bool {
 @(private)
 data_begin :: proc(h:^Host,p:^Peer,w:^serial.Bit_Writer,type:Packet_Type) {
     out:=h.back.outgoing[:]
-    out[0],out[1],out[2]=u8(type),u8(p.send_counter),u8(p.send_counter>>8)
+    out[0],out[1],out[2],out[3],out[4]=u8(type),u8(p.send_counter),u8(p.send_counter>>8),u8(p.remote),u8(p.remote>>8)
     serial.bit_writer_init(w,out[DATA_HEADER:PACKET_BYTES-TAG_BYTES])
 }
 @(private)
@@ -497,10 +509,11 @@ handshake_accept :: proc(h:^Host,p:^Peer) {
     handshake_begin(h,&w,.Accepted,p.client_salt)
     s:=&p.secure
     sealed:[ACCEPT_BYTES+TAG_BYTES]u8
-    salt,objects,history:=u64le(p.server_salt),u32le(h.desc.replication.max_objects),u32le(h.history)
+    salt,objects,history,slot:=u64le(p.server_salt),u32le(h.desc.replication.max_objects),u32le(h.history),u16le(p.index)
     mem.copy(&sealed[0],&salt,8)
     mem.copy(&sealed[8],&objects,4)
     mem.copy(&sealed[12],&history,4)
+    mem.copy(&sealed[16],&slot,2)
     aead_seal(&s.accept,0,s.public[:],sealed[:ACCEPT_BYTES],sealed[ACCEPT_BYTES:])
     serial.bit_write_bytes(&w,s.public[:])
     serial.bit_write_bytes(&w,sealed[:])
@@ -526,13 +539,17 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
     p:=peer_find(b,from)
     r:serial.Bit_Reader
     if type==.Data || type==.Disconnect {
+        // From an address no connection has: the connection of the slot it names, if it opens under its key.
+        roamed:=p==nil
+        if slot:=int(bytes[3])|int(bytes[4])<<8;roamed && slot<len(b.peers) {p=&b.peers[slot]}
         if p==nil || p.state!=.Connected {b.stats.packets_invalid+=1;return}
         body,counter,authentic:=data_open(h,p,bytes)
-        if !authentic {
+        if !authentic || roamed && p.recv_any && counter<=p.recv_counter {
             b.stats.packets_invalid+=1
-            p.stats.packets_rejected+=1
+            if !roamed {p.stats.packets_rejected+=1}
             return
         }
+        if roamed {peer_readdress(b,p,from)}
         serial.bit_reader_init(&r,body)
         if type==.Disconnect {
             reason:=serial.bit_read(&r,8)
@@ -593,11 +610,16 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
             if other.state==.Connected && &other!=p && other.client_salt==salt {b.stats.handshakes_dropped+=1;return}
         }
         if hash!=host_protocol_hash(h) {handshake_deny(h,from,salt,.Denied_Protocol);return}
-        if b.secure.handshakes<=0 {b.stats.handshakes_deferred+=1;return}
+        failed:=failed_record(b,from)
+        if b.secure.handshakes<=0 || failed.due-b.now>(FAILED_BURST-1)*FAILED_INTERVAL {b.stats.handshakes_deferred+=1;return}
         b.secure.handshakes-=1
         session:Peer_Secure
-        // A wrong invitation: no answer tells it so.
-        if !secure_server_accept(h,&session,salt,&client_public,proof[:]) {b.stats.handshakes_dropped+=1;return}
+        // A wrong invitation: no answer tells it so, and the address waits for its next try.
+        if !secure_server_accept(h,&session,salt,&client_public,proof[:]) {
+            failed.due=max(failed.due,b.now)+FAILED_INTERVAL
+            b.stats.handshakes_dropped+=1
+            return
+        }
         slot:=p
         for &candidate in b.peers {
             if slot!=nil {break}
@@ -650,18 +672,16 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
             return
         }
         crypto.zero_explicit(&b.attempt,size_of(Attempt))
-        if from!=p.address {
-            peer_unlist(b,p)
-            p.address=from
-            peer_list(b,p)
-        }
+        peer_readdress(b,p,from)
         answer:=sealed[:ACCEPT_BYTES]
         server_salt:u64le
         objects,history:u32le
+        slot:u16le
         mem.copy(&server_salt,&answer[0],8)
         mem.copy(&objects,&answer[8],4)
         mem.copy(&history,&answer[12],4)
-        p.server_salt=u64(server_salt)
+        mem.copy(&slot,&answer[16],2)
+        p.server_salt,p.remote=u64(server_salt),u16(slot)
         // The history of the server is the client's: at most what this end would keep itself.
         if int(objects)>h.desc.replication.max_objects || history==0 || int(history)>history_ticks(HISTORY_MAX_SECONDS,h.desc.tick_rate) {
             // The server holds the connection already: it hears why, and this end never had it.
