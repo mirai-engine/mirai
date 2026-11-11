@@ -16,16 +16,15 @@ import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
 
-// The scene being edited: the file the World was opened from or saved to,
-// the document it was read as (what the World cannot hold: the order of its
-// roots, tables of libraries the project does not have) and
-// the state of the history it was saved at. Opening and creating replace the
-// World and start a new history.
+// The scene being edited: its file, the document it was read as (what the
+// World cannot hold: the order of its roots, tables of libraries the project
+// does not have) and the state of the history its file holds. The file is
+// written when a step ends (document_flush): it is what the editor has.
+// Opening and creating replace the World and start a new history.
 
 SCENE_EXTENSION :: ".scene"
 DOCUMENT_PATH_BYTES :: 1024
 @(private) DIALOG_OPEN :: u32(0x4d4f5045)
-@(private) DIALOG_SAVE :: u32(0x4d534156)
 
 Document_Error :: enum u8 {
     None,
@@ -43,14 +42,14 @@ Document_Error :: enum u8 {
 
 @(storage)
 Document :: struct {
-    path:[DOCUMENT_PATH_BYTES]u8, // as given: relative to the assets folder when inside it; empty for a scene never saved
+    path:[DOCUMENT_PATH_BYTES]u8, // as given: relative to the assets folder when inside it; empty until its first step gives it a file
     path_length:int,
     file:[DOCUMENT_PATH_BYTES]u8, // absolute
     file_length:int,
     id:base.Asset_Id,
     previous:^asset.Scene,        // the document of the file; nil for a new scene
-    saved:u64,                    // the state of the history when it was saved or opened
-    unsaved:bool,                 // changes from before a restart, or a section Save could not write
+    written:u64,                  // the state of the history its file holds
+    stale:bool,                   // the World holds what no step does and the file lacks: of a peer, a merge, a section that could not be written
     prefab:bool,                  // its kind: a prefab, shown in the studio light and placed by its one root; chosen when it is made, changed by scene.write kind
     source_stamp:[2]i64,
     sections:Document_Sections,
@@ -72,8 +71,6 @@ scene_folder :: proc(s:^Session,otherwise:string) -> string {
     return otherwise
 }
 
-document_dirty :: proc(s:^Session) -> bool {return s.document.unsaved || history.edits_scene_state(s.edits)!=s.document.saved}
-
 // The name a person reads for the scene.
 document_title :: proc(d:^Document) -> string {
     path:=document_path(d)
@@ -94,7 +91,7 @@ document_error_text :: proc(error:Document_Error) -> string {
     case .Out_Of_Memory: return "there is not enough memory to copy the scene out of the World; the file was not changed"
     case .Capture_Failed: return "the scene could not be copied out of the World: engine.diagnostics says why; the file was not changed"
     case .Bad_Path:     return "the path has a root and no drive, so it names no folder; write it with its drive, as C:/..."
-    case .Importing:    return "an import writes assets now; save when it ends (asset.import_status)"
+    case .Importing:    return "an import writes assets now; the file is written when it ends (asset.import_status)"
     case .Not_One_Root: return "a prefab has exactly one root: put its entities under one (Group), or make it a scene (File > Make scene)"
     }
     return ""
@@ -151,7 +148,7 @@ scene_open :: proc(s:^Session,path:string) -> Document_Error {
     return .None
 }
 
-// A document never saved: a scene with a sky and a sun, or a prefab with its one root.
+// A document without a file yet: a scene with a sky and a sun, or a prefab with its one root.
 scene_new :: proc(s:^Session,prefab:=false) {
     runs_stop(s)
     tools_release(s)
@@ -174,44 +171,34 @@ scene_new :: proc(s:^Session,prefab:=false) {
     document_opened(s)
 }
 
-// Saves the scene: to its file, or to path when given (a new file is
-// another asset, with an id of its own). Without either it asks for a file.
-scene_save :: proc(s:^Session,path:="") -> Document_Error {
-    if import_busy(s)!="" {return .Importing}
-    tool_preview_cancel(s)
+// The end of a step for the document in front: its file takes the World
+// when the history is not where the file left it. A document without a file
+// gets one at its first step, in the assets folder. .None when the file holds
+// the document.
+@(private)
+document_flush :: proc(s:^Session) -> Document_Error {
     d:=s.document
-    target:=path
-    if target=="" {target=document_path(d)}
-    if target=="" {
-        dialog_save(s)
-        return .None
+    if s.app.assets==nil || s.edits.world!=s.edit_world || !d.stale && history.edits_scene_state(s.edits)==d.written {return .None}
+    if import_busy(s)!="" {return .Importing}
+    file:=document_file(d)
+    if file=="" {
+        if !s.has_project {return .None}
+        _,file=asset_new_file(s,s.assets_root,d.prefab?"Prefab":"Untitled",SCENE_EXTENSION,false)
+        d.id=asset_id_new(s)
     }
-    file:=scene_file(s,target)
-    if file=="" {return .Bad_Path}
-    if !strings.has_suffix(file,SCENE_EXTENSION) {file=strings.concatenate({file,SCENE_EXTENSION},context.temp_allocator)}
-    if !history.edits_commit(s.edits,edited_world(s),document_selection(s)) && s.edits.error!=.No_Change {return .Rejected}
-    if file!=document_file(d) || d.id=={} {d.id=asset_id_new(s)}
-    if error:=document_write(s,file,true);error!=.None {return error}
-    // What memory held of the file, unsaved (a prefab an operation made), is of before this save.
-    if r:=files_registry(s);r!=nil {
-        if relative,inside:=asset.registry_relative(r,file);inside {_,_=asset.registry_memory_drop(r,relative)}
-    }
-    // A section that could not be written keeps the document unsaved.
-    if !sections_save(s) {d.unsaved=true}
-    owned:=make([dynamic]string,context.temp_allocator)
-    world_owned_unsaved(s,edited_world(s),&owned)
-    if _,saved:=assets_save(s,owned[:]);!saved {notify(s,"Assets the scene makes could not be saved; they stay unsaved")}
+    document_write(s,file,true) or_return
+    // A section that could not be written is tried again with the next flush.
+    d.stale=!sections_save(s)
     document_name(d,scene_path(s,file),file)
     assets_wrote(s,file)
     document_source_stamp(s)
-    if !d.unsaved {notify(s,fmt.tprintf("Saved %s",document_title(d)))}
-    return .None
+    return .Write_Failed if d.stale else .None
 }
 
 // The edited World as a scene, with the overrides of its prefab instances
 // as a file keeps them.
 @(private)
-document_capture :: proc(s:^Session,captured:^asset.Scene,id:base.Asset_Id,recovery:^Recovery_Info=nil,allocator:=context.allocator) -> Document_Error {
+document_capture :: proc(s:^Session,captured:^asset.Scene,id:base.Asset_Id,allocator:=context.allocator) -> Document_Error {
     tool_preview_cancel(s)
     a:=s.app.assets
     if a==nil {return .No_Assets}
@@ -228,14 +215,11 @@ document_capture :: proc(s:^Session,captured:^asset.Scene,id:base.Asset_Id,recov
         asset.scene_destroy(captured)
         return error==.Out_Of_Memory?.Out_Of_Memory:.Capture_Failed
     }
-    if recovery!=nil {
-        if _,error:=asset.document_put_row(&captured.doc,&a.types,RECOVERY_TABLE,recovery);error!=.None {asset.scene_destroy(captured);return .Capture_Failed}
-    }
     return .None
 }
 
 // Writes the edited World to a file. As the document, it becomes the file
-// the scene is saved in; otherwise it is a copy (the recovery, the restart).
+// of the scene; otherwise it is a copy (what the players of a game read).
 document_write :: proc(s:^Session,file:string,as_document:bool) -> Document_Error {
     tool_preview_cancel(s)
     a:=s.app.assets
@@ -251,7 +235,7 @@ document_write :: proc(s:^Session,file:string,as_document:bool) -> Document_Erro
     if as_document && d.prefab && asset.prefab_refused(&captured)!="" {return .Not_One_Root}
     if asset.scene_save(&captured,file)!=.None {return .Write_Failed}
     if !as_document {return .None}
-    // What was written is what the next save carries from.
+    // What was written is what the next write carries from.
     if saved:=new(asset.Scene);asset.scene_load(saved,&a.types,file)==.None {
         document_previous_free(d)
         d.previous=saved
@@ -259,27 +243,8 @@ document_write :: proc(s:^Session,file:string,as_document:bool) -> Document_Erro
         free(saved)
     }
     d.id=id
-    d.saved=history.edits_scene_state(s.edits)
-    d.unsaved=false
-    return .None
-}
-
-// The scene a restart left: the World as it was, with the path and the
-// unsaved changes of the document that was open.
-document_restore :: proc(s:^Session,file,path:string,unsaved:bool) -> Document_Error {
-    loaded,error:=scene_load_file(s,project.path_absolute(file,context.temp_allocator))
-    if error!=.None {
-        if loaded!=nil {asset.scene_destroy(loaded);free(loaded)}
-        return error
-    }
-    d:=s.document
-    document_previous_free(d)
-    d.previous=loaded
-    d.id=loaded.doc.id
-    d.prefab=.Prefab in loaded.doc.flags
-    if path!="" {document_name(d,path,scene_file(s,path))} else {document_name(d,"","")}
-    document_opened(s)
-    d.unsaved=unsaved
+    d.written=history.edits_scene_state(s.edits)
+    d.stale=false
     return .None
 }
 
@@ -295,85 +260,24 @@ document_reset :: proc(s:^Session) {
     d:=s.document
     document_previous_free(d)
     d.id={}
-    d.unsaved=false
+    d.stale=false
     d.prefab=false
-    d.saved=history.edits_scene_state(s.edits)
+    d.written=history.edits_scene_state(s.edits)
     document_name(d,"","")
 }
 
 // ---------------------------------------------------------------- what asks first
 
-// What waits for the answer about unsaved changes. The question also lists
-// unsaved assets (Editor_Ui.confirm_assets): Save writes them and Discard
-// gives them back what their files hold, except before the game of a plugin
-// (Play_Provider), which goes on without them. Closing an asset document
-// asks about its asset alone.
-Pending :: enum u8 {None,New,Close,Quit,Play_Plugin,Asset_Close,Open_Scene}
-
-// Whether the question comes before the game of a plugin, whose players read the saved files.
-@(private)
-pending_plugin :: proc(pending:Pending) -> bool {return pending==.Play_Plugin}
-
-Choice :: enum u8 {Save,Discard,Cancel}
+// What waits for the answer of a question: changing the scene while others
+// lose what they do in it (a shared session, agents at work), or quitting
+// while agents work.
+Pending :: enum u8 {None,New,Quit,Open_Scene}
 
 file_new :: proc(s:^Session,prefab:=false) {
     tool_preview_cancel(s)
     s.new_prefab=prefab
-    assets:=document_closing_assets(s)
-    if document_dirty(s) || len(assets)>0 || scene_switch_interrupts(s) {confirm_open(s,.New,assets);return}
+    if scene_switch_interrupts(s) {confirm_open(s,.New);return}
     s.requests+={.New}
-}
-
-// Saves the scene. When it uses unsaved assets it first asks whether to save
-// them with it (Modal.Save_Changes); those it owns are saved with it.
-save_request :: proc(s:^Session) {
-    tool_preview_cancel(s)
-    used:=make([dynamic]string,context.temp_allocator)
-    owned:=make([dynamic]string,context.temp_allocator)
-    world_unsaved_assets(s,edited_world(s),&used)
-    world_owned_unsaved(s,edited_world(s),&owned)
-    #reverse for path,i in used {
-        if slice.contains(owned[:],path) {ordered_remove(&used,i)}
-    }
-    if len(used)>0 {
-        confirm_assets_set(s.gui,used[:])
-        s.gui.modal=.Save_Changes
-        return
-    }
-    if error:=scene_save(s);error!=.None {notify(s,fmt.tprintf("The scene could not be saved: %s",document_error_text(error)))}
-}
-
-// The answer to Save_Changes: the scene with its unsaved assets, or alone.
-save_changes_resolve :: proc(s:^Session,with_assets:bool) {
-    g:=s.gui
-    g.modal=.None
-    if with_assets {
-        if _,ok:=assets_save(s,g.confirm_assets[:]);!ok {notify(s,"Some assets could not be saved; they stay unsaved")}
-    }
-    confirm_assets_set(g,nil)
-    if error:=scene_save(s);error!=.None {notify(s,fmt.tprintf("The scene could not be saved: %s",document_error_text(error)))}
-}
-
-// Saves the unsaved assets and every document with changes that has a file.
-save_all :: proc(s:^Session) {
-    tool_preview_cancel(s)
-    saved,ok:=assets_save_all(s)
-    if !ok {notify(s,"Some assets could not be saved; they stay unsaved")}
-    documents_ensure(s)
-    active:=s.active_document
-    untitled:=0
-    for index in 0..<len(s.documents) {
-        tab:=&s.documents[index]
-        d:=index==active?s.document:&tab.document
-        e:=index==active?s.edits:&tab.edits
-        if !d.unsaved && history.edits_scene_state(e)==d.saved {continue}
-        if document_path(d)=="" {untitled+=1;continue}
-        document_activate(s,index)
-        if scene_save(s)!=.None {notify(s,"A scene could not be saved")}
-        saved+=1
-    }
-    document_activate(s,active)
-    if untitled>0 {notify(s,untitled==1?"An untitled scene was not saved: Save as gives it a file":fmt.tprintf("%d untitled scenes were not saved: Save as gives them a file",untitled))} else if ok {notify(s,fmt.tprintf("Saved %d %s",saved,saved==1?"file":"files"))}
 }
 
 file_open :: proc(s:^Session) {
@@ -388,82 +292,33 @@ file_open_path :: proc(s:^Session,path:string) {
     s.requests+={.Open}
 }
 
-confirm_open :: proc(s:^Session,pending:Pending,assets:[]string=nil) {
-    g:=s.gui
-    confirm_assets_set(g,assets)
-    g.pending=pending
-    g.modal=.Confirm
-}
-
-// The unsaved assets a question lists, as copies it owns.
-confirm_assets_set :: proc(g:^Editor_Ui,assets:[]string) {
-    for path in g.confirm_assets {delete(path)}
-    clear(&g.confirm_assets)
-    for path in assets {append(&g.confirm_assets,strings.clone(path))}
+confirm_open :: proc(s:^Session,pending:Pending) {
+    s.gui.pending=pending
+    s.gui.modal=.Confirm
 }
 
 // Closes the dialog open, unanswered, with what it asked about.
 modal_close :: proc(g:^Editor_Ui) {
     g.modal=.None
-    confirm_assets_set(g,nil)
     g.delete_asset={}
     g.discard_path={}
 }
 
-// The answer to the question about unsaved changes.
-confirm_resolve :: proc(s:^Session,choice:Choice) {
+// The answer to a question: the agents still working stop and what waited goes on.
+confirm_resolve :: proc(s:^Session,go_on:bool) {
     g:=s.gui
     g.modal=.None
     pending:=g.pending
-    if choice==.Cancel {
+    g.pending=.None
+    if !go_on {
         if pending==.Quit {projects_next_cancel(s)}
-        g.pending=.None
-        confirm_assets_set(g,nil)
         return
     }
-    // The agents still working stop first: what they did is saved or discarded
-    // with the rest. They work on the scene, which closing an asset keeps.
-    if !pending_plugin(pending) && pending!=.Asset_Close {ai_working_stop(s)}
-    if choice==.Save {
-        if _,ok:=assets_save(s,g.confirm_assets[:]);!ok {
-            notify(s,"Some assets could not be saved; they stay unsaved")
-            g.pending=.None
-            confirm_assets_set(g,nil)
-            return
-        }
-    } else if !pending_plugin(pending) {
-        assets_discard(s,g.confirm_assets[:])
-    }
-    confirm_assets_set(g,nil)
-    if choice==.Save && !pending_plugin(pending) && pending!=.Asset_Close && document_dirty(s) {
-        if document_path(s.document)=="" {
-            g.save_then=true
-            dialog_save(s)
-            return
-        }
-        if scene_save(s)!=.None {
-            notify(s,"The scene could not be saved")
-            g.pending=.None
-            return
-        }
-    }
-    pending_continue(s,pending)
-}
-
-@(private)
-pending_continue :: proc(s:^Session,pending:Pending) {
-    s.gui.pending=.None
+    ai_working_stop(s)
     switch pending {
     case .None:
-    case .New:         s.requests+={.New}
-    case .Close:       s.requests+={.Document_Discard}
-    case .Quit:
-        documents_ensure(s)
-        s.documents[s.active_document].quit_approved=true
-        s.requests+={.Quit_Check}
-    case .Play_Plugin:
-        if p:=providers(s);p.plays && p.play.confirmed!=nil {p.play.confirmed(s)}
-    case .Asset_Close: s.requests+={.Asset_Discard}
+    case .New:  s.requests+={.New}
+    case .Quit: documents_quit(s,true)
     case .Open_Scene:
         s.open_confirmed=true
         s.requests+={.Open}
@@ -476,42 +331,17 @@ dialog_open :: proc(s:^Session) {
     if !platform.dialog_show(s.app.platform,{kind=.Open_File,tag=DIALOG_OPEN,filters=filters[:],location=s.assets_root}) {notify(s,"A file dialog is already open")}
 }
 
-@(private)
-dialog_save :: proc(s:^Session) {
-    tool_preview_cancel(s)
-    filters:=[1]platform.Dialog_Filter{{"Scene","scene"}}
-    location:=document_file(s.document)
-    if location=="" {location=s.assets_root}
-    if !platform.dialog_show(s.app.platform,{kind=.Save_File,tag=DIALOG_SAVE,filters=filters[:],location=location}) {notify(s,"A file dialog is already open")}
-}
-
-// Answers of the file dialogs the editor opened.
+// The answer of the file dialog the editor opened.
 @(private)
 dialogs_answer :: proc(s:^Session) {
     result:=platform.dialog_result(s.app.platform)
-    if result.state==.None || result.tag!=DIALOG_OPEN && result.tag!=DIALOG_SAVE {return}
-    g:=s.gui
+    if result.tag!=DIALOG_OPEN {return}
     switch result.state {
-    case .None:
+    case .None,.Cancelled:
     case .Accepted:
-        if result.tag==DIALOG_OPEN {
-            s.open_length=copy(s.open_path[:],result.path)
-            s.requests+={.Open}
-            return
-        }
-        if scene_save(s,result.path)!=.None {
-            notify(s,"The scene could not be saved")
-            g.save_then,g.pending=false,.None
-            return
-        }
-        if g.save_then {
-            g.save_then=false
-            pending_continue(s,g.pending)
-        }
-    case .Cancelled:
-        if result.tag==DIALOG_SAVE {g.save_then,g.pending=false,.None}
+        s.open_length=copy(s.open_path[:],result.path)
+        s.requests+={.Open}
     case .Failed:
-        g.save_then,g.pending=false,.None
         notify(s,"The system file dialog is not available")
     }
 }
@@ -525,7 +355,7 @@ scene_load_file :: proc(s:^Session,file:string) -> (loaded:^asset.Scene,error:Do
     reading:=host.load_phase_begin(s.app,.Read)
     read:=false
     defer if !read {host.load_phase_end(s.app,reading,1)}
-    // A file of the assets as the registry holds it, unsaved, else the disk.
+    // A file of the assets as the registry holds it: what an open gesture wrote, else the disk.
     source:asset.Asset
     opened:asset.Error
     if relative,inside:=asset.registry_relative(&a.registry,file);inside {
@@ -557,7 +387,7 @@ scene_load_file :: proc(s:^Session,file:string) -> (loaded:^asset.Scene,error:Do
         prefab_reader_begin(s,&reader)
         defer prefab_reader_end(&reader)
         if changed,_:=asset.scene_resolve(&reader.resolver,loaded);changed {
-            if moved:=reader.resolver.reparented;moved>0 {log.warnf("%s: %d entities it added under members its prefabs removed hang from the nearest member left now; save it to keep them there",file,moved)}
+            if moved:=reader.resolver.reparented;moved>0 {log.warnf("%s: %d entities it added under members its prefabs removed hang from the nearest member left now",file,moved)}
             data,encoded:=asset.scene_bytes(loaded)
             if encoded!=.None || asset.asset_take(&resolved,data)!=.None {
                 asset.scene_destroy(loaded)
@@ -601,8 +431,8 @@ document_opened :: proc(s:^Session) {
     w:=edited_world(s)
     history.edits_reset(s.edits,w)
     prefabs_opened(s)
-    s.document.saved=history.edits_scene_state(s.edits)
-    s.document.unsaved=false
+    s.document.written=history.edits_scene_state(s.edits)
+    s.document.stale=false
     s.document.sections={}
     if views:=core.world_storage_of(w,scene.Section_Views);views!=nil {clear(&views.items)}
     if u:=core.world_storage_of(w,scene.Unresolved_References);u!=nil {s.edits.resolved=u.written}

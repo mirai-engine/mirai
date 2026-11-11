@@ -341,7 +341,7 @@ journal_sync :: proc(edits:^Edits,w:core.World_Ref) -> bool {
         size:=info.info.size
         d:=journal_diff(table,image,size,edits.ranges[i].ranges,authors,only_authors && i!=id)
         for r in journal_diff_next(&d) {
-            if edits.reading || edits.logging {
+            if edits.reading {
                 change:=Journal_Change{entity=r.entity,id=journal_id(edits,w,id,r.entity),table=i32(i),present=r.image_row>=0,off=r.image_row>=0 && image.off[r.image_row]}
                 if edits.reading && change.present {
                     at:=edits.change_values_first+u64(len(edits.change_values))
@@ -598,9 +598,8 @@ world_turned_prune :: proc(w:core.World_Ref,marks:[]u8,bound:int,transforms:core
     core.world_settle(w)
 }
 
-// What the image took since a reader looked at cursor, which then points
-// past it. Collaboration and the recovery log read the changes, each with
-// its own cursor: what both read goes (journal_read_done, journal_log_done).
+// What the image took since collaboration looked at cursor, which then points
+// past it; what it read goes (journal_read_done).
 journal_read :: proc(edits:^Edits,cursor:^u64) -> []Journal_Change {
     end:=edits.changes_first+u64(len(edits.changes))
     from:=clamp(cursor^,edits.changes_first,end)
@@ -622,18 +621,11 @@ journal_read_done :: proc(edits:^Edits,cursor:u64) {
     journal_trim(edits)
 }
 
-// The recovery log wrote what it read up to cursor.
-journal_log_done :: proc(edits:^Edits,cursor:u64) {
-    edits.logged=cursor
-    journal_trim(edits)
-}
-
 @(private)
 journal_trim :: proc(edits:^Edits) {
     end:=edits.changes_first+u64(len(edits.changes))
     first:=end
     if edits.reading {first=min(first,edits.read_done)}
-    if edits.logging {first=min(first,edits.logged)}
     read:=int(clamp(first,edits.changes_first,end)-edits.changes_first)
     remove_range(&edits.changes,0,read)
     edits.changes_first+=u64(read)
@@ -648,7 +640,7 @@ journal_trim :: proc(edits:^Edits) {
 // Forgets the changes for every reader: the World they were of was replaced.
 journal_changes_drop :: proc(edits:^Edits) {
     end:=edits.changes_first+u64(len(edits.changes))
-    edits.read_done,edits.logged=end,end
+    edits.read_done=end
     journal_trim(edits)
 }
 
@@ -658,16 +650,7 @@ journal_reading :: proc(edits:^Edits,on:bool) -> (cursor:u64) {
     end:=edits.changes_first+u64(len(edits.changes))
     journal_read_done(edits,end)
     if !on {shrink(&edits.change_values)}
-    if !on && !edits.logging {shrink(&edits.changes)}
-    return end
-}
-
-// Starts or stops the reading of the recovery log, which sees from now on.
-journal_logging :: proc(edits:^Edits,on:bool) -> (cursor:u64) {
-    edits.logging=on
-    end:=edits.changes_first+u64(len(edits.changes))
-    journal_log_done(edits,end)
-    if !on && !edits.reading {shrink(&edits.changes)}
+    if !on {shrink(&edits.changes)}
     return end
 }
 

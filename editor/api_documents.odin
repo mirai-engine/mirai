@@ -10,7 +10,6 @@ Api_Document_Params :: struct {
     action:enum u8 {Open,Activate,Close,Preview_Sun} `mirai:"label=Open takes a scene or a prefab or an asset that opens as a document (a material or a kind a plugin declares); Preview_Sun turns the preview sun of a prefab on or off"`,
     path:[DOCUMENT_PATH_BYTES]u8 `mirai:"text,optional,label=Open: the file to open. The others: the document by its path as editor.documents lists it, a tab or an asset document; empty: the active tab, and for Close the asset document in front when one is"`,
     enabled:bool `mirai:"optional,label=Preview_Sun: whether the sun shows"`,
-    discard:bool `mirai:"optional,label=Close: drops unsaved changes; without it closing them fails"`,
 }
 
 Api_Documents_Result :: struct {
@@ -21,14 +20,12 @@ Api_Documents_Result :: struct {
 }
 Api_Document_Tab :: struct {
     path:string `mirai:"label=Its file; empty before it has one"`,
-    dirty:bool `mirai:"label=Whether it has unsaved changes"`,
     kind:Document_Kind `mirai:"label=A scene, shown in its own light, or a prefab, shown in the studio light"`,
     preview_sun:bool `mirai:"label=Whether a prefab shows with the preview sun"`,
 }
 Api_Asset_Document_Tab :: struct {
     path:string `mirai:"label=Under the asset folder; of a Slang program the path of its .slang"`,
     kind:string `mirai:"label=The kind of the asset; program for a Slang program"`,
-    dirty:bool `mirai:"label=Whether it has unsaved changes"`,
     undo:int `mirai:"label=Steps it can undo"`,
     redo:int `mirai:"label=Steps it can redo"`,
 }
@@ -44,9 +41,8 @@ api_documents :: proc(s:^Session,call:^api.Call) {
     r.documents=make([]Api_Document_Tab,len(s.documents),call.allocator)
     for &tab,index in s.documents {
         d:=index==s.active_document?s.document:&tab.document
-        e:=index==s.active_document?s.edits:&tab.edits
         v:=index==s.active_document?s.viewport:&tab.viewport
-        r.documents[index]={document_path(d),d.unsaved || history.edits_scene_state(e)!=d.saved,.Prefab if d.prefab else .Scene,v.preview_sun}
+        r.documents[index]={document_path(d),.Prefab if d.prefab else .Scene,v.preview_sun}
     }
     r.asset=api_asset_document_front(s)
     r.assets=make([]Api_Asset_Document_Tab,len(s.asset_documents),call.allocator)
@@ -55,7 +51,7 @@ api_documents :: proc(s:^Session,call:^api.Call) {
         if d.id!={} {
             if info,known:=asset.kind_info(d.kind);known {kind=info.name}
         }
-        r.assets[index]={unsaved_name(s,asset_document_path(s,&d)),kind,asset_document_dirty(s,&d),d.history.cursor,len(d.history.steps)-d.history.cursor}
+        r.assets[index]={file_name(s,asset_document_path(s,&d)),kind,d.history.cursor,len(d.history.steps)-d.history.cursor}
     }
 }
 
@@ -96,12 +92,6 @@ api_document :: proc(s:^Session,call:^api.Call) {
         asset_document_activate(s,-1)
         document_activate(s,index)
     case .Close:
-        d:=index==s.active_document?s.document:&s.documents[index].document
-        e:=index==s.active_document?s.edits:&s.documents[index].edits
-        if d.unsaved || history.edits_scene_state(e)!=d.saved {
-            if api_turn_refused(s,call,"close a document with unsaved changes") {return}
-            if !p.discard {api.call_fail(call,api.SERVER_ERROR,"The document has unsaved changes; save it or pass discard");return}
-        }
         document_activate(s,index)
         document_close_active(s)
     case .Preview_Sun:
@@ -118,7 +108,7 @@ api_document :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_asset_document_front :: proc(s:^Session) -> string {
     if s.asset_shown<=0 || s.asset_shown>len(s.asset_documents) {return ""}
-    return unsaved_name(s,asset_document_path(s,&s.asset_documents[s.asset_shown-1]))
+    return file_name(s,asset_document_path(s,&s.asset_documents[s.asset_shown-1]))
 }
 
 // The open document named by its path: the index of a tab, or of an asset
@@ -134,7 +124,7 @@ api_document_named :: proc(s:^Session,name:string) -> (index,shown:int) {
     registered,found:=asset_document_file(s,name)
     for &d,at in s.asset_documents {
         if found && d.id==registered.id {return -1,at}
-        if listed:=asset_document_path(s,&d);listed!="" && (listed==name || unsaved_name(s,listed)==name) {return -1,at}
+        if listed:=asset_document_path(s,&d);listed!="" && (listed==name || file_name(s,listed)==name) {return -1,at}
     }
     return
 }
@@ -145,15 +135,7 @@ api_asset_document :: proc(s:^Session,call:^api.Call,p:^Api_Document_Params,inde
     if index<0 || index>=len(s.asset_documents) {api.call_fail(call,api.INVALID_PARAMS,"That asset document is not open: editor.documents lists them");return}
     #partial switch p.action {
     case .Activate: asset_document_activate(s,index)
-    case .Close:
-        d:=&s.asset_documents[index]
-        if asset_document_dirty(s,d) && !asset_document_used(s,d) {
-            if api_turn_refused(s,call,"close an asset with unsaved changes") {return}
-            if !p.discard {api.call_fail(call,api.SERVER_ERROR,"The asset has unsaved changes; save it (asset.save) or pass discard");return}
-            path:=[1]string{asset_document_path(s,d)}
-            assets_discard(s,path[:])
-        }
-        asset_document_close_now(s,index)
+    case .Close:    asset_document_close(s,index)
     case:
         api.call_fail(call,api.INVALID_PARAMS,"An asset document is activated or closed: Preview_Sun is of a prefab")
         return

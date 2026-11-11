@@ -478,14 +478,10 @@ selection_section_locked :: proc(s:^Session,w:core.World_Ref) -> bool {
     return false
 }
 
-// Edits the section of reference in its world, or stops with none. What the
-// one left keeps unsaved, Save still writes.
+// Edits the section of reference in its world, or stops with none.
 section_edit_set :: proc(s:^Session,reference:core.Entity) {
     w:=edited_world(s)
     d:=&s.document.sections
-    if left:=section_editing(s);left!=core.NONE && left!=reference && section_unsaved(s,w,left) {
-        notify(s,fmt.tprintf("%s keeps its unsaved changes: Save writes them to %s",entity_label(w,left),section_scene_name(s,w,left)))
-    }
     views:=core.world_storage_of(w,scene.Section_Views)
     if d.edit!=core.NONE && d.edit!=reference && views!=nil {scene.section_view(views,d.edit,{},false)}
     if reference!=core.NONE {
@@ -545,7 +541,7 @@ section_capture :: proc(s:^Session,w:core.World_Ref,reference:core.Entity,captur
 
 // Whether the section of reference holds what its scene does not: changed
 // while it is loaded and on, or waiting dormant while it is off.
-section_unsaved :: proc(s:^Session,w:core.World_Ref,reference:core.Entity) -> bool {
+section_changed :: proc(s:^Session,w:core.World_Ref,reference:core.Entity) -> bool {
     r,ok:=entity_get(w,reference,scene.Scene_Reference)
     switch {
     case !ok: return false
@@ -582,7 +578,7 @@ section_save :: proc(s:^Session,reference:core.Entity) -> (result:Section_Write,
     }
     d:=&s.document.sections
     for e in others {
-        if slice.contains(d.edited[:d.edited_count],api_entity_id(w,e)) && section_unsaved(s,w,e) {
+        if slice.contains(d.edited[:d.edited_count],api_entity_id(w,e)) && section_changed(s,w,e) {
             notify(s,fmt.tprintf("%s shows the scene %s saved from %s: what changed in it is gone",entity_label(w,e),section_scene_name(s,w,e),entity_label(w,reference)))
         }
         section_reload(s,w,e)
@@ -592,8 +588,8 @@ section_save :: proc(s:^Session,reference:core.Entity) -> (result:Section_Write,
 
 // Writes the scene of every section edited in its world that changed: the
 // one edited first, so that it wins over another reference to the same
-// scene. False, with a notice, when one could not be written: the document
-// stays unsaved.
+// scene. False, with a notice, when one could not be written: the next flush
+// tries again.
 sections_save :: proc(s:^Session) -> bool {
     w:=edited_world(s)
     d:=&s.document.sections
@@ -614,19 +610,18 @@ sections_save :: proc(s:^Session) -> bool {
         case .Written: append(&written,r.scene)
         case .Failed:
             ok=false
-            notify(s,fmt.tprintf("The section %s was not saved: %s",entity_label(w,e),why))
+            notify(s,fmt.tprintf("The section %s was not written: %s",entity_label(w,e),why))
         }
     }
     return ok
 }
 
 Api_Section_Edit_Params :: struct {
-    entity:Api_Entity_Text `mirai:"text,entity,optional,label=The entity of a Scene_Reference whose section is edited in its world: Save writes its scene too, and the rest reads only; omitted stops"`,
+    entity:Api_Entity_Text `mirai:"text,entity,optional,label=The entity of a Scene_Reference whose section is edited in its world: its steps write its scene, and the rest reads only; omitted stops"`,
 }
 
 Api_Section_Edit_Result :: struct {
     editing:base.Entity_Id `mirai:"label=The section edited in its world now; 0 for none"`,
-    unsaved:base.Entity_Id `mirai:"label=The section it left with unsaved changes, which stays loaded; 0 for none"`,
 }
 Api_Section_Preview_Result :: struct {
     sky:base.Entity_Id `mirai:"label=The Sky the viewport previews; 0 for that of the document"`,
@@ -645,14 +640,12 @@ api_section_edit :: proc(s:^Session,call:^api.Call) {
         ok:bool
         if e,ok=api_section_reference(call,w,params.entity[:]);!ok {return}
     }
-    left:=section_editing(s)
-    kept:=left!=core.NONE && left!=e && section_unsaved(s,w,left)
     section_edit_set(s,e)
     if section_editing(s)!=e {
-        api.call_failf(call,api.SERVER_ERROR,"%d sections were edited in their world since the scene opened: scene.save, then scene.open it again to edit another",SECTIONS_EDITED)
+        api.call_failf(call,api.SERVER_ERROR,"%d sections were edited in their world since the scene opened: scene.open it again to edit another",SECTIONS_EDITED)
         return
     }
-    api.call_result(call,Api_Section_Edit_Result)^={api_entity_id(w,e),kept?api_entity_id(w,left):0}
+    api.call_result(call,Api_Section_Edit_Result).editing=api_entity_id(w,e)
 }
 
 // ---------------------------------------------------------------- the view

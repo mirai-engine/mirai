@@ -17,8 +17,7 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:ui"
 
-// Build: the shaders of the project (with the sources of programs the editor
-// holds unsaved) and its library (the world generated from the attributes of
+// Build: the shaders of the project and its library (the world generated from the attributes of
 // its packages, its game and its plugins) are made without stopping the
 // editor. One that succeeds is loaded into the running editor, its worlds
 // migrated when their layout changed (reload.odin), and so is what a build
@@ -68,7 +67,6 @@ Build_Play :: struct {
     pending:bool,
     request:bool, // the Play of the toolbar or of a shortcut; otherwise of play.start, with these
     owner,players,online,ping_ms:int,
-    saved_only:bool,
 }
 
 // Starts a build of the editor of the project, or of its game into folder
@@ -93,7 +91,6 @@ Build_Run :: struct {
     project_root,engine_root,folder,test_package:string,
     runs:string,               // the folder of the binaries of the engine this editor runs
     names:[]string,
-    overlay:[]shaders.Overlay, // a build of the editor: the programs the editor holds unsaved
     action:build.Action,
     target:build.Target,
     seconds:f64,               // how long it may run before it is stopped; 0: no limit
@@ -123,11 +120,6 @@ build_run_start :: proc(s:^Session,action:build.Action,target:build.Target,folde
     r.folder,r.test_package=strings.clone(folder,a),strings.clone(test_package,a)
     r.names=make([]string,len(names),a)
     for name,i in names {r.names[i]=strings.clone(name,a)}
-    if action==.Build && target==.Editor {
-        overlay:=programs_overlay(s)
-        r.overlay=make([]shaders.Overlay,len(overlay),a)
-        for held,i in overlay {r.overlay[i]={strings.clone(held.path,a),slice.clone(held.data,a),held.removed}}
-    }
     r.action,r.target,r.seconds,r.started=action,target,seconds,time.tick_now()
     b.run=r
     if action==.Build {
@@ -160,7 +152,7 @@ build_run :: proc(r:^Build_Run) {
         return intrinsics.atomic_load(&r.cancel) || r.seconds>0 && time.duration_seconds(time.tick_since(r.started))>r.seconds
     }
     if r.action==.Build {
-        r.shaders=build.shaders_start(&p,overlay=r.overlay)
+        r.shaders=build.shaders_start(&p)
         if r.target==.Game {
             for !build.shaders_poll(r.shaders) {
                 if stopped(r) {return}
@@ -221,8 +213,7 @@ build_run_free :: proc(b:^Build_State) {
     build.job_destroy(r.job)
     build.shaders_destroy(r.shaders)
     for name in r.names {delete(name,a)}
-    for held in r.overlay {delete(held.path,a);delete(held.data,a)}
-    delete(r.names,a);delete(r.overlay,a)
+    delete(r.names,a)
     delete(r.project_root,a);delete(r.engine_root,a);delete(r.runs,a);delete(r.folder,a);delete(r.test_package,a)
     free(r,a)
 }
@@ -440,7 +431,7 @@ build_play_resume :: proc(s:^Session) {
         s.requests+={.Play}
         return
     }
-    if error:=play_begin(s,play.owner,play.players,play.online,play.ping_ms,play.saved_only);error!="" {
+    if error:=play_begin(s,play.owner,play.players,play.online,play.ping_ms);error!="" {
         base.text_set(s.build.play_error[:],error)
         log.errorf("the game did not start after the build: %s",error)
         notify(s,"The game could not start")

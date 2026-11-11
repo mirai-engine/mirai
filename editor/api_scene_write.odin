@@ -427,7 +427,7 @@ api_write_target :: proc(a:^Api_Write) -> (target:author.Scene_Target,ok:bool) {
                 for e in core.world_table_of(a.w,core.Id).entities {roots+=int(entity_parent(a.w,e)==core.NONE)}
                 if roots!=1 {return false,fmt.tprintf("a prefab has exactly one root, and this scene has %d: put its entities under one (group), then make it a prefab",roots)}
             }
-            d.prefab,d.unsaved=prefab,true
+            d.prefab,d.stale=prefab,true
             a.s.view_cut=true
             return true,""
         },
@@ -464,6 +464,6 @@ api_inspect_tree :: proc(a:^Api_Write,params:^Api_Inspect_Params) {
     serial.write_u8(&tree,']')
     r:=api.call_result(call,Api_Inspect_Result)
     base.text_set(r.path[:],document_path(s.document))
-    r.dirty,r.playing,r.total=document_dirty(s),s.mode!=.Edit,core.world_entities(w).alive
+    r.playing,r.total=s.mode!=.Edit,core.world_entities(w).alive
     r.shown,r.matched,r.tree=len(part),len(part),serial.Json(string(serial.writer_bytes(&tree)))
 }

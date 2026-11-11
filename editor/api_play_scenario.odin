@@ -246,11 +246,8 @@ api_scenario_steps :: proc(s:^Session,call:^api.Call,sc:^Scenario) -> (ran:[]Api
         if target=="" {return nil,fail(call,"scene: %q is not a path of a file",sc.scene),0}
         if !os.is_file(target) {return nil,fail(call,"scene: %s is not there",target),0}
         if !project.path_same(target,document_file(s.document)) {
-            switch {
-            case owner!=0:
+            if owner!=0 {
                 return nil,fail(call,"scene: the scenario plays %s and the document is %s; a turn does not open another scene: run it with mirai play test, or ask the user to open that scene",sc.scene,document_path(s.document)),0
-            case document_dirty(s):
-                return nil,fail(call,"scene: the scenario plays %s and the document %s has unsaved changes: save them (scene.save) or open %s",sc.scene,document_path(s.document),sc.scene),0
             }
             path,_:=serial.text_encode(struct{path:string}{target},.Line,context.temp_allocator)
             if _,error,ok:=api_scenario_call(server,"scene.open",string(path),answer_buffer[:]);!ok {

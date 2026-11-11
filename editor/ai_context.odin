@@ -56,13 +56,11 @@ Ai_Context_Camera :: struct {
 Ai_Context_Document :: struct {
     path:string,
     state:u64,
-    dirty:bool,
     entities:int,
 }
 // The asset document in front when the message was sent, instead of the scene.
 Ai_Context_Asset :: struct {
     path:string,
-    dirty:bool,
     picked:[]string, // what the user picked in it, by name: the nodes of an interface
     shown:string,    // what it showed, as its plugin says it: the clip and its time of an animation
 }
@@ -297,7 +295,7 @@ ai_context_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity) -> bool 
             if text:=ai_entity_id_text(w,e);text!="" {append(&selection,text)}
         }
     }
-    document:=Ai_Context_Document{path=document_path(s.document),state=history.edits_scene_state(s.edits),dirty=document_dirty(s),entities=core.world_entities(w).alive}
+    document:=Ai_Context_Document{path=document_path(s.document),state=history.edits_scene_state(s.edits),entities=core.world_entities(w).alive}
     context_value:=Ai_Context{
         task=base.text_get(task.name[:]),mode=task.play?"play":"edit",instructions=ai_instructions_read(s),
         region={rect={task.region.x,task.region.y,task.region.w,task.region.h},window=task.window},
@@ -319,7 +317,7 @@ ai_context_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity) -> bool 
     if front!=nil {
         picked:=make([]string,front.picked_count,context.temp_allocator)
         for &name,i in picked {name=base.text_get(front.picked[i][:])}
-        context_value.asset={path=asset_document_path(s,front),dirty=asset_document_dirty(s,front),picked=picked,shown=strings.clone(base.text_get(front.shown[:]),context.temp_allocator)}
+        context_value.asset={path=asset_document_path(s,front),picked=picked,shown=strings.clone(base.text_get(front.shown[:]),context.temp_allocator)}
     }
     data,encoded:=serial.text_encode(context_value,.Pretty,context.temp_allocator)
     if !encoded {return false}
@@ -476,7 +474,6 @@ ai_prompt_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity,detached:b
     }
     if front:=asset_document_in_front(s);front!=nil && front.kind!=asset.KIND_MATERIAL {
         fmt.sbprintf(&b,"- This message comes from the document of %s, not from the scene",asset_document_path(s,front))
-        if asset_document_dirty(s,front) {strings.write_string(&b," (it has unsaved changes)")}
         if task.image {strings.write_string(&b,"; `view_viewport` shows it as the user saw it")}
         strings.write_string(&b,".\n")
         if shown:=base.text_get(front.shown[:]);shown!="" {fmt.sbprintf(&b,"- It showed %s.\n",shown)}

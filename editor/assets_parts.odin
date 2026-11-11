@@ -53,7 +53,7 @@ api_asset_detach :: proc(s:^Session,call:^api.Call) {
         return
     }
     file,_:=asset.registry_find(r,id)
-    api.call_result(call,Api_Detach_Result)^={id,file.path,owner,true}
+    api.call_result(call,Api_Detach_Result)^={id,file.path,owner}
 }
 
 // The files that had the id of another and were given one of their own, and

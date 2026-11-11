@@ -36,7 +36,6 @@ Api_Asset_Create_Params :: struct {
 Api_Asset_Create_Result :: struct {
     id:[base.ASSET_ID_TEXT]u8 `mirai:"text,label=The id of the asset; empty for a folder"`,
     path:[API_PATH_BYTES]u8 `mirai:"text,label=Its path under the assets folder"`,
-    unsaved:bool `mirai:"label=It stays in memory until asset.save; a folder and a scene are on disk at once"`,
 }
 
 // What Create makes, in the order it lists them: what the editor makes, then
@@ -307,5 +306,4 @@ api_asset_create :: proc(s:^Session,call:^api.Call) {
     result:=api.call_result(call,Api_Asset_Create_Result)
     if id!={} {base.asset_id_format(id,result.id[:])}
     base.text_set(result.path[:],path)
-    result.unsaved=kind!=ASSET_CREATE_FOLDER && kind!=asset.KIND_SCENE && kind!=ASSET_CREATE_PREFAB
 }

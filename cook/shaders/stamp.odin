@@ -95,10 +95,10 @@ stamp_current :: proc(g:^Generation,request:string,allocator:=context.allocator)
         if !same(file) {return}
     }
     for listing in record.listings {
-        if listing_read(listing.path,listing.recursive,context.temp_allocator,g.sources.overlay).hash!=listing.hash {return}
+        if listing_read(listing.path,listing.recursive,context.temp_allocator).hash!=listing.hash {return}
     }
     for file in record.files {
-        bytes,found:=source_read(g.sources.overlay,file.path,context.temp_allocator)
+        bytes,found:=source_bytes(file.path,context.temp_allocator)
         if found!=(file.hash!="") || (found && sha_of(bytes,context.temp_allocator)!=file.hash) {return}
     }
     stamp=record.stamp

@@ -85,14 +85,6 @@ git_changes_build :: proc(s:^Session,width,room:f32) {
             if message:=git.push(s.git,git_roots(s));message!="" {notify(s,message)}
         }
     }
-    if documents_dirty(s) || len(assets_unsaved(s))>0 {
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),gap=8,align_y=.Center,padding=ui.padding_xy(8,0),fill=ui.tone(ctx,"card"),radius=ui.metric(ctx,"radius_control")}) {
-            if ui.box(ctx,{width=ui.fixed(6),height=ui.fixed(6),fill=UNSAVED_COLOR,radius=3}) {}
-            ui.label(ctx,"Unsaved changes",ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
-            ui.spacer(ctx)
-            if ui.button(ctx,ui.id(ctx,"git_save"),{label="Save all",variant="field",height=ui.metric(ctx,"control")-6}).clicked {command_run(s,"save_all")}
-        }
-    }
     // Discarding all of them shows while the pointer is on their head.
     header,list:=ui.id(ctx,"git_changes_head"),ui.id(ctx,"git_changes")
     _=ui.interact(ctx,header,{.Passive})

@@ -14,8 +14,8 @@ import "mirai:std/serial"
 
 // Git from the editor: the project in a repository, its changes, commit, push
 // and pull. The commands run in editor/git; here is what they need of the
-// session (unsaved work, the files of the project, the assets read again) and
-// what starts them. A pull that leaves files in conflict puts the editor in
+// session (the files of the project, the assets read again) and what starts
+// them. A pull that leaves files in conflict puts the editor in
 // merge mode: the conflicts are resolved in git_merge.odin. The editor writes
 // the lines of .gitattributes of the kinds of asset on Initialize.
 
@@ -125,7 +125,7 @@ git_commit :: proc(s:^Session,push:bool) -> string {
         if change.left_out {left_out+=1} else {included+=1}
     }
     if left_out>0 && included==0 {return "Every change is left out"}
-    if documents_dirty(s) || len(assets_unsaved(s))>0 {return "Save first: a commit takes the files as they are saved"}
+    files_flush(s,true)
     git.start(g,git_roots(s),push?.Commit_Push:.Commit)
     return ""
 }
@@ -138,7 +138,6 @@ git_pull :: proc(s:^Session) -> string {
     if git.working(g) {return "Wait for git to finish"}
     if g.merging {return "Resolve the conflicts of the merge first"}
     if base.text_get(g.remote[:])=="" {return "The repository has no remote to pull from"}
-    if documents_dirty(s) || len(assets_unsaved(s))>0 {return "Save first"}
     if len(g.changes)>0 {return "Commit your changes before pulling"}
     git.start(g,git_roots(s),.Pull)
     return ""
@@ -146,12 +145,11 @@ git_pull :: proc(s:^Session) -> string {
 
 // Puts the changes of some files back as the last commit has them, or all
 // of them with paths empty; a file git does not track goes to the trash.
-// With unsaved work it does not: what memory holds would be written again.
 git_discard :: proc(s:^Session,paths:[]string) -> string {
     g:=s.git
     if git.working(g) {return "Wait for git to finish"}
     if g.merging {return "Resolve the conflicts of the merge first"}
-    if documents_dirty(s) || len(assets_unsaved(s))>0 {return "Save or discard the unsaved changes first"}
+    files_flush(s,true)
     for list in ([3]^[dynamic]string{&g.discard_paths,&g.discard_staged,&g.discard_trashed}) {
         for path in list {delete(path)}
         clear(list)

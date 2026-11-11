@@ -704,7 +704,7 @@ api_material_document :: proc(s:^Session,call:^api.Call) {
     channel_ids:=MATERIAL_CHANNEL_IDS
     channel:=api.call_given(call,"channel")?channel_ids[Material_Channel(p.channel)]:""
     if name=="" {
-        if material_document_shown(s) {asset_document_close_now(s,s.asset_shown-1)}
+        if material_document_shown(s) {asset_document_close(s,s.asset_shown-1)}
         api.call_result(call,Api_Material_Document_Result)^={}
         return
     }

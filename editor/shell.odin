@@ -51,19 +51,8 @@ DOCUMENT_LIBRARY_TABS :: [Document_Type]Library_Tabs{
     .Asset={.Content,.Ai,.Git},
 }
 Bottom_Tab :: enum u8 {Console,Build}
-Modal :: enum u8 {None,Confirm,Save_Changes,Recovery,Shortcuts,Settings,Delete_Asset,Git_Discard}
+Modal :: enum u8 {None,Confirm,Shortcuts,Settings,Delete_Asset,Git_Discard}
 
-// Whether the world of a document uses unsaved assets, as last asked
-// (document_uses_unsaved): key is the revision of the registry and the state
-// of its history then.
-Unsaved_Use :: struct {
-    world:rawptr,
-    key:[2]u64,
-    uses:bool,
-}
-
-// The dot of unsaved changes.
-UNSAVED_COLOR :: ui.Color{201,181,239,255}
 Splitter :: enum u8 {None,Bottom,Right}
 
 // How the right panel sits: over the scene, or docked to the edge of the window
@@ -140,11 +129,8 @@ Editor_Ui :: struct {
     toolbar_height:f32, // of the toolbar under the document bar, its bottom on a whole pixel (bars_snap)
     bar_height:f32,     // of the theme, before bars_snap puts its bottom on a whole pixel
     pending:Pending,
-    save_then:bool, // a Save As asked by the question about unsaved changes goes on with what waits
-    confirm_assets:[dynamic]string, // the unsaved assets the question lists, by their path in the registry
     delete_asset:base.Asset_Id,     // what Modal.Delete_Asset asks about
     discard_path:[git.PATH_BYTES]u8, // what Modal.Git_Discard asks about; empty: every change
-    unsaved_uses:[dynamic]Unsaved_Use,
     drag:Drag,
     placement:Placement,
     preview:Placement_Preview,
@@ -249,7 +235,6 @@ gui_destroy :: proc(g:^Editor_Ui) {
     delete(g.preview.parts)
     g.preview={}
     g.draws,g.panels={},{}
-    confirm_assets_set(g,nil)
     core.value_free(g,type_info_of(Editor_Ui))
 }
 
@@ -851,8 +836,8 @@ shell_after :: proc(s:^Session) {
         platform.window_set_cursor(p,g.cursor)
         g.cursor_set=g.cursor
     }
-    title:=fmt.tprintf("%s%s - Mirai",document_title(s.document),document_dirty(s)?" *":"")
-    if s.projects!=nil && s.projects.launcher {title="Mirai"} else if d:=asset_document_active(s);d!=nil {title=fmt.tprintf("%s%s - Mirai",asset_document_title(s,d),asset_document_dirty(s,d)?" *":"")}
+    title:=fmt.tprintf("%s - Mirai",document_title(s.document))
+    if s.projects!=nil && s.projects.launcher {title="Mirai"} else if d:=asset_document_active(s);d!=nil {title=fmt.tprintf("%s - Mirai",asset_document_title(s,d))}
     if title!=string(g.title[:g.title_length]) {
         g.title_length=copy(g.title[:],title)
         platform.window_set_title(p,title)
@@ -1084,7 +1069,6 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
                 if material_document_shown(s) {ui.label(ctx,material_document_kind(s),ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"))}
             }
         } else if ui.box(ctx,{width=ui.FIT,height=ui.GROW,gap=4,align_y=.Center}) {
-            command_button(s,"save",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,disabled=!document_dirty(s)})
             command_button(s,"undo",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
             command_button(s,"redo",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
         }
@@ -1523,71 +1507,20 @@ modal_build :: proc(s:^Session) {
     ctx:=g.ctx
     switch g.modal {
     case .None:
-    case .Recovery:
-        if ui.modal(ctx,shell_id(g,"recovery"),{width=440}) {
-            ui.label(ctx,"Recover unsaved changes?",ui.metric(ctx,"font_title"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
-            if s.recovery.tabs {
-                ui.label(ctx,"Every tab of the editor that ended",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
-            } else {
-                for &found in s.recovery.found {
-                    path:=base.text_get(found.scene?found.info.source[:]:found.source[:])
-                    ui.label(ctx,path!=""?filepath.base(path):"Untitled",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
-                }
-            }
-            if len(s.recovery.assets)>0 {ui.label(ctx,"Assets with unsaved changes",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=8,align_x=.End,align_y=.Center}) {
-                if ui.button(ctx,shell_id(g,"recovery_later"),{label="Later",variant="field",width=92,height=28,center=true}).clicked {g.modal=.None}
-                if ui.button(ctx,shell_id(g,"recover"),{label="Recover",variant="accent",width=92,height=28,center=true}).clicked {s.requests+={.Recover}}
-                if ui.button(ctx,shell_id(g,"discard_recovery"),{label="Discard",variant="field",width=92,height=28,center=true}).clicked {s.requests+={.Discard_Recovery}}
-            }
-        }
     case .Confirm:
         if ui.modal(ctx,shell_id(g,"confirm"),{width=380}) {
-            // Agents still working are asked about too, with nothing unsaved.
-            scene:=document_dirty(s) && !pending_plugin(g.pending) && g.pending!=.Asset_Close
-            unsaved:=scene || len(g.confirm_assets)>0
             working,waiting:=ai_working_count(s),ai_review_waiting_count(s)
             agents:=working==1?"An agent is working":fmt.tprintf("%d agents are working",working)
             others:=scene_switch_others(s,g.pending)
-            ui.label(ctx,unsaved?"Unsaved changes":others!=""?"Change the scene?":agents,ui.metric(ctx,"font_title"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,others!=""?"Change the scene?":agents,ui.metric(ctx,"font_title"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
             if others!="" {ui.text(ctx,others,ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted")))}
-            if pending_plugin(g.pending) {
-                ui.label(ctx,"The players read the saved files",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
-            } else if unsaved {
-                ui.label(ctx,len(g.confirm_assets)>0?"Save the changes before going on?":document_title(s.document),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
-            }
-            if unsaved {unsaved_list(s,scene)} else {ui.label(ctx,document_title(s.document),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
-            if (unsaved || others!="") && working>0 {ui.label(ctx,fmt.tprintf("%s: %s",agents,working==1?"it stops":"they stop"),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
+            ui.label(ctx,document_title(s.document),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+            if others!="" && working>0 {ui.label(ctx,fmt.tprintf("%s: %s",agents,working==1?"it stops":"they stop"),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
             if waiting>0 {ui.label(ctx,fmt.tprintf("%d agent %s waiting for review",waiting,waiting==1?"change":"changes"),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=8,align_x=.End,align_y=.Center}) {
-                choices:=[3]Choice{.Save,.Discard,.Cancel}
-                labels:=[3]string{"Save","Discard","Cancel"}
-                widths:=[3]f32{92,92,92}
-                shown:=choices[:]
-                verb:="Play"
-                if p:=providers(s);g.pending==.Play_Plugin && p.plays && p.play.verb!=nil {verb=p.play.verb(s)}
-                if g.pending==.Play_Plugin {labels[0],labels[1],widths[1]=fmt.tprintf("Save and %s",strings.to_lower(verb,context.temp_allocator)),fmt.tprintf("%s without",verb),110}
-                if !unsaved {
-                    // Nothing to save: going on is all that is asked.
-                    pending_labels:=[Pending]string{.None="Continue",.New="New",.Close="Close",.Quit="Quit",.Play_Plugin="Play",.Asset_Close="Close",.Open_Scene="Open"}
-                    labels[1]=pending_labels[g.pending]
-                    if g.pending==.Play_Plugin {labels[1]=verb}
-                    shown=choices[1:]
-                }
-                for choice in shown {
-                    if ui.button(ctx,shell_id(g,"confirm_choice",int(choice)+1),{label=labels[int(choice)],variant=choice==.Save || !unsaved && choice==.Discard?"accent":"field",width=widths[int(choice)],height=28,center=true}).clicked {confirm_resolve(s,choice)}
-                }
-            }
-        }
-    case .Save_Changes:
-        if ui.modal(ctx,shell_id(g,"save_changes"),{width=380}) {
-            ui.label(ctx,"Save changes",ui.metric(ctx,"font_title"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
-            ui.label(ctx,"The scene uses assets with unsaved changes.",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
-            unsaved_list(s,true)
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=8,align_x=.End,align_y=.Center}) {
-                if ui.button(ctx,shell_id(g,"save_changes_cancel"),{label="Cancel",variant="field",width=92,height=28,center=true}).clicked {modal_close(g)}
-                if ui.button(ctx,shell_id(g,"save_changes_scene"),{label="Scene only",variant="field",width=92,height=28,center=true}).clicked {save_changes_resolve(s,false)}
-                if ui.button(ctx,shell_id(g,"save_changes_all"),{label="Save all",variant="accent",width=92,height=28,center=true}).clicked {save_changes_resolve(s,true)}
+                labels:=[Pending]string{.None="Continue",.New="New",.Quit="Quit",.Open_Scene="Open"}
+                if ui.button(ctx,shell_id(g,"confirm_choice",2),{label=labels[g.pending],variant="accent",width=92,height=28,center=true}).clicked {confirm_resolve(s,true)}
+                if ui.button(ctx,shell_id(g,"confirm_choice",3),{label="Cancel",variant="field",width=92,height=28,center=true}).clicked {confirm_resolve(s,false)}
             }
         }
     case .Shortcuts:
@@ -1613,27 +1546,6 @@ modal_build :: proc(s:^Session) {
     case .Settings: settings_modal(s)
     case .Delete_Asset: asset_delete_modal(s)
     case .Git_Discard:  git_discard_modal(s)
-    }
-}
-
-// What a question about unsaved changes saves or discards: the scene when
-// scene is set, and its assets, a row each with the kind of the file.
-@(private)
-unsaved_list :: proc(s:^Session,scene:bool) {
-    g:=s.gui
-    ctx:=g.ctx
-    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=2,padding={0,6,0,6}}) {
-        if scene {modal_row(ctx,document_is_prefab(s)?.Prefab:.Scene,document_title(s.document),document_is_prefab(s)?"Prefab":"Scene")}
-        registry:=&s.app.assets.registry
-        for path in g.confirm_assets {
-            if asset.registry_outside(path) {
-                modal_row(ctx,.Material,asset_name(path),"Program")
-            } else if file,found:=asset.registry_find_path(registry,path);found && file.state==.Asset {
-                modal_asset_row(s,ctx,file)
-            } else {
-                modal_row(ctx,.None,asset_name(path),"File")
-            }
-        }
     }
 }
 

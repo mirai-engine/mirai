@@ -35,7 +35,7 @@ import "mirai:ui"
 //
 // An entry that only changes what the person sees (a dialog, a popup, a tab,
 // the field a name is typed in, who has the keys), or that asks the person
-// before anything happens (a file to open, what to do with unsaved changes),
+// before anything happens (a file to open, a question),
 // runs a procedure of the interface (Binding.view) and is no method: an agent
 // works through the API, and looks at the interface with editor.input and
 // capture.
@@ -228,7 +228,6 @@ command_state :: proc(s:^Session,name:string) -> Command_State {
 // What an entry shows now: the one place that says whether it is on and whether it is checked.
 binding_state :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
     if st:=api_state(s);st.library_generation!=s.library_generation {return {disabled=true}}
-    if s.gui!=nil && s.gui.modal==.Recovery && b.name!="quit" {return {disabled=true}}
     // What it acts on is in front: the scene, an asset document of its kind, a card with the keyboard.
     d:=asset_document_active(s)
     if b.scene && d!=nil || b.document!=0 && (d==nil || d.kind!=b.document) || b.card && card_focused(s)=={} {return {disabled=true}}
@@ -561,9 +560,6 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="new_prefab",view=proc(s:^Session) {file_new(s,true)},label="New prefab",icon=.Prefab,menu=.File,group=0,modes=edit},
         {name="open",view=file_open,label="Open...",icon=user(.Scene),shortcut=key(.O,{.Primary}),menu=.File,group=0,modes=edit},
         {name="projects",view=projects_show,label="Open project...",icon=user(.Folder),menu=.File,group=0,modes=edit,state=state_projects},
-        {name="save",view=save_front,label="Save",icon=user(.Save),shortcut=key(.S,{.Primary}),menu=.File,group=1,state=state_save},
-        {name="save_all",method="editor.save_all",label="Save all",icon=user(.Save),shortcut=key(.S,{.Primary,.Shift}),menu=.File,group=1,modes=edit},
-        {name="save_as",view=dialog_save,label="Save as...",icon=user(.Save),shortcut=key(.S,{.Primary,.Alt}),menu=.File,group=1,modes=edit,scene=true},
         {name="make_prefab",method="scene.write",params=`{"kind":"Prefab","entities":[]}`,label="Make prefab",icon=.Prefab,menu=.File,group=1,modes=edit,scene=true},
         {name="make_scene",method="scene.write",params=`{"kind":"Scene","entities":[]}`,label="Make scene",icon=user(.Scene),menu=.File,group=1,modes=edit,scene=true},
         {name="import",view=import_ask,label="Import...",icon=.Import,menu=.File,group=2,modes=edit},
@@ -643,12 +639,6 @@ commands_register :: proc(s:^Session,st:^Api_State) {
 @(private="file") state_stop :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode==.Edit && !play_plugin_active(s)}}
 
 @(private="file")
-state_save :: proc(s:^Session,b:^Binding) -> Command_State {
-    if d:=asset_document_active(s);d!=nil {return {disabled=!asset_document_dirty(s,d)}}
-    return {disabled=s.mode!=.Edit}
-}
-
-@(private="file")
 state_build :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
     state.disabled=!s.has_project || s.engine_root==""
     #partial switch s.build.phase {
@@ -712,12 +702,6 @@ state_graphics :: proc(s:^Session,b:^Binding) -> Command_State {
 
 @(private="file") settings_toggle :: proc(s:^Session) {if s.gui.modal==.Settings {modal_close(s.gui)} else {settings_show(s)}}
 @(private="file") rename_focus :: proc(s:^Session) {s.gui.layout.right_open,s.inspector.rename=true,true}
-
-// Saves what is in front: the asset of the document, or the scene, asking first about the unsaved assets it uses.
-@(private="file")
-save_front :: proc(s:^Session) {
-    if asset_document_active(s)!=nil {asset_document_save(s)} else {save_request(s)}
-}
 
 @(private="file")
 shortcuts_show :: proc(s:^Session) {
@@ -785,7 +769,6 @@ camera_preview_selected :: proc(s:^Session) {
 // ---------------------------------------------------------------- the methods the entries of the editor needed
 
 Api_Scene_New_Params :: struct {
-    discard:bool `mirai:"optional,label=Drops the unsaved changes of the scene it takes the place of; without it they make it fail"`,
     kind:Document_Kind `mirai:"optional,label=Scene: with a sky and a sun, shown in its own light; Prefab: one root, shown in the studio light and placed as instances"`,
 }
 
@@ -798,10 +781,6 @@ Api_Tool_Result :: struct {
     plugin_tool:[32]u8 `mirai:"text,label=The tool of a plugin that is on; empty when none is"`,
 }
 
-Api_Save_All_Result :: struct {
-    dirty:bool `mirai:"label=Whether a document still has unsaved changes: one without a file which scene.save gives a path"`,
-}
-
 Api_Thumbnail_Result :: struct {
     asked:bool `mirai:"label=The view of the scene is taken in the next frames and kept as its thumbnail"`,
 }
@@ -809,10 +788,9 @@ Api_Thumbnail_Result :: struct {
 @(private)
 commands_methods_register :: proc(s:^Session,st:^Api_State) {
     tool_on_default:=Api_Tool_Params{on=true}
-    api_register(s,st,{name="scene.new",summary="An empty scene or prefab in place of the document, with an empty history. Fails with unsaved changes unless discard.",params=type_info_of(Api_Scene_New_Params),result=type_info_of(Api_File_Result),flags={.Destructive},run=api_scene_new})
+    api_register(s,st,{name="scene.new",summary="An empty scene or prefab in place of the document, with an empty history; its first step gives it a file.",params=type_info_of(Api_Scene_New_Params),result=type_info_of(Api_File_Result),flags={.Destructive},run=api_scene_new})
     api_register(s,st,{name="scene.thumbnail",summary="Takes the view of the viewport as the thumbnail of the scene of the document, which the content browser and the projects screen show.",result=type_info_of(Api_Thumbnail_Result),can=scene_thumbnail_can,run=api_scene_thumbnail})
     api_register(s,st,{name="editor.tool",summary="Chooses what the pointer does in the viewport: the mode of the gizmo, or the tool of a plugin, whose panel takes the place of Details while it is on.",params=type_info_of(Api_Tool_Params),result=type_info_of(Api_Tool_Result),defaults=&tool_on_default,flags={.Idempotent},run=api_editor_tool})
-    api_register(s,st,{name="editor.save_all",summary="Writes every unsaved asset and every document with changes that has a file.",result=type_info_of(Api_Save_All_Result),run=api_save_all})
 }
 
 @(private)
@@ -821,10 +799,6 @@ api_scene_new :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Scene_New_Params)
     if !collab_can_open(s) {
         api.call_fail(call,api.SERVER_ERROR,"Leave the session before replacing the scene (collab.leave)")
-        return
-    }
-    if !params.discard && (document_dirty(s) || len(document_closing_assets(s))>0) {
-        api.call_fail(call,api.SERVER_ERROR,"The scene has unsaved changes; scene.save and asset.save write them, or pass discard")
         return
     }
     tool_preview_cancel(s)
@@ -898,18 +872,6 @@ settings_show :: proc(s:^Session) {
     settings_plugins_load(s)
     input_settings_load(s)
     settings_project_load(s)
-}
-
-@(private)
-api_save_all :: proc(s:^Session,call:^api.Call) {
-    if api_turn_refused(s,call,"save what others changed: asset.save writes the assets of its turn and scene.save the document") {return}
-    if !api_guard(s,call) {return}
-    if !collab_can_save(s) {
-        api.call_fail(call,api.SERVER_ERROR,"The host of the session saves the shared scene")
-        return
-    }
-    save_all(s)
-    api.call_result(call,Api_Save_All_Result).dirty=documents_dirty(s)
 }
 
 // ---------------------------------------------------------------- editor.inspect

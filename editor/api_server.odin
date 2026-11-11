@@ -322,7 +322,8 @@ api_jobs :: proc(s:^Session) {
     play_plugin_poll(s)
     runs_pump(s)
     collab_update(s)
-    recovery_update(s)
+    events_steps(s)
+    files_flush(s)
 }
 
 // Keeps the editor going from inside a handler until pending says false:

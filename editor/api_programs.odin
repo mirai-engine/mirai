@@ -160,18 +160,10 @@ program_file :: proc(s:^Session,call:^api.Call,p:^Api_Program_Params) -> (domain
     return
 }
 
-// The .slang that declares a program of that name, where programs come from:
-// one made in memory and not saved yet too.
+// The .slang that declares a program of that name, where programs come from.
 program_locate :: proc(s:^Session,name:string) -> (path:string,sources:[]shaders.Source,ok:bool) {
     folders:[dynamic]string
     folders,sources=program_folders(s)
-    for held in assets_unsaved(s) {
-        if held.removed || !asset.registry_outside(held.path) || !strings.has_suffix(held.path,".slang") {continue}
-        if shaders.program_directives(string(held.data)).name!=name {continue}
-        for folder in folders {
-            if strings.has_prefix(held.path,folder) && len(held.path)>len(folder) && held.path[len(folder)]=='/' {return strings.clone(held.path,context.temp_allocator),sources,true}
-        }
-    }
     for folder in folders {
         w:=os.walker_create(folder)
         defer os.walker_destroy(&w)
@@ -187,7 +179,7 @@ program_locate :: proc(s:^Session,name:string) -> (path:string,sources:[]shaders
     return
 }
 
-// The source of a program as it is now, unsaved or in its file.
+// The source of a program as its file holds it.
 @(private)
 program_text :: proc(s:^Session,path:string) -> (text:string,ok:bool) {
     data:=file_read(s,path) or_return
@@ -271,7 +263,7 @@ api_program_create :: proc(s:^Session,call:^api.Call) {
     if !shaders.identifier_valid(name) {api.call_failf(call,api.INVALID_PARAMS,"program %q is not a Slang identifier: letters, digits and _, not starting with a digit (Rust_Metal)",name);return}
     if name=="pbr" {api.call_fail(call,api.INVALID_PARAMS,"pbr is the name of the standard model: give the program another name");return}
     if path,_,taken:=program_locate(s,name);taken {
-        api.call_failf(call,api.INVALID_PARAMS,"a program named %s is in %s: change it with material.program.edit, or give the new one another name",name,unsaved_name(s,path))
+        api.call_failf(call,api.INVALID_PARAMS,"a program named %s is in %s: change it with material.program.edit, or give the new one another name",name,file_name(s,path))
         return
     }
     said:=shaders.program_directives(p.source)

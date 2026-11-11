@@ -50,12 +50,10 @@ Api_Path_Params :: struct {
 Api_File_Result :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"text,label=The file of the document"`,
     entities:int `mirai:"label=Entities alive in the scene"`,
-    dirty:bool `mirai:"label=Whether the document has unsaved changes"`,
 }
 
 Api_Inspect_Result :: struct {
     path:[DOCUMENT_PATH_BYTES]u8 `mirai:"text,label=The file of the document; empty before it has one"`,
-    dirty:bool `mirai:"label=Whether the document has unsaved changes"`,
     playing:bool `mirai:"label=Whether the editor is out of Edit mode; with world Game: true"`,
     total:int `mirai:"label=Entities alive in the world"`,
     tick:u64 `mirai:"optional,label=With world Game: the tick of the game it was read at"`,
@@ -96,7 +94,6 @@ api_scene_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="scene.inspect",summary="The entities of the document in save order with their place and the names of their components; with components, their transforms, prefab links and values; with root, that entity and what hangs from it as the nested document scene.write takes; with world Game, those of the game that plays, and with storages its storages: the score or the state of a match. One value alone: entity, components with the one component and _select.",params=type_info_of(Api_Inspect_Params),result=type_info_of(Api_Inspect_Result),flags={.Core,.Read_Only},run=api_scene_inspect})
     api_register(s,st,{name="play.player",summary="The focused local seat of the game that plays, the body it drives and the camera that shows it. scene.inspect with world Game and include_runtime reads the rest.",params=type_info_of(Api_Play_Player_Params),result=type_info_of(Api_Play_Player_Result),flags={.Read_Only},run=api_play_player})
     api_scene_write_register(s,st)
-    api_register(s,st,{name="scene.save",flags={.Core},summary="Writes the document to its file or to another, which becomes its file.",params=type_info_of(Api_Path_Params),result=type_info_of(Api_File_Result),run=api_scene_save})
     api_register(s,st,{name="scene.open",summary="Opens a scene or a prefab file as the document, with an empty history.",params=type_info_of(Api_Path_Params),result=type_info_of(Api_File_Result),flags={.Destructive},run=api_scene_open})
 }
 
@@ -272,7 +269,7 @@ api_scene_inspect :: proc(s:^Session,call:^api.Call) {
     // Naming a storage asks for it alone, unless the entities are named too.
     r:=api.call_result(call,Api_Inspect_Result)
     base.text_set(r.path[:],document_path(s.document))
-    r.dirty,r.playing,r.total,r.offset=document_dirty(s),play || s.mode!=.Edit,entities.alive,offset
+    r.playing,r.total,r.offset=play || s.mode!=.Edit,entities.alive,offset
     if t:=core.world_storage_of(w,core.Time);play && t!=nil {r.tick=t.tick}
     only_storages:=storages!="" && !narrowed
     candidates:=[]core.Entity{only} if only!=core.NONE else api_entities_ordered(w)
@@ -414,34 +411,13 @@ component_value_read :: proc(w:core.World_Ref,t:^core.Table_Info,current:rawptr,
 @(private)
 api_file_result :: proc(s:^Session,call:^api.Call) {
     result:=api.call_result(call,Api_File_Result)
-    result.entities,result.dirty=core.world_entities(edited_world(s)).alive,document_dirty(s)
+    result.entities=core.world_entities(edited_world(s)).alive
     base.text_set(result.path[:],document_path(s.document))
 }
 
 @(private)
 api_document_fail :: proc(call:^api.Call,error:Document_Error,path:string) {
     api.call_failf(call,api.SERVER_ERROR,"%s: %s",path,document_error_text(error))
-}
-
-@(private)
-api_scene_save :: proc(s:^Session,call:^api.Call) {
-    params:=api.call_params(call,Api_Path_Params)
-    if !api_guard(s,call) {return}
-    if !collab_can_save(s) {
-        api.call_fail(call,api.SERVER_ERROR,"The host of the session saves the shared scene")
-        return
-    }
-    path:=base.text_get(params.path[:])
-    if path=="" {path=document_path(s.document)}
-    if path=="" {
-        api.call_fail(call,api.SERVER_ERROR,"The scene has no file yet; pass a path")
-        return
-    }
-    if error:=scene_save(s,strings.clone(path,call.allocator));error!=.None {
-        api_document_fail(call,error,path)
-        return
-    }
-    api_file_result(s,call)
 }
 
 @(private)

@@ -100,17 +100,7 @@ programs_start :: proc(s:^Session) {
         unused:=gpu.renderer_shaders_idle(s.app.renderer)
         for id in gpu.Shader_Id {if unused[id] {append(&idle,gpu.SHADERS[id].name)}}
     }
-    p.job=build.shaders_start(p.project,first[:],programs_overlay(s),idle[:])
-}
-
-// The sources of programs the editor holds unsaved, as a generation reads
-// them in place of their files; they point into the registry.
-programs_overlay :: proc(s:^Session) -> []shaders.Overlay {
-    overlay:=make([dynamic]shaders.Overlay,context.temp_allocator)
-    for held in assets_unsaved(s) {
-        if asset.registry_outside(held.path) {append(&overlay,shaders.Overlay{held.path,held.data,held.removed})}
-    }
-    return overlay[:]
+    p.job=build.shaders_start(p.project,first[:],idle[:])
 }
 
 @(private)

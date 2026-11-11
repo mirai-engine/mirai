@@ -252,36 +252,6 @@ asset_document_title :: proc(s:^Session,d:^Asset_Document) -> string {
     return asset_name(path)
 }
 
-asset_document_dirty :: proc(s:^Session,d:^Asset_Document) -> bool {
-    for path in asset_document_paths(s,d) {
-        for held in assets_unsaved(s) {
-            if held.path==path {return true}
-        }
-    }
-    return false
-}
-
-// What Save writes of a document: its file, and the others its steps
-// changed (the texts a .ui edits in their languages), by registry path.
-asset_document_paths :: proc(s:^Session,d:^Asset_Document) -> []string {
-    paths:=make([dynamic]string,context.temp_allocator)
-    path:=asset_document_path(s,d)
-    if path=="" {return nil}
-    append(&paths,path)
-    if s.app==nil || s.app.assets==nil {return paths[:]}
-    r:=&s.app.assets.registry
-    add :: proc(paths:^[dynamic]string,r:^asset.Registry,files:[]history.Edit_File) {
-        for &file in files {
-            relative,ok:=asset.registry_relative(r,file.path)
-            if !ok || slice.contains(paths[:],relative) {continue}
-            append(paths,relative)
-        }
-    }
-    for &step in d.history.steps {add(&paths,r,step.files[:])}
-    add(&paths,r,d.history.files[:])
-    return paths[:]
-}
-
 asset_document_icon :: proc(s:^Session,d:^Asset_Document) -> ui.Icon {
     if d.id=={} {return .Material}
     icon,_:=asset_icon(s,d.kind)
@@ -394,11 +364,11 @@ asset_drop_take :: proc(s:^Session,kind:asset.Fourcc) -> (drop:Asset_Drop,ok:boo
 }
 
 // The document in front when another asset of its kind may take its tab: it
-// has nothing unsaved and no history.
+// has no history.
 @(private)
 asset_document_reusable :: proc(s:^Session,kind:asset.Fourcc) -> ^Asset_Document {
     front:=asset_document_active(s)
-    if front==nil || front.kind!=kind || asset_document_dirty(s,front) {return nil}
+    if front==nil || front.kind!=kind {return nil}
     if front.history.open || len(front.history.steps)>0 {return nil}
     return front
 }
@@ -506,43 +476,9 @@ asset_document_activate :: proc(s:^Session,index:int) {
     material_document_follow(s)
 }
 
-// Closes a document, asking first about its asset when it is unsaved and no
-// open scene uses it: what a scene uses stays unsaved.
+// Closes a document. The one before it comes to the front, or the scene
+// after the last.
 asset_document_close :: proc(s:^Session,index:int) {
-    if index<0 || index>=len(s.asset_documents) {return}
-    d:=&s.asset_documents[index]
-    if asset_document_dirty(s,d) && !asset_document_used(s,d) {
-        s.asset_request=index
-        path:=[1]string{asset_document_path(s,d)}
-        confirm_open(s,.Asset_Close,path[:])
-        return
-    }
-    asset_document_close_now(s,index)
-}
-
-// Whether a document of a scene shows the unsaved asset of a document.
-@(private)
-asset_document_used :: proc(s:^Session,d:^Asset_Document) -> bool {
-    path:=asset_document_path(s,d)
-    used:=make([dynamic]string,context.temp_allocator)
-    for index in 0..<max(len(s.documents),1) {
-        world:=s.edit_world
-        if index!=s.active_document {
-            if index>=len(s.documents) || s.documents[index].world==nil {continue}
-            world=s.documents[index].world
-        }
-        if world==nil {continue}
-        world_unsaved_assets(s,{data=world,info=s.info},&used)
-        for held in used {
-            if held==path {return true}
-        }
-    }
-    return false
-}
-
-// Closes a document without asking. The one before it comes to the front,
-// or the scene after the last.
-asset_document_close_now :: proc(s:^Session,index:int) {
     if index<0 || index>=len(s.asset_documents) {return}
     shown:=s.asset_shown
     if shown==index+1 {asset_document_activate(s,-1)}
@@ -564,19 +500,6 @@ asset_documents_free :: proc(s:^Session) {
     s.asset_documents,s.asset_shown=nil,0
 }
 
-// Writes the unsaved asset of the document in front.
-asset_document_save :: proc(s:^Session) {
-    d:=asset_document_active(s)
-    if d==nil {return}
-    asset_history_end(&d.history)
-    paths:=asset_document_paths(s,d)
-    if len(paths)==0 {return}
-    switch saved,ok:=assets_save(s,paths);{
-    case !ok:     notify(s,fmt.tprintf("%s could not be saved; it stays unsaved",asset_document_title(s,d)))
-    case saved>0: notify(s,fmt.tprintf("Saved %s",asset_document_title(s,d)))
-    }
-}
-
 // Documents whose asset left the registry close: deleted or moved away.
 @(private)
 asset_documents_prune :: proc(s:^Session) {
@@ -584,7 +507,7 @@ asset_documents_prune :: proc(s:^Session) {
     for i:=len(s.asset_documents)-1;i>=0;i-=1 {
         d:=&s.asset_documents[i]
         if d.id=={} {continue}
-        if _,found:=asset.registry_find(&s.app.assets.registry,d.id);!found {asset_document_close_now(s,i)}
+        if _,found:=asset.registry_find(&s.app.assets.registry,d.id);!found {asset_document_close(s,i)}
     }
 }
 

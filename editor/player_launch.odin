@@ -41,7 +41,6 @@ player_launch_start :: proc(s:^Session,shipped:bool,scene:string,players:int,arg
     if !s.has_project {return "There is no project: open a folder with a project.mirai"}
     if len(arguments)>len(l.arguments) {return fmt.tprintf("The arguments take at most %d bytes",len(l.arguments))}
     if len(scene)>len(l.scene) {return fmt.tprintf("The path of the scene takes at most %d bytes",len(l.scene))}
-    if unsaved:=play_unsaved(s);unsaved!="" {return unsaved}
     if shipped && player_launch_game(s)=="" {return "There is no shipped game: build.start with target game builds it"}
     if !shipped && code_changed(s) && s.build.phase!=.Running && !build_start(s) {return "The code of the project changed and its build could not start"}
     l^={shipped=shipped,waiting=!shipped && (s.build.phase==.Running || s.build.reload),players=players}

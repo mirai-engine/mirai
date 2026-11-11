@@ -68,15 +68,15 @@ asset_owned_refusal :: proc(r:^asset.Registry,file:^asset.Registry_File) -> stri
     return ""
 }
 
-// The first file of paths or inside folder that is unsaved, as why it cannot
-// move; "" for none.
+// The first file of paths or inside folder that an open edit holds unwritten,
+// as why it cannot move; "" for none.
 @(private)
-asset_unsaved_refusal :: proc(r:^asset.Registry,paths:[]string,folder:="") -> string {
+asset_held_refusal :: proc(r:^asset.Registry,paths:[]string,folder:="") -> string {
     for held in r.memory {
         if asset.registry_outside(held.path) {continue}
         inside:=folder!="" && asset_path_inside(held.path,folder)
         for path in paths {inside||=held.path==path}
-        if inside {return fmt.tprintf("%s has unsaved changes: save or discard them first",held.path)}
+        if inside {return fmt.tprintf("%s is being edited: finish the edit first",held.path)}
     }
     return ""
 }
@@ -90,7 +90,7 @@ asset_move_refusal :: proc(s:^Session,r:^asset.Registry,file:^asset.Registry_Fil
     files:=asset_delete_files(r,file.id)
     paths:=make([]string,len(files),context.temp_allocator)
     for at,i in files {paths[i]=r.files[at].path}
-    return asset_unsaved_refusal(r,paths)
+    return asset_held_refusal(r,paths)
 }
 
 // Moves the asset id and the parts it owns to folder, under name without its
@@ -187,7 +187,7 @@ asset_folder_move :: proc(s:^Session,from,folder,name:string) -> (path,message:s
     if path==source {return}
     if asset_path_inside(path,source) {return "",fmt.tprintf("%s cannot go inside itself: give a folder outside it",source)}
     if asset_path_taken(r,path) && !strings.equal_fold(path,source) {return "",fmt.tprintf("%s already exists: give another name or folder",path)}
-    if refusal=asset_unsaved_refusal(r,nil,source);refusal!="" {return "",refusal}
+    if refusal=asset_held_refusal(r,nil,source);refusal!="" {return "",refusal}
     for &file in r.files {
         if file.state==.Asset && asset_path_inside(file.path,source) && scene_tab(s,file.id)>=0 {return "",fmt.tprintf("%s is open in a tab: close the tab first",file.path)}
     }

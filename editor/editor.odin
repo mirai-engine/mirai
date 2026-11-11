@@ -51,7 +51,6 @@ Mode :: enum u8 {Edit,Play,Paused,Simulate,Simulation_Paused,Watch}
 
 Request :: enum u8 {
     Play,    // copy the edited World and run its game loop
-    Recover,Discard_Recovery,
     Stop,    // discard the World of the Play
     Resume_Here, // from the frame the history went back to, dropping what came after it
     New,     // an empty scene, without asking
@@ -60,10 +59,8 @@ Request :: enum u8 {
     Quit,    // ends without asking
     Document_Switch,
     Document_Close,
-    Document_Discard,
     Asset_Switch,  // Session.asset_request comes to the front; -1: the scene
-    Asset_Close,   // Session.asset_request closes, asking about its asset
-    Asset_Discard, // Session.asset_request closes without asking
+    Asset_Close,   // Session.asset_request closes
     Quit_Check,
 }
 Requests :: bit_set[Request;u64]
@@ -118,13 +115,11 @@ USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] [--hidd
 // The arguments the editor was started with.
 Options :: struct {
     project,scene,engine,capture:string,
-    restore:string,  // a scene file the restart left: loaded instead of scene, which stays the path of the document
-    documents:string,
+    documents:string, // the tabs a restart left (documents_restore)
     gpu_lost:string, // what stopped the GPU of the editor whose restart this is
     built:bool,      // a Build of the editor whose restart this is succeeded: its library is the one loaded
     view:string,     // the camera: "x,y,z,yaw,pitch,distance"
     select:string,   // Ids of the entities selected, in hexadecimal, separated by commas
-    dirty:bool,      // the restored scene had unsaved changes
     frames,width,height:int,
     density:f32,     // headless: pixels per point; 0: 1
     headless,no_gpu,validation,hidden:bool,
@@ -165,7 +160,7 @@ Session :: struct {
     watch:Watch,
     edit_orbit:Orbit,
     edit_selection:history.Selection, // that of the document while the editor shows a game
-    recovery:Recovery,
+    flush:Files_Flush,
     events:platform.Crash_Events, // what the crash report names before a fault (events.odin)
     events_turns:u64,             // the turns of the history whose steps were noted
     editor_world:rawptr,
@@ -334,8 +329,7 @@ notify :: proc(s:^Session,text:string) {
 // What the editor is doing, for whoever drives it: an agent, a test.
 Status :: struct {
     mode:Mode,
-    document:string,  // path of the scene; empty for one never saved
-    dirty:bool,
+    document:string,  // path of the scene; empty before it has a file
     entities:int,     // alive in the World shown
     selected:int,
     active:core.Entity,
@@ -349,7 +343,6 @@ Status :: struct {
 status :: proc(s:^Session) -> (st:Status) {
     st.mode=s.mode
     st.document=document_path(s.document)
-    st.dirty=document_dirty(s)
     st.entities=core.world_entities(shown_world(s)).alive
     st.selected=len(s.selection.entities)
     st.active=history.selection_active(s.selection)
@@ -461,15 +454,10 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
 
     if options.view!="" {view_parse(&s.viewport.orbit,options.view)}
     scene:=options.scene
-    if scene=="" && options.restore=="" && has_project {scene=project.start_scene(root,context.temp_allocator)}
+    if scene=="" && options.documents=="" && has_project {scene=project.start_scene(root,context.temp_allocator)}
     switch {
     case options.documents!="":
-        if why:=documents_restore(s,options.documents);why!="" {log.errorf("The document tabs could not all be restored; the recovery files were kept: %s",why)}
-    case options.restore!="":
-        if error:=document_restore(s,options.restore,options.scene,options.dirty);error!=.None {
-            log.errorf("the restarted scene could not be read: %s",document_error_text(error))
-        }
-        _=os.remove(options.restore)
+        if why:=documents_restore(s,options.documents);why!="" {log.errorf("The document tabs could not all be opened again: %s",why)}
     case scene!="":
         if error:=scene_open(s,scene);error!=.None {
             fmt.eprintfln("mirai: could not open the scene %s: %s",scene,document_error_text(error))
@@ -480,7 +468,6 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
         }
     }
     if options.select!="" {select_ids(s,options.select)}
-    if options.restore=="" {recovery_open(s)}
     // A headless editor is driven through its API: one that cannot open it ends.
     if !services_open(s,options) && options.headless {
         close(s)
@@ -553,10 +540,6 @@ close :: proc(s:^Session) -> int {
     tools_release(s)
     preferences_close(s)
     services_close(s)
-    // A normal end leaves no chain; one for the GPU kept what it needs.
-    recovery_chains_close(s,s.gpu_failure!=.Ended)
-    if s.recovery.assets_owned {base.remove_all(recovery_assets_own(s))}
-    recovery_log_destroy(s)
     events_close(s)
     app,edit_world,editor_world:=s.app,s.edit_world,s.editor_world
     session_destroy(s)
@@ -731,20 +714,15 @@ between_frames :: proc(s:^Session) {
     play_history_seek(s)
     watch_update(s)
     play_plugin_poll(s)
-    recovery_update(s)
+    events_steps(s)
+    files_flush(s)
     asset_documents_retain(s)
 }
 
 @(private)
 requests_run :: proc(s:^Session) {
     requests:=s.requests
-    s.requests-={.Play,.Stop,.Resume_Here,.New,.Open,.Restart,.Quit,.Recover,.Discard_Recovery,.Document_Switch,.Document_Close,.Document_Discard,.Asset_Switch,.Asset_Close,.Asset_Discard,.Quit_Check}
-    if .Recover in requests {
-        if _,why:=recovery_resolve(s,false);why!="" {notify(s,why)}
-    }
-    if .Discard_Recovery in requests {
-        if _,why:=recovery_resolve(s,true);why!="" {notify(s,why)}
-    }
+    s.requests-={.Play,.Stop,.Resume_Here,.New,.Open,.Restart,.Quit,.Document_Switch,.Document_Close,.Asset_Switch,.Asset_Close,.Quit_Check}
     if .Stop in requests {shown_stop(s)}
     if .Play in requests && playing(s) {s.play_asked={}}
     if .Play in requests && !playing(s) && !play_build_first(s,{request=true}) && !play_start(s) {notify(s,"The game could not start")}
@@ -760,12 +738,10 @@ requests_run :: proc(s:^Session) {
         document_activate(s,s.document_request)
     }
     if .Document_Close in requests {document_close(s,s.document_request)}
-    if .Document_Discard in requests {document_close_active(s)}
     if .Asset_Switch in requests {asset_document_activate(s,s.asset_request)}
     if .Asset_Close in requests {asset_document_close(s,s.asset_request)}
-    if .Asset_Discard in requests {asset_document_close_now(s,s.asset_request)}
     asset_documents_prune(s)
-    if .Quit_Check in requests {documents_quit_next(s)}
+    if .Quit_Check in requests {documents_quit(s)}
     if .Restart in requests {restart(s,{"--built"})}
     if .Quit in requests {s.quit=true}
 }
@@ -785,14 +761,13 @@ open_run :: proc(s:^Session) {
     path:=string(s.open_path[:s.open_length])
     scene:=document_scene_tab(s)
     // Another scene takes the place of the one open: who would lose what
-    // they do, or what is unsaved, is asked about first.
+    // they do is asked about first.
     replaces:=scene>=0 && !path_is_prefab(s,path) && !document_holds_file(s,path)
     if replaces && !s.open_confirmed {
         asset_document_activate(s,-1)
         document_activate(s,scene)
-        assets:=document_closing_assets(s)
-        if document_dirty(s) || len(assets)>0 || scene_switch_interrupts(s) || !collab_can_open(s) {
-            confirm_open(s,.Open_Scene,assets)
+        if scene_switch_interrupts(s) || !collab_can_open(s) {
+            confirm_open(s,.Open_Scene)
             return
         }
     }
@@ -912,7 +887,7 @@ run_create :: proc(s:^Session,owner,player:int) -> ^Run {
     }
     if r==nil {return nil}
     if !history.edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {notify(s,history.edits_error_text(s.edits.error));return nil}
-    if !recovery_protect(s) {return nil}
+    files_flush(s,true)
     world:=document_copy(s)
     if world==nil {return nil}
     s.run_serial+=1
@@ -1021,11 +996,8 @@ play_view_restore :: proc(s:^Session) {
     history.selection_prune(s.selection,edited_world(s))
 }
 
-// Asks to end: with unsaved changes the editor asks first.
-quit_request :: proc(s:^Session) {
-    for &tab in s.documents {tab.quit_approved=false}
-    s.requests+={.Quit_Check}
-}
+// Asks to end: while agents work the editor asks first.
+quit_request :: proc(s:^Session) {s.requests+={.Quit_Check}}
 
 // The editor starts again on the library a Build left, with the scene as
 // it is: written to a file the new one reads and removes. extra: arguments
@@ -1197,13 +1169,11 @@ options_read :: proc(args:[]string) -> (o:Options,ok:bool) {
         case "--scene":      o.scene=value(args,&i) or_return
         case "--engine":     o.engine=value(args,&i) or_return
         case "--capture":    o.capture=value(args,&i) or_return
-        case "--restore":    o.restore=value(args,&i) or_return
         case "--documents":  o.documents=value(args,&i) or_return
         case "--gpu-lost":   o.gpu_lost=value(args,&i) or_return
         case "--built":      o.built=true
         case "--view":       o.view=value(args,&i) or_return
         case "--select":     o.select=value(args,&i) or_return
-        case "--dirty":      o.dirty=true
         case "--frames":     o.frames=number(args,&i) or_return
         case "--width":      o.width=number(args,&i) or_return
         case "--height":     o.height=number(args,&i) or_return
@@ -1255,7 +1225,7 @@ options_passed :: proc(args:[]string) -> []string {
         case "--engine","--width","--height","--density","--api-port","--name":
             if i+1<len(args) {append(&kept,args[i],args[i+1])}
             i+=1
-        case "--project","--scene","--restore","--documents","--gpu-lost","--view","--select","--frames","--capture","--join":
+        case "--project","--scene","--documents","--gpu-lost","--view","--select","--frames","--capture","--join":
             i+=1
         }
     }

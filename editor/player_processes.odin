@@ -428,17 +428,3 @@ play_copy_file :: proc(s:^Session,name:string) -> string {
     if !os.is_dir(folder) {_=os.make_directory_all(folder)}
     return project.path(folder,name,allocator=context.temp_allocator)
 }
-
-// Why the API does not start a game of players of other processes while
-// assets have unsaved changes: they read the saved files. Empty without any.
-play_unsaved :: proc(s:^Session) -> string {
-    unsaved:=assets_unsaved_paths(s)
-    if len(unsaved)==0 {return ""}
-    names:=strings.builder_make(context.temp_allocator)
-    for path,i in unsaved {
-        if i>0 {strings.write_string(&names,", ")}
-        strings.write_string(&names,unsaved_name(s,path))
-    }
-    one:=len(unsaved)==1
-    return fmt.tprintf("The players of a game in other processes read the saved files, and %s unsaved changes: %s. Save %s with asset.save, or pass saved_only:true to play with what the files hold",one?"this asset has":"these assets have",strings.to_string(names),one?"it":"them")
-}
