@@ -19,9 +19,8 @@ import "mirai:std/base"
 import_model :: proc(path:string,formats:[]Format,options:Import_Options={},allocator:=context.allocator) -> (model:Imported_Model,error:Error) {
     caller:=context.temp_allocator
     settings,stored:=options.settings,false
-    // Without a root the sidecar is with what the import writes, which whoever writes it reads.
-    if !options.ignore_stored && options.root!="" {
-        kept,found,settings_error:=settings_load(path,options.root)
+    if !options.ignore_stored {
+        kept,found,settings_error:=settings_load(path)
         if settings_error.code!=.None {return {},settings_error}
         if found {settings,stored=kept,true}
     }
@@ -131,6 +130,7 @@ read_model :: proc(r:^Reader,formats:[]Format,model:^Imported_Model) -> bool {
     model.source_size=u64(len(bytes))
     model.source_hash=base.hash64(bytes)
     model.format=format.name
+    model.folder=own(r,format.folder(r.path) if format.folder!=nil else r.stem)
     model.version=import_version(format.version)
     r.data=format.data
     space:=format.space

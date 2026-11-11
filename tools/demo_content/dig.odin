@@ -5,31 +5,20 @@ import "core:os"
 import "mirai:asset"
 import "mirai:std/base"
 import terrain "plugins:terrain/runtime"
-import "plugins:vfx/runtime/effect"
 
 DIG_GRASS :: 0
 DIG_SOIL :: 1
 DIG_ROCK :: 2
 DIG_ORE :: 3
 
-// A material of one color for a layer of the dig.
-@(private="file")
-dig_material :: proc(o:^Out,name:string,color:[3]f32,roughness:f32,metallic:f32=0) -> base.Asset_Id {
-    info:=asset.MATERIAL_DEFAULTS
-    info.base_color,info.roughness,info.metallic=color,roughness,metallic
-    id:=asset.content_id(PROJECT,"material",name)
-    asset.content_check(&o.content,name,asset.material_save(path(o,fmt.tprintf("assets/dig/%s.mat",name)),&o.content.types,{id=id,info=info}))
-    return id
-}
-
 // The Volume of the dig scene: grass over soil over rock with pockets of ore,
-// their materials and the dust a dig raises (Terrain_Dust).
+// with the materials of assets/dig.
 write_dig_assets :: proc(o:^Out) {
     os.make_directory_all(path(o,"assets/dig"))
-    grass:=dig_material(o,"Dig grass",{0.2,0.36,0.1},0.9)
-    soil:=dig_material(o,"Dig soil",{0.34,0.23,0.14},0.95)
+    grass:=asset.content_id(PROJECT,"material","Dig grass")
+    soil:=asset.content_id(PROJECT,"material","Dig soil")
     rock:=material_id("Cobblestone")
-    ore:=dig_material(o,"Dig ore",{0.85,0.5,0.22},0.35,0.85)
+    ore:=asset.content_id(PROJECT,"material","Dig ore")
 
     // 32 by 16 by 32 m: solid from 7.5 m under the surface, at 0, up to it.
     source:terrain.Source
@@ -50,12 +39,4 @@ write_dig_assets :: proc(o:^Out) {
     terrain_id:=asset.content_id(PROJECT,"terrain","dig")
     asset.content_check(&o.content,"dig terrain",terrain.source_save(&source,path(o,"assets/dig/dig.terrain"),terrain_id,&o.content.types))
 
-    dust:=effect.PARTICLE_DEFAULTS
-    dust.duration,dust.max_particles,dust.rate=1,4000,0
-    dust.shape,dust.shape_size=.Sphere,{0.7,0.4,0.7}
-    dust.lifetime,dust.speed,dust.size=[2]f32{1.6,3.2},[2]f32{0.2,1.1},[2]f32{0.2,0.55}
-    dust.gravity,dust.drag=0.05,1.4
-    dust.colors={{0.85,0.8,0.7,0.6},{0.8,0.76,0.68,0}}
-    dust_id:=asset.content_id(PROJECT,"particle","dig_dust")
-    asset.content_check(&o.content,"dig dust",effect.particle_save(path(o,"assets/dig/dig_dust.particle"),&o.content.types,{id=dust_id,info=dust}))
 }

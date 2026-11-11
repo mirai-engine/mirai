@@ -110,6 +110,23 @@ variants_are_the_source_and_its_variant_lines :: proc(t:^testing.T) {
     testing.expect(t,found[3].name=="tight" && found[3].defines[0]=="B")
 }
 
+// The source itself of a stage with the variant hw, or one that says so,
+// serves only the rays traced by software: Metal gets no code of it.
+@(test)
+a_stage_of_the_software_tracer_is_the_source_of_a_variant_hw_or_says_so :: proc(t:^testing.T) {
+    Case :: struct {text:string,variant:Variant,software:bool}
+    cases:=[?]Case{
+        {"//! variant hw MIRAI_HW_RT=1\n",{},true},
+        {"//! variant hw MIRAI_HW_RT=1\n",{name="hw"},false},
+        {"#include \"native.slang\"\n//! software rays\n",{},true},
+        {"//!variant hw A\n",{},true},
+        {"//! variant clip MIRAI_CLIP=1\n",{},false},
+        {"// ! software rays\n",{},false},
+        {"",{},false},
+    }
+    for c in cases {testing.expectf(t,software_rays(c.text,c.variant)==c.software,"%q of the variant %q",c.text,c.variant.name)}
+}
+
 @(test)
 constants_are_the_constant_lines_of_the_source_by_id :: proc(t:^testing.T) {
     found:=constants("//! constant color MIRAI_COLORED\n#include \"x.slang\"\n//! constant unlayered MIRAI_NO_LAYERS\r\n//! constant\n//! constant alone\n//! constant too many words\n// ! constant no A\n//!constant tight B\n//! variant hw MIRAI_HW=1\n",context.temp_allocator)
