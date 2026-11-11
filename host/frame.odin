@@ -108,6 +108,13 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
     // folder: building them all again takes the GPU driver many seconds.
     pipelines:string
     if folder:=app_user_folder(app.root,context.temp_allocator);folder!="" {pipelines,_=filepath.join({folder,PIPELINE_CACHE_FILE},context.temp_allocator)}
+    surface:rhi.Surface_Desc
+    if desc.window {
+        surface={
+            vulkan_create=source.vulkan_create,vulkan_user=source.vulkan_user,metal_layer=source.metal_layer,
+            width=u32(app.drawable.x),height=u32(app.drawable.y),vsync=desc.vsync,
+        }
+    }
     device,device_error:=rhi.device_create({
         app_name="Mirai",validation=desc.gpu_validation,allow_hardware_ray_tracing=true,
         vulkan_instance_extensions=platform.vulkan_instance_extensions(p),
@@ -115,22 +122,13 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
         on_message=desc.gpu_message!=nil?desc.gpu_message:rhi.message_print,
         loader_lock=desc.gpu_loader_lock,
         pipeline_cache_path=pipelines,
+        surface=surface,
     })
     if device==nil {
         log.errorf("GPU device: %s",device_error)
         return .Device_Failed
     }
     app.device=device
-    if desc.window {
-        surface:=rhi.Surface_Desc{
-            vulkan_create=source.vulkan_create,vulkan_user=source.vulkan_user,metal_layer=source.metal_layer,
-            width=u32(app.drawable.x),height=u32(app.drawable.y),vsync=desc.vsync,
-        }
-        if !rhi.swapchain_create(device,surface) {
-            log.errorf("swapchain: %s",rhi.device_error(device))
-            return .Device_Failed
-        }
-    }
     renderer,allocation_error:=new(render.Renderer,app.allocator)
     if allocation_error!=nil {return .Out_Of_Memory}
     app.renderer=renderer
