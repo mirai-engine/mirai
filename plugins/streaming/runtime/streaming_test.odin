@@ -1,8 +1,15 @@
 package streaming
 
+import "core:fmt"
 import "core:testing"
+import "mirai:asset"
 import "mirai:core"
+import render "mirai:engine/render"
 import scene "mirai:engine/scene"
+import "mirai:host"
+import "mirai:std/base"
+import "mirai:std/jobs"
+import mm "mirai:std/math"
 
 @(private)
 @(test_world)
@@ -68,6 +75,105 @@ a_section_follows_how_near_its_sources_are :: proc(t:^testing.T) {
     sources.items[0].position,sources.items[0].ahead={25,0,0},{25,0,0}
     streaming_sections(core.ref(&sources),core.read(&w.references),core.read(&w.worlds),core.ref(&settings),&seen,&w.requests)
     testing.expect_value(t,len(w.requests.queue.items),0)
+}
+
+@(private)
+@(test_world)
+Far_World :: struct {
+    using world:Test_World,
+    ids:core.Table(core.Id),
+    references:core.Table(scene.Scene_Reference),
+    worlds:core.Table(core.World_Transform),
+    transforms:core.Table(core.Transform),
+    parents:core.Table(core.Parent),
+    proxies:core.Table(scene.Section_Proxy),
+    renderers:core.Table(render.Mesh_Renderer),
+    hierarchy:core.Hierarchy,
+}
+
+// A loaded section whose far mesh was never read, asked to go the frame
+// after it shows: it stays
+// until jobs read its far mesh, which then shows in its place in the same
+// frame it goes; no frame shows neither, and the proxy never names a mesh
+// that is not loaded, which a frame would read.
+@(test)
+a_section_goes_once_its_far_mesh_is_read_to_take_its_place :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"streaming-far")
+    if folder=="" {return}
+    ROOM :: base.Asset_Id{0xfa,1}
+    types:asset.Types
+    asset.types_init(&types)
+    defer asset.types_destroy(&types)
+    room:asset.Scene;asset.scene_init(&room,&types,ROOM)
+    asset.scene_entity_add(&room,1,0,"Floor")
+    testing.expect_value(t,asset.scene_save(&room,fmt.tprintf("%s/room.scene",folder)),asset.Error.None)
+    asset.scene_destroy(&room)
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=folder,capacity=8})) {return}
+    defer host.assets_destroy(&assets)
+    // Its far mesh, as the editor part makes it into the cache.
+    FAR :: 64*1024
+    mesh:=asset.far_cache_id(asset.far_key(&assets.registry,ROOM))
+    {
+        count:=FAR-FAR%3
+        vertices:=make([]asset.Vertex,count,context.temp_allocator)
+        indices:=make([]u32,count,context.temp_allocator)
+        for &v,i in vertices {v={position={f32(i%97),f32(i/97),0},normal=mm.normal_pack({0,0,1})}}
+        for &index,i in indices {index=u32(i)}
+        desc:=asset.Mesh_Desc{id=mesh}
+        testing.expect(t,asset.mesh_build({vertices=vertices},indices,nil,&desc.geometry,context.temp_allocator))
+        testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/%x-%x.mesh",folder,mesh[0],mesh[1]),&types,desc),asset.Error.None)
+    }
+    host.assets_scan(&assets)
+    info,ok:=test_info(t,Far_World)
+    if !ok {return}
+    defer test_info_destroy(&info)
+    app:=host.App{info=&info,assets=&assets,allocator=context.allocator}
+    if !testing.expect(t,jobs.system_init(&app.jobs,{threads=2})) {return}
+    w:=cast(^Far_World)host.app_world_create(&app)
+    defer {
+        host.app_world_free(&app,w)
+        host.app_assets_releases_stop(&app)
+        jobs.system_destroy(&app.jobs)
+        delete(app.worlds)
+        host.assets_marks_free(&app.asset_marks)
+        host.app_content_destroy(&app)
+    }
+    world:=host.app_world_ref(&app,w)
+    e:=core.create(&w.entities)
+    core.add(&w.ids,e,core.Id{1})
+    core.add(&w.references,e,scene.Scene_Reference{scene=ROOM,rule=.Manual,loaded=ROOM})
+    core.add(&w.transforms,e,core.TRANSFORM_IDENTITY)
+    core.world_settle(world)
+    far:Streaming_Far
+    defer streaming_far_free(&far)
+    loads:scene.Section_Loads
+    defer scene.section_loads_free(&loads)
+    requests:scene.Section_Requests
+    defer delete(requests.queue.items)
+    stays:scene.Section_Stays
+    defer delete(stays.queue.items)
+    loading:scene.Section_Loading
+    problems:core.Problems
+    shown:=false
+    for frame in 0..<64 {
+        app.stats.frames+=1
+        scene.scene_sections(world,&app,&w.references,&requests,{},core.read(&w.worlds),core.read(&w.ids),&loads,&loading,{},{},nil,&stays,&problems)
+        core.world_settle(world)
+        streaming_far(world,&app,core.read(&w.references),{},&w.transforms,core.read(&w.parents),core.read(&w.proxies),core.read(&w.renderers),&far,&stays)
+        core.world_settle(world)
+        reference,_:=core.get(&w.references,e)
+        proxied:=core.count(&w.proxies)>0
+        if proxied {testing.expect(t,host.assets_loaded(&assets,core.at(&w.renderers,0).mesh),"the proxy names its far mesh once it is loaded")}
+        testing.expect(t,reference.loaded!={} || proxied,"the section or its far mesh shows")
+        shown||=proxied
+        if shown && reference.loaded=={} {break}
+        if frame==0 {scene.section_request(&requests,e,.Unloaded)}
+        // Its jobs end between frames, whatever the speed of their threads.
+        if far.scenes[0].warm!=nil {jobs.wait(&app.jobs,jobs.OWNER,&far.scenes[0].warm.counter)}
+    }
+    reference,_:=core.get(&w.references,e)
+    testing.expect(t,shown && reference.loaded=={},"its far mesh took its place")
 }
 
 // A crate that rolls out of its section passes, where it is, to the section

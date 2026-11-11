@@ -128,9 +128,10 @@ candidate_before :: proc(a,b:Section_Candidate) -> bool {
 scene_sections :: proc(
     world:core.World_Ref,app:^host.App,references:^core.Table(Scene_Reference),requests:^Section_Requests,
     sources:core.Ref(Streaming_Sources),worlds:^core.Table(core.World_Transform,.Read),ids:^core.Table(core.Id,.Read),
-    loads:^Section_Loads,loading:^Section_Loading,root:core.Ref(Scene_Root),views:core.Ref(Section_Views),waits:^Load_Waits,problems:^core.Problems,
+    loads:^Section_Loads,loading:^Section_Loading,root:core.Ref(Scene_Root),views:core.Ref(Section_Views),waits:^Load_Waits,stays:^Section_Stays,problems:^core.Problems,
 ) {
     waited:=core.take(&waits.assets) if waits!=nil else nil
+    staying:=core.take(&stays.queue) if stays!=nil else nil
     if u:=core.world_storage_of(world,Unresolved_References);u!=nil {clear(&u.resolved)}
     for r in core.take(&requests.queue) {
         reference:=core.edit(references,r.entity)
@@ -194,10 +195,11 @@ scene_sections :: proc(
         state:=section_wanted(views.ptr,e,reference)
         slot:=-1
         if loads!=nil {for l,i in loads.items {if l.job!=nil && l.entity==e {slot=i}}}
+        stays:=reference.loaded==reference.scene && slice.contains(staying,e)
         switch {
         case state==.Unloaded || reference.rule!=.With_Document && reference.loaded!={} && reference.loaded!=reference.scene:
             if slot>=0 {load_cancel(loads,&loads.items[slot])}
-            if reference.loaded=={} {break}
+            if reference.loaded=={} || stays {break}
             section_drop(world,documents,e)
         case reference.loaded=={} && loads!=nil && reference.failed!=reference.scene && reference.scene!={}:
             pose,_:=core.get(worlds,e)
@@ -212,7 +214,7 @@ scene_sections :: proc(
         }
         reference=core.at(references,row)
         // Loaded and off: what hangs from it under Disabled; on, without it.
-        if held:=state==.Loaded;reference.loaded!={} && held!=reference.held {
+        if held:=state==.Loaded;reference.loaded!={} && held!=reference.held && !(held && stays) {
             if section_hold(world,e,held)!=.None {
                 core.report(problems,e,"scene.memory","out of memory to tell what this section turned on from what changed in it: a save holds it all as changed; free memory")
             }

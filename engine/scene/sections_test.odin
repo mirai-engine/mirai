@@ -101,7 +101,7 @@ section_ref :: proc(f:^Section_Fixture) -> core.World_Ref {return host.app_world
 @(private="file")
 section_frame :: proc(f:^Section_Fixture) {
     w:=section_ref(f)
-    scene_sections(w,&f.app,&f.world.references,&f.requests,core.ref(&f.sources),core.read(&f.world.worlds),core.read(&f.world.ids),&f.loads,&f.loading,core.ref(&f.world.root),core.ref(&f.views),nil,f.problems)
+    scene_sections(w,&f.app,&f.world.references,&f.requests,core.ref(&f.sources),core.read(&f.world.worlds),core.read(&f.world.ids),&f.loads,&f.loading,core.ref(&f.world.root),core.ref(&f.views),nil,nil,f.problems)
     core.world_settle(w)
     scene_references(w,&f.world.unresolved,core.read(&f.world.ids))
     core.world_settle(w)
@@ -760,7 +760,7 @@ a_member_of_a_section_is_copied_from_its_scene :: proc(t:^testing.T) {
     if _,error:=load(w,&f.app,"root.scene");!testing.expect_value(t,error,Error.None) {return}
     before:=core.raw_count(core.raw(&f.world.lamps))
     // Read, as the queue of spawns reads it: the copy is placed in the call.
-    if job,begun:=prefab_warm_begin(&f.app,{SECTION_ROOM},true);testing.expect_value(t,begun,Error.None) {
+    if job,begun:=assets_warm_begin(&f.app,{SECTION_ROOM},true);testing.expect_value(t,begun,Error.None) {
         load_step(job,true)
         load_free(job)
     }

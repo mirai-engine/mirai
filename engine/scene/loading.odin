@@ -126,10 +126,10 @@ Load_Item :: struct {
     ready:bool, // a job prepared it
 }
 
-// Starts reading in jobs prefabs and what they take that is not loaded, for
-// the spawns that wait for them (Prefab_Pending): a load without a World,
-// all Warming. nil, with the error, when it cannot start.
-prefab_warm_begin :: proc(app:^host.App,prefabs:[]base.Asset_Id,documents:=false) -> (job:^Load_Job,error:Error) {
+// Starts reading in jobs assets and what they take that is not loaded: the
+// prefabs spawns wait for (Prefab_Pending), the far mesh of a section. A load
+// without a World, all Warming. nil, with the error, when it cannot start.
+assets_warm_begin :: proc(app:^host.App,ids:[]base.Asset_Id,documents:=false) -> (job:^Load_Job,error:Error) {
     a:=app.assets
     if a==nil {return nil,.No_Assets}
     heap:=runtime.heap_allocator()
@@ -139,7 +139,7 @@ prefab_warm_begin :: proc(app:^host.App,prefabs:[]base.Asset_Id,documents:=false
     job.names=make([dynamic]base.Asset_Id,heap)
     job.animations=make([dynamic]base.Asset_Id,heap)
     asset.types_init(&job.types,heap)
-    append(&job.names,..prefabs)
+    append(&job.names,..ids)
     load_warm_begin(job)
     if job.error!=.None {
         error=job.error
@@ -514,6 +514,14 @@ load_warm :: proc(job:^Load_Job,all:bool,start:time.Tick,taken:^int) -> bool {
 Load_Waits :: struct {assets:core.Queue(base.Asset_Id)}
 
 load_wait :: proc(waits:^Load_Waits,id:base.Asset_Id) {if waits!=nil {core.push(&waits.assets,id)}}
+
+// The loaded sections a library keeps as they are, on or off, though they are
+// to turn off or go: what shows in their place is not ready (a far mesh read
+// in jobs). A library names them in each frame until it is (section_stay).
+@(storage,queue)
+Section_Stays :: struct {queue:core.Queue(core.Entity)}
+
+section_stay :: proc(stays:^Section_Stays,e:core.Entity) {core.push(&stays.queue,e)}
 
 // What the loads of sections of a World that wait for the libraries name, appended to out.
 loads_waiting :: proc(loads:^Section_Loads,out:^[dynamic]base.Asset_Id) {

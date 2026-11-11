@@ -349,6 +349,8 @@ Prefab_Forms :: struct {
     bytes:int,
     clock:u64,
     prepared:int, // prefabs read into a form since the World was made
+    pending:core.Shape, // of the rows of Prefab_Pending, and Prefab_Warms.ended, when spawns_fill last looked at them
+    ended:u64,
     allocator:runtime.Allocator,
 }
 

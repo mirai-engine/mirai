@@ -246,7 +246,7 @@ prefabs_warm :: proc(w:core.World_Ref,app:^host.App) {
         if file,found:=asset.registry_find(&app.assets.registry,id);found && asset.registry_prefab(file) {append(&prefabs,id)}
     }
     if len(prefabs)==0 {return}
-    if job,begun:=prefab_warm_begin(app,prefabs[:]);begun==.None {
+    if job,begun:=assets_warm_begin(app,prefabs[:]);begun==.None {
         load_step(job,true)
         load_free(job)
     }

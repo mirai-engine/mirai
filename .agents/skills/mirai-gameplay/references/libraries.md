@@ -46,8 +46,9 @@ the name of their type) and a world (handles and tables).
   rotation is none and a zero scale is 1; its rows wait for the end of the function that spawned
   it. It never reads a file: a prefab that is not loaded, or that takes something that is not,
   gives its root at once with only its `Transform`, `Parent`, `Id` and `Prefab_Pending{prefab}`;
-  jobs read the prefab and what it takes (`prefab_warm_begin`, at most `PREFAB_WARMS` at once) and
-  `scene_spawns` (`frame`, both loops) places the rest on the root, which keeps what it was given
+  jobs read the prefab and what it takes (`assets_warm_begin`, at most `PREFAB_WARMS` at once) and
+  `scene_spawns` (`frame`, both loops), once a read ended or the spawns that wait changed, and not
+  in every frame meanwhile, places the rest on the root, which keeps what it was given
   meanwhile (a seat that drives it keeps driving it); a prefab that does not place takes its root
   away with the problem. `spawns_fill(all=true)` waits, for an answer of the editor that gives the
   copy whole. `spawn_member`, the copy of an entity of a section that is not loaded, waits the same
@@ -245,7 +246,11 @@ section that is not on until it returns.
 **Far shape (HLOD).** `streaming_far` (`frame`, both loops, after `scene_sections`) shows, while a
 section is not loaded and on, the far mesh of its scene next to its reference (`Section_Proxy` and a
 transient `Mesh_Renderer`, which follow the reference): it is seen from afar, enters the rays and
-keeps covering the sun and the sky.
+keeps covering the sun and the sky. The far mesh is read in jobs (`assets_warm_begin`, up to
+`FAR_WARMS` at once, those of loaded sections first) and shows once it is read: no frame reads it,
+and a loaded section stays as it is, on or off, until its far mesh can take its place
+(`scene.section_stay`); one whose read ended without it shows none and keeps none. A proxy whose
+scene has another far mesh still being read keeps the one it shows.
 
 - The far mesh of a scene is a derived asset of it, an asset as any, shared by all its references
   (`cook/far`), which `far_find` finds again when the registry changes (`Streaming_Far`): a
