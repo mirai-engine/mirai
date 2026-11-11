@@ -11,7 +11,7 @@ import importer "mirai:cook/import"
 @(test)
 paths_that_name_devices_are_not_read :: proc(t:^testing.T) {
     when ODIN_OS==.Windows {
-        folder:=base.test_folder(t,"devices")
+        _,folder:=test_project(t,"devices")
         if folder=="" {return}
         path:=write_text(folder,"d.obj","mtllib con\nmtllib nul.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")
         model,ok:=import_ok(t,path)
@@ -31,7 +31,7 @@ paths_that_name_devices_are_not_read :: proc(t:^testing.T) {
         path=write_text(folder,"b.gltf",`{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],"buffers":[{"byteLength":36,"uri":"con"}],"bufferViews":[{"buffer":0,"byteLength":36}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"}]}`)
         _,error=importer.import_model(path,FORMATS[:])
         testing.expect(t,error.code==.Malformed && contains(error.message,"device"),error.message)
-        _,texture_error:=importer.import_texture(fmt.tprintf("%s/nul.png",folder),fmt.tprintf("%s/out",folder),{image=.Color})
+        _,texture_error:=importer.import_texture(fmt.tprintf("%s/nul.png",folder),{image=.Color})
         testing.expect_value(t,texture_error.code,importer.Error_Code.Not_Found)
     }
 }

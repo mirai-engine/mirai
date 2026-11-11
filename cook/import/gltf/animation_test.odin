@@ -3,6 +3,7 @@ package gltf
 import "core:fmt"
 import "core:mem"
 import "core:os"
+import "core:path/filepath"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -32,9 +33,8 @@ gltf_animation_import_preserves_tangents_and_unambiguous_targets :: proc(t:^test
     testing.expect_value(t,anim.track_evaluate(tracks[2].keys,.Scale,2),[4]f32{3,3,3,0})
     testing.expect_value(t,anim.track_evaluate(model.animations[1].tracks[0].keys,.Position,1),[4]f32{-2,2,-2,0})
 
-    folder:=base.test_folder(t,"write-animation")
+    report,error,folder:=write_model(t,&model,"write-animation")
     if folder=="" {return}
-    report,error:=importer.import_write(&model,folder)
     defer importer.report_destroy(&report)
     if !testing.expect_value(t,error.code,importer.Error_Code.None) {return}
     testing.expect(t,report.animation_id!={} && len(report.assets)==1 && report.assets[0].id==report.animation_id)
@@ -54,7 +54,7 @@ gltf_animation_import_preserves_tangents_and_unambiguous_targets :: proc(t:^test
     testing.expect_value(t,anim.clip_evaluate(&library,bound[0],1),position)
     testing.expect_value(t,anim.clip_evaluate(&library,bound[1],1),rotation)
     // Imported again over its files, it keeps their ids.
-    again,again_error:=importer.import_write(&model,folder)
+    again,again_error:=importer.import_write(&model,{root=filepath.dir(folder)})
     defer importer.report_destroy(&again)
     if !testing.expect_value(t,again_error.code,importer.Error_Code.None) {return}
     testing.expect_value(t,again.animation_id,report.animation_id)

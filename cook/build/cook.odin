@@ -202,9 +202,11 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     }
     for file,at in files {
         if file.state==.Asset && (file.kind==asset.KIND_SCENE || file.kind==asset.KIND_RECORDS || file.kind==asset.KIND_STRINGS) {root_add(reached,&pending,&report,u32(at))}
-        // What a plugin brings is for its code, which no scene names.
+        // What a plugin brings is for its code, which no scene names; its sources
+        // (a file with a sidecar beside it) and their sidecars stay behind.
+        source:=strings.has_suffix(file.path,asset.SIDECAR_EXTENSION) || strings.concatenate({file.path,asset.SIDECAR_EXTENSION},temp) in registry.by_path
         for folder in desc.plugins {
-            if strings.has_prefix(file.path,folder.prefix) && len(file.path)>len(folder.prefix) && file.path[len(folder.prefix)]=='/' {root_add(reached,&pending,&report,u32(at))}
+            if !source && strings.has_prefix(file.path,folder.prefix) && len(file.path)>len(folder.prefix) && file.path[len(folder.prefix)]=='/' {root_add(reached,&pending,&report,u32(at))}
         }
     }
     for root in manifest.roots {
@@ -216,7 +218,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
             }
         } else if strings.has_suffix(root,"/") {
             for file,at in files {
-                if strings.has_prefix(file.path,root) {
+                if file.state==.Asset && strings.has_prefix(file.path,root) {
                     root_add(reached,&pending,&report,u32(at))
                     named=true
                 }

@@ -259,6 +259,8 @@ a_cook_ships_every_asset_of_an_active_plugin_under_its_prefix :: proc(t:^testing
     BRUSH :: base.Asset_Id{7,1}
     material_write(t,&types,fmt.tprintf("%s/brushes/soft.mat",plugin),BRUSH,WOOD_COLOR,{})
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/readme.txt",plugin),"for the code of the plugin")==nil)
+    // A source and its sidecar stay behind: what its import made ships, not what it was made from.
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/brushes/soft.png",plugin),"a source")==nil && os.write_entire_file(fmt.tprintf("%s/brushes/soft.png.import",plugin),"{}")==nil)
 
     report:=cook_assets({assets=assets,output=output,plugins={{path=plugin,prefix="plugins/probe"}},allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)

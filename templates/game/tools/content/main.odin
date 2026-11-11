@@ -50,15 +50,14 @@ write_hum :: proc(c:^asset.Content) {
         tremolo:=0.75+0.25*math.sin(2*math.PI*1.5*t)
         le(file,44+frame*2,u32(u16(i16(wave*tremolo*20000))),2)
     }
-    os.make_directory_all("source/sounds")
     // Written only when it differs, so that the import of an unchanged source is the same file.
-    existing,read_error:=os.read_entire_file("source/sounds/hum.wav",context.temp_allocator)
-    if (read_error!=nil || string(existing)!=string(file)) && os.write_entire_file("source/sounds/hum.wav",file)!=nil {
-        fmt.eprintln("content: source/sounds/hum.wav could not be written")
+    existing,read_error:=os.read_entire_file("assets/arena/hum.wav",context.temp_allocator)
+    if (read_error!=nil || string(existing)!=string(file)) && os.write_entire_file("assets/arena/hum.wav",file)!=nil {
+        fmt.eprintln("content: assets/arena/hum.wav could not be written")
         c.failed=true
         return
     }
-    report,error:=importer.import_sound("source/sounds/hum.wav","assets/arena",{},{root="."})
+    report,error:=importer.import_sound("assets/arena/hum.wav",{},{root="."})
     if error.code!=.None {
         fmt.eprintfln("content: %s",error.message)
         c.failed=true

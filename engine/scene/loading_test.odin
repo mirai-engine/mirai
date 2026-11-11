@@ -355,7 +355,7 @@ the_sections_loading_tell_how_far_they_are :: proc(t:^testing.T) {
     LAMP :: base.Asset_Id{0x5ec,2}
     meshes:=[2]base.Asset_Id{{0x5ec,3},{0x5ec,4}}
     for mesh in meshes {loading_mesh(t,&p,mesh,host.LOAD_FRAME_BYTES*6/10)}
-    loading_scene(t,&p,LAMP,meshes[1:])
+    loading_scene(t,&p,LAMP,meshes[1:],prefab=true)
     {
         lamp:asset.Scene
         file:asset.Asset
@@ -446,7 +446,7 @@ a_spawn_of_a_prefab_not_loaded_returns_its_root_and_jobs_fill_it :: proc(t:^test
     PREFAB :: base.Asset_Id{0x5a,2}
     LEVEL :: base.Asset_Id{0x5a,3}
     loading_mesh(t,&p,MESH,host.LOAD_FRAME_BYTES/8)
-    loading_scene(t,&p,PREFAB,{MESH})
+    loading_scene(t,&p,PREFAB,{MESH},prefab=true)
     loading_scene(t,&p,LEVEL,{PREFAB})
     host.assets_scan(&p.assets)
     w:=host.app_world_ref(&p.app,p.world)
@@ -499,7 +499,7 @@ a_spawn_of_a_prefab_not_loaded_returns_its_root_and_jobs_fill_it :: proc(t:^test
     // A scene whose field names the prefab reads it with what it takes: the next spawn is whole at once.
     other:=PREFAB
     other[1]=4
-    loading_scene(t,&p,other,{MESH})
+    loading_scene(t,&p,other,{MESH},prefab=true)
     loading_scene(t,&p,LEVEL,{other})
     host.assets_scan(&p.assets)
     job,begun:=load_begin(&p.app,LEVEL)
