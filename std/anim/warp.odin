@@ -93,12 +93,29 @@ pose_warp :: proc "contextless" (skeleton:Skeleton,local,world:[]math.Transform,
         }
     }
     if stride==1 {return true}
-    targets,poles:[16]math.Vec3;rotations:[16]math.Quat
+    // The feet move along the stride; the pelvis drops by the least that keeps every leg no more
+    // extended than the clip has it, and a foot still beyond that is pulled back to it.
+    targets,poles:[16]math.Vec3;rotations:[16]math.Quat;extents:[16]f32
+    drop:f32
     for leg,i in settings.legs {
-        foot:=world[leg.foot].position
+        hip,foot:=world[leg.hip].position,world[leg.foot].position
         rotations[i]=world[leg.foot].rotation
-        targets[i]=foot+direction*linalg.dot(foot-world[leg.hip].position,direction)*(stride-1)
+        extents[i]=linalg.length(foot-hip)
+        targets[i]=foot+direction*linalg.dot(foot-hip,direction)*(stride-1)
         if !anim_vec3_valid(targets[i]) {return false}
+        if _,highest,reachable:=limb_height_range(hip,targets[i],up,extents[i]);reachable {drop=min(drop,highest)}
+    }
+    if drop<0 {
+        moved:=world[pelvis];moved.position+=up*drop
+        parent=skeleton.parents[pelvis]
+        placed,placed_ok:=math.transform_relative(moved,world[parent] if parent>=0 else root_transform)
+        if !placed_ok {return false}
+        local[pelvis]=placed
+        if !pose_world(skeleton.parents,local,world,root_transform) {return false}
+    }
+    for leg,i in settings.legs {
+        hip:=world[leg.hip].position
+        if reach:=targets[i]-hip;linalg.length(reach)>extents[i] {targets[i]=hip+linalg.normalize0(reach)*extents[i]}
         pole,valid:=two_bone_pole_from_pose(world[leg.hip],world[leg.knee],world[leg.foot],targets[i]);if !valid {return false}
         poles[i]=pole
     }

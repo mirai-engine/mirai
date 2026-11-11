@@ -116,6 +116,9 @@ rig; `fraction` is the part of the remaining time that this step consumes.
   - It turns the pelvis and distributes the inverse compensation over the spine.
   - The stride scales the projection of each foot with respect to its own hip over the direction of
     travel, keeping the separation that comes from the pelvis.
+  - No leg ends more extended than the clip has it: the pelvis drops along `up` by the least that
+    brings every warped foot within its source hip-to-foot distance, and a foot still beyond it
+    (a stride that no height reaches) is pulled back toward its hip.
   - The pole of the knee comes from the source flexion plane ([common pole](anim.md)), without
     configuring another plane.
   - It keeps the lengths and the world rotation of each foot after the pelvis turn.
