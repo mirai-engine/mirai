@@ -1133,6 +1133,19 @@ locks_claim :: proc(t:^Raw_Table,e:Entity,name:string) -> bool {
     return true
 }
 
+// Gives back what the locks of a row take when the last change pending for
+// its entity is a remove or a turn off: what the settle of a World does for
+// every table before applying any.
+@(private)
+locks_release_pending :: proc(t:^Raw_Table) {
+    for p,k in t.pending {
+        if p.value!=PENDING_REMOVE && p.value!=PENDING_OFF || raw_row(t,p.entity)<0 {continue}
+        last:=true
+        for q in t.pending[k+1:] {last&&=q.entity!=p.entity}
+        if last {locks_release(t,p.entity)}
+    }
+}
+
 @(private)
 locks_release :: proc(t:^Raw_Table,e:Entity) {
     i:=entity_index(e)

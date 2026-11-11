@@ -168,6 +168,31 @@ test_info_world_of_locks :: proc(allocator:=context.allocator) -> (info:World_In
     return info,true
 }
 
+@(rodata) test_world_lock_names_world_of_rivals:=[?]string{"","core.Lock_Rival","core.Lock_Body"}
+@(private="file")
+test_info_world_of_rivals :: proc(allocator:=context.allocator) -> (info:World_Info,ok:bool) {
+    context.allocator=allocator
+    tables,tables_error:=make([]Table_Info,3)
+    storages,storages_error:=make([]Storage_Info,0)
+    if tables_error!=nil || storages_error!=nil {
+        delete(tables);delete(storages)
+        return
+    }
+    locks_0:=make([]Lock,1)
+    locks_0[0]={int(offset_of(World_Of_Rivals,owner))-int(offset_of(World_Of_Rivals,rivals)),1,test_world_lock_names_world_of_rivals[:],"Lock_Owner"}
+    tables[0]={name="Lock_Rival",library="core",type=typeid_of(Lock_Rival),info=type_info_of(Lock_Rival),offset=offset_of(World_Of_Rivals,rivals),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,was="",base=false,locks=locks_0}
+    locks_1:=make([]Lock,1)
+    locks_1[0]={int(offset_of(World_Of_Rivals,owner))-int(offset_of(World_Of_Rivals,bodies)),2,test_world_lock_names_world_of_rivals[:],"Lock_Owner"}
+    tables[1]={name="Lock_Body",library="core",type=typeid_of(Lock_Body),info=type_info_of(Lock_Body),offset=offset_of(World_Of_Rivals,bodies),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,was="",base=false,locks=locks_1}
+    tables[2]={name="Lock_Owner",library="core",type=typeid_of(Lock_Owner),info=type_info_of(Lock_Owner),offset=offset_of(World_Of_Rivals,owner),place=.World,shared=false,replicated=.None,game=false,default=nil,description="",fields=nil,single=false,far=false,derived=false,was="",base=false,locks=nil}
+    info.sizes={.World=size_of(World_Of_Rivals),.Shared=1,.Editor=1}
+    info.aligns={.World=align_of(World_Of_Rivals),.Shared=1,.Editor=1}
+    info.entities,info.revisions=offset_of(World_Of_Rivals,entities),offset_of(World_Of_Rivals,storage_revisions)
+    info.tables,info.storages=tables,storages
+    world_info_index(&info)
+    return info,true
+}
+
 @(private="file")
 test_info_tree_world :: proc(allocator:=context.allocator) -> (info:World_Info,ok:bool) {
     context.allocator=allocator
@@ -487,6 +512,7 @@ test_info :: proc(t:^testing.T,$W:typeid,allocator:=context.allocator,loc:=#call
     else when W==World_Of_Single {info,ok=test_info_world_of_single(allocator)}
     else when W==World_Of_Probes {info,ok=test_info_world_of_probes(allocator)}
     else when W==World_Of_Locks {info,ok=test_info_world_of_locks(allocator)}
+    else when W==World_Of_Rivals {info,ok=test_info_world_of_rivals(allocator)}
     else when W==Tree_World {info,ok=test_info_tree_world(allocator)}
     else when W==Id_World {info,ok=test_info_id_world(allocator)}
     else when W==Memory_From {info,ok=test_info_memory_from(allocator)}

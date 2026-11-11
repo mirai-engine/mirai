@@ -55,6 +55,10 @@ settle :: proc(info:^World_Info,world,editor:rawptr) -> (settled:int) {
     marks:=es.pending[:]
     // Checking writes, every table settles: a row written late shows at the next settle of the World.
     linked:=!CHECK_WRITES && len(marks)>0 && len(marks)>=len(info.tables)
+    // What a row that goes takes is free for an add of any table, whatever their order.
+    for &t,at in info.tables {
+        if len(t.locks)>0 && t.place==.World && (!linked || marks[at]) {locks_release_pending(cast(^Raw_Table)(uintptr(world)+t.offset))}
+    }
     parented:=s.parent>=0 && (!linked || marks[s.parent])
     if parented {
         settle_table(info,world,s.parent,es,marks)
