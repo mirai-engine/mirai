@@ -240,8 +240,7 @@ stroke_write :: proc(s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,ass
 stroke_apply :: proc(s:^editor.Session,stroke:^Stroke,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,color:[3]f32,strength:f32) -> bool {
     a:=assets
     meshes:=core.world_table_of(world,erender.Mesh_Renderer)
-    row:=meshes!=nil?core.edit(meshes,stroke.entity):nil
-    if a==nil || row==nil {return false}
+    if a==nil || meshes==nil || !core.has(meshes,stroke.entity) {return false}
     colors_blend(stroke.canvas.vertices,stroke.before,stroke.weights,color,strength)
     bytes,error:=canvas_bytes(&stroke.canvas,stroke.id,&a.types,allocator)
     defer delete(bytes,allocator)
@@ -249,7 +248,8 @@ stroke_apply :: proc(s:^editor.Session,stroke:^Stroke,world:core.World_Ref,asset
     stroke.dirty,stroke.wait=false,REFRESH_SECONDS
     if stroke.written {return true}
     stroke.written=true
-    row.mesh=stroke.id
+    // Asked for here: writing the file settles the World, which ends an edit asked for before it.
+    core.edit(meshes,stroke.entity).mesh=stroke.id
     if painted:=core.world_table_of(world,paint.Painted);painted!=nil && !core.has(painted,stroke.entity) {
         core.add(painted,stroke.entity,paint.Painted{source=stroke.source.mesh,shape=stroke.source.shape})
     }
