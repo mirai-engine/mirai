@@ -198,6 +198,15 @@ the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T)
         // A file under the assets that does not exist yet is made there.
         made:=on(&q,.Scene,"write",project.path(root,"assets","arena","annex.scene",allocator=context.temp_allocator),project.path(root,"document.json",allocator=context.temp_allocator))
         testing.expectf(t,made.code==0 && strings.has_prefix(made.out,"arena/annex.scene: made"),"%s%s",made.out,made.err)
+        // A scene no asset of the project is, outside or where the registry looks not (.mirai), reads too.
+        other:asset.Scene
+        testing.expect_value(t,asset.scene_init(&other,&q.types,asset.content_id("elsewhere","scene","copy.scene"),context.temp_allocator),asset.Error.None)
+        for file in ([]string{project.path(root,"copy.scene",allocator=context.temp_allocator),project.path(root,"assets",".mirai","copy.scene",allocator=context.temp_allocator)}) {
+            os.make_directory_all(file[:strings.last_index_byte(file,'/')])
+            testing.expect_value(t,asset.scene_save(&other,file),asset.Error.None)
+            copy_read:=on(&q,.Scene,"read",file)
+            testing.expectf(t,copy_read.code==0 && strings.contains(copy_read.out,`"entities"`),"%s: %s%s",file,copy_read.out,copy_read.err)
+        }
     }
     written:=on(&p,.Ui,"write","hud/hud.ui",hud)
     testing.expectf(t,written.code==0 && strings.contains(written.out,"hud/hud.ui: unchanged"),"%d %s%s",written.code,written.out,written.err)
