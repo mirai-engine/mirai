@@ -22,7 +22,9 @@ Destruct_Cache :: struct {
     ready:bool,
     pass:u32,
     entries:core.Entity_Map(Entry), // by destructible
-    seen:core.Seen,           // of the destructibles: the entries of those that went end
+    seen:[Watched]core.Seen,  // of what a destructible is made of, and of the groups: what changed is looked at again
+    role:core.Network_Role,   // the destructibles were looked at for
+    meshes:[dynamic]base.Asset_Id, // generated for the groups, which hold them
     infos:[]physics.Piece_Info,   // the pieces of the destructible being looked at
     marks:[]u32,              // by body slot: equal to mark for the bodies already taken in the pass under way
     group_of:[]i32,           // by body slot: index of its group in this pass
@@ -33,20 +35,16 @@ Destruct_Cache :: struct {
     slicer:geom.Slicer,
     halves:[2]geom.Mesh_Buffer,
     merged:geom.Mesh_Buffer,
-    stats:Destruct_Stats,
 }
 
-Destruct_Stats :: struct {
-    created,destroyed:u64, // simulation destructibles
-    meshes:int,            // generated meshes alive
-    prepared:u64,          // meshes cut into pieces, off the tick
-    events:u64,            // fracture events applied
-}
+@(private)
+Watched :: enum u8 {Destructible,Rigid_Body,Collider,Mesh_Renderer,Groups}
 
 @(private)
 Scratch_Group :: struct {
     group:u32,
     body:physics.Body_Handle,
+    entity:core.Entity, // that has it already
     debris:bool,
     first,count:int, // in flat
 }
@@ -93,27 +91,17 @@ Visual :: struct {
     geometry:geom.Mesh_Buffer,
 }
 
-// The entity and the generated mesh of one body of a broken destructible.
-@(private)
-Group_Record :: struct {
-    group:u32,
-    entity:core.Entity,
-    mesh:base.Asset_Id,
-    members:[dynamic]i32, // the pieces the mesh was made of
-    body:physics.Body_Handle,
-}
-
 @(private)
 Entry :: struct {
     prepared:^Prepared,
     visuals:[dynamic]Visual,
-    groups:[dynamic]Group_Record,
     materials:[render.MATERIAL_SLOTS]base.Asset_Id, // of the Mesh_Renderer of the groups
     generated:[asset.MESH_MAX_SLOTS]base.Asset_Id,  // of the meshes generated for them
     slots:u32,                                      // material slots of those meshes; the last is the interior
     event:physics.Break_Event,                       // the strongest applied in event_tick: what Fracture tells
     event_tick:u64,
-    pass:u32,                                       // the last tick that wrote its state
+    pass:u32,                                       // the last tick that looked at it
+    mirrored:bool,                                  // its groups were drawn from this entry
 }
 
 // Frees the memory of the cache and the meshes it made.
@@ -130,7 +118,7 @@ scratch_free :: proc(cache:^Destruct_Cache) {
 
 // Frees the memory of the cache when the application ends: its meshes go with the assets.
 cache_free :: proc(cache:^Destruct_Cache) {
-    core.entity_map_destroy(&cache.entries);delete(cache.groups)
+    core.entity_map_destroy(&cache.entries);delete(cache.groups);delete(cache.meshes)
     scratch_free(cache)
     if cache.ready {
         geom.slicer_destroy(&cache.slicer)
@@ -146,11 +134,13 @@ destruct_release :: proc(cache:^Destruct_Cache,assets:^host.Assets,job_system:^j
     if cache!=nil {cache_reset(assets,job_system,cache)}
 }
 
-// Releases what the cache derived, for a simulation that was replaced.
+// Releases what the cache derived, for a simulation that was replaced: every destructible is looked at again.
 @(private)
 cache_reset :: proc(assets:^host.Assets,job_system:^jobs.Job_System,cache:^Destruct_Cache) {
-    for &entry in cache.entries.values {entry_release(assets,job_system,cache,&entry)}
+    for &entry in cache.entries.values {entry_release(job_system,&entry)}
     core.entity_map_clear(&cache.entries)
+    #reverse for mesh in cache.meshes {mesh_release(assets,cache,mesh)}
+    cache.seen={}
 }
 
 // Scratch for the pieces and the bodies a simulation holds, reserved once for each size of it.
@@ -198,14 +188,16 @@ visuals_release :: proc(entry:^Entry) {
     clear(&entry.visuals)
 }
 
-// Releases the generated meshes of the groups of an entry. The entities are the caller's.
+// Releases a mesh generated for a group.
 @(private)
-groups_release :: proc(assets:^host.Assets,cache:^Destruct_Cache,entry:^Entry) {
-    for &group in entry.groups {
-        if group.mesh!={} && assets!=nil && host.assets_mesh_release(assets,group.mesh) {cache.stats.meshes-=1}
-        delete(group.members)
+mesh_release :: proc(assets:^host.Assets,cache:^Destruct_Cache,mesh:base.Asset_Id) {
+    if mesh=={} {return}
+    for id,at in cache.meshes {
+        if id!=mesh {continue}
+        unordered_remove(&cache.meshes,at)
+        if assets!=nil {host.assets_mesh_release(assets,mesh)}
+        return
     }
-    clear(&entry.groups)
 }
 
 @(private)
@@ -221,12 +213,9 @@ prepared_release :: proc(job_system:^jobs.Job_System,entry:^Entry) {
     entry.prepared=nil
 }
 
-// Ends an entry: its meshes, its geometry and its cut. The entities of its
-// groups are the caller's, and so is taking it out of the cache.
+// Ends an entry: its geometry and its cut. Taking it out of the cache is the caller's.
 @(private)
-entry_release :: proc(assets:^host.Assets,job_system:^jobs.Job_System,cache:^Destruct_Cache,entry:^Entry) {
-    groups_release(assets,cache,entry)
-    delete(entry.groups)
+entry_release :: proc(job_system:^jobs.Job_System,entry:^Entry) {
     visuals_release(entry)
     delete(entry.visuals)
     prepared_release(job_system,entry)
@@ -403,6 +392,9 @@ group_mesh_make :: proc(assets:^host.Assets,cache:^Destruct_Cache,entry:^Entry,m
     if len(m.colors)!=len(m.positions) {clear(&m.colors)}
     if len(m.materials)*3!=len(m.indices) {clear(&m.materials)}
     id,ok=host.assets_mesh_generate(assets,geom.mesh_buffer_view(m),entry.generated[:entry.slots])
-    if ok {cache.stats.meshes+=1}
+    if _,err:=append(&cache.meshes,id);ok && err!=nil {
+        host.assets_mesh_release(assets,id)
+        return {},false
+    }
     return
 }

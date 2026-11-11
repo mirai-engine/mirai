@@ -42,12 +42,12 @@ shown :: proc(lut: []f16, scene: Vec3) -> Vec3 {
 @(test)
 every_display_transform_shows_the_card_it_is_exposed_for_alike :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
+	settings.gi_enabled, settings.taa = false, false
 	f: Fixture
 	if !fixture_init(t, &f, 96, 64, settings, hardware_rt = false) {return}
 	defer fixture_destroy(&f)
 	r, device := f.renderer, f.device
-	scene_set(r, nil, nil, {}, {})
+	scene_given(r, nil, nil, {}, {})
 	// What the display shows, in linear light, of a backdrop the view exposes to scene.
 	seen :: proc(t: ^testing.T, r: ^Renderer, scene: Vec3) -> (shown: Vec3, ok: bool) {
 		camera := Camera{position = {0, 1, 4}, forward = {0, 0, -4}, up = {0, 1, 0}, fov_y = 50, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}

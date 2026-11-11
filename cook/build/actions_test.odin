@@ -28,7 +28,7 @@ ACTIONS_CORE :: `package core
 @(params) Input_Of :: struct($E:typeid) {actions:Ref(Actions),base:Action}
 @(actions) Look_Action :: enum u8 {Look}
 @(actions) Walk_Action :: enum u8 {Move,Jump}
-Action_Default :: struct {kind:u8}
+Action_Bindings :: struct {kind:u8}
 `
 
 // The members of the @(actions) enums are the actions of the world, one
@@ -46,7 +46,7 @@ Action :: enum u8 {
     Layer_Back,
     Stamp,
 }
-action_defaults :: proc() -> [Action]core.Action_Default {return {.Layer_Back={kind=1},.Stamp={kind=1}}}
+action_defaults :: proc() -> [Action]core.Action_Bindings {return {.Layer_Back={kind=1},.Stamp={kind=1}}}
 @(step="fixed") game_stamp :: proc(input:core.Input_Of(Action),walk:core.Input_Of(core.Walk_Action)) {}
 `)
     if !ok {return}
@@ -61,7 +61,7 @@ action_defaults :: proc() -> [Action]core.Action_Default {return {.Layer_Back={k
             `{typeid_of(p_core.Action),i64(4),"stamp","game","game/game.odin",6,false,true,nil}`,
             `actions[0]={typeid_of(p_core.Look_Action),type_info_of(p_core.Look_Action),0,"core",nil}`,
             `actions[2]={typeid_of(p_game.Action),type_info_of(p_game.Action),3,"game",action_defaults_2}`,
-            `action_defaults_2 :: proc(dst:rawptr) {(cast(^[p_game.Action]p_core.Action_Default)dst)^=p_game.action_defaults()}`,
+            `action_defaults_2 :: proc(dst:rawptr) {(cast(^[p_game.Action]p_core.Action_Bindings)dst)^=p_game.action_defaults()}`,
             `i64(8*size_of(p_core.Action_Mask))),true}`,
             `p_game.game_stamp(p_core.Input_Of(p_game.Action){actions=p_core.ref(&w.actions),base=p_core.Action(3)},p_core.Input_Of(p_core.Walk_Action){actions=p_core.ref(&w.actions),base=p_core.Action(1)})`,
             "info.named_types,info.names,info.name_bits,info.actions=named_types,names,name_bits,actions",
@@ -89,7 +89,7 @@ the_actions_enums_are_checked :: proc(t:^testing.T) {
         {"package game\n@(actions) Action :: enum u8 {Fire=4}\n","the generator gives the values of actions"},
         {"package game\nimport \"mirai:core\"\nFIRE :: core.Action(9)\n","make it a member of the @(actions) enum of its library"},
         {"package game\nimport \"mirai:core\"\nKind :: enum u8 {A}\n@(step=\"fixed\") game_kind :: proc(input:core.Input_Of(Kind)) {}\n","Input_Of is received for the @(actions) enum whose actions it reads"},
-        {"package game\nimport \"mirai:core\"\n@(actions) Action :: enum u8 {Fire}\n@(storage) Game_Actions :: struct {defaults:[Action]core.Action_Default}\n","game.odin(4): Game_Actions carries the defaults of the actions of Action, and a struct carries no defaults of actions: declare them beside the enum as action_defaults"},
+        {"package game\nimport \"mirai:core\"\n@(actions) Action :: enum u8 {Fire}\n@(storage) Game_Actions :: struct {defaults:[Action]core.Action_Bindings}\n","game.odin(4): Game_Actions carries the defaults of the actions of Action, and a struct carries no defaults of actions: declare them beside the enum as action_defaults"},
     }
     for c in cases {
         p,ok:=actions_project(t,folder,ACTIONS_CORE,c.game)
@@ -99,4 +99,8 @@ the_actions_enums_are_checked :: proc(t:^testing.T) {
         for message in errors {found||=strings.contains(message,c.says)}
         testing.expectf(t,found,"no error says %q: %v",c.says,errors)
     }
+    // Bindings held as data, by a number and not by an enum @(actions), are no defaults.
+    p,ok:=actions_project(t,folder,ACTIONS_CORE,"package game\nimport \"mirai:core\"\n@(storage) Game_Bindings :: struct {held:[8]core.Action_Bindings}\n")
+    if !ok {return}
+    for message in world_generate(&p,context.temp_allocator).errors {testing.expectf(t,!strings.contains(message,"carries the defaults"),"%s",message)}
 }

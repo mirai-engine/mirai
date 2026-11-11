@@ -13,8 +13,8 @@ import phys "plugins:physics/runtime"
 @(actions)
 Walk_Action :: enum u8 {Move,Jump,Sprint,Crouch}
 
-// Their bindings when input.mirai of the project does not name them.
-walk_action_defaults :: proc "contextless" () -> [Walk_Action]input.Action_Default {
+// Their bindings when Input_Settings does not name them.
+walk_action_defaults :: proc "contextless" () -> [Walk_Action]input.Action_Bindings {
     return {
         .Move=input.action_default(.Axis2,input.binding_keys(.A,.D,.S,.W),input.binding_gamepad_stick(.Left)),
         .Jump=input.action_default(.Button,input.binding_key(.Space),input.binding_gamepad_button(.South)),
@@ -47,7 +47,7 @@ locomotion_seat :: proc(
         move:=core.edit(moves,e)
         if move==nil {continue}
         if !walks {
-            core.report(problems,e,"locomotion.seat_action","a seat drives its Character, whose actions move and look have another kind than Axis2 in the input map; give them that kind in input.mirai, or give its Drivable move_relative_to Game and write its Move_Input in the game")
+            core.report(problems,e,"locomotion.seat_action","a seat drives its Character, whose actions move and look have another kind than Axis2 in the input map; give them that kind in Project Settings > Input (Input_Settings), or give its Drivable move_relative_to Game and write its Move_Input in the game")
             continue
         }
         seat:=owner.seat

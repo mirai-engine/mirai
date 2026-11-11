@@ -16,7 +16,9 @@
   even if there are several threads. It fails if it leaves alive anything it made or if the
   device or the validation report errors. Only a test that exercises a device (capacities, ring,
   messages, loss) or measures without validation makes its own device, with
-  `shared_device.create_or_skip` or after `shared_device.hold`, to run alone. The GPU tests of
+  `shared_device.create_or_skip` or after `shared_device.hold`, to run alone; a shared device stays
+  alive beside it, so no test destroys the last device of the process
+  ([driver defect](../../../../docs/ODIN_WORKAROUNDS.md#drivers)). The GPU tests of
   `rhi` are in `rhi/tests`
   (`mirai test rhi/tests`), which can import it; those of `rhi` do not touch the GPU.
 - The GPU tests of a plugin load the shaders that `mirai test` generates before compiling them in
@@ -135,7 +137,7 @@ It measures GI on synthetic fixtures: it does not replace the [render check](#re
 ## Render check
 
 `mirai render check demo` measures what the user sees: the fixed views of `demo/render_check.mirai`
-in a windowless editor compiled at `--dev`, measured only between checkouts (it takes the `mirai
+in a windowless editor compiled in dev, measured only between checkouts (it takes the `mirai
 measure` turn), against the `main` build measured the same way. A global change of the image or its
 cost (GI, light, shadows, TAA, exposure, tonemap, demo materials, a pass that runs in every scene)
 is accepted only with this check, without regressions, besides the reference metrics of `gi_test`:
@@ -153,10 +155,10 @@ depends on what the GPU receives and does:
 
 While working, `--views` and `--quality`.
 
-- **`--dev` or `--release`.** Both builds of a check are built in the same mode, `--dev` unless it
+- **Dev or `--release`.** Both builds of a check are built in the same mode, dev unless it
   says otherwise. The image, the frame and the GPU of each pass come out the same in the two modes;
-  the CPU costs about twice as much in `--dev`, and its figures only compare against another
-  `--dev`. `--release` only when the doubt is the cost of the CPU or a budget in absolute numbers,
+  the CPU costs about twice as much in dev, and its figures only compare against another
+  dev. `--release` only when the doubt is the cost of the CPU or a budget in absolute numbers,
   or when the user asks for it. Measures saved of one mode do not serve the other, and against a
   report of the other mode the cost is not compared.
 - **Views** (`render_check.mirai`): window sizes (the demo measures only 1440×900; another with

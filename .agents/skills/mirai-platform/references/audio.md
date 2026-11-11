@@ -98,11 +98,10 @@ invalid one return false.
   yet is stopped at once.
 - **Aligned start.** With `start_frame` (mixer clock) the first sample comes out exactly on that
   frame, even if it falls in the middle of a render.
-- **Filter and send.** A spatial voice, or one with a low-pass or a reverb send, is mixed apart: a
-  spatial one goes through its [direct effect and its output](#positional-audio), then any voice
-  through its one-pole filter, which changes cutoff without clicks, and its send; a binaural voice
-  is filtered and sent as one source, before its HRTF. Any other goes straight to its bus, at no
-  extra cost.
+- **Send.** A spatial voice, or one with a reverb send, is mixed apart: a spatial one goes through
+  its [direct effect and its output](#positional-audio), then any voice through its send, ramped
+  without clicks; a binaural voice is sent as one source, before its HRTF. Any other goes straight
+  to its bus, at no extra cost.
 - **Stealing.** Without free voices, `voice_play` takes the one with the lowest priority and,
   among equals, the oldest, if its priority does not exceed the new one's; if not, it returns 0.
   The stolen handle stops being valid at once and its sound drops to silence within a chunk.
@@ -161,9 +160,10 @@ binaural and panning effects.
   late whatever size the render has. A source that turned less than a quarter of the finest spacing
   of the measurements keeps its filters. On speakers the direction, brought to the horizontal plane,
   pans with constant power; a mono output plays it centered.
-- The HRTF is the one Steam Audio ships (`audio/hrtf/cipic_124.hrtf`, CIPIC database), so the mixer
-  only runs at the rates it was measured at. It is loaded and transformed when the mixer is
-  created; the binaural state of every voice slot is reserved then.
+- The HRTF is the one Steam Audio ships (`audio/hrtf/cipic_124.hrtf`, CIPIC database), at
+  `MIXER_RATE`, the one rate the mixer renders at; the device stream converts it to the rate of
+  the output, so headphones work on any. It is loaded and transformed, and the binaural state of
+  every voice slot reserved, the first time the output is headphones; speakers never pay for it.
 - A source at the listener comes from above. A place, velocity, rotation or occlusion that is not
   a number is refused by `voice_play`, `voice_set_position`, `voice_set_occlusion` and
   `listener_set`.

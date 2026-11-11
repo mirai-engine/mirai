@@ -72,11 +72,11 @@ loaded_textures_take_the_limits_the_renderer_changes_to :: proc(t:^testing.T) {
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
 }
 
-// A texture an instance shows holds the levels its distance asks for: far
-// away, those of side render.TEXTURE_TAIL; near, all of them, read again
-// from its file. Its handle stays, and the materials that name it with it.
+// A texture an instance shows holds the levels the frames sample: far away,
+// those of side render.TEXTURE_TAIL; near, all of them, read again from its
+// file. Its handle stays, and the materials that name it with it.
 @(test)
-a_texture_holds_the_levels_its_distance_asks_for :: proc(t:^testing.T) {
+a_texture_holds_the_levels_the_frames_sample :: proc(t:^testing.T) {
     device:=shared_device.take_or_skip(t,hardware_rt=false)
     if device==nil {return}
     r:=new(render.Renderer)
@@ -117,38 +117,57 @@ a_texture_holds_the_levels_its_distance_asks_for :: proc(t:^testing.T) {
     indices:=[6]u32{0,2,1,0,3,2}
     quad,added:=render.mesh_add(r,vertices[:],indices[:])
     if !testing.expect(t,added) {return}
-    render.scene_set(r,{{object_id=1,mesh=quad,transform=render.Mat4(1),tint={1,1,1}}},nil,{},{})
+    render.scene_set_environment(r,{},{})
+    render.scene_update(r,0,{{object_id=1,mesh=quad,transform=render.Mat4(1),tint={1,1,1}}},true)
 
-    // What the streamer of the application does between frames, at once.
-    stream :: proc(a:^Assets,r:^render.Renderer,types:^asset.Types,id:base.Asset_Id) -> render.Texture_Levels_Result {
-        requests:[1]render.Texture_Request
-        if render.textures_update(r)==0 || render.texture_requests(r,requests[:],nil)!=1 {return .Stale}
-        prepared:=Assets_Prepared{level=requests[0].level}
-        found:bool
-        prepared.source,found=assets_source(a,id,context.allocator)
-        if !found {return .Mismatch}
-        assets_prepare(&prepared,assets_limits(a),types)
-        defer assets_prepared_free(&prepared)
-        return render.texture_levels_set(r,requests[0],prepared.levels.data)
+    // What the streamer of the application does between frames, at once,
+    // over the frames the feedback of a view takes to come back.
+    settle :: proc(t:^testing.T,a:^Assets,r:^render.Renderer,types:^asset.Types,id:base.Asset_Id,camera:render.Camera,loc:=#caller_location) {
+        for _ in 0..<16 {
+            testing.expect(t,render.renderer_frame(r,{camera=camera}),r.error,loc=loc)
+            if render.textures_update(r)==0 {return}
+            requests:[1]render.Texture_Request
+            if render.texture_requests(r,requests[:],nil)!=1 {continue}
+            prepared:=Assets_Prepared{level=requests[0].level}
+            found:bool
+            prepared.source,found=assets_source(a,id,context.allocator)
+            if !testing.expect(t,found,loc=loc) {return}
+            assets_prepare(&prepared,assets_limits(a),types)
+            defer assets_prepared_free(&prepared)
+            testing.expect_value(t,render.texture_levels_queue(r,requests[0],prepared.levels.data),render.Texture_Levels_Result.Set,loc=loc)
+            for render.texture_upload_pending(r,requests[0]) {testing.expect(t,render.renderer_frame(r,{camera=camera}),r.error,loc=loc)}
+        }
+        testing.fail_now(t,"the levels did not settle",loc=loc)
     }
-    // A view of 64 pixels asks for every level only a few centimetres away.
+    // A view of 64 pixels samples every level only a few centimetres away.
     look :: proc(height:f32) -> render.Camera {
         return {position={0,height,0},forward={0,-1,0},up={0,0,-1},fov_y=60,near=0.05,exposure=render.UNIT_EXPOSURE}
     }
-    testing.expect(t,render.renderer_frame(r,{camera=look(1000)}),r.error)
-    testing.expect_value(t,stream(&a,r,&types,id),render.Texture_Levels_Result.Set)
+    settle(t,&a,r,&types,id,look(10))
     testing.expect_value(t,width(r,texture),u32(render.TEXTURE_TAIL))
     testing.expect(t,texture.handle==handle,"the handle stays")
-    testing.expect(t,render.renderer_frame(r,{camera=look(0.06)}),r.error)
-    testing.expect_value(t,stream(&a,r,&types,id),render.Texture_Levels_Result.Set)
+    settle(t,&a,r,&types,id,look(0.06))
     testing.expect_value(t,width(r,texture),u32(SIZE))
     testing.expect_value(t,render.textures_update(r),0)
-    testing.expect(t,render.renderer_frame(r,{camera=look(0.06)}),r.error)
 
-    // Queued, the levels go with the frames that follow, and the texture takes them once they went.
-    testing.expect(t,render.renderer_frame(r,{camera=look(1000)}),r.error)
+    // Fewer levels, once a window of frames sampled it coarser, the renderer
+    // copies from those it holds: nothing is read.
     requests:[1]render.Texture_Request
-    if !testing.expect(t,render.textures_update(r)>0 && render.texture_requests(r,requests[:],nil)==1) {return}
+    for frames:=0;frames<2*render.TEXTURE_FEEDBACK_FRAMES && width(r,texture)!=u32(render.TEXTURE_TAIL);frames+=1 {
+        testing.expect(t,render.renderer_frame(r,{camera=look(10)}),r.error)
+        render.textures_update(r)
+        testing.expect_value(t,render.texture_requests(r,requests[:],nil),0)
+    }
+    testing.expect_value(t,width(r,texture),u32(render.TEXTURE_TAIL))
+    testing.expect(t,texture.handle==handle,"the handle stays")
+
+    // Queued, the levels it lacks go with the frames that follow, and the
+    // texture takes them once they went.
+    for frames:=0;frames<16;frames+=1 {
+        testing.expect(t,render.renderer_frame(r,{camera=look(0.06)}),r.error)
+        if render.textures_update(r)>0 && render.texture_requests(r,requests[:],nil)==1 {break}
+    }
+    if !testing.expect(t,requests[0].handle==handle) {return}
     prepared:=Assets_Prepared{level=requests[0].level}
     found:bool
     prepared.source,found=assets_source(&a,id,context.allocator)
@@ -157,11 +176,11 @@ a_texture_holds_the_levels_its_distance_asks_for :: proc(t:^testing.T) {
     defer assets_prepared_free(&prepared)
     testing.expect_value(t,render.texture_levels_queue(r,requests[0],prepared.levels.data),render.Texture_Levels_Result.Set)
     testing.expect_value(t,render.texture_levels_queue(r,requests[0],prepared.levels.data),render.Texture_Levels_Result.Busy)
-    testing.expect(t,render.texture_upload_pending(r,requests[0]) && width(r,texture)==u32(SIZE),"the levels have not gone yet")
-    for frames:=0;frames<8 && render.texture_upload_pending(r,requests[0]);frames+=1 {testing.expect(t,render.renderer_frame(r,{camera=look(1000)}),r.error)}
+    testing.expect(t,render.texture_upload_pending(r,requests[0]) && width(r,texture)==u32(render.TEXTURE_TAIL),"the levels have not gone yet")
+    for frames:=0;frames<8 && render.texture_upload_pending(r,requests[0]);frames+=1 {testing.expect(t,render.renderer_frame(r,{camera=look(0.06)}),r.error)}
     testing.expect(t,!render.texture_upload_pending(r,requests[0]),"they went")
-    testing.expect_value(t,width(r,texture),u32(render.TEXTURE_TAIL))
-    testing.expect(t,render.renderer_frame(r,{camera=look(1000)}),r.error)
+    testing.expect_value(t,width(r,texture),u32(SIZE))
+    testing.expect(t,render.renderer_frame(r,{camera=look(0.06)}),r.error)
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
 }
 
@@ -290,7 +309,8 @@ a_mesh_a_load_takes_over_frames_and_its_skinned_copy_are_drawn_once_all_of_them_
         for _ in 0..=rhi.MAX_FRAMES_IN_FLIGHT {testing.expect(t,render.renderer_frame(r,{camera=camera}),r.error)}
     }
     instances:=[1]render.Instance_Desc{{object_id=1,mesh=handle,transform=1}}
-    render.scene_set(r,instances[:],nil,{},{})
+    render.scene_set_environment(r,{},{})
+    render.scene_update(r,0,instances[:],true)
     drawn :: proc(r:^render.Renderer) -> bool {return r.scene.instances[0].meta.w&render.INSTANCE_FLAG_HIDDEN==0}
     frames:=0
     for ;frames<64 && render.mesh_upload_pending(r,prepared.mesh_upload);frames+=1 {
@@ -326,7 +346,8 @@ a_mesh_a_load_takes_over_frames_and_its_skinned_copy_are_drawn_once_all_of_them_
     testing.expect(t,render.mesh_uploading(r,pose),"more than a frame uploads goes over frames")
     // As engine/render shows a copy that replaces the mesh of an entity: that mesh hidden, the copy outlined.
     entity:=[2]render.Instance_Desc{{object_id=1,mesh=handle,transform=1,hidden=true},{object_id=1,copy_owner=1,mesh=pose,transform=1,highlight=1}}
-    render.scene_set(r,entity[:],nil,{},{})
+    render.scene_set_environment(r,{},{})
+    render.scene_update(r,0,entity[:],true)
     copied :: proc(r:^render.Renderer) -> bool {return r.scene.instances[1].meta.w&render.INSTANCE_FLAG_HIDDEN==0}
     lifted:=mm.Mat4(1)
     lifted[1,3]=0.5

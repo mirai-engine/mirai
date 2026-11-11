@@ -248,7 +248,6 @@ impostor_capture :: proc(r: ^Renderer, parts: []Impostor_Part, grid, frame: u32,
 	if !rhi.buffer_upload(device, state.vertices, 0, slice_bytes(vertices)) || !rhi.buffer_upload(device, state.materials, 0, slice_bytes(rows)) || !rhi.buffer_upload(device, state.frames, 0, frames) {return}
 	cmd := rhi.immediate_begin(device)
 	if cmd == nil {return}
-	for buffer in ([]rhi.Buffer{state.vertices, state.materials, state.frames}) {rhi.cmd_barrier_buffer(cmd, buffer, .Shader_Read)}
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, state.vertices)
 	rhi.cmd_bind_buffer(cmd, SLOT_MATERIALS, state.materials)
 	rhi.cmd_bind_sampler(cmd, SLOT_MATERIAL_SAMPLER, r.material_sampler)

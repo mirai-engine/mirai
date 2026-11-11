@@ -9,8 +9,8 @@ import "core:testing"
 @(private="file")
 share_heightfield :: proc(t:^testing.T,s:^Source,allocator:=context.allocator) -> bool {
     if !testing.expect(t,source_make(s,.Heightfield,{257,1,257},1,16,allocator)) {return false}
-    if !testing.expect(t,grid_prepare(&s.heights,{},{256,0,256},s.allocator)) {return false}
-    for z in 0..<257 {for x in 0..<257 {grid_set(&s.heights,x,z,math.sin(f32(x)*0.05)*4+math.cos(f32(z)*0.07)*3)}}
+    if !testing.expect(t,grid_prepare(&s.field,{},{256,0,256},s.allocator)) {return false}
+    for z in 0..<257 {for x in 0..<257 {grid_set(&s.field,x,z,math.sin(f32(x)*0.05)*4+math.cos(f32(z)*0.07)*3)}}
     return true
 }
 
@@ -40,11 +40,11 @@ a_copy_shares_its_pages_and_a_write_on_either_side_leaves_the_other_as_it_was ::
         if kind==.Heightfield {
             if !share_heightfield(t,&source) {return}
         } else if !testing.expect(t,source_make(&source,.Volume,{97,97,97},1,16)) {return}
-        g:=source_samples_grid(&source)
+        g:=&source.field
         tracking:mem.Tracking_Allocator
         mem.tracking_allocator_init(&tracking,context.allocator);defer mem.tracking_allocator_destroy(&tracking)
         if !testing.expect(t,data_source_copy(&copied,&source)) {return}
-        c:=source_samples_grid(&copied)
+        c:=&copied.field
         for page,i in g.pages {testing.expect(t,raw_data(page.values)==raw_data(c.pages[i].values),"the copy holds the values of the source")}
         testing.expect_value(t,len(c.pages),len(g.pages))
         // What a copy allocates is its tables, less than the values of one page.
@@ -93,8 +93,8 @@ a_copy_shares_the_coarse_grid_until_an_edit_writes_it :: proc(t:^testing.T) {
         // 1025 samples a side: a coarse grid of 129, 3 by 3 pages.
         source,copied:Source;defer source_destroy(&source);defer source_destroy(&copied)
         if !testing.expect(t,source_make(&source,.Heightfield,{1025,1,1025},1,64)) {return}
-        if !testing.expect(t,grid_prepare(&source.heights,{},{1024,0,1024},source.allocator)) {return}
-        for z in 0..<1025 {for x in 0..<1025 {grid_set(&source.heights,x,z,math.sin(f32(x)*0.05)*4)}}
+        if !testing.expect(t,grid_prepare(&source.field,{},{1024,0,1024},source.allocator)) {return}
+        for z in 0..<1025 {for x in 0..<1025 {grid_set(&source.field,x,z,math.sin(f32(x)*0.05)*4)}}
         if !testing.expect(t,source_coarse_build(&source,nil)) {return}
         if !testing.expect(t,data_source_copy(&copied,&source)) {return}
         g,c:=&source.coarse.heights,&copied.coarse.heights
@@ -128,9 +128,9 @@ the_pages_a_copy_holds_outlive_the_source_they_came_from :: proc(t:^testing.T) {
     testing.expect(t,first.current_memory_allocated>0 && first.current_memory_allocated<held,"the values the copy holds stay; the tables of the source go")
     testing.expect_value(t,source_value(&copied,{100,0,200}),expected)
     // The copy holds them alone now: it writes them in place.
-    values:=raw_data(copied.heights.pages[1+5*3].values)
+    values:=raw_data(copied.field.pages[1+5*3].values)
     testing.expect(t,share_raise(&copied,{1,3}).changed)
-    testing.expect_value(t,raw_data(copied.heights.pages[1+5*3].values),values)
+    testing.expect_value(t,raw_data(copied.field.pages[1+5*3].values),values)
     source_destroy(&copied)
     testing.expect_value(t,len(first.allocation_map),0)
     testing.expect_value(t,len(second.allocation_map),0)
@@ -146,12 +146,12 @@ a_ring_of_snapshots_holds_only_what_changed_within_it_and_lets_go_of_what_leaves
     entry.id={5,5}
     if !share_heightfield(t,&entry.source) {return}
     if !testing.expect(t,data_chunks_allocate(entry,context.allocator)) {return}
-    pages:=len(entry.source.heights.pages)
+    pages:=len(entry.source.field.pages)
     ring:[RING]Terrain_Data
     defer {for &snapshot in ring {terrain_data_free(&snapshot)}}
     grids :: proc(live:^Terrain_Data,ring:^[RING]Terrain_Data) -> (list:[RING+1]^Grid(f32)) {
-        list[0]=&live.entries[0].source.heights
-        for &snapshot,i in ring {list[i+1]=len(snapshot.entries)>0?&snapshot.entries[0].source.heights:list[0]}
+        list[0]=&live.entries[0].source.field
+        for &snapshot,i in ring {list[i+1]=len(snapshot.entries)>0?&snapshot.entries[0].source.field:list[0]}
         return
     }
     // A brush a tick, on a page another tick touched too or on a new one:

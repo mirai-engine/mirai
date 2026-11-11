@@ -47,7 +47,7 @@ no_store_of_an_aggregate_of_more_than_64_bytes :: proc(t:^testing.T) {
         if !testing.expectf(t,staged && len(errors)==0,"%s: %v",library.name,errors) {return}
     }
     for library in libraries {
-        if !ir(t,root,compiler,project.path(paths.stage,engine_library_entry(library)),project.path(folder,"ir",library.file),flags[:],fmt.tprintf("-collection:mirai=%s",paths.decl),fmt.tprintf("-collection:%s=%s",ENGINE_STAGE_COLLECTION,paths.stage)) {return}
+        if !ir(t,root,compiler,project.path(paths.stage,engine_library_entry(library)),project.path(folder,"ir",library.file),flags[:],fmt.tprintf("-collection:mirai=%s",paths.decl),fmt.tprintf("-collection:%s=%s",STAGE_COLLECTION,paths.stage)) {return}
     }
 
     p,open_error:=project.open(project.path(root,"demo"),root)

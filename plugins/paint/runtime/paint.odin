@@ -61,7 +61,7 @@ paint_render :: proc(state:^Paint_Render,painted:core.Read(Painted),synced:core.
     if renderer==nil || assets==nil || synced.ptr==nil {return}
     sync:=synced.ptr
     loaded:=[2]u64{assets.registry.revision,core.version(painted)}
-    given:=[2]u64{sync.stats.instance_updates,u64(render.instance_count(renderer))}
+    given:=[2]u64{render.instance_revision(renderer),u64(render.instance_count(renderer))}
     if loaded!=state.loaded || sync.world!=state.world {
         state.loaded,state.world,state.given=loaded,sync.world,{}
         for shown in state.shown[:state.count] {render.colors_remove(renderer,shown.handle)}

@@ -214,10 +214,10 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
 - The text measures (`text_width`, `text_line`, `text_lines`, `text_index_at`…) are in layout units
   with the kerning and do not depend on the density. A text has no line limit.
 - **One word breaker.** Every text that wraps at words walks them with `layout_walk` and breaks
-  where Clay breaks a text (`layout_break_next`): a word goes to the next line unless it fits with
-  the space after it, and one wider than the line takes a line of its own. A text of several spans
-  fills its lines with `Flow`, which breaks at the same places and keeps on one line what no space
-  parts. `text_line` is that break for the text a field edits.
+  with one `Flow`, whatever its spans: a word goes to the next line unless it fits with the space
+  after it, one wider than the line takes a line of its own, a line gives up the space it breaks
+  or ends at, and what no space parts stays on one line. `text_line` is that break for the text a
+  field edits, which keeps the spaces of its last line.
 - **Lines like CSS.** `TEXT_LINE` (Inter's ascent plus descent) is the `normal` line height and the
   box of a line; `text_leading` centers it in a height with half the excess above, like CSS. A row
   centers its text this way and `Text_Style.line_height` distributes the excess of each line;
@@ -250,8 +250,8 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
 
 All take the context, an id and their state by parameter.
 
-- **Canvas.** `canvas` is an area that its owner draws with `Context_Desc.draw_user`: the layout
-  places it, the container with clip clips it and the pointer over it is its interaction.
+- **Canvas.** `canvas` is an area that `Context.draw_user` draws as its `Draw_Node` says: the
+  layout places it, the container with clip clips it and the pointer over it is its interaction.
 - **Text and icons.** `label` is a line clipped to its box, which can fade out at its end, and
   `text` with `prose` is the running text ([text](#text)). The `Icon`s are drawn on a 16 vector
   grid.
@@ -406,8 +406,8 @@ What an element looks like hovered, pressed, focused or selected is a state of i
 `transition`: an `Anim_Set` has no animation for a state.
 
 - An animation changes how a node is drawn, never its size: a size is what the layout computes, and
-  a node goes to a new one with the `transition` of its style. `Value`, `Frame` and `Reveal` give
-  the value of a control, the frame of an image and the visible part of a text (typewriter).
+  a node goes to a new one with the `layout_transition` of its style. `Value`, `Frame` and `Reveal`
+  give the value of a control, the frame of an image and the visible part of a text (typewriter).
 - `anim_play` after another animation starts from the value that one left; the first of an element
   starts from its keys. In the tree, `clicked` arrives the frame after the click.
 - `animated(ctx, id, value)` draws what is built inside moved, scaled, rotated and tinted around the
@@ -428,7 +428,7 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
   not those of a component, which the game writes and which show what was asked until it has had a
   tick to. A `Button` that binds a value writes its `choice` when clicked, as a `Radio` does, and
   emits `Changed` after `Clicked`.
-- **Draw.** A `Draw` node is a leaf whose paint (`Paint_Kind.Draw`) calls `Game_Source.draw` at
+- **Draw.** A `Draw` node is a leaf whose paint (`Paint_Kind.Draw`) calls `Context.draw_user` at
   `frame_end` with a `Draw_Node`: the rectangle, the colors and text of its style, and the bytes
   of the field its `bind_value` names, of any type (`Bound_Want.Data`, `draw_value`). `draw` names
   who draws it. It is replayed with its screen, so what it shows comes from what it binds. A
@@ -463,6 +463,9 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
   - The instance copies only the bytes it reads: the ranges read from each region are joined and
     packed into `values`. `tree_values_refresh` copies only those ranges, skips what did not change
     according to its stamp and stores which ranges changed until the next build.
+  - What changed is what a node shows: an f32 shown only by a number of a template is copied when
+    it moves a shown step (its decimals, a second of a clock), and the value of a Progress when its
+    fill moves a pixel; below that nothing is copied and no node is built. Games never round.
   - The formats after the colon are in `tree_bind.odin`: numbers with the separators of the
     language of `Game_Source.language` (`NUMBER_LOCALES`), times, texts by value and CLDR plurals
     (`{n:one=# coin|other=# coins}`). An enum name or a category that does not exist fails like a
@@ -528,16 +531,16 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
 - With `Node_Style.transition`, a node's colors, its shadow and what `move` and `scale` give go from
   the style it showed to the new one when its state or variant changes; a change under way starts
   from where it was and a transparent end only fades.
-- The same `transition` carries the rectangle of the node to a new layout (an item inserted above
-  it, a page that grows, a size that changes), as Clay's transitions do: the layout keeps the last
-  rectangle of each element that asks (`layout_transition_ask`, by id, up to
-  `LAYOUT_TRANSITIONS`), and the node goes from where it was drawn to where the layout puts it with
-  the `Cubic_Out` ease. Its place is kept from the corner of its parent's content, so a parent
-  that moves or scrolls carries it without starting it; a size on its way is fixed for a second
-  layout, so what surrounds it follows. The first time, and on a surface of another size, it is
-  where the layout puts it at once. `Frame.transitioning` says the next frame differs, and
-  `engine/gui` keeps no screen of that context. Only tree nodes ask: what code builds, as the
-  editor, goes to its new place at once.
+- `Node_Style.layout_transition` carries the rectangle of the node to a new layout (an item inserted
+  above it, a page that grows, a size that changes), as Clay's transitions do: the layout keeps the
+  last rectangle of each element that asks (`layout_transition_ask`, in a table by id of
+  `Context_Desc.max_transitions`), and the node goes from where it was drawn to where the layout
+  puts it with the `Cubic_Out` ease. Its place is kept from the corner of its parent's content, so a
+  parent that moves or scrolls carries it without starting it; a size on its way is fixed for a
+  second layout, so what surrounds it follows. The first time, after a frame it was not asked for (a
+  node shown again), and on a surface of another size, it is where the layout puts it at once.
+  `Frame.transitioning` says the next frame differs, and `engine/gui` keeps no screen of that
+  context. Only tree nodes ask: what code builds, as the editor, goes to its new place at once.
 - `Node_Style.move` and `scale` draw a node through a scope around its center that the layout and
   the pointer do not see (`animated_begin` with `still`), so what lifts a button under the pointer
   does not lose it.

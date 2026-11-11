@@ -11,8 +11,8 @@ Fixture :: struct {
 	renderer: ^Renderer, // on the heap: a Renderer is too big for the stack
 }
 
-// The generation with the Surface programs of testdata/ (Grid, Ocean and
-// Pieces), which `mirai test` makes before the tests run: the engine has no
+// The generation with the Surface programs of testdata/ (Grid and Pieces),
+// which `mirai test` makes before the tests run: the engine has no
 // Surface program of its own.
 TEST_GENERATION :: #directory + "/../.mirai/tmp/render-test-shaders"
 
@@ -59,4 +59,27 @@ fixture_destroy :: proc(f: ^Fixture) {
 	renderer_destroy(f.renderer)
 	free(f.renderer)
 	f.renderer = nil
+}
+
+// The lights, the sun and the sky in place of those the scene has, through
+// what a frame does with them: the lights that give light take the first
+// indices, those past them go, and the lights settle.
+scene_lights_given :: proc(r: ^Renderer, lights: []Light_Desc, sun: Sun_Desc, environment: Environment) -> bool {
+	count := 0
+	for l in lights {
+		if !light_gives(l) {continue}
+		if !scene_light_update(r, u32(count), l) {return false}
+		count += 1
+	}
+	for i := len(r.scene.lights) - 1; i >= count; i -= 1 {scene_light_remove(r, u32(i))}
+	scene_set_environment(r, sun, environment)
+	return scene_lights_settle(r)
+}
+
+// The instances, the lights, the sun and the sky in place of those the scene
+// has, as the sync of a world gives them and a frame settles them.
+scene_given :: proc(r: ^Renderer, instances: []Instance_Desc, lights: []Light_Desc, sun: Sun_Desc, environment: Environment) -> bool {
+	if !scene_update(r, 0, instances, true) {return false}
+	tlas_settle(&r.scene)
+	return scene_lights_given(r, lights, sun, environment)
 }

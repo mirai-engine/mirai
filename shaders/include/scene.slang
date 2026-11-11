@@ -424,16 +424,49 @@ Material material_row(uint row) {
 
 bool material_has(uint texture_index) { return texture_index != INVALID; }
 
+#ifdef MIRAI_TEXTURE_FEEDBACK
+// The finest level a stage that shades surfaces samples of each texture, for
+// its residency (render/texture_residency.odin): the first word says how
+// many textures it may write, then one per texture past the reserved entries
+// of the table. Any pass, in any order: an atomic minimum.
+[[vk::binding(TEXTURE_FEEDBACK_SLOT, 0)]] RWStructuredBuffer<uint> texture_feedback_words : register(MIRAI_REGISTER(u, TEXTURE_FEEDBACK_SLOT), space0);
+#endif
+
+// That a texture was sampled at `level`: log2 of the texels across its width
+// a sample spans at the level it reads, less log2 of that width, which no
+// level held changes; -FLT_MAX for every level.
+void texture_feedback(uint texture_index, float level) {
+#ifdef MIRAI_TEXTURE_FEEDBACK
+    uint entry = texture_index - TEXTURE_TABLE_RESERVED;
+    if (entry >= texture_feedback_words[0] || isnan(level)) return;
+    uint code = uint(clamp(floor((level - TEXTURE_FEEDBACK_LOW) * TEXTURE_FEEDBACK_STEPS), 0.0, float(TEXTURE_FEEDBACK_CODES - 1u)));
+    uint at = TEXTURE_FEEDBACK_FIRST + entry;
+    if (code < texture_feedback_words[at]) InterlockedMin(texture_feedback_words[at], code);
+#endif
+}
+
 // Ray hits have no screen-space derivatives: `lod` is the level of a texture
 // of one texel, which the size of the texture then shifts (see hit_lod).
 float4 material_texel_at(uint texture_index, float2 uv, float lod) {
     float2 size = float2(texture_size(material_textures[mirai_nonuniform(texture_index)], 0));
+    texture_feedback(texture_index, lod + 0.5 * log2(size.y / size.x));
     return material_textures[mirai_nonuniform(texture_index)].SampleLevel(material_sampler, uv, lod + 0.5 * log2(size.x * size.y));
 }
 // Rasterized surfaces (MATERIAL_RASTER, fragment shaders only) filter with the
 // screen-space derivatives of uv, and `lod` is a bias.
 float4 material_texel(uint texture_index, float2 uv, float lod) {
 #ifdef MATERIAL_RASTER
+#ifdef MIRAI_TEXTURE_FEEDBACK
+    // The level anisotropic filtering reads: over the shorter axis of the
+    // footprint, or the longer one over its samples, each axis the shortest
+    // a device may take of it (the larger of its two steps in texels).
+    float2 size = float2(texture_size(material_textures[mirai_nonuniform(texture_index)], 0));
+    float2 dx = abs(ddx(uv) * size), dy = abs(ddy(uv) * size);
+    float across = max(dx.x, dx.y), down = max(dy.x, dy.y);
+    float longer = max(across, down);
+    // Where the uv do not change no level is asked.
+    if (longer > 0.0) texture_feedback(texture_index, log2(max(min(across, down), longer / MATERIAL_ANISOTROPY)) + lod - log2(size.x));
+#endif
     return material_textures[mirai_nonuniform(texture_index)].SampleBias(material_sampler, uv, lod);
 #else
     return material_texel_at(texture_index, uv, lod);
@@ -501,8 +534,10 @@ float3 material_ray_normal(Material m, Instance inst, float3 normal, float3 w, M
 }
 // Sampling follows the evaluated surface's explicit context, including a
 // ray hit reconstructed inside a fragment shader.
+// A program keeps every level of the textures it samples: its uv and levels are its own.
 float4 mirai_sample_texture_at(uint index, float2 uv, float lod, bool ray) {
     if (!material_has(index)) return float4(1.0);
+    texture_feedback(index, -FLT_MAX);
 #ifdef MATERIAL_RASTER
     if (!ray) return material_textures[mirai_nonuniform(index)].SampleBias(material_sampler, uv, lod);
 #endif
@@ -528,13 +563,19 @@ float4 mirai_sample_texture(Mirai_PostProcess_Context ctx, uint index, float2 uv
     return mirai_sample_texture_at(index, uv, lod, false);
 }
 float4 mirai_sample_texture_level(uint index, float2 uv, float level) {
-    return material_has(index) ? material_textures[mirai_nonuniform(index)].SampleLevel(material_sampler, uv, level) : float4(1);
+    if (!material_has(index)) return float4(1);
+    texture_feedback(index, -FLT_MAX);
+    return material_textures[mirai_nonuniform(index)].SampleLevel(material_sampler, uv, level);
 }
 float4 mirai_sample_texture_grad(uint index, float2 uv, float2 dx, float2 dy) {
-    return material_has(index) ? material_textures[mirai_nonuniform(index)].SampleGrad(material_sampler, uv, dx, dy) : float4(1);
+    if (!material_has(index)) return float4(1);
+    texture_feedback(index, -FLT_MAX);
+    return material_textures[mirai_nonuniform(index)].SampleGrad(material_sampler, uv, dx, dy);
 }
 float2 mirai_texture_size(uint index) {
-    return material_has(index) ? float2(texture_size(material_textures[mirai_nonuniform(index)], 0)) : float2(1);
+    if (!material_has(index)) return float2(1);
+    texture_feedback(index, -FLT_MAX);
+    return float2(texture_size(material_textures[mirai_nonuniform(index)], 0));
 }
 float4 mirai_sample_texture_projected(Mirai_Surface_Context ctx, uint index, float3 u, float3 v, float metres) {
     float scale = 1.0 / max(metres, 1e-6);

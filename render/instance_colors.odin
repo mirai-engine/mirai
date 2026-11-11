@@ -47,14 +47,13 @@ colors_remove :: proc(r:^Renderer,colors:Colors_Handle) -> bool {
 // of vertices than its mesh has.
 scene_set_instance_colors :: proc(r:^Renderer,descriptor:u32,colors:Colors_Handle) -> bool {
     s:=&r.scene
-    if int(descriptor)>=len(s.desc_instance) || int(colors)>len(s.colors) {return false}
+    if int(descriptor)>=len(s.instances) || int(colors)>len(s.colors) {return false}
     run:Pool_Range
     if colors!=0 {
         run=s.colors[colors-1]
         if run.count==0 {return false}
     }
-    index:=s.desc_instance[descriptor]
-    if index<0 {return true}
+    index:=descriptor
     inst:=&s.instances[index]
     if run.count!=0 && run.count!=s.meshes[inst.meta.x&INSTANCE_MESH_MASK].vertex_count {return false}
     if inst.colors==run.first && inst.color_count==run.count {return true}
