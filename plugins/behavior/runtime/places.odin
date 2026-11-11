@@ -31,7 +31,7 @@ Place_Layout :: enum u8 {
     Mesh,         // points of the mesh of the querier joined to the center, spacing apart, from inner to outer; a grid in a volume
     Entities,     // the entities of the query
     Perceivables, // the Perceivables of the teams of the query within outer of the center
-    Remembered,   // where the querier last perceived those of the teams of the query, within outer of the center
+    Remembered,   // what the querier remembers, where it last perceived it, within outer of the center
     Offers,       // where the users of the offers of `use` stand, within outer of the center, those the querier can take now
 }
 
@@ -71,7 +71,7 @@ Place_Query :: struct {
     spacing:f32,          // m, of a grid or of the points of the mesh
     entities:[PLACE_ENTITIES]core.Entity, // of the layout Entities
     entity_count:u8,
-    teams:Teams,          // of the layouts Perceivables and Remembered
+    teams:Teams,          // of the Perceivables of the layouts Perceivables and Remembered
     use:Smart_Use,        // of the layout Offers
     tests:[PLACE_TESTS]Place_Test,
     test_count:u8,
@@ -252,8 +252,8 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^
         if !found {break}
         for o in perception.memory.items[:clamp(perception.memory.count,0,ai.PERCEPTION_CAPACITY)] {
             e:=core.Entity(o.subject)
-            p,perceivable:=core.get(perceivables,e)
-            if e==query.querier || !perceivable || u32(query.teams)&(1<<u32(p.team))==0 {continue}
+            if e==query.querier {continue}
+            if p,perceivable:=core.get(perceivables,e);perceivable && u32(query.teams)&(1<<u32(p.team))==0 {continue}
             if !(linalg.length(o.position-center.position)<=query.outer) {continue}
             add(&c,o.position,e)
         }

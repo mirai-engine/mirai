@@ -677,10 +677,10 @@ the_path_of_places_walks_only_what_the_querier_walks :: proc(t:^testing.T) {
 }
 
 // The points of the mesh around the querier are those joined to where it
-// stands: an island across a gap gives none. Entities are candidates too,
-// those of the query, the Perceivables of some teams or those the querier
-// remembers, and the offers of a use of smart objects; each place found from
-// one says which.
+// stands: an island across a gap gives none; rings in an arc are centered on
+// where the center faces. Entities are candidates too, those of the query,
+// the Perceivables of some teams or what the querier remembers, and the
+// offers of a use of smart objects; each place found from one says which.
 @(test)
 places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: proc(t:^testing.T) {
     f:Places_Test
@@ -725,6 +725,29 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
     testing.expect(t,result.status==.Found && result.count==8)
     for p in result.points[:result.count] {testing.expectf(t,p.x<=6.01 && p.y==0,"%v is on the ground the querier stands on",p)}
     testing.expect(t,linalg.distance(result.points[0],mm.Vec3{5,0,2})>4.5,"the farthest of that ground")
+    // Rings in a half turn around a lookout: from its right through where it faces to its left,
+    // the one point of a ring where it faces, and none when it faces straight up.
+    Arc :: struct {rotation:mm.Quat,per_ring:u8,points:[]mm.Vec3}
+    arcs:=[]Arc{
+        {mm.quat_axis_angle({0,1,0},-mm.PI/2),3,{{2,0,0.5},{3.5,0,2},{2,0,3.5}}},
+        {mm.quat_axis_angle({0,1,0},-mm.PI/2),1,{{3.5,0,2}}},
+        {mm.quat_axis_angle({1,0,0},mm.PI/2),3,{}},
+    }
+    for arc,i in arcs {
+        lookout:=core.create(&f.entities)
+        core.add(&f.worlds,lookout,core.World_Transform{transform={position={2,0,2},rotation=arc.rotation,scale=1}})
+        test_world_settle(&f.w)
+        rings:=Place_Query{querier=querier,center=.Target,target=lookout,layout=.Rings,inner=1.5,outer=1.5,rings=1,per_ring=arc.per_ring,arc=mm.PI,keep=8}
+        rings.tests[0]={measure=.Distance,from=.Target,target=lookout,min=0,max=16,response={kind=.Linear,slope=-1,shift_y=1}}
+        rings.test_count=1
+        result=run(&f,rings)
+        testing.expectf(t,int(result.count)==len(arc.points),"arc %d: %v",i,result)
+        for want in arc.points {
+            found:=false
+            for p in result.points[:result.count] {found||=linalg.distance(p,want)<1e-3}
+            testing.expectf(t,found,"arc %d: %v is a place",i,want)
+        }
+    }
     // The entities given, the nearest first.
     given:=Place_Query{querier=querier,center=.Querier,layout=.Entities,keep=2}
     given.entities[0],given.entities[1]=far,near
@@ -739,13 +762,14 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
     result=run(&f,seen)
     testing.expect(t,result.count==1 && result.entities[0]==near && linalg.distance(result.points[0],mm.Vec3{3,0,2})<1e-3)
     // Within 8 m the far one on the island is a Perceivable of team 1 too, but the querier never
-    // perceived it: of those it remembers, only the near one, where it last perceived it.
+    // perceived it: of what it remembers, the near one and a noise no one made, where it last
+    // perceived them; not the friend, of another team.
     remembers:Perception
     ai.memory_perceive(&remembers.memory,u64(near),{4,0,1},.Sight,1,0)
     ai.memory_perceive(&remembers.memory,u64(friend),{4,0,1.5},.Sight,1,0)
-    // A forged memory: past its capacity, the far one nowhere, and someone made up.
-    remembers.memory.items[2]={subject=u64(far),position={transmute(f32)u32(0x7fc00000),0,0},confidence=1}
-    remembers.memory.items[3]={subject=1<<50,position={4,0,2},confidence=1}
+    ai.memory_perceive(&remembers.memory,u64(core.NONE),{2,0,3},.Hearing,0.75,0)
+    // A forged memory: past its capacity, and the far one nowhere.
+    remembers.memory.items[3]={subject=u64(far),position={transmute(f32)u32(0x7fc00000),0,0},confidence=1}
     remembers.memory.count=99
     core.add(&f.perceptions,querier,remembers)
     test_world_settle(&f.w)
@@ -754,7 +778,8 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
     testing.expect(t,result.count==2 && result.entities[1]==far)
     seen.layout=.Remembered
     result=run(&f,seen)
-    testing.expectf(t,result.count==1 && result.entities[0]==near && linalg.distance(result.points[0],mm.Vec3{4,0,1})<1e-3,"remembered: %v",result)
+    testing.expectf(t,result.count==2 && result.entities[0]==near && linalg.distance(result.points[0],mm.Vec3{4,0,1})<1e-3,"remembered: %v",result)
+    testing.expectf(t,result.entities[1]==core.NONE && linalg.distance(result.points[1],mm.Vec3{2,0,3})<1e-3,"the noise: %v",result)
     // The offers of a use within 8 m: of the crate, its second offer, where its user stands; not those of another use.
     crate,box:=core.create(&f.entities),core.create(&f.entities)
     core.add(&f.worlds,crate,core.World_Transform{transform={position={1,0,2},rotation=1,scale=1}})

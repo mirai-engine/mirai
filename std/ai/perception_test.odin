@@ -54,17 +54,6 @@ places_are_laid_out_and_the_best_kept_in_order :: proc(t:^testing.T) {
     testing.expect_value(t,n,8)
     for p in ring[:4] {testing.expect(t,abs(linalg.distance(p,math.Vec3{1,2,3})-2)<1e-4 && p.y==2)}
     for p in ring[4:8] {testing.expect(t,abs(linalg.distance(p,math.Vec3{1,2,3})-4)<1e-4)}
-    // A half turn facing +z: on each ring from +x through +z to -x, ends included.
-    arc:[6]math.Vec3
-    testing.expect_value(t,places_rings({},2,4,2,3,arc[:],{0,0,1},math.PI),6)
-    for p,i in arc {
-        radius:=f32(2 if i<3 else 4)
-        ends:=[3]math.Vec3{{radius,0,0},{0,0,radius},{-radius,0,0}}
-        testing.expectf(t,linalg.distance(p,ends[i%3])<1e-4,"%d: %v",i,p)
-    }
-    testing.expect_value(t,places_rings({},2,4,1,1,arc[:],{1,0,0},1),1)
-    testing.expect(t,linalg.distance(arc[0],math.Vec3{2,0,0})<1e-4,"one point faces ahead")
-    testing.expect_value(t,places_rings({},2,4,1,3,arc[:],{0,1,0},1),0)
     grid:[64]math.Vec3
     testing.expect_value(t,places_grid({},2,1,grid[:]),25)
     // Nearer to a point is better; one input per candidate: its distance.

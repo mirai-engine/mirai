@@ -146,8 +146,9 @@ what it perceives; `think` only reads and proposes, and the actions write.
 - `place_query` asks for places for an agent: candidates around it, around another entity or
   around a point (in rings, all around or in an arc centered on where the center faces, in a grid
   or the points of its navmesh joined to that center, `ai.places_mesh`), entities (those of the
-  request, the `Perceivable`s of some teams near the center, or with `Remembered` those of the
-  agent's `Perception` memory, where it last perceived them: an unseen enemy is no candidate) or
+  request, the `Perceivable`s of some teams near the center, or with `Remembered` what the agent's
+  `Perception` memory holds, where it last perceived it, a `Perceivable` only of those teams and a
+  noise with no maker too: an unseen enemy is no candidate) or
   the open offers of a use of the smart objects, brought to its navmesh, measured by its tests
   (distance, angle, visibility from someone with a ray, path length over what the agent walks and
   crosses, influence of some teams and cover) and scored with utility; the best ones come back in
