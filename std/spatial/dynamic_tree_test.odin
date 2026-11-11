@@ -82,7 +82,7 @@ import math "mirai:std/math"
 }
 @(private="file") tree_bytes :: proc(tree:^Dynamic_Tree) -> []byte {return slice.to_bytes(tree.nodes[:tree.node_high])}
 @(private="file") trees_equal :: proc(a,b:^Dynamic_Tree) -> bool {
-    return a.root==b.root&&a.free_list==b.free_list&&a.node_high==b.node_high&&a.proxy_count==b.proxy_count&&
+    return a.root==b.root&&a.free_list==b.free_list&&a.node_high==b.node_high&&a.proxy_count==b.proxy_count&&a.placed==b.placed&&
         mem.compare(tree_bytes(a),tree_bytes(b))==0
 }
 
@@ -455,7 +455,9 @@ dynamic_tree_rebuild_lowers_the_area_of_a_level_and_keeps_every_proxy :: proc(t:
         for &tree in trees {dynamic_tree_insert(&tree,box,u64(i))}
     }
     before:=dynamic_tree_area_ratio(&trees[0])
+    testing.expect_value(t,trees[0].placed,SIDE*SIDE)
     testing.expect(t,dynamic_tree_rebuild(&trees[0]))
+    testing.expect_value(t,trees[0].placed,0)
     testing.expect(t,dynamic_tree_validate(&trees[0]))
     after:=dynamic_tree_area_ratio(&trees[0])
     testing.expectf(t,after<0.9*before,"area ratio %f after the rebuild, %f before",after,before)

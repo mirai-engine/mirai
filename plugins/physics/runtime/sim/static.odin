@@ -22,7 +22,6 @@ Static_Log :: struct {
 
 @(private)
 static_log_push :: proc "contextless" (w:^World,box:Aabb) {
-    w.static_unbuilt=true
     log:=&w.static_log
     capacity:=u64(len(log.boxes))
     if capacity>0 {log.boxes[log.head%capacity]=box}
@@ -65,15 +64,13 @@ static_changes :: proc(w:^World,since:u64,out:[]Aabb) -> (next:u64,count:int,ove
     return since+u64(count),count,false
 }
 
-// Builds the tree of the static shapes again when static collision changed since the last build: for the
-// end of a load, whose shapes went into the tree one by one. A transaction that may allocate and takes as
-// long as building it from scratch; false, with the tree as it was, without memory or with a box that is not
-// finite.
+// Builds the tree of the static shapes again, whole, once the shapes inserted or moved in it since its last
+// build reach half of it: a load, whose shapes go in one at a time, costs about two builds, and a change now
+// and then only its insertion. Between steps: a transaction that may allocate when it builds. False, with the
+// tree as it was, without memory.
 world_rebuild_static :: proc(w:^World) -> bool {
-    if !w.static_unbuilt {return true}
-    if !spatial.dynamic_tree_rebuild(&w.trees[STATIC_TREE]) {return false}
-    w.static_unbuilt=false
-    return true
+    tree:=&w.trees[STATIC_TREE]
+    return 2*tree.placed<tree.proxy_count || spatial.dynamic_tree_rebuild(tree)
 }
 
 // Writes into the caller buffers, without allocating, the world triangles of the shapes of static bodies

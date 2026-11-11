@@ -173,9 +173,10 @@ inside.
     the broad phase runs again on the calling thread and what does not fit waits for the next step:
     which pairs are created does not depend on the workers.
   - A contact is destroyed when the fattened boxes stop overlapping.
-  - The static tree fills one insertion at a time; `world_rebuild_static` builds it again by surface
-    area once static collision changed, and the integration calls it when a full sync completes: the
-    end of a load.
+  - The static tree fills one insertion at a time; `world_rebuild_static`, which the integration
+    calls every tick before stepping, builds it whole again once the shapes inserted or moved in it
+    since its last build reach half of it: a load costs about two builds and a change now and then
+    its insertion. The count is tree state, so a copy repeats the same builds.
 - **Narrow phase.** One routine per unordered pair of types: closed forms between spheres,
   capsules and cylinder-sphere; 15-axis SAT for box-box; SAT with Gauss map pruning and axis cache
   for hulls and box-hull; GJK (plus SAT when the core penetrates) for sphere and capsule against

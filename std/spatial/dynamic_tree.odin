@@ -16,10 +16,11 @@ Tree_Node :: struct {aabb:Aabb, user:u64, parent:i32, child1,child2:i32, height:
 
 Tree_Stats :: struct {insert_failures:u64}
 Dynamic_Tree_Desc :: struct {proxy_capacity:int, margin:f32, allocator:mem.Allocator}
-// nodes[:node_high] with root, free_list, node_high and proxy_count is the entire state.
-// node_high counts the node slots ever used. stamps: of the nodes by chunk (base.chunk_stamp), with the
+// nodes[:node_high] with root, free_list, node_high, proxy_count and placed is the entire state.
+// node_high counts the node slots ever used; placed, the leaves inserted or moved since the tree was built
+// whole by dynamic_tree_rebuild. stamps: of the nodes by chunk (base.chunk_stamp), with the
 // revision that dynamic_tree_copy moves.
-Dynamic_Tree :: struct {nodes:[]Tree_Node, root,free_list,node_high,proxy_count:i32, margin:f32, allocator:mem.Allocator, stats:Tree_Stats, stamps:[]u64, revision:u64}
+Dynamic_Tree :: struct {nodes:[]Tree_Node, root,free_list,node_high,proxy_count,placed:i32, margin:f32, allocator:mem.Allocator, stats:Tree_Stats, stamps:[]u64, revision:u64}
 
 dynamic_tree_init :: proc(tree:^Dynamic_Tree, desc:Dynamic_Tree_Desc) -> bool {
     tree^={}
@@ -42,7 +43,7 @@ dynamic_tree_destroy :: proc(tree:^Dynamic_Tree) {
     tree^={}
 }
 dynamic_tree_clear :: proc(tree:^Dynamic_Tree) {
-    tree.root=NULL_NODE;tree.free_list=NULL_NODE;tree.node_high=0;tree.proxy_count=0
+    tree.root=NULL_NODE;tree.free_list=NULL_NODE;tree.node_high=0;tree.proxy_count=0;tree.placed=0
 }
 
 @(private) node_alloc :: proc(tree:^Dynamic_Tree) -> i32 {
@@ -162,6 +163,7 @@ dynamic_tree_clear :: proc(tree:^Dynamic_Tree) {
 
 @(private) leaf_insert :: proc(tree:^Dynamic_Tree, leaf:i32, start:i32) {
     nodes:=tree.nodes
+    tree.placed+=1
     node_written(tree,leaf)
     nodes[leaf].parent=NULL_NODE
     if tree.root==NULL_NODE {tree.root=leaf;return}
@@ -233,7 +235,10 @@ dynamic_tree_update :: proc(tree:^Dynamic_Tree, proxy:i32, tight:Aabb, displacem
 // context.temp_allocator. Without it, or with a box that is not finite, the tree stays as it was.
 dynamic_tree_rebuild :: proc(tree:^Dynamic_Tree) -> bool {
     count:=int(tree.proxy_count)
-    if count<3 {return true}
+    if count<3 {
+        tree.placed=0
+        return true
+    }
     nodes:=tree.nodes[:tree.node_high]
     boxes,boxes_error:=make([]Aabb,count,context.temp_allocator)
     order,order_error:=make([]u32,count,context.temp_allocator)
@@ -275,6 +280,7 @@ dynamic_tree_rebuild :: proc(tree:^Dynamic_Tree) -> bool {
     }
     tree.root=made[0]
     nodes[tree.root].parent=NULL_NODE
+    tree.placed=0
     return true
 }
 @(private) proxy_valid :: #force_inline proc "contextless" (tree:^Dynamic_Tree, proxy:i32) -> bool {
@@ -503,7 +509,7 @@ dynamic_tree_copy :: proc(dst,src:^Dynamic_Tree, whole:bool) -> (written:int, ok
     if src.node_high<0||int(src.node_high)>len(dst.nodes) {return 0,false}
     nodes:=[1]base.Chunk_Copy{{mem.slice_to_bytes(dst.nodes),mem.slice_to_bytes(src.nodes),size_of(Tree_Node)}}
     written=base.chunks_copy(nodes[:],dst.stamps,src.stamps,int(max(src.node_high,dst.node_high)),whole)
-    dst.root,dst.free_list,dst.node_high,dst.proxy_count=src.root,src.free_list,src.node_high,src.proxy_count
+    dst.root,dst.free_list,dst.node_high,dst.proxy_count,dst.placed=src.root,src.free_list,src.node_high,src.proxy_count,src.placed
     revision:=max(dst.revision,src.revision)+1
     dst.revision,src.revision=revision,revision
     return written,true

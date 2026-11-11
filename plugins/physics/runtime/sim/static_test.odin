@@ -492,9 +492,9 @@ the_static_change_log_changes_no_simulation_result :: proc(t:^testing.T) {
     }
 }
 
-// A level of static boxes made one by one: rebuilding their tree once static collision changed lowers its
-// area until static collision changes again, and what rests on them moves as in the world that kept the tree as
-// it was filled.
+// A level of static boxes made one by one: their tree is built again once those insertions reach half of it,
+// which lowers its area, a box made afterwards only goes in, and what rests on them moves as in the world that
+// kept the tree as it was filled.
 @(test)
 rebuilding_the_static_tree_after_a_load_lowers_its_area_and_changes_no_result :: proc(t:^testing.T) {
     worlds:[2]World
@@ -510,7 +510,10 @@ rebuilding_the_static_tree_after_a_load_lowers_its_area_and_changes_no_result ::
     testing.expect(t,world_rebuild_static(&worlds[0]))
     testing.expect(t,spatial.dynamic_tree_validate(tree))
     testing.expectf(t,spatial.dynamic_tree_area_ratio(tree)<0.9*before,"area ratio %v, %v before",spatial.dynamic_tree_area_ratio(tree),before)
-    testing.expect(t,!worlds[0].static_unbuilt && bool(worlds[1].static_unbuilt))
+    testing.expect_value(t,tree.placed,0)
+    for &w in worlds {test_static_box(&w,{0,0,30})}
+    testing.expect(t,world_rebuild_static(&worlds[0]))
+    testing.expect_value(t,tree.placed,1)
     for step in 0..<90 {
         for &w in worlds {world_step(&w,1.0/60)}
         for i in 0..<40 {

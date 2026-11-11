@@ -23,8 +23,7 @@ World_State :: struct {
     bond_high,bond_free,bond_count:i32,
     push_rule_count:i32,
     hit_shapes:i32,    // live shapes that raise hits
-    grounds_stale:b16,  // a body or shape changed since the characters last found their ground
-    static_unbuilt:b16, // static collision changed since world_rebuild_static
+    grounds_stale:b32, // a body or shape changed since the characters last found their ground
     twin_count:i32,
     push_rules:[PUSH_RULE_CAPACITY]Push_Rule,
     cut_count:i32,

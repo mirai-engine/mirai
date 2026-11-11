@@ -182,8 +182,6 @@ physics_step :: proc(
             for row in 0..<core.count(colliders) {entity_sync(&s,core.entity_at(colliders,row))}
             for row in 0..<core.count(characters) {entity_sync(&s,core.entity_at(characters,row))}
             synced=!s.waiting
-            // A load ends here: its static shapes went into the tree one by one.
-            if synced && !sim.world_rebuild_static(w) {memory_problem(problems,core.NONE,"the rebuild of the tree of the static shapes")}
             // Without them sealed_sync and poses_write have no room and every tick looks at all the bodies.
             if reserve(&state.sealed,core.count(rigids)+core.count(colliders)+core.count(characters))!=nil || reserve(&state.touched,2*len(state.links.values))!=nil {
                 memory_problem(problems,core.NONE,"the bodies whose Transform changes, so every tick looks at all of them")
@@ -204,6 +202,7 @@ physics_step :: proc(
     requests_apply(&s,asked)
     if s.playing {joints_sync(&s,core.read(joints),joint_states)}
     joint_requests_apply(&s,joints,joint_states,joint_requests)
+    if !sim.world_rebuild_static(w) {memory_problem(problems,core.NONE,"the rebuild of the tree of the static shapes")}
     if s.playing {
         for row in 0..<core.count(characters) {
             e:=core.entity_at(characters,row)
