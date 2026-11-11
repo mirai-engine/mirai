@@ -131,20 +131,29 @@ root (an instance with overrides in a document, `spawn` while running).
   also that of an instance stored in the document: the root's rules.
 - **When it loads** (`sections.odin`): `rule` `With_Document` loads with its document; `Manual`,
   when requested; `Spatial`, as the streaming plugin decides. `state` is what was requested:
-  `Active`, `Loaded` (loaded and turned off, ready to turn on without a pause: what hangs goes
-  under `Disabled` with `Section_Held` and the reference stays on, so that another state can be
-  requested of it) or `Unloaded`; `loaded`, what it loaded. `section_request(&r, e, state)` in
+  `Active`, `Loaded` (loaded and turned off, ready to turn on without a pause: what hangs goes under
+  `Disabled` with `Section_Held` and the reference stays on, so that another state can be requested
+  of it) or `Unloaded`; `loaded`, what it loaded. `section_request(&r, e, state)` in
   `Section_Requests` requests it and `scene_sections` (`frame`, both loops) fulfills it: it loads
   separately in jobs, up to `SECTION_LOADS` at a time per world (`Section_Loads`, of each `World`),
-  and settles nothing while it walks the references. A scene that replaces the world
-  (`Scene_Root.changes`) takes the loads in flight with it. What loads requested as `Loaded` is
-  joined already turned off. A section that did not load stays in `failed` and is not retried until
-  it is requested again; one whose scene contains it is `Cycle`, and its problem names the scenes
-  around it (`section_path`). The reference is replicated: with networking the server requests and
-  each end loads its own. A `Spatial` one follows `streamed`, what this end's streaming wants,
-  which does not travel: `section_state` says what each one has to be. The editor shows a section
-  in another way in its view with `Section_Views` (`section_view`), which `scene_sections` reads
-  first: it is not an edit, it is not saved, it is not replicated and Play does not copy it.
+  and settles nothing while it walks the references. Those a source stands in load first, then by
+  how near the sources come to their boxes, then by `Id`: never by the order of the table; one a
+  source stands in, with every place taken, takes the place of the load farthest from the sources,
+  and has the job workers and the frames (`host.assets_load_whole`). A load no longer wanted stops
+  its jobs and leaves its place at once: it goes once they end (`Section_Loads.cancelled`), and no
+  frame waits for them. A scene that replaces the world (`Scene_Root.changes`) takes the loads in
+  flight with it. What loads requested as `Loaded` is joined already turned off. A section that did
+  not load stays in `failed` and is not retried until it is requested again; one whose scene
+  contains it is `Cycle`, and its problem names the scenes around it (`section_path`). The reference
+  is replicated: with networking the server requests and each end loads its own. A `Spatial` one
+  follows `streamed`, what this end's streaming wants, which does not travel: `section_state` says
+  what each one has to be. The editor shows a section in another way in its view with
+  `Section_Views` (`section_view`), which `scene_sections` reads first: it is not an edit, it is not
+  saved, it is not replicated and Play does not copy it.
+- **Who outruns the loads** (`scene_holds`, `game`): a body a seat drives that stands in the box of
+  a section to load that is not loaded (`ready_at`) is held there, off with `Section_Held`, until
+  the section joins or does not load; it stays a source. `Section_Settings.wait` `Free` holds
+  nothing: the game keeps its player in a loading zone of its own, or slows it, by `ready_at`.
 - **What is unloaded** (`dormant.odin`): while a section is loaded, its record (`Section_Records`)
   knows what changed since it loaded through the stamps of its rows (`core.changes`) and, through
   the shape of each entity (which components it has and which it turned off), which component went

@@ -7,6 +7,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import input "mirai:engine/input"
 import "mirai:host"
 import "mirai:std/base"
 
@@ -24,6 +25,7 @@ Section_World :: struct {
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
+    worlds:core.Table(core.World_Transform),
     parents:core.Table(core.Parent),
     disabled:core.Table(core.Disabled),
     keeps:core.Table(core.Keep),
@@ -39,10 +41,13 @@ Section_World :: struct {
     links:core.Table(Section_Test_Link),
     grounds:core.Table(Section_Test_Ground),
     kept:core.Table(Far_Kept),
+    seats:core.Table(input.Seat),
+    remotes:core.Table(core.Remote),
     hierarchy:core.Hierarchy,
     unresolved:Unresolved_References,
     records:Section_Records,
     root:Scene_Root,
+    holds:Section_Holds,
 }
 
 // A project with that World and its assets in a temporary folder, and the
@@ -58,6 +63,7 @@ Section_Fixture :: struct {
     loads:Section_Loads,
     loading:Section_Loading,
     requests:Section_Requests,
+    sources:Streaming_Sources,
     views:Section_Views,
     problems:^core.Problems,
 }
@@ -95,7 +101,7 @@ section_ref :: proc(f:^Section_Fixture) -> core.World_Ref {return host.app_world
 @(private="file")
 section_frame :: proc(f:^Section_Fixture) {
     w:=section_ref(f)
-    scene_sections(w,&f.app,&f.world.references,&f.requests,&f.loads,&f.loading,core.ref(&f.world.root),core.ref(&f.views),nil,f.problems)
+    scene_sections(w,&f.app,&f.world.references,&f.requests,core.ref(&f.sources),core.read(&f.world.worlds),core.read(&f.world.ids),&f.loads,&f.loading,core.ref(&f.world.root),core.ref(&f.views),nil,f.problems)
     core.world_settle(w)
     scene_references(w,&f.world.unresolved,core.read(&f.world.ids))
     core.world_settle(w)
@@ -376,6 +382,81 @@ a_section_cancelled_mid_load_does_not_wait_for_its_jobs :: proc(t:^testing.T) {
         section_frame(&f)
         testing.expect_value(t,len(f.loads.cancelled),0)
     }
+}
+
+// Ten cells in a row, 20 m apart, all asked on, and four places to load
+// them: the cell the player stands in loads first, then the nearest, whatever
+// the order of the table, and the player is held, off, until its cell joins.
+// A player that teleports to the other end, with every place taken, takes the
+// place of the load farthest from it, and is held there until its cell joins.
+@(test)
+the_section_a_player_stands_in_loads_first_and_holds_it_until_it_joins :: proc(t:^testing.T) {
+    f:Section_Fixture
+    if !section_fixture_open(t,&f,"near") {return}
+    defer section_fixture_close(&f)
+    CELL :: base.Asset_Id{0x6c,1}
+    cell:asset.Scene;asset.scene_init(&cell,&f.types,CELL)
+    asset.scene_entity_add(&cell,1,0,"Lamp")
+    asset.scene_set(&cell,1,"Section_Test_Lamp",&Section_Test_Lamp{1})
+    section_save(t,&f,&cell,"cell.scene")
+    host.assets_scan(&f.assets)
+    w:=f.world
+    cells:[10]core.Entity
+    for &c,i in cells {
+        c=core.create(&w.entities)
+        core.add(&w.ids,c,core.Id{base.Entity_Id(i+1)})
+        core.add(&w.references,c,Scene_Reference{scene=CELL,extents={5,5,5},rule=.Manual})
+        core.add(&w.worlds,c,core.World_Transform{transform={position={f32(i)*20,0,0},rotation=1,scale=1}})
+    }
+    body,seat:=core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.worlds,body,core.World_Transform{transform={position={180,0,0},rotation=1,scale=1}})
+    core.add(&w.seats,seat,input.Seat{body=body})
+    core.world_settle(section_ref(&f))
+    stand :: proc(f:^Section_Fixture,x:f32) {
+        f.sources.items[0]={position={x,0,0},ahead={x,0,0}}
+        f.sources.count=1
+    }
+    frame :: proc(f:^Section_Fixture) {
+        section_frame(f)
+        w:=f.world
+        scene_holds(core.read(&w.references),core.read(&w.worlds),core.read(&w.seats),core.read(&w.remotes),&w.disabled,&w.held,{},&w.holds,f.problems)
+        core.world_settle(section_ref(f))
+    }
+    loading :: proc(f:^Section_Fixture,cells:[]core.Entity) -> (set:bit_set[0..<10]) {
+        for l in f.loads.items {for c,i in cells {if l.job!=nil && l.entity==c {set+={i}}}}
+        return
+    }
+    stand(&f,180)
+    frame(&f)
+    testing.expect_value(t,loading(&f,cells[:]),bit_set[0..<10]{6,7,8,9})
+    testing.expect(t,core.entity_off(&w.entities,body),"held while its cell loads")
+    testing.expect(t,!ready_at(core.read(&w.references),core.read(&w.worlds),{180,0,0}),"its cell is not ready")
+    frame(&f)
+    reference,_:=core.get(&w.references,cells[9])
+    testing.expect_value(t,reference.loaded,CELL)
+    testing.expect(t,!core.entity_off(&w.entities,body),"its cell joined")
+    testing.expect_value(t,loading(&f,cells[:]),bit_set[0..<10]{2,3,4,5})
+    // Those loads go on in their jobs; the player teleports to the first cell.
+    for l in f.loads.items {l.job.counter.pending+=1}
+    core.edit(&w.worlds,body).position={0,0,0}
+    stand(&f,0)
+    frame(&f)
+    testing.expect_value(t,loading(&f,cells[:]),bit_set[0..<10]{0,2,3,4})
+    testing.expect_value(t,len(f.loads.cancelled),1)
+    testing.expect(t,core.entity_off(&w.entities,body),"held where it went")
+    frame(&f)
+    reference,_=core.get(&w.references,cells[0])
+    testing.expect_value(t,reference.loaded,CELL)
+    testing.expect(t,!core.entity_off(&w.entities,body),"its cell joined")
+    testing.expect(t,ready_at(core.read(&w.references),core.read(&w.worlds),{0,0,0}),"its cell is ready")
+    for l in f.loads.items {if l.job!=nil {l.job.counter.pending-=1}}
+    for job in f.loads.cancelled {job.counter.pending-=1}
+    for _ in 0..<4 {frame(&f)}
+    for c in cells {
+        r,_:=core.get(&w.references,c)
+        testing.expect_value(t,r.loaded,CELL)
+    }
+    testing.expect_value(t,len(f.loads.cancelled),0)
 }
 
 @(private="file") SECTION_A :: base.Asset_Id{0x6b,1}

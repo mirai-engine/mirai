@@ -21,6 +21,7 @@ Loading_World :: struct {
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
+    worlds:core.Table(core.World_Transform),
     parents:core.Table(core.Parent),
     models:core.Table(Loading_Model),
     references:core.Table(Scene_Reference),
@@ -390,7 +391,7 @@ the_sections_loading_tell_how_far_they_are :: proc(t:^testing.T) {
         b:=&p.assets.loads
         b.frame,b.seconds,b.bytes,b.served=p.app.stats.frames,-3600,0,0
         w:=cast(^Loading_World)world.data
-        scene_sections(world,&p.app,&w.references,requests,loads,loading,{},{},nil,problems)
+        scene_sections(world,&p.app,&w.references,requests,{},core.read(&w.worlds),core.read(&w.ids),loads,loading,{},{},nil,problems)
         core.settle(&p.info,w,nil)
     }
     // Its scene is read and asks for the prefab its instance follows.

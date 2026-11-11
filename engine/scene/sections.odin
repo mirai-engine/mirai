@@ -1,10 +1,13 @@
 package scene
 
+import "core:math/linalg"
 import "core:slice"
 import "mirai:core"
+import input "mirai:engine/input"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/jobs"
+import mm "mirai:std/math"
 
 // Sections that load when they are asked: each Scene_Reference says what it
 // should be (section_state) and holds what it loaded (loaded); scene_sections
@@ -104,9 +107,27 @@ load_cancel :: proc(loads:^Section_Loads,l:^Section_Load) {
     load_free(job)
 }
 
+// A section to load: those a source stands in first, then by how near the
+// sources come to their boxes, then by Id, whatever the order of the table.
+@(private)
+Section_Candidate :: struct {
+    near:f32, // m from the box to the nearest source, or where its motion takes it
+    holds:bool, // a source stands in its box
+    id:base.Entity_Id,
+    entity:core.Entity,
+}
+
+@(private)
+candidate_before :: proc(a,b:Section_Candidate) -> bool {
+    if a.holds!=b.holds {return a.holds}
+    if a.near!=b.near {return a.near<b.near}
+    return a.id<b.id || a.id==b.id && a.entity<b.entity
+}
+
 @(step="frame",loops="game editor")
 scene_sections :: proc(
     world:core.World_Ref,app:^host.App,references:^core.Table(Scene_Reference),requests:^Section_Requests,
+    sources:core.Ref(Streaming_Sources),worlds:^core.Table(core.World_Transform,.Read),ids:^core.Table(core.Id,.Read),
     loads:^Section_Loads,loading:^Section_Loading,root:core.Ref(Scene_Root),views:core.Ref(Section_Views),waits:^Load_Waits,problems:^core.Problems,
 ) {
     waited:=core.take(&waits.assets) if waits!=nil else nil
@@ -159,10 +180,16 @@ scene_sections :: proc(
     es:=core.world_entities(world)
     dormants:=core.world_table_of(world,Dormant)
     documents:=assets_documents(app.assets)
+    // What a section dropped above it this frame destroyed or left dormant waits.
+    waits_drop :: proc(es:^core.Entities,dormants:^core.Table(Dormant),e:core.Entity) -> bool {
+        return !core.alive(es,e) || dormants!=nil && core.raw_added(core.raw(dormants),type_info_of(Dormant),e)!=nil
+    }
+    candidates:=make([dynamic]Section_Candidate,context.temp_allocator)
+    nears:=[SECTION_LOADS]f32{0..<SECTION_LOADS=max(f32)} // of the sections loading: the place a source that stands in another takes
+    holding:[SECTION_LOADS]bool
     for row in 0..<core.count(references) {
         e:=core.entity_at(references,row)
-        // What a section dropped above it this frame destroyed or left dormant waits.
-        if !core.alive(es,e) || dormants!=nil && core.raw_added(core.raw(dormants),type_info_of(Dormant),e)!=nil {continue}
+        if waits_drop(es,dormants,e) {continue}
         reference:=core.at(references,row)
         state:=section_wanted(views.ptr,e,reference)
         slot:=-1
@@ -172,33 +199,18 @@ scene_sections :: proc(
             if slot>=0 {load_cancel(loads,&loads.items[slot])}
             if reference.loaded=={} {break}
             section_drop(world,documents,e)
-        case reference.loaded=={} && slot<0 && loads!=nil && reference.failed!=reference.scene && reference.scene!={}:
-            free:=-1
-            for l,i in loads.items {if l.job==nil {free=i;break}}
-            if free<0 {break}
-            job,error:=section_load_begin(app,world,e)
-            if error!=.None {
-                section_failed(world,app.assets,references,e,reference.scene,error,problems)
+        case reference.loaded=={} && loads!=nil && reference.failed!=reference.scene && reference.scene!={}:
+            pose,_:=core.get(worlds,e)
+            near,holds:=section_near(sources.ptr,reference,pose.transform)
+            if slot<0 {
+                id,_:=core.get(ids,e)
+                append(&candidates,Section_Candidate{near,holds,id.value,e})
                 break
             }
-            // With libraries to wait for, it joins once what they prepare of it is ready.
-            job.gated=waits!=nil
-            loads.items[free]={job,e}
+            nears[slot],holding[slot]=near,holds
+            if holds {load_whole(loads.items[slot].job)}
         }
         reference=core.at(references,row)
-        // Not loaded nor loading: what draws a far form of its own shows, read from its scene apart.
-        loading:=slot>=0
-        if loads!=nil && !loading {for l in loads.items {if l.job!=nil && l.entity==e {loading=true}}}
-        if loads!=nil && reference.loaded=={} && !loading && reference.far!=reference.scene {
-            free:=-1
-            for l,i in loads.far {if l.job==nil {free=i;break}}
-            if free>=0 {
-                job,_:=far_load_begin(app,world,e)
-                if job!=nil {job.gated=waits!=nil}
-                // A load without jobs to wait for shows in this frame.
-                if job!=nil && load_step(job) {far_load_end(job,world,e)} else if job!=nil {loads.far[free]={job,e}}
-            }
-        }
         // Loaded and off: what hangs from it under Disabled; on, without it.
         if held:=state==.Loaded;reference.loaded!={} && held!=reference.held {
             if section_hold(world,e,held)!=.None {
@@ -206,6 +218,44 @@ scene_sections :: proc(
             }
             core.edit_at(references,row).held=held
         }
+    }
+    slice.sort_by(candidates[:],candidate_before)
+    for c in candidates {
+        free:=-1
+        for l,i in loads.items {if l.job==nil {free=i;break}}
+        // A source stands in it: the load farthest from the sources that stands in none gives it its place.
+        if free<0 && c.holds {
+            for _,i in loads.items {if !holding[i] && (free<0 || nears[i]>nears[free]) {free=i}}
+            if free>=0 {load_cancel(loads,&loads.items[free])}
+        }
+        if free<0 {break}
+        job,error:=section_load_begin(app,world,c.entity)
+        if error!=.None {
+            reference,_:=core.get(references,c.entity)
+            section_failed(world,app.assets,references,c.entity,reference.scene,error,problems)
+            continue
+        }
+        // With libraries to wait for, it joins once what they prepare of it is ready.
+        job.gated=waits!=nil
+        if c.holds {load_whole(job)}
+        loads.items[free]={job,c.entity}
+        nears[free],holding[free]=c.near,c.holds
+    }
+    // Not loaded nor loading: what draws a far form of its own shows, read from its scene apart.
+    for row in 0..<core.count(references) {
+        if loads==nil {break}
+        e:=core.entity_at(references,row)
+        reference:=core.at(references,row)
+        if reference.loaded!={} || reference.far==reference.scene || waits_drop(es,dormants,e) {continue}
+        loading:=false
+        for l in loads.items {loading||=l.job!=nil && l.entity==e}
+        free:=-1
+        for l,i in loads.far {if l.job==nil {free=i;break}}
+        if loading || free<0 {continue}
+        job,_:=far_load_begin(app,world,e)
+        if job!=nil {job.gated=waits!=nil}
+        // A load without jobs to wait for shows in this frame.
+        if job!=nil && load_step(job) {far_load_end(job,world,e)} else if job!=nil {loads.far[free]={job,e}}
     }
     if records_look(world)!=.None {
         core.report(problems,core.NONE,"scene.memory","out of memory to follow what changes in the sections: they are looked at again next frame; free memory")
@@ -218,6 +268,91 @@ scene_sections :: proc(
         for l in loads.far {busy||=l.job!=nil}
     }
     host.load_report(app,.Sections,busy)
+}
+
+// How near the sources, and where their motion takes them, come to the box
+// of a section at pose, in meters, and whether one stands in it; max(f32)
+// without sources.
+section_near :: proc "contextless" (sources:^Streaming_Sources,reference:Scene_Reference,pose:mm.Transform) -> (near:f32,holds:bool) {
+    near=max(f32)
+    if sources==nil {return}
+    half:=reference.extents*linalg.abs(pose.scale)
+    inverse:=mm.quat_inverse(pose.rotation)
+    for source in sources.items[:sources.count] {
+        for point,i in ([2][3]f32{source.position,source.ahead}) {
+            d:=box_distance(-half,half,mm.quat_rotate(inverse,point-pose.position))
+            if d<near {near=d}
+            holds||=i==0 && d==0
+        }
+    }
+    return
+}
+
+// A load that a source stands in has the job workers and the frames.
+@(private)
+load_whole :: proc(job:^Load_Job) {
+    job.whole=true
+    if job.budget!=0 {host.assets_load_whole(job.app.assets,job.budget)}
+}
+
+// Whether the sections to load whose boxes hold a point of the world are
+// loaded, or did not load: what a loading screen, a lift or a vehicle that
+// slows before what is not there waits for.
+ready_at :: proc(references:^core.Table(Scene_Reference,$A),worlds:^core.Table(core.World_Transform,$B),point:[3]f32) -> bool {
+    for row in 0..<core.count(references) {
+        r:=core.at(references,row)
+        if section_state(r)==.Unloaded || r.scene=={} || r.loaded==r.scene || r.failed==r.scene {continue}
+        if pose,placed:=core.get(worlds,core.entity_at(references,row));placed && section_holds(r,pose.transform,point) {return false}
+    }
+    return true
+}
+
+// What a body a seat drives does while it stands where a section it is to
+// have is not loaded (ready_at). Hold: it is held where it is, off with
+// Section_Held, until the section joins, and does not fall through what is
+// not there. Free: it goes on, for a game that keeps its player in a loading
+// zone of its own (a lift, a corridor, a screen) or slows it before what is
+// not there, by ready_at ahead of it.
+Section_Wait :: enum u8 {Hold,Free}
+
+@(storage,setting)
+Section_Settings :: struct {
+    wait:Section_Wait,
+}
+
+// The bodies scene_holds holds.
+@(storage)
+Section_Holds :: struct {bodies:[dynamic]core.Entity}
+
+// Holds each body a seat drives that stands where a section it is to have is
+// not loaded, as Section_Settings.wait says, and lets it go once it is. Only
+// where the body is decided: not one another end of the network moves.
+@(step="frame",loops="game",after="scene_sections")
+scene_holds :: proc(
+    references:^core.Table(Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),seats:^core.Table(input.Seat,.Read),remotes:^core.Table(core.Remote,.Read),
+    disabled:^core.Table(core.Disabled),marks:^core.Table(Section_Held),settings:Section_Settings,holds:^Section_Holds,problems:^core.Problems,
+) {
+    for i:=len(holds.bodies)-1;i>=0;i-=1 {
+        body:=holds.bodies[i]
+        at:=(^core.World_Transform)(core.raw_find(core.raw(worlds),type_info_of(core.World_Transform),body))
+        if at!=nil && settings.wait==.Hold && !ready_at(references,worlds,at.position) {continue}
+        core.remove(disabled,body)
+        core.remove(marks,body)
+        unordered_remove(&holds.bodies,i)
+    }
+    if settings.wait!=.Hold {return}
+    // A body held, or turned off, has its rows off: it is not looked at again.
+    for row in 0..<core.count(seats) {
+        body:=core.at(seats,row).body
+        at,placed:=core.get(worlds,body)
+        if !placed || !core.owned(remotes,body) || ready_at(references,worlds,at.position) {continue}
+        if _,no_room:=append(&holds.bodies,body);no_room!=nil {
+            core.report(problems,body,"scene.memory","out of memory to hold this body where its section is not loaded: it goes on, and may fall; free memory")
+            continue
+        }
+        core.add(disabled,body,core.Disabled{})
+        core.add(marks,body,Section_Held{})
+    }
 }
 
 // A section that did not load says why, and is not tried again until it is
