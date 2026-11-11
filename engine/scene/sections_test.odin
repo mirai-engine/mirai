@@ -48,7 +48,6 @@ Section_World :: struct {
     unresolved:Unresolved_References,
     records:Section_Records,
     root:Scene_Root,
-    holds:Section_Holds,
 }
 
 // A project with that World and its assets in a temporary folder, and the
@@ -387,9 +386,11 @@ a_section_cancelled_mid_load_does_not_wait_for_its_jobs :: proc(t:^testing.T) {
 
 // Ten cells in a row, 20 m apart, all asked on, and four places to load
 // them: the cell the player stands in loads first, then the nearest, whatever
-// the order of the table, and the player is held, off, until its cell joins.
-// A player that teleports to the other end, with every place taken, takes the
-// place of the load farthest from it, and is held there until its cell joins.
+// the order of the table, and the player is held, on and drawn, until its
+// cell joins. A player that teleports to the other end, with every place
+// taken, takes the place of the load farthest from it, and is held there; one
+// held that teleports into another cell not loaded is held by that one, and
+// one that teleports into a loaded cell is let go at once.
 @(test)
 the_section_a_player_stands_in_loads_first_and_holds_it_until_it_joins :: proc(t:^testing.T) {
     f:Section_Fixture
@@ -420,36 +421,51 @@ the_section_a_player_stands_in_loads_first_and_holds_it_until_it_joins :: proc(t
     frame :: proc(f:^Section_Fixture) {
         section_frame(f)
         w:=f.world
-        scene_holds(core.read(&w.references),core.read(&w.worlds),core.read(&w.seats),core.read(&w.remotes),&w.disabled,&w.held,{},&w.holds,f.problems)
+        scene_holds(core.read(&w.references),core.read(&w.worlds),core.read(&w.seats),core.read(&w.remotes),&w.held,{})
         core.world_settle(section_ref(f))
     }
     loading :: proc(f:^Section_Fixture,cells:[]core.Entity) -> (set:bit_set[0..<10]) {
         for l in f.loads.items {for c,i in cells {if l.job!=nil && l.entity==c {set+={i}}}}
         return
     }
+    held :: proc(t:^testing.T,f:^Section_Fixture,body:core.Entity,want:bool,why:string,loc:=#caller_location) {
+        testing.expect(t,!core.entity_off(&f.world.entities,body),"a held body stays on, drawn",loc=loc)
+        testing.expect(t,core.has(&f.world.held,body)==want,why,loc=loc)
+    }
+    teleport :: proc(f:^Section_Fixture,body:core.Entity,x:f32) {
+        core.edit(&f.world.worlds,body).position={x,0,0}
+        stand(f,x)
+    }
     stand(&f,180)
     frame(&f)
     testing.expect_value(t,loading(&f,cells[:]),bit_set[0..<10]{6,7,8,9})
-    testing.expect(t,core.entity_off(&w.entities,body),"held while its cell loads")
+    held(t,&f,body,true,"held while its cell loads")
     testing.expect(t,!ready_at(core.read(&w.references),core.read(&w.worlds),{180,0,0}),"its cell is not ready")
     frame(&f)
     reference,_:=core.get(&w.references,cells[9])
     testing.expect_value(t,reference.loaded,CELL)
-    testing.expect(t,!core.entity_off(&w.entities,body),"its cell joined")
+    held(t,&f,body,false,"its cell joined")
     testing.expect_value(t,loading(&f,cells[:]),bit_set[0..<10]{2,3,4,5})
-    // Those loads go on in their jobs; the player teleports to the first cell.
+    // Loads that go on in their jobs from here on; the player teleports to the first cell.
     for l in f.loads.items {l.job.counter.pending+=1}
-    core.edit(&w.worlds,body).position={0,0,0}
-    stand(&f,0)
+    teleport(&f,body,0)
     frame(&f)
     testing.expect_value(t,loading(&f,cells[:]),bit_set[0..<10]{0,2,3,4})
     testing.expect_value(t,len(f.loads.cancelled),1)
-    testing.expect(t,core.entity_off(&w.entities,body),"held where it went")
+    held(t,&f,body,true,"held where it went")
+    // Held, it teleports into the second cell, not loaded either.
+    for l in f.loads.items {if l.entity==cells[0] {l.job.counter.pending+=1}}
+    teleport(&f,body,20)
     frame(&f)
-    reference,_=core.get(&w.references,cells[0])
-    testing.expect_value(t,reference.loaded,CELL)
-    testing.expect(t,!core.entity_off(&w.entities,body),"its cell joined")
-    testing.expect(t,ready_at(core.read(&w.references),core.read(&w.worlds),{0,0,0}),"its cell is ready")
+    testing.expect_value(t,loading(&f,cells[:]),bit_set[0..<10]{0,1,2,3})
+    testing.expect_value(t,len(f.loads.cancelled),2)
+    held(t,&f,body,true,"held by the cell it went to")
+    // Held, it teleports into the last cell, which is loaded.
+    for l in f.loads.items {if l.entity==cells[1] {l.job.counter.pending+=1}}
+    teleport(&f,body,180)
+    frame(&f)
+    held(t,&f,body,false,"let go at once where its cell is loaded")
+    testing.expect(t,ready_at(core.read(&w.references),core.read(&w.worlds),{180,0,0}),"its cell is ready")
     for l in f.loads.items {if l.job!=nil {l.job.counter.pending-=1}}
     for job in f.loads.cancelled {job.counter.pending-=1}
     for _ in 0..<4 {frame(&f)}
@@ -491,7 +507,7 @@ a_section_whose_file_goes_while_it_loads_fails_and_lets_its_player_go :: proc(t:
         frame :: proc(f:^Section_Fixture) {
             section_frame(f)
             w:=f.world
-            scene_holds(core.read(&w.references),core.read(&w.worlds),core.read(&w.seats),core.read(&w.remotes),&w.disabled,&w.held,{},&w.holds,f.problems)
+            scene_holds(core.read(&w.references),core.read(&w.worlds),core.read(&w.seats),core.read(&w.remotes),&w.held,{})
             core.world_settle(section_ref(f))
         }
         testing.expect_value(t,os.remove(fmt.tprintf("%s/%s",f.folder,gone)),nil)
@@ -507,7 +523,7 @@ a_section_whose_file_goes_while_it_loads_fails_and_lets_its_player_go :: proc(t:
         }
         testing.expect_value(t,core.raw_count(core.raw(&w.lamps)),0)
         testing.expect(t,f.problems.count>0,"it says the section did not load")
-        testing.expect(t,!core.entity_off(&w.entities,body),"the player goes on")
+        testing.expect(t,!core.has(&w.held,body),"the player goes on")
         testing.expect(t,ready_at(core.read(&w.references),core.read(&w.worlds),{0,0,0}),"nothing there is to load")
         for l in f.loads.items {testing.expect(t,l.job==nil,"it is not tried again")}
     }

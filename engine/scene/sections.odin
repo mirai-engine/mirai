@@ -132,6 +132,7 @@ scene_sections :: proc(
 ) {
     waited:=core.take(&waits.assets) if waits!=nil else nil
     staying:=core.take(&stays.queue) if stays!=nil else nil
+    joined:[SECTION_LOADS]core.Entity
     if u:=core.world_storage_of(world,Unresolved_References);u!=nil {clear(&u.resolved)}
     for r in core.take(&requests.queue) {
         reference:=core.edit(references,r.entity)
@@ -156,7 +157,7 @@ scene_sections :: proc(
         }
         loads_waits_settle(loads,waited)
         // The loads that ended join their sections.
-        for &l in loads.items {
+        for &l,i in loads.items {
             if l.job==nil || !load_step(l.job) {continue}
             job,e:=l.job,l.entity
             l={}
@@ -167,7 +168,8 @@ scene_sections :: proc(
             scene:=job.root
             report,error:=section_load_end(job,world,e)
             if error!=.None {section_failed(world,app.assets,references,e,scene,error,problems)}
-            else if report.missing>0 {
+            else {joined[i]=e}
+            if error==.None && report.missing>0 {
                 core.report(problems,e,"scene.section","%d scenes this section loads with are not there, and stay empty; put their files back, or take out the references that name them",report.missing)
             }
         }
@@ -199,7 +201,8 @@ scene_sections :: proc(
         state:=section_wanted(views.ptr,e,reference)
         slot:=-1
         if loads!=nil {for l,i in loads.items {if l.job!=nil && l.entity==e {slot=i}}}
-        stay:=reference.loaded==reference.scene && slice.contains(staying,e)
+        // What joined in this frame hangs from it once the frame settles: it goes, or turns off, in the next.
+        stay:=reference.loaded==reference.scene && (slice.contains(staying,e) || slice.contains(joined[:],e))
         switch {
         case state==.Unloaded || reference.rule!=.With_Document && reference.loaded!={} && reference.loaded!=reference.scene:
             if slot>=0 {load_cancel(loads,&loads.items[slot])}
@@ -314,11 +317,12 @@ ready_at :: proc(references:^core.Table(Scene_Reference,$A),worlds:^core.Table(c
 }
 
 // What a body a seat drives does while it stands where a section it is to
-// have is not loaded (ready_at). Hold: it is held where it is, off with
-// Section_Held, until the section joins, and does not fall through what is
-// not there. Free: it goes on, for a game that keeps its player in a loading
-// zone of its own (a lift, a corridor, a screen) or slows it before what is
-// not there, by ready_at ahead of it.
+// have is not loaded (ready_at). Hold: it is held where it is, with
+// Section_Held, until the section joins: the library that simulates it does
+// not move it, and it is drawn and animated at rest. Free: it goes on, for a
+// game that keeps its player in a loading zone of its own (a lift, a
+// corridor, a screen) or slows it before what is not there, by ready_at ahead
+// of it.
 Section_Wait :: enum u8 {Hold,Free}
 
 @(storage,setting)
@@ -326,37 +330,27 @@ Section_Settings :: struct {
     wait:Section_Wait,
 }
 
-// The bodies scene_holds holds.
-@(storage)
-Section_Holds :: struct {bodies:[dynamic]core.Entity}
-
 // Holds each body a seat drives that stands where a section it is to have is
-// not loaded, as Section_Settings.wait says, and lets it go once it is. Only
-// where the body is decided: not one another end of the network moves.
+// not loaded, as Section_Settings.wait says, and lets it go once where it
+// stands now is, also after a place moved it. Only where the body is decided:
+// not one another end of the network moves. The rows on of Section_Held are
+// those it holds: what a section holds is off with them.
 @(step="frame",loops="game",after="scene_sections")
 scene_holds :: proc(
     references:^core.Table(Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),seats:^core.Table(input.Seat,.Read),remotes:^core.Table(core.Remote,.Read),
-    disabled:^core.Table(core.Disabled),marks:^core.Table(Section_Held),settings:Section_Settings,holds:^Section_Holds,problems:^core.Problems,
+    marks:^core.Table(Section_Held),settings:Section_Settings,
 ) {
-    for i:=len(holds.bodies)-1;i>=0;i-=1 {
-        body:=holds.bodies[i]
-        at:=(^core.World_Transform)(core.raw_find(core.raw(worlds),type_info_of(core.World_Transform),body))
-        if at!=nil && settings.wait==.Hold && !ready_at(references,worlds,at.position) {continue}
-        core.remove(disabled,body)
+    for row:=core.count(marks)-1;row>=0;row-=1 {
+        body:=core.entity_at(marks,row)
+        at,placed:=core.get(worlds,body)
+        if settings.wait==.Hold && placed && !ready_at(references,worlds,at.position) {continue}
         core.remove(marks,body)
-        unordered_remove(&holds.bodies,i)
     }
     if settings.wait!=.Hold {return}
-    // A body held, or turned off, has its rows off: it is not looked at again.
     for row in 0..<core.count(seats) {
         body:=core.at(seats,row).body
         at,placed:=core.get(worlds,body)
-        if !placed || !core.owned(remotes,body) || ready_at(references,worlds,at.position) {continue}
-        if _,no_room:=append(&holds.bodies,body);no_room!=nil {
-            core.report(problems,body,"scene.memory","out of memory to hold this body where its section is not loaded: it goes on, and may fall; free memory")
-            continue
-        }
-        core.add(disabled,body,core.Disabled{})
+        if !placed || core.has(marks,body) || !core.owned(remotes,body) || ready_at(references,worlds,at.position) {continue}
         core.add(marks,body,Section_Held{})
     }
 }

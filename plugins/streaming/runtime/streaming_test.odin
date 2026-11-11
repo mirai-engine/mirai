@@ -86,6 +86,7 @@ Far_World :: struct {
     worlds:core.Table(core.World_Transform),
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
+    disabled:core.Table(core.Disabled),
     proxies:core.Table(scene.Section_Proxy),
     renderers:core.Table(render.Mesh_Renderer),
     hierarchy:core.Hierarchy,
@@ -155,25 +156,44 @@ a_section_goes_once_its_far_mesh_is_read_to_take_its_place :: proc(t:^testing.T)
     defer delete(stays.queue.items)
     loading:scene.Section_Loading
     problems:core.Problems
-    shown:=false
-    for frame in 0..<64 {
+    frame :: proc(app:^host.App,world:core.World_Ref,w:^Far_World,requests:^scene.Section_Requests,loads:^scene.Section_Loads,loading:^scene.Section_Loading,far:^Streaming_Far,stays:^scene.Section_Stays,problems:^core.Problems) {
         app.stats.frames+=1
-        scene.scene_sections(world,&app,&w.references,&requests,{},core.read(&w.worlds),core.read(&w.ids),&loads,&loading,{},{},nil,&stays,&problems)
+        scene.scene_sections(world,app,&w.references,requests,{},core.read(&w.worlds),core.read(&w.ids),loads,loading,{},{},nil,stays,problems)
         core.world_settle(world)
-        streaming_far(world,&app,core.read(&w.references),{},&w.transforms,core.read(&w.parents),core.read(&w.proxies),core.read(&w.renderers),&far,&stays)
+        streaming_far(world,app,core.read(&w.references),{},&w.transforms,core.read(&w.parents),core.read(&w.proxies),core.read(&w.renderers),far,stays)
         core.world_settle(world)
+    }
+    shown:=false
+    for frame_at in 0..<64 {
+        frame(&app,world,w,&requests,&loads,&loading,&far,&stays,&problems)
         reference,_:=core.get(&w.references,e)
         proxied:=core.count(&w.proxies)>0
         if proxied {testing.expect(t,host.assets_loaded(&assets,core.at(&w.renderers,0).mesh),"the proxy names its far mesh once it is loaded")}
         testing.expect(t,reference.loaded!={} || proxied,"the section or its far mesh shows")
         shown||=proxied
         if shown && reference.loaded=={} {break}
-        if frame==0 {scene.section_request(&requests,e,.Unloaded)}
+        if frame_at==0 {scene.section_request(&requests,e,.Unloaded)}
         // Its jobs end between frames, whatever the speed of their threads.
         if far.scenes[0].warm!=nil {jobs.wait(&app.jobs,jobs.OWNER,&far.scenes[0].warm.counter)}
     }
     reference,_:=core.get(&w.references,e)
     testing.expect(t,shown && reference.loaded=={},"its far mesh took its place")
+    // Asked on again and, once its jobs read it, off again in the frame it joins: it goes in the next,
+    // once what joined hangs from it, and its far mesh shows all along.
+    scene.section_request(&requests,e,.Active)
+    frame(&app,world,w,&requests,&loads,&loading,&far,&stays,&problems)
+    if !testing.expect(t,loads.items[0].job!=nil && core.count(&w.proxies)==1,"it loads behind its far mesh") {return}
+    jobs.wait(&app.jobs,jobs.OWNER,&loads.items[0].job.counter)
+    scene.section_request(&requests,e,.Unloaded)
+    alive:=core.world_entities(world).alive
+    frame(&app,world,w,&requests,&loads,&loading,&far,&stays,&problems)
+    reference,_=core.get(&w.references,e)
+    testing.expect(t,loads.items[0].job==nil && reference.loaded==ROOM,"it joined")
+    testing.expect_value(t,core.count(&w.proxies),1)
+    frame(&app,world,w,&requests,&loads,&loading,&far,&stays,&problems)
+    reference,_=core.get(&w.references,e)
+    testing.expect(t,reference.loaded=={} && core.count(&w.proxies)==1,"it went, its far mesh in its place")
+    testing.expect_value(t,core.world_entities(world).alive,alive)
 }
 
 // A crate that rolls out of its section passes, where it is, to the section

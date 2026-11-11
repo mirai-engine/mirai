@@ -46,11 +46,9 @@ scene_sources :: proc(
 ) {
     list:[SOURCES_MAX]Source
     count,wanted:=0,0
-    // off: also while its rows are off, as a body held where its section is not loaded (scene_holds).
-    add :: proc(list:^[SOURCES_MAX]Source,count,wanted:^int,worlds:^core.Table(core.World_Transform,$A),motions:^core.Table(core.Motion,$B),e:core.Entity,distance:f32,off:=false) {
-        found:=core.raw_row(core.raw(worlds),e) if off else core.row_of(worlds,e)
-        if found<0 {return}
-        at:=(^core.World_Transform)(core.raw_value(core.raw(worlds),type_info_of(core.World_Transform),found))^
+    add :: proc(list:^[SOURCES_MAX]Source,count,wanted:^int,worlds:^core.Table(core.World_Transform,$A),motions:^core.Table(core.Motion,$B),e:core.Entity,distance:f32) {
+        at,placed:=core.get(worlds,e)
+        if !placed {return}
         wanted^+=1
         if count^==SOURCES_MAX {return}
         motion,_:=core.get(motions,e)
@@ -64,7 +62,7 @@ scene_sources :: proc(
         count,wanted=1,1
     }
     sources.view,sources.viewed=view.position,view.size.x>0 && view.size.y>0
-    for row in 0..<core.count(seats) {add(&list,&count,&wanted,worlds,motions,core.at(seats,row).body,0,off=true)}
+    for row in 0..<core.count(seats) {add(&list,&count,&wanted,worlds,motions,core.at(seats,row).body,0)}
     for row in 0..<core.count(marks) {add(&list,&count,&wanted,worlds,motions,core.entity_at(marks,row),core.at(marks,row).distance)}
     if wanted>SOURCES_MAX {
         core.report(problems,core.NONE,"scene.sources","%d streaming sources and SOURCES_MAX is %d: those past it load nothing around them; take Streaming_Source from the entities that do not need it",wanted,SOURCES_MAX)

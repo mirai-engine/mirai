@@ -11,10 +11,10 @@ its `base.Asset_Id`. Every scene of the project ships, whether another names it 
 - A scene that is not a prefab is not spawned, whatever its roots: it hangs whole under an entity
   with `scene.Scene_Reference` (a section, loaded with its scene or asked with
   `scene.section_request`). A prefab can hang as a section too.
-- The section a player stands in loads first, and the player is held where it is, off, until it
-  joins. A game that keeps its player in a lift, a corridor or a loading screen instead sets
-  `scene.Section_Settings{wait=.Free}` and waits for `scene.ready_at(references,worlds,point)`; a
-  vehicle that slows before what is not loaded asks it ahead of itself.
+- The section a player stands in loads first; the player is held there, drawn and at rest, until it
+  joins (`core.place` still moves it). A game with its own loading zone (a lift, a screen) sets
+  `scene.Section_Settings{wait=.Free}` and waits for `scene.ready_at(references,worlds,point)`, also
+  ahead of a vehicle that slows.
 - A scene a prefab references loads with each copy of it.
 
 ## Spawn and forget

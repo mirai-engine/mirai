@@ -152,9 +152,13 @@ root (an instance with overrides in a document, `spawn` while running).
   `Section_Views` (`section_view`), which `scene_sections` reads first: it is not an edit, it is not
   saved, it is not replicated and Play does not copy it.
 - **Who outruns the loads** (`scene_holds`, `game`): a body a seat drives that stands in the box of
-  a section to load that is not loaded (`ready_at`) is held there, off with `Section_Held`, until
-  the section joins or does not load; it stays a source. `Section_Settings.wait` `Free` holds
-  nothing: the game keeps its player in a loading zone of its own, or slows it, by `ready_at`.
+  a section to load that is not loaded (`ready_at`) takes `Section_Held`, on: physics holds it
+  where it is, kinematic and at rest, still colliding, drawn and animated, until where it stands
+  is loaded or did not load; a place moves it meanwhile, and the hold follows where it went. The
+  rows on of `Section_Held` are only those: what a section holds is off with them.
+  `Section_Settings.wait` `Free` holds nothing: the game keeps its player in a loading zone of its
+  own, or slows it, by `ready_at`. A section that joins goes or turns off in the next frame at
+  the earliest, once what joined hangs from it.
 - **What is unloaded** (`dormant.odin`): while a section is loaded, its record (`Section_Records`)
   knows what changed since it loaded through the stamps of its rows (`core.changes`) and, through
   the shape of each entity (which components it has and which it turned off), which component went
