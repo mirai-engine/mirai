@@ -287,6 +287,10 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   to date, by an `asset.Prefab_Resolver` of the project prefabs
   ([instances](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab)); the
   shipped game loads them without checking them. If it cannot, `Resolve_Failed` with the file.
+- **Far meshes.** A game with the `streaming` plugin (`Cook_Desc.far`) ships beside each scene a
+  section references its far mesh, `<scene>.far.mesh` with the id `asset.far_mesh_id` gives
+  (`cook/far`): the game shows it and makes none
+  ([far shape](../../mirai-gameplay/references/libraries.md#plugin-streaming)).
 - Every other asset is written again compressed for shipping (`asset.document_repack` with
   `SHIP`, [compression](../../mirai-assets/references/formats.md#compression)), and so are the
   textures it writes in blocks; a file that is not an asset is copied byte by byte.

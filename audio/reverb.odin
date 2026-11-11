@@ -147,9 +147,5 @@ reverb_run :: proc "contextless" (u:^Reverb_Unit,input,out:[^]f32,n:int) {
         out[k*2]+=sides[0]*same+sides[1]*other
         out[k*2+1]+=sides[1]*same+sides[0]*other
     }
-    // A tail left to ring down would compute with denormals for a long time.
-    for &side in u.combs {
-        for &comb in side {if abs(comb.store)<1e-20 {comb.store=0}}
-    }
     u.wet_now=u.params.wet
 }

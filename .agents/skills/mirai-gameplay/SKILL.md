@@ -105,11 +105,13 @@ the same attributes and no private paths. Declaration and parameter binding:
    `multiplayer.send`; the game does not ask.
 7. Runtime prefab: `scene.spawn(spawner, path_or_id, ...)` with `core.Commands`; its rows wait
    until the end of the function and are finished with
-   `core.commands_added`. With `transient=true` the entities do not get an `Id` and a save does not
-   include them as scene entities.
+   `core.commands_added`; a prefab not loaded yet gives its root alone, filled frames later
+   ([scene](references/libraries.md#scene)). With `transient=true` the entities do not get an
+   `Id` and a save does not include them as scene entities.
 8. Game code names an asset by its path in the assets wherever a call takes one (`scene.spawn`,
    `scene.request`, `audio.play`), and a field it fills by
-   `host.assets_id`; data fields hold its `base.Asset_Id`.
+   `host.assets_id`; data fields hold its `base.Asset_Id`. A path literal of the project's code
+   that names no asset fails the build where it is written.
 
 ## Invariants
 
@@ -149,7 +151,8 @@ the same attributes and no private paths. Declaration and parameter binding:
 - **What draws the far shape of an entity is not unloaded with its section.** An entity with a
   `@(component,far)` component (a terrain, a foliage) stays on with what hangs from it, and the
   library that draws it keeps only its far shape, without colliders or the near part.
-- `scene.spawn` and asset loading are transactions.
+- `scene.spawn` and asset loading are transactions, and a spawn reads no file: what it needs that
+  is not loaded is read in jobs and fills the root later.
 - **What fails at runtime is a problem of an entity**, not a counter: a library that rejects a
   request or cannot do something calls `core.report` with the entity, a `library.cause` code and
   how to fix it, and `engine.diagnostics` lists it

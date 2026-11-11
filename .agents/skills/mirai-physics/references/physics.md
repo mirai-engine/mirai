@@ -26,6 +26,8 @@ constants and parameters: `types.odin` and the comments of each file.
   (`world_set_body_gravity`, `body_gravity`); the gravity scale multiplies either one.
 - Mass, center and inertia come from the shapes (`density` in kg/m³). A dynamic without mass
   receives 1 kg. `body_set_mass_properties` sets them by hand.
+- Every creation and setter refuses a value that is not finite (NaN or infinite), as Box2D checks
+  its inputs: it returns a null handle or false and changes nothing.
 - 3×3 matrices are inverted with a tolerance relative to their scale: a 1 mm steel ball spins and a
   joint holds a 1e8 kg block.
 - Forces (`body_apply_force*`, `body_apply_torque`) accumulate until the step; impulses change the
@@ -66,7 +68,10 @@ constants and parameters: `types.odin` and the comments of each file.
   (its core is its planes moved inward, with `std/geom`), smaller than the distance from the center
   of mass to its nearest face. A negative or non-finite value rejects the shape; zero is the shape
   with sharp edges, at no added cost.
-- `mesh_create` builds the BVH and marks flat or concave internal edges as non-colliding.
+- `mesh_create` drops triangles without area and repeats of a triangle (the same corners in the same
+  turn) as Jolt's `Sanitize` does, then builds the BVH and marks flat or concave internal edges as
+  non-colliding: a sliver along an edge would switch it off. `Mesh_Desc.inside_out` turns every
+  triangle of mirrored vertices so it still faces where it did.
   **Triangles collide only by their front**, also for [bullets](#bullets): what arrives from behind
   a face passes through it. A thin wall that must stop from both sides carries two opposite layers
   or volume; a floor or a terrain, only its top face. That way what ended up behind a face comes out
@@ -227,7 +232,12 @@ inside.
 
 ### Bullets
 
-An awake dynamic with `bullet` looks for its impacts inside the step (`ccd.odin`).
+Every awake dynamic whose farthest point moves in the step more than `CCD_SAFETY` of its smallest
+extent is swept against static shapes and stops at the first impact; the contacts of the next step
+answer it with every shape that touches (Box2D's fast bodies). If its shapes start the sweep
+touching, a sphere of `CCD_CORE` of that extent at its center of mass is swept instead: a body in
+contact still cannot go through. The rest of this section is what an awake dynamic with `bullet`
+adds (`ccd.odin`).
 
 - Only what moved is swept: the awake ones enter with their swept box in a scratch tree; sleeping
   and static ones are met in the world trees. It uses the relative trajectory and the rotation of
@@ -256,9 +266,10 @@ An awake dynamic with `bullet` looks for its impacts inside the step (`ccd.odin`
 
 ### Bullets and overlaps
 
-The same sweep looks for the convex shapes that only overlap with the bullet and that it was not
-touching at the start of the step, up to `CCD_OVERLAP_CAPACITY` per bullet and step (those that do
-not fit add to `Stats.ccd_overlaps_dropped`). Those it reaches before stopping and does not keep
+The same sweep looks for the convex shapes that only overlap with the swept body (static ones only,
+unless it is a bullet) and that it was not touching at the start of the step, up to
+`CCD_OVERLAP_CAPACITY` per body and step (those that do not fit add to
+`Stats.ccd_overlaps_dropped`). Those it reaches before stopping and does not keep
 touching at the end emit `overlap_begin` and `overlap_end` in that step, on both sides and with
 `crossed`: a trigger thinner than what the bullet travels is not lost. If it ends inside, the next
 step reports the entry as usual.

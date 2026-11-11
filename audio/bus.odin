@@ -134,9 +134,6 @@ bus_process :: proc "contextless" (bus:^Mix_Bus,buffer:[^]f32,n:int) {
                     z2=f.b2*x-f.a2*y
                     buffer[k*2+channel]=y
                 }
-                // A filter left to ring down would compute with denormals for a long time.
-                if abs(z1)<1e-20 {z1=0}
-                if abs(z2)<1e-20 {z2=0}
                 bus.filter_state[channel]={z1,z2}
             }
         }

@@ -28,6 +28,7 @@ Section_World :: struct {
     keeps:core.Table(core.Keep),
     references:core.Table(Scene_Reference),
     placed:core.Table(Prefab_Instance),
+    pendings:core.Table(Prefab_Pending),
     members:core.Table(Section_Member),
     held:core.Table(Section_Held),
     dormants:core.Table(Dormant),
@@ -641,6 +642,11 @@ a_member_of_a_section_is_copied_from_its_scene :: proc(t:^testing.T) {
     w:=section_ref(&f)
     if _,error:=load(w,&f.app,"root.scene");!testing.expect_value(t,error,Error.None) {return}
     before:=core.raw_count(core.raw(&f.world.lamps))
+    // Read, as the queue of spawns reads it: the copy is placed in the call.
+    if job,begun:=prefab_warm_begin(&f.app,{SECTION_ROOM},true);testing.expect_value(t,begun,Error.None) {
+        load_step(job,true)
+        load_free(job)
+    }
     at:=core.Transform{position={3,4,5},rotation=1,scale={1,1,1}}
     report,error:=spawn_member(core.commands_of(w),f.app.assets,SECTION_ROOM,1,id_in(1,11),at)
     if !testing.expect_value(t,error,Error.None) {return}
@@ -758,6 +764,7 @@ a_prefab_spawns_by_its_one_root_and_any_scene_hangs_as_a_section :: proc(t:^test
     empty:asset.Scene;asset.scene_init(&empty,&f.types,{0x6a,10})
     section_save(t,&f,&empty,"empty.scene")
     testing.expect(t,host.assets_scan(&f.assets))
+    for id in ([]base.Asset_Id{SECTION_CELLAR,SECTION_HOUSE}) {testing.expect(t,host.assets_scene(&f.assets,id)!=nil)}
     w:=section_ref(&f)
     s:=Spawner{core.commands_of(w),&f.assets,f.problems}
 

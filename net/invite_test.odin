@@ -10,9 +10,9 @@ import "mirai:std/serial"
 @(test)
 invitation_codes_round_trip_and_refuse_typos :: proc(t:^testing.T) {
     lan,public:=address_ip4(192,168,1,20,27500),address_ip4(203,0,113,7,41000)
-    for invitation in ([]Invitation{{lan,public,0xa1b2c3d4},{lan,{},1},{{},public,0xffffffff}}) {
+    for invitation in ([]Invitation{{lan,public,0xa1b2c3d4e5f60718},{lan,{},1},{{},public,max(u64)}}) {
         code:=invite_encode(invitation,context.temp_allocator)
-        testing.expect_value(t,len(code),INVITE_CHARACTERS+INVITE_CHARACTERS/INVITE_GROUP-1)
+        testing.expect_value(t,len(code),INVITE_CHARACTERS+(INVITE_CHARACTERS-1)/INVITE_GROUP)
         got,ok:=invite_decode(code)
         testing.expectf(t,ok && got==invitation,"%v gave %s, read as %v",invitation,code,got)
         // Lowercase, spaces and the letters that look like digits are the same code.
@@ -44,8 +44,8 @@ invitation_codes_round_trip_and_refuse_typos :: proc(t:^testing.T) {
             testing.expectf(t,!wrong,"%q read as a code",text)
         }
     }
-    // The code of the previous format, of one address, is too short.
-    _,old:=invite_decode("K7Q2-9XMA-PL3F-0B2C")
+    // A code of the previous format, with a token of 32 bits, is too short.
+    _,old:=invite_decode("R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A")
     testing.expect(t,!old)
     wide:=Address{kind=.IP6,port=7950,ip={0=0x20,1=0x01,15=1}}
     for invitation in ([]Invitation{{lan,public,0},{{},{},7},{wide,{},7},{lan,{kind=.IP4,ip={0=1,1=2,2=3,3=4}},7},{address_memory(1),{},7}}) {
@@ -158,6 +158,106 @@ a_server_with_an_invitation_answers_only_who_brings_it :: proc(t:^testing.T) {
     testing.expect_value(t,host_stats(server).handshakes_refused,u64(0))
 }
 
+// A wrong proof costs its address. 100,000 of them from 1,000 addresses, each
+// with a cookie of its own, get no answer and at most the burst and one per
+// interval of key exchanges each, and nothing is kept per guess; who brings the
+// invitation joins meanwhile as fast as with nobody guessing.
+@(test)
+wrong_proofs_cost_their_address_and_the_invited_join_meanwhile :: proc(t:^testing.T) {
+    ADDRESSES :: 1000
+    ROUNDS :: 100
+    INVITE :: 0x5eed5eed5eed5eed
+    w:Test_World;test_world_init(&w,ADDRESSES+3);defer test_world_destroy(&w)
+    server:=test_host(&w,{mode=.Server,invite=INVITE,handshakes_per_update=1<<20})
+    calm:=test_host(&w,{mode=.Client,invite=INVITE})
+    invited:=test_host(&w,{mode=.Client,invite=INVITE})
+    join_steps :: proc(w:^Test_World,server,client:^Host,forge:proc(w:^Test_World,round:int)=nil) -> (steps:int) {
+        host_connect(client,address_memory(0))
+        for steps=1;steps<300;steps+=1 {
+            if forge!=nil {forge(w,steps)}
+            test_step(w)
+            host_poll(server)
+            for command in host_poll(client) {
+                if command.kind==.Connected {return}
+            }
+        }
+        return
+    }
+    calm_steps:=join_steps(&w,server,calm)
+
+    // Every forger returns the cookie it got at its own address, with proofs it makes up.
+    Forged :: struct {salt,stamp,cookie:u64}
+    forged:=make([]Forged,ADDRESSES)
+    defer delete(forged)
+    buffer,answer:[PACKET_BYTES]u8
+    writer:serial.Bit_Writer
+    for &f,i in forged {
+        f.salt=u64(0x10000+i)
+        forger:=sim_endpoint_transport(&w.sim,3+i)
+        buffer[0]=u8(Packet_Type.Request)
+        serial.bit_writer_init(&writer,buffer[1:])
+        serial.bit_write(&writer,f.salt,64)
+        forger.send(forger.data,address_memory(0),test_handshake(buffer[:],&writer,server.back.key,HANDSHAKE_BYTES))
+    }
+    test_step(&w,2)
+    for &f,i in forged {
+        forger:=sim_endpoint_transport(&w.sim,3+i)
+        size,_,challenged:=forger.receive(forger.data,answer[:])
+        if !testing.expect(t,challenged && Packet_Type(answer[0])==.Challenge) {return}
+        reader:serial.Bit_Reader
+        serial.bit_reader_init(&reader,answer[1:size-CHECKSUM_BYTES])
+        _=serial.bit_read(&reader,64)
+        f.stamp,f.cookie=serial.bit_read(&reader,64),serial.bit_read(&reader,64)
+    }
+    Attack :: struct {server:^Host,forged:[]Forged,state:u64}
+    attack:=Attack{server,forged,7}
+    context.user_ptr=&attack
+    forge :: proc(w:^Test_World,round:int) {
+        a:=(^Attack)(context.user_ptr)
+        buffer:[PACKET_BYTES]u8
+        writer:serial.Bit_Writer
+        for f,i in a.forged {
+            buffer[0]=u8(Packet_Type.Response)
+            serial.bit_writer_init(&writer,buffer[1:])
+            serial.bit_write(&writer,f.salt,64)
+            serial.bit_write(&writer,f.stamp,64)
+            serial.bit_write(&writer,f.cookie,64)
+            serial.bit_write(&writer,host_protocol_hash(a.server),64)
+            for _ in 0..<KEY_BYTES+TAG_BYTES {serial.bit_write(&writer,base.splitmix_next(&a.state)&0xff,8)}
+            forger:=sim_endpoint_transport(&w.sim,3+i)
+            forger.send(forger.data,address_memory(0),test_handshake(buffer[:],&writer,a.server.back.key,HANDSHAKE_BYTES))
+        }
+    }
+    before:=host_stats(server)
+    for round in 0..<ROUNDS/2 {
+        forge(&w,round)
+        test_step(&w)
+        host_poll(server)
+    }
+    invited_steps:=join_steps(&w,server,invited,forge)
+    for round in ROUNDS/2+invited_steps..<ROUNDS {
+        forge(&w,round)
+        test_step(&w)
+        host_poll(server)
+    }
+    test_step(&w)
+    host_poll(server)
+    after:=host_stats(server)
+    exchanged,put_off:=after.handshakes_dropped-before.handshakes_dropped,after.handshakes_deferred-before.handshakes_deferred
+    elapsed:=f64(ROUNDS+1)*TEST_STEP
+    budget:=u64(ADDRESSES*(FAILED_BURST+int(elapsed/FAILED_INTERVAL)+1))
+    testing.expectf(t,exchanged+put_off==ADDRESSES*ROUNDS,"%d exchanged and %d put off of %d",exchanged,put_off,ADDRESSES*ROUNDS)
+    testing.expectf(t,exchanged<=budget,"%d key exchanges for wrong proofs, more than %d",exchanged,budget)
+    testing.expect_value(t,after.handshakes_refused,u64(0))
+    for i in 0..<ADDRESSES {
+        forger:=sim_endpoint_transport(&w.sim,3+i)
+        _,_,answered:=forger.receive(forger.data,answer[:])
+        if !testing.expectf(t,!answered,"forger %d heard an answer",i) {break}
+    }
+    testing.expectf(t,calm_steps<300 && invited_steps<=calm_steps+1,"the invited joined in %d steps, with nobody guessing in %d",invited_steps,calm_steps)
+    testing.expect_value(t,after.connections,2)
+}
+
 // The same over real UDP sockets on loopback, joining by the code: it connects
 // at the address of the host on its network, and when that one does not answer,
 // at the one its router mapped; a wrong invitation and none hear only the challenge.
@@ -205,7 +305,7 @@ a_code_over_udp_reaches_the_host_at_either_of_its_addresses :: proc(t:^testing.T
         reason,at,delivered:=attempt(t,server,&answers,invitation)
         testing.expectf(t,reason==.None && at==here && delivered,"%v: %v at %v, a message delivered: %v",invitation,reason,at,delivered)
     }
-    for token in ([2]u32{0x2b3c4d5f,1}) {
+    for token in ([2]u64{0x2b3c4d5f,1}) {
         reason,_,_:=attempt(t,server,&answers,{here,{},token})
         testing.expect_value(t,reason,Disconnect_Reason.Connect_Timeout)
         testing.expectf(t,answers.all[.Challenge]>0 && answers.all[.Accepted]==0 && answers.all[.Denied]==0 && answers.all[.Data]==0,"invitation %x: the server answered %v",token,answers.all)

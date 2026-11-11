@@ -259,6 +259,7 @@ job_start :: proc(desc:Desc) -> ^Job {
                 if found.prefix!="" {append(&job.plugin_assets,found)}
             }
             job.cook.plugins=job.plugin_assets[:]
+            for index in p.active {job.cook.far||=base.text_get(p.plugins[index].manifest.name[:])=="streaming"}
         }
     }
 

@@ -78,7 +78,7 @@ hulls_free :: proc(w:^World) -> int {
 // a center of mass inside it, and the inertia about that center.
 hull_set_mass :: proc(w:^World,h:Hull_Handle,volume:f32,center:Vec3,inertia:Mat3) -> bool {
     slot,_:=hull_slot(w,h)
-    if slot==nil || slot.refs>0 {return false}
+    if slot==nil || slot.refs>0 || !finite(volume) || !finite(center) || !finite(inertia) {return false}
     slot.hull.volume,slot.hull.center,slot.hull.inertia=volume,center,inertia
     slot.hull.inner_radius=max(f32)
     for plane in slot.hull.planes {slot.hull.inner_radius=min(slot.hull.inner_radius,-plane_distance(plane,center))}
@@ -107,7 +107,8 @@ shape_refs_add :: proc "contextless" (w:^World,shape:^Shape,delta:i32) {
 // Without update_mass the caller updates the mass of the body once, after its last shape, with
 // body_mass_update.
 shape_create :: proc(w:^World,body_handle:Body_Handle,desc:Shape_Desc,update_mass:=true) -> Shape_Handle {
-    w.grounds_stale=true
+    if !finite(desc.transform) || !finite(desc.surface_speed) ||
+       !finite(desc.friction,desc.restitution,desc.rolling_resistance,desc.density,desc.convex_radius,desc.drag) {return {}}
     body,body_index:=body_get(w,body_handle)
     if body==nil {return {}}
     type:Shape_Type
@@ -115,24 +116,24 @@ shape_create :: proc(w:^World,body_handle:Body_Handle,desc:Shape_Desc,update_mas
     resource:u32
     radius:f32
     round:=desc.convex_radius
-    if !(round>=0 && round<max(f32)) {return {}}
+    if !(round>=0) {return {}}
     switch g in desc.geometry {
     case Sphere:
-        if !(g.radius>0) {return {}}
+        if !(g.radius>0) || !finite(g.radius) {return {}}
         type=.Sphere;size.x=g.radius
     case Capsule:
-        if !(g.radius>0) || !(g.half_height>=0) {return {}}
+        if !(g.radius>0) || !(g.half_height>=0) || !finite(g.radius,g.half_height) {return {}}
         if g.half_height<LINEAR_SLOP {
             type=.Sphere;size.x=g.radius
         } else {
             type=.Capsule;size={g.radius,g.half_height,0}
         }
     case Box:
-        if !(g.half_extents.x>0 && g.half_extents.y>0 && g.half_extents.z>0) {return {}}
+        if !(g.half_extents.x>0 && g.half_extents.y>0 && g.half_extents.z>0) || !finite(g.half_extents) {return {}}
         if !(round<min(g.half_extents.x,g.half_extents.y,g.half_extents.z)) {return {}}
         type=.Box;size=g.half_extents;radius=round
     case Cylinder:
-        if !(g.radius>0 && g.radius<max(f32)) || !(g.half_height>0 && g.half_height<max(f32)) {return {}}
+        if !(g.radius>0 && g.half_height>0) || !finite(g.radius,g.half_height) {return {}}
         if !(round<min(g.radius,g.half_height)) {return {}}
         type=.Cylinder;size={g.radius,g.half_height,0};radius=round
     case Hull_Handle:
@@ -150,6 +151,7 @@ shape_create :: proc(w:^World,body_handle:Body_Handle,desc:Shape_Desc,update_mas
     case:
         return {}
     }
+    w.grounds_stale=true
     tree:=&w.trees[body.type==.Static?STATIC_TREE:DYNAMIC_TREE]
     index:=w.shape_free
     if index<0 && int(w.shape_high)>=len(w.shapes) {
@@ -171,9 +173,9 @@ shape_create :: proc(w:^World,body_handle:Body_Handle,desc:Shape_Desc,update_mas
         friction=max(desc.friction,0),restitution=clamp(desc.restitution,0,1),density=max(desc.density,0),
         filter=desc.filter,body=body_index,next=body.shape_list,prev=-1,rolling_resistance=max(desc.rolling_resistance,0),
         resource=resource,generation=shape.generation+1,type=type,
-        dominance=i32(desc.dominance),surface_speed=finite_or_zero(desc.surface_speed),radius=radius,
+        dominance=i32(desc.dominance),surface_speed=desc.surface_speed,radius=radius,
     }
-    shape.drag=desc.drag>0 && desc.drag<=max(f32)?desc.drag:shape_drag_default(type)
+    shape.drag=desc.drag>0?desc.drag:shape_drag_default(type)
     if desc.one_way {shape.flags+={.One_Way}}
     if desc.hits {shape.flags+={.Hits};w.hit_shapes+=1}
     shape.tag=desc.tag
@@ -467,16 +469,9 @@ shape_set_filter :: proc(w:^World,h:Shape_Handle,filter:Filter) {
     body_wake(w,shape.body)
 }
 // Takes effect on the contacts of the shape at once, as shape_set_material.
-shape_set_rolling_resistance :: proc(w:^World,h:Shape_Handle,rolling_resistance:f32) {
-    shape,index:=shape_get(w,h)
-    if shape==nil {return}
-    shape.rolling_resistance=max(rolling_resistance,0)
-    body:=&w.bodies[shape.body]
-    for key:=body.contact_list;key>=0; {
-        contact:=&w.contacts[key>>1]
-        if contact.shape_a==index || contact.shape_b==index {contact_mix_material(w,contact)}
-        key=contact.edges[key&1].next
-    }
+shape_set_rolling_resistance :: proc(w:^World,h:Shape_Handle,rolling_resistance:f32) -> bool {
+    friction,restitution:=shape_material(w,h)
+    return shape_material_set(w,h,friction,restitution,rolling_resistance)
 }
 // Takes effect on the contacts created from now on.
 shape_material :: proc(w:^World,h:Shape_Handle) -> (friction,restitution:f32) {
@@ -484,24 +479,32 @@ shape_material :: proc(w:^World,h:Shape_Handle) -> (friction,restitution:f32) {
     if shape==nil {return}
     return shape.friction,shape.restitution
 }
-shape_set_material :: proc(w:^World,h:Shape_Handle,friction,restitution:f32) {
+shape_set_material :: proc(w:^World,h:Shape_Handle,friction,restitution:f32) -> bool {
+    shape,_:=shape_read(w,h)
+    return shape!=nil && shape_material_set(w,h,friction,restitution,shape.rolling_resistance)
+}
+@(private)
+shape_material_set :: proc(w:^World,h:Shape_Handle,friction,restitution,rolling_resistance:f32) -> bool {
+    if !finite(friction,restitution,rolling_resistance) {return false}
     shape,index:=shape_get(w,h)
-    if shape==nil {return}
-    shape.friction,shape.restitution=max(friction,0),clamp(restitution,0,1)
+    if shape==nil {return false}
+    shape.friction,shape.restitution,shape.rolling_resistance=max(friction,0),clamp(restitution,0,1),max(rolling_resistance,0)
     body:=&w.bodies[shape.body]
     for key:=body.contact_list;key>=0; {
         contact:=&w.contacts[key>>1]
         if contact.shape_a==index || contact.shape_b==index {contact_mix_material(w,contact)}
         key=contact.edges[key&1].next
     }
+    return true
 }
 // The rules of the contacts of the shape: how its surface moves, whether it blocks only from its +Y side
 // and its dominance. They take effect on its contacts at the next step; turning one_way off lets the
 // contacts that were going through it block again.
-shape_set_surface :: proc(w:^World,h:Shape_Handle,surface_speed:Vec3,one_way:bool,dominance:i8) {
+shape_set_surface :: proc(w:^World,h:Shape_Handle,surface_speed:Vec3,one_way:bool,dominance:i8) -> bool {
+    if !finite(surface_speed) {return false}
     shape,index:=shape_get(w,h)
-    if shape==nil {return}
-    shape.surface_speed,shape.dominance=finite_or_zero(surface_speed),i32(dominance)
+    if shape==nil {return false}
+    shape.surface_speed,shape.dominance=surface_speed,i32(dominance)
     if one_way {shape.flags+={.One_Way}} else {shape.flags-={.One_Way}}
     body_wake(w,shape.body)
     body:=&w.bodies[shape.body]
@@ -513,6 +516,7 @@ shape_set_surface :: proc(w:^World,h:Shape_Handle,surface_speed:Vec3,one_way:boo
         if !one_way && .Pass in contact.flags {stamp(w,contact);contact.flags-={.Pass}}
         body_wake(w,side==0?contact.body_b:contact.body_a)
     }
+    return true
 }
 shape_surface :: proc(w:^World,h:Shape_Handle) -> (surface_speed:Vec3,one_way:bool,dominance:i8) {
     shape,_:=shape_read(w,h)
@@ -521,29 +525,25 @@ shape_surface :: proc(w:^World,h:Shape_Handle) -> (surface_speed:Vec3,one_way:bo
 }
 
 // Changes the drag coefficient of a shape in a fluid; zero or less takes the measured value of its form.
-shape_set_drag :: proc(w:^World,h:Shape_Handle,drag:f32) {
+shape_set_drag :: proc(w:^World,h:Shape_Handle,drag:f32) -> bool {
+    if !finite(drag) {return false}
     shape,_:=shape_get(w,h)
-    if shape==nil {return}
-    shape.drag=drag>0 && drag<=max(f32)?drag:shape_drag_default(shape.type)
+    if shape==nil {return false}
+    shape.drag=drag>0?drag:shape_drag_default(shape.type)
+    return true
 }
 shape_drag :: proc(w:^World,h:Shape_Handle) -> f32 {
     shape,_:=shape_read(w,h)
     return shape!=nil?shape.drag:0
 }
 
-@(private)
-finite_or_zero :: proc "contextless" (v:Vec3) -> Vec3 {
-    for x in v {
-        if !(x>=-max(f32) && x<=max(f32)) {return {}}
-    }
-    return v
-}
-
-shape_set_density :: proc(w:^World,h:Shape_Handle,density:f32) {
+shape_set_density :: proc(w:^World,h:Shape_Handle,density:f32) -> bool {
+    if !finite(density) {return false}
     shape,_:=shape_get(w,h)
-    if shape==nil {return}
+    if shape==nil {return false}
     shape.density=max(density,0)
     body_update_mass(w,shape.body)
+    return true
 }
 
 // Box stored in the tree: the shape may move inside it without touching the tree. Small shapes get a

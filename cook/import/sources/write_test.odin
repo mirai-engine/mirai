@@ -17,6 +17,8 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 import importer "mirai:cook/import"
+import "mirai:cook/prefab"
+import "mirai:cook/author"
 
 Png_Sink :: struct {bytes:[dynamic]u8,allocator:runtime.Allocator}
 
@@ -194,6 +196,52 @@ a_skinned_mesh_is_written_with_its_rig :: proc(t:^testing.T) {
     clips,clips_error:=asset.animation_view(&animation_file,&types)
     testing.expect_value(t,clips_error,asset.Error.None)
     testing.expect(t,len(clips.clips)==1 && clips.clips[0].skeleton==report.skeleton_ids[0])
+}
+
+// The prefab of an import stores each component in the layout the game declares, starting the
+// fields the import does not set at their default, as mirai scene write writes it: that command
+// finds nothing to convert and writes the same bytes. A game without the animation plugin gets
+// none of its components.
+@(test)
+the_prefab_of_an_import_is_written_in_the_layout_of_the_game :: proc(t:^testing.T) {
+    Case :: struct {files:[]string,animated:bool}
+    cases:=[?]Case{
+        {{"characters/jelly/jelly.gltf","characters/jelly/jelly.bin"},true},
+        {{"gallery/vase.obj","gallery/vase.mtl","gallery/vase_color.png"},false},
+    }
+    for c in cases {
+        root,assets:=test_project(t,"prefab-layout")
+        if root=="" {return}
+        world:=prefab.import_world(t,c.animated)
+        if world==nil {return}
+        report,error:=import_source(copy_in(root,DEMO,..c.files),{world=world,root=root,textures=.Uncompressed})
+        if !testing.expectf(t,error.code==.None,"%s: %s",c.files[0],error.message) {return}
+        defer importer.report_destroy(&report)
+        p:=author.Project{name="layout",assets_root=assets,info=world}
+        asset.registry_init(&p.registry,assets,imported=fmt.tprintf("%s/.mirai/imported",root))
+        asset.types_init(&p.types)
+        defer {asset.registry_destroy(&p.registry);asset.types_destroy(&p.types);author.scratch_world_free(&p.scratch)}
+        p.assets={&p.registry,&p.types}
+        testing.expect_value(t,asset.registry_scan(&p.registry),asset.Error.None)
+        path,_:=filepath.rel(assets,report.prefab_path,context.temp_allocator)
+        path,_=strings.replace_all(path,"\\","/",context.temp_allocator)
+        testing.expectf(t,len(author.scene_stored(&p,path))==0,"%s: no component is stored with another layout",path)
+        saved,_:=os.read_entire_file(report.prefab_path,context.temp_allocator)
+        scene:asset.Scene
+        if !testing.expect_value(t,asset.scene_load(&scene,&p.types,report.prefab_path,context.temp_allocator),asset.Error.None) {return}
+        resaved,problem:=author.scene_file_bytes(&scene,&p.types,world,&p.scratch)
+        testing.expectf(t,problem=="" && slice.equal(saved,resaved),"%s: written again as mirai scene write writes it, the same bytes (%s)",path,problem)
+        _,targeted:=asset.scene_component(&scene,"Animation_Target")
+        threshold:=f32(-1)
+        if root,rooted:=asset.prefab_root(&scene);rooted {
+            if animation,found:=asset.scene_get(&scene,root,"Animation",prefab.Game_Animation);found {threshold=animation.event_threshold}
+        }
+        if c.animated {
+            testing.expectf(t,targeted && threshold==prefab.GAME_ANIMATION_DEFAULT.event_threshold,"%s: the components of the plugin, a field the import does not set at its default (%v)",path,threshold)
+        } else {
+            testing.expectf(t,!targeted && threshold<0,"%s: without the plugin, none of its components",path)
+        }
+    }
 }
 
 // With Import_Settings.skeleton the import writes only the clips, as an .anim bound to that
@@ -448,7 +496,7 @@ importing_again_keeps_the_identity_of_every_asset :: proc(t:^testing.T) {
     ids_by_root:[2][dynamic]base.Asset_Id
     for root,i in ([]string{"a","b"}) {
         if i==1 {testing.expect(t,os.copy_directory_all(fmt.tprintf("%s/b/assets",folder),fmt.tprintf("%s/a/assets",folder))==nil)}
-        report,vase_error:=import_source(fmt.tprintf("%s/%s/assets/gallery/vase.obj",folder,root))
+        report,vase_error:=import_source(fmt.tprintf("%s/%s/assets/gallery/vase.obj",folder,root),{world=prefab.import_world(t)})
         testing.expect_value(t,vase_error.code,importer.Error_Code.None)
         ids_by_root[i].allocator=context.temp_allocator
         for item in report.assets {append(&ids_by_root[i],item.id)}
@@ -703,7 +751,7 @@ a_radiance_image_becomes_an_hdr_texture :: proc(t:^testing.T) {
     for _ in 0..<8 {append(&hdr,200,200,200,135)} // 100
     _=os.write_entire_file(path,hdr[:])
     testing.expect_value(t,source_kind(path),Source_Kind.Image)
-    report,error:=import_source(path,{})
+    report,error:=import_source(path,{world=prefab.import_world(t)})
     defer importer.report_destroy(&report)
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     a:asset.Asset
