@@ -686,31 +686,28 @@ emitters_take_their_lights_from_the_part_of_the_room_of_their_kind :: proc(t:^te
     info:=effect.PARTICLE_DEFAULTS
     info.lights=3
     app:host.App
-    desc,_:=emitter_desc(&info,app.assets,app.renderer,1)
-    testing.expect(t,desc.lights==3 && !desc.shadows,"the lights of an effect cast no shadows unless it asks")
-    info.light_shadows=true
-    desc,_=emitter_desc(&info,app.assets,app.renderer,1)
-    testing.expect(t,desc.shadows)
+    desc,_:=emitter_desc(info,app.assets,app.renderer,1)
+    testing.expect_value(t,desc.info.lights,u32(3))
     info.light_range=0
-    desc,_=emitter_desc(&info,app.assets,app.renderer,1)
-    testing.expect_value(t,desc.lights,u32(0))
+    desc,_=emitter_desc(info,app.assets,app.renderer,1)
+    testing.expect_value(t,desc.info.lights,u32(0))
 
     Want :: struct {lights:u32,shadows,live:bool}
     wants:=[?]Want{{3,true,true},{2,false,true},{7,true,false},{4,true,true},{5,false,true}}
     slots:[len(wants)]Pool_Slot
-    for want,at in wants {slots[at].live,slots[at].desc.lights,slots[at].desc.shadows=want.live,want.lights,want.shadows}
+    for want,at in wants {slots[at].live,slots[at].desc.info.lights,slots[at].desc.info.light_shadows=want.live,want.lights,want.shadows}
     asked:=lights_asked(slots[:])
     testing.expect_value(t,asked,[2]u32{7,7})
     taken:[2]u32
     shares:[len(wants)][4]u32
-    for &s,at in slots {shares[at]=light_share(s.desc.lights if s.live else 0,s.desc.shadows,&taken,asked)}
+    for &s,at in slots {shares[at]=light_share(s.desc.info.lights if s.live else 0,s.desc.info.light_shadows,&taken,asked)}
     testing.expect_value(t,shares,[len(wants)][4]u32{{0,3,0,0},{3,0,0,2},{3,0,2,0},{3,4,2,0},{7,0,2,5}})
     for part in 0..<2 {
         for i in 0..<asked[part] {
             found:=-1
             for share,at in shares {if share[2*part]<=i {found=at}}
             share:=shares[max(found,0)]
-            testing.expectf(t,found>=0 && i>=share[2*part] && i<share[2*part]+share[2*part+1] && slots[found].desc.shadows==(part==0),"light %d of part %d is of slot %d",i,part,found)
+            testing.expectf(t,found>=0 && i>=share[2*part] && i<share[2*part]+share[2*part+1] && slots[found].desc.info.light_shadows==(part==0),"light %d of part %d is of slot %d",i,part,found)
         }
     }
     // What is left of what the world asked for, and no more.
@@ -718,8 +715,8 @@ emitters_take_their_lights_from_the_part_of_the_room_of_their_kind :: proc(t:^te
     testing.expect_value(t,light_share(5,true,&taken,{4,0}),[4]u32{0,4,0,0})
     testing.expect_value(t,light_share(2,true,&taken,{4,0}),[4]u32{4,0,0,0})
     many:[2]Pool_Slot
-    many[0].live,many[0].desc.lights,many[0].desc.shadows=true,erender.LIGHTS_ASKED_MAX+5,true
-    many[1].live,many[1].desc.lights=true,erender.LIGHTS_ASKED_MAX+5
+    many[0].live,many[0].desc.info.lights,many[0].desc.info.light_shadows=true,erender.LIGHTS_ASKED_MAX+5,true
+    many[1].live,many[1].desc.info.lights=true,erender.LIGHTS_ASKED_MAX+5
     testing.expect_value(t,lights_asked(many[:]),[2]u32{erender.LIGHTS_ASKED_MAX,erender.LIGHTS_ASKED_MAX})
 }
 

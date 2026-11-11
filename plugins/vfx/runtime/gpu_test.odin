@@ -149,9 +149,11 @@ expect_clean :: proc(t: ^testing.T, d: ^rhi.Device) {
 test_emitter :: proc(id: u64, position: [3]f32) -> Emitter_Desc {
 	return {
 		id = id, capacity = 64, transform = trs(position, {1, 1, 1}), previous = trs(position, {1, 1, 1}),
-		shape = .Point, lifetime = {0.5, 0.5}, speed = {0, 0}, size = {0.6, 0.6}, color = {{1, 1, 1, 1}, {1, 1, 1, 1}},
-		render = .Billboard, blend = .Additive, intensity = 4, flipbook = {1, 1},
-		size_curve = effect.PARTICLE_CURVE_ONE, color_curve = GRADIENT_WHITE,
+		info = {
+			shape = .Point, lifetime = {0.5, 0.5}, speed = {0, 0}, size = {0.6, 0.6}, colors = {{1, 1, 1, 1}, {1, 1, 1, 1}},
+			render = .Billboard, blend = .Additive, intensity = 4, flipbook = {1, 1},
+			size_over_life = effect.PARTICLE_CURVE_ONE, color_over_life = GRADIENT_WHITE,
+		},
 	}
 }
 
@@ -212,21 +214,21 @@ particles_of_every_kind_draw_around_glass_without_validation_errors :: proc(t: ^
 	},true)
 	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	smoke := test_emitter(1, {0, 0, 0})
-	smoke.blend, smoke.lit, smoke.sort, smoke.collision = .Alpha, true, true, .World
-	smoke.speed, smoke.shape, smoke.shape_angle, smoke.acceleration = {1, 2}, .Cone, 0.4, {0, -4, 0}
-	smoke.noise_strength, smoke.noise_frequency, smoke.noise_speed = 2, 1, 1
-	smoke.event, smoke.event_target, smoke.event_count = .Death, 2, 4
-	smoke.velocity = {{-0.5, 0, -0.5}, {0.5, 1, 0.5}}
+	smoke.info.blend, smoke.info.lit, smoke.info.sort, smoke.info.collision = .Alpha, true, true, .World
+	smoke.info.speed, smoke.info.shape, smoke.info.shape_angle, smoke.info.acceleration = {1, 2}, .Cone, 0.4, {0, -4, 0}
+	smoke.info.noise, smoke.info.noise_frequency, smoke.info.noise_speed = 2, 1, 1
+	smoke.info.trigger, smoke.event_target, smoke.info.sub_count = .Death, 2, 4
+	smoke.info.velocity = {{-0.5, 0, -0.5}, {0.5, 1, 0.5}}
 	sparks := test_emitter(2, {0, 0, 0})
-	sparks.render, sparks.collision, sparks.speed, sparks.stretch, sparks.bounce = .Velocity, .World, {2, 3}, 0.05, 0.5
-	sparks.relative = true
+	sparks.info.render, sparks.info.collision, sparks.info.speed, sparks.info.stretch, sparks.info.bounce = .Velocity, .World, {2, 3}, 0.05, 0.5
+	sparks.info.emission_mode = .Relative
 	trail := test_emitter(3, {0, 0.5, 0})
-	trail.render, trail.lit, trail.lifetime = .Ribbon, true, {0.4, 0.4}
+	trail.info.render, trail.info.lit, trail.info.lifetime = .Ribbon, true, {0.4, 0.4}
 	pieces := test_emitter(4, {0, 1, 0})
-	pieces.render, pieces.mesh, pieces.lit, pieces.collision, pieces.size, pieces.spin = .Mesh, f.cube_range, true, .World, {0.1, 0.2}, {-3, 3}
-	pieces.shape, pieces.shape_size, pieces.acceleration = .Sphere, {0.3, 0.3, 0.3}, {0, -9.8, 0}
+	pieces.info.render, pieces.mesh, pieces.info.lit, pieces.info.collision, pieces.info.size, pieces.info.spin = .Mesh, f.cube_range, true, .World, {0.1, 0.2}, {-3, 3}
+	pieces.info.shape, pieces.info.shape_size, pieces.info.acceleration = .Sphere, {0.3, 0.3, 0.3}, {0, -9.8, 0}
 	ripples := test_emitter(5, {0, -0.45, 0})
-	ripples.render, ripples.flipbook, ripples.local = .Horizontal, {2, 2}, true
+	ripples.info.render, ripples.info.flipbook, ripples.info.local_space = .Horizontal, {2, 2}, true
 	DT :: f32(1.0 / 60)
 	seconds: f32
 	births: u32
@@ -265,7 +267,7 @@ particles_keep_steady_frames_allocation_free :: proc(t: ^testing.T) {
 	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -0.6, 0}, {12, 0.2, 12})}},true)
 	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	emitters := [2]Emitter_Desc{test_emitter(1, {0, 0, 0}), test_emitter(2, {1, 0, 0})}
-	emitters[1].blend, emitters[1].sort, emitters[1].lit = .Alpha, true, true
+	emitters[1].info.blend, emitters[1].info.sort, emitters[1].info.lit = .Alpha, true, true
 	for &e in emitters {e.spawns = test_rate(3, 1.0 / 60)}
 	for _ in 0 ..< 4 {
 		frame_emitters(f, &f.sync, emitters[:], 1.0 / 60)
@@ -298,7 +300,7 @@ ribbon_lays_a_band_along_the_path_of_its_emitter :: proc(t: ^testing.T) {
 	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.1, 0.1, 0.1}}},true)
 	camera := gpu.Camera{position = {0, 0, 5}, forward = {0, 0, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	trail := test_emitter(1, {-2, 0, 0})
-	trail.render, trail.lifetime, trail.size, trail.soft = .Ribbon, {2, 2}, {0.3, 0.3}, 0
+	trail.info.render, trail.info.lifetime, trail.info.size, trail.info.soft = .Ribbon, {2, 2}, {0.3, 0.3}, 0
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 60 {
 		trail.previous = trail.transform
@@ -335,11 +337,11 @@ mesh_particles_of_a_blending_material_cover_by_their_alpha :: proc(t: ^testing.T
 	camera := gpu.Camera{position = {0, 0, 5}, forward = {0, 0, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	// Two cubes of the material: one with full alpha, one whose curve takes its alpha to zero.
 	shown := test_emitter(1, {-1.2, 0, 0})
-	shown.render, shown.mesh, shown.material, shown.blended, shown.blend = .Mesh, f.cube_range, 1, true, .Alpha
-	shown.lifetime, shown.size, shown.soft, shown.relative, shown.intensity = {10, 10}, {1, 1}, 0, true, 1
+	shown.info.render, shown.mesh, shown.material, shown.blended, shown.info.blend = .Mesh, f.cube_range, 1, true, .Alpha
+	shown.info.lifetime, shown.info.size, shown.info.soft, shown.info.emission_mode, shown.info.intensity = {10, 10}, {1, 1}, 0, .Relative, 1
 	faded := shown
 	faded.id, faded.transform, faded.previous = 2, trs({1.2, 0, 0}, {1, 1, 1}), trs({1.2, 0, 0}, {1, 1, 1})
-	faded.color = {{1, 1, 1, 0}, {1, 1, 1, 0}}
+	faded.info.colors = {{1, 1, 1, 0}, {1, 1, 1, 0}}
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 8 {
 		shown.spawns = test_burst(1) if i == 0 else {}
@@ -370,7 +372,7 @@ particle_lists_given_between_frames_add_up :: proc(t: ^testing.T) {
 	r := &f.renderer
 	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	emitter := test_emitter(9, {0, 0, 0})
-	emitter.lifetime = {5, 5}
+	emitter.info.lifetime = {5, 5}
 	for i in 0 ..< 3 {
 		emitter.spawns = test_burst(10, u32(i) * 10)
 		testing.expect(t, frame_emitters(f, &f.sync, {emitter}, 1.0 / 60))
@@ -395,7 +397,7 @@ particle_pool_keeps_its_size_when_the_device_refuses_another :: proc(t: ^testing
 	r := &f.renderer
 	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	emitter := test_emitter(4, {0, 0, 0})
-	emitter.lifetime = {5, 5}
+	emitter.info.lifetime = {5, 5}
 	emitter.spawns = test_burst(10)
 	// A world whose first capacity the device refuses has no pool, and says so.
 	testing.expect(t, !frame_emitters(f, &f.sync, {emitter}, 1.0 / 60, max(u32)))
@@ -428,11 +430,11 @@ particle_events_start_once_when_lists_come_between_frames :: proc(t: ^testing.T)
 	r := &f.renderer
 	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	flash := test_emitter(1, {0, 0, 0})
-	flash.lifetime = {0.02, 0.02}
-	flash.event, flash.event_target, flash.event_count = .Death, 2, 3
+	flash.info.lifetime = {0.02, 0.02}
+	flash.info.trigger, flash.event_target, flash.info.sub_count = .Death, 2, 3
 	flash.spawns = test_burst(8)
 	sparks := test_emitter(2, {0, 0, 0})
-	sparks.lifetime = {5, 5}
+	sparks.info.lifetime = {5, 5}
 	testing.expect(t, frame_emitters(f, &f.sync, {flash, sparks}, 1.0 / 60))
 	testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
 	flash.spawns = {}
@@ -458,10 +460,10 @@ particle_births_start_at_their_instant :: proc(t: ^testing.T) {
 	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	DT :: f32(1.0 / 60)
 	burst := test_emitter(1, {0, 0, 0})
-	burst.lifetime = {0.1, 0.1}
+	burst.info.lifetime = {0.1, 0.1}
 	burst.spawns = test_burst(20)
 	spread := test_emitter(2, {1, 0, 0})
-	spread.lifetime = {0.4, 0.4}
+	spread.info.lifetime = {0.4, 0.4}
 	// Ages 0.375, 0.35 ... 0 at the end of the first frame: fifteen of them before it.
 	spread.spawns[0] = {count = 16, per = 1, age = 0.375, spacing = 0.025}
 	testing.expect(t, frame_emitters(f, &f.sync, {burst, spread}, DT))
@@ -504,7 +506,7 @@ particle_long_frames_take_several_steps :: proc(t: ^testing.T) {
 	r := &f.renderer
 	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	emitter := test_emitter(1, {0, 0, 0})
-	emitter.lifetime = {0.115, 0.115}
+	emitter.info.lifetime = {0.115, 0.115}
 	// Twenty-five births 0.01 s apart over a frame of 0.25 s: those born in its last 0.115 s live.
 	emitter.spawns[0] = {count = 25, per = 1, age = 0.24, spacing = 0.01}
 	testing.expect(t, frame_emitters(f, &f.sync, {emitter}, 0.25))
@@ -532,10 +534,10 @@ particle_generations_restart_and_pauses_hold :: proc(t: ^testing.T) {
 	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	DT :: f32(1.0 / 60)
 	held := test_emitter(1, {0, 0, 0})
-	held.lifetime = {0.1, 0.1}
+	held.info.lifetime = {0.1, 0.1}
 	held.spawns = test_burst(10)
 	again := test_emitter(2, {1, 0, 0})
-	again.lifetime = {5, 5}
+	again.info.lifetime = {5, 5}
 	again.spawns = test_burst(7)
 	testing.expect(t, frame_emitters(f, &f.sync, {held, again}, DT))
 	testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
@@ -564,10 +566,10 @@ particle_worlds_keep_their_own_pools :: proc(t: ^testing.T) {
 	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	DT :: f32(1.0 / 60)
 	edit := test_emitter(5, {0, 0, 0})
-	edit.lifetime = {5, 5}
+	edit.info.lifetime = {5, 5}
 	edit.spawns = test_burst(11)
 	play := test_emitter(5, {0, 0, 0}) // the same id, in another world
-	play.lifetime = {5, 5}
+	play.info.lifetime = {5, 5}
 	play.spawns = test_burst(4)
 	other: Particle_Sync
 	defer particle_sync_free(&other)
@@ -617,9 +619,9 @@ particle_programs_move_and_keep_their_particles :: proc(t: ^testing.T) {
 	if program == nil {return}
 	testing.expect(t, program.attributes > 0 && program.attributes <= erender.PARTICLE_ATTRIBUTE_BYTES)
 	ring := test_emitter(1, {0, 0, 0})
-	ring.capacity, ring.lifetime, ring.size = 256, {5, 5}, {0.15, 0.15}
-	ring.shape, ring.shape_size, ring.shell = .Circle, {1, 1, 1}, 1
-	ring.acceleration = {0, -9.8, 0}
+	ring.capacity, ring.info.lifetime, ring.info.size = 256, {5, 5}, {0.15, 0.15}
+	ring.info.shape, ring.info.shape_size, ring.info.shell = .Circle, {1, 1, 1}, 1
+	ring.info.acceleration = {0, -9.8, 0}
 	// Its speed is a value of the instance, as a game gives it; a name the program does not declare is refused.
 	info := effect.PARTICLE_DEFAULTS
 	base.text_set(info.program[:], "Orbit")
@@ -666,8 +668,8 @@ particle_surface_shape_starts_particles_on_its_mesh :: proc(t: ^testing.T) {
 	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}},true)
 	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	shell := test_emitter(1, {-2.5, 2, 0})
-	shell.capacity, shell.lifetime, shell.size = 512, {5, 5}, {0.12, 0.12}
-	shell.shape = .Surface
+	shell.capacity, shell.info.lifetime, shell.info.size = 512, {5, 5}, {0.12, 0.12}
+	shell.info.shape = .Surface
 	box := trs({1.2, 0.5, 0}, {0.8, 0.8, 0.8})
 	shell.resources = test_resources(&f.sync, {kind = .Surface, mesh = f.cube, triangles = f.cube_range.x / 3, transform = box, previous = box})
 	DT :: f32(1.0 / 60)
@@ -706,9 +708,9 @@ particle_programs_follow_a_surface_that_moves :: proc(t: ^testing.T) {
 	program := erender.program_find(&f.assets, "Stick", .Vfx)
 	if !testing.expect(t, program != nil && len(program.resources) == 1 && program.resources[0].kind == .Surface, "testdata has the Vfx program Stick, which reads a surface") {return}
 	sticky := test_emitter(1, {0, 3, 0})
-	sticky.capacity, sticky.lifetime, sticky.size = 512, {5, 5}, {0.12, 0.12}
+	sticky.capacity, sticky.info.lifetime, sticky.info.size = 512, {5, 5}, {0.12, 0.12}
 	sticky.program = {id = program.id, parameters = transmute([16][4]f32)erender.program_defaults(program), attributes = u32(program.attributes)}
-	base.text_set(sticky.program.name[:], program.name)
+	base.text_set(sticky.info.program[:], program.name)
 	DT :: f32(1.0 / 60)
 	place :: proc(x: f32) -> matrix[4, 4]f32 {return trs({x, 0.5, 0}, {0.6, 0.6, 0.6})}
 	for i in 0 ..< 40 {
@@ -747,8 +749,8 @@ particle_channel_births_start_where_the_game_says :: proc(t: ^testing.T) {
 	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}},true)
 	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	impacts := test_emitter(1, {0, 3, 0})
-	impacts.capacity, impacts.lifetime, impacts.size = 512, {5, 5}, {0.15, 0.15}
-	impacts.shape, impacts.shape_size = .Sphere, {0.1, 0.1, 0.1}
+	impacts.capacity, impacts.info.lifetime, impacts.info.size = 512, {5, 5}, {0.15, 0.15}
+	impacts.info.shape, impacts.info.shape_size = .Sphere, {0.1, 0.1, 0.1}
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 8 {
 		clear(&f.sync.births)
@@ -788,11 +790,11 @@ particle_reports_tell_the_game_of_deaths_and_hits :: proc(t: ^testing.T) {
 		gpu.scene_update(r, 0, {{object_id = 1, mesh = f.cube, transform = trs({0, -0.6, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}}, true)
 		camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 		brief := test_emitter(1, {0, 0, 0})
-		brief.lifetime, brief.report, brief.owner = {0.05, 0.05}, .Death, core.Entity(77)
+		brief.info.lifetime, brief.info.report, brief.owner = {0.05, 0.05}, .Death, core.Entity(77)
 		// Thrown over the floor, each dies at its first hit: one report each.
 		falls := test_emitter(2, {-1.5, 0, 0})
-		falls.lifetime, falls.velocity, falls.acceleration = {5, 5}, {{2, 0, 0}, {2, 0, 0}}, {0, -9.8, 0}
-		falls.collision, falls.collision_life, falls.report, falls.owner = .World, 1, .Collision, core.Entity(78)
+		falls.info.lifetime, falls.info.velocity, falls.info.acceleration = {5, 5}, {{2, 0, 0}, {2, 0, 0}}, {0, -9.8, 0}
+		falls.info.collision, falls.info.collision_life, falls.info.report, falls.owner = .World, 1, .Collision, core.Entity(78)
 		reports: Particle_Reports
 		defer particle_reports_free(&reports)
 		heard: [2]int
@@ -894,12 +896,12 @@ particle_bones_and_surface_shapes_start_particles_on_the_posed_skin :: proc(t: ^
 	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}},true)
 	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	along := test_emitter(1, {-2.5, 2, 0})
-	along.capacity, along.lifetime, along.size = 512, {5, 5}, {0.12, 0.12}
-	along.shape, along.shape_size = .Bones, {0, 0, 0}
+	along.capacity, along.info.lifetime, along.info.size = 512, {5, 5}, {0.12, 0.12}
+	along.info.shape, along.info.shape_size = .Bones, {0, 0, 0}
 	along.resources = test_resources(&f.sync, bone)
 	onto := test_emitter(2, {2.5, 2, 0})
-	onto.capacity, onto.lifetime, onto.size = 512, {5, 5}, {0.12, 0.12}
-	onto.shape = .Surface
+	onto.capacity, onto.info.lifetime, onto.info.size = 512, {5, 5}, {0.12, 0.12}
+	onto.info.shape = .Surface
 	onto.resources = test_resources(&f.sync, {kind = .Surface, mesh = posed, triangles = f.cube_range.x / 3, transform = identity, previous = identity})
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 8 {
@@ -978,12 +980,9 @@ test_frame_read :: proc(t: ^testing.T, f: ^Gpu_Fixture, emitters: []Emitter_Desc
 // resources and stages, as particles_sync gives them.
 @(private = "file")
 test_program :: proc(t: ^testing.T, f: ^Gpu_Fixture, desc: ^Emitter_Desc, name: string, resources: ..Resource_Desc) -> bool {
-	info: effect.Particle_Info
-	base.text_set(info.program[:], name)
+	base.text_set(desc.info.program[:], name)
 	needs: Program_Needs
-	program: Program
-	if !testing.expectf(t, particle_program_check(&f.assets, &info, nil, nil, &program, &needs) == "", "testdata has the Vfx program %s", name) {return false}
-	desc.program = program
+	if !testing.expectf(t, particle_program_check(&f.assets, &desc.info, nil, nil, &desc.program, &needs) == "", "testdata has the Vfx program %s", name) {return false}
 	rows: [RESOURCE_ROWS]Resource_Desc
 	copy(rows[1:], resources)
 	desc.resources = test_resources(&f.sync, ..rows[:])
@@ -1064,7 +1063,7 @@ particle_splats_go_into_a_grid_that_particles_sample :: proc(t: ^testing.T) {
 	// Cells of half a metre; the middle of cell (1, 0, 0) is at x 0.75.
 	grid := test_grid(f, "heat", {4, 1, 1}, 0.5, 1, {-2, 0, 0})
 	hot := test_emitter(1, {0.75, 0.25, 0.25})
-	hot.capacity, hot.lifetime = 64, {5, 5}
+	hot.capacity, hot.info.lifetime = 64, {5, 5}
 	if !test_program(t, f, &hot, "Spread", Resource_Desc{kind = .Grid, first = grid}) {return}
 	hot.program.parameters[0][0] = 1
 	DT :: f32(1.0 / 60)
@@ -1190,7 +1189,7 @@ particle_lights_light_the_scene_and_cast_shadows :: proc(t: ^testing.T) {
 	},true)
 	camera := gpu.Camera{position = {0, 6, 0.01}, forward = {0, -6.9, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	spark := test_emitter(1, {0, 0.3, 0})
-	spark.lifetime, spark.size, spark.lights, spark.light, spark.shadows = {10, 10}, {0.02, 0.02}, 4, {5, 2.5, 0.05}, true
+	spark.info.lifetime, spark.info.size, spark.info.lights, spark.info.light_intensity, spark.info.light_range, spark.info.light_radius, spark.info.light_shadows = {10, 10}, {0.02, 0.02}, 4, 5, 2.5, 0.05, true
 	spark.spawns = test_burst(4)
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 6 {
@@ -1228,7 +1227,7 @@ particle_lights_grow_the_light_buffers_before_the_room_goes_up :: proc(t: ^testi
 	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.5, 0.5, 0.5}}},true)
 	camera := gpu.Camera{position = {0, 6, 0.01}, forward = {0, -6.9, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	spark := test_emitter(1, {0, 0.3, 0})
-	spark.lifetime, spark.size, spark.lights, spark.light = {10, 10}, {0.02, 0.02}, 40, {5, 2.5, 0.05}
+	spark.info.lifetime, spark.info.size, spark.info.lights, spark.info.light_intensity, spark.info.light_range, spark.info.light_radius = {10, 10}, {0.02, 0.02}, 40, 5, 2.5, 0.05
 	spark.spawns = test_burst(40)
 	for i in 0 ..< 3 {
 		testing.expect(t, frame_emitters(f, &f.sync, {spark}, 1.0 / 60))
@@ -1259,10 +1258,10 @@ particle_lights_without_shadows_light_through_what_stands_in_their_way :: proc(t
 	},true)
 	camera := gpu.Camera{position = {0, 6, 0.01}, forward = {0, -6.9, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	spark := test_emitter(1, {0, 0.3, 0})
-	spark.lifetime, spark.size, spark.lights, spark.light = {10, 10}, {0.02, 0.02}, 4, {5, 2.5, 0.05}
+	spark.info.lifetime, spark.info.size, spark.info.lights, spark.info.light_intensity, spark.info.light_range, spark.info.light_radius = {10, 10}, {0.02, 0.02}, 4, 5, 2.5, 0.05
 	spark.spawns = test_burst(4)
 	away := test_emitter(2, {40, 0.3, 0})
-	away.lifetime, away.size, away.lights, away.light, away.shadows = {10, 10}, {0.02, 0.02}, 2, {5, 2.5, 0.05}, true
+	away.info.lifetime, away.info.size, away.info.lights, away.info.light_intensity, away.info.light_range, away.info.light_radius, away.info.light_shadows = {10, 10}, {0.02, 0.02}, 2, 5, 2.5, 0.05, true
 	away.spawns = test_burst(2)
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 6 {
@@ -1318,7 +1317,7 @@ particle_world_textures_reach_the_materials :: proc(t: ^testing.T) {
 	grids_place(&f.sync.grids, 3)
 	grids_place(&f.sync.grids, 2)
 	tally := test_emitter(1, {0, 0.5, 0})
-	tally.size = {0.01, 0.01}
+	tally.info.size = {0.01, 0.01}
 	if !test_program(t, f, &tally, "Tally", Resource_Desc{kind = .Grid, first = grid}) {return}
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 6 {
@@ -1357,10 +1356,10 @@ particle_collisions_land_on_the_scene_and_slide_by_their_friction :: proc(t: ^te
 	stops := test_emitter(1, {-1.5, 0, 0})
 	slides := test_emitter(2, {-1.5, 0, -1})
 	for e in ([]^Emitter_Desc{&stops, &slides}) {
-		e.lifetime, e.size, e.velocity, e.acceleration = {5, 5}, {0.3, 0.3}, {{2, 0, 0}, {2, 0, 0}}, {0, -9.8, 0}
-		e.collision, e.bounce = .World, 0
+		e.info.lifetime, e.info.size, e.info.velocity, e.info.acceleration = {5, 5}, {0.3, 0.3}, {{2, 0, 0}, {2, 0, 0}}, {0, -9.8, 0}
+		e.info.collision, e.info.bounce = .World, 0
 	}
-	stops.friction, slides.friction = 1, 0
+	stops.info.friction, slides.info.friction = 1, 0
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 90 {
 		stops.spawns = test_burst(4) if i == 0 else {}
@@ -1401,8 +1400,8 @@ particles_that_land_hit_once_per_bounce_and_rest_at_any_frame_rate :: proc(t: ^t
 		camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 		// From 0.45 m over the floor they land at 3 m/s, bounce once at 0.9 m/s and then rest.
 		drop := test_emitter(1, {0, 0, 0})
-		drop.capacity, drop.lifetime, drop.size, drop.acceleration = 128, {5, 5}, {0.1, 0.1}, {0, -9.8, 0}
-		drop.collision, drop.bounce, drop.collision_life, drop.report, drop.owner = .World, 0.3, 0.1, .Collision, core.Entity(77)
+		drop.capacity, drop.info.lifetime, drop.info.size, drop.info.acceleration = 128, {5, 5}, {0.1, 0.1}, {0, -9.8, 0}
+		drop.info.collision, drop.info.bounce, drop.info.collision_life, drop.info.report, drop.owner = .World, 0.3, 0.1, .Collision, core.Entity(77)
 		reports: Particle_Reports
 		defer particle_reports_free(&reports)
 		hits := 0
@@ -1442,12 +1441,12 @@ particle_sprites_hand_their_data_to_the_program_of_their_material :: proc(t: ^te
 	camera := gpu.Camera{position = {0, 0, 4}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	given := test_emitter(1, {-1, 0, 0})
 	plain := test_emitter(2, {1, 0, 0})
-	given.material, given.lifetime = 1, {5, 5}
-	plain.material, plain.lifetime = 1, {5, 5}
+	given.material, given.info.lifetime = 1, {5, 5}
+	plain.material, plain.info.lifetime = 1, {5, 5}
 	program := erender.program_find(&f.assets, "Hand_Over", .Vfx)
 	if !testing.expect(t, program != nil, "testdata has the Vfx program Hand_Over") {return}
 	given.program = {id = program.id, parameters = transmute([16][4]f32)erender.program_defaults(program), attributes = u32(program.attributes)}
-	base.text_set(given.program.name[:], program.name)
+	base.text_set(given.info.program[:], program.name)
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 6 {
 		given.spawns = test_burst(1) if i == 0 else {}
@@ -1590,8 +1589,8 @@ particle_sprites_go_behind_the_fog_of_the_view :: proc(t: ^testing.T) {
 	FRONT :: [3]f32{0.8, 0, -3}
 	behind := test_emitter(1, BEHIND)
 	front := test_emitter(2, FRONT)
-	behind.lifetime, front.lifetime = {5, 5}, {5, 5}
-	behind.intensity, front.intensity = 0.5, 0.5
+	behind.info.lifetime, front.info.lifetime = {5, 5}, {5, 5}
+	behind.info.intensity, front.info.intensity = 0.5, 0.5
 	// Two metres of a medium that stops 1.5 of each metre and scatters nothing: it lets through e^-3.
 	medium := fog.Medium{box = {position = {0, 0, -6}, rotation = 1, scale = {6, 6, 2}}, density = 1.5}
 	state := fog.Fog_Gpu{}
