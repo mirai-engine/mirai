@@ -200,7 +200,10 @@ context_sheet_set :: proc(ctx:^Context,data:Tree_Data) -> bool {
     names=names[:count]
     slice.sort_by(names,proc(a,b:Sheet_Name) -> bool {return a.hash<b.hash})
     sheet_destroy(ctx)
-    ctx.sheet,ctx.sheet_names,ctx.sheet_tokens=tree,names,tokens
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    ctx.sheet=tree
+    ctx.sheet_names=names
+    ctx.sheet_tokens=tokens
     return true
 }
 

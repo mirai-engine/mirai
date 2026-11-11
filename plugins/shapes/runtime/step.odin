@@ -196,7 +196,9 @@ shapes_update :: proc(
                 core.report(problems,e,"shapes.memory","no memory to gather the brushes of the shape: it keeps its previous mesh; free memory or remove brushes")
                 continue
             }
-            key,material,collider=shape_key(shape,cache.gathered[:],body),shape.material,collider_of(&u,e,body)
+            key,material=shape_key(shape,cache.gathered[:],body),shape.material
+            // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+            collider=collider_of(&u,e,body)
         } else {
             entry.place,_=core.world_of(transforms,parents,e)
             if !has_spline || spline.material=={} {
@@ -227,7 +229,8 @@ shapes_update :: proc(
         }
         b:=&cache.builds[used]
         clear(&b.brushes)
-        b.entity,b.body,b.spline,b.material,b.cut_first,b.key,b.collider,b.limits=e,body,entry.spline,material,cut_first,key,collider,limits
+        b.entity,b.body,b.spline,b.material,b.cut_first,b.key,b.limits=e,body,entry.spline,material,cut_first,key,limits
+        b.collider=collider
         if entry.spline {
             ribbon_lay(q,&spline,entry.place,&b.geometry)
         } else if append(&b.brushes,..cache.gathered[:])!=len(cache.gathered) {

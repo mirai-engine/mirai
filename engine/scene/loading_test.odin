@@ -386,6 +386,9 @@ the_sections_loading_tell_how_far_they_are :: proc(t:^testing.T) {
     defer {for l in loads.items {if l.job!=nil {load_free(l.job)}}}
     step :: proc(p:^Loading_Project,world:core.World_Ref,requests:^Section_Requests,loads:^Section_Loads,loading:^Section_Loading,problems:^core.Problems) {
         p.app.stats.frames+=1
+        // A frame with time to spare: what it takes is decided by bytes, not by how loaded the machine is.
+        b:=&p.assets.loads
+        b.frame,b.seconds,b.bytes,b.served=p.app.stats.frames,-3600,0,0
         w:=cast(^Loading_World)world.data
         scene_sections(world,&p.app,&w.references,requests,loads,loading,{},{},nil,problems)
         core.settle(&p.info,w,nil)
