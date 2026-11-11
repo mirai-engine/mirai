@@ -172,9 +172,11 @@ demo enables. How an `editor/` adds steps, panels and tools:
 
 - **`paint`** (`Runtime`, `Editor`)
   - Game: `Painted{colors}` names a `.paint`, the colors of the entity over the shared mesh its
-    `Mesh_Renderer` shows: one per vertex by index in the mesh (cluster order, every level). The
-    runtime gives them to the instance through `engine/render` (`colors_load`,
-    `instance_colors_set`); the mesh and its levels stay shared and untouched.
+    `Mesh_Renderer` shows: one per vertex by index in the mesh (cluster order, every level), with
+    the position of each and the content hash of the mesh file painted on. The runtime gives them
+    to the instance through `engine/render` (`colors_load`, `instance_colors_set`); the mesh and
+    its levels stay shared and untouched. Colors of another number of vertices than the mesh has
+    are not shown and reported as `paint.mismatch`.
   - Editor: vertex color brush that writes a `.paint` per stroke. API: [Paint](#paint).
 - **`terrain`** (`Runtime`, `Editor`, `Shaders`, `Assets`)
   - Game: `Terrain{source, revision, solid}` and `terrain_update`. Heightfield or Volume
@@ -250,6 +252,8 @@ Vertex color brush (shortcut **B**, code in `paint_editor.odin` and `canvas.odin
   a `.paint`, a file of the stroke step (`editor.file_write`) that `Painted` names: it stays in
   memory until Save, undo and cancel remove it, and the next stroke reads it through
   `host.assets_file`. Another entity of the same mesh keeps its own colors.
+- A `.paint` whose mesh file changed (imported again) follows it: `paint_fit` gives each vertex
+  the color of the nearest painted position and writes it in memory, saved with the next Save.
 - A stroke stamps the brush by distance in the world onto the vertices, with a soft falloff up to
   the radius, and each vertex keeps the maximum of its stamps: passing twice in one stroke paints
   once.
@@ -267,6 +271,7 @@ Vertex color brush (shortcut **B**, code in `paint_editor.odin` and `canvas.odin
 - `paint/editor`: unsaved colors that go with undo and cancel, every level painted, and stroke
   and clear by API (`painted_colors_stay_in_memory_until_saved_and_go_with_undo_and_cancel`,
   `a_stroke_paints_every_level_of_a_mesh_two_entities_share`,
-  `paint_api_strokes_along_points_and_clears_as_steps_of_undo`); drawn at every level, per
-  instance: `gpu_instances_of_one_mesh_draw_their_own_colors_at_every_level` (`render`). The
-  stroke with the pointer is verified by the user.
+  `paint_api_strokes_along_points_and_clears_as_steps_of_undo`,
+  `paint_follows_its_mesh_imported_again_with_its_vertices_in_another_order`); drawn at every
+  level, per instance: `gpu_instances_of_one_mesh_draw_their_own_colors_at_every_level`
+  (`render`). The stroke with the pointer is verified by the user.
