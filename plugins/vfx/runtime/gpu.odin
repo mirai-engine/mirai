@@ -257,7 +257,6 @@ Pool_Buffer :: enum u8 {Particles,Lists,State,Events,Data}
 
 EVENTS_AT :: 256 // bytes of the events buffer before the events
 
-@(private)
 pool_buffer :: proc "contextless" (pool:^Pool,b:Pool_Buffer) -> erender.Buffer_Desc {
     count:=u64(max(pool.capacity,1))
     switch b {
@@ -1099,7 +1098,6 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
     world_textures_write(sync,pass)
     if pool.reports {erender.pass_readback(pass,events,REPORTS_AT,reports_readback())}
     data_readback(sync,pass,u32(pool.frame&1))
-    watch_copy(sync,pass)
     // Started: a frame simulated without a new list moves what there is and starts nothing.
     for &s in pool.slots[:pool.slot_end] {
         if !s.live {continue}

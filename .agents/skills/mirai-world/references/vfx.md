@@ -431,8 +431,9 @@ To the GPU:
   of its program have (in the pool or in the emitter table) and filters those of others; events are
   dispatched only for the programs of some destination emitter. The spans and pipelines are looked
   up again when a range, a program or a destination, or the shaders change.
-- `particle.instance.inspect` copies the particles of the emitter it looks at
-  (`Particle_Sync.watch`) with their Attributes, to debug a program.
+- `particle.instance.inspect` copies the particles of the emitter it looks at with their
+  Attributes, to debug a program: the editor part asks for that readback in a `Simulate` pass of
+  its own (`editor/watch.odin`), so a game binary has none of it.
 - The resource functions of `mirai_vfx.slang` are defined by `particle_programs.slang` over the
   emitter's resource rows (`ctx.emitter`), the areas buffer and the frame's channel births.
 

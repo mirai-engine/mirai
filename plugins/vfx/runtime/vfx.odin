@@ -94,7 +94,6 @@ Particle_Sync :: struct {
     started:[dynamic]Channel_Started,
     world:u64,         // as the renderer names it (erender.world_key)
     world_id:core.World_Id,
-    watch:u64,         // the emitter whose particles the GPU copies back each frame for the editor (watched); 0: none
     pool:Pool,
     surfaces:Surfaces,
     grids:Grids,
