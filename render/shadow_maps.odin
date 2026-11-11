@@ -87,14 +87,10 @@ Shadow_Want :: struct {
 // How much of the view a light lights: the share of the screen its sphere
 // covers, 0 outside the frustum.
 @(private)
-shadow_light_share :: proc(light: Gpu_Light, eye, forward: Vec3, tan_y, aspect: f32, frustum: [6]Vec4, orthographic: bool, height: f32) -> f32 {
+shadow_light_share :: proc(light: Gpu_Light, eye, forward: Vec3, tan_y, aspect: f32, frustum: [6]Vec4) -> f32 {
 	c, range := light.position_range.xyz, light.position_range.w
 	if range <= 0 {return 0}
 	for plane in frustum {if linalg.dot(plane.xyz, c) + plane.w < -range {return 0}}
-	if orthographic {
-		r := range / max(0.5 * height, 1e-3)
-		return min(math.PI * r * r / (4 * aspect), 1)
-	}
 	d := linalg.length(c - eye)
 	if d <= range {return 1}
 	r := range / math.sqrt(d * d - range * range) / max(tan_y, 1e-4)
@@ -298,11 +294,12 @@ shadow_maps_plan :: proc(p: ^Pass) -> (maps: Shadow_Maps, ok: bool) {
 		return false
 	}
 	for light, i in s.lights {
+		if orthographic {break}
 		// A light turned off casts no shadow and takes no room of the atlas.
 		if !(light.color_intensity.w > 0) || !(max(light.color_intensity.x, light.color_intensity.y, light.color_intensity.z) > 0) {continue}
-		share := shadow_light_share(light, eye, forward, tan_y, aspect, p.frame.frustum, orthographic, camera.height)
+		share := shadow_light_share(light, eye, forward, tan_y, aspect, p.frame.frustum)
 		keep := SHADOW_RASTER_KEEP if was(b, i) else SHADOW_RASTER_SHARE
-		if orthographic || share < keep {continue}
+		if share < keep {continue}
 		at := picked
 		for at > 0 && shares[at - 1] < share {at -= 1}
 		if at >= SHADOW_RASTER_LIGHTS {continue}
