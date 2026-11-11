@@ -31,7 +31,7 @@ Pose_Scratch :: struct {
 // What the pose of a rig could not do in its job; animation_tick reports it.
 Pose_Faults :: struct {
     program,mirror,memory:bool,
-    layer_bone,layer_reference:u16, // a bit a slot of the stack
+    layer_reference:u16, // a bit a slot of the stack
 }
 
 // An entity of a tick between its clocks, which run in order on the owner thread, and what
@@ -204,9 +204,6 @@ pose_rows_run :: proc(playback:^Playback,transforms:^core.Table(core.Transform,$
 pose_faults_report :: proc(problems:^core.Problems,e:core.Entity,faults:Pose_Faults,actions:^Action_Runtime=nil) {
     if faults.memory {memory_problem(problems,e,"the blend of its clips")}
     for i in 0..<STACK_SLOTS {
-        if faults.layer_bone&(u16(1)<<u16(i))!=0 {
-            core.report(problems,e,"animation.layer_bone","layer '%s' of the .character of this entity plays over a bone, or a part or region of the body, that this rig does not have, so it plays nothing; give its over one of its bones, a part or region of its body (@upper_body), or none",stack_slot_name(actions,e,i))
-        }
         if faults.layer_reference&(u16(1)<<u16(i))!=0 {
             core.report(problems,e,"animation.layer_reference","layer '%s' of the .character of this entity adds its clip over a reference clip its animation does not have, so it plays nothing; give its reference_clip the name of one of its clips, or none to subtract the clip that plays",stack_slot_name(actions,e,i))
         }
