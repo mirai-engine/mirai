@@ -344,7 +344,7 @@ a_spline_samples_only_valid_points_and_lies_on_the_ground :: proc(t:^testing.T) 
     bad_height.points[1].height=max(f32)
     too_many.count=SPLINE_POINTS+1
     for c in ([]Case{
-        {"two points",SPLINE_DEFAULT,true},{"none",{},false},{"one",{count=1,points={0={{0,0,0},1,0}}},false},
+        {"two points",SPLINE_DEFAULT,true},{"none",{},false},{"one",{count=1,points={0={{0,0,0},1,0,0}}},false},
         {"no width",bad_width,false},{"not a number",bad_point,false},{"too high",bad_height,false},{"too many",too_many,false},
     }) {
         s:=c.spline
@@ -354,7 +354,7 @@ a_spline_samples_only_valid_points_and_lies_on_the_ground :: proc(t:^testing.T) 
         testing.expectf(t,reaches==c.samples,"%s: its reach",c.name)
     }
     // Its reach holds every sample of its curve with its width, at any height.
-    curve:=Spline{count=4,points={0={{0,0,0},2,0},1={{6,0,-4},1,0},2={{0,0,-8},1,0},3={{6,0,-12},4,0}}}
+    curve:=Spline{count=4,points={0={{0,0,0},2,0,0},1={{6,0,-4},1,0,0},2={{0,0,-8},1,0,0},3={{6,0,-12},4,0,0}}}
     turned:=mm.Transform{{10,-3,5},mm.quat_axis_angle({0,1,0},0.7),{2,1,2}}
     reach,_:=spline_reach(&curve,turned)
     out:[256]mm.Path_Point

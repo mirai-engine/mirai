@@ -59,19 +59,25 @@ fluids_follow_their_rows_their_volumes_and_their_entities :: proc(t:^testing.T) 
     core.remove(&f.fluids,room)
     physics_test_step(&f,0)
     testing.expect_value(t,f.state.world.fluid_count,1)
-    // A Spline makes its Fluid water along it, as deep as its height, with the current in its frame.
+    // A Spline makes its Fluid water along it, as deep as the height of its points, flowing at their speed.
     river:=core.create(&f.entities)
-    core.add(&f.fluids,river,Fluid{density=1000,current={0,0,-1.5}})
-    core.add(&f.splines,river,volume.Spline{count=2,points={0={{100,4,0},3,1},1={{88,3,0},3,1}}})
+    core.add(&f.fluids,river,Fluid{density=1000,current={0.5,0,0}})
+    core.add(&f.splines,river,volume.Spline{count=2,points={0={{100,4,0},3,1,1.5},1={{88,3,0},3,1,1.5}}})
     physics_test_step(&f,0)
     sample,entity,ok=fluid_at({&f.state},{94,4,0})
     testing.expect(t,ok && entity==river && abs(sample.height-4.5)<0.05 && sample.density==1000)
-    testing.expectf(t,sample.current.x< -1.4,"it flows down its path: %v",sample.current)
+    testing.expectf(t,abs(sample.current.x+1.5)<0.05 && abs(sample.current.z+0.5)<0.01,"it flows down its path and across to its right: %v",sample.current)
     _,entity,_=fluid_at({&f.state},{94,4,3})
     testing.expect(t,entity!=river,"past its banks")
     core.edit(&f.splines,river).points[1].width=0
+    along:=core.create(&f.entities)
+    core.add(&f.fluids,along,Fluid{density=1000,current={0,0,-1}})
+    core.add(&f.splines,along,volume.Spline{count=2,points={0={{200,4,0},3,1,0},1={{188,3,0},3,1,0}}})
     physics_test_step(&f,0)
-    testing.expect(t,core.problem_find(&f.problems,river,"physics.fluid_path")!=nil && f.state.world.fluid_count==1,"a sample without width is a problem")
+    for e in ([2]core.Entity{river,along}) {
+        testing.expectf(t,core.problem_find(&f.problems,e,"physics.fluid_path")!=nil,"a point without width, or a current along the path, is a problem: %v",e)
+    }
+    testing.expect_value(t,f.state.world.fluid_count,1)
 }
 
 // A fluid fills a plane or a box: without a Volume, in one of another shape, dry in a plane or in a box

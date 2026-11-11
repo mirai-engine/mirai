@@ -16,9 +16,10 @@ $P scene.write '{"merge":true,"entities":[
   {"name":"Pond","position":[30,0,10],"components":{
     "Volume":{"shape":"Box","extents":[6,1.5,4]},"Fluid":{"density":1000},"Water":{}}},
   {"name":"Creek","position":[30,0,-10],"components":{
-    "Fluid":{"density":1000,"current":[0,0,-1.5]},"Water":{},
-    "Spline":{"count":3,"points":[{"position":[0,0,0],"width":3,"height":1},
-      {"position":[6,0,-10],"width":3,"height":1},{"position":[0,0,-20],"width":4,"height":1.2}]}}}]}'
+    "Fluid":{"density":1000},"Water":{},
+    "Spline":{"count":3,"points":[{"position":[0,0,0],"width":3,"height":1,"speed":1.5},
+      {"position":[6,0,-10],"width":3,"height":1,"speed":2.5},
+      {"position":[0,0,-20],"width":4,"height":1.2,"speed":1}]}}}]}'
 ```
 
 - A `Plane` volume is every point below the height of its entity, to the horizon: a sea. A `Box`
@@ -26,9 +27,11 @@ $P scene.write '{"merge":true,"entities":[
   walls, with its top face as the surface: a lake whose box fills its basin up to the water level,
   or a pool. Only its surface is drawn: the ground or a basin around it are its walls.
 - A river is a `Fluid` on a `Spline` ([splines](splines.md)) instead of a `Volume`:
-  the spline lies on the ground, and its water is the `height` of each point deep over it and as
-  wide as the point, level across. The `current` of the `Fluid` is in the frame of the path: `-z`
-  flows toward its last point, and what floats drifts with it. It ends at its first and last point.
+  each point lies on the ground, and its water is the `height` of the point deep over it and as
+  wide as the point, level across, flowing toward the last point at the `speed` of the point; what
+  floats drifts with it. Its surface never rises from the first point to the last. The `current`
+  of the `Fluid` adds a flow across (`x`, to its right) and up; its `z` stays 0. It ends at its
+  first and last point. A body in two waters at once, across the mouth of a river, floats in both.
   Where it runs into a lake or the sea, the one the physics takes there by `priority` is drawn (a
   `Volume` on the river gives only its priority).
 - Density 1000 is fresh water, 1025 the sea; 0 is a dry box, the air of a room under the sea: give
@@ -67,7 +70,7 @@ $P scene.write '{"merge":true,"entities":[{"name":"Valley mist","position":[0,0,
 - A `Fluid` without a `Volume`, in a sphere or the whole world, or with density 0 in a `Plane`, is
   not made (`physics.fluid`). Two fluids that meet at the same `priority`: `physics.fluid_overlap`.
 - `Fluid_Waves` on a `Box` or a river makes no waves: the problem `physics.fluid_waves`.
-- A river whose points have no width or no height, or sit at the same place seen from above, is
-  not made (`physics.fluid_path`).
+- A river whose points have no width or no height, or sit at the same place seen from above, or
+  whose `Fluid` has a `current` along it (`z`), is not made (`physics.fluid_path`).
 - A fog that hides the whole view is a `density` too high: lower it before touching exposure
   ([exposure.md](exposure.md)).
