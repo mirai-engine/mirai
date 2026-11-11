@@ -150,8 +150,8 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   than a follower plans again, or a way read from it crossed a polygon that expired: a tile built
   elsewhere does not touch it. One it does not reach (cut off, or beyond what the search holds)
   searches its own way. While the target moves, the end of each follower's corridor slides after it
-  over the surface; a follower plans again only once a wall stops that end short of the target. Those that fly, swim or cross between spaces, and a way
-  into a far section, search alone.
+  over the surface; a follower plans again only once a wall stops that end short of the target.
+  Those that fly, swim or cross between spaces, and a way into a far section, search alone.
 - `navigation_agents` (`fixed`, `apply`, `server`): searches paths in portions in arrival order
   within `path_iterations` per tick, moves the corridor to where the body is, goes to the next
   corner, steps aside from the others with ORCA (characters that do not navigate, obstacles and
