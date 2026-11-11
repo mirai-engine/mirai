@@ -274,8 +274,13 @@ Water is not simulated: it is an analytic volume with a queryable surface, deter
 the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws it.
 
 - `fluid_create`, `fluid_set` and `fluid_destroy` (`Fluid_Desc`): a `Plane` (everything below the
-  height of its position, an ocean) or a `Box` rotated only in yaw, whose top face is the surface;
-  density, current in the volume frame and priority.
+  height of its position, an ocean), a `Box` rotated only in yaw whose top face is the surface (a
+  lake, a pool), or a `Path` (a river): the samples of a curve that `fluid_create` and `fluid_set`
+  copy, each with its width and its height as depth, level across, ending at its ends. Density,
+  current (in the frame of the box, or of the path: -Z along it toward its end) and priority. The
+  integration makes a `Fluid` with a `volume.Spline` on its entity a path: it samples the spline
+  and lays it on the ground with the procedures of the `Spline`, and does it again when the spline
+  or its place changes, or when a box of `core.Ground_Queries.changed` overlaps its reach.
   - With zero density it is a dry box: it removes the lowest-priority fluid where it is (a base
     under the sea). Flooding a room is raising the floor of its air with `fluid_set`.
   - A fluid does not overlap another one, nor a dry box another dry box; where they would, the one
@@ -287,7 +292,7 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
 - **A single surface query.** `fluid_surface_at` (private) is the only place that knows the shape of
   the surface: the height and the normal over (x, z), with the waves of the plane at the world's
   time. All readers follow it.
-  - **Waves** (`Fluid_Desc.waves`, only of a plane; a box with waves is not created): a sum of
+  - **Waves** (`Fluid_Desc.waves`, of a plane or a box): a sum of
     Gerstner waves (`fluid_waves.odin`). The time is `world_time`, the seconds the world advanced,
     which go in the snapshot: a rollback returns to the same waves. `wave_terms` gives each wave at
     a time, with the phase reduced in f64 from a nearby origin (near the world center or far, early
@@ -296,7 +301,8 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
     inclination (`steepness`) is clipped so that the sum of k·A does not pass `WAVE_FOLD`: the
     surface never folds and Newton converges. The water shaders evaluate their twin in Slang on the
     same terms.
-  - What the plane reaches with its crests enters its box (`fluid_bounds`).
+  - What the crests reach enters the box of the volume (`fluid_bounds`), and so does what the slope
+    of a box raises and lowers.
   - `fluid_sample(w,point)` gives over it the height, the normal, the current and the density at the
     point: the surface over a wet point, the one below for a dry one, or the underside of the water
     (normal downward) for a point under all of it.

@@ -1,18 +1,22 @@
 package core
 
+import "mirai:std/base"
+
 // Births of effects by channel, for whoever draws them without knowing who
 // asks: the library that asks pushes them to the queue, and the one that draws
 // effects (vfx) takes them in the next fixed step and starts, at each, the
 // particles of the emitters that listen to its channel. A birth to a channel
 // nobody listens to is let go.
 
-// A channel of births: an id with a name declared in code (core/names.odin).
-// The engine and its plugins declare theirs below CHANNEL_GAME, a game its own
-// from it: CHANNEL_IMPACTS :: core.Birth_Channel(16).
-@(names="CHANNEL_")
-Birth_Channel :: distinct u16
-CHANNEL_NONE :: Birth_Channel(0)
-CHANNEL_GAME :: 16 // the first value of a channel of a game
+// A channel of births is a name (birth_channel): whoever pushes and whoever
+// listens say the same text, as the data channels of vfx are named, and
+// nobody hands out ids. 0: none.
+Birth_Channel :: distinct u64
+CHANNEL_NAME_BYTES :: 32 // of a name a component keeps
+
+birth_channel :: proc "contextless" (name:string) -> Birth_Channel {
+    return name=="" ? 0 : Birth_Channel(base.name_hash(name))
+}
 
 // count particles at position, with velocity besides the one their effect
 // gives them, color and size multiplying theirs, and values its programs read

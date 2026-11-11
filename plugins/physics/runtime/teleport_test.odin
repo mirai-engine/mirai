@@ -26,7 +26,7 @@ a_teleport_is_a_jump_by_what_takes_the_body_from_where_it_was :: proc(t:^testing
         &f.state,core.ref(&f.settings),&f.requests,&f.events,&f.meshes,&f.app,{},
         core.read(&f.rigids),core.read(&f.colliders),core.read(&f.characters),core.read(&f.moves),
         &f.joints,core.read(&f.statics),core.read(&f.parents),core.read(&f.names),
-        &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,{},nil,{},{},nil,&jumps,&f.problems,{},{},{},{},{},core.ref(&f.hierarchy),
+        &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,{},nil,{},{},nil,&jumps,&f.problems,{},{},{},{},{},core.ref(&f.hierarchy),{},{},{},
     )
     physics_test_settle(&f)
     testing.expect_value(t,f.state.stats.teleports,u64(1))

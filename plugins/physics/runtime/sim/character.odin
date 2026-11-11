@@ -706,7 +706,7 @@ character_fluid_keep :: proc(w:^World,ch:^Character,body:^Body) #no_bounds_check
     state.submersion=body_submersion(d,body.position.y,column[:count])
     if state.submersion>0 {
         state.fluid+={.In_Fluid}
-        state.fluid_velocity=fluid_current(&w.fluids[fluid])
+        state.fluid_velocity=fluid_current(&w.fluids[fluid],body.position)
     }
     if state.head_depth>0 {state.fluid+={.Underwater}}
 }
