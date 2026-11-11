@@ -868,7 +868,8 @@ object_scope_controls_relevance_radius_and_follows_the_replicated_ancestor :: pr
         if tick==40 {core.add(&world.visibility,seat,Visibility{sees=1})}
         if tick==70 {core.add(&world.visibility,seat,Visibility{})}
         if tick==100 {core.add(&world.visibility,seat,Visibility{sees=1});core.edit(&world.objects,large).radius=10}
-        if tick==120 {core.destroy(&world.entities,parent)}
+        // The child is taken out first: what hangs from parent goes with it.
+        if tick==120 {core.remove(&world.parents,child);core.destroy(&world.entities,parent)}
         if tick==121 {
             replacement=net_test_body(world,&info,4,{100,0,0})
             core.add(&world.objects,replacement,net_test_replicate(audience=.Always))

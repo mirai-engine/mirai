@@ -284,3 +284,28 @@ off_follows_disabled_and_the_tree_from_what_changed :: proc(t:^testing.T) {
     testing.expect(t,w.entities.off[i]==!was,"a settle that hung one child walked other entities")
     w.entities.off[i]=was
 }
+
+// The indices born since a point can be taken back, as the editor's history
+// does: the tree then moves entities past the generations, and their off goes.
+@(test)
+off_follows_the_tree_past_the_indices_taken_back :: proc(t:^testing.T) {
+    w:Tree_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    add(&w.disabled,create(&w.entities),Disabled{})
+    test_world_settle(&w)
+    n:=len(w.entities.generation)
+    top,under:=create(&w.entities),create(&w.entities)
+    add(&w.disabled,top,Disabled{})
+    add(&w.parents,under,Parent{top,0})
+    test_world_settle(&w)
+    testing.expect(t,entity_off(&w.entities,under))
+    remove(&w.disabled,top);remove(&w.parents,under)
+    resize(&w.entities.generation,n)
+    w.entities.alive-=2
+    test_world_settle(&w)
+    testing.expect_value(t,w.entities.disabled,1)
+    again:=create(&w.entities)
+    test_world_settle(&w)
+    testing.expect(t,entity_index(again)==entity_index(top) && !entity_off(&w.entities,again))
+}

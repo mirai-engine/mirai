@@ -133,7 +133,9 @@ entities_activity :: proc(es:^Entities,disabled:^Table(Disabled,$A),hierarchy:Re
     moved,whole:=log_since(hierarchy.moved,&read)
     if !c.written && len(c.gone)==0 && len(moved)==0 && !whole {return true}
     if count(disabled)>0 || es.disabled>0 {
-        if resize(&es.off,len(es.generation))!=nil {return false}
+        // As long as the tree: what it moved may be past the generations, as
+        // after the editor's history took back the indices born since a step.
+        if resize(&es.off,max(len(es.generation),len(hierarchy.parent)))!=nil {return false}
         if c.all || whole {
             activity_whole(es,disabled,hierarchy) or_return
         } else {
@@ -172,7 +174,7 @@ activity_follow :: proc(es:^Entities,disabled:^Table(Disabled,$A),hierarchy:Ref(
 // Makes off of every entity follow Disabled and the hierarchy.
 @(private="file")
 activity_whole :: proc(es:^Entities,disabled:^Table(Disabled,$A),hierarchy:Ref(Hierarchy)) -> bool {
-    n:=len(es.generation)
+    n:=len(es.off)
     if resize(&es.walk,n)!=nil {return false}
     slice.zero(es.walk[:])
     // Below an entity marked everything is marked: its walk stops there.
@@ -191,7 +193,9 @@ activity_whole :: proc(es:^Entities,disabled:^Table(Disabled,$A),hierarchy:Ref(H
     for i in 1..<n {
         off:=es.walk[i]
         if off==es.off[i] {continue}
-        if _,error:=append(&es.turned,entity_make(i,es.generation[i]));error!=nil {return false}
+        if i<len(es.generation) {
+            if _,error:=append(&es.turned,entity_make(i,es.generation[i]));error!=nil {return false}
+        }
         es.off[i]=off
         es.disabled+=off?1:-1
     }
