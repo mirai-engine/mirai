@@ -84,11 +84,13 @@ MATCH_BLEND :: 8
 // goes that fast along its measured direction, or forward. rates, when rates[0] is positive, are
 // the least and most rate it plays at to follow the body in place of those of a search: a set
 // authored slower than it is played (a crouch), or one kept from playing faster than it was made.
-Match_Clip :: struct {clips:[MATCH_BLEND]Clip,weights:[MATCH_BLEND]f32,modes:u32,entry:bool,speed:f32,rates:[2]f32}
+// mirror: its rows are of its pose reflected across the plane of the rig (pose_mirror), left and
+// right swapped, as the program plays it.
+Match_Clip :: struct {clips:[MATCH_BLEND]Clip,weights:[MATCH_BLEND]f32,modes:u32,entry,mirror:bool,speed:f32,rates:[2]f32}
 // The rows of a clip or of a blended sample, with its clips and their weights as shares of 1.
 // speed is how fast the body goes over the ground in it, m/s: that of its root, or for a clip in
-// place the one its feet push at. rates: those of its Match_Clip.
-Match_Range :: struct {clips:[MATCH_BLEND]Clip,weights:[MATCH_BLEND]f32,first,count:i32,modes:u32,loop,entry:bool,speed:f32,travel:math.Vec3,rates:[2]f32}
+// place the one its feet push at. rates and mirror: those of its Match_Clip.
+Match_Range :: struct {clips:[MATCH_BLEND]Clip,weights:[MATCH_BLEND]f32,first,count:i32,modes:u32,loop,entry,mirror:bool,speed:f32,travel:math.Vec3,rates:[2]f32}
 Match_Database :: struct {
     rate:f32,                      // rows per second of each clip
     features:[]simd.f32x4,         // MATCH_LANES per row, normalized
@@ -104,8 +106,9 @@ Match_Database :: struct {
 }
 Match_Build_Error :: enum u8 {None,Invalid,Memory_Limit,Out_Of_Memory}
 // What the features read of a skeleton: bones of the feet and the hips, and
-// the body its clips are measured with. A rig faces -Z.
-Match_Rig :: struct {skeleton:Skeleton,body:Body_Map,left_foot,right_foot,hips:i32}
+// the body its clips are measured with. A rig faces -Z. pairs, corrections and plane mirror it
+// (mirror_prepare); without pairs it has no mirrored clips.
+Match_Rig :: struct {skeleton:Skeleton,body:Body_Map,left_foot,right_foot,hips:i32,pairs:[]i32,corrections:[]math.Quat,plane:Mirror_Plane}
 
 // Where the body goes and went, raw, in the frame of its facing: its velocity now (m/s), where it
 // was MATCH_PAST seconds before, and where it is and faces at each MATCH_HORIZON.
@@ -138,7 +141,8 @@ match_database_bytes :: proc "contextless" (rows,ranges:int,events:=false) -> in
 // of each marker of an event (a landing; each clip names it with one of its own; empty: none):
 // when a clip that is not a blend has one, each row keeps the
 // seconds to the next one of its clip. A clip that does not move the skeleton or lasts a single
-// pose, a blend whose clips do not loop, or a rig without feet and hips gives Invalid; db is
+// pose, a blend whose clips do not loop, a rig without feet and hips, or a mirrored clip of a rig
+// that does not mirror gives Invalid; db is
 // empty after an error.
 match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips:[]Match_Clip,rate:f32,weights:=MATCH_WEIGHTS_DEFAULT,limit:=0,event:[]u32={},allocator:=context.allocator) -> (error:Match_Build_Error) {
     match_database_free(db)
@@ -151,7 +155,7 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
     total,longest:=0,0
     events,blended_any:=false,false
     for c in clips {
-        if !anim_finite(c.speed) || c.speed<0 || !match_rates_valid(c.rates) {return}
+        if !anim_finite(c.speed) || c.speed<0 || !match_rates_valid(c.rates) || c.mirror && len(rig.pairs)!=n {return}
         duration,blended,valid:=match_clip_duration(lib,c)
         if !valid {return}
         count,_:=frames_layout(duration,rate,MAX_FRAMES)
@@ -199,6 +203,12 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
             sum:f32;for w in c.weights {sum+=w}
             for w,k in c.weights {weights[k]=w/sum}
         } else if !skeleton_bind(lib,c.clips[0],skeleton,tracks) || !frames_sample_clip(lib,c.clips[0],tracks,rest,nil,frames) {return}
+        if c.mirror {
+            for frame in 0..<count {
+                pose:=frames_pose(frames,frame)
+                if !pose_mirror(skeleton.parents,rig.pairs,rig.corrections,rig.plane,pose,pose,world[:2*n]) {return}
+            }
+        }
         ground,grounded:=frames_ground(body_rig,frames,world);if !grounded {return}
         rest_world:=world[count*n:][:n]
         root:=int(ground.root)
@@ -213,7 +223,7 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
             speed=c.speed
         }
         motion:=Match_Motion{frames=frames,world=world[:count*n],rest=rest_world,root=root,in_place=ground.in_place,travel=travel}
-        ranges[i]={clips=c.clips if blended else {0=c.clips[0]},weights=weights,first=i32(row),count=i32(count),modes=c.modes,loop=frames.loop,entry=c.entry,speed=speed,travel=travel,rates=c.rates}
+        ranges[i]={clips=c.clips if blended else {0=c.clips[0]},weights=weights,first=i32(row),count=i32(count),modes=c.modes,loop=frames.loop,entry=c.entry,mirror=c.mirror,speed=speed,travel=travel,rates=c.rates}
         for frame in 0..<count {
             values:=&raw[row+frame]
             at:=f32(frame)

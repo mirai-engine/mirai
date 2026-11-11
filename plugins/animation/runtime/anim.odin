@@ -1307,7 +1307,7 @@ animation_motion_clock :: proc(state:^Playing,content:^host.Content_Animation,ou
             if share<=clock.weight || int(leaf.player)>=len(state.program.players) {continue}
             slot:=state.program.players[leaf.player]
             if slot.advanced!=state.program.frame {continue}
-            clock={player=slot.player,from=slot.from,to=slot.to,root=state.program.root,weight=share,active=true}
+            clock={player=slot.player,from=slot.from,to=slot.to,root=state.program.root,weight=share,active=true,mirror=output.mirror}
         }}
         return
     }

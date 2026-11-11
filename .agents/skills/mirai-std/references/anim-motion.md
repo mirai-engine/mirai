@@ -12,6 +12,9 @@ temporal state. The world integration and the authoring are in
   in the frame of the character (its place on the ground and its facing, -Z forward), normalized per
   type so that each type weighs what its weight says. The present and the past say what the body
   did, the future what it is asked for: a body held still that is asked to walk is not a walk.
+  A `Match_Clip` with `mirror` has the rows of its pose reflected by `pose_mirror` with the pairs
+  of its `Match_Rig`, so one clip gives both sides. `match_query_pose` gives the pose lanes of a
+  query from the pose a rig has and the one before, for a search with no row playing.
   `match_database_build` is a load transaction: it rejects with `Memory_Limit` a database larger
   than its cap (`match_database_bytes` estimates it before allocating) and leaves the database empty
   on any error.

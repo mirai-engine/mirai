@@ -209,6 +209,7 @@ matching_walks_mirai_avatar_with_its_feet_planted_without_pose_jumps_and_follows
 Match_Fixture :: struct {
     using w:Match_World,
     bones:[4]asset.Skeleton_Bone,
+    pairs:[4]i32, // the bone on the other side of each
     definition:Skeleton_Content,
     content:host.Content_Animation,
     assets:host.Assets,
@@ -238,7 +239,8 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
         base.text_set(f.bones[i].name[:],bone.name);base.text_set(f.bones[i].path[:],bone.path)
     }
     // Its feet and hips, which matching measures, are those of its body.
-    f.definition={id={0x3a7c,2},revision=1,bones=f.bones[:],body=lib.body_map_empty()}
+    f.pairs={0,2,1,3}
+    f.definition={id={0x3a7c,2},revision=1,bones=f.bones[:],body=lib.body_map_empty(),mirror=f.pairs[:]}
     f.definition.body.bones[.Pelvis],f.definition.body.bones[.Foot_L],f.definition.body.bones[.Foot_R],f.definition.body.bones[.Head]=0,1,2,3;f.definition.body.up={0,1,0}
     hips,left,right,head:=f.bones[0].target,f.bones[1].target,f.bones[2].target,f.bones[3].target
     still:=[2]lib.Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.95,0,0}}}
@@ -839,6 +841,23 @@ a_blended_sample_plays_its_clips_together_at_its_weights_in_phase :: proc(t:^tes
     walked,vaulted:=g.state.program.players[mixed.leaves[0].player].player,g.state.program.players[mixed.leaves[1].player].player
     shares:=[2]f32{lib.player_time(&g.content.lib,walked),lib.player_time(&g.content.lib,vaulted)/2}
     testing.expectf(t,abs(shares[0]-shares[1])<1e-3,"in phase: %v of each clip",shares)
+}
+
+// A source mirrored Only plays its clip reflected: the left foot steps where the clip puts the
+// right one, across the plane between them; the root motion and the clock of warping follow.
+@(test)
+a_mirrored_source_plays_its_clip_with_left_and_right_swapped :: proc(t:^testing.T) {
+    f:Match_Fixture;defer match_fixture_free(&f)
+    if !testing.expect(t,match_fixture(t,&f)) {return}
+    content:=&f.graphs.contents[0]
+    content.set.match.clips[1].mirror=.Only
+    if !testing.expect(t,match_check(content.set.match)) {return}
+    for _ in 0..<30 {testing.expect(t,match_step(&f,1.0/60,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5}))}
+    value,_:=animation_match(&f.playback,f.rig)
+    player:=f.state.program.players[f.state.program.output.groups[0].leaves[0].player].player
+    right:=lib.clip_evaluate(&f.content.lib,lib.clip_tracks(&f.content.lib,lib.clip_find(&f.content.lib,base.name_hash("walk")))[1],lib.player_time(&f.content.lib,player))
+    foot:=f.state.local[bone_resolve(f.state,bone_ref("foot_l"))].position
+    testing.expectf(t,value.clip==base.name_hash("walk") && f.state.program.output.mirror && linalg.length(foot-mm.Vec3{-right.x,right.y,right.z})<.01,"the left foot is at %v, the right one of the clip at %v",foot,right.xyz)
 }
 
 // A source with rates of its own follows the body between them, past those of the .character: the walk

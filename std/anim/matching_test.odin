@@ -217,6 +217,47 @@ match_search_skips_runs_by_their_bounds_and_enters_a_mode_by_its_entry_clips :: 
     testing.expect(t,range>=0 && db.ranges[range].entry && f32(best-int(db.ranges[range].first))<=MATCH_ENTRY_SPAN*db.rate+1,"entering a mode searches the starts of its entry clips")
 }
 
+// A set with only a turn to the left, its left foot ahead, mirrored: the reflected rows turn to
+// the right with the right foot ahead, and a body asked to turn right picks them. A rig with no
+// sides to swap refuses a mirrored clip.
+@(test)
+a_mirrored_clip_adds_the_rows_of_its_reflected_pose :: proc(t:^testing.T) {
+    library:Library;defer library_destroy(&library)
+    rig,clips,ok:=match_test_rig(&library)
+    if !testing.expect(t,ok) {return}
+    names:=rig.skeleton.names
+    // The hips go a quarter of a circle of 1.5 m to the left in 1 s, turning with it.
+    RADIUS :: 1.5/(cmath.PI/2)
+    hips,turns:[5]Keyframe
+    for &key,i in hips {
+        angle:=f32(i)/4*cmath.PI/2;turn:=math.quat_axis_angle({0,1,0},angle)
+        key={time=f32(i)/4,value={-RADIUS+RADIUS*cmath.cos(angle),1,-RADIUS*cmath.sin(angle),0}}
+        turns[i]={time=f32(i)/4,value={imag(turn),jmag(turn),kmag(turn),real(turn)}}
+    }
+    ahead:=[2]Keyframe{{time=0,value={.1,-.95,-.3,0}},{time=1,value={.1,-.95,-.3,0}}}
+    behind:=[2]Keyframe{{time=0,value={-.1,-.95,.3,0}},{time=1,value={-.1,-.95,.3,0}}}
+    turn,error:=clip_add(&library,{name=base.name_hash("turn_left"),tracks={{target=names[1],property=.Position,keys=hips[:]},{target=names[1],property=.Rotation,keys=turns[:]},{target=names[2],property=.Position,keys=ahead[:]},{target=names[3],property=.Position,keys=behind[:]}}})
+    if !testing.expect(t,error==.None) {return}
+    pairs:=[5]i32{0,1,3,2,4}
+    corrections:[5]math.Quat;scratch:[5]math.Transform
+    if rig.plane,ok=mirror_prepare(rig.skeleton.parents,pairs[:],rig.skeleton.rest,corrections[:],scratch[:]);!testing.expect(t,ok) {return}
+    rig.pairs,rig.corrections=pairs[:],corrections[:]
+    set:=[4]Match_Clip{clips[0],clips[1],{clips={0=turn},modes=1<<1},{clips={0=turn},modes=1<<1,mirror=true}}
+    db:Match_Database;defer match_database_free(&db)
+    if !testing.expect(t,match_database_build(&db,&library,rig,set[:],30)==.None) {return}
+    left,right:=db.ranges[2],db.ranges[3]
+    testing.expectf(t,right.mirror && !left.mirror && left.travel.x< -.5 && linalg.length(right.travel-{-left.travel.x,left.travel.y,left.travel.z})<1e-3,"the mirrored turn goes %v, the turn %v",right.travel,left.travel)
+    request:=Match_Request{modes=1<<1,min_rate=.5,max_rate=1}
+    request.trajectory=match_trajectory({0,0,-1.5},{1.5,0,0},3,3,{0,0,-1},{1,0,0},cmath.PI/2)
+    best,_,_:=match_search(&db,request)
+    feet:=[2]int{MATCH_FEATURES[.Foot_Position][0]+2,MATCH_FEATURES[.Foot_Position][0]+5}
+    raw:[2]f32
+    for at,k in feet {raw[k]=simd.to_array(db.features[best*MATCH_LANES+at/4])[at%4]*db.scale[at]+db.mean[at]}
+    testing.expectf(t,match_range_of(&db,best)==3 && raw[1]<raw[0]-.5,"a turn to the right plays row %d of range %d with the right foot ahead: %v",best,match_range_of(&db,best),raw)
+    rig.pairs=nil
+    testing.expect_value(t,match_database_build(&db,&library,rig,set[:],30),Match_Build_Error.Invalid)
+}
+
 // The pose a rig has, a frame of the walk and the one before, asks for that row of the walk: the
 // feet where they are and moving as they move with the body. A pose out of shape asks for the mean.
 @(test)

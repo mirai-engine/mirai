@@ -137,7 +137,11 @@ The match of the set (`Match_Profile`):
 - Clips of an `.anim` library ([multiple sources](#multiple-sources)), each with the locomotion
   modes it serves (bit `m` for mode `m`: the values of physics' `Locomotion_Mode`) and, if it starts
   a mode (jump, landing), the `entry` mark. An entry clip does not loop. `speed`, when positive, is
-  the one the clip travels at instead of the one measured from its feet.
+  the one the clip travels at instead of the one measured from its feet. `mirror` `Both` also
+  searches its rows with left and right swapped (a left turn or a left-foot start gives the right
+  one), `Only` only those; a picked mirrored row plays the clips of its source reflected
+  ([mirroring](#mirroring)), its root motion and warping clock with them. A mirror on a skeleton
+  whose bones do not name their sides is the problem `animation.match_mirror`.
 - A source with `blend` is a blend (the motion matching form of a sampled blend space): its clip and
   those of `blend` loop and are in phase, whatever their durations. Each `Match_Sample` of it
   (weights per clip, as shares of their sum, and an optional `speed`) is a range of rows of its own,
@@ -196,6 +200,9 @@ Per tick:
 - Entering a mode that has entry clips searches only among their starts; without them, among the
   clips of the mode. An entry clip does not take part in the continuous search, except to keep
   playing it.
+- With nothing of the database playing (the first search, a swapped library, a mode the clip that
+  plays does not serve), the search asks for the feet the rig has and how they and its hips move
+  with the body, from the pose of the last two ticks, not for the mean of the database.
 - Every jump enters through an inertial transition of `blend` seconds: it captures pose and
   velocity and evaluates only the target with decaying offsets, so the target keeps its own motion
   (its planted feet). The capture is of the boundary before the new advance, before the layers of
@@ -482,7 +489,7 @@ message that says how to fix it; `engine.diagnostics` lists them and `animation.
 - Data that does not apply: a clip, a layer, a bone, a socket or a parameter that do not exist
   (`animation.clip`, `layer_clip`, `layer_bone`, `pose_bone`, `attachment_socket`,
   `parameter`, `match_clip`, `layer_space`), a matching database that is not built
-  (`match_database`, `match_memory`), operations of a set that are
+  (`match_database`, `match_memory`, `match_blend`, `match_mirror`), operations of a set that are
   not bound or not resolved (`rig_*`, `constraint_*`, `grounding_*`, `retarget_*`, `motion_*`,
   `morph_*`) and rejected requests (`action_*`, `modifier_*`, `distance`, `match_goal`).
 - A rig that cannot follow its leader (`follow_rig`, `follow_bones`, `follow_pose`), curve poses
