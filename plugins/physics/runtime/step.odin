@@ -569,8 +569,7 @@ body_sync :: proc(s:^Sync,e:core.Entity,l:^Link,rigid:Rigid_Body,has_rigid,rigid
             sim.body_set_bullet(w,l.body,rigid.bullet)
             if sim.body_gravity_scale(w,l.body)!=rigid.gravity_scale {sim.body_set_gravity_scale(w,l.body,rigid.gravity_scale)}
             if locks:=body_locks(rigid.locks);sim.body_locks(w,l.body)!=locks {sim.body_set_locks(w,l.body,locks)}
-            fixed:=sim.body_mass_fixed(w,l.body)
-            mass_changed||=sim.body_type(w,l.body)==.Dynamic && (rigid.mass>0?!fixed || sim.body_mass(w,l.body)!=rigid.mass:fixed)
+            mass_changed=true
         }
     }
 
@@ -691,8 +690,6 @@ compound_sync :: proc(s:^Sync,e:core.Entity,l:^Link,collider:Collider,owner:core
     geometry_release(s,l)
     if failure:=collider_shapes_make(s,l,e,holder.body,collider,scale,filter,&relative);failure!=.None {shape_problem(s,e,collider,failure)}
     l.kind,l.owner,l.body,l.made=.Compound,owner,holder.body,key
-    rigid,has_rigid:=core.get(s.rigids,owner)
-    body_mass_update(w,holder.body,rigid,has_rigid)
 }
 
 // What a Hull, Mesh or Heightfield collider shows. A mesh without a file is an immutable generated id, also
@@ -708,19 +705,11 @@ shown_of :: proc(s:^Sync,e:core.Entity,collider:Collider) -> (shown:Shown) {
     return
 }
 
-// The mass of a dynamic body from the shapes it has now: by their density, or scaled to the mass its Rigid_Body gives.
+// A dynamic body weighs what its Rigid_Body says, or what its shapes do; they place its center and inertia,
+// and the simulation keeps both as they change.
 @(private)
 body_mass_update :: proc(w:^sim.World,body:sim.Body_Handle,rigid:Rigid_Body,has_rigid:bool) {
-    if !has_rigid || rigid.type!=.Dynamic {return}
-    sim.body_reset_mass_properties(w,body)
-    if rigid.mass<=0 {return}
-    if mass,center,inertia:=sim.body_mass_properties(w,body);mass>0 {
-        factor:=rigid.mass/mass
-        for row in 0..<3 {
-            for column in 0..<3 {inertia[row,column]*=factor}
-        }
-        sim.body_set_mass_properties(w,body,rigid.mass,center,inertia)
-    }
+    if has_rigid && rigid.type==.Dynamic {sim.body_set_mass(w,body,rigid.mass)}
 }
 
 // Ends what the link holds: the body, or the shape of a compound, and the geometry made for it.
@@ -737,11 +726,6 @@ link_release :: proc(s:^Sync,l:^Link) {
             destroyed+=1
         }
         state.stats.shapes_destroyed+=destroyed
-        // proxy_set has no rows to read.
-        if holder:=link_find(state,l.owner);destroyed>0 && holder!=nil && holder.kind==.Body && s.rigids.table!=nil {
-            rigid,has_rigid:=core.get(s.rigids,l.owner)
-            body_mass_update(w,holder.body,rigid,has_rigid)
-        }
         geometry_release(s,l)
     case .Body:
         // A body the simulation ended by itself (debris, the bodies of a destructible) took its shapes with it, not their geometry.
