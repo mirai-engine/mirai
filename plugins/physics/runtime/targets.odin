@@ -17,8 +17,8 @@ import mm "mirai:std/math"
 // entity with a parent is left to its parent.
 @(step="fixed",loops="game",stage="begin")
 physics_pose_targets :: proc(
-    state:^Physics_State,targets:core.Read(core.Pose_Target),transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),
-    rigids:core.Read(Rigid_Body),characters:core.Read(Character),
+    state:^Physics_State,targets:^core.Table(core.Pose_Target,.Read),transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),
+    rigids:^core.Table(Rigid_Body,.Read),characters:^core.Table(Character,.Read),
 ) {
     c:=core.changes(targets,&state.targets_seen)
     // What left the table was not kept: every follow of what no longer has a target ends.
@@ -70,7 +70,7 @@ target_made :: proc(s:^Sync,l:^Link,e:core.Entity) {
 
 // A following target holds the body, or leads the character, toward its pose.
 @(private)
-target_follow :: proc(state:^Physics_State,h:^Held,l:^Link,target:core.Pose_Target,rigids:core.Read(Rigid_Body)) {
+target_follow :: proc(state:^Physics_State,h:^Held,l:^Link,target:core.Pose_Target,rigids:^core.Table(Rigid_Body,.Read)) {
     if !target.follow {
         hold_end(state,h,l,.Target,rigids)
         return

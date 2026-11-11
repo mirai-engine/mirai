@@ -25,7 +25,7 @@ Gravity_Fields :: struct {
 @(private)
 Gravity_Place :: struct {
     fields:^Gravity_Fields,
-    gravities:core.Read(volume.Gravity),
+    gravities:^core.Table(volume.Gravity,.Read),
     point:[3]f32,
 }
 
@@ -37,7 +37,7 @@ gravity_value :: proc(p:Gravity_Place,row:i32) -> [3]f32 {
 // Makes what the fields keep again when a Gravity, its Volume or their
 // places changed. False without memory.
 @(private)
-gravity_fields_update :: proc(fields:^Gravity_Fields,gravities:core.Read(volume.Gravity),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform)) -> (changed,ok:bool) {
+gravity_fields_update :: proc(fields:^Gravity_Fields,gravities:^core.Table(volume.Gravity,$A),volumes:^core.Table(volume.Volume,$B),worlds:^core.Table(core.World_Transform,$C)) -> (changed,ok:bool) {
     changed,ok=volume.index_update(&fields.index,volumes,worlds,gravities)
     if !changed {return}
     down:volume.Hits
@@ -55,7 +55,7 @@ gravity_fields_update :: proc(fields:^Gravity_Fields,gravities:core.Read(volume.
 
 // The gravity at a point of the fields as gravity_fields_update left them.
 @(private)
-gravity_place :: proc(fields:^Gravity_Fields,gravities:core.Read(volume.Gravity),point:[3]f32) -> [3]f32 {
+gravity_place :: proc(fields:^Gravity_Fields,gravities:^core.Table(volume.Gravity,$A),point:[3]f32) -> [3]f32 {
     hits,bounded:=volume.index_hits(&fields.index,point)
     if !bounded && !fields.center {return fields.world}
     return volume.combine(hits,volume.GRAVITY_WORLD,Gravity_Place{fields,gravities,point},gravity_value,volume.mix_linear)
@@ -72,7 +72,7 @@ gravity_local :: proc "contextless" (fields:^Gravity_Fields) -> bool {
 // is the same everywhere, with that of its world alone. physics_step gives it
 // after it made the bodies of the tick, which fall from their first one.
 @(private)
-gravity_apply :: proc(state:^Physics_State,gravities:core.Read(volume.Gravity),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),problems:^core.Problems) {
+gravity_apply :: proc(state:^Physics_State,gravities:^core.Table(volume.Gravity,$A),volumes:^core.Table(volume.Volume,$B),worlds:^core.Table(core.World_Transform,$C),problems:^core.Problems) {
     w:=&state.world
     fields:=&state.gravity
     changed,ok:=gravity_fields_update(fields,gravities,volumes,worlds)

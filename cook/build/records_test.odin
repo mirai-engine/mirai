@@ -47,7 +47,7 @@ Ammo :: struct {count:u16}
 @(component)
 Holder :: struct {weapon:core.Record(Weapon)}
 @(step="fixed")
-fire :: proc(weapons:core.Records(Weapon),holders:core.Read(Holder)) {}
+fire :: proc(weapons:core.Records(Weapon),holders:^core.Table(Holder,.Read)) {}
 `
     output,ok:=records_fixture(t,source)
     if !ok {return}

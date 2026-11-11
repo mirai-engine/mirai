@@ -11,7 +11,7 @@ import net_phys "plugins:physics_multiplayer/runtime"   // joins physics and mul
 
 @(step="fixed",server)
 shoot :: proc(inputs:core.Ref(multiplayer.Remote_Inputs),history:^multiplayer.Rewind_History,
-    physics:core.Ref(phys.Physics_State),marked:core.Read(multiplayer.Rewind),
+    physics:core.Ref(phys.Physics_State),marked:^core.Table(multiplayer.Rewind,.Read),
     time:core.Time /* , the shooter's seat and body, the aim */) {
     connection:=multiplayer.Connection(seat.peer)         // the shooter's seat
     tick,ok:=multiplayer.rewind_tick(inputs,connection,time)

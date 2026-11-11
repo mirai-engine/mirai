@@ -142,16 +142,16 @@ far_walk :: proc "contextless" (far:^Nav_Far,position:mm.Vec3,dt:f32) -> mm.Vec3
 // which its route and its goal are of; 0 on the surface. Its Collider may be
 // off, with the agent far.
 @(private)
-far_lift :: proc "contextless" (n:^Navigation,colliders:core.Read(phys.Collider),e:core.Entity,class:i8,scale:[3]f32) -> mm.Vec3 {
-    if class<0 || int(class)>=n.count || !class_in_volume(n,int(class)) || colliders.table==nil {return {}}
-    collider:=cast(^phys.Collider)core.raw_find(core.raw(colliders.table),type_info_of(phys.Collider),e)
+far_lift :: proc "contextless" (n:^Navigation,colliders:^core.Table(phys.Collider,$A),e:core.Entity,class:i8,scale:[3]f32) -> mm.Vec3 {
+    if class<0 || int(class)>=n.count || !class_in_volume(n,int(class)) || colliders==nil {return {}}
+    collider:=cast(^phys.Collider)core.raw_find(core.raw(colliders),type_info_of(phys.Collider),e)
     if collider==nil {return {}}
     return {0,(collider.size.x+collider.size.y)*abs(scale.y),0}
 }
 
 // A request to an agent that is far changes where it goes; false when it is not far.
 @(private)
-far_request :: proc(paths:^core.Table(Nav_Path),fars:^core.Table(Nav_Far),asked:Nav_Request,worlds:core.Read(core.World_Transform)) -> bool {
+far_request :: proc(paths:^core.Table(Nav_Path),fars:^core.Table(Nav_Far),asked:Nav_Request,worlds:^core.Table(core.World_Transform,$A)) -> bool {
     far:=cast(^Nav_Far)core.raw_edit(core.raw(fars),type_info_of(Nav_Far),asked.entity)
     p:=cast(^Nav_Path)core.raw_edit(core.raw(paths),type_info_of(Nav_Path),asked.entity)
     if far==nil || p==nil {return false}
@@ -177,9 +177,9 @@ far_request :: proc(paths:^core.Table(Nav_Path),fars:^core.Table(Nav_Far),asked:
 // The part of navigation_agents for what is far, after the agents moved.
 @(private)
 agents_far :: proc(
-    n:core.Ref(Navigation),builds:core.Ref(Navigation_Builds),a:^Navigation_Agents,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),
+    n:core.Ref(Navigation),builds:core.Ref(Navigation_Builds),a:^Navigation_Agents,agents:^core.Table(Nav_Agent,$A),paths:^core.Table(Nav_Path),
     fars:^core.Table(Nav_Far),roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),
-    walks:core.Read(locomotion.Walk),flights:core.Read(locomotion.Fly),swims:core.Read(locomotion.Swim),colliders:core.Read(phys.Collider),worlds:core.Read(core.World_Transform),
+    walks:^core.Table(locomotion.Walk,$B),flights:^core.Table(locomotion.Fly,$C),swims:^core.Table(locomotion.Swim,$D),colliders:^core.Table(phys.Collider,$E),worlds:^core.Table(core.World_Transform,$F),
     placer:core.Placer,bodies:^phys.Body_Requests,events:^Nav_Events,time:core.Time,
 ) {
     if n.ptr==nil || builds.ptr==nil || !n.ready || !time.playing || time.dt<=0 {return}

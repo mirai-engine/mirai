@@ -92,10 +92,10 @@ gate_through :: proc "contextless" (entrance,exit:mm.Transform,mirror:bool) -> m
 // view its nested views.
 @(step="render",loops="game editor",after="render_sync")
 portals_render :: proc(
-    state:^Portals_Gpu,portals:core.Read(Portal),worlds:core.Read(core.World_Transform),
-    suns:core.Read(erender.Sun),points:core.Read(erender.Point_Light),spots:core.Read(erender.Spot_Light),rects:core.Read(erender.Rect_Light),
-    layers:core.Read(erender.Layers),highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),
-    hidden:core.Read(erender.Hidden),parents:core.Read(core.Parent),assets:^host.Assets,renderer:^erender.Renderer,extras:^host.Frame_Extras,frame:core.Frame_Time,
+    state:^Portals_Gpu,portals:^core.Table(Portal,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    suns:^core.Table(erender.Sun,.Read),points:^core.Table(erender.Point_Light,.Read),spots:^core.Table(erender.Spot_Light,.Read),rects:^core.Table(erender.Rect_Light,.Read),
+    layers:^core.Table(erender.Layers,.Read),highlights:^core.Table(erender.Highlight,.Read),outlines:^core.Table(erender.Outline,.Read),
+    hidden:^core.Table(erender.Hidden,.Read),parents:^core.Table(core.Parent,.Read),assets:^host.Assets,renderer:^erender.Renderer,extras:^host.Frame_Extras,frame:core.Frame_Time,
 ) {
     state.last,state.last_count=state.gates,state.count
     state.count=0

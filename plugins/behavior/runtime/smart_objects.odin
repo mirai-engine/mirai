@@ -70,7 +70,7 @@ smart_used :: proc(uses:^Smart_Uses,found:Smart_Found) {
 }
 
 @(step="fixed",stage="react",server)
-smart_update :: proc(objects:core.Read(Smart_Object),states:^core.Table(Smart_State),uses:^Smart_Uses,time:core.Time) {
+smart_update :: proc(objects:^core.Table(Smart_Object,.Read),states:^core.Table(Smart_State),uses:^Smart_Uses,time:core.Time) {
     if core.reshaped(objects,&uses.shapes[0]) | core.reshaped(states,&uses.shapes[1]) {
         for row in 0..<core.count(objects) {
             e:=core.entity_at(objects,row)
@@ -90,9 +90,9 @@ smart_update :: proc(objects:core.Read(Smart_Object),states:^core.Table(Smart_St
 // from its Mind_World.
 @(params)
 Smart_View :: struct {
-    objects:core.Read(Smart_Object),
-    states:core.Read(Smart_State),
-    worlds:core.Read(core.World_Transform),
+    objects:^core.Table(Smart_Object,.Read),
+    states:^core.Table(Smart_State,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),
     claims:core.Ref(Claims),
     time:core.Time,
 }
@@ -180,7 +180,7 @@ smart_open :: proc(v:Smart_View,object:core.Entity,i:int,offer:Smart_Offer,state
 // waits while others hold it (stage 0), takes `seconds` (1), lands at the
 // other end and waits for navigation to take it from there (2). Success once
 // across; Failure when it is not at such a link.
-cross_act :: proc(a:^ai.Act($A),links:core.Read(nav.Nav_Link),placer:core.Placer,use:Smart_Use,user:Smart_User,seconds:f64) -> ai.Status {
+cross_act :: proc(a:^ai.Act($A),links:^core.Table(nav.Nav_Link,$B),placer:core.Placer,use:Smart_Use,user:Smart_User,seconds:f64) -> ai.Status {
     if a.phase==.Exit {return .Success}
     w,e,v:=world_of(a),agent(a),smart_view(a)
     p,ok:=agent_path(a)
@@ -202,7 +202,7 @@ cross_act :: proc(a:^ai.Act($A),links:core.Read(nav.Nav_Link),placer:core.Placer
 
 // The offer of `use` on the link with an end at `from`.
 @(private)
-smart_at_link :: proc(v:Smart_View,links:core.Read(nav.Nav_Link),from:[3]f32,use:Smart_Use,user:Smart_User) -> (found:Smart_Found,ok:bool) {
+smart_at_link :: proc(v:Smart_View,links:^core.Table(nav.Nav_Link,$A),from:[3]f32,use:Smart_Use,user:Smart_User) -> (found:Smart_Found,ok:bool) {
     for row in 0..<core.count(v.objects) {
         object:=core.entity_at(v.objects,row)
         link,linked:=core.get(links,object)

@@ -80,7 +80,7 @@ timeline_tick :: proc(w:^Timeline_World,app:^host.App,problems:^core.Problems,dt
     extra:Test_Storages;defer test_storages_free(&extra)
     test_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),&w.playback,app,time,{},nil,problems,&extra)
     animation_fields(core.test_world_ref(w),core.ref(&w.playback),&w.fields,{},app,problems)
-    animation_finish(&w.playback,{problems=problems},&w.constraints,&w.transforms,core.read(&w.parents),dt,nil,{},places=&w.places)
+    animation_finish(&w.playback,{problems=problems},&w.constraints,&w.transforms,&w.parents,dt,nil,{},places=&w.places)
     core.test_world_settle(w)
 }
 
@@ -136,8 +136,8 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     core.add(&w.animations,door,animation)
     core.add(&w.progress,door,Animation_Progress{})
     core.test_world_settle(&w)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
-    at :: proc(w:^Timeline_World,e:core.Entity) -> [3]f32 {value,_:=core.get(core.read(&w.transforms),e);return value.position}
+    core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
+    at :: proc(w:^Timeline_World,e:core.Entity) -> [3]f32 {value,_:=core.get(&w.transforms,e);return value.position}
 
     // Not playing, it writes where its clip starts once, and then leaves what it drives alone.
     timeline_tick(&w,&app,&problems)
@@ -155,9 +155,9 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     testing.expect_value(t,at(&w,leaf),[3]f32{2,0,0})
     testing.expect_value(t,at(&w,actor),[3]f32{2,0,0})
     testing.expect_value(t,at(&w,other),[3]f32{0,0,0})
-    progress,_:=core.get(core.read(&w.progress),door)
+    progress,_:=core.get(&w.progress,door)
     testing.expect_value(t,progress.time,f32(3))
-    lamp,_:=core.get(core.read(&w.lamps),actor)
+    lamp,_:=core.get(&w.lamps,actor)
     testing.expect_value(t,lamp,Timeline_Lamp{color={1.5,2,2.5,0},intensity=3,steps=-2,flags={.Lit}})
 
     // Paused it holds nothing; resumed it goes on from where it was, and reports the marker it crosses.
@@ -167,7 +167,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     core.edit(&w.lamps,actor).intensity=40
     timeline_tick(&w,&app,&problems)
     testing.expect_value(t,at(&w,leaf),[3]f32{9,9,9})
-    lamp,_=core.get(core.read(&w.lamps),actor)
+    lamp,_=core.get(&w.lamps,actor)
     testing.expect_value(t,lamp.intensity,f64(40))
     animation_command(&w.requests,door,.Resume)
     timeline_tick(&w,&app,&problems)
@@ -175,7 +175,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     timeline_tick(&w,&app,&problems)
     testing.expect_value(t,at(&w,leaf),[3]f32{6,0,0})
     testing.expect(t,len(w.events.items)==1 && w.events.items[0].entity==door && w.events.items[0].kind==.Marker && w.events.items[0].name==base.name_hash("half"))
-    lamp,_=core.get(core.read(&w.lamps),actor)
+    lamp,_=core.get(&w.lamps,actor)
     testing.expect(t,lamp.on && lamp.flags=={.Lit,.Flickers} && lamp.intensity==5,"a Float track sets a flag and a member of a bit set from a half up")
 
     // An entity whose Transform another component owns is asked of its owner, at the place of the track.
@@ -211,7 +211,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     for code in ([]string{"animation.field_type","animation.field_path","animation.field_component","animation.field_target"}) {
         testing.expectf(t,core.problem_find(&problems,door,code)!=nil,"%s was not reported",code)
     }
-    lamp,_=core.get(core.read(&w.lamps),actor)
+    lamp,_=core.get(&w.lamps,actor)
     testing.expect_value(t,lamp.steps,min(i16))
     testing.expect_value(t,len(w.fields.fields),7)
     // Resume at a negative speed takes it back from where it is.

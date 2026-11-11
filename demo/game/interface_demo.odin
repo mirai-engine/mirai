@@ -105,7 +105,7 @@ Interface_Demo :: struct {
 @(step="fixed",stage="react")
 interface_demo :: proc(
     demos:^core.Table(Interface_Demo),screens:^core.Table(gui.UI_Screen),hidden:^core.Table(render.Hidden),
-    names:core.Read(core.Name),ui_events:core.Ref(gui.UI_Events),actions:inp.Input_Of(Action),time:core.Time,
+    names:^core.Table(core.Name,.Read),ui_events:core.Ref(gui.UI_Events),actions:inp.Input_Of(Action),time:core.Time,
     ui_settings:core.Ref(gui.UI_Settings),preferences:^gui.UI_Preferences,
     items:core.Records(Item),lines:core.Records(Dialogue_Line),answers:core.Records(Dialogue_Choice),texts:^core.Texts,problems:^core.Problems,
 ) {
