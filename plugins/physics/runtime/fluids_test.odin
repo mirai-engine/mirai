@@ -118,6 +118,31 @@ a_fluid_that_cannot_be_made_or_meets_another_of_its_priority_is_a_problem :: pro
     testing.expect(t,core.problem_find(&f.problems,b,"physics.fluid_overlap")!=nil)
     testing.expect(t,core.problem_find(&f.problems,over,"physics.fluid_overlap")==nil,"a higher priority decides where they meet")
     testing.expect_value(t,f.state.world.fluid_count,i32(made+3))
+    // They meet where a column holds both, not where their boxes do: a river that winds around a lake.
+    Meeting :: struct {name:string,river:[4][3]f32,meets:bool}
+    meetings:=[?]Meeting{
+        {"winds around the lake",{{-20,0,0},{-20,0,-40},{20,0,-40},{20,0,0}},false},
+        {"crosses the lake",{{-20,0,-20},{-6,0,-20},{6,0,-20},{20,0,-20}},true},
+    }
+    pairs:[len(meetings)][2]core.Entity
+    for m,i in meetings {
+        at:=[3]f32{300+100*f32(i),0,0}
+        lake,river:=core.create(&f.entities),core.create(&f.entities)
+        core.add(&f.fluids,lake,FLUID_DEFAULT)
+        core.add(&f.volumes,lake,volume.box({8,1,8}))
+        core.add(&f.transforms,lake,core.Transform{at+{0,0,-20},1,{1,1,1}})
+        spline:=volume.Spline{count=4}
+        for p,k in m.river {spline.points[k]={p,4,1,1}}
+        core.add(&f.fluids,river,FLUID_DEFAULT)
+        core.add(&f.splines,river,spline)
+        core.add(&f.transforms,river,core.Transform{at,1,{1,1,1}})
+        pairs[i]={lake,river}
+    }
+    physics_test_step(&f,0)
+    for m,i in meetings {
+        reported:=core.problem_find(&f.problems,pairs[i][0],"physics.fluid_overlap")!=nil || core.problem_find(&f.problems,pairs[i][1],"physics.fluid_overlap")!=nil
+        testing.expectf(t,reported==m.meets,"a river that %s: reported %v",m.name,reported)
+    }
 }
 
 @(test)

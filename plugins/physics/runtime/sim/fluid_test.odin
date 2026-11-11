@@ -32,10 +32,16 @@ submerged :: proc(w:^World,h:Body_Handle) -> (load:Fluid_Load,center:Vec3) {
     body,_:=body_get(w,h)
     wet:Wet
     wet_find(w,body,{},&wet)
-    if wet.water_count==0 {return}
     clip:=new(Clip_Scratch)
     defer free(clip)
+    if wet.water_count==0 {return}
     load=body_load(w,body,body.center,body.rotation,&wet,0,{},clip)
+    if wet.water_count>1 {
+        other:=body_load(w,body,body.center,body.rotation,&wet,1,{},clip)
+        load.volume+=other.volume
+        load.moment+=other.moment
+        load.area+=other.area
+    }
     if load.volume>0 {center=body.center+load.moment/load.volume}
     return
 }
@@ -175,8 +181,9 @@ a_long_river_never_rises_and_flows_at_the_speed_of_its_points :: proc(t:^testing
 }
 
 // A body takes the water whose column holds it, not one whose box it is in:
-// a box in a lake that a river winds around stays afloat, and a plank across
-// two pools floats level on both.
+// a box in a lake that a river winds around stays afloat, a plank across two
+// pools floats level on both, and the air of a dry box over the plank keeps
+// both out of it.
 @(test)
 a_body_floats_in_the_water_it_is_in_and_in_both_across_a_border :: proc(t:^testing.T) {
     w:World
@@ -196,6 +203,11 @@ a_body_floats_in_the_water_it_is_in_and_in_both_across_a_border :: proc(t:^testi
     body,_:=body_get(&w,plank)
     up:=q_rotate(body.rotation,UP)
     testing.expectf(t,abs(level.y)<0.02 && up.y>0.999,"the plank floats level across the two pools at %v, up %v",level,up)
+    wet,_:=submerged(&w,plank)
+    testing.expectf(t,abs(wet.volume-0.3)<0.01,"half of it is in the water of the two: %v m3",wet.volume)
+    dry_box(&w,{0,0,40},{2,1,1})
+    dry,_:=submerged(&w,plank)
+    testing.expectf(t,abs(dry.volume)<1e-5,"none of it is in either under the air: %v m3",dry.volume)
 }
 
 // Two paths whose ends meet, the second going on the way the first ends: across

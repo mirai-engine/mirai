@@ -43,6 +43,7 @@ shape_drag_default :: proc "contextless" (type:Shape_Type) -> f32 {
 
 @(private) WET_DRY :: 4 // dry boxes a body can be in at once; more are ignored
 @(private) WET_COLUMN :: 4
+@(private) WET_TERMS :: 2+2*WET_DRY // of a second water: it, less the first, less each dry box, plus the first in each
 @(private) WET_NEAR :: 8 // fluids whose box meets the box of a body that it looks for its waters among
 
 // A water a body is in.
@@ -65,7 +66,7 @@ Wet :: struct {
     water_count:i32,
     character:i32, // slot of the character of the body, -1 for another body; a character is in its first water
     current:Vec3,  // that the drags pull toward: of its waters, by the drag of each in the last substep
-    dry:[WET_DRY]i32, // over the first water in priority
+    dry:[WET_DRY]i32, // over one of its waters in priority
     dry_count:i32,
     column:[WET_COLUMN]Fluid_Interval, // a character: the fluid in its column
     column_count:i32,
@@ -76,7 +77,7 @@ Wet :: struct {
 
 // The planes of one part of the region of a fluid around a body, keeping dot(n,p)<=d: the fluid (sign 1),
 // or the fluid inside a dry box, taken out (sign -1). Interface planes are those between fluid and air.
-@(private) TERM_PLANES :: 12
+@(private) TERM_PLANES :: 18 // two waters and a dry box
 @(private)
 Fluid_Term :: struct {
     planes:[TERM_PLANES]Plane,
@@ -203,6 +204,7 @@ wet_find :: proc "contextless" (w:^World,body:^Body,reach:Vec3,wet:^Wet) #no_bou
         if contact.flags&{.Touching,.Overlap}=={.Touching} {wet.supported=true;break}
     }
     priority:=w.fluids[wet.waters[0].fluid].priority
+    for water in wet.waters[1:wet.water_count] {priority=min(priority,w.fluids[water.fluid].priority)}
     for &d,k in w.fluids[:w.fluid_high] {
         if d.generation&1==0 || d.density>0 || d.priority<=priority || wet.dry_count==WET_DRY {continue}
         if !math.aabb_overlaps(d.bounds,box) {continue}
@@ -311,7 +313,7 @@ fluid_forces :: proc(w:^World,i:int,worker:int) -> (linear,angular:Vec3,k,angula
 // What of a body with its center of mass at com and turned by q is in its water `water`, relative to com.
 @(private)
 body_load :: proc(w:^World,body:^Body,com:Vec3,q:Quat,wet:^Wet,water:int,flow:Vec3,clip:^Clip_Scratch) -> (load:Fluid_Load) {
-    terms:[1+WET_DRY]Fluid_Term
+    terms:[WET_TERMS]Fluid_Term
     count:=fluid_terms(w,wet,water,com,&terms)
     frame:=Transform{-q_rotate(q,body.local_center),q} // the body frame, relative to the center of mass
     for s:=body.shape_list;s>=0;s=w.shapes[s].next {
@@ -323,9 +325,9 @@ body_load :: proc(w:^World,body:^Body,com:Vec3,q:Quat,wet:^Wet,water:int,flow:Ve
 }
 
 // The parts of the region of one water of a body, with planes relative to its center of mass: the water, less
-// the dry boxes over it of the first water, or less the first water of the second.
+// the first water of the second, less the dry boxes over it.
 @(private)
-fluid_terms :: proc "contextless" (w:^World,wet:^Wet,water:int,com:Vec3,terms:^[1+WET_DRY]Fluid_Term) -> int #no_bounds_check {
+fluid_terms :: proc "contextless" (w:^World,wet:^Wet,water:int,com:Vec3,terms:^[WET_TERMS]Fluid_Term) -> int #no_bounds_check {
     shift :: #force_inline proc "contextless" (p:Plane,com:Vec3) -> Plane {return {p.n,p.d-dot(p.n,com)}}
     // The surface of a water and the walls and floor of its shape.
     region :: proc "contextless" (w:^World,water:^Wet_Water,com:Vec3,term:^Fluid_Term) {
@@ -347,26 +349,33 @@ fluid_terms :: proc "contextless" (w:^World,wet:^Wet,water:int,com:Vec3,terms:^[
             }
         }
     }
-    fluid:=&terms[0]
-    fluid^={sign=1,interface=1}
-    region(w,&wet.waters[water],com,fluid)
+    own:=&wet.waters[water]
+    terms[0]={sign=1,interface=1}
+    region(w,own,com,&terms[0])
+    count:=1
     if water>0 {
-        terms[1]=fluid^
+        terms[1]=terms[0]
         terms[1].sign=-1
         region(w,&wet.waters[0],com,&terms[1])
-        return 2
+        count=2
     }
-    count:=1
+    // Each dry box over it in priority takes itself out of what is left: of a second water, the water less
+    // the first, so what both take out is given back once.
+    bases:=count
+    priority:=w.fluids[own.fluid].priority
     for d in wet.dry[:wet.dry_count] {
-        term:=&terms[count]
-        term^=fluid^
-        term.sign=-1
-        for plane,k in fluid_box_planes(&w.fluids[d]) {
-            if k==2 {term.interface|=1<<u32(term.count)} // the floor of the air is the surface under it
-            term.planes[term.count]=shift(plane,com)
-            term.count+=1
+        if w.fluids[d].priority<=priority {continue}
+        for base in 0..<bases {
+            term:=&terms[count]
+            term^=terms[base]
+            term.sign=-term.sign
+            for plane,k in fluid_box_planes(&w.fluids[d]) {
+                if k==2 {term.interface|=1<<u32(term.count)} // the floor of the air is the surface under it
+                term.planes[term.count]=shift(plane,com)
+                term.count+=1
+            }
+            count+=1
         }
-        count+=1
     }
     return count
 }

@@ -178,6 +178,63 @@ fluids_overlap :: proc(w:^World,box:Aabb,out:[]Fluid_Handle,skip:=0) -> int {
     return count
 }
 
+// Whether two fluids or dry boxes meet: a point that both columns hold between bottom and surface, by the
+// rule every reader follows (fluid_spot). It looks at points of each about FLUID_MEET_STEP apart over its
+// surface, its middle and its floor, just inside them; a plane holds every point under it. False for a
+// handle that is gone.
+fluids_meet :: proc(w:^World,a,b:Fluid_Handle) -> bool {
+    fa,ia:=fluid_read(w,a)
+    fb,ib:=fluid_read(w,b)
+    if fa==nil || fb==nil || !math.aabb_overlaps(fa.bounds,fb.bounds) {return false}
+    if fa.shape==.Plane && fb.shape==.Plane {return true}
+    return fluid_reaches(w,ia,ib) || fluid_reaches(w,ib,ia)
+}
+
+@(private) FLUID_MEET_STEP :: 1     // m between the points fluids_meet looks at
+@(private) FLUID_MEET_POINTS :: 256 // most of them along a side of a box or a segment of a path
+@(private) FLUID_MEET_INSET :: 0.999
+
+// Whether a point of fluid `from`, of those fluids_meet looks at, is held by fluid `into`.
+@(private)
+fluid_reaches :: proc "contextless" (w:^World,from,into:i32) -> bool {
+    held :: proc "contextless" (w:^World,into:i32,p:Vec3) -> bool {
+        spot:=fluid_spot(w,into,p)
+        return spot.inside && p.y>=spot.bottom && p.y<=spot.top
+    }
+    pieces :: proc "contextless" (long:f32) -> int {return clamp(int(cmath.ceil(long/FLUID_MEET_STEP)),1,FLUID_MEET_POINTS)}
+    f:=&w.fluids[from]
+    switch f.shape {
+    case .Plane:
+    case .Box:
+        h:=f.half_extents*FLUID_MEET_INSET
+        s,c:=cmath.sincos(f.yaw)
+        nx,nz:=pieces(2*h.x),pieces(2*h.z)
+        for i in 0..=nx {
+            for k in 0..=nz {
+                l:=Vec3{h.x*(2*f32(i)/f32(nx)-1),0,h.z*(2*f32(k)/f32(nz)-1)}
+                for y in ([3]f32{-h.y,0,h.y}) {
+                    if held(w,into,f.position+{c*l.x+s*l.z,y,c*l.z-s*l.x}) {return true}
+                }
+            }
+        }
+    case .Path:
+        points:=fluid_points(w,from)
+        for j in 0..<len(points)-1 {
+            n:=pieces(length(points[j+1].position-points[j].position))
+            for k in 0..=n {
+                p,tangent:=math.path_at(points,j,f32(k)/f32(n))
+                across:=0.5*p.width*FLUID_MEET_INSET*normalize(Vec3{-tangent.z,0,tangent.x})
+                for side in ([3]f32{-1,0,1}) {
+                    for depth in ([3]f32{1-FLUID_MEET_INSET,0.5,FLUID_MEET_INSET}) {
+                        if held(w,into,p.position+side*across-{0,depth*p.height,0}) {return true}
+                    }
+                }
+            }
+        }
+    }
+    return false
+}
+
 // Makes slot index the fluid of a valid description, of that generation.
 @(private)
 fluid_put :: proc "contextless" (w:^World,index:i32,d:Fluid_Desc,path:[]Path_Point,generation:u32) {

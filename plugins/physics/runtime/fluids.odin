@@ -336,8 +336,8 @@ volume_wind :: proc(winds:core.Read(volume.Wind),volumes:core.Read(volume.Volume
     return {blowing.x,blowing.z}
 }
 
-// Fluids that meet fluids, or dry boxes that meet dry boxes, at the same priority: nothing says which of
-// the two decides where they meet.
+// Fluids that meet fluids, or dry boxes that meet dry boxes, at the same priority (sim.fluids_meet): nothing
+// says which of the two decides where they meet.
 @(private)
 fluids_overlaps_report :: proc(state:^Physics_State,problems:^core.Problems) {
     w:=&state.world
@@ -346,7 +346,7 @@ fluids_overlaps_report :: proc(state:^Physics_State,problems:^core.Problems) {
         if !sim.fluid_valid(w,a.fluid) {continue}
         for &b in links[i+1:] {
             if !sim.fluid_valid(w,b.fluid) || (a.desc.density>0)!=(b.desc.density>0) || a.desc.priority!=b.desc.priority {continue}
-            if !mm.aabb_overlaps(sim.fluid_bounds(w,a.fluid),sim.fluid_bounds(w,b.fluid)) {continue}
+            if !sim.fluids_meet(w,a.fluid,b.fluid) {continue}
             kind:=a.desc.density>0?"fluid":"dry box"
             core.report(problems,core.Entity(b.desc.user_data),"physics.fluid_overlap","its Fluid meets another %s (%v) of the same priority, so either may decide where they meet; give the Volume of the one that decides a higher priority, or move them apart",kind,core.Entity(a.desc.user_data))
         }

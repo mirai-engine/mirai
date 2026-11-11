@@ -337,7 +337,9 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
   then priority) at its center, the lowest point of its box and the corners of its bottom, among
   the fluids its box swept by its velocity of the step meets; never by the box of a fluid. It keeps
   up to two: the second, across a border (a river into a lake), counts without what the first
-  holds. A character is in its first. In each substep, in the velocity integration, for each awake
+  holds, and a dry box over either in priority takes itself out of each. A character is in its
+  first. Two fluids meet (`fluids_meet`, the `physics.fluid_overlap` problem) by the same column
+  rule, never by their boxes. In each substep, in the velocity integration, for each awake
   dynamic in a water:
   - The surface of a body in a step is the plane tangent to the waves over its center, at the start
     of the step: its waves lift it and tilt it.
