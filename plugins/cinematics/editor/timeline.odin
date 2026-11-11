@@ -58,9 +58,9 @@ actors_of :: proc(w:core.World_Ref,timeline:core.Entity) -> (entities:[]core.Ent
     if table==nil {return}
     e:=make([dynamic]core.Entity,context.temp_allocator)
     v:=make([dynamic]anim.Animation_Target,context.temp_allocator)
-    for row in 0..<core.count(core.read(table)) {
-        value:=core.at(core.read(table),row)
-        if value.animation==timeline {append(&e,core.entity_at(core.read(table),row));append(&v,value)}
+    for row in 0..<core.count(table) {
+        value:=core.at(table,row)
+        if value.animation==timeline {append(&e,core.entity_at(table,row));append(&v,value)}
     }
     return e[:],v[:]
 }

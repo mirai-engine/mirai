@@ -181,18 +181,18 @@ spatial_bone_and_socket_targets_read_the_sampled_pose_and_keep_their_binding :: 
     append(&skeletons.contents,Skeleton_Content{id=state.skeleton,sockets=sockets})
     target:=spatial_bone(source,"joint3")
     binding:Spatial_Target_Binding;defer delete(binding.path)
-    result,ok:=spatial_target_sample(target,&binding,&playback,&skeletons,{},{},core.read(&worlds))
+    result,ok:=spatial_target_sample(target,&binding,&playback,&skeletons,(^core.Table(core.Transform))(nil),nil,core.read(&worlds))
     testing.expect(t,ok && linalg.length(result.position-mm.Vec3{20,1,0})<1e-5,"the root of a skeleton is its entity, the others its sampled pose")
     target=spatial_socket(source,"grip",{{0,0,.5},1,{1,1,1}})
-    result,ok=spatial_target_sample(target,&binding,&playback,&skeletons,{},{},core.read(&worlds))
+    result,ok=spatial_target_sample(target,&binding,&playback,&skeletons,(^core.Table(core.Transform))(nil),nil,core.read(&worlds))
     testing.expect(t,ok && linalg.length(result.position-mm.Vec3{20,1.2,.5})<1e-5)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
-    for _ in 0..<32 {value,valid:=spatial_target_sample(target,&binding,&playback,&skeletons,{},{},core.read(&worlds));stable &&=valid && value==result}
+    for _ in 0..<32 {value,valid:=spatial_target_sample(target,&binding,&playback,&skeletons,(^core.Table(core.Transform))(nil),nil,&worlds);stable &&=valid && value==result}
     context=saved
     testing.expect(t,stable)
     state.bound+=1;state.targets[3]=base.name_hash("missing");state.aliases[3]=state.targets[3]
-    _,ok=spatial_target_sample(target,&binding,&playback,&skeletons,{},{},core.read(&worlds))
+    _,ok=spatial_target_sample(target,&binding,&playback,&skeletons,(^core.Table(core.Transform))(nil),nil,&worlds)
     testing.expect(t,!ok,"a rebound rig without the bone of the socket")
     testing.expect(t,!spatial_target_valid(spatial_entity(core.NONE)) && spatial_target_valid(spatial_entity(core.NONE),false),"a profile names the kind; the goal, the entity")
 }
@@ -301,7 +301,7 @@ named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(
     profiles:Character_Assets;defer character_assets_free(&profiles)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     prepare :: proc(w:^Rig_Shapes_World,profiles:^Character_Assets,skeletons:^Skeleton_Assets,app:^host.App) -> bool {
-        return modifier_prepare(&w.modifiers,core.read(&w.animations),core.read(&w.attachments),profiles,skeletons,&w.playback,app.assets,app.allocator,nil)
+        return modifier_prepare(&w.modifiers,&w.animations,&w.attachments,profiles,skeletons,&w.playback,app.assets,app.allocator,nil)
     }
     if !testing.expect(t,prepare(&w,&profiles,&skeletons,&app)) {return}
     modifier_goal(&w.requests,{rig=rig,kind=.Look,target=spatial_point({1,2,3}),weight=1,enabled=true})

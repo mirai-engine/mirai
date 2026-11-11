@@ -56,8 +56,8 @@ Decals_Gpu :: struct {
 // The decals of the world into the frame, the lower ones first.
 @(step="render",loops="game editor",after="render_sync")
 decals_render :: proc(
-    state:^Decals_Gpu,decals:core.Read(Decal),worlds:core.Read(core.World_Transform),
-    hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),assets:^host.Assets,renderer:^render.Renderer,
+    state:^Decals_Gpu,decals:^core.Table(Decal,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),assets:^host.Assets,renderer:^render.Renderer,
 ) {
     state.count=0
     if assets==nil || core.count(decals)==0 {return}

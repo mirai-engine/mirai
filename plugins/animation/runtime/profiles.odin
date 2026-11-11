@@ -162,7 +162,7 @@ modifier_append :: proc(table:^core.Table($T),entity:core.Entity,value:T) -> boo
 
 // The modifiers of the .character of each animated entity, laid out again when an Animation, an
 // attachment, a rig or an asset changes.
-modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:core.Read(Animation),attachments:core.Read(Bone_Attachment),characters:^Character_Assets,skeletons:^Skeleton_Assets,playback:^Playback,loaded:^host.Assets,allocator:mem.Allocator,problems:^core.Problems) -> bool {
+modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animation,$A),attachments:^core.Table(Bone_Attachment,$B),characters:^Character_Assets,skeletons:^Skeleton_Assets,playback:^Playback,loaded:^host.Assets,allocator:mem.Allocator,problems:^core.Problems) -> bool {
     allocation_failed :: proc(cache:^$T,id:base.Asset_Id) -> bool {
         if cache==nil || id=={} {return false}
         for content in cache.contents {if content.id==id {return content.checked==0}}
@@ -178,7 +178,7 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:core.Read(Animatio
         row^+=1
     }
     for row in 0..<core.count(animations) {
-        id:=animation_character(loaded,animations.table.values[row]);revision:u64
+        id:=animation_character(loaded,animations.values[row]);revision:u64
         if id=={} {continue}
         if content:=character_content(characters,loaded,allocator,id);content!=nil {revision=character_key(core.entity_at(animations,row),id,content.revision)} else if allocation_failed(characters,id) {memory_problem(problems,core.entity_at(animations,row),"its .character");return false}
         compare_revision(runtime,&revision_row,revision,&revisions_changed)
@@ -197,7 +197,7 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:core.Read(Animatio
     next.ik.layout,next.look.layout,next.limits.layout=runtime.ik.layout+1,runtime.look.layout+1,runtime.limits.layout+1
     next.grounding.layout,next.sockets.layout=runtime.grounding.layout+1,runtime.sockets.layout+1
     for row in 0..<core.count(animations) {
-        id:=animation_character(loaded,animations.table.values[row])
+        id:=animation_character(loaded,animations.values[row])
         if id=={} {continue}
         entity:=core.entity_at(animations,row)
         content:=character_content(characters,loaded,allocator,id);append(&next.revisions,character_key(entity,id,content.revision) if content!=nil else 0)
@@ -333,7 +333,7 @@ modifier_take :: proc(runtime:^Modifier_Runtime,requests:^Animation_Requests,pro
 }
 
 @(step="fixed",loops="game editor",stage="apply")
-animation_sample :: proc(animations:core.Read(Animation),progress:^core.Table(Animation_Progress),played:^core.Table(Animation_Played),attachments:core.Read(Bone_Attachment),transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),targets:core.Read(Animation_Target),meshes:core.Read(erender.Mesh_Renderer),sources:core.Read(Pose_Source),remotes:core.Read(core.Remote),requests:^Animation_Requests,events:^Animation_Events,runtime:^Modifier_Runtime,playback:^Playback,characters:^Character_Assets,skeletons:^Skeleton_Assets,app:^host.App,time:core.Time,frame:core.Frame_Time,problems:^core.Problems,actions:^Action_Runtime,motion:^Motion_Runtime,content_sources:^Source_Assets,paces:core.Read(core.Own_Pace),clock:core.Clock,budget:Animation_Budget_Config) {
+animation_sample :: proc(animations:^core.Table(Animation,.Read),progress:^core.Table(Animation_Progress),played:^core.Table(Animation_Played),attachments:^core.Table(Bone_Attachment,.Read),transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),names:^core.Table(core.Name,.Read),targets:^core.Table(Animation_Target,.Read),meshes:^core.Table(erender.Mesh_Renderer,.Read),sources:^core.Table(Pose_Source,.Read),remotes:^core.Table(core.Remote,.Read),requests:^Animation_Requests,events:^Animation_Events,runtime:^Modifier_Runtime,playback:^Playback,characters:^Character_Assets,skeletons:^Skeleton_Assets,app:^host.App,time:core.Time,frame:core.Frame_Time,problems:^core.Problems,actions:^Action_Runtime,motion:^Motion_Runtime,content_sources:^Source_Assets,paces:^core.Table(core.Own_Pace,.Read),clock:core.Clock,budget:Animation_Budget_Config) {
     if app.assets==nil {playback.frame+=1;return}
     if !rigs_update(playback,meshes,sources,app.assets) {memory_problem(problems,core.NONE,"the list of rigs, so nothing is animated in this tick");playback.frame+=1;return}
     if !modifier_prepare(runtime,animations,attachments,characters,skeletons,playback,app.assets,app.allocator,problems) {playback.frame+=1;return}
@@ -358,7 +358,7 @@ progress_resume :: proc(progress:^core.Table(Animation_Progress),playback:^Playb
 
 // Where each clip is, for a saved game; an entity that lost its Animation loses it.
 @(private)
-progress_write :: proc(progress:^core.Table(Animation_Progress),animations:core.Read(Animation),playback:^Playback) {
+progress_write :: proc(progress:^core.Table(Animation_Progress),animations:^core.Table(Animation,$A),playback:^Playback) {
     for row in 0..<core.count(progress) {
         if e:=core.entity_at(progress,row);!core.has(animations,e) {core.remove(progress,e)}
     }
@@ -377,7 +377,7 @@ progress_write :: proc(progress:^core.Table(Animation_Progress),animations:core.
 }
 
 @(step="fixed",loops="game editor",stage="react")
-animation_advance :: proc(transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),worlds:core.Read(core.World_Transform),requests:^Animation_Requests,runtime:^Modifier_Runtime,playback:^Playback,constraints:^Animation_Constraints,grounding:^Grounding_Runtime,world:core.World_Ref,queries:core.Ref(core.World_Queries),time:core.Time,skeletons:core.Ref(Skeleton_Assets),problems:^core.Problems,motion:^Motion_Runtime,characters:^Character_Assets,verticals:core.Read(core.Vertical),paces:core.Read(core.Own_Pace),clock:core.Clock,places:^core.Places) {
+animation_advance :: proc(transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),worlds:^core.Table(core.World_Transform,.Read),requests:^Animation_Requests,runtime:^Modifier_Runtime,playback:^Playback,constraints:^Animation_Constraints,grounding:^Grounding_Runtime,world:core.World_Ref,queries:core.Ref(core.World_Queries),time:core.Time,skeletons:core.Ref(Skeleton_Assets),problems:^core.Problems,motion:^Motion_Runtime,characters:^Character_Assets,verticals:^core.Table(core.Vertical,.Read),paces:^core.Table(core.Own_Pace,.Read),clock:core.Clock,places:^core.Places) {
     modifier_take(runtime,requests,problems,time.dt)
     inputs:=Constraint_Inputs{core.read(&runtime.ik),core.read(&runtime.look),core.read(&runtime.limits),core.read(&runtime.sockets),worlds,runtime.geometry,skeletons.ptr,problems}
     ground_inputs:=Grounding_Inputs{core.read(&runtime.grounding),core.world_query(world,queries),core.read(transforms),parents,runtime.geometry,problems,verticals}

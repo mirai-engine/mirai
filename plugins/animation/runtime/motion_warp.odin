@@ -190,7 +190,7 @@ motion_take_requests :: proc(runtime:^Motion_Runtime,requests:^Animation_Request
 }
 
 @(private)
-motion_discover :: proc(runtime:^Motion_Runtime,animations:core.Read(Animation),assets:^host.Assets,problems:^core.Problems) -> bool {
+motion_discover :: proc(runtime:^Motion_Runtime,animations:^core.Table(Animation,$A),assets:^host.Assets,problems:^core.Problems) -> bool {
     // Kept only when the entities found have their room: without it they are looked for again.
     seen:=runtime.animations_seen
     c:=core.changes(animations,&seen)
@@ -198,14 +198,14 @@ motion_discover :: proc(runtime:^Motion_Runtime,animations:core.Read(Animation),
     added,rows:=0,len(runtime.rows)
     counted:=c
     for row in core.each_changed(animations,&counted) {
-        if animation_character(assets,animations.table.values[row])=={} {continue}
+        if animation_character(assets,animations.values[row])=={} {continue}
         index:=core.entity_index(core.entity_at(animations,row));rows=max(rows,index+1)
         slot:=int(runtime.rows[index])-1 if index<len(runtime.rows) else -1
         if slot<0 || slot>=len(runtime.instances) || core.entity_index(runtime.instances[slot].entity)!=index {added+=1}
     }
     if !program_array_reserve(&runtime.instances,len(runtime.instances)+added) || !program_array_resize(&runtime.rows,rows) {memory_problem(problems,core.NONE,"the entities whose .character warps, so none applies");return false}
     for row in core.each_changed(animations,&c) {
-        if animation_character(assets,animations.table.values[row])=={} {continue}
+        if animation_character(assets,animations.values[row])=={} {continue}
         entity:=core.entity_at(animations,row);index:=core.entity_index(entity);slot:=int(runtime.rows[index])-1
         if slot<0 || slot>=len(runtime.instances) || core.entity_index(runtime.instances[slot].entity)!=index {
             slot=len(runtime.instances)
@@ -221,15 +221,15 @@ motion_discover :: proc(runtime:^Motion_Runtime,animations:core.Read(Animation),
     return true
 }
 
-motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Animation_Requests,animations:core.Read(Animation),playback:^Playback,characters:^Character_Assets,loaded:^host.Assets,allocator:mem.Allocator,problems:^core.Problems) -> bool {
-    if runtime==nil || playback==nil || animations.table==nil {return false}
+motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Animation_Requests,animations:^core.Table(Animation,.Read),playback:^Playback,characters:^Character_Assets,loaded:^host.Assets,allocator:mem.Allocator,problems:^core.Problems) -> bool {
+    if runtime==nil || playback==nil || animations==nil {return false}
     if allocator.procedure!=nil {context.allocator=allocator}
     runtime.frame+=1
     if !motion_discover(runtime,animations,loaded,problems) {return false}
     kept:=0
     for &instance,i in runtime.instances {
         row:=core.row_of(animations,instance.entity);index:=core.entity_index(instance.entity)
-        id:=animation_character(loaded,animations.table.values[row]) if row>=0 else {}
+        id:=animation_character(loaded,animations.values[row]) if row>=0 else {}
         if id=={} {if index<len(runtime.rows) && runtime.rows[index]==i32(i+1) {runtime.rows[index]=0};motion_instance_free(&instance);continue}
         instance.seen=runtime.frame
         state:=constraint_playing(playback,instance.entity)
@@ -247,7 +247,7 @@ motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Animation_Requests,anim
 }
 
 // Before the rigs sample: a bone or socket reads the pose of the previous tick.
-motion_resolve_targets :: proc(runtime:^Motion_Runtime,playback:^Playback,skeletons:^Skeleton_Assets,transforms:core.Read(core.Transform),parents:core.Read(core.Parent),worlds:core.Read(core.World_Transform)) {
+motion_resolve_targets :: proc(runtime:^Motion_Runtime,playback:^Playback,skeletons:^Skeleton_Assets,transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),worlds:^core.Table(core.World_Transform,.Read)) {
     if runtime==nil {return}
     previous:=playback.frame-1 if playback!=nil && playback.frame>1 else 0
     for &instance in runtime.instances {for &target,i in instance.targets {

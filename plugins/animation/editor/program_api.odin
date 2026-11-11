@@ -267,7 +267,7 @@ program_grounding_diagnostic :: proc(world:core.World_Ref,entity:core.Entity,slo
     for &value in playback.states {if value.entity==entity {state=&value;break}}
     if record==nil || !record.initialized || record.count<1 || record.count>anim.GROUNDING_LEGS || state==nil || !state.pose_ready {return}
     ground:=core.world_query(world,core.ref(core.world_storage_of(world,core.World_Queries)))
-    ignore:=anim.ground_ignore(ground,core.read(core.world_table_of(world,core.Parent)),entity)
+    ignore:=anim.ground_ignore(ground,core.world_table_of(world,core.Parent),entity)
     result.blocked_legs=record.blocked
     for i in 0..<int(record.count) {
         if record.targets[i].weight<=0 {continue}

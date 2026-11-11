@@ -56,7 +56,7 @@ shell_events :: proc(events:^gui.UI_Events,screen:core.Entity,shell:^Shell,solo:
 // and the buttons reach. The screens follow the page.
 @(step="frame")
 shell_frame :: proc(
-    shell:^Shell,ui_events:core.Ref(gui.UI_Events),shell_screens:core.Read(Shell_Screen),ui_screens:^core.Table(gui.UI_Screen),huds:core.Read(Shell_Hud),
+    shell:^Shell,ui_events:core.Ref(gui.UI_Events),shell_screens:^core.Table(Shell_Screen,.Read),ui_screens:^core.Table(gui.UI_Screen),huds:^core.Table(Shell_Hud,.Read),
     network:core.Ref(core.Network),scenes:^scene.Scene_Requests,hidden:^core.Table(render.Hidden),graphics:^render.Graphics_Settings,app:^host.App,
 ) {
     solo:=network.role==.Standalone
@@ -77,7 +77,7 @@ shell_frame :: proc(
 
     // The world runs behind the main menu and stops under the pause and settings pages.
     frozen:=shell.page==.Pause || shell.page==.Settings
-    if value,found:=core.get(ui_screens,screen);found && value.pause!=frozen {core.edit(ui_screens,screen).pause=frozen}
+    if value:=core.edit(ui_screens,screen);value!=nil {value.pause=frozen}
     render.set_hidden(hidden,screen,shell.page==.Playing)
     if hud,found:=core.sole(huds);found {render.set_hidden(hidden,hud,shell.page==.Menu)}
 }

@@ -9,7 +9,7 @@ A channel is only its name: the same text in the code that pushes and in the emi
 
 ```odin
 @(step="fixed")
-impacts :: proc(hits:core.Read(Hit), births:^core.Births) {
+impacts :: proc(hits:^core.Table(Hit,.Read), births:^core.Births) {
     for i in 0..<core.count(hits) {
         hit:=core.at(hits, i)
         core.push(&births.queue, core.Birth{

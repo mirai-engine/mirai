@@ -33,7 +33,7 @@ distance_tick_preserves_physical_fade_clocks_root_metadata_and_manual_warp_overr
     core.add(&animations,actor,animation)
     core.table_settle(&transforms,&entities);core.table_settle(&parents,&entities);core.table_settle(&names,&entities);core.table_settle(&targets,&entities);core.table_settle(&animations,&entities)
     hierarchy:core.Hierarchy;defer core.value_free(&hierarchy,type_info_of(core.Hierarchy))
-    core.hierarchy_settle(&hierarchy,core.read(&parents),&entities)
+    core.hierarchy_settle(&hierarchy,&parents,&entities)
     requests:Animation_Requests;events:Animation_Events;playback:Playback;skeletons:Skeleton_Assets
     defer {delete(requests.timeline.items);delete(requests.poses.items);delete(requests.distances.items);delete(events.items);playback_free(&playback);skeleton_assets_free(&skeletons)}
     motion:Motion_Runtime;motion_assets:Character_Assets;extra:Test_Storages
