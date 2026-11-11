@@ -169,7 +169,7 @@ end_tick :: proc(e:^End,_:^Fixture,resimulating:=false) {
     clear(&e.replayed.results.items);clear(&e.digs.digs.items) // the logs of a tick, as their readers are handed them
     terrain.terrain_replay(&e.replays,&e.replayed,&e.digs,&e.terrain_requests,&e.data,core.read(&e.terrains),core.read(&e.worlds),f.app.assets,&e.problems)
     terrain_net_send(core.ref(&e.authority),&e.net,time,&e.outbox,core.ref(&e.connections),core.ref(&e.replayed),core.ref(&e.data),core.ref(&e.session),core.ref(&e.root))
-    core.queue_clear(&e.connections.events)
+    clear(&e.connections.events.items)
 }
 
 // What a server sent, to each client it is for. keep: the items stay to be
@@ -388,7 +388,7 @@ a_client_that_enters_late_gets_the_pages_the_edits_touched_and_converges :: proc
     core.push(&s.connections.events,multiplayer.Connection_Event{kind=.Entered,connection=3})
     c.tick=s.tick
     round(&f,&s,&c)
-    core.queue_clear(&s.connections.events)
+    clear(&s.connections.events.items)
     for _ in 0..<16 {round(&f,&s,&c)}
     same,differ:=same_ground(&c,&s)
     testing.expectf(t,same,"a client that came late holds the ground of the server: %d samples differ",differ)

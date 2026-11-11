@@ -713,11 +713,10 @@ and the others interpolate it. The server puts what arrives in `core.Pose_Target
 
 - `Net_Connections.events` brings `Connected`/`Disconnected` with the connection and the reason,
   and on the server `Entered` when a connection enters its world (on arriving and after each scene
-  change): from then on what the game sends reaches it. `fixed` functions read it directly: at the
-  start of each tick the network leaves there what happened since the previous one, and in
-  `core.Net_Messages` the messages that arrived. A frame without
-  ticks keeps it for the next and of a frame with several only the first has it; a tick that
-  repeats has the ones it had.
+  change): from then on what the game sends reaches it. It is a `core.Events`: at the start of each
+  tick the network pushes what happened since the previous one, and each reader gets it once. In
+  `core.Net_Messages` are the messages that arrived: a frame without ticks keeps them for the next
+  and of a frame with several only the first has them; a tick that repeats has the ones it had.
 - The identity of a player between one connection and the next is that of its seat
   ([players](#authority-and-players)).
 

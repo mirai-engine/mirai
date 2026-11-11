@@ -321,7 +321,7 @@ screen_node_rect :: proc(ctx:^ui.Context,tree:^ui.Widget_Tree,e:core.Entity,inde
 // the screen, and what it does have.
 @(private)
 asked_check :: proc(gui:^Gui,app:^host.App,problems:^core.Problems) {
-    for &asked in gui.names_asked[:gui.names_asked_count] {
+    for &asked in gui.names_asked.names[:gui.names_asked.count] {
         if asked.checked {continue}
         found:=false
         slots:=core.entity_map_get(&gui.index,asked.entity)

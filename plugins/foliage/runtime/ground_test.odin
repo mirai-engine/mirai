@@ -3,6 +3,7 @@ package foliage
 import "core:testing"
 import "mirai:core"
 import scene "mirai:engine/scene"
+import mm "mirai:std/math"
 
 // A ground that is the plane y = height over x and z from -32 to 32 m, with
 // no surface over x and z from 4 to 8 m, as a provider of core.Ground_Queries
@@ -23,9 +24,6 @@ Ground_World :: struct {
 Ground_Test :: struct {
     using w:Ground_World,
     height:f32,
-    changes:[4]core.Ground_Change,
-    count:int,
-    revision:u64,
     coarse:int, // probes asked coarse
     plant:core.Entity,
 }
@@ -40,12 +38,13 @@ ground_test_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
         if origin.x>4 && origin.x<8 && origin.z>4 && origin.z<8 {return {},.Empty}
         return {point={origin.x,f.height,origin.z},normal={0,1,0},weights={0,255,0,0},layers={1={7,7}}},.Ground
     }
-    return {user=f,probe=probe,spacing=1,revision=f.revision,changes=f.changes[:f.count]},true
+    return {user=f,probe=probe,spacing=1},true
 }
 
 @(private="file")
 ground_test_step :: proc(f:^Ground_Test) {
     foliage_ground(&f.ground,&f.requests,core.ref(&f.data),core.read(&f.foliages),core.read(&f.worlds),core.ref(&f.streaming),core.ref(&f.queries),{data=f},nil,nil)
+    clear(&f.queries.changed.items)
 }
 
 @(private="file")
@@ -55,9 +54,8 @@ tile_revision :: proc(owner:^Ground_Owner,coord:[2]i32) -> u32 {
 }
 
 // What foliage asks of the ground and when: nothing without a provider; the
-// cells of each Foliage once; again only those under a change it announces,
-// those the editor asks for and all of them when the changes it keeps do not
-// reach back; coarse far from the sources.
+// cells of each Foliage once; again only those under a change it announces
+// and those the editor asks for; coarse far from the sources.
 @(test)
 the_ground_of_foliage_is_read_where_the_ground_changed :: proc(t:^testing.T) {
     f:Ground_Test
@@ -96,12 +94,11 @@ the_ground_of_foliage_is_read_where_the_ground_changed :: proc(t:^testing.T) {
     testing.expect_value(t,owner.revision,revision)
     // A change over cell (0,0) reads it again, and not the other.
     other:=tile_revision(owner,{-1,-1})
-    f.height,f.revision=3,1
-    f.changes[0],f.count={{{1,-10,1},{20,10,20}},1},1
+    f.height=3
+    core.push(&f.queries.changed,mm.Aabb{{1,-10,1},{20,10,20}})
     ground_test_step(&f)
     testing.expect(t,tile_revision(owner,{0,0})>revision && tile_revision(owner,{-1,-1})==other)
-    // A revision past what it keeps reads every tile.
-    f.revision,f.count=1<<32,0
+    core.push(&f.queries.changed,mm.Aabb{{-20,-10,-20},{-1,10,-1}})
     ground_test_step(&f)
     tile,_=ground_cell(owner,{-1,-1})
     height,_,_=ground_at(tile,16,16)

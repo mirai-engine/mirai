@@ -220,7 +220,7 @@ gallery_fragments_remain_while_sleeping_and_fade_before_their_physical_expiry ::
     body:phys.Body_Handle
     for piece in pieces[:min(count,len(pieces))] {if piece.body!=root && piece.body!=0 {body=piece.body;break}}
     if !testing.expect(t,body!=0) {return}
-    phys.proxy_set(&physics,target,root,{},1);phys.proxy_set(&physics,fragment,body,{},1)
+    phys.proxy_set(&physics,target,root);phys.proxy_set(&physics,fragment,body)
     core.add(&stations,core.create(&entities),Physics_Gallery{station=9,target=target,fade_seconds=2})
     core.add(&states,target,destruct.Destructible_State{handle=handle})
     core.add(&groups,fragment,destruct.Destructible_Group{owner=target,group=1})

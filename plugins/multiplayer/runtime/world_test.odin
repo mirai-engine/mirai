@@ -283,10 +283,13 @@ the_connections_and_the_messages_that_arrive_reach_the_first_tick_after_them :: 
     s.received=received[:]
     defer {delete(s.arrived);delete(received[0].blocks)}
     ref:=core.world_ref(&world,&info)
-    // The connection events and the messages the tick has.
-    tick :: proc(ref:core.World_Ref,app:^host.App,s:^Net_Session,w:^Net_Test_World) -> [2]int {
+    // The connection events a reader of each tick gets, and the messages the tick has.
+    seen:u64
+    arrived:[]Connection_Event
+    tick :: proc(ref:core.World_Ref,app:^host.App,s:^Net_Session,w:^Net_Test_World,seen:^u64,arrived:^[]Connection_Event) -> [2]int {
         net_tick_head(ref,app,s,&w.remote,&w.connections,&w.messages,nil)
-        return {len(w.connections.events.items),len(core.inbox(&w.messages,0,u32).items)}
+        arrived^,_=core.log_since(w.connections.events.log,seen)
+        return {len(arrived^),len(core.inbox(&w.messages,0,u32).items)}
     }
     // As event_deliver leaves it.
     message :: proc(s:^Net_Session,value:u32) {
@@ -297,23 +300,23 @@ the_connections_and_the_messages_that_arrive_reach_the_first_tick_after_them :: 
     }
     append(&s.arrived,Connection_Event{kind=.Connected,connection=1})
     message(&s,10)
-    testing.expect_value(t,tick(ref,&app,&s,&world),[2]int{1,1})
-    testing.expect_value(t,tick(ref,&app,&s,&world),[2]int{0,0})
+    testing.expect_value(t,tick(ref,&app,&s,&world,&seen,&arrived),[2]int{1,1})
+    testing.expect_value(t,tick(ref,&app,&s,&world,&seen,&arrived),[2]int{0,0})
     // Two frames without a tick.
     append(&s.arrived,Connection_Event{kind=.Connected,connection=2})
     message(&s,11)
     append(&s.arrived,Connection_Event{kind=.Disconnected,connection=1,reason=.Timeout})
     message(&s,12)
-    testing.expect_value(t,tick(ref,&app,&s,&world),[2]int{2,2})
-    testing.expect_value(t,world.connections.events.items[1],Connection_Event{kind=.Disconnected,connection=1,reason=.Timeout})
+    testing.expect_value(t,tick(ref,&app,&s,&world,&seen,&arrived),[2]int{2,2})
+    testing.expect_value(t,arrived[1],Connection_Event{kind=.Disconnected,connection=1,reason=.Timeout})
     second:=core.inbox(&world.messages,0,u32).items[1]
     testing.expect(t,second.value==12 && second.sender==4,"in the order they arrived, with who sent them")
     world.time.resimulating=true
     append(&s.arrived,Connection_Event{kind=.Connected,connection=3})
     message(&s,13)
-    testing.expect_value(t,tick(ref,&app,&s,&world),[2]int{2,2})
+    testing.expect_value(t,tick(ref,&app,&s,&world,&seen,&arrived),[2]int{0,2})
     world.time.resimulating=false
-    testing.expect_value(t,tick(ref,&app,&s,&world),[2]int{1,1})
+    testing.expect_value(t,tick(ref,&app,&s,&world,&seen,&arrived),[2]int{1,1})
 }
 
 // A message of 4 KB a client sends reaches the inbox of its type on the
