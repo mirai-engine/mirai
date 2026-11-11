@@ -115,6 +115,8 @@ counterclockwise seen from above, and the queries do not depend on the winding.
   corridor is not straightened again while it is followed.
 - Each tick: `nav_corridor_move` takes the start to where the agent is (what it walked off the path
   is added ahead) and `nav_corridor_corners` gives the next corners up to the first link.
+  `nav_corridor_move_target` slides the end after a target that moves, over the surface from the
+  last polygon (Detour's moving target): no search while nothing walls it off.
 - `nav_corridor_cross` crosses the link at the front and leaves the agent at its end;
   `nav_corridor_valid` says whether the first steps still exist and the filter walks them.
 

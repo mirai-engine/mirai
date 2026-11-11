@@ -192,7 +192,8 @@ Navigation_Agents :: struct {
 // only leaves its mark; a second one begins the search, from where the target
 // is on the mesh, and from then each follower expands it as far as its own
 // polygon and reads its path. It begins again when the target moved on, at
-// most every NAV_REPLAN_FOLLOW, or the mesh changed.
+// most every NAV_REPLAN_FOLLOW, or a way read from it crossed a polygon that
+// expired: a tile built elsewhere does not touch it.
 @(private)
 Follow_Tree :: struct {
     query:ai.Nav_Query,
@@ -204,7 +205,6 @@ Follow_Tree :: struct {
     goal:mm.Vec3,       // where the target was when the search began
     end:mm.Vec3,        // on the mesh
     end_ref:ai.Nav_Ref,
-    revision:u64,       // of the mesh then
     age,idle:f32,       // s since the search began, and since a follower last asked
 }
 
@@ -399,10 +399,20 @@ navigation_agents :: proc(
             p.time+=time.dt
             if p.time>=NAV_REPLAN_FOLLOW*4 {p.time,p.state,p.stuck=0,.Waiting,0}
         }
+        walk_row,_:=core.get(walks,e)
+        walk:=Walk_Like{walk_row.jump_height,walk_row.max_speed}
+        // Each agent jumps under the gravity of its place: a planet, a room without it.
+        filter:=agent_filter(n.ptr,class,agent,walk,can_swim,linalg.length(phys.gravity_of_entity(physics,e)))
         if p.target!=core.NONE && (p.state==.Moving || p.state==.Arrived) {
             p.time+=time.dt
             if to,ok:=core.get(worlds,p.target);ok {
-                if p.time>=NAV_REPLAN_FOLLOW && linalg.length(to.position-p.goal)>max(p.distance*0.5,0.5) {p.goal=to.position;p.state=.Waiting}
+                slack:=max(p.distance*0.5,0.5)
+                // The end of its corridor slides after the target over the surface, as Detour moves
+                // a target: it searches again only once a wall stops the end short of the target.
+                if to.position!=p.goal && !flies && !swims && !p.medium && !p.through && ai.nav_corridor_move_target(&p.corridor,&n.classes[class].mesh,&filter,to.position) && linalg.length(p.corridor.target.xz-to.position.xz)<=slack {
+                    p.goal=to.position
+                    if p.state==.Arrived && linalg.length(p.corridor.target.xz-pose.position.xz)>agent_reach(agent,p)+slack {p.state=.Moving}
+                } else if p.time>=NAV_REPLAN_FOLLOW && linalg.length(to.position-p.goal)>slack {p.goal=to.position;p.state=.Waiting}
             } else {p.state=.Idle}
         }
         switch p.state {
@@ -415,10 +425,6 @@ navigation_agents :: proc(
                     agent_fly(p,e,agent,center,&n.classes[class].volume,swim.speed if swims else fly.speed,swim.acceleration if swims else fly.acceleration,flies,moving.mode,events,loco)
                 }
             } else if p.corridor.count>0 {
-                walk_row,_:=core.get(walks,e)
-                walk:=Walk_Like{walk_row.jump_height,walk_row.max_speed}
-                // Each agent jumps under the gravity of its place: a planet, a room without it.
-                filter:=agent_filter(n.ptr,class,agent,walk,can_swim,linalg.length(phys.gravity_of_entity(physics,e)))
                 agent_follow(n.ptr,p,e,agent,pose.position,&n.classes[class].mesh,&filter,walk,time.dt,events,loco,problems)
             } else {
                 p.velocity={}
@@ -794,7 +800,11 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
             }
             a.searching,a.searching_tree=core.NONE,0
             count,found:=0,false
-            if status==.Found {count,found=ai.nav_toward_path(&tree.query,from,a.refs[:])}
+            if status==.Found {
+                count,found=ai.nav_toward_path(&tree.query,from,a.refs[:])
+                // A polygon of the way expired (a tile built again on it): the next follower begins it again.
+                if !found {tree.built=false}
+            }
             if !found {
                 // Cut off from the target, or beyond what the shared search holds: its own says how near it gets.
                 if ai.nav_path_begin(&a.query,mesh,from,tree.end_ref,p.corridor.position,tree.end,&tree.filter)==.Invalid {agent_fail(p,e,events);continue}
@@ -866,7 +876,7 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
 }
 
 // The search toward its target that a follower reads its path from, begun, or
-// begun again when the target moved on or the mesh changed; -1 for the first
+// begun again when the target moved on or a way read from it expired; -1 for the first
 // follower of a target, which leaves its mark and searches its own way, and
 // when no search is free.
 @(private)
@@ -883,10 +893,10 @@ follow_tree :: proc(a:^Navigation_Agents,p:^Nav_Path,e:core.Entity,mesh:^ai.Nav_
         tree.idle=0
         if !tree.built && tree.first==e {return -1}
         moved:=tree.age>=NAV_REPLAN_FOLLOW && linalg.length(p.goal-tree.goal)>max(p.distance*0.5,0.5)
-        if !tree.built || moved || tree.revision!=mesh.revision || !ai.nav_ref_valid(mesh,tree.end_ref) {
+        if !tree.built || moved || !ai.nav_ref_valid(mesh,tree.end_ref) {
             if len(tree.query.points)==0 && !ai.nav_query_init(&tree.query,len(a.query.points)) {return -1}
             if !ai.nav_toward_begin(&tree.query,mesh,to,end,filter) {tree.built=false;return -1}
-            tree.built,tree.goal,tree.end,tree.end_ref,tree.revision,tree.age=true,p.goal,end,to,mesh.revision,0
+            tree.built,tree.goal,tree.end,tree.end_ref,tree.age=true,p.goal,end,to,0
         }
         return i
     }

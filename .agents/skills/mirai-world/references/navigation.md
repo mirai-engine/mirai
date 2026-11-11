@@ -147,8 +147,10 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   the same entity read their paths from one search toward it
   ([std/ai](../../mirai-std/references/ai.md#queries-nav_queryodin)): the first plans its own way,
   the second starts the shared search, and it starts again when the target moved on, no more often
-  than a follower plans again, or the mesh changed. One it does not reach (cut off, or beyond what
-  the search holds) searches its own way. Those that fly, swim or cross between spaces, and a way
+  than a follower plans again, or a way read from it crossed a polygon that expired: a tile built
+  elsewhere does not touch it. One it does not reach (cut off, or beyond what the search holds)
+  searches its own way. While the target moves, the end of each follower's corridor slides after it
+  over the surface; a follower plans again only once a wall stops that end short of the target. Those that fly, swim or cross between spaces, and a way
   into a far section, search alone.
 - `navigation_agents` (`fixed`, `apply`, `server`): searches paths in portions in arrival order
   within `path_iterations` per tick, moves the corridor to where the body is, goes to the next
@@ -315,11 +317,11 @@ It needs no component or configuration.
   it, beside one that is not seated and stays; six that patrol together over a staircase, a drop
   and a fence that the game crosses without falling off the platform, and one that is taken out of
   its level and climbs back, and one that is asked for another destination in the middle of a
-  jump; eight that follow a runner by one search toward it; tiles that an area or an obstacle
-  changes, built again from their heightfields and equal to those the collision gives; the
-  crossing of links that looks at no path while none crosses; the tiles waiting for unloaded
-  collision, with and without `Nav_Bounds`, and those of the
-  unloaded terrain, which are dropped in a running world, kept in the edited one and come back
+  jump; eight that follow a runner by one search toward it, and after a step aside without one;
+  tiles that an area or an obstacle changes, built again from their heightfields and equal to
+  those the collision gives; the crossing of links that looks at no path while none crosses; the
+  tiles waiting for unloaded collision, with and without `Nav_Bounds`, and those of the unloaded
+  terrain, which are dropped in a running world, kept in the edited one and come back
   from their bake without being built. Sections: the bakes of two that stitch at their border,
   the tiles of one that leaves and comes back with its bake, nothing to do without changes, an
   agent that crosses an unloaded section far away and appears in the next, one that arrives far

@@ -1787,6 +1787,9 @@ followers_of_one_target_share_one_search_toward_it :: proc(t:^testing.T) {
     defer nav_test_destroy(&f)
     nav_test_box(&f,{0,-0.5,0},{20,0.5,12})
     nav_test_box(&f,{0,1,-3},{0.3,1,9})
+    // A yard 100 m away, where a crate moves.
+    nav_test_box(&f,{100,-0.5,0},{5,0.5,5})
+    crate:=nav_test_box(&f,{100,0.5,0},{0.5,0.5,0.5})
     nav_test_settled(t,&f)
     runner:=core.create(&f.entities)
     core.add(&f.transforms,runner,core.Transform{{14,0,-8},1,{1,1,1}})
@@ -1827,8 +1830,44 @@ followers_of_one_target_share_one_search_toward_it :: proc(t:^testing.T) {
         replans+=p.replans
         testing.expectf(t,(p.state==.Arrived || p.state==.Moving) && linalg.distance(pose.position,at.position)<4,"walker %d is %v at %v, the runner at %v",i,p.state,pose.position,at.position)
     }
-    testing.expectf(t,trees==1 && begun>=3 && begun<=2*SECONDS+1,"%d searches shared, begun %d times",trees,begun)
+    testing.expectf(t,trees==1 && begun>=1 && begun<=2,"%d searches shared, begun %d times",trees,begun)
     testing.expectf(t,own<=4,"%d searches of their own beside the shared one",own)
+    searched :: proc(f:^Nav_Test) -> (searches:u64) {
+        for &tree in f.run.trees {searches+=tree.query.search.stats.searches}
+        return searches+f.run.query.search.stats.searches
+    }
+    // It steps 2 m aside: the ends of their corridors slide after it, with no search and no wait.
+    before:=searched(&f)
+    waited:=0
+    for tick in 0..<60*3 {
+        core.edit(&f.transforms,runner).position.x=14-min(f32(tick)/30,1)*2
+        agents_test_step(&f)
+        for e in walkers {
+            p,_:=core.get(&f.paths,e)
+            if p.state==.Waiting {waited+=1}
+        }
+    }
+    at,_=core.get(&f.worlds,runner)
+    for e,i in walkers {
+        pose,_:=core.get(&f.worlds,e)
+        testing.expectf(t,linalg.distance(pose.position,at.position)<4,"walker %d is at %v, the runner at %v",i,pose.position,at.position)
+    }
+    testing.expectf(t,waited==0 && searched(&f)==before,"they waited %d ticks and searched %d times",waited,searched(&f)-before)
+    // Asked again, they begin the search where it stands; a tile built again 100 m away
+    // does not begin it again for those asked after.
+    for e in walkers {nav_follow(&f.nav_requests,e,runner,1)}
+    for _ in 0..<60 {agents_test_step(&f)}
+    begun=0
+    for &tree in f.run.trees {begun+=tree.query.search.stats.searches}
+    built:=f.nav.stats.built
+    core.edit(&f.transforms,crate).position.x=102
+    for _ in 0..<60 {agents_test_step(&f)}
+    testing.expect(t,f.nav.stats.built>built)
+    for e in walkers {nav_follow(&f.nav_requests,e,runner,1)}
+    for _ in 0..<30 {agents_test_step(&f)}
+    again:=u64(0)
+    for &tree in f.run.trees {again+=tree.query.search.stats.searches}
+    testing.expectf(t,again==begun,"the shared search began %d more times",again-begun)
     testing.expect_value(t,f.problems.count,0)
 }
 

@@ -134,8 +134,10 @@ a_corridor_stops_at_a_link_and_goes_on_from_its_end :: proc(t:^testing.T) {
     testing.expect(t,!ok)
 }
 
+// Off its path the agent adds what it walked to the front, and after a
+// target that moves the end follows it.
 @(test)
-a_corridor_takes_back_the_polygons_walked_off_it :: proc(t:^testing.T) {
+a_corridor_takes_back_the_polygons_walked_off_it_and_follows_its_target :: proc(t:^testing.T) {
     mesh:Nav_Mesh
     test_mesh(t,&mesh)
     defer nav_mesh_destroy(&mesh)
@@ -151,10 +153,26 @@ a_corridor_takes_back_the_polygons_walked_off_it :: proc(t:^testing.T) {
     // Pushed back and away from the path: the corridor grows at its front and still ends at the target.
     testing.expect(t,nav_corridor_move(&c,&mesh,&filter,{0.5,0,3.5}))
     testing.expect(t,c.count>count && c.path[0]==nearest(t,&mesh,{0.5,0,3.5}) && nav_corridor_last(&c)==nearest(t,&mesh,b))
-    for i in 1..<int(c.count) {
-        _,_,ok:=nav_portal_points(&mesh,c.path[i-1],c.path[i])
-        testing.expect(t,ok)
+    joined :: proc(t:^testing.T,mesh:^Nav_Mesh,c:^Nav_Corridor) {
+        for i in 1..<int(c.count) {
+            _,_,ok:=nav_portal_points(mesh,c.path[i-1],c.path[i])
+            testing.expect(t,ok)
+        }
     }
+    joined(t,&mesh,&c)
+    // Its end follows a target that moves on and aside, and back over the path, without a search.
+    for to in ([?]math.Vec3{{3.5,0,3.5},{1.5,0,3.5},{0.5,0,3.5}}) {
+        testing.expect(t,nav_corridor_move_target(&c,&mesh,&filter,to))
+        testing.expectf(t,nav_corridor_last(&c)==nearest(t,&mesh,to) && linalg.distance(c.target,to)<1e-3,"toward %v it ends at %v",to,c.target)
+        joined(t,&mesh,&c)
+    }
+    testing.expect(t,c.count<=2)
+    // Off the mesh it stops at its edge; a cut corridor or a damaged one does not move.
+    testing.expect(t,nav_corridor_move_target(&c,&mesh,&filter,{-3,0,3.5}) && c.target.x>=0)
+    c.cut=true
+    testing.expect(t,!nav_corridor_move_target(&c,&mesh,&filter,{3.5,0,0.5}))
+    c.cut,c.count=false,0
+    testing.expect(t,!nav_corridor_move_target(&c,&mesh,&filter,{3.5,0,0.5}) && !nav_corridor_move_target(&c,nil,&filter,{3.5,0,0.5}))
 }
 
 @(test)
@@ -177,6 +195,12 @@ a_long_path_keeps_its_first_part_and_a_target_on_it :: proc(t:^testing.T) {
     testing.expect(t,nav_corridor_move(&c,&mesh,&filter,{1.5,0,0.5}))
     testing.expect(t,c.cut && c.count==NAV_CORRIDOR_CAPACITY && c.target.x<37)
     on,_:=nav_closest_point_on_poly(&mesh,nav_corridor_last(&c),c.target)
+    testing.expect(t,linalg.distance(on,c.target)<1e-4)
+    // One whose end, following its target, outgrows it is cut there too.
+    corridor_plan(t,&c,&q,&mesh,&filter,{1.5,0,0.5},{30.5,0,0.5})
+    testing.expect(t,!c.cut && nav_corridor_move_target(&c,&mesh,&filter,{36.5,0,0.5}))
+    testing.expect(t,c.cut && c.count==NAV_CORRIDOR_CAPACITY && c.target.x<36)
+    on,_=nav_closest_point_on_poly(&mesh,nav_corridor_last(&c),c.target)
     testing.expect(t,linalg.distance(on,c.target)<1e-4)
     a,b:=math.Vec3{0.5,0,0.5},math.Vec3{59.5,0,0.5}
     corridor_plan(t,&c,&q,&mesh,&filter,a,b)

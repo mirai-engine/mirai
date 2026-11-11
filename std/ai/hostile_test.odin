@@ -465,12 +465,13 @@ hostile_corridors_forged_and_followed :: proc(t:^testing.T) {
         c.position,c.target=hostile_nav_point(&h,2),hostile_nav_point(&h,2)
         corners:[4]Nav_Corner
         for _ in 0..<6 {
-            switch base.hostile_int(&h,7) {
+            switch base.hostile_int(&h,8) {
             case 0:
                 room:=corners[:base.hostile_int(&h,5)]
                 written:=nav_corridor_corners(&c,&mesh,room,base.hostile_f32(&h))
                 testing.expect(t,written>=0 && written<=len(room),"A corridor writes more corners than fit")
             case 1: _=nav_corridor_move(&c,&mesh,&filter,hostile_nav_point(&h,2))
+            case 7: _=nav_corridor_move_target(&c,&mesh,&filter,hostile_nav_point(&h,2))
             case 2: c.count=i32(nav_path_straighten(&mesh,&filter,hostile_nav_point(&h,2),hostile_nav_point(&h,2),c.path[:],int(c.count)))
             case 3: _,_,_,_=nav_corridor_cross(&c,&mesh)
             case 4: _=nav_corridor_valid(&c,&mesh,&filter,base.hostile_int(&h,80)-4)
