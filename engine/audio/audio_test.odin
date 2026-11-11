@@ -456,7 +456,7 @@ the_reverb_is_that_of_the_volumes_the_listener_is_in :: proc(t:^testing.T) {
     w.view=core.View{position={0,15,0},rotation=1}
     mixer_reverb:Mixer_Reverb
     run :: proc(p:^Audio_World,settings:^Audio_Settings,dt:f32,r:^Mixer_Reverb,app:^host.App) {
-        audio_reverb(core.read(&p.reverbs),core.read(&p.volumes),core.read(&p.worlds),nil,nil,core.read(&p.listeners),core.ref(&p.view),core.ref(settings),{},{dt=dt},r,app.mixer)
+        audio_reverb(core.read(&p.reverbs),core.read(&p.volumes),core.read(&p.worlds),nil,nil,nil,core.read(&p.listeners),core.ref(&p.view),core.ref(settings),{},{dt=dt},r,app.mixer)
     }
     run(&w,&settings,0.1,&mixer_reverb,&f.app)
     got,_:=mixer.reverb_get(f.app.mixer)
@@ -505,7 +505,7 @@ the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb :: proc(t:^
     room.view=core.View{position={0,-2,0},rotation=1}
     mixed:Mixer_Reverb
     hear :: proc(r:^core.Table(Audio_Reverb,$A),v:^core.Table(volume.Volume,$B),w:^core.Table(core.World_Transform,$C),l:^core.Table(Audio_Listener,$D),view:^core.View,settings:^Audio_Settings,medium:^Audio_Medium,mixed:^Mixer_Reverb,app:^host.App) -> Reverb {
-        for _ in 0..<60 {audio_reverb(r,v,w,nil,nil,l,core.ref(view),core.ref(settings),core.ref(medium),{dt=0.1},mixed,app.mixer)}
+        for _ in 0..<60 {audio_reverb(r,v,w,nil,nil,nil,l,core.ref(view),core.ref(settings),core.ref(medium),{dt=0.1},mixed,app.mixer)}
         got,_:=mixer.reverb_get(app.mixer)
         return got
     }

@@ -18,10 +18,14 @@ $P scene.write '{"entities":[
 ## The Volume
 
 - `shape`: `Box` (`extents` is half its size on each axis), `Sphere` (`extents[0]` is its radius),
-  `Plane` (everything under the entity; its up, +Y, says where under is) or `Unbounded` (the whole
-  world; under a streamed section, the box of that section). Box and sphere scale with the entity,
-  and all turn with it.
-- In code: `volume.box(half)`, `volume.sphere(radius)`, `volume.plane()` and `volume.world()`.
+  `Plane` (everything under the entity; its up, +Y, says where under is), `Outline` (the column
+  over the loop of the points of the `Spline` of its entity, their `x` and `z`, from `extents[1]`
+  under the entity to `extents[1]` over it: a lake, a valley, an L-shaped room) or `Unbounded`
+  (the whole world; under a streamed section, the box of that section). Box, sphere and outline
+  scale with the entity, and all turn with it. The corner tool of the `shapes` plugin moves,
+  inserts and removes the points of an outline.
+- In code: `volume.box(half)`, `volume.sphere(radius)`, `volume.plane()`, `volume.outline(height)`
+  and `volume.world()`.
 - The editor draws the selected `Volume` whatever is in it.
 
 ## What can happen in it
@@ -32,14 +36,14 @@ $P scene.write '{"entities":[
   higher goes on top and among equals the smaller volume wins; `mode`, `Replace` what is below or
   `Add` to it. Without a `Volume` it rules the whole world.
 - `phys.Fluid`: water, where bodies float and characters swim ([water](water-fog.md)); density 0
-  is a dry box, and its `priority` decides where fluids meet. A `Plane` or a `Box`; without one,
-  the problem `physics.fluid`.
+  is a dry box, and its `priority` decides where fluids meet. A `Plane`, a `Box` or an `Outline`;
+  without one, the problem `physics.fluid`.
 - `phys.Force_Field`: pushes the bodies there each tick, rising over its `blend`, in any shape.
   Without a `Volume` it pushes everywhere.
 - `destruct.Strain_Field`: strains the destructibles there each tick. A `Box` or a `Sphere`;
   without one, the problem `destruct.strain_field`.
 - `nav.Nav_Bounds`, `nav.Nav_Area`, `nav.Nav_Obstacle`: where navmeshes are made, an area with a
-  cost, a blocker ([ai](../ai.md)). A `Box` or a `Sphere`; without one, the problem
+  cost, a blocker ([ai](../ai.md)). A `Box`, a `Sphere` or an `Outline`; without one, the problem
   `navigation.volume`.
 - `foliage.Foliage_Bender`: leans the grass around a body, as far as its volume reaches.
 
@@ -92,11 +96,12 @@ phys.apply_area(bodies,volume.box({2,1,2}),pose,200,along={1,0,0})
 ## Asking a region yourself
 
 ```odin
-zones:=volume.Where{volumes,worlds,parents,sections} // the tables a step receives
-v,pose,ok:=volume.placed(zones,e)                    // the Volume of e where it is
-inside:=ok && volume.holds(v,pose,point)
-weight:=volume.weight(v,pose,point,blend)            // 0 outside, 1 inside, between over blend
-meets:=volume.overlaps(v,pose,box)                   // a box of the world
+zones:=volume.Where{volumes,worlds,parents,sections,splines} // the tables a step receives
+v,pose,outline,ok:=volume.placed(zones,e)  // the Volume of e where it is, the points of an Outline
+inside:=ok && volume.holds(v,pose,point,outline)
+weight:=volume.weight(v,pose,point,blend,outline) // 0 outside, 1 inside, between over blend
+meets:=volume.overlaps(v,pose,box,outline)        // a box of the world
+
 ```
 
 `volume.at` gives a zone value at a point with every volume applied; `volume.wind_at` the wind.

@@ -163,10 +163,12 @@ extinction :: proc "contextless" (look:Water) -> f32 {
     return taken/look.attenuation_distance
 }
 
-// The box of a fluid of the physics, whose sides are its scale.
+// The box of the world around a prism of the physics from its floor to its still surface, whose sides are
+// its scale.
 @(private)
-fluid_box :: proc "contextless" (desc:phys.Fluid_Desc) -> mm.Transform {
-    return {desc.position,mm.quat_axis_angle({0,1,0},desc.yaw),2*desc.half_extents}
+fluid_box :: proc "contextless" (info:phys.Fluid_Info) -> mm.Transform {
+    low,high:=[3]f32{info.bounds.min.x,info.top-info.desc.depth,info.bounds.min.z},[3]f32{info.bounds.max.x,info.top,info.bounds.max.z}
+    return {0.5*(low+high),1,high-low}
 }
 
 // How deep a plane reaches under its surface for its medium, and how far sideways from the camera.
@@ -228,7 +230,7 @@ water_render :: proc(
             continue
         }
         body:Gpu_Body
-        box:=fluid_box(desc)
+        box:=fluid_box(info)
         top:=info.top
         reach:=phys.waves_reach(desc.waves)
         if desc.shape==.Plane {
@@ -252,10 +254,10 @@ water_render :: proc(
             }
         }
         if !dry {
-            // The solid of the glass absorbs and scatters what the view crosses; fog gives the shafts of the sun,
-            // and the light of the sun that the water takes on its way down.
-            shafts:=look.scatter_color/max(max(look.scatter_color.r,look.scatter_color.g,look.scatter_color.b),1e-3)
-            fog.medium_add(media,{box=box,density=look.shafts,color=shafts,anisotropy=0.6,priority=desc.priority,carved=true,sun_only=true,shade=extinction(look)})
+            // The solid of the glass absorbs what the view crosses along its bent way and scatters the light
+            // around; the fog scatters the light of the sun in the water, with its shafts, and takes what the
+            // water takes of it on its way down.
+            fog.medium_add(media,{box=box,density=extinction(look),color=look.scatter_color,anisotropy=0.6,priority=desc.priority,carved=true,sun_only=true,shade=extinction(look),glass=true})
         } else {
             fog.medium_add(media,{box=box,priority=desc.priority,dry=true})
         }
@@ -277,12 +279,12 @@ water_render :: proc(
         if desc.shape==.Plane {
             sheet_place(state,app.assets,app.renderer,&app.extras,view,i,info.entity,materials[i])
         } else if desc.density>0 {
-            sheet_place(state,app.assets,app.renderer,&app.extras,view,i,info.entity,materials[i],info.bounds)
+            sheet_place(state,app.assets,app.renderer,&app.extras,view,i,info.entity,materials[i],physics,&kept[i])
         } else if !crosses_water(state,i) && floor_in_fluid(physics,desc) {
             // The floor of the air of a dry box in a fluid is a surface of that fluid, seen from over it; where the
             // box crosses the surface of a water, the sheet of the water goes down to it instead.
-            box:=fluid_box(desc)
-            floor:=mm.Transform{desc.position-{0,desc.half_extents.y,0},box.rotation,{box.scale.x,1,box.scale.z}}
+            box:=fluid_box(info)
+            floor:=mm.Transform{box.position-{0,0.5*box.scale.y,0},1,{box.scale.x,1,box.scale.z}}
             if instance,usable:=render.mesh_instance(app.assets,{shape=.Plane},mm.transform_matrix(floor));usable {
                 instance.material=render.Material_Handle(materials[i])
                 instance.object_id,instance.copy_owner=u64(info.entity),base.name_hash("water floor")
@@ -322,7 +324,8 @@ lens_reach :: proc "contextless" (view:core.View) -> f32 {
 @(private)
 floor_in_fluid :: proc(physics:core.Ref(phys.Physics_State),dry:phys.Fluid_Desc) -> bool {
     FLOOR_PROBE :: f32(1e-3) // m under and over the floor where the fluid is looked for
-    floor:=dry.position-{0,dry.half_extents.y,0}
+    floor:=dry.position-{0,dry.depth,0}
+
     under,_,wet:=phys.fluid_at(physics,floor-{0,FLOOR_PROBE,0})
     over,_,found:=phys.fluid_at(physics,floor+{0,FLOOR_PROBE,0})
     return wet && under.density>0 && found && over.fluid==under.fluid && over.density==0

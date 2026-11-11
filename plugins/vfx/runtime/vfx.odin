@@ -183,7 +183,7 @@ particles_sync :: proc(
     bindings:^core.Table(Particle_Bindings,.Read),meshes:^core.Table(erender.Mesh_Renderer,.Read),drawn:core.Ref(erender.Render_Sync),listeners:^core.Table(Particle_Channel,.Read),grids:^core.Table(Particle_Grid,.Read),volumes:^core.Table(Particle_Volume,.Read),textures:^core.Table(Particle_World_Texture,.Read),
     clocks:core.Ref(Particle_Clocks),settings:core.Ref(Particle_Settings),sync:^Particle_Sync,reports:^Particle_Reports,watch:^Particle_Data_Watch,read:^Particle_Data_Read,ui_effects:^UI_Particles,ui_requests:core.Ref(gui.UI_Effects),id:core.World_Id,time:core.Time,frame:core.Frame_Time,
     view:core.View,problems:^core.Problems,app:^host.App,
-    winds:^core.Table(volume.Wind,.Read),places:^core.Table(volume.Volume,.Read),gravities:^core.Table(volume.Gravity,.Read),sections:^core.Table(scene.Scene_Reference,.Read),
+    winds:^core.Table(volume.Wind,.Read),places:^core.Table(volume.Volume,.Read),gravities:^core.Table(volume.Gravity,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
 ) {
     if sync==nil {return}
     data_read(read,reports,sync,app.renderer,id,problems)
@@ -195,7 +195,7 @@ particles_sync :: proc(
     clear(&sync.stage_rows)
     clear(&sync.segments)
     grids_sync(&sync.grids,grids,volumes,textures,worlds,view,problems)
-    sync.fields=fields_of(gravities,winds,{places,worlds,parents,sections})
+    sync.fields=fields_of(gravities,winds,{places,worlds,parents,sections,splines})
     world_textures_keep(sync,app.renderer,id)
     // Rigs are read again once the assets change.
     if a!=nil {

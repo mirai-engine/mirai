@@ -116,6 +116,15 @@ area_requests_push_by_the_weight_of_their_volume_its_range_and_its_noise :: proc
         sim.body_set_transform(w,bodies[0],{0,0.5,0},1)
         sim.body_set_transform(w,bodies[1],{2,0.9,0},1)
     }
+    // An outline by the Spline of the entity it names: an L whose notch, inside its box, holds the shallow body.
+    holder:=core.create(&f.entities)
+    core.add(&f.splines,holder,volume.Spline{count=6,points={0={position={-1,0,-1}},1={position={3,0,-1}},2={position={3,0,-0.5}},3={position={1,0,-0.5}},4={position={1,0,1}},5={position={-1,0,1}}}})
+    physics_test_step(&f,0)
+    apply_area(&f.requests,volume.outline(4),{position={0,0.5,0},rotation=1,scale=1},120,{1,0,0},outline_of=holder)
+    physics_test_step(&f)
+    gained:=speeds(w,bodies)
+    testing.expectf(t,abs(gained[0]-1)<2e-3 && abs(gained[1])<2e-3,"an outline: gained %v, not [1, 0]",gained)
+    for body in bodies {sim.body_set_velocity(w,body,{},{})}
     noise:=Field_Noise{scale=0.5,seed=11,range={0,2}}
     expected:[2]f32
     for body,i in bodies {expected[i]=0.5*sim.noise_weight(sim.body_position(w,body),{1,0.5,0},mm.QUAT_IDENTITY,noise)}

@@ -84,6 +84,7 @@ Gpu_Volume :: struct {
 @(private) CARVE_DRY :: 1
 @(private) CARVE_CARVED :: 2
 @(private) CARVE_SUN_ONLY :: 4
+@(private) CARVE_GLASS :: 8
 
 // The volumes of the frame for its shaders, whose places are relative to the
 // origin the renderer draws from: built in the world, they move by it. The
@@ -137,6 +138,7 @@ Medium :: struct {
     carved:bool,       // dry boxes of higher priority take it out
     sun_only:bool,     // the sun alone lights it, in shafts: the light around it is drawn by the plugin that adds it
     shade:f32,         // 1/m it takes of the light of the sun that crosses it: the medium and the surfaces in it are darker deeper
+    glass:bool,        // the glass of its surface takes what it stops of the view: it adds its light, dimmed on its way to the eye in it, and dims nothing behind it
 }
 
 // fog.slang Fog_Params.
@@ -154,8 +156,9 @@ Gpu_Params :: struct {
     reach:f32,   // metres along the view where the last of them begins
     side:u32,    // render.Glass_Side of the nearest layer of glass, where fog_apply lays the fog
     pad:[2]u32,
+    outlines:volume.Gpu_Outlines, // of the volumes
 }
-#assert(size_of(Gpu_Params)==64)
+#assert(size_of(Gpu_Params)==64+size_of(volume.Gpu_Outlines))
 
 // What the passes of each view draw the fog of the frame with.
 @(storage,host)
@@ -168,6 +171,7 @@ Fog_Gpu :: struct {
     time:f64,   // seconds of the world the frame shows
     dry:bool,   // some volume of the frame is a dry box
     shade:bool, // some volume of the frame takes the light of the sun
+    outlines:volume.Gpu_Outlines,
 }
 
 // The media other plugins add to the frame.
@@ -182,10 +186,10 @@ medium_add :: proc(media:^Fog_Media,medium:Medium) {core.push(&media.queue,mediu
 @(step="render",loops="game editor",after="render_sync")
 fog_render :: proc(
     state:^Fog_Gpu,volumes:^core.Table(Fog_Volume,.Read),places:^core.Table(volume.Volume,.Read),media:^Fog_Media,worlds:^core.Table(core.World_Transform,.Read),
-    hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),settings:core.Ref(Fog_Settings),app:^host.App,problems:^core.Problems,
+    hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),settings:core.Ref(Fog_Settings),app:^host.App,problems:^core.Problems,
 ) {
-    zones:=volume.Where{places,worlds,parents,sections}
-    state.count,state.dry,state.shade=0,false,false
+    zones:=volume.Where{places,worlds,parents,sections,splines}
+    state.count,state.dry,state.shade,state.outlines.count=0,false,false,{}
     state.hidden=settings.hidden==.Every_Fourth?4:1
     added:=core.take(&media.queue)
     if app.renderer==nil || core.count(volumes)==0 && len(added)==0 {return}
@@ -195,12 +199,12 @@ fog_render :: proc(
         e:=core.entity_at(volumes,int(row))
         fog:=core.at(volumes,int(row))
         if !(fog.density>0) || render.is_hidden(hidden,parents,e) {continue}
-        place,at,_:=volume.placed(zones,e)
+        place,at,outline,_:=volume.placed(zones,e)
         if place.shape==.Unbounded {
-            core.report(problems,e,"fog.volume","its Fog_Volume fills nothing: a fog fills a Volume of shape Box, Sphere or Plane; give its entity one, or for a haze over the whole world raise the mie of the air of the Sky")
+            core.report(problems,e,"fog.volume","its Fog_Volume fills nothing: a fog fills a Volume of shape Box, Sphere, Plane or Outline; give its entity one, or for a haze over the whole world raise the mie of the air of the Sky")
             continue
         }
-        volume_gpu(state,fog,place,at)
+        volume_gpu(state,fog,place,at,outline)
     }
     for medium in added {medium_gpu(state,medium)}
     fog_submit(state,app)
@@ -208,26 +212,16 @@ fog_render :: proc(
 
 // A volume of the world placed at a pose into the frame.
 @(private)
-volume_gpu :: proc(state:^Fog_Gpu,fog:Fog_Volume,place:volume.Volume,at:mm.Transform) {
+volume_gpu :: proc(state:^Fog_Gpu,fog:Fog_Volume,place:volume.Volume,at:mm.Transform,outline:[]mm.Path_Point) {
     if state.count>=CAPACITY {return}
     color:=linalg.clamp(fog.color,0,1)
     entry:=Gpu_Volume{
-        volume=volume.gpu_volume(place,at,fog.zone),
+        volume=volume.gpu_volume(place,at,fog.zone,outline,&state.outlines),
         medium={color.r*fog.density,color.g*fog.density,color.b*fog.density,fog.density},
         params={fog.variable?1/max(fog.wisp_size,0.1):0,clamp(fog.anisotropy,-0.95,0.95),max(fog.falloff,0),at.position.y},
     }
-    half:=entry.volume.shape.xyz
-    if place.shape==.Box {
-        // The base is the lowest corner of the box.
-        low:=max(f32)
-        for corner in 0..<8 {
-            local:=[3]f32{corner&1!=0?half.x:-half.x,corner&2!=0?half.y:-half.y,corner&4!=0?half.z:-half.z}
-            low=min(low,at.position.y+mm.quat_rotate(at.rotation,local).y)
-        }
-        entry.params.w=low
-    } else if place.shape==.Sphere {
-        entry.params.w=at.position.y-half.x
-    }
+    // The base is the lowest point of a box, a sphere or an outline.
+    if place.shape==.Box || place.shape==.Sphere || place.shape==.Outline {entry.params.w=volume.bounds(place,at,outline).min.y}
     state.volumes[state.count]=entry
     state.drift[state.count]=fog.drift
     state.count+=1
@@ -268,7 +262,7 @@ medium_gpu :: proc(state:^Fog_Gpu,medium:Medium) -> bool {
         volume=volume.gpu_volume(volume.box({0.5,0.5,0.5}),medium.box,{mode=.Add}),
         medium={color.r*density,color.g*density,color.b*density,density},
         params={0,clamp(medium.anisotropy,-0.95,0.95),0,low},
-        carve={f32(medium.priority),f32((medium.dry?u32(CARVE_DRY):0)|(medium.carved?u32(CARVE_CARVED):0)|(medium.sun_only?u32(CARVE_SUN_ONLY):0)),medium.dry?0:max(medium.shade,0),0},
+        carve={f32(medium.priority),f32((medium.dry?u32(CARVE_DRY):0)|(medium.carved?u32(CARVE_CARVED):0)|(medium.sun_only?u32(CARVE_SUN_ONLY):0)|(medium.glass?u32(CARVE_GLASS):0)),medium.dry?0:max(medium.shade,0),0},
     }
     state.count+=1
     state.dry||=medium.dry
@@ -287,7 +281,7 @@ fog_record :: proc(pass:^render.Pass,user:rawptr) {
     seen:=render.Pass_Texture_Desc{name=render.MEDIA_TEXTURE,format=.RGBA16_Float,width=grid.x,height=grid.y,depth=grid.z+media.cells.w}
     far:=render.Pass_Texture_Desc{name="fog far",format=.R32_Float,width=grid.x,height=grid.y}
     reach:=render.Pass_Texture_Desc{name="fog reach",format=.R32_Float,width=grid.x,height=grid.y}
-    params:=Gpu_Params{grid={grid.x,grid.y,grid.z,u32(state.count)},distance=media.distance,scale=media.scale,history=HISTORY,hidden=state.hidden,dry=state.dry?1:0,shade=state.shade?1:0,far=media.cells.w,reach=media.reach,side=u32(pass.glass)}
+    params:=Gpu_Params{grid={grid.x,grid.y,grid.z,u32(state.count)},distance=media.distance,scale=media.scale,history=HISTORY,hidden=state.hidden,dry=state.dry?1:0,shade=state.shade?1:0,far=media.cells.w,reach=media.reach,side=u32(pass.glass),outlines=state.outlines}
     // In front of glass the grid of the view is lit already: the fog from the eye to the glass goes over it.
     if pass.glass==.Front {
         volumes:=volumes_relative(state,pass.origin)
@@ -319,6 +313,10 @@ fog_record :: proc(pass:^render.Pass,user:rawptr) {
     if !now || !before || !held {return}
     params.kept=kept?1:0
     render.pass_timestamp(pass,"fog light")
+    render.pass_surface_read(pass,5,.Shadow_Atlas)
+    render.pass_shadow_data(pass,6)
+    render.pass_surface_read(pass,7,.Shadow_Tint)
+    render.pass_surface_read(pass,8,.Shadow_Glass)
     render.pass_pipeline(pass,state.pipelines[2])
     volumes:=volumes_relative(state,pass.origin)
     if !render.pass_params(pass,&params,size_of(params)) || !render.pass_upload(pass,2,&volumes,state.count*size_of(Gpu_Volume)) {return}

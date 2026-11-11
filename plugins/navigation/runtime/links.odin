@@ -54,7 +54,7 @@ Link_Seen :: struct {
 // or gets it one way only.
 @(private)
 links_update :: proc(n:^Navigation,b:^Navigation_Builds,links:^core.Table(Nav_Link,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),physics:core.Ref(phys.Physics_State),changed:mm.Aabb,fresh:bool,problems:^core.Problems) {
-    if !boxes_touched(links,{},transforms,parents,&b.links_seen) && !fresh && mm.aabb_is_empty(changed) {return}
+    if !boxes_touched(links,{},{},transforms,parents,&b.links_seen) && !fresh && mm.aabb_is_empty(changed) {return}
     if fresh {
         for i in 0..<n.count {
             if class_in_volume(n,i) {continue}

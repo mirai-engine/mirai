@@ -70,7 +70,14 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float2 uv = (float2(p) + 0.5) * frame.inv_resolution;
     float3 color = out_display[p].rgb;
     switch (params.mode) {
-    case DEBUG_SHADOWS: color = source.SampleLevel(linear_sampler, uv, 0.0).rgb; break;
+    // The part of the light with nothing in the way that got there (direct_samples.comp).
+    case DEBUG_SHADOWS: {
+        uint width, height;
+        source.GetDimensions(width, height);
+        float part = source.Load(int3(p * int2(width, height) / int2(frame.resolution), 0)).a;
+        color = float3(part >= 1.5 ? part - 2.0 : part);
+        break;
+    }
     case DEBUG_REFLECTIONS: case DEBUG_REFLECTIONS_RAW: color = source.Load(int3(p, 0)).rgb; break;
     case DEBUG_LIGHTS: {
         Pixel pixel = pixel_at(p, uv, depth);

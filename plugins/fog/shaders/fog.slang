@@ -19,12 +19,18 @@ struct Fog_Params {
     float reach;    // metres along the view where the last of them begins
     uint side;      // FOG_SIDE_*: of the nearest layer of glass, where fog_apply lays the fog
     uint pad0, pad1;
+    Gpu_Outlines outlines; // of the volumes
 };
 // render.Glass_Side.
 #define FOG_SIDE_ALL 0u
 #define FOG_SIDE_BEHIND 1u
 #define FOG_SIDE_FRONT 2u
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Fog_Params> fog : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
+
+// The outlines of the volumes, read where they are.
+struct Fog_Outlines : IVolume_Outlines {
+    float2 outline_point(uint i) { return fog.outlines.outline_point(i); }
+};
 
 // fog.WISP_OCTAVES.
 #define FOG_WISP_OCTAVES 3u
@@ -41,6 +47,8 @@ struct Fog_Volume {
 #define FOG_CARVE_DRY 1u
 #define FOG_CARVE_CARVED 2u
 #define FOG_CARVE_SUN_ONLY 4u
+// The glass of its surface takes what it stops of the view (fog.Medium.glass).
+#define FOG_CARVE_GLASS 8u
 bool fog_carve(Fog_Volume v, uint bit) { return (uint(v.carve.y) & bit) != 0u; }
 
 // The grid of the view: the media of the view it integrates (media_grid.slang).
@@ -157,7 +165,8 @@ float fog_optical_depth(Fog_Volume v, float ya, float yb, float length) {
 // How much of a volume there is at a point: its weight, thinner with the
 // height over its base.
 float fog_volume_share(Fog_Volume v, float3 position) {
-    float w = volume_weight(v.volume, position);
+    Fog_Outlines outlines;
+    float w = volume_weight(v.volume, position, outlines);
     if (!(w > 0.0)) return 0.0;
     return w * exp(-v.params.z * max(position.y - v.params.w, 0.0));
 }

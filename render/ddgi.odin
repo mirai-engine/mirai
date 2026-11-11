@@ -182,8 +182,8 @@ ddgi_update :: proc(p: ^Pass, warm := false) -> bool {
 		rhi.cmd_dispatch(cmd, groups(groups(t.width, 8), 8), groups(groups(t.height, 8), 8))
 	}
 	rhi.cmd_fill_buffer(cmd, g.histogram, 0, PROBE_HISTOGRAM_WORDS * 4, 0)
-	Select :: struct {mode, budget, changed_everywhere, frame_number, rays_per_probe, total, awake, pad: u32}
-	select := Select{budget = budget, changed_everywhere = g.changed_everywhere, frame_number = frame_number, rays_per_probe = g.rays_per_probe, total = g.total, awake = awake}
+	Select :: struct {mode, budget, changed_everywhere, frame_number, rays_per_probe, total, awake, whole: u32}
+	select := Select{budget = budget, changed_everywhere = g.changed_everywhere, frame_number = frame_number, rays_per_probe = g.rays_per_probe, total = g.total, awake = awake, whole = 1 if warm else 0}
 	for mode in u32(0) ..< 4 {
 		select.mode = mode
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Ddgi_Select])
