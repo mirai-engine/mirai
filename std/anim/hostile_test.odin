@@ -411,7 +411,7 @@ hostile_skeletons_and_solvers_reject_invalid_inputs :: proc(t:^testing.T) {
         }
         pole,poled:=two_bone_pole_from_pose(rest[0],rest[1],rest[2],hostile_vec4(&h).xyz)
         testing.expect(t,!poled || numbers(pole.x,pole.y,pole.z),"The pole of a pose is not of numbers")
-        looked,looks:=look_at(rest[bone].rotation,hostile_vec4(&h).xyz,hostile_vec4(&h).xyz,base.hostile_f32(&h),base.hostile_f32(&h))
+        looked,looks:=look_at(rest[bone].rotation,hostile_vec4(&h).xyz,hostile_vec4(&h).xyz,base.hostile_f32(&h),base.hostile_f32(&h),hostile_vec4(&h).xyz)
         limited,limits:=rotation_limit(rest[bone].rotation,1,{hostile_vec4(&h).xyz,base.hostile_f32(&h),base.hostile_f32(&h),base.hostile_f32(&h)})
         testing.expect(t,(!looks || numbers(abs(looked))) && (!limits || numbers(abs(limited))),"A rotation that was solved is not of numbers")
         rest[bone]=saved

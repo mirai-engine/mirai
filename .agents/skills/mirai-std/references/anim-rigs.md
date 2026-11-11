@@ -71,7 +71,8 @@ without clips or an assumed human rig.
 - `spline_chain` puts the points of the chain on a cubic Bézier (`SPLINE_SEGMENTS` segments) and
   continues straight if the curve ends; `skeleton_spline_ik` orients each bone toward the next,
   keeps `up` and distributes `twist` by distance.
-- `aim_at` is `look_at` that also turns the `up` axis toward `world_up` around the direction.
+- `aim_at` is `look_at` that also turns the `up` axis toward `world_up` around the line from the
+  bone to where its ray passes, which keeps an offset ray on the target.
 - `pose_sample_weights` weighs rotation samples by angular closeness (inverse of the square,
   normalized; an exact sample weighs 1) and rejects repeated or non-unit samples.
 

@@ -135,8 +135,12 @@ equal length, at least one bone, finite transforms and unit quaternions. No proc
 
 - `two_bone_ik` receives three transforms in the same space, target and pole. It keeps the lengths
   also with intermediate weight, clamps targets out of reach, keeps the rotation of the end and
-  gives `reached` apart from numeric success. `skeleton_ik` applies it to a direct parent-child
-  chain and recomposes the pose.
+  gives `reached` apart from numeric success. With a `Chain_Reach` it softens and stretches as a
+  chain does ([reach](anim-rigs.md#reach-spline-aiming-and-pose-samples-rig_shapesodin)).
+  `skeleton_ik` applies it to a direct parent-child chain and recomposes the pose.
+- `look_at` and `aim_at` aim the ray from an `offset` of the bone (eyes, muzzle) through the
+  target, so the vector to the target is not normalized; a target nearer the bone than that ray
+  passes fails.
 - `two_bone_pole_from_pose` gives a pole that keeps the bend when the target changes: it transports
   the direction of the knee through the minimal rotation of the root→end axis toward root→target and
   leaves it at one chain length, so that raising the target does not invert the knee. An almost

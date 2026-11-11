@@ -117,16 +117,38 @@ pose_ik_apply :: proc "contextless" (hierarchy:Pose_Hierarchy,local,world:[]math
     return pose_world_branch(hierarchy,local,world,root,root_transform)
 }
 
-look_at :: proc "contextless" (rotation:math.Quat,forward,target_direction:math.Vec3,max_angle:f32,weight:f32=1) -> (math.Quat,bool) {
-    if !anim_rotation_valid(rotation) || !anim_finite(max_angle) || max_angle<0 || !anim_finite(weight) {return rotation,false}
-    from,from_ok:=anim_unit(forward)
-    to,to_ok:=anim_unit(target_direction)
-    if !from_ok || !to_ok {return rotation,false}
-    change:=anim_between(math.quat_rotate(rotation,from),to)
+// The bone turns so that the ray from offset along forward (both in its frame: the eyes of a head,
+// the muzzle of a gun in a hand) passes through the target, at target_direction from the bone.
+look_at :: proc "contextless" (rotation:math.Quat,forward,target_direction:math.Vec3,max_angle:f32,weight:f32=1,offset:math.Vec3={}) -> (math.Quat,bool) {
+    if !anim_finite(max_angle) || max_angle<0 || !anim_finite(weight) {return rotation,false}
+    point,point_ok:=look_point(rotation,forward,target_direction,offset)
+    if !point_ok {return rotation,false}
+    from,_:=anim_unit(math.quat_rotate(rotation,point))
+    to,_:=anim_unit(target_direction)
+    change:=anim_between(from,to)
     angle:=2*cmath.atan2(linalg.length(math.Vec3{change.x,change.y,change.z}),abs(change.w))
     fraction:=math.saturate(weight)
     if angle>max_angle {fraction*=max_angle/angle}
     return linalg.normalize0(math.quat_slerp(1,change,fraction)*rotation),true
+}
+
+// The point of the ray from offset along forward, in the frame of the bone, as far from the bone as
+// the target: turning it onto the target aims the ray through the target (ozz IKAimJob). False when
+// the target is nearer the bone than the ray passes.
+@(private)
+look_point :: proc "contextless" (rotation:math.Quat,forward,target,offset:math.Vec3) -> (point:math.Vec3,ok:bool) {
+    if !anim_rotation_valid(rotation) || !anim_vec3_valid(target) || !anim_vec3_valid(offset) {return}
+    axis,axis_ok:=anim_unit(forward)
+    if !axis_ok {return}
+    if _,toward:=anim_unit(target);!toward {return}
+    local:=math.quat_rotate(conj(rotation),target)
+    squared:=f64(local.x)*f64(local.x)+f64(local.y)*f64(local.y)+f64(local.z)*f64(local.z)
+    along:=f64(linalg.dot(axis,offset))
+    across:=f64(linalg.dot(offset,offset))-along*along
+    if !(squared>=across) {return}
+    point=offset+axis*f32(cmath.sqrt(squared-across)-along)
+    _,ok=anim_unit(point)
+    return
 }
 
 Rotation_Limit :: struct {axis:math.Vec3,max_swing,min_twist,max_twist:f32}

@@ -80,7 +80,9 @@ Bones and modifiers:
   per-entity routing fields are transient. A contact (a hand on a ledge) is an IK row with a spatial
   target held in the world; the ground is grounding. The last bone of an IK keeps what its `hold`
   says: its rotation in the world (a foot), relative to the joint (a hand in line with its forearm)
-  or that of the target; Look with `use_up` turns the `up` axis of the bone toward `world_up`.
+  or that of the target, and its `reach` softens and stretches it as a chain's. Look aims the ray
+  from its `offset` (the eyes of a head, the muzzle of a held gun), not from the bone; with
+  `use_up` it turns the `up` axis of the bone toward `world_up`.
 - A target is a [`Spatial_Target`](animation-rigs.md#spatial-targets). No operation gives
   physical balance or self-collision of the character.
 

@@ -25,13 +25,14 @@ IK_Constraint :: struct {
 }
 IK_CONSTRAINT_DEFAULT :: IK_Constraint{target=SPATIAL_TARGET_DEFAULT,pole={0,0,-1},weight=1,enabled=true}
 
-// A bone turns its forward axis toward a target, up to max_angle; with
-// use_up, its up axis turns toward world_up around it.
+// A bone turns so that the ray from offset along its forward axis passes through a target, up to
+// max_angle; with use_up, its up axis turns toward world_up around it.
 Look_Constraint :: struct {
     rig:core.Entity `mirai:"transient"`,
     bone:Bone_Ref,
     target:Spatial_Target `mirai:"optional"`,
     forward:mm.Vec3,
+    offset:mm.Vec3 `mirai:"optional"`, // where the ray starts in the frame of the bone: the eyes of a head, the muzzle of a held gun
     up,world_up:mm.Vec3 `mirai:"optional"`,
     use_up:bool `mirai:"optional"`,
     max_angle:f32 `mirai:"angle,min=0"`,
@@ -279,9 +280,9 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         }
         direction:=target.position-state.world[bone].position
         rotation:mm.Quat;valid:bool
-        if config.use_up {rotation,valid=lib.aim_at(state.world[bone].rotation,config.forward,direction,config.up,config.world_up,config.max_angle,config.weight)} else {rotation,valid=lib.look_at(state.world[bone].rotation,config.forward,direction,config.max_angle,config.weight)}
+        if config.use_up {rotation,valid=lib.aim_at(state.world[bone].rotation,config.forward,direction,config.up,config.world_up,config.max_angle,config.weight,config.offset)} else {rotation,valid=lib.look_at(state.world[bone].rotation,config.forward,direction,config.max_angle,config.weight,config.offset)}
         if !valid {
-            core.report(problems,state.entity,"animation.constraint_solve","Look %d of the .character of this rig cannot aim: its forward or up axis is zero or not finite, or its target is where the bone is; give it axes and a target apart from the bone",at)
+            core.report(problems,state.entity,"animation.constraint_solve","Look %d of the .character of this rig cannot aim: its forward or up axis is zero or not finite, or its target is where the bone is or nearer the bone than its offset; give it axes and a target beyond its offset",at)
             continue
         }
         parent:=state.parents[bone]
@@ -289,8 +290,9 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         if !lib.pose_world(skeleton.parents,state.local[:],state.world[:],parent_world) {pose_problem(problems,state.entity);continue}
         // The residual is how far the aim passes from the target, at its distance.
         aim:=mm.quat_rotate(state.world[bone].rotation,linalg.normalize0(config.forward))
-        diagnostic.angular_error=math.atan2(linalg.length(linalg.cross(aim,direction)),linalg.dot(aim,direction))
-        diagnostic.residual=linalg.length(target.position-state.world[bone].position-aim*linalg.length(direction))
+        sight:=target.position-mm.transform_point(state.world[bone],config.offset)
+        diagnostic.angular_error=math.atan2(linalg.length(linalg.cross(aim,sight)),linalg.dot(aim,sight))
+        diagnostic.residual=linalg.length(sight-aim*linalg.length(sight))
         diagnostic.reached=diagnostic.angular_error<=.001
         diagnostic.valid=true
     }
