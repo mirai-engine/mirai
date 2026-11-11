@@ -221,6 +221,8 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
   ends at, and a soft hyphen it breaks at is drawn as a hyphen, which must fit; what no space or
   mark parts stays on one line. `text_line` is that break for the text a field edits, which keeps
   the spaces of its last line.
+- **A glyph a font lacks** is measured and drawn from `FONT_REGULAR` (Inter in the fonts of the
+  application), at the same size; `?` only when that one lacks it too (`font_glyph`).
 - **Lines like CSS.** `TEXT_LINE` (Inter's ascent plus descent) is the `normal` line height and the
   box of a line; `text_leading` centers it in a height with half the excess above, like CSS. A row
   centers its text this way and `Text_Style.line_height` distributes the excess of each line;
