@@ -141,15 +141,9 @@ quad_place :: proc "contextless" (s:^Source,q:^Quad,index:int) -> [3]i32 {
 // The local box of node i: its region of the source, with the heights its
 // samples reach (ranges) for a Heightfield.
 node_box :: proc "contextless" (s:^Source,q:^Quad,ranges:[][2]f32,i:int) -> (low,high:[3]f32) {
-    origin:=source_origin(s)
-    if s.kind==.Volume {
-        a,b:=quad_region3(s,q,i)
-        return origin+[3]f32{f32(a.x),f32(a.y),f32(a.z)}*s.cell,origin+[3]f32{f32(b.x),f32(b.y),f32(b.z)}*s.cell
-    }
-    a,b:=quad_region(s,q,i)
-    low=origin+[3]f32{f32(a.x),0,f32(a.y)}*s.cell
-    high=origin+[3]f32{f32(b.x),0,f32(b.y)}*s.cell
-    if i<len(ranges) {low.y,high.y=ranges[i].x,ranges[i].y} else {low.y,high.y=-HEIGHT_LIMIT,HEIGHT_LIMIT}
+    a,b:=quad_region3(s,q,i)
+    low,high=source_box(s,a,b)
+    if s.kind==.Heightfield && i<len(ranges) {low.y,high.y=ranges[i].x,ranges[i].y}
     return
 }
 

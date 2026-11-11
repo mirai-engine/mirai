@@ -104,13 +104,12 @@ pending_brush :: proc(tool:^Terrain_Tool) -> terrain.Brush {
         sides:=max(tool.ramp_sides,0)/stroke.scale
         return {kind=.Ramp,center=p.a,delta=p.b-p.a,radius=radius+sides,hardness=min(radius/(radius+sides),0.99),falloff=brush_of(tool).falloff,amount=1}
     }
-    brush:=terrain.Brush{kind=tool.brush,center=p.a,radius=radius,amount=1,rotation=1,layer=u32(tool.layer)}
+    brush:=terrain.Brush{kind=tool.brush,center=p.a,radius=radius,amount=1,rotation=1,layer=u32(tool.layer),blend=max(tool.blend,0)/stroke.scale}
     switch tool.shape {
     case .Sphere,.Selected: brush.shape=.Sphere
     case .Capsule: brush.shape,brush.delta=.Capsule,p.b-p.a
     case .Box: brush.shape,brush.extent=.Box,radius
     }
-    if stroke.source.kind==.Volume {brush.blend=max(tool.blend,0)/stroke.scale}
     return brush
 }
 
