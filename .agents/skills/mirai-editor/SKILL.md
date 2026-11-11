@@ -141,9 +141,9 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 5. A project file that an edit writes (materials, programs, particles, animation assets) enters
    its step with `file_write` and its bytes; an asset or the source of a program stays in memory,
    unsaved, until Save ([files](references/document.md#edits-and-undo),
-   [programs](references/document.md#unsaved-programs)). The world of a Play, `World_Transform`,
-   the selection's `Highlight` and derived rows without `Id` do not enter the undo; any other
-   component does, by its presence when no field of it is saved (`author.component_saved`). Painting
+   [programs](references/document.md#unsaved-programs)). The world of a Play, components declared
+   `derived` and derived rows without `Id` do not enter the undo; any other component does, by
+   its presence when no field of it is saved. Painting
    and terrain leave in the undo the reference to a revision of the asset, not the file.
 6. Apply the [tables](../mirai-core/references/core.md#tables) contract from editor tools too.
 7. A change to an API method, a field tag or the scene format updates `editor/api`, plugins, the

@@ -93,7 +93,7 @@ place_query :: proc(r:^Place_Requests,query:Place_Query) -> u32 {
 Place_Status :: enum u8 {None,Waiting,Found,Empty}
 
 // The answer to the last query of an agent. Behavior is its only writer.
-@(component,description="The best places of the last query of places of this agent, best first, with their scores.")
+@(component,derived,description="The best places of the last query of places of this agent, best first, with their scores.")
 Place_Result :: struct {
     request:u32 `mirai:"readonly,transient"`,
     status:Place_Status `mirai:"readonly,transient"`,

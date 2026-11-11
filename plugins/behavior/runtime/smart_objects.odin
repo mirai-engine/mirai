@@ -43,7 +43,7 @@ Smart_Object :: struct {
 
 // What is left of the offers of a smart object. Behavior adds it to every
 // Smart_Object and is its only writer.
-@(component,description="How many times each offer of the smart object was used and when it is offered again.")
+@(component,derived,description="How many times each offer of the smart object was used and when it is offered again.")
 Smart_State :: struct {
     used:[SMART_OFFERS]i32 `mirai:"readonly,transient"`,
     ready:[SMART_OFFERS]u64 `mirai:"readonly,transient"`, // the tick it is offered again at

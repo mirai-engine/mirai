@@ -32,7 +32,7 @@ import "mirai:std/serial"
 // and the game/ of the project go into World and Shared; the editor and the
 // editor/ of plugins and of the project into Editor_World.
 
-CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,keep,persist,single,far,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw,mind,act"
+CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,keep,persist,single,far,derived,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw,mind,act"
 
 PHASES :: [7]string{"input","fixed","frame","late","ui","render","release"}
 UI_PHASE :: 4 // where the interfaces are built: the engine and the editor draw in it, a game shows .ui documents
@@ -2298,7 +2298,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
                 fmt.sbprintf(w,"    %s[%d]={{int(offset_of(%s,%s))-int(offset_of(%s,%s)),%d,LOCK_NAMES[:],\"%s\"}}\n",locks,li,struct_names[int(t.place)],target.field,struct_names[int(t.place)],t.field,t.lock_id,target.name)
             }
         }
-        fmt.sbprintf(w,"    tables[%d]={{\"%s\",\"%s\",typeid_of(%s.%s),type_info_of(%s.%s),offset_of(%s,%s),.%v,%v,.%v,%v,%s,%q,%s,%v,%v,%v,%s,false}}\n",i,t.name,t.pkg.name,t.pkg.alias,t.name,t.pkg.alias,t.name,struct_names[int(t.place)],t.field,t.place,t.shared,t.replication,game,defaults[t] or_else "nil",t.description,fields,t.single,t.far,t.pkg.path=="mirai:core",locks)
+        fmt.sbprintf(w,"    tables[%d]={{\"%s\",\"%s\",typeid_of(%s.%s),type_info_of(%s.%s),offset_of(%s,%s),.%v,%v,.%v,%v,%s,%q,%s,%v,%v,%v,%v,%s,false}}\n",i,t.name,t.pkg.name,t.pkg.alias,t.name,t.pkg.alias,t.name,struct_names[int(t.place)],t.field,t.place,t.shared,t.replication,game,defaults[t] or_else "nil",t.description,fields,t.single,t.far,t.derived,t.pkg.path=="mirai:core",locks)
         i+=1
     }
     fmt.sbprintf(w,"    storages:=make([]%s.Storage_Info,%d)\n",core_alias,len(storage_index)+int(cursors[1]>0))

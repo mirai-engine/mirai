@@ -74,7 +74,7 @@ COMPONENT_LINKS_TEXT :: "%s: %s is what links an entity to its prefab, which a d
 // besides the identity, the place and the links of an entity, which have keys
 // of their own or are kept by the engine. One with no field to show is {}.
 component_listed :: proc(t:^core.Table_Info) -> bool {
-    if !escene.component_saved(t.type) {return false}
+    if t.derived {return false}
     switch t.type {
     case core.Transform,core.Name,core.Id,core.Parent,core.Disabled,erender.Hidden,erender.Material_Override,
          escene.Prefab_Instance,escene.Prefab_Member,escene.Section_Member: return false

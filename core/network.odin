@@ -20,7 +20,7 @@ Network :: struct {
 // connection holds now and simulates; on a client, a replica it neither
 // predicts nor holds. What the server simulates the server decides, also
 // where a client predicts it.
-@(component,description="Another end of the network session decides what this entity does.")
+@(component,derived,description="Another end of the network session decides what this entity does.")
 Remote :: struct {}
 
 // Whether someone checks that the World runs the same twice (the sync test of

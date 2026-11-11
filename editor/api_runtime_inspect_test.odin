@@ -15,6 +15,8 @@ import "mirai:std/serial"
 Inspect_Config :: struct {speed:f32,compiled:[2]u32 `mirai:"hidden"`,diagnostics:u32 `mirai:"transient,hidden"`}
 @(private="file")
 Inspect_Runtime :: struct {ticks:u32 `mirai:"transient"`}
+@(component,derived)
+Inspect_Derived :: struct {steps:u32 `mirai:"transient"`}
 @(private="file")
 Inspect_World :: struct {
     using world:core.Test_World,
@@ -22,6 +24,7 @@ Inspect_World :: struct {
     transforms:core.Table(core.Transform),
     config:core.Table(Inspect_Config),
     state:core.Table(Inspect_Runtime),
+    derived:core.Table(Inspect_Derived),
 }
 @(private="file") Inspect_Editor :: struct {api:Api}
 
@@ -74,6 +77,7 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     core.add(&world.transforms,entity,core.Transform{rotation=1,scale={1,1,1}})
     core.add(&world.config,entity,Inspect_Config{speed=2,compiled={8,9},diagnostics=13})
     core.add(&world.state,entity,Inspect_Runtime{ticks=21})
+    core.add(&world.derived,entity,Inspect_Derived{steps=5})
     core.settle(&info,&world,nil)
     // A component with no saved field is data by its presence: listed, its values are not.
     testing.expect(t,inspector_listed(&session,&tables[3]) && api_component_listed(&session,&tables[3]))
@@ -86,13 +90,13 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     api_entity_write(&session,w,&out,entity,true,scratch,true)
     text:=string(serial.writer_bytes(&out))
     testing.expect(t,strings.contains(text,`"Inspect_Config":{"speed": 2}`))
-    testing.expect(t,!strings.contains(text,"compiled") && !strings.contains(text,"diagnostics") && strings.contains(text,`"Inspect_Runtime":{}`),text)
+    testing.expect(t,!strings.contains(text,"compiled") && !strings.contains(text,"diagnostics") && strings.contains(text,`"Inspect_Runtime":{}`) && !strings.contains(text,"Inspect_Derived"),text)
     out.count=0
     api_entity_write(&session,w,&out,entity,true,scratch,true,true)
     text=string(serial.writer_bytes(&out))
     testing.expect(t,strings.contains(text,`"diagnostics": 13`))
     testing.expect(t,strings.contains(text,`"compiled": [8, 9]`))
-    testing.expect(t,strings.contains(text,`"Inspect_Runtime":{"ticks": 21}`))
+    testing.expect(t,strings.contains(text,`"Inspect_Runtime":{"ticks": 21}`) && strings.contains(text,`"Inspect_Derived":{"steps": 5}`),text)
     testing.expect_value(t,world.config.version,version)
     config,_:=core.get(&world.config,entity)
     testing.expect_value(t,config.diagnostics,u32(13))

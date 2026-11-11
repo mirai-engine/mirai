@@ -32,8 +32,8 @@ receives the place of its origin: a type or a function of an editor package neve
 ```odin
 @(component) @(component,shared) @(component,locks="core.Transform") @(component,replicated)
 @(component,replicated="owner") @(net_message) @(net_message,from="client",reliable)
-@(component,single) @(component,far) @(storage) @(storage,host) @(storage,setting)
-@(storage,setting="machine")
+@(component,single) @(component,far) @(component,derived) @(storage) @(storage,host)
+@(storage,setting) @(storage,setting="machine")
 @(storage,queue) @(storage,shared) @(storage,keep) @(storage,persist)
 @(storage,reset="state_reset")
 @(storage,copy="state_copy",swap="state_swap") @(storage,copy=false) @(storage,free="state_free")
@@ -60,6 +60,9 @@ receives the place of its origin: a type or a function of an editor package neve
   section is unloaded it stays enabled together with what hangs from it
   ([what is unloaded](../../mirai-gameplay/references/libraries.md#scene-references)).
   `Terrain` and `Foliage` declare it; the core does not know them.
+- `derived` (of a component): only code adds it and nobody authors it (`Table_Info.derived`): a
+  save, Duplicate, the undo and a document leave it out; any other component is data, by its
+  presence when no field of it is saved (a marker such as a game's `Player`).
 - `description="text"`: optional description of the component in `Table_Info.description`. It
   accepts Odin literals, with escapes and raw strings; it takes no space per entity.
 - The comment on the line of a component field (`radius:f32, // of the sphere that glows`) is its

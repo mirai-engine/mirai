@@ -47,7 +47,7 @@ Perceivable :: struct {
 PERCEIVABLE_DEFAULT :: Perceivable{point=1}
 
 // What a perceiver remembers. Behavior adds it to every Perceiver and is its only writer.
-@(component,description="What the perceiver remembers of what it saw and heard, and how sure it still is.")
+@(component,derived,description="What the perceiver remembers of what it saw and heard, and how sure it still is.")
 Perception :: struct {
     memory:ai.Perception_Memory `mirai:"transient,readonly"`,
 }

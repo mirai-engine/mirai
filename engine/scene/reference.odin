@@ -57,7 +57,7 @@ section_state :: proc "contextless" (reference:Scene_Reference) -> Section_State
 // hangs from a section loaded and off, and what is dormant. The reference
 // stays on, so the state of the section can still be asked; what its author
 // turned off stays off.
-@(component,description="Off because its section is loaded and off, or not loaded: on again with it.")
+@(component,derived,description="Off because its section is loaded and off, or not loaded: on again with it.")
 Section_Held :: struct {}
 
 // What stands for the section of reference while it is not loaded and on,

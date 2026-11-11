@@ -61,7 +61,7 @@ destructible :: proc "contextless" (pieces:u32=16,anchored:=false,seed:u64=1) ->
 destructible_default :: proc "contextless" () -> Destructible {return destructible()}
 
 // What this library keeps of a destructible. Only it writes it.
-@(component)
+@(component,derived)
 Destructible_State :: struct {
     handle:phys.Breakable_Handle `mirai:"transient,readonly,hidden"`,
     revision:u32 `mirai:"transient,readonly,hidden"`,         // of the simulation destructible that the groups mirror
@@ -77,7 +77,7 @@ Destructible_State :: struct {
 // body that is still the destructible's own is a child of it (group 0), each
 // one that came off an entity of its own with the Transform of its body. It is
 // a proxy of that body in physics, which writes its Transform.
-@(component,locks="core.Transform")
+@(component,derived,locks="core.Transform")
 Destructible_Group :: struct {
     owner:core.Entity `mirai:"transient,readonly"`, // the destructible
     group:u32 `mirai:"transient,readonly"`,         // physics.Piece_Info.group: the same on every end of a network session

@@ -24,7 +24,7 @@ RAGDOLL_DEFAULT :: Ragdoll{mode=.Simulated,weight=1,hertz=5,damping_ratio=1,max_
 Ragdoll_Bone :: struct {rig:core.Entity,bone:anim.Bone_Ref,offset:mm.Transform}
 RAGDOLL_BONE_DEFAULT :: Ragdoll_Bone{offset=mm.TRANSFORM_IDENTITY}
 
-@(component)
+@(component,derived)
 Ragdoll_State :: struct {
     binding:anim.Bone_Handle `mirai:"transient,readonly"`,
     reference:u64 `mirai:"transient"`,

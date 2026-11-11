@@ -6,7 +6,6 @@ import "core:mem"
 import "core:strconv"
 import "core:strings"
 import "mirai:cook/author"
-import scene "mirai:engine/scene"
 import "mirai:core"
 import "mirai:editor/history"
 import eaudio "mirai:engine/audio"
@@ -308,7 +307,7 @@ entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",
         return false
     }
     for &t in w.info.tables {
-        if t.place!=.World || !scene.component_saved(t.type) {continue}
+        if t.place!=.World || t.derived {continue}
         table:=core.world_table_at(w,&t)
         info:=t.info
         offsets:=entity_offsets(t.info)
