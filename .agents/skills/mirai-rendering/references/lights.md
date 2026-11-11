@@ -194,7 +194,10 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   whose rays run the program. The constants of the view carry the cascades of the sun it drew
   (`Gpu_Frame.sun_maps`), so that a pass after the direct light takes the shadow of the sun from
   them and traces only where none holds the point (`sun_shadow_seen`; an extension binds the atlas
-  with `Surface_Source.Shadow_Atlas`): the fog lights its cells so.
+  with `Surface_Source.Shadow_Atlas`): the fog lights its cells so. The atlas, its tint and the
+  depth of its nearest glass are targets of the frame of a view, like the points and samples of the
+  direct light: the views share them (`targets_frame`), since each draws its maps before it reads
+  them.
 - **Skinned meshes.** The skin writes the posed box and normal cone of each cluster, grown by the
   reach of its vertex programs, so that the view cull and the shadow map cull leave posed clusters
   out like static ones.
@@ -206,8 +209,6 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   [cut](#cutoff-of-a-point-that-traces-its-own-rays), and none where no light looks at them. With
   `colored_shadows`, those of the hits cross the glass with its
   [medium filter](materials.md#medium-filter).
-- **Reference.** `Settings.reference_lights` is the same system with many samples and without
-  maps or half resolution: its average over a few frames is the exact image.
 - **What changed.** The scene lists what casts shadows and changed since the last frame that drew
   it (`Scene_State.occluders`, `Gpu_Frame.moved`): each instance that moved, took another pose or
   shape, arrived or left, with the box it covers in both frames, the lights that moved or changed
