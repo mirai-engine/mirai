@@ -56,10 +56,10 @@ Multi_IK_Joint :: struct {
     stiffness:f32 `mirai:"optional,min=0,max=1"`,
     preferred:mm.Quat `mirai:"optional"`,
     preferred_weight:f32 `mirai:"optional,min=0,max=1"`,
-    limit:lib.Rotation_Limit `mirai:"optional"`,
-    use_limit:bool `mirai:"optional"`,
+    frame:mm.Quat `mirai:"optional"`, // the limit axes X, Y and Z in the frame of the bone at rest
+    limits:[3]lib.Multi_IK_Limit `mirai:"optional"`, // from rest, about each axis: two Locked make a hinge
 }
-MULTI_IK_JOINT_DEFAULT :: Multi_IK_Joint{preferred=1,limit={axis={0,1,0},max_swing=mm.PI,min_twist=-mm.PI,max_twist=mm.PI}}
+MULTI_IK_JOINT_DEFAULT :: Multi_IK_Joint{preferred=1,frame=1}
 // A bone that reaches the position of its target by position_weight and its
 // rotation by rotation_weight.
 Multi_IK_Effector :: struct {
@@ -131,6 +131,7 @@ Multi_IK_Binding :: struct {
     targets:[RIG_EFFECTORS]Spatial_Target_Binding,
     residuals:[RIG_EFFECTORS]f32,
     backup:[dynamic]mm.Transform,
+    links:[dynamic]lib.Pose_Link,
 }
 Chain_Retarget_Binding :: struct {
     using binding:Rig_Binding,
@@ -149,7 +150,7 @@ Chain_Retarget_Binding :: struct {
 rig_binding_free :: proc(binding:^$T) {
     when T==Chain_IK_Binding || T==Follow_Binding {delete(binding.target.path)}
     when T==Spline_IK_Binding {for target in binding.targets {delete(target.path)}}
-    when T==Multi_IK_Binding {for target in binding.targets {delete(target.path)};delete(binding.backup)}
+    when T==Multi_IK_Binding {for target in binding.targets {delete(target.path)};delete(binding.backup);delete(binding.links)}
     when T==Chain_Retarget_Binding {
         delete(binding.source_rest);delete(binding.source_pose);delete(binding.target_rest)
         delete(binding.source_world);delete(binding.target_world)
@@ -196,7 +197,7 @@ rig_profiles_check :: proc(profile:Pose_Profile) -> bool {
         if !finite(s.angular_tolerance) || s.angular_tolerance<0 {return false}
         for &joint,j in value.joints[:value.joint_count] {
             if !profile_bone(joint.bone) || !profile_weight(joint.stiffness) || !profile_weight(joint.preferred_weight) || !profile_rotation(joint.preferred) {return false}
-            if joint.use_limit {_,ok:=lib.rotation_limit(joint.preferred,joint.preferred,joint.limit);if !ok {return false}}
+            if _,ok:=lib.joint_limit_axes(1,1,1,joint.limits);!ok || !profile_rotation(joint.frame) {return false}
             for other in value.joints[:j] {if joint.bone==other.bone {return false}}
         }
         for &effector,j in value.effectors[:value.effector_count] {
@@ -305,11 +306,12 @@ rigs_chains_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constr
             binding.ready=false;binding.root=i32(bone_resolve(state,config.root));bound:=binding.root>=0
             for joint,i in config.joints[:config.joint_count] {
                 bone:=bone_resolve(state,joint.bone);bound &&=bone>=0
-                binding.joints[i]={bone=i32(bone),stiffness=joint.stiffness,preferred=joint.preferred,preferred_weight=joint.preferred_weight,limit=joint.limit,use_limit=joint.use_limit}
+                binding.joints[i]={bone=i32(bone),stiffness=joint.stiffness,preferred=joint.preferred,preferred_weight=joint.preferred_weight,frame=joint.frame,limits=joint.limits}
             }
             for effector,i in config.effectors[:config.effector_count] {bone:=bone_resolve(state,effector.bone);bound &&=bone>=0;binding.effectors[i].bone=i32(bone)}
             if !bound {rig_problem(inputs.problems,state.entity,.Multi_IK,&config,.Bind);valid=false;continue}
-            if resize(&binding.backup,len(state.local))!=nil {memory_problem(inputs.problems,state.entity,"a Multi IK of its .character");valid=false;continue}
+            if resize(&binding.backup,len(state.local))!=nil || resize(&binding.links,len(state.local))!=nil {memory_problem(inputs.problems,state.entity,"a Multi IK of its .character");valid=false;continue}
+            if _,linked:=lib.pose_hierarchy_prepare(skeleton.parents,binding.links[:]);!linked {rig_problem(inputs.problems,state.entity,.Multi_IK,&config,.Bind);valid=false;continue}
             rig_binding_publish(binding,state,runtime.geometry,.Multi_IK,current_slot)
         }
         if !config.enabled || config.weight<=0 {continue}
@@ -321,7 +323,7 @@ rigs_chains_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constr
         }
         if !targets_valid {modifier_request_rejected(runtime,state.entity,.Missing_Target);rig_problem(inputs.problems,state.entity,.Multi_IK,&config,.Target);valid=false;continue}
         copy(binding.backup[:],state.local[:]);settings:=config.settings;settings.root=binding.root
-        result,solved:=lib.multi_ik(skeleton,state.local[:],state.world[:],binding.joints[:config.joint_count],binding.effectors[:config.effector_count],settings,binding.residuals[:config.effector_count],root_transform)
+        result,solved:=lib.multi_ik(skeleton,{skeleton.parents,binding.links[:]},state.local[:],state.world[:],binding.joints[:config.joint_count],binding.effectors[:config.effector_count],settings,binding.residuals[:config.effector_count],root_transform)
         if solved && config.weight!=1 {
             for &local,i in state.local {local=mm.transform_interpolate(binding.backup[i],local,config.weight)}
             solved=lib.pose_world(skeleton.parents,state.local[:],state.world[:],root_transform)
