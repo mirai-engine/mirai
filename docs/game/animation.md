@@ -47,7 +47,7 @@ graphs or locomotion blend spaces.
 anim.play(requests,e,"Vault")              // an action: a clip once, in its layer or whole body
 anim.stop(requests,e,"Reload")             // ends it early, as its cancel policy allows
 anim.set(requests,e,"aim_yaw",yaw)         // an axis of an aim space, or the weight of a layer
-anim.look(requests,e,anim.spatial_entity(target))   // the head turns to it; weight 0 lets go
+anim.look(requests,e,anim.spatial_entity(target))   // the head fades to it; weight 0 lets go
 ```
 
 - An action without a layer fades in over the whole body, in any locomotion mode; one in a layer

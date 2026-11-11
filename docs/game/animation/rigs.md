@@ -24,8 +24,9 @@ anim.modifier_control(requests,{rig=e,kind=.IK,weight=0,enabled=false,fade=.2}) 
 - `kind` is one of `Modifier_Kind` (`IK`, `Look`, `Grounding`, `Chain_IK`, `Spline_IK`, `Spring`,
   `Follow`, ...). `slot` indexes the operations of that kind (0 is the first); `name` picks
   one instead (`base.text_set(goal.name[:],"left_hand")`); `effector` picks one of a `Multi_IK`.
-- `modifier_goal` sets where; `modifier_control` sets an independent weight and fade. Both persist
-  per operation until replaced.
+- `modifier_goal` sets where and the weight, reached over its `fade` from the weight that applies
+  (a goal that lets go keeps its target while it fades out); `modifier_control` sets an
+  independent weight and fade. Both persist per operation until replaced.
 - `animation.inspect` part `Modifiers` lists the operations and the last request that failed.
 
 ## Feet on the ground

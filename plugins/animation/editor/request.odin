@@ -356,18 +356,18 @@ request_aim :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity
     }
     definition,_:=program_modifier_definition(profile,kind,slot)
     requests:=core.world_storage_of(world,anim.Animation_Requests)
+    // Asking for it turns on an operation the .character keeps off until asked; off, it lets go
+    // from where it aims.
+    value:=anim.Modifier_Goal{rig=entity,kind=kind,slot=slot,target=anim.spatial_point({}),fade=fade}
     if !off {
         goal:=Preview_Goal{kind=.Look if kind==.Look else .IK,name=definition.name,target=target}
-        value,valid:=program_modifier_goal_value(s,call,world,entity,profile,&goal,raw,path);if !valid {return false}
-        // Asking for it turns on an operation the .character keeps off until asked.
-        value.enabled=true
-        waiting:=len(requests.goals.items)
-        anim.modifier_goal(requests,value)
-        if len(requests.goals.items)==waiting {authoring_failure(call,path,"Capacity","space in Animation_Requests.goals","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
+        valid:bool
+        if value,valid=program_modifier_goal_value(s,call,world,entity,profile,&goal,raw,path);!valid {return false}
+        value.weight,value.enabled,value.fade=weight,true,fade
     }
-    waiting:=len(requests.controls.items)
-    anim.modifier_control(requests,{rig=entity,kind=kind,slot=slot,name=definition.name,weight=0 if off else weight,enabled=!off,fade=fade})
-    if len(requests.controls.items)==waiting {authoring_failure(call,path,"Capacity","space in Animation_Requests.controls","full or unavailable","The control could not be queued",api.SERVER_ERROR);return false}
+    waiting:=len(requests.goals.items)
+    anim.modifier_goal(requests,value)
+    if len(requests.goals.items)==waiting {authoring_failure(call,path,"Capacity","space in Animation_Requests.goals","full or unavailable","The goal could not be queued",api.SERVER_ERROR);return false}
     request_note(applied,"Look" if kind==.Look else "Reach",base.text_get(definition.name[:]),0 if off else weight)
     return true
 }

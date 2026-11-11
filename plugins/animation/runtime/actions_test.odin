@@ -1,10 +1,12 @@
 package anim
 
 import "base:runtime"
+import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
@@ -607,4 +609,84 @@ a_world_action_plays_at_its_speed_while_its_entity_is_slowed :: proc(t:^testing.
         layers_advance(&playback,&state,&content,description,&events,.1,nil);actions_layer_finish(&actions,&state)
         testing.expectf(t,abs(state.layers[0].fader.current.time-want)<1e-5,"%v: the pose is at %v s of its clip, want %v",clock,state.layers[0].fader.current.time,want)
     }
+}
+
+// What a whole tick of the animation of a rig reads and writes, for a test that plays its actions
+// and looks as a game asks for them.
+@(private="file")
+Played_World :: struct {
+    using world:core.Test_World,
+    transforms:core.Table(core.Transform),parents:core.Table(core.Parent),names:core.Table(core.Name),
+    meshes:core.Table(erender.Mesh_Renderer),sources:core.Table(Pose_Source),animations:core.Table(Animation),targets:core.Table(Animation_Target),
+    progress:core.Table(Animation_Progress),attachments:core.Table(Bone_Attachment),worlds:core.Table(core.World_Transform),
+    played:core.Table(Animation_Played),remotes:core.Table(core.Remote),
+    requests:Animation_Requests,events:Animation_Events,playback:Playback,constraints:Animation_Constraints,grounding:Grounding_Runtime,
+    modifiers:Modifier_Runtime,actions:Action_Runtime,motion:Motion_Runtime,
+}
+
+// A body that stands in its idle leans by an action and turns by its look: each fades in and out
+// over its own time, the pose turns no faster than twice what the action alone turns it, and once
+// both let go the body is back at rest.
+@(test)
+an_action_and_a_look_over_an_idle_body_fade_in_and_back_to_rest :: proc(t:^testing.T) {
+    directory:=base.test_folder(t,"played_fades")
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    library,id:=base.Asset_Id{0x11,0xa1},base.Asset_Id{0x11,0xa2}
+    side:=mm.Vec3{1,0,0}
+    keys:=[]lib.Keyframe{{time=0,value=lib.quat_vec4(1),ease=.Sine_In_Out},{time=.2,value=lib.quat_vec4(mm.quat_axis_angle(side,-.6)),ease=.Sine_In_Out},{time=.5,value=lib.quat_vec4(mm.quat_axis_angle(side,-.6))}}
+    rest:=[]lib.Keyframe{{time=0,value=lib.quat_vec4(1)}}
+    clips:=[]asset.Animation_Clip_Desc{{name="idle",tracks={{target="Body",property=.Rotation,keys=rest}}},{name="lean",tracks={{target="Body",property=.Rotation,keys=keys}}}}
+    if !testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/lean.anim",directory),&types,{id=library,clips=clips}),asset.Error.None) {return}
+    actions:=[]Action_Definition{ACTION_DEFINITION_DEFAULT}
+    base.text_set(actions[0].name[:],"Lean");base.text_set(actions[0].clip[:],"lean");actions[0].fade_in,actions[0].fade_out=.2,.2
+    aim:=LOOK_CONSTRAINT_DEFAULT;aim.bone=bone_ref("Body");aim.enabled=false
+    set:=character_set_make(library);set.actions.actions=actions;set.pose.look={aim}
+    if !testing.expect_value(t,character_save(fmt.tprintf("%s/lean.character",directory),&types,id,set),asset.Error.None) {return}
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return}
+    defer host.assets_destroy(&assets)
+    app:=host.App{assets=&assets,allocator=context.allocator};defer host.app_content_destroy(&app)
+    w:Played_World;problems:core.Problems
+    if !core.test_world_init(t,&w,test_types) {return}
+    defer core.test_world_destroy(&w)
+    characters:Character_Assets;skeletons:Skeleton_Assets;sources:Source_Assets
+    defer {character_assets_free(&characters);skeleton_assets_free(&skeletons);source_assets_free(&sources)}
+    rig,body:=core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.transforms,rig,core.TRANSFORM_IDENTITY);core.add(&w.transforms,body,core.TRANSFORM_IDENTITY)
+    target:=Animation_Target{animation=rig};base.text_set(target.path[:],"Body");core.add(&w.targets,body,target)
+    animation:=ANIMATION_DEFAULT;animation.asset=id;core.add(&w.animations,rig,animation)
+    core.test_world_settle(&w)
+    DT :: f32(1.0/60)
+    // The turn of the body in the tick, in radians per second.
+    tick :: proc(w:^Played_World,problems:^core.Problems,app:^host.App,characters:^Character_Assets,skeletons:^Skeleton_Assets,sources:^Source_Assets,body:core.Entity) -> f32 {
+        before,_:=core.get(core.read(&w.transforms),body)
+        time:=core.Time{dt=DT,playing=true}
+        animation_sample(core.read(&w.animations),&w.progress,&w.played,core.read(&w.attachments),&w.transforms,core.read(&w.parents),{},core.read(&w.names),core.read(&w.targets),core.read(&w.meshes),core.read(&w.sources),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,characters,skeletons,app,time,{},problems,&w.actions,&w.motion,sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
+        core.test_world_settle(w)
+        animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,&w.constraints,&w.grounding,{},{},time,core.ref(skeletons),problems,&w.motion,characters,{},{},core.CLOCK_DEFAULT,nil)
+        core.test_world_settle(w)
+        after,_:=core.get(core.read(&w.transforms),body)
+        return mm.quat_angle(before.rotation,after.rotation)/DT
+    }
+    for _ in 0..<4 {tick(&w,&problems,&app,&characters,&skeletons,&sources,body)}
+    if host.content_animation_pending(&app,library) {host.content_animation_wait(&app,library)}
+    for _ in 0..<4 {tick(&w,&problems,&app,&characters,&skeletons,&sources,body)}
+    // The action alone: its own turn, its fades included.
+    play(&w.requests,rig,"Lean")
+    alone:f32
+    for _ in 0..<60 {alone=max(alone,tick(&w,&problems,&app,&characters,&skeletons,&sources,body))}
+    rested,_:=core.get(core.read(&w.transforms),body)
+    // With a look, which lets go after the action ends.
+    look(&w.requests,rig,spatial_point({.6,-.2,-1}))
+    play(&w.requests,rig,"Lean")
+    both:f32
+    for i in 0..<90 {
+        if i==50 {look(&w.requests,rig,spatial_point({}),0)}
+        both=max(both,tick(&w,&problems,&app,&characters,&skeletons,&sources,body))
+    }
+    last,_:=core.get(core.read(&w.transforms),body)
+    testing.expectf(t,alone>1,"the action turns the body (%.2f rad/s)",alone)
+    testing.expectf(t,mm.quat_angle(rested.rotation,1)<1e-3 && mm.quat_angle(last.rotation,1)<1e-3,"the body is back at rest: %v %v",rested.rotation,last.rotation)
+    testing.expectf(t,both<=2*alone,"with the look the body turns at most twice as fast as the action alone turns it: %.2f against %.2f rad/s",both,alone)
+    testing.expect_value(t,problems.count,0)
 }

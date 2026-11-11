@@ -174,7 +174,7 @@ Playing :: struct {
     clip:int,                  // of the asset; -1: none
     time,duration:f32,         // of the clip of the component, in seconds
     ended:bool,                // a clip that does not loop reached the end it heads to; playing again starts it over
-    held:bool,                 // its clip did not move in the tick: the entities it drives are not written
+    held:bool,                 // its clip did not move in the tick: the entities it drives are not written, unless what is over it (a fade, a look) moved the pose
     held_weight:f32,
     playing:bool,              // whether its clip plays in this tick: Animation.playing at the start, then the commands
     speed:f32,                 // as playing, of Animation.speed
@@ -373,7 +373,6 @@ animation_tick :: proc(
                 if !skeleton_bind(playback,state,definition,content,transforms) {memory_problem(problems,e,"the pose of its skeleton");continue}
             }
             if programmed && len(state.program.from)!=len(state.local) && resize(&state.program.from,len(state.local))!=nil {memory_problem(problems,e,"its animation program");continue}
-            if state.pose_ready {copy(state.previous[:],state.local[:])}
             copy(state.local[:],state.rest[:])
             if root,ok:=core.get(transforms,e);ok {state.local[0]=core.to_math(root)}
         } else if state.skeleton!={} || state.hierarchy_stamp!=stamp || state.tracks==0 {
@@ -1027,7 +1026,7 @@ pose_layers :: proc(playback:^Playback,state:^Playing,content:^host.Content_Anim
 // Writes the pose to the entities it is bound to. An entity whose Transform another component
 // owns (a body) is asked of its owner through places, at the place the track gives it.
 pose_write :: proc(playback:^Playback,state:^Playing,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent)={},places:^core.Places=nil) {
-    if state.held && state.skeleton=={} {return}
+    if state.held && state.skeleton=={} && state.pose_ready && slice.equal(state.local[:],state.previous[:]) {return}
     for binding,i in state.bindings {
         if binding.entity==core.NONE {continue}
         old,ok:=core.get(transforms,binding.entity)
@@ -1250,7 +1249,7 @@ animation_finish :: proc(playback:^Playback,inputs:Constraint_Inputs,constraints
         constraints_apply(state,playback,inputs,constraints,transforms,parents,dt*core.pace_of(clock,paces,state.entity),grounding,ground_inputs,rig_runtime,motion,characters,final_poses)
         pose_write(playback,state,transforms,parents,places)
         if !state.pose_ready || !slice.equal(state.local[:],state.previous[:]) {state.changed=playback.frame}
-        if !state.pose_ready {copy(state.previous[:],state.local[:])}
+        copy(state.previous[:],state.local[:])
         state.pose_ready=true
         state.finished=playback.frame
     }
