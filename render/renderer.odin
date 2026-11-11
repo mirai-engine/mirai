@@ -296,7 +296,7 @@ Pipeline_Id :: enum {
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Translucent, Reflect_Resolve,
 	Shadow_Maps, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, // the cull of the maps of the shadows, and their draws by what each writes
-	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Mean, Glass_Inside,
+	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Mean, Glass_Inside,
 	Gbuffer_Plain, // without the reflectance target: no reflective instance in the frustum
 	Gbuffer_Layers, Gbuffer_Layers_Clip, Gbuffer_Nested_Layers, // with the layers target: an instance with layers in the frustum
 	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines,
@@ -371,7 +371,7 @@ Targets :: struct {
 	needs_clear:             bool,
 	glass:                   [GLASS_LAYERS_MAX]Glass_Layer,
 	glass_zbuffer:           rhi.Texture,
-	glass_scene:             rhi.Texture, // copy of the scene a glass layer is drawn over, for the layer to read
+	glass_scene:             rhi.Texture, // copy of the scene a glass layer is drawn over, for the layer to read, and its levels to blur it (glass_levels.comp)
 	glass_reflections:       rhi.Texture, // the traced reflections of the nearest layer of glass, filtered
 	glass_valid:             bool,
 	glass_needs_clear:       bool,
@@ -912,6 +912,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Air_Sky, .Air_Sky_Comp)
 	compute(list, r, .Air_Aerial, .Air_Aerial_Comp)
 	compute(list, r, .Glass_Mean, .Glass_Mean_Comp)
+	compute(list, r, .Glass_Levels, .Glass_Levels_Comp)
 	compute(list, r, .Points, .Points_Comp)
 	compute(list, r, .Skin, .Skin_Comp)
 	// Only rays traced by software run them: they walk or refit the software BVH.

@@ -1,5 +1,6 @@
 package mirai_render
 
+import "core:math"
 import "core:math/linalg"
 import "mirai:rhi"
 import mm "mirai:std/math"
@@ -72,7 +73,7 @@ ensure_glass_targets :: proc(r: ^Renderer, t: ^Targets) -> bool {
 		ok &&= layer.albedo != 0 && layer.normal != 0 && layer.emission != 0 && layer.ids != 0 && layer.depth != 0 && layer.surface != 0 && (layer.layers != 0 || !layered)
 	}
 	t.glass_zbuffer = full(d, t, .D32_Float, {.Depth_Target}, "glass z")
-	t.glass_scene = full(d, t, .RGBA16_Float, {.Sampled, .Storage, .Color_Target}, "glass scene")
+	t.glass_scene = rhi.texture_create(d, {width = t.width, height = t.height, format = .RGBA16_Float, usage = {.Sampled, .Storage, .Color_Target}, mip_levels = glass_scene_levels(t), name = "glass scene"})
 	t.glass_reflections = full(d, t, .RGBA16_Float, {.Sampled, .Storage, .Color_Target}, "glass reflections")
 	t.glass_valid = false
 	t.glass_needs_clear = true
@@ -279,8 +280,10 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 		params.snapshot, params.traced = 1, 0
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.display)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.glass_scene)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.glass_scene, 0)
 		rhi.cmd_dispatch_indirect(cmd, p.view.glass_dispatch, 0)
+		glass_scene_levels_record(p)
+		glass_layer_bind(p, k)
 		params.snapshot, params.traced = 0, 1 if traced && k == 0 else 0
 		rhi.cmd_bind_pipeline(cmd, light)
 		set_params(cmd, &params)
@@ -295,6 +298,32 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 		rhi.cmd_dispatch_indirect(cmd, p.view.glass_dispatch, 0)
 	}
 	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, t.layers if t.layers != 0 else r.dummy_layers)
+}
+
+// The levels of the copy of the scene behind a layer: down to the one the
+// widest blur of glass_pass.slang takes (scene_blurred, 8 % of the height).
+@(private)
+glass_scene_levels :: proc(t: ^Targets) -> u32 {
+	widest := u32(math.ceil(math.log2(max(0.08 * f32(t.height), 1)) - 0.5)) + 1
+	full := u32(1)
+	for (max(t.width, t.height) >> full) > 0 {full += 1}
+	return clamp(widest, 1, min(full, rhi.MAX_TEXTURE_MIPS))
+}
+
+// Each level of the scene the layer reads from the one before (glass_levels.comp).
+@(private)
+glass_scene_levels_record :: proc(p: ^Pass) {
+	r, cmd, t := p.r, p.cmd, p.t
+	Params :: struct {source_size: [2]i32, first, pad: u32}
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Glass_Levels])
+	levels := glass_scene_levels(t)
+	for level in 1 ..< levels {
+		params := Params{source_size = {i32(max(t.width >> (level - 1), 1)), i32(max(t.height >> (level - 1), 1))}, first = 1 if level == 1 else 0}
+		set_params(cmd, &params)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.glass_scene, i32(level - 1))
+		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.glass_scene, i32(level))
+		rhi.cmd_dispatch(cmd, groups(max(t.width >> level, 1), 8), groups(max(t.height >> level, 1), 8))
+	}
 }
 
 // glass_pass.slang Params_Block.
