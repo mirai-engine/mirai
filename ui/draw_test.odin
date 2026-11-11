@@ -21,7 +21,7 @@ vertices_keep_the_layout_the_renderer_reads :: proc(t:^testing.T) {
 @(test)
 rectangles_are_two_triangles_in_window_points :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input(800,600)
     input.scale=2
@@ -47,7 +47,7 @@ rectangles_are_two_triangles_in_window_points :: proc(t:^testing.T) {
 @(test)
 the_clip_cuts_geometry_colors_and_texture_coordinates :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     frame_begin(&ctx,input)
@@ -86,7 +86,7 @@ the_clip_cuts_geometry_colors_and_texture_coordinates :: proc(t:^testing.T) {
 @(test)
 scissors_split_the_commands_and_skip_what_they_hide :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input(800,600)
     frame_begin(&ctx,input)
@@ -123,7 +123,7 @@ scissors_split_the_commands_and_skip_what_they_hide :: proc(t:^testing.T) {
 @(test)
 scissors_are_in_window_points_whatever_the_scale :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input(800,600)
     input.scale=2
@@ -140,7 +140,7 @@ vertices_that_do_not_fit_are_dropped_whole_and_counted :: proc(t:^testing.T) {
     ctx:Context
     desc:=TEST_SMALL
     desc.max_vertices=14
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     input:=test_input()
     frame_begin(&ctx,input)
@@ -167,7 +167,7 @@ commands_that_do_not_fit_drop_their_vertices :: proc(t:^testing.T) {
     ctx:Context
     desc:=TEST_SMALL
     desc.max_commands=2
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     input:=test_input()
     frame_begin(&ctx,input)
@@ -190,7 +190,7 @@ glyphs_snap_to_device_pixels_at_any_density :: proc(t:^testing.T) {
     desc:=TEST_FONT
     desc.density=2
     desc.font_texture=5
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     input:=test_input(100,100)
     frame_begin(&ctx,input)
@@ -213,7 +213,7 @@ glyphs_snap_to_device_pixels_at_any_density :: proc(t:^testing.T) {
 @(test)
 nine_slices_keep_their_borders :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     frame_begin(&ctx,input)
@@ -241,7 +241,7 @@ nine_slices_keep_their_borders :: proc(t:^testing.T) {
 @(test)
 shapes_rasterize_with_their_colors_corners_and_antialiasing :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input(64,64)
     frame_begin(&ctx,input)
@@ -271,7 +271,7 @@ shapes_rasterize_with_their_colors_corners_and_antialiasing :: proc(t:^testing.T
 @(test)
 clips_follow_the_transform_they_were_set_under :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     white:=Color{255,255,255,255}
@@ -305,7 +305,7 @@ clips_follow_the_transform_they_were_set_under :: proc(t:^testing.T) {
 @(test)
 a_frame_that_only_draws_does_not_lay_anything_out :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     input:=test_input()
     drawn :: proc(ctx:^Context) -> Frame {
@@ -341,7 +341,7 @@ a_frame_that_only_draws_does_not_lay_anything_out :: proc(t:^testing.T) {
 @(test)
 a_program_is_a_shape_that_carries_its_id_and_values :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     frame_begin(&ctx,test_input())
     draw_program(&ctx,{10,20,40,30},7,{0.25,0.5,1,-2},{255,128,0,200},{4,4,100,0})
@@ -368,7 +368,7 @@ a_program_is_a_shape_that_carries_its_id_and_values :: proc(t:^testing.T) {
 @(test)
 a_box_or_a_bar_with_a_program_fills_through_it :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     Case :: struct {program:u32,stroke:bool}
     s:Case

@@ -227,7 +227,7 @@ document_recovery :: proc(s:^Session) -> bool {
     if folder:=project.folder_path(s.project_root,.Generated,context.temp_allocator);!os.is_dir(folder) {_=os.make_directory_all(folder)}
     w.path=strings.clone(file,allocator)
     w.saved,w.error,w.busy=history.edits_scene_state(s.edits),.None,true
-    jobs.run(&s.app.jobs,jobs.OWNER,recovery_write,w,&w.counter)
+    jobs.run(&s.app.jobs,jobs.OWNER,.Background,recovery_write,w,&w.counter)
     // Without threads a job runs when it is waited for.
     if jobs.worker_count(&s.app.jobs)==1 {return recovery_wait(s)}
     return true

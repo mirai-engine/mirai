@@ -158,7 +158,7 @@ poses_by_track_match_the_pose_each_track_gives_by_name :: proc(t:^testing.T) {
         copy(state.local[:],state.rest[:])
         advance(&playback,&state,&content,animation,&events,.1,nil)
         layers_advance(&playback,&state,&content,animation,&events,.1,nil)
-        result:=pose_sample(&playback,&state,&content.lib,animation,{})
+        result:=pose_sample(&playback,&state,&content,animation,{})
         faults.memory||=result.memory;faults.layer_bone|=result.layer_bone;faults.layer_reference|=result.layer_reference
         reference_pose(&state,&content.lib,animation,expected[:])
         for value,b in expected {

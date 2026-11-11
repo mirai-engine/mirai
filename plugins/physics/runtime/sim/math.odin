@@ -40,9 +40,18 @@ PI :: math.PI
     if abs(n.x)<0.57735027 {return normalize({0,n.z,-n.y})}
     return normalize({n.y,-n.x,0})
 }
-@(private) is_finite3 :: proc "contextless" (a:Vec3) -> bool {
-    s:=a.x+a.y+a.z
-    return s-s==0
+// Whether every float of the values is a number: neither NaN nor infinite.
+finite :: proc{finite_floats,finite_vectors,finite_quats,finite_matrices,finite_transforms}
+finite_floats :: proc "contextless" (values:..f32) -> bool {return finite_block(values)}
+finite_vectors :: proc "contextless" (values:..Vec3) -> bool {return finite_block(values)}
+finite_quats :: proc "contextless" (values:..Quat) -> bool {return finite_block(values)}
+finite_matrices :: proc "contextless" (values:..Mat3) -> bool {return finite_block(values)}
+finite_transforms :: proc "contextless" (values:..Transform) -> bool {return finite_block(values)}
+@(private)
+finite_block :: #force_inline proc "contextless" (values:[]$T) -> bool {
+    zero:f32
+    for v in values {for x in transmute([size_of(T)/size_of(f32)]f32)v {zero+=x*0}}
+    return zero==0
 }
 
 @(private) q_rotate :: #force_inline proc "contextless" (q:Quat,v:Vec3) -> Vec3 {return math.quat_rotate(q,v)}

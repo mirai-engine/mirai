@@ -20,7 +20,7 @@ data folder (`host.app_user_folder`).
 {
   "Graphics_Settings": {"frame_limit": 0, "vsync": false, "show_fps": true},
   "Display_Settings": {"mode": "Windowed", "width": 1280, "height": 720},
-  "Spawn_Settings": {"players": true}
+  "Spawn_Settings": {"prefab": "6d6972616967616d706c617965720001"}
 }
 ```
 

@@ -11,6 +11,7 @@ import "core:strings"
 import "core:sync"
 import "core:time"
 import "mirai:asset"
+import "mirai:cook/far"
 import anim "mirai:std/anim"
 import lz_optimal "mirai:cook/compressor/lz"
 import "mirai:cook/textures"
@@ -35,7 +36,9 @@ import "mirai:std/subprocess"
 // again as Final from its source, which the cook imports again; a scene or prefab with a stale prefab
 // instance is written with its instances brought up to date, so a shipped
 // game loads them as they are; every other file is copied byte for byte.
-// The folder gets a packed index, so the game does not look at its files to
+// With far, every scene a section references gets its far mesh beside it
+// (cook/far), which the game shows while the section is not loaded. The
+// folder gets a packed index, so the game does not look at its files to
 // know what they are, and everything written is read back and checked.
 
 COOK_FILE :: "cook.mirai"
@@ -56,6 +59,7 @@ Cook_Desc :: struct {
     worker:jobs.Worker_Ref, // where the files are cooked, in parallel on its system. No system: a system of the cook, a thread per core
     server:bool, // for a dedicated server: what is only shown or heard (asset.Kind_Info.presentation) stays behind, and is not missing
     quick:bool,  // a cook that checks a change (a dev game): lz_optimal.QUICK in place of SHIP
+    far:bool,    // the far meshes of the scenes sections reference: the game streams sections (plugin streaming)
     allocator:runtime.Allocator, // of the report. Unset: context.allocator
 }
 
@@ -108,6 +112,7 @@ Cook_Report :: struct {
     textures_compressed:int,
     animations_compressed:int,
     scenes_resolved:int,      // scenes and prefabs written with their prefab instances up to date
+    far_meshes:int,           // far meshes written beside the scenes sections reference
     source_bytes:i64,         // of the whole assets folder
     output_bytes:i64,         // of what was written, with the index
     seconds:f64,
@@ -197,9 +202,11 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     }
     for file,at in files {
         if file.state==.Asset && (file.kind==asset.KIND_SCENE || file.kind==asset.KIND_RECORDS || file.kind==asset.KIND_STRINGS) {root_add(reached,&pending,&report,u32(at))}
-        // What a plugin brings is for its code, which no scene names; its sources stay behind.
+        // What a plugin brings is for its code, which no scene names; its sources
+        // (a file with a sidecar beside it) and their sidecars stay behind.
+        source:=strings.has_suffix(file.path,asset.SIDECAR_EXTENSION) || strings.concatenate({file.path,asset.SIDECAR_EXTENSION},temp) in registry.by_path
         for folder in desc.plugins {
-            if file.state==.Asset && strings.has_prefix(file.path,folder.prefix) && len(file.path)>len(folder.prefix) && file.path[len(folder.prefix)]=='/' {root_add(reached,&pending,&report,u32(at))}
+            if !source && strings.has_prefix(file.path,folder.prefix) && len(file.path)>len(folder.prefix) && file.path[len(folder.prefix)]=='/' {root_add(reached,&pending,&report,u32(at))}
         }
     }
     for root in manifest.roots {
@@ -301,6 +308,14 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
         if entry.resolved {report.scenes_resolved+=1}
         report.output_bytes+=entry.bytes
         append(&written,entry)
+    }
+    if desc.far {
+        made,error,detail:=far_meshes_cook(&work,reached,left,allocator)
+        if error!=.None {cook_fail(&report,error,detail,allocator);return}
+        append(&written,..made)
+        report.far_meshes=len(made)
+        for entry in made {report.output_bytes+=entry.bytes}
+        slice.sort_by(written[:],proc(a,b:Cook_File) -> bool {return a.path<b.path})
     }
     report.files,report.dropped=written[:],dropped[:]
 
@@ -479,6 +494,58 @@ file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:
     }
     if info,stat_error:=os.stat(target,context.temp_allocator);stat_error==nil {entry.bytes=info.size}
     return .None,""
+}
+
+// The far mesh of each scene a cooked scene references, written beside it
+// (<scene>.far.mesh, far.far_mesh_id) and read back; one without static
+// meshes has none.
+@(private="file")
+far_meshes_cook :: proc(work:^Cook_Work,reached,left:[]bool,allocator:runtime.Allocator) -> (made:[]Cook_File,error:Cook_Error,detail:string) {
+    scenes:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    types:=work_types(work,0)
+    for file,at in work.files {
+        if !reached[at] || left[at] || file.state!=.Asset || file.kind!=asset.KIND_SCENE {continue}
+        source:asset.Asset
+        if asset.asset_load(&source,asset.registry_file_path(work.registry,file.path,context.temp_allocator),context.temp_allocator)!=.None {return nil,.Read_Failed,strings.clone(file.path,allocator)}
+        far.far_scenes(&source,types,&scenes)
+        asset.asset_close(&source)
+    }
+    Far_Work :: struct {work:^Cook_Work,scenes:[]base.Asset_Id,entries:[]Cook_File,errors:[]Cook_Error}
+    fw:=Far_Work{work=work,scenes=scenes[:],entries=make([]Cook_File,len(scenes),context.temp_allocator),errors=make([]Cook_Error,len(scenes),context.temp_allocator)}
+    each :: proc(fw:^Far_Work,first,last:int,worker:int) {
+        context.allocator=fw.work.allocator
+        for at in first..<last {
+            id:=fw.scenes[at]
+            record,found:=asset.registry_find(fw.work.registry,id)
+            if !found {continue}
+            g:asset.Mesh_Geometry
+            if !far.far_cook(fw.work.registry,id,&g,context.temp_allocator) {continue}
+            path:=strings.concatenate({strings.trim_suffix(record.path,".scene"),far.FAR_EXTENSION},context.temp_allocator)
+            target:=fmt.tprintf("%s/%s",fw.work.desc.output,path)
+            types:=work_types(fw.work,worker)
+            mesh:=asset.far_mesh_id(id)
+            if asset.mesh_save(target,types,{id=mesh,geometry=g},context.temp_allocator)!=.None {
+                fw.entries[at].path,fw.errors[at]=strings.clone(path,fw.work.allocator),.Write_Failed
+                continue
+            }
+            check:asset.Asset
+            if asset.asset_load(&check,target,context.temp_allocator)!=.None || !asset.blob_verify_hash(&check.blob) || check.blob.header.id!=mesh {fw.errors[at]=.Verify_Failed}
+            asset.asset_close(&check)
+            fw.entries[at]={path=strings.clone(path,fw.work.allocator),id=mesh,kind=asset.KIND_MESH}
+            if info,stat_error:=os.stat(target,context.temp_allocator);stat_error==nil {fw.entries[at].bytes=info.size}
+        }
+    }
+    jobs.parallel_for(work.on.system,work.on.worker,len(scenes),1,each,&fw)
+    out:=make([dynamic]Cook_File,allocator)
+    defer for entry in fw.entries {delete(entry.path,work.allocator)}
+    for entry,at in fw.entries {
+        if fw.errors[at]!=.None {return nil,fw.errors[at],strings.clone(entry.path,allocator)}
+        if entry.path=="" {continue}
+        kept:=entry
+        kept.path=strings.clone(entry.path,allocator)
+        append(&out,kept)
+    }
+    return out[:],.None,""
 }
 
 // Writes a texture that stores RGBA8 as blocks, the ones the cache keeps for

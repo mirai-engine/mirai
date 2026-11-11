@@ -167,7 +167,7 @@ breakable_state_apply :: proc(w:^World,h:Breakable_Handle,state:[]u8) -> bool {
         record:=bond_record(state,pieces,at)
         is_cluster:=.Cluster in record.flags
         if record.a<0 || int(record.a)>=pieces || !is_cluster && (record.b<0 || int(record.b)>=pieces) || is_cluster && record.b!=-1 ||
-           record.cluster < -1 || int(record.cluster)>=clusters || !break_finite(record.area,record.strain,record.strength,record.center.x,record.center.y,record.center.z) ||
+           record.cluster < -1 || int(record.cluster)>=clusters || !finite(record.area,record.strain,record.strength,record.center.x,record.center.y,record.center.z) ||
            record.area<0 || record.strain<0 || record.strength<0 || is_cluster && (at!=clusters || clusters>=len(s.ids)) {return false}
         clusters+=int(is_cluster)
     }

@@ -21,6 +21,7 @@ import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The panel at the right while something is selected: the name and the
@@ -57,7 +58,6 @@ Inspector :: struct {
     gesture_frame:u64,        // the last frame its field was built
     picker:Color_Session,
     list:Choice_List,
-    list_with:[dynamic]base.Asset_Id, // the prefabs the open list offers when its field names a component they must have (with=)
     geometry_choice:Geometry_Choice,
     post_process:Post_Process_Editor,
     add_filter:[64]u8,
@@ -83,7 +83,7 @@ Color_Session :: struct {
     alpha:f32,
     emission:bool, // a radiance: brighter than 1, with its intensity apart
     intensity:f64,
-    state:ui.Color_Picker,
+    state:kit.Color_Picker,
 }
 
 // The list of assets open for a field, or the components to add.
@@ -97,7 +97,6 @@ Choice_List :: struct {
     geometry:bool,
     field:ui.Id,
     path:int,          // a text of this many bytes takes the path of the asset under the assets folder instead of its id
-    with:bool,         // it offers only Inspector.list_with
     scroll:f32,
 }
 
@@ -201,8 +200,7 @@ card :: proc(s:^Session) -> bool {
     return true
 }
 card_begin :: proc(s:^Session) {
-    th:=&s.gui.ctx.theme
-    ui.box_begin(s.gui.ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,fill=th.card,radius=th.radius_popup})
+    ui.box_begin(s.gui.ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,fill=ui.tone(s.gui.ctx,"card"),radius=ui.metric(s.gui.ctx,"radius_popup")})
 }
 card_end :: proc(s:^Session) {ui.box_end(s.gui.ctx,{})}
 
@@ -232,7 +230,6 @@ Section_Button :: struct {
 section :: proc(s:^Session,title:string,folded:=false,icon:ui.Icon=.None,description:string="",menu:^bool=nil,on:^bool=nil,buttons:[]Section_Button=nil,pressed:^int=nil) -> (open:bool) {
     ins:=s.inspector
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     key:=base.name_hash(title)
     // What the search shows stays open.
     searching:=inspector_needle(ins)!=""
@@ -283,19 +280,18 @@ scroll_shadow :: proc(s:^Session,shown:bool) {
 // The band of a section whose open state its caller keeps.
 section_band :: proc(s:^Session,id:ui.Id,title:string,open:bool,icon:ui.Icon=.None,on:^bool=nil,buttons:[]Section_Button=nil,pressed:^int=nil,banded:=false) -> ui.Interaction {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     it:=ui.interact(ctx,id,{.Focusable})
     if pressed!=nil {pressed^=-1}
     // In a block the title sits on it; a section on the panel heads it with a band.
     if banded {band_begin(ctx,id,it.hot)} else {ui.box_begin(ctx,{id=id,width=ui.GROW,height=ui.fixed(CARD_HEADER),padding={9,0,7,0},gap=7,align_y=.Center,fill=ui.color_alpha({255,255,255,255},it.hot?10:0),radius=4})}
     {
         if on!=nil {ui.checkbox(ctx,ui.id_derive(ctx,id,"on"),on)}
-        if icon!=.None {ui.icon(ctx,icon,th.text_muted,14)}
-        ui.label(ctx,title,th.font,th.text,0,font=ui.FONT_SEMIBOLD)
+        if icon!=.None {ui.icon(ctx,icon,ui.tone(ctx,"text_muted"),14)}
+        ui.label(ctx,title,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
         for button,i in buttons {
-            if ui.button(ctx,ui.id_derive(ctx,id,"button",i),{icon=button.icon,icon_color=th.text_muted,icon_size=13,style=.Ghost,width=22,height=22,active=button.on,disabled=button.disabled}).clicked && pressed!=nil {pressed^=i}
+            if ui.button(ctx,ui.id_derive(ctx,id,"button",i),{icon=button.icon,icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="ghost",width=22,height=22,active=button.on,disabled=button.disabled}).clicked && pressed!=nil {pressed^=i}
         }
-        ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,th.text_muted,13)
+        ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,ui.tone(ctx,"text_muted"),13)
     }
     if banded {band_end(ctx)} else {ui.box_end(ctx,{})}
     if pressed!=nil && pressed^>=0 {it.clicked=false}
@@ -305,14 +301,13 @@ section_band :: proc(s:^Session,id:ui.Id,title:string,open:bool,icon:ui.Icon=.No
 // A band that heads a section on a panel, from one edge to the other between
 // two rules; id takes the pointer. What it holds goes before band_end.
 band_begin :: proc(ctx:^ui.Context,id:ui.Id,hot:=false) {
-    th:=&ctx.theme
     ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(CARD_HEADER),direction=.Column})
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.border}) {}
-    ui.box_begin(ctx,{id=id,width=ui.GROW,height=ui.GROW,padding={BAND_INSET,0,BAND_INSET,0},gap=7,align_y=.Center,fill=th.field_hover if hot else th.band})
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"border")}) {}
+    ui.box_begin(ctx,{id=id,width=ui.GROW,height=ui.GROW,padding={BAND_INSET,0,BAND_INSET,0},gap=7,align_y=.Center,fill=ui.tone(ctx,"field_hover") if hot else ui.tone(ctx,"band")})
 }
 band_end :: proc(ctx:^ui.Context) {
     ui.box_end(ctx,{})
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ctx.theme.border}) {}
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"border")}) {}
     ui.box_end(ctx,{})
 }
 
@@ -328,7 +323,7 @@ row_description :: proc(s:^Session,row:ui.Id,text:string) {
     if text=="" {return}
     ctx:=s.gui.ctx
     area,shown:=ui.widget_rect(ctx,row)
-    on:=shown && ctx.popup.count==0 && ui.rect_contains(area,ctx.pointer) && ctx.pointer.x<area.x+ctx.theme.label_width
+    on:=shown && ctx.popup.count==0 && ui.rect_contains(area,ctx.pointer) && ctx.pointer.x<area.x+ui.metric(ctx,"label_width")
     inspector_description(s,row,text,on)
 }
 
@@ -377,7 +372,6 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
     preview:=s.edits.preview
     if preview {ui.disabled_begin(ctx)}
     defer if preview {ui.disabled_end(ctx)}
-    th:=&ctx.theme
     if git_review_shown(s) {
         git_review_build(s,w,width,max_height)
         return
@@ -395,21 +389,21 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
     strip:=f32(0)
     if review!=nil {
         ai_review_strip(s,w,review,active)
-        strip=ai_review_strip_height(th)
+        strip=ai_review_strip_height(ctx)
     }
     // One line for every entity, over the scroll: a prefab only adds buttons to it.
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(INSPECTOR_HEAD),padding={11,0,7,0},gap=4,align_y=.Center}) {
         if !single {
-            ui.label(ctx,fmt.tprintf("%d selected",len(s.selection.entities)),ctx.theme.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
-            if s.mode==.Edit {command_button(s,"group",{icon=command_icon(s,"group"),tip=fmt.tprintf("Group selection (%s)",command_shortcut_text(s,"group")),icon_size=14,icon_color=th.text_muted,style=.Ghost,width=25,height=ctx.theme.control},2)}
-            if s.mode==.Edit && s.app.assets!=nil {command_button(s,"prefab_create",{icon=.Prefab,tip="Create prefab",icon_size=14,icon_color=th.text_muted,style=.Ghost,width=25,height=ctx.theme.control},1)}
+            ui.label(ctx,fmt.tprintf("%d selected",len(s.selection.entities)),ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
+            if s.mode==.Edit {command_button(s,"group",{icon=command_icon(s,"group"),tip=fmt.tprintf("Group selection (%s)",command_shortcut_text(s,"group")),icon_size=14,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=25,height=ui.metric(ctx,"control")},2)}
+            if s.mode==.Edit && s.app.assets!=nil {command_button(s,"prefab_create",{icon=.Prefab,tip="Create prefab",icon_size=14,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=25,height=ui.metric(ctx,"control")},1)}
         }
         if single && identity_row(s,w,active) {return}
     }
     variant:=single && s.mode==.Edit?inspector_variant_name(s,w,active):""
     if variant!="" {
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(INSPECTOR_VARIANT),padding={11,0,7,0},align_y=.Center}) {
-            ui.label(ctx,fmt.tprintf("Variant of %s",variant),th.font_small,PREFAB_TEXT,0)
+            ui.label(ctx,fmt.tprintf("Variant of %s",variant),ui.metric(ctx,"font_small"),PREFAB_TEXT,0)
         }
     }
     origin:=f32(0)
@@ -425,7 +419,7 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
     sectioned:=!preview && section_locked(s,w,active)
     if sectioned {ui.disabled_begin(ctx)}
     defer if sectioned {ui.disabled_end(ctx)}
-    if ui.scroll_area(ctx,ui.id(ctx,"inspector_scroll"),&ins.scroll,{height=ui.FIT,max_height=max(max_height-strip-INSPECTOR_HEAD-(variant!=""?INSPECTOR_VARIANT:0)-origin-SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=th.panel}) {
+    if ui.scroll_area(ctx,ui.id(ctx,"inspector_scroll"),&ins.scroll,{height=ui.FIT,max_height=max(max_height-strip-INSPECTOR_HEAD-(variant!=""?INSPECTOR_VARIANT:0)-origin-SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=ui.tone(ctx,"panel")}) {
         needle:=inspector_needle(ins)
         if single && review==nil {ai_review_entity_bar(s,w,active,width-16)}
         inner:=width-16
@@ -467,7 +461,7 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
         add:=ui.id(ctx,"add_component")
         added:ui.Interaction
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(25),stroke=ui.color_alpha({255,255,255,255},51),radius=4}) {
-            added=ui.button(ctx,add,{label="Add component",icon=.Plus,icon_size=12,icon_color=th.text_label,style=.Ghost,width=-1,height=ctx.theme.control,size=th.font_small,center=true,active=ins.list.key==ADD_COMPONENT_KEY})
+            added=ui.button(ctx,add,{label="Add component",icon=.Plus,icon_size=12,icon_color=ui.tone(ctx,"text_label"),variant="ghost",width=-1,height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_small"),center=true,active=ins.list.key==ADD_COMPONENT_KEY})
         }
         if added.right {value_menu_open(s,{kind=.Components},"Components")}
         if added.clicked && ins.list.key!=ADD_COMPONENT_KEY {
@@ -514,7 +508,6 @@ inspector_primary :: proc(t:^core.Table_Info) -> bool {
 identity_row :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (changed:bool) {
     ins:=s.inspector
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     link,linked:=prefab_link_of(w,e)
     {
         enabled:=!entity_has(w,e,core.Disabled)
@@ -529,9 +522,9 @@ identity_row :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (changed:bool
             // Inside a prefab instance or a section, it selects the root of what holds it;
             // on the root of an instance, a double click opens its prefab.
             if up:=container_of(w,e);up!=core.NONE {
-                if ui.button(ctx,ui.id(ctx,"holder_root"),{icon=icon,icon_color=color,icon_size=15,style=.Ghost,width=22,height=ctx.theme.control}).clicked {history.selection_set(s.selection,{up})}
+                if ui.button(ctx,ui.id(ctx,"holder_root"),{icon=icon,icon_color=color,icon_size=15,variant="ghost",width=22,height=ui.metric(ctx,"control")}).clicked {history.selection_set(s.selection,{up})}
             } else if linked && link.root && s.mode==.Edit {
-                if ui.button(ctx,ui.id(ctx,"prefab_open"),{icon=icon,icon_color=color,icon_size=15,style=.Ghost,width=22,height=ctx.theme.control}).double {
+                if ui.button(ctx,ui.id(ctx,"prefab_open"),{icon=icon,icon_color=color,icon_size=15,variant="ghost",width=22,height=ui.metric(ctx,"control")}).double {
                     if _,path,found:=prefab_file(s,link.asset);found {
                         file_open_path(s,path)
                         changed=true
@@ -542,36 +535,36 @@ identity_row :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (changed:bool
         field:=ui.id(ctx,"name")
         if ins.rename {ui.edit_request(ctx,field);ins.rename=false}
         if ctx.edit.id!=field {ins.name_length=copy(ins.name[:len(ins.name)-1],entity_name(w,e))}
-        named:=ui.text_field(ctx,field,ins.name[:len(ins.name)-1],&ins.name_length,{height=ctx.theme.control,size=ctx.theme.font_heading,inline=true,font=ui.FONT_SEMIBOLD,color=linked && link.root?PREFAB_TEXT:entity_has(w,e,scene.Scene_Reference)?SECTION_TEXT:th.text})
+        named:=ui.text_field(ctx,field,ins.name[:len(ins.name)-1],&ins.name_length,{height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_heading"),inline=true,font=ui.FONT_SEMIBOLD,color=linked && link.root?PREFAB_TEXT:entity_has(w,e,scene.Scene_Reference)?SECTION_TEXT:ui.tone(ctx,"text")})
         if named.changed && !entity_rename(s,e,string(ins.name[:ins.name_length])) {notify(s,"An entity needs a name")}
         if s.mode==.Edit && s.app.assets!=nil && !linked && len(s.selection.entities)==1 {
-            changed|=command_button(s,"prefab_create",{icon=.Prefab,tip="Create prefab",icon_size=14,icon_color=th.text_muted,style=.Ghost,width=25,height=ctx.theme.control},1)
+            changed|=command_button(s,"prefab_create",{icon=.Prefab,tip="Create prefab",icon_size=14,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=25,height=ui.metric(ctx,"control")},1)
         }
         if s.mode==.Edit && entity_has(w,e,scene.Scene_Reference) {
             editing:=section_editing(s)==e
-            if ui.button(ctx,ui.id(ctx,"section_edit"),{icon=.Edit,tip=editing?"Stop editing the section":"Edit the section here, in its world",icon_size=15,icon_color=editing?SECTION_COLOR:th.text_muted,style=.Ghost,active=editing,width=22,height=ctx.theme.control}).clicked {section_edit_set(s,editing?core.NONE:e)}
+            if ui.button(ctx,ui.id(ctx,"section_edit"),{icon=.Edit,tip=editing?"Stop editing the section":"Edit the section here, in its world",icon_size=15,icon_color=editing?SECTION_COLOR:ui.tone(ctx,"text_muted"),variant="ghost",active=editing,width=22,height=ui.metric(ctx,"control")}).clicked {section_edit_set(s,editing?core.NONE:e)}
             previewed:=section_previewed(w,e)
-            if ui.button(ctx,ui.id(ctx,"section_preview"),{icon=.Sun,tip=previewed?"Back to the environment of the scene":"Preview the environment of this section",icon_size=15,icon_color=previewed?SECTION_COLOR:th.text_muted,style=.Ghost,active=previewed,width=22,height=ctx.theme.control}).clicked {section_preview_toggle(s,w,e)}
+            if ui.button(ctx,ui.id(ctx,"section_preview"),{icon=.Sun,tip=previewed?"Back to the environment of the scene":"Preview the environment of this section",icon_size=15,icon_color=previewed?SECTION_COLOR:ui.tone(ctx,"text_muted"),variant="ghost",active=previewed,width=22,height=ui.metric(ctx,"control")}).clicked {section_preview_toggle(s,w,e)}
         }
         if linked && s.mode==.Edit {
             if link.root {
                 variant:=ui.id(ctx,"variant_save")
                 // A variant of an instance that changes nothing would be its prefab again.
                 unchanged:=prefab_entry_disabled(s,"prefab_apply")
-                if ui.button(ctx,variant,{icon=ui.icon_user(u8(User_Icon.Variant)),tip="Save variant",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control,disabled=unchanged,active=ui.popup_is_open(ctx,variant_prompt_popup(s.gui)) && s.gui.variant.instance==e}).clicked {
+                if ui.button(ctx,variant,{icon=ui.icon_user(u8(User_Icon.Variant)),tip="Save variant",icon_size=15,variant="ghost",width=22,height=ui.metric(ctx,"control"),disabled=unchanged,active=ui.popup_is_open(ctx,variant_prompt_popup(s.gui)) && s.gui.variant.instance==e}).clicked {
                     variant_prompt_open(s,variant,link.asset,e)
                 }
-                changed|=command_button(s,"prefab_apply",{icon=.Save_Prefab,tip="Apply changes",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
-                if prefab_variant_of(s,w,link)!={} {changed|=command_button(s,"prefab_apply_base",{icon=ui.icon_user(u8(User_Icon.Up)),tip="Apply to base",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)}
-                changed|=command_button(s,"prefab_unlink",{icon=ui.icon_user(u8(User_Icon.Unlink)),tip="Unlink",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
-                changed|=command_button(s,"prefab_revert",{icon=.Revert,tip="Revert all",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
+                changed|=command_button(s,"prefab_apply",{icon=.Save_Prefab,tip="Apply changes",icon_size=15,variant="ghost",width=22,height=ui.metric(ctx,"control")},1)
+                if prefab_variant_of(s,w,link)!={} {changed|=command_button(s,"prefab_apply_base",{icon=ui.icon_user(u8(User_Icon.Up)),tip="Apply to base",icon_size=15,variant="ghost",width=22,height=ui.metric(ctx,"control")},1)}
+                changed|=command_button(s,"prefab_unlink",{icon=ui.icon_user(u8(User_Icon.Unlink)),tip="Unlink",icon_size=15,variant="ghost",width=22,height=ui.metric(ctx,"control")},1)
+                changed|=command_button(s,"prefab_revert",{icon=.Revert,tip="Revert all",icon_size=15,variant="ghost",width=22,height=ui.metric(ctx,"control")},1)
             } else {
-                changed|=command_button(s,"prefab_revert",{icon=.Revert,tip="Revert entity changes",icon_size=15,style=.Ghost,width=22,height=ctx.theme.control},1)
+                changed|=command_button(s,"prefab_revert",{icon=.Revert,tip="Revert entity changes",icon_size=15,variant="ghost",width=22,height=ui.metric(ctx,"control")},1)
             }
-            if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(16),fill=th.border}) {}
+            if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(16),fill=ui.tone(ctx,"border")}) {}
         }
         hidden:=entity_has(w,e,erender.Hidden)
-        if ui.button(ctx,ui.id(ctx,"visible"),{icon=hidden?.Eye_Off:.Eye,icon_size=14,icon_color=hidden?th.accent:th.text_muted,style=.Ghost,width=25,height=ctx.theme.control}).clicked {entity_hidden_set(s,e,!hidden)}
+        if ui.button(ctx,ui.id(ctx,"visible"),{icon=hidden?.Eye_Off:.Eye,icon_size=14,icon_color=hidden?ui.tone(ctx,"accent"):ui.tone(ctx,"text_muted"),variant="ghost",width=25,height=ui.metric(ctx,"control")}).clicked {entity_hidden_set(s,e,!hidden)}
     }
     return
 }
@@ -590,12 +583,11 @@ inspector_variant_name :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> str
 @(private)
 hierarchy_square :: proc(s:^Session,w:core.World_Ref,e:core.Entity,index:int,editable:bool) -> (clicked,unlink:bool) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     id:=ui.id(ctx,"hierarchy_square",index)
     cross:=ui.id(ctx,"hierarchy_unlink",index)
     it:=ui.interact(ctx,id,{.Focusable})
     hot:=it.hot || ctx.hot==cross
-    if ui.box(ctx,{id=id,width=ui.fixed(HIERARCHY_TILE),height=ui.fixed(HIERARCHY_TILE),fill=th.well,stroke=hot?th.accent:th.well_stroke,radius=4,align_x=.Center,align_y=.Center}) {
+    if ui.box(ctx,{id=id,width=ui.fixed(HIERARCHY_TILE),height=ui.fixed(HIERARCHY_TILE),fill=ui.tone(ctx,"well"),stroke=hot?ui.tone(ctx,"accent"):ui.tone(ctx,"well_stroke"),radius=4,align_x=.Center,align_y=.Center}) {
         if preview:=preview_entity(s,w,e);preview.kind!=.Solid {
             if ui.box(ctx,{width=ui.fixed(HIERARCHY_TILE-4),height=ui.fixed(HIERARCHY_TILE-4),image=preview}) {}
         } else {
@@ -604,7 +596,7 @@ hierarchy_square :: proc(s:^Session,w:core.World_Ref,e:core.Entity,index:int,edi
         }
         if hot {
             if ui.box(ctx,{float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right}}) {
-                unlink=ui.button(ctx,cross,{icon=.Cross,icon_color=ctx.hot==cross?th.danger_soft:th.text,style=.Ghost,width=14,height=14,icon_size=12,disabled=!editable}).clicked
+                unlink=ui.button(ctx,cross,{icon=.Cross,icon_color=ctx.hot==cross?ui.tone(ctx,"danger_soft"):ui.tone(ctx,"text"),variant="ghost",width=14,height=14,icon_size=12,disabled=!editable}).clicked
             }
         }
     }
@@ -614,7 +606,6 @@ hierarchy_square :: proc(s:^Session,w:core.World_Ref,e:core.Entity,index:int,edi
 @(private)
 hierarchy_section :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     card(s)
     ins:=s.inspector
     buttons:=[1]Section_Button{{icon=ui.icon_user(u8(User_Icon.List)),on=ins.hierarchy_tree}}
@@ -631,11 +622,11 @@ hierarchy_section :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32) {
         return
     }
     editable:=!prefab_member_locked(s,w,e)
-    plus:=ui.Button{icon=.Plus,icon_size=12,icon_color=th.text_label,style=.Well,width=HIERARCHY_TILE,height=HIERARCHY_TILE,disabled=!editable}
+    plus:=ui.Button{icon=.Plus,icon_size=12,icon_color=ui.tone(ctx,"text_label"),variant="well",width=HIERARCHY_TILE,height=HIERARCHY_TILE,disabled=!editable}
     row:=ui.Box{width=ui.GROW,height=ui.fixed(HIERARCHY_TILE),gap=5,align_y=.Center}
     selected,release:=core.NONE,core.NONE
     if ui.box(ctx,row) {
-        ui.label(ctx,"Parent",th.font_small,th.text_label,th.label_width)
+        ui.label(ctx,"Parent",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),ui.metric(ctx,"label_width"))
         if parent:=entity_parent(w,e);parent!=core.NONE {
             clicked,unlink:=hierarchy_square(s,w,parent,0,editable)
             if clicked {selected=parent}
@@ -647,11 +638,11 @@ hierarchy_section :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32) {
     }
     children:=hierarchy_children(w,e)
     count:=min(len(children),32)
-    columns:=max(int((width-12-th.label_width)/(HIERARCHY_TILE+5)),1)
+    columns:=max(int((width-12-ui.metric(ctx,"label_width"))/(HIERARCHY_TILE+5)),1)
     plus.disabled=false
     for start:=0;start<count+1;start+=columns {
         if ui.box(ctx,row) {
-            if start==0 {ui.label(ctx,"Children",th.font_small,th.text_label,th.label_width)} else {ui.spacer(ctx,th.label_width,1)}
+            if start==0 {ui.label(ctx,"Children",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),ui.metric(ctx,"label_width"))} else {ui.spacer(ctx,ui.metric(ctx,"label_width"),1)}
             for cell in start..<min(start+columns,count+1) {
                 if cell==count {
                     if ui.button(ctx,ui.id(ctx,"child_pick"),plus).clicked {
@@ -667,7 +658,7 @@ hierarchy_section :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32) {
             }
         }
     }
-    if len(children)>count {ui.label(ctx,fmt.tprintf("and %d more",len(children)-count),th.font_label,th.text_faint)}
+    if len(children)>count {ui.label(ctx,fmt.tprintf("and %d more",len(children)-count),ui.metric(ctx,"font_label"),ui.tone(ctx,"text_faint"))}
     if release!=core.NONE {
         if !entity_reparent(s,release,core.NONE) {notify(s,"The entity could not leave its parent")}
     } else if selected!=core.NONE {history.selection_set(s.selection,{selected})}
@@ -680,7 +671,6 @@ HIERARCHY_TREE_HEIGHT :: f32(132)
 @(private)
 hierarchy_tree :: proc(s:^Session,w:core.World_Ref,e:core.Entity) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     ins:=s.inspector
     Tree_Row :: struct {entity:core.Entity,depth:int}
     rows:=make([dynamic]Tree_Row,context.temp_allocator)
@@ -755,10 +745,10 @@ transform_rows :: proc(s:^Session,w:core.World_Ref) {
         // The row takes the right click that its fields leave.
         if ui.box(ctx,{id=row,width=ui.GROW,height=ui.FIT}) {
             value_menu_row(s,row,{kind=.Transform_Field,transform=field},labels[field])
-            if ui.property(ctx,labels[field]) {
+            if kit.property(ctx,labels[field]) {
                 values:=[3]f64{f64(shown[field].x),f64(shown[field].y),f64(shown[field].z)}
                 id:=ui.id(ctx,"transform",int(field)+1)
-                r,axis:=ui.vector_field(ctx,id,values[:],{number={decimals=decimals[field],speed=speeds[field],unit=field==.Rotation?"°":""},mixed_axes={mixed[field][0],mixed[field][1],mixed[field][2],false}})
+                r,axis:=kit.vector_field(ctx,id,values[:],{number={decimals=decimals[field],speed=speeds[field],unit=field==.Rotation?"°":""},mixed_axes={mixed[field][0],mixed[field][1],mixed[field][2],false}})
                 field_reset_button(&c,offsets[field],field==.Rotation?16:12)
                 if axis<0 {continue}
                 key:=u64(id)<<8|u64(axis)
@@ -859,7 +849,7 @@ geometry_row :: proc(c:^Inspect) {
         if other.mesh!=mesh.mesh || mesh.mesh=={} && other.shape!=mesh.shape {mixed=true;break}
     }
     if ui.box(s.gui.ctx,{width=ui.GROW,height=ui.FIT,gap=4,align_y=.Center}) {
-        ui.label(s.gui.ctx,"Mesh",s.gui.ctx.theme.font_small,s.gui.ctx.theme.text_label,s.gui.ctx.theme.label_width)
+        ui.label(s.gui.ctx,"Mesh",ui.metric(s.gui.ctx,"font_small"),ui.tone(s.gui.ctx,"text_label"),ui.metric(s.gui.ctx,"label_width"))
         if geometry_choice(s,ui.id(s.gui.ctx,"geometry"),&mesh,mixed) {geometry_set(s,c.t,c.entities,mesh.shape,mesh.mesh)}
         field_reset_button(c,0,int(offset_of(erender.Mesh_Renderer,materials)))
     }
@@ -898,7 +888,7 @@ skeleton_row :: proc(c:^Inspect) {
     icon,color:=asset_icon(s,asset.KIND_SKELETON)
     row_begin(ctx,"Skeleton")
     ui.disabled_begin(ctx)
-    ui.button(ctx,ui.id(ctx,"skeleton"),{label=shown,icon=icon,icon_color=color,style=.Field,width=-1,size=ctx.theme.font_small})
+    ui.button(ctx,ui.id(ctx,"skeleton"),{label=shown,icon=icon,icon_color=color,variant="field",width=-1,size=ui.metric(ctx,"font_small")})
     ui.disabled_end(ctx)
     row_end(ctx)
 }
@@ -917,14 +907,13 @@ geometry_field :: proc(s:^Session,id:ui.Id,mesh:^erender.Mesh_Renderer,mixed:=fa
     if mixed {label="Multiple"}
     key:=u64(id)|u64(1)<<63
     open:=s.inspector.list.key==key
-    th:=&ctx.theme
     arrow:=ui.id_derive(ctx,id,"arrow")
     hot:=ctx.hot==id || ctx.hot==arrow
-    appearance:=ui.Node_Style{radius=th.radius_control,text={size=th.font_small,color=th.text}}
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(MATERIAL_ROW),gap=0,fill=th.well,stroke=open?th.accent:(hot?th.well_stroke_hover:th.well_stroke),radius=th.radius_control}) {
+    appearance:=ui.Node_Style{radius=ui.metric(ctx,"radius_control"),text={size=ui.metric(ctx,"font_small"),color=ui.tone(ctx,"text")}}
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(MATERIAL_ROW),gap=0,fill=ui.tone(ctx,"well"),stroke=open?ui.tone(ctx,"accent"):(hot?ui.tone(ctx,"well_stroke_hover"):ui.tone(ctx,"well_stroke")),radius=ui.metric(ctx,"radius_control")}) {
         // The thumbnail beside it shows the geometry (geometry_row).
-        clicked:=ui.button(ctx,id,{label=label,width=-1,height=MATERIAL_ROW,size=th.font_small,padding=7,active=open,look=&appearance}).clicked
-        clicked|=ui.button(ctx,arrow,{icon=.Chevron_Down,icon_size=13,icon_color=th.text_muted,width=18,height=MATERIAL_ROW,active=open,look=&appearance}).clicked
+        clicked:=ui.button(ctx,id,{label=label,width=-1,height=MATERIAL_ROW,size=ui.metric(ctx,"font_small"),padding=7,active=open,look=&appearance}).clicked
+        clicked|=ui.button(ctx,arrow,{icon=.Chevron_Down,icon_size=13,icon_color=ui.tone(ctx,"text_muted"),width=18,height=MATERIAL_ROW,active=open,look=&appearance}).clicked
         if clicked && !open {
             anchor,_:=ui.widget_rect(ctx,id)
             anchor.w+=18
@@ -953,7 +942,7 @@ geometry_set :: proc(s:^Session,t:^core.Table_Info,entities:[]core.Entity,shape:
 fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,prefix:string) {
     v,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
     if !is_struct {return}
-    current:=""
+    current,titled:="",""
     first:=true
     skip:=-1
     folded:=false // in a section that is closed
@@ -965,6 +954,7 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
         if title,found:=core.field_option(tag,"section");found && title!="" && depth==0 {current=title}
         if _,hidden:=core.field_option(tag,"hidden");hidden {continue}
         if _,transient:=core.field_option(tag,"transient");transient {continue}
+        if modes,only:=core.field_option(tag,"mode");only && !mode_shows(c,v,origin,modes) {continue}
         if c.sections && depth==0 && current!=c.section {continue}
         if c.type==erender.Mesh_Renderer && v.names[i]=="materials" {continue}
         offset:=origin+v.offsets[i]
@@ -982,7 +972,10 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
         }
         if prefix!="" {label=fmt.tprintf("%s %s",prefix,strings.to_lower(label,context.temp_allocator))}
         if depth==0 && c.needle!="" && !base.contains_fold(label,c.needle) {continue}
-        if title,found:=core.field_option(tag,"section");found && title!="" && depth==0 && !c.sections {
+        // A section starts at the first of its fields shown.
+        if depth==0 && !c.sections && current!=titled {
+            titled=current
+            title:=current
             if banded {fold_band_end(c.s);banded=false}
             folded=false
             // Searching, the rows that have it show without their part.
@@ -997,7 +990,7 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
         if prefix=="" && c.t!=nil && info==c.t.info && c.storage==0 {description=core.field_description(c.t,v.names[i])}
         if c.ruled && depth==0 {
             if !first {
-                if ui.box(c.s.gui.ctx,{width=ui.GROW,height=ui.fixed(1),fill=c.s.gui.ctx.theme.row_rule}) {}
+                if ui.box(c.s.gui.ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(c.s.gui.ctx,"row_rule")}) {}
             }
             first=false
         }
@@ -1009,6 +1002,23 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
         }
         field_row(c,v.types[i],tag,v.names[i],label,offset,depth,description)
     }
+}
+
+// Whether a field tagged mode=A|B shows: while the field mode of its struct,
+// an enum, is one of those values.
+@(private)
+mode_shows :: proc(c:^Inspect,v:runtime.Type_Info_Struct,origin:uintptr,modes:string) -> bool {
+    for i in 0..<int(v.field_count) {
+        if v.names[i]!="mode" {continue}
+        name,named:=reflect.enum_name_from_value_any(any{rawptr(&c.value[origin+v.offsets[i]]),v.types[i].id})
+        if !named {return true}
+        rest:=modes
+        for want in strings.split_iterator(&rest,"|") {
+            if want==name {return true}
+        }
+        return false
+    }
+    return true
 }
 
 // Two masks of the same names as one table, with one arrow that reverts both.
@@ -1034,7 +1044,6 @@ names_matrix_row :: proc(c:^Inspect,info:^runtime.Type_Info,titles:[2]string,off
 // name, with the box of each mask in its column. masks change in place;
 // changed says which did.
 names_matrix :: proc(ctx:^ui.Context,info:^core.World_Info,of:typeid,id:ui.Id,titles:[]string,masks:[][]u8,disabled:=false) -> (changed:[2]bool) {
-    th:=&ctx.theme
     ui.id_push(ctx,id)
     defer ui.id_pop(ctx)
     if disabled {ui.disabled_begin(ctx)}
@@ -1042,26 +1051,26 @@ names_matrix :: proc(ctx:^ui.Context,info:^core.World_Info,of:typeid,id:ui.Id,ti
     columns:=min(len(titles),len(masks),2)
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(22),align_y=.Center}) {
-            ui.spacer(ctx,th.label_width+7,1)
+            ui.spacer(ctx,ui.metric(ctx,"label_width")+7,1)
             for column in 0..<columns {
                 if column>0 {ui.spacer(ctx,1,1)}
-                if ui.box(ctx,{width=ui.GROW,height=ui.GROW,align_x=.Center,align_y=.Center}) {ui.label(ctx,strings.to_upper(titles[column],context.temp_allocator),ctx.theme.font_caption,ctx.theme.text_caption,font=ui.FONT_SEMIBOLD)}
+                if ui.box(ctx,{width=ui.GROW,height=ui.GROW,align_x=.Center,align_y=.Center}) {ui.label(ctx,strings.to_upper(titles[column],context.temp_allocator),ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"),font=ui.FONT_SEMIBOLD)}
             }
         }
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ctx.theme.rule}) {}
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"rule")}) {}
         first:=true
         for entry,i in core.names_of(info,of) {
             if entry.value<0 || entry.value>=i64(len(masks[0])*8) {continue}
             if !first {
-                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ctx.theme.row_rule}) {}
+                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"row_rule")}) {}
             }
             first=false
             byte,bit:=entry.value/8,u8(1)<<u8(entry.value%8)
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(25),align_y=.Center}) {
-                ui.label(ctx,readable(entry.name),th.font_small,th.text_label,th.label_width+7)
+                ui.label(ctx,readable(entry.name),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),ui.metric(ctx,"label_width")+7)
                 for column in 0..<columns {
                     if column>0 {
-                        if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=ctx.theme.row_rule}) {}
+                        if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=ui.tone(ctx,"row_rule")}) {}
                     }
                     if ui.box(ctx,{width=ui.GROW,height=ui.GROW,align_x=.Center,align_y=.Center}) {
                         on:=masks[column][byte]&bit!=0
@@ -1073,7 +1082,7 @@ names_matrix :: proc(ctx:^ui.Context,info:^core.World_Info,of:typeid,id:ui.Id,ti
                 }
             }
         }
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ctx.theme.rule}) {}
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"rule")}) {}
     }
     return
 }
@@ -1110,7 +1119,7 @@ ADVANCED_SECTION :: "Advanced"
 // opens goes in a fold_band.
 section_fold :: proc(s:^Session,id:ui.Id,title:string,open:bool) -> (clicked:bool) {
     ctx:=s.gui.ctx
-    ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(ctx.theme.row),align_y=.Center})
+    ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),align_y=.Center})
     clicked=fold_label(s,id,title,open)
     ui.box_end(ctx,{})
     return
@@ -1135,7 +1144,6 @@ fold_section :: proc(s:^Session,id:ui.Id,key:u64,title:string,folded:=false,sear
 field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name,label:string,offset:uintptr,depth:int,description:="") {
     s:=c.s
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     if int(offset)+info.size>c.size {return}
     _,readonly:=core.field_option(tag,"readonly")
     unit,has_unit:=core.field_option(tag,"unit")
@@ -1165,7 +1173,7 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
     }
     defer if leaf && !readonly {
         ui.box_end(ctx,{})
-        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(ctx.theme.row),align_y=.Center}) {field_reset_button(c,int(offset),info.size)}
+        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(ui.metric(ctx,"row")),align_y=.Center}) {field_reset_button(c,int(offset),info.size)}
         ui.box_end(ctx,{})
     }
     if readonly {ui.disabled_begin(ctx)}
@@ -1179,8 +1187,7 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
         entity_row(c,shown,int(offset),key)
         return
     case base.Asset_Id:
-        with,_:=core.field_option(tag,"with")
-        asset_row(c,shown,field_asset_kinds(s,tag,name),int(offset),key,with)
+        asset_row(c,shown,field_asset_kinds(s,tag,name),int(offset),key)
         return
     }
     if core.named_type_of(c.w.info,info.id)!=nil {
@@ -1195,7 +1202,7 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
     case runtime.Type_Info_Boolean:
         row_begin(ctx,shown)
         value:=(cast(^bool)p)^
-        if ui.toggle_switch(ctx,ui.id(ctx,"bool",int(offset)+1),&value) {
+        if kit.toggle_switch(ctx,ui.id(ctx,"bool",int(offset)+1),&value) {
             stored:=value
             inspect_write(c,int(offset),mem.ptr_to_bytes(&stored))
         }
@@ -1231,28 +1238,28 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
             }
         }
         need:=f32(0)
-        for name in v.names {need+=ui.text_width(&ctx.font,readable(name),th.font_small)+16}
+        for name in v.names {need+=ui.text_width(&ctx.font,readable(name),ui.metric(ctx,"font_small"))+16}
         if iconed {
-            if ui.segments(ctx,ui.GROW,th.row) {
+            if kit.segments(ctx,ui.GROW,ui.metric(ctx,"row")) {
                 for name,at in v.names {
-                    if ui.button(ctx,ui.id(ctx,"enum_choice",int(offset)*8+at+1),{icon=icons[at],icon_size=16,tip=readable(name),style=.Tab,active=at==selected,width=-1,height=th.row-4,center=true,padding=2}).clicked && at!=selected {
+                    if ui.button(ctx,ui.id(ctx,"enum_choice",int(offset)*8+at+1),{icon=icons[at],icon_size=16,tip=readable(name),variant="tab",active=at==selected,width=-1,height=ui.metric(ctx,"row")-4,center=true,padding=2}).clicked && at!=selected {
                         buffer:[8]u8
                         number_write(raw_data(buffer[:]),v.base,f64(v.values[at]))
                         inspect_write(c,int(offset),buffer[:info.size])
                     }
                 }
             }
-        } else if len(v.names)<=ENUM_SEGMENTS && need<=c.width-th.label_width-REVERT_SIDE-16 {
-            if ui.segments(ctx,ui.GROW,th.row) {
+        } else if len(v.names)<=ENUM_SEGMENTS && need<=c.width-ui.metric(ctx,"label_width")-REVERT_SIDE-16 {
+            if kit.segments(ctx,ui.GROW,ui.metric(ctx,"row")) {
                 for name,at in v.names {
-                    if ui.button(ctx,ui.id(ctx,"enum_choice",int(offset)*8+at+1),{label=readable(name),style=.Tab,active=at==selected,width=-1,height=th.row-4,size=th.font_small,center=true,padding=2}).clicked && at!=selected {
+                    if ui.button(ctx,ui.id(ctx,"enum_choice",int(offset)*8+at+1),{label=readable(name),variant="tab",active=at==selected,width=-1,height=ui.metric(ctx,"row")-4,size=ui.metric(ctx,"font_small"),center=true,padding=2}).clicked && at!=selected {
                         buffer:[8]u8
                         number_write(raw_data(buffer[:]),v.base,f64(v.values[at]))
                         inspect_write(c,int(offset),buffer[:info.size])
                     }
                 }
             }
-        } else if ui.dropdown(ctx,ui.id(ctx,"enum",int(offset)+1),{list=v.names},&selected,{width=-1,height=th.row,searchable=true}) {
+        } else if ui.dropdown(ctx,ui.id(ctx,"enum",int(offset)+1),{list=v.names},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=true}) {
             buffer:[8]u8
             number_write(raw_data(buffer[:]),v.base,f64(v.values[selected]))
             inspect_write(c,int(offset),buffer[:info.size])
@@ -1271,7 +1278,7 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
         values:=[3]f64{f64(degrees.x),f64(degrees.y),f64(degrees.z)}
         row_begin(ctx,shown)
         id:=ui.id(ctx,"rotation",int(offset)+1)
-        r,axis:=ui.vector_field(ctx,id,values[:],{number={decimals=1,speed=0.5,unit="°"}})
+        r,axis:=kit.vector_field(ctx,id,values[:],{number={decimals=1,speed=0.5,unit="°"}})
         if axis>=0 {
             if inspect_stepped(c) {gesture_follow(c.s,key+u64(axis),r,readable(c.name))}
             if r.changed {
@@ -1359,7 +1366,6 @@ record_row :: proc(c:^Inspect,label:string,record,offset:int) {
 named_row :: proc(c:^Inspect,info:^runtime.Type_Info,label:string,offset:uintptr,key:u64) {
     s:=c.s
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     ins:=s.inspector
     type:=core.named_type_of(c.w.info,info.id)
     current:=i64(number_read(&c.value[offset],info))
@@ -1392,7 +1398,7 @@ named_row :: proc(c:^Inspect,info:^runtime.Type_Info,label:string,offset:uintptr
             ui.edit_request(ctx,field)
             ins.naming_request=false
         }
-        r:=ui.text_field(ctx,field,ins.value_name[:],&ins.value_name_length,{height=th.row})
+        r:=ui.text_field(ctx,field,ins.value_name[:],&ins.value_name_length,{height=ui.metric(ctx,"row")})
         if r.committed {
             if error:=names_rename(s,c.w.info,info.id,names[selected].name,string(ins.value_name[:ins.value_name_length]));error!=.None {
                 notify(s,names_error_text(error,type.name,string(ins.value_name[:ins.value_name_length])))
@@ -1401,7 +1407,7 @@ named_row :: proc(c:^Inspect,info:^runtime.Type_Info,label:string,offset:uintptr
         if r.committed || r.cancelled || (!r.editing && !r.began && ctx.edit.id!=field) {ins.naming=0}
     } else {
         created:string
-        if ui.dropdown(ctx,ui.id(ctx,"named",int(offset)+1),{list=options},&selected,{width=-1,height=th.row,searchable=true,empty=fmt.tprintf("%d",current)},&created) {
+        if ui.dropdown(ctx,ui.id(ctx,"named",int(offset)+1),{list=options},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=true,empty=fmt.tprintf("%d",current)},&created) {
             write(c,info,offset,names[selected].value)
         }
         if created!="" {
@@ -1410,7 +1416,7 @@ named_row :: proc(c:^Inspect,info:^runtime.Type_Info,label:string,offset:uintptr
             } else {notify(s,names_error_text(error,type.name,created))}
         }
         // An input action is renamed in code; names.rename then follows it.
-        if selected>=0 && names[selected].project && info.id!=input.Action &&ui.button(ctx,ui.id(ctx,"rename_value",int(offset)+1),{icon=.Edit,style=.Ghost,width=th.row,height=th.row}).clicked {
+        if selected>=0 && names[selected].project && info.id!=input.Action &&ui.button(ctx,ui.id(ctx,"rename_value",int(offset)+1),{icon=.Edit,variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {
             ins.naming,ins.naming_request=key,true
         }
     }
@@ -1421,18 +1427,17 @@ named_row :: proc(c:^Inspect,info:^runtime.Type_Info,label:string,offset:uintptr
 @(private)
 named_bits_row :: proc(c:^Inspect,info:^runtime.Type_Info,of:typeid,label:string,offset:uintptr) {
     ctx:=c.s.gui.ctx
-    th:=&ctx.theme
     bits:[16]u8
     if info.size>len(bits) {readonly_row(ctx,label,"mask");return}
     mem.copy(&bits,&c.value[offset],info.size)
-    ui.label(ctx,label,th.font_small,th.text_muted,0)
+    ui.label(ctx,label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
     changed:=false
     for entry,i in core.names_of(c.w.info,of) {
         if entry.value<0 || entry.value>=i64(info.size*8) {continue}
         byte,mask:=entry.value/8,u8(1)<<u8(entry.value%8)
         on:=bits[byte]&mask!=0
-        ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center})
-        ui.label(ctx,readable(entry.name),th.font_small,th.text,0)
+        ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center})
+        ui.label(ctx,readable(entry.name),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0)
         if ui.checkbox(ctx,ui.id(ctx,"named_bit",int(offset)*64+i+1),&on) {
             bits[byte]~=mask
             changed=true
@@ -1457,14 +1462,13 @@ bit_set_axis_group :: proc(names:[]string,first:int) -> (group:string,count:int)
 bit_set_field :: proc(ctx:^ui.Context,id:ui.Id,label:string,bits:[]u8,type:runtime.Type_Info_Bit_Set) -> (changed:bool) {
     elements,is_enum:=runtime.type_info_base(type.elem).variant.(runtime.Type_Info_Enum)
     if !is_enum {readonly_row(ctx,label,"bit set");return}
-    th:=&ctx.theme
-    axes:=ui.AXIS_NAMES
-    ui.label(ctx,label,th.font_small,th.text_muted,0)
+    axes:=kit.AXIS_NAMES
+    ui.label(ctx,label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
     for first:=0;first<len(elements.names); {
         group,count:=bit_set_axis_group(elements.names,first)
         if count==0 {count=1}
-        ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center})
-        if group!="" {ui.label(ctx,readable(group),th.font_small,th.text_label,th.label_width)}
+        ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center})
+        if group!="" {ui.label(ctx,readable(group),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),ui.metric(ctx,"label_width"))}
         for at in first..<first+count {
             bit:=int(i64(elements.values[at])-type.lower)
             if bit<0 || bit>=len(bits)*8 {continue}
@@ -1473,9 +1477,9 @@ bit_set_field :: proc(ctx:^ui.Context,id:ui.Id,label:string,bits:[]u8,type:runti
             clicked:=false
             if group!="" {
                 axis:=at-first
-                clicked=ui.toggle(ctx,ui.id_derive(ctx,id,"member",at+1),axes[axis],&on)
+                clicked=kit.toggle(ctx,ui.id_derive(ctx,id,"member",at+1),axes[axis],&on)
             } else {
-                ui.label(ctx,readable(elements.names[at]),th.font_small,th.text,0)
+                ui.label(ctx,readable(elements.names[at]),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0)
                 clicked=ui.checkbox(ctx,ui.id_derive(ctx,id,"member",at+1),&on)
             }
             if clicked {
@@ -1495,7 +1499,6 @@ bit_set_field :: proc(ctx:^ui.Context,id:ui.Id,label:string,bits:[]u8,type:runti
 records_rows :: proc(c:^Inspect,v:runtime.Type_Info_Array,label:string,offset:uintptr,count,depth:int) {
     s:=c.s
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     one:=label
     switch {
     case strings.has_suffix(label,"sses"),strings.has_suffix(label,"shes"),strings.has_suffix(label,"ches"),strings.has_suffix(label,"xes"),strings.has_suffix(label,"uses"):
@@ -1507,7 +1510,7 @@ records_rows :: proc(c:^Inspect,v:runtime.Type_Info_Array,label:string,offset:ui
         at_offset:=offset+uintptr(at*v.elem_size)
         key:=base.hash_combine(u64(c.index)<<32|u64(at_offset),0x7265636f7264)
         open:=inspector_section_open(s.inspector,key,true)
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
             if fold_button(s,ui.id(ctx,"record_fold",int(at_offset)+1),fmt.tprintf("%s %d",one,at+1),open) {
                 inspector_section_toggle(s.inspector,key)
                 open=!open
@@ -1527,12 +1530,11 @@ records_rows :: proc(c:^Inspect,v:runtime.Type_Info_Array,label:string,offset:ui
 @(private)
 fold_button :: proc(s:^Session,id:ui.Id,label:string,open:bool) -> (clicked:bool) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     white:=ui.Color{255,255,255,255}
     it:=ui.interact(ctx,id,{.Focusable})
     if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(20),padding={7,0,5,0},gap=4,align_y=.Center,fill=ui.color_alpha(white,open || it.hot?28:15),stroke=ui.color_alpha(white,open?46:26),radius=4}) {
-        ui.label(ctx,label,th.font_small,th.text,0,font=open?ui.FONT_SEMIBOLD:ui.FONT_REGULAR)
-        ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,th.text_muted,11)
+        ui.label(ctx,label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0,font=open?ui.FONT_SEMIBOLD:ui.FONT_REGULAR)
+        ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,ui.tone(ctx,"text_muted"),11)
     }
     return it.clicked
 }
@@ -1541,14 +1543,13 @@ fold_button :: proc(s:^Session,id:ui.Id,label:string,open:bool) -> (clicked:bool
 // where the labels of the rows around it start, with the arrow after it.
 fold_label :: proc(s:^Session,id:ui.Id,label:string,open:bool) -> (clicked:bool) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     it:=ui.interact(ctx,id,{.Focusable})
-    if ui.box(ctx,{id=id,width=ui.fixed(th.label_width),height=ui.fixed(20),gap=3,align_y=.Center}) {
+    if ui.box(ctx,{id=id,width=ui.fixed(ui.metric(ctx,"label_width")),height=ui.fixed(20),gap=3,align_y=.Center}) {
         font:u8=open?ui.FONT_SEMIBOLD:ui.FONT_REGULAR
         // A long label fades out before the arrow.
-        room:=min(ui.text_width(&ctx.font,label,th.font_small,int(font))+1,th.label_width-14)
-        ui.label(ctx,label,th.font_small,open || it.hot?th.text:th.text_label,room,font=font,fade=true)
-        ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,th.text_muted,11)
+        room:=min(ui.text_width(&ctx.font,label,ui.metric(ctx,"font_small"),int(font))+1,ui.metric(ctx,"label_width")-14)
+        ui.label(ctx,label,ui.metric(ctx,"font_small"),open || it.hot?ui.tone(ctx,"text"):ui.tone(ctx,"text_label"),room,font=font,fade=true)
+        ui.icon(ctx,open?.Chevron_Down:.Chevron_Right,ui.tone(ctx,"text_muted"),11)
     }
     return it.clicked
 }
@@ -1565,24 +1566,22 @@ fold_band :: proc(s:^Session) -> bool {
 fold_band_begin :: proc(s:^Session) {
     ctx:=s.gui.ctx
     ui.box_begin(ctx,{width=ui.GROW,height=ui.FIT,padding={4,3,0,4},gap=9})
-    if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=ctx.theme.rule}) {}
+    if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=ui.tone(ctx,"rule")}) {}
     ui.box_begin(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3})
 }
 fold_band_end :: proc(s:^Session) {ui.box_end(s.gui.ctx,{});ui.box_end(s.gui.ctx,{})}
 
 // A row with its label in the column of labels.
 row_begin :: proc(ctx:^ui.Context,label:string) {
-    th:=&ctx.theme
-    ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center})
-    ui.column_label(ctx,label)
+    ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center})
+    kit.column_label(ctx,label)
 }
 row_end :: proc(ctx:^ui.Context) {ui.box_end(ctx,{})}
 
 @(private)
 readonly_row :: proc(ctx:^ui.Context,label,value:string) {
-    th:=&ctx.theme
     row_begin(ctx,label)
-    ui.label(ctx,value,th.font_small,th.text_faint,0)
+    ui.label(ctx,value,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)
     row_end(ctx)
 }
 
@@ -1686,7 +1685,7 @@ number_cell :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,id
     if axis_label!="" && strip[3]==0 {desc.label=axis_label}
     value:=number_read(&c.value[offset],info)*scale
     r:ui.Number_Result
-    if axis_label=="" {r=ui.slider_field(c.s.gui.ctx,id,&value,desc)} else {r=ui.number_field(c.s.gui.ctx,id,&value,desc)}
+    if axis_label=="" {r=kit.slider_field(c.s.gui.ctx,id,&value,desc)} else {r=ui.number_field(c.s.gui.ctx,id,&value,desc)}
     // The values a panel holds are no step of the document.
     stepped:=inspect_stepped(c)
     if stepped {gesture_follow(c.s,key,r,readable(c.name))}
@@ -1708,9 +1707,8 @@ number_cell :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,id
 @(private)
 vector_row :: proc(c:^Inspect,info:^runtime.Type_Info,v:runtime.Type_Info_Array,tag:reflect.Struct_Tag,label:string,offset:uintptr,key:u64) {
     ctx:=c.s.gui.ctx
-    th:=&ctx.theme
     // axes: the name of each, a letter (`axes=LTRB`) or words (`axes=Min Max Step`); X, Y, Z and W otherwise.
-    names:=ui.AXIS_NAMES
+    names:=kit.AXIS_NAMES
     axes,lettered:=core.field_option(tag,"axes")
     words:=strings.fields(axes,context.temp_allocator) if strings.contains(axes," ") else nil
     if v.count==4 && (axes=="LTRB" || axes=="TL TR BR BL") {
@@ -1721,7 +1719,7 @@ vector_row :: proc(c:^Inspect,info:^runtime.Type_Info,v:runtime.Type_Info_Array,
     for at in 0..<v.count {
         letter:=names[at]
         if at<len(words) {letter=words[at]} else if lettered && words==nil && at<len(axes) {letter=axes[at:at+1]}
-        number_cell(c,v.elem,tag,ui.id(ctx,"axis",int(offset)*8+at+1),key+u64(at)*2,label,offset+uintptr(at*v.elem_size),letter,lettered?{}:th.axis[at])
+        number_cell(c,v.elem,tag,ui.id(ctx,"axis",int(offset)*8+at+1),key+u64(at)*2,label,offset+uintptr(at*v.elem_size),letter,lettered?{}:ui.tone(ctx,kit.AXIS_TOKENS[at]))
     }
     row_end(ctx)
 }
@@ -1732,12 +1730,11 @@ vector_row :: proc(c:^Inspect,info:^runtime.Type_Info,v:runtime.Type_Info_Array,
 box_row :: proc(c:^Inspect,v:runtime.Type_Info_Array,tag:reflect.Struct_Tag,label:string,offset:uintptr,key:u64,sides:bool) {
     s:=c.s
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     icons:=BOX_SIDE_ICONS if sides else BOX_CORNER_ICONS
     names:=BOX_SIDE_NAMES if sides else BOX_CORNER_NAMES
     fold:=base.hash_combine(key,0x626f7873696465)
     open:=inspector_section_open(s.inspector,fold,true)
-    ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center})
+    ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center})
     if fold_label(s,ui.id(ctx,"box_sides",int(offset)+1),label,open) {
         inspector_section_toggle(s.inspector,fold)
         open=!open
@@ -1761,15 +1758,14 @@ box_row :: proc(c:^Inspect,v:runtime.Type_Info_Array,tag:reflect.Struct_Tag,labe
 @(private)
 record_rows :: proc(c:^Inspect,v:runtime.Type_Info_Array,fields:runtime.Type_Info_Struct,label:string,offset:uintptr,key:u64) {
     ctx:=c.s.gui.ctx
-    th:=&ctx.theme
     array:=c.value[offset:][:v.count*v.elem_size]
     used:=0
     for at in 0..<v.count {
         if !mem.check_zero(array[at*v.elem_size:][:v.elem_size]) {used=at+1}
     }
     row_begin(ctx,label)
-    for i in 0..<int(fields.field_count) {ui.label(ctx,readable(fields.names[i]),th.font_small,th.text_faint,0)}
-    ui.spacer(ctx,th.row)
+    for i in 0..<int(fields.field_count) {ui.label(ctx,readable(fields.names[i]),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)}
+    ui.spacer(ctx,ui.metric(ctx,"row"))
     row_end(ctx)
     for at in 0..<min(used+1,v.count) {
         at_offset:=offset+uintptr(at*v.elem_size)
@@ -1779,8 +1775,8 @@ record_rows :: proc(c:^Inspect,v:runtime.Type_Info_Array,fields:runtime.Type_Inf
             number_cell(c,fields.types[i],reflect.Struct_Tag(fields.tags[i]),ui.id(ctx,"record",int(offset)*64+cell+1),key+u64(cell)*2,label,at_offset+fields.offsets[i],"",{})
         }
         if at>=used {
-            ui.spacer(ctx,th.row)
-        } else if ui.button(ctx,ui.id(ctx,"record_remove",int(offset)*64+at+1),{icon=.Cross,style=.Ghost,width=th.row,height=th.row}).clicked {
+            ui.spacer(ctx,ui.metric(ctx,"row"))
+        } else if ui.button(ctx,ui.id(ctx,"record_remove",int(offset)*64+at+1),{icon=.Cross,variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {
             next:=make([]u8,len(array),context.temp_allocator)
             copy(next,array[:at*v.elem_size])
             copy(next[at*v.elem_size:],array[(at+1)*v.elem_size:])
@@ -1815,16 +1811,15 @@ keys_count :: proc(fields:runtime.Type_Info_Struct) -> (count:int) {
 @(private)
 keys_rows :: proc(c:^Inspect,info:^runtime.Type_Info,fields:runtime.Type_Info_Struct,count:int,label:string,offset:uintptr,key:u64) {
     ctx:=c.s.gui.ctx
-    th:=&ctx.theme
     columns:=int(fields.field_count)
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
-        ui.label(ctx,label,th.font_small,th.text_muted,0)
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
+        ui.label(ctx,label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
         ui.spacer(ctx)
         field_reset_button(c,int(offset),info.size)
     }
     row_begin(ctx,"")
     for i in 0..<columns {
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),align_y=.Center}) {ui.label(ctx,readable(fields.names[i]),th.font_small,th.text_faint,0)}
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),align_y=.Center}) {ui.label(ctx,readable(fields.names[i]),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)}
     }
     ui.spacer(ctx,REVERT_SIDE,1)
     row_end(ctx)
@@ -1834,7 +1829,7 @@ keys_rows :: proc(c:^Inspect,info:^runtime.Type_Info,fields:runtime.Type_Info_St
             array:=runtime.type_info_base(fields.types[i]).variant.(runtime.Type_Info_Array)
             at_offset:=offset+fields.offsets[i]+uintptr(at*array.elem_size)
             cell:=at*columns+i
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
                 if color,is_color:=runtime.type_info_base(array.elem).variant.(runtime.Type_Info_Array);is_color {
                     color_cell(c,label,fields.names[i],at_offset,color.count,key+u64(cell)*2)
                 } else {
@@ -1885,7 +1880,7 @@ data_row :: proc(c:^Inspect,label:string,offset:uintptr,count:int) {
         append(&names,fmt.tprintf("%s (missing)",current))
     }
     row_begin(ctx,label)
-    if ui.dropdown(ctx,ui.id(ctx,"data",int(offset)+1),{list=names[:]},&selected,{width=-1,height=ctx.theme.row,searchable=true}) && !(missing && selected==len(names)-1) {
+    if ui.dropdown(ctx,ui.id(ctx,"data",int(offset)+1),{list=names[:]},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=true}) && !(missing && selected==len(names)-1) {
         buffer:=make([]u8,count,context.temp_allocator)
         if selected>0 {copy(buffer[:max(count-1,0)],names[selected])}
         inspect_write(c,int(offset),buffer)
@@ -1930,10 +1925,9 @@ hex_row :: proc(c:^Inspect,label:string,offset:uintptr) {
 color_row :: proc(c:^Inspect,label,name:string,offset:uintptr,channels:int,key:u64) {
     s:=c.s
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     fold:=base.hash_combine(key,0x6368616e6e656c73)
     open:=inspector_section_open(s.inspector,fold,true)
-    ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center})
+    ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center})
     if fold_label(s,ui.id(ctx,"channels",int(offset)+1),label,open) {
         inspector_section_toggle(s.inspector,fold)
         open=!open
@@ -1947,7 +1941,7 @@ color_row :: proc(c:^Inspect,label,name:string,offset:uintptr,channels:int,key:u
     if fold_band(s) {
         for at in 0..<channels {
             row_begin(ctx,names[at])
-            number_cell(c,type_info_of(f32),tag if at<3 else reflect.Struct_Tag(`mirai:"min=0,max=1"`),ui.id(ctx,"channel",int(offset)*4+at+1),key+u64(at+1)*2,label,offset+uintptr(at*4),"",th.channel[at])
+            number_cell(c,type_info_of(f32),tag if at<3 else reflect.Struct_Tag(`mirai:"min=0,max=1"`),ui.id(ctx,"channel",int(offset)*4+at+1),key+u64(at+1)*2,label,offset+uintptr(at*4),"",ui.tone(ctx,kit.CHANNEL_TOKENS[at]))
             row_end(ctx)
         }
     }
@@ -1958,18 +1952,17 @@ color_row :: proc(c:^Inspect,label,name:string,offset:uintptr,channels:int,key:u
 color_cell :: proc(c:^Inspect,label,name:string,offset:uintptr,channels:int,key:u64) {
     s:=c.s
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     linear:=(cast(^[3]f32)&c.value[offset])^
     emission:=strings.contains(name,"emission")
     id:=ui.id(ctx,"swatch",int(offset)+1)
-    if ui.color_swatch(ctx,id,swatch_color(linear),s.inspector.picker.key==key).clicked && s.inspector.picker.key!=key {
+    if kit.color_swatch(ctx,id,swatch_color(linear),s.inspector.picker.key==key).clicked && s.inspector.picker.key!=key {
         rect,_:=ui.widget_rect(ctx,id)
         alpha:=channels>3?(cast(^[4]f32)&c.value[offset])^.w:1
         picker_open(s,{key=key,table=c.index,storage=c.storage,held=c.held,stepped=c.write!=nil,offset=int(offset),channels=channels,alpha=alpha,emission=emission},linear,rect)
     }
     if channels>3 {
         alpha_info:=type_info_of(f32)
-        number_cell(c,alpha_info,`mirai:"min=0,max=1"`,ui.id(ctx,"alpha",int(offset)+1),key+1,label,offset+12,"A",th.channel[3])
+        number_cell(c,alpha_info,`mirai:"min=0,max=1"`,ui.id(ctx,"alpha",int(offset)+1),key+1,label,offset+12,"A",ui.tone(ctx,kit.CHANNEL_TOKENS[3]))
     }
 }
 
@@ -1994,7 +1987,7 @@ picker_open :: proc(s:^Session,p:Color_Session,linear:[3]f32,anchor:ui.Rect) {
         ins.picker.intensity=f64(peak)
         shown/=peak
     }
-    ui.color_picker_set(&ins.picker.state,ui.display_color({clamp(shown.x,0,1),clamp(shown.y,0,1),clamp(shown.z,0,1)}))
+    kit.color_picker_set(&ins.picker.state,ui.display_color({clamp(shown.x,0,1),clamp(shown.y,0,1),clamp(shown.z,0,1)}))
     ui.popup_open(s.gui.ctx,picker_popup(s.gui),anchor)
 }
 
@@ -2006,7 +1999,6 @@ picker_build :: proc(s:^Session,w:core.World_Ref) {
     if p.key==0 {return}
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     popup:=picker_popup(g)
     if !ui.popup_is_open(ctx,popup) {
         gesture_end(s,p.key)
@@ -2016,16 +2008,16 @@ picker_build :: proc(s:^Session,w:core.World_Ref) {
     if ins.gesture==p.key {ins.gesture_frame=s.frame}
     changed:=false
     if ui.popup(ctx,popup,{width=240,padding=12}) {
-        changed=ui.color_picker(ctx,ui.id_derive(ctx,popup,"picker"),&p.state).changed
+        changed=kit.color_picker(ctx,ui.id_derive(ctx,popup,"picker"),&p.state).changed
         if p.emission {
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
-                ui.label(ctx,"Intensity",th.font_small,th.text_label,th.label_width)
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
+                ui.label(ctx,"Intensity",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),ui.metric(ctx,"label_width"))
                 changed|=ui.number_field(ctx,ui.id_derive(ctx,popup,"intensity"),&p.intensity,{decimals=2,speed=0.02,has_min=true,has_max=true,max=1e5}).changed
             }
         }
     }
     if !changed {return}
-    linear:=ui.linear_color(ui.color_picker_rgb(&p.state))*f32(p.intensity)
+    linear:=ui.linear_color(kit.color_picker_rgb(&p.state))*f32(p.intensity)
     value:=[4]f32{linear.x,linear.y,linear.z,p.alpha}
     bytes:=mem.ptr_to_bytes(&value)[:p.channels>3?16:12]
     if p.held!=0 {
@@ -2055,7 +2047,6 @@ entity_row :: proc(c:^Inspect,label:string,offset:int,key:u64) {
     s:=c.s
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     w:=c.w
     referred:=(cast(^core.Entity)&c.value[offset])^
     row_begin(ctx,label)
@@ -2063,9 +2054,9 @@ entity_row :: proc(c:^Inspect,label:string,offset:int,key:u64) {
     if entity_alive(w,referred) {
         icon,color:=entity_icon(s,w,referred)
         id:=ui.id(ctx,"entity",offset+1)
-        it:=ui.button(ctx,id,{label=entity_label(w,referred),icon=icon,icon_color=color,style=.Field,width=-1,size=th.font_small})
+        it:=ui.button(ctx,id,{label=entity_label(w,referred),icon=icon,icon_color=color,variant="field",width=-1,size=ui.metric(ctx,"font_small")})
         if rect,found:=ui.widget_rect(ctx,id);found && g.drag.kind==.Entity && drag_dropped(g,rect) {inspect_entity_set(c,offset,g.drag.entity)}
-        if ui.button(ctx,ui.id(ctx,"entity_clear",offset+1),{icon=.Cross,style=.Ghost,width=th.row,height=th.row}).clicked || it.right {
+        if ui.button(ctx,ui.id(ctx,"entity_clear",offset+1),{icon=.Cross,variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked || it.right {
             inspect_entity_set(c,offset,core.NONE)
         } else if it.clicked {
             history.selection_set(s.selection,{referred})
@@ -2077,11 +2068,11 @@ entity_row :: proc(c:^Inspect,label:string,offset:int,key:u64) {
         pending:=base.Entity_Id(0)
         if len(c.entities)>0 {pending=scene.unresolved_target(core.world_storage_of(w,scene.Unresolved_References),c.entities[len(c.entities)-1],base.name_hash(c.t.name),u32(offset))}
         if pending!=0 {
-            if ui.button(ctx,id,{label=fmt.tprintf("In a section not loaded (%016x)",u64(pending)),icon=.Link,icon_color=SECTION_COLOR,style=.Field,width=-1,size=th.font_small,active=waiting}).clicked {
+            if ui.button(ctx,id,{label=fmt.tprintf("In a section not loaded (%016x)",u64(pending)),icon=.Link,icon_color=SECTION_COLOR,variant="field",width=-1,size=ui.metric(ctx,"font_small"),active=waiting}).clicked {
                 g.placement={}
                 s.viewport.pick=waiting?{}:{active=true,table=c.index,offset=offset}
             }
-        } else if ui.button(ctx,id,{icon=.Plus,style=.Field,width=-1,height=th.row,active=waiting}).clicked {
+        } else if ui.button(ctx,id,{icon=.Plus,variant="field",width=-1,height=ui.metric(ctx,"row"),active=waiting}).clicked {
             g.placement={}
             s.viewport.pick=waiting?{}:{active=true,table=c.index,offset=offset}
         }
@@ -2131,14 +2122,13 @@ inspector_pick_finish :: proc(s:^Session,w:core.World_Ref,e:core.Entity) {
 @(private)
 asset_field_thumbnail :: proc(s:^Session,id:ui.Id,kind:asset.Fourcc,value:base.Asset_Id,side:f32,quad:ui.Quad={},icon:ui.Icon=.None) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     it:=ui.interact(ctx,id,{.Focusable})
     file:^asset.Registry_File
     if value!={} && s.app.assets!=nil {file,_=asset.registry_find(&s.app.assets.registry,value)}
     if ui.box(ctx,{id=id,width=ui.fixed(side),height=ui.fixed(side)}) {
         if file!=nil && quad.kind==.Solid && icon==.None {asset_thumbnail(s,file,side,hot=it.hot)} else {
             color:=asset_kind_color(s,kind)
-            asset_frame(s,side,color,ui.color_alpha(color,140 if it.hot else 77),1,quad,icon,th.text_muted,kind)
+            asset_frame(s,side,color,ui.color_alpha(color,140 if it.hot else 77),1,quad,icon,ui.tone(ctx,"text_muted"),kind)
         }
     }
     if it.double && file!=nil && s.mode!=.Play {
@@ -2159,7 +2149,7 @@ asset_field_find :: proc(s:^Session,id:ui.Id,value:base.Asset_Id) {
     ctx:=s.gui.ctx
     found:=false
     if value!={} && s.app.assets!=nil {_,found=asset.registry_find(&s.app.assets.registry,value)}
-    if ui.button(ctx,id,{icon=ui.icon_user(u8(User_Icon.Search)),icon_color=ctx.theme.text_muted,tip="Find in Content Browser",style=.Ghost,width=22,height=22,disabled=!found}).clicked && found {content_reveal(s,value)}
+    if ui.button(ctx,id,{icon=ui.icon_user(u8(User_Icon.Search)),icon_color=ui.tone(ctx,"text_muted"),tip="Find in Content Browser",variant="ghost",width=22,height=22,disabled=!found}).clicked && found {content_reveal(s,value)}
 }
 
 // Plays the sound of a field to be heard, or stops it. That of an
@@ -2176,7 +2166,7 @@ asset_field_hear :: proc(c:^Inspect,id:ui.Id,value:base.Asset_Id) {
     }
     heard:=sound_heard(s,value)
     if heard {sound_hear_tune(s,source)}
-    if !ui.button(ctx,id,{icon=heard?.Stop:.Play,icon_color=ctx.theme.text_muted,tip=heard?"Stop sound":"Play sound",style=.Ghost,width=22,height=22,disabled=value=={} || s.app.mixer==nil}).clicked {return}
+    if !ui.button(ctx,id,{icon=heard?.Stop:.Play,icon_color=ui.tone(ctx,"text_muted"),tip=heard?"Stop sound":"Play sound",variant="ghost",width=22,height=22,disabled=value=={} || s.app.mixer==nil}).clicked {return}
     if heard {
         sound_hear_stop(s)
     } else if !sound_hear_source(s,source) {
@@ -2222,10 +2212,9 @@ asset_field_dropped :: proc(s:^Session,id:ui.Id,kinds:Asset_Kinds,label:string) 
 // shows it in the content browser. An asset of its kinds dropped on it is
 // assigned; one of another kind is refused.
 @(private)
-asset_row :: proc(c:^Inspect,label:string,kinds:Asset_Kinds,offset:int,key:u64,with:="") {
+asset_row :: proc(c:^Inspect,label:string,kinds:Asset_Kinds,offset:int,key:u64) {
     s:=c.s
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     id_value:=(cast(^base.Asset_Id)&c.value[offset])^
     shown:="None"
     if id_value!={} {
@@ -2235,14 +2224,13 @@ asset_row :: proc(c:^Inspect,label:string,kinds:Asset_Kinds,offset:int,key:u64,w
     row:=ui.id(ctx,"asset_row",offset+1)
     fill,stroke,faded:=asset_field_drop_look(s,row,kinds)
     if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(MATERIAL_ROW+2),gap=4,align_y=.Center,fill=fill,stroke=stroke,stroke_width=1,radius=4,track=true,layer={enabled=faded,opacity=0.45}}) {
-        ui.column_label(ctx,label)
+        kit.column_label(ctx,label)
         asset_field_thumbnail(s,ui.id(ctx,"asset_thumb",offset+1),kinds[0],id_value,MATERIAL_ROW)
         id:=ui.id(ctx,"asset",offset+1)
         open:=s.inspector.list.key==key
-        if ui.button(ctx,id,{label=shown,icon=.Chevron_Down,icon_after=true,icon_color=th.text_muted,icon_size=13,style=.Well,width=-1,height=MATERIAL_ROW,size=th.font_small,padding=7,active=open}).clicked && !open {
+        if ui.button(ctx,id,{label=shown,icon=.Chevron_Down,icon_after=true,icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="well",width=-1,height=MATERIAL_ROW,size=ui.metric(ctx,"font_small"),padding=7,active=open}).clicked && !open {
             anchor,_:=ui.widget_rect(ctx,id)
-            list_open(s,{key=key,table=c.index,storage=c.storage,held=c.held,offset=offset,kinds=kinds,with=with!=""},anchor)
-            if with!="" {prefabs_with(s,with,&s.inspector.list_with)}
+            list_open(s,{key=key,table=c.index,storage=c.storage,held=c.held,offset=offset,kinds=kinds},anchor)
         }
         if kinds[0]==asset.KIND_SOUND {asset_field_hear(c,ui.id(ctx,"asset_hear",offset+1),id_value)}
         asset_field_find(s,ui.id(ctx,"asset_find",offset+1),id_value)
@@ -2257,7 +2245,6 @@ asset_row :: proc(c:^Inspect,label:string,kinds:Asset_Kinds,offset:int,key:u64,w
 asset_pick_row :: proc(c:^Inspect,label:string,kind:asset.Fourcc,offset:int,key:u64,quad:ui.Quad={}) -> (opened:bool) {
     s:=c.s
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     id_value:=(cast(^base.Asset_Id)&c.value[offset])^
     shown:="Pack"
     if id_value!={} {
@@ -2267,11 +2254,11 @@ asset_pick_row :: proc(c:^Inspect,label:string,kind:asset.Fourcc,offset:int,key:
     row:=ui.id(ctx,"asset_row",offset+1)
     fill,stroke,faded:=asset_field_drop_look(s,row,{0=kind})
     if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(MATERIAL_ROW+2),gap=4,align_y=.Center,fill=fill,stroke=stroke,stroke_width=1,radius=4,track=true,layer={enabled=faded,opacity=0.45}}) {
-        ui.column_label(ctx,label)
+        kit.column_label(ctx,label)
         asset_field_thumbnail(s,ui.id(ctx,"asset_thumb",offset+1),kind,id_value,MATERIAL_ROW,quad if id_value=={} else {})
         id:=ui.id(ctx,"asset",offset+1)
         open:=s.inspector.list.key==key
-        if ui.button(ctx,id,{label=shown,icon=.Chevron_Down,icon_after=true,icon_color=th.text_muted,icon_size=13,style=.Well,width=-1,height=MATERIAL_ROW,size=th.font_small,padding=7,active=open}).clicked && !open {
+        if ui.button(ctx,id,{label=shown,icon=.Chevron_Down,icon_after=true,icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="well",width=-1,height=MATERIAL_ROW,size=ui.metric(ctx,"font_small"),padding=7,active=open}).clicked && !open {
             anchor,_:=ui.widget_rect(ctx,id)
             list_open(s,{key=key,table=c.index,storage=c.storage,held=c.held,offset=offset,kinds={0=kind}},anchor)
             opened=true
@@ -2290,7 +2277,6 @@ asset_pick_row :: proc(c:^Inspect,label:string,kind:asset.Fourcc,offset:int,key:
 asset_path_row :: proc(c:^Inspect,label:string,kinds:Asset_Kinds,offset,count:int,key:u64) {
     s:=c.s
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     path:=base.text_get(c.value[offset:][:count])
     value:base.Asset_Id
     shown:="None"
@@ -2301,33 +2287,16 @@ asset_path_row :: proc(c:^Inspect,label:string,kinds:Asset_Kinds,offset,count:in
         }
     }
     ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(MATERIAL_ROW+2),gap=4,align_y=.Center})
-    ui.column_label(ctx,label)
+    kit.column_label(ctx,label)
     asset_field_thumbnail(s,ui.id(ctx,"asset_thumb",offset+1),kinds[0],value,MATERIAL_ROW)
     id:=ui.id(ctx,"asset",offset+1)
     open:=s.inspector.list.key==key
-    if ui.button(ctx,id,{label=shown,icon=.Chevron_Down,icon_after=true,icon_color=th.text_muted,icon_size=13,style=.Well,width=-1,height=MATERIAL_ROW,size=th.font_small,padding=7,active=open}).clicked && !open {
+    if ui.button(ctx,id,{label=shown,icon=.Chevron_Down,icon_after=true,icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="well",width=-1,height=MATERIAL_ROW,size=ui.metric(ctx,"font_small"),padding=7,active=open}).clicked && !open {
         anchor,_:=ui.widget_rect(ctx,id)
         list_open(s,{key=key,table=c.index,storage=c.storage,held=c.held,offset=offset,kinds=kinds,path=count},anchor)
     }
     asset_field_find(s,ui.id(ctx,"asset_find",offset+1),value)
     ui.box_end(ctx,{})
-}
-
-// The prefabs of the registry that have a component named name, as read
-// once when a list opens: a body for a seat is a prefab with a Drivable.
-@(private)
-prefabs_with :: proc(s:^Session,name:string,into:^[dynamic]base.Asset_Id) {
-    clear(into)
-    if s.app.assets==nil {return}
-    reader:Prefab_Reader
-    prefab_reader_begin(s,&reader)
-    defer prefab_reader_end(&reader)
-    for &file in s.app.assets.registry.files {
-        if !asset.registry_prefab(&file) {continue}
-        if scene,error:=asset.resolver_take(&reader.resolver,file.id);error==.None && scene!=nil {
-            if _,found:=asset.scene_component(scene,name);found {append(into,file.id)}
-        }
-    }
 }
 
 // Whether a path of the registry is a file of the assets folder, not of a mount.
@@ -2414,7 +2383,6 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
     if l.key==0 {return}
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     popup:=list_popup(g)
     if !ui.popup_is_open(ctx,popup) {
         l^={}
@@ -2455,7 +2423,6 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
             for &file in a.registry.files {
                 if file.state!=.Asset || !asset_kind_takes(l.kinds,file.kind) || !asset.registry_listed(&file) || !base.contains_fold(file.path,filter) {continue}
                 if l.path>0 && (len(file.path)>=l.path || !asset_under_root(&a.registry,file.path)) {continue}
-                if l.with && !slice.contains(ins.list_with[:],file.id) {continue}
                 if content_part(&a.registry,&file) {
                     append(&parts,&file)
                     continue
@@ -2471,7 +2438,7 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
             }
         }
     }
-    row_height:=th.row if l.key==ADD_COMPONENT_KEY else ASSET_LIST_ROW
+    row_height:=ui.metric(ctx,"row") if l.key==ADD_COMPONENT_KEY else ASSET_LIST_ROW
     shown:=f32(clamp(len(choices),1,10))*row_height
     chosen:=-1
     if ui.popup(ctx,popup,{width=260,search="Search"}) {

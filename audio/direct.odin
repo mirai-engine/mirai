@@ -110,16 +110,15 @@ eq_filters :: proc "contextless" (gains:[BANDS]f32,sample_rate:int) -> [BANDS]Bi
 }
 
 // IIR2Filterer::apply over a cascade, in place, the three stages in one pass
-// over the samples. The tiny offset keeps the state out of denormals.
+// over the samples.
 @(private)
 eq_run :: proc "contextless" (filters:^[BANDS]Biquad,states:^[BANDS]Biquad_State,samples:[]f32) #no_bounds_check {
     f0,f1,f2:=filters[0],filters[1],filters[2]
     s0,s1,s2:=states[0],states[1],states[2]
     for &x in samples {
-        a:=x+1e-9
-        b:=f0.b0*a+s0.z1
-        s0.z1=f0.b1*a-f0.a1*b+s0.z2
-        s0.z2=f0.b2*a-f0.a2*b
+        b:=f0.b0*x+s0.z1
+        s0.z1=f0.b1*x-f0.a1*b+s0.z2
+        s0.z2=f0.b2*x-f0.a2*b
         c:=f1.b0*b+s1.z1
         s1.z1=f1.b1*b-f1.a1*c+s1.z2
         s1.z2=f1.b2*b-f1.a2*c

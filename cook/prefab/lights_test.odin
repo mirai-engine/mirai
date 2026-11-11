@@ -43,7 +43,7 @@ imported_lights_are_the_lights_of_their_entities :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     assets:=importer.Import_Report{allocator=context.allocator}
     defer importer.report_destroy(&assets)
-    _,write_error:=model_prefab(&model,&assets,&types,{1,2},"lights",path)
+    _,write_error:=model_prefab(&model,&assets,&types,import_world(t),{1,2},"lights",path)
     if !testing.expect_value(t,write_error,Error.None) {return}
     scene:asset.Scene
     if !testing.expect_value(t,asset.scene_load(&scene,&types,path),asset.Error.None) {return}
@@ -103,7 +103,7 @@ def Mesh "Floor"
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     assets:=importer.Import_Report{allocator=context.allocator}
     defer importer.report_destroy(&assets)
-    _,write_error:=model_prefab(&model,&assets,&types,{1,2},"rect-lights",path)
+    _,write_error:=model_prefab(&model,&assets,&types,import_world(t),{1,2},"rect-lights",path)
     if !testing.expect_value(t,write_error,Error.None) {return}
     scene:asset.Scene
     if !testing.expect_value(t,asset.scene_load(&scene,&types,path),asset.Error.None) {return}

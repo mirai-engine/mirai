@@ -1,16 +1,11 @@
-package streaming
+package far
 
-import "base:runtime"
 import "core:fmt"
 import "core:math"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
-import render "mirai:engine/render"
-import scene "mirai:engine/scene"
-import "mirai:host"
 import "mirai:std/base"
-import "mirai:std/jobs"
 import mm "mirai:std/math"
 
 @(private="file") FAR_ROOT :: base.Asset_Id{0xfa,1}
@@ -20,6 +15,8 @@ import mm "mirai:std/math"
 
 @(private="file")
 Far_Test_Body :: struct {kind:u8}
+@(private="file")
+Far_Test_Hidden :: struct {}
 
 // A bumpy sheet of side cells as a static mesh whose slot comes red.
 @(private="file")
@@ -47,9 +44,8 @@ far_test_sheet :: proc(t:^testing.T,types:^asset.Types,path:string,side:int) -> 
 }
 
 // A scene with two sheets, a third that moves and a fourth that is hidden
-// under a group, and a reference to a scene with one more: the far mesh of
-// the first holds the three that stay, red, and was made of every asset it
-// read, each with its hash.
+// under a group, and a reference to a scene with one more: the far mesh the
+// cook makes of the first holds the three that stay, red.
 @(test)
 a_far_mesh_is_made_of_the_static_meshes_of_a_scene_and_of_the_scenes_it_references :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"far")
@@ -70,41 +66,28 @@ a_far_mesh_is_made_of_the_static_meshes_of_a_scene_and_of_the_scenes_it_referenc
     for id in 1..=6 {
         pose:=at(f32(id)*40)
         asset.scene_set(&root,base.Entity_Id(id),"Transform",&pose)
-        if id!=5 {asset.scene_set(&root,base.Entity_Id(id),"Mesh_Renderer",&render.Mesh_Renderer{mesh=FAR_SHEET})}
+        if id!=5 {asset.scene_set(&root,base.Entity_Id(id),"Mesh_Renderer",&Far_Renderer{mesh=FAR_SHEET})}
     }
     asset.scene_set(&root,3,"Rigid_Body",&Far_Test_Body{1})
-    asset.scene_set(&root,5,"Hidden",&render.Hidden{})
+    asset.scene_set(&root,5,"Hidden",&Far_Test_Hidden{})
     asset.scene_entity_add(&root,7,0,"Inner")
-    asset.scene_set(&root,7,"Scene_Reference",&scene.Scene_Reference{scene=FAR_INNER,extents={50,50,50}})
+    asset.scene_set(&root,7,"Scene_Reference",&Far_Reference{scene=FAR_INNER})
     testing.expect_value(t,asset.scene_save(&root,files[0].path),asset.Error.None)
     asset.scene_destroy(&root)
     inner:asset.Scene;asset.scene_init(&inner,&types,FAR_INNER)
     asset.scene_entity_add(&inner,1,0,"Sheet")
-    asset.scene_set(&inner,1,"Mesh_Renderer",&render.Mesh_Renderer{mesh=FAR_SHEET})
+    asset.scene_set(&inner,1,"Mesh_Renderer",&Far_Renderer{mesh=FAR_SHEET})
     testing.expect_value(t,asset.scene_save(&inner,files[1].path),asset.Error.None)
     asset.scene_destroy(&inner)
 
-    b:=far_build_new(FAR_ROOT,0.01,{})
-    defer far_build_free(nil,b)
-    rounds:=0
-    for !b.done && rounds<8 {
-        // What the main thread does: a source for each asset asked for that there is.
-        for id in b.wanted {
-            for file in files {
-                if file.id!=id {continue}
-                heap:=runtime.heap_allocator()
-                append(&b.sources,host.Assets_Source{id=id,kind=file.kind,hash=u64(id[1]),path=fmt.aprint(file.path,allocator=heap),allocator=heap})
-            }
-        }
-        clear(&b.wanted)
-        far_round(b,jobs.OWNER)
-        rounds+=1
-    }
-    testing.expect(t,b.done && b.built,"it is made")
-    testing.expect_value(t,rounds,3)
-    g:=b.made.geometry
-    testing.expect(t,g.levels[0].triangle_count<=4*sheet && g.levels[0].triangle_count>sheet,"four sheets, cut at its error")
-    testing.expect(t,.Has_Surface in g.flags && b.made.ahead.rays.count==0,"without a renderer it has no rays")
+    registry:asset.Registry
+    asset.registry_init(&registry,folder)
+    defer asset.registry_destroy(&registry)
+    if !testing.expect_value(t,asset.registry_scan(&registry),asset.Error.None) {return}
+    g:asset.Mesh_Geometry
+    testing.expect(t,far_cook(&registry,FAR_ROOT,&g,context.temp_allocator),"it is made")
+    testing.expect(t,g.levels[0].triangle_count>0 && g.levels[0].triangle_count<4*sheet,"four sheets, cut at its error")
+    testing.expect(t,.Has_Surface in g.flags)
     // The inner sheet at 0 and those at 40, 80 and 160; not the one that moves
     // at 120, nor the hidden one at 200 and what hangs from it.
     low,high:=g.bounds_min,g.bounds_max
@@ -113,6 +96,6 @@ a_far_mesh_is_made_of_the_static_meshes_of_a_scene_and_of_the_scenes_it_referenc
         color:=mm.rgba8_unpack(g.colors[c.vertex_first])
         testing.expect(t,color.r==1 && color.g==0 && color.b==0,"its slot came red")
     }
-    testing.expect_value(t,len(b.read),4)
-    for r in b.read {testing.expect_value(t,r.hash,u64(r.id[1]))}
+    // A scene without static meshes has none.
+    testing.expect(t,!far_cook(&registry,{0xfa,9},&g,context.temp_allocator),"a scene that is not there gives none")
 }

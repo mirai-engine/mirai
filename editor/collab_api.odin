@@ -14,7 +14,7 @@ Api_Collab_Host_Params :: struct {
 }
 
 Api_Collab_Join_Params :: struct {
-    invite:[64]u8 `mirai:"text,label=The code of the invitation of the host (like R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A)"`,
+    invite:[64]u8 `mirai:"text,label=The code of the invitation of the host (like R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT)"`,
     name:[COLLAB_NAME_BYTES]u8 `mirai:"text,optional"`,
     discard:bool `mirai:"optional,label=Replace the scene even with unsaved changes"`,
 }
@@ -138,12 +138,12 @@ share_button :: proc(s:^Session,height:f32) {
         tip=fmt.tprintf("Session, %d editors",count)
     }
     if ui.box(ctx,{width=ui.fixed(28),height=ui.fixed(height)}) {
-        if ui.button(ctx,id,{icon=ui.icon_user(u8(User_Icon.Users)),icon_size=15,icon_color=active?ctx.theme.success:{},tip=tip,style=.Ghost,width=28,height=height,active=ui.popup_is_open(ctx,share_popup(g))}).clicked {
+        if ui.button(ctx,id,{icon=ui.icon_user(u8(User_Icon.Users)),icon_size=15,icon_color=active?ui.tone(ctx,"success"):{},tip=tip,variant="ghost",width=28,height=height,active=ui.popup_is_open(ctx,share_popup(g))}).clicked {
             anchor,_:=ui.widget_rect(ctx,id)
             ui.popup_open(ctx,share_popup(g),anchor)
         }
         if active {
-            if ui.box(ctx,{width=ui.fixed(6),height=ui.fixed(6),fill=ctx.theme.success,radius=3,float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right,offset={-4,4}}}) {}
+            if ui.box(ctx,{width=ui.fixed(6),height=ui.fixed(6),fill=ui.tone(ctx,"success"),radius=3,float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right,offset={-4,4}}}) {}
         }
     }
 }
@@ -151,9 +151,8 @@ share_button :: proc(s:^Session,height:f32) {
 // A row of the popup: its name in the column of names, then what follows.
 @(private,deferred_in=share_row_end)
 share_row :: proc(ctx:^ui.Context,name:string,height:f32=26) -> bool {
-    th:=&ctx.theme
     ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(height),gap=8,align_y=.Center})
-    ui.label(ctx,name,10.5,th.text_muted,SESSION_LABEL)
+    ui.label(ctx,name,10.5,ui.tone(ctx,"text_muted"),SESSION_LABEL)
     return true
 }
 @(private)
@@ -165,16 +164,15 @@ share_row_end :: proc(ctx:^ui.Context,name:string,height:f32) {ui.box_end(ctx,{}
 share_code :: proc(s:^Session,id,name,code,missing:string) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     if share_row(ctx,name) {
         ui.spacer(ctx,-1,0)
-        if ui.button(ctx,shell_id(g,id),{label="Copy",style=.Field,width=0,height=24,size=10.5,padding=8,center=true,disabled=code==""}).clicked {
+        if ui.button(ctx,shell_id(g,id),{label="Copy",variant="field",width=0,height=24,size=10.5,padding=8,center=true,disabled=code==""}).clicked {
             platform.clipboard_set(s.app.platform,code)
             notify(s,"Copied the code")
         }
     }
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),padding={6,0,6,0},align_y=.Center,fill=th.well,stroke=th.well_stroke,radius=th.radius_control,clip_x=true}) {
-        ui.label(ctx,code!=""?code:missing,code!=""?10.5:th.font_label,code!=""?th.text:th.text_muted,0)
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),padding={6,0,6,0},align_y=.Center,fill=ui.tone(ctx,"well"),stroke=ui.tone(ctx,"well_stroke"),radius=ui.metric(ctx,"radius_control"),clip_x=true}) {
+        ui.label(ctx,code!=""?code:missing,code!=""?10.5:ui.metric(ctx,"font_label"),code!=""?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted"),0)
     }
 }
 
@@ -182,7 +180,6 @@ share_code :: proc(s:^Session,id,name,code,missing:string) {
 share_build :: proc(s:^Session) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     popup:=share_popup(g)
     if !ui.popup_is_open(ctx,popup) {return}
     c:=collab_of(s)
@@ -190,35 +187,35 @@ share_build :: proc(s:^Session) {
     st:=collab_state(s)
     if ui.popup(ctx,popup,{width=SESSION_WIDTH,align_right=true,padding=12,gap=6}) {
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(22),align_y=.Center}) {
-            ui.label(ctx,"Session",13,th.text,0,font=ui.FONT_SEMIBOLD)
-            if ui.button(ctx,shell_id(g,"share_close"),{icon=.Cross,icon_size=12,icon_color=th.text_muted,style=.Ghost,width=22,height=22}).clicked {ui.popup_close(ctx,popup)}
+            ui.label(ctx,"Session",13,ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
+            if ui.button(ctx,shell_id(g,"share_close"),{icon=.Cross,icon_size=12,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=22,height=22}).clicked {ui.popup_close(ctx,popup)}
         }
         ui.spacer(ctx,-1,2)
         switch {
         case st==nil || st.role==.None:
             if share_row(ctx,"Name") {ui.text_field(ctx,shell_id(g,"share_name"),c.name[:],&c.name_length,{height=24,size=11,live=true,keep_caret=true})}
             if c.joining {
-                if share_row(ctx,"Invitation") {ui.text_field(ctx,shell_id(g,"share_address"),c.join[:],&c.join_length,{height=24,size=11,placeholder="R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A",live=true,keep_caret=true})}
+                if share_row(ctx,"Invitation") {ui.text_field(ctx,shell_id(g,"share_address"),c.join[:],&c.join_length,{height=24,size=11,placeholder="R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT",live=true,keep_caret=true})}
             }
             if c.error!=.None {
-                if share_row(ctx,"Error") {ui.label(ctx,collab_error_text(c.error),th.font_label,th.danger_soft,0)}
+                if share_row(ctx,"Error") {ui.label(ctx,collab_error_text(c.error),ui.metric(ctx,"font_label"),ui.tone(ctx,"danger_soft"),0)}
             }
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(26),gap=8,align_y=.Center}) {
                 busy:=s.mode!=.Edit
-                if ui.button(ctx,shell_id(g,"share_join"),{label="Join",style=.Field,width=-1,height=ctx.theme.control,size=11,center=true,disabled=busy || c.joining && c.join_length==0}).clicked {
+                if ui.button(ctx,shell_id(g,"share_join"),{label="Join",variant="field",width=-1,height=ui.metric(ctx,"control"),size=11,center=true,disabled=busy || c.joining && c.join_length==0}).clicked {
                     if c.joining {c.error=collab_join(s,string(c.join[:c.join_length]),string(c.name[:c.name_length]),false)} else {c.joining=true;ui.edit_request(ctx,shell_id(g,"share_address"))}
                 }
-                if ui.button(ctx,shell_id(g,"share_host"),{label="Host",style=.Accent,width=-1,height=ctx.theme.control,size=11,center=true,disabled=busy}).clicked {
+                if ui.button(ctx,shell_id(g,"share_host"),{label="Host",variant="accent",width=-1,height=ui.metric(ctx,"control"),size=11,center=true,disabled=busy}).clicked {
                     c.error=collab_host(s,0,string(c.name[:c.name_length]))
                 }
             }
         case:
             c.error=.None
             #partial switch st.phase {
-            case .Connecting: ui.label(ctx,"Connecting...",10.5,th.text_muted,0)
-            case .Syncing:    ui.label(ctx,"Receiving the scene...",10.5,th.text_muted,0)
+            case .Connecting: ui.label(ctx,"Connecting...",10.5,ui.tone(ctx,"text_muted"),0)
+            case .Syncing:    ui.label(ctx,"Receiving the scene...",10.5,ui.tone(ctx,"text_muted"),0)
             case .Ended:
-                if share_row(ctx,"Reason") {ui.label(ctx,st.reason,10.5,th.text,0)}
+                if share_row(ctx,"Reason") {ui.label(ctx,st.reason,10.5,ui.tone(ctx,"text"),0)}
             }
             if st.role==.Host {
                 // One code joins from anywhere: a guest asks at both of its addresses.
@@ -230,14 +227,14 @@ share_build :: proc(s:^Session) {
                     if ui.box(ctx,{width=ui.fixed(9),height=ui.fixed(9),fill=collab_color(i),radius=4.5}) {}
                     name:=string(peer.name[:peer.name_length])
                     if i==int(st.self) {name=fmt.tprintf("%s (you)",name)}
-                    ui.label(ctx,name,12,th.text,0)
-                    ui.label(ctx,i==0?"Host":"Guest",th.font_label,th.text_muted)
+                    ui.label(ctx,name,12,ui.tone(ctx,"text"),0)
+                    ui.label(ctx,i==0?"Host":"Guest",ui.metric(ctx,"font_label"),ui.tone(ctx,"text_muted"))
                 }
             }
-            for &unsent in st.unsent[:st.unsent_count] {ui.text(ctx,collab_unsent_text(st,&unsent),ui.prose(ctx,th.font_label,th.danger_soft))}
+            for &unsent in st.unsent[:st.unsent_count] {ui.text(ctx,collab_unsent_text(st,&unsent),ui.prose(ctx,ui.metric(ctx,"font_label"),ui.tone(ctx,"danger_soft")))}
             label:=st.role==.Host?"Stop":"Leave"
             if st.phase==.Ended {label="Close"}
-            if ui.button(ctx,shell_id(g,"share_leave"),{label=label,style=.Accent,width=-1,height=ctx.theme.control,size=11,center=true}).clicked {collab_leave(s)}
+            if ui.button(ctx,shell_id(g,"share_leave"),{label=label,variant="accent",width=-1,height=ui.metric(ctx,"control"),size=11,center=true}).clicked {collab_leave(s)}
         }
     }
 }

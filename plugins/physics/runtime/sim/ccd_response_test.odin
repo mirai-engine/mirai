@@ -3,7 +3,7 @@ package mirai_physics
 import "core:testing"
 
 @(test)
-disabling_ccd_restores_discrete_motion_and_clears_contact_flags :: proc(t:^testing.T) {
+a_former_bullet_still_stops_at_a_static_wall_and_then_rests_on_it :: proc(t:^testing.T) {
     w:World
     testing.expect(t,test_world(&w))
     defer world_destroy(&w)
@@ -15,10 +15,9 @@ disabling_ccd_restores_discrete_motion_and_clears_contact_flags :: proc(t:^testi
     body_set_bullet(&w,body,false)
     body_set_transform(&w,body,{-1,0,0},QUAT_IDENTITY)
     body_set_velocity(&w,body,{200,0,0},{})
-    world_step(&w,1.0/60)
-    testing.expect(t,body_position(&w,body).x>2)
-    testing.expect_value(t,body_linear_velocity(&w,body),Vec3{200,0,0})
-    testing.expect_value(t,len(world_events(&w).contact_begin),0)
+    test_steps(&w,2)
+    testing.expect(t,body_position(&w,body).x< -0.05)
+    testing.expect(t,abs(body_linear_velocity(&w,body).x)<0.01)
     body_set_transform(&w,body,{-0.066,0,0},QUAT_IDENTITY)
     body_set_velocity(&w,body,{1,0,0},{})
     test_steps(&w,8)

@@ -172,7 +172,7 @@ ui_inspector_document :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App,in
         defer ui.id_pop(ctx)
         if ui.box(ctx,{width=ui.GROW,height=ui.GROW,align_x=.Center,align_y=.Center}) {
             switch {
-            case u.failed:          ui.label(ctx,"The file cannot be read",ctx.theme.font_small,ctx.theme.text_muted)
+            case u.failed:          ui.label(ctx,"The file cannot be read",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
             case !u.read:
             case:                   preview_column(s,u,app)
             }
@@ -192,7 +192,7 @@ ui_inspector_document :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App,in
             }
             // What another node shows has another length: kept, the offset could show nothing.
             if u.scrolled!=u.selected {u.properties_scroll,u.scrolled={},u.selected}
-            if ui.scroll_area(ctx,ui.id(ctx,"properties"),&u.properties_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD-origin-editor.SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=ctx.theme.panel}) {
+            if ui.scroll_area(ctx,ui.id(ctx,"properties"),&u.properties_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD-origin-editor.SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=ui.tone(ctx,"panel")}) {
                 properties(s,u,a,details.width.value)
             }
         }

@@ -74,7 +74,7 @@ the_fade_of_a_layer_is_edited_under_its_row_as_one_undo_step :: proc(t:^testing.
 	core.test_world_settle(&world)
 
 	ctx:ui.Context
-	if !testing.expect(t,ui.context_init(&ctx,{no_font=true})) {return}
+	if !testing.expect(t,test_ui_init(&ctx,{no_font=true})) {return}
 	defer ui.context_destroy(&ctx)
 	gui:=Editor_Ui{ctx=&ctx}
 	edits:history.Edits

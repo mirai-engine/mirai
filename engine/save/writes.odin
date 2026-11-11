@@ -137,7 +137,7 @@ writes_step :: proc(work:^Save_Work,renderer:^erender.Renderer,job_system:^jobs.
         case .Thumbnail: return
         case .Ready:
             w.phase=.Writing
-            if jobs.worker_count(job_system)>1 {jobs.run(job_system,jobs.OWNER,write_job,w,&w.counter)} else {write_job(w,0)}
+            if jobs.worker_count(job_system)>1 {jobs.run(job_system,jobs.OWNER,.Background,write_job,w,&w.counter)} else {write_job(w,0)}
         case .Writing:
             if jobs.pending(&w.counter) {return}
             write_end(work,w,results)

@@ -141,6 +141,9 @@ voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice 
     return handle
 }
 
+// Voices voice_play can start without stealing one.
+voices_free :: proc(m:^Mixer) -> int {return m.free_count}
+
 // The voice has not ended, as far as the last mixer_update knows.
 voice_valid :: proc(m:^Mixer,voice:Voice) -> bool {
     _,shadow:=voice_shadow(m,voice)
@@ -210,7 +213,7 @@ transmission_clamp :: proc "contextless" (t:[BANDS]f32) -> [BANDS]f32 {
 @(private)
 voice_desc_finite :: proc "contextless" (d:Voice_Desc) -> bool {
     a:=d.attenuation
-    numbers:=[?]f32{d.doppler,d.occlusion,a.min_distance,a.max_distance,a.rolloff,d.directivity.weight,d.directivity.power,
+    numbers:=[?]f32{d.doppler,d.occlusion,a.min_distance,a.max_distance,a.rolloff,a.near_radius,d.directivity.weight,d.directivity.power,
         real(d.rotation),imag(d.rotation),jmag(d.rotation),kmag(d.rotation)}
     for x in numbers {
         if !finite(x) {return false}

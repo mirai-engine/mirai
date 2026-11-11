@@ -1,6 +1,7 @@
 package host
 
 import "base:runtime"
+import "core:os"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
@@ -153,11 +154,12 @@ Content_Sound_Set :: struct {
     last:int, // the variation chosen last; -1: none
 }
 
-// What plays for a .sound or a .sound_set: a sound of the mixer, and the
-// volume and pitch it takes over those it is played at.
+// What plays for a .sound or a .sound_set: a sound of the mixer, the volume
+// and pitch it takes over those it is played at, and how audio.play hears it.
 Sound_Pick :: struct {
     sound:audio.Sound,
     volume,pitch:f32,
+    hearing:asset.Sound_Hearing,
 }
 
 Content_Stats :: struct {
@@ -662,11 +664,12 @@ content_sound_set :: proc(app:^App,id:base.Asset_Id) -> ^Content_Sound_Set {
 // What plays for a .sound, at its volume and pitch, or for a .sound_set: one
 // of its sounds by their weights, not the last one when it says no_repeat,
 // with a volume and a pitch from its ranges. A sound of the set that does not
-// load is left out. Zero when nothing of it can play.
+// load is left out. A .sound is heard as SOUND_HEARING_DEFAULT. Zero when
+// nothing of it can play.
 content_sound_pick :: proc(app:^App,id:base.Asset_Id) -> Sound_Pick {
     set:=content_sound_set(app,id)
     if set==nil {
-        if sound:=content_sound(app,id);sound!={} {return {sound,1,1}}
+        if sound:=content_sound(app,id);sound!={} {return {sound,1,1,asset.SOUND_HEARING_DEFAULT}}
         return {}
     }
     c:=app.content
@@ -694,7 +697,7 @@ content_sound_pick :: proc(app:^App,id:base.Asset_Id) -> Sound_Pick {
     }
     set.last=chosen
     info:=&set.info
-    return {sounds[chosen],mm.random_range(&c.rng,info.volume_min,info.volume_max),mm.random_range(&c.rng,info.pitch_min,info.pitch_max)}
+    return {sounds[chosen],mm.random_range(&c.rng,info.volume_min,info.volume_max),mm.random_range(&c.rng,info.pitch_min,info.pitch_max),info.hearing}
 }
 
 // The generation of what content_sound_pick plays for a .sound or a
@@ -806,6 +809,12 @@ project_asset_mounts :: proc(p:^project.Project,allocator:=context.allocator) ->
     mounts:=make([dynamic]asset.Registry_Mount,allocator)
     for folder in project.asset_folders(p,allocator) {
         if folder.prefix!="" {append(&mounts,asset.Registry_Mount{folder=folder.path,prefix=folder.prefix,imported=folder.imported})}
+    }
+    // The far meshes the editor made, where the assets are not cooked: a game that runs them shows them.
+    assets:=project.folder_path(p.root,.Assets,context.temp_allocator)
+    far:=project.cache_path(p.root,project.FAR_CACHE,allocator=allocator)
+    if !os.exists(project.path(assets,asset.REGISTRY_INDEX,allocator=context.temp_allocator)) && (os.is_dir(far) || os.make_directory_all(far)==nil) {
+        append(&mounts,asset.Registry_Mount{folder=far,prefix=project.FAR_PREFIX})
     }
     return mounts[:]
 }

@@ -99,7 +99,7 @@ app_textures_stream :: proc(app:^App) {
         for st.reads[next].busy {next+=1}
         read:=&st.reads[next]
         read^={request=request,prepared={source=source,level=request.level},limits=limits,busy=true}
-        if threads {jobs.run(&app.jobs,jobs.OWNER,texture_read,read,&st.counter)} else {texture_read(read,jobs.OWNER)}
+        if threads {jobs.run(&app.jobs,jobs.OWNER,.Background,texture_read,read,&st.counter)} else {texture_read(read,jobs.OWNER)}
     }
 }
 

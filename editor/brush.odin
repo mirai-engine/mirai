@@ -110,16 +110,16 @@ brush_adjust_draw :: proc(s:^Session,a:^Brush_Adjust,input:core.Input,radius,val
     ctx:=s.gui.ctx
     ui.draw_line(ctx,middle,input.mouse_position,1.5,{BRUSH_ADD.r,BRUSH_ADD.g,BRUSH_ADD.b,150})
     text:=a.strength?fmt.tprintf("%.0f %%",value*100):fmt.tprintf("%.1f m",radius)
-    size:=ctx.theme.font
+    size:=ui.metric(ctx,"font")
     width:=ui.text_width(&ctx.font,text,size)
     at:=input.mouse_position+{16,-24}
-    ui.draw_rounded(ctx,{at.x-6,at.y-3,width+12,size+8},4,ctx.theme.popup)
-    ui.draw_text(ctx,text,at.x,at.y,size,ctx.theme.text)
+    ui.draw_rounded(ctx,{at.x-6,at.y-3,width+12,size+8},4,ui.tone(ctx,"popup"))
+    ui.draw_text(ctx,text,at.x,at.y,size,ui.tone(ctx,"text"))
 }
 
 // The key that does the same as a field of a row, after it, as the buttons
 // show theirs.
 key_hint :: proc(ctx:^ui.Context,key:string) {
     ui.spacer(ctx)
-    ui.label(ctx,key,ctx.theme.font_small,ctx.theme.text_muted)
+    ui.label(ctx,key,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
 }

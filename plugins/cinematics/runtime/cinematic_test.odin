@@ -27,7 +27,6 @@ Cinematic_World :: struct {
     cinematics:core.Table(Cinematic),
     activations:core.Table(cam.Camera_Activation),
     follows:core.Table(cam.Camera_Follow),
-    drivables:core.Table(input.Drivable),
     seats:core.Table(input.Seat),
     remotes:core.Table(core.Remote),
     hierarchy:core.Hierarchy,
@@ -37,10 +36,10 @@ Cinematic_World :: struct {
     events:anim.Animation_Events,
     constraints:anim.Animation_Constraints,
     modifier_runtime:anim.Modifier_Runtime,
-    modifier_requests:anim.Modifier_Requests,
     grounding:anim.Grounding_Runtime,
     actions:anim.Action_Runtime,
-    motion_requests:anim.Motion_Requests,
+    motion:anim.Motion_Runtime,
+    played:core.Table(anim.Animation_Played),
     shown:cam.Cameras,
     seat_state:input.Seats,
     camera_requests:cam.Camera_Requests,
@@ -140,11 +139,11 @@ fixture_destroy :: proc(f:^Cinematic_Fixture) {
 @(private="file")
 fixture_tick :: proc(f:^Cinematic_Fixture,tick:u64,dt:f32,playing:=true,acting:proc(f:^Cinematic_Fixture)=nil) {
     time:=core.Time{dt=dt,tick=tick,playing=playing}
-    cam.camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.shown,&f.camera_requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.drivables),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
-    anim.animation_sample(core.read(&f.animations),&f.progress,core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),&f.requests,&f.events,&f.modifier_requests,&f.modifier_runtime,&f.playback,&f.characters,&f.skeletons,&f.app,time,{},&f.problems,&f.actions,nil,&f.motion_requests,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+    cam.camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.shown,&f.camera_requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.parents),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
+    anim.animation_sample(core.read(&f.animations),&f.progress,&f.played,core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),core.read(&f.remotes),&f.requests,&f.events,&f.modifier_runtime,&f.playback,&f.characters,&f.skeletons,&f.app,time,{},&f.problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
     core.test_world_settle(&f.w)
     anim.animation_fields(core.test_world_ref(&f.w),core.ref(&f.playback),&f.fields,core.ref(&f.content_sources),&f.app,&f.problems)
-    anim.animation_advance(&f.transforms,core.read(&f.parents),{},&f.modifier_requests,&f.modifier_runtime,&f.playback,&f.constraints,&f.grounding,{},{},time,&f.requests,core.ref(&f.skeletons),&f.problems,nil,&f.characters,{},{},core.CLOCK_DEFAULT,nil)
+    anim.animation_advance(&f.transforms,core.read(&f.parents),{},&f.requests,&f.modifier_runtime,&f.playback,&f.constraints,&f.grounding,{},{},time,core.ref(&f.skeletons),&f.problems,&f.motion,&f.characters,{},{},core.CLOCK_DEFAULT,nil)
     if acting!=nil {acting(f)}
     cinematic_advance(core.ref(&f.entities),&f.cinematics,core.read(&f.cameras),core.read(&f.animations),core.ref(&f.playback),core.ref(&f.content_sources),&f.app,core.ref(&f.actions),&f.requests,core.ref(&f.shown),core.ref(&f.seat_state),&f.camera_requests,&f.seat_requests,core.read(&f.seats),time,core.read(&f.remotes),&f.problems)
     core.test_world_settle(&f.w)
@@ -199,7 +198,8 @@ the_markers_of_a_clip_cut_between_cameras_and_play_actions_while_it_plays :: pro
     testing.expect(t,len(stops)==1 && stops[0].stop && stops[0].entity==f.hero)
     testing.expect(t,len(f.camera_requests.items)==1 && f.camera_requests.items[0]==asked(f,f.close,.5))
     fixture_tick(f,3,DT)
-    testing.expect_value(t,cam.camera_selected(&f.shown,core.read(&f.drivables),core.read(&f.cameras),f.seat),f.close)
+    selected,_:=cam.camera_selected(&f.shown,core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),f.seat)
+    testing.expect_value(t,selected,f.close)
     testing.expect(t,len(f.camera_requests.items)==0,"the shot in force is asked once")
     lens,_:=core.get(core.read(&f.cameras),f.close)
     testing.expect_value(t,lens.fov,f32(.625))
@@ -225,12 +225,12 @@ the_markers_of_a_clip_cut_between_cameras_and_play_actions_while_it_plays :: pro
     clear(&f.requests.timeline.items)
     cinematic_follow(core.read(&f.cinematics),core.read(&f.animations),core.ref(&f.playback),&f.requests,{dt=DT,tick=11,playing=true},core.read(&f.remotes))
     commands:=f.requests.timeline.items[:]
-    testing.expect(t,len(commands)==1 && commands[0]==anim.Animation_Command{f.timeline,.25,.Seek},"a clip that plays is sought a tick before the half second the anchor gives the end of the tick")
+    testing.expect(t,len(commands)==1 && commands[0]==anim.Animation_Command{f.timeline,.25,1,.Seek},"a clip that plays is sought a tick before the half second the anchor gives the end of the tick")
     clear(&f.requests.timeline.items)
     remote.status,remote.anchor_time,remote.anchor_rate=.Paused,.75,0
     cinematic_follow(core.read(&f.cinematics),core.read(&f.animations),core.ref(&f.playback),&f.requests,{dt=DT,tick=40,playing=true},core.read(&f.remotes))
     commands=f.requests.timeline.items[:]
-    testing.expect(t,len(commands)==2 && commands[0].command==.Pause && commands[1]==anim.Animation_Command{f.timeline,.75,.Seek},"paused by the server, it pauses where the anchor is")
+    testing.expect(t,len(commands)==2 && commands[0].command==.Pause && commands[1]==anim.Animation_Command{f.timeline,.75,1,.Seek},"paused by the server, it pauses where the anchor is")
     clear(&f.requests.timeline.items)
     core.remove(&f.remotes,f.timeline);core.test_world_settle(&f.w)
 

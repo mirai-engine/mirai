@@ -75,18 +75,28 @@ like `replication.hysteresis`) and the values it admits.
     sealed with a key from the exchange of that key with the server's lasting one and the
     invitation.
   - *Accepted*: the server's key for the connection and, sealed with the session keys, its salt,
-    object capacity and history.
+    object capacity, history and the slot of the connection.
   - Nothing but the challenge answers an address that has not returned a valid cookie, and
     nothing at all a proof that does not open (a wrong invitation): both count in
     `handshakes_dropped`. Denials (`Denied_Protocol`, `Denied_Full`) go only to a returned cookie,
     and `Denied_Full` only to a proof that opened; they count in `handshakes_refused`. The idea
     is netcode's: answer only when necessary, and deny only a request that passed every check
     ([standard](https://raw.githubusercontent.com/mas-bandwidth/netcode/main/STANDARD.md)).
+  - A wrong proof costs its address (the IP without the port, an IPv6 /64): a few back to back,
+    then one per interval; what comes sooner is put off before the key exchange
+    (`handshakes_deferred`). The allowance is a token bucket kept as one time per address in a
+    fixed table of sets; a full set gives its slot that frees soonest to the newcomer, so a crowd
+    of guessers never shuts out who brings the invitation, which joins with no added round trip.
 - **Format.** Every datagram starts with a type byte. The handshake ends in an XXH3 checksum keyed
   with `protocol_id`, which only filters strays; data ends in the ChaCha20-Poly1305 tag, with the
-  type and sequence as associated data. The protocol hash includes fragments, events, input,
-  channels and `TRANSPORT_VERSION`, which rises when the format of the handshake or of data
-  datagrams changes.
+  type, sequence and the slot of the connection at the receiver as associated data. The protocol
+  hash includes fragments, events, input, channels and `TRANSPORT_VERSION`, which rises when the
+  format of the handshake or of data datagrams changes.
+- **Roaming.** A data datagram from an address no connection has goes to the connection of the
+  slot it names; if it opens under that key and is newer than any the connection accepted, the
+  connection moves to that address, as WireGuard roams: a router that changes the port, or a
+  switch of network, loses nothing and costs no round trip. A forged datagram does not open, and
+  one replayed from elsewhere is not newer, so neither moves a connection.
 - **Sealing** (`net/secure.odin`, only with `core:crypto`; there is no unsealed mode): the session
   keys come from HKDF-SHA256 over the exchange of the two keys made for the connection and that of
   the client's key with the server's lasting one, salted with the key of the invitation. The
@@ -100,13 +110,14 @@ like `replication.hysteresis`) and the values it admits.
 - **Two ways in.** By address: a server whose `Host_Desc.invite` is zero admits anyone who reaches
   it, and the client calls `host_connect` with that address. By invitation: `Host_Desc.invite` is
   in every key, so both ends must have the same one, and a client without it times out with
-  `Connect_Timeout`. It is a short secret so that whoever received the code gets in, not a
-  credential: nobody can try invitations from the server's answers, but whoever poses as the
-  server on the path can try them against the client's proof.
+  `Connect_Timeout`. It is a 64-bit secret so that whoever received the code gets in, not a
+  credential: nobody can try invitations from the server's answers, and neither the guesses the
+  server lets through nor whoever poses as the server on the path, trying them against the
+  client's proof offline, get near it.
 - **Invitation codes** (`net/invite.odin`): the host says where it is, as ICE gathers a host and a
   reflexive candidate: `invite_make` takes its address on its network (`address_lan`) and, once
   the router mapped its port, the mapped one; `invite_encode` writes both with the token and a
-  CRC-12 in Crockford base32, tolerant of case, separators and confusable characters, and the
+  CRC-15 in Crockford base32, tolerant of case, separators and confusable characters, and the
   client passes both addresses of `invite_decode` to `host_connect`. On the host's network the LAN
   address answers; from outside, the mapped one; a router that does not loop its public address
   back does not matter, and the client asks no other address.
@@ -154,6 +165,14 @@ command. `budget` limits the bytes of a channel per update.
   queues what has room, and the channel takes nothing else until it is in, so a message has no
   size limit. A message longer than `PIECE_BYTES` arrives in pieces (`Command.more`), which the
   receiver joins; the library's own reliable channel takes only whole messages.
+- **Window.** The chunks a reliable channel keeps in flight grow by what the path acknowledges
+  (`channel_window`, each congestion interval), so they double each round trip while they hold the
+  channel back. Twice what the connection's rate sends in a round trip bounds them,
+  so congestion control and `send_rate` decide what a stream takes, and `Channel_Desc.window`, a
+  power of two the same at both ends, is the most a channel holds and receives ahead. A loss does
+  not shrink the window: its resend waits a round trip with the chunks after it acknowledged.
+- While objects wait for the update, the reliable game channels leave half of each datagram to
+  them: a part that streams does not starve the state.
 - The library channels count their queue the same way: `event_send` of a `Reliable` event and the
   authority requests return `Full` and send nothing if they do not fit in the queue of some
   connection they may go to, and the sender retries. The connection is not closed;

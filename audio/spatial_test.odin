@@ -11,13 +11,15 @@ attenuation_models_follow_their_curves :: proc(t:^testing.T) {
     test_near(t,attenuation_gain(inverse,4),0.5)
     test_near(t,attenuation_gain(inverse,8),0.25)
     test_near(t,attenuation_gain(inverse,20),0.1)
-    // Beyond the maximum distance the level stops falling.
-    test_near(t,attenuation_gain(inverse,50),0.04)
-    test_near(t,attenuation_gain(inverse,5000),0.04)
+    // Over the last quarter of the way to the maximum distance it fades to
+    // silence, and beyond it nothing is heard.
+    test_near(t,attenuation_gain(inverse,44),2.0/44*0.5)
+    test_near(t,attenuation_gain(inverse,50),0)
+    test_near(t,attenuation_gain(inverse,5000),0)
     inverse.rolloff=3
     test_near(t,attenuation_gain(inverse,4),2.0/(2+3*2))
     inverse.rolloff=0
-    test_near(t,attenuation_gain(inverse,40),1)
+    test_near(t,attenuation_gain(inverse,30),1)
 
     linear:=Attenuation{model=.Linear,min_distance=10,max_distance=110,rolloff=1}
     test_near(t,attenuation_gain(linear,5),1)
@@ -27,7 +29,7 @@ attenuation_models_follow_their_curves :: proc(t:^testing.T) {
     test_near(t,attenuation_gain(linear,110),0)
     test_near(t,attenuation_gain(linear,400),0)
     linear.rolloff=0.5
-    test_near(t,attenuation_gain(linear,110),0.5)
+    test_near(t,attenuation_gain(linear,60),0.75)
     linear.rolloff=4
     test_near(t,attenuation_gain(linear,60),0)
 
@@ -35,14 +37,16 @@ attenuation_models_follow_their_curves :: proc(t:^testing.T) {
     test_near(t,attenuation_gain(exponential,0.5),1)
     test_near(t,attenuation_gain(exponential,2),0.25)
     test_near(t,attenuation_gain(exponential,10),0.01)
-    test_near(t,attenuation_gain(exponential,1000),0.0001,1e-7)
+    test_near(t,attenuation_gain(exponential,1000),0)
     exponential.rolloff=1
     test_near(t,attenuation_gain(exponential,4),0.25)
 
-    test_near(t,attenuation_gain({model=.None,min_distance=1,max_distance=10,rolloff=1},500),1)
+    test_near(t,attenuation_gain({model=.None,min_distance=1,max_distance=10,rolloff=1},5),1)
+    test_near(t,attenuation_gain({model=.None,min_distance=1,max_distance=10,rolloff=1},500),0)
     // Distances that make no sense do not divide by zero.
-    test_near(t,attenuation_gain({model=.Inverse},3),1e-4/(1e-4+0*3))
-    test_near(t,attenuation_gain({model=.Linear,min_distance=5,max_distance=5,rolloff=1},9),1)
+    test_near(t,attenuation_gain({model=.Inverse},3),0)
+    test_near(t,attenuation_gain({model=.Linear,min_distance=5,max_distance=5,rolloff=1},4),1)
+    test_near(t,attenuation_gain({model=.Linear,min_distance=5,max_distance=5,rolloff=1},9),0)
     testing.expect(t,!math.is_nan(attenuation_gain({model=.Exponential,rolloff=1},0)))
     // Every model falls or stays as the distance grows.
     for model in Attenuation_Model {
@@ -226,12 +230,12 @@ test_noise :: proc(i:int) -> f32 {
 // FRAMES of a looping noise placed at position for a listener at the origin
 // looking down -Z, after the voice has settled.
 @(private="file")
-placed_noise :: proc(t:^testing.T,output:Output_Kind,position:[3]f32,occlusion:f32=0,frames:=8192,step:=0) -> []f32 {
+placed_noise :: proc(t:^testing.T,output:Output_Kind,position:[3]f32,occlusion:f32=0,frames:=8192,step:=0,near_radius:f32=0) -> []f32 {
     m:=test_mixer(t,{output=output})
     defer mixer_destroy(m)
     noise:=test_mono(t,m,RATE,test_noise)
     desc:=VOICE_DEFAULT
-    desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,position,{model=.None}
+    desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,position,{model=.None,min_distance=1,max_distance=100,near_radius=near_radius}
     desc.occlusion=occlusion
     testing.expect(t,voice_play(m,noise,desc)!=0)
     test_render(m,CHUNK_FRAMES*2)
@@ -293,6 +297,72 @@ headphones_mirror_left_and_right_with_level_and_time_differences :: proc(t:^test
     testing.expectf(t,right_lag>=15 && right_lag<=45 && abs(right_lag-left_lag)<=3,"interaural delays %d and %d samples",right_lag,left_lag)
 }
 
+// Balance of a stretch of output: -1 all left, 1 all right.
+@(private="file")
+balance :: proc(out:[]f32) -> f32 {
+    l,r:=math.sqrt(energy(out,2,0)),math.sqrt(energy(out,2,1))
+    return f32((r-l)/max(r+l,1e-30))
+}
+
+@(test)
+a_source_through_the_listener_crosses_between_ears_without_a_jump :: proc(t:^testing.T) {
+    // The worst change of balance between chunks of a noise moved 5 cm a chunk (about 9 m/s)
+    // along X from 2 m at the left to 2 m at the right, at z.
+    pass :: proc(t:^testing.T,output:Output_Kind,z,near_radius:f32) -> (worst,first,last:f32) {
+        m:=test_mixer(t,{output=output})
+        defer mixer_destroy(m)
+        desc:=VOICE_DEFAULT
+        desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{-2,0,z},{model=.None,min_distance=1,max_distance=100,near_radius=near_radius}
+        voice:=voice_play(m,test_mono(t,m,RATE,test_noise),desc)
+        test_render(m,CHUNK_FRAMES*2)
+        first=balance(test_render(m,CHUNK_FRAMES))
+        last=first
+        for step in 1..=80 {
+            voice_set_position(m,voice,{-2+f32(step)*0.05,0,z})
+            now:=balance(test_render(m,CHUNK_FRAMES))
+            worst=max(worst,abs(now-last))
+            last=now
+        }
+        return
+    }
+    db :: proc(out:[]f32) -> f32 {return f32(10*math.log10(energy(out,2,1)/max(energy(out,2,0),1e-30)))}
+    for output in Output_Kind {
+        beside,_,_:=pass(t,output,-1,0)
+        through,first,last:=pass(t,output,0,1)
+        flip,_,_:=pass(t,output,0,0)
+        testing.expectf(t,first<-0.5 && last>0.5,"%v: it goes from the left to the right: %v to %v",output,first,last)
+        testing.expectf(t,through<=3*beside,"%v: through the listener it moves %v a chunk, 1 m ahead %v",output,through,beside)
+        testing.expectf(t,flip>3*beside,"%v: without a near radius it flips at once: %v",output,flip)
+        left:=placed_noise(t,output,{-0.05,0,0},near_radius=0.5)
+        right:=placed_noise(t,output,{0.05,0,0},near_radius=0.5)
+        testing.expectf(t,abs(db(right)-db(left))<1,"%v: 5 cm to each side differ by %v dB",output,db(right)-db(left))
+        // Beyond its near radius a voice sounds as it did without one, to the sample.
+        far:=placed_noise(t,output,{2,1,-1},near_radius=1)
+        plain:=placed_noise(t,output,{2,1,-1})
+        for i in 0..<len(far) {
+            if !testing.expectf(t,far[i]==plain[i],"%v: sample %d differs",output,i) {break}
+        }
+    }
+}
+
+@(test)
+a_voice_with_delay_starts_when_its_sound_arrives :: proc(t:^testing.T) {
+    for delay in ([?]bool{false,true}) {
+        m:=test_mixer(t,{output=.Speakers})
+        defer mixer_destroy(m)
+        desc:=VOICE_DEFAULT
+        desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{0,0,-343},{model=.None,min_distance=1,max_distance=1000,delay=delay}
+        testing.expect(t,voice_play(m,test_mono(t,m,64,test_one),desc)!=0)
+        out:=test_render(m,RATE+4)
+        start:=-1
+        for i in 0..<RATE+4 {
+            if out[i*2]!=0 {start=i;break}
+        }
+        // 343 m at 343 m/s: one second.
+        testing.expectf(t,start==(RATE if delay else 0),"delay %v: it starts at frame %d",delay,start)
+    }
+}
+
 @(test)
 binaural_output_does_not_depend_on_how_the_render_is_cut :: proc(t:^testing.T) {
     whole:=placed_noise(t,.Headphones,{2,1,-1},frames=4096)
@@ -312,7 +382,7 @@ binaural_voice_plays_its_tail_when_it_stops :: proc(t:^testing.T) {
     defer mixer_destroy(m)
     noise:=test_mono(t,m,RATE,test_noise)
     desc:=VOICE_DEFAULT
-    desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{2,0,-1},{model=.None}
+    desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{2,0,-1},{model=.None,min_distance=1,max_distance=100}
     voice:=voice_play(m,noise,desc)
     test_render(m,CHUNK_FRAMES*4)
     voice_stop(m,voice)
@@ -430,6 +500,11 @@ spatial_voices_take_hostile_input_without_harm :: proc(t:^testing.T) {
     }
     d:=desc;d.attenuation.min_distance=nan
     testing.expect_value(t,voice_play(m,noise,d),Voice(0))
+    d=desc;d.attenuation.near_radius=nan
+    testing.expect_value(t,voice_play(m,noise,d),Voice(0))
+    // So far that its sound would arrive after the clock runs out.
+    d=desc;d.position,d.attenuation.delay={1e18,0,0},true
+    testing.expect(t,voice_play(m,noise,d)!=0)
     d=desc;d.rotation=quaternion(real=nan,imag=0,jmag=0,kmag=0)
     testing.expect_value(t,voice_play(m,noise,d),Voice(0))
     // The listener at the source, absurd numbers that are numbers, and a zero rotation.
@@ -459,7 +534,7 @@ doppler_changes_the_speed_of_a_spatial_voice :: proc(t:^testing.T) {
     m:=test_mixer(t,{speed_of_sound=300,output=.Speakers})
     defer mixer_destroy(m)
     desc:=VOICE_DEFAULT
-    desc.spatial=true;desc.attenuation={model=.None}
+    desc.spatial=true;desc.attenuation={model=.None,min_distance=1,max_distance=100}
     desc.position={0,0,-50}
     desc.velocity={0,0,60} // toward the listener at a fifth of the speed of sound: 300/(300-60)=1.25
     sound:=test_mono(t,m,100000,test_ramp)
@@ -500,7 +575,7 @@ binaural_one_voice :: proc(t:^testing.T) -> []f32 {
     defer mixer_destroy(m)
     noise:=test_mono(t,m,RATE,test_noise)
     desc:=VOICE_DEFAULT
-    desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{0,0,-10},{model=.None}
+    desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{0,0,-10},{model=.None,min_distance=1,max_distance=100}
     desc.volume=BINAURAL_ONE_VOICE_LEVEL
     voice:=voice_play(m,noise,desc)
     FRAMES :: 4096

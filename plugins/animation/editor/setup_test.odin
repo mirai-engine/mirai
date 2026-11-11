@@ -114,11 +114,11 @@ character_setup_builds_locomotion_look_feet_hands_and_gestures_from_the_body :: 
     if testing.expect_value(t,authoring_test_load(a,"characters/figure.character",&file),asset.Error.None) {
         set,error:=anim.character_view(&file,&a.assets.types)
         profile:=set.pose
-        testing.expect(t,error==.None && set.info.animation==library && len(profile.look)==1 && len(profile.ik)==2 && len(profile.grounding)==1 && profile.grounding[0].count==2)
+        testing.expect(t,error==.None && set.info.animation==library && len(profile.look)==1 && len(profile.ik)==2 && profile.grounding.count==2)
         // The skeleton keeps its body: the set names its parts, not its bones, and its legs are
         // those of the body.
         testing.expect(t,base.text_get(profile.look[0].bone.path[:])=="@head" && !profile.look[0].enabled)
-        testing.expect(t,base.text_get(profile.ik[0].end.path[:])=="@hand_l" && profile.grounding[0].legs[1].foot=={} && profile.grounding[0].body=={})
+        testing.expect(t,base.text_get(profile.ik[0].end.path[:])=="@hand_l" && profile.grounding.legs[1].foot=={} && profile.grounding.body=={})
         actions:=set.actions
         testing.expect(t,len(actions.actions)==3 && len(actions.layers)==3)
         if len(actions.actions)==3 && len(actions.layers)==3 {

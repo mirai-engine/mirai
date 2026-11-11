@@ -56,8 +56,8 @@ test_shop_events :: proc(s:^Test_Shop,kind:Tree_Event_Kind,name:string) -> (foun
 test_shop_context :: proc(t:^testing.T,ctx:^Context,font:=false) {
     desc:=TEST_FONT if font else TEST_SMALL
     desc.navigation=true
-    testing.expect(t,context_init(ctx,desc))
-    ctx.theme.activate_on_press=false
+    testing.expect(t,test_context_init(ctx,desc))
+    ctx.release_activates=true
 }
 
 @(test)
@@ -517,9 +517,9 @@ rich_text_takes_italics_rules_links_and_images :: proc(t:^testing.T) {
     testing.expect(t,spans[0].decoration=={.Bold} && spans[0].style.font==FONT_SEMIBOLD,"A font without a heavier face of its own draws a synthetic bold")
     Test_Rich :: struct {clicked:u64,text:string}
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     input:=test_input()
     build :: proc(ctx:^Context,user:rawptr) {
         r:=cast(^Test_Rich)user

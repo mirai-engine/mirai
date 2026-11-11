@@ -3,6 +3,7 @@ package editor
 import "base:runtime"
 import "core:fmt"
 import "core:sync"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The log of the editor and of everything that runs in it, as the console
@@ -123,24 +124,22 @@ LEVEL_COLORS :: [Console_Level]ui.Color{.Debug={100,108,122,255},.Info={150,158,
 console_tools :: proc(s:^Session) {
     c:=s.console
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     names:=[Console_Level]string{.Debug="Debug",.Info="Info",.Warning="Warnings",.Error="Errors"}
-    if ui.segments(ctx,ui.FIT,28) {
+    if kit.segments(ctx,ui.FIT,28) {
         for level in ([4]Console_Level{.Error,.Warning,.Info,.Debug}) {
             shown:=level not_in c.hidden
-            if ui.toggle(ctx,ui.id(ctx,"console_level",int(level)+1),fmt.tprintf("%s %d",names[level],c.counts[level]),&shown,0) {
+            if kit.toggle(ctx,ui.id(ctx,"console_level",int(level)+1),fmt.tprintf("%s %d",names[level],c.counts[level]),&shown,0) {
                 if shown {c.hidden-={level}} else {c.hidden+={level}}
             }
         }
     }
-    if ui.button(ctx,ui.id(ctx,"console_clear"),{label="Clear",style=.Field,height=24,size=th.font_small}).clicked {console_clear(c)}
+    if ui.button(ctx,ui.id(ctx,"console_clear"),{label="Clear",variant="field",height=24,size=ui.metric(ctx,"font_small")}).clicked {console_clear(c)}
 }
 
 @(private)
 console_build :: proc(s:^Session,height:f32) {
     c:=s.console
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     colors:=LEVEL_COLORS
     sync.mutex_lock(&c.mutex)
     defer sync.mutex_unlock(&c.mutex)
@@ -160,8 +159,8 @@ console_build :: proc(s:^Session,height:f32) {
         text:=string(entry.text[:entry.length])
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(CONSOLE_ROW),gap=6,align_y=.Center}) {
             if ui.box(ctx,{width=ui.fixed(6),height=ui.fixed(6),fill=colors[entry.level],radius=3}) {}
-            ui.label(ctx,text,th.font_small,entry.level==.Info || entry.level==.Debug?th.text:colors[entry.level],0)
-            if entry.repeats>0 {ui.label(ctx,fmt.tprintf("x%d",entry.repeats+1),th.font_label,th.text_faint)}
+            ui.label(ctx,text,ui.metric(ctx,"font_small"),entry.level==.Info || entry.level==.Debug?ui.tone(ctx,"text"):colors[entry.level],0)
+            if entry.repeats>0 {ui.label(ctx,fmt.tprintf("x%d",entry.repeats+1),ui.metric(ctx,"font_label"),ui.tone(ctx,"text_faint"))}
         }
     }
     ui.list_end(ctx,list,len(shown),last,CONSOLE_ROW)
