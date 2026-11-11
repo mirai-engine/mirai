@@ -233,30 +233,46 @@ a_floor_with_a_box_gets_a_mesh_that_goes_around_the_box :: proc(t:^testing.T) {
 }
 
 @(test)
-a_tile_is_published_on_the_tick_after_its_build_whatever_the_threads :: proc(t:^testing.T) {
-    built :: proc(t:^testing.T,threads:int) -> (ticks:[16]u64) {
+a_tile_is_published_a_fixed_number_of_ticks_after_its_build_whatever_the_threads :: proc(t:^testing.T) {
+    TICKS :: 24
+    Run :: struct {built:[TICKS]u64,started:int}
+    run :: proc(t:^testing.T,threads:int,blocked:bool) -> (r:Run) {
         f:Nav_Test
         if !nav_test_init(t,&f,threads) {return}
         defer nav_test_destroy(&f)
-        // A worker busy with a long job: the builds stay queued unless the tick waits for them.
+        // A worker busy with a long job: the builds are not done by their tick, which waits for them.
         busy:jobs.Counter
-        started:bool
-        defer if threads>0 {jobs.wait(&f.app.jobs,jobs.OWNER,&busy)}
-        if threads>0 {
+        running:bool
+        defer if blocked {jobs.wait(&f.app.jobs,jobs.OWNER,&busy)}
+        if blocked {
             jobs.run(&f.app.jobs,jobs.OWNER,.Background,proc(data:rawptr,worker:int) {
                 intrinsics.atomic_store((^bool)(data),true)
                 time.sleep(300*time.Millisecond)
-            },&started,&busy)
-            for !intrinsics.atomic_load(&started) {thread.yield()}
+            },&running,&busy)
+            for !intrinsics.atomic_load(&running) {thread.yield()}
         }
         nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
         nav_test_box(&f,{0,1,0},{1,1,4})
-        for &tick in ticks {nav_test_step(&f);tick=f.nav.stats.built}
+        r.started=-1
+        for &built,tick in r.built {
+            nav_test_step(&f)
+            built=f.nav.stats.built
+            for build in f.builds.builds {if build.busy && r.started<0 {r.started=tick}}
+        }
         return
     }
-    alone:=built(t,0)
-    testing.expect(t,alone[len(alone)-1]>0)
-    testing.expect_value(t,built(t,1),alone)
+    alone:=run(t,0,false)
+    testing.expect(t,alone.started>=0 && alone.built[TICKS-1]>0)
+    for tick in 0..<alone.started+NAV_BUILD_TICKS {testing.expectf(t,alone.built[tick]==0,"a tile at tick %d, asked at %d",tick,alone.started)}
+    testing.expectf(t,alone.built[alone.started+NAV_BUILD_TICKS]>0,"no tile %d ticks after the first build",NAV_BUILD_TICKS)
+    cases:=[]struct{threads:int,blocked:bool}{
+        {2,false}, // done before their tick: nothing waits
+        {1,true},  // still queued at their tick: waited for, and published in that same tick
+    }
+    for c in cases {
+        threaded:=run(t,c.threads,c.blocked)
+        testing.expectf(t,threaded==alone,"%d threads, blocked %v: %v, without threads %v",c.threads,c.blocked,threaded,alone)
+    }
 }
 
 @(test)

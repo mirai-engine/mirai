@@ -36,6 +36,10 @@ NAV_CHANGES_PER_READ :: 256
 NAV_TRIANGLES_MAX :: 1<<20     // of the input of one tile
 NAV_COARSE_EXPANDED :: 256     // nodes the searches of the ways of a region of the coarse graph expand in a tick
 NAV_FIELDS :: 64               // tiles whose heightfield is kept to build them again when an area or an obstacle changes on them
+// Ticks from the start of a tile's build to its publishing: its job runs in the background
+// meanwhile, and one not done by then is waited for, so a tile arrives at the same tick whatever
+// the threads do. A dev build of the AI arena takes about 9 ms a tile, under one tick at 60 Hz.
+NAV_BUILD_TICKS :: 4
 
 // What the application keeps to build the meshes of a world: the jobs and
 // what the build tracks of the world. None of it is the state of the world.
@@ -82,6 +86,7 @@ Navigation_Builds :: struct {
     fields:[dynamic]Tile_Field, // the heightfields kept, at most NAV_FIELDS: the one unused longest gives its place
     fields_clock:u64,
     looked:u64,           // rows, marks and builds the build went through so far: a tick with nothing to do adds none
+    ticks:u64,            // that published: the clock of Build.due
 }
 
 // The heightfield a tile was last built from, with what it was made of: a
@@ -189,6 +194,7 @@ Build_Stats :: struct {
 Build :: struct {
     counter:jobs.Counter,
     busy:bool,
+    due:u64, // the tick of Navigation_Builds.ticks it is published at
     class:int,
     coord:[2]i32,
     stamp:u32,
@@ -542,6 +548,7 @@ navigation_build :: proc(
     }
     sections_update(n,b,limits,fresh)
     paging_update(n,b,q.unloaded,time.playing,fresh,reset,app,problems)
+    b.ticks+=1
     published,spent:=builds_publish(n,b,problems)
     if published>0 {host.load_phase_add(app,.Nav_Tiles,spent,published)}
     builds_start(n,b,physics,limits,gone,time.playing,&app.jobs,problems)
@@ -717,8 +724,9 @@ areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:^core.Table(Nav_Ar
 @(private)
 builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),limits:Limits,unloaded:Unloaded,playing:bool,job_system:^jobs.Job_System,problems:^core.Problems) {
     b.jobs=job_system
-    want:=int(n.settings.builds) if n.settings.builds>0 else 4
-    for len(b.builds)<want {
+    per_tick:=int(n.settings.builds) if n.settings.builds>0 else 4
+    due:=b.ticks+NAV_BUILD_TICKS
+    for len(b.builds)<per_tick*NAV_BUILD_TICKS {
         build,error:=new(Build)
         if error!=nil {break}
         append(&b.builds,build)
@@ -756,8 +764,11 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
             }
             if checks>=NAV_CHECKS_PER_TICK {return}
             free:^Build
-            for build in b.builds {if !build.busy {free=build;break}}
-            if free==nil {return}
+            started:=0
+            for build in b.builds {
+                if !build.busy {free=build} else if build.due==due {started+=1}
+            }
+            if free==nil || started>=per_tick {return}
             checks+=1
             next:=mark^
             collision:=mark.collision
@@ -786,7 +797,7 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
                 free.volume_config=c.volume_config
                 next.building=true
                 mark_set(c,mark,next)
-                build_launch(free,job_system)
+                build_launch(free,job_system,due)
                 continue
             }
             coord:=coord_of_key(key)
@@ -819,7 +830,7 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
             free.config=c.config
             next.building=true
             mark_set(c,mark,next)
-            build_launch(free,job_system)
+            build_launch(free,job_system,due)
         }
     }
     b.unloaded_seen=revision
@@ -839,12 +850,13 @@ mark_box_of :: proc "contextless" (c:^Class_Mesh,key:u64,air:bool) -> mm.Aabb {
 }
 
 @(private)
-build_launch :: proc(build:^Build,job_system:^jobs.Job_System) {
+build_launch :: proc(build:^Build,job_system:^jobs.Job_System,due:u64) {
+    build.due=due
     if jobs.worker_count(job_system)==0 {
         build_job(build,0)
         return
     }
-    jobs.run(job_system,jobs.OWNER,.Frame,build_job,build,&build.counter)
+    jobs.run(job_system,jobs.OWNER,.Background,build_job,build,&build.counter)
 }
 
 // The triangles of the static collision in a box that block filter (the
@@ -983,14 +995,13 @@ build_job :: proc(build:^Build,worker:int) {
     build.status=ai.nav_build_tile(build.config,build.coord,{vertices=build.vertices[:],indices=build.indices[:],volumes=build.volumes[:]},&build.scratch,&build.result,field=&build.field)
 }
 
-// Puts the tiles of the builds of the tick before in their meshes, when they
+// Puts the tiles of the builds due in this tick in their meshes, when they
 // are still what the tile needs: how many builds ended and what their jobs
-// took. It waits for their jobs, so a world publishes the same tiles at the
-// same tick however fast its threads run.
+// took.
 @(private)
 builds_publish :: proc(n:^Navigation,b:^Navigation_Builds,problems:^core.Problems) -> (ended:int,ns:i64) {
     for build in b.builds {
-        if !build.busy {continue}
+        if !build.busy || build.due>b.ticks {continue}
         if jobs.pending(&build.counter) {jobs.wait(b.jobs,jobs.OWNER,&build.counter)}
         build.busy=false
         ended+=1

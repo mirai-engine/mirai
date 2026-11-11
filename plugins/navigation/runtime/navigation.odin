@@ -110,7 +110,7 @@ Navigation_Settings :: struct {
     tile_cells:i32 `mirai:"min=8,max=512,advanced"`,      // voxels across a tile
     max_tiles:i32 `mirai:"min=1,advanced"`,                // of each class
     max_links:i32 `mirai:"min=0,advanced"`,                // of each class, given and generated
-    builds:i32 `mirai:"min=1,max=64,advanced"`,            // tiles built at once
+    builds:i32 `mirai:"min=1,max=64,advanced"`,            // tiles a tick starts building
     areas:[NAV_AREA_CAPACITY]Nav_Area_Cost `mirai:"trim"`,
     path_iterations:i32 `mirai:"min=1,section=Agents,advanced"`, // polygons the searches of all agents expand in a tick
 }
