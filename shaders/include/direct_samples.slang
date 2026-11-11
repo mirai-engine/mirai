@@ -82,13 +82,12 @@ uint direct_traced(int2 p, uint m) {
 // Sample k of the m of a pixel: the point of its light, of sixteen across it
 // (light_point, sun_ray), so that the samples of a window of the pattern spread
 // over the light; how the disc is turned, another for each square of the
-// pattern; and where among the lights of a group it picks.
+// pattern.
 float direct_point(uint place, uint m, uint k) { return 16.0 * (float(place + 9u * k) + 0.5) / float(9u * m); }
 float direct_spin(int2 p) {
     uint h = hash_u32(uint(p.x / 3) * 73856093u ^ uint(p.y / 3) * 19349663u);
     return float(h) * (2.0 * PI / 4294967296.0);
 }
-float direct_pick(uint place, uint m, uint k) { return frac(0.5 + float(place * m + k) * 0.6180339887); }
 
 // The weight of the sun at a point: the luminance of its light on the surface;
 // none while it casts no shadows, when the pixels take all of it.

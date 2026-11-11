@@ -1242,10 +1242,6 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 	return true
 }
 
-// The runs of direct_filter.comp: what each point takes, and each pixel.
-DIRECT_FILTER_POINTS :: u32(1)
-DIRECT_FILTER_PIXELS :: u32(2)
-
 // Shadow rays at a hit of a ray of the probe volume: what it gathers is
 // blurred over many rays and probes.
 PROBE_LIGHT_BUDGET :: u32(4)
