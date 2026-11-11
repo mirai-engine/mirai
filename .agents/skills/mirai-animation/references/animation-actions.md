@@ -14,13 +14,17 @@ actions over it), and `layers_advance`, `pose_layers` and the curves read only t
 - A layer plays by itself a clip (`clip`, of another `.anim` with `animation`, [multiple
   sources](animation.md#multiple-sources)) or a [space](animation.md#additive-spaces) of the
   set, or nothing until an action plays in it.
-- `over` limits it to the branch of a bone or to a part or region of the body (`@upper_body`);
-  empty is the whole pose. `mode` is Override (each channel its clips animate goes to their value
-  by the weight) or Additive (it adds what they change from the pose at `reference` seconds of
-  `reference_clip`; none: of each clip itself). A target the reference clip does not move is
-  measured from the layer's own clip. With `mesh_space`, an Override layer blends the rotations of
-  its branch in the space of the rig: it keeps the turn its clip gives it whatever the base turns
-  above it.
+- `over` limits it to up to four branches, each a bone or a part or region of the body
+  (`@upper_body`) and the bones below it; none is the whole pose. A branch with a `depth` gives the
+  layer a share that grows by 1/depth a bone from where it starts, and a bone in several takes the
+  most; the shares of a slot are made when its branches or the bindings change (`layer_mask`).
+  `mode` is Override (each channel its clips animate goes to their value by the weight) or Additive
+  (it adds what they change from the pose at `reference` seconds of `reference_clip`; none: of each
+  clip itself). A target the reference clip does not move is measured from the layer's own clip.
+  With `mesh_space` the rotations go in the space of the rig: an Override layer keeps the turn its
+  clip gives its branch whatever the base turns above it, and an Additive one carries the turn of
+  each bone to the rig through the reference pose and puts it before the base there, so an aim
+  offset turns about the axes of the rig over a base that leans.
 - `sync` keeps the phase of its clip on that of the base, by markers when both have them.
 - **A parameter is a name of the set.** The name of a layer is its weight, from 0 to 1, reached
   over its `fade`; the name of an axis of its space is where the space is sampled, clamped to the
@@ -60,8 +64,8 @@ The actions of a set are layers, definitions and sections over the `.anim` of th
 
 ## Requests and lifecycle
 
-`play`, `stop`, `set` and `look` write to `Animation_Requests`; the equivalent API asks for
-Play/Simulation. `animation_sample` serves them.
+`play`, `play_at`, `stop`, `set` and `look` write to `Animation_Requests`; the equivalent API asks
+for Play/Simulation. `animation_sample` serves them.
 
 - **One priority rule.** `play` takes the slot of its action if nothing plays there, or if its
   priority reaches the one playing and that one allows it: Allow gives way at once, Finish_Section
@@ -69,6 +73,12 @@ Play/Simulation. `animation_sample` serves them.
   slots are independent: an action in a layer plays whatever the whole body does.
 - `play` with a section of an action that plays moves it there, closing and reopening windows,
   without starting it again.
+- **Driven.** `play_at` puts the action the seconds since its start its driver gives (a timeline):
+  forward it plays there, through its sections, telling what it crosses; sought or back it starts
+  over from where it started and goes there telling nothing, as a seek of a clip. It starts at its
+  start whatever its `entry`, so playing to a time and seeking it show the same pose; a seek past
+  its end leaves nothing of it. A driven play is not recorded in `Animation_Played`: every end
+  drives it by its own timeline.
 - **In a layer** an action crossfades over what the layer plays (`fade_in`), at its weight, and
   when it ends the layer goes back to what it plays by itself over `fade_out`.
 - **Over the whole body** it is slot 0, a layer under the others over the whole pose, over a
@@ -160,6 +170,9 @@ Discovery and memory:
   region, additive reference and space of the rig, on the owner thread and in jobs.
 - `discovery_bench_test.odin` and `program_bench_test.odin` (with `MIRAI_BENCH`): optional
   preparation without stable allocations, and the cost of a pose by base and layers.
+- `a_driven_action_shows_the_time_of_its_driver_played_or_sought` and
+  `the_preview_of_the_editor_does_not_travel_into_a_play` (a scrubbed actor in the copy Play
+  starts from).
 - `an_action_that_moves_its_body_gives_it_its_share_of_the_root_delta`: a play, the share without
   the base and an action without `body_move`.
 

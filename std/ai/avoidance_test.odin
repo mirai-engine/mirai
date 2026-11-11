@@ -59,6 +59,28 @@ two_agents_walking_at_each_other_pass_without_touching :: proc(t:^testing.T) {
     for agent,i in agents {testing.expectf(t,linalg.distance(agent.position,goals[i])<0.1,"agent %d at %v",i,agent.position)}
 }
 
+// A mover at 5 m/s that does not step aside, across the way of an agent, at
+// it and from behind: the velocity the agent takes keeps their radii apart
+// over the whole horizon, as the mover goes on unchanged.
+@(test)
+an_agent_keeps_clear_of_a_mover_that_does_not_step_aside :: proc(t:^testing.T) {
+    movers:=[?]Avoid_Agent(2){
+        {position={0,-5},velocity={0,5},radius=0.4,ignores=true},
+        {position={6.5,0.1},velocity={-5,0},radius=0.4,ignores=true},
+        {position={-5,-0.1},velocity={5,0},radius=0.4,ignores=true},
+    }
+    for &mover,c in movers {
+        self:=Avoid_Agent(2){position={-1.5,0},velocity={1.5,0},radius=0.4}
+        v:=avoid_velocity(self,{1.5,0},1.5,([^]Avoid_Agent(2))(&mover)[:1],1.5,AVOID_DT)
+        gap:=f32(1e30)
+        for step in 0..=150 {
+            time:=f32(step)*0.01
+            gap=min(gap,linalg.distance(self.position+v*time,mover.position+mover.velocity*time)-0.8)
+        }
+        testing.expectf(t,gap>-1e-3,"case %d: at %v the gap is %v",c,v,gap)
+    }
+}
+
 @(test)
 a_ring_of_agents_swaps_sides_without_touching :: proc(t:^testing.T) {
     COUNT :: 8
@@ -189,9 +211,9 @@ avoidance_in_a_volume_with_every_height_zero_matches_the_plane :: proc(t:^testin
     lift :: proc(v:math.Vec2) -> math.Vec3 {return {v.x,0,v.y}}
     check :: proc(t:^testing.T,round:int,self:Avoid_Agent(2),preferred:math.Vec2,max_speed:f32,flat:[]Avoid_Agent(2)) {
         raised:[16]Avoid_Agent(3)
-        for other,i in flat {raised[i]={lift(other.position),lift(other.velocity),other.radius}}
+        for other,i in flat {raised[i]={lift(other.position),lift(other.velocity),other.radius,other.ignores}}
         a:=avoid_velocity(self,preferred,max_speed,flat,2,AVOID_DT)
-        b:=avoid_velocity(Avoid_Agent(3){lift(self.position),lift(self.velocity),self.radius},lift(preferred),max_speed,raised[:len(flat)],2,AVOID_DT)
+        b:=avoid_velocity(Avoid_Agent(3){lift(self.position),lift(self.velocity),self.radius,false},lift(preferred),max_speed,raised[:len(flat)],2,AVOID_DT)
         testing.expectf(t,near_vec(lift(a),b,1e-4),"round %d: %v on the plane, %v in the volume",round,a,b)
     }
     crowd:=avoid_squeezed_crowd()
@@ -206,6 +228,7 @@ avoidance_in_a_volume_with_every_height_zero_matches_the_plane :: proc(t:^testin
                 position={math.random_range(&rng,-spread,spread),math.random_range(&rng,-spread,spread)},
                 velocity={math.random_range(&rng,-2,2),math.random_range(&rng,-2,2)},
                 radius=math.random_range(&rng,0.2,0.6),
+                ignores=math.random_range(&rng,0,1)<0.3,
             }
         }
         self:=Avoid_Agent(2){velocity={math.random_range(&rng,-1.5,1.5),math.random_range(&rng,-1.5,1.5)},radius=0.4}

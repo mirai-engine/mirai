@@ -54,8 +54,8 @@ ANIMATION_DEFAULT :: Animation{speed=1,weight=1,loop=true,playing=true,fade=0.2,
 // itself, or the clip of the action that plays in it.
 Layer_Ask :: struct {
     clip:u64,   // name in the library of the clip; 0: none, and without a space the layer fades out
-    over:u64,   // base.name_hash of the path or name of the bone whose branch it moves; 0: the whole pose
-    weight:f32, // over what is below it
+    over:Layer_Over, // the branches of the body it moves
+    weight:f32,      // over what is below it
     speed:f32,
     fade:f32,   // seconds to reach its weight, and of a change of clip
     loop:bool,
@@ -64,7 +64,7 @@ Layer_Ask :: struct {
     reference:f32,       // Additive: seconds into the reference clip whose pose it adds its clip over
     reference_clip:u64,  // Additive: name in the library of that clip; 0: its own clip
     curves:Curve_Blend,
-    mesh_space:bool, // Override: the rotations of its branch blend in the space of the rig
+    mesh_space:bool, // its rotations blend or add in the space of the rig
     space:u8,        // instead of clip: 1 + the space of the set its parameters sample
 }
 
@@ -185,6 +185,10 @@ Playing :: struct {
     asked:[STACK_SLOTS]Layer_Ask,           // what each slot plays in this tick
     stack:u8,                               // slots its .character gives it; 0: none
     parameters:[STACK_PARAMETERS]Stack_Parameter, // what set gave it; name 0: free
+    masks:[dynamic]f32,                // by slot of the stack and binding: the share of its layer each bone takes (layer_mask)
+    masks_over:[STACK_SLOTS]Layer_Over, // the branches each row of masks was made for
+    masks_made:u16,                    // a bit a row made for the bindings of masks_bound
+    masks_bound:u64,
     program:Program_Playing,
     curves:[dynamic]Curve_Output,
     curves_ready:bool,
@@ -254,6 +258,7 @@ Playback :: struct {
     hierarchy_stamp:u64, // moves when any of them does
     track_maps:[dynamic]Track_Map,
     scratch:[dynamic]Pose_Scratch, // one a job that poses
+    previewed:bool,                // its last tick did not play: what it played was the editor's preview
     bones_peak:int,                // bindings of the largest state bound: the room of each scratch
     work:[dynamic]Pose_Row,        // the entities of the tick under way
     work_contents:[dynamic]host.Content_Animation, // what they play, each once: its library outlives the tick, its place in the host may not
@@ -789,8 +794,18 @@ layer_space_advance :: proc(state:^Playing,layer:^Layer_Playing,asked:Layer_Ask,
 @(private)
 layers_advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,events:^Animation_Events,dt:f32,problems:^core.Problems,characters:^Character_Assets=nil,app:^host.App=nil,actions:^Action_Runtime=nil) {
     library:=&content.lib
+    n:=len(state.bindings)
+    if state.masks_bound!=state.bound {state.masks_made,state.masks_bound=0,state.bound}
     for &layer,i in state.layers[:state.stack] {
         asked:=state.asked[i]
+        // The share each bone takes, made again only when the branches or the bindings change.
+        if bit:=u16(1)<<u16(i);asked.over!={} && (state.masks_made&bit==0 || state.masks_over[i]!=asked.over) {
+            if len(state.masks)<STACK_SLOTS*n && resize(&state.masks,STACK_SLOTS*n)!=nil {memory_problem(problems,state.entity,"the masks of its layers");continue}
+            state.masks_over[i]=asked.over;state.masks_made|=bit
+            if !layer_mask(state,asked.over,state.masks[i*n:][:n]) {
+                core.report(problems,state.entity,"animation.layer_bone","layer '%s' of the .character of this entity plays over a bone, or a part or region of the body, that this rig does not have, so it plays nothing; give each branch of its over one of its bones, a part or region of its body (@upper_body), or none",stack_slot_name(actions,state.entity,i))
+            }
+        }
         if asked.space!=0 {
             if app==nil || !layer_space_advance(state,&layer,asked,content,animation,characters,app,dt) {
                 core.report(problems,state.entity,"animation.layer_space","layer '%s' of the .character of this entity samples a space that names a clip its animation does not have; check it with animation.asset.inspect, and fix it with animation.space.set",stack_slot_name(actions,state.entity,i))
@@ -975,8 +990,32 @@ pose_layer_mesh_rotation :: proc(rotations:[]mm.Quat,state:^Playing,blend:lib.Bo
     return true
 }
 
+// The rotation of bone b after an Additive layer added in the space of the rig, written to its
+// local pose. The turn its clip gives a bone from its reference is carried to the rig through the
+// reference pose and goes before the base there, so an aim turns about the axes of the rig whatever
+// the base bends below it. rotations holds by binding the reference pose in that space, turned
+// into the base as each bone is done, the turns added up to each bone, and the result. A bone the
+// layer leaves out follows its parent as in the base. False when its parent comes after it.
+@(private)
+pose_layer_mesh_additive :: proc(rotations:[]mm.Quat,state:^Playing,added:lib.Bone_Blend,b:int,share:f32) -> bool {
+    n:=len(state.bindings)
+    reference,turns,result:=rotations[:n],rotations[n:2*n],rotations[2*n:3*n]
+    parent:=int(state.parents[b])
+    if parent<0 {reference[b],turns[b],result[b]=1,1,1;return true}
+    if parent>=b {return false}
+    own:=state.local[b].rotation
+    turn:=turns[parent]
+    if value,ok:=lib.bone_added_rotation(added);ok && share>0 {turn*=reference[b]*value*mm.quat_inverse(reference[b])}
+    turns[b],reference[b]=turn,reference[parent]*own
+    if share<=0 {result[b]=result[parent]*own;return true}
+    result[b]=mm.quat_slerp(1,turn,share)*reference[b]
+    state.local[b].rotation=linalg.normalize0(mm.quat_inverse(result[parent])*result[b])
+    return true
+}
+
 // The slots of the stack of state over its local pose, in order: each moves only what its clips
-// animate, inside its branch, replacing by its weight or adding its change from its reference.
+// animate, by the share of its weight each bone of its branches takes, replacing by it or adding its
+// change from its reference.
 @(private)
 pose_layers :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,transforms:^core.Table(core.Transform,.Read)=nil,worker:=0) -> (faults:Pose_Faults) {
     if state.stack==0 {return}
@@ -988,10 +1027,10 @@ pose_layers :: proc(playback:^Playback,state:^Playing,content:^host.Content_Anim
         players:[LAYER_PLAYERS]lib.Player
         count:=layer_players(&layer,&players)
         if count==0 {continue}
-        selection:Bone_Selection;masked:=asked.over!=0
-        if masked {
-            found:bool
-            if selection,found=bone_select(state,asked.over);!found {faults.layer_bone|=u16(1)<<u16(i);continue}
+        mask:[]f32
+        if asked.over!={} {
+            if state.masks_made&(u16(1)<<u16(i))==0 || state.masks_over[i]!=asked.over || len(state.masks)<(i+1)*n {continue}
+            mask=state.masks[i*n:][:n]
         }
         additive:=asked.mode==.Additive
         from:lib.Clip
@@ -1001,6 +1040,20 @@ pose_layers :: proc(playback:^Playback,state:^Playing,content:^host.Content_Anim
         scratch,bones,shared,ready:=pose_room(playback,state,worker)
         if !ready {faults.memory=true;continue}
         tracks:=shared.bones[:]
+        mesh:=asked.mesh_space && len(state.parents)==n
+        rotations:=scratch.rig_rotations[:3*n]
+        if mesh && additive {
+            // The reference pose in the space of the rig, which carries the turns of the clip there.
+            for player in players[:count] {lib.bones_blend(bones,tracks,library,{clip=from if from!=0 else player.clip,time=asked.reference,weight=1 if from!=0 else player.weight})}
+            tracks_twins(shared,bones)
+            for b in 0..<n {
+                parent:=int(state.parents[b])
+                if parent<0 || parent>=b {rotations[b]=1;continue}
+                value,_,ok:=lib.bone_rotation(bones[b])
+                rotations[b]=rotations[parent]*(value if ok else state.rest[b].rotation)
+            }
+            mem.zero_slice(bones)
+        }
         for player in players[:count] {
             if additive {lib.bones_blend_additive(bones,tracks,library,player,asked.reference,1,from,scratch.references[:])} else {lib.bones_blend(bones,tracks,library,player)}
         }
@@ -1009,11 +1062,9 @@ pose_layers :: proc(playback:^Playback,state:^Playing,content:^host.Content_Anim
         root:=clip_root(content,layer.fader.current.clip);root.in_place=layer.root_motion==.In_Place
         root_bone:=bone_resolve(state,root.bone) if root.in_place else -1
         reference:=root_reference(state,root_bone,transforms) if root_bone>=0 else mm.TRANSFORM_IDENTITY
-        mesh:=!additive && asked.mesh_space && len(state.parents)==n
         for b in 0..<n {
-            share:=layer.weight*mm.saturate(animation.weight)
-            if masked && !bone_selected(state,selection,b) {share=0}
-            if mesh && !pose_layer_mesh_rotation(scratch.rig_rotations[:3*n],state,bones[b],b,share) {continue}
+            share:=layer.weight*mm.saturate(animation.weight)*(mask[b] if mask!=nil else 1)
+            if mesh && !(pose_layer_mesh_additive(rotations,state,bones[b],b,share) if additive else pose_layer_mesh_rotation(rotations,state,bones[b],b,share)) {continue}
             if share<=0 {continue}
             turned:=state.local[b].rotation
             state.local[b]=pose_layer_transform(bones[b],state.local[b],share,additive,&root if b==root_bone else nil,reference)
@@ -1160,9 +1211,18 @@ Animation_Settings :: struct {
 }
 ANIMATION_SETTINGS_DEFAULT :: Animation_Settings{requests=256,match_goals=4096}
 
-// The room of the requests of a tick, and what did not fit or was invalid in them.
+// The room of the requests of a tick, and what did not fit or was invalid in them. What the editor
+// played while the world did not play is its preview (a scrubbed timeline, the actions it drove):
+// on the first tick that plays, as in the copy Play starts from, the clips start again from their
+// components, no action plays and what the editor asked is dropped, so none of it reaches the game.
 @(step="input fixed",loops="game editor",stage="begin")
-animation_requests_serve :: proc(requests:^Animation_Requests,settings:Animation_Settings,problems:^core.Problems) {
+animation_requests_serve :: proc(requests:^Animation_Requests,settings:Animation_Settings,problems:^core.Problems,playback:^Playback,actions:^Action_Runtime,time:core.Time) {
+    if time.playing && playback.previewed {
+        for &state in playback.states {state.asset={}}
+        for &state in actions.states {state.slots={}}
+        clear(&requests.timeline.items);clear(&requests.plays.items);clear(&requests.distances.items)
+    }
+    playback.previewed=!time.playing
     code,capacity,setting:="animation.requests",int(settings.requests),"Animation_Settings.requests"
     core.queue_serve(&requests.timeline,capacity,problems,code,"timeline commands",setting,"it names an entity, a command, a finite time and a finite speed")
     core.queue_serve(&requests.distances,capacity,problems,code,"animation distance plays",setting,"it names an entity, a clip and a time of 0 or more, or a distance track of its .character")
@@ -1201,7 +1261,7 @@ playback_free :: proc(playback:^Playback) {
 playing_free :: proc(state:^Playing) {
     program_free(&state.program)
     delete(state.curves);delete(state.bindings);delete(state.parents);delete(state.targets);delete(state.aliases);delete(state.previous)
-    delete(state.mirror_pairs);delete(state.mirror_corrections);delete(state.mirror_scratch);delete(state.regions)
+    delete(state.mirror_pairs);delete(state.mirror_corrections);delete(state.mirror_scratch);delete(state.regions);delete(state.masks)
     delete(state.rest);delete(state.local);delete(state.world);delete(state.sampled)
     delete(state.follow);delete(state.retarget);delete(state.retarget_rest);delete(state.retarget_world);delete(state.driven);delete(state.driven_own);delete(state.driven_leader)
     state^={}
