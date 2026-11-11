@@ -125,7 +125,7 @@ nav_move_to :: proc(r:^Nav_Requests,e:core.Entity,point:[3]f32) {core.push(&r.qu
 // Walks the agent after an entity, keeping that far from it.
 nav_follow :: proc(r:^Nav_Requests,e,target:core.Entity,distance:f32=1) {core.push(&r.queue,Nav_Request{kind=.Follow,entity=e,target=target,distance=distance})}
 nav_stop :: proc(r:^Nav_Requests,e:core.Entity) {core.push(&r.queue,Nav_Request{kind=.Stop,entity=e})}
-// Faces a point while it walks (a shooter that strafes); nav_look_along faces the way again.
+// Faces a point, walking (a shooter that strafes) or standing; nav_look_along faces the way again.
 nav_look_at :: proc(r:^Nav_Requests,e:core.Entity,point:[3]f32) {core.push(&r.queue,Nav_Request{kind=.Look_At,entity=e,point=point})}
 nav_look_along :: proc(r:^Nav_Requests,e:core.Entity) {core.push(&r.queue,Nav_Request{kind=.Look_Along,entity=e})}
 // The game crossed the link the agent waits at: it goes on from its end.
@@ -1154,8 +1154,8 @@ ground_box :: #force_inline proc "contextless" (at:mm.Vec3,reach:f32) -> mm.Aabb
 // Writes the Move_Input of every agent no seat drives, and of a seated one
 // while it goes: its velocity, which its mover takes up to its top speed (the
 // velocity that steps aside is the one it moves at), looking where it goes or
-// at what it looks at; its body turns there at its own rate. One that flies or
-// swims looks level and climbs or dives. The seat of a seated one
+// at what it looks at, also standing; its body turns there at its own rate.
+// One that flies or swims looks level and climbs or dives. The seat of a seated one
 // wrote its Move_Input earlier in the tick, with its buttons and the turn of
 // the ground. How many agents cross a link.
 @(private)
@@ -1173,24 +1173,23 @@ agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,.Read),paths:^co
         }
         mi:=core.edit(inputs,e)
         if mi==nil {continue}
+        pose,_:=core.get(worlds,e)
         if !agent_goes(p^) {
-            // Once, when it stops: whatever writes it next is not navigation.
+            // Once, when it stops: whatever writes it next is not navigation, but where it looks.
             if !p.halted {
                 if !driven {mi.move,mi.velocity={},false}
                 p.halted=true
             }
+            if p.looking && !driven {agent_look(mi,p^,pose.position)}
             continue
         }
         p.halted=false
         ground,_:=core.get(grounds,e)
-        pose,_:=core.get(worlds,e)
         if !driven {mi.look_yaw=mm.angle_wrap(mi.look_yaw+ground.ground_turn)}
         flat:=mm.Vec3{p.velocity.x,0,p.velocity.z}
         speed:=linalg.length(flat)
         if p.looking {
-            to:=p.look-pose.position
-            to.y=0
-            if linalg.length(to)>1e-3 {mi.look_yaw=mm.yaw_of_direction(to)}
+            agent_look(mi,p^,pose.position)
         } else if speed>0.05 {mi.look_yaw=mm.yaw_of_direction(flat)}
         mi.velocity=true
         if p.class>=0 && int(p.class)<n.count && class_in_volume(n,int(p.class)) {
@@ -1202,6 +1201,13 @@ agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,.Read),paths:^co
         if speed<=1e-4 || p.state==.Crossing && !p.medium {mi.move={}}
     }
     return
+}
+
+@(private)
+agent_look :: #force_inline proc "contextless" (mi:^input.Move_Input,p:Nav_Path,position:mm.Vec3) {
+    to:=p.look-position
+    to.y=0
+    if linalg.length(to)>1e-3 {mi.look_yaw=mm.yaw_of_direction(to)}
 }
 
 // Drives the characters that cross a link of the engine: the launch of a

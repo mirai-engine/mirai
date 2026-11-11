@@ -77,17 +77,23 @@ what it perceives; `think` only reads and proposes, and the actions write.
 ## Smart objects
 
 - `Smart_Object` publishes up to `SMART_OFFERS` offers: the use (`Smart_Use`, ids that the game
-  declares as `USE_*`), where the one who uses it stands (in the object's frame), how many at a
-  time, how many times, the cooldown after each use, the teams that can take it and the abilities
-  (`Nav_Agent.abilities`) that it requires.
+  declares as `USE_*`), where the one who uses it stands (in the object's frame), which way it
+  faces there (a yaw: a seat cannot pitch or roll), where it comes from (`enter`, from `at`), how
+  many at a time, how many times, the cooldown after each use, the teams that can take it and the
+  abilities (`Nav_Agent.abilities`) that it requires. One slot per entity: many seats are many
+  entities, never one object with many slots or several ways in for one seat.
 - An offer is open to a user (`smart_offer`) if it was not spent, is not in cooldown, is of its
-  team and its abilities, and he holds it or there is room. They are found among what the agent
+  team and its abilities, and he holds it, there is room, or a holder of a lower priority
+  (`Smart_User.priority`) has not started to use it. They are found among what the agent
   perceives (`smart_offer` of the subject), near a point (`smart_nearest`, which looks at each
   object) or with a place query of layout `Offers`, scored like the others.
 - The action that uses it reserves it for its whole life (`smart_claim`, in `Claims` with the
-  attack tokens) and the mind releases it in its `Exit`. `offer_act` does the whole trip: it takes
-  the closest, reserves it, walks (after it, if it moves) and waits, and fails when the offer is
-  gone or closed to it before; whoever spends it says so with `smart_used`, and
+  attack tokens) and the mind releases it in its `Exit`. A claim of a higher priority displaces
+  one not in use; one in use (`ai.claim_use`) is never displaced, and the one displaced is not
+  told: its next `Update` finds it no longer holds it and fails. `offer_act` does the whole trip:
+  it takes the closest, reserves it, walks to `enter` and then to `at` (after it, if it moves),
+  marks it in use, faces its yaw (`nav_look_at`, released on `Exit`) and waits, and fails when the
+  offer is gone, closed to it or taken before; whoever spends it says so with `smart_used`, and
   `smart_update` (`fixed`, `react`, `server`), sole writer of `Smart_State`, counts the use and
   starts the cooldown.
 - `Claims` belongs to the world and is written by the steps of the minds (`ctx.reservations`);
@@ -180,7 +186,8 @@ what it perceives; `think` only reads and proposes, and the actions write.
   destroyed, ray turns, random crowds that remember by the grid whom they would among every
   perceivable, a tick with nothing to do that goes through no row, places by budget, from the
   navmesh, from entities and from offers, a place
-  target that is destroyed, the offers by team, ability, capacity, uses and cooldown, and the
+  target that is destroyed, the offers by team, ability, capacity, uses and cooldown, the way in
+  and the facing of `offer_act` and the claim of a higher priority before use, and the
   influence maps without allocating.
   `mirai test plugins/multiplayer/runtime
   a_mind_decides_on_the_server_and_the_client_plays_what_it_plays`: a mind in a session, the

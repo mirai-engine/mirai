@@ -310,8 +310,8 @@ soldier_cover :: proc(a:^ai.Act(Soldier_Act),w:Arena,smart_objects:^core.Table(b
             if !ok || result.request!=u32(a.memory[0]) || result.status==.Waiting {return .Running}
             if result.status!=.Found || result.offers[0]<0 {return .Failure}
             object,_:=core.get(smart_objects,result.entities[0])
-            found:=behavior.Smart_Found{result.entities[0],int(result.offers[0]),result.points[0],max(int(object.offers[result.offers[0]].users),1)}
-            if !behavior.smart_claim(a,found) {return .Failure}
+            found:=behavior.Smart_Found{object=result.entities[0],offer=int(result.offers[0]),at=result.points[0],users=max(int(object.offers[result.offers[0]].users),1)}
+            if !behavior.smart_claim(a,found,arena_user(w,e)) {return .Failure}
             nav.nav_move_to(requests,e,found.at)
             return ai.next_stage(a)
         case 1:
