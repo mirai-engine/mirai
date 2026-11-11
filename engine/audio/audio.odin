@@ -317,7 +317,7 @@ sources_update :: proc(sources:^core.Table(Audio_Source,$A),states:^core.Table(A
 // The state of a source, written only when it is another.
 @(private)
 state_put :: proc(states:^core.Table(Audio_Source_State),e:core.Entity,state:Audio_Source_State) {
-    if held:=core.edit(states,e);held!=nil {held^=state} else {core.add(states,e,state)}
+    if held,has:=core.get(states,e);!has {core.add(states,e,state)} else if held!=state {core.edit(states,e)^=state}
 }
 
 // The reverb of the mixer goes to that of the volumes where the listener is
