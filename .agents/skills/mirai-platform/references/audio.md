@@ -24,6 +24,9 @@ that decodes [feeds](#feeds):
 - What it reports (finished voices, released sounds and feeds, clock, underruns) comes back
   through atomics. `mixer_update`, once per frame on the game thread, frees what finished and,
   without a decoder thread, decodes the feeds ahead.
+- `mixer_render` and the decoder thread count subnormal floats as zero (FTZ and DAZ on x86, FZ
+  on ARM64; `mixer_render` restores the caller's mode): a tail that rings down to silence never
+  computes with them, so no filter or delay line carries a guard of its own.
 - As long as parameters do not change, one call or chunks of any size give the same samples.
 - `mixer_destroy` requires that the audio thread is no longer rendering.
 
@@ -164,9 +167,15 @@ binaural and panning effects.
   `MIXER_RATE`, the one rate the mixer renders at; the device stream converts it to the rate of
   the output, so headphones work on any. It is loaded and transformed, and the binaural state of
   every voice slot reserved, the first time the output is headphones; speakers never pay for it.
-- A source at the listener comes from above. A place, velocity, rotation or occlusion that is not
-  a number is refused by `voice_play`, `voice_set_position`, `voice_set_occlusion` and
-  `listener_set`.
+- **Near the listener.** Within `near_radius` a voice keeps less and less of its direction, Steam
+  Audio's spatial blend: on speakers its pan goes toward the middle and on headphones its HRTF
+  toward a flat filter with no phase, so a source through the listener crosses between ears
+  without a jump. Beyond the radius nothing changes. The default is the distance the HRTF was
+  measured at; a source at the listener (heard from above) has no direction left.
+- A place, velocity, rotation, near radius or occlusion that is not a number is refused by
+  `voice_play`, `voice_set_position`, `voice_set_occlusion` and `listener_set`.
+- With `delay` a spatial voice starts later by its distance at start over the speed of sound; it
+  is not a delay line, so a source that moves afterwards only shifts its pitch by Doppler.
 - Doppler takes the velocities along the source-listener line and multiplies the pitch.
 - A stereo sound with a position is heard as one source (average of its channels).
 - The direct path and the pitch of a positional voice are recomputed on the audio thread when its
@@ -175,6 +184,5 @@ binaural and panning effects.
 ## What it does not do
 
 Resampling better than linear, more than one room reverb, reflections, pathing, baked or
-convolution reverb from geometry (a later plugin), ambisonics, a 2D/3D blend of a spatial voice,
-propagation delay, other HRTFs than the one shipped, sounds or output of more than two channels,
-and seeking or querying the position of a playing voice.
+convolution reverb from geometry (a later plugin), ambisonics, other HRTFs than the one shipped,
+sounds or output of more than two channels, and seeking or querying the position of a playing voice.

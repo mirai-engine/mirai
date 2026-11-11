@@ -19,9 +19,8 @@ PROGRAM_CLOCKS :: PROGRAM_GROUPS*2
 PROGRAM_LEAVES :: MATCH_BLEND
 PROGRAM_PLAYERS :: PROGRAM_GROUPS*PROGRAM_LEAVES*2
 Sync_Mode :: enum u8 {Independent,Markers,Weighted,Fixed}
-// start: seconds a new player of it starts at. driven: the whole-body action that plays it keeps
-// its time (Match_Playing.driven_from, driven_to) and takes root motion by root, its own policy.
-Program_Leaf :: struct {clip:u64,key:u32,weight,speed:f32,loop,sync:bool,player:u16,start:f32,driven:bool,root:Root_Motion_Policy}
+// start: seconds a new player of it starts at.
+Program_Leaf :: struct {clip:u64,key:u32,weight,speed:f32,loop,sync:bool,player:u16,start:f32}
 Program_Group :: struct {leaves:[PROGRAM_LEAVES]Program_Leaf,count:u8,weight,root_weight:f32,mode:Sync_Mode,duration:f32,key:u64}
 Program_Output :: struct {asset:base.Asset_Id,groups:[PROGRAM_GROUPS]Program_Group,count:u8,primary:u8}
 Program_Player :: struct {key:u32,player:lib.Player,seen,advanced:u64,from,to:f32,was_done,active_last:bool}
@@ -107,10 +106,9 @@ program_representative :: proc(group:^Program_Group,content:^host.Content_Animat
 }
 
 // The program an Animation plays this tick, when its asset is a .character with locomotion.
-// inject: the whole-body action that plays instead of the search. problems: where what its
-// locomotion cannot do is reported.
+// problems: where what its locomotion cannot do is reported.
 @(private)
-program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,characters:^Character_Assets,dt:f32,events:^Animation_Events=nil,playback:^Playback=nil,prepared:^host.Content_Animation=nil,problems:^core.Problems=nil,goals:[]Match_Goal={},inject:Match_Inject={},facing:=mm.FORWARD) -> (output:^Program_Output,programmed,ok:bool) {
+program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,characters:^Character_Assets,dt:f32,events:^Animation_Events=nil,playback:^Playback=nil,prepared:^host.Content_Animation=nil,problems:^core.Problems=nil,goals:[]Match_Goal={},facing:=mm.FORWARD) -> (output:^Program_Output,programmed,ok:bool) {
     if app.assets==nil {return nil,false,false}
     runtime:=&state.program
     runtime.error=.None
@@ -140,7 +138,7 @@ program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,charact
     reset:=runtime.asset!=animation.asset || runtime.revision!=revision || runtime.library!=source || !runtime.ready
     swapped:=reset && runtime.ready && runtime.asset==animation.asset && runtime.revision==revision
     if reset {runtime.match=match_swapped(runtime.match) if swapped else MATCH_PLAYING_DEFAULT}
-    ok=match_output(state,output,content,prepared if prepared!=nil else host.content_animation(app,source),source,dt,goals,inject,facing,app.assets,app.allocator,problems)
+    ok=match_output(state,output,content,prepared if prepared!=nil else host.content_animation(app,source),source,dt,goals,facing,app.assets,app.allocator,problems)
     if reset {
         mem.zero_slice(runtime.players[:]);mem.zero_slice(runtime.leader_keys[:])
         runtime.epoch=0
@@ -198,8 +196,7 @@ program_players :: proc(state:^Playing,output:^Program_Output,content:^host.Cont
             index:=int(lib.clip_find(&content.lib,leaf.clip))-1
             if index<0 || index>=content.clip_count {runtime.error=.Missing_Clip;return false}
             if !finite(leaf.speed*animation.speed) {runtime.error=.Invalid_Parameter;return false}
-            // A whole-body action takes root motion by its own policy, or by that of the component.
-            policy:=leaf.root if leaf.driven && leaf.root!=.None else animation.root_motion
+            policy:=animation.root_motion
             if group.root_weight<=0 || leaf.weight<=0 || policy==.None || index>=len(content.roots) {continue}
             meta:=content.roots[index]
             if !meta.translation && !meta.rotation {continue}
@@ -329,11 +326,7 @@ program_players :: proc(state:^Playing,output:^Program_Output,content:^host.Cont
                 if leaf.sync && valid && i!=leader {lib.player_synchronize(&content.lib,player,phase)}
                 from:=player.time;was_done:=player.done;to:=from
                 batch:[EVENT_BATCH]lib.Event;written,dropped:int
-                if leaf.driven {
-                    // The action that plays it keeps its clock and gives its markers.
-                    from,to,was_done=runtime.match.driven_from,runtime.match.driven_to,false
-                    player.time,player.done,player.fresh=to,false,false
-                } else if leaf.sync && valid && i!=leader {
+                if leaf.sync && valid && i!=leader {
                     next,next_valid:=lib.sync_phase(&content.lib,lead.player);if lead.player.done || group.mode==.Weighted || group.mode==.Fixed {next.markers=false}
                     if next_valid {lib.player_synchronize(&content.lib,player,next)}
                     to=player.time

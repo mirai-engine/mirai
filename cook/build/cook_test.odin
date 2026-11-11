@@ -259,6 +259,8 @@ a_cook_ships_every_asset_of_an_active_plugin_under_its_prefix :: proc(t:^testing
     BRUSH :: base.Asset_Id{7,1}
     material_write(t,&types,fmt.tprintf("%s/brushes/soft.mat",plugin),BRUSH,WOOD_COLOR,{})
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/readme.txt",plugin),"for the code of the plugin")==nil)
+    // A source and its sidecar stay behind: what its import made ships, not what it was made from.
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/brushes/soft.png",plugin),"a source")==nil && os.write_entire_file(fmt.tprintf("%s/brushes/soft.png.import",plugin),"{}")==nil)
 
     report:=cook_assets({assets=assets,output=output,plugins={{path=plugin,prefix="plugins/probe"}},allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
@@ -455,5 +457,56 @@ a_cook_ships_animations_sampled_on_the_rest_pose_of_their_skeleton :: proc(t:^te
         played:=anim.vec4_quat(anim.clip_evaluate(&lib,anim.clip_tracks(&lib,1)[0],time))
         moved:=mm.quat_rotate(exact,{0,.03,0})-mm.quat_rotate(played,{0,.03,0})
         testing.expect(t,cmath.sqrt(moved.x*moved.x+moved.y*moved.y+moved.z*moved.z)<=anim.COMPRESS_DEFAULT.precision*1.05)
+    }
+}
+
+@(private="file") Far_Test_Renderer :: struct {mesh:base.Asset_Id}
+@(private="file") Far_Test_Reference :: struct {scene:base.Asset_Id}
+
+// A game that streams sections ships the far mesh of each scene a section
+// references beside it, which its runtime shows and does not make; one that
+// does not stream ships none.
+@(test)
+a_cook_writes_the_far_mesh_of_each_scene_a_section_references :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"cook-far")
+    if folder=="" {return}
+    WORLD :: base.Asset_Id{0xfa,0x10}
+    ROOM :: base.Asset_Id{0xfa,0x11}
+    SHEET :: base.Asset_Id{0xfa,0x12}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    assets:=fmt.tprintf("%s/assets",folder)
+    testing.expect(t,os.make_directory_all(fmt.tprintf("%s/rooms",assets))==nil)
+    vertices:=make([dynamic]asset.Vertex,context.temp_allocator)
+    indices:=make([dynamic]u32,context.temp_allocator)
+    for z in 0..=8 {for x in 0..=8 {append(&vertices,asset.Vertex{position={f32(x),0,f32(z)},normal=mm.normal_pack({0,1,0}),color=0xffffffff,tangent=mm.tangent_pack({1,0,0},1)})}}
+    for z in 0..<u32(8) {for x in 0..<u32(8) {a:=z*9+x;append(&indices,a,a+9,a+1,a+1,a+9,a+10)}}
+    g:asset.Mesh_Geometry
+    testing.expect(t,asset.mesh_build_dag({vertices=vertices[:]},indices[:],&g,context.temp_allocator))
+    testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/rooms/sheet.mesh",assets),&types,{id=SHEET,geometry=g}),asset.Error.None)
+    room:asset.Scene;asset.scene_init(&room,&types,ROOM)
+    asset.scene_entity_add(&room,1,0,"Floor")
+    asset.scene_set(&room,1,"Mesh_Renderer",&Far_Test_Renderer{SHEET})
+    testing.expect_value(t,asset.scene_save(&room,fmt.tprintf("%s/rooms/room.scene",assets)),asset.Error.None)
+    asset.scene_destroy(&room)
+    world:asset.Scene;asset.scene_init(&world,&types,WORLD)
+    asset.scene_entity_add(&world,1,0,"Room")
+    asset.scene_set(&world,1,"Scene_Reference",&Far_Test_Reference{ROOM})
+    testing.expect_value(t,asset.scene_save(&world,fmt.tprintf("%s/world.scene",assets)),asset.Error.None)
+    asset.scene_destroy(&world)
+
+    for streams in ([]bool{true,false}) {
+        output:=fmt.tprintf("%s/game-%v/assets",folder,streams)
+        report:=cook_assets({assets=assets,output=output,far=streams,quick=true,allocator=context.temp_allocator})
+        if !testing.expect_value(t,report.error,Cook_Error.None) {return}
+        path:=fmt.tprintf("%s/rooms/room.far.mesh",output)
+        testing.expect_value(t,report.far_meshes,streams?1:0)
+        testing.expect_value(t,os.exists(path),streams)
+        if !streams {continue}
+        shipped:asset.Registry
+        asset.registry_init(&shipped,output,"",context.temp_allocator)
+        defer asset.registry_destroy(&shipped)
+        testing.expect_value(t,asset.registry_load(&shipped,fmt.tprintf("%s/%s",output,asset.REGISTRY_INDEX)),asset.Error.None)
+        file,found:=asset.registry_find(&shipped,asset.far_mesh_id(ROOM))
+        testing.expect(t,found && file.kind==asset.KIND_MESH && file.path=="rooms/room.far.mesh","the index lists it by the id the runtime asks for")
     }
 }

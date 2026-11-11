@@ -149,7 +149,7 @@ hull_init :: proc(hull:^Hull,desc:Hull_Desc,allocator:mem.Allocator,convex_radiu
     vertex_count:=len(desc.vertices);face_count:=len(desc.face_counts)
     if vertex_count<4 || vertex_count>HULL_MAX_VERTICES || face_count<4 || face_count>HULL_MAX_FACES {return false}
     for v in desc.vertices {
-        if !is_finite3(v) {return false}
+        if !finite(v) {return false}
     }
     error:mem.Allocator_Error
     if hull.vertices,error=make([]Vec3,vertex_count,allocator);error!=nil {return false}

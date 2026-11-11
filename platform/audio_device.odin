@@ -21,6 +21,11 @@ Audio_Device_Stats :: struct {
     callbacks:u64, // times the device asked for audio
     frames:u64,    // frames it was given
 }
+Audio_Device_Change :: enum u8 {
+    Lost,  // the output the mixer plays on left: SDL plays it to nowhere until audio_device_switch
+    Added, // the system lists one more output
+}
+Audio_Device_Changes :: bit_set[Audio_Device_Change;u8]
 
 // Frames rendered per call of the mixer from the device callback.
 @(private) AUDIO_DEVICE_CHUNK :: 1024
@@ -28,10 +33,12 @@ Audio_Device_Stats :: struct {
 @(private)
 Audio_Device :: struct {
     stream:^sdl.AudioStream,
+    output:sdl.AudioDeviceID, // the output the stream opened: AUDIO_DEVICE_DEFAULT_PLAYBACK or one by its name
     mixer:^audio.Mixer,
     channels:int,
     scratch:[]f32,
     subsystem,driver_chosen,frames_chosen:bool,
+    changes:Audio_Device_Changes, // since audio_device_changes last took them
     callbacks,frames:u64, // atomic: written by the audio thread
 }
 
@@ -119,6 +126,8 @@ audio_stream_open :: proc(p:^Platform,name:string) -> (error:Audio_Error,found:b
     }
     spec:=sdl.AudioSpec{format=.F32,channels=c.int(device.channels),freq=c.int(device.mixer.sample_rate)}
     device.stream=sdl.OpenAudioDeviceStream(id,&spec,audio_device_callback,device)
+    device.output=id
+    device.changes-={.Lost}
     if device.stream==nil {return .Device_Failed,found}
     // A device opened with a stream starts paused.
     if !sdl.ResumeAudioStreamDevice(device.stream) {return .Device_Failed,found}
@@ -152,6 +161,34 @@ audio_device_paused :: proc(p:^Platform) -> bool {
 }
 audio_device_stats :: proc(p:^Platform) -> Audio_Device_Stats {
     return {sync.atomic_load_explicit(&p.audio.callbacks,.Relaxed),sync.atomic_load_explicit(&p.audio.frames,.Relaxed)}
+}
+
+// What happened to the outputs since the last call, as frame_begin saw it;
+// the caller decides where to play.
+audio_device_changes :: proc(p:^Platform) -> (changes:Audio_Device_Changes) {
+    changes,p.audio.changes=p.audio.changes,{}
+    return
+}
+
+// Without a window nothing else takes SDL's events: only those of the outputs.
+@(private)
+audio_device_pump :: proc(p:^Platform) {
+    sdl.PumpEvents()
+    event:sdl.Event
+    for sdl.PeepEvents(&event,1,.GETEVENT,.AUDIO_DEVICE_ADDED,.AUDIO_DEVICE_REMOVED)>0 {audio_device_event(p,event.adevice)}
+}
+
+// A stream opened as the default moves to the next default by itself; one
+// opened on an output by its name stays on it, played to nowhere, when it leaves.
+@(private)
+audio_device_event :: proc(p:^Platform,event:sdl.AudioDeviceEvent) {
+    device:=&p.audio
+    if event.recording || device.stream==nil {return}
+    if event.type==.AUDIO_DEVICE_ADDED {
+        device.changes+={.Added}
+    } else if event.which==device.output {
+        device.changes+={.Lost}
+    }
 }
 
 // On SDL's audio thread: no allocation, no lock of ours, only the mixer.
