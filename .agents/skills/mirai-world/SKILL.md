@@ -34,7 +34,8 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   [GPU pools and emitters](references/vfx.md#pools-and-emitters),
   [births and steps](references/vfx.md#births-and-steps),
   [Vfx programs](references/vfx.md#vfx-programs), [passes](references/vfx.md#passes),
-  [ribbons and trails](references/vfx.md#ribbons) and
+  [ribbons and trails](references/vfx.md#ribbons),
+  [mesh particles](references/vfx.md#mesh-particles) and
   [particle lights](references/vfx.md#particle-lights)
 - `vfx` in the editor (GPU effect preview, effects document, `Particle_Emitter` section,
   thumbnails, Particles card, `particle.*` methods):

@@ -576,7 +576,9 @@ Mirai_Vfx_Particle particle_program_value(uint slot, Particle p) {
     v.age = p.age; v.lifetime = p.lifetime;
     v.size = p.size; v.rotation = p.rotation; v.spin = p.spin; v.seed = p.seed;
     v.color = particle_emitters[slot].program.x != 0u ? particle_color(p) : float4(0.0);
-    v.ribbon = particle_ribbon(p);
+    bool mesh = particle_emitters[slot].kinds.y == PARTICLE_RENDER_MESH;
+    v.ribbon = mesh ? 0u : particle_ribbon(p);
+    v.mesh = (p.flags >> MESH_CHOICE_SHIFT) & (PARTICLE_MESHES - 1u);
     return v;
 }
 
@@ -594,7 +596,11 @@ void particle_program_store(uint slot, Mirai_Vfx_Particle v, bool color, inout P
     }
     p.age = v.age; p.lifetime = v.lifetime;
     p.size = max(v.size, 0.0); p.rotation = v.rotation; p.spin = v.spin; p.seed = v.seed;
-    p.flags = (p.flags & ((1u << RIBBON_SHIFT) - 1u)) | ((v.ribbon & PARTICLE_RIBBON_MASK) << RIBBON_SHIFT);
+    // A Mesh particle keeps where it faces in the bits of a ribbon.
+    uint mesh_bits = (PARTICLE_MESHES - 1u) << MESH_CHOICE_SHIFT;
+    bool mesh = particle_emitters[slot].kinds.y == PARTICLE_RENDER_MESH;
+    uint kept = (mesh ? 0xFFFFFFFFu : (1u << RIBBON_SHIFT) - 1u) & ~mesh_bits;
+    p.flags = (p.flags & kept) | ((v.mesh << MESH_CHOICE_SHIFT) & mesh_bits) | (mesh ? 0u : (v.ribbon & PARTICLE_RIBBON_MASK) << RIBBON_SHIFT);
     if (color) p.color = particle_color_pack(v.color);
 }
 

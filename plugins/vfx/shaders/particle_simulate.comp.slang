@@ -195,6 +195,9 @@ void main(uint3 id : SV_DispatchThreadID) {
         v.velocity = velocity;
     }
     particle_program_store(slot, v, program.x != 0u, p);
+    if (particle_emitters[slot].kinds.y == PARTICLE_RENDER_MESH && particle_emitters[slot].mesh.y == PARTICLE_FACING_VELOCITY && length(v.velocity) > PARTICLE_MESH_FACING_SPEED) {
+        p.flags = (p.flags & ((1u << RIBBON_SHIFT) - 1u)) | particle_heading_pack(normalize(v.velocity));
+    }
     // A trail: an event each time its age passes a period, where it is now, and
     // at the end of the frame one whose point leads it to where its head is.
     if (h > 0.0 && floor(lived * float(TRAILS_PER_SECOND)) != floor((lived - h) * float(TRAILS_PER_SECOND))) event_push(slot, PARTICLE_EVENT_TRAIL, v.position, v.velocity, p.color, v.seed);

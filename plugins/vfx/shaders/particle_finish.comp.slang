@@ -5,7 +5,8 @@
 // ties so a burst keeps one order), and for a ribbon the pieces each segment
 // is cut into to follow the curve through its particles, the most its turn
 // needs to stay within about a pixel, rising at once and coming down a piece
-// a frame.
+// a frame. Mesh particles: a run of the list for each mesh of the emitter,
+// and its draw.
 #define PARTICLES_WRITABLE
 #define PARTICLES_COUNTED
 #include "particles.slang"
@@ -31,6 +32,8 @@ struct Params_Block { uint mode; uint emitters; uint count; uint parity; uint st
 groupshared float keys[PARTICLE_SORT_MAX];
 groupshared uint values[PARTICLE_SORT_MAX];
 groupshared uint partial[MIRAI_GROUP_X];
+groupshared uint mesh_counts[PARTICLE_MESHES];
+groupshared uint mesh_cursors[PARTICLE_MESHES];
 
 bool sorted_before(uint a, uint b) {
     uint ra = values[a] >> SORT_SLOT_BITS, rb = values[b] >> SORT_SLOT_BITS;
@@ -153,6 +156,41 @@ void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
             start += own[k];
         }
         total = partial[MIRAI_GROUP_X - 1u];
+    }
+    // Mesh particles: its list in a run per mesh, through the scratch quarter of
+    // the lists (in no order within a run: a sorted effect has one mesh), and a
+    // draw of each run, its first instance where it starts.
+    if (e.kinds.y == PARTICLE_RENDER_MESH) {
+        uint count = clamp(e.mesh.x, 1u, PARTICLE_MESHES);
+        if (t < PARTICLE_MESHES) mesh_counts[t] = t == 0u && count == 1u ? alive : 0u;
+        GroupMemoryBarrierWithGroupSync();
+        if (count > 1u) {
+            for (uint i = t; i < alive; i += MIRAI_GROUP_X) InterlockedAdd(mesh_counts[particle_mesh_choice(slot, particles[particle_lists[drawn + i]])], 1u);
+            GroupMemoryBarrierWithGroupSync();
+            if (t == 0u) {
+                uint at = 0u;
+                for (uint c = 0u; c < PARTICLE_MESHES; c++) { mesh_cursors[c] = at; at += mesh_counts[c]; }
+            }
+            GroupMemoryBarrierWithGroupSync();
+            uint scratch = 3u * e.program.y + e.range.x;
+            for (uint i = t; i < alive; i += MIRAI_GROUP_X) {
+                uint index = particle_lists[drawn + i];
+                uint at;
+                InterlockedAdd(mesh_cursors[particle_mesh_choice(slot, particles[index])], 1u, at);
+                particle_lists[scratch + at] = index;
+            }
+            DeviceMemoryBarrierWithGroupSync();
+            for (uint i = t; i < alive; i += MIRAI_GROUP_X) particle_lists[drawn + i] = particle_lists[scratch + i];
+        }
+        if (t < PARTICLE_MESHES) {
+            uint first = 0u;
+            for (uint c = 0u; c < t; c++) first += mesh_counts[c];
+            uint words = PARTICLE_MESH_DRAWS_AT + (slot * PARTICLE_MESHES + t) * 4u;
+            particle_queue[words] = t < count ? e.mesh_vertices[t] : 0u;
+            particle_queue[words + 1u] = mesh_counts[t];
+            particle_queue[words + 2u] = 0u;
+            particle_queue[words + 3u] = first;
+        }
     }
     if (t != 0u) return;
     bool mesh = e.kinds.y == PARTICLE_RENDER_MESH;
