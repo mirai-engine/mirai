@@ -233,19 +233,22 @@ document_write :: proc(s:^Session,file:string,as_document:bool) -> Document_Erro
     if !os.is_dir(folder) {_=os.make_directory_all(folder)}
     id:=d.id
     if id=={} {id=asset_id_new(s)}
-    captured:asset.Scene
-    document_capture(s,&captured,id) or_return
-    defer asset.scene_destroy(&captured)
-    if as_document && d.prefab && asset.prefab_refused(&captured)!="" {return .Not_One_Root}
-    if asset.scene_save(&captured,file)!=.None {return .Write_Failed}
+    captured:=new(asset.Scene)
+    if error:=document_capture(s,captured,id);error!=.None {
+        free(captured)
+        return error
+    }
+    kept:=false
+    defer if !kept {
+        asset.scene_destroy(captured)
+        free(captured)
+    }
+    if as_document && d.prefab && asset.prefab_refused(captured)!="" {return .Not_One_Root}
+    if asset.scene_save(captured,file)!=.None {return .Write_Failed}
     if !as_document {return .None}
     // What was written is what the next write carries from.
-    if saved:=new(asset.Scene);asset.scene_load(saved,&a.types,file)==.None {
-        document_previous_free(d)
-        d.previous=saved
-    } else {
-        free(saved)
-    }
+    document_previous_free(d)
+    d.previous,kept=captured,true
     d.id=id
     d.written=history.edits_scene_state(s.edits)
     d.stale=false

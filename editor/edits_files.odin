@@ -29,12 +29,14 @@ import "mirai:std/base"
 // reaches the disk once. A content equal to the disk is no change. Other
 // files (the Slang source of a program) are written at once.
 
-FLUSH_WINDOW :: u64(100_000_000)  // ns a file waits after it last changed: what a tool keeps writing is written once
+FLUSH_WINDOW :: u64(100_000_000)  // ns a file or the document waits after it last changed: what keeps changing is written once
 FLUSH_RETRY :: u64(1_000_000_000) // ns until a write that failed is tried again
 
 Files_Flush :: struct {
     seen:u64,   // the revision of the registry when the files held last changed
     due:u64,    // ns: when what is held is written; 0: at once
+    state:u64,  // the state of the history of the document when it last changed
+    document_due:u64, // ns: when the document is written
     told:Document_Error, // the failure of the document last told
     failed:bool, // a file could not be written: told once
 }
@@ -109,6 +111,11 @@ files_flush :: proc(s:^Session,now:=false) -> bool {
     }
     if s.edits==nil || s.document==nil {return true}
     document_file_follow(s)
+    // The document waits as a file does: steps that follow one another are written once.
+    if state:=history.edits_scene_state(s.edits);!now && state!=s.document.written {
+        if state!=f.state {f.state,f.document_due=state,clock+FLUSH_WINDOW}
+        if clock<f.document_due {return false}
+    }
     error:=document_flush(s)
     if error!=.None && error!=.Importing && error!=f.told {notify(s,fmt.tprintf("%s is not written: %s",document_title(s.document),document_error_text(error)))}
     f.told=error
