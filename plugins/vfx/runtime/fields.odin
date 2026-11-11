@@ -41,7 +41,7 @@ fields_of :: proc(gravities:^core.Table(volume.Gravity,$A),winds:^core.Table(vol
     g:=&f.gravity
     for i in 0..<n {
         e:=core.entity_at(gravities,int(rows[i]))
-        v,at,_:=volume.placed(zones,e)
+        v,at,_,_:=volume.placed(zones,e)
         world,_:=core.get(zones.worlds,e)
         field:=core.at(gravities,int(rows[i]))
         g.volumes[i]=volume.gpu_volume(v,at,field.zone)

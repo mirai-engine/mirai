@@ -140,6 +140,43 @@ path_box :: proc "contextless" (points:[]Path_Point) -> Aabb {
     return box
 }
 
+// How far inside the loop of points a place (x, z) is, seen from above, m:
+// below 0 outside it. The loop goes straight from each point to the next and
+// from the last back to the first, either way round; scale multiplies x and z
+// of every point. -max(f32) for fewer than three points or a place that is not
+// finite.
+loop_depth :: proc "contextless" (points:[]Path_Point,x,z:f32,scale:=[2]f32{1,1}) -> f32 #no_bounds_check {
+    n:=len(points)
+    if n<3 || !(abs(x)<=max(f32) && abs(z)<=max(f32)) {return -max(f32)}
+    inside:=false
+    nearest:=max(f32)
+    a:=points[n-1].position.xz*scale
+    for p in points {
+        b:=p.position.xz*scale
+        if (a.y>z)!=(b.y>z) && x<a.x+(b.x-a.x)*(z-a.y)/(b.y-a.y) {inside=!inside}
+        d:=b-a
+        f:=clamp(((x-a.x)*d.x+(z-a.y)*d.y)/max(d.x*d.x+d.y*d.y,1e-30),0,1)
+        off:=[2]f32{x,z}-a-d*f
+        nearest=min(nearest,off.x*off.x+off.y*off.y)
+        a=b
+    }
+    d:=math.sqrt(nearest)
+    return inside?d:-d
+}
+
+// Twice the area the loop of points closes seen from above, m2, with the sign
+// of the way round it goes: above 0 when it turns from +X toward +Z, so the
+// outward side of the edge from a to b is (b-a).z, -(b-a).x times the sign.
+loop_area :: proc "contextless" (points:[]Path_Point) -> f32 #no_bounds_check {
+    if len(points)<3 {return 0}
+    twice:f32
+    a:=points[len(points)-1].position
+    for p in points {
+        twice+=a.x*p.position.z-a.z*p.position.x
+        a=p.position
+    }
+    return twice
+}
 
 // Arc length table: lengths[i] is the length of the curve from its start to
 // sample i, for points sampled at even steps of the parameter. Both slices

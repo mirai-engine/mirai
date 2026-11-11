@@ -287,7 +287,7 @@ fluids_sync :: proc(
         has_waves:=false
         if waves!=nil {raised,has_waves=core.get(waves,e)}
         if has_waves && shaped && desc.shape==.Plane {
-            desc.waves=fluid_waves_of(raised,desc.yaw,volume_wind(winds,{volumes,worlds,parents,sections},world.position))
+            desc.waves=fluid_waves_of(raised,desc.yaw,volume_wind(winds,{volumes,worlds,parents,sections,splines},world.position))
         } else if has_waves && shaped {
             core.report(problems,e,"physics.fluid_waves","its Fluid_Waves makes no waves: a Box or a path holds still water; make its Volume a Plane, or remove the Fluid_Waves")
         }

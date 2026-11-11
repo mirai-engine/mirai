@@ -182,9 +182,9 @@ medium_add :: proc(media:^Fog_Media,medium:Medium) {core.push(&media.queue,mediu
 @(step="render",loops="game editor",after="render_sync")
 fog_render :: proc(
     state:^Fog_Gpu,volumes:^core.Table(Fog_Volume,.Read),places:^core.Table(volume.Volume,.Read),media:^Fog_Media,worlds:^core.Table(core.World_Transform,.Read),
-    hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),settings:core.Ref(Fog_Settings),app:^host.App,problems:^core.Problems,
+    hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),settings:core.Ref(Fog_Settings),app:^host.App,problems:^core.Problems,
 ) {
-    zones:=volume.Where{places,worlds,parents,sections}
+    zones:=volume.Where{places,worlds,parents,sections,splines}
     state.count,state.dry,state.shade=0,false,false
     state.hidden=settings.hidden==.Every_Fourth?4:1
     added:=core.take(&media.queue)
@@ -195,9 +195,9 @@ fog_render :: proc(
         e:=core.entity_at(volumes,int(row))
         fog:=core.at(volumes,int(row))
         if !(fog.density>0) || render.is_hidden(hidden,parents,e) {continue}
-        place,at,_:=volume.placed(zones,e)
-        if place.shape==.Unbounded {
-            core.report(problems,e,"fog.volume","its Fog_Volume fills nothing: a fog fills a Volume of shape Box, Sphere or Plane; give its entity one, or for a haze over the whole world raise the mie of the air of the Sky")
+        place,at,_,_:=volume.placed(zones,e)
+        if place.shape==.Unbounded || place.shape==.Outline {
+            core.report(problems,e,"fog.volume","its Fog_Volume fills nothing: a fog fills a Volume of shape Box, Sphere or Plane, not the whole world nor an Outline; give its entity one, or for a haze over the whole world raise the mie of the air of the Sky")
             continue
         }
         volume_gpu(state,fog,place,at)

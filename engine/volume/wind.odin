@@ -48,7 +48,7 @@ gpu_wind :: proc(winds:^core.Table(Wind,$A),at:Where) -> (g:Gpu_Wind) {
     for i in 0..<n {
         e:=core.entity_at(winds,int(rows[i]))
         wind:=core.at(winds,int(rows[i]))
-        v,shape,_:=placed(at,e)
+        v,shape,_,_:=placed(at,e)
         pose,found:=core.get(at.worlds,e)
         if !found {pose.transform=mm.TRANSFORM_IDENTITY}
         g.volumes[i]=gpu_volume(v,shape,wind.zone)

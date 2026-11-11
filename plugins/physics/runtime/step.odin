@@ -244,7 +244,7 @@ physics_step :: proc(
     }
     parallel:=Parallel{&app.jobs}
     w.desc.parallel_user=&parallel
-    if gravities!=nil {gravity_apply(state,gravities,{volumes,worlds,parents,sections},problems)}
+    if gravities!=nil {gravity_apply(state,gravities,{volumes,worlds,parents,sections,splines},problems)}
     sim.world_step(w,time.dt)
     w.desc.parallel_user=nil
     strains_apply(w,asked)
