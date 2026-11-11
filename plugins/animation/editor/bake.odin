@@ -98,7 +98,7 @@ retarget_bake :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,cl
             tracks[at]={target=base.text_get(track.target[:]),property=track.property,slot=track.slot,keys=clips.keys[track.first_key:][:track.key_count]};at+=1
         }
         markers:=bake_array(asset.Animation_Marker_Desc,int(clip.marker_count),scratch) or_return
-        for &marker,j in clips.markers[clip.first_marker:][:clip.marker_count] {markers[j]={marker.time,base.text_get(marker.name[:]),marker.duration}}
+        for &marker,j in clips.markers[clip.first_marker:][:clip.marker_count] {markers[j]={marker.time,base.text_get(marker.name[:]),marker.duration,base.text_get(marker.target[:])}}
         root:=clip.root
         if root.translation || root.rotation {
             source_bone:=find(source,{root.bone});root.bone={}

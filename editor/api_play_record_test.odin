@@ -26,7 +26,8 @@ a_recording_reads_its_frames_wide_before_and_after_the_tonemap :: proc(t:^testin
     cube,made:=erender.mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix({position={0,0.5,0},rotation=1,scale={1,1,1}}),{color={0.2,0.9,0.5,1},emission={2,6,3}})
     if !testing.expect(t,made) {return}
     host.assets_commit(app.assets)
-    gpu.scene_set(app.renderer,{cube},nil,{},{background={0.3,0.05,0.02},use_background=true})
+    gpu.scene_set_environment(app.renderer,{},{background={0.3,0.05,0.02},use_background=true})
+    gpu.scene_update(app.renderer,0,{cube},true)
     host.app_camera_set(app,{position={0,1.2,4},forward={0,-0.7,-4},up={0,1,0},fov_y=40,near=0.05,far=100,exposure=gpu.UNIT_EXPOSURE},true)
     size:=[2]i32{64,48}
     images:[2][]f32

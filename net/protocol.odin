@@ -42,7 +42,8 @@ TYPE_CAPACITY :: 128
 TYPE_LEAVES :: 1<<15 // of all the types composed after sealing
 MAX_STATE_WORDS :: 1024
 MAX_STATE_BYTES :: 880 // on the wire: a larger state goes in parts, each field of it within this
-EVENT_MAX_BYTES :: 880
+EVENT_MAX_BYTES :: 880 // an unreliable event on the wire, within a datagram
+RELIABLE_EVENT_MAX_BYTES :: 8*MAX_STATE_WORDS // a reliable event on the wire: its channel streams it in chunks
 
 // A bit per fragment of an object type.
 Fragment_Mask :: u16
@@ -264,10 +265,12 @@ type_kinds :: proc(p:^Protocol,type:Type_Id) -> []Fragment_Id {
 
 // Registers an event: a structure sent to the replicas of an object, or to
 // nobody in particular, once. The name identifies it in the protocol hash.
+// False when it encodes larger than its kind carries (EVENT_MAX_BYTES,
+// RELIABLE_EVENT_MAX_BYTES) or holds more than MAX_STATE_WORDS.
 event_register :: proc(p:^Protocol,name:string,schema:^serial.Schema,type:serial.Type_Index,flags:Event_Flags={}) -> (Event_Id,bool) {
     if p.sealed || len(p.events)>=int(EVENT_NONE) {return EVENT_NONE,false}
     leaves,choices:=len(p.leaves),len(p.choices)
-    desc,ok:=descriptor_build(p,name,{{schema=schema,type=type}},EVENT_MAX_BYTES)
+    desc,ok:=descriptor_build(p,name,{{schema=schema,type=type}},.Reliable in flags?RELIABLE_EVENT_MAX_BYTES:EVENT_MAX_BYTES)
     if !ok {return EVENT_NONE,false}
     if _,error:=append(&p.events,Event_Type{name_hash=desc.name_hash,flags=flags,desc=desc});error!=nil {
         delete(desc.name,p.allocator)

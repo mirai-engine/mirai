@@ -46,7 +46,7 @@ mirai import assets/player/step.wav     # assets/player/step.sound
 
 ## Kinds
 - Engine: `.mesh` `.skeleton` `.mat` `.tex` `.anim` `.sound` `.sound_set` `.ui` `.font` `.strings`
-  `.prompts` `.records` `.scene` (one root: a prefab, `kind=prefab`).
+  `.prompts` `.records` `.scene` (its header says Scene or Prefab).
 - Plugins add `.particle`, `.terrain`, `.foliage`, `.navmesh`, `.character` (`animation`),
   `.fracture` (`destruct`), `.physics_cache`.
 - Folders are named after what they hold (`player`, `arena`), never after a kind; the browser

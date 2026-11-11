@@ -873,6 +873,7 @@ fixed_rows :: proc(p:^Pane,n:^ui.Tree_Node) {
     }
     if n.kind==.Progress {style_changed(p,"Style",value_row(p,"Fills",Enum_Value(ui.Progress_Fill),&st.fill_mode,d.fill_mode,"Which way the bar grows: from a side, from the center or around"))}
     style_changed(p,"Style",value_row(p,"Transition",Seconds_Value,&st.transition,d.transition,"How long its colors take to go from the look of one state to that of the next; 0: at once"))
+    style_changed(p,"Style",value_row(p,"Layout transition",Seconds_Value,&st.layout_transition,d.layout_transition,"How long it takes to go to a new place or size the layout gives it; 0: at once"))
 }
 
 // The rows of the look the pane edits: the box, for what draws one, the

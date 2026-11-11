@@ -42,8 +42,8 @@ of its owner and is taken by the function in parentheses:
 
 Events the libraries emit: `phys.Physics_Events` (`contact_begin`, `overlap_begin`, `sleep`,
 `joint_break`...), `destruct.Destruct_Events`, `gui.UI_Events`, `anim.Animation_Events`,
-`save.Save_Results`, `scene.Scene_Results`, `multiplayer.Net_Events` (filled at the start of each
-tick). They
+`save.Save_Results`, `scene.Scene_Results`, `core.Inbox(T)` of a `@(net_message)` (filled at the
+start of each tick). They
 are cleared and filled once per tick or frame; those of the frame (`Save_Results`, `Scene_Results`)
 are read in a `frame` step, the others with `core.Ref(...)` in the same tick,
 in the stage of the emitting function or a later one, where the reader runs after it

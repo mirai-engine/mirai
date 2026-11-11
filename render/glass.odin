@@ -242,7 +242,7 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 		rhi.cmd_begin_render_pass(cmd, &pass)
 		Params :: struct {light_budget, pad0, pad1, pad2: u32}
 		params := Params{light_budget = settings.light_budget}
-		targets := [2]^rhi.Pipeline{&r.pipelines[.Glass_Filter], shadow_target(r, .Translucent, .Translucent_Hw, .Translucent_Color, .Translucent_Color_Hw)}
+		targets := [2]^rhi.Pipeline{&r.pipelines[.Glass_Filter], pipeline_of(r, .Translucent, {TRANSLUCENT_FRAG_COLOR} if shadows_colored(r) else {})}
 		for entry in s.translucent {
 			for target in targets {
 				rhi.cmd_bind_pipeline(cmd, target^)
@@ -270,7 +270,7 @@ glass_shade :: proc(p: ^Pass, trace_reflections: bool) {
 
 	rhi.cmd_timestamp(cmd, "glass")
 	params := glass_params(p)
-	pipeline := shadow_pipeline(r, .Glass, .Glass_Hw, .Glass_Color, .Glass_Color_Hw)
+	pipeline := pipeline_of(r, .Glass, {GLASS_COMP_COLOR} if shadows_colored(r) else {})^
 	for k := layers - 1; k >= 0; k -= 1 {
 		rhi.cmd_bind_pipeline(cmd, pipeline)
 		glass_layer_bind(p, k)
@@ -367,6 +367,6 @@ glass_inside :: proc(p: ^Pass) {
 	glass_layer_bind(p, 0)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.glass_scene)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.display)
-	glass_walk(p, shadow_pipeline(r, .Glass_Inside, .Glass_Inside_Hw, .Glass_Inside_Color, .Glass_Inside_Color_Hw), &params, true)
+	glass_walk(p, pipeline_of(r, .Glass_Inside, {GLASS_INSIDE_COMP_COLOR} if shadows_colored(r) else {})^, &params, true)
 	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, t.layers if t.layers != 0 else r.dummy_layers)
 }

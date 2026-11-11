@@ -64,12 +64,18 @@ glow:=anim.animation_curve(playback.ptr,e,"pulse")       // Float curve of the c
 
 ## A cutscene
 
-A cinematic is a clip with shots (plugin `cinematics`, which needs `animation`): the entity with
-the `Animation` also has a `Cinematic`; each camera or actor out of it has an `Animation_Target`
-that names it; a `Cinematic_Shot` says from which time of the clip a camera is seen and how long it
-blends in; and a `Cinematic_Viewer` on one more camera shows it to a seat, with the seat's actions
-blocked (`block_mask`). The editor API builds it: `cinematics.add` with part `Timeline`, `Shot` and
-`Actor`, and the animation methods for its keys.
+A cinematic is a clip (plugin `cinematics`, which needs `animation`) of an entity that also has a
+`Cinematic`; each camera or actor out of it has an `Animation_Target` that names it. A marker of
+the clip on a camera is a shot: from its time on the seat (`Cinematic.seat`, none: the focused
+player) sees through it, blended in over the marker's duration as `cam.camera_override` blends,
+with the actions of `Cinematic.block_mask` blocked. A marker on another actor plays the action of
+its name there (`anim.play`) until a span ends, or the clip for a moment.
+
+"The camera moves from A to B, then cuts to C while the character waves" is a timeline entity
+(`Animation` + `Cinematic`), the cameras `Cam` and `C` and the character `Hero` as actors, and one
+clip: Position and Rotation keys of `Cam` from A at 0 to B at 3, a marker `Shot` on `Cam` at 0, a
+marker `Shot` on `C` at 3 and a marker `Wave` on `Hero` at 3 lasting 2. The editor API builds it:
+`cinematics.add` (parts `Timeline`, `Actor`), `animation.key.set` and `animation.marker.set`.
 
 ```odin
 anim.animation_command(requests,intro,.Play)             // as any clip
@@ -80,7 +86,8 @@ for event in events.items {
 }
 ```
 
-- In a network game the server commands the clip and every client follows it.
+- In a network game the server commands the clip, every client follows it and the server plays
+  the actions of the actors.
 - What the clip moved is the game's again when the clip ends.
 
 ## Root motion

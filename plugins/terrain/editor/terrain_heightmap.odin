@@ -70,11 +70,11 @@ heightmap_import :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_R
         for i in 0..<int(stroke.source.layer_count) {terrain.source_layer_set(&next,i,stroke.source.layers[i])}
         next.revision=stroke.source.revision
     }
-    if !terrain.grid_prepare(&next.heights,{},{heightmap.width-1,0,heightmap.height-1},next.allocator) {editor.notify(s,"There is not enough memory for the heightmap");return false}
+    if !terrain.grid_prepare(&next.field,{},{heightmap.width-1,0,heightmap.height-1},next.allocator) {editor.notify(s,"There is not enough memory for the heightmap");return false}
     for value,i in heightmap.values {
         height:=value*tool.height_scale+tool.height_offset
         if abs(height)>terrain.HEIGHT_LIMIT {editor.notify(s,"Heightmap heights exceed the terrain limit");return false}
-        terrain.grid_set(&next.heights,i%heightmap.width,i/heightmap.width,height)
+        terrain.grid_set(&next.field,i%heightmap.width,i/heightmap.width,height)
     }
     // A swap by single stores until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     previous:=stroke.source
@@ -95,11 +95,11 @@ heightmap_export :: proc(s:^editor.Session,tool:^Terrain_Tool,path:string) -> bo
     source:=&stroke.source
     width,height:=int(source.samples.x),int(source.samples.z)
     low,high:=f32(max(f32)),f32(-max(f32))
-    for z in 0..<height {for x in 0..<width {h:=terrain.grid_get(&source.heights,x,z);low,high=min(low,h),max(high,h)}}
+    for z in 0..<height {for x in 0..<width {h:=terrain.grid_get(&source.field,x,z);low,high=min(low,h),max(high,h)}}
     span:=max(high-low,1e-6)
     values,error:=make([]f32,width*height,context.temp_allocator)
     if error!=nil {editor.notify(s,"There is not enough memory for the heightmap");return false}
-    for z in 0..<height {for x in 0..<width {values[x+width*z]=(terrain.grid_get(&source.heights,x,z)-low)/span}}
+    for z in 0..<height {for x in 0..<width {values[x+width*z]=(terrain.grid_get(&source.field,x,z)-low)/span}}
     bytes,encode:=textures.heightmap_encode(values,width,height,context.temp_allocator)
     if encode!=.None {editor.notify(s,fmt.tprintf("Heightmap: %v",encode));return false}
     file:=path

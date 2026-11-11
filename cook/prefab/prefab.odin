@@ -135,6 +135,7 @@ model_prefab :: proc(model:^importer.Imported_Model,assets:^importer.Import_Repo
     // One root, the model's own or the entity that wraps several: the scene is a prefab.
     root,rooted:=asset.prefab_root(&scene)
     if !rooted {return report,.Write}
+    scene.doc.flags+={.Prefab}
     if assets.animation_id!={} {
         animation:=Animation{asset=assets.animation_id,speed=1,weight=1,loop=true,playing=true,fade=0.2}
         if asset.scene_set(&scene,root,"Animation",&animation)!=.None {return report,.Write}

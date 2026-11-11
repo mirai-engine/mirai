@@ -167,7 +167,7 @@ demo enables. How an `editor/` adds steps, panels and tools:
 - **`spawn`** (`Runtime`, `Editor`): spawn points and bodies for the players, which it destroys
   with their seat; the Spawn card of Create
   ([spawn points](../../mirai-gameplay/references/control.md#spawn-points)).
-- **`cinematics`** (depends on `animation`): the shots and the viewers of a clip
+- **`cinematics`** (depends on `animation`): the shots and the actions the markers of a clip stage
   ([cinematics](../../mirai-gameplay/references/cinematics.md)).
 
 - **`paint`** (`Runtime`, `Editor`)

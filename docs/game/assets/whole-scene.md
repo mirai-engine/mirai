@@ -2,7 +2,7 @@
 
 A scene is a file of `assets/`, the source of the game, as a `.ui` is: an agent writes it through
 the API, a person in the editor, and nothing writes over what either saved. A prefab is a scene
-with one root.
+whose kind is Prefab, with one root.
 Terrain, foliage and sea go in one `--batch` file of JSON lines, one line per call, each finding
 what it needs by name ([terrain-foliage](../world/terrain-foliage.md)). The file is sent as the
 calls of one `batch`, which runs them in order and stops at the first that fails:
