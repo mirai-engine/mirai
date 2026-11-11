@@ -119,7 +119,9 @@ registry).
 - `asset.Types` is the context with the schema of the program's types: it is created once and
   passed to reads and writes.
 - **Atomic writing.** `document_save` and `scene_save` write a temporary and rename;
-  `mirai asset set` does not leave the file half-written if a value is invalid.
+  `mirai asset set` does not leave the file half-written if a value is invalid. The readers of
+  `std/serial` share delete and the rename has POSIX semantics, so a save replaces a file that
+  is being read; on Windows it waits a moment for a scanner that holds the file.
 - **A scene is one file**, not one per entity.
 - **The header says Scene or Prefab.** One `.scene` extension and kind; `Header_Flag.Prefab` is
   what whoever made the file chose, never guessed from its roots, and a prefab has exactly one root
