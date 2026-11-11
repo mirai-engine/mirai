@@ -14,27 +14,20 @@ version asks to write it again). An effect is like a material: entities name it
 program parameters alike). Tables: `particle` (`Particle_Info`), `parameters`
 (`Particle_Parameter`) and `hidden` (`Particle_Field`).
 
-- `Particle_Info` is the destination of what is imported from other engines:
-  - cycle (`duration`, `prewarm`), a constant `rate` (a program's `births` gives any other shape),
-    `rate_over_distance` and four `bursts` (time, count, repetitions, interval);
-  - shape (`Surface`: the triangles of what the entity binds or draws; `Bones`: its bones,
-    [surfaces and bones](#surfaces-bones-and-resources)), life, initial velocity (`speed`
-    along the shape's normal and `velocity`, a range in the entity's space), `inherit_velocity`;
-  - forces: `gravity` (the part it takes from the gravity where each particle is),
-    `acceleration`, `drag` (1/s, how fast it reaches the wind where it is), noise and attractor;
-    collision. Gravity (`Gravity`) and wind (`Wind`) are the same volumes that bodies and foliage
-    read, and each particle evaluates them on the GPU where it is
+- `Particle_Info` is the destination of what is imported from other engines; its fields and
+  their units are in `effect.odin`. Besides them:
+  - a constant `rate`: a program's `births` gives any other shape;
+  - the shapes `Surface` and `Bones` take the triangles or bones of what the entity binds or
+    draws ([surfaces and bones](#surfaces-bones-and-resources));
+  - `gravity` and `drag` read the gravity (`Gravity`) and wind (`Wind`) where each particle is, the
+    volumes bodies and foliage read, evaluated on the GPU
     ([volumes](../../mirai-gameplay/references/libraries.md#volume)); those of an effect view fall
     with `GRAVITY`;
-  - look: size, rotation and spin, colors, `intensity`, `emission_mode` (what a particle's color is
-    without light: nits, or what the exposed image shows, the default), size and color curves over
-    life, how it is drawn (`render`, `blend`, `lit`, `sort`, `material`, `mesh`) and sub-UV
-    (`flipbook`, `flipbook_speed`);
   - a `Mesh` particle turns its mesh by its `rotation` (and `spin`) about an axis of its own;
-  - lights: up to `lights` of its particles light the scene; they cast shadows only with
-    `light_shadows` ([lights](#particle-lights));
-  - sub effect (`trigger`, `sub_particle`, `sub_count`), what the game hears from its particles
-    (`report`, [reports](#reports)) and Vfx program (`program`).
+  - its particles light the scene with `lights`, and cast shadows only with `light_shadows`
+    ([lights](#particle-lights));
+  - the editor shows each field in the group its `group` tag names, or in that of the field
+    before it ([document](vfx-editor.md#particle-document)).
 - Curves have `PARTICLE_CURVE_KEYS` keys with non-decreasing times from 0 to 1; the surplus ones
   repeat the last at 1.
 - `parameters` stores values for the program by name (`Particle_Parameter`: type, from one to four
@@ -55,15 +48,11 @@ program parameters alike). Tables: `particle` (`Particle_Info`), `parameters`
 A `Particle_Emitter` on an entity shows an effect. An effect of several emitters is a prefab,
 placed with `scene.spawn`.
 
-`Particle_Emitter`:
-
-- `particle`: the effect; none uses `effect.PARTICLE_DEFAULTS`.
-- `active`: emits from the start; turning it off lets the live particles finish.
-- `loop`: the effect's cycle (`duration`) starts again when it ends.
-- `preview`: in the editor, with the world not playing, it emits and restarts when it ends.
-- `destroy_when_done`: while playing, the entity and what hangs from it are destroyed when all the
-  emitters of the tree finished their cycle and their last particles (and those of their sub
-  effect) died.
+`Particle_Emitter` names the effect (none: `effect.PARTICLE_DEFAULTS`). It emits by its fields
+alone: `active` while playing (start and stop set it), `preview` in the editor while the world does
+not play; turning either off lets the live particles finish. `destroy_when_done` destroys, while
+playing, the entity and what hangs from it once every emitter of the tree finished its cycle and
+its last particles (and those of its sub effect) died.
 
 Values of an instance:
 
@@ -150,7 +139,7 @@ constraint solver reads the other particles already moved).
 
 - Over particles: once per live particle, like `update`. Neighbours go through a grid: one stage
   adds each particle to the words of its cell (`mirai_vfx_grid_word_add`) and a later one reads
-  the cells around it; the cook refuses a stage that declares `neighbors`.
+  the cells around it.
 - Over a grid: once per cell of its region; each iteration reads what the previous one left and
   leaves its cell's layers in the other copy, which keeps those it does not leave.
   A single emitter walks a grid with its stages; another that does so in the same frame is the
@@ -229,8 +218,7 @@ resource.
 - A channel is a name ([births](../../mirai-core/references/core.md#births)), keyed as a
   [data channel](#data-channels) is: whoever pushes and whoever listens say it as text
   (`fluids` `brushes` and `displacers`, `water` `splashes`, `terrain` `dust`, the demo's
-  `impacts`). A program's `channel` resource reads the channel whose name is its own
-  (`channel_needs`).
+  `impacts`). A program's `channel` resource reads the channel whose name is its own.
 
 - A silent `Particle_Channel` (`silent`) starts no particles: its program reads the births alone,
   through a `channel` resource of the same name (the brushes of the `fluids` plugin).
@@ -312,21 +300,22 @@ Requests (`Particle_Requests`, a `core.Queue` of the world; `particles_tick` tak
   `request_values_clear`, applied, write `Particle_Override`.
 - One for an entity without an emitter, or that the emitter does not take, is the `vfx.request`
   problem of that entity, with the `Error` and its `error_message`.
-- `status(clocks, emitter, e)` gives state (`Idle`, `Playing`, `Paused`, `Finishing`, `Done`),
-  seconds, generation and births.
+- `status(clocks, emitter, e)` gives where the clock of an emitter is.
 
 To the GPU:
 
 - `particles_sync` (`render`, both loops, after `render_sync`) builds each frame the world's
-  emitters (`Emitter_Desc`) with the births of its clock that it did not start and its age, and the
-  seconds that the world advanced: those of its ticks while playing (a paused Play does not move
-  its particles) and the frame in the editor. A rollback that repeats ticks does not start again
-  what was started; one that started fewer starts what comes after.
+  emitters (`Emitter_Desc`: the resolved `Particle_Info` and what the frame resolves of it) with the
+  births of its clock that it did not start and its age, and the seconds that the world advanced:
+  those of its ticks while playing (a paused Play does not move its particles) and the frame in the
+  editor. A rollback that repeats ticks does not start again what was started; one that started
+  fewer starts what comes after.
 - `Particle_Sync` is `@(storage,host,by_world)`: each world stores what it told the GPU about its
-  emitters in a `core.Entity_Map` (`Emitter_Shown`: resolved effect, programs, started births,
-  generation and pose), its pool and the pipelines of its stages, and releases the emitters that
-  left from `core.changes`. The effect is resolved again if the asset, its values or parameters, or
-  the shaders change.
+  emitters in a `core.Entity_Map` (`Emitter_Shown`: the `Emitter_Desc` of the emitter and of its
+  sub effect, the needs of its program, started births, generation and pose), its pool and the
+  pipelines of its stages, and releases the emitters that left from `core.changes`. The effect is
+  resolved again (`shown_resolve`, the same for the world's emitters and the UI's) if the asset,
+  its values or parameters, the shaders or the scene's vertices change.
 - A new emitter starts at the current world pose and from the second frame interpolates the
   motion. `Emitter_Shown` keeps the previous pose even if the emitter is hidden or the application
   has no renderer.
@@ -358,10 +347,11 @@ To the GPU:
 - Nothing allocates in a stable frame: the pool's tables are built when it is created, the emitter
   table goes up to the frame memory once (`pass_rows_upload`) and all its passes bind it, and a
   program's parameters go up only when they change (`pass_buffer_write`).
-- What an emitter says about its effect (`Emitter_Desc` except what changes each frame) is built
-  when the key of what it shows changes (asset, values, parameters, shaders, scene rebuilt), and its
-  `Gpu_Emitter` row only when its `revision` changes (0: every frame) or its range starts; each
-  frame writes its place, its births, the step, its lights and its age, and uploads the table.
+- An effect field exists once: in `Particle_Info`, which `Emitter_Desc` carries as it is, and in
+  the one place that packs it into the `Gpu_Emitter` row (`emitter_row`). The desc is built when
+  the key of what it shows changes, the row only when its `revision` changes (0: every frame) or
+  its range starts; each frame writes its place, its births, the step, its lights and its age, and
+  uploads the table.
 - `Gpu_Particle` and `Gpu_Emitter` are equal to `particles.slang`; the values that that file copies
   from the plugin (flags, types, sizes and capacities) are compared with those of Odin by a test.
   A pool's free and draw lists go in one buffer, and the programs' `Attributes` (those that their
