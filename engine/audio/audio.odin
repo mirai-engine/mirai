@@ -73,13 +73,15 @@ Audio_Source :: struct {
     min_distance:f32 `mirai:"min=0,unit=m"`,
     max_distance:f32 `mirai:"min=0,unit=m"`,
     rolloff:f32 `mirai:"min=0"`, // how fast it falls: 1 is the curve as its model says it
+    near_radius:f32 `mirai:"min=0,unit=m"`, // nearer, it is heard less from its direction, so passing through the listener does not jump between ears
+    delay:bool, // starts later by its distance over the speed of sound, as thunder after its flash
     doppler:f32 `mirai:"min=0"`, // 0: none; 1: the physical shift of pitch as it and the listener move
     reverb:f32 `mirai:"min=0,max=1"`, // share of it the room of the listener reverberates
     directivity:f32 `mirai:"min=0,max=1"`, // 0: the same all around; 0.5: loudest toward -Z of the entity and silent behind; 1: silent at its sides
     directivity_power:f32 `mirai:"min=0"`,  // how narrow the directivity is: 1 as it is, higher narrower
 }
 
-AUDIO_SOURCE_DEFAULT :: Audio_Source{bus=BUS_EFFECTS,volume=1,pitch=1,playing=true,attenuation=.Inverse,min_distance=1,max_distance=20,rolloff=1,directivity_power=1}
+AUDIO_SOURCE_DEFAULT :: Audio_Source{bus=BUS_EFFECTS,volume=1,pitch=1,playing=true,attenuation=.Inverse,min_distance=1,max_distance=20,rolloff=1,near_radius=1,directivity_power=1}
 
 // A spatial source that what collides between it and the listener hides:
 // Audio_Source_State.occlusion is the part of it out of sight, 0 to 1, which
@@ -619,9 +621,10 @@ transmission_through :: proc(h:^Hearing,source:core.Entity,from,listener:[3]f32)
 @(private)
 attenuation_of :: proc "contextless" (source:Audio_Source) -> mixer.Attenuation {
     a:=mixer.ATTENUATION_DEFAULT
-    a.model,a.rolloff=source.attenuation,source.rolloff
+    a.model,a.rolloff,a.delay=source.attenuation,source.rolloff,source.delay
     if source.min_distance>0 {a.min_distance=source.min_distance}
     if source.max_distance>0 {a.max_distance=source.max_distance}
+    if source.near_radius>0 {a.near_radius=source.near_radius}
     return a
 }
 
