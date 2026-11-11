@@ -26,13 +26,7 @@
 // Of what an rgba16f image holds.
 #define FOG_IMAGE_MOST 65000.0
 
-// The light the fog turns towards the eye from it to a depth, and what it
-// lets through: a cell of the grid holds them up to its far side.
-float4 fog_seen_at(float2 uv, float depth, bool empty) {
-    float s = fog_seen_slice(depth, empty);
-    float4 f = seen.SampleLevel(linear_sampler, float3(uv, max(s - 0.5, 0.5) / float(fog.grid.z + fog.far)), 0.0);
-    return s < 1.0 ? lerp(float4(0.0, 0.0, 0.0, 1.0), f, s) : f;
-}
+float4 fog_seen_at(float2 uv, float depth, bool empty) { return media_seen(seen, fog_grid(), uv, depth, empty); }
 
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]

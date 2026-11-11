@@ -43,12 +43,12 @@ rotation_limits_blend_from_the_input_pose_and_leave_zero_weight_unchanged :: pro
 in_place_root_motion_preserves_gameplay_actor_placement_and_restores_internal_bone_reference :: proc(t:^testing.T) {
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
     rig,bone:=core.create(&entities),core.create(&entities)
-    transforms:core.Table(core.Transform);parents:core.Table(core.Parent);roots:core.Table(Root_Motion)
-    defer core.table_destroy(&transforms);defer core.table_destroy(&parents);defer core.table_destroy(&roots)
+    transforms:core.Table(core.Transform);parents:core.Table(core.Parent)
+    defer core.table_destroy(&transforms);defer core.table_destroy(&parents)
     rest:=[2]mm.Transform{{{3,0,0},mm.quat_axis_angle({0,1,0},0.2),{1,1,1}},{{0,1,0},1,{1,1,1}}}
     core.add(&transforms,rig,core.from_math(rest[0]));core.add(&transforms,bone,core.from_math(rest[1]))
-    core.add(&parents,bone,{entity=rig});core.add(&roots,rig,ROOT_MOTION_DEFAULT)
-    core.table_settle(&transforms,&entities);core.table_settle(&parents,&entities);core.table_settle(&roots,&entities)
+    core.add(&parents,bone,{entity=rig})
+    core.table_settle(&transforms,&entities);core.table_settle(&parents,&entities)
     state:=constraint_fixture_state(rig,rest[:]);defer playing_free(&state)
     state.targets[0],state.bindings[0].target=0,0
     state.bindings[0].driven={.Position,.Rotation};state.bindings[1].entity=bone
@@ -59,16 +59,19 @@ in_place_root_motion_preserves_gameplay_actor_placement_and_restores_internal_bo
     clip,_:=lib.clip_add(&library,{loop=.Loop,tracks={{target=0,property=.Position,keys={{time=0,value={}},{time=1,value={1,0,0,0}}}},{target=0,property=.Rotation,keys={{time=0,value={0,0,0,1}},{time=1,value={imag(turn),jmag(turn),kmag(turn),real(turn)}}}}}})
     lib.fader_play(&state.fader,clip)
     playback:Playback;defer playback_free(&playback)
-    bound:=host.Content_Animation{lib=library}
+    roots:=[1]asset.Animation_Root{{translation=true,rotation=true}}
+    bound:=host.Content_Animation{lib=library,clip_count=1,roots=roots[:]}
     testing.expect(t,tracks_bind(&playback,&state,&bound))
     cache:Animation_Constraints;defer constraints_free(&cache)
     problems:core.Problems
+    animation:=ANIMATION_DEFAULT;animation.root_motion=.In_Place
+    state.root={translation=true,rotation=true,in_place=true}
     expected:=rest[0]
     for _ in 0..<3 {
         motion:=root_motion_sample(&library,state.fader,ROOT_MOTION_DEFAULT,0.25)
         lib.fader_advance(&library,&state.fader,0.25,nil)
-        pose_sample(&playback,&state,&library,ANIMATION_DEFAULT,core.read(&transforms),nil)
-        constraints_apply(&state,&playback,{roots=core.read(&roots),problems=&problems},&cache,&transforms,core.read(&parents),0.25)
+        pose_sample(&playback,&state,&bound,animation,core.read(&transforms))
+        constraints_apply(&state,&playback,{problems=&problems},&cache,&transforms,core.read(&parents),0.25)
         pose_write(&playback,&state,&transforms)
         current,_:=core.get(&transforms,rig)
         testing.expect_value(t,core.to_math(current),expected)
@@ -77,13 +80,6 @@ in_place_root_motion_preserves_gameplay_actor_placement_and_restores_internal_bo
         core.edit(&transforms,rig)^=core.from_math(expected)
     }
     testing.expect(t,linalg.length(expected.position-rest[0].position)>0.5 && mm.quat_angle(expected.rotation,rest[0].rotation)>0.3)
-    state.bindings[0].driven={}
-    state.local[0]=expected
-    state.local[1].position={5,2,0};state.local[1].rotation=mm.quat_axis_angle({0,1,0},0.8)
-    core.edit(&roots,rig).bone=bone_ref("11")
-    constraints_apply(&state,&playback,{roots=core.read(&roots),problems=&problems},&cache,&transforms,core.read(&parents),0.25)
-    testing.expect_value(t,state.local[0],expected)
-    testing.expect_value(t,state.local[1],rest[1])
     testing.expect_value(t,problems.count,0)
 }
 

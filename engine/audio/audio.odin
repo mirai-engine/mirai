@@ -3,6 +3,7 @@ package audio
 import "base:intrinsics"
 import "core:math"
 import "core:math/linalg"
+import "core:slice"
 import "mirai:core"
 import "mirai:host"
 import "mirai:platform"
@@ -73,13 +74,15 @@ Audio_Source :: struct {
     min_distance:f32 `mirai:"min=0,unit=m"`,
     max_distance:f32 `mirai:"min=0,unit=m"`,
     rolloff:f32 `mirai:"min=0"`, // how fast it falls: 1 is the curve as its model says it
+    near_radius:f32 `mirai:"min=0,unit=m"`, // nearer, it is heard less from its direction, so passing through the listener does not jump between ears
+    delay:bool, // starts later by its distance over the speed of sound, as thunder after its flash
     doppler:f32 `mirai:"min=0"`, // 0: none; 1: the physical shift of pitch as it and the listener move
     reverb:f32 `mirai:"min=0,max=1"`, // share of it the room of the listener reverberates
     directivity:f32 `mirai:"min=0,max=1"`, // 0: the same all around; 0.5: loudest toward -Z of the entity and silent behind; 1: silent at its sides
     directivity_power:f32 `mirai:"min=0"`,  // how narrow the directivity is: 1 as it is, higher narrower
 }
 
-AUDIO_SOURCE_DEFAULT :: Audio_Source{bus=BUS_EFFECTS,volume=1,pitch=1,playing=true,attenuation=.Inverse,min_distance=1,max_distance=20,rolloff=1,directivity_power=1}
+AUDIO_SOURCE_DEFAULT :: Audio_Source{bus=BUS_EFFECTS,volume=1,pitch=1,playing=true,attenuation=.Inverse,min_distance=1,max_distance=20,rolloff=1,near_radius=1,directivity_power=1}
 
 // A spatial source that what collides between it and the listener hides:
 // Audio_Source_State.occlusion is the part of it out of sight, 0 to 1, which
@@ -198,6 +201,7 @@ Audio_Output :: struct {
 Mixer_Output :: struct {
     device:[AUDIO_OUTPUT_NAME_BYTES]u8,
     set:bool,
+    missing:bool, // device is not connected: the default plays until it is
 }
 
 Audio_Stats :: struct {
@@ -398,7 +402,8 @@ buses_apply :: proc(m:^Mixer,settings:^Audio_Settings,volumes:^Audio_Volumes=nil
     }
 }
 
-// Plays the mixer on the output of the settings when they change. The mixer
+// Plays the mixer on the output of the settings when they change; while that
+// output is not connected, on the default, until it comes back. The mixer
 // keeps its voices and its clock. An application whose mixer the system does
 // not play (headless, or one nobody plays) has no output to change.
 @(step="late",stage="end",loops="game editor")
@@ -406,20 +411,30 @@ audio_output :: proc(output:Audio_Output,applied:^Mixer_Output,app:^host.App,pro
     if app.mixer==nil {return}
     kind:=output.kind if output.kind<=max(Output_Kind) else .Speakers
     if mixer.mixer_output(app.mixer)!=kind {mixer.mixer_set_output(app.mixer,kind)}
-    if !platform.audio_device_is_open(app.platform) || applied.set && applied.device==output.device {return}
-    first:=!applied.set
-    applied.device,applied.set=output.device,true
+    p:=app.platform
+    if !platform.audio_device_is_open(p) {return}
+    changes:=platform.audio_device_changes(p)
     device:=output.device
     name:=base.text_get(device[:])
+    lost:bool
+    if applied.set && applied.device==device {
+        // The chosen output left, or one came that may be it coming back.
+        lost=.Lost in changes && !applied.missing
+        back:=.Added in changes && applied.missing && slice.contains(platform.audio_device_names(p,context.temp_allocator),name)
+        if !lost && !back {return}
+    }
+    first:=!applied.set
+    applied.device,applied.set=device,true
     // The application opened the default.
     if first && name=="" {return}
-    p:=app.platform
-    if error,found:=platform.audio_device_switch(p,name);error!=.None {
+    error,found:=platform.audio_device_switch(p,"" if lost else name)
+    applied.missing=error!=.None || lost || !found
+    if error!=.None {
         // The default, which the application opened, opens again.
         reopened:=platform.audio_device_open(p,app.mixer)==.None
         core.report(problems,core.NONE,"audio.output","the output \"%s\" did not open (%v): %s; choose another in Audio_Output.device, or leave it empty for the default",name,error,reopened?"the sound plays on the default one":"the game plays no sound")
-    } else if !found {
-        core.report(problems,core.NONE,"audio.output","Audio_Output.device \"%s\" is not an output of this machine, so the sound plays on the default one; give it one of %v, or leave it empty",name,platform.audio_device_names(p,context.temp_allocator))
+    } else if applied.missing {
+        core.report(problems,core.NONE,"audio.output","the output \"%s\" is not connected, so the sound plays on the default one until it is; give Audio_Output.device one of %v, or leave it empty",name,platform.audio_device_names(p,context.temp_allocator))
     }
 }
 
@@ -619,9 +634,10 @@ transmission_through :: proc(h:^Hearing,source:core.Entity,from,listener:[3]f32)
 @(private)
 attenuation_of :: proc "contextless" (source:Audio_Source) -> mixer.Attenuation {
     a:=mixer.ATTENUATION_DEFAULT
-    a.model,a.rolloff=source.attenuation,source.rolloff
+    a.model,a.rolloff,a.delay=source.attenuation,source.rolloff,source.delay
     if source.min_distance>0 {a.min_distance=source.min_distance}
     if source.max_distance>0 {a.max_distance=source.max_distance}
+    if source.near_radius>0 {a.near_radius=source.near_radius}
     return a
 }
 

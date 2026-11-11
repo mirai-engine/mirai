@@ -6,7 +6,7 @@ import "mirai:std/base"
 
 // Why a collider has no shape in the simulation.
 @(private)
-Shape_Failure :: enum u8 {None,No_Mesh,No_Geometry,No_Heightfield,Hull,Geometry_Budget,Shapes,Convex_Radius}
+Shape_Failure :: enum u8 {None,No_Mesh,No_Geometry,No_Heightfield,Mirrored_Heightfield,Hull,Geometry_Budget,Shapes,Convex_Radius,Sheared}
 
 @(private)
 shape_problem :: proc(s:^Sync,e:core.Entity,collider:Collider,failure:Shape_Failure) {
@@ -22,6 +22,10 @@ shape_problem :: proc(s:^Sync,e:core.Entity,collider:Collider,failure:Shape_Fail
         core.report(s.problems,e,"physics.collider_geometry","its %v Collider takes its shape from mesh %s, which has no collision geometry: the mesh is missing, or a generated mesh was freed; give Mesh_Renderer.mesh a mesh of the assets, or use another Collider kind",collider.kind,mesh)
     case .No_Heightfield:
         core.report(s.problems,e,"physics.collider_heightfield","its Heightfield Collider takes its shape from mesh %s, which is not a valid heightfield; give it the mesh of a terrain, or use another Collider kind",mesh)
+    case .Mirrored_Heightfield:
+        core.report(s.problems,e,"physics.collider_mirrored","its Heightfield Collider has a negative axis in its world scale, and a heightfield cannot be mirrored; make the scale positive, or mirror the terrain itself")
+    case .Sheared:
+        core.report(s.problems,e,"physics.collider_sheared","its %v Collider turns under a scale that is not the same along the turned axes, which shears it, and a shape cannot be sheared: it collides with that scale along its own axes; make the scale of its parents uniform, or turn it only by quarter turns about their axes",collider.kind)
     case .Hull:
         core.report(s.problems,e,"physics.collider_hull","the convex hull of mesh %s could not be built for its Hull Collider: its points are degenerate, or the hull needs more than 255 faces or vertices; use a simpler mesh, or a Mesh or Box Collider",mesh)
     case .Geometry_Budget:

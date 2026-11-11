@@ -77,20 +77,20 @@ rig_modifier_api_discovers_named_operations_effectors_and_retarget_chains_of_the
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000011","diagnostics":true}`).code,0)
     testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"diagnostic"`))
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000012","controls":[{"kind":"Chain_Retarget","name":"transfer","weight":0.4}]}`).code,0)
-    testing.expect(t,len(play.modifier_requests.controls.items)==1 && play.modifier_requests.controls.items[0].rig==second && play.modifier_requests.controls.items[0].slot==0)
+    testing.expect(t,len(play.animation_requests.controls.items)==1 && play.animation_requests.controls.items[0].rig==second && play.animation_requests.controls.items[0].slot==0)
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector":"right","target":{"position":[1,2,3]}}]}`).code,0)
-    testing.expect_value(t,play.modifier_requests.queue.items[0].effector,u8(1))
+    testing.expect_value(t,play.animation_requests.goals.items[0].effector,u8(1))
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector":"left","target":{"position":[4,5,6]}}]}`).code,0)
-    testing.expect_value(t,play.modifier_requests.queue.items[1].effector,u8(0))
+    testing.expect_value(t,play.animation_requests.goals.items[1].effector,u8(0))
     for request in ([8]string{`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector":"absent"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector_index":0}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Spring","name":"tail","target":"0000000000000012"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Chain_Retarget","name":"transfer"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Twist","name":"roll"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector":"left","weight":0.5}]}`,`{"entity":"0000000000000012","goals":[{"kind":"Multi_IK","name":"body","effector":"left"}]}`}) {result:=authoring_test_execute(f,"request",request);testing.expectf(t,result.code==api.INVALID_PARAMS,"%s: %d %s",request,result.code,result.data)}
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000012","controls":[{"kind":"Chain_Retarget","name":"transfer","slot":0}]}`).code,api.INVALID_PARAMS)
-    testing.expect_value(t,len(play.modifier_requests.queue.items),2)
+    testing.expect_value(t,len(play.animation_requests.goals.items),2)
     preview:Preview_Params;copy(preview.entity[:],"0000000000000011");preview.controls[0]={kind=.Chain_Retarget,weight=.3,enabled=true};base.text_set(preview.controls[0].name[:],"transfer")
     preview.goals[0]={kind=.Multi_IK,target={position={0,1,0},rotation=1,scale={1,1,1}}};base.text_set(preview.goals[0].name[:],"body");base.text_set(preview.goals[0].effector[:],"right")
     call:=api.Call{raw=`{"controls":[{"kind":"Chain_Retarget","name":"transfer"}],"goals":[{"kind":"Multi_IK","name":"body","effector":"right","target":{"position":[0,1,0]}}]}`,allocator=context.temp_allocator}
     testing.expect(t,request_apply(&f.session,&call,core.test_world_ref(&play),first,&preview,0,nil))
-    testing.expect_value(t,len(play.modifier_requests.controls.items),2);testing.expect_value(t,len(play.modifier_requests.queue.items),3)
+    testing.expect_value(t,len(play.animation_requests.controls.items),2);testing.expect_value(t,len(play.animation_requests.goals.items),3)
     call.raw=`{"goals":[{"kind":"Multi_IK","name":"body","effector":"right","target":{"position":[0,1,0]},"contact":0.5}]}`
     testing.expect(t,!request_apply(&f.session,&call,core.test_world_ref(&play),first,&preview,0,nil))
-    testing.expect(t,strings.contains(call.error.data,`"path":"goals[0].contact"`));testing.expect_value(t,len(play.modifier_requests.queue.items),3)
+    testing.expect(t,strings.contains(call.error.data,`"path":"goals[0].contact"`));testing.expect_value(t,len(play.animation_requests.goals.items),3)
 }

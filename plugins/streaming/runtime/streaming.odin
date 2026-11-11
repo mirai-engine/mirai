@@ -7,8 +7,9 @@ import mm "mirai:std/math"
 
 // The sections whose rule is Spatial load by where the players of this end
 // are, with the residency of the sources (scene.resident): a section loads off
-// once a source, or where its motion takes it, comes within load of its box
-// (or the distance of the source), turns on within active, and turns off or
+// once a source, or where its motion takes it, comes within its distance of
+// its box (Scene_Reference.distance, or load; or the distance of the source),
+// turns on within the share of it that active is of load, and turns off or
 // drops once every source is scene.RESIDENT_KEEP times either away. Each end
 // streams its own: the state of a Spatial section does not travel. Only what
 // moved is looked at again: all of them when the sources moved, one whose
@@ -17,7 +18,7 @@ import mm "mirai:std/math"
 @(storage,setting)
 Streaming_Settings :: struct {
     active:f32 `mirai:"min=0,unit=m"`, // a section turns on when a source comes this near its box
-    load:f32 `mirai:"min=0,unit=m"`,   // and loads, off, this near
+    load:f32 `mirai:"min=0,unit=m"`,   // and loads, off, this near, unless it has a distance of its own
 }
 
 STREAMING_SETTINGS_DEFAULT :: Streaming_Settings{active=40,load=80}
@@ -29,14 +30,6 @@ Streaming_Seen :: struct {
     references:core.Seen, // the table of Scene_Reference
     worlds:core.Seen,
     settings:Streaming_Settings,
-}
-
-// How far a point is from the box of a section: 0 inside.
-section_distance :: proc "contextless" (reference:scene.Scene_Reference,pose:mm.Transform,point:[3]f32) -> f32 {
-    local:=mm.quat_rotate(mm.quat_inverse(pose.rotation),point-pose.position)
-    half:=reference.extents*linalg.abs(pose.scale)
-    outside:=linalg.max(linalg.abs(local)-half,[3]f32{})
-    return linalg.length(outside)
 }
 
 @(step="frame",loops="game editor")
@@ -55,8 +48,9 @@ streaming_sections :: proc(sources:core.Ref(scene.Streaming_Sources),references:
         at:=core.row_of(worlds,e)
         if at<0 || !all && !core.changed(worlds,moved,at) {continue}
         pose:=core.at(worlds,at).transform
+        load:=reference.distance>0?reference.distance:s.load
         // How near the sources come to its box, in loads.
-        near:=scene.sources_near(sources.ptr,mm.transform_matrix({pose.position,pose.rotation,{1,1,1}}),s.load)
+        near:=scene.sources_near(sources.ptr,mm.transform_matrix({pose.position,pose.rotation,{1,1,1}}),load)
         half:=reference.extents*linalg.abs(pose.scale)
         nearest:=scene.box_near(&near,-half,half)
         want:=scene.Section_State.Unloaded
@@ -75,6 +69,8 @@ Streaming_Crossings :: struct {
     hierarchy:u64,       // the version of the hierarchy the homes are of
     references:core.Seen, // the table of Scene_Reference it looked at
     worlds:core.Seen,
+    boxes:scene.Section_Boxes, // of the sections, as of references and worlds
+    holding:[dynamic]scene.Section_Box, // the boxes that hold a point, while one is looked at
 }
 
 // The section an entity hangs in, unless it moves with something that moves.
@@ -101,6 +97,17 @@ streaming_crossings :: proc(
     moved:=core.changes(worlds,&crossings.worlds)
     sections:=core.touched(references,&crossings.references)
     if !moved.written && !sections {return}
+    // The boxes follow the references and where they are.
+    reshaped:=sections || moved.all
+    if !reshaped && moved.written {
+        for row in 0..<core.count(references) {
+            at:=core.row_of(worlds,core.entity_at(references,row))
+            if at>=0 && core.changed(worlds,moved,at) {reshaped=true;break}
+        }
+    }
+    if reshaped && !scene.section_boxes_build(&crossings.boxes,references,worlds) {
+        core.report(problems,core.NONE,"streaming.memory","out of memory to find the boxes of the sections; what moves stays in the section it hangs from: free memory")
+    }
     for row in 0..<core.count(motions) {
         if !core.at(motions,row).awake {continue}
         e:=core.entity_at(motions,row)
@@ -123,8 +130,8 @@ streaming_crossings :: proc(
         if section==core.NONE {continue}
         reference,_:=core.get(references,section)
         home,placed:=core.get(worlds,section)
-        if !placed || reference.extents=={} || section_distance(reference,home.transform,core.at(worlds,at).position)==0 {continue}
-        if !crossing_hang(references,worlds,hierarchy,parents,transforms,e,at,section) {continue}
+        if !placed || reference.extents=={} || scene.section_holds(reference,home.transform,core.at(worlds,at).position) {continue}
+        if !crossing_hang(crossings,worlds,hierarchy,parents,transforms,e,at,section) {continue}
         core.remove(members,e)
         crossings.homes[index]={}
     }
@@ -134,7 +141,7 @@ streaming_crossings :: proc(
         e:=t.entities[row]
         at:=core.row_of(worlds,e)
         if at<0 || core.raw_row(core.raw(parents),e)>=0 || !sections && !core.changed(worlds,moved,at) {continue}
-        crossing_hang(references,worlds,hierarchy,parents,transforms,e,at,core.NONE,false)
+        crossing_hang(crossings,worlds,hierarchy,parents,transforms,e,at,core.NONE,false)
     }
 }
 
@@ -142,15 +149,15 @@ streaming_crossings :: proc(
 // is loaded and on and whose box holds it; when none does, from the root, or,
 // with root false, it stays where it hangs.
 @(private)
-crossing_hang :: proc(references:core.Read(scene.Scene_Reference),worlds:core.Read(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),parents:^core.Table(core.Parent),transforms:^core.Table(core.Transform),e:core.Entity,at:int,from:core.Entity,root:=true) -> (hung:bool) {
-    position:=core.at(worlds,at).position
+crossing_hang :: proc(crossings:^Streaming_Crossings,worlds:core.Read(core.World_Transform),hierarchy:core.Ref(core.Hierarchy),parents:^core.Table(core.Parent),transforms:^core.Table(core.Transform),e:core.Entity,at:int,from:core.Entity,root:=true) -> (hung:bool) {
     target:=core.NONE
     target_pose:=mm.TRANSFORM_IDENTITY
-    for r in 0..<core.count(references) {
-        other,candidate:=core.at(references,r),core.entity_at(references,r)
-        pose,ok:=core.get(worlds,candidate)
-        if candidate==from || !ok || other.loaded=={} || scene.section_state(other)!=.Active || other.extents=={} {continue}
-        if section_distance(other,pose.transform,position)==0 {target,target_pose=candidate,pose.transform;break}
+    clear(&crossings.holding)
+    scene.section_boxes_at(&crossings.boxes,core.at(worlds,at).position,&crossings.holding)
+    for box in crossings.holding {
+        if box.entity==from || box.reference.loaded=={} || scene.section_state(box.reference)!=.Active {continue}
+        target,target_pose=box.entity,box.pose
+        break
     }
     if target==core.NONE && !root {return false}
     local,ok:=mm.transform_relative(core.at(worlds,at).transform,target_pose)

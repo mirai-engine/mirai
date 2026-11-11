@@ -15,8 +15,8 @@ import nav "plugins:navigation/runtime"
 // which registers the mind by name and gives the agents far from the players
 // their tick. The registry is the same for every world; the state of each
 // agent is plain data in its Mind_Agent and copies with the world. A tick
-// that runs again decides nothing, and the clients see what each agent does
-// in its Mind_Presentation.
+// that runs again decides nothing. What an action plays (anim.play, anim.look)
+// reaches the clients through the replicated state of the animation.
 
 MINDS_CAPACITY :: 16
 MIND_NAME :: 16
@@ -45,21 +45,6 @@ Mind_Agent :: struct {
     mind:Mind_Name `mirai:"text"`,
     state:ai.Mind `mirai:"hidden"`,
 }
-
-// What the players see of what the mind of an agent does, written where it
-// decides and replicated: the clients show it (an animation, where the head
-// turns) without running the mind. It travels if the entity has it when it
-// is first replicated: its prefab carries it with its Mind_Agent.
-@(component,shared,replicated,description="What the players see of what the mind of this agent does: its action and step, what it looks at and the animation it asks for. Written on the server, replicated to the clients.")
-Mind_Presentation :: struct {
-    action:u16 `mirai:"readonly"`,         // the value of the enum of the action that runs, ai.MIND_NONE
-    step:u16 `mirai:"readonly"`,           // of the step it runs, ai.MIND_NONE
-    look:core.Entity `mirai:"readonly"`,  // what it looks at, or none
-    look_point:[3]f32 `mirai:"readonly,unit=m,precision=0.01"`, // where it looks without an entity
-    animation:u16 `mirai:"readonly"`,     // the game's id of the animation it asks for
-    animations:u16 `mirai:"readonly"`,    // times it asked for one: the same animation asked again shows again
-}
-MIND_PRESENTATION_DEFAULT :: Mind_Presentation{action=ai.MIND_NONE,step=ai.MIND_NONE,animation=ai.MIND_NONE}
 
 MIND_KEEP :: f32(0.05) // the margin of the running action of an agent over the others
 
@@ -118,7 +103,7 @@ mind_name :: proc "contextless" (name:string) -> Mind_Name {
     return key
 }
 
-// What every mind reads and asks for: its agents, how they walk and show,
+// What every mind reads and asks for: its agents, how they walk,
 // the smart objects and the claims. The generated step of a mind binds it
 // first in the context of the mind, which the procedures of the mind reach
 // through their ai.Mind_Context: the helpers of behavior take only the
@@ -127,7 +112,6 @@ mind_name :: proc "contextless" (name:string) -> Mind_Name {
 Mind_World :: struct {
     minds:^Minds,
     agents:^core.Table(Mind_Agent),
-    presentations:^core.Table(Mind_Presentation),
     requests:^nav.Nav_Requests,
     paths:core.Read(nav.Nav_Path),
     fars:core.Read(nav.Nav_Far),
@@ -140,8 +124,7 @@ Mind_World :: struct {
 
 // Ticks every agent of a mind, after registering it: ctx.holder is the agent,
 // as the holder of what it claims, and ctx.user is w, the start of the
-// context of the mind. After its tick its Mind_Presentation (an agent without
-// one gets it before) shows the action and the step it runs. An agent far
+// context of the mind. An agent far
 // from the players (nav.Nav_Far) is off and decides on: its mind ticks once
 // every step of what is far (nav.nav_far_decide), and what it claims lasts
 // until its next tick. Only a world that plays decides, and a tick that runs
@@ -185,15 +168,7 @@ minds_unknown :: proc(minds:core.Ref(Minds),agents:core.Read(Mind_Agent),time:co
 @(private)
 mind_run :: proc(w:^Mind_World,e:core.Entity,m:^ai.Mind,acts:^[$A]$P,think:proc(t:^ai.Think(A)),ctx:^ai.Mind_Context) {
     ctx.holder=u64(e)
-    if w.presentations!=nil {
-        if _,found:=presentation_read(w.presentations,e);!found {core.add(w.presentations,e,MIND_PRESENTATION_DEFAULT)}
-    }
     ai.mind_tick(m,acts,think,ctx)
-    shown,found:=presentation_read(w.presentations,e)
-    if !found {return}
-    next:=shown
-    next.action,next.step=ai.mind_running(m)
-    if next!=shown {presentation_write(w.presentations,e,next)}
 }
 
 // The agent a procedure of a mind runs for: of its ai.Act or its ai.Think.
@@ -201,44 +176,6 @@ agent :: #force_inline proc "contextless" (a:^$T) -> core.Entity {return core.En
 
 @(private)
 world_of :: #force_inline proc "contextless" (a:^$T) -> ^Mind_World {return (^Mind_World)(a.user)}
-
-// The Mind_Presentation of an agent: the one it is given in this function,
-// or its row, on or off while it is far.
-@(private)
-presentation_read :: proc(presentations:^core.Table(Mind_Presentation),e:core.Entity) -> (shown:Mind_Presentation,ok:bool) {
-    if presentations==nil {return}
-    t:=core.raw(presentations)
-    found:=core.raw_added(t,type_info_of(Mind_Presentation),e)
-    if found==nil {found=core.raw_find(t,type_info_of(Mind_Presentation),e)}
-    if found==nil {return}
-    return (cast(^Mind_Presentation)found)^,true
-}
-
-@(private)
-presentation_write :: proc(presentations:^core.Table(Mind_Presentation),e:core.Entity,shown:Mind_Presentation) {
-    if row:=cast(^Mind_Presentation)core.raw_staged(core.raw(presentations),type_info_of(Mind_Presentation),e);row!=nil {row^=shown}
-}
-
-// The agent looks at an entity, or at a point without one, as the players
-// see it. Without its Mind_Presentation, nothing.
-present_look :: proc(a:^ai.Act($A),target:core.Entity,point:[3]f32={}) {
-    w,e:=world_of(a),agent(a)
-    shown,found:=presentation_read(w.presentations,e)
-    if !found || shown.look==target && shown.look_point==point {return}
-    shown.look,shown.look_point=target,point
-    presentation_write(w.presentations,e,shown)
-}
-
-// The agent asks for an animation by the game's id: the players see it
-// start, again each time it is asked. Without its Mind_Presentation, nothing.
-present_animation :: proc(a:^ai.Act($A),animation:u16) {
-    w,e:=world_of(a),agent(a)
-    shown,found:=presentation_read(w.presentations,e)
-    if !found {return}
-    shown.animation=animation
-    shown.animations+=1
-    presentation_write(w.presentations,e,shown)
-}
 
 // The Nav_Path of the agent of an action or a think procedure: on, or off
 // while it is far.
