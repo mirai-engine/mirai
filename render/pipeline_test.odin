@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "mirai:rhi"
 
 @(private = "file")
 expect_error :: proc(t: ^testing.T, desc: Render_Pipeline_Desc, words: string, loc := #caller_location) {
@@ -145,7 +146,10 @@ pipeline_resources_follow_the_view_by_shift_align_and_pixels :: proc(t: ^testing
 	testing.expect_value(t, bindings[9], u32(SLOT_PASS9))
 	testing.expect_value(t, bindings[10], u32(SLOT_INSTANCES))
 	testing.expect_value(t, bindings[CUSTOM_PASS_SLOTS - 1], u32(SLOT_POINTS))
-	for binding in bindings {testing.expect(t, binding != SLOT_MATERIAL_SAMPLER && binding != SLOT_PARAMS)}
+	// The material points bind the texture feedback between the dispatches of
+	// any pass: a slot of a pass would lose what the pass bound there.
+	testing.expect(t, TEXTURE_FEEDBACK_SLOT < rhi.MAX_BUFFER_BINDING_SLOTS)
+	for binding in bindings {testing.expect(t, binding != SLOT_MATERIAL_SAMPLER && binding != SLOT_PARAMS && binding != TEXTURE_FEEDBACK_SLOT)}
 }
 
 // Pipelines no frame asks for make room for others; the standard ones stay.
