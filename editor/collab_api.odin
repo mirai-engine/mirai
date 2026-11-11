@@ -14,7 +14,7 @@ Api_Collab_Host_Params :: struct {
 }
 
 Api_Collab_Join_Params :: struct {
-    invite:[64]u8 `mirai:"text,label=The code of the invitation of the host (like R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A)"`,
+    invite:[64]u8 `mirai:"text,label=The code of the invitation of the host (like R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT)"`,
     name:[COLLAB_NAME_BYTES]u8 `mirai:"text,optional"`,
     discard:bool `mirai:"optional,label=Replace the scene even with unsaved changes"`,
 }
@@ -198,7 +198,7 @@ share_build :: proc(s:^Session) {
         case st==nil || st.role==.None:
             if share_row(ctx,"Name") {ui.text_field(ctx,shell_id(g,"share_name"),c.name[:],&c.name_length,{height=24,size=11,live=true,keep_caret=true})}
             if c.joining {
-                if share_row(ctx,"Invitation") {ui.text_field(ctx,shell_id(g,"share_address"),c.join[:],&c.join_length,{height=24,size=11,placeholder="R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A",live=true,keep_caret=true})}
+                if share_row(ctx,"Invitation") {ui.text_field(ctx,shell_id(g,"share_address"),c.join[:],&c.join_length,{height=24,size=11,placeholder="R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT",live=true,keep_caret=true})}
             }
             if c.error!=.None {
                 if share_row(ctx,"Error") {ui.label(ctx,collab_error_text(c.error),th.font_label,th.danger_soft,0)}

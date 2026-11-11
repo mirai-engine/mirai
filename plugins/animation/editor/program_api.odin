@@ -193,7 +193,7 @@ program_modifier_count :: proc(profile:anim.Pose_Profile,kind:anim.Modifier_Kind
     switch kind {
     case .IK: return len(profile.ik)
     case .Look: return len(profile.look)
-    case .Grounding: return len(profile.grounding)
+    case .Grounding: return 1 if profile.grounding.count>0 else 0
     case .Limit: return len(profile.limits)
     case .Chain_IK: return len(profile.chain_ik)
     case .Twist: return len(profile.twist)
@@ -215,7 +215,7 @@ program_modifier_definition :: proc(profile:anim.Pose_Profile,kind:anim.Modifier
     switch kind {
     case .IK:name=anim.modifier_operation_name(&profile.ik[slot]);result.weight,result.enabled=profile.ik[slot].weight,profile.ik[slot].enabled
     case .Look:name=anim.modifier_operation_name(&profile.look[slot]);result.weight,result.enabled=profile.look[slot].weight,profile.look[slot].enabled
-    case .Grounding:name=anim.modifier_operation_name(&profile.grounding[slot]);result.weight,result.enabled=profile.grounding[slot].weight,profile.grounding[slot].enabled
+    case .Grounding:grounding:=profile.grounding;name=anim.modifier_operation_name(&grounding);result.weight,result.enabled=grounding.weight,grounding.enabled
     case .Limit:name=anim.modifier_operation_name(&profile.limits[slot]);result.weight,result.enabled=profile.limits[slot].weight,profile.limits[slot].enabled
     case .Chain_IK:name=anim.modifier_operation_name(&profile.chain_ik[slot]);result.weight,result.enabled=profile.chain_ik[slot].weight,profile.chain_ik[slot].enabled
     case .Twist:name=anim.modifier_operation_name(&profile.twist[slot]);result.weight,result.enabled=profile.twist[slot].weight,profile.twist[slot].enabled
@@ -314,7 +314,7 @@ program_modifier_inspect :: proc(s:^editor.Session,call:^api.Call) {
                 api.write_key(call.out,"alpha");api.write_number(call.out,alpha);api.write_key(call.out,"target_alpha");api.write_number(call.out,target);api.write_bool(call.out,"requested_enabled",requested);api.write_key(call.out,"fade_remaining");api.write_number(call.out,remaining)
                 diagnostic,_:=anim.animation_rig_diagnostic(runtime,entity,kind,u16(slot),core.world_storage_of(world,anim.Animation_Constraints))
                 result:=Modifier_Diagnostic_Result{valid=diagnostic.valid,reached=diagnostic.reached,residual=diagnostic.residual,angular_error=diagnostic.angular_error,iterations=diagnostic.iterations}
-                if kind==.Grounding {result=program_grounding_diagnostic(world,entity,u16(slot),profile.grounding[slot])}
+                if kind==.Grounding {result=program_grounding_diagnostic(world,entity,u16(slot),profile.grounding)}
                 api.write_key(call.out,"diagnostic");authoring_write_value(call,&result,type_info_of(Modifier_Diagnostic_Result))
             }
             api.write_key(call.out,"effectors");serial.write_u8(call.out,'[')

@@ -230,12 +230,12 @@ test_noise :: proc(i:int) -> f32 {
 // FRAMES of a looping noise placed at position for a listener at the origin
 // looking down -Z, after the voice has settled.
 @(private="file")
-placed_noise :: proc(t:^testing.T,output:Output_Kind,position:[3]f32,occlusion:f32=0,frames:=8192,step:=0) -> []f32 {
+placed_noise :: proc(t:^testing.T,output:Output_Kind,position:[3]f32,occlusion:f32=0,frames:=8192,step:=0,near_radius:f32=0) -> []f32 {
     m:=test_mixer(t,{output=output})
     defer mixer_destroy(m)
     noise:=test_mono(t,m,RATE,test_noise)
     desc:=VOICE_DEFAULT
-    desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,position,{model=.None,min_distance=1,max_distance=100}
+    desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,position,{model=.None,min_distance=1,max_distance=100,near_radius=near_radius}
     desc.occlusion=occlusion
     testing.expect(t,voice_play(m,noise,desc)!=0)
     test_render(m,CHUNK_FRAMES*2)
@@ -295,6 +295,72 @@ headphones_mirror_left_and_right_with_level_and_time_differences :: proc(t:^test
     right_lag,left_lag:=lag(right,1,0),lag(left,0,1)
     // A head is about 0.6 ms across for sound at the side: 20 to 40 samples at 48 kHz.
     testing.expectf(t,right_lag>=15 && right_lag<=45 && abs(right_lag-left_lag)<=3,"interaural delays %d and %d samples",right_lag,left_lag)
+}
+
+// Balance of a stretch of output: -1 all left, 1 all right.
+@(private="file")
+balance :: proc(out:[]f32) -> f32 {
+    l,r:=math.sqrt(energy(out,2,0)),math.sqrt(energy(out,2,1))
+    return f32((r-l)/max(r+l,1e-30))
+}
+
+@(test)
+a_source_through_the_listener_crosses_between_ears_without_a_jump :: proc(t:^testing.T) {
+    // The worst change of balance between chunks of a noise moved 5 cm a chunk (about 9 m/s)
+    // along X from 2 m at the left to 2 m at the right, at z.
+    pass :: proc(t:^testing.T,output:Output_Kind,z,near_radius:f32) -> (worst,first,last:f32) {
+        m:=test_mixer(t,{output=output})
+        defer mixer_destroy(m)
+        desc:=VOICE_DEFAULT
+        desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{-2,0,z},{model=.None,near_radius=near_radius}
+        voice:=voice_play(m,test_mono(t,m,RATE,test_noise),desc)
+        test_render(m,CHUNK_FRAMES*2)
+        first=balance(test_render(m,CHUNK_FRAMES))
+        last=first
+        for step in 1..=80 {
+            voice_set_position(m,voice,{-2+f32(step)*0.05,0,z})
+            now:=balance(test_render(m,CHUNK_FRAMES))
+            worst=max(worst,abs(now-last))
+            last=now
+        }
+        return
+    }
+    db :: proc(out:[]f32) -> f32 {return f32(10*math.log10(energy(out,2,1)/max(energy(out,2,0),1e-30)))}
+    for output in Output_Kind {
+        beside,_,_:=pass(t,output,-1,0)
+        through,first,last:=pass(t,output,0,1)
+        flip,_,_:=pass(t,output,0,0)
+        testing.expectf(t,first<-0.5 && last>0.5,"%v: it goes from the left to the right: %v to %v",output,first,last)
+        testing.expectf(t,through<=3*beside,"%v: through the listener it moves %v a chunk, 1 m ahead %v",output,through,beside)
+        testing.expectf(t,flip>3*beside,"%v: without a near radius it flips at once: %v",output,flip)
+        left:=placed_noise(t,output,{-0.05,0,0},near_radius=0.5)
+        right:=placed_noise(t,output,{0.05,0,0},near_radius=0.5)
+        testing.expectf(t,abs(db(right)-db(left))<1,"%v: 5 cm to each side differ by %v dB",output,db(right)-db(left))
+        // Beyond its near radius a voice sounds as it did without one, to the sample.
+        far:=placed_noise(t,output,{2,1,-1},near_radius=1)
+        plain:=placed_noise(t,output,{2,1,-1})
+        for i in 0..<len(far) {
+            if !testing.expectf(t,far[i]==plain[i],"%v: sample %d differs",output,i) {break}
+        }
+    }
+}
+
+@(test)
+a_voice_with_delay_starts_when_its_sound_arrives :: proc(t:^testing.T) {
+    for delay in ([?]bool{false,true}) {
+        m:=test_mixer(t,{output=.Speakers})
+        defer mixer_destroy(m)
+        desc:=VOICE_DEFAULT
+        desc.loop,desc.spatial,desc.position,desc.attenuation=true,true,{0,0,-343},{model=.None,delay=delay}
+        testing.expect(t,voice_play(m,test_mono(t,m,64,test_one),desc)!=0)
+        out:=test_render(m,RATE+4)
+        start:=-1
+        for i in 0..<RATE+4 {
+            if out[i*2]!=0 {start=i;break}
+        }
+        // 343 m at 343 m/s: one second.
+        testing.expectf(t,start==(RATE if delay else 0),"delay %v: it starts at frame %d",delay,start)
+    }
 }
 
 @(test)
@@ -434,6 +500,11 @@ spatial_voices_take_hostile_input_without_harm :: proc(t:^testing.T) {
     }
     d:=desc;d.attenuation.min_distance=nan
     testing.expect_value(t,voice_play(m,noise,d),Voice(0))
+    d=desc;d.attenuation.near_radius=nan
+    testing.expect_value(t,voice_play(m,noise,d),Voice(0))
+    // So far that its sound would arrive after the clock runs out.
+    d=desc;d.position,d.attenuation.delay={1e18,0,0},true
+    testing.expect(t,voice_play(m,noise,d)!=0)
     d=desc;d.rotation=quaternion(real=nan,imag=0,jmag=0,kmag=0)
     testing.expect_value(t,voice_play(m,noise,d),Voice(0))
     // The listener at the source, absurd numbers that are numbers, and a zero rotation.

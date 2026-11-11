@@ -12,6 +12,7 @@ import "mirai:platform"
 import volume "mirai:engine/volume"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import sdl "vendor:sdl3"
 
 @(private="file") HUM :: base.Asset_Id{1,1}
 @(private="file") STEP_A :: base.Asset_Id{2,2}
@@ -518,7 +519,7 @@ the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb :: proc(t:^
 }
 
 @(test)
-the_output_follows_the_setting_and_one_the_system_does_not_list_plays_the_default :: proc(t:^testing.T) {
+the_output_follows_the_setting_and_the_default_plays_while_it_is_not_connected :: proc(t:^testing.T) {
     m,error:=mixer.mixer_create({})
     if !testing.expect_value(t,error,mixer.Error.None) {return}
     defer mixer.mixer_destroy(m)
@@ -548,6 +549,28 @@ the_output_follows_the_setting_and_one_the_system_does_not_list_plays_the_defaul
     // Unchanged, it is not opened again.
     audio_output(output,&applied,&app,&problems)
     testing.expect_value(t,core.problem_find(&problems,core.NONE,"audio.output").count,u64(1))
+    // The chosen output is unplugged: the next frame plays the default and
+    // tells it once; plugged in again, the chosen one plays again.
+    count:i32
+    devices:=sdl.GetAudioPlaybackDevices(&count)
+    if !testing.expect(t,devices!=nil && count>0) {return}
+    defer sdl.free(devices)
+    base.text_set(output.device[:],string(sdl.GetAudioDeviceName(devices[0])))
+    audio_output(output,&applied,&app,&problems)
+    testing.expect(t,!applied.missing)
+    unplugged,plugged:sdl.Event
+    unplugged.type=.AUDIO_DEVICE_REMOVED
+    unplugged.adevice.which=devices[0]
+    plugged.type=.AUDIO_DEVICE_ADDED
+    plugged.adevice.which=devices[0]
+    steps:=[?]struct{event:^sdl.Event,missing:bool}{{&unplugged,true},{nil,true},{&plugged,false},{nil,false}}
+    for step in steps {
+        if step.event!=nil {testing.expect(t,sdl.PushEvent(step.event))}
+        platform.frame_begin(p)
+        audio_output(output,&applied,&app,&problems)
+        testing.expect(t,applied.missing==step.missing && platform.audio_device_is_open(p))
+        testing.expect_value(t,core.problem_find(&problems,core.NONE,"audio.output").count,u64(2))
+    }
 }
 
 // A voice draws its variation from its set once: the source tunes it in

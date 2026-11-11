@@ -10,11 +10,13 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
+import evolume "mirai:engine/volume"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:rhi"
 import "mirai:rhi/shared_device"
 import "mirai:std/base"
+import fog "plugins:fog/runtime"
 import "plugins:vfx/runtime/effect"
 import "plugins:vfx/runtime/gridfile"
 
@@ -210,7 +212,7 @@ particles_of_every_kind_draw_around_glass_without_validation_errors :: proc(t: ^
 	},true)
 	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	smoke := test_emitter(1, {0, 0, 0})
-	smoke.blend, smoke.lit, smoke.sort, smoke.collision = .Alpha, true, true, .Screen
+	smoke.blend, smoke.lit, smoke.sort, smoke.collision = .Alpha, true, true, .World
 	smoke.speed, smoke.shape, smoke.shape_angle, smoke.acceleration = {1, 2}, .Cone, 0.4, {0, -4, 0}
 	smoke.noise_strength, smoke.noise_frequency, smoke.noise_speed = 2, 1, 1
 	smoke.event, smoke.event_target, smoke.event_count = .Death, 2, 4
@@ -1629,5 +1631,63 @@ programs_see_the_vertex_colors_and_the_object_of_their_point_drawn_and_reflected
 		testing.expectf(t, left.g > 20 && left.g < left.r, "%s, the scale of its object along y: %v", what, left)
 		testing.expectf(t, right.b > left.b + 40, "%s, its +x side of the object: %v against %v", what, right, left)
 	}
+	expect_clean(t, f.device)
+}
+
+// Particles go behind the media of the view: a fog box between the eye and a
+// sprite takes what the sprite sends by what the box lets through, and a
+// sprite in front of the box sends as much as without it.
+@(test)
+particle_sprites_go_behind_the_fog_of_the_view :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 192, 128, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, 0, -20}, {40, 40, 0.2}), tint = {0.02, 0.02, 0.02}}},true)
+	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
+	camera := gpu.Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	BEHIND :: [3]f32{-0.8, 0, -9}
+	FRONT :: [3]f32{0.8, 0, -3}
+	behind := test_emitter(1, BEHIND)
+	front := test_emitter(2, FRONT)
+	behind.lifetime, front.lifetime = {5, 5}, {5, 5}
+	behind.intensity, front.intensity = 0.5, 0.5
+	// Two metres of a medium that stops 1.5 of each metre and scatters nothing: it lets through e^-3.
+	medium := fog.Medium{box = {position = {0, 0, -6}, rotation = 1, scale = {6, 6, 2}}, density = 1.5}
+	state := fog.Fog_Gpu{}
+	settings_fog := fog.Fog_Settings{hidden = .Every_Frame}
+	media: fog.Fog_Media
+	defer delete(media.queue.items)
+	volumes: core.Table(fog.Fog_Volume)
+	places: core.Table(evolume.Volume)
+	worlds: core.Table(core.World_Transform)
+	hidden: core.Table(erender.Hidden)
+	parents: core.Table(core.Parent)
+	DT :: f32(1.0 / 60)
+	seconds: f32
+	seen: [2][2][3]f32 // without and with the fog: the sprite behind it and the one in front
+	for &frame, foggy in seen {
+		for i in 0 ..< 10 {
+			behind.spawns = test_burst(1) if foggy == 0 && i == 0 else {}
+			front.spawns = behind.spawns
+			testing.expect(t, frame_emitters(f, &f.sync, {behind, front}, DT))
+			if foggy == 1 {fog.medium_add(&media, medium)}
+			fog.fog_render(&state, core.read(&volumes), core.read(&places), &media, core.read(&worlds), core.read(&hidden), core.read(&parents), core.ref(&settings_fog), &f.app, nil)
+			seconds += DT
+			testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = seconds}), r.error)
+		}
+		rhi.device_wait_idle(f.device)
+		pixels, w, _, ok := gpu.renderer_capture(r)
+		if !testing.expect(t, ok, r.error) {return}
+		frame = {pixel(pixels, w, project(r, camera, BEHIND)), pixel(pixels, w, project(r, camera, FRONT))}
+		delete(pixels)
+	}
+	open, misty := seen[0], seen[1]
+	testing.expectf(t, open[0].r > 40 && open[1].r > 40, "without fog both sprites show: %v", open)
+	testing.expectf(t, misty[0].r < open[0].r * 0.3, "the sprite behind the fog %v is dimmed by it, from %v", misty[0], open[0])
+	testing.expectf(t, abs(misty[1].r - open[1].r) <= 0.1 * open[1].r + 2, "the sprite in front of the fog %v shows as without it %v", misty[1], open[1])
 	expect_clean(t, f.device)
 }

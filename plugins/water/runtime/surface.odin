@@ -1,6 +1,7 @@
 package water
 
 import "core:math"
+import "core:math/linalg"
 import "core:mem"
 import "mirai:core"
 import render "mirai:engine/render"
@@ -117,38 +118,42 @@ dry_span :: proc "contextless" (b:Gpu_Body) -> (floor,top:f32) {
     return min(a,c),max(a,c)
 }
 
-// Whether a dry box of the frame takes out of a plane of lower priority some of the surface its waves can be at.
+// Whether a dry box of the frame takes out of a water of lower priority some of the surface its waves can be at.
 @(private)
 dry_crosses :: proc "contextless" (state:^Water_Gpu,dry,plane:int) -> bool {
     d,p:=state.bodies[dry],state.bodies[plane]
-    if !(d.surface.z>0.5) || !(p.surface.y>0.5) || !(d.surface.w>p.surface.w) {return false}
+    if !(d.surface.z>0.5) || p.surface.z>0.5 || !(d.surface.w>p.surface.w) {return false}
     reach:=phys.waves_reach(state.waves[plane])
     floor,top:=dry_span(d)
     return floor<p.surface.x+reach && top>p.surface.x-reach
 }
 
-// Whether a dry box of the frame crosses the surface of some plane.
+// Whether a dry box of the frame crosses the surface of some water.
 @(private)
-crosses_plane :: proc "contextless" (state:^Water_Gpu,dry:int) -> bool {
+crosses_water :: proc "contextless" (state:^Water_Gpu,dry:int) -> bool {
     for j in 0..<state.count {if dry_crosses(state,dry,j) {return true}}
     return false
 }
 
 // The grid of the plane `body` of the frame around the camera: as it is generated while the plane is still
-// and no dry box crosses it, else through its sheet.
+// and no dry box crosses it, else through its sheet. That of a lake, whose walls are `walls`, only through
+// its sheet, which ends at them.
 @(private)
-sheet_place :: proc(state:^Water_Gpu,assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,view:core.View,body:int,e:core.Entity,material:u32) {
+sheet_place :: proc(state:^Water_Gpu,assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,view:core.View,body:int,e:core.Entity,material:u32,walls:Maybe(mm.Aabb)=nil) {
     top:=state.bodies[body].surface.x
     middle:=[3]f32{math.round(view.position.x/SURFACE_STEP)*SURFACE_STEP,top,math.round(view.position.z/SURFACE_STEP)*SURFACE_STEP}
     instance,usable:=render.mesh_instance(assets,{mesh=state.surface},mm.transform_matrix({middle,1,1}))
     if !usable {return}
     instance.material=render.Material_Handle(material)
     instance.object_id,instance.copy_owner=u64(e),base.name_hash("water")
-    defer render.instance_add(extras,instance)
+    lake,bounded:=walls.?
+    drawn:=!bounded
+    defer if drawn {render.instance_add(extras,instance)}
     moving:=state.waves[body].count>0
     lowest:=f32(0)
-    cut:=false
+    cut:=bounded
     key:=base.hash64(mem.ptr_to_bytes(&middle))
+    if bounded {key=base.hash64(mem.ptr_to_bytes(&lake),key)}
     for j in 0..<state.count {
         if !dry_crosses(state,j,body) {continue}
         cut=true
@@ -183,6 +188,12 @@ sheet_place :: proc(state:^Water_Gpu,assets:^host.Assets,renderer:^render.Render
         reach:=phys.waves_reach(state.waves[body])
         bounds_min:=[3]f32{rest_min.x-reach,min(lowest,-reach),rest_min.z-reach}
         bounds_max:=[3]f32{rest_max.x+reach,reach,rest_max.z+reach}
+        if bounded {
+            // Within its walls.
+            bounds_min.xz=linalg.max(bounds_min.xz,lake.min.xz-middle.xz)
+            bounds_max.xz=linalg.min(bounds_max.xz,lake.max.xz-middle.xz)
+            if !(bounds_min.x<=bounds_max.x && bounds_min.z<=bounds_max.z) {return}
+        }
         if !render.deformable_update(renderer,sheet.mesh,bounds_min,bounds_max) {return}
         sheet.key,sheet.made,sheet.middle,sheet.body,sheet.write=key,made,middle,body,true
         sheet.eye={view.position.x-middle.x,view.position.z-middle.z}
@@ -190,6 +201,7 @@ sheet_place :: proc(state:^Water_Gpu,assets:^host.Assets,renderer:^render.Render
     // Drawn as last written, which is where the grid is.
     if sheet.middle!=middle {return}
     instance.mesh=sheet.mesh
+    drawn=true
 }
 
 // The sheets no plane drew in this frame go; those written in it get the pass that writes them.

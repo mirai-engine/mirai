@@ -87,7 +87,7 @@ bone_joint :: proc(joint_rows:core.Read(phys.Joint),parents:core.Read(core.Paren
 
 @(private)
 ragdoll_release :: proc(state:^Ragdoll_State,entity:core.Entity,bodies:^phys.Body_Requests,joints:^phys.Joint_Requests,joint_rows:core.Read(phys.Joint),parents:core.Read(core.Parent)) {
-    if state.active && state.mode==.Animated {phys.manipulation_end(bodies,entity,true)}
+    if state.active && state.mode==.Animated {phys.manipulation_end(bodies,entity)}
     if state.active && state.mode==.Driven {
         if joint,_,found:=bone_joint(joint_rows,parents,entity);found {phys.set_joint_drive_enabled(joints,joint,false)}
     }
@@ -151,7 +151,7 @@ ragdoll_prepare :: proc(configs:core.Read(Ragdoll),bones:core.Read(Ragdoll_Bone)
             if state.error!=.None || config.mode==.Disabled {ragdoll_release(state,entity,bodies,joints,joint_rows,parents);continue}
             if state.active && state.mode!=config.mode {ragdoll_release(state,entity,bodies,joints,joint_rows,parents)}
             target:=mm.transform_compose(runtime.pose[state.binding.index],bone.offset)
-            if config.mode==.Animated {phys.manipulation_target(bodies,entity,target.position,target.rotation)}
+            if config.mode==.Animated {phys.manipulation_target(bodies,entity,target.position,target.rotation,follow=true)}
             if config.mode==.Driven {
                 if joint_entity,joint,exists:=bone_joint(joint_rows,parents,entity);exists {
                     if config.hertz==0 || config.max_torque==0 {

@@ -134,26 +134,65 @@ hull_bodies_rest_on_boxes_and_on_each_other :: proc(t:^testing.T) {
 
 // A flat square grid of triangles around the origin, `cells` per side, with an optional height function.
 @(private)
-test_grid_mesh :: proc(w:^World,cells:int,size:f32,height:proc(x,z:f32)->f32=nil) -> (Mesh_Handle,bool) {
+// dirty: each cell also repeats a triangle from another corner and has three corners in a row, of no area.
+test_grid_mesh :: proc(w:^World,cells:int,size:f32,height:proc(x,z:f32)->f32=nil,dirty:=false) -> (Mesh_Handle,bool) {
     vertices:=make([]Vec3,(cells+1)*(cells+1),context.temp_allocator)
-    indices:=make([]u32,6*cells*cells,context.temp_allocator)
+    indices:=make([dynamic]u32,0,12*cells*cells,context.temp_allocator)
     for row in 0..=cells {
         for column in 0..=cells {
             x,z:=(f32(column)/f32(cells)-0.5)*size,(f32(row)/f32(cells)-0.5)*size
             vertices[row*(cells+1)+column]={x,height==nil?0:height(x,z),z}
         }
     }
-    cursor:=0
     for row in 0..<cells {
         for column in 0..<cells {
             a:=u32(row*(cells+1)+column)
             b:=a+1
             c:=a+u32(cells+1)
             d:=c+1
-            for index in ([6]u32{a,c,b, b,c,d}) {indices[cursor]=index;cursor+=1}
+            append(&indices,a,c,b, b,c,d)
+            if dirty {append(&indices,c,b,a, a,b,a)}
+            if dirty && column+2<=cells {append(&indices,a,b,b+1)}
         }
     }
-    return mesh_create(w,{vertices=vertices,indices=indices})
+    return mesh_create(w,{vertices=vertices,indices=indices[:]})
+}
+
+@(test)
+slivers_and_repeats_of_a_mesh_are_dropped_and_its_real_edges_stay :: proc(t:^testing.T) {
+    // A table top and its front, split at m under the edge a-b: a sliver a,b,m closes the seam.
+    a,b,m,e,f,c,d:u32=0,1,2,3,4,5,6
+    vertices:=[7]Vec3{{0,0,0},{2,0,0},{1,0,0},{0,0,-1},{2,0,-1},{0,-1,0},{2,-1,0}}
+    top:=[]u32{a,b,f, a,f,e}
+    front:=[]u32{c,d,m, c,m,a, d,b,m}
+    dirt:=[]u32{a,b,m, b,f,a, a,a,b}
+    indices:=make([dynamic]u32,context.temp_allocator)
+    append(&indices,..top)
+    append(&indices,..dirt[:3])
+    append(&indices,..front)
+    append(&indices,..dirt[3:])
+    edge_hit :: proc(mesh:^Mesh,from,to:u32) -> (hit:bool,found:bool) {
+        for triangle,at in mesh.triangles {
+            for k in 0..<3 {
+                p,q:=triangle[k],triangle[(k+1)%3]
+                if p==from && q==to || p==to && q==from {return mesh.flags[at]>>u32(k)&1==1,true}
+            }
+        }
+        return
+    }
+    for inside_out in ([2]bool{false,true}) {
+        mesh:Mesh
+        if !testing.expect(t,mesh_build(&mesh,{vertices[:],indices[:],nil,inside_out},context.allocator)) {return}
+        defer mesh_release(&mesh,context.allocator)
+        testing.expect_value(t,len(mesh.triangles),5)
+        for edge in ([?][3]u32{{a,b,1},{a,m,1},{m,b,1},{a,f,0}}) {
+            hit,found:=edge_hit(&mesh,edge[0],edge[1])
+            testing.expectf(t,found && hit==(edge[2]==1),"edge %v-%v of the mesh turned %v: hit %v",edge[0],edge[1],inside_out,hit)
+        }
+        triangle:=mesh.triangles[0]
+        n:=cross(vertices[triangle[1]]-vertices[triangle[0]],vertices[triangle[2]]-vertices[triangle[0]])
+        testing.expectf(t,(n.y>0 || n.z>0)!=inside_out,"turned %v, a triangle faces %v",inside_out,n)
+    }
 }
 
 @(private)
@@ -232,7 +271,7 @@ sliding_over_inner_edges_of_a_flat_mesh_does_not_bump :: proc(t:^testing.T) {
     w:World
     testing.expect(t,test_world(&w,contacts=512))
     defer world_destroy(&w)
-    mesh,ok:=test_grid_mesh(&w,40,40)
+    mesh,ok:=test_grid_mesh(&w,40,40,dirty=true)
     testing.expect(t,ok)
     test_static_shape(&w,mesh)
     box:=test_body(&w,Box{{0.3,0.3,0.3}},{-15,0.3,0.13},friction=0)
@@ -352,7 +391,7 @@ mesh_edge_masks_follow_original_triangles_after_bvh_ordering :: proc(t:^testing.
         masks[triangle]=u8(triangle%7+1)
     }
     mesh:Mesh
-    testing.expect(t,mesh_build(&mesh,{vertices[:],indices[:],masks[:]},context.allocator))
+    testing.expect(t,mesh_build(&mesh,{vertices[:],indices[:],masks[:],false},context.allocator))
     defer mesh_release(&mesh,context.allocator)
     for triangle,index in mesh.triangles {
         original:=int(triangle[0])/3
@@ -361,8 +400,8 @@ mesh_edge_masks_follow_original_triangles_after_bvh_ordering :: proc(t:^testing.
     bad_count:=[1]u8{}
     bad_bits:=[16]u8{};bad_bits[0]=8
     rejected:Mesh
-    testing.expect(t,!mesh_build(&rejected,{vertices[:],indices[:],bad_count[:]},context.allocator))
-    testing.expect(t,!mesh_build(&rejected,{vertices[:],indices[:],bad_bits[:]},context.allocator))
+    testing.expect(t,!mesh_build(&rejected,{vertices[:],indices[:],bad_count[:],false},context.allocator))
+    testing.expect(t,!mesh_build(&rejected,{vertices[:],indices[:],bad_bits[:],false},context.allocator))
 }
 
 @(test)

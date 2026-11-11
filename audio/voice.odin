@@ -213,7 +213,7 @@ transmission_clamp :: proc "contextless" (t:[BANDS]f32) -> [BANDS]f32 {
 @(private)
 voice_desc_finite :: proc "contextless" (d:Voice_Desc) -> bool {
     a:=d.attenuation
-    numbers:=[?]f32{d.doppler,d.occlusion,a.min_distance,a.max_distance,a.rolloff,d.directivity.weight,d.directivity.power,
+    numbers:=[?]f32{d.doppler,d.occlusion,a.min_distance,a.max_distance,a.rolloff,a.near_radius,d.directivity.weight,d.directivity.power,
         real(d.rotation),imag(d.rotation),jmag(d.rotation),kmag(d.rotation)}
     for x in numbers {
         if !finite(x) {return false}
