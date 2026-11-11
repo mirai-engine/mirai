@@ -551,7 +551,7 @@ entity_sync :: proc(s:^Sync,e:core.Entity) {
     collider,has_collider:=core.get(s.colliders,e)
     config,has_character:=core.get(s.characters,e)
     collider_changed:=row_changed(s.colliders,s.changes[1],e)
-    if zone:=zone_collider(s,e);zone.kind!=.External {collider,has_collider,collider_changed=zone,true,row_changed(s.volumes,s.changes[3],e) || row_changed(s.splines,s.changes[4],e)}
+    if zone:=zone_collider(s,e);zone.kind!=.External {collider,has_collider,collider_changed=zone,true,row_changed(s.volumes,s.changes[3],e) || s.splines!=nil && row_changed(s.splines,s.changes[4],e)}
     if has_collider && collider.kind==.External {has_collider=false}
     owner:=core.NONE
     if !has_rigid && !has_character && has_collider {owner=compound_owner(s,e)}
