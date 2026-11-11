@@ -456,7 +456,7 @@ vfx_programs_load_their_attributes_and_dispatch_three_entries :: proc(t:^testing
     }
     testing.expect_value(t,listed,2)
     // A program that moves its particles, reads another emitter and writes a cleared grid in a stage over its particles.
-    fixture_write(t,f.project,"shaders/drift.slang","//! mirai vfx Drift\n//! moves\n//! resource leader emitter\n//! resource counts grid cleared\n//! stage count over particles writes counts\nnamespace Drift {struct Parameters {float speed;}; struct Attributes {uint hits;};\nvoid initialize(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid count(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {mirai_vfx_grid_word_add(ctx,counts,int3(0),0u,1u);a.hits=mirai_vfx_emitter_alive(ctx,leader);}\nvoid update(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid render(Mirai_Vfx_Context ctx,Parameters p,Mirai_Vfx_Particle particle,Attributes a,inout Mirai_Vfx_Visual visual) {}}\n")
+    fixture_write(t,f.project,"shaders/drift.slang","//! mirai vfx Drift\n//! moves\n//! resource leader emitter\n//! resource counts grid cleared\n//! stage count over particles writes counts\nnamespace Drift {struct Parameters {float speed;}; struct Attributes {uint hits;};\nvoid initialize(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid count(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {mirai_vfx_grid_word_add(ctx,counts,int3(0),0u,1u);a.hits=mirai_vfx_emitter_capacity(ctx,leader);}\nvoid update(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid render(Mirai_Vfx_Context ctx,Parameters p,Mirai_Vfx_Particle particle,Attributes a,inout Mirai_Vfx_Visual visual) {}}\n")
     catalog,problem=programs_of(&f)
     testing.expect_value(t,problem,"")
     drift,found=program_named(catalog,"Drift")
@@ -471,28 +471,28 @@ vfx_programs_load_their_attributes_and_dispatch_three_entries :: proc(t:^testing
     _,problem=programs_of(&f)
     testing.expectf(t,strings.contains(problem,"Drift.body: a resource is of kind") && strings.contains(problem,"surface"),"%s",problem)
     // Its stages, over particles or a grid it reads, go to the catalog and to the dispatchers of their kind.
-    stages_source:="//! mirai vfx Drift\n//! resource field grid\n//! stage push over particles neighbors 0.5 iterations 2\n//! stage relax over field iterations 3\nnamespace Drift {struct Parameters {float speed;}; struct Attributes {uint hits;};\nvoid initialize(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid push(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid relax(Mirai_Vfx_Cell cell,Parameters p) {}\nvoid update(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid render(Mirai_Vfx_Context ctx,Parameters p,Mirai_Vfx_Particle particle,Attributes a,inout Mirai_Vfx_Visual visual) {}}\n"
+    stages_source:="//! mirai vfx Drift\n//! resource field grid\n//! stage push over particles iterations 2\n//! stage relax over field iterations 3\nnamespace Drift {struct Parameters {float speed;}; struct Attributes {uint hits;};\nvoid initialize(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid push(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid relax(Mirai_Vfx_Cell cell,Parameters p) {}\nvoid update(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid render(Mirai_Vfx_Context ctx,Parameters p,Mirai_Vfx_Particle particle,Attributes a,inout Mirai_Vfx_Visual visual) {}}\n"
     fixture_write(t,f.project,"shaders/drift.slang",stages_source)
     catalog,problem=programs_of(&f)
     testing.expect_value(t,problem,"")
     drift,found=program_named(catalog,"Drift")
     testing.expect(t,found && len(drift.stages)==2)
     if found && len(drift.stages)==2 {
-        testing.expect(t,drift.stages[0].name=="push" && drift.stages[0].over=="particles" && drift.stages[0].neighbors==0.5 && drift.stages[0].iterations==2)
+        testing.expect(t,drift.stages[0].name=="push" && drift.stages[0].over=="particles" && drift.stages[0].iterations==2)
         testing.expect(t,drift.stages[1].name=="relax" && drift.stages[1].over=="field" && drift.stages[1].iterations==3)
     }
     include,_=os.read_entire_file(path_join(f.output,"include",VFX_FOLDER,"Drift",VFX_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
     testing.expect(t,strings.contains(string(include),"Drift::push(ctx,mirai_load_Drift(packed),value,a)"))
     testing.expect(t,strings.contains(string(include),"case 1: Drift::relax(cell,mirai_load_Drift(packed));return true;"))
-    // A stage over what is not a grid, no iterations, neighbors over a grid and a name of the contract are refused.
+    // A stage over what is not a grid, no iterations, neighbors and a name of the contract are refused.
     refused:=[4][2]string{
         {"//! stage relax over hits","a stage goes over particles or over a grid"},
         {"//! stage push over particles iterations 0","iterations is a number"},
-        {"//! stage relax over field neighbors 1","neighbors is a radius"},
+        {"//! stage push over particles neighbors 1","declare a grid resource"},
         {"//! stage update over particles","initialize, update and render are not stages"},
     }
     for case_ in refused {
-        fixture_write(t,f.project,"shaders/drift.slang",strings.concatenate({"//! mirai vfx Drift\n//! resource field grid\n",case_[0],"\n",stages_source[len("//! mirai vfx Drift\n//! resource field grid\n//! stage push over particles neighbors 0.5 iterations 2\n//! stage relax over field iterations 3\n"):]},context.temp_allocator))
+        fixture_write(t,f.project,"shaders/drift.slang",strings.concatenate({"//! mirai vfx Drift\n//! resource field grid\n",case_[0],"\n",stages_source[len("//! mirai vfx Drift\n//! resource field grid\n//! stage push over particles iterations 2\n//! stage relax over field iterations 3\n"):]},context.temp_allocator))
         _,problem=programs_of(&f)
         testing.expectf(t,strings.contains(problem,case_[1]),"%s gives %q",case_[0],problem)
     }

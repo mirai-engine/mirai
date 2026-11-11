@@ -77,7 +77,7 @@ fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
 
 @(private="file")
 fixture_sync :: proc(f:^Emitters_Fixture,id:core.World_Id,time:core.Time,frame:=FRAME) {
-    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{})
+    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{})
 }
 
 @(private="file")
@@ -297,9 +297,9 @@ the_values_particles_slang_copies_are_those_of_the_plugin :: proc(t:^testing.T) 
         {"PARTICLE_FLAG_MOVED",FLAG_MOVED},{"PARTICLE_FLAG_BIRTHS",FLAG_BIRTHS},{"PARTICLE_FLAG_PREPARE",FLAG_PREPARE},
         {"PARTICLE_STATE_BYTES",STATE_BYTES},{"PARTICLE_SPAWNS",SPAWNS},
         {"PARTICLE_EVENT_CAPACITY",EVENT_CAPACITY},{"PARTICLE_EVENTS_AT",EVENTS_AT/4},{"PARTICLE_EVENT_WORDS",size_of(Gpu_Event)/4},
-        {"PARTICLE_REPORT_CAPACITY",REPORT_CAPACITY},{"PARTICLE_REPORT_WORDS",size_of(Gpu_Report)/4},
+        {"PARTICLE_REPORT_WORDS",REPORT_WORDS},
         {"PARTICLE_RESOURCES",RESOURCE_ROWS},{"PARTICLE_RESOURCE_BYTES",size_of(Gpu_Resource)},
-        {"PARTICLE_DATA_ENTRIES",DATA_ENTRIES},{"PARTICLE_DATA_GAME_ENTRIES",DATA_GAME_ENTRIES},{"PARTICLE_SEGMENT_BYTES",size_of(Gpu_Segment)},
+        {"PARTICLE_DATA_ENTRIES",DATA_ENTRIES},{"PARTICLE_SEGMENT_BYTES",size_of(Gpu_Segment)},
         {"PARTICLE_STAGES",erender.PROGRAM_STAGES},{"PARTICLE_STAGE_BYTES",size_of(Gpu_Stage)},{"PARTICLE_BIRTH_BYTES",size_of(Gpu_Birth)},
         {"PARTICLE_SORT_MAX",SORT_MAX},
     }) {expect(t,defines,each.name,each.value)}
@@ -618,7 +618,7 @@ channel_births_start_once_through_a_rollback :: proc(t:^testing.T) {
 
 // The places of the reports come back to the world from the origin of the
 // frame they were written in, but those of an effect view, which are of the
-// view; what does not fit is lost and counted.
+// view; what does not fit is lost and counted, and a frame comes once.
 @(test)
 reports_come_back_to_the_world_from_the_origin_of_their_frame :: proc(t:^testing.T) {
     pool:Pool
@@ -628,20 +628,25 @@ reports_come_back_to_the_world_from_the_origin_of_their_frame :: proc(t:^testing
     view_at:=pool_slot_take(&pool,2,8)
     pool.slots[world_at].desc.owner=core.Entity(7)
     pool.slots[view_at].desc.owner,pool.slots[view_at].desc.view=core.Entity(9),1
-    Bytes :: struct {head:Reports_Head,rows:[3]Gpu_Report}
-    bytes:=Bytes{head={count=REPORT_CAPACITY+5,origin={-20480,1024,15360}}}
-    bytes.rows[0]={position={1.5,-2,0.25},slot=u32(world_at),kind=u32(effect.Particle_Event.Death)}
-    bytes.rows[1]={position={0.5,0.5,0},slot=u32(view_at),kind=u32(effect.Particle_Event.Collision)}
-    bytes.rows[2]={position={3,3,3},slot=u32(world_at)}
+    row :: proc(slot:int,kind:effect.Particle_Event,position:[3]f32) -> (r:[REPORT_WORDS]u32) {
+        p:=transmute([3]u32)position
+        r[0],r[1],r[2],r[3],r[4]=u32(slot),u32(kind),p.x,p.y,p.z
+        return
+    }
+    origin:=transmute([3]u32)[3]f32{-20480,1024,15360}
+    Bytes :: struct {head:[4]u32,rows:[3][REPORT_WORDS]u32}
+    bytes:=Bytes{head={DATA_ENTRIES+5,origin.x,origin.y,origin.z}}
+    bytes.rows={row(world_at,.Death,{1.5,-2,0.25}),row(view_at,.Collision,{0.5,0.5,0}),row(world_at,.None,{3,3,3})}
     reports:Particle_Reports
     defer particle_reports_free(&reports)
-    reports_take(&reports,&pool,([^]u8)(&bytes)[:size_of(bytes)])
+    reports_take(&reports,&pool,([^]u8)(&bytes)[:size_of(bytes)],1)
+    reports_take(&reports,&pool,([^]u8)(&bytes)[:size_of(bytes)],1)
     if !testing.expect_value(t,len(reports.reports),3) {return}
     testing.expect_value(t,reports.reports[0].position,[3]f32{-20478.5,1022,15360.25})
     testing.expect_value(t,reports.reports[0].entity,core.Entity(7))
     testing.expect_value(t,reports.reports[1].position,[3]f32{0.5,0.5,0})
     testing.expect_value(t,reports.reports[1].entity,core.Entity(9))
-    testing.expect_value(t,reports.lost,u32(REPORT_CAPACITY+2))
+    testing.expect_value(t,reports.lost,u32(DATA_ENTRIES+2))
 }
 
 // The textures of the world reach a view relative to its origin: the region
@@ -739,9 +744,8 @@ particle_ranges_join_again_when_they_return_to_the_pool :: proc(t: ^testing.T) {
 	p.capacity = 1000
 	p.slots = make([]Pool_Slot, 8)
 	p.order = make([]u16, 8)
-	p.free = make([][2]u32, 9)
-	defer {delete(p.slots); delete(p.order); delete(p.free)}
-	p.free[0], p.free_count = {0, 1000}, 1
+	base.ranges_reset(&p.free, 1000, 8)
+	defer {delete(p.slots); delete(p.order); base.ranges_free(&p.free)}
 	a, b, c := pool_slot_take(&p, 30, 100), pool_slot_take(&p, 10, 200), pool_slot_take(&p, 20, 300)
 	testing.expect_value(t, p.slots[a].offset, u32(0))
 	testing.expect_value(t, p.slots[b].offset, u32(100))
@@ -750,14 +754,14 @@ particle_ranges_join_again_when_they_return_to_the_pool :: proc(t: ^testing.T) {
 	testing.expect_value(t, pool_slot_find(&p, 99), -1)
 	testing.expect_value(t, pool_slot_take(&p, 40, 500), -1)
 	pool_slot_release(&p, b)
-	testing.expect_value(t, p.free_count, 2)
+	testing.expect_value(t, len(p.free.free), 2)
 	pool_slot_release(&p, a)
-	testing.expect_value(t, p.free_count, 2)
-	testing.expect_value(t, p.free[0], [2]u32{0, 300})
+	testing.expect_value(t, len(p.free.free), 2)
+	testing.expect_value(t, p.free.free[0], base.Range{0, 300})
 	testing.expect_value(t, p.pool_end, u32(600))
 	pool_slot_release(&p, c)
-	testing.expect_value(t, p.free_count, 1)
-	testing.expect_value(t, p.free[0], [2]u32{0, 1000})
+	testing.expect_value(t, len(p.free.free), 1)
+	testing.expect_value(t, p.free.free[0], base.Range{0, 1000})
 	testing.expect_value(t, p.slot_end, 0)
 	whole := pool_slot_take(&p, 40, 1000)
 	testing.expect_value(t, p.slots[whole].offset, u32(0))

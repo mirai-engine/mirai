@@ -1,18 +1,19 @@
 package vfx
 
 import "mirai:core"
-import erender "mirai:engine/render"
 import "plugins:vfx/runtime/effect"
 
 // What the particles tell the game: a particle of an effect whose report
-// names it that died or hit something, written by the GPU and read back
-// frames later without waiting for it. It is presentation alone (a decal, a
-// sound, another effect): it is not deterministic nor part of the world, so
-// no function of fixed reads it (the generator refuses it), and it decides
-// nothing of the game. A frame keeps REPORT_CAPACITY of them; the rest are
-// lost and counted.
+// names it that died or hit something. The simulate pass appends it to the
+// data channel REPORTS_CHANNEL, read back as the channels a game watches are:
+// frames later, without waiting for the GPU. It is presentation alone (a
+// decal, a sound, another effect): it is not deterministic nor part of the
+// world, so no function of fixed reads it (the generator refuses it), and it
+// decides nothing of the game. A frame keeps DATA_ENTRIES of them; the rest
+// are lost and counted.
 
-REPORT_CAPACITY :: 1024
+REPORTS_CHANNEL :: u64(0) // the name of the data channel of the reports, which no name hashes to
+REPORT_WORDS :: 11        // of an entry: its emitter's slot, Particle_Event, position, velocity, normal
 
 Particle_Report :: struct {
     entity:core.Entity,         // the emitter, or the one whose sub effect it is
@@ -26,7 +27,7 @@ Particle_Report :: struct {
 Particle_Reports :: struct {
     reports:[dynamic]Particle_Report,
     frame:u64, // of the renderer, + 1, the reports are of; 0: none yet
-    lost:u32,  // of that frame, beyond REPORT_CAPACITY
+    lost:u32,  // of that frame, beyond DATA_ENTRIES
 }
 
 particle_reports_free :: proc(reports:^Particle_Reports) {
@@ -34,117 +35,25 @@ particle_reports_free :: proc(reports:^Particle_Reports) {
     reports^={}
 }
 
-// shaders/particles.slang: the reports after the events.
-Gpu_Report :: struct {
-    position:[3]f32, slot:u32,
-    velocity:[3]f32, kind:u32,
-    normal:[3]f32, pad:u32,
-}
-#assert(size_of(Gpu_Report)==48)
-
-// What comes before the reports of a frame: how many the GPU wrote, and the
-// origin of the renderer their places are relative to.
-Reports_Head :: struct {
-    count:u32,
-    origin:[3]f32,
-}
-#assert(size_of(Reports_Head)==16)
-
-REPORTS_AT :: EVENTS_AT+2*EVENT_CAPACITY*size_of(Gpu_Event) // bytes of the events buffer before the reports
-REPORTS_BYTES :: size_of(Reports_Head)+REPORT_CAPACITY*size_of(Gpu_Report)
-
+// The reports of the copy of the channel a frame wrote, in the world: their
+// places come back from the origin of that frame (data_frame), but those of an
+// effect view, which are of the view.
 @(private)
-reports_readback :: proc "contextless" () -> erender.Buffer_Desc {return {"vfx particle reports",REPORTS_BYTES}}
-
-// The reports the GPU brought back since the last frame, by the entity of
-// their emitter.
-@(private)
-reports_read :: proc(reports:^Particle_Reports,sync:^Particle_Sync,renderer:^erender.Renderer,id:core.World_Id) {
-    clear(&reports.reports)
-    data,frame,ok:=erender.readback(renderer,id,reports_readback().name)
-    if !ok || frame==reports.frame {return}
+reports_take :: proc(reports:^Particle_Reports,pool:^Pool,data:[]u8,frame:u64) {
+    if frame==reports.frame || len(data)<16 {return}
     reports.frame=frame
-    reports_take(reports,&sync.pool,data)
-}
-
-// The reports of the bytes the GPU wrote, in the world: their places come
-// back from the origin of their frame, but those of an effect view, which are
-// of the view.
-@(private)
-reports_take :: proc(reports:^Particle_Reports,pool:^Pool,data:[]u8) {
-    if len(data)<size_of(Reports_Head) {return}
-    head:=(cast(^Reports_Head)raw_data(data))^
-    count:=min(head.count,REPORT_CAPACITY,u32((len(data)-size_of(Reports_Head))/size_of(Gpu_Report)))
-    reports.lost=head.count-count
-    rows:=([^]Gpu_Report)(rawptr(uintptr(raw_data(data))+size_of(Reports_Head)))[:count]
-    for &row in rows {
-        if int(row.slot)>=pool.slot_end || !pool.slots[row.slot].live {continue}
-        desc:=&pool.slots[row.slot].desc
+    head:=([^]u32)(raw_data(data))
+    count:=min(head[0],DATA_ENTRIES,u32((len(data)-16)/(REPORT_WORDS*4)))
+    reports.lost=head[0]-count
+    origin:=transmute([3]f32)[3]u32{head[1],head[2],head[3]}
+    for row in ([^][REPORT_WORDS]u32)(raw_data(data[16:]))[:count] {
+        if int(row[0])>=pool.slot_end || !pool.slots[row[0]].live {continue}
+        desc:=&pool.slots[row[0]].desc
+        position:=transmute([3]f32)[3]u32{row[2],row[3],row[4]}
         append(&reports.reports,Particle_Report{
-            entity=desc.owner,kind=effect.Particle_Event(row.kind),
-            position=row.position+(desc.view==0?head.origin:[3]f32{}),velocity=row.velocity,normal=row.normal,
+            entity=desc.owner,kind=effect.Particle_Event(row[1]),
+            position=position+(desc.view==0?origin:[3]f32{}),
+            velocity=transmute([3]f32)[3]u32{row[5],row[6],row[7]},normal=transmute([3]f32)[3]u32{row[8],row[9],row[10]},
         })
     }
-}
-
-// The particles of the emitter the editor watches (Particle_Sync.watch),
-// copied back each frame: the slots of its range, at most WATCH_MAX, and the
-// Attributes of their program. Debugging alone: nothing of the game reads them.
-WATCH_MAX :: 1024
-
-@(private)
-watch_readback :: proc "contextless" (attributes:bool,bytes:u64) -> erender.Buffer_Desc {
-    return {"vfx watched attributes" if attributes else "vfx watched particles",max(bytes,16)}
-}
-
-@(private)
-watch_copy :: proc(sync:^Particle_Sync,pass:^erender.Pass) {
-    pool:=&sync.pool
-    if sync.watch==0 {return}
-    at:=pool_slot_find(pool,sync.watch)
-    if at<0 {return}
-    s:=&pool.slots[at]
-    count:=min(s.capacity,WATCH_MAX)
-    erender.pass_readback(pass,pool_buffer(pool,.Particles),u64(s.offset)*size_of(Gpu_Particle),watch_readback(false,u64(count)*size_of(Gpu_Particle)))
-    if s.stride>0 {erender.pass_readback(pass,pool_buffer(pool,.Data),u64(ATTRIBUTES_AT+s.attributes),watch_readback(true,u64(count)*u64(s.stride)))}
-    erender.pass_readback(pass,pool_buffer(pool,.State),u64(at)*size_of(Gpu_State),{"vfx watched state",size_of(Gpu_State)})
-}
-
-// A particle of the watched emitter as the GPU had it some frames ago, and the words of its Attributes.
-Watched_Particle :: struct {
-    slot:u32,
-    position,velocity:[3]f32,
-    age,lifetime,size:f32,
-    seed:u32,
-    attributes:[]u32,
-}
-
-// The counters of the watched emitter as the GPU had them: free slots, births of a frame and all
-// it started, of a program that gives its births.
-watched_state :: proc(sync:^Particle_Sync,renderer:^erender.Renderer) -> (state:Gpu_State,ok:bool) {
-    data,_,read:=erender.readback(renderer,sync.world_id,"vfx watched state")
-    if !read || len(data)<size_of(Gpu_State) {return}
-    return (^Gpu_State)(raw_data(data))^,true
-}
-
-// The living particles of the watched emitter, from what the GPU copied back.
-watched :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,allocator:=context.temp_allocator) -> (list:[]Watched_Particle,frame:u64,ok:bool) {
-    at:=pool_slot_find(&sync.pool,sync.watch)
-    if sync.watch==0 || at<0 {return}
-    data,copied,read:=erender.readback(renderer,sync.world_id,watch_readback(false,0).name)
-    if !read || len(data)<size_of(Gpu_Particle) {return}
-    words,_,_:=erender.readback(renderer,sync.world_id,watch_readback(true,0).name)
-    stride:=int(sync.pool.slots[at].stride)
-    // In the world, as the reports: those local to their emitter or of an effect view keep their places.
-    desc:=&sync.pool.slots[at].desc
-    origin:=desc.local || desc.view!=0?[3]f32{}:sync.pool.origin
-    rows:=([^]Gpu_Particle)(raw_data(data))[:len(data)/size_of(Gpu_Particle)]
-    out:=make([dynamic]Watched_Particle,allocator)
-    for row,slot in rows {
-        if !(row.lifetime>0) {continue}
-        p:=Watched_Particle{slot=u32(slot),position=row.position+origin,velocity=row.velocity,age=row.age,lifetime=row.lifetime,size=row.size,seed=row.seed}
-        if stride>0 && (slot+1)*stride<=len(words) {p.attributes=([^]u32)(raw_data(words[slot*stride:]))[:stride/4]}
-        append(&out,p)
-    }
-    return out[:],copied,true
 }

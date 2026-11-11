@@ -93,7 +93,6 @@ Particle_Sync :: struct {
     started:[dynamic]Channel_Started,
     world:u64,         // as the renderer names it (erender.world_key)
     world_id:core.World_Id,
-    watch:u64,         // the emitter whose particles the GPU copies back each frame for the editor (watched); 0: none
     pool:Pool,
     surfaces:Surfaces,
     grids:Grids,
@@ -111,7 +110,6 @@ Particle_Sync :: struct {
     world_shown:World_Textures_Frame, // and as the steps before, which the views of this frame show
     loads:[dynamic]Grid_Load,      // the states of the frame the grids start from (gridfile)
     load_bytes:[dynamic]u8,        // their cells, as the grids keep them
-    bake:Grid_Bake,
 }
 
 particle_sync_free :: proc(sync:^Particle_Sync) {
@@ -183,13 +181,12 @@ particles_sync :: proc(
     emitters:^core.Table(Particle_Emitter,.Read),overrides:^core.Table(Particle_Override,.Read),
     worlds:^core.Table(core.World_Transform,.Read),hidden:^core.Table(erender.Hidden,.Read),parents:^core.Table(core.Parent,.Read),
     bindings:^core.Table(Particle_Bindings,.Read),meshes:^core.Table(erender.Mesh_Renderer,.Read),drawn:core.Ref(erender.Render_Sync),listeners:^core.Table(Particle_Channel,.Read),grids:^core.Table(Particle_Grid,.Read),volumes:^core.Table(Particle_Volume,.Read),textures:^core.Table(Particle_World_Texture,.Read),
-    clocks:core.Ref(Particle_Clocks),settings:core.Ref(Particle_Settings),sync:^Particle_Sync,reports:^Particle_Reports,data:^Particle_Data,watch:^Particle_Data_Watch,read:^Particle_Data_Read,ui_effects:^UI_Particles,ui_requests:core.Ref(gui.UI_Effects),id:core.World_Id,time:core.Time,frame:core.Frame_Time,
+    clocks:core.Ref(Particle_Clocks),settings:core.Ref(Particle_Settings),sync:^Particle_Sync,reports:^Particle_Reports,watch:^Particle_Data_Watch,read:^Particle_Data_Read,ui_effects:^UI_Particles,ui_requests:core.Ref(gui.UI_Effects),id:core.World_Id,time:core.Time,frame:core.Frame_Time,
     view:core.View,problems:^core.Problems,app:^host.App,
     winds:^core.Table(volume.Wind,.Read),places:^core.Table(volume.Volume,.Read),gravities:^core.Table(volume.Gravity,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
 ) {
     if sync==nil {return}
-    if reports!=nil {reports_read(reports,sync,app.renderer,id)}
-    if read!=nil {data_read(read,&sync.data,app.renderer,id,problems)}
+    data_read(read,reports,sync,app.renderer,id,problems)
     r,a:=app.renderer,app.assets
     sync.world,sync.world_id=erender.world_key(id),id
     clear(&sync.descs)
@@ -218,7 +215,6 @@ particles_sync :: proc(
     shaders:=app.shaders.reloads
     // What an emitter is resolved from besides its own: the triangles of meshes move when the scene is made again.
     made:=erender.vertices_made(app.renderer)
-    used:[DATA_CHANNELS]bool
     placed:=core.join(emitters,worlds)
     for e,emitter,world in core.each_joined(&placed) {
         shown:=shown_of(sync,e)
@@ -268,7 +264,7 @@ particles_sync :: proc(
         }
         desc.stages=emitter_stages(sync,&shown.needs,desc.resources,desc.id,e,problems)
         for need in shown.needs.resources {
-            if need.kind==.Data {data_need(&sync.data,need.name,need.words,&used,problems,e)}
+            if need.kind==.Data {data_need(&sync.data,need.name,need.words,problems,e)}
         }
         if listener,listens:=core.get(listeners,e);listens && !listener.silent {desc.births.x,desc.births.y=channel_region(sync,channel_key(listener))}
         desc.paused,desc.generation=paused,shown.generation
@@ -283,11 +279,9 @@ particles_sync :: proc(
         append(&sync.owners,e)
     }
     grids_release(&sync.grids,&sync.pool)
-    pushed:[]Data_Push
-    if data!=nil {pushed=core.take(&data.queue)}
     watched:[]u64
     if watch!=nil {watched=core.take(&watch.queue)}
-    data_place(&sync.data,used,pushed,watched)
+    data_watched(&sync.data,watched)
     asked:[]gui.UI_Effect
     if ui_requests.ptr!=nil {asked=ui_requests.items[:]}
     if ui_effects!=nil && (ui_effects.count>0 || len(asked)>0) {
@@ -324,10 +318,8 @@ particles_release :: proc(sync:^Particle_Sync,id:core.World_Id,renderer:^erender
     if renderer!=nil {
         pool_release(renderer,id,&sync.pool)
         erender.buffer_release(renderer,id,world_buffer(sync).name)
-        erender.readback_release(renderer,id,GRID_BAKE_READBACK)
         for name in sync.world_textures[:sync.world_texture_count] {erender.table_texture_release(renderer,id,world_texture_key(name))}
-        erender.readback_release(renderer,id,reports_readback().name)
-        for entry in sync.data.entries {erender.readback_release(renderer,id,data_readback_desc(entry.name,entry.words).name)}
+        for &entry in sync.data.entries {erender.readback_release(renderer,id,data_readback_desc(&entry).name)}
     }
     pool_free(&sync.pool)
     surfaces_free(&sync.surfaces)
