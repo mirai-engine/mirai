@@ -231,17 +231,60 @@ stroke_apply :: proc(s:^editor.Session,stroke:^Stroke,world:core.World_Ref,asset
     painted:=core.world_table_of(world,paint.Painted)
     if assets==nil || painted==nil {return false}
     colors_blend(stroke.canvas.colors,stroke.before,stroke.weights,color,strength)
-    document:asset.Document
-    if paint.colors_document(&document,&assets.types,stroke.id,stroke.canvas.colors,allocator)!=.None {return false}
-    defer asset.document_destroy(&document)
-    bytes,error:=asset.document_bytes(&document,allocator)
+    bytes,ok:=canvas_bytes(&stroke.canvas,assets,stroke.id,allocator)
     defer delete(bytes,allocator)
-    if error!=.None || !editor.file_write(s,stroke.path,bytes,"Paint") {return false}
+    if !ok || !editor.file_write(s,stroke.path,bytes,"Paint") {return false}
     stroke.dirty,stroke.wait=false,REFRESH_SECONDS
     if stroke.written {return true}
     stroke.written=true
     if row:=core.edit(painted,stroke.entity);row!=nil {row.colors=stroke.id} else {core.add(painted,stroke.entity,paint.Painted{colors=stroke.id})}
     return true
+}
+
+// The paint of an entity whose mesh changed since it was painted (imported
+// again) follows it: its colors go to the nearest vertices of the mesh as it
+// is now, in memory, and are saved with the next Save.
+@(storage,free="paint_fit_free")
+Paint_Fit :: struct {
+    seen:u64,                  // the revision of the assets last looked at
+    fit:map[base.Asset_Id]u64, // the content_hash of the mesh each .paint was found to fit
+}
+
+paint_fit_free :: proc(f:^Paint_Fit) {
+    delete(f.fit)
+    f^={}
+}
+
+@(step="frame")
+paint_fit :: proc(s:^editor.Session,f:^Paint_Fit,tool:^Paint_Tool,meshes:^core.Table(erender.Mesh_Renderer,.Read),painted:^core.Table(paint.Painted,.Read),assets:^host.Assets) {
+    if assets==nil || tool.stroke.active || editor.playing(s) || f.seen==assets.registry.revision {return}
+    f.seen=assets.registry.revision
+    for row in 0..<core.count(painted) {
+        id:=core.at(painted,row).colors
+        shown,has:=core.get(meshes,core.entity_at(painted,row))
+        mesh,found:=asset.registry_find(&assets.registry,shown.mesh)
+        if !has || !found || f.fit[id]==mesh.content_hash {continue}
+        if paint_refit(s,assets,shown,id,mesh.content_hash) {f.fit[id]=mesh.content_hash}
+    }
+}
+
+// Writes a .paint again fit to the mesh an entity shows, of that content_hash,
+// unless it was painted on it.
+@(private)
+paint_refit :: proc(s:^editor.Session,a:^host.Assets,shown:erender.Mesh_Renderer,id:base.Asset_Id,mesh:u64) -> bool {
+    record,found:=asset.registry_find(&a.registry,id)
+    file:asset.Asset
+    if !found || host.assets_file(a,id,paint.PAINT_KIND,&file)!=.None {return false}
+    view,error:=paint.paint_view(&file,&a.types)
+    painted_on:=view.mesh
+    asset.asset_close(&file)
+    if error!=.None {return false}
+    if painted_on==mesh {return true}
+    canvas:Canvas
+    if !canvas_load(&canvas,a,shown,id,context.temp_allocator) {return false}
+    defer canvas_destroy(&canvas)
+    bytes,ok:=canvas_bytes(&canvas,a,id,context.temp_allocator)
+    return ok && editor.file_set(s,asset.registry_file_path(&a.registry,record.path,context.temp_allocator),bytes)
 }
 
 // The stroke becomes one step of the history.

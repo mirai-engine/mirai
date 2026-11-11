@@ -172,22 +172,24 @@ ai_scene_figures_render_as_transient_geometry_and_reuse_descriptors :: proc(t:^t
     testing.expect_value(t,instance.slot_materials[4],u32(0))
     color:=agent_color(int(task.color_index))
     linear:=mm.srgb_to_linear([3]f32{f32(color[0])/255,f32(color[1])/255,f32(color[2])/255})
+    // The instance holds the color of each colored part over the row of its material.
+    held :: proc(instance:gpu.Instance_Desc,row:u32,target:gpu.Instance_Material_Value_Target,value:[3]f32) -> bool {
+        given:=gpu.instance_material_value(row,target,{value.x,value.y,value.z,1})
+        values:=instance.material_values
+        for entry in values.entries[:values.count] {if entry==given {return true}}
+        return false
+    }
     for slot in PRESENCE_COLOR_SLOTS {
         row:=instance.slot_materials[slot]
-        if testing.expect(t,row>0,"each colored part has its own derived material") {
-            values:=host.assets_material_values(app.assets,row-1)
-            testing.expect_value(t,values.info.base_color,linear)
-            if slot==PRESENCE_STARS_SLOT {
-                testing.expect_value(t,values.info.emission,linear)
-            }
+        if testing.expect(t,row>0,"each colored part shows the material of its slot") {
+            testing.expectf(t,held(instance,row-1,.Base_Color,linear),"slot %d holds its color",slot)
+            if slot==PRESENCE_STARS_SLOT {testing.expect(t,held(instance,row-1,.Emission,linear),"the stars glow in it")}
         }
     }
     other:Presence
     other_color:=agent_color(1)
     testing.expect(t,presence_prepare(&session,&other,figure.at+{0.75,0,0},math.PI,other_color,agent_level(1),100))
-    for slot in PRESENCE_COLOR_SLOTS {
-        testing.expect(t,other.instance.slot_materials[slot]>0 && other.instance.slot_materials[slot]!=instance.slot_materials[slot],"different figures retain different colors")
-    }
+    testing.expect(t,other.instance.material_values!=instance.material_values,"different figures retain different colors")
 
     host.assets_commit(app.assets)
     renderer:=app.renderer
