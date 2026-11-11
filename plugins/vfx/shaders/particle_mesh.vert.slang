@@ -2,8 +2,7 @@
 #include "native.slang"
 // A mesh per particle of the list an emitter draws (vfx.particles_record), in
 // the G-buffer with the fragment of the engine: lit, shadowed and reflected
-// like the scene. It is scaled, turned and faced as its effect says
-// (particle_mesh_turn) and moves by its velocity.
+// like the scene. It turns about an axis of its own and moves by its velocity.
 // The draw gives each cluster of level 0 of the mesh CLUSTER_DRAW_VERTICES
 // vertices: those past its triangles are collapsed, and those of materials
 // of another Surface program than params.program (INVALID: any), which a
@@ -30,12 +29,11 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
     uint index = particle_drawn(params.emitter, instance_id);
     Particle p = particles[index];
     Particle_Look look = particle_program_look(params.emitter, index, p);
-    float3x3 turn = particle_mesh_turn(params.emitter, p);
-    float3 scale = e.mesh_scale.xyz;
-    float3 world = particle_world(params.emitter, p.position) + particle_world_vector(params.emitter, mul(turn, v.position * scale * look.size));
+    float3x3 rotation = particle_rotation(p.seed, p.rotation);
+    float3 world = particle_world(params.emitter, p.position) + particle_world_vector(params.emitter, mul(rotation, v.position * look.size));
     float3 prev_world = world - particle_world_vector(params.emitter, p.velocity) * e.step.x;
-    output.out_normal = normalize(particle_world_vector(params.emitter, mul(turn, particle_mesh_normal(v.normal, scale))));
-    output.out_tangent = float4(normalize(particle_world_vector(params.emitter, mul(turn, particle_mesh_tangent(v.tangent.xyz, scale)))), v.tangent.w);
+    output.out_normal = normalize(particle_world_vector(params.emitter, mul(rotation, v.normal)));
+    output.out_tangent = float4(normalize(particle_world_vector(params.emitter, mul(rotation, v.tangent.xyz))), v.tangent.w);
     output.out_color = material_vertex_tint(material_row(material), v.color.rgb) * look.color.rgb;
     output.out_vertex_color = v.color;
     output.out_emission = float3(0.0);

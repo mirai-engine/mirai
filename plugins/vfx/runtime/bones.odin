@@ -165,14 +165,6 @@ entity_bones :: proc(sync:^Particle_Sync,drawn:^erender.Render_Sync,meshes:^core
     return bones_of(sync,renderer,rig,0,mm.transform_matrix(world.transform),false)
 }
 
-// The bones of a mesh asset at a transform, in its bind pose.
-@(private)
-asset_bones :: proc(sync:^Particle_Sync,assets:^host.Assets,renderer:^erender.Renderer,mesh:base.Asset_Id,transform:mm.Mat4) -> Resource_Desc {
-    rig:=bone_rig(&sync.rigs,assets,mesh)
-    if rig==nil {return {}}
-    return bones_of(sync,renderer,rig,0,transform,false)
-}
-
 @(private)
 bones_of :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,rig:^Bone_Rig,skin:erender.Mesh_Handle,transform:mm.Mat4,posed:bool) -> Resource_Desc {
     first,count,ok:=bones_pose(sync,renderer,rig,skin,posed)
