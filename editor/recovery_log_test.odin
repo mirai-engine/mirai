@@ -12,6 +12,70 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
 
+@(private) Recovery_Score_Before :: struct {points:i32}
+@(private) Recovery_Score_After :: struct {lives:u8,points:i64}
+
+@(private)
+@(test_world)
+Recovery_Before_World :: struct {
+    using world:Test_World,
+    using scene_tables:Test_Scene,
+    scores:core.Table(Recovery_Score_Before) `mirai:"name=Recovery_Score"`,
+}
+
+@(private)
+@(test_world)
+Recovery_After_World :: struct {
+    using world:Test_World,
+    using scene_tables:Test_Scene,
+    scores:core.Table(Recovery_Score_After) `mirai:"name=Recovery_Score"`,
+}
+
+// A step logged by one build and put back by another that lays its component out otherwise
+// converts by the names of the fields; a field the old layout lacks keeps what the row has.
+@(test)
+a_logged_step_converts_to_the_layout_of_a_later_build :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"recovery-layout")
+    if root=="" {return}
+    ID :: base.Entity_Id(77)
+    before:Recovery_Before_World
+    if !test_world_init(t,&before) {return}
+    defer test_world_destroy(&before)
+    e:=core.create(&before.entities)
+    core.add(&before.ids,e,core.Id{ID})
+    core.add(&before.scores,e,Recovery_Score_Before{7})
+    test_world_settle(&before)
+    logged:=new(Test_Session);defer free(logged)
+    test_session_open(logged,test_world_ref(&before))
+    defer test_session_close(logged)
+    s:=&logged.s
+    s.project_root=root
+    defer recovery_log_destroy(s)
+    recovery_log_begin(s)
+    core.edit(&before.scores,e)^=Recovery_Score_Before{42}
+    testing.expect(t,history.edits_commit(&logged.edits,edited_world(s),&logged.selection))
+    recovery_log_write(s)
+    recovery_log_close(s)
+    file,read:=recovery_log_read(s,s.recovery.slot,1)
+    if !testing.expect(t,read && len(file.records)==1) {return}
+
+    after:Recovery_After_World
+    if !test_world_init(t,&after) {return}
+    defer test_world_destroy(&after)
+    later:=core.create(&after.entities)
+    core.add(&after.ids,later,core.Id{ID})
+    core.add(&after.scores,later,Recovery_Score_After{lives=3,points=1})
+    test_world_settle(&after)
+    restored:=new(Test_Session);defer free(restored)
+    test_session_open(restored,test_world_ref(&after))
+    defer test_session_close(restored)
+    applied,lost,_:=recovery_log_replay(&restored.s,{file})
+    testing.expect(t,applied==1 && lost==0)
+    test_world_settle(&after)
+    score,_:=core.get(&after.scores,later)
+    testing.expect(t,score.points==42 && score.lives==3,"the value converts")
+}
+
 @(test)
 recovery_log_writes_each_step_over_the_saved_file_and_puts_them_back :: proc(t:^testing.T) {
     info,described:=prefab_test_info(t)
@@ -86,7 +150,8 @@ recovery_log_writes_each_step_over_the_saved_file_and_puts_them_back :: proc(t:^
     for history.undo(&edits,w,&selection) {}
     core.world_settle(w)
     testing.expect_value(t,entity_name(w,kept),"Kept")
-    testing.expect(t,recovery_log_replay(&s,chain)==records)
+    applied,lost,_:=recovery_log_replay(&s,chain)
+    testing.expect(t,applied==records && lost==0)
     core.world_settle(w)
     testing.expect_value(t,entity_name(w,kept),"Moved")
     testing.expect_value(t,entity_name(w,api_entity(w,born_id)),"Born")

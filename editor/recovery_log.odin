@@ -24,7 +24,8 @@ import "mirai:std/serial"
 // project until Save.
 //
 // A log is a chain of generations, <Generated>/autosave-<slot>-<n>.log, each a
-// header and records of the bytes of an Edit message with their size and CRC:
+// header (with the layout of every table it logs, so that a start on another
+// build converts the rows by the names of their fields) and records of the bytes of an Edit message with their size and CRC:
 // a copy names the generation that follows it, a new copy makes the older
 // generations useless, and a record cut by a crash ends the chain. Writes
 // reach the operating system as the steps are done; the disk, within
@@ -34,7 +35,7 @@ RECOVERY_LOG_SYNC :: u64(100_000_000)        // ns
 RECOVERY_COPY_INTERVAL :: u64(60_000_000_000) // ns: a copy follows a change it lacks after this
 RECOVERY_LOG_BYTES :: 16<<20                 // a log of the copy this long asks for a copy at once
 @(private) RECOVERY_LOG_MAGIC :: u32(0x4c52494d)
-@(private) RECOVERY_LOG_VERSION :: u32(2)
+@(private) RECOVERY_LOG_VERSION :: u32(3)
 
 // What a generation follows: a copy of recovery that names it, or the saved file of the document.
 Recovery_Base :: enum u8 {Copy,Source}
@@ -136,6 +137,8 @@ recovery_log_close :: proc(s:^Session) {
 recovery_log_open :: proc(s:^Session,generation:u64,base:Recovery_Base) -> bool {
     l:=&s.recovery.log
     recovery_log_close(s)
+    ws:=s.info.schema
+    if ws==nil {recovery_log_failed(s);return false}
     path:=recovery_log_path(s,recovery_slot(s),generation)
     if folder:=project.folder_path(s.project_root,.Generated,context.temp_allocator);!os.is_dir(folder) {_=os.make_directory_all(folder)}
     file,error:=os.open(path,{.Write,.Create,.Trunc})
@@ -150,6 +153,17 @@ recovery_log_open :: proc(s:^Session,generation:u64,base:Recovery_Base) -> bool 
         source:=document_file(s.document)
         serial.write_scalar(&w,u16(len(source)))
         serial.write_bytes(&w,transmute([]u8)source)
+    }
+    serial.schema_write(&w,&ws.schema)
+    st:=recovery_log_tables(s)
+    logged:=0
+    for t in st.tables {if t.used {logged+=1}}
+    serial.write_scalar(&w,u32(logged))
+    for t,i in st.tables {
+        if !t.used {continue}
+        serial.write_string(&w,s.info.tables[i].name)
+        serial.write_scalar(&w,core.type_layout_hash(s.info.tables[i].info))
+        serial.write_scalar(&w,ws.tables[i].type)
     }
     if _,write_error:=os.write(file,serial.writer_bytes(&w));write_error!=nil {recovery_log_failed(s);return false}
     l.sync_due=platform.clock_ns()+RECOVERY_LOG_SYNC
@@ -343,7 +357,17 @@ Recovery_Log_File :: struct {
     generation:u64,
     base:Recovery_Base,
     source:string,
+    schema:serial.Schema,
+    tables:[]Recovery_Log_Table,
     records:[dynamic][]u8,
+}
+
+// A table of a log as the build that wrote it laid it out.
+@(private)
+Recovery_Log_Table :: struct {
+    name:string,
+    layout:u64,              // core.type_layout_hash
+    type:serial.Type_Index,  // in the schema of its file
 }
 
 @(private)
@@ -359,6 +383,16 @@ recovery_log_read :: proc(s:^Session,slot:int,generation:u64) -> (file:Recovery_
         file.source=string(serial.read_bytes(&r,size))
     }
     if r.failed || file.base>max(Recovery_Base) {return}
+    if serial.schema_read(&r,&file.schema,context.temp_allocator)!=.None {return}
+    logged:=int(serial.read_u32(&r))
+    if r.failed || logged>serial.reader_remaining(&r) {return}
+    file.tables=make([]Recovery_Log_Table,logged,context.temp_allocator)
+    for &t in file.tables {
+        t.name=serial.read_string(&r)
+        t.layout=serial.read_u64(&r)
+        t.type=serial.Type_Index(serial.read_u16(&r))
+    }
+    if r.failed {return}
     file.records=make([dynamic][]u8,context.temp_allocator)
     for {
         size:=int(serial.read_u32(&r))
@@ -395,19 +429,94 @@ recovery_log_chain :: proc(s:^Session,slot:int,copy_generation:u64) -> (chain:[]
 }
 
 // Puts the records of a chain back over the document as it is, as the rows
-// of another editor are taken: the journal takes them without a step.
+// of another editor are taken: the journal takes them without a step. The
+// rows of a table this build lays out otherwise convert by the names of their
+// fields; lost counts the changes that cannot (their component is gone, or
+// not plain data), and names says of which components.
 @(private)
-recovery_log_replay :: proc(s:^Session,chain:[]Recovery_Log_File) -> (applied:int) {
+recovery_log_replay :: proc(s:^Session,chain:[]Recovery_Log_File) -> (applied,lost:int,names:string) {
     st:=new(Collab_State)
     defer free(st)
     collab_tables_build(s,st)
     defer collab_tables_free(st)
-    for file in chain {
+    w:=edited_world(s)
+    ws:=s.info.schema
+    gone:=make([dynamic]string,context.temp_allocator)
+    for &file in chain {
+        tables:=make(map[u64]Recovery_Log_Convert,len(file.tables),context.temp_allocator)
+        same:=true
+        for logged in file.tables {
+            c:=Recovery_Log_Convert{table=-1,name=logged.name}
+            hash:=base.name_hash(logged.name)
+            if i,found:=core.world_table_index_of_hash(w,hash);found && ws!=nil && st.tables[i].used {
+                switch {
+                case core.type_layout_hash(s.info.tables[i].info)==logged.layout: c.table=i
+                case logged.type!=serial.TYPE_NONE && ws.tables[i].type!=serial.TYPE_NONE:
+                    m:=new(serial.Migration,context.temp_allocator)
+                    if serial.migration_init(m,&file.schema,logged.type,&ws.schema,ws.tables[i].type,context.temp_allocator)==.None {c.table,c.migration=i,m}
+                }
+            }
+            same&&=c.table>=0 && c.migration==nil && st.tables[c.table].hash==hash
+            tables[hash]=c
+        }
         for record in file.records {
-            collab_edit_apply(s,st,record)
+            bytes:=record
+            if !same {bytes=recovery_log_convert(s,st,tables,record,&lost,&gone)}
+            collab_edit_apply(s,st,bytes)
             applied+=1
         }
     }
-    return
+    return applied,lost,strings.join(gone[:],", ",context.temp_allocator)
+}
+
+// What a table of a log is in this build: its table, -1 when it has none,
+// and the migration of its values when it lays them out otherwise.
+@(private)
+Recovery_Log_Convert :: struct {
+    table:int,
+    migration:^serial.Migration,
+    name:string,
+}
+
+// A record of a log as this build lays its rows out; what it cannot convert
+// counts in lost, and the name of its component goes once to gone.
+@(private)
+recovery_log_convert :: proc(s:^Session,st:^Collab_State,tables:map[u64]Recovery_Log_Convert,record:[]u8,lost:^int,gone:^[dynamic]string) -> []u8 {
+    w:=edited_world(s)
+    r:=serial.reader_init(record)
+    serial.read_u8(&r)
+    serial.read_u8(&r)
+    count:=int(serial.read_u32(&r))
+    ops:Collab_Ops
+    collab_ops_begin(&ops)
+    for _ in 0..<count {
+        kind:=Collab_Op(serial.read_u8(&r))
+        hash:=serial.read_u64(&r)
+        id:=base.Entity_Id(serial.read_u64(&r))
+        bytes:=serial.read_bytes(&r,int(serial.read_u16(&r)))
+        if r.failed {break}
+        c,known:=tables[hash]
+        if !known || c.table<0 {
+            lost^+=1
+            if known && !slice.contains(gone[:],c.name) {append(gone,c.name)}
+            continue
+        }
+        t:=&st.tables[c.table]
+        if kind==.Set && c.migration!=nil {
+            info:=&s.info.tables[c.table]
+            // A field the old layout lacks keeps what the row has, or starts as a new row does.
+            default,value:=make([]u8,max(t.size,1),context.temp_allocator),make([]u8,max(t.size,1),context.temp_allocator)
+            e:=core.entity_of(core.world_entities(w),id)
+            if current:=core.raw_find(core.world_table_at(w,info),info.info,e);e!=core.NONE && current!=nil {
+                collab_normalize(w,t,current,default)
+            } else if info.default!=nil && t.size>0 {
+                info.default(raw_data(default))
+            }
+            serial.migration_apply(c.migration,value,bytes,1,default)
+            bytes=value[:t.size]
+        }
+        collab_op_write(&ops,&ops.body,kind,t.hash,id,bytes)
+    }
+    return collab_ops_pack(&ops,.Edit,0)
 }
 
