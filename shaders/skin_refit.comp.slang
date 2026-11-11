@@ -18,8 +18,8 @@ void main(uint3 tid:SV_DispatchThreadID) {
         node.bounds_min=float3(FLT_MAX);node.bounds_max=float3(-FLT_MAX);
         for (uint i=0;i<node.count;++i) {
             Bvh_Triangle t=triangles[job.y+node.left_first+i];
-            node.bounds_min=min(node.bounds_min,min(t.v0,min(t.v0+t.e1.xyz,t.v0+t.e2.xyz)));
-            node.bounds_max=max(node.bounds_max,max(t.v0,max(t.v0+t.e1.xyz,t.v0+t.e2.xyz)));
+            node.bounds_min=min(node.bounds_min,min(t.v0,min(t.v1.xyz,t.v2.xyz)));
+            node.bounds_max=max(node.bounds_max,max(t.v0,max(t.v1.xyz,t.v2.xyz)));
         }
     } else {
         Bvh_Node left=nodes[job.x+node.left_first],right=nodes[job.x+node.left_first+1u];

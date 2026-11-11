@@ -18,7 +18,8 @@ Each technique states its status; what is listed as prepared is not implemented.
 - **BVH** (implemented, `render/bvh.odin`). Built by the one SAH builder of `std/spatial`
   (`bvh_build`), its nodes uploaded as it lays them out, with a depth that limits the shader
   stack; compute traversal nearest-first, bounded by the nearest hit and with early exit for
-  shadow rays.
+  shadow rays. Its triangle test is watertight, as the hardware one: no ray passes between two
+  triangles through the edge or corner they share, so each triangle keeps its corners whole.
 - **BLAS / TLAS** (implemented). One BLAS per ray cut of each mesh in object space, persistent:
   editing transform, material or visibility does not rebuild it. Cut 0 is level 0; the coarser
   ones are cuts of the DAG that the file stores (`ray_errors`). `ray_cuts_update` chooses the
