@@ -1351,7 +1351,8 @@ Probe_Directions probe_directions(float3 direction) {
 bool probe_wants(Probe_Directions directions, int d) { return (directions.wants & (1u << uint(d))) != 0u; }
 
 // What the probes of a cascade around a point give around each direction it
-// wants, where they see it, and its weight: zero where none of them holds
+// wants (w: the share of it that comes from the sky, blended as it is),
+// where they see it, and its weight: zero where none of them holds
 // light. The weights are those of DDGI (wrapped cosine, Chebyshev visibility,
 // small weights crushed); the irradiance blends as its square root, so that a
 // bright probe does not stain dark neighbors, and the point moves off its
@@ -1369,7 +1370,7 @@ bool probe_wants(Probe_Directions directions, int d) { return (directions.wants 
 #define PROBE_SEEN_MARGIN 0.1
 #define PROBE_SEEN_GAIN 4.0
 #define PROBE_HIDDEN_SHARE 0.055
-float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 view_dir, float viewer_distance, Probe_Directions directions, bool surface, out float3 light[PROBE_READS]) {
+float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 view_dir, float viewer_distance, Probe_Directions directions, bool surface, out float4 light[PROBE_READS]) {
     float spacing = probe_spacing(cascade);
     float limit = probe_distance_limit(cascade);
     float toward_eye = lerp(0.0, 0.8, saturate(viewer_distance / spacing));
@@ -1385,19 +1386,19 @@ float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 vi
     float2 irr_size = float2(texture_size(irradiance_atlas, 0));
     float2 dist_size = float2(texture_size(distance_atlas, 0));
     float2 toward[PROBE_READS];
-    float3 sum[PROBE_READS];
+    float4 sum[PROBE_READS];
     [ForceUnroll]
     for (int d = 0; d < PROBE_READS; d++) {
         toward[d] = probe_wants(directions, d) ? probe_atlas_direction(directions.at[d]) : float2(0.0);
-        sum[d] = float3(0.0);
-        light[d] = float3(0.0);
+        sum[d] = float4(0.0);
+        light[d] = float4(0.0);
     }
     float weight_sum = 0.0;
     // The same weighed by how much each probe sees the point, and the share
     // of the trilinear weight of those that see it.
-    float3 seen_sum[PROBE_READS];
+    float4 seen_sum[PROBE_READS];
     [ForceUnroll]
-    for (int d = 0; d < PROBE_READS; d++) seen_sum[d] = float3(0.0);
+    for (int d = 0; d < PROBE_READS; d++) seen_sum[d] = float4(0.0);
     float seen_weight = 0.0;
     float seen_share = 0.0;
     uint held = 0u;
@@ -1443,8 +1444,8 @@ float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 vi
         [ForceUnroll]
         for (int d = 0; d < PROBE_READS; d++) {
             if (!probe_wants(directions, d)) continue;
-            float3 stored = irradiance_atlas.SampleLevel(linear_sampler, probe_atlas_texel(tile, toward[d], frame.volume_atlas.y, irr_size), 0.0).rgb;
-            float3 root = probe_light_root(stored) * weight;
+            float4 stored = irradiance_atlas.SampleLevel(linear_sampler, probe_atlas_texel(tile, toward[d], frame.volume_atlas.y, irr_size), 0.0);
+            float4 root = float4(probe_light_root(stored.rgb), stored.a) * weight;
             sum[d] += root;
             seen_sum[d] += root * sees;
         }
@@ -1460,8 +1461,8 @@ float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 vi
     float shown = PROBE_HIDDEN_SHARE > 0.0 ? saturate(seen_share / PROBE_HIDDEN_SHARE) : 1.0;
     [ForceUnroll]
     for (int d = 0; d < PROBE_READS; d++) {
-        float3 root = lerp(sum[d], seen_sum[d], open) / total;
-        light[d] = root * root * shown;
+        float4 root = lerp(sum[d], seen_sum[d], open) / total;
+        light[d] = float4(root.rgb * root.rgb, root.a) * shown;
     }
     return 1.0;
 }
@@ -1471,9 +1472,9 @@ float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 vi
 // it, blending into the next one over the last cells before its edge, and the
 // next one where none of its probes holds light yet; 0 where none holds any
 // and -1 beyond the cascades.
-float probe_volume_read(float3 position, float3 normal, float3 view_dir, float viewer_distance, Probe_Directions directions, bool surface, out float3 light[PROBE_READS]) {
+float probe_volume_read(float3 position, float3 normal, float3 view_dir, float viewer_distance, Probe_Directions directions, bool surface, out float4 light[PROBE_READS]) {
     [ForceUnroll]
-    for (int d = 0; d < PROBE_READS; d++) light[d] = float3(0.0);
+    for (int d = 0; d < PROBE_READS; d++) light[d] = float4(0.0);
     float3 counts = float3(frame.volume_counts.xyz);
     uint cascades = probe_cascades();
     uint cascade = cascades;
@@ -1502,7 +1503,7 @@ float probe_volume_read(float3 position, float3 normal, float3 view_dir, float v
     // The finest cascade, then the next one where it blends or holds nothing.
     [loop]
     for (uint k = 0u; k < 2u; k++) {
-        float3 read[PROBE_READS];
+        float4 read[PROBE_READS];
         float a = probe_cascade_read(cascade + k, position, normal, view_dir, viewer_distance, directions, surface, read);
         if (k == 0u || held == 0.0) {
             held = a;
@@ -1521,18 +1522,19 @@ float probe_volume_read(float3 position, float3 normal, float3 view_dir, float v
 // Irradiance (in Lambert-normalized radiance units) arriving around each
 // direction a surface point wants, from the probe volume, or zero when no
 // cache exists (callers add their own ambient floor) or no probe holds light
-// yet; beyond the cascades, the sky's. The normal places the lookup and
-// weights the probes; the directions are what the irradiance is read for.
+// yet; beyond the cascades, the sky's. w is the share of it that comes from
+// the sky. The normal places the lookup and weights the probes; the
+// directions are what the irradiance is read for.
 // `view_dir` points towards the eye or the origin of the ray that found the
 // point, `viewer_distance` away; below 0, the eye of the view.
 // The share of it that comes through a gate of an extension is that of the
 // place beyond the gate, so the light of a point at a gate is the same on both
 // of its sides.
-void probe_volume_light(float3 position, float3 normal, float3 view_dir, float viewer_distance, Probe_Directions directions, bool surface, out float3 light[PROBE_READS]) {
+void probe_volume_light(float3 position, float3 normal, float3 view_dir, float viewer_distance, Probe_Directions directions, bool surface, out float4 light[PROBE_READS]) {
     if (probe_volume_read(position, normal, view_dir, viewer_distance, directions, surface, light) >= 0.0) return;
     [ForceUnroll]
     for (int d = 0; d < PROBE_READS; d++) {
-        if (probe_wants(directions, d)) light[d] = sky_irradiance(directions.at[d]);
+        if (probe_wants(directions, d)) light[d] = float4(sky_irradiance(directions.at[d]), 1.0);
     }
 }
 

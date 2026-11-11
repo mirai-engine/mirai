@@ -136,7 +136,7 @@ a_tree_of_nodes_builds_the_widgets_it_describes :: proc(t:^testing.T) {
     testing.expect(t,test_rect_near(test_rect(t,&ctx,tree_element_id(&ctx,"resume")),{10,76,90,30}))
     // A checkbox without a size is a line of its text square (16, of the first style), centered in the row.
     side:=16*TEXT_LINE
-    testing.expect(t,test_rect_near(test_rect(t,&ctx,tree_element_id(&ctx,"mute")),{108,76+(30-side)*0.5,side,side}))
+    testing.expect(t,test_rect_snapped(test_rect(t,&ctx,tree_element_id(&ctx,"mute")),{108,76+(30-side)*0.5,side,side}))
     testing.expect_value(t,s.event_count,0)
 }
 

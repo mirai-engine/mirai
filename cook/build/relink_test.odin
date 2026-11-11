@@ -2,6 +2,7 @@ package build
 
 import "core:mem/virtual"
 import "core:os"
+import "mirai:std/subprocess"
 import "core:strings"
 import "core:testing"
 import "mirai:project"
@@ -48,7 +49,7 @@ a_change_inside_a_procedure_links_what_links_against_it_again :: proc(t:^testing
         for len(job.compiles)>0 {
             compile:=job.compiles[0]
             ordered_remove(&job.compiles,0)
-            state,_:=os.process_wait(compile.process)
+            state,_:=subprocess.wait(&compile.process)
             if !compile.relink {built.compiled+=1}
             job_plugin_finish(job,compile,state.exit_code)
             if !testing.expectf(t,job.result.status==.Running,"%s builds: %v %s",job.plugins[compile.library].path,job.result.diagnostics,job.result.text) {return}

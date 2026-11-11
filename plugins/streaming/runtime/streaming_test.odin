@@ -5,8 +5,9 @@ import "mirai:core"
 import scene "mirai:engine/scene"
 
 @(private)
+@(test_world)
 Streaming_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     references:core.Table(scene.Scene_Reference),
     worlds:core.Table(core.World_Transform),
     motions:core.Table(core.Motion),
@@ -26,12 +27,12 @@ Streaming_World :: struct {
 @(test)
 a_section_follows_how_near_its_sources_are :: proc(t:^testing.T) {
     w:Streaming_World
-    if !core.test_world_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     e:=core.create(&w.entities)
     core.add(&w.references,e,scene.Scene_Reference{extents={10,10,10},rule=.Spatial,streamed=.Unloaded})
     core.add(&w.worlds,e,core.World_Transform{transform={rotation=1,scale=1}})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     settings:=Streaming_Settings{active=20,load=50}
     seen:Streaming_Seen
     sources:scene.Streaming_Sources
@@ -74,8 +75,8 @@ a_section_follows_how_near_its_sources_are :: proc(t:^testing.T) {
 @(test)
 what_moves_out_of_its_section_hangs_from_the_one_that_holds_it :: proc(t:^testing.T) {
     w:Streaming_World
-    if !core.test_world_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     a,b,crate:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.references,a,scene.Scene_Reference{scene={1,1},extents={10,10,10},loaded={1,1}})
     core.add(&w.references,b,scene.Scene_Reference{scene={2,2},extents={10,10,10},loaded={2,2}})
@@ -87,9 +88,9 @@ what_moves_out_of_its_section_hangs_from_the_one_that_holds_it :: proc(t:^testin
     core.add(&w.transforms,crate,core.Transform{{25,0,0},1,{1,1,1}})
     core.add(&w.worlds,crate,core.World_Transform{transform={position={25,0,0},rotation=1,scale=1}})
     run :: proc(w:^Streaming_World) {
-        core.test_world_settle(w)
+        test_world_settle(w)
         streaming_crossings(core.read(&w.motions),core.read(&w.references),core.read(&w.worlds),core.read(&w.roaming),core.ref(&w.hierarchy),&w.parents,&w.transforms,&w.members,&w.crossings,nil)
-        core.test_world_settle(w)
+        test_world_settle(w)
     }
     run(&w)
     parent,_:=core.get(&w.parents,crate)

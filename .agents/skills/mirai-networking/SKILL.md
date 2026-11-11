@@ -206,7 +206,8 @@ In `plugins/multiplayer/runtime`:
   records, the server's input and lag compensation) is `history_seconds` at the tick rate plus the
   tick being written, made when the session opens or connects; none is a fixed count of ticks.
 - **One rule says how a replica is shown** (`replica_wanted`): predicted what the client drives,
-  what shared a simulation group with it in the last `critical_ticks`, what `Replicate.predict`
+  what shared a simulation group with it or swept its bounds into reach of it in the last
+  `critical_ticks`, what `Replicate.predict`
   asks and what the client spawned ahead; interpolated the rest, with pose, motion, `Move_Input`
   and components of the same server tick. There is no setting that changes it for every replica.
 - **A replica that changes timeline does not jump in what is drawn**, and neither does a
@@ -219,8 +220,9 @@ In `plugins/multiplayer/runtime`:
     to then are dropped: nothing is closed over later ticks.
   - What a library knows has changed in already simulated ticks comes back through `rewind`, not
     on its own.
-- **The type of an object is what its entity has now.** A replicated component that comes or goes
-  re-types the object in place (`object_retype`); it is never destroyed and made again for it.
+- **The type of an object lists all its entity replicated.** A replicated component that goes
+  travels as absent in the pose; only one the type never listed widens it in place
+  (`object_retype`), never destroyed and made again, and its holder keeps it.
 - **A spawn both ends make in a tick is one entity** (`predict_spawn`): the plugin numbers the
   spawns of each seat in the tick, never the game, and the replica takes the client's by the Id
   both draw, also when a correction runs the tick of the spawn again (`replicas_relink`,

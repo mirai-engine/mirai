@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:math/linalg"
 import "core:testing"
 import "mirai:core"
+import "mirai:engine/volume"
 import "mirai:std/ai"
 import mm "mirai:std/math"
 import nav "plugins:navigation/runtime"
@@ -38,9 +39,10 @@ serving_allocator :: proc(served:^int,owner:runtime.Allocator) -> runtime.Alloca
 
 // What the tests of this file tick: the tables and the storages of a World
 // that the minds, the perception, the places and the smart objects read.
-@(private="file")
+@(private)
+@(test_world)
 Behavior_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     mind_agents:core.Table(Mind_Agent),
     perceivers:core.Table(Perceiver),
     perceptions:core.Table(Perception),
@@ -52,6 +54,8 @@ Behavior_World :: struct {
     paths:core.Table(nav.Nav_Path),
     fars:core.Table(nav.Nav_Far),
     agents:core.Table(nav.Nav_Agent),
+    patrols:core.Table(Patrol),
+    splines:core.Table(volume.Spline),
     walks:core.Table(locomotion.Walk),
     swims:core.Table(locomotion.Swim),
     turns:Perceiving,
@@ -77,7 +81,7 @@ Sight_World :: struct {
 @(private="file")
 sight_world_destroy :: proc(f:^Sight_World) {
     sight_free(&f.sight)
-    core.test_world_destroy(&f.behavior)
+    test_world_destroy(&f.behavior)
 }
 
 @(private="file")
@@ -115,13 +119,13 @@ minds_register_by_name_and_tick_their_agents :: proc(t:^testing.T) {
     minds:=new(Minds)
     defer free(minds)
     world:Behavior_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     a,b,lost:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     core.add(&world.mind_agents,a,Mind_Agent{mind=mind_name("counter")})
     core.add(&world.mind_agents,b,Mind_Agent{mind=mind_name("counter")})
     core.add(&world.mind_agents,lost,Mind_Agent{mind=mind_name("nobody")})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     c:=Counting{world={minds=minds,agents=&world.mind_agents,time={tick=1,dt=1.0/60,playing=true}}}
     minds_tick(&c.world,"counter",&COUNTING_ACTS,counting_think)
     testing.expect_value(t,c.entered,2)
@@ -139,11 +143,11 @@ the_mind_of_an_agent_does_not_tick_again_in_a_resimulation :: proc(t:^testing.T)
     minds:=new(Minds)
     defer free(minds)
     world:Behavior_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     e:=core.create(&world.entities)
     core.add(&world.mind_agents,e,Mind_Agent{mind=mind_name("hunter")})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     c:=Counting{world={minds=minds,agents=&world.mind_agents,time={tick=1,dt=1.0/60,playing=true}}}
     minds_tick(&c.world,"hunter",&COUNTING_ACTS,counting_think)
     testing.expect(t,c.entered==1)
@@ -168,19 +172,19 @@ the_mind_of_an_agent_far_ticks_at_the_steps_of_what_is_far :: proc(t:^testing.T)
     minds:=new(Minds)
     defer free(minds)
     world:Behavior_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     near,far,dormant:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     for e in ([3]core.Entity{near,far,dormant}) {
         core.add(&world.mind_agents,e,Mind_Agent{mind=mind_name("counter")})
         core.add(&world.paths,e,nav.Nav_Path{state=.Arrived,class=-1})
     }
     core.add(&world.fars,far,nav.Nav_Far{arrived=true})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     // Off: the far one as navigation leaves it, the dormant one as a section that sleeps.
     for e in ([2]core.Entity{far,dormant}) {core.disable(&world.mind_agents,e);core.disable(&world.paths,e)}
     core.disable(&world.fars,far)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     c:=Counting{world={minds=minds,agents=&world.mind_agents,paths=core.read(&world.paths),fars=core.read(&world.fars),claims=&world.claims}}
     calls:=0
     for tick in u64(0)..<60 {
@@ -213,11 +217,11 @@ Move_Act :: enum u8 {Move}
 @(test)
 move_actions_ask_navigation_and_read_where_the_agent_got :: proc(t:^testing.T) {
     world:Behavior_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     e,prey,other:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     core.add(&world.paths,e,nav.Nav_Path{state=.Waiting})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     w:=Mind_World{requests=&world.moves,paths=core.read(&world.paths)}
     ctx:=ai.Mind_Context{user=&w,holder=u64(e)}
     memory:[ai.MIND_WORDS]u64
@@ -253,15 +257,103 @@ move_actions_ask_navigation_and_read_where_the_agent_got :: proc(t:^testing.T) {
     testing.expect_value(t,chase_act(&a,other,1),ai.Status.Failure)
 }
 
+// A patrol walks the points of a Spline from the one after where it is
+// nearest, on to the next when it arrives or cannot get there, back and forth,
+// around or once; it follows the path when it moves or is edited, stands at a
+// path of one point, keeps a crossing when it is interrupted and fails with a
+// problem without a path to walk. An agent without a mind walks it by itself.
+@(test)
+patrols_walk_the_points_of_their_spline :: proc(t:^testing.T) {
+    world:Behavior_World
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    e,route:=core.create(&world.entities),core.create(&world.entities)
+    line:=volume.Spline{count=3,points={0={{0,0,0},1,0},1={{0,0,-4},1,0},2={{0,0,-8},1,0}}}
+    core.add(&world.paths,e,nav.Nav_Path{})
+    core.add(&world.worlds,e,core.World_Transform{transform={{5,0,3},mm.QUAT_IDENTITY,{1,1,1}}})
+    core.add(&world.worlds,route,core.World_Transform{transform={{5,0,0},mm.QUAT_IDENTITY,{1,1,1}}})
+    core.add(&world.splines,route,line)
+    core.add(&world.patrols,e,Patrol{path=route,mode=.Back_And_Forth})
+    test_world_settle(&world)
+    problems:core.Problems
+    w:=Mind_World{requests=&world.moves,paths=core.read(&world.paths),worlds=core.read(&world.worlds),patrols=&world.patrols,splines=core.read(&world.splines),problems=&problems}
+    ctx:=ai.Mind_Context{user=&w,holder=u64(e)}
+    memory:[ai.MIND_WORDS]u64
+    a:=ai.Act(Move_Act){ctx=&ctx,memory=memory[:]}
+    Step :: struct {name:string,phase:ai.Phase,state:nav.Nav_State,edit:proc(w:^Behavior_World,e,route:core.Entity),status:ai.Status,goal:[3]f32,asks:bool}
+    move :: proc(w:^Behavior_World,e,route:core.Entity) {core.edit(&w.worlds,route).position.x=6}
+    once :: proc(w:^Behavior_World,e,route:core.Entity) {core.edit(&w.patrols,e).mode=.Once}
+    loop :: proc(w:^Behavior_World,e,route:core.Entity) {core.edit(&w.patrols,e).mode=.Loop}
+    shorten :: proc(w:^Behavior_World,e,route:core.Entity) {core.edit(&w.splines,route).count=1}
+    lost :: proc(w:^Behavior_World,e,route:core.Entity) {
+        nan:=f32(0)
+        core.edit(&w.splines,route).points[0].position.y=nan/nan
+    }
+    for c in ([]Step{
+        {"from the nearest, the next",.Enter,.Idle,nil,.Running,{5,0,-4},true},
+        {"walking",.Update,.Moving,nil,.Running,{},false},
+        {"its path moved",.Update,.Moving,move,.Running,{6,0,-4},true},
+        {"there",.Update,.Arrived,nil,.Running,{6,0,-8},true},
+        {"and back",.Update,.Arrived,nil,.Running,{6,0,-4},true},
+        {"one it cannot get to",.Update,.Failed,nil,.Running,{6,0,0},true},
+        {"and forth again",.Update,.Arrived,nil,.Running,{6,0,-4},true},
+        {"around",.Update,.Arrived,loop,.Running,{6,0,-8},true},
+        {"from the last to the first",.Update,.Arrived,nil,.Running,{6,0,0},true},
+        {"once to the last",.Update,.Arrived,once,.Running,{6,0,-4},true},
+        {"at the end",.Update,.Arrived,nil,.Running,{6,0,-8},true},
+        {"ended",.Update,.Arrived,nil,.Success,{},false},
+        {"edited to one point: to it",.Update,.Arrived,shorten,.Running,{6,0,0},true},
+        {"and stands there",.Update,.Arrived,loop,.Running,{},false},
+        {"a point not a number",.Update,.Arrived,lost,.Failure,{},false},
+    }) {
+        if c.edit!=nil {c.edit(&world,e,route)}
+        core.edit(&world.paths,e).state=c.state
+        core.edit(&world.paths,e).goal=world.moves.queue.items[len(world.moves.queue.items)-1].point if len(world.moves.queue.items)>0 else {}
+        asked:=len(world.moves.queue.items)
+        a.phase=c.phase
+        testing.expectf(t,patrol_act(&a)==c.status,"%s: its status",c.name)
+        asks:=len(world.moves.queue.items)>asked
+        testing.expectf(t,asks==c.asks && (!asks || world.moves.queue.items[asked].point==c.goal),"%s: asked %v",c.name,world.moves.queue.items[asked:])
+    }
+    testing.expect_value(t,problems.count,1)
+    // An interrupted patrol stops the agent, but not in the middle of a crossing.
+    for state in ([]nav.Nav_State{.Crossing,.Moving}) {
+        core.edit(&world.paths,e).state=state
+        asked:=len(world.moves.queue.items)
+        a.phase,a.cause=.Exit,.Aborted
+        patrol_act(&a)
+        testing.expectf(t,(len(world.moves.queue.items)>asked)==(state==.Moving),"%v",state)
+    }
+    // Without a mind it walks by itself; with one, only while the mind patrols.
+    core.edit(&world.splines,route)^=line
+    core.edit(&world.paths,e).state=.Idle
+    for minded in ([]bool{false,true}) {
+        if minded {
+            core.add(&world.mind_agents,e,Mind_Agent{})
+            test_world_settle(&world)
+        }
+        asked:=len(world.moves.queue.items)
+        patrols_walk(&world.patrols,core.read(&world.mind_agents),core.read(&world.paths),core.read(&world.splines),core.read(&world.worlds),&world.moves,&problems,{playing=true,dt=1.0/60})
+        testing.expectf(t,(len(world.moves.queue.items)>asked)!=minded,"with a mind: %v",minded)
+    }
+    // Without a path it fails, as one without its Patrol.
+    core.edit(&world.patrols,e).path=core.NONE
+    a.phase=.Enter
+    testing.expect_value(t,patrol_act(&a),ai.Status.Failure)
+    core.remove(&world.patrols,e)
+    test_world_settle(&world)
+    testing.expect_value(t,patrol_act(&a),ai.Status.Failure)
+}
+
 // The clock at `seconds` of a run at hz ticks a second.
 @(private="file")
 clock_at :: proc(hz,seconds:f64) -> core.Time {return {tick=u64(seconds*hz+0.5),seconds=seconds,dt=f32(1/hz),playing=true}}
 
 @(private="file")
 sight_tick :: proc(f:^Sight_World,seconds:f64) {
-    core.test_world_settle(f)
+    test_world_settle(f)
     perception_update(core.read(&f.perceivers),&f.perceptions,core.read(&f.perceivables),core.read(&f.worlds),core.ref(&f.settings),&f.turns,&f.sight,&f.noises,&f.events,core.ref(&f.physics),core.read(&f.fars),core.ref(&f.entities),clock_at(60,seconds),&f.problems)
-    core.test_world_settle(f)
+    test_world_settle(f)
 }
 
 @(private="file")
@@ -274,7 +366,7 @@ placed :: proc(f:^Behavior_World,position:mm.Vec3) -> core.Entity {
 @(test)
 perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: proc(t:^testing.T) {
     f:Sight_World
-    if !core.test_world_init(t,&f.behavior,test_types) {return}
+    if !test_world_init(t,&f.behavior) {return}
     defer sight_world_destroy(&f)
     // A guard at the origin looking down -Z (its front), noticing team 1.
     guard:=placed(&f,{})
@@ -317,7 +409,7 @@ perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: pro
 @(test)
 a_remembered_subject_that_is_destroyed_is_forgotten_at_once :: proc(t:^testing.T) {
     f:Sight_World
-    if !core.test_world_init(t,&f.behavior,test_types) {return}
+    if !test_world_init(t,&f.behavior) {return}
     defer sight_world_destroy(&f)
     guard:=placed(&f,{})
     watch:=PERCEIVER_DEFAULT
@@ -331,7 +423,7 @@ a_remembered_subject_that_is_destroyed_is_forgotten_at_once :: proc(t:^testing.T
     mine:=core.edit(&f.perceptions,guard)
     testing.expect(t,mine!=nil && ai.memory_find(&mine.memory,u64(seen))!=nil && ai.memory_find(&mine.memory,0)!=nil)
     core.destroy(&f.entities,seen)
-    core.test_world_settle(&f)
+    test_world_settle(&f)
     again:=placed(&f,{0,0,-50})
     sight_tick(&f,0.2)
     mine=core.edit(&f.perceptions,guard)
@@ -346,7 +438,7 @@ a_remembered_subject_that_is_destroyed_is_forgotten_at_once :: proc(t:^testing.T
 @(test)
 sight_shares_its_rays_among_perceivers_in_turns :: proc(t:^testing.T) {
     f:Sight_World
-    if !core.test_world_init(t,&f.behavior,test_types) {return}
+    if !test_world_init(t,&f.behavior) {return}
     defer sight_world_destroy(&f)
     f.settings.rays=1
     guards:[3]core.Entity
@@ -367,7 +459,7 @@ sight_shares_its_rays_among_perceivers_in_turns :: proc(t:^testing.T) {
 @(test)
 every_perceiver_gets_its_turn_and_forgets_only_in_it :: proc(t:^testing.T) {
     f:Sight_World
-    if !core.test_world_init(t,&f.behavior,test_types) {return}
+    if !test_world_init(t,&f.behavior) {return}
     defer sight_world_destroy(&f)
     f.settings.rays=1
     guards:[4]core.Entity
@@ -397,12 +489,12 @@ every_perceiver_gets_its_turn_and_forgets_only_in_it :: proc(t:^testing.T) {
 @(test)
 places_are_answered_in_order_within_the_budget :: proc(t:^testing.T) {
     world:Behavior_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     a,b:=core.create(&world.entities),core.create(&world.entities)
     core.add(&world.worlds,a,core.World_Transform{transform={position={0,0,0},rotation=1,scale=1}})
     core.add(&world.worlds,b,core.World_Transform{transform={position={10,0,0},rotation=1,scale=1}})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     places:Places
     defer places_free(&places)
     world.settings=Behavior_Settings{queries=1}
@@ -415,7 +507,7 @@ places_are_answered_in_order_within_the_budget :: proc(t:^testing.T) {
     place_query(&world.requests,q)
     problems:core.Problems
     places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},&problems)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     first,_:=core.get(&world.results,a)
     second,_:=core.get(&world.results,b)
     testing.expect(t,first.status==.Found && first.request==1 && first.count==3 && first.points[0]=={3,0,0} && first.scores[0]>=first.scores[1])
@@ -445,14 +537,14 @@ Places_Test :: struct {
 @(test)
 places_of_a_target_that_is_destroyed_are_none :: proc(t:^testing.T) {
     f:Places_Test
-    if !core.test_world_init(t,&f.w,test_types) {return}
+    if !test_world_init(t,&f.w) {return}
     defer {
         places_free(&f.places)
-        core.test_world_destroy(&f.w)
+        test_world_destroy(&f.w)
     }
     querier,target,gone:=core.create(&f.entities),core.create(&f.entities),core.create(&f.entities)
     for e,i in ([]core.Entity{querier,target,gone}) {core.add(&f.worlds,e,core.World_Transform{transform={position={f32(i)*5,0,0},rotation=1,scale=1}})}
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
     f.settings=Behavior_Settings{queries=1}
     around:=Place_Query{querier=querier,center=.Target,target=target,layout=.Grid,outer=2,spacing=1,keep=1}
     around.tests[0]={measure=.Distance,from=.Querier,min=0,max=10,response={kind=.Linear,slope=-1,shift_y=1}}
@@ -464,7 +556,7 @@ places_of_a_target_that_is_destroyed_are_none :: proc(t:^testing.T) {
     run :: proc(f:^Places_Test) {
         places_run(&f.requests,&f.places,&f.results,core.ref(&f.settings),core.read(&f.worlds),core.read(&f.perceivers),{},core.read(&f.paths),
             core.read(&f.agents),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),Smart_View{objects=core.read(&f.objects),states=core.read(&f.states),worlds=core.read(&f.worlds),claims=core.ref(&f.claims)},{},&f.problems)
-        core.test_world_settle(&f.w)
+        test_world_settle(&f.w)
     }
     place_query(&f.requests,around)
     run(&f)
@@ -472,7 +564,7 @@ places_of_a_target_that_is_destroyed_are_none :: proc(t:^testing.T) {
     testing.expect(t,result.status==.Found && result.request==1,"around the target while it is there")
     core.destroy(&f.entities,target)
     core.destroy(&f.entities,gone)
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
     place_query(&f.requests,orphan)
     place_query(&f.requests,around)
     run(&f)
@@ -489,8 +581,8 @@ places_of_a_target_that_is_destroyed_are_none :: proc(t:^testing.T) {
 @(test)
 the_path_of_places_walks_only_what_the_querier_walks :: proc(t:^testing.T) {
     world:Behavior_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     world.navigation.classes[0].class=nav.NAVIGATION_SETTINGS_DEFAULT.classes[0]
     world.navigation.count,world.navigation.ready=1,true
     mesh:=&world.navigation.classes[0].mesh
@@ -507,7 +599,7 @@ the_path_of_places_walks_only_what_the_querier_walks :: proc(t:^testing.T) {
         core.add(&world.walks,e,locomotion.Walk{max_speed=4,jump_height=1})
     }
     core.add(&world.swims,swimmer,locomotion.SWIM_DEFAULT)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     places:Places
     defer places_free(&places)
     origin:=mm.Vec3{1,0,1}
@@ -550,10 +642,10 @@ the_path_of_places_walks_only_what_the_querier_walks :: proc(t:^testing.T) {
 @(test)
 places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: proc(t:^testing.T) {
     f:Places_Test
-    if !core.test_world_init(t,&f.w,test_types) {return}
+    if !test_world_init(t,&f.w) {return}
     defer {
         places_free(&f.places)
-        core.test_world_destroy(&f.w)
+        test_world_destroy(&f.w)
     }
     f.navigation.classes[0].class=nav.NAVIGATION_SETTINGS_DEFAULT.classes[0]
     f.navigation.count,f.navigation.ready=1,true
@@ -573,13 +665,13 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
     core.add(&f.perceivables,near,Perceivable{team=1})
     core.add(&f.perceivables,far,Perceivable{team=1})
     core.add(&f.perceivables,friend,Perceivable{team=2})
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
     f.settings=Behavior_Settings{queries=4}
     run :: proc(f:^Places_Test,q:Place_Query) -> Place_Result {
         place_query(&f.requests,q)
         places_run(&f.requests,&f.places,&f.results,core.ref(&f.settings),core.read(&f.worlds),core.read(&f.perceivers),core.read(&f.perceivables),core.read(&f.paths),
             core.read(&f.agents),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),Smart_View{objects=core.read(&f.objects),states=core.read(&f.states),worlds=core.read(&f.worlds),claims=core.ref(&f.claims)},{},&f.problems)
-        core.test_world_settle(&f.w)
+        test_world_settle(&f.w)
         result,_:=core.get(&f.results,q.querier)
         return result
     }
@@ -614,7 +706,7 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
     other.offers[0]={use=2,users=1}
     core.add(&f.objects,crate,stocked)
     core.add(&f.objects,box,other)
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
     offered:=given
     offered.layout,offered.outer,offered.use,offered.entity_count=.Offers,8,1,0
     result=run(&f,offered)
@@ -632,8 +724,8 @@ Smart_Act :: enum u8 {Use}
 @(test)
 smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     world:Behavior_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     USE_AMMO :: Smart_Use(1)
     USE_TURRET :: Smart_Use(2)
     crate,far_crate,turret,a,b:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
@@ -647,9 +739,9 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     gun:Smart_Object
     gun.offers[0]={use=USE_TURRET,users=1,abilities=nav.Nav_Abilities(1<<u32(nav.ABILITY_CLIMB))}
     core.add(&world.objects,turret,gun)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     smart_update(core.read(&world.objects),&world.states,&world.uses,{seconds=0})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     v:=Mind_World{objects=core.read(&world.objects),states=core.read(&world.states),worlds=core.read(&world.worlds),claims=&world.claims,time=clock_at(60,1.0/60)}
     looks:=ai.Mind_Context{user=&v}
     red:=Smart_User{entity=a,team=1}
@@ -684,7 +776,7 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
         core.edit(&world.states,crate)^={}
         smart_used(&world.uses,found)
         smart_update(core.read(&world.objects),&world.states,&world.uses,clock_at(hz,1))
-        core.test_world_settle(&world)
+        test_world_settle(&world)
         v.time=clock_at(hz,5.95)
         _,ok=smart_offer(&looks,crate,USE_AMMO,red)
         testing.expectf(t,!ok,"cooling down at %v Hz",hz)
@@ -694,10 +786,42 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
     }
     smart_used(&world.uses,found)
     smart_update(core.read(&world.objects),&world.states,&world.uses,clock_at(60,6))
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     v.time=clock_at(60,100)
     _,ok=smart_offer(&looks,crate,USE_AMMO,red)
     testing.expect(t,!ok,"spent")
+    // One that walks to a kit walks after it as it moves, and fails once it is destroyed.
+    USE_HEAL :: Smart_Use(3)
+    kit,walker:=placed(&world,{0,0,20}),placed(&world,{0,0,15})
+    heal:Smart_Object
+    heal.offers[0]={use=USE_HEAL,users=1}
+    core.add(&world.objects,kit,heal)
+    core.add(&world.paths,walker,nav.Nav_Path{class=-1})
+    core.test_world_settle(&world)
+    smart_update(core.read(&world.objects),&world.states,&world.uses,v.time)
+    core.test_world_settle(&world)
+    v.requests,v.paths=&world.moves,core.read(&world.paths)
+    walks:ai.Mind
+    memory:[ai.MIND_WORDS]u64
+    walking:=ai.Mind_Context{user=&v,tick=v.time.tick,dt=v.time.dt,holder=u64(walker),reservations=&world.claims.reservations}
+    act=ai.Act(Smart_Act){ctx=&walking,mind=&walks,frame=&walks.main,phase=.Enter,memory=memory[:]}
+    healer:=Smart_User{entity=walker}
+    asked :: proc(world:^Behavior_World) -> nav.Nav_Request {return world.moves.queue.items[len(world.moves.queue.items)-1]}
+    status,taken:=offer_act(&act,USE_HEAL,healer,10,1)
+    testing.expect(t,status==.Running && taken.object==kit && asked(&world).kind==.Move_To && asked(&world).point==taken.at)
+    core.edit(&world.paths,walker)^={state=.Moving,goal=taken.at,class=-1}
+    act.phase=.Update
+    requests:=len(world.moves.queue.items)
+    status,_=offer_act(&act,USE_HEAL,healer,10,1)
+    testing.expect(t,status==.Running && len(world.moves.queue.items)==requests)
+    core.edit(&world.worlds,kit).position={3,0,20}
+    core.test_world_settle(&world)
+    status,_=offer_act(&act,USE_HEAL,healer,10,1)
+    testing.expect(t,status==.Running && asked(&world).kind==.Move_To && asked(&world).point==[3]f32{3,0,20},"it walks to where the kit is now")
+    core.destroy(&world.entities,kit)
+    core.test_world_settle(&world)
+    status,_=offer_act(&act,USE_HEAL,healer,10,1)
+    testing.expect_value(t,status,ai.Status.Failure)
 }
 
 // The influence of each team is where its Perceivables are, less farther
@@ -705,8 +829,8 @@ smart_objects_offer_their_uses_to_whom_may_take_them :: proc(t:^testing.T) {
 @(test)
 influence_maps_follow_the_teams :: proc(t:^testing.T) {
     world:Behavior_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     influence:Influence
     defer influence_free(&influence)
     world.settings.influence_size,world.settings.influence_cells,world.settings.influence_rays=32,32*32*INFLUENCE_TEAMS,0
@@ -723,11 +847,11 @@ influence_maps_follow_the_teams :: proc(t:^testing.T) {
     // A reader alone has them made.
     reader:=core.create(&world.entities)
     core.add(&world.perceivers,reader,Perceiver{})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     influence_update(&influence,core.ref(&world.settings),core.read(&world.perceivables),core.read(&world.perceivers),core.read(&world.mind_agents),core.read(&world.results),core.read(&world.worlds),core.ref(&world.physics),{tick=3,dt=1.0/60,playing=true})
     testing.expect(t,ai.influence_ready(&influence.grid))
     core.remove(&world.perceivers,reader)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     influence_update(&influence,core.ref(&world.settings),core.read(&world.perceivables),core.read(&world.perceivers),core.read(&world.mind_agents),core.read(&world.results),core.read(&world.worlds),core.ref(&world.physics),{tick=4,dt=1.0/60,playing=true})
     testing.expect(t,!ai.influence_ready(&influence.grid),"the maps nobody reads any more are freed")
     red,blue:=core.create(&world.entities),core.create(&world.entities)
@@ -735,7 +859,7 @@ influence_maps_follow_the_teams :: proc(t:^testing.T) {
     core.add(&world.perceivables,blue,Perceivable{team=2})
     core.add(&world.worlds,red,core.World_Transform{transform={position={-10,0,0},rotation=1,scale=1}})
     core.add(&world.worlds,blue,core.World_Transform{transform={position={10,0,0},rotation=1,scale=1}})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     for tick in 0..<20 {
         // Made on the first tick; the others do not allocate.
         saved:=context.allocator
@@ -763,7 +887,7 @@ influence_maps_follow_the_teams :: proc(t:^testing.T) {
 perceivers_find_by_the_grid_whom_they_would_among_every_perceivable :: proc(t:^testing.T) {
     round :: proc(t:^testing.T,seed:u64,spread:f32,rays:i32) {
         f:Sight_World
-        if !core.test_world_init(t,&f.behavior,test_types) {return}
+        if !test_world_init(t,&f.behavior) {return}
         defer sight_world_destroy(&f)
         f.settings.rays=rays
         rng:=mm.rng_make(seed)
@@ -824,7 +948,7 @@ perceivers_find_by_the_grid_whom_they_would_among_every_perceivable :: proc(t:^t
 @(test)
 a_tick_with_nothing_to_do_goes_through_no_row :: proc(t:^testing.T) {
     f:Sight_World
-    if !core.test_world_init(t,&f.behavior,test_types) {return}
+    if !test_world_init(t,&f.behavior) {return}
     defer sight_world_destroy(&f)
     guard:=placed(&f,{})
     watch:=PERCEIVER_DEFAULT
@@ -861,25 +985,25 @@ a_tick_with_nothing_to_do_goes_through_no_row :: proc(t:^testing.T) {
     // The objects get their state when they come; a tick after, with the tables as they were, none is gone through.
     box:=placed(&f,{})
     core.add(&f.objects,box,Smart_Object{})
-    core.test_world_settle(&f.behavior)
+    test_world_settle(&f.behavior)
     smart_update(core.read(&f.objects),&f.states,&f.uses,{seconds=0})
-    core.test_world_settle(&f.behavior)
+    test_world_settle(&f.behavior)
     testing.expect(t,core.has(&f.states,box))
     smart_update(core.read(&f.objects),&f.states,&f.uses,{seconds=1})
-    core.test_world_settle(&f.behavior)
+    test_world_settle(&f.behavior)
     shapes:=f.uses.shapes
     testing.expect(t,!core.reshaped(&f.objects,&shapes[0]) && !core.reshaped(&f.states,&shapes[1]))
     // One without its state is not looked for while the tables say nothing changed.
     other:=placed(&f,{})
     core.add(&f.objects,other,Smart_Object{})
-    core.test_world_settle(&f.behavior)
+    test_world_settle(&f.behavior)
     changed:=f.uses.shapes
     _=core.reshaped(&f.objects,&f.uses.shapes[0]) | core.reshaped(&f.states,&f.uses.shapes[1])
     smart_update(core.read(&f.objects),&f.states,&f.uses,{seconds=2})
-    core.test_world_settle(&f.behavior)
+    test_world_settle(&f.behavior)
     testing.expect(t,!core.has(&f.states,other))
     f.uses.shapes=changed
     smart_update(core.read(&f.objects),&f.states,&f.uses,{seconds=3})
-    core.test_world_settle(&f.behavior)
+    test_world_settle(&f.behavior)
     testing.expect(t,core.has(&f.states,other))
 }

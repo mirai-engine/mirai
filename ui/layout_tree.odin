@@ -107,7 +107,6 @@ Layout_Text_Desc :: struct {
     size:f32,    // of its style: a line shows while the box of a line of this size fits in the element
     line:f32,    // the box of a line; one that holds a taller piece is as tall as it
     wrap:Text_Wrap,
-    cut:bool,    // a word wider than a line goes on in the next one instead of past its end
     ellipsis:bool,
     hits:bool,   // pieces of it take the pointer: frame_end gives them their rectangles
     align_x,align_y:Align,
@@ -195,6 +194,7 @@ Layout_Tree :: struct {
     aspects:bool,  // an element of the frame keeps an aspect
     transitions:[]Layout_Transition, // by id: a power of two of slots, found from the id on
     dt:f32,        // seconds since the last frame, which carry what transitions
+    ppu:f32,       // device pixels per layout unit: the grid boxes and the sizes of texts fall on
     allocator:mem.Allocator,
 }
 
@@ -261,7 +261,8 @@ layout_destroy :: proc(t:^Layout_Tree) {
 // Starts the tree of a frame on a surface of this size. Node zero is the
 // surface: every element at the top level is inside it.
 @(private)
-layout_begin :: proc(t:^Layout_Tree,size:[2]f32) {
+layout_begin :: proc(t:^Layout_Tree,size:[2]f32,ppu:f32) {
+    t.ppu=ppu
     t.text_count=0;t.span_count=0;t.piece_count=0;t.kids_len=0;t.pending_len=0;t.line_count=0;t.command_count=0
     t.duplicates=0;t.overflow=false;t.aspects=false
     id_table_clear(&t.ids)
@@ -420,8 +421,20 @@ layout_fit_text :: proc(t:^Layout_Tree,font:^Font,n:^Layout_Node) {
         n.min_dim.x=n.dim.x if text.wrap==.None else least
     }
     if l.height.kind==.Fit {n.dim.y,n.min_dim.y=text.line,text.line}
+    n.dim={layout_whole(t.ppu,n.dim.x),layout_whole(t.ppu,n.dim.y)}
+    if text.wrap==.None {n.min_dim.x=n.dim.x}
+    n.min_dim.y=n.dim.y
     layout_limit(n)
 }
+// What a text asks for, up to whole device pixels (ppu per unit): a box
+// rounded to them is never smaller than the text it holds.
+@(private)
+layout_whole :: #force_inline proc "contextless" (ppu,v:f32) -> f32 {
+    return math.ceil(v*ppu-LAYOUT_EPSILON)/ppu if ppu>0 && abs(v)<math.F32_MAX/16 else v
+}
+// A size a widget measures from its text, up to the device pixels of the context.
+@(private)
+context_whole :: #force_inline proc "contextless" (ctx:^Context,v:f32) -> f32 {return layout_whole(ctx.scale*ctx.font.density,v)}
 // The words of a span in order: those its measure kept, or the span walked again.
 @(private)
 layout_span_walk :: proc "contextless" (t:^Layout_Tree,font:^Font,s:^Layout_Span) -> (w:Layout_Walk) {
@@ -441,10 +454,10 @@ layout_text_ask :: proc "contextless" (t:^Layout_Tree,font:^Font,text:^Layout_Te
         m:=&s.measure
         if s.box || s.pad>0 || s.solid || s.text=="" || !m.breaks {
             line+=s.width+s.gap
-            if s.box {least=max(least,s.width)} else if s.text!="" && !text.cut {least=max(least,s.width if s.pad>0 || s.solid else m.min_width)}
+            if s.box {least=max(least,s.width)} else if s.text!="" {least=max(least,s.width if s.pad>0 || s.solid else m.min_width)}
             continue
         }
-        if !text.cut {least=max(least,m.min_width)}
+        least=max(least,m.min_width)
         if len(spans)==1 {wide=m.width;continue}
         words:=layout_span_walk(t,font,&s)
         for {
@@ -564,8 +577,22 @@ layout_measure_run :: proc(g:^Layout_Measures,font:^Font,text:string,size:f32,fa
     return
 }
 
-// The words of a run, in order, as they are measured: each with the space that
-// ends it, and a line break as a word of no length after the word before it.
+// The bytes of the mark a word may end after that ends text at byte end: a
+// hyphen or a slash (1), a soft hyphen (2: drawn as a hyphen only where a line
+// breaks at it), an en or em dash or a zero width space (3); 0 for none.
+@(private)
+text_mark :: #force_inline proc "contextless" (text:string,end:int) -> int {
+    switch c:=text[end-1];c {
+    case '-','/':return 1
+    case 0xad:if end>=2 && text[end-2]==0xc2 {return 2}
+    case 0x93,0x94,0x8b:if end>=3 && text[end-3]==0xe2 && text[end-2]==0x80 {return 3}
+    }
+    return 0
+}
+
+// The words of a run, in order, as they are measured: each with the space or
+// the mark (text_mark) that ends it, and a line break as a word of no length
+// after the word before it.
 @(private)
 Layout_Walk :: struct {
     font:^Font,text:string,size:f32,face:int,space:f32,
@@ -587,7 +614,16 @@ layout_walk :: proc "contextless" (w:^Layout_Walk) -> (word:Layout_Word,bare:f32
     start:=w.at
     for i in start..<len(w.text) {
         c:=w.text[i]
-        if c!=' ' && c!='\n' {continue}
+        if c!=' ' && c!='\n' {
+            // A word ends after a mark that follows something and that a word
+            // follows, and a hyphen or a slash keeps a number after it (1/2, x-5).
+            n:=text_mark(w.text,i+1)
+            if n==0 || i+1-n<=start || i+1>=len(w.text) {continue}
+            if next:=w.text[i+1];next==' ' || next=='\n' || n==1 && next>='0' && next<='9' {continue}
+            w.at=i+1
+            bare=text_width(w.font,w.text[start:i+1],w.size,w.face)
+            return {i32(start),i32(i+1-start),bare},bare,true
+        }
         w.at=i+1
         if c=='\n' && i==start {return {i32(i+1),0,0},0,true}
         bare=text_width(w.font,w.text[start:i],w.size,w.face)
@@ -684,7 +720,7 @@ layout_text_wrap :: proc(t:^Layout_Tree,font:^Font,text:^Layout_Text,width:f32,k
     spans:=t.spans[text.spans_first:][:text.spans_len]
     y:f32
     defer if keep {text.height=max(y,text.line)}
-    f:=Flow{spans=spans,width=width if text.wrap==.Words else max(f32),cut=text.cut}
+    f:=Flow{spans=spans,width=width if text.wrap==.Words else max(f32)}
     for &s,i in spans {
         p:=Flow_Piece{span=i32(i),text=s.text,width=s.width,gap=s.gap}
         if s.box || s.pad>0 || s.solid {
@@ -726,18 +762,18 @@ Flow_Piece :: struct {
 }
 // A line being filled with the words of spans: how every text breaks. Words
 // come from layout_walk; a word that does not fit starts the next line, a
-// word wider than the line takes one of its own (or goes on in the next with
-// cut), a line gives up the space it breaks at, and pieces that no space
-// parts stay on one line. When flow_put refuses a piece the line is full: its
-// owner keeps what flow_line gives, calls flow_next and puts the piece again.
+// word wider than the line breaks after its last glyph that fits, a line gives
+// up the space it breaks at and draws the hyphen of a soft hyphen it breaks
+// at, and pieces that no space or mark parts stay on one line. When flow_put
+// refuses a piece the line is full: its owner keeps what flow_line gives,
+// calls flow_next and puts the piece again.
 @(private)
 Flow :: struct {
     spans:[]Layout_Span, // what its pieces are of
     pieces:[FLOW_PIECES]Flow_Piece,
     count:int,
     used,width:f32,
-    cut:bool,     // a word wider than the line goes on in the next one instead of past its end
-    glued:bool,   // no space follows the piece put last
+    glued:bool,   // the line may not break after the piece put last
     unit:int,     // where the pieces no space parts start: the piece,
     unit_at:int,  // the byte of its text
     unit_x:f32,   // and the place in the line
@@ -799,20 +835,28 @@ flow_put :: proc "contextless" (f:^Flow,font:^Font,p:^Flow_Piece) -> bool {
         }
         bare:=len(p.text)
         for bare>0 && p.text[bare-1]==' ' {bare-=1}
-        if f.cut && !s.box && bare>0 {
+        if !s.box && bare>0 {
             n,width:=text_prefix(font,p.text,s.size,room-s.pad,int(s.font))
+            // A line holds at least one character.
+            if n==0 && f.count==0 {
+                n=1
+                for n<len(p.text) && p.text[n]&0xc0==0x80 {n+=1}
+                width=text_width(font,p.text[:n],s.size,int(s.font))
+            }
             if n<bare {
-                if n==0 && f.count==0 {
-                    n=1
-                    for n<len(p.text) && p.text[n]&0xc0==0x80 {n+=1}
-                    width=text_width(font,p.text[:n],s.size,int(s.font))
-                }
                 if n>0 {
                     head:=p^
                     head.text,head.width,head.gap=p.text[:n],width+s.pad,0
                     flow_add(f,head)
+                    // The rest is the word less its head and the kerning across the cut,
+                    // so a long word is not measured again at each of its lines.
+                    a,b:=n-1,n+1
+                    for a>0 && p.text[a]&0xc0==0x80 {a-=1}
+                    for b<len(p.text) && p.text[b]&0xc0==0x80 {b+=1}
+                    pair:=text_width(font,p.text[a:b],s.size,int(s.font))
+                    kern:=pair-text_width(font,p.text[a:n],s.size,int(s.font))-text_width(font,p.text[n:b],s.size,int(s.font))
                     p.text=p.text[n:]
-                    p.width=text_width(font,p.text,s.size,int(s.font))+s.pad
+                    p.width-=width+kern
                 }
                 f.ready=f.count
                 return false
@@ -824,7 +868,14 @@ flow_put :: proc "contextless" (f:^Flow,font:^Font,p:^Flow_Piece) -> bool {
     }
     if !joins && f.count==FLOW_PIECES {f.ready=f.count;return false}
     flow_add(f,p^)
-    f.glued=!flow_words(f,p) || p.text=="" || p.text[len(p.text)-1]!=' '
+    f.glued=!flow_words(f,p) || p.text==""
+    if !f.glued {
+        switch text_mark(p.text,len(p.text)) {
+        case 0:f.glued=p.text[len(p.text)-1]!=' '
+        // A soft hyphen breaks only where the hyphen it draws still fits.
+        case 2:f.glued=f.used+text_width(font,"-",s.size,int(s.font))>f.width
+        }
+    }
     return true
 }
 // Room as wide as a space after what the line holds: a word ends there.
@@ -843,11 +894,14 @@ flow_line :: proc "contextless" (f:^Flow,font:^Font) -> []Flow_Piece {
     n:=f.ready
     if n>0 {
         last:=&f.pieces[n-1]
-        if flow_words(f,last) && len(last.text)>0 && last.text[len(last.text)-1]==' ' {
-            s:=&f.spans[last.span]
-            last.text=last.text[:len(last.text)-1]
-            last.width-=text_width(font," ",s.size,int(s.font))
-            if last.text=="" {n-=1}
+        if s:=&f.spans[last.span];flow_words(f,last) && len(last.text)>0 {
+            if last.text[len(last.text)-1]==' ' {
+                last.text=last.text[:len(last.text)-1]
+                last.width-=text_width(font," ",s.size,int(s.font))
+                if last.text=="" {n-=1}
+            } else if text_mark(last.text,len(last.text))==2 {
+                last.width+=text_width(font,"-",s.size,int(s.font))
+            }
         }
     }
     return f.pieces[:n]
@@ -1050,11 +1104,12 @@ layout_fit_grid :: proc(t:^Layout_Tree,n:^Layout_Node,kids:[]i32) {
 layout_size :: proc(t:^Layout_Tree,x:bool) {
     for &root in t.roots[:t.root_count] {
         r:=&t.nodes[root.node]
-        // A growing floating element takes the size of what it hangs from.
+        // A growing floating element takes the size of what it hangs from, a percent its share of it.
         if r.floating {
             p:=[2]f32{root.rect.w,root.rect.h} if root.hung else t.nodes[root.parent].dim
-            if r.layout.width.kind==.Grow {r.dim.x=p.x}
-            if r.layout.height.kind==.Grow {r.dim.y=p.y}
+            w,h:=r.layout.width,r.layout.height
+            if w.kind==.Grow {r.dim.x=p.x} else if w.kind==.Percent {r.dim.x=p.x*w.value}
+            if h.kind==.Grow {r.dim.y=p.y} else if h.kind==.Percent {r.dim.y=p.y*h.value}
         }
         r.dim.x=clamp(r.dim.x,axis_min(r.layout.width),axis_max(r.layout.width))
         r.dim.y=clamp(r.dim.y,axis_min(r.layout.height),axis_max(r.layout.height))
@@ -1343,7 +1398,7 @@ layout_finish :: proc(t:^Layout_Tree,font:^Font,frame:u64,dt:f32) -> (moving:boo
                 position=float_contain(p,&root,r.dim,bounds,position)
             }
         }
-        layout_place(t,root.node,position,origin)
+        layout_place(t,root.node,position,origin,t.ppu)
     }
     for &e in t.transitions {moving||=e.frame==frame && e.placed && e.time<e.seconds}
     return
@@ -1368,7 +1423,7 @@ layout_solve :: proc(t:^Layout_Tree,font:^Font) {
     for &text in t.texts[:t.text_count] {
         n:=&t.nodes[text.node]
         height:=layout_text_wrap(t,font,&text,n.dim.x,true)
-        if l:=&n.layout;l.height.kind==.Fit {n.dim.y=clamp(height,axis_min(l.height),axis_max(l.height))}
+        if l:=&n.layout;l.height.kind==.Fit {n.dim.y=clamp(layout_whole(t.ppu,height),axis_min(l.height),axis_max(l.height))}
     }
     for root in t.roots[:t.root_count] {layout_heights(t,root.node)}
     layout_size(t,false)
@@ -1487,12 +1542,26 @@ float_contain :: proc "contextless" (p:Rect,root:^Layout_Root,dim:[2]f32,bounds:
     return position
 }
 
+// The children are placed from the place of their parent as laid out and each
+// box is rounded on its own, so neighbours share an edge. What transitions is
+// not rounded while it moves, nor what it holds: ppu 0.
 @(private)
-layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
+layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32,ppu:f32) {
     n:=&t.nodes[index]
     position:=position
-    if n.transition>0 {position=origin+layout_transition_place(&t.transitions[n.transition-1],position-origin,n.dim,t.nodes[0].dim,t.dt)}
+    ppu:=ppu
+    if n.transition>0 {
+        e:=&t.transitions[n.transition-1]
+        position=origin+layout_transition_place(e,position-origin,n.dim,t.nodes[0].dim,t.dt)
+        if e.time<e.seconds {ppu=0}
+    }
     n.box={position.x,position.y,n.dim.x,n.dim.y}
+    if ppu>0 {
+        // Edges on whole device pixels and the size between them (taffy's round_layout).
+        lo:=[2]f32{math.round(position.x*ppu),math.round(position.y*ppu)}
+        hi:=[2]f32{math.round((position.x+n.dim.x)*ppu),math.round((position.y+n.dim.y)*ppu)}
+        if abs(hi.x)+abs(hi.y)<math.F32_MAX {n.box={lo.x/ppu,lo.y/ppu,(hi.x-lo.x)/ppu,(hi.y-lo.y)/ppu}}
+    }
     if n.text>=0 {
         layout_place_text(t,index)
         return
@@ -1531,7 +1600,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
                 child.box.x=x+align_offset(self_align(l.align_x,child.layout.self_x),width-child.dim.x)+offset.x
                 child.box.y=y+align_offset(self_align(l.align_y,child.layout.self_y),high-child.dim.y)+offset.y
             }
-            for kid in kids {layout_place(t,kid,{t.nodes[kid].box.x,t.nodes[kid].box.y},position+offset)}
+            for kid in kids {layout_place(t,kid,{t.nodes[kid].box.x,t.nodes[kid].box.y},position+offset,ppu)}
         case .Wrap:
             inner:=n.dim.x-left_right
             y:=position.y+l.padding[1]
@@ -1542,7 +1611,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
                 x:=position.x+l.padding[0]+align_offset(l.align_x,inner-used)
                 for kid in kids[start:end] {
                     child:=&t.nodes[kid]
-                    layout_place(t,kid,[2]f32{x,y+align_offset(self_align(l.align_y,child.layout.self_y),high-child.dim.y)}+offset,position+offset)
+                    layout_place(t,kid,[2]f32{x,y+align_offset(self_align(l.align_y,child.layout.self_y),high-child.dim.y)}+offset,position+offset,ppu)
                     x+=child.dim.x+l.gap
                 }
                 y+=high+l.gap
@@ -1554,7 +1623,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
                 at:=position+{l.padding[0],l.padding[1]}
                 at.x+=align_offset(self_align(l.align_x,child.layout.self_x),n.dim.x-left_right-child.dim.x)
                 at.y+=align_offset(self_align(l.align_y,child.layout.self_y),n.dim.y-top_bottom-child.dim.y)
-                layout_place(t,kid,at+offset,position+offset)
+                layout_place(t,kid,at+offset,position+offset,ppu)
             }
         case .Row,.Column:
             row:=l.direction==.Row
@@ -1584,7 +1653,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
                 } else {
                     at.x=position.x+l.padding[0]+align_offset(self_align(l.align_x,child.layout.self_x),n.dim.x-left_right-child.dim.x)+offset.x
                 }
-                layout_place(t,kid,at,position+offset)
+                layout_place(t,kid,at,position+offset,ppu)
                 if row {next.x+=child.dim.x+l.gap} else {next.y+=child.dim.y+l.gap}
             }
         }

@@ -174,7 +174,7 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     owner:=core.create(&w.entities)
     core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     terrain_test_update(&w,&resident,&app)
     // A new source shows its one layer in every chunk.
     testing.expect(t,core.count(&w.statics)>0)
@@ -249,7 +249,7 @@ a_program_of_the_source_blends_its_layers_in_place_of_terrain_layers :: proc(t:^
     owner:=core.create(&w.entities)
     core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     terrain_test_update(&w,&resident,&app)
     testing.expect(t,core.count(&w.statics)>0)
     for row in 0..<core.count(&w.statics) {testing.expect_value(t,w.statics.values[row].materials[0],blend)}

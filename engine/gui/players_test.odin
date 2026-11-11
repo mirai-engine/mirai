@@ -13,14 +13,15 @@ import "mirai:std/base"
 import "mirai:ui"
 
 // What a HUD on the body of a player shows.
-@(private="file")
+@(private)
 Player_Test_Hud :: struct {coins:i32}
 
 // The world of a split window: the seats, the bodies they drive with a HUD
 // on each, and what a frame of the interfaces reads.
-@(private="file")
+@(private)
+@(test_world)
 Players_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     screens:core.Table(UI_Screen),
     widgets:core.Table(World_Widget),
     worlds:core.Table(core.World_Transform),
@@ -60,10 +61,10 @@ Players_Fixture :: struct {
 @(private="file")
 players_frame :: proc(f:^Players_Fixture) {
     w:=&f.w
-    world:=core.test_world_ref(w)
+    world:=test_world_ref(w)
     frame_begin(world,core.read(&w.screens),core.read(&w.widgets),core.read(&w.worlds),core.read(&w.hidden),core.read(&w.parents),core.read(&w.meshes),
         UI_SETTINGS_DEFAULT,UI_PREFERENCES_DEFAULT,{},core.ref(&f.state),core.read(&w.seats),core.read(&w.moves),core.ref(&f.bindings),core.ref(&f.actions),
-        {},core.read(&w.cameras),core.read(&w.exposures),core.read(&w.view_volumes),core.read(&w.volumes),&f.requests,&f.effects,&f.sounds,&f.gui,&f.app,&f.problems,false)
+        {},core.read(&w.cameras),core.read(&w.exposures),core.read(&w.view_volumes),core.read(&w.volumes),{},&f.requests,&f.effects,&f.sounds,&f.gui,&f.app,&f.problems,false)
     widgets_build(world,&f.gui,&f.app,&f.problems)
 }
 
@@ -116,12 +117,13 @@ a_screen_on_the_body_of_a_player_shows_in_the_part_of_that_player :: proc(t:^tes
     defer {
         ui.font_destroy(&f.app.ui_font)
         host.app_content_destroy(&f.app)
+        host.app_texts_destroy(&f.app)
     }
     if !testing.expect(t,ui.font_init(&f.app.ui_font,nil,nil,1,f.app.allocator,on_demand=true)) {return}
     w:=&f.w
-    if !core.test_world_init(t,w,test_types) {return}
-    defer core.test_world_destroy(w)
-    f.app.info=core.test_world_info(w)
+    if !test_world_init(t,w) {return}
+    defer test_world_destroy(w)
+    f.app.info=test_world_info(w)
     defer {
         gui_free(&f.gui)
         delete(f.requests.items);delete(f.effects.items);delete(f.seat_requests.items);delete(f.context_requests.items)
@@ -145,7 +147,7 @@ a_screen_on_the_body_of_a_player_shows_in_the_part_of_that_player :: proc(t:^tes
     core.add(&w.huds,remote,Player_Test_Hud{coins=60})
     core.add(&w.screens,scene,UI_Screen{asset=HUD_ID})
     core.add(&w.huds,scene,Player_Test_Hud{coins=90})
-    core.test_world_settle(w)
+    test_world_settle(w)
 
     owner :: proc(w:^Players_Test_World,e:core.Entity) -> (slot:int,owned,local:bool) {
         return screen_owner(core.read(&w.seats),core.read(&w.moves),core.read(&w.parents),e)
@@ -192,7 +194,7 @@ a_screen_on_the_body_of_a_player_shows_in_the_part_of_that_player :: proc(t:^tes
 
     // What one body shows changes: its player builds again, the other does not.
     core.edit(&w.huds,bodies[1]).coins=8
-    core.test_world_settle(w)
+    test_world_settle(w)
     players_frame(f)
     testing.expect(t,second.open && context_shows(second.ctx,"8") && first.skipped,"Only the player whose HUD changed is built")
     players_frame_end(f)

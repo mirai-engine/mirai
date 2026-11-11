@@ -6,23 +6,24 @@ import "mirai:editor"
 import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
-@(private="file")
+@(private)
+@(test_world,editor="Bodies_Test_Editor")
 Bodies_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     states:core.Table(phys.Character_State),
     characters:core.Table(phys.Character),
     walks:core.Table(locomotion.Walk),
 }
 
-@(private="file") Bodies_Test_Editor :: struct {bodies:Locomotion_Bodies}
+@(private) Bodies_Test_Editor :: struct {bodies:Locomotion_Bodies}
 
 // The editor measures a walker by its Walk, its Character and the height its capsule took, and a body
 // that does not walk as a person.
 @(test)
 a_walker_is_measured_by_its_character_and_its_walk :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Bodies_Test_World,core.Test_None,Bodies_Test_Editor,test_types)
+    info,described:=test_info(t,Bodies_Test_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Bodies_Test_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
     defer core.world_destroy(&info,.World,&world)

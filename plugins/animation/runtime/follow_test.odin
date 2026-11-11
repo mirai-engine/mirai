@@ -32,9 +32,10 @@ follow_rig :: proc(playback:^Playback,entity:core.Entity,skeleton:u64,names:[]st
     playback.rows[index]=i32(len(playback.states))
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Follow_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
 }
@@ -42,15 +43,15 @@ Follow_World :: struct {
 @(test)
 a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without_stable_allocations :: proc(t:^testing.T) {
     w:Follow_World
-    if !core.test_world_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     body,holder,head:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     body_place:=mm.Transform{{1,0,0},mm.quat_axis_angle({0,1,0},.7),{1,1,1}}
     holder_place:=mm.Transform{{0,2,3},mm.quat_axis_angle({1,0,0},.3),{1,1,1}}
     head_place:=mm.Transform{{5,0,0},mm.quat_axis_angle({0,0,1},-.4),{1,1,1}}
     core.add(&w.transforms,body,core.from_math(body_place));core.add(&w.transforms,holder,core.from_math(holder_place));core.add(&w.transforms,head,core.from_math(head_place))
     core.add(&w.parents,head,{entity=holder})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
 
     step:=mm.Transform{{0,.2,0},1,{1,1,1}}
     playback:Playback;defer playback_free(&playback)

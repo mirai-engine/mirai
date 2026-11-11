@@ -15,6 +15,14 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
+@(test_world)
+Apply_Test_World :: struct {
+    using world:Test_World,
+    ids:core.Table(core.Id),
+    meshes:core.Table(erender.Mesh_Renderer),
+    looks:core.Table(erender.Material_Values),
+}
+
 @(test)
 an_imported_material_keeps_unsaved_changes_over_an_import_and_goes_back_by_field :: proc(t:^testing.T) {
     root:=base.test_folder(t,"material-base")
@@ -120,13 +128,6 @@ the_override_of_a_slot_of_an_entity_goes_into_its_material :: proc(t:^testing.T)
     testing.expect(t,len(view.overlays)==1 && view.overlays[0].material==base.Asset_Id{9,9} && view.overlays[0].blend==.Multiply)
 }
 
-Apply_Test_World :: struct {
-    using world:core.Test_World,
-    ids:core.Table(core.Id),
-    meshes:core.Table(erender.Mesh_Renderer),
-    looks:core.Table(erender.Material_Values),
-}
-
 // Apply to material edits the material in memory, as one step with what the
 // entity stops changing: undo gives both back, and only Save writes the file.
 @(test)
@@ -146,8 +147,8 @@ applying_to_a_material_is_one_undo_step_in_memory_that_save_writes :: proc(t:^te
     app:=host.App{assets=&assets}
 
     world:Apply_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     e:=core.create(&world.entities)
     mesh:=erender.Mesh_Renderer{shape=.Cube}
     mesh.materials[0]=wall
@@ -157,9 +158,9 @@ applying_to_a_material_is_one_undo_step_in_memory_that_save_writes :: proc(t:^te
     core.add(&world.ids,e,core.Id{value=base.Entity_Id(77)})
     core.add(&world.meshes,e,mesh)
     core.add(&world.looks,e,look)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     f:Test_Session
-    test_session_open(&f,core.test_world_ref(&world))
+    test_session_open(&f,test_world_ref(&world))
     defer test_session_close(&f)
     materials:Materials
     s:=&f.s

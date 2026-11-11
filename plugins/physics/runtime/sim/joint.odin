@@ -425,18 +425,21 @@ angular_axes_solve :: proc "contextless" (st:^Step,js:^Joint_Solver,v:^Joint_Vel
     // the ellipse of the limits of that side; its impulse is kept as the upper one of axis Y.
     impulse:=&js.axes.angular_axes_impulse[1].upper
     ax,bx:=q_rotate(qa,Vec3{1,0,0}),q_rotate(qb,Vec3{1,0,0})
-    normal:=cross(ax,bx)
-    sine:=length(normal)
+    normal,sine:=normalize_length(cross(ax,bx))
     if sine<=1e-6 {
-        if !warm {impulse^=0}
-        return
+        if dot(ax,bx)>0 {
+            if !warm {impulse^=0}
+            return
+        }
+        // Folded exactly back the swing has no side of its own: it opens about the Y axis of frame A.
+        normal=q_rotate(qa,Vec3{0,1,0})
     }
-    row:=row_make(js,{},normal/sine,normal/sine)
+    row:=row_make(js,{},normal,normal)
     if warm {
         row_apply(js,row,v,-impulse^)
         return
     }
-    side:=q_inv_rotate(qa,normal/sine)
+    side:=q_inv_rotate(qa,normal)
     y,z:=js.axes.angular_axes[1],js.axes.angular_axes[2]
     reach_y,reach_z:=max(side.y>0?y.upper:-y.lower,1e-4),max(side.z>0?z.upper:-z.lower,1e-4)
     reach:=1/cmath.sqrt(side.y*side.y/(reach_y*reach_y)+side.z*side.z/(reach_z*reach_z))

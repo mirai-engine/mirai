@@ -455,7 +455,8 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
   one ray to each light up to `reflection_light_budget`; above it, groups of the
   [light tree](lights.md#local-lights).
 - **A choice.** `Settings.reflections` is `Off` unless the game or the player chooses it; no
-  preset turns it on. `Traced` lets a 2×2 block from `REFLECTION_SHARED_ROUGHNESS` share a ray
+  preset turns it on; `Off`, the specular reads the [probe volume](gi.md#probe-volume), which
+  gives the sky sharp. `Traced` lets a 2×2 block from `REFLECTION_SHARED_ROUGHNESS` share a ray
   that each frame traces a different pixel; `Detailed` traces every pixel and adds the detail.
 - **Filters.** The spatial one weights samples of a disc that grows with the roughness by the
   similarity of the source pixel. The temporal one looks up the history where the reflected point

@@ -19,9 +19,10 @@ memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment
     return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Scratch_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     paths:core.Table(Nav_Path),
 }
 
@@ -38,7 +39,7 @@ navigation_scratch_without_memory_reports_it_and_leaves_its_part :: proc(t:^test
         builds:Navigation_Builds
         agents:Navigation_Agents
         w:Scratch_World
-        if !core.test_world_init(t,&w,test_types) {return}
+        if !test_world_init(t,&w) {return}
         for i in 0..<3 {append(&agents.near,Near{entity=core.Entity(i+1),position={f32(i),0,0},radius=0.5,height=2})}
         done,refused:=false,false
         for served in 0..<8 {
@@ -66,6 +67,6 @@ navigation_scratch_without_memory_reports_it_and_leaves_its_part :: proc(t:^test
         testing.expectf(t,done && refused,"%v: reported without memory, and with it it goes through",call)
         delete(builds.seen)
         delete(agents.near);spatial.grid_destroy(&agents.grid)
-        core.test_world_destroy(&w)
+        test_world_destroy(&w)
     }
 }

@@ -83,7 +83,7 @@ SHAPE_DEFAULT :: Shape{
 // On the child entity that draws and collides a shape, or draws the ribbon of a
 // spline. It has no core.Id: a scene never saves it, and the step makes it
 // again from its source.
-@(component,description="The derived child that draws and collides the Shape of its parent, or draws the ribbon of its Spline: made again from that source, never saved.")
+@(component,derived,description="The derived child that draws and collides the Shape of its parent, or draws the ribbon of its Spline: made again from that source, never saved.")
 Shape_Part :: struct {}
 
 Stamp_Kind :: enum u8 {

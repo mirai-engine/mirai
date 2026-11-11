@@ -54,7 +54,8 @@ the editor takes and `scene.inspect` with `root` gives: one grammar, with or wit
 
 - `preset` is a recipe (`cube`, `sphere`, `plane`, `point_light`, `sun`, `camera`...) or the card
   of a plugin (`spawn`, `fog`...): it gives the components, and `components` changes their fields
-  or adds others. A field left out starts as its component does.
+  or adds others. A field left out starts as its component does. Every component an entity has
+  is in its document; one with no field to show, a marker, is `{}`.
 - `prefab` with the path or the id of a `.scene` that has one entity at the top is a linked
   instance of it, placed the first time. What the document leaves out of it and of its children
   stays as the prefab gives it; what it says of them, by their names, the instance holds on its own.

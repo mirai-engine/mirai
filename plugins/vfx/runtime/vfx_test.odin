@@ -11,9 +11,10 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "plugins:vfx/runtime/effect"
 
-@(private="file")
+@(private)
+@(test_world)
 Emitters_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     emitters:core.Table(Particle_Emitter),
     worlds:core.Table(core.World_Transform),
     overrides:core.Table(Particle_Override),
@@ -44,17 +45,17 @@ Emitters_Fixture :: struct {
 }
 
 @(private="file")
-fixture_init :: proc(t:^testing.T,f:^Emitters_Fixture) -> bool {return core.test_world_init(t,&f.w,test_types)}
+fixture_init :: proc(t:^testing.T,f:^Emitters_Fixture) -> bool {return test_world_init(t,&f.w)}
 
 @(private="file")
 fixture_destroy :: proc(f:^Emitters_Fixture) {
     particle_reports_free(&f.reports)
     particle_sync_free(&f.sync)
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
 }
 
 @(private="file")
-fixture_settle :: proc(f:^Emitters_Fixture) {core.test_world_settle(&f.w)}
+fixture_settle :: proc(f:^Emitters_Fixture) {test_world_settle(&f.w)}
 
 @(private="file")
 fixture_emitter :: proc(f:^Emitters_Fixture,emitter:Particle_Emitter,position:[3]f32={}) -> core.Entity {
@@ -75,7 +76,7 @@ fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
 
 @(private="file")
 fixture_sync :: proc(f:^Emitters_Fixture,id:core.World_Id,time:core.Time,frame:=FRAME) {
-    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.parameters),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{})
+    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.parameters),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{})
 }
 
 @(private="file")

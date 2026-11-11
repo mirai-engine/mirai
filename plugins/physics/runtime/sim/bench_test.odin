@@ -125,10 +125,7 @@ worker_threads_give_the_same_result_as_one_thread :: proc(t:^testing.T) {
         test_scene_edit(&b,step)
         world_step(&a,1.0/60)
         world_step(&b,1.0/60)
-        if world_hash(&a)!=world_hash(&b) {
-            testing.expectf(t,false,"threads changed the result at step %v",step)
-            return
-        }
+        if !test_same(t,&a,&b,"threads changed the result at step %v",step) {return}
     }
     testing.expect(t,world_stats(&b).active_contacts>200)
 }
@@ -237,8 +234,8 @@ bench_steps :: proc(t:^testing.T) {
         settle:=scene==.Spheres_5000?120:60
         single,stats:=bench_run(scene,nil,settle,BENCH_STEPS)
         multi,_:=bench_run(scene,&pool,settle,BENCH_STEPS)
-        fmt.printfln("BENCH %v: 1 thread median %.3f ms (best %.3f, mean %.3f), 4 threads median %.3f (best %.3f, mean %.3f); bodies %v awake %v islands %v contacts %v constraints %v joints %v colors %v overflow %v",
-            scene,single.median,single.best,single.mean,multi.median,multi.best,multi.mean,stats.bodies,stats.awake_bodies,stats.islands,stats.active_contacts,stats.constraints,stats.joints,stats.colors,stats.overflow_constraints)
+        fmt.printfln("BENCH %v: 1 thread median %.3f ms (best %.3f, mean %.3f), 4 threads median %.3f (best %.3f, mean %.3f); bodies %v awake %v islands %v contacts %v (carried %v) constraints %v joints %v colors %v overflow %v",
+            scene,single.median,single.best,single.mean,multi.median,multi.best,multi.mean,stats.bodies,stats.awake_bodies,stats.islands,stats.active_contacts,stats.carried_contacts,stats.constraints,stats.joints,stats.colors,stats.overflow_constraints)
         fmt.printfln("BENCH   median stages on 1 thread: pairs %.3f narrow %.3f prepare %.3f solve %.3f finalize %.3f sleep %.3f; on 4: narrow %.3f prepare %.3f solve %.3f",
             single.stages[0],single.stages[1],single.stages[2],single.stages[3],single.stages[4],single.stages[5],multi.stages[1],multi.stages[2],multi.stages[3])
     }

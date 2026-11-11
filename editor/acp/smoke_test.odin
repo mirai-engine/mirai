@@ -3,6 +3,7 @@ package acp
 import "core:fmt"
 import "core:encoding/json"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:platform"
@@ -74,20 +75,17 @@ when ACP_SMOKE {
         codex,has_codex:=os.lookup_env("MIRAI_ACP_SMOKE_CODEX",context.temp_allocator)
         testing.expect(t,has_adapter && has_bun && has_cwd && has_codex,"The explicit smoke test requires adapter, Bun, project and Codex paths")
         if !has_adapter || !has_bun || !has_cwd || !has_codex {return}
-        p,error:=platform.create({headless=true,process_capacity=2})
-        testing.expect_value(t,error,platform.Error.None)
-        if p==nil {return}
-        defer platform.destroy(p)
         c:=test_client(t)
-        defer destroy(&c,p)
-        environment:=fmt.aprintf("CODEX_PATH=%s",codex,allocator=context.temp_allocator)
-        start_error:=start(&c,p,{command={bun,adapter},working_directory=cwd,environment={environment}},session_titles=true)
+        defer destroy(&c)
+        inherited,_:=os.environ(context.temp_allocator)
+        environment:=slice.concatenate([][]string{inherited,{fmt.aprintf("CODEX_PATH=%s",codex,allocator=context.temp_allocator)}},context.temp_allocator)
+        start_error:=start(&c,{command={bun,adapter},working_dir=cwd,env=environment},session_titles=true)
         testing.expect_value(t,start_error,Error.None)
         if start_error!=.None {return}
         smoke:=Smoke{t=t,client=&c,cwd=cwd}
         deadline:=platform.clock_seconds()+90
         for !smoke.failed && !smoke.done && platform.clock_seconds()<deadline {
-            poll(&c,p,smoke_event,&smoke)
+            poll(&c,smoke_event,&smoke)
             platform.sleep_coarse(1_000_000)
         }
         testing.expect(t,smoke.done && !smoke.failed,"The agent completed the benign connection prompt")
@@ -97,32 +95,32 @@ when ACP_SMOKE {
             testing.expect_value(t,strings.trim_space(base.text_get(smoke.reply[:])),"ACP_OK")
             testing.expect_value(t,c.phase,Phase.Ready)
         }
-        stop(&c,p)
+        stop(&c)
         deadline=platform.clock_seconds()+5
-        for c.process!=0 && platform.clock_seconds()<deadline {
-            poll(&c,p,nil,nil)
+        for c.process.pid!=0 && platform.clock_seconds()<deadline {
+            poll(&c,nil,nil)
             platform.sleep_coarse(1_000_000)
         }
-        testing.expect_value(t,c.process,platform.Process(0))
+        testing.expect_value(t,c.process.pid,0)
         if !smoke.done || smoke.failed {return}
         base.text_set(smoke.session[:],session_id(&c))
         smoke.reply={};smoke.done=false
-        start_error=start(&c,p,{command={bun,adapter},working_directory=cwd,environment={environment}},session_titles=true)
+        start_error=start(&c,{command={bun,adapter},working_dir=cwd,env=environment},session_titles=true)
         testing.expect_value(t,start_error,Error.None)
         deadline=platform.clock_seconds()+90
         for !smoke.failed && !smoke.done && platform.clock_seconds()<deadline {
-            poll(&c,p,smoke_event,&smoke)
+            poll(&c,smoke_event,&smoke)
             platform.sleep_coarse(1_000_000)
         }
         testing.expect(t,smoke.done && !smoke.failed,"The restarted agent recovered its previous conversation")
         testing.expect_value(t,session_id(&c),base.text_get(smoke.session[:]))
         testing.expect_value(t,strings.trim_space(base.text_get(smoke.reply[:])),"ACP_OK")
-        stop(&c,p)
+        stop(&c)
         deadline=platform.clock_seconds()+5
-        for c.process!=0 && platform.clock_seconds()<deadline {
-            poll(&c,p,nil,nil)
+        for c.process.pid!=0 && platform.clock_seconds()<deadline {
+            poll(&c,nil,nil)
             platform.sleep_coarse(1_000_000)
         }
-        testing.expect_value(t,c.process,platform.Process(0))
+        testing.expect_value(t,c.process.pid,0)
     }
 }

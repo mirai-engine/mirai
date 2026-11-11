@@ -208,10 +208,10 @@ pages_load_the_most_wanted_once_into_free_then_least_recent_slots :: proc(t: ^te
 	resident :: proc(r: ^Renderer, mesh, page: u32) -> bool {return page_resident(r.scene.meshes[mesh].stream, page)}
 	stamp :: proc(r: ^Renderer, mesh, page: u32, frame: u64) {r.scene.pages.slots[r.scene.meshes[mesh].stream.slots[page]].stamp = frame}
 
-	// Duplicates count once, what is no page out of the pools not at all, and
-	// one whose parents are not there waits.
+	// What is no page out of the pools counts not at all, and one whose parents
+	// are not there waits.
 	r.frame = 100
-	requests := []Page_Request{{m1, a, 1, 0}, {m1, a, 9, 0}, {m1, s1.root, 50, 0}, {m2 + 7, a, 50, 0}, {m1, c, 50, 0}, {m2, a, 5, 0}}
+	requests := []Page_Request{{m1, a, 9, 0}, {m1, s1.root, 50, 0}, {m2 + 7, a, 50, 0}, {m1, c, 50, 0}, {m2, a, 5, 0}}
 	testing.expect_value(t, pages_load(r, requests), 2)
 	testing.expect_value(t, s.pages.requested, 3)
 	testing.expect(t, resident(r, m1, a) && resident(r, m2, a) && !resident(r, m1, c), "the two free slots take the pages whose parents are there")

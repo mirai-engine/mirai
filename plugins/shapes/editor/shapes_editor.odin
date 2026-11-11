@@ -451,12 +451,17 @@ shapes_panel :: proc(s:^editor.Session,tool:^Shapes_Tool,world:core.World_Ref,in
         defer ui.id_pop(ctx)
         e,shape,found:=selected_shape(s,world)
         if tool.mode==.Brush {
-            if solid:=selected_solid(s,world);solid!=core.NONE {e,shape,found=solid,editor.entity_get(world,solid,shapes.Shape)}
+            // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+            if solid:=selected_solid(s,world);solid!=core.NONE {
+                value,has:=editor.entity_get(world,solid,shapes.Shape)
+                e,found=solid,has
+                shape=value
+            }
         }
         note:=""
         if tool.mode==.Corners {
-            corners:Corners
-            e,corners,found=selected_corners(s,world)
+            picked,corners,has:=selected_corners(s,world)
+            e,found=picked,has
             note=fmt.tprintf("%d corners",corner_count(&corners))
         }
         if tool.mode==.Stamp && found && shape.loop_count>0 {note=fmt.tprintf("%d corners",shape.point_count)}

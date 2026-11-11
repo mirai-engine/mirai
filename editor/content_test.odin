@@ -524,7 +524,8 @@ content_browser_enters_folders_selects_drags_stars_filters_and_searches_from_the
         if line.kind!=.Cards {continue}
         for card in c.cards[line.first:][:line.count] {if card.file==3 {names=line.names}}
     }
-    testing.expectf(t,found && abs(rect.w-cell)<0.01 && abs(rect.h-content_card_height(c.view,cell,names))<0.01,"%v",rect)
+    // The layout puts edges on whole pixels: a size moves by one at most.
+    testing.expectf(t,found && abs(rect.w-cell)<=1 && abs(rect.h-content_card_height(c.view,cell,names))<=1,"%v",rect)
     content_test_click(t,&session,entry)
     testing.expect_value(t,c.selected,asset_id)
     testing.expect(t,g.drag.kind==.Asset && g.drag.asset_id==asset_id)
@@ -814,7 +815,7 @@ ctrl_and_the_wheel_over_create_resize_its_cards_with_those_of_the_browser :: pro
     }
     for _ in 0..<2 {frame(&session,{size={800,600},pointer_absent=true})}
     card,found:=ui.widget_rect(&ctx,ui.id(&ctx,"card",CONTENT_TEST_CUBE+1))
-    testing.expect(t,found && abs(card.w-cell)<0.01,"A card of Create is a cell of the browser at its width")
+    testing.expect(t,found && abs(card.w-cell)<=1,"A card of Create is a cell of the browser at its width, on whole pixels")
     over:=ui.Input{size={800,600},pointer=ui.rect_center(card)}
     frame(&session,over)
     zoom:=over

@@ -7,8 +7,7 @@ import phys "plugins:physics/runtime"
 
 // The tables and the storages of a World that destruct steps on. The test
 // world of a library that uses destruct holds them after its header with
-// `using`, gives destruct.test_types to core.test_world_init or
-// core.test_info, and steps with destruct.test_step. The test makes the
+// `using` and steps with destruct.test_step. The test makes the
 // simulation of physics itself, with the capacities it needs.
 Test_Destruct :: struct {
     configs:core.Table(Destructible),
@@ -36,16 +35,6 @@ Test_Destruct_Host :: struct {
     app:host.App,
     cache:Destruct_Cache,
     problems:core.Problems,
-}
-
-// What the declarations of destruct and of the libraries it uses name: core.Test_Types.
-test_types :: proc(types:^[dynamic]core.Test_Type) {
-    phys.test_types(types)
-    append(types,
-        core.test_type(Destructible,default=proc(dst:^Destructible) {dst^=destructible_default()}),
-        core.test_type(Strain_Field,default=proc(dst:^Strain_Field) {dst^=STRAIN_FIELD_DEFAULT}),
-        core.test_type(Destruct_Cache,free=cache_free),
-    )
 }
 
 // destruct_step alone, on the rows as they are and as the loop calls it.

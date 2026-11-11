@@ -19,8 +19,9 @@ import "mirai:std/serial"
 import "mirai:ui"
 
 @(private)
+@(test_world)
 Create_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -88,9 +89,9 @@ terrain_panel_hides_creation_while_a_terrain_is_selected_and_reaches_it_on_short
     if !testing.expect_value(t,error,platform.Error.None) || p==nil {return}
     defer platform.destroy(p)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     owner:=core.create(&world.entities)
     core.add(&world.terrains,owner,terrain.Terrain{source={1,1},revision=1})
     core.add(&world.worlds,owner,core.World_Transform{})
@@ -168,9 +169,9 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     if !testing.expect_value(t,error,platform.Error.None) || p==nil {return}
     defer platform.destroy(p)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     ctx:=new(ui.Context);defer free(ctx)
     if !testing.expect(t,ui.context_init(ctx,{}) && kit.theme_set(ctx)) {return}
     defer ui.context_destroy(ctx)
@@ -228,9 +229,9 @@ a_named_terrain_takes_the_name_and_a_missing_heightmap_says_its_path :: proc(t:^
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:history.Selection;defer delete(selection.entities)
     edits:history.Edits;defer history.edits_free(&edits)
@@ -260,9 +261,9 @@ a_volume_created_on_a_heightfield_is_filled_with_its_ground :: proc(t:^testing.T
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:history.Selection;defer delete(selection.entities)
     edits:history.Edits;defer history.edits_free(&edits)
@@ -313,9 +314,9 @@ create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     if !testing.expect_value(t,error,platform.Error.None) || p==nil {return}
     defer platform.destroy(p)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     ctx:=new(ui.Context);defer free(ctx)
     if !testing.expect(t,ui.context_init(ctx,{}) && kit.theme_set(ctx)) {return}
     defer ui.context_destroy(ctx)
@@ -383,9 +384,9 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:history.Selection;defer delete(selection.entities)
     edits:history.Edits;defer history.edits_free(&edits)
@@ -395,13 +396,13 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.create_kind=.Heightfield;tool.samples,tool.chunk_cells=5,4
     terrain_create(&s,&tool,ref,app.assets,app.allocator)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     if !testing.expect_value(t,len(world.terrains.values),1) {return}
     owner:=world.terrains.entities[0]
     id:=world.terrains.values[0].source
     operand:=editor.entity_create(&s,{name="Operand"})
     core.add(&world.meshes,operand,erender.Mesh_Renderer{shape=.Cube})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     history.selection_set(&selection,{owner,operand})
     history.edits_reset(&edits,ref)
     original:=test_held(t,&assets,relative)

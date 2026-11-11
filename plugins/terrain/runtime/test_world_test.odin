@@ -10,8 +10,7 @@ import phys "plugins:physics/runtime"
 // The tables and the storages of a World that terrain_update runs on, after
 // those of physics, which its chunks collide in. The test world of a library
 // that uses terrain holds them after its header with
-// `using terrain:terrain.Test_Terrain`, gives terrain.test_types to
-// core.test_world_init or core.test_info, and steps with terrain.test_step.
+// `using terrain:terrain.Test_Terrain` and steps with terrain.test_step.
 // The Terrain_Resident of the world is of its application: the test holds it.
 Test_Terrain :: struct {
     using physics:phys.Test_Physics,

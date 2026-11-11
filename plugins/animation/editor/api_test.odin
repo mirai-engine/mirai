@@ -8,9 +8,10 @@ import "mirai:editor/api"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
-@(private="file")
+@(private)
+@(test_world)
 Api_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     parents:core.Table(core.Parent),
     animations:core.Table(anim.Animation),
@@ -19,9 +20,9 @@ Api_Test_World :: struct {
 
 @(test)
 animation_stop_and_seek_operate_on_the_play_world_and_refuse_edit_seeks :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Api_Test_World,anim.test_types)
+    info,described:=test_info(t,Api_Test_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     document,play_world:Api_Test_World
     defer for w in ([2]^Api_Test_World{&document,&play_world}) {core.world_destroy(&info,.World,w)}
     for w in ([2]^Api_Test_World{&document,&play_world}) {
@@ -53,13 +54,13 @@ animation_stop_and_seek_operate_on_the_play_world_and_refuse_edit_seeks :: proc(
 @(test)
 animation_subtree_queries_bound_cycles_and_keep_neighboring_roots_separate :: proc(t:^testing.T) {
     w:Api_Test_World
-    if !core.test_world_init(t,&w,anim.test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     a,b,child,cycle:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.parents,child,core.Parent{entity=a})
     core.add(&w.parents,cycle,core.Parent{entity=cycle})
-    core.test_world_settle(&w)
-    world:=core.test_world_ref(&w)
+    test_world_settle(&w)
+    world:=test_world_ref(&w)
     testing.expect(t,within(world,a,a) && within(world,child,a) && !within(world,child,b) && !within(world,cycle,a))
 }
 

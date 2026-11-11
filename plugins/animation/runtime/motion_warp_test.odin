@@ -116,9 +116,10 @@ motion_profiles_roundtrip_windows_distance_keys_and_reject_windows_of_one_name :
     profile.keys[1].distance=3;testing.expect(t,!motion_profile_check(profile))
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Motion_Warp_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     animations:core.Table(Animation),
     worlds:core.Table(core.World_Transform),
 }
@@ -126,8 +127,8 @@ Motion_Warp_World :: struct {
 @(test)
 root_warp_targets_reach_the_window_endpoint_copy_and_update_without_stable_allocations :: proc(t:^testing.T) {
     w:Motion_Warp_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     entity:=core.create(&w.entities)
     content:host.Content_Animation;state:=layer_fixture(t,&content);state.entity=entity;state.clip=0
     defer lib.library_destroy(&content.lib);defer playing_free(&state)
@@ -289,8 +290,8 @@ root_warp_crosses_multiple_windows_in_time_order_and_includes_prior_window_corre
 motion_runtime_reuses_generational_entity_slots_and_retires_only_the_mapping_it_owns :: proc(t:^testing.T) {
     problems:core.Problems
     w:Motion_Warp_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     playback:Playback;defer playback_free(&playback)
     motion:Motion_Runtime;defer motion_runtime_free(&motion)
     requests:Animation_Requests;defer {delete(requests.warps.items);delete(requests.locomotion.items)}
@@ -300,14 +301,14 @@ motion_runtime_reuses_generational_entity_slots_and_retires_only_the_mapping_it_
     test_character_register(&host_assets,{1,2});defer test_registry_free(&host_assets)
     entity:=core.create(&w.entities);index:=core.entity_index(entity)
     append(&playback.states,Playing{entity=entity,bound=1});resize(&playback.rows,index+1);playback.rows[index]=1
-    config:=ANIMATION_DEFAULT;config.asset={1,2};core.add(&w.animations,entity,config);core.test_world_settle(&w)
+    config:=ANIMATION_DEFAULT;config.asset={1,2};core.add(&w.animations,entity,config);test_world_settle(&w)
     testing.expect(t,motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,&problems))
     motion_target(&requests,entity,"ledge",spatial_world(mm.TRANSFORM_IDENTITY))
     motion_take_requests(&motion,&requests,&problems)
     old:=entity
-    testing.expect(t,core.destroy(&w.entities,entity));core.test_world_settle(&w)
+    testing.expect(t,core.destroy(&w.entities,entity));test_world_settle(&w)
     entity=core.create(&w.entities);testing.expect(t,core.entity_index(entity)==index && entity!=old)
-    core.add(&w.animations,entity,config);core.test_world_settle(&w);playback.states[0].entity=entity
+    core.add(&w.animations,entity,config);test_world_settle(&w);playback.states[0].entity=entity
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     ok:=motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,&problems)
     target:=mm.TRANSFORM_IDENTITY;target.position.x=7
@@ -317,18 +318,18 @@ motion_runtime_reuses_generational_entity_slots_and_retires_only_the_mapping_it_
     preserved:=current!=nil && len(current.targets)==1 && current.targets[0].world==target && len(motion.instances)==1 && old_instance==nil
     context=saved
     testing.expect(t,ok && preserved && problems.count==0)
-    core.remove(&w.animations,entity);core.test_world_settle(&w)
+    core.remove(&w.animations,entity);test_world_settle(&w)
     testing.expect(t,motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,&problems) && motion_instance(&motion,entity)==nil && motion.rows[index]==0)
 }
 
 @(test)
 motion_discovers_changed_profiles_retries_first_targets_and_compacts_instances_in_world_copies :: proc(t:^testing.T) {
     w:Motion_Warp_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     first,second,plain:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     for entity in ([3]core.Entity{first,second,plain}) {core.add(&w.animations,entity,ANIMATION_DEFAULT)}
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     playback:Playback;defer playback_free(&playback)
     for entity in ([2]core.Entity{first,second}) {append(&playback.states,Playing{entity=entity,bound=1});index:=core.entity_index(entity);resize(&playback.rows,index+1);playback.rows[index]=i32(len(playback.states))}
     profile:=motion_test_profile();defer motion_test_free(&profile)
@@ -358,7 +359,7 @@ motion_discovers_changed_profiles_retries_first_targets_and_compacts_instances_i
     context=saved;app.allocator=saved.allocator;cache.allocator=saved.allocator
     testing.expect(t,prepared && len(motion.instances)==1 && motion_instance(&motion,second)==nil && motion_instance(&motion,first).profile==base.Asset_Id{3,5} && motion_instance(&motion,first).targets[0].world==target)
     testing.expect(t,len(copied.instances)==2 && motion_instance(&copied,second)!=nil)
-    core.remove(&w.animations,first);core.test_world_settle(&w)
+    core.remove(&w.animations,first);test_world_settle(&w)
     testing.expect(t,motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,nil) && len(motion.instances)==0 && motion_instance(&motion,first)==nil)
 }
 
@@ -376,8 +377,8 @@ root_warp_reaches_a_bone_or_socket_of_another_rig_from_the_pose_it_sampled_in_th
     append(&playback.states,rig_test_state(other,3,.5));resize(&playback.rows,4);playback.rows[3]=1
     sampled:=&playback.states[0];sampled.seen=4;sampled.skeleton={4,5}
     w:Motion_Warp_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     testing.expect(t,modifier_append(&w.worlds,other,core.World_Transform{transform={{10,0,0},1,{1,1,1}}}))
     sockets:=make([]asset.Skeleton_Socket,1)
     base.text_set(sockets[0].name[:],"grip");base.text_set(sockets[0].bone[:],"joint3");sockets[0].offset=mm.TRANSFORM_IDENTITY;sockets[0].offset.position={0,.2,0}

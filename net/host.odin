@@ -119,6 +119,7 @@ Command :: struct {
     ended:bool,   // Object_Destroyed: the object is gone on the server; false: it only left what this connection sees
     more:bool,    // Message: a piece of a reliable message whose next bytes come in the next Message of the channel
     retyped:bool, // Object_Created: the replica of this object goes on, with the type and the whole state of the command
+    complete:bool, // Object_Updated: the replica holds the whole state of the server's tick after it (an update that follows a message about it)
     mask:u64,     // fields that changed, one bit each as numbered by the object type
     data:[]u8,
     words:[]u32,  // quantized state: object_read and event_read turn it into structures

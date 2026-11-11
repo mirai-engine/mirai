@@ -1,5 +1,6 @@
 package navigation
 
+import "core:math"
 import "core:mem"
 import "core:math/linalg"
 import "core:time"
@@ -103,18 +104,48 @@ boxes_touched :: proc "contextless" (rows:^core.Table($T,.Read),volumes:^core.Ta
     return core.touched(rows,&seen[0]) | core.touched(transforms,&seen[1]) | core.touched(parents,&seen[2]) | core.touched(volumes,&seen[3])
 }
 
-// Half the size of the box of a Nav_Bounds, a Nav_Area or a Nav_Obstacle: the
-// extents of the Volume of its entity, which is to be a Box.
-box_half :: proc(volumes:^core.Table(volume.Volume,$A),e:core.Entity) -> (half:[3]f32,ok:bool) {
-    if volumes==nil {return}
+// The upright prism the Volume of e covers placed at pose, as the navigation
+// marks it: a box by its corners, a sphere by the octagon around it. False
+// without a Volume or for one without an end, a plane or the whole world,
+// which no navmesh can bound.
+@(private)
+volume_prism :: proc(volumes:^core.Table(volume.Volume,$A),e:core.Entity,pose:mm.Transform,area:u8) -> (box:mm.Aabb,prism:ai.Nav_Area_Volume,ok:bool) {
     v,found:=core.get(volumes,e)
-    if !found || v.shape!=.Box {return}
-    return v.extents,true
+    if !found || !volume.valid(v,pose) {return}
+    box=volume.bounds(v,pose)
+    #partial switch v.shape {
+    case .Box:
+        // Upright, turned only by the yaw the rotation gives its corners.
+        h:=v.extents*pose.scale
+        box=mm.AABB_EMPTY
+        signs:=[4][2]f32{{-1,-1},{1,-1},{1,1},{-1,1}}
+        for sign,i in signs {
+            p:=pose.position+mm.quat_rotate(pose.rotation,mm.Vec3{sign.x*h.x,0,sign.y*h.z})
+            prism.points[i]={p.x,p.z}
+            box=mm.aabb_add_point(box,p-{0,h.y,0})
+            box=mm.aabb_add_point(box,p+{0,h.y,0})
+        }
+        // Counter-clockwise on (x, z up) whatever the turn: a mirror would wind them the other way.
+        c:=prism.points
+        if (c[1].x-c[0].x)*(c[2].y-c[0].y)-(c[1].y-c[0].y)*(c[2].x-c[0].x)<0 {prism.points[1],prism.points[3]=c[3],c[1]}
+        prism.count=4
+    case .Sphere:
+        reach:=(box.max.x-box.min.x)*0.5/math.cos(f32(math.PI/8))
+        for &point,k in prism.points {
+            turn:=(f32(k)+0.5)*math.PI/4
+            point={pose.position.x+reach*math.cos(turn),pose.position.z+reach*math.sin(turn)}
+        }
+        prism.count=8
+    case:
+        return
+    }
+    prism.area,prism.min_y,prism.max_y=area,box.min.y,box.max.y
+    return box,prism,true
 }
 
 @(private)
-box_missing :: proc(problems:^core.Problems,e:core.Entity,what:string) {
-    core.report(problems,e,"navigation.volume","its %s has no box, so the navigation does not see it: it takes the Volume of its entity, of shape Box; add one (volume.box)",what)
+prism_missing :: proc(problems:^core.Problems,e:core.Entity,what:string) {
+    core.report(problems,e,"navigation.volume","its %s has no Volume with an end, so the navigation does not see it: give its entity a Volume of shape Box or Sphere (volume.box, volume.sphere)",what)
 }
 
 @(private)
@@ -432,25 +463,6 @@ tile_inside :: proc "contextless" (c:^Class_Mesh,coord:[2]i32,limits:[]mm.Aabb) 
     return false
 }
 
-// The world box of an upright box in the frame of an entity.
-@(private)
-upright_box :: proc "contextless" (pose:mm.Transform,half:[3]f32) -> (box:mm.Aabb,corners:[4][2]f32) {
-    h:=half*pose.scale
-    box=mm.AABB_EMPTY
-    signs:=[4][2]f32{{-1,-1},{1,-1},{1,1},{-1,1}}
-    for sign,i in signs {
-        p:=pose.position+mm.quat_rotate(pose.rotation,mm.Vec3{sign.x*h.x,0,sign.y*h.z})
-        corners[i]={p.x,p.z}
-        box=mm.aabb_add_point(box,p-{0,h.y,0})
-        box=mm.aabb_add_point(box,p+{0,h.y,0})
-    }
-    // Counter-clockwise on (x, z up) whatever the turn: a mirror would wind them the other way.
-    if (corners[1].x-corners[0].x)*(corners[2].y-corners[0].y)-(corners[1].y-corners[0].y)*(corners[2].x-corners[0].x)<0 {
-        corners[1],corners[3]=corners[3],corners[1]
-    }
-    return
-}
-
 @(step="fixed",loops="game editor",stage="react",server)
 navigation_build :: proc(
     n:^Navigation,b:^Navigation_Builds,settings:core.Ref(Navigation_Settings),bakes:^core.Table(Navigation_Bake,.Read),physics:core.Ref(phys.Physics_State),requests:^Nav_Build_Requests,
@@ -562,12 +574,11 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:^core.Table(Nav_
         pose,ok:=core.world_of(transforms,parents,e)
         if !ok {continue}
         bound:=bounds.values[i]
-        half,boxed:=box_half(volumes,e)
-        if !boxed {
-            box_missing(problems,e,"Nav_Bounds")
+        box,_,bounded:=volume_prism(volumes,e,pose,0)
+        if !bounded {
+            prism_missing(problems,e,"Nav_Bounds")
             continue
         }
-        box,_:=upright_box(pose,half)
         if bound.air {
             if count_air<len(air) {air[count_air]=box;count_air+=1}
         } else if count<len(surface) {surface[count]=box;count+=1}
@@ -677,14 +688,12 @@ areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:^core.Table(Nav_Ar
         pose,ok:=core.world_of(transforms,parents,e)
         if !ok {continue}
         area:=areas.values[i]
-        half,boxed:=box_half(volumes,e)
-        if !boxed {
-            box_missing(problems,e,"Nav_Area")
+        box,prism,bounded:=volume_prism(volumes,e,pose,u8(area.area))
+        if !bounded {
+            prism_missing(problems,e,"Nav_Area")
             continue
         }
-        box,corners:=upright_box(pose,half)
-        now:=Area_Seen{box=box,volume={count=4,area=u8(area.area),min_y=box.min.y,max_y=box.max.y}}
-        for corner,k in corners {now.volume.points[k]=corner}
+        now:=Area_Seen{box=box,volume=prism}
         at:=core.entity_map_index(&b.areas,e)
         if at>=0 {
             if at<len(seen) {seen[at]=true}
@@ -1080,14 +1089,11 @@ obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:^core.Tabl
         if moved {
             pose,ok:=core.world_of(transforms,parents,e)
             if !ok {continue}
-            half,boxed:=box_half(volumes,e)
-            if !boxed {
-                box_missing(problems,e,"Nav_Obstacle")
+            box,volume,bounded:=volume_prism(volumes,e,pose,ai.NAV_AREA_BLOCKED)
+            if !bounded {
+                prism_missing(problems,e,"Nav_Obstacle")
                 continue
             }
-            box,corners:=upright_box(pose,half)
-            volume:=ai.Nav_Area_Volume{count=4,area=ai.NAV_AREA_BLOCKED,min_y=box.min.y,max_y=box.max.y}
-            for corner,k in corners {volume.points[k]=corner}
             if at<0 {
                 core.entity_map_put(&b.obstacles,e,Area_Seen{box=box,volume=volume})
                 at=core.entity_map_index(&b.obstacles,e)

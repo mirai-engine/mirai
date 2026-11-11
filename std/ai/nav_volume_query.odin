@@ -315,7 +315,8 @@ nav_volume_corridor_set :: proc "contextless" (c:^Nav_Corridor,volume:^Nav_Volum
     copy(c.path[:count],path[:count])
     c.count=i32(count)
     c.target=target
-    if count<len(path) {
+    c.cut=count<len(path)
+    if c.cut {
         box,_:=nav_volume_ref_box(volume,c.path[count-1])
         c.target=math.aabb_center(box)
     }

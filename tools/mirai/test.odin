@@ -110,7 +110,8 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         if p.nothing || p.owner!="" {continue}
         files:=package_parse(p.folder)
         package_flags,ok:=test_flags(root,p.folder,files,release,flags[:])
-        if !ok || !test_imports_check(root,p.folder,files) || !package_test_shaders(root,p.folder) {
+        // What it compiles reads the test worlds of the package and of those it imports.
+        if !ok || !test_imports_check(root,p.folder,files) || !package_test_shaders(root,p.folder) || !test_worlds(root,p.folder) {
             builds[i].failure=.Generate
             continue
         }
@@ -241,16 +242,16 @@ test_project_run :: proc(root:string,p:Test_Package,release:bool,flags:[]string,
     locked:=true
     defer if locked {workspace.lock_release(&lock)}
     times.turn+=time.tick_since(asked)
-    if !c_libraries_current(root) || !build.engine_current(root,mode) {
-        if !ensure_runtime_dependencies(root) {return}
-        if engine_report(build.engine_build({engine_root=root,mode=mode}),root,os.stderr)!=0 {return}
-    }
     opened,error:=project.open(p.owner,root)
     if error.code!=.None {
         fmt.eprintfln("mirai test: %s",project_error_text(p.owner,error))
         return
     }
     defer project.close(&opened)
+    if engine:=build.project_engine(&opened,mode,context.temp_allocator);!c_libraries_current(root) || !build.engine_current(root,mode,engine.defines) {
+        if !ensure_runtime_dependencies(root) {return}
+        if engine_report(build.engine_build({engine_root=root,mode=mode,defines=engine.defines}),root,os.stderr)!=0 {return}
+    }
     job:=build.job_start({project=&opened,target=.Editor,action=.Test,test_package=p.folder,test=options,flags=flags,dev=!release,engine=mode})
     defer build.job_destroy(job)
     for !build.job_poll(job) {

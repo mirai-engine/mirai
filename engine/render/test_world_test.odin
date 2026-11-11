@@ -9,8 +9,9 @@ import gpu "mirai:render"
 // The World of the tests of this library: what its functions read and write.
 // It holds no core.Disabled, so the test that draws by its hierarchy settles it.
 @(private)
+@(test_world)
 Render_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     worlds:core.Table(core.World_Transform),
     locals:core.Table(core.Transform),
     parents:core.Table(core.Parent),
@@ -42,7 +43,7 @@ Render_World :: struct {
 @(private)
 world_sync :: proc(w:^Render_World,sync:^Render_Sync,app:^host.App,id:core.World_Id={},hierarchy:core.Ref(core.Hierarchy)={},posed:^Posed_Meshes=nil) {
     shows:Frame_Values_Requests
-    render_sync(sync,app,id,core.FRAME_TIME_DEFAULT,{},core.read(&w.worlds),core.read(&w.meshes),core.read(&w.values),core.read(&w.hidden),core.read(&w.elsewhere),core.read(&w.parents),hierarchy,core.read(&w.suns),core.read(&w.points),core.read(&w.spots),core.read(&w.rects),core.read(&w.emissions),core.read(&w.skies),core.read(&w.view_volumes),{},core.read(&w.highlights),core.read(&w.outlines),{&w.outline_styles},core.read(&w.offsets),core.read(&w.layers),{},{},{},{},posed,&shows)
+    render_sync(sync,app,id,core.FRAME_TIME_DEFAULT,{},core.read(&w.worlds),core.read(&w.meshes),core.read(&w.values),core.read(&w.hidden),core.read(&w.elsewhere),core.read(&w.parents),hierarchy,core.read(&w.suns),core.read(&w.points),core.read(&w.spots),core.read(&w.rects),core.read(&w.emissions),core.read(&w.skies),core.read(&w.view_volumes),{},{},core.read(&w.highlights),core.read(&w.outlines),{&w.outline_styles},core.read(&w.offsets),core.read(&w.layers),{},{},{},{},posed,&shows)
 }
 
 // An application that draws nothing: assets over a renderer without a
@@ -70,13 +71,13 @@ sync_fixture_init :: proc(t:^testing.T,f:^Sync_Fixture) -> bool {
         f.assets.shapes[shape]={handle=handle,vertex_count=3,index_count=3,bounds_max={1,0,1}}
         f.assets.shapes_ready[shape]=true
     }
-    return core.test_world_init(t,&f.world,test_types)
+    return test_world_init(t,&f.world)
 }
 
 @(private)
 sync_fixture_destroy :: proc(f:^Sync_Fixture) {
     sync_free(&f.sync)
-    core.test_world_destroy(&f.world)
+    test_world_destroy(&f.world)
     host.extras_free(&f.app.extras)
     host.assets_destroy(&f.assets)
     gpu.scene_destroy(&f.renderer)
@@ -97,7 +98,7 @@ sync_cube :: proc(f:^Sync_Fixture,x:f32) -> core.Entity {
 // the upload of a frame takes it.
 @(private)
 sync_frame :: proc(f:^Sync_Fixture,id:core.World_Id={},posed:^Posed_Meshes=nil) -> int {
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     core.hierarchy_settle(&f.world.hierarchy,core.read(&f.world.parents),&f.world.entities)
     s:=&f.renderer.scene
     for &word in s.touched {word=0}
