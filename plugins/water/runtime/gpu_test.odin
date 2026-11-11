@@ -102,7 +102,8 @@ water_frame :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> (pixels: []u8, ok: bool) 
 		instances := make([dynamic]gpu.Instance_Desc, context.temp_allocator)
 		append(&instances, gpu.Instance_Desc{object_id = 1, mesh = f.cube, transform = mm.transform_matrix({{0, -0.5, 0}, mm.QUAT_IDENTITY, {40, 1, 40}}), tint = {0.05, 0.05, 0.05}})
 		append(&instances, ..f.app.extras.instances[:])
-		testing.expect(t, gpu.scene_set(&f.renderer, instances[:], nil, {direction = {0.3, -1, 0.2}, color = {1, 1, 1}, illuminance = 3}, {sky = {0.4, 0.5, 0.6}}), f.renderer.error)
+		gpu.scene_set_environment(&f.renderer, {direction = {0.3, -1, 0.2}, color = {1, 1, 1}, illuminance = 3}, {sky = {0.4, 0.5, 0.6}})
+		testing.expect(t, gpu.scene_update(&f.renderer, 0, instances[:], true), f.renderer.error)
 		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error)
 	}
 	rhi.device_wait_idle(f.device)
@@ -144,12 +145,10 @@ a_lake_and_a_river_draw_where_their_fluids_are :: proc(t: ^testing.T) {
 	core.add(&w.fluids, lake, phys.FLUID_DEFAULT)
 	core.add(&w.volumes, lake, volume.box({2, 0.5, 2}))
 	core.add(&w.transforms, lake, core.Transform{{-3, 0.25, 0}, mm.QUAT_IDENTITY, {1, 1, 1}})
-	// The samples a Spline of shapes hands the physics: a bend 1.5 m wide and 0.4 m deep.
+	// A Spline with a Fluid: a bend 1.5 m wide and 0.4 m deep.
 	river := core.create(&w.entities)
 	core.add(&w.fluids, river, phys.Fluid{density = 1000, current = {0, 0, -1}})
-	path: phys.Fluid_Path
-	path.count = u16(mm.path_sample({{{3, 0.4, 3}, 1.5, 0.4}, {{4, 0.4, 0}, 1.5, 0.4}, {{3, 0.4, -3}, 1.5, 0.4}}, 1, path.points[:]))
-	core.add(&w.paths, river, path)
+	core.add(&w.splines, river, volume.Spline{count = 3, points = {0 = {{3, 0, 3}, 1.5, 0.4}, 1 = {{4, 0, 0}, 1.5, 0.4}, 2 = {{3, 0, -3}, 1.5, 0.4}}})
 	wet, wet_ok := water_frame(t, f)
 	testing.expect_value(t, w.state.world.fluid_count, 2)
 	if !wet_ok {return}

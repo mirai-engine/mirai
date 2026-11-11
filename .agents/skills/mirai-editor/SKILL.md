@@ -153,6 +153,9 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 - The methods of the API are the only catalog of commands: a menu entry, a shortcut and a button
   are an entry that names a method and its params, a gesture runs the handler of the method, and a
   plugin gives its method its entry ([commands](references/editor.md#commands-and-shortcuts)).
+- A procedure the editor keeps runs only from a registration of the current library generation:
+  from a swap until `api_poll` registers again, calls and queued gestures are refused and entries
+  are off, and the project library does not swap while a plugin's handler is on the stack.
 - Asset folders are thematic, never by type (the browser filters by type): what the editor
   imports or creates goes where the user is, and it creates no folder named after a type.
 - State located according to [the session](references/editor.md#the-session). `Api` keeps only a

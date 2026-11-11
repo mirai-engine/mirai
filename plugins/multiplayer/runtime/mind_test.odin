@@ -109,8 +109,6 @@ a_mind_decides_on_the_server_and_the_client_sees_its_presentation :: proc(t:^tes
     sessions[0].problems,sessions[1].problems=&problems[0],&problems[1]
     testing.expect_value(t,wire.host_connect(&sessions[1].host,wire.address_memory(0)),wire.Error.None)
     outbox:Net_Outbox;defer core.value_free(&outbox,type_info_of(Net_Outbox))
-    server_events,client_events:Net_Events
-    defer core.value_free(&server_events,type_info_of(Net_Events));defer core.value_free(&client_events,type_info_of(Net_Events))
     shown:[200]behavior.Mind_Presentation
     seen_steps:bit_set[Net_Act]
     snapshot:^Mind_Net_World

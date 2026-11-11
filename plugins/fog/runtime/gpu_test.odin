@@ -127,7 +127,8 @@ fog_goes_on_past_the_grid_without_a_seam :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set(r, {{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, -2000}, {8000, 0.2, 8000}), tint = {0.02, 0.02, 0.02}}}, nil, {direction = linalg.normalize([3]f32{0.4, 0.5, 0.6}), color = {1, 1, 1}, illuminance = 2 * math.PI, enabled = true}, {sky = {0.3, 0.4, 0.6}})
+	gpu.scene_set_environment(r,{direction = linalg.normalize([3]f32{0.4, 0.5, 0.6}), color = {1, 1, 1}, illuminance = 2 * math.PI, enabled = true},{sky = {0.3, 0.4, 0.6}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, -2000}, {8000, 0.2, 8000}), tint = {0.02, 0.02, 0.02}}},true)
 	HIGH :: f32(40)
 	forward := linalg.normalize([3]f32{0, -0.3, -1})
 	camera := gpu.Camera{position = {0, HIGH, 0}, forward = forward, up = {0, 1, 0}, fov_y = 60, near = 0.1, exposure = gpu.UNIT_EXPOSURE}
@@ -212,10 +213,11 @@ fog_wisps_vary_drift_and_leave_no_trail :: proc(t: ^testing.T) {
 	if !gpu_fixture_init(t, f) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	gpu.scene_set(r, {
+	gpu.scene_set_environment(r,{direction = linalg.normalize([3]f32{0.5, 0.6, 0.4}), color = {1, 1, 1}, illuminance = 3 * math.PI, enabled = true},{sky = {0.05, 0.06, 0.08}})
+	gpu.scene_update(r,0,{
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {80, 0.2, 80}), tint = {0.05, 0.05, 0.05}},
 		{object_id = 2, mesh = f.cube, transform = trs({0, 6, -14}, {40, 12, 0.5}), tint = {0.02, 0.02, 0.02}},
-	}, nil, {direction = linalg.normalize([3]f32{0.5, 0.6, 0.4}), color = {1, 1, 1}, illuminance = 3 * math.PI, enabled = true}, {sky = {0.05, 0.06, 0.08}})
+	},true)
 	camera := gpu.Camera{position = {0, 2, 10}, forward = {0, -0.05, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 200, exposure = gpu.UNIT_EXPOSURE}
 	// A slab across the view: what the eye sees of it crosses a wisp or two.
 	even := FOG_VOLUME_DEFAULT
@@ -287,7 +289,8 @@ fog_in_front_of_glass_goes_over_it :: proc(t: ^testing.T) {
 	gpu.materials_set(r, {blue})
 	wall := gpu.Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, 0, -30}, {200, 200, 1}), tint = {0, 0, 0}}
 	pane := gpu.Instance_Desc{object_id = 2, mesh = f.cube, transform = trs({0, 0, -6}, {4, 4, 0.05}), material = 1, tint = {1, 1, 1}}
-	gpu.scene_set(r, {wall, pane}, nil, {direction = linalg.normalize([3]f32{0.6, 0.5, 0.3}), color = {1, 1, 1}, illuminance = 3 * math.PI, enabled = true}, {sky = {0.02, 0.02, 0.02}})
+	gpu.scene_set_environment(r,{direction = linalg.normalize([3]f32{0.6, 0.5, 0.3}), color = {1, 1, 1}, illuminance = 3 * math.PI, enabled = true},{sky = {0.02, 0.02, 0.02}})
+	gpu.scene_update(r,0,{wall, pane},true)
 	camera := gpu.Camera{position = {0, 0, 0}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 200, exposure = gpu.UNIT_EXPOSURE}
 	haze := Fog_Volume{density = 0.25, color = {1, 1, 1}}
 	places := []volume.Volume{{shape = .Box, extents = {0.5, 0.5, 0.5}}}

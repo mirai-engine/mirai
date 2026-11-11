@@ -150,7 +150,6 @@ shape_outline_set :: proc(s:^Shape,set:^geom.Polygon_Set,polygon:int) -> Shape_E
     if kept_loops>SHAPE_LOOPS {return .Too_Many_Loops}
     if kept_points>SHAPE_POINTS {return .Too_Many_Points}
     t:=s^
-    t.kind=.Solid
     t.points={}
     t.loops={}
     t.point_count,t.loop_count=u16(kept_points),0
@@ -175,7 +174,7 @@ shape_outline_set :: proc(s:^Shape,set:^geom.Polygon_Set,polygon:int) -> Shape_E
 // caller makes a shape of each of the others with shape_outline_set. It fails
 // before changing s when some polygon of the result does not fit a Shape.
 shape_combine :: proc(s:^Shape,points:[]geom.Vec2,loops:[]int,op:geom.Polygon_Op,out:^geom.Polygon_Set) -> Shape_Error {
-    if s.kind!=.Solid || out==nil || len(loops)==0 {return .Invalid}
+    if out==nil || len(loops)==0 {return .Invalid}
     if error:=shape_valid_counts(s);error!=.None {return error}
     shape_points,shape_loops:=shape_outline(s)
     switch geom.polygon_boolean(shape_points,shape_loops,points,loops,op,out) {
@@ -212,46 +211,10 @@ shape_contains :: proc(s:^Shape,p:geom.Vec2) -> bool {
     return inside
 }
 
-// The nearest vertex within radius of p.
-shape_vertex_near :: proc(s:^Shape,p:geom.Vec2,radius:f32) -> (vertex:int,found:bool) {
-    if shape_valid_counts(s)!=.None {return}
-    best:=radius*radius
-    for q,i in s.points[:s.point_count] {
-        d:=q-p
-        if distance:=d.x*d.x+d.y*d.y;distance<=best {vertex,found,best=i,true,distance}
-    }
-    return
-}
-
-// The nearest edge within radius of p, by its first vertex, and the point of
-// it nearest to p.
-shape_edge_near :: proc(s:^Shape,p:geom.Vec2,radius:f32) -> (edge:int,at:geom.Vec2,found:bool) {
-    if shape_valid_counts(s)!=.None {return}
-    best:=radius*radius
-    first:=0
-    for l in 0..<int(s.loop_count) {
-        n:=int(s.loops[l])
-        // The last point of a Spline ends it.
-        for i in 0..<(s.kind==.Spline?n-1:n) {
-            a,b:=s.points[first+i],s.points[first+(i+1)%n]
-            q:=segment_nearest(a,b,p)
-            d:=q-p
-            if distance:=d.x*d.x+d.y*d.y;distance<=best {edge,at,found,best=first+i,q,true,distance}
-        }
-        first+=n
-    }
-    return
-}
-
-// Moves a vertex to a new place in the plane of the shape. The path of a
-// Spline may cross itself.
+// Moves a vertex to a new place in the local XY.
 shape_vertex_move :: proc(s:^Shape,vertex:int,to:geom.Vec2) -> Shape_Error {
     if error:=shape_valid_counts(s);error!=.None {return error}
     if vertex<0 || vertex>=int(s.point_count) || !finite2(to) {return .Invalid}
-    if s.kind==.Spline {
-        s.points[vertex]=to
-        return .None
-    }
     loop,first,n:=loop_of(s,vertex)
     before:=loop_area(s.points[first:first+n])
     previous:=s.points[vertex]
@@ -264,52 +227,50 @@ shape_vertex_move :: proc(s:^Shape,vertex:int,to:geom.Vec2) -> Shape_Error {
     return .None
 }
 
-// Inserts a vertex at `at` on an edge, after its first vertex; on a Spline,
-// with the width and height in proportion between the ends of the edge.
+// Inserts a vertex at `at` on an edge, after its first vertex.
 shape_vertex_insert :: proc(s:^Shape,edge:int,at:geom.Vec2) -> Shape_Error {
     if error:=shape_valid_counts(s);error!=.None {return error}
-    if edge<0 || edge>=int(s.point_count)-(s.kind==.Spline?1:0) || !finite2(at) {return .Invalid}
+    if edge<0 || edge>=int(s.point_count) || !finite2(at) {return .Invalid}
     if int(s.point_count)>=SHAPE_POINTS {return .Too_Many_Points}
-    t:=s^
-    loop,first,n:=loop_of(&t,edge)
-    before:=loop_area(t.points[first:first+n])
-    next:=int(t.point_count)
-    a,b:=edge_ends(&t,edge)
-    ab:=t.points[b]-t.points[a]
-    long:=ab.x*ab.x+ab.y*ab.y
-    along:=long>0?clamp(((at.x-t.points[a].x)*ab.x+(at.y-t.points[a].y)*ab.y)/long,0,1):0
-    width:=t.widths[a]+(t.widths[b]-t.widths[a])*along
-    height:=t.heights[a]+(t.heights[b]-t.heights[a])*along
-    copy(t.points[edge+2:next+1],t.points[edge+1:next])
-    copy(t.widths[edge+2:next+1],t.widths[edge+1:next])
-    copy(t.heights[edge+2:next+1],t.heights[edge+1:next])
-    t.points[edge+1],t.widths[edge+1],t.heights[edge+1]=at,width,height
-    t.point_count+=1
-    t.loops[loop]+=1
-    if t.kind==.Solid && (!edge_clear(&t,edge) || !edge_clear(&t,edge+1) || !loops_hold(&t,loop,before)) {return .Self_Intersecting}
-    s^=t
+    loop,first,n:=loop_of(s,edge)
+    before:=loop_area(s.points[first:first+n])
+    next:=s.point_count
+    copy(s.points[edge+2:next+1],s.points[edge+1:next])
+    s.points[edge+1]=at
+    s.point_count+=1
+    s.loops[loop]+=1
+    if !edge_clear(s,edge) || !edge_clear(s,edge+1) || !loops_hold(s,loop,before) {
+        copy(s.points[edge+1:next],s.points[edge+2:next+1])
+        s.points[next]={}
+        s.point_count-=1
+        s.loops[loop]-=1
+        return .Self_Intersecting
+    }
     return .None
 }
 
-// Removes a vertex; a loop keeps at least three, a Spline two.
+// Removes a vertex; a loop keeps at least three.
 shape_vertex_remove :: proc(s:^Shape,vertex:int) -> Shape_Error {
     if error:=shape_valid_counts(s);error!=.None {return error}
     if vertex<0 || vertex>=int(s.point_count) {return .Invalid}
-    t:=s^
-    loop,first,n:=loop_of(&t,vertex)
-    if n<=loop_least(&t) {return .Invalid}
-    before:=loop_area(t.points[first:first+n])
-    count:=int(t.point_count)
-    copy(t.points[vertex:count-1],t.points[vertex+1:count])
-    copy(t.widths[vertex:count-1],t.widths[vertex+1:count])
-    copy(t.heights[vertex:count-1],t.heights[vertex+1:count])
-    t.points[count-1],t.widths[count-1],t.heights[count-1]={},0,0
-    t.point_count-=1
-    t.loops[loop]-=1
+    loop,first,n:=loop_of(s,vertex)
+    if n<=3 {return .Invalid}
+    before:=loop_area(s.points[first:first+n])
+    count:=int(s.point_count)
+    removed:=s.points[vertex]
+    copy(s.points[vertex:count-1],s.points[vertex+1:count])
+    s.points[count-1]={}
+    s.point_count-=1
+    s.loops[loop]-=1
     // The edge that now joins the neighbors of the vertex starts at the one before it.
     prev:=first+(vertex-first+n-2)%(n-1)
-    if t.kind==.Solid && (!edge_clear(&t,prev) || !loops_hold(&t,loop,before)) {return .Self_Intersecting}
-    s^=t
+    if !edge_clear(s,prev) || !loops_hold(s,loop,before) {
+        copy(s.points[vertex+1:count],s.points[vertex:count-1])
+        s.points[vertex]=removed
+        s.point_count+=1
+        s.loops[loop]+=1
+        return .Self_Intersecting
+    }
     return .None
 }
 
@@ -342,20 +303,15 @@ shape_counts :: proc "contextless" (s:^Shape) -> (points,loops:int) {
     return min(int(s.point_count),SHAPE_POINTS),min(int(s.loop_count),SHAPE_LOOPS)
 }
 
-// The fewest points of a loop: three, and two of the path of a Spline.
-@(private)
-loop_least :: proc "contextless" (s:^Shape) -> int {return s.kind==.Spline?2:3}
-
-// Whether the loops of a shape hold its points, each at least loop_least; a
-// Spline has one.
+// Whether the loops of a shape hold its points, each at least three.
 @(private)
 shape_valid_counts :: proc "contextless" (s:^Shape) -> Shape_Error {
     if int(s.point_count)>SHAPE_POINTS {return .Too_Many_Points}
-    if int(s.loop_count)>SHAPE_LOOPS || s.kind==.Spline && s.loop_count>1 {return .Too_Many_Loops}
+    if int(s.loop_count)>SHAPE_LOOPS {return .Too_Many_Loops}
     if s.loop_count==0 {return .Empty}
     total:=0
     for size in s.loops[:s.loop_count] {
-        if int(size)<loop_least(s) {return .Invalid}
+        if size<3 {return .Invalid}
         total+=int(size)
     }
     if total!=int(s.point_count) {return .Invalid}
@@ -600,13 +556,4 @@ set_largest_first :: proc(set:^geom.Polygon_Set) -> bool {
     copy(set.polygon_loops[1:best+1],set.polygon_loops[:best])
     set.polygon_loops[0]=loops
     return true
-}
-
-@(private)
-segment_nearest :: proc "contextless" (a,b,p:geom.Vec2) -> geom.Vec2 {
-    ab:=b-a
-    length:=ab.x*ab.x+ab.y*ab.y
-    if !(length>0) {return a}
-    t:=clamp(((p.x-a.x)*ab.x+(p.y-a.y)*ab.y)/length,0,1)
-    return a+ab*t
 }

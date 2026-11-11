@@ -139,7 +139,7 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
 1. **One set:** a `.character` in `Animation.asset`, over the `.anim` of its clips, holds what
    the character plays and adapts; `animation.character.setup` writes it from the clip names and
    the skeleton body.
-2. **Locomotion:** the match clips of the set with the physics mode each one serves. With a
+2. **Locomotion:** the match clips of the set with the locomotion mode each one serves. With a
    `Character`, `animation_physics` tells it on each tick the mode, the velocity and the request:
    the game writes nothing. Without physics, the game calls `match_goal`.
 3. **Few clips:** idle and walk are enough; a run or jog widens the range. The rate of a clip

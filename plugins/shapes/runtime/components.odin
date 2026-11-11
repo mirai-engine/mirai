@@ -23,21 +23,15 @@ import mm "mirai:std/math"
 // or the depth is smaller than that, the bevel there is smaller. It is drawn
 // only: the shape collides as if it had none.
 //
-// A Spline is an open path through its points, in the local XZ plane of the
-// entity, each with a width and a height: a curve through them sampled by
-// length (mm.path_sample) that lies on the ground under it (core.Ground_Queries;
-// without ground, on the plane of the entity), height over it. What it is
-// comes from what the entity has: with a physics.Fluid it is water along the
-// path, a river, whose depth is the height (physics.Fluid_Path, which the
-// water draws); without one, a ribbon drawn with its material that follows
-// the ground across, a road or a path. It does not collide.
+// A volume.Spline with a material is drawn the same way, on a derived child: a
+// ribbon along its path that follows the ground across (ribbon.odin). It does
+// not collide.
 
 SHAPE_POINTS :: 512
 SHAPE_LOOPS :: 16
 BEVEL_POINTS :: 8
 BEVEL_SEGMENTS :: 16
 
-Shape_Kind :: enum u8 {Solid,Spline}
 Brush_Kind :: enum u8 {Box,Sphere,Cylinder}
 // Round: a quarter of a circle, tangent to the cap and the side. Chamfer: a
 // straight cut. Points: the polyline of bevel_points.
@@ -61,10 +55,9 @@ Brush :: struct {
     place:mm.Transform, // its local Transform
 }
 
-@(component,description="An editable shape: a Solid of a polygon extruded along its local Z and the brushes of its children, added, cut and intersected in order; or a Spline, a path of points on the ground that is a river with a Fluid and a road drawn with its material without one. What it shows is made from it on a child entity.")
+@(component,description="An editable solid: a polygon extruded along its local Z and the brushes of its children, added, cut and intersected in order. What it shows is made from it on a child entity.")
 Shape :: struct {
-    kind:Shape_Kind,
-    depth:f32 `mirai:"min=0,unit=m"`, // of the polygon of a Solid, along local Z
+    depth:f32 `mirai:"min=0,unit=m"`, // of the polygon, along local Z
     material:base.Asset_Id `mirai:"kind=.mat"`,
     uv_scale:f32 `mirai:"min=0"`, // texture repeats per meter; 0: 1
     bevel:f32 `mirai:"min=0,unit=m"`, // of the polygon: how far its caps are inset and its rims fall; 0: none
@@ -77,27 +70,20 @@ Shape :: struct {
     bevel_points:[BEVEL_POINTS][2]f32 `mirai:"hidden"`,
     point_count:u16 `mirai:"hidden"`,
     loop_count:u8 `mirai:"hidden"`,
-    loops:[SHAPE_LOOPS]u16 `mirai:"hidden"`,      // points of each loop, the outline first and then its holes; a Spline has one
-    points:[SHAPE_POINTS][2]f32 `mirai:"hidden"`, // local XY of a Solid, local XZ of a Spline
-    widths:[SHAPE_POINTS]f32 `mirai:"hidden,unit=m"`,  // of a Spline: across at each point
-    heights:[SHAPE_POINTS]f32 `mirai:"hidden,unit=m"`, // of a Spline: over the ground at each point
+    loops:[SHAPE_LOOPS]u16 `mirai:"hidden"`,      // points of each loop, the outline first and then its holes
+    points:[SHAPE_POINTS][2]f32 `mirai:"hidden"`, // local XY
 }
 
 // A square of one meter, one deep.
 SHAPE_DEFAULT :: Shape{
-    kind=.Solid,depth=1,uv_scale=1,point_count=4,loop_count=1,loops={0=4},
+    depth=1,uv_scale=1,point_count=4,loop_count=1,loops={0=4},
     points={0={-0.5,-0.5},1={0.5,-0.5},2={0.5,0.5},3={-0.5,0.5}},
 }
 
-// A path of 12 m along -Z, 3 m wide and lying 0.05 m over the ground.
-SPLINE_DEFAULT :: Shape{
-    kind=.Spline,depth=0,uv_scale=1,point_count=2,loop_count=1,loops={0=2},
-    points={0={0,0},1={0,-12}},widths={0=3,1=3},heights={0=0.05,1=0.05},
-}
-
-// On the child entity that draws and collides a shape. It has no core.Id: a
-// scene never saves it, and the step makes it again from the Shape.
-@(component,description="The derived child that draws and collides the Shape of its parent: made again from that source, never saved.")
+// On the child entity that draws and collides a shape, or draws the ribbon of a
+// spline. It has no core.Id: a scene never saves it, and the step makes it
+// again from its source.
+@(component,description="The derived child that draws and collides the Shape of its parent, or draws the ribbon of its Spline: made again from that source, never saved.")
 Shape_Part :: struct {}
 
 Stamp_Kind :: enum u8 {

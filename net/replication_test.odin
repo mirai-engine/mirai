@@ -497,3 +497,61 @@ an_object_retyped_keeps_its_replica_and_takes_the_fragments_of_its_new_type :: p
     testing.expect_value(t,object_retype(s.clients[0],object,s.tp.actor,{}),Error.Invalid)
     testing.expect_value(t,object_retype(s.server,object,s.tp.prop,{}),Error.None)
 }
+
+// A reliable event larger than a datagram streams on its channel and arrives
+// whole, also over a link that loses datagrams, and one that large that is
+// not reliable is refused as it registers. Event bytes that do not parse are
+// refused, at every length, without crashing the host nor reaching the game.
+@(test)
+a_reliable_event_of_4_kb_arrives_whole_and_hostile_event_bytes_are_refused :: proc(t:^testing.T) {
+    {
+        schema:serial.Schema;serial.schema_init(&schema);defer serial.schema_destroy(&schema)
+        big,_:=serial.schema_add(&schema,Test_Big)
+        p:Protocol;protocol_init(&p);defer protocol_destroy(&p)
+        _,unreliable:=event_register(&p,"Big",&schema,big,{.From_Client})
+        _,reliable:=event_register(&p,"Big",&schema,big,{.Reliable,.From_Client})
+        testing.expect(t,!unreliable && reliable,"only a reliable event exceeds a datagram")
+    }
+    s:Scene;scene_init(&s,1);defer scene_destroy(&s)
+    sim_endpoint_conditions(&s.w.sim,1,{loss=0.2})
+    value:Test_Big
+    for &v,i in value.values {v=u32(i*2654435761)}
+    value.count=len(value.values)
+    testing.expect_value(t,event_send(s.clients[0],s.tp.big,0,&value),Error.None)
+    arrived:=0
+    for tick in u32(1)..=600 {
+        host_publish(s.clients[0],tick);host_publish(s.server,tick)
+        test_step(&s.w)
+        host_poll(s.clients[0])
+        for &command in host_poll(s.server) {
+            if command.kind!=.Event || command.event!=s.tp.big {continue}
+            out:Test_Big
+            testing.expect(t,event_read(s.server,&command,&out) && out==value && command.connection==s.on_server[0],"the event arrives whole, from its client")
+            arrived+=1
+        }
+        if arrived>0 {break}
+    }
+    testing.expect_value(t,arrived,1)
+
+    peer:=peer_from(s.server,s.on_server[0])
+    if !testing.expect(t,peer!=nil) {return}
+    state:=u64(5)
+    junk:[RELIABLE_EVENT_MAX_BYTES+64]u8
+    refused:=0
+    for round in 0..<4000 {
+        size:=int(base.splitmix_next(&state)%u64(len(junk)))
+        for &b in junk[:size] {b=u8(base.splitmix_next(&state))}
+        if size>=4 {
+            // An event of the protocol, or just past its ids, with what follows at random.
+            w:serial.Bit_Writer
+            serial.bit_writer_init(&w,junk[:4])
+            serial.bit_write(&w,u64(System_Message.Event),3)
+            serial.bit_write(&w,u64(round%(len(s.tp.protocol.events)+1)),16)
+        }
+        if !repl_message(s.server,peer,CHANNEL_SYSTEM,junk[:size]) {refused+=1}
+    }
+    for &command in host_poll(s.server) {
+        if command.kind==.Event {testing.expect(t,int(command.event)<len(s.tp.protocol.events) && len(command.words)>=s.tp.protocol.events[command.event].desc.words)}
+    }
+    testing.expectf(t,refused>1000,"%d of 4000 refused",refused)
+}

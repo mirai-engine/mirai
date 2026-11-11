@@ -121,7 +121,7 @@ jobs:
           "$mirai" doctor || true
           for template in game empty; do
             "$mirai" new "projects/$template" --template "$template"
-            "$mirai" build editor "projects/$template" --dev | tee "projects/$template.log"
+            "$mirai" build editor "projects/$template" | tee "projects/$template.log"
             if grep -q "plugin libraries built" "projects/$template.log"; then
               echo "::error::the $template template compiled plugin libraries the package should bring"
               exit 1

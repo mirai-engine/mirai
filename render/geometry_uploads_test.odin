@@ -79,13 +79,13 @@ a_mesh_added_over_frames_is_hidden_until_all_its_geometry_went :: proc(t: ^testi
 	for ranges in s.pool_dirty {testing.expect_value(t, len(ranges), 0)}
 	testing.expect(t, !mesh_uploading(r, small))
 
-	scene_set(r, {{object_id = 1, mesh = small, transform = 1}, {object_id = 2, mesh = big, transform = 1, highlight = 1}, {object_id = 3, mesh = big, transform = 1, hidden = true}}, nil, {}, {})
-	shown := s.desc_instance[1]
+	scene_given(r, {{object_id = 1, mesh = small, transform = 1}, {object_id = 2, mesh = big, transform = 1, highlight = 1}, {object_id = 3, mesh = big, transform = 1, hidden = true}}, nil, {}, {})
+	shown := 1
 	testing.expect_value(t, s.instances[shown].meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_COLLAPSED), u32(INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_COLLAPSED))
 	testing.expect(t, !highlight_drawn(s.instances[shown].meta.w) && s.hw_instances[shown].mask_flags == 0, "no outline, and no ray meets it")
-	testing.expect_value(t, s.instances[s.desc_instance[2]].meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_COLLAPSED), u32(INSTANCE_FLAG_HIDDEN))
+	testing.expect_value(t, s.instances[2].meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_COLLAPSED), u32(INSTANCE_FLAG_HIDDEN))
 	testing.expect_value(t, s.hidden_count, 2)
-	testing.expect(t, s.instances[s.desc_instance[0]].meta.w & INSTANCE_FLAG_HIDDEN == 0)
+	testing.expect(t, s.instances[0].meta.w & INSTANCE_FLAG_HIDDEN == 0)
 	moved := Mat4(1)
 	moved[0, 3] = 3
 	testing.expect(t, scene_move(r, {1}, {moved}))
@@ -118,7 +118,7 @@ a_mesh_added_over_frames_is_hidden_until_all_its_geometry_went :: proc(t: ^testi
 	testing.expect(t, !mesh_upload_pending(r, request) && !mesh_uploading(r, big))
 	testing.expect_value(t, s.instances[shown].meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_COLLAPSED), u32(0))
 	testing.expect(t, highlight_drawn(s.instances[shown].meta.w) && s.hw_instances[shown].mask_flags != 0, "outlined, and rays meet it")
-	testing.expect(t, s.instances[s.desc_instance[2]].meta.w & INSTANCE_FLAG_HIDDEN != 0, "one its description hides stays hidden")
+	testing.expect(t, s.instances[2].meta.w & INSTANCE_FLAG_HIDDEN != 0, "one its description hides stays hidden")
 	testing.expect_value(t, s.hidden_count, 1)
 	testing.expect(t, s.geometry_dirty && !s.batch.built)
 	testing.expect(t, instance_touched(s, u32(shown)) || s.instances_dirty, "the instance that shows goes to the GPU")
@@ -172,7 +172,7 @@ a_mesh_that_takes_the_slot_of_one_still_going_shows_only_its_own_geometry :: pro
 	s := &r.scene
 	grid, _ := uploads_grid(16)
 	gone, gone_request, _ := mesh_add_over_frames(r, grid, nil)
-	scene_set(r, {{object_id = 1, mesh = gone, transform = 1}}, nil, {}, {})
+	scene_given(r, {{object_id = 1, mesh = gone, transform = 1}}, nil, {}, {})
 	held := uploads_held(s)
 	sent: u64
 	uploads_frame(t, r, 256, held, &sent)
@@ -195,7 +195,7 @@ a_mesh_that_takes_the_slot_of_one_still_going_shows_only_its_own_geometry :: pro
 	testing.expect(t, ok && len(copies) == 1)
 	testing.expect(t, mem.compare(copies[0].bytes, mem.slice_to_bytes(s.vertices[record.vertex_word:][:record.vertex_span])) == 0, "what goes is what it put there")
 	testing.expect_value(t, copies[0].offset, u64(record.vertex_word) * 4)
-	scene_set(r, {{object_id = 2, mesh = reused, transform = 1}}, nil, {}, {})
+	scene_given(r, {{object_id = 2, mesh = reused, transform = 1}}, nil, {}, {})
 	testing.expect(t, s.instances[0].meta.w & INSTANCE_FLAG_COLLAPSED != 0, "its instance waits for it")
 
 	// The queue full, the next goes at once.

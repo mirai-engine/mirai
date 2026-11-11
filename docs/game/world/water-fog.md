@@ -17,15 +17,15 @@ $P scene.write '{"merge":true,"entities":[
     "Volume":{"shape":"Box","extents":[6,1.5,4]},"Fluid":{"density":1000},"Water":{}}},
   {"name":"Creek","position":[30,0,-10],"components":{
     "Fluid":{"density":1000,"current":[0,0,-1.5]},"Water":{},
-    "Shape":{"kind":"Spline","point_count":3,"loop_count":1,"loops":[3],
-      "points":[[0,0],[6,-10],[0,-20]],"widths":[3,3,4],"heights":[1,1,1.2]}}}]}'
+    "Spline":{"count":3,"points":[{"position":[0,0,0],"width":3,"height":1},
+      {"position":[6,0,-10],"width":3,"height":1},{"position":[0,0,-20],"width":4,"height":1.2}]}}}]}'
 ```
 
 - A `Plane` volume is every point below the height of its entity, to the horizon: a sea. A `Box`
   volume (`extents` is half its size, times the scale of the entity) is water that ends at its
   walls, with its top face as the surface: a lake whose box fills its basin up to the water level,
   or a pool. Only its surface is drawn: the ground or a basin around it are its walls.
-- A river is a `Fluid` on a `Spline` ([splines](splines.md), plugin `shapes`) instead of a `Volume`:
+- A river is a `Fluid` on a `Spline` ([splines](splines.md)) instead of a `Volume`:
   the spline lies on the ground, and its water is the `height` of each point deep over it and as
   wide as the point, level across. The `current` of the `Fluid` is in the frame of the path: `-z`
   flows toward its last point, and what floats drifts with it. It ends at its first and last point.
@@ -68,6 +68,6 @@ $P scene.write '{"merge":true,"entities":[{"name":"Valley mist","position":[0,0,
   not made (`physics.fluid`). Two fluids that meet at the same `priority`: `physics.fluid_overlap`.
 - `Fluid_Waves` on a `Box` or a river makes no waves: the problem `physics.fluid_waves`.
 - A river whose points have no width or no height, or sit at the same place seen from above, is
-  not made (`physics.fluid_path`); one with too many points for its water says `shapes.spline`.
+  not made (`physics.fluid_path`).
 - A fog that hides the whole view is a `density` too high: lower it before touching exposure
   ([exposure.md](exposure.md)).

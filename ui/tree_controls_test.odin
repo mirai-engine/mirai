@@ -296,17 +296,19 @@ a_transition_carries_the_colors_of_a_node_between_its_states :: proc(t:^testing.
     testing.expect(t,back[0]<200 && back[0]>150)
 }
 
-// The transition of a style carries the rectangle of its node to a new layout: from where it was
-// drawn, through rectangles between both, to exactly where the layout puts it; a layout that
-// changes on the way starts again from where it is. A new size too, which the layout around it
-// follows. What code builds without a style, as the editor, goes there at once.
+// The layout transition of a style carries the rectangle of its node to a new layout: from where
+// it was drawn, through rectangles between both, to exactly where the layout puts it; a layout
+// that changes on the way starts again from where it is. A new size too, which the layout around
+// it follows. A node shown again, a style whose transition is only of its colors and what code
+// builds without a style, as the editor, go there at once. The context keeps as many rectangles
+// as its description says.
 @(test)
-a_transition_carries_the_rectangle_of_a_node_to_a_new_layout :: proc(t:^testing.T) {
+a_layout_transition_carries_the_rectangle_of_a_node_to_a_new_layout :: proc(t:^testing.T) {
     s:Test_Shop
     test_shop_init(t,&s)
     defer test_shop_destroy(&s)
     tree_style(&s.tree,{}) // what a node without a style takes
-    style,_:=tree_style(&s.tree,{transition=0.25})
+    style,_:=tree_style(&s.tree,{layout_transition=0.25})
     root:=tree_node(&s.tree,-1,{kind=.Box,name="row"})
     lead:=tree_node(&s.tree,root,{kind=.Box,name="lead",layout={width=fixed(20),height=fixed(10)}})
     mover:=tree_node(&s.tree,root,{kind=.Box,name="mover",style=style,layout={width=fixed(30),height=fixed(10)}})
@@ -344,6 +346,24 @@ a_transition_carries_the_rectangle_of_a_node_to_a_new_layout :: proc(t:^testing.
     testing.expectf(t,grown.w>30 && grown.w<60 && after.x==grown.w,"its size on the way, which the layout around it follows: %v %v",grown,after)
     for _ in 0..<20 {test_frame(&ctx,&input,tracked,&s)}
     testing.expect(t,rect(t,&ctx,"mover").w==60 && rect(t,&ctx,"after").x==60)
+    elsewhere :: proc(ctx:^Context,user:rawptr) {if box(ctx,{id=id(ctx,"elsewhere"),width=fixed(10),height=fixed(10)}) {}}
+    test_frame(&ctx,&input,elsewhere,nil)
+    s.tree.nodes[lead].layout.width=fixed(50)
+    frame=test_frame(&ctx,&input,tracked,&s)
+    testing.expect(t,rect(t,&ctx,"mover").x==50 && !frame.transitioning,"shown again elsewhere, it does not slide from where it was")
+    s.tree.styles[style]={transition=0.25}
+    s.tree.nodes[lead].layout.width=fixed(5)
+    frame=test_frame(&ctx,&input,tracked,&s)
+    testing.expect(t,rect(t,&ctx,"mover").x==5 && !frame.transitioning,"a transition of colors does not move the layout")
+    s.tree.styles[style]={layout_transition=0.25}
+    small:Context
+    desc:=TEST_SMALL
+    desc.max_transitions=1
+    testing.expect(t,context_init(&small,desc))
+    defer context_destroy(&small)
+    s.tree.nodes[lead].style=style
+    test_frame(&small,&input,tracked,&s)
+    testing.expect_value(t,small.stats.dropped_transitions,u32(1))
 
     lead_width:=f32(20)
     built :: proc(ctx:^Context,user:rawptr) {

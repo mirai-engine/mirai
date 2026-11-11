@@ -36,7 +36,7 @@ gpu_a_coarser_ray_cut_is_built_while_an_instance_wants_it :: proc(t: ^testing.T)
 	accels := rhi.device_stats(device).accels
 	far := Mat4(1)
 	far[0, 3], far[2, 3] = 0, -400
-	scene_set(r, {{object_id = 1, mesh = mesh, transform = far, tint = 1}}, nil, {}, {})
+	scene_given(r, {{object_id = 1, mesh = mesh, transform = far, tint = 1}}, nil, {}, {})
 	camera := Camera{position = {6, 8, 20}, forward = {0, -0.3, -1}, up = {0, 1, 0}, fov_y = 50, near = 0.1, far = 1000, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	m := &r.scene.meshes[mesh]
@@ -47,7 +47,7 @@ gpu_a_coarser_ray_cut_is_built_while_an_instance_wants_it :: proc(t: ^testing.T)
 	for ray in m.rays[1:m.ray_count] {if ray.blas != 0 {built += 1}}
 	testing.expectf(t, built == 1, "only the cut wanted has its BLAS: %d", built)
 	// Without instances nothing wants it: it stays a while, then goes.
-	scene_set(r, nil, nil, {}, {})
+	scene_given(r, nil, nil, {}, {})
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	testing.expect(t, m.rays[cut].blas != 0, "a cut nobody wants keeps its BLAS a while")
 	r.frame += RAY_CUT_KEEP + 1
@@ -74,7 +74,7 @@ gpu_what_phase_1_rescues_is_drawn_once :: proc(t: ^testing.T) {
 	if !testing.expect(t, added) {return}
 	wall := Mat4(1)
 	wall[0, 0], wall[1, 1], wall[2, 2], wall[2, 3] = 60, 60, 1, 5
-	scene_set(r, {{object_id = 1, mesh = cube, transform = wall, tint = 1}}, nil, {}, {})
+	scene_given(r, {{object_id = 1, mesh = cube, transform = wall, tint = 1}}, nil, {}, {})
 	N :: 30
 	field := make([]Batch_Instance, N * N, context.temp_allocator)
 	for &b, i in field {b = batch_instance({f32(i % N) - N / 2, f32(i / N) * 0.7 - 10, 20}, 1, 0.5, 0.5)}
@@ -84,7 +84,7 @@ gpu_what_phase_1_rescues_is_drawn_once :: proc(t: ^testing.T) {
 	for _ in 0 ..< 6 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	testing.expectf(t, r.stats.visible_kinds[.Batch].clusters == 0, "behind the wall the field is hidden: %v", r.stats.visible_kinds[.Batch])
 	// The wall goes: the pyramid of the frame before still hides the field, phase 1 draws it.
-	scene_set(r, nil, nil, {}, {})
+	scene_given(r, nil, nil, {}, {})
 	most: u32
 	late: u32
 	for _ in 0 ..< 6 {
@@ -155,7 +155,7 @@ gpu_the_detail_camera_chooses_the_levels_the_view_draws :: proc(t: ^testing.T) {
 	if !testing.expect(t, asset.mesh_build_dag({vertices = vertices[:]}, indices[:], &g, context.temp_allocator)) {return}
 	mesh, added := mesh_add_geometry(r, g, nil)
 	if !testing.expect(t, added) {return}
-	scene_set(r, {{object_id = 1, mesh = mesh, transform = Mat4(1), tint = 1}}, nil, {}, {})
+	scene_given(r, {{object_id = 1, mesh = mesh, transform = Mat4(1), tint = 1}}, nil, {}, {})
 	near := Camera{position = {8, 3, 18}, forward = {0, -0.3, -1}, up = {0, 1, 0}, fov_y = 50, near = 0.1, far = 1000, exposure = UNIT_EXPOSURE}
 	far := near
 	far.position = {8, 60, 400}

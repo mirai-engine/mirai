@@ -53,22 +53,22 @@ the_coarse_grid_holds_the_samples_at_its_points_and_follows_edits :: proc(t:^tes
     check :: proc(t:^testing.T,s:^Source) {
         for j in 0..<s.coarse.size.y {for i in 0..<s.coarse.size.x {
             x,z:=coarse_position(i,int(s.samples.x)),coarse_position(j,int(s.samples.z))
-            testing.expect_value(t,coarse_height(s,x,z),grid_get(&s.heights,x,z))
+            testing.expect_value(t,coarse_height(s,x,z),grid_get(&s.field,x,z))
         }}
     }
     check(t,&s)
     // The last row and column are points of it, whatever the step.
-    testing.expect_value(t,coarse_height(&s,100,76),grid_get(&s.heights,100,76))
+    testing.expect_value(t,coarse_height(&s,100,76),grid_get(&s.field,100,76))
     for range,i in ranges {
         low,high,_:=chunk_region(&s,chunk_coord(&s,i))
-        for z in low.z..=high.z {for x in low.x..=high.x {h:=grid_get(&s.heights,x,z);testing.expect(t,h>=range.x && h<=range.y)}}
+        for z in low.z..=high.z {for x in low.x..=high.x {h:=grid_get(&s.field,x,z);testing.expect(t,h>=range.x && h<=range.y)}}
     }
     change:=source_edit(&s,{kind=.Raise,center={-10,0,-6},radius=6,amount=40})
     testing.expect(t,change.changed)
     source_coarse_update(&s,change.low,change.high,ranges)
     check(t,&s)
     top:=f32(0)
-    for z in change.low.z..=change.high.z {for x in change.low.x..=change.high.x {top=max(top,grid_get(&s.heights,x,z))}}
+    for z in change.low.z..=change.high.z {for x in change.low.x..=change.high.x {top=max(top,grid_get(&s.field,x,z))}}
     covered:=false
     for range in ranges {if range.y>=top {covered=true}}
     testing.expect(t,top>30 && covered,"the ranges reach what the edit raised")

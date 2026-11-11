@@ -67,7 +67,7 @@ stroke_begin :: proc(stroke:^Stroke,w:core.World_Ref,plane:Plane,first:core.Enti
     made.material=material
     if shapes.shape_edit_begin(&stroke.edit,plane,cut,kind,size,angle,tolerance,made,allocator)!=.None {return false}
     take :: proc(stroke:^Stroke,w:core.World_Ref,e:core.Entity,shape:^shapes.Shape) {
-        if shape.kind!=.Solid || shape.loop_count==0 {return}
+        if shape.loop_count==0 {return}
         shapes.shape_edit_piece(&stroke.edit,e,editor.entity_world(w,e),shape^)
     }
     if first!=core.NONE {

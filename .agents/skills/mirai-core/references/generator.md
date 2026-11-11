@@ -187,7 +187,7 @@ or cleared start at what the package declares: a constant `NAME_DEFAULT` or a pr
 `name_default()`, with the type name in uppercase or in `snake_case`; without them, zeros. A saved
 scene does not use the default: it reads what it saved. The defaults of the members of an enum
 `@(actions)` follow the same rule with a plural: `<enum>_defaults()` or `<ENUM>_DEFAULTS`, a
-`[E]Action_Default`.
+`[E]Action_Bindings`.
 
 A literal of any type whose package declares its default (`T{...}` or `pkg.T{...}`, outside the
 declaration that builds the default) names every field the default sets to something other than
@@ -252,6 +252,8 @@ Each parameter is bound by its type; the order in the signature is free.
   and the views of the frame, its clock, its content, the launch).
 - `core.Records(T)`, with `T` a `@(record)`: the rows of its tables, read-only
   (`host.app_record_set`).
+- `core.Inbox(M)`, with `M` a `@(net_message)`: the messages of that type that arrived for the
+  tick, read-only; a read of `core.Net_Messages`, which the network writes.
 - A `@(params)` struct, by value ([groups](#parameter-groups)).
 
 ### Parameter groups
@@ -337,7 +339,7 @@ all. The ones most often stumbled on:
 - A function that receives twice a datum it writes, when either of the two is a field of a
   `@(params)`.
 - A literal that leaves out a field its type's default sets ([initial values](#initial-values));
-  a struct with a field `[E]Action_Default` (the defaults of actions go beside
+  a struct with a field `[E]Action_Bindings` (the defaults of actions go beside
   their enum).
 - A `replicated` on a storage or with a value that is neither `owner` nor `others`; a `net_message`
   that is also a component or storage, of an editor package, or with an unknown `from`.
@@ -413,7 +415,7 @@ between packages; in `fixed`:
 - `end`: transform propagation, particles and network publication.
 
 Outside `fixed` almost everything stays in `intent`: `begin` and `end` give the first and the last
-of the frame (the network, the UI and editor frame, `input.mirai`) and in `late` `input` moves the
+of the frame (the network, the UI and editor frame, the input map) and in `late` `input` moves the
 cameras before `camera_follow`. A function of several phases has the same stage in all of them.
 
 - **Within a stage**, in the order of the libraries (engine, plugins with their dependencies first,

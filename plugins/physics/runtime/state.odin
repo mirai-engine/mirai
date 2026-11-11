@@ -39,8 +39,6 @@ Physics_State :: struct {
     joints:core.Entity_Map(Joint_Link), // by entity with a Joint
     fluids:core.Entity_Map(Fluid_Link), // by entity with a Fluid
     fluids_synced:u64, // the versions of the tables the fluids were last made from
-    paths_seen:core.Seen,
-    paths_shape:core.Shape,
     world_body:sim.Body_Handle, // the static body joints to the world hold on to
     geometry:[dynamic]Geometry_Mark, // by slot of the hulls, then the meshes, then the heightfields of the world
     sources:[dynamic]Geometry_Source, // by slot as geometry: what it was made from, to share it
@@ -59,8 +57,6 @@ Physics_State :: struct {
     // (link_touch); with touched_all, every link.
     touched:[dynamic]u32,
     touched_all:bool,
-    characters_at:[2]u64, // the version and the layout of Character that characters_hash is of
-    characters_hash:u64,
     collision:Collision_Settings, // those the filters of the shapes were made with
     pushes_set:bool, // the simulation has the push rules of collision
     own_gravity:bool, // the bodies fall with the gravity of their place (gravity_apply)
@@ -158,10 +154,10 @@ Shown :: struct {
 @(private)
 Joint_Link :: struct {
     joint:sim.Joint_Handle,
-    body,target:sim.Body_Handle,
+    a,b:sim.Body_Handle,
     applied:Joint,
     frames:Joint_Frames,
-    scale,target_scale:[3]f32,
+    local:core.Transform, // of the entity of the joint, when it was made
     refused:bool,
 }
 
@@ -170,9 +166,8 @@ Joint_Link :: struct {
 @(private)
 Joint_Frames :: struct {
     taken:bool,
-    target_anchor:[3]f32,
-    target_rotation:mm.Quat,
-    length:f32,
+    b_anchor:[3]f32,
+    b_rotation:mm.Quat,
 }
 
 Body_Request_Kind :: enum u8 {
@@ -278,9 +273,9 @@ Contact_End :: struct {a,b,collider_a,collider_b:core.Entity}
 Overlap_Event :: struct {entity,other,collider,other_collider:core.Entity,crossed:bool}
 Body_Event :: struct {entity:core.Entity}
 Joint_Break :: struct {
-    entity,target:core.Entity,
-    force:f32,  // N
-    torque:f32, // N m
+    entity:core.Entity, // of the Joint
+    force:f32,          // N
+    torque:f32,         // N m
 }
 
 // What happened in the last tick. The simulation clears and fills it at the
@@ -617,7 +612,7 @@ state_copy_as :: proc(dst,src:^Physics_State,kept:bool) -> bool {
     dst.own_gravity=src.own_gravity
     dst.gravity.index.made=false
     if _,copied:=sim.world_state_copy(&dst.world,&src.world);!copied {return false}
-    dst.synced,dst.fluids_synced,dst.paths_seen,dst.paths_shape=src.synced,src.fluids_synced,src.paths_seen,src.paths_shape
+    dst.synced,dst.fluids_synced=src.synced,src.fluids_synced
     dst.sealed_key,dst.transforms_seen,dst.unmade=0,{},src.unmade
     dst.epoch=max(dst.epoch,src.epoch)+1;if dst.epoch==0 {dst.epoch=1}
     return true

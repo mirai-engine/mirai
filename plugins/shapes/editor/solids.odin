@@ -45,7 +45,7 @@ brush_place :: proc(s:^editor.Session,place:mm.Transform,at:[3]f32,kind:shapes.B
     solid_world:=mm.Transform{at,mm.QUAT_IDENTITY,{1,1,1}}
     if target!=core.NONE {
         shape,found:=editor.entity_get(w,target,shapes.Shape)
-        if !found || shape.kind!=.Solid {return core.NONE,.Invalid}
+        if !found {return core.NONE,.Invalid}
         solid_world=editor.entity_world(w,target)
     }
     local,usable:=mm.transform_relative(place,solid_world)
@@ -58,7 +58,7 @@ brush_place :: proc(s:^editor.Session,place:mm.Transform,at:[3]f32,kind:shapes.B
         if solid!=core.NONE {
             // A solid takes its form from its brushes: none of the polygon of the default.
             shape:shapes.Shape
-            shape.kind,shape.uv_scale,shape.material=.Solid,1,material
+            shape.uv_scale,shape.material=1,material
             editor.component_add(s,solid,shape_info,&shape)
         }
     }
@@ -79,11 +79,10 @@ brush_place :: proc(s:^editor.Session,place:mm.Transform,at:[3]f32,kind:shapes.B
 // The Solid an entity belongs to: itself, or the parent of a brush.
 solid_of :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
     if e==core.NONE {return core.NONE}
-    if shape,ok:=editor.entity_get(w,e,shapes.Shape);ok {return shape.kind==.Solid?e:core.NONE}
+    if editor.entity_has(w,e,shapes.Shape) {return e}
     if !editor.entity_has(w,e,shapes.Shape_Brush) {return core.NONE}
     parent:=editor.entity_parent(w,e)
-    if shape,ok:=editor.entity_get(w,parent,shapes.Shape);ok && shape.kind==.Solid {return parent}
-    return core.NONE
+    return editor.entity_has(w,parent,shapes.Shape)?parent:core.NONE
 }
 
 // The Solid selected last, or the one of the brush selected last.

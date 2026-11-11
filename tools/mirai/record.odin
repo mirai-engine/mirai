@@ -6,7 +6,7 @@ import "core:os"
 import "core:strconv"
 import "mirai:project"
 
-RECORD_USAGE :: "record [project] [--out <folder>] [--scene S] [--format png16|exr] [--fps N] [--seconds S] [--size WxH] [--sheet N] [--no-audio] [--dev|--release]"
+RECORD_USAGE :: "record [project] [--out <folder>] [--scene S] [--format png16|exr] [--fps N] [--seconds S] [--size WxH] [--sheet N] [--no-audio] [--release]"
 
 // mirai record: a sequence of the game of a project frame after frame at a
 // fixed rate, as play.record writes it, with its sound. It uses the session of
@@ -15,12 +15,11 @@ RECORD_USAGE :: "record [project] [--out <folder>] [--scene S] [--format png16|e
 // Prints the result of play.record and the validation errors of the editor;
 // exit 1 with validation errors.
 cmd_record :: proc(root:string,args:[]string) -> int {
-    mode,args,modes_valid:=build_mode_take(args)
+    mode,args:=build_mode_take(args)
     folder,out,scene:=".","",""
     Params :: struct {path:string,format:string,fps:int,duration:string `json:"for"`,width,height:int,audio:bool,sheet:int}
     params:=Params{format="Png16",fps=30,duration="2s",width=1280,height=720,audio=true,sheet=16}
     usage :: proc() -> int {fmt.eprintfln("Usage: mirai %s",RECORD_USAGE);return 2}
-    if !modes_valid {fmt.eprintln("mirai record: --dev and --release do not go together; pass one of them");return usage()}
     for i:=0;i<len(args);i+=1 {
         ok:=true
         text:string

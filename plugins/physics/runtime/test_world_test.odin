@@ -30,7 +30,7 @@ Test_Physics :: struct {
     fluids:core.Table(Fluid),
     verticals:core.Table(core.Vertical),
     volumes:core.Table(volume.Volume), // where the fluids and the gravities are
-    paths:core.Table(Fluid_Path),
+    splines:core.Table(volume.Spline),
     // The gravity of the places of the world: a step reads them when its host says fields.
     gravities:core.Table(volume.Gravity),
     worlds:core.Table(core.World_Transform), // of what has a Gravity: the bodies of a test have none
@@ -71,14 +71,6 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
         core.test_type(Fluid,default=proc(dst:^Fluid) {dst^=FLUID_DEFAULT}),
         core.test_type(Force_Field,default=proc(dst:^Force_Field) {dst^=FORCE_FIELD_DEFAULT}),
         core.test_type(Fluid_Waves,default=proc(dst:^Fluid_Waves) {dst^=FLUID_WAVES_DEFAULT}),
-        core.test_type(Fluid_Path),
-        core.test_type(Walk,default=proc(dst:^Walk) {dst^=WALK_DEFAULT}),
-        core.test_type(Fly,default=proc(dst:^Fly) {dst^=FLY_DEFAULT}),
-        core.test_type(Swim,default=proc(dst:^Swim) {dst^=SWIM_DEFAULT}),
-        core.test_type(Slide,default=proc(dst:^Slide) {dst^=SLIDE_DEFAULT}),
-        core.test_type(Mantle,default=proc(dst:^Mantle) {dst^=MANTLE_DEFAULT}),
-        core.test_type(Tactical_Sprint,default=proc(dst:^Tactical_Sprint) {dst^=TACTICAL_SPRINT_DEFAULT}),
-        core.test_type(Ledge_Jump,default=proc(dst:^Ledge_Jump) {dst^=LEDGE_JUMP_DEFAULT}),
     )
 }
 
@@ -134,6 +126,6 @@ test_step :: proc(p:^Test_Physics,h:^Test_Physics_Host,dt:f32) {
         core.read(&p.rigids),core.read(&p.colliders),core.read(&p.characters),core.read(&p.moves),
         &p.joints,core.read(&p.statics),core.read(&p.parents),core.read(&p.names),
         &p.transforms,&p.bodies,core.read(&p.replicas),&p.character_states,&p.joint_states,core.read(&p.fluids),&p.joint_requests,core.ref(&p.collision),core.ref(&p.sync_check),&p.simulation_hash,nil,&h.problems,
-        gravities,core.read(&p.volumes),worlds,{},{},h.whole?{}:core.ref(&p.hierarchy),core.read(&p.paths),
+        gravities,core.read(&p.volumes),worlds,{},{},h.whole?{}:core.ref(&p.hierarchy),core.read(&p.splines),{},{},
     )
 }

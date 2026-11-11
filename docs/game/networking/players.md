@@ -9,7 +9,9 @@ connect again; the player's secret is kept in their profile, so a returning clie
 
 A seat drives a body that carries `inp.Drivable`. With `Spawn_Settings.players` on in
 `settings.mirai`, the `spawn` plugin gives each seat, local or remote, the prefab of a
-`Spawn_Point` and destroys it with the seat. Without it, the server asks:
+`Spawn_Point` with `players` on and destroys it with the seat; a point with `players` off is for
+what the game spawns, such as enemies ([prefabs](../core/prefabs.md#at-spawn-points)). Without it,
+the server asks:
 
 ```odin
 @(step="fixed",server)
@@ -54,11 +56,11 @@ everything else it shows interpolated, a little in the past, pose and components
 instant. `Replicate.predict` keeps an entity predicted always: a ball to intercept.
 
 A spawn that should not wait a round trip (a projectile) is made by the same `fixed` function on
-both ends, in the tick of the input that causes it, and marked:
+both ends, in the tick of the input that causes it, and marked with the seat that makes it:
 
 ```odin
 e:=scene.spawn(spawner,ROCKET_PREFAB,at)     // on the server and on the shooter's client
-multiplayer.predict_spawn(session,ids,spawns,e,seat.peer,time)   // sequence=n: nth of the tick
+multiplayer.predict_spawn(spawns,e,seat)     // spawns: ^multiplayer.Net_Spawns
 ```
 
 The replica of the server's takes the one the client made; one the server never makes goes after

@@ -201,8 +201,11 @@ inside.
   touch statics use the last colors and are solved at the end; those that find no color, serially
   and in order before the colors. `Contact_Block(N)` and `Joint_Block(N)` are SoA blocks of N lanes
   with `core:simd`: those of one color go four at a time, those without color in blocks of one lane
-  by the same code, without copies, and an empty lane gives null impulses. `SixDOF` and the angular
-  drives of `Spherical` go to the scalar solver (`joint_solve`) before the lanes of their color.
+  by the same code, without copies, and an empty lane gives null impulses. A joint whose axes no
+  kernel in lanes solves goes to the scalar solver (`joint_solve`) before the lanes of its color.
+- **What the step walks.** Bodies keep a list of the awake ones and shapes one of those that need
+  pairs, both in the state the snapshot copies: the narrow phase, the gathering of bodies and joints
+  and the gravity of the awake bodies walk them, in the order of the lists, never every slot.
 - **Islands and sleep.** Islands (`island.odin`) persist and are snapshot state.
   - A touching contact or a joint between two awake dynamics joins their islands at once (the
     smaller enters the larger). A kinematic is an island of its own, a static has none and a
@@ -270,8 +273,9 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
   lake, a pool), or a `Path` (a river): the samples of a curve that `fluid_create` and `fluid_set`
   copy, each with its width and its height as depth, level across, ending at its ends. Density,
   current (in the frame of the box, or of the path: -Z along it toward its end) and priority. The
-  integration takes a path from `Fluid_Path`, which the plugin of its source writes (a `Spline` of
-  `shapes`): physics never samples a curve itself.
+  integration makes a `Fluid` with a `volume.Spline` on its entity a path: it samples the spline
+  and lays it on the ground with the procedures of the `Spline`, and does it again when the spline,
+  its place or the revision of the ground changes.
   - With zero density it is a dry box: it removes the lowest-priority fluid where it is (a base
     under the sea). Flooding a room is raising the floor of its air with `fluid_set`.
   - A fluid does not overlap another one, nor a dry box another dry box; where they would, the one
@@ -338,22 +342,27 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
 
 ## Joints
 
-`Joint_Desc` carries type, bodies and a frame per body whose X axis is the hinge, slide or twist
-axis; `joint_frames` computes them from an anchor and an axis in the world. Types: `Fixed`,
-`Spherical` (cone, twist and angular drives), `Revolute` and `Prismatic` (limit, motor, spring),
-`Distance` (rigid, spring or tension-only rope) and `SixDOF`.
+`Joint_Desc` carries the bodies, a frame per body whose X axis is the hinge, slide or twist axis
+(`joint_frames` computes them from an anchor and an axis in the world) and one six-axis record: each
+linear and angular axis (`Joint_Axis`) free, locked or limited, with a drive toward a position, a
+velocity or both, bounded by its force. There are no kinds: a kind is a pattern of the axes.
 
-- `SixDOF` configures each linear and angular axis (`Joint_Axis`). Translation is measured in frame
-  A; angular coordinates are the vector of the relative principal rotation, with branch at π, not
-  Euler angles. `Spherical` admits those drives on free axes and keeps its limits. The axes are a
-  block of their own of the snapshot (`World.joint_axes`) that a joint without axes does not walk.
-- `joint_configuration_error` rejects before creating state, also a motor or spring incompatible
-  with the type. `joint_set_axes` changes targets and budgets without erasing the warm start;
-  changing motion, drive flags or limits resets the impulse of that axis. `joint_drive_pose`
-  validates atomically, and `Disabled` suspends the drives keeping limits and targets.
+- Translation is measured in frame A; angular coordinates are the vector of the relative principal
+  rotation, with branch at π, not Euler angles. Two or three limited linear axes share one limit,
+  on the length of the offset across them (a rope, a rod), driven by the first of them. The swings
+  (Y and Z) limited together share a cone whose angle toward each side is the limit of that side.
+- The solver picks the kernel by the pattern (`joint_kernel_of`): all locked is fixed; linear
+  locked with one free turn is a hinge, angular locked with one free move a slider, linear locked
+  with free or round-coned swings a ball, three equally limited moves a distance. These go in lanes
+  with their limit and drive on their axis; any other pattern is solved one axis at a time with the
+  same meaning. The axes are a block of their own of the snapshot (`World.joint_axes`).
+- `joint_configuration_error` rejects before creating state. `joint_set_axes` changes targets and
+  budgets without erasing the warm start; changing motion, drive flags or limits resets the impulse
+  of that axis, and a change of kernel all of them. `joint_drive_pose` validates atomically and
+  frees the locked axes it drives, and `Disabled` suspends the drives keeping limits and targets.
 - On exceeding `break_force` or `break_torque` the joint is destroyed at the end of the step with a
   `Joint_Break_Event`.
-- Limits are rigid velocity constraints; only the correction of a violation is soft. A motor of any
+- Limits are rigid velocity constraints; only the correction of a violation is soft. A drive of any
   force stops at the limit.
 
 ## GJK

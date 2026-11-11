@@ -20,7 +20,7 @@ names the Surface program of a water without its own material (empty or unknown:
   `SURFACE_STEP`, with cells that double outward by rings and whose edges between levels share
   vertices. That of a plane goes on to the horizon; that of a box ends at its walls (its vertices
   past them go onto them), so a box is a lake that sits in its basin, and its walls are the ground
-  or the banks around it. Water along a path (a `Spline` with a `Fluid`: a river) is a ribbon
+  or the banks around it. Water along a path (a `volume.Spline` with a `Fluid`: a river) is a ribbon
   along the samples the physics follows (`phys.fluid_path`, `river.odin`), level across, made
   again only when they or the waters it meets change, ending where a water of higher priority
   takes it; its vertex colors carry the current, which its small waves drift with. They are added

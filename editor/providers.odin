@@ -16,13 +16,17 @@ import mm "mirai:std/math"
 // an Editor storage whose sole field is the provider, filled by its default
 // procedure. Without the plugin, what it provides is not there.
 
-// The bodies of Simular (physics): the gizmo drives a body without changing
-// what the scene saves.
+// The bodies of Simulate (physics): the gizmo drives a body without changing
+// what the scene saves, and a Simulate limited to some entities moves them alone.
 Simulation_Provider :: struct {
     owner:proc(w:core.World_Ref,e:core.Entity) -> core.Entity,                          // the entity whose body e is part of; none without a body
     move:proc(w:core.World_Ref,e:core.Entity,position:[3]f32,rotation:mm.Quat) -> bool, // heads the body of its owner e there while held
     release:proc(w:core.World_Ref,e:core.Entity) -> bool,
-    settle:proc(w:core.World_Ref,app:^host.App), // takes what was written as its own without simulating time
+    step:proc(w:core.World_Ref,app:^host.App,dt:f32) -> bool, // advances its simulation alone by dt; 0 takes what was written as its own
+    // Readies a copy of the document so that only moving move, each with a core.Motion that says
+    // when it rests, and every other body is still. A problem names what is wrong and how to fix
+    // it; at is the index in moving it is about, -1 for none.
+    limit:proc(w:core.World_Ref,app:^host.App,moving:[]core.Entity) -> (at:int,problem:string),
 }
 
 // What a plugin adds to Play: a game of its own that the Play button starts
@@ -119,7 +123,7 @@ Route_Provider :: struct {
     next:proc(s:^Session,w:core.World_Ref,body:core.Entity,goal:[3]f32) -> Route,
 }
 
-// What the plugin that moves a body in a game says of it (physics: its
+// What the plugins that move a body of a game say of it (physics, locomotion:
 // characters): the drive of play.step and the playtest plugin read it with
 // play_stance and play_body_measure, never by the name of a component. known
 // is false for a body that is not one it moves.
@@ -361,7 +365,7 @@ simulation_owner :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> core.Enti
 
 // What was written becomes the simulation's own, without simulating time.
 simulation_settle :: proc(s:^Session,w:core.World_Ref) {
-    if p:=providers(s);p.simulates {p.simulation.settle(w,s.app)}
+    if p:=providers(s);p.simulates {p.simulation.step(w,s.app,0)}
 }
 
 // The game of the plugin that plays one runs (Play_Provider.active).

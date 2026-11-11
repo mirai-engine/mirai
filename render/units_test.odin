@@ -15,7 +15,7 @@ Units_Fixture :: struct {
 @(private = "file")
 units_fixture :: proc(t: ^testing.T, f: ^Units_Fixture, gi := false, loc := #caller_location) -> bool {
 	settings := DEFAULT_SETTINGS
-	settings.gi_enabled, settings.reflections, settings.taa = gi, false, false
+	settings.gi_enabled, settings.taa = gi, false
 	if !fixture_init(t, f, 64, 64, settings, hardware_rt = false, loc = loc) {return false}
 	lambert := DEFAULT_MATERIAL
 	lambert.specular_factor = 0
@@ -57,18 +57,18 @@ lights_reach_a_white_surface_with_the_luminance_their_units_give :: proc(t: ^tes
 	if !units_fixture(t, &f) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	scene_set(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {})
+	scene_given(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {})
 	testing.expect(t, renderer_frame(r, {camera = DOWN}), r.error)
 	testing.expectf(t, r.scene.light_scale == math.pow(f32(2), -15), "a sunlit scene takes a light scale near its sun: %v", r.scene.light_scale)
 	sunlit := nits_at_center(t, &f, r.targets.direct)
 	testing.expectf(t, near(sunlit, 100000 / math.PI, 0.01), "100000 lux give a white Lambert surface %v nits, not 100000 / pi", sunlit)
 	// 1000 cd two metres above: 250 lux.
-	scene_set(r, {f.floor}, {{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 1000, range = 100}}, {}, {})
+	scene_given(r, {f.floor}, {{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 1000, range = 100}}, {}, {})
 	testing.expect(t, renderer_frame(r, {camera = DOWN}), r.error)
 	lamp := nits_at_center(t, &f, r.targets.direct)
 	testing.expectf(t, near(lamp, 250 / math.PI, 0.02), "1000 candela at 2 m give %v nits, not 250 / pi", lamp)
 	// A square of 10 cm glowing at 20000 nits two metres above: 200 cd towards the floor.
-	scene_set(r, {f.floor}, {{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 20000, range = 100, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {0.1, 0.1}}}, {}, {})
+	scene_given(r, {f.floor}, {{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 20000, range = 100, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {0.1, 0.1}}}, {}, {})
 	testing.expect(t, renderer_frame(r, {camera = DOWN}), r.error)
 	panel := nits_at_center(t, &f, r.targets.direct)
 	testing.expectf(t, near(panel, 50 / math.PI, 0.02), "20000 nits over 0.01 m^2 at 2 m give %v nits, not 50 / pi", panel)
@@ -81,12 +81,12 @@ without_gi_the_sky_lights_a_surface_and_nothing_else_does :: proc(t: ^testing.T)
 	if !units_fixture(t, &f) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	scene_set(r, {f.floor}, nil, {}, {sky = {2000, 2000, 2000}})
+	scene_given(r, {f.floor}, nil, {}, {sky = {2000, 2000, 2000}})
 	testing.expect(t, renderer_frame(r, {camera = DOWN}), r.error)
 	// Facing the zenith it sees the gradient at its top: the luminance of the sky.
 	lit := nits_at_center(t, &f, r.targets.display)
 	testing.expectf(t, near(lit, 2000, 0.02), "a white floor under a sky of 2000 nits shows %v nits", lit)
-	scene_set(r, {f.floor}, nil, {}, {})
+	scene_given(r, {f.floor}, nil, {}, {})
 	testing.expect(t, renderer_frame(r, {camera = DOWN}), r.error)
 	dark := nits_at_center(t, &f, r.targets.display)
 	testing.expectf(t, dark == 0, "without sky or lights nothing lights it: %v nits", dark)
@@ -128,7 +128,7 @@ the_exposure_meters_the_image_or_follows_the_camera :: proc(t: ^testing.T) {
 	defer fixture_destroy(&f)
 	r := f.renderer
 	renderer_set_display_transform(r, .ACES_2)
-	scene_set(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {})
+	scene_given(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {})
 	metered := DOWN
 	metered.exposure = {}
 	testing.expect(t, renderer_frame(r, {camera = metered, time = 0}), r.error)
@@ -156,17 +156,17 @@ the_exposure_meters_the_image_or_follows_the_camera :: proc(t: ^testing.T) {
 	strong := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1600000, enabled = true}
 	weak := strong
 	weak.illuminance = 100000
-	scene_set(r, {f.floor}, nil, strong, {})
+	scene_given(r, {f.floor}, nil, strong, {})
 	high := exposure_cut(t, &f, adapting, &time)
-	scene_set(r, {f.floor}, nil, weak, {})
+	scene_given(r, {f.floor}, nil, weak, {})
 	low := exposure_cut(t, &f, adapting, &time)
 	testing.expectf(t, abs(low - state.ev100) < 0.2, "a cut exposes for its light at once: EV100 %v, not %v", low, state.ev100)
 	testing.expectf(t, abs(high - low - 4) < 0.35, "sixteen times the light is 4 EV more: %v", high - low)
-	scene_set(r, {f.floor}, nil, strong, {})
+	scene_given(r, {f.floor}, nil, strong, {})
 	brightens := exposure_settles(t, &f, adapting, &time, low, high)
 	testing.expectf(t, brightens > 0.45 && brightens <= 0.501, "with 4 EV more light it comes within 5 %% in %v s, not 0.5", brightens)
 	exposure_cut(t, &f, adapting, &time)
-	scene_set(r, {f.floor}, nil, weak, {})
+	scene_given(r, {f.floor}, nil, weak, {})
 	darkens := exposure_settles(t, &f, adapting, &time, high, low)
 	testing.expectf(t, darkens > 0.95 && darkens <= 1.001, "with 4 EV less light it comes within 5 %% in %v s, not 1", darkens)
 	// At speed, a second for each EV the light falls and three EV a second
@@ -176,12 +176,12 @@ the_exposure_meters_the_image_or_follows_the_camera :: proc(t: ^testing.T) {
 	steady.exposure.adaptation_mode = .Speed
 	apart := high - low
 	exposure_cut(t, &f, steady, &time)
-	scene_set(r, {f.floor}, nil, strong, {})
+	scene_given(r, {f.floor}, nil, strong, {})
 	brightens = exposure_settles(t, &f, steady, &time, low, high)
 	expected := ((apart - 1.5) + 1.5 * math.ln(1.5 / (0.05 * apart))) / 3
 	testing.expectf(t, abs(brightens - expected) < 0.05, "at speed, with 4 EV more light it comes within 5 %% in %v s, not %v", brightens, expected)
 	exposure_cut(t, &f, steady, &time)
-	scene_set(r, {f.floor}, nil, weak, {})
+	scene_given(r, {f.floor}, nil, weak, {})
 	darkens = exposure_settles(t, &f, steady, &time, high, low)
 	expected *= 3
 	testing.expectf(t, abs(darkens - expected) < 0.05, "at speed, with 4 EV less light it comes within 5 %% in %v s, not %v", darkens, expected)
@@ -204,7 +204,7 @@ a_parallel_view_meters_its_surfaces_and_not_its_sky :: proc(t: ^testing.T) {
 	if !units_fixture(t, &f) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	scene_set(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {sky = {20, 20, 20}})
+	scene_given(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {sky = {20, 20, 20}})
 	time := f32(0)
 	close := DOWN
 	close.exposure = {}
@@ -255,7 +255,7 @@ a_relative_emission_shows_its_value_at_any_exposure_and_is_not_metered :: proc(t
 	materials_set(r, {lambert, glow})
 	// A sun a meter does not clamp: the floor shows 1000 / pi nits.
 	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1000, enabled = true}
-	scene_set(r, {f.floor, glow_over_the_left(&f)}, nil, sun, {})
+	scene_given(r, {f.floor, glow_over_the_left(&f)}, nil, sun, {})
 	for ev in ([2]f32{11, 3}) {
 		camera := DOWN
 		camera.exposure = {mode = .Manual, ev100 = ev, own = true}
@@ -265,7 +265,7 @@ a_relative_emission_shows_its_value_at_any_exposure_and_is_not_metered :: proc(t
 	}
 	metered :: proc(t: ^testing.T, f: ^Units_Fixture, instances: []Instance_Desc, sun: Sun_Desc) -> f32 {
 		r := f.renderer
-		scene_set(r, instances, nil, sun, {})
+		scene_given(r, instances, nil, sun, {})
 		camera := DOWN
 		camera.exposure = {}
 		for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = camera, time = 0}), r.error)}
@@ -300,14 +300,14 @@ a_relative_emission_follows_an_adapting_exposure_a_frame_behind :: proc(t: ^test
 	strong := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 1600000, enabled = true}
 	weak := strong
 	weak.illuminance = 100000
-	scene_set(r, {f.floor, glow_over_the_left(&f)}, nil, strong, {})
+	scene_given(r, {f.floor, glow_over_the_left(&f)}, nil, strong, {})
 	time := f32(0)
 	exposure_cut(t, &f, camera, &time)
 	// And a frame on, for the CPU to read back the exposure of the cut.
 	time += 1.0 / 60
 	testing.expect(t, renderer_frame(r, {camera = camera, time = time}), r.error)
 	for sun in ([2]Sun_Desc{weak, strong}) {
-		scene_set(r, {f.floor, glow_over_the_left(&f)}, nil, sun, {})
+		scene_given(r, {f.floor, glow_over_the_left(&f)}, nil, sun, {})
 		before := exposure_state(t, &f).ev100
 		previous, moved := before, f32(0)
 		for _ in 0 ..< 60 {
@@ -344,7 +344,7 @@ a_relative_emission_lights_nothing :: proc(t: ^testing.T) {
 	wall[0, 3], wall[1, 3] = -1.3, 0.6
 	lit :: proc(t: ^testing.T, f: ^Units_Fixture, wall: Mat4, material: Material_Handle) -> f32 {
 		r := f.renderer
-		scene_set(r, {f.floor, {object_id = 2, mesh = f.floor.mesh, transform = wall, material = material, tint = {1, 1, 1}}}, nil, {}, {})
+		scene_given(r, {f.floor, {object_id = 2, mesh = f.floor.mesh, transform = wall, material = material, tint = {1, 1, 1}}}, nil, {}, {})
 		for frame in 0 ..< 60 {testing.expect(t, renderer_frame(r, {camera = DOWN, time = f32(frame) / 60}), r.error)}
 		return render_units_at(t, f, r.targets.display, 0.1, 0.5).y
 	}
@@ -369,7 +369,7 @@ with_nothing_to_meter_the_exposure_begins_at_the_strongest_light :: proc(t: ^tes
 	materials_set(r, {glow})
 	covering := f.floor
 	covering.material = 1
-	scene_set(r, {covering}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {background = {0, 0, 0}, use_background = true})
+	scene_given(r, {covering}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {background = {0, 0, 0}, use_background = true})
 	camera := DOWN
 	camera.exposure = {}
 	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera, time = 0}), r.error)}
@@ -387,7 +387,7 @@ the_scene_exposes_the_views_whose_camera_has_no_exposure :: proc(t: ^testing.T) 
 	defer fixture_destroy(&f)
 	r := f.renderer
 	renderer_set_display_transform(r, .ACES_2)
-	scene_set(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {})
+	scene_given(r, {f.floor}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true}, {})
 	metered := DOWN
 	metered.exposure = {}
 	testing.expect(t, renderer_frame(r, {camera = metered, time = 0}), r.error)

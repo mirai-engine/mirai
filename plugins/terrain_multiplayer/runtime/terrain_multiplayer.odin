@@ -198,13 +198,13 @@ part_replay :: proc(source:base.Asset_Id,part:^multiplayer.Journal_Part) -> (rep
 
 @(step="fixed",loops="game",stage="begin")
 terrain_net_receive :: proc(
-    events:core.Ref(multiplayer.Net_Events),authority:core.Ref(core.Network),n:^Terrain_Net,session:core.Ref(multiplayer.Net_Session),
+    inbox:multiplayer.Journal_Inbox,authority:core.Ref(core.Network),n:^Terrain_Net,session:core.Ref(multiplayer.Net_Session),
     time:core.Time,rewinds:^multiplayer.Net_Rewinds,root:core.Ref(scene.Scene_Root),problems:^core.Problems,
 ) {
     if n==nil {return}
     net_world(n,root)
     if authority.ptr==nil || authority.role==.Standalone {return}
-    multiplayer.journal_receive(&n.journal,events,authority.role==.Server,multiplayer.own_connection(session),time,rewinds,false,NET_READ_SAMPLES,problems)
+    multiplayer.journal_receive(&n.journal,inbox,authority.role==.Server,multiplayer.own_connection(session),time,rewinds,false,NET_READ_SAMPLES,problems)
 }
 
 // Server: what a held ask can be told at its tick, its rate, where its seat

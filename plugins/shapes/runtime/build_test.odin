@@ -50,7 +50,7 @@ built_shapes_are_closed_and_face_out :: proc(t:^testing.T) {
     testing.expect(t,shape_stamp(&holed,circle[:],.Difference,&set)==.None && holed.loop_count==2)
     reversed:=SHAPE_DEFAULT
     reversed.points[1],reversed.points[3]=reversed.points[3],reversed.points[1]
-    solid:=Shape{kind=.Solid,uv_scale=2}
+    solid:=Shape{uv_scale=2}
     brushes:=[]Brush{
         brush_at(.Box,{0,0,0},{2,2,2}),
         brush_at(.Sphere,{1,1,1},{1.6,1.6,1.6},.Subtract),
@@ -121,9 +121,9 @@ a_shape_that_cannot_be_built_says_why :: proc(t:^testing.T) {
         {"counts",counts,nil,.Invalid},
         {"not finite",nan,nil,.Invalid},
         {"empty",{},nil,.Empty},
-        {"only cuts and intersections",{kind=.Solid},cuts,.Empty},
-        {"no brushes",{kind=.Solid},nil,.Empty},
-        {"a brush without volume",{kind=.Solid},flat_brush,.Invalid},
+        {"only cuts and intersections",{},cuts,.Empty},
+        {"no brushes",{},nil,.Empty},
+        {"a brush without volume",{},flat_brush,.Invalid},
         {"negative bevel",bevels[0],nil,.Invalid},
         {"bevel not finite",bevels[1],nil,.Invalid},
         {"too many segments",bevels[2],nil,.Invalid},
@@ -148,7 +148,7 @@ bodies_are_convex_pieces_that_cover_the_shape :: proc(t:^testing.T) {
     l:=SHAPE_DEFAULT
     l.point_count,l.loops[0]=6,6
     l.points[0],l.points[1],l.points[2],l.points[3],l.points[4],l.points[5]={0,0},{2,0},{2,1},{1,1},{1,2},{0,2}
-    solid:=Shape{kind=.Solid}
+    solid:=Shape{}
     added:=[]Brush{brush_at(.Box,{},{2,2,2}),brush_at(.Sphere,{1,1,0},{1,1,1})}
     cut:=[]Brush{added[0],added[1],brush_at(.Box,{0,0,1},{1,1,1},.Subtract)}
     Case :: struct {name:string,shape:Shape,brushes:[]Brush,pieces:int}

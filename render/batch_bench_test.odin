@@ -107,7 +107,7 @@ a_jump_of_the_origin_costs_what_the_batches_are_not_what_they_hold :: proc(t: ^t
 		descs := make([]Instance_Desc, SCENE)
 		defer delete(descs)
 		for &desc, i in descs {desc = {object_id = u64(i + 1), mesh = mesh, transform = linalg.matrix4_translate_f32(far + {f32(i % 40) * 3, 0, f32(i / 40) * 3}), tint = 1}}
-		scene_set(r, descs, nil, {}, {})
+		scene_given(r, descs, nil, {}, {})
 		batches_build(r)
 		ROUNDS :: 20
 		jump, tables: time.Duration

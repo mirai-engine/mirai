@@ -73,6 +73,7 @@ Field :: struct {
     asset_kinds:string, // the extensions an Asset_Id field holds, separated by spaces (kind=); not in the binary schema
     required_component:u64,
     trim:bool, // a fixed array the text writes up to its last element with a byte set; not in the binary schema
+    keyed:bool, // a fixed array of structs whose first field, a text, names each entry (empty: none): a layer of settings replaces the entries it names; not in the binary schema
     any_value:bool, // tagged any: text_read takes any JSON there and leaves the bytes, for whoever reads it from the text; not in the binary schema
     entity_name:bool, // a text that names an entity: the API says so in its schema
     was:string, // the names the field had before, separated by spaces (was=): a migration reads a stored field by any of them; not in the binary schema
@@ -492,7 +493,7 @@ schema_add_floats :: proc(s:^Schema,info:^runtime.Type_Info,type:Type,count:int,
 }
 
 // Field options come from the struct tag `mirai:"..."`: a comma separated
-// list of flags (transient, local, readonly, hidden, color, angle, text, trim, any, inline) and
+// list of flags (transient, local, readonly, hidden, color, angle, text, trim, keyed, any, inline) and
 // of key=value pairs (min, max, step, precision, bits, label, unit, name: the
 // key of a param whose word is reserved in Odin; was: the names the field had,
 // newest first). False without memory for a text.
@@ -513,6 +514,7 @@ schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) -> bool {
         case "angle":     field.flags+={.Angle}
         case "text":      field.flags+={.Text}
         case "trim":      field.trim=true
+        case "keyed":     field.keyed=true
         case "any":       field.any_value=true
         case "entity":    field.entity_name=true
         case "min":       field.min,field.has_min=strconv.parse_f64(value)

@@ -379,7 +379,6 @@ continuous_place :: proc(w:^World,index:i32,pose:Transform) {
         shape.aabb=shape_aabb(w,shape,pose)
         if !math.aabb_contains(shape.fat,shape.aabb) {
             shape.fat=shape_fat(shape.aabb)
-            shape.flags+={.Moved}
             body.flags+={.Enlarged}
         }
     }
@@ -487,7 +486,6 @@ continuous_contact :: proc(w:^World,shape_a,shape_b:i32) {
         } else {contact_stopped(w,contact)}
     }
     if contact.manifold_count==0 {return}
-    contact.flags+={.Continuous}
     if started {contact.flags+={.Started}}
     st:=&w.step
     if .Visited not_in contact.flags {

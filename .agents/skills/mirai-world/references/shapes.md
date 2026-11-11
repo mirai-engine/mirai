@@ -2,17 +2,18 @@
 
 `shapes` (`Runtime` and `Editor`; depends on `physics`) makes editable shapes for any game: level
 blockout, games where players stamp squares, circles, stars and other shapes onto flat polygons
-to add or cut material, drag vertices, and make pieces static or physical, and the splines of
-roads, paths and rivers (what an author writes: [splines](../../../../docs/game/world/splines.md)).
+to add or cut material, drag vertices, and make pieces static or physical, and draws the ribbons of
+roads and paths along a `volume.Spline`
+([Spline](../../mirai-gameplay/references/libraries.md#volume); what an author writes:
+[splines](../../../../docs/game/world/splines.md)).
 
 ## Source and derived
 
-- The `Shape` of an entity is the source and the only thing a scene saves. A **Solid** is made of
-  brushes in order, each added to, cut from or intersected with what the ones before it made: its
-  own **polygon** first, when it has points (a polygon with holes in the local XY plane of the
+- The `Shape` of an entity is the source and the only thing a scene saves. It is a **solid** made
+  of brushes in order, each added to, cut from or intersected with what the ones before it made:
+  its own **polygon** first, when it has points (a polygon with holes in the local XY plane of the
   entity, its outline first and then its holes, extruded along local Z by `depth` and centered on
-  the entity), then the brushes of its children. A **Spline** is an open path of points in the
-  local XZ plane, each with a width and a height ([Splines](#splines)).
+  the entity), then the brushes of its children.
 - The texture is anchored in the local plane: caps by position, and each side and bevel band
   along its own direction, so an edit elsewhere on the outline does not slide what it kept.
 - A **bevel** (`bevel`, `bevel_profile`) rounds or cuts the front and back rims of the polygon:
@@ -76,25 +77,18 @@ roads, paths and rivers (what an author writes: [splines](../../../../docs/game/
 
 ## Splines
 
-- A spline is sampled by length on its Catmull-Rom curve through `mm.path_sample`, the one sampler
-  of that curve: the physics and the water read its samples, never a sampler of their own.
-- It lies on the ground of `core.Ground_Queries` under each sample (on the plane of its entity
-  where there is none, or where the ground is not loaded) and `height` over it. The step lays it
-  again when its `Shape`, its place (`Transform`, `Parent`), the revision of the ground or the
-  presence of a `Fluid` changes; with no spline it does not look at places or the ground.
-- **With a `physics.Fluid`** the spline is water: the step writes its `physics.Fluid_Path`
-  (samples in the world, each `height` deep, transient, never saved), the physics makes it a
-  `Path` fluid and the water draws it; the spline has no child. Without the `Fluid` the path goes.
-- **Without one** it is a ribbon on the derived child, drawn with `material`: rows of points along
-  the samples, as many across as the spacing of the ground asks, each on the ground, u across and v
-  along by `uv_scale`. It has no collider: what stands on it stands on the ground.
-- What it is comes from the components of its entity, never from a kind of its own: a road, a
-  path and a river are the same source.
+- A `volume.Spline` with a `material` is a ribbon on a derived child, as a `Shape` is: rows of
+  points along the samples of `spline_sample`, as many across as the spacing of the ground asks,
+  each laid with `spline_lay`, u across and v along in metres (the material repeats them). It has no
+  collider: what stands on it stands on the ground. Without a material nothing here draws it (a
+  river, which the water draws, or a route).
+- The step lays it again when its `Spline`, its place (`Transform`, `Parent`) or the revision of the
+  ground changes; with no spline it does not look at places or the ground. An entity with both a
+  `Shape` and a drawn `Spline` draws the `Shape` and reports `shapes.both`.
 
 ## Editing
 
-- The editing procedures work in the plane of the shape (local XY of a polygon, XZ of a spline)
-  and change only the `Shape` they get,
+- The editing procedures work in the local XY of the shape and change only the `Shape` they get,
   and only when they succeed. The caller decides the entities: when a stamp splits a shape, it
   makes a shape entity for each other polygon of the set with `shape_outline_set`.
 - `shape_outline_set`, `shape_combine` and `shape_stamp` (`shape_combine` with one loop)
@@ -140,9 +134,7 @@ roads, paths and rivers (what an author writes: [splines](../../../../docs/game/
 - Vertices are indices into the points of all loops, and an edge is named by its first vertex. A
   vertex move, insertion or removal that would make edges cross or touch, take a hole out of the
   outline or into another, or turn a loop inside out is refused with `Self_Intersecting`; a loop
-  keeps at least three points. The path of a spline is open: it may cross itself, keeps at least
-  two points, has no edge from its last point to its first, and a point inserted on it takes the
-  width and height in proportion.
+  keeps at least three points.
 
 ## Shapes tool
 
@@ -162,11 +154,13 @@ it back.
   Cutting takes the area out of every polygon of the plane it reaches: each other polygon
   of a split is a copy of its entity (`entities_duplicate`) with that outline, and a shape cut
   away whole is deleted.
-- **Corners** (2): the selected polygon or spline shows its loops or path and corners (those of a
-  spline at their height). A drag moves a corner on its plane, a double click on an edge inserts
+- **Corners** (2): one tool over the corners of an entity (`Corners`): the polygon of its `Shape`,
+  else the points of its `Spline` (in its local XZ, open, at their height; a point inserted takes
+  the width and height in proportion and the path keeps two). The selected entity shows its loops
+  or path and corners. A drag moves a corner on its plane, a double click on an edge inserts
   one, Ctrl+click or Delete removes the one under the pointer; a click elsewhere selects the shape
-  under it. An edit the shape refuses does not apply. The panel shows the width and height of the
-  point of a spline taken last, and a change of them is one step. Create has a Spline card.
+  under it. An edit the shape refuses does not apply. The width and height of each point of a
+  spline are fields of the `Spline` in the inspector. Create has a Spline card.
 - **Brush** (3): a box, sphere or cylinder brush, added, cut or intersected (X), shown as lines on
   the surface
   under the pointer (`editor.pick_point`), its Y along the normal and turned by the angle around
@@ -200,14 +194,14 @@ within the unbeveled collider, front faces that neither turn over nor overlap; i
 refused; bevel 0 ignores the profile; the key follows the bevel), convex pieces of bodies, and the
 step (one child without `Id`, regeneration and release, a copied world, removal; a Solid of brush
 children with a hole that follows a moved, reordered and removed brush; a piece per added brush;
-polygons that neither build nor allocate while nothing changes; a spline that lies on the ground
-as a ribbon without collider, follows the ground and its entity, and with a `Fluid` is its path).
+polygons that neither build nor allocate while nothing changes; a spline with a material that lies
+on the ground as a ribbon without collider and follows the ground and its entity).
 
 `mirai test plugins/shapes/editor`: a stroke is one step that undo and redo take back and forth,
 a cut that splits makes a second shape entity and undo restores one, Escape puts back every shape
 a cut stroke changed, a corner drag is
 one step and a crossing move does not apply, `shapes.stamp` and `shapes.corner` as steps, the
-points of a spline edited from above and the size of one as a step, a brush
+points of a spline edited from above, a brush
 placed on a surface as one step and a child with `Id` (and a new Solid with it), and where a ray
 meets each brush primitive.
 Gestures with the pointer are tested by the user.

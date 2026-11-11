@@ -9,6 +9,7 @@ import "mirai:core"
 import destruct "plugins:destruct/runtime"
 import gui "mirai:engine/gui"
 import inp "mirai:engine/input"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
 import scene "mirai:engine/scene"
@@ -18,7 +19,7 @@ import mm "mirai:std/math"
 
 // The game of the demo project, for the scenes in ../assets. The
 // player is a character of the physics world that walks on the colliders of
-// the level, driven by the input actions of ../input.mirai:
+// the level, driven by these input actions:
 //   move   W A S D, left stick      look   mouse, right stick
 //   jump   Space, South             use    E, West: opens or closes a door,
 //   throw  left button, right              or changes the material of a
@@ -76,21 +77,17 @@ Door :: struct {
     reach:f32 `mirai:"min=0,unit=m,local"`,  // how near the player has to stand
     open:bool,
     lamp:core.Entity `mirai:"local"`,         // glows green while the door is open, red while it is closed
+    closed_y:f32 `mirai:"transient,local"`,   // where the door was when it started
 }
 
-@(component)
-Door_State :: struct {
-    closed_y:f32 `mirai:"transient,local"`, // where the door was when it started
-}
-
-// A thrown cube: a body that gets its velocity once it exists.
+// A thrown cube: a body that gets its velocity once it exists. Until then
+// its row is new (core.added): it is written when it is launched.
 @(component)
 Projectile :: struct {
     speed:f32 `mirai:"min=0,unit=m/s"`, // along the forward of the entity
-    seconds_left:f32 `mirai:"min=0,unit=s"`, // it goes this long after it is seen first
-    until:u64 `mirai:"readonly,hidden"`,    // the tick it goes at; 0 until it is seen first
+    seconds_left:f32 `mirai:"min=0,unit=s"`, // it goes this long after it is launched
+    until:u64 `mirai:"readonly,hidden"`,    // the tick it goes at
     velocity:[3]f32 `mirai:"transient"`,
-    launched:bool `mirai:"transient"`,
 }
 
 CAPTION_CAPACITY :: 128
@@ -139,7 +136,7 @@ yaw_of :: proc "contextless" (rotation:mm.Quat) -> f32 {
 }
 
 // The actions the game reads, those of interface_demo.odin too; move and jump are of physics
-// (phys.Walk_Action) and look of the engine (inp.Look_Action).
+// (locomotion.Walk_Action) and look of the engine (inp.Look_Action).
 @(actions)
 Action :: enum u8 {
     Use,Flashlight,Throw,Bark,Switch_Body,Overhead_View,
@@ -148,9 +145,9 @@ Action :: enum u8 {
     Hud_Style,Interface_Menu,Inventory,Talk,
 }
 
-// Their bindings. The editor (Project Settings > Input), input.set and the player write in an
-// input.mirai only what they change.
-action_defaults :: proc "contextless" () -> [Action]inp.Action_Default {
+// Their bindings. The editor (Project Settings > Input), settings.set and the
+// player keep in Input_Settings of settings.mirai only what they change of these.
+action_defaults :: proc "contextless" () -> [Action]inp.Action_Bindings {
     key :: inp.binding_key
     pad :: inp.binding_gamepad_button
     mouse :: inp.binding_mouse_button
@@ -217,9 +214,10 @@ game_use :: proc(
         feet:=placed.position
         if inp.pressed(actions,e,.Use) {
             for at in 0..<core.count(doors) {
-                door:=core.edit_at(doors,at)
                 other:=core.entity_at(doors,at)
-                if !in_reach(worlds,feet,other,door.reach) {continue}
+                // A door that has not taken its place yet (game_doors) does not open.
+                if core.added(doors,at) || !in_reach(worlds,feet,other,core.at(doors,at).reach) {continue}
+                door:=core.edit_at(doors,at)
                 door.open=!door.open
                 log.infof("%s %s",core.name_get(names,other),door.open?"opened":"closed")
             }
@@ -239,18 +237,14 @@ game_use :: proc(
 
 // Doors slide towards where their state, or a button pressed for them, says, at a constant speed.
 @(step="fixed")
-game_doors :: proc(doors:core.Read(Door),buttons:core.Read(Floor_Button),states:^core.Table(Door_State),transforms:^core.Table(core.Transform),time:core.Time) {
+game_doors :: proc(doors:^core.Table(Door),buttons:core.Read(Floor_Button),transforms:^core.Table(core.Transform),time:core.Time) {
     for row in 0..<core.count(doors) {
         e:=core.entity_at(doors,row)
-        door:=core.at(doors,row)
         placed,has_place:=core.get(transforms,e)
         if !has_place {continue}
-        state,known:=core.get(states,e)
-        if !known {
-            core.add(states,e,Door_State{closed_y=placed.position.y})
-            continue
-        }
-        target:=state.closed_y+(door_opened(doors,buttons,e)?door.travel:0)
+        if core.added(doors,row) {core.edit_at(doors,row).closed_y=placed.position.y}
+        door:=core.at(doors,row)
+        target:=door.closed_y+(door_opened(core.read(doors),buttons,e)?door.travel:0)
         if placed.position.y==target {continue}
         step:=door.speed*time.dt
         if local:=core.free(transforms,e);local!=nil {local.position.y+=clamp(target-local.position.y,-step,step)}
@@ -362,9 +356,9 @@ game_projectiles :: proc(
     damage:^destruct.Destruct_Requests,time:core.Time,
 ) {
     strike :: proc(projectiles:^core.Table(Projectile),damage:^destruct.Destruct_Requests,cube,struck:core.Entity,point:[3]f32) {
-        projectile,ok:=core.get(projectiles,cube)
-        if !ok || !projectile.launched {return}
-        destruct.damage(damage,struck,point,PROJECTILE_REACH,projectile.velocity*PROJECTILE_MASS)
+        row:=core.row_of(projectiles,cube)
+        if row<0 || core.added(projectiles,row) {return}
+        destruct.damage(damage,struck,point,PROJECTILE_REACH,core.at(projectiles,row).velocity*PROJECTILE_MASS)
     }
     for contact in events.contact_begin.items {
         strike(projectiles,damage,contact.a,contact.b,contact.point)
@@ -372,20 +366,20 @@ game_projectiles :: proc(
     }
     for row in 0..<core.count(projectiles) {
         e:=core.entity_at(projectiles,row)
-        projectile:=core.edit_at(projectiles,row)
-        if state,has:=core.get(body_states,e);has {
-            if projectile.launched {
-                projectile.velocity=state.linear
-            } else if local,placed:=core.get(transforms,e);placed {
-                projectile.velocity=mm.quat_forward(local.rotation)*projectile.speed
-                phys.set_velocity(bodies,e,projectile.velocity,{6,4,0})
-                projectile.launched=true
-            }
+        state,has:=core.get(body_states,e)
+        if core.added(projectiles,row) {
+            local,placed:=core.get(transforms,e)
+            if !has || !placed {continue}
+            projectile:=core.edit_at(projectiles,row)
+            projectile.velocity=mm.quat_forward(local.rotation)*projectile.speed
+            projectile.until=core.deadline(time,projectile.seconds_left)
+            phys.set_velocity(bodies,e,projectile.velocity,{6,4,0})
+            continue
         }
-        if projectile.until==0 {
-            projectile.until=max(core.deadline(time,projectile.seconds_left),1)
-        } else if core.due(time,projectile.until) {
+        if core.due(time,core.at(projectiles,row).until) {
             core.destroy(es,e)
+        } else if has {
+            core.edit_at(projectiles,row).velocity=state.linear
         }
     }
 }
@@ -393,11 +387,10 @@ game_projectiles :: proc(
 // What the use action does where a body stands.
 Player_Hint :: enum u8 {None,Open_Door,Close_Door,Swatch}
 
-// What player_hud.ui shows of the body it is on, a person or the dog, while a
-// seat drives it: the screen is on the body, so it shows in the view of its player.
+// What player_hud.ui shows of the body it is on, a person or the dog: the
+// screen is on the body, so it shows in the view of its player, and only then.
 @(component,description="The HUD of a body a seat drives: the crosshair, the cubes it threw, what the use action does where it stands and the caption of the nearest exhibit.")
 Player_Hud :: struct {
-    shown:bool,       // a seat drives this body
     person:bool,      // it throws cubes
     thrown:i32,
     hint:Player_Hint,
@@ -432,7 +425,7 @@ exhibit_caption :: proc(out:[]u8,exhibits:core.Read(Exhibit),worlds:core.Read(co
 @(step="frame")
 player_hud :: proc(
     huds:^core.Table(Player_Hud),players:core.Read(Player),doors:core.Read(Door),swatches:core.Read(Swatch),exhibits:core.Read(Exhibit),
-    barkers:core.Read(Barker),demos:core.Read(Control_Demo),drivables:core.Read(inp.Drivable),
+    barkers:core.Read(Barker),demos:core.Read(Control_Demo),
     worlds:core.Read(core.World_Transform),names:core.Read(core.Name),
 ) {
     shown:=core.read(huds)
@@ -441,9 +434,9 @@ player_hud :: proc(
         next:Player_Hud
         player,has_player:=core.get(players,body)
         barker,has_barker:=core.get(barkers,body)
-        if placed,has_world:=core.get(worlds,body);has_world && inp.seat_of(drivables,body)!=core.NONE && (has_player || has_barker) {
+        if placed,has_world:=core.get(worlds,body);has_world && (has_player || has_barker) {
             feet:=placed.position
-            next.shown,next.person,next.thrown=true,has_player,i32(player.thrown)
+            next.person,next.thrown=has_player,i32(player.thrown)
             next.control,next.dog,next.barks=core.count(demos)>0,has_barker,i32(barker.count)
             for at in 0..<core.count(doors) {
                 if next.hint!=.None || !in_reach(worlds,feet,core.entity_at(doors,at),core.at(doors,at).reach) {continue}
