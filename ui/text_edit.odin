@@ -7,6 +7,8 @@ import "core:slice"
 // the context, so typing never allocates. No shaping and no IME.
 
 TEXT_EDIT_CAPACITY :: 64<<10
+TEXT_EDIT_STEPS :: 100       // edits undo goes back through
+TEXT_EDIT_HISTORY :: 64<<10  // bytes of the text they removed and inserted; a larger edit forgets them all
 
 Text_Filter :: enum u8 {
     Any,    // printable ASCII
@@ -16,6 +18,20 @@ Text_Filter :: enum u8 {
 
 @(private)
 Edit_Drag :: enum u8 {None,Caret,Select}
+
+// What an edit was: a run of typing, of Backspace or of Delete is one step of
+// undo, and so is a paste over a selection.
+@(private)
+Edit_Kind :: enum u8 {Other,Type,Paste,Back,Forward}
+
+// One step of undo: removed bytes at at gave way to inserted ones. Both are
+// in Text_Edit.history from first on, the removed first.
+@(private)
+Edit_Step :: struct {
+    at,removed,inserted,first:i32,
+    cursor,anchor:i32, // before it
+    kind:Edit_Kind,
+}
 
 Text_Edit :: struct {
     id:Id,              // the field being edited; 0: none
@@ -36,6 +52,11 @@ Text_Edit :: struct {
     drag:Edit_Drag,
     caret_started:f64,
     font:u8,            // of the text: what the caret and the lines are measured with; the field sets it each frame
+    steps:[TEXT_EDIT_STEPS]Edit_Step,
+    history:[TEXT_EDIT_HISTORY]u8,
+    done:int,           // steps undo can take back
+    step_count:int,     // steps kept: those after done are what redo does again
+    joins:bool,         // the last step takes the next edit of its kind that goes on from it
 }
 
 text_edit_accepts :: proc "contextless" (filter:Text_Filter,c:u8) -> bool {
@@ -66,27 +87,44 @@ text_edit_begin :: proc "contextless" (e:^Text_Edit,id:Id,initial:string,filter:
 }
 text_edit_value :: proc "contextless" (e:^Text_Edit) -> string {return string(e.buffer[:e.length])}
 text_edit_selection :: proc "contextless" (e:^Text_Edit) -> (lo,hi:int) {return min(e.anchor,e.cursor),max(e.anchor,e.cursor)}
-text_edit_select_all :: proc "contextless" (e:^Text_Edit) {e.anchor=0;e.cursor=e.length}
+text_edit_select_all :: proc "contextless" (e:^Text_Edit) {e.anchor=0;e.cursor=e.length;e.joins=false}
 text_edit_move :: proc "contextless" (e:^Text_Edit,index:int,extend:bool) {
     e.cursor=clamp(index,0,e.length)
     if !extend {e.anchor=e.cursor}
+    e.joins=false
 }
-// The run of characters of one class around index: letters, digits and '_',
-// spaces, or the rest. Numbers and codes are one word.
+// The class of a character for words: letters, digits and '_' (0), spaces and
+// line breaks (1), or the rest (2).
+@(private="file")
+text_edit_class :: proc "contextless" (c:u8) -> int {
+    switch c {
+    case 'a'..='z','A'..='Z','0'..='9','_':return 0
+    case ' ','\n':return 1
+    }
+    return 2
+}
+// The run of characters of one class around index. Numbers and codes are one word.
 text_edit_word :: proc "contextless" (e:^Text_Edit,index:int) -> (lo,hi:int) {
     if e.length==0 || e.filter!=.Any {return 0,e.length}
-    class :: proc "contextless" (c:u8) -> int {
-        switch c {
-        case 'a'..='z','A'..='Z','0'..='9','_':return 0
-        case ' ':return 1
-        }
-        return 2
-    }
     lo=clamp(index,0,e.length-1);hi=lo+1
-    kind:=class(e.buffer[lo])
-    for lo>0 && class(e.buffer[lo-1])==kind {lo-=1}
-    for hi<e.length && class(e.buffer[hi])==kind {hi+=1}
+    kind:=text_edit_class(e.buffer[lo])
+    for lo>0 && text_edit_class(e.buffer[lo-1])==kind {lo-=1}
+    for hi<e.length && text_edit_class(e.buffer[hi])==kind {hi+=1}
     return
+}
+// Where a word away from index is, as Godot moves the caret by words: the
+// start of the word before it (step < 0) or the end of the one after it.
+@(private)
+text_edit_word_step :: proc "contextless" (e:^Text_Edit,index,step:int) -> int {
+    i:=clamp(index,0,e.length)
+    if step<0 {
+        for i>0 && text_edit_class(e.buffer[i-1])==1 {i-=1}
+        if i>0 {i,_=text_edit_word(e,i-1)}
+    } else {
+        for i<e.length && text_edit_class(e.buffer[i])==1 {i+=1}
+        if i<e.length {_,i=text_edit_word(e,i)}
+    }
+    return i
 }
 // The lines of the text being edited.
 @(private)
@@ -139,48 +177,130 @@ text_edit_line_move :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32,st
     text_edit_move(e,line_start+text_index_at(&ctx.font,text[line_start:line_end],size,e.goal_x,f=int(e.font)),extend)
 }
 
-text_edit_delete_selection :: proc "contextless" (e:^Text_Edit) -> bool {
-    lo,hi:=text_edit_selection(e)
-    if lo==hi {return false}
+// Puts text in the place of bytes lo..hi, the caret after it. text may be
+// what lies after the text in the buffer, where a paste reads it.
+@(private)
+text_edit_splice :: proc(e:^Text_Edit,lo,hi:int,text:string) {
     copy(e.buffer[lo:],e.buffer[hi:e.length])
     e.length-=hi-lo
-    e.cursor=lo;e.anchor=lo
+    copy(e.buffer[e.length:],text)
+    slice.rotate_right(e.buffer[lo:e.length+len(text)],len(text))
+    e.length+=len(text)
+    e.cursor=lo+len(text);e.anchor=e.cursor
     e.changes+=1
+}
+// Replaces bytes lo..hi with text as an edit of kind that undo takes back;
+// what does not fit in the capacity is dropped.
+@(private)
+text_edit_replace :: proc(e:^Text_Edit,lo,hi:int,text:string,kind:Edit_Kind) {
+    text:=text[:clamp(e.capacity-e.length+hi-lo,0,len(text))]
+    if lo==hi && text=="" {return}
+    text_edit_record(e,lo,hi,text,kind)
+    text_edit_splice(e,lo,hi,text)
+}
+// Keeps the edit about to replace bytes lo..hi with text: in the last step
+// when it goes on from it, as a run of typing does, or in a new one, for which
+// the oldest steps make room.
+@(private)
+text_edit_record :: proc "contextless" (e:^Text_Edit,lo,hi:int,text:string,kind:Edit_Kind) {
+    joins:=e.joins && e.done>0 && kind!=.Other
+    e.joins=true
+    e.step_count=e.done
+    used:=0
+    if e.done>0 {
+        s:=&e.steps[e.done-1]
+        used=int(s.first+s.removed+s.inserted)
+        if joins && s.kind==kind && used+hi-lo+len(text)<=TEXT_EDIT_HISTORY {
+            switch {
+            case lo==hi && lo==int(s.at+s.inserted) && (kind==.Type || kind==.Paste):
+                copy(e.history[used:],text)
+                s.inserted+=i32(len(text))
+                return
+            case text=="" && s.inserted==0 && kind==.Back && hi==int(s.at):
+                copy(e.history[int(s.first)+hi-lo:],e.history[s.first:used])
+                copy(e.history[s.first:],e.buffer[lo:hi])
+                s.at,s.removed=i32(lo),s.removed+i32(hi-lo)
+                return
+            case text=="" && s.inserted==0 && kind==.Forward && lo==int(s.at):
+                copy(e.history[used:],e.buffer[lo:hi])
+                s.removed+=i32(hi-lo)
+                return
+            }
+        }
+    }
+    size:=hi-lo+len(text)
+    if size>TEXT_EDIT_HISTORY {
+        e.done,e.step_count,e.joins=0,0,false
+        return
+    }
+    drop:=0
+    for drop<e.done && (e.done-drop>=TEXT_EDIT_STEPS || used-int(e.steps[drop].first)+size>TEXT_EDIT_HISTORY) {drop+=1}
+    if drop>0 {
+        base:=int(e.steps[drop].first) if drop<e.done else used
+        copy(e.history[:],e.history[base:used])
+        copy(e.steps[:],e.steps[drop:e.done])
+        e.done-=drop
+        for &s in e.steps[:e.done] {s.first-=i32(base)}
+        used-=base
+    }
+    e.steps[e.done]={at=i32(lo),removed=i32(hi-lo),inserted=i32(len(text)),first=i32(used),cursor=i32(e.cursor),anchor=i32(e.anchor),kind=kind}
+    copy(e.history[used:],e.buffer[lo:hi])
+    copy(e.history[used+hi-lo:],text)
+    e.done+=1
+    e.step_count=e.done
+}
+// Takes back the last edit, with the caret and selection it had before.
+text_edit_undo :: proc(e:^Text_Edit) -> bool {
+    if e.done==0 {return false}
+    e.done-=1
+    s:=e.steps[e.done]
+    text_edit_splice(e,int(s.at),int(s.at+s.inserted),string(e.history[s.first:][:s.removed]))
+    e.cursor,e.anchor,e.joins=int(s.cursor),int(s.anchor),false
+    return true
+}
+// Does again the edit undo took back last.
+text_edit_redo :: proc(e:^Text_Edit) -> bool {
+    if e.done>=e.step_count {return false}
+    s:=e.steps[e.done]
+    e.done+=1
+    text_edit_splice(e,int(s.at),int(s.at+s.removed),string(e.history[s.first+s.removed:][:s.inserted]))
+    e.joins=false
+    return true
+}
+
+text_edit_delete_selection :: proc(e:^Text_Edit) -> bool {
+    lo,hi:=text_edit_selection(e)
+    if lo==hi {return false}
+    text_edit_replace(e,lo,hi,"",.Other)
     return true
 }
 // Replaces the selection with c.
-text_edit_insert :: proc "contextless" (e:^Text_Edit,c:u8) {
+text_edit_insert :: proc(e:^Text_Edit,c:u8) {
     if !text_edit_takes(e,c) {return}
-    text_edit_delete_selection(e)
-    if e.length>=e.capacity {return}
-    copy(e.buffer[e.cursor+1:e.length+1],e.buffer[e.cursor:e.length])
-    e.buffer[e.cursor]=c;e.length+=1;e.cursor+=1;e.anchor=e.cursor
-    e.changes+=1
+    lo,hi:=text_edit_selection(e)
+    typed:=[1]u8{c}
+    text_edit_replace(e,lo,hi,string(typed[:]),.Type)
 }
-text_edit_remove :: proc "contextless" (e:^Text_Edit,at:int) {
+// Removes the character at, before the caret (Backspace) or after it (Delete).
+text_edit_remove :: proc(e:^Text_Edit,at:int) {
     if at<0 || at>=e.length {return}
-    copy(e.buffer[at:e.length-1],e.buffer[at+1:e.length])
-    e.length-=1
-    e.changes+=1
-    if e.cursor>at {e.cursor-=1}
-    e.anchor=e.cursor
+    text_edit_replace(e,at,at+1,"",.Back if at<e.cursor else .Forward)
 }
 
-// Puts the clipboard at the caret in one move: it is read into the room after
-// the text, and what the filter takes turns into place.
+// Puts the clipboard in the place of the selection as one edit: it is read
+// into the room after the text, and what the filter takes turns into place.
 @(private)
 text_edit_paste :: proc(ctx:^Context,e:^Text_Edit) {
-    text_edit_delete_selection(e)
+    lo,hi:=text_edit_selection(e)
+    text_edit_replace(e,lo,hi,"",.Paste)
     room:=e.buffer[e.length:e.capacity]
     count:=clamp(ctx.clipboard_get(ctx.clipboard_user,room),0,len(room))
     kept:=0
     for c in room[:count] {
         if text_edit_takes(e,c) {room[kept]=c;kept+=1}
     }
-    if kept==0 {return}
-    slice.rotate_right(e.buffer[e.cursor:e.length+kept],kept)
-    e.length+=kept;e.cursor+=kept;e.anchor=e.cursor
-    e.changes+=1
+    text_edit_replace(e,lo,lo,string(room[:kept]),.Paste)
+    e.joins=false
 }
 
 // Applies the keys and the text of one frame. Returns true when the text changed.
@@ -196,19 +316,28 @@ text_edit_keys :: proc(ctx:^Context,e:^Text_Edit,size:f32) -> bool {
             if .X in in_.keys_pressed {text_edit_delete_selection(e)}
         }
         if .V in in_.keys_repeated && ctx.clipboard_get!=nil {text_edit_paste(ctx,e)}
+        if .Z in in_.keys_repeated {
+            if shift {text_edit_redo(e)} else {text_edit_undo(e)}
+        }
+        if .Y in in_.keys_repeated {text_edit_redo(e)}
     } else {
         for c in in_.text[:in_.text_count] {text_edit_insert(e,c)}
     }
-    if .Backspace in in_.keys_repeated && !text_edit_delete_selection(e) {text_edit_remove(e,e.cursor-1)}
-    if .Delete in in_.keys_repeated && !text_edit_delete_selection(e) {text_edit_remove(e,e.cursor)}
+    // With Primary, Backspace, Delete and the arrows go by words.
+    if .Backspace in in_.keys_repeated && !text_edit_delete_selection(e) {
+        if primary {text_edit_replace(e,text_edit_word_step(e,e.cursor,-1),e.cursor,"",.Other)} else {text_edit_remove(e,e.cursor-1)}
+    }
+    if .Delete in in_.keys_repeated && !text_edit_delete_selection(e) {
+        if primary {text_edit_replace(e,e.cursor,text_edit_word_step(e,e.cursor,1),"",.Other)} else {text_edit_remove(e,e.cursor)}
+    }
     // Without Shift an arrow collapses a selection to that edge instead of stepping.
     if .Left in in_.keys_repeated {
         lo,hi:=text_edit_selection(e)
-        text_edit_move(e,e.cursor-1 if shift||lo==hi else lo,shift)
+        text_edit_move(e,(text_edit_word_step(e,e.cursor,-1) if primary else e.cursor-1) if shift||lo==hi else lo,shift)
     }
     if .Right in in_.keys_repeated {
         lo,hi:=text_edit_selection(e)
-        text_edit_move(e,e.cursor+1 if shift||lo==hi else hi,shift)
+        text_edit_move(e,(text_edit_word_step(e,e.cursor,1) if primary else e.cursor+1) if shift||lo==hi else hi,shift)
     }
     if e.multiline {
         if .Up in in_.keys_repeated {text_edit_line_move(ctx,e,size,-1,shift);by_line=true}
@@ -267,6 +396,7 @@ text_edit_press :: proc(ctx:^Context,e:^Text_Edit,size:f32,a:Text_Area,words:=tr
         e.drag=.Caret
     }
     e.goal_x=-1
+    e.joins=false
 }
 // While the button of that press is held: moving the pointer selects.
 text_edit_drag :: proc(ctx:^Context,e:^Text_Edit,size:f32,a:Text_Area) {
