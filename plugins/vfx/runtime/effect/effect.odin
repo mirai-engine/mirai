@@ -97,7 +97,7 @@ Particle_Info :: struct {
     attractor_strength:f32 `mirai:"unit=m/s²"`,
     collision:Particle_Collision,             // World: against the traced scene
     bounce:f32 `mirai:"min=0,max=1"`,
-    friction:f32 `mirai:"min=0,max=1"`,
+    friction:f32 `mirai:"min=0,max=1"`,       // tangent speed lost per normal speed a surface stops
     collision_life:f32 `mirai:"min=0,max=1"`, // share of its life a particle loses per hit
     render:Particle_Render,
     blend:Particle_Blend,

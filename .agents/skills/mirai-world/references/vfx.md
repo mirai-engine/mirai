@@ -450,8 +450,11 @@ In the `Simulate` stage, per step:
 - **simulate**: one thread per slot of each program's span; `_hw` variant.
   - Program, acceleration, value-noise rotor with analytic derivatives (no sources), attractor and
     drag.
-  - `Screen` collision against the depth and normal of this frame's G-buffer, or `World` with
-    `trace_ray` and the triangle's normal.
+  - `World` collision with `trace_ray` and the triangle's normal. Only a particle that goes into
+    the surface faster than the rest speed (and than twice what its acceleration gives it in the
+    step) bounces and hits: event, report and lost life. Slower it stays on the surface without a
+    hit, so a particle at rest is silent and keeps its life at any step. Friction takes tangent
+    speed in proportion to the normal speed stopped (Coulomb), the same per second at any step.
   - Deaths to the free list; death or hit events, and reports of those that the emitter's `report`
     names.
   - In the last step: the live ones to the draw list and, the `lit` ones, their light (sun with

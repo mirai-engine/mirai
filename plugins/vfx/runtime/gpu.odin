@@ -139,7 +139,9 @@ Emitter_Desc :: struct {
     attractor:[3]f32,    // a point of the emitter that pulls with attractor_strength (m/s²)
     attractor_strength:f32,
     collision:effect.Particle_Collision,
-    bounce,friction,collision_life:f32, // share of the normal speed kept, of the tangent speed lost, of the life lost per hit
+    // Share of the normal speed kept per hit, tangent speed lost per normal speed
+    // stopped, share of the life lost per hit.
+    bounce,friction,collision_life:f32,
     render:effect.Particle_Render,
     blend:effect.Particle_Blend,
     material:erender.Material_Handle, // its Surface program, or its base color (its texture is the flipbook), opacity and emission
