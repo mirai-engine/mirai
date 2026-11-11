@@ -124,11 +124,12 @@ slang_package_of_this_platform_is_pinned :: proc(t:^testing.T) {
 // cannot compare, and anything older, is not.
 @(test)
 a_slang_version_is_the_pinned_one_or_a_later_one :: proc(t:^testing.T) {
+    PINNED :: "2026.20" // any release: the table does not follow the pin of the engine
     cases := [?]struct {
         version:  string,
         accepted: bool,
     }{
-        {SLANG_VERSION, true},
+        {PINNED, true},
         {"2026.20", true},
         {"2026.20.1", true},
         {"2026.21", true},
@@ -142,7 +143,7 @@ a_slang_version_is_the_pinned_one_or_a_later_one :: proc(t:^testing.T) {
         {"unknown", false},
     }
     for c in cases {
-        testing.expectf(t,slang_version_at_least(c.version,SLANG_VERSION)==c.accepted,
-            "%q should compare as %v against %s",c.version,c.accepted,SLANG_VERSION)
+        testing.expectf(t,slang_version_at_least(c.version,PINNED)==c.accepted,
+            "%q should compare as %v against %s",c.version,c.accepted,PINNED)
     }
 }
