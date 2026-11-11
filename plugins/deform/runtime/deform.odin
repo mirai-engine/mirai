@@ -93,8 +93,8 @@ unit :: proc "contextless" (v,fallback:[3]f32) -> [3]f32 {
 // this frame written in its Geometry stage.
 @(step="render",loops="game editor",before="render_sync")
 deform_render :: proc(
-    state:^Deform_Gpu,deforms:core.Read(Deform),meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
-    parents:core.Read(core.Parent),hidden:core.Read(erender.Hidden),app:^host.App,time:core.Time,frame:core.Frame_Time,id:core.World_Id,poses:^erender.Posed_Meshes,
+    state:^Deform_Gpu,deforms:^core.Table(Deform,.Read),meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),hidden:^core.Table(erender.Hidden,.Read),app:^host.App,time:core.Time,frame:core.Frame_Time,id:core.World_Id,poses:^erender.Posed_Meshes,
 ) {
     if state==nil || app.renderer==nil || app.assets==nil {return}
     state.world=erender.world_key(id)

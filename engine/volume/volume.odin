@@ -71,7 +71,7 @@ world :: proc "contextless" () -> Volume {return {shape=.Unbounded}}
 Volume_Check :: struct {seen:core.Seen `mirai:"transient,hidden"`}
 
 @(step="frame")
-volumes_check :: proc(volumes:core.Read(Volume),check:^Volume_Check,problems:^core.Problems) {
+volumes_check :: proc(volumes:^core.Table(Volume,.Read),check:^Volume_Check,problems:^core.Problems) {
     if !core.touched(volumes,&check.seen) {return}
     for row in 0..<core.count(volumes) {
         if v:=core.at(volumes,row);v.shape==.Unbounded && v.extents!={} {
@@ -253,7 +253,7 @@ hit_of :: proc "contextless" (row:int,v:Volume,pose:mm.Transform,weight:f32) -> 
 // Where the volume of e rules, as a shape at a pose: without a Volume, the
 // whole world; unbounded in a section, the box of its section. False where it
 // rules nowhere (no pose, or a section box without size).
-placed :: proc(volumes:core.Read(Volume),worlds:core.Read(core.World_Transform),e:core.Entity) -> (v:Volume,pose:mm.Transform,ok:bool) {
+placed :: proc(volumes:^core.Table(Volume,$A),worlds:^core.Table(core.World_Transform,$B),e:core.Entity) -> (v:Volume,pose:mm.Transform,ok:bool) {
     found:bool
     v,found=core.get(volumes,e)
     if !found {return {},mm.TRANSFORM_IDENTITY,true}
@@ -271,7 +271,7 @@ placed :: proc(volumes:core.Read(Volume),worlds:core.Read(core.World_Transform),
 
 // The volumes of the value of table that hold point, in the order they are
 // applied, in one pass over them.
-gather :: proc(volumes:core.Read(Volume),worlds:core.Read(core.World_Transform),table:core.Read($T),point:[3]f32) -> (h:Hits) {
+gather :: proc(volumes:^core.Table(Volume,$B),worlds:^core.Table(core.World_Transform,$C),table:^core.Table($T,$A),point:[3]f32) -> (h:Hits) {
     for row in 0..<core.count(table) {
         v,pose,ok:=placed(volumes,worlds,core.entity_at(table,row))
         if !ok {continue}
@@ -289,9 +289,9 @@ combine :: proc(h:Hits,value:$V,user:$U,value_of:proc(user:U,row:i32) -> V,mix:p
 }
 
 // The value of table at a point: every volume that holds it over fallback.
-at :: proc(volumes:core.Read(Volume),worlds:core.Read(core.World_Transform),table:core.Read($T),point:[3]f32,fallback:T,mix:proc(value:^T,by:T,weight:f32,add:bool)) -> T {
-    if table.table==nil {return fallback}
-    of :: proc(table:core.Read(T),row:i32) -> T {return core.at(table,int(row))}
+at :: proc(volumes:^core.Table(Volume,$B),worlds:^core.Table(core.World_Transform,$C),table:^core.Table($T,$A),point:[3]f32,fallback:T,mix:proc(value:^T,by:T,weight:f32,add:bool)) -> T {
+    if table==nil {return fallback}
+    of :: proc(table:^core.Table(T,A),row:i32) -> T {return core.at(table,int(row))}
     return combine(gather(volumes,worlds,table,point),fallback,table,of,mix)
 }
 
@@ -334,7 +334,7 @@ index_destroy :: proc(ix:^Index) {
 }
 
 @(private)
-place_of :: proc(volumes:core.Read(Volume),worlds:core.Read(core.World_Transform),e:core.Entity) -> (p:Place) {
+place_of :: proc(volumes:^core.Table(Volume,$A),worlds:^core.Table(core.World_Transform,$B),e:core.Entity) -> (p:Place) {
     p.volume,p.pose,p.rules=placed(volumes,worlds,e)
     p.world=mm.TRANSFORM_IDENTITY
     if world,found:=core.get(worlds,e);found {p.world=world.transform}
@@ -345,10 +345,10 @@ place_of :: proc(volumes:core.Read(Volume),worlds:core.Read(core.World_Transform
 // or where they are changed. changed: it was made again, and what a library
 // combined from it is to be combined again. ok is false without memory: then
 // no volume holds any point until an update finds it.
-index_update :: proc(ix:^Index,volumes:core.Read(Volume),worlds:core.Read(core.World_Transform),table:core.Read($T)) -> (changed,ok:bool) {
+index_update :: proc(ix:^Index,volumes:^core.Table(Volume,$B),worlds:^core.Table(core.World_Transform,$C),table:^core.Table($T,$A)) -> (changed,ok:bool) {
     moved:=core.touched(volumes,&ix.seen[0])
     count:=0
-    if table.table!=nil {
+    if table!=nil {
         moved|=core.touched(table,&ix.seen[1])
         count=core.count(table)
     }
@@ -434,7 +434,7 @@ index_hits :: proc(ix:^Index,point:[3]f32) -> (h:Hits,bounded:bool) {
 // they are: what a shader that combines them at each point gets, with
 // gpu_volume. rows takes their rows; past its length the lowest priorities
 // are left out.
-ordered :: proc(volumes:core.Read(Volume),worlds:core.Read(core.World_Transform),table:core.Read($T),rows:[]i32) -> int {
+ordered :: proc(volumes:^core.Table(Volume,$B),worlds:^core.Table(core.World_Transform,$C),table:^core.Table($T,$A),rows:[]i32) -> int {
     h:Hits
     for row in 0..<core.count(table) {
         v,pose,ok:=placed(volumes,worlds,core.entity_at(table,row))

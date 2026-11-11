@@ -286,7 +286,7 @@ replay_page :: proc(data:^Terrain_Data,entry:^Data_Source,replay:Replay) -> (cha
 // The replays, and while the tick is routed the requests of dig and
 // request_layer, before terrain_update: what they change shows as an edit does.
 @(step="fixed",loops="game",stage="simulate",before="terrain_update")
-terrain_replay :: proc(replays:^Terrain_Replays,events:^Terrain_Replay_Events,digs:^Terrain_Digs,requests:^Terrain_Requests,data:^Terrain_Data,terrains:core.Read(Terrain),worlds:core.Read(core.World_Transform),assets:^host.Assets,problems:^core.Problems) {
+terrain_replay :: proc(replays:^Terrain_Replays,events:^Terrain_Replay_Events,digs:^Terrain_Digs,requests:^Terrain_Requests,data:^Terrain_Data,terrains:^core.Table(Terrain,.Read),worlds:^core.Table(core.World_Transform,.Read),assets:^host.Assets,problems:^core.Problems) {
     routed,asked:=replays.routed,replays.asked
     replays.routed,replays.asked=false,false
     if len(replays.items.items)==0 && (!routed || len(requests.edits.items)==0 && len(requests.layers.items)==0) {return}
@@ -626,4 +626,4 @@ terrain_filled :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id) -> bool {
 }
 
 // The terrain of a source whose problems name it, or none.
-terrain_of_source :: proc(terrains:core.Read(Terrain),id:base.Asset_Id) -> core.Entity {return source_owner(terrains,id)}
+terrain_of_source :: proc(terrains:^core.Table(Terrain,$A),id:base.Asset_Id) -> core.Entity {return source_owner(terrains,id)}

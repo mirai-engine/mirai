@@ -52,7 +52,7 @@ selected_force_fields_show_where_they_push_in_their_volume :: proc(t:^testing.T)
     testing.expect_value(t,app.extras.debug_count,1)
     lines:=app.extras.debug[0]
     testing.expect(t,!lines.depth_test && lines.count==10 && lines.dropped==0)
-    pose,placed:=core.world_of(core.read(&w.transforms),core.read(&w.parents),entity);testing.expect(t,placed)
+    pose,placed:=core.world_of(&w.transforms,&w.parents,entity);testing.expect(t,placed)
     // Against its direction, for its force pulls: as long as half its box along it.
     testing.expect_value(t,lines.vertices[0].position,pose.position)
     direction:=mm.quat_rotate(pose.rotation,mm.Vec3{-1,0,0})
@@ -68,7 +68,7 @@ selected_force_fields_show_where_they_push_in_their_volume :: proc(t:^testing.T)
     preview_run(&w,&session,preview,&app)
     lines=app.extras.debug[0]
     testing.expect_value(t,lines.count,60)
-    pose,_=core.world_of(core.read(&w.transforms),core.read(&w.parents),entity)
+    pose,_=core.world_of(&w.transforms,&w.parents,entity)
     for arrow in 0..<6 {
         from,to:=lines.vertices[arrow*10].position,lines.vertices[1+arrow*10].position
         testing.expect(t,abs(linalg.length(from-pose.position)-3)<1e-4 && abs(linalg.length(to-pose.position)-1)<1e-4)

@@ -231,7 +231,7 @@ Frame_Actions :: struct {slots:[LOCAL_CAPACITY]Actions}
 @(params)
 Input_Of :: struct($E:typeid) where intrinsics.type_is_enum(E) {
     state:core.Ref(Seats),
-    seats:core.Read(Seat),
+    seats:^core.Table(Seat,.Read),
     base:Action,
 }
 
@@ -242,7 +242,7 @@ Input_Of :: struct($E:typeid) where intrinsics.type_is_enum(E) {
 Frame_Input_Of :: struct($E:typeid) where intrinsics.type_is_enum(E) {
     actions:core.Ref(Frame_Actions),
     state:core.Ref(Seats),
-    seats:core.Read(Seat),
+    seats:^core.Table(Seat,.Read),
     base:Action,
 }
 
@@ -323,7 +323,7 @@ input_map_build :: proc(bindings:^Input_Map,settings:core.Ref(Input_Settings),wr
 
 // The actions of each local slot for the frame, in the contexts of its seat.
 @(step="input",stage="end")
-input_frame_actions_update :: proc(bindings:core.Ref(Input_Map),actions:^Frame_Actions,input:core.Frame_Input,state:core.Ref(Seats),seats:core.Read(Seat),frame:core.Frame_Time) {
+input_frame_actions_update :: proc(bindings:core.Ref(Input_Map),actions:^Frame_Actions,input:core.Frame_Input,state:core.Ref(Seats),seats:^core.Table(Seat,.Read),frame:core.Frame_Time) {
     count:=state.local_count
     for slot in 0..<LOCAL_CAPACITY {
         if slot>=count {
@@ -332,7 +332,7 @@ input_frame_actions_update :: proc(bindings:core.Ref(Input_Map),actions:^Frame_A
         }
         own:=slot_input(input.input,slot,count,state.focus)
         contexts:^Context_Stack
-        if row:=core.row_of(seats,local_seat(seats,slot));row>=0 {contexts=&seats.table.values[row].contexts}
+        if row:=core.row_of(seats,local_seat(seats,slot));row>=0 {contexts=&seats.values[row].contexts}
         actions_update(&actions.slots[slot],bindings.ptr,&own,frame.dt,contexts)
     }
 }

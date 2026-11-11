@@ -106,7 +106,7 @@ character_setup_builds_locomotion_look_feet_hands_and_gestures_from_the_body :: 
     for want in ([]string{"Locomotion","Look","Foot_Ik","Hand_Ik","Gestures"}) {testing.expectf(t,strings.contains(text,fmt.tprintf(`"want":"%s","status":"Ready"`,want)),"%s in %s",want,text)}
     testing.expectf(t,strings.contains(text,`"detail":"walking: Idle, Walk"`),"detail in %s",text)
     // One .character holds the locomotion, the gestures, the warping and the modifiers.
-    animation,found:=core.get(core.read(&f.world.animations),f.rig)
+    animation,found:=core.get(&f.world.animations,f.rig)
     if !testing.expect(t,found) {return}
     testing.expect(t,animation.asset==authoring_test_id(a,"characters/figure.character") && animation.root_motion==.In_Place)
     testing.expect(t,base.text_get(animation.clip[:])=="" && animation.speed==1)
