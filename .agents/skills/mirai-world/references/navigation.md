@@ -167,6 +167,9 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   still far from the level of its corridor (more than its `climb` and half a meter: pushed,
   fallen, placed elsewhere) searches again from where it is, instead of walking against the wall
   toward a corner above.
+- **Planning on the way.** While its path is searched (`Waiting`), one that walks goes on along
+  the corridor it has, from whose first polygon the search starts. It plans again when a step
+  ahead stops being valid.
 - **Searching in the air.** A request cuts the crossing in progress and searches in the same tick.
   If the body is not standing on the ground (it falls, or jumps between roofs) and there is no
   navmesh within its reach, the search waits for it to be standing instead of failing with

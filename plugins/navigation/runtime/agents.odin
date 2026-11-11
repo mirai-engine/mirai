@@ -46,6 +46,7 @@ NAV_REPLAN_FOLLOW :: f32(0.5)  // s between plans while following a target that 
 NAV_FOLLOW_TREES :: 4          // targets whose followers share a search at once
 NAV_FOLLOW_IDLE :: f32(2)      // s without a follower asking before the search toward a target is let go
 NAV_OFF_LEVEL :: f32(0.5)      // m beyond its climb that an agent may be above or below its corridor
+NAV_CORRIDOR_AHEAD :: 8        // steps of its corridor that must stay valid as an agent walks it
 NAV_CROSS_SLACK :: f32(1.0)    // s a crossing may outlast its arc before it counts as failed
 NAV_FLY_AHEAD :: 6             // portals of its corridor a flying agent looks for ahead
 NAV_SHORE_MARGIN :: f32(16)    // m around its way where an agent that swims looks for shores
@@ -65,7 +66,7 @@ NAV_AGENT_DEFAULT :: Nav_Agent{reach=0.3,avoidance=true}
 
 Nav_State :: enum u8 {
     Idle,
-    Waiting,  // for its path
+    Waiting,  // for its path, walking on along the one it had
     Moving,
     Crossing, // a link
     Arrived,  // at its end, or as near as it can (Nav_Path.partial)
@@ -296,6 +297,7 @@ navigation_agents :: proc(
             agent_stop_crossing(p,asked.entity,loco)
             p.state=.Idle
             p.velocity={}
+            p.corridor.count=0
             if mi:=core.edit(inputs,asked.entity);mi!=nil {mi.move={}}
         case .Look_At:
             p.look,p.looking=asked.point,true
@@ -374,7 +376,8 @@ navigation_agents :: proc(
             continue
         }
         if int(p.class)!=class {
-            p.class=i8(class)
+            // Its corridor was over the mesh or the volume of the other class.
+            p.class,p.corridor.count=i8(class),0
             switch {
             case p.state==.Moving: p.state=.Waiting
             // In the other space: it plans on from there; a take-off, once where it leads.
@@ -401,21 +404,22 @@ navigation_agents :: proc(
         switch p.state {
         case .Idle,.Arrived,.Failed:
             p.velocity={}
-        case .Waiting:
-            p.velocity={}
-            if a.searching!=e && !p.queued {append(&a.waiting,e);p.queued=true}
-        case .Moving:
-            if flies {
-                agent_fly(p,e,agent,center,&n.classes[class].volume,fly.speed,fly.acceleration,true,moving.mode,events,loco)
-            } else if swims {
-                agent_fly(p,e,agent,center,&n.classes[class].volume,swim.speed,swim.acceleration,false,moving.mode,events,loco)
-            } else {
+        case .Waiting,.Moving:
+            if flies || swims {
+                p.velocity={}
+                if p.state==.Moving {
+                    agent_fly(p,e,agent,center,&n.classes[class].volume,swim.speed if swims else fly.speed,swim.acceleration if swims else fly.acceleration,flies,moving.mode,events,loco)
+                }
+            } else if p.corridor.count>0 {
                 walk_row,_:=core.get(walks,e)
                 walk:=Walk_Like{walk_row.jump_height,walk_row.max_speed}
                 // Each agent jumps under the gravity of its place: a planet, a room without it.
                 filter:=agent_filter(n.ptr,class,agent,walk,can_swim,linalg.length(phys.gravity_of_entity(physics,e)))
                 agent_follow(n.ptr,p,e,agent,pose.position,&n.classes[class].mesh,&filter,walk,events,loco)
+            } else {
+                p.velocity={}
             }
+            if p.state==.Waiting && a.searching!=e && !p.queued {append(&a.waiting,e);p.queued=true}
         case .Crossing:
             p.velocity={}
             if p.medium {
@@ -468,37 +472,54 @@ agent_stop_crossing :: proc(p:^Nav_Path,e:core.Entity,loco:^locomotion.Locomotio
     p.partial,p.manual=false,false
 }
 
-// Heads for the next corner, starting a link when it is at its start.
+// Plans again from where it is; while it waits it walks on along its corridor.
+@(private)
+agent_replan :: proc "contextless" (p:^Nav_Path) {
+    if p.state!=.Waiting {p.state,p.replans=.Waiting,p.replans+1}
+}
+
+// Whether navigation moves the agent: on its way, across a link, or on along its corridor while it waits.
+@(private)
+agent_goes :: #force_inline proc "contextless" (p:Nav_Path) -> bool {
+    return p.state==.Moving || p.state==.Crossing || p.state==.Waiting && p.velocity!={}
+}
+
+// Heads for the next corner, starting a link when it is at its start. While
+// its path is searched (Waiting) it walks on along the corridor it has, up to
+// its end or its next link.
 @(private)
 agent_follow :: proc(n:^Navigation,p:^Nav_Path,e:core.Entity,agent:Nav_Agent,position:mm.Vec3,mesh:^ai.Nav_Mesh,filter:^ai.Nav_Filter,walk:Walk_Like,events:^Nav_Events,loco:^locomotion.Locomotion_Requests) {
+    p.velocity={}
+    class:=n.classes[p.class].class
     // One that left the level of its corridor (pushed off a ledge, fallen) plans from where it is.
-    if !ai.nav_corridor_valid(&p.corridor,mesh,filter,8) || !ai.nav_corridor_move(&p.corridor,mesh,filter,position) || abs(position.y-p.corridor.position.y)>n.classes[p.class].class.climb+NAV_OFF_LEVEL {
-        p.state=.Waiting
-        p.replans+=1
+    if !ai.nav_corridor_move(&p.corridor,mesh,filter,position) || abs(position.y-p.corridor.position.y)>class.climb+NAV_OFF_LEVEL {
+        agent_replan(p)
         return
     }
+    // A step ahead changed (a tile built again).
+    if !ai.nav_corridor_valid(&p.corridor,mesh,filter,NAV_CORRIDOR_AHEAD) {agent_replan(p)}
     corners:[4]ai.Nav_Corner
     count:=ai.nav_corridor_corners(&p.corridor,mesh,corners[:],0.05)
-    if count==0 {p.state=.Waiting;p.replans+=1;return}
+    if count==0 {agent_replan(p);return}
     next:=corners[0]
     flat:=mm.Vec3{next.position.x-position.x,0,next.position.z-position.z}
     distance:=linalg.length(flat)
     reach:=agent_reach(agent,p)
     if .End in next.flags && distance<=reach {
-        p.velocity={}
         // At the portal into a section away: it goes far from here (agents_far).
-        if p.through {return}
+        if p.state==.Waiting || p.through {return}
         if p.medium {agent_medium_begin(p,e,false,events,loco);return}
         p.state=.Arrived
         core.push(&events.queue,Nav_Event{kind=.Arrived,entity=e})
         return
     }
     if .Link in next.flags && distance<=max(reach,0.25) {
+        if p.state==.Waiting {return}
         link:=ai.nav_link_of(mesh,next.ref)
-        if link==nil {p.state=.Waiting;p.replans+=1;return}
+        if link==nil {agent_replan(p);return}
         from,to,_,_:=ai.nav_link_ends(link,next.ref)
         kind:=Nav_Link_Kind(link.desc.kind)
-        p.state,p.link,p.from,p.to,p.kind,p.time,p.velocity=.Crossing,next.ref,from,to,kind,0,{}
+        p.state,p.link,p.from,p.to,p.kind,p.time=.Crossing,next.ref,from,to,kind,0
         p.manual=u32(agent.manual)&(1<<u32(kind))!=0 || kind!=LINK_JUMP && kind!=LINK_DROP && kind!=LINK_CLIMB && kind!=LINK_LADDER
         if !p.manual {locomotion.set_mode(loco,e,MODE_NAV_LINK)}
         core.push(&events.queue,Nav_Event{kind=.Crossing,entity=e,link=kind,manual=p.manual,from=from,to=to})
@@ -515,7 +536,7 @@ agent_follow :: proc(n:^Navigation,p:^Nav_Path,e:core.Entity,agent:Nav_Agent,pos
 agent_fly :: proc(p:^Nav_Path,e:core.Entity,agent:Nav_Agent,position:mm.Vec3,volume:^ai.Nav_Volume,speed,acceleration:f32,flies:bool,mode:locomotion.Locomotion_Mode,events:^Nav_Events,loco:^locomotion.Locomotion_Requests) {
     if flies && mode!=locomotion.MODE_FLYING {locomotion.set_mode(loco,e,locomotion.MODE_FLYING)}
     next,end,ok:=ai.nav_volume_corridor_steer(&p.corridor,volume,position,NAV_FLY_AHEAD)
-    if !ok {p.state=.Waiting;p.replans+=1;return}
+    if !ok {agent_replan(p);return}
     to:=next-position
     distance:=linalg.length(to)
     reach:=agent_reach(agent,p)
@@ -553,8 +574,8 @@ agent_medium_crossing :: proc(p:^Nav_Path,position:mm.Vec3,speed:f32,walks:bool)
     if walks {to.y=0}
     distance:=linalg.length(to)
     if p.time>linalg.length(p.to-p.from)/max(speed*0.25,0.25)+NAV_CROSS_SLACK*2 {
-        p.medium,p.state=false,.Waiting
-        p.replans+=1
+        p.medium=false
+        agent_replan(p)
         return
     }
     if distance>0.05 {p.velocity=to/distance*speed}
@@ -590,8 +611,7 @@ agent_crossed :: proc(n:^Navigation,p:^Nav_Path,e:core.Entity,events:^Nav_Events
             }
         }
     }
-    p.state=.Waiting
-    p.replans+=1
+    agent_replan(p)
 }
 
 // The launch of a jump or a drop from a point to the end of its link: the
@@ -690,7 +710,13 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
             if sections!=nil {
                 if via,ok:=agent_via(n,a,sections,int(p.class),pose.position,p.goal);ok {goal,p.through=via,true}
             }
-            from,start,found:=ai.nav_find_nearest(mesh,pose.position,extents,&filter)
+            // From where it stands on its corridor, which it walks on along while the search runs; else from the mesh nearest to it.
+            from,start:=ai.nav_corridor_first(&p.corridor),p.corridor.position
+            found:=!ai.nav_ref_is_link(from) && ai.nav_corridor_valid(&p.corridor,mesh,&filter,1) && linalg.length2(mm.Vec2{pose.position.x-start.x,pose.position.z-start.z})<=class.radius*class.radius && abs(pose.position.y-start.y)<=class.climb+NAV_OFF_LEVEL
+            if !found {
+                from,start,found=ai.nav_find_nearest(mesh,pose.position,extents,&filter)
+                if found {ai.nav_corridor_reset(&p.corridor,from,start)}
+            }
             to,end,found_goal:=ai.nav_find_nearest(mesh,goal,extents*4,&filter)
             ground,_:=core.get(grounds,e)
             // One in the air (falling, or asked elsewhere in the middle of a jump) looks for the mesh again once it stands.
@@ -713,7 +739,6 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
                 core.push(&events.queue,Nav_Event{kind=.Failed,entity=e})
                 continue
             }
-            ai.nav_corridor_reset(&p.corridor,from,start)
             if p.target!=core.NONE && !p.through {
                 if tree:=follow_tree(a,p,e,mesh,&filter,to,end);tree>=0 {
                     // Toward the target as the shared search saw it.
@@ -806,6 +831,8 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
         }
         target:=a.query.end
         if partial {target,_=ai.nav_closest_point_on_poly(mesh,a.refs[count-1],a.query.end)}
+        // From where the search began: the next move of the corridor takes it to where the agent walked since.
+        p.corridor.position=a.query.start
         if !ai.nav_corridor_set(&p.corridor,mesh,&a.query.filter,target,a.refs[:count]) {agent_fail(p,e,events);continue}
         p.partial=partial || final!=.Found
         p.state=.Moving
@@ -942,6 +969,7 @@ agent_medium_path :: proc(n:^Navigation,a:^Navigation_Agents,p:^Nav_Path,e:core.
     crosses&&=part<=ai.NAV_CORRIDOR_CAPACITY
     in_volume:=class_in_volume(n,int(p.class))
     target:=from if crosses else q.end
+    p.corridor.position=q.start
     set:bool
     if in_volume {
         volume:=&n.classes[p.class].volume
@@ -992,7 +1020,7 @@ agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Pa
     for near,i in a.near {
         if !near.avoids {continue}
         p:=core.edit(paths,near.entity)
-        if p==nil || p.state!=.Moving {continue}
+        if p==nil || !agent_goes(p^) || p.state==.Crossing {continue}
         speed:=linalg.length(p.velocity)
         // Farther than both can close within the horizon, a neighbor shapes no velocity it may choose.
         top:=max(speed,linalg.length(near.velocity))
@@ -1094,7 +1122,7 @@ agents_steer :: proc(n:^Navigation,agents:^core.Table(Nav_Agent,.Read),paths:^co
         }
         mi:=core.edit(inputs,e)
         if mi==nil {continue}
-        if p.state!=.Moving && p.state!=.Crossing {
+        if !agent_goes(p^) {
             // Once, when it stops: whatever writes it next is not navigation.
             if !p.halted {
                 if !driven {mi.move={}}

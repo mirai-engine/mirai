@@ -90,7 +90,8 @@ counterclockwise seen from above, and the queries do not depend on the winding.
   of them and `nav_toward_path` reads its way from there in the order it is walked: the search
   costs what the farthest asks, and each one after it only its path.
 - `nav_straight_path` pulls the path taut with the funnel and cuts at each link: corners with
-  `Start`, `End` and `Link` (the start of a link, with its reference).
+  `Start`, `End` and `Link` (the start of a link, with its reference). Past a node no longer
+  valid it ends on the last valid polygon, without `End`.
 - `nav_path_straighten` removes, in one pass, each bend of the pulled path that a raycast skips at
   no more cost than the bend: the ray's polygons replace the bend's. A ray never crosses an area
   dearer than the stretch it replaces, so a path does not cut through what A* went around; the

@@ -1708,7 +1708,8 @@ a_kept_navigation_copies_its_meshes_again_only_when_a_build_changed_them :: proc
 
 // Eight walkers follow a runner around a wall: the first plans its own way
 // and the rest read theirs from one search toward the runner, begun again no
-// more than twice a second as it moves; all of them walk to it.
+// more than twice a second as it moves; all of them walk to it, and none
+// stops while it plans again.
 @(test)
 followers_of_one_target_share_one_search_toward_it :: proc(t:^testing.T) {
     f:Nav_Test
@@ -1726,11 +1727,20 @@ followers_of_one_target_share_one_search_toward_it :: proc(t:^testing.T) {
     }
     nav_test_settle(&f)
     SECONDS :: 12
+    halts,moved:=0,[8]bool{}
     for tick in 0..<60*SECONDS {
         // It runs along the far side for a while, then waits for them.
         core.edit(&f.transforms,runner).position.z=-8+min(f32(tick)/60,6)*2
         agents_test_step(&f)
+        at,_:=core.get(&f.worlds,runner)
+        for e,i in walkers {
+            mi,_:=core.get(&f.inputs,e)
+            pose,_:=core.get(&f.worlds,e)
+            moved[i]||=mi.move!={}
+            if moved[i] && mi.move=={} && linalg.distance(pose.position,at.position)>3 {halts+=1}
+        }
     }
+    testing.expectf(t,halts==0,"followers stood still for %d ticks while they planned again",halts)
     trees,begun:=0,u64(0)
     // Let go once they all arrived, the search keeps its count.
     for &tree in f.run.trees {
