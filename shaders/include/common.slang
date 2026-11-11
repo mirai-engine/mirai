@@ -314,8 +314,8 @@ struct Bvh_Node {
 struct Bvh_Triangle {
     float3 v0;
     uint primitive; // index within the mesh (integer, never float bits)
-    float4 e1;
-    float4 e2;
+    float4 v1;      // w unused
+    float4 v2;
 };
 
 // Probe.cell.w flags: traced for its cell and seeing out of geometry; inside

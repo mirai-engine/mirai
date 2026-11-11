@@ -263,7 +263,7 @@ Stats :: struct {
 	pages_requested:   u32, // of the last frame: the pages the cull and the ray cuts asked for, once each
 	pages_loaded:      u32, // the pages it loaded
 	pages_evicted:     u32, // the pages that left their slot to others
-	page_requests_dropped: u32, // the requests past the capacity of the list and the pages that found no slot
+	page_requests_dropped: u32, // the requests that found no entry in the table and the pages that found no slot
 	textures_reduced:  u32, // held without the largest levels the frames sample, to fit the pool
 	textures_pending:  u32, // streamed, whose levels are not yet those the frames sample
 	lights:            u32,

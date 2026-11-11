@@ -22,6 +22,6 @@ void main(uint3 tid:SV_DispatchThreadID) {
     float3 a,b,c;
     uint material;
     mesh_triangle_positions(meshes[job.x],triangle.primitive,a,b,c,material);
-    triangle.v0=a;triangle.e1=float4(b-a,0);triangle.e2=float4(c-a,0);
+    triangle.v0=a;triangle.v1=float4(b,0);triangle.v2=float4(c,0);
     triangles[at]=triangle;
 }

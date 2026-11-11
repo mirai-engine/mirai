@@ -97,6 +97,9 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   packages listed before its own in `ENGINE_PACKAGES`; an optimized build never splits a layer.
 - The project libraries and the engine ones share flags (`engine_flags`: `-custom-attribute` and
   the platform ones); their layouts depend on it.
+- A define is one value for every library of a build: one a `#config` of the engine reads builds
+  the engine apart, a declaration carries the value its `#config` took, and a library is never
+  loaded by engine binaries built with other defines.
 - Every test executable, of `mirai test` and of `build.test`, is built and run by one runner
   (`cook/build/tests.odin`), is current by the content fingerprint of what its build read and
   runs in the engine root: a relative path in a test is relative to the engine.
@@ -153,6 +156,9 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   without waiting for a turn), a change in the body of a procedure (rebuilds only the library of
   its package) and in a worktree from `mirai worktree new` (reports "copied from the shared
   cache").
+- Defines: `a_define_the_engine_reads_builds_what_reads_it_with_one_layout` of `cook/build`; by
+  hand, a project with a define the engine reads builds only the libraries that read it and
+  those that name what it changed, in `<mode>-<hash>`, and building it again compiles nothing.
 - Environment: `mirai doctor` from a worktree without its own `.deps` finds Odin and the
   dependencies of the main checkout.
 - Installed engine: `project/project_test.odin` (told by its manifest) and, in `cook/build`,

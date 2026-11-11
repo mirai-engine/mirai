@@ -14,6 +14,7 @@ import "mirai:host"
 import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/subprocess"
 import "mirai:std/serial"
 
 // What Codex brings of the user's own setup stays out of the agent of the
@@ -364,9 +365,9 @@ ai_tool_call_current :: proc(m:^Ai,task:^Ai_Task) -> (kind,title:string,ok:bool)
 ai_start_client :: proc(s:^Session,worker:^Ai_Worker,provider:Ai_Provider) -> string {
     m:=s.ai;c:=&worker.client;connection:=&m.connections[provider]
     if !connection.installed {return connection.agent==.Command?"The command of the agent was not found":"Download the agent from AI connections first"}
-    if c.process!=0 {
+    if c.process.pid!=0 {
         if worker.provider==provider && c.phase!=.Failed && c.phase!=.Stopping {return ""}
-        if c.phase!=.Stopping {acp.stop(c,s.app.platform)}
+        if c.phase!=.Stopping {acp.stop(c)}
         return "The previous agent is closing; retry shortly"
     }
     if !worker.created {
@@ -403,7 +404,8 @@ ai_start_client :: proc(s:^Session,worker:^Ai_Worker,provider:Ai_Provider) -> st
     // The environment of the user as it is: the agent signs in and configures
     // itself as it always does. Mirai only names the program of the agent
     // and, for the commands it runs, this editor and the agent.
-    environment:=make([dynamic]string,context.temp_allocator)
+    inherited,_:=os.environ(context.temp_allocator)
+    environment:=slice.to_dynamic(inherited,context.temp_allocator)
     if connection.agent==.Codex {
         if !ai_codex_rules_write(s.project_root) {return "The rules that make Codex ask before deleting files could not be written in .codex/rules"}
         if binary:=ai_codex_binary(s);binary!="" {append(&environment,fmt.tprintf("CODEX_PATH=%s",binary))}
@@ -421,7 +423,7 @@ ai_start_client :: proc(s:^Session,worker:^Ai_Worker,provider:Ai_Provider) -> st
     worker.agent=m.agent_serial
     append(&environment,fmt.tprintf("%s=%s%d",api.AI_TASK_VARIABLE,AI_AGENT_TAG,worker.agent),fmt.tprintf("%s=%d",api.PORT_VARIABLE,api_port(s)))
     worker.provider=provider
-    if acp.start(c,s.app.platform,{command=command[:],working_directory=s.project_root,environment=environment[:]},session_titles=connection.agent==.Codex)!=.None {return "The ACP agent could not be started"}
+    if acp.start(c,{command=command[:],working_dir=s.project_root,env=environment[:]},session_titles=connection.agent==.Codex)!=.None {return "The ACP agent could not be started"}
     worker.idle_since=0
     return ""
 }
@@ -601,7 +603,7 @@ ai_acp_event :: proc(user:rawptr,event:acp.Event) {
             // Only an agent added by its command signs in through ACP, with the
             // first method it offers.
             chosen:=len(methods)>0?acp.text(acp.at(methods[0],"id")):""
-            if chosen=="" || acp.authenticate(&worker.client,chosen)!=.None {m.login=false;m.connection_ui.busy=false;base.text_set(m.connection_ui.error[:],"No account sign-in method is available");acp.stop(&worker.client,s.app.platform)}
+            if chosen=="" || acp.authenticate(&worker.client,chosen)!=.None {m.login=false;m.connection_ui.busy=false;base.text_set(m.connection_ui.error[:],"No account sign-in method is available");acp.stop(&worker.client)}
         } else if task!=nil {ai_open_task_session(s,worker,task)}
     case .Authenticated:
         if !login {if task!=nil {ai_open_task_session(s,worker,task)};return}
@@ -609,7 +611,7 @@ ai_acp_event :: proc(user:rawptr,event:acp.Event) {
         m.connections[worker.provider].configured=true
         if !ai_settings_save(s) {m.connections[worker.provider]=previous;base.text_set(m.connection_ui.error[:],"The connection settings could not be saved")}
         m.login=false;m.connection_ui.busy=false;m.connection_ui.screen=.Overview
-        acp.stop(&worker.client,s.app.platform)
+        acp.stop(&worker.client)
     case .Config_Options:ai_model_choices(s,worker.provider,event.value)
     case .Session_Ready:if task!=nil {ai_send_task_prompt(s,worker,task)}
     case .Update:
@@ -658,10 +660,10 @@ ai_acp_event :: proc(user:rawptr,event:acp.Event) {
         if task!=nil {
             ai_task_persist(s,task)
             if said:=base.text_get(task.said[:]);said!="" {ai_task_fail(task,"Connection error: %s. The agent printed: %s",event.text,said)} else {ai_task_fail(task,"Connection error: %s",event.text)}
-            ai_task_end(s,m,task,1);acp.stop(&worker.client,s.app.platform)
+            ai_task_end(s,m,task,1);acp.stop(&worker.client)
         }
         if probe {ai_probe_end(s,event.text)}
-        if login {m.login=false;m.connection_ui.busy=false;base.text_set(m.connection_ui.error[:],event.text);m.connection_ui.screen=.Auth;acp.stop(&worker.client,s.app.platform)}
+        if login {m.login=false;m.connection_ui.busy=false;base.text_set(m.connection_ui.error[:],event.text);m.connection_ui.screen=.Auth;acp.stop(&worker.client)}
     case .Stderr:
         if login || probe {base.text_set(m.connection_ui.log[:],event.text)}
         if task!=nil {ai_said_keep(task,event.text)}
@@ -756,7 +758,7 @@ ai_task_busy :: proc(m:^Ai,id:int) -> bool {
 }
 
 ai_process_running :: proc(m:^Ai) -> bool {
-    for &worker in m.workers {if worker.client.process!=0 {return true}}
+    for &worker in m.workers {if worker.client.process.pid!=0 {return true}}
     return false
 }
 
@@ -764,7 +766,7 @@ ai_workers_stop :: proc(s:^Session,provider:Ai_Provider,all:bool=false) {
     for &worker in s.ai.workers {
         if !all && worker.provider!=provider {continue}
         if task:=ai_task_find(s.ai,worker.task);task!=nil {ai_task_cancel(s,s.ai,task)}
-        if worker.client.process!=0 {acp.stop(&worker.client,s.app.platform)}
+        if worker.client.process.pid!=0 {acp.stop(&worker.client)}
     }
 }
 
@@ -772,15 +774,15 @@ ai_worker_take :: proc(s:^Session,task:^Ai_Task,provider:Ai_Provider) -> ^Ai_Wor
     m:=s.ai
     if task.conversation.kind==.Agent && ai_subagent_workers(m)>=AI_WORKER_CAPACITY-1 {return nil}
     for &worker in m.workers {
-        if worker.task==0 && worker.last_task==task.id && worker.provider==provider && (worker.client.process==0 || worker.client.phase==.Ready) {return &worker}
+        if worker.task==0 && worker.last_task==task.id && worker.provider==provider && (worker.client.process.pid==0 || worker.client.phase==.Ready) {return &worker}
     }
     for &worker in m.workers {
-        if worker.task==0 && worker.client.process==0 {return &worker}
+        if worker.task==0 && worker.client.process.pid==0 {return &worker}
     }
     for &worker in m.workers {
         if worker.task!=0 || worker.client.phase!=.Ready {continue}
         if worker.provider==provider {return &worker}
-        acp.stop(&worker.client,s.app.platform)
+        acp.stop(&worker.client)
     }
     return nil
 }
@@ -799,7 +801,7 @@ ai_task_start :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
     ai_code_begin(s,m,task)
     m.scene_serial+=1
     if message:=ai_start_client(s,worker,provider);message!="" {ai_task_fail(task,"%s",message);ai_task_end(s,m,task,1);return}
-    task.pid=platform.process_id(s.app.platform,worker.client.process)
+    task.pid=worker.client.process.pid
     if worker.client.phase==.Ready || worker.client.phase==.Initialized {ai_open_task_session(s,worker,task)}
     ai_task_dirty(task);ai_task_persist(s,task)
 }
@@ -811,7 +813,7 @@ ai_task_end :: proc(s:^Session,m:^Ai,task:^Ai_Task,exit_code:int) {
         index:=int((uintptr(worker)-uintptr(&m.workers[0]))/size_of(Ai_Worker))
         if exit_code!=0 {
             #partial switch worker.client.phase {
-            case .Initialized,.Opening,.Configuring,.Failed:acp.stop(&worker.client,s.app.platform)
+            case .Initialized,.Opening,.Configuring,.Failed:acp.stop(&worker.client)
             }
         }
         worker.task=0;worker.idle_since=platform.clock_seconds();worker.cancel_deadline=0
@@ -842,10 +844,10 @@ ai_task_poll :: proc(s:^Session,m:^Ai) {
     for &worker in m.workers {
         if !worker.created {continue}
         callback:=Ai_Callback{session=s,worker=&worker}
-        acp.poll(&worker.client,s.app.platform,ai_acp_event,&callback)
+        acp.poll(&worker.client,ai_acp_event,&callback)
         ai_cancel_expire(s,m,&worker,now)
         if task:=ai_task_find(m,worker.task);task!=nil {ai_task_silence(s,task,now)}
-        if worker.task==0 && !(m.login && &worker==&m.workers[0]) && worker.client.process!=0 && worker.client.phase==.Ready && worker.idle_since>0 && now-worker.idle_since>=AI_IDLE_SECONDS {acp.stop(&worker.client,s.app.platform)}
+        if worker.task==0 && !(m.login && &worker==&m.workers[0]) && worker.client.process.pid!=0 && worker.client.phase==.Ready && worker.idle_since>0 && now-worker.idle_since>=AI_IDLE_SECONDS {acp.stop(&worker.client)}
     }
     ai_login_poll(s)
     ai_install_poll(s)
@@ -871,7 +873,7 @@ ai_persist_poll :: proc(s:^Session,m:^Ai,now:f64) {
 }
 
 ai_queue_advance :: proc(s:^Session,m:^Ai) {
-    if m.login || m.probe.active || m.installer!=0 || m.connection_pending.kind!=.None {return}
+    if m.login || m.probe.active || m.installer.pid!=0 || m.connection_pending.kind!=.None {return}
     for &task in m.tasks[:m.task_count] {
         if ai_running_count(m)>=AI_WORKER_CAPACITY {break}
         if task.state==.Queued && ai_task_current(s,&task) {ai_task_start(s,m,&task)}
@@ -889,7 +891,7 @@ ai_task_cancel :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> bool {
         ai_permissions_cancel(m,worker)
         if worker.cancel_deadline==0 {worker.cancel_deadline=platform.clock_seconds()+AI_CANCEL_SECONDS}
     } else {
-        if worker!=nil {acp.stop(&worker.client,s.app.platform)}
+        if worker!=nil {acp.stop(&worker.client)}
         ai_task_end(s,m,task,1)
     }
     return true
@@ -901,8 +903,8 @@ ai_cancel_expire :: proc(s:^Session,m:^Ai,worker:^Ai_Worker,now:f64) -> bool {
     task:=ai_task_find(m,worker.task)
     worker.cancel_deadline=0
     if task==nil || !task.stop {return false}
-    if worker.client.process!=0 {_=platform.process_terminate(s.app.platform,worker.client.process,true)}
-    acp.stop(&worker.client,s.app.platform)
+    _=subprocess.terminate(&worker.client.process,force=true)
+    acp.stop(&worker.client)
     ai_task_end(s,m,task,1)
     return true
 }
@@ -910,7 +912,7 @@ ai_cancel_expire :: proc(s:^Session,m:^Ai,worker:^Ai_Worker,now:f64) -> bool {
 ai_task_retry :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> string {
     if !ai_task_finished(task) || !ai_task_current(s,task) {return "The task is not ready to retry"}
     if ai_task_external(task) {return "The turn of an agent outside the editor is asked again from that agent"}
-    if m.pending || ai_running_count(m)>=AI_WORKER_CAPACITY || m.login || m.installer!=0 {return "Wait for an agent to finish"}
+    if m.pending || ai_running_count(m)>=AI_WORKER_CAPACITY || m.login || m.installer.pid!=0 {return "Wait for an agent to finish"}
     if !task.review_finished {if message:=ai_task_revert(s,m,task);message!="" {return message}}
     prompt,error:=os.read_entire_file(ai_task_path(s,task,AI_FILE_MESSAGE),context.temp_allocator)
     if error!=nil || len(prompt)==0 {return "The original message is unavailable"}
@@ -927,26 +929,25 @@ ai_destroy :: proc(s:^Session) {
     m:=s.ai
     m.closing=true
     m.connection_pending={}
-    if m.login_process!=0 {platform.process_release(s.app.platform,m.login_process);m.login_process=0;m.login=false}
-    if m.installer!=0 {
+    if m.login_process.pid!=0 {subprocess.release(&m.login_process);m.login=false}
+    if m.installer.pid!=0 {
         ai_install_cancel(s)
         until:=platform.clock_seconds()+3
-        for m.installer!=0 && platform.clock_seconds()<until {ai_install_poll(s);if m.installer!=0 {time.sleep(10*time.Millisecond)}}
-        if m.installer!=0 {platform.process_release(s.app.platform,m.installer)}
+        for m.installer.pid!=0 && platform.clock_seconds()<until {ai_install_poll(s);if m.installer.pid!=0 {time.sleep(10*time.Millisecond)}}
+        subprocess.release(&m.installer)
     }
     for &task in m.tasks[:m.task_count] {
         ai_task_persist(s,&task)
         host.app_png_write_wait(s.app,&task.image_write)
         for &write in task.reference_writes {host.app_png_write_wait(s.app,&write)}
     }
-    for &worker in m.workers {if worker.created {acp.stop(&worker.client,s.app.platform)}}
+    for &worker in m.workers {if worker.created {acp.stop(&worker.client)}}
     until:=platform.clock_seconds()+4
     for ai_process_running(m) && platform.clock_seconds()<until {ai_task_poll(s,m);if ai_process_running(m) {time.sleep(10*time.Millisecond)}}
-    for &worker in m.workers {if worker.created {acp.destroy(&worker.client,s.app.platform);worker.created=false};worker.task=0}
+    for &worker in m.workers {if worker.created {acp.destroy(&worker.client);worker.created=false};worker.task=0}
     for &task in m.tasks[:m.task_count] {ai_review_free(&task.review);ai_steers_free(&task)}
     ai_code_free(m)
     delete(m.marks);m.marks=nil
     delete(m.asset_marks);m.asset_marks=nil
     ai_store.close(&m.store)
-    m.installer=0
 }

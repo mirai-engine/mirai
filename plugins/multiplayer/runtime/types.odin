@@ -80,7 +80,7 @@ Replicate :: struct {
 REPLICATE_DEFAULT :: Replicate{priority=1,radius=1}
 
 // What the network knows of an entity it replicates: its object. Only this library writes it.
-@(component)
+@(component,derived)
 Net_Link :: struct {
     object:Object `mirai:"transient,readonly,local"`,
 }
@@ -326,7 +326,7 @@ Net_Identity :: struct {secret:[2]u64}
 // (predict_spawn, predict_kept). The replica the server sends for it takes it;
 // when none does within the history, one the replica would own goes, and one
 // a library keeps loses only this mark. Only the network writes it.
-@(component,description="An entity this client made ahead of its server: the replica the server sends takes it, or it goes.")
+@(component,derived,description="An entity this client made ahead of its server: the replica the server sends takes it, or it goes.")
 Predicted_Spawn :: struct {
     tick:u64 `mirai:"transient,readonly"`,
     kept:bool `mirai:"transient,readonly"`, // the library that made it keeps it: it outlives its replica

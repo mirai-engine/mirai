@@ -132,7 +132,7 @@ run_compiler :: proc(root:string,command:[]string,what:string) -> int {
         kept=min(seen,len(PATTERN)-1)
         copy(window[:kept],window[seen-kept:seen])
     }
-    state,wait_error:=os.process_wait(process)
+    state,wait_error:=subprocess.wait(&process)
     if wait_error!=nil {fmt.eprintfln("mirai: %s: %v",command[0],wait_error);return 127}
     if state.exit_code!=0 && out_of_memory {fmt.eprintln(out_of_memory_text(what))}
     if state.exit_code!=0 && !said && build.compiler_crashed(state.exit_code) && memory>0 {
@@ -144,7 +144,7 @@ run_compiler :: proc(root:string,command:[]string,what:string) -> int {
 run_with :: proc(root:string,command:[]string,stdout:^os.File,limits:=subprocess.Limits{}) -> int {
     process,error:=subprocess.start({working_dir=root,command=command,stdin=os.stdin,stdout=stdout,stderr=os.stderr},limits)
     if error!=nil {fmt.eprintfln("mirai: could not run %s: %v",command[0],error);return 127}
-    state,wait_error:=os.process_wait(process)
+    state,wait_error:=subprocess.wait(&process)
     if wait_error!=nil {fmt.eprintfln("mirai: %s: %v",command[0],wait_error);return 127}
     return state.exit_code
 }
