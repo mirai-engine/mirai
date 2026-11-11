@@ -2076,9 +2076,10 @@ agents_step_aside_from_those_they_meet_within_the_horizon :: proc(t:^testing.T) 
 }
 
 // The neighbors an agent gathers from the grid are, among those it may meet
-// within the horizon, the nearest ones ORCA counts: the same as a look at
-// every other agent finds, in a crowd, far apart, on two floors, in the air,
-// beside an obstacle and with positions that are not numbers or are huge.
+// within the horizon at their real velocities, the nearest ones ORCA counts:
+// the same as a look at every other agent finds, in a crowd, far apart, on two
+// floors, in the air, beside an obstacle and with positions that are not
+// numbers or are huge.
 @(test)
 agents_gather_the_nearest_neighbors_they_may_meet :: proc(t:^testing.T) {
     f:Nav_Test
@@ -2116,7 +2117,7 @@ agents_gather_the_nearest_neighbors_they_may_meet :: proc(t:^testing.T) {
         agents_avoid(&f.nav,&f.run,&f.paths,1.0/60,&f.problems)
         fastest,widest:f32
         for near in f.run.near {
-            if near.avoids {fastest=max(fastest,linalg.length(near.velocity))}
+            fastest=max(fastest,linalg.length(near.velocity))
             widest=max(widest,near_sphere(near))
         }
         for near,i in f.run.near {
@@ -2126,12 +2127,15 @@ agents_gather_the_nearest_neighbors_they_may_meet :: proc(t:^testing.T) {
             gathered,every:[dynamic]f32
             defer delete(gathered)
             defer delete(every)
-            for other in f.run.neighbors {append(&gathered,linalg.length2(other.position-near.position.xz))}
+            for other in f.run.neighbors {
+                append(&gathered,linalg.length2(other.position-near.position.xz))
+                // The obstacle, which does not step aside, comes with its real velocity.
+                if other.radius==1.5 {testing.expectf(t,other.velocity==[2]f32{5,0} && other.ignores,"%v: the obstacle is met at %v, ignoring %v",c,other.velocity,other.ignores)}
+            }
             for other in f.run.neighbors_air {append(&gathered,linalg.length2(other.position-near.position))}
             for other,j in f.run.near {
                 if j==i {continue}
-                velocity:=other.velocity if other.avoids else {}
-                reach:=NAV_AGENT_HORIZON*(top+linalg.length(velocity))
+                reach:=NAV_AGENT_HORIZON*(top+linalg.length(other.velocity))
                 distance2:f32
                 if near.flies {
                     reach+=near_sphere(near)+near_sphere(other)

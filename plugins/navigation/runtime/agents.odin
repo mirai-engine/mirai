@@ -1036,15 +1036,20 @@ agents_avoid :: proc(n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Pa
     spatial.grid_clear(&a.grid)
     // The fastest and the widest: farther than those close within the horizon, nobody shapes a velocity.
     fastest,widest:f32
-    for near,i in a.near {
+    for &near,i in a.near {
         spatial.grid_insert(&a.grid,ground_box(near.position,0),u64(i))
-        if near.avoids {fastest=max(fastest,linalg.length(near.velocity))}
+        // Only those that step aside in this tick share the change: one idle or crossing a link does not.
+        if near.avoids {
+            p,_:=core.get(paths,near.entity)
+            near.avoids=agent_goes(p) && p.state!=.Crossing
+        }
+        fastest=max(fastest,linalg.length(near.velocity))
         widest=max(widest,near_sphere(near))
     }
     for near,i in a.near {
         if !near.avoids {continue}
         p:=core.edit(paths,near.entity)
-        if p==nil || !agent_goes(p^) || p.state==.Crossing {continue}
+        if p==nil {continue}
         speed:=linalg.length(p.velocity)
         // Farther than both can close within the horizon, a neighbor shapes no velocity it may choose.
         top:=max(speed,linalg.length(near.velocity))
@@ -1092,9 +1097,8 @@ agent_neighbors :: proc(a:^Navigation_Agents,i:int,top,wanted:f32) {
             if !ok {break}
             if int(index)==i {continue}
             other:=a.near[index]
-            velocity:=other.avoids?other.velocity:{}
             to:=other.position-near.position
-            reach:=NAV_AGENT_HORIZON*(top+linalg.length(velocity))
+            reach:=NAV_AGENT_HORIZON*(top+linalg.length(other.velocity))
             if near.flies {
                 reach+=near_sphere(near)+near_sphere(other)
             } else {
@@ -1106,9 +1110,9 @@ agent_neighbors :: proc(a:^Navigation_Agents,i:int,top,wanted:f32) {
             if distance2>reach*reach {continue}
             if distance2<=held*held {within+=1}
             if near.flies {
-                append(&a.neighbors_air,ai.Avoid_Agent(3){position=other.position,velocity=velocity,radius=near_sphere(other)})
+                append(&a.neighbors_air,ai.Avoid_Agent(3){position=other.position,velocity=other.velocity,radius=near_sphere(other),ignores=!other.avoids})
             } else {
-                append(&a.neighbors,ai.Avoid_Agent(2){position=other.position.xz,velocity=velocity.xz,radius=other.radius})
+                append(&a.neighbors,ai.Avoid_Agent(2){position=other.position.xz,velocity=other.velocity.xz,radius=other.radius,ignores=!other.avoids})
             }
         }
         if held>=far || within>=ai.AVOID_MAX_NEIGHBORS {return}

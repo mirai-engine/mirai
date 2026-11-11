@@ -499,22 +499,22 @@ hostile_neighbors_through_the_avoidance :: proc(t:^testing.T) {
     for round in 0..<HOSTILE_ROUNDS {
         clear(&neighbors)
         wild:=round%3==0
-        for _ in 0..<base.hostile_int(&h,40) {append(&neighbors,Avoid_Agent(2){hostile_vec2(&h,wild),hostile_vec2(&h,wild),wild?base.hostile_f32(&h):f32(base.hostile_int(&h,20))/10})}
+        for _ in 0..<base.hostile_int(&h,40) {append(&neighbors,Avoid_Agent(2){hostile_vec2(&h,wild),hostile_vec2(&h,wild),wild?base.hostile_f32(&h):f32(base.hostile_int(&h,20))/10,base.hostile_int(&h,2)==1})}
         if base.hostile_int(&h,4)==0 && len(neighbors)>0 {
             for &n in neighbors {n.position=neighbors[0].position}
         }
-        self:=Avoid_Agent(2){hostile_vec2(&h,wild),hostile_vec2(&h,wild),wild?base.hostile_f32(&h):f32(base.hostile_int(&h,20))/10}
+        self:=Avoid_Agent(2){hostile_vec2(&h,wild),hostile_vec2(&h,wild),wild?base.hostile_f32(&h):f32(base.hostile_int(&h,20))/10,false}
         _=avoid_velocity(self,hostile_vec2(&h,wild),base.hostile_f32(&h),neighbors[:],base.hostile_f32(&h),base.hostile_f32(&h))
         speed:=f32(1+base.hostile_int(&h,5))
         walked:=avoid_velocity(self,hostile_vec2(&h,false),speed,neighbors[:],f32(1+base.hostile_int(&h,5)),0.1)
         // Among neighbors of numbers, the velocity is one, and no faster than the agent goes.
         testing.expectf(t,wild || (walked-walked=={} && linalg.length(walked)<=speed*1.001+1e-4),"An agent among %d neighbors walks at %v, faster than %v",len(neighbors),walked,speed)
         clear(&flying)
-        for _ in 0..<base.hostile_int(&h,40) {append(&flying,Avoid_Agent(3){hostile_vec3(&h,wild),hostile_vec3(&h,wild),wild?base.hostile_f32(&h):f32(base.hostile_int(&h,20))/10})}
+        for _ in 0..<base.hostile_int(&h,40) {append(&flying,Avoid_Agent(3){hostile_vec3(&h,wild),hostile_vec3(&h,wild),wild?base.hostile_f32(&h):f32(base.hostile_int(&h,20))/10,base.hostile_int(&h,2)==1})}
         if base.hostile_int(&h,4)==0 && len(flying)>0 {
             for &n in flying {n.position=flying[0].position}
         }
-        bird:=Avoid_Agent(3){hostile_vec3(&h,wild),hostile_vec3(&h,wild),wild?base.hostile_f32(&h):f32(base.hostile_int(&h,20))/10}
+        bird:=Avoid_Agent(3){hostile_vec3(&h,wild),hostile_vec3(&h,wild),wild?base.hostile_f32(&h):f32(base.hostile_int(&h,20))/10,false}
         _=avoid_velocity(bird,hostile_vec3(&h,wild),base.hostile_f32(&h),flying[:],base.hostile_f32(&h),base.hostile_f32(&h))
         speed=f32(1+base.hostile_int(&h,5))
         flown:=avoid_velocity(bird,hostile_vec3(&h,false),speed,flying[:],f32(1+base.hostile_int(&h,5)),0.1)

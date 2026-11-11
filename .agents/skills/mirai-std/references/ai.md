@@ -273,10 +273,10 @@ It is a rewrite in Odin of Recast and of the tile closing of Detour
 ## Avoidance between agents (`avoidance.odin`)
 
 - `avoid_velocity(self, preferred, max_speed, neighbors, horizon, dt, walls, wall_horizon)`
-  applies ORCA, with `neighbors []Avoid_Agent(N){position, velocity, radius}`: a single code for N=2
-  (disks on the plane) and N=3 (spheres in a volume). Each neighbor forbids a half-space of
-  velocities that would bring the two together before `horizon` seconds, and each agent takes half
-  of the change.
+  applies ORCA, with `neighbors []Avoid_Agent(N)`: a single code for N=2 (disks on the plane) and
+  N=3 (spheres in a volume). Each neighbor forbids a half-space of velocities that would bring the
+  two together before `horizon` seconds, and each agent takes half of the change; toward one that
+  `ignores` it (it does not step aside: a player, a moving body), all of it, at its real velocity.
 - **Walls come first.** On the plane, each `Avoid_Wall` (a segment, walked on the side to its
   right) forbids the velocities that cross it before `wall_horizon` seconds, as the edges of the
   obstacles of RVO2 do. An agent on a wall may not move into it; at the corner of two walls that
@@ -287,7 +287,6 @@ It is a rewrite in Odin of Recast and of the tile closing of Detour
   none remains, the one that violates the neighbors least: the walls stay as they are.
 - Agents that already overlap are separated in one step `dt`.
 - Only the `AVOID_MAX_NEIGHBORS` nearest neighbors and the first `AVOID_MAX_WALLS` walls count.
-- A neighbor that does not avoid receives only half of the space: block it in the navmesh.
 - Whoever moves the agent moves it at the velocity returned, speed included: a faster body is not
   where the others, and the walls, were told it would be.
 
