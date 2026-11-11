@@ -76,9 +76,10 @@ game_score :: proc(events:core.Ref(Hit_Events),score:^Score) {
 Readers take `core.Ref(Events)` (or `Events` by value) and find in `items` what came since they
 last ran: each event reaches each function once, in `fixed`, `frame` or `late`, with any number of
 ticks in a frame. In the stage of the owner a reader runs after it; one that runs before it gets
-the event in its next run. Engine events:
-`phys.Physics_Events` (contacts, overlaps, sleep), `anim.Animation_Events`,
-`destruct.Destruct_Events`, `save.Save_Results` and `scene.Scene_Results`.
+the event in its next run. Engine events: `gui.UI_Events`, `phys.Physics_Events` (contacts,
+overlaps, sleep), `anim.Animation_Events`, `destruct.Destruct_Events`, `save.Save_Results`,
+`scene.Scene_Results` and `multiplayer.Net_Connections`. Code outside the loops keeps a cursor and
+asks `core.log_since(events.landed.log, &cursor)`.
 
 ## Objects with a state
 

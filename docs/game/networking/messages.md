@@ -38,7 +38,8 @@ votes :: proc(votes:core.Inbox(Vote)) {
 
 ## Arrivals
 
-`multiplayer.Net_Connections` lists, at the start of each tick, who connected, left or entered.
+`multiplayer.Net_Connections` is a `core.Events` of who connected, left or entered, pushed at the
+start of each tick: a function that receives it gets each event once, whatever its cadence.
 `Entered` is when a connection is in the world; messages sent to it before are not heard.
 
 ```odin

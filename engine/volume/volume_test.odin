@@ -350,6 +350,19 @@ a_spline_samples_only_valid_points_and_lies_on_the_ground :: proc(t:^testing.T) 
         s:=c.spline
         out:[32]mm.Path_Point
         testing.expectf(t,(spline_sample(&s,1,out[:])>0)==c.samples,"%s",c.name)
+        _,reaches:=spline_reach(&s,{scale={1,1,1},rotation=mm.QUAT_IDENTITY})
+        testing.expectf(t,reaches==c.samples,"%s: its reach",c.name)
+    }
+    // Its reach holds every sample of its curve with its width, at any height.
+    curve:=Spline{count=4,points={0={{0,0,0},2,0},1={{6,0,-4},1,0},2={{0,0,-8},1,0},3={{6,0,-12},4,0}}}
+    turned:=mm.Transform{{10,-3,5},mm.quat_axis_angle({0,1,0},0.7),{2,1,2}}
+    reach,_:=spline_reach(&curve,turned)
+    out:[256]mm.Path_Point
+    for p in out[:spline_sample(&curve,0.05,out[:])] {
+        for side in ([2]f32{-0.5,0.5}) {
+            at:=mm.transform_point(turned,p.position+{p.width*side,0,0})
+            testing.expectf(t,mm.aabb_contains_point(reach,at+{0,1e6,0}) && mm.aabb_contains_point(reach,at-{0,1e6,0}),"%v is out of %v",at,reach)
+        }
     }
     place:=mm.Transform{{1,2,3},mm.QUAT_IDENTITY,{1,1,1}}
     testing.expect_value(t,spline_lay({},place,{0,5,0},0.5),[3]f32{1,7.5,3})

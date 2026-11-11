@@ -274,8 +274,8 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
   copy, each with its width and its height as depth, level across, ending at its ends. Density,
   current (in the frame of the box, or of the path: -Z along it toward its end) and priority. The
   integration makes a `Fluid` with a `volume.Spline` on its entity a path: it samples the spline
-  and lays it on the ground with the procedures of the `Spline`, and does it again when the spline,
-  its place or the revision of the ground changes.
+  and lays it on the ground with the procedures of the `Spline`, and does it again when the spline
+  or its place changes, or when a box of `core.Ground_Queries.changed` overlaps its reach.
   - With zero density it is a dry box: it removes the lowest-priority fluid where it is (a base
     under the sea). Flooding a room is raising the floor of its air with `fluid_set`.
   - A fluid does not overlap another one, nor a dry box another dry box; where they would, the one
