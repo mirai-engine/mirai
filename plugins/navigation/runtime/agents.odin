@@ -245,8 +245,9 @@ class_of :: proc "contextless" (n:^Navigation,character:phys.Character,collider:
 }
 
 // What an agent can cross: its jump from its Walk (how high, and how far in
-// the time in the air at its speed), its drop and abilities from Nav_Agent.
-agent_can :: proc "contextless" (n:^Navigation,class:int,agent:Nav_Agent,walk:Walk_Like,gravity:f32) -> ai.Nav_Need {
+// the time in the air at its speed, under the gravity it falls by), its drop
+// and abilities from Nav_Agent.
+agent_can :: proc "contextless" (n:^Navigation,class:int,agent:Nav_Agent,walk:locomotion.Walk,gravity:f32) -> ai.Nav_Need {
     c:=n.classes[class].class
     can:=ai.Nav_Need{down=agent.drop if agent.drop>0 else c.drop,abilities=u32(agent.abilities)}
     if walk.jump_height>0 && gravity>0 {
@@ -255,7 +256,11 @@ agent_can :: proc "contextless" (n:^Navigation,class:int,agent:Nav_Agent,walk:Wa
     }
     return can
 }
-Walk_Like :: struct {jump_height,max_speed:f32}
+
+// The gravity a character falls by: that of its place times its gravity_scale.
+agent_gravity :: proc(physics:core.Ref(phys.Physics_State),e:core.Entity,character:phys.Character) -> f32 {
+    return linalg.length(phys.gravity_of_entity(physics,e))*character.gravity_scale
+}
 
 // The areas an agent never walks: its own, and the deep ground under the water when it cannot swim.
 agent_avoids :: proc "contextless" (agent:Nav_Agent,swims:bool) -> Nav_Areas {
@@ -263,7 +268,7 @@ agent_avoids :: proc "contextless" (agent:Nav_Agent,swims:bool) -> Nav_Areas {
 }
 
 // What an agent of a class walks and crosses, as navigation moves it; swims: it has a Swim.
-agent_filter :: proc "contextless" (n:^Navigation,class:int,agent:Nav_Agent,walk:Walk_Like,swims:bool,gravity:f32) -> ai.Nav_Filter {
+agent_filter :: proc "contextless" (n:^Navigation,class:int,agent:Nav_Agent,walk:locomotion.Walk,swims:bool,gravity:f32) -> ai.Nav_Filter {
     return filter_make(&n.settings,agent_avoids(agent,swims),agent_can(n,class,agent,walk,gravity))
 }
 
@@ -399,10 +404,9 @@ navigation_agents :: proc(
             p.time+=time.dt
             if p.time>=NAV_REPLAN_FOLLOW*4 {p.time,p.state,p.stuck=0,.Waiting,0}
         }
-        walk_row,_:=core.get(walks,e)
-        walk:=Walk_Like{walk_row.jump_height,walk_row.max_speed}
+        walk,_:=core.get(walks,e)
         // Each agent jumps under the gravity of its place: a planet, a room without it.
-        filter:=agent_filter(n.ptr,class,agent,walk,can_swim,linalg.length(phys.gravity_of_entity(physics,e)))
+        filter:=agent_filter(n.ptr,class,agent,walk,can_swim,agent_gravity(physics,e,character))
         if p.target!=core.NONE && (p.state==.Moving || p.state==.Arrived) {
             p.time+=time.dt
             if to,ok:=core.get(worlds,p.target);ok {
@@ -435,7 +439,7 @@ navigation_agents :: proc(
             if p.medium {
                 p.time+=time.dt
                 speed:=swim.speed if swims else (fly.speed if flies else 0)
-                if !flies && !swims {walk_row,_:=core.get(walks,e);speed=walk_row.max_speed}
+                if !flies && !swims {speed=walk.max_speed}
                 here:=center if flies || swims else pose.position
                 // Up in the air where the take-off leads, clear of the ground, it plans the rest.
                 if p.kind==LINK_FLY && flies && linalg.length(p.to-here)<=max(agent_reach(agent,p),0.5) {
@@ -447,7 +451,7 @@ navigation_agents :: proc(
             } else if !p.manual {
                 p.time+=time.dt
                 ground,_:=core.get(grounds,e)
-                agent_crossing(n.ptr,p,e,pose.position,ground,linalg.length(phys.gravity_of_entity(physics,e)),events,loco)
+                agent_crossing(n.ptr,p,e,pose.position,ground,agent_gravity(physics,e,character),events,loco)
             }
         }
     }
@@ -498,7 +502,7 @@ agent_goes :: #force_inline proc "contextless" (p:Nav_Path) -> bool {
 // its path is searched (Waiting) it walks on along the corridor it has, up to
 // its end or its next link.
 @(private)
-agent_follow :: proc(n:^Navigation,p:^Nav_Path,e:core.Entity,agent:Nav_Agent,position:mm.Vec3,mesh:^ai.Nav_Mesh,filter:^ai.Nav_Filter,walk:Walk_Like,dt:f32,events:^Nav_Events,loco:^locomotion.Locomotion_Requests,problems:^core.Problems) {
+agent_follow :: proc(n:^Navigation,p:^Nav_Path,e:core.Entity,agent:Nav_Agent,position:mm.Vec3,mesh:^ai.Nav_Mesh,filter:^ai.Nav_Filter,walk:locomotion.Walk,dt:f32,events:^Nav_Events,loco:^locomotion.Locomotion_Requests,problems:^core.Problems) {
     asked:=linalg.length(p.velocity) // in the last tick, after stepping aside
     p.velocity={}
     class:=n.classes[p.class].class
@@ -732,8 +736,9 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
                 continue
             }
             mesh:=&n.classes[p.class].mesh
-            walk_row,_:=core.get(walks,e)
-            filter:=agent_filter(n,int(p.class),agent,{walk_row.jump_height,walk_row.max_speed},core.has(swims,e),linalg.length(phys.gravity_of_entity(physics,e)))
+            walk,_:=core.get(walks,e)
+            character,_:=core.get(characters,e)
+            filter:=agent_filter(n,int(p.class),agent,walk,core.has(swims,e),agent_gravity(physics,e,character))
             extents:=mm.Vec3{class.radius*2+0.5,class.height,class.radius*2+0.5}
             // Toward a section away, only as far as the portal its way enters by.
             goal:=p.goal
@@ -945,8 +950,9 @@ agent_medium_begin_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigati
     mesh_class,volume_class:=int(p.partner) if in_volume else int(p.class),int(p.class) if in_volume else int(p.partner)
     mesh:=&n.classes[mesh_class].mesh
     volume:=&n.classes[volume_class].volume
-    walk_row,_:=core.get(walks,e)
-    filter:=agent_filter(n,mesh_class,agent,{walk_row.jump_height,walk_row.max_speed},core.has(swims,e),linalg.length(phys.gravity_of_entity(physics,e)))
+    walk,_:=core.get(walks,e)
+    character,_:=core.get(characters,e)
+    filter:=agent_filter(n,mesh_class,agent,walk,core.has(swims,e),agent_gravity(physics,e,character))
     // Under the water it swims, through the volume: the ground there is not walked.
     if n.classes[volume_class].class.space==.Water {filter.excluded|=u64(1)<<u64(AREA_WATER)}
     own:=n.classes[p.class].class
@@ -1219,7 +1225,7 @@ navigation_crossing :: proc(
         traction:=character.traction_force
         switch p.kind {
         case LINK_JUMP,LINK_DROP:
-            velocity,_,_:=jump_launch(pose.position if p.time==0 else p.from,p.to,p.kind,linalg.length(phys.gravity_of_entity(physics,e))*character.gravity_scale)
+            velocity,_,_:=jump_launch(pose.position if p.time==0 else p.from,p.to,p.kind,agent_gravity(physics,e,character))
             flat:=mm.Vec3{velocity.x,0,velocity.z}
             if p.time==0 {
                 next.value.launch=velocity-motion.linear

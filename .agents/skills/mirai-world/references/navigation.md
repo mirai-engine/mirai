@@ -138,8 +138,8 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   `AREA_WATER` area: an agent without `Swim` does not step on it; one that swims crosses it, and
   swims there.
 - What it crosses comes from its components: jump height from `Walk.jump_height`, width from
-  `Walk.max_speed` times the time in the air, drop from `Nav_Agent.drop` (or its class's) and its
-  abilities.
+  `Walk.max_speed` times the time in the air under the gravity it falls by (that of its place times
+  `Character.gravity_scale`), drop from `Nav_Agent.drop` (or its class's) and its abilities.
 - It is asked through `Nav_Requests`: `nav_move_to`, `nav_follow`, `nav_stop`, `nav_look_at`,
   `nav_look_along`, `nav_crossing_done`. `Nav_Path`, which navigation adds and only navigation
   writes, says what it is doing; `Nav_Events` reports arrivals, failures and crossings.

@@ -541,6 +541,23 @@ links_are_generated_between_roofs_for_what_the_class_can_do :: proc(t:^testing.T
     // One that cannot jump stays on its roof.
     _,status=nav_test_path(t,&f,{-5,0,0},{5,1,0},{})
     testing.expect_value(t,status,ai.Search_Status.No_Path)
+    // An agent jumps as far as its gravity lets it: under four times the gravity
+    // (Character.gravity_scale) the gap is too wide, and it stays on its roof.
+    for scale in ([?]f32{1,4}) {
+        e:=agents_test_walker(&f,{-5,0,0})
+        nav_test_settle(&f)
+        core.edit(&f.characters,e).gravity_scale=scale
+        nav_move_to(&f.nav_requests,e,{5,1,0})
+        arrived,_,crossed,_:=agents_test_travel(&f,e,8)
+        pose,_:=core.get(&f.worlds,e)
+        if scale==1 {
+            testing.expectf(t,arrived && len(crossed)==1 && crossed[0]==LINK_JUMP,"it arrives %v by the links %v",arrived,crossed)
+        } else {
+            p,_:=core.get(&f.paths,e)
+            testing.expectf(t,!arrived && p.state==.Arrived && p.partial && pose.position.x<0 && pose.position.y>-0.5,"it is %v at %v",p.state,pose.position)
+        }
+        core.destroy(&f.entities,e)
+    }
     // A wall between the roofs closes the arc: the links go.
     nav_test_box(&f,{0,0,0},{0.25,6,6})
     nav_test_settled(t,&f)
