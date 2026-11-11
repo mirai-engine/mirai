@@ -110,14 +110,14 @@ an_entity_map_drops_what_left_its_table_from_the_changes :: proc(t:^testing.T) {
     testing.expect(t,!c.all && len(c.gone)==4)
     left:[dynamic]Entity;defer delete(left)
     at,value:=0,0
-    for e in entity_map_left(&m,read(&table),c,&at,&value) {
+    for e in entity_map_left(&m,&table,c,&at,&value) {
         testing.expect(t,entity_index(e)==value+1)
         append(&left,e)
     }
     // The settle writes what was asked first and the destroyed after.
     testing.expect(t,len(left)==3 && left[0]==removed && left[1]==off && left[2]==destroyed)
     testing.expect(t,len(m.values)==2 && entity_map_get(&m,back)^==3 && entity_map_get(&m,kept)^==4)
-    testing.expect_value(t,entity_map_prune(&m,read(&table),changes(&table,&seen)),0)
+    testing.expect_value(t,entity_map_prune(&m,&table,changes(&table,&seen)),0)
 
     // A table the reader did not see: every value without a row on goes.
     lost:=[3]Entity{create(&es),create(&es),create(&es)}
@@ -129,7 +129,7 @@ an_entity_map_drops_what_left_its_table_from_the_changes :: proc(t:^testing.T) {
     settle(&table,&es)
     c=changes(&table,&seen)
     testing.expect(t,c.all)
-    testing.expect_value(t,entity_map_prune(&m,read(&table),c),3)
+    testing.expect_value(t,entity_map_prune(&m,&table,c),3)
     testing.expect(t,len(m.values)==2 && entity_map_get(&m,back)^==3 && entity_map_get(&m,kept)^==4)
     for e in lost {testing.expect(t,entity_map_get(&m,e)==nil)}
 }

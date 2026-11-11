@@ -15,7 +15,7 @@ with `players` off is for what the game spawns, such as enemies
 
 ```odin
 @(step="fixed",server)
-give_bodies :: proc(seats:core.Read(inp.Seat),requests:^spawn.Spawn_Requests) {
+give_bodies :: proc(seats:^core.Table(inp.Seat,.Read),requests:^spawn.Spawn_Requests) {
     for row in 0..<core.count(seats) {
         seat:=core.entity_at(seats,row)
         if core.at(seats,row).body==core.NONE {spawn.spawn(requests,seat,PLAYER_PREFAB)}
