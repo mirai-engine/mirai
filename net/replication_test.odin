@@ -107,6 +107,63 @@ descriptors_pick_a_serializer_per_field_and_round_trip_whole_and_as_deltas :: pr
     }
 }
 
+// An array of bytes is one field of its bytes: whole it round trips, its delta
+// carries the run of bytes that changed, and lengths past the array do not parse.
+@(test)
+an_array_of_bytes_is_one_field_whose_delta_carries_the_bytes_that_changed :: proc(t:^testing.T) {
+    Blob :: struct {data:[256]u8}
+    schema:serial.Schema;serial.schema_init(&schema);defer serial.schema_destroy(&schema)
+    index,_:=serial.schema_add(&schema,Blob)
+    p:Protocol;protocol_init(&p);defer protocol_destroy(&p)
+    id,ok:=type_register(&p,"Blob",{{schema=&schema,type=index}})
+    if !testing.expect(t,ok) {return}
+    type:=&p.types[id]
+    testing.expect(t,type.leaf_count==1 && type.bit_count==1 && type.words==64,"one field of 64 words")
+    bits:=int(type.leaves[0].bits)
+    before:Blob
+    for &b,i in before.data {b=u8(i*7+1)}
+    after:=before
+    after.data[100],after.data[101],after.data[103]=0,0xff,9
+    old,new:[64]u32
+    fragment_quantize(&p,type,0,&before,old[:],nil,nil)
+    fragment_quantize(&p,type,0,&after,new[:],nil,nil)
+    buffer:[MAX_STATE_BYTES]u8
+    for against,pass in ([2][]u32{nil,old[:]}) {
+        w:serial.Bit_Writer;serial.bit_writer_init(&w,buffer[:])
+        state_write(&w,type,type.all,new[:],against)
+        written:=serial.bit_writer_bits(&w)
+        if pass==1 {testing.expectf(t,written==1+2*bits+4*8,"the delta carries the four bytes from the first to the last that changed: %d bits",written)}
+        r:serial.Bit_Reader;serial.bit_reader_init(&r,serial.bit_writer_flush(&w),written)
+        got:[64]u32
+        out:Blob
+        testing.expect(t,state_read(&r,type,type.all,got[:],against) && got==new)
+        fragment_dequantize(&p,type,0,got[:],type.all,&out,nil,nil)
+        testing.expect(t,out==after,"the bytes arrive whole and equal")
+    }
+    hostile:=[?]struct{delta:bool,first,end:u64}{{false,0,257},{true,10,5},{true,300,300},{false,0,u64(1)<<uint(bits)-1}}
+    for c in hostile {
+        w:serial.Bit_Writer;serial.bit_writer_init(&w,buffer[:])
+        if c.delta {serial.bit_write_bool(&w,false);serial.bit_write(&w,c.first,bits)}
+        serial.bit_write(&w,c.end,bits)
+        serial.bit_write_bytes(&w,buffer[:300])
+        r:serial.Bit_Reader;serial.bit_reader_init(&r,serial.bit_writer_flush(&w),serial.bit_writer_bits(&w))
+        got:[64]u32
+        testing.expectf(t,!state_read(&r,type,type.all,got[:],c.delta?old[:]:nil),"a run of %d..%d does not parse",c.first,c.end)
+    }
+    state:=u64(9)
+    junk:[400]u8
+    for round in 0..<2000 {
+        size:=int(base.splitmix_next(&state)%u64(len(junk)))
+        for &b in junk[:size] {b=u8(base.splitmix_next(&state))}
+        r:serial.Bit_Reader;serial.bit_reader_init(&r,junk[:size])
+        got:[64]u32
+        if state_read(&r,type,type.all,got[:],round%2==0?nil:old[:]) {
+            out:Blob
+            fragment_dequantize(&p,type,0,got[:],type.all,&out,nil,nil)
+        }
+    }
+}
+
 @(test)
 protocols_reject_what_they_cannot_replicate_and_hash_every_choice :: proc(t:^testing.T) {
     Wide :: struct {values:[300]u64}
@@ -503,7 +560,7 @@ an_object_retyped_keeps_its_replica_and_takes_the_fragments_of_its_new_type :: p
 // not reliable is refused as it registers. Event bytes that do not parse are
 // refused, at every length, without crashing the host nor reaching the game.
 @(test)
-a_reliable_event_of_4_kb_arrives_whole_and_hostile_event_bytes_are_refused :: proc(t:^testing.T) {
+a_reliable_event_of_6_kb_with_4_kb_of_bytes_arrives_whole_and_hostile_event_bytes_are_refused :: proc(t:^testing.T) {
     {
         schema:serial.Schema;serial.schema_init(&schema);defer serial.schema_destroy(&schema)
         big,_:=serial.schema_add(&schema,Test_Big)
@@ -516,6 +573,7 @@ a_reliable_event_of_4_kb_arrives_whole_and_hostile_event_bytes_are_refused :: pr
     sim_endpoint_conditions(&s.w.sim,1,{loss=0.2})
     value:Test_Big
     for &v,i in value.values {v=u32(i*2654435761)}
+    for &b,i in value.bytes {b=u8(i*31+i/256)}
     value.count=len(value.values)
     testing.expect_value(t,event_send(s.clients[0],s.tp.big,0,&value),Error.None)
     arrived:=0

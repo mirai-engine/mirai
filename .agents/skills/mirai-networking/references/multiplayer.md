@@ -713,11 +713,10 @@ and the others interpolate it. The server puts what arrives in `core.Pose_Target
 
 - `Net_Connections.events` brings `Connected`/`Disconnected` with the connection and the reason,
   and on the server `Entered` when a connection enters its world (on arriving and after each scene
-  change): from then on what the game sends reaches it. `fixed` functions read it directly: at the
-  start of each tick the network leaves there what happened since the previous one, and in
-  `core.Net_Messages` the messages that arrived. A frame without
-  ticks keeps it for the next and of a frame with several only the first has it; a tick that
-  repeats has the ones it had.
+  change): from then on what the game sends reaches it. It is a `core.Events`: at the start of each
+  tick the network pushes what happened since the previous one, and each reader gets it once. In
+  `core.Net_Messages` are the messages that arrived: a frame without ticks keeps them for the next
+  and of a frame with several only the first has them; a tick that repeats has the ones it had.
 - The identity of a player between one connection and the next is that of its seat
   ([players](#authority-and-players)).
 
@@ -852,7 +851,8 @@ one set by whoever tests those functions by hand).
   `a_client_without_the_scene_of_its_server_leaves_saying_so`,
   `a_client_follows_the_pause_and_the_time_scale_of_its_server` and
   `the_connections_and_the_messages_that_arrive_reach_the_first_tick_after_them`; a typed message
-  of 4 KB: `a_typed_message_of_4_kb_reaches_the_inbox_of_its_type_whole`. Sections:
+  with 4 KB of bytes:
+  `a_typed_message_of_6_kb_with_4_kb_of_bytes_reaches_the_inbox_of_its_type_whole`. Sections:
   `what_is_in_a_section_reaches_a_client_while_it_has_the_section_loaded`,
   `a_replica_of_a_section_that_is_not_loaded_waits_for_it`,
   `what_is_in_sections_that_overlap_reaches_a_client_that_has_either` and

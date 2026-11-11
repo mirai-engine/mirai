@@ -1,5 +1,6 @@
 package editor
 
+import "core:os"
 import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
@@ -41,7 +42,7 @@ placement_subject :: proc(d:Drag) -> bool {
     return d.kind==.Preset || d.kind==.Asset && (d.asset_kind==asset.KIND_MESH || d.asset_kind==asset.KIND_SCENE || placement_sound(d))
 }
 
-// A .sound or a .sound_set placed in the scene makes an entity of the Sound preset that plays it.
+// A .sound or a .sound_set placed in the scene makes an entity of the sound recipe that plays it.
 @(private)
 placement_sound :: proc(d:Drag) -> bool {
     return d.kind==.Asset && (d.asset_kind==asset.KIND_SOUND || d.asset_kind==asset.KIND_SOUND_SET)
@@ -71,24 +72,15 @@ placement_prepare :: proc(s:^Session,d:Drag) -> ^Placement_Preview {
     p.key=key
     clear(&p.parts)
     p.low,p.high,p.measured={},{},false
-    part:=Placement_Part{tint=erender.TINT_DEFAULT,transform=mm.TRANSFORM_IDENTITY}
-    if d.kind==.Preset {
-        card:=cards(s)[d.card]
-        part.mesh.shape=card.body
-        if card.scale!={} {part.transform.scale=card.scale}
-        if part.mesh.shape!=.None {placement_measure(s,p,part)}
-    } else if d.asset_kind==asset.KIND_MESH {
-        part.mesh.mesh=d.asset_id
-        placement_measure(s,p,part)
-    } else if d.asset_kind==asset.KIND_SCENE {
-        file:=host.assets_scene(a,d.asset_id)
-        if file==nil {return p}
+    // What a scene draws, its root where it is placed.
+    measure :: proc(s:^Session,p:^Placement_Preview,file:^asset.Asset) {
+        a:=s.app.assets
         data:=host.app_world_create(s.app)
-        if data==nil {return p}
+        if data==nil {return}
         defer host.app_world_free(s.app,data)
         w:=host.app_world_ref(s.app,data)
         report,error:=scene.instantiate(w,file,&a.types,{transient=true,documents=scene.assets_documents(a)})
-        if error!=.None {return p}
+        if error!=.None {return}
         core.world_settle(w)
         if transforms:=core.world_table_of(w,core.Transform);transforms!=nil {
             if root:=core.edit(transforms,report.root);root!=nil {root.position,root.rotation={},1}
@@ -97,12 +89,25 @@ placement_prepare :: proc(s:^Session,d:Drag) -> ^Placement_Preview {
             for mesh,i in meshes.values[:core.count(meshes)] {
                 e:=meshes.entities[i]
                 if entity_hidden(w,e) || entity_has(w,e,erender.Drawn_Elsewhere) {continue}
-                part=Placement_Part{mesh=mesh,tint=erender.TINT_DEFAULT,transform=entity_world(w,e)}
+                part:=Placement_Part{mesh=mesh,tint=erender.TINT_DEFAULT,transform=entity_world(w,e)}
                 if tint,ok:=entity_get(w,e,erender.Tint);ok {part.tint=tint}
                 if override,ok:=entity_get(w,e,erender.Material_Override);ok {part.override=override}
                 placement_measure(s,p,part)
             }
         }
+    }
+    if d.kind==.Preset {
+        recipe,found:=recipe_of(s,cards(s)[d.card].recipe)
+        if !found {return p}
+        bytes,error:=os.read_entire_file(recipe.path,context.temp_allocator)
+        file:asset.Asset
+        if error!=nil || asset.asset_open(&file,bytes,context.temp_allocator)!=.None {return p}
+        defer asset.asset_close(&file)
+        measure(s,p,&file)
+    } else if d.asset_kind==asset.KIND_MESH {
+        placement_measure(s,p,{mesh={mesh=d.asset_id},tint=erender.TINT_DEFAULT,transform=mm.TRANSFORM_IDENTITY})
+    } else if d.asset_kind==asset.KIND_SCENE {
+        if file:=host.assets_scene(a,d.asset_id);file!=nil {measure(s,p,file)}
     }
     return p
 }
@@ -119,10 +124,8 @@ placement_point :: proc(s:^Session,d:Drag,hit:Pick) -> [3]f32 {
             support=max(support,-(v.x*normal.x+v.y*normal.y+v.z*normal.z))
         }
         point+=normal*support
-    } else if d.kind==.Preset {
-        point.y+=cards(s)[d.card].lift
-    } else if placement_sound(d) {
-        point.y+=cards(s)[int(Preset.Sound)].lift
+    } else if d.kind==.Preset || placement_sound(d) {
+        if recipe,found:=recipe_of(s,cards(s)[d.card].recipe if d.kind==.Preset else "sound");found {point.y+=recipe.local.position.y}
     }
     return point
 }

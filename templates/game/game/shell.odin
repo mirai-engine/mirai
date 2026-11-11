@@ -56,14 +56,14 @@ shell_events :: proc(events:^gui.UI_Events,screen:core.Entity,shell:^Shell,solo:
 // and the buttons reach. The screens follow the page.
 @(step="frame")
 shell_frame :: proc(
-    shell:^Shell,g:^gui.Gui,shell_screens:core.Read(Shell_Screen),ui_screens:^core.Table(gui.UI_Screen),huds:core.Read(Shell_Hud),
+    shell:^Shell,ui_events:core.Ref(gui.UI_Events),shell_screens:core.Read(Shell_Screen),ui_screens:^core.Table(gui.UI_Screen),huds:core.Read(Shell_Hud),
     network:core.Ref(core.Network),scenes:^scene.Scene_Requests,hidden:^core.Table(render.Hidden),graphics:^render.Graphics_Settings,app:^host.App,
 ) {
     solo:=network.role==.Standalone
     if !solo && shell.page==.Menu {shell.page=.Playing}
 
     screen,_:=core.sole(shell_screens)
-    events:=gui.events_this_frame(g)
+    events:=ui_events.ptr
     shell_events(events,screen,shell,solo,scenes,graphics,app)
     shell.quality=render.graphics_quality_of(graphics^)
 

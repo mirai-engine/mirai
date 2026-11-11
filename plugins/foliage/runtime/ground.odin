@@ -14,7 +14,6 @@ import mm "mirai:std/math"
 @(storage)
 Foliage_Ground :: struct {
     owners:[dynamic]Ground_Owner,
-    revision:u64,      // of the ground when the tiles were last asked for
     foliage:[2]u64,    // Foliage_Data: entries made and loads
     seen:[2]core.Seen, // the tables of Foliage and World_Transform
     streamed:u64,      // the revision of the streaming sources

@@ -178,6 +178,9 @@ register the same in the same order.
   types and `TYPE_LEAVES` leaves. `type_register` registers and composes before sealing (tests).
 - Each replicated field (without `local`) produces leaves with a serializer according to its type
   and its tags (`bits`, `min`/`max`, `precision`, `text`; an array inherits those of its field).
+  - An array of one-byte values (a `text` too, and a `rotation` sent whole) is one field of its
+    bytes, packed four to a word: whole it travels up to its last nonzero byte, and as a delta the
+    run from the first to the last byte that changed. Its bytes must fit a part of a state.
   - A `base.Entity` travels as the network object of that game id, and the client receives its own
     id (`object_bind`). If the referenced replica does not exist yet it reads zero and the
     reference stays pending (`object_references_pending`); an entity that the sender does not

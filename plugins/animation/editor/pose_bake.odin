@@ -170,7 +170,7 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
             for track in tracks {if track.bone==root.bone {base.text_set(root_metadata.bone[:],track.desc.target);break}}
             root_metadata.translation,root_metadata.rotation=root.root.translation,root.root.rotation
         }
-        if events:=core.world_storage_of(world,anim.Animation_Events);events!=nil {crossed:=core.events_since(events.queue,&cursor);if frame>0 {for event in crossed {
+        if events:=core.world_storage_of(world,anim.Animation_Events);events!=nil {crossed,_:=core.log_since(events.queue.log,&cursor);if frame>0 {for event in crossed {
             if event.entity!=entity || event.kind!=.Marker {continue}
             name:=preview_marker_name(preview_trace_source_view(&trace,event.animation),event.name)
             if name[0]==0 {authoring_failure(call,"markers","Missing_Name","a source name for every crossed marker",fmt.tprintf("%x",event.name),"A marker name could not be resolved");return false}

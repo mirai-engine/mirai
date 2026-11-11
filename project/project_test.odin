@@ -103,7 +103,12 @@ a_plugin_manifest_round_trips_as_json :: proc(t:^testing.T) {
     m.parts={.Runtime,.Editor,.Assets}
     base.text_set(m.icon[:],"art/icon.png")
     base.text_set(m.asset_kinds[0].extension[:],".terrain")
+    base.text_set(m.asset_kinds[0].kind[:],"TERR")
+    base.text_set(m.asset_kinds[0].label[:],"Terrain")
+    m.asset_kinds[0].color={168,124,72}
     base.text_set(m.asset_kinds[1].extension[:],".biome")
+    base.text_set(m.asset_kinds[1].kind[:],"BIOM")
+    base.text_set(m.asset_kinds[1].folder[:],"runtime/biome")
     m.asset_kinds[1].merged=true
     text:=plugin_text(&m,context.temp_allocator)
     testing.expect(t,strings.contains(text,`"extension": ".biome"`) && !strings.contains(text,`"extension": ""`),text)
@@ -226,6 +231,9 @@ a_bad_plugin_manifest_is_refused_with_what_and_where :: proc(t:^testing.T) {
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".Biome"}]}`,.Asset_Kind_Invalid,.None,".Biome"},
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome"}, {"extension": ".biome", "merged": true}]}`,.Asset_Kind_Invalid,.None,".biome"},
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"merged": true}]}`,.Asset_Kind_Invalid,.None,""},
+        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome"}]}`,.Asset_Kind_Invalid,.None,".biome"},
+        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome", "kind": "BIOM"}, {"extension": ".zone", "kind": "BIOM"}]}`,.Asset_Kind_Invalid,.None,".zone"},
+        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome", "kind": "BIOM", "folder": "../elsewhere"}]}`,.Asset_Kind_Invalid,.None,".biome"},
     }
     for c in cases {
         _,error:=plugin_parse(c.text)

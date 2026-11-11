@@ -26,12 +26,12 @@ portals_cards_default :: proc() -> (cards:Portals_Cards) {
     }
     cards.provider.count=2
     cards.provider.cards[0]={
-        label="Portal",group="Logic",color={190,150,255,255},lift=1.5,scale={2,3,1},component=portals.Portal,make=portal_make,
+        recipe="portal",group="Logic",color={190,150,255,255},component=portals.Portal,
         drawing=ui.icon_drawing(ui.icon_part(.Loop,rim[:],1.4),ui.icon_part(.Fill,inside[:],shade=60)),
     }
     // A glass that stands, with the glint of what it reflects.
     cards.provider.cards[1]={
-        label="Mirror",group="Logic",color={160,220,255,255},lift=1.2,scale={1.6,2.4,1},make=mirror_make,
+        recipe="mirror",group="Logic",color={160,220,255,255},
         drawing=ui.icon_drawing(
             ui.icon_part(.Loop,{{-4.6,-6.8},{4.6,-6.8},{4.6,6.8},{-4.6,6.8}},1.4),
             ui.icon_part(.Line,{{-2.4,1.2},{1.2,-4.2}}),
@@ -39,16 +39,6 @@ portals_cards_default :: proc() -> (cards:Portals_Cards) {
         ),
     }
     return
-}
-
-@(private)
-portal_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
-    if t:=core.world_table_of(w,portals.Portal);t!=nil {core.add(t,e,portals.Portal{})}
-}
-
-@(private)
-mirror_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
-    if t:=core.world_table_of(w,portals.Portal);t!=nil {core.add(t,e,portals.Portal{mirror=true})}
 }
 
 @(storage)

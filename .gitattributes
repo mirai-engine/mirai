@@ -12,15 +12,15 @@
 *.sound binary
 *.sound_set merge=mirai diff=mirai -text
 *.ui merge=mirai diff=mirai -text
-*.fracture binary
-*.physics_cache binary
 *.font binary
 *.strings merge=mirai diff=mirai -text
 *.prompts merge=mirai diff=mirai -text
 *.records merge=mirai diff=mirai -text
 *.character merge=mirai diff=mirai -text
+*.fracture binary
 *.foliage binary
 *.navmesh binary
+*.physics_cache binary
 *.terrain binary
 *.particle merge=mirai diff=mirai -text
 *.grid binary

@@ -50,7 +50,7 @@ part_add :: proc(s:^editor.Session,w:core.World_Ref,desc:Part_Desc) -> (e:core.E
     if desc.part!=.Timeline && !editor.entity_has(w,desc.timeline,cine.Cinematic) {return core.NONE,"the timeline has no Cinematic"}
     switch desc.part {
     case .Timeline:
-        e=editor.entity_create(s,{preset=.Empty,name="Cinematic"})
+        e=editor.entity_create(s,{name="Cinematic"})
         if e==core.NONE {return core.NONE,"the entity could not be created"}
         animation:=anim.ANIMATION_DEFAULT
         animation.asset,animation.playing,animation.loop,animation.fade=desc.clip,desc.playing,false,0

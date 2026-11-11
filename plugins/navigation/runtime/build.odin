@@ -69,6 +69,7 @@ Navigation_Builds :: struct {
     bounds_seen,areas_seen,obstacles_seen,links_seen:[4]core.Seen,
     bounds_unloaded:u64,  // Unloaded.revision the bounds were last made with
     settling:int,         // obstacles that are not blocking yet
+    unloaded:u64,         // advances with each tick the unloaded ground changed in (core.Ground_Queries.unloaded)
     unloaded_seen:u64,    // Unloaded.revision the marks waiting for it were last looked at with
     // By class, the tiles and zones that went in a run where the terrain is not loaded, with the
     // hash of the one each had (0: none), to read again from the bakes.
@@ -455,6 +456,7 @@ navigation_build :: proc(
     bounds:core.Read(Nav_Bounds),areas:core.Read(Nav_Area),links:core.Read(Nav_Link),obstacles:core.Read(Nav_Obstacle),volumes:core.Read(volume.Volume),time:core.Time,transforms:core.Read(core.Transform),parents:core.Read(core.Parent),
     ground:core.Ref(core.Ground_Queries),world:core.World_Ref,references:core.Read(scene.Scene_Reference),worlds:core.Read(core.World_Transform),ids:core.Read(core.Id),app:^host.App,problems:^core.Problems,
 ) {
+    if ground.ptr!=nil && len(ground.unloaded.items)>0 {b.unloaded+=1}
     if physics.ptr==nil || !physics.ready || settings.ptr==nil {return}
     // A section away is not loaded: like the terrain that is not, its tiles wait for it.
     if core.touched(references,&b.sections_tables[0]) | core.touched(worlds,&b.sections_tables[1]) | core.touched(ids,&b.sections_tables[2]) || !n.ready {
@@ -462,7 +464,7 @@ navigation_build :: proc(
         b.looked+=u64(core.count(references))
     }
     q:=core.ground_query(world,ground)
-    gone:=Unloaded{q.unloaded,&b.sections,base.hash_combine(q.unloaded_revision,b.sections.hash)}
+    gone:=Unloaded{q.unloaded,&b.sections,base.hash_combine(b.unloaded,b.sections.hash)}
     fresh,reset:=false,false
     // A class is made again when it changes, or when what blocks its agents does (Collision_Settings).
     collision:=&physics.ptr.collision
@@ -526,7 +528,7 @@ navigation_build :: proc(
         next,count,overflow=phys.static_changes(physics,b.cursor,b.boxes[:])
     }
     sections_update(n,b,limits,fresh)
-    paging_update(n,b,q,time.playing,fresh,reset,app,problems)
+    paging_update(n,b,q.unloaded,time.playing,fresh,reset,app,problems)
     published,spent:=builds_publish(n,b,problems)
     if published>0 {host.load_phase_add(app,.Nav_Tiles,spent,published)}
     builds_start(n,b,physics,limits,gone,time.playing,&app.jobs,problems)
@@ -1169,12 +1171,12 @@ sections_update :: proc(n:^Navigation,b:^Navigation_Builds,limits:Limits,fresh:b
 // have or what changed. The edited world keeps them all: the editor bakes its
 // meshes.
 @(private)
-paging_update :: proc(n:^Navigation,b:^Navigation_Builds,ground:core.Ground_Query,playing,fresh,reset:bool,app:^host.App,problems:^core.Problems) {
+paging_update :: proc(n:^Navigation,b:^Navigation_Builds,unloaded:[]mm.Aabb,playing,fresh,reset:bool,app:^host.App,problems:^core.Problems) {
     if reset {for &paged in b.paged {base.hash_map_clear(&paged)}}
-    seen:=base.hash_combine(ground.unloaded_revision,u64(playing))
+    seen:=base.hash_combine(b.unloaded,u64(playing))
     if seen==b.paged_seen && !fresh {return}
     b.paged_seen=seen
-    boxes:=ground.unloaded if playing else nil
+    boxes:=unloaded if playing else nil
     paging_restore(n,b,boxes,app,problems)
     if len(boxes)==0 {return}
     gone:=make([dynamic]u64,context.temp_allocator)
