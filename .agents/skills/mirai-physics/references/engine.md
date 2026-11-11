@@ -102,10 +102,10 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   cap, and the friction of the ground does not define how much it slips.
 - `COLLIDER_DEFAULT` (also when adding it from the inspector) uses the `Default` preset without
   group: a door with a new collider blocks everything. The inspector shows all fields, also those
-  that do not correspond to the `kind`. Adding a `Character` or a `Destructible` (editor or API)
-  adds `collider_character()` or `collider_fracture()` if the entity has no collider.
+  that do not correspond to the `kind`. Adding a `Character` (editor or API) adds
+  `collider_character()` if the entity has no collider.
 - `kind`: `Hull`, `Mesh` and `Heightfield` read the entity's `Mesh_Renderer`; `External` leaves the
-  shape to another plugin (`destruct`, for the pieces), which takes surface and collision from this
+  shape to another plugin (`shapes`, for a brush), which takes surface and collision from this
   collider. `Mesh` and `Heightfield` contribute no mass and are for static geometry: nothing rejects
   a dynamic with them, but that case has no coverage.
 - A `Hull` whose mesh has several convex pieces (`host.assets_collision_hulls`: those of a generated
@@ -688,7 +688,7 @@ Physics does not know the network: both share `core` tables.
     parent.
 - **`core.Simulation_Hash`**: with `core.Sync_Check.on`, the step leaves the simulation hash to
   compare two runs.
-- **Proxy** (`proxies.odin`): `proxy_set/proxy_pose/proxy_written` make an entity represent a body
+- **Proxy** (`proxies.odin`): `proxy_set` makes an entity represent a body
   that another library owns.
   - It accepts requests, places, manipulation, constraints and pose targets like a body of its own.
   - `proxy_remove` removes the link and its joints, restores a pending hold and never destroys the

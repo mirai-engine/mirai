@@ -278,7 +278,7 @@ container_kind :: proc(w:core.World_Ref,e:core.Entity) -> Container_Kind {
 
 container_color :: proc(s:^Session,kind:Container_Kind) -> (icon,text:ui.Color) {
     switch kind {
-    case .Prefab:  return asset_kind_color(s,SHOWN_PREFAB),PREFAB_TEXT
+    case .Prefab:  return PREFAB_ASSET_COLOR,PREFAB_TEXT
     case .Section: return SECTION_COLOR,SECTION_TEXT
     case .None:
     }

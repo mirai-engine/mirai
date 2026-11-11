@@ -199,7 +199,7 @@ ddgi_update :: proc(p: ^Pass, warm := false) -> bool {
 	update := Update{rays_per_probe = g.rays_per_probe, light_budget = min(settings.light_budget, PROBE_LIGHT_BUDGET), max_distance = 1e4, frame_number = frame_number}
 	// The rays, then what waits for the programs of what they hit.
 	batch := points_begin(p)
-	trace := shadow_pipeline(r, .Ddgi_Trace, .Ddgi_Trace_Hw, .Ddgi_Trace_Color, .Ddgi_Trace_Color_Hw)
+	trace := pipeline_of(r, .Ddgi_Trace, {DDGI_TRACE_COMP_COLOR} if shadows_colored(r) else {})^
 	rhi.cmd_bind_pipeline(cmd, trace)
 	set_params(cmd, &update)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, g.rays)

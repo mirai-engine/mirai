@@ -466,7 +466,6 @@ pose_write :: proc(s:^Sync,l:^Link,e:core.Entity,pose:sim.Transform) {
     if row<0 {return}
     position,rotation,ok:=local_of(s.locals,s.parents,e,pose)
     if !ok {return}
-    if l.kind==.Proxy {proxy_written(s.state,e,position,rotation)}
     local:=s.transforms.values[row]
     if local.position==position && local.rotation==rotation {return}
     written:=core.edit_at(s.transforms,row)
@@ -493,7 +492,8 @@ foreign_write :: proc(s:^Sync,e:core.Entity,component:string,pose:sim.Transform,
 entity_sync :: proc(s:^Sync,e:core.Entity) {
     state:=s.state
     l:=link_at(s,e)
-    if l==nil {return}
+    // A proxy's body is another library's: a breakable replaces the Collider and Rigid_Body of its entity.
+    if l==nil || l.kind==.Proxy {return}
     at:=link_index(state,l)
     if at>=len(state.visited) && resize(&state.visited,len(state.links.values))!=nil || state.visited[at]==state.pass {return}
     if l.kind==.None {
@@ -737,7 +737,8 @@ link_release :: proc(s:^Sync,l:^Link) {
             destroyed+=1
         }
         state.stats.shapes_destroyed+=destroyed
-        if holder:=link_find(state,l.owner);destroyed>0 && holder!=nil && holder.kind==.Body {
+        // proxy_set has no rows to read.
+        if holder:=link_find(state,l.owner);destroyed>0 && holder!=nil && holder.kind==.Body && s.rigids.table!=nil {
             rigid,has_rigid:=core.get(s.rigids,l.owner)
             body_mass_update(w,holder.body,rigid,has_rigid)
         }
@@ -1201,8 +1202,8 @@ poses_write :: proc(s:^Sync) {
             if l:=link_find(state,core.Entity(user));l!=nil && l.kind==.Body && l.body==body {link_touch(state,l)}
         }
     }
-    #reverse for proxy,at in state.proxies {
-        if l:=link_find(state,proxy.entity);l!=nil && l.kind==.Proxy {link_touch(state,l)} else {unordered_remove(&state.proxies,at)}
+    #reverse for e,at in state.proxies {
+        if l:=link_find(state,e);l!=nil && l.kind==.Proxy {link_touch(state,l)} else {unordered_remove(&state.proxies,at)}
     }
     for row in 0..<core.count(s.characters) {
         if l:=link_find(state,core.entity_at(s.characters,row));l!=nil {link_touch(state,l)}

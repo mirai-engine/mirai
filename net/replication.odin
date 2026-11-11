@@ -715,7 +715,7 @@ event_send :: proc(h:^Host,event:Event_Id,object:Object,payload:rawptr,connectio
     words:=h.front.words[:type.desc.words]
     mem.zero_slice(words)
     fragment_quantize(protocol,&type.desc,0,payload,words,h,front_to_reference)
-    buffer:[EVENT_MAX_BYTES+16]u8
+    buffer:[RELIABLE_EVENT_MAX_BYTES+16]u8
     w:serial.Bit_Writer
     serial.bit_writer_init(&w,buffer[:])
     serial.bit_write(&w,u64(System_Message.Event),3)

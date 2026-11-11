@@ -41,12 +41,7 @@ shared: Shared
 take :: proc(t: ^testing.T, hardware_rt := true) -> (device: ^rhi.Device, message: string) {
 	hold(t)
 	i := int(hardware_rt)
-	if shared.devices[i] == nil && shared.refused[i] == "" {
-		context.allocator = runtime.heap_allocator()
-		d, refusal := rhi.device_create({app_name = "mirai GPU tests", validation = true, allow_hardware_ray_tracing = hardware_rt, on_message = count_message, message_user = &shared.errors, allocator = context.allocator})
-		shared.devices[i] = d
-		if d == nil {shared.refused[i] = strings.clone(refusal != "" ? refusal : "no device")}
-	}
+	make_shared(i)
 	d := shared.devices[i]
 	if d == nil {return nil, shared.refused[i]}
 	if !shared.taken[i] {
@@ -91,6 +86,26 @@ hold :: proc(t: ^testing.T) {
 	sync.atomic_store(&shared.errors, 0)
 	shared.taken = {}
 	testing.cleanup(t, give, t)
+	keep_one()
+}
+
+// The NVIDIA Windows driver (616.92) frees the context of the worker threads
+// of a process's last device while they still run: a device destroyed with
+// none other alive and another made after it end the process at random
+// (ODIN_WORKAROUNDS.md, Drivers). One device lives from the first hold to the
+// end of the process, so the devices of the tests are never the last.
+@(private)
+keep_one :: proc() {
+	if shared.devices[0] == nil && shared.devices[1] == nil {make_shared(1)}
+}
+
+@(private)
+make_shared :: proc(i: int) {
+	if shared.devices[i] != nil || shared.refused[i] != "" {return}
+	context.allocator = runtime.heap_allocator()
+	d, refusal := rhi.device_create({app_name = "mirai GPU tests", validation = true, allow_hardware_ray_tracing = i == 1, on_message = count_message, message_user = &shared.errors, allocator = context.allocator})
+	shared.devices[i] = d
+	if d == nil {shared.refused[i] = strings.clone(refusal != "" ? refusal : "no device")}
 }
 
 @(private)
@@ -115,6 +130,9 @@ give :: proc(data: rawptr) {
 	if errors := sync.atomic_load(&shared.errors); errors > 0 {
 		testing.expectf(t, false, "the shared device reported %d errors", errors)
 	}
+	dropped: [2]^rhi.Device
+	defer for d in dropped {if d != nil {rhi.device_destroy(d)}}
+	defer keep_one()
 	for taken, i in shared.taken {
 		d := shared.devices[i]
 		if !taken || d == nil {continue}
@@ -129,7 +147,7 @@ give :: proc(data: rawptr) {
 		failure, text := rhi.device_failure(d)
 		if failure != .None {testing.expectf(t, false, "the shared device failed: %s", text)}
 		if !idle || failure != .None || left != {} {
-			if idle {rhi.device_destroy(d)}
+			if idle {dropped[i] = d}
 			shared.devices[i] = nil
 		}
 	}

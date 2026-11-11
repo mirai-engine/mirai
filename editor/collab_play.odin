@@ -34,15 +34,15 @@ collab_offer :: proc(s:^Session,out:[]u8) -> int {
     return clamp(p.play.offer(s,out),0,len(out))
 }
 
-// A guest: the offer of the game the host serves, and the address of the
-// session as this guest reaches the host. The offer is a copy.
-collab_host_offer :: proc(s:^Session) -> (offer:[]u8,target:wire.Address,ok:bool) {
+// A guest: the offer of the game the host serves, and the invitation of the
+// session it joined with. The offer is a copy.
+collab_host_offer :: proc(s:^Session) -> (offer:[]u8,invitation:wire.Invitation,ok:bool) {
     st:=collab_state(s)
     if !collab_host_seen(st) || !st.peers[0].serving {return}
     host:=&st.peers[0]
     offer=make([]u8,host.offer_size,context.temp_allocator)
     copy(offer,host.offer[:host.offer_size])
-    return offer,st.target,true
+    return offer,st.invitation,true
 }
 
 // The host started the game of a plugin on the scene as it is: what it edited

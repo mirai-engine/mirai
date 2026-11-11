@@ -22,22 +22,19 @@ rendered_copies_keep_motion_history_by_source_owner_and_variant :: proc(t:^testi
         {object_id=42,copy_owner=7,copy_variant=2,mesh=mesh,transform=Mat4(1),tint={1,1,1},uniform_color=true},
     }
     for &desc,i in descriptors {desc.transform[0,3]=f32(i*3)}
-    scene_set(r,descriptors[:],nil,{}, {})
+    scene_given(r,descriptors[:],nil,{}, {})
     testing.expect_value(t,len(r.scene.instance_keys),4)
-    // Reorder copies and move each separately. The source GPU id remains shared.
-    reordered:=[4]Instance_Desc{descriptors[3],descriptors[1],descriptors[0],descriptors[2]}
-    for &desc,i in reordered {desc.transform[2,3]=f32(i+1)}
-    scene_set(r,reordered[:],nil,{}, {})
-    old_order:=[4]int{3,1,0,2}
+    // Each moved at its index: the source GPU id stays shared, and each copy draws its motion.
+    moved:=descriptors
+    for &desc,i in moved {desc.transform[2,3]=f32(i+1)}
+    testing.expect(t,scene_update(r,0,moved[:]))
     for inst,i in r.scene.instances {
         testing.expect_value(t,inst.meta.z,42)
-        testing.expect_value(t,inst.prev_world,rows_3x4(descriptors[old_order[i]].transform))
-        testing.expect_value(t,inst.world,rows_3x4(reordered[i].transform))
+        testing.expect_value(t,inst.prev_world,rows_3x4(descriptors[i].transform))
+        testing.expect_value(t,inst.world,rows_3x4(moved[i].transform))
     }
-    testing.expect_value(t,r.scene.touched_count,4)
-    // Dropping and recreating a variant starts with its own new pose.
-    scene_set(r,reordered[:3],nil,{}, {})
-    reordered[3].copy_variant=2
-    scene_set(r,reordered[:],nil,{}, {})
+    // Another variant at an index starts with its own new pose.
+    moved[3].copy_variant=3
+    testing.expect(t,scene_update(r,3,moved[3:]))
     testing.expect_value(t,r.scene.instances[3].prev_world,r.scene.instances[3].world)
 }

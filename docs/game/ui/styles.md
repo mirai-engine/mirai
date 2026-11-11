@@ -35,10 +35,10 @@ The template's `assets/menu/theme.ui` is the example of tokens and styles, and i
   `extends` makes one start from another (`"focus": {"extends": "hover", ...}`). `focus` is the
   ring of keys and gamepad: give it a look that is not `hover`.
 - `move_x`, `move_y` and `scale` draw the node somewhere else without moving the layout or the
-  pointer; with `transition` they animate. `transition` also carries the node to a new place or
-  size when the layout changes (an item inserted above it, a panel that grows): change its size in
-  the layout, never with an animation. `blur` blurs what is behind the node, for a pause
-  screen.
+  pointer; with `transition` they animate. `layout_transition` carries the node to a new place or
+  size when the layout changes (an item inserted above it, a panel that grows), over its own
+  seconds: change its size in the layout, never with an animation. `blur` blurs what is behind the
+  node, for a pause screen.
 - Layout goes in a style too: `width`, `height`, `direction`, `gap`, `padding`, `align_x`,
   `align_y`. A node takes it and states only what differs; a change of the style reaches every node
   that uses it.

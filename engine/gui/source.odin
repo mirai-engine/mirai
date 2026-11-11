@@ -75,8 +75,9 @@ source_bind :: proc(
     }
     s.ctx.game={
         user=&s.source,family=s.family,prompts=source_prompts,action=source_action,texts=host.app_texts(app),language=ui_language(&settings,&preferences),
-        texture=source_texture,view=source_view,particles=source_particles,sound=source_sound,draw=source_draw,
+        texture=source_texture,view=source_view,particles=source_particles,sound=source_sound,
     }
+    s.ctx.draw_user,s.ctx.draw_user_data=source_draw,&s.source
 }
 
 // The procedure @(draw) of the game a Draw node names; nil: the game declares none of that name.

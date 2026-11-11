@@ -117,7 +117,6 @@ target_place :: proc(state:^Physics_State,l:^Link,e:core.Entity,local:^core.Tran
         }
         local.position,local.rotation=position,rotation
     }
-    if l.kind==.Proxy {proxy_written(state,e,local.position,local.rotation)}
 }
 
 // Puts every character a following target leads at its pose, with its

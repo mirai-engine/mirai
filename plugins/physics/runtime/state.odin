@@ -57,7 +57,7 @@ Physics_State :: struct {
     unmade:bool, // the last sync left a body or character unmade, which a whole sync tries again
     sealed:[dynamic]Sealed_Body, // scratch of sealed_sync, as long as the rows of the bodies
     visited:[dynamic]u32, // scratch of a sync, by link: the pass that synced it
-    proxies:[dynamic]Proxy, // those of the Proxy links
+    proxies:[dynamic]core.Entity, // the entities of the Proxy links
     held:[dynamic]Held, // what a manipulation or a pose target steers
     owned:[dynamic]Owned, // by slot of the bodies of the world: those another library owns (owned.odin)
     owned_stamps:[dynamic]u64, // of the chunks of owned, as link_stamps
@@ -113,14 +113,6 @@ Link :: struct {
     character:sim.Character_Handle,
     owner:core.Entity, // compound: the ancestor whose body carries the shape
     made:u64, // a hash of what its shapes or its capsule were made from (shape_key): another asks to make them again
-}
-
-// A proxy and the Transform it was last left with, by whoever moves it or by its pose target.
-@(private)
-Proxy :: struct {
-    entity:core.Entity,
-    position:[3]f32,
-    rotation:mm.Quat,
 }
 
 // Who holds a body as kinematic, heading for a pose in every step: a
