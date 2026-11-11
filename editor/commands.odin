@@ -16,10 +16,14 @@ import "mirai:ui"
 // refuses are the same for both. A plugin gives its methods entries the same
 // way (Api_Method.entry, command_bind, tool_entry).
 //
-// What is a command: whatever has a menu entry, a shortcut or a button. What a
-// person does inside a panel with the pointer or the keyboard focus (a scroll,
-// a hover, a fold, a splitter, a field being typed, the keys a focused card or
-// an asset document takes) is the view of that panel and has no method.
+// An entry that only changes what the person sees (a dialog, a popup, a tab,
+// the field a name is typed in, who has the keys) runs a procedure of the
+// interface (Binding.view) and is no method: an agent works through the API,
+// and looks at the interface with editor.input and capture.
+//
+// What a person does inside a panel with the pointer or the keyboard focus (a
+// scroll, a hover, a fold, a splitter, a field being typed, the keys a focused
+// card or an asset document takes) is the view of that panel and has no entry.
 //
 // The params of an entry name what the person has in front in place of
 // values, which the editor puts there when the gesture runs:
@@ -63,6 +67,7 @@ Binding :: struct {
     name:string,   // what command_run, the buttons and editor.inspect name it by; the name of its method when empty
     method:string,
     params:string, // JSON; "": none
+    view:proc(s:^Session), // in place of a method: what only changes what the person sees
     label:string,
     icon:ui.Icon,
     shortcut,alternate:Shortcut,
@@ -106,7 +111,7 @@ command_text :: proc(st:^Api_State,format:string,args:..any) -> string {
 // its name is taken.
 command_bind :: proc(s:^Session,b:Binding) -> bool {
     st:=api_state(s)
-    if st==nil || b.method=="" {return false}
+    if st==nil || (b.method=="")==(b.view==nil) {return false}
     c:=&st.commands
     entry:=b
     if entry.name=="" {entry.name=entry.method}
@@ -198,6 +203,10 @@ command_run :: proc(s:^Session,name:string) -> bool {
     if d:=asset_document_active(s);d!=nil && b.scene {
         d.request=b.name
         d.request_serial+=1
+        return true
+    }
+    if b.view!=nil {
+        b.view(s)
         return true
     }
     params:=strings.builder_make(context.temp_allocator)
@@ -379,7 +388,7 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="new",method="scene.new",label="New scene",icon=user(.Scene),shortcut=key(.N,{.Primary}),menu=.File,group=0,state=state_editing},
         {name="new_prefab",method="scene.new",params=`{"kind":"Prefab"}`,label="New prefab",icon=.Prefab,menu=.File,group=0,state=state_editing},
         {name="open",method="editor.document",params=`{"action":"Open","path":"$ask"}`,label="Open...",icon=user(.Scene),shortcut=key(.O,{.Primary}),menu=.File,group=0,state=state_editing},
-        {name="projects",method="editor.view",params=`{"part":"Projects"}`,label="Open project...",icon=user(.Folder),menu=.File,group=0,state=state_projects},
+        {name="projects",view=projects_show,label="Open project...",icon=user(.Folder),menu=.File,group=0,state=state_projects},
         {name="save",method="scene.save",label="Save",icon=user(.Save),shortcut=key(.S,{.Primary}),menu=.File,group=1,state=state_save},
         {name="save_all",method="editor.save_all",label="Save all",icon=user(.Save),shortcut=key(.S,{.Primary,.Shift}),menu=.File,group=1,state=state_editing},
         {name="save_as",method="scene.save",params=`{"path":"$ask"}`,label="Save as...",icon=user(.Save),shortcut=key(.S,{.Primary,.Alt}),menu=.File,group=1,state=state_editing,scene=true},
@@ -387,16 +396,16 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="make_scene",method="scene.write",params=`{"kind":"Scene","entities":[]}`,label="Make scene",icon=user(.Scene),menu=.File,group=1,state=state_kind,scene=true},
         {name="import",method="asset.import",params=`{"path":"$ask"}`,label="Import...",icon=.Import,menu=.File,group=2,state=state_import},
         {name="build",method="build.start",label="Build",icon=user(.Hammer),shortcut=key(.B,{.Primary}),menu=.File,group=3,state=state_build},
-        {name="settings",method="editor.view",params=`{"part":"Settings"}`,label="Project settings",icon=user(.Gear),menu=.File,group=3,state=state_settings},
+        {name="settings",view=settings_toggle,label="Project settings",icon=user(.Gear),menu=.File,group=3,state=state_settings},
         {name="quit",method="engine.shutdown",label="Quit",icon=.Cross,shortcut=key(.Q,{.Primary}),menu=.File,group=4},
 
         {name="undo",method="history.undo",label="Undo",icon=user(.Undo),shortcut=key(.Z,{.Primary}),state=state_undo},
         {name="redo",method="history.redo",label="Redo",icon=user(.Redo),shortcut=key(.Y,{.Primary}),alternate=key(.Z,{.Primary,.Shift}),state=state_redo},
-        {name="copy",method="editor.copy",params=`{"entities":["$roots"]}`,label="Copy",icon=user(.Copy),shortcut=key(.C,{.Primary}),state=state_copy,scene=true},
+        {name="copy",view=copy_roots,label="Copy",icon=user(.Copy),shortcut=key(.C,{.Primary}),state=state_copy,scene=true},
         {name="paste",method="scene.write",params=`{"entities":[{"copy":"$copied"}]}`,label="Paste",shortcut=key(.V,{.Primary}),state=state_paste,scene=true},
         {name="duplicate",method="scene.write",params=`{"entities":[{"copy":"$roots"}]}`,label="Duplicate",icon=user(.Copy),shortcut=key(.D,{.Primary}),state=state_scene_edit,scene=true},
         {name="delete",method="scene.write",params=`{"root":"$roots","entities":[{"delete":true}]}`,label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),state=state_scene_edit,scene=true},
-        {name="rename",method="editor.view",params=`{"part":"Rename"}`,label="Rename",icon=.Edit,shortcut=key(.F2),state=state_rename,scene=true},
+        {name="rename",view=rename_focus,label="Rename",icon=.Edit,shortcut=key(.F2),state=state_rename,scene=true},
         {name="select_all",method="editor.select",params=`{"entities":["$all"]}`,label="Select all",shortcut=key(.A,{.Primary}),state=state_select_all,scene=true},
         {name="deselect",method="editor.select",label="Deselect",shortcut=key(.Escape),state=state_selected,scene=true},
         {name="group",method="scene.group",params=`{"entities":["$roots"]}`,label="Group selection",icon=.Group,shortcut=key(.G,{.Primary}),state=state_scene_edit,scene=true},
@@ -414,17 +423,17 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="indicators",method="preferences.set",params=preference(st,"Viewport_Preferences",`"show_indicators":"$toggle"`),label="Indicators",icon=.Eye,menu=.View,group=1,state=state_indicators,scene=true},
         {name="output_frame",method="preferences.set",params=preference(st,"Viewport_Preferences",`"show_output_frame":"$toggle"`),label="Output frame",icon=user(.Camera),menu=.View,group=1,state=state_output_frame,scene=true},
         {name="game_detail",method="preferences.set",params=preference(st,"Viewport_Preferences",`"game_detail":"$toggle"`),label="Detail of the game camera",menu=.View,group=1,state=state_game_detail,scene=true},
-        {name="studio_light",method="editor.view",params=`{"part":"Studio_Light","on":"$toggle"}`,label="Studio light",icon=.Sun,menu=.View,group=1,state=state_studio_light,scene=true},
-        {name="graphics",method="editor.view",params=`{"part":"Graphics"}`,label="Graphics",icon=user(.Graphics),menu=.View,group=1,state=state_graphics},
+        {name="studio_light",view=studio_light_toggle,label="Studio light",icon=.Sun,menu=.View,group=1,state=state_studio_light,scene=true},
+        {name="graphics",view=graphics_toggle,label="Graphics",icon=user(.Graphics),menu=.View,group=1,state=state_graphics},
         {name="inspector_panel",method="preferences.set",params=preference(st,"Layout",`"right_open":"$toggle"`),label="Details",icon=user(.Graphics),menu=.View,group=2,state=state_inspector_panel},
         {name="console_panel",method="preferences.set",params=preference(st,"Layout",`"bottom_open":"$toggle","bottom_tab":"Console"`),label="Console",icon=user(.Terminal),shortcut=key(.Grave,{.Primary}),menu=.View,group=2,state=state_console_panel},
         {name="build_panel",method="preferences.set",params=preference(st,"Layout",`"bottom_open":"$toggle","bottom_tab":"Build"`),label="Build output",icon=user(.Hammer),menu=.View,group=2,state=state_build_panel},
         {name="library_panel",method="preferences.set",params=preference(st,"Layout",`"left_open":"$toggle"`),label="Content Browser",icon=.Layers,shortcut=key(.Tab),state=state_library_panel},
-        {name="hierarchy_panel",method="editor.view",params=`{"part":"Hierarchy","on":"$toggle"}`,label="Hierarchy",icon=user(.List),state=state_hierarchy_panel},
-        {name="source_control",method="editor.view",params=`{"part":"Git"}`,label="Source control",icon=user(.Branch),state=state_source_control},
-        {name="ai_chat",method="editor.view",params=`{"part":"Chat","on":"$toggle"}`,label="AI tasks",icon=.Sparkle,state=state_ai_chat},
-        {name="shortcuts",method="editor.view",params=`{"part":"Shortcuts"}`,label="Keyboard shortcuts",icon=user(.Command),menu=.View,group=MENU_GROUP_PLUGINS+1},
-        {name="find",method="editor.view",params=`{"part":"Find"}`,label="Find object",icon=user(.Search),shortcut=key(.Space),scene=true},
+        {name="hierarchy_panel",view=hierarchy_toggle,label="Hierarchy",icon=user(.List),state=state_hierarchy_panel},
+        {name="source_control",view=git_toggle,label="Source control",icon=user(.Branch),state=state_source_control},
+        {name="ai_chat",view=chat_toggle,label="AI tasks",icon=.Sparkle,state=state_ai_chat},
+        {name="shortcuts",view=shortcuts_show,label="Keyboard shortcuts",icon=user(.Command),menu=.View,group=MENU_GROUP_PLUGINS+1},
+        {name="find",view=finder_open,label="Find object",icon=user(.Search),shortcut=key(.Space),scene=true},
 
         // The key of Play stops what plays, and that of Pause resumes it.
         {name="play",method="play.start",label="Play",icon=.Play,shortcut=key(.F5),state=state_play,scene=true},
@@ -434,10 +443,10 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="pause",method="play.pause",params=`{"paused":true}`,label="Pause",icon=user(.Pause),shortcut=key(.F6),state=state_pause,scene=true,in_game=true},
         {name="resume",method="play.pause",params=`{"paused":false}`,label="Resume",icon=.Play,shortcut=key(.F6),state=state_resume,scene=true,in_game=true},
         {name="stop",method="play.stop",label="Stop",icon=.Stop,shortcut=key(.F5,{.Shift}),alternate=key(.F5),state=state_stop,in_game=true},
-        {name="release_input",method="play.release",label="Release input",shortcut=key(.F1),state=state_release_input,scene=true,in_game=true},
-        {name="camera_preview",method="camera.preview",params=`{"entity":"$active"}`,label="Preview camera",state=state_camera_preview,scene=true},
-        {name="camera_keep",method="camera.preview",params=`{"end":"Keep"}`,label="Keep cameras",state=state_camera_previewing},
-        {name="camera_discard",method="camera.preview",params=`{"end":"Discard"}`,label="Discard cameras",state=state_camera_previewing},
+        {name="release_input",view=input_release,label="Release input",shortcut=key(.F1),state=state_release_input,scene=true,in_game=true},
+        {name="camera_preview",view=camera_preview_selected,label="Preview camera",state=state_camera_preview,scene=true},
+        {name="camera_keep",view=proc(s:^Session) {camera_preview_end(s,true)},label="Keep cameras",state=state_camera_previewing},
+        {name="camera_discard",view=proc(s:^Session) {camera_preview_end(s,false)},label="Discard cameras",state=state_camera_previewing},
 
         {name="prefab_create",method="prefab.create",params=`{"entity":"$selection"}`,label="Create prefab",icon=.Save_Prefab,state=state_prefab,scene=true},
         {name="prefab_apply",method="prefab.apply",params=`{"entity":"$active"}`,label="Apply to prefab",icon=.Prefab,state=state_prefab,scene=true},
@@ -570,11 +579,6 @@ Api_Group_Params :: struct {
     entities:[64]Api_Entity_Text `mirai:"text,entity,label=The entities the group holds by name or path or id; it is made where they hang from when they share a parent and at the root otherwise"`,
 }
 
-Api_Copy_Params :: struct {
-    entities:[64]Api_Entity_Text `mirai:"optional,text,entity,label=The entities Paste of the editor then duplicates; none forgets them"`,
-}
-Api_Copy_Result :: struct {copied:int}
-
 Api_Tool_Params :: struct {
     tool:[32]u8 `mirai:"text,label=move rotate or scale: the mode of the gizmo; or the tool of a plugin by the name editor.inspect gives it in commands (paint or terrain or foliage)"`,
     on:bool `mirai:"optional,label=Of the tool of a plugin: false turns it off and gives the scene back to the gizmo"`,
@@ -582,15 +586,6 @@ Api_Tool_Params :: struct {
 Api_Tool_Result :: struct {
     tool:[8]u8 `mirai:"text,label=move rotate or scale"`,
     plugin_tool:[32]u8 `mirai:"text,label=The tool of a plugin that is on; empty when none is"`,
-}
-
-Api_View_Part :: enum u8 {Settings,Shortcuts,Projects,Graphics,Find,Chat,Git,Hierarchy,Rename,Studio_Light}
-Api_View_Params :: struct {
-    part:Api_View_Part `mirai:"label=What of the interface the person sees: the dialogs Settings and Shortcuts; the screen Projects; the popups Graphics and Find; the tabs Chat and Git and Hierarchy of the left panel; Rename the name field of Details for the selected entity; Studio_Light the light of the studio in the viewport in place of that of the scene (not saved and not in a Play). The panels and the options of the viewport that the editor remembers are preferences: preferences.set"`,
-    on:bool `mirai:"optional,label=false closes or hides it; of Rename and Find and Projects only true"`,
-}
-Api_View_Result :: struct {
-    on:bool `mirai:"label=Whether the part shows now"`,
 }
 
 Api_Save_All_Result :: struct {
@@ -601,32 +596,14 @@ Api_Thumbnail_Result :: struct {
     asked:bool `mirai:"label=The view of the scene is taken in the next frames and kept as its thumbnail"`,
 }
 
-Api_Release_Result :: struct {
-    released:bool `mirai:"label=The editor has the keyboard and the mouse"`,
-}
-
-Api_Camera_Preview_End :: enum u8 {None,Keep,Discard}
-Api_Camera_Preview_Params :: struct {
-    entity:Api_Entity_Text `mirai:"optional,text,entity,label=The entity with a Camera to preview: the scene plays as a simulation seen through it"`,
-    end:Api_Camera_Preview_End `mirai:"optional,label=Ends the preview: Keep writes into the document what its cameras became as one undo step; Discard leaves them as they were"`,
-}
-Api_Camera_Preview_Result :: struct {
-    previewing:bool,
-}
-
 @(private)
 commands_methods_register :: proc(s:^Session,st:^Api_State) {
-    on:=Api_View_Params{on=true}
     tool_on_default:=Api_Tool_Params{on=true}
     api_register(s,st,{name="scene.new",summary="An empty scene or prefab in place of the document, with an empty history. Fails with unsaved changes unless discard.",params=type_info_of(Api_Scene_New_Params),result=type_info_of(Api_File_Result),flags={.Destructive},run=api_scene_new})
     api_register(s,st,{name="scene.group",summary="Puts entities under a new empty entity at their center, as one undo step. Returns the group.",params=type_info_of(Api_Group_Params),result=type_info_of(Api_Edit_Result),run=api_scene_group})
     api_register(s,st,{name="scene.thumbnail",summary="Takes the view of the viewport as the thumbnail of the scene of the document, which the content browser and the projects screen show.",result=type_info_of(Api_Thumbnail_Result),run=api_scene_thumbnail})
-    api_register(s,st,{name="editor.copy",summary="Keeps entities for Paste of the editor (Ctrl+V), which duplicates them; scene.write with copy copies one at once.",params=type_info_of(Api_Copy_Params),result=type_info_of(Api_Copy_Result),flags={.Idempotent},run=api_editor_copy})
     api_register(s,st,{name="editor.tool",summary="Chooses what the pointer does in the viewport: the mode of the gizmo, or the tool of a plugin, whose panel takes the place of Details while it is on.",params=type_info_of(Api_Tool_Params),result=type_info_of(Api_Tool_Result),defaults=&tool_on_default,flags={.Idempotent},run=api_editor_tool})
-    api_register(s,st,{name="editor.view",summary="Shows or hides a part of the interface of the editor that is not a preference: a dialog, a popup, a tab of the left panel, the name field of Details or the studio light. To see it, capture with ui.",params=type_info_of(Api_View_Params),result=type_info_of(Api_View_Result),defaults=&on,flags={.Idempotent},run=api_editor_view})
     api_register(s,st,{name="editor.save_all",summary="Writes every unsaved asset and every document with changes that has a file.",result=type_info_of(Api_Save_All_Result),run=api_save_all})
-    api_register(s,st,{name="play.release",summary="Gives the keyboard and the mouse of the game the user plays back to the editor, as F1 does; a click on the game takes them again.",result=type_info_of(Api_Release_Result),flags={.Idempotent},run=api_play_release})
-    api_register(s,st,{name="camera.preview",summary="Previews a camera of the scene: the scene plays as a simulation seen through it, with the blend of its activation, and Details edits the copy that plays. end stops it, keeping what the cameras became or not.",params=type_info_of(Api_Camera_Preview_Params),result=type_info_of(Api_Camera_Preview_Result),run=api_camera_preview})
 }
 
 @(private)
@@ -707,19 +684,6 @@ api_scene_thumbnail :: proc(s:^Session,call:^api.Call) {
 }
 
 @(private)
-api_editor_copy :: proc(s:^Session,call:^api.Call) {
-    params:=api.call_params(call,Api_Copy_Params)
-    w:=edited_world(s)
-    entities,known:=api_call_entities(call,w,params.entities[:],"entities",call.allocator)
-    if !known {return}
-    clear(&s.copied)
-    for e in entities {
-        if id:=api_entity_id(w,e);id!=0 {append(&s.copied,id)}
-    }
-    api.call_result(call,Api_Copy_Result).copied=len(s.copied)
-}
-
-@(private)
 api_editor_tool :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Tool_Params)
     name:=base.text_get(params.tool[:])
@@ -766,89 +730,53 @@ api_editor_tool :: proc(s:^Session,call:^api.Call) {
     if v.plugin_tool!=0 {base.text_set(result.plugin_tool[:],base.text_get(v.plugin_tool_name[:]))}
 }
 
-@(private)
-api_editor_view :: proc(s:^Session,call:^api.Call) {
-    params:=api.call_params(call,Api_View_Params)
+// ---------------------------------------------------------------- what only changes what the person sees
+
+@(private="file") settings_toggle :: proc(s:^Session) {if s.gui.modal==.Settings {modal_close(s.gui)} else {settings_show(s)}}
+@(private="file") rename_focus :: proc(s:^Session) {s.gui.layout.right_open,s.inspector.rename=true,true}
+@(private="file") studio_light_toggle :: proc(s:^Session) {s.viewport.studio_light=!s.viewport.studio_light}
+@(private="file") hierarchy_toggle :: proc(s:^Session) {library_select(s,.Editor if state_hierarchy_panel(s,nil).checked else .Hierarchy)}
+@(private="file") git_toggle :: proc(s:^Session) {library_select(s,.Content if state_source_control(s,nil).checked else .Git)}
+@(private="file") input_release :: proc(s:^Session) {if player_processes_captured(s) {player_processes_release(s)} else {play_release_input(s)}}
+
+@(private="file")
+shortcuts_show :: proc(s:^Session) {
+    ui.popup_close(s.gui.ctx)
+    s.gui.modal,s.gui.modal_scroll=.Shortcuts,0
+}
+
+@(private="file")
+graphics_toggle :: proc(s:^Session) {
     g:=s.gui
-    result:=api.call_result(call,Api_View_Result)
-    if g==nil || g.ctx==nil {
-        api.call_fail(call,api.SERVER_ERROR,"The editor has no interface")
-        return
+    if ui.popup_is_open(g.ctx,graphics_popup(g)) {ui.popup_close(g.ctx);return}
+    anchor,_:=ui.widget_rect(g.ctx,shell_id(g,"graphics"))
+    ui.popup_open(g.ctx,graphics_popup(g),anchor)
+}
+
+// A chat folded with its panel comes back with it instead of closing.
+@(private="file")
+chat_toggle :: proc(s:^Session) {
+    switch {
+    case play_shown(s):                                  play_chat_set(s,!s.play_chat_open)
+    case ai_chat_open(s.ai) && !s.gui.layout.left_open:  s.gui.layout.left_open=true
+    case:                                                ai_chat_toggle(s.ai)
     }
-    refuse :: proc(call:^api.Call,part:Api_View_Part) {api.call_failf(call,api.INVALID_PARAMS,"%v only shows: leave on out",part)}
-    switch params.part {
-    case .Settings:
-        if params.on && (!s.has_project || s.mode!=.Edit) {
-            api.call_fail(call,api.SERVER_ERROR,"The settings are those of a project, out of Play")
-            return
-        }
-        if params.on {settings_show(s)} else if g.modal==.Settings {modal_close(g)}
-        result.on=g.modal==.Settings
-    case .Shortcuts:
-        if params.on {
-            ui.popup_close(g.ctx)
-            g.modal,g.modal_scroll=.Shortcuts,0
-        } else if g.modal==.Shortcuts {modal_close(g)}
-        result.on=g.modal==.Shortcuts
-    case .Projects:
-        if !params.on {refuse(call,params.part);return}
-        if s.mode!=.Edit || s.engine_root=="" || s.projects==nil {
-            api.call_fail(call,api.SERVER_ERROR,"The projects screen opens out of Play, in an editor that knows the root of its engine")
-            return
-        }
-        projects_show(s)
-        result.on=true
-    case .Graphics:
-        if params.on {
-            anchor,_:=ui.widget_rect(g.ctx,shell_id(g,"graphics"))
-            ui.popup_open(g.ctx,graphics_popup(g),anchor)
-        } else if ui.popup_is_open(g.ctx,graphics_popup(g)) {ui.popup_close(g.ctx)}
-        result.on=params.on
-    case .Find:
-        if !params.on {refuse(call,params.part);return}
-        finder_open(s)
-        result.on=true
-    case .Chat:
-        if s.mode==.Play {
-            api.call_fail(call,api.SERVER_ERROR,"The chat opens while the game is paused: play.pause first")
-            return
-        }
-        shown:=ai_chat_open(s.ai) && (g.layout.left_open || play_shown(s))
-        if shown!=params.on {
-            // A chat folded with its panel comes back with it instead of closing.
-            if play_shown(s) {play_chat_set(s,!s.play_chat_open)} else if ai_chat_open(s.ai) && !g.layout.left_open {g.layout.left_open=true} else {ai_chat_toggle(s.ai)}
-        }
-        result.on=ai_chat_open(s.ai) && (g.layout.left_open || play_shown(s))
-    case .Git:
-        if !s.has_project {
-            api.call_fail(call,api.SERVER_ERROR,"Source control is that of a project")
-            return
-        }
-        if params.on {
-            g.layout.left_open=true
-            library_select(s,.Git)
-        } else if g.layout.library_tab==.Git {library_select(s,.Content)}
-        result.on=g.layout.left_open && g.layout.library_tab==.Git
-    case .Hierarchy:
-        library_select(s,params.on?.Hierarchy:.Editor)
-        result.on=g.layout.left_open && g.layout.library_tab==.Hierarchy
-    case .Rename:
-        if !params.on {refuse(call,params.part);return}
-        if len(s.selection.entities)!=1 || watching(s) {
-            api.call_fail(call,api.SERVER_ERROR,"Rename is of one selected entity: editor.select it; scene.write with root and name renames without the field")
-            return
-        }
-        g.layout.right_open=true
-        s.inspector.rename=true
-        result.on=true
-    case .Studio_Light:
-        if params.on && (document_is_prefab(s) || playing(s)) {
-            api.call_fail(call,api.SERVER_ERROR,"The studio light is of a scene out of Play: a prefab document always shows with it")
-            return
-        }
-        s.viewport.studio_light=params.on
-        result.on=s.viewport.studio_light
+}
+
+// Keeps the selected roots for Paste, by their ids: not their data.
+@(private="file")
+copy_roots :: proc(s:^Session) {
+    w:=shown_world(s)
+    clear(&s.copied)
+    for e in history.selection_roots(s.selection,w,context.temp_allocator) {
+        if id:=api_entity_id(w,e);id!=0 {append(&s.copied,id)}
     }
+}
+
+// The scene plays as a simulation seen through the selected camera, with the blend of its activation.
+@(private="file")
+camera_preview_selected :: proc(s:^Session) {
+    if !camera_preview_start(s,camera_preview_target(s,shown_world(s))) {notify(s,"The camera could not be previewed: the simulation did not start")}
 }
 
 // Opens Project Settings on the layer of the project.
@@ -877,46 +805,6 @@ api_save_all :: proc(s:^Session,call:^api.Call) {
     }
     save_all(s)
     api.call_result(call,Api_Save_All_Result).dirty=documents_dirty(s)
-}
-
-@(private)
-api_play_release :: proc(s:^Session,call:^api.Call) {
-    if ai_task_of_call(s,call)!=0 {
-        api.call_fail(call,api.SERVER_ERROR,"The keyboard and the mouse are those of the game of the user: a turn gives its run input with play.step")
-        return
-    }
-    if player_processes_captured(s) {player_processes_release(s)} else {play_release_input(s)}
-    api.call_result(call,Api_Release_Result).released=!player_processes_captured(s) && (s.mode!=.Play || s.play_input_released)
-}
-
-@(private)
-api_camera_preview :: proc(s:^Session,call:^api.Call) {
-    params:=api.call_params(call,Api_Camera_Preview_Params)
-    if ai_task_of_call(s,call)!=0 {
-        api.call_fail(call,api.SERVER_ERROR,"The preview takes the view of the user: a turn looks through a camera with camera.set and entity")
-        return
-    }
-    switch params.end {
-    case .Keep,.Discard:
-        if !camera_previewing(s) {
-            api.call_fail(call,api.SERVER_ERROR,"No camera is being previewed")
-            return
-        }
-        camera_preview_end(s,params.end==.Keep)
-    case .None:
-        w:=edited_world(s)
-        targets,known:=api_call_targets(call,w,params.entity[:])
-        if !known {return}
-        if playing(s) {
-            api.call_fail(call,api.SERVER_ERROR,"A game or a preview plays: play.stop, or camera.preview with end")
-            return
-        }
-        if !camera_preview_start(s,targets[0]) {
-            api.call_fail(call,api.SERVER_ERROR,"The camera could not be previewed: the entity has no Camera, or the simulation did not start")
-            return
-        }
-    }
-    api.call_result(call,Api_Camera_Preview_Result).previewing=camera_previewing(s)
 }
 
 // ---------------------------------------------------------------- editor.inspect

@@ -83,14 +83,18 @@ every_entry_of_a_menu_or_a_shortcut_calls_a_method_of_the_api_with_params_it_tak
     defer commands_test_close(f)
     s:=&f.s
     st:=api_state(s)
-    testing.expect(t,api.method_find(&st.server,"editor.action")==nil,"the methods are the only catalog")
+    for gone in ([?]string{"editor.action","editor.view","editor.copy","play.release","camera.preview"}) {
+        testing.expectf(t,api.method_find(&st.server,gone)==nil,"%s only changed what a person sees: it is no method",gone)
+    }
     for name in COMMANDS_OF_THE_ACTIONS {
         testing.expectf(t,command_binding(s,name)!=nil,"%s is something a person does: it has an entry",name)
     }
     for &b in command_bindings(s) {
+        testing.expectf(t,b.label!="","the entry %s shows a label",b.name)
+        // What only changes what the person sees is no method.
+        if b.view!=nil {continue}
         method:=api.method_find(&st.server,b.method)
         if !testing.expectf(t,method!=nil,"the entry %s calls %s, which is no method",b.name,b.method) {continue}
-        testing.expectf(t,b.label!="","the entry %s shows a label",b.name)
         // Whatever it shows, checked or not, its params are params of its method.
         state:=binding_state(s,&b)
         for checked in ([2]bool{false,true}) {
@@ -221,17 +225,9 @@ the_methods_a_menu_calls_refuse_an_agent_what_they_cannot_do_and_say_how :: proc
         {"scene.group",`{"entities":["Nobody"]}`,"names no entity"},
         {"scene.group",`{"entities":["$roots"]}`,"names no entity"},
         {"scene.write",`{"entities":[{"copy":"$copied"}]}`,"names no entity"},
-        {"editor.copy",`{"entities":["Nobody"]}`,"names no entity"},
         {"editor.tool",`{"tool":"hammer"}`,"hammer"},
         {"editor.tool",`{"tool":"move","on":false}`,"always has a mode"},
         {"editor.tool",`{}`,"tool"},
-        {"editor.view",`{"part":"Nothing"}`,"part"},
-        {"editor.view",`{"part":"Find","on":false}`,"only shows"},
-        {"editor.view",`{"part":"Settings"}`,"project"},
-        {"editor.view",`{"part":"Rename"}`,"one selected entity"},
-        {"camera.preview",`{}`,"entity"},
-        {"camera.preview",`{"entity":"Object"}`,"could not be previewed"},
-        {"camera.preview",`{"end":"Keep"}`,"No camera is being previewed"},
         {"scene.thumbnail",`{}`,"thumbnail"},
         {"scene.new",`{"discard":"yes"}`,"discard"},
     }

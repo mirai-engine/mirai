@@ -268,7 +268,7 @@ view_mode_build :: proc(s: ^Session) {
 			}
 		}
 		ui.menu_header(ctx, "Light")
-		if ui.menu_item(ctx, ui.id(ctx, "studio_light"), "Studio light", {icon = .Sun, checked = s.viewport.studio_light}) {s.viewport.studio_light = !s.viewport.studio_light}
+		command_menu_item(s, ui.id(ctx, "studio_light"), "studio_light")
 		viewport_exposure_build(s)
 	}
 }
