@@ -62,7 +62,7 @@ gallery_spider :: proc(o:^Out) {
         leg.phase=f32((i+i/4)%2)*.5;leg.step_distance=.3;leg.step_height=.15;leg.sole_height=.03;leg.pole_offset={-1 if i<4 else 1,.2,0}
         grounding.legs[i]=leg
     }
-    gallery_set(o,"characters/spider","spider",{},{pose={grounding={grounding}}})
+    gallery_set(o,"characters/spider","spider",{},{pose={grounding=grounding}})
 }
 
 @(private)

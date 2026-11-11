@@ -72,7 +72,7 @@ collab_error_text :: proc(error:Collab_Error) -> string {
     case .None:      return ""
     case .Busy:      return "a session is open; leave it first"
     case .Playing:   return "a game is playing; stop it first"
-    case .Invite:    return "not the code of an invitation: like R2M0-253B-DK5G-0W87-DDP5-XG9E-FB1A; copy it again"
+    case .Invite:    return "not the code of an invitation: like R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT; copy it again"
     case .Transport: return "the port could not be opened"
     case .No_Assets: return "the project has no assets folder"
     case .Dirty:     return "the scene has unsaved changes; save it or discard them"
@@ -163,7 +163,7 @@ Collab_State :: struct {
     mapping:wire.Port_Mapping,
     mapping_on:bool,
     port:int,
-    invite:u32,           // the token of the session
+    invite:u64,           // the token of the session
     invitation:wire.Invitation, // a guest: of the host
     self:u8,
     peers:[COLLAB_PEERS]Collab_Peer,

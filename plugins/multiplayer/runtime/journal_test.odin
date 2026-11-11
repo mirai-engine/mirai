@@ -80,6 +80,7 @@ Toy_Pair :: struct {
     udp:bool,
     base:f64,
     rewinds:Net_Rewinds,
+    seen:u64,          // server: the cursor of its connection events, as a generated call keeps it
 }
 
 @(private="file")
@@ -153,12 +154,13 @@ pair_tick :: proc(p:^Toy_Pair,tick:u64,amount:u32) {
         journal_receive(&toy.journal,inbox,index==0,own_connection(core.ref(&p.sessions[index])),w.time,&p.rewinds,true,0,&p.problems[index])
         if index==0 {
             if amount!=0 {toy_publish(toy,&w.outbox,w.time,amount)}
-            journal_connections(&toy.journal,core.ref(&w.connections))
-            for event in w.connections.events.items {
+            // The view of the log a step that reads Net_Connections is handed: what came since it last ran.
+            connections:=w.connections
+            core.events_read(&connections.events,&p.seen)
+            journal_connections(&toy.journal,core.ref(&connections))
+            for event in connections.events.items {
                 if event.kind==.Entered {journal_offer(&toy.journal,event.connection,TOY_KEY,true)}
             }
-            // The log of a tick, as the loop clears it for the next.
-            clear(&w.connections.events.items)
             toy_serve(toy,&w.outbox,w.time)
         } else {
             toy_follow(toy,w.time)

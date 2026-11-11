@@ -197,7 +197,7 @@ Api_Simulation_Apply_Params :: struct {
 @(private)
 api_simulation_register :: proc(s:^Session,st:^Api_State) {
     move:=Api_Simulation_Move_Params{rotation={0,0,0,1}}
-    api_register(s,st,{name="simulation.move",summary="Drives a body toward a world pose on physics ticks, temporarily kinematic; release restores its authored type once it reaches the target.",params=Api_Simulation_Move_Params,defaults=&move,result=Api_Play_Result,run=api_simulation_move})
+    api_register(s,st,{name="simulation.move",summary="Drives a body toward a world pose on physics ticks: a dynamic body is pulled by a spring of bounded force and keeps colliding, a static or kinematic one moves there as kinematic. release lets go: a pulled body at once, keeping its velocity, another once it reaches the target.",params=Api_Simulation_Move_Params,defaults=&move,result=Api_Play_Result,run=api_simulation_move})
     api_register(s,st,{name="simulation.apply",summary="Stops and keeps only the transforms of the given scene entities as one undo step.",params=Api_Simulation_Apply_Params,result=Api_History_Result,run=api_simulation_apply})
 }
 

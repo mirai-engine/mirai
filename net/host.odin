@@ -69,7 +69,7 @@ Host_Desc :: struct {
     protocol_id:u32,          // identity of the application: datagrams of any other are ignored
     version:u32,              // both ends must have the same
     seed:u64,                 // source of salts; 0 takes it from the system
-    invite:u32,               // the invitation both ends must have; 0 at both: anyone who reaches the server joins. Every key of a connection depends on it (invite.odin)
+    invite:u64,               // the invitation both ends must have; 0 at both: anyone who reaches the server joins. Every key of a connection depends on it (invite.odin)
     max_connections:int,      // server; default 32. A client has one
     channels:[]Channel_Desc,  // at most USER_CHANNELS
     tick_rate:int,            // Hz, default 60
@@ -131,7 +131,7 @@ Host_Stats :: struct {
     packets_invalid:u64,     // wrong size, checksum or contents
     handshakes_refused:u64,  // answered with a denial, after the cookie and the proof of the client
     handshakes_dropped:u64,  // answered with nothing: a cookie that is not this host's or is old, or a proof that does not open
-    handshakes_deferred:u64, // key exchanges put off because the update had computed its share
+    handshakes_deferred:u64, // key exchanges put off: the update had computed its share, or the address presented wrong proofs too fast
     commands_dropped:u64,    // the command buffer was full
     receive_stalls:u64,      // updates that stopped reading because the command buffer had no reserve left
     operations_dropped:u64,  // the frame of the simulation was full
@@ -389,6 +389,7 @@ host_destroy :: proc(h:^Host) {
     repl_destroy(h)
     for &peer in h.back.peers {peer_release(h,&peer)}
     delete(h.back.peers,h.allocator)
+    delete(h.back.secure.failed,h.allocator)
     base.hash_map_destroy(&h.back.by_address)
     for frame in h.frames {delete(frame.ops,h.allocator);delete(frame.bytes,h.allocator)}
     for buffer in h.buffers {delete(buffer.commands,h.allocator);delete(buffer.bytes,h.allocator);delete(buffer.released,h.allocator)}

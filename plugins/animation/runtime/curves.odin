@@ -47,7 +47,7 @@ sample_layer_curves :: proc(state:^Playing,content:^host.Content_Animation,anima
     if state.stack==0 {return}
     for &layer,i in state.layers[:state.stack] {
         asked:=state.asked[i]
-        if asked.injected || layer.weight<=0 || asked.curves==.Ignore {continue}
+        if layer.weight<=0 || asked.curves==.Ignore {continue}
         players:[LAYER_PLAYERS]lib.Player
         count:=layer_players(&layer,&players)
         if count==0 {continue}

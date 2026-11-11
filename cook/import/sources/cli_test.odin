@@ -6,6 +6,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "mirai:cook/prefab"
 import importer "mirai:cook/import"
 import "mirai:std/base"
 import "mirai:std/subprocess"
@@ -23,7 +24,7 @@ Result :: struct {code:int,out,err:string}
 @(private="file")
 import_run :: proc(args:..string) -> Result {
     output,errors:=strings.builder_make(context.temp_allocator),strings.builder_make(context.temp_allocator)
-    code:=command(args,strings.to_writer(&output),strings.to_writer(&errors))
+    code:=command(args,strings.to_writer(&output),strings.to_writer(&errors),test_library)
     return {code,strings.to_string(output),strings.to_string(errors)}
 }
 
@@ -72,6 +73,7 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     if !has_compiler || compiler=="" {compiler="odin"}
     root_folder,folder:=test_project(t,"cli")
     if folder=="" {return}
+    context.user_ptr=prefab.import_world(t)
     exe:=fmt.tprintf("%s/bin/tests/mirai-import-cli%s",root,EXE)
     os.make_directory_all(fmt.tprintf("%s/bin/tests",root))
     {

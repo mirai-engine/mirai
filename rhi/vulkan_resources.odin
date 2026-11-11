@@ -589,8 +589,10 @@ vk_pipeline_cache_close :: proc(d: ^Device, key: u64, cache: vk.PipelineCache, f
 	if error != nil {return}
 	if d.dvk.GetPipelineCacheData(d.handle, cache, &size, raw_data(data)) != .SUCCESS || size == 0 {delete(data, d.allocator); return}
 	defer delete(data, d.allocator)
-	sync.guard(&d.pipelines_kept.lock)
-	pipeline_store_put(&d.pipelines_kept, key, data[:size])
+	sync.lock(&d.pipelines_kept.lock)
+	due := pipeline_store_put(&d.pipelines_kept, key, data[:size])
+	sync.unlock(&d.pipelines_kept.lock)
+	if due {pipeline_store_save(&d.pipelines_kept, string(d.store_path[:d.store_path_len]))}
 }
 
 // What the constants of a shader are in a pipeline, as the driver takes them:

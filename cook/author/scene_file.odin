@@ -409,33 +409,32 @@ scene_file_apply :: proc(f:^Scene_File,text:string) -> (applied:Scene_Applied,pr
     return
 }
 
-// The bytes of the file as a save of the editor writes a scene: its entities
-// in a world of the game, captured, so the same scene is the same bytes
-// whoever wrote it.
-@(private="file")
-scene_file_bytes :: proc(f:^Scene_File) -> (bytes:[]u8,problem:string) {
-    p:=f.p
+// The bytes of a scene as a save of the editor writes it: its entities in a
+// world of the game info describes, captured, so the same scene is the same
+// bytes whoever wrote it, every component in the layout the game declares.
+// scratch: that world, made the first time; in the temp allocator.
+scene_file_bytes :: proc(scene:^asset.Scene,types:^asset.Types,info:^core.World_Info,scratch:^Scratch_World) -> (bytes:[]u8,problem:string) {
     FAILED :: "the file could not be written: "
-    edited,packing:=asset.scene_bytes(&f.scene,context.temp_allocator)
+    edited,packing:=asset.scene_bytes(scene,context.temp_allocator)
     file:asset.Asset
     if packing!=.None || asset.asset_open(&file,edited,context.temp_allocator)!=.None {return nil,FAILED+"memory ran out"}
     defer asset.asset_close(&file)
-    if p.scratch.w.data==nil {
+    if scratch.w.data==nil {
         made:bool
-        if p.scratch,made=scratch_world_make(p.info);!made {return nil,FAILED+"a scene is written through a world of the game, and the library of the project gives none; "+BUILD_FIX}
+        if scratch^,made=scratch_world_make(info);!made {return nil,FAILED+"a scene is written through a world of the game, and the library of the project gives none; "+BUILD_FIX}
     }
-    w:=p.scratch.w
+    w:=scratch.w
     defer {
         if ids:=core.world_table_of(w,core.Id);ids!=nil {
             for e in slice.clone(ids.entities[:],context.temp_allocator) {core.destroy(core.world_entities(w),e)}
         }
         core.world_settle(w)
     }
-    if _,error:=escene.instantiate(w,&file,&p.types);error!=.None {return nil,fmt.tprintf("%s%s",FAILED,escene.error_text(error))}
+    if _,error:=escene.instantiate(w,&file,types);error!=.None {return nil,fmt.tprintf("%s%s",FAILED,escene.error_text(error))}
     core.world_settle(w)
     captured:asset.Scene
-    if _,error:=escene.capture(w,&captured,&p.types,{previous=&f.scene},context.temp_allocator);error!=.None {return nil,fmt.tprintf("%s%s",FAILED,escene.error_text(error))}
-    for override in f.scene.overrides {append(&captured.overrides,override)}
+    if _,error:=escene.capture(w,&captured,types,{previous=scene},context.temp_allocator);error!=.None {return nil,fmt.tprintf("%s%s",FAILED,escene.error_text(error))}
+    for override in scene.overrides {append(&captured.overrides,override)}
     if bytes,packing=asset.scene_bytes(&captured,context.temp_allocator);packing!=.None {return nil,FAILED+"memory ran out"}
     return bytes,""
 }
@@ -467,7 +466,7 @@ scene_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:st
         if refused:=asset.prefab_refused(&f.scene);refused!="" {return {},fmt.tprintf("%s: %s",path,refused)}
     }
     bytes:[]u8
-    if bytes,problem=scene_file_bytes(&f);problem!="" {return {},problem}
+    if bytes,problem=scene_file_bytes(&f.scene,&p.types,p.info,&p.scratch);problem!="" {return {},problem}
     file:=asset.registry_file_path(&p.registry,path,context.temp_allocator) if exists else fmt.tprintf("%s/%s",p.assets_root,path)
     problem=file_put(p,file,path,bytes,&written)
     return

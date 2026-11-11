@@ -31,6 +31,7 @@ window_translate :: proc(p:^Platform,event:^sdl.Event) {
     #partial switch event.type {
     // SDL also sends QUIT for Cmd+Q in the macOS menu and for SIGINT and SIGTERM.
     case .QUIT,.WINDOW_CLOSE_REQUESTED:input_apply(p,Window_Event{kind=.Close_Requested})
+    case .AUDIO_DEVICE_ADDED,.AUDIO_DEVICE_REMOVED:audio_device_event(p,event.adevice)
     case .WINDOW_FOCUS_GAINED:input_apply(p,Window_Event{kind=.Focus_Gained})
     case .WINDOW_FOCUS_LOST:
         if w.resize.hit!=.NORMAL {w.resize.hit=.NORMAL;_=sdl.CaptureMouse(false)}
