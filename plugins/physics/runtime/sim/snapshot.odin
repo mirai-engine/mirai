@@ -1,29 +1,31 @@
 package mirai_physics
 
+import "base:runtime"
 import "core:mem"
+import "core:strings"
 import "core:hash/xxhash"
 import "mirai:std/base"
 import "mirai:std/spatial"
 
-// An array of the state: all its slots, the size of one, the slots in use and the pool it is of.
-@(private) State_Array :: struct {bytes:[]byte,size:int,high:i32,pool:Pool}
+// An array of the state: all its slots, the type of one, the slots in use and the pool it is of.
+@(private) State_Array :: struct {bytes:[]byte,info:^runtime.Type_Info,high:i32,pool:Pool}
 
 // The arrays of the state, which world_state_copy copies and world_hash hashes up to their counts.
 @(private)
 state_arrays :: proc(w:^World) -> [12]State_Array {
     return {
-        {mem.slice_to_bytes(w.bodies),size_of(Body),w.body_high,.Bodies},
-        {mem.slice_to_bytes(w.shapes),size_of(Shape),w.shape_high,.Shapes},
-        {mem.slice_to_bytes(w.contacts),size_of(Contact),w.contact_high,.Contacts},
-        {mem.slice_to_bytes(w.joints),size_of(Joint),w.joint_high,.Joints},
-        {mem.slice_to_bytes(w.blocks),size_of(Manifold_Block),w.block_high,.Blocks},
-        {mem.slice_to_bytes(w.characters),size_of(Character),w.character_high,.Characters},
-        {mem.slice_to_bytes(w.joint_axes),size_of(Joint_Axes),w.joint_high,.Joints},
-        {mem.slice_to_bytes(w.islands),size_of(Island),w.island_high,.Islands},
-        {mem.slice_to_bytes(w.fluids),size_of(Fluid),w.fluid_high,.Fluids},
-        {mem.slice_to_bytes(w.breakables),size_of(Breakable),w.breakable_high,.Breakables},
-        {mem.slice_to_bytes(w.pieces),size_of(Piece),w.piece_high,.Pieces},
-        {mem.slice_to_bytes(w.bonds),size_of(Bond),w.bond_high,.Bonds},
+        {mem.slice_to_bytes(w.bodies),type_info_of(Body),w.body_high,.Bodies},
+        {mem.slice_to_bytes(w.shapes),type_info_of(Shape),w.shape_high,.Shapes},
+        {mem.slice_to_bytes(w.contacts),type_info_of(Contact),w.contact_high,.Contacts},
+        {mem.slice_to_bytes(w.joints),type_info_of(Joint),w.joint_high,.Joints},
+        {mem.slice_to_bytes(w.blocks),type_info_of(Manifold_Block),w.block_high,.Blocks},
+        {mem.slice_to_bytes(w.characters),type_info_of(Character),w.character_high,.Characters},
+        {mem.slice_to_bytes(w.joint_axes),type_info_of(Joint_Axes),w.joint_high,.Joints},
+        {mem.slice_to_bytes(w.islands),type_info_of(Island),w.island_high,.Islands},
+        {mem.slice_to_bytes(w.fluids),type_info_of(Fluid),w.fluid_high,.Fluids},
+        {mem.slice_to_bytes(w.breakables),type_info_of(Breakable),w.breakable_high,.Breakables},
+        {mem.slice_to_bytes(w.pieces),type_info_of(Piece),w.piece_high,.Pieces},
+        {mem.slice_to_bytes(w.bonds),type_info_of(Bond),w.bond_high,.Bonds},
     }
 }
 
@@ -73,7 +75,7 @@ world_state_copy :: proc(dst,src:^World) -> (written:int,ok:bool) {
     counts,slots:[Pool]int
     to:=state_arrays(dst)
     for a,i in state_arrays(src) {
-        copies[a.pool][counts[a.pool]]={to[i].bytes,a.bytes,a.size}
+        copies[a.pool][counts[a.pool]]={to[i].bytes,a.bytes,a.info.size}
         counts[a.pool]+=1
         slots[a.pool]=max(slots[a.pool],int(a.high),int(to[i].high))
     }
@@ -127,7 +129,7 @@ world_succeed :: proc(next,previous:^World) {
 world_state_fits :: proc(dst,src:^World) -> bool {
     to:=state_arrays(dst)
     for a,i in state_arrays(src) {
-        if int(a.high)>len(to[i].bytes)/a.size {return false}
+        if int(a.high)>len(to[i].bytes)/a.info.size {return false}
     }
     if int(src.piece_hull_high)>len(dst.piece_hulls) {return false}
     for &tree,i in src.trees {
@@ -185,7 +187,7 @@ world_hash :: proc(w:^World) -> u64 {
     hash:=xxhash.XXH3_64_with_seed(mem.ptr_to_bytes(&state),0)
     for a in state_arrays(w) {
         if a.high==0 {continue}
-        hash=xxhash.XXH3_64_with_seed(a.bytes[:int(a.high)*a.size],hash)
+        hash=xxhash.XXH3_64_with_seed(a.bytes[:int(a.high)*a.info.size],hash)
     }
     for &tree in w.trees {
         head:=[4]i32{tree.root,tree.free_list,tree.node_high,tree.proxy_count}
@@ -193,4 +195,88 @@ world_hash :: proc(w:^World) -> u64 {
         if tree.node_high>0 {hash=xxhash.XXH3_64_with_seed(mem.slice_to_bytes(tree.nodes[:tree.node_high]),hash)}
     }
     return hash
+}
+
+// The first place where the states of two worlds differ, what world_hash hashes: the type of the element
+// (one of the state arrays, Tree_Node or Dynamic_Tree for a tree, World_State), its slot (the tree for
+// Dynamic_Tree), the path of the field, written into buf, and its value in each world, which points into it.
+World_Diff :: struct {type:typeid,slot:i32,field:string,a,b:any}
+
+// Where a and b first differ, to find what broke determinism or a copy. Arrays come first, by slot, then the
+// trees, then the counters, which also tell slots that only one world uses.
+world_diff :: proc(a,b:^World,buf:[]byte) -> (diff:World_Diff,differ:bool) {
+    path:=strings.builder_from_bytes(buf)
+    other:=state_arrays(b)
+    for x,i in state_arrays(a) {
+        size:=x.info.size
+        if at,found:=first_difference(x.bytes[:int(min(x.high,other[i].high))*size],other[i].bytes);found {
+            return value_diff(&x.bytes[at/size*size],&other[i].bytes[at/size*size],x.info,at%size,i32(at/size),&path),true
+        }
+    }
+    for &tree,i in a.trees {
+        strings.write_string(&path,i==STATIC_TREE?"static tree":"dynamic tree")
+        head:=int(offset_of(spatial.Dynamic_Tree,root))
+        heads:=mem.ptr_to_bytes(&tree)[head:int(offset_of(spatial.Dynamic_Tree,proxy_count))+size_of(i32)]
+        if at,found:=first_difference(heads,mem.ptr_to_bytes(&b.trees[i])[head:]);found {
+            return value_diff(&tree,&b.trees[i],type_info_of(spatial.Dynamic_Tree),head+at,i32(i),&path),true
+        }
+        nodes:=mem.slice_to_bytes(tree.nodes[:min(tree.node_high,b.trees[i].node_high)])
+        if at,found:=first_difference(nodes,mem.slice_to_bytes(b.trees[i].nodes));found {
+            size:=size_of(spatial.Tree_Node)
+            return value_diff(&nodes[at/size*size],&mem.slice_to_bytes(b.trees[i].nodes)[at/size*size],type_info_of(spatial.Tree_Node),at%size,i32(at/size),&path),true
+        }
+        strings.builder_reset(&path)
+    }
+    if at,found:=first_difference(mem.ptr_to_bytes(&a.state),mem.ptr_to_bytes(&b.state));found {
+        return value_diff(&a.state,&b.state,type_info_of(World_State),at,0,&path),true
+    }
+    return
+}
+
+// The first byte of x that differs from y, compared a block at a time.
+@(private)
+first_difference :: proc(x,y:[]byte) -> (at:int,found:bool) {
+    BLOCK :: 4096
+    for start:=0;start<len(x);start+=BLOCK {
+        end:=min(start+BLOCK,len(x))
+        if mem.compare(x[start:end],y[start:end])==0 {continue}
+        for k in start..<end {if x[k]!=y[k] {return k,true}}
+    }
+    return
+}
+
+// The innermost field of two values of a type that holds the byte at offset, its path written into path.
+@(private)
+value_diff :: proc(a,b:rawptr,info:^runtime.Type_Info,offset:int,slot:i32,path:^strings.Builder) -> World_Diff {
+    type:=info.id
+    info,offset:=info,offset
+    at:=0
+    walk: for {
+        #partial switch v in runtime.type_info_base(info).variant {
+        case runtime.Type_Info_Struct:
+            for i in 0..<int(v.field_count) {
+                start:=int(v.offsets[i])
+                if offset<start || offset>=start+v.types[i].size {continue}
+                strings.write_byte(path,'.')
+                strings.write_string(path,v.names[i])
+                info,offset,at=v.types[i],offset-start,at+start
+                continue walk
+            }
+            // Padding between fields: the byte itself.
+            strings.write_string(path," padding")
+            info,at=type_info_of(u8),at+offset
+            break walk
+        case runtime.Type_Info_Array:
+            i:=offset/v.elem_size
+            strings.write_byte(path,'[');strings.write_int(path,i);strings.write_byte(path,']')
+            info,offset,at=v.elem,offset-i*v.elem_size,at+i*v.elem_size
+        case runtime.Type_Info_Enumerated_Array:
+            i:=offset/v.elem_size
+            strings.write_byte(path,'[');strings.write_int(path,i);strings.write_byte(path,']')
+            info,offset,at=v.elem,offset-i*v.elem_size,at+i*v.elem_size
+        case:
+            break walk
+        }
+    }
+    return {type,slot,strings.to_string(path^),any{rawptr(uintptr(a)+uintptr(at)),info.id},any{rawptr(uintptr(b)+uintptr(at)),info.id}}
 }

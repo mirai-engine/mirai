@@ -390,7 +390,10 @@ geometry.
 - The state is the arrays of `state_arrays` (bodies, shapes, contacts, joints and their axes,
   islands, manifold blocks, characters, fluids, breakables, pieces, bonds), the two trees and
   `World_State`, which also stores gravity, the push rules, twins and cuts. A new state array is
-  added to `state_arrays`, with its counter in `World_State`. `world_hash` hashes that state.
+  added to `state_arrays`, with its counter in `World_State`. `world_hash` hashes that state;
+  `world_diff` locates where two states first differ (the element, its slot, the field and both
+  values), and the determinism and snapshot tests compare worlds with it, so a divergence names
+  its cause. It reads only: a step pays nothing for it.
 - `world_state_copy(&dst,&src)` makes `dst` what `src` is; stepping both repeats the same steps bit
   for bit. A snapshot is a world kept with `world_kept_init` (pools sized to what `src` uses, never
   stepped) that takes a copy and gives it back. It returns the bytes written.
