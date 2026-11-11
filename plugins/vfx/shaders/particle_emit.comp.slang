@@ -5,7 +5,9 @@
 // as old as the step has left it, or on its surface where the surface was
 // then. A birth before the frame starts as far in its life as it got (a
 // prewarm). Mode 1: a thread per event of the step before, which starts the
-// particles it asks for in its target emitter, in the ribbon it names. A particle takes a free slot
+// particles it asks for in its target emitter, in the ribbon it names; mode
+// 4, after the last step, those of its events, drawn in this frame (the
+// point a leader starts lives until the next step). A particle takes a free slot
 // of its emitter; one that finds none is not started. The program of the
 // emitter starts it after its effect. Mode 2: a thread per birth a game gave
 // the channel of each emitter (y), which starts its particles if it falls in
@@ -93,8 +95,10 @@ void shape_sample(Particle_Emitter e, inout uint seed, out float3 position, out 
 // with what velocity, how far into the step (age: the seconds the step does
 // not move it, as a negative age) and how much of its life it already lived.
 // False when its emitter has no free slot or it would be dead already.
-bool particle_start(uint slot, Particle_Emitter e, uint seed, uint birth, float3 world_position, float3 world_velocity, float age, float lived, float time, float4 tint = float4(1.0), float scale = 1.0, float4 values = float4(0.0), uint ribbon = 0u) {
+bool particle_start(uint slot, Particle_Emitter e, uint seed, uint birth, float3 world_position, float3 world_velocity, float age, float lived, float time, float4 tint = float4(1.0), float scale = 1.0, float4 values = float4(0.0), uint ribbon = 0u, bool leader = false, bool drawn = false) {
     float lifetime = lerp(e.lifetime_speed.x, e.lifetime_speed.y, random01(seed));
+    // A leader lives until the next step.
+    if (leader) lifetime = min(lifetime, 1e-6);
     if (lived >= lifetime) return false;
     uint previous;
     InterlockedAdd(particle_states[slot].dead, 0xFFFFFFFFu, previous);
@@ -128,6 +132,13 @@ bool particle_start(uint slot, Particle_Emitter e, uint seed, uint birth, float3
     p.flags = 0u;
     particle_program_store(slot, v, true, p);
     particles[index] = p;
+    if (e.kinds.y == PARTICLE_RENDER_RIBBON) particle_ribbon_look_store(slot, index, particle_program_look(slot, index, p));
+    // Started after the last step: drawn in this frame.
+    if (drawn) {
+        uint at;
+        InterlockedAdd(particle_states[slot].alive, 1u, at);
+        if (at < e.range.y) particle_lists[e.program.y + e.range.x + at] = index;
+    }
     return true;
 }
 
@@ -253,16 +264,20 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
         return;
     }
-    uint half_read = 1u - params.parity;
+    // Mode 1 takes the events of the step before; mode 4, after the last step, those of it.
+    bool late = params.mode == 4u;
+    uint half_read = late ? params.parity : 1u - params.parity;
     if (id.x >= min(particle_queue[half_read], PARTICLE_EVENT_CAPACITY)) return;
     Particle_Event ev = particle_event_load(half_read, id.x);
     uint slot = ev.target & 0xFFFFu;
-    uint count = ev.target >> 16u;
+    uint count = (ev.target >> 16u) & 0x7FFFu;
+    bool leader = (ev.target & PARTICLE_EVENT_LEADER) != 0u;
     if (slot >= params.emitters) return;
     Particle_Emitter e = particle_emitters[slot];
     if (e.program.x != params.program) return;
     if ((e.range.w & PARTICLE_FLAG_ACTIVE) == 0u) return;
-    uint seed = hash_u32(e.random.x * 7907u + params.step * 3203u + id.x * 104729u + ev.color);
+    // The frame too: the events of one step are numbered from 0 in every frame.
+    uint seed = hash_u32(e.random.x * 7907u + (params.step + (late ? 1u : 0u)) * 3203u + id.x * 104729u + ev.color + frame.frame_index * 2654435761u);
     for (uint k = 0u; k < count; k++) {
         float3 local, direction;
         shape_sample(e, seed, local, direction);
@@ -270,6 +285,6 @@ void main(uint3 id : SV_DispatchThreadID) {
         float speed = lerp(e.lifetime_speed.z, e.lifetime_speed.w, random01(seed));
         float3 local_velocity = lerp(e.velocity_a.xyz, e.velocity_b.xyz, float3(random01(seed), random01(seed), random01(seed)));
         float3 velocity = normalize(transform_vector(e.world, direction)) * speed + transform_vector(e.world, local_velocity);
-        if (!particle_start(slot, e, seed, INVALID, ev.position + offset, velocity + ev.velocity * e.spin.w, 0.0, 0.0, e.step.w - e.step.x + float(params.step) * e.step.y, float4(1.0), 1.0, float4(0.0), ev.ribbon)) break;
+        if (!particle_start(slot, e, seed, INVALID, ev.position + offset, velocity + ev.velocity * e.spin.w, 0.0, 0.0, late ? e.step.w : e.step.w - e.step.x + float(params.step) * e.step.y, float4(1.0), 1.0, float4(0.0), ev.ribbon, leader, late)) break;
     }
 }

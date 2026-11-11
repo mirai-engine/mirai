@@ -421,7 +421,7 @@ To the GPU:
 - The resource functions of `mirai_vfx.slang` are defined by `particle_programs.slang` over the
   emitter's resource rows (`ctx.emitter`), the areas buffer and the frame's channel births.
 
-## Passes
+### Passes
 
 In the `Simulate` stage, per step:
 
@@ -444,9 +444,8 @@ In the `Simulate` stage, per step:
     step) bounces and hits: event, report and lost life. Slower it stays on the surface without a
     hit, so a particle at rest is silent and keeps its life at any step. Friction takes tangent
     speed in proportion to the normal speed stopped (Coulomb), the same per second at any step.
-  - Deaths to the free list; death or hit events, a `Trail` event each time a particle's age
-    passes a multiple of `1/TRAILS_PER_SECOND`, and reports of those that the emitter's `report`
-    names.
+  - Deaths to the free list; death, hit and `Trail` events ([ribbons](#ribbons)), and reports
+    of those that the emitter's `report` names.
   - In the last step: the live ones to the draw list and, the `lit` ones, their light (sun with
     shadow ray, local lights without rays, probe volume and ambient), renewed for half of them each
     frame and stored as RGB with shared exponent.
@@ -458,26 +457,16 @@ Once per frame, in `Simulate`:
   moved since the last time the GPU cleared them.
 - **volume light**: after the steps, the light of the cells of each volume; `_hw` variant.
 - **finish**: one group per emitter.
-  - Sorted list in shared memory (bitonic, up to `SORT_MAX`): back to front, or a ribbon by the
-    low bits of its ribbon (packed above its slot in the range), then its age, then its slot, so
-    a burst keeps one order.
-  - Indirect draw of what is alive and the counters; a ribbon's draw has a
-    quad per piece of each segment, the most pieces any segment needs for straight pieces to stay
-    within a pixel or so of its curve at its distance (up to `RIBBON_PIECES`), which rises at once
-    and comes down one a frame.
+  - Sorted list in shared memory (bitonic, up to `SORT_MAX`): back to front, or a ribbon as
+    [ribbons](#ribbons) says.
+  - Indirect draw of what is alive and the counters.
 
 In each view:
 
 - **volumes** (`Blend`): the volumes' media, before the sprites.
 - **sprites** (`Blend`): over the lit image, before TAA; the emitters from farthest to nearest.
   - `Billboard` (faces the camera, with rotation), `Velocity` (stretched according to `stretch`),
-    `Horizontal` (plane in XZ) and `Ribbon`: each particle joined to the next of the list in the
-    same ribbon (`flags` above `RIBBON_SHIFT`; 0, that of the emitter), along the cubic that
-    leaves each point along the mean of the directions to its neighbours (a point at the end of
-    its ribbon, toward its one neighbour), with its width, color, light and life lerped along it.
-    The ribbon of a particle is that of the particle whose event started it
-    (`particle_own_ribbon` of its seed), or what its program gives `particle.ribbon`; a death
-    needs no state: the next frame's list joins the neighbours of a dead point.
+    `Horizontal` (plane in XZ) and `Ribbon` ([ribbons](#ribbons)).
   - `Mesh` particles whose material blends (alpha mode `blend`, `Emitter_Desc.blended`): their
     mesh with `particle_mesh_blend.vert` and the sprites' fragment, placed as in the G-buffer, so
     their color, opacity and curves fade them as a sprite's, additive or covering by alpha as the
@@ -513,7 +502,7 @@ In each view:
   and a mesh with pages outside its root loads them all and does not release them while it is
   drawn, because the scene's cull does not see the particles.
 
-## Particle lights
+### Particle lights
 
 The particles of an emitter with `lights` are scene lights
 ([GPU lights](../../mirai-rendering/references/lights.md#gpu-lights)). Those of an effect with
@@ -536,6 +525,26 @@ they light everything within their reach, without shadow rays or a place in thos
   size). A `lit` particle receives the light of the others and its own.
 - Each group sorts its lights by a Z curve over the box of those of this frame and builds its tree
   by halves, each node what its lights give together, like the CPU tree.
+
+## Ribbons
+
+- A particle joins a ribbon (`flags` above `RIBBON_SHIFT`; 0, that of the emitter): that of the
+  particle whose event started it (`particle_own_ribbon` of its seed), or what its program gives
+  `particle.ribbon`. `Trail` makes an event each time a particle's age (before a hit takes life
+  from it) passes a multiple of `1/TRAILS_PER_SECOND`, and at the end of each frame a leader:
+  the events of the last step start their points after it, drawn in the frame, and the point of a
+  leader lives until the next step, so a trail reaches its head.
+- **finish** sorts a ribbon's list by its ribbon (as wide as the word leaves above the slot,
+  `SORT_SLOT_BITS`), its age and its slot, so a burst keeps one order. Each segment within a ribbon
+  takes the pieces its turn needs for straight pieces to stay within about a pixel of its curve at
+  its distance (up to `RIBBON_PIECES`; none between ribbons), rising at once and coming down one a
+  frame (kept in its first particle's `flags`); where the quads of each segment start goes in the
+  lists quarter after the births, and the draw has their sum.
+- The vertices of a segment find it by binary search and lie on the cubic that leaves each point
+  along the mean of the directions to its neighbours (toward its one neighbour at an end), with
+  width, color and light lerped; what each particle shows is kept by the last step and by its
+  birth after the Attributes of its program (`RIBBON_LOOK_BYTES`), so no program runs per vertex.
+- A death needs no state: the next frame's list joins the neighbours of a dead point.
 
 ## Verification
 

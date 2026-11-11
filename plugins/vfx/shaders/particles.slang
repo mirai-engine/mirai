@@ -1,5 +1,8 @@
 //! mirai constant PARTICLE_CURVE_KEYS uint ../runtime/effect/effect.odin
 //! mirai constant RIBBON_SHIFT uint ../runtime/gpu.odin
+//! mirai constant RIBBON_PIECES_SHIFT uint ../runtime/gpu.odin
+//! mirai constant RIBBON_LOOK_BYTES uint ../runtime/gpu.odin
+//! mirai constant SORT_SLOT_BITS uint ../runtime/gpu.odin
 //! mirai constant RIBBON_PIECES uint ../runtime/gpu.odin
 //! mirai constant TRAILS_PER_SECOND uint ../runtime/gpu.odin
 // Particles: the pool, the emitters and what the passes share. Layouts are
@@ -17,7 +20,7 @@ struct Particle {
     uint color;                     // rgba8 of the square root of the linear color
     uint light;                     // rgb with a shared exponent: the light it receives
     uint emitter;                   // slot
-    uint flags;                     // 1: light holds a value; above RIBBON_SHIFT, the ribbon it joins
+    uint flags;                     // 1: light holds a value; from RIBBON_PIECES_SHIFT, the pieces of the segment it starts; above RIBBON_SHIFT, the ribbon it joins
 };
 
 #define PARTICLE_SPAWNS 8u
@@ -63,8 +66,7 @@ struct Particle_State {
     uint births; uint born; // of an emitter whose program gives its births: those of the frame, and all it started
     // An indexed draw; that of a mesh, without indices: vertex count, instance count, first vertex, first instance.
     uint index_count; uint instance_count; uint first_index; int vertex_offset; uint first_instance;
-    uint pieces;          // of a ribbon: those each segment is cut into this frame
-    uint pad3; uint pad4;
+    uint pad2; uint pad3; uint pad4;
 };
 
 struct Particle_Event {
@@ -72,6 +74,9 @@ struct Particle_Event {
     float3 velocity; uint color;
     uint ribbon;                  // that the particles it starts join
 };
+// An event a trail makes at the end of each frame: the point it starts lives
+// until the next step, drawn where its head is now.
+#define PARTICLE_EVENT_LEADER 0x80000000u
 
 #define PARTICLE_FLAG_ACTIVE 1u
 #define PARTICLE_FLAG_RESET 2u
@@ -111,7 +116,7 @@ struct Particle_Event {
 
 #define PARTICLE_EVENT_CAPACITY 16384u
 #define PARTICLE_EVENTS_AT 64u // words of particle_queue before the events: their counts and dispatches
-#define PARTICLE_EVENT_WORDS 12u
+#define PARTICLE_EVENT_WORDS 9u
 
 // The resources of an emitter in particle_frame: the surface of its shape,
 // then those of its program, in the order it declares them.
@@ -398,6 +403,10 @@ uint particle_emitter_of(Particle p) { return p.emitter; }
 #define PARTICLE_RIBBON_MASK (0xFFFFFFFFu >> RIBBON_SHIFT)
 uint particle_ribbon(Particle p) { return p.flags >> RIBBON_SHIFT; }
 uint particle_own_ribbon(uint seed) { return max(hash_u32(seed) & PARTICLE_RIBBON_MASK, 1u); }
+
+// The pieces of the segment of a ribbon a particle starts, last frame.
+#define PARTICLE_PIECES_MASK 15u
+uint particle_pieces(Particle p) { return (p.flags >> RIBBON_PIECES_SHIFT) & PARTICLE_PIECES_MASK; }
 
 // The direction a ribbon leaves a particle at here in, between those it came
 // from before and goes on to after: the mean of both.

@@ -626,6 +626,29 @@ void particle_program_update(uint slot, uint index, float time, float dt, inout 
 }
 #endif
 
+// What a particle of a ribbon shows, kept after the Attributes of its program
+// (RIBBON_LOOK_BYTES): its vertices read it for both ends of their segment.
+uint particle_ribbon_look_at(uint slot, uint index) {
+    return particle_attributes(slot, index) + particle_emitters[slot].data.y - RIBBON_LOOK_BYTES;
+}
+Particle_Look particle_ribbon_look(uint slot, uint index) {
+    uint at = particle_ribbon_look_at(slot, index);
+    Particle_Look look;
+    look.color = asfloat(particle_data.Load4(at));
+    float4 w = asfloat(particle_data.Load4(at + 16u));
+    look.size = w.x; look.frame = w.y; look.random = w.z; look.given = asuint(w.w);
+    for (uint i = 0u; i < 4u; i++) look.data[i] = asfloat(particle_data.Load4(at + 32u + i * 16u));
+    return look;
+}
+#ifdef PARTICLES_WRITABLE
+void particle_ribbon_look_store(uint slot, uint index, Particle_Look look) {
+    uint at = particle_ribbon_look_at(slot, index);
+    particle_data.Store4(at, asuint(look.color));
+    particle_data.Store4(at + 16u, uint4(asuint(look.size), asuint(look.frame), asuint(look.random), look.given));
+    for (uint i = 0u; i < 4u; i++) particle_data.Store4(at + 32u + i * 16u, asuint(look.data[i]));
+}
+#endif
+
 // What a particle shows, after the program of its emitter.
 Particle_Look particle_program_look(uint slot, uint index, Particle p) {
     Particle_Look look = particle_look(slot, p);

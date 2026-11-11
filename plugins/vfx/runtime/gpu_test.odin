@@ -419,10 +419,11 @@ a_ribbon_follows_the_curve_through_its_points :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
-// The pieces a ribbon cuts each segment into rise at once where the curve
-// asks for more, and come down one a frame where it asks for fewer.
+// Each segment of a ribbon takes the pieces its own turn asks for (those at
+// the ends, which turn less, fewer), rising at once and coming down one a
+// frame where the curve asks for fewer.
 @(test)
-ribbon_pieces_rise_at_once_and_come_down_a_frame_at_a_time :: proc(t: ^testing.T) {
+ribbon_pieces_follow_each_segment_rise_at_once_and_come_down_a_frame_at_a_time :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)
 	defer free(f)
 	if !gpu_fixture_init(t, f, 64, 64, test_settings()) {return}
@@ -433,14 +434,18 @@ ribbon_pieces_rise_at_once_and_come_down_a_frame_at_a_time :: proc(t: ^testing.T
 	trail := test_emitter(1, {0, 0, 0})
 	trail.info.render, trail.info.lifetime = .Ribbon, {30, 30}
 	quarter_circle(t, f, &trail, near, 1.5)
-	pieces :: proc(t: ^testing.T, f: ^Gpu_Fixture, trail: Emitter_Desc, camera: gpu.Camera) -> (pieces, instances: u32) {
-		read := test_frame_read(t, f, {trail}, 1.0 / 60, camera, 0, {pool_buffer(&f.sync.pool, .State), {}})
-		if len(read[0]) < size_of(Gpu_State) {return}
-		s := (^Gpu_State)(raw_data(read[0]))^
-		return s.pieces, s.draw[1]
+	pieces :: proc(t: ^testing.T, f: ^Gpu_Fixture, trail: Emitter_Desc, camera: gpu.Camera) -> (most, instances: u32) {
+		read := test_frame_read(t, f, {trail}, 1.0 / 60, camera, 0, {pool_buffer(&f.sync.pool, .Particles), pool_buffer(&f.sync.pool, .State)})
+		if read[0] == nil || read[1] == nil {return}
+		slot := pool_slot_find(&f.sync.pool, 1)
+		range := f.sync.pool.slots[slot]
+		for p in mem.slice_data_cast([]Gpu_Particle, read[0])[range.offset:][:range.capacity] {
+			if p.lifetime > 0 {most = max(most, (p.flags >> RIBBON_PIECES_SHIFT) & 15)}
+		}
+		return most, mem.slice_data_cast([]Gpu_State, read[1])[slot].draw[1]
 	}
 	most, instances := pieces(t, f, trail, near)
-	testing.expectf(t, most > 1 && instances == 4 * most, "a curve seen from near is cut in pieces: %d, %d instances", most, instances)
+	testing.expectf(t, most > 1 && instances > 4 && instances < 4 * most, "a curve seen from near is cut in pieces, each segment its own: at most %d, %d quads", most, instances)
 	for k in 1 ..< min(most, 3) {
 		got, _ := pieces(t, f, trail, far)
 		testing.expectf(t, got == most - k, "seen from far, a frame comes down one piece: %d, not %d", got, most - k)
@@ -450,8 +455,41 @@ ribbon_pieces_rise_at_once_and_come_down_a_frame_at_a_time :: proc(t: ^testing.T
 	expect_clean(t, f.device)
 }
 
-// A program joins its particles in two ribbons: the list of the emitter is in
-// order by ribbon, then age, then slot, with one boundary between them.
+// The newest point of a trail is where its head is in the frame, however fast it goes.
+@(test)
+a_trail_reaches_its_head :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, 64, 64, test_settings()) {return}
+	defer gpu_fixture_destroy(f)
+	camera := gpu.Camera{position = {0, 0, 6}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	heads := test_emitter(1, {-3, 0, 0})
+	heads.info.lifetime, heads.info.velocity = {5, 5}, {{30, 0, 0}, {30, 0, 0}}
+	heads.info.trigger, heads.info.sub_count, heads.event_target = .Trail, 1, 2
+	trail := test_emitter(2, {0, 0, 0})
+	trail.capacity = 256
+	trail.info.render, trail.info.lifetime = .Ribbon, {1, 1}
+	for i in 0 ..< 7 {
+		heads.spawns = test_burst(1) if i == 0 else {}
+		testing.expect(t, frame_emitters(f, &f.sync, {heads, trail}, 1.0 / 60))
+		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = f32(i) / 60}), f.renderer.error)
+	}
+	heads.spawns = {}
+	read := test_frame_read(t, f, {heads, trail}, 1.0 / 60, camera, 0, {pool_buffer(&f.sync.pool, .Particles), {}})
+	if read[0] == nil {return}
+	particles := mem.slice_data_cast([]Gpu_Particle, read[0])
+	head_range := f.sync.pool.slots[pool_slot_find(&f.sync.pool, 1)]
+	trail_range := f.sync.pool.slots[pool_slot_find(&f.sync.pool, 2)]
+	head: [3]f32
+	for p in particles[head_range.offset:][:head_range.capacity] {if p.lifetime > 0 {head = p.position}}
+	newest, youngest := [3]f32{}, f32(max(f32))
+	for p in particles[trail_range.offset:][:trail_range.capacity] {
+		if p.lifetime > 0 && p.age < youngest {newest, youngest = p.position, p.age}
+	}
+	testing.expectf(t, linalg.length(newest - head) < 0.05, "the newest point %v of the trail is at its head %v", newest, head)
+	expect_clean(t, f.device)
+}
+
 @(test)
 ribbon_lists_sort_by_ribbon_then_age :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)

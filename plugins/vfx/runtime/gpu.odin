@@ -50,11 +50,14 @@ CAPACITY :: 262144
 EMITTER_CAPACITY :: 1024 // of a world
 EVENT_CAPACITY :: 16384
 SORT_MAX :: 2048 // particles of a sorted emitter or a ribbon
+SORT_SLOT_BITS :: 11 // of a slot of a sorted range: the ribbon of a particle takes the bits of a word above them
+#assert(1<<SORT_SLOT_BITS==SORT_MAX)
 EVENT_SPAWN_MAX :: 64
 SPAWNS :: 8 // groups of births an emitter gives in a frame
 STEP :: f32(1.0/30) // the longest step a simulation takes
 TRAILS_PER_SECOND :: 30 // Trail events of a particle in each second of its life
 RIBBON_PIECES :: 8 // most pieces a ribbon cuts the curve between two of its particles into
+RIBBON_LOOK_BYTES :: 96 // of each particle of a ribbon after the Attributes of its program: what it shows this frame (particle_ribbon_look of particles.slang)
 STEPS :: 8
 FRAME_MAX :: f32(0.25) // seconds a frame simulates at most
 
@@ -157,10 +160,12 @@ Gpu_Particle :: struct {
     color:u32,          // rgba8 of the mix it started with
     light:u32,          // rgb with a shared exponent: the light it receives
     emitter:u32,        // slot
-    flags:u32,          // 1: light holds a value; above RIBBON_SHIFT, the ribbon it joins (0: that of its emitter)
+    flags:u32,          // 1: light holds a value; from RIBBON_PIECES_SHIFT, the pieces of the segment of a ribbon it starts; above RIBBON_SHIFT, the ribbon it joins (0: that of its emitter)
 }
 #assert(size_of(Gpu_Particle)==64)
-RIBBON_SHIFT :: 8
+RIBBON_SHIFT :: 11 // its ribbon has the bits of a word the sort keeps above a slot
+#assert(RIBBON_SHIFT==SORT_SLOT_BITS)
+RIBBON_PIECES_SHIFT :: 3 // 4 bits
 
 Gpu_Emitter :: struct {
     world,previous:[3][4]f32,
@@ -199,8 +204,7 @@ Gpu_State :: struct {
     dead,alive:u32, // free slots on its list, and particles on the one drawn
     births,born:u32, // of an emitter whose program gives its births: those of the frame, and all it started
     draw:[5]u32,    // index count, instance count, first index, vertex offset, first instance; of a mesh: vertex count, instance count, first vertex, first instance
-    pieces:u32,     // of a ribbon: the pieces each segment is cut into this frame, and the frames after can lower by one a frame
-    pad1:[2]u32,
+    pad1:[3]u32,
 }
 #assert(size_of(Gpu_State)==48)
 
@@ -208,9 +212,8 @@ Gpu_Event :: struct {
     position:[3]f32, target:u32, // relative to the origin of the pool
     velocity:[3]f32, color:u32,
     ribbon:u32,          // that the particles it starts join: one of the particle that made it
-    pad:[3]u32,
 }
-#assert(size_of(Gpu_Event)==48)
+#assert(size_of(Gpu_Event)==36)
 
 // The buffers of the pool of a world. Events: the event counts of the two
 // halves and the dispatches that consume them, then from EVENTS_AT the
@@ -223,7 +226,7 @@ pool_buffer :: proc "contextless" (pool:^Pool,b:Pool_Buffer) -> erender.Buffer_D
     count:=u64(max(pool.capacity,1))
     switch b {
     case .Particles: return {"vfx particles",count*size_of(Gpu_Particle)}
-    case .Lists:     return {"vfx particle lists",3*count*size_of(u32)}
+    case .Lists:     return {"vfx particle lists",4*count*size_of(u32)}
     case .State:     return {"vfx particle state",EMITTER_CAPACITY*size_of(Gpu_State)}
     case .Events:    return {"vfx particle events",EVENTS_AT+2*EVENT_CAPACITY*size_of(Gpu_Event)}
     case .Data:      return {"vfx particle data",pool_data_bytes(pool.capacity)}
@@ -356,6 +359,7 @@ pool_emitters :: proc(pool:^Pool,emitters:[]Emitter_Desc,dt:f32,capacity:u32,max
         capacity:=desc.capacity
         if desc.info.sort || desc.info.render==.Ribbon {capacity=min(capacity,SORT_MAX)}
         stride:=(desc.program.attributes+15)&~u32(15)
+        if desc.info.render==.Ribbon {stride+=RIBBON_LOOK_BYTES}
         if slot_at>=0 && (pool.slots[slot_at].capacity!=capacity || pool.slots[slot_at].stride!=stride || pool.slots[slot_at].generation!=desc.generation) {
             pool_slot_release(pool,slot_at)
             slot_at=-1
@@ -949,6 +953,7 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
     }
     events:=pool_buffer(pool,.Events)
     world:=world_buffer(sync)
+    all_late:[PROGRAMS_IN_USE+1]Program_Group
     for step in 0..<pool.steps {
         params.parity,params.step,params.last=u32(pool.step&1),step,u32(step+1==pool.steps)
         // What the particles of the step splat starts at zero.
@@ -996,6 +1001,21 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
         params.program,params.first,params.count=0,0,pool.pool_end
         pool.step+=1
     }
+    // The events of the last step start their particles now, drawn in this frame:
+    // a trail reaches its head.
+    params.parity,params.step=u32((pool.step-1)&1),pool.steps
+    params.mode=2
+    erender.pass_pipeline(pass,p.begin)
+    erender.pass_params(pass,&params,size_of(params))
+    erender.pass_dispatch(pass,1)
+    for group in program_groups(p,&all_late) {
+        if !group.events {continue}
+        params.program,params.emitter_first,params.mode=group.program,group.emitter_first,4
+        erender.pass_pipeline(pass,group.emit)
+        erender.pass_params(pass,&params,size_of(params))
+        erender.pass_dispatch_indirect(pass,events,u64(16+16*params.parity))
+    }
+    params.program,params.emitter_first=0,0
     erender.pass_pipeline(pass,p.finish)
     erender.pass_params(pass,&params,size_of(params))
     erender.pass_counters(pass,9,"particles")
