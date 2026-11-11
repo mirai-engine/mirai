@@ -78,8 +78,11 @@
     error of its parent is not within the threshold, and its own is or the page of its children
     (`child_page`) is not there; in that case it requests that page with the pixels of its error,
     before the occlusion test. The instance's level range goes up to the coarsest, and each drawn
-    cluster stamps its slot with the frame. The requests (fixed-capacity list; what exceeds it is
-    counted) and the stamps come back through readbacks `MAX_FRAMES_IN_FLIGHT` frames later. The
+    cluster stamps its slot with the frame. The requests go to a table keyed by the page: each
+    page once with the highest priority any cluster gave it, so what loads depends on the pages
+    asked and not on the order the GPU culled. The table doubles while a frame fills more than
+    half of it or a request finds no entry (counted). Requests and stamps come back through
+    readbacks `MAX_FRAMES_IN_FLIGHT` frames later. The
     other readers without a cull (glass, particles, outline) skip the clusters whose page is not
     there; the outline draws the finest there is.
   - **Invariant.** A page is in the pools only if all the pages that have its parents are: it
@@ -87,13 +90,13 @@
     what the cull draws covers the mesh exactly once. A fine group can be a child of clusters from
     several pages and the view request it from just one: a request with missing parents loads
     first the missing parent whose own parents are there.
-  - **Loading.** Each frame deduplicates the requests (the higher priority stays), sorts them and
-    loads the most requested up to `PAGE_LOAD_WORDS` decoded words, in jobs if the renderer has a
+  - **Loading.** Each frame sorts the requests by priority (ties by page) and loads the most
+    wanted up to `PAGE_LOAD_WORDS` decoded words, in jobs if the renderer has a
     `Job_System` (`Renderer_Desc.jobs`, that of `host`) and otherwise on the calling thread. The
     slot is a free one or that of the page drawn longest ago that was not stamped in `PAGE_KEEP`
     frames, has no loaded children, is not a parent of the one loading and is not in a ray cut
-    that an instance traces. Releasing it leaves its entry at `GPU_NONE`. A stable frame does not
-    allocate.
+    that an instance traces: the first eviction of a frame sorts those slots by stamp once.
+    Releasing it leaves its entry at `GPU_NONE`. A stable frame does not allocate.
   - If for `PAGE_SHORT_FRAMES` consecutive frames requests are left without room, `Stats.problem`
     says `page_pool_bytes` is lacking.
 - **Clusters.** A mesh arrives in the clusters of `.mesh` v6

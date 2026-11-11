@@ -186,11 +186,11 @@ api_git_commit :: proc(s:^Session,call:^api.Call) {
 }
 
 @(private)
-api_git_push :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git.push(s.git,s.app.platform,git_roots(s)))}
+api_git_push :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git.push(s.git,git_roots(s)))}
 @(private)
 api_git_pull :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git_pull(s))}
 @(private)
-api_git_abort :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git.abort(s.git,s.app.platform,git_roots(s)))}
+api_git_abort :: proc(s:^Session,call:^api.Call) {api_git_ended(s,call,git.abort(s.git,git_roots(s)))}
 
 Api_Git_Discard_Params :: struct {
     path:[git.PATH_BYTES]u8 `mirai:"text,optional,label=The file to put back from the root of the repository as git.status lists it; every change without it"`,

@@ -12,6 +12,7 @@ import "mirai:project"
 import "mirai:editor/acp"
 import "mirai:editor/api"
 import "mirai:std/base"
+import "mirai:std/subprocess"
 import "mirai:ui"
 
 AI_TASK_CAPACITY :: 16
@@ -160,10 +161,10 @@ Ai :: struct {
     landed_seen:u64, // Store.landed when what shows rows of the store last read them
     login:bool,
     login_provider:Ai_Provider,
-    login_process:platform.Process,
+    login_process:subprocess.Process,
     login_cancelled:bool,
     connection_pending:Ai_Connection_Pending,
-    installer:platform.Process,
+    installer:subprocess.Process,
     install_operation:[32]u8,
     install_cancel:[AI_PATH_BYTES]u8,
     install_provider:Ai_Provider,
