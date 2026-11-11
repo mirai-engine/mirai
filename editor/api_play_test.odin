@@ -273,7 +273,7 @@ the_game_that_plays_is_changed_and_read_by_its_storages_and_conditions :: proc(t
     refused:=[?]struct{params,says:string}{
         {`{"world":"Game","entities":[{"id":"00000000000000ff","position":[0,0,0]}]}`,"00000000000000ff"},
         {`{"world":"Game","replace":true,"entities":[]}`,"replace and kind are of the document"},
-        {`{"world":"Game","kind":"Prefab","entities":[]}`,"replace and kind are of the document"},
+        {`{"world":"Game","kind":"Prefab","entities":[{"name":"Hero"}]}`,"replace and kind are of the document"},
     }
     for c in refused {
         wrong,_:=probe_call(f,"scene.write",c.params)
@@ -333,8 +333,9 @@ every_method_of_the_editor_is_described_by_its_types :: proc(t:^testing.T) {
     // What the state of the editor does not allow now has one code, with the method that changes it.
     error,_=probe_call(f,"play.stop",`{}`)
     testing.expect_value(t,error.code,0)
-    for method in ([]string{"play.player","scene.inspect","scene.write"}) {
-        error,_=probe_call(f,method,method=="play.player"?`{}`:`{"world":"Game","entities":[]}`)
+    for c in ([][2]string{{"play.player",`{}`},{"scene.inspect",`{"world":"Game"}`},{"scene.write",`{"world":"Game","entities":[{"name":"Hero"}]}`}}) {
+        method:=c[0]
+        error,_=probe_call(f,method,c[1])
         testing.expectf(t,error.code==api.NOT_NOW && error.message==API_NO_GAME && error.data==`{"fix":"play.start"}`,"%s: %v",method,error)
     }
 }

@@ -469,13 +469,13 @@ makes is named as the entry.
   `editor.input` and `capture` with `ui`.
 - **One place says whether an entry is on and checked** (`binding_state`): what it acts on is in
   front (`scene`, `document`, `card`), the editor is in one of its `modes`, its context is there,
-  and its method can be called: `Api_Method.can` says why not as the editor is, whatever the
-  params, which also fails the call of an agent (`-32001`) and is what `engine.describe` gives as
-  `unavailable`. An entry that flips something names it (`tool`, or `preference` with the fields
-  it has `on` and `off`): that gives its params and its check. `Binding.state` is left for what
-  no method says: the labels of Undo, Redo and Build, Play against Stop, what applies to the
-  selected member of a prefab, and the procedures of the interface. `editor.inspect` reports
-  every entry with its method, its params and what it shows.
+  and its method can be called with the params the entry would give it: `Api_Method.can` takes
+  the typed params and says why not, which is also what fails the call, of anyone (`-32001`);
+  with no params it says what holds for any, which `engine.describe` gives as `unavailable`. An
+  entry that flips something names it (`tool`, or `preference` with the fields it has `on` and
+  `off`): that gives its params and its check. `Binding.state` is left for what no method says:
+  the labels of Undo, Redo and Build, Play against Stop, and the procedures of the interface.
+  `editor.inspect` reports every entry with its method, its params and what it shows.
 - **What a document or a card has chosen.** The entries of an asset document are bindings its
   plugin gives with `document` (the nodes of a `.ui`), and those of the asset of the card of the
   browser that has the keyboard have `card`: they share the keys of those of the scene, which

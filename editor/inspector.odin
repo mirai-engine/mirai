@@ -550,7 +550,7 @@ identity_row :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (changed:bool
             if link.root {
                 variant:=ui.id(ctx,"variant_save")
                 // A variant of an instance that changes nothing would be its prefab again.
-                unchanged:=prefab_entry_disabled(s,"prefab_apply")
+                unchanged:=command_state(s,"prefab_apply").disabled
                 if ui.button(ctx,variant,{icon=ui.icon_user(u8(User_Icon.Variant)),tip="Save variant",icon_size=15,variant="ghost",width=22,height=ui.metric(ctx,"control"),disabled=unchanged,active=ui.popup_is_open(ctx,variant_prompt_popup(s.gui)) && s.gui.variant.instance==e}).clicked {
                     variant_prompt_open(s,variant,link.asset,e)
                 }

@@ -79,8 +79,9 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
     their tabs and the options of the viewport the editor remembers are `preferences.set`
     (`Layout`, `Viewport_Preferences`). What Settings and Projects show is `settings.get`/`set`
     and `project.get`/`set`.
-  - A method that cannot be called as the editor is fails with `-32001` and says why;
-    `engine.describe` gives the same text as `unavailable`.
+  - A method that cannot be called with its params as the editor is fails with `-32001` and says
+    why (a write that names nothing, a prefab method on what has no link or no override);
+    `engine.describe` gives as `unavailable` what holds for any params.
   - A method that went answers what does what it did (`API_MOVED` in `editor/api_server.odin`).
   - The prefab actions use the scope of the UI; `prefab.apply` and `prefab.revert`, that of their
     entity ([operations](../../mirai-editor/references/prefabs.md#operations)).

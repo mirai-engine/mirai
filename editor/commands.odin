@@ -30,8 +30,8 @@ import "mirai:ui"
 //
 // Whether an entry is on is said in one place (binding_state): by what it
 // acts on being in front, by the modes it is for, by its context being
-// there, and by its method, whose Api_Method.can also fails the call of an
-// agent and is told by engine.describe.
+// there, and by its method, asked with the params the entry would call:
+// Api_Method.can, which is also what fails a call, of anyone.
 //
 // An entry that only changes what the person sees (a dialog, a popup, a tab,
 // the field a name is typed in, who has the keys), or that asks the person
@@ -103,7 +103,7 @@ Binding :: struct {
     card:bool,     // it works on the asset of the card of the browser that has the keyboard: off without one
     in_game:bool,  // its shortcut runs while a game has the keys
     state:Command_State_Proc, // of a procedure of the interface: off and checked; of a method: what no method says, its label or whose game plays
-    can:Api_Can,   // of its method, taken when it is bound
+    call:^api.Method, // its method, found when it is bound
 }
 
 @(private)
@@ -139,9 +139,7 @@ command_bind :: proc(s:^Session,b:Binding) -> bool {
     if (entry.method=="")==(entry.view==nil) {return false}
     if entry.name=="" {entry.name=entry.method}
     if entry.method!="" {
-        method:=api.method_find(&st.server,entry.method)
-        if method==nil || method.user==nil {return false}
-        entry.can=(^Api_Entry)(method.user).can
+        if entry.call=api.method_find(&st.server,entry.method);entry.call==nil {return false}
     }
     if c.count>=len(c.bindings) || binding_find(c,entry.name)!=nil {return false}
     c.bindings[c.count]=entry
@@ -212,8 +210,21 @@ binding_state :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
     case b.tool!="":       state.checked=tool_checked(s,b.tool)
     case b.preference!="": state.checked=preference_holds(s,b.preference,b.on)
     }
-    state.disabled||=b.modes!={} && s.mode not_in b.modes || context_missing(s,b.params) || b.can!=nil && b.can(s)!=""
+    state.disabled||=b.modes!={} && s.mode not_in b.modes || context_missing(s,b.params) || binding_refused(s,b)
     return
+}
+
+// Whether the method of an entry says it cannot be called with the params the entry would call it with now.
+@(private)
+binding_refused :: proc(s:^Session,b:^Binding) -> bool {
+    if b.call==nil || b.call.can==nil {return false}
+    params:=strings.builder_make(context.temp_allocator)
+    if !binding_params(s,b,&params) {return true}
+    server:=&api_state(s).server
+    mark:=base.arena_mark(&server.scratch)
+    defer base.arena_rewind(&server.scratch,mark)
+    bytes,_,_,read:=api.params_read(server,b.call,strings.to_string(params))
+    return !read || b.call.can(b.call.user,raw_data(bytes))!=""
 }
 
 command_label :: proc(s:^Session,name:string) -> string {
@@ -526,8 +537,8 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="save",view=save_front,label="Save",icon=user(.Save),shortcut=key(.S,{.Primary}),menu=.File,group=1,state=state_save},
         {name="save_all",method="editor.save_all",label="Save all",icon=user(.Save),shortcut=key(.S,{.Primary,.Shift}),menu=.File,group=1,modes=edit},
         {name="save_as",view=dialog_save,label="Save as...",icon=user(.Save),shortcut=key(.S,{.Primary,.Alt}),menu=.File,group=1,modes=edit,scene=true},
-        {name="make_prefab",method="scene.write",params=`{"kind":"Prefab","entities":[]}`,label="Make prefab",icon=.Prefab,menu=.File,group=1,modes=edit,state=state_kind,scene=true},
-        {name="make_scene",method="scene.write",params=`{"kind":"Scene","entities":[]}`,label="Make scene",icon=user(.Scene),menu=.File,group=1,modes=edit,state=state_kind,scene=true},
+        {name="make_prefab",method="scene.write",params=`{"kind":"Prefab","entities":[]}`,label="Make prefab",icon=.Prefab,menu=.File,group=1,modes=edit,scene=true},
+        {name="make_scene",method="scene.write",params=`{"kind":"Scene","entities":[]}`,label="Make scene",icon=user(.Scene),menu=.File,group=1,modes=edit,scene=true},
         {name="import",view=import_ask,label="Import...",icon=.Import,menu=.File,group=2,modes=edit},
         {name="build",method="build.start",label="Build",icon=user(.Hammer),shortcut=key(.B,{.Primary}),menu=.File,group=3,state=state_build},
         {name="settings",view=settings_toggle,label="Project settings",icon=user(.Gear),menu=.File,group=3,modes=edit,state=state_settings},
@@ -583,11 +594,11 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="camera_keep",view=proc(s:^Session) {camera_preview_end(s,true)},label="Keep cameras",state=state_camera_previewing},
         {name="camera_discard",view=proc(s:^Session) {camera_preview_end(s,false)},label="Discard cameras",state=state_camera_previewing},
 
-        {name="prefab_create",method="prefab.create",params=`{"entities":["$roots"]}`,label="Create prefab",icon=.Save_Prefab,state=state_prefab,scene=true},
-        {name="prefab_apply",method="prefab.apply",params=`{"entity":"$active","whole":true}`,label="Apply to prefab",icon=.Prefab,state=state_prefab,scene=true},
-        {name="prefab_apply_base",method="prefab.apply",params=`{"entity":"$active","whole":true,"target":"Base"}`,label="Apply to base",icon=user(.Up),state=state_prefab,scene=true},
-        {name="prefab_revert",method="prefab.revert",params=`{"entity":"$active","whole":true}`,label="Revert to prefab",icon=.Revert,state=state_prefab,scene=true},
-        {name="prefab_unlink",method="prefab.unlink",params=`{"entity":"$active"}`,label="Unlink prefab",icon=user(.Unlink),state=state_prefab,scene=true},
+        {name="prefab_create",method="prefab.create",params=`{"entities":["$roots"]}`,label="Create prefab",icon=.Save_Prefab,modes=edit,scene=true},
+        {name="prefab_apply",method="prefab.apply",params=`{"entity":"$active","whole":true}`,label="Apply to prefab",icon=.Prefab,modes=edit,scene=true},
+        {name="prefab_apply_base",method="prefab.apply",params=`{"entity":"$active","whole":true,"target":"Base"}`,label="Apply to base",icon=user(.Up),modes=edit,scene=true},
+        {name="prefab_revert",method="prefab.revert",params=`{"entity":"$active","whole":true}`,label="Revert to prefab",icon=.Revert,modes=edit,scene=true},
+        {name="prefab_unlink",method="prefab.unlink",params=`{"entity":"$active"}`,label="Unlink prefab",icon=user(.Unlink),modes=edit,scene=true},
 
         // Of the asset of the card of the browser that has the keyboard, with the keys of the scene.
         {name="asset_delete",view=proc(s:^Session) {asset_delete_ask(s,card_focused(s))},label="Delete",icon=user(.Trash),shortcut=key(.Delete),alternate=key(.Backspace),modes=edit,card=true},
@@ -602,7 +613,6 @@ commands_register :: proc(s:^Session,st:^Api_State) {
 
 // ---------------------------------------------------------------- what the entries show that no method says
 
-@(private="file") state_kind :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=document_is_prefab(s)==(b.name=="make_prefab")}}
 // A key is of Play or of Stop: an agent plays again a game that plays, a person stops it.
 @(private="file") state_play :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode!=.Edit || play_plugin_active(s)}}
 @(private="file") state_stop :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode==.Edit && !play_plugin_active(s)}}
@@ -654,9 +664,6 @@ state_redo :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
     if !state.disabled {state.detail=history.redo_label(s.edits)}
     return
 }
-
-// What applies to the selected entity of a prefab: its overrides, its link, the base of its variant.
-@(private="file") state_prefab :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=prefab_entry_disabled(s,b.name)}}
 
 // Of the procedures of the interface: they have no method to say it.
 @(private="file") state_rename :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=len(s.selection.entities)!=1 || watching(s)}}
@@ -803,7 +810,7 @@ api_scene_new :: proc(s:^Session,call:^api.Call) {
 }
 
 @(private)
-scene_thumbnail_can :: proc(s:^Session) -> string {
+scene_thumbnail_can :: proc(s:^Session,params:rawptr) -> string {
     if s.mode==.Edit && scene_thumbnail_takes(s) {return ""}
     return "The thumbnail is that of a scene of the assets in front, out of Play, in an editor that draws and a project with a thumbs folder"
 }

@@ -265,6 +265,14 @@ a_method_says_in_one_place_that_it_cannot_be_called_now :: proc(t:^testing.T) {
     }
     history.selection_set(&f.selection,{f.entity})
     testing.expect(t,command_state(s,"scene_thumbnail").disabled && command_state(s,"apply_simulation").disabled)
+    // It is asked with the params the entry would call: of two entries of one method, the one that would change nothing is off.
+    testing.expect(t,!command_state(s,"make_prefab").disabled && command_state(s,"make_scene").disabled)
+    nothing,wrote:=execute(st,&out,"scene.write",`{"kind":"Scene","entities":[]}`)
+    testing.expect(t,!wrote && nothing.code==api.NOT_NOW && strings.contains(nothing.message,"names nothing to change"),nothing.message)
+    testing.expect(t,test_command(s,"make_prefab") && command_state(s,"make_prefab").disabled && !command_state(s,"make_scene").disabled)
+    testing.expect(t,test_command(s,"make_scene") && !f.document.prefab)
+    // What is linked to no prefab has nothing to unlink or to apply; prefabs_test.odin asks the methods on instances.
+    testing.expect(t,command_state(s,"prefab_unlink").disabled && command_state(s,"prefab_apply").disabled)
     _,described:=execute(st,&out,"engine.describe",`{"methods":["scene.write"]}`)
     testing.expect(t,described && !strings.contains(string(serial.writer_bytes(&out)),`"unavailable"`))
     cases:=[?]struct{method,params,want:string}{
@@ -276,7 +284,8 @@ a_method_says_in_one_place_that_it_cannot_be_called_now :: proc(t:^testing.T) {
         {"editor.tool",`{"tool":"move","on":false}`,"always has a mode"},
         {"editor.tool",`{}`,"tool"},
         {"history.undo",`{"asset":"nobody.ui"}`,"has no document open"},
-        {"prefab.create",`{"entities":[]}`,"name the root"},
+        {"prefab.create",`{"entities":["Object"]}`,"no assets folder"},
+        {"prefab.unlink",`{"entity":"Object"}`,"not linked to a prefab"},
         {"scene.new",`{"discard":"yes"}`,"discard"},
     }
     alive:=core.world_entities(w).alive

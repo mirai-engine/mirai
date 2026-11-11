@@ -82,7 +82,7 @@ Api_Write :: struct {
 
 @(private)
 api_scene_write_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="scene.write",flags={.Core,.Destructive},params=type_info_of(Api_Scene_Write_Params),summary="The one way to change the entities of the scene: a document of nested entities, as scene.inspect with root gives it, that names what changes. Entities are matched by id or name, the others made (with preset, with prefab as a linked instance, with copy from another entity), and delete takes one away; what the document leaves out stays, or with replace goes. One step of undo; the result names what it made.",result=type_info_of(Api_Write_Result),run=api_scene_write})
+    api_register(s,st,{name="scene.write",flags={.Core,.Destructive},params=type_info_of(Api_Scene_Write_Params),summary="The one way to change the entities of the scene: a document of nested entities, as scene.inspect with root gives it, that names what changes. Entities are matched by id or name, the others made (with preset, with prefab as a linked instance, with copy from another entity), and delete takes one away; what the document leaves out stays, or with replace goes. One step of undo; the result names what it made.",result=type_info_of(Api_Write_Result),can=api_scene_write_can,run=api_scene_write})
 }
 
 // The entities of the part of a world a document declares: root and what
@@ -115,6 +115,14 @@ api_write_world :: proc(s:^Session,call:^api.Call,a:^Api_Write,world:Api_World,p
     if own {a.run,_=api_play_own_run(s,call,player)} else if a.run,_=api_play_run(s,call,player);a.run==nil {api_no_game(call)}
     a.w=run_ref(s,a.run)
     return a.run!=nil
+}
+
+// A document that names no entity and no other kind than the one the scene is changes nothing.
+@(private)
+api_scene_write_can :: proc(s:^Session,params:rawptr) -> string {
+    p:=(^Api_Scene_Write_Params)(params)
+    if p==nil || len(p.entities)>0 || p.replace || p.root!="" || p.world==.Scene && document_is_prefab(s)!=(p.kind==.Prefab) {return ""}
+    return "The document names nothing to change: no entity, and no other kind than the one the scene is"
 }
 
 @(private)

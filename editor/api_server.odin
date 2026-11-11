@@ -68,15 +68,16 @@ Api_Entry :: struct {
     provided:bool, // of a plugin, by its provider: its code is of the library it came from
 }
 
-// Why a method cannot be called as the editor is now, whatever its params: "" when it can. One
-// place says it for the call of an agent, which fails with it, for the entries of the method,
-// which are off, and for engine.describe.
-Api_Can :: #type proc(s:^Session) -> string
+// Why a method cannot be called with these params as the editor is now: "" when it can. params is
+// the value of the params type of the method, or nil for whatever they are (engine.describe). One
+// place says it for the call, which fails with it, whoever makes it, and for the entries of the
+// method, which are off: a menu, a shortcut and a button ask it with the params they would call.
+Api_Can :: #type proc(s:^Session,params:rawptr) -> string
 
 @(private)
-api_can :: proc(user:rawptr) -> string {
+api_can :: proc(user:rawptr,params:rawptr) -> string {
     entry:=(^Api_Entry)(user)
-    return entry.can(entry.session)
+    return entry.can(entry.session,params)
 }
 
 // Memory of the API; the storage only points at it because the server must stay where it was made.

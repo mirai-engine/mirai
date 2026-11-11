@@ -201,7 +201,7 @@ api_simulation_register :: proc(s:^Session,st:^Api_State) {
 }
 
 @(private)
-simulation_can :: proc(s:^Session) -> string {return "" if simulating(s) else "No scene is simulating; play.start with simulate first"}
+simulation_can :: proc(s:^Session,params:rawptr) -> string {return "" if simulating(s) else "No scene is simulating; play.start with simulate first"}
 
 @(private)
 api_simulation_apply :: proc(s:^Session,call:^api.Call) {

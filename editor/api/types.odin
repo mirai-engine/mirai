@@ -114,9 +114,10 @@ Method_Desc :: struct {
 // A method that went and what does what it did, for whoever still calls it.
 Moved :: struct {was,now:string}
 
-// Why a method cannot be called as things are now, whatever its params; "" when it can. The server
-// asks before it runs the handler, and engine.describe tells it.
-Method_Can :: #type proc(user:rawptr) -> string
+// Why a method cannot be called with these params as things are now; "" when it can. params is
+// the value of its params type, or nil for whatever they are. The server asks before it runs the
+// handler, and engine.describe tells what holds for any params.
+Method_Can :: #type proc(user:rawptr,params:rawptr) -> string
 
 Method :: struct {
     name,summary:string,
