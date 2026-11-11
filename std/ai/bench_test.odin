@@ -207,7 +207,7 @@ bench_nav_build_tile :: proc(t:^testing.T) {
     }
     bench_report("nav_build_tile, 64x64 cells",&b,1,f32(polys))
     // The same tile once an obstacle settles on it: from its triangles, and from the field its build kept.
-    obstacle:=[1]Nav_Area_Volume{{points={{6,6},{8,6},{8,8},{6,8},{},{},{},{}},count=4,area=NAV_AREA_BLOCKED,min_y=-1,max_y=2}}
+    obstacle:=[1]Nav_Area_Volume{{points={0={6,6},1={8,6},2={8,8},3={6,8}},count=4,area=NAV_AREA_BLOCKED,min_y=-1,max_y=2}}
     input.volumes=obstacle[:]
     field:Nav_Tile_Field
     nav_build_tile(config,{},input,&scratch,&data,field=&field)
