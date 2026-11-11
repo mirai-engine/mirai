@@ -107,6 +107,7 @@ Storage_Procs :: struct {
     copy:proc(dst,src:rawptr) -> bool,      // copy="f"
     copy_kept:proc(dst,src:rawptr) -> bool, // copy_kept="f": into the copy a history keeps
     swap:proc(a,b:rawptr),                  // swap="f"
+    diff:proc(a,b:rawptr,buf:[]byte) -> string, // diff="f": where two values differ, written into buf; empty when they do not
     free:proc(value:rawptr),                // free="f"
     reset:proc(value:rawptr),               // reset="f": what clearing the World does to it
 }
@@ -136,7 +137,7 @@ World_Info :: struct {
     sizes:[Place]int,
     aligns:[Place]int,
     entities:uintptr, // offset of the Entities in World
-    revisions:uintptr, // offset in World of a u64 for each storage, as storages lists them: it grows when a function receives the storage to write, when code outside the loop asks for it (world_storage) and when the World is copied over, swapped or cleared. 0: a World made by hand, which has none and whose storages a copy always takes
+    revisions:uintptr, // offset in World of a u64 for each storage, as storages lists them: it grows when a function receives the storage to write, when code outside the loop asks for it (world_storage) and when the World is copied over, swapped or cleared
     tables:[]Table_Info,
     storages:[]Storage_Info,
     messages:[]Message_Info,
@@ -150,6 +151,7 @@ World_Info :: struct {
     settles:Settle_Info, // what settle and the procedures of world_data look for in tables and storages
     loops:[Loop][Phase]Loop_Proc,
     events_age:proc(world:rawptr,ticked:bool), // ages every log (events_age) of a World, those a fixed function reads only when ticked: what runs a frame of a World calls it at its end
+    events_rewind:proc(world:rawptr), // leaves each cursor of a reader of the frame at most at the end of its log, after the World was replaced under it (world_restore, world_swap)
     order:[Loop][Phase][]i32, // the steps each loop calls, by index, in its order
     tables_by_type,storages_by_type:map[typeid]int, // index in tables and in storages, by_world aside: world_info_index
     schema:^World_Schema, // world_info_index
@@ -177,10 +179,9 @@ copy_marks_follow :: proc(w:World_Ref,restored,marks:[]Copy_Mark) {
 // The marks a copy of what changed takes: one per table, then one per storage.
 copy_marks_count :: proc "contextless" (info:^World_Info) -> int {return len(info.tables)+len(info.storages)}
 
-// The revisions of the storages of a World, as its World_Info lists them;
-// none in a World made by hand.
+// The revisions of the storages of a World, as its World_Info lists them.
 world_revisions :: proc "contextless" (w:World_Ref) -> []u64 {
-    if w.data==nil || w.info.revisions==0 || w.place!=.World {return nil}
+    if w.data==nil || w.place!=.World {return nil}
     return ([^]u64)(uintptr(w.data)+w.info.revisions)[:len(w.info.storages)]
 }
 
@@ -394,7 +395,7 @@ world_storage :: proc(w:World_Ref,type:typeid) -> rawptr {
 // The storage at an index of info.storages, of the place of w, as
 // world_storage gives it.
 world_storage_at :: proc "contextless" (w:World_Ref,index:int) -> rawptr {
-    if w.info.revisions!=0 && w.place==.World {([^]u64)(uintptr(w.data)+w.info.revisions)[index]+=1}
+    if w.place==.World {([^]u64)(uintptr(w.data)+w.info.revisions)[index]+=1}
     return rawptr(uintptr(w.data)+w.info.storages[index].offset)
 }
 
@@ -418,11 +419,6 @@ entity_tables :: proc(w:World_Ref,e:Entity,allocator:=context.temp_allocator) ->
         if raw_find(world_table_at(w,&t),t.info,e)!=nil {append(&found,&t)}
     }
     return found[:]
-}
-
-// Destroys an entity and everything under it, from code outside the loop.
-world_destroy_tree :: proc(w:World_Ref,e:Entity) {
-    destroy_tree(world_entities(w),ref(world_storage_of(w,Hierarchy)),e)
 }
 
 // Gives dst what src holds of the run, not of its entities: the storages

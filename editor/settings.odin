@@ -3,7 +3,6 @@ package editor
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
-import "core:reflect"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor/api"
@@ -295,7 +294,7 @@ settings_categories :: proc(s:^Session) -> []Settings_Category {
     }
     if s.settings_layer==.Project && s.has_project {
         manifest:=Settings_Category{storage=SETTINGS_CATEGORY_PROJECT,name="Project",group="Project"}
-        manifest.sections=settings_sections(type_info_of(project.Manifest),manifest.name,needle)
+        manifest.sections=settings_sections(s,type_info_of(project.Manifest),manifest.name,needle)
         if len(manifest.sections)>0 {append(&list,manifest)}
     }
     if s.settings_layer==.Project && s.settings_plugins.count>0 {
@@ -322,7 +321,7 @@ settings_categories :: proc(s:^Session) -> []Settings_Category {
                 if settings_owner(&s.info.storages[c.storage])==owner {at=first+i;break}
             }
             name:=settings_storage_name(&info)
-            sections:=settings_sections(info.info,name,needle)
+            sections:=settings_sections(s,info.info,name,needle)
             if at<0 {
                 append(&list,Settings_Category{storage=index,name=name,group=group})
                 at=len(list)-1
@@ -400,25 +399,18 @@ settings_group :: proc(s:^Session,info:^core.Storage_Info) -> string {
 // of them those with a field whose name has needle; all of them when the
 // title or the name of the setting has it.
 @(private)
-settings_sections :: proc(info:^runtime.Type_Info,name,needle:string) -> []string {
+settings_sections :: proc(s:^Session,info:^runtime.Type_Info,name,needle:string) -> []string {
     titles:=make([dynamic]string,context.temp_allocator)
-    v,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
-    if !is_struct {return titles[:]}
     every:=needle=="" || base.contains_fold(name,needle)
     current:=""
     found:=false
-    for i in 0..<int(v.field_count) {
-        tag:=reflect.Struct_Tag(v.tags[i])
-        tagged:=field_tagged(v.tags[i])
-        if title:=tagged.section;title!="" && title!=current {
+    for field in type_fields(s.info,info) {
+        if title:=field.section;title!="" && title!=current {
             if found {append(&titles,current)}
             current,found=title,false
         }
-        if .Hidden in tagged.flags {continue}
-        if .Transient in tagged.flags {continue}
-        label:=readable(v.names[i])
-        if custom:=tagged.label;custom!="" {label=custom}
-        found|=every || base.contains_fold(current,needle) || base.contains_fold(label,needle)
+        if !field_shown(field) {continue}
+        found|=every || base.contains_fold(current,needle) || base.contains_fold(field_label(field),needle)
     }
     if found {append(&titles,current)}
     return titles[:]
@@ -427,19 +419,13 @@ settings_sections :: proc(info:^runtime.Type_Info,name,needle:string) -> []strin
 // Whether the section title of a setting shows fields not tagged advanced,
 // and fields tagged advanced, of those whose name has needle (all: empty).
 @(private)
-settings_section_fields :: proc(info:^runtime.Type_Info,title,needle:string) -> (plain,advanced:bool) {
-    v,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
-    if !is_struct {return}
+settings_section_fields :: proc(s:^Session,info:^runtime.Type_Info,title,needle:string) -> (plain,advanced:bool) {
     current:=""
-    for i in 0..<int(v.field_count) {
-        tag:=reflect.Struct_Tag(v.tags[i])
-        tagged:=field_tagged(v.tags[i])
-        if section:=tagged.section;section!="" {current=section}
-        if current!=title || .Hidden in tagged.flags || .Transient in tagged.flags {continue}
-        label:=readable(v.names[i])
-        if custom:=tagged.label;custom!="" {label=custom}
-        if needle!="" && !base.contains_fold(label,needle) {continue}
-        if .Advanced in tagged.hints {advanced=true} else {plain=true}
+    for field in type_fields(s.info,info) {
+        if section:=field.section;section!="" {current=section}
+        if current!=title || !field_shown(field) {continue}
+        if needle!="" && !base.contains_fold(field_label(field),needle) {continue}
+        if .Advanced in field.hints {advanced=true} else {plain=true}
     }
     return
 }
@@ -760,9 +746,10 @@ settings_cards :: proc(s:^Session,category:Settings_Category,needle:string,heigh
                 if !every && !base.contains_fold(title,needle) {c.needle=needle}
                 defaults:[INSPECTOR_COMPONENT_BYTES]u8
                 c.defaults=settings_defaults(s,info,&defaults)
-                fields_rows(&c,info.info,0,0,"")
+                if !inspect_schema(&c,info.info) {continue}
+                fields_rows(&c,c.of,0,0,"")
                 // The fields tagged advanced go last, under a fold that starts closed.
-                if plain,advanced:=settings_section_fields(info.info,title,c.needle);advanced {
+                if plain,advanced:=settings_section_fields(s,info.info,title,c.needle);advanced {
                     if plain {
                         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"row_rule")}) {}
                     }
@@ -770,7 +757,7 @@ settings_cards :: proc(s:^Session,category:Settings_Category,needle:string,heigh
                     if fold_section(s,ui.id(ctx,"settings_advanced",k+1),key,ADVANCED_SECTION,folded=true,searching=needle!="") {
                         fold_band_begin(s)
                         c.advanced=true
-                        fields_rows(&c,info.info,0,0,"")
+                        fields_rows(&c,c.of,0,0,"")
                         fold_band_end(s)
                     }
                 }

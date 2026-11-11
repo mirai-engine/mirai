@@ -114,9 +114,9 @@ Apply :: struct {
 
 // The bodies whose seat went away go with it, before input_drive lets go of them.
 @(step="fixed",stage="input",before="input_drive")
-spawn_seat_bodies :: proc(es:core.Commands,hierarchy:core.Ref(core.Hierarchy),bodies:^core.Table(Seat_Body,.Read)) {
+spawn_seat_bodies :: proc(es:core.Commands,bodies:^core.Table(Seat_Body,.Read)) {
     for row in 0..<core.count(bodies) {
-        if seat:=core.at(bodies,row).seat;!core.alive(es.entities,seat) {core.destroy_tree(es.entities,hierarchy,core.entity_at(bodies,row))}
+        if seat:=core.at(bodies,row).seat;!core.alive(es.entities,seat) {core.destroy(es,core.entity_at(bodies,row))}
     }
 }
 

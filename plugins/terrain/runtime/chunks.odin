@@ -26,6 +26,7 @@ Chunk_Mesh :: struct {
     locked:[dynamic]bool, // of a node of a Volume, by vertex: on a side of its region another piece shares, where its levels keep it
     render:host.Mesh_Render_Geometry, // what the renderer takes of geometry, made by the job that built it
     render_ready:bool,                // render is that of geometry as it is
+    grid:bool,                        // of the samples of a Heightfield: its tangents follow its grid and its collider is a heightfield
     // A piece of a Heightfield: the border of a chunk, and the lines it joins.
     border:Piece_Border,
     lines:Piece_Lines,
@@ -183,7 +184,7 @@ chunk_place :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh) {
 
 @(private)
 chunk_mesh_clear :: proc(mesh:^Chunk_Mesh) {
-    mesh.render_ready=false
+    mesh.render_ready,mesh.grid=false,false
     geom.mesh_buffer_clear(&mesh.geometry)
     clear(&mesh.uv1s);clear(&mesh.heights);clear(&mesh.disabled_edges);clear(&mesh.disabled_borders);clear(&mesh.holes);clear(&mesh.locked)
     mesh.columns,mesh.rows=0,0
@@ -193,10 +194,11 @@ chunk_mesh_clear :: proc(mesh:^Chunk_Mesh) {
 // A displaced chunk (displacement.odin), without collider: at level 0 with
 // each cell split in 2^detail per side, its sides at the levels of lod but
 // those that join another displaced chunk (fine), at its steps.
+@(private)
 chunk_detail_build :: proc(s:^Source,coord:[3]i32,lod:Chunk_Lod,detail:u8,fine:[4]bool,mesh:^Chunk_Mesh) -> bool {
     chunk_mesh_clear(mesh)
     low,high,valid:=chunk_region(s,coord)
-    if !valid || s.kind!=.Heightfield || lod.level!=0 {return false}
+    if !valid || lod.level!=0 {return false}
     piece_border_of_lod(lod,&mesh.border)
     piece_build(s,{low=low.xz,high=high.xz,border=&mesh.border,holes=!grid_none(&s.holes),detail=detail,fine=fine},mesh) or_return
     chunk_place(s,coord,mesh)
@@ -228,6 +230,7 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
         return true
     }
     columns,rows:=high.x-low.x+1,high.z-low.z+1
+    mesh.grid=true
     if lod!={} {
         piece_border_of_lod(lod,&mesh.border)
         if !piece_build(s,{low=low.xz,high=high.xz,level=lod.level,border=&mesh.border,holes=!grid_none(&s.holes) || len(join.cuts)>0,cuts=join.cuts},mesh) {return false}
@@ -295,10 +298,10 @@ detail_vertex :: proc "contextless" (s:^Source,at,step:[2]int,detail:u8) -> (pos
 // built: chunk_publish then only gives it the rows of its materials. levels:
 // in the clusters the renderer draws at the detail the view asks for, as a
 // node of a Volume is, its locked vertices kept where they are. Any thread.
-chunk_render_prepare :: proc(kind:Source_Kind,mesh:^Chunk_Mesh,limits:host.Assets_Limits,levels:=false) -> bool {
+chunk_render_prepare :: proc(mesh:^Chunk_Mesh,limits:host.Assets_Limits,levels:=false) -> bool {
     if len(mesh.geometry.indices)==0 {return false}
     tangents:[][4]f32
-    if kind==.Heightfield {
+    if mesh.grid {
         tangents=make([][4]f32,len(mesh.geometry.normals),context.temp_allocator)
         heightfield_tangents(mesh.geometry.normals[:],tangents)
     }
@@ -447,18 +450,18 @@ chunk_heightfield_borders :: proc(s:^Source,low,high:[3]int,mesh:^Chunk_Mesh,cut
 
 // picking keeps the triangles on the CPU without a collider: the editor picks
 // a chunk far from the view by them. levels: as chunk_render_prepare made it.
-chunk_publish :: proc(a:^host.Assets,kind:Source_Kind,mesh:^Chunk_Mesh,collision:=true,picking:=false,levels:=false) -> (id:base.Asset_Id,ok:bool) {
+chunk_publish :: proc(a:^host.Assets,mesh:^Chunk_Mesh,collision:=true,picking:=false,levels:=false) -> (id:base.Asset_Id,ok:bool) {
     if len(mesh.geometry.indices)==0 {return {},true}
     options:=host.Mesh_Generate_Options{no_lods=!levels || !mesh.render_ready,collision=collision || picking,disabled_edges=mesh.disabled_edges[:]}
     if mesh.render_ready {
         options.render_geometry=&mesh.render
-    } else if kind==.Heightfield {
+    } else if mesh.grid {
         tangents:=make([][4]f32,len(mesh.geometry.normals),context.temp_allocator)
         heightfield_tangents(mesh.geometry.normals[:],tangents)
         options.tangents=tangents
     }
     heightfield:host.Assets_Heightfield
-    if kind==.Heightfield && collision {
+    if mesh.grid && collision {
         // In the space of the chunk, whose first sample is its origin.
         heightfield={heights=mesh.heights[:],columns=mesh.columns,rows=mesh.rows,cell=mesh.cell,disabled_borders=mesh.disabled_borders[:],holes=mesh.holes[:]}
         options.heightfield=&heightfield

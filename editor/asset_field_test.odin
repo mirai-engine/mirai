@@ -1,9 +1,9 @@
 package editor
 
-import "core:reflect"
 import "core:testing"
 import "mirai:asset"
 import "mirai:std/base"
+import "mirai:std/serial"
 
 @(private="file")
 Asset_Field_Test :: struct {
@@ -21,8 +21,10 @@ asset_field_takes_the_kinds_its_tag_names_and_those_a_plugin_declares :: proc(t:
     s.providers.kinds[0]={kind=CHARACTER,label="Character",extension=".character"}
     s.providers.kind_count=1
     kinds :: proc(s:^Session,name:string) -> Asset_Kinds {
-        field:=reflect.struct_field_by_name(Asset_Field_Test,name)
-        return field_asset_kinds(s,field.tag,field.name)
+        schema:serial.Schema
+        serial.schema_init(&schema,context.temp_allocator)
+        type,_:=serial.schema_add_type_info(&schema,type_info_of(Asset_Field_Test))
+        return field_asset_kinds(s,serial.schema_field(&schema,type,base.name_hash(name))^)
     }
     source:=kinds(&s,"source")
     testing.expect_value(t,source,Asset_Kinds{0=asset.KIND_ANIMATION,1=CHARACTER})

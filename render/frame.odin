@@ -301,7 +301,7 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, filtered: rhi.Texture, sto
 	constants: rhi.Shader_Constants
 	if shadows_colored(r) {constants += {REFLECT_COMP_COLOR}}
 	if !scene_layered(s) && !(glass && glass_layered(s)) {constants += {REFLECT_COMP_UNLAYERED}}
-	pipeline := pipeline_of(r, .Reflect, constants)^
+	pipeline := pipeline_of(r, .Reflect, constants, {REFLECT_COMP_COLOR, REFLECT_COMP_UNLAYERED})^
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, albedo)
@@ -327,8 +327,10 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, filtered: rhi.Texture, sto
 
 	Resolve :: struct {shared_from, pad0, pad1, pad2: f32}
 	resolve := Resolve{shared_from = split}
+	resolve_pipeline := pipeline_of(r, .Reflect_Resolve, {REFLECT_RESOLVE_COMP_GLASS} if glass else {})^
+	if resolve_pipeline == 0 {return}
 	rhi.cmd_timestamp(cmd, "glass reflect resolve" if glass else "reflect resolve")
-	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Reflect_Resolve, {REFLECT_RESOLVE_COMP_GLASS} if glass else {})^)
+	rhi.cmd_bind_pipeline(cmd, resolve_pipeline)
 	set_params(cmd, &resolve)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.reflect_raw)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, normal)
@@ -390,11 +392,13 @@ present_blit :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: rhi.Texture, 
 renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     d:=r.device
     r.error=""
+    r.pipeline_waiting=""
     started:=time.tick_now()
     texture_uploads_install(r)
     geometry_uploads_install(r)
     pipelines_install(r)
     if r.variants_wanted {pipeline_variants_ask(r)}
+    if r.scene.programs_arrived {programs_ask(r)}
     // What the extensions asked of this frame lasts for it alone.
     defer {
         r.pass_count=0;r.main_pipeline=0;r.gbuffer_asked={}
@@ -1031,9 +1035,11 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 		if !upload_transient(r, cmd, restart[:], s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, chunk_dispatch))) {return false}
 		params := Cull_Params{phase = 1, occlusion = 1, hiz_levels = t.hiz_levels, glass_groups = glass_groups}
 		cull_record(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
-		rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Cull_Clusters, {CULL_CLUSTERS_COMP_CANDIDATES})^)
-		cull_bind(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
-		rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, candidate_dispatch)))
+		if candidates := pipeline_of(r, .Cull_Clusters, {CULL_CLUSTERS_COMP_CANDIDATES})^; candidates != 0 {
+			rhi.cmd_bind_pipeline(cmd, candidates)
+			cull_bind(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
+			rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, candidate_dispatch)))
+		}
 		cull_programs_bin(p, 1)
 		rhi.cmd_timestamp(cmd, "gbuffer late")
 		draw1 := u64(offset_of(Gpu_Cull_State, draws)) + size_of(Gpu_Draw)
@@ -1252,7 +1258,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	// add the rest where it marks a point (Frame.sun_maps.z, direct_maps.comp).
 	if p.frame.sun_maps.z != 0 {
 		rhi.cmd_timestamp(cmd, "direct maps")
-		rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Maps, unlayered)^)
+		rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Maps, unlayered, unlayered)^)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
@@ -1280,7 +1286,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	squares := (points.x + 1) / 2
 	rhi.cmd_dispatch(cmd, groups(squares, 8), groups((points.y + 1) / 2, 8))
 	rhi.cmd_timestamp(cmd, "direct samples")
-	samples := pipeline_of(r, .Direct_Samples, unlayered + ({DIRECT_SAMPLES_COMP_COLOR} if params.glass != 0 else {}))^
+	samples := pipeline_of(r, .Direct_Samples, unlayered + ({DIRECT_SAMPLES_COMP_COLOR} if params.glass != 0 else {}), {DIRECT_SAMPLES_COMP_UNLAYERED, DIRECT_SAMPLES_COMP_COLOR})^
 	// Glass with a program colors the light by what its program gives where each ray crosses it.
 	batch := params.glass != 0 && points_begin(p, filters = true)
 	rhi.cmd_bind_pipeline(cmd, samples)
@@ -1331,7 +1337,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 		}
 	}
 	rhi.cmd_timestamp(cmd, "direct pixels")
-	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Filter, unlayered)^)
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Filter, unlayered, unlayered)^)
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
@@ -1473,7 +1479,7 @@ pass_contact :: proc(p: ^Pass) -> bool {
 pass_composite :: proc(p: ^Pass) {
 	r, cmd, t := p.r, p.cmd, p.t
 	rhi.cmd_timestamp(cmd, "composite")
-	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Composite, {} if p.layered else {COMPOSITE_COMP_UNLAYERED})^)
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Composite, {} if p.layered else {COMPOSITE_COMP_UNLAYERED}, {COMPOSITE_COMP_UNLAYERED})^)
 	Params :: struct {gathered, pad0, pad1, pad2: u32}
 	params := Params{gathered = u32(p.gathered)}
 	set_params(cmd, &params)
@@ -1724,7 +1730,8 @@ update_stats :: proc(r: ^Renderer) {
 	if host := rhi.device_stats(r.device).host_memory; host > 0 {
 		memory = fmt.tprintf("%d resources of GPU memory went to system memory because the device memory was full, which slows the frames: a lower resolution or texture quality frees device memory", host)
 	}
-	for other in ([]string{r.tlas_problem, pages_problem(r), memory}) {
+	waiting := fmt.tprintf("the pass of the stage %s is skipped while its pipeline is made", r.pipeline_waiting) if r.pipeline_waiting != "" else ""
+	for other in ([]string{r.tlas_problem, pages_problem(r), memory, r.pipeline_problem, waiting}) {
 		if other == "" {continue}
 		if s.problem == "" {s.problem = string(r.problem_buffer[:copy(r.problem_buffer[:], other)]); continue}
 		// The problems before are at the start of problem_buffer: this one follows them.

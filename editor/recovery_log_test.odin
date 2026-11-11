@@ -2,6 +2,7 @@ package editor
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -11,6 +12,70 @@ import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
+
+@(private) Recovery_Score_Before :: struct {points:i32}
+@(private) Recovery_Score_After :: struct {lives:u8,points:i64}
+
+@(private)
+@(test_world)
+Recovery_Before_World :: struct {
+    using world:Test_World,
+    using scene_tables:Test_Scene,
+    scores:core.Table(Recovery_Score_Before) `mirai:"name=Recovery_Score"`,
+}
+
+@(private)
+@(test_world)
+Recovery_After_World :: struct {
+    using world:Test_World,
+    using scene_tables:Test_Scene,
+    scores:core.Table(Recovery_Score_After) `mirai:"name=Recovery_Score"`,
+}
+
+// A step logged by one build and put back by another that lays its component out otherwise
+// converts by the names of the fields; a field the old layout lacks keeps what the row has.
+@(test)
+a_logged_step_converts_to_the_layout_of_a_later_build :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"recovery-layout")
+    if root=="" {return}
+    ID :: base.Entity_Id(77)
+    before:Recovery_Before_World
+    if !test_world_init(t,&before) {return}
+    defer test_world_destroy(&before)
+    e:=core.create(&before.entities)
+    core.add(&before.ids,e,core.Id{ID})
+    core.add(&before.scores,e,Recovery_Score_Before{7})
+    test_world_settle(&before)
+    logged:=new(Test_Session);defer free(logged)
+    test_session_open(logged,test_world_ref(&before))
+    defer test_session_close(logged)
+    s:=&logged.s
+    s.project_root=root
+    defer recovery_log_destroy(s)
+    recovery_log_begin(s)
+    core.edit(&before.scores,e)^=Recovery_Score_Before{42}
+    testing.expect(t,history.edits_commit(&logged.edits,edited_world(s),&logged.selection))
+    recovery_log_write(s)
+    recovery_log_close(s)
+    file,read:=recovery_log_read(s,s.recovery.slot,1)
+    if !testing.expect(t,read && len(file.records)==1) {return}
+
+    after:Recovery_After_World
+    if !test_world_init(t,&after) {return}
+    defer test_world_destroy(&after)
+    later:=core.create(&after.entities)
+    core.add(&after.ids,later,core.Id{ID})
+    core.add(&after.scores,later,Recovery_Score_After{lives=3,points=1})
+    test_world_settle(&after)
+    restored:=new(Test_Session);defer free(restored)
+    test_session_open(restored,test_world_ref(&after))
+    defer test_session_close(restored)
+    applied,lost,_:=recovery_log_replay(&restored.s,{file})
+    testing.expect(t,applied==1 && lost==0)
+    test_world_settle(&after)
+    score,_:=core.get(&after.scores,later)
+    testing.expect(t,score.points==42 && score.lives==3,"the value converts")
+}
 
 @(test)
 recovery_log_writes_each_step_over_the_saved_file_and_puts_them_back :: proc(t:^testing.T) {
@@ -86,7 +151,8 @@ recovery_log_writes_each_step_over_the_saved_file_and_puts_them_back :: proc(t:^
     for history.undo(&edits,w,&selection) {}
     core.world_settle(w)
     testing.expect_value(t,entity_name(w,kept),"Kept")
-    testing.expect(t,recovery_log_replay(&s,chain)==records)
+    applied,lost,_:=recovery_log_replay(&s,chain)
+    testing.expect(t,applied==records && lost==0)
     core.world_settle(w)
     testing.expect_value(t,entity_name(w,kept),"Moved")
     testing.expect_value(t,entity_name(w,api_entity(w,born_id)),"Born")
@@ -269,4 +335,50 @@ a_pending_recovery_stays_aside_while_the_document_is_edited_and_saved :: proc(t:
     testing.expect(t,len(recovery_log_generations(s,mine))>0,"the chain of this editor stays")
     resolved,reason=recovery_resolve(s,false)
     testing.expect(t,!resolved && reason=="","with nothing offered there is nothing to resolve, and no error")
+}
+
+// A saved file that changed between the crash and the start (a checkout, a write from outside)
+// is not what the log followed: its steps go over it in a copy under .mirai/tmp, and the file
+// stays as it is.
+@(test)
+a_log_over_a_saved_file_that_changed_goes_back_in_a_copy :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !prefab_fixture_init(t,f,"recovery-changed") {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    s.project_root=f.root
+    testing.expect(t,jobs.system_init(&f.app.jobs,{threads=1,allocator=context.allocator}))
+    defer jobs.system_destroy(&f.app.jobs)
+    defer recovery_log_destroy(s)
+    defer documents_free(s)
+    w:=edited_world(s)
+    plain:=entity_create(s,{name="Plain",named=true})
+    core.world_settle(w)
+    history.edits_reset(&f.edits,w)
+    plain_id:=api_entity_id(w,plain)
+    if !testing.expect_value(t,scene_save(s,"other.scene"),Document_Error.None) {return}
+    entity_rename(s,plain,"Saved")
+    prefab_fixture_step(f)
+    if !testing.expect_value(t,scene_save(s,"crashed.scene"),Document_Error.None) {return}
+    recovery_update(s)
+    entity_rename(s,plain,"Lost in the crash")
+    prefab_fixture_step(f)
+    recovery_update(s)
+    testing.expect(t,recovery_log_flush(s,true))
+
+    crashed:=scene_file(s,"crashed.scene")
+    other,_:=os.read_entire_file(scene_file(s,"other.scene"),context.temp_allocator)
+    testing.expect(t,os.write_entire_file(crashed,other)==nil)
+    recovery_chains_close(s,false)
+    documents_free(s)
+    s.active_document=0
+    s.recovery.chain={}
+    scene_new(s)
+    recovery_open(s)
+    resolved,reason:=recovery_resolve(s,false)
+    testing.expectf(t,resolved && strings.contains(reason,"changed since"),"%s",reason)
+    testing.expectf(t,strings.contains(document_file(s.document),".mirai/tmp/recovered-crashed.scene"),"%s",document_file(s.document))
+    testing.expect_value(t,entity_name(edited_world(s),api_entity(edited_world(s),plain_id)),"Lost in the crash")
+    now,_:=os.read_entire_file(crashed,context.temp_allocator)
+    testing.expect(t,string(now)==string(other),"the file stays as it is")
 }

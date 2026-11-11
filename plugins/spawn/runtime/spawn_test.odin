@@ -24,17 +24,17 @@ a_body_given_to_a_seat_goes_when_the_seat_goes :: proc(t:^testing.T) {
     w:Spawn_World
     if !test_world_init(t,&w) {return}
     defer test_world_destroy(&w)
-    es,bodies,hierarchy:=&w.entities,&w.bodies,&w.hierarchy
+    es,bodies:=&w.entities,&w.bodies
     seat,given,other:=core.create(es),core.create(es),core.create(es)
     core.add(bodies,given,Seat_Body{seat})
     core.add(&w.seats,seat,input.Seat{body=other})
     test_world_settle(&w)
-    spawn_seat_bodies({entities=es},core.ref(hierarchy),core.read(bodies))
+    spawn_seat_bodies({entities=es},core.read(bodies))
     test_world_settle(&w)
     testing.expect(t,core.alive(es,given),"a body stays while its seat is there")
     core.destroy(es,seat)
     test_world_settle(&w)
-    spawn_seat_bodies({entities=es},core.ref(hierarchy),core.read(bodies))
+    spawn_seat_bodies({entities=es},core.read(bodies))
     test_world_settle(&w)
     testing.expect(t,!core.alive(es,given),"the body spawn gave goes with its seat")
     testing.expect(t,core.alive(es,other),"a body nobody gave is left to the game")

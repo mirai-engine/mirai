@@ -150,7 +150,7 @@ recipe_parts :: proc(w:core.World_Ref,types:^asset.Types,recipe:Recipe,allocator
     if placed!=.None {return nil,fmt.tprintf("the recipe %s could not be placed: %s",recipe.path,escene.error_text(placed))}
     core.world_settle(w)
     parts=entity_parts(w,report.root,allocator)
-    core.world_destroy_tree(w,report.root)
+    core.destroy(core.world_entities(w),report.root)
     core.world_settle(w)
     return parts,""
 }

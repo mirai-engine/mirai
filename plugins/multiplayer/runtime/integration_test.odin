@@ -49,7 +49,6 @@ Net_Test_Tables :: struct {
     spawns:core.Table(Predicted_Spawn),
     references:core.Table(scene.Scene_Reference),
     tombstones:core.Table(scene.Tombstone),
-    held:core.Table(scene.Section_Held),
     time:core.Time,
     frame:core.Frame_Time,
     input:core.Input,

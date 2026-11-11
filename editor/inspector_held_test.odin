@@ -1,13 +1,16 @@
 package editor
 
-import "base:runtime"
 import "core:mem"
 import "core:testing"
+import "mirai:std/serial"
 
 @(test)
 curves_show_as_keys_and_held_values_take_what_a_popup_chose :: proc(t:^testing.T) {
     keys :: proc(type:typeid) -> int {
-        return keys_count(runtime.type_info_base(type_info_of(type)).variant.(runtime.Type_Info_Struct))
+        s:serial.Schema
+        serial.schema_init(&s,context.temp_allocator)
+        index,_:=serial.schema_add_type_info(&s,type_info_of(type))
+        return keys_count(&s,index)
     }
     Curve :: struct {values:[8]f32,times:[8]f32}
     Gradient :: struct {colors:[8][4]f32 `mirai:"color"`,times:[8]f32}

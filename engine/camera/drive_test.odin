@@ -215,7 +215,7 @@ player_1_without_a_body_flies_a_free_camera_in_play :: proc(t:^testing.T) {
     test_world_settle(w)
     commands:=core.commands(w,test_world_info(w))
     run :: proc(w:^Drive_World,commands:core.Commands) {
-        camera_free(commands,&w.free,core.read(&w.seats),core.ref(&w.seat_state),&w.seat_requests,&w.cameras,&w.transforms,core.read(&w.moves),core.ref(&w.origin),core.ref(&w.network),core.ref(&w.hierarchy),{dt=0.5})
+        camera_free(commands,&w.free,core.read(&w.seats),core.ref(&w.seat_state),&w.seat_requests,&w.cameras,&w.transforms,core.read(&w.moves),core.ref(&w.origin),core.ref(&w.network),{dt=0.5})
         test_world_settle(w)
     }
     run(w,commands)

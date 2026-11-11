@@ -396,7 +396,7 @@ stroke_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
             if jobs.pending(&build.counter) {jobs.wait(job_system,jobs.OWNER,&build.counter)}
             preview:=&stroke.previews[build.preview]
             if !build.ok {editor.notify(s,"The terrain preview could not be rebuilt");continue}
-            id,ok:=terrain.chunk_publish(a,stroke.source.kind,&build.mesh,false)
+            id,ok:=terrain.chunk_publish(a,&build.mesh,false)
             if !ok {editor.notify(s,"The terrain preview could not be rebuilt");continue}
             if preview.mesh!={} {host.assets_mesh_release(a,preview.mesh)}
             preview.mesh,preview.ready,preview.dirty=id,true,false
@@ -442,7 +442,7 @@ stroke_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
 @(private)
 preview_build :: proc(build:^Preview_Build,worker:int) {
     build.ok=terrain.chunk_build(build.source,build.coord,&build.mesh,false,build.lod)
-    if build.ok {terrain.chunk_render_prepare(build.source.kind,&build.mesh,build.limits)}
+    if build.ok {terrain.chunk_render_prepare(&build.mesh,build.limits)}
 }
 @(private)
 stroke_end :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets,consume:=core.NONE,label:="Sculpt") {

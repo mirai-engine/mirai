@@ -125,7 +125,7 @@ value_put :: proc(override:^Particle_Override,name:u64,bytes:[]u8) -> Error {
         if len(bytes)<field.size {return .Type_Mismatch}
         candidate:=effect.PARTICLE_DEFAULTS
         mem.copy(rawptr(uintptr(&candidate)+field.offset),raw_data(bytes),field.size)
-        if !effect.particle_check({info=&candidate}) {return .Invalid_Value}
+        if !effect.particle_check({info=candidate}) {return .Invalid_Value}
     }
     at:=-1
     for stored,i in override.names[:override.count] {
@@ -207,7 +207,7 @@ value_parameter :: proc(program:^erender.Program,name:u64,value:[effect.PARTICLE
 particle_resolve :: proc(a:^host.Assets,particle:base.Asset_Id,override:^Particle_Override) -> (info:effect.Particle_Info) {
     info=effect.PARTICLE_DEFAULTS
     if a!=nil && particle!={} {
-        if view,ok:=effect_view(a,particle);ok {info=view.info^}
+        if view,ok:=effect_view(a,particle);ok {info=view.info}
     }
     if override==nil {return}
     for name,i in override.names[:min(override.count,PARTICLE_OVERRIDE_CAPACITY)] {
@@ -232,14 +232,14 @@ particle_resolve_checked :: proc(a:^host.Assets,particle:base.Asset_Id,override:
         }
     }
     info^=particle_resolve(a,particle,override)
-    if !effect.particle_check({info=info}) {return .Invalid_Value}
+    if !effect.particle_check({info=info^}) {return .Invalid_Value}
     return .None
 }
 
 // The document of an effect as its file holds it, which the assets keep open
 // and read again when it changes. ok is false when it cannot be loaded, or
 // its tables are not those of an effect: then a problem of the asset.
-effect_view :: proc(a:^host.Assets,id:base.Asset_Id) -> (view:effect.Particle_View,ok:bool) {
+effect_view :: proc(a:^host.Assets,id:base.Asset_Id) -> (view:effect.Particle_Desc,ok:bool) {
     file:=host.assets_document(a,id,effect.PARTICLE_KIND)
     if file==nil {return}
     error:asset.Error
