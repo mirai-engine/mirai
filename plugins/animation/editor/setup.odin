@@ -552,7 +552,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             definitions:=make([dynamic]anim.Action_Definition,call.allocator)
             layers:=make([dynamic]anim.Stack_Layer,call.allocator)
             // A layer of the set a gesture plays in: over the upper body, fading in along the spine
-            // so the waist does not break, or over one arm.
+            // to the bones it carries so the waist does not break, or over one arm.
             layer :: proc(layers:^[dynamic]anim.Stack_Layer,name:string,over:anim.Bone_Ref,depth:int=0) {
                 value:=anim.STACK_LAYER_DEFAULT;value.over[0]={over,u8(clamp(depth,0,255))};base.text_set(value.name[:],name)
                 append(layers,value)
@@ -568,7 +568,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
                 if arm_l.path[0]!=0 {arm_l=anim.bone_ref(anim.BODY_LABEL+"arm_l")}
                 if arm_r.path[0]!=0 {arm_r=anim.bone_ref(anim.BODY_LABEL+"arm_r")}
             }
-            layer(&layers,"Upper_Body",over,count)
+            layer(&layers,"Upper_Body",over,count+1)
             if arm_l.path[0]!=0 {layer(&layers,"Arm_L",arm_l)}
             if arm_r.path[0]!=0 {layer(&layers,"Arm_R",arm_r)}
             for clip in clips.gestures {
