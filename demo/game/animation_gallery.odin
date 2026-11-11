@@ -125,7 +125,7 @@ Animation_Gallery_Diagnostics :: struct {
 // The bodies of the gallery that walk on their own go back and forth along the walkway; the jumper
 // jumps its obstacle. One that fell or wandered off goes back to its station.
 @(step="fixed")
-gallery_move_inputs :: proc(gallery:core.Read(Animation_Gallery),inputs:^core.Table(inp.Move_Input),walks:core.Read(locomotion.Walk),worlds:core.Read(core.World_Transform),placer:core.Placer,seats:core.Read(inp.Seat),walk_actions:inp.Input_Of(locomotion.Walk_Action),time:core.Time) {
+gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),inputs:^core.Table(inp.Move_Input),walks:^core.Table(locomotion.Walk,.Read),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,seats:^core.Table(inp.Seat,.Read),walk_actions:inp.Input_Of(locomotion.Walk_Action),time:core.Time) {
     for row in 0..<core.count(gallery) {
         entity:=core.entity_at(gallery,row)
         item:=core.at(gallery,row)
@@ -171,7 +171,7 @@ gallery_move_inputs :: proc(gallery:core.Read(Animation_Gallery),inputs:^core.Ta
     }
 }
 
-gallery_direct_clips :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Table(anim.Animation),progresses:core.Read(anim.Animation_Progress),requests:^anim.Animation_Requests,commands:[]Gallery_Command) {
+gallery_direct_clips :: proc(gallery:^core.Table(Animation_Gallery,.Read),animations:^core.Table(anim.Animation),progresses:^core.Table(anim.Animation_Progress,.Read),requests:^anim.Animation_Requests,commands:[]Gallery_Command) {
     for row in 0..<core.count(gallery) {
         item:=core.at(gallery,row)
         entity:=core.entity_at(gallery,row)
@@ -191,8 +191,8 @@ gallery_direct_clips :: proc(gallery:core.Read(Animation_Gallery),animations:^co
 // The bodies that walk by their physics plant their feet only while they stand on the ground.
 // It reads the gallery as gallery_observe left it in the last tick.
 @(step="fixed",stage="react",before="gallery_observe")
-gallery_control :: proc(gallery:core.Read(Animation_Gallery),players:core.Read(Gallery_Player),characters:core.Read(phys.Character_State),requests:^anim.Animation_Requests) {
-    ground :: proc(characters:core.Read(phys.Character_State),requests:^anim.Animation_Requests,entity:core.Entity) {
+gallery_control :: proc(gallery:^core.Table(Animation_Gallery,.Read),players:^core.Table(Gallery_Player,.Read),characters:^core.Table(phys.Character_State,.Read),requests:^anim.Animation_Requests) {
+    ground :: proc(characters:^core.Table(phys.Character_State,.Read),requests:^anim.Animation_Requests,entity:core.Entity) {
         character,exists:=core.get(characters,entity)
         if exists {anim.modifier_goal(requests,{rig=entity,kind=.Grounding,weight=1 if character.standing else 0,enabled=true})}
     }
@@ -207,8 +207,8 @@ gallery_control :: proc(gallery:core.Read(Animation_Gallery),players:core.Read(G
 // body, faded in and out over it; the additive, greeting and synchronized stations set
 // their parameter; the actions station greets and steps; the warp station strides to its goal.
 @(step="fixed")
-gallery_animate :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Table(anim.Animation),worlds:core.Read(core.World_Transform),time:core.Time,requests:^anim.Animation_Requests,progresses:core.Read(anim.Animation_Progress),playback:core.Ref(anim.Playback),motors:^core.Table(Animation_Motor),ui_events:core.Ref(gui.UI_Events),names:core.Read(core.Name),panel:core.Ref(Gallery_UI),morphs:core.Read(Morph_Playground),morph_weights:^core.Table(anim.Morph_Weights)) {
-    if morphs.table!=nil && morph_weights!=nil {morph_playground_animate(morphs,requests,morph_weights,time)}
+gallery_animate :: proc(gallery:^core.Table(Animation_Gallery,.Read),animations:^core.Table(anim.Animation),worlds:^core.Table(core.World_Transform,.Read),time:core.Time,requests:^anim.Animation_Requests,progresses:^core.Table(anim.Animation_Progress,.Read),playback:core.Ref(anim.Playback),motors:^core.Table(Animation_Motor),ui_events:core.Ref(gui.UI_Events),names:^core.Table(core.Name,.Read),panel:core.Ref(Gallery_UI),morphs:^core.Table(Morph_Playground,.Read),morph_weights:^core.Table(anim.Morph_Weights)) {
+    if morphs!=nil && morph_weights!=nil {morph_playground_animate(morphs,requests,morph_weights,time)}
     for event in ui_events.items {
         if event.kind!=.Clicked || event.name!=base.name_hash("toggle") {continue}
         lift:=core.entity_named(names,SHOWCASE_LIFT)
@@ -262,7 +262,7 @@ gallery_animate :: proc(gallery:core.Read(Animation_Gallery),animations:^core.Ta
 }
 
 @(step="fixed",stage="apply")
-gallery_root_motion :: proc(gallery:core.Read(Animation_Gallery),transforms:^core.Table(core.Transform),playback:core.Ref(anim.Playback)) {
+gallery_root_motion :: proc(gallery:^core.Table(Animation_Gallery,.Read),transforms:^core.Table(core.Transform),playback:core.Ref(anim.Playback)) {
     for row in 0..<core.count(gallery) {
         item:=core.at(gallery,row)
         if item.kind!=.Root_Motion {continue}
@@ -288,9 +288,9 @@ gallery_ik_target :: proc(item:Animation_Gallery) -> mm.Vec3 {
 }
 
 @(step="fixed",stage="react")
-gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.Table(core.Transform),characters:core.Read(phys.Character_State),moving:core.Read(core.Motion),events:core.Ref(anim.Animation_Events),playback:core.Ref(anim.Playback),grounding:core.Ref(anim.Grounding_Runtime),modifiers:core.Ref(anim.Modifier_Runtime),time:core.Time,panel:^Gallery_UI) {
+gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.Table(core.Transform),characters:^core.Table(phys.Character_State,.Read),moving:^core.Table(core.Motion,.Read),events:core.Ref(anim.Animation_Events),playback:core.Ref(anim.Playback),grounding:core.Ref(anim.Grounding_Runtime),modifiers:core.Ref(anim.Modifier_Runtime),time:core.Time,panel:^Gallery_UI) {
     if !time.playing {return}
-    feet:=core.read(&modifiers.grounding)
+    feet:=&modifiers.grounding
     commands:=panel.commands[:panel.count]
     for &item,row in core.writable(gallery) {
         entity:=gallery.entities[row]

@@ -108,8 +108,8 @@ spline_nearest :: proc(s:^Spline,place:mm.Transform,point:[3]f32) -> (key:f32,ok
 
 // Whether e has a spline, placed at place, whose reach one of boxes overlaps:
 // one to lay again where the ground changed in those boxes.
-spline_under :: proc(splines:core.Read(Spline),e:core.Entity,place:mm.Transform,boxes:[]mm.Aabb) -> bool {
-    if splines.table==nil {return false}
+spline_under :: proc(splines:^core.Table(Spline,$A),e:core.Entity,place:mm.Transform,boxes:[]mm.Aabb) -> bool {
+    if splines==nil {return false}
     spline,has:=core.get(splines,e)
     if !has {return false}
     reach:=spline_reach(&spline,place) or_return

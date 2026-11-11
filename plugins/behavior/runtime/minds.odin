@@ -115,13 +115,13 @@ Mind_World :: struct {
     minds:^Minds,
     agents:^core.Table(Mind_Agent),
     requests:^nav.Nav_Requests,
-    paths:core.Read(nav.Nav_Path),
-    fars:core.Read(nav.Nav_Far),
-    objects:core.Read(Smart_Object),
-    states:core.Read(Smart_State),
-    worlds:core.Read(core.World_Transform),
+    paths:^core.Table(nav.Nav_Path,.Read),
+    fars:^core.Table(nav.Nav_Far,.Read),
+    objects:^core.Table(Smart_Object,.Read),
+    states:^core.Table(Smart_State,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),
     patrols:^core.Table(Patrol),
-    splines:core.Read(volume.Spline),
+    splines:^core.Table(volume.Spline,.Read),
     claims:^Claims,
     problems:^core.Problems,
     time:core.Time,
@@ -146,24 +146,24 @@ minds_tick :: proc(w:^Mind_World,name:string,acts:^[$A]$P,think:proc(t:^ai.Think
         if agents.values[row].mind!=key {continue}
         mind_run(w,core.entity_at(agents,row),&core.edit_at(agents,row).state,acts,think,&ctx)
     }
-    if w.fars.table==nil || !nav.nav_far_decide(time) {return}
+    if w.fars==nil || !nav.nav_far_decide(time) {return}
     // Until its next tick, once every step of what is far.
     ctx.lease=u32(nav.NAV_FAR_PERIOD/max(time.dt,1e-6)+0.5)+1
     // The rows after those on are off: of them, the agents far.
     for row in core.count(agents)..<len(agents.entities) {
         if agents.values[row].mind!=key {continue}
         e:=agents.entities[row]
-        if core.raw_find(core.raw(w.fars.table),type_info_of(nav.Nav_Far),e)==nil {continue}
+        if core.raw_find(core.raw(w.fars),type_info_of(nav.Nav_Far),e)==nil {continue}
         mind_run(w,e,&core.edit_at(agents,row).state,acts,think,&ctx)
     }
 }
 
 // Reports the agents of a name no mind of the game declares.
 @(step="fixed",stage="apply",server)
-minds_unknown :: proc(minds:core.Ref(Minds),agents:core.Read(Mind_Agent),time:core.Time,problems:^core.Problems) {
+minds_unknown :: proc(minds:core.Ref(Minds),agents:^core.Table(Mind_Agent,.Read),time:core.Time,problems:^core.Problems) {
     if !time.playing || time.resimulating {return}
     for row in 0..<core.count(agents) {
-        name:=agents.table.values[row].mind
+        name:=agents.values[row].mind
         if mind_of(minds.ptr,name)!=nil {continue}
         text:=base.text_get(name[:])
         core.report(problems,core.entity_at(agents,row),"behavior.mind","No mind is declared as %q: give the think procedure of a mind @(mind=%q), or fix the name of its Mind_Agent",text,text)
@@ -188,10 +188,10 @@ agent_path :: proc(a:^$T) -> (nav.Nav_Path,bool) {return read_any(world_of(a).pa
 
 // The row of e, on or off while it is far.
 @(private)
-read_any :: proc(r:core.Read($T),e:core.Entity) -> (v:T,ok:bool) {
-    if r.table==nil {return}
+read_any :: proc(r:^core.Table($T,$A),e:core.Entity) -> (v:T,ok:bool) {
+    if r==nil {return}
     if v,ok=core.get(r,e);ok {return}
-    found:=cast(^T)core.raw_find(core.raw(r.table),type_info_of(T),e)
+    found:=cast(^T)core.raw_find(core.raw(r),type_info_of(T),e)
     if found==nil {return}
     return found^,true
 }
@@ -268,7 +268,7 @@ patrol_act :: proc(a:^ai.Act($A)) -> ai.Status {
         return .Success
     }
     if a.phase==.Update && !walking {return .Running}
-    patrol,found:=read_any(core.read(w.patrols),e)
+    patrol,found:=read_any(w.patrols,e)
     if !found {return .Failure}
     walked:=patrol
     status:=patrol_walk(&walked,e,a.phase==.Enter,p,w.splines,w.worlds,w.requests,w.problems)
@@ -280,8 +280,8 @@ patrol_act :: proc(a:^ai.Act($A)) -> ai.Status {
 // Walks the agents with a Patrol and no mind.
 @(step="fixed",server)
 patrols_walk :: proc(
-    patrols:^core.Table(Patrol),minds:core.Read(Mind_Agent),paths:core.Read(nav.Nav_Path),splines:core.Read(volume.Spline),
-    worlds:core.Read(core.World_Transform),requests:^nav.Nav_Requests,problems:^core.Problems,time:core.Time,
+    patrols:^core.Table(Patrol),minds:^core.Table(Mind_Agent,.Read),paths:^core.Table(nav.Nav_Path,.Read),
+    splines:^core.Table(volume.Spline,.Read),worlds:^core.Table(core.World_Transform,.Read),requests:^nav.Nav_Requests,problems:^core.Problems,time:core.Time,
 ) {
     if !time.playing || time.resimulating {return}
     for row in 0..<core.count(patrols) {
@@ -301,7 +301,7 @@ patrols_walk :: proc(
 // of one point it stands there), Success at the end of a Once path, Failure
 // without a Spline to walk (the problem behavior.patrol).
 @(private)
-patrol_walk :: proc(patrol:^Patrol,e:core.Entity,start:bool,p:nav.Nav_Path,splines:core.Read(volume.Spline),worlds:core.Read(core.World_Transform),requests:^nav.Nav_Requests,problems:^core.Problems) -> ai.Status {
+patrol_walk :: proc(patrol:^Patrol,e:core.Entity,start:bool,p:nav.Nav_Path,splines:^core.Table(volume.Spline,$A),worlds:^core.Table(core.World_Transform,$B),requests:^nav.Nav_Requests,problems:^core.Problems) -> ai.Status {
     spline,_:=read_any(splines,patrol.path)
     place,_:=read_any(worlds,patrol.path)
     count,next:=int(spline.count),int(patrol.next)

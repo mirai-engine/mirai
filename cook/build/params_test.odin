@@ -31,7 +31,7 @@ PARAMS_CORE :: `package core
 @(storage) Tally :: struct {count:i32}
 @(component) Spot :: struct {value:f32}
 @(component) Mark :: struct {value:f32}
-@(params) Looker :: struct {spots:Read(Spot),asks:Ref(Asks),clock:Clock}
+@(params) Looker :: struct {spots:^Table(Spot,.Read),asks:Ref(Asks),clock:Clock}
 @(params) Mover :: struct {spots:^Table(Spot),asks:^Asks,tally:^Tally}
 `
 
@@ -45,7 +45,7 @@ a_params_struct_binds_each_field_as_its_parameter :: proc(t:^testing.T) {
     if folder=="" {return}
     game_source:=`package game
 import "mirai:core"
-@(step="fixed") game_look :: proc(marks:^core.Table(core.Mark),look:core.Looker,spots:core.Read(core.Spot)) {}
+@(step="fixed") game_look :: proc(marks:^core.Table(core.Mark),look:core.Looker,spots:^core.Table(core.Spot,.Read)) {}
 @(step="fixed") game_move :: proc(move:core.Mover,asks:^core.Asks,clock:core.Clock) {}
 `
     p,ok:=params_project(t,folder,PARAMS_CORE,game_source)
@@ -82,10 +82,10 @@ a_written_datum_reaches_a_step_once :: proc(t:^testing.T) {
     if !ok {return}
     errors:=params_errors(t,&p,`package game
 import "mirai:core"
-@(step="fixed") game_loose :: proc(move:core.Mover,spots:core.Read(core.Spot)) {}
+@(step="fixed") game_loose :: proc(move:core.Mover,spots:^core.Table(core.Spot,.Read)) {}
 @(step="fixed") game_twice :: proc(a:core.Mover,b:core.Mover) {}
-@(step="fixed") game_pushes :: proc(look:core.Looker,asks:^core.Asks,spots:core.Read(core.Spot)) {}
-@(params) Itself :: struct {marks:^core.Table(core.Mark),seen:core.Read(core.Mark)}
+@(step="fixed") game_pushes :: proc(look:core.Looker,asks:^core.Asks,spots:^core.Table(core.Spot,.Read)) {}
+@(params) Itself :: struct {marks:^core.Table(core.Mark),seen:^core.Table(core.Mark,.Read)}
 @(step="fixed") game_itself :: proc(it:Itself) {}
 `)
     loose,twice,pushes,itself:=false,false,false,false
@@ -109,12 +109,12 @@ a_params_struct_has_only_parameters_and_does_not_nest :: proc(t:^testing.T) {
     if !ok {return}
     errors:=params_errors(t,&p,`package game
 import "mirai:core"
-@(params) Outer :: struct {look:core.Looker,marks:core.Read(core.Mark)}
+@(params) Outer :: struct {look:core.Looker,marks:^core.Table(core.Mark,.Read)}
 @(params) Odd :: struct {count:int}
 @(params) Empty :: struct {}
 @(params,component) Both :: struct {value:f32}
 @(step="fixed") game_pointer :: proc(move:^core.Mover) {}
-@(step="fixed") game_untyped :: proc(marks:core.Read(core.Mark),count:=3) {}
+@(step="fixed") game_untyped :: proc(marks:^core.Table(core.Mark,.Read),count:=3) {}
 `)
     found:[6]bool
     for message in errors {
@@ -142,7 +142,7 @@ import "mirai:host"
 import mixer "mirai:audio"
 import erender "mirai:engine/render"
 import "mirai:std/jobs"
-@(params) Loader :: struct {assets:^host.Assets,allocator:runtime.Allocator,spots:core.Read(core.Spot)}
+@(params) Loader :: struct {assets:^host.Assets,allocator:runtime.Allocator,spots:^core.Table(core.Spot,.Read)}
 @(step="frame") game_load :: proc(loader:Loader,job_system:^jobs.Job_System) {}
 @(step="render") game_draw :: proc(renderer:^erender.Renderer,extras:^host.Frame_Extras,m:^mixer.Mixer,app:^host.App) {}
 `

@@ -7,7 +7,7 @@ import "mirai:core"
 // rest stays for core.places_drop. A place asked after this function waits for
 // the next tick.
 @(step="fixed",loops="game editor",stage="simulate",after="physics_prepare")
-physics_places :: proc(places:^core.Places,requests:^Body_Requests,state:core.Ref(Physics_State),rigids:core.Read(Rigid_Body),characters:core.Read(Character)) {
+physics_places :: proc(places:^core.Places,requests:^Body_Requests,state:core.Ref(Physics_State),rigids:^core.Table(Rigid_Body,.Read),characters:^core.Table(Character,.Read)) {
     asked:=core.take(&places.queue)
     left:=0
     for request in asked {

@@ -55,7 +55,7 @@ motion_targets_queued_before_the_first_tick_bind_and_warp_the_same_interval :: p
     core.add(&animations,actor,animation)
     core.table_settle(&transforms,&entities);core.table_settle(&parents,&entities);core.table_settle(&names,&entities);core.table_settle(&targets,&entities);core.table_settle(&animations,&entities)
     hierarchy:core.Hierarchy;defer core.value_free(&hierarchy,type_info_of(core.Hierarchy))
-    core.hierarchy_settle(&hierarchy,core.read(&parents),&entities)
+    core.hierarchy_settle(&hierarchy,&parents,&entities)
     requests:Animation_Requests;events:Animation_Events;playback:Playback;skeletons:Skeleton_Assets
     defer {delete(requests.timeline.items);delete(requests.poses.items);delete(requests.distances.items);delete(events.items);playback_free(&playback);skeleton_assets_free(&skeletons)}
     motion:Motion_Runtime;characters:Character_Assets;extra:Test_Storages
@@ -182,7 +182,7 @@ motion_requests_reject_invalid_values_and_missing_entity_targets_never_use_stale
     motion:Motion_Runtime;defer motion_runtime_free(&motion)
     append(&motion.instances,Motion_Instance{entity=entity});resize(&motion.rows,2);motion.rows[1]=1
     motion_target(&requests,entity,"ledge",spatial_entity(target_entity))
-    motion_take_requests(&motion,&requests,nil);motion_resolve_targets(&motion,nil,nil,{},{},{})
+    motion_take_requests(&motion,&requests,nil);motion_resolve_targets(&motion,nil,nil,nil,{},{})
     testing.expect(t,!motion.instances[0].targets[0].resolved && motion.instances[0].error==.Missing_Target)
     for _ in 0..=cap(requests.warps.items) {motion_target(&requests,entity,"ledge",spatial_world(mm.TRANSFORM_IDENTITY))}
     testing.expect_value(t,requests.warps.dropped,1)
@@ -386,21 +386,21 @@ root_warp_reaches_a_bone_or_socket_of_another_rig_from_the_pose_it_sampled_in_th
     requests:Animation_Requests;defer delete(requests.warps.items);defer delete(requests.locomotion.items)
     motion_target(&requests,state.entity,"ledge",spatial_bone(other,"joint3"));motion_take_requests(&motion,&requests,nil)
     testing.expect(t,!motion.instances[0].targets[0].resolved,"a bone is found before the rigs sample, not when it is asked")
-    motion_resolve_targets(&motion,&playback,&skeletons,{},{},core.read(&w.worlds))
+    motion_resolve_targets(&motion,&playback,&skeletons,nil,{},core.read(&w.worlds))
     target:=motion.instances[0].targets[0]
     testing.expect(t,target.resolved && linalg.length(target.world.position-mm.Vec3{10,1,0})<1e-5)
     state.root_enabled,state.was_playing=true,true;state.fader.current=lib.player_make(1);state.fader.current.time=2;state.prev_fader.current=lib.player_make(1)
     state.motion={translation={2,0,0},rotation=1}
     testing.expect(t,motion_apply_root(&motion,&cache,app.assets,app.allocator,&state,{1,2},&content,mm.TRANSFORM_IDENTITY,2) && linalg.length(state.motion.translation-mm.Vec3{10,1,0})<1e-4 && motion.instances[0].remaining_error<1e-4)
     motion_target(&requests,state.entity,"ledge",spatial_socket(other,"grip"));motion_take_requests(&motion,&requests,nil)
-    motion_resolve_targets(&motion,&playback,&skeletons,{},{},core.read(&w.worlds))
+    motion_resolve_targets(&motion,&playback,&skeletons,nil,{},core.read(&w.worlds))
     testing.expect(t,len(motion.instances[0].targets)==1 && motion.instances[0].targets[0].resolved && linalg.length(motion.instances[0].targets[0].world.position-mm.Vec3{10,1.2,0})<1e-5)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
-    for _ in 0..<8 {motion_resolve_targets(&motion,&playback,&skeletons,{},{},core.read(&w.worlds));stable &&=motion.instances[0].targets[0].resolved}
+    for _ in 0..<8 {motion_resolve_targets(&motion,&playback,&skeletons,nil,{},core.read(&w.worlds));stable &&=motion.instances[0].targets[0].resolved}
     context=saved
     testing.expect(t,stable)
     sampled.seen=5
-    motion_resolve_targets(&motion,&playback,&skeletons,{},{},core.read(&w.worlds))
+    motion_resolve_targets(&motion,&playback,&skeletons,nil,{},core.read(&w.worlds))
     testing.expect(t,!motion.instances[0].targets[0].resolved && motion.instances[0].error==.Missing_Target,"a rig not sampled in the previous tick names no place")
 }

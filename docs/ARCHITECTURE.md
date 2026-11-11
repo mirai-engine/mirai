@@ -163,7 +163,7 @@ door_move :: proc(
 | Parameter | Meaning |
 | --- | --- |
 | `^core.Table(C)` | Writes the table of component `C` |
-| `core.Read(C)` | Reads the table of `C` |
+| `^core.Table(C,.Read)` | Reads the table of `C` |
 | `^S` | Writes storage `S` |
 | `core.Ref(S)` | Reads storage `S` without copying it |
 | `S` | Reads a copy of storage `S`; for small ones (`Time`, `Input`, `View`) |
@@ -230,8 +230,8 @@ Table :: struct($T:typeid) {
 
 - `values` and `entities` are parallel and dense, with the enabled rows first: traversing a
   component is traversing `0..<core.count(t)`.
-- `core.get(t,e)` on a `^Table` gives the row to write or `nil`; on a `Read`, the value.
-  `core.has(t,e)` answers in constant time.
+- `core.get(t,e)` gives the value and whether it is on, on either access; `core.edit(t,e)` the row
+  to write or `nil`. `core.has(t,e)` answers in constant time.
 - **Turning off without losing data.** `core.disable(t,e)`/`core.enable(t,e)` turn a component off
   and on; `core.Disabled` turns off an entity and what hangs from it, except its identity,
   transform and hierarchy. What is off keeps its values and no loop function sees it; reflection
@@ -241,19 +241,20 @@ Table :: struct($T:typeid) {
 - **Adding and removing are applied when the function ends** (`core.add`, `core.remove`,
   `core.destroy`): no traversal or pointer is invalidated inside a function.
   Created entities have a handle right away; their components appear for the next function, and
-  the same function reads and writes them where they are expected (`core.added`, `core.staged`),
+  the same function reads and writes them where they are expected (`core.staged`),
   without settling the world in between.
 - Between functions, handles are kept (`core.Entity`: index and generation), never pointers.
 
 **How a change is detected.**
 
 - Each write raises the table's `version` and the written row takes that value as its stamp
-  (`stamps`). These write: `core.get`, `core.at`, `core.free` or `core.staged` on a `^Table`,
-  `core.writable` (all rows), `core.raw_get` and `core.raw_touch` by reflection, and the `add`
-  that replaces a row.
-- Reading (`Read`, `core.row_of`, `core.raw_find`, traversing `values`) does not stamp.
+  (`stamps`). These write: `core.edit`, `core.edit_at`, `core.free` or `core.staged`, whose row
+  keeps its stamp when it settles with the bytes it had, `core.writable` (all rows),
+  `core.raw_edit` and `core.raw_touch` by reflection, and the `add` that replaces a row.
+- Reading (`core.get`, `core.row_of`, `core.raw_find`, traversing `values`) does not stamp.
 - `layout` rises when rows are added or removed or the whole table is replaced.
-  `version` and `layout` only grow, also in a table copied over.
+  `version` and `layout` only grow, also in a table copied over, except that the edits of a
+  function that wrote nothing take `version` back; a version a reader saw is never given again.
 - Whoever reads keeps what it saw in a `core.Seen` and `core.changes` gives it the rows stamped
   since then and the entities whose row stopped being enabled or was removed while off, or asks it
   to read everything if the table was replaced. It is also valid to keep the version it saw and

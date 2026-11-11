@@ -41,8 +41,8 @@ a_replica_changes_between_interpolated_and_predicted_without_a_jump_in_what_is_d
             modes[seen]=r.mode
             seen+=1
         }
-        local,_:=core.get(core.read(&f.world.transforms),f.e)
-        offset,_:=core.get(core.read(&f.world.offsets),f.e)
+        local,_:=core.get(&f.world.transforms,f.e)
+        offset,_:=core.get(&f.world.offsets,f.e)
         now:=local.position.x+offset.offset.x
         if tick>40 {
             testing.expectf(t,now-drawn>-1e-4 && now-drawn<2*STEP,"tick %d, %v: drawn %.3f m after %.3f m, and its steady step is %.3f m",tick,r.mode,now,drawn,STEP)
@@ -100,7 +100,7 @@ a_predicted_spawn_is_taken_by_its_replica_once_across_a_loss_and_a_correction ::
     }
     taken :: proc(t:^testing.T,f:^Correction_Fixture,r:^Replica,id:base.Entity_Id,entities:int,what:string) {
         e:=core.entity_of(&f.world.entities,id)
-        link,linked:=core.get(core.read(&f.world.links),e)
+        link,linked:=core.get(&f.world.links,e)
         testing.expectf(t,e!=core.NONE && r.entity==e && linked && link.object==r.object && !core.has(&f.world.spawns,e) && core.count(&f.world.transforms)==entities,
             "%s: the replica has entity %v, the Id is of %v (linked %v), and the world has %d entities of %d",what,r.entity,e,linked,core.count(&f.world.transforms),entities)
     }

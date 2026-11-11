@@ -180,7 +180,7 @@ copy_rows_equal :: proc(a,b:^Table(Copy_Row)) -> bool {
         if len(a.values[row].items)!=len(b.values[row].items) {return false}
         if len(a.values[row].items)>0 && raw_data(a.values[row].items)==raw_data(b.values[row].items) {return false}
         for item,i in a.values[row].items {if b.values[row].items[i]!=item {return false}}
-        if row<a.on && table_row(b,e)!=row {return false}
+        if row<a.on && row_of(b,e)!=row {return false}
     }
     return true
 }
@@ -491,7 +491,7 @@ a_rollback_gives_the_readers_of_each_table_the_rows_it_brought_back :: proc(t:^t
             case 3,4:
                 if count(&w.values)>0 {edit_at(&w.values,next(&random,count(&w.values))).x+=1}
             case 5:
-                if count(&w.values)>0 {row:=next(&random,count(&w.values));set_at(&w.values,row,at(&w.values,row))}
+                if count(&w.values)>0 {row:=next(&random,count(&w.values));edit_at(&w.values,row)^=at(&w.values,row)}
             case 6:
                 if count(&w.values)>1 {
                     child,parent:=entity_at(&w.values,next(&random,count(&w.values))),entity_at(&w.values,next(&random,count(&w.values)))

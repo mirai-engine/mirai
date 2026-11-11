@@ -51,9 +51,9 @@ Control_Demo :: struct {}
 @(step="fixed")
 game_seats :: proc(
     es:core.Commands,follows:^core.Table(Follow),
-    seats:core.Read(inp.Seat),actions:inp.Input_Of(Action),hierarchy:core.Ref(core.Hierarchy),names:core.Read(core.Name),demos:core.Read(Control_Demo),
+    seats:^core.Table(inp.Seat,.Read),actions:inp.Input_Of(Action),hierarchy:core.Ref(core.Hierarchy),names:^core.Table(core.Name,.Read),demos:^core.Table(Control_Demo,.Read),
     requests:^inp.Seat_Requests,shown:core.Ref(cam.Cameras),camera_requests:^cam.Camera_Requests,
-    camera_changes:^cam.Camera_Changes,camera_follows:core.Read(cam.Camera_Follow),cameras:core.Read(render.Camera),
+    camera_changes:^cam.Camera_Changes,camera_follows:^core.Table(cam.Camera_Follow,.Read),cameras:^core.Table(render.Camera,.Read),
 ) {
     if core.count(demos)==0 {return}
     for row in 0..<core.count(follows) {
@@ -63,7 +63,7 @@ game_seats :: proc(
     for row in 0..<core.count(seats) {
         seat:=core.entity_at(seats,row)
         body:=inp.body_of(seats,seat)
-        companion:=companion_of(core.read(follows),body)
+        companion:=companion_of(follows,body)
         if companion!=core.NONE && inp.seat_pressed(actions,seat,.Switch_Body) {
             // The seat drives the dog, and the person follows it.
             inp.drive(requests,seat,companion)
@@ -93,8 +93,8 @@ game_seats :: proc(
 // Each person gets a dog behind it.
 @(step="fixed",server)
 game_dogs :: proc(
-    spawner:scene.Spawner,follows:core.Read(Follow),players:core.Read(Player),
-    seats:core.Read(inp.Seat),demos:core.Read(Control_Demo),worlds:core.Read(core.World_Transform),
+    spawner:scene.Spawner,follows:^core.Table(Follow,.Read),players:^core.Table(Player,.Read),
+    seats:^core.Table(inp.Seat,.Read),demos:^core.Table(Control_Demo,.Read),worlds:^core.Table(core.World_Transform,.Read),
 ) {
     if core.count(demos)==0 {return}
     for row in 0..<core.count(seats) {
@@ -112,7 +112,7 @@ game_dogs :: proc(
 }
 
 @(private="file")
-companion_of :: proc(follows:core.Read(Follow),leader:core.Entity) -> core.Entity {
+companion_of :: proc(follows:^core.Table(Follow,$A),leader:core.Entity) -> core.Entity {
     for row in 0..<core.count(follows) {
         if core.at(follows,row).leader==leader {return core.entity_at(follows,row)}
     }
@@ -123,8 +123,8 @@ companion_of :: proc(follows:core.Read(Follow),leader:core.Entity) -> core.Entit
 // until it is near, where this end decides what it does.
 @(step="fixed")
 game_follow :: proc(
-    follows:core.Read(Follow),seats:core.Read(inp.Seat),moves:^core.Table(inp.Move_Input),
-    worlds:core.Read(core.World_Transform),remotes:core.Read(core.Remote),
+    follows:^core.Table(Follow,.Read),seats:^core.Table(inp.Seat,.Read),moves:^core.Table(inp.Move_Input),
+    worlds:^core.Table(core.World_Transform,.Read),remotes:^core.Table(core.Remote,.Read),
 ) {
     for row in 0..<core.count(follows) {
         e:=core.entity_at(follows,row)

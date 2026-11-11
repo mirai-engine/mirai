@@ -33,7 +33,7 @@ a_character_of_the_world_stands_on_a_planet_with_the_up_of_its_place :: proc(t:^
     vertical :: proc(f:^Physics_Test,verticals:^core.Table(core.Vertical),e:core.Entity) -> [3]f32 {
         physics_verticals(core.ref(&f.state),core.read(&f.characters),verticals)
         core.table_settle(verticals,&f.entities)
-        return mm.quat_rotate(core.vertical_of(core.read(verticals),e),{0,1,0})
+        return mm.quat_rotate(core.vertical_of(verticals,e),{0,1,0})
     }
     for _ in 0..<40 {physics_test_step(&f)}
     pose:=physics_test_pose(&f,walker)
