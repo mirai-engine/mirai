@@ -432,7 +432,7 @@ far_update :: proc(far:^Streaming_Far,app:^host.App,error:f32,problems:^core.Pro
             if source,found:=host.assets_source(a,id,runtime.heap_allocator());found {append(&b.sources,source)}
         }
         clear(&b.wanted)
-        if jobs.worker_count(&app.jobs)>1 {jobs.run(&app.jobs,jobs.OWNER,far_round,b,&b.counter)} else {far_round(b,jobs.OWNER)}
+        if jobs.worker_count(&app.jobs)>1 {jobs.run(&app.jobs,jobs.OWNER,.Background,far_round,b,&b.counter)} else {far_round(b,jobs.OWNER)}
     }
 }
 

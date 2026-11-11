@@ -195,7 +195,7 @@ load_free :: proc(job:^Load_Job) {
 // Runs a phase of the load in a job, or here without job threads.
 @(private)
 load_run :: proc(job:^Load_Job,phase:proc(job:^Load_Job,worker:int)) {
-    if jobs.worker_count(&job.app.jobs)>1 {jobs.run(&job.app.jobs,jobs.OWNER,phase,job,&job.counter)} else {phase(job,jobs.OWNER)}
+    if jobs.worker_count(&job.app.jobs)>1 {jobs.run(&job.app.jobs,jobs.OWNER,.Background,phase,job,&job.counter)} else {phase(job,jobs.OWNER)}
 }
 
 // The documents of the load, as instantiate reads them.
@@ -382,7 +382,7 @@ load_named :: proc(job:^Load_Job) {
     if workers:=jobs.worker_count(&app.jobs);workers>1 {
         asset.piece_decoders_init(&job.pieces,&app.jobs,runtime.heap_allocator())
         share:=workers if job.whole else max(workers/LOAD_WORKERS_SHARE,1)
-        for _ in 0..<min(share,count) {jobs.run(&app.jobs,jobs.OWNER,load_prepare,job,&job.counter)}
+        for _ in 0..<min(share,count) {jobs.run(&app.jobs,jobs.OWNER,.Background,load_prepare,job,&job.counter)}
     }
 }
 

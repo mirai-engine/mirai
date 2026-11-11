@@ -924,7 +924,7 @@ app_png_write_start :: proc(app:^App,w:^Png_Write,path:string,pixels:[]u8,width,
         w.error=no_path
         return
     }
-    jobs.run(&app.jobs,jobs.OWNER,png_write,w,&w.counter)
+    jobs.run(&app.jobs,jobs.OWNER,.Background,png_write,w,&w.counter)
 }
 
 @(private="file")
