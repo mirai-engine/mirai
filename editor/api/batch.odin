@@ -98,7 +98,7 @@ batch :: proc(call:^Call) {
         method:=method_find(server,given.method)
         params:=given.params!=""?string(given.params):"{}"
         if method==nil {
-            failure={INVALID_PARAMS,fmt.tprintf(`%q is not a method of this editor; a call is {{"method":"...","params":{{...}}}}`,given.method),""}
+            failure={INVALID_PARAMS,fmt.tprintf(`%q is not a method of this editor%s; a call is {{"method":"...","params":{{...}}}}`,given.method,methods_similar(server,given.method)),""}
         } else if strings.contains(params,`"$`) {
             problem:="params is not JSON"
             if value,malformed:=json.parse_string(params,parse_integers=true,allocator=context.temp_allocator);malformed==nil {
