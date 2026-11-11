@@ -16,7 +16,6 @@ Api_Collab_Host_Params :: struct {
 Api_Collab_Join_Params :: struct {
     invite:[64]u8 `mirai:"text,label=The code of the invitation of the host (like R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT)"`,
     name:[COLLAB_NAME_BYTES]u8 `mirai:"text,optional"`,
-    discard:bool `mirai:"optional,label=Replace the scene even with unsaved changes"`,
 }
 
 Api_Collab_Peer :: struct {
@@ -96,7 +95,7 @@ api_collab_host :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_collab_join :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Collab_Join_Params)
-    if error:=collab_join(s,base.text_get(params.invite[:]),base.text_get(params.name[:]),params.discard);error!=.None {
+    if error:=collab_join(s,base.text_get(params.invite[:]),base.text_get(params.name[:]));error!=.None {
         api.call_fail(call,error==.Invite?api.INVALID_PARAMS:api.SERVER_ERROR,collab_error_text(error))
         return
     }
@@ -203,7 +202,7 @@ share_build :: proc(s:^Session) {
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(26),gap=8,align_y=.Center}) {
                 busy:=s.mode!=.Edit
                 if ui.button(ctx,shell_id(g,"share_join"),{label="Join",variant="field",width=-1,height=ui.metric(ctx,"control"),size=11,center=true,disabled=busy || c.joining && c.join_length==0}).clicked {
-                    if c.joining {c.error=collab_join(s,string(c.join[:c.join_length]),string(c.name[:c.name_length]),false)} else {c.joining=true;ui.edit_request(ctx,shell_id(g,"share_address"))}
+                    if c.joining {c.error=collab_join(s,string(c.join[:c.join_length]),string(c.name[:c.name_length]))} else {c.joining=true;ui.edit_request(ctx,shell_id(g,"share_address"))}
                 }
                 if ui.button(ctx,shell_id(g,"share_host"),{label="Host",variant="accent",width=-1,height=ui.metric(ctx,"control"),size=11,center=true,disabled=busy}).clicked {
                     c.error=collab_host(s,0,string(c.name[:c.name_length]))

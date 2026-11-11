@@ -74,4 +74,3 @@ bright, step by step: [exposure.md](world/exposure.md).
 
 - No enabled `Sky` and `Sun` (or a `Sun` with `illuminance` 0): a black image, not an error.
 - A camera `Exposure` added to fix one scene stays when the scene changes.
-- Terrain, foliage and edited assets stay unsaved until `asset.save` and `scene.save`.

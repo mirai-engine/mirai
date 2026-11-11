@@ -15,9 +15,8 @@ import "mirai:ui"
 // document declares. The document is read and written below the editor
 // (cook/author); here its methods find the file among the assets of the
 // session and write it as a step of its history. A node is named by its name,
-// or by "#row". Each call is one step of the history of the file, which waits
-// for Save; a call that would leave a tree that does not load changes nothing
-// and says why.
+// or by "#row". Each call is one step of the history of the file; a call that
+// would leave a tree that does not load changes nothing and says why.
 
 @(storage)
 Ui_Tree_Api :: struct {provider:editor.Api_Provider}
@@ -41,13 +40,12 @@ Ui_Write_Params :: struct {
     asset:string `mirai:"label=the path of a .ui of the project (hud/hud.ui), or its id"`,
     node:string `mirai:"optional,label=name or #row: the document declares that node and what it holds, and nothing else of the file changes; absent: the whole file"`,
     document:serial.Json `mirai:"label=as ui.inspect gives it: use (paths of the .ui it takes styles and tokens from, and widgets), params of the widget this file is (name to node.field, node.parameter of a use, or field of its root), tokens, styles and animations by name, and nodes nested, each {name, kind (a Node_Kind, or the name of the file of a widget it uses), text (in the language texts are written in), key (the key of the .strings it shows, which then says that text; '' makes one from the text; absent: the same text in every language), style, look (its own style instead), image, the keys of its layout (width, height, gap...), events, slot, children}; a use also the parameters of its widget. tokens, styles and animations it names become what it says, null takes one away, the others stay; the nodes of the file, or of node, become these, matched by name and kind. Without nodes, no node changes"`,
-    save:bool `mirai:"optional,label=writes the file now, as asset.save does, instead of leaving it for Save; a path that does not exist yet makes the .ui"`,
 }
 
 @(private)
 tree_api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="ui.inspect",summary="A .ui, or one of its nodes, as the document ui.write takes back: its nodes nested, each with what differs from a new node of its kind, and the styles and animations they take.",params=type_info_of(Ui_Inspect_Params),result=type_info_of(Tree_Inspect),flags={.Read_Only},run=api_tree_inspect})
-    editor.api_method_register(s,{name="ui.write",summary="Makes a .ui, or one of its nodes, say what a document declares, as ui.inspect gives it; a widget is a .ui of its own and another uses it by name through use. Nodes are matched by name, the others are made and those it does not declare go; a node with key shows that key of the .strings of the project, and its text is what the key says in the language texts are written in. A path its nodes bind that the game of this build lacks fails with what the game has there, and changes nothing. One step of history; the file waits for Save, or for save:true. On the command line document=@file reads it from a file, and a path that does not exist yet makes the .ui.",params=type_info_of(Ui_Write_Params),result=type_info_of(Tree_Write_Answer),run=api_tree_write})
+    editor.api_method_register(s,{name="ui.write",summary="Makes a .ui, or one of its nodes, say what a document declares, as ui.inspect gives it; a widget is a .ui of its own and another uses it by name through use. Nodes are matched by name, the others are made and those it does not declare go; a node with key shows that key of the .strings of the project, and its text is what the key says in the language texts are written in. A path its nodes bind that the game of this build lacks fails with what the game has there, and changes nothing. One step of history. On the command line document=@file reads it from a file, and a path that does not exist yet makes the .ui.",params=type_info_of(Ui_Write_Params),result=type_info_of(Tree_Write_Answer),run=api_tree_write})
     capture_api_register(s)
     nodes_bind(s)
 }
@@ -130,13 +128,10 @@ api_tree_write :: proc(s:^editor.Session,call:^api.Call) {
     args,args_ok:=tree_args(s,&reading,&texts)
     if !args_ok {return}
     for key in args.keys {
-        if key!="asset" && key!="node" && key!="document" && key!="save" {api.call_failf(call,api.INVALID_PARAMS,"ui.write has no '%s'; it has asset, node, document and save",key);return}
+        if key!="asset" && key!="node" && key!="document" {api.call_failf(call,api.INVALID_PARAMS,"ui.write has no '%s'; it has asset, node and document",key);return}
     }
     text,found:=author.tree_arg(&args,"document")
     if !found {api.call_fail(call,api.INVALID_PARAMS,"document is required: as ui.inspect gives it, with what it declares; on the command line document=@file reads it from a file");return}
-    save,save_ok:=author.tree_arg_bool(&args,"save")
-    if !save_ok {return}
-    if save && !editor.api_guard(s,call) {return}
     // A path that names nothing yet makes the .ui, once its document reads
     // and its tree is known to load: a refused one leaves no file.
     path,fresh,named:=tree_asset_new(s,&args)
@@ -165,14 +160,6 @@ api_tree_write :: proc(s:^editor.Session,call:^api.Call) {
     }
     if problem,written:=records_file_write(s,id,&r,bytes,imports,params,"Write");!written {api.call_failf(call,api.SERVER_ERROR,"%s. Nothing changed",problem);return}
     if problem:=editor.texts_write(s,&texts,"Write");problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
-    if save {
-        record,recorded:=asset.registry_find(&s.app.assets.registry,id)
-        if !recorded {api.call_fail(call,api.SERVER_ERROR,"the .ui it wrote is not in the assets");return}
-        paths:=make([dynamic]string,context.temp_allocator)
-        append(&paths,record.path)
-        for file in texts.files {if file.changed {append(&paths,file.path)}}
-        if _,failures:=editor.assets_write(s,paths[:]);failures!="" {api.call_failf(call,api.SERVER_ERROR,"the .ui stays unsaved: %s",failures);return}
-    }
     api.call_result(call,Tree_Write_Answer)^={ok=true,made=made,removed=removed}
 }
 

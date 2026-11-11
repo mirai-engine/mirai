@@ -254,7 +254,7 @@ def engine_stop(b: Bench):
         b.clock.close()
         b.clock = None
     try:
-        rpc(b, "engine.shutdown", {"discard": True}, 20)
+        rpc(b, "engine.shutdown", {}, 20)
     except BenchError:
         pass
     try:
@@ -566,12 +566,13 @@ def delete_roots(b: Bench):
 
 
 def grid_new(b: Bench, path: Path):
-    """The scene of this engine, built through its API and saved with scene.save."""
+    """The scene of this engine, built through its API in a file of its own."""
+    path.unlink(missing_ok=True)
+    rpc(b, "scene.new", {"path": path.as_posix()})
     delete_roots(b)
     for first in range(0, b.args.cubes, 64):
         rpc(b, "scene.write", merge(*grid_cubes(b, first)))
     rpc(b, "scene.write", merge({"preset": "sun", "name": "Daylight", "position": [0, 10, 0]}))
-    rpc(b, "scene.save", {"path": path.as_posix()})
 
 
 def scenario_batch(b: Bench):
@@ -834,7 +835,7 @@ def scenario_simulation(b: Bench):
     engine_start(b, [] if b.args.simulation_gpu else ["--no-gpu"])
     try:
         box = {"Collider": {"kind": "Box", "size": [1, 1, 1]}}
-        rpc(b, "scene.new", {"discard": True})
+        rpc(b, "scene.new", {})
         rpc(b, "scene.write", merge({"preset": "cube", "name": "Floor", "position": [0, -0.5, 0], "scale": [10, 0.5, 10], "components": box}))
         wall = rpc(b, "scene.write", merge({"preset": "cube", "name": "Wall", "position": [-2, 1, 0], "scale": [0.25, 1, 2], "components": box}))
         rpc(b, "scene.write", merge({"preset": "cube", "name": "Box", "position": [0, 0.51, 0], "scale": [0.5, 0.5, 0.5], "components": {
@@ -928,7 +929,7 @@ def scenario_fade(b: Bench):
     metrics, passes, parts = {}, {}, {}
     engine_start(b)
     try:
-        rpc(b, "scene.new", {"discard": True})
+        rpc(b, "scene.new", {})
         grid_new(b, Path(args.scratch) / f"fade_{b.variant}_{args.cubes}.scene")
         entity = rpc(b, "scene.inspect", {"limit": 1})["entities"][0]["id"]
         rpc(b, "camera.set", grid_camera(b))

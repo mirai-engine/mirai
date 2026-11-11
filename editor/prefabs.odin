@@ -16,8 +16,8 @@ import "mirai:std/serial"
 // Linked prefabs. The World holds every entity of an instance with its
 // effective values and, as two components, which instance placed it
 // (scene.Prefab_Instance on the root, scene.Prefab_Member on every entity it
-// placed): the history, a shared session and the recovery log carry them as
-// any other row. What an instance holds on its own, its overrides, is not
+// placed): the history and a shared session carry them as any
+// other row. What an instance holds on its own, its overrides, is not
 // kept: it is what its members hold apart from the prefab as the instance
 // was last brought up to date (its base), compared when it is asked for.
 //
@@ -25,8 +25,8 @@ import "mirai:std/serial"
 // root as a document, changes that document with the procedures of asset,
 // and writes it back onto the same entities (scene.update) inside one
 // gesture, whose step holds the rows that changed and the prefab files it
-// wrote. A prefab file an operation writes stays in memory, unsaved, as any
-// asset an edit changes.
+// wrote. A prefab file an operation writes is written when the step ends, as
+// any asset an edit changes.
 //
 // The hierarchy of an instance is the one of the prefab and the entities it
 // added under its members. A member that is not the root is not deleted nor
@@ -302,7 +302,7 @@ assets_rescan :: proc(s:^Session) {
     if a!=nil && !a.indexed {_=asset.registry_scan(&a.registry)}
 }
 
-// The prefab as its file holds it now, unsaved or on disk, with the instances
+// The prefab as its file holds it now, in memory or on disk, with the instances
 // it holds up to date with their prefabs and its components in the layout of
 // the program.
 @(private)
@@ -873,8 +873,8 @@ prefab_new_file :: proc(s:^Session,path:string) -> (file:string,error:Prefab_Err
     return file,.None
 }
 
-// Writes a prefab into its file, unsaved, as part of the open gesture. A file
-// no Save could write, because what would be its folder is a file, is refused now.
+// Writes a prefab into its file as part of the open gesture. A file that
+// could not be written, because what would be its folder is a file, is refused now.
 @(private)
 prefab_file_write :: proc(s:^Session,prefab:^asset.Scene,path,label:string) -> Prefab_Error {
     for at:=strings.last_index_byte(path,'/');at>0;at=strings.last_index_byte(path[:at],'/') {
@@ -1187,7 +1187,7 @@ Prefab_Apply_Target :: enum u8 {
 
 // Writes the overrides of an entity into its prefab, ends them, and brings every instance up to date, the
 // prefabs that place this one included. Base: the variant takes them first and its base then takes, of what
-// the variant holds as the overrides of its root, what they changed. The files stay unsaved.
+// the variant holds as the overrides of its root, what they changed.
 prefab_apply :: proc(s:^Session,entity:core.Entity,paths:[]string,all_members:=false,target:=Prefab_Apply_Target.Prefab) -> (count:int,error:Prefab_Error) {
     id:=prefab_entity_id(s,entity) or_return
     w:=edited_world(s)
@@ -1276,7 +1276,7 @@ prefab_variant_overrides :: proc(doc:^asset.Scene,root:base.Entity_Id,selected:[
 }
 
 // The prefabs that place a prefab that changed, found by what the files of the assets depend on, are
-// brought up to date with it and written, unsaved; done takes them, for those that place them in turn.
+// brought up to date with it and written; done takes them, for those that place them in turn.
 @(private)
 prefab_propagate :: proc(s:^Session,changed:base.Asset_Id,done:^[dynamic]base.Asset_Id,label:string) {
     registry:=&s.app.assets.registry

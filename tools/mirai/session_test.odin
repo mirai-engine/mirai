@@ -25,10 +25,10 @@ a_session_leaves_the_default_api_port_to_the_users_editor :: proc(t:^testing.T) 
 @(test)
 session_options_take_their_flags_and_leave_the_rest_to_the_editor :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    options,problem:=session_options({"--release","--discard","--copy","--timeout","30","--frames","5","--dev"})
+    options,problem:=session_options({"--release","--force","--copy","--timeout","30","--frames","5","--dev"})
     testing.expect_value(t,problem,"")
     testing.expect_value(t,options.mode,Build_Mode.Release)
-    testing.expect(t,options.discard && options.copy && !options.no_build && !options.orphans)
+    testing.expect(t,options.force && options.copy && !options.no_build && !options.orphans)
     testing.expect_value(t,options.timeout,30)
     testing.expect(t,slice.equal(options.editor_args,[]string{"--frames","5","--dev"}),"--dev is no flag of theirs: it goes to the editor")
     options,problem=session_options({})
@@ -60,41 +60,6 @@ session_options_refuse_a_timeout_that_is_no_number :: proc(t:^testing.T) {
         _,problem:=session_options(args)
         testing.expectf(t,problem!="","%v is refused",args)
     }
-}
-
-// Unsaved changes go alone only when every one is of a copy under
-// .mirai/tmp/ of the project: a scene outside the assets folder is named by
-// its file, and the rest relative to the assets folder or to the project.
-@(test)
-only_unsaved_copies_under_mirai_tmp_go_without_discard :: proc(t:^testing.T) {
-    context.allocator=context.temp_allocator
-    folder:="C:/proyectos/demo" when ODIN_OS==.Windows else "/proyectos/demo"
-    copy:=fmt.tprintf("%s/.mirai/tmp/prueba.scene",folder)
-    testing.expect(t,session_discardable(folder,{}))
-    testing.expect(t,session_discardable(folder,{copy,".mirai/tmp/shaders/x.slang"}))
-    testing.expect(t,!session_discardable(folder,{copy,"scenes/main.scene"}),"a scene of the assets")
-    testing.expect(t,!session_discardable(folder,{copy,"materials/rock.mat"}),"an asset")
-    testing.expect(t,!session_discardable(folder,{""}),"a scene never saved")
-    testing.expect(t,!session_discardable(folder,{fmt.tprintf("%s/.mirai/tmp/../../assets/x.scene",folder)}),"out of tmp by ..")
-    testing.expect(t,!session_discardable(folder,{fmt.tprintf("%s/.mirai/tmpx/a.scene",folder)}),"a folder that starts like tmp")
-    testing.expect(t,!session_discardable(folder,{"C:/otro/.mirai/tmp/a.scene" when ODIN_OS==.Windows else "/otro/.mirai/tmp/a.scene"}),"tmp of another project")
-    when ODIN_OS==.Windows {
-        testing.expect(t,session_discardable(folder,{`c:\PROYECTOS\demo\.mirai\tmp\b.scene`}),"backslashes and another case")
-    }
-}
-
-@(test)
-the_unsaved_paths_are_the_dirty_scenes_and_the_unsaved_assets :: proc(t:^testing.T) {
-    context.allocator=context.temp_allocator
-    documents:=`{"active":0,"documents":[{"index":0,"path":"C:/p/.mirai/tmp/a.scene","dirty":true,"preview_sun":false},{"index":1,"path":"scenes/main.scene","dirty":false,"preview_sun":false},{"index":2,"path":"","dirty":true,"preview_sun":false}],"asset":-1,"assets":[{"index":0,"path":"materials/rock.mat","kind":"material","dirty":true,"undo":1,"redo":0}]}`
-    assets:=`{"assets":[{"path":"materials/rock.mat","removed":false,"asset":"00112233445566778899aabbccddeeff","kind":"material"},{"path":"shaders/water.slang","removed":false,"kind":"program"}],"scene":["materials/rock.mat"]}`
-    paths,ok:=session_unsaved_parse(documents,assets)
-    testing.expect(t,ok)
-    testing.expect(t,slice.equal(paths,[]string{"C:/p/.mirai/tmp/a.scene","","materials/rock.mat","shaders/water.slang"}),"dirty scenes, then assets once")
-    paths,ok=session_unsaved_parse(`{"documents":[]}`,`{"assets":[]}`)
-    testing.expect(t,ok && len(paths)==0)
-    _,ok=session_unsaved_parse("not json",assets)
-    testing.expect(t,!ok)
 }
 
 // The project comes from --project, relative to where the program runs when

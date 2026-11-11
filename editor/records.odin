@@ -8,7 +8,7 @@ import "mirai:std/base"
 // the assets and the layout of the project, and the write of the file as an
 // edit, a step of the history like any other.
 
-// A table as its file says now, unsaved in memory or on disk; message says
+// A table as its file says now, in memory or on disk; message says
 // why it cannot be changed when it cannot.
 records_edit_load :: proc(s:^Session,id:base.Asset_Id,e:^records.Edit,allocator:=context.allocator) -> (message:string) {
     a:=s.app.assets

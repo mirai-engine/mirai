@@ -13,8 +13,7 @@ import nav "plugins:navigation/runtime"
 
 // Keeps the .navmesh of each Navigation_Bake of the edited world as its
 // meshes: that of the scene, and that of each of its sections loaded in it.
-// Once they have settled after a change, each is written again, in memory
-// until it is saved.
+// Once they have settled after a change, each is written again.
 
 // A .navmesh in the browser and in the field of a Navigation_Bake.
 @(storage)
@@ -111,10 +110,9 @@ navigation_bake_keep :: proc(s:^editor.Session,kept:^Nav_Bake_Kept) {
     if written {kept^={w.data,n.revision,seen}}
 }
 
-// The scene, or the section edited in its world, saves its meshes: the first
+// The scene, or the section edited in its world, writes its meshes: the first
 // time it gets a .navmesh beside it and an entity whose Navigation_Bake names
-// it, in one undo step; the file stays in memory until the scene is saved,
-// and follows the meshes from then on.
+// it, in one undo step; the file follows the meshes from then on.
 @(private)
 bake_call :: proc(s:^editor.Session,call:^api.Call) {
     if editor.document_is_prefab(s) {api.call_fail(call,api.INVALID_PARAMS,"nav.bake works on a scene: open one");return}
@@ -124,7 +122,7 @@ bake_call :: proc(s:^editor.Session,call:^api.Call) {
     if n==nil || bakes==nil {api.call_fail(call,api.INVALID_PARAMS,"The scene has no navigation: activate the plugin navigation in project.mirai");return}
     table:=cast(^core.Table(nav.Navigation_Bake))bakes
     if !n.ready {api.call_fail(call,api.INVALID_PARAMS,"The navigation meshes are not made yet: the physics of the scene must be ready");return}
-    if s.document==nil || editor.document_path(s.document)=="" {api.call_fail(call,api.INVALID_PARAMS,"Save the scene first: its .navmesh goes beside it");return}
+    if s.document==nil || editor.document_path(s.document)=="" {api.call_fail(call,api.INVALID_PARAMS,"The scene has no file, and its .navmesh goes beside it: give it one (File > Keep in a file, or scene.new with a path)");return}
     section:=editor.section_editing(s)
     owner:=core.NONE
     for row in 0..<core.count(table) {

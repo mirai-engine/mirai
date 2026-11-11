@@ -354,8 +354,8 @@ terrain_test_world_free :: proc(w:^Terrain_Test_World) {
 }
 
 @(private)
-// Puts a source in the memory of the registry of the assets, unsaved, as the
-// editor writes it.
+// Puts a source in the memory of the registry of the assets, as the editor
+// holds it until its step is written.
 terrain_test_write :: proc(t:^testing.T,assets:^host.Assets,path:string,source:^Source,id:base.Asset_Id) {
     bytes,error:=source_bytes(source,id,&assets.types)
     defer delete(bytes)
@@ -597,7 +597,7 @@ volume_runtime_keeps_empty_chunk_identity_and_updates_collision_when_material_ap
 }
 
 @(test)
-terrain_runtime_reads_unsaved_sources_and_follows_a_discard_without_reloading_each_frame :: proc(t:^testing.T) {
+terrain_runtime_reads_sources_the_registry_holds_and_follows_them_without_reloading_each_frame :: proc(t:^testing.T) {
     root:=base.test_folder(t,"terrain")
     source:Source;testing.expect(t,source_make(&source,.Heightfield,{9,1,9},1,4));defer source_destroy(&source)
     source.revision=1
@@ -631,8 +631,8 @@ terrain_runtime_reads_unsaved_sources_and_follows_a_discard_without_reloading_ea
     for _ in 0..<4 {terrain_test_update(&w,&resident,&app)}
     testing.expect_value(t,w.data.stats.loads,u64(3))
     testing.expect_value(t,len(w.data.entries),2)
-    // Discard: the file on disk answers again, and the owners keep the
-    // revision of their history.
+    // The registry lets the file go: the disk answers again, and the owners
+    // keep the revision of their history.
     {dropped,_:=asset.registry_memory_drop(&assets.registry,"source.terrain");testing.expect(t,dropped)}
     for _ in 0..<4 {terrain_test_update(&w,&resident,&app)}
     testing.expect_value(t,w.data.stats.loads,u64(4))

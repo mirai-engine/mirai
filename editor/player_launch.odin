@@ -14,7 +14,7 @@ import "mirai:std/subprocess"
 
 // A game the editor runs in a window of its own, as mirai play does: the
 // player on the library of the project, built first when its code changed, or
-// the game that the last build of the game shipped. It reads the saved files
+// the game that the last build of the game shipped. It reads the files
 // of the project and ends with the editor (--attached); what it prints goes
 // to the console.
 
@@ -41,7 +41,6 @@ player_launch_start :: proc(s:^Session,shipped:bool,scene:string,players:int,arg
     if !s.has_project {return "There is no project: open a folder with a project.mirai"}
     if len(arguments)>len(l.arguments) {return fmt.tprintf("The arguments take at most %d bytes",len(l.arguments))}
     if len(scene)>len(l.scene) {return fmt.tprintf("The path of the scene takes at most %d bytes",len(l.scene))}
-    if unsaved:=play_unsaved(s);unsaved!="" {return unsaved}
     if shipped && player_launch_game(s)=="" {return "There is no shipped game: build.start with target game builds it"}
     if !shipped && code_changed(s) && s.build.phase!=.Running && !build_start(s) {return "The code of the project changed and its build could not start"}
     l^={shipped=shipped,waiting=!shipped && (s.build.phase==.Running || s.build.reload),players=players}
@@ -171,7 +170,7 @@ Api_Player_Status :: struct {
 
 @(private)
 player_launch_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="player.start",summary="Runs the game in a window of its own as mirai play does, or the shipped game: it reads the saved files of the project, prints to the console and ends with the editor.",params=type_info_of(Api_Player_Start_Params),result=type_info_of(Api_Player_Status),run=api_player_start})
+    api_register(s,st,{name="player.start",summary="Runs the game in a window of its own as mirai play does, or the shipped game: it reads the files of the project, prints to the console and ends with the editor.",params=type_info_of(Api_Player_Start_Params),result=type_info_of(Api_Player_Status),run=api_player_start})
     api_register(s,st,{name="player.status",summary="State of the game player.start runs.",result=type_info_of(Api_Player_Status),flags={.Read_Only},run=api_player_status})
     api_register(s,st,{name="player.stop",summary="Ends the game player.start runs, or its wait for the build.",result=type_info_of(Api_Player_Status),flags={.Idempotent},run=api_player_stop})
 }

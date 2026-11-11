@@ -202,7 +202,7 @@ action_follow :: proc(s:^Session,info:^core.World_Info,old,name:string) -> Names
 }
 
 // The documents of the project that keep the action old take the name: the
-// values stay and read by it. Each one changes as an edit, unsaved; those of
+// values stay and read by it. Each one changes as an edit; those of
 // plugins and the engine stay.
 @(private)
 action_documents_rename :: proc(s:^Session,old,name:string) {
@@ -287,7 +287,7 @@ Api_Name_Rename_Result :: struct {building:bool}
 api_names_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="names.list",summary="The types @(names) of the project (locomotion modes, input actions, collision categories...) with the named values the code declares for each.",params=type_info_of(Api_Names_Params),result=type_info_of(Api_Names_Result),flags={.Read_Only},run=api_names_list})
     api_register(s,st,{name="names.create",summary="Declares a new value of a type @(names) in game/names.odin, the first free one after its highest, and starts the build of the game; an input action is declared in code, as a member of the enum @(actions) of the game.",params=type_info_of(Api_Name_Create_Params),result=type_info_of(Api_Name_Create_Result),run=api_name_create})
-    api_register(s,st,{name="names.rename",summary="Renames a value of a type @(names) that the project declared, with @(name) on its constant, and starts the build of the game; saved data keeps its number. An input action is renamed in code first (its member of the enum @(actions)); once built, this follows it: Input_Settings of the project takes the new name, and the documents that keep it too, as edits, unsaved.",params=type_info_of(Api_Name_Rename_Params),result=type_info_of(Api_Name_Rename_Result),run=api_name_rename})
+    api_register(s,st,{name="names.rename",summary="Renames a value of a type @(names) that the project declared, with @(name) on its constant, and starts the build of the game; saved data keeps its number. An input action is renamed in code first (its member of the enum @(actions)); once built, this follows it: Input_Settings of the project takes the new name, and the documents that keep it too, as edits.",params=type_info_of(Api_Name_Rename_Params),result=type_info_of(Api_Name_Rename_Result),run=api_name_rename})
 }
 
 @(private)

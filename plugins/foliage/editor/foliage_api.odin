@@ -13,8 +13,7 @@ import mm "mirai:std/math"
 import foliage "plugins:foliage/runtime"
 
 // The methods of the foliage for agents and scripts: what the panel does,
-// in the edited world, each a step of undo kept unsaved as a stroke of the
-// tool is. foliage.paint does what one stroke of the brush does from at to
+// in the edited world, each a step of undo as a stroke of the tool is. foliage.paint does what one stroke of the brush does from at to
 // to: Paint fills to the density of each type, under its rules, Erase leaves
 // erase_density of it, Reapply gives the instances the values of their type
 // again, and Generate turns on the generator of the cells.
@@ -142,7 +141,7 @@ foliage_api_register :: proc(s:^editor.Session) {
     editor.tool_entry(s,TOOL,"Foliage",.Edit,{key=.G,set=true})
     paint_defaults:=Paint_Params{radius=3,density=1}
     query_defaults:=Query_Params{limit=256}
-    editor.api_method_register(s,{name="foliage.create",summary="Makes a Foliage in the edited scene, with a .foliage of no types in memory until it is saved; one step of undo takes it away.",params=type_info_of(Create_Params),result=type_info_of(Foliage_Create_Result),run=api_create})
+    editor.api_method_register(s,{name="foliage.create",summary="Makes a Foliage in the edited scene, with a new .foliage of no types; one step of undo takes it and its file away.",params=type_info_of(Create_Params),result=type_info_of(Foliage_Create_Result),run=api_create})
     editor.api_method_register(s,{name="foliage.type_add",summary="Adds a type of foliage that shows a mesh with the values it is given, as one step of undo; the name it answers names it in the other methods.",params=type_info_of(Type_Add_Params),result=type_info_of(Type_Result),run=api_type_add})
     editor.api_method_register(s,{name="foliage.type_set",summary="Changes the values of a type of foliage it is given, as one step of undo; the others stay: its mesh, how dense, large, turned and leaned it is, its offset, its rule of slope, height and terrain layers, its distances, wind and shadow.",params=type_info_of(Type_Set_Params),result=type_info_of(Type_Result),run=api_type_set})
     editor.api_method_register(s,{name="foliage.type_remove",summary="Takes a type of foliage out with its instances, as one step of undo.",params=type_info_of(Type_Remove_Params),flags={.Destructive},result=type_info_of(Type_Result),run=api_type_remove})

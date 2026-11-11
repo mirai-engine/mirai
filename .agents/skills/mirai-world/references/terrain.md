@@ -14,7 +14,7 @@ Creating a terrain produces identity, transform and `Terrain{source, revision, s
 `Mesh_Renderer`: the geometry belongs to derived children and their materials belong to the source
 ([materials](#materials-and-layers)), shared by all its owners. `revision` (read-only) is the
 revision shared by the entities of that source and the key of the editor history; it requests no
-reloads and after Discard it can differ from the file's.
+reloads and after a change of its file outside the tool it can differ from the file's.
 
 Fields of `Terrain`:
 
@@ -45,7 +45,7 @@ Chunks:
   derived marker is removed.
 - Changing `Terrain.source` retires the previous children and takes the resident revision.
 - A source is read again when its file's stamp changes in the asset registry (`terrain_stamp`): a
-  stroke, an undo, Save, Discard or a recovery.
+  stroke, an undo or a change outside the editor (git, a tool).
 - Changing `Terrain.source` retires the previous children. Changing representation or distribution
   replaces geometries; a local change keeps the identities of the unaffected chunks.
 
@@ -276,7 +276,7 @@ T or its entry in the Tools menu, outside Play.
   and BMP) normalizes integers to [0,1] without gamma and scales and offsets the height; its first
   row is the start of Z. Volumetric Terrain starts with a solid block surrounded by air. Plane
   shows the size in meters and in chunks, and the view draws its outline where it will be born.
-- The new file (`terrain/<type>.terrain`) exists only in the registry's memory until Save and is
+- The new file (`terrain/<type>.terrain`) waits in the registry until its step ends and is
   part of the undo step: undoing it removes it even if later strokes changed it.
 - **Save surface as mesh** (Sculpt of a Volume) writes its surface as a plain `.mesh` beside its
   source (`source_surface`), with the material of its first layer: the static form of what was
@@ -379,10 +379,10 @@ Preview and confirmation:
 - The head stores the LZ block of each page it wrote with the hash of its values
   (`source_bytes(...,keep=true)`): writing the file again only compresses the pages that changed.
 - The undo step stores the owners' revisions, not the file. `terrain_sync` takes the head to the
-  revision restored by the steps and writes it in memory; if it is what the disk has, it stops
-  being unsaved.
+  revision restored by the steps and puts it in the registry, which the flush writes; one equal to
+  the disk's is no change.
 - If the file changes without the revision changing: with an undo or redo in between, the file
-  takes the head; if not, it changed outside the tool (Save, Discard, a recovery), the revision
+  takes the head; if not, it changed outside the tool (git, another tool), the revision
   has what the file has and the step that leads to it stores, of what changed, that of the previous
   revision (`steps_rebase`): undo returns to it and redo does not bring back what was discarded.
 - On opening the document, the revision resolved from the file enters the initial base with
@@ -414,7 +414,7 @@ ground in the color of the level it shows, a coarser node one.
 
 `terrain.create`, `terrain.edit`, `terrain.layer`, `terrain.interior`, `terrain.sample`,
 `terrain.heightmap` and `terrain.resize` (`terrain_api.odin`) do what the panel does in the edited
-world on the entity they name (no selection needed), each change an unsaved undo step like a
+world on the entity they name (no selection needed), each change an undo step like a
 stroke. `terrain.create` takes a `name` for its entity and file, beside the scene. A layer is named
 by its material
 (`asset.slot_named`: the path or stem, `default` with no material, `#2` for the second of the same).
@@ -455,7 +455,7 @@ touches fit in a tick's queue.
   of the entity it names, with the source's path and how to fix it; what does not load, does not
   fit or is not built is a problem of the first terrain that shows it.
 - Sources are read through the host (`terrain_read`, over `host.assets_file`): Play, the preview
-  and reload see what the registry has unsaved. The stamps are compared only when the registry's
+  and reload see what the registry holds. The stamps are compared only when the registry's
   revision changes. The game does not write files per brush: `request_save` asks for an explicit
   save.
 - `Terrain_Data` copies the sources for Play and snapshots sharing their pages, and a copy onto a
@@ -680,7 +680,8 @@ Residency by distance:
   with them: what a game reads of a source there (`source_ray`, `source_value`) is not in memory.
 - A brush first reads, in the tick, the pages it touches, and removing a layer all those of its
   weights. Save writes each page, those in memory and those in their blocks.
-- A source that only has the registry's memory (unsaved in the editor) is read whole.
+- A source that only has the registry's memory (held by the editor until its step ends) is read
+  whole.
 - A world copy (Play, snapshot, rollback) shares the pages in memory, the own blocks and the coarse
   grid; a uniform page is its value and the others stay in the file. A series
   of snapshots retains only the pages that changed within it, and releases them on
@@ -703,7 +704,7 @@ Reading from other plugins (such as the foliage bridge), with `core.Ref(Terrain_
 
 ## Limits in open worlds
 
-- A source that is only in the registry's memory (unsaved) is read whole.
+- A source that is only in the registry's memory (held until its step ends) is read whole.
 - **Volume** is limited to `VOLUME_SAMPLES_MAX` per axis and `VOLUME_CHUNKS_MAX` chunks. Its
   octree stops at `VOLUME_NODE_CELLS`: a Volume kilometers wide shows its far ground as that many
   roots, each a piece of `Terrain_Settings.chunks`, and a streamed one builds each root once.
@@ -806,12 +807,12 @@ Editor: `mirai test plugins/terrain/editor` (CPU).
 - `a_stroke_keeps_the_pages_it_changed_and_undo_and_redo_trade_them`,
   `a_change_of_kind_keeps_the_whole_source_once`
 - `failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes`
-- `terrain_layers_paint_and_holes_are_steps_of_undo_kept_unsaved`
+- `terrain_layers_paint_and_holes_are_steps_of_undo`
 - `terrain_editor_budget_leaves_chunks_and_colliders_to_the_runtime`
-- `terrain_history_follows_a_save_and_a_discard_of_its_file`
+- `terrain_history_writes_its_file_at_the_flush_and_follows_a_change_outside_it`
 - `undoing_a_new_terrain_takes_its_file_away_after_its_strokes`
 - `a_preview_shows_the_level_of_its_chunk_and_a_hole_joins_its_neighbors_at_level_0`
-- `terrain_runtime_reads_unsaved_sources_and_follows_a_discard_without_reloading_each_frame`
+- `terrain_runtime_reads_sources_the_registry_holds_and_follows_them_without_reloading_each_frame`
 - `volume_strokes_are_steps_of_undo_that_keep_only_their_blocks`
 - `terrain_view_modes_ask_for_their_pipeline_only_while_one_is_shown`
 
@@ -824,7 +825,6 @@ terrain): `terrains_of_a_shared_source_keep_one_set_of_pieces_each_across_world_
 - `mirai shaders check plugins/terrain/shaders/terrain_layers.slang` compiles the layers program in
   raster and in rays; its image, the joins between levels and the holes need a GPU capture.
 - By API and captures: preview, file and revision until confirming, cancellation, undo/redo and
-  entities that share a source. Unsaved: `editor.input` creates and sculpts, `asset.unsaved` and
-  the disk do not change, `scene.inspect` of the game and `capture` see it, `asset.save` writes and
-  `asset.discard` returns to the disk. Direct gestures are tested by the user; a Darwin ARM64 check
-  only verifies types.
+  entities that share a source. On a copy under `.mirai/tmp/`: `editor.input` creates and sculpts,
+  the file holds each stroke once its step ends, `scene.inspect` of the game and `capture` see it.
+  Direct gestures are tested by the user; a Darwin ARM64 check only verifies types.

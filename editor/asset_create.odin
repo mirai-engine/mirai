@@ -18,8 +18,8 @@ import "mirai:ui"
 // font (the Inter of the editor, for another one import its file), or a kind a plugin creates
 // (Asset_Document_Provider.creates), such as a particle effect. A folder and a scene are written
 // at once, as an import writes: a scene or a prefab opens from its file. The others are a
-// step of the history of the scene and stay unsaved in memory until Save, as
-// material.set with path leaves them. The plugin of a kind it creates gives the bytes
+// step of the history of the scene, written when it ends, as material.set
+// with path writes them. The plugin of a kind it creates gives the bytes
 // of its empty file (Asset_Document_Provider.create), which are written the
 // same way.
 
@@ -36,7 +36,6 @@ Api_Asset_Create_Params :: struct {
 Api_Asset_Create_Result :: struct {
     id:[base.ASSET_ID_TEXT]u8 `mirai:"text,label=The id of the asset; empty for a folder"`,
     path:[API_PATH_BYTES]u8 `mirai:"text,label=Its path under the assets folder"`,
-    unsaved:bool `mirai:"label=It stays in memory until asset.save; a folder and a scene are on disk at once"`,
 }
 
 // What Create makes, in the order it lists them: what the editor makes, then
@@ -180,7 +179,7 @@ asset_create_gesture :: proc(s:^Session,label:string) -> (opened,ready:bool) {
 
 // Makes a new asset of kind at path, a path of the assets with its extension
 // (asset_create_path), with id: a folder or a scene at once on disk, another
-// kind as an edit, unsaved; the empty file of a kind of a plugin is what its
+// kind as an edit; the empty file of a kind of a plugin is what its
 // plugin gives. Returns what failed, as how to correct it; "" when it was made.
 asset_create :: proc(s:^Session,kind:asset.Fourcc,path:string,id:base.Asset_Id) -> string {
     if refusal:=asset_create_refusal(s);refusal!="" {return refusal}
@@ -307,5 +306,4 @@ api_asset_create :: proc(s:^Session,call:^api.Call) {
     result:=api.call_result(call,Api_Asset_Create_Result)
     if id!={} {base.asset_id_format(id,result.id[:])}
     base.text_set(result.path[:],path)
-    result.unsaved=kind!=ASSET_CREATE_FOLDER && kind!=asset.KIND_SCENE && kind!=ASSET_CREATE_PREFAB
 }

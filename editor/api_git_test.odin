@@ -2,6 +2,7 @@ package editor
 
 import "core:testing"
 import "mirai:cook/build"
+import "mirai:editor/git"
 import "mirai:project"
 import "mirai:std/base"
 
@@ -43,3 +44,34 @@ git_merges_the_document_kinds_of_the_engine_and_of_the_plugins :: proc(t:^testin
     for c in cases {testing.expectf(t,git_merges_entities(plugins,c.path)==c.merged,"%s",c.path)}
 }
 
+
+// A file is pending as git last said of its path from the root of the
+// repository, and a project in no repository edits nothing.
+@(test)
+git_says_what_is_pending_and_a_project_without_repository_edits_nothing :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    g:=new(Git)
+    s:=Session{git=g,has_project=true}
+    testing.expect_value(t,git_missing(&s),"")
+    g.checked,g.available=true,true
+    testing.expect(t,git_missing(&s)!="","git answered and the project is in no repository")
+    g.repository=true
+    testing.expect_value(t,git_missing(&s),"")
+    s.has_project=false
+    g.repository=false
+    testing.expect_value(t,git_missing(&s),"")
+
+    base.text_set(g.root[:],"C:/work/repo")
+    pending,kept:git.Change
+    base.text_set(pending.path[:],"game/assets/a.scene")
+    pending.pending=true
+    base.text_set(kept.path[:],"game/assets/b.mat")
+    kept.kept=true
+    append(&g.changes,pending,kept)
+    testing.expect_value(t,git_path(&s,"C:/work/repo/game/assets/a.scene"),"game/assets/a.scene")
+    testing.expect_value(t,git_path(&s,"C:/work/other/a.scene"),"")
+    testing.expect(t,git_pending(&s,"C:/work/repo/game/assets/a.scene"))
+    testing.expect(t,!git_pending(&s,"C:/work/repo/game/assets/b.mat"),"what is kept is not pending")
+    testing.expect(t,!git_pending(&s,"") && !git_pending(&s,"C:/work/repo/game/assets/c.scene"))
+    testing.expect_value(t,git_pending_count(&s),1)
+}

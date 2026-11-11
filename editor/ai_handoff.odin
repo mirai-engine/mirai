@@ -179,8 +179,7 @@ ai_handoff_build :: proc(s:^Session,task:^Ai_Task,before:i64) -> string {
     listed:=false
     for &other in m.tasks[:m.task_count] {
         if other.id!=task.id && c.kind!=.Main {continue}
-        pending:=other.review.pending || other.review_deferred && ai_review_pending(s,other.conversation.id)
-        if !pending {continue}
+        if !other.review.pending {continue}
         if !listed {strings.write_string(&b,"Changes the user has not reviewed yet:\n");listed=true}
         fmt.sbprintf(&b,"- %d, %q: %d changes\n",other.id,base.text_get(other.title[:]),ai_review_count(&other))
     }

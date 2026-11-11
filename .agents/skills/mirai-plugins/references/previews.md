@@ -28,7 +28,7 @@ what the clip is on the right.
 - **Markers:** the strip's lane, one diamond per clip marker with its name. Dragging one moves it
   (**Move marker** on release); its **+** button asks for a name and adds it at the playhead; the
   right button opens a menu: **Add marker** at that time and, on a marker, **Rename marker** and
-  **Delete marker**. The `.anim` changes in memory, unsaved, as a step of the document history
+  **Delete marker**. The `.anim` changes as a step of the document history
   (`animation_marker_write`, with `asset.animation_descs` as `animation.marker.set`); gameplay and
   agents read those markers by name.
 - **Details:** clip, duration, tracks, keys, markers and, with a root bone, the root motion;
@@ -112,7 +112,7 @@ browser; a set picks one of its sounds each time. The state is `Previews.sound`.
 - **`.sound_set`**: its sounds up to the last one with a free entry after it, each with its weight
   and an x that removes it, and its ranges. The rows are those of Details over the document's
   values, with the arrow that returns what they had when read. They are written with
-  `editor.sound_set_write` when the UI releases them: in memory, unsaved, one history step each
+  `editor.sound_set_write` when the UI releases them: one history step each
   time; what `editor.sound_set_refusal` rejects (a sound that is not a `.sound`, an inverted
   range) is said by a toast and the rows go back to the file. A file read again replaces the rows
   only if they had no changes.

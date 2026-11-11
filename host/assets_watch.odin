@@ -1,5 +1,6 @@
 package host
 
+import "core:strings"
 import "mirai:asset"
 import "mirai:platform"
 
@@ -24,6 +25,8 @@ app_assets_destroy :: proc(app:^App) {
     app_textures_stream_stop(app)
     app_assets_releases_stop(app)
     if app.assets_watch.watch!=0 {platform.watch_destroy(app.platform,app.assets_watch.watch)}
+    for written in app.assets_watch.written {delete(written.path,app.allocator)}
+    delete(app.assets_watch.written)
     assets_destroy(app.assets)
     free(app.assets,app.allocator)
     app.assets=nil
@@ -40,6 +43,42 @@ Assets_Watch :: struct {
     spent:int, // units given since the last pass ended
     pass:int,  // units the last pass that walked the folder took; 0 before the first
     quiet:u64, // passes the system answered without a walk, as the watch counts them
+    written:[dynamic]Assets_Written,
+}
+
+// A file whoever holds the assets wrote with what is loaded of it, as the
+// registry recorded it then: the event of that write reads nothing again.
+@(private)
+Assets_Written :: struct {path:string,stamp:[2]i64}
+
+// Whoever holds the assets wrote the file at path of the folder, which the
+// registry looked at since, with what is loaded of it.
+app_asset_written :: proc(app:^App,path:string) {
+    aw:=&app.assets_watch
+    if app.assets==nil || aw.watch==0 {return}
+    file,found:=asset.registry_find_path(&app.assets.registry,path)
+    if !found {return}
+    for &written in aw.written {
+        if written.path==path {written.stamp={file.size,file.time};return}
+    }
+    if aw.written.allocator.procedure==nil {aw.written=make([dynamic]Assets_Written,app.allocator)}
+    owned,failed:=strings.clone(path,app.allocator)
+    if failed!=nil {return}
+    if _,full:=append(&aw.written,Assets_Written{owned,{file.size,file.time}});full!=nil {delete(owned,app.allocator)}
+}
+
+// Whether the event of a file is that of the write app_asset_written told, which it forgets.
+@(private)
+assets_watch_written :: proc(app:^App,file:^asset.Registry_File) -> bool {
+    aw:=&app.assets_watch
+    for written,at in aw.written {
+        if written.path!=file.path {continue}
+        same:=written.stamp==([2]i64{file.size,file.time})
+        delete(written.path,app.allocator)
+        unordered_remove(&aw.written,at)
+        return same
+    }
+    return false
 }
 
 // Looks at a part of the asset folder, paced by time so that it costs the
@@ -96,7 +135,8 @@ app_assets_watch_apply :: proc(app:^App,events:[]platform.Watch_Event) {
     }
     for event in events {
         if event.kind==.Removed {continue}
-        if file,found:=asset.registry_find_path(&app.assets.registry,event.path);found {assets_reload(app.assets,file.id)}
+        file,found:=asset.registry_find_path(&app.assets.registry,event.path)
+        if found && !assets_watch_written(app,file) {assets_reload(app.assets,file.id)}
     }
     content_refresh(app)
 }

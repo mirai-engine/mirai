@@ -46,6 +46,9 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
   the engine has no rules of a game. Whoever uses the API, a person or an AI over MCP, declares the
   result they want, and on invalid input gets an error that says what failed and how to fix it. A
   plugin extends the renderer through `engine/render`, without importing `render` or `rhi`.
+- **Few concepts, a simple surface.** The API, the editor and the formats show as few concepts as
+  the job needs. Where what is simple to use and what is simple to build pull apart, the
+  difficulty stays inside the engine, never with whoever uses it.
 - **Physics and game networking are first-party plugins** (`physics`, `multiplayer`): fixed step,
   authoritative server, prediction and rollback, no bit-exact lockstep across architectures. The
   `net` transport stays in the engine: editor collaboration uses it and cannot be turned off.
@@ -219,8 +222,9 @@ scripts. Looking at how something looks does not require removing the frame limi
   fails on `main` is stated in the report. A change does not land by deleting a test case or
   widening a limit: a case that no longer applies is named in the report, with the reason.
 - Preserve local changes. Report what was checked and in which environment.
-- Against an open editor, work on a copy: `scene.save` only to `.mirai/tmp/`, never over a
-  versioned asset.
+- Against an open editor every edit is written to its file. To try or verify something of your
+  own, work on a copy under `.mirai/tmp/` (`mirai session start --copy`, or `asset.move` with
+  `copy`); edit a versioned asset itself only when the task asks for that change.
 
 ## Parallel work
 

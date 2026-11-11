@@ -18,7 +18,6 @@ $P terrain.edit '{"entity":"Hills","brush":"noise","at":[256,0,256],"radius":200
 $P terrain.edit '{"entity":"Hills","brush":"flatten","at":[0,0,0],"radius":12}'
 $P terrain.layer '{"entity":"Hills","material":"hills/grass.mat","tiling":4}'
 $P terrain.layer '{"entity":"Hills","material":"hills/rock.mat","automatic":true,"slope":[35,90]}'
-$P asset.save '{"all":true}'; $P scene.save '{}'
 ```
 
 - Kinds: `heightfield` (heights over x and z: hills, valleys, plains) and `volume` (solid and

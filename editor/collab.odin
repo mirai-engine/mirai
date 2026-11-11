@@ -63,7 +63,6 @@ Collab_Error :: enum u8 {
     Invite,      // not the code of an invitation
     Transport,   // the port could not be opened
     No_Assets,
-    Dirty,       // the scene has unsaved changes
     No_Random,   // the system gives no secure random bytes, which the session is sealed with
 }
 
@@ -75,7 +74,6 @@ collab_error_text :: proc(error:Collab_Error) -> string {
     case .Invite:    return "not the code of an invitation: like R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT; copy it again"
     case .Transport: return "the port could not be opened"
     case .No_Assets: return "the project has no assets folder"
-    case .Dirty:     return "the scene has unsaved changes; save it or discard them"
     case .No_Random: return "this system gives no secure random bytes to seal the session with"
     }
     return ""
@@ -240,12 +238,6 @@ collab_hosting :: proc(s:^Session) -> bool {
     return st!=nil && st.role==.Host && st.phase==.Joined
 }
 
-// A guest does not write the file of the scene: the host does.
-collab_can_save :: proc(s:^Session) -> bool {
-    st:=collab_state(s)
-    return st==nil || st.role!=.Guest || st.phase==.Ended
-}
-
 // A guest cannot open another scene without leaving the session.
 collab_can_open :: proc(s:^Session) -> bool {
     st:=collab_state(s)
@@ -377,10 +369,9 @@ collab_host :: proc(s:^Session,port:int,name:string) -> Collab_Error {
 }
 
 // Enters the session of another editor with the code of its invitation: the scene is replaced by the one of the host.
-collab_join :: proc(s:^Session,code,name:string,discard:bool) -> Collab_Error {
+collab_join :: proc(s:^Session,code,name:string) -> Collab_Error {
     invitation,valid:=wire.invite_decode(code)
     if !valid {return .Invite}
-    if document_dirty(s) && !discard {return .Dirty}
     st,error:=collab_start(s,.Guest,0,name,invitation)
     if error!=.None {return error}
     if wire.host_connect(&st.host,invitation.lan,invitation.public)!=.None {
@@ -409,6 +400,17 @@ collab_leave :: proc(s:^Session) {
     collab_destroy(s)
 }
 
+// A guest that is out of its session forgets the files the session gave it:
+// its own keep what they had.
+@(private)
+collab_guest_forget :: proc(s:^Session) {
+    r:=files_registry(s)
+    if r==nil {return}
+    for path in assets_held(s) {
+        if dropped,_:=asset.registry_memory_drop(r,path);dropped {host.app_asset_changed(s.app,path)}
+    }
+}
+
 @(private)
 collab_destroy :: proc(s:^Session) {
     c:=collab_of(s)
@@ -423,8 +425,10 @@ collab_destroy :: proc(s:^Session) {
     collab_tables_free(st)
     history.journal_reading(s.edits,false)
     for &tab in s.documents {history.journal_reading(&tab.edits,false)}
+    guest:=st.role==.Guest
     free(st)
     c.state=nil
+    if guest {collab_guest_forget(s)}
 }
 
 @(private)
@@ -1045,7 +1049,6 @@ collab_edits_send :: proc(s:^Session,st:^Collab_State) {
     }
     history.journal_read_done(edits,st.cursor)
     if ops.count==0 {return}
-    if st.role==.Host {s.document.unsaved=true}
     collab_broadcast(st,collab_ops_pack(&ops,.Edit,st.self))
     st.sent_edits+=1
     st.sent_ops+=u64(ops.count)
@@ -1218,7 +1221,8 @@ collab_edit_apply :: proc(s:^Session,st:^Collab_State,data:[]u8,own:=false) {
     // What the others changed is no step of this history: the overrides derived before it are of before it.
     if s.editor_world!=nil && len(touched)>0 {prefabs_changed(s)}
     history.selection_prune(s.selection,w)
-    if st.role==.Host {s.document.unsaved=true}
+    // What the others changed is no step: the host writes it with its next flush.
+    if st.role==.Host {s.document.stale=true}
 }
 
 // What the others were told of a row this end is editing takes what another

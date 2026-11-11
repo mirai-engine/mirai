@@ -214,7 +214,7 @@ api_audio_stop :: proc(s:^Session,call:^api.Call) {
 
 // ---------------------------------------------------------------- sound sets
 
-// The values a set has in its file, as it is now: unsaved in memory, or on disk.
+// The values a set has in its file, as it is now: in memory, or on disk.
 sound_set_file :: proc(s:^Session,id:base.Asset_Id) -> (info:asset.Sound_Set_Info,ok:bool) {
     a:=s.app.assets
     if a==nil {return}

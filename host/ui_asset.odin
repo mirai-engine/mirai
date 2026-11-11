@@ -99,7 +99,7 @@ ui_tree_view :: proc(a:^asset.Asset,types:^asset.Types) -> (data:ui.Tree_Data,er
 
 // The records of the widgets the components of a tree name, by row of
 // components, each linked already with the widgets it names, read from the
-// assets as the registry holds them (unsaved files included). files gets the
+// assets as the registry holds them, in memory or on disk. files gets the
 // stamp of every file read, to load the tree again when one changes. A
 // transaction: false when a widget is missing, is not a .ui, does not read,
 // or names through others a file that names it.

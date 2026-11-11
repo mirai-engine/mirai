@@ -357,10 +357,6 @@ assets_unmount :: proc(a:^Assets,prefix:string) -> asset.Error {
     return asset.registry_unmount(&a.registry,prefix)
 }
 
-// The files of the folder changed in memory and not written: what an editor
-// has unsaved (asset.Registry_Memory). Assets read them instead of the disk.
-assets_unsaved :: proc(a:^Assets) -> []asset.Registry_Memory {return a.registry.memory[:]}
-
 assets_errors :: proc(a:^Assets) -> []Assets_Error {return a.errors[:]}
 assets_errors_clear :: proc(a:^Assets) {clear(&a.errors)}
 

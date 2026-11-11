@@ -627,8 +627,8 @@ animation_timeline :: proc(s:^editor.Session,p:^Animation,a:^host.Assets,clip:an
 }
 
 // Writes the marker of the menu of the timeline into the clip, with name, or
-// takes it out with remove: the .anim changes in memory, unsaved, as a step of
-// the history of the document. Markers keep the order of their times.
+// takes it out with remove: the .anim changes as a step of the history of
+// the document. Markers keep the order of their times.
 @(private)
 animation_marker_write :: proc(s:^editor.Session,a:^host.Assets,p:^Animation,clip:anim.Clip,name:string,remove:bool,label:="") -> bool {
     if a==nil || clip==0 || p.loaded=={} {return false}

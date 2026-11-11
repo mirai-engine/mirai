@@ -102,8 +102,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     bytes,error:=terrain.source_bytes(&source,id,&a.types,allocator)
     if error!=.None {editor.notify(s,"The terrain could not be written");return}
     defer delete(bytes,allocator)
-    // The new file is part of the step: undo takes it away, and it stays in
-    // the memory of the registry until it is saved.
+    // The new file is part of the step: undo takes it away.
     history.edits_begin(s.edits,editor.document_selection(s),"Add terrain")
     if !editor.file_write(s,path,bytes,"Add terrain") {history.edits_cancel(s.edits,world);editor.notify(s,"The terrain could not be written");return}
     position:=placed?at:[3]f32{s.viewport.orbit.target.x,0,s.viewport.orbit.target.z}

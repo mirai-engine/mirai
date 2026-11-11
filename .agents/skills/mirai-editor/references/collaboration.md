@@ -15,9 +15,8 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
   `--join <invitation>`, Session > Join or `collab.join`, with the host's invitation code. The name
   comes from `--name`, the Name field of Session or `name` of the API. It is left with Session >
   Stop (host) or Leave (guest), or `collab.leave`, and the scene stays as it is.
-- Joining **replaces** the guest's scene: with unsaved changes it fails with `Dirty` unless
-  `discard`, and `--join` enters with `discard`. Sharing and joining require `Edit`, a project with
-  an assets folder and no open session (`Busy`). `COLLAB_PEERS` editors fit.
+- Joining **replaces** the guest's scene. Sharing and joining require `Edit`, a project with an
+  assets folder and no open session (`Busy`). `COLLAB_PEERS` editors fit.
 - On sharing, the host creates a token and shows its invitation code
   ([invitations](../../mirai-networking/references/networking.md)): the address of its network
   (`address_lan`: the one the system uses toward the internet, not a virtual adapter's), the one
@@ -36,9 +35,9 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
 ## What travels
 
 - **The whole scene**, once on entering: what `scene.capture` writes, as one message over the
-  reliable channel. The guest loads it with `scene.replace`: one that does not fit
-  whole leaves its world as it was and ends the session. Assets do not travel, except the unsaved
-  ones: both editors must have the same files.
+  reliable channel. The guest loads it with `scene.replace`: one that does not fit whole leaves its
+  world as it was and ends the session. Assets do not travel, except those an editor of the session
+  changes (below): both editors must have the same files.
 - The network half of the session runs in its own thread (`worker_start`): an editor busy for a
   while (generating a game's world, a long frame) keeps responding and nobody gives it up for gone.
 - Reliable messages wait in each peer's queue (`Collab_Peer.out`) and stream into the channel as
@@ -77,19 +76,21 @@ Code: `collab.odin`, `collab_api.odin` and `collab_play.odin` (the host's networ
   sees them, and the host forwards them. The others draw the figure and outline what changed; the
   chat stays with whoever launched it.
 - **Prefab instances** have no channel of their own: they are rows of their entities and travel
-  as edits, and the prefab an operation wrote travels as the unsaved asset file it is. Between
+  as edits, and the prefab an operation wrote travels as the asset file it is. Between
   the two an editor may hold instances of a file it does not have yet: they read as stale and no
   end refreshes them by itself ([overrides](prefabs.md#overrides)).
 - **Pings** (`collab_ping.odin`): [figures](editor.md#pings).
 - **Asset files** (`collab_files.odin`, one `File` message): what changes an asset file in
-  an editor (an agent's material, a painted texture, an undo) travels to the others and stays in the
-  memory of their registry, unsaved, as where it was edited (`file_changed`, `file_set`). The host
-  forwards it and, to whoever enters, sends its unsaved files after the scene.
+  an editor (an agent's material, a painted texture, an undo) travels to the others (`file_changed`,
+  `file_set`). The host writes it with its step and forwards it; a guest keeps it in the memory of
+  its registry while it is in the session and forgets it when it leaves. To whoever enters, the
+  host sends after the scene the files its registry holds and those git lists as changed since
+  its last commit, which the checkout of the guest lacks.
 - **A file that cannot travel** (larger than `COLLAB_FILE_BYTES`) stays where it was edited and
   every editor is told (`File_Unsent`, `Collab_State.unsent`): a toast when it happens, a line of
   Session while it lasts and `unsent` of `collab.status`, with the file, who changed it and what
-  makes it the same for all: saving it and sharing it through the project's repository. It leaves
-  the list when it travels or when whoever changed it leaves.
+  makes it the same for all: committing it and sharing it through the project's repository. It
+  leaves the list when it travels or when whoever changed it leaves.
 - Bar avatars in [panels](panels.md#layout).
 
 Edits:
@@ -108,7 +109,8 @@ Edits:
   open: the step of that gesture holds its own fields. Each editor's undo undoes its own steps and
   keeps what the others wrote afterwards, also in the field it wrote
   ([undo by author](document.md#undo-by-author)); what it changes travels like any edit.
-- The host marks the document with unsaved changes and only it writes the file.
+- A guest writes nothing: its host writes the document and the asset files
+  ([the file is the state](document.md#the-file-is-the-editors-state)).
 
 ## Compatibility
 

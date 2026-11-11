@@ -99,15 +99,6 @@ Source :: struct {
     folder:string,
 }
 
-// A source read from memory instead of its file: what an editor changed and
-// did not save. It keeps the name of its file, so what it compiles to is what
-// the file compiles to once it holds the same.
-Overlay :: struct {
-    path:   string, // of the file
-    data:   []u8,
-    removed:bool,   // there is no such file now
-}
-
 // Where the generation of a project is published unless Options.output says otherwise.
 PROJECT_OUTPUT :: ".mirai/shaders"
 
@@ -127,7 +118,6 @@ Options :: struct {
     idle:    []string, // stages compiled after the others, by their names in the manifest: those whose code the one who loads the generation does not run now
     active_output:string, // "": none. Once every stage but the idle ones compiles, a generation that loads alone is written there: the catalog and those stages of this one, the idle ones as the output has them. Not without an idle stage
     progress:^Progress, // nil: none. One for each generation
-    overlay: []Overlay, // sources read from memory instead of their files; a stage that reads one from its folder fails
 }
 
 // What the thread that started a generation follows of it, and how it stops it.
@@ -524,10 +514,6 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
         }
     }
 
-    if read:=overlay_read(g,job);read!="" {
-        job_fail(job,allocator,"%s: it includes %s, which has unsaved changes that Slang would not see in its file; save it first",name,read)
-        return
-    }
     spv:=path_join(job.staging,spv_name,allocator=context.temp_allocator)
     msl:=path_join(job.staging,msl_name,allocator=context.temp_allocator)
     temporary,temporary_error:=os.make_directory_temp("","mirai-shader-*",context.temp_allocator)
@@ -645,21 +631,6 @@ job_run :: proc(g:^Generation,job:^Job,allocator:runtime.Allocator) {
         spv_hash=sha_of(spv_bytes,allocator) if vulkan else "",msl_hash=sha_of(metal_bytes,allocator) if metal else "",
     }
     cache_stage_write(g.shared,job.result,{.Vulkan=spv_bytes,.Metal=metal_bytes},backends)
-}
-
-// A source of the overlay that Slang would read from its file to compile a
-// stage: the stage itself, or what its literal includes and imports reach
-// outside the copies of the programs. Compiled, it would be stored under what
-// the overlay holds. "" when there is none.
-@(private)
-overlay_read :: proc(g:^Generation,job:^Job) -> string {
-    if len(g.sources.overlay)==0 {return ""}
-    disk:Sources
-    sources_init(&disk,context.temp_allocator)
-    for path in dependencies(job.source,job.includes,context.temp_allocator,&disk,literal=true) {
-        if path in g.sources.overlay {return stable_name(path,g.bases,context.temp_allocator)}
-    }
-    return ""
 }
 
 // Identity of what the engine's own stages share with a build of the engine:
@@ -1061,7 +1032,7 @@ current :: proc(options:Options) -> bool {
 // is asked for. problem: why it cannot run.
 @(private)
 generation_setup :: proc(g:^Generation,options:Options,scratch:runtime.Allocator) -> (odin:bool,request,problem:string) {
-    sources_init(&g.sources,scratch,options.overlay)
+    sources_init(&g.sources,scratch)
     g.root=path_clean(options.root,scratch)
     g.project=path_clean(options.project,scratch) if options.project!="" else ""
     switch {

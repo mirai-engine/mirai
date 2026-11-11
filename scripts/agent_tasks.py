@@ -74,7 +74,6 @@ TASKS = ROOT / "tests" / "agent_tasks"
 # Every editor method the runner calls; a rename of the API changes only these.
 INSPECT = "scene.inspect"
 WRITE = "scene.write"
-SAVE = "scene.save"
 PLAY_CHECK = "play.check"
 CAMERA = "camera.set"
 UI_INSPECT = "ui.inspect"
@@ -130,7 +129,7 @@ class Session:
         return answer["result"]
 
     def stop(self):
-        mirai("session", "stop", self.project.as_posix(), "--discard")
+        mirai("session", "stop", self.project.as_posix(), "--force")
 
 
 class Scene:
@@ -480,7 +479,6 @@ def set_up_scene(task: dict, session: Session):
         return
     document = json.loads((TASKS / "scenes" / f"{task['scene']}.json").read_text("utf-8"))
     session.rpc(WRITE, {"entities": document["entities"]})
-    session.rpc(SAVE, {"path": (session.project / ".mirai" / "tmp" / "task.scene").as_posix()})
 
 
 def base_project(template: str, out: Path, built: set[str]) -> Path:

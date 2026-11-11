@@ -31,16 +31,15 @@ The editor prints its usage (`USAGE_TEXT`) on an unknown argument. What the usag
 
 - `--headless` without `--frames` is the **manual mode**: it does not advance by itself, serves the
   API and advances when asked. While waiting it keeps up what runs in real time outside the world:
-  the Build, the game of the plugin that plays one (`Play_Provider.poll`), collaboration and
-  recovery. With `--frames n` it runs n frames, serves the API once per frame and ends.
+  the Build, the game of the plugin that plays one (`Play_Provider.poll`) and collaboration.
+  With `--frames n` it runs n frames, serves the API once per frame and ends.
 - `--no-gpu` and `--density` require `--headless`. `--density` serves to see in a capture what only
   fails with fractional scale.
 - `--hidden` opens the native window hidden with the continuous loop; `--width` and `--height`
   give it a size in points and without them it is maximized.
 - The editor itself passes: `--documents` (manifest of all tabs after a Build), `--gpu-lost` (what
   stopped the GPU of the editor that restarted it:
-  [GPU that stops working](#gpu-that-stops-working)), `--restore`, `--view`, `--select` and
-  `--dirty` (recovery of a document), `--launcher` (only the
+  [GPU that stops working](#gpu-that-stops-working)), `--view`, `--select`, `--launcher` (only the
   [projects](panels.md#projects) screen) and `--git-init`, `--git-lfs` and `--git-remote` (the
   project becomes a repository as soon as git responds: [git](git.md#operations)).
 - The exit codes are the `EDITOR_*` constants of `editor.odin`; that of a manual headless without
@@ -77,11 +76,11 @@ Editor steps, in order; a plugin step orders itself against them with `after`
 
 - Play and Simulate run a copy of the `World` in the editor process, with the same application,
   GPU and library. Each run has an owner: the user or an AI turn.
-- `play_start` ends the open edit, writes the recovery copy if there are unsaved changes, creates
-  the world with `core.world_copy` (which brings the clock of `edit_world`, at zero: the editor
-  loop does not advance it) and keeps camera and selection for Stop. Document and history stay in
-  `edit_world`. If it cannot write the recovery or create the world, memory included, it does not
-  start ([recovery](document.md#recovery-and-failures)).
+- `play_start` ends the open edit, writes the files the edit changed (`files_flush`), creates the
+  world with `core.world_copy` (which brings the clock of `edit_world`, at zero: the editor loop
+  does not advance it) and keeps camera and selection for Stop. Document and history stay in
+  `edit_world`. If it cannot create the world, memory included, it does not start. While it runs
+  nothing is written ([the file is the state](document.md#the-file-is-the-editors-state)).
 - Opening a scene starts the first compression of the `.anim` its world can play, and
   `play_start` waits for any that has not ended: no entity of a run plays a library still
   compressing ([content](../../mirai-core/references/host.md#content)).
@@ -106,7 +105,7 @@ Input and layout:
   asks for, and its network continues between steps
   ([network pause](../../mirai-networking/references/multiplayer.md#the-tick)). Outside the pause
   the camera is the editor's, unless the Play has a camera of its own (`core.View.camera`).
-- Save, open, new scene, import and the prefab operations require `Edit`. Scene editing by API does
+- Open, new scene, import and the prefab operations require `Edit`. Scene editing by API does
   not: it writes to the document, which the game does not see until stopped.
 
 Agent runs:
@@ -237,9 +236,9 @@ The editor provides the generic parts:
   view ([cameras](../../mirai-gameplay/references/control.md#cameras)). `Play_Players` keeps them
   between sessions.
 - **A plugin's game.** Play (F5, `play.start`) first asks the `Play_Provider` whether it starts its
-  game; the plugin adds rows to the run menu, the icon, the bar label, Stop and the question about
-  unsaved assets (`Pending.Play_Plugin`). While its game runs, Play and Simulate wait. Without a
-  plugin that provides it, `play.start` with `online` fails saying `multiplayer` is missing.
+  game; the plugin adds rows to the run menu, the icon, the bar label and Stop. While its game runs,
+  Play and Simulate wait. Without a plugin that provides it, `play.start` with `online` fails saying
+  `multiplayer` is missing.
 - **Player processes** (`editor/player_processes.odin`): the plugin opens a `mirai-player` per
   player with the arguments that say what it plays; the editor adds `--attached` and how to show
   it: each process loads its copy of the `editor` library that the editor already loaded and runs
@@ -290,7 +289,7 @@ physics; `physics` adds dragging bodies with the gizmo through its `Simulation_P
   the simulation; the character keeps its controller.
 - Pause and Stop work in Play and Simulate. `Simulation_Paused` keeps the world and allows
   navigating; `play.step` advances the ticks it asks for.
-- **Stop discards the copy** and the camera used inside it; it keeps document, unsaved changes,
+- **Stop discards the copy** and the camera used inside it; it keeps document,
   selection and history. It does not revert files or external services the game writes.
 - **Apply transforms** captures between frames the poses of the selected entities that already
   existed in the document, discards the copy and applies them in one transaction: it validates
@@ -380,8 +379,8 @@ the same editor replaces the previous.
   advances a frame.
 - New and Open stop the run before replacing the world: no UI action frees a world inside its
   loop.
-- A scene with unsaved changes asks before being replaced or closed (Save, Discard, Cancel),
-  resolved in `confirm_resolve`; the API uses `discard` instead of asking.
+- Replacing the scene asks first only when agents work or a session is shared, resolved in
+  `confirm_resolve`; the API does not ask.
 
 ## Build and reload
 
@@ -392,8 +391,7 @@ during a Play. The engine binaries are updated by the
 (`build.start` target `built`) is loaded the same way: first the engine libraries built again,
 taken in place while what they declare stands, so the worlds, histories and Play go on
 ([taking a build in place](../../mirai-projects/references/projects.md#engine-binaries)); then the
-library of the project and the shaders it published. Compiling on save does not exist: the build
-is explicit.
+library of the project and the shaders it published. The build is explicit.
 
 - **Play compiles first** when an Odin source of the project's `game/`, `editor/` or `plugins/`,
   or its manifest, changed since the last build that remained (`code_fingerprint` against
@@ -422,27 +420,24 @@ is explicit.
 
 **Restart** (`restart`):
 
-1. Stops the Play and saves each tab to `.mirai/restart-N.scene`.
-2. Writes `restart-documents.json` with paths, selection, cameras, preview sun, pending changes
-   and active tab; unsaved assets go to `.mirai/restart-assets/` (`assets_unsaved_store`) and
-   return to memory before the scenes.
+1. Stops the Play and writes each tab's document (`document_flush`).
+2. Writes `restart-documents.json` with the paths, selection, cameras, preview sun and active tab
+   of the tabs, and the open asset documents.
 3. Starts the same `mirai-editor` with `--project`, `--documents` and the run arguments; the new
-   process loads the compiled library and restores all documents.
+   process loads the compiled library and opens the tabs from their files.
 
-- The original files are not modified. The snapshots are deleted when all were restored; on an
-  error they remain.
+- The snapshot is deleted when all were restored; on an error it remains.
 - A restart starts new histories; a reload keeps them in all tabs. The shared session is not
   inherited.
 
 ### GPU that stops working
 
 When `host.app_gpu_failure` reports a failure (`editor/gpu_failure.odin`), the editor does the
-restart above with `--gpu-lost <text>`: a GPU reset costs a moment and none of the work; the new
-one says so in the console and in a notification. If the one that started with `--gpu-lost` fails
-again before `GPU_FAILURE_AGAIN_NS` since it became ready, the same work would stop it in a loop:
-it leaves all its tabs and the unsaved assets (`recovery_tabs_keep`), which the next startup offers
-to recover, and exits with `EDITOR_GPU_LOST` and a message that names the cause. `engine.gpu_lose`
-causes the failure to test it.
+restart above with `--gpu-lost <text>`: a GPU reset costs a moment and none of the work; the new one
+says so in the console and in a notification. If the one that started with `--gpu-lost` fails again
+before `GPU_FAILURE_AGAIN_NS` since it became ready, the same work would stop it in a loop: it exits
+with `EDITOR_GPU_LOST` and a message that names the cause; the files hold the work.
+`engine.gpu_lose` causes the failure to test it.
 
 ## Commands and shortcuts
 
@@ -463,7 +458,7 @@ makes is named as the entry.
   agent would not is a param anyone may give (`scene.write` `select`, `prefab.apply` `whole`).
 - **What only changes what the person sees is no method.** A dialog, a popup, a tab of the left
   panel, the selection, the camera of the viewport, the field a name is typed in, who has the
-  keys, and what asks the person first (New, Open, Save, Import, Quit) are a procedure of the
+  keys, and what asks the person first (New, Open, Import, Quit) are a procedure of the
   interface on the entry (`Binding.view`). An agent works through the API, shows a panel with
   `preferences.set` of `Layout` and a tool with `editor.tool`, and looks at the interface with
   `editor.input` and `capture` with `ui`.

@@ -69,14 +69,15 @@ stored_thumbnails_last_until_their_asset_or_what_it_needs_changes :: proc(t:^tes
     testing.expect(t,thumbnail_save(folder,material,THUMBNAIL_SIZE,saved_texture,image,&file))
     testing.expect(t,thumbnail_load(folder,material,THUMBNAIL_SIZE,saved_texture,&file,&read))
 
-    // Saving the asset itself does too.
+    // Writing the asset itself does too.
     time.sleep(10*time.Millisecond)
     material_write(t,&types,fmt.tprintf("%s/wood.mat",assets),material,texture,0.25)
     testing.expect_value(t,asset.registry_refresh(&r,{"wood.mat"}),asset.Error.None)
     saved_material:=thumbnail_store_key(&r,material,subject,.Small,PROGRAMS)
     testing.expect(t,saved_material!=saved_texture && saved_material!=key && !thumbnail_load(folder,material,THUMBNAIL_SIZE,saved_material,&file,&read))
 
-    // An unsaved change is another content; dropping it gives back the key of the file.
+    // What the registry holds of it until its step is written is another content;
+    // dropping it gives back the key of the file.
     held,_:=serial.file_read(fmt.tprintf("%s/other.mat",assets),context.temp_allocator)
     other_key:=thumbnail_store_key(&r,other,subject,.Small,PROGRAMS)
     material_write(t,&types,fmt.tprintf("%s/changed.mat.tmp",assets),other,{},0.75)

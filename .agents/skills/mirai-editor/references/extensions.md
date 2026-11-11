@@ -15,7 +15,7 @@ to an unloaded library. Those of one type are looked up in a single place (`prov
 
 - **Data.** A tool's state is a flat `@(storage)` (`Paint_Tool`, `Terrain_Tool`); with memory of its
   own, `@(storage,free="proc")`. A `@(component)` of the editor package lives in `Editor`, not in
-  `World`: what must survive Play and saving goes in `runtime/`.
+  `World`: what must survive Play and the scene's file goes in `runtime/`.
 - **Functions.** They run by default in the `editor` loop and receive as parameters what they use:
   `^editor.Session`, its storage, `core.World_Ref` (the shown world), `core.Input`, `core.Time`, the
   part of the application they reach (`^host.Assets`, `^host.Frame_Extras`; `^host.App` for the
@@ -75,9 +75,9 @@ Outline of `paint` and `terrain` (`plugins/*/editor/`):
    not the file. `editor/revision_history.odin` is the chain of revisions: the tool keeps the head
    of each source it edited (what the file has at the owners' revision) and steps between two
    revisions that undo and redo change with it. `revision_sync` takes each head to its owners'
-   revision and writes it; if the file changed outside (Save, Discard), the revision takes what it
-   has. A new step replaces what was undone since its revision; past `REVISION_STEPS_CAPACITY` the
-   oldest goes. What a step keeps, how it changes with the head and how the source is read and
+   revision and writes it; if the file changed outside (git, another tool), the revision takes what
+   it has. A new step replaces what was undone since its revision; past `REVISION_STEPS_CAPACITY`
+   the oldest goes. What a step keeps, how it changes with the head and how the source is read and
    written is given by the tool in a `Revision_Source`.
 
 **Authoring geometry preview** (used by [terrain](../../mirai-world/references/terrain.md)):
@@ -86,9 +86,9 @@ Outline of `paint` and `terrain` (`plugins/*/editor/`):
   visual instance of the frame (`host.extras_instance_add`, `replace_source` to substitute the shown
   entity), without changing components or history. The mesh is released on replacing it, cancelling
   or finishing, before `render_sync`.
-- To confirm, it writes the asset in the registry's memory, unsaved, and what is loaded reloads by
-  itself. A new `.paint` per stroke is a file of the step (`editor.file_write`); a
-  tool that keeps its own undo by revision (`.terrain`) writes it outside the history with
+- To confirm, it writes the asset (the registry holds it until the step ends) and what is loaded
+  reloads by itself. A new `.paint` per stroke is a file of the step (`editor.file_write`); a tool
+  that keeps its own undo by revision (`.terrain`) writes it outside the history with
   `editor.file_set`, and the step restores the component that keeps the revision.
 
 ## Cancelable previews
@@ -105,7 +105,7 @@ name:
   `edits_commit` do not confirm it.
 - The plugin keeps its temporary resources in its storage and, if `tool_preview_active` stops being
   true, releases them without writing the document. It keeps no row pointers between functions.
-- Changing tool, Play or Simulate, saving, replacing the scene, reloading code, closing the editor,
+- Changing tool, Play or Simulate, replacing the scene, reloading code, closing the editor,
   selecting from Hierarchy or the API and a scene write by API cancel it. Escape and Ctrl+Z with
   the gesture open only cancel; after confirming, Ctrl+Z undoes the whole step.
 - Details stays read-only while it lasts; confirming or cancelling leaves the tool on.
@@ -166,7 +166,7 @@ A plugin opens asset types in tabs next to the scenes
   leaves out Graphics). A `ui` step `after="editor_panels"` takes `editor.asset_document_active(s)`
   and, if it is of its type, builds `ui.panel(ctx, id, editor.asset_workspace(g))`; with Details on
   the right, `editor.asset_workspace_details` gives the two panels. `editor.asset_toolbar(g)` is
-  the toolbar's place after Save, Undo and Redo, and `asset_toolbar_whole` the center of all of the
+  the toolbar's place after Undo and Redo, and `asset_toolbar_whole` the center of all of the
   bar after the tabs.
   The plugin's state follows the front document: on changing asset it rereads it.
 - **Playing.** `editor.timeline_strip` is the time strip of a document that plays. It does not own
@@ -177,8 +177,7 @@ A plugin opens asset types in tabs next to the scenes
 - **Editing.** What the document writes through `editor.file_write` (or a procedure that uses it,
   like `vfx`'s `particle_write`) is a step of its history; it is best to write when the UI releases
   the gesture, not on every frame of a drag. A step can write another asset (the texts a `.ui`
-  edits in its languages): the document's Save also writes those its steps changed, and the tab is
-  marked while any is unsaved (`asset_document_paths`).
+  edits in its languages): the flush also writes those its steps changed.
 - **Between frames.** `Asset_Document_Provider.between(s, d)` runs between frames while one of its
   documents is in front: what needs frames of its own from the renderer, like a world drawn into a
   texture (`host.app_world_draw`, the
@@ -196,12 +195,12 @@ A plugin opens asset types in tabs next to the scenes
   `document` set to its kind (`command_bind`; `nodes_bind` of `ui_inspector`): they are on only
   with one of its documents in front, where those of the scene are off, so they take the same
   keys; its menus show them with `command_menu_item`.
-- **Create.** `Asset_Document_Provider.creates` says which of its types (of `asset.KINDS`) offer
-  the content browser's Create and `asset.create`. The editor chooses the path and id and calls
+- **Create.** `Asset_Document_Provider.creates` says which of its types (of `asset.KINDS`) offer the
+  content browser's Create and `asset.create`. The editor chooses the path and id and calls
   `Asset_Document_Provider.create(s, kind, id)`, which returns the bytes of the empty file in the
-  temporary allocator (nil if it could not); the editor writes them immediately like its own types,
-  as an unsaved history step. This way no frame runs inside an API call. `ui_inspector` creates the
-  `.ui` this way: a root Box that grows to the surface and style 0.
+  temporary allocator (nil if it could not); the editor writes them immediately like its own types.
+  This way no frame runs inside an API call. `ui_inspector` creates the `.ui` this way: a root Box
+  that grows to the surface and style 0.
 - **AI context.** `editor.asset_document_pick` says what the user chose in the document: the chat
   shows it and sends it instead of the scene's selection. `editor.asset_document_show_say` says in
   one line what the document shows at that moment, which the message also carries.
@@ -345,8 +344,8 @@ A plugin adds modes to the [mode menu](panels.md#inspection-mode) and to
 - Handlers use `editor.shown_world`. A document write goes between
   `editor.api_edit_begin(s,call,label)` and `editor.api_edit_end(s,call,ok)`, which apply guards,
   cancellation and undo. An asset the plugin writes goes through `editor.file_write` inside that
-  pair: it enters the same step and the review of the turn that requested it, and stays unsaved
-  ([files](document.md#edits-and-undo)); to read it as it is, `editor.asset_read` or
+  pair: it enters the same step and the review of the turn that requested it, and the flush
+  writes it ([files](document.md#edits-and-undo)); to read it as it is, `editor.asset_read` or
   `host.assets_file`.
 - A tool that confirms through its [cancelable preview](#cancelable-previews) does not
   use that pair: after `editor.api_guard_edit` it opens the gesture, advances it and confirms or
@@ -473,9 +472,7 @@ and joins them with the engine's.
 A plugin that plays a game of its own from Play (`multiplayer`: a networked game) gives a
 `Play_Provider`. The editor queries it at fixed points and keeps nothing of the plugin:
 
-- On requesting Play from Edit (`start`), the plugin takes Play for its game or lets it continue;
-  with unsaved assets it asks with `confirm_open(s, .Play_Plugin, ...)` (the buttons carry their
-  `verb`) and continues in `confirmed`.
+- On requesting Play from Edit (`start`), the plugin takes Play for its game or lets it continue.
 - On the bar it gives its rows of the run menu (`menu`), its label (`label`) and Stop (`active`,
   `stop`); the run button keeps the mode's icon, with or without online players.
 - The user's run starts and ends (`play_begin`, `play_end`), a paused one keeps what it has open

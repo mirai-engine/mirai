@@ -12,15 +12,15 @@ import "mirai:std/base"
 // Taking a part out of its owner clears that and nothing else: it is still
 // what the import writes, which keeps it out of the owner from then on.
 // Copies of assets made outside the editor get an id of their own in the
-// registry (registry_duplicates_resolve), which the API tells with how to
-// keep it.
+// registry (registry_duplicates_resolve), which the editor writes to their files
+// and the API tells.
 
 Api_Detach_Params :: struct {
     asset:[API_PATH_BYTES]u8 `mirai:"text,label=The part to take out of the asset that owns it: its path under the asset folder or its id"`,
 }
 
-// Takes the asset id out of the asset that owns it, as an edit of its file:
-// unsaved until it is saved, with undo. The owner it had, or a message that
+// Takes the asset id out of the asset that owns it, as an edit of its file,
+// with undo. The owner it had, or a message that
 // says why it could not.
 asset_detach :: proc(s:^Session,id:base.Asset_Id) -> (owner:base.Asset_Id,message:string) {
     r:=files_registry(s)
@@ -53,7 +53,7 @@ api_asset_detach :: proc(s:^Session,call:^api.Call) {
         return
     }
     file,_:=asset.registry_find(r,id)
-    api.call_result(call,Api_Detach_Result)^={id,file.path,owner,true}
+    api.call_result(call,Api_Detach_Result)^={id,file.path,owner}
 }
 
 // The files that had the id of another and were given one of their own, and
@@ -64,14 +64,14 @@ api_duplicates_list :: proc(r:^asset.Registry,errors:^[dynamic]Api_Engine_Diagno
     for entry in r.reassigned {
         append(errors,Api_Engine_Diagnostics_Result_Asset_Errors{
             fmt.tprint(base.asset_id_format(entry.to,buffer[:])),api_kind_name(r,entry.path),"Duplicate_Id","Reassigned",entry.path,
-            fmt.tprintf("%s had the id %s of %s, as a copy made outside the editor does: in memory it has the id %s and is an asset of its own, without owner or import. Save it (asset.save) to keep that id, or delete the file if the copy is not wanted.",entry.path,base.asset_id_format(entry.from,other[:]),entry.original,base.asset_id_format(entry.to,buffer[:])),
+            fmt.tprintf("%s had the id %s of %s, as a copy made outside the editor does: it has the id %s now, which the editor writes to its file, and is an asset of its own, without owner or import. Delete the file if the copy is not wanted.",entry.path,base.asset_id_format(entry.from,other[:]),entry.original,base.asset_id_format(entry.to,buffer[:])),
         })
     }
     for duplicate in r.duplicates {
         a,b:=r.files[duplicate.first].path,r.files[duplicate.second].path
         append(errors,Api_Engine_Diagnostics_Result_Asset_Errors{
             fmt.tprint(base.asset_id_format(duplicate.id,buffer[:])),api_kind_name(r,a),"Duplicate_Id","Unresolved",b,
-            fmt.tprintf("%s and %s have the same id, and lookups give %s. One of them is unsaved, which keeps the id: save it (asset.save) or discard it (asset.discard), and delete the file that is a copy.",a,b,a),
+            fmt.tprintf("%s and %s have the same id, and lookups give %s. One of them is being edited, which keeps the id until its step ends: then the copy gets an id of its own. Delete the file of the copy if it is not wanted.",a,b,a),
         })
     }
 }

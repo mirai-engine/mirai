@@ -245,7 +245,8 @@ scan opens every file and writes it again.
   neither by id nor by path, and stays in `Registry.refused` until a scan, a refresh of its path or
   the unmount. `host` opens a guest file with a byte limit far below the default one
   (`ASSETS_GUEST_LIMIT`, read and decompressed).
-- **In-memory files** (`registry_memory.odin`): what an editor changed and did not write. While a
+- **In-memory files** (`registry_memory.odin`): what an editor changed in a step that has not ended
+  and so has not written. While a
   path is in memory, its registry entry is what that content says and `registry_read` gives its
   bytes; a scan or a refresh keep it, the cache and the index do not store it, and
   `registry_memory_write` writes it and forgets it. A file outside the folders (a program's `.slang`
@@ -261,12 +262,13 @@ scan opens every file and writes it again.
 - **Repeated ids.** Several files with one id are copies made outside the editor of one of them.
   With `Registry.resolve_duplicates` (the registry of `host.assets_init`), the oldest is the
   original (`file_newer`) and each copy receives, in the registry's memory, an id of its own derived
-  from the one it had and from its path, so it is the same on each scan until saved; it stops being
-  part of another asset and an output of an import. An unedited copy follows its file; one that was
-  already in memory with the repeated id is an edit and keeps it. A tool that only reads
-  (`mirai asset ls`, cooking) does not activate it and sees the pair in `r.duplicates`. The cook
-  refuses the pair (`Duplicate_Id`, naming both files): which one the editor takes depends on the
-  creation times of a machine, so a game ships neither until the copy is saved with its own id.
+  from the one it had and from its path, so it is the same on each scan until its file is written
+  with it; it stops being part of another asset and an output of an import. An unedited copy follows
+  its file; one that was already in memory with the repeated id is an edit and keeps it. A tool that
+  only reads (`mirai asset ls`, cooking) does not activate it and sees the pair in `r.duplicates`.
+  The cook refuses the pair (`Duplicate_Id`, naming both files): which one the editor takes depends
+  on the creation times of a machine, so a game ships neither until the copy is written with its own
+  id.
 
 ## Text
 

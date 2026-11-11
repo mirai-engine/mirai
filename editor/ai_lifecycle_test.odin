@@ -187,18 +187,13 @@ project_chat_restore_uses_the_latest_user_message_after_empty_visual_turns :: pr
     restored:=new(Ai);defer free(restored);ai_connections_reset(restored)
     testing.expect_value(t,ai_store.open(&restored.store,root),"");defer ai_store.close(&restored.store)
     reopened:=Session{ai=restored,project_root=root,document=&document}
-    loaded:=ai_conversation_restore(&reopened,&task.conversation,only_pending=true)
+    loaded:=ai_conversation_restore(&reopened,&task.conversation)
     if !testing.expect(t,loaded!=nil) {return}
     defer ai_review_free(&loaded.review)
     testing.expect_value(t,base.text_get(loaded.name[:]),"1-1")
     message,error:=os.read_entire_file(ai_task_path(&reopened,loaded,AI_FILE_MESSAGE),context.temp_allocator)
     testing.expect(t,error==nil && string(message)=="Move the chair\nunder the window","the message of the turn comes back from the chat")
-    testing.expect(t,!loaded.review_finished && loaded.state==.Done)
-    restored.task_count=AI_TASK_CAPACITY
-    other:=ai_store.Conversation{id=2}
-    testing.expect(t,ai_conversation_restore(&reopened,&other,only_pending=true)==nil)
-    testing.expect_value(t,restored.task_count,AI_TASK_CAPACITY)
-    restored.task_count=1
+    testing.expect(t,loaded.review_finished && loaded.state==.Done && len(loaded.review.transactions)==0,"the review of a turn does not outlive the editor")
 }
 
 @(test)

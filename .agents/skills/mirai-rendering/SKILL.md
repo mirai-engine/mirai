@@ -19,8 +19,7 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - Shader generation (`cook/shaders/`, `mirai shaders`, `mirai setup slang`) →
   [shaders](references/shaders.md#shader-toolchain)
 - Programs and extensions of a project, reload in `host` →
-  [shaders](references/shaders.md#project-generation); unsaved sources of an editor
-  (`Options.overlay`) → [in-memory sources](references/shaders.md#in-memory-sources)
+  [shaders](references/shaders.md#project-generation)
 - Renderer, scene entry, pools and vertices (`render/`) →
   [scene](references/scene.md#scene-and-instances)
 - `scene_move`, `scene_update`, `materials_set` →

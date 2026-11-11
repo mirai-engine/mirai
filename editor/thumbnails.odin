@@ -33,7 +33,7 @@ import "mirai:ui"
 // the content of the asset and of everything it needs, as the registry has
 // it, the shaders the renderer runs and THUMBNAIL_RENDERER. A file with
 // another key is a preview to draw again, as when the asset or one of its
-// dependencies is saved, or a program changes. Up to
+// dependencies changes, or a program does. Up to
 // THUMBNAIL_LOADS are read per frame, besides the one drawn.
 
 Thumbnail_Level :: enum u8 {Small,Large}

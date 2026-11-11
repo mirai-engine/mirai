@@ -187,8 +187,8 @@ Written :: struct {
     stored:[]escene.Stored, // a scene: the components of the game the file stored with another layout, now written with the game's
 }
 
-// Makes the .ui a path names say what a document declares, as ui.write does
-// with save: a path that names nothing yet makes the file, whose id is the
+// Makes the .ui a path names say what a document declares, as ui.write does:
+// a path that names nothing yet makes the file, whose id is the
 // same for that path every time. A document ui.write refuses is refused, and
 // the file stays as it was, and the files that use it as a widget follow
 // where its parameters go now. Its paths are checked against p.info: the

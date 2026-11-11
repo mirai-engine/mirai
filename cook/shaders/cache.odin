@@ -21,7 +21,6 @@ Sources :: struct {
     allocator:runtime.Allocator,
     files:    map[string]Source_File,
     listings: map[string]Listing,
-    overlay:  map[string]Overlay, // by the path of the source: read instead of its file
 }
 
 Source_File :: struct {
@@ -39,24 +38,10 @@ Listing :: struct {
     hash:     string,   // of their names; "" for a folder that does not exist
 }
 
-sources_init :: proc(s:^Sources,allocator:runtime.Allocator,overlay:[]Overlay={}) {
+sources_init :: proc(s:^Sources,allocator:runtime.Allocator) {
     s.allocator=allocator
     s.files=make(map[string]Source_File,allocator)
     s.listings=make(map[string]Listing,allocator)
-    s.overlay=make(map[string]Overlay,allocator)
-    for entry in overlay {s.overlay[path_clean(entry.path,allocator)]=entry}
-}
-
-// What a source holds: what the overlay gives for it, else its file.
-@(private)
-source_read :: proc(overlay:map[string]Overlay,path:string,allocator:=context.allocator) -> (data:[]u8,ok:bool) {
-    entry,overlaid:=overlay[path]
-    if !overlaid {return source_bytes(path,allocator)}
-    if entry.removed {return nil,false}
-    data=make([]u8,len(entry.data),allocator)
-    copy(data,entry.data)
-    if strings.has_suffix(path,".slang-module") {return data,true}
-    return lf_bytes(data),true
 }
 
 @(private)
@@ -64,7 +49,7 @@ sources_file :: proc(s:^Sources,path:string) -> Source_File {
     sync.guard(&s.lock)
     if file,known:=s.files[path];known {return file}
     file:Source_File
-    file.data,file.found=source_read(s.overlay,path,s.allocator)
+    file.data,file.found=source_bytes(path,s.allocator)
     if file.found {
         file.hash=sha_of(file.data,s.allocator)
         file.compilation_hash=sha_of(compilation_source_bytes(path,file.data,context.temp_allocator),s.allocator)
@@ -120,7 +105,7 @@ compilation_source_bytes :: proc(path:string,data:[]u8,allocator:=context.alloca
 }
 
 @(private)
-listing_read :: proc(directory:string,recursive:bool,allocator:runtime.Allocator,overlay:map[string]Overlay=nil) -> (listing:Listing) {
+listing_read :: proc(directory:string,recursive:bool,allocator:runtime.Allocator) -> (listing:Listing) {
     listing.directory,listing.recursive=strings.clone(directory,allocator),recursive
     found:=make([dynamic]string,allocator)
     collect :: proc(directory:string,recursive:bool,found:^[dynamic]string) {
@@ -135,18 +120,8 @@ listing_read :: proc(directory:string,recursive:bool,allocator:runtime.Allocator
             }
         }
     }
-    exists:=os.is_directory(directory)
-    if exists {collect(directory,recursive,&found)}
-    // A source the overlay removed is not there, and one it adds is, also to a
-    // folder the disk does not have yet.
-    for path,entry in overlay {
-        relative,inside:=path_relative(path,directory)
-        if !inside || (!recursive && strings.contains_rune(relative,'/')) {continue}
-        at,listed:=slice.linear_search(found[:],path)
-        if entry.removed && listed {ordered_remove(&found,at)}
-        if !entry.removed && !listed {append(&found,strings.clone(path,allocator))}
-    }
-    if !exists && len(found)==0 {return}
+    if !os.is_directory(directory) {return}
+    collect(directory,recursive,&found)
     slice.sort_by(found[:],path_less)
     hash:Sha256
     sha_begin(&hash)
@@ -165,7 +140,7 @@ sources_listing :: proc(s:^Sources,directory:string,recursive:bool) -> Listing {
     sync.guard(&s.lock)
     key:=strings.concatenate({directory,"|r" if recursive else "|"},context.temp_allocator)
     if listing,known:=s.listings[key];known {return listing}
-    listing:=listing_read(directory,recursive,s.allocator,s.overlay)
+    listing:=listing_read(directory,recursive,s.allocator)
     s.listings[strings.clone(key,s.allocator)]=listing
     return listing
 }

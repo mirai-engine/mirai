@@ -104,8 +104,8 @@ rig_assets :: proc(t:^testing.T,directory:string) -> (skeleton,mesh,clips:base.A
 }
 
 @(test)
-skeleton_content_follows_a_skeleton_held_unsaved_in_the_memory_of_the_registry :: proc(t:^testing.T) {
-    directory:=base.test_folder(t,"unsaved-skeleton")
+skeleton_content_follows_a_skeleton_held_in_the_memory_of_the_registry :: proc(t:^testing.T) {
+    directory:=base.test_folder(t,"held-skeleton")
     skeleton_id,_,_,saved:=rig_assets(t,directory);if !saved {return}
     assets:host.Assets;if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return};defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
@@ -119,7 +119,8 @@ skeleton_content_follows_a_skeleton_held_unsaved_in_the_memory_of_the_registry :
     doc:asset.Document;defer asset.document_destroy(&doc)
     if !testing.expect_value(t,asset.skeleton_document(&doc,&assets.types,{id=skeleton_id,bones={bone}}),asset.Error.None) {return}
     bytes,error:=asset.document_bytes(&doc,context.temp_allocator);if !testing.expect_value(t,error,asset.Error.None) {return}
-    // What an editor leaves unsaved: only the registry holds it, and only its revision tells.
+    // What an editor holds until its step is written: only the registry has it,
+    // and only its revision tells.
     revision:=assets.revision
     testing.expect_value(t,asset.registry_memory_set(&assets.registry,"rig.skeleton",bytes),asset.Error.None)
     content=skeleton_content(&skeletons,app.assets,app.allocator,skeleton_id)

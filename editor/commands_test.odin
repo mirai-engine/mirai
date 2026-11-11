@@ -66,7 +66,7 @@ commands_test_close :: proc(f:^Commands_Test) {
 // What the menus, the shortcuts and the buttons of the editor run.
 @(private="file")
 COMMANDS_OF_THE_ACTIONS :: [?]string{
-    "new","open","save","save_all","save_as","build","quit",
+    "new","open","build","quit",
     "undo","redo","copy","paste","duplicate","delete","rename","select_all","deselect","group",
     "tool_move","tool_rotate","tool_scale","space","snap",
     "focus","reset_camera","scene_thumbnail","grid","indicators","output_frame","game_detail","studio_light","hierarchy_panel","inspector_panel","console_panel","build_panel","library_panel",
@@ -298,7 +298,7 @@ a_method_says_in_one_place_that_it_cannot_be_called_now :: proc(t:^testing.T) {
     gone,batched:=execute(st,&out,"batch",`{"calls":[{"method":"play.set","params":{}}]}`)
     testing.expect(t,!batched && !strings.contains(gone.message,"scene.write"),gone.message)
     // An entry needs a method that is registered, or a procedure, and a name no other has; a session without the registry runs none.
-    testing.expect(t,!command_bind(s,{name="orphan",label="Orphan"}) && !command_bind(s,{name="save",method="scene.save",label="Save"}) && !command_bind(s,{name="lost",method="no.such.method",label="Lost"}))
+    testing.expect(t,!command_bind(s,{name="orphan",label="Orphan"}) && !command_bind(s,{name="undo",method="scene.write",label="Undo"}) && !command_bind(s,{name="lost",method="no.such.method",label="Lost"}))
     testing.expect(t,tool_entry(s,"brush","Brush",.Edit) && !tool_entry(s,"brush","Brush",.Edit))
     // A key is of one entry where both can be on: the second is refused, naming both; where one of
     // them is off (a card of the browser has the keyboard, another mode) it is not taken.
@@ -311,7 +311,7 @@ a_method_says_in_one_place_that_it_cannot_be_called_now :: proc(t:^testing.T) {
     testing.expect(t,command_bind(s,{name="plugin_card",view=idle,label="C",shortcut={key=.J,set=true},card=true}))
     testing.expect(t,command_bind(s,{name="plugin_play",view=idle,label="P",shortcut={key=.J,set=true},modes={.Play},scene=true}) && command_binding(s,"plugin_b")==nil)
     bare:Session
-    testing.expect(t,!command_run(&bare,"save") && !command_call(&bare,"scene.save","{}") && command_state(&bare,"save").disabled && len(command_bindings(&bare))==0)
+    testing.expect(t,!command_run(&bare,"undo") && !command_call(&bare,"scene.write","{}") && command_state(&bare,"undo").disabled && len(command_bindings(&bare))==0)
     commands_run(&bare)
 }
 

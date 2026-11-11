@@ -308,7 +308,7 @@ Split :: struct {near,far:f32,depth:i32,owner,node:u32}
 
 // What the registry of the assets records of the file of a source: it
 // differs once the file changes, on disk or in the memory of the registry
-// (an edit, undo, Save, Discard, a recovery).
+// (an edit, undo, its write, a change outside the editor).
 File_Stamp :: struct {size,time:i64,found:bool}
 
 terrain_stamp :: proc(a:^host.Assets,id:base.Asset_Id) -> File_Stamp {
@@ -323,7 +323,7 @@ terrain_file :: proc(a:^host.Assets,id:base.Asset_Id,allocator:=context.temp_all
 }
 
 // Reads the source of a terrain as the registry of the assets holds it: what
-// its memory keeps unsaved, or the file. paged leaves the pages of a
+// its memory holds until the file is written, or the file. paged leaves the pages of a
 // Heightfield or Volume on disk in the file, read when needed; one only the
 // memory of the registry holds is read whole.
 terrain_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=context.allocator,paged:=false) -> bool {

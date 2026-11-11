@@ -7,6 +7,7 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:editor"
 import "mirai:editor/api"
+import "mirai:editor/history"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -79,12 +80,23 @@ authoring_test_revision :: proc(f:^Authoring_Test,path:string) -> u64 {
     return base.hash64(bytes) if error==.None else 0
 }
 
-// Opens a file of the test as the editor sees it: unsaved in the memory of
-// the registry, else on disk.
+// Opens a file of the test as the editor sees it: what the registry holds
+// until it is written, else the disk.
 @(private)
 authoring_test_load :: proc(f:^Authoring_Test,path:string,file:^asset.Asset) -> asset.Error {
     data:=asset.registry_read(&f.assets.registry,path) or_return
     return asset.asset_take(file,data)
+}
+
+// Writes what the registry holds as the end of a call of the API does; the
+// fixture keeps no history of its own.
+@(private)
+authoring_test_flush :: proc(f:^Authoring_Test) -> bool {
+    edits:history.Edits
+    document:editor.Document
+    f.session.edits,f.session.document=&edits,&document
+    defer f.session.edits,f.session.document=nil,nil
+    return editor.files_flush(&f.session,true)
 }
 
 @(private)
@@ -236,17 +248,14 @@ timeline_authoring_edits_curves_keys_markers_and_root_without_partial_writes :: 
     testing.expect(t,base.text_get(view.markers[1].target[:])=="Hero" && view.markers[1].duration==.5)
     result=authoring_test_execute(f,"track",fmt.tprintf(`{{"asset":"%s","clip":"stride","target":"pulse","property":"Float","remove":true}}`,identity))
     testing.expect_value(t,result.code,0)
-    // The clip exists only in memory, unsaved, until it is saved.
+    // The registry answers for the clip until the end of the call writes it.
     disk:=fmt.tprintf("%s/clip.anim",f.root)
-    testing.expect(t,!os.exists(disk) && editor.asset_unsaved(&f.session,id))
-    saved,written:=editor.assets_save_all(&f.session)
-    testing.expect(t,written && saved==1 && os.exists(disk) && !editor.asset_unsaved(&f.session,id))
-    kept:=authoring_test_revision(f,"clip.anim")
-    result=authoring_test_execute(f,"marker",fmt.tprintf(`{{"asset":"%s","clip":"stride","name":"lift","time":0.25}}`,identity))
-    testing.expect_value(t,result.code,0)
-    testing.expect(t,authoring_test_revision(f,"clip.anim")!=kept && editor.asset_unsaved(&f.session,id))
-    testing.expect_value(t,editor.assets_discard(&f.session,editor.assets_unsaved_paths(&f.session)),1)
-    testing.expect_value(t,authoring_test_revision(f,"clip.anim"),kept)
+    written:=authoring_test_revision(f,"clip.anim")
+    _,held:=asset.registry_memory_find(&f.assets.registry,"clip.anim")
+    testing.expect(t,!os.exists(disk) && held)
+    testing.expect(t,authoring_test_flush(f) && os.exists(disk))
+    _,held=asset.registry_memory_find(&f.assets.registry,"clip.anim")
+    testing.expect(t,!held && authoring_test_revision(f,"clip.anim")==written)
 }
 
 @(test)

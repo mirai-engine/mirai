@@ -43,7 +43,7 @@ Api_Material_Params :: struct {
 materials_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="material.inspect",params=type_info_of(Api_Material_Params),summary="The values of a material (.mat) and, of an imported one, what its source gave at the last import and the fields that differ from it.",result=type_info_of(Api_Material_Result),flags={.Read_Only},run=api_material_inspect})
     material_capture_register(s,st)
-    api_register(s,st,{name="material.set",params=type_info_of(Api_Material_Params),summary="Changes a material (.mat) for every entity that shows it, its values and, by name, the parameters and textures of its Surface program and the layers drawn over it, or makes a new one at path over the defaults. What it is not given stays. One undo step, in memory: asset.save writes its file.",result=type_info_of(Api_Material_Result),run=api_material_set})
+    api_register(s,st,{name="material.set",params=type_info_of(Api_Material_Params),summary="Changes a material (.mat) for every entity that shows it, its values and, by name, the parameters and textures of its Surface program and the layers drawn over it, or makes a new one at path over the defaults. What it is not given stays. One undo step, which writes its file.",result=type_info_of(Api_Material_Result),run=api_material_set})
     api_register(s,st,{name="material.revert",params=type_info_of(Api_Material_Revert_Params),summary="Gives fields of an imported material back what its source gave at the last import, so they stop being overrides.",result=type_info_of(Api_Material_Result),flags={.Idempotent},run=api_material_revert})
     material_instance_api_register(s,st)
 }
@@ -58,7 +58,7 @@ material_values_read :: proc(call:^api.Call,text:string,info:^asset.Material_Inf
     return true
 }
 
-// The file of a material as it is now: unsaved in memory, or on disk. The
+// The file of a material as it is now: in memory, or on disk. The
 // caller closes file with asset_close.
 @(private)
 material_open :: proc(s:^Session,id:base.Asset_Id,file:^asset.Asset) -> (view:asset.Material_View,ok:bool) {

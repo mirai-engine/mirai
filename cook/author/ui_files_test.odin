@@ -13,7 +13,7 @@ import "mirai:ui"
 
 
 // A project whose .ui only the memory of the registry holds, as an editor
-// leaves them unsaved.
+// has them until their step ends.
 @(private="file")
 Project :: struct {
     root:string,

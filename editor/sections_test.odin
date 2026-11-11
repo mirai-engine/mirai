@@ -81,7 +81,6 @@ sections_fixture_init :: proc(t:^testing.T,f:^Sections_Fixture,name:string,state
     core.settle(&f.info,w,nil)
     test_session_open(&f.edited,core.world_ref(w,&f.info))
     f.s.editor_world,f.s.assets_root,f.s.app,f.s.inspector,f.s.outliner,f.s.ai=&f.editor,f.root,&f.app,&f.inspector,&f.outliner,&f.ai
-    f.document.saved=history.edits_scene_state(&f.edits)
     return true
 }
 
@@ -143,7 +142,6 @@ a_section_turned_on_or_off_in_the_view_is_no_edit_and_its_reference_keeps_what_i
     testing.expect(t,reference.state==.Unloaded && reference.rule==.Manual,"the reference keeps what it asks")
     testing.expect_value(t,section_shown(s,w,f.r),Section_Shown.Active)
     testing.expect(t,!history.edits_commit(&f.edits,w,&f.selection) && f.edits.error==.No_Change,"what the section loaded is no step")
-    testing.expect(t,!document_dirty(s))
     // An edit of the user after it holds only its own rows.
     testing.expect(t,transform_set(s,f.a,{{3,0,0},1,{1,1,1}}))
     testing.expect(t,history.edits_commit(&f.edits,w,&f.selection))
@@ -259,25 +257,25 @@ the_camera_travels_to_a_section_and_turns_it_on_in_the_view :: proc(t:^testing.T
 }
 
 @(test)
-save_writes_each_section_edited_in_its_world_that_changed_and_stays_unsaved_when_one_cannot_be :: proc(t:^testing.T) {
+a_flush_writes_each_section_edited_in_its_world_that_changed_and_tries_again_one_that_cannot_be :: proc(t:^testing.T) {
     f:=new(Sections_Fixture)
     defer free(f)
-    if !testing.expect(t,sections_fixture_init(t,f,"save")) {return}
+    if !testing.expect(t,sections_fixture_init(t,f,"flush")) {return}
     defer sections_fixture_destroy(f)
     s:=&f.s
     w:=edited_world(s)
     file:=fmt.tprintf("%s/layer.scene",f.root)
-    // Another reference to the same scene shows what is saved, outside the undo.
+    // Another reference to the same scene shows what is written, outside the undo.
     other:=sections_test_entity(f,3,"Layer again",core.NONE,{0,40,0})
     core.add(&f.world.references,other,scene.Scene_Reference{scene=f.x,loaded=f.x})
     core.world_settle(w)
     history.edits_reset(&f.edits,w)
+    testing.expect_value(t,test_document_write(s,"world.scene"),Document_Error.None)
     section_edit_set(s,f.r)
     testing.expect(t,transform_set(s,f.c,{{7,0,0},1,{1,1,1}}))
     testing.expect(t,history.edits_commit(&f.edits,w,&f.selection))
     steps:=len(f.edits.steps)
-    testing.expect_value(t,scene_save(s,"world.scene"),Document_Error.None)
-    testing.expect(t,!document_dirty(s),"saved, the document is clean")
+    testing.expect(t,files_flush(s,true))
     testing.expect_value(t,len(f.edits.steps),steps)
     saved:asset.Scene
     testing.expect_value(t,asset.scene_load(&saved,&f.assets.types,file),asset.Error.None)
@@ -289,27 +287,26 @@ save_writes_each_section_edited_in_its_world_that_changed_and_stays_unsaved_when
     testing.expect(t,len(children)==1 && entity_local(w,children[0]).position==[3]f32{7,0,0},"the other reference shows it")
     // Unchanged, it is not written again.
     before,_:=os.stat(file,context.temp_allocator)
-    testing.expect_value(t,scene_save(s,"world.scene"),Document_Error.None)
+    testing.expect(t,files_flush(s,true))
     after,_:=os.stat(file,context.temp_allocator)
     testing.expect(t,before.modification_time==after.modification_time)
-    // Left with a change, the next Save still writes it.
+    // A step made in the section before leaving it is written too.
     testing.expect(t,transform_set(s,f.c,{{9,0,0},1,{1,1,1}}))
     testing.expect(t,history.edits_commit(&f.edits,w,&f.selection))
     section_edit_set(s,core.NONE)
-    testing.expect(t,strings.contains(string(s.toast[:s.toast_length]),"keeps its unsaved changes"))
-    testing.expect_value(t,scene_save(s,"world.scene"),Document_Error.None)
+    testing.expect(t,files_flush(s,true))
     testing.expect(t,asset.scene_load(&saved,&f.assets.types,file)==.None && saved.stamp!=stamp)
     placed,_=asset.scene_get(&saved,SECTIONS_TEST_LOCAL,"Transform",core.Transform)
     testing.expect_value(t,placed.position,[3]f32{9,0,0})
     asset.scene_destroy(&saved)
-    // A section that cannot be written leaves the document unsaved.
+    // A section that cannot be written is told and leaves the document to write again.
     section_edit_set(s,f.r)
     testing.expect(t,transform_set(s,f.c,{{11,0,0},1,{1,1,1}}))
     testing.expect(t,history.edits_commit(&f.edits,w,&f.selection))
     core.edit(&f.world.references,f.r).held=true
-    testing.expect_value(t,scene_save(s,"world.scene"),Document_Error.None)
-    testing.expect(t,document_dirty(s),"a section not written keeps the document unsaved")
-    testing.expect(t,strings.contains(string(s.toast[:s.toast_length]),"was not saved"))
+    testing.expect(t,!files_flush(s,true))
+    testing.expect(t,f.document.stale,"a section not written is written with the next flush")
+    testing.expect(t,strings.contains(string(s.toast[:s.toast_length]),"not written"))
 }
 
 @(test)

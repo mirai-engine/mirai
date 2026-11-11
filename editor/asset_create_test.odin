@@ -30,8 +30,8 @@ create_test_file :: proc(s:^Session,kind:asset.Fourcc,id:base.Asset_Id) -> []u8 
 @(private="file") CREATE_TEST_FAILS :: base.Asset_Id{7,7}
 
 // Create gives the first free name of a folder, numbered, and makes each kind
-// as it says: a folder and a scene on disk at once, the rest in memory as a
-// step of the history of the scene.
+// as it says: a folder and a scene on disk at once, the rest as a step of the
+// history of the scene that the registry holds until it is written.
 @(test)
 create_makes_each_kind_with_a_free_name_where_it_says :: proc(t:^testing.T) {
     f:Files_Test
@@ -54,11 +54,11 @@ create_makes_each_kind_with_a_free_name_where_it_says :: proc(t:^testing.T) {
     files_test_commit(&f)
     file,found:=asset.registry_find(r,material)
     testing.expect(t,found && file.path=="Materials/New Material.mat" && file.kind==asset.KIND_MATERIAL)
-    testing.expect(t,!os.exists(disk(&f,"Materials/New Material.mat")),"it stays unsaved")
+    testing.expect(t,!os.exists(disk(&f,"Materials/New Material.mat")),"the registry holds it until its step is written")
     testing.expect_value(t,asset_create_path(r,"Materials","New Material",".mat"),"Materials/New Material 2.mat")
-    // A folder only an unsaved file is in is taken too.
+    // A folder only a file the registry holds is in is taken too.
     testing.expect_value(t,asset_create_path(r,"","Materials",""),"Materials 2")
-    // Undo takes it away: it was only memory.
+    // Undo takes it away before it reached the disk.
     testing.expect(t,history.undo(&f.edits,edited_world(s),&f.selection))
     _,found=asset.registry_find(r,material)
     testing.expect(t,!found)

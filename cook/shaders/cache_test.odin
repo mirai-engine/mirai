@@ -422,17 +422,3 @@ cancel_kills_the_tools_that_run_and_starts_no_other :: proc(t:^testing.T) {
     testing.expect(t,!started_again && message!="","a cancelled runner starts nothing")
     testing.expect_value(t,runner.runs,1)
 }
-
-@(test)
-a_folder_only_the_overlay_has_lists_the_sources_it_adds :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"shaders")
-    if root=="" {return}
-    missing:=path_join(root,"shaders",allocator=context.temp_allocator)
-    path:=path_join(missing,"glow.slang",allocator=context.temp_allocator)
-    overlay:=make(map[string]Overlay,context.temp_allocator)
-    overlay[path]=Overlay{path,transmute([]u8)string("//! mirai ui Glow\n"),false}
-    listing:=listing_read(missing,true,context.temp_allocator,overlay)
-    testing.expect(t,len(listing.files)==1 && listing.files[0]==path && listing.hash!="","a new program makes the folder of the project")
-    nothing:=listing_read(missing,true,context.temp_allocator)
-    testing.expect(t,len(nothing.files)==0 && nothing.hash=="","a folder that is not there has no listing")
-}

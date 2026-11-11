@@ -17,12 +17,11 @@ import "mirai:ui"
 // The document of a .ui, in a tab next to the scenes: the interface as the
 // game builds it and the properties of the node chosen, with its nodes in
 // the Hierarchy of the left panel.
-// What the document changes goes to the file of the asset in memory,
-// unsaved, as a step of the history of the document once the UI lets go of
-// it (a drag, a typed value, a popup); undo, redo and Save are those of every
-// asset document. The file is read again when it or the history changes and
-// nothing waits to be written: after undo, redo, Save or a change from
-// outside. What waits goes to its document before another comes to the
+// What the document changes goes to the file of the asset as a step of the
+// history of the document once the UI lets go of it (a drag, a typed value,
+// a popup); undo and redo are those of every asset document. The file is
+// read again when it or the history changes and nothing waits to be written:
+// after undo, redo or a change from outside. What waits goes to its document before another comes to the
 // front, Play starts or the API reads a .ui.
 
 SCOPE :: ui.Id(0x75696e73)

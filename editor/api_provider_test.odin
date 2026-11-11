@@ -128,5 +128,5 @@ editor_plugin_methods_exist_before_frames_and_reload_from_current_metadata :: pr
     testing.expectf(t,ok,"%v",error)
     testing.expect_value(t,string(serial.writer_bytes(&out)),`{"value": 18}`)
     // The entries are those of the library in use: the new one gives none.
-    testing.expect(t,command_binding(&session,"test.plugin")==nil && command_binding(&session,"save")!=nil)
+    testing.expect(t,command_binding(&session,"test.plugin")==nil && command_binding(&session,"undo")!=nil)
 }

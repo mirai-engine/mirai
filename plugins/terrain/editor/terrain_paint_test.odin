@@ -11,7 +11,7 @@ import terrain "plugins:terrain/runtime"
 import "mirai:std/base"
 
 @(test)
-terrain_layers_paint_and_holes_are_steps_of_undo_kept_unsaved :: proc(t:^testing.T) {
+terrain_layers_paint_and_holes_are_steps_of_undo :: proc(t:^testing.T) {
     root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/ground.terrain",root)
     relative:="ground.terrain"
@@ -104,7 +104,7 @@ terrain_layers_paint_and_holes_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     held=registry_source(t,&assets,id);testing.expect_value(t,held.layers_material,base.Asset_Id{});terrain.source_destroy(&held)
 }
 
-// The source the registry holds for a terrain, unsaved or on disk.
+// The source the registry answers for a terrain.
 @(private="file")
 registry_source :: proc(t:^testing.T,a:^host.Assets,id:base.Asset_Id) -> (s:terrain.Source) {
     testing.expect(t,terrain.terrain_read(&s,a,id))

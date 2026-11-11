@@ -27,7 +27,7 @@ Foliage_Test_World :: struct {
     foliages:core.Table(foliage.Foliage),
 }
 
-// The source the registry holds for a foliage, unsaved or on disk.
+// The source the registry answers for a foliage.
 @(private="file")
 held_source :: proc(t:^testing.T,a:^host.Assets,id:base.Asset_Id) -> (s:foliage.Source) {
     testing.expect(t,foliage.foliage_read(&s,a,id))
@@ -47,7 +47,7 @@ override_count :: proc(s:^foliage.Source,kind:foliage.Override_Kind) -> (count:i
 }
 
 @(test)
-foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing.T) {
+foliage_strokes_and_selections_are_steps_of_undo_written_at_the_flush :: proc(t:^testing.T) {
     root:=base.test_folder(t,"foliage-tool")
     path:=fmt.tprintf("%s/meadow.foliage",root)
     relative:="meadow.foliage"
@@ -82,7 +82,8 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     edits:history.Edits;defer history.edits_free(&edits)
     history.edits_reset(&edits,ref)
     app:=host.App{allocator=context.allocator,assets=&assets}
-    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
+    document:editor.Document
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,document=&document}
     tool:Foliage_Tool;tool_ready(&tool);defer foliage_tool_free(&tool)
     history.selection_set(&selection,{meadow})
     foliages:=&world.foliages
@@ -97,7 +98,8 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     }
     random:=mm.rng_make(9,1)
 
-    // A stroke of paint puts three instances in memory; the disk keeps what it had.
+    // A stroke of paint puts three instances in the registry at once; the
+    // flush of its step writes them.
     if !prepare(t,&s,&tool,core.read(foliages),meadow) {return}
     edit_baseline(&tool)
     for point in ([3][3]f32{{2,0,2},{4,0,3},{40,0,5}}) {paint_instance(&tool.edit.source,&tool.edit.source.types[0],point,{0,1,0},&random,nil)}
@@ -106,9 +108,12 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     testing.expect_value(t,manual_count(&held),3)
     testing.expect_value(t,held.info.revision,u32(2))
     foliage.source_destroy(&held)
-    _,unsaved:=asset.registry_memory_find(&assets.registry,relative)
-    testing.expect(t,unsaved,"the stroke stays in the memory of the registry")
+    _,buffered:=asset.registry_memory_find(&assets.registry,relative)
+    testing.expect(t,buffered,"the registry holds the stroke until its flush")
     on_disk,_:=serial.file_read(path);testing.expect(t,string(on_disk)==string(disk));delete(on_disk)
+    stroked,_:=asset.registry_read(&assets.registry,relative);defer delete(stroked)
+    testing.expect(t,editor.files_flush(&s,true))
+    on_disk,_=serial.file_read(path);testing.expect(t,string(on_disk)==string(stroked));delete(on_disk)
     testing.expect_value(t,core.at(foliages,0).revision,u32(2))
 
     // Erase takes out the manual instance under it and the generated ones near it.
@@ -165,12 +170,16 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
         testing.expect_value(t,held.info.revision,revision)
         foliage.source_destroy(&held)
     }
+    testing.expect(t,editor.files_flush(&s,true))
     held=held_source(t,&assets,id)
     testing.expect_value(t,manual_count(&held),0)
     testing.expect_value(t,len(held.cells[0].overrides),0)
     foliage.source_destroy(&held)
     testing.expect(t,history.redo(&edits,ref,&selection))
     foliage_sync(&s,&tool,core.read(foliages),app.assets)
+    testing.expect(t,editor.files_flush(&s,true))
+    _,buffered=asset.registry_memory_find(&assets.registry,relative)
+    testing.expect(t,!buffered)
     held=held_source(t,&assets,id)
     testing.expect_value(t,manual_count(&held),3)
     foliage.source_destroy(&held)
