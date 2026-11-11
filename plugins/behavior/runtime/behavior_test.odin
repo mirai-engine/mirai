@@ -392,6 +392,14 @@ perceivers_see_the_teams_they_notice_in_their_cone_hear_noises_and_forget :: pro
     mine=core.edit(&f.perceptions,guard)
     heard:=ai.memory_find(&mine.memory,u64(behind))
     testing.expect(t,heard!=nil && heard.senses=={.Hearing} && ai.memory_find(&mine.memory,u64(friend))==nil)
+    // What it saw stays in sight a little past its range; what it did not is not noticed there.
+    core.edit(&f.worlds,ahead).position={0,0,-21}
+    beyond:=placed(&f,{1.5,0,-21})
+    core.add(&f.perceivables,beyond,Perceivable{team=1,point=1})
+    sight_tick(&f,0.3)
+    mine=core.edit(&f.perceptions,guard)
+    kept:=ai.memory_find(&mine.memory,u64(ahead))
+    testing.expect(t,kept!=nil && kept.last==18 && .Sight in kept.senses && ai.memory_find(&mine.memory,u64(beyond))==nil)
     // What it no longer perceives is forgotten after `forget` seconds.
     core.edit(&f.worlds,ahead).position={0,0,-50}
     sight_tick(&f,1.2)
@@ -453,6 +461,38 @@ sight_shares_its_rays_among_perceivers_in_turns :: proc(t:^testing.T) {
     for g in guards {
         mine:=core.edit(&f.perceptions,g)
         testing.expect(t,mine!=nil && ai.memory_find(&mine.memory,u64(target))!=nil)
+    }
+    // Fewer rays than candidates: each perceiver goes on from where the rays
+    // stopped it, so every subject in sight is looked at again within
+    // ceil(candidates/rays) ticks, and none is forgotten.
+    crowd:Sight_World
+    if !test_world_init(t,&crowd.behavior) {return}
+    defer sight_world_destroy(&crowd)
+    crowd.settings.rays=3
+    watchers:[2]core.Entity
+    for &w,i in watchers {
+        w=placed(&crowd,{f32(i)*2,0,0})
+        watch:=PERCEIVER_DEFAULT
+        watch.forget=8.0/60
+        core.add(&crowd.perceivers,w,watch)
+    }
+    subjects:[8]core.Entity
+    for &s,i in subjects {
+        s=placed(&crowd,{f32(i)-2,0,-6})
+        core.add(&crowd.perceivables,s,Perceivable{point=1})
+    }
+    WITHIN :: (2*8+2)/3 // ticks: ceil(candidates/rays)
+    for tick in 0..=40 {
+        sight_tick(&crowd,f64(tick)/60)
+        if tick<=WITHIN {continue}
+        for w in watchers {
+            mine:=core.edit(&crowd.perceptions,w)
+            for s in subjects {
+                o:=ai.memory_find(&mine.memory,u64(s))
+                testing.expectf(t,o!=nil && u64(tick)-o.last<=WITHIN,"tick %d: %v last looked at %v at tick %v",tick,w,s,o.last if o!=nil else 0)
+            }
+        }
+        for event in crowd.events.queue.items {testing.expectf(t,event.kind!=.Forgot,"tick %d: %v forgot %v",tick,event.perceiver,event.subject)}
     }
 }
 
