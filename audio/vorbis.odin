@@ -1,6 +1,8 @@
 package mirai_audio
 
 import "base:runtime"
+import "core:strconv"
+import "core:strings"
 import "vendor:stb/vorbis"
 
 // Ogg Vorbis through stb_vorbis, mono or stereo.
@@ -78,6 +80,15 @@ vorbis_decode :: proc(file:[]u8,allocator:runtime.Allocator) -> (pcm:Pcm,error:E
         if got<=0 {break}
         decoded+=got
     }
+    // The comment LOOPSTART names the frame a loop goes back to.
+    loop_start:=0
+    comments:=vorbis.get_comment(decoder)
+    for comment in comments.comment_list[:max(comments.comment_list_length,0)] {
+        text:=string(comment)
+        if len(text)>10 && strings.equal_fold(text[:10],"LOOPSTART=") {
+            if frame,ok:=strconv.parse_int(text[10:],10);ok && frame>0 && frame<decoded {loop_start=frame}
+        }
+    }
     // A file cut short holds fewer frames than its last page claims.
-    return {samples[:decoded*channels],channels,int(info.sample_rate)},.None
+    return {samples[:decoded*channels],channels,int(info.sample_rate),loop_start},.None
 }

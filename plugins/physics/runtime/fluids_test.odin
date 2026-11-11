@@ -16,8 +16,8 @@ fluids_follow_their_rows_their_volumes_and_their_entities :: proc(t:^testing.T) 
     core.add(&f.volumes,sea,volume.plane())
     core.add(&f.transforms,sea,core.Transform{{0,2,0},mm.quat_axis_angle({0,1,0},0.5*mm.PI),{1,1,1}})
     room:=core.create(&f.entities)
-    core.add(&f.fluids,room,Fluid{})
-    core.add(&f.volumes,room,volume.box({1,1,1},priority=1))
+    core.add(&f.fluids,room,Fluid{priority=1})
+    core.add(&f.volumes,room,volume.box({1,1,1}))
     core.add(&f.transforms,room,core.Transform{{10,0,0},1,{2,3,4}})
     physics_test_step(&f,0)
     testing.expect_value(t,f.problems.count,0)
@@ -52,7 +52,7 @@ fluids_follow_their_rows_their_volumes_and_their_entities :: proc(t:^testing.T) 
     // The priority of its Volume is what puts the air over the sea: at that of the sea, the sea is there.
     sample,_,_=fluid_at({&f.state},{10,0,0})
     testing.expect_value(t,sample.density,f32(0))
-    core.edit(&f.volumes,room).priority=0
+    core.edit(&f.fluids,room).priority=0
     physics_test_step(&f,0)
     sample,_,_=fluid_at({&f.state},{10,0,0})
     testing.expect(t,sample.density==1025 && f.state.world.fluid_count==2)
@@ -101,8 +101,8 @@ a_fluid_that_cannot_be_made_or_meets_another_of_its_priority_is_a_problem :: pro
     }
     a,b,over:=core.create(&f.entities),core.create(&f.entities),core.create(&f.entities)
     for e,i in ([3]core.Entity{a,b,over}) {
-        core.add(&f.fluids,e,FLUID_DEFAULT)
-        core.add(&f.volumes,e,volume.box({2,1,2},priority=i==2?1:0))
+        core.add(&f.fluids,e,Fluid{density=FLUID_DEFAULT.density,priority=i==2?1:0})
+        core.add(&f.volumes,e,volume.box({2,1,2}))
         core.add(&f.transforms,e,core.Transform{{-100+f32(i)*3,0,0},1,{1,1,1}})
     }
     physics_test_step(&f,0)

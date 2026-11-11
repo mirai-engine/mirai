@@ -15,7 +15,12 @@ import "mirai:std/serial"
 // loads; one of SOUND_STREAM_SECONDS or more is streamed instead, so that it
 // never sits decoded in memory. A long Ogg Vorbis keeps its file, which is
 // smaller than its samples coded, and so does a long WAV with samples that
-// 16 bits would round.
+// 16 bits would round: kept as it is, at its own rate, a voice resamples it
+// as it plays, which costs nothing that shows for the one or two that stream.
+// Every sound the importer codes is brought to audio.MIXER_RATE (resample), so
+// a voice at its own pitch copies it. Where a loop of it goes back to is what
+// its file says, the first loop of the smpl chunk of a WAV or the LOOPSTART
+// comment of a Vorbis, in the frames of what it holds.
 
 SOUND_STREAM_SECONDS :: f32(10)
 
@@ -41,28 +46,32 @@ sound_build :: proc(bytes:[]u8,options:Sound_Options={},allocator:=context.alloc
     }
     pcm:=audio.decode(bytes,allocator) or_return
     defer audio.pcm_destroy(&pcm,allocator)
-    frames:=len(pcm.samples)/pcm.channels
-    if frames==0 {return {},.Invalid_Data}
+    if len(pcm.samples)==0 {return {},.Invalid_Data}
     limit:=options.stream_seconds>0?options.stream_seconds:SOUND_STREAM_SECONDS
-    stream:=options.storage==.Stream || options.storage==.Auto && f32(frames)/f32(pcm.sample_rate)>=limit
-    desc={channels=pcm.channels,sample_rate=pcm.sample_rate,frames=frames}
-    if stream {desc.flags={.Stream}}
-    samples,failed:=make([]i16,len(pcm.samples),allocator)
-    if failed!=nil {return {},.Out_Of_Memory}
-    defer delete(samples,allocator)
+    stream:=options.storage==.Stream || options.storage==.Auto && f32(len(pcm.samples)/pcm.channels)/f32(pcm.sample_rate)>=limit
     exact:=true
-    for sample,i in pcm.samples {
-        scaled:=clamp(sample,-1,1)*32768
-        samples[i]=i16(clamp(scaled+(scaled<0?-0.5:0.5),-32768,32767))
-        if f32(samples[i])*(1.0/32768)!=sample {exact=false}
-    }
+    for sample in pcm.samples {exact&&=f32(i16_of(sample))*(1.0/32768)==sample}
     // A stream plays its file as it is: coded, it has to be the same samples.
     if stream && (ogg || !exact) {
-        desc.file=bytes
-        return desc,.None
+        return {channels=pcm.channels,sample_rate=pcm.sample_rate,frames=len(pcm.samples)/pcm.channels,loop_start=pcm.loop_start,flags={.Stream},file=bytes},.None
     }
-    desc.lossless=audio.lossless_encode(samples,pcm.channels,pcm.sample_rate,allocator) or_return
+    values,loop_start:=pcm.samples,pcm.loop_start
+    resampled:=pcm.sample_rate!=audio.MIXER_RATE
+    if resampled {values,loop_start=resample(pcm.samples,pcm.channels,pcm.sample_rate,audio.MIXER_RATE,pcm.loop_start,allocator) or_return}
+    defer if resampled {delete(values,allocator)}
+    desc={channels=pcm.channels,sample_rate=audio.MIXER_RATE,frames=len(values)/pcm.channels,loop_start=loop_start}
+    if stream {desc.flags={.Stream}}
+    samples,failed:=make([]i16,len(values),allocator)
+    if failed!=nil {return {},.Out_Of_Memory}
+    defer delete(samples,allocator)
+    for sample,i in values {samples[i]=i16_of(sample)}
+    desc.lossless=audio.lossless_encode(samples,pcm.channels,audio.MIXER_RATE,allocator) or_return
     return desc,.None
+}
+@(private="file")
+i16_of :: proc(sample:f32) -> i16 {
+    scaled:=clamp(sample,-1,1)*32768
+    return i16(clamp(scaled+(scaled<0?-0.5:0.5),-32768,32767))
 }
 
 // Imports a sound file as <name>.sound. The sound is the root of the import:

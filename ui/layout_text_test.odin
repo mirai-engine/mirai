@@ -92,6 +92,68 @@ a_text_keeps_the_lines_that_fit_and_its_own_line_breaks :: proc(t:^testing.T) {
 }
 
 @(test)
+a_word_wider_than_its_line_breaks_inside_its_box :: proc(t:^testing.T) {
+    ctx:Context
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
+    defer context_destroy(&ctx)
+    STYLE :: Text_Style{size=14,color={255,255,255,255},wrap=.Words}
+    font:=&ctx.font
+    long:=make([]u8,10_000,context.temp_allocator)
+    for &c in long {c='w'}
+    // first: its first line, when the case says it; lines: how many, when it says it.
+    Case :: struct {name,content:string,width:f32,first:string,lines:int}
+    Cases :: struct {cases:[]Case}
+    cases:=[]Case{
+        {"a long word","Lebensversicherungsgesellschaft",60,"",0},
+        {"after its hyphen","self-contained",text_width(font,"self-contained",14)*0.75,"self-",2},
+        {"after its slash","assets/fonts/inter",text_width(font,"assets/fonts/",14)+1,"assets/fonts/",2},
+        {"after an em dash","yes—no",text_width(font,"yes—",14)+1,"yes—",2},
+        {"a number keeps its hyphen","x-5",text_width(font,"x-",14)+1,"",0},
+        {"at a soft hyphen, drawn","Lebens\u00ADversicherung",text_width(font,"Lebens-",14)+1,"Lebens\u00AD",0},
+        {"a soft hyphen takes no room","Lebens\u00ADversicherung",500,"Lebens\u00ADversicherung",1},
+        {"invalid UTF-8","\xff\xfe\xc2\xe2\x80wordwordword\xc2",20,"",0},
+        // Last: its lines may take all the room for lines of the frame.
+        {"ten thousand characters",string(long),0,"w",0},
+    }
+    s:=Cases{cases}
+    build :: proc(ctx:^Context,user:rawptr) {
+        s:=cast(^Cases)user
+        for c,i in s.cases {
+            if box(ctx,{width=FIT,height=FIT,float={to=.Surface,offset={0,f32(i)*200}}}) {
+                text(ctx,c.content,STYLE,fixed(c.width),FIT,id(ctx,"text",i+1))
+            }
+        }
+    }
+    input:=test_input(800,2000)
+    test_frame(&ctx,&input,build,&s)
+    glyph:=text_width(font,"W",14) // the widest glyph a box of no room holds on each line
+    tree:=&ctx.layout
+    for c,i in cases {
+        index:=layout_index(tree,id(&ctx,"text",i+1))
+        if !testing.expectf(t,index>0,"%s: laid out",c.name) {continue}
+        leaf:=&tree.texts[tree.nodes[index].text]
+        for &line in tree.lines[leaf.lines_first:][:leaf.lines_len] {
+            testing.expectf(t,line.width<=max(c.width,glyph)+0.05,"%s: a line %v wide in %v",c.name,line.width,c.width)
+        }
+        if c.lines>0 {testing.expectf(t,int(leaf.lines_len)==c.lines,"%s: %v lines",c.name,leaf.lines_len)}
+        first:[1]string
+        test_text_lines(&ctx,id(&ctx,"text",i+1),first[:])
+        if c.first!="" {testing.expectf(t,first[0]==c.first,"%s: first line %q",c.name,first[0])}
+    }
+    // A line that breaks at a soft hyphen draws a hyphen; one that does not draws nothing there.
+    Shy :: struct {width:f32}
+    shy:Shy
+    draw_shy :: proc(ctx:^Context,user:rawptr) {
+        text(ctx,"Lebens\u00ADversicherung",STYLE,fixed((cast(^Shy)user).width),FIT)
+    }
+    for width,i in ([2]f32{500,text_width(font,"Lebens-",14)+1}) {
+        shy.width=width
+        frame:=test_frame(&ctx,&input,draw_shy,&shy)
+        testing.expectf(t,len(frame.vertices)==(18+i)*6,"%v glyphs at %v",len(frame.vertices)/6,width)
+    }
+}
+
+@(test)
 text_built_out_of_order_or_from_numbers_that_are_none_ends_no_frame :: proc(t:^testing.T) {
     ctx:Context
     testing.expect(t,test_context_init(&ctx,TEST_FONT))
@@ -114,7 +176,7 @@ text_built_out_of_order_or_from_numbers_that_are_none_ends_no_frame :: proc(t:^t
             text(ctx,"numbers that are none",{size=size,wrap=.Words,line_height=nan},fixed(nan),FIT)
             text(ctx,"numbers that are none",{size=12,wrap=.Words},grow(nan,nan),percent(nan))
         }
-        if text_begin(ctx,{size=12,wrap=.Words},nan,true) {
+        if text_begin(ctx,{size=12,wrap=.Words},nan) {
             text_span(ctx,"a chip",{size=nan,pad=nan,height=nan})
             text_box(ctx,nan,nan,{kind=.Rect},gap=nan)
             text_box(ctx,1e30,-1,{})

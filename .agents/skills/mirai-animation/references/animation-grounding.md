@@ -72,7 +72,8 @@ Parameters:
 Units:
 
 - Lengths in world units, durations in seconds.
-- There is no segment stretching: an out-of-reach target keeps the lengths and may leave a residual.
+- A leg stretches only by its `reach` (soft distance and stretch, as a chain); without it an
+  out-of-reach target keeps the lengths and may leave a residual.
 - Scales follow the common TRS contract of Mirai.
 
 ## Clip adaptation

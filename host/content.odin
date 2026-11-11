@@ -373,7 +373,8 @@ content_sound_load :: proc(app:^App,id:base.Asset_Id,entry:^Content_Sound) -> bo
     file:asset.Asset
     content_open(a,id,asset.KIND_SOUND,&file,entry) or_return
     view,error:=asset.sound_view(&file,&a.types)
-    if error!=.None {
+    // A sound the importer coded is at the rate of the mixer; one at another is imported again.
+    if error!=.None || view.info.encoding==.Lossless && view.info.sample_rate!=audio.MIXER_RATE {
         asset.asset_close(&file)
         return false
     }
@@ -382,6 +383,10 @@ content_sound_load :: proc(app:^App,id:base.Asset_Id,entry:^Content_Sound) -> bo
     data:=view.lossless if view.info.encoding==.Lossless else view.file
     stream:=.Stream in view.info.flags
     if stream {sound,failed=audio.sound_stream(mixer,data)} else {sound,failed=audio.sound_load(mixer,data)}
+    if failed==.None && !audio.sound_set_loop_start(mixer,sound,int(view.info.loop_start)) {
+        audio.sound_destroy(mixer,sound)
+        failed=.Invalid_Data
+    }
     if failed!=.None {
         asset.asset_close(&file)
         return false

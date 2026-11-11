@@ -8,7 +8,7 @@ what happens in it is another component:
 | --- | --- |
 | A road, a path, a trail | `Spline` with the `material` of its surface (plugin `shapes` draws it) |
 | A river, a stream | `Spline` and a `Fluid` (plugin `physics`); `water` draws it |
-| A route that nothing draws (a patrol) | `Spline` alone |
+| A route that nothing draws (a patrol) | `Spline` alone, named by the `Patrol` of who walks it ([ai](../ai.md)) |
 
 ```sh
 P="mirai rpc --project ."

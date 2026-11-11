@@ -221,10 +221,15 @@ With `backdrop_blur` the layer takes a filtered copy of its parent's background.
 - The text measures (`text_width`, `text_line`, `text_lines`, `text_index_at`…) are in layout units
   with the kerning and do not depend on the density. A text has no line limit.
 - **One word breaker.** Every text that wraps at words walks them with `layout_walk` and breaks
-  with one `Flow`, whatever its spans: a word goes to the next line unless it fits with the space
-  after it, one wider than the line takes a line of its own, a line gives up the space it breaks
-  or ends at, and what no space parts stays on one line. `text_line` is that break for the text a
-  field edits, which keeps the spaces of its last line.
+  with one `Flow`, whatever its spans. A word ends at a space or after a mark (`text_mark`: a
+  hyphen or a slash not followed by a digit, an en or em dash, a zero width space, a soft hyphen).
+  A word goes to the next line unless it fits with the space after it; one wider than the line
+  starts one and breaks after its last glyph that fits; a line gives up the space it breaks or
+  ends at, and a soft hyphen it breaks at is drawn as a hyphen, which must fit; what no space or
+  mark parts stays on one line. `text_line` is that break for the text a field edits, which keeps
+  the spaces of its last line.
+- **A glyph a font lacks** is measured and drawn from `FONT_REGULAR` (Inter in the fonts of the
+  application), at the same size; `?` only when that one lacks it too (`font_glyph`).
 - **Lines like CSS.** `TEXT_LINE` (Inter's ascent plus descent) is the `normal` line height and the
   box of a line; `text_leading` centers it in a height with half the excess above, like CSS. A row
   centers its text this way and `Text_Style.line_height` distributes the excess of each line;
@@ -322,6 +327,10 @@ All take the context, an id and their state by parameter.
 - A game field (`style`) takes everything from the style and its first click places the cursor.
 - There is only one field in edit per context (`ctx.edit`, up to `TEXT_EDIT_CAPACITY` bytes, what
   the AI chat message admits). The cursor blinks with `Input.dt` without allocating.
+- Primary+Z undoes and Primary+Y or Primary+Shift+Z redoes, within the edit in progress: a run of
+  typing, of Backspace or of Delete and a paste over a selection are one step each, and a caret
+  moved ends a run. The steps live in `ctx.edit` (`TEXT_EDIT_STEPS`, `TEXT_EDIT_HISTORY`); the
+  oldest go to make room. Primary with the arrows, Backspace or Delete goes by words.
 
 ### Number fields
 

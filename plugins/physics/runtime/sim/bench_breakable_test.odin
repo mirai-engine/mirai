@@ -117,7 +117,7 @@ bench_wall :: proc(t:^testing.T) {
     anchors:=[1]Aabb{{{-4.1,-2.1,-0.4},{4.1,-1.95,0.4}}}
     desc:=BREAKABLE_DESC_DEFAULT
     desc.mesh,desc.sites,desc.anchors,desc.position=geom.mesh_buffer_view(&mesh),sites[:],anchors[:],{0,2,0}
-    desc.damage_radius,desc.debris_volume=1.5,0.06
+    desc.debris_volume=0.06
     mark:=time.tick_now()
     wall,error:=breakable_create(w,desc)
     build:=time.duration_milliseconds(time.tick_since(mark))

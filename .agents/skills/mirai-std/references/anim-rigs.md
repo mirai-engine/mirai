@@ -66,11 +66,13 @@ without clips or an assumed human rig.
 - `chain_reach` adjusts the target and the scale of a chain: past the extension minus
   `soft_distance`, the reach approaches the extension with a smooth curve instead of stopping dead,
   and what is missing is covered by stretching up to `max_stretch`. `skeleton_chain_ik(..., reach)`
-  applies it and distributes the stretch in the local translations.
+  and `two_bone_ik(..., reach)` apply it and put the stretch in the local translations: one reach
+  for every chain, so a leg near full extension does not snap its knee.
 - `spline_chain` puts the points of the chain on a cubic Bézier (`SPLINE_SEGMENTS` segments) and
   continues straight if the curve ends; `skeleton_spline_ik` orients each bone toward the next,
   keeps `up` and distributes `twist` by distance.
-- `aim_at` is `look_at` that also turns the `up` axis toward `world_up` around the direction.
+- `aim_at` is `look_at` that also turns the `up` axis toward `world_up` around the line from the
+  bone to where its ray passes, which keeps an offset ray on the target.
 - `pose_sample_weights` weighs rotation samples by angular closeness (inverse of the square,
   normalized; an exact sample weighs 1) and rejects repeated or non-unit samples.
 

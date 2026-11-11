@@ -9,13 +9,15 @@ Chain_Reach :: struct {
     max_stretch:f32 `mirai:"optional,min=0"`,
 }
 
-aim_at :: proc "contextless" (rotation:math.Quat,forward,target_direction,up,world_up:math.Vec3,max_angle:f32,weight:f32=1) -> (math.Quat,bool) {
+aim_at :: proc "contextless" (rotation:math.Quat,forward,target_direction,up,world_up:math.Vec3,max_angle:f32,weight:f32=1,offset:math.Vec3={}) -> (math.Quat,bool) {
     local_up,up_ok:=anim_unit(up);wanted_up,wanted_ok:=anim_unit(world_up)
     axis,axis_ok:=anim_unit(forward)
     if !up_ok || !wanted_ok || !axis_ok || linalg.length(linalg.cross(axis,local_up))<1e-6 || !anim_finite(weight) {return rotation,false}
-    desired,ok:=look_at(rotation,forward,target_direction,max_angle)
+    desired,ok:=look_at(rotation,forward,target_direction,max_angle,1,offset)
     if !ok {return rotation,false}
-    aimed:=math.quat_rotate(desired,axis)
+    // It rolls around the line from the bone to where the ray passes, which keeps the ray on it.
+    point,_:=look_point(rotation,forward,target_direction,offset)
+    aimed,_:=anim_unit(math.quat_rotate(desired,point))
     current:=math.quat_rotate(desired,local_up)
     a,a_ok:=anim_unit(current-aimed*linalg.dot(current,aimed))
     b,b_ok:=anim_unit(wanted_up-aimed*linalg.dot(wanted_up,aimed))

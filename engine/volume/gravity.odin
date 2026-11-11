@@ -5,7 +5,7 @@ import mm "mirai:std/math"
 
 // Where things fall, in m/s2, equal for every mass: the gravity of a level,
 // a room without it, a planet. Each one rules where the Volume of its entity
-// says, by its priority, replacing what is below or adding to it; without a
+// says, by the priority of its zone, replacing what is below or adding to it; without a
 // Volume it is the gravity of the whole world. The bodies of the plugin
 // physics and the particles of vfx fall with it, and with GRAVITY_WORLD where
 // none rules.
@@ -20,9 +20,10 @@ Gravity :: struct {
     pull:Gravity_Pull,
     acceleration:f32 `mirai:"unit=m/s2"`,
     radius:f32 `mirai:"min=0,unit=m"`, // Center: the surface, times the scale; it weakens with the square of the distance beyond it and toward the center inside it; 0: as strong at any distance
+    zone:Zone,
 }
 
-GRAVITY_DEFAULT :: Gravity{acceleration=9.81}
+GRAVITY_DEFAULT :: Gravity{acceleration=9.81,zone=ZONE_DEFAULT}
 
 // What things fall with where no Gravity rules, m/s2.
 GRAVITY_WORLD :: [3]f32{0,-9.81,0}
