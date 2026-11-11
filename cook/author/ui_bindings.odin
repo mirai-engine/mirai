@@ -603,7 +603,7 @@ records_names_check :: proc(a:Assets,r:^Records,out:[]Bind_Problem) -> (count:in
 }
 
 
-// The records of a .ui as the assets hold it, unsaved changes included.
+// The records of a .ui as the registry holds it, in memory or on disk.
 records_read :: proc(a:Assets,id:base.Asset_Id,records:^Records,allocator:runtime.Allocator) -> bool {
     if a.registry==nil {return false}
     record,found:=asset.registry_find(a.registry,id)

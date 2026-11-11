@@ -18,7 +18,7 @@ nothing of the session), what the operations need of the session (`editor/git.od
   `fetch` every `GIT_FETCH_SECONDS` in an editor with a window, with a remote and outside a merge,
   silent if it fails and without opening the credential manager (`GCM_INTERACTIVE=never`), so that
   ↓N says what arrived; and a state read when the tab is in view and something it shows may have
-  changed (a save, a file that changed, an agent review, the window regaining focus, the tab
+  changed (a file that changed, an agent review, the window regaining focus, the tab
   opening). There is no periodic read.
 - Commands run with `GIT_TERMINAL_PROMPT=0`: git does not ask for credentials on the console; a
   missing authentication is an error of the operation and the system's credential manager provides
@@ -34,14 +34,14 @@ nothing of the session), what the operations need of the session (`editor/git.od
   (`git_init_later`).
 - Each state read sets in the local configuration the drivers that are missing or are not this
   engine's (a clone, an engine that moved).
-- **Commit** takes the saved files: with anything unsaved it does not run. Without files left out
-  it commits the whole project folder, also what was saved after the last read. **Push** sets the
+- **Commit** first writes what the editor holds (`files_flush`). Without files left out it commits
+  the whole project folder, also what was written after the last read. **Push** sets the
   upstream the first time.
 - A state read yields to what the user asks: Pull, Push, Commit or Abort cut it and the state is
   read again on finishing (`git_working` says whether something that changes the repository runs).
 - **Discard** asks and returns the files to how the last commit has them (`git restore`); one git
-  does not track goes to the trash. It does not run with unsaved work or in a merge; the assets
-  are read again, and the open scene too if it was one of them.
+  does not track goes to the trash. It writes what the editor holds first and does not run in a
+  merge; the assets are read again, and the open scene too if it was one of them.
 - **Pull** (`pull --no-rebase`) requires everything committed: so every conflict is between two
   commits and the asset merge resolves it. What the driver could not join leaves the repository in
   merge and the editor in merge mode, with the Git tab marked.
@@ -57,8 +57,8 @@ nothing of the session), what the operations need of the session (`editor/git.od
   textures, an asset that could not be read).
 - **Each conflict takes what arrived (theirs)** until one's own is chosen. The open scene shows the
   choices instantly: the document is built in memory with them and replaces the world
-  (`git_scene_show`), without writing the file, and stays unsaved. The entities of unaccepted items
-  are outlined (`GIT_CONFLICT_LEVEL`).
+  (`git_scene_show`), without writing the file until the merge finishes. The entities of unaccepted
+  items are outlined (`GIT_CONFLICT_LEVEL`).
 - Choosing something from an accepted item leaves it pending again. ✕ takes one's own for the
   whole item and accepts it; ✓ accepts what was chosen. Both move to the next pending one.
 - A row that one side removed and the other changed is chosen whole. An entity that returns brings

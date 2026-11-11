@@ -39,9 +39,8 @@ spawned copy in a running world
 can hang whole under a `Scene_Reference` as a section.
 
 - A prefab has exactly one root. The writers that author files refuse another count with how to
-  fix it (`prefab_refused`: the editor's Save and Kind, `mirai scene write`) and
-  `mirai asset verify` reports it; a reader does not refuse it, so a recovery copy of a prefab
-  being edited reads back.
+  fix it (`prefab_refused`: the editor's write of a prefab and Kind, `mirai scene write`) and
+  `mirai asset verify` reports it; a reader does not refuse it.
 - `scene.capture` keeps the kind of `previous`; a new document sets it itself.
 - `registry_prefab(file)` answers from the header the registry read, for a file on disk and for one
   held in memory alike, so a browser tells a prefab from a scene without opening files;
@@ -98,7 +97,7 @@ What it fixed on its own are its `Override`s, a table of the file.
   every load, cook and editor that updates the instance.
 - `scene_overrides_derive` finds the overrides of the instances of a document by comparing their
   members with a base, and `scene_overrides_apply` writes some into a prefab. A file keeps the
-  overrides for the load that finds the prefab changed; the editor derives them when it saves
+  overrides for the load that finds the prefab changed; the editor derives them when it writes
   ([overrides](../../mirai-editor/references/prefabs.md#overrides)).
 - The editor's Apply and Revert of an added entity: `scene_child_apply` writes it into the prefab
   with what hangs from it (instances placed among them included) and makes it a member;

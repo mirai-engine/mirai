@@ -72,4 +72,4 @@ scene, not how bright it is.
 
 ## Pitfalls that fail silently
 
-- A change in the editor's view does not change the game: save the scene (`scene.save`).
+- A change in the editor's view does not change the game: change the scene (`scene.write`).

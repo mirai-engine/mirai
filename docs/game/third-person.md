@@ -39,7 +39,6 @@ $P scene.write '{"root":"Player","entities":[{
                        "turn":true,"recenter":1.5}}},
     {"name":"Body","position":[0,0.9,0],"scale":[0.6,0.9,0.6],
      "components":{"Mesh_Renderer":{"shape":"Capsule"},"Material_Values":{"color":[0.9,0.45,0.25,1]}}}]}]}'
-$P scene.save '{}'
 ```
 
 One `scene.write` changes the fields it names of `Player` and of the child named
@@ -63,7 +62,6 @@ height ([water-fog.md](world/water-fog.md)):
 $P scene.open '{"path":"arena/main.scene"}'
 $P scene.write '{"entities":[{"name":"Sea","position":[0,-1,0],"components":{
   "Volume":{"shape":"Plane"},"Fluid":{"density":1025},"Water":{},"Fluid_Waves":{}}}]}'
-$P scene.save '{}'
 ```
 
 Hills and trees in one `batch` file: [whole-scene.md](assets/whole-scene.md). A moving platform

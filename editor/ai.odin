@@ -293,7 +293,7 @@ ai_review_waiting_count :: proc(s:^Session) -> (count:int) {
 }
 
 // Stops the turns of the document that are still working. The API refuses
-// their calls from now on: what is saved or discarded next is all they did.
+// their calls from now on: what they wrote until then is all they did.
 ai_working_stop :: proc(s:^Session) {
     if s.ai==nil {return}
     for &task in s.ai.tasks[:s.ai.task_count] {

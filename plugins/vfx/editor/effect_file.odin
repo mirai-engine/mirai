@@ -8,8 +8,8 @@ import "mirai:std/base"
 import vfx "plugins:vfx/runtime"
 import "plugins:vfx/runtime/effect"
 
-// The file of an effect as the editor writes it: a file of the project in
-// memory, unsaved, as a step of the history it is written in.
+// The file of an effect as the editor writes it: a file of the project, as a
+// step of the history it is written in.
 
 PARTICLE_FIELDS :: 64 // of Particle_Info that its hidden fields can name
 

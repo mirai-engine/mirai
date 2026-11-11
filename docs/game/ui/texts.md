@@ -44,7 +44,7 @@ mirai texts import texts.csv --project .
 - The CSV has the column `key` and one per language by its code, the one texts are written in
   first; an import changes nothing where a cell is empty.
 - With the editor open, `texts.list`, `texts.set`, `texts.missing`, `texts.export` and
-  `texts.import` do the same on what it holds unsaved.
+  `texts.import` do the same on what it holds.
 
 The player chooses the language in `UI_Preferences.language`: a `Dropdown` written
 `English=en|Español=es` that binds it is the whole menu. From code, a function of the loop

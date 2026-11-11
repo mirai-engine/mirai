@@ -220,7 +220,7 @@ ai_markdown_resolve :: proc(data:rawptr,target,text:string,buffer:[]u8) -> ui.Ma
 }
 
 // Opens a scene the agent offered to try and plays it: at once when it is
-// the one open, else once Open (which may ask to save first) has put it in
+// the one open, else once Open has put it in
 // its place (ai_play_follow).
 ai_play_scene :: proc(s:^Session,path:string) {
     if s.document!=nil && document_path(s.document)==path {

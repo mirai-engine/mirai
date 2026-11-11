@@ -77,4 +77,4 @@ for ev in events.items {                   // events:core.Ref(anim.Animation_Eve
 - A `play` of lower priority than the action in its slot, or over one that does not allow it, is
   refused (`animation.action_busy`); wait for its `Ended`.
 - Events live one tick; compare names by hash. A rejected request is a problem (`animation.*`).
-- Edits made through the API stay unsaved until `asset.save`.
+- Edits made through the API are written to their files when their step ends.

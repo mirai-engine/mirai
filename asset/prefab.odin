@@ -979,7 +979,7 @@ registry_prefab_files :: proc(files:^Registry_Prefabs) -> Prefab_Files {
         if file,found:=registry_find(files.registry,id);found && registry_prefab(file) {
             no_asset:runtime.Allocator_Error
             if a,no_asset=new(Asset,files.allocator);no_asset!=nil {return nil,.Out_Of_Memory}
-            // What the registry holds of it unsaved, else the disk.
+            // What the registry holds of it in memory, else the disk.
             data,error:=registry_read(files.registry,file.path,files.allocator)
             if error==.None {error=asset_take(a,data,files.allocator)}
             if error!=.None {

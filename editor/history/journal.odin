@@ -9,7 +9,7 @@ import "mirai:std/base"
 // The journal of the edited World, in Edits: the image of what the World held
 // when the journal last took it (the rows of the tables a scene saves and the
 // entities), the steps of undo with what the rows they changed were, and,
-// while collaboration or the recovery log read it, the rows the image took
+// while collaboration reads it, the rows the image took
 // since. Readers keep
 // a cursor of their own: undo its place in the steps, the review of an agent
 // the state of a step, collaboration its place in the changes.

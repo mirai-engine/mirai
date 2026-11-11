@@ -22,9 +22,9 @@ import "plugins:vfx/runtime/effect"
 // file. The rows are those of Details, in groups, with arrows that give a
 // value back as it was when the document read it, and an eye per field that
 // hides it from the instances. The parameters of its Vfx program are those
-// the renderer declares. What the rows change is written into the .particle,
-// in memory and unsaved, once the UI lets go of it (a drag, a typed value, a
-// popup): a step of the history of the document each time.
+// the renderer declares. What the rows change is written into the .particle
+// once the UI lets go of it (a drag, a typed value, a popup): a step of the
+// history of the document each time.
 
 PARTICLE_SIDE :: 512  // pixels of a side of its image
 EYE_WIDTH :: 20       // the column of the eyes, with its gap

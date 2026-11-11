@@ -43,7 +43,7 @@ ai_context_range :: proc(r:^Ai_Range) -> Ai_Context_Range {
 // What Copy range puts on the clipboard, for a chat in the editor or out of it.
 ai_range_text :: proc(r:^Ai_Range) -> string {
     path:=base.text_get(r.path[:])
-    if path=="" {path="unsaved"}
+    if path=="" {path="no file"}
     name:=base.text_get(r.name[:])
     switch r.kind {
     case .Asset:
@@ -122,7 +122,7 @@ ai_range_prompt :: proc(task:^Ai_Task,b:^strings.Builder) {
             "this message is about them. `play.history` with `run` %d, `from` %d and `to` %d reads "+
             "them, also after the user stopped that Play: with `trace`, values of entities at those "+
             "ticks; with `verify`, whether playing them again repeats them.\n",
-            r.from,r.to,r.run,path!=""?path:"an unsaved scene",r.run,r.from,r.to)
+            r.from,r.to,r.run,path!=""?path:"a scene without a file",r.run,r.from,r.to)
     case .Asset:
         rate:=r.rate>0?r.rate:1
         fmt.sbprintf(b,"- The user chose frames %d to %d (%.2f s to %.2f s) of %s%s%s on its "+
@@ -131,6 +131,6 @@ ai_range_prompt :: proc(task:^Ai_Task,b:^strings.Builder) {
     case .Clip:
         fmt.sbprintf(b,"- The user chose ticks %d to %d of the clip of %s in %s on its "+
             "timeline: this message is about them.\n",r.from,r.to,name,
-            path!=""?path:"an unsaved scene")
+            path!=""?path:"a scene without a file")
     }
 }

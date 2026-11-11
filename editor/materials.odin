@@ -283,8 +283,8 @@ material_revert :: proc(s:^Session,e:core.Entity,slot:int) -> bool {
 
 // Writes in the material of a slot what the entity changed of it, which it
 // stops changing: every entity that shows the material takes it, but in what
-// it changes itself. The material changes in memory, as every edit does:
-// Save writes its file. One step.
+// it changes itself. Its file is written when the step ends, as every
+// edit's is. One step.
 @(private)
 material_apply :: proc(s:^Session,e:core.Entity,slot:int) -> (material:base.Asset_Id,message:string) {
     w:=editing_world(s)
@@ -869,14 +869,14 @@ material_write :: proc(s:^Session,owner:base.Asset_Id,change:Material_Change) ->
 }
 
 // After an import wrote the file of a material, what memory holds of it
-// unsaved follows what the source gives now as the file did: it keeps what
-// was changed after the last import, saved or not.
+// follows what the source gives now as the file did: it keeps what was
+// changed after the last import.
 material_rebase :: proc(s:^Session,id:base.Asset_Id) {
     a:=s.app.assets
     if a==nil {return}
     record,found:=asset.registry_find(&a.registry,id)
     if !found {return}
-    if held,unsaved:=asset.registry_memory_find(&a.registry,record.path);!unsaved || held.removed {return}
+    if held,in_memory:=asset.registry_memory_find(&a.registry,record.path);!in_memory || held.removed {return}
     path:=asset.registry_file_path(&a.registry,record.path,context.temp_allocator)
     written:asset.Asset
     if asset.asset_load(&written,path,context.temp_allocator)!=.None {return}
@@ -913,7 +913,7 @@ material_base :: proc(s:^Session,id:base.Asset_Id) -> ^asset.Material_Info {
 }
 
 // Opens a file of the assets as it is now: what the registry holds of it in
-// memory, unsaved, or the disk. The caller closes it with asset_close.
+// memory, or the disk. The caller closes it with asset_close.
 asset_read :: proc(s:^Session,relative:string,file:^asset.Asset,allocator:=context.temp_allocator) -> bool {
     a:=s.app.assets
     if a==nil {return false}

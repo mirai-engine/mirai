@@ -103,9 +103,8 @@ authoring_set_target :: proc(s:^editor.Session,call:^api.Call,path:string,kind:a
 }
 
 // Publishes an asset document: prepares the response and writes the file as
-// a step of the editor's history (one undo with the rest of the call). The
-// asset changes in memory, unsaved; a new one exists only there until it is
-// saved. written is the part of the result that names it. dry_run in the
+// a step of the editor's history (one undo with the rest of the call).
+// written is the part of the result that names it. dry_run in the
 // params validates and answers without writing.
 @(private)
 authoring_publish :: proc(s:^editor.Session,call:^api.Call,target:Authoring_File,doc:^asset.Document,written:^Authoring_Write_Result) -> bool {

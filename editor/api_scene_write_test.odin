@@ -497,7 +497,9 @@ a_document_written_to_a_file_gives_the_bytes_the_method_and_the_editor_write :: 
         if !testing.expect_value(t,os.write_entire_file(file,saved),nil) {return}
         if !testing.expect_value(t,scene_open(s,"same.scene"),Document_Error.None) {return}
         _,failure,ok:=write_scene(f,document)
-        if !testing.expect(t,ok,failure) || !testing.expect_value(t,test_document_write(s,"same.scene"),Document_Error.None) {return}
+        if !testing.expect(t,ok,failure) {return}
+        prefab_fixture_step(f)
+        if !testing.expect(t,files_flush(s,true)) {return}
         live,_:=os.read_entire_file(file,context.temp_allocator)
         if !testing.expect_value(t,os.write_entire_file(file,saved),nil) || !testing.expect_value(t,asset.registry_scan(&p.registry),asset.Error.None) {return}
         _,problem:=author.scene_write(&p,"same.scene",document)

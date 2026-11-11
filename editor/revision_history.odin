@@ -107,7 +107,7 @@ revision_walk :: proc(h:^Revision_History($Step,$Source,$Stamp),id:base.Asset_Id
     return true
 }
 
-// The file of a source changed outside the tool (Save, Discard, a recovery)
+// The file of a source changed outside the tool (the history of the editor, git)
 // while its owners stayed at the revision of its head: that revision holds
 // fresh from here on, and the head takes it.
 revision_rebase :: proc(h:^Revision_History($Step,$Source,$Stamp),src:Revision_Source(Step,Source,Stamp),id:base.Asset_Id,revision:u32,head,fresh:^Source) {

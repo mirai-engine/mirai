@@ -644,7 +644,7 @@ ai_review_follows_the_scene_it_is_read_with :: proc(t:^testing.T) {
     // A scene that holds what the turn left keeps it waiting for review.
     ai_review_reconcile(&f.s,&f.ai,task)
     testing.expect(t,task.review.pending && !task.declined)
-    // Closed without saving, the scene is read as it was before the turn: its
+    // Back as it was before the turn (its file discarded outside the editor): its
     // changes wait declined and the chat offers to take them back.
     testing.expect(t,history.undo(&f.edits,ref,&f.selection))
     ai_review_reconcile(&f.s,&f.ai,task)
@@ -665,24 +665,21 @@ quitting_asks_while_agents_work_and_stops_them_before_going_on :: proc(t:^testin
     f:=ai_review_test_open(t);if f==nil {return}
     defer ai_review_test_close(f)
     defer documents_free(&f.s)
-    f.document.saved=history.edits_state(&f.edits)
     running:=&f.ai.tasks[0];running.id=1;running.world=&f.w;running.state=.Running
     queued:=&f.ai.tasks[1];queued.id=2;queued.world=&f.w;queued.state=.Queued
     f.ai.task_count=2
     testing.expect_value(t,ai_working_count(&f.s),2)
 
-    // With nothing unsaved, quitting asks while agents work; Cancel leaves them working.
-    documents_quit_next(&f.s)
+    // Quitting asks while agents work; Cancel leaves them working.
+    documents_quit(&f.s)
     testing.expect(t,f.gui.modal==.Confirm && f.gui.pending==.Quit && !f.s.quit)
-    confirm_resolve(&f.s,.Cancel)
-    testing.expect_value(t,ai_working_count(&f.s),2)
-    // Going on stops them first, so the API refuses what they would still do.
-    documents_quit_next(&f.s)
-    confirm_resolve(&f.s,.Discard)
+    confirm_resolve(&f.s,false)
+    testing.expect(t,ai_working_count(&f.s)==2 && !f.s.quit)
+    // Going on stops them first, so the API refuses what they would still do, and quits.
+    documents_quit(&f.s)
+    confirm_resolve(&f.s,true)
     testing.expect_value(t,ai_working_count(&f.s),0)
     testing.expect(t,running.stop && queued.state==.Cancelled)
-    testing.expect(t,.Quit_Check in f.s.requests)
-    documents_quit_next(&f.s)
     testing.expect(t,f.s.quit,"the agents answered, nothing else is asked")
 }
 

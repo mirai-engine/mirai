@@ -8,9 +8,9 @@ import "mirai:engine/gui"
 import "mirai:std/serial"
 
 // The texts of the project in the session: its .strings as author.Texts
-// reads them, unsaved changes included, and the texts.* methods, which do in
+// reads them, and the texts.* methods, which do in
 // the open editor what mirai texts does on the files. A change is a step of
-// history of each .strings it touches, which waits for Save.
+// history of each .strings it touches.
 
 // The texts of the project; their languages are those its .strings name,
 // the one its texts are written in (UI_Settings.source) first.
@@ -58,10 +58,10 @@ Texts_Count :: struct {
 @(private)
 texts_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="texts.list",summary="Every text a player reads, by key: what each key of the .strings of the project says in each language. A node of a .ui, a core.Text of a row and the code show a text by its key.",result=type_info_of(Texts_List),flags={.Read_Only},run=api_texts_list})
-    api_register(s,st,{name="texts.set",summary="Makes a key say a text in a language: adds a text, or translates one. One step of history; its .strings waits for Save.",params=type_info_of(Texts_Set_Params),result=type_info_of(Texts_Count),run=api_texts_set})
+    api_register(s,st,{name="texts.set",summary="Makes a key say a text in a language: adds a text, or translates one. One step of history, which writes its .strings.",params=type_info_of(Texts_Set_Params),result=type_info_of(Texts_Count),run=api_texts_set})
     api_register(s,st,{name="texts.missing",summary="What the texts lack: who shows a key no .strings has, the keys that say nothing in a language of the game, and the characters the glyphs of the interfaces lack.",result=type_info_of(Texts_Missing),flags={.Read_Only},run=api_texts_missing})
     api_register(s,st,{name="texts.export",summary="Writes every text of the project to a CSV for translators.",params=type_info_of(Texts_File_Params),result=type_info_of(Texts_Count),flags={.Read_Only},run=api_texts_export})
-    api_register(s,st,{name="texts.import",summary="Makes the keys of a CSV say its texts, as texts.export writes it. One step of history per .strings, which waits for Save.",params=type_info_of(Texts_File_Params),result=type_info_of(Texts_Count),run=api_texts_import})
+    api_register(s,st,{name="texts.import",summary="Makes the keys of a CSV say its texts, as texts.export writes it. One step of history per .strings.",params=type_info_of(Texts_File_Params),result=type_info_of(Texts_Count),run=api_texts_import})
 }
 
 @(private="file")

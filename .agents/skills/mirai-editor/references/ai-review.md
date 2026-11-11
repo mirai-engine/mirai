@@ -28,9 +28,8 @@ Each unit (the main chat and each subagent) has its own record of scene and proj
 - **Files.** The turn's steps bring the files its calls wrote through the API (`.mat`, `.slang`,
   `.particle`, animation assets: [files in the history](document.md#edits-and-undo)). Per
   transaction the project path is kept and what the file had before and after (or that it did not
-  exist); `changed_files` lists them in the order the turn changed them. An asset or a program is in
-  memory, unsaved: Revert and Restore change that memory (a program publishes again) and the project
-  does not change until Save.
+  exist); `changed_files` lists them in the order the turn changed them. Revert and Restore rewrite
+  those files (a program publishes again).
 - **Code.** The project files the agent changes with its own tools (code, shaders, the manifest;
   everything but `assets/`, which belongs to the API, and the dot folders) enter when the turn
   ends, as one more transaction (`editor/ai_code.odin`): at the start each file is taken by path,
@@ -176,13 +175,13 @@ it was already confirmed, it repeats without reverting. It also reverts the reco
   do not match its presence, or if it turns a side off without the component or a component of the
   entity's base.
 - `ai_review_reconcile`, on loading and on each `document_opened`, follows the scene (values and off
-  state) and the files it is read with: with what the turn had before (it was closed without
-  saving) it is left declined with `AI_UNSAVED_NOTE` and Restore; with what the turn left it
-  returns to review even if it was declined; with part, it stays as the record says.
+  state) and the files it is read with: with what the turn had before (the files went back, as
+  with a git discard) it is left declined with `AI_UNDONE_NOTE` and Restore; with what the turn
+  left it returns to review even if it was declined; with part, it stays as the record says.
 - A `running` or `queued` turn returns as `failed` and starts no process; a subagent the editor
   closed on returns `interrupted` ([reopening](ai-tasks.md#compaction-and-handoff)). If the editor
-  closed with the dialog, its changes reach as far as Save or Discard stopped it
-  ([exiting](document.md#exiting-with-changes-or-agents-working)).
+  closed with the dialog, its changes are those its steps had written
+  ([quitting](document.md#quitting-new-and-open-with-agents-working)).
 - The record has a cap of rows and bytes (`AI_REVIEW_ROW_CAPACITY`, `AI_REVIEW_BYTE_CAPACITY`; a
   file counts as one row). On reaching it the review is left incomplete, and the turn keeps the
   history states of each step it confirmed (`Ai_Review.states`): Revert and Restore take those

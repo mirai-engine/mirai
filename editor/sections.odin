@@ -26,14 +26,14 @@ import "mirai:ui"
 // sections load, drop or turn there goes to the image of the journal without
 // a step.
 
-SECTIONS_EDITED :: 64 // sections a document keeps for Save once they were edited in their world
+SECTIONS_EDITED :: 64 // sections a document writes once they were edited in their world
 SECTION_TRAVEL_DISTANCE :: f32(200) // m: past it the camera goes into a big section instead of framing it whole
 
 // The sections of a document in the editor; each tab keeps its own, and
 // what its view shows of them is in the scene.Section_Views of its World.
 Document_Sections :: struct {
-    edit:core.Entity, // the reference whose section is edited in its world: the rest reads only, and Save writes its scene too
-    edited:[SECTIONS_EDITED]base.Entity_Id, // the references edited in their world since the document opened: Save writes the scenes that changed
+    edit:core.Entity, // the reference whose section is edited in its world: the rest reads only, and its scene is written too
+    edited:[SECTIONS_EDITED]base.Entity_Id, // the references edited in their world since the document opened: the scenes that changed are written
     edited_count:int,
 }
 
@@ -313,7 +313,7 @@ entity_within :: proc(w:core.World_Ref,e,top:core.Entity) -> bool {
     return false
 }
 
-// The file of the document in front, for where a section is: "Untitled" before it is saved.
+// The file of the document in front, for where a section is: "Untitled" without a file.
 document_label :: proc(s:^Session) -> string {
     if s.document==nil || s.document.path_length==0 {return "Untitled"}
     return filepath.base(document_path(s.document))
@@ -489,7 +489,7 @@ section_edit_set :: proc(s:^Session,reference:core.Entity) {
         if id==0 {return}
         if !slice.contains(d.edited[:d.edited_count],id) {
             if d.edited_count==len(d.edited) {
-                notify(s,fmt.tprintf("%d sections were edited in their world since the scene opened: save and open it again to edit another",SECTIONS_EDITED))
+                notify(s,fmt.tprintf("%d sections were edited in their world since the scene opened: open it again to edit another",SECTIONS_EDITED))
                 return
             }
             d.edited[d.edited_count]=id
@@ -516,10 +516,10 @@ section_capture :: proc(s:^Session,w:core.World_Ref,reference:core.Entity,captur
     switch {
     case r.loaded=={}:
         // Unloaded, what changed in it waits dormant under its reference.
-        if len(entity_children(w,reference))>0 {return "",false,"its changes wait while it is off: turn it on to save them"}
+        if len(entity_children(w,reference))>0 {return "",false,"its changes wait while it is off: turn it on to write them"}
         return "",false,""
     case r.loaded!=r.scene: return "",false,"it is loading"
-    case r.held:                         return "",false,"it is loaded and off: turn it on to save it"
+    case r.held:                         return "",false,"it is loaded and off: turn it on to write it"
     }
     path=scene_file(s,file.path)
     previous:asset.Scene

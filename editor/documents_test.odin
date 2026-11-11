@@ -1,7 +1,10 @@
 package editor
 
 import "core:fmt"
+import "core:os"
 import "core:testing"
+import "mirai:asset"
+import "mirai:core"
 import "mirai:editor/history"
 import "mirai:platform"
 import "mirai:std/base"
@@ -161,4 +164,85 @@ escape_closes_a_dialog_with_what_it_asks_about :: proc(t:^testing.T) {
         escape_run(&s,&gui,&viewport,&selection)
         testing.expectf(t,gui.modal==.None && gui.delete_asset=={} && base.text_get(gui.discard_path[:])=="","%v",modal)
     }
+}
+
+// Whether the scene of a file has an entity named name.
+@(private="file")
+documents_test_has :: proc(f:^Prefab_Fixture,file,name:string) -> bool {
+    loaded:asset.Scene
+    if asset.scene_load(&loaded,&f.assets.types,file,context.temp_allocator)!=.None {return false}
+    defer asset.scene_destroy(&loaded)
+    for &held in asset.scene_names(&loaded) {
+        if base.text_get(held[:])==name {return true}
+    }
+    return false
+}
+
+// A document without a file writes nothing; once it has one, every step that
+// ends reaches it, undo too, and an open gesture waits for its end.
+@(test)
+the_steps_of_a_document_reach_its_file_once_it_has_one :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(t,f,"document-flush")) {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    w:=edited_world(s)
+    entity_create(s,{name="Rock",named=true})
+    core.world_settle(w)
+    prefab_fixture_step(f)
+    testing.expect(t,files_flush(s,true))
+    testing.expect_value(t,asset.registry_scan(&f.assets.registry),asset.Error.None)
+    testing.expect(t,len(f.assets.registry.files)==0 && document_file(s.document)=="","no file is made for it")
+
+    testing.expect_value(t,document_file_give(s,"level.scene"),Document_Error.None)
+    file:=scene_file(s,"level.scene")
+    testing.expect(t,!os.exists(file),"the file is written by the next flush")
+    testing.expect(t,files_flush(s,true) && documents_test_has(f,file,"Rock"))
+
+    tree:=entity_create(s,{name="Tree",named=true})
+    core.world_settle(w)
+    prefab_fixture_step(f)
+    testing.expect(t,files_flush(s,true) && documents_test_has(f,file,"Tree"))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
+    testing.expect(t,files_flush(s,true) && !documents_test_has(f,file,"Tree") && documents_test_has(f,file,"Rock"))
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
+    testing.expect(t,files_flush(s,true) && documents_test_has(f,file,"Tree"))
+
+    tree=api_entity(w,api_entity_id(w,tree))
+    opened,ready:=edit_open(s,"Rename")
+    testing.expect(t,ready && entity_rename(s,tree,"Oak"))
+    testing.expect(t,!files_flush(s,true) && !documents_test_has(f,file,"Oak"),"an open gesture is no step yet")
+    edit_close(s,opened)
+    prefab_fixture_step(f)
+    testing.expect(t,files_flush(s,true) && documents_test_has(f,file,"Oak"))
+}
+
+// The file of the document changed outside the editor: the next flush reads
+// it again, with a new history, and writes nothing over it.
+@(test)
+a_document_reads_its_file_again_when_it_changed_outside :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(t,f,"document-follow")) {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    w:=edited_world(s)
+    rock:=entity_create(s,{name="Rock",named=true})
+    core.world_settle(w)
+    prefab_fixture_step(f)
+    id:=api_entity_id(w,rock)
+    if !testing.expect_value(t,test_document_write(s,"level.scene"),Document_Error.None) {return}
+    file:=document_file(s.document)
+    testing.expect(t,len(f.edits.steps)>0)
+
+    outside:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&outside,&f.assets.types,file),asset.Error.None) {return}
+    asset.scene_entity_rename(&outside,id,"Boulder")
+    testing.expect_value(t,asset.scene_save(&outside,file),asset.Error.None)
+    asset.scene_destroy(&outside)
+    assets_wrote(s,file)
+
+    testing.expect(t,files_flush(s,true))
+    testing.expect_value(t,entity_name(w,api_entity(w,id)),"Boulder")
+    testing.expect_value(t,len(f.edits.steps),0)
+    testing.expect(t,documents_test_has(f,file,"Boulder"))
 }

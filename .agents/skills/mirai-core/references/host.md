@@ -378,8 +378,7 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
   like the far shape of a section). What the renderer is still uploading (the levels of a texture,
   the geometry of a mesh) waits until it has gone up. Without job threads it is released in the
   call.
-- `assets_unsaved(a)`: the files that the registry has in memory unwritten.
-  `app_asset_changed(app, path)` rereads what is loaded from a file that changed on disk or in
+- `app_asset_changed(app, path)` rereads what is loaded from a file that changed on disk or in
   memory, as when the watcher sees it.
 - `assets_material_derive`, `assets_material_values`, `assets_material_overlays`,
   `assets_postprocess`: derived rows of the material table, with the

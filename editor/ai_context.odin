@@ -359,7 +359,7 @@ ai_state_write :: proc(s:^Session,task:^Ai_Task,w:core.World_Ref) -> bool {
 }
 
 // The methods a turn uses most, named in the instructions by their MCP tool.
-AI_PROMPT_TOOLS :: [?]string{"scene.inspect","scene.write","batch","play.start","play.step","scene.save","asset.save","play.check","capture","play.stop","view.viewport","asset.import","finish","engine.describe"}
+AI_PROMPT_TOOLS :: [?]string{"scene.inspect","scene.write","batch","play.start","play.step","play.check","capture","play.stop","view.viewport","asset.import","finish","engine.describe"}
 // The methods whose parameters go in the instructions, from the live
 // registry: most of what a turn does, without looking their schemas up.
 AI_PROMPT_SCHEMAS :: [?]string{"scene.inspect","scene.write","batch","finish"}

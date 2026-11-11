@@ -19,9 +19,9 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
 - `engine.diagnostics`: after a failed capture, test or Play, read it before repeating.
   - `since` with the previous `console.serial` reads only what is new.
   - A repeated id is an `asset_errors` entry with `problem:"Duplicate_Id"`: `detail:"Reassigned"`
-    is a copy made outside the editor that received an id of its own in memory, which is kept with
-    `asset.save` or left by deleting the file; `"Unresolved"`, a pair with an unsaved file, which
-    is resolved by saving it or discarding it. For an asset of another version, `message` gives the
+    is a copy made outside the editor that received an id of its own, which the editor writes to
+    its file, or left by deleting the file; `"Unresolved"`, a pair with a file being edited, which
+    resolves when its step ends. For an asset of another version, `message` gives the
     `mirai import` that redoes it.
   - `problems` has one per world, the edited one and each Play
     ([problems](../../mirai-core/references/core.md#problems)). To know whether something still
@@ -49,8 +49,7 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
     ([unloading](../../mirai-core/references/host.md#failures-unloading-and-watching)).
 - `engine.step`: only in a manual editor; advances whole editor, game and render frames with a
   fixed `dt`.
-- `engine.shutdown`: stops a Play and exits after replying. Fails with unsaved changes, of scenes
-  or assets, unless `discard`, and with an open file dialog.
+- `engine.shutdown`: stops a Play and exits after replying. Fails with an open file dialog.
 - `engine.gpu_lose`: the next submission to the GPU reports the device lost, as after a reset; the
   editor restarts with its documents
   ([GPU that stops working](../../mirai-editor/references/editor.md#gpu-that-stops-working)). After
@@ -85,10 +84,9 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   - The prefab actions use the scope of the UI; `prefab.apply` and `prefab.revert`, that of their
     entity ([operations](../../mirai-editor/references/prefabs.md#operations)).
 - `editor.section_edit`: `entity` with `Scene_Reference`: its section is edited in the
-  world of the open scene, `scene.save` also writes its scene (and that of each section edited
+  world of the open scene, the flush also writes its scene (and that of each section edited
   this way that changed) and the rest stays read-only; without `entity` it ends. Only in Edit and in
-  a scene. Returns `{editing,unsaved}`: `unsaved` is the section it stopped editing with unsaved
-  changes.
+  a scene. Returns `{editing}`.
 - `editor.sections`: the map of the World tab: each section with its rule, what it asks for
   (`asked`), what the view asks for (`view`, `Auto` with nothing), what it shows (`shown`, with
   `Loading`), its box in the world and its cost (`entities`, `meshes`, `textures`, `gpu_bytes` of
@@ -172,11 +170,6 @@ advances frames, what waits for Edit and common errors. Conventions, errors and 
   - In Play the lit image of the game is shown; the mode comes back on returning to Edit. A mode of
     a plugin that stops being declared goes back to `lit`.
   - `collision` are lines: `capture` without `ui` does not include them.
-- `editor.recover`: what an editor left when it ended waits set aside: loading, editing, saving
-  and Play go on, and `editor.inspect` says so with `recovery_offered`. With nothing offered it
-  answers `resolved:false`, so a retry after a timeout is no error; what could not be put back
-  stays offered with `reason`, a failure of every part fails with that cause
-  ([recovery](../../mirai-editor/references/document.md#recovery-and-failures)).
 - `camera.set` (`idempotent`): returns `{position, target, yaw, pitch, distance, fov_y, exposure,
   ev100}`; all params are optional.
   - `position` and `target` are 3 numbers and must differ; `yaw` and `pitch`, radians.
@@ -246,10 +239,10 @@ single undo, which also replaces the ragdoll the rig had. Parts, shapes and join
 ## Interfaces
 
 The `ui.*` methods of the `ui_inspector` plugin edit the `.ui` files of the project like the
-document: each write is a step of the file history, which waits for Save, and one that would leave
+document: each write is a step of the file history, and one that would leave
 a tree that does not load changes nothing and says why. A new `.ui` is created with
 `ui.write` with a path that does not exist yet (or `asset.create {kind:"ui"}`) and written whole,
-or a part of it, with `ui.write` (`document=@file`, `save=true`); `ui.capture` shows
+or a part of it, with `ui.write` (`document=@file`); `ui.capture` shows
 it alone, at its size, as a PNG.
 Contract: [the inspector](../../mirai-plugins/references/ui-inspector.md#api).
 
@@ -261,7 +254,7 @@ call is an undo step and an error leaves nothing. Contract:
 
 - `paint.stroke`: the points are world points and need not be on the surface; paints the vertices
   within `radius` of the stroke, at every level of detail. A stroke that reaches no vertex is
-  `-32602` and writes nothing. Each stroke writes a new unsaved `.paint` that the entity's
+  `-32602` and writes nothing. Each stroke writes a new `.paint` that the entity's
   `Painted` names; `paint.clear` gives it back the colors of its mesh.
 - `shapes.stamp` and `shapes.corner`: the Stamp and Corners modes of the Shapes tool at world
   points ([shapes tool](../../mirai-world/references/shapes.md#shapes-tool)). A cut that touches
@@ -362,7 +355,7 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
 ([protocol](api.md#concurrency-transactions-and-undo)).
 
 - `scene.inspect` (`read_only`): free-form result
-  `{path,dirty,playing,total,offset, entities[],shown,matched,omitted,left_out}`.
+  `{path,playing,total,offset, entities[],shown,matched,omitted,left_out}`.
   - Filters: `entity` (only that one); `name` (exact name; `*` stands for any sequence and case is
     significant); `component` (only the entities that have it, by its name as
     [names of the API](api.md#method-conventions) take it; an unknown one is `-32602`).
@@ -452,9 +445,6 @@ An entity is named as [the API names it](api.md#method-conventions). Each edit i
   answered. `transaction:true` makes what the calls edit of the scene one step of undo, taken
   back whole when one fails (their edits join the edit the batch holds open,
   `Api_State.transaction`); what they write to files stays.
-- `scene.save`: `path` is a file or a path under `assets/` (by default, the document's); a new path
-  becomes the document's file. Fails with a Play, as a guest of a session, or without a path in a
-  scene never saved.
 - `scene.open`: opens a scene, a prefab too, in the active document, with an empty history; without
   `path` it rereads the document's file. Fails as a guest.
 
@@ -513,13 +503,11 @@ foliage) at the place the locals give them, with the edits of the same frame.
   - Opening an already open file activates its tab; activating or opening a scene brings it to the
     front. `Open` of an asset that is no scene opens its
     [document](../../mirai-editor/references/document.md#asset-documents); one of a type
-    without a document is `-32602`. `Close` of an unsaved asset that no open scene uses asks for
-    `discard`, which gives back what the file has.
+    without a document is `-32602`. `Close` drops its history.
   - Switching scene document stops Play; a guest leaves the shared session first. `Preview_Sun`
     requires a prefab and touches neither its history nor its file.
-- `scene.open` replaces the active document; `scene.save` and `history.*` act on it, also with an
-  asset document in front. `engine.shutdown` requires saving or discarding if any tab has changes
-  or any asset is left unsaved.
+- `scene.open` replaces the active document; `history.*` acts on it, also with an asset document in
+  front.
 
 ## Play
 
@@ -532,8 +520,8 @@ turn. A turn that started inside the user's Play and did not open its own reads 
 result of `play.status`, `paused`, `simulating` and `input_released` are the user's;
 `input_released`: F1 or the chat released the input, or Simulate reserves it for the editor.
 
-- `play.start`: saves a recovery copy if there are changes and clones the world; fails if the copy
-  is not saved or the world is not created.
+- `play.start`: writes the files the edits changed and clones the world; fails if the world is not
+  created.
   - Outside a turn it opens the user's Play, which the editor shows; a game already playing answers
     its state while the document is as it was when it started, and starts again when it changed.
     `from` `Camera` or `Point` (with `point`) is Play from camera or from here: player 1 appears
@@ -668,14 +656,11 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
 - `play.scenario.run`: plays scenario files one after the other in the caller's run and answers
   one report per file ([scenarios](../../../../docs/game/testing/scenario.md)).
 
-**Networked game**
-([networked Play](../../mirai-networking/references/multiplayer.md#networked-play)).
-`play.join` and `play.network.status` are registered by the `multiplayer` plugin: without it they
-do not exist. Only outside a turn. Their players read the saved files: with unsaved assets,
-`play.join` and `play.start` with `online` (or while it shares the scene) fail with the list of
-`assets_unsaved_paths` and the fix (save them with `asset.save` or pass `saved_only:true`, which
-plays with what the files have), like the question of the UI's networked Play. `play.join` fails
-if the host does not serve a game.
+**Networked game** ([networked
+Play](../../mirai-networking/references/multiplayer.md#networked-play)). `play.join` and
+`play.network.status` are registered by the `multiplayer` plugin: without it they do not exist. Only
+outside a turn. Their players read the files as they are, which hold every step that ended.
+`play.join` fails if the host does not serve a game.
 
 ## Simulation
 
@@ -747,14 +732,14 @@ when the viewport draws with them, which `mirai shaders` asks for.
   its action ends; the editor keeps drawing frames meanwhile, since the one job slot runs off the
   frame. None runs while another does.
 
-- With `target:"game"` it compiles the shipped game like `mirai build game`: first the saved
-  shaders (without the editor's unsaved programs), then the game with its cooked assets in `out`
+- With `target:"game"` it compiles the shipped game like `mirai build game`: first the
+  shaders, then the game with its cooked assets in `out`
   (relative to the project; empty, `.mirai/game`). It does not restart the editor; `build.status`
   says `game`, the executable it left.
 - `player.start` opens the game in a window of its own, like `mirai play`: it compiles the `play`
   library first (`building` meanwhile) and runs `mirai-player --project`; with `shipped`, it runs
-  the executable of the last build of the game (or the one in `.mirai/game`). It reads the saved
-  files (with unsaved assets it fails and names them), its output goes to the console and it ends
+  the executable of the last build of the game (or the one in `.mirai/game`). It reads the
+  files, its output goes to the console and it ends
   with the editor. `player.stop` closes it; `player.status` says whether it runs and with which
   code it ended (`-1`: stopped or not started). There is one at a time; while it compiles there is
   no Build, which generates the project's world in the same folder.
@@ -787,8 +772,7 @@ of an instance" are `-32602`; the rest, `-32000`
 ([errors](../../mirai-editor/references/prefabs.md#errors)).
 
 - An instance is named by its `root`. `prefab.create`, `prefab.variant.create` and `prefab.apply`
-  leave the prefab files they write unsaved, as any asset an edit changes: `scene.save` or
-  `asset.save` writes them.
+  write the prefab files as any asset an edit changes: with its step.
 - `prefab.list`: the instances the document placed, not those its prefabs place. A `stale`
   instance is not up to date with its prefab as its files give it now, that file or the file of a
   prefab it places having changed; `prefab.refresh` updates it, and nothing is stale after it.
@@ -845,26 +829,25 @@ of an instance" are `-32602`; the rest, `-32000`
   source in the project keeps the choice in its settings
 - `asset.detach`: `asset` (path or id) is a part that leaves its owner: it is left without `owner`
   and shown alone; the import keeps writing it and leaves it out
-  ([parts](../../mirai-imports/references/imports.md#parts)). It is an unsaved edit, with undo;
-  returns `{asset,path,owner,unsaved}`. One that is not part of anything fails saying so.
-- `asset.create`: what Create of the
-  [content browser](../../mirai-editor/references/panels.md#content-browser) does: `kind`
-  (`folder`, `scene`, `material`, `sound_set`, `strings`, `font`, `particle` or a type a plugin
-  creates, such as `ui`), `folder` under the assets folder and `name` without extension; without a
-  name it takes a numbered "New <Type>". A folder and a scene go to disk at once; the rest is an
-  unsaved edit, with undo, and that of a plugin is written by its plugin in a frame the method
-  runs. Returns `{id,path,unsaved}`; an unknown type fails naming the valid ones, and a taken or
-  invalid name says why.
+  ([parts](../../mirai-imports/references/imports.md#parts)). It is an edit of its file, with undo;
+  returns `{asset,path,owner}`. One that is not part of anything fails saying so.
+- `asset.create`: what Create of the [content
+  browser](../../mirai-editor/references/panels.md#content-browser) does: `kind` (`folder`, `scene`,
+  `material`, `sound_set`, `strings`, `font`, `particle` or a type a plugin creates, such as `ui`),
+  `folder` under the assets folder and `name` without extension; without a name it takes a numbered
+  "New <Type>". A folder and a scene go to disk at once; the rest is an edit with undo, written when
+  its step ends, and that of a plugin is written by its plugin in a frame the method runs. Returns
+  `{id,path}`; an unknown type fails naming the valid ones, and a taken or invalid name says why.
 - `asset.delete`: `asset` (path or id) goes to the system trash with the import parts it owns, like
   Delete of the [content browser](../../mirai-editor/references/panels.md#content-browser): at
-  once, without undo or `asset.save`. Returns `{moved,used_by}`; those that use it keep the
+  once, without undo. Returns `{moved,used_by}`; those that use it keep the
   reference. Fails saying why with an asset of a plugin, of the engine or of the editor, a scene
   open in a tab or outside Edit.
 - `asset.move {asset, folder?, name?, copy?}` takes an asset by path or id, or a folder by path,
-  and writes at once, without undo or `asset.save`; it returns the resulting path and id
+  and writes at once, without undo; it returns the resulting path and id
   ([rename, move and duplicate](../../mirai-editor/references/panels.md#content-browser)). No
   `folder` keeps the one it is in and `/` is the root. Moving keeps the id and takes the parts
-  along; what has unsaved changes fails asking for `asset.save` or `asset.discard`. With `copy` it
+  along; what is being edited fails asking to finish the edit. With `copy` it
   copies with new ids and the copy is not an output of the import; without `name` it takes a free
   one.
 - `asset.users`: `asset` (path or id). Returns `{used_by}`, the files that reference it or a part
@@ -883,12 +866,11 @@ of an instance" are `-32602`; the rest, `-32000`
   - `sound_set.set` (with `path`, a new one over `SOUND_SET_DEFAULTS`, which fails if the file
     exists): `values.sounds` carries `.sound` paths or ids; one that is
     not a `.sound` of the registry or an inverted range is `-32602` and says which field to fix.
-    They leave the file unsaved, in an undo step.
-- **Game data** (`records.*`, `api_records.odin`): `.records` tables of the `@(record)` types
-  ([game data](../../mirai-core/references/core.md#game-data)). A table is `records` (its path
-  with or without extension, or its id) and a row, its name. Each change is an undo step and leaves
-  the file unsaved; a change the table does not admit fails with the row, the field or the column
-  and what value is expected.
+    They are an undo step.
+- **Game data** (`records.*`, `api_records.odin`): `.records` tables of the `@(record)` types ([game
+  data](../../mirai-core/references/core.md#game-data)). A table is `records` (its path with or
+  without extension, or its id) and a row, its name. Each change is an undo step; a change the table
+  does not admit fails with the row, the field or the column and what value is expected.
   - `records.types`: each type as `library.Name`, with its description, its fields (type, options
     of an enum, `records` of the type a `core.Record` names, description) and its tables.
   - `records.create {path,type}` creates an empty table of that type, the only method that does;
@@ -912,22 +894,12 @@ of an instance" are `-32602`; the rest, `-32000`
     nothing and there are no formulas. It is one step; returns
     `{updated,added,rejected:[{line,row,reason}]}`, and an invalid header writes nothing.
     `records.export {records,file}` writes that CSV.
-- **Unsaved assets.** The methods that edit assets (`material.*`, `particle.*`, `sound_set.*`,
-  `records.*`) and programs (`material.program.create` and `edit`) change them in memory, in an
-  undo step attributed to the AI turn that calls:
-  - `asset.unsaved`: `{assets:[{path,removed,asset,kind}],scene:[path]}`; `scene` are those the
-    document's scene uses, also through dependencies and through the programs of its materials. A
-    program has `kind:"program"`, without `asset`, and `path` is the path of its `.slang` under the
-    project (`engine/...` for one of the engine).
-  - `asset.save`: `assets` (paths under the assets folder, ids or the path of a program) or
-    `all:true`; without either, the unsaved assets of the turn of the caller, or every one outside
-    a turn. Writes their files and returns `{saved}`; a file that cannot be written is named with
-    its cause; like Save, it waits for Edit (a running
-    game reads those files). With `folder` (inside the project's `.mirai/tmp/`) it writes copies
-    there, with the same paths, and leaves them unsaved: this is how an agent tests without
-    touching the project.
-  - `asset.discard`: the same, and gives them back what their files have; one that existed only in
-    memory disappears. An AI turn cannot discard.
+- **Files of assets.** The methods that edit assets (`material.*`, `particle.*`, `sound_set.*`,
+  `records.*`) and programs (`material.program.create` and `edit`) change their files in an undo
+  step attributed to the AI turn that calls; the flush writes them when the call ends. Every edit
+  reaches its file, so what is only to be tried or verified is done on a copy under `.mirai/tmp/`
+  (`mirai session start --copy`, or `asset.move` with `copy`;
+  [AGENTS.md](../../../../AGENTS.md#verification)).
 
 ## Graphics and settings
 
@@ -1011,21 +983,21 @@ of an instance" are `-32602`; the rest, `-32000`
   the call) and its `overlays`, which replace the ones it has; what it is not given stays. An
   out-of-range value, a field the type does not have or a name its program does not have is `-32602`
   and changes nothing. What a single entity changes is its `Material_Values`, which the inspector
-  edits. `material.set` leaves the `.mat` in memory, unsaved, in an undo step attributed to the AI
-  turn that calls them. In an imported material, a field that ends up different from what was
-  imported goes to `overrides`.
+  edits. `material.set` writes the `.mat` in an undo step attributed to the AI turn that calls them.
+  In an imported material, a field that ends up different from what was imported goes to
+  `overrides`.
 - `material.instance.*`: what an entity with `Mesh_Renderer` shows of the material of a slot
   (`slot`, 0 if missing), its `Material_Values`, as the inspector edits it; the overlays are the
   first slot's. `set` takes `values` (as `inspect` gives them: those that differ from the material
   become the entity's), `parameters` of the program, `textures` by map (`maps.base_color`) or
   program texture, and `overlays` (`null` gives back those of the material); the material does not
   change. `revert` removes the slot's from it. `apply` writes it to the slot's material and removes
-  it from the entity, in one undo step and in memory like every edit (`asset.save` writes the file);
+  it from the entity, in one undo step, like every edit;
   a slot the entity changes nothing of, or with the default material, which has no file, is
   `-32602`.
 - `material.revert`: `material` and `paths` (comma-separated paths, as `overrides` gives them, or a
   whole part: `coat`, `maps.normal`; empty: the whole material). Those parts take what the source
-  gave and stop being overrides, in an undo step and unsaved, and the result is that of
+  gave and stop being overrides, in an undo step, and the result is that of
   `material.inspect`. A material that was not imported or a path that is not part of
   `Material_Info` is `-32602` and changes nothing.
 
@@ -1047,8 +1019,7 @@ The methods serve the programs of all domains (Surface, PostProcess, Vfx and UI)
 result is the one the source declares. A program is named by `program` (name or path of the
 `.slang`) or, a Surface one, by `material` (the `.mat` that uses it). It is looked up in the
 project's `shaders/`, in those of its active plugins and in the engine's `shaders/materials`, also
-among those created unsaved. The methods read the source the editor has: the unsaved one or the
-file's.
+The methods read the source the editor has.
 
 - `material.program.check` compiles it without publishing where it runs (a Surface in a raster
   stage and in a ray one; the others in the engine stages that evaluate them), with the project's
@@ -1059,12 +1030,12 @@ file's.
   with `source` or the template of its `kind` (without `kind`, the one `source` declares, or
   `surface`). A name that a program of the project, its plugins or the engine already has, one that
   is not an identifier or `pbr`, and a source that does not declare `//! mirai <kind> <program>` are
-  `-32602`. After that it goes on like `edit`: check, the `.slang` in memory as an undo step and
+  `-32602`. After that it goes on like `edit`: check, the `.slang` written as an undo step and
   publishing.
 - `material.program.edit`: with `source` it replaces the whole file; the last one wins
   ([concurrency](api.md#concurrency-transactions-and-undo)).
   It does the check first: with errors it does not write and the `-32602` carries the result of the
-  check in `data`. Then it changes the `.slang` in memory, as an undo step (part of the turn's
+  check in `data`. Then it writes the `.slang` as an undo step (part of the turn's
   revision), and publishes the project's programs with that source: first the stages of the
   previews, then those that run the frames and finally the idle ones
   ([publishing](../../mirai-rendering/references/shaders.md#publication-from-the-editor)).
@@ -1082,8 +1053,7 @@ file's.
 [Collaboration](../../mirai-editor/references/collaboration.md). In `peers` of `collab.status`,
 `playing` says that editor is in a Play or Simulate of its own and `serving`, that it serves a
 networked game; `unsent` lists the asset files changed in the session that the others do not have
-because they are too large to travel. `collab.join` fails with unsaved changes unless `discard`;
-an invalid code is `-32602`.
+because they are too large to travel. an invalid code is `-32602`.
 
 ## Project panels
 

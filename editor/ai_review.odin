@@ -450,7 +450,7 @@ ai_review_reconcile :: proc(s:^Session,m:^Ai,task:^Ai_Task) {
         task.declined,task.undone,task.review_finished=true,true,true
         task.review.pending=false
         task.question=.None
-        ai_transcript_add(&task.transcript,AI_UNSAVED_NOTE,.Note)
+        ai_transcript_add(&task.transcript,AI_UNDONE_NOTE,.Note)
     case:
         return
     }

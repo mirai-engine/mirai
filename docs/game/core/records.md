@@ -46,7 +46,7 @@ game_pickups :: proc(pickups:^core.Table(Pickup,.Read),items:core.Records(Item),
 With an editor session: `records.types` lists the record types,
 `records.create` makes a table, `records.add` and
 `records.set` write rows by field name, `records.import` and `records.export` move a CSV whose
-header is `name` and the paths of the fields, then `asset.save`.
+header is `name` and the paths of the fields.
 
 ## Pitfalls that fail silently
 

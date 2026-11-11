@@ -83,7 +83,8 @@ files_touched_settle :: proc(s:^Session,touched:^[dynamic]string,kept:^int) {
 // (the end of a call of the API, a tab that goes to the back). What cannot be
 // written is told once and tried again. False while something waits.
 files_flush :: proc(s:^Session,now:=false) -> bool {
-    if s.edits==nil || playing(s) || s.edits.open || s.edits.commit || s.edits.preview {return false}
+    if s.app==nil || playing(s) {return false}
+    if s.edits!=nil && (s.edits.open || s.edits.commit || s.edits.preview) {return false}
     for &d in s.asset_documents {if d.history.open {return false}}
     // A guest of a session writes nothing: its host does, and what the session gave it goes when it leaves.
     if st:=collab_state(s);st!=nil && st.role==.Guest {return false}
@@ -96,7 +97,7 @@ files_flush :: proc(s:^Session,now:=false) -> bool {
         }
         failed:=""
         for path in assets_held(s) {
-            if error:=asset.registry_memory_write(r,path);error!=.None {failed=path}
+            if error:=asset.registry_memory_write(r,path);error!=.None {failed=path} else {host.app_asset_written(s.app,path)}
         }
         f.seen=r.revision
         if failed!="" {
@@ -106,6 +107,7 @@ files_flush :: proc(s:^Session,now:=false) -> bool {
         }
         f.failed=false
     }
+    if s.edits==nil || s.document==nil {return true}
     document_file_follow(s)
     error:=document_flush(s)
     if error!=.None && error!=.Importing && error!=f.told {notify(s,fmt.tprintf("%s is not written: %s",document_title(s.document),document_error_text(error)))}

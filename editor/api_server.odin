@@ -406,8 +406,8 @@ api_disk_baseline :: proc(s:^Session) {
 }
 
 // What changed on disk since the last call is there for this one, whoever
-// changed it: assets are read again where they are loaded, with unsaved ones
-// kept, and shaders are published; a call that draws waits for them. False,
+// changed it: assets are read again where they are loaded, with those the
+// registry holds kept, and shaders are published; a call that draws waits for them. False,
 // with the call failed, when they could not be published.
 @(private)
 api_disk_sync :: proc(s:^Session,call:^api.Call) -> bool {
@@ -498,6 +498,8 @@ api_trampoline :: proc(call:^api.Call) {
         edits.author=st.person || st.in_call>1?author_before:history.EDIT_AUTHOR_USER
     }
     files_settle(entry.session)
+    // The files of the steps of the call are written before it answers.
+    if st.in_call==1 && !st.transaction && api_call_edits(call) {files_flush(entry.session,true)}
     if task_id!=0 {task=ai_task_find(entry.session.ai,task_id)}
     if task!=nil && base.text_get(task.name[:])!=call.client_tag {task=nil}
     if external_id!=0 {task=ai_task_find(entry.session.ai,external_id)}

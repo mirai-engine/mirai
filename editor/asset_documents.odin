@@ -17,9 +17,7 @@ import "mirai:ui"
 // quiet, and the API and the agents keep working on it. The left panel stays;
 // Details and the tools of the viewport leave. A document has its own
 // history: the files its UI writes outside a gesture of the scene are steps
-// of it (file_write), and Save writes its asset. What is unsaved is what the
-// registry holds in memory (assets_unsaved.odin), so the dot of a tab, Save
-// all and the questions about unsaved changes are those of every asset.
+// of it (file_write), written when each ends (files_flush).
 //
 // The editor draws the documents of materials, and of the source of a program
 // alone; a plugin opens the kinds its storage declares with an
@@ -221,8 +219,6 @@ asset_document_active :: proc "contextless" (s:^Session) -> ^Asset_Document {
 // picking and edits by hand wait.
 scene_covered :: proc "contextless" (s:^Session) -> bool {return asset_document_active(s)!=nil}
 
-// The path its unsaved changes are kept by: in the registry, or the absolute
-// one of the source of a program alone. Empty for an asset that is gone.
 // What the plugin of a document says it shows now (Asset_Document.shown).
 asset_document_show_say :: proc(d:^Asset_Document,text:string) {base.text_set(d.shown[:],text)}
 
@@ -566,8 +562,8 @@ asset_workspace_details :: proc(s:^Session) -> (document,details:ui.Panel_Float,
     return document,details,max(room-2*DETAILS_MARGIN,120)
 }
 
-// The room the toolbar leaves to the document in front, after save, undo
-// and redo, as the last frame laid it out: a plugin builds what plays there
+// The room the toolbar leaves to the document in front, after undo and
+// redo, as the last frame laid it out: a plugin builds what plays there
 // in a box that floats over it.
 asset_toolbar :: proc(g:^Editor_Ui) -> (rect:ui.Rect,ok:bool) {
     return ui.widget_rect(g.ctx,shell_id(g,"asset_toolbar"))

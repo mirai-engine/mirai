@@ -405,7 +405,7 @@ this plugin the editor shows nothing of networking.
 
 - With **Online** players (run menu or `play.start` with `online` and `ping_ms`), or while it
   shares its scene as host, Play serves the game from its own world; without online it serves only
-  guests. With unsaved assets, the bar asks and the API fails listing them, except `saved_only`.
+  guests.
 - Serving: the scene is written to `.mirai/play/play.scene` and the world of Play opens a server
   (`Session_Request.open`) on the first free UDP port from `Net_Settings.port`, with a new token;
   its local players play in it and, as soon as the server listens, one `mirai-player` is opened per

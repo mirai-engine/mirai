@@ -413,7 +413,7 @@ scene_load_file :: proc(s:^Session,file:string) -> (loaded:^asset.Scene,error:Do
         return nil,.Not_A_Scene
     }
     // Its instances follow their prefabs before the World takes them: no step holds that, and the
-    // document is as its file until it is saved.
+    // document is as its file until a step writes it.
     resolved:asset.Asset
     defer asset.asset_close(&resolved)
     document:=&source
@@ -450,7 +450,7 @@ scene_load_file :: proc(s:^Session,file:string) -> (loaded:^asset.Scene,error:Do
 }
 
 // Says in the console what the scenes of a load store otherwise than the
-// world reads them: a warning when a save loses values or nothing reads them.
+// world reads them: a warning when a write loses values or nothing reads them.
 stored_log :: proc(s:^Session,stored:[]scene.Stored) {
     for entry in stored {
         name:="a scene"

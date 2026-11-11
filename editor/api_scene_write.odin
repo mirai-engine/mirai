@@ -49,7 +49,7 @@ Api_Scene_Write_Params :: struct {
     select:bool `mirai:"optional,label=true: the entities it made are what the editor has selected after it"`,
     root:string `mirai:"entity,optional,label=by its name, a path Parent/Child or its id, the entity the document declares with what hangs from it: entities holds that one entity. Left out: entities are those at the top of the scene"`,
     replace:bool `mirai:"optional,label=true: the document declares all there is under root, or in the scene without root, and what it leaves out goes: entities, components and fields. Left out: what it leaves out stays as it is, and it names only what it changes or adds"`,
-    kind:Document_Kind `mirai:"optional,label=what the document is from now on, which Save writes: a scene, shown in its own light, or a prefab, with exactly one root, shown in the studio light and placed as instances. Left out: it stays what it is"`,
+    kind:Document_Kind `mirai:"optional,label=what the document is from now on, which its file keeps: a scene, shown in its own light, or a prefab, with exactly one root, shown in the studio light and placed as instances. Left out: it stays what it is"`,
     entities:[]Api_Scene_Write_Entity `mirai:"label=the entities, nesting what hangs from each by children; matched by id, else by name among siblings, else (with replace) by place, and the others are made"`,
 }
 Api_Scene_Write_Entity :: struct {
@@ -417,7 +417,7 @@ api_write_target :: proc(a:^Api_Write) -> (target:author.Scene_Target,ok:bool) {
             core.world_settle(a.w)
             return before-core.world_entities(a.w).alive,""
         },
-        // The kind of the document, which Save writes.
+        // The kind of the document, which its file keeps.
         kind=proc(user:rawptr,prefab:bool) -> (bool,string) {
             a:=(^Api_Write)(user)
             d:=a.s.document

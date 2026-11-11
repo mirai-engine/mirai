@@ -39,8 +39,7 @@ difference with the catalog, it rules.
 - Walking the player to a place, with no bot, and turning the view at something: `play.step` with
   `drive` or `look_at` ([drive](../../../docs/game/testing/scenario.md#drive)).
 - Writing or changing a `.ui` (one nested document by name: `ui.write asset=<path>
-  document=@<file>
-  save=true`, `ui.inspect` reads it back): [writing-ui](../../../docs/game/ui/writing-ui.md).
+  document=@<file>`, `ui.inspect` reads it back): [writing-ui](../../../docs/game/ui/writing-ui.md).
 - Reading, checking or writing the documents of interfaces and scenes with no editor,
   from files of text:
   [`mirai ui` and `mirai scene`](references/api.md#mirai-ui-and-mirai-scene).
@@ -131,8 +130,7 @@ difference with the catalog, it rules.
    in place when only bodies or shader code changed, otherwise restarting it with its documents
    and the reason ([sessions](references/api.md#sessions)). `mirai session restart [project]`
    opens another session with the same arguments.
-7. Close with `engine.shutdown` (`discard` to discard unsaved changes) or with
-   `mirai session stop`.
+7. Close with `engine.shutdown` or with `mirai session stop`; the files already hold every edit.
 
 ### Testing like a player
 
@@ -262,8 +260,8 @@ positions misses both.
   `mirai test plugins/playtest/editor`; its filmstrip, live.
 - `mirai image` and the measure of `mirai capture`: `mirai test cook/image`; `mirai capture`
   against a project with GPU and `mirai test tools/mirai` if the CLI changes.
-- `mirai session`: `mirai test tools/mirai` covers options, the free API port, discarding copies
-  of `.mirai/tmp/`, sweeping the copies whose editor ended and process roles
+- `mirai session`: `mirai test tools/mirai` covers options, the free API port, deleting copies,
+  sweeping the copies whose editor ended and process roles
   (`tools/mirai/session_test.odin`); `restart`, the build with an open session and
   `stop --orphans` are tested with a real editor.
 - `mirai rpc` (`--select`, `--wait-until`, `describe`): `mirai test tools/mirai` and

@@ -67,8 +67,7 @@ row_find :: proc(e:^Edit,name:string) -> int {
     return -1
 }
 
-// A table as its file says now, unsaved in the memory of the registry or on
-// disk; message says why it cannot be changed when it cannot.
+// A table as its file says now, in the memory of the registry or on disk; message says why it cannot be changed when it cannot.
 load :: proc(registry:^asset.Registry,types:^asset.Types,info:^core.World_Info,id:base.Asset_Id,e:^Edit,allocator:=context.allocator) -> (message:string) {
     record,found:=asset.registry_find(registry,id)
     if !found || record.kind!=asset.KIND_RECORDS {return "It is not a .records of the assets: asset.list with kind Records lists them"}

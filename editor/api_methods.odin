@@ -391,7 +391,7 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="engine.shutdown",summary="Stops Play and quits the editor after answering.",result=type_info_of(Api_Shutdown_Result),flags={.Destructive,.As_User},run=api_shutdown})
     api_register(s,st,{name="engine.gpu_lose",summary="Makes the next submission to the GPU report the device lost, as a reset of the GPU does, to test what follows: the editor starts again with its documents, and ends if it was started again for a loss less than a minute before.",result=type_info_of(Api_Gpu_Lose_Result),flags={.Destructive,.As_User},run=api_gpu_lose})
     api_register(s,st,{name="editor.inspect",summary="What the editor shows and the entries of its menus, shortcuts and buttons: the method each one calls, with what params, and whether it is off or checked for the person now.",result=type_info_of(Api_Editor_Inspect),flags={.Read_Only},run=api_editor_inspect})
-    api_register(s,st,{name="editor.section_edit",summary="Edits the section of a Scene_Reference in its world: its entities are edited here, scene.save writes its scene too, and everything else reads only. id 0 stops. Returns the reference edited.",params=type_info_of(Api_Section_Edit_Params),result=type_info_of(Api_Section_Edit_Result),run=api_section_edit})
+    api_register(s,st,{name="editor.section_edit",summary="Edits the section of a Scene_Reference in its world: its entities are edited here, its scene is written too, and everything else reads only. id 0 stops. Returns the reference edited.",params=type_info_of(Api_Section_Edit_Params),result=type_info_of(Api_Section_Edit_Result),run=api_section_edit})
     api_register(s,st,{name="editor.section_preview",summary="Draws the sky and the sun of the section of a Scene_Reference instead of those on, in the view of the editor only: not an edit, not saved, and Play starts without it. id 0 goes back. Returns the sky and the sun drawn.",params=type_info_of(Api_Section_Preview_Params),result=type_info_of(Api_Section_Preview_Result),run=api_section_preview})
     api_register(s,st,{name="editor.sections",summary="The sections of the scene as the World panel maps them: each Scene_Reference with its rule, the state it asks, what the view of the editor asks of it (view; Auto for nothing) and what it shows, its box, and what it costs (entities, meshes and textures of its scene, GPU bytes they hold now and bytes of their files); with the sources the sections stream around and the camera of the editor.",flags={.Read_Only},result=type_info_of(Api_Sections_Result),run=api_sections})
     api_register(s,st,{name="editor.section_view",summary="Turns a section on (Active), loaded and off (Loaded) or off (Unloaded) in the view of the editor alone, or gives it back to what its reference asks (Auto): not an edit, not in the undo and not saved; Play starts with what the references ask. It loads over the next frames: shown in editor.sections says when it is there. Returns the section.",params=type_info_of(Api_Section_View_Params),flags={.Idempotent,.View},result=type_info_of(Api_Section),run=api_section_view})
@@ -1513,8 +1513,7 @@ built_loading :: proc(s:^Session,user:rawptr) -> bool {
 @(private)
 api_build_status :: proc(s:^Session,call:^api.Call) {api_build_result(s,call)}
 
-// build.start with target shaders: published again from their files and what
-// the editor holds unsaved, answering once the viewport has them.
+// build.start with target shaders: published again from their files, answering once the viewport has them.
 @(private)
 api_build_shaders :: proc(s:^Session,call:^api.Call,seconds:int) {
     started:=time.tick_now()

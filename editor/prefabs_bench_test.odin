@@ -7,7 +7,7 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/history"
 
-// The time of a Save, which derives the overrides of every instance, and of
+// The time of a write of the scene, which derives the overrides of every instance, and of
 // placing one instance more, in a scene that holds many. Run with
 //   mirai test editor prefab_save_and_placing_in_a_scene_of_many_instances -define:EDITOR_PREFAB_BENCH=true
 

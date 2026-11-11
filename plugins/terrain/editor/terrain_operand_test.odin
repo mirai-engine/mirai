@@ -182,5 +182,6 @@ the_surface_of_a_volume_is_saved_as_a_mesh_asset :: proc(t:^testing.T) {
     view,error:=asset.mesh_view(&file,&assets.types)
     testing.expect_value(t,error,asset.Error.None)
     testing.expect(t,view.info!=nil && view.info.triangle_count>=2*14*14,"the top of the block and its sides")
+    testing.expect(t,history.edits_commit(&edits,ref,&selection))
     testing.expect(t,editor.files_flush(&session,true) && os.exists(fmt.tprintf("%s/dug.mesh",root)))
 }

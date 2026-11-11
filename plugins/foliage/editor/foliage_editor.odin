@@ -23,9 +23,8 @@ import "base:runtime"
 // types on the surface under the brush and take them out, Generate turns the
 // generator of the cells under it on or off, and Select takes one instance
 // under the pointer, which the gizmo moves, turns and scales and Delete takes
-// out. Each change is a step of undo: the source goes to the
-// memory of the registry, unsaved, outside the history (editor.file_set),
-// and the step keeps the revision of the Foliage that show it; the tool
+// out. Each change is a step of undo: the source goes to its file outside
+// the history (editor.file_set), and the step keeps the revision of the Foliage that show it; the tool
 // keeps the source of each revision, which undo and redo put back.
 
 PANEL_SCOPE :: ui.Id(0x666f6c69)
@@ -131,8 +130,8 @@ foliage_file :: proc(a:^host.Assets,id:base.Asset_Id,allocator:=context.temp_all
     return asset.registry_file_path(&a.registry,file.path,allocator),true
 }
 
-// Puts a source in its file, in the memory of the registry, unsaved,
-// outside the history of the editor (foliage_history.odin).
+// Puts a source in its file, outside the history of the editor
+// (foliage_history.odin).
 foliage_write :: proc(s:^editor.Session,a:^host.Assets,id:base.Asset_Id,source:^foliage.Source) -> bool {
     path,found:=foliage_file(a,id)
     if !found {return false}
@@ -235,8 +234,8 @@ edit_commit :: proc(s:^editor.Session,t:^Foliage_Tool,world:core.World_Ref,asset
 }
 
 // Undo and redo put back the revision of a source their step holds, and
-// what changes the file outside the tool (Save, Discard, a recovery) is the
-// source of the revision its Foliage show.
+// what changes the file outside the tool (git, another tool) is the source
+// of the revision its Foliage show.
 @(step="frame",stage="begin",after="editor_tools")
 foliage_sync :: proc(s:^editor.Session,tool:^Foliage_Tool,foliages:^core.Table(foliage.Foliage,.Read),assets:^host.Assets) {
     a:=assets
@@ -607,8 +606,7 @@ choose_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,a
 }
 
 // A Foliage with a new .foliage of no types, at the target of the view. The
-// new file is part of the step: undo takes it away, and it stays in the
-// memory of the registry until it is saved.
+// new file is part of the step: undo takes it away.
 foliage_create :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,at:=[3]f32{},placed:=false,name:="") -> core.Entity {
     a:=assets
     table:=core.world_table_of(world,foliage.Foliage)

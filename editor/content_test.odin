@@ -1015,7 +1015,7 @@ content_shows_empty_folders_and_the_line_of_create :: proc(t:^testing.T) {
 }
 
 // A right click on a folder opens Create; its entry names the new asset in
-// the line, Enter makes it unsaved, and it comes selected and open.
+// the line, Enter makes it, and it comes selected and open.
 @(test)
 a_right_click_on_a_folder_creates_an_asset_named_in_place :: proc(t:^testing.T) {
     root:=base.test_folder(t,"content-create")

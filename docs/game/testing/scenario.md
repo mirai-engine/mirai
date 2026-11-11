@@ -99,13 +99,13 @@ no closer (`describe play.step` gives the defaults):
 mirai play test . shell            # one scenario by name; no name: all of tests/scenarios
 ```
 
-One line per file, `PASS` or `FAIL` with the step and what its method answered; the exit code is
-0 only when all passed. `play.scenario.run` (`path`: a file or a folder) answers
-every step with its tick and result; a file its methods would not take fails whole before the
-game starts, and it fails while a game of the caller already plays or when the game does not build.
-Outside a turn it opens the scene of the scenario if the document is another without unsaved
-changes; in a turn the document must be that scene. A long trace or filmstrip goes in a run of its
-own: the response buffer bounds the results of its steps.
+One line per file, `PASS` or `FAIL` with the step and what its method answered; the exit code is 0
+only when all passed. `play.scenario.run` (`path`: a file or a folder) answers every step with its
+tick and result; a file its methods would not take fails whole before the game starts, and it fails
+while a game of the caller already plays or when the game does not build. Outside a turn it opens
+the scene of the scenario if the document is another; in a turn the document must be that scene. A
+long trace or filmstrip goes in a run of its own: the response buffer bounds the results of its
+steps.
 
 ## Monitors
 

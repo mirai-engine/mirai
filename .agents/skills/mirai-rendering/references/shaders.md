@@ -350,19 +350,6 @@
 - `cancel(&progress)`, from another thread, stops the generation: no more stages start, the running
   tools are killed and it ends with `Result.cancelled`, without publishing.
 
-## In-memory sources
-
-- `Options.overlay` gives sources that the generation reads instead of their files: what an editor
-  has unsaved. It goes through `Sources`, so fingerprints, stamp, listings and the copy of the
-  programs see that content under the file name; a new one appears, also in a folder the disk
-  does not have yet, and a `removed` one does not. A project whose only program is a new one from
-  the overlay has its own generation.
-- What compiles stays in the cache with the fingerprint of that content: saving it leaves the
-  generation up to date without compiling.
-- If a literal include or import of a stage names a source of the overlay outside the copies, the
-  stage fails (`it includes ..., which has unsaved changes`) instead of storing in the cache the
-  code of the file with the fingerprint of the memory.
-
 ## Generation without changes
 
 - A published generation leaves `generation.json` with the request, the tools, the hash of each
@@ -447,11 +434,10 @@ it. The domain is the one the source declares.
 ### Publication from the editor
 
 `editor/material_programs.odin`: when a program source changes through the editor
-(`material.program.create` or `edit`, undo, reverting an AI turn, discarding it), a job generates
-the project shaders again without stopping the editor. The edited source goes as an
-[in-memory source](#in-memory-sources): the project's `.slang` does not change until Save, which
-does not publish again
-([unsaved programs](../../mirai-editor/references/document.md#unsaved-programs)).
+(`material.program.create` or `edit`, undo, reverting an AI turn), a job generates
+the project shaders again without stopping the editor. The edited source is written to the
+project's `.slang` at once, so generation reads the file
+([programs](../../mirai-editor/references/document.md#programs)).
 
 - The preview stages (`render.preview_shader`) are the [early ones](#early-stages-and-cancellation),
   also those of each program (`thumbnail__<Program>.frag` is early with `thumbnail.frag`): the

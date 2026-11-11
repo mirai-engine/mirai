@@ -1059,9 +1059,8 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
     if ui.box(ctx,{id=shell_id(g,"document_toolbar"),width=ui.fixed(ctx.size.x),height=ui.fixed(toolbar_height(g)),padding={10,0,10,0},gap=4,align_y=.Center,float={to=.Surface,offset={0,ui.metric(ctx,"bar_height")},layer=ui.LAYER_BAR},fill=ui.tone(ctx,"panel"),block=true}) {
         document:=asset_document_active(s)
         if document!=nil {
-            // An asset document: its save, undo and redo, and what it plays after them.
+            // An asset document: its undo and redo, and what it plays after them.
             if ui.box(ctx,{width=ui.FIT,height=ui.GROW,gap=4,align_y=.Center}) {
-                command_button(s,"save",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
                 command_button(s,"undo",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
                 command_button(s,"redo",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
             }

@@ -13,15 +13,13 @@ import gpu "mirai:render"
 // The material programs of the project are published again when a source of
 // theirs changes through the editor (an API edit, an undo, a discard): the
 // shaders of the project are generated on a job, without stopping the editor,
-// with the sources the editor holds unsaved read from its memory
-// (programs_overlay). The stages the previews draw with go first: once they
+// from the files of their sources. The stages the previews draw with go first: once they
 // compile, the renderer takes them with the new catalog and the other stages
 // as they were, and a preview shows the program. The stages the frames run
 // go next: once they compile, the renderer takes them with the idle ones as
 // they were (gpu.renderer_shaders_idle), and the viewport shows it. The whole
 // generation replaces them when it is done. A change while a job runs cancels
-// it and starts another. Saving a source needs no publication: its file then
-// holds what was published.
+// it and starts another.
 
 Programs_Publication :: struct {
     job:^build.Shaders_Job,

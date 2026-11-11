@@ -12,9 +12,8 @@ import "mirai:ui"
 // what it is: its length, its channels, its sample rate and whether it is
 // decoded while it plays. That of a .sound_set shows its sounds with their
 // weights and the ranges of volume and pitch it draws from, as rows of
-// Details; what they change is written into the .sound_set, in memory and
-// unsaved, once the UI lets go of it: a step of the history of the document
-// each time. Play, in the toolbar of both, plays it to be heard, and a set
+// Details; what they change is written into the .sound_set once the UI lets
+// go of it: a step of the history of the document each time. Play, in the toolbar of both, plays it to be heard, and a set
 // chooses one of its sounds each time.
 
 WAVE_WIDTH :: 1024

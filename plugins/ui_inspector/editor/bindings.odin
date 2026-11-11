@@ -472,7 +472,7 @@ Ui_Check_Problem :: struct {
     message:string `mirai:"label=What fails for a person"`,
 }
 Ui_Rename_Result :: struct {
-    files:[]string `mirai:"label=The paths of the .ui it changed; each waits for Save"`,
+    files:[]string `mirai:"label=The paths of the .ui it changed"`,
 }
 
 @(private)

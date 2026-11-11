@@ -120,7 +120,7 @@ inspector use them.
 - **Renaming.** The member is renamed in code, with the types in view (the rename of an editor of
   code, or an agent), and the game built. Then `names.rename` on `Action` follows it: the entry of
   the project's `Input_Settings` takes the new name, and the documents that keep the action
-  (scenes, prefabs, records) too, as edits, unsaved, one step of history each. It refuses while
+  (scenes, prefabs, records) too, as edits, one step of history each. It refuses while
   the built code still declares the old name or does not declare the new one; the inspector offers
   no rename for actions. Plugins' documents and players' saves keep the old name and lose it, as
   with the member of any enum. `names.create` does not declare actions: the member and its default

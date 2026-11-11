@@ -215,8 +215,9 @@ scripts. Looking at how something looks does not require removing the frame limi
   fails on `main` is stated in the report. A change does not land by deleting a test case or
   widening a limit: a case that no longer applies is named in the report, with the reason.
 - Preserve local changes. Report what was checked and in which environment.
-- Against an open editor, work on a copy: `scene.save` only to `.mirai/tmp/`, never over a
-  versioned asset.
+- Against an open editor every edit is written to its file. To try or verify something of your
+  own, work on a copy under `.mirai/tmp/` (`mirai session start --copy`, or `asset.move` with
+  `copy`); edit a versioned asset itself only when the task asks for that change.
 
 ## Parallel work
 

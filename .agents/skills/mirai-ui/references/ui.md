@@ -371,7 +371,7 @@ All take the context, an id and their state by parameter.
     pointer, or over it where it does not fit under.
   - A click outside a popup only closes it; Escape closes the last (the submenu first).
   - A `modal` with `close` is dismissed with its cross or a click outside, and whoever opened it
-    closes it. The questions (save, recover) are not dismissed.
+    closes it. The questions (quit, replace the scene) are not dismissed.
 - **Scroll** (`scroll.odin`): the offset belongs to the caller. `list_begin` and `rows_begin` build
   only the visible rows (equal ones, or of heights that the caller measured once).
   - An area that scrolls horizontally leaves its content as wide as it asks, so a paragraph is not

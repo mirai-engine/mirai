@@ -16,7 +16,7 @@ import "mirai:std/serial"
 import "mirai:ui"
 
 // A project whose .ui only the memory of the registry holds, as an editor
-// leaves them unsaved.
+// holds them until their step is written.
 @(private="file")
 Project :: struct {
     root:string,
@@ -388,7 +388,7 @@ a_write_refuses_the_paths_the_game_lacks_and_changes_nothing :: proc(t:^testing.
         api_tree_write(s,&call)
         return call.error.message,!call.failed && answer.ok
     }
-    // What the files hold before: saved, with nothing waiting for Save.
+    // What the files hold before, on disk.
     files:=[?]struct{path:string,id:base.Asset_Id,document:string}{{"hud/stat.ui",STAT_ID,PATHS_STAT},{"hud/hud.ui",HUD_ID,PATHS_HUD},{"hud/stale.ui",STALE_ID,PATHS_STALE}}
     for f in files {
         if _,made:=project_doc(t,&p,f.path,f.id,f.document);!made {return}
@@ -435,8 +435,8 @@ a_write_refuses_the_paths_the_game_lacks_and_changes_nothing :: proc(t:^testing.
         message,written:=write(&s,c.asset,c.node,c.document)
         if !testing.expectf(t,!written,"%s was written",c.document) {continue}
         for part in c.says {testing.expectf(t,strings.contains(message,part),"%s\nlacks: %s\nsays:  %s",c.document,part,message)}
-        _,unsaved:=asset.registry_memory_find(&p.assets.registry,c.asset)
-        testing.expectf(t,!unsaved,"%s waits for Save after a refused write",c.asset)
+        _,held:=asset.registry_memory_find(&p.assets.registry,c.asset)
+        testing.expectf(t,!held,"the registry holds %s after a refused write",c.asset)
     }
     testing.expect(t,saved(&p,"hud/hud.ui")==hud_before,"the file is as it was")
     host.assets_scan(&p.assets)
@@ -467,8 +467,8 @@ a_write_refuses_the_paths_the_game_lacks_and_changes_nothing :: proc(t:^testing.
     }
     testing.expect(t,holds(&hud,"slots","cell") && holds(&hud,"cell","slot") && holds(&hud,"enemies","foe"),doc_text(&p,&hud))
     testing.expect(t,author.document_row_of(&hud,"enemy")<0 && author.records_subtree(hud.nodes[:],author.document_row_of(&hud,"enemies"))==1,"what the List held went")
-    _,unsaved:=asset.registry_memory_find(&p.assets.registry,"hud/stale.ui")
-    testing.expect(t,unsaved,"a write the game takes waits for Save")
+    _,held:=asset.registry_memory_find(&p.assets.registry,"hud/stale.ui")
+    testing.expect(t,held,"the registry holds a write the game takes until its step is written")
     // Written whole, the file answers for every path it holds.
     stale:author.Records
     if !project_records(t,&p,STALE_ID,&stale) {return}

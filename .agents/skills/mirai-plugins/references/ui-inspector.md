@@ -15,11 +15,10 @@ and the types of its tables, so the methods here and
 ## Document
 
 - Its provider (`editor.Asset_Document_Provider`) declares the type and that it has its own
-  hierarchy. Each change enters the document's history (`editor.file_write`) and Save writes the
-  file with `host.ui_tree_save`; records that `ui.tree_load` rejects are not saved, and the
-  warning says why. An undo or a redo reads the file again and chooses the node that changed
-  (`records_changed_row`); the file is re-read only when its size and time or the history cursor
-  change, not after its own write.
+  hierarchy. Each change enters the document's history (`editor.file_write`) and the flush writes
+  the file; records that `ui.tree_load` rejects are not written, and the warning says why. An undo
+  or a redo reads the file again and chooses the node that changed (`records_changed_row`); the file
+  is re-read only when its size and time or the history cursor change, not after its own write.
 - What a gesture leaves pending goes to its document's history (`inspector_flush`) before another
   document comes to the front, on Play and on each API call that reads or writes a `.ui`.
 - On writing, the keys of each track are left in time order and the rows that nothing uses go away
@@ -38,7 +37,7 @@ and the types of its tables, so the methods here and
   itself. The nodes of an unfolded instance are read-only (their own document changes them).
 - Copy, Paste, Duplicate and Delete act on all the chosen ones (a node inside another chosen one
   goes with it). **Make widget** moves a Box and what it has into a new `.ui` next to the file,
-  unsaved, with a parameter per named text or binding, and puts a use in its place: what is
+  with a parameter per named text or binding, and puts a use in its place: what is
   reusable is another `.ui`.
 - Copy stores the nodes as records of their own (`Clip_Nodes`) with the rows and texts that they
   use, so they paste into any `.ui` (`records_paste_rows`, `merge_put`): a named style of the same
@@ -89,8 +88,7 @@ and the types of its tables, so the methods here and
 - A named style does not change from a node: the first change makes the node an override (an
   unnamed style that `extends` it, marked with `*`), which says only what differs and follows later
   changes of the style in the rest. **Apply to style** writes it into the style, with its variants,
-  and its nodes return to it (`records_style_save`); **Revert** discards it. Save only writes the
-  file.
+  and its nodes return to it (`records_style_save`); **Revert** discards it.
 - Choosing a sound in Events on a node whose style is shared asks whether it goes to the node (an
   override) or to the style, which sounds it in all its nodes.
 - A style without nodes is deleted (`records_style_remove`); an override counts for its style.
@@ -174,7 +172,7 @@ An agent authors an interface without opening the document: it reads and writes 
 or changes a part with one method per part. The methods read free parameters: the fields go by the
 names of `ui.Tree_Node`, `ui.Node_Style` and `ui.Tree_Image` (`engine.describe` gives the schemas).
 A node is named by its name or by `#row`. Each write enters the document's history as a change
-made by hand, nothing is saved until Save, and one that would leave a tree that does not load
+made by hand, and one that would leave a tree that does not load
 changes nothing and says why.
 
 - `ui.inspect` gives the `.ui`, or with `node` that node and what it has, as the document that
@@ -184,8 +182,7 @@ changes nothing and says why.
   not give. Reading back names: what is written and read back is the same, and what the visual
   editor changed reads back by name too.
 - `ui.write` makes the file, or `node`, say what the document declares, in one step; a path that
-  does not exist yet makes the `.ui` and `save=true` writes the file (what an agent passes; a
-  person saves with Save). On the command line `document=@file` reads it from a file:
+  does not exist yet makes the `.ui`. On the command line `document=@file` reads it from a file:
   - The document's nodes replace those of the part: they are matched by name and type (an unnamed
     one, by place among the unnamed ones of its type in the same container) and keep what ties
     them to the file (the overrides of an instance); the others are

@@ -15,9 +15,8 @@ import "mirai:ui"
 // document declares. The document is read and written below the editor
 // (cook/author); here its methods find the file among the assets of the
 // session and write it as a step of its history. A node is named by its name,
-// or by "#row". Each call is one step of the history of the file, which waits
-// for Save; a call that would leave a tree that does not load changes nothing
-// and says why.
+// or by "#row". Each call is one step of the history of the file; a call that
+// would leave a tree that does not load changes nothing and says why.
 
 @(storage)
 Ui_Tree_Api :: struct {provider:editor.Api_Provider}

@@ -13,9 +13,9 @@ and stands it on the [ground](#ground) of the world.
   like that of a [terrain](terrain.md). `revision` (read-only) is the key of the
   [tool](#tool)'s history, its sole writer: the runtime does not touch it, so undoing to revision 0
   of an imported level restores the source of that revision.
-- `foliage_load` reads the sources through `host.assets_file` (with what the registry holds
-  unsaved) and reads them again when the stamp of their file changes; one that cannot be read is
-  the `foliage.source_unread` problem of its entity. `Foliage_Data` is copied with the world (Play,
+- `foliage_load` reads the sources through `host.assets_file` (with what the registry holds) and
+  reads them again when the stamp of their file changes; one that cannot be read is the
+  `foliage.source_unread` problem of its entity. `Foliage_Data` is copied with the world (Play,
   rollback).
 - Each cell in memory has a version: reading the source again keeps that of the equal cells
   (`cells_version`) and gives the next one to those that changed; another seed or other types
@@ -328,9 +328,9 @@ the registry's memory as a file of the undo step that creates it.
 - **Undo**: the step stores the revision of the `Foliage`s; as in the terrain
   ([history](terrain.md#tool)), the tool stores the head of each source and each step only the
   cells, types and info that changed (`foliage_history.odin`); undo and redo change them with the
-  head and `foliage_sync` writes it with `editor.file_set`. Nothing reaches disk until Save; Save
-  and Discard change the file and the current revision takes what it has, without redo bringing
-  back what was discarded.
+  head and `foliage_sync` writes it with `editor.file_set`. The file is rewritten when the step
+  ends; one changed outside the tool (git, another tool) is taken as the current revision, without
+  redo bringing back what it replaced.
 - Radius, densities, Ground only and the Reapply checkboxes are stored in the editor preferences
   (`Foliage_Tool`).
 - `foliage_cells` inspection mode (Advanced → Foliage): the outline of each cell near the view over
@@ -382,7 +382,7 @@ the registry's memory as a file of the undo step that creates it.
   `an_entity_with_a_replicated_object_component_reaches_a_client` in `plugins/multiplayer/runtime`.
 - Ground (`plugins/foliage/runtime`): `the_ground_of_foliage_is_read_where_the_ground_changed`.
 - `mirai test plugins/foliage/editor -collection:plugins=<root>/plugins`:
-  `foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved`,
+  `foliage_strokes_and_selections_are_steps_of_undo_written_at_the_flush`,
   `a_move_of_an_imported_foliage_is_undone_back_to_revision_zero`,
   `a_canceled_stroke_puts_back_what_the_file_held`,
   `the_brush_fills_to_its_density_with_spacing_and_stands_on_the_ground`,

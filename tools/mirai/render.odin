@@ -926,7 +926,17 @@ render_capture :: proc(e:^Render_Editor,path:string,frames:int) -> bool {
 @(private="file")
 render_measure :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,size:[2]int,folder:string) -> (m:Render_Measure) {
     m.view,m.size,m.luma_target=view.name,size,view.luma
-    if _,ok:=render_call(e,"scene.open",struct{path:string}{view.scene});!ok {
+    scene:=view.scene
+    // A view that pushes an entity edits its scene, which the editor writes at once: it runs on a copy.
+    if view.push.frames>0 {
+        source:=project.path(project.folder_path(e.run.project,.Assets,context.temp_allocator),view.scene,allocator=context.temp_allocator)
+        copied:=project.path_absolute(project.path(e.run.project,".mirai/tmp/render",filepath.base(view.scene),allocator=context.temp_allocator),context.temp_allocator)
+        if data,read:=os.read_entire_file(source,context.temp_allocator);read==nil {
+            _=os.make_directory_all(filepath.dir(copied))
+            if serial.file_write_atomic(copied,data)==.None {scene=copied}
+        }
+    }
+    if _,ok:=render_call(e,"scene.open",struct{path:string}{scene});!ok {
         m.scene_missing=!os.is_file(project.path(project.folder_path(e.run.project,.Assets,context.temp_allocator),view.scene,allocator=context.temp_allocator))
         m.failure=m.scene_missing?fmt.aprintf("this build has no scene %s",view.scene):"scene.open failed"
         return

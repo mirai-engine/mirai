@@ -261,7 +261,7 @@ foliage_stamp :: proc(a:^host.Assets,id:base.Asset_Id) -> File_Stamp {
 }
 
 // Reads a source as the registry of the assets holds it: what its memory
-// keeps unsaved, or the file.
+// holds until the file is written, or the file.
 foliage_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=context.allocator) -> bool {
     file:asset.Asset
     if host.assets_file(a,id,FOLIAGE_KIND,&file)!=.None {return false}

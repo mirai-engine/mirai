@@ -1129,7 +1129,7 @@ a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_th
         {`{"steps":[{"method":"play.check","params":{"conditions":[{"storage":"Nothing"}]}}]}`,"steps[0] play.check: conditions[0]"},
         {`{"steps":[{"method":"play.step","params":{"drive":{"position":[100,0,0],"move":"move"},"for":2}}]}`,"the drive did not arrive"},
         {`{"steps":[{"method":"play.step","params":{"ticks":"many"}}]}`,"steps[0].params"},
-        {`{"steps":[{"method":"scene.save","params":{}}]}`,"steps are play methods"},
+        {`{"steps":[{"method":"scene.open","params":{"path":"other.scene"}}]}`,"steps are play methods"},
         {`{"steps":[{"method":"scene.write","params":{"entities":[]}}]}`,`give scene.write "world": "Game"`},
         {`{"steps":[{"method":"play.start"}]}`,"leave it out"},
         {`{"steps":[{"method":"play.nothing"}]}`,"is not a method"},

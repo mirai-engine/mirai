@@ -16,9 +16,9 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 // material.program.*: the Slang source of a program (Surface, PostProcess,
-// Vfx or UI) as the agent works on it, as it is now (unsaved, or its file).
-// check compiles it without publishing; create and edit change the source in
-// memory as a step of undo (attributed to the turn that asks) once it
+// Vfx or UI) as the agent works on it, as its file holds it.
+// check compiles it without publishing; create and edit write the source as
+// a step of undo (attributed to the turn that asks) once it
 // compiles, and publish the programs of the project; inspect gives the
 // source with its parameters and the graph derived from it. The domain of a
 // program is the one its source declares.
@@ -95,8 +95,8 @@ Api_Material_Program_Create_Params :: struct {
 @(private)
 programs_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="material.program.check",params=type_info_of(Api_Program_Params),summary="Compiles a program without publishing it, where it runs (a Surface program for raster and for ray hits), and reads its source for the usual mistakes.",result=type_info_of(Api_Program_Result),flags={.Read_Only,.Idempotent},run=api_program_check})
-    api_register(s,st,{name="material.program.create",params=type_info_of(Api_Material_Program_Create_Params),summary="Makes a new program in the shaders folder of the project once it compiles, in memory as one undo step until asset.save writes its .slang, and publishes the programs of the project.",result=type_info_of(Api_Program_Result),run=api_program_create})
-    api_register(s,st,{name="material.program.edit",params=type_info_of(Api_Program_Params),summary="Changes the source of a program once it compiles, in memory as one undo step until asset.save writes its .slang, and publishes the programs of the project.",result=type_info_of(Api_Program_Result),run=api_program_edit})
+    api_register(s,st,{name="material.program.create",params=type_info_of(Api_Material_Program_Create_Params),summary="Makes a new program in the shaders folder of the project once it compiles, writing its .slang as one undo step, and publishes the programs of the project.",result=type_info_of(Api_Program_Result),run=api_program_create})
+    api_register(s,st,{name="material.program.edit",params=type_info_of(Api_Program_Params),summary="Changes the source of a program once it compiles, writing its .slang as one undo step, and publishes the programs of the project.",result=type_info_of(Api_Program_Result),run=api_program_edit})
     api_register(s,st,{name="material.program.inspect",params=type_info_of(Api_Program_Params),summary="The source of a program, the fields of its struct Parameters and the graph derived from the source.",result=type_info_of(Api_Program_Inspect),flags={.Read_Only,.Idempotent},run=api_program_inspect})
 }
 
@@ -290,7 +290,7 @@ api_program_create :: proc(s:^Session,call:^api.Call) {
     program_write(s,call,name,path,text,true,sources,"Create program")
 }
 
-// Checks the source of a program and, once it compiles, writes it in memory
+// Checks the source of a program and, once it compiles, writes its file
 // as a step of undo named label (no step when it is unchanged) and publishes
 // the programs of the project. With errors nothing changes and the error data
 // is the result of the check.

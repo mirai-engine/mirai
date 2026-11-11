@@ -479,7 +479,7 @@ material_variant_set :: proc(s:^Session,w:^Material_Document) {
 }
 
 // Writes the material with the values of the variant the preview shows as a
-// new material beside it, named after both, unsaved like the rest of the
+// new material beside it, named after both, as a step of the
 // document. Its document does not open: the variants stay to save others.
 @(private)
 material_variant_save :: proc(s:^Session,w:^Material_Document) {

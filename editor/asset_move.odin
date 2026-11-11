@@ -21,8 +21,8 @@ import "mirai:std/serial"
 // asset names its id, which moving keeps: references, Recent, Favorites and
 // open documents follow it. An asset moves with the parts it owns, which keep
 // where they are beside it; an import keeps its source, which Import_Info
-// names from the project. What has unsaved changes does not move until it is
-// saved or discarded. A duplicate is a new asset with ids of its own, and no
+// names from the project. What is being edited does not move until its step
+// ends. A duplicate is a new asset with ids of its own, and no
 // output of an import.
 
 Api_Asset_Move_Params :: struct {
@@ -209,7 +209,7 @@ asset_folder_move :: proc(s:^Session,from,folder,name:string) -> (path,message:s
 // free name, or into folder (of the registry) under name without its
 // extension ("": a free one); the parts keep where they are beside it. Every
 // copy has a new id, and what the copies name of each other they name of the
-// copies. What memory holds unsaved of them is what is copied. Returns the
+// copies. What memory holds of them is what is copied. Returns the
 // copy, or what failed.
 asset_duplicate :: proc(s:^Session,id:base.Asset_Id,folder:Maybe(string)=nil,name:="") -> (copy:base.Asset_Id,path,message:string) {
     if refusal:=asset_create_refusal(s);refusal!="" {return {},"",refusal}

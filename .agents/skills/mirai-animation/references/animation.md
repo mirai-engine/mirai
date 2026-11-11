@@ -59,7 +59,7 @@ The `.character` set:
 Shared assets:
 
 - Skeletons, skins and sets are read through the registry with `host.assets_file`, like the `.anim`:
-  an unsaved asset is seen like one on disk.
+  an asset a step has not flushed yet is seen like one on disk.
 - Each cache looks at the registry only when `assets_stamp` advances and rereads the file whose
   registry entry changed.
 

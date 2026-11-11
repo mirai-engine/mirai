@@ -27,7 +27,7 @@ import "mirai:ui"
 // what mirai edit opens without a project) is an editor of the empty
 // template that shows only this screen. Opening a project builds its editor
 // library in this process, as Build does, and starts the editor on it; an
-// editor of a project asks about what is unsaved and ends as it starts it.
+// editor of a project ends as it starts it.
 // Before the build, the plugins from git a new project was given are added
 // and those of its project.mirai checked out (cook/install).
 
@@ -403,7 +403,7 @@ projects_poll :: proc(s:^Session) {
         if projects_start(s) {s.quit=true}
         return
     }
-    // The editor of a project ends as the others do, asking about what is unsaved.
+    // The editor of a project ends as the others do.
     p.next,p.shown=true,false
     quit_request(s)
 }

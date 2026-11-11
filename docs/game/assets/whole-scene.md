@@ -1,28 +1,27 @@
 # A whole scene through the API
 
 A scene is a file of `assets/`, the source of the game, as a `.ui` is: an agent writes it through
-the API, a person in the editor, and nothing writes over what either saved. A prefab is a scene
-whose kind is Prefab, with one root.
-Terrain, foliage and sea go in one file, the params of one `batch`: its calls run in order, each
-finding what it needs by name ([terrain-foliage](../world/terrain-foliage.md)), and it stops at the
-first that fails. `"transaction":true` makes what they edit of the scene one step of undo:
+the API, a person in the editor, and each edit reaches its file when its step ends. A prefab is a
+scene whose kind is Prefab, with one root. Terrain, foliage and sea go in one file, the params of
+one `batch`: its calls run in order, each finding what it needs by name
+([terrain-foliage](../world/terrain-foliage.md)), and it stops at the first that fails.
+`"transaction":true` makes what they edit of the scene one step of undo:
 
 ```json
 {"transaction": true, "calls": [
-{"method":"scene.open","params":{"path":"arena/main.scene"}},
+{"method":"scene.new","params":{"path":"arena/main.scene"}},
 {"method":"terrain.create","params":{"name":"Island","samples":257,"spacing":1,"at":[0,0,0],"heightmap":"assets/island/island.png","height_scale":40}},
 {"method":"terrain.layer","params":{"entity":"Island","material":"island/sand.mat","tiling":6}},
 {"method":"terrain.layer","params":{"entity":"Island","material":"island/grass.mat","automatic":true,"height":[2.6,40],"slope":[0,42],"softness":[6,1.2]}},
 {"method":"foliage.create","params":{"name":"Plants"}},
 {"method":"foliage.type_add","params":{"entity":"Plants","mesh":"island/palm.mesh","name":"palm","density":0.007,"scale":[0.8,1.25],"align":0.15,"rule":true,"slope":[0,28],"ground_height":[0.9,6.5]}},
 {"method":"foliage.paint","params":{"entity":"Plants","mode":"generate","at":[0,0,0],"radius":82}},
-{"method":"scene.write","params":{"entities":[{"name":"Sea","components":{"Volume":{"shape":"Plane"},"Fluid":{"density":1025},"Water":{},"Fluid_Waves":{}}},{"name":"Hut","prefab":"island/hut.scene","position":[4,3,-2]}]}},
-{"method":"asset.save","params":{"all":true}},
-{"method":"scene.save","params":{}}
+{"method":"scene.write","params":{"entities":[{"name":"Sea","components":{"Volume":{"shape":"Plane"},"Fluid":{"density":1025},"Water":{},"Fluid_Waves":{}}},{"name":"Hut","prefab":"island/hut.scene","position":[4,3,-2]}]}}
 ]}
 ```
 
-`scene.save` with a new `path` writes another scene.
+`scene.new` with a `path` makes the scene there and fails if the file exists (`scene.open` opens
+it).
 
 ```sh
 mirai rpc --project . batch --file island.json
@@ -41,7 +40,7 @@ mirai rpc --project . batch --file island.json
 - A param that is exactly `"$N"` or `"$N.path"` takes what call N answered, or a field of it:
   `"root":"$7.id"` is the entity call 7 made.
 - The file is the recipe of a first version: to change the scene later, edit what it made
-  (`scene.write`, `terrain.layer`, `foliage.type_set`) and save, as with any scene.
+  (`scene.write`, `terrain.layer`, `foliage.type_set`), as with any scene.
 
 ## As a file of text
 

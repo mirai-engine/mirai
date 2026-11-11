@@ -280,9 +280,9 @@ It needs no component or configuration.
   that contains it, those that the boxes of its sections do not cover and the whole coarse graph.
   Those at the border are in both and are read once.
 - `nav.bake` makes it next to the scene, or the scene of the section edited in its world, in an
-  undo step and in the memory of the registry; afterwards the editor rewrites in memory that of
-  each `Navigation_Bake` of the edited world every time the meshes settle. Only saving the scene
-  writes it to disk (its field is `owned`).
+  undo step and through the registry; afterwards the editor rewrites that of each
+  `Navigation_Bake` of the edited world every time the meshes settle, and the flush writes it to
+  disk (its field is `owned`).
 - A world that loads the scene starts with those tiles and only builds those that changed. A file
   from another version or a damaged one is the `navigation.bake` problem and the mesh is built
   whole.
