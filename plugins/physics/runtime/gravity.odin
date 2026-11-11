@@ -37,8 +37,8 @@ gravity_value :: proc(p:Gravity_Place,row:i32) -> [3]f32 {
 // Makes what the fields keep again when a Gravity, its Volume or their
 // places changed. False without memory.
 @(private)
-gravity_fields_update :: proc(fields:^Gravity_Fields,gravities:core.Read(volume.Gravity),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform)) -> (changed,ok:bool) {
-    changed,ok=volume.index_update(&fields.index,volumes,worlds,gravities)
+gravity_fields_update :: proc(fields:^Gravity_Fields,gravities:core.Read(volume.Gravity),zones:volume.Where) -> (changed,ok:bool) {
+    changed,ok=volume.index_update(&fields.index,zones,gravities)
     if !changed {return}
     down:volume.Hits
     fields.center=false
@@ -72,10 +72,10 @@ gravity_local :: proc "contextless" (fields:^Gravity_Fields) -> bool {
 // is the same everywhere, with that of its world alone. physics_step gives it
 // after it made the bodies of the tick, which fall from their first one.
 @(private)
-gravity_apply :: proc(state:^Physics_State,gravities:core.Read(volume.Gravity),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),problems:^core.Problems) {
+gravity_apply :: proc(state:^Physics_State,gravities:core.Read(volume.Gravity),zones:volume.Where,problems:^core.Problems) {
     w:=&state.world
     fields:=&state.gravity
-    changed,ok:=gravity_fields_update(fields,gravities,volumes,worlds)
+    changed,ok:=gravity_fields_update(fields,gravities,zones)
     if !ok {memory_problem(problems,core.NONE,"the places of the Gravity fields, so the bodies fall with that of the world")}
     if !gravity_local(fields) {
         // Every body falls with the world: only a change of it reaches them.

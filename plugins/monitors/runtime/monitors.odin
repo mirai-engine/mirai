@@ -3,6 +3,7 @@ package monitors
 import "core:math"
 import "core:math/linalg"
 import "mirai:core"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -129,7 +130,7 @@ monitors_render :: proc(
     meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),
     tints:core.Read(erender.Tint),overrides:core.Read(erender.Material_Override),hidden:core.Read(erender.Hidden),
     highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),layers:core.Read(erender.Layers),
-    view:core.View,app:^host.App,frame:core.Frame_Time,view_volumes:core.Read(erender.View_Volume),volumes:core.Read(volume.Volume),
+    view:core.View,app:^host.App,frame:core.Frame_Time,view_volumes:core.Read(erender.View_Volume),volumes:core.Read(volume.Volume),sections:core.Read(scene.Scene_Reference),
     locals:core.Read(core.Transform),
 ) {
     if app.renderer==nil || app.assets==nil {return}
@@ -218,7 +219,7 @@ monitors_render :: proc(
             }
             seen:core.View
             erender.view_of_camera(&seen,cameras,exposures,worlds,a.camera,{f32(width),f32(height)})
-            erender.view_volume_expose(&seen,view_volumes,volumes,worlds)
+            erender.view_volume_expose(&seen,view_volumes,{volumes,worlds,parents,sections})
             // A level left alone for long has histories of another moment.
             stale:=fed.drawn[level]==0 || state.frame-fed.drawn[level]>interval*UNSEEN_INTERVAL+1
             if !erender.view_texture_draw(&app.extras,fed.textures[level],seen,width,height,stale,erender.pipeline_standard(app.renderer,a.light?.Light:.Full)) {continue}

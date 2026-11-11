@@ -451,8 +451,8 @@ navigation_agents :: proc(
     }
     placed:=core.join(obstacles,worlds)
     for e,_,pose in core.each_joined(&placed) {
-        size:=box_half(volumes,e) or_continue
-        half:=size*pose.scale
+        box,_:=volume_prism(volumes,e,pose.transform,0) or_continue
+        half:=(box.max-box.min)*0.5
         motion,_:=core.get(motions,e)
         append(&a.near,Near{entity=e,position=pose.position,velocity=motion.linear,radius=linalg.length(mm.Vec2{half.x,half.z}),height=half.y*2})
     }

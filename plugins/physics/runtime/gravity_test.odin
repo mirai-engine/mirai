@@ -26,8 +26,8 @@ bodies_fall_with_the_gravity_of_their_place :: proc(t:^testing.T) {
     defer physics_test_destroy(&f)
     f.fields=true
     field_place(&f,volume.GRAVITY_DEFAULT,nil,{})
-    field_place(&f,volume.Gravity{},volume.Volume{shape=.Box,extents={5,5,5},priority=1},{20,0,0})
-    field_place(&f,volume.Gravity{pull=.Center,acceleration=5,radius=2},volume.Volume{shape=.Sphere,extents={10,0,0},priority=1},{-40,0,0})
+    field_place(&f,volume.Gravity{zone={priority=1}},volume.box({5,5,5}),{20,0,0})
+    field_place(&f,volume.Gravity{pull=.Center,acceleration=5,radius=2,zone={priority=1}},volume.sphere(10),{-40,0,0})
     rigid:=RIGID_BODY_DYNAMIC
     rigid.mass=1
     falling:=physics_test_box(&f,{0,0,0},{0.2,0.2,0.2},rigid)
@@ -86,7 +86,7 @@ without_local_fields_a_body_costs_reading_the_gravity_of_the_world :: proc(t:^te
     defer physics_test_destroy(&f)
     f.fields=true
     level:=field_place(&f,volume.Gravity{acceleration=4},nil,{})
-    field_place(&f,volume.Gravity{acceleration=1},volume.Volume{shape=.Unbounded,priority=1,mode=.Add},{})
+    field_place(&f,volume.Gravity{acceleration=1,zone={priority=1,mode=.Add}},volume.world(),{})
     rigid:=RIGID_BODY_DYNAMIC
     rigid.mass=1
     floor:=physics_test_box(&f,{0,-1,0},{10,0.5,10})

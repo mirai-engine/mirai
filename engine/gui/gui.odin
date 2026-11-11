@@ -7,6 +7,7 @@ import "mirai:core"
 import audio "mirai:engine/audio"
 import inp "mirai:engine/input"
 import render "mirai:engine/render"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import "mirai:host"
 import "mirai:platform"
@@ -528,10 +529,10 @@ gui_frame_begin :: proc(
     world:core.World_Ref,screens:core.Read(UI_Screen),widgets:core.Read(World_Widget),worlds:core.Read(core.World_Transform),
     hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),meshes:core.Read(render.Mesh_Renderer),settings:UI_Settings,preferences:UI_Preferences,time:core.Time,
     seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
-    device:core.Frame_Input,cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),
+    device:core.Frame_Input,cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),sections:core.Read(scene.Scene_Reference),
     requests:^UI_Requests,effects:^UI_Effects,sounds:^audio.Sound_Requests,gui:^Gui,app:^host.App,problems:^core.Problems,
 ) {
-    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,drivables,bindings,actions,device,cameras,exposures,view_volumes,volumes,requests,effects,sounds,gui,app,problems,false)
+    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,drivables,bindings,actions,device,cameras,exposures,view_volumes,volumes,sections,requests,effects,sounds,gui,app,problems,false)
 }
 
 // The preview of the editor's world, while it does not play: the
@@ -542,11 +543,11 @@ gui_preview_begin :: proc(
     world:core.World_Ref,screens:core.Read(UI_Screen),widgets:core.Read(World_Widget),worlds:core.Read(core.World_Transform),
     hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),meshes:core.Read(render.Mesh_Renderer),settings:UI_Settings,preferences:UI_Preferences,time:core.Time,
     seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
-    device:core.Frame_Input,cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),
+    device:core.Frame_Input,cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),sections:core.Read(scene.Scene_Reference),
     requests:^UI_Requests,effects:^UI_Effects,sounds:^audio.Sound_Requests,gui:^Gui,app:^host.App,problems:^core.Problems,
 ) {
     if time.playing {return}
-    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,drivables,bindings,actions,device,cameras,exposures,view_volumes,volumes,requests,effects,sounds,gui,app,problems,true)
+    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,drivables,bindings,actions,device,cameras,exposures,view_volumes,volumes,sections,requests,effects,sounds,gui,app,problems,true)
 }
 
 @(private)
@@ -554,7 +555,7 @@ frame_begin :: proc(
     world:core.World_Ref,screens:core.Read(UI_Screen),widgets:core.Read(World_Widget),worlds:core.Read(core.World_Transform),
     hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),meshes:core.Read(render.Mesh_Renderer),settings:UI_Settings,preferences:UI_Preferences,time:core.Time,
     seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
-    device:core.Frame_Input,cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),
+    device:core.Frame_Input,cameras:core.Read(render.Camera),exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),volumes:core.Read(volume.Volume),sections:core.Read(scene.Scene_Reference),
     requests:^UI_Requests,effects:^UI_Effects,sounds:^audio.Sound_Requests,gui:^Gui,app:^host.App,problems:^core.Problems,preview:bool,
 ) {
     if gui==nil {return}
@@ -613,7 +614,7 @@ frame_begin :: proc(
         s.key=key
         s.input=input
         s.viewed,s.animating=false,false
-        source_bind(&s,gui,app,p,seat_state,seats,bindings,actions,cameras,exposures,view_volumes,volumes,worlds,settings,preferences,gamepad,effects,sounds)
+        source_bind(&s,gui,app,p,seat_state,seats,bindings,actions,cameras,exposures,view_volumes,{volumes,worlds,parents,sections},settings,preferences,gamepad,effects,sounds)
         if world_panels && !preview {meshes_aim(gui,app.assets,app.renderer,&app.extras,&s,p,input.ray,meshes,worlds)}
         ui.frame_begin(s.ctx,input)
         s.open=true

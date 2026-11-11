@@ -436,13 +436,14 @@ the_reverb_is_that_of_the_volumes_the_listener_is_in :: proc(t:^testing.T) {
     }
     level,hall,cave,closet:=Audio_Reverb{room_size=0.5,wet=0.25},AUDIO_REVERB_DEFAULT,AUDIO_REVERB_DEFAULT,AUDIO_REVERB_DEFAULT
     hall.room_size,cave.room_size,closet.room_size=0.9,0.3,0.1
+    hall.zone,cave.zone={},{}
     place(&w,level,nil,{},{1,1,1})
     place(&w,hall,volume.Volume{shape=.Box,extents={20,10,20}},{},{1,1,1})
     place(&w,cave,volume.Volume{shape=.Box,extents={2,2,2}},{10,0,0},{2,1,1}) // 4 m along x once scaled
-    place(&w,closet,volume.Volume{shape=.Box,extents={1,1,1},priority=-1},{13,0,0},{1,1,1})
+    place(&w,{room_size=closet.room_size,zone={priority=-1}},volume.box({1,1,1}),{13,0,0},{1,1,1})
     core.test_world_settle(&w)
     at :: proc(p:^Audio_World,point:[3]f32) -> f32 {
-        return volume.at(core.read(&p.volumes),core.read(&p.worlds),core.read(&p.reverbs),point,Audio_Reverb{},reverb_mix).room_size
+        return volume.at({volumes=core.read(&p.volumes),worlds=core.read(&p.worlds)},core.read(&p.reverbs),point,Audio_Reverb{},reverb_mix).room_size
     }
     testing.expect_value(t,at(&w,{0,0,0}),f32(0.9))
     testing.expect_value(t,at(&w,{13.5,0,0}),f32(0.3))
@@ -452,18 +453,18 @@ the_reverb_is_that_of_the_volumes_the_listener_is_in :: proc(t:^testing.T) {
     w.view=core.View{position={0,15,0},rotation=1}
     mixer_reverb:Mixer_Reverb
     run :: proc(p:^Audio_World,settings:^Audio_Settings,dt:f32,r:^Mixer_Reverb,app:^host.App) {
-        audio_reverb(core.read(&p.reverbs),core.read(&p.volumes),core.read(&p.worlds),core.read(&p.listeners),core.ref(&p.view),core.ref(settings),{},{dt=dt},r,app.mixer)
+        audio_reverb(core.read(&p.reverbs),core.read(&p.volumes),core.read(&p.worlds),{},{},core.read(&p.listeners),core.ref(&p.view),core.ref(settings),{},{dt=dt},r,app.mixer)
     }
     run(&w,&settings,0.1,&mixer_reverb,&f.app)
     got,_:=mixer.reverb_get(f.app.mixer)
-    testing.expect(t,got==transmute(Reverb)level,"outside of every box, the level; the first one at once")
+    testing.expect(t,got==(^Reverb)(&level)^,"outside of every box, the level; the first one at once")
     w.view.position={0,0,0}
     run(&w,&settings,0.1,&mixer_reverb,&f.app)
     got,_=mixer.reverb_get(f.app.mixer)
     testing.expect(t,got.room_size>0.5 && got.room_size<0.9,"it goes toward the hall")
     for _ in 0..<40 {run(&w,&settings,0.1,&mixer_reverb,&f.app)}
     got,_=mixer.reverb_get(f.app.mixer)
-    testing.expect(t,got==transmute(Reverb)hall,"and gets there")
+    testing.expect(t,got==(^Reverb)(&hall)^,"and gets there")
 }
 
 // Under the water the master loses its highs, by the lower of its own cutoff
@@ -501,7 +502,7 @@ the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb :: proc(t:^
     room.view=core.View{position={0,-2,0},rotation=1}
     mixed:Mixer_Reverb
     hear :: proc(r:core.Read(Audio_Reverb),v:core.Read(volume.Volume),w:core.Read(core.World_Transform),l:core.Read(Audio_Listener),view:^core.View,settings:^Audio_Settings,medium:^Audio_Medium,mixed:^Mixer_Reverb,app:^host.App) -> Reverb {
-        for _ in 0..<60 {audio_reverb(r,v,w,l,core.ref(view),core.ref(settings),core.ref(medium),{dt=0.1},mixed,app.mixer)}
+        for _ in 0..<60 {audio_reverb(r,v,w,{},{},l,core.ref(view),core.ref(settings),core.ref(medium),{dt=0.1},mixed,app.mixer)}
         got,_:=mixer.reverb_get(app.mixer)
         return got
     }
@@ -511,7 +512,7 @@ the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb :: proc(t:^
     water.weight=0.5
     half:=Reverb{0.4,0.5,0.4,0.75}
     testing.expect(t,near(hear(r,v,w,l,&room.view,&settings,&water,&mixed,&f.app),half),"half of each")
-    testing.expect(t,near(hear(r,v,w,l,&room.view,&settings,&air,&mixed,&f.app),transmute(Reverb)level),"in the air, the room")
+    testing.expect(t,near(hear(r,v,w,l,&room.view,&settings,&air,&mixed,&f.app),(^Reverb)(&level)^),"in the air, the room")
     position,found:=listener_position(w,l,core.ref(&room.view))
     testing.expect(t,found && position==room.view.position,"without an Audio_Listener the View hears")
 }

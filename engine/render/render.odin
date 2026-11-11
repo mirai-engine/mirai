@@ -5,6 +5,7 @@ import "core:math/linalg"
 import "core:slice"
 import "mirai:asset"
 import "mirai:core"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import "mirai:host"
 import gpu "mirai:render"
@@ -502,7 +503,7 @@ render_sync :: proc(
     sync:^Render_Sync,app:^host.App,id:core.World_Id,frame:core.Frame_Time,view:core.View,
     worlds:core.Read(core.World_Transform),meshes:core.Read(Mesh_Renderer),tints:core.Read(Tint),
     hidden:core.Read(Hidden),elsewhere:core.Read(Drawn_Elsewhere),parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),
-    suns:core.Read(Sun),points:core.Read(Point_Light),spots:core.Read(Spot_Light),rects:core.Read(Rect_Light),emissions:core.Read(Light_Emission),skies:core.Read(Sky),view_volumes:core.Read(View_Volume),volumes:core.Read(volume.Volume),
+    suns:core.Read(Sun),points:core.Read(Point_Light),spots:core.Read(Spot_Light),rects:core.Read(Rect_Light),emissions:core.Read(Light_Emission),skies:core.Read(Sky),view_volumes:core.Read(View_Volume),volumes:core.Read(volume.Volume),sections:core.Read(scene.Scene_Reference),
     overrides:core.Read(Material_Override),highlights:core.Read(Highlight),outlines:core.Read(Outline),outline_styles:core.Ref(Outline_Styles),
     offsets:core.Read(Draw_Offset),layers:core.Read(Layers),bodies:core.Ref(View_Bodies),preview:core.Ref(Environment_Preview),
     locals:core.Read(core.Transform),cameras:core.Read(Camera),posed:^Posed_Meshes,
@@ -702,7 +703,7 @@ render_sync :: proc(
     if preview.ptr!=nil && preview.section!=core.NONE {
         if at,placed:=core.get(worlds,preview.section);placed {looked=at.position}
     }
-    look:=view_volume_at(view_volumes,volumes,worlds,looked)
+    look:=view_volume_at(view_volumes,{volumes,worlds,parents,sections},looked)
     exposure:=host.render_exposure(view_exposure_of(look))
     exposure.own=false
     gpu.scene_set_exposure(r,exposure)

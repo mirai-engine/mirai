@@ -6,7 +6,6 @@ import "core:mem"
 import "core:slice"
 import "mirai:asset"
 import "mirai:core"
-import volume "mirai:engine/volume"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -256,10 +255,6 @@ form_place :: proc(w:core.World_Ref,form:^Form,asset_types:^asset.Types,desc:Ins
                 else if unresolved!=nil && !desc.transient {append(&unresolved.items,Unresolved_Reference{e,c.name_hash,ref.offset,ref.target})}
                 else {report.dangling+=1}
                 intrinsics.unaligned_store(cast(^u64)(uintptr(value)+uintptr(ref.offset)),u64(live))
-            }
-            if info.type==volume.Volume && desc.scope!=core.NONE {
-                place:=(^volume.Volume)(value)
-                if place.shape==.Unbounded {place.scope,place.scope_extents=desc.scope,desc.scope_extents}
             }
             if info.type==Scene_Reference && desc.only==0 {
                 reference:=(^Scene_Reference)(value)

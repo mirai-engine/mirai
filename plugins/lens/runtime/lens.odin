@@ -4,6 +4,7 @@ import "core:math"
 import "mirai:core"
 import camera "mirai:engine/camera"
 import render "mirai:engine/render"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 
 // What a lens does to the image besides exposing it: the depth of field of
@@ -47,9 +48,10 @@ LENS_DEFAULT :: Lens{focus=10,sensor=0.024}
 @(component,description="How the views look through their lens where its Volume is: depth of field, motion blur, bloom, vignette, distortion and color fringes. Without a Volume, in the whole world. A camera with its own Lens keeps it.")
 Lens_Volume :: struct {
     lens:Lens `mirai:"section=Lens"`,
+    zone:volume.Zone,
 }
 
-LENS_VOLUME_DEFAULT :: Lens_Volume{lens=LENS_DEFAULT}
+LENS_VOLUME_DEFAULT :: Lens_Volume{lens=LENS_DEFAULT,zone=volume.ZONE_DEFAULT}
 
 // A volume that replaces blends the numbers of what is below into its own by
 // its weight and takes its switches past half; one that adds adds its effects
@@ -109,16 +111,16 @@ Gpu_Params :: struct {
 @(step="render",loops="game editor")
 lens_render :: proc(
     state:^Lens_Gpu,lenses:core.Read(Lens),zones:core.Read(Lens_Volume),places:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),
-    exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),view:core.View,locals:core.Ref(camera.Local_Views),renderer:^render.Renderer,
+    parents:core.Read(core.Parent),sections:core.Read(scene.Scene_Reference),exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),view:core.View,locals:core.Ref(camera.Local_Views),renderer:^render.Renderer,
 ) {
     state.views={}
     if renderer==nil || core.count(lenses)==0 && core.count(zones)==0 {return}
     used:=false
-    state.views[0]=view_lens(lenses,zones,places,worlds,exposures,view_volumes,view)
+    state.views[0]=view_lens(lenses,zones,{places,worlds,parents,sections},exposures,view_volumes,view)
     used||=state.views[0].used
     for local,slot in locals.items {
         if int(local.slot)!=slot+1 {continue}
-        state.views[slot+1]=view_lens(lenses,zones,places,worlds,exposures,view_volumes,local)
+        state.views[slot+1]=view_lens(lenses,zones,{places,worlds,parents,sections},exposures,view_volumes,local)
         used||=state.views[slot+1].used
     }
     if !used {return}
@@ -133,16 +135,16 @@ lens_render :: proc(
 
 // How a view looks through its lens: its camera's own, or the one of where it is.
 view_lens :: proc(
-    lenses:core.Read(Lens),zones:core.Read(Lens_Volume),places:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),
+    lenses:core.Read(Lens),zones:core.Read(Lens_Volume),places:volume.Where,
     exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),view:core.View,
 ) -> (v:View_Lens) {
     own:=false
     if view.camera!=core.NONE {
         if l,has:=core.get(lenses,view.camera);has {v.lens,own=l,true}
     }
-    if !own {v.lens=volume.at(places,worlds,zones,view.position,LENS_VOLUME_DEFAULT,lens_mix).lens}
+    if !own {v.lens=volume.at(places,zones,view.position,LENS_VOLUME_DEFAULT,lens_mix).lens}
     exposure:render.Exposure
-    if e,has:=core.get(exposures,view.camera);view.camera!=core.NONE && has {exposure=e} else {exposure=render.view_volume_at(view_volumes,places,worlds,view.position).exposure}
+    if e,has:=core.get(exposures,view.camera);view.camera!=core.NONE && has {exposure=e} else {exposure=render.view_volume_at(view_volumes,places,view.position).exposure}
     v.aperture,v.shutter=exposure.aperture,exposure.shutter
     l:=v.lens
     v.used=l.depth_of_field || l.motion_blur && v.shutter>0 || final_used(l)

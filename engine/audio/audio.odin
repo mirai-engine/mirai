@@ -7,6 +7,7 @@ import "mirai:core"
 import "mirai:host"
 import "mirai:platform"
 import mixer "mirai:audio"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import "mirai:std/base"
 
@@ -112,11 +113,12 @@ Audio_Reverb :: struct {
     damping:f32 `mirai:"min=0,max=1"`,   // how fast the highs of its tail die
     wet:f32 `mirai:"min=0"`,             // gain of what it returns
     width:f32 `mirai:"min=0,max=1"`,     // from mono to wide stereo
+    zone:volume.Zone,
 }
 
-AUDIO_REVERB_DEFAULT :: Audio_Reverb{room_size=0.6,damping=0.4,wet=1,width=1}
+AUDIO_REVERB_DEFAULT :: Audio_Reverb{room_size=0.6,damping=0.4,wet=1,width=1,zone=volume.ZONE_DEFAULT}
 
-#assert(size_of(Audio_Reverb)==size_of(Reverb))
+#assert(offset_of(Audio_Reverb,zone)==size_of(Reverb))
 
 // What the library derived from the source. Only audio_sources writes it.
 @(component)
@@ -320,7 +322,7 @@ state_put :: proc(states:^core.Table(Audio_Source_State),e:core.Entity,state:Aud
 // over about REVERB_FADE.
 @(step="late",stage="end",after="camera_view")
 audio_reverb :: proc(
-    reverbs:core.Read(Audio_Reverb),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),listeners:core.Read(Audio_Listener),
+    reverbs:core.Read(Audio_Reverb),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),sections:core.Read(scene.Scene_Reference),listeners:core.Read(Audio_Listener),
     view:core.Ref(core.View),settings:core.Ref(Audio_Settings),medium:core.Ref(Audio_Medium),frame:core.Frame_Time,reverb:^Mixer_Reverb,m:^Mixer,
 ) {
     if m==nil || reverb==nil {return}
@@ -328,8 +330,8 @@ audio_reverb :: proc(
     if settings.ptr!=nil {bus=settings.reverb_bus}
     hearing:=Hearing{worlds=worlds,listeners=listeners,view=view}
     room,silent:Audio_Reverb
-    if position,_,_,found:=listener_pose(&hearing);found {room=volume.at(volumes,worlds,reverbs,position,silent,reverb_mix)}
-    target:=transmute(Reverb)room
+    if position,_,_,found:=listener_pose(&hearing);found {room=volume.at({volumes,worlds,parents,sections},reverbs,position,silent,reverb_mix)}
+    target:=(^Reverb)(&room)^
     if medium.ptr!=nil {
         if weight:=clamp(medium.weight,0,1);weight>0 {
             target=transmute(Reverb)((transmute([4]f32)target)*(1-weight)+(transmute([4]f32)reverb_clamp(medium.reverb))*weight)
@@ -351,9 +353,8 @@ audio_reverb :: proc(
 }
 
 reverb_mix :: proc(value:^Audio_Reverb,by:Audio_Reverb,weight:f32,add:bool) {
-    v:=transmute([4]f32)value^
-    volume.mix_linear(&v,transmute([4]f32)by,weight,add)
-    value^=transmute(Audio_Reverb)v
+    by:=by
+    volume.mix_linear((^[4]f32)(value),(^[4]f32)(&by)^,weight,add)
 }
 
 // The buses of the mixer as the settings and the medium of the listener say;
