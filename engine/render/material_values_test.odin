@@ -63,7 +63,7 @@ only_a_texture_makes_an_entity_show_a_row_of_its_own :: proc(t:^testing.T) {
     testing.expect(t,material_value(core.edit(&f.world.values,e),"alpha_mode",f32(asset.Alpha_Mode.Mask)))
     sync_frame(f)
     testing.expect(t,f.assets.stats.derived==0 && len(s.translucent)==0,"a masked one stays masked as it fades")
-    core.edit(&f.world.values,e).live.screen={texture=7}
+    material_screen(&f.world.lives,e,{texture=7})
     sync_frame(f)
     testing.expect_value(t,f.assets.stats.derived,1)
 }
@@ -129,10 +129,11 @@ a_light_that_shows_the_row_of_an_instance_is_given_it_with_its_values :: proc(t:
     testing.expect_value(t,transmute(u32)s.lights[0].size.w,plain)
 }
 
-// What a step gives an entity at run time is live over what the entity
-// authors: a value wins over the authored one of its name and leaves it as
-// it was, a screen shows in its slot, and an entity without the component
-// takes it only in a world that plays.
+// What a step gives an entity at run time is its Material_Live, over what
+// the entity authors: a value wins over the authored one of its name and
+// leaves it as it was, and a screen shows in its slot, also on an entity
+// without Material_Values, in a world that does not play. What stops takes
+// the component away with the last of it.
 @(test)
 what_is_live_goes_over_what_an_entity_authors_and_leaves_it :: proc(t:^testing.T) {
     f:=new(Sync_Fixture);defer free(f)
@@ -144,29 +145,27 @@ what_is_live_goes_over_what_an_entity_authors_and_leaves_it :: proc(t:^testing.T
     roughness:=base.name_hash("roughness")
     testing.expect(t,material_value(&own,roughness,{0.2,0,0,0}))
     core.add(&w.values,authored,own)
-    test_world_settle(w)
-    shown :: proc(f:^Sync_Fixture,e:core.Entity) -> (look:Material_Values,desc:gpu.Material_Desc) {
-        test_world_settle(&f.world)
-        look,_=core.get(&f.world.values,e)
-        desc=gpu.DEFAULT_MATERIAL
-        material_values_apply(&f.assets,&desc,&look,0)
-        return
+    sync_frame(f)
+    // The row the instance of an entity shows.
+    row :: proc(f:^Sync_Fixture,e:core.Entity) -> gpu.Material_Desc {
+        sync_frame(f)
+        material,_,_,_:=gpu.scene_instance_materials(&f.renderer,u32(instance_of(&f.sync,e)))
+        return host.assets_material_values(&f.assets,u32(material))
     }
-    testing.expect(t,material_live(&w.values,bare,false)==nil,"a step authors nothing")
-    live:=material_live(&w.values,authored,false)
-    if !testing.expect(t,live!=nil && material_value(live,roughness,{0.9,0,0,0})) {return}
-    live.screen={texture=9,lit=true,emission=200}
-    look,desc:=shown(f,authored)
-    testing.expect(t,desc.roughness==0.9 && desc.textures[.Emission]==9 && desc.base_color==[3]f32{} && desc.emission==[3]f32{200,200,200})
-    testing.expect(t,material_values_slot(&look,0) && material_values_plain(&look)==material_values_plain(&own))
-    look.live={}
-    testing.expect(t,look==own,"what it authors is as it was")
-    live=material_live(&w.values,authored,false)
-    material_value_drop(live,roughness)
-    live.screen={}
-    look,desc=shown(f,authored)
-    testing.expect(t,look==own && desc.roughness==0.2 && desc.textures[.Emission]==0,"without them its own show again")
-    testing.expect(t,material_live(&w.values,bare,true)!=nil)
-    test_world_settle(w)
-    testing.expect(t,core.has(&w.values,bare),"in a world that plays the entity takes the component")
+    testing.expect(t,material_value(material_live(&w.lives,authored),roughness,{0.9,0,0,0}))
+    material_screen(&w.lives,authored,{texture=9,lit=true,emission=200})
+    // A monitor on an entity that authors nothing: its instance shows a row with the image.
+    material_screen(&w.lives,bare,{texture=7,lit=true,emission=100})
+    testing.expect(t,row(f,authored).textures[.Emission]==9 && row(f,bare).textures[.Emission]==7,"each shows its screen, also the one without Material_Values")
+    look,_:=core.get(&w.values,authored)
+    live,_:=core.get(&w.lives,authored)
+    given:=gpu.DEFAULT_MATERIAL
+    material_values_apply(&f.assets,&given,&look,0,true,&live)
+    testing.expect(t,given.roughness==0.9 && given.base_color==[3]f32{} && given.emission==[3]f32{200,200,200},"what is live wins over what is authored")
+    testing.expect(t,look==own && !core.has(&w.values,bare),"what the entities author is as it was")
+    material_value_drop(material_live(&w.lives,authored),roughness)
+    material_screen(&w.lives,authored,{})
+    material_screen(&w.lives,bare,{})
+    testing.expect(t,row(f,authored).textures[.Emission]==0 && row(f,bare).textures[.Emission]==0,"without them their own show again")
+    testing.expect(t,!core.has(&w.lives,bare) && !core.has(&w.lives,authored),"what stops takes the component with it")
 }

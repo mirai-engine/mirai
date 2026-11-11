@@ -256,16 +256,14 @@ ray_release :: proc(gui:^Gui,renderer:^render.Renderer,at:int) {
 }
 
 // The textures of the World_Widgets drawn on meshes, in the material slots
-// they name: the screen the Material_Values of their entities show at run
-// time, as the base color, lit, or as light. One whose widget went is taken
-// away.
+// they name: the screen their entities show at run time, as the base color,
+// lit, or as light. One whose widget went is taken away.
 @(step="render",before="render_sync")
-gui_meshes_render :: proc(gui:^Gui,looks:^core.Table(render.Material_Values)) {
+gui_meshes_render :: proc(gui:^Gui,lives:^core.Table(render.Material_Live)) {
     if gui==nil {return}
     for &mesh in gui.meshes {
         if mesh.entity==core.NONE {continue}
-        texture:=mesh.drawn?mesh.texture:0
-        if live:=render.material_live(looks,mesh.entity,texture!=0);live!=nil {live.screen={texture,u8(mesh.slot),mesh.emission>0,mesh.emission}}
+        render.material_screen(lives,mesh.entity,{mesh.drawn?mesh.texture:0,u8(mesh.slot),mesh.emission>0,mesh.emission})
         if mesh.texture==0 {mesh={}}
     }
 }

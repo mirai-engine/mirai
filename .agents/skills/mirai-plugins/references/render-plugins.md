@@ -82,10 +82,9 @@ reads as it likes. Without the stage in the shaders in use, the mesh is drawn at
 - A camera's image is a **feed**. The screens that show the same camera with the same aspect share
   one: it is drawn once, at the largest size, with the highest cadence and the fullest quality
   that any of them asks for.
-- `monitors_render` gives the image of each screen as the screen the `Material_Values` of its
-  entity show at run time (`render.material_live`), and takes it away when the `Screen` goes. In
-  a world that does not play (Edit) only an entity that has `Material_Values` shows it: a step
-  authors nothing. It hands over each feed as a [texture view][vtex] at the size at which it is
+- `monitors_render` gives the image of each screen as the screen of the `Material_Live` of its
+  entity (`render.material_screen`), in any world, and takes it away when the `Screen` goes. It
+  hands over each feed as a [texture view][vtex] at the size at which it is
   seen: the smallest level (each half the previous) that still gives one texel per pixel to the
   screen that shows it largest, with margin to shrink. The textures of each level are kept with
   their histories, and a new level is drawn `WARM_IMAGES` times before being shown, so that its

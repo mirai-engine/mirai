@@ -230,6 +230,7 @@ Look_World :: struct {
     ids:core.Table(core.Id),
     parents:core.Table(core.Parent),
     looks:core.Table(erender.Material_Values),
+    lives:core.Table(erender.Material_Live),
     hierarchy:core.Hierarchy,
 }
 
@@ -258,11 +259,11 @@ curve_materials_are_live_over_what_the_entity_authors_and_no_scene_saves_them ::
     base.text_set(blush.curve[:],"blush");base.text_set(blush.parameter[:],"emission")
     testing.expect(t,pose_profile_check({curve_materials={frame,blush}}))
     testing.expect(t,modifier_append(&modifiers.curve_materials,face,frame) && modifier_append(&modifiers.curve_materials,face,blush))
-    apply :: proc(modifiers:^Modifier_Runtime,state:^Playing,w:^Look_World,e:core.Entity,playing:=false) -> (live:erender.Material_Live,fits:bool) {
-        fits=curve_materials_apply(modifiers,state,2,&w.looks,e,playing)
+    apply :: proc(modifiers:^Modifier_Runtime,state:^Playing,w:^Look_World,e:core.Entity) -> (live:erender.Material_Live,fits:bool) {
+        fits=curve_materials_apply(modifiers,state,2,&w.lives,e)
         test_world_settle(w)
-        look,_:=core.get(&w.looks,e)
-        return look.live,fits
+        live,_=core.get(&w.lives,e)
+        return
     }
     find :: proc(o:^erender.Material_Live,slot:int,name:string) -> (value:[4]f32,found:bool) {
         at:=erender.material_value_find(o,slot,base.name_hash(name))
@@ -285,19 +286,20 @@ curve_materials_are_live_over_what_the_entity_authors_and_no_scene_saves_them ::
     testing.expect(t,curve_poses_apply(state,&playback,&modifiers,false,&problems))
     drawn,_=apply(&modifiers,state,&w,face)
     value,found=find(&drawn,1,"frame");testing.expect(t,found && value==[4]f32{1,1,1,1},"blush .5 rounded to its step")
-    // A curve that does not play takes its values away.
+    // A curve that does not play takes its values away, and the component with the last.
     for &curve in state.curves {curve.weight=0}
     drawn,applied=apply(&modifiers,state,&w,face)
-    testing.expect(t,applied && drawn.count==0)
+    testing.expect(t,applied && !core.has(&w.lives,face))
     for &curve in state.curves {curve.weight=1}
     // A scene saves what the entities author: neither the values a curve moved nor the screen
-    // one shows, and no component where a step found none.
+    // one shows, on the entity that authors a look and on the one that authors none.
     drawn,applied=apply(&modifiers,state,&w,face)
-    _,bare_applied:=apply(&modifiers,state,&w,bare)
-    erender.material_live(&w.looks,face,false).screen={texture=7,lit=true,emission=200}
+    bare_drawn,bare_applied:=apply(&modifiers,state,&w,bare)
+    erender.material_screen(&w.lives,face,{texture=7,lit=true,emission=200})
+    erender.material_screen(&w.lives,bare,{texture=7,lit=true,emission=200})
     test_world_settle(&w)
     core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
-    testing.expect(t,applied && bare_applied && drawn.count==3 && !core.has(&w.looks,bare),"a step authors nothing")
+    testing.expect(t,applied && bare_applied && drawn.count==3 && bare_drawn.count==3 && !core.has(&w.looks,bare),"a step authors nothing")
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     document:asset.Scene
     _,error:=scene.capture(test_world_ref(&w),&document,&types,{id={1,2}})
@@ -305,14 +307,12 @@ curve_materials_are_live_over_what_the_entity_authors_and_no_scene_saves_them ::
         saved,kept:=asset.scene_get(&document,1,"Material_Values",erender.Material_Values)
         testing.expect(t,kept && saved==own,"the scene keeps what the entity authored")
         _,kept=asset.scene_get(&document,2,"Material_Values",erender.Material_Values)
-        testing.expect(t,!kept,"and none where none was authored")
+        _,live_kept:=asset.scene_component(&document,"Material_Live")
+        testing.expect(t,!kept && !live_kept,"none where none was authored, and nothing of what is live")
         asset.scene_destroy(&document)
     }
-    // In a world that plays, the entity without them takes them.
-    drawn,applied=apply(&modifiers,state,&w,bare,true)
-    testing.expect(t,applied && drawn.count==3)
-    // A live part that is full keeps what fits and says so; a bad row is refused by the profile.
-    live:=erender.material_live(&w.looks,face,false)
+    // A Material_Live that is full keeps what fits and says so; a bad row is refused by the profile.
+    live:=erender.material_live(&w.lives,face)
     live^={}
     for i in 0..<erender.MATERIAL_VALUES_CAPACITY {erender.material_value(live,u64(i+1),{},0)}
     drawn,applied=apply(&modifiers,state,&w,face)

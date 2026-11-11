@@ -23,7 +23,7 @@ Bind_Pose_World :: struct {
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     worlds:core.Table(core.World_Transform),
-    tints:core.Table(erender.Material_Values),
+    lives:core.Table(erender.Material_Live),
     hidden:core.Table(erender.Hidden),
     elsewhere:core.Table(erender.Drawn_Elsewhere),
     highlights:core.Table(erender.Highlight),
@@ -107,7 +107,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     }
     tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,w:^Bind_Pose_World,problems:^core.Problems,posed:^erender.Posed_Meshes,modifiers:^Modifier_Runtime=nil) {
         clear(&app.extras.instances)
-        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.tints,core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},core.Ref(Modifier_Runtime){ptr=modifiers})
+        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},core.Ref(Modifier_Runtime){ptr=modifiers})
         skin_shown(app,posed,core.read(&w.meshes),core.read(&w.worlds),core.read(&w.offsets),core.read(&w.parents),core.FRAME_TIME_DEFAULT)
     }
     measure :: proc(renderer:^gpu.Renderer,label:string) -> int {
@@ -139,8 +139,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     testing.expect_value(t,result[0].position,vertices[0].position+[3]f32{0,0.5,0})
     testing.expect_value(t,problems.count,0)
 
-    // A rig at the bind whose curves move a material value stays the mesh of the world: the value is live in the Material_Values of its mesh.
-    core.add(&w.tints,draws[1],erender.MATERIAL_VALUES_DEFAULT);test_world_settle(&w)
+    // A rig at the bind whose curves move a material value stays the mesh of the world: the value is the Material_Live of its mesh.
     still:=constraint_playing(&w.playback,roots[1])
     append(&still.curves,Curve_Output{target=base.name_hash("blush"),property=.Float,value={1,0,0,0},weight=1})
     blush:=CURVE_MATERIAL_DEFAULT;blush.rig,blush.every,blush.scale=roots[1],true,{1,0,0,0}
@@ -149,17 +148,16 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     tick(&app,&cache,&state,&w,&problems,&posed,&w.modifiers)
     test_world_settle(&w)
     testing.expect_value(t,measure(renderer,"one rig posed and one with curve materials"),1)
-    look,_:=core.get(&w.tints,draws[1])
-    given:=erender.material_value_find(&look.live,0,base.name_hash("base_color"))
-    testing.expect(t,given>=0 && look.live.values[given]==[4]f32{1,0,0,0} && look.count==0,"the value of the curve is live on the entity")
+    live,_:=core.get(&w.lives,draws[1])
+    given:=erender.material_value_find(&live,0,base.name_hash("base_color"))
+    testing.expect(t,given>=0 && live.values[given]==[4]f32{1,0,0,0},"the value of the curve is live on the entity")
     instance:=core.entity_map_get(&state.instances,draws[1])
     testing.expect(t,instance!=nil && !instance.copied,"the still rig with curve materials makes no copy")
     // A curve that stops playing takes its value away.
     still.curves[0].weight=0
     tick(&app,&cache,&state,&w,&problems,&posed,&w.modifiers)
     test_world_settle(&w)
-    look,_=core.get(&w.tints,draws[1])
-    testing.expect_value(t,look.live.count,u32(0))
+    testing.expect(t,!core.has(&w.lives,draws[1]))
     testing.expect_value(t,problems.count,0)
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))

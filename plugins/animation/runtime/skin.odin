@@ -209,11 +209,11 @@ skin_rig_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.As
 // targets and no skin its weights alone, by one joint. The copy it poses is
 // the mesh the renderer draws its entity with (erender.Posed_Meshes): placed,
 // tinted, hidden and outlined as any mesh of an entity. The material values
-// the curves of a rig move are live in the Material_Values of its meshes.
+// the curves of a rig move are the Material_Live of its meshes.
 @(step="render",loops="game editor",before="render_sync")
 animation_skin :: proc(
     meshes:^core.Table(erender.Mesh_Renderer,.Read),skins:^core.Table(Pose_Source,.Read),parents:^core.Table(core.Parent,.Read),
-    worlds:^core.Table(core.World_Transform,.Read),looks:^core.Table(erender.Material_Values),
+    worlds:^core.Table(core.World_Transform,.Read),lives:^core.Table(erender.Material_Live),
     hidden:^core.Table(erender.Hidden,.Read),elsewhere:^core.Table(erender.Drawn_Elsewhere,.Read),
     cache:^Skin_Runtime,state:^Skin_Instances,assets:^host.Assets,renderer:^erender.Renderer,poses:^erender.Posed_Meshes,job_system:^jobs.Job_System,allocator:runtime.Allocator,time:core.Time,frame:core.Frame_Time,playback:core.Ref(Playback),
     morphs:core.Ref(Morph_Playback),problems:^core.Problems,
@@ -289,7 +289,7 @@ animation_skin :: proc(
         instance.seen=state.frame
         source:=host.assets_mesh(assets,static.mesh)
         if source==nil || source.handle==host.ASSETS_MESH_NONE {continue}
-        if !rigid && modifiers.ptr!=nil && !curve_materials_apply(modifiers.ptr,pose,int(source.slot_count),looks,entity,time.playing) {
+        if !rigid && modifiers.ptr!=nil && !curve_materials_apply(modifiers.ptr,pose,int(source.slot_count),lives,entity) {
             core.report(problems,entity,"animation.curve_material","the curve materials of the .character of the rig of this entity set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_VALUES_CAPACITY)
         }
         bones:=len(pose.local) if !rigid else 0

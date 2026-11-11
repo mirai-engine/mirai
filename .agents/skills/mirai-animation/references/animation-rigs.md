@@ -89,11 +89,10 @@ its body animation; no solver evaluates it.
 - **Curve material**: a value of the material of the meshes of the rig (`parameter`: a value of the
   material or of its program, in `slot` or in every slot) is `offset` plus `scale` times the
   curve, rounded to multiples of `step` when it is positive: the frame of a flipbook face, a
-  switch, a blush. `animation_skin` gives it to the live part of the `Material_Values` of each
-  mesh of the rig (the rig and those that share its pose) while the curve plays, over the value
-  the entity authors under that name, and takes it away when it does not; in a world that does
-  not play, only to a mesh that has the component. Past the capacity of the live part it is the
-  problem `animation.curve_material`.
+  switch, a blush. `animation_skin` gives it to the `Material_Live` of each mesh of the rig (the
+  rig and those that share its pose) while the curve plays, over the value the entity authors
+  under that name, and takes it away when it does not. Past the capacity of the component it is
+  the problem `animation.curve_material`.
 - A face of a rig evaluator or of a control rig is baked to curves and poses or to morphs: the
   plugin has
   no rig evaluator. Poses driven by bone rotations are correctives (inverse distance), not an RBF
