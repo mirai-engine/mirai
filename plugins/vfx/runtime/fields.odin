@@ -58,6 +58,18 @@ fields_of :: proc(gravities:^core.Table(volume.Gravity,$A),winds:^core.Table(vol
     return
 }
 
+// The strongest gravity and the fastest wind anywhere in fields, m/s2 and m/s:
+// a particle reaches no faster than the wind its drag takes it to.
+fields_most :: proc "contextless" (f:Gpu_Fields) -> (gravity,wind:f32) {
+    gravity=linalg.length(f.fallback.xyz)
+    g:=f.gravity
+    for i in 0..<min(g.count.x,GRAVITY_VOLUMES) {
+        gravity=max(gravity,abs(g.centers[i].y) if g.centers[i].x!=0 else linalg.length(g.pulls[i].xyz))
+    }
+    for i in 0..<min(f.wind.count.x,volume.WIND_VOLUMES) {wind=max(wind,linalg.length(f.wind.values[i].xyz))}
+    return
+}
+
 // The fields of fields_of for the particles of a frame whose places are relative to origin.
 fields_relative :: proc "contextless" (f:Gpu_Fields,origin:[3]f32) -> Gpu_Fields {
     f:=f
