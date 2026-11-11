@@ -286,6 +286,54 @@ actions_segment_sections_and_windows_copy_state_and_obey_cancellation_without_st
     clear(&requests.plays.items);for _ in 0..=cap(requests.plays.items) {play(&requests,entity,"attack")};testing.expect_value(t,requests.plays.dropped,1)
 }
 
+// A driven action is where its driver says, played there tick by tick or sought there: across the
+// jump between its sections its clip shows the same time; paused it stays, sent back it goes back,
+// and sought past its end nothing of it shows. A seek tells nothing.
+@(test)
+a_driven_action_shows_the_time_of_its_driver_played_or_sought :: proc(t:^testing.T) {
+    Drive :: struct {at:f32,seek:bool}
+    Seen :: struct {time,clip,weight:f32,section:i16,finishing:bool,events:int}
+    drive :: proc(t:^testing.T,drives:[]Drive) -> (seen:Seen) {
+        w:Actions_World
+        if !test_world_init(t,&w) {return}
+        defer test_world_destroy(&w)
+        entity:=core.create(&w.entities)
+        description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&w.descriptions,entity,description);test_world_settle(&w)
+        content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.entity=entity;state.asset=content.id
+        action_test_spans(&content);defer action_test_spans_free(&content)
+        profile:=action_test_profile();defer action_profile_free(&profile)
+        cache:Character_Assets;defer character_assets_free(&cache)
+        test_character_seed(&cache,description.asset,action_test_set(profile))
+        host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
+        test_character_register(&host_assets,description.asset);defer test_registry_free(&host_assets)
+        playback:Playback;defer playback_free(&playback);events:Animation_Events;defer delete(events.items)
+        requests:Animation_Requests;defer delete(requests.plays.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
+        for value in drives {
+            play_at(&requests,entity,"attack",value.at,value.seek)
+            testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil))
+            stack_step(&actions,&state,description,&content,&playback,&events,.1)
+            seen.events+=len(events.items)
+        }
+        slot:=actions.states[0].slots[0]
+        seen.time,seen.clip,seen.weight,seen.section,seen.finishing=slot.time,state.layers[0].fader.current.time,state.layers[0].weight,slot.section,slot.finishing
+        return
+    }
+    played:=drive(t,{{0,false},{.1,false},{.2,false},{.3,false},{.35,false}})
+    sought:=drive(t,{{.35,true}})
+    testing.expectf(t,abs(played.time-1.1)<1e-5 && played.section==1 && played.events>0,"played: a quarter second of windup, then a tenth of recover: %v",played)
+    testing.expectf(t,abs(sought.time-played.time)<1e-5 && abs(sought.clip-played.clip)<1e-5 && sought.section==played.section && sought.weight==played.weight && sought.events==0,"sought %v, played %v",sought,played)
+    paused:=drive(t,{{.35,true},{.35,false},{.35,false}})
+    testing.expectf(t,abs(paused.time-1.1)<1e-5 && paused.events==0,"paused it stays: %v",paused)
+    back:=drive(t,{{.35,true},{.1,false}})
+    testing.expectf(t,abs(back.time-.1)<1e-5 && back.section==0 && back.events==0,"sent back it goes back: %v",back)
+    past:=drive(t,{{2,true}})
+    testing.expectf(t,past.finishing && past.weight==0 && past.events==0,"sought past its end nothing of it shows: %v",past)
+    requests:Animation_Requests;defer delete(requests.plays.items)
+    nan:=f32(0h7fc00000)
+    play_at(&requests,core.entity_make(1,1),"attack",-1);play_at(&requests,core.entity_make(1,1),"attack",nan);play_at(&requests,core.NONE,"attack",0);play_at(nil,core.entity_make(1,1),"attack",0)
+    testing.expect(t,requests.plays.refused==3 && len(requests.plays.items)==0)
+}
+
 @(test)
 action_root_motion_uses_section_segments_fade_weight_and_exposes_a_continuous_warp_clock :: proc(t:^testing.T) {
     content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.asset={1,2}

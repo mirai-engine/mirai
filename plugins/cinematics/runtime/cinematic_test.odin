@@ -146,8 +146,8 @@ fixture_tick :: proc(f:^Cinematic_Fixture,tick:u64,dt:f32,playing:=true,acting:p
 
 // A cinematic is a clip whose markers stage it: one on a camera is a shot, which the timeline asks
 // of engine/camera as the camera_override of its seat with the blend of the marker, while the clip
-// plays or is paused; one on an actor plays the action of its name there and a span stops it at
-// its end. A marker on an entity that is gone is a problem, never a crash.
+// plays or is paused; one on an actor drives the action of its name there by the time of the clip
+// and a span stops it at its end. A marker on an entity that is gone is a problem, never a crash.
 @(test)
 the_markers_of_a_clip_cut_between_cameras_and_play_actions_while_it_plays :: proc(t:^testing.T) {
     DT :: f32(.25)
@@ -168,7 +168,7 @@ the_markers_of_a_clip_cut_between_cameras_and_play_actions_while_it_plays :: pro
     }
 
     // The clip plays by itself: the first shot cuts to wide, the input of the seat is blocked, and
-    // the actor starts to wave.
+    // the actor starts to wave, driven from the start of its marker.
     fixture_tick(f,1,DT)
     c,_:=core.get(core.read(&f.cinematics),f.timeline)
     testing.expect(t,c.status==.Playing && c.time==.25 && c.duration==1)
@@ -176,7 +176,7 @@ the_markers_of_a_clip_cut_between_cameras_and_play_actions_while_it_plays :: pro
     testing.expect(t,len(f.seat_requests.items)==1 && f.seat_requests.items[0].kind==.Block_Add && f.seat_requests.items[0].mask==3)
     clear(&f.seat_requests.items)
     waves:=plays(f);defer delete(waves)
-    testing.expect(t,len(waves)==1 && !waves[0].stop && waves[0].entity==f.hero && base.text_get(waves[0].action[:])=="Wave")
+    testing.expect(t,len(waves)==1 && waves[0].driven && !waves[0].seek && waves[0].at==0 && waves[0].entity==f.hero && base.text_get(waves[0].action[:])=="Wave")
 
     // At the end of its span the wave is stopped, while it plays; the shot of close is asked with the
     // blend of its marker, as camera_override asks it.
@@ -237,7 +237,8 @@ the_markers_of_a_clip_cut_between_cameras_and_play_actions_while_it_plays :: pro
 }
 
 // The editor scrubs a timeline by seeking its clip: whatever the order of the heads, a head shows the
-// same cameras where the clip puts them and the same shot, which blends in from the one before it.
+// same cameras where the clip puts them and the same shot, which blends in from the one before it,
+// and drives the action of an actor to its time there.
 @(test)
 a_head_of_a_scrubbed_clip_shows_one_shot :: proc(t:^testing.T) {
     f:=new(Cinematic_Fixture);defer free(f)
@@ -253,6 +254,9 @@ a_head_of_a_scrubbed_clip_shows_one_shot :: proc(t:^testing.T) {
         return
     }
     nan:=f32(0h7fc00000)
+    look(f,.3)
+    driven:=f.requests.plays.items[:]
+    testing.expectf(t,len(driven)==1 && driven[0].entity==f.hero && driven[0].driven && driven[0].seek && abs(driven[0].at-.05)<1e-6,"the head asks the wave where it is at its time: %v",driven)
     late,early:=look(f,.6),look(f,.25)
     testing.expect_value(t,look(f,.6),late)
     testing.expect_value(t,look(f,.25),early)

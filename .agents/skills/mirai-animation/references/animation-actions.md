@@ -64,8 +64,8 @@ The actions of a set are layers, definitions and sections over the `.anim` of th
 
 ## Requests and lifecycle
 
-`play`, `stop`, `set` and `look` write to `Animation_Requests`; the equivalent API asks for
-Play/Simulation. `animation_sample` serves them.
+`play`, `play_at`, `stop`, `set` and `look` write to `Animation_Requests`; the equivalent API asks
+for Play/Simulation. `animation_sample` serves them.
 
 - **One priority rule.** `play` takes the slot of its action if nothing plays there, or if its
   priority reaches the one playing and that one allows it: Allow gives way at once, Finish_Section
@@ -73,6 +73,12 @@ Play/Simulation. `animation_sample` serves them.
   slots are independent: an action in a layer plays whatever the whole body does.
 - `play` with a section of an action that plays moves it there, closing and reopening windows,
   without starting it again.
+- **Driven.** `play_at` puts the action the seconds since its start its driver gives (a timeline):
+  forward it plays there, through its sections, telling what it crosses; sought or back it starts
+  over from where it started and goes there telling nothing, as a seek of a clip. It starts at its
+  start whatever its `entry`, so playing to a time and seeking it show the same pose; a seek past
+  its end leaves nothing of it. A driven play is not recorded in `Animation_Played`: every end
+  drives it by its own timeline.
 - **In a layer** an action crossfades over what the layer plays (`fade_in`), at its weight, and
   when it ends the layer goes back to what it plays by itself over `fade_out`.
 - **Over the whole body** it is slot 0, a layer under the others over the whole pose, over a

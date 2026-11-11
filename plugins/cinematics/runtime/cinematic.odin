@@ -17,10 +17,12 @@ import anim "plugins:animation/runtime"
 //
 //   on a camera   a shot: from its time on the seat sees through that camera, which
 //                 engine/camera blends in over its duration (0: a cut)
-//   on an actor   anim.play of the action of its name; a span stops it at its end
+//   on an actor   the action of its name, driven by the clip (anim.play_at) from its time to
+//                 the end of its span, or of the clip for a moment
 //
 // While the clip plays or is paused with a shot in force, the timeline is the owner of a camera
-// override of its seat and of an input block of block_mask; they go when it stops or ends.
+// override of its seat and of an input block of block_mask; they go when it stops or ends. In the
+// editor the actors take the pose of the head of the clip.
 
 Cinematic_Status :: enum u8 {
     Stopped,   // at its start, not playing
@@ -128,15 +130,15 @@ cinematic_follow :: proc(cinematics:^core.Table(Cinematic,.Read),animations:^cor
 }
 
 // Runs after animation_advance, whose Playback it reads: the seats see the cameras where the clip put
-// them in this tick, and the actions of the actors start and stop with the clip.
-@(step="fixed",stage="react",after="animation_advance")
+// them in this tick, and the actions of the actors are where the clip is. In the editor, where the
+// game does not play, only the actors follow the head of the clip.
+@(step="fixed",loops="game editor",stage="react",after="animation_advance")
 cinematic_advance :: proc(
     entities:core.Ref(core.Entities),cinematics:^core.Table(Cinematic),cameras:^core.Table(render.Camera,.Read),animations:^core.Table(anim.Animation,.Read),
     playback:core.Ref(anim.Playback),content_sources:core.Ref(anim.Source_Assets),app:^host.App,actions:core.Ref(anim.Action_Runtime),
     requests:^anim.Animation_Requests,shown:core.Ref(cam.Cameras),seat_state:core.Ref(input.Seats),camera_requests:^cam.Camera_Requests,
     seat_requests:^input.Seat_Requests,seats:^core.Table(input.Seat,.Read),time:core.Time,remotes:^core.Table(core.Remote,.Read),problems:^core.Problems,
 ) {
-    if !time.playing {return}
     for row in 0..<core.count(cinematics) {
         e:=cinematics.entities[row]
         was:=core.at(cinematics,row)
@@ -147,19 +149,23 @@ cinematic_advance :: proc(
         }
         at,duration,ended,clipped:=anim.animation_progress(playback.ptr,e)
         if !clipped {continue}
-        owned:=core.owned(remotes,e)
         next:=was
-        next.time,next.duration=at,duration
-        if owned {
-            next.status=cinematic_status(anim.animation_playing(playback.ptr,e),ended,at)
-            rate:=animation.speed if next.status==.Playing else 0
-            if next.status!=was.status || rate!=was.anchor_rate || time.tick<was.anchor_tick || clip_apart(cinematic_anchored(was,time.tick,time.dt,duration,animation.loop),at,duration,animation.loop)>time.dt*max(abs(rate),1)*.5 {
-                next.anchor_tick,next.anchor_time,next.anchor_rate=time.tick,at,rate
+        if time.playing {
+            next.time,next.duration=at,duration
+            if core.owned(remotes,e) {
+                next.status=cinematic_status(anim.animation_playing(playback.ptr,e),ended,at)
+                rate:=animation.speed if next.status==.Playing else 0
+                if next.status!=was.status || rate!=was.anchor_rate || time.tick<was.anchor_tick || clip_apart(cinematic_anchored(was,time.tick,time.dt,duration,animation.loop),at,duration,animation.loop)>time.dt*max(abs(rate),1)*.5 {
+                    next.anchor_tick,next.anchor_time,next.anchor_rate=time.tick,at,rate
+                }
             }
+            if next!=was {core.edit_at(cinematics,row)^=next}
         }
-        if next!=was {core.edit_at(cinematics,row)^=next}
-        showing:=next.status==.Playing || next.status==.Paused
+        showing:=!time.playing || next.status==.Playing || next.status==.Paused
         showed:=was.status==.Playing || was.status==.Paused
+        // A clip that did not play on from where it was, or the head of the editor, was sought.
+        step:=time.dt*animation.speed if next.status==.Playing else 0
+        sought:=!time.playing || clip_apart(at,was.time+step,duration,animation.loop)>time.dt*max(abs(animation.speed),1)*.5
         markers,content:=anim.animation_markers(playback.ptr,content_sources.ptr,app,e)
         for marker in markers {
             if int(marker.id)>=len(content.markers) || content.markers[marker.id].target==0 {continue}
@@ -170,11 +176,13 @@ cinematic_advance :: proc(
                 core.report(problems,e,"cinematics.marker_target","marker '%s' of its clip is on an entity it does not animate: none below it has the name of its target, and none names it in Animation_Target.animation; name the entity as the marker does, or give it an Animation_Target with this entity and that name",action)
                 continue
             }
-            if !owned || core.has(cameras,on) {continue}
-            acting:=cinematic_acting(showing,marker.time,marker.duration,at)
-            if acting==cinematic_acting(showed,marker.time,marker.duration,was.time) {continue}
-            if acting {anim.play(requests,on,action)} else if _,_,playing:=anim.action_playing(actions,on,action);playing {anim.stop(requests,on,action)}
+            if core.has(cameras,on) {continue}
+            // Every end drives the actions of its actors by its own clip, which follows the anchor.
+            acting,acted:=cinematic_acting(showing,marker.time,marker.duration,at),cinematic_acting(showed,marker.time,marker.duration,was.time)
+            _,_,playing:=anim.action_playing(actions,on,action)
+            if acting && (playing || sought || !acted) {anim.play_at(requests,on,action,at-marker.time,sought)} else if !acting && playing && (acted || sought) {anim.stop(requests,on,action)}
         }
+        if !time.playing {continue}
         shot,_:=cinematic_shot(playback.ptr,content_sources.ptr,app,entities.ptr,cameras,e,at)
         seat:=next.seat if next.seat!=core.NONE else input.focused(seat_state.ptr,seats)
         asked:cam.Camera_Override
