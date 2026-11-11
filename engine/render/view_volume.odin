@@ -58,7 +58,7 @@ view_volume_mix :: proc(value:^View_Volume,by:View_Volume,weight:f32,add:bool) {
 }
 
 // How a view looks at point.
-view_volume_at :: proc(views:core.Read(View_Volume),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),point:[3]f32) -> View_Volume {
+view_volume_at :: proc(views:^core.Table(View_Volume,$A),volumes:^core.Table(volume.Volume,$B),worlds:^core.Table(core.World_Transform,$C),point:[3]f32) -> View_Volume {
     return volume.at(volumes,worlds,views,point,VIEW_VOLUME_DEFAULT,view_volume_mix)
 }
 
@@ -70,7 +70,7 @@ view_exposure_of :: proc "contextless" (v:View_Volume) -> core.View_Exposure {
 }
 
 // A view through a camera without its own Exposure takes that of where it is.
-view_volume_expose :: proc(view:^core.View,views:core.Read(View_Volume),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform)) {
+view_volume_expose :: proc(view:^core.View,views:^core.Table(View_Volume,$A),volumes:^core.Table(volume.Volume,$B),worlds:^core.Table(core.World_Transform,$C)) {
     if view.exposure.own {return}
     view.exposure=view_exposure_of(view_volume_at(views,volumes,worlds,view.position))
 }

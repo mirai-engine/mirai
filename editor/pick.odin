@@ -102,7 +102,7 @@ entity_author :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
     ids:=core.world_table_of(w,core.Id)
     parents:=core.world_table_of(w,core.Parent)
     if ids==nil || parents==nil {return e}
-    if author:=core.ancestor_with(core.read(parents),core.read(ids),e);author!=core.NONE {return author}
+    if author:=core.ancestor_with(parents,ids,e);author!=core.NONE {return author}
     return e
 }
 

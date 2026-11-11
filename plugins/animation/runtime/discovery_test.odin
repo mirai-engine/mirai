@@ -29,7 +29,7 @@ modifier_preparation_ignores_unrelated_writes_reloads_only_changed_definitions_a
     playback:Playback;defer playback_free(&playback)
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
     prepare :: proc(modifiers:^Modifier_Runtime,w:^Discovery_World,characters:^Character_Assets,skeletons:^Skeleton_Assets,playback:^Playback,app:^host.App) -> bool {
-        return modifier_prepare(modifiers,core.read(&w.animations),core.read(&w.attachments),characters,skeletons,playback,app.assets,app.allocator,nil)
+        return modifier_prepare(modifiers,&w.animations,&w.attachments,characters,skeletons,playback,app.assets,app.allocator,nil)
     }
     if !testing.expect(t,prepare(&modifiers,&w,&characters,&skeletons,&playback,&app)) {return}
     geometry:=modifiers.geometry;buffer:=raw_data(modifiers.look.values)

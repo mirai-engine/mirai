@@ -10,7 +10,7 @@ import mm "mirai:std/math"
 // carried across their rest poses with translations scaled to its bones, before its own
 // modifiers. The bake of clips onto another skeleton pairs the bones the same way.
 @(private)
-leader_follow :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),parent_world:mm.Transform) -> bool {
+leader_follow :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,$A),parent_world:mm.Transform) -> bool {
     problems:=inputs.problems
     leader:=constraint_playing(playback,state.leader)
     posed:=leader!=nil && (leader.seen==playback.frame if state.stage==.Sampled else leader.finished==playback.frame)
@@ -48,7 +48,7 @@ leader_follow :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs
     if leader.world_final!=playback.frame || len(leader.world)!=len(leader.local) {
         leader_world:=mm.TRANSFORM_IDENTITY
         if parent,has:=core.get(parents,leader.entity);has && parent.entity!=core.NONE {
-            placed,ok:=constraint_world(core.read(transforms),parents,inputs.worlds,parent.entity)
+            placed,ok:=constraint_world(transforms,parents,inputs.worlds,parent.entity)
             if !ok {
                 core.report(problems,state.entity,"animation.follow_rig","the rig this one follows (0x%016x) cannot be placed: one of its parents has no Transform; give them one",u64(state.leader))
                 return false

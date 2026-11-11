@@ -32,15 +32,15 @@ place :: proc(f:^Fixture,level:f32,v:Maybe(Volume),position:[3]f32={},scale:f32=
 
 @(private="file")
 level_at :: proc(f:^Fixture,point:[3]f32) -> f32 {
-    return at(core.read(&f.volumes),core.read(&f.worlds),core.read(&f.levels),point,Level{1},mix_level).value
+    return at(core.read(&f.volumes),core.read(&f.worlds),&f.levels,point,Level{1},mix_level).value
 }
 
 // The level at a point through an index, as a library that asks at many
 // points: the base where no bounded volume holds it.
 @(private="file")
 level_indexed :: proc(f:^Fixture,ix:^Index,point:[3]f32) -> f32 {
-    levels:=core.read(&f.levels)
-    of :: proc(levels:core.Read(Level),row:i32) -> Level {return core.at(levels,int(row))}
+    levels:=&f.levels
+    of :: proc(levels:^core.Table(Level),row:i32) -> Level {return core.at(levels,int(row))}
     h,_:=index_hits(ix,point)
     return combine(h,Level{1},levels,of,mix_level).value
 }
@@ -139,7 +139,7 @@ the_index_finds_overlapping_volumes_by_priority_as_a_pass_over_them :: proc(t:^t
     place(&f,90,plane(blend=10,priority=8),position={0,-50,0})
     wall:=place(&f,70,plane(priority=9),position={60,0,0})
     core.edit(&f.worlds,wall).rotation=mm.quat_axis_angle({0,0,1},mm.PI/2)
-    changed,ok:=index_update(&ix,core.read(&f.volumes),core.read(&f.worlds),core.read(&f.levels))
+    changed,ok:=index_update(&ix,core.read(&f.volumes),core.read(&f.worlds),&f.levels)
     testing.expect(t,changed && ok)
     points:=[?][3]f32{{},{0.5,0,0},{1.5,0,0},{3,0,0},{4.5,0,0},{19,0,0},{21,0,0},{22.5,0,0},{24,0,0},{-30,8,0},{-38,0,0},{100,100,100},{0,-55,0},{-500,-70,900},{61,-70,0}}
     for p in points {
@@ -162,7 +162,7 @@ the_index_is_made_again_only_when_its_volumes_change :: proc(t:^testing.T) {
     defer core.test_world_destroy(&f)
     ix:Index;defer index_destroy(&ix)
     update :: proc(f:^Fixture,ix:^Index) -> bool {
-        changed,_:=index_update(ix,core.read(&f.volumes),core.read(&f.worlds),core.read(&f.levels))
+        changed,_:=index_update(ix,core.read(&f.volumes),core.read(&f.worlds),&f.levels)
         return changed
     }
     place(&f,2,nil)
@@ -303,7 +303,7 @@ a_hostile_volume_holds_and_meets_nothing :: proc(t:^testing.T) {
         e:=place(&f,50,c.v)
         core.edit(&f.worlds,e).transform=c.pose
     }
-    _,ok:=index_update(&ix,core.read(&f.volumes),core.read(&f.worlds),core.read(&f.levels))
+    _,ok:=index_update(&ix,core.read(&f.volumes),core.read(&f.worlds),&f.levels)
     testing.expect(t,ok)
     for p in points[:3] {testing.expectf(t,level_indexed(&f,&ix,p)==1 && level_at(&f,p)==1,"a hostile volume rules at %v",p)}
 }
