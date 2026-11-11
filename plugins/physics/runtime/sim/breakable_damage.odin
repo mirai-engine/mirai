@@ -98,6 +98,46 @@ break_source_valid :: proc(desc:Breakable_Desc,source:^geom.Fracture) -> bool {
     return true
 }
 
+// A crack runs along the bonds: the strain a bond that broke had left over, times the propagation of its
+// breakable, goes to the unbroken bonds of its two pieces by their area, in waves until none breaks. The bonds
+// that broke are breaking.ids[:broken], in the order they broke; those that break here follow them. Each bond
+// breaks once, so the waves end.
+@(private)
+break_propagate :: proc(w:^World,index:i32,broken:int) {
+    d:=&w.breakables[index]
+    s:=&w.breaking
+    first,last:=0,broken
+    for first<last {
+        for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {s.spread[slot]={}}
+        for slot:=d.bond_list;slot>=0;slot=w.bonds[slot].next {
+            c:=&w.bonds[slot]
+            if c.flags&{.Broken,.Cluster}!={} || c.cluster>=0 {continue}
+            s.spread[c.a].x+=c.area
+            s.spread[c.b].x+=c.area
+        }
+        for encoded in s.ids[first:last] {
+            c:=&w.bonds[encoded]
+            area:=s.spread[c.a].x+s.spread[c.b].x
+            if !(area>0) {continue}
+            per_area:=d.propagation*(c.strain-c.strength*c.area)/area
+            s.spread[c.a].y+=per_area
+            s.spread[c.b].y+=per_area
+        }
+        first=last
+        for slot:=d.bond_list;slot>=0;slot=w.bonds[slot].next {
+            c:=&w.bonds[slot]
+            if c.flags&{.Broken,.Cluster}!={} || c.cluster>=0 {continue}
+            arriving:=c.area*(s.spread[c.a].y+s.spread[c.b].y)
+            if !(arriving>0) {continue}
+            c.strain=min(max(f32),c.strain+arriving)
+            if c.strain<c.strength*c.area {continue}
+            c.flags+={.Broken}
+            s.ids[last]=u32(slot)
+            last+=1
+        }
+    }
+}
+
 @(private)
 break_cluster_common :: proc "contextless" (clusters:[]Cluster_Desc,a,b:i32) -> i32 {
     left,right:=a,b

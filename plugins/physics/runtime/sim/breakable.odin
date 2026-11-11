@@ -26,7 +26,8 @@ Breakable_Desc :: struct {
     strength:f32,          // N s per m2 of shared face that a bond takes before it breaks
     impact_damage:bool,
     damage_threshold:f32,  // N s of a contact in one step below which it does no damage
-    damage_radius:f32,     // m around a contact point that its damage reaches
+    damage_radius:f32,     // m around a contact point where its damage starts
+    propagation:f32,       // 0 to 1: share of the strain left over by a bond that breaks that goes on to the other bonds of its two pieces, by their area
     debris_volume:f32,     // m3: a group that comes off smaller than this is debris
     debris_ticks:u32,      // steps that debris lasts
     removal_ticks:u32,     // zero keeps detached non-debris pieces
@@ -140,7 +141,7 @@ Breakable :: struct {
     bond_list,bond_tail,bond_count:i32,
     density,friction,restitution:f32,
     gravity_scale:f32,
-    strength,damage_threshold,damage_radius,debris_volume:f32,
+    strength,damage_threshold,damage_radius,propagation,debris_volume:f32,
     debris_ticks:u32,
     removal_ticks:u32,
     flags:Breakable_Flags,
@@ -152,7 +153,7 @@ Breakable :: struct {
     generation:u32, // odd while the slot is in use
     next_free:i32,
 }
-#assert(size_of(Breakable)==224)
+#assert(size_of(Breakable)==232)
 
 Piece_Info :: struct {
     id:i32,             // stable while the breakable lives
@@ -187,6 +188,7 @@ Break_Scratch :: struct {
     changed:[]bool,            // per body slot: its shapes changed and its mass waits for settle
     changed_list:[]Body_Handle,
     changed_count:int,
+    spread:[][2]f32,           // per piece slot, while a crack runs: area of its unbroken bonds, and strain per m2 that reaches them
     cluster_body:[]i32,        // per bond slot
     hits:[]Break_Event,
     lost:[]u32,                // per breakable slot, since the last step began: events that did not fit
@@ -245,6 +247,7 @@ breakables_make :: proc(w:^World) -> bool {
         s.from=alloc(Body_Handle,pieces,a,&ok)
         s.ids=alloc(u32,max(pieces,bonds),a,&ok)
         s.volume=alloc(f32,pieces,a,&ok)
+        s.spread=alloc([2]f32,pieces,a,&ok)
         s.anchored=alloc(bool,pieces,a,&ok)
         s.side=alloc(i8,pieces,a,&ok)
         s.keeper=alloc(i32,bodies,a,&ok)
@@ -274,7 +277,7 @@ breakables_free :: proc(w:^World) {
     }
     s:=&w.breaking
     delete(s.parent,a);delete(s.group,a);delete(s.source,a);delete(s.firsts,a);delete(s.body,a);delete(s.made_body,a);delete(s.from,a);delete(s.ids,a)
-    delete(s.volume,a);delete(s.anchored,a);delete(s.side,a);delete(s.keeper,a);delete(s.marks,a);delete(s.changed,a);delete(s.changed_list,a)
+    delete(s.volume,a);delete(s.spread,a);delete(s.anchored,a);delete(s.side,a);delete(s.keeper,a);delete(s.marks,a);delete(s.changed,a);delete(s.changed_list,a)
     delete(s.cluster_body,a);delete(s.hits,a);delete(s.lost,a);delete(s.refused,a)
     w.breakables,w.pieces,w.bonds,w.piece_hulls,w.piece_origins,w.events.breaks=nil,nil,nil,nil,nil,nil
     w.breaking={}
@@ -643,9 +646,10 @@ cluster_hull_build :: proc(w:^World,index,cluster:i32,points:[]Vec3,counts,indic
 // of the mesh as shape, connected to the pieces it shares a face with. It starts as one body, static if
 // any piece is anchored and dynamic otherwise. A transaction that allocates: not for the middle of a tick.
 breakable_create :: proc(w:^World,desc:Breakable_Desc) -> (handle:Breakable_Handle,error:Breakable_Error) {
-    if !(desc.density>0) || !finite(desc.density,desc.friction,desc.restitution,desc.gravity_scale,desc.strength,desc.damage_threshold,desc.damage_radius,desc.debris_volume,
+    if !(desc.density>0) || !finite(desc.density,desc.friction,desc.restitution,desc.gravity_scale,desc.strength,desc.damage_threshold,desc.damage_radius,desc.propagation,desc.debris_volume,
        desc.position.x,desc.position.y,desc.position.z,desc.rotation.x,desc.rotation.y,desc.rotation.z,desc.rotation.w) ||
-       desc.friction<0 || desc.restitution<0 || desc.restitution>1 || desc.strength<0 || desc.damage_threshold<0 || desc.damage_radius<0 || desc.debris_volume<0 {return {},.Invalid_Desc}
+       desc.friction<0 || desc.restitution<0 || desc.restitution>1 || desc.strength<0 || desc.damage_threshold<0 || desc.damage_radius<0 || desc.debris_volume<0 ||
+       desc.propagation<0 || desc.propagation>1 {return {},.Invalid_Desc}
     if desc.fracture==nil && (len(desc.sites)==0 || !geom.mesh_is_valid(desc.mesh) || len(desc.mesh.indices)==0) {return {},.Invalid_Desc}
     if len(desc.anchors)>BREAKABLE_ANCHOR_CAPACITY || w.kept {return {},.Invalid_Desc}
     if !breakables_make(w) {return {},.Out_Of_Memory}
@@ -687,7 +691,7 @@ breakable_create :: proc(w:^World,desc:Breakable_Desc) -> (handle:Breakable_Hand
     d^={
         user_data=desc.user_data,piece_list=-1,piece_tail=-1,bond_list=-1,bond_tail=-1,
         density=desc.density,friction=desc.friction,restitution=desc.restitution,gravity_scale=desc.gravity_scale,
-        strength=desc.strength,damage_threshold=desc.damage_threshold,damage_radius=desc.damage_radius,
+        strength=desc.strength,damage_threshold=desc.damage_threshold,damage_radius=desc.damage_radius,propagation=desc.propagation,
         debris_volume=desc.debris_volume,debris_ticks=desc.debris_ticks,removal_ticks=desc.removal_ticks,
         hull_vertices=i32(clamp(desc.hull_vertices==0?32:desc.hull_vertices,4,HULL_MAX_VERTICES)),
         filter=desc.filter,anchor_count=i32(len(desc.anchors)),generation=d.generation+1,next_free=-1,
@@ -939,6 +943,7 @@ break_damage :: proc(w:^World,index:i32,event:^Break_Event) -> (broke,strained:b
     else if !(event.half_extents.x>0 && event.half_extents.y>0 && event.half_extents.z>0) {return}
     only:=piece_body(w,index,event.piece)
     broke,strained=break_clusters_damage(w,index,event,only)
+    broken:=0
     for slot:=d.bond_list;slot>=0;slot=w.bonds[slot].next {
         c:=&w.bonds[slot]
         if c.flags&{.Broken,.Cluster}!={} || c.cluster>=0 {continue}
@@ -951,8 +956,11 @@ break_damage :: proc(w:^World,index:i32,event:^Break_Event) -> (broke,strained:b
         if event.kind!=.Weaken && c.strain>=c.strength*c.area {
             c.flags+={.Broken}
             broke=true
+            w.breaking.ids[broken]=u32(slot)
+            broken+=1
         }
     }
+    if d.propagation>0 {break_propagate(w,index,broken)}
     if broke {breakable_regroup(w,index,event)}
     return
 }

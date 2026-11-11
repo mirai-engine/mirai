@@ -95,6 +95,11 @@ Topology:
   debris and `ignore_body`, and lists the event of each body it reached with those of the step.
   The integration applies there what `physics.strain_area` asked, once the step of the tick ran.
 - Each bond accumulates strain up to `strength * area`, saturating at the largest f32.
+- The region only seeds the damage; a crack runs along the bond graph. In the same event, the strain
+  a bond that breaks holds beyond its threshold, times `propagation`, goes to the unbroken
+  bonds of its two pieces by their area, in waves until none breaks; at 0 a crack stops where the
+  region ends. It is a function of the event and the state, so a replayed event cracks alike:
+  `propagation` is authored on both ends and nothing more travels.
 - With `impact_damage`, per contact only the points that approached fast and accumulated at least
   `damage_threshold` of normal impulse do damage: they are parameters of the breakage model, not
   energy. A resting load does not break by its weight; debris receives no damage.
