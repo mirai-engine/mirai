@@ -398,6 +398,8 @@ command_pop :: proc "contextless" (m:^Mixer,command:^Command) -> bool {
 // under LIMITER_CEILING.
 // Safe to call from an audio thread: it takes no lock and allocates nothing.
 mixer_render :: proc "contextless" (m:^Mixer,out:[]f32) {
+    float_mode:=denormals_flush()
+    defer denormals_restore(float_mode)
     frames:=len(out)/m.channels
     done:=0
     for done<frames {
