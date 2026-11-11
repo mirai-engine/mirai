@@ -159,7 +159,7 @@ back_tick :: proc(f:^Physics_Test,scene:Back_Scene,tick:int) -> (dt:f32) {
     case tick==120:             set_velocity(&f.requests,scene.placed,{0,2,0})
     // Left at rest while it moves: asleep without a step.
     case tick==125:             core.add(&f.replicas,scene.placed,core.Pose_Target{placed=1,rest=true,position={6,0.5,2},rotation=1,scale={1,1,1}})
-    case tick==150:             _=proxy_set(&f.state,scene.ghost,body_of(core.ref(&f.state),scene.kicked),{3,0.5,0},1)
+    case tick==150:             _=proxy_set(&f.state,scene.ghost,body_of(core.ref(&f.state),scene.kicked))
     case tick>=160 && tick<180: manipulation_target(&f.requests,scene.wall,{-3+f32(tick-159)*0.02,1,0})
     case tick==180:             manipulation_end(&f.requests,scene.wall)
     case tick==210:             set_velocity(&f.requests,scene.kicked,{0,3,0})

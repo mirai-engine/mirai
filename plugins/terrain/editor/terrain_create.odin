@@ -98,7 +98,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         if !terrain.source_make(&source,tool.create_kind==.Volume?.Volume:.Heightfield,samples,tool.cell,tool.chunk_cells,allocator) {editor.notify(s,"The terrain dimensions exceed their budget");return}
     }
     if !terrain_budget(s,world,&source) {return}
-    label,path:=editor.asset_new_file(s,fmt.tprintf("%s/terrain",a.registry.root),name!=""?name:terrain_kind_name(source.kind),terrain.EXTENSION,name!="")
+    label,path:=editor.asset_new_file(s,fmt.tprintf("%s/terrain",a.registry.root),name!=""?name:terrain_kind_name(source.kind),terrain.TERRAIN_EXTENSION,name!="")
     source.revision=1;seed:=base.hash_combine(base.name_hash(path),platform.clock_ns())
     id:=base.Asset_Id{seed,base.hash_combine(seed,base.name_hash("Terrain"))}
     bytes,error:=terrain.source_bytes(&source,id,&a.types,allocator)
@@ -111,7 +111,7 @@ terrain_create :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     position:=placed?at:[3]f32{s.viewport.orbit.target.x,0,s.viewport.orbit.target.z}
     transform:=core.Transform{position=position,rotation=1,scale={1,1,1}}
     if ground!=core.NONE {transform=over.transform}
-    e:=editor.entity_create(s,{preset=.Empty,name=label,transform=transform})
+    e:=editor.entity_create(s,{name=label,transform=transform})
     core.add(terrains,e,terrain.Terrain{source=id,revision=1,solid=true,ground=over.id})
     history.edits_end(s.edits);history.selection_set(editor.document_selection(s),{e})
     append(&tool.applied,Applied{source=id,revision=1,stamp=terrain.terrain_stamp(a,id)})

@@ -175,7 +175,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     made:[Ragdoll_Part]core.Entity
     for &body,part in bodies {
         if !body.present {continue}
-        e:=editor.entity_create(s,{preset=.Empty,name=fmt.tprintf("%s %s",stem,strings.to_lower(fmt.tprintf("%v",part),call.allocator)),transform=core.from_math(body.pose)})
+        e:=editor.entity_create(s,{name=fmt.tprintf("%s %s",stem,strings.to_lower(fmt.tprintf("%v",part),call.allocator)),transform=core.from_math(body.pose)})
         if e==core.NONE {
             failure(call,{"entity","Edit_Refused","a scene that takes new entities","refused","The bodies could not be made in the edited scene","Edit the section the rig is in, or save and reopen the scene"})
             editor.api_edit_end(s,call,false)
@@ -187,7 +187,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         core.add(rigids,e,rigid);core.add(colliders,e,collider)
         core.add(bindings,e,rag.Ragdoll_Bone{rig=rig,bone=bone_named(view.bones,int(body.bone)),offset=body.offset})
         if part==.Pelvis {continue}
-        joined:=editor.entity_create(s,{preset=.Empty,name=fmt.tprintf("%s %s joint",stem,strings.to_lower(fmt.tprintf("%v",part),call.allocator)),parent=e,transform=core.from_math(body.joint_at)})
+        joined:=editor.entity_create(s,{name=fmt.tprintf("%s %s joint",stem,strings.to_lower(fmt.tprintf("%v",part),call.allocator)),parent=e,transform=core.from_math(body.joint_at)})
         if joined==core.NONE {
             failure(call,{"entity","Edit_Refused","a scene that takes new entities","refused","The joints could not be made in the edited scene","Edit the section the rig is in, or save and reopen the scene"})
             editor.api_edit_end(s,call,false)

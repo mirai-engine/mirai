@@ -11,7 +11,6 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
         core.test_type(Foliage_Tool_Preferences,default=proc(dst:^Foliage_Tool_Preferences) {dst^=foliage_tool_preferences_default()}),
         core.test_type(Foliage_Api,default=proc(dst:^Foliage_Api) {dst^=FOLIAGE_API_DEFAULT}),
         core.test_type(Foliage_Thumbnails,default=proc(dst:^Foliage_Thumbnails) {dst^=FOLIAGE_THUMBNAILS_DEFAULT}),
-        core.test_type(Foliage_Kinds,default=proc(dst:^Foliage_Kinds) {dst^=FOLIAGE_KINDS_DEFAULT}),
         core.test_type(Foliage_Menu,default=proc(dst:^Foliage_Menu) {dst^=FOLIAGE_MENU_DEFAULT}),
     )
 }

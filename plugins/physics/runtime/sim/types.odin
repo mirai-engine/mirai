@@ -73,6 +73,7 @@ Body_Flag :: enum u32 {
     Lock_Linear_X,Lock_Linear_Y,Lock_Linear_Z,
     Lock_Angular_X,Lock_Angular_Y,Lock_Angular_Z,
     Mass_Override, // the mass was set by the caller and shapes do not change it
+    Mass_Given,    // body.mass was given (body_set_mass): the shapes give its center and inertia only
     Own_Gravity,   // it falls with its gravity, not with that of the world
     Enlarged,      // a shape left its fat box during the last step
     Character,     // capsule of a character: its contacts and boxes look ahead by its speed

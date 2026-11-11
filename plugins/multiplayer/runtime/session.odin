@@ -422,7 +422,7 @@ protocol_build :: proc(s:^Net_Session,w:core.World_Ref) -> bool {
         condition:=info.replicated==.Owner?wire.Fragment_Condition.Owner:info.replicated==.Others?.Not_Owner:.All
         registered:bool
         s.fragments[table],registered=wire.fragment_register(&s.protocol,info.name,{schema=&s.schema,type=type,condition=condition})
-        if !registered {return protocol_refuse(s,"%s does not fit the protocol: it replicates no field, or its fields take more than a state carries; mark local what need not travel",info.name)}
+        if !registered {return protocol_refuse(s,"%s does not fit the protocol: it replicates no field, one of its fields encodes in more than %d bytes, or all take more than %d words; mark local what need not travel, or send a large array in a reliable message",info.name,wire.MAX_STATE_BYTES,wire.MAX_STATE_WORDS)}
         largest=max(largest,info.info.size)
     }
     events,events_error:=make([]Net_Event,len(w.info.messages),allocator)

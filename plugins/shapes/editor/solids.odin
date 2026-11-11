@@ -54,7 +54,7 @@ brush_place :: proc(s:^editor.Session,place:mm.Transform,at:[3]f32,kind:shapes.B
     if opened && !history.edits_begin(s.edits,s.selection,op==.Union?"Add brush":op==.Subtract?"Cut brush":"Intersect brush") {return core.NONE,.Invalid}
     solid:=target
     if solid==core.NONE {
-        solid=editor.entity_create(s,{preset=.Empty,name="Solid",transform=core.from_math(solid_world)})
+        solid=editor.entity_create(s,{name="Solid",transform=core.from_math(solid_world)})
         if solid!=core.NONE {
             // A solid takes its form from its brushes: none of the polygon of the default.
             shape:shapes.Shape
@@ -64,7 +64,7 @@ brush_place :: proc(s:^editor.Session,place:mm.Transform,at:[3]f32,kind:shapes.B
     }
     if solid!=core.NONE {
         names:=BRUSH_NAMES
-        brush=editor.entity_create(s,{preset=.Empty,name=names[op][kind],parent=solid,transform=core.from_math(local)})
+        brush=editor.entity_create(s,{name=names[op][kind],parent=solid,transform=core.from_math(local)})
         if brush!=core.NONE {
             value:=shapes.Shape_Brush{kind=kind,op=op}
             editor.component_add(s,brush,brush_info,&value)

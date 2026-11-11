@@ -851,7 +851,8 @@ one set by whoever tests those functions by hand).
   `a_client_without_the_scene_of_its_server_leaves_saying_so`,
   `a_client_follows_the_pause_and_the_time_scale_of_its_server` and
   `the_connections_and_the_messages_that_arrive_reach_the_first_tick_after_them`; a typed message
-  of 4 KB: `a_typed_message_of_4_kb_reaches_the_inbox_of_its_type_whole`. Sections:
+  with 4 KB of bytes:
+  `a_typed_message_of_6_kb_with_4_kb_of_bytes_reaches_the_inbox_of_its_type_whole`. Sections:
   `what_is_in_a_section_reaches_a_client_while_it_has_the_section_loaded`,
   `a_replica_of_a_section_that_is_not_loaded_waits_for_it`,
   `what_is_in_sections_that_overlap_reaches_a_client_that_has_either` and

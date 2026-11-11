@@ -735,7 +735,7 @@ terrain_update :: proc(
     for id in named {
         if data_find(data,id)!=nil || slice.contains(data.unread[:],id) {continue}
         record,found:=asset.registry_find(&app.assets.registry,id)
-        if !found || record.kind!=KIND {continue}
+        if !found || record.kind!=TERRAIN_KIND {continue}
         if data_load_begin(data,app.assets,id)!=nil {scene.load_wait(waits,id)} else {data_load(data,app.assets,id,problems,core.NONE)}
     }
     for marker,row in terrains.values[:core.count(terrains)] {

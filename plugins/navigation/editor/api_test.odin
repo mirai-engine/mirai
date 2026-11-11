@@ -65,11 +65,3 @@ a_route_is_the_next_corner_and_what_is_left :: proc(t:^testing.T) {
     testing.expect_value(t,route_of(near[:],{}).state,editor.Route_State.None)
     testing.expect_value(t,route_of(nil,{}).state,editor.Route_State.None)
 }
-
-// What git and the tools know of the kinds of the plugin without loading it.
-@(test)
-the_manifest_declares_the_asset_kinds_the_plugin_registers :: proc(t:^testing.T) {
-    m,error:=project.plugin_read(#directory+"../plugin.mirai")
-    testing.expect_value(t,error.code,project.Error_Code.None)
-    testing.expect_value(t,editor.asset_kinds_differ(NAV_KINDS_DEFAULT.provider,&m),"")
-}
