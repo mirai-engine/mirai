@@ -170,8 +170,7 @@ LIGHT_WEIGHT_ROWS          :: 2
 // word for each light, four to a row, 0 for a light without maps, else its
 // first map + 1 and, from bit SHADOW_LIGHT_FACES, which faces of its cube have
 // one; then SHADOW_MAP_ROWS for each map. The constants of a view hold those of
-// the cascades of the sun, SUN_MAP_ROWS. The maps draw SHADOW_ENTRIES clusters
-// at most, SHADOW_TESTED_ENTRIES of them of masked or blended materials.
+// the cascades of the sun, SUN_MAP_ROWS.
 SHADOW_MAP_ROWS            :: 6
 SHADOW_LIGHT_FACES         :: 16
 // The face of a spot whose one map lies along its cone, after the six of the cube.
@@ -179,8 +178,6 @@ SHADOW_SPOT_FACE           :: 6
 SHADOW_MAP_ORTHOGRAPHIC    :: 1
 SHADOW_SUN_MAPS            :: 6
 SUN_MAP_ROWS               :: SHADOW_SUN_MAPS * SHADOW_MAP_ROWS
-SHADOW_ENTRIES             :: u32(1 << 18)
-SHADOW_TESTED_ENTRIES      :: u32(1 << 16)
 REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 
 // The probe volume, and the rays of its contact occlusion at each pixel.
