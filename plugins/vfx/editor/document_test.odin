@@ -118,7 +118,8 @@ particle_document_builds_the_rows_of_every_field_and_its_eyes_hide_them :: proc(
     app:host.App
     s:=new(editor.Session)
     defer free(s)
-    s.gui,s.inspector,s.app=&g,&inspector,&app
+    info:core.World_Info
+    s.gui,s.inspector,s.app,s.info=&g,&inspector,&app,&info
     p:Effect_Document
     p.read=true
     p.file.info=effect.PARTICLE_DEFAULTS
