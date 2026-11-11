@@ -91,6 +91,7 @@ build_start :: proc(s:^Session,target:=build.Target.Editor,folder:="") -> bool {
 Build_Run :: struct {
     thread:^thread.Thread,
     project_root,engine_root,folder,test_package:string,
+    runs:string,               // the folder of the binaries of the engine this editor runs
     names:[]string,
     overlay:[]shaders.Overlay, // a build of the editor: the programs the editor holds unsaved
     action:build.Action,
@@ -118,7 +119,7 @@ build_run_start :: proc(s:^Session,action:build.Action,target:build.Target,folde
     build_run_free(b)
     a:=runtime.heap_allocator()
     r:=new(Build_Run,a)
-    r.project_root,r.engine_root=strings.clone(s.project_root,a),strings.clone(s.engine_root,a)
+    r.project_root,r.engine_root,r.runs=strings.clone(s.project_root,a),strings.clone(s.engine_root,a),strings.clone(engine_folder_here(s),a)
     r.folder,r.test_package=strings.clone(folder,a),strings.clone(test_package,a)
     r.names=make([]string,len(names),a)
     for name,i in names {r.names[i]=strings.clone(name,a)}
@@ -168,7 +169,7 @@ build_run :: proc(r:^Build_Run) {
             if r.shaders.result.status==.Failed {return}
         }
     }
-    r.job=build.job_start({project=&p,target=r.target,action=r.action,output=r.folder,test_package=r.test_package,test={names=r.names,quiet=true},dev=r.target==.Editor && build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE})
+    r.job=build.job_start({project=&p,target=r.target,action=r.action,output=r.folder,test_package=r.test_package,test={names=r.names,quiet=true},dev=r.target==.Editor && build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE,runs=r.runs})
     for {
         ended:=build.job_poll(r.job)
         if r.shaders!=nil {ended=build.shaders_poll(r.shaders) && ended}
@@ -222,7 +223,7 @@ build_run_free :: proc(b:^Build_State) {
     for name in r.names {delete(name,a)}
     for held in r.overlay {delete(held.path,a);delete(held.data,a)}
     delete(r.names,a);delete(r.overlay,a)
-    delete(r.project_root,a);delete(r.engine_root,a);delete(r.folder,a);delete(r.test_package,a)
+    delete(r.project_root,a);delete(r.engine_root,a);delete(r.runs,a);delete(r.folder,a);delete(r.test_package,a)
     free(r,a)
 }
 
@@ -379,7 +380,7 @@ files_fingerprint :: proc(path,extension:string,hash:^u64,depth:int) {
 // API: of the engine and of its plugins. Empty without the root of the engine.
 code_api_folders :: proc(s:^Session) -> (engine,plugins:string) {
     if s.engine_root=="" {return}
-    engine=build.engine_paths(s.engine_root,build.ENGINE_MODE_HERE,context.temp_allocator).decl
+    engine=project.path(engine_folder_here(s),"decl",allocator=context.temp_allocator)
     manifest,error:=project.manifest_read(project.path(s.project_root,project.PROJECT_FILE,allocator=context.temp_allocator))
     if error.code!=.None {return}
     opened:=project.Project{manifest=manifest}
@@ -480,7 +481,7 @@ build_tools :: proc(s:^Session) {
 
 FAILURE_TEXTS :: [build.Failure]string{
     .None="",.Engine_Missing="The root of the engine is not known",
-    .Engine_Incomplete="The installed engine lacks some of its binaries: unpack its package again",.Generate="The attributes of the packages are wrong",
+    .Engine_Incomplete="The installed engine lacks some of its binaries: unpack its package again",.Engine_Defines="The editor runs engine binaries built with other defines than the project's",.Generate="The attributes of the packages are wrong",
     .Compiler_Missing="No Odin compiler in MIRAI_ODIN or PATH",.Shaders="The shaders of the engine could not be generated",
     .Compiler_Failed="The compiler could not run",
     .Write_Failed="A generated file could not be written",.Compile="The code does not compile",

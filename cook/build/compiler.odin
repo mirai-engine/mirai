@@ -167,7 +167,7 @@ IMPORT_LIBRARIES_AHEAD :: ODIN_OS==.Windows
 import_libraries_make :: proc(compiler:string,made:[][2]string) -> string {
     when !IMPORT_LIBRARIES_AHEAD {return ""}
     linker:=strings.concatenate({compiler[:max(strings.last_index_byte(compiler,'/'),0)],"/bin/lld-link.exe"},context.temp_allocator)
-    processes:=make([dynamic]os.Process,0,len(made),context.temp_allocator)
+    processes:=make([dynamic]subprocess.Process,0,len(made),context.temp_allocator)
     failed:=""
     for pair in made {
         process,error:=subprocess.start({command={linker,"/lib","/nologo","/machine:x64",fmt.tprintf("/def:%s",pair[0]),fmt.tprintf("/out:%s",pair[1])}})
@@ -177,8 +177,8 @@ import_libraries_make :: proc(compiler:string,made:[][2]string) -> string {
         }
         append(&processes,process)
     }
-    for process,i in processes {
-        state,error:=os.process_wait(process)
+    for &process,i in processes {
+        state,error:=subprocess.wait(&process)
         if failed=="" && (error!=nil || state.exit_code!=0) {failed=made[i][1]}
     }
     return failed
@@ -381,7 +381,7 @@ root_relative :: proc(text,root:string) -> string {
 // of a library, a program, the target of a job or a test executable.
 @(private)
 Compile :: struct {
-    process:os.Process,
+    process:subprocess.Process,
     streams:[2]string, // its error and output streams
     staged:string,     // what it writes, which it must leave; "": it writes nothing (a check)
     library:int,       // of a job: a plugin library, -1 its target; of the engine: a library, -1 a program

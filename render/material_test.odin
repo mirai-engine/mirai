@@ -688,6 +688,60 @@ material_smooth_surfaces_reflect_the_scene :: proc(t: ^testing.T) {
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
+// Without traced reflections a mirror reads the probe volume, which holds the
+// sky blurred over a hemisphere: under an open sky it shows the sky as sharp
+// as without the volume, and under a roof the roof, not the sky.
+@(test)
+material_mirror_reads_the_sky_sharp_from_the_probes_and_not_under_a_roof :: proc(t: ^testing.T) {
+	f: Fixture
+	settings := material_settings()
+	settings.gi_enabled = true
+	settings.reflections = .Off
+	if !fixture_init(t, &f, 64, 64, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	// A sky lit only within 22.5 degrees of the zenith: blurred over a hemisphere, a sixth of it
+	// reaches straight up.
+	WIDE, TALL :: 32, 16
+	image: [WIDE * TALL * 4]u8
+	for i in 0 ..< WIDE * 2 * 4 {image[i] = 255}
+	sky, added := texture_add(r, {pixels = image[:], width = WIDE, height = TALL, name = "zenith"})
+	testing.expect(t, added, r.error)
+	mirror, roof := DEFAULT_MATERIAL, DEFAULT_MATERIAL
+	mirror.base_color = {0.9, 0.9, 0.9}
+	mirror.metallic = 1
+	mirror.roughness = 0.05
+	roof.base_color = {0.2, 0.2, 0.2}
+	materials_set(r, {mirror, roof})
+	quad := ground_quad(r)
+	floor := Instance_Desc{object_id = 1, mesh = quad, transform = scale_matrix(20), material = 1, tint = {1, 1, 1}}
+	environment := Environment{sky = {1, 1, 1}, sky_texture = sky}
+	scene_given(r, {floor}, nil, {}, environment)
+	settled :: proc(t: ^testing.T, f: ^Fixture, camera: Camera) -> [3]f32 {
+		frames(t, f, camera, 48)
+		return screen_color(t, f, camera, {0, 0, 0})
+	}
+	// Looking straight down, the floor mirrors the zenith.
+	probed := settled(t, &f, OVERHEAD)
+	settings.gi_enabled = false
+	testing.expect(t, renderer_apply_settings(r, settings))
+	sky_only := settled(t, &f, OVERHEAD)
+	testing.expectf(t, sky_only.r > 100, "without the volume the mirror shows the lit zenith: %v", sky_only)
+	testing.expectf(t, abs(probed.r - sky_only.r) < 12, "with the volume the mirror shows the zenith as sharp: %v against %v", probed, sky_only)
+
+	// A roof facing down over the floor, the eye under it.
+	settings.gi_enabled = true
+	testing.expect(t, renderer_apply_settings(r, settings))
+	over := scale_matrix(4)
+	over[1, 1], over[2, 2], over[1, 3] = -4, -4, 1.2
+	scene_given(r, {floor, {object_id = 2, mesh = quad, transform = over, material = 2, tint = {1, 1, 1}}}, nil, {}, environment)
+	under := OVERHEAD
+	under.position = {0, 0.8, 0}
+	roofed := settled(t, &f, under)
+	testing.expectf(t, roofed.r < sky_only.r * 0.5, "under a roof the mirror does not show the sky: %v against %v", roofed, sky_only)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
 // A ray that finds a surface with a program shows what the program gives
 // there (points.odin), not the values of its row: no stage of rays runs it.
 // With the program alone in the scene its stage takes the whole window of

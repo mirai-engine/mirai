@@ -42,7 +42,7 @@ template_copy :: proc(t:^testing.T,name:string) -> (root,engine:string,ok:bool) 
 }
 
 @(private="file") Game_Status :: struct {health:f32,hits:i32,message:[32]u8 `mirai:"text"`}
-@(private="file") Game_Mark :: struct {seen:i32 `mirai:"transient"`}
+@(private="file") Game_Mark :: struct {seen:i32 `mirai:"transient,hidden"`}
 
 // The world of the game of the tests: where a recipe is run.
 @(private="file")
@@ -181,6 +181,31 @@ the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T)
             of_asset:=on(&q,named.kind,"read",named.path)
             of_file:=on(&q,named.kind,"read",outside)
             testing.expectf(t,of_asset.code==0 && of_file.code==0 && of_file.out==of_asset.out,"%s: %s%s",named.path,of_file.out,of_file.err)
+            // Read and write resolve a name alike: the path of the registry, with or without
+            // assets/, the id and the file under the assets name the same asset; a write refuses
+            // a file outside them.
+            record,_:=asset.registry_find_path(&q.registry,named.path)
+            id:[base.ASSET_ID_TEXT]u8
+            document:=project.path(root,"document.json",allocator=context.temp_allocator)
+            for form in ([]string{named.path,strings.concatenate({"assets/",named.path},context.temp_allocator),base.asset_id_format(record.id,id[:]),project.path(root,"assets",named.path,allocator=context.temp_allocator)}) {
+                read:=on(&q,named.kind,"read",form,"--out",document)
+                written:=on(&q,named.kind,"write",form,document)
+                testing.expectf(t,read.code==0 && written.code==0 && strings.has_prefix(written.out,strings.concatenate({named.path,": "},context.temp_allocator)) && !strings.contains(written.out,": made"),"%s: %s%s%s",form,read.err,written.out,written.err)
+            }
+            outside_write:=on(&q,named.kind,"write",outside,document)
+            testing.expectf(t,outside_write.code==1 && strings.contains(outside_write.err,"is outside the assets of the project"),"%s%s",outside_write.out,outside_write.err)
+        }
+        // A file under the assets that does not exist yet is made there.
+        made:=on(&q,.Scene,"write",project.path(root,"assets","arena","annex.scene",allocator=context.temp_allocator),project.path(root,"document.json",allocator=context.temp_allocator))
+        testing.expectf(t,made.code==0 && strings.has_prefix(made.out,"arena/annex.scene: made"),"%s%s",made.out,made.err)
+        // A scene no asset of the project is, outside or where the registry looks not (.mirai), reads too.
+        other:asset.Scene
+        testing.expect_value(t,asset.scene_init(&other,&q.types,asset.content_id("elsewhere","scene","copy.scene"),context.temp_allocator),asset.Error.None)
+        for file in ([]string{project.path(root,"copy.scene",allocator=context.temp_allocator),project.path(root,"assets",".mirai","copy.scene",allocator=context.temp_allocator)}) {
+            os.make_directory_all(file[:strings.last_index_byte(file,'/')])
+            testing.expect_value(t,asset.scene_save(&other,file),asset.Error.None)
+            copy_read:=on(&q,.Scene,"read",file)
+            testing.expectf(t,copy_read.code==0 && strings.contains(copy_read.out,`"entities"`),"%s: %s%s",file,copy_read.out,copy_read.err)
         }
     }
     written:=on(&p,.Ui,"write","hud/hud.ui",hud)
@@ -317,6 +342,18 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     text:=string(serial.writer_bytes(&out))
     for part in ([]string{`"name":"Ground"`,`"Point_Light":{"intensity": 7}`,`"Mark":{}`,`"off":["Point_Light"]`,`"name":"Bulb","visible":false`}) {
         testing.expectf(t,strings.contains(text,part),"the document has %s: %s",part,text)
+    }
+    // A component with no field to show is {} in the document: written back whole or merged, it
+    // stays, and only null in a merge takes it away.
+    for c in ([]struct{document:string,kept:bool}{
+        {text,true},
+        {`{"merge":true,"entities":[{"name":"Lamp","position":[2,4,0]}]}`,true},
+        {`{"merge":true,"entities":[{"name":"Lamp","components":{"Mark":null}}]}`,false},
+    }) {
+        _,problem=scene_write(&p,"arena/main.scene",c.document)
+        serial.writer_init(&out,0,context.temp_allocator)
+        testing.expect(t,problem=="" && scene_read(&p,"arena/main.scene",&out)=="",problem)
+        testing.expectf(t,strings.contains(string(serial.writer_bytes(&out)),`"Mark":{}`)==c.kept,"%s: %s",c.document,serial.writer_bytes(&out))
     }
     // What a document cannot declare says where and what does.
     scene_file,_:=asset.registry_find_path(&p.registry,"arena/main.scene")
