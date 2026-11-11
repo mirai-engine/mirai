@@ -108,7 +108,7 @@ asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,mess
         if refused!="" {return "",fmt.tprintf("folder: %s",refused)}
         if busy:=import_busy(s);busy!="" {return "",busy}
         source:=strings.trim_suffix(sidecar,importer.SIDECAR_EXTENSION)
-        target:=fmt.tprintf("%s/%s/%s",project.folder_path(s.project_root,.Source,context.temp_allocator),into,filepath.base(source))
+        target:=fmt.tprintf("%s/%s",asset.registry_file_path(r,into,context.temp_allocator),filepath.base(source))
         if dir:=filepath.dir(target);!os.is_dir(dir) {_=os.make_directory_all(dir)}
         if os.exists(target) || os.rename(source,target)!=nil || os.rename(sidecar,fmt.tprintf("%s%s",target,importer.SIDECAR_EXTENSION))!=nil {
             return "",fmt.tprintf("%s could not be moved to %s: a file is there, or another program has it open",source,target)
@@ -193,12 +193,10 @@ asset_folder_move :: proc(s:^Session,from,folder,name:string) -> (path,message:s
     }
     full:=asset.registry_file_path(r,source,context.temp_allocator)
     target:=asset.registry_file_path(r,path,context.temp_allocator)
-    // The sources of the folder go with it: what they give is listed where they are, and nothing is imported.
-    sources:=project.folder_path(s.project_root,.Source,context.temp_allocator)
-    for pair in ([2][2]string{{fmt.tprintf("%s/%s",sources,source),fmt.tprintf("%s/%s",sources,path)},{full,target}}) {
-        if !os.is_dir(pair[0]) {continue}
-        if dir:=filepath.dir(pair[1]);!os.is_dir(dir) {_=os.make_directory_all(dir)}
-        if os.rename(pair[0],pair[1])!=nil {return "",fmt.tprintf("%s could not be moved to %s; another program may have a file of it open",source,path)}
+    // The sources of the folder go with it, with their sidecars: what they give is listed where they are, and nothing is imported.
+    if os.is_dir(full) {
+        if dir:=filepath.dir(target);!os.is_dir(dir) {_=os.make_directory_all(dir)}
+        if os.rename(full,target)!=nil {return "",fmt.tprintf("%s could not be moved to %s; another program may have a file of it open",source,path)}
     }
     asset_history_moved(s,full,target,true)
     asset_start_scene_moved(s,source,path,true)
