@@ -1,31 +1,29 @@
 #include "native.slang"
-// The camera looks along its rays: they show a relative emission (hit_emission).
-#define MIRAI_HITS_SHOW_RELATIVE_EMISSION 1
 //! variant hw MIRAI_HW_RT=1
 // color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
 //! constant color MIRAI_GLASS_MEANS
 // The camera inside a solid of glass (params.medium, the blended instance
 // under the top of whose box it is), after glass.comp lit the nearest layer:
 // at a back face of the solid, the view leaves it, bending out within the
-// window of Snell and reflected back inside beyond the critical angle; and the
-// solid absorbs what the view meets in it and scatters light towards it, from
-// the camera to the first layer or, without one, to the opaque scene. It reads the scene from the copy that
-// glass.comp made of it before that layer and writes over the image. It runs
-// only while some instance is over the camera.
-#define GLASS_WALK_IN_SCENE 1
+// window of Snell and shown on screen as glass.comp shows the scene
+// (glass_pass.slang), and is reflected back inside, all of it beyond the
+// critical angle, as the reflections of the layer found it; and
+// the solid absorbs what the view meets in it and scatters light towards it,
+// from the camera to the first layer or, without one, to the opaque scene. It
+// reads the scene from the copy that glass.comp made of it before that layer
+// and writes over the image. It runs only while some instance is over the
+// camera.
 #include "glass_pass.slang"
 #define MIRAI_GROUP_X 8
 #define MIRAI_GROUP_Y 8
 #define MIRAI_GROUP_Z 1
 
 // The two ways of the light that comes to the eye from inside a solid
-// through a back face of it: what bends out of it within the window of Snell
-// (LEG_OUT), and what the face reflects back in (LEG_IN), all of it beyond
-// the critical angle. The face reflects as its F0 says at the angle outside,
-// where the light is in the thinner medium. Each adds to the image once it is
-// known, under what the solid absorbs between the camera and the face.
-#define LEG_OUT 0u
-#define LEG_IN 1u
+// through a back face of it: what bends out of it within the window of Snell,
+// and what the face reflects back in, all of it beyond the critical angle.
+// The face reflects as its F0 says at the angle outside, where the light is
+// in the thinner medium. Each adds to the image under what the solid absorbs
+// between the camera and the face.
 float3 leaving_reflectance(Material m, Glass g, out bool out_way) {
     float ior = m.ior;
     float cos_inside = saturate(dot(g.view, g.normal));
@@ -73,15 +71,10 @@ void medium_find(uint instance) {
 
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
-void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint local : SV_GroupIndex) {
+void main(uint3 dispatch_id : SV_DispatchThreadID, uint local : SV_GroupIndex) {
     if (local == 0u) medium_find(params.medium - 1u);
     GroupMemoryBarrierWithGroupSync();
     int2 p = int2(dispatch_id.xy);
-    Point_Head head;
-    if (params.resume != 0u) {
-        if (!head_of_round(group.x * (MIRAI_GROUP_X * MIRAI_GROUP_Y) + local, head)) return;
-        p = int2(head.owner & 0xffffu, head.owner >> 16u);
-    }
     if (any(((p) >= (int2(frame.resolution))))) return;
     float depth = layer_depth.Load(int3(p, 0)).r;
     float2 uv = (float2(p) + 0.5) * frame.inv_resolution;
@@ -114,38 +107,20 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         bool out_way;
         float3 reflectance = leaving_reflectance(m, g, out_way);
         float3 near_absorbed = material_absorption(m, near);
-        float3 back = reflect(-g.view, g.normal);
-        Glass_Walk w;
-        bool shade = false;
-        Surface shown;
-        float t = 0.0;
-        if (params.resume != 0u) {
-            w = walk_resumed(head, m, ids.y, bias, shade, shown, t);
-        } else {
-            out_color[p] = float4(finite_or_zero(g.emission * near_absorbed + solid_scatter(m, ids.y, frame.camera_position.xyz, view_direction(uv), near, medium_top)), 1.0);
+        float3 seen = g.emission * near_absorbed + solid_scatter(m, ids.y, frame.camera_position.xyz, view_direction(uv), near, medium_top);
+        if (out_way) {
             float3 out_direction = refract(-g.view, g.normal, m.ior);
-            w = out_way ? walk_start(LEG_OUT, WALK_SEEN, g.position + out_direction * bias, out_direction, 0u) : walk_start(LEG_IN, WALK_INSIDE, g.position + back * bias, back, 0u);
+            Glass_Walk w = walk_start(g.position + out_direction * bias, out_direction, 0u);
+            walk_show(w, depth, g.roughness, uv, seed);
+            seen += w.radiance * surface_filter(m, g.base_color, g.alpha, reflectance) * near_absorbed;
         }
-        for (;;) {
-            if (shade) {
-                walk_shaded(w, shown, t);
-                shade = false;
-            }
-            if (w.stage == WALK_DONE) {
-                float3 added;
-                if (w.leg == LEG_OUT) {
-                    added = w.radiance * surface_filter(m, g.base_color, g.alpha, reflectance);
-                } else {
-                    // Under an open sheet the solid goes on to what the ray finds.
-                    float path = (w.flags & WALK_OPEN) != 0u ? w.path + w.travelled : w.path;
-                    added = (w.radiance * material_absorption(m, path) + solid_scatter(m, ids.y, g.position + back * bias, back, path, medium_top)) * reflectance;
-                }
-                out_color[p] = float4(out_color[p].rgb + finite_or_zero(added * near_absorbed), 1.0);
-                if (w.leg == LEG_IN) return;
-                w = walk_start(LEG_IN, WALK_INSIDE, g.position + back * bias, back, 0u);
-            }
-            if (!walk_advance(w, m, ids.y, depth, g.roughness, bias, p, seed, shade, shown, t)) return;
-        }
+        // Back in, its reflection, traced with the layer (reflect.comp), which takes what the solid
+        // absorbs and scatters on the way; without it, what so much of the solid scatters.
+        float3 back = reflect(-g.view, g.normal);
+        float3 inside = params.traced != 0u ? reflection.Load(int3(p, 0)).rgb : solid_scatter(m, ids.y, g.position + back * bias, back, params.max_distance, medium_top);
+        seen += inside * reflectance * near_absorbed;
+        out_color[p] = float4(finite_or_zero(seen), 1.0);
+        return;
     }
     if (inside) {
         Material medium = material_row(medium_row);

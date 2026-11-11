@@ -50,6 +50,14 @@ float4 fog_beyond(float3 a, float3 b, float3 eye_ray, float3 around) {
         float stopped = fog_optical_depth(v, lerp(a.y, b.y, start), lerp(a.y, b.y, end), (end - start) * length);
         float3 light = sun * media_phase(cosine, v.params.y);
         if (!fog_carve(v, FOG_CARVE_SUN_ONLY)) light += ambient;
+        if (fog_carve(v, FOG_CARVE_GLASS)) {
+            // What its glass takes of the view it does not stop: its light, dimmed in it on the way to the eye.
+            float3 entry = lerp(a, b, start);
+            float to_eye = distance(frame.camera_position.xyz, entry);
+            float on_way = min(fog_volume_exit(v, entry, (frame.camera_position.xyz - entry) / max(to_eye, 1e-6)), to_eye);
+            sent += v.medium.rgb / v.medium.a * light * (1.0 - exp(-stopped)) * exp(-v.medium.a * on_way);
+            continue;
+        }
         float3 by = v.medium.rgb / v.medium.a * light * stopped;
         if (v.volume.kind.y != 0u) {
             depth += stopped;

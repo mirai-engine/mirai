@@ -41,7 +41,7 @@ a_deformable_with_levels_keeps_the_levels_of_its_source_in_its_own_vertices :: p
 	count := original.vertex_count
 	testing.expect_value(t, mesh.level_count, original.level_count)
 	testing.expect(t, mesh.flags & MESH_FLAG_LEVEL0 == 0 && mesh.vertices_posed == count)
-	testing.expect_value(t, mesh.vertex_span, original.vertex_span + 3 * count * POSED_WORDS)
+	testing.expect_value(t, mesh.vertex_span, original.vertex_span + 3 * count * POSED_WORDS + original.cluster_count * POSED_BOUNDS_WORDS)
 	testing.expect_value(t, mesh.index_span, original.index_span)
 	written, rest, posed, row, known := deformable_vertices(r, with)
 	testing.expect_value(t, row, u32(with))
