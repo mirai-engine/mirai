@@ -64,7 +64,7 @@ players_frame :: proc(f:^Players_Fixture) {
     world:=test_world_ref(w)
     frame_begin(world,core.read(&w.screens),core.read(&w.widgets),core.read(&w.worlds),core.read(&w.hidden),core.read(&w.parents),core.read(&w.meshes),
         UI_SETTINGS_DEFAULT,UI_PREFERENCES_DEFAULT,{},core.ref(&f.state),core.read(&w.seats),core.read(&w.moves),core.ref(&f.bindings),core.ref(&f.actions),
-        {},core.read(&w.cameras),core.read(&w.exposures),core.read(&w.view_volumes),core.read(&w.volumes),{},&f.requests,&f.effects,&f.sounds,&f.gui,&f.app,&f.problems,false)
+        {},core.read(&w.cameras),core.read(&w.exposures),core.read(&w.view_volumes),core.read(&w.volumes),{},{},&f.requests,&f.effects,&f.sounds,&f.gui,&f.app,&f.problems,false)
     widgets_build(world,&f.gui,&f.app,&f.problems)
 }
 

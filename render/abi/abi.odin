@@ -208,6 +208,9 @@ DEPTH_PROBE_CAPACITY :: 8
 DEPTH_PROBE_CELLS    :: 32
 DEPTH_PROBE_CELL     :: 2
 
+// The points of the outlines of one table of volumes a shader weighs (engine/volume).
+VOLUME_OUTLINE_POINTS :: 64
+
 // The winds a shader combines (engine/volume).
 WIND_VOLUMES :: 8
 

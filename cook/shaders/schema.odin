@@ -216,6 +216,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     i(&b,"DEPTH_PROBE_CELLS",abi.DEPTH_PROBE_CELLS)
     f(&b,"DEPTH_PROBE_CELL",abi.DEPTH_PROBE_CELL)
     i(&b,"WIND_VOLUMES",abi.WIND_VOLUMES)
+    i(&b,"VOLUME_OUTLINE_POINTS",abi.VOLUME_OUTLINE_POINTS)
 
     u(&b,"POINTS_CAPACITY",abi.POINTS_CAPACITY)
     u(&b,"POINTS_PROGRAMS",abi.POINTS_PROGRAMS)
