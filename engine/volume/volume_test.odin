@@ -330,3 +330,29 @@ a_volume_relative_to_the_origin_keeps_where_it_is :: proc(t:^testing.T) {
     moved:=gpu_wind_relative(winds,origin)
     testing.expect(t,moved.volumes[0]==relative && moved.volumes[1]==g,"the winds the frame has move, and only them")
 }
+
+// A spline samples only from 2 to SPLINE_POINTS finite points with a width; a
+// sample lies on the ground under it, or where it is without ground, raised by
+// its height.
+@(test)
+a_spline_samples_only_valid_points_and_lies_on_the_ground :: proc(t:^testing.T) {
+    nan:=f32(0);nan=nan/nan
+    Case :: struct {name:string,spline:Spline,samples:bool}
+    bad_width,bad_point,bad_height,too_many:=SPLINE_DEFAULT,SPLINE_DEFAULT,SPLINE_DEFAULT,SPLINE_DEFAULT
+    bad_width.points[1].width=0
+    bad_point.points[0].position.x=nan
+    bad_height.points[1].height=max(f32)
+    too_many.count=SPLINE_POINTS+1
+    for c in ([]Case{
+        {"two points",SPLINE_DEFAULT,true},{"none",{},false},{"one",{count=1,points={0={{0,0,0},1,0}}},false},
+        {"no width",bad_width,false},{"not a number",bad_point,false},{"too high",bad_height,false},{"too many",too_many,false},
+    }) {
+        s:=c.spline
+        out:[32]mm.Path_Point
+        testing.expectf(t,(spline_sample(&s,1,out[:])>0)==c.samples,"%s",c.name)
+    }
+    place:=mm.Transform{{1,2,3},mm.QUAT_IDENTITY,{1,1,1}}
+    testing.expect_value(t,spline_lay({},place,{0,5,0},0.5),[3]f32{1,7.5,3})
+    flat :: proc(user:rawptr,origin,down:[3]f32,coarse:bool) -> (core.Ground_Hit,core.Ground_Found) {return {point={origin.x,-1,origin.z}},.Ground}
+    testing.expect_value(t,spline_lay({probe=flat},place,{0,5,0},0.5),[3]f32{1,-0.5,3})
+}
