@@ -274,7 +274,7 @@ call_params :: #force_inline proc(call:^Call,$T:typeid) -> ^T {
     return (^T)(call.params)
 }
 call_result :: #force_inline proc(call:^Call,$T:typeid) -> ^T {
-    assert(call.method.result_id==T)
+    assert(call.method.result_id==T && call.result!=nil,"a handler answers with the result its method registers; a call made by hand gives it one")
     return (^T)(call.result)
 }
 // Whether the caller gave a param, and not null: an optional one left out
