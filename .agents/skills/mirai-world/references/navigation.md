@@ -25,9 +25,10 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   them again only when it holds those of another, also after the world went back to a copy, and
   copies the marks of the tiles, the settings and the counts every time.
 - It builds by itself, in `navigation_build` (`fixed`, `react`, game and editor, `server`):
-  - **Where.** Inside the `Nav_Bounds`; with none, in the box of all the static collision
-    (`phys.static_bounds`). A `Nav_Bounds`, a `Nav_Area` or a `Nav_Obstacle` covers the upright
-    prism of the [`Volume`](../../mirai-gameplay/references/libraries.md#volume) of its entity
+  - **Where.** Inside the `Nav_Bounds`; with none, in the box of the static collision that blocks,
+    without sensors (`phys.static_bounds`). A `Nav_Bounds`, a `Nav_Area` or a `Nav_Obstacle`
+    covers the upright prism of the
+    [`Volume`](../../mirai-gameplay/references/libraries.md#volume) of its entity
     (`volume_prism`): a box by its corners turned by the yaw, a sphere by the octagon around it.
     Without one, or with a plane or an unbounded one, which no navmesh bounds, the
     `navigation.volume` problem, and the navigation does not see it.

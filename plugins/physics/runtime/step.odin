@@ -102,6 +102,7 @@ physics_step :: proc(
         return
     }
     w:=&state.world
+    defer sim.static_bounds_update(w)
     lying:=splines!=nil && core.count(splines)>0
     fluids_sync(state,fluids,volumes,transforms,parents,problems,fluid_waves,winds,worlds,splines,lying?core.ground_query(world,ground):{},lying && ground.ptr!=nil?ground.changed.items[:]:nil,sections)
     if !events_reserve(events,w.desc.event_capacity) {

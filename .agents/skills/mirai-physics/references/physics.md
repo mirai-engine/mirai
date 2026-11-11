@@ -460,8 +460,11 @@ What whoever builds from the level needs, like the navmesh, without allocating.
   - a static body moved (`body_set_transform`: where it was and where it ended up), destroyed, or
     that becomes static or stops being so (`body_set_type`): the box of all its shapes.
 
-  It notes every static shape, also sensors; the step notes nothing, because it does not move
-  statics.
+  A sensor blocks nothing, so it is not static collision: it notes nothing, and its filter only
+  when it starts or stops blocking. The step notes nothing, because it does not move statics.
+- `static_bounds(w)` is the box around the static shapes that block, sensors left out, as of the
+  last `static_bounds_update(w)`, which makes it again only when the log moved; the plugin calls it
+  at the end of `physics_step`.
 - `static_changes(w,since,out) -> (next,count,overflow)` copies into `out` what was noted since the
   cursor `since`, from oldest to newest, and gives the cursor of the next read. Each reader keeps
   its own, zero at the start; a read that fills `out` leaves the rest for the next one.
