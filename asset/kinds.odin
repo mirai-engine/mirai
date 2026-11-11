@@ -126,18 +126,16 @@ version_message :: proc(a:^Asset,types:^Types,path:string,current:u16=0,allocato
     info,_:=import_info(a,types)
     if info==nil {return copied(fmt.tprintf("%s; it was not imported: make it again",stale),allocator)}
     source:=serial.text_field(info.source[:])
-    folder:=parent(path)
-    if filepath.is_abs(source) {return copied(fmt.tprintf("%s; import its source again: mirai import %s --out %s",stale,source,folder),allocator)}
     // The source is named relative to the root of the import: the first folder above the asset that holds it.
-    root:=folder
+    root:=parent(path)
     for {
         joined,_:=filepath.join({root,source},context.temp_allocator)
-        if os.exists(joined) {return copied(fmt.tprintf("%s; import its source again: mirai import %s --out %s --root %s",stale,slashed(joined),folder,root),allocator)}
+        if os.exists(joined) {return copied(fmt.tprintf("%s; import its source again: mirai import %s",stale,slashed(joined)),allocator)}
         up:=parent(root)
         if up==root {break}
         root=up
     }
-    return copied(fmt.tprintf("%s; import its source %s again with mirai import into %s",stale,source,folder),allocator)
+    return copied(fmt.tprintf("%s; import its source %s again with mirai import",stale,source),allocator)
 }
 
 // Where an asset built from a source file came from: what an importer needs

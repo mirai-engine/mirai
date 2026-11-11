@@ -47,14 +47,6 @@ asset_import_takes_the_settings_of_a_source_and_says_what_each_takes :: proc(t:^
 @(test)
 asset_import_reads_a_relative_source_from_the_project :: proc(t:^testing.T) {
     s:=Session{project_root="C:/game"}
-    testing.expect_value(t,asset_import_source(&s,"source/walk.glb"),"C:/game/source/walk.glb")
+    testing.expect_value(t,asset_import_source(&s,"assets/hero/walk.glb"),"C:/game/assets/hero/walk.glb")
     testing.expect_value(t,asset_import_source(&s,"C:/elsewhere/walk.glb"),"C:/elsewhere/walk.glb")
-}
-
-@(test)
-an_import_goes_where_it_is_asked_and_no_folder_is_named_after_its_type :: proc(t:^testing.T) {
-    Case :: struct {kind:sources.Source_Kind,folder,model,expected:string}
-    for c in ([]Case{{.Model,"","knight","knight"},{.Model,"characters","knight","characters/knight"},{.Image,"","",""},{.Image,"surfaces/wood","","surfaces/wood"},{.Sound,"","",""}}) {
-        testing.expect_value(t,import_destination(c.kind,c.folder,c.model),c.expected)
-    }
 }

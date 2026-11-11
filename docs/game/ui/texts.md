@@ -37,8 +37,7 @@ mirai texts import texts.csv --project .
 - `missing` lists who shows a key no `.strings` has, with its document and its node or its row
   and field, and the keys that say nothing in a language of the game.
 - The CSV has the column `key` and one per language by its code, the one texts are written in
-  first; an import changes nothing where a cell is empty. It is the CSV `mirai import` reads
-  into a `.strings` of its own, which then changes in its CSV.
+  first; an import changes nothing where a cell is empty.
 - With the editor open, `texts.list`, `texts.set`, `texts.missing`, `texts.export` and
   `texts.import` do the same on what it holds unsaved.
 

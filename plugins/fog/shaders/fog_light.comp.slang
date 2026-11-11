@@ -16,8 +16,7 @@
 // moved: a shaft of light that a moving thing cuts shows at once. A cell
 // behind everything its column and those around it see is lit one frame in
 // fog.hidden, by turns, and keeps what it had in the others: once the camera
-// shows it, it has its light. With fog.hidden 0 it is never lit, and once
-// shown its light starts again.
+// shows it, it has its light.
 #include "media.slang"
 #include <extension_hooks.slang>
 #define FOG_VOLUMES_SLOT SLOT_PASS2
@@ -27,7 +26,7 @@
 #define MIRAI_GROUP_Z 4
 
 // rgb the light towards the eye for each metre of what the medium scatters
-// there, times a: 1 where there is a medium, 0 where none, below 0 never lit.
+// there, times a: 1 where there is a medium, 0 where none.
 [[vk::binding(SLOT_PASS0, 0)]] [[vk::image_format("rgba16f")]] RWTexture3D<float4> light_now : register(MIRAI_REGISTER(u, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture3D<float4> light_before : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 // The farthest depth each column and those around it see (fog_reach.comp).
@@ -72,8 +71,7 @@ float4 fog_medium(float3 position, float taken, float footprint, out float4 mean
 }
 
 // The light the frame before left where the middle of the cell was then; false
-// when the view keeps none, when it was outside the grid then, or when the
-// cell there was not lit.
+// when the view keeps none or when it was outside the grid then.
 bool fog_before(uint3 id, out float4 before) {
     before = float4(0.0);
     if (fog.kept == 0u) return false;
@@ -84,7 +82,7 @@ bool fog_before(uint3 id, out float4 before) {
     float3 at = float3(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5, fog_depth_slice(depth) / float(fog.grid.z));
     if (any(at < 0.0) || any(at > 1.0)) return false;
     before = light_before.SampleLevel(linear_sampler, at, 0.0);
-    return before.a >= 0.0;
+    return true;
 }
 
 // How many places of a cell the sun is taken at: the shafts of narrow windows
@@ -136,13 +134,9 @@ bool fog_hidden(uint3 id) {
 void main(uint3 id : SV_DispatchThreadID) {
     if (any(id >= fog.grid.xyz)) return;
     if (fog.hidden != 1u && fog_hidden(id)) {
-        // Not lit in this frame: it keeps what it had, and one without it is lit now; never lit, it says so.
+        // Not lit in this frame: it keeps what it had, and one without it is lit now.
         // No pixel reads the medium behind all that its column and those around it see.
         medium_now[id] = float4(0.0);
-        if (fog.hidden == 0u) {
-            light_now[id] = float4(0.0, 0.0, 0.0, -1.0);
-            return;
-        }
         // The turn is of the group of the cell: the threads that run together skip together.
         uint3 group = id / uint3(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z);
         float4 kept;

@@ -1980,7 +1980,7 @@ renderer_reset_history :: proc(r:^Renderer,reset_camera:bool=false) {
     scene_changed(&r.scene)
     r.gi_warm=true
     for view in views_all(r) {
-        view.targets.reflect_valid,view.targets.gi_reference_valid,view.targets.taa_valid=false,false,false
+        view.targets.reflect_valid,view.targets.taa_valid=false,false
         view.targets.glass_valid,view.targets.shadow.valid,view.targets.hiz_valid=false,false,false
         if reset_camera {view.has_previous=false}
     }

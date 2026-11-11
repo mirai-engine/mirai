@@ -9,16 +9,18 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 
 // What draws and collides a shape, made from its source alone, on any
-// thread. The drawn mesh has one material slot. An Outline has its caps with
-// planar UVs and its sides with UVs that run along the perimeter, flat normals
-// where a loop turns sharply and shared ones where it turns little, so a
-// circle looks round; the bands of a bevel continue the UVs of its sides. A
-// Solid has the UVs of a box projection. Both scale their UVs by uv_scale.
-// What collides is, for a static shape, the triangles of the mesh joined by
-// position (of an Outline, its caps and sides without the bevel), with the
-// edges between coplanar triangles disabled so nothing catches on the seams
-// of a flat face; for a body, the convex pieces of shape_pieces_build, each a
-// hull of the collider.
+// thread; the ribbon of a spline from its points (ribbon.odin). The drawn
+// mesh has one material slot. A polygon alone has its caps with planar UVs and
+// its sides with UVs that run along the perimeter, flat normals where a loop
+// turns sharply and shared ones where it turns little, so a circle looks
+// round; the bands of a bevel continue the UVs of its sides. A Solid with
+// brushes has the UVs of a box projection. Both scale their UVs by uv_scale; a
+// ribbon runs u across and v along it in meters. What collides is, for a static shape,
+// the triangles of the mesh joined by position (of a polygon alone, its caps
+// and sides without the bevel), with the edges between coplanar triangles
+// disabled so nothing catches on the seams of a flat face; for a body, the
+// convex pieces of shape_pieces_build, each a hull of the collider. A ribbon
+// collides with nothing.
 
 // A side shares the normal of a vertex with the next side when the two turn less than this cosine apart.
 @(private) SMOOTH_COS :: 0.82
@@ -40,6 +42,8 @@ Shape_Geometry :: struct {
     brush:geom.Mesh_Buffer,
     work:geom.Mesh_Buffer,
     indices,sizes:[dynamic]u32,
+    ribbon:[dynamic][3]f32,     // of a spline, rows of columns points: what the build makes its mesh from
+    columns:int,
 }
 
 shape_geometry_init :: proc(g:^Shape_Geometry,allocator:=context.allocator) {
@@ -52,12 +56,13 @@ shape_geometry_init :: proc(g:^Shape_Geometry,allocator:=context.allocator) {
     g.pieces.sizes=make([dynamic]u32,allocator)
     g.indices=make([dynamic]u32,allocator)
     g.sizes=make([dynamic]u32,allocator)
+    g.ribbon=make([dynamic][3]f32,allocator)
 }
 
 shape_geometry_destroy :: proc(g:^Shape_Geometry) {
     geom.mesh_buffer_destroy(&g.mesh);geom.mesh_buffer_destroy(&g.collision)
     geom.mesh_buffer_destroy(&g.brush);geom.mesh_buffer_destroy(&g.work)
-    delete(g.disabled_edges);delete(g.pieces.points);delete(g.pieces.sizes);delete(g.indices);delete(g.sizes)
+    delete(g.disabled_edges);delete(g.pieces.points);delete(g.pieces.sizes);delete(g.indices);delete(g.sizes);delete(g.ribbon)
     g^={}
 }
 
@@ -68,18 +73,12 @@ shape_geometry_clear :: proc(g:^Shape_Geometry) {
 }
 
 // Builds the mesh of a shape and what collides: for a body its convex
-// pieces, else the static triangles. The brushes, in order, are those of a
-// Solid; an Outline has none. On an error g holds nothing usable.
+// pieces, else the static triangles. The brushes, in order, are those of the
+// Solid. On an error g holds nothing usable.
 shape_geometry_build :: proc(s:^Shape,brushes:[]Brush,body:bool,g:^Shape_Geometry) -> Shape_Error {
     shape_geometry_clear(g)
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-    error:Shape_Error
-    switch s.kind {
-    case .Outline: error=outline_build(s,g)
-    case .Solid:   error=solid_build(s,brushes,g)
-    case:          error=.Invalid
-    }
-    if error!=.None {
+    if error:=solid_build(s,brushes,g);error!=.None {
         shape_geometry_clear(g)
         return error
     }
@@ -91,21 +90,22 @@ shape_geometry_build :: proc(s:^Shape,brushes:[]Brush,body:bool,g:^Shape_Geometr
         return .None
     }
     geom.mesh_buffer_clear(&g.collision)
-    if error=shape_pieces_build(s,brushes,g);error!=.None {
+    if error:=shape_pieces_build(s,brushes,g);error!=.None {
         shape_geometry_clear(g)
         return error
     }
     return .None
 }
 
-// The convex pieces of a shape whose mesh g already holds: of an Outline, the
-// convex partition of its polygon extruded into prisms; of a Solid, its
-// brushes when none subtracts, else an approximate decomposition of its mesh.
+// The convex pieces of a Solid whose mesh g already holds: when every brush
+// adds, the convex partition of its polygon extruded into prisms and its
+// brushes; else an approximate decomposition of its mesh.
 shape_pieces_build :: proc(s:^Shape,brushes:[]Brush,g:^Shape_Geometry) -> Shape_Error {
     clear(&g.pieces.points);clear(&g.pieces.sizes)
     runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
-    switch s.kind {
-    case .Outline:
+    adds:=true
+    for b in brushes {adds&&=b.op==.Union}
+    if adds && s.loop_count>0 {
         points,sizes,error:=outline_loops(s)
         if error!=.None {return error}
         clear(&g.indices);clear(&g.sizes)
@@ -118,25 +118,22 @@ shape_pieces_build :: proc(s:^Shape,brushes:[]Brush,g:^Shape_Geometry) -> Shape_
             append(&g.pieces.sizes,2*size)
             at+=int(size)
         }
-    case .Solid:
-        subtracts:=false
-        for b in brushes {subtracts||=b.subtract}
-        if !subtracts {
-            for b in brushes {
-                if !brush_valid(b) {return .Invalid}
-                brush_mesh(b,&g.brush)
-                append(&g.pieces.points,..g.brush.positions[:])
-                append(&g.pieces.sizes,u32(len(g.brush.positions)))
-            }
-        } else {
-            if len(g.mesh.indices)==0 {return .Empty}
-            parts,error:=geom.mesh_decompose(geom.mesh_buffer_view(&g.mesh),{},context.temp_allocator)
-            if error!=.None {return .Geometry}
-            for hull in parts.hulls {
-                if len(hull.vertices)<4 {continue}
-                append(&g.pieces.points,..hull.vertices)
-                append(&g.pieces.sizes,u32(len(hull.vertices)))
-            }
+    }
+    if adds {
+        for b in brushes {
+            if !brush_valid(b) {return .Invalid}
+            brush_mesh(b,&g.brush)
+            append(&g.pieces.points,..g.brush.positions[:])
+            append(&g.pieces.sizes,u32(len(g.brush.positions)))
+        }
+    } else {
+        if len(g.mesh.indices)==0 {return .Empty}
+        parts,error:=geom.mesh_decompose(geom.mesh_buffer_view(&g.mesh),{},context.temp_allocator)
+        if error!=.None {return .Geometry}
+        for hull in parts.hulls {
+            if len(hull.vertices)<4 {continue}
+            append(&g.pieces.points,..hull.vertices)
+            append(&g.pieces.sizes,u32(len(hull.vertices)))
         }
     }
     if len(g.pieces.sizes)==0 {return .Empty}
@@ -148,10 +145,10 @@ shape_key :: proc(s:^Shape,brushes:[]Brush,body:bool) -> u64 {
     points,loops:=shape_counts(s)
     bevel_points:=min(int(s.bevel_point_count),BEVEL_POINTS)
     head:=struct {
-        kind:Shape_Kind,body:bool,loops:u8,points:u16,depth,uv_scale:f32,material:base.Asset_Id,
+        body:bool,loops:u8,points:u16,depth,uv_scale:f32,material:base.Asset_Id,
         bevel:f32,profile:Bevel_Profile,segments,bevel_points:u8,
     } {
-        s.kind,body,u8(loops),u16(points),s.depth,s.uv_scale,s.material,
+        body,u8(loops),u16(points),s.depth,s.uv_scale,s.material,
         s.bevel,s.bevel_profile,s.bevel_segments,u8(bevel_points),
     }
     h:=hash.fnv64a(slice.bytes_from_ptr(&head,size_of(head)))
@@ -161,7 +158,7 @@ shape_key :: proc(s:^Shape,brushes:[]Brush,body:bool) -> u64 {
     for b in brushes {
         // Field by field: the padding of a Brush is not part of it.
         values:=[12]f32{
-            f32(b.kind),b.subtract?1:0,b.place.position.x,b.place.position.y,b.place.position.z,
+            f32(b.kind),f32(b.op),b.place.position.x,b.place.position.y,b.place.position.z,
             b.place.rotation.x,b.place.rotation.y,b.place.rotation.z,b.place.rotation.w,
             b.place.scale.x,b.place.scale.y,b.place.scale.z,
         }
@@ -172,8 +169,8 @@ shape_key :: proc(s:^Shape,brushes:[]Brush,body:bool) -> u64 {
 
 // ------------------------------------------------------------------ outline
 
-// The loops of an Outline, its outline counter-clockwise and its holes
-// clockwise, in temporary memory, checked.
+// The loops of the polygon of a Solid, its outline counter-clockwise and its
+// holes clockwise, in temporary memory, checked.
 @(private)
 outline_loops :: proc(s:^Shape) -> (points:[]geom.Vec2,sizes:[]int,error:Shape_Error) {
     if error=shape_valid_counts(s);error!=.None {return}
@@ -290,20 +287,25 @@ side_normal :: proc "contextless" (other,side:geom.Vec2) -> geom.Vec2 {
 
 // -------------------------------------------------------------------- solid
 
+// The polygon of a Solid, when it has one, and then its brushes in order.
 @(private)
 solid_build :: proc(s:^Shape,brushes:[]Brush,g:^Shape_Geometry) -> Shape_Error {
     k,usable:=uv_scale_of(s)
     if !usable {return .Invalid}
-    if len(brushes)==0 {return .Empty}
+    have:=s.loop_count>0
+    if have {
+        if error:=outline_build(s,g);error!=.None || len(brushes)==0 {return error}
+        // Among brushes the polygon collides as what they make together.
+        geom.mesh_buffer_clear(&g.collision)
+    } else if len(brushes)==0 {return .Empty}
     for b in brushes {
         if !brush_valid(b) {return .Invalid}
     }
-    // What cuts before the first brush that adds has nothing to cut: it is left out.
-    have:=false
+    // What cuts or intersects before the first that adds has nothing to work on: it is left out.
     for b in brushes {
         brush_mesh(b,&g.brush)
         if !have {
-            if b.subtract {continue}
+            if b.op!=.Union {continue}
             geom.mesh_buffer_clear(&g.mesh)
             append(&g.mesh.positions,..g.brush.positions[:])
             append(&g.mesh.normals,..g.brush.normals[:])
@@ -312,7 +314,7 @@ solid_build :: proc(s:^Shape,brushes:[]Brush,g:^Shape_Geometry) -> Shape_Error {
             have=true
             continue
         }
-        error:=geom.mesh_boolean(geom.mesh_buffer_view(&g.mesh),geom.mesh_buffer_view(&g.brush),b.subtract?.Subtract:.Union,&g.work)
+        error:=geom.mesh_boolean(geom.mesh_buffer_view(&g.mesh),geom.mesh_buffer_view(&g.brush),b.op,&g.work)
         if error!=.None {return .Geometry}
         g.mesh,g.work=g.work,g.mesh
         have=len(g.mesh.indices)>0
@@ -322,6 +324,41 @@ solid_build :: proc(s:^Shape,brushes:[]Brush,g:^Shape_Geometry) -> Shape_Error {
     clear(&m.colors);clear(&m.materials)
     if resize(&m.uvs,len(m.positions))!=nil {return .Out_Of_Memory}
     for p,i in m.positions {m.uvs[i]=box_uv(p,m.normals[i])*k}
+    return .None
+}
+
+// The mesh of the ribbon of a spline from its points, g.ribbon: u across
+// from its left side and v along its middle, in meters, and the normal of each
+// point across the points around it, facing up.
+@(private)
+ribbon_build :: proc(g:^Shape_Geometry) -> Shape_Error {
+    shape_geometry_clear(g)
+    c:=g.columns
+    if c<2 || len(g.ribbon)<2*c || len(g.ribbon)%c!=0 {return .Invalid}
+    rows:=len(g.ribbon)/c
+    m:=&g.mesh
+    v:f32
+    for r in 0..<rows {
+        row:=g.ribbon[r*c:][:c]
+        if r>0 {v+=linalg.length(row[c/2]-g.ribbon[(r-1)*c+c/2])}
+        u:f32
+        for p,j in row {
+            if j>0 {u+=linalg.length(p-row[j-1])}
+            across:=row[min(j+1,c-1)]-row[max(j-1,0)]
+            along:=g.ribbon[min(r+1,rows-1)*c+j]-g.ribbon[max(r-1,0)*c+j]
+            n:=linalg.normalize0(linalg.cross(across,along))
+            if n.y<0 {n=-n}
+            if n=={} {n={0,1,0}}
+            append(&m.positions,p);append(&m.normals,n);append(&m.uvs,geom.Vec2{u,v})
+        }
+    }
+    // Counter-clockwise seen from above: the columns go from left to right of the way along the rows.
+    for r in 0..<rows-1 {
+        for j in 0..<c-1 {
+            a:=u32(r*c+j)
+            append(&m.indices,a,a+1,a+u32(c),a+1,a+u32(c)+1,a+u32(c))
+        }
+    }
     return .None
 }
 
