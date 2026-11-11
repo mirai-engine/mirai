@@ -80,30 +80,44 @@ float3 opaque_plane(float2 uv, out float3 normal) {
 // far along it: it meets the plane of the surface the screen holds where it
 // starts, and, where the screen holds another surface at that point, the plane
 // of that one, up to CROSSING_TURNS times. What lies nearer the eye than
-// `nearest` (in front of the layer) hides the point. Off the screen it ends at
-// its edge. False where it turns away from the planes, goes past reach, or
-// meets what is in front of the layer.
+// `nearest` (in front of the layer) hides the point; under a sheet (open),
+// what the screen holds at a point is under it only where the layer covers
+// that point and it lies behind the layer there. Off the screen it ends at its
+// edge. CROSSING_FAR where it goes past reach; CROSSING_LOST where it turns
+// away from the planes or meets what is in front of the layer, and the screen
+// does not hold where it ends. first: how far it goes to the plane of the
+// surface where it starts, below 0 where it turns away from it.
 #define CROSSING_TURNS 3
-bool screen_crossing(float3 origin, float3 direction, float reach, float nearest, out float2 uv, out float travelled) {
+#define CROSSING_MET 0u
+#define CROSSING_FAR 1u
+#define CROSSING_LOST 2u
+uint screen_crossing(float3 origin, float3 direction, float reach, float nearest, bool open, out float2 uv, out float travelled, out float first) {
     uv = project_uv(origin);
     travelled = 0.0;
+    first = -1.0;
     for (int turn = 0; turn < CROSSING_TURNS; turn++) {
-        if (opaque_depth(uv) < nearest) return false;
+        if (opaque_depth(uv) < nearest) return CROSSING_LOST;
+        if (open) {
+            float layer = layer_depth.Load(int3(min(int2(uv * frame.resolution), int2(frame.resolution) - 1), 0)).r;
+            if (!(layer > 0.0) || opaque_depth(uv) < layer) return CROSSING_LOST;
+        }
         float3 normal;
         float3 surface = opaque_plane(uv, normal);
         float facing = dot(direction, normal);
-        if (!(facing < -1e-4)) return false;
+        if (!(facing < -1e-4)) return CROSSING_LOST;
         travelled = dot(surface - origin, normal) / facing;
-        if (!(travelled > 0.0) || travelled > reach) return false;
+        if (turn == 0) first = travelled;
+        if (!(travelled > 0.0)) return CROSSING_LOST;
+        if (travelled > reach) return CROSSING_FAR;
         float3 met = origin + direction * travelled;
         float2 next = project_uv(met);
         float2 inside = clamp(next, 0.5 * frame.inv_resolution, 1.0 - 0.5 * frame.inv_resolution);
         uv = inside;
-        if (any(((inside) != (next)))) return true;
+        if (any(((inside) != (next)))) return CROSSING_MET;
         float z = view_depth(met);
-        if (abs(opaque_depth(uv) - z) <= 0.01 * z + 0.02) return true;
+        if (abs(opaque_depth(uv) - z) <= 0.01 * z + 0.02) return CROSSING_MET;
     }
-    return true;
+    return CROSSING_MET;
 }
 
 // The scene around uv as a rough layer at layer_distance shows it: spread over
@@ -164,16 +178,18 @@ Glass_Walk walk_start(float3 origin, float3 direction, uint flags) {
 void walk_show(inout Glass_Walk w, Material m, float depth, float roughness, float2 uv, inout uint seed) {
     float2 at;
     // In a solid without a way out it goes no farther than what would still show through.
-    float reach = (w.flags & WALK_OPEN) != 0u ? min(material_clear_reach(m), params.max_distance) : params.max_distance;
+    bool open = (w.flags & WALK_OPEN) != 0u && material_clear_reach(m) < params.max_distance;
+    float reach = open ? min(material_clear_reach(m), params.max_distance) : params.max_distance;
     float travelled;
-    if (!screen_crossing(w.origin, w.direction, reach, depth, at, travelled)) {
-        if ((w.flags & WALK_OPEN) != 0u && material_clear_reach(m) < params.max_distance) {
-            w.travelled = material_clear_reach(m);
-            w.radiance = float3(0.0);
-            return;
-        }
+    float first;
+    uint crossing = screen_crossing(w.origin, w.direction, reach, depth, (w.flags & WALK_OPEN) != 0u, at, travelled, first);
+    if (crossing != CROSSING_MET) {
+        // Past reach, or where the screen does not hold where the way ends,
+        // what the pixel shows straight through, as far in as the way goes to
+        // the surface it starts over: what the solid absorbs on that way fades
+        // it as it fades what the screen holds, with no edge between them.
         at = uv;
-        travelled = length(position_from_depth(at, opaque_depth(at)) - w.origin);
+        travelled = first > 0.0 ? first : length(position_from_depth(at, opaque_depth(at)) - w.origin);
     }
     w.travelled = travelled;
     w.radiance = scene_through(at, depth, roughness, seed);

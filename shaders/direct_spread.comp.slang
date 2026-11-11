@@ -41,6 +41,7 @@ struct Params_Block { uint axis; uint scale; uint samples; uint even; };
 groupshared float4 spread_points[SPREAD_TILE];  // w 1 for a surface, 2 for one a nested view drew
 groupshared float4 spread_normals[SPREAD_TILE]; // w the width of a point there, metres
 groupshared float2 spread_parts[SPREAD_TILE];
+groupshared float2 spread_radii[SPREAD_TILE];   // of the penumbrae of the local lights and of the sun, points
 
 // How far apart in deviations of their noise two parts may lie and still
 // weigh alike, the least deviation of a part, and the points of the window of
@@ -79,7 +80,7 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     for (uint i = index; i < uint(SPREAD_TILE); i += uint(SPREAD_RUN)) {
         int2 q = start + along * (int(i) - DIRECT_SPREAD_MAX);
         float4 point = float4(0.0), normal = float4(0.0);
-        float2 parts = float2(-1.0);
+        float2 parts = float2(-1.0), radii = float2(0.0);
         if (all(q >= 0) && all(q < size)) {
             int2 source = q * scale;
             float depth = g_depth.Load(int3(source, 0)).r;
@@ -88,11 +89,14 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
                 point = float4(pixel.position, depth_nested(depth) ? 2.0 : 1.0);
                 normal = float4(gbuffer_normal(source), float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth)));
                 parts = columns ? out_parts[q] : float2(out_points[q].a, out_sun[q]);
+                float4 held = point_depth.Load(int3(q, 0));
+                radii = min(float2(held.w, held.y), float2(DIRECT_SPREAD_MAX));
             }
         }
         spread_points[i] = point;
         spread_normals[i] = normal;
         spread_parts[i] = parts;
+        spread_radii[i] = radii;
     }
     GroupMemoryBarrierWithGroupSync();
     int2 p = start + along * int(index);
@@ -109,25 +113,29 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
         float2 sum = part, total = float2(1.0);
         float n = SPREAD_WINDOW * float(max(params.samples, 1u));
         float2 variance = float2(spread_variance(part.x, n), spread_variance(part.y, n));
-        int reach = int(max(radius.x, radius.y));
         float3 position = spread_points[center].xyz;
         float4 facing = spread_normals[center];
-        for (int d = 1; d <= reach; d++) {
+        // A tap counts within the wider of the two penumbrae, its own and the
+        // center's: the spread is the same both ways, so that a point whose taps
+        // found no blocker still takes the penumbra of a neighbour that did.
+        for (int d = 1; d <= DIRECT_SPREAD_MAX; d++) {
             [unroll]
             for (int side = -1; side <= 1; side += 2) {
                 int tap = center + side * d;
+                float2 reach = max(radius, spread_radii[tap]);
+                if (float(d) > max(reach.x, reach.y)) continue;
                 // A point across the opening of a nested view lies on another surface, however alike.
                 if (spread_points[tap].w != spread_points[center].w) continue;
                 if (!direct_surface(position, facing, spread_points[tap].xyz, spread_normals[tap].xyz, float(d))) continue;
                 float2 value = spread_parts[tap];
-                if (value.x >= 0.0) {
+                if (value.x >= 0.0 && own.x >= 0.0) {
                     float v = spread_part(value.x);
-                    float w = spread_weight(float(d), radius.x, part.x, variance.x, v, n);
+                    float w = spread_weight(float(d), reach.x, part.x, variance.x, v, n);
                     sum.x += w * v;
                     total.x += w;
                 }
-                if (value.y >= 0.0) {
-                    float w = spread_weight(float(d), radius.y, part.y, variance.y, value.y, n);
+                if (value.y >= 0.0 && own.y >= 0.0) {
+                    float w = spread_weight(float(d), reach.y, part.y, variance.y, value.y, n);
                     sum.y += w * value.y;
                     total.y += w;
                 }

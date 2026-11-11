@@ -160,6 +160,8 @@ LIGHT_WEIGHT_ROWS          :: 2
 // at most, SHADOW_TESTED_ENTRIES of them of masked or blended materials.
 SHADOW_MAP_ROWS            :: 6
 SHADOW_LIGHT_FACES         :: 16
+// The face of a spot whose one map lies along its cone, after the six of the cube.
+SHADOW_SPOT_FACE           :: 6
 SHADOW_MAP_ORTHOGRAPHIC    :: 1
 SHADOW_SUN_MAPS            :: 6
 SUN_MAP_ROWS               :: SHADOW_SUN_MAPS * SHADOW_MAP_ROWS

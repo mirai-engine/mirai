@@ -170,23 +170,25 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
 - **Shadow maps** (`render/shadow_maps.odin`, `Settings.shadow_maps`; the Graphics settings always
   turn it on). Every frame, from the camera and the lights alone, the lights whose sphere covers a
   share of the view, and the sun in cascades, get depth maps in one atlas, so the cost does not
-  depend on what moves. They draw the clusters of the cut of the view, of the instances of the
-  scene and of the batches that cast shadows: what casts a shadow is what the view draws, at the
-  detail its distance from the eye asks for. Those of an instance with masked or blended
-  materials are drawn apart, with their coverage as a shadow ray asks it (`hit_covers`). A point
-  under a map takes taps around it: all lit, lit; all blocked,
+  depend on what moves. A light turned off takes none; a spot no wider than a face of the cube takes
+  one map along its cone; the cascades of the sun end where the scene ends. They draw the clusters
+  of the cut of the view, of the instances of the scene and of the batches that cast shadows: what
+  casts a shadow is what the view draws, at the detail its distance from the eye asks for. Those of
+  an instance with masked or blended materials are drawn apart, with their coverage as a shadow ray
+  asks it (`hit_covers`). A point under a map takes taps around it: all lit, lit; all blocked,
   hidden; where they disagree (a penumbra) it takes the hard shadow of the map at the point, and
-  `direct_spread` averages that evenly over the points of its surface within the penumbra width
-  the blockers give. A point wider on its surface than its penumbra (far ground seen at a grazing
-  angle) spreads its taps over its width and takes the share of them that is lit, which the
+  `direct_spread` averages that evenly over the points of its surface within the penumbra width the
+  blockers give, the wider of that of the point and that of each neighbour, so the penumbra is the
+  same seen from either side. A point wider on its surface than its penumbra (far ground seen at a
+  grazing angle) spreads its taps over its width and takes the share of them that is lit, which the
   jitter of the view does not move; the cascades of the sun reach the horizon of an open scene for
-  that ground. Lights without maps (small on the screen) trace their samples: raster for
-  near and large lights, rays for far ones. Glass with a program keeps only its mean
-  in the tint of the maps: a point with such glass between it and a light a map holds takes all
-  of its light from samples, whose rays run the program. The constants of the view carry the
-  cascades of the sun it drew (`Gpu_Frame.sun_maps`), so that a pass after the direct light takes
-  the shadow of the sun from them and traces only where none holds the point (`sun_shadow_seen`;
-  an extension binds the atlas with `Surface_Source.Shadow_Atlas`): the fog lights its cells so.
+  that ground. Lights without maps (small on the screen) trace their samples: raster for near and
+  large lights, rays for far ones. Glass with a program keeps only its mean in the tint of the maps:
+  a point with such glass between it and a light a map holds takes all of its light from samples,
+  whose rays run the program. The constants of the view carry the cascades of the sun it drew
+  (`Gpu_Frame.sun_maps`), so that a pass after the direct light takes the shadow of the sun from
+  them and traces only where none holds the point (`sun_shadow_seen`; an extension binds the atlas
+  with `Surface_Source.Shadow_Atlas`): the fog lights its cells so.
 - **Skinned meshes.** The skin writes the posed box and normal cone of each cluster, grown by the
   reach of its vertex programs, so that the view cull and the shadow map cull leave posed clusters
   out like static ones.

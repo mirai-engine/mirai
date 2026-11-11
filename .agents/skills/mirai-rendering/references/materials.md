@@ -481,7 +481,11 @@ the pieces of a mesh, numbered in UV1, fly in with a turn as its `progress` goes
   that reaches it inside, dimmed by the path from the roof of the solid. Both hold on every path
   through the solid, also from inside and in what is traced.
 - An open mesh (without an exit for the inside ray, like the surface of water) follows the
-  refracted ray to what it finds, and the solid reaches up to there.
+  refracted ray on the screen to what it finds, and the solid reaches up to there; under the
+  sheet only what the layer covers counts. Where the screen does not hold where the ray ends, or
+  past where the solid still shows through, the pixel shows what lies straight behind it, as far
+  in as the refracted ray goes to the surface it starts over, so the light through both ways stays
+  alike.
 - **From inside.** The camera can be inside a solid: the candidate is the blend instance with a
   solid material (`material_solid`; a sheet without thickness, like a skylight, is not a medium)
   below the roof of whose box (or less than `GLASS_MEDIUM_NEAR` above it), and within its sides, is

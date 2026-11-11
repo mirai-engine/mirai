@@ -191,13 +191,18 @@ uint shadow_face_of(float3 v) {
 [[vk::binding(SHADOW_DATA_SLOT, 0)]] StructuredBuffer<uint4> view_shadow_data : register(MIRAI_REGISTER(t, SHADOW_DATA_SLOT), space0);
 
 // The map of local light `light` a point falls in; false where it has none on
-// that side.
+// that side. A spot with one map along its cone (SHADOW_SPOT_FACE) has it for
+// every point.
 bool light_map_of(uint light, float3 position, out Shadow_Map m) {
     m = (Shadow_Map)0;
     if (frame.sun_maps.z == 0u) return false;
     uint word = shadow_light_word(view_shadow_data, light);
     if (word == 0u) return false;
     uint faces = word >> SHADOW_LIGHT_FACES;
+    if ((faces & (1u << SHADOW_SPOT_FACE)) != 0u) {
+        m = shadow_map_at(view_shadow_data, frame.sun_maps.y, (word & 0xFFFFu) - 1u);
+        return true;
+    }
     uint face = shadow_face_of(position - lights[light].position_range.xyz);
     if ((faces & (1u << face)) == 0u) return false;
     m = shadow_map_at(view_shadow_data, frame.sun_maps.y, (word & 0xFFFFu) - 1u + countbits(faces & ((1u << face) - 1u)));

@@ -25,6 +25,10 @@ SHADOW_GROUP :: u32(256) // the threads of a group of shadow_maps.comp
 SHADOW_MAP_SMALLEST :: u32(128)
 SHADOW_MAP_LARGEST :: u32(2048)
 SHADOW_LIGHT_FACES :: abi.SHADOW_LIGHT_FACES
+SHADOW_SPOT_FACE :: abi.SHADOW_SPOT_FACE
+// The cosine of the half angle of the widest spot that takes one map along
+// its cone instead of the faces of the cube around it.
+SHADOW_SPOT_COS_MIN :: f32(0.5)
 SHADOW_RASTER_SHARE :: f32(0.02)
 SHADOW_RASTER_KEEP :: f32(0.01)
 SHADOW_RASTER_LIGHTS :: 32 // the most lights rasterized in a frame, those that light most of the view
@@ -141,6 +145,23 @@ shadow_light_faces :: proc(wants: ^[SHADOW_MAPS_MAX]Shadow_Want, count: ^int, li
 	}
 	z0, z1 := max(depth - range, near), depth + range
 	if z1 <= z0 {return}
+	// A spot no wider than a face: one map along its axis that holds the
+	// whole cone, with no seam between faces where the cone crosses them.
+	if spot && light.direction_cone.w >= SHADOW_SPOT_COS_MIN {
+		if count^ >= SHADOW_MAPS_MAX {return}
+		ff := linalg.normalize(light.direction_cone.xyz)
+		reference := Vec3{0, 1, 0} if abs(ff.y) < 0.99 else Vec3{1, 0, 0}
+		fr := linalg.normalize(linalg.cross(reference, ff))
+		fu := linalg.cross(ff, fr)
+		cone := math.acos(clamp(light.direction_cone.w, -1, 1))
+		reach := math.tan(min(cone * 1.05 + 0.02, 1.2))
+		wants[count^] = {
+			m = {origin = c, near = light_near, right = fr, far = range, up = fu, forward = ff, skip = skip, span = {-reach, -reach, reach, reach}},
+			light = index, face = SHADOW_SPOT_FACE, weight = share,
+		}
+		count^ += 1
+		return
+	}
 	bounds: [6]Vec4 // low x, low y, high x, high y of x / z, y / z
 	far: [6]f32
 	hits: [6]int
@@ -196,9 +217,20 @@ shadow_sun_cascades :: proc(wants: ^[SHADOW_MAPS_MAX]Shadow_Want, count: ^int, t
 	su := linalg.cross(axis, sr)
 	ends := SHADOW_SUN_CASCADES
 	sides := SHADOW_SUN_SIDES
+	// No farther than the farthest the scene reaches from the eye: past it no
+	// cascade holds anything.
+	extent := f32(math.F32_MAX)
+	if has_bounds {
+		extent = 0
+		for i in 0 ..< 8 {
+			corner := Vec3{scene_high.x if i & 1 != 0 else scene_low.x, scene_high.y if i & 2 != 0 else scene_low.y, scene_high.z if i & 4 != 0 else scene_low.z}
+			extent = max(extent, linalg.length(corner - eye))
+		}
+	}
 	from := near
 	for end, k in ends {
 		to := end if camera_far <= 0 else min(end, camera_far)
+		to = min(to, extent)
 		if to <= from || count^ >= SHADOW_MAPS_MAX {break}
 		corners: [8]Vec3
 		for i in 0 ..< 8 {
@@ -266,6 +298,8 @@ shadow_maps_plan :: proc(p: ^Pass) -> (maps: Shadow_Maps, ok: bool) {
 		return false
 	}
 	for light, i in s.lights {
+		// A light turned off casts no shadow and takes no room of the atlas.
+		if !(light.color_intensity.w > 0) || !(max(light.color_intensity.x, light.color_intensity.y, light.color_intensity.z) > 0) {continue}
 		share := shadow_light_share(light, eye, forward, tan_y, aspect, p.frame.frustum, orthographic, camera.height)
 		keep := SHADOW_RASTER_KEEP if was(b, i) else SHADOW_RASTER_SHARE
 		if orthographic || share < keep {continue}
