@@ -47,6 +47,7 @@ PARTICLE_ATTRIBUTE_BYTES :: gpu.PARTICLE_ATTRIBUTE_BYTES
 Nested_View :: gpu.Nested_View
 NESTED_VIEW_CAPACITY :: gpu.NESTED_VIEW_CAPACITY
 Mesh_Handle :: gpu.Mesh_Handle
+Colors_Handle :: gpu.Colors_Handle
 Texture_Handle :: gpu.Texture_Handle
 Material_Handle :: gpu.Material_Handle
 Instance_Desc :: gpu.Instance_Desc
@@ -368,6 +369,24 @@ instance_placed :: proc(renderer:^Renderer,index:int) -> (mesh:Mesh_Handle,trans
 // not have or a value that is not finite.
 instance_wet_set :: proc(renderer:^Renderer,index:int,wet:f32) -> bool {
     return renderer!=nil && index>=0 && gpu.scene_set_instance_wet(renderer,u32(index),wet)
+}
+// Colors of every vertex of a mesh, by index in the mesh (the order of the
+// vertices of its clusters, every level), that instances of it show in place
+// of its own (instance_colors_set). False for none or without room.
+colors_load :: proc(renderer:^Renderer,colors:[]u32) -> (Colors_Handle,bool) {
+    if renderer==nil {return 0,false}
+    return gpu.colors_load(renderer,colors)
+}
+// The instances that show them go back to the colors of their mesh.
+colors_remove :: proc(renderer:^Renderer,colors:Colors_Handle) -> bool {
+    return renderer!=nil && gpu.colors_remove(renderer,colors)
+}
+// The colors an instance of the renderer shows, by its index (instance_of),
+// while it keeps its identity and its mesh; 0 gives it back those of its
+// mesh. False for an index or colors the renderer does not have, or colors
+// of another number of vertices than its mesh has.
+instance_colors_set :: proc(renderer:^Renderer,index:int,colors:Colors_Handle) -> bool {
+    return renderer!=nil && index>=0 && gpu.scene_set_instance_colors(renderer,u32(index),colors)
 }
 // A visual instance for this frame, without an entity of its own in the renderer.
 instance_add :: proc(extras:^host.Frame_Extras,instance:Instance_Desc) -> bool {return host.extras_instance_add(extras,instance)}

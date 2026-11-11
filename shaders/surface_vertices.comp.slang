@@ -69,6 +69,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     for (uint local = lane.x; local < cluster_vertex_count(c); local += MIRAI_GROUP_X) {
         uint index = c.vertex_first + local;
         Mesh_Point rest = cluster_point_at(mesh, c, local, INVALID);
+        rest.color = instance_vertex_color(inst, index, rest.color);
         Posed_Vertex at = posed ? posed_load(params.input, index) : (Posed_Vertex)0;
         Posed_Vertex now = vertex_packed(vertex_moved(mesh, rest, at, posed, inst.world, params.time, parameters), rest);
         if (params.before == 2u) {

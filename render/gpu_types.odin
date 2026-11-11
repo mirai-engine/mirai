@@ -148,7 +148,8 @@ Gpu_Instance :: struct {
 	slot_materials: [32]u32,
 	wet:        f32,    // 0 dry to 1 soaked, which the materials read (scene_set_instance_wet)
 	material_values: u32, // 1 + the word of the index pool where the values it gives over the rows of its materials start (Instance_Material_Values); 0: none
-	reserved:   [2]u32, // the stride stays a multiple of 16, as Metal lays out a struct with float4
+	colors:     u32,    // its own color of each vertex of its mesh in the vertex pool, by index in the mesh (scene_set_instance_colors)
+	color_count: u32,   // the vertices of its mesh; 0: the colors of the mesh
 }
 #assert(size_of(Gpu_Instance) % 16 == 0)
 GPU_NONE :: max(u32)

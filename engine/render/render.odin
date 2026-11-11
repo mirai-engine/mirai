@@ -1406,7 +1406,6 @@ mesh_slot_row :: proc(a:^host.Assets,static:Mesh_Renderer,instance:^gpu.Instance
 }
 
 // The instance of an entity; -1 when it is not drawn.
-@(private)
 instance_of :: proc(sync:^Render_Sync,e:core.Entity) -> int {return core.entity_map_index(&sync.drawn,e)}
 
 // Keeps through a round of derived rows those the batches of the plugins

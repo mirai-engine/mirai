@@ -258,6 +258,7 @@ Scene_State :: struct {
 	blas_nodes:           [dynamic]Gpu_Bvh_Node,
 	blas_triangles:       [dynamic]Gpu_Bvh_Triangle,
 	free_meshes:          [dynamic]u32,
+	colors:               [dynamic]Pool_Range, // of the vertex pool, by Colors_Handle - 1; a count of 0 is free
 	pool_free:           [Mesh_Pool][dynamic]Pool_Range,
 	pool_dirty:          [Mesh_Pool][dynamic]Pool_Range,
 	mesh_dirty:          [dynamic]Pool_Range,
@@ -396,6 +397,7 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.blas_nodes = make([dynamic]Gpu_Bvh_Node, a)
 	s.blas_triangles = make([dynamic]Gpu_Bvh_Triangle, a)
 	s.free_meshes = make([dynamic]u32,a)
+	s.colors = make([dynamic]Pool_Range,a)
 	s.pages.streamed = make([dynamic]u32, a)
 	s.light_scale, s.lights_scale = 1, 1
 	// An empty table has no smooth material.
@@ -850,6 +852,7 @@ meshes_clear :: proc(r: ^Renderer) {
 	clear(&s.blas_nodes)
 	clear(&s.blas_triangles)
 	clear(&s.free_meshes)
+	clear(&s.colors)
 	for &ranges in s.pool_free {clear(&ranges)}
 	for &ranges in s.pool_dirty {clear(&ranges)}
 	clear(&s.mesh_dirty)
@@ -1504,14 +1507,15 @@ instance_material_values_release :: proc(s: ^Scene_State, inst: ^Gpu_Instance) {
 // An instance of the scene described again at another index: `descriptor`
 // is what `from` was, and takes where that one was drawn as its previous
 // transform, so the next frame draws its motion, and what extensions gave it
-// (scene_set_instance_wet). For whoever closes the gap an instance leaves
-// with another, before it truncates the scene. False for a descriptor the
-// scene does not have.
+// (scene_set_instance_wet, scene_set_instance_colors). For whoever closes the
+// gap an instance leaves with another, before it truncates the scene. False
+// for a descriptor the scene does not have.
 scene_instance_was :: proc(r: ^Renderer, descriptor, from: u32) -> bool {
 	s := &r.scene
 	if int(descriptor) >= len(s.instances) || int(from) >= len(s.instances) {return false}
 	was, inst := s.instances[from], &s.instances[descriptor]
 	inst.prev_world, inst.wet = was.world, was.wet
+	if was.color_count == s.meshes[inst.meta.x & INSTANCE_MESH_MASK].vertex_count {inst.colors, inst.color_count = was.colors, was.color_count}
 	instance_touch(s, descriptor)
 	return true
 }
@@ -1564,10 +1568,10 @@ scene_set_instance_wet :: proc(r:^Renderer,descriptor:u32,wet:f32) -> bool {
 
 // What extensions gave an instance, which it keeps with its identity.
 @(private)
-Instance_Given :: struct {wet:f32}
+Instance_Given :: struct {wet:f32,colors,color_count:u32}
 
 @(private)
-instance_given :: proc "contextless" (inst:Gpu_Instance) -> Instance_Given {return {inst.wet}}
+instance_given :: proc "contextless" (inst:Gpu_Instance) -> Instance_Given {return {inst.wet,inst.colors,inst.color_count}}
 
 // Room for count instances in every table that holds one of each, and in
 // those of what rays and glass need of them. False without memory.
@@ -1635,6 +1639,8 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 			emission = {desc.emission.x, desc.emission.y, desc.emission.z, 0},
 			wet = given.wet,
 		}
+		// Colors of another mesh than the one it shows now are not its own.
+		if given.color_count == mesh.vertex_count {s.instances[index].colors, s.instances[index].color_count = given.colors, given.color_count}
 		// Without room for its values it shows its rows as they are (stats.problem says what is missing).
 		values_given := desc.material_values
 		if instance_material_values_give(r, &s.instances[index], &values_given) && instance_material_values_glow(s, s.instances[index].material_values) {instance_changed_near(s, &s.instances[index], true)}
@@ -1772,7 +1778,7 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
 
 // The light changes around an instance that comes, goes or shows something
 // else: its box and the reach of its glow, or of its shadow and color.
-@(private = "file")
+@(private)
 instance_changed_near :: proc(s: ^Scene_State, inst: ^Gpu_Instance, glowed := false) {
 	radius := linalg.length(inst.bounds_max.xyz - inst.bounds_min.xyz) * 0.5
 	glows := glowed || inst.emission.xyz != {}
@@ -2370,7 +2376,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	delete(s.skinned)
 	delete(s.blas_nodes)
 	delete(s.blas_triangles)
-	delete(s.free_meshes);delete(s.mesh_dirty)
+	delete(s.free_meshes);delete(s.mesh_dirty);delete(s.colors)
 	for ranges in s.pool_free {delete(ranges)}
 	for ranges in s.pool_dirty {delete(ranges)}
 	delete(s.translucent)

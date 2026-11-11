@@ -1,6 +1,7 @@
 package mirai_render
 
 import "core:mem"
+import "core:slice"
 import "core:testing"
 import "mirai:asset"
 import mm "mirai:std/math"
@@ -466,6 +467,58 @@ how_wet_an_instance_is_stays_with_its_identity_and_changes_no_light :: proc(t:^t
     other.object_id=3
     testing.expect(t,scene_update(r,0,{other}))
     testing.expect_value(t,s.instances[0].wet,f32(0))
+}
+
+// The colors an instance shows over its mesh stay with its identity while
+// its mesh has as many vertices, and leave every instance with the colors;
+// none, colors of another number of vertices and handles the renderer does
+// not have are refused.
+@(test)
+the_colors_of_an_instance_stay_with_its_identity_and_its_mesh :: proc(t:^testing.T) {
+    r:=new(Renderer);defer free(r)
+    r.allocator=context.allocator
+    scene_init(r)
+    defer scene_destroy(r)
+    vertices,indices:=edit_grid(4,2)
+    defer delete(vertices);defer delete(indices)
+    handle,_:=edit_add(r,vertices[:],indices[:],{0,1})
+    fewer_vertices,fewer_indices:=edit_grid(2,2)
+    defer delete(fewer_vertices);defer delete(fewer_indices)
+    fewer,_:=edit_add(r,fewer_vertices[:],fewer_indices[:],{0,1})
+    materials_set(r,{DEFAULT_MATERIAL})
+    a:=Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1),tint={1,1,1}}
+    b:=Instance_Desc{object_id=2,mesh=handle,transform=Mat4(1),tint={1,1,1}}
+    scene_given(r,{a,b},nil,{},{})
+    s:=&r.scene
+    count:=s.meshes[handle].vertex_count
+    red:=make([]u32,count,context.temp_allocator)
+    for &color in red {color=0xff0000ff}
+    reds,loaded:=colors_load(r,red)
+    short,_:=colors_load(r,red[:count-1])
+    _,empty:=colors_load(r,nil)
+    testing.expect(t,loaded && !empty)
+    cases:=[]struct{descriptor:u32,colors:Colors_Handle,why:string}{
+        {1,short,"colors of another number of vertices"},
+        {1,Colors_Handle(len(s.colors)+1),"colors the renderer does not have"},
+        {2,reds,"a descriptor the scene does not have"},
+    }
+    for c in cases {testing.expect(t,!scene_set_instance_colors(r,c.descriptor,c.colors),c.why)}
+    testing.expect(t,scene_set_instance_colors(r,1,reds))
+    shown:=s.instances[1]
+    testing.expect(t,shown.color_count==count && slice.equal(s.vertices[shown.colors:][:count],red))
+    testing.expect_value(t,s.instances[0].color_count,u32(0))
+    // Another order keeps them with the instance; another mesh of other vertices does not.
+    testing.expect(t,scene_update(r,0,{b}) && scene_instance_was(r,0,1) && scene_update(r,1,{a}))
+    testing.expect_value(t,s.instances[0].color_count,count)
+    testing.expect_value(t,s.instances[1].color_count,u32(0))
+    other:=b
+    other.mesh=fewer
+    testing.expect(t,scene_update(r,0,{other}))
+    testing.expect_value(t,s.instances[0].color_count,u32(0))
+    testing.expect(t,scene_update(r,0,{b}) && scene_set_instance_colors(r,0,reds) && scene_set_instance_colors(r,1,reds))
+    testing.expect(t,colors_remove(r,reds))
+    testing.expect(t,s.instances[0].color_count==0 && s.instances[1].color_count==0)
+    testing.expect(t,!colors_remove(r,reds),"colors that are gone")
 }
 
 // What casts shadows and changed since the last frame drew the scene: each

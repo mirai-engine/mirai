@@ -181,7 +181,8 @@ struct Instance {
     uint slot_materials[32]; // row+1 by source slot; zero inherits
     float wet;            // 0 dry to 1 soaked (render.scene_set_instance_wet)
     uint material_values; // 1 + the word of the index pool where the values it gives over the rows of its materials start; 0: none
-    uint reserved[2];
+    uint colors;          // its own color of each vertex of its mesh in vertex_words, by index in the mesh (render.scene_set_instance_colors)
+    uint color_count;     // 0: the colors of its mesh
 };
 uint instance_mesh(Instance inst) { return inst.meta.x & INSTANCE_MESH_MASK; }
 uint instance_ray_cut(Instance inst) { return (inst.meta.x >> INSTANCE_RAY_SHIFT) & 3u; }

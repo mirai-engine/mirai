@@ -1196,7 +1196,7 @@ struct Hit_Point {
 Hit_Point hit_point(uint instance_index, uint primitive, float2 bary, float footprint) {
     Hit_Point h;
     h.inst = scene_instance(instance_index);
-    Mesh_Triangle tri = mesh_triangle(meshes[instance_mesh(h.inst)], primitive);
+    Mesh_Triangle tri = mesh_triangle(h.inst, meshes[instance_mesh(h.inst)], primitive);
     float3 w = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
     float3 local = tri.a.position * w.x + tri.b.position * w.y + tri.c.position * w.z;
     float3 n = tri.a.normal * w.x + tri.b.normal * w.y + tri.c.normal * w.z;
