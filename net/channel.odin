@@ -23,12 +23,12 @@ Channel_Desc :: struct {
     budget:int,            // bytes of this channel per update of a connection; 0 has no limit
     queue_bytes:int,       // messages waiting to be sent, default 32 KiB
     max_message_bytes:int, // Unreliable and Sequenced: at most MAX_UNRELIABLE_BYTES, the default. Reliable has no limit
-    window:int,            // Reliable: chunks of 256 bytes in flight at most, and held ahead on receiving; a power of two up to MAX_WINDOW, default 64
+    window:int,            // Reliable: chunks of 256 bytes in flight at most, and held ahead on receiving; a power of two up to 4096, default 64
 }
 
 MAX_UNRELIABLE_BYTES :: 1024
-MAX_WINDOW :: 4096
 PIECE_BYTES :: 16<<10
+@(private) MAX_WINDOW :: 4096
 @(private) CHUNK_BYTES :: 256
 @(private) CHUNK_WINDOW :: 64 // chunks a reliable channel starts with in flight, and its default window
 @(private) CHANNEL_SYSTEM :: 6

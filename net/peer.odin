@@ -800,8 +800,7 @@ peer_send :: proc(h:^Host,p:^Peer) {
         ack_bits_write(&w,&p.recv_bits,p.recv_any && p.recv_counter>p.ack_known?int(min(p.recv_counter-p.ack_known,ACK_WINDOW)):0)
         serial.bit_write(&w,u64(clamp((b.now-p.recv_time)*1000,0,255)),8)
         wrote:=time_write(h,p,&w,seq)
-        r:=&b.repl
-        yield:=r.key_cursor<r.key_count && budget>0?min(budget,PACKET_BYTES*4):0
+        yield:=b.repl.key_cursor<b.repl.key_count && budget>0?min(budget,PACKET_BYTES*4):0
         if channels_write(h,p,&w,SECTION_RESERVE,yield) {wrote=true}
         more:=false
         last:=packet+1>=h.desc.packets_per_update || u16(p.send_seq+1-p.sent_tail)>=SENT_WINDOW-1 || p.tokens<=PACKET_BYTES
