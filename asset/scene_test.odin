@@ -485,7 +485,7 @@ gone :: proc(scene:^Scene,ids:..base.Entity_Id) -> bool {
 }
 
 @(test)
-prefab_node_that_leaves_takes_what_hangs_from_it_and_what_named_it_names_none :: proc(t:^testing.T) {
+a_member_that_leaves_gives_what_the_scene_added_under_it_to_the_nearest_member_left :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     plug:Scene;plug_prefab(&plug,&types);defer scene_destroy(&plug)
     // The Lamp brings a Plug under its Bulb.
@@ -534,20 +534,31 @@ prefab_node_that_leaves_takes_what_hangs_from_it_and_what_named_it_names_none ::
     // The Bulb leaves the Lamp, with the Plug under it.
     scene_entities_remove(&prefab,{2})
     testing.expect(t,instance_count(&prefab)==0 && member_count(&prefab)==0 && scene_entity_count(&prefab)==2)
-    testing.expect_value(t,scene_instance_update(&scene,a,&prefab),Error.None)
-    testing.expect_value(t,scene_instance_update(&scene,b,&prefab),Error.None)
+    reparented:=0
+    testing.expect_value(t,scene_instance_update(&scene,a,&prefab,&reparented),Error.None)
+    testing.expect_value(t,scene_instance_update(&scene,b,&prefab,&reparented),Error.None)
 
-    // The member goes with its overrides, what was added under it and the instances under it.
-    testing.expect(t,gone(&scene,bulb_a,bulb_b,sticker,corner,plug_a,pin_a,placed_root,placed_pin))
-    testing.expect_value(t,scene_entity_count(&scene),6)
-    testing.expect(t,instance_count(&scene)==2 && scene_entity_instance(&scene,shade_a)==a)
-    testing.expect_value(t,member_count(&scene),4)
-    testing.expect(t,len(scene.overrides)==1 && scene.overrides[0].entity==shade_a)
-    // What named any of them names none, also what the Shade overrides; the rest is kept.
+    // The member goes with its overrides and the members under it; what the scene added under
+    // it, the Sticker and its Plug, hangs from the Lamp root after its Shade, as a Child override.
+    testing.expect(t,gone(&scene,bulb_a,bulb_b,plug_a,pin_a))
+    testing.expect_value(t,reparented,2)
+    testing.expect_value(t,scene_entity_count(&scene),10)
+    for id in ([]base.Entity_Id{sticker,placed_root}) {
+        record:=scene_entity(&scene,int(scene.index[id]))
+        testing.expect(t,record.parent==root_a && record.order>scene_entity(&scene,int(scene.index[shade_a])).order)
+        child:=false
+        for override in scene.overrides {child||=override.entity==id && override.kind==.Child}
+        testing.expect(t,child)
+    }
+    testing.expect_value(t,scene_entity(&scene,int(scene.index[corner])).parent,sticker)
+    testing.expect(t,instance_count(&scene)==3 && scene_entity_instance(&scene,shade_a)==a && scene_entity_instance(&scene,placed_pin)==placed_root)
+    testing.expect_value(t,member_count(&scene),6)
+    testing.expect_value(t,len(scene.overrides),3)
+    // What named the members that left names none, also what the Shade overrides; the rest is kept.
     room_follow,_:=scene_get(&scene,room,"Follow",Test_Follow)
     testing.expect_value(t,room_follow,Test_Follow{})
     watcher_follow,_:=scene_get(&scene,watcher,"Follow",Test_Follow)
-    testing.expect_value(t,watcher_follow,Test_Follow{offset={1,2,3}})
+    testing.expect_value(t,watcher_follow,Test_Follow{target=base.Entity(corner),anchor=placed_pin,offset={1,2,3}})
     shade_follow,_:=scene_get(&scene,shade_a,"Follow",Test_Follow)
     testing.expect_value(t,shade_follow,Test_Follow{target=base.Entity(root_a),offset={0,0,1}})
     shade_b_follow,_:=scene_get(&scene,member(&scene,b,3),"Follow",Test_Follow)
@@ -783,17 +794,6 @@ prefab_instances_keep_the_entities_they_add_through_updates :: proc(t:^testing.T
     testing.expect_value(t,scene_read(&loaded,&types,serial.writer_bytes(&w)),Error.None)
     defer scene_destroy(&loaded)
     testing.expect(t,len(loaded.overrides)==1 && override_kinds(&loaded)==kinds)
-
-    // What was added under a member that leaves the prefab goes with it.
-    scene_entities_remove(&prefab,{2})
-    testing.expect_value(t,scene_instance_update(&scene,a,&prefab),Error.None)
-    _,bulb_left:=scene_entity_find(&scene,bulb)
-    _,wire_left:=scene_entity_find(&scene,500)
-    _,plug_left:=scene_entity_find(&scene,501)
-    testing.expect(t,!bulb_left && !wire_left && !plug_left)
-    shade_parent,_=parent_of(&scene,shade)
-    testing.expect_value(t,shade_parent,root)
-    testing.expect_value(t,override_kinds(&scene)[.Child],0)
 }
 
 @(test)

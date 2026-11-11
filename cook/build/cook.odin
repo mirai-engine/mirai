@@ -113,6 +113,7 @@ Cook_Report :: struct {
     textures_compressed:int,
     animations_compressed:int,
     scenes_resolved:int,      // scenes and prefabs written with their prefab instances up to date
+    reparented:int,           // entities those scenes added under members their prefabs removed, now under the nearest member left
     far_meshes:int,           // far meshes written beside the scenes sections reference
     source_bytes:i64,         // of the whole assets folder
     output_bytes:i64,         // of what was written, with the index
@@ -324,7 +325,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
         for entry in made {report.output_bytes+=entry.bytes}
         slice.sort_by(written[:],proc(a,b:Cook_File) -> bool {return a.path<b.path})
     }
-    report.files,report.dropped=written[:],dropped[:]
+    report.files,report.dropped,report.reparented=written[:],dropped[:],work.resolver.reparented
 
     // The output is what was cooked: what an earlier cook left and this one did not write goes.
     cooked:asset.Registry
@@ -611,6 +612,7 @@ cook_summary :: proc(report:^Cook_Report,allocator:=context.allocator) -> string
     if report.textures_compressed>0 {fmt.sbprintf(&b,", %d textures compressed",report.textures_compressed)}
     if report.animations_compressed>0 {fmt.sbprintf(&b,", %d animations sampled",report.animations_compressed)}
     if report.scenes_resolved>0 {fmt.sbprintf(&b,", %d scenes and prefabs with their prefab instances brought up to date",report.scenes_resolved)}
+    if report.reparented>0 {fmt.sbprintf(&b,", %d entities they added under members their prefabs removed under the nearest member left (open and save them in the editor to keep that)",report.reparented)}
     if report.removed>0 {fmt.sbprintf(&b,", %d files of an earlier cook removed",report.removed)}
     strings.write_byte(&b,'\n')
     for shown in ([2]bool{false,true}) {
