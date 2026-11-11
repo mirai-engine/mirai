@@ -365,9 +365,13 @@ All take the context, an id and their state by parameter.
   only the visible rows (equal ones, or of heights that the caller measured once).
   - An area that scrolls horizontally leaves its content as wide as it asks, so a paragraph is not
     split.
-  - The wheel goes to the innermost area under the pointer; the page keys and the right stick, to
-    that one or to the one that has the focus, if it has nothing focusable (otherwise they belong to
-    the navigation). `zoom` takes the wheel with Ctrl (Cmd on macOS) before the area scrolls.
+  - The wheel goes to the innermost area under the pointer that can still move its content that
+    way (by last frame's rectangles of the area and its content), so one that fits or is at its
+    end passes it outward; one whose content fits its height turns it sideways. An area without
+    content of its own (one that pans or zooms) and Ctrl+wheel take it always. The page keys and
+    the right stick go to the innermost area under the pointer or to the one that has the focus,
+    if it has nothing focusable (otherwise they belong to the navigation). `zoom` takes the wheel
+    with Ctrl (Cmd on macOS) before the area scrolls.
   - A content that shrinks leaves in place what was seen: the area stores below the missing place,
     which goes away when scrolling up and never when scrolling down with the wheel. The bar floats
     and takes no layout.
