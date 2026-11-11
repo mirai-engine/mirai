@@ -91,8 +91,10 @@ feed, with its own decoder and a larger ring.
 is valid until a `mixer_update` sees the voice finish or until it is stolen; operations on an
 invalid one return false.
 
-- **Resampling** linear; with a step of exactly 1 the samples are copied. In a loop, the frame
-  after the last is the first, also for interpolating.
+- **Resampling** is Godot's cubic Hermite over four frames, so a 44.1 kHz sound keeps its highs
+  at the mixer's rate; with a step of exactly 1 the samples are copied. The neighbours of a frame
+  are those it plays between: silence before the start and after the end, the frames across the
+  seam of a loop, and the frame before an offset (a feed decodes it too).
 - **Pan.** Mono: constant power. Stereo: balance, lowers the side it moves away from.
 - **Fades**: an exact linear envelope to the sample. A voice that is leaving to stop does not
   accept another fade.
@@ -186,6 +188,6 @@ binaural and panning effects.
 
 ## What it does not do
 
-Resampling better than linear, more than one room reverb, reflections, pathing, baked or
+More than one room reverb, reflections, pathing, baked or
 convolution reverb from geometry (a later plugin), ambisonics, other HRTFs than the one shipped,
 sounds or output of more than two channels, and seeking or querying the position of a playing voice.

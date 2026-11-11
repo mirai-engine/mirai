@@ -266,13 +266,38 @@ resampled_sine_matches_the_sine_at_the_new_rate :: proc(t:^testing.T) {
         voice:=voice_play(m,sound,desc)
         out:=test_render(m,4000)
         worst:=f32(0)
-        for i in 0..<4000 {
+        // The frames around the first source frame are interpolated with the silence before the sound.
+        for i in 4..<4000 {
             want:=f32(math.sin(2*math.PI*f64(c.frequency)*f64(i)/RATE))
             worst=max(worst,abs(out[i*2]-want),abs(out[i*2+1]+want))
         }
-        // Linear interpolation of a sine is off by (w*w)/8 at most, w being the phase step between source frames.
+        // A cubic Hermite of a sine is off by less than w*w*w/8, w being the phase step between source frames.
         w:=2*math.PI*f32(440)/44100
-        testing.expectf(t,worst<w*w/8+2e-4,"pitch %v: off by %v",c.pitch,worst)
+        testing.expectf(t,worst<w*w*w/8+2e-5,"pitch %v: off by %v",c.pitch,worst)
+        voice_stop(m,voice)
+        test_render(m,CHUNK_FRAMES)
+        mixer_update(m)
+    }
+    // The highs of a 44.1 kHz sound keep their level: a line between two
+    // frames would lose 1.5 dB at 10 kHz and 3.4 dB at 15 kHz.
+    High :: struct {frequency:f64,loss_db:f32}
+    highs:=[?]High{{10000,0.5},{15000,2}}
+    for c in highs {
+        samples:=make([]f32,44100,context.temp_allocator)
+        for &x,i in samples {x=f32(math.sin(2*math.PI*c.frequency*f64(i)/44100))}
+        sound,_:=sound_create(m,samples,1,44100)
+        voice:=voice_play(m,sound)
+        out:=test_render(m,9700)
+        s,k:f64
+        for i in 100..<9700 {
+            phase:=2*math.PI*c.frequency*f64(i)/RATE
+            s+=f64(out[i*2])*math.sin(phase)
+            k+=f64(out[i*2])*math.cos(phase)
+        }
+        // Each side of the pan carries the sine at cos(pi/4).
+        level:=2*math.sqrt(s*s+k*k)/9600/(math.SQRT_TWO/2)
+        loss:=f32(-20*math.log10(level))
+        testing.expectf(t,loss<c.loss_db,"%v Hz loses %v dB",c.frequency,loss)
         voice_stop(m,voice)
         test_render(m,CHUNK_FRAMES)
         mixer_update(m)
@@ -313,18 +338,19 @@ loop_seam_has_no_gap_and_no_repeated_frame :: proc(t:^testing.T) {
     voice_stop(m,voice)
     test_render(m,CHUNK_FRAMES)
     mixer_update(m)
-    // At half speed every other output frame lies between two source frames;
-    // the one after the last source frame lies between it and the first.
+    // At half speed every other output frame lies between two source frames,
+    // interpolated with the frames around them as they play: silence before
+    // the first time through, and across the seam the frames of the loop.
     desc.pitch=0.5
     voice=voice_play(m,sound,desc)
     out=test_render(m,600)
     for i in 0..<600 {
-        a:=test_ramp((i/2)%100)
-        b:=test_ramp((i/2+1)%100)
-        want:=a if i%2==0 else (a+b)*0.5
-        if !test_near(t,out[i*2],want,1e-4) {break}
+        frame:=proc(j:int) -> f32 {return 0 if j<0 else test_ramp(j%100)}
+        j:=i/2
+        want:=frame(j) if i%2==0 else hermite(frame(j-1),frame(j),frame(j+1),frame(j+2),0.5)
+        if !test_near(t,out[i*2],want,1e-6) {break}
     }
-    test_near(t,out[199*2],(test_ramp(99)+test_ramp(0))*0.5,1e-4)
+    test_near(t,out[199*2],(-test_ramp(98)+9*test_ramp(99)+9*test_ramp(0)-test_ramp(1))/16,1e-6)
     // Told to stop looping, it plays to the end of the sound and ends there.
     voice_set_loop(m,voice,false)
     out=test_render(m,600)

@@ -230,7 +230,7 @@ feed_voice_mix :: proc "contextless" (m:^Mixer,v:^Mix_Voice,out:[^]f32,from,to:i
     frames:=u64(v.source.frames)
     if !v.loop && frames>0 {
         // The decoder may have gone round already: the sound ends at its next end all the same.
-        first:=frames-u64(v.offset)
+        first:=frames-u64(v.offset)+u64(min(v.offset,1))
         end:=first
         if read>first {end=first+(read-first+frames-1)/frames*frames}
         if write>=end {write=end;ended=true}
@@ -238,13 +238,14 @@ feed_voice_mix :: proc "contextless" (m:^Mixer,v:^Mix_Voice,out:[^]f32,from,to:i
     mask:=f.capacity-1
     channels:=u64(v.source.channels)
     available:=write-read
-    needed:=(u64(u32(v.cursor))+step*u64(to-from))>>32+2
+    needed:=(u64(u32(v.cursor))+step*u64(to-from))>>32+3
     count:=min(available,needed)
-    // In two runs of samples: up to the end of the ring, and from its start.
+    // The frame played last, then in two runs of samples: up to the end of the ring, and from its start.
+    for c in 0..<channels {m.scratch[c]=v.kept[c]}
     at:=read&mask
     first:=min(count,f.capacity-at)*channels
     rest:=count*channels-first
-    dst:=raw_data(m.scratch)
+    dst:=raw_data(m.scratch[channels:])
     if f.ring32!=nil {
         src:=raw_data(f.ring32)
         #no_bounds_check {
@@ -261,7 +262,10 @@ feed_voice_mix :: proc "contextless" (m:^Mixer,v:^Mix_Voice,out:[^]f32,from,to:i
     // More of the sound is still to come after these frames, now or later.
     holds:=!ended || count<available
     mixed:int
-    alive,mixed=segments_mix(v,raw_data(m.scratch),count,false,holds,out,from,to,max(step,1),target,span)
+    alive,mixed=segments_mix(v,dst,count,false,holds,true,out,from,to,max(step,1),target,span)
+    if played:=v.cursor>>32;played>0 {
+        for c in 0..<channels {v.kept[c]=dst[(played-1)*channels+c]}
+    }
     sync.atomic_store_explicit(&f.read,read+v.cursor>>32,.Release)
     v.cursor&=ONE-1
     // Waiting for the first frames of a play is not running dry.
