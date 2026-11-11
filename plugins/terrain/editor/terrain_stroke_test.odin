@@ -13,9 +13,9 @@ import "mirai:ui"
 @(test)
 terrain_held_brush_keeps_raising_under_the_pointer :: proc(t:^testing.T) {
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     ctx:ui.Context
     if !testing.expect(t,ui.context_init(&ctx,{}) && kit.theme_set(&ctx)) {return}
     defer ui.context_destroy(&ctx)

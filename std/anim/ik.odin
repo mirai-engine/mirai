@@ -38,7 +38,9 @@ two_bone_pole_from_pose :: proc "contextless" (root,joint,end:math.Transform,tar
     return pole,anim_vec3_valid(pole)
 }
 
-two_bone_ik :: proc "contextless" (root,joint,end:math.Transform,target,pole:math.Vec3,weight:f32=1) -> (result:IK_Result,ok:bool) {
+// With reach, the end eases in toward full extension and the two bones stretch past it, as a chain
+// does (chain_reach): the joint keeps a bounded speed as the target leaves reach.
+two_bone_ik :: proc "contextless" (root,joint,end:math.Transform,target,pole:math.Vec3,weight:f32=1,reach:Chain_Reach={}) -> (result:IK_Result,ok:bool) {
     result={root,joint,end,false}
     if !anim_transform_valid(root) || !anim_transform_valid(joint) || !anim_transform_valid(end) || !anim_vec3_valid(target) || !anim_vec3_valid(pole) || !anim_finite(weight) {return}
     upper,lower:=joint.position-root.position,end.position-joint.position
@@ -47,10 +49,17 @@ two_bone_ik :: proc "contextless" (root,joint,end:math.Transform,target,pole:mat
     delta:=target-root.position
     distance:=linalg.length(delta)
     if !anim_finite(distance) {return}
+    goal,stretch:=distance,f32(1)
+    if reach!={} {
+        adjusted,scale,reach_ok:=chain_reach(root.position,target,a+b,reach)
+        if !reach_ok {return}
+        goal,stretch=linalg.length(adjusted-root.position),scale
+    }
     direction,valid:=anim_unit(delta)
     if !valid {direction,_=anim_unit(end.position-root.position);if direction=={} {direction=upper/a}}
-    minimum,maximum:=abs(a-b),a+b
-    reach:=clamp(distance,minimum,maximum)
+    long_a,long_b:=a*stretch,b*stretch
+    minimum,maximum:=abs(long_a-long_b),long_a+long_b
+    span:=clamp(goal,minimum,maximum)
     bend:=pole-root.position
     bend-=direction*linalg.dot(bend,direction)
     bend,valid=anim_unit(bend)
@@ -60,27 +69,28 @@ two_bone_ik :: proc "contextless" (root,joint,end:math.Transform,target,pole:mat
         if !valid {bend=anim_perpendicular(direction)}
     }
     along:f32
-    if reach>1e-6 {along=f32((f64(a)*f64(a)+f64(reach)*f64(reach)-f64(b)*f64(b))/(2*f64(reach)))}
-    height:=cmath.sqrt(max(a*a-along*along,0))
+    if span>1e-6 {along=f32((f64(long_a)*f64(long_a)+f64(span)*f64(span)-f64(long_b)*f64(long_b))/(2*f64(span)))}
+    height:=cmath.sqrt(max(long_a*long_a-along*along,0))
     solved_joint:=root.position+direction*along+bend*height
-    solved_end:=root.position+direction*reach
-    upper_turn:=anim_between(upper/a,(solved_joint-root.position)/a)
-    lower_turn:=anim_between(lower/b,(solved_end-solved_joint)/b)
+    solved_end:=root.position+direction*span
+    upper_turn:=anim_between(upper/a,(solved_joint-root.position)/long_a)
+    lower_turn:=anim_between(lower/b,(solved_end-solved_joint)/long_b)
     weight:=math.saturate(weight)
     upper_turn=math.quat_slerp(1,upper_turn,weight)
     lower_turn=math.quat_slerp(1,lower_turn,weight)
+    shown:=1+(stretch-1)*weight
     result.root.rotation=linalg.normalize0(upper_turn*root.rotation)
     result.joint.rotation=linalg.normalize0(lower_turn*joint.rotation)
-    result.joint.position=root.position+math.quat_rotate(upper_turn,upper)
-    result.end.position=result.joint.position+math.quat_rotate(lower_turn,lower)
-    result.reached=distance>=minimum && distance<=maximum
+    result.joint.position=root.position+math.quat_rotate(upper_turn,upper*shown)
+    result.end.position=result.joint.position+math.quat_rotate(lower_turn,lower*shown)
+    result.reached=abs(distance-span)<=maximum*1e-5
     return result,true
 }
 
-skeleton_ik :: proc "contextless" (s:Skeleton,local,world:[]math.Transform,root,joint,end:int,target,pole:math.Vec3,weight:f32=1,root_transform:math.Transform=math.TRANSFORM_IDENTITY) -> bool {
+skeleton_ik :: proc "contextless" (s:Skeleton,local,world:[]math.Transform,root,joint,end:int,target,pole:math.Vec3,weight:f32=1,root_transform:math.Transform=math.TRANSFORM_IDENTITY,reach:Chain_Reach={}) -> bool {
     if !skeleton_validate(s) || len(local)!=len(s.rest) || len(world)!=len(local) || root<0 || joint<0 || end<0 || root>=len(local) || joint>=len(local) || end>=len(local) || s.parents[joint]!=i32(root) || s.parents[end]!=i32(joint) {return false}
     if !pose_world(s.parents,local,world,root_transform) {return false}
-    solved,ok:=two_bone_ik(world[root],world[joint],world[end],target,pole,weight)
+    solved,ok:=two_bone_ik(world[root],world[joint],world[end],target,pole,weight,reach)
     if !ok {return false}
     if !pose_ik_local(s.parents,local,world,root,joint,end,solved,root_transform) {return false}
     return pose_world(s.parents,local,world,root_transform)
@@ -107,16 +117,38 @@ pose_ik_apply :: proc "contextless" (hierarchy:Pose_Hierarchy,local,world:[]math
     return pose_world_branch(hierarchy,local,world,root,root_transform)
 }
 
-look_at :: proc "contextless" (rotation:math.Quat,forward,target_direction:math.Vec3,max_angle:f32,weight:f32=1) -> (math.Quat,bool) {
-    if !anim_rotation_valid(rotation) || !anim_finite(max_angle) || max_angle<0 || !anim_finite(weight) {return rotation,false}
-    from,from_ok:=anim_unit(forward)
-    to,to_ok:=anim_unit(target_direction)
-    if !from_ok || !to_ok {return rotation,false}
-    change:=anim_between(math.quat_rotate(rotation,from),to)
+// The bone turns so that the ray from offset along forward (both in its frame: the eyes of a head,
+// the muzzle of a gun in a hand) passes through the target, at target_direction from the bone.
+look_at :: proc "contextless" (rotation:math.Quat,forward,target_direction:math.Vec3,max_angle:f32,weight:f32=1,offset:math.Vec3={}) -> (math.Quat,bool) {
+    if !anim_finite(max_angle) || max_angle<0 || !anim_finite(weight) {return rotation,false}
+    point,point_ok:=look_point(rotation,forward,target_direction,offset)
+    if !point_ok {return rotation,false}
+    from,_:=anim_unit(math.quat_rotate(rotation,point))
+    to,_:=anim_unit(target_direction)
+    change:=anim_between(from,to)
     angle:=2*cmath.atan2(linalg.length(math.Vec3{change.x,change.y,change.z}),abs(change.w))
     fraction:=math.saturate(weight)
     if angle>max_angle {fraction*=max_angle/angle}
     return linalg.normalize0(math.quat_slerp(1,change,fraction)*rotation),true
+}
+
+// The point of the ray from offset along forward, in the frame of the bone, as far from the bone as
+// the target: turning it onto the target aims the ray through the target (ozz IKAimJob). False when
+// the target is nearer the bone than the ray passes.
+@(private)
+look_point :: proc "contextless" (rotation:math.Quat,forward,target,offset:math.Vec3) -> (point:math.Vec3,ok:bool) {
+    if !anim_rotation_valid(rotation) || !anim_vec3_valid(target) || !anim_vec3_valid(offset) {return}
+    axis,axis_ok:=anim_unit(forward)
+    if !axis_ok {return}
+    if _,toward:=anim_unit(target);!toward {return}
+    local:=math.quat_rotate(conj(rotation),target)
+    squared:=f64(local.x)*f64(local.x)+f64(local.y)*f64(local.y)+f64(local.z)*f64(local.z)
+    along:=f64(linalg.dot(axis,offset))
+    across:=f64(linalg.dot(offset,offset))-along*along
+    if !(squared>=across) {return}
+    point=offset+axis*f32(cmath.sqrt(squared-across)-along)
+    _,ok=anim_unit(point)
+    return
 }
 
 Rotation_Limit :: struct {axis:math.Vec3,max_swing,min_twist,max_twist:f32}

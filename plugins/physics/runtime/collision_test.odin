@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:strings"
 import "core:testing"
 import "mirai:core"
+import volume "mirai:engine/volume"
 import "mirai:std/base"
 import "mirai:std/serial"
 import sim "plugins:physics/runtime/sim"
@@ -109,18 +110,19 @@ collision_settings_reject_repeated_presets_custom_entries_and_bad_pushes :: proc
     testing.expect_value(t,defaults,Collision_Filter{layers=1,block=COLLISION_LAYERS_ALL})
 }
 
+@(private) @(test_world) Named_World :: struct {
+    using world:Test_World,
+    colliders:core.Table(Collider),
+}
+
 // The settings, a Collider and a Query_Filter speak in text by the names the
 // code declares, and keep the numbers.
 @(test)
 categories_and_presets_take_the_names_the_code_declares_in_text :: proc(t:^testing.T) {
-    Named_World :: struct {
-        using world:core.Test_World,
-        colliders:core.Table(Collider),
-    }
     names,types,bits:=collision_test_names()
-    info,described:=core.test_info(t,Named_World,test_types)
+    info,described:=test_info(t,Named_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.names,info.named_types,info.name_bits=names[:],types[:],bits[:]
     ws:=core.world_schema_make(&info,context.temp_allocator)
     if !testing.expect(t,ws!=nil) {return}
@@ -308,4 +310,35 @@ contact_rules_of_a_collider_reach_its_shape_without_making_it_again :: proc(t:^t
     testing.expectf(t,abs(v.x)<0.05,"stopped at %v",v)
     // The floor blocks from its +Y side: the box still rests on it.
     testing.expect(t,abs(physics_test_pose(&f,box).position.y-0.25)<0.03)
+}
+
+// A box or a sphere Volume without a Collider of its own reports the bodies that go in and out of it and
+// blocks nothing; a plane, which has no end, reports nothing.
+@(test)
+a_volume_reports_the_bodies_that_go_in_and_out :: proc(t:^testing.T) {
+    f:Physics_Test
+    if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    zones:=[2]core.Entity{core.create(&f.entities),core.create(&f.entities)}
+    core.add(&f.transforms,zones[0],core.Transform{{0,0,0},1,{1,1,1}})
+    core.add(&f.volumes,zones[0],volume.box({1,5,5}))
+    core.add(&f.transforms,zones[1],core.Transform{{0,1,0},1,{1,1,1}})
+    core.add(&f.volumes,zones[1],volume.plane())
+    mover:=core.create(&f.entities)
+    core.add(&f.transforms,mover,core.Transform{{-3,0,0},1,{1,1,1}})
+    core.add(&f.colliders,mover,collider_sphere(0.25))
+    core.add(&f.rigids,mover,RIGID_BODY_DYNAMIC)
+    physics_test_step(&f,0)
+    set_velocity(&f.requests,mover,{6,0,0})
+    began,ended,plane:=0,0,0
+    for _ in 0..<60 {
+        physics_test_step(&f)
+        for event in f.events.overlap_begin.items {
+            if event.collider==zones[0] && event.other==mover {began+=1}
+            if event.collider==zones[1] || event.other==zones[1] {plane+=1}
+        }
+        for event in f.events.overlap_end.items {if event.collider==zones[0] && event.other==mover {ended+=1}}
+    }
+    testing.expect(t,began==1 && ended==1 && plane==0)
+    testing.expect(t,physics_test_pose(&f,mover).position.x>1.5,"the volume blocks nothing")
 }

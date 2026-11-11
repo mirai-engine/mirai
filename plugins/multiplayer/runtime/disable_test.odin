@@ -11,7 +11,7 @@ import wire "mirai:net"
 components_turned_off_on_the_server_turn_off_on_the_client :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     apps:[2]host.App

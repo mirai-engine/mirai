@@ -223,29 +223,30 @@ a_hidden_screen_builds_until_nothing_of_it_shows :: proc(t:^testing.T) {
     testing.expect(t,len(gui.unblock)==1 && gui.unblock[0]==e)
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Bind_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     healths:core.Table(Bind_Test_Health),
     match:Bind_Test_Match,
 }
-@(private="file") Bind_Test_Health :: struct {value:f32,most:f32}
+@(private) Bind_Test_Health :: struct {value:f32,most:f32}
 
-@(private="file") @(storage,setting="machine")
+@(private) @(storage,setting="machine")
 Bind_Test_Match :: struct {seconds:f32}
 
 @(test)
 paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T) {
     w:Bind_Test_World
-    if !core.test_world_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     e:=core.create(&w.entities)
     core.add(&w.healths,e,Bind_Test_Health{3,10})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     gui:Gui
     gui.allocator=context.allocator
     defer gui_free(&gui)
-    b:=Bind{gui=&gui,world=core.test_world_ref(&w)}
+    b:=Bind{gui=&gui,world=test_world_ref(&w)}
     host:=bind_host(&b)
     // A component, by its name, is the row of the entity with its stamp.
     _,storage,found:=host.source(host.user,base.name_hash("Bind_Test_Health"))
@@ -288,7 +289,7 @@ paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T
         low:Gui
         low.allocator=limited
         low.sources=make([dynamic]Bound_Source,limited)
-        binding:=Bind{gui=&low,world=core.test_world_ref(&w)}
+        binding:=Bind{gui=&low,world=test_world_ref(&w)}
         {
             context.allocator=limited
             low_host:=bind_host(&binding)
@@ -442,12 +443,12 @@ the_reference_scales_the_interfaces_with_the_scale_of_the_player :: proc(t:^test
 @(test)
 a_modal_on_top_blocks_the_seats_it_covers_until_it_leaves :: proc(t:^testing.T) {
     w:Seats_Test_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     first,second,menu,pause:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.seats,first,inp.Seat{})
     core.add(&w.seats,second,inp.Seat{slot=1})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     state:inp.Seats
     requests:inp.Seat_Requests
     defer delete(requests.items)
@@ -483,11 +484,11 @@ a_modal_on_top_blocks_the_seats_it_covers_until_it_leaves :: proc(t:^testing.T) 
 the_buttons_of_a_modal_get_the_actions_it_takes_from_the_game :: proc(t:^testing.T) {
     DROP :: inp.Action(4)
     w:Seats_Test_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     seat,inventory,cinematic:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.seats,seat,inp.Seat{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     bindings:inp.Input_Map
     inp.input_map_action(&bindings,DROP,.Button)
     inp.input_map_bind(&bindings,DROP,inp.binding_key(.X))
@@ -497,9 +498,9 @@ the_buttons_of_a_modal_get_the_actions_it_takes_from_the_game :: proc(t:^testing
     state.blocks[0]={owner=inventory,mask=inp.ALL_ACTIONS,active=true}
     core.edit(&w.seats,seat).blocked=inp.ALL_ACTIONS
     names:=[1]core.Name_Info{{type=inp.Action,value=i64(DROP),name="drop_item"}}
-    info:=core.test_world_info(&w)
+    info:=test_world_info(&w)
     info.names=names[:]
-    core.test_info_index(info)
+    test_info_index(info)
     app:=new(host.App)
     defer free(app)
     app.info=info
@@ -521,8 +522,8 @@ the_buttons_of_a_modal_get_the_actions_it_takes_from_the_game :: proc(t:^testing
 a_screen_with_an_input_context_puts_the_seats_it_covers_in_it :: proc(t:^testing.T) {
     MENU :: inp.Input_Context(1)
     w:Seats_Test_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     inventory:=core.create(&w.entities)
     state:inp.Seats
     requests:inp.Seat_Requests

@@ -148,9 +148,10 @@ multi_ik_full_and_partial_weights_preserve_solver_pose_and_diagnostics :: proc(t
     }
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Rigs_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     animations:core.Table(Animation),
     attachments:core.Table(Bone_Attachment),
     playback:Playback,
@@ -168,10 +169,10 @@ profile_reload_allocation_failure_preserves_spring_state_controls_and_recovers_a
     assets:host.Assets;if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return};defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
     w:Rigs_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     entity:=core.create(&w.entities)
-    player:=ANIMATION_DEFAULT;player.asset=id;core.add(&w.animations,entity,player);core.test_world_settle(&w)
+    player:=ANIMATION_DEFAULT;player.asset=id;core.add(&w.animations,entity,player);test_world_settle(&w)
     append(&w.playback.states,rig_test_state(entity,3,1))
     profiles:Character_Assets;defer character_assets_free(&profiles)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
@@ -331,8 +332,8 @@ semantic_retarget_bindings_ignore_actor_placement_and_replay_without_allocations
 rig_goal_persistence_keeps_independent_effectors_and_accepts_chain_retarget_goals :: proc(t:^testing.T) {
     problems:core.Problems
     w:Rigs_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     body,transfer:=core.create(&w.entities),core.create(&w.entities)
     multi:=MULTI_IK_CONSTRAINT_DEFAULT;multi.rig=body;multi.effector_count=2
     multi.effectors[0],multi.effectors[1]=MULTI_IK_EFFECTOR_DEFAULT,MULTI_IK_EFFECTOR_DEFAULT
@@ -416,6 +417,11 @@ look_and_ik_publish_their_residual_and_whether_they_reach_in_the_constraints_of_
     testing.expect(t,aimed_found && aimed.valid && aimed.reached && aimed.residual<1e-3 && aimed.angular_error<1e-3)
     _,beyond:=animation_rig_diagnostic(nil,rig,.Look,1,&cache);_,elsewhere:=animation_rig_diagnostic(nil,rig,.IK,0)
     testing.expect(t,!beyond && !elsewhere)
+    // With an offset (eyes above the bone) the ray from the offset passes through the target.
+    core.edit_at(&looks,0).offset={0,.2,-.1}
+    copy(state.local[:],state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0)
+    aimed,_=animation_rig_diagnostic(nil,rig,.Look,0,&cache)
+    testing.expect(t,problems.count==0 && aimed.valid && aimed.reached && aimed.residual<1e-3,"the eyes aim at the target")
     core.edit_at(&looks,0).target=spatial_point({5,1,0});core.edit_at(&looks,0).max_angle=.2
     copy(state.local[:],state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0)
     aimed,_=animation_rig_diagnostic(nil,rig,.Look,0,&cache)

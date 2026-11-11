@@ -232,10 +232,11 @@ a_copy_of_what_changed_equals_a_whole_copy_after_writes_layout_changes_and_a_swa
     testing.expect(t,copy_rows_equal(&source,&copied))
 }
 
-@(private="file") Rev_List :: struct {items:[dynamic]i32}
-@(private="file") Rev_Count :: struct {value:i32}
+@(private) Rev_List :: struct {items:[dynamic]i32}
+@(private) Rev_Count :: struct {value:i32}
 
-@(private="file")
+@(private)
+@(test_world)
 Rev_World :: struct {
     using world:Test_World,
     disabled:Table(Disabled),
@@ -331,7 +332,7 @@ a_copy_of_what_changed_takes_the_storages_written_and_equals_a_whole_copy :: pro
     testing.expect(t,world_copy_changed(&info,&older,&w,older_marks[:]))
     testing.expect_value(t,older.count.value,i32(3))
     // Two Worlds swapped are both others.
-    swapped:=[2][TEST_STORAGES]u64{w.storage_revisions,kept.storage_revisions}
+    swapped:=[2]type_of(w.storage_revisions){w.storage_revisions,kept.storage_revisions}
     revisions_swapped(w.storage_revisions[:3],kept.storage_revisions[:3])
     for k in 0..<3 {testing.expect(t,w.storage_revisions[k]>max(swapped[0][k],swapped[1][k]) && kept.storage_revisions[k]==w.storage_revisions[k])}
     // A World made by hand has no revisions: asking for a storage moves none.
@@ -342,11 +343,12 @@ a_copy_of_what_changed_takes_the_storages_written_and_equals_a_whole_copy :: pro
     testing.expect(t,w.storage_revisions==revisions && world_revisions(world_ref(&w,&plain))==nil)
 }
 
-@(private="file") Roll_Value :: struct {x:f32,n:u32}
-@(private="file") Roll_Ref :: struct {at:^u32,n:u32} // a pointer: its table is restored by copy and swap
-@(private="file") Roll_Log :: struct {log:Events(u32)}
+@(private) Roll_Value :: struct {x:f32,n:u32}
+@(private) Roll_Ref :: struct {at:^u32,n:u32} // a pointer: its table is restored by copy and swap
+@(private) Roll_Log :: struct {log:Events(u32)}
 
-@(private="file")
+@(private)
+@(test_world)
 Roll_World :: struct {
     using world:Test_World,
     disabled:Table(Disabled),

@@ -43,14 +43,19 @@ effect_hit :: proc(ctx:^Context,index:u16,point:[2]f32) -> bool {
     return true
 }
 
+// Whether point, on the surface of w, is over what is seen of it.
+@(private)
+widget_contains :: proc(ctx:^Context,w:^Widget,point:[2]f32) -> bool {
+    p:=point
+    if w.scope!=0 && int(w.scope)<ctx.previous_scope_count {p=affine_apply(ctx.previous_scopes[w.scope],point)}
+    return rect_contains(w.area,p) && effect_hit(ctx,w.effect_clip,point)
+}
+
 @(private)
 widget_hit :: proc(ctx:^Context,surface:u16,point:[2]f32) -> ^Widget {
     best:^Widget
     for &w in ctx.previous[:ctx.previous_count] {
-        if w.surface!=surface || .Passive in w.flags {continue}
-        p:=point
-        if w.scope!=0 && int(w.scope)<ctx.previous_scope_count {p=affine_apply(ctx.previous_scopes[w.scope],point)}
-        if !rect_contains(w.area,p) || !effect_hit(ctx,w.effect_clip,point) {continue}
+        if w.surface!=surface || .Passive in w.flags || !widget_contains(ctx,&w,point) {continue}
         if best==nil || w.layer>=best.layer {best=&w}
     }
     return best
@@ -63,10 +68,7 @@ widget_under :: proc(ctx:^Context,id:Id) -> bool {
     if ctx.input.pointer_absent || id==0 {return false}
     w:=widget_previous(ctx,id)
     if w==nil || ctx.hot!=0 && w.layer<ctx.hot_layer {return false}
-    point:=ctx.screen_pointer if w.surface==0 else ctx.previous_panels[w.surface-1].pointer
-    p:=point
-    if w.scope!=0 && int(w.scope)<ctx.previous_scope_count {p=affine_apply(ctx.previous_scopes[w.scope],point)}
-    return rect_contains(w.area,p) && effect_hit(ctx,w.effect_clip,point)
+    return widget_contains(ctx,w,ctx.screen_pointer if w.surface==0 else ctx.previous_panels[w.surface-1].pointer)
 }
 
 @(private)
@@ -78,14 +80,11 @@ input_route :: proc(ctx:^Context) {
     if hit!=nil {
         ctx.over=true;ctx.hot=hit.id;ctx.hot_layer=hit.layer
         if ctx.input.wheel!={} {
-            // The wheel belongs to the innermost scroll area of that layer under the pointer.
+            // The wheel belongs to the innermost scroll area of that layer under the pointer that can move that way.
             point:=ctx.screen_pointer if hit.surface==0 else ctx.previous_panels[hit.surface-1].pointer
             target:^Widget
             for &w in ctx.previous[:ctx.previous_count] {
-                if .Scroll not_in w.flags || w.surface!=hit.surface || w.layer<hit.layer {continue}
-                p:=point
-                if w.scope!=0 && int(w.scope)<ctx.previous_scope_count {p=affine_apply(ctx.previous_scopes[w.scope],point)}
-                if !rect_contains(w.area,p) || !effect_hit(ctx,w.effect_clip,point) {continue}
+                if .Scroll not_in w.flags || w.surface!=hit.surface || w.layer<hit.layer || !widget_contains(ctx,&w,point) || !scroll_room(ctx,&w) {continue}
                 if target==nil || w.layer>=target.layer {target=&w}
             }
             if target!=nil {ctx.wheel_target=target.id}

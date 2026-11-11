@@ -594,28 +594,36 @@ those that happen in the loop are reported as [problems](#problems).
 
 ## Test worlds
 
-A test that needs a world declares a struct and lets `core` describe it (`core/test_world.odin`,
-public API, so a game's tests reach it through the declarations of the engine libraries): no test
-writes `Table_Info` or `Storage_Info` rows, nor the init, destroy, settle, copy and swap of its
-tables.
+A test that needs a world declares its struct in a `_test.odin` and marks it `@(test_world)`: the
+[generator](generator.md#outputs) writes its `World_Info` as it writes that of a game, from the
+attributes, the defaults and the procedures of the package that declares each type, into
+`worlds_gen_test.odin` of the package of the test. No test writes `Table_Info` or `Storage_Info`
+rows, nor says again what an attribute says.
 
-- The struct starts with `using world:core.Test_World`; each other field is a `core.Table(T)` of a
-  component, an array of them (a table per element, named `<T>_<index>`) or the value of a
-  storage. What the attributes of `T` say is read from the source that
-  declares it, through the `core.declared_read` the generator uses: a test world cannot say
-  something else of a type than a generated one. A type a test file declares may have no attribute,
-  and takes the default its test gives it.
-- What the application and the editor hold go in two more structs, given to `core.test_info`: a
-  `@(storage,host)` as a value, a `by_world` one as a `core.By_World(T)`.
-- `core.test_world_init` makes a world that holds its own `World_Info`, for a test of one world;
-  `core.test_info` gives the `World_Info` alone, which says of each table and storage what a
-  generated one says, for a test that hands it to the application, the editor or a history.
-- Reflection does not find the defaults (`NAME_DEFAULT`, `name_default()`) nor the procedures the
-  attributes name. A library that declares them exports `test_types` from a test file, which adds
-  them with `core.test_type` and calls the `test_types` of the libraries it uses; the world is
-  given the one of its library. A world that lacks one fails saying which entry to add.
+- The struct starts with `using world:Test_World`, the header the generated file gives its package
+  (the entities and a revision for each storage); each other field is a `core.Table(T)` of a
+  component, an array of them with its count as a number (a table per element, named
+  `<T>_<index>`) or the value of a storage. A type a test file declares may have no attribute: a
+  plain component or storage, whose default is its `NAME_DEFAULT` or `name_default()` as for any
+  other. The tag of a field takes `mirai:"game"` (the game of a project declares it) and
+  `mirai:"name=Spin"` (the name its table or storage goes by).
+- What the application and the editor hold go in two more structs the attribute names,
+  `@(test_world,host="Shared_Struct",editor="Editor_Struct")`: a `@(storage,host)` as a value, a
+  `by_world` one as a `core.By_World(T)`.
+- The world, the structs it names and the types of their fields are declared at the top of a file
+  and are not private to it: the generated file of the package reads them.
+- `test_world_init(t,&w)` makes a world that holds its own `World_Info`, for a test of one world
+  (`test_world_destroy`, `test_world_settle`, `test_world_ref`, `test_world_copy`); `test_info(t,W)`
+  gives the `World_Info` alone, for a test that hands it to the application, the editor or a
+  history (`test_info_destroy`; `test_info_index` after the test gave it names or records). They
+  are of the package of the test, written with its worlds: a test calls them without `core.`.
+- `mirai check` and `mirai test` write the file of the package and of those it imports before
+  they compile, and a check or a test of a project those of its packages; an error says which
+  field of which world is wrong and what to write. Git keeps only that of `core`: the `mirai` tool
+  is built from `core`, whose tests the compiler reads, before it can generate anything.
 - A library whose tables other libraries need in their tests exports them as a struct those hold
   with `using`, with the step that runs on them: `physics.Test_Physics` and `physics.test_step`.
-- Test files of an imported package are compiled into every build of tests, and into no other.
+- The compiler reads the test files of every package a build reads from its folder; the libraries
+  of the engine and of a project are built from stages without them.
 - A test that writes files takes its folder from `base.test_folder`, which removes it when the test
   ends.

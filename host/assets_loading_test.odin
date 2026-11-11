@@ -138,8 +138,8 @@ a_load_waits_for_the_geometry_of_the_meshes_it_took_over_frames :: proc(t:^testi
     testing.expect(t,!app_assets_uploading(&app) && len(app.asset_releases.uploading)==0)
 }
 
-@(private="file") Building_Model :: struct {mesh:base.Asset_Id}
-@(private="file") Building_World :: struct {using world:core.Test_World,models:core.Table(Building_Model),plain:core.Table(core.Name)}
+@(private) Building_Model :: struct {mesh:base.Asset_Id}
+@(test_world) @(private) Building_World :: struct {using world:Test_World,models:core.Table(Building_Model),plain:core.Table(core.Name)}
 
 // A World a job builds is not read by the marks: what only it names unloads,
 // and what it names counts once it is done. A table that never changed and
@@ -158,9 +158,9 @@ the_marks_leave_out_a_world_a_job_builds :: proc(t:^testing.T) {
     if !testing.expect(t,assets_init(&assets,{root=root,capacity=8})) {return}
     defer assets_destroy(&assets)
 
-    info,described:=core.test_info(t,Building_World)
+    info,described:=test_info(t,Building_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     app:=App{info=&info,assets=&assets,allocator=context.allocator}
     app.worlds=make([dynamic]World_Slot)
     defer delete(app.worlds)

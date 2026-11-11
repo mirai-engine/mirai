@@ -115,10 +115,10 @@ a_world_copy_shown_in_its_place_is_drawn_the_same :: proc(t:^testing.T) {
     copy(lights,s.lights[:])
     testing.expect(t,len(first)>30 && len(lights)>5)
     copied:Render_World
-    if !core.test_world_init(t,&copied,test_types) {return}
-    defer core.test_world_destroy(&copied)
+    if !test_world_init(t,&copied) {return}
+    defer test_world_destroy(&copied)
     populate(&copied,entities[:])
-    core.test_world_settle(&copied)
+    test_world_settle(&copied)
     world_sync(&copied,&f.sync,&f.app,{index=2,generation=1},core.ref(&copied.hierarchy))
     testing.expect(t,f.sync.synced && f.sync.world==core.World_Id{index=2,generation=1})
     second:=given(t,s);defer delete(second)
@@ -220,7 +220,7 @@ a_posed_mesh_is_the_instance_of_its_entity_and_a_visual_one_hides_it :: proc(t:^
     core.add(&f.world.worlds,root,core.World_Transform{transform={rotation=1,scale=1},previous={rotation=1,scale=1}})
     core.add(&f.world.offsets,root,Draw_Offset{offset={0,2,0}})
     core.add(&f.world.parents,b,core.Parent{entity=root})
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     core.hierarchy_settle(&f.world.hierarchy,&f.world.parents,&f.world.entities)
     frame(f,&posed)
     testing.expect(t,mesh_of(s,1)==sphere && s.instances[1].world[1][3]==2 && s.instances[0].world[1][3]==0,"a posed mesh is drawn with the offset of what it hangs from")
@@ -271,7 +271,7 @@ a_sync_without_memory_leaves_an_empty_scene_until_a_frame_makes_it :: proc(t:^te
     if !sync_fixture_init(t,f) {return}
     entities:[24]core.Entity
     populate(&f.world,entities[:])
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     limit:=Memory_Limit{owner=context.allocator,remaining=max(int)}
     limited:=runtime.Allocator{memory_limit_proc,&limit}
     defer {context.allocator=limited;sync_fixture_destroy(f)}

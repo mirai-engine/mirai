@@ -15,8 +15,9 @@ import "mirai:std/serial"
 
 Unsaved_Test_Look :: struct {material:base.Asset_Id}
 
+@(test_world)
 Unsaved_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     looks:core.Table(Unsaved_Test_Look),
 }
 
@@ -39,11 +40,11 @@ unsaved_assets_are_saved_discarded_and_found_through_what_a_world_uses :: proc(t
     app:=host.App{assets=&assets}
 
     w:Unsaved_Test_World
-    if !core.test_world_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     e:=core.create(&w.entities)
     core.add(&w.looks,e,Unsaved_Test_Look{material=stone})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     s:=Session{app=&app}
 
     rough:=asset.MATERIAL_DEFAULTS
@@ -63,7 +64,7 @@ unsaved_assets_are_saved_discarded_and_found_through_what_a_world_uses :: proc(t
 
     // The world shows stone, and stone needs clay: clay is what it uses unsaved.
     used:=make([dynamic]string,context.temp_allocator)
-    world_unsaved_assets(&s,core.test_world_ref(&w),&used)
+    world_unsaved_assets(&s,test_world_ref(&w),&used)
     testing.expect(t,len(used)==1 && used[0]=="clay.mat","what a world uses reaches the dependencies of what it names")
 
     saved,ok:=assets_save(&s,used[:])
@@ -133,8 +134,9 @@ quitting_asks_once_about_the_scene_and_the_unsaved_assets :: proc(t:^testing.T) 
 
 Owned_Test_Look :: struct {material:base.Asset_Id,made:base.Asset_Id `mirai:"owned"`}
 
+@(test_world)
 Owned_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     looks:core.Table(Owned_Test_Look),
 }
 
@@ -153,10 +155,10 @@ the_unsaved_assets_a_world_owns_are_those_of_its_owned_fields :: proc(t:^testing
     defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets}
     w:Owned_Test_World
-    if !core.test_world_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     core.add(&w.looks,core.create(&w.entities),Owned_Test_Look{material=used_id,made=made_id})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     s:=Session{app=&app}
     rough:=asset.MATERIAL_DEFAULTS
     rough.roughness=0.25
@@ -165,7 +167,7 @@ the_unsaved_assets_a_world_owns_are_those_of_its_owned_fields :: proc(t:^testing
         testing.expect_value(t,error,asset.Error.None)
         testing.expect(t,file_write(&s,fmt.tprintf("%s/%s",folder,pair.file),data,"Write"))
     }
-    world:=core.test_world_ref(&w)
+    world:=test_world_ref(&w)
     used:=make([dynamic]string,context.temp_allocator)
     world_unsaved_assets(&s,world,&used)
     testing.expectf(t,len(used)==2,"the world uses both: %v",used)

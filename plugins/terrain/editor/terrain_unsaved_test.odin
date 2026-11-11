@@ -43,9 +43,9 @@ terrain_history_follows_a_save_and_a_discard_of_its_file :: proc(t:^testing.T) {
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     source:terrain.Source;defer terrain.source_destroy(&source)
     if !testing.expect(t,terrain.source_make(&source,.Heightfield,{5,1,5},1,4)) {return}
     id:=base.Asset_Id{81,82};source.revision=1
@@ -64,7 +64,7 @@ terrain_history_follows_a_save_and_a_discard_of_its_file :: proc(t:^testing.T) {
     s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     core.add(&world.worlds,owner,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     unsaved:=unsaved_test_held
     sculpt:=unsaved_test_sculpt
     middle:=[3]int{2,0,2}
@@ -119,9 +119,9 @@ undoing_a_new_terrain_takes_its_file_away_after_its_strokes :: proc(t:^testing.T
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:history.Selection;defer delete(selection.entities)
     edits:history.Edits;defer history.edits_free(&edits)
@@ -136,7 +136,7 @@ undoing_a_new_terrain_takes_its_file_away_after_its_strokes :: proc(t:^testing.T
     owner:=world.terrains.entities[0]
     created:=test_held(t,&assets,relative);defer delete(created)
     core.add(&world.worlds,owner,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     unsaved_test_sculpt(t,&s,&tool,ref,&world,owner,2)
     unsaved_test_sculpt(t,&s,&tool,ref,&world,owner,3)
     stroked:=test_held(t,&assets,relative);defer delete(stroked)
@@ -162,9 +162,9 @@ volume_strokes_are_steps_of_undo_that_keep_only_their_blocks :: proc(t:^testing.
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:history.Selection;defer delete(selection.entities)
     edits:history.Edits;defer history.edits_free(&edits)
@@ -179,7 +179,7 @@ volume_strokes_are_steps_of_undo_that_keep_only_their_blocks :: proc(t:^testing.
     owner:=world.terrains.entities[0]
     id:=world.terrains.values[0].source
     core.add(&world.worlds,owner,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     created:=test_held(t,&assets,relative);defer delete(created)
     cave:=[3]f32{-8.5,-24.5,-8.5}
     deep:=[3]int{40,24,40}

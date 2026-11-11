@@ -19,9 +19,9 @@ terrain_layers_paint_and_holes_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     source:terrain.Source;defer terrain.source_destroy(&source)
     if !testing.expect(t,terrain.source_make(&source,.Heightfield,{9,1,9},1,4)) {return}
     id:=base.Asset_Id{91,92};source.revision=1
@@ -39,7 +39,7 @@ terrain_layers_paint_and_holes_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     core.add(&world.worlds,owner,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     prepare :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,world:^Create_Test_World,owner:core.Entity) -> bool {
         terrain_sync(s,tool,core.read(&world.terrains),s.app.assets)
         return testing.expect(t,stroke_prepare(tool,s.app.assets,s.app.allocator,&world.terrains,&world.worlds,editor.Pick{entity=owner}))
