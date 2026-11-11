@@ -20,12 +20,12 @@ memory_limit_proc :: proc(data: rawptr, mode: runtime.Allocator_Mode, size, alig
 }
 
 @(private = "file")
-MEMORY_CATALOG :: `{"programs":[{"id":3,"name":"Paint","domain":"vfx","attributes":8,"size":24,
-	"resources":[{"name":"field","kind":"grid"},{"name":"words","kind":"data","words":4}],
-	"stages":[{"name":"spread","iterations":2,"over":"field","writes":["field"]}],
+MEMORY_CATALOG :: `{"version":2,"programs":[{"id":3,"name":"Paint","domain":"Vfx","attributes":8,"size":24,
+	"resources":[{"name":"field","kind":"Grid"},{"name":"words","kind":"Data","words":4}],
+	"stages":[{"name":"spread","iterations":2,"over":0,"writes":1}],
 	"parameters":[
-		{"name":"image","kind":"texture","components":1,"offset":0,"default":"","min":0,"max":0,"srgb":true},
-		{"name":"steps","kind":"int32","components":2,"offset":4,"default":[-2,5],"min":-8,"max":8,"group":"Pattern"}]}]}`
+		{"name":"image","kind":"Texture","components":1,"offset":0,"srgb":true},
+		{"name":"steps","kind":"Int","components":2,"offset":4,"defaults":[-2,5,0,0],"min":-8,"max":8,"group":"Pattern"}]}]}`
 
 // What the renderer asks its allocator for without a device, with the memory
 // ending at each request in turn: the call is refused, says so where it has

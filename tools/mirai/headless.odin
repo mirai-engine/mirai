@@ -1,10 +1,10 @@
 package main
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:time"
 import "mirai:editor/api"
+import "mirai:std/serial"
 import "mirai:std/subprocess"
 
 // An editor that mirai bench or mirai render opens headless to measure, and
@@ -42,21 +42,24 @@ headless_close :: proc(e:^Headless_Editor) {
     e.port=0
 }
 
-headless_call :: proc(e:^Headless_Editor,method:string,params:json.Object) -> (result:string,err:api.Error,called:bool) {
-    text:="{}"
-    if params!=nil {
-        bytes,_:=json.marshal(params,allocator=context.temp_allocator)
-        text=string(bytes)
-    }
-    return api.rpc_call(e.port,method,text,1,RENDER_TIMEOUT_MS,context.allocator)
+// The params of camera.set and profile.capture that bench and render give.
+Camera_Set :: struct {
+    position,target:[]f64,
+    fov:f64 `mirai:"optional"`, // degrees, vertical; 0 keeps the camera of the editor
+    exposure:string,
+    ev100:f64 `mirai:"optional"`,
+}
+Profile_Capture :: struct {frames:int,advance:bool,label:string,top:int}
+
+headless_call :: proc(e:^Headless_Editor,method:string,params:any) -> (result:string,err:api.Error,called:bool) {
+    text,_:=serial.text_encode(params,.Line,context.temp_allocator,sparse=true)
+    return api.rpc_call(e.port,method,string(text),1,RENDER_TIMEOUT_MS,context.allocator)
 }
 
 // Advances frames, each with the fixed dt of engine.step.
 headless_step :: proc(e:^Headless_Editor,frames:int) -> bool {
     for left:=frames;left>0;left-=3600 {
-        step:=make(json.Object,context.temp_allocator)
-        step["frames"]=json.Integer(min(left,3600))
-        if _,err,called:=headless_call(e,"engine.step",step);!called {
+        if _,err,called:=headless_call(e,"engine.step",struct{frames:int}{min(left,3600)});!called {
             fmt.eprintfln("mirai %s: %s: engine.step: %s",e.tool,e.label,api.error_text(err,context.temp_allocator))
             return false
         }

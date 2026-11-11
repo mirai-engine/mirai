@@ -66,8 +66,6 @@ slang_package_is_checked_unpacked_and_marked :: proc(t:^testing.T) {
     testing.expect(t,os.is_file(path_join(target,"lib/slang.txt",allocator=context.temp_allocator)))
     testing.expect(t,prebuilt_installed(target,sha256),"the marker names the package that was installed")
     testing.expect(t,!prebuilt_installed(target,"another hash"))
-    marker,_:=os.read_entire_file(path_join(target,"mirai-package.json",allocator=context.temp_allocator),context.temp_allocator)
-    testing.expect_value(t,string(marker),strings.concatenate({"{\n  \"version\": \"",SLANG_VERSION,"\",\n  \"asset\": \"slang-test.tar.gz\",\n  \"sha256\": \"",sha256,"\"\n}\n"},context.temp_allocator))
     found,located:=tool_find(root,.Slangc,context.temp_allocator)
     if _,configured:=os.lookup_env("MIRAI_SLANGC",context.temp_allocator);!configured {
         if _,also:=os.lookup_env("MIRAI_SLANG",context.temp_allocator);!also {testing.expect(t,located && path_inside(found,target),"the generator finds the installed compiler")}

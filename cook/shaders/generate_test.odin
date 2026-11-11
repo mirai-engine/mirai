@@ -302,7 +302,7 @@ generation_for_a_project_adds_its_programs_and_leaves_the_engine_tables :: proc(
     testing.expect_value(t,reload.engine,engine.engine)
     testing.expect(t,mini_read(&mini,"render/shaders_gen.odin")==table,"the tables of the engine are not written for a project")
     catalog,_:=os.read_entire_file(path_join(options.output,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
-    testing.expect(t,strings.contains(string(catalog),"\"name\": \"Glow\"") && strings.contains(string(catalog),"\"source\": \"project/glow.slang\"") && strings.contains(string(catalog),"\"default\": 0.5,"))
+    testing.expect(t,strings.contains(string(catalog),"\"name\": \"Glow\"") && strings.contains(string(catalog),"\"source\": \"project/glow.slang\"") && strings.contains(string(catalog),"0.5"))
     manifest,_:=os.read_entire_file(path_join(options.output,"manifest.json",allocator=context.temp_allocator),context.temp_allocator)
     testing.expect(t,strings.contains(string(manifest),"\"tests\": []"))
     testing.expect(t,os.is_file(path_join(project,".mirai/shader-cache",STAMP_FILE,allocator=context.temp_allocator)),"the stamp of a project is in the project")

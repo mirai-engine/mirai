@@ -78,8 +78,7 @@ cmd_mcp :: proc(root:string,args:[]string) -> int {
 // A message that came on stdio: a cancellation goes to the editor at once,
 // while the call it stops still holds the worker; the rest wait their turn.
 mcp_arrived :: proc(bridge:^Mcp_Bridge,line:string) {
-    method,_:=api.json_string(api.json_member(line,"method"))
-    if method=="notifications/cancelled" {
+    if mcp_read(line).method=="notifications/cancelled" {
         if port:=connection_editor(bridge.connection).port;port!=0 {
             api.client_post(port,"/mcp",line,api.WAIT_TIMEOUT_MS,context.temp_allocator)
             free_all(context.temp_allocator)
@@ -112,7 +111,7 @@ mcp_message :: proc(bridge:^Mcp_Bridge,line:string) {
     if text=="" {return}
     if name:=api.bridge_client_name(context.temp_allocator,text);name!="" && !bridge.named {bridge.client=strings.clone(name)}
     c:=bridge.connection
-    method,_:=api.json_string(api.json_member(text,"method"))
+    method:=mcp_read(text).method
     called:=method=="tools/call"?mcp_tool_method(text):""
     reply:string
     answer:bool
@@ -141,11 +140,23 @@ mcp_message :: proc(bridge:^Mcp_Bridge,line:string) {
 
 // The method a tools/call runs: its tool, or the method the tool call names.
 mcp_tool_method :: proc(message:string) -> string {
-    params:=api.json_member(message,"params")
-    name,_:=api.json_string(api.json_member(params,"name"))
-    if name!=api.MCP_CALL_TOOL {return name}
-    method,_:=api.json_string(api.json_member(api.json_member(params,"arguments"),"method"))
-    return method
+    params:=mcp_read(message).params
+    if params.name!=api.MCP_CALL_TOOL {return params.name}
+    arguments:struct {method:string}
+    serial.text_decode(string(params.arguments),&arguments,context.temp_allocator,skip_unknown=true)
+    return arguments.method
+}
+
+// What the bridge reads of a message of the client; nothing of one that is not JSON-RPC.
+Mcp_Message :: struct {
+    id:serial.Json,
+    method:string,
+    params:struct {name:string,arguments:serial.Json},
+}
+
+mcp_read :: proc(text:string) -> (message:Mcp_Message) {
+    serial.text_decode(text,&message,context.temp_allocator,skip_unknown=true)
+    return
 }
 
 // An editor that answers an initialize says its tools do not change; with
@@ -158,14 +169,12 @@ mcp_lists_changes :: proc(reply:string) -> string {
 // The answer to a call of the docs tool, the same with or without an editor,
 // which never reaches it; answered is false for any other tool.
 mcp_docs_call :: proc(root,message:string) -> (reply:string,answered:bool) {
-    id:=api.json_member(message,"id")
-    params:=api.json_member(message,"params")
-    name,_:=api.json_string(api.json_member(params,"name"))
-    if id=="" || name!=api.MCP_DOCS_TOOL {return}
+    read:=mcp_read(message)
+    if read.id=="" || read.params.name!=api.MCP_DOCS_TOOL {return}
     w:serial.Writer
     serial.writer_init(&w,4096,context.temp_allocator)
-    api.docs_tool_write(&w,root,api.json_member(params,"arguments"))
-    return fmt.tprintf(`{{"jsonrpc":"2.0","id":%s,"result":%s}}`,id,string(serial.writer_bytes(&w))),true
+    api.docs_tool_write(&w,root,string(read.params.arguments))
+    return fmt.tprintf(`{{"jsonrpc":"2.0","id":%s,"result":%s}}`,read.id,string(serial.writer_bytes(&w))),true
 }
 
 // What is answered while no editor does: why and the docs tool, which needs

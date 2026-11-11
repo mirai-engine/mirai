@@ -436,23 +436,3 @@ extension_macros :: proc(text:string) -> (features:Extension_Features) {
         offset=end
     }
 }
-
-// The part of catalog.json that says where the constants of a view keep what
-// the generation adds to them.
-@(private)
-extensions_json :: proc(writer:^Json_Writer,extensions:Extensions) {
-    json_key(writer,"frame");json_object_begin(writer)
-    json_key(writer,"size");json_integer(writer,i64(extensions.frame_size))
-    json_key(writer,"nested");json_bool(writer,extensions.nested)
-    json_key(writer,"instance_ids");json_bool(writer,extensions.instance_ids)
-    json_key(writer,"extensions");json_array_begin(writer)
-    for field in extensions.fields {
-        json_object_begin(writer)
-        json_key(writer,"name");json_string(writer,field.name)
-        json_key(writer,"offset");json_integer(writer,i64(field.offset))
-        json_key(writer,"size");json_integer(writer,i64(field.size))
-        json_object_end(writer)
-    }
-    json_array_end(writer)
-    json_object_end(writer)
-}

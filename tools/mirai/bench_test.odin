@@ -1,11 +1,11 @@
 package main
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:math"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "mirai:std/serial"
 
 @(private="file")
 near :: proc(a,b:f64) -> bool {return abs(a-b)<1e-9}
@@ -14,7 +14,7 @@ near :: proc(a,b:f64) -> bool {return abs(a-b)<1e-9}
 @(private="file")
 summary_of :: proc(frame,cpu,gpu,game,shadows:f64,zones:string) -> (s:Bench_Summary) {
     text:=fmt.tprintf(`{{"id":1,"frame":{{"count":240,"p50_ms":%f,"p95_ms":%f,"cpu_ms":%f,"gpu_ms":%f}},"parts":[{{"name":"game","mean_ms":%f,"p95_ms":1}},{{"name":"audio","mean_ms":0.0001}}],"gpu":[{{"name":"shadows","mean_ms":%f}}],"zones":[%s],"notes":["Headless"]}}`,frame,frame+2,cpu,gpu,game,shadows,zones)
-    _=json.unmarshal_string(text,&s,allocator=context.temp_allocator)
+    serial.text_decode(text,&s,context.temp_allocator,skip_unknown=true)
     return
 }
 
@@ -161,15 +161,11 @@ bench_markdown_is_a_table_for_the_benchmarks :: proc(t:^testing.T) {
 @(test)
 bench_conditions_warn_when_the_builds_were_measured_apart :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    parse :: proc(text:string) -> json.Value {
-        value,_:=json.parse_string(text,parse_integers=true)
-        return value
-    }
     report:Bench_Report
     report.runs={{name="head"},{name="base"}}
     bench_conditions(&report,{
-        parse(`{"optimization":"Speed","device":"GPU","preset":"Ultra","entities":10,"workers":7,"validation":false}`),
-        parse(`{"optimization":"Minimal","device":"GPU","preset":"High","entities":12,"workers":7,"validation":true}`),
+        `{"optimization":"Speed","device":"GPU","preset":"Ultra","entities":10,"workers":7,"validation":false}`,
+        `{"optimization":"Minimal","device":"GPU","preset":"High","entities":12,"workers":7,"validation":true}`,
     })
     testing.expect_value(t,report.device,"GPU")
     joined:=strings.join(report.warnings[:],"\n")
@@ -179,6 +175,6 @@ bench_conditions_warn_when_the_builds_were_measured_apart :: proc(t:^testing.T) 
     testing.expect(t,!strings.contains(joined,"entities"),joined)
     two_dev:Bench_Report
     two_dev.runs={{name="head"},{name="base"}}
-    bench_conditions(&two_dev,{parse(`{"optimization":"Minimal","validation":false}`),parse(`{"optimization":"Minimal","validation":false}`)})
+    bench_conditions(&two_dev,{`{"optimization":"Minimal","validation":false}`,`{"optimization":"Minimal","validation":false}`})
     testing.expect_value(t,len(two_dev.warnings),0)
 }
