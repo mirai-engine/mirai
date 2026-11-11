@@ -107,6 +107,7 @@ Storage_Procs :: struct {
     copy:proc(dst,src:rawptr) -> bool,      // copy="f"
     copy_kept:proc(dst,src:rawptr) -> bool, // copy_kept="f": into the copy a history keeps
     swap:proc(a,b:rawptr),                  // swap="f"
+    diff:proc(a,b:rawptr,buf:[]byte) -> string, // diff="f": where two values differ, written into buf; empty when they do not
     free:proc(value:rawptr),                // free="f"
     reset:proc(value:rawptr),               // reset="f": what clearing the World does to it
 }

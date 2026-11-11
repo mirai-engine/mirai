@@ -21,6 +21,7 @@ Declared :: struct {
     copy:string,      // "false": it is not copied
     copy_kept:string, // of the copy a history keeps, which copy_changed makes; copy otherwise
     swap:string,
+    diff:string,      // where two values differ, as text
     free:string,      // releases what the storage holds; value_free otherwise
     reset:string,     // gives a storage of the World its start when the World is cleared
     lock_names:string, // the components whose rows a row of this one owns, as written: separated by spaces
@@ -107,6 +108,7 @@ declared_read :: proc(d:^Declared,options:map[string]string,editor:bool) -> (inv
     d.copy=options["copy"] or_else ""
     d.copy_kept=options["copy_kept"] or_else ""
     d.swap=options["swap"] or_else ""
+    d.diff=options["diff"] or_else ""
     d.free=options["free"] or_else ""
     d.reset=options["reset"] or_else ""
     d.lock_names=options["locks"] or_else ""

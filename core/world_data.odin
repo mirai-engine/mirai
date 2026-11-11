@@ -234,6 +234,17 @@ world_swap :: proc(info:^World_Info,a,b:rawptr) {
     }
 }
 
+// Where two Worlds of one info differ, as the first storage that says diff=
+// and finds a difference tells it, written into buf: its name and that text;
+// empty when none does. What a divergence already found asks, never a tick.
+world_diff :: proc(info:^World_Info,a,b:rawptr,buf:[]byte) -> (storage,text:string) {
+    for &s in info.storages {
+        if s.place!=.World || s.procs.diff==nil {continue}
+        if text=s.procs.diff(storage_of(a,&s),storage_of(b,&s),buf);text!="" {return s.name,text}
+    }
+    return
+}
+
 // Takes every entity and row of a World, and its storages derived from them
 // go back to their start: the settings, the storages that say keep and those
 // that are not copied stay. False without memory: the World as it was.

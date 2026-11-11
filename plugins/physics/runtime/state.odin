@@ -1,5 +1,6 @@
 package physics
 
+import "core:fmt"
 import "core:hash/xxhash"
 import "core:math/linalg"
 import "core:mem"
@@ -31,7 +32,7 @@ Physics_Settings :: struct {
 // entities to what was made for them. Copied state by state, with the
 // geometry its bodies need: what a slot of geometry holds is known by a hash
 // of it, so a copy into a world that has it already does not compare it.
-@(storage,copy="state_copy",copy_kept="state_copy_kept",swap="state_swap",free="state_destroy",shared,reset="state_reset")
+@(storage,copy="state_copy",copy_kept="state_copy_kept",swap="state_swap",diff="state_diff",free="state_destroy",shared,reset="state_reset")
 Physics_State :: struct {
     ready:bool,
     world:sim.World,
@@ -673,6 +674,14 @@ state_swap :: proc(a,b:^Physics_State) {
         sim.world_succeed(&a.world,&b.world)
         sim.world_succeed(&b.world,&a.world)
     }
+}
+
+// Where the simulations of two states differ: the slot of the body (or of
+// what else), the field and both values, written into buf.
+state_diff :: proc(a,b:^Physics_State,buf:[]byte) -> string {
+    diff,differ:=sim.world_diff(&a.world,&b.world,buf[:len(buf)/2])
+    if !differ {return ""}
+    return fmt.bprintf(buf[len(buf)/2:],"%v %d%s is %v, and %v in the other",diff.type,diff.slot,diff.field,diff.a,diff.b)
 }
 
 // Frees the simulation of a world.
