@@ -170,6 +170,9 @@ Discovery and memory:
   region, additive reference and space of the rig, on the owner thread and in jobs.
 - `discovery_bench_test.odin` and `program_bench_test.odin` (with `MIRAI_BENCH`): optional
   preparation without stable allocations, and the cost of a pose by base and layers.
+- `a_driven_action_shows_the_time_of_its_driver_played_or_sought` and
+  `the_preview_of_the_editor_does_not_travel_into_a_play` (a scrubbed actor in the copy Play
+  starts from).
 - `an_action_that_moves_its_body_gives_it_its_share_of_the_root_delta`: a play, the share without
   the base and an action without `body_move`.
 

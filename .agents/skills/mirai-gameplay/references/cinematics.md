@@ -107,7 +107,9 @@ the editor has no other.
   the block a shot asks, as `camera_override` asks it, the action a span drives and stops, a marker
   on an entity that is gone, the release at the end and a client following the anchor),
   `a_head_of_a_scrubbed_clip_shows_one_shot` (and the action it drives to the head) and
-  `an_anchor_gives_the_time_of_a_clip_at_a_tick`; the driven play itself:
+  `an_anchor_gives_the_time_of_a_clip_at_a_tick`,
+  `a_scrubbed_timeline_plays_from_its_start_in_a_play` (the copy Play starts from); the driven
+  play itself:
   `a_driven_action_shows_the_time_of_its_driver_played_or_sought` in `plugins/animation/runtime`.
 - Reference walkthrough: the intro of the demo's control scene ([demo](demo.md#control)): playback,
   the cut and the blend between its two shots, the bark marker and input blocking during the

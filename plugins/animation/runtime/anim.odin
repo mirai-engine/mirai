@@ -258,6 +258,7 @@ Playback :: struct {
     hierarchy_stamp:u64, // moves when any of them does
     track_maps:[dynamic]Track_Map,
     scratch:[dynamic]Pose_Scratch, // one a job that poses
+    previewed:bool,                // its last tick did not play: what it played was the editor's preview
     bones_peak:int,                // bindings of the largest state bound: the room of each scratch
     work:[dynamic]Pose_Row,        // the entities of the tick under way
     work_contents:[dynamic]host.Content_Animation, // what they play, each once: its library outlives the tick, its place in the host may not
@@ -1210,9 +1211,18 @@ Animation_Settings :: struct {
 }
 ANIMATION_SETTINGS_DEFAULT :: Animation_Settings{requests=256,match_goals=4096}
 
-// The room of the requests of a tick, and what did not fit or was invalid in them.
+// The room of the requests of a tick, and what did not fit or was invalid in them. What the editor
+// played while the world did not play is its preview (a scrubbed timeline, the actions it drove):
+// on the first tick that plays, as in the copy Play starts from, the clips start again from their
+// components, no action plays and what the editor asked is dropped, so none of it reaches the game.
 @(step="input fixed",loops="game editor",stage="begin")
-animation_requests_serve :: proc(requests:^Animation_Requests,settings:Animation_Settings,problems:^core.Problems) {
+animation_requests_serve :: proc(requests:^Animation_Requests,settings:Animation_Settings,problems:^core.Problems,playback:^Playback,actions:^Action_Runtime,time:core.Time) {
+    if time.playing && playback.previewed {
+        for &state in playback.states {state.asset={}}
+        for &state in actions.states {state.slots={}}
+        clear(&requests.timeline.items);clear(&requests.plays.items);clear(&requests.distances.items)
+    }
+    playback.previewed=!time.playing
     code,capacity,setting:="animation.requests",int(settings.requests),"Animation_Settings.requests"
     core.queue_serve(&requests.timeline,capacity,problems,code,"timeline commands",setting,"it names an entity, a command, a finite time and a finite speed")
     core.queue_serve(&requests.distances,capacity,problems,code,"animation distance plays",setting,"it names an entity, a clip and a time of 0 or more, or a distance track of its .character")

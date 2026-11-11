@@ -321,6 +321,11 @@ owner and keeps no clip choice in game code.
   explicit `animation` does not change and over a direct `.anim` it is not evaluated. Changing it
   restarts the program; an absent clip is `Missing_Clip`.
 - Over `.anim`, an empty clip chooses the first. The defaults are `ANIMATION_DEFAULT`.
+- **What the editor plays is preview.** While the world does not play (Edit), clips sought by the
+  Tracks head, the actions a timeline drives and the editor's previews live only in derived
+  storages and queues, never in a component: a save or a Duplicate holds none of it. On the first
+  tick that plays, as in the copy Play starts from, `animation_requests_serve` starts every clip
+  again from its component, drops every action and the plays, seeks and distances left queued.
 - What plays over the base is the stack of the set
   ([the layer stack](animation-actions.md#the-layer-stack)); `animation_clip` changes the clip of
   the component.

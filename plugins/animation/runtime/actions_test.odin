@@ -70,11 +70,11 @@ action_test_layered :: proc(profile:^Action_Profile,action:int) {
 }
 // actions_prepare over the events of a tick of its own, as animation_tick clears them.
 @(private="file")
-prepare :: proc(actions:^Action_Runtime,requests:^Animation_Requests,cache:^Character_Assets,descriptions:^core.Table(Animation),playback:^Playback,events:^Animation_Events,app:^host.App,problems:^core.Problems,remotes:^core.Table(core.Remote,.Read)={},played:^core.Table(Animation_Played)=nil,tick:u64=1) -> bool {
+prepare :: proc(actions:^Action_Runtime,requests:^Animation_Requests,cache:^Character_Assets,descriptions:^core.Table(Animation),playback:^Playback,events:^Animation_Events,app:^host.App,problems:^core.Problems,remotes:^core.Table(core.Remote,.Read)={},played:^core.Table(Animation_Played)=nil,tick:u64=1,playing:=true) -> bool {
     clear(&events.items)
     unheard:core.Table(Animation_Played);defer core.table_destroy(&unheard)
     local:core.Table(core.Remote);defer core.table_destroy(&local)
-    return actions_prepare(actions,requests,cache,core.read(descriptions),playback,events,app,remotes if remotes!=nil else core.read(&local),played if played!=nil else &unheard,{tick=tick,dt=.1,playing=true},problems)
+    return actions_prepare(actions,requests,cache,core.read(descriptions),playback,events,app,remotes if remotes!=nil else core.read(&local),played if played!=nil else &unheard,{tick=tick,dt=.1,playing=playing},problems)
 }
 // How many events of a kind the tick left.
 @(private="file")
@@ -332,6 +332,66 @@ a_driven_action_shows_the_time_of_its_driver_played_or_sought :: proc(t:^testing
     nan:=f32(0h7fc00000)
     play_at(&requests,core.entity_make(1,1),"attack",-1);play_at(&requests,core.entity_make(1,1),"attack",nan);play_at(&requests,core.NONE,"attack",0);play_at(nil,core.entity_make(1,1),"attack",0)
     testing.expect(t,requests.plays.refused==3 && len(requests.plays.items)==0)
+}
+
+@(private)
+@(test_world)
+Preview_World :: struct {
+    using world:Test_World,
+    descriptions:core.Table(Animation),
+    played:core.Table(Animation_Played),
+    progress:core.Table(Animation_Progress),
+    requests:Animation_Requests,
+    actions:Action_Runtime,
+    playback:Playback,
+}
+
+// What the editor played while the world did not play is its preview: an actor a scrubbed timeline
+// drove to the middle of its action, and the head the timeline was sought to, do not reach the copy
+// Play starts from. There the actor plays nothing until the game asks, then starts from the
+// beginning; and the scrub wrote nothing a save keeps.
+@(test)
+the_preview_of_the_editor_does_not_travel_into_a_play :: proc(t:^testing.T) {
+    edit:=new(Preview_World);defer free(edit)
+    if !test_world_init(t,edit) {return}
+    defer test_world_destroy(edit)
+    entity:=core.create(&edit.entities)
+    description:=ANIMATION_DEFAULT;description.asset={3,4};core.add(&edit.descriptions,entity,description);test_world_settle(edit)
+    content:host.Content_Animation;fixture:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);fixture.entity,fixture.asset=entity,content.id
+    append(&edit.playback.states,fixture)
+    action_test_spans(&content);defer action_test_spans_free(&content)
+    profile:=action_test_profile();defer action_profile_free(&profile)
+    cache:Character_Assets;defer character_assets_free(&cache)
+    test_character_seed(&cache,description.asset,action_test_set(profile))
+    host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
+    test_character_register(&host_assets,description.asset);defer test_registry_free(&host_assets)
+    events:Animation_Events;defer delete(events.items)
+    tick :: proc(w:^Preview_World,cache:^Character_Assets,app:^host.App,content:^host.Content_Animation,events:^Animation_Events,playing:bool) -> bool {
+        animation_requests_serve(&w.requests,ANIMATION_SETTINGS_DEFAULT,nil,&w.playback,&w.actions,{playing=playing})
+        if !prepare(&w.actions,&w.requests,cache,&w.descriptions,&w.playback,events,app,nil,played=&w.played,playing=playing) {return false}
+        description,_:=core.get(&w.descriptions,w.playback.states[0].entity)
+        stack_step(&w.actions,&w.playback.states[0],description,content,&w.playback,events,.1)
+        return true
+    }
+    // In the editor the timeline drives the attack to .3 s, every frame, and its head is sought.
+    for _ in 0..<3 {
+        play_at(&edit.requests,entity,"attack",.3,true)
+        testing.expect(t,tick(edit,&cache,&app,&content,&events,false))
+    }
+    testing.expect(t,edit.actions.states[0].slots[0].active && abs(edit.actions.states[0].slots[0].time-1.05)<1e-5,"the scrub drove the attack")
+    play_at(&edit.requests,entity,"attack",.3,true);animation_seek(&edit.requests,entity,.3)
+    testing.expect(t,core.count(&edit.played)==0 && core.count(&edit.progress)==0,"the scrub wrote nothing a save keeps")
+    // Play starts from a copy of the edited world.
+    play:=new(Preview_World);defer free(play)
+    if !test_world_init(t,play) {return}
+    defer test_world_destroy(play)
+    testing.expect(t,test_world_copy(play,edit))
+    testing.expect(t,tick(play,&cache,&app,&content,&events,true))
+    testing.expect(t,!play.actions.states[0].slots[0].active && len(play.requests.timeline.items)==0,"the actor plays nothing the editor left")
+    play_at(&play.requests,entity,"attack",0)
+    testing.expect(t,tick(play,&cache,&app,&content,&events,true))
+    slot:=play.actions.states[0].slots[0]
+    testing.expectf(t,slot.active && slot.time==0 && slot.section==0 && count(&events,.Started)==1,"asked by the game it starts from its beginning: %v",slot)
 }
 
 @(test)

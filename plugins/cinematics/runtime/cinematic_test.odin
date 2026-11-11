@@ -134,6 +134,7 @@ fixture_destroy :: proc(f:^Cinematic_Fixture) {
 @(private="file")
 fixture_tick :: proc(f:^Cinematic_Fixture,tick:u64,dt:f32,playing:=true,acting:proc(f:^Cinematic_Fixture)=nil) {
     time:=core.Time{dt=dt,tick=tick,playing=playing}
+    anim.animation_requests_serve(&f.requests,anim.ANIMATION_SETTINGS_DEFAULT,&f.problems,&f.playback,&f.actions,time)
     cam.camera_select(core.ref(&f.entities),core.read(&f.cameras),&f.shown,&f.camera_requests,core.read(&f.activations),core.read(&f.follows),core.read(&f.parents),core.read(&f.seats),core.ref(&f.seat_state),&f.problems)
     anim.animation_sample(core.read(&f.animations),&f.progress,&f.played,core.read(&f.attachments),&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.meshes),core.read(&f.sources),core.read(&f.remotes),&f.requests,&f.events,&f.modifier_runtime,&f.playback,&f.characters,&f.skeletons,&f.app,time,{},&f.problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
     test_world_settle(&f.w)
@@ -298,4 +299,32 @@ an_anchor_gives_the_time_of_a_clip_at_a_tick :: proc(t:^testing.T) {
     testing.expect_value(t,cinematic_status(true,false,0),Cinematic_Status.Playing)
     testing.expect_value(t,cinematic_status(false,false,2),Cinematic_Status.Paused)
     testing.expect_value(t,cinematic_status(false,false,0),Cinematic_Status.Stopped)
+}
+
+// A timeline scrubbed in the editor is its preview: the copy Play starts from plays it from its
+// start, and an actor acts when the clip reaches its marker, from the start of its action.
+@(test)
+a_scrubbed_timeline_plays_from_its_start_in_a_play :: proc(t:^testing.T) {
+    DT :: f32(.1)
+    f:=new(Cinematic_Fixture);defer free(f)
+    if !fixture_init(t,f) {return}
+    defer fixture_destroy(f)
+    anim.animation_seek(&f.requests,f.timeline,.3)
+    fixture_tick(f,1,0,playing=false);fixture_tick(f,2,0,playing=false)
+    testing.expect(t,len(f.requests.plays.items)==1 && f.requests.plays.items[0].seek,"the head drives the wave")
+    play:=new(Cinematic_Fixture);defer free(play)
+    play^=f^;play.w={}
+    if !test_world_init(t,&play.w) {return}
+    defer test_world_destroy(&play.w)
+    testing.expect(t,test_world_copy(&play.w,&f.w))
+    asked:[3]f32
+    for i in 0..<3 {
+        clear(&play.requests.plays.items)
+        fixture_tick(play,u64(i+1),DT)
+        at,_,_,_:=anim.animation_progress(&play.playback,play.timeline)
+        asked[i]=-1
+        for request in play.requests.plays.items {if request.entity==play.hero {asked[i]=request.at;testing.expect(t,request.driven && !request.seek)}}
+        testing.expectf(t,abs(at-DT*f32(i+1))<1e-5,"tick %d: the clip plays from its start, at %v",i+1,at)
+    }
+    testing.expectf(t,asked[0]<0 && asked[1]<0 && abs(asked[2]-.05)<1e-5,"the wave is asked once the clip reaches it, from its start: %v",asked)
 }
