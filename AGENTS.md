@@ -72,8 +72,8 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 - **Code or data taken from another project** under an open-source license (MIT, Apache, BSD,
   zlib, GPL and the like), translated or adapted, gets its entry in
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) in the same task: the project, its license, the
-  copyright holder as its repository states it, the files it reaches and where it ends up. The
-  final report lists it under **Derived code**.
+  copyright holder as its repository states it and where it ends up. The final report lists it
+  under **Derived code**.
 - **Done** is every requested point implemented and verified as [Verification](#verification)
   says. The final message lists what was left unverified or approximate.
 - **If what is missing is structural** (another technique, a new system), stop and ask.
