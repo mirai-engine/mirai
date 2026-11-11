@@ -28,7 +28,7 @@ Format :: struct {
     sniff:proc(head:[]u8) -> Sniff, // head: up to SNIFF_BYTES from the start of the file
     read:proc(r:^Reader,bytes:[]u8) -> bool,
     data:rawptr,         // given to read as Reader.data: the options of the format, nil for its defaults
-    folder:proc(path:string) -> string, // the folder of models/ a file of it goes to; nil: its file name
+    folder:proc(path:string) -> string, // the folder beside a file of it its assets go to; nil: its stem
 }
 
 // The format of a file: the first whose sniff recognizes its content, or else

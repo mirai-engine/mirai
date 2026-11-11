@@ -393,8 +393,8 @@ mtl_create_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	if (desc.validation || env_flag("MIRAI_VALIDATION") == "1") && !d.info.features.validation {
 		if d.on_message != nil {d.on_message(.Validation_Warning, "validation requested; run with MTL_DEBUG_LAYER=1 to enable Metal API validation", d.message_user)}
 	}
-	rt_env := env_flag("MIRAI_RT")
-	d.info.features.ray_query = bool(MTL.Device_supportsRaytracing(d.device)) && desc.allow_hardware_ray_tracing && rt_env != "software" && rt_env != "0"
+	// Metal traces rays by hardware alone: allow_hardware_ray_tracing and MIRAI_RT choose the tracer only on Vulkan.
+	d.info.features.ray_query = bool(MTL.Device_supportsRaytracing(d.device))
 	d.info.features.draw_indirect_count = false
 	d.info.features.texture_bc = bool(MTL.Device_supportsBCTextureCompression(d.device))
 	d.info.features.timestamps = false

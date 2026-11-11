@@ -270,10 +270,11 @@ a key without text in a language has no entry.
   language 0, show what the key says in the first language of its file that has it.
 - **One way to edit.** `cook/author/texts.odin` reads the `.strings` as rows of keys, sets a text,
   makes the key of a text (`texts_key`: equal texts share it, another text under that name takes a
-  number), writes the files that changed, moves them through the CSV `cook/import` reads and lists
-  what is missing with who asks for it. `mirai texts` does it on the files and `texts.*` in the
-  open editor; a document of a `.ui` gives the text of a key beside its node and sets it
-  ([texts](../../../../docs/game/ui/texts.md)). A `.strings` an import made changes in its CSV.
+  number), writes the files that changed, moves them through a CSV and lists what is missing with
+  who asks for it. The CSV (`cook/import/strings.odin`, RFC 4180, UTF-8) is only that exchange: its
+  first row is `key` and the code of each language, and a problem names its line. `mirai texts` does
+  it on the files and `texts.*` in the open editor; a document of a `.ui` gives the text of a key
+  beside its node and sets it ([texts](../../../../docs/game/ui/texts.md)).
 
 ## Records
 
