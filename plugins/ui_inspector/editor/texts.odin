@@ -5,6 +5,7 @@ import "core:strings"
 import "mirai:cook/author"
 import "mirai:editor"
 import "mirai:engine/gui"
+import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:editor/kit"
 import "mirai:ui"
@@ -13,7 +14,7 @@ import "mirai:ui"
 // key of the texts of the project (editor.texts_open): what the key says in
 // each language is in its .strings, so the nodes, the rows of game data and
 // the code that name one key show one text. The bubble of its Text row opens
-// a window with the key and a row for each language of UI_Settings.languages;
+// a window with the key and a row for each language its .strings name;
 // texts.* does it for agents, and mirai texts takes them to a CSV and back.
 
 // What the rows of the window edit, as the texts had it when it opened.
@@ -24,35 +25,40 @@ Texts_Edit :: struct {
     revision:u64, // of the assets then: a .strings that changes is read again
     key:[ui.TREE_NAME_CAPACITY]u8,
     key_length:int,
-    values:[gui.Language][TEXT_EDIT]u8,
-    lengths:[gui.Language]int,
+    values:[TEXTS_LANGUAGES][TEXT_EDIT]u8, // by language of the game
+    lengths:[TEXTS_LANGUAGES]int,
+    code:[gui.LANGUAGE_CODE]u8, // of a language to add
+    code_length:int,
 }
+TEXTS_LANGUAGES :: 16 // languages the window edits; the others are edited with texts.set
 
-// The languages of the game and the one its texts are written in.
+// The codes of the languages of the game, those its .strings name, the one
+// its texts are written in first: read again when the assets change.
+Texts_Languages :: struct {
+    revision:u64, // of the assets they were read at
+    codes:[TEXTS_LANGUAGES][gui.LANGUAGE_CODE]u8,
+    count:int,
+}
 @(private)
-texts_languages :: proc(s:^editor.Session) -> (languages:gui.Languages,source:gui.Language) {
-    languages,source={.English},.English
-    if settings:=cast(^gui.UI_Settings)editor.setting_value(s,gui.UI_Settings);settings!=nil {
-        languages,source=settings.languages,settings.source
+texts_languages :: proc(s:^editor.Session,u:^Ui_Inspector) -> []string {
+    l:=&u.languages
+    if revision:=s.app.assets.registry.revision;l.revision!=revision || l.count==0 {
+        texts:=editor.texts_open(s)
+        l.revision,l.count=revision,min(len(texts.languages),TEXTS_LANGUAGES)
+        for code,i in texts.languages[:l.count] {base.text_set(l.codes[i][:],code)}
     }
-    languages+={source}
-    return
-}
-
-// The name of a language as a person reads it.
-language_name :: proc(language:gui.Language) -> string {
-    name,_:=strings.replace_all(fmt.tprintf("%v",language),"_"," ",context.temp_allocator)
-    return name
+    out:=make([]string,l.count,context.temp_allocator)
+    for &code,i in l.codes[:l.count] {out[i]=serial.text_field(code[:])}
+    return out
 }
 
 // The text of a node in a language: what its key says there, or its own in
 // the one texts are written in.
 @(private)
-node_text_in :: proc(s:^editor.Session,r:^author.Records,n:^ui.Tree_Node,language,source:gui.Language) -> string {
-    codes:=gui.LANGUAGE_CODES
+node_text_in :: proc(s:^editor.Session,r:^author.Records,n:^ui.Tree_Node,language,source:string) -> string {
     if .Localized in n.flags {
-        texts,_:=editor.texts_open(s)
-        return author.texts_text(&texts,author.records_text(r,n.text),codes[language])
+        texts:=editor.texts_open(s)
+        return author.texts_text(&texts,author.records_text(r,n.text),language)
     }
     return author.records_text(r,n.text) if language==source else ""
 }
@@ -61,14 +67,13 @@ node_text_in :: proc(s:^editor.Session,r:^author.Records,n:^ui.Tree_Node,languag
 // says there, for everything that shows the key, as a step of history of
 // its .strings; of another, its own. Whether the records of the .ui changed.
 @(private)
-node_text_set :: proc(s:^editor.Session,r:^author.Records,n:^ui.Tree_Node,language:gui.Language,text:string) -> (records_changed:bool) {
+node_text_set :: proc(s:^editor.Session,r:^author.Records,n:^ui.Tree_Node,language,text:string) -> (records_changed:bool) {
     if .Localized not_in n.flags {
         author.records_text_set(r,&n.text,text)
         return true
     }
-    codes:=gui.LANGUAGE_CODES
-    texts,_:=editor.texts_open(s)
-    problem:=author.texts_set(&texts,author.records_text(r,n.text),codes[language],text)
+    texts:=editor.texts_open(s)
+    problem:=author.texts_set(&texts,author.records_text(r,n.text),language,text)
     if problem=="" {problem=editor.texts_write(s,&texts,"Text")}
     if problem!="" {editor.notify(s,problem)}
     return false
@@ -77,12 +82,11 @@ node_text_set :: proc(s:^editor.Session,r:^author.Records,n:^ui.Tree_Node,langua
 // Makes a node localized, under the key its text makes (author.texts_key),
 // or takes it back to a text of its own: what its key says.
 @(private)
-node_localize :: proc(s:^editor.Session,r:^author.Records,n:^ui.Tree_Node,source:gui.Language,localized:bool) {
-    codes:=gui.LANGUAGE_CODES
-    texts,_:=editor.texts_open(s)
+node_localize :: proc(s:^editor.Session,r:^author.Records,n:^ui.Tree_Node,source:string,localized:bool) {
+    texts:=editor.texts_open(s)
     text:=author.records_text(r,n.text)
     if !localized {
-        if said:=author.texts_text(&texts,text,codes[source]);said!="" {author.records_text_set(r,&n.text,said)}
+        if said:=author.texts_text(&texts,text,source);said!="" {author.records_text_set(r,&n.text,said)}
         n.flags-={.Localized}
         return
     }
@@ -113,7 +117,8 @@ texts_window :: proc(s:^editor.Session,u:^Ui_Inspector,n:^ui.Tree_Node) {
     e:=&u.texts
     if !e.open {return}
     r:=&u.records
-    languages,source:=texts_languages(s)
+    languages:=texts_languages(s,u)
+    source:=languages[0]
     // The window is of the node it opened for: choosing another closes it.
     if e.node>=0 && e.node!=u.selected {
         e.open=false
@@ -124,8 +129,8 @@ texts_window :: proc(s:^editor.Session,u:^Ui_Inspector,n:^ui.Tree_Node) {
     if e.node!=u.selected || (e.change!=u.change || e.revision!=revision) && ctx.edit.id==0 {
         e.node,e.change,e.revision=u.selected,u.change,revision
         e.key_length=copy(e.key[:len(e.key)-1],author.records_text(r,n.text) if .Localized in n.flags else "")
-        for language in gui.Language {
-            e.lengths[language]=copy(e.values[language][:len(e.values[language])-1],node_text_in(s,r,n,language,source))
+        for language,i in languages {
+            e.lengths[i]=copy(e.values[i][:len(e.values[i])-1],node_text_in(s,r,n,language,source))
         }
     }
     closed:=false
@@ -133,7 +138,7 @@ texts_window :: proc(s:^editor.Session,u:^Ui_Inspector,n:^ui.Tree_Node) {
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=6,align_y=.Center}) {
             ui.icon(ctx,.Speech,ui.tone(ctx,"text_muted"),15)
             ui.label(ctx,fmt.tprintf("Texts of %s",serial.text_field(n.name[:])),ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
-            if ui.button(ctx,ui.id(ctx,"texts_settings"),{icon=ui.icon_user(u8(editor.User_Icon.Gear)),icon_size=14,icon_color=ui.tone(ctx,"text_muted"),tip="The languages of the game, in Project Settings",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {
+            if ui.button(ctx,ui.id(ctx,"texts_settings"),{icon=ui.icon_user(u8(editor.User_Icon.Gear)),icon_size=14,icon_color=ui.tone(ctx,"text_muted"),tip="The language its texts are written in, in Project Settings",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {
                 e.open=false
                 editor.settings_open(s,"UI_Settings")
             }
@@ -155,13 +160,22 @@ texts_window :: proc(s:^editor.Session,u:^Ui_Inspector,n:^ui.Tree_Node) {
                 }
             }
         }
-        for language in gui.Language {
-            if language not_in languages || !localized && language!=source {continue}
+        for language,i in languages {
+            if !localized && i>0 {break}
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
-                kit.column_label(ctx,language_name(language))
-                buffer:=e.values[language][:]
-                result:=ui.text_field(ctx,ui.id(ctx,"text",int(language)+1),buffer[:len(buffer)-1],&e.lengths[language],{width=ui.GROW,placeholder="" if language==source else string(e.values[source][:e.lengths[source]])})
-                if result.committed && node_text_set(s,r,n,language,string(buffer[:e.lengths[language]])) {changed(u,"Text")}
+                kit.column_label(ctx,language)
+                buffer:=e.values[i][:]
+                result:=ui.text_field(ctx,ui.id(ctx,"text",i+1),buffer[:len(buffer)-1],&e.lengths[i],{width=ui.GROW,placeholder="" if i==0 else string(e.values[0][:e.lengths[0]])})
+                if result.committed && node_text_set(s,r,n,language,string(buffer[:e.lengths[i]])) {changed(u,"Text")}
+            }
+        }
+        // Another language: the code of a .strings column, which its first text makes.
+        if localized && len(languages)<TEXTS_LANGUAGES {
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
+                ui.text_field(ctx,ui.id(ctx,"texts_code"),e.code[:len(e.code)-1],&e.code_length,{width=ui.fixed(ui.metric(ctx,"label_width")),placeholder="pl"})
+                buffer:=e.values[len(languages)][:]
+                result:=ui.text_field(ctx,ui.id(ctx,"text",len(languages)+1),buffer[:len(buffer)-1],&e.lengths[len(languages)],{width=ui.GROW,placeholder="Its text in another language"})
+                if result.committed && e.code_length>0 && node_text_set(s,r,n,string(e.code[:e.code_length]),string(buffer[:e.lengths[len(languages)]])) {changed(u,"Text")}
             }
         }
     }

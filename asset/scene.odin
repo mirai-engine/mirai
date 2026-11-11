@@ -2,6 +2,7 @@ package asset
 
 import "base:intrinsics"
 import "core:mem"
+import "core:strings"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -197,7 +198,7 @@ scene_entity_reparent :: proc(scene:^Scene,id:base.Entity_Id,parent:base.Entity_
     return .None
 }
 
-@(private="file")
+@(private)
 component_table :: proc(scene:^Scene,table:int) -> bool {
     target:=&scene.doc.tables[table]
     return table!=0 && len(target.columns)==2 && target.columns[0].name==COLUMN_ENTITY && target.columns[0].ref==0 && target.columns[1].name==COLUMN_VALUE
@@ -211,6 +212,31 @@ scene_component :: proc(scene:^Scene,name:string) -> (table:int,found:bool) {
 scene_component_by_hash :: proc(scene:^Scene,name_hash:u64) -> (table:int,found:bool) {
     for candidate,at in scene.doc.tables {
         if candidate.name_hash==name_hash && component_table(scene,at) {return at,true}
+    }
+    return -1,false
+}
+
+// The component table of a document that a document of another schema names: by its name, or
+// by a name one of the two had (was=). A table under an earlier name than name takes it, with the
+// overrides and the records of what is off that name it.
+scene_component_twin :: proc(scene:^Scene,name:string,schema:^serial.Schema,type:serial.Type_Index) -> (table:int,found:bool) {
+    if table,found=scene_component(scene,name);found {return}
+    for &candidate,at in scene.doc.tables {
+        if !component_table(scene,at) {continue}
+        if serial.names_hold(scene.doc.schema.types[candidate.columns[1].type].was,name) {return at,true}
+        if !serial.names_hold(schema.types[type].was,candidate.name) {continue}
+        renamed,no_name:=strings.clone(name,scene.doc.allocator)
+        if no_name!=nil {return -1,false}
+        earlier:=candidate.name_hash
+        delete(candidate.name,scene.doc.allocator)
+        candidate.name,candidate.name_hash=renamed,base.name_hash(name)
+        for &override in scene.overrides {
+            if override.component==earlier {override.component=candidate.name_hash}
+        }
+        for &record in scene.off {
+            if record.component==earlier {record.component=candidate.name_hash}
+        }
+        return at,true
     }
     return -1,false
 }

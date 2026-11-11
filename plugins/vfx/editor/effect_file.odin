@@ -16,7 +16,6 @@ Particle_File :: struct {
     info:effect.Particle_Info,
     parameters:[dynamic]effect.Particle_Parameter,
     hidden:[dynamic]effect.Particle_Field,
-    resources:[dynamic]effect.Particle_Resource,
 }
 
 // Writes the file of an effect at path as an edit, in the open gesture or in
@@ -26,10 +25,10 @@ Particle_File :: struct {
 particle_publish :: proc(s:^editor.Session,id:base.Asset_Id,path:string,file:^Particle_File,label:string) -> string {
     a:=s.app.assets
     if a==nil {return "The editor has no assets"}
-    if problem:=effect.particle_validate({info=&file.info,parameters=file.parameters[:],hidden=file.hidden[:],resources=file.resources[:]});problem.message!="" {
+    if problem:=effect.particle_validate({info=&file.info,parameters=file.parameters[:],hidden=file.hidden[:]});problem.message!="" {
         return fmt.tprintf("%s: %s",problem.field,problem.message)
     }
-    bytes,error:=effect.particle_bytes(&a.types,{id=id,info=file.info,parameters=file.parameters[:],hidden=file.hidden[:],resources=file.resources[:]},context.temp_allocator)
+    bytes,error:=effect.particle_bytes(&a.types,{id=id,info=file.info,parameters=file.parameters[:],hidden=file.hidden[:]},context.temp_allocator)
     if error!=.None || !editor.file_write(s,path,bytes,label) {return "The particle effect could not be written"}
     return ""
 }
@@ -54,13 +53,11 @@ particle_file :: proc(s:^editor.Session,id:base.Asset_Id) -> (file:Particle_File
     file.info=effect.PARTICLE_DEFAULTS
     file.parameters=make([dynamic]effect.Particle_Parameter,context.temp_allocator)
     file.hidden=make([dynamic]effect.Particle_Field,context.temp_allocator)
-    file.resources=make([dynamic]effect.Particle_Resource,context.temp_allocator)
     if a:=s.app.assets;a!=nil && id!={} {
         if view,ok:=vfx.effect_view(a,id);ok {
             file.info=view.info^
             append(&file.parameters,..view.parameters)
             append(&file.hidden,..view.hidden)
-            append(&file.resources,..view.resources)
         }
     }
     return

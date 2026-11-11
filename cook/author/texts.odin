@@ -5,7 +5,6 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import importer "mirai:cook/import"
-import "mirai:engine/gui"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -40,17 +39,6 @@ Texts_File :: struct {
 TEXTS_HOME :: "texts.strings"
 // How long the key made from a text gets before its number.
 TEXTS_KEY_WORDS :: 40
-
-// The codes of the languages of a game, the one its texts are written in first.
-texts_languages :: proc(settings:gui.UI_Settings) -> []string {
-    codes:=gui.LANGUAGE_CODES
-    out:=make([dynamic]string,context.temp_allocator)
-    append(&out,codes[settings.source])
-    for language in gui.Language {
-        if language in settings.languages && language!=settings.source {append(&out,codes[language])}
-    }
-    return out[:]
-}
 
 @(private="file")
 texts_language :: proc(t:^Texts,code:string) -> int {
@@ -124,9 +112,7 @@ texts_read :: proc(a:Assets,source:string) -> (t:Texts) {
 // that says nothing is not written. problem: what keeps it from it.
 texts_set :: proc(t:^Texts,key,code,text:string) -> (problem:string) {
     context.allocator=context.temp_allocator
-    codes:=gui.LANGUAGE_CODES
-    known:=slice.enumerated_array(&codes)
-    if !slice.contains(known,code) {return fmt.tprintf("'%s' is no language a game can be in; give its code: %s",code,strings.join(known,", "))}
+    if !texts_code(code) {return fmt.tprintf("'%s' is no code of a language: two or three lowercase letters, then a region or a script after '-' if any (pl, pt-BR, es-419), up to %d bytes",code,len(asset.String_Language{}.code)-1)}
     if key=="" || len(key)>=len(asset.String_Key{}.name) {return fmt.tprintf("a key is a name shorter than %d bytes, and '%s' is not",len(asset.String_Key{}.name),key)}
     row:=texts_row(t,key)
     if row==nil {
@@ -329,11 +315,26 @@ texts_record_uses :: proc(uses:^[dynamic]Texts_Use,schema:^serial.Schema,type:se
     }
 }
 
+// Whether code names a language as a .strings keeps it: a language of two or
+// three lowercase letters, then parts of letters and digits after '-'.
+texts_code :: proc(code:string) -> bool {
+    if len(code)>=len(asset.String_Language{}.code) {return false}
+    for part,i in strings.split(code,"-",context.temp_allocator) {
+        if i==0 && (len(part)<2 || len(part)>3) || len(part)<2 || len(part)>8 {return false}
+        for c in transmute([]u8)part {
+            if i==0 && (c<'a' || c>'z') || !(c>='a' && c<='z' || c>='A' && c<='Z' || c>='0' && c<='9') {return false}
+        }
+    }
+    return true
+}
+
 // What the texts lack, each a line that says how to fix it: what does not
 // load and the keys two files have; who shows a key no .strings has, by its
-// document and its node or its row and field; and the keys that say nothing
-// in a language of the game.
-texts_missing :: proc(t:^Texts,uses:[]Texts_Use,languages:[]string) -> []string {
+// document and its node or its row and field; the keys that say nothing in
+// a language of the game, nor in the language of its region; and the
+// characters of a language the glyphs of the interfaces lack, which show
+// as '?'.
+texts_missing :: proc(t:^Texts,uses:[]Texts_Use) -> []string {
     context.allocator=context.temp_allocator
     out:=make([dynamic]string)
     append(&out,..t.problems[:])
@@ -344,9 +345,37 @@ texts_missing :: proc(t:^Texts,uses:[]Texts_Use,languages:[]string) -> []string 
         if !said {append(&out,fmt.tprintf("%s: %s shows the key %s, which no .strings has: mirai texts set %s %s \"<its text>\" writes it",use.document,use.asker,use.key,use.key,t.languages[0]))}
     }
     for &row in t.rows {
-        for code in languages {
-            if texts_text(t,row.key,code)=="" {append(&out,fmt.tprintf("the key %s of %s says nothing in %s, where it shows what it says in %s: mirai texts set %s %s \"<its text>\" writes it",row.key,t.files[row.file].path,code,t.languages[0],row.key,code))}
+        for code in t.languages[1:] {
+            if texts_text(t,row.key,code)!="" {continue}
+            shown:=t.languages[0]
+            for parent:=code;strings.last_index_byte(parent,'-')>0; {
+                parent=parent[:strings.last_index_byte(parent,'-')]
+                if texts_text(t,row.key,parent)!="" {shown="";break}
+            }
+            if shown!="" {append(&out,fmt.tprintf("the key %s of %s says nothing in %s, where it shows what it says in %s: mirai texts set %s %s \"<its text>\" writes it",row.key,t.files[row.file].path,code,shown,row.key,code))}
         }
     }
+    for code,language in t.languages {
+        lacked:=make([dynamic]string)
+        seen:=make([dynamic]rune)
+        for &row in t.rows {
+            if language>=len(row.cells) {continue}
+            for r in row.cells[language] {
+                if texts_drawn(r) || slice.contains(seen[:],r) {continue}
+                append(&seen,r)
+                append(&lacked,fmt.tprintf("'%c' U+%04X (%s)",r,r,row.key))
+            }
+        }
+        if len(lacked)>0 {append(&out,fmt.tprintf("the texts in %s have characters the glyphs of the interfaces lack, which show as '?': %s; write them with Latin, Greek or Cyrillic letters: mirai texts set <key> %s \"<its text>\"",code,strings.join(lacked[:],", "),code))}
+    }
     return out[:]
+}
+
+// Whether the fonts of the interfaces draw a character: those of the glyphs
+// of their atlas (ui.FONT_RANGES and ui.FONT_EXTRA).
+@(private="file")
+texts_drawn :: proc(r:rune) -> bool {
+    for range in ui.FONT_RANGES {if r>=range.first && r<=range.last {return true}}
+    extras:=ui.FONT_EXTRA
+    return slice.contains(extras[:],r)
 }

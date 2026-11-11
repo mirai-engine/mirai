@@ -150,6 +150,9 @@ The same `world_step` serves the server, the predicting client and resimulation.
 - If the hit normal exceeds `max_slope` (an edge or a steep face), a ray reads the neighboring face
   on the outside: if it is walkable, it is the edge of a step. If the hit is no good (a step that
   is too high, a steep face or an overlapped sphere), a ray along the axis looks for the floor.
+- With no floor and not rising, a capsule that touches faces too steep to stand on whose normals
+  differ and add up to walkable ground (a V, two rocks) stands where its feet are: it cannot slide
+  off. The contacts are read in `characters_prepare`, before flattening changes their normals.
 - The ground velocity is that of its body at the point plus the tangent part of the shape's
   `surface_speed`: a belt carries the standing character at its velocity.
 - A `one_way` shape lets the capsule pass from below or from the side; the probe finds it from above

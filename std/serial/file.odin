@@ -22,16 +22,15 @@ File_Error :: enum u8 {
 // The whole file, in memory of the allocator with the alignment asked for.
 file_read :: proc(path:string,allocator:=context.allocator,alignment:=WRITER_ALIGNMENT,limit:=i64(max(int))) -> (data:[]u8,error:File_Error) {
     if alignment<=0 || alignment&(alignment-1)!=0 {return nil,.Invalid_Alignment}
-    file,open_error:=os.open(path)
-    if open_error!=nil {return nil,file_open_error(open_error)}
-    defer os.close(file)
-    size,size_error:=os.file_size(file)
-    if size_error!=nil {return nil,.Read}
+    file:=file_open_read(path) or_return
+    defer file_close(file)
+    size,sized:=file_size(file)
+    if !sized {return nil,.Read}
     if size>limit {return nil,.Too_Large}
     if size==0 {return nil,.None}
     bytes,alloc_error:=mem.alloc_bytes_non_zeroed(int(size),alignment,allocator)
     if alloc_error!=nil {return nil,.Out_Of_Memory}
-    if !file_read_exact(file,bytes) {
+    if !file_read_at(file,0,bytes) {
         mem.free_bytes(bytes,allocator)
         return nil,.Read
     }
@@ -40,24 +39,21 @@ file_read :: proc(path:string,allocator:=context.allocator,alignment:=WRITER_ALI
 
 // The first bytes of a file, as many as fit the buffer, and its size.
 file_read_head :: proc(path:string,buffer:[]u8) -> (head:[]u8,size:i64,error:File_Error) {
-    file,open_error:=os.open(path)
-    if open_error!=nil {return nil,0,file_open_error(open_error)}
-    defer os.close(file)
-    size_error:os.Error
-    size,size_error=os.file_size(file)
-    if size_error!=nil {return nil,0,.Read}
+    file:=file_open_read(path) or_return
+    defer file_close(file)
+    sized:bool
+    size,sized=file_size(file)
+    if !sized {return nil,0,.Read}
     head=buffer[:min(i64(len(buffer)),size)]
-    if !file_read_exact(file,head) {return nil,size,.Read}
+    if !file_read_at(file,0,head) {return nil,size,.Read}
     return head,size,.None
 }
 
 // A range of a file. Fails when the file ends before it.
 file_read_range :: proc(path:string,offset:i64,out:[]u8) -> File_Error {
-    file,open_error:=os.open(path)
-    if open_error!=nil {return file_open_error(open_error)}
-    defer os.close(file)
-    if _,seek_error:=os.seek(file,offset,.Start);seek_error!=nil {return .Read}
-    return file_read_exact(file,out)?.None:.Read
+    file:=file_open_read(path) or_return
+    defer file_close(file)
+    return file_read_at(file,offset,out)?.None:.Read
 }
 
 // Writes a temporary file next to the destination and renames it over it: a
@@ -83,7 +79,7 @@ file_write_atomic :: proc(path:string,data:[]u8,sync:=false) -> File_Error {
         os.remove(staging)
         return .Write
     }
-    if os.rename(staging,path)!=nil {
+    if !file_replace(staging,path) {
         os.remove(staging)
         return .Rename
     }
@@ -122,21 +118,4 @@ staging_pid :: proc(entry,name:string) -> (pid:int,staging:bool) {
         pid=pid*10+int(c-'0')
     }
     return pid,pid>0
-}
-
-@(private)
-file_open_error :: proc(error:os.Error) -> File_Error {
-    if general,is_general:=error.(os.General_Error);is_general && general==.Not_Exist {return .Not_Found}
-    return .Open
-}
-
-@(private)
-file_read_exact :: proc(file:^os.File,out:[]u8) -> bool {
-    total:=0
-    for total<len(out) {
-        count,error:=os.read(file,out[total:])
-        total+=count
-        if error!=nil || count<=0 {break}
-    }
-    return total==len(out)
 }

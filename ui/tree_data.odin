@@ -58,6 +58,7 @@ Tree_Node :: struct {
     bind_visible:[TREE_PATH_CAPACITY]u8 `mirai:"text"`,
     bind_selected,bind_disabled:[TREE_PATH_CAPACITY]u8 `mirai:"text"`,
     bind_items:[TREE_PATH_CAPACITY]u8 `mirai:"text"`, // a List: an array of structs or of entities, whose elements the node it holds binds
+    bind_key:[TREE_PATH_CAPACITY]u8 `mirai:"text"`,   // a List: the field of its element that tells its items apart; an entity tells itself apart
     bind_image:[TREE_PATH_CAPACITY]u8 `mirai:"text"`, // an Image: a texture, as an asset id
     bind_tint:[TREE_PATH_CAPACITY]u8 `mirai:"text"`,  // a color in place of its fill, linear RGBA in floats or display RGBA in bytes
     bind_variant:[TREE_PATH_CAPACITY]u8 `mirai:"text"`, // a text or an enum: the name of the variant
@@ -128,7 +129,7 @@ Tree_Param :: struct {
     field:Tree_Param_Field,
     param:[TREE_NAME_CAPACITY]u8 `mirai:"text"`, // a parameter of the use at node; empty: field of node
 }
-Tree_Param_Field :: enum u8 {Text,Style,Data,Bind_Text,Bind_Value,Bind_Visible,Bind_Selected,Bind_Disabled,Bind_Items,Bind_Image,Bind_Tint,Bind_Variant,Variant,Action,Tag,Accepts}
+Tree_Param_Field :: enum u8 {Text,Style,Data,Bind_Text,Bind_Value,Bind_Visible,Bind_Selected,Bind_Disabled,Bind_Items,Bind_Key,Bind_Image,Bind_Tint,Bind_Variant,Variant,Action,Tag,Accepts}
 Tree_Font :: struct {
     font:base.Asset_Id, // a .font
 }
@@ -276,7 +277,7 @@ tree_load :: proc(tree:^Widget_Tree,data:Tree_Data,resources:Tree_Resources,allo
         if u64(node.text.offset)+u64(node.text.length)>u64(len(data.text)) || int(node.layout.tracks)>len(data.grid_tracks) {return false}
         strings+=int(node.text.length)
         // The text and the names it binds: tree_node keeps them in strings.
-        for field in ([8][]u8{node.bind_text[:],node.bind_value[:],node.bind_visible[:],node.bind_selected[:],node.bind_disabled[:],node.bind_items[:],node.bind_image[:],node.bind_tint[:]}) {strings+=len(serial.text_field(field))}
+        for field in ([9][]u8{node.bind_text[:],node.bind_value[:],node.bind_visible[:],node.bind_selected[:],node.bind_disabled[:],node.bind_items[:],node.bind_key[:],node.bind_image[:],node.bind_tint[:]}) {strings+=len(serial.text_field(field))}
         strings+=len(serial.text_field(node.bind_variant[:]))+len(serial.text_field(node.action[:]))
         for &f in node.fields {strings+=len(serial.text_field(f.path[:]))}
         if parent:=int(node.parent);parent>=0 && parent<len(data.nodes) && data.nodes[parent].kind==.Tabs {strings+=len(serial.text_field(node.name[:]))}
@@ -373,7 +374,7 @@ tree_fill :: proc(tree:^Widget_Tree,data:Tree_Data,resources:Tree_Resources) -> 
             kind=node.kind,name=serial.text_field(node.name[:]),layout=node.layout,float=node.float,clip=node.clip,block=node.block,
             style=node.style,image=node.image,anims=node.anims,text=tree_string(data.text,node.text),fields=tree_text_fields(&node),layer=node.layer,variant=serial.text_field(node.variant[:]),selected=node.selected,disabled=node.disabled,
             bind_text=serial.text_field(node.bind_text[:]),bind_value=serial.text_field(node.bind_value[:]),bind_visible=serial.text_field(node.bind_visible[:]),bind_selected=serial.text_field(node.bind_selected[:]),bind_disabled=serial.text_field(node.bind_disabled[:]),
-            bind_items=serial.text_field(node.bind_items[:]),bind_image=serial.text_field(node.bind_image[:]),bind_tint=serial.text_field(node.bind_tint[:]),bind_variant=serial.text_field(node.bind_variant[:]),
+            bind_items=serial.text_field(node.bind_items[:]),bind_key=serial.text_field(node.bind_key[:]),bind_image=serial.text_field(node.bind_image[:]),bind_tint=serial.text_field(node.bind_tint[:]),bind_variant=serial.text_field(node.bind_variant[:]),
             index=node.index,count=node.count,choice=node.choice,limit=node.limit,delay=node.delay,particle=node.particle,
             tag=serial.text_field(node.tag[:]),accepts=serial.text_field(node.accepts[:]),ghost=serial.text_field(node.ghost[:]),draw=serial.text_field(node.draw[:]),
             flags=node.flags,action=serial.text_field(node.action[:]),hold=node.hold,range=node.range,order=node.order,
@@ -435,7 +436,7 @@ tree_node_record :: proc(text:^[dynamic]u8,parent:i32,desc:Node_Desc) -> (node:T
     node.text=tree_string_add(text,desc.text)
     tree_text_set(node.tag[:],desc.tag);tree_text_set(node.accepts[:],desc.accepts);tree_text_set(node.ghost[:],desc.ghost);tree_text_set(node.draw[:],desc.draw)
     for f,i in desc.fields {tree_text_set(node.fields[i].name[:],f.name);tree_text_set(node.fields[i].path[:],f.path)}
-    tree_text_set(node.data[:],desc.data);tree_text_set(node.bind_items[:],desc.bind_items);tree_text_set(node.bind_image[:],desc.bind_image);tree_text_set(node.bind_tint[:],desc.bind_tint);tree_text_set(node.bind_variant[:],desc.bind_variant)
+    tree_text_set(node.data[:],desc.data);tree_text_set(node.bind_items[:],desc.bind_items);tree_text_set(node.bind_key[:],desc.bind_key);tree_text_set(node.bind_image[:],desc.bind_image);tree_text_set(node.bind_tint[:],desc.bind_tint);tree_text_set(node.bind_variant[:],desc.bind_variant)
     tree_text_set(node.action[:],desc.action)
     for side in 0..<4 {tree_text_set(node.nav[side][:],desc.nav[side])}
     tree_text_set(node.name[:],desc.name);tree_text_set(node.variant[:],desc.variant)
@@ -446,10 +447,10 @@ tree_node_record :: proc(text:^[dynamic]u8,parent:i32,desc:Node_Desc) -> (node:T
 
 // The text fields of a record, each of which must end in a zero.
 @(private)
-tree_node_texts :: proc "contextless" (node:^Tree_Node) -> [29][]u8 {
+tree_node_texts :: proc "contextless" (node:^Tree_Node) -> [30][]u8 {
     f:=&node.fields
     return {node.name[:],node.tag[:],node.accepts[:],node.ghost[:],node.draw[:],node.variant[:],node.data[:],node.bind_text[:],node.bind_value[:],node.bind_visible[:],node.bind_selected[:],node.bind_disabled[:],
-        node.bind_items[:],node.bind_image[:],node.bind_tint[:],node.bind_variant[:],node.action[:],node.nav[0][:],node.nav[1][:],node.nav[2][:],node.nav[3][:],
+        node.bind_items[:],node.bind_key[:],node.bind_image[:],node.bind_tint[:],node.bind_variant[:],node.action[:],node.nav[0][:],node.nav[1][:],node.nav[2][:],node.nav[3][:],
         f[0].name[:],f[0].path[:],f[1].name[:],f[1].path[:],f[2].name[:],f[2].path[:],f[3].name[:],f[3].path[:]}
 }
 

@@ -796,7 +796,7 @@ agents_test_step :: proc(f:^Nav_Test) {
         &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,&f.nav_crossings,time,&f.problems)
     nav_test_settle(f)
     navigation_crossing(core.read(&f.paths),&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
-    locomotion.locomotion_step(core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),{},{},&f.loco,time,core.CLOCK_DEFAULT,&f.problems)
+    locomotion.locomotion_step(core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.ref(&f.places),{},{},&f.loco,time,core.CLOCK_DEFAULT,&f.problems)
     nav_test_settle(f)
     phys.physics_step(
         &f.state,core.ref(&f.settings),&f.requests,&f.events,&f.meshes,&f.app,time,
@@ -1572,6 +1572,28 @@ a_seated_agent_walks_where_it_is_asked_while_its_seat_drives_it :: proc(t:^testi
     testing.expectf(t,pose.position.x>5,"it walked to %v",pose.position)
     testing.expectf(t,abs(stayed.position.x+6)<0.1,"the other stayed at %v",stayed.position)
     testing.expect_value(t,f.problems.count,0)
+}
+
+// Crouched, a walker could go at its crouch_speed (2.5 m/s), and its path goes at 2 (the max_speed of
+// its Walk): it goes at 2, for navigation asks for the velocity it planned, which the locomotion
+// takes up to the top speed it has.
+@(test)
+an_agent_goes_at_the_speed_of_its_path_under_its_top_speed :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
+    nav_test_settled(t,&f)
+    e:=agents_test_walker(&f,{-6,0,0})
+    nav_test_settle(&f)
+    core.edit(&f.walks,e).max_speed=2
+    core.edit(&f.inputs,e).buttons=input.action_bit(input.Action(locomotion.Walk_Action.Crouch)) // its actions start at 0
+    nav_move_to(&f.nav_requests,e,{6,0,0})
+    for _ in 0..<120 {agents_test_step(&f)}
+    motion,_:=core.get(&f.bodies,e)
+    state,_:=core.get(&f.loco_states,e)
+    testing.expect_value(t,state.mode,locomotion.MODE_CROUCHING)
+    testing.expectf(t,abs(linalg.length(motion.linear.xz)-2)<0.05,"it goes at %v",motion.linear)
 }
 
 // Six walkers patrol the paths of the AI arena of the demo, each from another

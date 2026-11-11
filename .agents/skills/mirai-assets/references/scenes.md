@@ -82,7 +82,10 @@ What it fixed on its own are its `Override`s, a table of the file.
 - `scene_instance_update`: the members follow the prefab (additions, removals, parent, order, name
   and components) except what an override names, and the `stamp` becomes the prefab's. The parent,
   the order and the root's placement (`INSTANCE_PLACEMENT`) belong to the instance; a member whose
-  origin is no longer in the prefab is removed with what the instance added under it.
+  origin is no longer in the prefab is removed, and what the instance added under it hangs from
+  the nearest member left (the root at worst), still a `Child`: a prefab author never deletes a
+  level designer's work. The resolver counts it (`reparented`); the editor says it on load and
+  the cook in its summary.
   - Marking compares leaf by leaf with the base (`value_leaves`, `overrides_mark`) and following
     copies what is marked onto the new base (`override_keep`), in `asset/overrides.odin`; the
     layers of an [imported material](kinds.md#what-was-imported-and-what-was-changed) use the same

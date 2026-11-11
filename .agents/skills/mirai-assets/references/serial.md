@@ -47,8 +47,10 @@ copied as a block or used in place.
 
 - Fields are paired by name, or by a name the destination field had: the tag `was=` lists them
   (`mirai:"was=strength power"`), so a value stored before a rename, or before several, is read.
-  An earlier name that is another field of the struct is refused when the type is added. The tag
-  is not in the binary schema: only the program's type reads by it.
+  An earlier name that is another field of the struct is refused when the type is added. The
+  names are in the binary schema (a struct with renames, or with renamed fields, carries them;
+  any other is written as if there were none), so a source that had the destination's name
+  pairs too: a file of a newer layout reads into an older one. `path_resolve` takes them as well.
 - One without a source keeps the default given by whoever reads (zero if none is given). One
   without a destination is lost, and `Migration.removed` lists it by its path, as
   `Migration.incompatible` lists the fields whose shapes do not convert; whoever reads a document

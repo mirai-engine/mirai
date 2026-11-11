@@ -13,10 +13,10 @@ Game_Source :: struct {
     // Whether an action is held, and whether it was pressed since the last frame.
     action:proc(user:rawptr,action:u64) -> (down,pressed:bool),
     // What the localized nodes read their keys in: the texts of the game
-    // and the language they show in, the name_hash of its code ("es",
-    // "pt-BR"); 0, the one each key was written in.
+    // and the code of the language they show in ("es", "pt-BR"), as
+    // base.text finds it; empty, the one each key was written in.
     texts:^base.Texts,
-    language:u64,
+    language:string,
     // What an Image shows for a texture asset.
     texture:proc(user:rawptr,id:base.Asset_Id) -> Quad,
     // What a camera sees, at a size in layout units.

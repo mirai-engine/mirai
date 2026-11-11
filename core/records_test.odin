@@ -67,12 +67,12 @@ a_text_of_a_row_is_read_by_its_key :: proc(t:^testing.T) {
     texts:=Texts{slots=slots[:],text=transmute([]u8)string("Sword")}
     title:Text
     base.text_set(title.key[:],"item.sword")
-    value,found:=text(&texts,title,base.name_hash("es"))
+    value,found:=text(&texts,title,"es")
     testing.expect(t,found && value=="Sword")
-    value,found=text(&texts,"item.sword",0)
+    value,found=text(&texts,"item.sword","")
     testing.expect(t,found && value=="Sword")
-    _,found=text(&texts,Text{},0)
+    _,found=text(&texts,Text{},"")
     testing.expect(t,!found)
-    _,found=text(nil,title,0)
+    _,found=text(nil,title,"")
     testing.expect(t,!found)
 }

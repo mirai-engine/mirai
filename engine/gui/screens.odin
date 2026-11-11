@@ -308,9 +308,9 @@ screen_scope :: proc(ctx:^ui.Context,e:core.Entity) -> ui.Id {return ui.id(ctx,"
 // Where the node at index of the tree of the UI_Screen of an entity was laid
 // out in the last frame of its context, in window points, as the node is for
 // element 0 of the lists around it. False when it was not laid out.
-screen_node_rect :: proc(ctx:^ui.Context,tree:^ui.Widget_Tree,e:core.Entity,index:int) -> (rect:ui.Rect,found:bool) {
+screen_node_rect :: proc(ctx:^ui.Context,tree:^ui.Widget_Tree,instance:^ui.Tree_Instance,e:core.Entity,index:int) -> (rect:ui.Rect,found:bool) {
     ui.id_push(ctx,screen_scope(ctx,e))
-    r,laid:=ui.widget_rect(ctx,ui.tree_node_element(ctx,tree,index))
+    r,laid:=ui.widget_rect(ctx,ui.tree_node_element(ctx,tree,instance,index))
     ui.id_pop(ctx)
     if !laid {return}
     s:=ctx.scale
@@ -405,7 +405,7 @@ instance_get :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,e:core.Entity,s
         instance.asset,instance.generation,instance.bound,instance.info,instance.changed=asset,content.generation,target,world.info,true
         bind:=Bind{gui=gui,app=app,world=world}
         host_of:=bind_host(&bind)
-        instance.failed=!ui.tree_instance_init(&instance.instance,&content.tree,&host_of,host.app_texts(app),ui_language(&gui.settings,&gui.preferences),gui.allocator)
+        instance.failed=!ui.tree_instance_init(&instance.instance,&content.tree,&host_of,host.app_texts(app),ui_language(&gui.preferences),gui.allocator)
         if instance.failed {
             failure:=instance.instance.failure
             file:[base.ASSET_ID_TEXT]u8
@@ -629,7 +629,7 @@ screen_key :: proc(assets:^host.Assets,ctx:^ui.Context,instance:^Instance,entry:
     // The family of the device shows other prompts, and other texts come with the language.
     mark:=[12]u64{instance.revision,u64(instance.generation),u64(i64(layer)),u64(entry.passive)|u64(entry.top)<<1,entry.variant,revision,
         u64(transmute(u32)rect.x)<<32|u64(transmute(u32)rect.y),u64(transmute(u32)rect.z)<<32|u64(transmute(u32)rect.w),u64(entry.entity),
-        u64(ctx.game.family),ctx.game.language,u64(ctx.game.texts.generation) if ctx.game.texts!=nil else 0}
+        u64(ctx.game.family),base.name_hash(ctx.game.language),u64(ctx.game.texts.generation) if ctx.game.texts!=nil else 0}
     return base.hash64(mem.slice_to_bytes(mark[:]))
 }
 
@@ -677,9 +677,9 @@ requests_apply :: proc(gui:^Gui,ctx:^ui.Context,instance:^Instance,content:^host
                 core.report(problems,r.entity,"gui.play","animation '%s' was not played on node '%s': its interface has no node or animation of those names, or no copy %d of that node; name them as the .ui does",anim,node,r.item)
             }
         case .Focus:
-            if r.item>=0 {ui.id_push(ctx,ui.id(ctx,"item",int(r.item)+1))}
-            ui.focus_set(ctx,ui.tree_element_id(ctx,node))
-            if r.item>=0 {ui.id_pop(ctx)}
+            index,named:=-1,base.name_hash(node)
+            for &n,at in content.tree.nodes[:content.tree.node_count] {if n.name==named {index=at;break}}
+            ui.focus_set(ctx,ui.tree_node_element(ctx,&content.tree,&instance.instance,index,int(r.item)))
         }
         ordered_remove(&gui.requests,i)
     }

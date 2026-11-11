@@ -453,6 +453,8 @@ Character_Solver :: struct {
     floating:bool,                  // Float holds the head over the surface of a fluid
     float_separation:f32,           // m of the feet above where Float holds them, at the start of the step
     float_limit:f32,                // N s per substep
+    wedge:Vec3,                     // the ground normal of the faces that hold it (character_wedged); zero without
+    wedge_body:i32,
 }
 
 // Finds what is under the feet, along its up. A sphere a little thinner than the capsule is swept down from
@@ -666,10 +668,46 @@ characters_ground_task :: proc(data:rawptr,first,last,worker:int) {
         body:=&w.bodies[cs.body]
         stamp(w,ch)
         ground,_:=character_probe(w,ch,body,cs.up,max(-dot(body.linear_velocity,cs.up)*st.dt,0))
+        if !ground.walkable && cs.wedge!={} && dot(body.linear_velocity-ground.velocity,cs.up)<=LAND_SPEED {
+            ground={hit=true,walkable=true,body=body_handle(w,cs.wedge_body),point=body.position,normal=cs.wedge}
+            if under:=&w.bodies[cs.wedge_body];under.type!=.Static {ground.velocity=under.linear_velocity+cross(under.angular_velocity,ground.point-under.center)}
+        }
         character_ground_keep(&ch.state,ground)
         ch.state.wall_normal,ch.state.wall_push=character_wall(w,body,cs.up,cs.drive.velocity)
         character_fluid_keep(w,ch,body)
     }
+}
+
+// The ground of a capsule held by faces too steep to stand on, as in a V or between two rocks: the
+// normals of what it touches, when two differ and they add up to walkable ground (the floor of Godot's
+// CharacterBody3D from several walls). It cannot slide off them, so it is no fall. Read before the
+// contacts of a standing character are flattened. Zero without one; held, the body whose face lifts it
+// the most.
+@(private)
+character_wedged :: proc(w:^World,ch:^Character,body:^Body,up:Vec3) -> (normal:Vec3,held:i32) #no_bounds_check {
+    sum,first:Vec3
+    apart:=false
+    highest:=-max(f32)
+    for key:=body.contact_list;key>=0; {
+        index:=key>>1
+        contact:=&w.contacts[index]
+        side:=key&1
+        key=contact.edges[side].next
+        if contact.flags&{.Touching,.Overlap}!={.Touching} {continue}
+        for i in 0..<contact.manifold_count {
+            manifold:=i==0?&w.manifolds[index]:&w.extra_manifolds[contact.extra][i-1]
+            touching:=false
+            for point in manifold.points[:manifold.count] {touching=touching || point.separation<=CHARACTER_SKIN}
+            if !touching {continue}
+            out:=side==0?-manifold.normal:manifold.normal
+            if sum=={} {first=out} else {apart=apart || dot(out,first)<1-1e-4}
+            sum+=out
+            if lift:=dot(out,up);lift>highest {highest,held=lift,side==0?contact.body_b:contact.body_a}
+        }
+    }
+    l:=length(sum)
+    if !apart || !(l>0) || dot(sum,up)<l*cmath.cos(ch.desc.max_slope) {return {},-1}
+    return sum/l,held
 }
 
 // The boxes of a character whose up turned: a shape that left its fat box grows it to hold the new pose.
@@ -852,6 +890,7 @@ characters_prepare :: proc(w:^World) #no_bounds_check {
         push:=(ch.desc.push_force>0?ch.desc.push_force:ch.desc.traction_force)*felt
         cs.push_limit=push*st.h
         pushes:=push<cs.drive.force
+        cs.wedge,cs.wedge_body=character_wedged(w,ch,body,cs.up)
         if !cs.standing {
             if pushes {character_pushes(w,&cs,body,.Drive_Vertical in cs.move.flags?Vec3{}:cs.up)}
             continue

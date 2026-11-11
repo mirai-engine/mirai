@@ -8,17 +8,17 @@ editor (inspector, document, thumbnails and `particle.*`) is in [its reference](
 
 ## Format
 
-`plugins/vfx/runtime/effect` (`effect.KIND` `PART`, `.particle`, `effect.VERSION` 2; another
+`plugins/vfx/runtime/effect` (`effect.KIND` `PART`, `.particle`, `effect.VERSION` 4; another
 version asks to write it again). An effect is like a material: entities name it
-(`vfx.Particle_Emitter`) and give it values of their own (`vfx.Particle_Override`, and
-`vfx.Particle_Parameters` for its program). Tables: `particle` (`Particle_Info`), `parameters`
-(`Particle_Parameter`), `hidden` (`Particle_Field`) and `resources` (`Particle_Resource`).
+(`vfx.Particle_Emitter`) and give it values of their own (`vfx.Particle_Override`, fields and
+program parameters alike). Tables: `particle` (`Particle_Info`), `parameters`
+(`Particle_Parameter`) and `hidden` (`Particle_Field`).
 
 - `Particle_Info` is the destination of what is imported from other engines:
-  - cycle (`duration`, `prewarm`), rate (`rate`, multiplied along the cycle by `rate_over_cycle`),
+  - cycle (`duration`, `prewarm`), a constant `rate` (a program's `births` gives any other shape),
     `rate_over_distance` and four `bursts` (time, count, repetitions, interval);
-  - shape (`Surface`: the triangles of `surface_mesh` or of what the entity draws; `Bones`: its
-    bones, [surfaces and bones](#surfaces-bones-and-resources)), life, initial velocity (`speed`
+  - shape (`Surface`: the triangles of what the entity binds or draws; `Bones`: its bones,
+    [surfaces and bones](#surfaces-bones-and-resources)), life, initial velocity (`speed`
     along the shape's normal and `velocity`, a range in the entity's space), `inherit_velocity`;
   - forces: `gravity` (the part it takes from the gravity where each particle is),
     `acceleration`, `drag` (1/s, how fast it reaches the wind where it is), noise and attractor;
@@ -30,18 +30,7 @@ version asks to write it again). An effect is like a material: entities name it
     without light: nits, or what the exposed image shows, the default), size and color curves over
     life, how it is drawn (`render`, `blend`, `lit`, `sort`, `material`, `mesh`) and sub-UV
     (`flipbook`, `flipbook_speed`);
-  - placement of `Mesh` particles: `facing` (`Particle_Facing`),
-    `spin_axis`, `mesh_rotation` (a quaternion x y z w) and `mesh_scale` (per axis, times `size`).
-    A vertex `v` goes to `position + W(F · R_axis(rotation) · Q_mesh · (v ⊙ mesh_scale · size))`:
-    `W` is the sim-to-world vector transform (`local_space`), `rotation` already holds `spin · age`,
-    `R_axis` turns about the normalized `spin_axis`, and `F` is the frame of `facing`: `Entity` the
-    axes of the simulation space; `Camera_Position` X toward the camera, Z = X × up with up = world
-    +Y (world ∓X when X is within 0.99 of it), Y = Z × X; `Camera_Plane` the same with X = −camera
-    forward and up = camera up. `Random` (the default) keeps the old turn about an axis of each
-    particle's own instead of `F · R_axis` and ignores `spin_axis`; `mesh_rotation` and
-    `mesh_scale` apply to every facing. Zeros stand for X, no turn and a scale of one
-    (`particle_mesh_placement`).
-    `mesh_scale` takes zero or more; the editor's preview reach grows by its largest component;
+  - a `Mesh` particle turns its mesh by its `rotation` (and `spin`) about an axis of its own;
   - lights: up to `lights` of its particles light the scene; they cast shadows only with
     `light_shadows` ([lights](#particle-lights));
   - sub effect (`trigger`, `sub_particle`, `sub_count`), what the game hears from its particles
@@ -51,8 +40,6 @@ version asks to write it again). An effect is like a material: entities name it
 - `parameters` stores values for the program by name (`Particle_Parameter`: type, from one to four
   components, values or texture).
 - `hidden` lists the fields that an instance does not show.
-- `resources` gives by name the mesh that each surface or bones resource of the program reads when
-  the instance binds nothing else.
 - A value is named by its path (`rate`, `colors.1`, `bursts.0.count`,
   `size_over_life.values.2`). `particle_fields` lists those that an instance can change; the
   program's text no. `particle_value_at` finds one by path and `particle_value_find` by the hash of
@@ -80,12 +67,16 @@ placed with `scene.spawn`.
 
 Values of an instance:
 
-- `Particle_Override`: effect values of the entity itself, by the hash of the field's path
-  (`effect.particle_fields`) and their bytes. `override_set(&o, "colors.1", [4]f32{...})`
-  validates path, type and range and returns an `Error`; `error_message` says how to fix it. The
-  effect's assets and program belong to the effect (`Effect_Field`).
-- `Particle_Parameters`: parameters of the effect's Vfx program belonging to the entity, by name
-  (`parameter_set`, `parameter_get`).
+- `Particle_Override`: the entity's own values, shaped like `erender.Material_Override`: one
+  table of `base.name_hash` names and 16-byte values, where a name is a field path of the effect
+  (`effect.particle_fields`, its bytes) or `parameters.` and a parameter of its Vfx program (its
+  numbers as `[4]f32` or its texture's `Asset_Id`, `parameter_value`, `parameter_hash`): the
+  prefix, the name of the file's table, keeps a parameter such as `speed` apart from the field.
+  `value_set(&o, "colors.1", [4]f32{...})` validates a field's type and range, or a parameter's
+  numbers, and returns an `Error`; `error_message` says how to fix it; `value_remove` takes one
+  away. The effect's assets and program belong to the effect
+  (`Effect_Field`). Whether the program declares a parameter is told when the emitter resolves
+  it (`particle_program_check`, `value_parameter`).
 - `particle_resolve(assets, particle, override)` gives what an entity shows;
   `particle_resolve_checked` also says what is wrong. `particle_program` resolves the effect's Vfx
   program in the catalog of the shaders in use (`erender.program_find`).
@@ -97,7 +88,8 @@ Values of an instance:
 
 What an emitter reads besides its values are resources, in rows that the GPU finds through the
 emitter: first the surface or bones of its shape, then those that its program declares
-(`//! resource name surface|channel|bones|grid`), in their order. A grid is the one that the
+(`//! resource name surface|channel|grid|emitter|data`), in their order. Bones are of the `Bones`
+shape alone: no program resource reads them. A grid is the one that the
 emitter binds or one of the world by its name ([grids](#grids-and-stages)).
 
 - A surface is the mesh that an entity draws in the frame, as the renderer has it: a skeleton's
@@ -113,16 +105,16 @@ emitter binds or one of the world by its name ([grids](#grids-and-stages)).
   A mesh that nobody poses, in its bind pose.
 - Who gives each one, in order: what the entity binds (`Particle_Bindings`: `surface` for the
   shape, `sources` for those of the program: the source of its name or, with none, the unnamed one
-  of its index), the effect's mesh (`surface_mesh`, `resources`) in the emitter's pose and, for the
-  shape, what the emitter draws. A resource without a source has neither surface nor bones: the
-  program reads it with `valid` false.
+  of its index) and, for the shape, what the emitter draws. An effect names no mesh: one that must
+  emit from a given mesh is a prefab whose emitter binds that mesh's entity. A resource without a
+  source has no surface: the program reads it with `valid` false.
 - A grid: that of the entity that binds its source or that of the world's grid it names (`grid`);
   without a binding, the first grid that its stages walk is that of the emitter's entity, if it has
   one, and any other that of the world with the resource's name. A binding to what does not exist
   reads nothing: it is not looked up elsewhere. So each fluid runs on its own and several emitters
   read different grids with the same program.
 - Details shows of `Particle_Bindings` the surface and one row per resource of the program that an
-  entity reads (surface, bones, grid or emitter), with the name that the program gives it, and for
+  entity reads (surface, grid or emitter), with the name that the program gives it, and for
   a grid another with the name of the grid it reads; it writes the source of its index, unnamed
   (`bindings_section`).
 - A surface is sampled by area and bones by length, on the GPU: the summed length of the bones goes
@@ -300,30 +292,30 @@ Clocks (`Particle_Clocks`, of the world):
 
 - One `Emitter_Clock` per emitter, in a `core.Entity_Map`; that of an emitter that left or lost its
   `World_Transform` is released from `core.changes`. It stores seconds of its generation,
-  generation, control, pause and the numbered births it started (`emitted`), in `Particle_Birth`
+  generation, pause and the numbered births it started (`emitted`), in `Particle_Birth`
   groups (first index, count, every how many, time of the first and spacing). It stores the last
   `PARTICLE_BIRTHS`; if they do not fit, it merges the two oldest without losing any.
 - `particles_tick` (`fixed`, both loops, after `transforms_propagate`) takes the requests and
   advances the clocks: while playing, with `time.dt`; while not playing (the editor), with
   `frame.dt` and `preview`. A mode change restarts them: Play starts without those of the preview.
-- `emission_step` adds the step's births: the rate times `rate_over_cycle` at the middle of the
-  step, the bursts that the cycle reaches (the repetitions of a step in a group), the distance
-  traveled and, on starting a generation with `prewarm` and `loop`, a whole life of earlier births.
-  `emitter_capacity` gives the particles it needs.
+- `emission_step` adds the step's births: the rate, the bursts that the cycle reaches (the
+  repetitions of a step in a group), the distance traveled and, on starting a generation with
+  `prewarm` and `loop`, a whole life of earlier births. `emitter_capacity` gives the particles it
+  needs.
 - A copy, a Play and a rollback take the clocks.
 
 Requests (`Particle_Requests`, a `core.Queue` of the world; `particles_tick` takes them in order):
 
-- `start`, `stop` (lets it finish), `restart` (another generation: the GPU discards its
-  particles), `pause`, `resume`, `authored` (returns to its fields) and `burst(count)` (at the
-  step's time).
-- `request_override`, `request_override_remove`, `request_override_clear`, `request_parameter` and
-  their pairs validate when asked; applied, they write `Particle_Override` and
-  `Particle_Parameters`.
+- `start` and `stop` set and clear `Particle_Emitter.active`, which `particles_tick` alone writes
+  for them (a stopped emitter lets its particles finish); `restart` (another generation: the GPU
+  discards its particles), `pause`, `resume` and `burst(count)` (at the step's time) act on the
+  clock. An emitter is emitting by its fields alone: `active` while playing, `preview` otherwise.
+- `request_value` validates when asked, like `value_set`; it, `request_value_remove` and
+  `request_values_clear`, applied, write `Particle_Override`.
 - One for an entity without an emitter, or that the emitter does not take, is the `vfx.request`
   problem of that entity, with the `Error` and its `error_message`.
 - `status(clocks, emitter, e)` gives state (`Idle`, `Playing`, `Paused`, `Finishing`, `Done`),
-  control, seconds, generation and births.
+  seconds, generation and births.
 
 To the GPU:
 
@@ -512,8 +504,8 @@ In each view:
 - **meshes** (`Gbuffer`): `Mesh` particles (but those whose material blends) in the G-buffer with
   `particle_mesh.vert` and the
   engine's fragment, or that of the Surface program of their materials, one draw per program
-  (`pass_mesh_programs`): placed by their facing, rotation and mesh scale (`particle_mesh_turn` of
-  `particles.slang`, normals by the inverse of the scale), motion vectors from their velocity
+  (`pass_mesh_programs`): turned by their rotation about an axis of their own
+  (`particle_rotation` of `particles.slang`), motion vectors from their velocity
   and the emitter's material or the mesh's, which the plugin tells the renderer each frame
   (`frame_gbuffer_mesh`) so that the views store their reflectance and their layers. Everything
   that follows lights, shades and reflects them. Each one draws without indices the level 0
