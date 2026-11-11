@@ -38,7 +38,12 @@ Scene_File :: struct {
 scene_path :: proc(p:^Project,named:string) -> (path:string,exists:bool,problem:string) {
     path=asset_path(named)
     if _,found:=asset.registry_find_path(&p.registry,path);found {return path,true,""}
+    // A file outside the assets (a recipe), which asset_named read in memory by its path.
+    if asset.registry_outside(path) {
+        if _,held:=asset.registry_memory_find(&p.registry,path);held {return path,true,""}
+    }
     fresh:=strings.has_suffix(path,".scene") && !strings.contains_rune(path,':')
+
     if fresh {return path,false,""}
     id,unknown:=asset.registry_resolve(&p.registry,path,".scene")
     if unknown!="" {return "",false,fmt.tprintf("asset: %s",unknown)}

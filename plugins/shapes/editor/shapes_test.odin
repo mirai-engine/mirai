@@ -23,6 +23,7 @@ Shapes_Test_World :: struct {
     brushes:core.Table(shapes.Shape_Brush),
     shapes:core.Table(shapes.Shape),
     splines:core.Table(volume.Spline),
+    volumes:core.Table(volume.Volume),
 }
 
 // A scene with the tables a shape entity uses, edited by a session of its own.
@@ -338,7 +339,9 @@ a_ray_meets_a_brush_primitive_where_it_enters_and_leaves :: proc(t:^testing.T) {
 
 // The points of a Spline lie in its local XZ, edited by the one corner tool:
 // the API takes them by world points from above, inserts with the width and
-// height in proportion, lets the path cross itself and keeps two.
+// height in proportion, lets the path cross itself and keeps two. With a
+// Volume Outline they are a loop: its closing edge takes a corner, its edges
+// may not cross and it keeps three.
 @(test)
 shapes_api_edits_the_points_of_a_spline_from_above :: proc(t:^testing.T) {
     f:=new(Shapes_Test)
@@ -374,4 +377,17 @@ shapes_api_edits_the_points_of_a_spline_from_above :: proc(t:^testing.T) {
     run(s,{op=.Remove,at={2,0,-14}})
     _,failed=run(s,{op=.Remove,at={0,0,0}})
     testing.expect(t,failed && core.at(&w.splines,core.row_of(&w.splines,e)).count==2,"a spline keeps two points")
+    core.add(&w.volumes,e,volume.outline(2))
+    core.edit(&w.splines,e)^=volume.Spline{count=4,points={0={position={-4,0,-4}},1={position={4,0,-4}},2={position={4,0,4}},3={position={-4,0,4}}}}
+    test_world_settle(w)
+    corner,failed=run(s,{op=.Insert,at={-4,9,0}})
+    spline=core.at(&w.splines,core.row_of(&w.splines,e))
+    testing.expectf(t,!failed && corner==4 && spline.count==5 && abs(spline.points[4].position.x+4)<1e-4 && abs(spline.points[4].position.z)<1e-4,"the edge from the last point to the first takes one: %v",spline)
+    _,failed=run(s,{op=.Move,at={-4,0,0},to={6,0,0}})
+    testing.expect(t,failed && core.at(&w.splines,core.row_of(&w.splines,e)).points[4].position.x==-4,"a loop does not cross itself")
+    run(s,{op=.Remove,at={-4,0,0}})
+    run(s,{op=.Remove,at={4,0,4}})
+    _,failed=run(s,{op=.Remove,at={4,0,-4}})
+    testing.expect(t,failed && core.at(&w.splines,core.row_of(&w.splines,e)).count==3,"a loop keeps three points")
 }
+

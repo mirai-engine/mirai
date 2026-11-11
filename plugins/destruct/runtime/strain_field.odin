@@ -32,7 +32,7 @@ strain_fields_step :: proc(
         field:=core.at(fields,row)
         if !(field.strain>0) {continue}
         e:=core.entity_at(fields,row)
-        area,pose,rules:=volume.placed({volumes,worlds,parents,sections},e)
+        area,pose,_,rules:=volume.placed({volumes,worlds,parents,sections,nil},e)
         if !rules {continue}
         if area.shape!=.Box && area.shape!=.Sphere {
             core.report(problems,e,"destruct.strain_field","its Strain_Field strains nothing: it needs a Volume of shape Box or Sphere on its entity (volume.box, volume.sphere)")

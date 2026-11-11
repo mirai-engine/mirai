@@ -11,18 +11,22 @@ import shapes "plugins:shapes/runtime"
 import mm "mirai:std/math"
 
 // The corners of an entity: the polygon of its Shape or the points of its
-// volume.Spline. A drag moves one, an insertion or a removal changes one;
-// each is one step. A move the polygon refuses (edges that would cross) does
-// not apply and the corner stays where it was last taken.
+// volume.Spline, a loop when its Volume is an Outline (a lake). A drag moves
+// one, an insertion or a removal changes one; each is one step. A move the
+// polygon or the loop refuses (edges that would cross) does not apply and the
+// corner stays where it was last taken.
 
 CORNER_REACH :: f32(10) // points of the window from a corner or an edge within which the pointer takes it
 
 Corner_Op :: enum u8 {Move,Insert,Remove}
 
 // What the corners of an entity are: the polygon of its Shape, in its local
-// XY, or else the path of its Spline, which is open, its points in its local XZ.
+// XY, or else the points of its Spline in its local XZ: a loop at the top of
+// its Volume when that is an Outline, else an open path.
 Corners :: struct {
     spline:bool,
+    closed:bool,
+    top:f32, // of the Outline, over the entity
     shape:shapes.Shape,
     path:volume.Spline,
 }
@@ -46,7 +50,10 @@ Corner_Hover :: struct {
 // The corners of an entity: those of the polygon of its Shape, else those of its Spline.
 corners_of :: proc(w:core.World_Ref,e:core.Entity) -> (c:Corners,found:bool) {
     if shape,ok:=editor.entity_get(w,e,shapes.Shape);ok && shape.loop_count>0 {return {shape=shape},true}
-    if path,ok:=editor.entity_get(w,e,volume.Spline);ok {return {spline=true,path=path},true}
+    if path,ok:=editor.entity_get(w,e,volume.Spline);ok {
+        zone,_:=editor.entity_get(w,e,volume.Volume)
+        return {spline=true,closed=zone.shape==.Outline,top=zone.extents.y,path=path},true
+    }
     return
 }
 
@@ -70,33 +77,44 @@ corners_write :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity,c:^Corner
     return info!=nil && editor.field_write(s,info,{e},0,mem.ptr_to_bytes(&c.path))
 }
 
-// Moves, inserts or removes a corner: on a polygon as the Shape allows; on a
-// spline a point inserted takes the width and height in proportion between
-// the ends of its edge, and the path keeps two points.
+// Moves, inserts or removes a corner: on a polygon, and on the loop of an
+// outline, as a Shape allows; on a spline a point inserted takes the width and
+// height in proportion between the ends of its edge, and a path keeps two
+// points.
 corner_apply :: proc(c:^Corners,op:Corner_Op,index:int,at:[2]f32) -> shapes.Shape_Error {
-    if !c.spline {
+    vertex :: proc(s:^shapes.Shape,op:Corner_Op,index:int,at:[2]f32) -> shapes.Shape_Error {
         switch op {
-        case .Move:   return shapes.shape_vertex_move(&c.shape,index,at)
-        case .Insert: return shapes.shape_vertex_insert(&c.shape,index,at)
-        case .Remove: return shapes.shape_vertex_remove(&c.shape,index)
+        case .Move:   return shapes.shape_vertex_move(s,index,at)
+        case .Insert: return shapes.shape_vertex_insert(s,index,at)
+        case .Remove: return shapes.shape_vertex_remove(s,index)
         }
+        return .Invalid
     }
+    if !c.spline {return vertex(&c.shape,op,index,at)}
     p:=&c.path
     count:=corner_count(c)
-    if !(at.x-at.x==0 && at.y-at.y==0) || index<0 || index>=count-(op==.Insert?1:0) {return .Invalid}
+    if c.closed {
+        if op==.Insert && count>=volume.SPLINE_POINTS {return .Too_Many_Points}
+        loop:=new(shapes.Shape,context.temp_allocator)
+        if loop==nil {return .Invalid}
+        loop.point_count,loop.loop_count,loop.loops[0]=u16(count),1,u16(count)
+        for q,i in p.points[:count] {loop.points[i]=q.position.xz}
+        if error:=vertex(loop,op,index,at);error!=.None {return error}
+    }
+    if !(at.x-at.x==0 && at.y-at.y==0) || index<0 || index>=count-(op==.Insert && !c.closed?1:0) {return .Invalid}
     switch op {
     case .Move:
         p.points[index].position.xz=at
     case .Insert:
         if count>=volume.SPLINE_POINTS {return .Too_Many_Points}
-        a,b:=p.points[index],p.points[index+1]
+        a,b:=p.points[index],p.points[(index+1)%count]
         along:=segment_along(a.position.xz,b.position.xz,at)
         copy(p.points[index+2:count+1],p.points[index+1:count])
         p.points[index+1]={linalg.lerp(a.position,b.position,along),math.lerp(a.width,b.width,along),math.lerp(a.height,b.height,along),math.lerp(a.speed,b.speed,along)}
         p.points[index+1].position.xz=at
         p.count+=1
     case .Remove:
-        if count<=2 {return .Invalid}
+        if count<=(c.closed?3:2) {return .Invalid}
         copy(p.points[index:count-1],p.points[index+1:count])
         p.points[count-1]={}
         p.count-=1
@@ -160,11 +178,13 @@ corner_edit :: proc(s:^editor.Session,e:core.Entity,op:Corner_Op,index:int,at:[2
 
 // The plane the corners of an entity placed at t lie on, as a transform whose
 // local XY holds them: its local XY for a polygon; its local XZ for a spline,
-// at the height of a point over the plane of the entity, or at its plane for -1.
+// at the top of an outline, else at the height of a point over the plane of the
+// entity, or at its plane for -1.
 corner_plane :: proc(t:mm.Transform,c:^Corners,vertex:int) -> mm.Transform {
     if !c.spline {return t}
-    up:=f32(0)
-    if vertex>=0 && vertex<volume.SPLINE_POINTS {up=c.path.points[vertex].position.y+c.path.points[vertex].height}
+    up:=c.top
+    if !c.closed {up=vertex>=0 && vertex<volume.SPLINE_POINTS?c.path.points[vertex].position.y+c.path.points[vertex].height:0}
+
     return mm.transform_compose(t,{{0,up,0},mm.quat_axis_angle({1,0,0},0.5*math.PI),{1,1,1}})
 }
 
@@ -175,13 +195,14 @@ corner_world :: proc(t:mm.Transform,c:^Corners,vertex:int) -> [3]f32 {
 }
 
 // The edges of the corners, each by its first corner and the one it runs to:
-// the loops of a polygon close, the path of a spline does not.
+// the loops of a polygon and of an outline close, an open path does not.
 corner_edges :: proc(c:^Corners,out:^[dynamic][2]int) {
     count:=corner_count(c)
     if c.spline {
-        for i in 0..<count-1 {append(out,[2]int{i,i+1})}
+        for i in 0..<count-(c.closed?0:1) {append(out,[2]int{i,(i+1)%count})}
         return
     }
+
     first:=0
     for l in 0..<min(int(c.shape.loop_count),shapes.SHAPE_LOOPS) {
         n:=int(c.shape.loops[l])

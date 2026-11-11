@@ -84,9 +84,9 @@ trs :: proc(position, scale: [3]f32) -> matrix[4, 4]f32 {
 
 // One frame of the fog volumes at a time of the world.
 @(private = "file")
-fog_frame :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, seconds: f32, fogs: []Fog_Volume, places: []volume.Volume, poses: []mm.Transform, cut := false) {
-	f.state.count = 0
-	for fog, i in fogs {volume_gpu(&f.state, fog, places[i], poses[i])}
+fog_frame :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, seconds: f32, fogs: []Fog_Volume, places: []volume.Volume, poses: []mm.Transform, cut := false, outlines: [][]mm.Path_Point = nil) {
+	f.state.count, f.state.outlines.count = 0, {}
+	for fog, i in fogs {volume_gpu(&f.state, fog, places[i], poses[i], outlines != nil ? outlines[i] : nil)}
 	f.app.time = seconds
 	fog_submit(&f.state, &f.app)
 	testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = seconds, camera_cut = cut}), f.renderer.error)
@@ -174,6 +174,44 @@ fog_goes_on_past_the_grid_without_a_seam :: proc(t: ^testing.T) {
 	for y in far + 1 ..< boundary {
 		testing.expectf(t, lumas[y] <= lumas[y - 1] + 1, "row %d (%.0f m) %.1f, row %d %.1f", y, depths[y], lumas[y], y - 1, lumas[y - 1])
 	}
+	expect_clean(t, f.device)
+}
+
+// Looking down at a dark ground through a fog in an L outline: the L is fogged, its notch, inside the
+// box of the outline, is as clear as the ground without the fog.
+@(test)
+fog_in_an_outline_fills_its_loop_and_not_its_box :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r,{direction = linalg.normalize([3]f32{0.4, 0.5, 0.6}), color = {1, 1, 1}, illuminance = 2 * math.PI, enabled = true},{sky = {0.3, 0.4, 0.6}})
+	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {200, 0.2, 200}), tint = {0.02, 0.02, 0.02}}},true)
+	HIGH :: f32(30)
+	camera := gpu.Camera{position = {0, HIGH, 0}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.1, exposure = gpu.UNIT_EXPOSURE}
+	l := []mm.Path_Point{{position = {-8, 0, -8}}, {position = {8, 0, -8}}, {position = {8, 0, 0}}, {position = {0, 0, 0}}, {position = {0, 0, 8}}, {position = {-8, 0, 8}}}
+	dense := Fog_Volume{density = 0.3, color = {1, 1, 1}}
+	frames :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, fogs: []Fog_Volume, l: []mm.Path_Point) -> (image: Image, ok: bool) {
+		for i in 0 ..< 20 {fog_frame(t, f, camera, f32(i) / 60, fogs, {volume.outline(10)}, {{position = {0, 2, 0}, rotation = 1, scale = 1}}, outlines = {l})}
+		return capture(t, f)
+	}
+	clear, clear_ok := frames(t, f, camera, {}, l)
+	if !clear_ok {return}
+	defer delete(clear.pixels)
+	fogged, fogged_ok := frames(t, f, camera, {dense}, l)
+	if !fogged_ok {return}
+	defer delete(fogged.pixels)
+	// A place of the ground in the image: +X to the right, +Z down.
+	at :: proc(x, z: f32) -> (low, high: [2]int) {
+		scale := f32(HEIGHT / 2) / (HIGH * math.tan(math.to_radians(f32(30))))
+		p := [2]int{WIDTH / 2 + int(x * scale), HEIGHT / 2 + int(z * scale)}
+		return p - 2, p + 2
+	}
+	in_l, in_l_high := at(-4, -4)
+	notch, notch_high := at(4, 4)
+	testing.expectf(t, block(fogged, in_l, in_l_high) > block(clear, in_l, in_l_high) + 8, "the L is fogged: %.1f, clear %.1f", block(fogged, in_l, in_l_high), block(clear, in_l, in_l_high))
+	testing.expectf(t, difference(fogged, clear, notch, notch_high) < 1, "the notch is clear: %.1f apart", difference(fogged, clear, notch, notch_high))
 	expect_clean(t, f.device)
 }
 
