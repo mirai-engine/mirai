@@ -413,7 +413,7 @@ GOLDEN_BOXES :: []Golden_Box{
     {"float.under.b",{504,96,120,12}},
     {"main.centered",{424,87,200,40}},
     {"main.centered.in",{494,101,60,12}},
-    {"main.bottom",{532.5,130,91.5,20}},
+    {"main.bottom",{533,130,91,20}},
     {"percent",{424,153,200,100}},
     {"percent.a",{504,153,40,27}},
     {"percent.b",{474,185,100,18}},

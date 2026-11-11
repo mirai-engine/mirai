@@ -298,12 +298,15 @@ draw_shape :: proc(ctx:^Context,r:Rect,style:Shape_Style) {
     if r.w<=0 || r.h<=0 || style.fill[3]==0 && style.fill2[3]==0 && style.stroke[3]==0 {return}
     radius:=style.radii
     for &v in radius {v=clamp(v,0,min(r.w,r.h)*0.5)}
+    // A border is whole device pixels wide, as the edges of the boxes are.
+    stroke:=style.stroke_width
+    if stroke>0 {stroke=max(math.round(stroke*ctx.draw.ppu),1)*ctx.draw.pixel}
     shape:=Shape{
         bounds={r.x,r.y,r.w,r.h},radii=radius,
         fill=[4]f32{f32(style.fill[0]),f32(style.fill[1]),f32(style.fill[2]),f32(style.fill[3])}/255,
         fill2=[4]f32{f32(style.fill2[0]),f32(style.fill2[1]),f32(style.fill2[2]),f32(style.fill2[3])}/255,
         stroke=[4]f32{f32(style.stroke[0]),f32(style.stroke[1]),f32(style.stroke[2]),f32(style.stroke[3])}/255,
-        params={clamp(style.stroke_width,0,min(r.w,r.h)*0.5),0,0,f32(style.gradient)},
+        params={clamp(stroke,0,min(r.w,r.h)*0.5),0,0,f32(style.gradient)},
     }
     shape_emit(ctx,shape,ctx.draw.pixel)
 }

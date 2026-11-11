@@ -640,7 +640,7 @@ frame_end :: proc(ctx:^Context) -> Frame {
     ctx.widget_pieces=ctx.widget_count
     if laid {
         t:=&ctx.layout
-        transitioning=layout_finish(t,&ctx.font,ctx.stats.frame,ctx.input.dt)
+        transitioning=layout_finish(t,&ctx.font,ctx.stats.frame,ctx.input.dt,ctx.scale*ctx.font.density)
         ctx.stats.layout_errors+=u32(t.duplicates)
         if t.overflow {ctx.stats.dropped_elements+=1}
         for &w in ctx.widgets[:ctx.widget_count] {

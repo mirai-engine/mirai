@@ -1308,8 +1308,9 @@ layout_heights :: proc(t:^Layout_Tree,index:i32) {
 
 // ---------------------------------------------------------------- placement
 
+// ppu: device pixels per layout unit, the grid the edges of the boxes fall on.
 @(private)
-layout_finish :: proc(t:^Layout_Tree,font:^Font,frame:u64,dt:f32) -> (moving:bool) {
+layout_finish :: proc(t:^Layout_Tree,font:^Font,frame:u64,dt,ppu:f32) -> (moving:bool) {
     // The surface closes like any container, which puts the elements of the
     // top level inside it.
     layout_kids(t,&t.nodes[0])
@@ -1344,7 +1345,7 @@ layout_finish :: proc(t:^Layout_Tree,font:^Font,frame:u64,dt:f32) -> (moving:boo
                 position=float_contain(p,&root,r.dim,bounds,position)
             }
         }
-        layout_place(t,root.node,position,origin)
+        layout_place(t,root.node,position,origin,ppu)
     }
     for &e in t.transitions {moving||=e.frame==frame && e.placed && e.time<e.seconds}
     return
@@ -1488,12 +1489,26 @@ float_contain :: proc "contextless" (p:Rect,root:^Layout_Root,dim:[2]f32,bounds:
     return position
 }
 
+// The children are placed from the place of their parent as laid out and each
+// box is rounded on its own, so neighbours share an edge. What transitions is
+// not rounded while it moves, nor what it holds: ppu 0.
 @(private)
-layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
+layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32,ppu:f32) {
     n:=&t.nodes[index]
     position:=position
-    if n.transition>0 {position=origin+layout_transition_place(&t.transitions[n.transition-1],position-origin,n.dim,t.nodes[0].dim,t.dt)}
+    ppu:=ppu
+    if n.transition>0 {
+        e:=&t.transitions[n.transition-1]
+        position=origin+layout_transition_place(e,position-origin,n.dim,t.nodes[0].dim,t.dt)
+        if e.time<e.seconds {ppu=0}
+    }
     n.box={position.x,position.y,n.dim.x,n.dim.y}
+    if ppu>0 {
+        // Edges on whole device pixels and the size between them (taffy's round_layout).
+        lo:=[2]f32{math.round(position.x*ppu),math.round(position.y*ppu)}
+        hi:=[2]f32{math.round((position.x+n.dim.x)*ppu),math.round((position.y+n.dim.y)*ppu)}
+        if abs(hi.x)+abs(hi.y)<math.F32_MAX {n.box={lo.x/ppu,lo.y/ppu,(hi.x-lo.x)/ppu,(hi.y-lo.y)/ppu}}
+    }
     if n.text>=0 {
         layout_place_text(t,index)
         return
@@ -1532,7 +1547,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
                 child.box.x=x+align_offset(self_align(l.align_x,child.layout.self_x),width-child.dim.x)+offset.x
                 child.box.y=y+align_offset(self_align(l.align_y,child.layout.self_y),high-child.dim.y)+offset.y
             }
-            for kid in kids {layout_place(t,kid,{t.nodes[kid].box.x,t.nodes[kid].box.y},position+offset)}
+            for kid in kids {layout_place(t,kid,{t.nodes[kid].box.x,t.nodes[kid].box.y},position+offset,ppu)}
         case .Wrap:
             inner:=n.dim.x-left_right
             y:=position.y+l.padding[1]
@@ -1543,7 +1558,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
                 x:=position.x+l.padding[0]+align_offset(l.align_x,inner-used)
                 for kid in kids[start:end] {
                     child:=&t.nodes[kid]
-                    layout_place(t,kid,[2]f32{x,y+align_offset(self_align(l.align_y,child.layout.self_y),high-child.dim.y)}+offset,position+offset)
+                    layout_place(t,kid,[2]f32{x,y+align_offset(self_align(l.align_y,child.layout.self_y),high-child.dim.y)}+offset,position+offset,ppu)
                     x+=child.dim.x+l.gap
                 }
                 y+=high+l.gap
@@ -1555,7 +1570,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
                 at:=position+{l.padding[0],l.padding[1]}
                 at.x+=align_offset(self_align(l.align_x,child.layout.self_x),n.dim.x-left_right-child.dim.x)
                 at.y+=align_offset(self_align(l.align_y,child.layout.self_y),n.dim.y-top_bottom-child.dim.y)
-                layout_place(t,kid,at+offset,position+offset)
+                layout_place(t,kid,at+offset,position+offset,ppu)
             }
         case .Row,.Column:
             row:=l.direction==.Row
@@ -1585,7 +1600,7 @@ layout_place :: proc(t:^Layout_Tree,index:i32,position,origin:[2]f32) {
                 } else {
                     at.x=position.x+l.padding[0]+align_offset(self_align(l.align_x,child.layout.self_x),n.dim.x-left_right-child.dim.x)+offset.x
                 }
-                layout_place(t,kid,at,position+offset)
+                layout_place(t,kid,at,position+offset,ppu)
                 if row {next.x+=child.dim.x+l.gap} else {next.y+=child.dim.y+l.gap}
             }
         }
