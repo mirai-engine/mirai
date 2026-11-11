@@ -24,6 +24,7 @@ import "mirai:std/serial"
 @(private) LINK_ROLE :: 1 // the role has to be sent
 @(private) LINK_FULL :: 2 // the whole state has to be sent, even to the holder of the authority
 @(private) LINK_RETYPE :: 4 // the replica the connection has, or is being sent, is of the type before: it takes the creation again
+@(private) LINK_TICK :: 8 // a message about the object went out: an update with the whole state follows it, changed or not
 @(private) GENERATION_WIDTHS :: [4]u8{4,8,16,32}
 @(private) BASELINES_LOOSE :: 3
 @(private) FILL_TRIES :: 10    // objects behind one that did not fit that may fail to fit too before the datagram is closed
@@ -552,9 +553,7 @@ repl_op :: proc(h:^Host,frame:^Frame,op:^Op) {
         payload:Create_Payload
         mem.copy(&payload,raw_data(data),size_of(Create_Payload))
         type:=&r.protocol.types[payload.type]
-        // Whoever held it simulates the type before: the server takes it back, and
-        // the epoch tells apart what that client still sends.
-        if r.holder[o]!=0 {authority_set(h,o,0,0)}
+        // Whoever holds it keeps it; the epoch tells apart what it still sends of the type before.
         r.type_before[o],r.type[o]=r.type[o],payload.type
         r.epoch[o]=(r.epoch[o]+1)&15
         r.fresh[o]=0
@@ -706,9 +705,18 @@ repl_op :: proc(h:^Host,frame:^Frame,op:^Op) {
         if r.server || p.state!=.Connected || len(p.repl.inputs)==0 {return}
         pr:=&p.repl
         words:=r.protocol.input.words
-        slot:=int(op.c%INPUT_RING)
-        mem.copy(&pr.inputs[slot*words],raw_data(op_data(frame,op)),words*4)
-        pr.input_ticks[slot]=op.c+1
+        // An input delay that grows skips ticks: they take this input. One that shrinks submits a tick again: the
+        // first stays.
+        from:=op.c
+        if pr.input_any {
+            if i32(op.c-pr.input_newest)<=0 {return}
+            from=max(pr.input_newest+1,op.c-INPUT_DELAY_MAX)
+        }
+        for tick:=from;i32(tick-op.c)<=0;tick+=1 {
+            slot:=int(tick%INPUT_RING)
+            mem.copy(&pr.inputs[slot*words],raw_data(op_data(frame,op)),words*4)
+            pr.input_ticks[slot]=tick+1
+        }
         pr.input_newest,pr.input_any=op.c,true
     }
 }
@@ -852,12 +860,16 @@ entry_write :: proc(h:^Host,p:^Peer,w:^serial.Bit_Writer,o:int,seq:u16,limit:int
         mask:=pr.dirty[o]&owner_mask
         holder:=r.holder[o]==peer_handle(h,p)
         if holder && flags&LINK_FULL==0 {mask=0}
-        if mask==0 && flags&LINK_ROLE==0 {
+        if mask==0 && flags&(LINK_ROLE|LINK_TICK)==0 {
             w^=mark
             pr.dirty[o]=0
             return .Nothing
         }
         active:=int(pr.active[o])
+        // After a message about the object, everything changed since what the connection is known to have: the
+        // replica then holds the whole state of this tick, also when an update before was lost.
+        complete:=flags&LINK_TICK!=0 && !holder
+        if complete {mask=active==0?owner_mask:mask|pr.since_base[o]&owner_mask}
         block:=u32(0)
         slot:=active==1?1:0
         // Once the object holds BASELINES_LOOSE blocks, links due for a new baseline take it together, to share it:
@@ -889,11 +901,13 @@ entry_write :: proc(h:^Host,p:^Peer,w:^serial.Bit_Writer,o:int,seq:u16,limit:int
                 mask=sent
             }
         }
+        complete&&=rest==0
         if flags&LINK_ROLE!=0 {
             serial.bit_write(w,1<<2|u64(peer_role(h,p,o))<<3|u64(r.epoch[o])<<5,9)
         } else {
             serial.bit_write(w,0,3)
         }
+        serial.bit_write_bool(w,complete)
         serial.bit_write(w,u64(active)|u64(block!=0)<<2|u64(slot)<<3,block!=0?4:3)
         mask_write(w,type,mask)
         state_write(w,type,mask,words,active!=0?pool_words(&r.bases,int(pr.base[active-1][o]-1)):nil)
@@ -902,7 +916,7 @@ entry_write :: proc(h:^Host,p:^Peer,w:^serial.Bit_Writer,o:int,seq:u16,limit:int
             w^=mark
             return fit
         }
-        pr.dirty[o],pr.flags[o]=rest,0
+        pr.dirty[o],pr.flags[o]=rest,rest!=0?flags&LINK_TICK:0
         if block!=0 {
             pr.base[slot][o],pr.pending[o],pr.since_pending[o]=block,u8(slot+1),0
             pr.request[o]+=1
@@ -1197,6 +1211,7 @@ objects_read :: proc(h:^Host,p:^Peer,rd:^serial.Bit_Reader) -> bool {
                 epoch=u8(serial.bit_read(rd,4))
                 if role==.None {return false}
             }
+            complete:=serial.bit_read_bool(rd)
             use:=int(serial.bit_read(rd,2))
             keep:=serial.bit_read_bool(rd)
             slot:=keep?int(serial.bit_read(rd,1)):0
@@ -1215,8 +1230,9 @@ objects_read :: proc(h:^Host,p:^Peer,rd:^serial.Bit_Reader) -> bool {
                 if role!=.Held {pr.dirty[o]=0;bitset_clear(pr.work,o)}
                 command_push(h,{kind=.Role_Changed,object=object,role=role,connection=handle})
             }
-            if mask!=0 {
-                command:=command_push(h,{kind=.Object_Updated,object=object,type=r.type[o],tick=r.remote_tick,mask=mask,connection=handle},nil,type.words)
+            // Without changes, the update that follows a message about the object (LINK_TICK).
+            if mask!=0 || !role_changed {
+                command:=command_push(h,{kind=.Object_Updated,object=object,type=r.type[o],tick=r.remote_tick,mask=mask,connection=handle,complete=complete},nil,type.words)
                 if command==nil {peer_drop(h,p,.Capacity,true);return true}
                 copy(command.words,words)
             }

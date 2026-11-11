@@ -222,8 +222,8 @@ its whole state: the object, its parent, owner, scope and events go on.
   (`Command.retyped`), keeping what the game bound the replica to. A creation in flight is
   followed by the new one once it is acked, and a link that was leaving takes it if it returns.
 - The baselines of the object are dropped: they are of the words of the type before.
-- It bumps the epoch, and the server reads what an older epoch still sends (a client that held
-  the object) with the type before, to drop it.
+- It bumps the epoch, and the server reads what an older epoch still sends (the client that holds
+  the object, which keeps it) with the type before, to drop it.
 
 **Large states** (`Object_Type.large`, whose maximum encoding exceeds `MAX_STATE_BYTES`):
 
@@ -360,8 +360,11 @@ object are sent until its creation was acked.
 - An unreliable event encodes within `EVENT_MAX_BYTES`, a datagram; a reliable one within
   `RELIABLE_EVENT_MAX_BYTES`, which its channel cuts in chunks as for any reliable message, and
   every event within `MAX_STATE_WORDS`. `event_register` refuses one past them.
-- They name their object by handle and travel apart from the state: on the same object they arrive
-  in order, but there is no order between events and updates.
+- They name their object by handle. A server event carries the tick it was sent in (the one after
+  the last `host_publish`), and fanning it out about an object marks the link (`LINK_TICK`): the
+  next update goes even without changes and carries every field changed since what the connection
+  is known to have (`Command.complete`), so the receiver can wait for a state of that tick that a
+  lost update before it cannot leave incomplete.
 - A reliable event that arrives before its replica waits for it up to 5 s; one sent in the tick in
   which the object was created waits on the server for that tick's scope evaluation.
 
@@ -394,8 +397,13 @@ connection is for a replica.
 - The client estimates the server tick (`Clock.server`, corrected 10 % per sample; the estimate
   jumps if it strays more than 30 ticks) and wants its own tick ahead: half the RTT, twice the
   jitter, `input_lead` ticks and `bias`, a slow correction according to the margin the server
-  reports, less `input_delay`, the ticks ahead of its own it submits its input for. That target
-  (`Clock.target`) is smoothed with a constant of 0.5 s.
+  reports, less `Clock.input_delay`, the whole ticks ahead of its own it submits its input for.
+  That target (`Clock.target`) is smoothed with a constant of 0.5 s.
+- The input delay follows the round trip (`Replication_Desc.input_delay`, lightyear's
+  `InputDelayConfig`): delay covers it up to `cover` (at least `min`), prediction the next
+  `predict`, delay again the rest, up to `INPUT_DELAY_MAX`. It moves only once it is a whole tick
+  off. A tick an increase skips takes the next input submitted; a tick submitted again keeps the
+  first.
 - The client tick is stored by whoever uses it, with a fraction (the last simulated plus what its
   time already covers of the next). `clock_advance(h,now,local)` returns:
   - `shift`: whole ticks to add to it now. On synchronizing, what puts it on the target (also

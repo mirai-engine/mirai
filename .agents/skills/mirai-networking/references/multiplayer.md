@@ -32,11 +32,13 @@ Usually its prefab carries it: everything that appears from that prefab is repli
   - its driver (its `input.Move_Input`, published when it changes) if it has `Move_Input`;
   - each of its `@(component,replicated)` components, on or off.
 - Each distinct set is a protocol type that both ends compose from the list its creation carries
-  ([types](networking.md#protocol-and-descriptors)). When a replicated component, its motion or
-  its `Move_Input` comes or goes later, the server gives the object the type of what the entity
-  has now (`server_kinds`, [re-typing](networking.md#replication)) with its whole state, and each
-  replica goes on with its entity, which gains or loses the component. What a client holds is
-  re-typed when it comes back, and of what each end simulates only the creation travels.
+  ([types](networking.md#protocol-and-descriptors)). The type lists everything the entity
+  replicated: one that goes stays listed and travels as absent (`Pose.absent`), and the replica
+  drops it and takes it back whole when it returns, a small update each way (bevy_replicon's
+  insertions and removals). Only one the type never listed widens it (`server_kinds`,
+  [re-typing](networking.md#replication)) with its whole state; each replica goes on with its
+  entity, and whoever holds the object keeps it and takes only the components it lacks. Of what
+  each end simulates only the creation travels.
 - `replicated="owner"` sends it only to the owner, `replicated="others"` to everyone but the owner.
   `replicated="object"` sends it to every end and makes an entity that has it replicated without a
   `Replicate` of its own (`Simulation.Server`, `Audience.Always`): what a plugin writes that does
@@ -128,6 +130,10 @@ Ask :: struct {id:base.Entity_Id}
   since the tick before, like [`Net_Connections`](#connection-events). There is no bag of every
   message decoded by type. `send` returns `false` and does not enqueue in a tick that runs again
   (`Net_Outbox.replaying`): it sent the first time.
+- A client holds a message about a replica (`messages_release`) until the replica has the whole
+  state the server sends after it ([events](networking.md#events)) and, interpolated, the display
+  reached that state; the server publishes the entity in the message's tick, turn or not
+  (`Server_Object.said`). One about none, or about a replica the client simulates, goes at once.
 - `Net_Outbox` (`copy=false`) is not copied with the world: a correction does not lose what is
   waiting. A `reliable` message the host rejects because the queue is full (`Full`) waits there,
   with the ones that follow, until the next frame; the other rejections are the `net.event_send`
@@ -148,7 +154,8 @@ takes the default:
 - Tolerances: position 0.05 m, velocity 0.5 m/s and rad/s, rotation 0.07 rad, scale 0.001.
 - `max_resimulate`: ticks repeated in one frame, 0.3 s of ticks (at most the history).
   `resimulate_budget`: one second of ticks per second. `critical_ticks`: half a second.
-- `sync_test`: 0 (off). `input_delay`: 0 ticks. `rewind_entities`: 64.
+- `sync_test`: 0 (off). `rewind_entities`: 64. `replication.input_delay`: by the round trip
+  ([time](networking.md#time-and-inputs)).
 - `absent_seconds`: 300 s that the seat of a player who left waits for them; negative, none.
 
 ## What another library simulates
@@ -523,10 +530,13 @@ One rule says how it lives (`replica_wanted`):
 - **Simulated here** (without `core.Pose_Target`): `Each` or `Held`. It is not corrected.
 - **Predicted** (`core.Pose_Target` without `follow`): what this client drives (`Predicted`); what
   a simulation moves on the server while it shared a simulation group (`core.Motion.island`) with
-  what this client drives in the last `critical_ticks`: what it touches or is joined to; what
-  `Replicate.predict` asks always; and what this client spawned ahead of the server. The client
-  simulates it ahead of the server, which corrects it. More than `predicted_capacity` at once is
-  the `net.predicted` problem, and the rest stay interpolated.
+  what this client drives, or was about to touch it, in the last `critical_ticks`: what it
+  touches or is joined to, and what its bounds (`Replicate.radius`), swept by its velocity from
+  its newest state to the client tick, bring within the bounds of what it drives grown by how far
+  that goes meanwhile (`records_capture`), so a ball turns predicted before the hit and not one
+  round trip after it; what `Replicate.predict` asks always; and what this client spawned ahead of
+  the server. The client simulates it ahead of the server, which corrects it. More than
+  `predicted_capacity` at once is the `net.predicted` problem, and the rest stay interpolated.
 - **Interpolated** (`core.Pose_Target` with `follow`): everything else, shown between the server's
   states.
   - On each tick it goes to the state of the display tick of that tick (`clock_interpolation_tick`)
@@ -580,7 +590,7 @@ One rule says how it lives (`replica_wanted`):
   - Each repeated tick is `host.app_tick_replay`. `core.Time` returns with the copy and each tick
     advances it, so it ends where it was; `core.Frame_Time` is not part of the copy, and of the
     present only the frame's `Input` is kept by hand.
-  - A replica re-typed since the copy loses there the components of the type it had then.
+  - A replica whose type widened since the copy takes there the components it lacked.
 - What cannot go back (the frame or the budget have no room, or the state is older than the
   history, `unverified`) takes the state in the present (`replica_place_now`): it moves by what it
   was off at the tick of the state, with the velocity error carried to now, or, without a record
@@ -608,8 +618,10 @@ One rule says how it lives (`replica_wanted`):
 **Predicted spawns.** A `fixed` function that makes an entity on both ends in the tick of the
 input that causes it (a projectile) marks it with `multiplayer.predict_spawn(spawns, e, seat)`,
 which queues it in `Net_Spawns`. At the end of the tick (`spawns_take`) it gets the `Id` both ends
-draw from the connection of the seat, the tick and how many that seat made before it in that tick
-(`spawn_id`), and, on a client, `Predicted_Spawn`. The queue is part of the `World`: a tick that
+draw from the connection of the seat, the tick, its kind (`spawn_kind`: its prefab, or without one
+the fragments it replicates) and how many of that kind the seat made before it in that tick
+(`spawn_id`), and, on a client, `Predicted_Spawn`. A spawn the server skips shifts none of another
+kind. The queue is part of the `World`: a tick that
 runs again numbers its spawns alike. `predict_kept` queues an entity that has its `Id` already and
 that its library keeps (`Predicted_Spawn.kept`).
 
@@ -622,9 +634,11 @@ that its library keeps (`Predicted_Spawn.kept`).
 - One no replica took within the history was not made by the server, and is destroyed; one a
   library keeps loses only its mark.
 
-**Input delay.** With `Net_Settings.input_delay` a client acts on its input that many ticks after
-taking it, and submits it for that tick at once, so its tick runs that many less ahead of the
-server ([clock](networking.md#time-and-inputs)).
+**Input delay.** A client acts on its input as many ticks after taking it as its clock's input
+delay, which follows the round trip within `Net_Settings.replication.input_delay`
+([clock](networking.md#time-and-inputs)), and submits it for that tick at once, so its tick runs
+that many less ahead of the server. Each tick keeps the delay it first ran with (`Taken.delay`):
+one that runs again acts on what it acted on.
 
 - The seat it drives with keeps two lines of what it held: the one its devices feed, outside the
   `World` (it only advances when a tick runs first), and the delayed one the game sees
@@ -857,7 +871,10 @@ one set by whoever tests those functions by hand).
   `a_client_follows_the_pause_and_the_time_scale_of_its_server` and
   `the_connections_and_the_messages_that_arrive_reach_the_first_tick_after_them`; a typed message
   with 4 KB of bytes:
-  `a_typed_message_of_6_kb_with_4_kb_of_bytes_reaches_the_inbox_of_its_type_whole`. Sections:
+  `a_typed_message_of_6_kb_with_4_kb_of_bytes_reaches_the_inbox_of_its_type_whole`; order and
+  reach: `a_message_about_an_entity_is_read_after_the_state_of_its_tick`,
+  `a_status_that_comes_and_goes_on_a_lent_object_keeps_its_type_and_its_holder` and
+  `a_ball_thrown_at_a_driven_body_turns_predicted_before_it_hits`. Sections:
   `what_is_in_a_section_reaches_a_client_while_it_has_the_section_loaded`,
   `a_replica_of_a_section_that_is_not_loaded_waits_for_it`,
   `what_is_in_sections_that_overlap_reaches_a_client_that_has_either` and
