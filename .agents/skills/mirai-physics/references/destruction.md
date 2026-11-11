@@ -87,14 +87,22 @@ Topology:
 - `break_apply(w,event)` is the one door for what is asked of a breakable: a `Damage` strains and
   launches what comes off with its impulse, a `Weaken` adds strain without breaking, on every body
   (`piece=-1`) or on the body of one piece. Strain and impulse are independent.
-- The `Break_Region` of an event is a sphere or an oriented box that weighs as a
+- The `Break_Region` of a `Damage` or `Weaken` is a sphere or an oriented box that weighs as a
   [`Volume`](../../mirai-gameplay/references/libraries.md#volume) does: 1 inside, rising from the
   border over `blend` meters. It is in the event so that another end repeats it; damage evaluates
-  it at the centers of bonds and of cluster pieces.
+  it at the centers of bonds and of cluster pieces. An `Impact` has no region: it strains the
+  bonds of the piece it hit by their area, or the cluster that piece is whole in. A body that
+  touches several pieces raises a hit on each, so the contacts are the size of the impact.
 - `breakables_strain` gives a region to every breakable a `Query_Filter` meets, body by body except
   debris and `ignore_body`, and lists the event of each body it reached with those of the step.
   The integration applies there what `physics.strain_area` asked, once the step of the tick ran.
 - Each bond accumulates strain up to `strength * area`, saturating at the largest f32.
+- A crack runs along the bond graph: in the same event, the strain a bond that breaks holds
+  beyond its threshold, times `propagation`, goes to the unbroken bonds of its two pieces by their
+  area, in waves until none breaks. 1, the default, is a brittle material that keeps the strain it
+  is given; a material that should not crack through gives less as data. It is a function of the
+  event and the state, so a replayed event cracks alike: `propagation` is authored on both ends
+  and nothing more travels.
 - With `impact_damage`, per contact only the points that approached fast and accumulated at least
   `damage_threshold` of normal impulse do damage: they are parameters of the breakage model, not
   energy. A resting load does not break by its weight; debris receives no damage.
@@ -102,8 +110,8 @@ Topology:
   - In anchored bodies the groups with anchors remain; without anchors, the one with the greatest
     volume. The others receive dynamic bodies with inherited pose, velocity and surface.
   - The explicit impulse is distributed by volume and spatial weight among what is detached. A
-    contact impact distributes it only when detaching from static: the solver already hit the
-    dynamic.
+    contact impact gives it to the group of the piece it hit, and only when detaching from static:
+    the solver already hit the dynamic.
   - If bodies are missing, it keeps the broken bonds and retries detaching in a later event.
 - `Strain_Field` on an entity with a box or sphere
   [`Volume`](../../mirai-gameplay/references/libraries.md#volume) is persistent strain

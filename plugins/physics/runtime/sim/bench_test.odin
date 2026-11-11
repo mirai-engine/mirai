@@ -125,10 +125,7 @@ worker_threads_give_the_same_result_as_one_thread :: proc(t:^testing.T) {
         test_scene_edit(&b,step)
         world_step(&a,1.0/60)
         world_step(&b,1.0/60)
-        if world_hash(&a)!=world_hash(&b) {
-            testing.expectf(t,false,"threads changed the result at step %v",step)
-            return
-        }
+        if !test_same(t,&a,&b,"threads changed the result at step %v",step) {return}
     }
     testing.expect(t,world_stats(&b).active_contacts>200)
 }

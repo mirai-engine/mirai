@@ -136,6 +136,8 @@ tables and is the only package that imports it. The game and the other plugins, 
 - A break event carries no geometry, and applying it to a world in the same state gives the same
   state. One limited to the body of a piece does not depend on where the other bodies are: it is the
   one that travels over the network.
+- Damage follows the bonds, not meters: an impact strains the piece it hit, a crack runs along the
+  bond graph, and the default is brittle (`propagation` 1); a tougher material sets less as data.
 - The frame of each body of a breakable is the frame of the breakable: the shapes of its pieces
   have an identity local transform.
 - Breaking changes bodies and shapes at the end of `world_step`, once its hits are gathered, or

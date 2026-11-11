@@ -19,7 +19,7 @@ test_wall :: proc(state:^Physics_State,position:[3]f32={0,1,0},user:u64=0) -> (B
     anchors:=[1]sim.Aabb{{{-2.1,-1.1,-0.3},{2.1,-0.95,0.3}}}
     desc:=BREAKABLE_DESC_DEFAULT
     desc.mesh,desc.sites,desc.anchors,desc.position=geom.mesh_buffer_view(&mesh),sites[:],anchors[:],position
-    desc.damage_radius,desc.user_data=1,user
+    desc.user_data=user
     return breakable_create(state,desc)
 }
 
