@@ -16,65 +16,37 @@ import "mirai:std/serial"
 API_UNSAVED :: 64
 API_UNSAVED_NAMED :: 16 // of the unsaved files an error names, the rest counted
 
-@(private)
-UNSAVED_SCHEMA :: `{"type":"object","properties":{"assets":{"type":"array","maxItems":64,"items":{"type":"string"},"description":"Unsaved assets, by their path under the asset folder or their id; a program by the path of its .slang under the project. asset.save without assets or all: those of the turn of the caller, or every one outside a turn"},"all":{"type":"boolean","description":"Every unsaved asset instead of a list"},"folder":{"type":"string","description":"asset.save: writes copies under this folder of the project, inside .mirai/tmp/, and leaves the assets unsaved"}},"additionalProperties":false}`
-
-@(private)
-Api_Unsaved_Params :: struct {
-    assets:[API_UNSAVED][API_PATH_BYTES]u8,
-    count:int,
-    all:bool,
-    folder:[API_PATH_BYTES]u8,
-}
-
 Api_Unsaved_Result :: struct {
-    assets:[1]Api_Unsaved_Asset `mirai:"list"`,
-    scene:[1][API_PATH_BYTES]u8 `mirai:"text,list,label=The unsaved assets the scene of the document uses"`,
+    assets:[]Api_Unsaved_Asset,
+    scene:[]string `mirai:"label=The unsaved assets the scene of the document uses"`,
 }
 Api_Unsaved_Asset :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=Under the asset folder; of a Slang program the path of its .slang under the project or under engine/ for one of the engine"`,
+    path:string `mirai:"label=Under the asset folder; of a Slang program the path of its .slang under the project or under engine/ for one of the engine"`,
     removed:bool `mirai:"label=Whether memory holds it as removed"`,
     asset:base.Asset_Id `mirai:"optional,label=Its id; a program has none"`,
-    kind:[32]u8 `mirai:"text,optional,label=The kind of the asset; program for a Slang program"`,
+    kind:string `mirai:"optional,label=The kind of the asset; program for a Slang program"`,
 }
 
 Api_Saved_Result :: struct {
     saved:int `mirai:"label=Assets written: to their files or as copies under folder"`,
-    folder:[2*API_PATH_BYTES]u8 `mirai:"text,optional,label=With folder: the full path of the copies"`,
+    folder:string `mirai:"optional,label=With folder: the full path of the copies"`,
 }
 
 Api_Discarded_Result :: struct {
     discarded:int `mirai:"label=Assets given back what their files hold"`,
 }
 
-@(private)
-unsaved_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="asset.unsaved",summary="The assets and Slang programs changed in memory and not saved, and which of them the scene of the document uses.",result=Api_Unsaved_Result,writes_result=true,flags={.Read_Only},run=api_asset_unsaved})
-    api_register(s,st,{name="asset.save",flags={.Core},params_schema=UNSAVED_SCHEMA,summary="Writes unsaved assets to their files, or copies of them that leave them unsaved. Writing the files is refused while a game plays.",result=Api_Saved_Result,writes_result=true,run=api_asset_save})
-    api_register(s,st,{name="asset.discard",params_schema=UNSAVED_SCHEMA,summary="Gives unsaved assets back what their files hold; one that only memory held is gone.",result=Api_Discarded_Result,run=api_asset_discard})
+Api_Asset_Save_Params :: struct {
+    assets:[]string `mirai:"optional,label=At most 64. Unsaved assets, by their path under the asset folder or their id; a program by the path of its .slang under the project. asset.save without assets or all: those of the turn of the caller, or every one outside a turn"`,
+    all:bool `mirai:"optional,label=Every unsaved asset instead of a list"`,
+    folder:string `mirai:"optional,label=asset.save: writes copies under this folder of the project, inside .mirai/tmp/, and leaves the assets unsaved"`,
 }
 
 @(private)
-api_unsaved_params :: proc(call:^api.Call,p:^Api_Unsaved_Params) -> bool {
-    a:Rpc_Args
-    rpc_init(&a,call,call.raw)
-    o:Rpc_Object
-    if !rpc_object_begin(&a,"params") {return false}
-    for key in rpc_next(&a,&o) {
-        switch key {
-        case "assets":
-            if !serial.text_accept(&a.r,'[') {return rpc_fail(&a,"assets must be an array of paths or ids")}
-            for i:=0;!serial.text_accept(&a.r,']');i+=1 {
-                if i>0 && !serial.text_accept(&a.r,',') {return rpc_fail(&a,"assets must be an array of paths or ids")}
-                if p.count>=len(p.assets) {return rpc_fail(&a,"assets takes at most %d entries; all: true takes every one",len(p.assets))}
-                rpc_text(&a,"a path or an id",p.assets[p.count][:len(p.assets[0])-1])
-                p.count+=1
-            }
-        case "all":    p.all,_=rpc_bool(&a,"all")
-        case "folder": rpc_text(&a,"folder",p.folder[:len(p.folder)-1])
-        }
-    }
-    return !a.failed
+unsaved_api_register :: proc(s:^Session,st:^Api_State) {
+    api_register(s,st,{name="asset.unsaved",summary="The assets and Slang programs changed in memory and not saved, and which of them the scene of the document uses.",result=type_info_of(Api_Unsaved_Result),flags={.Read_Only},run=api_asset_unsaved})
+    api_register(s,st,{name="asset.save",flags={.Core},params=type_info_of(Api_Asset_Save_Params),summary="Writes unsaved assets to their files, or copies of them that leave them unsaved. Writing the files is refused while a game plays.",result=type_info_of(Api_Saved_Result),run=api_asset_save})
+    api_register(s,st,{name="asset.discard",params=type_info_of(Api_Asset_Save_Params),summary="Gives unsaved assets back what their files hold; one that only memory held is gone.",result=type_info_of(Api_Discarded_Result),run=api_asset_discard})
 }
 
 @(private)
@@ -84,28 +56,22 @@ api_asset_unsaved :: proc(s:^Session,call:^api.Call) {
         return
     }
     r:=&s.app.assets.registry
-    w:=call.out
-    serial.text_write_raw(w,`{"assets":[`)
-    for held,i in assets_unsaved(s) {
-        if i>0 {serial.write_u8(w,',')}
-        serial.text_write_raw(w,`{"path":`);serial.text_write_string(w,unsaved_name(s,held.path))
-        api.write_key(w,"removed");serial.text_write_raw(w,held.removed?"true":"false")
-        if asset.registry_outside(held.path) {
-            api.write_text(w,"kind","program")
-        } else if file,found:=asset.registry_find_path(r,held.path);found && file.state==.Asset {
-            api.write_key(w,"asset");api_asset_write(w,file.id)
-            api.write_key(w,"kind");serial.text_write_string(w,api_asset_kind_name(s,file.kind))
+    held:=assets_unsaved(s)
+    result:=api.call_result(call,Api_Unsaved_Result)
+    result.assets=make([]Api_Unsaved_Asset,len(held),call.allocator)
+    for entry,i in held {
+        out:=&result.assets[i]
+        out.path,out.removed=unsaved_name(s,entry.path),entry.removed
+        if asset.registry_outside(entry.path) {
+            out.kind="program"
+        } else if file,found:=asset.registry_find_path(r,entry.path);found && file.state==.Asset {
+            out.asset,out.kind=file.id,api_asset_kind_name(s,file.kind)
         }
-        serial.write_u8(w,'}')
     }
-    used:=make([dynamic]string,context.temp_allocator)
+    used:=make([dynamic]string,call.allocator)
     world_unsaved_assets(s,edited_world(s),&used)
-    serial.text_write_raw(w,`],"scene":[`)
-    for path,i in used {
-        if i>0 {serial.write_u8(w,',')}
-        serial.text_write_string(w,unsaved_name(s,path))
-    }
-    serial.text_write_raw(w,`]}`)
+    for &path in used {path=unsaved_name(s,path)}
+    result.scene=used[:]
 }
 
 // The unsaved files of the caller: those its turn changed, or every one
@@ -131,7 +97,7 @@ api_unsaved_of_caller :: proc(s:^Session,call:^api.Call) -> []string {
 // The paths the params name: each an unsaved asset, by path or id, all of
 // them, or with none named those of the caller when none says so.
 @(private)
-api_unsaved_paths :: proc(s:^Session,call:^api.Call,p:^Api_Unsaved_Params,of_caller:=false) -> (paths:[dynamic]string,ok:bool) {
+api_unsaved_paths :: proc(s:^Session,call:^api.Call,p:^Api_Asset_Save_Params,of_caller:=false) -> (paths:[dynamic]string,ok:bool) {
     if s.app==nil || s.app.assets==nil {
         api.call_fail(call,api.SERVER_ERROR,"The editor has no assets")
         return
@@ -142,8 +108,11 @@ api_unsaved_paths :: proc(s:^Session,call:^api.Call,p:^Api_Unsaved_Params,of_cal
         return paths,true
     }
     r:=&s.app.assets.registry
-    for &entry in p.assets[:p.count] {
-        name:=base.text_get(entry[:])
+    if len(p.assets)>API_UNSAVED {
+        api.call_failf(call,api.INVALID_PARAMS,"assets takes at most %d entries; all: true takes every one",API_UNSAVED)
+        return
+    }
+    for name in p.assets {
         if name=="" {continue}
         path:=name
         if id,is_id:=serial.text_parse_asset_id(name);is_id {
@@ -171,11 +140,10 @@ api_unsaved_paths :: proc(s:^Session,call:^api.Call,p:^Api_Unsaved_Params,of_cal
 
 @(private)
 api_asset_save :: proc(s:^Session,call:^api.Call) {
-    p:Api_Unsaved_Params
-    if !api_unsaved_params(call,&p) {return}
-    paths,ok:=api_unsaved_paths(s,call,&p,of_caller=true)
+    p:=api.call_params(call,Api_Asset_Save_Params)
+    paths,ok:=api_unsaved_paths(s,call,p,of_caller=true)
     if !ok {return}
-    folder:=base.text_get(p.folder[:])
+    folder:=p.folder
     if folder!="" {
         api_unsaved_copy(s,call,folder,paths[:])
         return
@@ -186,8 +154,7 @@ api_asset_save :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.SERVER_ERROR,"%d of %d assets could not be written and stay unsaved: %s",len(paths)-saved,len(paths),failures)
         return
     }
-    serial.text_write_raw(call.out,`{"saved":`);serial.text_write_int(call.out,i64(saved))
-    serial.write_u8(call.out,'}')
+    api.call_result(call,Api_Saved_Result).saved=saved
 }
 
 // Copies of unsaved assets under a folder of .mirai/tmp/ of the project, at
@@ -213,21 +180,18 @@ api_unsaved_copy :: proc(s:^Session,call:^api.Call,folder:string,paths:[]string)
         }
         copied+=1
     }
-    serial.text_write_raw(call.out,`{"saved":`);serial.text_write_int(call.out,i64(copied))
-    api.write_key(call.out,"folder");serial.text_write_string(call.out,target)
-    serial.write_u8(call.out,'}')
+    api.call_result(call,Api_Saved_Result)^={copied,target}
 }
 
 @(private)
 api_asset_discard :: proc(s:^Session,call:^api.Call) {
     if api_turn_refused(s,call,"discard unsaved changes of the user") {return}
-    p:Api_Unsaved_Params
-    if !api_unsaved_params(call,&p) {return}
-    if base.text_get(p.folder[:])!="" {
+    p:=api.call_params(call,Api_Asset_Save_Params)
+    if p.folder!="" {
         api.call_fail(call,api.INVALID_PARAMS,"folder is for asset.save")
         return
     }
-    paths,ok:=api_unsaved_paths(s,call,&p)
+    paths,ok:=api_unsaved_paths(s,call,p)
     if !ok {return}
     api.call_result(call,Api_Discarded_Result).discarded=assets_discard(s,paths[:])
 }

@@ -20,8 +20,8 @@ difference with the catalog, it rules.
 - Connecting a client, limits, errors, MCP: [the server](references/api.md#the-server),
   [method conventions](references/api.md#method-conventions) and
   [MCP over HTTP](references/api.md#mcp-over-http).
-- Calling from the terminal: [`mirai rpc`](references/api.md#mirai-rpc) (also `--batch`, many
-  calls as one `batch`, whose calls can name the results of earlier ones) and
+- Calling from the terminal: [`mirai rpc`](references/api.md#mirai-rpc) (`mirai rpc batch --file`:
+  many calls as one request, whose calls can name the results of earlier ones) and
   [`mirai mcp`](references/api.md#mirai-mcp); reading only some fields or waiting for a state
   without `sleep` loops: [`--select` and `--wait-until`](references/api.md#fields-and-waits); the
   params and result of a method, with an example, and the methods of a plugin:
@@ -114,10 +114,10 @@ difference with the catalog, it rules.
    with `components`), `component.list` (components, fields, ranges
    and initial values), `asset.list`; a single field with `--select` (`_select` in a call of MCP),
    and a state that takes time (`play.network.status`) with `--wait-until` (`_wait_until`).
-3. Edit the entities with `scene.write`, the document `scene.inspect` with `root` gives: with
-   `merge` it names only what it adds or changes; without it, it declares all there is under
-   `root`. Calls of several methods that succeed or fail together go in `batch` with
-   `transaction`.
+3. Edit the entities with `scene.write`, its `entities` the `tree` `scene.inspect` with `root`
+   gives: it names only what it adds or changes; with `replace` it declares all there is under
+   `root`, and what it leaves out goes. Calls of several methods that succeed or fail together
+   go in `batch` with `transaction`.
 4. Verify with `scene.inspect` or `capture`; undo with `history.undo`. A method that fails
    changes nothing.
 5. Debugging a game: `play.history` with `trace` reads what happened at past ticks, `verify`
@@ -175,14 +175,15 @@ positions misses both.
 ### Adding or changing a method
 
 1. Register it with `api_register` in the editor or in a
-   [plugin provider](../mirai-editor/references/extensions.md#api-methods), with flat structs
-   for params and result ([conventions](references/api.md#method-conventions)). The `summary` is
-   one sentence about what it is for; what each field is goes in its `label=`, without commas.
-   A field that only bounds how much it answers takes the `clamp` tag.
-2. If the handler writes the result by hand, declare its shape with `result=R` and
-   `writes_result=true` (`list`, `any` and `key=` in the tags) and test what is written with
-   `api.result_mismatch`; `params_schema` for params read by hand and `result_schema` written by
-   hand only for what a struct does not describe.
+   [plugin provider](../mirai-editor/references/extensions.md#api-methods), with a struct for
+   its params and one for its result ([conventions](references/api.md#method-conventions)): they
+   are its only description. The `summary` is one sentence about what it is for; what each field
+   is goes in its `label=`, the last option of its tag. A field that only bounds how much it
+   answers takes the `clamp` tag; what the method does to the editor is in its `flags`.
+2. The handler reads `call.params` and fills `call.result`; a list of any length is a slice it
+   makes in `call.allocator`. A handler that still writes its JSON itself says
+   `writes_result=true`, and its test checks what it wrote against the result type with
+   `api.result_mismatch`.
 3. Document it in the [catalog](references/methods.md) only with what the schema does not say.
 4. A contract change (name, params, result, error code) updates its consumers in the same task:
    `editor/ai_context.odin` (instructions to the agent), plugins and this skill; an incompatible
@@ -211,7 +212,9 @@ positions misses both.
   same ([protocol](references/api.md#concurrency-transactions-and-undo)).
 - Answers name entities by `core.Id`, or a live one by its handle (`0x` and 16 hexadecimal digits
   in a string), and assets by `Asset_Id` (32 digits).
-- Methods and their schemas are server data; they are not duplicated by hand elsewhere.
+- Methods and their schemas are server data; they are not duplicated by hand elsewhere. The
+  schema of a method is derived from the structs of its params and its result: nothing writes a
+  JSON Schema by hand.
 - Each method belongs to the editor or to the plugin whose provider registers it. MCP lists only
   the editor core (the methods with the `Core` flag: the basics of a scene) and the `call` tool,
   which runs any other method by name; `X-Mirai-Plugins` adds those of those plugins (`*`: all
@@ -237,9 +240,10 @@ positions misses both.
   `std/serial/text_test.odin` (a reader of loose names) and
   `editor/api_runtime_inspect_test.odin` (a name of a component or a key resolves as it is
   written or says the nearest).
-- Declared results: `editor/api/schema_test.odin` (a result the handler writes is described by its
-  type; the description of the methods has the shape it declares); those of an editor method, with
-  `api_result_shape_expect` of `editor/api_result_shape_test.odin` in its test, as
+- Declared params and results: `editor/api/schema_test.odin` (a method is described by its types
+  alone, lists of any length and any JSON included; a result the handler writes is described by
+  its type; the description of the methods has the shape it declares); those of an editor
+  method, with `api_result_shape_expect` of `editor/api_result_shape_test.odin` in its test, as
   `editor/ai_api_test.odin` does.
 - Writers of a recording (EXR, 16-bit PNG, WAV): `mirai test cook/movie`; its contact sheet and
   the grid of its cells: `cook/image/image_test.odin`; the held actions of its manifest:

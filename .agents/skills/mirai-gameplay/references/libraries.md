@@ -46,8 +46,9 @@ the name of their type) and a world (handles and tables).
   rotation is none and a zero scale is 1; its rows wait for the end of the function that spawned
   it. It never reads a file: a prefab that is not loaded, or that takes something that is not,
   gives its root at once with only its `Transform`, `Parent`, `Id` and `Prefab_Pending{prefab}`;
-  jobs read the prefab and what it takes (`prefab_warm_begin`, at most `PREFAB_WARMS` at once) and
-  `scene_spawns` (`frame`, both loops) places the rest on the root, which keeps what it was given
+  jobs read the prefab and what it takes (`assets_warm_begin`, at most `PREFAB_WARMS` at once) and
+  `scene_spawns` (`frame`, both loops), once a read ended or the spawns that wait changed, and not
+  in every frame meanwhile, places the rest on the root, which keeps what it was given
   meanwhile (a seat that drives it keeps driving it); a prefab that does not place takes its root
   away with the problem. `spawns_fill(all=true)` waits, for an answer of the editor that gives the
   copy whole. `spawn_member`, the copy of an entity of a section that is not loaded, waits the same
@@ -131,20 +132,33 @@ root (an instance with overrides in a document, `spawn` while running).
   also that of an instance stored in the document: the root's rules.
 - **When it loads** (`sections.odin`): `rule` `With_Document` loads with its document; `Manual`,
   when requested; `Spatial`, as the streaming plugin decides. `state` is what was requested:
-  `Active`, `Loaded` (loaded and turned off, ready to turn on without a pause: what hangs goes
-  under `Disabled` with `Section_Held` and the reference stays on, so that another state can be
-  requested of it) or `Unloaded`; `loaded`, what it loaded. `section_request(&r, e, state)` in
+  `Active`, `Loaded` (loaded and turned off, ready to turn on without a pause: what hangs goes under
+  `Disabled` with `Section_Held` and the reference stays on, so that another state can be requested
+  of it) or `Unloaded`; `loaded`, what it loaded. `section_request(&r, e, state)` in
   `Section_Requests` requests it and `scene_sections` (`frame`, both loops) fulfills it: it loads
   separately in jobs, up to `SECTION_LOADS` at a time per world (`Section_Loads`, of each `World`),
-  and settles nothing while it walks the references. A scene that replaces the world
-  (`Scene_Root.changes`) takes the loads in flight with it. What loads requested as `Loaded` is
-  joined already turned off. A section that did not load stays in `failed` and is not retried until
-  it is requested again; one whose scene contains it is `Cycle`, and its problem names the scenes
-  around it (`section_path`). The reference is replicated: with networking the server requests and
-  each end loads its own. A `Spatial` one follows `streamed`, what this end's streaming wants,
-  which does not travel: `section_state` says what each one has to be. The editor shows a section
-  in another way in its view with `Section_Views` (`section_view`), which `scene_sections` reads
-  first: it is not an edit, it is not saved, it is not replicated and Play does not copy it.
+  and settles nothing while it walks the references. Those a source stands in load first, then by
+  how near the sources come to their boxes, then by `Id`: never by the order of the table; one a
+  source stands in, with every place taken, takes the place of the load farthest from the sources,
+  and has the job workers and the frames (`host.assets_load_whole`). A load no longer wanted stops
+  its jobs and leaves its place at once: it goes once they end (`Section_Loads.cancelled`), and no
+  frame waits for them. A scene that replaces the world (`Scene_Root.changes`) takes the loads in
+  flight with it. What loads requested as `Loaded` is joined already turned off. A section that did
+  not load stays in `failed` and is not retried until it is requested again; one whose scene
+  contains it is `Cycle`, and its problem names the scenes around it (`section_path`). The reference
+  is replicated: with networking the server requests and each end loads its own. A `Spatial` one
+  follows `streamed`, what this end's streaming wants, which does not travel: `section_state` says
+  what each one has to be. The editor shows a section in another way in its view with
+  `Section_Views` (`section_view`), which `scene_sections` reads first: it is not an edit, it is not
+  saved, it is not replicated and Play does not copy it.
+- **Who outruns the loads** (`scene_holds`, `game`): a body a seat drives that stands in the box of
+  a section to load that is not loaded (`ready_at`) takes `Section_Held`, on: physics holds it
+  where it is, kinematic and at rest, still colliding, drawn and animated, until where it stands
+  is loaded or did not load; a place moves it meanwhile, and the hold follows where it went. The
+  rows on of `Section_Held` are only those: what a section holds is off with them.
+  `Section_Settings.wait` `Free` holds nothing: the game keeps its player in a loading zone of its
+  own, or slows it, by `ready_at`. A section that joins goes or turns off in the next frame at
+  the earliest, once what joined hangs from it.
 - **What is unloaded** (`dormant.odin`): while a section is loaded, its record (`Section_Records`)
   knows what changed since it loaded through the stamps of its rows (`core.changes`) and, through
   the shape of each entity (which components it has and which it turned off), which component went
@@ -236,7 +250,11 @@ section that is not on until it returns.
 **Far shape (HLOD).** `streaming_far` (`frame`, both loops, after `scene_sections`) shows, while a
 section is not loaded and on, the far mesh of its scene next to its reference (`Section_Proxy` and a
 transient `Mesh_Renderer`, which follow the reference): it is seen from afar, enters the rays and
-keeps covering the sun and the sky.
+keeps covering the sun and the sky. The far mesh is read in jobs (`assets_warm_begin`, up to
+`FAR_WARMS` at once, those of loaded sections first) and shows once it is read: no frame reads it,
+and a loaded section stays as it is, on or off, until its far mesh can take its place
+(`scene.section_stay`); one whose read ended without it shows none and keeps none. A proxy whose
+scene has another far mesh still being read keeps the one it shows.
 
 - The far mesh of a scene is a derived asset of it, an asset as any, shared by all its references
   (`cook/far`), which `far_find` finds again when the registry changes (`Streaming_Far`): a

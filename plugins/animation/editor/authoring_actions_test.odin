@@ -35,11 +35,12 @@ action_authoring_resolves_named_sections_defaults_and_preserves_assets_on_failur
     set,error:=anim.character_view(&file,&f.assets.types);profile:=set.actions;testing.expect_value(t,error,asset.Error.None)
     testing.expect(t,profile.actions[0].weight==1 && profile.actions[0].speed==1 && profile.actions[0].exit==1 && profile.actions[0].layer=={} && profile.sections[0].next==1 && profile.sections[1].next== -1);asset.asset_close(&file)
     result=authoring_test_execute(f,"inspect",fmt.tprintf(`{{"asset":"%s"}}`,asset_text));testing.expect_value(t,result.code,0)
-    text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"next": "end"`) && !strings.contains(text,"section_count"))
+    text:=api.json_compact(string(serial.writer_bytes(&f.out)));testing.expect(t,strings.contains(text,`"next":"end"`) && !strings.contains(text,"section_count"))
     {
         failure:=Action_Inspect_Allocator{owner=context.temp_allocator,size=2*size_of(Action_Section_Params)}
         params:=Asset_Inspect_Params{asset=asset_id,limit=32}
-        call:=api.Call{method=api.method_find(&f.server,"inspect"),params=&params,out=&f.out,allocator={action_inspect_allocator,&failure}}
+        inspected:Asset_Inspect_Result
+        call:=api.Call{method=api.method_find(&f.server,"inspect"),params=&params,result=&inspected,out=&f.out,allocator={action_inspect_allocator,&failure}}
         serial.writer_reset(&f.out)
         asset_inspect(&f.session,&call)
         testing.expect(t,failure.failed && call.failed && call.error.code==api.SERVER_ERROR)
@@ -66,7 +67,7 @@ action_authoring_resolves_named_sections_defaults_and_preserves_assets_on_failur
         result=authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"hero.character",%s}}`,bad));testing.expectf(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,c[1]),"%s: %s",c[0],result.data)
         testing.expect_value(t,authoring_test_revision(f,"hero.character"),revision)
     }
-    schema:=authoring_result_schema(Asset_Inspect_Result,type_info_of(Asset_Inspect_Result),context.temp_allocator);testing.expect(t,strings.contains(schema,`"root_motion"`) && strings.contains(schema,`"cancel"`) && !strings.contains(schema,"section_count"))
+    schema:=authoring_result_schema(Asset_Inspect_Result,context.temp_allocator);testing.expect(t,strings.contains(schema,`"root_motion"`) && strings.contains(schema,`"cancel"`) && !strings.contains(schema,"section_count"))
     requested:=request_defaults();authoring_test_register(f,t,"request",Request_Params,request,requested)
     result=authoring_test_execute(f,"request",`{"entity":"0000000000000001","actions":[{"name":"attack"}]}`)
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"actions"`) && strings.contains(result.data,`"code":"Runtime_Required"`))

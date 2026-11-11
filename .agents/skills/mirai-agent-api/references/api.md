@@ -202,7 +202,6 @@ mirai rpc <method> [key=value...|json|-|--file F] [--select FIELDS]
   [--wait-until CONDITION]
   [--project P] [--port N] [--timeout S]
 mirai rpc describe [plugin|method|prefix|method...] [--project P|--port N]
-mirai rpc --batch <calls.jsonl|-> [the same options]
 ```
 
 - Params are `key=value` arguments or one JSON object (`{}` if missing; `-` from stdin).
@@ -224,11 +223,8 @@ mirai rpc --batch <calls.jsonl|-> [the same options]
   process is alive but uses no CPU for `api.CLIENT_HUNG_SECONDS` is `-32095`, naming its pid and
   its log. Knowing the process needs a port file: with `--port` only that of the project at or
   above the current folder. A call to `MIRAI_API_PORT` sends `MIRAI_AI_TASK`
-  ([context](#ai-turn-context)). `--batch` reads one `{"method","params"}` call per line, from a
-  file or from stdin (`-`), and sends them as the calls of one
-  [`batch`](methods.md#scene), so many calls cost one process and one request; it prints what
-  `batch` answers, and at the first call that fails its error. `--timeout` bounds the whole
-  batch.
+  ([context](#ai-turn-context)). Many calls cost one process and one request as the params of
+  one [`batch`](methods.md#scene), in a file (`mirai rpc batch --file calls.json`) or from stdin.
 - Output: the result on stdout and code 0; an error, on stderr as `{"error":{...}}` and code 1;
   invalid arguments, `Usage:` and code 2. From the client: `-32099` with no editor listening,
   `-32097` when `--timeout` runs out, `-32096` if it closed the connection without answering (it
@@ -361,27 +357,30 @@ when the server opens; code reload rebuilds methods and schemas without closing 
   under the assets folder, with or without its extension, checked against the field's `kind`;
   results keep ids. A miss lists the nearest paths of that kind.
 - **Params are taken as they can only be meant**, in one place before anything reads them
-  (`api.params_shape`, over the JSON Schema of the method, with or without a type): a key that is
+  (`api.params_shape`, over the JSON Schema of the method): a key that is
   the singular or the plural of one field, a
   single value where a list goes, a list of one where a single value goes, and a number or a
   boolean, as its text, where the schema takes only a string. A list of several for a single
   value fails saying so.
-- **A key the params do not declare is `-32602`**, with the same words for a typed method and
-  for one that reads them by hand: an object of a `params_schema` that has `properties` takes
-  only those, unless it says `"additionalProperties":true` or gives the schema of the others
-  (an object keyed by component name).
+- **A key the params do not declare is `-32602`**; a method without a params type takes none.
+  What only the world gives a shape (an object keyed by component name) is a `serial.Json` field,
+  which takes any JSON.
 - **A name of a registry is matched as a person writes it** (`base.name_find`): components, enum
   members of params and values, input keys and presets, without minding case, underscores, spaces
   or hyphens. It resolves only when exactly one candidate fits; otherwise the error says which
   fit or the nearest ones, when any is close for the length of the name. It is for what comes
   through the API: assets and binary data are read exactly.
-- **Params and result are flat structs.** A field is required unless its tag carries `optional`;
-  when absent, it takes the value from the method's `defaults`, or zero.
-  - Text: `[N]u8` with tag `text`, up to N bytes.
+- **Params and result are structs, and they are the only description of a method.** A field is
+  required unless its tag carries `optional`; when absent or `null`, it takes the value from the
+  method's `defaults`, or zero. A method without a result type answers `null`, and an optional
+  field of a result that holds nothing (zero, empty) is left out of the answer.
+  - Text: `[N]u8` with tag `text`, up to N bytes, or a `string` of any length.
+  - A list of any length is a slice (`[]T`) and any JSON value a `serial.Json` field, which holds
+    its text; both live in the scratch of the call, so a request that does not fit fails. A type
+    does not hold itself: a nested document is a `serial.Json` field.
   - `min`/`max` bound numbers and each element of an array; `label` is the schema description and
     `unit`, its unit (`x-unit`).
   - An array of numbers has exactly its length; another array, up to its length.
-  - `any` on a param takes any JSON, which its handler reads from `Call.raw`.
   - `clamp` on an integer that only bounds how much a method answers: past its `max` it takes it,
     and the result says so in `_clamped`. Other ranges fail.
   - A fixed array with tag `trim` is written up to its last element with any non-zero byte
@@ -400,12 +399,18 @@ when the server opens; code reload rebuilds methods and schemas without closing 
 - **Hexadecimal ids.** An entity (`core.Id`) is taken as a string of up to 16 digits
   (`"00a1b2c3d4e5f607"`, also with `0x`) and answered with `0x` and all its digits; an asset, 32
   digits without it. A live `core.Entity` handle has the form of an id and appears as `entity`
-  (`play.inspect`, `play.player`).
+  (`scene.inspect` of a game, `play.player`).
 - **Transforms local to the parent**: `rotation_deg` in Euler degrees, position in meters and
   scale in factors. `world_position` is read-only.
-- **Free-form methods** (`scene.*`, `editor.input`, `camera.set`, `*.inspect`, `*.list`…) read or
-  write the JSON by hand. They declare `params_schema` and, if the result has a known shape,
-  `result_schema`.
+- **`Call.raw` is the text of the params as their types say them**: a handler that reads a
+  `serial.Json` field, or still reads its params from the text, gets the names of enums as the
+  type has them. A handler that writes its result itself declares its type the same way
+  (`writes_result`); a result whose type is `serial.Json` has no declared shape.
+- **A method the state of the editor does not allow now** (no game plays, or one does) fails with
+  `-32001`, whose `data.fix` names the method that changes it (`play.start`, `play.stop`).
+- **What a method does to the editor is in its flags** (`api.Method_Flag`), which
+  `engine.describe` lists: it only reads, it draws the scene, it runs as the user would, it
+  changes the view and not the document.
 - The values of a component are the JSON of its schema: fields in the order of the type, enums by
   name, entity references as Id. `transient` fields are neither written nor accepted.
 

@@ -32,7 +32,7 @@ Streaming_Seen :: struct {
     settings:Streaming_Settings,
 }
 
-@(step="frame",loops="game editor")
+@(step="frame",loops="game editor",before="scene_sections")
 streaming_sections :: proc(sources:core.Ref(scene.Streaming_Sources),references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),settings:core.Ref(Streaming_Settings),seen:^Streaming_Seen,requests:^scene.Section_Requests) {
     s:=settings.ptr!=nil?settings.ptr^:STREAMING_SETTINGS_DEFAULT
     if sources.ptr==nil || s.load<=0 {return}

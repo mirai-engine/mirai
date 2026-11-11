@@ -35,17 +35,12 @@ Settle_Result :: struct {
 @(private)
 api_settle_register :: proc(s:^editor.Session) {
     defaults:=Settle_Params{ticks=SETTLE_TICKS}
-    editor.api_method_register(s,Settle_Params,Settle_Result,{
-        name="physics.settle",
+    editor.api_method_register(s,{
+        params=type_info_of(Settle_Params),result=type_info_of(Settle_Result),name="physics.settle",
         summary="Simulates the scene with only the given entities moving until they rest or the ticks run out, and keeps their poses as one step of undo: what drops placed objects onto the scene and onto each other. Create them above where they fall with scene.write, each with a Collider.",
         defaults=&defaults,run=api_settle,
-        entry={label="Drop to rest",params=`{"entities":["$selection"]}`,icon=.Import,menu=.Tools,state=settle_state,scene=true},
     })
-}
-
-@(private)
-settle_state :: proc(s:^editor.Session,b:^editor.Binding) -> editor.Command_State {
-    return {disabled=s.mode!=.Edit || len(s.selection.entities)==0}
+    editor.command_bind(s,{method="physics.settle",label="Drop to rest",params=`{"entities":["$selection"]}`,icon=.Import,menu=.Tools,modes={.Edit},scene=true})
 }
 
 @(private)

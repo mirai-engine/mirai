@@ -5,7 +5,6 @@ import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
-import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
@@ -68,15 +67,15 @@ rig_modifier_api_discovers_named_operations_effectors_and_retarget_chains_of_the
     value:=anim.ANIMATION_DEFAULT;value.asset=pose_id;core.add(&play.animations,first,value)
     value.asset=retarget_id;core.add(&play.animations,second,value);test_world_settle(&play)
     f.session.info,f.session.mode=test_world_info(&play),.Play;f.session.runs[0]={world=&play}
-    inspect:=Modifier_Inspect_Params{limit=256};requested:=request_defaults()
+    inspect:=Instance_Inspect_Params{parts={.Modifiers},limit=256};requested:=request_defaults()
     authoring_test_register(f,t,"request",Request_Params,request,requested)
-    authoring_test_register(f,t,"inspect",Modifier_Inspect_Params,program_modifier_inspect,&inspect)
+    authoring_test_register(f,t,"inspect",Instance_Inspect_Params,instance_inspect,&inspect)
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000011"}`).code,0)
-    output:=string(serial.writer_bytes(&f.out))
+    output:=api.json_compact(string(serial.writer_bytes(&f.out)))
     testing.expect(t,strings.contains(output,`"total":5`) && strings.contains(output,`"name":"transfer"`))
     testing.expect(t,!strings.contains(output,`"diagnostic"`) && !strings.contains(output,`"slot"`) && !strings.contains(output,`"index"`) && strings.contains(output,`"left"`) && strings.contains(output,`"right"`))
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000011","diagnostics":true}`).code,0)
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"diagnostic"`))
+    testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"target_alpha"`))
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000012","controls":[{"kind":"Chain_Retarget","name":"transfer","weight":0.4}]}`).code,0)
     testing.expect(t,len(play.animation_requests.controls.items)==1 && play.animation_requests.controls.items[0].rig==second && play.animation_requests.controls.items[0].slot==0)
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector":"right","target":{"position":[1,2,3]}}]}`).code,0)

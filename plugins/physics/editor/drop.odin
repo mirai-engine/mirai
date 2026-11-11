@@ -55,9 +55,8 @@ drop_free :: proc(tool:^Drop_Tool) {
 @(private)
 api_drop_register :: proc(s:^editor.Session) {
     editor.tool_entry(s,DROP_TOOL,"Drop",.Import,{key=.P,set=true})
-    editor.api_method_register(s,Drop_Params,{name="physics.drop",summary="The Confirm and Cancel of the Drop tool, for the person who holds a drop open: Confirm keeps the dropped meshes where they are as one step of undo, Cancel takes them away. A call of an agent finds none open, since an edit of an agent ends what the person left open; an agent drops with physics.settle.",run=api_drop})
-    editor.command_bind(s,{name="drop_confirm",method="physics.drop",params=`{"end":"Confirm"}`,label="Confirm",state=drop_state,scene=true})
-    editor.command_bind(s,{name="drop_cancel",method="physics.drop",params=`{"end":"Cancel"}`,label="Cancel",state=drop_state,scene=true})
+    editor.command_bind(s,{name="drop_confirm",view=proc(s:^editor.Session) {drop_finish(s,true)},label="Confirm",state=drop_state,scene=true})
+    editor.command_bind(s,{name="drop_cancel",view=proc(s:^editor.Session) {drop_finish(s,false)},label="Cancel",state=drop_state,scene=true})
 }
 
 @(private)
@@ -71,15 +70,11 @@ drop_state :: proc(s:^editor.Session,b:^editor.Binding) -> editor.Command_State 
     return {disabled=tool==nil || !drop_open(s,tool)}
 }
 
+// Confirm and Cancel of the panel: of the person who holds a drop open.
 @(private)
-api_drop :: proc(s:^editor.Session,call:^api.Call) {
-    tool:=drop_tool_of(s)
-    if tool==nil || !drop_open(s,tool) {
-        api.call_fail(call,api.SERVER_ERROR,"No drop is open: hold the left button on the scene with the Drop tool on first")
-        return
-    }
-    if !drop_end(s,tool,api.call_params(call,Drop_Params).end==.Confirm) {
-        api.call_fail(call,api.SERVER_ERROR,"The dropped meshes could not be kept as a step of undo")
+drop_finish :: proc(s:^editor.Session,keep:bool) {
+    if tool:=drop_tool_of(s);tool!=nil && drop_open(s,tool) && !drop_end(s,tool,keep) {
+        editor.notify(s,"The dropped meshes could not be kept as a step of undo")
     }
 }
 

@@ -125,9 +125,9 @@ name:
 - It is passed to `ui.panel` and the controls are built inside the panel's positive block, which
   closes its scope on exit. `free_region` discounts these panels. An independent panel can use
   its own `anchor`/`pivot`.
-- A panel of its own opens from View: the method that opens it carries the entry
-  (`entry={label=..., menu=.View, group=editor.MENU_GROUP_PLUGINS, params=`{"open":"$toggle"}`}` in
-  its `api_method_register`), so an agent opens it too; `profiler` does (`profile.panel`).
+- A panel of its own opens from View: an entry of the plugin with a procedure of the interface
+  (`editor.command_bind(s, {name=..., label=..., menu=.View, group=editor.MENU_GROUP_PLUGINS,
+  view=..., state=...})`), as `profiler` does; what the panel shows is data its methods give.
 - Use the inspector widgets (`ui.section`, `ui.property`, `ui.number_field`, `ui.toggle`,
   `ui.color_field`) and a `ui.Id` of its own scope (`ui.id_derive(ctx, SCOPE, "panel")`). The
   Details cards are `editor.card_begin`, `section_band` and `card_body_begin`, with their open state
@@ -192,11 +192,10 @@ A plugin opens asset types in tabs next to the scenes
 - **Settings.** `editor.settings_open(s, name)` opens Project Settings at that storage's setting,
   like the File menu.
 - The plugin's state follows the front document: on changing asset it rereads it.
-- **Edit keys.** `Asset_Document_Provider.takes` names the entries that work on the scene its
-  documents take instead (`copy`, `paste`, `duplicate`, `delete`, `rename`...): with one in front,
-  their shortcuts do not call their methods, but leave the name of the entry in
-  `Asset_Document.request` with another `request_serial`, and the plugin runs each serial once on
-  what the document has chosen.
+- **Edit keys.** What works on what a document has chosen is entries its plugin binds with
+  `document` set to its kind (`command_bind`; `nodes_bind` of `ui_inspector`): they are on only
+  with one of its documents in front, where those of the scene are off, so they take the same
+  keys; its menus show them with `command_menu_item`.
 - **Create.** `Asset_Document_Provider.creates` says which of its types (of `asset.KINDS`) offer
   the content browser's Create and `asset.create`. The editor chooses the path and id and calls
   `Asset_Document_Provider.create(s, kind, id)`, which returns the bytes of the empty file in the
@@ -334,12 +333,12 @@ A plugin adds modes to the [mode menu](panels.md#inspection-mode) and to
 - `editor.Api_Provider` declares its registry in the default, for example
   `ANIMATION_API_DEFAULT :: Animation_Api{provider={register=register}}`. On opening the API the
   editor invokes that initializer, which the generator publishes in `World_Info`, and the provider
-  calls `editor.api_method_register(s, Params, Result, descriptor)` per method (or without
-  `Result`, or without either for free-form JSON), without running a frame. Reload rebuilds the
-  registry between calls with those of the new library.
-- The `Type_Info` of params and result must come from the library that declares the structs:
-  `api_method_register` is parapoly in them, so it instantiates in that library and takes them
-  itself. `engine.describe` and MCP expose those schemas.
+  calls `editor.api_method_register(s, descriptor)` per method, without running a frame. Reload
+  rebuilds the registry between calls with those of the new library.
+- The descriptor's `params` and `result` are the `type_info_of` of their structs, taken in the
+  library that declares them: each library has its own type table, so the editor cannot look up a
+  plugin's type. `mirai build editor` opens the built editor once with the project and fails with
+  every method that did not register. `engine.describe` and MCP expose those schemas.
 - A method a person runs too carries its entry in the same descriptor (`entry`: label, icon,
   shortcut, menu, params and what it shows): the plugin writes the gesture once, in the method.
   `editor.command_bind` gives a method more entries, with other params.

@@ -10,14 +10,13 @@ import "mirai:host"
 import "mirai:project"
 import gpu "mirai:render"
 import "mirai:std/base"
-import "mirai:std/serial"
 
 Api_Viewport_Params :: struct {
     request:[64]u8 `mirai:"optional,text,label=An older message of the turn by the folder of its snapshot under .mirai/ai; empty: the message of the turn of the caller"`,
 }
 
 Api_Viewport_Result :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=The absolute path of the PNG the message saved; MCP also returns the image"`,
+    path:string `mirai:"label=The absolute path of the PNG the message saved; MCP also returns the image"`,
 }
 
 Api_Capture_Of :: enum u8 {Auto,Scene,Game}
@@ -49,38 +48,34 @@ API_CAPTURE_GAME_FRAMES :: 120
 API_CAPTURE_TEXTURES_WAIT :: 10*time.Second
 
 // What the renderer counted of the image it drew last.
-@(private)
 Api_Capture_Seen :: struct {
-    textures_pending:int,
-    instances_drawn:int,
-    instances_culled:int,
-    instances_occluded:int,
+    textures_pending:int `mirai:"label=Textures still streaming when the image was taken; above 0 with frames left automatic: its wait ran out"`,
+    instances_drawn:int `mirai:"label=Instances drawn in the image; 0 with instances_culled above 0: the camera sees none of what is there; all three 0: nothing is there for it to see"`,
+    instances_culled:int `mirai:"label=Instances outside the view of its camera or hidden from it"`,
+    instances_occluded:int `mirai:"label=Instances in its view behind something drawn"`,
 }
 
 Api_Capture_Result :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=The absolute path of the file written"`,
+    path:string `mirai:"label=The absolute path of the file written"`,
     width:int `mirai:"label=Pixels of the image"`,
     height:int `mirai:"label=Pixels of the image"`,
     columns:int `mirai:"optional,label=A filmstrip: its cells across"`,
     rows:int `mirai:"optional,label=A filmstrip: its cells down"`,
     cell:[2]int `mirai:"optional,label=A filmstrip: the pixels of a cell"`,
     ticks:int `mirai:"optional,label=A filmstrip: the ticks it ran"`,
-    cells:[1]Api_Capture_Cell `mirai:"list,optional,label=A filmstrip: its cells from the top left row by row"`,
-    textures_pending:int `mirai:"optional,label=Textures still streaming when the image was taken; above 0 with frames left automatic: its wait ran out. This and the instance counts are given only when it is above 0 or no instance was drawn"`,
-    instances_drawn:int `mirai:"optional,label=Instances drawn in the image; 0 with instances_culled above 0: the camera sees none of what is there; all three 0: nothing is there for it to see"`,
-    instances_culled:int `mirai:"optional,label=Instances outside the view of its camera or hidden from it"`,
-    instances_occluded:int `mirai:"optional,label=Instances in its view behind something drawn"`,
+    cells:[]Api_Capture_Cell `mirai:"optional,label=A filmstrip: its cells from the top left row by row"`,
+    using seen:Api_Capture_Seen `mirai:"inline"`,
 }
 Api_Capture_Cell :: struct {
     tick:u64 `mirai:"label=The tick of the game it shows"`,
-    at:u8 `mirai:"any,optional,label=Following an entity: where it shows in points of the image; null when it is behind the camera or gone"`,
+    at:[]f32 `mirai:"optional,label=Following an entity: where it shows in points of the image; absent when it is behind the camera or gone"`,
 }
 
 @(private)
 api_viewport_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="view.viewport",summary="see what the user was looking at when sent this message",params=Api_Viewport_Params,result=Api_Viewport_Result,writes_result=true,flags={.Core,.Read_Only,.Idempotent},run=api_view_viewport})
+    api_register(s,st,{name="view.viewport",summary="see what the user was looking at when sent this message",params=type_info_of(Api_Viewport_Params),result=type_info_of(Api_Viewport_Result),flags={.Core,.Read_Only,.Idempotent,.Draws},run=api_view_viewport})
     capture_default:=Api_Capture_Params{dt=HEADLESS_DT,seconds=-1,size={256,256}}
-    api_register(s,st,{name="capture",summary="Draws fresh frames and writes a PNG: alone, the game of the caller as its camera shows it, drawn without showing it on the user's screen, or the edited scene through the camera of the viewport when no game plays (of chooses); with ui, the window of the editor as the user sees it. With path the answer is only where it is and its size; without path MCP also returns the image. With every and count, or segments with every or count, it steps the game and writes one filmstrip of cells around an entity or a region with the tick of each.",params=Api_Capture_Params,result=Api_Capture_Result,writes_result=true,defaults=&capture_default,flags={.Core,.Read_Only},run=api_capture})
+    api_register(s,st,{name="capture",summary="Draws fresh frames and writes a PNG: alone, the game of the caller as its camera shows it, drawn without showing it on the user's screen, or the edited scene through the camera of the viewport when no game plays (of chooses); with ui, the window of the editor as the user sees it. With path the answer is only where it is and its size; without path MCP also returns the image. With every and count, or segments with every or count, it steps the game and writes one filmstrip of cells around an entity or a region with the tick of each.",params=type_info_of(Api_Capture_Params),result=type_info_of(Api_Capture_Result),defaults=&capture_default,flags={.Core,.Read_Only,.As_User,.Draws},run=api_capture})
 }
 
 // What the caller is playing as an image, the scene the viewport shows or the
@@ -95,7 +90,7 @@ api_capture :: proc(s:^Session,call:^api.Call) {
     filmstrip:=(p.every[0]!=0 && base.text_get(p.every[:])!="0") || api_filmstrip_spread(call,p)
     if filmstrip && p.of==.Scene {api.call_fail(call,api.INVALID_PARAMS,"a filmstrip steps the game: leave of out, or give Game");return}
     game:=!p.ui && p.of!=.Scene && (r!=nil || p.of==.Game)
-    if (game || filmstrip) && r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if (game || filmstrip) && r==nil {api_no_game(call);return}
     if game || filmstrip {
         if p.seconds>=0 || p.dt!=HEADLESS_DT {api.call_fail(call,api.INVALID_PARAMS,"dt and seconds are the clock of the window: a game runs by its ticks, so leave them out");return}
         if p.frames>API_CAPTURE_GAME_FRAMES {api.call_failf(call,api.INVALID_PARAMS,"frames: a game draws at most %d for an image",API_CAPTURE_GAME_FRAMES);return}
@@ -190,23 +185,11 @@ api_capture_seen :: proc(app:^host.App) -> Api_Capture_Seen {
     return {int(stats.textures_pending),int(stats.visible_instances),int(stats.culled_instances),int(stats.occluded_instances)}
 }
 
-// The counts only when they explain a wrong image: nothing drawn or textures not in yet.
+// What capture answers for one image; shown: MCP also gives the image. path
+// is copied: the answer is written after whoever made it lets go of it.
 @(private)
-api_capture_seen_write :: proc(out:^serial.Writer,seen:Api_Capture_Seen) {
-    if seen.instances_drawn>0 && seen.textures_pending==0 {return}
-    api.write_int(out,"textures_pending",i64(seen.textures_pending))
-    api.write_int(out,"instances_drawn",i64(seen.instances_drawn))
-    api.write_int(out,"instances_culled",i64(seen.instances_culled))
-    api.write_int(out,"instances_occluded",i64(seen.instances_occluded))
-}
-
-// What capture answers for one image; shown: MCP also gives the image.
-@(private)
-api_capture_reply :: proc(call:^api.Call,path:string,width,height:int,shown:bool,seen:Maybe(Api_Capture_Seen)=nil) {
-    serial.text_write_raw(call.out,`{"path":`);serial.text_write_string(call.out,path)
-    api.write_int(call.out,"width",i64(width));api.write_int(call.out,"height",i64(height))
-    if counted,known:=seen.?;known {api_capture_seen_write(call.out,counted)}
-    serial.write_u8(call.out,'}')
+api_capture_reply :: proc(call:^api.Call,path:string,width,height:int,shown:bool,seen:=Api_Capture_Seen{}) {
+    api.call_result(call,Api_Capture_Result)^={path=api.clone_text(call.allocator,path),width=width,height=height,seen=seen}
     if shown {api.call_image(call,path)}
 }
 
@@ -303,6 +286,6 @@ api_view_viewport :: proc(s:^Session,call:^api.Call) {
     }
     path:=project.path(s.project_root,fmt.tprintf(".mirai/ai/%s/%s",request,AI_FILE_IMAGE),allocator=context.temp_allocator)
     if !os.is_file(path) {api.call_fail(call,api.SERVER_ERROR,"The viewport snapshot for this message is unavailable");return}
-    serial.text_write_raw(call.out,`{"path":`);serial.text_write_string(call.out,path);serial.write_u8(call.out,'}')
+    api.call_result(call,Api_Viewport_Result).path=path
     api.call_image(call,path)
 }

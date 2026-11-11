@@ -21,29 +21,29 @@ Api_Component_Params :: struct {
 }
 
 Api_Component_List :: struct {
-    components:[1]Api_Component_Entry `mirai:"list"`,
-    left_out:[256]u8 `mirai:"text,optional,label=What the answer leaves out and how to ask for it"`,
+    components:[]Api_Component_Entry,
+    left_out:string `mirai:"optional,label=What the answer leaves out and how to ask for it"`,
 }
 Api_Component_Entry :: struct {
-    name:[64]u8 `mirai:"text"`,
-    library:[64]u8 `mirai:"text,label=The package that declares it"`,
-    description:[1024]u8 `mirai:"text,optional"`,
-    plain_data:bool `mirai:"optional,label=Present and false when the component is not plain data: it has no default nor fields"`,
-    default:u8 `mirai:"any,optional,label=The value of a new component"`,
-    fields:[1]Api_Component_Field `mirai:"list,optional,label=Every field down to those of nested structs"`,
+    name:string,
+    library:string `mirai:"optional,label=The package that declares it"`,
+    description:string `mirai:"optional"`,
+    opaque:bool `mirai:"optional,label=The component is not plain data: it has no default nor fields"`,
+    default:serial.Json `mirai:"optional,label=The value of a new component"`,
+    fields:[]Api_Component_Field `mirai:"optional,label=Every field down to those of nested structs"`,
 }
 Api_Component_Field :: struct {
-    path:[256]u8 `mirai:"text,label=The field after those it is inside; separated by dots"`,
-    type:[16]u8 `mirai:"text,label=Bool Int Uint Float Enum Bit_Set Entity Entity_Id Asset or Array; Text Color or Quaternion by its flags"`,
-    element:[16]u8 `mirai:"text,optional,label=Of an Array: the kind of its elements"`,
+    path:string `mirai:"label=The field after those it is inside; separated by dots"`,
+    type:string `mirai:"label=Bool Int Uint Float Enum Bit_Set Entity Entity_Id Asset or Array; Text Color or Quaternion by its flags"`,
+    element:string `mirai:"optional,label=Of an Array: the kind of its elements"`,
     count:int `mirai:"optional,label=Of an Array: its length"`,
-    options:[1][64]u8 `mirai:"text,list,optional,label=Of an Enum or a Bit_Set: the names it takes"`,
-    min:f32 `mirai:"optional"`,
-    max:f32 `mirai:"optional"`,
-    unit:[32]u8 `mirai:"text,optional"`,
-    label:[256]u8 `mirai:"text,optional,label=The name the inspector shows"`,
-    read_only:bool `mirai:"optional,label=Present and true when scene.write refuses to change it"`,
-    description:[1024]u8 `mirai:"text,optional"`,
+    options:[]string `mirai:"optional,label=Of an Enum or a Bit_Set: the names it takes"`,
+    min:f64 `mirai:"optional"`,
+    max:f64 `mirai:"optional"`,
+    unit:string `mirai:"optional"`,
+    label:string `mirai:"optional,label=The name the inspector shows"`,
+    read_only:bool `mirai:"optional,label=scene.write refuses to change it"`,
+    description:string `mirai:"optional"`,
 }
 
 Api_Asset_Params :: struct {
@@ -54,8 +54,8 @@ Api_Asset_Params :: struct {
 }
 
 Api_Asset_List :: struct {
-    root:[API_PATH_BYTES]u8 `mirai:"text,label=The asset folder"`,
-    assets:[1]Api_Asset_Entry `mirai:"list"`,
+    root:string `mirai:"label=The asset folder"`,
+    assets:[]Api_Asset_Entry,
     total:int `mirai:"label=Assets the filters take"`,
     offset:int,
     shown:int,
@@ -64,9 +64,9 @@ Api_Asset_List :: struct {
     missing:int `mirai:"label=Dependencies that no file of the registry is"`,
 }
 Api_Asset_Entry :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=Under the asset folder"`,
+    path:string `mirai:"label=Under the asset folder"`,
     asset:base.Asset_Id,
-    kind:[32]u8 `mirai:"text,label=The name of its kind (mesh; texture; material...); other for a kind this build does not know"`,
+    kind:string `mirai:"label=The name of its kind (mesh; texture; material...); other for a kind this build does not know"`,
     prefab:bool `mirai:"optional,label=Of a scene: whether it has exactly one root, which makes it a prefab that scene.write with prefab and scene.spawn place"`,
     size:int `mirai:"label=Bytes of the file"`,
     dependencies:int `mirai:"label=Assets it uses"`,
@@ -77,76 +77,62 @@ Api_Asset_Entry :: struct {
 // What api_asset_detach (assets_parts.odin) writes.
 Api_Detach_Result :: struct {
     asset:base.Asset_Id `mirai:"label=The part"`,
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=Its path under the asset folder"`,
+    path:string `mirai:"label=Its path under the asset folder"`,
     owner:base.Asset_Id `mirai:"label=The asset it was a part of"`,
     unsaved:bool `mirai:"label=Always true: the change waits for asset.save"`,
 }
 
 // What api_asset_delete (asset_delete.odin) writes.
 Api_Asset_Delete_Result :: struct {
-    moved:[1][API_PATH_BYTES]u8 `mirai:"text,list,label=The paths moved to the trash: the asset and its parts"`,
-    used_by:[1][API_PATH_BYTES]u8 `mirai:"text,list,label=The files that use what moved; they keep the reference"`,
-    error:[API_PATH_BYTES+64]u8 `mirai:"text,optional,label=Why the rest could not be moved after some were"`,
+    moved:[]string `mirai:"label=The paths moved to the trash: the asset and its parts"`,
+    used_by:[]string `mirai:"label=The files that use what moved; they keep the reference"`,
+    error:string `mirai:"optional,label=Why the rest could not be moved after some were"`,
 }
 
 @(private)
 api_assets_register :: proc(s:^Session,st:^Api_State) {
     assets:=Api_Asset_Params{limit=256}
-    api_register(s,st,{name="component.list",summary="The components a scene can hold, with their defaults and their fields as scene.write takes them.",params=Api_Component_Params,result=Api_Component_List,writes_result=true,flags={.Core,.Read_Only},run=api_component_list})
-    api_register(s,st,{name="asset.list",summary="The assets of the registry by kind and folder, with a count of its broken files, duplicated ids and missing dependencies.",params=Api_Asset_Params,result=Api_Asset_List,writes_result=true,defaults=&assets,flags={.Core,.Read_Only},run=api_asset_list})
-    api_register(s,st,{name="asset.detach",summary="Takes a part of an import out of the asset that owns it so it shows on its own; the import still writes it and leaves it out of the owner.",params=Api_Detach_Params,result=Api_Detach_Result,writes_result=true,run=api_asset_detach})
-    api_register(s,st,{name="asset.create",summary="Makes an empty asset in a folder of the assets as Create of the content browser does; material.set, particle.set and the like fill it.",params=Api_Asset_Create_Params,result=Api_Asset_Create_Result,run=api_asset_create})
-    api_register(s,st,{name="asset.users",summary="The files that use an asset or a part it owns, as the Delete modal of the content browser lists them.",params=Api_Asset_Users_Params,result=Api_Asset_Users_Result,writes_result=true,flags={.Read_Only},run=api_asset_users})
-    api_register(s,st,{name="asset.delete",summary="Moves an asset and the parts it owns to the trash of the system at once and without undo. Fails for files of plugins, the engine or the editor, open tabs and outside Edit.",params=Api_Asset_Delete_Params,result=Api_Asset_Delete_Result,writes_result=true,flags={.Destructive},run=api_asset_delete})
-    api_register(s,st,{name="asset.move",summary="Moves, renames or copies an asset with the parts it owns, or a folder with all it holds, at once and without undo; a move keeps ids and references, an asset its extension. A move fails for files of plugins, the engine or the editor, open tabs, unsaved changes, a folder into itself and outside Edit.",params=Api_Asset_Move_Params,result=Api_Asset_Moved_Result,run=api_asset_move})
+    api_register(s,st,{name="component.list",summary="The components a scene can hold, with their defaults and their fields as scene.write takes them.",params=type_info_of(Api_Component_Params),result=type_info_of(Api_Component_List),flags={.Core,.Read_Only},run=api_component_list})
+    api_register(s,st,{name="asset.list",summary="The assets of the registry by kind and folder, with a count of its broken files, duplicated ids and missing dependencies.",params=type_info_of(Api_Asset_Params),result=type_info_of(Api_Asset_List),defaults=&assets,flags={.Core,.Read_Only},run=api_asset_list})
+    api_register(s,st,{name="asset.detach",summary="Takes a part of an import out of the asset that owns it so it shows on its own; the import still writes it and leaves it out of the owner.",params=type_info_of(Api_Detach_Params),result=type_info_of(Api_Detach_Result),run=api_asset_detach})
+    api_register(s,st,{name="asset.create",summary="Makes an empty asset in a folder of the assets as Create of the content browser does; material.set, particle.set and the like fill it.",params=type_info_of(Api_Asset_Create_Params),result=type_info_of(Api_Asset_Create_Result),run=api_asset_create})
+    api_register(s,st,{name="asset.users",summary="The files that use an asset or a part it owns, as the Delete modal of the content browser lists them.",params=type_info_of(Api_Asset_Users_Params),result=type_info_of(Api_Asset_Users_Result),flags={.Read_Only},run=api_asset_users})
+    api_register(s,st,{name="asset.delete",summary="Moves an asset and the parts it owns to the trash of the system at once and without undo. Fails for files of plugins, the engine or the editor, open tabs and outside Edit.",params=type_info_of(Api_Asset_Delete_Params),result=type_info_of(Api_Asset_Delete_Result),flags={.Destructive},run=api_asset_delete})
+    api_register(s,st,{name="asset.move",summary="Moves, renames or copies an asset with the parts it owns, or a folder with all it holds, at once and without undo; a move keeps ids and references, an asset its extension. A move fails for files of plugins, the engine or the editor, open tabs, unsaved changes, a folder into itself and outside Edit.",params=type_info_of(Api_Asset_Move_Params),result=type_info_of(Api_Asset_Moved_Result),run=api_asset_move})
 }
 
 // ---------------------------------------------------------------- component.list
 
 @(private)
-api_fields_write :: proc(w:^serial.Writer,schema:^serial.Schema,type:serial.Type_Index,prefix:string,first:^bool,include_runtime:bool=false) {
+api_fields :: proc(schema:^serial.Schema,type:serial.Type_Index,prefix:string,list:^[dynamic]Api_Component_Field,include_runtime:bool=false) {
     t:=schema.types[type]
     for field in schema.fields[t.first:][:t.count] {
         if !include_runtime && (.Hidden in field.flags || .Transient in field.flags) {continue}
-        path:=prefix==""?field.name:strings.concatenate({prefix,".",field.name},context.temp_allocator)
+        path:=prefix==""?field.name:strings.concatenate({prefix,".",field.name},list.allocator)
         inner:=schema.types[field.type]
         if inner.kind==.Struct {
-            api_fields_write(w,schema,field.type,path,first,include_runtime)
+            api_fields(schema,field.type,path,list,include_runtime)
             continue
         }
-        if !first^ {serial.write_u8(w,',')}
-        first^=false
-        serial.text_write_raw(w,`{"path":`);serial.text_write_string(w,path)
         kind,_:=reflect.enum_name_from_value(inner.kind)
         switch {
         case .Text in field.flags:     kind="Text"
         case .Color in field.flags:    kind="Color"
         case .Rotation in field.flags: kind="Quaternion"
         }
-        api.write_key(w,"type");serial.text_write_string(w,kind)
+        row:=Api_Component_Field{path=path,type=kind,label=field.label,read_only=.Read_Only in field.flags,description=field.description,unit=field.unit}
         if inner.kind==.Array && kind=="Array" {
-            elem:=schema.types[inner.elem]
-            elem_kind,_:=reflect.enum_name_from_value(elem.kind)
-            api.write_key(w,"element");serial.text_write_string(w,elem_kind)
-            api.write_key(w,"count");serial.text_write_int(w,i64(inner.count))
+            row.element,_=reflect.enum_name_from_value(schema.types[inner.elem].kind)
+            row.count=int(inner.count)
         }
         if inner.kind==.Enum || inner.kind==.Bit_Set {
-            api.write_key(w,"options");serial.write_u8(w,'[')
-            for choice,i in schema.choices[inner.first:][:inner.count] {
-                if i>0 {serial.write_u8(w,',')}
-                serial.text_write_string(w,choice.name)
-            }
-            serial.write_u8(w,']')
+            row.options=make([]string,inner.count,list.allocator)
+            for &option,i in row.options {option=schema.choices[inner.first+u32(i)].name}
         }
-        if field.has_min {api.write_key(w,"min");serial.text_write_float(w,transmute(u64)field.min,8)}
-        if field.has_max {api.write_key(w,"max");serial.text_write_float(w,transmute(u64)field.max,8)}
-        unit:=field.unit
-        if unit=="" && .Angle in field.flags {unit="rad"}
-        if unit!="" {api.write_key(w,"unit");serial.text_write_string(w,unit)}
-        if field.label!="" {api.write_key(w,"label");serial.text_write_string(w,field.label)}
-        if .Read_Only in field.flags {api.write_key(w,"read_only");api.write_flag(w,true)}
-        if field.description!="" {api.write_key(w,"description");serial.text_write_string(w,field.description)}
-        serial.write_u8(w,'}')
+        if field.has_min {row.min=transmute(f64)field.min}
+        if field.has_max {row.max=transmute(f64)field.max}
+        if row.unit=="" && .Angle in field.flags {row.unit="rad"}
+        append(list,row)
     }
 }
 
@@ -154,7 +140,6 @@ api_fields_write :: proc(w:^serial.Writer,schema:^serial.Schema,type:serial.Type
 api_component_list :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Component_Params)
     st:=api_state(s)
-    w:=call.out
     named:[API_COMPONENT_NAMES]^core.Table_Info
     count:=0
     for &entry in params.names {
@@ -166,52 +151,42 @@ api_component_list :: proc(s:^Session,call:^api.Call) {
             return
         }
         if !params.include_runtime && table.derived {
-            api.call_failf(call,api.INVALID_PARAMS,"%s is derived by the engine: it is not added nor written, play.inspect reads it; include_runtime=true lists it",table.name)
+            api.call_failf(call,api.INVALID_PARAMS,"%s is derived by the engine: it is not added nor written, scene.inspect with world Game reads it; include_runtime=true lists it",table.name)
             return
         }
         named[count]=table
         count+=1
     }
-    serial.text_write_raw(w,`{"components":[`)
-    first:=true
+    result:=api.call_result(call,Api_Component_List)
+    components:=make([dynamic]Api_Component_Entry,call.allocator)
     for &t,i in s.info.tables {
         if t.place!=.World || count>0 && !slice.contains(named[:count],&t) {continue}
         type:=st.types[i]
-        // A derived component is not added nor written: play.inspect reads it.
+        // A derived component is not added nor written: an inspect of the game reads it.
         if !params.include_runtime && t.derived {continue}
-        if !first {serial.write_u8(w,',')}
-        first=false
-        serial.text_write_raw(w,`{"name":`);serial.text_write_string(w,t.name)
         if count==0 {
-            if brief:=api.summary_brief(t.description);brief!="" {api.write_key(w,"description");serial.text_write_string(w,brief)}
-            serial.write_u8(w,'}')
+            append(&components,Api_Component_Entry{name=t.name,description=api.summary_brief(t.description)})
             continue
         }
+        entry:=Api_Component_Entry{name=t.name,library=t.library,description=t.description,opaque=type==serial.TYPE_NONE}
+        if entry.opaque {append(&components,entry);continue}
         size:=t.info.size
-        api.write_key(w,"library");serial.text_write_string(w,t.library)
-        api.write_key(w,"description");serial.text_write_string(w,t.description)
-        if type==serial.TYPE_NONE {
-            api.write_key(w,"plain_data");api.write_flag(w,false)
-            serial.write_u8(w,'}')
-            continue
-        }
         bytes,_:=make([]u8,max(size,1),call.allocator)
         if t.default!=nil {t.default(raw_data(bytes))} else {component_default(t.type,bytes)}
         for offset in entity_offsets(t.info) {(cast(^u64)&bytes[offset])^=0}
         omitted:=serial.Field_Flags{.Transient,.Hidden} if !params.include_runtime else serial.Field_Flags{}
-        api.write_key(w,"default");serial.text_write(w,&st.schema,type,bytes[:size],.Line,omit_fields=omitted)
-        api.write_key(w,"fields");serial.write_u8(w,'[')
-        fields_first:=true
-        if st.schema.types[type].kind==.Struct {api_fields_write(w,&st.schema,type,"",&fields_first,params.include_runtime)}
-        serial.write_u8(w,']')
-        serial.write_u8(w,'}')
+        // The default is of a type the world declares.
+        value:serial.Writer
+        serial.writer_init(&value,0,call.allocator)
+        serial.text_write(&value,&st.schema,type,bytes[:size],.Line,omit_fields=omitted)
+        entry.default=serial.Json(string(serial.writer_bytes(&value)))
+        fields:=make([dynamic]Api_Component_Field,call.allocator)
+        if st.schema.types[type].kind==.Struct {api_fields(&st.schema,type,"",&fields,params.include_runtime)}
+        entry.fields=fields[:]
+        append(&components,entry)
     }
-    serial.write_u8(w,']')
-    if count==0 {
-        api.write_key(w,"left_out")
-        serial.text_write_string(w,"the library, default and fields of each: ask for them with name or names (up to 16)")
-    }
-    serial.write_u8(w,'}')
+    result.components=components[:]
+    if count==0 {result.left_out="the library, default and fields of each: ask for them with name or names (up to 16)"}
 }
 
 // ---------------------------------------------------------------- asset.list
@@ -254,37 +229,18 @@ api_asset_list :: proc(s:^Session,call:^api.Call) {
     host.assets_scan(a)
     registry:=&a.registry
     folder:=base.text_get(params.folder[:])
-    w:=call.out
-    total,shown:=0,0
-    broken:=0
-    serial.text_write_raw(w,`{"root":`);serial.text_write_string(w,registry.root)
-    api.write_key(w,"assets");serial.write_u8(w,'[')
+    r:=api.call_result(call,Api_Asset_List)
+    entries:=make([dynamic]Api_Asset_Entry,call.allocator)
     for &file in registry.files {
-        if file.state==.Broken {broken+=1}
+        if file.state==.Broken {r.broken+=1}
         if file.state!=.Asset || !asset.registry_listed(&file) || !api_asset_kind_matches(s,base.text_get(params.kind[:]),file.kind) {continue}
         if folder!="" && !strings.has_prefix(file.path,folder) {continue}
-        total+=1
-        if total<=params.offset || shown>=params.limit {continue}
-        if shown>0 {serial.write_u8(w,',')}
-        shown+=1
-        serial.text_write_raw(w,`{"path":`);serial.text_write_string(w,file.path)
-        api.write_key(w,"asset");api_asset_write(w,file.id)
-        api.write_key(w,"kind");serial.text_write_string(w,api_asset_kind_name(s,file.kind))
-        if file.kind==asset.KIND_SCENE {api.write_key(w,"prefab");api.write_flag(w,asset.registry_prefab(&file))}
-        api.write_key(w,"size");serial.text_write_int(w,file.size)
-        api.write_key(w,"dependencies");serial.text_write_int(w,i64(file.dependency_count))
-        api.write_key(w,"used_by");serial.text_write_int(w,i64(len(asset.registry_dependents(registry,file.id))))
-        if file.owner!={} {api.write_key(w,"owner");api_asset_write(w,file.owner)}
-        serial.write_u8(w,'}')
+        r.total+=1
+        if r.total<=params.offset || len(entries)>=params.limit {continue}
+        append(&entries,Api_Asset_Entry{file.path,file.id,api_asset_kind_name(s,file.kind),asset.registry_prefab(&file),int(file.size),int(file.dependency_count),len(asset.registry_dependents(registry,file.id)),file.owner})
     }
-    serial.write_u8(w,']')
-    api.write_key(w,"total");serial.text_write_int(w,i64(total))
-    api.write_key(w,"offset");serial.text_write_int(w,i64(params.offset))
-    api.write_key(w,"shown");serial.text_write_int(w,i64(shown))
-    api.write_key(w,"broken");serial.text_write_int(w,i64(broken))
-    api.write_key(w,"duplicates");serial.text_write_int(w,i64(len(registry.duplicates)+len(registry.reassigned)))
     missing:=make([dynamic]asset.Registry_Missing,context.temp_allocator)
     asset.registry_missing(registry,&missing)
-    api.write_key(w,"missing");serial.text_write_int(w,i64(len(missing)))
-    serial.write_u8(w,'}')
+    r.root,r.assets,r.offset,r.shown=registry.root,entries[:],params.offset,len(entries)
+    r.duplicates,r.missing=len(registry.duplicates)+len(registry.reassigned),len(missing)
 }

@@ -141,8 +141,8 @@ describe_words :: proc(schema:string) -> string {
         if json_member(schema,"x-entity")!="" {return "entity name, path or id"}
         pattern,_:=json_string(json_member(schema,"pattern"))
         switch pattern {
-        case "^(0x)?[0-9a-fA-F]{1,16}$": return "entity id (up to 16 hex)"
-        case "^0x[0-9a-fA-F]{32}$":      return "128-bit integer (0x and 32 hex)"
+        case PATTERN_ENTITY_ID: return "entity id (up to 16 hex)"
+        case PATTERN_WIDE:      return "128-bit integer (0x and 32 hex)"
         }
         if size:=json_member(schema,"maxLength");size!="" {return fmt.tprintf("string up to %s",size)}
         return "string"
@@ -214,9 +214,9 @@ describe_value :: proc(b:^strings.Builder,schema:string,depth:int) {
         if json_member(schema,"x-entity")!="" {strings.write_string(b,`"Floor"`);break}
         pattern,_:=json_string(json_member(schema,"pattern"))
         switch pattern {
-        case "^(0x)?[0-9a-fA-F]{1,16}$": strings.write_string(b,`"0000000000000001"`)
-        case "^0x[0-9a-fA-F]{32}$":      strings.write_string(b,`"0x00000000000000000000000000000000"`)
-        case:                            strings.write_string(b,`"x"`)
+        case PATTERN_ENTITY_ID: strings.write_string(b,`"0000000000000001"`)
+        case PATTERN_WIDE:      strings.write_string(b,`"0x00000000000000000000000000000000"`)
+        case:                   strings.write_string(b,`"x"`)
         }
     case "array":
         count,_:=strconv.parse_int(json_member(schema,"minItems"),10)

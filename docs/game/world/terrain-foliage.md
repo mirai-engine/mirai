@@ -5,7 +5,7 @@ the plugins stream, draw with levels of detail and collide. Add `"terrain"` and 
 `plugins` in `project.mirai`. Never make ground or vegetation from cubes, planes or imported
 meshes placed one by one: they do not stream, paint, scatter or collide as these do.
 
-Name what you make: later calls find it by that name, so one `--batch` file of JSON lines builds a
+Name what you make: later calls find it by that name, so one `batch` file builds a
 whole scene, with no ids to pass between calls ([whole-scene.md](../assets/whole-scene.md)).
 
 ## Ground

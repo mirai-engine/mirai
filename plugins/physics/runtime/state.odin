@@ -117,9 +117,11 @@ Link :: struct {
 
 // Who holds a body, heading for a pose in every step: a manipulation (a tool, a
 // ragdoll) or a following pose target, which goes first and holds it as kinematic.
-// A character a following target leads is put at its pose after every step.
+// A character a following target leads is put at its pose after every step. A
+// section holds it where it is, kinematic and at rest, character too
+// (physics_section_holds).
 @(private)
-Hold_Source :: enum u8 {Manipulation,Target}
+Hold_Source :: enum u8 {Manipulation,Target,Section}
 
 // What steers a body or a character: the sources that hold it, and the pose target it took.
 @(private)

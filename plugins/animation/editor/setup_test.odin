@@ -2,7 +2,6 @@ package animation_editor
 
 import "core:fmt"
 import cmath "core:math"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -97,12 +96,12 @@ character_setup_builds_locomotion_look_feet_hands_and_gestures_from_the_body :: 
     result=authoring_test_execute(a,"setup",strings.concatenate({request[:len(request)-1],`,"dry_run":true}`},context.temp_allocator))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     testing.expect(t,!authoring_test_exists(a,"characters/figure.character"))
-    text:=string(serial_bytes(a))
+    text:=api.json_compact(string(serial_bytes(a)))
     testing.expectf(t,strings.contains(text,`"clip":"Idle","mode":"WALKING","entry":false,"loop":true`) && strings.contains(text,`"clip":"Walk","mode":"WALKING"`) && strings.contains(text,`"gestures":["Wave"]`),"clips in %s",text)
 
     result=authoring_test_execute(a,"setup",request)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
-    text=string(serial_bytes(a))
+    text=api.json_compact(string(serial_bytes(a)))
     for want in ([]string{"Locomotion","Look","Foot_Ik","Hand_Ik","Gestures"}) {testing.expectf(t,strings.contains(text,fmt.tprintf(`"want":"%s","status":"Ready"`,want)),"%s in %s",want,text)}
     testing.expectf(t,strings.contains(text,`"detail":"walking: Idle, Walk"`),"detail in %s",text)
     // One .character holds the locomotion, the gestures, the warping and the modifiers.
@@ -122,7 +121,7 @@ character_setup_builds_locomotion_look_feet_hands_and_gestures_from_the_body :: 
         actions:=set.actions
         testing.expect(t,len(actions.actions)==3 && len(actions.layers)==3)
         if len(actions.actions)==3 && len(actions.layers)==3 {
-            testing.expect(t,base.text_get(actions.layers[0].over.path[:])=="@upper_body" && base.text_get(actions.layers[1].over.path[:])=="@arm_l" && base.text_get(actions.layers[2].over.path[:])=="@arm_r")
+            testing.expect(t,base.text_get(actions.layers[0].over[0].bone.path[:])=="@upper_body" && actions.layers[0].over[0].depth>1 && base.text_get(actions.layers[1].over[0].bone.path[:])=="@arm_l" && base.text_get(actions.layers[2].over[0].bone.path[:])=="@arm_r")
             for action,i in actions.actions {testing.expect(t,action.layer==actions.layers[i].name,"each gesture plays in the layer of its part of the body")}
         }
         // Idle and walk alone make a valid locomotion: rates cover the speeds between them.
@@ -160,7 +159,7 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
     // Only the clips named are classified, at the speed told for them.
     result:=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"clips":["Idle","Walk"],"speeds":[{{"clip":"Walk","speed":2.5}}],"dry_run":true}}`,ids))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
-    text:=string(serial_bytes(a))
+    text:=api.json_compact(string(serial_bytes(a)))
     testing.expectf(t,strings.contains(text,`"clip":"Walk","mode":"WALKING","entry":false,"loop":true,"speed":2.5,"told":true`) && strings.contains(text,`"gestures":[]`),"clips in %s",text)
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"clips":["Idle","Run"]}}`,ids))
     testing.expect(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"clips[1]"`) && strings.contains(result.data,"Missing_Clip"))
@@ -169,7 +168,7 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
     // A clip with rates of its own plays between them instead of those of the locomotion.
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Locomotion"],"speeds":[{{"clip":"Walk","speed":3}}],"rates":[{{"clip":"Walk","min_rate":0.5,"max_rate":1.5}}]}}`,ids))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
-    text=string(serial_bytes(a))
+    text=api.json_compact(string(serial_bytes(a)))
     testing.expectf(t,strings.contains(text,`"speed":3,"told":true,"rates":[0.5,1.5]`),"rates in %s",text)
     match:asset.Asset
     if testing.expect_value(t,authoring_test_load(a,"characters/figure.character",&match),asset.Error.None) {
@@ -184,7 +183,7 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
     blends:=`"blends":[{"clips":["Idle","Walk"],"samples":[{"weights":[1,0,0,0,0,0,0,0]},{"weights":[0.5,0.5,0,0,0,0,0,0],"speed":0.6},{"weights":[0,1,0,0,0,0,0,0]}],"min_rate":0.5,"max_rate":2}]`
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Locomotion"],"replace":true,%s,"min_rate":0.3,"max_rate":1.5,"trajectory_direction":0}}`,ids,blends))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
-    text=string(serial_bytes(a))
+    text=api.json_compact(string(serial_bytes(a)))
     testing.expectf(t,strings.contains(text,`"locomotion":[],"blends":[{"clips":["Idle","Walk"],"mode":"WALKING","samples":3,"rates":[0.5,2]}]`),"blends in %s",text)
     if testing.expect_value(t,authoring_test_load(a,"characters/figure.character",&match),asset.Error.None) {
         set,error:=anim.character_view(&match,&a.assets.types);profile:=set.match
@@ -231,14 +230,14 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Gestures"]}}`,crowded))
     testing.expectf(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Capacity"`) && strings.contains(result.data,"Wave_0"),"%s",result.data)
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Locomotion","Gestures"],"clips":["Idle_0","Wave_3"],"dry_run":true}}`,crowded))
-    testing.expectf(t,result.code==0 && strings.contains(string(serial_bytes(a)),`"gestures":["Wave_3"]`),"%s %s",result.message,result.data)
+    testing.expectf(t,result.code==0 && strings.contains(api.json_compact(string(serial_bytes(a))),`"gestures":["Wave_3"]`),"%s %s",result.message,result.data)
 
     // With the skeleton alone it writes the assets and changes no entity.
     before,_:=core.get(&f.world.animations,f.rig)
     solo:=fmt.tprintf(`"skeleton":"%s","library":"%s","folder":"solo"`,authoring_test_id_text(base.Asset_Id{840,2}),authoring_test_id_text(library))
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s}}`,solo))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
-    text=string(serial_bytes(a))
+    text=api.json_compact(string(serial_bytes(a)))
     testing.expectf(t,strings.has_prefix(text,`{"skeleton":`) && authoring_test_exists(a,"solo/figure.character"),"%s",text)
     after,_:=core.get(&f.world.animations,f.rig)
     testing.expect(t,after==before && after.asset!=authoring_test_id(a,"solo/figure.character"))

@@ -23,7 +23,7 @@ schema_failure_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,al
 @(test)
 schema_read_and_clone_release_every_partial_allocation_and_hashes_retry_without_memory :: proc(t:^testing.T) {
     Kind :: enum u8 {First,Second}
-    Sample :: struct {kind:Kind,values:[3]f32 `mirai:"label=Values,unit=m"`}
+    Sample :: struct {kind:Kind,values:[3]f32 `mirai:"unit=m,label=Values"`}
     original:Schema;schema_init(&original);defer schema_destroy(&original)
     if _,ok:=schema_add(&original,Sample);!testing.expect(t,ok) {return}
     bytes:Writer;writer_init(&bytes);defer writer_destroy(&bytes)

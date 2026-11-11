@@ -50,10 +50,10 @@ Body_Motion :: struct {translation:mm.Vec3,move:Action_Body_Move,vertical:bool}
 // parameters too.
 Stack_Layer :: struct {
     name:[64]u8 `mirai:"text"`,
-    over:Bone_Ref `mirai:"optional"`,       // the bone, @part or @region of the body whose branch it moves; empty: the whole pose
+    over:[LAYER_BRANCHES]Layer_Branch `mirai:"optional"`, // the branches of the body it moves, each fading in over its depth; none: the whole pose
     mode:Layer_Mode `mirai:"optional"`,
     curves:Curve_Blend `mirai:"optional"`,
-    mesh_space:bool `mirai:"optional"`,     // Override: the rotations of its branch blend in the space of the rig, so it keeps the turn its clip gives them whatever the base turns above it
+    mesh_space:bool `mirai:"optional"`,     // its rotations go in the space of the rig: Override keeps the turn its clip gives them whatever the base turns above, Additive turns them about the axes of the rig
     weight:f32 `mirai:"optional,min=0,max=1"`, // until set gives it another
     fade:f32 `mirai:"optional,min=0,unit=s"`,  // seconds its weight takes to follow, and of a change of what it plays
     clip:[64]u8 `mirai:"text,optional"`,    // what it plays while no action does; empty: nothing
@@ -100,7 +100,8 @@ action_layer_find :: proc(profile:Action_Profile,name:[64]u8) -> (index:int,ok:b
 action_profile_check :: proc(profile:Action_Profile) -> bool {
     if len(profile.actions)>ACTION_CAPACITY || len(profile.layers)>STACK_LAYERS || len(profile.sections)>ACTION_ROWS {return false}
     for &layer,i in profile.layers {
-        if !blend_text_valid(layer.name[:],false) || !blend_text_valid(layer.clip[:],true) || !blend_text_valid(layer.reference_clip[:],true) || !blend_text_valid(layer.space[:],true) || !profile_bone(layer.over) || layer.mode>max(Layer_Mode) || layer.curves>max(Curve_Blend) || !profile_weight(layer.weight) {return false}
+        if !blend_text_valid(layer.name[:],false) || !blend_text_valid(layer.clip[:],true) || !blend_text_valid(layer.reference_clip[:],true) || !blend_text_valid(layer.space[:],true) || layer.mode>max(Layer_Mode) || layer.curves>max(Curve_Blend) || !profile_weight(layer.weight) {return false}
+        for branch in layer.over {if !profile_bone(branch.bone) {return false}}
         for number in ([?]f32{layer.fade,layer.reference}) {if !finite(number) || number<0 {return false}}
         if !finite(layer.speed) || layer.clip[0]!=0 && layer.space[0]!=0 || layer.sync && layer.clip[0]==0 || layer.animation!={} && layer.clip[0]==0 {return false}
         for previous in profile.layers[:i] {if previous.name==layer.name {return false}}
@@ -109,7 +110,7 @@ action_profile_check :: proc(profile:Action_Profile) -> bool {
         if !blend_text_valid(value.name[:],false) || !blend_text_valid(value.clip[:],false) || !blend_text_valid(value.layer[:],true) || !blend_text_valid(value.exit_marker[:],true) || value.root_motion>max(Root_Motion_Policy) || value.cancel>max(Action_Cancel_Policy) || value.entry>max(Action_Entry) || !profile_weight(value.weight) || !finite(value.speed) || value.speed<=0 || value.clock>max(Action_Clock) || value.body_move>max(Action_Body_Move) || !finite(value.exit) || value.exit<=0 || value.exit>1 {return false}
         layer,found:=action_layer_find(profile,value.layer)
         if !found {return false}
-        if value.root_motion!=.None && layer>=0 && (profile.layers[layer].over!={} || profile.layers[layer].mode!=.Override) {return false}
+        if value.root_motion!=.None && layer>=0 && (layer_over(profile.layers[layer].over)!={} || profile.layers[layer].mode!=.Override) {return false}
         if value.body_move!=.None && value.root_motion==.None || value.body_vertical && value.body_move==.None {return false}
         for number in ([?]f32{value.fade_in,value.fade_out}) {if !finite(number) || number<0 {return false}}
         for previous in profile.actions[:i] {if previous.name==value.name {return false}}
@@ -121,6 +122,11 @@ action_profile_check :: proc(profile:Action_Profile) -> bool {
     }
     return true
 }
+// The branches of a layer as its asks carry them.
+layer_over :: proc(over:[LAYER_BRANCHES]Layer_Branch) -> (hashed:Layer_Over) {
+    for branch,i in over {if hash:=bone_ref_hash(branch.bone);hash!=0 {hashed[i]={hash,branch.depth}}}
+    return
+}
 action_profile_free :: proc(profile:^Action_Profile,allocator:=context.allocator) {delete(profile.layers,allocator);delete(profile.actions,allocator);delete(profile.sections,allocator);profile^={}}
 @(private)
 action_profile_clone :: proc(source:Action_Profile,allocator:mem.Allocator) -> (profile:Action_Profile,ok:bool) {
@@ -129,8 +135,10 @@ action_profile_clone :: proc(source:Action_Profile,allocator:mem.Allocator) -> (
     profile.sections,ok=rows_clone(source.sections,allocator);if !ok {action_profile_free(&profile,allocator);return {},false}
     return profile,true
 }
-// What play, stop and set ask of the animation of an entity; animation_sample serves them.
-Play_Request :: struct {entity:core.Entity,stop:bool,action,section:[64]u8 `mirai:"text"`}
+// What play, play_at, stop and set ask of the animation of an entity; animation_sample serves them.
+// driven: at is the seconds since the action started that play_at gives, gone to without telling
+// what it passes with seek.
+Play_Request :: struct {entity:core.Entity,stop,driven,seek:bool,at:f32,action,section:[64]u8 `mirai:"text"`}
 Value_Request :: struct {entity:core.Entity,name:u64,value:f32}
 
 // Plays the action named name of the .character of entity, from section when
@@ -142,6 +150,16 @@ play :: proc(requests:^Animation_Requests,entity:core.Entity,name:string,section
     if requests==nil {return}
     if entity==core.NONE || name=="" || len(name)>=64 || len(section)>=64 {core.refuse(&requests.plays);return}
     value:=Play_Request{entity=entity};base.text_set(value.action[:],name);base.text_set(value.section[:],section);core.offer(&requests.plays,value)
+}
+// Plays the action named name of the .character of entity where a timeline drives it: seconds after
+// it started, at its speed. Asked on every tick it follows that time instead of its own clock, so a
+// cutscene that pauses, seeks or is scrubbed shows the pose of its time; one that does not play
+// starts there, from its start whatever its entry. seek goes there without telling what it passes,
+// as a seek of a clip does; going back is a seek. While it is not asked it plays on by itself.
+play_at :: proc(requests:^Animation_Requests,entity:core.Entity,name:string,seconds:f32,seek:=false) {
+    if requests==nil {return}
+    if entity==core.NONE || name=="" || len(name)>=64 || !finite(seconds) || seconds<0 {core.refuse(&requests.plays);return}
+    value:=Play_Request{entity=entity,driven=true,seek=seek,at=seconds};base.text_set(value.action[:],name);core.offer(&requests.plays,value)
 }
 // Ends the action named name on entity as its cancel policy says: at once, at the end of its
 // section, or not at all.
@@ -180,6 +198,11 @@ Action_Playing :: struct {
     entering:bool,          // the next sample starts it at its section, from the span of its clip, and tells it
     late:f32,               // seconds of its clip it starts past its section: another end started it that much before
     windows:[ACTION_WINDOWS]u64, // the names of the spans of its clip it is inside of; 0: free
+    origin:f32,             // where its clip started, in origin_section
+    origin_section:i16,
+    elapsed:f32,            // seconds it played since it started
+    driven,drive_seek:bool, // play_at asked it in this tick for drive seconds since it started
+    drive:f32,
     player:lib.Player,
     from,to:f32,
     continuous:bool,
@@ -219,10 +242,9 @@ action_plan_bind :: proc(plan:^Action_Plan,set:Character_Set) {
     plan.animation=set.info.animation
     plan.slots,plan.layers,plan.layer_names={},{},{}
     for &layer,i in plan.profile.layers {
-        over,_:=bone_ref_hash(layer.over)
         plan.layer_names[i]=base.name_hash(base.text_get(layer.name[:]))
         plan.layers[i]={
-            clip=base.name_hash(base.text_get(layer.clip[:])) if layer.clip[0]!=0 else 0,over=over,weight=layer.weight,speed=layer.speed,fade=layer.fade,loop=layer.loop,sync=layer.sync,
+            clip=base.name_hash(base.text_get(layer.clip[:])) if layer.clip[0]!=0 else 0,over=layer_over(layer.over),weight=layer.weight,speed=layer.speed,fade=layer.fade,loop=layer.loop,sync=layer.sync,
             mode=layer.mode,reference=layer.reference,reference_clip=base.name_hash(base.text_get(layer.reference_clip[:])) if layer.reference_clip[0]!=0 else 0,curves=layer.curves,mesh_space=layer.mesh_space,space=u8(character_space(set,layer.space)+1) if layer.space[0]!=0 else 0,
         }
     }
@@ -466,6 +488,13 @@ actions_prepare :: proc(runtime:^Action_Runtime,requests:^Animation_Requests,cha
             core.report(problems,request.entity,"animation.action_missing","a %s of action '%s' was refused: the .character of this entity has no action with that name; name one of its actions (animation.inspect lists them), or add it with animation.action.set",verb,name)
             continue
         }
+        // A driven play is each end's own: its driver runs on every end.
+        if request.driven {
+            slot:=&state.slots[plan.slots[index]]
+            if (!slot.active || slot.finishing || int(slot.action)!=index) && !action_ask(runtime,state,index,-1,false,0,false,playback,events,problems) {continue}
+            slot.driven,slot.drive_seek,slot.drive=true,request.seek,request.at
+            continue
+        }
         section:=-1
         if request.section!=([64]u8{}) {
             for value,i in profile.sections {if int(value.action)==index && value.name==request.section {section=i;break}}
@@ -551,6 +580,9 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
     if content==nil {actions_interrupt(runtime,active,playback,events,problems);return}
     for &slot,i in active.slots {
         if !slot.active {continue}
+        driven:=slot.driven;slot.driven=false
+        // A driven play sought or sent back tells nothing of this tick, as a seek of a clip.
+        silent:=len(events.items) if driven && (slot.drive_seek || slot.drive<slot.elapsed) else -1
         if !planned && !slot.finishing {action_end(runtime,active,&slot,true,playback,events,problems)}
         layer:=&state.layers[i]
         // A finishing slot hands its layer back to what it plays by itself over the fade out of its
@@ -599,7 +631,7 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
             continue
         }
         layer.root_motion,layer.body,layer.body_vertical=definition.root_motion,definition.body_move,definition.body_vertical
-        if slot.starting && slot.section<0 {
+        if slot.starting && slot.section<0 && !driven {
             // Where its clip starts, by the clip the base plays.
             switch definition.entry {
             case .Start:
@@ -608,6 +640,7 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
             }
         }
         if entered {
+            if slot.starting {slot.origin,slot.origin_section,slot.elapsed=slot.time,slot.section,slot.late}
             slot.time=min(slot.time+slot.late*speed,duration);slot.late=0
             if slot.section>=0 {action_emit(runtime,active,&slot,.Section,slot.time,playback,events,problems)}
             action_windows(runtime,active,&slot,content,handle,slot.time,slot.time,playback,events,problems,true)
@@ -624,6 +657,15 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
         seek:=controlled && distance.seek
         rejected:=false
         remaining:=dt if animation.playing else 0
+        if driven {
+            // Forward it plays to the time asked; sought or back it starts over and goes there.
+            if silent>=0 {
+                action_windows(runtime,active,&slot,nil,0,slot.time,slot.time,playback,events,problems,leave=true)
+                slot.time,slot.section,slot.elapsed=slot.origin,slot.origin_section,0
+                current.time,current.fresh,current.done=slot.time,true,false
+            }
+            remaining=slot.drive-slot.elapsed
+        }
         exit:=action_exit(content,handle,definition,duration)
         if controlled {
             target:=distance.time;valid:=finite(target) && target>=0 && target<=duration
@@ -676,6 +718,7 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
             slot.time=current.time;action_windows(runtime,active,&slot,content,handle,from,slot.time,playback,events,problems)
             remaining-=step
             event_elapsed+=step
+            slot.elapsed+=step
             if slot.time<end || remaining<=0 && slot.time<end {break}
             next:=profile.sections[slot.section].next if slot.section>=0 else -1
             if slot.cancel_pending || next<0 {action_end(runtime,active,&slot,slot.cancel_pending,playback,events,problems);break}
@@ -697,6 +740,14 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
                 core.report(problems,state.entity,"animation.action_sections","action '%s' crossed %d sections in one tick and was stopped: its sections loop without length between them; give them length",base.text_get(definition.name[:]),ACTION_PASSES)
                 action_end(runtime,active,&slot,true,playback,events,problems)
             }
+        }
+        // Where the driver said, without what the steps of its sections round off.
+        if driven && !slot.finishing {slot.elapsed=slot.drive}
+        if silent>=0 {
+            base.truncate(&events.items,silent)
+            slot.from,slot.continuous,layer.from,layer.carried=slot.time,false,slot.time,ROOT_DELTA_DEFAULT
+            // Sought past its end it is over: nothing of it shows.
+            if slot.finishing {asked.weight,asked.fade=0,0}
         }
         // One that ends in this tick plays its last part at its weight, and fades out from the next.
         current.speed=0

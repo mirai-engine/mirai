@@ -10,8 +10,9 @@ it ([shots and actions](#shots-and-actions)). A scene contains the components an
 playback through code; the editor builds them with the Cinematics tool and the API
 ([editor and API](#editor-and-api)). `cinematic_advance` runs in `fixed` (`react`): it reads the
 `Playback` that `animation_advance` writes, so it sees what the clip wrote in the tick.
-`cinematic_follow` asks the clip of a client to go where the server's is. Both run only while
-playing (`Time.playing`).
+`cinematic_follow` asks the clip of a client to go where the server's is; it runs only while
+playing (`Time.playing`). `cinematic_advance` runs in the editor too, where it only drives the
+actors to the head of the clip.
 
 ## Components
 
@@ -47,9 +48,13 @@ target are (`anim.animation_markers`, `anim.animation_bound`).
   those of `engine/camera`. With `block_mask`, it also owns an input block of the seat. Both go
   when the clip stops, ends or has no shot in force; the view leaves with the blend of the last
   shot, as any override does.
-- **An action** is a marker on another entity: entering it plays the action of its name there
-  (`anim.play`), leaving a span stops it if it still plays (`anim.stop`), and a moment lasts until
-  the clip stops or ends. Only the end that decides the timeline asks.
+- **An action** is a marker on another entity: from its time to the end of its span, or of the clip
+  for a moment, the action of its name there is driven by the clip
+  ([`anim.play_at`](../../mirai-animation/references/animation-actions.md#requests-and-lifecycle)),
+  at the time of the clip less that of the marker: paused it holds, sought or scrubbed it shows the
+  pose of that time, and leaving the span stops it if it still plays. One that ended by itself
+  inside its span is not started again until the clip is sought. Every end drives its actors by
+  its own clip, which follows the anchor.
 - `Cameras` and `Seats` are derived: after a saved game loads, the timeline asks for its override
   and its block again. An action does not resume after a load.
 - A marker whose target no entity has, or whose entity is gone, is the problem
@@ -93,15 +98,22 @@ the editor has no other.
 - Shot view puts the viewport's view on the shot at the head with its blend from the shot before,
   without roll; turning it off or leaving the tool restores the previous view.
 - `cinematics.control` in Edit moves the head of the Tracks tool on the timeline (turns the tool
-  on) and in Play queues the command with `anim.animation_command`. `add` requires Edit.
+  on) and in Play queues the command with `anim.animation_command`.
+- A timeline is the recipe `cinematic` (`scene.write` with `preset`, Create, the tool's New
+  timeline): an entity with a `Cinematic` and the `Animation` that plays its clip. No method makes
+  one or an actor: they are components `scene.write` writes.
 
 ## Verification
 
 - `mirai test plugins/cinematics/runtime`:
   `the_markers_of_a_clip_cut_between_cameras_and_play_actions_while_it_plays` (the override and
-  the block a shot asks, as `camera_override` asks it, the action a span plays and stops, a marker
+  the block a shot asks, as `camera_override` asks it, the action a span drives and stops, a marker
   on an entity that is gone, the release at the end and a client following the anchor),
-  `a_head_of_a_scrubbed_clip_shows_one_shot` and `an_anchor_gives_the_time_of_a_clip_at_a_tick`.
+  `a_head_of_a_scrubbed_clip_shows_one_shot` (and the action it drives to the head) and
+  `an_anchor_gives_the_time_of_a_clip_at_a_tick`,
+  `a_scrubbed_timeline_plays_from_its_start_in_a_play` (the copy Play starts from); the driven
+  play itself:
+  `a_driven_action_shows_the_time_of_its_driver_played_or_sought` in `plugins/animation/runtime`.
 - Reference walkthrough: the intro of the demo's control scene ([demo](demo.md#control)): playback,
   the cut and the blend between its two shots, the bark marker and input blocking during the
   intro; in the editor, `cinematics.control` Seek with view Shot over that intro and `capture` with

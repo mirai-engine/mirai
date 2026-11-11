@@ -70,7 +70,8 @@ tracks_test_open :: proc(f:^Tracks_Fixture,t:^testing.T,name:string) -> bool {
     core.add(&w.targets,f.actor,target)
     s:=&f.authoring.session
     s.info,s.edit_world,s.editor_world,s.selection,s.edits,s.viewport,s.gui=&f.info,w,&f.editor_world,&f.selection,&f.edits,&f.viewport,&f.gui
-    if !testing.expect_value(t,editor.api_open(s,0,false,false),editor.Api_Open_Error.None) {return false}
+    api_opened,api_problem:=editor.api_open(s,0,false,false)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return false}
     authoring_clip_register(s)
     serial.writer_init(&f.out,1<<16)
     animation:=anim.ANIMATION_DEFAULT;animation.playing=false
@@ -209,7 +210,7 @@ capture_keys_the_tracks_of_an_entity_with_what_it_has_now :: proc(t:^testing.T) 
     cursor:=f.edits.cursor
     result:=tracks_test_call(f,"animation.key.capture",`{"animation":"0000000000000001","entity":"0000000000000002","time":1}`)
     if !testing.expectf(t,result.code==0,"%v",result) {return}
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"keys":2`),string(serial.writer_bytes(&f.out)))
+    testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"keys":2`),api.json_compact(string(serial.writer_bytes(&f.out))))
     testing.expect_value(t,f.edits.cursor,cursor+1)
     position:=tracks_test_keys(f,"Panel",.Position)
     rotation:=tracks_test_keys(f,"Panel",.Rotation)
@@ -241,11 +242,14 @@ the_tracks_tool_is_turned_on_by_its_entry_and_keys_what_the_gizmo_moves :: proc(
     entry:=editor.command_binding(s,TRACKS_TOOL)
     if !testing.expect(t,entry!=nil && entry.method=="editor.tool" && entry.menu==.Tools) {return}
     st:=editor.api_state(s)
-    testing.expect(t,api.method_find(&st.server,"animation.tracks.show")!=nil && api.method_find(&st.server,"animation.key.capture")!=nil)
+    // The head of the tool is moved by animation.request, which the authoring of the plugin registers.
+    if api.method_find(&st.server,"animation.request")==nil {request_register(s)}
+    testing.expect(t,api.method_find(&st.server,"animation.tracks.show")==nil && api.method_find(&st.server,"animation.key.capture")!=nil)
+    testing.expect(t,tracks_test_call(f,"animation.request",`{"entity":"0000000000000001","seek":0.5}`).code!=0,"the head is that of the tool, which is off")
     testing.expect(t,editor.command_run(s,TRACKS_TOOL))
     editor.commands_run(s)
     testing.expect(t,editor.tool_on(s,TRACKS_TOOL))
-    testing.expect_value(t,tracks_test_call(f,"animation.tracks.show",`{"entity":"0000000000000001","time":0.5}`).code,0)
+    testing.expect_value(t,tracks_test_call(f,"animation.request",`{"entity":"0000000000000001","seek":0.5}`).code,0)
     tracker:=&f.editor_world.tracks
     testing.expect(t,tracker.entity==f.door && tracker.head==0.5)
     view,clip,ok:=tracks_clip(s,tracker,w)

@@ -128,10 +128,7 @@ play_ui_lists_what_the_last_frame_showed_where_it_is_in_the_window :: proc(t:^te
     view:=Play_Ui_View{session=&s,gui=&g,allocator=context.temp_allocator}
     view.names.allocator=context.temp_allocator
     append(&view.names,Play_Ui_Names{asset,tree,names})
-    w:serial.Writer
-    serial.writer_init(&w,0,context.temp_allocator)
-    play_ui_write(&view,&w)
-    text:=string(serial.writer_bytes(&w))
+    text:=observe_text(play_ui(&view))
     api_result_shape_expect(t,text,Api_Play_Ui)
     result:=observe_json(t,text)
     contexts,_:=result["contexts"].(json.Array)
@@ -184,9 +181,7 @@ play_ui_lists_what_the_last_frame_showed_where_it_is_in_the_window :: proc(t:^te
 
     // all lists the screen the frame did not build too, without nodes.
     view.all=true
-    serial.writer_init(&w,0,context.temp_allocator)
-    play_ui_write(&view,&w)
-    text=string(serial.writer_bytes(&w))
+    text=observe_text(play_ui(&view))
     api_result_shape_expect(t,text,Api_Play_Ui)
     interfaces,_=observe_json(t,text)["interfaces"].(json.Array)
     if testing.expect_value(t,len(interfaces),2) {
@@ -197,9 +192,7 @@ play_ui_lists_what_the_last_frame_showed_where_it_is_in_the_window :: proc(t:^te
 
     // A game without the UI of engine/gui shows none.
     view.gui=nil
-    serial.writer_init(&w,0,context.temp_allocator)
-    play_ui_write(&view,&w)
-    testing.expect_value(t,string(serial.writer_bytes(&w)),`{"contexts":[],"interfaces":[]}`)
+    testing.expect_value(t,observe_text(play_ui(&view)),`{"contexts":[],"interfaces":[]}`)
 }
 
 // The voices of a game: what each was given, its bus by name, its place when
@@ -230,10 +223,7 @@ play_audio_lists_the_voices_of_the_game_with_what_they_were_given :: proc(t:^tes
     names:=[?]core.Name_Info{{type=eaudio.Audio_Bus,name="Music",value=1}}
     info:=core.World_Info{names=names[:]}
     s:=Session{app=&host.App{},info=&info}
-    w:serial.Writer
-    serial.writer_init(&w,0,context.temp_allocator)
-    play_audio_write(&s,&w,&voices,test_world_ref(&world),nil)
-    text:=string(serial.writer_bytes(&w))
+    text:=observe_text(play_audio(&s,&voices,test_world_ref(&world),nil))
     api_result_shape_expect(t,text,Api_Play_Audio)
     result:=observe_json(t,text)
     list,_:=result["voices"].(json.Array)
@@ -256,9 +246,14 @@ play_audio_lists_the_voices_of_the_game_with_what_they_were_given :: proc(t:^tes
     m,error:=mixer.mixer_create({})
     if !testing.expect_value(t,error,mixer.Error.None) {return}
     defer mixer.mixer_destroy(m)
-    serial.writer_init(&w,0,context.temp_allocator)
-    play_audio_write(&s,&w,nil,{},m)
-    text=string(serial.writer_bytes(&w))
+    text=observe_text(play_audio(&s,nil,{},m))
     api_result_shape_expect(t,text,Api_Play_Audio)
-    testing.expect(t,strings.contains(text,`"voices":[]`) && strings.contains(text,`"mixer":{"voices_active":0`))
+    testing.expect(t,strings.contains(text,`"voices":[]`),text)
+}
+
+// What a play observe method answers, as JSON without spaces.
+@(private="file")
+observe_text :: proc(value:any) -> string {
+    text,_:=serial.text_encode(value,.Line,context.temp_allocator,sparse=true)
+    return api.json_compact(string(text))
 }

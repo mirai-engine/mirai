@@ -23,6 +23,8 @@ Reference_Gi :: struct {
 // surfaces each meets.
 GI_REFERENCE_PATHS :: u32(4)
 GI_REFERENCE_BOUNCES :: u32(32)
+// The threads of a group of reference_lights.comp, one for each pixel.
+REFERENCE_LIGHTS_GROUP :: u32(64)
 
 @(private = "file", rodata)
 REFERENCE_LIGHTS_USES := [?]Render_Use{{.Normal, .Read, false}, {.Linear_Depth, .Read, false}, {.Albedo, .Read, false}, {.Direct, .Write, false}}
@@ -72,7 +74,7 @@ reference_lights_record :: proc(s: ^Stage_Pass, user: rawptr) {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
 	points_bind(p)
-	rhi.cmd_dispatch(cmd, groups(t.width * t.height, DIRECT_TRACED_GROUP))
+	rhi.cmd_dispatch(cmd, groups(t.width * t.height, REFERENCE_LIGHTS_GROUP))
 	points_rounds(p, batch, pipeline, &params, 1)
 }
 

@@ -11,6 +11,7 @@ import "mirai:host"
 import "mirai:project"
 import gpu "mirai:render"
 import "mirai:std/base"
+import "mirai:std/serial"
 import "mirai:ui"
 import vfx "plugins:vfx/runtime"
 import "plugins:vfx/runtime/effect"
@@ -24,9 +25,9 @@ particle_document_shows_every_field_of_the_effect_once_in_its_group :: proc(t:^t
     seen:bit_set[Particle_Group]
     group:Particle_Group
     for i in 0..<int(fields.field_count) {
-        if name,tagged:=core.field_option(reflect.Struct_Tag(fields.tags[i]),"group");tagged {
-            _,known:=reflect.enum_from_name(Particle_Group,name)
-            testing.expectf(t,known,"%s names group %q",fields.names[i],name)
+        if tagged,_:=serial.field_tag(fields.tags[i]);tagged.section!="" {
+            _,known:=reflect.enum_from_name(Particle_Group,tagged.section)
+            testing.expectf(t,known,"%s names group %q",fields.names[i],tagged.section)
         }
         group=particle_group(fields.tags[i],group)
         seen+={group}

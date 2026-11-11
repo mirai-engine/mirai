@@ -1,6 +1,7 @@
 package editor
 
 import "base:runtime"
+import "core:fmt"
 import "core:mem"
 import "core:strings"
 import "mirai:editor/api"
@@ -138,6 +139,18 @@ preferences_close :: proc(s:^Session) {
     p^={}
 }
 
+// Whether an area has the fields given, as the JSON of its fields: what an entry that flips them shows checked by.
+preference_holds :: proc(s:^Session,area,fields:string) -> bool {
+    for setting in preferences_list(s) {
+        if setting.name!=area {continue}
+        one:=[1]project.Setting{setting}
+        next:=project.settings_clone(one[:],context.temp_allocator)
+        if len(next)!=1 || project.settings_parse(fmt.tprintf(`{{%q:{{%s}}}}`,area,fields),next,strict=true).code!=.None {return false}
+        return mem.compare_ptrs(next[0].value,setting.value,setting.info.size)==0
+    }
+    return false
+}
+
 // ---------------------------------------------------------------- API
 
 Api_Preferences_Get_Params :: struct {
@@ -145,18 +158,19 @@ Api_Preferences_Get_Params :: struct {
 }
 
 Api_Preferences :: struct {
-    file:[512]u8 `mirai:"text,label=The file that keeps them; empty: this editor keeps none (--headless without --preferences) and a change lasts until it closes"`,
-    preferences:u8 `mirai:"any,label=Every value in effect: a section per area of the editor with its fields"`,
-    kept:u8 `mirai:"any,label=The sections and fields the file sets over the values of the code"`,
+    file:string `mirai:"label=The file that keeps them; empty: this editor keeps none (--headless without --preferences) and a change lasts until it closes"`,
+    preferences:serial.Json `mirai:"label=Every value in effect: a section per area of the editor with its fields"`,
+    kept:serial.Json `mirai:"label=The sections and fields the file sets over the values of the code"`,
+}
+
+Api_Preferences_Set_Params :: struct {
+    preferences:serial.Json `mirai:"label={'<Area>': {'<field>': value}}: an object of areas as preferences.get names them, each with the fields to change"`,
 }
 
 @(private)
-API_PREFERENCES_SET_SCHEMA :: `{"type":"object","properties":{"preferences":{"type":"object","additionalProperties":{"type":"object"},"description":"{\"<Area>\": {\"<field>\": value}}: an object of areas as preferences.get names them, each with the fields to change"}},"required":["preferences"],"additionalProperties":false}`
-
-@(private)
 preferences_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="preferences.get",summary="The preferences of the editor on this machine, the same for every project: its panels, viewport, lists, console, Play and chats, and of the plugins.",params=Api_Preferences_Get_Params,result=Api_Preferences,writes_result=true,flags={.Read_Only},run=api_preferences_get})
-    api_register(s,st,{name="preferences.set",params_schema=API_PREFERENCES_SET_SCHEMA,summary="Changes preferences of the editor; they take effect at once, the file keeps what differs from the values of the code and it answers with the areas changed.",result=Api_Preferences,writes_result=true,run=api_preferences_set})
+    api_register(s,st,{name="preferences.get",summary="The preferences of the editor on this machine, the same for every project: its panels, viewport, lists, console, Play and chats, and of the plugins.",params=type_info_of(Api_Preferences_Get_Params),result=type_info_of(Api_Preferences),flags={.Read_Only},run=api_preferences_get})
+    api_register(s,st,{name="preferences.set",params=type_info_of(Api_Preferences_Set_Params),summary="Changes preferences of the editor; they take effect at once, the file keeps what differs from the values of the code and it answers with the areas changed.",result=type_info_of(Api_Preferences),run=api_preferences_set})
 }
 
 @(private)
@@ -176,36 +190,21 @@ api_preferences_write :: proc(s:^Session,call:^api.Call,keep:[]bool) {
         return
     }
     project.settings_default(code)
-    out:=call.out
-    serial.text_write_raw(out,`{"file": `)
-    serial.text_write_string(out,s.preferences!=nil?s.preferences.file:"")
-    serial.text_write_raw(out,`, "preferences": `)
     shown:=settings_kept(list,keep)
-    serial.text_write_raw(out,strings.trim_space(project.settings_text(shown,{},{},context.temp_allocator)))
-    serial.text_write_raw(out,`, "kept": `)
-    serial.text_write_raw(out,strings.trim_space(project.settings_text(shown,settings_kept(code,keep),{},context.temp_allocator)))
-    serial.write_u8(out,'}')
+    api.call_result(call,Api_Preferences)^={
+        s.preferences!=nil?s.preferences.file:"",
+        serial.Json(strings.trim_space(project.settings_text(shown,{},{},call.allocator))),
+        serial.Json(strings.trim_space(project.settings_text(shown,settings_kept(code,keep),{},call.allocator))),
+    }
 }
 
 // Read into copies and checked against the fields of each area: a change that
 // fails leaves every preference as it was.
 @(private)
 api_preferences_set :: proc(s:^Session,call:^api.Call) {
-    USAGE :: `params are {"preferences": {"<Area>": {"<field>": value}}}`
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,call.raw,context.temp_allocator)
-    defer serial.text_reader_destroy(&r)
-    sections:=""
-    if serial.text_accept(&r,'{') && !serial.text_accept(&r,'}') {
-        key,named:=serial.text_string(&r)
-        if named && key=="preferences" && serial.text_expect(&r,':') && serial.text_peek(&r)=='{' {
-            start:=r.offset
-            if serial.text_skip(&r) {sections=r.text[start:r.offset]}
-        }
-        if !serial.text_expect(&r,'}') || !serial.text_end(&r) {sections=""}
-    }
-    if sections=="" {
-        api.call_fail(call,api.INVALID_PARAMS,USAGE)
+    sections:=strings.trim_space(string(api.call_params(call,Api_Preferences_Set_Params).preferences))
+    if !strings.has_prefix(sections,"{") {
+        api.call_fail(call,api.INVALID_PARAMS,`preferences is an object of areas: {"<Area>": {"<field>": value}}`)
         return
     }
     list:=preferences_list(s)

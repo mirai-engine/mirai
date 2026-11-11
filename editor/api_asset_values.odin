@@ -10,58 +10,8 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 // What the methods that edit an asset by code share, those of the editor and
-// those of plugins: the asset the params name, the values of its info as
-// their text, and the result that names it.
-
-ASSET_PARAMS_EXTRA :: 4
-
-// The params of a method that edits an asset by code: the asset under `key`
-// (its path under the assets folder, or its id), the path of a new one, its
-// values and the text of the other keys the method takes.
-Asset_Params :: struct {
-    named,path:string,
-    values:string,                    // the text of the object
-    extra:[ASSET_PARAMS_EXTRA]string, // the text of each key of extra given; empty: not given
-}
-
-asset_params :: proc(call:^api.Call,key:string,extra:[]string={}) -> (p:Asset_Params,ok:bool) {
-    r:serial.Text_Reader
-    serial.text_reader_init(&r,call.raw,context.temp_allocator)
-    failed :: proc(call:^api.Call,r:^serial.Text_Reader) -> bool {
-        line,column:=serial.text_position(call.raw,r.error.offset)
-        api.call_failf(call,api.INVALID_PARAMS,"%s at line %d, column %d",serial.text_error_message(r,allocator=context.temp_allocator),line,column)
-        return false
-    }
-    if !serial.text_accept(&r,'{') {
-        serial.text_fail(&r,.Expected_Object)
-        return p,failed(call,&r)
-    }
-    if serial.text_accept(&r,'}') {return p,true}
-    for {
-        serial.text_space(&r)
-        name,named:=serial.text_string(&r)
-        if !named || !serial.text_expect(&r,':') {return p,failed(call,&r)}
-        name=strings.clone(name,context.temp_allocator)
-        serial.text_space(&r)
-        other:=-1
-        for each,i in extra[:min(len(extra),ASSET_PARAMS_EXTRA)] {
-            if each==name {other=i;break}
-        }
-        switch {
-        case name==key || name=="path":
-            text,read:=serial.text_string(&r)
-            if !read {return p,failed(call,&r)}
-            if name=="path" {p.path=strings.clone(text,context.temp_allocator)} else {p.named=strings.clone(text,context.temp_allocator)}
-        case name=="values" || other>=0:
-            start:=r.offset
-            if !serial.text_skip(&r) {return p,failed(call,&r)}
-            if other>=0 {p.extra[other]=call.raw[start:r.offset]} else {p.values=call.raw[start:r.offset]}
-        }
-        if serial.text_accept(&r,',') {continue}
-        if !serial.text_expect(&r,'}') {return p,failed(call,&r)}
-        return p,true
-    }
-}
+// those of plugins: the asset the params name and the values of its info as
+// their text.
 
 // Puts the values of the params, the text of the values of an asset, over info.
 asset_values_read :: proc(call:^api.Call,text:string,info:^$T) -> bool {
@@ -78,30 +28,6 @@ asset_values_read :: proc(call:^api.Call,text:string,info:^$T) -> bool {
         return false
     }
     return true
-}
-
-// Opens the result of an asset: its id under `key` and its path.
-asset_named_write :: proc(s:^Session,out:^serial.Writer,key:string,id:base.Asset_Id) {
-    serial.write_u8(out,'{')
-    serial.text_write_string(out,key)
-    serial.write_u8(out,':')
-    serial.write_u8(out,'"')
-    serial.text_write_asset_id(out,id)
-    serial.write_u8(out,'"')
-    if file,found:=asset.registry_find(&s.app.assets.registry,id);found {
-        api.write_key(out,"path")
-        serial.text_write_string(out,file.path)
-    }
-}
-
-// The values of an asset as their text, under `key` of the result.
-asset_values_write :: proc(out:^serial.Writer,key:string,info:^$T) {
-    schema:serial.Schema
-    serial.schema_init(&schema,context.temp_allocator)
-    defer serial.schema_destroy(&schema)
-    type,_:=serial.schema_add_type_info(&schema,type_info_of(T))
-    api.write_key(out,key)
-    serial.text_write(out,&schema,type,mem.ptr_to_bytes(info),.Line)
 }
 
 // The asset a text names, in one place for every method: its id, or its path
@@ -134,22 +60,22 @@ asset_named :: proc(s:^Session,call:^api.Call,name:string,kind:asset.Fourcc,exte
     return
 }
 
-// The asset a *.set writes: the one the params name under `key`, or a new one
-// with a new id at path, whose file must not exist yet.
+// The asset a *.set writes: the one the params name under `key`, named, or a
+// new one with a new id at path, whose file must not exist yet.
 Asset_Target :: struct {
     id:base.Asset_Id,
     file:string, // its file in the project
     created:bool,
 }
 
-asset_target :: proc(s:^Session,call:^api.Call,p:^Asset_Params,key:string,kind:asset.Fourcc,extension,what:string) -> (t:Asset_Target,ok:bool) {
-    if (p.named=="")==(p.path=="") {
+asset_target :: proc(s:^Session,call:^api.Call,named,path:string,key:string,kind:asset.Fourcc,extension,what:string) -> (t:Asset_Target,ok:bool) {
+    if (named=="")==(path=="") {
         api.call_failf(call,api.INVALID_PARAMS,"Give exactly one of %s, %s to change by its path under the assets folder or its id, and path, where a new one goes",key,what)
         return
     }
     a:=s.app.assets
-    if p.named!="" {
-        t.id=asset_named(s,call,p.named,kind,extension,what) or_return
+    if named!="" {
+        t.id=asset_named(s,call,named,kind,extension,what) or_return
         record,_:=asset.registry_find(&a.registry,t.id)
         t.file=asset.registry_file_path(&a.registry,record.path,context.temp_allocator)
         return t,true
@@ -158,7 +84,7 @@ asset_target :: proc(s:^Session,call:^api.Call,p:^Asset_Params,key:string,kind:a
         api.call_fail(call,api.SERVER_ERROR,"The editor has no project")
         return
     }
-    path:=strings.has_suffix(p.path,extension)?p.path:fmt.tprintf("%s%s",p.path,extension)
+    path:=strings.has_suffix(path,extension)?path:fmt.tprintf("%s%s",path,extension)
     if t.file=scene_file(s,path);t.file=="" {
         api.call_failf(call,api.INVALID_PARAMS,"%s: %s",path,document_error_text(.Bad_Path))
         return

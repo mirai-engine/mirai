@@ -120,9 +120,7 @@ play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(
     copy(p.fields[0][:],"points[0].depth");copy(p.fields[1][:],"blend.progress")
     trace:Api_Trace
     testing.expect_value(t,api_trace_read(&s,&call,ref,&p,`{"view":true,"entity":"Hero","fields":["",""]}`,1,&trace),"")
-    out:serial.Writer
-    serial.writer_init(&out,0,context.temp_allocator)
-    api_trace_write(&s,&out,&trace)
-    written:=string(serial.writer_bytes(&out))
+    table,_:=serial.text_encode(api_trace_table(&s,&trace),.Line,context.temp_allocator,sparse=true)
+    written:=api.json_compact(string(table))
     testing.expect(t,strings.contains(written,`{"view":true,"field":"points[0].depth"}`) && strings.contains(written,`"values":[10,0.25]`),written)
 }

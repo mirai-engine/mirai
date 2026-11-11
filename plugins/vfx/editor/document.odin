@@ -11,6 +11,7 @@ import "mirai:editor"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
+import "mirai:std/serial"
 import "mirai:editor/kit"
 import "mirai:ui"
 import vfx "plugins:vfx/runtime"
@@ -32,7 +33,7 @@ DOCUMENT_SCOPE :: ui.Id(0x70617274)
 KEY_EFFECT :: u64(0x7061727469636c65) // of its values among those the rows of Details hold
 
 // The groups of the rows: a field of Particle_Info is in the group its tag
-// names (`mirai:"group=Look"`), or in that of the field before it.
+// names (`mirai:"section=Look"`), or in that of the field before it.
 Particle_Group :: enum u8 {Spawn,Shape,Motion,Look,Collision,Program}
 PARTICLE_GROUP_TITLES :: [Particle_Group]string{.Spawn="SPAWN",.Shape="SHAPE",.Motion="MOTION",.Look="LOOK",.Collision="COLLISION AND EVENTS",.Program="PROGRAM"}
 
@@ -270,8 +271,8 @@ effect_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets) {
 
 // The group a field of Particle_Info with this tag is in, after a field of group before.
 particle_group :: proc(tag:string,before:Particle_Group) -> Particle_Group {
-    name,_:=core.field_option(reflect.Struct_Tag(tag),"group")
-    group,named:=reflect.enum_from_name(Particle_Group,name)
+    tagged,_:=serial.field_tag(tag)
+    group,named:=reflect.enum_from_name(Particle_Group,tagged.section)
     return group if named else before
 }
 

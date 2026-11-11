@@ -8,7 +8,6 @@ import "mirai:editor/api"
 import "mirai:editor/history"
 import "mirai:platform"
 import "mirai:std/base"
-import "mirai:std/serial"
 import "mirai:ui"
 
 // The pins a user drops on the scene for the agent: a tool of the viewport
@@ -325,15 +324,15 @@ Ai_Annotation_List_Params :: struct {
 Ai_Annotation_Result :: struct {
     id:int `mirai:"label=What annotation.remove takes"`,
     number:int `mirai:"label=The number the pin shows"`,
-    group:[AI_ANNOTATION_GROUP_BYTES]u8 `mirai:"text,label=Its group; empty without one"`,
-    document:[1024]u8 `mirai:"text"`,
+    group:string `mirai:"label=Its group; empty without one"`,
+    document:string,
     entity:base.Entity_Id `mirai:"optional,label=The entity it is on; absent on another surface"`,
-    entity_name:[256]u8 `mirai:"text,label=Its name; empty on another surface or when its document is closed"`,
+    entity_name:string `mirai:"label=Its name; empty on another surface or when its document is closed"`,
     position:[3]f32 `mirai:"label=In the world"`,
-    note:[AI_ANNOTATION_TEXT_BYTES]u8 `mirai:"text"`,
+    note:string,
 }
 Ai_Annotation_List_Result :: struct {
-    annotations:[1]Ai_Annotation_Result `mirai:"list,label=The pins of the document in the order of their numbers"`,
+    annotations:[]Ai_Annotation_Result `mirai:"label=The pins of the document in the order of their numbers"`,
 }
 Ai_Annotation_Remove_Params :: struct {
     id:int `mirai:"optional,min=0,label=One annotation by the id annotation.list gives; give id or group"`,
@@ -345,8 +344,8 @@ Ai_Annotation_Remove_Result :: struct {
 
 @(private)
 ai_annotations_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="annotation.list",summary="The pins the user dropped on a document for the agent, with their numbers, groups, positions, entities and notes.",params=Ai_Annotation_List_Params,result=Ai_Annotation_List_Result,writes_result=true,flags={.Read_Only,.Idempotent},run=ai_method_annotation_list})
-    api_register(s,st,{name="annotation.remove",summary="Takes out one annotation of the open document, or every annotation of one of its groups, when the agent is done with them.",params=Ai_Annotation_Remove_Params,result=Ai_Annotation_Remove_Result,run=ai_method_annotation_remove})
+    api_register(s,st,{name="annotation.list",summary="The pins the user dropped on a document for the agent, with their numbers, groups, positions, entities and notes.",params=type_info_of(Ai_Annotation_List_Params),result=type_info_of(Ai_Annotation_List_Result),flags={.Read_Only,.Idempotent},run=ai_method_annotation_list})
+    api_register(s,st,{name="annotation.remove",summary="Takes out one annotation of the open document, or every annotation of one of its groups, when the agent is done with them.",params=type_info_of(Ai_Annotation_Remove_Params),result=type_info_of(Ai_Annotation_Remove_Result),run=ai_method_annotation_remove})
 }
 
 @(private)
@@ -357,23 +356,11 @@ ai_method_annotation_list :: proc(s:^Session,call:^api.Call) {
     if document=="" {document=ai_annotations_document(s)}
     notes,message:=ai_store.annotations(&m.store,document)
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
-    w:=call.out
-    serial.text_write_raw(w,`{"annotations":[`)
+    listed:=make([]Ai_Annotation_Result,len(notes),call.allocator)
     for &note,index in notes {
-        if index>0 {serial.write_u8(w,',')}
-        serial.write_u8(w,'{')
-        api.write_int(w,"id",note.id,true)
-        api.write_int(w,"number",i64(index+1))
-        api.write_text(w,"group",note.group_name)
-        api.write_text(w,"document",note.document)
-        if note.entity!=0 {api.write_key(w,"entity");api.write_id(w,base.Entity_Id(note.entity))}
-        api.write_text(w,"entity_name",ai_annotation_entity_name(s,document,note.entity))
-        position:=[3]f32{f32(note.x),f32(note.y),f32(note.z)}
-        api.write_numbers(w,"position",position[:])
-        api.write_text(w,"note",note.text)
-        serial.write_u8(w,'}')
+        listed[index]={int(note.id),index+1,note.group_name,note.document,base.Entity_Id(note.entity),ai_annotation_entity_name(s,document,note.entity),{f32(note.x),f32(note.y),f32(note.z)},note.text}
     }
-    serial.text_write_raw(w,"]}")
+    api.call_result(call,Ai_Annotation_List_Result).annotations=listed
 }
 
 @(private)

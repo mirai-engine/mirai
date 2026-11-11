@@ -1,8 +1,6 @@
 package animation_editor
 
 import "core:fmt"
-import "core:mem"
-import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -11,7 +9,6 @@ import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
-import mm "mirai:std/math"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
@@ -37,7 +34,7 @@ space_authoring_adds_replaces_and_removes_spaces_of_a_character_and_rejects_part
     // A new .character needs the .anim of its clips.
     testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"other.character",%s}}`,speeds)).code,api.INVALID_PARAMS)
     existing:=authoring_test_execute(f,"set",request)
-    testing.expect(t,existing.code==0 && strings.contains(string(serial.writer_bytes(&f.out)),`"replaced":true`) && authoring_test_id(f,"hero.character")==id,existing.message)
+    testing.expect(t,existing.code==0 && strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"replaced":true`) && authoring_test_id(f,"hero.character")==id,existing.message)
     // A second space keeps the first; the speed of a sample is 1 by itself.
     aim:=`"info":{"name":"aim","dimension":"One","x":{"name":"yaw","min":-1,"max":1}},"samples":[{"position":[-1,0],"clip":"walk"},{"position":[1,0],"clip":"idle"}]`
     testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"hero.character",%s}}`,aim)).code,0)
@@ -48,7 +45,7 @@ space_authoring_adds_replaces_and_removes_spaces_of_a_character_and_rejects_part
         first,count:=anim.character_space_samples(set,1);testing.expect(t,count==2 && base.text_get(set.space_samples[first].clip[:])=="walk" && set.space_samples[first+1].speed==1)
     }
     testing.expect_value(t,authoring_test_execute(f,"sample",fmt.tprintf(`{{"asset":"%s","space":"speeds","position":[1,0]}}`,identity)).code,0)
-    text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"weight":0.5`) && strings.contains(text,`"clip":"idle"`) && strings.contains(text,`"clip":"walk"`))
+    text:=api.json_compact(string(serial.writer_bytes(&f.out)));testing.expect(t,strings.contains(text,`"weight":0.5`) && strings.contains(text,`"clip":"idle"`) && strings.contains(text,`"clip":"walk"`))
     testing.expect_value(t,authoring_test_execute(f,"sample",fmt.tprintf(`{{"asset":"%s","space":"missing","position":[1,0]}}`,identity)).code,api.INVALID_PARAMS)
     revision:=authoring_test_revision(f,"hero.character")
     for bad in ([2][2]string{{`"position":[2,0]`,`"position":[0,0]`},{`"clip":"walk"`,`"clip":"missing"`}}) {
@@ -81,7 +78,7 @@ two_dimensional_space_authoring_samples_triangles_and_rejects_collinear_replacem
     identity:=authoring_test_id_text(authoring_test_id(f,"hero.character"))
     revision:=authoring_test_revision(f,"hero.character")
     testing.expect_value(t,authoring_test_execute(f,"sample",fmt.tprintf(`{{"asset":"%s","space":"moves","position":[0.25,0.25]}}`,identity)).code,0)
-    text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.count(text,`"index":`)==3 && strings.contains(text,`"weight":0.5`) && strings.count(text,`"weight":0.25`)==2)
+    text:=api.json_compact(string(serial.writer_bytes(&f.out)));testing.expect(t,strings.count(text,`"index":`)==3 && strings.contains(text,`"weight":0.5`) && strings.count(text,`"weight":0.25`)==2)
     collinear,_:=strings.replace_all(definition,`"position":[0,1]`,`"position":[0.5,0]`,context.temp_allocator)
     testing.expect_value(t,authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"hero.character",%s}}`,collinear)).code,api.INVALID_PARAMS)
     testing.expect_value(t,authoring_test_revision(f,"hero.character"),revision)
@@ -109,7 +106,7 @@ program_test_worlds_destroy :: proc(info:^core.World_Info,document,play:^Program
 @(private)
 program_test_register_result :: proc(f:^Authoring_Test,t:^testing.T,name:string,$P,$R:typeid,run:editor.Api_Handler,defaults:^P=nil) {
     entry:=new(Authoring_Test_Entry,context.temp_allocator);entry^={&f.session,run}
-    testing.expect_value(t,api.method_register(&f.server,{name=name,params=P,params_info=type_info_of(P),result=R,result_info=type_info_of(R),defaults=defaults,user=entry,handler=proc(call:^api.Call) {entry:=(^Authoring_Test_Entry)(call.user);entry.run(entry.session,call)}}),api.Register_Error.None)
+    testing.expect_value(t,api.method_register(&f.server,{name=name,params=type_info_of(P),result=type_info_of(R),defaults=defaults,user=entry,handler=proc(call:^api.Call) {entry:=(^Authoring_Test_Entry)(call.user);entry.run(entry.session,call)}}),api.Register_Error.None)
 }
 
 @(test)
@@ -138,10 +135,10 @@ program_runtime_api_sets_named_parameters_and_keeps_actions_and_modifier_control
     }
     f.session.info,f.session.edit_world,f.session.mode=&world_info,&document,.Play;f.session.runs[0]={world=&play}
     requested:=request_defaults();authoring_test_register(f,t,"request",Request_Params,request,requested)
-    inspect:=Modifier_Inspect_Params{limit=128};authoring_test_register(f,t,"inspect",Modifier_Inspect_Params,program_modifier_inspect,&inspect)
+    inspect:=Instance_Inspect_Params{parts={.Modifiers},limit=128};authoring_test_register(f,t,"inspect",Instance_Inspect_Params,instance_inspect,&inspect)
     // A parameter is the weight of a layer of its set, asked of the running world.
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","parameters":[{"name":"Arm","value":0.6}]}`).code,0)
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"kind":"Parameter","name":"Arm"`))
+    testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"kind":"Parameter","name":"Arm"`))
     if testing.expect_value(t,len(play.animation_requests.values.items),1) {
         queued:=play.animation_requests.values.items[0]
         testing.expect(t,queued.name==base.name_hash("Arm") && queued.value==.6)
@@ -155,7 +152,7 @@ program_runtime_api_sets_named_parameters_and_keeps_actions_and_modifier_control
     testing.expect_value(t,len(play.animation_requests.values.items),1);testing.expect_value(t,len(document.animation_requests.values.items),0)
     // An action is played and stopped by its name, in its layer or over the whole body.
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","actions":[{"name":"Vault"},{"name":"Wave"}]}`).code,0)
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"kind":"Play","name":"Vault"`))
+    testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"kind":"Play","name":"Vault"`))
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","actions":[{"name":"Vault","stop":true}]}`).code,0)
     if testing.expect_value(t,len(play.animation_requests.plays.items),3) {
         plays:=play.animation_requests.plays.items
@@ -171,7 +168,7 @@ program_runtime_api_sets_named_parameters_and_keeps_actions_and_modifier_control
     testing.expect_value(t,len(play.animation_requests.controls.items),1);testing.expect_value(t,len(document.animation_requests.controls.items),0)
     testing.expect_value(t,play.animation_requests.controls.items[0].fade,f32(.2))
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000011"}`).code,0)
-    text:=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(text,`"kind":"Look"`) && strings.contains(text,`"name":"head"`) && !strings.contains(text,`"slot"`) && !strings.contains(text,`"diagnostic"`))
+    text:=api.json_compact(string(serial.writer_bytes(&f.out)));testing.expect(t,strings.contains(text,`"kind":"Look"`) && strings.contains(text,`"name":"head"`) && !strings.contains(text,`"slot"`) && !strings.contains(text,`"diagnostic"`))
     // Edit changes the document: what only a running world takes is refused there.
     f.session.mode=.Edit
     for runtime in ([3]string{`"actions":[{"name":"Vault"}]`,`"parameters":[{"name":"Arm","value":0.5}]`,`"controls":[{"kind":"Look","name":"head"}]`}) {

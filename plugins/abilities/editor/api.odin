@@ -6,7 +6,6 @@ import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
-import "mirai:std/serial"
 import ab "plugins:abilities/runtime"
 import phys "plugins:physics/runtime"
 
@@ -25,11 +24,70 @@ Use_Params :: struct {
     table:[1024]u8 `mirai:"text,optional,label=The .records path when two tables have a row of that name"`,
 }
 
+Inspect_Result :: struct {
+    kit:string `mirai:"optional,label=Its Ability_Kit row; left out without a kit"`,
+    ability:string `mirai:"optional,label=The Ability row it runs; left out when idle"`,
+    seconds:f32 `mirai:"optional,unit=s,label=Since the running ability started"`,
+    own_seconds:f32 `mirai:"optional,unit=s,label=On the clock of the running ability"`,
+    duration:f32 `mirai:"optional,unit=s"`,
+    windows:[]Window_Result `mirai:"optional,label=The windows of the running ability open now"`,
+    statuses:[]string,
+    attributes:[]Attribute_Result,
+    buffer:[]Buffer_Result `mirai:"label=What waits in its input buffer"`,
+    cooldowns:[]Cooldown_Result,
+    timers:[]Timer_Result,
+    candidates:[]Candidate_Result `mirai:"label=Every ability of its kit and what blocks it"`,
+}
+Window_Result :: struct {
+    index:int,
+    from,to:f32 `mirai:"unit=s"`,
+    clock:string `mirai:"optional,label=own: on the clock of the ability"`,
+    cancel_into:[]string `mirai:"optional"`,
+    hitbox:string `mirai:"optional"`,
+    cue:string `mirai:"optional"`,
+}
+Attribute_Result :: struct {
+    attribute:string,
+    base,value,max:f32,
+}
+Buffer_Result :: struct {
+    ability:string,
+    seconds_ago:f32 `mirai:"unit=s"`,
+    waits_for_running:bool `mirai:"optional"`,
+}
+Cooldown_Result :: struct {
+    ability:string,
+    seconds_left:f32 `mirai:"unit=s"`,
+}
+Timer_Result :: struct {
+    tags,statuses:[]string,
+    stacks:int,
+    every:string `mirai:"optional,label=The attribute it changes each period"`,
+    amount:f32 `mirai:"optional"`,
+    modifies:string `mirai:"optional"`,
+    seconds_left:f32 `mirai:"unit=s"`,
+}
+Candidate_Result :: struct {
+    ability:string,
+    blocked:string,
+}
+
+Check_Result :: struct {
+    problems:[]Check_Problem `mirai:"label=Empty: every sheet runs"`,
+    abilities,kits:int `mirai:"label=Rows of Ability and of Ability_Kit"`,
+}
+Check_Problem :: struct {table,row,problem:string}
+
+Use_Result :: struct {
+    ability:string,
+    requested:bool,
+}
+
 @(private)
 register :: proc(s:^editor.Session) {
-    editor.api_method_register(s,Inspect_Params,{name="abilities.inspect",summary="What an Ability_User does and why: its kit, the ability it runs and for how long, the windows open now, its statuses, its attributes with their bases and current values, what waits in its input buffer, its cooldowns and timers, and for every ability of its kit whether it could start now or what blocks it (a status, its mode, a condition, a cost, a cooldown, or no open cancel window of the running ability that accepts its tags). Use it in Play to see why an ability does or does not start.",flags={.Read_Only},result_schema=`{"type":"object"}`,run=inspect})
-    editor.api_method_register(s,{name="abilities.check",summary="Checks every Ability and Ability_Kit row of the project as the game runs them: times, windows, hitboxes, effects, costs and conditions, and references to rows that no table has. Returns each problem with its table, its row and how to fix it; an empty list means every sheet runs. Run it after records.set or records.import of abilities.",flags={.Read_Only},result_schema=`{"type":"object"}`,run=check})
-    editor.api_method_register(s,Use_Params,{name="abilities.use",summary="Asks an Ability_User of the running game to start an ability by the name of its row, as its input would: it starts when it is valid within the buffer of its kit. Needs Play or Simulate; abilities.inspect tells what blocks it.",result_schema=`{"type":"object"}`,run=use})
+    editor.api_method_register(s,{name="abilities.inspect",summary="What an Ability_User does and why: its kit, the ability it runs and for how long, the windows open now, its statuses, its attributes with their bases and current values, what waits in its input buffer, its cooldowns and timers, and for every ability of its kit whether it could start now or what blocks it (a status, its mode, a condition, a cost, a cooldown, or no open cancel window of the running ability that accepts its tags). Use it in Play to see why an ability does or does not start.",params=type_info_of(Inspect_Params),flags={.Read_Only},result=type_info_of(Inspect_Result),run=inspect})
+    editor.api_method_register(s,{name="abilities.check",summary="Checks every Ability and Ability_Kit row of the project as the game runs them: times, windows, hitboxes, effects, costs and conditions, and references to rows that no table has. Returns each problem with its table, its row and how to fix it; an empty list means every sheet runs. Run it after records.set or records.import of abilities.",flags={.Read_Only},result=type_info_of(Check_Result),run=check})
+    editor.api_method_register(s,{name="abilities.use",summary="Asks an Ability_User of the running game to start an ability by the name of its row, as its input would: it starts when it is valid within the buffer of its kit. Needs Play or Simulate; abilities.inspect tells what blocks it.",params=type_info_of(Use_Params),result=type_info_of(Use_Result),run=use})
 }
 
 @(private)
@@ -55,24 +113,19 @@ value_name :: proc(s:^editor.Session,type:typeid,value:i64) -> string {
 }
 
 @(private)
-bits_write :: proc(s:^editor.Session,w:^serial.Writer,key:string,type:typeid,bits:u64,first_key:=false) {
-    api.write_key(w,key,first_key)
-    serial.text_write_raw(w,"[")
-    first:=true
+bits_names :: proc(s:^editor.Session,call:^api.Call,type:typeid,bits:u64) -> []string {
+    names:=make([dynamic]string,call.allocator)
     for i in 0..<64 {
-        if bits&(u64(1)<<u64(i))==0 {continue}
-        if !first {serial.text_write_raw(w,",")}
-        serial.text_write_string(w,value_name(s,type,i64(i)))
-        first=false
+        if bits&(u64(1)<<u64(i))!=0 {append(&names,value_name(s,type,i64(i)))}
     }
-    serial.text_write_raw(w,"]")
+    return names[:]
 }
 
 @(private)
-row_write :: proc(w:^serial.Writer,key:string,rows:core.Records(ab.Ability),ref:core.Record(ab.Ability),first:=false) {
-    api.write_key(w,key,first)
-    if ref=={} {serial.text_write_raw(w,"null");return}
-    if name:=core.record_name(rows,ref);name!="" {serial.text_write_string(w,name)} else {serial.text_write_string(w,fmt.tprintf("missing row %d",u64(ref.row)))}
+row_name :: proc(rows:core.Records(ab.Ability),ref:core.Record(ab.Ability)) -> string {
+    if ref=={} {return ""}
+    if name:=core.record_name(rows,ref);name!="" {return name}
+    return fmt.tprintf("missing row %d",u64(ref.row))
 }
 
 @(private)
@@ -95,123 +148,69 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
         dt=1.0/60
         if settings:=core.world_storage_of(world,core.Simulation_Settings);settings!=nil && settings.tick_rate>0 {dt=1/f32(settings.tick_rate)}
     }
-    w:=call.out
-    serial.text_write_raw(w,"{")
-    api.write_key(w,"kit",true)
-    if u.kit=={} {serial.text_write_raw(w,"null")} else {serial.text_write_string(w,core.record_name(kits,u.kit) if core.record_name(kits,u.kit)!="" else "missing row")}
-    row_write(w,"ability",abilities,u.ability)
+    r:=api.call_result(call,Inspect_Result)
+    if u.kit!={} {r.kit=core.record_name(kits,u.kit) if core.record_name(kits,u.kit)!="" else "missing row"}
+    r.ability=row_name(abilities,u.ability)
     active:=ab.ability_sheet(abilities,u.ability)
     at:ab.Ability_Time
     if active!=nil {
         at={local=i64(time.tick-u.start) if time.tick>=u.start else 0,own=u.own}
-        api.write_key(w,"seconds");api.write_number(w,f32(at.local)*dt)
-        api.write_key(w,"own_seconds");api.write_number(w,at.own*dt)
-        api.write_key(w,"duration");api.write_number(w,active.duration)
-        api.write_key(w,"windows")
-        serial.text_write_raw(w,"[")
-        listed:=0
+        r.seconds,r.own_seconds,r.duration=f32(at.local)*dt,at.own*dt,active.duration
+        windows:=make([dynamic]Window_Result,call.allocator)
         for &win,i in active.windows {
             if !ab.ability_window_open(win,dt,at) {continue}
-            if listed>0 {serial.text_write_raw(w,",")}
-            serial.text_write_raw(w,"{")
-            api.write_int(w,"index",i64(i),true)
-            api.write_key(w,"from");api.write_number(w,win.from)
-            api.write_key(w,"to");api.write_number(w,win.to)
-            if win.clock==.Own {api.write_text(w,"clock","own")}
-            if win.cancel_into!=0 {bits_write(s,w,"cancel_into",ab.Ability_Tag,u64(win.cancel_into))}
-            if win.hitbox.shape!=.None {api.write_text(w,"hitbox",fmt.tprintf("%v",win.hitbox.shape))}
-            if win.cue!=ab.CUE_NONE {api.write_text(w,"cue",value_name(s,ab.Ability_Cue,i64(win.cue)))}
-            serial.text_write_raw(w,"}")
-            listed+=1
+            shown:=Window_Result{index=i,from=win.from,to=win.to,cancel_into=bits_names(s,call,ab.Ability_Tag,u64(win.cancel_into))}
+            if win.clock==.Own {shown.clock="own"}
+            if win.hitbox.shape!=.None {shown.hitbox=fmt.tprintf("%v",win.hitbox.shape)}
+            if win.cue!=ab.CUE_NONE {shown.cue=value_name(s,ab.Ability_Cue,i64(win.cue))}
+            append(&windows,shown)
         }
-        serial.text_write_raw(w,"]")
+        r.windows=windows[:]
     }
-    bits_write(s,w,"statuses",ab.Ability_Status,u64(u.statuses))
-    api.write_key(w,"attributes")
-    serial.text_write_raw(w,"[")
-    listed:=0
+    r.statuses=bits_names(s,call,ab.Ability_Status,u64(u.statuses))
+    attributes:=make([dynamic]Attribute_Result,call.allocator)
     for entry,i in u.attributes {
-        if entry.attribute==ab.ATTRIBUTE_NONE {continue}
-        if listed>0 {serial.text_write_raw(w,",")}
-        serial.text_write_raw(w,"{")
-        api.write_text(w,"attribute",value_name(s,ab.Ability_Attribute,i64(entry.attribute)),true)
-        api.write_key(w,"base");api.write_number(w,entry.base)
-        api.write_key(w,"value");api.write_number(w,u.values[i])
-        api.write_key(w,"max");api.write_number(w,entry.max)
-        serial.text_write_raw(w,"}")
-        listed+=1
+        if entry.attribute!=ab.ATTRIBUTE_NONE {append(&attributes,Attribute_Result{value_name(s,ab.Ability_Attribute,i64(entry.attribute)),entry.base,u.values[i],entry.max})}
     }
-    serial.text_write_raw(w,"]")
-    api.write_key(w,"buffer")
-    serial.text_write_raw(w,"[")
-    listed=0
+    r.attributes=attributes[:]
+    buffer:=make([dynamic]Buffer_Result,call.allocator)
     for b in u.buffer {
-        if b.ability=={} {continue}
-        if listed>0 {serial.text_write_raw(w,",")}
-        serial.text_write_raw(w,"{")
-        row_write(w,"ability",abilities,b.ability,true)
-        api.write_key(w,"seconds_ago");api.write_number(w,f32(time.tick-b.tick)*dt if time.tick>=b.tick else 0)
-        if b.running && u.ability!={} && u.start==b.run {api.write_key(w,"waits_for_running");serial.text_write_raw(w,"true")}
-        serial.text_write_raw(w,"}")
-        listed+=1
+        if b.ability!={} {append(&buffer,Buffer_Result{row_name(abilities,b.ability),f32(time.tick-b.tick)*dt if time.tick>=b.tick else 0,b.running && u.ability!={} && u.start==b.run})}
     }
-    serial.text_write_raw(w,"]")
-    api.write_key(w,"cooldowns")
-    serial.text_write_raw(w,"[")
-    listed=0
+    r.buffer=buffer[:]
+    cooldowns:=make([dynamic]Cooldown_Result,call.allocator)
     for c in u.cooldowns {
-        if c.until<=time.tick {continue}
-        if listed>0 {serial.text_write_raw(w,",")}
-        serial.text_write_raw(w,"{")
-        row_write(w,"ability",abilities,c.ability,true)
-        api.write_key(w,"seconds_left");api.write_number(w,f32(c.until-time.tick)*dt)
-        serial.text_write_raw(w,"}")
-        listed+=1
+        if c.until>time.tick {append(&cooldowns,Cooldown_Result{row_name(abilities,c.ability),f32(c.until-time.tick)*dt})}
     }
-    serial.text_write_raw(w,"]")
-    api.write_key(w,"timers")
-    serial.text_write_raw(w,"[")
-    listed=0
+    r.cooldowns=cooldowns[:]
+    timers:=make([dynamic]Timer_Result,call.allocator)
     for timer in u.timers {
         if timer.until<=time.tick {continue}
-        if listed>0 {serial.text_write_raw(w,",")}
-        serial.text_write_raw(w,"{")
-        bits_write(s,w,"tags",ab.Ability_Tag,u64(timer.tags),true)
-        bits_write(s,w,"statuses",ab.Ability_Status,u64(timer.statuses))
-        api.write_int(w,"stacks",i64(timer.stacks))
-        if timer.period>0 {api.write_text(w,"every",value_name(s,ab.Ability_Attribute,i64(timer.attribute)));api.write_key(w,"amount");api.write_number(w,timer.amount)}
-        if timer.modify.attribute!=ab.ATTRIBUTE_NONE {api.write_text(w,"modifies",value_name(s,ab.Ability_Attribute,i64(timer.modify.attribute)))}
-        api.write_key(w,"seconds_left");api.write_number(w,f32(timer.until-time.tick)*dt)
-        serial.text_write_raw(w,"}")
-        listed+=1
+        shown:=Timer_Result{tags=bits_names(s,call,ab.Ability_Tag,u64(timer.tags)),statuses=bits_names(s,call,ab.Ability_Status,u64(timer.statuses)),stacks=int(timer.stacks),seconds_left=f32(timer.until-time.tick)*dt}
+        if timer.period>0 {shown.every,shown.amount=value_name(s,ab.Ability_Attribute,i64(timer.attribute)),timer.amount}
+        if timer.modify.attribute!=ab.ATTRIBUTE_NONE {shown.modifies=value_name(s,ab.Ability_Attribute,i64(timer.modify.attribute))}
+        append(&timers,shown)
     }
-    serial.text_write_raw(w,"]")
-    api.write_key(w,"candidates")
-    serial.text_write_raw(w,"[")
+    r.timers=timers[:]
+    candidates:=make([dynamic]Candidate_Result,call.allocator)
     if kit:=ab.kit_sheet(kits,u.kit);kit!=nil {
-        listed=0
         params:ab.Ability_World
         params.time=time
         if t:=core.world_table_of(world,phys.Character);t!=nil {params.characters=core.read(t)}
         text:[512]u8
         for ref in kit.abilities {
             if ref=={} {continue}
-            if listed>0 {serial.text_write_raw(w,",")}
-            serial.text_write_raw(w,"{")
-            row_write(w,"ability",abilities,ref,true)
             a:=ab.ability_sheet(abilities,ref)
+            blocked:string
             switch {
-            case a==nil: api.write_text(w,"blocked","its row is missing")
-            case ab.ability_check(a,text[:])!="": api.write_text(w,"blocked",fmt.tprintf("its sheet is not valid: %s",ab.ability_check(a,text[:])))
-            case:
-                block:=ab.start_block(&params,time.tick,dt,e,&u,kit,active,at,a,ref)
-                api.write_text(w,"blocked",block_text(block))
+            case a==nil: blocked="its row is missing"
+            case ab.ability_check(a,text[:])!="": blocked=fmt.tprintf("its sheet is not valid: %s",ab.ability_check(a,text[:]))
+            case: blocked=block_text(ab.start_block(&params,time.tick,dt,e,&u,kit,active,at,a,ref))
             }
-            serial.text_write_raw(w,"}")
-            listed+=1
+            append(&candidates,Candidate_Result{row_name(abilities,ref),blocked})
         }
     }
-    serial.text_write_raw(w,"]}")
+    r.candidates=candidates[:]
 }
 
 @(private)
@@ -232,48 +231,34 @@ block_text :: proc(block:ab.Ability_Block) -> string {
 @(private)
 check :: proc(s:^editor.Session,call:^api.Call) {
     abilities,kits:=sets(s)
-    w:=call.out
     text:[512]u8
-    count:=0
-    serial.text_write_raw(w,`{"problems":[`)
-    problem :: proc(w:^serial.Writer,count:^int,table,row,text:string) {
-        if count^>0 {serial.text_write_raw(w,",")}
-        serial.text_write_raw(w,"{")
-        api.write_text(w,"table",table,true)
-        api.write_text(w,"row",row)
-        api.write_text(w,"problem",text)
-        serial.text_write_raw(w,"}")
-        count^+=1
-    }
+    problems:=make([dynamic]Check_Problem,call.allocator)
     missing :: proc(rows:core.Records(ab.Ability),ref:core.Record(ab.Ability)) -> bool {return ref!={} && ab.ability_sheet(rows,ref)==nil}
     for i in 0..<core.records_count(abilities) {
         a,ref:=core.records_at(abilities,i)
         table,row:=table_name(abilities.set,ref.table),core.record_name(abilities,ref)
-        if t:=ab.ability_check(&a,text[:]);t!="" {problem(w,&count,table,row,t)}
-        if missing(abilities,a.next) {problem(w,&count,table,row,"next names a row no table of Ability has: pick another row or none")}
+        if t:=ab.ability_check(&a,text[:]);t!="" {append(&problems,Check_Problem{table,row,fmt.tprint(t)})}
+        if missing(abilities,a.next) {append(&problems,Check_Problem{table,row,"next names a row no table of Ability has: pick another row or none"})}
         for win,k in a.windows {
-            if missing(abilities,win.hitbox.effect.use) {problem(w,&count,table,row,fmt.tprintf("windows[%d].hitbox.effect.use names a row no table of Ability has: pick another row or none",k))}
+            if missing(abilities,win.hitbox.effect.use) {append(&problems,Check_Problem{table,row,fmt.tprintf("windows[%d].hitbox.effect.use names a row no table of Ability has: pick another row or none",k)})}
         }
     }
     for i in 0..<core.records_count(kits) {
         k,ref:=core.records_at(kits,i)
         table,row:=table_name(kits.set,ref.table),core.record_name(kits,ref)
-        if t:=ab.kit_check(&k,text[:]);t!="" {problem(w,&count,table,row,t)}
+        if t:=ab.kit_check(&k,text[:]);t!="" {append(&problems,Check_Problem{table,row,fmt.tprint(t)})}
         for a,n in k.abilities {
-            if missing(abilities,a) {problem(w,&count,table,row,fmt.tprintf("abilities[%d] names a row no table of Ability has: pick another row or none",n))}
+            if missing(abilities,a) {append(&problems,Check_Problem{table,row,fmt.tprintf("abilities[%d] names a row no table of Ability has: pick another row or none",n)})}
         }
     }
-    serial.text_write_raw(w,"]")
-    api.write_int(w,"abilities",i64(core.records_count(abilities)))
-    api.write_int(w,"kits",i64(core.records_count(kits)))
-    serial.text_write_raw(w,"}")
+    api.call_result(call,Check_Result)^={problems[:],core.records_count(abilities),core.records_count(kits)}
 }
 
 @(private)
 use :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Use_Params)
     if !editor.playing(s) {
-        api.call_failf(call,api.INVALID_PARAMS,"the game is not running: play.start first")
+        editor.api_no_game(call)
         return
     }
     world:=editor.shown_world(s)
@@ -308,9 +293,5 @@ use :: proc(s:^editor.Session,call:^api.Call) {
         return
     }
     ab.ability_use(requests,e,found)
-    w:=call.out
-    serial.text_write_raw(w,"{")
-    api.write_text(w,"ability",name,true)
-    api.write_bool(w,"requested",true)
-    serial.text_write_raw(w,"}")
+    api.call_result(call,Use_Result)^={name,true}
 }

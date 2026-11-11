@@ -60,10 +60,13 @@ Prefab_Warm :: struct {
 // The prefabs read in jobs for the spawns that wait for them, of every World
 // of the application.
 @(storage,host,free="prefab_warms_free")
-Prefab_Warms :: struct {items:[dynamic]Prefab_Warm}
+Prefab_Warms :: struct {
+    items:[dynamic]Prefab_Warm,
+    ended:u64, // reads that ended
+}
 
 prefab_warms_free :: proc(warms:^Prefab_Warms) {
-    for w in warms.items {load_cancel(w.job)}
+    for w in warms.items {load_free(w.job)}
     delete(warms.items)
     warms^={}
 }
@@ -85,6 +88,7 @@ spawns_fill :: proc(w:core.World_Ref,app:^host.App,warms:^Prefab_Warms,problems:
         if !load_step(warms.items[i].job,all) {continue}
         load_free(warms.items[i].job)
         unordered_remove(&warms.items,i)
+        warms.ended+=1
     }
     pendings:=core.world_table_of(w,Prefab_Pending)
     if pendings==nil {return}
@@ -92,6 +96,11 @@ spawns_fill :: proc(w:core.World_Ref,app:^host.App,warms:^Prefab_Warms,problems:
     if core.raw_count(t)==0 {return}
     ids:=core.world_table_of(w,core.Id)
     forms:=core.world_storage_of(w,Prefab_Forms)
+    // A spawn that waits is looked at when a read ended or the spawns that wait changed, not in every frame.
+    if forms!=nil && !all {
+        if !core.raw_reshaped(t,&forms.pending) && forms.ended==warms.ended {return}
+        forms.ended=warms.ended
+    }
     for row in 0..<core.raw_count(t) {
         root:=t.entities[row]
         pending:=(^Prefab_Pending)(core.raw_value(t,type_info_of(Prefab_Pending),row))^
@@ -103,7 +112,7 @@ spawns_fill :: proc(w:core.World_Ref,app:^host.App,warms:^Prefab_Warms,problems:
         for warmed:=false;;warmed=true {
             if member {loaded=prefab_loaded(a,prefab,documents=true)} else {form,entities,loaded,error=prefab_form(forms,w,a,prefab)}
             if loaded || !all || warmed {break}
-            if job,begun:=prefab_warm_begin(app,{prefab},member);begun==.None {
+            if job,begun:=assets_warm_begin(app,{prefab},member);begun==.None {
                 load_step(job,true)
                 load_free(job)
             }
@@ -112,7 +121,7 @@ spawns_fill :: proc(w:core.World_Ref,app:^host.App,warms:^Prefab_Warms,problems:
             warmed:=false
             for x in warms.items {warmed||=x.prefab==prefab}
             if warmed || len(warms.items)>=PREFAB_WARMS {continue}
-            job,begun:=prefab_warm_begin(app,{prefab},member)
+            job,begun:=assets_warm_begin(app,{prefab},member)
             if begun==.None {append(&warms.items,Prefab_Warm{prefab,job});continue}
             error=begun
         }

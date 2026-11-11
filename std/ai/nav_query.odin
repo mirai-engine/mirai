@@ -695,34 +695,62 @@ nav_move_along_surface :: proc(mesh:^Nav_Mesh,start_ref:Nav_Ref,start,end:math.V
     return best,count
 }
 
-NAV_WALL_NODES :: 16 // polygons nav_walls_near looks at
+NAV_WALL_NODES :: 16 // polygons a boundary looks at
+// Tiles a boundary keeps: all that a disc two tiles across touches. Past them it is gathered each time.
+NAV_BOUNDARY_TILES :: 9
 
-// The walls near a point of the surface, for avoid_velocity: the edges that
-// lead to no polygon the filter walks, among the polygons joined to
-// start_ref whose way there stays within `radius` of `center` on XZ, each as
-// (x, z) with the surface to its right, nearest first. Writes those that fit
-// `out`, at most AVOID_MAX_WALLS; how many.
-nav_walls_near :: proc(mesh:^Nav_Mesh,start_ref:Nav_Ref,center:math.Vec3,radius:f32,filter:^Nav_Filter,out:[]Avoid_Wall) -> (count:int) {
-    if filter==nil || !nav_point_finite(center) || !(radius>=0) || !(radius<=1e9) {return}
-    if _,poly:=nav_poly_of(mesh,start_ref);poly==nil {return}
-    room:=min(len(out),AVOID_MAX_WALLS)
-    if room==0 {return}
+// The walls near an agent on the surface, for avoid_velocity, gathered once
+// and kept while the agent stays well within where they were gathered, as
+// the local boundary of Detour does: plain data that copies with the agent.
+Nav_Boundary :: struct {
+    walls:[AVOID_MAX_WALLS]Avoid_Wall, // (x, z), the surface to their right, nearest center first
+    count:i32,
+    center:math.Vec3,                  // where they were gathered
+    range:f32,                         // m around center on XZ they hold; 0: none
+    tiles:[NAV_BOUNDARY_TILES]Nav_Ref, // a polygon of each tile they come from, to expire them
+}
+
+// The walls within `reach` of `center` on XZ: those `b` holds, or, when they
+// no longer cover it (the agent went on, or a tile they come from was built
+// again), those within twice the reach gathered again over the polygons
+// joined to start_ref: the edges that lead to no polygon the filter walks.
+// Adapted from dtLocalBoundary (DetourLocalBoundary.cpp, recastnavigation,
+// zlib license). True when gathered again.
+nav_boundary_update :: proc(b:^Nav_Boundary,mesh:^Nav_Mesh,start_ref:Nav_Ref,center:math.Vec3,reach:f32,filter:^Nav_Filter) -> (walls:[]Avoid_Wall,gathered:bool) {
+    if b==nil {return}
+    if mesh!=nil && b.range>0 && linalg.length(center.xz-b.center.xz)+reach<=b.range {
+        held:=true
+        for ref in b.tiles {
+            if ref!=0 && !nav_ref_valid(mesh,ref) {held=false;break}
+        }
+        if held {return b.walls[:clamp(b.count,0,AVOID_MAX_WALLS)],false}
+    }
+    b^={center=center}
+    if mesh==nil || filter==nil || !nav_point_finite(center) || !(reach>=0) || !(reach<=1e9) {return nil,true}
+    if _,poly:=nav_poly_of(mesh,start_ref);poly==nil {return nil,true}
+    radius:=reach*2
     distances:[AVOID_MAX_WALLS]f32
     nodes:[NAV_WALL_NODES]Nav_Ref
     nodes[0]=start_ref
-    used:=1
+    used,tiles:=1,0
+    held:=true
     flat :: #force_inline proc "contextless" (v:math.Vec3) -> math.Vec3 {return {v.x,0,v.z}}
     for at:=0;at<used;at+=1 {
         ref:=nodes[at]
         tile,poly:=nav_poly_of(mesh,ref)
         if poly==nil {continue}
+        known:=false
+        for kept in b.tiles[:tiles] {if nav_ref_slot(kept)==nav_ref_slot(ref) {known=true;break}}
+        if !known {
+            if tiles<NAV_BOUNDARY_TILES {b.tiles[tiles]=ref;tiles+=1} else {held=false}
+        }
         corners:[NAV_VERTS_PER_POLY]math.Vec3
         n:=nav_poly_vertices(tile,poly,&corners)
         inside:=nav_poly_center(tile,poly)
         open:=nav_open_edges(mesh,ref,filter)
         for e in 0..<n {
-            a,b:=corners[e],corners[(e+1)%n]
-            on,_:=math.closest_point_segment(flat(center),{flat(a),flat(b)})
+            a,c:=corners[e],corners[(e+1)%n]
+            on,_:=math.closest_point_segment(flat(center),{flat(a),flat(c)})
             d:=linalg.length2(on-flat(center))
             if !(d<=radius*radius) {continue}
             if open[e]!=0 {
@@ -731,20 +759,21 @@ nav_walls_near :: proc(mesh:^Nav_Mesh,start_ref:Nav_Ref,center:math.Vec3,radius:
                 if !seen && used<NAV_WALL_NODES {nodes[used]=open[e];used+=1}
                 continue
             }
-            if count==room && d>=distances[count-1] {continue}
-            wall:=Avoid_Wall{{a.x,a.z},{b.x,b.z}}
+            if b.count==AVOID_MAX_WALLS && d>=distances[b.count-1] {continue}
+            wall:=Avoid_Wall{{a.x,a.z},{c.x,c.z}}
             along:=wall.b-wall.a
             if along.y*(inside.x-a.x)-along.x*(inside.z-a.z)<0 {wall.a,wall.b=wall.b,wall.a}
-            slot:=min(count,room-1)
+            slot:=min(int(b.count),AVOID_MAX_WALLS-1)
             for slot>0 && distances[slot-1]>d {
-                out[slot]=out[slot-1];distances[slot]=distances[slot-1]
+                b.walls[slot]=b.walls[slot-1];distances[slot]=distances[slot-1]
                 slot-=1
             }
-            out[slot]=wall;distances[slot]=d
-            count=min(count+1,room)
+            b.walls[slot]=wall;distances[slot]=d
+            b.count=min(b.count+1,AVOID_MAX_WALLS)
         }
     }
-    return
+    if held {b.range=radius}
+    return b.walls[:b.count],true
 }
 
 // Walks the segment from `start` on start_ref toward `end` over the surface

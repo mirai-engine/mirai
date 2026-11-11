@@ -3,7 +3,6 @@ package ui_inspector_editor
 import "base:runtime"
 import "core:fmt"
 import "core:slice"
-import "core:strconv"
 import "core:strings"
 import "mirai:asset"
 import "mirai:cook/author"
@@ -451,36 +450,36 @@ Ui_Empty_Params :: struct {}
 
 Ui_Paths_Result :: struct {
     scope:author.Path_Scope_Kind `mirai:"label=What the entries are: the sources; the fields of a struct; or the components of an entity"`,
-    entries:[1]Ui_Path_Entry `mirai:"list"`,
+    entries:[]Ui_Path_Entry,
 }
 Ui_Path_Entry :: struct {
-    name:[RESULT_TEXT_BYTES]u8 `mirai:"text,label=@ is the data an instance of the widget gives it"`,
-    path:[RESULT_TEXT_BYTES]u8 `mirai:"text,label=What prefix takes, and a bind_ key of ui.write"`,
-    type:[RESULT_TEXT_BYTES]u8 `mirai:"text,optional,label=Its type in the game; @ has none"`,
+    name:string `mirai:"label=@ is the data an instance of the widget gives it"`,
+    path:string `mirai:"label=What prefix takes, and a bind_ key of ui.write"`,
+    type:string `mirai:"optional,label=Its type in the game; @ has none"`,
     fits:bool `mirai:"label=Whether the binding takes it"`,
     navigable:bool `mirai:"label=Whether it is a prefix that goes on"`,
     storage:bool `mirai:"optional,label=A storage; absent: a component or a field"`,
 }
 Ui_Check_Result :: struct {
-    problems:[1]Ui_Check_Problem `mirai:"list,label=Each binding the game lacks once and each .ui that does not load; at most 16 by .ui"`,
+    problems:[]Ui_Check_Problem `mirai:"label=Each binding the game lacks once and each .ui that does not load; at most 16 by .ui"`,
 }
 Ui_Check_Problem :: struct {
-    asset:[editor.API_PATH_BYTES]u8 `mirai:"text,label=The name of the file of the .ui"`,
-    node:[ui.TREE_NAME_CAPACITY*2]u8 `mirai:"text,label=The node that fails: its name, or instance/node inside a widget; empty when it does not load"`,
-    binding:[24]u8 `mirai:"text,label=The binding that fails; Text (in braces) for a name in braces of the text; empty when it does not load"`,
-    path:[ui.TREE_PATH_CAPACITY]u8 `mirai:"text,label=What the binding names that the game does not have or cannot show there; empty for a name in braces or when it does not load"`,
+    asset:string `mirai:"label=The name of the file of the .ui"`,
+    node:string `mirai:"label=The node that fails: its name, or instance/node inside a widget; empty when it does not load"`,
+    binding:string `mirai:"label=The binding that fails; Text (in braces) for a name in braces of the text; empty when it does not load"`,
+    path:string `mirai:"label=What the binding names that the game does not have or cannot show there; empty for a name in braces or when it does not load"`,
     loads:bool `mirai:"label=False: it does not load because a widget it uses is missing or an override names a node its widget no longer has"`,
-    message:[RESULT_TEXT_BYTES]u8 `mirai:"text,label=What fails for a person"`,
+    message:string `mirai:"label=What fails for a person"`,
 }
 Ui_Rename_Result :: struct {
-    files:[1][editor.API_PATH_BYTES]u8 `mirai:"list,text,label=The paths of the .ui it changed; each waits for Save"`,
+    files:[]string `mirai:"label=The paths of the .ui it changed; each waits for Save"`,
 }
 
 @(private)
 bind_api_register :: proc(s:^editor.Session) {
-    editor.api_method_register(s,Ui_Paths_Params,Ui_Paths_Result,{name="ui.paths",summary="Lists what a binding of a node of a .ui can take, one level of the data of the game at a time.",writes_result=true,flags={.Read_Only},run=api_paths})
-    editor.api_method_register(s,Ui_Empty_Params,Ui_Check_Result,{name="ui.check",summary="Checks every .ui of the project against the types of the game of this build: the paths they bind that the game lacks, the names of styles, tokens, components and parameters that resolve to nothing, and each .ui that does not load with why.",writes_result=true,flags={.Read_Only},run=api_check})
-    editor.api_method_register(s,Ui_Rename_Params,Ui_Rename_Result,{name="ui.path.rename",summary="Follows a field or a source the code renamed in the paths of every .ui: bindings, widget data and the fields of texts. One step of history per file.",writes_result=true,run=api_rename})
+    editor.api_method_register(s,{params=type_info_of(Ui_Paths_Params),result=type_info_of(Ui_Paths_Result),name="ui.paths",summary="Lists what a binding of a node of a .ui can take, one level of the data of the game at a time.",flags={.Read_Only},run=api_paths})
+    editor.api_method_register(s,{params=type_info_of(Ui_Empty_Params),result=type_info_of(Ui_Check_Result),name="ui.check",summary="Checks every .ui of the project against the types of the game of this build: the paths they bind that the game lacks, the names of styles, tokens, components and parameters that resolve to nothing, and each .ui that does not load with why.",flags={.Read_Only},run=api_check})
+    editor.api_method_register(s,{params=type_info_of(Ui_Rename_Params),result=type_info_of(Ui_Rename_Result),name="ui.path.rename",summary="Follows a field or a source the code renamed in the paths of every .ui: bindings, widget data and the fields of texts. One step of history per file.",run=api_rename})
 }
 
 @(private)
@@ -525,32 +524,14 @@ api_paths :: proc(s:^editor.Session,call:^api.Call) {
         if !walked || next.kind==.Sources && prefix!="" {api.call_failf(call,api.INVALID_PARAMS,"prefix '%s' is not a source, a struct or an entity of the game; walk it one name at a time from the entries ui.paths gives",prefix);return}
         scope=next
     }
-    out:=call.out
-    serial.write_u8(out,'{')
-    names:=author.PATH_SCOPE_NAMES
-    api.write_text(out,"scope",names[scope.kind],true)
-    api.write_key(out,"entries");serial.write_u8(out,'[')
-    first:=true
+    entries:=make([dynamic]Ui_Path_Entry,call.allocator)
     // What an instance of this widget gives it, which its @ paths read.
-    if prefix=="" && widget.kind!=.Sources {
-        serial.text_write_raw(out,`{"name":"@","path":"@","fits":`)
-        serial.text_write_raw(out,"true" if author.type_fits(widget.info,kind) else "false")
-        serial.text_write_raw(out,`,"navigable":true}`)
-        first=false
-    }
+    if prefix=="" && widget.kind!=.Sources {append(&entries,Ui_Path_Entry{name="@",path="@",fits=author.type_fits(widget.info,kind),navigable=true})}
     for &e in author.path_entries(info,scope,kind) {
         if !e.navigable && !e.fits {continue}
-        if !first {serial.write_u8(out,',')};first=false
-        serial.write_u8(out,'{')
-        api.write_text(out,"name",e.name,true)
-        api.write_text(out,"path",author.path_join(prefix,e.name))
-        api.write_text(out,"type",fmt.tprintf("%v",e.info.id))
-        api.write_bool(out,"fits",e.fits)
-        api.write_bool(out,"navigable",e.navigable)
-        if e.storage {api.write_bool(out,"storage",true)}
-        serial.write_u8(out,'}')
+        append(&entries,Ui_Path_Entry{name=e.name,path=author.path_join(prefix,e.name),type=fmt.tprintf("%v",e.info.id),fits=e.fits,navigable=e.navigable,storage=e.storage})
     }
-    serial.text_write_raw(out,"]}")
+    api.call_result(call,Ui_Paths_Result)^={scope.kind,entries[:]}
 }
 
 // Writes records as a step of the history of the document of their .ui. A
@@ -593,7 +574,16 @@ api_check :: proc(s:^editor.Session,call:^api.Call) {
     defer author.bind_types_free(&types)
     problems:=make([dynamic]author.Bind_Problem,context.temp_allocator)
     author.bind_check_all(&problems,&types,context.allocator,author.assets_of(a),s.app.info)
-    author.problems_write(call.out,author.assets_of(a),problems[:])
+    result:=api.call_result(call,Ui_Check_Result)
+    result.problems=make([]Ui_Check_Problem,len(problems),call.allocator)
+    for &row,i in result.problems {
+        problem:=&problems[i]
+        row={node=strings.clone(serial.text_field(problem.name[:]),call.allocator),loads=problem.fault!=.Widget && problem.fault!=.Load,asset=author.file_name_of(author.assets_of(a),problem.asset,"missing"),message=author.bind_problem_text(author.assets_of(a),problem)}
+        #partial switch problem.fault {
+        case .Template: row.binding="Text (in braces)"
+        case .Path: row.binding,row.path=fmt.tprintf("%v",problem.binding),strings.clone(serial.text_field(problem.path[:]),call.allocator)
+        }
+    }
 }
 
 @(private)
@@ -604,9 +594,7 @@ api_rename :: proc(s:^editor.Session,call:^api.Call) {
     if from=="" || to=="" {api.call_fail(call,api.INVALID_PARAMS,"from and to are paths: Old_Name.field and New_Name.field");return}
     a:=s.app.assets
     if a==nil {api.call_fail(call,api.SERVER_ERROR,"the editor has no assets");return}
-    out:=call.out
-    serial.text_write_raw(out,`{"files":[`)
-    first:=true
+    files:=make([dynamic]string,call.allocator)
     for &file in a.registry.files {
         if file.kind!=asset.KIND_UI || file.id=={} {continue}
         records:author.Records
@@ -629,9 +617,8 @@ api_rename :: proc(s:^editor.Session,call:^api.Call) {
         for &o in records.overrides {count+=each(&o.values,from,to)}
         if count==0 {continue}
         if _,written:=records_write(s,file.id,&records,"Rename path");!written {continue}
-        if !first {serial.write_u8(out,',')};first=false
-        serial.text_write_string(out,file.path)
+        append(&files,strings.clone(file.path,call.allocator))
     }
-    serial.text_write_raw(out,"]}")
+    api.call_result(call,Ui_Rename_Result).files=files[:]
 }
 

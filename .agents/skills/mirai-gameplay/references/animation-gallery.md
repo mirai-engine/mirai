@@ -70,8 +70,8 @@ schemas and `scene.inspect` for the ids of the stations, which are named after w
    `{"entity":"<rig>","motion":[{"name":"Reach","target":t}]}`, where `t` is
    `{"kind":"Entity","entity":"<Reach goal>"}`, then `animation.play` of `stride`. Its gallery
    restarts the stride every few seconds with the goal at another distance. `animation.inspect`
-   part `Motion` publishes the window and the predicted error; `play.inspect` reports the position
-   reached by physics.
+   part `Motion` publishes the window and the predicted error; `scene.inspect` of the game reports
+   the position reached by physics.
 2. `Mirai named actions`: `animation.request` with `{"entity":"<rig>","actions":[{"name":"Greet"}]}`
    starts the `Greeting` section; `Step` emits `Movement` windows. `animation.inspect` part
    `Actions` after one tick reads state and events.

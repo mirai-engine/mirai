@@ -11,23 +11,9 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
-// What the Tracks tool asks of a clip besides animation.key.set and animation.track.set: where its
-// head is, and the keys of what an entity has now. How the tracks of a clip name the entities and
+// What the Tracks tool asks of a clip besides animation.key.set and animation.track.set: the keys
+// of what an entity has now. Its head is moved by animation.request with seek, in Edit. How the tracks of a clip name the entities and
 // the fields they move is the binding of the runtime (anim bind, field_resolve), read back.
-
-Tracks_Show_Params :: struct {
-    entity:editor.Api_Entity_Text `mirai:"text,entity,label=The entity whose Animation plays the clip"`,
-    command:anim.Timeline_Command `mirai:"optional,label=Seek puts the head at time (without time it keeps it); Play plays the preview from the start and Resume from the head; Pause and Stop stop it, Stop at the start"`,
-    time:f32 `mirai:"optional,min=0,unit=s"`,
-    speed:f32 `mirai:"optional,min=0,max=4,label=Of the preview; 0 keeps it"`,
-}
-Tracks_Show_Result :: struct {
-    asset:base.Asset_Id `mirai:"label=The .anim: animation.asset.inspect reads its tracks and keys"`,
-    clip:[anim.CLIP_CAPACITY]u8 `mirai:"text"`,
-    time:f32 `mirai:"unit=s,label=Where the head is: the scene shows the clip there"`,
-    duration:f32 `mirai:"unit=s"`,
-    playing:bool,
-}
 
 Key_Capture_Params :: struct {
     animation:editor.Api_Entity_Text `mirai:"text,entity,label=The entity whose Animation plays the clip"`,
@@ -36,41 +22,14 @@ Key_Capture_Params :: struct {
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
 }
 Key_Capture_Result :: struct {
-    asset:base.Asset_Id,
-    path:[1024]u8 `mirai:"text"`,
-    dry_run:bool `mirai:"optional"`,
+    using written:Authoring_Write_Result `mirai:"inline"`,
     keys:u32 `mirai:"label=The tracks keyed"`,
 }
 
 @(private)
 tracks_register :: proc(s:^editor.Session) {
     editor.tool_entry(s,TRACKS_TOOL,"Tracks",.Play)
-    editor.api_method_register(s,Tracks_Show_Params,Tracks_Show_Result,{name="animation.tracks.show",summary="Turns on the Tracks tool on the clip of an entity's Animation and moves its head: the scene shows the clip at the head without changing the document. Edit only.",run=tracks_show})
-    editor.api_method_register(s,Key_Capture_Params,Key_Capture_Result,{name="animation.key.capture",summary="Keys at a time every track of the clip of an Animation that moves an entity, with the transform and the fields the entity has now: a key there is updated, else one is inserted. One step of undo.",run=key_capture,writes_result=true})
-}
-
-@(private)
-tracks_show :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Tracks_Show_Params)
-    if s.mode!=.Edit {api.call_fail(call,api.INVALID_PARAMS,"the Tracks tool shows a clip in Edit; in Play, animation.request seeks it");return}
-    w:=editor.edited_world(s)
-    e,found:=editor.api_call_entity(call,w,p.entity[:]);if !found {return}
-    animation,animated:=editor.entity_get(w,e,anim.Animation)
-    if !animated {api.call_fail(call,api.INVALID_PARAMS,"the entity has no Animation: give it one whose asset is an .anim, or name the entity whose clip moves it");return}
-    t:=tracks_tool_state(s)
-    if t==nil {api.call_fail(call,api.SERVER_ERROR,"the Tracks tool is not in this build of the editor");return}
-    // Another tool that shows the clip of the entity keeps it.
-    kept:=t.on && t.entity==e
-    if !kept {
-        editor.tool_set(s,TRACKS_TOOL,true)
-        t.selected=s.selection.entities[0] if len(s.selection.entities)>0 else core.NONE
-    }
-    if !kept && !editor.tool_on(s,TRACKS_TOOL) {api.call_fail(call,api.INVALID_PARAMS,"the Tracks tool works on the scene: bring the scene to the front with editor.document first");return}
-    out:=api.call_result(call,Tracks_Show_Result)
-    out.time,out.playing,_=tracks_command(s,e,p.command,p.time,authoring_field_present(call,"time"),p.speed)
-    out.asset=animation.asset
-    copy(out.clip[:],animation.clip[:])
-    if view,clip,ok:=tracks_clip(s,t,w);ok {out.duration=tracks_duration(view,clip)}
+    editor.api_method_register(s,{params=type_info_of(Key_Capture_Params),result=type_info_of(Key_Capture_Result),name="animation.key.capture",summary="Keys at a time every track of the clip of an Animation that moves an entity, with the transform and the fields the entity has now: a key there is updated, else one is inserted. One step of undo.",run=key_capture})
 }
 
 // The command of a timeline applied to the preview of the tool on the clip of an entity, which it
@@ -131,7 +90,9 @@ key_capture :: proc(s:^editor.Session,call:^api.Call) {
     doc:aa.Document
     defer aa.document_destroy(&doc)
     if error:=aa.animation_document(&doc,&s.app.assets.types,{id=animation.asset,clips=clips,source=view.source},s.app.allocator);error!=.None {authoring_failure(call,"clips","Invalid_Definition","keys within the clip capacities",fmt.tprintf("%v",error),"The keys could not be stored",api.SERVER_ERROR if error==.Out_Of_Memory else api.INVALID_PARAMS);return}
-    authoring_publish(s,call,file,&doc,proc(call:^api.Call,data:rawptr) {api.write_uint(call.out,"keys",u64((^u32)(data)^))},&keyed)
+    r:=api.call_result(call,Key_Capture_Result)
+    r.keys=keyed
+    authoring_publish(s,call,file,&doc,&r.written)
 }
 
 // The node a track target names, and for a "@field" track the component and its field.

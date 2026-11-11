@@ -9,8 +9,6 @@ import erender "mirai:engine/render"
 import "mirai:host"
 import lib "mirai:std/anim"
 import "mirai:std/base"
-import mm "mirai:std/math"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 @(storage)
@@ -18,15 +16,6 @@ Animation_Api :: struct {provider:editor.Api_Provider}
 
 ANIMATION_API_DEFAULT :: Animation_Api{provider={register=register}}
 
-Describe_Params :: struct {
-    entity:editor.Api_Entity_Text `mirai:"text,entity,optional"`,
-    handle:core.Entity `mirai:"transient"`,
-    asset:base.Asset_Id `mirai:"optional"`,
-    mesh:base.Asset_Id `mirai:"optional"`,
-    skeleton:base.Asset_Id `mirai:"optional"`,
-    offset:u32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=1024,clamp"`,
-}
 
 @(private="file")
 PATH_CAPACITY :: asset.NODE_PATH_CAPACITY // the field asset hides the package in Play_Params
@@ -77,13 +66,12 @@ register :: proc(s:^editor.Session) {
     authoring_register(s)
     program_register(s)
     morph_register(s)
-    describe_defaults:=Describe_Params{limit=256}
     play_defaults:=Play_Params{speed=1,fade=0.2,loop=true}
     preview_defaults:=new(Preview_Params,context.temp_allocator);if preview_defaults==nil {return}
     preview_defaults.dt,preview_defaults.limit,preview_defaults.trace_limit=1.0/60,256,16
     request_rows_defaults(preview_defaults)
-    editor.api_method_register(s,Play_Params,Control_Result,{name="animation.play",summary="Plays a clip of an .anim or a .character, its locomotion by motion matching, on an entity. What plays over it are the layers and actions of its .character (animation.action.set, animation.request). One step of undo in Edit; in Play it changes the running world.",defaults=&play_defaults,run=play})
-    editor.api_method_register(s,Preview_Params,Preview_Result,{name="animation.preview",summary="Evaluates an entity on a copy of the world with the fields of animation.request scheduled by tick and returns its poses; the document and the running world stay intact.",defaults=preview_defaults,flags={.Read_Only},run=preview,writes_result=true})
+    editor.api_method_register(s,{params=type_info_of(Play_Params),result=type_info_of(Control_Result),name="animation.play",summary="Plays a clip of an .anim or a .character, its locomotion by motion matching, on an entity. What plays over it are the layers and actions of its .character (animation.action.set, animation.request). One step of undo in Edit; in Play it changes the running world.",defaults=&play_defaults,run=play})
+    editor.api_method_register(s,{params=type_info_of(Preview_Params),result=type_info_of(Preview_Result),name="animation.preview",summary="Evaluates an entity on a copy of the world with the fields of animation.request scheduled by tick and returns its poses; the document and the running world stay intact.",defaults=preview_defaults,flags={.Read_Only},run=preview})
 }
 
 @(private)
@@ -180,19 +168,16 @@ asset_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,file:^asset
     return true
 }
 
+// The clips its animation plays and a page of the bones of its skeleton, with their mirror.
 @(private)
-describe :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Describe_Params)
-    animation_id,mesh_id,skeleton_id:=p.asset,p.mesh,p.skeleton
-    if p.entity[0]!=0 || p.handle!=core.NONE {
-        w,e,ok:=subject(s,call,p.entity[:],p.handle);if !ok {return}
-        if a,has:=editor.entity_get(w,e,anim.Animation);has && animation_id=={} {animation_id=a.library if a.library!={} else a.asset}
-        if skeleton_id=={} {skeleton_id=rig_skeleton(s,w,e)}
-        if m,has:=editor.entity_get(w,e,erender.Mesh_Renderer);has && mesh_id=={} {mesh_id=m.mesh}
-        if mesh_id=={} {
-            meshes:=core.world_table_of(w,erender.Mesh_Renderer)
-            if meshes!=nil {for m,i in meshes.values {if m.mesh!={} && within(w,meshes.entities[i],e) {mesh_id=m.mesh;break}}}
-        }
+instance_rig :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.Entity,p:^Instance_Inspect_Params) -> (r:Instance_Rig) {
+    animation_id,mesh_id,skeleton_id:base.Asset_Id
+    if a,has:=editor.entity_get(w,e,anim.Animation);has {animation_id=a.library if a.library!={} else a.asset}
+    skeleton_id=rig_skeleton(s,w,e)
+    if m,has:=editor.entity_get(w,e,erender.Mesh_Renderer);has {mesh_id=m.mesh}
+    if mesh_id=={} {
+        meshes:=core.world_table_of(w,erender.Mesh_Renderer)
+        if meshes!=nil {for m,i in meshes.values {if m.mesh!={} && within(w,meshes.entities[i],e) {mesh_id=m.mesh;break}}}
     }
     animation_file,mesh_file,skeleton_file:asset.Asset
     defer asset.asset_close(&animation_file)
@@ -222,33 +207,26 @@ describe :: proc(s:^editor.Session,call:^api.Call) {
         skeleton,error=asset.skeleton_view(&skeleton_file,&s.app.assets.types)
         if error!=.None {authoring_failure(call,"skeleton","Invalid_Asset","a valid .skeleton asset",fmt.tprintf("%v",error),"The asset is not a valid skeleton");return}
     }
-    out:=call.out
-    serial.text_write_raw(out,`{"clips":[`)
-    for &clip,i in animation.clips {
-        if i>0 {serial.text_write_raw(out,",")}
+    r.clips=make([]Instance_Clip,len(animation.clips),call.allocator)
+    for &row,i in r.clips {
+        clip:=animation.clips[i]
         duration:f32
         for track in animation.tracks[clip.first_track:][:clip.track_count] {
             if track.key_count>0 {duration=max(duration,animation.keys[track.first_key+track.key_count-1].time)}
         }
         for marker in animation.markers[clip.first_marker:][:clip.marker_count] {duration=max(duration,marker.time)}
-        serial.text_write_raw(out,"{");api.write_text(out,"name",base.text_get(clip.name[:]),true)
-        api.write_key(out,"duration");api.write_number(out,duration)
-        api.write_uint(out,"tracks",u64(clip.track_count));api.write_uint(out,"markers",u64(clip.marker_count));serial.text_write_raw(out,"}")
+        row={name=clip.name,duration=duration,tracks=u32(clip.track_count),markers=u32(clip.marker_count)}
     }
-    serial.text_write_raw(out,"]");api.write_int(out,"bones_total",i64(len(skeleton.bones)));api.write_int(out,"joints",i64(len(mesh.joints)))
-    api.write_key(out,"bones");serial.text_write_raw(out,"[")
-    start:=min(int(p.offset),len(skeleton.bones));end:=min(start+int(p.limit),len(skeleton.bones))
+    r.bones_total,r.joints=u32(len(skeleton.bones)),u32(len(mesh.joints))
     pairs,paired:=anim.skeleton_mirror_pairs(skeleton.bones,call.allocator)
     if !paired {authoring_failure(call,"bones","Out_Of_Memory","memory for mirror pairs","allocation failed","The skeleton could not be described",api.SERVER_ERROR);return}
-    for &node,i in skeleton.bones[start:end] {
-        if i>0 {serial.text_write_raw(out,",")}
-        serial.text_write_raw(out,"{");api.write_int(out,"index",i64(start+i),true);api.write_text(out,"name",base.text_get(node.name[:]))
-        api.write_text(out,"path",base.text_get(node.path[:]));api.write_int(out,"parent",i64(node.parent));api.write_int(out,"mirror",i64(pairs[start+i]))
-        api.write_numbers(out,"position",node.translation);api.write_numbers(out,"scale",node.scale)
-        rotation:=[4]f32{node.rotation.x,node.rotation.y,node.rotation.z,node.rotation.w}
-        api.write_numbers(out,"rotation",rotation[:]);serial.text_write_raw(out,"}")
+    first:=min(int(p.offset),len(skeleton.bones))
+    r.bones=make([]Instance_Bone,min(first+int(p.limit),len(skeleton.bones))-first,call.allocator)
+    for &row,i in r.bones {
+        node:=skeleton.bones[first+i]
+        row={index=u32(first+i),name=node.name,path=node.path,parent=i32(node.parent),mirror=i32(pairs[first+i]),position=node.translation,scale=node.scale,rotation={node.rotation.x,node.rotation.y,node.rotation.z,node.rotation.w}}
     }
-    serial.text_write_raw(out,"]}")
+    return
 }
 
 @(private)
@@ -263,10 +241,7 @@ preview :: proc(s:^editor.Session,call:^api.Call) {
     defer host.app_world_free(s.app,clone)
     world:=core.world_ref(clone,s.info)
     requests:=core.world_storage_of(world,anim.Animation_Requests)
-    trace:Preview_Trace
-    buffer:=make([]u8,PREVIEW_TRACE_BYTES+1,call.allocator);defer delete(buffer,call.allocator)
-    if buffer==nil {authoring_failure(call,"trace","Out_Of_Memory","memory for the preview trace","allocation failed","The preview trace could not be allocated",api.SERVER_ERROR);return}
-    serial.writer_init_fixed(&trace.writer,buffer)
+    trace:=Preview_Trace{frames=make([dynamic]Preview_Trace_Result,call.allocator)}
     animation,_:=editor.entity_get(world,e,anim.Animation)
     source_file:Authoring_File;defer asset.asset_close(&source_file.file)
     if animation.asset!={} {
@@ -293,53 +268,41 @@ preview :: proc(s:^editor.Session,call:^api.Call) {
     ids:=core.world_table_of(world,core.Id)
     targets:=core.world_table_of(world,anim.Animation_Target)
     names:=core.world_table_of(world,core.Name)
-    out:=call.out
-    serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(source,e))
-    progress,_,ended,_:=anim.animation_progress(core.world_storage_of(world,anim.Playback),e);api.write_key(out,"time");api.write_number(out,progress);api.write_bool(out,"ended",ended)
+    r:=api.call_result(call,Preview_Result)
+    r.id=editor.api_entity_id(source,e)
+    r.time,_,r.ended,_=anim.animation_progress(core.world_storage_of(world,anim.Playback),e)
     selected:^anim.Playing;for &state in playback.states {if state.entity==e {selected=&state;break}}
-    api.write_key(out,"program");preview_program_write(call,world,s.app,selected,animation)
-    api.write_key(out,"poses");serial.text_write_raw(out,"[")
-    total,written:=0,0
+    r.program=preview_program(call,world,s.app,selected,animation)
+    defer preview_trace_result(r,&trace,p)
+    poses:=make([dynamic]Preview_Pose_Result,call.allocator)
+    defer r.poses,r.shown=poses[:],u32(len(poses))
     if skeleton_id!={} {
         cache:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Skeleton_Assets)
         content:=anim.skeleton_content(cache,s.app.assets,s.app.allocator,skeleton_id)
-        playback:=core.world_storage_of(world,anim.Playback)
-        if content!=nil && playback!=nil {
-            for &state in playback.states {
-                if state.entity!=e || !state.pose_ready {continue}
-                total=len(content.bones)
-                start:=min(int(p.offset),total);end:=min(start+int(p.limit),total)
-                for &bone,i in content.bones[start:end] {
-                    index:=start+i+1
-                    if index>=len(state.local) {break}
-                    value:=state.local[index]
-                    if written>0 {serial.text_write_raw(out,",")};written+=1
-                    serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,0);api.write_text(out,"path",base.text_get(bone.path[:]))
-                    api.write_text(out,"name",base.text_get(bone.name[:]))
-                    api.write_numbers(out,"position",value.position);api.write_numbers(out,"scale",value.scale)
-                    rotation:=[4]f32{value.rotation.x,value.rotation.y,value.rotation.z,value.rotation.w}
-                    api.write_numbers(out,"rotation",rotation[:]);serial.text_write_raw(out,"}")
-                }
-                break
+        if content==nil {return}
+        for &state in playback.states {
+            if state.entity!=e || !state.pose_ready {continue}
+            r.total=u32(len(content.bones))
+            start:=min(int(p.offset),len(content.bones));end:=min(start+int(p.limit),len(content.bones))
+            for &bone,i in content.bones[start:end] {
+                index:=start+i+1
+                if index>=len(state.local) {break}
+                value:=state.local[index]
+                append(&poses,Preview_Pose_Result{path=bone.path,name=bone.name,position=value.position,scale=value.scale,rotation={value.rotation.x,value.rotation.y,value.rotation.z,value.rotation.w}})
             }
+            break
         }
-        serial.text_write_raw(out,"]");api.write_int(out,"total",i64(total));api.write_int(out,"shown",i64(written));preview_trace_result(call,&trace,p);serial.text_write_raw(out,"}")
         return
     }
     for value,i in transforms.values {
         entity:=transforms.entities[i]
         if !within(world,entity,e) {continue}
-        total+=1
-        if total<=int(p.offset) || written>=int(p.limit) {continue}
-        if written>0 {serial.text_write_raw(out,",")}
-        written+=1
-        serial.text_write_raw(out,"{");api.write_key(out,"id",true)
-        id,_:=core.get(ids,entity);api.write_id(out,id.value)
-        api.write_text(out,"name",core.name_get(names,entity))
-        target,_:=core.get(targets,entity);api.write_text(out,"path",base.text_get(target.path[:]))
-        api.write_numbers(out,"position",value.position);api.write_numbers(out,"scale",value.scale)
-        rotation:=[4]f32{value.rotation.x,value.rotation.y,value.rotation.z,value.rotation.w}
-        api.write_numbers(out,"rotation",rotation[:]);serial.text_write_raw(out,"}")
+        r.total+=1
+        if int(r.total)<=int(p.offset) || len(poses)>=int(p.limit) {continue}
+        id,_:=core.get(ids,entity)
+        target,_:=core.get(targets,entity)
+        row:=Preview_Pose_Result{id=id.value,path=target.path,position=value.position,scale=value.scale,rotation={value.rotation.x,value.rotation.y,value.rotation.z,value.rotation.w}}
+        base.text_set(row.name[:],core.name_get(names,entity))
+        append(&poses,row)
     }
-    serial.text_write_raw(out,"]");api.write_int(out,"total",i64(total));api.write_int(out,"shown",i64(written));preview_trace_result(call,&trace,p);serial.text_write_raw(out,"}")
 }
