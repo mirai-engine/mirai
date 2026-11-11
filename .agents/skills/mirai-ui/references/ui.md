@@ -95,8 +95,15 @@ result. It is built every frame and resolved in `frame_end`, one axis at a time:
    it received and the heights rise to the roots. Afterwards the height is distributed like the
    width.
 4. The floating roots are ordered by layer (within a layer, the one declared later stays on top) and
-   placed against what they hang from; a `GROW` float takes the size of that. Afterwards each
-   element is placed and the commands are listed in draw order.
+   placed against what they hang from; a `GROW` float takes the size of that and a `percent` one
+   its share of it. Afterwards each element is placed and the commands are listed in draw order.
+5. Each box is rounded to the device pixels of the screen: its edges, from where the layout put
+   them, and its size between them, so neighbours share an edge. What transitions is not rounded
+   while it moves, nor what it holds. An edge moves at most half a device pixel, a size at most
+   one; what a text asks for (and a button measured from its text) is rounded up to whole device
+   pixels first, so a box never ends narrower than the text it holds, and `text_height` gives the
+   same. Pointer hits and `widget_rect` see the rounded boxes; a shape's border is whole device
+   pixels wide.
 
 The measure of a span of text is stored by text, size and face in two generations that swap
 between frames: what a frame shows again is taken from the previous one without measuring it,
@@ -369,9 +376,13 @@ All take the context, an id and their state by parameter.
   only the visible rows (equal ones, or of heights that the caller measured once).
   - An area that scrolls horizontally leaves its content as wide as it asks, so a paragraph is not
     split.
-  - The wheel goes to the innermost area under the pointer; the page keys and the right stick, to
-    that one or to the one that has the focus, if it has nothing focusable (otherwise they belong to
-    the navigation). `zoom` takes the wheel with Ctrl (Cmd on macOS) before the area scrolls.
+  - The wheel goes to the innermost area under the pointer that can still move its content that
+    way (by last frame's rectangles of the area and its content), so one that fits or is at its
+    end passes it outward; one whose content fits its height turns it sideways. An area without
+    content of its own (one that pans or zooms) and Ctrl+wheel take it always. The page keys and
+    the right stick go to the innermost area under the pointer or to the one that has the focus,
+    if it has nothing focusable (otherwise they belong to the navigation). `zoom` takes the wheel
+    with Ctrl (Cmd on macOS) before the area scrolls.
   - A content that shrinks leaves in place what was seen: the area stores below the missing place,
     which goes away when scrolling up and never when scrolling down with the wheel. The bar floats
     and takes no layout.
