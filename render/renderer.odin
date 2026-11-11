@@ -294,8 +294,8 @@ Pipeline_Id :: enum {
 	Ddgi_Trace, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values, Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Translucent, Reflect_Resolve,
-	Shadow_Maps, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, // the cull of the maps of the shadows, and their draws by what each writes
-	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Mean, Glass_Inside,
+	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Tint, Shadow_Map_Glass, // the cull of the maps of the shadows by instance and by cluster, and their draws by what each writes
+	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Mean, Glass_Inside,
 	Gbuffer_Plain, // without the reflectance target: no reflective instance in the frustum
 	Gbuffer_Layers, Gbuffer_Layers_Clip, Gbuffer_Nested_Layers, // with the layers target: an instance with layers in the frustum
 	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines,
@@ -400,7 +400,7 @@ Targets :: struct {
 	needs_clear:             bool,
 	glass:                   [GLASS_LAYERS_MAX]Glass_Layer,
 	glass_zbuffer:           rhi.Texture,
-	glass_scene:             rhi.Texture, // copy of the scene a glass layer is drawn over, for the layer to read
+	glass_scene:             rhi.Texture, // copy of the scene a glass layer is drawn over, for the layer to read, and its levels to blur it (glass_levels.comp)
 	glass_reflections:       rhi.Texture, // the traced reflections of the nearest layer of glass, filtered
 	glass_valid:             bool,
 	glass_needs_clear:       bool,
@@ -801,7 +801,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	for b in r.debug_buffers {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.font_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.stats_readback {if b != 0 {rhi.buffer_destroy(d, b)}}
-	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.entries, r.shadow_buffers.draw, r.shadow_buffers.table}) {if b != 0 {rhi.buffer_destroy(d, b)}}
+	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.state, r.shadow_buffers.table}) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	if r.light_changes != 0 {rhi.buffer_destroy(d, r.light_changes)}
 	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
 	air_destroy(r)
@@ -934,6 +934,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Air_Sky, .Air_Sky_Comp)
 	compute(list, r, .Air_Aerial, .Air_Aerial_Comp)
 	compute(list, r, .Glass_Mean, .Glass_Mean_Comp)
+	compute(list, r, .Glass_Levels, .Glass_Levels_Comp)
 	compute(list, r, .Points, .Points_Comp)
 	compute(list, r, .Skin, .Skin_Comp)
 	// Only rays traced by software run them: they walk or refit the software BVH.
@@ -1035,6 +1036,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None, name = "shadow glass",
 	})
 	compute(list, r, .Shadow_Maps, .Shadow_Maps_Comp)
+	compute(list, r, .Shadow_Clusters, .Shadow_Clusters_Comp)
 	graphics(list, r, .Tonemap, {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Tonemap_Frag],
 		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, name = "tonemap",
