@@ -395,6 +395,9 @@ build_reload :: proc(s:^Session) {
     if !b.reload {return}
     switch library_reload(s) {
     case .Wait:
+    case .Refused:
+        b.reload=false
+        b.play={}
     case .Restart:
         b.reload=false
         b.play={}
