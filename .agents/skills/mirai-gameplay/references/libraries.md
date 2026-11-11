@@ -530,8 +530,10 @@ the reverb of the room where the listener is and what covers each source.
     game's gain: a slider binds its field and `save` stores it in the player's options.
   - `Audio_Output` (machine setting) is the output the player chose, by its name in
     `platform.audio_device_names`; empty, the system's. `audio_output` moves the mixer to it when
-    it changes, without losing its voices, and only if the application has an open output. A name
-    the system does not list sounds through the system's and is the problem `audio.output`. Its
+    it changes, without losing its voices, and only if the application has an open output. While
+    the chosen output is not connected (a name the system does not list, or one unplugged) the
+    sound plays through the system's, reported once as `audio.output`, and goes back to the chosen
+    one when it is plugged in again. Its
     `kind` (speakers by default, or headphones) is given to every mixer, open output or not.
   - `audio_buses` (`late`) compares each bus of the mixer with its entry and its volume and sends
     only what differs; a bus without an entry returns to 0 dB, without filter or ducking. The

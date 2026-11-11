@@ -24,6 +24,9 @@ that decodes [feeds](#feeds):
 - What it reports (finished voices, released sounds and feeds, clock, underruns) comes back
   through atomics. `mixer_update`, once per frame on the game thread, frees what finished and,
   without a decoder thread, decodes the feeds ahead.
+- `mixer_render` and the decoder thread count subnormal floats as zero (FTZ and DAZ on x86, FZ
+  on ARM64; `mixer_render` restores the caller's mode): a tail that rings down to silence never
+  computes with them, so no filter or delay line carries a guard of its own.
 - As long as parameters do not change, one call or chunks of any size give the same samples.
 - `mixer_destroy` requires that the audio thread is no longer rendering.
 
