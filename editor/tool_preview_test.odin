@@ -10,18 +10,18 @@ import api "mirai:editor/api"
 @(test)
 tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^testing.T) {
     world:Simulation_Test_World
-    if !core.test_world_init(t,&world) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     original:=core.create(&world.entities)
     core.add(&world.ids,original,core.Id{1})
     core.add(&world.transforms,original,core.Transform{{1,0,0},1,{1,1,1}})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     edits:history.Edits
     selection:history.Selection
     viewport:Viewport
     gui:Editor_Ui
     app:host.App
-    s:=Session{info=core.test_world_info(&world),edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui,app=&app}
+    s:=Session{info=test_world_info(&world),edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui,app=&app}
     w:=edited_world(&s)
     history.edits_reset(&edits,w)
     defer history.edits_free(&edits)
@@ -118,14 +118,14 @@ tool_previews_confirm_once_or_restore_the_document_and_selection :: proc(t:^test
 @(test)
 tool_lent_to_the_gizmo_stays_on :: proc(t:^testing.T) {
     world:Simulation_Test_World
-    if !core.test_world_init(t,&world) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     edits:history.Edits
     selection:history.Selection
     viewport:Viewport
     gui:Editor_Ui
     app:host.App
-    s:=Session{info=core.test_world_info(&world),edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui,app=&app}
+    s:=Session{info=test_world_info(&world),edit_world=&world,edits=&edits,selection=&selection,viewport=&viewport,gui=&gui,app=&app}
     history.edits_reset(&edits,edited_world(&s))
     defer history.edits_free(&edits)
     defer delete(selection.entities)

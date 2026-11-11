@@ -41,13 +41,14 @@ template_copy :: proc(t:^testing.T,name:string) -> (root,engine:string,ok:bool) 
     return root,engine,true
 }
 
-@(private="file") Game_Status :: struct {health:f32,hits:i32,message:[32]u8 `mirai:"text"`}
-@(private="file") Game_Mark :: struct {seen:i32 `mirai:"transient,hidden"`}
+@(private) Game_Status :: struct {health:f32,hits:i32,message:[32]u8 `mirai:"text"`}
+@(private) Game_Mark :: struct {seen:i32 `mirai:"transient,hidden"`}
 
 // The world of the game of the tests: where a recipe is run.
-@(private="file")
+@(private)
+@(test_world)
 Game_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     hidden:core.Table(erender.Hidden),
     disabled:core.Table(core.Disabled),
@@ -101,9 +102,9 @@ the_document_of_each_interface_of_the_template_writes_it_back_as_it_is :: proc(t
 a_path_the_game_lacks_is_refused_with_no_editor_as_ui_write_refuses_it :: proc(t:^testing.T) {
     root,engine,copied:=template_copy(t,"paths")
     if !copied {return}
-    info,described:=core.test_info(t,Game_World,erender.test_types)
+    info,described:=test_info(t,Game_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     p:Project
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
@@ -156,9 +157,9 @@ the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T)
     testing.expect(t,slice.equal(file_bytes_at(root,"assets/hud/hud.ui"),before))
 
     // With the types of the game a document is written to the asset it names.
-    info,described:=core.test_info(t,Game_World,erender.test_types)
+    info,described:=test_info(t,Game_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     p:Project
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
@@ -274,9 +275,9 @@ writing_a_widget_follows_its_parameters_in_the_files_that_use_it :: proc(t:^test
 the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:^testing.T) {
     root,engine,copied:=template_copy(t,"scene")
     if !copied {return}
-    info,described:=core.test_info(t,Game_World,erender.test_types)
+    info,described:=test_info(t,Game_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     p:Project
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
@@ -392,9 +393,9 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
 a_scene_document_makes_entities_from_recipes_and_prefabs :: proc(t:^testing.T) {
     root,engine,copied:=template_copy(t,"recipes")
     if !copied {return}
-    info,described:=core.test_info(t,Game_World,erender.test_types)
+    info,described:=test_info(t,Game_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     p:Project
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
@@ -529,9 +530,9 @@ the_documents_of_the_tracked_assets_write_back_the_files_they_were_read_from :: 
         log.warn("MIRAI_ROOT is not set: the tracked assets were not read. Use `mirai test cook/author`.")
         return
     }
-    info,described:=core.test_info(t,Game_World,erender.test_types)
+    info,described:=test_info(t,Game_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     for folder in ([]string{"templates/game","demo"}) {
         p:Project
         if problem:=project_open(&p,project.path(engine,folder,allocator=context.temp_allocator),engine,false);!testing.expectf(t,problem=="","%s: %s",folder,problem) {continue}

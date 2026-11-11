@@ -87,7 +87,7 @@ a_volume_that_joins_a_heightfield_takes_its_cells_and_digs_under_them :: proc(t:
     dug:=core.create(&w.entities)
     core.add(&w.transforms,dug,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,dug,Terrain{source=volume_id,solid=true,ground=7})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     view:=core.VIEW_DEFAULT
     view.position={0,6,0}
     for _ in 0..<3 {terrain_test_update(&w,&resident,&app,view=view)}
@@ -103,7 +103,7 @@ a_volume_that_joins_a_heightfield_takes_its_cells_and_digs_under_them :: proc(t:
     testing.expect(t,found && abs(hit.point.y-source_height(&ground,-7.5,-2.5))<0.05)
     // A Volume moved off the samples of the ground joins nothing and says how far to move it.
     core.add(&w.transforms,dug,core.Transform{position={0.5,0,0},rotation=1,scale=1})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     for _ in 0..<2 {terrain_test_update(&w,&resident,&app,view=view)}
     testing.expect(t,core.problem_find(&w.problems,dug,"terrain.ground_misaligned")!=nil)
     cut=resident_source_find(&resident,ground_id,field)

@@ -60,7 +60,7 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
   satisfies with an object (ammo, health) is this.
 - **Move requests:** `nav.nav_move_to`, `nav_follow`, `nav_stop`, `nav_look_at`, `nav_look_along`
   on `Nav_Requests`. `Nav_Path.state` is `Idle`, `Waiting`, `Moving`, `Crossing`, `Arrived` or
-  `Failed`; `partial`: it got as near as the mesh goes.
+  `Failed` (also blocked by a body: `navigation.blocked`); `partial`: it got as near as it goes.
 - **Show it:** an action that takes `requests:^anim.Animation_Requests` calls
   `anim.play(requests,behavior.agent(a),"Bite")` and `anim.look`. Minds run on the server, and every
   client plays what the server played, as far into it as the server is.

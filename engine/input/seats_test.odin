@@ -44,14 +44,14 @@ devices_reach_each_local_player :: proc(t:^testing.T) {
 @(test)
 focus_and_driving_wait_for_held_buttons :: proc(t:^testing.T) {
     w:Test_Seats
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     first,second,body,other:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     bindings:=test_bindings()
     core.add(&w.seats,first,Seat{})
     core.add(&w.seats,second,Seat{slot=1})
     core.add(&w.moves,body,Move_Input{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     state:Seats
     problems:core.Problems
     a:=Apply{es=&w.entities,state=&state,moves=&w.moves,seats=&w.seats,problems=&problems}
@@ -121,14 +121,14 @@ focus_and_driving_wait_for_held_buttons :: proc(t:^testing.T) {
 @(test)
 a_block_of_no_seat_takes_every_local_seat :: proc(t:^testing.T) {
     w:Test_Seats
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     first,second,remote,menu:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     bindings:=test_bindings()
     core.add(&w.seats,first,Seat{})
     core.add(&w.seats,second,Seat{slot=1})
     core.add(&w.seats,remote,Seat{peer=7})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     state:Seats
     problems:core.Problems
     a:=Apply{es=&w.entities,state=&state,moves=&w.moves,seats=&w.seats,problems=&problems}
@@ -166,13 +166,13 @@ a_block_of_no_seat_takes_every_local_seat :: proc(t:^testing.T) {
 @(test)
 refused_drives_report_the_seat_and_how_to_fix_them :: proc(t:^testing.T) {
     w:Test_Seats
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     first,second,body,prop:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.seats,first,Seat{})
     core.add(&w.seats,second,Seat{slot=1})
     core.destroy(&w.entities,prop)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     state:Seats
     problems:core.Problems
     a:=Apply{es=&w.entities,state=&state,moves=&w.moves,seats=&w.seats,problems=&problems}
@@ -199,12 +199,12 @@ refused_drives_report_the_seat_and_how_to_fix_them :: proc(t:^testing.T) {
 @(test)
 a_client_lets_go_of_what_the_server_took_and_takes_only_what_it_owns :: proc(t:^testing.T) {
     w:Test_Seats
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     seat,person,dog:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.seats,seat,Seat{body=person})
     core.add(&w.remotes,dog,core.Remote{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     state:Seats
     problems:core.Problems
     a:=Apply{es=&w.entities,state=&state,moves=&w.moves,seats=&w.seats,role=.Client,elsewhere=core.read(&w.remotes),problems=&problems}
@@ -216,7 +216,7 @@ a_client_lets_go_of_what_the_server_took_and_takes_only_what_it_owns :: proc(t:^
     // The server gives the dog to this client and the person to someone else.
     core.remove(&w.remotes,dog)
     core.add(&w.remotes,person,core.Remote{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     a.elsewhere=core.read(&w.remotes)
     count:=problems.count
     request_apply(&a,{kind=.Release,seat=seat})

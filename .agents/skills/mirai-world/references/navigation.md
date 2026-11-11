@@ -58,8 +58,7 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
     if the hash is that of the tile it has, it is not built. A tile with no input at all is empty
     without a job. If not, a frame job builds it and the next tick waits for it and publishes the
     tile, only if nobody marked it again: the tick of a tile never depends on how fast the threads
-    ran. Publishing does not allocate; a replaced tile
-    expires its references.
+    ran. Publishing does not allocate; a replaced tile expires its references.
   - **Carving.** A build from the collision leaves the heightfield of its tile with
     `Navigation_Builds`, which keeps those of the last `NAV_FIELDS` tiles. A tile marked only by a
     `Nav_Area` or an obstacle since its build began is built again from that heightfield
@@ -170,6 +169,12 @@ Automatic navmesh and agents that walk on it, and volumes they fly through
   still far from the level of its corridor (more than its `climb` and half a meter: pushed,
   fallen, placed elsewhere) searches again from where it is, instead of walking against the wall
   toward a corner above.
+- **Planning on the way.** While its path is searched (`Waiting`), one that walks goes on along
+  the corridor it has, from whose first polygon the search starts. It plans again when a step
+  ahead stops being valid or the end of a cut corridor is near: `Arrived` only at the goal.
+- **Blocked.** One that walks in place within its radius (asking for a quarter of its speed or
+  more, so not one that ORCA holds back) plans once more after `NAV_BLOCKED` and fails after
+  twice that, with `navigation.blocked`.
 - **Searching in the air.** A request cuts the crossing in progress and searches in the same tick.
   If the body is not standing on the ground (it falls, or jumps between roofs) and there is no
   navmesh within its reach, the search waits for it to be standing instead of failing with

@@ -51,15 +51,15 @@ terrain_pieces_far_from_the_render_origin_cover_their_region_on_both_sides :: pr
         core.add(&w.terrains,e,Terrain{source=id,solid=true})
         owners[i]=e
     }
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     eye:=[3]f32{0,900,-1800}
     view:=core.VIEW_DEFAULT
     view.position,view.size=eye,{1440,900}
     w.streaming.items[0]={eye,eye,0};w.streaming.count=1;w.streaming.revision+=1
     w.settings={}
     for _ in 0..<64 {
-        test_step(&w.terrain,core.commands_of(core.test_world_ref(&w.w)),&resident,&app,&w.problems,Terrain_Settings{},view=view)
-        core.test_world_settle(&w.w)
+        test_step(&w.terrain,core.commands_of(test_world_ref(&w.w)),&resident,&app,&w.problems,Terrain_Settings{},view=view)
+        test_world_settle(&w.w)
         idle:=!work_busy(&w.data,nil)
         for &source in resident.sources {if len(source.pending)>0 {idle=false}}
         if idle {break}

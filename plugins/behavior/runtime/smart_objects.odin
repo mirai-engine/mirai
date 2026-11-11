@@ -20,6 +20,7 @@ import nav "plugins:navigation/runtime"
 // agent claims to cross it, one at a time (cross_act).
 
 SMART_OFFERS :: 4
+SMART_MOVED :: f32(0.5) // m the place of an offer moves before its user, walking to it, heads for the new one
 
 // The use of an offer: the game declares its ids as constants (USE_AMMO :: behavior.Smart_Use(1)).
 @(names="USE_")
@@ -218,10 +219,11 @@ smart_at_link :: proc(v:Smart_View,links:^core.Table(nav.Nav_Link,$A),from:[3]f3
 
 // Goes for an offer of `use` and uses it: on Enter it takes the nearest one
 // `user` can take within `radius` of the agent and claims it, or fails; it
-// walks to where its user stands (stage 0), stays there `seconds` (stage 1)
-// and succeeds with the offer, whose effect the caller applies, with
-// smart_used when it spends it. It keeps the offer in the first two words of
-// its memory.
+// walks to where its user stands (stage 0), after it if the object moves,
+// stays there `seconds` (stage 1) and succeeds with the offer, whose effect
+// the caller applies, with smart_used when it spends it. It fails when the
+// offer is gone or closed to it (the object destroyed, disabled or spent). It
+// keeps the offer in the first two words of its memory.
 offer_act :: proc(a:^ai.Act($A),use:Smart_Use,user:Smart_User,radius:f32,seconds:f64) -> (status:ai.Status,found:Smart_Found) {
     w,e,v:=world_of(a),agent(a),smart_view(a)
     switch a.phase {
@@ -234,8 +236,13 @@ offer_act :: proc(a:^ai.Act($A),use:Smart_Use,user:Smart_User,radius:f32,seconds
         nav.nav_move_to(w.requests,e,found.at)
         return .Running,found
     case .Update:
-        found=offer_held(v,a)
+        found=offer_held(v,a,user)
+        if found.offer<0 {return .Failure,{}}
         if ai.stage(a)==0 {
+            if p,ok:=agent_path(a);ok && linalg.length(mm.Vec3(found.at)-mm.Vec3(p.goal))>SMART_MOVED {
+                nav.nav_move_to(w.requests,e,found.at)
+                return .Running,found
+            }
             #partial switch path_status(a) {
             case .Running: return .Running,found
             case .Failure: return .Failure,found
@@ -250,13 +257,15 @@ offer_act :: proc(a:^ai.Act($A),use:Smart_Use,user:Smart_User,radius:f32,seconds
     return .Success,{}
 }
 
-// The offer an offer_act holds.
+// The offer an offer_act holds, while it is still open to its user; offer -1 when not.
 @(private)
-offer_held :: proc(v:Smart_View,a:^ai.Act($A)) -> (found:Smart_Found) {
+offer_held :: proc(v:Smart_View,a:^ai.Act($A),user:Smart_User) -> (found:Smart_Found) {
     object:=core.Entity(a.memory[0])
     offer:=int(a.memory[1])
     o,has:=core.get(v.objects,object)
     pose,placed:=core.get(v.worlds,object)
     if !has || !placed || offer<0 || offer>=SMART_OFFERS {return {offer=-1}}
+    state,_:=core.get(v.states,object)
+    if !smart_open(v,object,offer,o.offers[offer],state,user) {return {offer=-1}}
     return {object,offer,mm.transform_point(pose.transform,o.offers[offer].at),max(int(o.offers[offer].users),1)}
 }

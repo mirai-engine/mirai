@@ -190,7 +190,7 @@ a_dig_request_edits_whichever_terrain_is_under_it_and_reports_what_it_cannot_do 
         core.add(&w.worlds,owners[kind],core.World_Transform{transform={position=place.position,rotation=1,scale={1,1,1}}})
         core.add(&w.terrains,owners[kind],Terrain{source=ids[kind],solid=false})
     }
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     terrain_test_update(&w,&resident,&app)
     nan:=transmute(f32)u32(0x7fc00000)
     testing.expect_value(t,dig(&w.terrain_requests,{kind=.Carve,center={nan,0,0},radius=3,amount=1}),Edit_Error.Center)

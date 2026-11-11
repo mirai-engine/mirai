@@ -36,9 +36,10 @@ fields_gravity :: proc(f:Gpu_Fields,p:[3]f32) -> [3]f32 {
     return value
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Fields_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     gravities:core.Table(volume.Gravity),
     volumes:core.Table(volume.Volume),
     worlds:core.Table(core.World_Transform),
@@ -50,14 +51,14 @@ Fields_World :: struct {
 @(test)
 particles_take_the_gravity_of_their_place_as_the_bodies :: proc(t:^testing.T) {
     w:Fields_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     place :: proc(w:^Fields_World,g:volume.Gravity,v:Maybe(volume.Volume),position:[3]f32,rotation:=mm.QUAT_IDENTITY) {
         e:=core.create(&w.entities)
         core.add(&w.gravities,e,g)
         if v,ok:=v.?;ok {core.add(&w.volumes,e,v)}
         core.add(&w.worlds,e,core.World_Transform{transform={position=position,rotation=rotation,scale=1}})
-        core.test_world_settle(w)
+        test_world_settle(w)
     }
     place(&w,volume.GRAVITY_DEFAULT,nil,{})
     place(&w,{pull=.Center,acceleration=5,radius=2,zone={blend=2,priority=1}},volume.sphere(10),{10040,0,0})

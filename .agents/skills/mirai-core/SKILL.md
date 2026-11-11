@@ -43,8 +43,8 @@ A game is a struct in memory and a list of functions that transform it
   key (`core.Text`, `core.Texts`): [game data](references/core.md#game-data).
 - What a function could not do, with its entity and how to fix it:
   [problems](references/core.md#problems).
-- The world of a test, and what a library gives the tests of others (`core.Test_World`,
-  `test_types`): [test worlds](references/core.md#test-worlds).
+- The world of a test (`@(test_world)`, `test_info`, `test_world_init`) and what a library gives
+  the tests of others: [test worlds](references/core.md#test-worlds).
 - Attributes and their rules: [generator](references/generator.md#attributes).
 - Parameter types of a function: [parameters](references/generator.md#parameters).
 - Grouping parameters in a struct that several functions or a helper receive (`@(params)`,
@@ -273,8 +273,8 @@ A game is a struct in memory and a list of functions that transform it
   `plugins/multiplayer/runtime` (`authority_test.odin`).
 - Indices and schema of the `World_Info`: `mirai test core`; the generated `info()`, with a real
   build of the demo.
-- What a test world says of its types: `mirai test core` (`test_world_test.odin`) and, for a new
-  attribute or a change in how one is written, `mirai test cook/build` (`declared_test.odin`).
+- What a test world says of its types and the errors of one no World could be:
+  `mirai test cook/build` (`test_worlds_test.odin`).
 - `single` tables: `mirai test core` (`table_test.odin`) and `engine/render` (`sky_test.odin`).
 - Copy, swap or replacement of worlds: `mirai test core`, `host` and `cook/build` (cases without
   memory), `plugins/multiplayer/runtime` (rollback), `plugins/physics/runtime` and

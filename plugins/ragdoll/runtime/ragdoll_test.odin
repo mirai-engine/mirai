@@ -36,8 +36,9 @@ physical_animation_rejects_a_stale_parent_binding_and_invalid_parent_offsets :: 
 }
 
 @(private)
+@(test_world)
 Ragdoll_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using physics:phys.Test_Physics,
     configs:core.Table(Ragdoll),
     bones:core.Table(Ragdoll_Bone),
@@ -56,11 +57,11 @@ Ragdoll_Fixture :: struct {
 }
 
 @(private)
-ragdoll_fixture_settle :: proc(f:^Ragdoll_Fixture) {core.test_world_settle(&f.w)}
+ragdoll_fixture_settle :: proc(f:^Ragdoll_Fixture) {test_world_settle(&f.w)}
 
 @(private)
 ragdoll_fixture_init :: proc(t:^testing.T,f:^Ragdoll_Fixture) -> bool {
-    if !core.test_world_init(t,&f.w,test_types) {return false}
+    if !test_world_init(t,&f.w) {return false}
     f.whole=true
     f.rig,f.upper,f.lower=core.create(&f.entities),core.create(&f.entities),core.create(&f.entities)
     core.add(&f.transforms,f.rig,core.from_math(mm.TRANSFORM_IDENTITY))
@@ -99,7 +100,7 @@ ragdoll_fixture_init :: proc(t:^testing.T,f:^Ragdoll_Fixture) -> bool {
 @(private)
 ragdoll_fixture_free :: proc(f:^Ragdoll_Fixture) {
     phys.test_host_destroy(&f.host)
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
 }
 
 @(private)

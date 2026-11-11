@@ -19,9 +19,9 @@ a_stroke_keeps_the_pages_it_changed_and_undo_and_redo_trade_them :: proc(t:^test
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     // 257 samples on a side: 25 pages of heights, a stroke in one of them.
     source:terrain.Source;defer terrain.source_destroy(&source)
     if !testing.expect(t,terrain.source_make(&source,.Heightfield,{257,1,257},1,32)) {return}
@@ -42,7 +42,7 @@ a_stroke_keeps_the_pages_it_changed_and_undo_and_redo_trade_them :: proc(t:^test
     s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     core.add(&world.worlds,owner,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
 
     stroke :: proc(t:^testing.T,s:^editor.Session,tool:^Terrain_Tool,ref:core.World_Ref,world:^Create_Test_World,owner:core.Entity,brush:terrain.Brush) {
         terrain_sync(s,tool,core.read(&world.terrains),s.app.assets)
@@ -101,9 +101,9 @@ a_change_of_kind_keeps_the_whole_source_once :: proc(t:^testing.T) {
 @(test)
 terrain_initial_asset_revision_is_the_baseline_of_the_first_undo :: proc(t:^testing.T) {
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     edits:history.Edits;defer history.edits_free(&edits)
     selection:history.Selection;defer delete(selection.entities)
     assets:host.Assets
@@ -111,7 +111,7 @@ terrain_initial_asset_revision_is_the_baseline_of_the_first_undo :: proc(t:^test
     session:=editor.Session{app=&app,info=ref.info,edit_world=&world,selection=&selection,edits=&edits,id_state=42}
     owner:=editor.entity_create(&session,{name="Terrain"})
     core.add(&world.terrains,owner,{source={1,2},revision=1})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     history.edits_reset(&edits,ref)
     initial:=history.edits_state(&edits)
     core.edit(&world.terrains,owner).revision=7

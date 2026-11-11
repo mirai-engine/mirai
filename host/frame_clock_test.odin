@@ -5,9 +5,10 @@ import "core:time"
 import "mirai:core"
 import "mirai:platform"
 
-@(private="file")
+@(private)
+@(test_world)
 Clock_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     time:core.Time,
     frame_time:core.Frame_Time,
 }
@@ -27,9 +28,9 @@ clock_test_frame :: proc(app:^App,w:^Clock_Test_World,wait:time.Duration) -> f32
 @(test)
 outside_play_the_render_clock_advances_the_dt_of_each_frame_and_not_the_time_between_them :: proc(t:^testing.T) {
     w:Clock_Test_World
-    if !core.test_world_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
-    info:=core.test_world_info(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    info:=test_world_info(&w)
     info.loops[.Editor][.Render]=clock_test_render
 
     manual,error:=platform.create({headless=true,fixed_dt=1.0/60,pacing=platform.Frame_Pacing{}})
