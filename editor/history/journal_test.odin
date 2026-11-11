@@ -198,3 +198,25 @@ journal_cancel_and_undo_put_the_world_back_in_the_room_they_reserved :: proc(t:^
 // Two ends of a session, each with its document: what one edits reaches the
 // other from the journal, as Sets, Fields, Turns and Removes, and what
 // arrives is not sent back.
+
+// An agent's turn of many steps past the capacity evicts its own oldest, never the user's.
+@(test)
+the_steps_of_one_author_never_evict_those_of_another :: proc(t:^testing.T) {
+    f:=new(Test_Journal);defer free(f)
+    if !test_journal_init(t,f,2) {return}
+    defer test_journal_free(f)
+    w:=test_world_ref(&f.world)
+    first:=test_journal_entity(f,1)
+    for i in 0..<5+EDITS_STEP_CAPACITY+44 {
+        f.edits.author=i<5?EDIT_AUTHOR_USER:EDIT_AUTHOR_API
+        testing.expect(t,edits_begin(&f.edits,&f.selection,"Move"))
+        core.edit(&f.world.transforms,first).position.y=f32(i+1)
+        edits_end(&f.edits)
+        testing.expect(t,edits_commit(&f.edits,w,&f.selection))
+    }
+    users:=0
+    for step in f.edits.steps {if step.author==EDIT_AUTHOR_USER {users+=1}}
+    testing.expect_value(t,users,5)
+    testing.expect_value(t,len(f.edits.steps),EDITS_STEP_CAPACITY)
+    testing.expect_value(t,f.edits.cursor,EDITS_STEP_CAPACITY)
+}

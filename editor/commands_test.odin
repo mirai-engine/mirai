@@ -300,6 +300,16 @@ a_method_says_in_one_place_that_it_cannot_be_called_now :: proc(t:^testing.T) {
     // An entry needs a method that is registered, or a procedure, and a name no other has; a session without the registry runs none.
     testing.expect(t,!command_bind(s,{name="orphan",label="Orphan"}) && !command_bind(s,{name="save",method="scene.save",label="Save"}) && !command_bind(s,{name="lost",method="no.such.method",label="Lost"}))
     testing.expect(t,tool_entry(s,"brush","Brush",.Edit) && !tool_entry(s,"brush","Brush",.Edit))
+    // A key is of one entry where both can be on: the second is refused, naming both; where one of
+    // them is off (a card of the browser has the keyboard, another mode) it is not taken.
+    idle :: proc(s:^Session) {}
+    testing.expect(t,command_bind(s,{name="plugin_a",view=idle,label="A",shortcut={key=.J,set=true},modes={.Edit},scene=true}))
+    testing.expect(t,!command_bind(s,{name="plugin_b",view=idle,label="B",shortcut={key=.J,set=true}}))
+    testing.expectf(t,strings.contains(st.refusal,"the shortcut J of the entry plugin_b is taken by the entry plugin_a"),"%s",st.refusal)
+    testing.expect(t,!command_bind(s,{name="plugin_delete",view=idle,label="Delete",alternate={key=.Delete,set=true},scene=true}))
+    testing.expectf(t,strings.contains(st.refusal,"of the entry plugin_delete is taken by the entry delete"),"%s",st.refusal)
+    testing.expect(t,command_bind(s,{name="plugin_card",view=idle,label="C",shortcut={key=.J,set=true},card=true}))
+    testing.expect(t,command_bind(s,{name="plugin_play",view=idle,label="P",shortcut={key=.J,set=true},modes={.Play},scene=true}) && command_binding(s,"plugin_b")==nil)
     bare:Session
     testing.expect(t,!command_run(&bare,"save") && !command_call(&bare,"scene.save","{}") && command_state(&bare,"save").disabled && len(command_bindings(&bare))==0)
     commands_run(&bare)

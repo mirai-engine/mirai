@@ -371,23 +371,35 @@ scene_refused :: proc(a:^Scene_Apply,path,problem:string) -> bool {
 
 // Matches the entities of the document from..to, which hang from parent,
 // that no id matched: by name among the entities of the parent, then by
-// place. ids: those that give an id too, of what was placed just now.
+// place. ids: those that give an id too, of what was placed just now, whose
+// children match in the order they were made. False after failing the
+// reading: a name more than one untaken child has names none of them.
 @(private="file")
-scene_match :: proc(a:^Scene_Apply,parent:Node,from,to:int,ids:=false) {
+scene_match :: proc(a:^Scene_Apply,parent:Node,from,to:int,ids:=false) -> bool {
     children:=a.children(a.user,parent,a.reading.allocator)
     for by_name in ([]bool{true,false}) {
         if !by_name && !a.replace {break}
         for c:=from;c<to;c=a.decls[c].end {
             d:=&a.decls[c]
             if d.node!=0 || d.copy!="" || d.group!="" || d.id!=0 && !ids || (d.name!="")!=by_name {continue}
+            named:=make([dynamic]Node,a.reading.allocator)
             for x in children {
                 if a.taken[x] || by_name && a.entity(a.user,x).name!=d.name {continue}
-                d.node=x
-                a.taken[x]=true
-                break
+                append(&named,x)
+                if !by_name || ids {break}
             }
+            if len(named)>1 {
+                listed:=strings.builder_make(a.reading.allocator)
+                for x,i in named {fmt.sbprintf(&listed,"%s0x%016x",i>0?", ":"",u64(a.entity(a.user,x).id))}
+                reading_failf(a.reading,"%s: %d children are named %s (ids %s); give the id of the one meant",d.path,len(named),d.name,strings.to_string(listed))
+                return false
+            }
+            if len(named)==0 {continue}
+            d.node=named[0]
+            a.taken[d.node]=true
         }
     }
+    return true
 }
 
 // The prefab a matched entity gives is what the scene says of it; by its path
@@ -439,9 +451,9 @@ scene_apply_at :: proc(a:^Scene_Apply,root:Node) -> bool {
         d.node=node
         a.taken[node]=true
     }
-    if root==0 {scene_match(a,0,0,len(decls))}
+    if root==0 {scene_match(a,0,0,len(decls)) or_return}
     for &p,i in decls {
-        if p.node!=0 {scene_match(a,p.node,i+1,p.end)}
+        if p.node!=0 {scene_match(a,p.node,i+1,p.end) or_return}
     }
     for &d in decls {
         if d.preset!="" {
@@ -491,7 +503,7 @@ scene_apply_at :: proc(a:^Scene_Apply,root:Node) -> bool {
                 if d.node==0 {continue}
                 d.keeps=true
                 if c>i && d.prefab!="" {scene_prefab_linked(a,d) or_return}
-                scene_match(a,d.node,c+1,d.end,true)
+                scene_match(a,d.node,c+1,d.end,true) or_return
             }
             return true
         }
