@@ -16,6 +16,7 @@ Removal_World :: struct {
     using world:core.Test_World,
     ids:core.Table(core.Id),
     parents:core.Table(core.Parent),
+    transforms:core.Table(core.Transform),
     foliages:core.Table(Foliage),
     removed:core.Table(Foliage_Removed),
     data:Foliage_Data,
