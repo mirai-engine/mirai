@@ -196,8 +196,9 @@ a_dig_raises_dust_of_each_layer_it_took_on_its_channel :: proc(t:^testing.T) {
     defer core.test_world_destroy(&w)
     dusty,bare:=core.create(&w.entities),core.create(&w.entities)
     dust:=TERRAIN_DUST_DEFAULT
-    dust.layers[1]={channel=core.Birth_Channel(20),color={1,0,0,1}}
-    dust.layers[3].channel=core.CHANNEL_NONE
+    dust.layers[1].color={1,0,0,1}
+    base.text_set(dust.layers[1].channel[:],"gravel")
+    dust.layers[3].channel={}
     core.add(&w.dusts,dusty,dust)
     core.test_world_settle(&w)
     core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0.5,0.25,0,0.25}})
@@ -205,6 +206,6 @@ a_dig_raises_dust_of_each_layer_it_took_on_its_channel :: proc(t:^testing.T) {
     terrain_dust(core.ref(&w.digs),core.read(&w.dusts),&w.births)
     births:=w.births.queue.items[:]
     if !testing.expect_value(t,len(births),2) {return}
-    testing.expect(t,births[0].channel==CHANNEL_DUST && births[0].count==20 && births[0].position==[3]f32{1,2,3})
-    testing.expect(t,births[1].channel==core.Birth_Channel(20) && births[1].count==10 && births[1].color==[4]f32{1,0,0,1})
+    testing.expect(t,births[0].channel==core.birth_channel(CHANNEL_DUST) && births[0].count==20 && births[0].position==[3]f32{1,2,3})
+    testing.expect(t,births[1].channel==core.birth_channel("gravel") && births[1].count==10 && births[1].color==[4]f32{1,0,0,1})
 }

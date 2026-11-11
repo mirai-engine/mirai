@@ -29,7 +29,7 @@ import vfx "plugins:vfx/runtime"
 // stands on it.
 
 IMPRINT_GRID :: "imprint"
-CHANNEL_STAMPS :: core.Birth_Channel(6)
+CHANNEL_STAMPS :: "stamps"
 
 GROUND_CAPACITY :: 256  // meshes drawn displaced at once, over every Imprint_Ground
 STAMP_CAPACITY :: 64    // stamps that walk with a stride at once
@@ -135,7 +135,7 @@ imprint_stamps :: proc(steps:^Imprint_Steps,stamps:core.Read(Imprint_Stamp),worl
             print,ok:=stride_print(stride,stamp,hit.point,forward,moved)
             if !ok {continue}
             core.push(&births.queue,core.Birth{
-                channel=CHANNEL_STAMPS,position=print,velocity=forward,size=stamp.radius,count=1,
+                channel=core.birth_channel(CHANNEL_STAMPS),position=print,velocity=forward,size=stamp.radius,count=1,
                 values={press,stamp.berm,STAMP_PRINT,max(stamp.length,2*stamp.radius)},
             })
             steps.pressed+=1
@@ -143,7 +143,7 @@ imprint_stamps :: proc(steps:^Imprint_Steps,stamps:core.Read(Imprint_Stamp),worl
         }
         if press<=0 {continue}
         core.push(&births.queue,core.Birth{
-            channel=CHANNEL_STAMPS,position=hit.point,velocity=motion/dt,size=stamp.radius,count=1,values={press,stamp.berm,STAMP_RUT,0},
+            channel=core.birth_channel(CHANNEL_STAMPS),position=hit.point,velocity=motion/dt,size=stamp.radius,count=1,values={press,stamp.berm,STAMP_RUT,0},
         })
         steps.pressed+=1
     }

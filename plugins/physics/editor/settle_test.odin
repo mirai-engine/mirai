@@ -36,7 +36,7 @@ settle_test_physics :: proc(data,shared,editor,app:rawptr) {
     a:=cast(^host.App)app
     phys.physics_step(&w.state,core.ref(&w.settings),&w.requests,&w.events,&(cast(^Settle_Test_Shared)shared).meshes,a,w.time,
         core.read(&w.rigids),core.read(&w.colliders),core.read(&w.characters),core.read(&w.moves),&w.joints,core.read(&w.statics),core.read(&w.parents),core.read(&w.names),
-        &w.transforms,&w.bodies,core.read(&w.replicas),&w.character_states,&w.joint_states,{},nil,{},{},nil,nil,host.app_world_storage(a,data,core.Problems),{},{},{},{},{},{})
+        &w.transforms,&w.bodies,core.read(&w.replicas),&w.character_states,&w.joint_states,{},nil,{},{},nil,nil,host.app_world_storage(a,data,core.Problems),{},{},{},{},{},{},{},{},{})
     core.settle(a.info,data,nil)
 }
 

@@ -5,8 +5,8 @@ description: Mirai world content plugins - `terrain` (heightfield and volume ter
   (cells, impostors, wind, collision, ground), `water` (waves, caustics, foam, wakes), `imprint`
   (footprints in snow, mud and sand), `vfx` (GPU particles, `.particle` effects, births by channel,
   grids and volumes), `navigation` (automatic navmesh, links, agents), `behavior` (AI minds, smart
-  objects, perception, influence maps) and `shapes` (editable outlines and solids of brush
-  entities). Use when sculpting or painting terrain,
+  objects, perception, influence maps) and `shapes` (editable solids of a polygon and brush
+  entities, and splines of roads, paths and rivers). Use when sculpting or painting terrain,
   scattering vegetation, making water, snow or particles, making enemies and NPCs walk and decide,
   or changing any of those plugins.
 ---
@@ -101,11 +101,13 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
 - The library under navigation and minds (A*, tiled navmesh, avoidance, the `Mind` loop and its
   actions): [minds](../mirai-std/references/ai.md#decisions-minds-mindodin) and
   [navigation](../mirai-std/references/ai.md#navigation) of `std/ai`
-- `shapes` (editable outlines and solids of brush entities saved as source, stamps and vertex
-  edits, bevels of the rims of an outline, the derived child with mesh and collider, static or
-  dynamic; the Shapes tool and `shapes.*`):
+- `shapes` (editable solids of a polygon and brush entities saved as source, stamps and vertex
+  edits, bevels of the rims of a polygon, the derived child with mesh and collider, static or
+  dynamic; the ribbons of roads along a `volume.Spline` with a material; the
+  Shapes tool and `shapes.*`):
   [source and derived](references/shapes.md#source-and-derived),
   [static and dynamic](references/shapes.md#static-and-dynamic),
+  [splines](references/shapes.md#splines),
   [editing](references/shapes.md#editing) and [Shapes tool](references/shapes.md#shapes-tool)
 - Using them from a game (volumes, mining and dig-and-break games, the demo):
   [gameplay](../mirai-gameplay/SKILL.md)
