@@ -3,7 +3,8 @@ package core
 import "core:testing"
 import "mirai:std/base"
 
-@(private="file")
+@(private)
+@(test_world)
 Id_World :: struct {
     using world:Test_World,
     ids:Table(Id),

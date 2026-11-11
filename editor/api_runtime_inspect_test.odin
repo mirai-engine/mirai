@@ -11,32 +11,33 @@ import erender "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-@(private="file")
+@(private)
 Inspect_Config :: struct {speed:f32,compiled:[2]u32 `mirai:"hidden"`,diagnostics:u32 `mirai:"transient,hidden"`}
-@(private="file")
+@(private)
 Inspect_Runtime :: struct {ticks:u32 `mirai:"transient"`}
 @(component,derived)
 Inspect_Derived :: struct {steps:u32 `mirai:"transient"`}
-@(private="file")
+@(private)
+@(test_world,editor="Inspect_Editor")
 Inspect_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     transforms:core.Table(core.Transform),
     config:core.Table(Inspect_Config),
     state:core.Table(Inspect_Runtime),
     derived:core.Table(Inspect_Derived),
 }
-@(private="file") Inspect_Editor :: struct {api:Api}
+@(private) Inspect_Editor :: struct {api:Api}
 
-@(private="file") Hidden_State :: struct {value:u32}
-@(private="file") Lights_World :: struct {using world:core.Test_World,points:core.Table(erender.Point_Light),spots:core.Table(erender.Spot_Light)}
-@(private="file") Lights_Editor :: struct {hidden:core.Table(Hidden_State)}
+@(private) Hidden_State :: struct {value:u32}
+@(test_world,editor="Lights_Editor") @(private) Lights_World :: struct {using world:Test_World,points:core.Table(erender.Point_Light),spots:core.Table(erender.Spot_Light)}
+@(private) Lights_Editor :: struct {hidden:core.Table(Hidden_State)}
 
 @(test)
 a_name_of_a_component_or_a_key_resolves_as_it_is_written_or_says_the_nearest :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Lights_World,core.Test_None,Lights_Editor,test_types)
+    info,described:=test_info(t,Lights_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     tables:=info.tables
     w:=core.World_Ref{info=&info,place=.World}
     cases:=[]struct{name:string,found:^core.Table_Info,says:string}{
@@ -58,9 +59,9 @@ a_name_of_a_component_or_a_key_resolves_as_it_is_written_or_says_the_nearest :: 
 
 @(test)
 api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Inspect_World,core.Test_None,Inspect_Editor,test_types)
+    info,described:=test_info(t,Inspect_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world,running:Inspect_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator) && core.world_init(&info,.World,&running,context.allocator)) {return}
     defer {core.world_destroy(&info,.World,&world);core.world_destroy(&info,.World,&running)}
@@ -157,9 +158,10 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     testing.expect_value(t,config.diagnostics,u32(13))
 }
 
-@(private="file")
+@(private)
+@(test_world,editor="Inspect_Editor")
 Filter_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     cameras:core.Table(erender.Camera),
 }
@@ -178,9 +180,9 @@ filter_entity :: proc(w:^Filter_World,id:u64,name:string,parent:=core.NONE) -> c
 
 @(test)
 inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Filter_World,core.Test_None,Inspect_Editor,test_types)
+    info,described:=test_info(t,Filter_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world,running:Filter_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator) && core.world_init(&info,.World,&running,context.allocator)) {return}
     defer {core.world_destroy(&info,.World,&world);core.world_destroy(&info,.World,&running)}
@@ -268,10 +270,11 @@ inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^t
     testing.expect_value(t,result["entities"].(json.Array)[0].(json.Object)["name"].(string),"Body 29")
 }
 
-@(private="file") Inspect_Link :: struct {seat,camera:core.Entity}
-@(private="file")
+@(private) Inspect_Link :: struct {seat,camera:core.Entity}
+@(private)
+@(test_world,editor="Inspect_Editor")
 Spawned_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     parents:core.Table(core.Parent),
     links:core.Table(Inspect_Link),
@@ -282,9 +285,9 @@ Spawned_World :: struct {
 // scene.inspect keeps the Ids of an edited world.
 @(test)
 play_inspection_names_the_references_of_spawned_entities_by_handle :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Spawned_World,core.Test_None,Inspect_Editor,test_types)
+    info,described:=test_info(t,Spawned_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Spawned_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
     defer core.world_destroy(&info,.World,&world)

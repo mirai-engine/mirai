@@ -26,7 +26,7 @@ Element_Clip :: struct {x,y:bool,scroll:[2]f32,floats:bool}
 @(private)
 layout_start :: proc(ctx:^Context) {
     if ctx.layout_started {return}
-    layout_begin(&ctx.layout,ctx.size)
+    layout_begin(&ctx.layout,ctx.size,ctx.scale*ctx.font.density)
     ctx.layout_started=true
 }
 

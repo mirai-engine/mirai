@@ -238,6 +238,7 @@ replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset
 // is whole in its call.
 @(private)
 prefabs_warm :: proc(w:core.World_Ref,app:^host.App) {
+    if app.assets==nil {return}
     names:=make([dynamic]base.Asset_Id,context.temp_allocator)
     host.world_asset_ids(w,&names)
     prefabs:=make([dynamic]base.Asset_Id,context.temp_allocator)

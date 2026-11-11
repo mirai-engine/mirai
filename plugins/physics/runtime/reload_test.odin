@@ -40,7 +40,7 @@ reloading_a_scene_recreates_body_velocity_and_automatic_joint_frames :: proc(t:^
     defer asset.asset_close(&source)
     f:Physics_Test;if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
-    w:=core.test_world_ref(&f.w)
+    w:=test_world_ref(&f.w)
     previous:core.Entity
     previous_body:sim.Body_Handle
     for _ in 0..<3 {

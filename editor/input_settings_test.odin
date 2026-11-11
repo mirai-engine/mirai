@@ -18,8 +18,8 @@ import "mirai:std/serial"
 @(private="file") JUMP :: input.Action(1)
 @(private="file") HIT :: input.Action(40)
 
-@(private="file") Input_World :: struct {using world:core.Test_World,settings:input.Input_Settings,bindings:input.Input_Map}
-@(private="file") Input_Editor :: struct {api:Api}
+@(test_world,editor="Input_Editor") @(private) Input_World :: struct {using world:Test_World,settings:input.Input_Settings,bindings:input.Input_Map}
+@(private) Input_Editor :: struct {api:Api}
 
 // The defaults of Input_Test_Action, as the generator finds them beside the enum.
 @(private="file")
@@ -58,14 +58,14 @@ Input_Fixture :: struct {
 input_fixture :: proc(t:^testing.T,f:^Input_Fixture) -> bool {
     f.folder=base.test_folder(t,"input-settings")
     if f.folder=="" {return false}
-    f.info=core.test_info(t,Input_World,core.Test_None,Input_Editor,test_types) or_return
+    f.info=test_info(t,Input_World) or_return
     f.names={
         {type=input.Action,value=0,name="move",file="engine/input/input.odin",line=1},
         {type=input.Action,value=1,name="jump",file="engine/input/input.odin",line=2},
         {type=input.Action,value=40,name="hit",library="game",file="game/game.odin",line=3,project=true},
     }
     f.info.names,f.info.actions=f.names[:],input_test_actions()
-    core.test_info_index(&f.info)
+    test_info_index(&f.info)
     if !testing.expect(t,core.world_init(&f.info,.World,&f.world,context.allocator)) {return false}
     f.app.info=&f.info
     f.session=Session{info=&f.info,edit_world=&f.world,editor_world=&f.editor,app=&f.app,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,edits=&f.edits,inspector=&f.inspector,project_root=f.folder,has_project=true}
@@ -87,7 +87,7 @@ input_fixture_destroy :: proc(f:^Input_Fixture) {
     history.edits_free(&f.edits)
     delete(f.selection.entities)
     if f.info.sizes[.World]>0 {core.world_destroy(&f.info,.World,&f.world)}
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 @(private="file")

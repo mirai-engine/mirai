@@ -13,16 +13,11 @@ import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
 
-@(private="file") @(storage,setting="machine") Layer_Setting :: struct {quality:i32,scale:f32}
-@(private="file") @(storage,setting) Layer_Rule :: struct {count:i32}
-@(private="file") Layer_World :: struct {using world:core.Test_World,setting:Layer_Setting,rule:Layer_Rule}
-@(private="file") Layer_Editor :: struct {api:Api}
-
-@(private="file")
-layer_test_types :: proc(types:^[dynamic]core.Test_Type) {
-    test_types(types)
-    append(types,core.test_type(Layer_Setting,default=proc(dst:^Layer_Setting) {dst^={quality=1,scale=1}}))
-}
+@(private) @(storage,setting="machine") Layer_Setting :: struct {quality:i32,scale:f32}
+@(private) LAYER_SETTING_DEFAULT :: Layer_Setting{quality=1,scale=1}
+@(private) @(storage,setting) Layer_Rule :: struct {count:i32}
+@(test_world,editor="Layer_Editor") @(private) Layer_World :: struct {using world:Test_World,setting:Layer_Setting,rule:Layer_Rule}
+@(private) Layer_Editor :: struct {api:Api}
 
 @(private="file")
 layer_text :: proc(layer:project.Settings_Layer,root,engine:string) -> string {
@@ -40,9 +35,9 @@ settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
     if folder=="" {return}
     root,engine:=project.path(folder,"project",allocator=context.temp_allocator),project.path(folder,"engine",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(engine)==nil)
-    info,made:=core.test_info(t,Layer_World,core.Test_None,Layer_Editor,layer_test_types)
+    info,made:=test_info(t,Layer_World)
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Layer_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
     defer core.world_destroy(&info,.World,&world)
@@ -172,12 +167,12 @@ settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
 }
 
-@(private="file") @(storage,setting) Advanced_Setting :: struct {
+@(private) @(storage,setting) Advanced_Setting :: struct {
     shown:bool `mirai:"section=Rules"`,
     pool:bool `mirai:"advanced"`,
     budget:bool `mirai:"section=Limits,advanced"`,
 }
-@(private="file") Advanced_World :: struct {using world:core.Test_World,setting:Advanced_Setting}
+@(test_world) @(private) Advanced_World :: struct {using world:Test_World,setting:Advanced_Setting}
 
 // A card draws its fields tagged advanced after the others, under a fold
 // that starts closed and keeps whether it is open; a card of only those has
@@ -188,13 +183,13 @@ advanced_settings_go_last_under_a_fold_the_search_opens :: proc(t:^testing.T) {
     if !testing.expect(t,test_ui_init(&ctx,{})) {return}
     defer ui.context_destroy(&ctx)
     world:Advanced_World
-    if !core.test_world_init(t,&world) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     g:=Editor_Ui{ctx=&ctx,layout=LAYOUT_DEFAULT}
     inspector:Inspector
     defer core.value_free(&inspector,type_info_of(Inspector))
     app:host.App
-    s:=Session{gui=&g,info=core.test_world_info(&world),edit_world=&world,app=&app,inspector=&inspector}
+    s:=Session{gui=&g,info=test_world_info(&world),edit_world=&world,app=&app,inspector=&inspector}
     frame :: proc(t:^testing.T,s:^Session,input:ui.Input) {
         ctx:=s.gui.ctx
         categories:=settings_categories(s)

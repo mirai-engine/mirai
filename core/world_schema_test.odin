@@ -5,7 +5,8 @@ import "core:testing"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-@(private="file")
+@(private)
+@(test_world,host="Indexed_Shared",editor="Indexed_Editor")
 Indexed_World :: struct {
     using world:Test_World,
     parents:Table(Parent),
@@ -15,21 +16,21 @@ Indexed_World :: struct {
     progress:Progress,
 }
 
-@(private="file")
+@(private)
 Indexed_Shared :: struct {problems:By_World(Problems)}
 
-@(private="file")
+@(private)
 Indexed_Editor :: struct {only:Table(Editor_Only)}
 
-@(private="file") Editor_Only :: struct {}
+@(private) Editor_Only :: struct {}
 
-@(private="file") @(storage,persist)
+@(private) @(storage,persist)
 Progress :: struct {level:f32}
 
 @(test)
 an_indexed_world_info_finds_what_its_lists_hold_and_describes_its_values_once :: proc(t:^testing.T) {
     w:Indexed_World
-    indexed,ok:=test_info(t,Indexed_World,Indexed_Shared,Indexed_Editor)
+    indexed,ok:=test_info(t,Indexed_World)
     if !ok {return}
     defer test_info_destroy(&indexed)
     testing.expect(t,indexed.tables_by_type!=nil && indexed.storages_by_type!=nil && indexed.schema!=nil)

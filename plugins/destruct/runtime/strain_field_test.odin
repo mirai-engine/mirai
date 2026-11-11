@@ -6,9 +6,10 @@ import volume "mirai:engine/volume"
 import mm "mirai:std/math"
 import phys "plugins:physics/runtime"
 
-@(private="file")
+@(private)
+@(test_world)
 Strain_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     fields:core.Table(Strain_Field),
     volumes:core.Table(volume.Volume),
     worlds:core.Table(core.World_Transform),
@@ -22,8 +23,8 @@ Strain_World :: struct {
 @(test)
 a_strain_field_asks_for_its_strain_in_the_volume_of_its_entity :: proc(t:^testing.T) {
     w:Strain_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     authority:core.Network
     problems:core.Problems
     step :: proc(w:^Strain_World,authority:^core.Network,problems:^core.Problems,time:core.Time) {
@@ -37,7 +38,7 @@ a_strain_field_asks_for_its_strain_in_the_volume_of_its_entity :: proc(t:^testin
     core.add(&w.worlds,field,core.World_Transform{transform=pose})
     for area in ([?]volume.Volume{volume.box({1,2,3}),volume.sphere(3)}) {
         core.add(&w.volumes,field,area)
-        core.test_world_settle(&w)
+        test_world_settle(&w)
         step(&w,&authority,&problems,{playing=true,dt=.25})
         if !testing.expect_value(t,len(w.bodies.queue.items),1) {return}
         asked:=w.bodies.queue.items[0]
@@ -46,26 +47,26 @@ a_strain_field_asks_for_its_strain_in_the_volume_of_its_entity :: proc(t:^testin
         testing.expect(t,asked.position==pose.position && asked.rotation==pose.rotation && asked.scale==pose.scale)
         core.queue_clear(&w.bodies.queue)
         core.remove(&w.volumes,field)
-        core.test_world_settle(&w)
+        test_world_settle(&w)
     }
     testing.expect_value(t,problems.count,0)
     // The whole world and a plane are no region of a strain.
     for region in ([?]Maybe(volume.Volume){nil,volume.plane()}) {
         if v,has:=region.?;has {core.add(&w.volumes,field,v)}
-        core.test_world_settle(&w)
+        test_world_settle(&w)
         step(&w,&authority,&problems,{playing=true,dt=.25})
         testing.expect(t,len(w.bodies.queue.items)==0 && core.problem_find(&problems,field,"destruct.strain_field")!=nil)
         if region!=nil {core.remove(&w.volumes,field)}
-        core.test_world_settle(&w)
+        test_world_settle(&w)
     }
     core.add(&w.volumes,field,volume.sphere(3))
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     authority.role=.Client
     step(&w,&authority,&problems,{playing=true,dt=.25})
     authority.role={}
     step(&w,&authority,&problems,{playing=false,dt=.25})
     core.disable(&w.fields,field)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     step(&w,&authority,&problems,{playing=true,dt=.25})
     testing.expect_value(t,len(w.bodies.queue.items),0)
 }

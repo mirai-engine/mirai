@@ -132,11 +132,14 @@ camera_preview_end :: proc(s:^Session,keep:bool) {
     kept:=make([dynamic]Kept,context.temp_allocator)
     cameras,count:=camera_preview_cameras(s,w)
     for e in cameras[:count] {
-        k:=Kept{id=api_entity_id(w,e)}
-        k.lens,_=entity_get(w,e,erender.Camera)
+        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+        lens,_:=entity_get(w,e,erender.Camera)
         follow,follows:=entity_get(w,e,ecamera.Camera_Follow)
-        k.follow,k.follows=ecamera.camera_follow_config(follow),follows
-        k.activation,k.activated=entity_get(w,e,ecamera.Camera_Activation)
+        activation,activated:=entity_get(w,e,ecamera.Camera_Activation)
+        k:=Kept{id=api_entity_id(w,e),follows=follows,activated=activated}
+        k.lens=lens
+        k.follow=ecamera.camera_follow_config(follow)
+        k.activation=activation
         append(&kept,k)
     }
     play_stop(s,true)

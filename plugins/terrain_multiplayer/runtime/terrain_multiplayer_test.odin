@@ -18,9 +18,10 @@ import terrain "plugins:terrain/runtime"
 // terrain data and what this library keeps, stepped as the fixed loop steps
 // them. The messages go from one end to another by hand, as the network
 // would deliver them, in the order a test chooses.
-@(private="file")
+@(private)
+@(test_world)
 End_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using ground:terrain.Test_Terrain,
     seats:core.Table(input.Seat),
     replays:terrain.Terrain_Replays,
@@ -35,7 +36,7 @@ End_World :: struct {
 }
 
 // The messages of the journals an end heard, until its step receives them.
-@(private="file")
+@(private)
 Heard :: struct {
     ops:[dynamic]core.Message(multiplayer.Net_Journal_Op),
     parts:[dynamic]core.Message(multiplayer.Net_Journal_Part),
@@ -107,8 +108,8 @@ fixture_destroy :: proc(f:^Fixture) {
 // sources and applies the requests of a tick that is not routed.
 @(private="file")
 end_update :: proc(e:^End,f:^Fixture) {
-    terrain.test_step(&e.ground,core.commands(&e.w,core.test_world_info(&e.w)),&e.resident,&f.app,&e.problems)
-    core.test_world_settle(&e.w)
+    terrain.test_step(&e.ground,core.commands(&e.w,test_world_info(&e.w)),&e.resident,&f.app,&e.problems)
+    test_world_settle(&e.w)
 }
 
 // An end with its terrain loaded, as the first tick of terrain_update leaves
@@ -116,7 +117,7 @@ end_update :: proc(e:^End,f:^Fixture) {
 @(private="file")
 end_init :: proc(t:^testing.T,e:^End,f:^Fixture,role:core.Network_Role,connection:multiplayer.Connection=0,loaded:=true) -> bool {
     e.fixture=f
-    if !core.test_world_init(t,&e.w,test_types) {return false}
+    if !test_world_init(t,&e.w) {return false}
     e.authority.role=role
     e.connection=connection
     if role==.Client {
@@ -129,7 +130,7 @@ end_init :: proc(t:^testing.T,e:^End,f:^Fixture,role:core.Network_Role,connectio
     e.owner=core.create(&e.entities)
     core.add(&e.transforms,e.owner,core.TRANSFORM_IDENTITY)
     core.add(&e.terrains,e.owner,terrain.Terrain{source=SOURCE,solid=false})
-    core.test_world_settle(&e.w)
+    test_world_settle(&e.w)
     end_update(e,f)
     if !loaded {return testing.expect(t,terrain.terrain_unread(core.ref(&e.data),&e.fixture.assets,SOURCE),"an end without the file of the source cannot read it")}
     return testing.expectf(t,terrain.terrain_source(core.ref(&e.data),SOURCE)!=nil,"the source loads: %v",core.problems_list(&e.problems))
@@ -142,7 +143,7 @@ end_destroy :: proc(e:^End) {
     delete(e.session.parts);e.session.parts=nil
     for part in e.outbox.parts {delete(part.bytes)}
     delete(e.outbox.parts);e.outbox.parts=nil
-    core.test_world_destroy(&e.w)
+    test_world_destroy(&e.w)
 }
 
 // What the parts the session of a client held for its tick were.
@@ -157,7 +158,7 @@ parts_forget :: proc(e:^End) {
 end_seat :: proc(e:^End,connection:multiplayer.Connection) {
     seat:=core.create(&e.entities)
     core.add(&e.seats,seat,input.Seat{peer=u64(connection)})
-    core.test_world_settle(&e.w)
+    test_world_settle(&e.w)
 }
 
 // The messages an end is about to receive this frame, and the step of the input phase.

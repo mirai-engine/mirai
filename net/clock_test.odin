@@ -21,7 +21,8 @@ Follower :: struct {
 @(private="file")
 follower_init :: proc(f:^Follower) {
     f^={h=new(Host)}
-    f.h.front.clock={rate=60,lead=2,delay=2.5,display_jump=CLOCK_JUMP_TICKS,display_max=CLOCK_MAX_DILATION}
+    // A second of prediction: no input delay.
+    f.h.front.clock={rate=60,lead=2,delay=2.5,display_jump=CLOCK_JUMP_TICKS,display_max=CLOCK_MAX_DILATION,delay_predict=60}
 }
 
 @(private="file")
@@ -118,7 +119,7 @@ remote_objects_are_shown_further_behind_with_more_jitter :: proc(t:^testing.T) {
 @(test)
 the_estimate_of_the_server_stands_still_while_it_pauses_and_follows_its_scale :: proc(t:^testing.T) {
     h:=new(Host);defer free(h)
-    h.front.clock={rate=60,lead=2,delay=2.5,scale=1}
+    h.front.clock={rate=60,lead=2,delay=2.5,scale=1,delay_predict=60}
     rtt:=0.1
     server,local,dilation:=1000.0,0.0,0.0
     frame :: proc(h:^Host,now,server,rtt:f64,local,dilation:^f64,paused:bool,scale:f32) {
@@ -202,7 +203,6 @@ Session :: struct {
     server_toy:Toy,
     published:Test_Transform, // what the server replicates of its toy
     fresh,repeated,none:int,
-    delay:u32, // ticks ahead of its own the client submits its input for
     last_client_tick:u32,
     ticks:Test_Ticks,
 }
@@ -227,8 +227,10 @@ session_frame :: proc(t:^testing.T,x:^Session) {
     first,steps:=test_ticks(&x.ticks,client,s.w.now)
     for step in 0..<u32(steps) {
         tick:=first+step
-        mine:=toy_input(tick+x.delay)
-        testing.expect_value(t,input_submit(client,tick+x.delay,&mine),Error.None)
+        // As far ahead of its own tick as its input delay says.
+        delay:=u32(clock_state(client).input_delay)
+        mine:=toy_input(tick+delay)
+        testing.expect_value(t,input_submit(client,tick+delay,&mine),Error.None)
         host_publish(client,tick)
         x.last_client_tick=tick
     }
@@ -243,24 +245,34 @@ session_init :: proc(x:^Session,s:^Scene,conditions:Sim_Conditions) {
     sim_endpoint_conditions(&s.w.sim,1,conditions)
 }
 
-// A client that submits its input some ticks ahead of its own (an input delay) runs that many ticks less ahead
-// of the server, and its inputs still arrive in time.
+// The input delay follows the round trip: a short one is covered by delay
+// alone, a long one by delay up to cover, prediction up to predict and delay
+// again beyond, so what a correction replays stays within predict. The client
+// runs as much less ahead, and its inputs still arrive in time.
 @(test)
-an_input_delay_runs_the_client_that_many_ticks_less_ahead :: proc(t:^testing.T) {
-    leads:[2]f64
-    for delay,index in ([2]u32{0,3}) {
+the_input_delay_covers_the_round_trip_and_bounds_what_a_correction_replays :: proc(t:^testing.T) {
+    // At 60 Hz the defaults cover 3 ticks and predict 6. A round trip of 20 ms (2 ticks, as the client measures
+    // it) is all delay; one of 300 ms (19 ticks) is 3 of delay, 6 predicted and 10 of delay again.
+    Case :: struct {latency:f64,delay:f64,replayed:f64}
+    for c in ([2]Case{{0.01,2,1},{0.15,13,7.5}}) {
         s:=new(Scene);defer free(s)
-        scene_init(s,1,{max_objects=8,input_delay=f32(delay)},seed=9);defer scene_destroy(s)
+        scene_init(s,1,{max_objects=8},seed=9);defer scene_destroy(s)
         x:=new(Session);defer free(x)
-        session_init(x,s,{latency=0.05,jitter=0.004})
-        x.delay=delay
-        for _ in 0..<240 {session_frame(t,x)}
-        x.fresh,x.repeated,x.none=0,0,0
+        session_init(x,s,{latency=c.latency,jitter=0.002})
         for _ in 0..<600 {session_frame(t,x)}
-        testing.expectf(t,x.fresh>=594,"delay %d: %d of 600 inputs in time",delay,x.fresh)
-        leads[index]=f64(x.last_client_tick)-f64(x.server_tick)
+        x.fresh,x.repeated,x.none=0,0,0
+        deepest:=0.0
+        for _ in 0..<600 {
+            session_frame(t,x)
+            clock:=clock_state(s.clients[0])
+            // From the newest state of the server to the client's tick, past what the lead keeps in hand.
+            deepest=max(deepest,f64(x.last_client_tick)-f64(s.clients[0].back.repl.remote_tick)-clock.lead-clock.bias)
+        }
+        clock:=clock_state(s.clients[0])
+        testing.expectf(t,clock.input_delay==c.delay,"%v s each way: a delay of %v ticks, not %v",c.latency,c.delay,clock.input_delay)
+        testing.expectf(t,x.fresh>=594,"%v s each way: %d of 600 inputs in time",c.latency,x.fresh)
+        testing.expectf(t,deepest<=c.replayed,"%v s each way: a correction replays %v ticks, more than %v",c.latency,deepest,c.replayed)
     }
-    testing.expectf(t,abs(leads[0]-leads[1]-3)<=1,"%v ticks ahead without a delay and %v with one of 3",leads[0],leads[1])
 }
 
 @(test)
@@ -276,8 +288,8 @@ client_clock_runs_ahead_of_the_server_so_inputs_arrive_in_time :: proc(t:^testin
     for _ in 0..<600 {session_frame(t,x)}
     testing.expect(t,x.fresh>=594)
     clock=clock_state(s.clients[0])
-    // Ahead of the tick the server is on by the trip of an input, about three ticks, plus the margin.
-    lead:=f64(x.last_client_tick)-f64(x.server_tick)
+    // Ahead of the tick the server is on by the trip of an input, about three ticks, plus the margin, less the input delay.
+    lead:=f64(x.last_client_tick)-f64(x.server_tick)+clock.input_delay
     testing.expectf(t,lead>=4 && lead<=8,"lead %v rtt %v bias %v",lead,clock.rtt,clock.bias)
     testing.expect(t,abs(clock.dilation)<0.03)
     testing.expect(t,abs(clock.rtt-0.1)<0.03)
@@ -295,7 +307,8 @@ client_clock_runs_ahead_of_the_server_so_inputs_arrive_in_time :: proc(t:^testin
     x.fresh,x.repeated=0,0
     for _ in 0..<300 {session_frame(t,x)}
     testing.expect(t,x.fresh>=297)
-    testing.expectf(t,f64(x.last_client_tick)-f64(x.server_tick)>=lead+3,"lead %v after %v",f64(x.last_client_tick)-f64(x.server_tick),lead)
+    later:=f64(x.last_client_tick)-f64(x.server_tick)+clock_state(s.clients[0]).input_delay
+    testing.expectf(t,later>=lead+3,"lead %v after %v",later,lead)
     testing.expect_value(t,clock_state(s.clients[0]).jumps,u32(0))
 
     // Redundancy covers lost datagrams.

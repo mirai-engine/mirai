@@ -38,7 +38,7 @@ incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors
             core.add(&w.transforms,author,core.TRANSFORM_IDENTITY)
             core.add(&w.statics,author,render.Mesh_Renderer{})
         }
-        core.test_world_settle(&w.w)
+        test_world_settle(&w.w)
         terrain_test_update(&w,&resident,&app)
         terrain_test_update(&w,&resident,&app)
         if !testing.expect(t,len(resident.owners)==1 && len(w.chunks.values)==4) {return}
@@ -47,7 +47,7 @@ incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors
         switch damage {
         case .Local,.Local_Restored:
             core.remove(&w.transforms,stale)
-            core.test_world_settle(&w.w)
+            test_world_settle(&w.w)
             tables:=terrain_test_tables(&w)
             testing.expect(t,!chunk_entity_matches(&tables,stale,owner,{},0))
             // Restored where its mesh is relative to: the place of its chunk.
@@ -68,7 +68,7 @@ incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors
             core.remove(&w.parents,author)
             core.add(&w.colliders,author,phys.collider_box({1.25,2.5,3.75}))
         }
-        core.test_world_settle(&w.w)
+        test_world_settle(&w.w)
         if damage==.Wrong_Parent {
             // Only a parent written: the prune sees it all the same.
             shapes,parents:=resident.gc_shapes,resident.gc_parents

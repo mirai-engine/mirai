@@ -5,9 +5,10 @@ import "mirai:core"
 import terrain "plugins:terrain/runtime"
 import "mirai:std/base"
 
-@(private="file")
+@(private)
+@(test_world)
 Preview_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     terrains:core.Table(terrain.Terrain),
     chunks:core.Table(terrain.Terrain_Chunk),
 }
@@ -15,8 +16,8 @@ Preview_Test_World :: struct {
 @(test)
 a_preview_shows_the_level_of_its_chunk_and_a_hole_joins_its_neighbors_at_level_0 :: proc(t:^testing.T) {
     world:Preview_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     tool:Terrain_Tool;defer terrain_tool_free(&tool)
     stroke:=&tool.stroke
     s:=&stroke.source
@@ -41,7 +42,7 @@ a_preview_shows_the_level_of_its_chunk_and_a_hole_joins_its_neighbors_at_level_0
         e:=core.create(&world.entities)
         core.add(&world.chunks,e,terrain.Terrain_Chunk{owner=owner,coord=coord,revision=1,lod=shown[index]})
     }
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     preview_of :: proc(stroke:^Stroke,coord:[3]i32) -> (Preview,bool) {
         at:=preview_find(stroke,coord)
         if at<0 {return {},false}

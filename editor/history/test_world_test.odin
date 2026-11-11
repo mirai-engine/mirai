@@ -8,8 +8,9 @@ import "mirai:std/base"
 // A component with a field a scene does not save.
 Test_Lamp :: struct {power:f32,glow:f32 `mirai:"transient"`}
 
+@(test_world)
 Test_Journal_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
@@ -28,22 +29,22 @@ Test_Journal :: struct {
 // Lamp, and every tenth without an Id: derived.
 test_journal_init :: proc(t:^testing.T,f:^Test_Journal,count:int) -> bool {
     w:=&f.world
-    if !core.test_world_init(t,w) {return false}
+    if !test_world_init(t,w) {return false}
     for i in 0..<count {
         e:=core.create(&w.entities)
         if i%10!=9 {core.add(&w.ids,e,{value=base.Entity_Id(i+1)})}
         core.add(&w.transforms,e,core.Transform{{f32(i+1),0,0},1,{1,1,1}})
         core.add(&w.lamps,e,{power=1,glow=f32(i)})
     }
-    core.test_world_settle(w)
-    edits_reset(&f.edits,core.test_world_ref(w))
+    test_world_settle(w)
+    edits_reset(&f.edits,test_world_ref(w))
     return true
 }
 
 test_journal_free :: proc(f:^Test_Journal) {
     edits_free(&f.edits)
     delete(f.selection.entities)
-    core.test_world_destroy(&f.world)
+    test_world_destroy(&f.world)
 }
 
 test_journal_entity :: proc(f:^Test_Journal,id:base.Entity_Id) -> core.Entity {
@@ -67,8 +68,9 @@ test_memory_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,align
 Test_Memory_Value :: struct {value:int,derived:int `mirai:"transient"`}
 Test_Memory_Other :: struct {value:int}
 
+@(test_world,editor="Test_Memory_Editor")
 Test_Memory_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     values:core.Table(Test_Memory_Value),
     others:core.Table(Test_Memory_Other),
@@ -91,7 +93,7 @@ Test_Memory :: struct {
 
 test_memory_init :: proc(t:^testing.T,f:^Test_Memory) -> bool {
     described:bool
-    f.info,described=core.test_info(t,Test_Memory_World,core.Test_None,Test_Memory_Editor)
+    f.info,described=test_info(t,Test_Memory_World)
     if !described {return false}
     if !testing.expect(t,core.world_init(&f.info,.World,&f.world,context.allocator)) {
         test_memory_free(f)
@@ -111,7 +113,7 @@ test_memory_free :: proc(f:^Test_Memory) {
     edits_free(&f.edits)
     delete(f.selection.entities)
     if f.info.sizes[.World]>0 {core.world_destroy(&f.info,.World,&f.world)}
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 test_memory_settle :: proc(f:^Test_Memory) {core.settle(&f.info,&f.world,nil)}

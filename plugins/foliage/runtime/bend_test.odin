@@ -5,9 +5,10 @@ import "mirai:core"
 import volume "mirai:engine/volume"
 import mm "mirai:std/math"
 
-@(private = "file")
+@(private)
+@(test_world)
 Bend_World :: struct {
-	using world: core.Test_World,
+	using world: Test_World,
 	benders: core.Table(Foliage_Bender),
 	volumes: core.Table(volume.Volume),
 	worlds: core.Table(core.World_Transform),
@@ -20,8 +21,8 @@ Bend_World :: struct {
 @(test)
 the_benders_nearest_the_view_bend_the_foliage :: proc(t: ^testing.T) {
 	w: Bend_World
-	if !core.test_world_init(t, &w, test_types) {return}
-	defer core.test_world_destroy(&w)
+	if !test_world_init(t,&w) {return}
+	defer test_world_destroy(&w)
 	placed: [BENDERS + 2]core.Entity
 	for &e, i in placed {
 		e = core.create(&w.entities)
@@ -45,7 +46,7 @@ the_benders_nearest_the_view_bend_the_foliage :: proc(t: ^testing.T) {
 	core.add(&w.benders, small, Foliage_Bender{lean = 0.5})
 	core.add(&w.volumes, small, volume.box({2, 1, 1}))
 	core.add(&w.worlds, small, core.World_Transform{half, half})
-	core.test_world_settle(&w)
+	test_world_settle(&w)
 	resident: Foliage_Resident
 	benders_gather(&resident, core.read(&w.benders), core.read(&w.volumes), core.read(&w.worlds), core.FRAME_TIME_DEFAULT, {})
 	if !testing.expect_value(t, resident.bender_count, BENDERS) {return}

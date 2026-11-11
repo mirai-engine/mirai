@@ -1,5 +1,6 @@
 package ui
 
+import "core:math"
 import "core:testing"
 
 @(private)
@@ -50,7 +51,7 @@ a_stack_lays_its_children_over_one_another_by_their_alignment :: proc(t:^testing
     testing.expect_value(t,test_rect(t,&ctx,id(&ctx,"back")),Rect{4,4,100,60})
     testing.expect_value(t,test_rect(t,&ctx,id(&ctx,"middle")),Rect{4+40,4+50,20,10})
     testing.expect_value(t,test_rect(t,&ctx,id(&ctx,"corner")),Rect{4+90,4,10,10})
-    testing.expect_value(t,test_rect(t,&ctx,id(&ctx,"fill")),Rect{4,4+27.5,100,5})
+    testing.expect_value(t,test_rect(t,&ctx,id(&ctx,"fill")),Rect{4,4+28,100,5}) // 27.5, on a whole pixel
 }
 
 @(test)
@@ -121,6 +122,36 @@ growing_children_share_what_is_left_by_their_weights :: proc(t:^testing.T) {
     testing.expect(t,test_near(test_rect(t,&ctx,id(&ctx,"one")).w,90,0.05))
     testing.expect(t,test_near(test_rect(t,&ctx,id(&ctx,"three")).w,270,0.05))
     testing.expect(t,test_near(test_rect(t,&ctx,id(&ctx,"capped")).w,40,0.05))
+}
+
+@(test)
+boxes_meet_on_whole_device_pixels :: proc(t:^testing.T) {
+    build :: proc(ctx:^Context,user:rawptr) {
+        if box(ctx,{id=id(ctx,"row"),width=fixed(1000),height=fixed(41),align_y=.Center,track=true}) {
+            for i in 1..=3 {if box(ctx,{id=id(ctx,"third",i),width=GROW,height=fixed(10),fill={255,255,255,255},stroke={0,0,0,255},stroke_width=1,track=true}) {}}
+        }
+    }
+    cases:=[]struct{density,scale:f32}{{1.25,1},{1.5,1},{1,1366.0/1920}}
+    for c in cases {
+        ctx:Context
+        testing.expect(t,test_context_init(&ctx,TEST_SMALL))
+        defer context_destroy(&ctx)
+        testing.expect(t,context_set_density(&ctx,c.density))
+        input:=test_input()
+        input.scale=c.scale
+        frame:=test_frame(&ctx,&input,build)
+        ppu:=c.density*c.scale
+        whole :: proc(units,ppu:f32) -> bool {return test_near(units*ppu,math.round(units*ppu),0.001)}
+        end:=f32(0)
+        for i in 1..=3 {
+            r:=test_rect(t,&ctx,id(&ctx,"third",i))
+            testing.expectf(t,whole(r.x,ppu) && whole(r.y,ppu) && whole(r.x+r.w,ppu) && whole(r.y+r.h,ppu),"%v, third %d: %v",c,i,r)
+            testing.expectf(t,i==1 || test_near(r.x,end,0.0001),"%v, third %d starts at %v, the one before ends at %v",c,i,r.x,end)
+            end=r.x+r.w
+        }
+        testing.expect_value(t,len(frame.shapes),3)
+        for s in frame.shapes {testing.expectf(t,s.params[0]*ppu>=1 && whole(s.params[0],ppu),"%v: a border %v units wide",c,s.params[0])}
+    }
 }
 
 @(test)

@@ -28,9 +28,11 @@ Prefer the first that answers the question:
 A `@(test)` in a `_test.odin` of the game builds a world of the tables the step reads and writes,
 runs the step and checks them; `mirai test game` (or `mirai test` inside the project) runs it.
 
-- The world is a struct that starts with `using world:core.Test_World`, with a `core.Table(T)` per
-  component and the value of each storage: `core.test_world_init(t,&w)` describes it from the
-  attributes of its types, `core.test_world_destroy` frees it.
+- The world is a struct marked `@(test_world)` at the top of the test file, which starts with
+  `using world:Test_World` and has a `core.Table(T)` per component and the value of each storage:
+  `mirai test` writes what the attributes of its types say into `worlds_gen_test.odin` of the
+  package (not for git), `test_world_init(t,&w)` makes the world and `test_world_destroy(&w)`
+  frees it.
 - A path in a test is relative to the root of the engine, not of the project.
 
 ## Look

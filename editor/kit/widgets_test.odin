@@ -213,12 +213,13 @@ labels_measure_their_text_and_buttons_fit_their_content :: proc(t:^testing.T) {
             ui.button(ctx,ui.id(ctx,"icon"),{icon=.Plus})
         }
     })
-    width:=ui.text_width(&ctx.font,"Directional light",13)
-    testing.expect(t,test_rect_near(test_rect(t,&ctx,ui.id(&ctx,"fit")),{0,0,width+1,19}))
-    testing.expect(t,test_rect_near(test_rect(t,&ctx,ui.id(&ctx,"fixed")),{width+1+4,0,40,19}))
+    // A text is as wide as it measures up to a whole device pixel.
+    width:=math.ceil(ui.text_width(&ctx.font,"Directional light",13)+1)
+    testing.expect(t,test_rect_near(test_rect(t,&ctx,ui.id(&ctx,"fit")),{0,0,width,19}))
+    testing.expect(t,test_rect_near(test_rect(t,&ctx,ui.id(&ctx,"fixed")),{width+4,0,40,19}))
     // Padding, icon, gap, label and its detail.
-    expected:=f32(10+16+6)+ui.text_width(&ctx.font,"Play",ui.metric(&ctx,"font"))+ui.text_width(&ctx.font,"F5",ui.metric(&ctx,"font_small"))+16+10
-    testing.expect(t,test_near(test_rect(t,&ctx,ui.id(&ctx,"button")).w,expected))
+    expected:=math.ceil(f32(10+16+6)+ui.text_width(&ctx.font,"Play",ui.metric(&ctx,"font"))+ui.text_width(&ctx.font,"F5",ui.metric(&ctx,"font_small"))+16+10)
+    testing.expectf(t,test_near(test_rect(t,&ctx,ui.id(&ctx,"button")).w,expected),"button %v, expected %v",test_rect(t,&ctx,ui.id(&ctx,"button")),expected)
     testing.expect(t,test_rect_near(test_rect(t,&ctx,ui.id(&ctx,"icon")),{test_rect(t,&ctx,ui.id(&ctx,"icon")).x,0,ui.metric(&ctx,"row"),ui.metric(&ctx,"row")}),"An icon alone makes a square of the row height")
 }
 

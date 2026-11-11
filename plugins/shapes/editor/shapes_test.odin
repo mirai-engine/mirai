@@ -12,9 +12,10 @@ import volume "mirai:engine/volume"
 import shapes "plugins:shapes/runtime"
 import mm "mirai:std/math"
 
-@(private="file")
+@(private)
+@(test_world)
 Shapes_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -41,8 +42,8 @@ Shapes_Test :: struct {
 
 @(private)
 shapes_test_open :: proc(t:^testing.T,f:^Shapes_Test) -> bool {
-    if !core.test_world_init(t,&f.world,test_types) {return false}
-    f.ref=core.test_world_ref(&f.world)
+    if !test_world_init(t,&f.world) {return false}
+    f.ref=test_world_ref(&f.world)
     f.app={allocator=context.allocator}
     f.document={previous=&f.previous}
     history.edits_reset(&f.edits,f.ref)
@@ -54,7 +55,7 @@ shapes_test_open :: proc(t:^testing.T,f:^Shapes_Test) -> bool {
 shapes_test_close :: proc(f:^Shapes_Test) {
     history.edits_free(&f.edits)
     delete(f.selection.entities)
-    core.test_world_destroy(&f.world)
+    test_world_destroy(&f.world)
 }
 
 // A shape entity with Id 7 at the origin, which the history starts with.
@@ -66,7 +67,7 @@ shapes_test_shape :: proc(f:^Shapes_Test,shape:shapes.Shape) -> core.Entity {
     core.add(&w.names,e,core.name_make("Shape"))
     core.add(&w.transforms,e,core.TRANSFORM_IDENTITY)
     core.add(&w.shapes,e,shape)
-    core.test_world_settle(w)
+    test_world_settle(w)
     history.edits_reset(&f.edits,f.ref)
     return e
 }
@@ -94,10 +95,10 @@ a_stamp_stroke_is_one_step_that_undo_and_redo_take_back_and_forth :: proc(t:^tes
     if !testing.expect(t,stroke_begin(stroke,f.ref,mm.TRANSFORM_IDENTITY,core.NONE,false,.Square,0.5,0,0.01,{},context.allocator)) {return}
     testing.expect_value(t,stroke_to(stroke,{0,0}),shapes.Shape_Error.None)
     testing.expect(t,stroke_write(s,&tool))
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     testing.expect_value(t,stroke_to(stroke,{1.5,0}),shapes.Shape_Error.None)
     testing.expect(t,stroke_write(s,&tool))
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     testing.expect_value(t,stroke_to(stroke,{3,0}),shapes.Shape_Error.None)
     testing.expect(t,stroke_write(s,&tool))
     stroke_end(s,&tool)
@@ -173,11 +174,11 @@ escape_puts_back_every_shape_a_cut_stroke_changed :: proc(t:^testing.T) {
     for i in 0..=20 {
         testing.expect_value(t,stroke_to(stroke,{0.05*f32(i%3),-1.5+0.15*f32(i)}),shapes.Shape_Error.None)
         testing.expect(t,stroke_write(s,&tool))
-        core.test_world_settle(&f.world)
+        test_world_settle(&f.world)
     }
     testing.expect_value(t,len(w.shapes.values),2)
     stroke_cancel(s,&tool)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     testing.expect(t,!stroke.active)
     testing.expect_value(t,w.entities.alive,1)
     if testing.expect_value(t,len(w.shapes.values),1) {testing.expect(t,core.at(&w.shapes,core.row_of(&w.shapes,e))==bar)}
@@ -350,7 +351,7 @@ shapes_api_edits_the_points_of_a_spline_from_above :: proc(t:^testing.T) {
     path:=volume.SPLINE_DEFAULT
     path.points[1].width,path.points[1].height=5,1
     core.add(&w.splines,e,path)
-    core.test_world_settle(w)
+    test_world_settle(w)
     history.edits_reset(&f.edits,f.ref)
     run :: proc(s:^editor.Session,params:Corner_Params) -> (corner:u32,failed:bool) {
         method:=api.Method{params_id=Corner_Params,result_id=Corner_Result}

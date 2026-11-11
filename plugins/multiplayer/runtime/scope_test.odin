@@ -14,7 +14,7 @@ import "mirai:std/base"
 visibility_replicates_an_entity_only_to_the_connections_whose_seat_shares_a_bit :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     apps:[2]host.App
     sessions:[2]Net_Session
@@ -93,7 +93,7 @@ visibility_replicates_an_entity_only_to_the_connections_whose_seat_shares_a_bit 
 entities_of_the_same_frequency_take_turns_instead_of_publishing_together :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
     entities:[3]core.Entity
@@ -129,7 +129,7 @@ entities_of_the_same_frequency_take_turns_instead_of_publishing_together :: proc
 the_parent_on_the_network_is_the_closest_replicated_ancestor :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)

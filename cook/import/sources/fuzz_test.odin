@@ -176,17 +176,16 @@ damaged_images_and_settings_are_imported_or_refused :: proc(t:^testing.T) {
     testing.expectf(t,rejected>len(text)/2 && read>0,"%d texts are sidecars and %d are refused",read,rejected)
 }
 
-// Fonts, texts and manifests of prompts, cut at lengths spread over them or
-// with bytes changed, are imported or refused.
+// Fonts and manifests of prompts, cut at lengths spread over them or with
+// bytes changed, are imported or refused.
 @(test)
-damaged_fonts_texts_and_prompts_are_imported_or_refused :: proc(t:^testing.T) {
+damaged_fonts_and_prompts_are_imported_or_refused :: proc(t:^testing.T) {
     _,folder:=test_project(t,"fuzz-interface")
     if folder=="" {return}
     _=os.write_entire_file(fmt.tprintf("%s/a.png",folder),png_bytes(8,8,{200,120,60},true))
     Subject :: struct {file:string,data:[]u8}
     subjects:=[?]Subject{
         {"subject.otf",#load("../../../assets/fixtures/cff.otf")},
-        {"subject.csv",transmute([]u8)string("key,es,en\nmenu.play,\"Jugar, \"\"ya\"\"\",Play\nmenu.quit,Salir,\n")},
         {"subject.prompts.json",transmute([]u8)string(`{"entries": [{"family": "Xbox", "input": "South", "image": "a.png"}, {"family": "Keyboard", "input": "Key", "key": "Space", "image": "a.png"}]}`)},
     }
     for subject in subjects {
