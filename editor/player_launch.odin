@@ -10,6 +10,7 @@ import "mirai:editor/api"
 import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/subprocess"
 
 // A game the editor runs in a window of its own, as mirai play does: the
 // player on the library of the project, built first when its code changed, or
@@ -36,7 +37,7 @@ Player_Launch :: struct {
 player_launch_start :: proc(s:^Session,shipped:bool,scene:string,players:int,arguments:string) -> string {
     p:=s.processes
     l:=&p.launch
-    if l.process.handle!=0 || l.waiting {return "A game player.start started still runs: player.stop ends it"}
+    if l.process.handle.pid!=0 || l.waiting {return "A game player.start started still runs: player.stop ends it"}
     if !s.has_project {return "There is no project: open a folder with a project.mirai"}
     if len(arguments)>len(l.arguments) {return fmt.tprintf("The arguments take at most %d bytes",len(l.arguments))}
     if len(scene)>len(l.scene) {return fmt.tprintf("The path of the scene takes at most %d bytes",len(l.scene))}
@@ -70,13 +71,13 @@ player_launch_poll :: proc(s:^Session) {
         }
         return
     }
-    if l.process.handle==0 {return}
+    if l.process.handle.pid==0 {return}
     player_launch_drain(s)
-    exited,code:=platform.process_poll(s.app.platform,l.process.handle)
-    if !exited {return}
+    state,_:=subprocess.wait(&l.process.handle,0)
+    if !state.exited {return}
     player_launch_drain(s)
-    platform.process_release(s.app.platform,l.process.handle)
-    l.process.handle=0
+    subprocess.release(&l.process.handle)
+    code:=state.exit_code
     l.ended,l.exit_code=true,code
     if code!=0 {log.warnf("the game ended with code %d",code)} else {log.info("the game ended")}
 }
@@ -87,10 +88,8 @@ player_launch_stop :: proc(s:^Session) {
     if p==nil {return}
     l:=&p.launch
     l.waiting=false
-    if l.process.handle!=0 {
-        _=platform.process_terminate(s.app.platform,l.process.handle,force=true)
-        platform.process_release(s.app.platform,l.process.handle)
-        l.process.handle=0
+    if l.process.handle.pid!=0 {
+        subprocess.release(&l.process.handle)
         l.ended,l.exit_code=true,-1
     }
 }
@@ -124,8 +123,8 @@ player_launch_open :: proc(s:^Session) -> string {
     if scene:=base.text_get(l.scene[:]);scene!="" {append(&command,"--scene",scene)}
     if l.players>0 {append(&command,"--players",fmt.tprintf("%d",l.players))}
     append(&command,..strings.fields(base.text_get(l.arguments[:]),context.temp_allocator))
-    process,error:=platform.process_start(s.app.platform,{command=command[:],working_directory=folder,merge_stderr=true})
-    if error!=.None {return fmt.tprintf("The game could not be started: %v",error)}
+    process,error:=subprocess.start({command=command[:],working_dir=folder},pipes=.Merged)
+    if error!=nil {return fmt.tprintf("The game could not be started: %v",error)}
     l.process={handle=process}
     log.infof("the game runs: %s",strings.join(command[:]," ",context.temp_allocator))
     return ""
@@ -136,7 +135,7 @@ player_launch_drain :: proc(s:^Session) {
     process:=&s.processes.launch.process
     buffer:[2048]u8
     for {
-        count,open:=platform.process_read(s.app.platform,process.handle,.Stdout,buffer[:])
+        count,open:=subprocess.read(&process.handle,.Stdout,buffer[:])
         for b in buffer[:count] {
             if b=='\n' || process.length==len(process.line) {
                 if process.length>0 {log.infof("game: %s",strings.trim_right_space(string(process.line[:process.length])))}
@@ -196,7 +195,7 @@ api_player_start :: proc(s:^Session,call:^api.Call) {
 api_player_status :: proc(s:^Session,call:^api.Call) {
     l:=&s.processes.launch
     result:=api.call_result(call,Api_Player_Status)
-    result^={running=l.process.handle!=0,building=l.waiting,shipped=l.shipped,ended=l.ended,exit_code=l.exit_code,scene=l.scene,players=l.players,arguments=l.arguments}
+    result^={running=l.process.handle.pid!=0,building=l.waiting,shipped=l.shipped,ended=l.ended,exit_code=l.exit_code,scene=l.scene,players=l.players,arguments=l.arguments}
 }
 
 @(private)

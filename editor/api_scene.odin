@@ -124,7 +124,7 @@ api_scene_register :: proc(s:^Session,st:^Api_State) {
 // The component values the API names: what a scene saves, besides the identity and the place of an entity.
 @(private)
 api_component_listed :: proc(s:^Session,t:^core.Table_Info,include_runtime:=false) -> bool {
-    if t.place!=.World || (!inspector_listed(s,t) && !(include_runtime && !author.type_saved(t.info))) {return false}
+    if t.place!=.World || (!inspector_listed(s,t) && !(include_runtime && t.derived)) {return false}
     st:=api_state(s)
     return st.types[api_table_index(s,t)]!=serial.TYPE_NONE
 }

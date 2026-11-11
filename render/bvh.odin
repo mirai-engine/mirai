@@ -76,7 +76,7 @@ bvh_ray_triangles :: proc(nodes: []Gpu_Bvh_Node, triangles: []Gpu_Bvh_Triangle, 
 		}
 		for i in node.left_first ..< node.left_first + node.count {
 			tri := triangles[i]
-			if hit, _, crossed := mm.ray_triangle_edges({origin, dir}, tri.v0, tri.e1.xyz, tri.e2.xyz); crossed && hit > 0 && hit < t {
+			if hit, _, crossed := mm.ray_triangle({origin, dir}, {tri.v0, tri.v1.xyz, tri.v2.xyz}); crossed && hit > 0 && hit < t {
 				t = hit
 				primitive = int(tri.primitive)
 			}

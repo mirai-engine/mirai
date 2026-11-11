@@ -142,7 +142,7 @@ cancelled_turn_rejects_mcp_mutations_and_releases_an_unresponsive_worker :: proc
     base.text_set(task.name[:],"1-0")
     worker:=&m.workers[0]
     testing.expect_value(t,acp.create(&worker.client,receive_bytes=512,send_bytes=512),acp.Error.None)
-    defer acp.destroy(&worker.client,nil)
+    defer acp.destroy(&worker.client)
     worker.created=true;worker.task=1;worker.client.phase=.Prompting
     app:host.App
     edits:history.Edits
@@ -251,7 +251,7 @@ stale_session_updates_do_not_change_current_tasks_and_permissions_are_cancelled 
     // An agent whose permissions the user answers; those of Codex follow ai_permission_policy.
     worker:=&m.workers[0];worker.task=1;worker.provider=AI_CLAUDE
     testing.expect_value(t,acp.create(&worker.client,receive_bytes=512,send_bytes=512),acp.Error.None)
-    defer acp.destroy(&worker.client,nil)
+    defer acp.destroy(&worker.client)
     base.text_set(worker.client.session[:],"current-session")
     s:=Session{ai=m}
     callback:=Ai_Callback{session=&s,worker=worker}
@@ -279,7 +279,7 @@ the_usage_an_agent_reports_lands_in_its_conversation :: proc(t:^testing.T) {
     task:=&m.tasks[0];task.id=1;task.state=.Running;task.started=time.tick_now();task.finish_called=true
     worker:=&m.workers[0];worker.task=1;worker.provider=AI_CLAUDE
     testing.expect_value(t,acp.create(&worker.client,receive_bytes=512,send_bytes=512),acp.Error.None)
-    defer acp.destroy(&worker.client,nil)
+    defer acp.destroy(&worker.client)
     base.text_set(worker.client.session[:],"current-session")
     app:host.App
     edits:history.Edits

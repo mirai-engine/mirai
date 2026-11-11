@@ -107,7 +107,8 @@ description: Mirai standard library for games, with the packages `std/base`, `st
   [std/serial](../mirai-assets/references/serial.md#stdserial).
 - What the structure of a `.ui` is judged by (`std/ui_format`):
   [interface](../mirai-assets/references/kinds.md#interface).
-- Child processes without console windows: [API](references/subprocess.md#api) and
+- Child processes, their tree, their pipes read every frame and their console windows:
+  [API](references/subprocess.md#api), [tree](references/subprocess.md#tree) and
   [Windows](references/subprocess.md#windows).
 
 ## Workflow
