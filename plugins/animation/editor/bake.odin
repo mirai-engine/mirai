@@ -11,10 +11,10 @@ import anim "plugins:animation/runtime"
 
 // Bakes clips of source onto target as a rig takes the pose of another (Pose_Source, stage
 // Sampled): by the chains of the target's .character where the topology differs, otherwise each
-// bone by the bone of its name, or of its path when a name repeats. The feet of the target stay
-// locked to the ground (lib.Lock_Feet) over the frames the feet of the source stand, or, without
-// legs in the body of the source, those its own feet stand; with crotch_floor, its crotch keeps
-// off the floor as the source's does (lib.retarget_crotch_pose).
+// bone by the bone of its name, or of its path when a name repeats. With legs in both bodies, the
+// feet of the target stay locked to the ground (lib.Lock_Feet) over the frames the feet of the
+// source stand; with crotch_floor, its crotch keeps off the floor as the source's does
+// (lib.retarget_crotch_pose).
 retarget_bake :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,clips:asset.Animation_View,source,target:asset.Skeleton_View,retarget_chains:[]anim.Chain_Retarget_Constraint,rate:f32=60,allocator:=context.allocator,skeleton:=base.Asset_Id{},crotch_floor:=false) -> asset.Error {
     if !asset.animation_check(clips) || !asset.skeleton_check(source) || !asset.skeleton_check(target) || len(retarget_chains)>anim.POSE_CONSTRAINTS || rate<1 || rate>240 || rate-rate!=0 {return .Invalid}
     scratch:=context.temp_allocator
@@ -121,23 +121,22 @@ retarget_bake :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,cl
             }
             if !lib.retarget_crotch_pose(target_rig,crotch,source_world,target_local,target_world) {return .Invalid}
         }
-        if legs(target_body) && frames>=3 {
+        if legs(source_body) && legs(target_body) && frames>=3 {
             rig:=lib.Body_Rig{parents=target_rig.parents,rest=target_rig.rest,body=target_body,root=i32(root_bone)}
-            lock:lib.Lock_Feet
-            if legs(source_body) {
-                // Where the feet of the source stand, and whether it loops.
-                measured:=lib.Body_Rig{parents=source_rig.parents,rest=source_rig.rest,body=source_body,root=i32(source_bone)}
-                contacts:=bake_array(lib.Contact,frames+4,scratch) or_return
-                metrics,ok:=lib.clip_metrics(measured,sampled,{contacts=contacts},bake_array(mm.Transform,lib.frames_scratch_size(sampled),scratch) or_return)
-                if !ok {return .Invalid}
-                baked.loop=clip_loops(metrics)
-                lock.contacts=contacts[:min(metrics.contacts,len(contacts))]
-            } else {baked.loop=bake_loops(rig,baked) or_return}
-            locked:=baked;locked.local=bake_array(mm.Transform,len(baked.local),scratch) or_return
-            transforms,contacts,heights:=lib.clip_edit_buffers(lock,baked)
-            buffers:=lib.Edit_Buffers{bake_array(mm.Transform,transforms,scratch) or_return,bake_array(lib.Contact,contacts,scratch) or_return,bake_array(f32,heights,scratch) or_return}
-            if lib.clip_edit(rig,lock,baked,locked,buffers).error!=.None {return .Invalid}
-            baked=locked
+            // Where the feet of the source stand, and whether it loops.
+            measured:=lib.Body_Rig{parents=source_rig.parents,rest=source_rig.rest,body=source_body,root=i32(source_bone)}
+            found:=bake_array(lib.Contact,frames+4,scratch) or_return
+            metrics,ok:=lib.clip_metrics(measured,sampled,{contacts=found},bake_array(mm.Transform,lib.frames_scratch_size(sampled),scratch) or_return)
+            if !ok {return .Invalid}
+            baked.loop=clip_loops(metrics)
+            lock:=lib.Lock_Feet{contacts=found[:min(metrics.contacts,len(found))]}
+            if len(lock.contacts)>0 {
+                locked:=baked;locked.local=bake_array(mm.Transform,len(baked.local),scratch) or_return
+                transforms,contacts,heights:=lib.clip_edit_buffers(lock,baked)
+                buffers:=lib.Edit_Buffers{bake_array(mm.Transform,transforms,scratch) or_return,bake_array(lib.Contact,contacts,scratch) or_return,bake_array(f32,heights,scratch) or_return}
+                if lib.clip_edit(rig,lock,baked,locked,buffers).error!=.None {return .Invalid}
+                baked=locked
+            }
         }
         for frame in 0..<frames {
             time:=min(f32(frame)/exact,duration)
@@ -157,14 +156,6 @@ retarget_bake :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,cl
         output[i]={name=base.text_get(clip.name[:]),tracks=tracks,markers=markers,root=root,skeleton=skeleton}
     }
     return asset.animation_document(doc,types,{id=id,clips=output},allocator)
-}
-
-// Whether baked frames loop, as clip_sample decides for a clip.
-@(private="file")
-bake_loops :: proc(rig:lib.Body_Rig,frames:lib.Frames) -> (loops:bool,error:asset.Error) {
-    scratch:=bake_array(mm.Transform,lib.frames_scratch_size(frames),context.temp_allocator) or_return
-    metrics,measured:=lib.clip_metrics(rig,frames,{},scratch)
-    return measured && clip_loops(metrics),.None
 }
 
 @(private="file")

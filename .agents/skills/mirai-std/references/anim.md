@@ -162,10 +162,12 @@ equal length, at least one bone, finite transforms and unit quaternions. No proc
   source index `-1` keeps the reference. The work buffers and the references do not overlap the
   output. It does not infer names or solve full-body IK.
 - `retarget_crotch_prepare` and `retarget_crotch_pose` (`retarget_crotch.odin`) keep the crotch of
-  a retargeted body off its floor as the source's: below its rest, the pelvis of the target rises
-  until its hips keep the share of their rest height that the source's keep, and the legs turn so
-  the feet stay. The floor is the lowest foot or toe joint at rest; pelvis or hips not above it are
-  `Hips_Height`, and bodies without pelvis, hips or feet keep nothing.
+  a retargeted body off its floor as the source's: while the pelvis of the source is nearer its
+  feet than at rest, the pelvis of the target rises until its hips keep the share of their rest
+  height that the source's keep, and the legs turn so the feet stay. Heights are over the lowest
+  foot or toe joint of each pose, so a root that moves down with straight legs is no crouch; pelvis
+  or hips not above the feet at rest are `Hips_Height`, and bodies without pelvis, hips or feet
+  keep nothing.
 - `follow_prepare` pairs the bones of a follower skeleton with those of a leader by name, or by path
   where a name repeats in either; `follow_pose` gives each paired bone the leader's pose: its local
   transform as is when its parent is paired with the leader's parent, else its place in the world

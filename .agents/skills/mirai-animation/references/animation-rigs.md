@@ -153,13 +153,13 @@ topology differs.
 
 - It prepares the correspondences of `std/anim` once and resamples the destination poses. Chains
   keep translations and scales of the destination.
-- Where the destination has both legs in its body, its feet are locked to the ground with the clip
-  edit `Lock_Feet` over the frames the feet of the source stand (or, without legs in the body of
-  the source, those its own feet stand): a mapping cannot keep them by itself when the limbs have
-  other proportions. Whether the bake loops is decided on the source.
+- Where both bodies have both legs, the feet of the destination are locked to the ground with the
+  clip edit `Lock_Feet` over the frames the feet of the source stand, if any: a mapping cannot keep
+  them by itself when the limbs have other proportions. Whether the bake loops is decided on the
+  source.
 - `crotch_floor` (both skeletons with a body of pelvis, hips and feet, or the bake fails) raises
   the pelvis while the source crouches so the hips keep the share of their rest height over the
-  floor that the hips of the source keep, and turns the legs so the feet stay
+  feet that the hips of the source keep, and turns the legs so the feet stay
   (`retarget_crotch_pose`). It only raises: a body of longer legs keeps what the mapping gave.
 - Float/Vector curves, slots and markers keep their keys.
 - The root motion bone is remapped by name or by exact chain correspondence; if it corresponds

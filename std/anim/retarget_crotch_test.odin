@@ -33,10 +33,10 @@ test_skeleton :: proc(b:^Test_Body) -> Skeleton {return {b.parents[:],b.names[:]
 
 @(test)
 retarget_crotch_keeps_the_hips_of_a_long_bodied_target_off_the_floor_in_a_crouch_and_its_feet_in_place :: proc(t:^testing.T) {
-    // Half as tall, with its hips low: the bones scaled by their own lengths take its crotch
-    // through the floor when the source crouches.
+    // Half as tall, with its hips low, short thighs and flat feet: copying the rotations of a
+    // crouch brings its hips nearer its feet than the share of their height the source keeps.
     source_body:=test_body(1,.1,.05,.45,.42,.08,.12)
-    target_body:=test_body(.5,.05,.2,.15,.12,.03,.06)
+    target_body:=test_body(.5,.05,.2,.1,.195,.005,.06)
     source,target:=test_skeleton(&source_body),test_skeleton(&target_body)
     mapping:=[10]i32{0,1,2,3,4,5,6,7,8,9}
     profile:[10]Retarget_Bone
@@ -55,17 +55,27 @@ retarget_crotch_keeps_the_hips_of_a_long_bodied_target_off_the_floor_in_a_crouch
         for leg in 0..<2 {
             hip,knee,foot:=2+4*leg,3+4*leg,4+4*leg
             testing.expect(t,skeleton_ik(source,source_local[:],world[:],hip,knee,foot,rest[foot].position,rest[foot].position+{0,.5,-1}))
+            source_local[foot].rotation=conj(world[knee].rotation)
         }
         testing.expect(t,retarget_pose(source,target,profile[:],source_local[:],source_world[:],target_world[:],target_local[:]))
         feet:=[2]math.Vec3{target_world[4].position,target_world[8].position}
-        hips:=target_world[2].position.y
+        // Heights over the floor of each pose: its lowest foot or toe joint.
+        floor:=min(target_world[4].position.y,target_world[5].position.y,target_world[8].position.y,target_world[9].position.y)
+        hips:=target_world[2].position.y-floor
         testing.expect(t,retarget_crotch_pose(target,crotch,source_world[:],target_local[:],target_world[:]))
         share:=(source_world[2].position.y)/.95
         wanted:=max(.3*share,hips) if drop>0 else hips
-        testing.expectf(t,abs(target_world[2].position.y-wanted)<1e-4,"drop %v: the hips stand at %v, %v asked",drop,target_world[2].position.y,wanted)
-        if drop>.4 {testing.expect(t,hips<.3*share-.01)}
+        testing.expectf(t,abs(target_world[2].position.y-floor-wanted)<1e-4,"drop %v: the hips stand at %v, %v asked",drop,target_world[2].position.y-floor,wanted)
+        if drop>.4 {testing.expectf(t,hips<.3*share-.01,"hips %v floor %v share %v",hips,floor,.3*share)}
         for foot,i in ([2]int{4,8}) {testing.expect(t,linalg.length(target_world[foot].position-feet[i])<1e-4)}
     }
+    // The root goes down with straight legs, as in a fall or down stairs: no crouch, the pose stays.
+    source_local:=source_body.rest
+    source_local[0].position.y-=.3
+    testing.expect(t,retarget_pose(source,target,profile[:],source_local[:],source_world[:],target_world[:],target_local[:]))
+    retargeted:=target_local
+    testing.expect(t,retarget_crotch_pose(target,crotch,source_world[:],target_local[:],target_world[:]))
+    for value,i in target_local {testing.expect(t,value==retargeted[i])}
 }
 
 @(test)
@@ -91,12 +101,13 @@ retarget_crotch_rejects_hips_on_the_floor_and_values_that_are_not_finite :: proc
     testing.expect_value(t,none,RETARGET_CROTCH_NONE)
     testing.expect(t,pose_world(source.parents,source.rest,source_world[:]))
     source_world[1].position.y-=.5
-    hostile:=[?]Retarget_Crotch{crotch,crotch,crotch,crotch,crotch}
+    hostile:=[?]Retarget_Crotch{crotch,crotch,crotch,crotch,crotch,crotch}
     hostile[0].source_pelvis=99
     hostile[1].scale=cmath.nan_f32()
     hostile[2].legs[0][1]=-7
     hostile[3].target_up={}
     hostile[4].legs[1]={8,7,6}
+    hostile[5].target_feet={-1,-1,-1,99}
     for value in hostile {
         local=target_body.rest
         testing.expect(t,!retarget_crotch_pose(target,value,source_world[:],local[:],target_world[:]))
