@@ -315,7 +315,7 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
     d.channels=nil
     if d.protocol!=nil {
         if !d.protocol.sealed {return refuse(h,"protocol","sealed by protocol_seal")}
-        h.channels[CHANNEL_SYSTEM]={kind=.Reliable,queue_bytes=64<<10,max_message_bytes=EVENT_MAX_BYTES+16}
+        h.channels[CHANNEL_SYSTEM]={kind=.Reliable,queue_bytes=64<<10,max_message_bytes=RELIABLE_EVENT_MAX_BYTES+16}
         h.channels[CHANNEL_EVENTS]={kind=.Unreliable,queue_bytes=16<<10,max_message_bytes=EVENT_MAX_BYTES+16}
     }
     h.start=time.tick_now()

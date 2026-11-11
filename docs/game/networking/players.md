@@ -56,11 +56,11 @@ everything else it shows interpolated, a little in the past, pose and components
 instant. `Replicate.predict` keeps an entity predicted always: a ball to intercept.
 
 A spawn that should not wait a round trip (a projectile) is made by the same `fixed` function on
-both ends, in the tick of the input that causes it, and marked:
+both ends, in the tick of the input that causes it, and marked with the seat that makes it:
 
 ```odin
 e:=scene.spawn(spawner,ROCKET_PREFAB,at)     // on the server and on the shooter's client
-multiplayer.predict_spawn(session,ids,spawns,e,seat.peer,time)   // sequence=n: nth of the tick
+multiplayer.predict_spawn(spawns,e,seat)     // spawns: ^multiplayer.Net_Spawns
 ```
 
 The replica of the server's takes the one the client made; one the server never makes goes after

@@ -8,7 +8,8 @@ import wire "mirai:net"
 import "mirai:std/base"
 
 // Who sees what is data: the bits of an entity (Visibility.mask) against those
-// of the seat of each connection (Visibility.sees), read when they change.
+// of the seat of each connection (Visibility.sees), read when they change: a
+// tick where neither changes reads no object, though input writes the seats.
 @(test)
 visibility_replicates_an_entity_only_to_the_connections_whose_seat_shares_a_bit :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
@@ -43,6 +44,7 @@ visibility_replicates_an_entity_only_to_the_connections_whose_seat_shares_a_bit 
     connected:Connection
     seat:core.Entity
     objects:[3]Object
+    reads:int
     for tick in 1..<180 {
         now:=f64(tick)/60
         wire.sim_network_advance(&network,now)
@@ -73,14 +75,18 @@ visibility_replicates_an_entity_only_to_the_connections_whose_seat_shares_a_bit 
                 core.add(&world.visibility,seat,Visibility{sees=c.sees})
             }
         }
+        // As input writes the seats every tick.
+        if seat!=core.NONE {_=core.edit(&world.seats,seat)}
         core.settle(&info,world,nil)
         server_publish(&sessions[0],core.world_ref(world,&info),&outbox,u32(tick))
         wire.host_update(&sessions[0].host,now)
+        if tick==150 {reads=sessions[0].server.visibility_reads}
         if tick==20 {
             for e,k in entities {objects[k]=wire.object_of_user(&sessions[0].host,u64(e))}
             testing.expect(t,objects[0]!=0 && objects[1]!=0 && objects[2]!=0)
         }
     }
+    testing.expectf(t,reads>0 && sessions[0].server.visibility_reads==reads,"the idle ticks after 150 read %d objects",sessions[0].server.visibility_reads-reads)
 }
 
 @(test)

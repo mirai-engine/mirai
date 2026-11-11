@@ -158,9 +158,9 @@ rollback.
 - Non-cosmetic groups receive the `Id` from `core.id_new` from a state derived from the root's Id
   and `group`, the same at each end. If the root has `Replicate`, the bridge gives each group of
   `Destruct_Events.grouped` its `Replicate` and the server publishes it as an authoritative body
-  with inherited audience and priority; the client asks to adopt it with
-  `multiplayer.adopt(&adoptions, id, e)` and the network binds it to its replica at the end of the
-  tick. Debris is local.
+  with inherited audience and priority; the client marks it with
+  `multiplayer.predict_kept(&spawns, e)` and the network binds it to its replica at the end of the
+  tick, while destruct keeps it. Debris is local.
 - A destructible without Id cannot pair its events between ends.
 - The journal lives in `Destruct_Net`, one per world like the session.
 - The server offers the state of what is broken to each connection that enters its world

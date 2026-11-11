@@ -97,8 +97,9 @@ neither the data world nor physics. A replicated object is an opaque game id plu
 
 In `plugins/multiplayer/runtime`:
 
-- `types.odin`: what a game declares (`Replicate`, `Net_Link`, `Net_Settings`, `Net_Events`,
-  `Net_Outbox`, `Remote_Inputs`, `send`, `event_read`), `DEFAULT_PORT` and `PLAYER_NET`.
+- `types.odin`: what a game declares (`Replicate`, `Net_Link`, `Net_Settings`, `Net_Outbox`,
+  `Net_Spawns`, `Remote_Inputs`, `send`, `predict_spawn`), `DEFAULT_PORT` and `PLAYER_NET`. The
+  messages that arrived are `core.Net_Messages`, read through `core.Inbox(T)`.
 - `session.odin`, `loop.odin`: `Net_Session`, the generator catalog protocol, composite types
   (`net_type`), opening and closing, the player arguments (`launch_read`), frame functions, what
   the player prints, helpers (`is_server`, `is_client`).
@@ -217,9 +218,14 @@ In `plugins/multiplayer/runtime`:
     on its own.
 - **The type of an object is what its entity has now.** A replicated component that comes or goes
   re-types the object in place (`object_retype`); it is never destroyed and made again for it.
-- **A spawn both ends make in a tick is one entity** (`predict_spawn`): the replica takes the
-  client's by the Id both draw, also when a correction runs the tick of the spawn again
-  (`replicas_relink`, `spawns_settle`).
+- **A spawn both ends make in a tick is one entity** (`predict_spawn`): the plugin numbers the
+  spawns of each seat in the tick, never the game, and the replica takes the client's by the Id
+  both draw, also when a correction runs the tick of the spawn again (`replicas_relink`,
+  `spawns_settle`). What a library makes for a replica (`predict_kept`) goes the same one way.
+- **Messages arrive typed:** a step receives `core.Inbox(T)` of its `@(net_message)` type; the
+  plugin holds no fixed size for a message, and a reliable one larger than a datagram streams.
+- **The server reads visibility by change:** objects again only when `Visibility` changes,
+  connections also when a seat comes, goes or turns; an idle tick reads none.
 - **The client tick never goes backwards** once synchronized: the clock corrects with a bounded
   dilation and only jumps forward; the display time of remote objects does not either
   ([time](references/networking.md#time-and-inputs)).
@@ -227,9 +233,9 @@ In `plugins/multiplayer/runtime`:
   copy and the repeated ticks (`host.app_tick_replay`) advance it to the present;
   `core.Frame_Time` is not copied, so rollback neither stores nor restores anything of the clock.
   A repeated tick sees the content it saw the first time (the generation the ring keeps), and the
-  connection events and messages it had (`Net_Connections`, `Net_Events`, filled at the start of
-  each tick). `send` does not queue (`Net_Outbox.replaying`), `Net_Outbox` is not copied with the
-  world (what it holds is not lost) and
+  connection events and messages it had (`Net_Connections`, `core.Net_Messages`, filled at the
+  start of each tick). `send` does not queue (`Net_Outbox.replaying`), `Net_Outbox` is not
+  copied with the world (what it holds is not lost) and
   `net_tick_tail` neither publishes nor sends: messages are not repeated unless the game asks; the
   rest follows the rule of [`Time`](../mirai-core/references/core.md#core-storages)
   ([correction](references/multiplayer.md#the-tick)).
