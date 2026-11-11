@@ -358,3 +358,32 @@ an_old_input_mirai_is_refused_with_where_its_bindings_go :: proc(t:^testing.T) {
     old:=core.problem_find(&problems,core.NONE,"input.old_file")
     testing.expect(t,old!=nil && strings.contains(core.problem_text(old),"Input_Settings of") && strings.contains(core.problem_text(old),project.SETTINGS_FILE))
 }
+
+// Bound with the mouse to look, a stick turns at a rate: held for a second it turns LOOK_STICK points
+// at 30 frames a second as at 144, and keys the same; the mouse moves it by what it moved.
+@(test)
+a_look_stick_turns_as_far_in_a_second_at_any_frame_rate :: proc(t:^testing.T) {
+    m:Input_Map
+    look:=Action(0)
+    input_map_action(&m,look,.Axis2)
+    m.actions[look]=look_action_defaults()[.Look]
+    testing.expect(t,input_map_bind(&m,look,binding_keys(.Left,.Right,.Down,.Up,LOOK_STICK)))
+    actions:Actions
+    for fps in ([2]int{30,144}) {
+        stick:core.Input
+        stick.gamepads[0].connected=true
+        stick.gamepads[0].axes[.Right_X]=1
+        for held in ([2]core.Input{stick,{keys_down={.Right}}}) {
+            device:=held
+            turned:f32
+            for _ in 0..<fps {
+                actions_update(&actions,&m,&device,1/f32(fps))
+                turned+=action(&actions,look).vector.x
+            }
+            testing.expectf(t,abs(turned-LOOK_STICK)<LOOK_STICK*1e-4,"at %d frames a second it turned %v points in a second, not %v",fps,turned,LOOK_STICK)
+        }
+    }
+    device:=core.Input{mouse_delta={12,0}}
+    actions_update(&actions,&m,&device,1.0/144)
+    testing.expect_value(t,action(&actions,look).vector,[2]f32{12,0})
+}

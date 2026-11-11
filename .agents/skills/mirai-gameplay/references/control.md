@@ -95,6 +95,11 @@ inspector use them.
   `[E]Action_Bindings`, and the compiler asks for every member. An input of a binding is an
   `inp.Input_Code`, named as the members of the enums of core (`Space`, `South`, `Left_X`, and the
   mouse as `Mouse_Left`, `Mouse_X`, `Wheel_Y`).
+- **Displacement and rate.** The `scale` of a binding is the sensitivity of a player and multiplies
+  the value after the dead zone. A mouse axis gives the movement since the last update; in an action
+  a mouse axis drives (`Look`), the other bindings are rates, their value per second, so a stick held
+  turns as far in a frame or a tick of any length. A seat's look travels and replays as the turn of
+  its tick, like the mouse's.
 - **What a project or a player changes** is the machine setting `inp.Input_Settings`
   ([settings](../../mirai-projects/references/projects.md#project-settings)), a section of
   `settings.mirai` with one keyed entry per action, by its name: its kind, context and bindings

@@ -67,6 +67,8 @@ CHORD_CAPACITY :: si.CHORD_CAPACITY
 // How a player looks around (Axis2: x right, y up, in points of mouse
 // movement): it turns the look of the body its seat drives, or a camera that
 // orbits it. The sensitivity of a player is the scale of its bindings.
+// The mouse moves it by a displacement; a stick or keys bound with it turn it
+// at a rate (actions_update), so a stick held turns as far at any frame rate.
 @(actions)
 Look_Action :: enum u8 {Look}
 
@@ -81,9 +83,13 @@ move_action_defaults :: proc "contextless" () -> [Move_Action]Action_Bindings {
 // Radians the look turns per unit of the look action: a point of mouse movement.
 LOOK_SPEED :: f32(0.12*math.RAD_PER_DEG)
 
+// Points a second a look stick held all the way turns: 270 degrees, Lyra's default pitch rate (its
+// yaw is 450 with a response curve that slows the middle of the stick; this stick is linear).
+LOOK_STICK :: f32(270*math.RAD_PER_DEG)/LOOK_SPEED
+
 // The bindings of look when Input_Settings does not name it.
 look_action_defaults :: proc "contextless" () -> [Look_Action]Action_Bindings {
-    return {.Look=action_default(.Axis2,binding_mouse_delta(),binding_gamepad_stick(.Right,25))}
+    return {.Look=action_default(.Axis2,binding_mouse_delta(),binding_gamepad_stick(.Right,LOOK_STICK))}
 }
 
 Action_Kind :: si.Action_Kind
@@ -160,7 +166,9 @@ code_gamepad_axis :: proc "contextless" (axis:core.Gamepad_Axis) -> Input_Code {
 //           dead zone (0: 0.15); or one mouse axis, as it comes
 //   Axis2   left, right, down and up keys or buttons; two gamepad axes, with
 //           a radial dead zone (0: 0.2); or two mouse axes, as they come
-// A chord is keys or buttons that must be held too (binding_chord).
+// A chord is keys or buttons that must be held too (binding_chord). In an
+// action a mouse axis drives (look), the others are rates: their value, times
+// scale, is per second.
 Input_Binding :: struct {
     inputs:[4]Input_Code `mirai:"trim"`,             // up to the first None
     chord:[CHORD_CAPACITY]Input_Code `mirai:"trim"`, // up to the first None
@@ -344,9 +352,9 @@ binding_key :: proc "contextless" (key:core.Key) -> Input_Binding {
 binding_key_axis :: proc "contextless" (negative,positive:core.Key,scale:f32=1) -> Input_Binding {
     return {inputs={0=code_key(negative),1=code_key(positive)},scale=scale}
 }
-// Axis2: diagonals keep unit length.
-binding_keys :: proc "contextless" (left,right,down,up:core.Key) -> Input_Binding {
-    return {inputs={code_key(left),code_key(right),code_key(down),code_key(up)}}
+// Axis2: diagonals keep the length of scale.
+binding_keys :: proc "contextless" (left,right,down,up:core.Key,scale:f32=1) -> Input_Binding {
+    return {inputs={code_key(left),code_key(right),code_key(down),code_key(up)},scale=scale}
 }
 binding_mouse_button :: proc "contextless" (button:core.Mouse_Button) -> Input_Binding {
     return {inputs={0=code_mouse_button(button)}}
@@ -699,6 +707,8 @@ actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,dt:f32,co
     for &a,index in m.actions[:count] {
         level:=layer(a.input_context,&layers,floor)
         if level==0 {continue}
+        // Beside the displacement of the mouse, a stick or keys turn at a rate: as far in any dt.
+        rate:=action_reads_mouse(m,Action(index))
         for &binding in action_bindings(&a) {
             kind,valid:=binding_kind(a.kind,binding)
             if !valid || stacked && inputs_taken(&taken,&binding,level) {continue}
@@ -707,6 +717,7 @@ actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,dt:f32,co
             for code,i in binding_inputs(&binding) {codes[i]=action_code(code,pad)}
             action:=si.Action(index)+1
             scale:=binding.scale!=0?binding.scale:1
+            if rate && kind!=.Delta && kind!=.Delta_2D {scale*=dt}
             zone:=binding.dead_zone
             bound:bool
             switch kind {
@@ -714,7 +725,7 @@ actions_update :: proc(actions:^Actions,m:^Input_Map,input:^core.Input,dt:f32,co
             case .Axis_Above: bound=si.input_bind_axis_button(&state,action,si.Axis_Code(codes[0]),zone>0?zone:DEAD_ZONE_BUTTON,scale)
             case .Code_Axis:  bound=si.input_bind_codes_axis(&state,action,si.Input_Code(codes[0]),si.Input_Code(codes[1]),scale)
             case .Analog:     bound=si.input_bind_axis(&state,action,si.Axis_Code(codes[0]),zone>0?zone:DEAD_ZONE_AXIS,scale)
-            case .Codes_2D:   bound=si.input_bind_codes_2d(&state,action,si.Input_Code(codes[0]),si.Input_Code(codes[1]),si.Input_Code(codes[2]),si.Input_Code(codes[3]))
+            case .Codes_2D:   bound=si.input_bind_codes_2d(&state,action,si.Input_Code(codes[0]),si.Input_Code(codes[1]),si.Input_Code(codes[2]),si.Input_Code(codes[3]),scale)
             case .Analog_2D:  bound=si.input_bind_axes_2d(&state,action,si.Axis_Code(codes[0]),si.Axis_Code(codes[1]),zone>0?zone:DEAD_ZONE_STICK,scale)
             case .Delta:      bound=si.input_bind_delta(&state,action,si.Axis_Code(codes[0]),scale)
             case .Delta_2D:   bound=si.input_bind_delta_2d(&state,action,si.Axis_Code(codes[0]),si.Axis_Code(codes[1]),scale)
@@ -798,8 +809,8 @@ binding_uses :: proc "contextless" (kind:Action_Kind,binding:Input_Binding) -> (
     read,valid:=binding_kind(kind,binding)
     if !valid {return}
     switch read {
-    case .Code,.Codes_2D:
-    case .Code_Axis,.Delta,.Delta_2D: scale=true
+    case .Code:
+    case .Code_Axis,.Codes_2D,.Delta,.Delta_2D: scale=true
     case .Axis_Above: scale,dead_zone,zone=true,true,DEAD_ZONE_BUTTON
     case .Analog:     scale,dead_zone,zone=true,true,DEAD_ZONE_AXIS
     case .Analog_2D:  scale,dead_zone,zone=true,true,DEAD_ZONE_STICK
