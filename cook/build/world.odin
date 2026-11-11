@@ -34,7 +34,7 @@ import "mirai:std/serial"
 // and the game/ of the project go into World and Shared; the editor and the
 // editor/ of plugins and of the project into Editor_World.
 
-CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,keep,persist,single,far,derived,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw,mind,act,was,test_world,editor"
+CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,diff,free,replicated,setting,description,queue,keep,persist,single,far,derived,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw,mind,act,was,test_world,editor"
 
 PHASES :: [7]string{"input","fixed","frame","late","ui","render","release"}
 UI_PHASE :: 4 // where the interfaces are built: the engine and the editor draw in it, a game shows .ui documents
@@ -643,8 +643,8 @@ type_read :: proc(g:^Generator,file:^ast.File,pkg:^Package,decl:^ast.Value_Decl,
         append(&g.errors,fmt.aprintf("%s: %s says persist: the progress of the player is a plain @(storage,persist) of a library; not a component, a storage of the application, a queue, events, a setting, nor one that resets or is not copied",t.where_,name))
         return nil
     }
-    if t.copy_kept!="" && (t.kind!=.Storage || t.place!=.World || t.copy=="false") {
-        append(&g.errors,fmt.aprintf("%s: %s says copy_kept, the copy of a storage of the World that a history keeps: write it on a @(storage) of a library that is copied",t.where_,name))
+    if (t.copy_kept!="" || t.diff!="") && (t.kind!=.Storage || t.place!=.World || t.copy=="false") {
+        append(&g.errors,fmt.aprintf("%s: %s says copy_kept or diff, which are of a storage of the World and its copies: write it on a @(storage) of a library that is copied",t.where_,name))
         return nil
     }
     if (t.keep || t.reset!="") && (t.kind!=.Storage || t.place!=.World) {
@@ -2415,6 +2415,10 @@ type_procs_write :: proc(w:^strings.Builder,t:^Type,c:string) {
             fmt.sbprintf(w,"%s_%s :: proc(value:rawptr) {{%s(cast(^%s)value)}}\n",n.option,t.field,ref(t.pkg,n.name),type)
         }
         fmt.sbprintf(&list,"%s%s=%s_%s",strings.builder_len(list)>0?",":"",n.option,n.option,t.field)
+    }
+    if t.diff!="" {
+        fmt.sbprintf(w,"diff_%s :: proc(a,b:rawptr,buf:[]byte) -> string {{return %s(cast(^%s)a,cast(^%s)b,buf)}}\n",t.field,ref(t.pkg,t.diff),type,type)
+        fmt.sbprintf(&list,"%sdiff=diff_%s",strings.builder_len(list)>0?",":"",t.field)
     }
     t.procs=strings.to_string(list)
 }
