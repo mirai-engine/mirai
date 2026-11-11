@@ -261,7 +261,7 @@ md_open :: proc(m:^Md,block:Md_Block,level,quote,depth:int,marker:string,blank:b
         box_begin(ctx,{width=fixed(m.room),height=FIT,direction=.Column})
     }
     if block==.Paragraph || block==.Heading {
-        m.texting=text_begin(ctx,{font=m.font,size=m.size,color=m.text_color,wrap=.Words},m.line,true)
+        m.texting=text_begin(ctx,{font=m.font,size=m.size,color=m.text_color,wrap=.Words},m.line)
     }
 }
 
@@ -314,7 +314,7 @@ md_code_line :: proc(m:^Md,line:string) {
     font:=&ctx.font
     f:=int(m.font)
     m.lines+=1
-    if !text_begin(ctx,{font=m.font,size=m.size,color=m.text_color,wrap=.Words},m.line,true) {return}
+    if !text_begin(ctx,{font=m.font,size=m.size,color=m.text_color,wrap=.Words},m.line) {return}
     // A tab is room up to the next stop of four spaces of its line.
     tab:=4*text_width(font," ",m.size,f)
     x:f32

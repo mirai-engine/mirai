@@ -8,7 +8,7 @@ Mouse_Buttons :: bit_set[Mouse_Button;u8]
 
 // The keys the library itself gives a meaning to. Shortcuts of the host are
 // its own business.
-Key :: enum u8 {Left,Right,Up,Down,Home,End,Page_Up,Page_Down,Backspace,Delete,Enter,Escape,Tab,Space,A,C,V,X}
+Key :: enum u8 {Left,Right,Up,Down,Home,End,Page_Up,Page_Down,Backspace,Delete,Enter,Escape,Tab,Space,A,C,V,X,Y,Z}
 Keys :: bit_set[Key;u32]
 
 Modifier :: enum u8 {

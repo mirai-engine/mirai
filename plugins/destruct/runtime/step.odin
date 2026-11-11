@@ -248,7 +248,7 @@ reconcile :: proc(c:^Ctx,e:core.Entity,remake:bool) {
     desc.hull_vertices=int(d.hull_vertices)
     desc.piece_anchors,desc.piece_clusters,desc.clusters,desc.bond_strength=p.anchors[:],p.piece_clusters[:],p.clusters[:],p.connection_strength[:]
     desc.cluster_points=p.cluster_points[:]
-    desc.damage_threshold,desc.damage_radius,desc.debris_volume=d.damage_threshold,d.damage_radius,d.debris_volume
+    desc.damage_threshold,desc.propagation,desc.debris_volume=d.damage_threshold,d.propagation,d.debris_volume
     desc.impact_damage=d.impact_damage && c.authority!=.Client
     if d.debris_lifetime<0 || d.removal_lifetime<0 ||
        d.debris_lifetime-d.debris_lifetime!=0 || d.removal_lifetime-d.removal_lifetime!=0 ||
@@ -280,7 +280,7 @@ destructible_problem :: proc(c:^Ctx,e:core.Entity,error:physics.Breakable_Error)
     why,fix:string
     switch error {
     case .None:
-    case .Invalid_Desc: why,fix="a value of the Destructible or of its Collider is not valid","give it a positive strength, damage radius and density, and finite values"
+    case .Invalid_Desc: why,fix="a value of the Destructible or of its Collider is not valid","give it a positive strength and density, a propagation from 0 to 1, and finite values"
     case .Invalid_Mesh: why,fix="the pieces of its mesh are not valid","use a closed mesh, or another .fracture asset"
     case .No_Pieces:    why,fix="its mesh gave no pieces","give it a closed mesh with volume"
     case .Capacity:     why,fix="the simulation has no room for it","raise the breakables, pieces, bonds, hulls, shapes or bodies of Physics_Settings"

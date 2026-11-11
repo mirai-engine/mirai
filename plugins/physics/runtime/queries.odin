@@ -80,8 +80,8 @@ static_changes :: proc(physics:core.Ref(Physics_State),since:Static_Cursor,boxes
     return {physics.epoch,at},count,overflow
 }
 
-// The box around all the static collision, with the margin of the broad phase; false without any or while
-// the simulation is not ready.
+// The box around the static collision that blocks, without sensors, as of the last physics_step; false without
+// any or while the simulation is not ready.
 static_bounds :: proc(physics:core.Ref(Physics_State)) -> (box:mm.Aabb,ok:bool) {
     if physics.ptr==nil || !physics.ready {return}
     return sim.static_bounds(&physics.world)

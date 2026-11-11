@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:math/linalg"
 import "core:testing"
 import "mirai:core"
+import "mirai:engine/volume"
 import "mirai:std/ai"
 import mm "mirai:std/math"
 import nav "plugins:navigation/runtime"
@@ -53,6 +54,8 @@ Behavior_World :: struct {
     paths:core.Table(nav.Nav_Path),
     fars:core.Table(nav.Nav_Far),
     agents:core.Table(nav.Nav_Agent),
+    patrols:core.Table(Patrol),
+    splines:core.Table(volume.Spline),
     walks:core.Table(locomotion.Walk),
     swims:core.Table(locomotion.Swim),
     turns:Perceiving,
@@ -252,6 +255,94 @@ move_actions_ask_navigation_and_read_where_the_agent_got :: proc(t:^testing.T) {
     core.edit(&world.paths,e).state=.Failed
     a.phase=.Update
     testing.expect_value(t,chase_act(&a,other,1),ai.Status.Failure)
+}
+
+// A patrol walks the points of a Spline from the one after where it is
+// nearest, on to the next when it arrives or cannot get there, back and forth,
+// around or once; it follows the path when it moves or is edited, stands at a
+// path of one point, keeps a crossing when it is interrupted and fails with a
+// problem without a path to walk. An agent without a mind walks it by itself.
+@(test)
+patrols_walk_the_points_of_their_spline :: proc(t:^testing.T) {
+    world:Behavior_World
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    e,route:=core.create(&world.entities),core.create(&world.entities)
+    line:=volume.Spline{count=3,points={0={{0,0,0},1,0},1={{0,0,-4},1,0},2={{0,0,-8},1,0}}}
+    core.add(&world.paths,e,nav.Nav_Path{})
+    core.add(&world.worlds,e,core.World_Transform{transform={{5,0,3},mm.QUAT_IDENTITY,{1,1,1}}})
+    core.add(&world.worlds,route,core.World_Transform{transform={{5,0,0},mm.QUAT_IDENTITY,{1,1,1}}})
+    core.add(&world.splines,route,line)
+    core.add(&world.patrols,e,Patrol{path=route,mode=.Back_And_Forth})
+    test_world_settle(&world)
+    problems:core.Problems
+    w:=Mind_World{requests=&world.moves,paths=core.read(&world.paths),worlds=core.read(&world.worlds),patrols=&world.patrols,splines=core.read(&world.splines),problems=&problems}
+    ctx:=ai.Mind_Context{user=&w,holder=u64(e)}
+    memory:[ai.MIND_WORDS]u64
+    a:=ai.Act(Move_Act){ctx=&ctx,memory=memory[:]}
+    Step :: struct {name:string,phase:ai.Phase,state:nav.Nav_State,edit:proc(w:^Behavior_World,e,route:core.Entity),status:ai.Status,goal:[3]f32,asks:bool}
+    move :: proc(w:^Behavior_World,e,route:core.Entity) {core.edit(&w.worlds,route).position.x=6}
+    once :: proc(w:^Behavior_World,e,route:core.Entity) {core.edit(&w.patrols,e).mode=.Once}
+    loop :: proc(w:^Behavior_World,e,route:core.Entity) {core.edit(&w.patrols,e).mode=.Loop}
+    shorten :: proc(w:^Behavior_World,e,route:core.Entity) {core.edit(&w.splines,route).count=1}
+    lost :: proc(w:^Behavior_World,e,route:core.Entity) {
+        nan:=f32(0)
+        core.edit(&w.splines,route).points[0].position.y=nan/nan
+    }
+    for c in ([]Step{
+        {"from the nearest, the next",.Enter,.Idle,nil,.Running,{5,0,-4},true},
+        {"walking",.Update,.Moving,nil,.Running,{},false},
+        {"its path moved",.Update,.Moving,move,.Running,{6,0,-4},true},
+        {"there",.Update,.Arrived,nil,.Running,{6,0,-8},true},
+        {"and back",.Update,.Arrived,nil,.Running,{6,0,-4},true},
+        {"one it cannot get to",.Update,.Failed,nil,.Running,{6,0,0},true},
+        {"and forth again",.Update,.Arrived,nil,.Running,{6,0,-4},true},
+        {"around",.Update,.Arrived,loop,.Running,{6,0,-8},true},
+        {"from the last to the first",.Update,.Arrived,nil,.Running,{6,0,0},true},
+        {"once to the last",.Update,.Arrived,once,.Running,{6,0,-4},true},
+        {"at the end",.Update,.Arrived,nil,.Running,{6,0,-8},true},
+        {"ended",.Update,.Arrived,nil,.Success,{},false},
+        {"edited to one point: to it",.Update,.Arrived,shorten,.Running,{6,0,0},true},
+        {"and stands there",.Update,.Arrived,loop,.Running,{},false},
+        {"a point not a number",.Update,.Arrived,lost,.Failure,{},false},
+    }) {
+        if c.edit!=nil {c.edit(&world,e,route)}
+        core.edit(&world.paths,e).state=c.state
+        core.edit(&world.paths,e).goal=world.moves.queue.items[len(world.moves.queue.items)-1].point if len(world.moves.queue.items)>0 else {}
+        asked:=len(world.moves.queue.items)
+        a.phase=c.phase
+        testing.expectf(t,patrol_act(&a)==c.status,"%s: its status",c.name)
+        asks:=len(world.moves.queue.items)>asked
+        testing.expectf(t,asks==c.asks && (!asks || world.moves.queue.items[asked].point==c.goal),"%s: asked %v",c.name,world.moves.queue.items[asked:])
+    }
+    testing.expect_value(t,problems.count,1)
+    // An interrupted patrol stops the agent, but not in the middle of a crossing.
+    for state in ([]nav.Nav_State{.Crossing,.Moving}) {
+        core.edit(&world.paths,e).state=state
+        asked:=len(world.moves.queue.items)
+        a.phase,a.cause=.Exit,.Aborted
+        patrol_act(&a)
+        testing.expectf(t,(len(world.moves.queue.items)>asked)==(state==.Moving),"%v",state)
+    }
+    // Without a mind it walks by itself; with one, only while the mind patrols.
+    core.edit(&world.splines,route)^=line
+    core.edit(&world.paths,e).state=.Idle
+    for minded in ([]bool{false,true}) {
+        if minded {
+            core.add(&world.mind_agents,e,Mind_Agent{})
+            test_world_settle(&world)
+        }
+        asked:=len(world.moves.queue.items)
+        patrols_walk(&world.patrols,core.read(&world.mind_agents),core.read(&world.paths),core.read(&world.splines),core.read(&world.worlds),&world.moves,&problems,{playing=true,dt=1.0/60})
+        testing.expectf(t,(len(world.moves.queue.items)>asked)!=minded,"with a mind: %v",minded)
+    }
+    // Without a path it fails, as one without its Patrol.
+    core.edit(&world.patrols,e).path=core.NONE
+    a.phase=.Enter
+    testing.expect_value(t,patrol_act(&a),ai.Status.Failure)
+    core.remove(&world.patrols,e)
+    test_world_settle(&world)
+    testing.expect_value(t,patrol_act(&a),ai.Status.Failure)
 }
 
 // The clock at `seconds` of a run at hz ticks a second.

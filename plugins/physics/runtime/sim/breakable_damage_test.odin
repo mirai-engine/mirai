@@ -5,19 +5,20 @@ import math "mirai:std/math"
 import "mirai:std/geom"
 
 @(private="file")
-test_authored_destructible :: proc(w:^World,hierarchy:=true,settings:=Breakable_Desc{}) -> (Breakable_Handle,Breakable_Error) {
+// A row of `parts` cubes, each bonded to the next.
+test_authored_destructible :: proc(w:^World,hierarchy:=true,settings:=Breakable_Desc{},parts:=4) -> (Breakable_Handle,Breakable_Error) {
     f:geom.Fracture;geom.fracture_init(&f);defer geom.fracture_destroy(&f)
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube);defer geom.mesh_buffer_destroy(&cube)
     geom.cube_build(&cube)
-    for part in 0..<4 {
+    for part in 0..<parts {
         first_vertex,first_index:=u32(len(f.mesh.positions)),u32(len(f.mesh.indices))
-        center:=Vec3{f32(part)*1.1-1.65,3,0}
+        center:=Vec3{(f32(part)-0.5*f32(parts-1))*1.1,3,0}
         for point in cube.positions {append(&f.mesh.positions,point+center)}
         append(&f.mesh.indices,..cube.indices[:])
         for _ in 0..<len(cube.indices)/3 {append(&f.mesh.materials,0)}
         append(&f.pieces,geom.Fracture_Piece{site=u32(part),first_vertex=first_vertex,vertex_count=u32(len(cube.positions)),first_index=first_index,index_count=u32(len(cube.indices)),volume=1,center=center})
     }
-    append(&f.connections,geom.Fracture_Connection{0,1,1},geom.Fracture_Connection{1,2,1},geom.Fracture_Connection{2,3,1})
+    for part in 1..<parts {append(&f.connections,geom.Fracture_Connection{u32(part-1),u32(part),1})}
     clusters:=[3]Cluster_Desc{{parent=-1,strength=100},{parent=0,strength=50},{parent=0,strength=50}}
     membership:=[4]i32{1,1,2,2}
     desc:=settings
@@ -300,6 +301,48 @@ authored_piece_cluster_bond_and_hull_capacity_failures_leave_no_live_destructibl
     }
 }
 
+// A crack runs along the bonds: a strain at the free end of a beam anchored at the other, or an impact on
+// its last piece, breaks it at the anchor only while what a bond leaves over goes on, and a replay
+// repeats where it stopped.
+@(test)
+a_crack_runs_along_the_bonds_by_the_propagation :: proc(t:^testing.T) {
+    PARTS :: 10
+    anchors:[PARTS]bool
+    anchors[0]=true
+    Case :: struct {propagation,strain:f32,anchor_breaks:bool,groups:int,impact:bool}
+    cases:=[?]Case{{0,6000,false,2,false},{1,6000,true,PARTS,false},{1,2100,false,5,false},{0.5,6000,false,4,false},{0,6000,false,2,true},{1,6000,true,PARTS,true}}
+    for c in cases {
+        w,kept:World;testing.expect(t,test_destruct_world(&w))
+        settings:=BREAKABLE_DESC_DEFAULT;settings.gravity_scale,settings.propagation,settings.piece_anchors=0,c.propagation,anchors[:]
+        h,error:=test_authored_destructible(&w,false,settings,PARTS)
+        testing.expect_value(t,error,Breakable_Error.None)
+        testing.expect(t,test_keep(&kept,&w))
+        // Only the bond between the last two pieces is in the region, and the last piece has no other.
+        event:Break_Event
+        broke:bool
+        if c.impact {
+            pieces:[PARTS]Piece_Info
+            breakable_pieces(&w,h,pieces[:])
+            event,broke,_=break_apply(&w,{breakable=h,piece=pieces[PARTS-1].id,vector={0,0,-c.strain},strain=c.strain,kind=.Impact})
+        } else {
+            event,broke=breakable_strain(&w,h,{0.5*PARTS*1.1-1.1,3,0},0.3,c.strain)
+        }
+        bonds:[PARTS-1]Bond_Info
+        breakable_bonds(&w,h,bonds[:])
+        testing.expectf(t,broke && bonds[PARTS-2].broken && bonds[0].broken==c.anchor_breaks && break_group_count(&w,h)==c.groups,"%v: the anchor bond broke %v, %v groups",c,bonds[0].broken,break_group_count(&w,h))
+        testing.expect(t,test_restore(&w,&kept) && break_event_apply(&w,event))
+        breakable_bonds(&w,h,bonds[:])
+        testing.expectf(t,bonds[0].broken==c.anchor_breaks && break_group_count(&w,h)==c.groups,"%v: the replay differs",c)
+        world_destroy(&kept);world_destroy(&w)
+    }
+    w:World;testing.expect(t,test_destruct_world(&w));defer world_destroy(&w)
+    for propagation in ([?]f32{-0.1,1.5,transmute(f32)u32(0x7fc00000),transmute(f32)u32(0x7f800000)}) {
+        settings:=BREAKABLE_DESC_DEFAULT;settings.propagation=propagation
+        _,error:=test_authored_destructible(&w,false,settings,PARTS)
+        testing.expectf(t,error==.Invalid_Desc,"propagation %v: %v",propagation,error)
+    }
+}
+
 @(test)
 a_strain_in_an_oriented_box_breaks_without_impulse :: proc(t:^testing.T) {
     w:World;testing.expect(t,test_destruct_world(&w));defer world_destroy(&w)
@@ -355,7 +398,7 @@ a_whole_cluster_collides_as_one_hull_with_the_mass_of_its_pieces_until_it_breaks
 @(test)
 an_impact_on_a_whole_cluster_names_one_of_its_pieces_and_breaks_it :: proc(t:^testing.T) {
     w:World;testing.expect(t,test_destruct_world(&w));defer world_destroy(&w)
-    settings:=BREAKABLE_DESC_DEFAULT;settings.gravity_scale=0;settings.damage_threshold=10;settings.damage_radius=3
+    settings:=BREAKABLE_DESC_DEFAULT;settings.gravity_scale=0;settings.damage_threshold=10
     h,_:=test_authored_destructible(&w,true,settings)
     test_cannonball(&w,{0.55,6,0},{0,-30,0})
     found:=false

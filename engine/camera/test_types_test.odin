@@ -13,8 +13,6 @@ Test_Cameras :: struct {
     cameras:core.Table(render.Camera),
     follows:core.Table(Camera_Follow),
     activations:core.Table(Camera_Activation),
-    triggers:core.Table(Environment_Trigger),
-    volumes:core.Table(volume.Volume),
     transforms:core.Table(core.Transform),
     worlds:core.Table(core.World_Transform),
     parents:core.Table(core.Parent),
@@ -25,5 +23,4 @@ Test_Cameras :: struct {
     selected:Cameras,
     requests:Camera_Requests,
     shakes:Camera_Shakes,
-    environment:render.Environment_Requests,
 }

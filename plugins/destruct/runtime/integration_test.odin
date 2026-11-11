@@ -143,7 +143,7 @@ a_strain_asked_of_physics_in_a_volume_breaks_a_destructible_and_is_applied_as_it
     bodies:phys.Body_Requests;defer delete(bodies.queue.items)
     out:[4]Group_Info
     // A weakening reaches its bonds by the weight of the volume and lets nothing go.
-    phys.strain_area(&bodies,volume.sphere(4,blend=1),{},1,weakening=true)
+    phys.strain_area(&bodies,volume.sphere(4),{},1,weakening=true,blend=1)
     testing.expect(t,phys.simulate(&f.physics,&bodies,&f.app.jobs,1.0/60,{}))
     destruct_test_step(&f)
     if !testing.expect_value(t,len(f.events.applied.items),1) {return}

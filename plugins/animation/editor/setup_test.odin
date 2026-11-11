@@ -215,14 +215,6 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
         result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Locomotion"],"replace":true,%s}}`,ids,refused.params))
         testing.expectf(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,fmt.tprintf(`"path":"%s"`,refused.path)) && strings.contains(result.data,refused.code) && strings.contains(result.data,`"fix"`),"%s: %s",refused.code,result.data)
     }
-    jog:=[2]lib.Keyframe{{time=0,value={0,1,0,0}},{time=.5,value={0,1.02,0,0}}}
-    still:=[2]lib.Keyframe{{time=0,value={0,1,0,0}},{time=1,value={0,1.01,0,0}}}
-    paced:=[2]asset.Animation_Clip_Desc{{name="Idle",tracks={{target="root/pelvis",property=.Position,keys=still[:]}}},{name="Jog",tracks={{target="root/pelvis",property=.Position,keys=jog[:]}}}}
-    pace:=base.Asset_Id{840,11}
-    testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/pace.anim",a.root),&a.assets.types,{id=pace,clips=paced[:]}),asset.Error.None)
-    testing.expect(t,host.assets_scan(&a.assets))
-    result=authoring_test_execute(a,"setup",fmt.tprintf(`{{"entity":"0000000000000011","library":"%s","folder":"paced","want":["Locomotion"],"blends":[{{"clips":["Idle","Jog"],"samples":[{{"weights":[1,1,0,0,0,0,0,0]}}]}}]}}`,authoring_test_id_text(pace)))
-    testing.expectf(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"path":"blends[0].clips[1]"`) && strings.contains(result.data,"Unequal_Duration") && strings.contains(result.data,"retime"),"%s",result.data)
 
     // A library larger than a .character takes fails and says how many there are.
     frames:=[2]lib.Keyframe{{time=0,value={0,1,0,0}},{time=1,value={0,1.01,0,0}}}

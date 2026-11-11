@@ -14,7 +14,7 @@ put :: proc(file:^[dynamic]u8,value:u32,bytes:int) {
 }
 // A WAV file around data. tag: 1 integer PCM, 3 IEEE float.
 @(private)
-test_wav :: proc(tag:u32,channels,rate,bits:int,data:[]u8,extensible:=false,junk:=false) -> []u8 {
+test_wav :: proc(tag:u32,channels,rate,bits:int,data:[]u8,extensible:=false,junk:=false,loop_start:=-1) -> []u8 {
     file:=make([dynamic]u8,context.temp_allocator)
     append(&file,"RIFF");put(&file,0,4);append(&file,"WAVE")
     if junk {
@@ -30,9 +30,56 @@ test_wav :: proc(tag:u32,channels,rate,bits:int,data:[]u8,extensible:=false,junk
     }
     append(&file,"data");put(&file,u32(len(data)),4);append(&file,..data)
     if len(data)%2==1 {append(&file,0)}
+    if loop_start>=0 {
+        // A sampler chunk with one forward loop from loop_start to the end.
+        append(&file,"smpl");put(&file,60,4)
+        for _ in 0..<7 {put(&file,0,4)}
+        put(&file,1,4);put(&file,0,4)
+        put(&file,0,4);put(&file,0,4);put(&file,u32(loop_start),4);put(&file,max(u32),4);put(&file,0,4);put(&file,0,4)
+    }
     size:=u32(len(file)-8)
     for i in 0..<4 {file[4+i]=u8(size>>(u32(i)*8))}
     return file[:]
+}
+// The Ogg Vorbis file with one more comment in its comment header, the first
+// packet of its second page.
+@(private="file")
+ogg_with_comment :: proc(file:[]u8,comment:string) -> []u8 {
+    page_length :: proc(page:[]u8) -> (n:int) {
+        n=27+int(page[26])
+        for lacing in page[27:][:page[26]] {n+=int(lacing)}
+        return
+    }
+    first:=page_length(file)
+    second:=file[first:][:page_length(file[first:])]
+    lacing:=second[27:][:second[26]]
+    size,k:=0,0
+    for {size+=int(lacing[k]);k+=1;if lacing[k-1]<255 {break}}
+    packet:=second[27+len(lacing):][:size]
+    at:=11+int(wav_u32(packet[7:])) // past the vendor
+    page:=make([dynamic]u8,context.temp_allocator)
+    append(&page,..second[:27])
+    grown:=make([dynamic]u8,context.temp_allocator)
+    append(&grown,..packet[:at]);put(&grown,wav_u32(packet[at:])+1,4);append(&grown,..packet[at+4:size-1])
+    put(&grown,u32(len(comment)),4);append(&grown,comment);append(&grown,packet[size-1])
+    for n:=len(grown);;n-=255 {
+        append(&page,u8(min(n,255)))
+        if n<255 {break}
+    }
+    append(&page,..lacing[k:])
+    page[26]=u8(len(page)-27)
+    append(&page,..grown[:]);append(&page,..second[27+len(lacing)+size:])
+    for i in 22..<26 {page[i]=0}
+    crc:u32
+    for value in page {
+        entry:=(crc>>24~u32(value))<<24
+        for _ in 0..<8 {entry=entry&0x80000000!=0?entry<<1~0x04c11db7:entry<<1}
+        crc=crc<<8~entry
+    }
+    for i in 0..<4 {page[22+i]=u8(crc>>(u32(i)*8))}
+    out:=make([dynamic]u8,context.temp_allocator)
+    append(&out,..file[:first]);append(&out,..page[:]);append(&out,..file[first+len(second):])
+    return out[:]
 }
 @(private="file")
 bytes_of :: proc(values:[]$T) -> []u8 {
@@ -110,6 +157,12 @@ wav_decodes_every_sample_format_it_names :: proc(t:^testing.T) {
     pcm,error=wav_decode(test_wav(3,1,48000,32,bytes_of(f32_data),extensible=true),allocator)
     testing.expect_value(t,error,Error.None)
     test_near(t,pcm.samples[3],0.25,0)
+
+    // The first loop of a sampler chunk says where a loop goes back to; one past the end is none.
+    for c in ([?][2]int{{2,2},{len(f32_data),0},{0,0}}) {
+        pcm,error=wav_decode(test_wav(3,1,48000,32,bytes_of(f32_data),loop_start=c[0]),allocator)
+        testing.expect(t,error==.None && pcm.loop_start==c[1] && len(pcm.samples)==len(f32_data))
+    }
 }
 
 @(test)
@@ -177,6 +230,12 @@ ogg_vorbis_decodes_to_the_sound_that_was_encoded :: proc(t:^testing.T) {
         worst=max(worst,abs(stereo.samples[i*2]-left),abs(stereo.samples[i*2+1]-right))
     }
     testing.expectf(t,worst<0.05,"the decoded stereo sines are off by %v",worst)
+
+    // The comment LOOPSTART, in any case, says where a loop goes back to; one outside the sound is none.
+    for c in ([?]struct{comment:string,loop_start:int}{{"loopstart=1000",1000},{"LOOPSTART=22050",0},{"LOOPSTART=x",0},{"TITLE=hum",0}}) {
+        pcm,error:=vorbis_decode(ogg_with_comment(SINE_MONO,c.comment),context.temp_allocator)
+        testing.expectf(t,error==.None && pcm.loop_start==c.loop_start && len(pcm.samples)==22050,"%v: %v %v",c.comment,error,pcm.loop_start)
+    }
 
     // Not Vorbis, and Vorbis cut short of its headers.
     garbage:=[]u8{'O','g','g','S',0,2,0,0,0,0,0,0,0,0,1,2,3,4,0,0,0,0,9,9,9,9,1,30,1,2,3}

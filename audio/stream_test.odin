@@ -70,13 +70,16 @@ looping_stream_wraps_without_a_seam_until_told_to_stop :: proc(t:^testing.T) {
     m:=test_mixer(t,{stream_frames=1024})
     defer mixer_destroy(m)
     FRAMES :: 1500
+    START :: 500
     sound,_:=sound_stream(m,ramp_wav(FRAMES))
+    // The decoder goes back to the loop start: the frames before it play once.
+    testing.expect(t,sound_set_loop_start(m,sound,START))
     desc:=VOICE_DEFAULT
     desc.loop=true
     voice:=voice_play(m,sound,desc)
     out:=play_along(m,FRAMES*4+100,step=173)
     for i in 0..<FRAMES*4+100 {
-        if !test_near(t,out[i*2],test_ramp(i%FRAMES),0) {break}
+        if !test_near(t,out[i*2],test_ramp(i if i<FRAMES else START+(i-FRAMES)%(FRAMES-START)),0) {break}
     }
     // No more loops: it ends at an end of the file, the next one that was not decoded yet.
     testing.expect(t,voice_set_loop(m,voice,false))

@@ -20,7 +20,7 @@ Fixture :: struct {
 
 @(private="file")
 look :: proc(f:^Fixture,view:core.View) -> View_Lens {
-    return view_lens(&f.lenses,&f.zones,&f.places,&f.worlds,&f.exposures,&f.view_volumes,view)
+    return view_lens(&f.lenses,&f.zones,{volumes=core.read(&f.places),worlds=core.read(&f.worlds)},&f.exposures,&f.view_volumes,view)
 }
 
 // Half way into the border of a volume that replaces, its numbers are half
