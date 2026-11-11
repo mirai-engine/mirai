@@ -1798,6 +1798,27 @@ an_agent_arrives_once_at_the_end_of_a_way_longer_than_its_corridor :: proc(t:^te
     testing.expect_value(t,f.problems.count,0)
 }
 
+// An agent pushed against a body its navmesh does not hold walks in place: it
+// plans once more and then fails, and says why.
+@(test)
+an_agent_that_walks_in_place_against_a_body_fails :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{10,0.5,1})
+    nav_test_box(&f,{0,1,1.3},{10,1,0.3})
+    nav_test_box(&f,{0,1,-1.3},{10,1,0.3})
+    nav_test_settled(t,&f)
+    crate:=nav_test_box(&f,{0,0.6,0},{0.5,0.6,1})
+    core.add(&f.rigids,crate,phys.RIGID_BODY_KINEMATIC)
+    e:=agents_test_walker(&f,{-3,0,0})
+    nav_move_to(&f.nav_requests,e,{6,0,0})
+    arrived,_,_,failed:=agents_test_travel(&f,e,5)
+    p,_:=core.get(&f.paths,e)
+    testing.expectf(t,!arrived && failed && p.state==.Failed && p.replans>=1,"it is %v after %d plans",p.state,p.replans)
+    testing.expect(t,core.problem_find(&f.problems,e,"navigation.blocked")!=nil)
+}
+
 // A path that says it crosses a link is driven only while navigation counts
 // one crossing: with none, the crossing of links looks at no path.
 @(test)
