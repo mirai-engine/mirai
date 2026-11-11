@@ -18,8 +18,8 @@
 // history starts, so a pixel just uncovered or a view just cut settles as
 // soon as before. What changes beyond the colors around it still shows at
 // once: the box clips the history. A pixel whose shadow changed because what
-// casts it moved (the mark shadow_temporal.comp leaves in the widths of its
-// blocks) keeps what a moving pixel keeps: a shadow that moves over a still
+// casts it moved (the mark direct_filter.comp leaves where a sample of the
+// direct light met what changed) keeps what a moving pixel keeps: a shadow that moves over a still
 // floor leaves no trail.
 #include "scene.slang"
 #include "grid.slang"
@@ -33,7 +33,7 @@ struct Params_Block {
     float feedback;      // weight of the current frame at full sample coverage
     float clip_gamma;    // variance box size in standard deviations
     float reactive;      // 1: reactive holds where the Blend stage drew this frame
-    float shadows;       // 1: shadow_widths holds the blocks of shadows of this frame
+    float shadows;       // 1: direct_marks holds the marks of the direct light of this frame
     float pad0;
     float pad1;
     float pad2;
@@ -49,8 +49,8 @@ struct Params_Block {
 // The frames the history of each pixel holds: of the last frame, and of this one.
 [[vk::binding(SLOT_PASS6, 0)]] Texture2D<float> previous_frames : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);
 [[vk::binding(SLOT_PASS7, 0)]] [[vk::image_format("r16f")]] RWTexture2D<float> out_frames : register(MIRAI_REGISTER(u, SLOT_PASS7), space0);
-// The widths of the blocks of 2x2 of shadows: z 1 where their ray met what changed.
-[[vk::binding(SLOT_PASS8, 0)]] Texture2D<float4> shadow_widths : register(MIRAI_REGISTER(t, SLOT_PASS8), space0);
+// 1 where a sample of the direct light of the pixel met what changed.
+[[vk::binding(SLOT_PASS8, 0)]] Texture2D<float4> direct_marks : register(MIRAI_REGISTER(t, SLOT_PASS8), space0);
 
 // Pixels a surface moves on screen in a frame below which it counts as still.
 static const float TAA_STILL = 0.25;
@@ -167,8 +167,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         bool still = dot(moved, moved) <= TAA_STILL * TAA_STILL;
         int2 at = clamp(base, int2(0), in_size - 1);
         if (still && params.shadows > 0.5) {
-            int2 block = min(at / 2, texture_size(shadow_widths, 0) - 1);
-            still = shadow_widths.Load(int3(block, 0)).z < 0.5;
+            still = direct_marks.Load(int3(min(at, texture_size(direct_marks, 0) - 1), 0)).r < 0.5;
         }
         float before_frames = previous_frames.SampleLevel(point_sampler, previous_uv, 0.0);
         float gamma = still ? lerp(params.clip_gamma, TAA_STILL_GAMMA, saturate(before_frames / TAA_STILL_WIDEN)) : params.clip_gamma;

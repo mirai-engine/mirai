@@ -1,15 +1,12 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-// The contact occlusion of the light the probe volume gives each pixel: the
-// probes are a metre apart and do not see the corner of a table or the floor
-// under a wardrobe. Mode 0 traces
-// CONTACT_RAYS short rays of the hemisphere of each pixel in the world, so
-// what shadows it counts also off the screen or behind something nearer the
-// eye; mode 1 blurs that over the surface, on its side of the opening of a
-// nested view, whose pixels it traces from where their surface is in the
-// world as those of the view. Nothing in it changes from frame
-// to frame: the rays of a pixel turn by a fixed pattern of 4x4 pixels, which
-// the blur removes.
+// The contact occlusion of the light the probe volume gives each point (the
+// first pixel of each scale x scale), which contact_pixels.comp takes to the
+// pixels: the probes are a metre apart and do not see the corner of a table or
+// the floor under a wardrobe. A point traces CONTACT_RAYS short rays of its
+// hemisphere in the world, so what shadows it counts also off the screen or
+// behind something nearer the eye. The rays of a point turn by a fixed pattern
+// of 4x4 points, all of which contact_pixels.comp averages.
 #include "lighting.slang"
 #include <extension_hooks.slang>
 #define MIRAI_GROUP_X 8
@@ -18,27 +15,32 @@
 // Metres: how far from a pixel what shadows it can stand.
 #define CONTACT_RADIUS 0.6
 
-struct Params_Block { uint mode; uint pad0; uint pad1; uint pad2; };
+// scale: the pixels across a point, 1 or 2.
+struct Params_Block { uint scale; uint pad0; uint pad1; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 #define GBUFFER_NORMAL SLOT_PASS0
 #include "gbuffer.slang"
 #include "pixel.slang"
+#include "direct_samples.slang"
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
-// What mode 0 wrote, for mode 1.
-[[vk::binding(SLOT_PASS2, 0)]] Texture2D<float4> raw_contact : register(MIRAI_REGISTER(t, SLOT_PASS2), space0);
-[[vk::binding(SLOT_PASS3, 0)]] [[vk::image_format("r16f")]] RWTexture2D<float> out_contact : register(MIRAI_REGISTER(u, SLOT_PASS3), space0);
+// The contact occlusion of each point, its linear depth (0: no surface) and
+// its normal.
+[[vk::binding(SLOT_PASS3, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_contact : register(MIRAI_REGISTER(u, SLOT_PASS3), space0);
 
-float contact_occlusion(int2 p, float depth) {
-    float2 uv = (float2(p) + 0.5) * frame.inv_resolution;
-    Pixel pixel = pixel_at(p, uv, depth);
-    float3 n = gbuffer_normal(p);
+// distance: from the eye to the point, which says how well its place is
+// known: the rays leave the surface by that much (view_bias), and past where
+// that takes their whole reach a point is wider than what could stand that
+// near it, and nothing shadows it.
+float contact_occlusion(int2 q, float3 position, float3 n, float distance) {
+    float bias = view_bias(distance);
+    if (bias >= CONTACT_RADIUS) return 1.0;
     float3 t = normalize(abs(n.y) < 0.99 ? cross(n, float3(0.0, 1.0, 0.0)) : cross(n, float3(1.0, 0.0, 0.0)));
     float3 b = cross(n, t);
-    // The 4x4 pattern a pixel's rays turn by, in sixteenths of a turn: by the pixel, not by
-    // its point, which the jitter of the view moves a little in every frame.
+    // The 4x4 pattern a point's rays turn by, in sixteenths of a turn: by the point, not by
+    // where it is, which the jitter of the view moves a little in every frame.
     const uint turns[16] = {0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u};
-    float turn = float(turns[(uint(p.x) & 3u) + 4u * (uint(p.y) & 3u)]) / 16.0 * 6.2831853;
-    float3 origin = pixel.position + n * 0.01;
+    float turn = float(turns[(uint(q.x) & 3u) + 4u * (uint(q.y) & 3u)]) / 16.0 * 6.2831853;
+    float3 origin = offset_origin(position, n, bias);
     float hidden = 0.0;
     [loop]
     for (uint i = 0u; i < CONTACT_RAYS; i++) {
@@ -54,36 +56,20 @@ float contact_occlusion(int2 p, float depth) {
     return saturate(1.0 - hidden / float(CONTACT_RAYS) * 1.5);
 }
 
-float contact_blur(int2 p, float depth) {
-    float own = depth_distance(depth);
-    float3 n = gbuffer_normal(p);
-    float sum = 0.0, weights = 0.0;
-    int2 size = int2(frame.resolution);
-    [loop]
-    for (int y = -2; y <= 1; y++) {
-        [loop]
-        for (int x = -2; x <= 1; x++) {
-            int2 q = clamp(p + int2(x, y), int2(0), size - 1);
-            float d = g_depth.Load(int3(q, 0)).r;
-            if (depth_empty(d) || !depth_same_side(d, depth)) continue;
-            float w = exp(-abs(depth_distance(d) - own) / max(own * 0.02, 1e-3));
-            w *= pow(saturate(dot(gbuffer_normal(q), n)), 8.0);
-            sum += raw_contact.Load(int3(q, 0)).r * w;
-            weights += w;
-        }
-    }
-    return weights > 0.0 ? sum / weights : 1.0;
-}
-
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
-void main(uint3 dispatch_id : SV_DispatchThreadID) {
-    int2 p = int2(dispatch_id.xy);
-    if (any(p >= int2(frame.resolution))) return;
+void main(uint3 id : SV_DispatchThreadID) {
+    int scale = int(params.scale);
+    int2 q = int2(id.xy);
+    int2 size = direct_points(scale);
+    if (any(q >= size)) return;
+    int2 p = q * scale;
     float depth = g_depth.Load(int3(p, 0)).r;
     if (depth_empty(depth)) {
-        out_contact[p] = 1.0;
+        out_contact[q] = float4(1.0, 0.0, 0.0, 0.0);
         return;
     }
-    out_contact[p] = params.mode == 0u ? contact_occlusion(p, depth) : contact_blur(p, depth);
+    Pixel pixel = pixel_at(p, (float2(p) + 0.5) * frame.inv_resolution, depth);
+    float3 normal = gbuffer_normal(p);
+    out_contact[q] = float4(contact_occlusion(q, pixel.position, normal, pixel.distance), depth_distance(depth), oct_encode(normal));
 }
