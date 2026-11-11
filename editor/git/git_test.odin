@@ -128,3 +128,30 @@ keeping_makes_the_index_the_base_a_discard_puts_back :: proc(t:^testing.T) {
     testing.expect(t,change.pending && !change.kept,"out of what is kept, it is pending again")
     testing.expect_value(t,read(file),"one")
 }
+
+// Until git said whether the project is in a repository, nothing is known of it: an edit that
+// arrives between the two answers is not refused.
+@(test)
+the_repository_is_known_only_after_git_answered_about_it :: proc(t:^testing.T) {
+    r:Repository
+    defer delete(r.out)
+    defer delete(r.changes)
+    defer delete(r.history)
+    r.operation=.Check
+    testing.expect(t,step_done(&r,{},0),"git is there: the refresh follows")
+    testing.expect(t,r.available && !r.checked,"git is there and has not said yet what holds the project")
+    r.operation,r.step=.Refresh,0
+    append(&r.out,"C:/work/repo\ngame/\n")
+    testing.expect(t,step_done(&r,{},0))
+    testing.expect(t,r.checked && r.repository && base.text_get(r.root[:])=="C:/work/repo")
+
+    outside:Repository
+    outside.operation,outside.step=.Refresh,0
+    testing.expect(t,!step_done(&outside,{},128))
+    testing.expect(t,outside.checked && !outside.repository,"git answered: the project is in no repository")
+
+    missing:Repository
+    missing.operation=.Check
+    testing.expect(t,!step_done(&missing,{},1))
+    testing.expect(t,missing.checked && !missing.available)
+}
