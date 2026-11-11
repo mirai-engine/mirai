@@ -89,7 +89,7 @@ shot_view :: proc(s:^editor.Session,w:core.World_Ref,timeline:core.Entity,time:f
     playback,sources:=core.world_storage_of(w,anim.Playback),core.world_storage_of(w,anim.Source_Assets)
     if cameras==nil || playback==nil || s.app==nil {return}
     previous:cine.Shot
-    shot,previous=cine.cinematic_shot(playback,sources,s.app,core.world_entities(w),core.read(cameras),timeline,time)
+    shot,previous=cine.cinematic_shot(playback,sources,s.app,core.world_entities(w),cameras,timeline,time)
     pose=camera_pose(w,shot.camera) or_return
     since:=time-shot.time
     if from,found:=camera_pose(w,previous.camera);found && shot.blend.seconds>0 && since<shot.blend.seconds {

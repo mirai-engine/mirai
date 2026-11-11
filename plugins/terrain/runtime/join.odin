@@ -139,9 +139,9 @@ source_volume_ground :: proc(s:^Source,join:Chunk_Join) -> bool {
 // each joined Volume stands on and the cuts of the pieces of that
 // Heightfield. A join that changes marks the levels to be chosen again.
 @(private)
-resident_joins :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:core.Read(Terrain),ids:core.Read(core.Id),worlds:core.Read(core.World_Transform),locals:core.Read(core.Transform),problems:^core.Problems) {
+resident_joins :: proc(resident:^Terrain_Resident,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),ids:^core.Table(core.Id,$B),worlds:^core.Table(core.World_Transform,$C),locals:^core.Table(core.Transform,$D),problems:^core.Problems) {
     // An entity without a World_Transform is a root: its Transform is where it is.
-    place :: proc(worlds:core.Read(core.World_Transform),locals:core.Read(core.Transform),e:core.Entity) -> (mm.Transform,bool) {
+    place :: proc(worlds:^core.Table(core.World_Transform,$A),locals:^core.Table(core.Transform,$B),e:core.Entity) -> (mm.Transform,bool) {
         if world,found:=core.get(worlds,e);found {return world.transform,true}
         local,found:=core.get(locals,e)
         return mm.Transform(local),found
