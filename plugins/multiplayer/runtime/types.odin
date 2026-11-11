@@ -59,7 +59,6 @@ NET_PROTOCOL_ID :: 0x4d495241
 DEFAULT_PORT :: 27500 // of Net_Settings.port
 PLAYER_NET :: 5 // the exit code of a player whose client could not join its server, or lost it with nobody watching
 COMPONENTS :: wire.MAX_FRAGMENTS-3 // replicated components of an entity, besides its pose, motion and driver
-INPUT_DELAY_MAX :: 15 // ticks, of Net_Settings.input_delay
 PENDING_EVENTS :: 1024 // messages of a type that wait for the next tick (a paused game runs none); later ones are dropped and reported
 
 // An entity the network replicates. The game gives it with the entity (in its
@@ -162,10 +161,6 @@ Net_Settings :: struct {
     resimulate_budget:int,   // client: ticks it may simulate again per second. The tick rate
     critical_ticks:int,      // client: ticks a replica stays critical after it last shared an island of the simulation with what the client drives. Half a second
     predicted_capacity:int,  // client: replicas simulated ahead of the server at once. 256
-    // client: ticks between taking the input of a player and acting on it, here and on the server
-    // alike. The client runs that many ticks less ahead of the server, so it predicts less and
-    // is corrected less, and the player feels them as latency. 0; at most INPUT_DELAY_MAX
-    input_delay:int `mirai:"min=0,max=15"`,
     rewind_entities:int,     // server: entities with Rewind whose pose each tick remembers. 64
     view_radius:f32,         // server: meters around what a connection owns that count as near. 128
     position_tolerance:f32,  // client: meters a prediction may be off before it is corrected. 0.05
@@ -250,7 +245,7 @@ Remote_Input :: struct {
     look:[2]f32, // yaw and pitch of the body it drives, as its client left them look_behind ticks before this one
     has_look:bool,
     look_behind:u8,
-    looks:[INPUT_DELAY_MAX+1][2]f32, // by tick modulo its length: the look that body had here after each of the last ticks
+    looks:[wire.INPUT_DELAY_MAX+1][2]f32, // by tick modulo its length: the look that body had here after each of the last ticks
     looks_kept:u8,                   // how many of them are of this connection
 }
 

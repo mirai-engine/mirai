@@ -397,8 +397,13 @@ connection is for a replica.
 - The client estimates the server tick (`Clock.server`, corrected 10 % per sample; the estimate
   jumps if it strays more than 30 ticks) and wants its own tick ahead: half the RTT, twice the
   jitter, `input_lead` ticks and `bias`, a slow correction according to the margin the server
-  reports, less `input_delay`, the ticks ahead of its own it submits its input for. That target
-  (`Clock.target`) is smoothed with a constant of 0.5 s.
+  reports, less `Clock.input_delay`, the whole ticks ahead of its own it submits its input for.
+  That target (`Clock.target`) is smoothed with a constant of 0.5 s.
+- The input delay follows the round trip (`Replication_Desc.input_delay`, lightyear's
+  `InputDelayConfig`): delay covers it up to `cover` (at least `min`), prediction the next
+  `predict`, delay again the rest, up to `INPUT_DELAY_MAX`. It moves only once it is a whole tick
+  off. A tick an increase skips takes the next input submitted; a tick submitted again keeps the
+  first.
 - The client tick is stored by whoever uses it, with a fraction (the last simulated plus what its
   time already covers of the next). `clock_advance(h,now,local)` returns:
   - `shift`: whole ticks to add to it now. On synchronizing, what puts it on the target (also

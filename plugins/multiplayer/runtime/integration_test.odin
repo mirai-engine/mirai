@@ -199,7 +199,10 @@ net_test_fixed :: proc(world,shared,editor,application:rawptr) {
         net_tick_head(ref,app,sh.session,&w.remote,nil,nil,sh.session.problems)
         core.settle(sh.info,w,nil)
     }
+    // The seat of a client acts on its input as late as its input delay, as the loop does around input_seats.
+    if sh.session!=nil {net_input_take(sh.session,&w.seats,w.time)}
     net_test_feed(w)
+    if sh.session!=nil {net_input_delay(sh.session,&w.seats,core.ref(&w.bindings),w.time,sh.session.problems)}
     if sh.spawn_at!=0 && w.time.tick==sh.spawn_at {
         for k in 0..<max(sh.spawns,1) {
             e:=core.create(&w.entities)

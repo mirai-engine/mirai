@@ -67,13 +67,23 @@ Replication_Desc :: struct {
     // its ticks in the handshake and a client takes them. Default 0.5, at most HISTORY_MAX_SECONDS
     history_seconds:f32,
     input_lead:f32,        // ticks of input the server should have in hand, default 2
-    input_delay:f32,       // client: ticks ahead of its own that it submits its input for; its tick runs that many less ahead of the server
+    input_delay:Input_Delay, // client: how far ahead of its own tick it submits its input, by the round trip it measures
     interpolation_delay:f32, // ticks behind the server that remote objects are shown besides the jitter, default 2.5
     display_jump:f32,      // client: seconds the display of remote objects may fall behind where it should be before it jumps there; default 30 ticks
     display_dilation:f32,  // client: how much faster or slower than its ticks the display may run to catch up, default 0.1
     object_stats:bool,     // keep bits sent per object
     groups:int,            // server: groups an object can be of (object_set_groups), from 1; default 1024, at most 65535
 }
+
+// How a client delays its input by the round trip, in seconds: the first cover
+// of it by delay (at least min), the next predict by prediction, and what is
+// beyond by delay again, so a correction replays at most predict. Its tick runs
+// as much less ahead of the server. Zero takes the default: min 0, cover
+// 0.05, predict 0.1. A negative min or cover is none; a negative predict has
+// no bound: past cover the input is never delayed.
+Input_Delay :: struct {min,cover,predict:f32}
+
+INPUT_DELAY_MAX :: 15 // ticks a client delays its input at the most
 
 Object_Desc :: struct {
     type:Type_Id,
@@ -194,6 +204,12 @@ repl_init :: proc(h:^Host) -> Error {
     if d.display_jump<=0 {d.display_jump=f32(CLOCK_JUMP_TICKS)/f32(h.desc.tick_rate)}
     if d.display_dilation<=0 {d.display_dilation=CLOCK_MAX_DILATION}
     if d.groups<=0 {d.groups=1024}
+    delays,defaults:=transmute([3]f32)d.input_delay,[3]f32{0,0.05,0.1}
+    for &value,i in delays {
+        if !(abs(value)<=max(f32)) {return refuse(h,"replication.input_delay","finite seconds in min, cover and predict; 0 takes the default, below 0 none")}
+        value=value==0?defaults[i]:value>0?value:i==2?max(f32):0
+    }
+    d.input_delay=transmute(Input_Delay)delays
     if d.groups>GROUPS_MAX {return refuse(h,"replication.groups","at most 65535; 0 takes 1024")}
     f:=&h.front
     protocol:=h.desc.protocol

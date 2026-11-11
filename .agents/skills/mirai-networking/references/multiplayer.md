@@ -152,7 +152,8 @@ takes the default:
 - Tolerances: position 0.05 m, velocity 0.5 m/s and rad/s, rotation 0.07 rad, scale 0.001.
 - `max_resimulate`: ticks repeated in one frame, 0.3 s of ticks (at most the history).
   `resimulate_budget`: one second of ticks per second. `critical_ticks`: half a second.
-- `sync_test`: 0 (off). `input_delay`: 0 ticks. `rewind_entities`: 64.
+- `sync_test`: 0 (off). `rewind_entities`: 64. `replication.input_delay`: by the round trip
+  ([time](networking.md#time-and-inputs)).
 - `absent_seconds`: 300 s that the seat of a player who left waits for them; negative, none.
 
 ## What another library simulates
@@ -628,9 +629,11 @@ that its library keeps (`Predicted_Spawn.kept`).
 - One no replica took within the history was not made by the server, and is destroyed; one a
   library keeps loses only its mark.
 
-**Input delay.** With `Net_Settings.input_delay` a client acts on its input that many ticks after
-taking it, and submits it for that tick at once, so its tick runs that many less ahead of the
-server ([clock](networking.md#time-and-inputs)).
+**Input delay.** A client acts on its input as many ticks after taking it as its clock's input
+delay, which follows the round trip within `Net_Settings.replication.input_delay`
+([clock](networking.md#time-and-inputs)), and submits it for that tick at once, so its tick runs
+that many less ahead of the server. Each tick keeps the delay it first ran with (`Taken.delay`):
+one that runs again acts on what it acted on.
 
 - The seat it drives with keeps two lines of what it held: the one its devices feed, outside the
   `World` (it only advances when a tick runs first), and the delayed one the game sees

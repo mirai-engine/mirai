@@ -148,7 +148,11 @@ Shown :: struct {
 
 // The actions the devices of a tick gave the seat a client drives with; tick is that tick plus one.
 @(private)
-Taken :: struct {tick:u32,actions:input.Remote_Actions}
+Taken :: struct {
+    tick:u32,
+    actions:input.Remote_Actions,
+    delay:u8, // the input delay of the tick: it sent them for that many ticks later
+}
 
 @(private)
 Client :: struct {
@@ -164,8 +168,8 @@ Client :: struct {
     authoritative:[]Authoritative,
     authoritative_words:[]u32,
     record_ticks:[]u32, // by tick modulo history: the tick of its row plus one
-    taken:[]Taken,      // with input_delay, by tick modulo its length: the actions the devices gave in each of the last ticks
-    fed_seat,delayed:input.Seat, // with input_delay: the seat it drives with as its devices left it, and as the game had it at the start of the tick
+    taken:[]Taken,      // by tick modulo its length: the actions the devices gave in each of the last ticks
+    fed_seat,delayed:input.Seat, // the seat it drives with as its devices left it, and as the game had it at the start of the tick
     record_free:[]i32,
     record_free_count:int,
     islands:[]u32,      // of what this client drives, by records_capture
@@ -263,7 +267,7 @@ history_make :: proc(s:^Net_Session,w:core.World_Ref,c:^Client,ticks:int) -> (ok
     if c.authoritative,error=make([]Authoritative,slots*d.predicted_capacity,allocator);error!=nil {return false}
     if c.authoritative_words,error=make([]u32,slots*d.predicted_capacity*c.words_per,allocator);error!=nil {return false}
     if c.record_ticks,error=make([]u32,slots,allocator);error!=nil {return false}
-    if c.taken,error=make([]Taken,slots+INPUT_DELAY_MAX,allocator);error!=nil {return false}
+    if c.taken,error=make([]Taken,slots+wire.INPUT_DELAY_MAX,allocator);error!=nil {return false}
     if d.sync_test>0 {
         if c.sync_hashes,error=make([]u64,(slots+1)*(len(w.info.tables)+1),allocator);error!=nil {return false}
         if c.sync_fed,error=make([]u64,slots+1,allocator);error!=nil {return false}
@@ -1055,9 +1059,11 @@ client_tail :: proc(s:^Net_Session,w:core.World_Ref,tick:u32,outbox:^Net_Outbox)
         sync_hashes(s,w,c.sync_hashes[(int(tick)%s.client.history)*(len(w.info.tables)+1):][:len(w.info.tables)+1])
     }
     if s.status==.Connected {
-        // With an input delay, what the devices gave in this tick is the input of a later one.
-        delay:=u32(s.desc.input_delay)
-        packet:=Input_Packet{actions=delay>0?c.taken[int(tick)%len(c.taken)].actions:driven_actions(s,w),look_behind=u8(delay)}
+        // What the devices gave in this tick is the input of the tick its input delay says (net_input_delay).
+        taken:=c.taken[int(tick)%len(c.taken)]
+        if taken.tick!=tick+1 {taken={tick+1,{},u8(wire.clock_state(h).input_delay)}}
+        delay:=u32(taken.delay)
+        packet:=Input_Packet{actions=taken.actions,look_behind=taken.delay}
         look:[2]f32
         look,packet.has_look=driven_look(w)
         packet.look_yaw,packet.look_pitch=mm.angle_wrap(look[0]),look[1]
@@ -1708,19 +1714,6 @@ driven_look :: proc(w:core.World_Ref) -> (look:[2]f32,ok:bool) {
     if seats==nil || moves==nil {return}
     move:=core.get(moves,input.body_of(core.read(seats),input.local_seat(core.read(seats),0))) or_return
     return {move.look_yaw,move.look_pitch},true
-}
-
-// The actions of the first local seat, the one that drives what the server
-// lets this client predict, as the game here saw them this tick.
-@(private)
-driven_actions :: proc(s:^Net_Session,w:core.World_Ref) -> (sent:input.Remote_Actions) {
-    seats:=core.world_table_of(w,input.Seat)
-    bindings:=core.world_storage_of(w,input.Input_Map)
-    if seats==nil || bindings==nil {return}
-    ok:bool
-    sent,ok=input.seat_remote(seats,input.local_seat(seats,0),bindings)
-    if !ok {core.report(s.problems,core.NONE,"net.input_axes","more than %d axis actions of the seat that drives were away from zero in one tick, and the server got only the first %d; give the actions that move together fewer axes, or make some of them buttons",input.REMOTE_AXES,input.REMOTE_AXES)}
-    return
 }
 
 // Client, at the start of a frame, before its ticks: what the input the frame takes is aimed at,

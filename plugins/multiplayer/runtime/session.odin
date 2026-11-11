@@ -205,8 +205,6 @@ settings_resolve :: proc(settings:Net_Settings,tick_dt:f32) -> (d:Net_Settings) 
     if d.max_resimulate<=0 {d.max_resimulate=int(0.3/tick_dt+0.5)}
     if d.rewind_tolerance==0 {d.rewind_tolerance=0.2}
     if d.rewind_entities<=0 {d.rewind_entities=64}
-    d.input_delay=clamp(d.input_delay,0,INPUT_DELAY_MAX)
-    d.replication.input_delay=f32(d.input_delay)
     d.sync_test=max(d.sync_test,0)
     return
 }

@@ -707,9 +707,18 @@ repl_op :: proc(h:^Host,frame:^Frame,op:^Op) {
         if r.server || p.state!=.Connected || len(p.repl.inputs)==0 {return}
         pr:=&p.repl
         words:=r.protocol.input.words
-        slot:=int(op.c%INPUT_RING)
-        mem.copy(&pr.inputs[slot*words],raw_data(op_data(frame,op)),words*4)
-        pr.input_ticks[slot]=op.c+1
+        // An input delay that grows skips ticks: they take this input. One that shrinks submits a tick again: the
+        // first stays.
+        from:=op.c
+        if pr.input_any {
+            if i32(op.c-pr.input_newest)<=0 {return}
+            from=max(pr.input_newest+1,op.c-INPUT_DELAY_MAX)
+        }
+        for tick:=from;i32(tick-op.c)<=0;tick+=1 {
+            slot:=int(tick%INPUT_RING)
+            mem.copy(&pr.inputs[slot*words],raw_data(op_data(frame,op)),words*4)
+            pr.input_ticks[slot]=tick+1
+        }
         pr.input_newest,pr.input_any=op.c,true
     }
 }
