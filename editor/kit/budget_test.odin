@@ -152,11 +152,12 @@ widgets_and_paints_beyond_the_capacity_are_dropped_and_counted :: proc(t:^testin
     frame:=test_frame(&ctx,&input,build,&s)
     testing.expect(t,frame.overflow)
     testing.expect_value(t,ctx.stats.dropped_widgets,u32(12))
-    testing.expect_value(t,ctx.stats.dropped_paints,u32(8))
+    // Each button is its box and its label.
+    testing.expect_value(t,ctx.stats.dropped_paints,u32(28))
     testing.expect_value(t,ctx.stats.widgets,u32(8))
     testing.expect_value(t,ctx.stats.paints,u32(12))
-    testing.expect_value(t,ctx.stats.elements,u32(21))
-    // The first eight still work; the rest are laid out, twelve of them drawn, and out of reach.
+    testing.expect_value(t,ctx.stats.elements,u32(27))
+    // The first eight still work; the rest are laid out, six of their labels drawn, and out of reach.
     last:=test_rect(t,&ctx,ui.id(&ctx,"button",8))
     testing.expect(t,test_rect_near(last,{0,140,100,20}))
     test_point(&input,last)

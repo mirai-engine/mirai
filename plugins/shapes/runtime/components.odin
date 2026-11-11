@@ -15,7 +15,9 @@ import mm "mirai:std/math"
 // brushes of its direct children with Shape_Brush. Without a Rigid_Body on
 // the shape entity it collides as a static mesh; with one, as convex pieces of
 // that body. A physics.Collider on the shape entity, of kind External, gives
-// the surface and the filtering of the derived collider.
+// the surface and the filtering of the derived collider; of another kind it
+// collides in place of the shape, and the child only draws. The child shows
+// the Material_Values of the shape.
 //
 // A bevel rounds or cuts the front and back rims of the polygon: its caps are
 // inset by bevel and the rims fall by bevel along Z, following the profile
@@ -59,7 +61,7 @@ Brush :: struct {
 Shape :: struct {
     depth:f32 `mirai:"min=0,unit=m"`, // of the polygon, along local Z
     material:base.Asset_Id `mirai:"kind=.mat"`,
-    uv_scale:f32 `mirai:"min=0"`, // texture repeats per meter; 0: 1
+    uv_scale:[2]f32 `mirai:"min=0"`, // texture repeats per meter along u and along v; 0: 1
     bevel:f32 `mirai:"min=0,unit=m"`, // of the polygon: how far its caps are inset and its rims fall; 0: none
     bevel_profile:Bevel_Profile,
     bevel_segments:u8 `mirai:"min=0,max=16"`, // of a Round bevel; 0: 4
@@ -76,7 +78,7 @@ Shape :: struct {
 
 // A square of one meter, one deep.
 SHAPE_DEFAULT :: Shape{
-    depth=1,uv_scale=1,point_count=4,loop_count=1,loops={0=4},
+    depth=1,uv_scale={1,1},point_count=4,loop_count=1,loops={0=4},
     points={0={-0.5,-0.5},1={0.5,-0.5},2={0.5,0.5},3={-0.5,0.5}},
 }
 

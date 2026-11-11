@@ -126,24 +126,66 @@ text_edit_word_step :: proc "contextless" (e:^Text_Edit,index,step:int) -> int {
     }
     return i
 }
-// The lines of the text being edited.
+// The lines of the text being edited as the text of its field breaks them,
+// walked in order by text_edit_lines_next.
 @(private)
-text_edit_lines :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32) -> Text_Lines {
-    wrap:Text_Wrap=.Words if e.multiline && e.wrap>0 else .None
-    return text_lines(&ctx.font,text_edit_value(e),size,e.wrap,wrap,int(e.font))
+Edit_Lines :: struct {
+    text:string,
+    lines:[]Layout_Line,
+    pieces:[]Layout_Piece,
+    row,at:int,
+}
+@(private)
+text_edit_lines :: proc(ctx:^Context,e:^Text_Edit,size:f32) -> (it:Edit_Lines) {
+    it.text=text_edit_value(e)
+    if !text_begin(ctx,{font=e.font,size=size,wrap=.Words if e.multiline && e.wrap>0 else .None},measure=true) {return}
+    text_span(ctx,it.text)
+    ctx.text_open.open=false
+    t:=&ctx.layout
+    text:=&t.texts[t.text_count]
+    lines,pieces:=t.line_count,t.piece_count
+    layout_text_wrap(t,&ctx.font,text,e.wrap,true)
+    // What was broken stays until the next text is measured.
+    it.lines,it.pieces=t.lines[lines:t.line_count],t.pieces[:t.piece_count]
+    t.line_count,t.piece_count,t.span_count=lines,pieces,int(text.spans_first)
+    return
+}
+// The byte range of the next line. A line keeps the spaces before its line
+// break and none of those it wraps at; a text that ends in a line break has
+// one more, empty, line.
+@(private)
+text_edit_lines_next :: proc "contextless" (it:^Edit_Lines) -> (start,end:int,ok:bool) {
+    row:=it.row
+    if row>len(it.lines) {return}
+    it.row+=1
+    if row==len(it.lines) {
+        if it.text!="" && it.text[len(it.text)-1]!='\n' {return}
+        return len(it.text),len(it.text),true
+    }
+    line:=&it.lines[row]
+    start,end=it.at,it.at
+    if line.pieces_len>0 {
+        first,last:=&it.pieces[line.pieces_first],&it.pieces[line.pieces_first+line.pieces_len-1]
+        start,end=int(first.start),int(last.start+last.length)
+        spaces:=end
+        for spaces<len(it.text) && it.text[spaces]==' ' {spaces+=1}
+        if spaces==len(it.text) || it.text[spaces]=='\n' {end=spaces} else {for end>start && it.text[end-1]==' ' {end-=1}}
+    }
+    it.at=end+1 if end<len(it.text) && it.text[end]=='\n' else end
+    return start,end,true
 }
 // The line index is on: its row and its byte range, and how many lines the
 // text has.
 @(private)
-text_edit_line_of :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32,index:int) -> (row,start,end,count:int) {
+text_edit_line_of :: proc(ctx:^Context,e:^Text_Edit,size:f32,index:int) -> (row,start,end,count:int) {
     it:=text_edit_lines(ctx,e,size)
     found:=false
     for {
-        line_start,line_end,ok:=text_lines_next(&it)
+        line_start,line_end,ok:=text_edit_lines_next(&it)
         if !ok {break}
-        count=it.row+1
+        count+=1
         if !found {
-            row,start,end=it.row,line_start,line_end
+            row,start,end=count-1,line_start,line_end
             found=index<=line_end
         }
     }
@@ -151,20 +193,20 @@ text_edit_line_of :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32,inde
 }
 // Byte range of line row, or of the last line when the text has fewer.
 @(private)
-text_edit_line_at :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32,row:int) -> (start,end:int) {
+text_edit_line_at :: proc(ctx:^Context,e:^Text_Edit,size:f32,row:int) -> (start,end:int) {
     it:=text_edit_lines(ctx,e,size)
     for {
-        line_start,line_end,ok:=text_lines_next(&it)
+        line_start,line_end,ok:=text_edit_lines_next(&it)
         if !ok {break}
         start,end=line_start,line_end
-        if it.row>=row {break}
+        if it.row>row {break}
     }
     return
 }
 // Moves the caret step lines, keeping the units it had from the start of its
 // line. Past the first or the last line it goes to the edge of the text.
 @(private)
-text_edit_line_move :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32,step:int,extend:bool) {
+text_edit_line_move :: proc(ctx:^Context,e:^Text_Edit,size:f32,step:int,extend:bool) {
     row,start,end,count:=text_edit_line_of(ctx,e,size,e.cursor)
     text:=text_edit_value(e)
     if e.goal_x<0 {e.goal_x=text_width(&ctx.font,text[start:clamp(e.cursor,start,end)],size,int(e.font))}
@@ -372,12 +414,13 @@ text_edit_reveal :: proc(ctx:^Context,e:^Text_Edit,size,room,height:f32) {
     e.scroll=clamp(e.scroll,0,max(text_width(&ctx.font,text,size,int(e.font))-room,0))
 }
 
-// The caret index under a point of the field, by line when the text wraps.
+// The caret index under a point of the text of the field, which is in a, by
+// line when the text wraps.
 @(private)
-text_edit_index_at :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32,a:Text_Area,cell:bool=false) -> int {
+text_edit_index_at :: proc(ctx:^Context,e:^Text_Edit,size:f32,a:Rect,cell:bool=false) -> int {
     x:=ctx.pointer.x-a.x+e.scroll
     if !e.multiline {return text_index_at(&ctx.font,text_edit_value(e),size,x,cell,int(e.font))}
-    row:=max(int((ctx.pointer.y-a.y+e.scroll_y)/a.line),0)
+    row:=max(int((ctx.pointer.y-a.y+e.scroll_y)/(size*TEXT_LINE)),0)
     start,end:=text_edit_line_at(ctx,e,size,row)
     return start+text_index_at(&ctx.font,text_edit_value(e)[start:end],size,x,cell,int(e.font))
 }
@@ -385,7 +428,7 @@ text_edit_index_at :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32,a:T
 // A press on the field being edited: the first click places the caret (Shift
 // extends the selection), the second selects a word, or places the caret too
 // without words, and the third everything.
-text_edit_press :: proc(ctx:^Context,e:^Text_Edit,size:f32,a:Text_Area,words:=true) {
+text_edit_press :: proc(ctx:^Context,e:^Text_Edit,size:f32,a:Rect,words:=true) {
     switch {
     case ctx.input.clicks>=3:
         text_edit_select_all(e)
@@ -399,7 +442,7 @@ text_edit_press :: proc(ctx:^Context,e:^Text_Edit,size:f32,a:Text_Area,words:=tr
     e.joins=false
 }
 // While the button of that press is held: moving the pointer selects.
-text_edit_drag :: proc(ctx:^Context,e:^Text_Edit,size:f32,a:Text_Area) {
+text_edit_drag :: proc(ctx:^Context,e:^Text_Edit,size:f32,a:Rect) {
     if e.drag==.None {return}
     if ctx.pointer!=ctx.press {e.drag=.Select}
     if e.drag==.Select {text_edit_move(e,text_edit_index_at(ctx,e,size,a),true)}
@@ -423,15 +466,13 @@ edit_request :: proc(ctx:^Context,id:Id) {ctx.edit_request=id;ctx.edit_request_f
 
 // One frame of the field being edited: the pointer on it, the keys and the
 // caret kept in sight. tab: 1 or -1 when Tab or Shift+Tab ended the edit.
-// pad and font: those of field_text_area and of the text.
 @(private)
-field_edit_update :: proc(ctx:^Context,id:Id,it:Interaction,size:f32,label:string,words:=true,marked:=false,pad:f32=0,font:u8=0,icon:=Icon.None) -> (event:Edit_Event,tab:int) {
+field_edit_update :: proc(ctx:^Context,id:Id,it:Interaction,size:f32,words:=true,font:u8=0) -> (event:Edit_Event,tab:int) {
     e:=&ctx.edit
     cursor,anchor:=e.cursor,e.anchor
     e.frame=ctx.stats.frame
     e.font=font
-    rect,_:=widget_rect(ctx,id)
-    area:=field_text_area(ctx,rect,label,size,e.multiline,marked,pad,icon)
+    area,_:=widget_rect(ctx,field_area(ctx,id))
     e.wrap=area.w
     in_:=&ctx.input
     // A click elsewhere applies the text.
@@ -453,26 +494,78 @@ field_edit_update :: proc(ctx:^Context,id:Id,it:Interaction,size:f32,label:strin
     }
     if text_edit_keys(ctx,e,size) {event=.Changed}
     if it.pressed || event==.Changed || e.cursor!=cursor || e.anchor!=anchor {e.caret_started=ctx.time}
-    if rect.w>0 {text_edit_reveal(ctx,e,size,area.w,area.h)}
+    if area.w>0 {text_edit_reveal(ctx,e,size,area.w,area.h)}
     return
 }
 
+// The well of a field: an outline that lightens under the pointer, and the
+// accent while it is edited, which keeps the fill.
 @(private)
-field_paint :: proc(ctx:^Context,id:Id,it:Interaction,text:string,size:f32,label:string,strip:Color,placeholder:string,held,disabled:bool,icon:=Icon.None) -> ^Paint {
+field_paint :: proc(ctx:^Context,id:Id,it:Interaction,held,disabled:bool,strip:Color) -> ^Paint {
+    radius:=metric(ctx,"radius_control")
+    stroke:=tone(ctx,"well_stroke_hover") if it.hot && !disabled else tone(ctx,"well_stroke")
+    if ctx.edit.id==id && id!=0 {stroke=tone(ctx,"accent")}
+    return paint_add(ctx,{kind=.Field,fill=tone(ctx,"field_active") if held else tone(ctx,"well"),stroke=stroke,corners={radius,radius,radius,radius},strip=strip})
+}
+
+// What a field shows, in a row inside its padding: its icon or the label of
+// its axis, its text, with the selection and the caret while it is edited, or
+// its placeholder while it is empty, and its unit.
+@(private)
+Field_Look :: struct {
+    text,placeholder,label,unit:string,
+    style:Text_Style,      // of its text
+    faint,selection:Color, // of the placeholder and of the selected text
+    icon:Icon,
+    multiline:bool,
+}
+// The look of a field of the theme.
+@(private)
+field_look :: proc(ctx:^Context,text:string,size:f32,font:u8,disabled:bool) -> Field_Look {
+    return {text=text,style={font=font,size=size,color=tone(ctx,"text_faint") if disabled else tone(ctx,"text")},faint=tone(ctx,"text_faint"),selection=tone(ctx,"text_select")}
+}
+// The room between the sides of a field and what it shows: that of the
+// editor when pad is 0; the unit keeps the right end.
+@(private)
+field_padding :: proc "contextless" (f:^Field_Look,pad:f32,marked:bool) -> [4]f32 {
+    top:=(pad if pad>0 else 5) if f.multiline else 0
+    return {pad if pad>0 else 11 if marked else 8,top,5 if f.unit!="" else pad if pad>0 else 8,top}
+}
+// The element of the text of a field: what the pointer places the caret in.
+@(private)
+field_area :: proc(ctx:^Context,id:Id) -> Id {return id_derive(ctx,id,"text")}
+
+@(private)
+field_content :: proc(ctx:^Context,id:Id,f:Field_Look) {
     e:=&ctx.edit
     editing:=e.id==id && id!=0
-    // A well with an outline that lightens under the pointer; editing keeps
-    // the fill: the accent outline marks it and the selection shows on the text.
-    fill:=tone(ctx,"field_active") if held else tone(ctx,"well")
-    stroke:=tone(ctx,"well_stroke_hover") if it.hot && !disabled else tone(ctx,"well_stroke")
-    paint:=Paint{kind=.Field,fill=fill,stroke=stroke,text=text,text_color=tone(ctx,"text_faint") if disabled else tone(ctx,"text"),size=size,caret=-1,label=label,strip=strip,placeholder=placeholder,icon=icon}
-    if editing {
+    if f.icon!=.None {
+        icon(ctx,f.icon,tone(ctx,"text_muted"),FIELD_ICON)
+    } else if f.label!="" {text(ctx,f.label,{font=FONT_MEDIUM,size=metric(ctx,"font_axis"),color=tone(ctx,"text"),align_y=.Center},FIT,GROW)}
+    area:=field_area(ctx,id)
+    style:=f.style
+    style.align_y=.Start if f.multiline else .Center
+    style.wrap=.Words if f.multiline else .None
+    // While it is edited, the text moves inside its clip to keep the caret in sight.
+    scroller:=Box{id=area,track=true,width=GROW,height=GROW,align_y=style.align_y,clip_x=!f.multiline,clip_y=f.multiline,scroll={e.scroll,e.scroll_y}}
+    if editing {box_begin(ctx,scroller)}
+    if text_begin(ctx,style) {
         lo,hi:=text_edit_selection(e)
-        paint.stroke=tone(ctx,"accent")
-        paint.text=text_edit_value(e);paint.caret=e.cursor;paint.selection={lo,hi};paint.scroll=e.scroll
-        paint.caret_hidden=int(max(ctx.time-e.caret_started,0)*2)%2!=0
+        lo,hi=clamp(lo,0,len(f.text)),clamp(hi,0,len(f.text))
+        caret:=clamp(e.cursor,0,len(f.text))
+        if !editing {lo,hi,caret=0,0,len(f.text)}
+        text_span(ctx,f.text[:lo if hi>lo else caret])
+        if hi>lo {text_span(ctx,f.text[lo:hi],{back=f.selection})}
+        if editing && hi<=lo && int(max(ctx.time-e.caret_started,0)*2)%2==0 {text_box(ctx,0,0,{kind=.Caret,fill=style.color})}
+        text_span(ctx,f.text[hi if hi>lo else caret:])
+        if f.text=="" && f.placeholder!="" {
+            if editing && !f.multiline {text_put(ctx,{width=2})}
+            text_span(ctx,f.placeholder,{font=style.font,size=style.size,color=f.faint})
+        }
+        if editing {text_end(ctx,{width=GROW if f.multiline else FIT})} else {text_end(ctx,{width=GROW,height=GROW},area)}
     }
-    return paint_add(ctx,paint)
+    if editing {box_end(ctx,scroller)}
+    if f.unit!="" {text(ctx,f.unit,{size=FIELD_UNIT,color=tone(ctx,"text_faint") if f.style.color==tone(ctx,"text_faint") else tone(ctx,"text_muted"),align_y=.Center},FIT,GROW)}
 }
 
 Text_Field :: struct {
@@ -502,7 +595,6 @@ Text_Field :: struct {
     padding:f32,         // units between its sides and its text; 0: those of the editor
     limit:int,           // bytes it takes; 0: as many as the buffer holds
     adjusts:bool,        // left and right are the caller's while it has the focus and is not typed
-    open:bool,           // its element stays open for what the caller builds in it, who closes it when result.open
 }
 Text_Result :: struct {
     editing:bool,
@@ -511,7 +603,6 @@ Text_Result :: struct {
     committed:bool, // Enter, Tab or a click elsewhere ended the edit
     cancelled:bool, // Escape ended it; the buffer keeps what it had
     tab:int,        // 1 or -1 when Tab or Shift+Tab ended it
-    open:bool,      // Text_Field.open: its element is open
 }
 
 // A field that edits the text in buffer[:length^].
@@ -533,7 +624,7 @@ text_field :: proc(ctx:^Context,id:Id,buffer:[]u8,length:^int,field:Text_Field={
     if it.hot && !field.disabled {ctx.cursor=.Text}
     if e.id==id && id!=0 {
         e.newline=field.enter_inserts
-        event,tab:=field_edit_update(ctx,id,it,size,field.label,marked=field.strip[3]>0,pad=field.padding,font=font,icon=field.icon)
+        event,tab:=field_edit_update(ctx,id,it,size,font=font)
         switch event {
         case .None:
         case .Changed:
@@ -556,26 +647,24 @@ text_field :: proc(ctx:^Context,id:Id,buffer:[]u8,length:^int,field:Text_Field={
         e.font=font
         // The press that starts a field of a game places its caret.
         if look!=nil && it.pressed {
-            if rect,found:=widget_rect(ctx,id);found {text_edit_press(ctx,e,size,field_text_area(ctx,rect,field.label,size,field.multiline,field.strip[3]>0,field.padding,field.icon))}
+            if area,found:=widget_rect(ctx,field_area(ctx,id));found {text_edit_press(ctx,e,size,area)}
         }
         result.began=true
     }
     result.editing=e.id==id && id!=0
-    paint:=field_paint(ctx,id,it,string(buffer[:length^]),size,field.label,field.strip,field.placeholder,false,field.disabled,field.icon)
+    f:=field_look(ctx,text_edit_value(e) if result.editing else string(buffer[:length^]),size,font,field.disabled)
+    f.placeholder,f.label,f.icon,f.multiline=field.placeholder,field.label,field.icon,field.multiline
+    if field.password {
+        masked:=text_reserve(ctx,len(f.text))
+        for &c in masked {c='*'}
+        f.text=text_commit(ctx,string(masked))
+    }
+    if !field.disabled && field.color[3]>0 {f.style.color=field.color}
+    paint:=field_paint(ctx,id,it,false,field.disabled,field.strip)
     if paint!=nil {
-        paint.multiline=field.multiline
-        paint.style.font=font
-        paint.padding=field.padding
-        paint.scroll_y=e.scroll_y if result.editing else 0
-        if field.password {
-            masked:=text_reserve(ctx,len(paint.text))
-            for &c in masked {c='*'}
-            paint.text=text_commit(ctx,string(masked))
-        }
-        if !field.disabled && field.color[3]>0 {paint.text_color=field.color}
         if field.bare {paint.fill={};paint.stroke={}}
         if field.inline && !result.editing {paint.fill={};paint.stroke=tone(ctx,"border") if it.hot && !field.disabled else {}}
-        if look!=nil {field_paint_look(paint,look)}
+        if look!=nil {field_paint_look(paint,&f,look)}
     }
     height:=field.height
     if height<=0 {
@@ -584,11 +673,8 @@ text_field :: proc(ctx:^Context,id:Id,buffer:[]u8,length:^int,field:Text_Field={
             height=f32(max(field.rows,1))*line+2*field.padding if field.multiline else line+2*field.padding
         } else {height=f32(max(field.rows,1))*line+10 if field.multiline else metric(ctx,"row")}
     }
-    element:=Element{id=id,layout={width=(field.width if field.width!={} else GROW),height=fixed(height)},custom=paint}
-    if field.open {
-        element.layout.direction,element.layout.align_y=.Row,.Center
-        result.open=element_open(ctx,element)
-    } else {element_leaf(ctx,element)}
+    if element_open(ctx,{id=id,layout={width=(field.width if field.width!={} else GROW),height=fixed(height),padding=field_padding(&f,field.padding,field.strip[3]>0),gap=4 if field.icon!=.None else 6,align_y=.Center},custom=paint}) {field_content(ctx,id,f)}
+    element_close(ctx)
     return
 }
 

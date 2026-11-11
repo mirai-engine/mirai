@@ -13,8 +13,9 @@ Paint_Kind :: enum u8 {
     Rect,       // fill, radius
     Panel,      // shadow, fill and a one unit stroke
     Bar,        // vertical gradient from fill to fill2 over a line of stroke
-    Box,        // fill and stroke, or quad2 tinted by fill, around an icon, a quad, a text and a right aligned detail
-    Field,      // a text or number field, edited or not
+    Box,        // fill and stroke, or quad2 tinted by fill: a button or a row, whose content are its children
+    Field,      // the well of a text or number field and the mark of its axis
+    Caret,      // a line of fill one unit wide at the left edge: where an edited text is typed
     Swatch,     // a color
     Sat_Value,  // the square of saturation and value of a color picker
     Hue,        // its bar of hues
@@ -63,27 +64,15 @@ Paint :: struct {
     effect_clip:u16,
     clip_data:Clip,
     shadow:bool,
-    text,detail:string,      // detail is right aligned (shortcuts, counts); of a text of one span: what it says
-    text_color,detail_color:Color,
+    text:string,             // of a text whose words are one span: what it says
     size:f32,
-    center:bool,
-    padding:f32,
     icon:Icon,
     icon_color:Color,
     icon_size:f32,
-    icon_after:bool,         // the icon follows the text instead of leading it
     fade:bool,               // of a text: a line wider than its rectangle fades out at its end
     hidden:bool,             // it keeps its place in the layout and draws nothing (Context.invisible)
     quad,quad2:Quad,         // preview or image; quad2: the track of a progress bar
-    label:string,            // axis letter of a number field
     strip:Color,             // axis color of a number field
-    caret:int,               // caret index in text, -1 when not editing
-    caret_hidden:bool,
-    multiline:bool,          // of a Field: the text wraps and keeps its line breaks
-    selection:[2]int,        // selected byte range of the edited text (empty when equal)
-    scroll:f32,              // units the edited text is shifted left
-    scroll_y:f32,            // units the edited text is shifted up
-    placeholder:string,
     hsv:[3]f32,
     style:Text_Style,
     border,border_uv:[4]f32, // nine slice
@@ -94,7 +83,6 @@ Paint :: struct {
     draw:Draw_Node,          // of Draw: what Context.draw_user is handed, but its rect
     prompt:Prompt,
     fill_mode:Progress_Fill, // of a Progress
-    faint:Color,             // the placeholder of a Field; the theme's text_faint when transparent
     fit:Image_Fit,           // of an Image, keeping image_size
     image_size:[2]f32,       // of the part of the image shown, in texels; zero: unknown, it stretches
     decoration:Text_Decorations, // of a text
@@ -102,81 +90,7 @@ Paint :: struct {
 }
 
 FIELD_UNIT :: f32(9.5) // size of the unit at the right end of a number field
-
-// Where the text of a field starts and how much room it has. marked: the
-// field has the mark of its axis on its left edge. pad: units between each
-// side and the text; 0: those of the editor. icon: drawn instead of the label.
-field_text_span :: proc(ctx:^Context,r:Rect,label:string,marked:=false,pad:f32=0,icon:=Icon.None) -> (x,room:f32) {
-    x=r.x+(pad if pad>0 else 11 if marked else 8)
-    if icon!=.None {x+=FIELD_ICON+4} else if label!="" {x+=text_width(&ctx.font,label,metric(ctx,"font_axis"),FONT_MEDIUM)+6}
-    return x,max(r.x+r.w-(pad if pad>0 else 8)-x,0)
-}
-FIELD_ICON :: f32(10) // side of the icon inside a field, before its value
-
-// Where the text of a field lives: one line sits centered, a multiline field
-// starts at the top and keeps the height of its rows.
-Text_Area :: struct {x,y,w,h,line:f32}
-field_text_area :: proc(ctx:^Context,r:Rect,label:string,size:f32,multiline:bool,marked:=false,pad:f32=0,icon:=Icon.None) -> (a:Text_Area) {
-    a.x,a.w=field_text_span(ctx,r,label,marked,pad,icon)
-    a.line=size*TEXT_LINE
-    top:=pad if pad>0 else 5
-    a.y=r.y+top if multiline else r.y+text_leading(size,r.h)
-    a.h=max(r.h-2*top,a.line) if multiline else size*TEXT_LINE
-    return
-}
-
-// The lines of a field that wraps: its selection, its text and its caret,
-// which belongs to the first line that ends where it is. Only the lines in
-// sight are drawn.
-@(private)
-paint_text_wrapped :: proc(ctx:^Context,p:^Paint,a:Text_Area,editing:bool,selection:Color) {
-    font:=&ctx.font
-    lo,hi:=clamp(p.selection[0],0,len(p.text)),clamp(p.selection[1],0,len(p.text))
-    caret:=clamp(p.caret,0,len(p.text))
-    drawn:=false
-    f:=int(p.style.font)
-    it:=text_lines(font,p.text,p.size,a.w,.Words,f)
-    for {
-        start,end,ok:=text_lines_next(&it)
-        if !ok {break}
-        y:=a.y+f32(it.row)*a.line-p.scroll_y
-        if y>a.y+a.h {break}
-        if y+a.line<a.y {
-            drawn|=caret<=end
-            continue
-        }
-        line:=p.text[start:end]
-        if editing && hi>lo && hi>start && lo<=end {
-            from:=text_width(font,p.text[start:clamp(lo,start,end)],p.size,f)
-            to:=text_width(font,p.text[start:clamp(hi,start,end)],p.size,f)
-            if hi>end {to=text_width(font,line,p.size,f)+p.size*0.3}
-            draw_rect(ctx,{a.x+from,y,max(to-from,1),a.line},selection)
-        }
-        draw_text(ctx,line,a.x,y,p.size,p.text_color,f)
-        if editing && hi<=lo && !p.caret_hidden && !drawn && caret<=end {
-            draw_rect(ctx,{math.round(a.x+text_width(font,p.text[start:clamp(caret,start,end)],p.size,f)),y,1,p.size*TEXT_LINE},p.text_color)
-        }
-        drawn|=caret<=end
-    }
-}
-
-@(private)
-paint_text_line :: proc(ctx:^Context,p:^Paint,r:Rect,x:f32,color:Color) {
-    draw_text(ctx,p.text,x,r.y+text_leading(p.size,r.h),p.size,color,int(p.style.font))
-}
-
-// A line that ends at end when it does not fit: it fades out over the last
-// TEXT_FADE units before it.
-@(private)
-paint_text_faded :: proc(ctx:^Context,p:^Paint,r:Rect,x,end:f32,color:Color) {
-    d:=&ctx.draw
-    before:=d.fade
-    d.fade={end-TEXT_FADE,end}
-    clip_push(ctx,{r.x,r.y,max(end-r.x,0),r.h})
-    paint_text_line(ctx,p,r,x,color)
-    clip_pop(ctx)
-    d.fade=before
-}
+FIELD_ICON :: f32(10)  // side of the icon inside a field, before its value
 
 TEXT_FADE :: 12
 
@@ -203,7 +117,6 @@ paint_background :: proc(ctx:^Context,r:Rect,p:^Paint) {
 
 @(private)
 paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
-    font:=&ctx.font
     switch p.kind {
     case .None:
     case .Rect,.Panel:
@@ -217,92 +130,12 @@ paint_draw :: proc(ctx:^Context,r:Rect,p:^Paint) {
         case p.border!={}:         draw_nine_slice(ctx,r,p.quad2,p.border,p.border_uv,p.fill)
         case:                      draw_image(ctx,r,p.quad2,p.fill)
         }
-        clip_push(ctx,r)
-        x:=r.x+p.padding
-        width:=text_width(font,p.text,p.size,int(p.style.font))
-        icon_width:=f32(0)
-        if p.icon!=.None {icon_width=p.icon_size+(6 if p.text!="" else 0)}
-        // A preview next to a text keeps a margin; alone it takes the box.
-        inset:=f32(4) if p.text!="" else f32(2)
-        preview_size:=max(r.h-2*inset,0)
-        preview_width:=preview_size+(6 if p.text!="" else 0) if p.quad.kind!=.Solid else 0
-        if p.center {x=r.x+(r.w-icon_width-preview_width-width)*0.5}
-        if p.icon!=.None && !p.icon_after {
-            draw_icon(ctx,p.icon,{x,r.y+(r.h-p.icon_size)*0.5,p.icon_size,p.icon_size},p.icon_color)
-            x+=icon_width
-        }
-        if p.quad.kind!=.Solid {
-            draw_image(ctx,{x,r.y+inset,preview_size,preview_size},p.quad)
-            x+=preview_width
-        }
-        // A detail takes at most half of what follows the start of the text,
-        // and shows its end when it does not fit.
-        right:=r.x+r.w-p.padding
-        detail_x:=right
-        if p.detail!="" && !p.center {detail_x-=min(text_width(font,p.detail,metric(ctx,"font_small")),max(right-x,0)*0.5)}
-        if p.text!="" {
-            // A text that reaches the icon after it or the detail fades out before it.
-            end:=r.x+r.w-p.padding-icon_width if p.icon_after else right
-            if p.detail!="" && !p.center {end=min(end,detail_x-8)}
-            if (p.icon_after || p.detail!="") && !p.center && x+width>end {paint_text_faded(ctx,p,r,x,end,p.text_color)} else {paint_text_line(ctx,p,r,x,p.text_color)}
-        }
-        // After the text: next to it when centered, else at the right end.
-        if p.icon!=.None && p.icon_after {
-            icon_x:=x+width+icon_width-p.icon_size if p.center else r.x+r.w-p.padding-p.icon_size
-            draw_icon(ctx,p.icon,{icon_x,r.y+(r.h-p.icon_size)*0.5,p.icon_size,p.icon_size},p.icon_color)
-        }
-        if p.detail!="" {
-            w:=text_width(font,p.detail,metric(ctx,"font_small"))
-            if detail_x>right-w {clip_push(ctx,{detail_x,r.y,r.x+r.w-detail_x,r.h})}
-            draw_text(ctx,p.detail,right-w,r.y+text_leading(metric(ctx,"font_small"),r.h),metric(ctx,"font_small"),p.detail_color)
-            if detail_x>right-w {clip_pop(ctx)}
-        }
-        clip_pop(ctx)
     case .Field:
-        // A field of a game gives its corners, its selection and its placeholder; one of the editor takes the theme.
-        radii:=p.corners if p.corners!={} else [4]f32{metric(ctx,"radius_control"),metric(ctx,"radius_control"),metric(ctx,"radius_control"),metric(ctx,"radius_control")}
-        selection:=p.fill2 if p.fill2[3]>0 else tone(ctx,"text_select")
-        faint:=p.faint if p.faint[3]>0 else tone(ctx,"text_faint")
-        draw_rounded_corners(ctx,r,radii,p.fill)
-        editing:=p.caret>=0
-        marked:=p.strip[3]>0
-        if marked {draw_rounded(ctx,{r.x+3,r.y+4,3,max(r.h-8,2)},1.5,p.strip)}
-        // The unit keeps the right end; the value is clipped before it.
-        unit:=text_width(font,p.detail,FIELD_UNIT)+5 if p.detail!="" else 0
-        if unit>0 {draw_text(ctx,p.detail,r.x+r.w-unit,r.y+text_leading(FIELD_UNIT,r.h),FIELD_UNIT,tone(ctx,"text_faint") if p.text_color==tone(ctx,"text_faint") else tone(ctx,"text_muted"))}
-        clip_push(ctx,{r.x+1,r.y,r.w-2-unit,r.h})
-        if p.icon!=.None {
-            draw_icon(ctx,p.icon,{r.x+(11 if marked else 8),r.y+(r.h-FIELD_ICON)*0.5,FIELD_ICON,FIELD_ICON},tone(ctx,"text_muted"))
-        } else if p.label!="" {draw_text(ctx,p.label,r.x+(11 if marked else 8),r.y+text_leading(metric(ctx,"font_axis"),r.h),metric(ctx,"font_axis"),tone(ctx,"text"),FONT_MEDIUM)}
-        x,room:=field_text_span(ctx,r,p.label,marked,p.padding,p.icon)
-        // The placeholder sits where the first line of text and the caret go.
-        if p.text=="" && p.placeholder!="" {
-            a:=field_text_area(ctx,r,p.label,p.size,p.multiline,marked,p.padding,p.icon)
-            draw_text(ctx,p.placeholder,a.x+(2 if editing && !p.multiline else 0),a.y,p.size,faint,int(p.style.font))
-        }
-        if p.multiline {
-            a:=field_text_area(ctx,r,p.label,p.size,true,marked,p.padding,p.icon)
-            clip_push(ctx,{a.x-1,a.y,a.w+2,a.h})
-            paint_text_wrapped(ctx,p,a,editing,selection)
-            clip_pop(ctx)
-        } else if editing {
-            // Long text scrolls inside its own clip, so it never covers the label or the unit.
-            clip_push(ctx,{x-1,r.y,max(room+2-unit,0),r.h})
-            x-=p.scroll
-            lo,hi:=clamp(p.selection[0],0,len(p.text)),clamp(p.selection[1],0,len(p.text))
-            if hi>lo {
-                from,to:=text_width(font,p.text[:lo],p.size,int(p.style.font)),text_width(font,p.text[:hi],p.size,int(p.style.font))
-                draw_rect(ctx,{x+from,r.y+4,to-from,r.h-8},selection)
-            }
-            paint_text_line(ctx,p,r,x,p.text_color)
-            if hi<=lo && !p.caret_hidden {
-                caret_height:=min(p.size*TEXT_LINE,max(r.h-4,0))
-                draw_rect(ctx,{math.round(x+text_width(font,p.text[:clamp(p.caret,0,len(p.text))],p.size,int(p.style.font))),r.y+(r.h-caret_height)*0.5,1,caret_height},p.text_color)
-            }
-            clip_pop(ctx)
-        } else if p.text!="" {paint_text_line(ctx,p,r,x,p.text_color)}
-        clip_pop(ctx)
-        if p.stroke[3]>0 {draw_shape(ctx,r,{stroke=p.stroke,stroke_width=p.stroke_width if p.stroke_width>0 else 1,radii=radii})}
+        draw_rounded_corners(ctx,r,p.corners,p.fill)
+        if p.strip[3]>0 {draw_rounded(ctx,{r.x+3,r.y+4,3,max(r.h-8,2)},1.5,p.strip)}
+        if p.stroke[3]>0 {draw_shape(ctx,r,{stroke=p.stroke,stroke_width=p.stroke_width if p.stroke_width>0 else 1,radii=p.corners})}
+    case .Caret:
+        draw_rect(ctx,{math.round(r.x),r.y,1,r.h},p.fill)
     case .Swatch:
         draw_rounded(ctx,r,metric(ctx,"radius_control"),p.fill)
         draw_rounded_stroke(ctx,r,metric(ctx,"radius_control"),1,p.stroke)

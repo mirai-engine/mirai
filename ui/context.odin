@@ -467,8 +467,6 @@ paint_add :: proc(ctx:^Context,paint:Paint) -> ^Paint {
     stored:=paint
     if ctx.invisible>0 {stored.hidden,stored.layer.enabled=true,false}
     stored.surface,stored.scope=ctx.surface,ctx.scope
-    stored.text=text_store(ctx,paint.text);stored.detail=text_store(ctx,paint.detail)
-    stored.label=text_store(ctx,paint.label);stored.placeholder=text_store(ctx,paint.placeholder)
     p:=&ctx.paints[ctx.paint_count];ctx.paint_count+=1
     p^=stored
     return p

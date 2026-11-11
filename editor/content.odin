@@ -1761,15 +1761,9 @@ asset_card_float :: proc(s:^Session) -> ui.Float {
 // cut and the pointer on the cell shows it whole.
 @(private)
 content_name_cut :: proc(ctx:^ui.Context,name:string,cell:f32,names:u8=2) -> bool {
-    lines:=ui.text_lines(&ctx.font,name,ui.metric(ctx,"font_small"),cell-2,.Words)
-    count:=0
-    for {
-        _,_,ok:=ui.text_lines_next(&lines)
-        if !ok {break}
-        count+=1
-        if count>int(names if names>0 else 2) {return true}
-    }
-    return false
+    size:=ui.metric(ctx,"font_small")
+    lines:=f32(names if names>0 else 2)*CONTENT_NAME_LINE
+    return ui.text_height(ctx,name,{size=size,wrap=.Words,line_height=CONTENT_NAME_LINE/size},cell-2)>lines+0.01
 }
 
 // The name under the thumbnail of a cell, in up to names lines as wide as it,

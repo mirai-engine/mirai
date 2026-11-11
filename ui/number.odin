@@ -122,7 +122,7 @@ number_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (re
     it:=interact(ctx,id,{.Focusable}+({.Disabled} if field.disabled else {})+({.Adjusts} if field.stepper else {}))
     begin_edit:=false
     if e.id==id && id!=0 {
-        event,tab:=field_edit_update(ctx,id,it,size,field.label,false,field.strip[3]>0,pad,font,field.icon)
+        event,tab:=field_edit_update(ctx,id,it,size,false,font)
         #partial switch event {
         case .Commit:
             text:=strings.trim_space(text_edit_value(e))
@@ -172,7 +172,7 @@ number_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (re
             field_edit_begin(ctx,id,number_format(buffer[:],value^,0 if field.integer else NUMBER_EDIT_DECIMALS),.Number,TEXT_EDIT_CAPACITY,look==nil)
             e.font=font
             if look!=nil && it.pressed {
-                if rect,found:=widget_rect(ctx,id);found {text_edit_press(ctx,e,size,field_text_area(ctx,rect,field.label,size,false,field.strip[3]>0,pad,field.icon))}
+                if area,found:=widget_rect(ctx,field_area(ctx,id));found {text_edit_press(ctx,e,size,area)}
             }
             result.began=true
         }
@@ -180,26 +180,24 @@ number_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (re
     }
     result.editing=e.id==id && id!=0
     result.scrubbing=s.id==id && s.moved && id!=0
-    text:="Multiple" if field.mixed else number_text(ctx,value^,decimals)
-    paint:=field_paint(ctx,id,it,text,size,field.label,field.strip,"",s.id==id && id!=0,field.disabled,field.icon)
-    if paint!=nil {
-        paint.detail=field.unit
-        paint.padding=pad
-        paint.style.font=font
-        if look!=nil {field_paint_look(paint,look)}
-    }
-    element:=Element{id=id,layout={width=width,height=fixed(height)},custom=paint}
+    text:=text_edit_value(e) if result.editing else "Multiple" if field.mixed else number_text(ctx,value^,decimals)
+    f:=field_look(ctx,text,size,font,field.disabled)
+    f.label,f.icon,f.unit=field.label,field.icon,field.unit
+    paint:=field_paint(ctx,id,it,s.id==id && id!=0,field.disabled,field.strip)
+    if paint!=nil && look!=nil {field_paint_look(paint,&f,look)}
+    layout:=Layout{width=width,height=fixed(height),gap=4 if field.icon!=.None else 6,align_y=.Center}
     if !field.stepper {
-        element_leaf(ctx,element)
+        layout.padding=field_padding(&f,pad,field.strip[3]>0)
+        if element_open(ctx,{id=id,layout=layout,custom=paint}) {field_content(ctx,id,f)}
+        element_close(ctx)
         return
     }
     by:=field.step if field.step>0 else 1
     next:=value^
     mark:=look.mark if look!=nil else tone(ctx,"text_muted")
-    element.layout.direction,element.layout.align_y=.Row,.Center
-    if element_open(ctx,element) {
+    if element_open(ctx,{id=id,layout=layout,custom=paint}) {
         if control_arrow(ctx,id_derive(ctx,id,"previous"),0,side,em,mark,field.disabled) {next-=by}
-        element_leaf(ctx,{layout={width=GROW,height=GROW}})
+        field_content(ctx,id,f)
         if control_arrow(ctx,id_derive(ctx,id,"next"),1,side,em,mark,field.disabled) {next+=by}
     }
     element_close(ctx)
@@ -214,11 +212,12 @@ number_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (re
 // its selection from the mark (or its text at a quarter) and its placeholder
 // from its text at half.
 @(private)
-field_paint_look :: proc "contextless" (paint:^Paint,look:^Node_Style) {
+field_paint_look :: proc "contextless" (paint:^Paint,f:^Field_Look,look:^Node_Style) {
     text:=look.text.color
-    paint.fill,paint.stroke,paint.stroke_width,paint.corners,paint.text_color=look.fill,look.stroke,look.stroke_width,look.radius,text
-    paint.fill2=look.mark if look.mark[3]>0 else color_alpha(text,text[3]/4)
-    paint.faint=color_alpha(text,text[3]/2)
+    paint.fill,paint.stroke,paint.stroke_width,paint.corners=look.fill,look.stroke,look.stroke_width,look.radius
+    f.style.color=text
+    f.selection=look.mark if look.mark[3]>0 else color_alpha(text,text[3]/4)
+    f.faint=color_alpha(text,text[3]/2)
 }
 
 Slider :: struct {

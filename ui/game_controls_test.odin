@@ -48,14 +48,13 @@ game_controls_take_every_color_corner_and_size_from_their_style :: proc(t:^testi
     for &p in ctx.paints[:ctx.paint_count] {
         #partial switch p.kind {
         case .Slider:slider=&p
-        case .Box:if p.icon_color==style.mark {check=&p}
-        case .Field:if p.placeholder=="Name" {field=&p}
         case .Arrow:if p.fill==style.mark {arrows+=1}
         }
     }
+    check,field=test_element_paint(&ctx,id(&ctx,"on")),test_element_paint(&ctx,id(&ctx,"name"))
     testing.expect(t,slider!=nil && slider.fill==style.track && slider.fill2==style.mark && slider.stroke==style.knob && slider.corners==style.radius && slider.value==0.5)
     testing.expect(t,check!=nil && check.fill==style.fill && check.stroke==style.stroke && check.corners==style.radius && check.stroke_width==2)
-    testing.expect(t,field!=nil && field.fill==style.fill && field.corners==style.radius && field.text_color==style.text.color && field.placeholder=="Name")
+    testing.expect(t,field!=nil && field.fill==style.fill && field.corners==style.radius && test_paint(&ctx,"Name").style.color==color_alpha(style.text.color,style.text.color[3]/2),"its placeholder is its text at half")
     testing.expect_value(t,arrows,5) // two of the selector, two of the number and the one of the dropdown
     // Without a size, a control is a line of its text and its room tall, ten of its sizes wide; a checkbox is a line square.
     line:=10*TEXT_LINE
