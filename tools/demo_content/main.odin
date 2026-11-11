@@ -4,22 +4,16 @@ import "core:fmt"
 import "core:math"
 import "core:os"
 import "mirai:asset"
-import importer "mirai:cook/import"
-import "mirai:cook/import/sources"
-import game "mirai:demo/game"
-import lib "mirai:std/anim"
 import "mirai:std/base"
-import mm "mirai:std/math"
 
-// Writes the assets of the demo project that code computes: the imports of
-// demo/source (sources.odin), the images, clips, meshes, sounds, particles,
-// fractures, profiles and tables of game data its scenes use, with the same
-// bytes on every run. Its scenes, prefabs and interfaces are
-// authored assets, as are the materials of demo/assets/surfaces: scene.write or
-// the editor change them, and this names those it uses by their ids.
+// Writes the assets of the demo project that code computes: the images, clips,
+// meshes, sources, fractures and terrain its scenes use, with the same bytes
+// on every run. What is authored (scenes, prefabs, interfaces, materials,
+// particles, tables of game data, clips of a few keys) is changed through the
+// API or the editor, and this names what it uses by its id; the sources it
+// writes beside their assets are imported by the build (sources.sync).
 //
-//   mirai content demo [-- --physics-only|--control-only|--raft-only|--features-only|
-//                          --animation-only|--interface-only|--dig-only|--ai-only]
+//   mirai content demo [-- --physics-only|--features-only|--animation-only|--interface-only|--dig-only]
 
 PROJECT :: "demo_content"
 BADGE_SIZE :: 64
@@ -87,29 +81,8 @@ write_panel :: proc(o:^Out) {
         {id=id,width=PANEL_SIZE,height=PANEL_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
 }
 
-// The lift: its platform goes up and comes down in four seconds while its
-// beacon turns once. "top" marks the highest point.
-write_lift :: proc(o:^Out) {
-    id:=asset.content_id(PROJECT,"animation","lift")
-    seconds:=game.SHOWCASE_RIDE_SECONDS
-    rise:=[]lib.Keyframe{
-        {time=0,value={0,0.1,0,0}},
-        {time=seconds/2,value={0,1.9,0,0},ease=.Sine_In_Out},
-        {time=seconds,value={0,0.1,0,0},ease=.Sine_In_Out},
-    }
-    turn:=make([]lib.Keyframe,5,context.temp_allocator)
-    for &key,i in turn {
-        key={time=seconds*f32(i)/4,value=lib.quat_vec4(mm.quat_axis_angle({0,1,0},f32(i)*math.PI/2))}
-    }
-    clips:=[]asset.Animation_Clip_Desc{
-        {name="ride",tracks={{target="Platform",property=.Position,keys=rise},{target="Beacon",property=.Rotation,keys=turn}},markers={{time=seconds/2,name="top"}}},
-        {name="parked",tracks={{target="Platform",property=.Position,keys=rise[:1]}}},
-    }
-    asset.content_check(&o.content,"assets/showcase/lift.anim",asset.animation_save(path(o,"assets/showcase/lift.anim"),&o.content.types,{id=id,clips=clips}))
-}
-
 // Two seconds of a low hum that loops without a click: every partial fits a
-// whole number of times. The WAV is the source; the .sound is its import.
+// whole number of times. The WAV is the source, which a build imports.
 write_hum :: proc(o:^Out) {
     FRAMES :: HUM_RATE*HUM_SECONDS
     file:=make([]u8,44+FRAMES*2,context.temp_allocator)
@@ -123,8 +96,7 @@ write_hum :: proc(o:^Out) {
         tremolo:=0.75+0.25*math.sin(2*math.PI*1.5*t)
         le(file,44+frame*2,u32(u16(i16(wave*tremolo*20000))),2)
     }
-    source:=path(o,"source/sounds/hum.wav")
-    os.make_directory_all(path(o,"source/sounds"))
+    source:=path(o,"assets/showcase/hum.wav")
     // Written only when it differs, so that the import of an unchanged source is the same file.
     existing,read_error:=os.read_entire_file(source,context.temp_allocator)
     if (read_error!=nil || string(existing)!=string(file)) && os.write_entire_file(source,file)!=nil {
@@ -132,17 +104,10 @@ write_hum :: proc(o:^Out) {
         o.content.failed=true
         return
     }
-    report,error:=sources.import_source(source,path(o,"assets/showcase"),{root=fmt.tprintf("%s/demo",o.root)})
-    if error.code!=.None {
-        fmt.eprintfln("demo_content: %s",error.message)
-        o.content.failed=true
-        return
-    }
-    defer importer.report_destroy(&report)
-    fmt.printfln("wrote source/sounds/hum.wav and imported %s",report.assets[0].path)
+    fmt.println("wrote assets/showcase/hum.wav")
 }
 
-// The id the import of source/materials/<name>.json gives the material <name>.mat.
+// The id of the material <name>.mat of assets/surfaces: the one an import of its source once gave it.
 material_id :: proc(name:string) -> base.Asset_Id {
     buffer:[192]u8
     return base.asset_id_named(fmt.bprintf(buffer[:],"material\x1fsource/materials/%s.json\x1f%s",name,name))
@@ -155,28 +120,20 @@ main :: proc() {
     defer asset.content_destroy(&o.content)
     switch len(os.args)>2?os.args[2]:"" {
     case "":
-        import_sources(&o)
         write_badge(&o)
         write_panel(&o)
-        write_lift(&o)
         write_hum(&o)
-        write_control_intro(&o)
         write_physics_gallery(&o)
-        write_horde_records(&o)
-        if !o.content.failed {write_animation_assets(&o)}
+        write_animation_assets(&o)
         write_feature_meshes(&o)
         write_decal_images(&o)
-        write_raft_particles(&o)
         write_dig_assets(&o)
-        write_interface_assets(&o)
+        write_interface_icons(&o)
     case "--physics-only":   write_physics_gallery(&o)
-    case "--control-only":   write_control_intro(&o)
-    case "--raft-only":      write_raft_particles(&o)
     case "--features-only":  write_feature_meshes(&o);write_decal_images(&o)
-    case "--animation-only": import_model(&o,"mirai/mirai.glb");if !o.content.failed {write_animation_assets(&o)}
-    case "--interface-only": write_interface_assets(&o)
+    case "--animation-only": write_animation_assets(&o)
+    case "--interface-only": write_interface_icons(&o)
     case "--dig-only":       write_dig_assets(&o)
-    case "--ai-only":        write_horde_records(&o)
     case:
         fmt.eprintfln("demo_content: unknown option %s",os.args[2])
         o.content.failed=true

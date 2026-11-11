@@ -205,7 +205,7 @@ a_model_larger_than_the_scratch_memory_of_its_caller_imports :: proc(t:^testing.
 
 @(test)
 the_vase_of_the_demo_imports_without_warnings :: proc(t:^testing.T) {
-    model,ok:=import_ok(t,DEMO+"models/vase.obj")
+    model,ok:=import_ok(t,DEMO+"gallery/vase.obj")
     if !ok {return}
     defer importer.model_destroy(&model)
     testing.expect_value(t,len(model.warnings),0)
@@ -214,7 +214,7 @@ the_vase_of_the_demo_imports_without_warnings :: proc(t:^testing.T) {
     testing.expect_value(t,len(model.meshes[0].slots),2)
     testing.expect_value(t,len(model.materials),2)
     testing.expect_value(t,len(model.images),1)
-    testing.expect(t,model.images[0].srgb && strings.has_suffix(model.images[0].path,"/demo/source/textures/vase_color.png"),model.images[0].path)
+    testing.expect(t,model.images[0].srgb && strings.has_suffix(model.images[0].path,"/demo/assets/gallery/vase_color.png"),model.images[0].path)
 }
 
 @(test)

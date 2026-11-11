@@ -13,7 +13,7 @@ whole scene, with no ids to pass between calls ([whole-scene.md](../assets/whole
 ```sh
 P="mirai rpc --project ."
 $P terrain.create '{"name":"Hills","samples":257,"spacing":2,"height_scale":60}'
-# from a heightmap of the project: '{"name":"Hills","heightmap":"source/hills.png"}'
+# from a heightmap of the project: '{"name":"Hills","heightmap":"assets/hills.png"}'
 $P terrain.edit '{"entity":"Hills","brush":"noise","at":[256,0,256],"radius":200,"scale":40}'
 $P terrain.edit '{"entity":"Hills","brush":"flatten","at":[0,0,0],"radius":12}'
 $P terrain.layer '{"entity":"Hills","material":"hills/grass.mat","tiling":4}'
