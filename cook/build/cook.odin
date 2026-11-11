@@ -77,6 +77,7 @@ Cook_Error :: enum u8 {
     Verify_Failed,    // detail: the file that does not read back as what was written
     Resolve_Failed,   // detail: the scene or prefab whose prefab instances could not be brought up to date
     Source_Failed,    // detail: the texture that is still Fast, which the import of its source by a build makes Final
+    Duplicate_Id,     // detail: the two files with one id and how to tell them apart
 }
 
 Cook_File :: struct {
@@ -185,6 +186,12 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     defer asset.registry_destroy(&registry)
     if asset.registry_scan(&registry)!=.None {cook_fail(&report,.Assets_Missing,desc.assets,allocator);return}
     files:=registry.files[:]
+    // Which of two files with one id is the asset depends on the machine: the cook takes neither.
+    if len(registry.duplicates)>0 {
+        twins:=registry.duplicates[0]
+        cook_fail(&report,.Duplicate_Id,fmt.tprintf("%s and %s have one id; open the copy in the editor and save it, which gives it an id of its own",files[twins.first].path,files[twins.second].path),allocator)
+        return
+    }
     reached:=make([]bool,len(files),temp)
     // What a dedicated server leaves behind counts as reached, and is not written.
     left:=make([]bool,len(files),temp)

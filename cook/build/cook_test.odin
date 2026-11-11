@@ -27,6 +27,7 @@ import "mirai:std/jobs"
 @(private="file") MAIN :: base.Asset_Id{4,1}
 @(private="file") HUD :: base.Asset_Id{5,1}
 @(private="file") PROP :: base.Asset_Id{6,1}
+@(private="file") LAMP :: base.Asset_Id{6,2}
 @(private="file") ABSENT :: base.Asset_Id{9,9}
 
 @(private="file")
@@ -229,8 +230,16 @@ a_cook_that_cannot_be_what_was_asked_says_why :: proc(t:^testing.T) {
         report:=cook_assets({assets=assets,output=output,manifest=manifest,allocator=context.temp_allocator})
         testing.expectf(t,report.error==.Root_Missing && report.detail==root && !os.exists(output),"%s: %v %s",root,report.error,report.detail)
     }
+    // Two files with one id, as a copy made outside the editor has: which one is the asset depends on the machine.
+    testing.expect(t,os.remove(manifest)==nil)
+    copy:=fmt.tprintf("%s/materials/wood copy.mat",assets)
+    wood,_:=os.read_entire_file(fmt.tprintf("%s/materials/wood.mat",assets),context.temp_allocator)
+    testing.expect(t,os.write_entire_file(copy,wood)==nil)
+    twins:=cook_assets({assets=assets,output=output,allocator=context.temp_allocator})
+    testing.expectf(t,twins.error==.Duplicate_Id && strings.contains(twins.detail,"materials/wood.mat") && strings.contains(twins.detail,"materials/wood copy.mat") && !os.exists(output),"%v %s",twins.error,twins.detail)
+    testing.expect(t,os.remove(copy)==nil)
     // An output that cannot be a folder.
-    testing.expect(t,os.remove(manifest)==nil && os.write_entire_file(fmt.tprintf("%s/blocked",folder),"a file")==nil)
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/blocked",folder),"a file")==nil)
     blocked:=cook_assets({assets=assets,output=fmt.tprintf("%s/blocked/assets",folder),allocator=context.temp_allocator})
     testing.expect_value(t,blocked.error,Cook_Error.Write_Failed)
     // A project without scenes or roots ships an empty folder with its index.
@@ -289,7 +298,7 @@ Glow :: struct {range:f32}
 
 @(private="file")
 glow_prefab_write :: proc(t:^testing.T,types:^asset.Types,path:string,range:f32) -> (lamp:asset.Scene) {
-    asset.scene_init(&lamp,types,PROP)
+    asset.scene_init(&lamp,types,LAMP)
     lamp.doc.flags+={.Prefab}
     asset.scene_entity_add(&lamp,1,0,"Lamp")
     asset.scene_entity_add(&lamp,2,1,"Bulb")
@@ -325,7 +334,7 @@ a_cook_brings_the_prefab_instances_of_what_it_ships_up_to_date :: proc(t:^testin
     lamp_path,level_path:=fmt.tprintf("%s/prefabs/lamp.scene",assets),fmt.tprintf("%s/scenes/level.scene",assets)
     lamp:=glow_prefab_write(t,&types,lamp_path,1)
     level:asset.Scene;asset.scene_init(&level,&types,MAIN);defer asset.scene_destroy(&level)
-    _,placed:=asset.scene_instantiate(&level,&lamp,PROP,0)
+    _,placed:=asset.scene_instantiate(&level,&lamp,LAMP,0)
     testing.expect_value(t,placed,asset.Error.None)
     testing.expect_value(t,asset.scene_save(&level,level_path),asset.Error.None)
     asset.scene_destroy(&lamp)
@@ -348,7 +357,7 @@ a_cook_brings_the_prefab_instances_of_what_it_ships_up_to_date :: proc(t:^testin
     testing.expect(t,report.error==.None && reached && len(report.missing)==0)
     testing.expect_value(t,os.remove(lamp_path),nil)
     report=cook_assets({assets=assets,output=output,allocator=context.temp_allocator})
-    testing.expect(t,report.error==.None && len(report.missing)==1 && report.missing[0].id==PROP && report.scenes_resolved==0)
+    testing.expect(t,report.error==.None && len(report.missing)==1 && report.missing[0].id==LAMP && report.scenes_resolved==0)
     testing.expect_value(t,glow_range(t,&types,fmt.tprintf("%s/scenes/level.scene",output)),f32(1))
 }
 
@@ -370,7 +379,7 @@ a_cook_on_many_workers_writes_what_a_cook_on_one_does :: proc(t:^testing.T) {
     lamp:=glow_prefab_write(t,&types,lamp_path,1)
     for at in 0..<6 {
         level:asset.Scene;asset.scene_init(&level,&types,{11,u64(at)})
-        _,placed:=asset.scene_instantiate(&level,&lamp,PROP,0)
+        _,placed:=asset.scene_instantiate(&level,&lamp,LAMP,0)
         testing.expect_value(t,placed,asset.Error.None)
         testing.expect_value(t,asset.scene_save(&level,fmt.tprintf("%s/scenes/level_%d.scene",assets,at)),asset.Error.None)
         asset.scene_destroy(&level)
