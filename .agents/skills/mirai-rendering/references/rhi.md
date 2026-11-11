@@ -66,9 +66,11 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   an access fault, a removed GPU) or `Hung` (the work did not finish). With
   `VK_EXT_device_fault` the text carries what the driver says about the fault.
 - **Where the GPU stopped.** The text of a loss or a hang names the labels open, the section
-  (`cmd_timestamp`), the pipeline and the draw where the GPU stopped (`Features.stop_place`).
-  Vulkan writes, with `VK_AMD_buffer_marker` at the bottom of the pipe, the serial of the frame
-  into a word of its own for each label, section, pipeline bind and draw, in a host-visible buffer
+  (`cmd_timestamp`) and the pipeline where the GPU stopped (`Features.stop_place`), by the name
+  the pipeline keeps a copy of (a program's stage names its program). Marks go per pass, section
+  and pipeline, not per draw: the renderer draws tens of indirect draws a frame. Vulkan writes,
+  with `VK_AMD_buffer_marker` at the bottom of the pipe, the serial of the frame into a word of its
+  own for each label, section and pipeline bind, in a host-visible buffer
   of the frame slot (`rhi/vulkan_marks.odin`): the first word of the oldest frame without it is
   where the GPU stopped, and with every frame done, the labels the last one left open. Metal makes
   frames with `MTLCommandBufferErrorOptionEncoderExecutionStatus` and names the encoder that

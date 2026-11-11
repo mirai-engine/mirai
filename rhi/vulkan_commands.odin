@@ -377,7 +377,7 @@ cmd_end_render_pass :: proc(c: ^Command_List) {
 			c.pipeline = command.pipeline
 			if p := pool_get(&d.pipelines, base.Handle(command.pipeline)); p != nil {
 				vk_pipeline_bind(c, p)
-				vk_mark(c, .Pipeline, p.name)
+				vk_mark(c, .Pipeline, vk_pipeline_name(p))
 			}
 			c.dirty = true
 		case .Slot:
@@ -392,15 +392,12 @@ cmd_end_render_pass :: proc(c: ^Command_List) {
 			vk_scissor(c, i32(r.x), i32(r.y), r.z, r.w)
 		case .Draw:
 			v := command.draw.values
-			if !vk_flush_bindings(c, .GRAPHICS) {continue}
-			d.dvk.CmdDraw(c.cmd, v.x, v.y, v.z, v.w)
-			vk_mark(c, .Draw)
+			if vk_flush_bindings(c, .GRAPHICS) {d.dvk.CmdDraw(c.cmd, v.x, v.y, v.z, v.w)}
 		case .Draw_Indirect, .Draw_Indexed_Indirect:
 			b := pool_get(&d.buffers, base.Handle(command.draw.buffer))
 			if b == nil || !vk_flush_bindings(c, .GRAPHICS) {continue}
 			offset, count, stride := vk.DeviceSize(command.draw.offset), command.draw.values.x, command.draw.values.y
 			if command.kind == .Draw_Indirect {d.dvk.CmdDrawIndirect(c.cmd, b.handle, offset, count, stride)} else {d.dvk.CmdDrawIndexedIndirect(c.cmd, b.handle, offset, count, stride)}
-			vk_mark(c, .Draw)
 		case .Push_Label: vk_label_push(c, command.name)
 		case .Pop_Label:  vk_label_pop(c)
 		case .Timestamp:  vk_section(c, command.name)
@@ -464,7 +461,7 @@ vk_pass_draw :: proc(c: ^Command_List) -> bool {
 	d := c.device
 	p := pool_get(&d.pipelines, base.Handle(c.pipeline))
 	if p == nil {set_error(d, "draw without a pipeline in render pass %s", c.pass.name); return false}
-	if p.bind_point != .GRAPHICS {set_error(d, "pipeline %s cannot be used inside a render pass", p.name); return false}
+	if p.bind_point != .GRAPHICS {set_error(d, "pipeline %s cannot be used inside a render pass", vk_pipeline_name(p)); return false}
 	if !c.dirty {return true}
 	c.dirty = false
 	for slot, i in p.slots {
@@ -515,7 +512,7 @@ cmd_bind_pipeline :: proc(c: ^Command_List, pipeline: Pipeline) {
 	c.dirty = true
 	if c.in_render_pass {vk_pass_record(c, {kind = .Pipeline, pipeline = bound})} else if p != nil {
 		vk_pipeline_bind(c, p)
-		vk_mark(c, .Pipeline, p.name)
+		vk_mark(c, .Pipeline, vk_pipeline_name(p))
 	}
 }
 
@@ -615,7 +612,7 @@ vk_flush_bindings :: proc(c: ^Command_List, bind_point: vk.PipelineBindPoint) ->
 	d := c.device
 	if p == nil {set_error(d, "draw or dispatch without a pipeline"); return false}
 	if p.bind_point != bind_point {
-		set_error(d, "pipeline %s cannot be used %s a render pass", p.name, "outside" if p.bind_point == .GRAPHICS else "inside")
+		set_error(d, "pipeline %s cannot be used %s a render pass", vk_pipeline_name(p), "outside" if p.bind_point == .GRAPHICS else "inside")
 		return false
 	}
 	if bind_point == .COMPUTE {
@@ -632,44 +629,44 @@ vk_flush_bindings :: proc(c: ^Command_List, bind_point: vk.PipelineBindPoint) ->
 	for slot, i in p.slots {
 		if !slot.used {continue}
 		s := c.slots[i]
-		if !s.set {set_error(d, "pipeline %s: slot %d is not bound", p.name, i); return false}
+		if !s.set {set_error(d, "pipeline %s: slot %d is not bound", vk_pipeline_name(p), i); return false}
 		w := vk.WriteDescriptorSet{sType = .WRITE_DESCRIPTOR_SET, dstBinding = u32(i), descriptorCount = 1, descriptorType = vk_descriptor_type(slot.kind)}
 		switch slot.kind {
 		case .Uniform_Buffer, .Storage_Buffer, .Storage_Buffer_RW:
 			b := pool_get(&d.buffers, base.Handle(s.buffer))
-			if b == nil {set_error(d, "pipeline %s: slot %d buffer was destroyed", p.name, i); return false}
+			if b == nil {set_error(d, "pipeline %s: slot %d buffer was destroyed", vk_pipeline_name(p), i); return false}
 			limits := &d.properties.limits
 			uniform := slot.kind == .Uniform_Buffer
 			max_range := u64(limits.maxUniformBufferRange if uniform else limits.maxStorageBufferRange)
 			alignment := u64(limits.minUniformBufferOffsetAlignment if uniform else limits.minStorageBufferOffsetAlignment)
 			if s.range > max_range || (alignment > 0 && s.offset % alignment != 0) {
-				set_error(d, "pipeline %s: slot %d binds %d bytes at offset %d (device limit %d, alignment %d)", p.name, i, s.range, s.offset, max_range, alignment)
+				set_error(d, "pipeline %s: slot %d binds %d bytes at offset %d (device limit %d, alignment %d)", vk_pipeline_name(p), i, s.range, s.offset, max_range, alignment)
 				return false
 			}
 			buffers[i] = {buffer = b.handle, offset = vk.DeviceSize(s.offset), range = vk.DeviceSize(s.range)}
 			w.pBufferInfo = &buffers[i]
 		case .Sampled_Texture, .Storage_Texture:
 			t := pool_get(&d.textures, base.Handle(s.texture))
-			if t == nil {set_error(d, "pipeline %s: slot %d holds no texture: it was destroyed or a buffer is bound there", p.name, i); return false}
+			if t == nil {set_error(d, "pipeline %s: slot %d holds no texture: it was destroyed or a buffer is bound there", vk_pipeline_name(p), i); return false}
 			view := t.view
 			if s.mip >= 0 && t.desc.mip_levels > 1 {view = t.mip_views[s.mip]}
 			layout := t.levels[max(s.mip, 0)].layout
 			if slot.kind == .Storage_Texture {layout = .GENERAL}
 			if layout != .GENERAL && layout != .SHADER_READ_ONLY_OPTIMAL && layout != .DEPTH_READ_ONLY_OPTIMAL {
-				set_error(d, "pipeline %s: slot %d texture is not readable (missing barrier before the pass)", p.name, i)
+				set_error(d, "pipeline %s: slot %d texture is not readable (missing barrier before the pass)", vk_pipeline_name(p), i)
 				return false
 			}
 			images[i] = {imageView = view, imageLayout = layout}
 			w.pImageInfo = &images[i]
 		case .Sampler:
 			sampler := pool_get(&d.samplers, base.Handle(s.sampler))
-			if sampler == nil {set_error(d, "pipeline %s: slot %d sampler was destroyed", p.name, i); return false}
+			if sampler == nil {set_error(d, "pipeline %s: slot %d sampler was destroyed", vk_pipeline_name(p), i); return false}
 			images[i] = {sampler = sampler^}
 			w.pImageInfo = &images[i]
 		case .Accel:
 			a := pool_get(&d.accels, base.Handle(s.accel))
-			if a == nil {set_error(d, "pipeline %s: slot %d acceleration structure was destroyed", p.name, i); return false}
-			if !a.built {set_error(d, "pipeline %s: slot %d acceleration structure was never built successfully", p.name, i); return false}
+			if a == nil {set_error(d, "pipeline %s: slot %d acceleration structure was destroyed", vk_pipeline_name(p), i); return false}
+			if !a.built {set_error(d, "pipeline %s: slot %d acceleration structure was never built successfully", vk_pipeline_name(p), i); return false}
 			accel_handles[i] = a.handle
 			accels[i] = {sType = .WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR, accelerationStructureCount = 1, pAccelerationStructures = &accel_handles[i]}
 			w.pNext = &accels[i]

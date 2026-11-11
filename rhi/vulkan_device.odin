@@ -62,7 +62,8 @@ Vk_Pipeline :: struct {
 	slots:      [MAX_BINDING_SLOTS]Slot_Info,
 	slot_mask:  u32,
 	uses_table: bool, // the layout has the texture table as set 1
-	name:       string,
+	name_bytes: [PIPELINE_NAME_BYTES]u8, // a copy of its name: what it was made from may go before it (vk_pipeline_name)
+	name_length: u8,
 }
 
 Vk_Accel :: struct {

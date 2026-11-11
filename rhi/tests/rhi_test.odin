@@ -48,7 +48,8 @@ rhi_fill_buffer_sets_every_byte_of_its_range_only :: proc(t: ^testing.T) {
 }
 
 // A loss stops every submission and wait at once, keeps its first cause with
-// where the GPU stopped (the labels left open), and the device is still
+// where the GPU stopped (the labels left open and the pipeline bound, by the
+// name it was made with even after that text went), and the device is still
 // destroyed cleanly.
 @(test)
 rhi_a_lost_device_fails_every_submission_and_wait_at_once :: proc(t: ^testing.T) {
@@ -57,6 +58,10 @@ rhi_a_lost_device_fails_every_submission_and_wait_at_once :: proc(t: ^testing.T)
 	defer rhi.device_destroy(d)
 	buffer := rhi.buffer_create(d, {size = 16, usage = {.Storage}, memory = .GPU, name = "lost"})
 	testing.expect(t, buffer != 0, rhi.device_error(d))
+	name := [?]u8{'f', 'i', 'l', 'l', ' ', 'L', 'a', 'v', 'a'}
+	pipeline := rhi.pipeline_create_compute(d, {shader = rhi.test_shader("fill.comp"), name = string(name[:])})
+	testing.expect(t, pipeline != 0, rhi.device_error(d))
+	name = {}
 	cmd, ok := rhi.frame_begin(d)
 	testing.expect(t, ok, rhi.device_error(d))
 	if !ok {return}
@@ -64,6 +69,7 @@ rhi_a_lost_device_fails_every_submission_and_wait_at_once :: proc(t: ^testing.T)
 	rhi.cmd_fill_buffer(cmd, buffer, 0, 16, 1)
 	rhi.cmd_pop_label(cmd)
 	rhi.cmd_push_label(cmd, "B")
+	rhi.cmd_bind_pipeline(cmd, pipeline)
 	rhi.cmd_fill_buffer(cmd, buffer, 0, 16, 2)
 	rhi.device_lose(d)
 	testing.expect(t, !rhi.frame_end(d, cmd), "the submission of the frame reports the loss")
@@ -73,6 +79,7 @@ rhi_a_lost_device_fails_every_submission_and_wait_at_once :: proc(t: ^testing.T)
 	testing.expectf(t, strings.has_suffix(text, "(provoked by device_lose)"), "the cause says it was provoked: %s", text)
 	if rhi.device_info(d).features.stop_place {
 		testing.expectf(t, strings.contains(text, "stopped in B") && !strings.contains(text, "A > B"), "the cause names the label left open, not the one closed: %s", text)
+		when rhi.SHADER_FORMAT == .Spirv {testing.expectf(t, strings.contains(text, "pipeline fill Lava"), "and the pipeline bound: %s", text)}
 	}
 	started := time.tick_now()
 	_, began := rhi.frame_begin(d)
@@ -86,6 +93,7 @@ rhi_a_lost_device_fails_every_submission_and_wait_at_once :: proc(t: ^testing.T)
 	rhi.device_lose(d)
 	_, again := rhi.device_failure(d)
 	testing.expect_value(t, again, text)
+	rhi.pipeline_destroy(d, pipeline)
 	rhi.buffer_destroy(d, buffer)
 	expect_clean(t, d)
 }

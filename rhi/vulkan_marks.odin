@@ -7,7 +7,7 @@ import "mirai:std/base"
 import vk "vendor:vulkan"
 
 // Where the GPU stopped when the device is lost or hangs. Each label pushed
-// or popped, each cmd_timestamp, pipeline bound and draw of a frame is a mark: the GPU
+// or popped, each cmd_timestamp and each pipeline bound in a frame is a mark: the GPU
 // writes the serial of the frame into the word of the mark once the work
 // recorded before it completed (VK_AMD_buffer_marker at the bottom of the
 // pipe), each into a word of its own, in a buffer of the frame slot the CPU
@@ -17,7 +17,7 @@ MAX_FRAME_MARKS :: 4096 // marks a frame records at most; past them the rest of 
 FRAME_MARK_NAME_BYTES :: 32768
 
 @(private)
-Vk_Mark_Kind :: enum u8 {Push, Pop, Section, Pipeline, Draw, End}
+Vk_Mark_Kind :: enum u8 {Push, Pop, Section, Pipeline, End}
 
 @(private)
 Vk_Mark :: struct {
@@ -79,26 +79,20 @@ vk_stopped :: proc(d: ^Device, out: []u8) -> string {
 	}
 	labels: [MAX_LABEL_DEPTH]string
 	section: [MAX_LABEL_DEPTH + 1]string
-	depth, draws := 0, 0
+	depth := 0
 	pipeline := ""
 	for mark in frame.marks[:stop] {
 		name := string(frame.names[mark.at:][:mark.length])
-		switch mark.kind {
+		#partial switch mark.kind {
 		case .Push:
 			if depth < MAX_LABEL_DEPTH {labels[depth], section[depth + 1] = name, ""}
 			depth += 1
-			draws = 0
 		case .Pop:
 			depth = max(depth - 1, 0)
-			draws = 0
 		case .Section:
 			section[min(depth, MAX_LABEL_DEPTH)] = name
-			draws = 0
 		case .Pipeline:
-			pipeline, draws = name, 0
-		case .Draw:
-			draws += 1
-		case .End:
+			pipeline = name
 		}
 	}
 	text := strings.builder_from_bytes(out)
@@ -108,7 +102,6 @@ vk_stopped :: proc(d: ^Device, out: []u8) -> string {
 	}
 	if strings.builder_len(text) == 0 {return ""}
 	if pipeline != "" {fmt.sbprintf(&text, ", with the pipeline %s", pipeline)}
-	if draws > 0 {fmt.sbprintf(&text, ", after its draw %d", draws)}
 	if stop == frame.count {fmt.sbprintf(&text, ", where its frame ended")}
 	return strings.to_string(text)
 }

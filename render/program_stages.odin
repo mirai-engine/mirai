@@ -54,7 +54,7 @@ program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now 
 		entry^ = {target = target, program = program}
 		if desc, ok := pipeline_desc_of(r, target); ok && desc.fragment != nil {
 			if entry.code = program_stage(r, desc.fragment, program); entry.code != nil {
-				desc.fragment = entry.code
+				desc.fragment, desc.name = entry.code, entry.code.name
 				if !pipeline_make(r, &entry.pipeline, graphics = desc, now = now, early = early) {entry^ = {}}
 			}
 		}
@@ -80,7 +80,7 @@ programs_ask :: proc(r: ^Renderer) {
 			program_graphics(r, &r.pipelines[id], row.program_id, early = true)
 		}
 		for program in renderer_programs(r) {
-			if program.id == row.program_id && program.domain == .Surface {program_compute(r, &r.points.stages, program, "surface_points", "surface points", early = true)}
+			if program.id == row.program_id && program.domain == .Surface {points_pipeline(r, program, early = true)}
 		}
 	}
 }
