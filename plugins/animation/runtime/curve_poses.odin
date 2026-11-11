@@ -60,9 +60,9 @@ CURVE_DRIVE_DEFAULT :: Curve_Drive{scale=1,high=1,weight=1,enabled=true}
 // frames of a flipbook face, a switch) when it is positive. parameter names a
 // value of the material (emission, roughness...) or a parameter of its
 // program; slot is the material slot of the mesh, or every slot with every.
-// It is drawn over the Material_Values of the entity without changing it:
-// each distinct value is a material of its own, so few values (a step) cost
-// little and a value that changes in every frame makes one in every frame.
+// It is the value of that name in the Material_Values of each mesh of the
+// rig while the curve plays, and none when it does not: the name is the
+// curve's.
 Curve_Material :: struct {
     rig:core.Entity `mirai:"transient"`,
     curve:[64]u8 `mirai:"text"`,
@@ -322,21 +322,20 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
     return valid
 }
 
-// The material values that the curves of rig give over the Material_Values
-// of a mesh with slots material slots, in override itself, a copy the caller
-// draws with. fits is false when they do not fit in it (the others still
-// apply); moved, when the rig has curve materials at all.
+// Writes the material values that the curves of rig give in the
+// Material_Values of entity, a mesh of it with slots material slots, and
+// takes away those of the curves that do not play. False when they do not
+// fit in it (the others still apply).
 @(private)
-curve_materials_apply :: proc(runtime:^Modifier_Runtime,rig:^Playing,slots:int,override:^erender.Material_Values) -> (fits,moved:bool) {
+curve_materials_apply :: proc(runtime:^Modifier_Runtime,rig:^Playing,slots:int,looks:^core.Table(erender.Material_Values),entity:core.Entity) -> (fits:bool) {
     fits=true
     if runtime==nil || rig==nil {return}
     first,end:=rig_rows(&runtime.curve_materials,rig.entity)
     if first>=end {return}
-    moved=true
+    look:=core.edit(looks,entity)
     curves:=playing_curves(rig)
     for row in first..<end {
         config:=&runtime.curve_materials.values[row]
-        if !config.enabled {continue}
         // The names curve_poses_apply hashed for the rig, and where it found its curve.
         name,parameter,slot:=u64(0),u64(0),i32(-1)
         if row<len(runtime.curve_material_states) && runtime.curve_material_states[row].ready && runtime.curve_material_states[row].rig==rig.entity && runtime.curve_material_states[row].geometry==runtime.geometry {
@@ -345,15 +344,22 @@ curve_materials_apply :: proc(runtime:^Modifier_Runtime,rig:^Playing,slots:int,o
         } else {
             name,parameter=base.name_hash(base.text_get(config.curve[:])),base.name_hash(base.text_get(config.parameter[:]))
         }
-        curve:=curve_slot(curves,name,&slot)
-        if curve==nil || curve.weight<=0 {continue}
-        amount:=curve.value.x
+        curve:=config.enabled?curve_slot(curves,name,&slot):nil
+        amount:=curve!=nil?curve.value.x:0
         if config.step>0 {amount=math.floor(amount/config.step+.5)*config.step}
         value:=config.offset+config.scale*amount
-        if !finite(value.x) || !finite(value.y) || !finite(value.z) || !finite(value.w) {continue}
+        plays:=curve!=nil && curve.weight>0 && finite(value.x) && finite(value.y) && finite(value.z) && finite(value.w)
         for target in 0..<max(slots,1) {
             if !config.every && target!=int(config.slot) {continue}
-            fits &&=erender.material_value(override,parameter,value,target)
+            if !plays {
+                if look!=nil {erender.material_value_drop(look,parameter,target)}
+                continue
+            }
+            if look==nil {
+                core.add(looks,entity,erender.MATERIAL_VALUES_DEFAULT)
+                look=core.staged(looks,entity)
+            }
+            fits &&=erender.material_value(look,parameter,value,target)
         }
     }
     return

@@ -366,25 +366,6 @@ Render_Sync :: struct {
     starved:bool, // a list had no memory in the frame (push)
 }
 
-// What an entity shows in a frame over its Material_Values (values_show).
-Frame_Values :: struct {
-    entity:core.Entity,
-    values:Material_Values,
-}
-
-@(storage,queue)
-Frame_Values_Requests :: struct {queue:core.Queue(Frame_Values)}
-
-// Gives an entity, for this frame alone, values and textures over its
-// Material_Values: what is only drawn and no table holds, as the texture a
-// panel of the interface is drawn into. Whatever draws the entity shows
-// them: its mesh of the world, or what replaces it, as a skinned copy; what
-// drew it is kept for the next frame (host.extras_mesh_shown). Before
-// render_sync, which takes them.
-values_show :: proc(r:^Frame_Values_Requests,e:core.Entity,values:Material_Values) {
-    core.offer(&r.queue,Frame_Values{e,values})
-}
-
 // What the sync keeps of the instance of an entity.
 Drawn :: struct {
     mesh:base.Asset_Id, // of its Mesh_Renderer when it was made: where it is in mesh_users
@@ -395,14 +376,11 @@ Drawn :: struct {
 }
 
 // What draws the mesh of an entity in place of the one its Mesh_Renderer
-// names: the copy a library poses on the GPU (a skin, a deformation), and,
-// with materialed, the values of its materials in place of its
-// Material_Values. The mesh is of its library, which takes the pose away
-// before it removes the mesh.
+// names: the copy a library poses on the GPU (a skin, a deformation). The
+// mesh is of its library, which takes the pose away before it removes the
+// mesh.
 Posed_Mesh :: struct {
     mesh:Mesh_Handle,
-    materialed:bool,
-    override:Material_Values,
 }
 
 // The posed meshes of a world, by entity. render_sync draws each as any
@@ -418,7 +396,7 @@ Posed_Meshes :: struct {
 posed_set :: proc(p:^Posed_Meshes,e:core.Entity,pose:Posed_Mesh) -> bool {
     if p==nil {return true}
     held:=core.entity_map_get(&p.poses,e)
-    if held!=nil && held.mesh==pose.mesh && held.materialed==pose.materialed && (!pose.materialed || held.override==pose.override) {return true}
+    if held!=nil && held^==pose {return true}
     if held!=nil {held^=pose} else if _,kept:=core.entity_map_put(&p.poses,e,pose);!kept {return false}
     append(&p.changed,e)
     return true
@@ -547,13 +525,10 @@ render_sync :: proc(
     suns:^core.Table(Sun,.Read),points:^core.Table(Point_Light,.Read),spots:^core.Table(Spot_Light,.Read),rects:^core.Table(Rect_Light,.Read),emissions:^core.Table(Light_Emission,.Read),skies:^core.Table(Sky,.Read),view_volumes:^core.Table(View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),
     highlights:^core.Table(Highlight,.Read),outlines:^core.Table(Outline,.Read),outline_styles:core.Ref(Outline_Styles),
     offsets:^core.Table(Draw_Offset,.Read),layers:^core.Table(Layers,.Read),bodies:core.Ref(View_Bodies),preview:core.Ref(Environment_Preview),
-    locals:^core.Table(core.Transform,.Read),cameras:^core.Table(Camera,.Read),posed:^Posed_Meshes,frame_values:^Frame_Values_Requests,
+    locals:^core.Table(core.Transform,.Read),cameras:^core.Table(Camera,.Read),posed:^Posed_Meshes,
 ) {
     a:=app.assets
     r:=app.renderer
-    shows:=core.take(&frame_values.queue)
-    app.extras.dropped+=u64(frame_values.queue.dropped)
-    frame_values.queue.dropped=0
     if a==nil || r==nil || app.ui_only {return}
     t:=Sync_Tables{worlds,meshes,values,hidden,elsewhere,parents,highlights,outlines,offsets,layers,locals,cameras,points,spots,rects,emissions,posed,{}}
     if bodies.ptr!=nil {t.owned=bodies.bodies}
@@ -576,7 +551,6 @@ render_sync :: proc(
     }
     if shown || (whole || reloaded) && view.cut {gpu.scene_world(r,world_key(id),!shown)}
     sync.world,sync.synced=id,true
-    frame_values_apply(shows,&app.extras,a,t,frame)
     // A visual instance of a mesh the renderer does not have is not drawn.
     #reverse for extra,i in app.extras.instances {
         if _,_,known:=gpu.mesh_bounds(r,extra.mesh);!known {unordered_remove(&app.extras.instances,i)}
@@ -930,21 +904,17 @@ mesh_handle :: proc(a:^host.Assets,static:Mesh_Renderer) -> (handle:Mesh_Handle,
 
 // The instance of the mesh of an entity, with its values, visibility,
 // outline and layers, and with the mesh a library poses for it in place of
-// its own (Posed_Meshes). over: what it shows this frame over its
-// Material_Values (values_show).
+// its own (Posed_Meshes).
 @(private)
-instance_make :: proc(a:^host.Assets,t:Sync_Tables,e:core.Entity,static:Mesh_Renderer,world:core.World_Transform,frame:core.Frame_Time,over:^Material_Values=nil) -> (instance:gpu.Instance_Desc,derives,ok:bool) {
+instance_make :: proc(a:^host.Assets,t:Sync_Tables,e:core.Entity,static:Mesh_Renderer,world:core.World_Transform,frame:core.Frame_Time) -> (instance:gpu.Instance_Desc,derives,ok:bool) {
     values:=MATERIAL_VALUES_DEFAULT
     if own,has_values:=core.get(t.values,e);has_values {values=own}
-    pose:=t.posed!=nil?core.entity_map_get(&t.posed.poses,e):nil
-    if pose!=nil && pose.materialed {values=pose.override}
-    if over!=nil {material_values_over(&values,over)}
     anchor,transform:=instance_place(world,frame,t.offsets,t.parents,t.worlds,t.locals,t.cameras,e)
     instance,ok=mesh_instance(a,static,transform,values)
     instance.anchor=anchor
     if !ok {return}
     // A pose whose mesh the renderer no longer has draws nothing: the mesh of the entity shows.
-    if pose!=nil {
+    if pose:=t.posed!=nil?core.entity_map_get(&t.posed.poses,e):nil;pose!=nil {
         if _,_,known:=gpu.mesh_bounds(a.renderer,pose.mesh);known {instance.mesh=pose.mesh}
     }
     instance.object_id=u64(e)
@@ -985,7 +955,7 @@ instance_given :: proc(sync:^Render_Sync,a:^host.Assets,t:Sync_Tables,at:int,fra
 // same rows with them are given in place: a color, an emission and the values
 // its instance holds, which the renderer leaves as they are when they are the
 // same. Others (a texture, an alpha, layers, another value of the standard
-// model, a posed mesh with values of its own) make the instance again.
+// model) make the instance again.
 @(private)
 values_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tables,c:^core.Changes) {
     clear(&sync.tinted);clear(&sync.tinted_colors);clear(&sync.tinted_emissions);clear(&sync.tinted_values)
@@ -994,63 +964,15 @@ values_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Ta
         at:=instance_of(sync,e)
         if at<0 || sync.drawn.values[at].changed {continue}
         static,has_mesh:=core.get(t.meshes,e)
-        pose:=t.posed!=nil?core.entity_map_get(&t.posed.poses,e):nil
         made,usable:=mesh_instance(a,static,1,core.at(t.values,row))
         material,slots,overlays,held:=gpu.scene_instance_materials(r,u32(at))
-        if !has_mesh || pose!=nil && pose.materialed || !usable || !held || made.material!=material || made.slot_materials!=slots || made.overlays!=overlays {
+        if !has_mesh || !usable || !held || made.material!=material || made.slot_materials!=slots || made.overlays!=overlays {
             instance_changed(sync,e)
             continue
         }
         push(sync,&sync.tinted,u32(at));push(sync,&sync.tinted_colors,made.tint);push(sync,&sync.tinted_emissions,made.emission);push(sync,&sync.tinted_values,made.material_values)
     }
 }
-
-// What entities show this frame over their Material_Values (values_show), in
-// what draws each one: what replaces its mesh, whose rows take them, or else
-// a copy of its mesh of the world that does. What drew each one is kept for
-// the next frame (host.extras_mesh_shown).
-@(private)
-frame_values_apply :: proc(shows:[]Frame_Values,extras:^host.Frame_Extras,a:^host.Assets,t:Sync_Tables,frame:core.Frame_Time) {
-    extras.meshes_shown_count=0
-    for &request in shows {
-        e:=request.entity
-        static,has_mesh:=core.get(t.meshes,e)
-        if !has_mesh {continue}
-        shown:^gpu.Instance_Desc
-        for &extra in host.extras_instances(extras) {
-            if extra.replace_source && extra.object_id==u64(e) {shown=&extra;break}
-        }
-        if shown==nil {
-            world,placed:=core.get(t.worlds,e)
-            if !placed {continue}
-            instance,_,made:=instance_make(a,t,e,static,world,frame,&request.values)
-            if !made || instance.hidden {continue}
-            instance.copy_owner,instance.replace_source=FRAME_VALUES_OWNER,true
-            if !host.extras_instance_add(extras,instance) {continue}
-            added:=host.extras_instances(extras)
-            shown=&added[len(added)-1]
-        } else {
-            // What replaces the mesh was made without them: each slot they name shows a row with them, in place of what its instance held for it.
-            for slot in 0..<u32(MATERIAL_SLOTS) {
-                if !material_values_slot(&request.values,int(slot)) {continue}
-                row,at:=mesh_slot_row(a,static,shown,slot)
-                values:=host.assets_material_values(a,row)
-                material_values_apply(a,&values,&request.values,int(slot))
-                derived,derives:=host.assets_material_derive(a,values)
-                if !derives {continue}
-                if at!=nil {at^=derived+1} else {shown.material=gpu.Material_Handle(derived)}
-            }
-        }
-        if extras.meshes_shown_count<len(extras.meshes_shown) {
-            extras.meshes_shown[extras.meshes_shown_count]={object=u64(e),mesh=shown.mesh,anchor=shown.anchor,transform=shown.transform}
-            extras.meshes_shown_count+=1
-        }
-    }
-}
-
-// What draws a mesh of the world with the values of a frame.
-@(private)
-FRAME_VALUES_OWNER :: u64(0x736c6f7400000000)
 
 // Keeps through a round of derived rows those an instance shows: its
 // material, those of its slots and its layers.
@@ -1359,7 +1281,6 @@ emission_material :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Syn
         shown.slot_materials=slots
         values:=MATERIAL_VALUES_DEFAULT
         if own,has_values:=core.get(t.values,e);has_values {values=own}
-        if pose:=t.posed!=nil?core.entity_map_get(&t.posed.poses,e):nil;pose!=nil && pose.materialed {values=pose.override}
         made,_:=mesh_instance(a,static,1,values)
         shown.material_values=made.material_values
     }
@@ -1627,6 +1548,27 @@ material_texture :: proc "contextless" (o:^Material_Values,name:u64,slot:int,tex
     }
     o.texture_slots[at],o.texture_names[at],o.textures[at],o.shown[at]=u8(slot),name,texture,shown
     return true
+}
+
+// Shows a texture the renderer made at run time (the panel of a widget, the
+// image of a camera) in a slot of an entity, in place of the one the entity
+// showed that way: as the base color of a white surface or, lit, as the light
+// of a black one. 0 shows none.
+material_screen :: proc(o:^Material_Values,slot:int,texture:gpu.Texture_Handle,lit:=false,emission:f32=0) {
+    color,light,color_map,light_map:=base.name_hash("base_color"),base.name_hash("emission"),base.name_hash("maps.base_color"),base.name_hash("maps.emission")
+    for i:=len(o.shown)-1;i>=0;i-=1 {
+        if o.shown[i]==0 {continue}
+        was:=int(o.texture_slots[i])
+        material_texture_drop(o,color_map,was);material_texture_drop(o,light_map,was)
+        material_value_drop(o,color,was);material_value_drop(o,light,was)
+    }
+    if texture==0 {return}
+    material_texture(o,lit?light_map:color_map,slot,{},texture)
+    material_value_hashed(o,color,lit?0:1,slot)
+    if lit {
+        material_texture(o,color_map,slot,{})
+        material_value_hashed(o,light,emission,slot)
+    }
 }
 
 // Takes the texture of one name of a slot away: that of the material shows again.

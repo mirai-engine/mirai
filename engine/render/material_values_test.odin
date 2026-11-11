@@ -123,3 +123,26 @@ the_values_an_instance_holds_give_the_row_they_derive :: proc(t:^testing.T) {
     testing.expect(t,shown!=row && shown==want,"the values for the row, and not those for another")
     testing.expect_value(t,material_row_held(&a,row,&gpu.Instance_Material_Values{}),row)
 }
+
+// A library shows a texture the renderer made on an entity by writing its
+// Material_Values: in one slot, given again without a change, and taken away
+// leaving the names of the others.
+@(test)
+a_screen_is_the_values_of_one_slot_and_goes_with_them :: proc(t:^testing.T) {
+    o:=MATERIAL_VALUES_DEFAULT
+    color,light,roughness:=base.name_hash("base_color"),base.name_hash("emission"),base.name_hash("roughness")
+    testing.expect(t,material_value(&o,roughness,{0.2,0,0,0},1))
+    material_screen(&o,1,7)
+    testing.expect(t,o.texture_count==1 && o.shown[0]==7 && o.texture_slots[0]==1 && o.texture_names[0]==base.name_hash("maps.base_color"))
+    testing.expect(t,o.count==2 && o.values[material_value_find(&o,1,color)].x==1)
+    same:=o
+    material_screen(&o,1,7)
+    testing.expect(t,o==same,"given again it changes nothing: its entity is not made again")
+    // As light, in another slot: the one that showed it lets go of it.
+    material_screen(&o,2,9,true,200)
+    testing.expect(t,o.texture_count==2 && material_value_find(&o,1,color)<0 && o.values[material_value_find(&o,2,color)].x==0 && o.values[material_value_find(&o,2,light)].x==200)
+    shown:=material_texture_find(&o,2,base.name_hash("maps.emission"))
+    testing.expect(t,shown>=0 && o.shown[shown]==9)
+    material_screen(&o,0,0)
+    testing.expect(t,o.texture_count==0 && o.count==1 && material_value_find(&o,1,roughness)==0)
+}

@@ -7,7 +7,6 @@ import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import erender "mirai:engine/render"
 import "mirai:host"
-import "mirai:std/base"
 import mm "mirai:std/math"
 
 // Screens that show what a camera sees. The image of a camera is a feed:
@@ -71,6 +70,7 @@ Fed :: struct {
 Monitors :: struct {
     fed:[FEED_CAPACITY]Fed,
     frame:u64,
+    seen:core.Seen, // of the screens: one that went stops showing its image
 }
 
 @(private)
@@ -123,18 +123,20 @@ asked_of :: proc "contextless" (asked:[]Asked,screen:Screen) -> int {
 }
 
 // What the screens ask of their cameras into the frame, each feed at the
-// level its screens ask for, and the screens drawn with the image of theirs.
+// level its screens ask for, and the image of each screen in the slot of the
+// Material_Values of its entity.
 @(step="render",loops="game editor",before="render_sync")
 monitors_render :: proc(
     state:^Monitors,screens:^core.Table(Screen,.Read),cameras:^core.Table(erender.Camera,.Read),exposures:^core.Table(erender.Exposure,.Read),
     meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),
-    looks:^core.Table(erender.Material_Values,.Read),hidden:^core.Table(erender.Hidden,.Read),
-    highlights:^core.Table(erender.Highlight,.Read),outlines:^core.Table(erender.Outline,.Read),offsets:^core.Table(erender.Draw_Offset,.Read),layers:^core.Table(erender.Layers,.Read),
-    view:core.View,app:^host.App,frame:core.Frame_Time,view_volumes:^core.Table(erender.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),
-    locals:^core.Table(core.Transform,.Read),
+    looks:^core.Table(erender.Material_Values),hidden:^core.Table(erender.Hidden,.Read),
+    view:core.View,app:^host.App,view_volumes:^core.Table(erender.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),
 ) {
     if app.renderer==nil || app.assets==nil {return}
     state.frame+=1
+    for e in core.changes(screens,&state.seen).gone {
+        if look:=core.edit(looks,e);look!=nil {erender.material_screen(look,0,0)}
+    }
     if core.count(screens)==0 {
         for &fed in state.fed {fed.entity=core.NONE}
         return
@@ -232,28 +234,17 @@ monitors_render :: proc(
     for row in 0..<core.count(screens) {
         e:=core.entity_at(screens,row)
         screen:=core.at(screens,row)
+        texture:erender.Texture_Handle
         feed:=screen.width>=LEVEL_MIN_SIZE && screen.height>=LEVEL_MIN_SIZE?asked_of(asked[:count],screen):-1
-        if feed<0 || asked[feed].place<0 {continue}
-        fed:=&state.fed[asked[feed].place]
-        static,has_mesh:=core.get(meshes,e)
-        world,placed:=core.get(worlds,e)
-        if fed.shown<0 || fed.textures[fed.shown]==0 || !has_mesh || !placed || erender.is_hidden(hidden,parents,e) {continue}
-        look:=erender.MATERIAL_VALUES_DEFAULT
-        if value,exists:=core.get(looks,e);exists {look=value}
+        if feed>=0 && asked[feed].place>=0 {
+            if fed:=&state.fed[asked[feed].place];fed.shown>=0 {texture=fed.textures[fed.shown]}
+        }
+        look:=core.edit(looks,e)
+        if look==nil && texture!=0 {
+            core.add(looks,e,erender.MATERIAL_VALUES_DEFAULT)
+            look=core.staged(looks,e)
+        }
         // The slot of the screen gives the image as its light, and reflects none.
-        slot:=int(min(screen.slot,erender.MATERIAL_SLOTS-1))
-        erender.material_texture(&look,base.name_hash("maps.emission"),slot,{},fed.textures[fed.shown])
-        erender.material_texture(&look,base.name_hash("maps.base_color"),slot,{})
-        erender.material_value(&look,"emission",screen.brightness,slot)
-        erender.material_value(&look,"base_color",0,slot)
-        anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,locals,cameras,e)
-        shown,usable:=erender.mesh_instance(app.assets,static,transform,look)
-        shown.anchor=anchor
-        if !usable {continue}
-        shown.object_id=u64(e)
-        shown.copy_owner,shown.replace_source=base.name_hash("monitors"),true
-        shown.highlight=erender.instance_outline(highlights,outlines,e)
-        if in_layers,exists:=core.get(layers,e);exists {shown.layers=in_layers.mask}
-        erender.instance_add(&app.extras,shown)
+        if look!=nil {erender.material_screen(look,int(min(screen.slot,erender.MATERIAL_SLOTS-1)),texture,true,screen.brightness)}
     }
 }

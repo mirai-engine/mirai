@@ -221,8 +221,9 @@ curve_drives_combine_clamp_and_replace_and_full_poses_blend_before_additive_ones
 }
 
 @(test)
-curve_materials_set_values_of_the_material_over_the_override_rounded_to_their_step :: proc(t:^testing.T) {
-    face:=core.entity_make(1,1)
+curve_materials_write_the_values_of_the_entity_rounded_to_their_step :: proc(t:^testing.T) {
+    entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
+    face:=core.create(&entities)
     playback:Playback;defer playback_free(&playback)
     playback.frame=1
     follow_rig(&playback,face,3,{"","root"},{-1,0},{mm.TRANSFORM_IDENTITY,mm.TRANSFORM_IDENTITY})
@@ -237,37 +238,48 @@ curve_materials_set_values_of_the_material_over_the_override_rounded_to_their_st
     base.text_set(blush.curve[:],"blush");base.text_set(blush.parameter[:],"emission")
     testing.expect(t,pose_profile_check({curve_materials={frame,blush}}))
     testing.expect(t,modifier_append(&modifiers.curve_materials,face,frame) && modifier_append(&modifiers.curve_materials,face,blush))
-    override:erender.Material_Values
-    erender.material_value(&override,base.name_hash("frame"),{9,9,9,9},1) // the entity's own, which the curve replaces in the drawing
-    applied,moved:=curve_materials_apply(&modifiers,state,2,&override)
-    testing.expect(t,applied && moved)
+    looks:core.Table(erender.Material_Values);defer core.table_destroy(&looks)
+    own:erender.Material_Values
+    erender.material_value(&own,base.name_hash("frame"),{9,9,9,9},1) // the entity's own, which the curve takes
+    core.add(&looks,face,own);core.table_settle(&looks,&entities)
+    apply :: proc(modifiers:^Modifier_Runtime,state:^Playing,looks:^core.Table(erender.Material_Values),entities:^core.Entities) -> (look:erender.Material_Values,fits:bool) {
+        fits=curve_materials_apply(modifiers,state,2,looks,state.entity)
+        core.table_settle(looks,entities)
+        look,_=core.get(looks,state.entity)
+        return
+    }
     find :: proc(o:^erender.Material_Values,slot:u8,name:string) -> (value:[4]f32,found:bool) {
         for i in 0..<int(o.count) {if o.slots[i]==slot && o.names[i]==base.name_hash(name) {return o.values[i],true}}
         return
     }
-    value,found:=find(&override,1,"frame")
-    testing.expect(t,found && value==[4]f32{3,3,3,3} && override.count==3,"rounded to its step, over the value of the override")
-    value,found=find(&override,0,"emission");testing.expect(t,found && value==[4]f32{0,0,.5,1})
-    value,found=find(&override,1,"emission");testing.expect(t,found && value==[4]f32{0,0,.5,1},"every slot")
+    drawn,applied:=apply(&modifiers,state,&looks,&entities)
+    value,found:=find(&drawn,1,"frame")
+    testing.expect(t,applied && found && value==[4]f32{3,3,3,3} && drawn.count==3,"rounded to its step, in place of the value the entity had")
+    value,found=find(&drawn,0,"emission");testing.expect(t,found && value==[4]f32{0,0,.5,1})
+    value,found=find(&drawn,1,"emission");testing.expect(t,found && value==[4]f32{0,0,.5,1},"every slot")
     // The tick of the animation hashes their names and finds their curves once; the
     // drawing reads them, and a curve renamed in the row is found again by its name.
     problems:core.Problems
     testing.expect(t,curve_poses_apply(state,&playback,&modifiers,false,&problems) && len(modifiers.curve_material_states)==2)
     bound:=modifiers.curve_material_states[0]
     testing.expect(t,bound.ready && bound.rig==face && bound.to==base.name_hash("frame") && bound.slot>=0 && state.curves[bound.slot].target==base.name_hash("mouth_frame"))
-    drawn:erender.Material_Values
-    applied,moved=curve_materials_apply(&modifiers,state,2,&drawn)
-    value,found=find(&drawn,1,"frame");testing.expect(t,applied && moved && found && value==[4]f32{3,3,3,3})
+    drawn,applied=apply(&modifiers,state,&looks,&entities)
+    value,found=find(&drawn,1,"frame");testing.expect(t,applied && found && value==[4]f32{3,3,3,3})
     base.text_set(modifiers.curve_materials.values[0].curve[:],"blush");modifiers.geometry+=1
     testing.expect(t,curve_poses_apply(state,&playback,&modifiers,false,&problems))
-    drawn={}
-    curve_materials_apply(&modifiers,state,2,&drawn)
+    drawn,_=apply(&modifiers,state,&looks,&entities)
     value,found=find(&drawn,1,"frame");testing.expect(t,found && value==[4]f32{1,1,1,1},"blush .5 rounded to its step")
-    // A full override keeps what fits and says so; a bad row is refused by the profile.
+    // A curve that does not play takes its values away.
+    for &curve in state.curves {curve.weight=0}
+    drawn,applied=apply(&modifiers,state,&looks,&entities)
+    testing.expect(t,applied && drawn.count==0)
+    for &curve in state.curves {curve.weight=1}
+    // Full Material_Values keep what fits and say so; a bad row is refused by the profile.
     full:erender.Material_Values
     for i in 0..<erender.MATERIAL_VALUES_CAPACITY {erender.material_value(&full,u64(i+1),{},0)}
-    applied,moved=curve_materials_apply(&modifiers,state,2,&full)
-    testing.expect(t,!applied && moved && int(full.count)==erender.MATERIAL_VALUES_CAPACITY)
+    core.edit(&looks,face)^=full;core.table_settle(&looks,&entities)
+    drawn,applied=apply(&modifiers,state,&looks,&entities)
+    testing.expect(t,!applied && int(drawn.count)==erender.MATERIAL_VALUES_CAPACITY)
     nan:=f32(0);nan/=nan
     bad:=frame;bad.step=-1
     testing.expect(t,!pose_profile_check({curve_materials={bad}}))

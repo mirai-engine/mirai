@@ -656,7 +656,7 @@ widgets_out_of_sight_are_not_built_and_the_nearest_come_first :: proc(t:^testing
     testing.expect_value(t,widget_unit(&view,on_screen,{reference={2000,1000}},1.5),f32(1.5))
     testing.expect_value(t,widget_unit(&view,widget,{reference={2000,1000}},1.5),widget.scale)
     app:host.App
-    _,mesh:=mesh_seen(app.renderer,&app.extras,&view,core.Entity(7),{0,0,10})
+    _,mesh:=mesh_seen(app.renderer,nil,&view,core.Entity(7),{0,0,10})
     testing.expect(t,mesh,"a mesh not drawn yet is seen: the frame that draws it says where it is")
     candidates:=[?]Widget_Candidate{{player=1,distance=3},{player=0,distance=9},{player=1,distance=1},{player=0,distance=2}}
     sort_candidates(candidates[:])

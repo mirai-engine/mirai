@@ -57,8 +57,7 @@ Skin_Instance :: struct {
 
 Skin_Update :: struct {slot:int,drawn,basis:mm.Transform,exact:u64}
 // morphed: its weights changed, and go to the renderer with the palette or on their own.
-// materialed: the curves of its rig move values of its materials, in override.
-Skin_Draw :: struct {work,slot:int,morphed,materialed:bool,override:erender.Material_Values}
+Skin_Draw :: struct {work,slot:int,morphed:bool}
 
 // The rigs of the meshes the application loaded, by asset: one per
 // application, which every world reads.
@@ -209,11 +208,12 @@ skin_rig_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.As
 // own pose, a mesh with Pose_Source the pose of its rig, and a mesh with
 // targets and no skin its weights alone, by one joint. The copy it poses is
 // the mesh the renderer draws its entity with (erender.Posed_Meshes): placed,
-// tinted, hidden and outlined as any mesh of an entity.
+// tinted, hidden and outlined as any mesh of an entity. The material values
+// the curves of a rig move are written in the Material_Values of its meshes.
 @(step="render",loops="game editor",before="render_sync")
 animation_skin :: proc(
     meshes:^core.Table(erender.Mesh_Renderer,.Read),skins:^core.Table(Pose_Source,.Read),parents:^core.Table(core.Parent,.Read),
-    worlds:^core.Table(core.World_Transform,.Read),looks:^core.Table(erender.Material_Values,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),looks:^core.Table(erender.Material_Values),
     hidden:^core.Table(erender.Hidden,.Read),elsewhere:^core.Table(erender.Drawn_Elsewhere,.Read),
     cache:^Skin_Runtime,state:^Skin_Instances,assets:^host.Assets,renderer:^erender.Renderer,poses:^erender.Posed_Meshes,job_system:^jobs.Job_System,allocator:runtime.Allocator,time:core.Time,frame:core.Frame_Time,playback:core.Ref(Playback),
     morphs:core.Ref(Morph_Playback),problems:^core.Problems,
@@ -289,15 +289,8 @@ animation_skin :: proc(
         instance.seen=state.frame
         source:=host.assets_mesh(assets,static.mesh)
         if source==nil || source.handle==host.ASSETS_MESH_NONE {continue}
-        look:=erender.MATERIAL_VALUES_DEFAULT
-        if value,exists:=core.get(looks,entity);exists {look=value}
-        // The material values the curves of its rig move, drawn over its own.
-        materialed:=false
-        if !rigid && modifiers.ptr!=nil {
-            fits:bool
-            if fits,materialed=curve_materials_apply(modifiers.ptr,pose,int(source.slot_count),&look);!fits {
-                core.report(problems,entity,"animation.curve_material","the curve materials of the .character of the rig of this entity, with its Material_Values, set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_VALUES_CAPACITY)
-            }
+        if !rigid && modifiers.ptr!=nil && !curve_materials_apply(modifiers.ptr,pose,int(source.slot_count),looks,entity) {
+            core.report(problems,entity,"animation.curve_material","the curve materials of the .character of the rig of this entity, with its Material_Values, set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_VALUES_CAPACITY)
         }
         bones:=len(pose.local) if !rigid else 0
         // Not drawn in the last frame (new, or shown again): it shows the pose and the weights of the
@@ -327,8 +320,6 @@ animation_skin :: proc(
             // Morphs deform from their first weights; a pose waits for a palette off the bind.
             if (rigid || len(rig.morphs)>0) && !skin_copy(renderer,instance,rig,problems,entity) {skin_instance_free(renderer,instance);continue}
         }
-        // Curve materials are drawn with the copy: the mesh of the world shared at the bind has none.
-        if materialed && !instance.copied && !skin_copy(renderer,instance,rig,problems,entity) {skin_instance_free(renderer,instance);continue}
         if !rigid && (instance.pose!=owner || instance.bound!=pose.bound) {
             instance.pose=owner;instance.bound=pose.bound;instance.reset=true
         }
@@ -370,7 +361,7 @@ animation_skin :: proc(
                 append(&state.candidates,Budget_Candidate{entity=entity,slot=u32(slot),policy=policy,force=instance.reset || !instance.copied || !time.playing})
             }
         }
-        append(&state.draws,Skin_Draw{work=work_index,slot=slot,morphed=morphed,materialed=materialed,override=materialed?look:{}})
+        append(&state.draws,Skin_Draw{work=work_index,slot=slot,morphed=morphed})
     }
     if !palette_workspace_prepare(&state.workspace,len(state.instances.values),allocator) {memory_problem(problems,core.NONE,"the skinned meshes of the world, so none is drawn in this frame");return}
     if budget!=nil {
@@ -424,7 +415,7 @@ animation_skin :: proc(
         }
         // A copy that still goes to the GPU is the mesh of its entity too: the renderer
         // draws nothing of it until all of the copy went, and it shows posed.
-        if !erender.posed_set(poses,state.instances.entities[draw.slot],{mesh=state.instances.values[draw.slot].mesh,materialed=draw.materialed,override=draw.override}) {
+        if !erender.posed_set(poses,state.instances.entities[draw.slot],{mesh=state.instances.values[draw.slot].mesh}) {
             memory_problem(problems,state.instances.entities[draw.slot],"its skinned mesh")
         }
     }
