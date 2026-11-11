@@ -116,7 +116,7 @@ drop_one :: proc(s:^editor.Session,tool:^Drop_Tool,point:[3]f32) -> string {
     w:=editor.edited_world(s)
     _,meshes:=core.world_table(w,erender.Mesh_Renderer)
     _,colliders:=core.world_table(w,phys.Collider)
-    e:=editor.entity_create(s,{preset=.Empty,name="Dropped mesh",transform=core.from_math(drop_pose(tool,point))})
+    e:=editor.entity_create(s,{name="Dropped mesh",transform=core.from_math(drop_pose(tool,point))})
     if e==core.NONE || meshes==nil || colliders==nil {drop_end(s,tool,false);return "The mesh could not be made"}
     mesh,collider:=tool.mesh,phys.COLLIDER_DEFAULT
     collider.kind=.Hull

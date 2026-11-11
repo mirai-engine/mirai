@@ -213,8 +213,13 @@ Overlaps:
   entity → body and entity → joint links in two `core.Entity_Map`: dense, the size of what the
   simulation has and not of the entity indices. The link of another generation of an index is
   released before taking its place; without memory for the links, synchronization waits for the next
-  tick (`physics.memory`). Copying it (rollback, Play) copies the simulation state block by block
-  (`sim.world_state_copy`) with its hulls, meshes and heightfields. The copy that keeps a history
+  tick (`physics.memory`). A link holds the handles of what was made and a hash of what its
+  shapes were made from; which rows changed comes from their stamps (`core.changes`), and taking a
+  row again changes nothing in the simulation, as after a rollback that brings the row back.
+  Copying it (rollback, Play) copies the simulation state block by block (`sim.world_state_copy`)
+  with its hulls, meshes and heightfields, and the links, the geometry sources and the owned bodies
+  by chunks stamped as the pools are: a history copy of a tick where nothing changed writes none of
+  them. The copy that keeps a history
   (`state_copy_kept`, the storage's `copy_kept`) is a kept world (`sim.world_kept_init`): its pools
   have what the original uses with margin and its `desc` the capacities of the original, with which
   the world that is copied back is made; it never advances. What each geometry slot has is told by
@@ -671,8 +676,9 @@ Physics does not know the network: both share `core` tables.
     (`step_followed`), and does not walk by its `Character_Move`: neither its step nor what it
     touches moves it away from what the other owner shows. It does not push like a kinematic body:
     what it touches moves aside by itself.
-  - Following and manipulation are two sources of the same hold (`Link.hold`): the first that takes
-    the body makes it kinematic and stores its type, the last that releases it gives it back, and
+  - Following and manipulation are two sources of the same hold (`Physics_State.held`, which lists
+    only what a manipulation or a pose target steers): the first that takes the body makes it
+    kinematic and stores its type, the last that releases it gives it back, and
     the target's pose goes before that of manipulation. While the target continues,
     `manipulation_target` stores the destination without moving the body and `manipulation_end`
     releases the manipulation without changing its type or velocity; when following ends, a
@@ -682,7 +688,7 @@ Physics does not know the network: both share `core` tables.
     parent.
 - **`core.Simulation_Hash`**: with `core.Sync_Check.on`, the step leaves the simulation hash to
   compare two runs.
-- **Proxy** (`proxies.odin`): `proxy_set/proxy_pose/proxy_written` make an entity represent a body
+- **Proxy** (`proxies.odin`): `proxy_set` makes an entity represent a body
   that another library owns.
   - It accepts requests, places, manipulation, constraints and pose targets like a body of its own.
   - `proxy_remove` removes the link and its joints, restores a pending hold and never destroys the

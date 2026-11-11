@@ -261,7 +261,7 @@ effect_subject_set :: proc(p:^Effect_Document,id:base.Asset_Id) {
 @(private)
 effect_sync :: proc(a:^host.Assets,p:^Effect_Document) {
     if p.id=={} || a==nil {return}
-    if record,found:=asset.registry_find(&a.registry,p.id);!found || record.kind!=effect.KIND {
+    if record,found:=asset.registry_find(&a.registry,p.id);!found || record.kind!=effect.PARTICLE_KIND {
         effect_subject_set(p,{})
         return
     }

@@ -226,7 +226,7 @@ effect_subject :: proc(s:^editor.Session,file:^asset.Registry_File,clip:u32,subj
         if !ok {return false}
         shown.id,shown.info=file.id,view.info^
     }
-    subject.provider=effect.KIND
+    subject.provider=effect.PARTICLE_KIND
     mem.copy(&subject.data,&shown,size_of(shown))
     return true
 }

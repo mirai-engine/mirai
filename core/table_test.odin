@@ -521,7 +521,7 @@ a_table_holds_rows_by_entity_only_where_it_has_rows :: proc(t:^testing.T) {
     pages:=0
     for page in names.rows {if len(page)>0 {pages+=1}}
     testing.expect_value(t,pages,2)
-    testing.expect(t,cap(names.gone)==0,"no entity went: there is no room for them yet")
+    testing.expect(t,cap(names.gone.items)==0,"no entity went: there is no room for them yet")
     value,found:=get(&names,far)
     testing.expect(t,found && value==2 && !has(&names,entity_make(2*ROWS_PAGE,1)))
     testing.expect(t,table_copy(&copied,&names))

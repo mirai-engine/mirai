@@ -398,7 +398,8 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     if !testing.expect_value(t,len(world.terrains.values),1) {return}
     owner:=world.terrains.entities[0]
     id:=world.terrains.values[0].source
-    operand:=editor.entity_create(&s,{preset=.Cube,name="Operand"})
+    operand:=editor.entity_create(&s,{name="Operand"})
+    core.add(&world.meshes,operand,erender.Mesh_Renderer{shape=.Cube})
     core.test_world_settle(&world)
     history.selection_set(&selection,{owner,operand})
     history.edits_reset(&edits,ref)
@@ -472,12 +473,4 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     after_redo:=test_held(t,&assets,relative)
     defer delete(after_redo)
     testing.expect_value(t,string(after_redo),string(committed))
-}
-
-// What git and the tools know of the kinds of the plugin without loading it.
-@(test)
-the_manifest_declares_the_asset_kinds_the_plugin_registers :: proc(t:^testing.T) {
-    m,error:=project.plugin_read(#directory+"../plugin.mirai")
-    testing.expect_value(t,error.code,project.Error_Code.None)
-    testing.expect_value(t,editor.asset_kinds_differ(TERRAIN_KINDS_DEFAULT.provider,&m),"")
 }

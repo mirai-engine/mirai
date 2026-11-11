@@ -192,9 +192,9 @@ Test_Secret :: struct {ammo:u16,stamina:f32 `mirai:"precision=0.01"`}
 Test_Input :: struct {move:[2]f32 `mirai:"min=-1,max=1,precision=0.01"`,buttons:u8}
 @(private)
 Test_Hit :: struct {damage:i32,from:base.Entity,point:[3]f32 `mirai:"precision=0.01"`}
-// 4 KB: more than a datagram carries.
+// 6 KB, 4 KB of it an array of bytes: more than a datagram carries.
 @(private)
-Test_Big :: struct {values:[1023]u32,count:u32}
+Test_Big :: struct {values:[511]u32,count:u32,bytes:[4096]u8}
 
 @(private)
 Test_Protocol :: struct {

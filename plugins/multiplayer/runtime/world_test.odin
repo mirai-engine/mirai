@@ -32,9 +32,9 @@ Pair :: struct {
     tick:u64,
 }
 
-// A message of 4 KB, from a client: more than a datagram carries.
+// A message of 6 KB, 4 KB of it an array of bytes, from a client: more than a datagram carries.
 @(private="file")
-Net_Test_Big :: struct {values:[1023]u32,count:u32}
+Net_Test_Big :: struct {values:[511]u32,count:u32,bytes:[4096]u8}
 
 // big: the protocol has Net_Test_Big after the messages of the session.
 @(private="file")
@@ -283,10 +283,13 @@ the_connections_and_the_messages_that_arrive_reach_the_first_tick_after_them :: 
     s.received=received[:]
     defer {delete(s.arrived);delete(received[0].blocks)}
     ref:=core.world_ref(&world,&info)
-    // The connection events and the messages the tick has.
-    tick :: proc(ref:core.World_Ref,app:^host.App,s:^Net_Session,w:^Net_Test_World) -> [2]int {
+    // The connection events a reader of each tick gets, and the messages the tick has.
+    seen:u64
+    arrived:[]Connection_Event
+    tick :: proc(ref:core.World_Ref,app:^host.App,s:^Net_Session,w:^Net_Test_World,seen:^u64,arrived:^[]Connection_Event) -> [2]int {
         net_tick_head(ref,app,s,&w.remote,&w.connections,&w.messages,nil)
-        return {len(w.connections.events.items),len(core.inbox(&w.messages,0,u32).items)}
+        arrived^,_=core.log_since(w.connections.events.log,seen)
+        return {len(arrived^),len(core.inbox(&w.messages,0,u32).items)}
     }
     // As event_deliver leaves it.
     message :: proc(s:^Net_Session,value:u32) {
@@ -297,29 +300,29 @@ the_connections_and_the_messages_that_arrive_reach_the_first_tick_after_them :: 
     }
     append(&s.arrived,Connection_Event{kind=.Connected,connection=1})
     message(&s,10)
-    testing.expect_value(t,tick(ref,&app,&s,&world),[2]int{1,1})
-    testing.expect_value(t,tick(ref,&app,&s,&world),[2]int{0,0})
+    testing.expect_value(t,tick(ref,&app,&s,&world,&seen,&arrived),[2]int{1,1})
+    testing.expect_value(t,tick(ref,&app,&s,&world,&seen,&arrived),[2]int{0,0})
     // Two frames without a tick.
     append(&s.arrived,Connection_Event{kind=.Connected,connection=2})
     message(&s,11)
     append(&s.arrived,Connection_Event{kind=.Disconnected,connection=1,reason=.Timeout})
     message(&s,12)
-    testing.expect_value(t,tick(ref,&app,&s,&world),[2]int{2,2})
-    testing.expect_value(t,world.connections.events.items[1],Connection_Event{kind=.Disconnected,connection=1,reason=.Timeout})
+    testing.expect_value(t,tick(ref,&app,&s,&world,&seen,&arrived),[2]int{2,2})
+    testing.expect_value(t,arrived[1],Connection_Event{kind=.Disconnected,connection=1,reason=.Timeout})
     second:=core.inbox(&world.messages,0,u32).items[1]
     testing.expect(t,second.value==12 && second.sender==4,"in the order they arrived, with who sent them")
     world.time.resimulating=true
     append(&s.arrived,Connection_Event{kind=.Connected,connection=3})
     message(&s,13)
-    testing.expect_value(t,tick(ref,&app,&s,&world),[2]int{2,2})
+    testing.expect_value(t,tick(ref,&app,&s,&world,&seen,&arrived),[2]int{0,2})
     world.time.resimulating=false
-    testing.expect_value(t,tick(ref,&app,&s,&world),[2]int{1,1})
+    testing.expect_value(t,tick(ref,&app,&s,&world,&seen,&arrived),[2]int{1,1})
 }
 
-// A message of 4 KB a client sends reaches the inbox of its type on the
-// server whole, with the connection that sent it.
+// A message of 6 KB with an array of 4 KB of bytes a client sends reaches the
+// inbox of its type on the server whole, with the connection that sent it.
 @(test)
-a_typed_message_of_4_kb_reaches_the_inbox_of_its_type_whole :: proc(t:^testing.T) {
+a_typed_message_of_6_kb_with_4_kb_of_bytes_reaches_the_inbox_of_its_type_whole :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
     p:=new(Pair)
     defer free(p)
@@ -331,6 +334,7 @@ a_typed_message_of_4_kb_reaches_the_inbox_of_its_type_whole :: proc(t:^testing.T
     connection:=own_connection(core.ref(&p.sessions[1]))
     value:Net_Test_Big
     for &v,i in value.values {v=u32(i*2654435761)}
+    for &b,i in value.bytes {b=u8(i*31+i/256)}
     value.count=len(value.values)
     testing.expect(t,send(&client.outbox,value))
     events_send(&p.sessions[1],&client.outbox)

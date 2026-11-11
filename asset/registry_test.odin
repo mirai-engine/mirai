@@ -560,9 +560,9 @@ registry_mounts_a_guest_folder_that_never_takes_an_id_the_registry_has :: proc(t
 // What the imports of the sources of a folder build that nobody edits is in
 // the imported folder that goes with it, each file named by its id and the
 // key of what it was built from, and is listed where the sidecar that lists it
-// is now: beside its source for the root of an import, in a folder named
-// after the source file for the rest. A sidecar that moves with its source
-// moves the listing; one whose source is gone lists nothing.
+// is now, in the folder it names: never by the order of a scan. A sidecar
+// that moves with its source moves the listing, also through a refresh; one
+// whose source is gone lists nothing.
 @(test)
 registry_lists_the_imported_folder_by_where_the_sources_are :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
@@ -572,26 +572,28 @@ registry_lists_the_imported_folder_by_where_the_sources_are :: proc(t:^testing.T
     imported:=fmt.tprintf("%s/game/.mirai/imported",folder)
     plugin:=fmt.tprintf("%s/pack/assets",folder)
     plugin_imported:=fmt.tprintf("%s/pack/.mirai/imported",folder)
-    for made in ([]string{fmt.tprintf("%s/props",root),imported,plugin,plugin_imported,fmt.tprintf("%s/game/source/props",folder),fmt.tprintf("%s/pack/source",folder)}) {os.make_directory_all(made)}
-    wood,body,lid,atlas,lost,unbuilt:=base.Asset_Id{1,1},base.Asset_Id{2,2},base.Asset_Id{3,3},base.Asset_Id{5,5},base.Asset_Id{6,6},base.Asset_Id{7,7}
+    for made in ([]string{fmt.tprintf("%s/props/crate",root),fmt.tprintf("%s/kit",root),imported,plugin,plugin_imported}) {os.make_directory_all(made)}
+    wood,body,lid,second,atlas,lost,unbuilt,other:=base.Asset_Id{1,1},base.Asset_Id{2,2},base.Asset_Id{3,3},base.Asset_Id{10,10},base.Asset_Id{5,5},base.Asset_Id{6,6},base.Asset_Id{7,7},base.Asset_Id{9,9}
     pixels:[16]u8
-    sidecar :: proc(t:^testing.T,source:string,present:bool,outputs:[]Import_Output) {
-        w:serial.Writer
-        serial.writer_init(&w,allocator=context.temp_allocator)
-        serial.text_write_raw(&w,"{\n  \"version\": 2,\n  \"settings\": {\"lods\": \"None\"},\n  \"outputs\": ")
-        import_outputs_write(&w,outputs)
-        serial.text_write_raw(&w,"\n}\n")
-        testing.expect_value(t,serial.file_write_atomic(fmt.tprintf("%s%s",source,SIDECAR_EXTENSION),serial.writer_bytes(&w)),serial.File_Error.None)
+    sidecar :: proc(t:^testing.T,source,folder:string,present:bool,outputs:[]Import_Output) {
+        listed:=make([dynamic]Import_Output,context.temp_allocator)
+        append(&listed,..outputs)
+        text:=sidecar_text(`{"lods": "None"}`,{folder=folder,outputs=listed},context.temp_allocator)
+        testing.expect_value(t,serial.file_write_atomic(fmt.tprintf("%s%s",source,SIDECAR_EXTENSION),transmute([]u8)text),serial.File_Error.None)
         if present {testing.expect_value(t,serial.file_write_atomic(source,transmute([]u8)string("a source")),serial.File_Error.None)}
     }
-    sidecar(t,fmt.tprintf("%s/game/source/props/wood.png",folder),true,{{kind=KIND_TEXTURE,name="wood",id=wood}})
-    sidecar(t,fmt.tprintf("%s/game/source/props/crate.glb",folder),true,{{kind=KIND_SCENE,name="crate",id={8,8}},{kind=KIND_TEXTURE,name="body",id=body,part=true},{kind=KIND_TEXTURE,name="lid",id=lid},{kind=KIND_TEXTURE,name="wood",id=wood,shared=true},{kind=KIND_TEXTURE,name="later",id=unbuilt}})
-    sidecar(t,fmt.tprintf("%s/game/source/props/gone.png",folder),false,{{kind=KIND_TEXTURE,name="gone",id=lost}})
-    sidecar(t,fmt.tprintf("%s/pack/source/atlas.png",folder),true,{{kind=KIND_TEXTURE,name="atlas",id=atlas}})
+    sidecar(t,fmt.tprintf("%s/props/wood.png",root),"",true,{{kind=KIND_TEXTURE,name="wood",id=wood}})
+    sidecar(t,fmt.tprintf("%s/props/crate.glb",root),"crate",true,{{kind=KIND_SCENE,name="crate",id={8,8}},{kind=KIND_TEXTURE,name="body",id=body,part=true},{kind=KIND_TEXTURE,name="lid",id=lid},{kind=KIND_TEXTURE,name="lid",index=1,id=second},{kind=KIND_TEXTURE,name="later",id=unbuilt}})
+    sidecar(t,fmt.tprintf("%s/props/crate.obj",root),"crate",true,{{kind=KIND_TEXTURE,name="body",id=other}})
+    sidecar(t,fmt.tprintf("%s/props/gone.png",root),"",false,{{kind=KIND_TEXTURE,name="gone",id=lost}})
+    sidecar(t,fmt.tprintf("%s/atlas.png",plugin),"",true,{{kind=KIND_TEXTURE,name="atlas",id=atlas}})
     Built :: struct {imported:string,id:base.Asset_Id,key:u64,listed:string}
-    built:=[]Built{{imported,wood,0x11,"props/wood.tex"},{imported,body,0x22,"props/crate.glb/body.tex"},{imported,lid,0x22,"props/crate.glb/lid.tex"},{plugin_imported,atlas,0x33,"plugins/pack/atlas.tex"},{imported,lost,0x44,""}}
+    built:=[]Built{
+        {imported,wood,0x11,"props/wood.tex"},{imported,body,0x22,"props/crate/body (crate.glb).tex"},{imported,lid,0x22,"props/crate/lid.tex"},
+        {imported,second,0x22,"props/crate/lid (1).tex"},{imported,other,0x55,"props/crate/body (crate.obj).tex"},{plugin_imported,atlas,0x33,"plugins/pack/atlas.tex"},{imported,lost,0x44,""},
+    }
     for b in built {testing.expect_value(t,texture_save(imported_file(b.imported,b.id,b.key,".tex",context.temp_allocator),&types,{id=b.id,width=2,height=2,format=.RGBA8,mips={pixels[:]}}),Error.None)}
-    write_material(t,&types,fmt.tprintf("%s/props/Wood.mat",root),{4,4},wood)
+    write_material(t,&types,fmt.tprintf("%s/props/crate/Wood.mat",root),{4,4},wood)
 
     cache:=fmt.tprintf("%s/registry.cache",folder)
     for pass in 0..<2 {
@@ -605,7 +607,7 @@ registry_lists_the_imported_folder_by_where_the_sources_are :: proc(t:^testing.T
                 testing.expect(t,!found,"what a source that is gone gave is not listed")
                 continue
             }
-            if !testing.expectf(t,found && file.path==b.listed && file.imported==b.key,"%v is listed at %s",b.id,b.listed) {continue}
+            if !testing.expectf(t,found && file.path==b.listed && file.imported==b.key,"%v is listed at %s, not %s",b.id,b.listed,file.path) {continue}
             testing.expect_value(t,registry_file_path(&r,file.path,context.temp_allocator),imported_file(b.imported,b.id,b.key,".tex",context.temp_allocator))
         }
         _,pending:=registry_find(&r,unbuilt)
@@ -613,11 +615,12 @@ registry_lists_the_imported_folder_by_where_the_sources_are :: proc(t:^testing.T
         registry_missing(&r,&missing)
         testing.expect(t,!pending && len(missing)==0,"an output that is not built is not listed, and one in the imported folder is not missing")
         if pass==0 {continue}
-        // The source moves with its sidecar: its assets are listed there at the next scan, as they are.
-        os.make_directory_all(fmt.tprintf("%s/game/source/kit",folder))
-        for end in ([2]string{"",SIDECAR_EXTENSION}) {testing.expect(t,os.rename(fmt.tprintf("%s/game/source/props/crate.glb%s",folder,end),fmt.tprintf("%s/game/source/kit/box.glb%s",folder,end))==nil)}
-        testing.expect_value(t,registry_scan(&r),Error.None)
+        // The source moves with its sidecar: its assets are listed there once the editor refreshes what moved, as they are.
+        for end in ([2]string{"",SIDECAR_EXTENSION}) {testing.expect(t,os.rename(fmt.tprintf("%s/props/crate.glb%s",root,end),fmt.tprintf("%s/kit/box.glb%s",root,end))==nil)}
+        testing.expect_value(t,registry_refresh(&r,{"props/crate.glb","kit/box.glb"+SIDECAR_EXTENSION}),Error.None)
         moved,again:=registry_find(&r,body)
-        testing.expect(t,again && moved.path=="kit/box.glb/body.tex" && moved.imported==0x22,"the asset is listed where its source is, with its id and its file")
+        testing.expect(t,again && moved.path=="kit/crate/body.tex" && moved.imported==0x22,"the asset is listed where its source is, with its id and its file")
+        alone,listed:=registry_find(&r,other)
+        testing.expect(t,listed && alone.path=="props/crate/body.tex","a path no other output has takes no source name")
     }
 }

@@ -234,7 +234,7 @@ a_connection_that_enters_the_world_gets_the_state_of_what_is_broken :: proc(t:^t
     core.push(&a.connections.events,multiplayer.Connection_Event{kind=.Connected,connection=connection})
     end_tick(&a)
     testing.expect_value(t,len(a.outbox.queue.items),0)
-    core.queue_clear(&a.connections.events)
+    clear(&a.connections.events.items)
     core.push(&a.connections.events,multiplayer.Connection_Event{kind=.Entered,connection=connection})
     end_tick(&a)
     states:=0
@@ -248,7 +248,7 @@ a_connection_that_enters_the_world_gets_the_state_of_what_is_broken :: proc(t:^t
     }
     testing.expect(t,states>0,"the state of what is broken goes to the connection that entered the world")
     clear(&a.outbox.queue.items)
-    core.queue_clear(&a.connections.events)
+    clear(&a.connections.events.items)
     end_tick(&a)
     testing.expect_value(t,len(a.outbox.queue.items),0)
 }
@@ -288,7 +288,7 @@ a_scene_that_replaces_the_world_forgets_its_logs_and_the_server_sends_what_is_br
     connection:=multiplayer.Connection(7)
     core.push(&a.connections.events,multiplayer.Connection_Event{kind=.Entered,connection=connection})
     end_tick(&a)
-    core.queue_clear(&a.connections.events)
+    clear(&a.connections.events.items)
     for item in a.outbox.queue.items {testing.expect_value(t,item.to,connection)}
     chunks:=end_received(&a)
     destruct_net_receive(chunks,core.ref(&c.authority),&c.net,{tick=c.tick+1},&rewinds,core.ref(&c.root),&c.problems)

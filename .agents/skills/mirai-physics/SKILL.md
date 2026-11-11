@@ -162,6 +162,9 @@ tables and is the only package that imports it. The game and the other plugins, 
   one six-axis record as its only description; the solver chooses its kernel from the axes.
 - The step walks the lists of the awake bodies and of the moved shapes, which are state; no stage
   of a step walks every slot of a pool.
+- A link holds only the handles of what was made; the sync learns what changed from row stamps and
+  calls a setter only where the simulation differs, so taking a restored row again changes nothing.
+  Holds live in `Physics_State.held`, which the step walks instead of the links.
 - A tool that moves bodies uses `manipulation_target`/`manipulation_end`; a preview that only needs
   physics uses `step_world`
   ([requests](references/engine.md#requests),
