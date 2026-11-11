@@ -55,14 +55,18 @@ settle :: proc(info:^World_Info,world,editor:rawptr) -> (settled:int) {
     marks:=es.pending[:]
     // Checking writes, every table settles: a row written late shows at the next settle of the World.
     linked:=!CHECK_WRITES && len(marks)>0 && len(marks)>=len(info.tables)
-    if s.parent>=0 && (!linked || marks[s.parent] || len(es.doomed)>0) {
+    parented:=s.parent>=0 && (!linked || marks[s.parent])
+    if parented {
         settle_table(info,world,s.parent,es,marks)
         settled+=1
-        if s.hierarchy>=0 && hierarchy_doom(cast(^Hierarchy)(uintptr(world)+info.storages[s.hierarchy].offset),cast(^Table(Parent))(uintptr(world)+info.tables[s.parent].offset),es) {
-            settle_table(info,world,s.parent,es,marks)
-        }
     }
+    doomed:=s.parent>=0 && s.hierarchy>=0 && hierarchy_doom(cast(^Hierarchy)(uintptr(world)+info.storages[s.hierarchy].offset),cast(^Table(Parent))(uintptr(world)+info.tables[s.parent].offset),es)
     if linked {settle_mark(info,world,marks,es.doomed[:],false)}
+    // Parent drops the rows of what was destroyed after it settled.
+    if s.parent>=0 && (linked && marks[s.parent] || !linked && doomed) {
+        settle_table(info,world,s.parent,es,marks)
+        if !parented {settled+=1}
+    }
     if s.disabled>=0 && (!linked || marks[s.disabled]) {
         settle_table(info,world,s.disabled,es,marks)
         settled+=1
