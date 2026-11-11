@@ -2224,6 +2224,24 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     }
     if aged {fmt.sbprint(w,"}\n\n")}
 
+    // A World replaced under the readers of the frame (a rollback, a scene swapped in) leaves
+    // each at most at the end of its log: they read what comes after.
+    if cursors[0]>0 {
+        fmt.sbprint(w,"events_rewind :: proc(world:rawptr) {\n    w:=cast(^World)world\n")
+        for step in kept {
+            if step.phases[FIXED_PHASE] {continue}
+            for param,pi in step.params {
+                at,reads:=cursor_of[[2]rawptr{step,param.type}]
+                if !reads || !reads_log(param) {continue}
+                again:=false
+                for other in step.params[:pi] {again||=other.type==param.type && reads_log(other)}
+                if again {continue}
+                for log,li in param.type.logs {fmt.sbprintf(w,"    w.frame_cursors[%d]=min(w.frame_cursors[%d],%s.log_end(w.%s.%s.log))\n",at+li,at+li,core_alias,param.type.field,log)}
+            }
+        }
+        fmt.sbprint(w,"}\n\n")
+    }
+
     for t in g.types {
         if included(t,editor) {type_procs_write(w,t,fmt.tprintf("%s.",core_alias))}
     }
@@ -2359,6 +2377,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     fmt.sbprint(w,"    info.records=records\n")
     fmt.sbprint(w,"    info.draws=draws\n")
     if aged {fmt.sbprint(w,"    info.events_age=events_age\n")}
+    if cursors[0]>0 {fmt.sbprint(w,"    info.events_rewind=events_rewind\n")}
     for loop in 0..<(editor?2:1) {
         for phase in 0..<len(PHASES) {
             if defined[loop][phase] {fmt.sbprintf(w,"    info.loops[.%s][.%s],info.order[.%s][.%s]=%s_%s,order_%s_%s[:]\n",loop==0?"Game":"Editor",titles[phase],loop==0?"Game":"Editor",titles[phase],loops[loop],phases[phase],loops[loop],phases[phase])}

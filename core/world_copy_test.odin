@@ -514,3 +514,48 @@ a_rollback_gives_the_readers_of_each_table_the_rows_it_brought_back :: proc(t:^t
     }
     testing.expect(t,rollbacks>20 && read_whole>0 && rows_back>0 && added_back>0,"the sequence did not cover a rollback by rows, one read whole and one that brings back added rows")
 }
+
+@(private) @(storage,copy="false") Roll_Reader :: struct {cursor:u64}
+
+@(private)
+@(test_world)
+Rewound_World :: struct {
+    using world:Test_World,
+    log:Roll_Log,
+    late:Roll_Reader, // a reader of the frame, whose cursor stays in its World
+}
+
+// A reader of the frame that read what a tick pushed reads, after a rollback
+// to before that tick, what the tick pushes when it runs again, once: with
+// the marks of a copy of what changed and without them.
+@(test)
+a_reader_of_the_frame_reads_once_what_a_tick_run_again_pushes :: proc(t:^testing.T) {
+    read :: proc(w:^Rewound_World) -> []u32 {
+        view:=w.log.log
+        events_read(&view,&w.late.cursor)
+        return view.items[:]
+    }
+    for with_marks in ([2]bool{false,true}) {
+        w,kept,stage:Rewound_World
+        if !test_world_init(t,&w) || !test_world_init(t,&kept) || !test_world_init(t,&stage) {return}
+        defer {test_world_destroy(&w);test_world_destroy(&kept);test_world_destroy(&stage)}
+        info:=test_world_info(&w)
+        info.events_rewind=proc(world:rawptr) {
+            w:=cast(^Rewound_World)world
+            w.late.cursor=min(w.late.cursor,log_end(w.log.log.log))
+        }
+        marks:=make([]Copy_Mark,with_marks?copy_marks_count(info):0,context.temp_allocator)
+        log:=0
+        for &s,k in info.storages {if s.info.id==Roll_Log {log=k}}
+        push(&w.log.log,1)
+        testing.expect(t,slice.equal(read(&w),[]u32{1}))
+        testing.expect(t,world_copy_changed(info,&kept,&w,marks))
+        push(&w.log.log,2)
+        w.storage_revisions[log]+=1
+        testing.expect(t,slice.equal(read(&w),[]u32{2}))
+        ok,_:=world_restore(info,&w,&kept,&stage,marks)
+        testing.expect(t,ok)
+        push(&w.log.log,3)
+        testing.expectf(t,slice.equal(read(&w),[]u32{3}),"marks %v: the reader of the frame saw %v",with_marks,read(&w))
+    }
+}

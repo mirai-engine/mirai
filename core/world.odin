@@ -150,6 +150,7 @@ World_Info :: struct {
     settles:Settle_Info, // what settle and the procedures of world_data look for in tables and storages
     loops:[Loop][Phase]Loop_Proc,
     events_age:proc(world:rawptr,ticked:bool), // ages every log (events_age) of a World, those a fixed function reads only when ticked: what runs a frame of a World calls it at its end
+    events_rewind:proc(world:rawptr), // leaves each cursor of a reader of the frame at most at the end of its log, after the World was replaced under it (world_restore, world_swap)
     order:[Loop][Phase][]i32, // the steps each loop calls, by index, in its order
     tables_by_type,storages_by_type:map[typeid]int, // index in tables and in storages, by_world aside: world_info_index
     schema:^World_Schema, // world_info_index
