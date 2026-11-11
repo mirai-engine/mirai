@@ -61,6 +61,7 @@ Table :: struct($T:typeid,$A:=Access.Write) {
     locks:[]Lock,             // rows of other tables a row on of this one owns
     name:string,
     waits:Waits,
+    settled:Settled,          // MIRAI_CHECK_WRITES only: the rows as the table last settled
 }
 
 // Where a table of a World says that it has adds, removes or turns pending,
@@ -272,6 +273,7 @@ raw_init :: proc(t:^Raw_Table,name:string,allocator:=context.allocator) {
     t.gone.items=make([dynamic]Entity,allocator)
     t.owners=make([dynamic]Row_Owner,allocator)
     t.name=name
+    when CHECK_WRITES {t.settled.values=make([dynamic]u8,allocator)}
 }
 
 table_destroy :: proc(t:^Table($T)) {raw_destroy(raw(t),size_of(T))}
@@ -284,6 +286,7 @@ raw_destroy :: proc(t:^Raw_Table,size:int) {
     for page in t.rows {delete(page,t.rows.allocator)}
     delete(t.entities);delete(t.stamps);delete(t.page_stamps);delete(t.off);delete(t.turns);delete(t.rows)
     delete(t.pending);delete(t.gone.items);delete(t.owners);delete(t.edits)
+    when CHECK_WRITES {delete(t.settled.values)}
     t^={}
 }
 
@@ -644,6 +647,11 @@ table_settle :: proc(t:^Table($T),es:^Entities) -> bool {
 
 raw_settle :: proc(t:^Raw_Table,size,align:int,es:^Entities) -> bool {
     if len(t.edits)>0 {edits_settle(t,size)}
+    when CHECK_WRITES {
+        if e:=settled_check(t,&t.settled,size);e!=NONE {
+            fail("the %s of entity %v was written since its table last settled without asking for its row: a pointer edit gave before that settle was written after it; ask for the row with edit where it is written",t.name,e)
+        }
+    }
     turned:=t.base?0:len(es.turned)
     if len(t.pending)==0 && len(es.doomed)==0 && turned==0 {return false}
     // Adds take next+1, and turns next or, of a row added, next+1.
@@ -665,6 +673,7 @@ raw_settle :: proc(t:^Raw_Table,size,align:int,es:^Entities) -> bool {
     if t.single && changed {changed=single_keep(t,size,es,next) || changed}
     if changed || written {t.version=next+1}
     if changed {t.layout+=1}
+    when CHECK_WRITES {if changed {settled_keep(t,&t.settled,size)}}
     return changed
 }
 
@@ -1173,6 +1182,7 @@ Raw_Table :: struct {
     locks:[]Lock,
     name:string,
     waits:Waits,
+    settled:Settled,
 }
 #assert(size_of(Raw_Table)==size_of(Table(u8)))
 #assert(offset_of(Raw_Table,stamps)==offset_of(Table(u8),stamps))
@@ -1367,6 +1377,44 @@ raw_count :: #force_inline proc "contextless" (t:^Raw_Table) -> int {return t.va
 // to write: a write that readers of the stamps would miss. It copies those
 // tables around each function.
 CHECK_WRITES :: #config(MIRAI_CHECK_WRITES,false)
+
+// With CHECK_WRITES every settle of a table also finds a row written since
+// the last one without being asked for: an edit is followed only until the
+// table settles, so a pointer edit gave before it and written after it
+// escapes every reader. Without it a table holds nothing more.
+when CHECK_WRITES {Settled :: Settled_Rows} else {Settled :: struct {}}
+
+// The bytes of the rows of a table as it last settled, and its version and
+// layout then: what a row stamped since may differ from.
+Settled_Rows :: struct {
+    values:[dynamic]u8,
+    version,layout:u64,
+}
+
+// The first entity whose row differs from what s kept without a stamp since,
+// NONE without one; s then holds the rows as they are. Rows that are others
+// since s was kept are only kept.
+settled_check :: proc(t:^Raw_Table,s:^Settled_Rows,size:int) -> (stale:Entity) {
+    if size==0 {return}
+    if s.layout!=t.layout || len(s.values)!=t.values.len*size {
+        settled_keep(t,s,size)
+        return
+    }
+    for row in 0..<t.values.len {
+        at:=row*size
+        value:=rawptr(uintptr(t.values.data)+uintptr(at))
+        if t.stamps[row]<=s.version && mem.compare_ptrs(value,&s.values[at],size)!=0 && stale==NONE {stale=t.entities[row]}
+        mem.copy_non_overlapping(&s.values[at],value,size)
+    }
+    s.version=version_top(t)
+    return
+}
+
+settled_keep :: proc(t:^Raw_Table,s:^Settled_Rows,size:int) {
+    if resize(&s.values,t.values.len*size)!=nil {clear(&s.values)}
+    if len(s.values)>0 {mem.copy_non_overlapping(raw_data(s.values),t.values.data,len(s.values))}
+    s.version,s.layout=version_top(t),t.layout
+}
 
 Write_Check :: struct {
     table:^Raw_Table,
