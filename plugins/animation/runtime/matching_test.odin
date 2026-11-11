@@ -999,6 +999,8 @@ match_library_swap_enters_the_new_clips_through_an_inertial_transition :: proc(t
     dt:=f32(1)/30;walking:=mm.Vec3{0,0,-1.5}
     for _ in 0..<20 {testing.expect(t,match_step_with(&f,&f.content,dt,GROUND,walking))}
     before:=[2]mm.Vec3{f.state.local[1].position,f.state.local[2].position}
+    foot_l:=bone_resolve(f.state,bone_ref("foot_l"))
+    planted:=f.state.local[foot_l].position
     walked,_:=animation_match(&f.playback,f.rig)
     testing.expect(t,walked.clip==base.name_hash("walk"),"it walks before the swap")
 
@@ -1010,6 +1012,11 @@ match_library_swap_enters_the_new_clips_through_an_inertial_transition :: proc(t
     testing.expect(t,f.state.program.library==MATCH_TEST_LIBRARY && swapped.clip==base.name_hash("walk"),"the rig plays the walk of the new library")
     testing.expect(t,f.state.program.inertia.active,"the swap enters the new clip through an inertial transition")
     testing.expectf(t,jump<.1,"a foot jumps %.3f m in the tick of the swap",jump)
+    // Nothing of the new library plays yet: the search asks for the feet the rig has, not for the
+    // mean of the database, and enters the new walk where its left foot is where the rig has it.
+    walk_new:=lib.clip_find(&weapon.lib,base.name_hash("walk"))
+    entered:=lib.clip_evaluate(&weapon.lib,lib.clip_tracks(&weapon.lib,walk_new)[0],f.state.program.output.groups[0].leaves[0].start)
+    testing.expectf(t,linalg.length(entered.xyz-planted)<.03,"the new walk starts with the left foot at %v, the rig had it at %v",entered.xyz,planted)
     // Past the blend, the feet are those of the new walk.
     for _ in 0..<15 {testing.expect(t,match_step_with(&f,&weapon,dt,GROUND,walking))}
     testing.expect(t,!f.state.program.inertia.active,"the transition ends within its blend")

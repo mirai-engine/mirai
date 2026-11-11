@@ -201,6 +201,35 @@ match_search_skips_runs_by_their_bounds_and_enters_a_mode_by_its_entry_clips :: 
     testing.expect(t,range>=0 && db.ranges[range].entry && f32(best-int(db.ranges[range].first))<=MATCH_ENTRY_SPAN*db.rate+1,"entering a mode searches the starts of its entry clips")
 }
 
+// The pose a rig has, a frame of the walk and the one before, asks for that row of the walk: the
+// feet where they are and moving as they move with the body. A pose out of shape asks for the mean.
+@(test)
+match_query_pose_asks_for_the_row_of_the_feet_the_rig_has :: proc(t:^testing.T) {
+    library:Library;defer library_destroy(&library)
+    rig,clips,ok:=match_test_rig(&library)
+    if !testing.expect(t,ok) {return}
+    db:Match_Database;defer match_database_free(&db)
+    tracks:[5]Bone_Tracks
+    if !testing.expect(t,match_database_build(&db,&library,rig,clips[:],30)==.None && skeleton_bind(&library,clips[1].clips[0],rig.skeleton,tracks[:])) {return}
+    walk:=db.ranges[1];dt:=1/db.rate
+    parents,rest:=rig.skeleton.parents,rig.skeleton.rest
+    for frame in ([3]int{3,7,22}) {
+        current,previous:[5]math.Transform
+        if !testing.expect(t,skeleton_sample(&library,tracks[:],rest,f32(frame)*dt,current[:]) && skeleton_sample(&library,tracks[:],rest,f32(frame-1)*dt,previous[:])) {return}
+        query,read:=match_query_pose(&db,parents,rig.left_foot,rig.right_foot,rig.hips,current[:],previous[:],dt,walk.travel)
+        best,_,_:=match_search(&db,{query=query,trajectory=match_row_trajectory(&db,int(walk.first)+frame),modes=1<<1})
+        testing.expectf(t,read && abs(best-int(walk.first)-frame)<=1,"the pose of frame %d asks for row %d of the walk",frame,best-int(walk.first))
+        Hostile :: struct {parents:[]i32,current:[]math.Transform,left:i32,dt:f32}
+        late:=[5]i32{-1,0,3,1,1}
+        broken:=current;broken[2].position.x=cmath.nan_f32()
+        for hostile,i in ([?]Hostile{{parents,current[:],rig.left_foot,cmath.nan_f32()},{parents,current[:],rig.left_foot,0},{parents,current[:],9,dt},{parents,current[:4],rig.left_foot,dt},{late[:],current[:],rig.left_foot,dt},{parents,broken[:],rig.left_foot,dt}}) {
+            mean,valid:=match_query_pose(&db,hostile.parents,hostile.left,rig.right_foot,rig.hips,hostile.current,previous[:],hostile.dt,walk.travel)
+            zero:=true;for lane in mean {for v in simd.to_array(lane) {zero&&=v==0}}
+            testing.expectf(t,!valid && zero,"hostile pose %d asks for the mean",i)
+        }
+    }
+}
+
 @(test)
 match_trajectory_follows_a_walk_that_accelerates_brakes_and_turns_at_its_rates :: proc(t:^testing.T) {
     Case :: struct {velocity,desired,facing,wanted:math.Vec3,acceleration,braking,turn:f32}

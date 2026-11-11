@@ -418,7 +418,17 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
         forced:=current<0 || entering || ending || incompatible || left
         if forced || m.timer<=0 && m.since>=info.hold {
             m.timer=info.interval
-            request:=lib.Match_Request{query=lib.match_features(db,row) if row>=0 else {},modes=bit,min_rate=info.min_rate,max_rate=info.max_rate,rate=m.rate,entry=entering}
+            request:=lib.Match_Request{modes=bit,min_rate=info.min_rate,max_rate=info.max_rate,rate=m.rate,entry=entering}
+            if row>=0 {
+                request.query=lib.match_features(db,row)
+            } else {
+                // Nothing of the database plays (the first search, a swapped library, a mode its
+                // clip does not serve): the feet the rig has and how they move with the body.
+                request.rate=1
+                if runtime.kept && runtime.history_dt>0 {
+                    request.query,_=lib.match_query_pose(db,state.parents[:],state.body[.Foot_L],state.body[.Foot_R],state.body[.Pelvis],runtime.current[:],runtime.history[:],runtime.history_dt,mm.quat_rotate(mm.quat_inverse(lib.match_yaw(facing)),velocity))
+                }
+            }
             request.filter_stationary,request.moving=filter_stationary,moving
             request.trajectory=trajectory if traced else lib.match_trajectory(velocity,goal.desired,goal.acceleration,goal.braking,facing,goal.facing,goal.turn_rate,goal.wall,&m.trail)
             // A clip that ends is left whole: a row of it a little earlier would play its tail

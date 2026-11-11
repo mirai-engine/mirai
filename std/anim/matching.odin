@@ -317,6 +317,37 @@ match_features :: #force_inline proc "contextless" (db:^Match_Database,row:int) 
     copy(query[:],db.features[row*MATCH_LANES:][:MATCH_LANES])
     return query
 }
+// The pose part of a query from the pose a rig has, for a search with nothing of the database
+// playing: where its feet are and how they and its hips move. current and previous are its local
+// poses dt seconds apart, in which the roots are the frame of the character and stay out; velocity
+// is that of the body in that frame, which the feet move with. The trajectory lanes are left at
+// the mean, and its velocities are those of rate 1. False, with the mean pose, for poses of other
+// sizes, a bone out of them, a parent after its child, or values that are not finite.
+match_query_pose :: proc "contextless" (db:^Match_Database,parents:[]i32,left_foot,right_foot,hips:i32,current,previous:[]math.Transform,dt:f32,velocity:math.Vec3) -> (query:Match_Query,ok:bool) {
+    n:=len(parents)
+    if len(current)!=n || len(previous)!=n || !anim_finite(dt) || dt<=0 || !anim_vec3_valid(velocity) {return}
+    point :: proc "contextless" (parents:[]i32,local:[]math.Transform,bone:int) -> (p:math.Vec3,ok:bool) {
+        for b:=bone;parents[b]>=0;b=int(parents[b]) {
+            if int(parents[b])>=b {return}
+            p=math.transform_point(local[b],p)
+        }
+        return p,anim_vec3_valid(p)
+    }
+    values:[MATCH_LANES*4]f32
+    for bone,k in ([3]i32{left_foot,right_foot,hips}) {
+        if bone<0 || int(bone)>=n {return}
+        now:=point(parents,current,int(bone)) or_return
+        before:=point(parents,previous,int(bone)) or_return
+        moving:=(now-before)/dt+velocity
+        if !anim_vec3_valid(moving) {return}
+        for axis in 0..<3 {
+            if k<2 {values[k*3+axis],values[6+k*3+axis]=now[axis],moving[axis]} else {values[12+axis]=moving[axis]}
+        }
+    }
+    for i in 0..<MATCH_FEATURES[.Hip_Velocity][1] {values[i]=(values[i]-db.mean[i])/db.scale[i]}
+    for lane in 0..<MATCH_LANES {query[lane]=match_lane(values[lane*4:][:4])}
+    return query,true
+}
 // The cost of a row against a query, each feature by its weight (match_query gives them).
 match_cost :: #force_inline proc "contextless" (db:^Match_Database,row:int,query,weights:Match_Query) -> f32 {
     features:=db.features[row*MATCH_LANES:][:MATCH_LANES]
