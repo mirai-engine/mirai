@@ -1,12 +1,9 @@
 package render
 
-import "core:reflect"
-import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
-import gpu "mirai:render"
 import "mirai:std/base"
 
 @(test)
@@ -68,10 +65,6 @@ only_a_texture_makes_an_entity_show_a_row_of_its_own :: proc(t:^testing.T) {
     material_screen(core.edit(&f.world.values,e),0,7)
     sync_frame(f)
     testing.expect_value(t,f.assets.stats.derived,1)
-    for field in MATERIAL_VALUE_FIELDS {
-        target,_:=reflect.enum_name_from_value(field.held)
-        testing.expectf(t,strings.to_lower(target,context.temp_allocator)==field.name,"%s is held as %s",field.name,target)
-    }
 }
 
 // The names an entity gives a slot, and the textures it gives and takes away.
@@ -110,30 +103,29 @@ values_given_over_those_of_an_entity_compose_with_them :: proc(t:^testing.T) {
 }
 
 // What shows a row through an instance without drawing it (the rectangle a
-// screen lights) is given the row with the values the instance holds for it:
-// the same row their values give derived from its material.
+// screen lights) is given the row with what the entity gives its slot: the
+// row those values derive from its material, and the row itself without any.
 @(test)
-the_values_an_instance_holds_give_the_row_they_derive :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"values-held")
-    if root=="" {return}
-    a:host.Assets
-    if !testing.expect(t,host.assets_init(&a,{root=root,capacity=8})) {return}
-    defer host.assets_destroy(&a)
-    material:=gpu.DEFAULT_MATERIAL
-    material.roughness=0.8
-    row,derived:=host.assets_material_derive(&a,material)
-    if !testing.expect(t,derived) {return}
-    held:gpu.Instance_Material_Values
-    held.entries[0]=gpu.instance_material_value(row,gpu.Instance_Material_Value_Target.Emission,{40,20,10,0})
-    held.entries[1]=gpu.instance_material_value(row,gpu.Instance_Material_Value_Target.Base_Color,{0,0,0,0})
-    held.entries[2]=gpu.instance_material_value(row+1,gpu.Instance_Material_Value_Target.Roughness,{0.1,0,0,0})
-    held.count=3
-    expected:=material
-    testing.expect(t,material_value_apply(&expected,nil,base.name_hash("emission"),{40,20,10,0}) && material_value_apply(&expected,nil,base.name_hash("base_color"),{}))
-    want,_:=host.assets_material_derive(&a,expected)
-    shown:=material_row_held(&a,row,&held)
-    testing.expect(t,shown!=row && shown==want,"the values for the row, and not those for another")
-    testing.expect_value(t,material_row_held(&a,row,&gpu.Instance_Material_Values{}),row)
+a_light_that_shows_the_row_of_an_instance_is_given_it_with_its_values :: proc(t:^testing.T) {
+    f:=new(Sync_Fixture);defer free(f)
+    if !sync_fixture_init(t,f) {return}
+    defer sync_fixture_destroy(f)
+    e:=sync_cube(f,0)
+    core.add(&f.world.rects,e,RECT_LIGHT_DEFAULT)
+    core.add(&f.world.emissions,e,Light_Emission{})
+    sync_frame(f)
+    s:=&f.renderer.scene
+    if !testing.expect_value(t,len(s.lights),1) {return}
+    plain:=transmute(u32)s.lights[0].size.w
+    values:=MATERIAL_VALUES_DEFAULT
+    testing.expect(t,material_value(&values,"emission",{40,20,10,0}))
+    core.add(&f.world.values,e,values)
+    sync_frame(f)
+    shown:=transmute(u32)s.lights[0].size.w
+    testing.expect(t,shown!=plain && host.assets_material_values(&f.assets,shown).emission==[3]f32{40,20,10},"the row its values derive")
+    core.remove(&f.world.values,e)
+    sync_frame(f)
+    testing.expect_value(t,transmute(u32)s.lights[0].size.w,plain)
 }
 
 // A library shows a texture the renderer made on an entity by writing its

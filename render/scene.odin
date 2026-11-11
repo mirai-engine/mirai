@@ -445,8 +445,9 @@ scene_init :: proc(r: ^Renderer) -> bool {
 
 MATERIAL_RANGES_MAX :: 64 // rows that go to the GPU in ranges; past them the whole table goes
 
-@(private)
-gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
+// A row of the table but for where its maps are placed.
+@(private = "file")
+gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 	mode, opacity := m.alpha_mode, clamp(m.opacity, 0, 1)
 	transmission := clamp(m.transmission, 0, 1) if mode != .Mask else 0
 	// The opacity of an opaque material is not a filter: its glass passes its base color.
@@ -481,10 +482,22 @@ gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 	result.fuzz = {color = linalg.clamp(f.color, 0, 1), weight = clamp(f.weight, 0, 1), roughness = clamp(f.roughness, 0, 1)}
 	result.anisotropy = {amount = clamp(m.anisotropy.amount, 0, 1), rotation = {math.cos(m.anisotropy.rotation), math.sin(m.anisotropy.rotation)}}
 	result.diffuse_transmission = {color = linalg.clamp(d.color, 0, 1), weight = clamp(d.weight, 0, 1)}
+	for texture, kind in m.textures {result.textures[kind] = texture_index(r, texture)}
+	// The usual packing of glTF: occlusion in the red of the metallic-roughness
+	// texture. Placed the same way, the shader reads it from that sample.
 	maps := m.maps
 	placed := asset.material_maps(&maps)
-	for transform, kind in placed {
-		result.textures[kind] = texture_index(r, m.textures[kind])
+	if packed := m.textures[.Occlusion]; packed != 0 && packed == m.textures[.Metallic_Roughness] && placed[.Occlusion] == placed[.Metallic_Roughness] {
+		result.textures[.Occlusion] = GPU_OCCLUSION_PACKED
+	}
+	return result
+}
+
+@(private)
+gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
+	result := gpu_material_values(r, m)
+	maps := m.maps
+	for transform, kind in asset.material_maps(&maps) {
 		// rotation * (scale * uv) + offset, as one matrix and one offset.
 		sine, cosine := math.sin(transform.rotation), math.cos(transform.rotation)
 		scale := transform.scale
@@ -494,11 +507,6 @@ gpu_material :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 			uv_set = transform.uv_set,
 			ray_lod = 0.5 * math.log2(max(abs(scale.x * scale.y), 1e-12)),
 		}
-	}
-	// The usual packing of glTF: occlusion in the red of the metallic-roughness
-	// texture. Placed the same way, the shader reads it from that sample.
-	if packed := m.textures[.Occlusion]; packed != 0 && packed == m.textures[.Metallic_Roughness] && placed[.Occlusion] == placed[.Metallic_Roughness] {
-		result.textures[.Occlusion] = GPU_OCCLUSION_PACKED
 	}
 	return result
 }
@@ -793,16 +801,15 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
         row:=instance_row(packed,material,&palette)
         m:=asset.Alpha_Mode.Opaque
         if int(row)<len(s.materials) {
-            values:=&s.materials[row]
-            shown:=instance_values_class(s,given,row)
-            m=shown.mode
-            departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || shown.ior!=defaults.ior || shown.specular
+            values:=instance_material(s,given,row)
+            m=asset.Alpha_Mode(values.alpha_mode)
+            departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
             if m != .Blend && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {reflectance=true}
             lit:=transmute(asset.Material_Layers)values.layers-{.Unlit}
-            if card(lit)>0 || shown.layered {
+            if card(lit)>0 {
                 if m == .Blend {glass_layered=true} else {layered=true}
             }
-            if m == .Blend {solid ||= shown.transmission > 0 && values.thickness > 0}
+            if m == .Blend {solid ||= values.transmission > 0 && values.thickness > 0}
         }
         tested ||= m != .Opaque
         blended ||= m == .Blend
@@ -1457,48 +1464,60 @@ instance_material_values_words :: proc "contextless" (s: ^Scene_State, values: u
 	return block[INSTANCE_VALUES_HEADER:] if len(block) > 0 else nil
 }
 
-// What of a row decides how an instance that shows it is traced and drawn,
-// with what the instance gives it: a specular of its own reflects, and a
-// layer reaches the layers target.
-@(private = "file")
-Instance_Row :: struct {
-	mode:              asset.Alpha_Mode,
-	transmission, ior: f32,
-	specular, layered: bool,
-}
-
-@(private = "file")
-instance_values_class :: proc "contextless" (s: ^Scene_State, values, row: u32) -> (c: Instance_Row) {
-	held := &s.materials[row]
-	c.mode, c.transmission, c.ior = asset.Alpha_Mode(held.alpha_mode), held.transmission, held.ior
+// The values of a row shading holds as an instance shows them, as the
+// shaders read them (material_row(row, block)): with the words the instance
+// gives it, and its fade.
+@(private)
+instance_material :: proc "contextless" (s: ^Scene_State, values, row: u32) -> (m: Gpu_Material) {
+	m = s.materials[row].shared
 	block := instance_material_values_block(s, values)
 	if len(block) == 0 {return}
-	words := block[INSTANCE_VALUES_HEADER:]
-	for at := 0; at + INSTANCE_VALUE_WORDS <= len(words); at += INSTANCE_VALUE_WORDS {
-		if words[at] != row {continue}
-		value := transmute(f32)words[at + 2]
-		#partial switch Instance_Material_Value_Target(words[at + 1] & 0xff) {
-		case .Specular: c.specular = true
-		case .Coat ..= .Anisotropy_Rotation, .Diffuse_Transmission, .Diffuse_Transmission_Color: c.layered = true
-		case .Ior: c.ior = max(value, 1)
-		case .Transmission: c.transmission = clamp(value, 0, 1)
-		case .Alpha_Mode: c.mode = asset.Alpha_Mode(int(clamp(value, 0, f32(len(asset.Alpha_Mode) - 1)) + 0.5))
+	words := (cast([^]u32)&m)[:size_of(m) / 4]
+	entries := block[INSTANCE_VALUES_HEADER:]
+	for at := 0; at + INSTANCE_VALUE_WORDS <= len(entries); at += INSTANCE_VALUE_WORDS {
+		if entries[at] != row {continue}
+		first := int(entries[at + 1] & (1 << INSTANCE_VALUE_COUNT_SHIFT - 1))
+		for given, c in entries[at + 2:][:min(entries[at + 1] >> INSTANCE_VALUE_COUNT_SHIFT, 4)] {
+			if first + c < len(words) {words[first + c] = given}
 		}
 	}
-	// As gpu_material gives a row its mode, and then its fade.
-	if c.mode == .Mask {c.transmission = 0} else if c.transmission > 0 && c.mode == .Opaque {c.mode = .Blend}
-	if c.mode == .Opaque && transmute(f32)block[1] > 0 {c.mode = .Blend}
+	if fade := transmute(f32)block[1]; fade > 0 {
+		m.opacity *= 1 - fade
+		if m.alpha_mode == u32(asset.Alpha_Mode.Opaque) {m.alpha_mode = u32(asset.Alpha_Mode.Blend)}
+	}
 	return
 }
 
-// Whether the values of an instance give it an emission: its glow reaches as far as that of a tint.
+// Whether what an instance gives changes the emission of a row it shows: its glow reaches as far as that of a tint.
 @(private = "file")
 instance_material_values_glow :: proc "contextless" (s: ^Scene_State, values: u32) -> bool {
 	words := instance_material_values_words(s, values)
 	for at := 0; at + INSTANCE_VALUE_WORDS <= len(words); at += INSTANCE_VALUE_WORDS {
-		if words[at + 1] & 0xff == u32(Instance_Material_Value_Target.Emission) {return true}
+		if row := words[at]; int(row) < len(s.materials) && instance_material(s, values, row).emission != s.materials[row].emission {return true}
 	}
 	return false
+}
+
+// Holds for an instance what `given` differs in from `shown`, the values of
+// the row `row` its points show, as the table holds them (gpu_material): up
+// to four words of the row from each that differs. What does not fit in
+// `held` is left out.
+instance_material_values_hold :: proc(r: ^Renderer, held: ^Instance_Material_Values, row: u32, shown, given: Material_Desc) {
+	from, to := gpu_material_values(r, shown), gpu_material_values(r, given)
+	a, b := (cast([^]u32)&from)[:size_of(from) / 4], (cast([^]u32)&to)[:size_of(to) / 4]
+	each: for word := 0; word < len(b); word += 1 {
+		if a[word] == b[word] {continue}
+		count := min(4, len(b) - word)
+		entry := Instance_Material_Value{row = row, word = u32(word) | u32(count) << INSTANCE_VALUE_COUNT_SHIFT}
+		copy(entry.words[:], b[word:][:count])
+		word += count - 1
+		// The slots that show one row give it the same once.
+		for other in held.entries[:min(int(held.count), len(held.entries))] {if other == entry {continue each}}
+		if int(held.count) < len(held.entries) {
+			held.entries[held.count] = entry
+			held.count += 1
+		}
+	}
 }
 
 // Puts what an instance gives over its rows in the index pool in place of

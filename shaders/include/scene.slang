@@ -435,13 +435,6 @@ bool material_has(uint texture_index) { return texture_index != INVALID; }
 // (render.Instance_Material_Values): `block` is Instance.material_values. A
 // stage that draws no instance of a scene (MIRAI_NO_INSTANCES: the previews)
 // reads none, and does not bind the pool they are in.
-uint material_values_count(uint block) {
-#ifdef MIRAI_NO_INSTANCES
-    return 0u;
-#else
-    return block == 0u ? 0u : min(indices[block - 1u], INSTANCE_VALUES_MAX);
-#endif
-}
 // Those the instance at an index gives; INVALID (a surface an extension
 // draws) gives none.
 uint material_values_of(uint instance_index) {
@@ -451,54 +444,34 @@ uint material_values_of(uint instance_index) {
     return instance_index == INVALID ? 0u : scene_instance(instance_index).material_values;
 #endif
 }
-// The value at `i` of a block, when it is for `row`: its target, how many
-// words it gives and the words.
-bool material_value_at(uint block, uint i, uint row, out uint target, out uint count, out uint4 words) {
-    target = 0u; count = 0u; words = uint4(0u, 0u, 0u, 0u);
-#ifdef MIRAI_NO_INSTANCES
-    return false;
-#else
-    uint at = block - 1u + INSTANCE_VALUES_HEADER + i * INSTANCE_VALUE_WORDS;
-    if (indices[at] != row) return false;
-    uint key = indices[at + 1u];
-    target = key & ((1u << INSTANCE_VALUE_COUNT_SHIFT) - 1u);
-    count = min(key >> INSTANCE_VALUE_COUNT_SHIFT, 4u);
-    words = uint4(indices[at + 2u], indices[at + 3u], indices[at + 4u], indices[at + 5u]);
-    return true;
-#endif
-}
-// A row as an instance shows it: with the values of the standard model the
-// instance gives it, and its fade.
-uint material_layer_given(uint layers, uint layer, bool on) {return on ? layers | layer : layers & ~layer;}
-Material material_row(uint row, uint block) {
-    Material m = material_row(row);
-    uint given = material_values_count(block);
+// `value`, the N words of row `row` from the word `first`, with those of
+// them the instance gives in their place.
+T material_given<T, let N : int>(T value, uint block, uint row, uint first) {
+#ifndef MIRAI_NO_INSTANCES
+    if (block == 0u) return value;
+    uint words[N] = reinterpret<uint[N]>(value);
+    uint given = min(indices[block - 1u], INSTANCE_VALUES_MAX);
     for (uint i = 0u; i < given; i++) {
-        uint target, count;
-        uint4 words;
-        if (!material_value_at(block, i, m.row, target, count, words) || target < INSTANCE_VALUE_STANDARD) continue;
-        float4 value = asfloat(words);
-        if (target == INSTANCE_VALUE_BASE_COLOR) m.base_color = value.xyz;
-        else if (target == INSTANCE_VALUE_OPACITY) m.opacity = saturate(value.x);
-        else if (target == INSTANCE_VALUE_METALLIC) m.metallic = saturate(value.x);
-        else if (target == INSTANCE_VALUE_ROUGHNESS) m.roughness = saturate(value.x);
-        else if (target == INSTANCE_VALUE_EMISSION) m.emission = value.xyz;
-        else if (target == INSTANCE_VALUE_SPECULAR) m.specular_factor = value.x;
-        else if (target == INSTANCE_VALUE_EMISSION_MODE) m.emission_mode = value.x >= 0.5 ? EMISSION_RELATIVE : EMISSION_PHYSICAL;
-        else if (target == INSTANCE_VALUE_UNLIT) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_UNLIT, value.x >= 0.5);
-        else if (target == INSTANCE_VALUE_COAT) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_COAT, value.x > 0.0);
-        else if (target == INSTANCE_VALUE_FUZZ) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_FUZZ, value.x > 0.0);
-        else if (target == INSTANCE_VALUE_ANISOTROPY) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_ANISOTROPY, value.x > 0.0);
-        else if (target == INSTANCE_VALUE_DIFFUSE_TRANSMISSION) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_DIFFUSE_TRANSMISSION, value.x > 0.0);
-        else if (target == INSTANCE_VALUE_IOR) m.ior = max(value.x, 1.0);
-        else if (target == INSTANCE_VALUE_TRANSMISSION) m.transmission = saturate(value.x);
-        else if (target == INSTANCE_VALUE_ALPHA_MODE) m.alpha_mode = uint(clamp(value.x, 0.0, 2.0) + 0.5);
+        uint at = block - 1u + INSTANCE_VALUES_HEADER + i * INSTANCE_VALUE_WORDS;
+        if (indices[at] != row) continue;
+        uint key = indices[at + 1u];
+        uint count = min(key >> INSTANCE_VALUE_COUNT_SHIFT, 4u);
+        for (uint c = 0u; c < count; c++) {
+            uint word = (key & ((1u << INSTANCE_VALUE_COUNT_SHIFT) - 1u)) + c - first;
+            if (word < uint(N)) words[word] = indices[at + 2u + c];
+        }
     }
+    value = reinterpret<T>(words);
+#endif
+    return value;
+}
+// A row as an instance shows it: with the words the instance gives it, and
+// its fade.
+Material material_row(uint row, uint block) {
+    Material m = material_given<Material, MATERIAL_WORDS>(material_row(row), block, row, 0u);
+    m.row = row;
 #ifndef MIRAI_NO_INSTANCES
     if (block != 0u) {
-        // As render.gpu_material gives a row its mode, and then the fade.
-        if (m.alpha_mode == ALPHA_MASK) m.transmission = 0.0;
-        else if (m.transmission > 0.0 && m.alpha_mode == ALPHA_OPAQUE) { m.alpha_mode = ALPHA_BLEND; m.opacity = 1.0; }
         float fade = asfloat(indices[block]);
         m.opacity *= 1.0 - fade;
         if (fade > 0.0 && m.alpha_mode == ALPHA_OPAQUE) m.alpha_mode = ALPHA_BLEND;
@@ -509,17 +482,7 @@ Material material_row(uint row, uint block) {
 // The parameters the program of a row reads at a point of an instance: those
 // of the row, under the ones the instance gives.
 void material_parameters(uint row, uint block, out float4 parameters[16]) {
-    parameters = materials[row].custom_params;
-    uint given = material_values_count(block);
-    for (uint i = 0u; i < given; i++) {
-        uint target, count;
-        uint4 words;
-        if (!material_value_at(block, i, row, target, count, words) || target >= INSTANCE_VALUE_STANDARD) continue;
-        for (uint c = 0u; c < count; c++) {
-            uint word = min(target + c, PROGRAM_PARAMETER_BYTES / 4u - 1u);
-            parameters[word >> 2u][word & 3u] = asfloat(words[c]);
-        }
-    }
+    parameters = material_given<float4[16], PROGRAM_PARAMETER_BYTES / 4>(materials[row].custom_params, block, row, MATERIAL_PARAMETERS_WORD);
 }
 #ifdef MIRAI_TEXTURE_FEEDBACK
 // The finest level a stage that shades surfaces samples of each texture, for
@@ -711,28 +674,11 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
     l.bits = bits;
     if (bits == 0u || (bits & MATERIAL_LAYER_UNLIT) != 0u) return l;
     float2 lod = float2(ctx.lod, ctx.lod1);
-    Material_Coat coat = materials[m.row].coat;
-    Material_Fuzz fuzz = materials[m.row].fuzz;
-    Material_Diffuse_Transmission transmission = materials[m.row].diffuse_transmission;
-    Material_Anisotropy anisotropy = materials[m.row].anisotropy;
-    // Under the values the instance gives.
-    for (uint i = 0u; i < material_values_count(ctx.material_values); i++) {
-        uint target, count;
-        uint4 words;
-        if (!material_value_at(ctx.material_values, i, m.row, target, count, words)) continue;
-        float4 v = asfloat(words);
-        if (target == INSTANCE_VALUE_COAT) coat.weight = saturate(v.x);
-        else if (target == INSTANCE_VALUE_COAT_ROUGHNESS) coat.roughness = saturate(v.x);
-        else if (target == INSTANCE_VALUE_COAT_COLOR) coat.color = saturate(v.xyz);
-        else if (target == INSTANCE_VALUE_COAT_IOR) coat.ior = max(v.x, 1.0);
-        else if (target == INSTANCE_VALUE_FUZZ) fuzz.weight = saturate(v.x);
-        else if (target == INSTANCE_VALUE_FUZZ_COLOR) fuzz.color = saturate(v.xyz);
-        else if (target == INSTANCE_VALUE_FUZZ_ROUGHNESS) fuzz.roughness = saturate(v.x);
-        else if (target == INSTANCE_VALUE_ANISOTROPY) anisotropy.amount = saturate(v.x);
-        else if (target == INSTANCE_VALUE_ANISOTROPY_ROTATION) anisotropy.rotation = float2(cos(v.x), sin(v.x));
-        else if (target == INSTANCE_VALUE_DIFFUSE_TRANSMISSION) transmission.weight = saturate(v.x);
-        else if (target == INSTANCE_VALUE_DIFFUSE_TRANSMISSION_COLOR) transmission.color = saturate(v.xyz);
-    }
+    Material_Blocks blocks = material_given<Material_Blocks, MATERIAL_BLOCK_WORDS>(materials[m.row].blocks, ctx.material_values, m.row, MATERIAL_WORDS);
+    Material_Coat coat = blocks.coat;
+    Material_Fuzz fuzz = blocks.fuzz;
+    Material_Diffuse_Transmission transmission = blocks.diffuse_transmission;
+    Material_Anisotropy anisotropy = blocks.anisotropy;
     if ((bits & MATERIAL_LAYER_COAT) != 0u) {
         l.coat = coat.weight;
         l.coat_roughness = coat.roughness;

@@ -269,12 +269,11 @@ MESH_FLAG_STREAMED :: abi.MESH_FLAG_STREAMED
 INSTANCE_VALUES_MAX :: abi.INSTANCE_VALUES_MAX
 INSTANCE_VALUES_HEADER :: abi.INSTANCE_VALUES_HEADER
 INSTANCE_VALUE_WORDS :: abi.INSTANCE_VALUE_WORDS
-// A value of the standard model an instance gives: the others are of the row.
-Instance_Material_Value_Target :: abi.Instance_Value
+INSTANCE_VALUE_COUNT_SHIFT :: abi.INSTANCE_VALUE_COUNT_SHIFT
 Instance_Material_Value :: struct {
-	row:    u32,    // of the material table: the value is for the points of the instance that show it
-	target: u32,    // a word of the parameters of the program of the row, or an Instance_Material_Value_Target; from INSTANCE_VALUE_COUNT_SHIFT, how many of its words it gives
-	words:  [4]u32, // as the row holds them
+	row:   u32,    // of the material table: the words are for the points of the instance that show it
+	word:  u32,    // the first word of the row (Gpu_Material_Row) it gives; from INSTANCE_VALUE_COUNT_SHIFT, how many from it
+	words: [4]u32, // in place of those of the row
 }
 #assert(size_of(Instance_Material_Value) == INSTANCE_VALUE_WORDS * size_of(u32))
 Instance_Material_Values :: struct {
@@ -283,21 +282,6 @@ Instance_Material_Values :: struct {
 	entries: [INSTANCE_VALUES_MAX]Instance_Material_Value,
 }
 #assert(offset_of(Instance_Material_Values, entries) == abi.INSTANCE_VALUES_HEADER * size_of(u32))
-
-// A value of the standard model, or of a number of the program of row
-// (target: the parameter), for the points of an instance that show row.
-instance_material_value :: proc(row: u32, target: union #no_nil {Instance_Material_Value_Target, ^Program_Parameter}, value: Vec4) -> (held: Instance_Material_Value) {
-	switch to in target {
-	case Instance_Material_Value_Target:
-		held = {row = row, target = u32(to) | 4 << abi.INSTANCE_VALUE_COUNT_SHIFT, words = transmute([4]u32)value}
-	case ^Program_Parameter:
-		params: [16]Vec4
-		program_parameter_set(&params, to, {f64(value.x), f64(value.y), f64(value.z), f64(value.w)})
-		held = {row = row, target = u32(to.offset / 4) | u32(to.components) << abi.INSTANCE_VALUE_COUNT_SHIFT}
-		copy(held.words[:], (cast(^[PROGRAM_PARAMETER_BYTES / 4]u32)&params)[to.offset / 4:][:to.components])
-	}
-	return
-}
 
 // uv' = linear * uv + offset: the transform of the material and that of the
 // map, composed. ray_lod: the texture level a ray adds for what they shrink.
@@ -358,14 +342,21 @@ Gpu_Material_Volume :: struct {
 	_:       f32,
 }
 
+Gpu_Material_Blocks :: struct {
+	coat:                 Gpu_Material_Coat,
+	fuzz:                 Gpu_Material_Fuzz,
+	anisotropy:           Gpu_Material_Anisotropy,
+	diffuse_transmission: Gpu_Material_Diffuse_Transmission,
+}
+#assert(size_of(Gpu_Material) == abi.MATERIAL_WORDS * size_of(u32))
+#assert(size_of(Gpu_Material_Blocks) == abi.MATERIAL_BLOCK_WORDS * size_of(u32))
+#assert(offset_of(Gpu_Material_Row, custom_params) == abi.MATERIAL_PARAMETERS_WORD * size_of(u32))
+
 // A row of the material table: the values, then what shading fetches at
 // the point that uses it.
 Gpu_Material_Row :: struct {
 	using shared:   Gpu_Material,
-	coat:           Gpu_Material_Coat,
-	fuzz:           Gpu_Material_Fuzz,
-	anisotropy:     Gpu_Material_Anisotropy,
-	diffuse_transmission: Gpu_Material_Diffuse_Transmission,
+	using blocks:   Gpu_Material_Blocks,
 	volume:         Gpu_Material_Volume,
 	map_transforms: [asset.Material_Map_Kind]Gpu_Material_Map_Transform,
 	custom_params:  [16]Vec4,

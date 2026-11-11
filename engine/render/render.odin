@@ -211,7 +211,7 @@ Post_Process_Layer :: struct {
 // MATERIAL_VALUE_FIELDS or MATERIAL_MAP_NAMES. With own_overlays its overlays
 // replace those of the material of the first slot. Several functions write
 // it, in loop order: each sets and drops only the names it gives. Its
-// instance holds its color, its light and its values (values_hold), given in
+// instance holds its color, its light and its values (slot_row), given in
 // place when they change; a texture makes the entity show a row of its own,
 // shared by what gives the same.
 @(component,shared,description="What this entity alone shows of its materials: a color that multiplies theirs, light added to theirs, and values and textures by name.")
@@ -284,30 +284,28 @@ Draw_Offset :: struct {
 
 // The values of the standard model an entity gives by name, and where
 // asset.Material_Info holds each: a number, a color, a flag or, with modes,
-// an enum of a byte with that many members; held: where an instance holds
-// it.
+// an enum of a byte with that many members.
 Material_Value_Field :: struct {
     name:string,
     offset:uintptr,
     kind:enum u8 {Number,Color,Flag,Mode},
     modes:u8,
-    held:gpu.Instance_Material_Value_Target,
 }
 MATERIAL_VALUE_FIELDS :: [22]Material_Value_Field{
-    {"base_color",offset_of(asset.Material_Info,base_color),.Color,0,.Base_Color},{"opacity",offset_of(asset.Material_Info,opacity),.Number,0,.Opacity},
-    {"metallic",offset_of(asset.Material_Info,metallic),.Number,0,.Metallic},{"roughness",offset_of(asset.Material_Info,roughness),.Number,0,.Roughness},
-    {"emission",offset_of(asset.Material_Info,emission),.Color,0,.Emission},{"specular",offset_of(asset.Material_Info,specular_factor),.Number,0,.Specular},
-    {"ior",offset_of(asset.Material_Info,ior),.Number,0,.Ior},{"transmission",offset_of(asset.Material_Info,transmission),.Number,0,.Transmission},
-    {"alpha_mode",offset_of(asset.Material_Info,alpha_mode),.Mode,len(asset.Alpha_Mode),.Alpha_Mode},
-    {"coat",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,weight),.Number,0,.Coat},{"coat_roughness",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,roughness),.Number,0,.Coat_Roughness},
-    {"coat_color",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,color),.Color,0,.Coat_Color},{"coat_ior",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,ior),.Number,0,.Coat_Ior},
-    {"fuzz",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,weight),.Number,0,.Fuzz},{"fuzz_color",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,color),.Color,0,.Fuzz_Color},
-    {"fuzz_roughness",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,roughness),.Number,0,.Fuzz_Roughness},
-    {"anisotropy",offset_of(asset.Material_Info,anisotropy)+offset_of(asset.Material_Anisotropy,amount),.Number,0,.Anisotropy},
-    {"anisotropy_rotation",offset_of(asset.Material_Info,anisotropy)+offset_of(asset.Material_Anisotropy,rotation),.Number,0,.Anisotropy_Rotation},
-    {"unlit",offset_of(asset.Material_Info,unlit),.Flag,0,.Unlit},{"emission_mode",offset_of(asset.Material_Info,emission_mode),.Mode,len(asset.Emission_Mode),.Emission_Mode},
-    {"diffuse_transmission",offset_of(asset.Material_Info,diffuse_transmission)+offset_of(asset.Material_Diffuse_Transmission,weight),.Number,0,.Diffuse_Transmission},
-    {"diffuse_transmission_color",offset_of(asset.Material_Info,diffuse_transmission)+offset_of(asset.Material_Diffuse_Transmission,color),.Color,0,.Diffuse_Transmission_Color},
+    {"base_color",offset_of(asset.Material_Info,base_color),.Color,0},{"opacity",offset_of(asset.Material_Info,opacity),.Number,0},
+    {"metallic",offset_of(asset.Material_Info,metallic),.Number,0},{"roughness",offset_of(asset.Material_Info,roughness),.Number,0},
+    {"emission",offset_of(asset.Material_Info,emission),.Color,0},{"specular",offset_of(asset.Material_Info,specular_factor),.Number,0},
+    {"ior",offset_of(asset.Material_Info,ior),.Number,0},{"transmission",offset_of(asset.Material_Info,transmission),.Number,0},
+    {"alpha_mode",offset_of(asset.Material_Info,alpha_mode),.Mode,len(asset.Alpha_Mode)},
+    {"coat",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,weight),.Number,0},{"coat_roughness",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,roughness),.Number,0},
+    {"coat_color",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,color),.Color,0},{"coat_ior",offset_of(asset.Material_Info,coat)+offset_of(asset.Material_Coat,ior),.Number,0},
+    {"fuzz",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,weight),.Number,0},{"fuzz_color",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,color),.Color,0},
+    {"fuzz_roughness",offset_of(asset.Material_Info,fuzz)+offset_of(asset.Material_Fuzz,roughness),.Number,0},
+    {"anisotropy",offset_of(asset.Material_Info,anisotropy)+offset_of(asset.Material_Anisotropy,amount),.Number,0},
+    {"anisotropy_rotation",offset_of(asset.Material_Info,anisotropy)+offset_of(asset.Material_Anisotropy,rotation),.Number,0},
+    {"unlit",offset_of(asset.Material_Info,unlit),.Flag,0},{"emission_mode",offset_of(asset.Material_Info,emission_mode),.Mode,len(asset.Emission_Mode)},
+    {"diffuse_transmission",offset_of(asset.Material_Info,diffuse_transmission)+offset_of(asset.Material_Diffuse_Transmission,weight),.Number,0},
+    {"diffuse_transmission_color",offset_of(asset.Material_Info,diffuse_transmission)+offset_of(asset.Material_Diffuse_Transmission,color),.Color,0},
 }
 
 // The maps of the standard model as Material_Values names them, the paths
@@ -1266,64 +1264,40 @@ rect_desc :: proc(world:core.World_Transform,rect:Rect_Light) -> gpu.Light_Desc 
 
 // The material a rectangle of Light_Emission shows: the one the mesh of its
 // entity is drawn with in that slot, by what replaces it in this frame if
-// something does (a screen of a plugin), or else as the renderer has it.
-// 0: none.
+// something does, or else as the renderer has it with what the entity gives
+// the slot. 0: none.
 @(private)
 emission_material :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tables,extras:[]gpu.Instance_Desc,e:core.Entity,slot:u32) -> gpu.Material_Handle {
     static,has_mesh:=core.get(t.meshes,e)
     at:=instance_of(sync,e)
     if !has_mesh || at<0 {return 0}
     shown:gpu.Instance_Desc
+    values:=MATERIAL_VALUES_DEFAULT
     if sync.drawn.values[at].replaced!=0 {
         for extra in extras {if extra.replace_source && extra.object_id==u64(e) {shown=extra;break}}
     } else if material,slots,_,held:=gpu.scene_instance_materials(r,u32(at));held {
-        shown.material=material
-        shown.slot_materials=slots
-        values:=MATERIAL_VALUES_DEFAULT
+        shown.material,shown.slot_materials=material,slots
         if own,has_values:=core.get(t.values,e);has_values {values=own}
-        made,_:=mesh_instance(a,static,1,values)
-        shown.material_values=made.material_values
     }
-    row,_:=mesh_slot_row(a,static,&shown,slot)
-    return gpu.Material_Handle(material_row_held(a,row,&shown.material_values))
+    // A light is given a row: the one those values derive.
+    row:=mesh_slot_row(a,static,&shown,slot)
+    desc:=host.assets_material_values(a,row)
+    given:=desc
+    material_values_apply(a,&given,&values,int(slot))
+    if given!=desc {
+        if derived,derives:=host.assets_material_derive(a,given);derives {row=derived}
+    }
+    return gpu.Material_Handle(row)
 }
 
-// The row with the values an instance holds for it over it, as the shaders
-// read them over the row: what a light that shows the row is given. The row
-// itself when the instance holds none for it.
-material_row_held :: proc(a:^host.Assets,row:u32,held:^gpu.Instance_Material_Values) -> u32 {
-    values:=host.assets_material_values(a,row)
-    given:=false
-    for &entry in held.entries[:min(int(held.count),len(held.entries))] {
-        if entry.row!=row {continue}
-        target:=entry.target&(1<<abi.INSTANCE_VALUE_COUNT_SHIFT-1)
-        if target<abi.INSTANCE_VALUE_STANDARD {
-            count:=min(int(entry.target>>abi.INSTANCE_VALUE_COUNT_SHIFT),4,gpu.PROGRAM_PARAMETER_BYTES/4-int(target))
-            copy((cast(^[gpu.PROGRAM_PARAMETER_BYTES/4]u32)&values.custom_params)[target:][:count],entry.words[:count])
-            given=true
-            continue
-        }
-        for field in MATERIAL_VALUE_FIELDS {
-            if u32(field.held)!=target {continue}
-            value:=transmute([4]f32)entry.words
-            if material_standard_value(&values.info,base.name_hash(field.name),&value,true) {given=true}
-        }
-    }
-    if !given {return row}
-    derived,derives:=host.assets_material_derive(a,values)
-    return derives?derived:row
-}
-
-// The row of the material a mesh is drawn with in a slot, and where the
-// instance keeps it when it says (nil: its global material).
-mesh_slot_row :: proc(a:^host.Assets,static:Mesh_Renderer,instance:^gpu.Instance_Desc,slot:u32) -> (row:u32,at:^u32) {
+// The row of the material a mesh is drawn with in a slot of an instance.
+mesh_slot_row :: proc(a:^host.Assets,static:Mesh_Renderer,instance:^gpu.Instance_Desc,slot:u32) -> u32 {
     mesh:=static.mesh!={}?host.assets_mesh(a,static.mesh):host.assets_shape(a,static.shape)
-    if mesh==nil || mesh.slot_count==0 {return u32(instance.material),nil}
+    if mesh==nil || mesh.slot_count==0 {return u32(instance.material)}
     index:=min(int(slot),int(mesh.slot_count)-1,len(instance.slot_materials)-1)
-    at=&instance.slot_materials[index]
-    if at^>0 {return at^-1,at}
+    if row:=instance.slot_materials[index];row>0 {return row-1}
     material:=index<MATERIAL_SLOTS?static.materials[index]:base.Asset_Id{}
-    return host.assets_material_row(a,material!={}?material:mesh.slot_materials[index]),at
+    return host.assets_material_row(a,material!={}?material:mesh.slot_materials[index])
 }
 
 // The instance of an entity; -1 when it is not drawn.
@@ -1372,35 +1346,19 @@ instances_moved :: proc(sync:^Render_Sync,t:Sync_Tables,c:core.Changes,frame:cor
     }
 }
 
-// Where an instance holds a value of the standard model; false for another name.
-@(private)
-material_value_instanced :: proc(name:u64) -> (target:gpu.Instance_Material_Value_Target,instanced:bool) {
-    for field in MATERIAL_VALUE_FIELDS {
-        if base.name_hash(field.name)==name {return field.held,true}
-    }
-    return
-}
-
 // Puts one named value over the values of a material: a parameter of its
 // program when the program declares one with that name, and otherwise the
 // value of the standard model with it. False for a name that is neither.
 material_value_apply :: proc(values:^gpu.Material_Desc,program:^gpu.Program,name:u64,value:[4]f32) -> bool {
-    if parameter:=material_value_parameter(program,name);parameter!=nil {
-        gpu.program_parameter_set(&values.custom_params,parameter,{f64(value.x),f64(value.y),f64(value.z),f64(value.w)})
-        return true
+    if program!=nil {
+        for &parameter in program.parameters {
+            if parameter.kind==.Texture || base.name_hash(parameter.name)!=name {continue}
+            gpu.program_parameter_set(&values.custom_params,&parameter,{f64(value.x),f64(value.y),f64(value.z),f64(value.w)})
+            return true
+        }
     }
     value:=value
     return material_standard_value(&values.info,name,&value,true)
-}
-
-// The parameter of a program a name of a value is; nil for another name.
-@(private)
-material_value_parameter :: proc(program:^gpu.Program,name:u64) -> ^gpu.Program_Parameter {
-    if program==nil {return nil}
-    for &parameter in program.parameters {
-        if parameter.kind!=.Texture && base.name_hash(parameter.name)==name {return &parameter}
-    }
-    return nil
 }
 
 // Puts a value of the standard model over the values of a material (put), or
@@ -1429,22 +1387,6 @@ surface_program :: proc(a:^host.Assets,id:u32) -> ^gpu.Program {
         if candidate.id==id && candidate.domain==.Surface {return &candidate}
     }
     return nil
-}
-
-// The values of a slot an instance holds, for its points that show row: the
-// numbers of the program of the row, and those of the standard model.
-@(private)
-values_hold :: proc(a:^host.Assets,held:^gpu.Instance_Material_Values,row:u32,o:^Material_Values,slot:int) {
-    program:=surface_program(a,host.assets_material_values(a,row).program_id)
-    for name,i in o.names[:min(int(o.count),len(o.names))] {
-        if int(o.slots[i])!=slot || int(held.count)>=len(held.entries) {continue}
-        if parameter:=material_value_parameter(program,name);parameter!=nil {
-            held.entries[held.count]=gpu.instance_material_value(row,parameter,o.values[i])
-        } else if target,instanced:=material_value_instanced(name);instanced {
-            held.entries[held.count]=gpu.instance_material_value(row,target,o.values[i])
-        } else {continue}
-        held.count+=1
-    }
 }
 
 // Whether an entity shows its materials as they are: an opaque white color, no light and nothing by name.
@@ -1640,7 +1582,8 @@ mesh_instance :: proc(a:^host.Assets,static:Mesh_Renderer,transform:mm.Mat4,valu
     instance.material_values.fade=1-clamp(values.color.a,0,1)
     shown:=static.materials[0]
     if mesh.slot_count==0 {
-        instance.material=gpu.Material_Handle(slot_row(a,&instance,host.assets_material_row(a,shown),&values,0))
+        row:=host.assets_material_row(a,shown)
+        instance.material=gpu.Material_Handle(material_values_slot(&values,0)?slot_row(a,&instance,row,&values,0):row)
     } else {
         if shown=={} {shown=mesh.slot_materials[0]}
         for slot in 0..<mesh.slot_count {
@@ -1662,17 +1605,18 @@ mesh_instance :: proc(a:^host.Assets,static:Mesh_Renderer,transform:mm.Mat4,valu
 }
 
 // The row a slot of an instance shows of a material with that row, with what
-// an entity gives the slot: one of its own with its textures; its values go
-// to `instance`, for that row.
+// an entity gives the slot: one of its own with its textures; `instance`
+// holds what its values change of that row.
 @(private)
 slot_row :: proc(a:^host.Assets,instance:^gpu.Instance_Desc,row:u32,values:^Material_Values,slot:int) -> u32 {
-    shown:=row
-    desc:=host.assets_material_values(a,row)
+    shown,desc:=row,host.assets_material_values(a,row)
     textured:=desc
     material_values_apply(a,&textured,values,slot,false)
     if textured!=desc {
-        if derived,ok:=host.assets_material_derive(a,textured);ok {shown=derived}
+        if derived,ok:=host.assets_material_derive(a,textured);ok {shown,desc=derived,textured}
     }
-    values_hold(a,&instance.material_values,shown,values,slot)
+    given:=desc
+    material_values_apply(a,&given,values,slot)
+    gpu.instance_material_values_hold(a.renderer,&instance.material_values,shown,desc,given)
     return shown
 }
