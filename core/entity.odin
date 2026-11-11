@@ -21,7 +21,7 @@ Entities :: struct {
     turned:[dynamic]Entity,  // their off changed in this settle: the tables move their rows
     walk:[dynamic]bool,      // by index, scratch of the settle: destroyed (hierarchy_doom), then under a Disabled (entities_activity)
     activity:Seen,           // the Disabled that off follows
-    activity_tree:u64,       // and the version of the Hierarchy
+    activity_tree:u64,       // and how far it read the moved of the Hierarchy
     alive:int,
     disabled:int,            // the entities off
     ids:Id_Index,            // the entities by their Id
@@ -121,20 +121,59 @@ entity_off :: #force_inline proc "contextless" (es:^Entities,e:Entity) -> bool {
     return i<len(es.off) && es.off[i]
 }
 
-// Makes off follow Disabled and the hierarchy when either changed, and lists
-// in turned the entities whose rows the other tables then move. The generated
-// settle calls it between functions, after settling Disabled and Parent and
-// the Hierarchy. False without memory: what it could not do waits for the
-// next settle.
+// Makes off follow Disabled and the hierarchy where either changed, and
+// lists in turned the entities whose rows the other tables then move: it
+// walks from what Disabled and the Hierarchy say changed, and every entity
+// only when one of them was replaced whole. The generated settle calls it
+// between functions, after settling Disabled and Parent and the Hierarchy.
+// False without memory: what it could not do waits for the next settle.
 entities_activity :: proc(es:^Entities,disabled:^Table(Disabled,$A),hierarchy:Ref(Hierarchy)) -> bool {
-    seen:=es.activity
-    if !touched(disabled,&seen) && hierarchy.version==es.activity_tree {return true}
-    if count(disabled)==0 && es.disabled==0 {
-        es.activity,es.activity_tree=seen,hierarchy.version
-        return true
+    seen,read:=es.activity,es.activity_tree
+    c:=changes(disabled,&seen)
+    moved,whole:=log_since(hierarchy.moved,&read)
+    if !c.written && len(c.gone)==0 && len(moved)==0 && !whole {return true}
+    if count(disabled)>0 || es.disabled>0 {
+        if resize(&es.off,len(es.generation))!=nil {return false}
+        if c.all || whole {
+            activity_whole(es,disabled,hierarchy) or_return
+        } else {
+            for e in c.gone {activity_follow(es,disabled,hierarchy,e) or_return}
+            for row in each_changed(disabled,&c) {activity_follow(es,disabled,hierarchy,entity_at(disabled,row)) or_return}
+            for e in moved {activity_follow(es,disabled,hierarchy,e) or_return}
+        }
     }
+    es.activity,es.activity_tree=seen,read
+    return true
+}
+
+// Makes off of root, and of what hangs from it, follow its Disabled and the
+// off of what it hangs from; below one whose off stays, nothing changes.
+@(private="file")
+activity_follow :: proc(es:^Entities,disabled:^Table(Disabled,$A),hierarchy:Ref(Hierarchy),root:Entity) -> bool {
+    for at:=root;at!=NONE; {
+        i:=entity_index(at)
+        above:=parent_of(hierarchy,at)
+        live:=alive(es,at)
+        off:=live && (has(disabled,at) || above!=NONE && es.off[entity_index(above)])
+        if off==es.off[i] {
+            at=subtree_next(hierarchy,root,at,false)
+            continue
+        }
+        if live {
+            if _,error:=append(&es.turned,at);error!=nil {return false}
+        }
+        es.off[i]=off
+        es.disabled+=off?1:-1
+        at=subtree_next(hierarchy,root,at)
+    }
+    return true
+}
+
+// Makes off of every entity follow Disabled and the hierarchy.
+@(private="file")
+activity_whole :: proc(es:^Entities,disabled:^Table(Disabled,$A),hierarchy:Ref(Hierarchy)) -> bool {
     n:=len(es.generation)
-    if resize(&es.off,n)!=nil || resize(&es.walk,n)!=nil {return false}
+    if resize(&es.walk,n)!=nil {return false}
     slice.zero(es.walk[:])
     // Below an entity marked everything is marked: its walk stops there.
     for row in 0..<count(disabled) {
@@ -156,7 +195,6 @@ entities_activity :: proc(es:^Entities,disabled:^Table(Disabled,$A),hierarchy:Re
         es.off[i]=off
         es.disabled+=off?1:-1
     }
-    es.activity,es.activity_tree=seen,hierarchy.version
     return true
 }
 

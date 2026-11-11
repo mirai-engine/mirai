@@ -224,3 +224,63 @@ the_world_of_a_deep_chain_composes_every_link :: proc(t:^testing.T) {
     testing.expect(t,placed && abs(world.position.x-150)<1e-3)
     testing.expect_value(t,depth_of(&w.parents,leaf),149)
 }
+
+// Off follows Disabled and the hierarchy from what changed alone: on random
+// changes it is what the Parent rows above each entity say, and a settle that
+// hangs one child somewhere looks at the off of nothing elsewhere.
+@(test)
+off_follows_disabled_and_the_tree_from_what_changed :: proc(t:^testing.T) {
+    w:Tree_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    random:=u64(0x9e3779b97f4a7c15)
+    next :: proc(random:^u64,n:int) -> int {
+        random^~=random^<<13;random^~=random^>>7;random^~=random^<<17
+        return int(random^%u64(n))
+    }
+    live:[dynamic]Entity
+    defer delete(live)
+    for _ in 0..<64 {append(&live,create(&w.entities))}
+    for round in 0..<200 {
+        for _ in 0..<4 {
+            switch next(&random,6) {
+            case 0: append(&live,create(&w.entities))
+            case 1:
+                child,parent:=live[next(&random,len(live))],live[next(&random,len(live))]
+                if entity_index(parent)<entity_index(child) {add(&w.parents,child,Parent{parent,0})}
+            case 2: remove(&w.parents,live[next(&random,len(live))])
+            case 3: add(&w.disabled,live[next(&random,len(live))],Disabled{})
+            case 4: remove(&w.disabled,live[next(&random,len(live))])
+            case 5: if round%8==0 {destroy(&w.entities,live[next(&random,len(live))])}
+            }
+        }
+        tree_settle(t,&w)
+        kept:=0
+        for e in live {if alive(&w.entities,e) {live[kept]=e;kept+=1}}
+        resize(&live,kept)
+        for e in live {
+            off:=false
+            for at:=e;at!=NONE && !off; {
+                off=has(&w.disabled,at)
+                parent,_:=get(&w.parents,at)
+                at=parent.entity
+            }
+            if entity_off(&w.entities,e)!=off {
+                testing.expectf(t,false,"round %d: entity %d is off %v, and the rows above it say %v",round,entity_index(e),entity_off(&w.entities,e),off)
+                return
+            }
+        }
+    }
+    // With something off, an off nobody set stays where nothing changed.
+    holder:=live[len(live)-1]
+    add(&w.disabled,holder,Disabled{})
+    tree_settle(t,&w)
+    far:=live[0]
+    i:=entity_index(far)
+    was:=w.entities.off[i]
+    w.entities.off[i]=!was
+    add(&w.parents,create(&w.entities),Parent{holder,0})
+    tree_settle(t,&w)
+    testing.expect(t,w.entities.off[i]==!was,"a settle that hung one child walked other entities")
+    w.entities.off[i]=was
+}
