@@ -107,7 +107,7 @@ volume_files_of_another_version_or_with_distances_past_the_band_are_refused :: p
     defer delete(data)
     // The version is in the header: the file of the version before is not read.
     document:asset.Document
-    asset.document_init(&document,KIND,id)
+    asset.document_init(&document,TERRAIN_KIND,id)
     document.kind_version=VERSION-1
     info:=source.info
     _,put:=asset.document_put_row(&document,&types,"terrain",&info)

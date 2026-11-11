@@ -1,5 +1,5 @@
 {
   "name": "ui_inspector",
   "version": "0.1.0",
-  "parts": ["Editor"]
+  "parts": ["Editor", "Recipes"]
 }

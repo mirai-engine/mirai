@@ -3,5 +3,5 @@
   "version": "0.1.0",
   "dependencies": ["physics"],
   "parts": ["Runtime", "Editor"],
-  "asset_kinds": [{"extension": ".fracture"}]
+  "asset_kinds": [{"extension": ".fracture", "kind": "FRAC", "label": "Fracture", "color": [180, 120, 110], "icon": "Collider"}]
 }

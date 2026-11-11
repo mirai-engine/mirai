@@ -277,35 +277,33 @@ scene_target :: proc(f:^Scene_File) -> Scene_Target {
             value,found:=scene_value(f,t,v,base.Entity_Id(node),start)
             serial.text_write_changed(out,&f.ws.schema,v.type,value if found else start,start,omit_fields={.Transient,.Hidden})
         },
-        // A preset is made once on a world of the game, and its components kept as the file keeps them.
+        // A recipe is placed once on a world of the game, and its components kept as the file keeps them.
         preset=proc(user:rawptr,name:string,allocator:runtime.Allocator) -> (preset:Scene_Preset,problem:string) {
             f:=(^Scene_File)(user)
             p:=f.p
-            index,found:=recipe_named(name,p.plugins.labels)
-            if !found {return {},recipe_problem(name,p.plugins.labels)}
+            index,found:=recipe_named(p.recipes,name)
+            if !found {return {},recipe_problem(p.recipes,name)}
             if p.scratch.w.data==nil {
                 made:bool
-                if p.scratch,made=scratch_world_make(p.info);!made {return {},"a preset is made on a world of the game, and the library of the project gives none; "+BUILD_FIX}
+                if p.scratch,made=scratch_world_make(p.info);!made {return {},"a recipe is placed on a world of the game, and the library of the project gives none; "+BUILD_FIX}
             }
+            recipe:=p.recipes[index]
+            native:[]Part
+            if native,problem=recipe_parts(p.scratch.w,&p.types,recipe,allocator);problem!="" {return}
             parts:=make([dynamic]Part,allocator)
-            for part in recipe_parts(&p.scratch,index,p.plugins,allocator) {
+            for part in native {
                 v:=scene_schema(f,part.t)
                 if v.type==serial.TYPE_NONE {continue}
                 image:=make([]u8,max(len(part.value),1),allocator)[:len(part.value)]
                 if len(image)>0 {serial.value_write(&v.layout,image,raw_data(part.value),1)}
                 append(&parts,Part{part.t,image})
             }
-            preset={name=name,parts=parts[:]}
-            preset.rotation,preset.scale=recipe_place(index,p.plugins)
-            return
+            return {recipe=recipe,parts=parts[:]},""
         },
         create=proc(user:rawptr,parent:Node,name:string,preset:Scene_Preset,id:base.Entity_Id) -> (Node,string) {
             f:=(^Scene_File)(user)
             name:=name
-            if name=="" {
-                name="Entity"
-                if preset.name!="" {name,_=strings.replace_all(preset.name,"_"," ",context.temp_allocator)}
-            }
+            if name=="" {name=preset.label if preset.label!="" else "Entity"}
             e:=id if id!=0 else asset.scene_new_id(&f.scene)
             if _,error:=asset.scene_entity_add(&f.scene,e,base.Entity_Id(parent),name);error!=.None {return 0,"the file holds no more entities"}
             identity:=core.TRANSFORM_IDENTITY

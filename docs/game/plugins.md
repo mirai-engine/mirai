@@ -20,10 +20,11 @@ use one for a reusable feature with its own data and editor tools, otherwise `ga
 - Replicated data: [networking](networking.md). Assets:
   [assets](assets.md).
 
-Layout: `plugin.mirai`, `runtime/`, `editor/`, `shaders/`, `assets/`; a part exists only if
-`parts` names it (`Runtime`, `Editor`, `Shaders`, `Assets`) and its folder exists. Each subfolder
-with `.odin` sources (not `_test.odin`) is another package. `assets/` mounts under
-`plugins/<name>/` and all of it ships.
+Layout: `plugin.mirai`, `runtime/`, `editor/`, `shaders/`, `assets/`, `recipes/`; a part exists
+only if `parts` names it (`Runtime`, `Editor`, `Shaders`, `Assets`, `Recipes`) and its folder
+exists. Each subfolder with `.odin` sources (not `_test.odin`) is another package. `assets/` mounts
+under `plugins/<name>/` and all of it ships; `recipes/` holds the scenes of one entity that Create
+and a `preset` place, and never ships.
 
 ## 1. Runtime part
 `plugins/heal/plugin.mirai`, then add `"heal"` to `plugins` in `project.mirai`:

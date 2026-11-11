@@ -95,7 +95,7 @@ png_size :: proc(path:string) -> (width,height:int,ok:bool) {
     return width,height,true
 }
 
-Plugin_Part :: enum u8 {Runtime,Editor,Shaders,Assets}
+Plugin_Part :: enum u8 {Runtime,Editor,Shaders,Assets,Recipes}
 Plugin_Parts :: bit_set[Plugin_Part;u8]
 
 Version :: [32]u8
@@ -109,11 +109,20 @@ Engine_Range :: struct {
     max:Version `mirai:"text"`,
 }
 
-// A kind of asset a plugin adds, by the extension of its files. It is what
-// says of the kind what is known without loading the plugin.
+// A kind of asset a plugin adds, by the extension of its files: its one
+// declaration. Git, the cook and the editor read it without building the
+// plugin, and the build generates from it the constants the plugin's code
+// names (cook/build kinds.odin).
 Asset_Kind :: struct {
     extension:[32]u8 `mirai:"text"`, // with the dot, in lowercase: ".particle"
+    kind:[5]u8 `mirai:"text"`,       // the four letters its files begin with (asset.Fourcc)
     merged:bool,                     // a document of rows that are edited, which git merges row by row and diffs by value through mirai, as asset.Kind_Info.merged says of a kind of the engine; false: bulk that an import, a bake or a recording makes, a whole file to git
+    folder:[64]u8 `mirai:"text"`,    // of the package its constants are generated in, relative to the plugin; empty: runtime
+    label:[32]u8 `mirai:"text"`,     // the kind as the content browser says it and the name of its filter; empty: the browser does not list it
+    color:[3]u8,                     // of its cards, fields, rows and tabs
+    icon:[32]u8 `mirai:"text"`,      // a ui.Icon or an editor.User_Icon, by name
+    field:[16]u8 `mirai:"text"`,     // a word: an Asset_Id field whose name has it takes the kind
+    scene_data:bool,                 // what a scene makes of itself: the browser lists it with the Plugins filter or a search
 }
 
 Plugin_Manifest :: struct {
@@ -162,7 +171,7 @@ Error_Code :: enum u8 {
     Automatic_Named,    // the project names subject, an automatic plugin: it is active when its dependencies are
     Automatic_Alone,    // subject is automatic and depends on nothing
     Source_Invalid,     // the source subject has no url, or its commit is not the full hash of one
-    Asset_Kind_Invalid, // the extension subject of an asset kind is not a dot and lowercase letters, digits and '_', or is there twice
+    Asset_Kind_Invalid, // of the asset kind of the extension subject: the extension is not a dot and lowercase letters, digits and '_', its kind is not four printable letters, its folder is not a relative path, or its extension or kind is there twice
     Schema_Failed,      // std/serial cannot describe the type subject: a defect of the engine, not of the file
     Out_Of_Memory,      // nothing of the files is wrong
 }
@@ -309,8 +318,13 @@ plugin_validate :: proc(m:^Plugin_Manifest) -> Error {
             continue
         }
         if extension[0]!='.' || !name_valid(extension[1:]) {return error_about(.Asset_Kind_Invalid,extension)}
+        if base.text_len(kind.kind[:])!=4 {return error_about(.Asset_Kind_Invalid,extension)}
+        for letter in kind.kind[:4] {
+            if letter<=' ' || letter>'~' {return error_about(.Asset_Kind_Invalid,extension)}
+        }
+        if folder:=base.text_get(kind.folder[:]);folder!="" && !relative_path_valid(folder) {return error_about(.Asset_Kind_Invalid,extension)}
         for &other in m.asset_kinds[:i] {
-            if other.extension==kind.extension {return error_about(.Asset_Kind_Invalid,extension)}
+            if other.extension==kind.extension || other.kind==kind.kind {return error_about(.Asset_Kind_Invalid,extension)}
         }
     }
     if m.automatic {
@@ -428,7 +442,7 @@ error_text :: proc(folder:string,error:Error,allocator:=context.allocator) -> st
     case .Automatic_Named:    text=fmt.tprintf("%s: enables the plugin '%s', which is automatic: it is enabled by itself when its dependencies are; remove it from plugins",file,subject)
     case .Automatic_Alone:    text=fmt.tprintf("%s: '%s' is automatic and depends on nothing; name in dependencies the plugins it joins or remove automatic",file,subject)
     case .Source_Invalid:     text=fmt.tprintf("%s: the source '%s' has no url or its commit is not a full hash",file,subject)
-    case .Asset_Kind_Invalid: text=fmt.tprintf("%s: the extension '%s' of an asset kind is not a dot and lowercase letters, digits and '_', or is there twice",file,subject)
+    case .Asset_Kind_Invalid: text=fmt.tprintf("%s: the asset kind '%s' needs an extension of a dot and lowercase letters, digits and '_', a kind of four printable letters and a folder relative to the plugin, and no other kind with its extension or its letters",file,subject)
     case .Schema_Failed:      text=fmt.tprintf("%s: std/serial does not describe the type %s; it is a defect of the engine, not of the file",file,subject)
     case .Out_Of_Memory:      text=fmt.tprintf("%s: there is not enough memory to read the project and its plugins; free memory and try again",file)
     }

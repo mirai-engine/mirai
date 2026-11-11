@@ -246,7 +246,7 @@ particle_resolve_checked :: proc(a:^host.Assets,particle:base.Asset_Id,override:
 // and read again when it changes. ok is false when it cannot be loaded, or
 // its tables are not those of an effect: then a problem of the asset.
 effect_view :: proc(a:^host.Assets,id:base.Asset_Id) -> (view:effect.Particle_View,ok:bool) {
-    file:=host.assets_document(a,id,effect.KIND)
+    file:=host.assets_document(a,id,effect.PARTICLE_KIND)
     if file==nil {return}
     error:asset.Error
     if view,error=effect.particle_view(file,&a.types);error!=.None {

@@ -8,6 +8,7 @@ import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/history"
 import eaudio "mirai:engine/audio"
@@ -150,10 +151,13 @@ Session :: struct {
     info:^core.World_Info,
     libraries:[dynamic]host.Project_Library, // loaded by Builds after the first: they stay until the editor ends
     library_generation:int,
-    cards:[CARD_CAPACITY]Card,                   // of cards(): the presets and those of the plugins of the library in use
+    cards:[CARD_CAPACITY]Card,                   // of cards(): those of the editor and of the plugins of the library in use
     card_tables:[CARD_CAPACITY]^core.Table_Info, // of the component each one is the icon of
     card_count:int,
+    cards_editor:int,                            // the first card of a plugin
     cards_library:int,                           // library_generation+1 of the cards held
+    recipes:[]author.Recipe,
+    recipes_library:int,                         // library_generation+1 of the recipes held
     providers:Providers,                         // of the plugins of the library in use
     edit_world:rawptr,   // the World being edited
     runs:[EDITOR_RUNS]Run,
@@ -1166,6 +1170,8 @@ session_destroy :: proc(s:^Session) {
     s.edit_selection={}
     delete(s.copied)
     s.copied=nil
+    author.recipes_free(s.recipes)
+    s.recipes=nil
     console_destroy(s.console)
     settings_engine_free(s)
     delete(s.project_root);delete(s.engine_root);delete(s.program);delete(s.engine_stamp);delete(s.library_stamp);delete(s.assets_root);delete(s.capture);delete(s.gpu_lost_before)
