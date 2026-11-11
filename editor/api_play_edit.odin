@@ -209,8 +209,15 @@ api_play_spawn :: proc(s:^Session,call:^api.Call) {
         if spawned.parent,known=api_call_entity(call,w,params.parent[:],"parent",game=true);!known {return}
     }
     spawned.transform={position=params.position,rotation=mm.quat_from_euler(params.rotation_deg*mm.RAD_PER_DEG),scale=params.scale}
+    before:=core.world_entities(w).alive
     report,error:=scene.spawn_prefab(core.commands_of(w),s.app.assets,spawned)
     core.world_settle(w)
+    // An answer gives the copy whole: what waits for its prefab is read now.
+    if error==.None {
+        scene.spawns_fill(w,s.app,core.world_storage_of(core.world_ref(s.app.shared,s.app.info,.Shared),scene.Prefab_Warms),core.world_storage_of(w,core.Problems),all=true)
+        core.world_settle(w)
+        report.entities=core.world_entities(w).alive-before
+    }
     if error!=.None {
         api.call_failf(call,api.SERVER_ERROR,"The prefab could not be spawned: %s",scene.error_text(error))
         return

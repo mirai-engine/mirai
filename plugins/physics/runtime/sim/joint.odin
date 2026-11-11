@@ -111,16 +111,12 @@ joint_flags_of :: proc "contextless" (kernel:Joint_Kernel,axes:^Joint_Axes,colli
 }
 
 joint_configuration_error :: proc "contextless" (desc:Joint_Desc) -> Joint_Error {
-    finite :: proc "contextless" (value:f32) -> bool {return value>=-max(f32) && value<=max(f32)}
-    for value in ([8]f32{desc.break_force,desc.break_torque,desc.frame_a.p.x,desc.frame_a.p.y,desc.frame_a.p.z,desc.frame_b.p.x,desc.frame_b.p.y,desc.frame_b.p.z}) {if !finite(value) {return .Invalid_Value}}
-    for q in ([2]Quat{desc.frame_a.q,desc.frame_b.q}) {
-        for value in ([4]f32{q.x,q.y,q.z,q.w}) {if !finite(value) {return .Invalid_Value}}
-    }
+    if !finite(desc.break_force,desc.break_torque) || !finite(desc.frame_a,desc.frame_b) {return .Invalid_Value}
     if desc.break_force<0 || desc.break_torque<0 {return .Invalid_Value}
     for axes,angular in ([2][3]Joint_Axis{desc.linear,desc.angular}) {
         for axis in axes {
             if axis.motion>.Limited || axis.drive&~(Joint_Drive{.Position,.Velocity,.Disabled})!={} {return .Invalid_Axis}
-            for value in ([7]f32{axis.lower,axis.upper,axis.position,axis.velocity,axis.hertz,axis.damping_ratio,axis.max_force}) {if !finite(value) {return .Invalid_Axis}}
+            if !finite(axis.lower,axis.upper,axis.position,axis.velocity,axis.hertz,axis.damping_ratio,axis.max_force) {return .Invalid_Axis}
             if axis.motion==.Limited && (axis.lower>axis.upper || angular==1 && (axis.lower< -PI || axis.upper>PI)) {return .Invalid_Axis}
             if axis.hertz<0 || axis.damping_ratio<0 || axis.max_force<0 || axis.drive!={} && (axis.motion==.Locked || axis.max_force<=0) || .Position in axis.drive && axis.hertz<=0 {return .Invalid_Axis}
         }
@@ -260,9 +256,11 @@ joint_user_data :: proc(w:^World,h:Joint_Handle) -> u64 {
     return joint==nil?0:joint.user_data
 }
 
-joint_set_break :: proc(w:^World,h:Joint_Handle,force,torque:f32) {
+joint_set_break :: proc(w:^World,h:Joint_Handle,force,torque:f32) -> bool {
+    if !finite(force,torque) {return false}
     joint,_:=joint_get(w,h)
     if joint!=nil {joint.break_force,joint.break_torque=max(force,0),max(torque,0)}
+    return joint!=nil
 }
 
 // New axes for a joint: the impulses of an axis whose motion, drive or limits changed start again, and all of

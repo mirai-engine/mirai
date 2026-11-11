@@ -19,6 +19,9 @@ Mesh_Desc :: struct {
     vertices:[]Vec3,
     indices:[]u32,
     disabled_edges:[]u8, // per input triangle: bits 0,1,2 disable its ordered edges
+    // The vertices were mirrored (scaled by an odd number of negative axes): each triangle turns the other
+    // way, so it still collides from the side it faced.
+    inside_out:bool,
 }
 
 // Grid of heights over the local XZ plane. Sample (column,row) is at (column*cell.x, height*cell.y, row*cell.z).
@@ -44,8 +47,9 @@ mesh_edge_active :: proc "contextless" (normal,a,b,opposite:Vec3) -> bool {
     return dot(normal,offset)< -ACTIVE_EDGE_SINE*length(across)
 }
 
-@(private)
-mesh_init :: proc(mesh:^Mesh,desc:Mesh_Desc,allocator:mem.Allocator) -> bool {
+// Builds a mesh outside any world, as mesh_create does inside one: for whoever keeps it and gives a copy
+// to every world that needs it. False on the descriptions mesh_create refuses.
+mesh_build :: proc(mesh:^Mesh,desc:Mesh_Desc,allocator:mem.Allocator) -> bool {
     mesh^={}
     count:=len(desc.indices)/3
     if count==0 || len(desc.indices)%3!=0 || len(desc.vertices)<3 {return false}
@@ -55,23 +59,28 @@ mesh_init :: proc(mesh:^Mesh,desc:Mesh_Desc,allocator:mem.Allocator) -> bool {
         if int(index)>=len(desc.vertices) {return false}
     }
     for v in desc.vertices {
-        if !is_finite3(v) {return false}
+        if !finite(v) {return false}
     }
+    indices,disabled,count_kept:=mesh_sanitize(desc,allocator)
+    defer delete(indices,allocator)
+    defer delete(disabled,allocator)
+    count=count_kept
+    if count==0 {return false}
     error:mem.Allocator_Error
     if mesh.vertices,error=make([]Vec3,len(desc.vertices),allocator);error!=nil {return false}
-    if mesh.triangles,error=make([][3]u32,count,allocator);error!=nil {mesh_free(mesh,allocator);return false}
-    if mesh.flags,error=make([]u8,count,allocator);error!=nil {mesh_free(mesh,allocator);return false}
+    if mesh.triangles,error=make([][3]u32,count,allocator);error!=nil {mesh_release(mesh,allocator);return false}
+    if mesh.flags,error=make([]u8,count,allocator);error!=nil {mesh_release(mesh,allocator);return false}
     copy(mesh.vertices,desc.vertices)
-    if !spatial.bvh_build_triangles(&mesh.bvh,desc.vertices,desc.indices,{allocator=allocator}) {mesh_free(mesh,allocator);return false}
+    if !spatial.bvh_build_triangles(&mesh.bvh,desc.vertices,indices,{allocator=allocator}) {mesh_release(mesh,allocator);return false}
     // Triangles are stored in leaf order, so a leaf is a contiguous range.
     for original,i in mesh.bvh.order {
-        mesh.triangles[i]={desc.indices[3*original],desc.indices[3*original+1],desc.indices[3*original+2]}
+        mesh.triangles[i]={indices[3*original],indices[3*original+1],indices[3*original+2]}
     }
     mesh.aabb=spatial.bvh_bounds(&mesh.bvh)
     // Pair the edges to tell which inner edges fold down enough to be hit.
     Edge :: struct {key:u64,triangle:u32,edge:u32}
     edges,edge_error:=make([]Edge,3*count,allocator)
-    if edge_error!=nil {mesh_free(mesh,allocator);return false}
+    if edge_error!=nil {mesh_release(mesh,allocator);return false}
     defer delete(edges,allocator)
     for triangle,i in mesh.triangles {
         for e in 0..<3 {
@@ -101,14 +110,68 @@ mesh_init :: proc(mesh:^Mesh,desc:Mesh_Desc,allocator:mem.Allocator) -> bool {
         first=last
     }
     for original,i in mesh.bvh.order {
-        if len(desc.disabled_edges)>0 {mesh.flags[i]&=~desc.disabled_edges[original]}
+        if len(disabled)>0 {mesh.flags[i]&=~disabled[original]}
         mesh.bvh.order[i]=u32(i)
     }
     return true
 }
 
+// The triangles of a mesh that collide, in their input order, each turned as the mesh is and with its disabled
+// edges: those with area and the first of each repeat (the same corners in the same turn), as Jolt's
+// MeshShapeSettings::Sanitize keeps. A sliver along an edge would switch the edge off, and a repeat would
+// switch on every edge it shares. Empty when out of memory.
 @(private)
-mesh_free :: proc(mesh:^Mesh,allocator:mem.Allocator) {
+mesh_sanitize :: proc(desc:Mesh_Desc,allocator:mem.Allocator) -> (indices:[]u32,disabled:[]u8,count:int) {
+    corners_of :: proc "contextless" (desc:Mesh_Desc,triangle:int) -> [3]u32 {
+        t:=[3]u32{desc.indices[3*triangle],desc.indices[3*triangle+1],desc.indices[3*triangle+2]}
+        if desc.inside_out {t[1],t[2]=t[2],t[1]}
+        return t
+    }
+    Corners :: struct {key:[3]u32,triangle:int}
+    corners,error:=make([]Corners,len(desc.indices)/3,allocator)
+    if error!=nil {return}
+    defer delete(corners,allocator)
+    for i in 0..<len(corners) {
+        t:=corners_of(desc,i)
+        a,b,c:=desc.vertices[t[0]],desc.vertices[t[1]],desc.vertices[t[2]]
+        n:=cross(b-a,c-a)
+        // Its height over its longest edge below 1e-6: Jolt's |n|^2 <= 1e-12, at any size.
+        longest:=max(dot(b-a,b-a),dot(c-b,c-b),dot(a-c,a-c))
+        if !(dot(n,n)>1e-12*longest*longest) {continue}
+        first:=t[0]<t[1]?(t[0]<t[2]?0:2):(t[1]<t[2]?1:2)
+        corners[count]={{t[first],t[(first+1)%3],t[(first+2)%3]},i}
+        count+=1
+    }
+    slice.sort_by(corners[:count],proc(x,y:Corners) -> bool {
+        for k in 0..<3 {if x.key[k]!=y.key[k] {return x.key[k]<y.key[k]}}
+        return x.triangle<y.triangle
+    })
+    unique:=0
+    for c,at in corners[:count] {
+        if at>0 && c.key==corners[at-1].key {continue}
+        corners[unique]=c
+        unique+=1
+    }
+    count=unique
+    slice.sort_by(corners[:count],proc(x,y:Corners) -> bool {return x.triangle<y.triangle})
+    if indices,error=make([]u32,3*count,allocator);error!=nil {return nil,nil,0}
+    if len(desc.disabled_edges)>0 {
+        if disabled,error=make([]u8,count,allocator);error!=nil {delete(indices,allocator);return nil,nil,0}
+    }
+    for c,at in corners[:count] {
+        t:=corners_of(desc,c.triangle)
+        copy(indices[3*at:],t[:])
+        if len(disabled)==0 {continue}
+        mask:=desc.disabled_edges[c.triangle]
+        // Turned, its edge 0 is the old edge 2 and its edge 2 the old edge 0.
+        if desc.inside_out {mask=mask&0b010|mask>>2&1|(mask&1)<<2}
+        disabled[at]=mask
+    }
+    return
+}
+
+// Frees what mesh_build made, with the allocator it was given.
+mesh_release :: proc(mesh:^Mesh,allocator:mem.Allocator) {
     delete(mesh.vertices,allocator);delete(mesh.triangles,allocator);delete(mesh.flags,allocator)
     spatial.bvh_destroy(&mesh.bvh)
     mesh^={}
@@ -118,7 +181,7 @@ mesh_free :: proc(mesh:^Mesh,allocator:mem.Allocator) {
 mesh_create :: proc(w:^World,desc:Mesh_Desc) -> (Mesh_Handle,bool) {
     for &slot,index in w.meshes {
         if slot.generation&1!=0 {continue}
-        if !mesh_init(&slot.mesh,desc,w.allocator) {return {},false}
+        if !mesh_build(&slot.mesh,desc,w.allocator) {return {},false}
         slot.generation+=1
         slot.refs=0
         return Mesh_Handle(base.handle_make(u32(index),slot.generation)),true
@@ -126,12 +189,6 @@ mesh_create :: proc(w:^World,desc:Mesh_Desc) -> (Mesh_Handle,bool) {
     w.stats.geometry_capacity_exhausted+=1
     return {},false
 }
-// Builds a mesh outside any world, as mesh_create does inside one: for whoever
-// keeps it and gives a copy to every world that needs it. False on the
-// descriptions mesh_create refuses.
-mesh_build :: proc(mesh:^Mesh,desc:Mesh_Desc,allocator:mem.Allocator) -> bool {return mesh_init(mesh,desc,allocator)}
-// Frees what mesh_build made, with the allocator it was given.
-mesh_release :: proc(mesh:^Mesh,allocator:mem.Allocator) {mesh_free(mesh,allocator)}
 
 // Registers a copy of a built mesh: nothing is computed again, its triangles
 // and its tree are copied. The source is not kept.
@@ -149,7 +206,7 @@ mesh_create_copy :: proc(w:^World,source:^Mesh) -> (Mesh_Handle,bool) {
         mesh.bvh.order,errors[4]=make([]u32,len(source.bvh.order),w.allocator)
         mesh.bvh.allocator=w.allocator
         for error in errors {
-            if error!=nil {mesh_free(mesh,w.allocator);return {},false}
+            if error!=nil {mesh_release(mesh,w.allocator);return {},false}
         }
         copy(mesh.vertices,source.vertices);copy(mesh.triangles,source.triangles);copy(mesh.flags,source.flags)
         copy(mesh.bvh.nodes,source.bvh.nodes);copy(mesh.bvh.order,source.bvh.order)
@@ -165,7 +222,7 @@ mesh_create_copy :: proc(w:^World,source:^Mesh) -> (Mesh_Handle,bool) {
 mesh_destroy :: proc(w:^World,h:Mesh_Handle) -> bool {
     slot,_:=mesh_slot(w,h)
     if slot==nil || slot.refs>0 {return false}
-    mesh_free(&slot.mesh,w.allocator)
+    mesh_release(&slot.mesh,w.allocator)
     slot.generation+=1
     return true
 }
@@ -200,9 +257,9 @@ heightfield_create :: proc(w:^World,desc:Heightfield_Desc) -> (Heightfield_Handl
         if len(desc.holes)!=(desc.columns-1)*(desc.rows-1) {return {},false}
         for hole in desc.holes {if hole>1 {return {},false}}
     }
-    if !(desc.cell.x>0 && desc.cell.y>0 && desc.cell.z>0) || !is_finite3(desc.cell) {return {},false}
+    if !(desc.cell.x>0 && desc.cell.y>0 && desc.cell.z>0) || !finite(desc.cell) {return {},false}
     extent:=Vec3{f32(desc.columns-1)*desc.cell.x,0,f32(desc.rows-1)*desc.cell.z}
-    if !is_finite3(extent) {return {},false}
+    if !finite(extent) {return {},false}
     for &slot,index in w.heightfields {
         if slot.generation&1!=0 {continue}
         heights,error:=make([]f32,len(desc.heights),w.allocator)

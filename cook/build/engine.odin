@@ -76,7 +76,7 @@ ENGINE_PACKAGES :: [?]Engine_Package{
     {.Engine,"ui","ui"},{.Engine,"host",""},{.Engine,"engine/volume","engine"},{.Engine,"engine/input","engine"},{.Engine,"engine/scene","engine"},
     {.Engine,"engine/render","engine"},{.Engine,"engine/audio","engine"},{.Engine,"engine/gui","engine"},{.Engine,"engine/camera","engine"},{.Engine,"engine/save","engine"},
 
-    {.Cook,"third_party/ufbx","ufbx"},{.Cook,"cook/workspace","cook"},{.Cook,"cook/cache","cook"},{.Cook,"cook/compressor/lz","cook"},{.Cook,"cook/compressor/bc7split","cook"},{.Cook,"cook/compressor/texture/common","cook"},
+    {.Cook,"third_party/ufbx","ufbx"},{.Cook,"cook/workspace","cook"},{.Cook,"cook/cache","cook"},{.Cook,"cook/far","cook"},{.Cook,"cook/compressor/lz","cook"},{.Cook,"cook/compressor/bc7split","cook"},{.Cook,"cook/compressor/texture/common","cook"},
     {.Cook,"cook/compressor/texture/bc67","cook"},{.Cook,"cook/compressor/texture/bc1","cook"},{.Cook,"cook/compressor/texture/bc4","cook"},{.Cook,"cook/compressor/texture/bc6","cook"},{.Cook,"cook/compressor/texture/bc7","cook"},
     {.Cook,"cook/compressor/texture","cook"},{.Cook,"cook/textures","cook"},{.Cook,"cook/image","cook"},{.Cook,"cook/movie","cook"},{.Cook,"cook/rig","cook"},
     {.Cook,"cook/import","cook"},{.Cook,"cook/import/obj","cook"},{.Cook,"cook/import/gltf","cook"},{.Cook,"cook/import/usd","cook"},
@@ -389,7 +389,7 @@ import "core:os"
 import "mirai:cook/import/sources"
 import "mirai:editor"
 
-main :: proc() {os.exit(sources.command(os.args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr),editor.plugin_import_formats))}
+main :: proc() {os.exit(sources.command(os.args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library))}
 `,paths.import_program},
         {"author program","author",`package main
 

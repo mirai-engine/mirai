@@ -36,8 +36,7 @@ joint_body :: proc(s:^Sync,e:core.Entity) -> sim.Body_Handle {
 }
 
 @(private)
-joint_world_body :: proc(s:^Sync) -> sim.Body_Handle {
-    state:=s.state
+joint_world_body :: proc(state:^Physics_State) -> sim.Body_Handle {
     if !sim.body_valid(&state.world,state.world_body) {
         desc:=sim.BODY_DESC_DEFAULT
         desc.type=.Static
@@ -122,7 +121,7 @@ joint_reconcile :: proc(s:^Sync,states:^core.Table(Joint_State),e:core.Entity,jo
     st.error=joint_configuration_error(joint)
     a:=joint_a(s,e,joint)
     body_a:=a==core.NONE?sim.Body_Handle{}:joint_body(s,a)
-    body_b:=joint.b==core.NONE?joint_world_body(s):joint_body(s,joint.b)
+    body_b:=joint.b==core.NONE?joint_world_body(s.state):joint_body(s,joint.b)
     if st.error==.None && (body_a=={} || body_b=={} || body_a==body_b) {st.error=.Invalid_Bodies}
     wanted:=!st.broken && st.error==.None
     // Its frame on a moves with its own Transform, unless it is on the entity of a, whose frame it is.

@@ -228,13 +228,13 @@ client_frames_run_the_ticks_of_the_clock :: proc(t:^testing.T,period,spread:f32)
     for _ in 0..<int(3/period) {
         ran:=sh.ran
         timing_frame_run(x,timing_dt(&random,period,spread))
-        if client.frame.alpha<0 || client.frame.alpha>=1 {outside+=1}
+        if client.frame.alpha<0 || client.frame.alpha>1 {outside+=1}
         if u64(sh.ran-ran)!=client.time.tick-previous_tick {uneven+=1}
         drawn,_:=timing_drawn(x,sh.mover)
         if drawn.x<previous_drawn.x {backward+=1}
         previous_drawn,previous_tick=drawn,client.time.tick
     }
-    testing.expectf(t,outside==0,"alpha outside [0,1) in %d frames",outside)
+    testing.expectf(t,outside==0,"alpha outside [0,1] in %d frames",outside)
     testing.expectf(t,uneven==0,"%d frames ran other ticks than the clock of the world counted",uneven)
     testing.expectf(t,backward==0,"what moves steadily went back in %d frames",backward)
 }

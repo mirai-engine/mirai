@@ -59,7 +59,7 @@ world_set_cuts :: proc(w:^World,cuts:[]Cut) -> bool {
     for cut in cuts {
         r:=cut.region
         q:=r.rotation.x+r.rotation.y+r.rotation.z+r.rotation.w
-        if !is_finite3(r.center) || !is_finite3(r.half) || q-q!=0 {return false}
+        if !finite(r.center) || !finite(r.half) || q-q!=0 {return false}
     }
     same:=int(w.cut_count)==len(cuts)
     for cut,i in cuts {same=same && w.cuts[i]==cut}
@@ -96,7 +96,7 @@ body_set_twin :: proc(w:^World,h:Body_Handle,through:Transform,point,normal:Vec3
     body,index:=body_get(w,h)
     if body==nil || body.type==.Static {return false}
     n:=normalize(normal)
-    if !is_finite3(through.p) || !is_finite3(point) || n=={} {return false}
+    if !finite(through.p) || !finite(point) || n=={} {return false}
     q:=through.q.x+through.q.y+through.q.z+through.q.w
     if q-q!=0 {return false}
     rotation:=q_normalize(through.q)

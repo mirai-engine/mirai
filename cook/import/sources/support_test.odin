@@ -2,11 +2,13 @@ package sources
 
 import "core:fmt"
 import "core:math/linalg"
+import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import "mirai:core"
 import importer "mirai:cook/import"
 import "mirai:cook/import/gltf"
 import "mirai:cook/import/obj"
@@ -29,6 +31,12 @@ write_text :: proc(folder,name,text:string) -> string {
     path:=fmt.tprintf("%s/%s",folder,name)
     _=os.write_entire_file(path,text)
     return path
+}
+
+// A Library that gives no formats and the types of the game context.user_ptr
+// points to: what sync and mirai import write the prefab of a model in.
+test_library :: proc(root:string,allocator:mem.Allocator) -> (formats:[]importer.Format,world:^core.World_Info,release:proc(state:rawptr),state:rawptr,problem:string) {
+    return nil,(^core.World_Info)(context.user_ptr),nil,nil,""
 }
 
 // formats: FORMATS when nil.

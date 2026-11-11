@@ -23,9 +23,9 @@ source.sound, source.loop, source.spatial = HUM, true, true
 source.volume, source.max_distance = 0.7, 25
 ```
 
-- Put it in the scene; the library starts, moves and stops the voice. `spatial` places it at the
-  entity: attenuated, duller far away, heard from its direction; without it `pan` places it.
-  `directivity` (0 to 1, `directivity_power` narrower) aims it toward -Z of the entity.
+- Put it in the scene; the library starts, moves and stops it. `spatial` places it at the entity,
+  attenuated and duller far away, else `pan` does; `directivity` aims it toward -Z; `near_radius`
+  keeps one through the camera from jumping between ears; `delay` starts it late by its distance.
 - The listener is the entity with `Audio_Listener` (the player's eyes), else the view. Game code
   writes `playing`, `plays`, `volume`, `pitch`, `pan`, `loop` (`core.writable` on its table).
 

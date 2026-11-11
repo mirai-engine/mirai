@@ -63,7 +63,8 @@ the assets.
 2. **From code.** `sources.import_source(path,options)` writes everything; for the model
    without writing it, `importer.import_model(path,sources.FORMATS[:],options)` reads it into an
    `Imported_Model` (plain data, no engine components) and `importer.import_write` writes its
-   assets; `cook/prefab.model_prefab` builds the prefab.
+   assets; `cook/prefab.model_prefab` builds the prefab in the types of the game
+   (`Import_Options.world`: the session's, or those of the project's editor library).
 3. **Adding a format.** A `cook/import/<format>` package that does not import the other formats,
    with its `FORMAT :: importer.Format{...}` and a line in `sources.FORMATS`
    ([how](references/imports.md#adding-a-format)). Its own options live in it (`Format.data`).
