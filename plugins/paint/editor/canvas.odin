@@ -50,7 +50,7 @@ canvas_load :: proc(c:^Canvas,a:^host.Assets,shown:erender.Mesh_Renderer,painted
     }
     if painted=={} {return true}
     file:asset.Asset
-    if host.assets_file(a,painted,paint.KIND,&file)!=.None {return true}
+    if host.assets_file(a,painted,paint.PAINT_KIND,&file)!=.None {return true}
     defer asset.asset_close(&file)
     if colors,error:=paint.colors_view(&file,&a.types);error==.None && len(colors)==len(c.colors) {copy(c.colors,colors)}
     return true

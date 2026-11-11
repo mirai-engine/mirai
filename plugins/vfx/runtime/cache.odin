@@ -41,7 +41,7 @@ grids_load_prepare :: proc(sync:^Particle_Sync,assets:^host.Assets,problems:^cor
     if a==nil {return}
     for &entry in sync.grids.entries {
         if entry.cached=={} || entry.loaded==entry.cached {continue}
-        file:=host.assets_document(a,entry.cached,gridfile.KIND)
+        file:=host.assets_document(a,entry.cached,gridfile.GRID_KIND)
         if file==nil {continue}
         info,cells,error:=gridfile.grid_view(file,&a.types)
         if error!=.None {

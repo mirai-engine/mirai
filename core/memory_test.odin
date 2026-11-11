@@ -67,7 +67,7 @@ core_calls_without_memory_fail_whole :: proc(t:^testing.T) {
                     allocation.remaining=0
                     table_settle(&table,&es)
                     c:=changes(&table,&seen)
-                    testing.expect(t,!has(&table,e) && c.all && cap(table.gone)==0)
+                    testing.expect(t,!has(&table,e) && c.all && cap(table.gone.items)==0)
                 }
                 allocation.remaining=max(int)
                 table_destroy(&table)

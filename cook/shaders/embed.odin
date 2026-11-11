@@ -49,6 +49,8 @@ embedded_pack :: proc(g:^Generation,groups:[2][]Job,backend:Backend,ship:bool,al
     for jobs in groups do for job in jobs {
         name,code_hash:=job.result.spv,job.result.spv_hash
         if backend==.Metal {name,code_hash=job.result.msl,job.result.msl_hash}
+        // A stage of the rays traced by software has no Metal code: its size is 0.
+        if name=="" {sha_text(&hash,"\n");at+=1;continue}
         data,err:=os.read_entire_file(path_join(job.staging,name,allocator=context.temp_allocator),context.allocator)
         if err!=nil {return nil,false,strings.concatenate({"could not read ",name," to embed it"},allocator)}
         append(&raw,..data)

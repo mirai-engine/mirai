@@ -1,0 +1,9 @@
+{
+  "version": 3,
+  "settings": {
+    "image": "Color"
+  },
+  "outputs": [
+    {"kind": "TEX", "name": "sky_overcast", "index": 0, "id": "88a3a1a16a759ed20966d1c3ff54ada1"}
+  ]
+}

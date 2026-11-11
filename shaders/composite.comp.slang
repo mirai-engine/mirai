@@ -23,7 +23,7 @@
 [[vk::binding(SLOT_PASS3, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS3), space0);
 [[vk::binding(SLOT_PASS4, 0)]] Texture2D<float4> direct_light : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
 // r: the contact occlusion of the probe volume (contact.comp); rgb with
-// FRAME_FLAG_GI_REFERENCE: the reference of the indirect light (gi_reference.comp).
+// FRAME_FLAG_GI_GIVEN: the diffuse indirect light a custom pass of the pipeline gives.
 [[vk::binding(SLOT_PASS5, 0)]] Texture2D<float4> indirect_input : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);
 [[vk::binding(SLOT_PASS6, 0)]] Texture3D<float4> aerial : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);
 [[vk::binding(SLOT_PASS7, 0)]] Texture2D<float4> reflections : register(MIRAI_REGISTER(t, SLOT_PASS7), space0); // rgb the filtered traced reflection
@@ -69,10 +69,10 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float4 motion = pixel_views.Load(int3(p, 0));
     Shading s = gbuffer_shading(g, pixel);
     float3 direct = direct_light.Load(int3(p, 0)).rgb;
-    bool reference = (frame.flags & (FRAME_FLAG_GI | FRAME_FLAG_GI_REFERENCE)) == (FRAME_FLAG_GI | FRAME_FLAG_GI_REFERENCE);
-    uint wants = INDIRECT_SPECULAR | (s.coat > 0.0 ? INDIRECT_COAT : 0u) | (reference ? 0u : INDIRECT_DIFFUSE);
+    bool given = (frame.flags & (FRAME_FLAG_GI | FRAME_FLAG_GI_GIVEN)) == (FRAME_FLAG_GI | FRAME_FLAG_GI_GIVEN);
+    uint wants = INDIRECT_SPECULAR | (s.coat > 0.0 ? INDIRECT_COAT : 0u) | (given ? 0u : INDIRECT_DIFFUSE);
     Indirect light = indirect_lobes(s.position, s.normal, s.view, s, wants, g.occlusion);
-    if (reference) light.irradiance = indirect_input.Load(int3(p, 0)).rgb * frame.gi_strength;
+    if (given) light.irradiance = indirect_input.Load(int3(p, 0)).rgb * frame.gi_strength;
     else if ((frame.flags & FRAME_FLAG_GI) != 0u) light.irradiance *= indirect_input.Load(int3(p, 0)).r;
     float3 indirect = light.irradiance;
     light.traced_coat = (g.bits & GBUFFER_TRACE_COAT) != 0u;

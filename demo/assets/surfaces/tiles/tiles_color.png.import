@@ -1,0 +1,9 @@
+{
+  "version": 3,
+  "settings": {
+    "image": "Color"
+  },
+  "outputs": [
+    {"kind": "TEX", "name": "tiles_color", "index": 0, "id": "cd3d66765e834e0c508906257f888eba"}
+  ]
+}

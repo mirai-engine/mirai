@@ -88,6 +88,9 @@
   Vulkan discards what is written to a target the pass lacks, but SPIRV-Cross fixes the outputs
   in the Metal source and Metal may refuse a pipeline whose function writes a target it does not
   have. The kind of a slot (`batches`), or a target the pass must not write (`sharpen`).
+- The source itself of a stage with the variant `hw`, and one that says `//! software rays`, serve
+  only the software tracer: they get no Metal code, since Metal traces rays by hardware alone
+  ([RHI](rhi.md#hardware-ray-tracing)).
 - Ray queries use Slang's `RayQuery` and share traversal and material filters with the software
   BVH. Validating SPIR-V does not certify GPU execution on any backend.
 

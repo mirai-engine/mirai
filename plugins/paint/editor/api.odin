@@ -13,11 +13,6 @@ Paint_Api :: struct {provider:editor.Api_Provider}
 
 PAINT_API_DEFAULT :: Paint_Api{provider={register=api_register}}
 
-// A .paint in the browser and in the field of a Painted.
-@(storage)
-Paint_Kinds :: struct {provider:editor.Asset_Kind_Provider}
-PAINT_KINDS_DEFAULT :: Paint_Kinds{provider={kinds={0={kind=paint.KIND,label="Paint",color={220,90,60,255},icon=.Edit,extension=paint.EXTENSION}},count=1}}
-
 STROKE_POINTS :: 256
 CLEAR_IDS :: 64
 
@@ -86,7 +81,7 @@ api_stroke :: proc(s:^editor.Session,call:^api.Call) {
     if !editor.api_edit_end(s,call,written) {return}
     out:=api.call_result(call,Stroke_Result)
     out.id,out.colors,out.vertices=editor.api_entity_id(w,e),stroke.id,u32(len(stroke.before))
-    fmt.bprintf(out.path[:],"%s/%016x%s",FOLDER,stroke.id[0],paint.EXTENSION)
+    fmt.bprintf(out.path[:],"%s/%016x%s",FOLDER,stroke.id[0],paint.PAINT_EXTENSION)
     for color,at in stroke.canvas.colors {
         if color!=stroke.before[at] {out.changed+=1}
     }

@@ -20,8 +20,6 @@ import phys "plugins:physics/runtime"
 // meshes of the edited scene change (nav.bake makes it the first time), and
 // saving the scene saves it.
 
-BAKE_KIND :: asset.Fourcc(u32('N')|u32('A')<<8|u32('V')<<16|u32('M')<<24)
-BAKE_EXTENSION :: ".navmesh"
 BAKE_VERSION :: 3
 
 // The navigation meshes the scene saves, on an entity of the scene; none:
@@ -171,7 +169,7 @@ bake_bytes :: proc(n:^Navigation,id:base.Asset_Id,types:^asset.Types,filter:=BAK
         append(&classes,class)
     }
     document:asset.Document
-    asset.document_init(&document,BAKE_KIND,id,allocator)
+    asset.document_init(&document,NAVMESH_KIND,id,allocator)
     defer asset.document_destroy(&document)
     document.kind_version=BAKE_VERSION
     asset.document_put(&document,types,"classes",classes[:]) or_return
@@ -211,7 +209,7 @@ bake_rows :: proc(file:^asset.Asset,types:^asset.Types,name:string,$T:typeid) ->
 // zones; false when the file is not one this version reads, leaving the
 // meshes as they were.
 bake_read :: proc(n:^Navigation,file:^asset.Asset,types:^asset.Types,only:Bake_Keys=nil) -> (count:int,ok:bool) {
-    if asset.kind_check(file,BAKE_KIND,BAKE_VERSION)!=.None {return}
+    if asset.kind_check(file,NAVMESH_KIND,BAKE_VERSION)!=.None {return}
     classes:=bake_rows(file,types,"classes",Bake_Class) or_return
     tiles:=bake_rows(file,types,"tiles",Bake_Tile) or_return
     links:=bake_rows(file,types,"links",Bake_Link) or_return
@@ -308,7 +306,7 @@ bake_load :: proc(n:^Navigation,bake:Navigation_Bake,app:^host.App,problems:^cor
     if bake.asset=={} || app.assets==nil {return}
     started:=time.tick_now()
     file:asset.Asset
-    if host.assets_file(app.assets,bake.asset,BAKE_KIND,&file)!=.None {
+    if host.assets_file(app.assets,bake.asset,NAVMESH_KIND,&file)!=.None {
         core.report(problems,core.NONE,"navigation.bake","The .navmesh of the scene (Navigation_Bake) cannot be read: the meshes are built from the collision; bake it again with nav.bake")
         return
     }

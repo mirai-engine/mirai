@@ -3,5 +3,5 @@
   "version": "0.1.0",
   "dependencies": [],
   "parts": ["Runtime", "Editor"],
-  "asset_kinds": [{"extension": ".paint"}]
+  "asset_kinds": [{"extension": ".paint", "kind": "PANT", "label": "Paint", "color": [220, 90, 60], "icon": "Edit"}]
 }

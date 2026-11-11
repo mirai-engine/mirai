@@ -10,8 +10,9 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
   project.mirai     manifest: what makes the folder a project
   settings.mirai    project settings, the bindings in Input_Settings: what differs (optional)
   cook.mirai        cooking roots that no scene names (optional)
-  assets/           assets: what is authored, and the documents imports write
-  source/           art sources, each with its sidecar (<source>.import): settings and asset ids
+  assets/           assets, by theme: what is authored, the art sources beside what they make,
+                    each with its sidecar (<source>.import: settings, folder and asset ids), and
+                    the documents their imports write
   game/             game library of the project
   editor/           editor package of the project (engine-time)
   plugins/<name>/   plugin.mirai, runtime/, editor/, shaders/, assets/
@@ -19,7 +20,7 @@ Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/bui
   panels/           editor panels built by the chat agent (engine-time)
   tests/scenarios/  gameplay tests the editor plays (`mirai play test`), optional
   .mirai/           generated; not edited or versioned
-    imported/       what imports build from source/ that nobody edits (meshes, textures, sounds,
+    imported/       what imports build from the sources that nobody edits (meshes, textures, sounds,
                     fonts), each file named by its id and what it was built from; a build makes
                     it again
     gen/            generated packages: the worlds and the root of each target
@@ -63,9 +64,13 @@ keeps its default; one the struct does not have is an error.
 - `test_dependencies`: plugins that its tests import besides its dependencies; they are never
   activated with it
   ([imports](../../mirai-plugins/references/plugins.md#dependencies-and-compatibility)).
-- `asset_kinds`: the kinds of asset a plugin adds, each by its extension and whether it is a
-  document git merges and diffs ([git and assets](../../mirai-assets/references/cli.md#git)):
-  what the CLI, the cook and the editor know of them without loading the plugin.
+- `asset_kinds`: the kinds of asset a plugin adds, its one declaration of them: each by its
+  extension, the four letters its files begin with (`kind`), whether it is a document git merges
+  and diffs ([git and assets](../../mirai-assets/references/cli.md#git)) and how the editor shows
+  it ([asset types](../../mirai-editor/references/extensions.md#asset-types-of-a-plugin)). A build
+  writes from it `kinds_gen.odin` into the package `folder` names (`runtime` without it), with
+  `<STEM>_KIND` and `<STEM>_EXTENSION` for each `.stem`; git keeps the file, so the plugin tests
+  without a build.
 - `development`: a tool for making the game (`profiler`, `tracy`). It goes into the `editor` and
   `play` libraries; the shipped game is generated with `shipped_world`, the world without them, and
   if its code reaches them the build fails with `Engine_Time_Code`.

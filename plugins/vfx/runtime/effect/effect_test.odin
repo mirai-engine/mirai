@@ -74,7 +74,7 @@ particle_lights_cast_shadows_only_when_the_effect_asks :: proc(t:^testing.T) {
     Before :: struct {rate:f32,lights:u32,light_intensity:f32,light_range:f32}
     before:=Before{rate=30,lights=4,light_intensity=10,light_range=2}
     doc:asset.Document
-    asset.document_init(&doc,KIND,{1,2})
+    asset.document_init(&doc,PARTICLE_KIND,{1,2})
     doc.kind_version=VERSION
     _,error:=asset.document_put_row(&doc,&types,"particle",&before)
     testing.expect_value(t,error,asset.Error.None)

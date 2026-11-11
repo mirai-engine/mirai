@@ -271,7 +271,7 @@ reconcile :: proc(c:^Ctx,e:core.Entity,remake:bool) {
         return
     }
     st.failed,st.handle=false,handle
-    if local,ok:=core.get(c.transforms,e);ok {physics.proxy_set(c.state,e,physics.breakable_body(c.view,handle),local.position,local.rotation)}
+    if core.has(c.transforms,e) {physics.proxy_set(c.state,e,physics.breakable_body(c.view,handle))}
     count:=min(physics.breakable_pieces(c.view,handle,cache.infos),len(cache.infos))
     visuals_source(c.problems,e,entry,cache.infos[:count])
 }
@@ -432,7 +432,7 @@ group_sync :: proc(c:^Ctx,owner:core.Entity,entry:^Entry,group:^Scratch_Group) {
         if !created {core.add(c.groups,group.entity,row)}
     }
     if !created {
-        if moved,ok:=core.get(c.transforms,group.entity);ok {physics.proxy_set(c.state,group.entity,group.body,moved.position,moved.rotation)}
+        if core.has(c.transforms,group.entity) {physics.proxy_set(c.state,group.entity,group.body)}
         return
     }
     pose:=core.TRANSFORM_IDENTITY
@@ -450,7 +450,7 @@ group_sync :: proc(c:^Ctx,owner:core.Entity,entry:^Entry,group:^Scratch_Group) {
     }
     core.add(c.transforms,group.entity,pose)
     core.add(c.groups,group.entity,row)
-    physics.proxy_set(c.state,group.entity,group.body,pose.position,pose.rotation)
+    physics.proxy_set(c.state,group.entity,group.body)
     if group.group!=0 {group_identify(c,owner,group.entity,group^)}
     if tint,has:=core.get(c.tints,owner);has {core.add(c.tints,group.entity,tint)}
 }

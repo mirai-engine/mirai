@@ -190,7 +190,7 @@ stroke_load :: proc(stroke:^Stroke,a:^host.Assets,e:core.Entity,shown:erender.Me
     // A file per stroke: undoing one finds the colors of the stroke before it untouched.
     seed:=base.hash_combine(u64(e),platform.clock_ns())
     stroke.id=base.Asset_Id{seed,base.hash_combine(seed,base.name_hash("Painted"))}
-    stroke.path=fmt.aprintf("%s/%s/%016x%s",a.registry.root,FOLDER,stroke.id[0],paint.EXTENSION,allocator=allocator)
+    stroke.path=fmt.aprintf("%s/%s/%016x%s",a.registry.root,FOLDER,stroke.id[0],paint.PAINT_EXTENSION,allocator=allocator)
     stroke.entity=e
     return true
 }

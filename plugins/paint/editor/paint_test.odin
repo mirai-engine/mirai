@@ -77,7 +77,7 @@ paint_test_stroke :: proc(t:^testing.T,tool:^Paint_Tool,app:^host.App,e:core.Ent
     for &weight in stroke.weights {weight=1}
     delete(stroke.path,app.allocator)
     stroke.id=base.Asset_Id{seed,base.hash_combine(seed,base.name_hash("Painted"))}
-    stroke.path=fmt.aprintf("%s/%s/%016x%s",root,FOLDER,stroke.id[0],paint.EXTENSION,allocator=app.allocator)
+    stroke.path=fmt.aprintf("%s/%s/%016x%s",root,FOLDER,stroke.id[0],paint.PAINT_EXTENSION,allocator=app.allocator)
     stroke.active,stroke.dirty=true,true
     return true
 }
@@ -94,7 +94,7 @@ painted_colors_stay_in_memory_until_saved_and_go_with_undo_and_cancel :: proc(t:
     tool.color,tool.strength=[3]f32{1,0,0},1
 
     if !paint_test_stroke(t,&tool,app,e,{},root,0x51) {return}
-    first,first_path:=tool.stroke.id,fmt.tprintf("%s/%s/%016x%s",root,FOLDER,u64(0x51),paint.EXTENSION)
+    first,first_path:=tool.stroke.id,fmt.tprintf("%s/%s/%016x%s",root,FOLDER,u64(0x51),paint.PAINT_EXTENSION)
     testing.expect(t,stroke_write(s,&tool,ref,app.assets,app.allocator))
     tool.stroke.dirty=true
     testing.expect(t,stroke_write(s,&tool,ref,app.assets,app.allocator))
@@ -109,7 +109,7 @@ painted_colors_stay_in_memory_until_saved_and_go_with_undo_and_cancel :: proc(t:
     // The next stroke reads the unsaved colors.
     if !paint_test_stroke(t,&tool,app,e,first,root,0x52) {return}
     testing.expect_value(t,tool.stroke.before[0],u32(0xff0000ff))
-    second_path:=fmt.tprintf("%s/%s/%016x%s",root,FOLDER,u64(0x52),paint.EXTENSION)
+    second_path:=fmt.tprintf("%s/%s/%016x%s",root,FOLDER,u64(0x52),paint.PAINT_EXTENSION)
     tool.color=[3]f32{0,0,1}
     testing.expect(t,stroke_write(s,&tool,ref,app.assets,app.allocator))
     testing.expect(t,editor.file_exists(s,second_path))

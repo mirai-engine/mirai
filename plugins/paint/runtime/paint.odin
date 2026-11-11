@@ -15,13 +15,11 @@ Painted :: struct {
 
 // A .paint: one color per vertex of a mesh, by index in the mesh (the order
 // of the vertices of its clusters, every level of detail), RGBA8.
-KIND :: asset.Fourcc(u32('P')|u32('A')<<8|u32('N')<<16|u32('T')<<24)
-EXTENSION :: ".paint"
 VERSION :: 1
 
 colors_document :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,colors:[]u32,allocator:=context.allocator) -> asset.Error {
     if len(colors)==0 {return .Invalid}
-    asset.document_init(doc,KIND,id,allocator)
+    asset.document_init(doc,PAINT_KIND,id,allocator)
     doc.kind_version=VERSION
     _,error:=asset.document_put(doc,types,"colors",colors,{.Bulk},.LZ)
     if error!=.None {asset.document_destroy(doc)}
@@ -29,7 +27,7 @@ colors_document :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,
 }
 
 colors_view :: proc(a:^asset.Asset,types:^asset.Types) -> (colors:[]u32,error:asset.Error) {
-    asset.kind_check(a,KIND,VERSION) or_return
+    asset.kind_check(a,PAINT_KIND,VERSION) or_return
     colors=asset.asset_rows(a,types,"colors","",u32) or_return
     if len(colors)==0 {return nil,.Corrupt}
     return
@@ -84,7 +82,7 @@ paint_render :: proc(state:^Paint_Render,painted:core.Read(Painted),synced:core.
 @(private)
 colors_load :: proc(assets:^host.Assets,renderer:^render.Renderer,id:base.Asset_Id) -> render.Colors_Handle {
     file:asset.Asset
-    if host.assets_file(assets,id,KIND,&file)!=.None {return 0}
+    if host.assets_file(assets,id,PAINT_KIND,&file)!=.None {return 0}
     defer asset.asset_close(&file)
     colors,error:=colors_view(&file,&assets.types)
     if error!=.None {return 0}
