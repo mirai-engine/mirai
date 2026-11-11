@@ -477,126 +477,106 @@ api_play_qa_report :: proc(s:^editor.Session,call:^api.Call) {
 
 // ---------------------------------------------------------------- repro
 
+// The params of the steps of a repro, as their methods take them: what the
+// file says is what was given, the rest left out.
+@(private)
+Repro_Segment :: struct {
+    ticks:int `mirai:"name=for"`,
+    keys:core.Keys `mirai:"optional"`,
+    mouse_buttons:core.Mouse_Buttons `mirai:"optional"`,
+    tap_keys:core.Keys `mirai:"optional"`,
+    tap_buttons:core.Mouse_Buttons `mirai:"optional"`,
+    mouse_position,mouse_delta,wheel:[2]f32 `mirai:"optional"`,
+    text:string `mirai:"optional"`,
+    gamepads:[]Repro_Gamepad `mirai:"optional"`,
+}
+@(private)
+Repro_Gamepad :: struct {
+    slot:int,
+    buttons,tapped:platform.Gamepad_Buttons `mirai:"optional"`,
+    left_stick,right_stick:[2]f32,
+    left_trigger,right_trigger:f32,
+}
+@(private)
+Repro_Step :: struct {
+    segments:[]Repro_Segment,
+    focus:int, // -1 keeps it
+}
+@(private)
+Repro_Action :: struct {
+    name:string,
+    release:bool `mirai:"optional"`,
+    value:f32 `mirai:"optional"`,
+    vector:[2]f32 `mirai:"optional"`,
+    ticks:int `mirai:"optional,name=for"`,
+}
+@(private)
+Repro_Input :: struct {
+    actions:[]Repro_Action,
+    slot:int,
+}
+// What must hold for the violation not to happen: a violation fails the
+// scenario, so the file reports the bug while it exists and passes once
+// it is fixed. The limit of its kind alone.
+@(private)
+Repro_Monitor :: struct {
+    non_finite,problems,falls:bool,
+    stuck_seconds:f32,
+    frame_ms,memory_mb,fall_below:f32 `mirai:"optional"`,
+}
+@(private)
+Repro_Start :: struct {players:int `mirai:"optional"`}
+
 @(private)
 Repro_Writer :: struct {
     s:^editor.Session,
     r:^editor.Run,
     q:^Run_Qa,
-    out:serial.Writer,
-    steps:int,
-    segments:[editor.API_STEP_SEGMENTS]^Qa_Entry,
-    segment_ticks:[editor.API_STEP_SEGMENTS]int,
-    segment_count,tick_sum:int,
+    steps:[dynamic]editor.Scenario_Step,
+    segments:[dynamic]Repro_Segment,
+    tick_sum:int,
     focus:int, // of the next play.step; -1: none
 }
 
 @(private)
-repro_step_begin :: proc(w:^Repro_Writer,method:string) {
-    if w.steps>0 {serial.write_u8(&w.out,',')}
-    w.steps+=1
-    serial.text_write_raw(&w.out,`{"method":`);serial.text_write_string(&w.out,method)
-    serial.text_write_raw(&w.out,`,"params":`)
-}
-
-@(private)
-repro_names :: proc(out:^serial.Writer,key:string,names:[]string) {
-    if len(names)==0 {return}
-    api.write_key(out,key);serial.write_u8(out,'[')
-    for name,i in names {
-        if i>0 {serial.write_u8(out,',')}
-        serial.text_write_string(out,name)
-    }
-    serial.write_u8(out,']')
-}
-
-@(private)
-repro_keys :: proc(out:^serial.Writer,key:string,keys:core.Keys) {
-    names:=make([dynamic]string,context.temp_allocator)
-    for k in keys {append(&names,fmt.tprint(k))}
-    repro_names(out,key,names[:])
-}
-
-@(private)
-repro_buttons :: proc(out:^serial.Writer,key:string,buttons:core.Mouse_Buttons) {
-    names:=make([dynamic]string,context.temp_allocator)
-    for b in buttons {append(&names,fmt.tprint(b))}
-    repro_names(out,key,names[:])
-}
-
-@(private)
-repro_pads :: proc(out:^serial.Writer,key:string,buttons:platform.Gamepad_Buttons) {
-    names:=make([dynamic]string,context.temp_allocator)
-    for b in buttons {append(&names,fmt.tprint(b))}
-    repro_names(out,key,names[:])
-}
-
-@(private)
-repro_pair :: proc(out:^serial.Writer,key:string,value:[2]f32) {
-    value:=value
-    api.write_key(out,key)
-    api.write_list(out,value[:])
+repro_step :: proc(w:^Repro_Writer,method:string,params:any) {
+    text,_:=serial.text_encode(params,.Line,context.temp_allocator,sparse=true)
+    append(&w.steps,editor.Scenario_Step{method=method,params=serial.Json(text)})
 }
 
 // A segment as play.step takes it.
 @(private)
-repro_segment :: proc(w:^Repro_Writer,e:^Qa_Entry,ticks:int) {
-    out:=&w.out
+repro_segment :: proc(w:^Repro_Writer,e:^Qa_Entry,ticks:int) -> Repro_Segment {
     i:=&e.given
-    serial.write_u8(out,'{')
-    api.write_int(out,"for",i64(ticks),true)
-    repro_keys(out,"keys",i.keys)
-    repro_buttons(out,"mouse_buttons",i.buttons)
-    repro_keys(out,"tap_keys",i.tap_keys)
-    repro_buttons(out,"tap_buttons",i.tap_buttons)
-    if i.placed {repro_pair(out,"mouse_position",i.mouse_position)}
-    if i.mouse_delta!={} {repro_pair(out,"mouse_delta",i.mouse_delta*f32(ticks)/f32(max(e.total,1)))}
-    if i.wheel!={} {repro_pair(out,"wheel",i.wheel)}
-    if e.text_len>0 {api.write_text(out,"text",qa_text(w.q,e.text_at,e.text_len))}
-    connected:=false
+    segment:=Repro_Segment{ticks=ticks,keys=i.keys,mouse_buttons=i.buttons,tap_keys=i.tap_keys,tap_buttons=i.tap_buttons,wheel=i.wheel}
+    if i.placed {segment.mouse_position=i.mouse_position}
+    if i.mouse_delta!={} {segment.mouse_delta=i.mouse_delta*f32(ticks)/f32(max(e.total,1))}
+    if e.text_len>0 {segment.text=qa_text(w.q,e.text_at,e.text_len)}
+    pads:=make([dynamic]Repro_Gamepad,context.temp_allocator)
     for &pad,slot in i.gamepads {
         if !pad.connected {continue}
-        if !connected {api.write_key(out,"gamepads");serial.write_u8(out,'[')} else {serial.write_u8(out,',')}
-        connected=true
-        serial.write_u8(out,'{')
-        api.write_int(out,"slot",i64(slot),true)
-        repro_pads(out,"buttons",pad.down)
-        repro_pads(out,"tapped",i.pad_taps[slot])
-        repro_pair(out,"left_stick",{pad.axes[.Left_X],pad.axes[.Left_Y]})
-        repro_pair(out,"right_stick",{pad.axes[.Right_X],pad.axes[.Right_Y]})
-        api.write_key(out,"left_trigger");api.write_number(out,pad.axes[.Left_Trigger])
-        api.write_key(out,"right_trigger");api.write_number(out,pad.axes[.Right_Trigger])
-        serial.write_u8(out,'}')
+        append(&pads,Repro_Gamepad{slot=slot,buttons=pad.down,tapped=i.pad_taps[slot],left_stick={pad.axes[.Left_X],pad.axes[.Left_Y]},right_stick={pad.axes[.Right_X],pad.axes[.Right_Y]},left_trigger=pad.axes[.Left_Trigger],right_trigger=pad.axes[.Right_Trigger]})
     }
-    if connected {serial.write_u8(out,']')}
-    serial.write_u8(out,'}')
+    segment.gamepads=pads[:]
+    return segment
 }
 
 // The play.step of the segments gathered so far.
 @(private)
 repro_flush :: proc(w:^Repro_Writer) {
-    if w.segment_count==0 {return}
-    repro_step_begin(w,"play.step")
-    out:=&w.out
-    serial.text_write_raw(out,`{"segments":[`)
-    for e,i in w.segments[:w.segment_count] {
-        if i>0 {serial.write_u8(out,',')}
-        repro_segment(w,e,w.segment_ticks[i])
-    }
-    serial.write_u8(out,']')
-    if w.focus>=0 {api.write_int(out,"focus",i64(w.focus))}
-    serial.text_write_raw(out,"}}")
-    w.focus=-1
-    w.segment_count,w.tick_sum=0,0
+    if len(w.segments)==0 {return}
+    repro_step(w,"play.step",Repro_Step{segments=w.segments[:],focus=w.focus})
+    w.segments=make([dynamic]Repro_Segment,context.temp_allocator)
+    w.focus,w.tick_sum=-1,0
 }
 
 @(private)
 repro_input :: proc(w:^Repro_Writer,e:^Qa_Entry,ticks:int) {
     ticks:=ticks
     for ticks>0 {
-        if w.segment_count==editor.API_STEP_SEGMENTS || w.tick_sum==editor.API_STEP_LIMIT {repro_flush(w)}
+        if len(w.segments)==editor.API_STEP_SEGMENTS || w.tick_sum==editor.API_STEP_LIMIT {repro_flush(w)}
         take:=min(ticks,editor.API_STEP_LIMIT-w.tick_sum)
-        w.segments[w.segment_count],w.segment_ticks[w.segment_count]=e,take
-        w.segment_count+=1
+        append(&w.segments,repro_segment(w,e,take))
         w.tick_sum+=take
         ticks-=take
     }
@@ -606,52 +586,29 @@ repro_input :: proc(w:^Repro_Writer,e:^Qa_Entry,ticks:int) {
 @(private)
 repro_holds :: proc(w:^Repro_Writer,entries:[]Qa_Entry) {
     m:=core.world_storage_of(editor.run_ref(w.s,w.r),input.Input_Map)
-    out:=&w.out
     start:=0
     for start<len(entries) {
         end:=start+1
         for end<len(entries) && entries[end].kind==.Hold && entries[end].slot==entries[start].slot && end-start<input.HOLD_CAPACITY {end+=1}
-        repro_step_begin(w,"play.input")
-        serial.text_write_raw(out,`{"actions":[`)
+        actions:=make([]Repro_Action,end-start,context.temp_allocator)
         for &e,i in entries[start:end] {
-            if i>0 {serial.write_u8(out,',')}
-            name,_:=core.name_of(w.s.info,input.Action,i64(e.hold.action))
-            serial.text_write_raw(out,`{"name":`);serial.text_write_string(out,name)
+            action:=&actions[i]
+            action.name,_=core.name_of(w.s.info,input.Action,i64(e.hold.action))
             if e.hold.value=={} {
-                api.write_bool(out,"release",true)
-            } else {
-                kind:=input.Action_Kind.Button
-                if m!=nil && int(e.hold.action)<input.ACTION_CAPACITY {kind=m.actions[e.hold.action].kind}
-                #partial switch kind {
-                case .Axis:  api.write_key(out,"value");api.write_number(out,e.hold.value.x)
-                case .Axis2: repro_pair(out,"vector",e.hold.value)
-                }
-                if e.hold.ticks>0 {api.write_int(out,"for",i64(e.hold.ticks))}
+                action.release=true
+                continue
             }
-            serial.write_u8(out,'}')
+            kind:=input.Action_Kind.Button
+            if m!=nil && int(e.hold.action)<input.ACTION_CAPACITY {kind=m.actions[e.hold.action].kind}
+            #partial switch kind {
+            case .Axis:  action.value=e.hold.value.x
+            case .Axis2: action.vector=e.hold.value
+            }
+            action.ticks=int(e.hold.ticks)
         }
-        serial.write_u8(out,']')
-        api.write_int(out,"slot",i64(entries[start].slot))
-        serial.text_write_raw(out,"}}")
+        repro_step(w,"play.input",Repro_Input{actions=actions,slot=entries[start].slot})
         start=end
     }
-}
-
-// What must hold for the violation not to happen: a violation fails the
-// scenario, so the file reports the bug while it exists and passes once
-// it is fixed.
-@(private)
-repro_monitor :: proc(out:^serial.Writer,q:^Run_Qa,v:^Qa_Violation) {
-    l:=&q.limits
-    serial.write_u8(out,'{')
-    api.write_bool(out,"non_finite",v.kind==.Non_Finite,true)
-    api.write_bool(out,"problems",v.kind==.Problem)
-    api.write_bool(out,"falls",v.kind==.Fell)
-    api.write_key(out,"stuck_seconds");api.write_number(out,v.kind==.Stuck?l.stuck_seconds:0)
-    if v.kind==.Frame_Time {api.write_key(out,"frame_ms");api.write_number(out,l.frame_ms)}
-    if v.kind==.Memory {api.write_key(out,"memory_mb");api.write_number(out,l.memory_mb)}
-    if v.kind==.Fell {api.write_key(out,"fall_below");api.write_number(out,l.fall_below)}
-    serial.write_u8(out,'}')
 }
 
 // The text of the scenario that plays a run from tick 0 to a violation.
@@ -661,17 +618,11 @@ qa_repro_text :: proc(s:^editor.Session,r:^editor.Run,q:^Run_Qa,v:^Qa_Violation,
     if q.broken!="" {return "",fmt.tprintf("No repro: %s",q.broken)}
     w:core.World_Ref=editor.run_ref(s,r)
     if network:=core.world_storage_of(w,core.Network);network!=nil && network.role!=.Standalone {return "","No repro: a game on the network does not play the same ticks again"}
-    repro:Repro_Writer
-    repro.s,repro.r,repro.q,repro.focus=s,r,q,-1
-    serial.writer_init(&repro.out,8192,allocator)
-    out:=&repro.out
-    serial.write_u8(out,'{')
-    path:=editor.document_path(s.document)
-    if path!="" {api.write_text(out,"scene",path,true)}
-    api.write_key(out,"start",path=="");serial.write_u8(out,'{')
-    if seats:=core.world_storage_of(w,input.Seats);seats!=nil && seats.local_count>0 {api.write_int(out,"players",i64(seats.local_count),true)}
-    serial.write_u8(out,'}')
-    api.write_key(out,"steps");serial.write_u8(out,'[')
+    repro:=Repro_Writer{s=s,r=r,q=q,focus=-1}
+    repro.steps=make([dynamic]editor.Scenario_Step,context.temp_allocator)
+    repro.segments=make([dynamic]Repro_Segment,context.temp_allocator)
+    start:Repro_Start
+    if seats:=core.world_storage_of(w,input.Seats);seats!=nil {start.players=seats.local_count}
     left:=v.ran
     entries:
     for i:=0;i<q.log_count && left>0;i+=1 {
@@ -693,23 +644,27 @@ qa_repro_text :: proc(s:^editor.Session,r:^editor.Run,q:^Run_Qa,v:^Qa_Violation,
         case .Monitors:
             if i!=q.armed_at {continue}
             repro_flush(&repro)
-            repro_step_begin(&repro,"play.qa.start")
-            repro_monitor(out,q,v)
-            serial.write_u8(out,'}')
+            l:=&q.limits
+            monitor:=Repro_Monitor{non_finite=v.kind==.Non_Finite,problems=v.kind==.Problem,falls=v.kind==.Fell}
+            #partial switch v.kind {
+            case .Stuck:      monitor.stuck_seconds=l.stuck_seconds
+            case .Frame_Time: monitor.frame_ms=l.frame_ms
+            case .Memory:     monitor.memory_mb=l.memory_mb
+            case .Fell:       monitor.fall_below=l.fall_below
+            }
+            repro_step(&repro,"play.qa.start",monitor)
         case .Call:
             repro_flush(&repro)
-            repro_step_begin(&repro,e.method)
-            serial.text_write_raw(out,qa_text(q,e.text_at,e.text_len))
-            serial.write_u8(out,'}')
+            append(&repro.steps,editor.Scenario_Step{method=e.method,params=serial.Json(qa_text(q,e.text_at,e.text_len))})
         }
         if left==0 {break entries}
     }
     repro_flush(&repro)
-    repro_step_begin(&repro,"play.qa.report")
-    serial.text_write_raw(out,"{}}]}")
-    bytes:=serial.writer_bytes(out)
+    append(&repro.steps,editor.Scenario_Step{method="play.qa.report"})
+    started,_:=serial.text_encode(start,.Line,context.temp_allocator,sparse=true)
+    bytes,_:=serial.text_encode(editor.Scenario{scene=editor.document_path(s.document),start=serial.Json(started),steps=repro.steps[:]},.Pretty,allocator,sparse=true)
     if len(bytes)>editor.API_SCENARIO_FILE_BYTES {return "",fmt.tprintf("No repro: its scenario takes %d bytes and a scenario file %d",len(bytes),editor.API_SCENARIO_FILE_BYTES)}
-    if repro.steps>editor.API_SCENARIO_STEPS {return "",fmt.tprintf("No repro: its scenario takes %d steps and a scenario file %d",repro.steps,editor.API_SCENARIO_STEPS)}
+    if len(repro.steps)>editor.API_SCENARIO_STEPS {return "",fmt.tprintf("No repro: its scenario takes %d steps and a scenario file %d",len(repro.steps),editor.API_SCENARIO_STEPS)}
     return string(bytes),""
 }
 

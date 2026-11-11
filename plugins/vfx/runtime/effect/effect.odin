@@ -3,7 +3,6 @@ package effect
 import "base:runtime"
 import "core:fmt"
 import "core:math"
-import "core:reflect"
 import "core:strconv"
 import "core:strings"
 import "mirai:asset"
@@ -341,7 +340,6 @@ Particle_Value :: struct {
     size:int,
     kind:Particle_Value_Kind,
     info:^runtime.Type_Info,
-    tag:reflect.Struct_Tag,
 }
 
 Particle_Value_Visitor :: #type proc(value:Particle_Value,user:rawptr) -> bool
@@ -351,8 +349,8 @@ Particle_Value_Visitor :: #type proc(value:Particle_Value,user:rawptr) -> bool
 // and so does the call, with false.
 particle_values_visit :: proc(visit:Particle_Value_Visitor,user:rawptr) -> bool {
     path:[PARTICLE_NAME_BYTES]u8
-    walk :: proc(info:^runtime.Type_Info,offset:uintptr,top:string,tag:reflect.Struct_Tag,path:[]u8,used:int,visit:Particle_Value_Visitor,user:rawptr) -> bool {
-        value:=Particle_Value{path=string(path[:used]),top=top,offset=offset,size=info.size,info=info,tag=tag}
+    walk :: proc(info:^runtime.Type_Info,offset:uintptr,top:string,path:[]u8,used:int,visit:Particle_Value_Visitor,user:rawptr) -> bool {
+        value:=Particle_Value{path=string(path[:used]),top=top,offset=offset,size=info.size,info=info}
         if info.id==base.Asset_Id {value.kind=.Asset;return visit(value,user)}
         #partial switch v in runtime.type_info_base(info).variant {
         case runtime.Type_Info_Struct:
@@ -362,7 +360,7 @@ particle_values_visit :: proc(visit:Particle_Value_Visitor,user:rawptr) -> bool 
                 if at>0 {path[at]='.';at+=1}
                 if at+len(v.names[i])>len(path) {return false}
                 copy(path[at:],v.names[i])
-                if !walk(v.types[i],offset+v.offsets[i],top==""?v.names[i]:top,reflect.Struct_Tag(v.tags[i]),path,at+len(v.names[i]),visit,user) {return false}
+                if !walk(v.types[i],offset+v.offsets[i],top==""?v.names[i]:top,path,at+len(v.names[i]),visit,user) {return false}
             }
             return true
         case runtime.Type_Info_Array:
@@ -379,7 +377,7 @@ particle_values_visit :: proc(visit:Particle_Value_Visitor,user:rawptr) -> bool 
                 if used+1+len(name)>len(path) {return false}
                 path[used]='.'
                 copy(path[used+1:],name)
-                if !walk(v.elem,offset+uintptr(index*v.elem_size),top,tag,path,used+1+len(name),visit,user) {return false}
+                if !walk(v.elem,offset+uintptr(index*v.elem_size),top,path,used+1+len(name),visit,user) {return false}
             }
             return true
         case runtime.Type_Info_Float:   value.kind=.Float
@@ -390,7 +388,7 @@ particle_values_visit :: proc(visit:Particle_Value_Visitor,user:rawptr) -> bool 
         }
         return visit(value,user)
     }
-    return walk(type_info_of(Particle_Info),0,"",{},path[:],0,visit,user)
+    return walk(type_info_of(Particle_Info),0,"",path[:],0,visit,user)
 }
 
 // In the temporary allocator.

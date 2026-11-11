@@ -77,8 +77,9 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
     put :: proc(b:^Clipboard_Test_Board,text:string) {b.length=copy(b.text[:],text)}
     lamp :: proc(w:^Clipboard_Test_World,e:core.Entity) -> Clipboard_Test_Lamp {value,_:=core.get(&w.lamps,e);return value}
     component:=Value_Menu{kind=.Component,table=LAMP}
-    color:=Value_Menu{kind=.Field,table=LAMP,offset=int(offset_of(Clipboard_Test_Lamp,color)),info=type_info_of([3]f32)}
-    intensity:=Value_Menu{kind=.Field,table=LAMP,offset=int(offset_of(Clipboard_Test_Lamp,intensity)),info=type_info_of(f32)}
+    schema:=&info.schema.schema
+    color:=Value_Menu{kind=.Field,table=LAMP,offset=int(offset_of(Clipboard_Test_Lamp,color)),type=schema.lookup[[3]f32]}
+    intensity:=Value_Menu{kind=.Field,table=LAMP,offset=int(offset_of(Clipboard_Test_Lamp,intensity)),type=schema.lookup[f32]}
 
     // A component goes under its name, as `components` of the API, with the
     // entity it names by its id.

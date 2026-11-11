@@ -471,7 +471,7 @@ step_exact :: proc(edits:^Edits,w:core.World_Ref,step:^Edit_Step) -> bool {
         table:=core.world_table_at(w,info)
         size:=info.info.size
         ranges:=edits.ranges[rows.table].ranges
-        offsets:=saved_entity_offsets(info.info)
+        offsets:=saved_entity_offsets(w.info,info.info)
         for e,k in rows.entities {
             row:=core.raw_row(table,e)
             if (row>=0)!=rows.held.present[k] {return false}
