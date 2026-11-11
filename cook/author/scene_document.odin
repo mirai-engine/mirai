@@ -9,6 +9,7 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
+import escene "mirai:engine/scene"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
@@ -79,19 +80,14 @@ component_links :: proc(name:string) -> bool {
 
 COMPONENT_LINKS_TEXT :: "%s: %s is what links an entity to its prefab, which a document does not override: leave it out, and give a new entity prefab to place an instance"
 
-// Whether a document writes a component by its name: what a scene saves
-// besides the identity and the place of an entity, which have keys of their own.
+// Whether a document writes a component by its name: every one a scene saves
+// besides the identity, the place and the links of an entity, which have keys
+// of their own or are kept by the engine. One with no field to show is {}.
 component_listed :: proc(t:^core.Table_Info) -> bool {
     switch t.type {
-    case core.Transform,core.Name,core.Id,core.Parent,core.Disabled,erender.Hidden,erender.Material_Override: return false
+    case core.Transform,core.Name,core.Id,core.Parent,core.Disabled,erender.Hidden,erender.Material_Override,
+         escene.Prefab_Instance,escene.Prefab_Member,escene.Section_Member: return false
     }
-    fields,structured:=runtime.type_info_base(t.info).variant.(runtime.Type_Info_Struct)
-    if structured && fields.field_count>0 {
-        visible:=false
-        for tag in fields.tags[:fields.field_count] {if _,hidden:=core.field_option(reflect.Struct_Tag(tag),"hidden");!hidden {visible=true;break}}
-        if !visible {return false}
-    }
-    // A component whose fields are all transient is saved by its presence.
     return true
 }
 

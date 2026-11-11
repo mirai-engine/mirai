@@ -42,7 +42,7 @@ template_copy :: proc(t:^testing.T,name:string) -> (root,engine:string,ok:bool) 
 }
 
 @(private="file") Game_Status :: struct {health:f32,hits:i32,message:[32]u8 `mirai:"text"`}
-@(private="file") Game_Mark :: struct {seen:i32 `mirai:"transient"`}
+@(private="file") Game_Mark :: struct {seen:i32 `mirai:"transient,hidden"`}
 
 // The world of the game of the tests: where a recipe is run.
 @(private="file")
@@ -310,6 +310,18 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     text:=string(serial.writer_bytes(&out))
     for part in ([]string{`"name":"Ground"`,`"Point_Light":{"intensity": 7}`,`"Mark":{}`,`"off":["Point_Light"]`,`"name":"Bulb","visible":false`}) {
         testing.expectf(t,strings.contains(text,part),"the document has %s: %s",part,text)
+    }
+    // A component with no field to show is {} in the document: written back whole or merged, it
+    // stays, and only null in a merge takes it away.
+    for c in ([]struct{document:string,kept:bool}{
+        {text,true},
+        {`{"merge":true,"entities":[{"name":"Lamp","position":[2,4,0]}]}`,true},
+        {`{"merge":true,"entities":[{"name":"Lamp","components":{"Mark":null}}]}`,false},
+    }) {
+        _,problem=scene_write(&p,"arena/main.scene",c.document)
+        serial.writer_init(&out,0,context.temp_allocator)
+        testing.expect(t,problem=="" && scene_read(&p,"arena/main.scene",&out)=="",problem)
+        testing.expectf(t,strings.contains(string(serial.writer_bytes(&out)),`"Mark":{}`)==c.kept,"%s: %s",c.document,serial.writer_bytes(&out))
     }
     // What a document cannot declare says where and what does.
     scene_file,_:=asset.registry_find_path(&p.registry,"arena/main.scene")
