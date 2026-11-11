@@ -96,12 +96,12 @@ result. It is built every frame and resolved in `frame_end`, one axis at a time:
    width.
 4. The floating roots are ordered by layer (within a layer, the one declared later stays on top) and
    placed against what they hang from; a `GROW` float takes the size of that and a `percent` one
-   its share of it. Afterwards each
-   element is placed and the commands are listed in draw order.
+   its share of it. Afterwards each element is placed and the commands are listed in draw order.
 5. Each box is rounded to the device pixels of the screen: its edges, from where the layout put
    them, and its size between them, so neighbours share an edge. What transitions is not rounded
-   while it moves, nor what it holds, and a text leaf is not (its glyphs snap as they are drawn). Pointer hits and `widget_rect` see the rounded boxes, and a
-   shape's border is whole device pixels wide.
+   while it moves, nor what it holds, and a text leaf is not (its glyphs snap as they are drawn).
+   Pointer hits and `widget_rect` see the rounded boxes; a shape's border is whole device pixels
+   wide.
 
 The measure of a span of text is stored by text, size and face in two generations that swap
 between frames: what a frame shows again is taken from the previous one without measuring it,
