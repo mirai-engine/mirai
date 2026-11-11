@@ -275,11 +275,19 @@ changed declaration of the game compiles the world too.
 
 ## Engine binaries
 
-`build.engine_build({engine_root, mode, force})` first generates the engine shaders
+`build.engine_build({engine_root, mode, defines, force})` first generates the engine shaders
 ([shaders](../../mirai-rendering/references/shaders.md); if they fail, it ends with `.Shaders`) and
 compiles into `<engine>/.mirai/engine/<mode>/` each part once per version of what it is built from.
 Each mode has its folder: switching between them compiles nothing.
 
+- **Defines.** A define is one value for every library of a build. The defines of a project that
+  a `#config` of an engine package reads (`engine_defines`) build its engine in
+  `<mode>-<hash of them>/`, which `edit`, `play`, `session` and the build of the project use: a
+  library compiles with the defines its own sources read, and its declarations write each
+  `#config` as the value it took, so a define compiles the library that reads it and those that
+  name what it changed, and the shared cache gives the rest. An installed engine refuses such a
+  define, and a build in an editor that runs the binaries of other defines ends with
+  `Engine_Defines`, saying which and what to run.
 - **Packages and layers.** `ENGINE_PACKAGES` (`cook/build/engine.odin`) is the only list of the
   packages of the engine, each after the ones it imports, with its layer: the build, the shipped
   game, the installed engine and the allocation lint read it. A layer is one of the

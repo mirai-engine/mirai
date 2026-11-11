@@ -359,7 +359,7 @@ made_build :: proc(structs:[Place]^runtime.Type_Info,types:Test_Types,allocator:
     }
     for &f in made.fields {
         description:=f.declared.description
-        f.declared={single=f.declared.single,keep=f.declared.keep,persist=f.declared.persist,setting=f.declared.setting,shared=f.declared.shared,far=f.declared.far,replication=f.declared.replication,by_world=f.declared.by_world,host=f.declared.host,copy=f.declared.copy=="false"?"false":""}
+        f.declared={single=f.declared.single,keep=f.declared.keep,persist=f.declared.persist,setting=f.declared.setting,shared=f.declared.shared,far=f.declared.far,derived=f.declared.derived,replication=f.declared.replication,by_world=f.declared.by_world,host=f.declared.host,copy=f.declared.copy=="false"?"false":""}
         f.file=""
         cloned,clone_error:=strings.clone(description,allocator)
         if clone_error!=nil {
@@ -660,7 +660,7 @@ made_info :: proc(made:^Test_Made,sizes,aligns:[Place]int,allocator:runtime.Allo
                 delete(tables,allocator);delete(storages,allocator)
                 return
             }
-            tables[index]={name=name,library=f.library,type=f.type,info=f.info,offset=f.offset,place=f.place,shared=d.shared,replicated=d.replication,game=f.game,default=f.procs.default,description=description,single=d.single,far=d.far,base=f.base,locks=f.locks}
+            tables[index]={name=name,library=f.library,type=f.type,info=f.info,offset=f.offset,place=f.place,shared=d.shared,replicated=d.replication,game=f.game,default=f.procs.default,description=description,single=d.single,far=d.far,derived=d.derived,base=f.base,locks=f.locks}
             locked||=len(f.locks)>0
             f.locks=nil
         } else {

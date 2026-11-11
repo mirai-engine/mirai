@@ -2,8 +2,8 @@
 name: mirai-platform
 description: Mirai operating system layer (the `platform` package, over SDL3) and its audio library
   (the `audio` package). Use when working on window and custom chrome, per-frame and per-tick input,
-  clock and frame pacing, child processes, file watching, paths, mixer, voices, buses, positional
-  audio and WAV/OGG decoding.
+  clock and frame pacing, file watching, paths, mixer, voices, buses, positional audio and WAV/OGG
+  decoding.
 ---
 
 # Mirai platform and audio
@@ -15,10 +15,10 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
 ## Map
 
 - Context, frame and pacing, input and injection, window, display scale, custom chrome, dialogs,
-  processes, crashes, file watching, paths, trash, audio device:
+  crashes, file watching, paths, trash, audio device:
   [context](references/platform.md#context), [frame](references/platform.md#frame),
   [input](references/platform.md#input), [window](references/platform.md#window),
-  [processes](references/platform.md#processes), [crashes](references/platform.md#crashes),
+  [crashes](references/platform.md#crashes),
   [file watching](references/platform.md#file-watching), [paths](references/platform.md#paths) and
   [audio device](references/platform.md#audio-device).
 - Mixer, threads, sounds, decoders, feeds and streams, voices, buses, sends, the master limiter,
@@ -43,11 +43,11 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
 
 - SDL state belongs to the process: a process has at most one `Platform` with a window, created on
   the main thread.
-- A headless `Platform` starts no SDL subsystem; it only uses its clock, its waits and its
-  processes. It accepts the same API as one with a window.
+- A headless `Platform` starts no SDL subsystem; it only uses its clock and its waits. It accepts
+  the same API as one with a window.
 - These do not allocate: `frame_begin`, `frame_end`, `input_tick_take`, `input_inject*`,
-  `window_set_regions`, `window_hit_at`, `watch_poll`, `process_read`, `process_write` and
-  `process_poll`. These are transactions: `create`, `process_start`, `watch_create`,
+  `window_set_regions`, `window_hit_at` and `watch_poll`. These are transactions: `create`,
+  `watch_create`,
   `audio_device_open`, `audio_device_switch`, the lists of displays and audio outputs, the
   clipboard and the title with a window.
 - `pressed` and `released` of `Input_Tick` hold for a single tick: `input_tick_take` delivers and
@@ -59,7 +59,7 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
   each voice decodes it. Loading never decodes those.
 - An exhausted capacity returns an error or handle 0 and adds to the statistics
   (`platform.stats`, `watch_stats`, `audio.mixer_stats`); nothing grows.
-- Handles (`Process`, `Watch`, `audio.Sound`, `audio.Voice`) are generational `base.Handle`s: a
+- Handles (`Watch`, `audio.Sound`, `audio.Voice`) are generational `base.Handle`s: a
   freed one does not affect whoever reuses its place.
 - Tests send no synthetic input to the desktop nor open visible windows: SDL's `dummy` driver or a
   `hidden` window.

@@ -8,6 +8,7 @@ import "mirai:editor/acp"
 import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/subprocess"
 
 Ai_Connection_Pending :: struct {
     kind:enum{None,Install,Login,Probe},
@@ -29,7 +30,7 @@ ai_install_start :: proc(s:^Session,operation:string,provider:Ai_Provider,runtim
     ai_initialize(s)
     m:=s.ai
     if !s.has_project {return "Open a project first"}
-    if m.installer!=0 || m.login || m.probe.active || (operation!="check" && ai_running_count(m)!=0) || m.connection_pending.kind!=.None {return "Wait for the current operation to finish"}
+    if m.installer.pid!=0 || m.login || m.probe.active || (operation!="check" && ai_running_count(m)!=0) || m.connection_pending.kind!=.None {return "Wait for the current operation to finish"}
     if operation!="check" && operation!="runtime" && m.connections[provider].agent==.Command {return "Mirai installs only the agents of Codex and Claude"}
     if operation!="check" && operation!="runtime" && m.connections[provider].user {
         // The installation of the user is updated and removed by its own command.
@@ -73,8 +74,8 @@ ai_install_start :: proc(s:^Session,operation:string,provider:Ai_Provider,runtim
         if version!="" {append(&command,"--version",version)}
         if m.connections[provider].agent==.Claude && ai_claude_binary()=="" {append(&command,"--claude-code")}
     }
-    process,error:=platform.process_start(s.app.platform,{command=command[:],working_directory=s.project_root,merge_stderr=true})
-    if error!=.None {return "The agent installer could not be started"}
+    process,error:=subprocess.start({command=command[:],working_dir=s.project_root},pipes=.Merged)
+    if error!=nil {return "The agent installer could not be started"}
     m.installer=process;m.install_provider=provider
     base.text_set(m.install_operation[:],operation);base.text_set(m.install_cancel[:],cancel)
     m.connection_ui.busy=true;m.connection_ui.error={};m.connection_ui.log={}
@@ -89,10 +90,10 @@ ai_install_cancel :: proc(s:^Session) {
     if m.connection_pending.kind!=.None {m.connection_pending={};m.connection_ui.busy=false;m.connection_ui.screen=.Overview;return}
     if m.probe.active {ai_probe_end(s,"");m.probe={};m.connection_ui.busy=false;m.connection_ui.screen=.Overview;return}
     if m.login {
-        if m.login_process!=0 {m.login_cancelled=true;_=platform.process_terminate(s.app.platform,m.login_process);return}
-        m.login=false;acp.stop(&m.workers[0].client,s.app.platform);m.connection_ui.busy=false;m.connection_ui.screen=.Overview;return
+        if m.login_process.pid!=0 {m.login_cancelled=true;_=subprocess.terminate(&m.login_process);return}
+        m.login=false;acp.stop(&m.workers[0].client);m.connection_ui.busy=false;m.connection_ui.screen=.Overview;return
     }
-    if m.installer==0 {return}
+    if m.installer.pid==0 {return}
     cancel:=base.text_get(m.install_cancel[:])
     if cancel!="" {_=os.write_entire_file(cancel,string("cancel"))}
     base.text_set(m.connection_ui.status[:],"Cancelling...")
@@ -111,10 +112,10 @@ ai_install_poll :: proc(s:^Session) {
         }
         if message!="" {m.connection_ui.busy=false;m.connection_ui.screen=.Overview;base.text_set(m.connection_ui.error[:],message)}
     }
-    if m.installer==0 {return}
+    if m.installer.pid==0 {return}
     buffer:[4096]u8
     for pass in 0..<8 {
-        count,_:=platform.process_read(s.app.platform,m.installer,.Stdout,buffer[:])
+        count,_:=subprocess.read(&m.installer,.Stdout,buffer[:])
         if count==0 {break}
         used:=len(base.text_get(m.connection_ui.log[:]))
         keep:=min(count,len(m.connection_ui.log)-1)
@@ -124,12 +125,13 @@ ai_install_poll :: proc(s:^Session) {
         }
         copy(m.connection_ui.log[used:used+keep],buffer[count-keep:count]);m.connection_ui.log[used+keep]=0
     }
-    exited,code:=platform.process_poll(s.app.platform,m.installer)
-    if !exited {return}
+    state,_:=subprocess.wait(&m.installer,0)
+    if !state.exited {return}
+    code:=state.exit_code
     operation:=base.text_get(m.install_operation[:])
     if operation=="check" && platform.clock_seconds()<m.connection_ui.check_display_until {return}
     cancelled:=os.is_file(base.text_get(m.install_cancel[:]))
-    platform.process_release(s.app.platform,m.installer);m.installer=0
+    subprocess.release(&m.installer)
     os.remove(base.text_get(m.install_cancel[:]))
     closed:=m.connection_ui.screen==.Closed
     m.connection_ui.busy=false
@@ -180,7 +182,7 @@ ai_connection_set :: proc(s:^Session,provider:Ai_Provider,use_existing:bool) -> 
     m:=s.ai
     c:=&m.connections[provider]
     if !c.installed {return c.agent==.Command?"The command of the agent was not found":"Download the agent first"}
-    if ai_running_count(m)!=0 || m.login || m.installer!=0 || m.probe.active {return "Wait for the current operation to finish"}
+    if ai_running_count(m)!=0 || m.login || m.installer.pid!=0 || m.probe.active {return "Wait for the current operation to finish"}
     if c.agent!=.Command {
         if base.text_get(c.known_adapter[:])!=base.text_get(c.adapter[:]) || base.text_get(c.known_version[:])=="" {
             return ai_probe_start(s,{int(provider)},true)
@@ -243,7 +245,7 @@ ai_probe_end :: proc(s:^Session,failure:string) {
     m:=s.ai
     if !m.probe.active {return}
     provider,connect:=m.probe.provider,m.probe.connect
-    acp.stop(&m.workers[0].client,s.app.platform)
+    acp.stop(&m.workers[0].client)
     m.probe.active=false
     if failure!="" {
         m.probe={}
@@ -264,7 +266,7 @@ ai_probe_end :: proc(s:^Session,failure:string) {
 ai_login_start :: proc(s:^Session,provider:Ai_Provider) -> string {
     ai_initialize(s)
     m:=s.ai
-    if ai_running_count(m)!=0 || m.login || m.installer!=0 || m.probe.active || m.connection_pending.kind!=.None {return "Wait for the current operation to finish"}
+    if ai_running_count(m)!=0 || m.login || m.installer.pid!=0 || m.probe.active || m.connection_pending.kind!=.None {return "Wait for the current operation to finish"}
     if ai_process_running(m) {
         ai_workers_stop(s,provider,all=true)
         m.connection_pending={kind=.Login,provider=provider}
@@ -288,8 +290,8 @@ ai_login_start :: proc(s:^Session,provider:Ai_Provider) -> string {
             if binary=="" {return "Claude Code is missing; download the agent again"}
             append(&command,binary,"auth","status","--json")
         }
-        process,error:=platform.process_start(s.app.platform,{command=command[:],working_directory=s.project_root,merge_stderr=c.agent==.Codex})
-        if error!=.None {return c.agent==.Codex?"Codex could not be started":"Claude Code could not be started"}
+        process,error:=subprocess.start({command=command[:],working_dir=s.project_root},pipes=.Merged if c.agent==.Codex else .Separate)
+        if error!=nil {return c.agent==.Codex?"Codex could not be started":"Claude Code could not be started"}
         m.login_provider=provider;m.login_process=process;m.login_cancelled=false;m.login=true
         m.connection_ui.busy=true;m.connection_ui.screen=.Login;m.connection_ui.log={};m.connection_ui.error={}
         base.text_set(m.connection_ui.status[:],c.agent==.Codex?"Checking the sign-in of Codex...":"Checking the sign-in of Claude Code...")
@@ -303,18 +305,19 @@ ai_login_start :: proc(s:^Session,provider:Ai_Provider) -> string {
 
 ai_login_poll :: proc(s:^Session) {
     m:=s.ai
-    if m.login_process==0 {return}
+    if m.login_process.pid==0 {return}
     buffer:[4096]u8
     for _ in 0..<8 {
-        count,_:=platform.process_read(s.app.platform,m.login_process,.Stdout,buffer[:])
+        count,_:=subprocess.read(&m.login_process,.Stdout,buffer[:])
         if count==0 {break}
         used:=len(base.text_get(m.connection_ui.log[:]))
         available:=len(m.connection_ui.log)-1-used
         if available>0 {used+=copy(m.connection_ui.log[used:len(m.connection_ui.log)-1],buffer[:min(count,available)]);m.connection_ui.log[used]=0}
     }
-    exited,code:=platform.process_poll(s.app.platform,m.login_process)
-    if !exited {return}
-    platform.process_release(s.app.platform,m.login_process);m.login_process=0
+    state,_:=subprocess.wait(&m.login_process,0)
+    if !state.exited {return}
+    code:=state.exit_code
+    subprocess.release(&m.login_process)
     m.login=false;m.connection_ui.busy=false
     if m.login_cancelled {m.connection_ui.screen=.Overview;m.connection_ui.log={};base.text_set(m.connection_ui.status[:],"Cancelled");return}
     c:=&m.connections[m.login_provider]

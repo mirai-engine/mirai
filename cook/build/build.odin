@@ -36,6 +36,7 @@ Failure :: enum u8 {
     None,
     Engine_Missing,   // the project was opened without the root of the engine
     Engine_Incomplete, // an installed engine lacks some of its binaries: Result.text names their folder
+    Engine_Defines,   // the binaries that load the library are built with other defines than the project's: Result.text says which and what to run
     Generate,         // the attributes of the project's packages are wrong: Result.text says how
     Compiler_Missing, // no Odin compiler in MIRAI_ODIN or in PATH
     Shaders,          // the shaders of the engine were not generated: Result.text says why
@@ -71,6 +72,7 @@ Desc :: struct {
     force:bool,                  // build even when nothing changed
     dev:bool,                   // -o:minimal whatever the manifest says: for checking a change, not for shipping
     engine:Engine_Mode,          // the binaries of the engine a library is built against
+    runs:string,                 // the folder of the binaries of the engine that load what is built; "": none runs yet
     action:Action,               // Check and Test: of the Editor target
     test_package:string,         // Test: the folder of the package, absolute
     test:Test_Options,           // Test: how its executable runs
@@ -207,6 +209,13 @@ job_start :: proc(desc:Desc) -> ^Job {
     }
 
     if p.engine_root=="" || desc.action!=.Build && desc.target==.Game {return job_fail(job,.Engine_Missing)}
+    // A library is never loaded by binaries built with other defines.
+    if desc.runs!="" && desc.target!=.Game && desc.action!=.Check {
+        if engine:=project_engine(p,desc.engine,context.temp_allocator);!project.path_same(desc.runs,engine.folder) {
+            job.result.text=fmt.aprintf("the project builds the engine with %s in %s, and this editor runs the binaries of %s: close it and run mirai edit %s",len(engine.defines)>0?strings.join(engine.defines,", ",context.temp_allocator):"no defines it reads",engine.folder,desc.runs,p.root,allocator=a)
+            return job_fail(job,.Engine_Defines)
+        }
+    }
     job.engine=desc.engine
     if desc.action==.Build {
         roots:=imports_roots(p)
@@ -255,7 +264,7 @@ job_start :: proc(desc:Desc) -> ^Job {
     }
 
     job.flags=target_flags(p,desc.target,desc.flags,a,desc.dev,desc.engine)
-    if desc.action==.Test {job.engine_folder=engine_paths(p.engine_root,desc.engine,a).folder}
+    if desc.action==.Test {job.engine_folder=project_engine(p,desc.engine,a).folder}
     job.force=desc.force
     job.compiles=make([dynamic]Compile,a)
     if desc.target!=.Game {
@@ -285,7 +294,7 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
     if len(job.plugins)==0 {return .None}
     job.plugin_flags=plugin_flags(p,desc.dev,a)
     job.plugin_cache=!p.manifest.build.debug
-    engine:=engine_paths(p.engine_root,desc.engine,context.temp_allocator)
+    engine:=project_engine(p,desc.engine,context.temp_allocator)
     job.engine_decl=strings.clone(engine.decl,a)
     declared:=declared_read(engine.declared,context.temp_allocator)
     made:=make([dynamic][2]string,context.temp_allocator)
@@ -301,7 +310,7 @@ job_plugins_plan :: proc(job:^Job,p:^project.Project,desc:Desc) -> Failure {
         // Its declarations are about to name the library of these sources: until
         // that one is published, no stamp says the part stands.
         _=os.remove(lib.stamp)
-        if errors:=plugin_library_prepare(&lib);len(errors)>0 {
+        if errors:=plugin_library_prepare(&lib,manifest_defines(&p.manifest,context.temp_allocator));len(errors)>0 {
             job.result.text=strings.join(errors,"\n",a)
             return .Generate
         }
@@ -391,7 +400,7 @@ job_plugins_start :: proc(job:^Job) {
     for i:=0;i<len(job.plugin_queue); {
         index:=job.plugin_queue[i]
         compiling,linking:=0,0
-        for compile in job.compiles {
+        for &compile in job.compiles {
             if compile.relink {linking+=1} else {compiling+=1}
         }
         room:=linking<job.link_limit if job.plugin_relink[index] else compiling<job.plugin_limit
@@ -708,7 +717,7 @@ job_advance :: proc(job:^Job,wait:bool) -> bool {
             i+=1
             continue
         }
-        state,error:=os.process_wait(job.compiles[i].process,timeout)
+        state,error:=subprocess.wait(&job.compiles[i].process,timeout)
         timeout=0
         if !state.exited {
             if general,is_general:=error.(os.General_Error);is_general && general==.Timeout {
@@ -748,7 +757,7 @@ target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.A
     flags:=make([dynamic]string,a)
     append(&flags,"build",generated_folder(p.root,target,a))
     // A library sees the engine through its declarations; the game, whole.
-    mirai:=target==.Game?p.engine_root:engine_paths(p.engine_root,engine,context.temp_allocator).decl
+    mirai:=target==.Game?p.engine_root:project_engine(p,engine,context.temp_allocator).decl
     append(&flags,fmt.aprintf("-collection:mirai=%s",mirai,allocator=a),fmt.aprintf("-collection:project=%s",p.root if target==.Game else project_decl(p.root,plugins_mode(p,dev),context.temp_allocator),allocator=a))
     // A library sees the engine's plugins through the declarations of their libraries; the game, whole.
     plugins:=target==.Game?project.path(p.engine_root,"plugins",allocator=context.temp_allocator):plugins_decl(p.root,plugins_mode(p,dev),context.temp_allocator)
@@ -764,9 +773,7 @@ target_flags :: proc(p:^project.Project,target:Target,extra:[]string,a:runtime.A
         else when ODIN_OS==.Darwin {linker_flags_append(&flags,fmt.tprintf("-Wl,-rpath,@loader_path/%s %s",project.PLUGIN_LIBRARIES,LIBRARY_OWN_RUNTIME),a)}
         library_optimization_append(&flags,p,dev)
     }
-    for &define in p.manifest.build.defines {
-        if text:=base.text_get(define[:]);text!="" {append(&flags,fmt.aprintf("-define:%s",text,allocator=a))}
-    }
+    for define in manifest_defines(&p.manifest,context.temp_allocator) {append(&flags,fmt.aprintf("-define:%s",define,allocator=a))}
     platform_flags(p.engine_root,&flags,target==.Game,a)
     environment_flags(&flags,a)
     for flag in extra {append(&flags,strings.clone(flag,a))}
@@ -867,9 +874,8 @@ job_done :: proc(job:^Job) -> ^Job {
 @(private)
 job_fail :: proc(job:^Job,failure:Failure) -> ^Job {
     job.result.status,job.result.failure=.Failed,failure
-    for compile in job.compiles {
-        _=os.process_kill(compile.process)
-        _,_=os.process_wait(compile.process)
+    for &compile in job.compiles {
+        subprocess.release(&compile.process)
     }
     clear(&job.compiles)
     test_build_cancel(&job.test_build)

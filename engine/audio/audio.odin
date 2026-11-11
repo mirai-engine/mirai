@@ -132,7 +132,7 @@ AUDIO_REVERB_DEFAULT :: Audio_Reverb{room_size=0.6,damping=0.4,wet=1,width=1,zon
 #assert(offset_of(Audio_Reverb,zone)==size_of(Reverb))
 
 // What the library derived from the source. Only audio_sources writes it.
-@(component)
+@(component,derived)
 Audio_Source_State :: struct {
     voice:mixer.Voice `mirai:"transient,readonly,local,hidden"`,
     ended:bool `mirai:"transient,readonly,local"`,

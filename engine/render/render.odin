@@ -58,7 +58,7 @@ set_hidden :: proc(table:^core.Table(Hidden),e:core.Entity,hidden:bool) {
 
 // Its mesh is drawn by something else: the pieces of a broken destructible.
 // The library that draws it instead adds and removes it.
-@(component,description="The mesh is rendered by another system, such as destructible fragments.")
+@(component,derived,description="The mesh is rendered by another system, such as destructible fragments.")
 Drawn_Elsewhere :: struct {}
 
 // Every light shines toward -Z of its entity, as a camera looks, and its
@@ -235,7 +235,7 @@ Material_Override :: struct {
 
 // The outline of the editor's selection: 1 to HIGHLIGHT_LEVELS. It is drawn
 // in place of the Outline of the entity.
-@(component)
+@(component,derived)
 Highlight :: struct {
     level:u8 `mirai:"transient"`,
 }
@@ -275,7 +275,7 @@ instance_outline :: proc(highlights:^core.Table(Highlight,$A),outlines:^core.Tab
 
 // Where an entity and what hangs from it are drawn relative to their
 // simulated place: what the network fades a correction with.
-@(component)
+@(component,derived)
 Draw_Offset :: struct {
     offset:[3]f32 `mirai:"transient"`,
     rotation:mm.Quat `mirai:"transient"`,
