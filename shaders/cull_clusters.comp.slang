@@ -23,25 +23,40 @@
 // The visible clusters of both phases: the instance, and the cluster as a word of the index pool.
 [[vk::binding(SLOT_PASS6, 0)]] RWStructuredBuffer<uint2> visible : register(MIRAI_REGISTER(u, SLOT_PASS6), space0);
 // The pages of streamed meshes the cut asks for: the first word counts them,
-// past the capacity too, and from PAGE_REQUEST_FIRST each is the mesh, the
-// page and its priority (render.Page_Request).
+// the second the requests that found no entry, and from PAGE_REQUEST_FIRST a
+// table of params.pages.w entries (a power of two), each the mesh, the page,
+// its highest priority and its key (render.Page_Request).
 [[vk::binding(SLOT_PASS7, 0)]] RWStructuredBuffer<uint> page_requests : register(MIRAI_REGISTER(u, SLOT_PASS7), space0);
 // Of each slot of the pages, the stamp of the last frame that drew a cluster of the page in it.
 [[vk::binding(SLOT_PASS8, 0)]] RWStructuredBuffer<uint> page_stamps : register(MIRAI_REGISTER(u, SLOT_PASS8), space0);
 // The clusters of Surface programs (PROGRAMS_* of cull_common.slang).
 [[vk::binding(SLOT_PASS9, 0)]] RWStructuredBuffer<uint> program_bins : register(MIRAI_REGISTER(u, SLOT_PASS9), space0);
 #define PAGE_REQUEST_WORDS 4u
+#define PAGE_REQUEST_PROBES 32u
 
-// Asks for the page of the children of a cluster a view draws in their place.
-void page_request(uint mesh, uint page, float pixels) {
-    if (params.pages.w == 0u) return;
-    uint at;
-    InterlockedAdd(page_requests[0], 1u, at);
-    if (at >= params.pages.w) return;
-    uint word = PAGE_REQUEST_FIRST + at * PAGE_REQUEST_WORDS;
-    page_requests[word] = mesh;
-    page_requests[word + 1u] = page;
-    page_requests[word + 2u] = asuint(pixels);
+// Asks for the page of the children of a cluster a view draws in their place:
+// its entry, found by its key (where the page is in the page table), lists it
+// once with the highest priority, whatever order the threads come in.
+void page_request(uint handle, Mesh mesh, uint page, float pixels) {
+    uint capacity = params.pages.w;
+    if (capacity == 0u) return;
+    uint key = mesh.page_word + page * PAGE_ENTRY_WORDS + 1u;
+    uint at = hash_u32(key);
+    for (uint probe = 0u; probe < PAGE_REQUEST_PROBES; probe++) {
+        uint word = PAGE_REQUEST_FIRST + ((at + probe) & (capacity - 1u)) * PAGE_REQUEST_WORDS;
+        uint held;
+        InterlockedCompareExchange(page_requests[word + 3u], 0u, key, held);
+        if (held == 0u) {
+            InterlockedAdd(page_requests[0], 1u);
+            page_requests[word] = handle;
+            page_requests[word + 1u] = page;
+        }
+        if (held == 0u || held == key) {
+            InterlockedMax(page_requests[word + 2u], asuint(max(pixels, 0.0)));
+            return;
+        }
+    }
+    InterlockedAdd(page_requests[1], 1u);
 }
 
 // Stamps the slot of the page of a cluster drawn: its page is in use.
@@ -143,7 +158,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
         if (!posed) {
             if (!frustum_visible(low, high) || cluster_backfacing(inst, scale, mesh, c, low, high)) return;
             // What the depth pyramid hides asks too: it shows once what hides it moves.
-            if (cut.request) page_request(instance_mesh(inst), c.child_page, cut.pixels);
+            if (cut.request) page_request(instance_mesh(inst), mesh, c.child_page, cut.pixels);
             if (params.occlusion != 0u) {
                 if (params.phase == 0u) {
                     if (occluded(low, high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane)) {

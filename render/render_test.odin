@@ -2191,3 +2191,46 @@ render_far_from_the_centre_looks_as_at_it_and_a_jump_keeps_the_history :: proc(t
 	mean, most = difference(centre, away)
 	testing.expectf(t, mean < 0.002 && most < 0.05, "a view 15 km from the origin is the one at it: mean %v, most %v", mean, most)
 }
+
+// A highlight narrower than a pixel, jittered over the frames: the resolve
+// weighs it by how bright it shows, not by the light scale of the scene. Under
+// a key light a thousand times stronger that lights nothing in view, the same
+// exposure shows the same highlight, and it changes as much from frame to frame.
+@(test)
+taa_weighs_the_light_as_it_shows :: proc(t: ^testing.T) {
+	WIDTH :: 64
+	ROW :: 24
+	FIRST :: 24
+	WIDE :: 16
+	settings := DEFAULT_SETTINGS
+	settings.gi_enabled = false
+	camera := Camera{position = {0, 0, 5}, forward = {0, 0, -5}, up = {0, 1, 0}, fov_y = 40, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	change, scale: [2]f32 // change: of the highlight from frame to frame, nits
+	for dim, c in ([2]bool{false, true}) {
+		f: Fixture
+		if !fixture_init(t, &f, WIDTH, 48, settings) {return}
+		defer fixture_destroy(&f)
+		r := f.renderer
+		vertices, indices := cube_mesh()
+		mesh, _ := mesh_add(r, vertices[:], indices[:])
+		stripe := Instance_Desc{object_id = 1, mesh = mesh, transform = linalg.matrix4_translate_f32({0.01, 0, 0}) * linalg.matrix4_scale_f32({0.05, 2, 0.05}), tint = {0, 0, 0}, emission = {50, 50, 50}}
+		key := []Light_Desc{{position = {0, 0, -500}, color = {1, 1, 1}, intensity = 4096, range = 1}}
+		testing.expect(t, scene_given(r, {stripe}, key if dim else nil, {}, {}))
+		scale[c] = r.scene.light_scale
+		pixels := make([]f16, WIDTH * 48 * 4, context.temp_allocator)
+		before: [WIDE]f32
+		for frame in 0 ..< 24 {
+			if !testing.expect(t, fixture_frame(&f, {camera = camera}), r.error) {return}
+			rhi.device_wait_idle(f.device)
+			testing.expect(t, golden_read_texture(f.device, r.main.targets.taa[(r.main.frames - 1) % 2], mem.slice_data_cast([]u8, pixels)))
+			for x in 0 ..< WIDE {
+				v := f32(pixels[((ROW * WIDTH) + FIRST + x) * 4 + 1]) / scale[c]
+				if frame > 0 {change[c] += abs(v - before[x])}
+				before[x] = v
+			}
+		}
+		expect_clean(t, f.device)
+	}
+	testing.expectf(t, scale[0] / scale[1] > 500, "the key light changes the light scale: %v", scale)
+	testing.expectf(t, change[0] > 0 && abs(change[1] / change[0] - 1) < 0.05, "the highlight changes as much from frame to frame under either light scale: %v nits", change)
+}

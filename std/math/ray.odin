@@ -122,24 +122,26 @@ ray_capsule :: proc "contextless" (ray:Ray,capsule:Capsule) -> (t:f32,normal:Vec
 }
 
 // Both faces are hit. uv are the barycentric weights of b and c at the hit; a has 1-u-v.
+// Watertight (Woop, Benthin and Wald 2013; pbrt-v4): in a space where the ray runs along +z, an
+// edge two triangles share has opposite values in each, so no ray passes between them.
 ray_triangle :: proc "contextless" (ray:Ray,triangle:Triangle) -> (t:f32,uv:Vec2,hit:bool) {
-    return ray_triangle_edges(ray,triangle.a,triangle.b-triangle.a,triangle.c-triangle.a)
-}
-// The same for a triangle kept as a corner and the two edges that leave it.
-ray_triangle_edges :: proc "contextless" (ray:Ray,a,e1,e2:Vec3) -> (t:f32,uv:Vec2,hit:bool) {
-    p:=linalg.cross(ray.direction,e2)
-    determinant:=linalg.dot(e1,p)
-    if abs(determinant)<1e-12 {return}
-    inverse:=1/determinant
-    s:=ray.origin-a
-    u:=linalg.dot(s,p)*inverse
-    if u<0 || u>1 {return}
-    q:=linalg.cross(s,e1)
-    v:=linalg.dot(ray.direction,q)*inverse
-    if v<0 || u+v>1 {return}
-    t=linalg.dot(e2,q)*inverse
-    if t<0 {return 0,{},false}
-    return t,{u,v},true
+    d:=ray.direction
+    m:=Vec3{abs(d.x),abs(d.y),abs(d.z)}
+    z:=(0 if m.x>m.z else 2) if m.x>m.y else (1 if m.y>m.z else 2)
+    x,y:=(z+1)%3,(z+2)%3
+    shear:=Vec3{-d[x],-d[y],1}/d[z]
+    p:[3]Vec3
+    for corner,i in ([3]Vec3{triangle.a,triangle.b,triangle.c}) {
+        q:=corner-ray.origin
+        p[i]={q[x]+shear.x*q[z],q[y]+shear.y*q[z],q[z]*shear.z}
+    }
+    e:=Vec3{p[1].x*p[2].y-p[1].y*p[2].x,p[2].x*p[0].y-p[2].y*p[0].x,p[0].x*p[1].y-p[0].y*p[1].x}
+    if (e.x<0 || e.y<0 || e.z<0) && (e.x>0 || e.y>0 || e.z>0) {return}
+    determinant:=e.x+e.y+e.z
+    if determinant==0 {return}
+    t=(e.x*p[0].z+e.y*p[1].z+e.z*p[2].z)/determinant
+    if !(t>=0) {return 0,{},false}
+    return t,{e.y,e.z}/determinant,true
 }
 // The unit normal of the face that follows the counter-clockwise winding.
 triangle_normal :: proc "contextless" (triangle:Triangle) -> Vec3 {

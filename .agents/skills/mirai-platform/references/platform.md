@@ -152,21 +152,6 @@ destroyed: the response goes through a mailbox in the process heap, with a mutex
 when nobody uses it anymore. In headless it stays open until `dialog_answer`, which answers through
 the same path.
 
-## Processes
-
-`process_start` launches a child with stdin, stdout and stderr through pipes. Nothing waits:
-`process_read` returns what arrived (`open=false` when the output ended and was read entirely),
-`process_write` how much the pipe accepted and `process_poll` whether it finished.
-
-- A child that fills a pipe that nobody reads stops: its output must be drained every frame.
-- On Windows the stdin pipe does not block and a write larger than it delivered nothing:
-  `process_write` passes SDL `PROCESS_WRITE_BYTES` at a time. Short reads go through a buffer of
-  the `Platform`, because with them SDL's stream lost data.
-- `process_terminate` terminates that process, not those it launched.
-- On Windows the child shares the program's console: SDL only asks for `CREATE_NO_WINDOW` in
-  `background` mode, which loses the exit code. What is waited on to the end goes through
-  [std/subprocess](../../mirai-std/references/subprocess.md).
-
 ## Crashes
 
 `crash_handler_install()` is called by the launchers (`editor.launch`, `host.player_run`), never by
@@ -231,4 +216,5 @@ output is not connected, reports `audio.output` once, and returns to it when it 
 ## What it does not do
 
 Sockets (`net` uses `core:net`), several windows, IME, text composition, touch and pen, native
-notifications of file changes and terminating a child's process tree.
+notifications of file changes and child processes
+([std/subprocess](../../mirai-std/references/subprocess.md)).
