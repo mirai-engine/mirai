@@ -304,27 +304,36 @@ float3 safe_inverse(float3 d) {
                 1.0 / (abs(d.z) > eps ? d.z : (d.z >= 0.0 ? eps : -eps)));
 }
 
-// Möller-Trumbore, double sided. Barycentrics follow the ray query convention.
+// The axes of v turned so that the largest of dir (axis kz) is the last.
+float3 ray_axes(float3 v, uint kz) { return kz == 0u ? v.yzx : (kz == 1u ? v.zxy : v); }
+
+// Watertight and double sided (Woop, Benthin and Wald 2013, as pbrt-v4 has
+// it): the corners move into a space where the ray runs along +z, and an edge
+// two triangles share gives both the same value with opposite signs, so a ray
+// through it or through a corner meets one of them. precise keeps the products
+// of the edge values unfused, or the two would round apart. Barycentrics
+// follow the ray query convention.
 bool ray_triangle(float3 origin, float3 dir, Bvh_Triangle tri, float t_min, float t_max, out float t, out float2 bary) {
     t = 0.0;
     bary = float2(0.0);
-    float3 e1 = tri.e1.xyz;
-    float3 e2 = tri.e2.xyz;
-    float3 p = cross(dir, e2);
-    float det = dot(e1, p);
-    if (abs(det) < 1e-12) return false;
-    float inv_det = 1.0 / det;
-    float3 s = origin - tri.v0;
-    float u = dot(s, p) * inv_det;
-    // Shared edges must not fall between both triangles after float rounding
-    // (notably an angled point/spot shadow through a planar quad).
-    const float edge_epsilon = 2e-7;
-    if (u < -edge_epsilon || u > 1.0 + edge_epsilon) return false;
-    float3 q = cross(s, e1);
-    float v = dot(dir, q) * inv_det;
-    if (v < -edge_epsilon || u + v > 1.0 + edge_epsilon) return false;
-    t = dot(e2, q) * inv_det;
-    bary = float2(u, v);
+    float3 m = abs(dir);
+    uint kz = m.x > m.y ? (m.x > m.z ? 0u : 2u) : (m.y > m.z ? 1u : 2u);
+    float3 d = ray_axes(dir, kz);
+    float3 shear = float3(-d.x, -d.y, 1.0) / d.z;
+    float3 a = ray_axes(tri.v0 - origin, kz);
+    float3 b = ray_axes(tri.v1.xyz - origin, kz);
+    float3 c = ray_axes(tri.v2.xyz - origin, kz);
+    a.xy += shear.xy * a.z;
+    b.xy += shear.xy * b.z;
+    c.xy += shear.xy * c.z;
+    precise float e0 = b.x * c.y - b.y * c.x;
+    precise float e1 = c.x * a.y - c.y * a.x;
+    precise float e2 = a.x * b.y - a.y * b.x;
+    if ((e0 < 0.0 || e1 < 0.0 || e2 < 0.0) && (e0 > 0.0 || e1 > 0.0 || e2 > 0.0)) return false;
+    float det = e0 + e1 + e2;
+    if (det == 0.0) return false;
+    t = (e0 * a.z + e1 * b.z + e2 * c.z) * shear.z / det;
+    bary = float2(e1, e2) / det;
     return t > t_min && t < t_max;
 }
 

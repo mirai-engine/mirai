@@ -110,7 +110,7 @@ a_plugin_library_is_linked_against_an_import_library_made_ahead :: proc(t:^testi
         lib:=Plugin_Library{name="thing",path="thing/runtime",packages={"thing/runtime"},root=sources,file="plugin-thing-runtime-minimal-00000001",
             stage=project.path(folder,"a folder","minimal","stage-thing-runtime"),linked=project.path(folder,"a folder","lib","plugin-thing-runtime-minimal-00000001.lib")}
         testing.expect(t,os.make_directory_all(project.path(folder,"a folder","lib"))==nil)
-        if failed:=plugin_library_prepare(&lib);!testing.expectf(t,len(failed)==0,"%v",failed) {return}
+        if failed:=plugin_library_prepare(&lib,nil);!testing.expectf(t,len(failed)==0,"%v",failed) {return}
         testing.expect_value(t,import_libraries_make(compiler,{{plugin_definition(&lib),lib.linked}}),"")
         import_library,read:=os.read_entire_file(lib.linked,context.temp_allocator)
         testing.expect(t,read==nil && strings.contains(string(import_library),"plugin-thing-runtime-minimal-00000001.dll") && strings.contains(string(import_library),"plugins.thing.runtime.answer"),"the import library names the published file and what it exports")
@@ -196,7 +196,7 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
     job_plugins_start(job)
     if !testing.expect_value(t,len(job.compiles),1) {return}
     compile:=pop(&job.compiles)
-    state,_:=os.process_wait(compile.process)
+    state,_:=subprocess.wait(&compile.process)
     job_plugin_finish(job,compile,state.exit_code)
     if !testing.expectf(t,job.result.status==.Running,"the library builds: %v %s",job.result.diagnostics,job.result.text) {return}
     lib:=&job.plugins[0]
@@ -364,7 +364,7 @@ a_plugin_step_receives_a_params_struct_through_its_library :: proc(t:^testing.T)
     if !testing.expect_value(t,len(job.compiles),1) {return}
     compile:=job.compiles[0]
     ordered_remove(&job.compiles,0)
-    state,_:=os.process_wait(compile.process)
+    state,_:=subprocess.wait(&compile.process)
     job_plugin_finish(job,compile,state.exit_code)
     if !testing.expectf(t,job.result.status==.Running,"the library builds: %v %s",job.result.diagnostics,job.result.text) {return}
 
@@ -492,7 +492,7 @@ a_plugin_library_compiles_once_those_it_links_against_are_published :: proc(t:^t
         if running(job,middle_index) && !IMPORT_LIBRARIES_AHEAD {testing.expect(t,job.plugin_published[base_index],"it starts once that one is published")}
         compile:=job.compiles[0]
         ordered_remove(&job.compiles,0)
-        state,_:=os.process_wait(compile.process)
+        state,_:=subprocess.wait(&compile.process)
         job_plugin_finish(job,compile,state.exit_code)
         if !testing.expectf(t,job.result.status==.Running,"%s builds: %v %s",job.plugins[compile.library].path,job.result.diagnostics,job.result.text) {return}
         job_plugins_start(job)
@@ -538,7 +538,7 @@ a_plugin_library_follows_the_declarations_of_the_packages_it_reaches :: proc(t:^
         .Tool={part=.Editor,root=sources,packages={"tool/editor"},stage=project.path(plugins,"stage-tool-editor")},
     }
     // drawn declares what over compiles against, as its build does.
-    if errors:=plugin_library_prepare(&libraries[.Drawn]);!testing.expectf(t,len(errors)==0,"drawn declares: %v",errors) {return}
+    if errors:=plugin_library_prepare(&libraries[.Drawn],nil);!testing.expectf(t,len(errors)==0,"drawn declares: %v",errors) {return}
     built:=project.path(folder,"built")
     engine:=Engine_Paths{decl=project.path(built,"decl"),declared=project.path(built,"engine.declared"),stamp=project.path(built,ENGINE_STAMP)}
     keys :: proc(p:^project.Project,libraries:^[Part]Plugin_Library,engine:Engine_Paths) -> (keys:[Part]u64) {

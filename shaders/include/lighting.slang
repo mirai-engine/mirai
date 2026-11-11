@@ -983,10 +983,10 @@ float3 shade_hit_glossy(Surface s, float3 ray_dir, float hit_distance, uint ligh
             directions.wants |= 1u << PROBE_COAT;
         }
     }
-    float3 around[PROBE_READS];
+    float4 around[PROBE_READS];
     sample_probes_around(s.position, n, -ray_dir, directions, around, hit_distance);
-    Indirect light = indirect_make(around[PROBE_DIFFUSE], around[PROBE_SPECULAR] * shown, 1.0);
-    light.coat_radiance = around[PROBE_COAT] * shown;
+    Indirect light = indirect_make(around[PROBE_DIFFUSE].rgb, probe_specular(around[PROBE_SPECULAR], directions.at[PROBE_SPECULAR], point.roughness) * shown, 1.0);
+    light.coat_radiance = probe_specular(around[PROBE_COAT], directions.at[PROBE_COAT], point.coat_roughness) * shown;
     return radiance + indirect_compose(point, light);
 }
 

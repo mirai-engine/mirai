@@ -125,7 +125,7 @@ cmd_measure :: proc(root:string,args:[]string) -> int {
     if !found {return 127}
     process,error:=subprocess.start({command=resolved,stdin=os.stdin,stdout=os.stdout,stderr=os.stderr})
     if error!=nil {fmt.eprintfln("mirai measure: could not run %s: %v",command[0],error);return 127}
-    state,wait_error:=os.process_wait(process)
+    state,wait_error:=subprocess.wait(&process)
     if wait_error!=nil {fmt.eprintfln("mirai measure: %s: %v",command[0],wait_error);return 127}
     return state.exit_code
 }

@@ -68,12 +68,12 @@ git_schedule :: proc(s:^Session) {
     now:=platform.clock_seconds()
     if !s.headless && g.repository && !g.merging && base.text_get(g.remote[:])!="" && (g.fetched==0 || now-g.fetched>=GIT_FETCH_SECONDS) {
         g.fetched=now
-        git.start(g,s.app.platform,git_roots(s),.Fetch)
+        git.start(g,git_roots(s),.Fetch)
         return
     }
     if g.stale && shown {
         g.stale=false
-        git.start(g,s.app.platform,git_roots(s),.Refresh)
+        git.start(g,git_roots(s),.Refresh)
     }
 }
 
@@ -81,7 +81,7 @@ git_schedule :: proc(s:^Session) {
 git_refresh :: proc(s:^Session) {
     g:=s.git
     if g==nil || git.busy(g) || !s.has_project {return}
-    git.start(g,s.app.platform,git_roots(s),g.checked?.Refresh:.Check)
+    git.start(g,git_roots(s),g.checked?.Refresh:.Check)
 }
 
 // A project created with Initialize Git repository: the editor started on it
@@ -109,7 +109,7 @@ git_init :: proc(s:^Session) -> string {
     if text,changed:=build.git_attributes(git_plugin_kinds(git_roots(s)),g.lfs,string(existing),context.temp_allocator);changed {
         if serial.file_write_atomic(attributes,transmute([]u8)text)!=.None {return "The .gitattributes could not be written"}
     }
-    git.start(g,s.app.platform,git_roots(s),.Init)
+    git.start(g,git_roots(s),.Init)
     return ""
 }
 
@@ -126,7 +126,7 @@ git_commit :: proc(s:^Session,push:bool) -> string {
     }
     if left_out>0 && included==0 {return "Every change is left out"}
     if documents_dirty(s) || len(assets_unsaved(s))>0 {return "Save first: a commit takes the files as they are saved"}
-    git.start(g,s.app.platform,git_roots(s),push?.Commit_Push:.Commit)
+    git.start(g,git_roots(s),push?.Commit_Push:.Commit)
     return ""
 }
 
@@ -140,7 +140,7 @@ git_pull :: proc(s:^Session) -> string {
     if base.text_get(g.remote[:])=="" {return "The repository has no remote to pull from"}
     if documents_dirty(s) || len(assets_unsaved(s))>0 {return "Save first"}
     if len(g.changes)>0 {return "Commit your changes before pulling"}
-    git.start(g,s.app.platform,git_roots(s),.Pull)
+    git.start(g,git_roots(s),.Pull)
     return ""
 }
 
@@ -171,7 +171,7 @@ git_discard :: proc(s:^Session,paths:[]string) -> string {
         }
     }
     if len(g.discard_paths)+len(g.discard_trashed)==0 {return "Nothing to discard"}
-    git.start(g,s.app.platform,git_roots(s),.Discard)
+    git.start(g,git_roots(s),.Discard)
     return ""
 }
 
@@ -211,11 +211,11 @@ git_poll :: proc(s:^Session) {
     if g==nil {return}
     git_ended(s)
     if g.operation==.None {git_schedule(s)}
-    if g.operation==.None || g.process==0 {return}
-    exited,code:=git.poll(g,s.app.platform)
+    if g.operation==.None || g.process.pid==0 {return}
+    exited,code:=git.poll(g)
     if !exited {return}
     if g.operation==.Load {git_merge_load_done(g,g.step,code)}
-    git.advance(g,s.app.platform,git_roots(s),code)
+    git.advance(g,git_roots(s),code)
     git_ended(s)
 }
 
@@ -241,11 +241,11 @@ git_ended :: proc(s:^Session) {
         }
     case .Finish:
         if !failed {git_merge_finished(s)}
-        git.start(g,s.app.platform,git_roots(s),.Refresh)
+        git.start(g,git_roots(s),.Refresh)
     case .Discard:
         git_discarded(s,!failed)
-        git.start(g,s.app.platform,git_roots(s),.Refresh)
+        git.start(g,git_roots(s),.Refresh)
     case:
-        git.start(g,s.app.platform,git_roots(s),.Refresh)
+        git.start(g,git_roots(s),.Refresh)
     }
 }

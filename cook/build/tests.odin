@@ -69,11 +69,10 @@ Test_Run :: struct {
     output:Test_Output,
     path:string,           // the package as the notes of the runner name it
     timeout:time.Duration,
-    process:os.Process,
-    reader:^os.File,
+    process:subprocess.Process, // its stdout and stderr come through one pipe
     pending:[dynamic]u8,
     lines:[dynamic]string, // what it said to show and the notes of the runner, oldest first: the caller may take them
-    running,open,exited:bool,
+    running,exited:bool,
     exit_code:int,         // -1 when it did not start, could not be waited for or was killed
 }
 
@@ -195,7 +194,7 @@ test_build_start :: proc(b:^Test_Build,environment:[]string=nil) -> bool {
 // fingerprint (publish_and_stamp), unless failure says why it was not built.
 test_build_poll :: proc(b:^Test_Build,wait:time.Duration=0) -> bool {
     if !b.running {return true}
-    state,error:=os.process_wait(b.compile.process,wait)
+    state,error:=subprocess.wait(&b.compile.process,wait)
     if error==os.General_Error.Timeout || (error==nil && !state.exited) {return false}
     b.running=false
     context.allocator=b.allocator
@@ -228,8 +227,7 @@ test_build_poll :: proc(b:^Test_Build,wait:time.Duration=0) -> bool {
 // Stops the compiler of a test executable; the executable of before stands.
 test_build_cancel :: proc(b:^Test_Build) {
     if !b.running {return}
-    _=os.process_kill(b.compile.process)
-    _,_=os.process_wait(b.compile.process)
+    subprocess.release(&b.compile.process)
     b.running=false
     for file in ([4]string{b.compile.streams[0],b.compile.streams[1],b.compile.staged,b.sources_staged}) {_=os.remove(file)}
 }
@@ -248,20 +246,13 @@ test_run_start :: proc(r:^Test_Run,b:^Test_Build,path:string,options:Test_Option
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,b.executable)
     if len(options.names)>0 {append(&command,fmt.tprintf("-tests:%s",strings.join(options.names,",",context.temp_allocator)))}
-    reader,writer,pipe_error:=os.pipe()
-    if pipe_error!=nil {
-        append(&r.lines,fmt.aprintf("%s: could not create a pipe: %v",r.path,pipe_error))
-        return false
-    }
-    process,error:=subprocess.start({working_dir=b.root,command=command[:],env=environment,stdout=writer,stderr=writer},{priority=options.priority})
-    os.close(writer)
+    process,error:=subprocess.start({working_dir=b.root,command=command[:],env=environment},{priority=options.priority},.Merged)
     if error!=nil {
-        os.close(reader)
         append(&r.lines,fmt.aprintf("%s: could not run %s: %v",r.path,b.executable,error))
         return false
     }
-    r.process,r.reader=process,reader
-    r.running,r.open=true,true
+    r.process=process
+    r.running=true
     r.output.changed=time.tick_now()
     return true
 }
@@ -274,7 +265,7 @@ test_run_poll :: proc(r:^Test_Run,wait:time.Duration=0) -> bool {
     context.allocator=r.allocator
     test_run_read(r)
     if !r.exited {
-        state,error:=os.process_wait(r.process,0 if r.open else wait)
+        state,error:=subprocess.wait(&r.process,0 if r.process.stdout!=nil else wait)
         switch {
         case error==nil && state.exited:
             r.exited,r.exit_code=true,state.exit_code
@@ -284,19 +275,18 @@ test_run_poll :: proc(r:^Test_Run,wait:time.Duration=0) -> bool {
             append(&r.lines,fmt.aprintf("%s: the test executable could not be waited for: %v",r.path,error))
             r.exited=true
         case test_hung(r.output,r.timeout,time.tick_now()):
-            _=os.process_kill(r.process)
-            _,_=os.process_wait(r.process)
+            subprocess.release(&r.process)
             r.exited=true
             if len(r.pending)>0 {test_run_feed(r,{'\n'})}
             test_hung_say(r)
         case:
-            if r.open && wait>0 {time.sleep(min(wait,5*time.Millisecond))}
+            if r.process.stdout!=nil && wait>0 {time.sleep(min(wait,5*time.Millisecond))}
             return false
         }
     }
     if len(r.pending)>0 {test_run_feed(r,{'\n'})}
     if r.exit_code!=0 && !r.output.summary && !r.output.hung {test_crash_say(r)}
-    os.close(r.reader)
+    subprocess.release(&r.process)
     r.running=false
     return true
 }
@@ -304,11 +294,7 @@ test_run_poll :: proc(r:^Test_Run,wait:time.Duration=0) -> bool {
 // Kills a run that did not end.
 test_run_cancel :: proc(r:^Test_Run) {
     if !r.running {return}
-    if !r.exited {
-        _=os.process_kill(r.process)
-        _,_=os.process_wait(r.process)
-    }
-    os.close(r.reader)
+    subprocess.release(&r.process)
     r.running=false
 }
 
@@ -332,13 +318,9 @@ test_run_report :: proc(r:^Test_Run,allocator:=context.allocator) -> (report:Tes
 test_run_read :: proc(r:^Test_Run) {
     buffer:[16384]u8
     for _ in 0..<64 {
-        if !r.open {return}
-        ready,ready_error:=os.pipe_has_data(r.reader)
-        if ready_error!=nil {r.open=false;return}
-        if !ready {return}
-        count,read_error:=os.read(r.reader,buffer[:])
-        if count>0 {test_run_feed(r,buffer[:count])}
-        if read_error!=nil {r.open=false}
+        count,_:=subprocess.read(&r.process,.Stdout,buffer[:])
+        if count==0 {return}
+        test_run_feed(r,buffer[:count])
     }
 }
 

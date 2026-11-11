@@ -61,7 +61,7 @@ no_store_of_an_aggregate_of_more_than_64_bytes :: proc(t:^testing.T) {
         lib.stage=project.path(folder,"plugins",lib.stage[strings.last_index_byte(lib.stage,'/')+1:])
         // A name for the import library its stage links: IR links nothing.
         plugin_library_name(p.root,&lib,0,context.temp_allocator)
-        failed:=plugin_library_prepare(&lib)
+        failed:=plugin_library_prepare(&lib,nil)
         if !testing.expectf(t,len(failed)==0,"%v",failed) {return}
         if !ir(t,root,compiler,project.path(lib.stage,PLUGIN_ENTRY),project.path(folder,"ir",lib.family),flags[:],fmt.tprintf("-collection:mirai=%s",decl),fmt.tprintf("-collection:plugins=%s",lib.stage)) {return}
     }

@@ -3,7 +3,8 @@
 // octahedral tile (6x6 interior and a border of one texel that wraps for
 // bilinear filtering). Its rays are the same every update. The rays and the
 // tiles hold the light encoded (probe_light_encode); this pass weighs,
-// filters and blends it decoded.
+// filters and blends it decoded. The alpha of a texel is the share of its
+// light that comes from the sky, which a smooth lobe reads sharp (probe_specular).
 //
 // Each texel takes, with what its rays give, what the probes next to it along
 // the grid hold in the same direction, where they see what this probe would:
@@ -73,8 +74,9 @@ groupshared uint tile_moved;
 groupshared uint tile_peak;
 
 // What a probe next to this one along the grid, `step` away, holds in
-// direction `dir` (interior texel `local` of its tile), where it sees what
-// this probe, slot `self_index` at `self`, would; a below 0 where it does not.
+// direction `dir` (interior texel `local` of its tile), with its share of the
+// sky, where it sees what this probe, slot `self_index` at `self`, would; a
+// below 0 where it does not.
 float4 probe_neighbor(int3 cell, uint cascade, int3 step, uint self_index, float3 self, float3 dir, int2 local) {
     int3 other_cell = cell + step;
     int3 corner = probe_corner_cell(cascade);
@@ -101,7 +103,8 @@ float4 probe_neighbor(int3 cell, uint cascade, int3 step, uint self_index, float
     bool own_open = own >= PROBE_FILTER_OPEN * limit;
     bool seen_open = reach >= PROBE_FILTER_OPEN * limit;
     if ((!own_open && own < apart - slack) || (!seen_open && own > apart + slack)) return float4(0.0, 0.0, 0.0, -1.0);
-    return float4(probe_light_decode(kept.Load(int3(tile * TILE + local, 0)).rgb), 1.0);
+    float4 held = kept.Load(int3(tile * TILE + local, 0));
+    return float4(probe_light_decode(held.rgb), held.a);
 }
 
 [shader("compute")]
@@ -131,34 +134,35 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
     int2 origin = int2(int(probe % per_row), int(probe / per_row)) * TILE;
     bool interior = all(local >= int2(1)) && all(local < int2(TILE - 1));
     float light = 0.0, moved = 0.0;
-    float3 before = probe_light_decode(irradiance[origin + local].rgb);
+    float4 stored = irradiance[origin + local];
+    float4 before = float4(probe_light_decode(stored.rgb), stored.a);
     if (interior) {
         float2 oct = ((float2(local - 1) + 0.5) / float(TILE - 2)) * 2.0 - 1.0;
         float3 texel_dir = oct_decode(oct);
-        float3 sum = float3(0.0);
+        // With the light, the share of it that comes from the sky: of the rays that meet nothing.
+        float4 sum = float4(0.0);
         float weight_sum = 0.0;
         for (uint r = 0u; r < rays; r++) {
             float4 sample_value = ray_values[r];
             if (sample_value.a < 0.0) continue;
             float w = max(0.0, dot(texel_dir, ray_dirs[r]));
-            sum += sample_value.rgb * w;
+            sum += float4(sample_value.rgb, sample_value.a >= params.max_distance ? 1.0 : 0.0) * w;
             weight_sum += w;
         }
-        float3 value = finite_or_zero(weight_sum > 1e-4 ? sum / weight_sum : float3(0.0));
+        float4 value = weight_sum > 1e-4 ? float4(finite_or_zero(sum.rgb / weight_sum), sum.a / weight_sum) : float4(0.0);
         float3 self = probe_world_position(probe);
-        float3 filtered = value;
         float filter_weight = 1.0;
         int3 steps[6] = {int3(1, 0, 0), int3(-1, 0, 0), int3(0, 1, 0), int3(0, -1, 0), int3(0, 0, 1), int3(0, 0, -1)};
         for (int k = 0; k < 6; k++) {
             float4 there = probe_neighbor(cell, cascade, steps[k], probe, self, texel_dir, local);
             if (there.a < 0.0) continue;
-            filtered += there.rgb * PROBE_FILTER_WEIGHT;
+            value += there * PROBE_FILTER_WEIGHT;
             filter_weight += PROBE_FILTER_WEIGHT;
         }
-        value = filtered / filter_weight;
-        tile_values[local.y][local.x] = float4(value, 1.0);
-        light = luminance(value);
-        float shown = luminance(before);
+        value /= filter_weight;
+        tile_values[local.y][local.x] = value;
+        light = luminance(value.rgb);
+        float shown = luminance(before.rgb);
         moved = abs(light - shown);
         light = max(light, shown);
         InterlockedMax(tile_peak, asuint(light));
@@ -175,10 +179,11 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
     // Kept awake by a change of the scene, not by its own light moving (frame + 1).
     bool marked = state.frames.z > params.frame_number;
     bool change = !held || marked || share > max(PROBE_SETTLED, PROBE_NOISE_CHANGE * noise);
-    if (interior) tile_values[local.y][local.x] = float4(lerp(before, tile_values[local.y][local.x].rgb, change ? 1.0 : PROBE_BLEND), 1.0);
+    if (interior) tile_values[local.y][local.x] = lerp(before, tile_values[local.y][local.x], change ? 1.0 : PROBE_BLEND);
     GroupMemoryBarrierWithGroupSync();
     int2 source = interior ? local : probe_tile_interior(local, TILE);
-    irradiance[origin + local] = float4(probe_light_encode(tile_values[source.y][source.x].rgb), 1.0);
+    float4 value = tile_values[source.y][source.x];
+    irradiance[origin + local] = float4(probe_light_encode(value.rgb), value.a);
     if (local_index != 0u || buried) return;
     if (held && !marked) probes[probe].frames.w = asuint(lerp(noise, share, PROBE_NOISE_RATE));
     if (!held || share > max(PROBE_SETTLED, PROBE_NOISE_CHANGE * noise)) probes[probe].frames.z = max(probes[probe].frames.z, params.frame_number + 1u);
