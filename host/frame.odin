@@ -34,7 +34,7 @@ FRAME_DEBUG_CAPACITY :: 8
 FRAME_INSTANCE_RESERVE :: 256
 FRAME_UI_TEXTURE_CAPACITY :: 32
 FRAME_EFFECT_VIEW_CAPACITY :: 16
-FRAME_SLOT_TEXTURE_CAPACITY :: 32
+FRAME_MESH_SHOWN_CAPACITY :: 32
 TEXTURE_VIEW_CAPACITY :: 8
 PIPELINE_CACHE_FILE :: "pipelines.bin"
 
@@ -59,30 +59,18 @@ Frame_Extras :: struct {
     effect_view_count:int,
     probes:[render.DEPTH_PROBE_CAPACITY]render.Depth_Probe,
     probe_count:int,
-    slot_textures:[FRAME_SLOT_TEXTURE_CAPACITY]Slot_Texture,
-    slot_texture_count:int,
-    slots_shown:[FRAME_SLOT_TEXTURE_CAPACITY]Slot_Shown, // of the last frame: render_sync writes them
-    slots_shown_count:int,
+    meshes_shown:[FRAME_MESH_SHOWN_CAPACITY]Mesh_Shown, // of the last frame: render_sync writes them
+    meshes_shown_count:int,
     texture_views:[TEXTURE_VIEW_CAPACITY]render.Frame_View, // the views this frame draws into a texture
     texture_view_count:int,
     dropped:u64, // what did not fit in its frame and was not drawn, since the application started
 }
 
-// A texture a slot of the mesh of an entity shows this frame over its
-// material: as its base color, or as its light. Whatever draws the entity
-// shows it: its mesh of the world, or what replaces it
-// (render.Instance_Desc.replace_source), as a skinned copy.
-Slot_Texture :: struct {
+// What drew, in the last frame, the mesh of an entity that showed values of
+// that frame alone (the texture of a panel on it), and where: the mesh the
+// renderer posed, if one replaced that of the world.
+Mesh_Shown :: struct {
     object:u64, // render.Instance_Desc.object_id
-    slot:u32,
-    texture:render.Texture_Handle,
-    emission:f32, // the light it gives, as Material_Info.emission; 0: it is the base color
-}
-
-// What drew the mesh of a Slot_Texture in the last frame, and where: the mesh
-// the renderer posed, if one replaced that of the world.
-Slot_Shown :: struct {
-    object:u64,
     mesh:render.Mesh_Handle,
     anchor:[3]f32,
     transform:render.Mat4, // relative to anchor
@@ -452,7 +440,7 @@ app_frame_end :: proc(app:^App) {
     base.profile_end(zone)
     app.extras.layer_count,app.extras.panel_count,app.extras.debug_count=0,0,0
     clear(&app.extras.instances)
-    app.extras.ui_texture_count,app.extras.effect_view_count,app.extras.probe_count,app.extras.slot_texture_count=0,0,0,0
+    app.extras.ui_texture_count,app.extras.effect_view_count,app.extras.probe_count=0,0,0
     app.camera_cut=false
     app.camera_carried={}
     app.inspection={}
@@ -634,20 +622,9 @@ extras_free :: proc(extras:^Frame_Extras) {
     extras.instances=nil
 }
 
-// A texture a slot of the mesh of an entity shows this frame (Slot_Texture).
-// False without room for another one.
-extras_slot_texture_add :: proc(extras:^Frame_Extras,texture:Slot_Texture) -> bool {
-    if extras.slot_texture_count>=len(extras.slot_textures) {extras.dropped+=1;return false}
-    extras.slot_textures[extras.slot_texture_count]=texture
-    extras.slot_texture_count+=1
-    return true
-}
-
-extras_slot_textures :: proc(extras:^Frame_Extras) -> []Slot_Texture {return extras.slot_textures[:extras.slot_texture_count]}
-
-// What drew the mesh of the Slot_Texture of object in the last frame.
-extras_slot_shown :: proc(extras:^Frame_Extras,object:u64) -> (Slot_Shown,bool) {
-    for shown in extras.slots_shown[:extras.slots_shown_count] {if shown.object==object {return shown,true}}
+// What drew the mesh of object in the last frame, when it showed values of that frame alone.
+extras_mesh_shown :: proc(extras:^Frame_Extras,object:u64) -> (Mesh_Shown,bool) {
+    for shown in extras.meshes_shown[:extras.meshes_shown_count] {if shown.object==object {return shown,true}}
     return {},false
 }
 
@@ -823,7 +800,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
         drawn=render.renderer_frame(r,desc)
         extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
         clear(&extras.instances)
-        extras.ui_texture_count,extras.effect_view_count,extras.probe_count,extras.slot_texture_count=0,0,0,0
+        extras.ui_texture_count,extras.effect_view_count,extras.probe_count=0,0,0
         app.camera_cut=false
         app.inspection={}
         app.view_count=0
@@ -895,7 +872,7 @@ app_world_draw :: proc(app:^App,world,editor:rawptr,texture:render.Texture_Handl
         drawn=render.renderer_frame(r,{camera=app.camera,camera_cut=cut && frame==0,time=app.time+f32(frame)*max(dt,0),views=seen[:],offscreen=true})
         extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
         clear(&extras.instances)
-        extras.ui_texture_count,extras.effect_view_count,extras.probe_count,extras.slot_texture_count=0,0,0,0
+        extras.ui_texture_count,extras.effect_view_count,extras.probe_count=0,0,0
         if !drawn {return}
     }
     return

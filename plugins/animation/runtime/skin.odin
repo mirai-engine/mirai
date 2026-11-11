@@ -58,7 +58,7 @@ Skin_Instance :: struct {
 Skin_Update :: struct {slot:int,drawn,basis:mm.Transform,exact:u64}
 // morphed: its weights changed, and go to the renderer with the palette or on their own.
 // materialed: the curves of its rig move values of its materials, in override.
-Skin_Draw :: struct {work,slot:int,morphed,materialed:bool,override:erender.Material_Override}
+Skin_Draw :: struct {work,slot:int,morphed,materialed:bool,override:erender.Material_Values}
 
 // The rigs of the meshes the application loaded, by asset: one per
 // application, which every world reads.
@@ -213,7 +213,7 @@ skin_rig_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.As
 @(step="render",loops="game editor",before="render_sync")
 animation_skin :: proc(
     meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),parents:core.Read(core.Parent),
-    worlds:core.Read(core.World_Transform),overrides:core.Read(erender.Material_Override),
+    worlds:core.Read(core.World_Transform),looks:core.Read(erender.Material_Values),
     hidden:core.Read(erender.Hidden),elsewhere:core.Read(erender.Drawn_Elsewhere),
     cache:^Skin_Runtime,state:^Skin_Instances,assets:^host.Assets,renderer:^erender.Renderer,poses:^erender.Posed_Meshes,job_system:^jobs.Job_System,allocator:runtime.Allocator,time:core.Time,frame:core.Frame_Time,playback:core.Ref(Playback),
     morphs:core.Ref(Morph_Playback),problems:^core.Problems,
@@ -289,13 +289,14 @@ animation_skin :: proc(
         instance.seen=state.frame
         source:=host.assets_mesh(assets,static.mesh)
         if source==nil || source.handle==host.ASSETS_MESH_NONE {continue}
-        override,_:=core.get(overrides,entity)
+        look:=erender.MATERIAL_VALUES_DEFAULT
+        if value,exists:=core.get(looks,entity);exists {look=value}
         // The material values the curves of its rig move, drawn over its own.
         materialed:=false
         if !rigid && modifiers.ptr!=nil {
             fits:bool
-            if fits,materialed=curve_materials_apply(modifiers.ptr,pose,int(source.slot_count),&override);!fits {
-                core.report(problems,entity,"animation.curve_material","the curve materials of the .character of the rig of this entity, with its Material_Override, set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_OVERRIDE_CAPACITY)
+            if fits,materialed=curve_materials_apply(modifiers.ptr,pose,int(source.slot_count),&look);!fits {
+                core.report(problems,entity,"animation.curve_material","the curve materials of the .character of the rig of this entity, with its Material_Values, set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_VALUES_CAPACITY)
             }
         }
         bones:=len(pose.local) if !rigid else 0
@@ -369,7 +370,7 @@ animation_skin :: proc(
                 append(&state.candidates,Budget_Candidate{entity=entity,slot=u32(slot),policy=policy,force=instance.reset || !instance.copied || !time.playing})
             }
         }
-        append(&state.draws,Skin_Draw{work=work_index,slot=slot,morphed=morphed,materialed=materialed,override=materialed?override:{}})
+        append(&state.draws,Skin_Draw{work=work_index,slot=slot,morphed=morphed,materialed=materialed,override=materialed?look:{}})
     }
     if !palette_workspace_prepare(&state.workspace,len(state.instances.values),allocator) {memory_problem(problems,core.NONE,"the skinned meshes of the world, so none is drawn in this frame");return}
     if budget!=nil {

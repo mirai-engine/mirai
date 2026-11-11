@@ -127,7 +127,7 @@ asked_of :: proc "contextless" (asked:[]Asked,screen:Screen) -> int {
 monitors_render :: proc(
     state:^Monitors,screens:core.Read(Screen),cameras:core.Read(erender.Camera),exposures:core.Read(erender.Exposure),
     meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),
-    tints:core.Read(erender.Tint),overrides:core.Read(erender.Material_Override),hidden:core.Read(erender.Hidden),
+    looks:core.Read(erender.Material_Values),hidden:core.Read(erender.Hidden),
     highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),layers:core.Read(erender.Layers),
     view:core.View,app:^host.App,frame:core.Frame_Time,view_volumes:core.Read(erender.View_Volume),volumes:core.Read(volume.Volume),
     locals:core.Read(core.Transform),
@@ -237,22 +237,18 @@ monitors_render :: proc(
         static,has_mesh:=core.get(meshes,e)
         world,placed:=core.get(worlds,e)
         if fed.shown<0 || fed.textures[fed.shown]==0 || !has_mesh || !placed || erender.is_hidden(hidden,parents,e) {continue}
-        tint:=erender.TINT_DEFAULT
-        if value,exists:=core.get(tints,e);exists {tint=value}
-        override,_:=core.get(overrides,e)
+        look:=erender.MATERIAL_VALUES_DEFAULT
+        if value,exists:=core.get(looks,e);exists {look=value}
+        // The slot of the screen gives the image as its light, and reflects none.
+        slot:=int(min(screen.slot,erender.MATERIAL_SLOTS-1))
+        erender.material_texture(&look,base.name_hash("maps.emission"),slot,{},fed.textures[fed.shown])
+        erender.material_texture(&look,base.name_hash("maps.base_color"),slot,{})
+        erender.material_value(&look,"emission",screen.brightness,slot)
+        erender.material_value(&look,"base_color",0,slot)
         anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,locals,cameras,e)
-        shown,usable:=erender.mesh_instance(app.assets,static,transform,tint,override)
+        shown,usable:=erender.mesh_instance(app.assets,static,transform,look)
         shown.anchor=anchor
         if !usable {continue}
-        row_shown,at:=erender.mesh_slot_row(app.assets,static,&shown,screen.slot)
-        values:=host.assets_material_values(app.assets,row_shown)
-        values.textures[.Emission]=fed.textures[fed.shown]
-        values.emission=screen.brightness
-        values.base_color=0
-        values.textures[.Base_Color]=0
-        lit,derived:=host.assets_material_derive(app.assets,values)
-        if !derived {continue}
-        if at!=nil {at^=lit+1} else {shown.material=erender.Material_Handle(lit)}
         shown.object_id=u64(e)
         shown.copy_owner,shown.replace_source=base.name_hash("monitors"),true
         shown.highlight=erender.instance_outline(highlights,outlines,e)

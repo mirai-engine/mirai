@@ -37,7 +37,7 @@ $P scene.write '{"root":"Player","merge":true,"entities":[{
       "Camera_Follow":{"offset":[0,1.5,0],"distance":5,"pitch":0.3,"min_pitch":-0.3,"max_pitch":1.2,
                        "turn":true,"recenter":1.5}}},
     {"name":"Body","position":[0,0.9,0],"scale":[0.6,0.9,0.6],
-     "components":{"Mesh_Renderer":{"shape":"Capsule"},"Tint":{"color":[0.9,0.45,0.25,1]}}}]}]}'
+     "components":{"Mesh_Renderer":{"shape":"Capsule"},"Material_Values":{"color":[0.9,0.45,0.25,1]}}}]}]}'
 $P scene.save '{}'
 ```
 

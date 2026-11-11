@@ -284,7 +284,6 @@ the_space_a_reader_declares_is_baked_once_into_what_the_import_gives :: proc(t:^
     testing.expect_value(t,base.offset,[2]f32{0.1-math.sin(f32(0.5)),1-math.cos(f32(0.5))-0.2})
     normal:=material_map(info,.Normal)
     testing.expect(t,normal^==asset.MATERIAL_MAP_DEFAULT && transmute(u32)normal.rotation==0 && transmute(u32)normal.offset.x==0 && transmute(u32)normal.offset.y==0,"the identity mapping keeps its bytes")
-    testing.expect(t,info.uv_scale==[2]f32{1,1} && transmute(u32)info.uv_offset.y==0)
 }
 
 @(test)

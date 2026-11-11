@@ -142,7 +142,7 @@ physics_gallery_events :: proc(stations:core.Read(Physics_Gallery),counts:^Physi
 }
 
 @(step="fixed")
-physics_gallery_fade :: proc(stations:core.Read(Physics_Gallery),view:destruct.Destruct_View,tints:^core.Table(render.Tint),time:core.Time) {
+physics_gallery_fade :: proc(stations:core.Read(Physics_Gallery),view:destruct.Destruct_View,tints:^core.Table(render.Material_Values),time:core.Time) {
     if !(time.dt>0) {return}
     for row in 0..<core.count(stations) {
         station:=core.at(stations,row)
@@ -153,7 +153,7 @@ physics_gallery_fade :: proc(stations:core.Read(Physics_Gallery),view:destruct.D
             if !group.expires {continue}
             alpha:=clamp(core.seconds_of(time,u64(group.remaining_ticks))/station.fade_seconds,0,1)
             tint,has:=core.get(tints,group.entity)
-            if !has {tint=render.TINT_DEFAULT}
+            if !has {tint=render.MATERIAL_VALUES_DEFAULT}
             if tint.color.a==alpha {continue}
             tint.color.a=alpha
             if has {core.edit(tints,group.entity)^=tint} else {core.add(tints,group.entity,tint)}

@@ -201,7 +201,7 @@ gallery_event_counts_restart_when_the_scene_is_loaded_again :: proc(t:^testing.T
 @(test)
 gallery_fragments_remain_while_sleeping_and_fade_before_their_physical_expiry :: proc(t:^testing.T) {
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    stations:core.Table(Physics_Gallery);states:core.Table(destruct.Destructible_State);groups:core.Table(destruct.Destructible_Group);tints:core.Table(render.Tint)
+    stations:core.Table(Physics_Gallery);states:core.Table(destruct.Destructible_State);groups:core.Table(destruct.Destructible_Group);tints:core.Table(render.Material_Values)
     defer core.table_destroy(&stations);defer core.table_destroy(&states);defer core.table_destroy(&groups);defer core.table_destroy(&tints)
     physics:phys.Physics_State;defer phys.state_destroy(&physics)
     settings:=phys.Physics_Settings{bodies=8,shapes=32,contacts=32,joints=1,hulls=16,breakables=1,pieces=32,bonds=64}
@@ -224,7 +224,7 @@ gallery_fragments_remain_while_sleeping_and_fade_before_their_physical_expiry ::
     core.add(&stations,core.create(&entities),Physics_Gallery{station=9,target=target,fade_seconds=2})
     core.add(&states,target,destruct.Destructible_State{handle=handle})
     core.add(&groups,fragment,destruct.Destructible_Group{owner=target,group=1})
-    original:=render.Tint{color={.3,.4,.5,1}}
+    original:=render.Material_Values{color={.3,.4,.5,1}}
     core.add(&tints,fragment,original);core.add(&tints,target,original)
     core.table_settle(&stations,&entities);core.table_settle(&states,&entities);core.table_settle(&groups,&entities);core.table_settle(&tints,&entities)
     for tick in 0..<480 {

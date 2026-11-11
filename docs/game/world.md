@@ -21,6 +21,8 @@ editor.
 - Sun, sky, indoor lights: [Light](#light). Brightness of the image: [Exposure](#exposure). Its
   color on the display: [display transform](world/exposure.md#display-transform).
 - An image that is too dark or too bright, step by step: [exposure.md](world/exposure.md).
+- The color, the light or a material value of one entity, from game code:
+  [look.md](world/look.md).
 - Walking on it, swimming in it: [character](character.md).
 
 ## Plugins

@@ -173,7 +173,7 @@ a_far_material_reads_its_maps_where_the_vertex_points :: proc(t:^testing.T) {
     pixels:=[8]u8{255,0,0,255,0,255,0,255}
     texels:=[][4]f32{{1,0,0,1},{0,1,0,1}}
     texture:=Far_Texture{2,1,texels}
-    info:=Material_Info{base_color={1,1,1},opacity=1,roughness=1,metallic=0,uv_scale={1,1}}
+    info:=Material_Info{base_color={1,1,1},opacity=1,roughness=1,metallic=0,ior=1.5}
     info.maps.base_color={scale={1,1}}
     m:=far_material(info,&texture,nil,nil)
     sheet:=far_sheet(48)
@@ -220,7 +220,7 @@ base_id :: proc(n:u64) -> base.Asset_Id {return {n,n}}
 a_far_mesh_leaves_out_what_a_masked_material_does_not_cover :: proc(t:^testing.T) {
     sheet:=far_sheet(16)
     clear_texture:=Far_Texture{1,1,[][4]f32{{1,1,1,0.1}}}
-    info:=Material_Info{base_color={1,1,1},opacity=1,alpha_mode=.Mask,alpha_cutoff=0.5,uv_scale={1,1}}
+    info:=Material_Info{base_color={1,1,1},opacity=1,alpha_mode=.Mask,alpha_cutoff=0.5,ior=1.5}
     info.maps.base_color={scale={1,1}}
     parts:=[1]Far_Part{{geometry=sheet,placement=linalg.MATRIX4F32_IDENTITY}}
     parts[0].materials[0]=far_material(info,&clear_texture,nil,nil)

@@ -672,7 +672,7 @@ arena_piece_add :: proc(c:core.Commands,piece:Arena_Piece) {
         core.commands_add(c,e,core.Transform{piece.position,1,piece.half*2})
         core.commands_add(c,e,phys.collider_box({0.5,0.5,0.5}))
         core.commands_add(c,e,render.Mesh_Renderer{shape=.Cube})
-        core.commands_add(c,e,render.Tint{color=piece.color})
+        core.commands_add(c,e,render.Material_Values{color=piece.color})
         if piece.kind==.Cart {
             core.commands_add(c,e,phys.RIGID_BODY_KINEMATIC)
             core.commands_add(c,e,nav.Nav_Obstacle{settle=1})
@@ -687,7 +687,7 @@ arena_piece_add :: proc(c:core.Commands,piece:Arena_Piece) {
         core.commands_add(c,slab,core.Transform{{0,0.01,0},1,piece.half*2})
         core.commands_add(c,slab,core.Parent{entity=e})
         core.commands_add(c,slab,render.Mesh_Renderer{shape=.Cube})
-        core.commands_add(c,slab,render.Tint{color=piece.color})
+        core.commands_add(c,slab,render.Material_Values{color=piece.color})
     case .Link:
         core.commands_add(c,e,core.Transform{piece.position,1,{1,1,1}})
         core.commands_add(c,e,nav.Nav_Link{end=piece.end,kind=piece.link,two_way=true,area=nav.AREA_WALKABLE,abilities=arena_link_abilities(piece.link)})
@@ -745,7 +745,7 @@ arena_body :: proc(c:core.Commands,position:mm.Vec3,color:[4]f32,speed:f32=4) ->
     core.commands_add(c,look,core.Transform{{0,0.9,0},1,{0.6,0.9,0.6}})
     core.commands_add(c,look,core.Parent{entity=e})
     core.commands_add(c,look,render.Mesh_Renderer{shape=.Capsule})
-    core.commands_add(c,look,render.Tint{color=color})
+    core.commands_add(c,look,render.Material_Values{color=color})
     return e
 }
 
@@ -880,7 +880,7 @@ arena_agents :: proc(c:core.Commands,kind:Arena_Kind,origin:mm.Vec3,count:int) {
             core.commands_add(c,bell,core.Transform{origin+corner,1,{1,1,1}})
             core.commands_add(c,bell,Arena_Bell{turn=i32(i),count=4,period=6,loudness=12})
             core.commands_add(c,bell,render.Mesh_Renderer{shape=.Sphere})
-            core.commands_add(c,bell,render.Tint{color={1,0.85,0.2,1}})
+            core.commands_add(c,bell,render.Material_Values{color={1,0.85,0.2,1}})
         }
         for i in 0..<max(count,1) {
             s,co:=mm.sincos_det(f32(i)/f32(max(count,1))*2*math.PI)
@@ -903,7 +903,7 @@ arena_drone :: proc(c:core.Commands,position:mm.Vec3) -> core.Entity {
     core.commands_add(c,look,core.Transform{{0,0.4,0},1,{0.5,0.4,0.5}})
     core.commands_add(c,look,core.Parent{entity=e})
     core.commands_add(c,look,render.Mesh_Renderer{shape=.Capsule})
-    core.commands_add(c,look,render.Tint{color={0.95,0.6,0.2,1}})
+    core.commands_add(c,look,render.Material_Values{color={0.95,0.6,0.2,1}})
     return e
 }
 

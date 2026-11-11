@@ -15,7 +15,6 @@ Render_World :: struct {
     locals:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     meshes:core.Table(Mesh_Renderer),
-    tints:core.Table(Tint),
     hidden:core.Table(Hidden),
     elsewhere:core.Table(Drawn_Elsewhere),
     suns:core.Table(Sun),
@@ -26,7 +25,7 @@ Render_World :: struct {
     skies:core.Table(Sky),
     view_volumes:core.Table(View_Volume),
     volumes:core.Table(volume.Volume),
-    overrides:core.Table(Material_Override),
+    values:core.Table(Material_Values),
     highlights:core.Table(Highlight),
     outlines:core.Table(Outline),
     offsets:core.Table(Draw_Offset),
@@ -42,7 +41,8 @@ Render_World :: struct {
 // cameras gives it: the camera of the application is set by the test.
 @(private)
 world_sync :: proc(w:^Render_World,sync:^Render_Sync,app:^host.App,id:core.World_Id={},hierarchy:core.Ref(core.Hierarchy)={},posed:^Posed_Meshes=nil) {
-    render_sync(sync,app,id,core.FRAME_TIME_DEFAULT,{},core.read(&w.worlds),core.read(&w.meshes),core.read(&w.tints),core.read(&w.hidden),core.read(&w.elsewhere),core.read(&w.parents),hierarchy,core.read(&w.suns),core.read(&w.points),core.read(&w.spots),core.read(&w.rects),core.read(&w.emissions),core.read(&w.skies),core.read(&w.view_volumes),{},core.read(&w.overrides),core.read(&w.highlights),core.read(&w.outlines),{&w.outline_styles},core.read(&w.offsets),core.read(&w.layers),{},{},{},{},posed)
+    shows:Frame_Values_Requests
+    render_sync(sync,app,id,core.FRAME_TIME_DEFAULT,{},core.read(&w.worlds),core.read(&w.meshes),core.read(&w.values),core.read(&w.hidden),core.read(&w.elsewhere),core.read(&w.parents),hierarchy,core.read(&w.suns),core.read(&w.points),core.read(&w.spots),core.read(&w.rects),core.read(&w.emissions),core.read(&w.skies),core.read(&w.view_volumes),{},core.read(&w.highlights),core.read(&w.outlines),{&w.outline_styles},core.read(&w.offsets),core.read(&w.layers),{},{},{},{},posed,&shows)
 }
 
 // An application that draws nothing: assets over a renderer without a

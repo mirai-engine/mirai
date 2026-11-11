@@ -67,7 +67,7 @@ FOREIGN :: [?][2]string{
 // What a program of each domain calls besides its own functions.
 @(private="file")
 MIRAI_API :: [Program_Domain]string{
-    .Surface="Slang intrinsics, the functions of the program and mirai_sample_texture(ctx, index, uv, lod), mirai_sample_texture_level(index, uv, level), mirai_sample_texture_grad(index, uv, dx, dy), mirai_surface_default(ctx) and mirai_surface_mix(a, b, mask)",
+    .Surface="Slang intrinsics, the functions of the program and mirai_sample_texture(ctx, index, uv, lod), mirai_sample_texture_level(index, uv, level), mirai_sample_texture_grad(index, uv, dx, dy), mirai_surface_default(ctx), mirai_surface_standard(ctx), mirai_surface_mix(a, b, mask), mirai_noise(ctx, metres), mirai_sample_triplanar(ctx, index, metres, sharpness) and mirai_height_blend(first, second, mask, contrast)",
     .Postprocess="Slang intrinsics, the functions of the program and mirai_scene_color(ctx, uv), mirai_scene_depth(ctx, uv), mirai_scene_normal(ctx, uv), mirai_outline(ctx, uv), mirai_sample_texture(ctx, index, uv, lod) and mirai_sample_texture_level(index, uv, level)",
     .Vfx="Slang intrinsics, the functions of the program and mirai_vfx_random(seed) and mirai_vfx_texture(index, uv, level)",
     .Ui="Slang intrinsics, the functions of the program and mirai_sample_texture_level(index, uv, level)",

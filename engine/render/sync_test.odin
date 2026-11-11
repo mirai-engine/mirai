@@ -84,7 +84,7 @@ same :: proc(t:^testing.T,a,b:map[u64]gpu.Gpu_Instance,what:string) {
     }
 }
 
-// A world of the fixture with meshes, a hierarchy, tints and lights.
+// A world of the fixture with meshes, a hierarchy, values and lights.
 @(private="file")
 populate :: proc(w:^Render_World,entities:[]core.Entity) {
     for &e,i in entities {
@@ -92,7 +92,7 @@ populate :: proc(w:^Render_World,entities:[]core.Entity) {
         place:=core.World_Transform{transform={position={f32(i%8),f32(i/8),0},rotation=1,scale=1},previous={position={f32(i%8),f32(i/8),0},rotation=1,scale=1}}
         core.add(&w.worlds,e,place)
         if i%5!=4 {core.add(&w.meshes,e,Mesh_Renderer{shape=i%3==0?.Sphere:.Cube})}
-        if i%4==1 {core.add(&w.tints,e,Tint{color={1,0.5,0.25,i%8==1?0.5:1}})}
+        if i%4==1 {core.add(&w.values,e,Material_Values{color={1,0.5,0.25,i%8==1?0.5:1}})}
         if i%7==3 {core.add(&w.points,e,POINT_LIGHT_DEFAULT)}
         if i%9==4 {core.add(&w.spots,e,SPOT_LIGHT_DEFAULT)}
         if i>0 && i%6==0 {core.add(&w.parents,e,core.Parent{entity=entities[i-1]})}
@@ -153,8 +153,8 @@ changes_leave_the_renderer_what_a_world_given_whole_does :: proc(t:^testing.T) {
             switch rand.int_max(12) {
             case 0: if core.has(&w.meshes,e) {core.remove(&w.meshes,e)} else {core.add(&w.meshes,e,Mesh_Renderer{shape=rand.int_max(2)==0?.Cube:.None})}
             case 1: if core.has(&w.hidden,e) {core.remove(&w.hidden,e)} else {core.add(&w.hidden,e,Hidden{})}
-            case 2: if core.has(&w.tints,e) {core.edit(&w.tints,e).color.a=rand.int_max(2)==0?1:0.25} else {core.add(&w.tints,e,Tint{color={0,1,0,1}})}
-            case 3: if core.has(&w.tints,e) {core.edit(&w.tints,e).color.r=rand.float32()}
+            case 2: if core.has(&w.values,e) {core.edit(&w.values,e).color.a=rand.int_max(2)==0?1:0.25} else {core.add(&w.values,e,Material_Values{color={0,1,0,1}})}
+            case 3: if core.has(&w.values,e) {core.edit(&w.values,e).color.r=rand.float32()}
             case 4: if world:=core.edit(&w.worlds,e);world!=nil {world.transform.position.z=rand.float32();world.previous=world.transform}
             case 5: if world:=core.edit(&w.worlds,e);world!=nil {world.transform.scale=rand.int_max(3)==0?0:1;world.previous=world.transform}
             case 6: if core.has(&w.elsewhere,e) {core.remove(&w.elsewhere,e)} else {core.add(&w.elsewhere,e,Drawn_Elsewhere{})}
@@ -238,7 +238,7 @@ a_posed_mesh_is_the_instance_of_its_entity_and_a_visual_one_hides_it :: proc(t:^
         shown:=pass==1 || pass==2
         if shown {
             // Faded: it shows a row derived for it, which goes when it stops coming.
-            extra,usable:=mesh_instance(&f.assets,{shape=.Cone},1,Tint{color={0,1,0,0.5}})
+            extra,usable:=mesh_instance(&f.assets,{shape=.Cone},1,Material_Values{color={0,1,0,0.5}})
             extra.object_id,extra.replace_source=u64(a),true
             // One of a mesh the renderer does not have is not drawn, and takes nothing with it.
             lost:=extra
@@ -254,7 +254,7 @@ a_posed_mesh_is_the_instance_of_its_entity_and_a_visual_one_hides_it :: proc(t:^
     // One that replaces nothing leaves the world as it is, and still gives back its row.
     for pass in 0..<3 {
         if pass==0 {
-            ghost,usable:=mesh_instance(&f.assets,{shape=.Cone},1,Tint{color={1,0,0,0.25}})
+            ghost,usable:=mesh_instance(&f.assets,{shape=.Cone},1,Material_Values{color={1,0,0,0.25}})
             testing.expect(t,usable && host.extras_instance_add(&f.app.extras,ghost))
         }
         touched:=frame(f,&posed)

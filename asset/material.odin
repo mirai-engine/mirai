@@ -28,7 +28,7 @@ import "mirai:std/serial"
 // A source gives the values of the standard model and of the parameters of
 // its program; overlays and hidden names are always the material's own.
 
-MATERIAL_VERSION :: 2
+MATERIAL_VERSION :: 3
 MATERIAL_MAX_PARAMETERS :: 32
 MATERIAL_MAX_OVERLAYS :: 4
 MATERIAL_NAME_BYTES :: 64
@@ -39,7 +39,9 @@ Alpha_Mode :: enum u8 {
     Blend,  // drawn over the scene after it is lit
 }
 
-// One map of a material: its texture and how it reads the UVs.
+// One map of a material: its texture and how it reads the UVs. The only
+// transform of the UVs a material has: one that tiles gives each of its maps
+// the scale.
 Material_Map :: struct {
     texture:base.Asset_Id,
     scale:[2]f32,
@@ -163,13 +165,11 @@ Material_Info :: struct {
     emission_mode:Emission_Mode,
     normal_scale:f32,
     occlusion_strength:f32 `mirai:"min=0,max=1"`,
-    uv_scale:[2]f32,
-    uv_offset:[2]f32,
     specular_factor:f32 `mirai:"min=0,max=1"`,
     specular_color:[3]f32 `mirai:"color"`,
     // Glass: KHR_materials_transmission, _ior and _volume.
     transmission:f32 `mirai:"min=0,max=1"`,
-    ior:f32,                             // 0, a constant reflector, or 1 and above
+    ior:f32 `mirai:"min=1"`,
     thickness:f32 `mirai:"min=0,unit=m"`, // 0: a sheet; above: the mesh bounds a solid about this deep
     attenuation_color:[3]f32 `mirai:"color"`,
     attenuation_distance:f32 `mirai:"min=0,unit=m"`,
@@ -207,7 +207,7 @@ Material_Name :: struct {name:[MATERIAL_NAME_BYTES]u8 `mirai:"text"`}
 
 MATERIAL_MAP_DEFAULT :: Material_Map{scale={1,1}}
 MATERIAL_DEFAULTS :: Material_Info{
-    base_color={1,1,1},opacity=1,alpha_cutoff=0.5,roughness=1,normal_scale=1,occlusion_strength=1,uv_scale={1,1},
+    base_color={1,1,1},opacity=1,alpha_cutoff=0.5,roughness=1,normal_scale=1,occlusion_strength=1,
     specular_factor=1,specular_color={1,1,1},ior=1.5,attenuation_color={1,1,1},
     coat={color={1,1,1},ior=1.6,normal_scale=1},fuzz={color={1,1,1},roughness=0.5},diffuse_transmission={color={1,1,1}},
     maps={
@@ -385,11 +385,11 @@ material_parameters_follow :: proc(view:Material_View,given:[]Material_Parameter
 material_check :: proc(view:Material_View) -> bool {
     m:=view.info
     if m==nil || view.imported!=nil && !material_check({info=view.imported}) {return false}
-    if !finite(m.base_color.r,m.base_color.g,m.base_color.b,m.emission.r,m.emission.g,m.emission.b,m.normal_scale,m.uv_scale.x,m.uv_scale.y,m.uv_offset.x,m.uv_offset.y) {return false}
+    if !finite(m.base_color.r,m.base_color.g,m.base_color.b,m.emission.r,m.emission.g,m.emission.b,m.normal_scale) {return false}
     if !finite(m.specular_color.r,m.specular_color.g,m.specular_color.b,m.attenuation_color.r,m.attenuation_color.g,m.attenuation_color.b,m.thickness,m.attenuation_distance,m.ior) {return false}
     if !unit(m.scatter_color.r) || !unit(m.scatter_color.g) || !unit(m.scatter_color.b) {return false}
     if !unit(m.opacity) || !unit(m.alpha_cutoff) || !unit(m.metallic) || !unit(m.roughness) || !unit(m.occlusion_strength) || !unit(m.specular_factor) || !unit(m.transmission) {return false}
-    if m.alpha_mode>max(Alpha_Mode) || m.emission_mode>max(Emission_Mode) || m.ior!=0 && m.ior<1 || m.thickness<0 || m.attenuation_distance<0 || !text_valid(m.program[:]) {return false}
+    if m.alpha_mode>max(Alpha_Mode) || m.emission_mode>max(Emission_Mode) || !(m.ior>=1) || m.thickness<0 || m.attenuation_distance<0 || !text_valid(m.program[:]) {return false}
     coat,fuzz:=&m.coat,&m.fuzz
     if !unit(coat.weight) || !unit(coat.roughness) || !unit(coat.color.r) || !unit(coat.color.g) || !unit(coat.color.b) || !(coat.ior>=1) || !finite(coat.ior,coat.normal_scale) {return false}
     if !unit(fuzz.weight) || !unit(fuzz.roughness) || !unit(fuzz.color.r) || !unit(fuzz.color.g) || !unit(fuzz.color.b) {return false}

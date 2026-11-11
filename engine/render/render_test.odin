@@ -62,7 +62,7 @@ shared_generated_chunks_survive_world_layout_changes_and_local_preview_retiremen
                 core.add(&w.worlds,e,core.World_Transform{transform,transform})
                 core.add(&w.parents,e,core.Parent{entity=owners[owner]})
                 core.add(&w.meshes,e,Mesh_Renderer{mesh=source[i]})
-                core.add(&w.tints,e,Tint{color=owner==0?[4]f32{1,1,1,1}:{0,1,0,1},emission={3,3,3}})
+                core.add(&w.values,e,Material_Values{color=owner==0?[4]f32{1,1,1,1}:{0,1,0,1},emission={3,3,3}})
             }
             core.test_world_settle(&w)
         } else if pass==2 || pass==4 {
@@ -81,7 +81,7 @@ shared_generated_chunks_survive_world_layout_changes_and_local_preview_retiremen
                 for index in ([2]int{0,4}) {
                     e:=chunks[index]
                     world,_:=core.get(&w.worlds,e)
-                    tint,_:=core.get(&w.tints,e)
+                    tint,_:=core.get(&w.values,e)
                     instance,usable:=mesh_instance(app.assets,{mesh=preview},mm.transform_matrix(world.transform),tint)
                     testing.expect(t,usable)
                     instance.object_id,instance.copy_owner,instance.copy_variant,instance.replace_source=u64(e),99,1,true
@@ -134,7 +134,7 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
     w.view.position,w.view.rotation,w.view.size={0,0,5},1,{160,120}
     e:=core.create(&w.entities)
     core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
-    core.add(&w.tints,e,Tint{color={1,0,0,1},emission={3,0,0}})
+    core.add(&w.values,e,Material_Values{color={1,0,0,1},emission={3,0,0}})
     core.test_world_settle(&w)
     for pass in 0..<5 {
         host.app_frame_begin(app)
@@ -142,7 +142,7 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
         if pass==2 || pass==3 {
             transform:=mm.TRANSFORM_IDENTITY
             transform.position.x=pass==2?1.5:-1.5
-            preview,ok:=mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix(transform),Tint{color={0,1,0,0.8},emission={0,3,0}})
+            preview,ok:=mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix(transform),Material_Values{color={0,1,0,0.8},emission={0,3,0}})
             testing.expect(t,ok)
             preview.copy_owner,preview.copy_variant=1,1
             testing.expect(t,host.extras_instance_add(&app.extras,preview))
@@ -188,7 +188,7 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
     material.emission={3,3,3}
     material.textures[.Base_Color],material.textures[.Emission]=texture,texture
     material.maps.base_color.uv_set,material.maps.emission.uv_set=1,1
-    mesh_version,tint_version:=w.meshes.version,w.tints.version
+    mesh_version,tint_version:=w.meshes.version,w.values.version
     for pass in 0..<5 {
         host.app_frame_begin(app)
         if pass==3 {
@@ -236,7 +236,7 @@ meshes_created_before_their_world_transform_become_visible_and_visual_instances_
             testing.expect_value(t,app.assets.stats.generated,0)
             testing.expect_value(t,app.assets.stats.derived,0)
         }
-        testing.expect(t,w.meshes.version==mesh_version && w.tints.version==tint_version && w.entities.alive==2)
+        testing.expect(t,w.meshes.version==mesh_version && w.values.version==tint_version && w.entities.alive==2)
     }
     cube:geom.Mesh_Buffer
     geom.mesh_buffer_init(&cube)
@@ -295,7 +295,7 @@ hiding_and_showing_update_what_hangs_from_it_without_a_new_scene :: proc(t:^test
         place.position.x=i==0?-1.5:1.5
         core.add(&w.worlds,e,core.World_Transform{place,place})
         core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
-        core.add(&w.tints,e,Tint{color={1,0,0,1},emission={3,0,0}})
+        core.add(&w.values,e,Material_Values{color={1,0,0,1},emission={3,0,0}})
     }
     core.add(&w.parents,child,core.Parent{parent,0})
     core.test_world_settle(&w)
@@ -352,7 +352,7 @@ meshes_that_come_and_go_change_only_their_instances :: proc(t:^testing.T) {
         place.position.x=x
         core.add(&w.worlds,e,core.World_Transform{place,place})
         core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
-        core.add(&w.tints,e,Tint{color={1,0,0,1},emission={3,0,0}})
+        core.add(&w.values,e,Material_Values{color={1,0,0,1},emission={3,0,0}})
         return e
     }
     a,b:=cube(&w,-2.5),cube(&w,0)
@@ -369,7 +369,7 @@ meshes_that_come_and_go_change_only_their_instances :: proc(t:^testing.T) {
         case 5: core.destroy(&w.entities,c)
         }
         core.test_world_settle(&w)
-        extra,usable:=mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix({{0,2,0},1,{0.5,0.5,0.5}}),Tint{color={0,1,0,1},emission={0,3,0}})
+        extra,usable:=mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix({{0,2,0},1,{0.5,0.5,0.5}}),Material_Values{color={0,1,0,1},emission={0,3,0}})
         testing.expect(t,usable)
         extra.copy_owner,extra.copy_variant=1,1
         testing.expect(t,host.extras_instance_add(&app.extras,extra))
@@ -465,7 +465,7 @@ a_scene_without_memory_is_empty_until_a_frame_makes_it :: proc(t:^testing.T) {
         place.position.x=x
         core.add(&w.worlds,e,core.World_Transform{place,place})
         core.add(&w.meshes,e,Mesh_Renderer{shape=.Cube})
-        core.add(&w.tints,e,Tint{color={1,0,0,1},emission={3,0,0}})
+        core.add(&w.values,e,Material_Values{color={1,0,0,1},emission={3,0,0}})
         return e
     }
     a:=cube(&w,-2.5)
@@ -479,7 +479,7 @@ a_scene_without_memory_is_empty_until_a_frame_makes_it :: proc(t:^testing.T) {
     for served in 0..<128 {
         host.app_frame_begin(app)
         // An instance of the application drawn in place of the first cube.
-        extra,usable:=mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix({{0,2,0},1,{0.5,0.5,0.5}}),Tint{color={0,1,0,1}})
+        extra,usable:=mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix({{0,2,0},1,{0.5,0.5,0.5}}),Material_Values{color={0,1,0,1}})
         testing.expect(t,usable)
         extra.object_id,extra.replace_source=u64(a),true
         testing.expect(t,host.extras_instance_add(&app.extras,extra))

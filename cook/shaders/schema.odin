@@ -230,6 +230,11 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"PROGRAMS_DISPATCH",abi.PROGRAMS_DISPATCH)
     u(&b,"PROGRAMS_HEADER",abi.PROGRAMS_HEADER)
     u(&b,"PROGRAM_PARAMETER_BYTES",abi.PROGRAM_PARAMETER_BYTES)
+    u(&b,"INSTANCE_VALUES_MAX",abi.INSTANCE_VALUES_MAX)
+    u(&b,"INSTANCE_VALUE_WORDS",abi.INSTANCE_VALUE_WORDS)
+    u(&b,"INSTANCE_VALUE_COUNT_SHIFT",abi.INSTANCE_VALUE_COUNT_SHIFT)
+    u(&b,"INSTANCE_VALUE_STANDARD",abi.INSTANCE_VALUE_STANDARD)
+    for name,i in reflect.enum_field_names(abi.Instance_Value) {u(&b,strings.concatenate({"INSTANCE_VALUE_",strings.to_upper(name,context.temp_allocator)},context.temp_allocator),abi.INSTANCE_VALUE_STANDARD+u32(i))}
     for name,value in reflect.enum_field_names(abi.Debug_View) {u(&b,strings.concatenate({"DEBUG_",strings.to_upper(name,context.temp_allocator)},context.temp_allocator),u32(value))}
     strings.write_string(&b,"#endif\n")
     return strings.to_string(b)

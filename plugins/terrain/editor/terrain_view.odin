@@ -116,14 +116,11 @@ terrain_view_lit :: proc(pass:^erender.Pass,user:rawptr) {
     erender.pass_dispatch(pass,(pass.width+7)/8,(pass.height+7)/8)
 }
 
-// The override of Terrain_Weights for an overlay: a color for each layer, or
-// the layer of the panel alone.
+// What Terrain_Weights takes for an overlay: a color for each layer, or the
+// layer of the panel alone.
 @(private)
-weights_override :: proc(overlay:Terrain_Overlay,layer:int) -> (o:erender.Material_Override) {
-    o.count=1
-    o.names[0]=base.name_hash("inspect")
-    o.values[0]={overlay==.Layer?2:1,f32(layer),0,0}
-    return
+weights_values :: proc(look:^erender.Material_Values,overlay:Terrain_Overlay,layer:int) {
+    erender.material_value(look,"inspect",{overlay==.Layer?2:1,f32(layer),0,0})
 }
 
 @(private)
@@ -139,9 +136,8 @@ terrain_overlay :: proc(s:^editor.Session,view:^Terrain_View,tool:^Terrain_Tool,
     a:=assets
     if a==nil {return}
     statics:=core.world_table_of(world,erender.Mesh_Renderer)
-    tints:=core.world_table_of(world,erender.Tint)
+    looks:=core.world_table_of(world,erender.Material_Values)
     if statics==nil {return}
-    override:=weights_override(view.overlay,tool.layer)
     for row in 0..<core.count(chunks) {
         chunk:=core.at(chunks,row)
         owner,known:=core.get(terrains,chunk.owner)
@@ -161,9 +157,10 @@ terrain_overlay :: proc(s:^editor.Session,view:^Terrain_View,tool:^Terrain_Tool,
         static,has_static:=core.get(statics,e)
         if !has_static || static.mesh=={} {continue}
         static.materials[0]=WEIGHTS_MATERIAL
-        tint:=erender.TINT_DEFAULT
-        if tints!=nil {if value,ok:=core.get(tints,e);ok {tint=value}}
-        if instance,ok:=erender.mesh_instance(a,static,mm.transform_matrix(placed.transform),tint,override);ok {
+        look:=erender.MATERIAL_VALUES_DEFAULT
+        if looks!=nil {if value,ok:=core.get(core.read(looks),e);ok {look.color,look.emission=value.color,value.emission}}
+        weights_values(&look,view.overlay,tool.layer)
+        if instance,ok:=erender.mesh_instance(a,static,mm.transform_matrix(placed.transform),look);ok {
             instance.object_id,instance.copy_owner,instance.copy_variant=u64(e),PREVIEW_OWNER,2
             instance.replace_source=true
             host.extras_instance_add(extras,instance)

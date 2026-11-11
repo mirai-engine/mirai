@@ -409,7 +409,7 @@ stroke_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     }
     statics:=core.world_table_of(world,erender.Mesh_Renderer)
     if statics==nil {return}
-    tints:=core.world_table_of(world,erender.Tint);overrides:=core.world_table_of(world,erender.Material_Override)
+    looks:=core.world_table_of(world,erender.Material_Values)
     // The view that shows the weights of the layers shows them on the preview too.
     overlay:=Terrain_Overlay.None
     if view:=core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Terrain_View);view!=nil {overlay=view.overlay}
@@ -426,17 +426,17 @@ stroke_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
         if !has_pose || editor.entity_hidden(world,e) {continue}
         static,has_static:=core.get(statics,e)
         if !has_static {static.materials=terrain.chunk_materials(&stroke.source)}
-        tint:=erender.TINT_DEFAULT;override:erender.Material_Override
-        if tints!=nil {
-            if value,ok:=core.get(tints,e);ok {tint=value} else if value,ok:=core.get(tints,chunk.owner);ok {tint=value}
-        }
-        if overrides!=nil {
-            found:bool;override,found=core.get(overrides,e)
-            if !found {override,_=core.get(overrides,chunk.owner)}
+        look:=erender.MATERIAL_VALUES_DEFAULT
+        if looks!=nil {
+            if value,ok:=core.get(core.read(looks),e);ok {look=value} else if value,ok:=core.get(core.read(looks),chunk.owner);ok {look=value}
         }
         if preview.mesh!={} {static.mesh,static.shape=preview.mesh,.None}
-        if overlay_weights(overlay) {static.materials[0],override=WEIGHTS_MATERIAL,weights_override(overlay,tool.layer)}
-        if instance,ok:=erender.mesh_instance(a,static,mm.transform_matrix(placed.transform),tint,override);ok {
+        if overlay_weights(overlay) {
+            static.materials[0]=WEIGHTS_MATERIAL
+            look={color=look.color,emission=look.emission}
+            weights_values(&look,overlay,tool.layer)
+        }
+        if instance,ok:=erender.mesh_instance(a,static,mm.transform_matrix(placed.transform),look);ok {
             instance.object_id,instance.copy_owner,instance.copy_variant=u64(e),PREVIEW_OWNER,1
             instance.replace_source=true;instance.hidden=preview.mesh=={}
             host.extras_instance_add(extras,instance)

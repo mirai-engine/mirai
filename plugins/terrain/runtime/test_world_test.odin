@@ -18,8 +18,7 @@ Test_Terrain :: struct {
     ids:core.Table(core.Id),
     terrains:core.Table(Terrain),
     chunks:core.Table(Terrain_Chunk),
-    tints:core.Table(render.Tint),
-    overrides:core.Table(render.Material_Override),
+    looks:core.Table(render.Material_Values),
     streaming:scene.Streaming_Sources,
     data:Terrain_Data,
     terrain_requests:Terrain_Requests,
@@ -37,9 +36,18 @@ TERRAIN_TEST_SETTINGS :: Terrain_Settings{lod_distance=-1}
 test_step :: proc(g:^Test_Terrain,commands:core.Commands,resident:^Terrain_Resident,app:^host.App,problems:^core.Problems,settings:=TERRAIN_TEST_SETTINGS,time:=core.Time{playing=true},frame:=core.Frame_Time{phase=.Fixed},view:=core.View{}) {
     terrain_update(
         commands,&g.terrains,&g.chunks,core.read(&g.transforms),core.read(&g.parents),core.read(&g.ids),&g.colliders,
-        &g.statics,&g.tints,&g.overrides,&g.data,resident,&g.terrain_requests,&g.digs,settings,app,time,frame,
+        &g.statics,&g.looks,&g.data,resident,&g.terrain_requests,&g.digs,settings,app,time,frame,
         view,core.read(&g.worlds),core.ref(&g.streaming),{},g.settings,{},nil,problems,{},&g.ground_queries,
     )
+}
+
+// The chunks that show values of layers over their material.
+@(private)
+layered_chunks :: proc(g:^Test_Terrain) -> (count:int) {
+    for &look in g.looks.values[:core.count(&g.looks)] {
+        if look.count>0 {count+=1}
+    }
+    return
 }
 
 // An allocator that serves remaining allocations of owner and then fails; below 0, all.

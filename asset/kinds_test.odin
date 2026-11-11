@@ -468,10 +468,7 @@ material_keeps_values_parameters_and_overlays :: proc(t:^testing.T) {
     wide:=[1]Material_Parameter{parameters[0]}
     wide[0].components=5
     bad=desc;bad.parameters=wide[:];refuse(t,&types,bad)
-    bad=desc;bad.info.ior=0
-    doc:Document
-    testing.expect_value(t,material_document(&doc,&types,bad),Error.None)
-    document_destroy(&doc)
+    bad=desc;bad.info.ior=0;refuse(t,&types,bad)
 }
 
 @(test)

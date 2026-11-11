@@ -24,8 +24,7 @@ ghosts_shown :: proc "contextless" (s:^Session) -> bool {return s.mode==.Edit ||
 
 Placement_Part :: struct {
     mesh:erender.Mesh_Renderer,
-    tint:erender.Tint,
-    override:erender.Material_Override,
+    tint:erender.Material_Values, // what its entity shows of its materials
     transform:mm.Transform,
 }
 
@@ -71,7 +70,7 @@ placement_prepare :: proc(s:^Session,d:Drag) -> ^Placement_Preview {
     p.key=key
     clear(&p.parts)
     p.low,p.high,p.measured={},{},false
-    part:=Placement_Part{tint=erender.TINT_DEFAULT,transform=mm.TRANSFORM_IDENTITY}
+    part:=Placement_Part{tint=erender.MATERIAL_VALUES_DEFAULT,transform=mm.TRANSFORM_IDENTITY}
     if d.kind==.Preset {
         card:=cards(s)[d.card]
         part.mesh.shape=card.body
@@ -97,9 +96,8 @@ placement_prepare :: proc(s:^Session,d:Drag) -> ^Placement_Preview {
             for mesh,i in meshes.values[:core.count(meshes)] {
                 e:=meshes.entities[i]
                 if entity_hidden(w,e) || entity_has(w,e,erender.Drawn_Elsewhere) {continue}
-                part=Placement_Part{mesh=mesh,tint=erender.TINT_DEFAULT,transform=entity_world(w,e)}
-                if tint,ok:=entity_get(w,e,erender.Tint);ok {part.tint=tint}
-                if override,ok:=entity_get(w,e,erender.Material_Override);ok {part.override=override}
+                part=Placement_Part{mesh=mesh,tint=erender.MATERIAL_VALUES_DEFAULT,transform=entity_world(w,e)}
+                if tint,ok:=entity_get(w,e,erender.Material_Values);ok {part.tint=tint}
                 placement_measure(s,p,part)
             }
         }
@@ -206,7 +204,7 @@ ghost_draw :: proc(s:^Session,w:core.World_Ref) {
     for part,i in p.parts {
         transform:=part.transform
         transform.position+=point
-        if instance,ok:=erender.mesh_instance(s.app.assets,part.mesh,mm.transform_matrix(transform),part.tint,part.override);ok {
+        if instance,ok:=erender.mesh_instance(s.app.assets,part.mesh,mm.transform_matrix(transform),part.tint);ok {
             instance.copy_owner,instance.copy_variant=0x706c6163656d656e,u64(i+1)
             host.extras_instance_add(&s.app.extras,instance)
         }

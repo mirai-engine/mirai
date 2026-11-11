@@ -104,8 +104,8 @@ Scenes:
     throws a cube with `scene.spawn`.
   - `game_projectiles` (`stage="react"`) damages with `destruct.damage` what the cube touches, and
     destruction applies it in the same tick.
-  - `game_glow` is the only writer of `Tint`: it also serves the portals' buttons, the lamps of
-    `horror` and the fade of the physics gallery.
+  - `game_glow` is the game's only writer of `Material_Values`: it also serves the portals' buttons,
+    the lamps of `horror` and the fade of the physics gallery.
   - The cameras of the prefabs are `Camera_Follow`: `Eyes` the player's, `Orbit` with `aim` those of
     the person and the dog, whose `Drivable` walks them with `move_relative_to` `View`.
 - **`control.odin`**: `Follow` is an AI that takes the body behind its leader while no seat drives
@@ -150,7 +150,7 @@ Scenes:
 - **`physics_gallery.odin`**: `Physics_Gallery`, its camera selection and requests reproducible by
   trigger, input E and reset by R.
   - Removal and the Size debris keep fragments for 6 s and fade them over the next 2 s, reading the
-    physical timer from `game_glow` (only writer of Tint).
+    physical timer from `game_glow` (the game's only writer of `Material_Values`).
   - Particles come from the public destruction event, omitting Remove events. Counts and prefabs
     stay in the `World`: a rollback brings them with the copy and repeats them the same.
   - Internal Strain keeps a collection suspended until the second E; the recorded geometry station

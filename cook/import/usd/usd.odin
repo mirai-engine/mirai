@@ -431,7 +431,7 @@ usd_material :: proc(u:^Usd_Import,material:int) -> int {
     }
     info.ior=input_number(usd_input(u,surface,"inputs:ior"),1.5)
     if !importer.ior_valid(info.ior) {
-        importer.fail(r,.Malformed,"the USD index of refraction must be 0 or at least 1")
+        importer.fail(r,.Malformed,"the USD index of refraction must be at least 1")
         return -1
     }
     // A texture multiplies its factor: a textured input leaves the factor at 1.

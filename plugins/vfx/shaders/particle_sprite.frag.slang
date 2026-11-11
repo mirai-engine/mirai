@@ -15,6 +15,7 @@
 // and an unlit one shows the emission of its material in its own units
 // (Particle_Info.emission_mode), as it shows its color.
 #define MATERIAL_RASTER
+#define MIRAI_NO_INSTANCES
 #include "particles.slang"
 #include "depth.slang"
 

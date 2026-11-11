@@ -145,16 +145,9 @@ float3 fresnel_schlick(float3 f0, float3 f90, float voh) {
 
 float3 fresnel_schlick(float3 f0, float f90, float voh) { return fresnel_schlick(f0, float3(f90), voh); }
 
-// A negative encoded F90 marks IOR zero. Its dielectric Fresnel is constant,
-// while the metallic share keeps its ordinary grazing reflectance of one.
-float3 specular_grazing(float3 f0, float encoded_f90, float3 base_color, float metallic) {
-    return encoded_f90 < 0.0 ? saturate(f0 + metallic * (1.0 - saturate(base_color))) : float3(encoded_f90);
-}
-// F0 and the encoded grazing reflectance of a surface in a target of 8 bits
-// per channel: the color is stored as sRGB by the target, and alpha keeps f90
-// below its top value, which stands for the Fresnel of a metal (f90 < 0).
-float4 specular_pack(float3 f0, float f90) { return float4(saturate(f0), f90 < 0.0 ? 1.0 : saturate(f90) * (254.0 / 255.0)); }
-float4 specular_unpack(float4 texel) { return float4(texel.rgb, texel.a > 254.5 / 255.0 ? -1.0 : texel.a * (255.0 / 254.0)); }
+// F0 and the grazing reflectance of a surface in a target of 8 bits per
+// channel: the color is stored as sRGB by the target, and alpha keeps f90.
+float4 specular_pack(float3 f0, float f90) { return float4(saturate(f0), saturate(f90)); }
 float diffuse_remaining(float3 reflectance) { return 1.0 - saturate(max(reflectance.r, max(reflectance.g, reflectance.b))); }
 
 // Smith's masking of the GGX lobe: the share of its microfacets a direction
@@ -251,7 +244,7 @@ Shading shading_diffuse(float3 position, float3 normal, float3 albedo) {
 }
 
 Shading shading_surface(float3 position, float3 normal, float3 view, float3 base_color, float metallic, float roughness, float3 f0, float f90) {
-    return shading_make(position, normal, view, diffuse_reflectance(base_color, metallic), f0, specular_grazing(f0, f90, base_color, metallic), roughness);
+    return shading_make(position, normal, view, diffuse_reflectance(base_color, metallic), f0, float3(f90), roughness);
 }
 
 Shading shading_surface(float3 position, float3 normal, float3 view, float3 base_color, float metallic, float roughness) {

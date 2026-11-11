@@ -78,7 +78,7 @@ bool fade_pixel_left(uint2 pixel, float fade) {
 // itself; the G-buffer keeps what each pixel evaluated (`stored`) while some
 // surface departs from it: specular maps and factors, another IOR, a program.
 float4 pixel_reflectance(int2 p, float4 albedo, bool stored) {
-    if (stored) return specular_unpack(surface_specular.Load(int3(p, 0)));
+    if (stored) return surface_specular.Load(int3(p, 0));
     return float4(specular_f0(albedo.rgb, albedo.a), 1.0);
 }
 
@@ -424,6 +424,72 @@ Material material_row(uint row) {
 
 bool material_has(uint texture_index) { return texture_index != INVALID; }
 
+// The values an instance gives over the rows of its materials
+// (render.Instance_Material_Values): `block` is Instance.material_values. A
+// stage that draws no instance of a scene (MIRAI_NO_INSTANCES: the previews)
+// reads none, and does not bind the pool they are in.
+uint material_values_count(uint block) {
+#ifdef MIRAI_NO_INSTANCES
+    return 0u;
+#else
+    return block == 0u ? 0u : min(indices[block - 1u], INSTANCE_VALUES_MAX);
+#endif
+}
+// The value at `i` of a block, when it is for `row`: its target, how many
+// words it gives and the words.
+bool material_value_at(uint block, uint i, uint row, out uint target, out uint count, out uint4 words) {
+    target = 0u; count = 0u; words = uint4(0u, 0u, 0u, 0u);
+#ifdef MIRAI_NO_INSTANCES
+    return false;
+#else
+    uint at = block + i * INSTANCE_VALUE_WORDS;
+    if (indices[at] != row) return false;
+    uint key = indices[at + 1u];
+    target = key & ((1u << INSTANCE_VALUE_COUNT_SHIFT) - 1u);
+    count = min(key >> INSTANCE_VALUE_COUNT_SHIFT, 4u);
+    words = uint4(indices[at + 2u], indices[at + 3u], indices[at + 4u], indices[at + 5u]);
+    return true;
+#endif
+}
+// A row with the values of the standard model an instance gives it.
+uint material_layer_given(uint layers, uint layer, bool on) {return on ? layers | layer : layers & ~layer;}
+Material material_instanced(Material m, uint block) {
+    uint given = material_values_count(block);
+    for (uint i = 0u; i < given; i++) {
+        uint target, count;
+        uint4 words;
+        if (!material_value_at(block, i, m.row, target, count, words) || target < INSTANCE_VALUE_STANDARD) continue;
+        float4 value = asfloat(words);
+        if (target == INSTANCE_VALUE_BASE_COLOR) m.base_color = value.xyz;
+        else if (target == INSTANCE_VALUE_OPACITY) m.opacity = saturate(value.x);
+        else if (target == INSTANCE_VALUE_METALLIC) m.metallic = saturate(value.x);
+        else if (target == INSTANCE_VALUE_ROUGHNESS) m.roughness = saturate(value.x);
+        else if (target == INSTANCE_VALUE_EMISSION) m.emission = value.xyz;
+        else if (target == INSTANCE_VALUE_SPECULAR) m.specular_factor = value.x;
+        else if (target == INSTANCE_VALUE_EMISSION_MODE) m.emission_mode = value.x >= 0.5 ? EMISSION_RELATIVE : EMISSION_PHYSICAL;
+        else if (target == INSTANCE_VALUE_UNLIT) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_UNLIT, value.x >= 0.5);
+        else if (target == INSTANCE_VALUE_COAT) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_COAT, value.x > 0.0);
+        else if (target == INSTANCE_VALUE_FUZZ) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_FUZZ, value.x > 0.0);
+        else if (target == INSTANCE_VALUE_ANISOTROPY) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_ANISOTROPY, value.x > 0.0);
+        else if (target == INSTANCE_VALUE_DIFFUSE_TRANSMISSION) m.layers = material_layer_given(m.layers, MATERIAL_LAYER_DIFFUSE_TRANSMISSION, value.x > 0.0);
+    }
+    return m;
+}
+// The parameters the program of a row reads at a point of an instance: those
+// of the row, under the ones the instance gives.
+void material_parameters(uint row, uint block, out float4 parameters[16]) {
+    parameters = materials[row].custom_params;
+    uint given = material_values_count(block);
+    for (uint i = 0u; i < given; i++) {
+        uint target, count;
+        uint4 words;
+        if (!material_value_at(block, i, row, target, count, words) || target >= INSTANCE_VALUE_STANDARD) continue;
+        for (uint c = 0u; c < count; c++) {
+            uint word = min(target + c, PROGRAM_PARAMETER_BYTES / 4u - 1u);
+            parameters[word >> 2u][word & 3u] = asfloat(words[c]);
+        }
+    }
+}
 #ifdef MIRAI_TEXTURE_FEEDBACK
 // The finest level a stage that shades surfaces samples of each texture, for
 // its residency (render/texture_residency.odin): the first word says how
@@ -604,7 +670,7 @@ uint material_layers_allowed(uint layers) {
     return layers;
 }
 // The layers a material holds at a point (MATERIAL_LAYER_* of its row): the
-// blocks of the row, by their maps. The coat follows the surface under the
+// blocks of the row, under the values of the instance, by their maps. The coat follows the surface under the
 // normal map of the base, or its own map; the tangent of an anisotropic lobe
 // is that of the surface turned by its rotation and its map, across the
 // shading normal.
@@ -614,8 +680,29 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
     l.bits = bits;
     if (bits == 0u || (bits & MATERIAL_LAYER_UNLIT) != 0u) return l;
     float2 lod = float2(ctx.lod, ctx.lod1);
+    Material_Coat coat = materials[m.row].coat;
+    Material_Fuzz fuzz = materials[m.row].fuzz;
+    Material_Diffuse_Transmission transmission = materials[m.row].diffuse_transmission;
+    Material_Anisotropy anisotropy = materials[m.row].anisotropy;
+    // Under the values the instance gives.
+    for (uint i = 0u; i < material_values_count(ctx.material_values); i++) {
+        uint target, count;
+        uint4 words;
+        if (!material_value_at(ctx.material_values, i, m.row, target, count, words)) continue;
+        float4 v = asfloat(words);
+        if (target == INSTANCE_VALUE_COAT) coat.weight = saturate(v.x);
+        else if (target == INSTANCE_VALUE_COAT_ROUGHNESS) coat.roughness = saturate(v.x);
+        else if (target == INSTANCE_VALUE_COAT_COLOR) coat.color = saturate(v.xyz);
+        else if (target == INSTANCE_VALUE_COAT_IOR) coat.ior = max(v.x, 1.0);
+        else if (target == INSTANCE_VALUE_FUZZ) fuzz.weight = saturate(v.x);
+        else if (target == INSTANCE_VALUE_FUZZ_COLOR) fuzz.color = saturate(v.xyz);
+        else if (target == INSTANCE_VALUE_FUZZ_ROUGHNESS) fuzz.roughness = saturate(v.x);
+        else if (target == INSTANCE_VALUE_ANISOTROPY) anisotropy.amount = saturate(v.x);
+        else if (target == INSTANCE_VALUE_ANISOTROPY_ROTATION) anisotropy.rotation = float2(cos(v.x), sin(v.x));
+        else if (target == INSTANCE_VALUE_DIFFUSE_TRANSMISSION) transmission.weight = saturate(v.x);
+        else if (target == INSTANCE_VALUE_DIFFUSE_TRANSMISSION_COLOR) transmission.color = saturate(v.xyz);
+    }
     if ((bits & MATERIAL_LAYER_COAT) != 0u) {
-        Material_Coat coat = materials[m.row].coat;
         l.coat = coat.weight;
         l.coat_roughness = coat.roughness;
         if (material_has(m.textures[MATERIAL_MAP_COAT])) l.coat *= material_map_texel(m, MATERIAL_MAP_COAT, m.textures[MATERIAL_MAP_COAT], ctx.uv0, ctx.uv1, lod, ctx.ray).r;
@@ -629,7 +716,6 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
         }
     }
     if ((bits & MATERIAL_LAYER_FUZZ) != 0u) {
-        Material_Fuzz fuzz = materials[m.row].fuzz;
         l.fuzz = fuzz.weight;
         l.fuzz_color = fuzz.color;
         l.fuzz_roughness = fuzz.roughness;
@@ -637,14 +723,12 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
         if (material_has(m.textures[MATERIAL_MAP_FUZZ_ROUGHNESS])) l.fuzz_roughness *= material_map_texel(m, MATERIAL_MAP_FUZZ_ROUGHNESS, m.textures[MATERIAL_MAP_FUZZ_ROUGHNESS], ctx.uv0, ctx.uv1, lod, ctx.ray).a;
     }
     if ((bits & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) != 0u) {
-        Material_Diffuse_Transmission transmission = materials[m.row].diffuse_transmission;
         l.diffuse_transmission = transmission.weight;
         l.diffuse_transmission_color = transmission.color;
         if (material_has(m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION])) l.diffuse_transmission *= material_map_texel(m, MATERIAL_MAP_DIFFUSE_TRANSMISSION, m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION], ctx.uv0, ctx.uv1, lod, ctx.ray).a;
         if (material_has(m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR])) l.diffuse_transmission_color *= material_map_texel(m, MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR, m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR], ctx.uv0, ctx.uv1, lod, ctx.ray).rgb;
     }
     if ((bits & MATERIAL_LAYER_ANISOTROPY) != 0u) {
-        Material_Anisotropy anisotropy = materials[m.row].anisotropy;
         float2 direction = float2(1.0, 0.0);
         l.anisotropy = anisotropy.amount;
         if (material_has(m.textures[MATERIAL_MAP_ANISOTROPY])) {
@@ -664,22 +748,24 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
 // The specular reflectance of a sample (OpenPBR): the dielectric F0 of its
 // IOR, specular color and factor, and the base color of a metal. Under a
 // coat the base meets the coat instead of the air, so its IOR is relative to
-// the coat where the coat covers it, and the coat roughens it. An IOR of zero
-// keeps a constant Fresnel.
+// the coat where the coat covers it, and the coat roughens it.
 void material_specular(inout Material_Sample s, float3 color, float ior, float factor) {
     float eta = ior;
     if (s.layers.coat > 0.0) {
-        if (ior > 0.0) eta = lerp(ior, ior / max(s.layers.coat_ior, 1.0), saturate(s.layers.coat));
+        eta = lerp(ior, ior / max(s.layers.coat_ior, 1.0), saturate(s.layers.coat));
         float base = s.roughness * s.roughness, coat = s.layers.coat_roughness * s.layers.coat_roughness;
         s.roughness = lerp(s.roughness, min(1.0, sqrt(sqrt(base * base + 2.0 * coat * coat))), saturate(s.layers.coat));
     }
-    float ratio = (max(eta, 0.0) - 1.0) / (max(eta, 0.0) + 1.0);
+    float ratio = (max(eta, 1.0) - 1.0) / (max(eta, 1.0) + 1.0);
     float3 f0 = saturate(color * (ratio * ratio)) * saturate(factor);
     s.f0 = lerp(f0, saturate(s.base_color), s.metallic);
-    s.f90 = ior == 0.0 ? -1.0 : lerp(saturate(factor), 1.0, s.metallic);
+    s.f90 = lerp(saturate(factor), 1.0, s.metallic);
 }
-Material_Sample material_evaluate(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission) {
-    Material_Sample s;
+// The standard model of a row at a point, its maps read: what the engine
+// makes a sample from (material_evaluate), and what a program builds on
+// (mirai_surface_standard). layers: those of the row there.
+Mirai_Surface material_standard(Material m, Mirai_Surface_Context ctx, float3 tint, out Material_Layers layers) {
+    Mirai_Surface s = mirai_surface_default(ctx);
     float2 uv0 = ctx.uv0, uv1 = ctx.uv1, lod = float2(ctx.lod, ctx.lod1);
     bool ray = ctx.ray;
     float4 base = material_base_color(m, uv0, uv1, lod, tint, ray);
@@ -704,14 +790,46 @@ Material_Sample material_evaluate(Material m, Mirai_Surface_Context ctx, float3 
     s.metallic = saturate(s.metallic);
     s.emission = m.emission;
     if (material_has(m.textures[MATERIAL_MAP_EMISSION])) s.emission *= material_map_texel(m, MATERIAL_MAP_EMISSION, m.textures[MATERIAL_MAP_EMISSION], uv0, uv1, lod, ray).rgb;
-    s.emission += added_emission;
-    s.layers = material_layers(m, ctx);
-    float3 specular_color = m.specular_color;
-    float specular_factor = m.specular_factor;
-    if (material_has(m.textures[MATERIAL_MAP_SPECULAR])) specular_factor *= material_map_texel(m, MATERIAL_MAP_SPECULAR, m.textures[MATERIAL_MAP_SPECULAR], uv0, uv1, lod, ray).a;
-    if (material_has(m.textures[MATERIAL_MAP_SPECULAR_COLOR])) specular_color *= material_map_texel(m, MATERIAL_MAP_SPECULAR_COLOR, m.textures[MATERIAL_MAP_SPECULAR_COLOR], uv0, uv1, lod, ray).rgb;
-    material_specular(s, specular_color, m.ior, specular_factor);
+    layers = material_layers(m, ctx);
+    s.specular_color = m.specular_color;
+    s.specular_factor = m.specular_factor;
+    if (material_has(m.textures[MATERIAL_MAP_SPECULAR])) s.specular_factor *= material_map_texel(m, MATERIAL_MAP_SPECULAR, m.textures[MATERIAL_MAP_SPECULAR], uv0, uv1, lod, ray).a;
+    if (material_has(m.textures[MATERIAL_MAP_SPECULAR_COLOR])) s.specular_color *= material_map_texel(m, MATERIAL_MAP_SPECULAR_COLOR, m.textures[MATERIAL_MAP_SPECULAR_COLOR], uv0, uv1, lod, ray).rgb;
+    s.specular_ior = m.ior;
+    // The layers the row holds there, as a program gives them.
+    s.unlit = (layers.bits & MATERIAL_LAYER_UNLIT) != 0u;
+    if ((layers.bits & MATERIAL_LAYER_COAT) != 0u) {
+        s.coat_weight = layers.coat; s.coat_roughness = layers.coat_roughness; s.coat_color = layers.coat_color; s.coat_ior = layers.coat_ior; s.coat_normal = layers.coat_normal;
+    }
+    if ((layers.bits & MATERIAL_LAYER_FUZZ) != 0u) {
+        s.fuzz_weight = layers.fuzz; s.fuzz_color = layers.fuzz_color; s.fuzz_roughness = layers.fuzz_roughness;
+    }
+    if ((layers.bits & MATERIAL_LAYER_ANISOTROPY) != 0u) {
+        s.specular_anisotropy = layers.anisotropy; s.specular_tangent = layers.tangent;
+    }
+    if ((layers.bits & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) != 0u) {
+        s.diffuse_transmission_weight = layers.diffuse_transmission; s.diffuse_transmission_color = layers.diffuse_transmission_color;
+    }
     return s;
+}
+Material_Sample material_evaluate(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission) {
+    Material_Sample s;
+    Material_Layers layers;
+    Mirai_Surface standard = material_standard(m, ctx, tint, layers);
+    s.base_color = standard.base_color;
+    s.alpha = standard.alpha;
+    s.roughness = standard.roughness;
+    s.metallic = standard.metallic;
+    s.occlusion = standard.occlusion;
+    s.emission = standard.emission + added_emission;
+    s.layers = layers;
+    material_specular(s, standard.specular_color, m.ior, standard.specular_factor);
+    return s;
+}
+Mirai_Surface mirai_surface_standard(Mirai_Surface_Context ctx) {
+    if (ctx.material == INVALID) return mirai_surface_default(ctx);
+    Material_Layers layers;
+    return material_standard(material_instanced(material_row(ctx.material), ctx.material_values), ctx, float3(1.0), layers);
 }
 // The context of a point for its material. vertex_normal: the interpolated
 // normal of the surface, facing like `normal`; tangent: its MikkTSpace
@@ -724,6 +842,7 @@ Mirai_Surface_Context material_context(float3 position, float3 normal, float3 ve
     ctx.vertex_color = float4(1.0);
     ctx.object_position = float3(0.0); ctx.object_x = float3(1.0, 0.0, 0.0); ctx.object_y = float3(0.0, 1.0, 0.0); ctx.object_z = float3(0.0, 0.0, 1.0);
     ctx.object_center = float3(0.0); ctx.object_radius = 0.0; ctx.object_low = float3(0.0); ctx.object_high = float3(0.0); ctx.wet = 0.0;
+    ctx.material_values = 0u; ctx.material = INVALID;
     ctx.particle_data[0] = float4(0.0); ctx.particle_data[1] = float4(0.0); ctx.particle_data[2] = float4(0.0); ctx.particle_data[3] = float4(0.0); ctx.particle_given = 0u; ctx.particle_random = 0.0; ctx.particle_radius = 0.0;
     float4 clip = view_clip(position);
     float2 ndc = clip.xy / max(clip.w, 1e-6);
@@ -744,6 +863,7 @@ Mirai_Surface_Context material_context_instance(Mirai_Surface_Context ctx, Insta
     ctx.object_radius = length(float3(length(ctx.object_x) * half_size.x, length(ctx.object_y) * half_size.y, length(ctx.object_z) * half_size.z));
     ctx.object_low = mesh.bounds_min.xyz; ctx.object_high = mesh.bounds_max.xyz;
     ctx.wet = saturate(inst.wet);
+    ctx.material_values = inst.material_values;
     return ctx;
 }
 // The same for an instance an index names; INVALID (a surface an extension
@@ -794,15 +914,18 @@ void material_program_apply(Material m, Mirai_Surface result, float3 tint, float
     if ((l.bits & MATERIAL_LAYER_ANISOTROPY) == 0u) l.anisotropy = 0.0;
     if ((l.bits & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) == 0u) l.diffuse_transmission = 0.0;
     values.layers = l;
-    material_specular(values, result.specular_color, max(result.specular_ior, 0.0), result.specular_factor);
+    material_specular(values, result.specular_color, max(result.specular_ior, 1.0), result.specular_factor);
 }
 // The program of a material at a point; false without one, or in a stage that
 // runs none (it includes the empty surface_programs.slang).
 bool material_program(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission, out Material_Sample values, inout float3 normal) {
     values = (Material_Sample)0;
     if (m.program_id == 0u) return false;
+    ctx.material = m.row;
     Mirai_Surface result = mirai_surface_default(ctx);
-    if (!mirai_evaluate_program(m.program_id, materials[m.row].custom_params, ctx, result)) return false;
+    float4 parameters[16];
+    material_parameters(m.row, ctx.material_values, parameters);
+    if (!mirai_evaluate_program(m.program_id, parameters, ctx, result)) return false;
     material_program_apply(m, result, tint, added_emission, values, normal);
     return true;
 }
@@ -834,6 +957,7 @@ Material_Sample material_sample_finish(Material_Sample values, Material m, Mirai
 }
 Material_Sample material_sample(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission, inout float3 normal) {
     Material_Sample values;
+    m = material_instanced(m, ctx.material_values);
     if (!material_program(m, ctx, tint, added_emission, values, normal)) values = material_evaluate(m, ctx, tint, added_emission);
     return material_sample_finish(values, m, ctx);
 }
@@ -884,6 +1008,7 @@ float3 hit_emission(Material_Sample m) {
 float material_alpha(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission) {
     float3 normal = ctx.normal;
     Material_Sample values;
+    m = material_instanced(m, ctx.material_values);
     if (material_program(m, ctx, tint, added_emission, values, normal)) return values.alpha;
     return material_base_color(m, ctx.uv0, ctx.uv1, float2(ctx.lod, ctx.lod1), tint, ctx.ray).a;
 }
@@ -898,7 +1023,6 @@ bool material_covers(Material m, float alpha) {
 
 // A blended material with transmission and thickness is the boundary of a
 // solid: its front faces are where light enters it.
-float material_ior(Material m) { return m.ior == 0.0 ? 1e10 : m.ior; }
 
 bool material_solid(Material m) { return m.transmission > 0.0 && m.thickness > 0.0; }
 
@@ -980,11 +1104,6 @@ float hit_lod(float3 world_edge1, float3 world_edge2, float2 uv_edge1, float2 uv
     return 0.5 * log2(max(uv_area, 1e-12) / max(world_area, 1e-12)) + log2(max(footprint, 1e-6));
 }
 
-// The four numbers an extension gave the instance (scene_set_instance_values).
-float4 instance_values(uint instance_index) {
-    Instance inst = scene_instance(instance_index);
-    return float4(inst.tint.w, inst.emission.w, inst.bounds_min.w, inst.bounds_max.w);
-}
 
 // What multiplies the base color of a material at a vertex of that color: the
 // color, but for a program, which reads it in its context.
@@ -1109,8 +1228,12 @@ Hit_Point hit_point(uint instance_index, uint primitive, float2 bary, float foot
 // What the program of the material at a hit gives there: only a stage of that
 // program runs it (surface_points.comp).
 Mirai_Surface hit_program(Hit_Point h) {
-    Mirai_Surface result = mirai_surface_default(h.ctx);
-    mirai_evaluate_program(h.m.program_id, materials[h.m.row].custom_params, h.ctx, result);
+    Mirai_Surface_Context ctx = h.ctx;
+    ctx.material = h.m.row;
+    Mirai_Surface result = mirai_surface_default(ctx);
+    float4 parameters[16];
+    material_parameters(h.m.row, ctx.material_values, parameters);
+    mirai_evaluate_program(h.m.program_id, parameters, ctx, result);
     return result;
 }
 
