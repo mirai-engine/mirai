@@ -70,7 +70,8 @@ A game is a struct in memory and a list of functions that transform it
 1. A component is a plain struct with `@(component)`; a storage, one with `@(storage)`. No pointers
    or dynamic ownership in components. `description="..."` gives an optional description of the
    component in its metadata, without per-entity data.
-2. The options of each field go in the `mirai:"..."` tag: `transient`, `local`, `readonly`,
+2. The options of each field go in the `mirai:"..."` tag, which `std/serial` alone reads
+   ([tags](../mirai-assets/references/serial.md)): `transient`, `local`, `readonly`,
    `hidden`, `text`, `hex` (an exact `u64` in the inspector, without going through float), `color`,
    `angle`, `unit=`, `min=`, `max=`, `precision=`, `bits=`, `section=` (inspector subtitle,
    [inspector](../mirai-editor/references/inspector.md)), `owned` (an `Asset_Id` that the scene

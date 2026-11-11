@@ -90,7 +90,8 @@ mirai_starting_to_its_side_turns_no_bone_faster_than_its_walk :: proc(t:^testing
     f:Animation_Input_Fixture;defer animation_input_fixture_destroy(&f)
     graphs:anim.Character_Assets;defer anim.character_assets_free(&graphs)
     progress:core.Table(anim.Animation_Progress);defer core.table_destroy(&progress)
-    constraints:anim.Animation_Constraints;grounding:anim.Grounding_Runtime
+    constraints:anim.Animation_Constraints;defer anim.constraints_free(&constraints)
+    grounding:anim.Grounding_Runtime;defer anim.grounding_free(&grounding)
     core.entities_init(&f.entities)
     root,found:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
     if !testing.expect(t,found && host.assets_init(&f.assets,{root=fmt.tprintf("%s/demo/assets",root),imported=fmt.tprintf("%s/demo/.mirai/imported",root),capacity=512})) {return}

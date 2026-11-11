@@ -5,7 +5,6 @@ import "core:testing"
 import "mirai:asset"
 import importer "mirai:cook/import"
 import "mirai:core"
-import "mirai:editor/api"
 import "mirai:editor/records"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -291,25 +290,13 @@ records_move_places_a_row_right_after_another :: proc(t:^testing.T) {
     }
 }
 
-// The hand-written params schemas are JSON, and a row as inspect writes it
-// keeps the shape of its result.
+// A row as inspect gives it holds the key of its texts in its values.
 @(test)
-records_api_schemas_and_results_keep_their_shape :: proc(t:^testing.T) {
-    for schema in ([]string{RECORDS_API_CREATE_SCHEMA,RECORDS_API_INSPECT_SCHEMA,RECORDS_API_SET_SCHEMA,RECORDS_API_ADD_SCHEMA,RECORDS_API_REMOVE_SCHEMA,RECORDS_API_MOVE_SCHEMA,RECORDS_API_IMPORT_SCHEMA,RECORDS_API_EXPORT_SCHEMA}) {
-        testing.expectf(t,api.json_valid(context.temp_allocator,schema),"%s",schema)
-    }
+records_api_rows_give_their_values :: proc(t:^testing.T) {
     f:Csv_Fixture
     csv_fixture(&f)
     _,_,_,message:=csv_import(&f,"name,damage,title.key\nsword,7,item.sword\naxe,1,\n")
     testing.expect_value(t,message,"")
-    out:serial.Writer
-    serial.writer_init(&out,0,context.temp_allocator)
-    serial.text_write_raw(&out,`{"records":"00000000000000090000000000000009","type":"game.Weapon","rows":[`)
-    records_api_row_write(&out,&f.c,0)
-    serial.write_u8(&out,',')
-    records_api_row_write(&out,&f.c,1)
-    serial.text_write_raw(&out,"]}")
-    text:=string(serial.writer_bytes(&out))
-    testing.expectf(t,strings.contains(text,`"title": {"key": "item.sword"}`),"%s",text)
-    api_result_shape_expect(t,text,Api_Records_Table)
+    sword:=records_api_row(&f.c,0)
+    testing.expectf(t,sword.name=="sword" && strings.contains(string(sword.values),`"title": {"key": "item.sword"}`),"%v",sword)
 }

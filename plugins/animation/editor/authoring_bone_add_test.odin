@@ -34,7 +34,7 @@ a_bone_added_to_a_skeleton_goes_last_and_takes_the_tracks_of_its_name :: proc(t:
 
     params:=fmt.tprintf(`{{"asset":"%s","parent":"root/hand_r","bone":{{"name":"hand_attach_r","position":[-0.085,0,0.03]}},"clips":["%s"]}}`,skeleton,clip)
     if !testing.expect_value(t,authoring_test_execute(f,"add",params).code,0) {return}
-    text:=string(serial.writer_bytes(&f.out))
+    text:=api.json_compact(string(serial.writer_bytes(&f.out)))
     testing.expect(t,strings.contains(text,`"bone":"root/hand_r/hand_attach_r"`) && strings.contains(text,`"renamed":1`) && strings.contains(text,`"driving":1`),text)
 
     file:asset.Asset

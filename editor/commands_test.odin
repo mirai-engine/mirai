@@ -107,11 +107,9 @@ every_entry_of_a_menu_or_a_shortcut_calls_a_method_of_the_api_with_params_it_tak
         }
     }
     // The entries are what editor.inspect tells an agent, with the method of each.
-    out:serial.Writer
-    serial.writer_init(&out);defer serial.writer_destroy(&out)
-    api_commands_write(s,&out)
-    listed:=string(serial.writer_bytes(&out))
-    testing.expect(t,strings.contains(listed,`{"name":"delete","method":"scene.write","params":"{\"root\":\"$roots\",\"merge\":true,\"entities\":[{\"delete\":true}]}"`),listed[:min(len(listed),200)])
+    found:=false
+    for command in api_commands(s) {found ||= command.name=="delete" && command.method=="scene.write" && command.params==`{"root":"$roots","merge":true,"entities":[{"delete":true}]}`}
+    testing.expect(t,found,"delete calls scene.write on the roots")
 }
 
 @(test)

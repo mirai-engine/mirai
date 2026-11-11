@@ -1,6 +1,7 @@
 package cinematics_editor
 
 import "core:fmt"
+import "core:strings"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
@@ -22,29 +23,29 @@ Inspect_Params :: struct {
 }
 Inspect_Marker :: struct {
     entity:base.Entity_Id `mirai:"label=The camera or the actor it is on; 0: no entity has its target"`,
-    target:[64]u8 `mirai:"text,label=Its target in animation.marker.set"`,
-    name:[64]u8 `mirai:"text,label=Of an action: the action it plays"`,
+    target:string `mirai:"label=Its target in animation.marker.set"`,
+    name:string `mirai:"label=Of an action: the action it plays"`,
     time,duration:f32 `mirai:"unit=s,label=Of a shot, the duration is its blend"`,
 }
 Inspect_Actor :: struct {
     id:base.Entity_Id,
-    name:[64]u8 `mirai:"text"`,
-    target:[64]u8 `mirai:"text,label=What the tracks and markers of the clip call it: the target of animation.track.set and animation.marker.set; its field tracks are target/@field/Component.field"`,
+    name:string,
+    target:string `mirai:"label=What the tracks and markers of the clip call it: the target of animation.track.set and animation.marker.set; its field tracks are target/@field/Component.field"`,
 }
 Inspect_View :: struct {camera:base.Entity_Id,position:[3]f32,rotation:[4]f32 `mirai:"label=Quaternion xyzw"`,fov:f32 `mirai:"angle"`,near:f32 `mirai:"unit=m"`}
 Inspect_Preview :: struct {on,playing,shot_view:bool,head:f32 `mirai:"unit=s"`}
 Inspect_Result :: struct {
     id:base.Entity_Id,
-    name:[64]u8 `mirai:"text"`,
+    name:string,
     clip:base.Asset_Id `mirai:"label=The .anim of the Animation of the timeline: animation.track.set and animation.key.set write its keys and animation.marker.set its markers, its shots and its actions"`,
-    clip_name:[anim.CLIP_CAPACITY]u8 `mirai:"text,label=Animation.clip; empty: the first of the asset"`,
+    clip_name:string `mirai:"label=Animation.clip; empty: the first of the asset"`,
     duration:f32 `mirai:"unit=s,label=Of the clip as the world plays it; 0 before it has one"`,
     loop,playing:bool `mirai:"label=Of its Animation"`,
     status:cine.Cinematic_Status,
     time:f32 `mirai:"unit=s,label=The time the shot is given at"`,
-    shots:[1]Inspect_Marker `mirai:"list,label=The markers of the clip on cameras"`,
-    actions:[1]Inspect_Marker `mirai:"list,label=The markers of the clip on the other actors"`,
-    actors:[1]Inspect_Actor `mirai:"list,label=The entities out of the timeline that its clip moves by name"`,
+    shots:[]Inspect_Marker `mirai:"label=The markers of the clip on cameras"`,
+    actions:[]Inspect_Marker `mirai:"label=The markers of the clip on the other actors"`,
+    actors:[]Inspect_Actor `mirai:"label=The entities out of the timeline that its clip moves by name"`,
     view:Inspect_View `mirai:"optional,label=What its seat sees at the time with the scene as it is; absent without a shot in force"`,
     preview:Inspect_Preview `mirai:"label=The Tracks tool of the editor on the clip, and the shot view of the Cinematics tool"`,
 }
@@ -79,9 +80,9 @@ Add_Result :: struct {id:base.Entity_Id}
 register :: proc(s:^editor.Session) {
     editor.tool_entry(s,TOOL,"Cinematics",.Play)
     inspect_defaults:=Inspect_Params{time=-1}
-    editor.api_method_register(s,Inspect_Params,Inspect_Result,{name="cinematics.inspect",summary="A timeline: the clip of its Animation and where it is, its shots and actions (the markers of the clip on its cameras and actors), the actors its clip moves, what its seat sees at a time, and the preview of the editor. animation.asset.inspect reads the keys and markers of the clip.",defaults=&inspect_defaults,writes_result=true,flags={.Read_Only},run=api_inspect})
-    editor.api_method_register(s,Control_Params,Control_Result,{name="cinematics.control",summary="Plays, pauses, resumes, stops or seeks the clip of a timeline: in Edit the head of the Tracks tool in the Cinematics tool, which shows the scene there without changing the document (animation.tracks.show for any clip); in Play the running world, as anim.animation_command does.",run=api_control})
-    editor.api_method_register(s,Add_Params,Add_Result,{name="cinematics.add",summary="Adds a timeline (an entity with a Cinematic and the Animation that plays its clip) or an actor: an entity anywhere that the clip moves and puts markers on by a name. Shots and actions are markers of the clip on its actors: animation.marker.set with their target. One step of undo.",run=api_add})
+    editor.api_method_register(s,{params=type_info_of(Inspect_Params),result=type_info_of(Inspect_Result),name="cinematics.inspect",summary="A timeline: the clip of its Animation and where it is, its shots and actions (the markers of the clip on its cameras and actors), the actors its clip moves, what its seat sees at a time, and the preview of the editor. animation.asset.inspect reads the keys and markers of the clip.",defaults=&inspect_defaults,flags={.Read_Only},run=api_inspect})
+    editor.api_method_register(s,{params=type_info_of(Control_Params),result=type_info_of(Control_Result),name="cinematics.control",summary="Plays, pauses, resumes, stops or seeks the clip of a timeline: in Edit the head of the Tracks tool in the Cinematics tool, which shows the scene there without changing the document (animation.tracks.show for any clip); in Play the running world, as anim.animation_command does.",run=api_control})
+    editor.api_method_register(s,{params=type_info_of(Add_Params),result=type_info_of(Add_Result),name="cinematics.add",summary="Adds a timeline (an entity with a Cinematic and the Animation that plays its clip) or an actor: an entity anywhere that the clip moves and puts markers on by a name. Shots and actions are markers of the clip on its actors: animation.marker.set with their target. One step of undo.",run=api_add})
 }
 
 @(private)
@@ -116,67 +117,29 @@ api_inspect :: proc(s:^editor.Session,call:^api.Call) {
     if time<0 {time=previewed?head:at}
     status:=value.status
     if s.mode==.Edit {status=clipped?cine.cinematic_status(false,ended,at):.Stopped}
-    out:=call.out
-    serial.write_u8(out,'{')
-    api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,timeline))
-    api.write_text(out,"name",editor.entity_name(w,timeline))
-    clip_text:[base.ASSET_ID_TEXT]u8
-    api.write_text(out,"clip",base.asset_id_format(animation.asset,clip_text[:]))
-    api.write_text(out,"clip_name",base.text_get(animation.clip[:]))
-    api.write_key(out,"duration");api.write_number(out,clipped?duration:0)
-    api.write_bool(out,"loop",animation.loop)
-    api.write_bool(out,"playing",animation.playing)
-    api.write_text(out,"status",fmt.tprintf("%v",status))
-    api.write_key(out,"time");api.write_number(out,time)
+    r:=api.call_result(call,Inspect_Result)
+    r^={
+        id=editor.api_entity_id(w,timeline),name=editor.entity_name(w,timeline),clip=animation.asset,clip_name=strings.clone(base.text_get(animation.clip[:]),call.allocator),
+        duration=clipped?duration:0,loop=animation.loop,playing=animation.playing,status=status,time=time,
+        preview={previewed,previewed && playing,previewed && c!=nil && c.shot_view && editor.tool_on(s,TOOL),previewed?head:0},
+    }
     markers,content:=anim.animation_markers(playback,core.world_storage_of(w,anim.Source_Assets),s.app,timeline)
     cameras:=core.world_table_of(w,erender.Camera)
-    for list in ([]string{"shots","actions"}) {
-        api.write_key(out,list);serial.write_u8(out,'[')
-        first:=true
-        for marker in markers {
-            if int(marker.id)>=len(content.markers) || content.markers[marker.id].target==0 {continue}
-            on:=anim.animation_bound(playback,timeline,content.markers[marker.id].target)
-            if !editor.entity_alive(w,on) {on=core.NONE}
-            if (list=="shots")!=(on!=core.NONE && cameras!=nil && core.has(cameras,on)) {continue}
-            if !first {serial.write_u8(out,',')}
-            first=false
-            serial.write_u8(out,'{')
-            api.write_key(out,"entity",true);api.write_id(out,editor.api_entity_id(w,on))
-            api.write_text(out,"target",actor_target(w,on) if on!=core.NONE else "")
-            api.write_text(out,"name",base.text_get(content.markers[marker.id].text[:]))
-            api.write_key(out,"time");api.write_number(out,marker.time)
-            api.write_key(out,"duration");api.write_number(out,marker.duration)
-            serial.write_u8(out,'}')
-        }
-        serial.write_u8(out,']')
+    shots,actions:=make([dynamic]Inspect_Marker,call.allocator),make([dynamic]Inspect_Marker,call.allocator)
+    for marker in markers {
+        if int(marker.id)>=len(content.markers) || content.markers[marker.id].target==0 {continue}
+        on:=anim.animation_bound(playback,timeline,content.markers[marker.id].target)
+        if !editor.entity_alive(w,on) {on=core.NONE}
+        row:=Inspect_Marker{editor.api_entity_id(w,on),strings.clone(actor_target(w,on),call.allocator) if on!=core.NONE else "",strings.clone(base.text_get(content.markers[marker.id].text[:]),call.allocator),marker.time,marker.duration}
+        append(&shots if on!=core.NONE && cameras!=nil && core.has(cameras,on) else &actions,row)
     }
-    api.write_key(out,"actors");serial.write_u8(out,'[')
+    r.shots,r.actions=shots[:],actions[:]
     actors,_:=actors_of(w,timeline)
-    for actor,i in actors {
-        if i>0 {serial.write_u8(out,',')}
-        serial.write_u8(out,'{')
-        api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,actor))
-        api.write_text(out,"name",editor.entity_name(w,actor))
-        api.write_text(out,"target",actor_target(w,actor))
-        serial.write_u8(out,'}')
-    }
-    serial.write_u8(out,']')
+    r.actors=make([]Inspect_Actor,len(actors),call.allocator)
+    for actor,i in actors {r.actors[i]={editor.api_entity_id(w,actor),editor.entity_name(w,actor),strings.clone(actor_target(w,actor),call.allocator)}}
     if shot,pose,ok:=shot_view(s,w,timeline,time);ok {
-        api.write_key(out,"view");serial.write_u8(out,'{')
-        api.write_key(out,"camera",true);api.write_id(out,editor.api_entity_id(w,shot.camera))
-        api.write_numbers(out,"position",pose.position)
-        rotation:=([4]f32)(lib.quat_vec4(pose.rotation))
-        api.write_numbers(out,"rotation",rotation[:])
-        api.write_key(out,"fov");api.write_number(out,pose.fov)
-        api.write_key(out,"near");api.write_number(out,pose.near)
-        serial.write_u8(out,'}')
+        r.view={editor.api_entity_id(w,shot.camera),pose.position,([4]f32)(lib.quat_vec4(pose.rotation)),pose.fov,pose.near}
     }
-    api.write_key(out,"preview");serial.write_u8(out,'{')
-    api.write_bool(out,"on",previewed,true)
-    api.write_bool(out,"playing",previewed && playing)
-    api.write_bool(out,"shot_view",previewed && c!=nil && c.shot_view && editor.tool_on(s,TOOL))
-    api.write_key(out,"head");api.write_number(out,previewed?head:0)
-    serial.text_write_raw(out,"}}")
 }
 
 @(private)

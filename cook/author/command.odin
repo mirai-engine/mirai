@@ -2,6 +2,7 @@ package author
 
 import "core:fmt"
 import "core:io"
+import "core:mem/virtual"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -569,33 +570,144 @@ command_check :: proc(run:^Run,args:[]string) -> int {
     return 0
 }
 
-// Checks the scenes args name, all without one: each reads as its
-// document and that document writes it back, and what it stores otherwise
-// than the game reads it is said, a problem when a save loses values or
-// nothing reads them. How many problems.
+// Checks the scenes args name; without one, those of the project and the
+// recipes of the engine and of its plugins: each reads as its document and
+// that document writes it back, and what it stores otherwise than the game
+// reads it is said, a problem when a save loses values or nothing reads them.
+// Without names, a scene whose key did not move since the last check (in
+// SCENE_KEYS_FILE) is not checked again: what that check said is said. How
+// many problems.
 @(private="file")
 scene_check :: proc(run:^Run,args:[]string) -> (count:int) {
-    paths:=make([dynamic]string,context.temp_allocator)
+    // What is said of the scenes outlives the temporary memory the checks of the next ones use.
+    arena:virtual.Arena
+    if virtual.arena_init_growing(&arena)!=nil {run_fail(run,"","memory ran out");return}
+    defer virtual.arena_destroy(&arena)
+    kept:=virtual.arena_allocator(&arena)
+    Named :: struct {path,shown,file:string} // file: a recipe, outside the assets
+    scenes:=make([dynamic]Named,kept)
     for arg in args {
         path,taken:=asset_named(run.p,arg,.Scene,false)
         if taken!="" {run_fail(run,arg,taken);continue}
-        append(&paths,asset_path(path))
+        path=strings.clone(asset_path(path),kept)
+        append(&scenes,Named{path,path,""})
     }
-    if len(args)==0 {
+    whole:=len(args)==0
+    if whole {
         for &file in run.p.registry.files {
-            if file.state==.Asset && asset.registry_listed(&file) && path_of_kind(file.path,.Scene) && !path_mounted(&run.p.registry,file.path) {append(&paths,strings.clone(file.path,context.temp_allocator))}
+            if file.state==.Asset && asset.registry_listed(&file) && path_of_kind(file.path,.Scene) && !path_mounted(&run.p.registry,file.path) {
+                path:=strings.clone(file.path,kept)
+                append(&scenes,Named{path,path,""})
+            }
+        }
+        for recipe in run.p.recipes {
+            path,taken:=asset_named(run.p,recipe.path,.Scene,false)
+            if taken!="" {run_fail(run,recipe.path,taken);continue}
+            append(&scenes,Named{strings.clone(path,kept),strings.clone(recipe.path,kept),strings.clone(recipe.path,kept)})
         }
     }
-    for path in paths {
-        if problem:=scene_verify(run.p,path);problem!="" {
-            fmt.wprintfln(run.output,"%s: %s",path,problem)
-            count+=1
+    keys:=project.path(project.folder_path(run.p.root,.Generated,context.temp_allocator),"build",SCENE_KEYS_FILE,allocator=context.temp_allocator)
+    types:=scene_types_key(run.p) if whole else 0
+    previous:=scene_keys_read(keys,types,kept)
+    checked:=make([dynamic]Scene_Checked,kept)
+    closure:=make([dynamic]u32,context.temp_allocator)
+    for scene in scenes {
+        key:=scene_key(run.p,scene.path,scene.file,types,&closure)
+        if old,kept:=previous[scene.shown];kept && old.key==key && types!=0 {
+            fmt.wprint(run.output,old.text)
+            append(&checked,old)
+            count+=old.problems
+            continue
         }
-        for entry in scene_stored(run.p,path) {
-            text,warning:=escene.stored_text(entry,path)
-            fmt.wprintln(run.output,text)
-            if warning {count+=1}
+        said:=strings.builder_make(kept)
+        problems:=0
+        if problem:=scene_verify(run.p,scene.path);problem!="" {
+            fmt.sbprintfln(&said,"%s: %s",scene.shown,problem)
+            problems+=1
         }
+        for entry in scene_stored(run.p,scene.path) {
+            text,warning:=escene.stored_text(entry,scene.shown)
+            fmt.sbprintln(&said,text)
+            if warning {problems+=1}
+        }
+        fmt.wprint(run.output,strings.to_string(said))
+        append(&checked,Scene_Checked{scene.shown,key,problems,strings.to_string(said)})
+        count+=problems
     }
+    if whole && types!=0 {scene_keys_write(keys,types,checked[:])}
     return
+}
+
+// Raise it when the check says something else of the same scenes and types: every key moves.
+@(private="file")
+SCENE_KEYS_VERSION :: 1
+// In the build folder of the project: what the last check of all its scenes said of each.
+SCENE_KEYS_FILE :: "scenes.keys"
+
+@(private)
+Scene_Checked :: struct {shown:string,key:u64,problems:int,text:string}
+
+// What the check of a scene reads: the types of the game, the scene and the prefabs it places,
+// by content.
+@(private="file")
+scene_key :: proc(p:^Project,path,file:string,types:u64,closure:^[dynamic]u32) -> u64 {
+    if types==0 {return 0}
+    if file!="" {
+        bytes,error:=os.read_entire_file(file,context.temp_allocator)
+        return base.hash_combine(types,base.hash64(bytes)) if error==nil else 0
+    }
+    found,listed:=asset.registry_find_path(&p.registry,path)
+    if !listed {return 0}
+    key:=base.hash_combine(types,found.content_hash)
+    asset.registry_closure(&p.registry,found.id,closure)
+    for needed in closure^ {key=base.hash_combine(key,p.registry.files[needed].content_hash)}
+    return key
+}
+
+// The types of the game a scene is checked against; 0: unknown.
+@(private)
+scene_types_key :: proc(p:^Project) -> u64 {
+    if p.info==nil || p.info.schema==nil {return 0}
+    w:serial.Writer
+    serial.writer_init(&w,allocator=context.temp_allocator)
+    serial.schema_write(&w,&p.info.schema.schema)
+    key:=base.hash_combine(SCENE_KEYS_VERSION,base.hash64(serial.writer_bytes(&w)))
+    for t in p.info.tables {key=base.hash_combine(base.hash_combine(key,base.name_hash(t.name)),base.name_hash(t.was))}
+    return key|1
+}
+
+@(private)
+scene_keys_read :: proc(file:string,types:u64,allocator:=context.allocator) -> map[string]Scene_Checked {
+    previous:=make(map[string]Scene_Checked,allocator)
+    data,error:=serial.file_read(file,allocator)
+    if types==0 || error!=.None {return previous}
+    r:=serial.reader_init(data)
+    if serial.read_varint(&r)!=SCENE_KEYS_VERSION || serial.read_u64(&r)!=types {return previous}
+    count:=serial.read_count(&r,11)
+    for _ in 0..<count {
+        entry:Scene_Checked
+        entry.shown=serial.read_string(&r)
+        entry.key=serial.read_u64(&r)
+        entry.problems=int(serial.read_varint(&r))
+        entry.text=serial.read_string(&r)
+        if r.failed {break}
+        previous[entry.shown]=entry
+    }
+    return previous
+}
+
+@(private)
+scene_keys_write :: proc(file:string,types:u64,checked:[]Scene_Checked) {
+    w:serial.Writer
+    serial.writer_init(&w,allocator=context.temp_allocator)
+    serial.write_varint(&w,SCENE_KEYS_VERSION)
+    serial.write_u64(&w,types)
+    serial.write_varint(&w,u64(len(checked)))
+    for entry in checked {
+        serial.write_string(&w,entry.shown)
+        serial.write_u64(&w,entry.key)
+        serial.write_varint(&w,u64(entry.problems))
+        serial.write_string(&w,entry.text)
+    }
+    _=serial.file_write_atomic(file,serial.writer_bytes(&w))
 }

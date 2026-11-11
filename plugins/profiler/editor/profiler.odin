@@ -34,7 +34,7 @@ panel_of :: proc(s:^editor.Session) -> ^Profiler_Panel {
 @(private)
 api_register :: proc(s:^editor.Session) {
 	open:=Panel_Params{open=true}
-	editor.api_method_register(s,Panel_Params,Panel_Result,{
+	editor.api_method_register(s,{params=type_info_of(Panel_Params),result=type_info_of(Panel_Result),
 		name="profile.panel",summary="Opens or closes the Profiler panel of the editor, which shows the last capture of profile.capture; capture with ui to see it.",
 		defaults=&open,flags={.Idempotent},run=api_panel,
 		entry={name="profiler",params=`{"open":"$toggle"}`,label="Profiler",menu=.View,group=editor.MENU_GROUP_PLUGINS,state=panel_state},

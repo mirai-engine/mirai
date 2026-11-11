@@ -168,18 +168,18 @@ Ai_Memory_Search_Params :: struct {
     limit:int `mirai:"optional,min=0,max=50,label=Hits to return; zero returns 10"`,
 }
 Ai_Memory_Search_Hit :: struct {
-    path:[AI_PATH_BYTES]u8 `mirai:"text,label=What memory.read takes"`,
-    snippet:[512]u8 `mirai:"text,label=Words around the matches, which go between **"`,
+    path:string `mirai:"label=What memory.read takes"`,
+    snippet:string `mirai:"label=Words around the matches, which go between **"`,
 }
 Ai_Memory_Search_Result :: struct {
-    hits:[1]Ai_Memory_Search_Hit `mirai:"list,label=The topics that match; the best first"`,
+    hits:[]Ai_Memory_Search_Hit `mirai:"label=The topics that match; the best first"`,
 }
 Ai_Memory_Read_Params :: struct {
     path:[AI_PATH_BYTES]u8 `mirai:"text,label=Of a topic as memory.search gives it; or the file of the user"`,
 }
 Ai_Memory_Read_Result :: struct {
-    path:[AI_PATH_BYTES]u8 `mirai:"text"`,
-    text:[AI_MEMORY_TOPIC_BYTES+1]u8 `mirai:"text"`,
+    path:string,
+    text:string,
     cut:bool `mirai:"label=The file is longer than this text"`,
 }
 Ai_Memory_Save_Params :: struct {
@@ -193,30 +193,24 @@ Ai_Memory_Save_Result :: struct {
 
 @(private)
 ai_memory_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="memory.search",summary="Full-text search of the topics of the memory of the project by their words, ranked by BM25; memory.read gives the one you want.",params=Ai_Memory_Search_Params,result=Ai_Memory_Search_Result,writes_result=true,flags={.Core,.Read_Only},run=ai_method_memory_search})
-    api_register(s,st,{name="memory.read",summary="A topic of the memory of the project, or the file of the user.",params=Ai_Memory_Read_Params,result=Ai_Memory_Read_Result,writes_result=true,flags={.Core,.Read_Only},run=ai_method_memory_read})
-    api_register(s,st,{name="memory.save",summary="Replaces a topic of the memory of the project, its short index, or the memory of the user, with one text that says how things are now.",params=Ai_Memory_Save_Params,result=Ai_Memory_Save_Result,flags={.Core},run=ai_method_memory_save})
+    api_register(s,st,{name="memory.search",summary="Full-text search of the topics of the memory of the project by their words, ranked by BM25; memory.read gives the one you want.",params=type_info_of(Ai_Memory_Search_Params),result=type_info_of(Ai_Memory_Search_Result),flags={.Core,.Read_Only},run=ai_method_memory_search})
+    api_register(s,st,{name="memory.read",summary="A topic of the memory of the project, or the file of the user.",params=type_info_of(Ai_Memory_Read_Params),result=type_info_of(Ai_Memory_Read_Result),flags={.Core,.Read_Only},run=ai_method_memory_read})
+    api_register(s,st,{name="memory.save",summary="Replaces a topic of the memory of the project, its short index, or the memory of the user, with one text that says how things are now.",params=type_info_of(Ai_Memory_Save_Params),result=type_info_of(Ai_Memory_Save_Result),flags={.Core},run=ai_method_memory_save})
 }
 
 @(private)
 ai_method_memory_search :: proc(s:^Session,call:^api.Call) {
     ai_initialize(s)
-    p:=api.call_params(call,Ai_Memory_Search_Params);w:=call.out
+    p:=api.call_params(call,Ai_Memory_Search_Params)
     hits:[ai_store.SEARCH_HITS]ai_store.Memory_Hit
     query:=base.text_get(p.query[:])
     if ai_store.index_match(query,false)=="" {api.call_fail(call,api.INVALID_PARAMS,ai_store.SEARCH_NO_WORDS);return}
     limit:=p.limit if p.limit>0 else AI_MEMORY_DEFAULT_HITS
     count,message:=ai_store.memory_search(&s.ai.store,query,hits[:min(limit,len(hits))],marks={"**","**"},allocator=call.allocator)
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
-    serial.text_write_raw(w,`{"hits":[`)
-    for &hit,index in hits[:count] {
-        if index>0 {serial.write_u8(w,',')}
-        serial.write_u8(w,'{')
-        api.write_text(w,"path",hit.path,true)
-        api.write_text(w,"snippet",hit.snippet)
-        serial.write_u8(w,'}')
-    }
-    serial.text_write_raw(w,"]}")
+    found:=make([]Ai_Memory_Search_Hit,count,call.allocator)
+    for &hit,index in hits[:count] {found[index]={hit.path,hit.snippet}}
+    api.call_result(call,Ai_Memory_Search_Result).hits=found
 }
 
 @(private)
@@ -227,12 +221,7 @@ ai_method_memory_read :: proc(s:^Session,call:^api.Call) {
     if problem!="" {api.call_fail(call,api.INVALID_PARAMS,problem);return}
     if !os.is_file(full) {api.call_failf(call,api.INVALID_PARAMS,"%s does not exist: memory.search lists the topics",path);return}
     text,cut:=ai_memory_load(full,AI_MEMORY_TOPIC_BYTES)
-    w:=call.out
-    serial.write_u8(w,'{')
-    api.write_text(w,"path",path,true)
-    api.write_text(w,"text",text)
-    api.write_bool(w,"cut",cut)
-    serial.write_u8(w,'}')
+    api.call_result(call,Ai_Memory_Read_Result)^={path,text,cut}
 }
 
 @(private)

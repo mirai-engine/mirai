@@ -150,7 +150,8 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     f.s={app=&f.app,info=&f.info,edit_world=f.data,editor_world=&f.tools,edits=&f.edits,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,document=&f.document,build=&f.build}
     history.edits_reset(&f.edits,editor.edited_world(&f.s))
     f.document.saved=history.edits_state(&f.edits)
-    if !testing.expect(t,editor.api_open(&f.s,0,true)==.None) {return false}
+    api_opened,api_problem:=editor.api_open(&f.s,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return false}
     editor.api_state(&f.s).poll_temp=context.temp_allocator
     serial.writer_init(&f.out)
     return testing.expect(t,editor.play_start(&f.s))
@@ -232,7 +233,7 @@ play_observe_says_in_one_small_answer_what_a_decision_needs :: proc(t:^testing.T
     player,_:=answer["player"].(json.Object)
     position,_:=player["position"].(json.Array)
     testing.expect(t,len(position)==3 && position[0].(json.Float)==1,text)
-    testing.expect(t,"grounded" not_in player,"a body no plugin moves does not say")
+    testing.expect(t,"stance" not_in player,"a body no plugin moves does not say")
     targets,_:=answer["targets"].(json.Array)
     if testing.expect_value(t,len(targets),1) {
         foe,_:=targets[0].(json.Object)
@@ -247,8 +248,8 @@ play_observe_says_in_one_small_answer_what_a_decision_needs :: proc(t:^testing.T
     testing.expectf(t,error.code==0,"%v",error)
     testing.expect_value(t,api.result_mismatch(Api_Play_Observe,text),"")
     seen:=probe_json(t,text)
-    grounded,said:=seen["player"].(json.Object)["grounded"].(json.Boolean)
-    testing.expect(t,said && !grounded,"in the air, as the plugin that moves it says")
+    stance,said:=seen["player"].(json.Object)["stance"].(json.String)
+    testing.expect(t,said && stance!="Standing","in the air, as the plugin that moves it says")
     testing.expect_value(t,seen["ran"].(json.Float) or_else 0,2)
     testing.expect(t,"playing" not_in seen,"the state of the game is left out")
     problems,_:=seen["problems"].(json.Array)

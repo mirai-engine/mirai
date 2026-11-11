@@ -2,7 +2,7 @@ package animation_editor
 
 import "base:runtime"
 import "core:fmt"
-import "core:mem"
+import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:editor"
@@ -11,12 +11,8 @@ import "mirai:host"
 import "mirai:platform"
 import "mirai:std/base"
 import "mirai:std/serial"
+import anim "plugins:animation/runtime"
 
-Authoring_Inspect_Params :: struct {
-    asset:base.Asset_Id,
-    offset:u32 `mirai:"optional"`,
-    limit:u32 `mirai:"optional,min=1,max=256,clamp"`,
-}
 Authoring_Create_Params :: struct {
     path:[1024]u8 `mirai:"text"`,
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
@@ -109,10 +105,10 @@ authoring_set_target :: proc(s:^editor.Session,call:^api.Call,path:string,kind:a
 // Publishes an asset document: prepares the response and writes the file as
 // a step of the editor's history (one undo with the rest of the call). The
 // asset changes in memory, unsaved; a new one exists only there until it is
-// saved. more writes fields of the result after asset and path. dry_run in
-// the params validates and answers without writing.
+// saved. written is the part of the result that names it. dry_run in the
+// params validates and answers without writing.
 @(private)
-authoring_publish :: proc(s:^editor.Session,call:^api.Call,target:Authoring_File,doc:^asset.Document,more:proc(call:^api.Call,data:rawptr)=nil,data:rawptr=nil) -> bool {
+authoring_publish :: proc(s:^editor.Session,call:^api.Call,target:Authoring_File,doc:^asset.Document,written:^Authoring_Write_Result) -> bool {
     if target.file.file==nil && editor.file_exists(s,target.path) {
         authoring_failure(call,"path","Already_Exists","a new asset path","created while the asset was prepared","The destination was created while the asset was prepared")
         return false
@@ -120,16 +116,7 @@ authoring_publish :: proc(s:^editor.Session,call:^api.Call,target:Authoring_File
     bytes:serial.Writer;serial.writer_init(&bytes,4096,s.app.allocator);defer serial.writer_destroy(&bytes)
     if error:=asset.document_write(doc,&bytes);error!=.None {authoring_failure(call,"asset","Serialization","a valid asset document",fmt.tprintf("%v",error),"The asset could not be serialized",api.SERVER_ERROR);return false}
     dry_run:=authoring_dry_run(call)
-    serial.text_write_raw(call.out,"{")
-    authoring_result(call,doc.id,target.path)
-    if dry_run {api.write_bool(call.out,"dry_run",true)}
-    if target.replaced {api.write_bool(call.out,"replaced",true)}
-    if more!=nil {more(call,data)}
-    serial.text_write_raw(call.out,"}")
-    if call.out.overflow!=0 {
-        authoring_failure(call,"result","Capacity","space for the publication result","response buffer full","The asset result does not fit in the response buffer",api.SERVER_ERROR)
-        return false
-    }
+    written^={doc.id,strings.clone(target.path,call.allocator),dry_run,target.replaced}
     if dry_run {return true}
     if !authoring_write(s,call,target.path,serial.writer_bytes(&bytes)) {
         if !call.failed {authoring_failure(call,"path","Write_Error","an asset write","write failed","The asset could not be written",api.SERVER_ERROR)}
@@ -156,23 +143,30 @@ authoring_dry_run :: proc(call:^api.Call) -> bool {
     return api.json_member(call.raw,"dry_run")=="true"
 }
 
+// A page of rows from offset, at most limit, each with its index. A row of
+// another type takes the fields of the same name and type.
 @(private)
-authoring_result :: proc(call:^api.Call,id:base.Asset_Id,path:string,first:bool=true) {
-    out:=call.out
-    api.write_key(out,"asset",first);serial.write_u8(out,'"');serial.text_write_asset_id(out,id);serial.write_u8(out,'"')
-    api.write_text(out,"path",path)
+authoring_pages :: proc(call:^api.Call,rows:[]$T,offset,limit:u32,$R:typeid) -> []Authoring_Page(R) {
+    first:=min(int(offset),len(rows));last:=min(first+int(limit),len(rows))
+    pages:=make([]Authoring_Page(R),last-first,call.allocator)
+    for &page,i in pages {
+        row:=rows[first+i]
+        page.index=u32(first+i)
+        when T==R {page.value=row} else {
+            authoring_struct_fields(&page.value,row)
+            when T==anim.Twist_Constraint {for amount,j in row.amounts[:row.amount_count] {page.value.amounts[j].value=amount}}
+            else when T==anim.Multi_IK_Constraint {authoring_struct_fields(&page.value.settings,row.settings)}
+            else when T==anim.Foot_Grounding {for j in 0..<int(row.count) {authoring_struct_fields(&page.value.legs[j],row.legs[j])}}
+        }
+    }
+    return pages
 }
 
+// A copy of a page of rows, in the call.
 @(private)
-authoring_write_value :: proc(call:^api.Call,value:^$T,info:^runtime.Type_Info) -> bool {
-    schema:serial.Schema
-    allocator:=call.server.allocator if call.server!=nil else context.allocator
-    serial.schema_init(&schema,allocator)
-    defer serial.schema_destroy(&schema)
-    index,ok:=serial.schema_add_type_info(&schema,info)
-    if !ok {authoring_failure(call,"result","Invalid_Schema","a registered result type","schema preparation failed","The value schema could not be prepared",api.INTERNAL_ERROR);return false}
-    serial.text_write(call.out,&schema,index,mem.ptr_to_bytes(value),.Line)
-    return call.out.overflow==0
+authoring_page :: proc(call:^api.Call,rows:[]$T,offset,limit:u32) -> []T {
+    first:=min(int(offset),len(rows))
+    return slice.clone(rows[first:min(first+int(limit),len(rows))],call.allocator)
 }
 
 @(private)

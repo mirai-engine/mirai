@@ -61,13 +61,13 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
     viewport:editor.Viewport;gui:editor.Editor_Ui
     f.session.info,f.session.edit_world,f.session.selection,f.session.edits,f.session.viewport,f.session.gui=&info,&document,&selection,&edits,&viewport,&gui
     history.edits_reset(&edits,core.world_ref(&document,&info))
-    inspect:=Morph_Inspect_Params{limit=256}
+    inspect:=Instance_Inspect_Params{parts={.Morphs},limit=256}
     set:=Morph_Set_Params{mode=.Override}
-    authoring_test_register(f,t,"inspect",Morph_Inspect_Params,morph_inspect,&inspect)
+    authoring_test_register(f,t,"inspect",Instance_Inspect_Params,instance_inspect,&inspect)
     program_test_register_result(f,t,"set",Morph_Set_Params,Morph_Set_Result,morph_set,&set)
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000012","limit":1}`).code,0)
-    output:=string(serial.writer_bytes(&f.out))
-    testing.expect(t,strings.contains(output,`"total":2`) && strings.contains(output,`"name": "Smile"`) && !strings.contains(output,`"name": "Blink"`))
+    output:=api.json_compact(string(serial.writer_bytes(&f.out)))
+    testing.expect(t,strings.contains(output,`"total":2`) && strings.contains(output,`"name":"Smile"`) && !strings.contains(output,`"name":"Blink"`))
     testing.expect(t,strings.contains(output,`"source":"0x0000000000000011"`) && strings.contains(output,`"source_kind":"Ancestor"`) && strings.contains(output,"Face/@morph/Smile"),output)
     testing.expect(t,!strings.contains(output,"diagnostic") && !strings.contains(output,"unresolved"))
     testing.expect_value(t,authoring_test_execute(f,"set",`{"entity":"0000000000000012","name":"Smile","value":0.35,"mode":"Default"}`).code,0)
@@ -78,7 +78,7 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
     testing.expect(t,history.undo(&edits,core.world_ref(&document,&info),&selection));testing.expect(t,!core.has(&document.configs,mesh))
     testing.expect(t,history.redo(&edits,core.world_ref(&document,&info),&selection))
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000012"}`).code,0)
-    output=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(output,`"mesh_default": 0.25`) && strings.contains(output,`"default_value": 0.35`) && strings.contains(output,`"evaluated": false`))
+    output=api.json_compact(string(serial.writer_bytes(&f.out)));testing.expect(t,strings.contains(output,`"mesh_default":0.25`) && strings.contains(output,`"default_value":0.35`) && strings.contains(output,`"evaluated":false`))
     before:=document.configs.values[0];cursor:=edits.cursor
     invalid:=authoring_test_execute(f,"set",`{"entity":"0000000000000012","name":"smile","value":1}`)
     testing.expect(t,invalid.code==api.INVALID_PARAMS && strings.contains(invalid.data,"Unknown_Target") && strings.contains(invalid.message,"inspect"))
@@ -88,10 +88,10 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
     append(&playing.current,f32(-1.25),f32(-.5));append(&document.morphs.states,playing)
     resize(&document.morphs.rows,int(core.entity_index(mesh))+1);document.morphs.rows[core.entity_index(mesh)]=1
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000012","diagnostics":true}`).code,0)
-    output=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(output,`"final_weight": -1.25`) && strings.contains(output,`"evaluated": true`) && strings.contains(output,`"pending": false`))
+    output=api.json_compact(string(serial.writer_bytes(&f.out)));testing.expect(t,strings.contains(output,`"final_weight":-1.25`) && strings.contains(output,`"evaluated":true`) && !strings.contains(output,`"pending":true`))
     testing.expect_value(t,authoring_test_execute(f,"set",`{"entity":"0000000000000012","name":"Smile","value":1.75}`).code,0)
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000012"}`).code,0)
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"evaluated": false`))
+    testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"evaluated":false`))
     cursor=edits.cursor;before=document.configs.values[0]
     f.session.mode=.Play;f.session.runs[0]={world=&play}
     testing.expect_value(t,authoring_test_execute(f,"set",`{"entity":"0000000000000012","name":"Blink","value":-2,"mode":"Additive"}`).code,0)
@@ -101,11 +101,11 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
     testing.expect_value(t,play.configs.values[0].values[0],f32(3));testing.expect_value(t,edits.cursor,cursor)
     anim.morph_weight_set(core.edit(&play.configs,play.meshes.entities[0]),"Future",4)
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000012","diagnostics":true}`).code,0)
-    output=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(output,`"error": "Unknown_Target"`) && strings.contains(output,`"name_hash"`))
+    output=api.json_compact(string(serial.writer_bytes(&f.out)));testing.expect(t,strings.contains(output,`"error":"Unknown_Target"`) && strings.contains(output,`"name_hash"`))
     testing.expect_value(t,authoring_test_execute(f,"set",`{"entity":"0000000000000012","name":"Future","remove":true}`).code,0)
     testing.expect_value(t,morph_api_test_count(play.configs.values[0]),1)
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000012","diagnostics":true}`).code,0)
-    output=string(serial.writer_bytes(&f.out));testing.expect(t,strings.contains(output,`"error": "None"`) && !strings.contains(output,`"name_hash"`))
+    output=api.json_compact(string(serial.writer_bytes(&f.out)));testing.expect(t,!strings.contains(output,`"Unknown_Target"`) && !strings.contains(output,`"name_hash"`))
     testing.expect_value(t,authoring_test_execute(f,"set",`{"entity":"0000000000000012","name":"Blink","remove":true}`).code,0)
     testing.expect_value(t,morph_api_test_count(play.configs.values[0]),0);testing.expect_value(t,document.configs.values[0],before)
     version:=play.configs.version
@@ -113,7 +113,7 @@ morph_api_inspects_named_defaults_final_weights_and_sources_and_controls_instanc
     testing.expect_value(t,play.configs.version,version)
     core.edit(&play.configs,play.meshes.entities[0]).source=play.animations.entities[0]
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000012"}`).code,0)
-    testing.expect(t,strings.contains(string(serial.writer_bytes(&f.out)),`"source_kind":"Explicit"`))
+    testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"source_kind":"Explicit"`))
     f.session.mode=.Watch
     testing.expect_value(t,authoring_test_execute(f,"set",`{"entity":"0000000000000012","name":"Smile","value":1}`).code,api.INVALID_PARAMS)
 }

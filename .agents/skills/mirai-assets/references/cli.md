@@ -32,7 +32,11 @@ subcommands with their usage.
   against the game of their project: whether their documents write them back, and each component
   stored otherwise than the game reads it (one the game lacks, a stored field it has under no
   name, a value that does not convert), named by scene, component and field; a loss is a problem.
-  A scene of no project says it was not checked against a game.
+  A scene of no project says it was not checked against a game. Without names it checks the
+  scenes of the project and the recipes of the engine and of its plugins, and checks again only
+  those whose key (the types of the game, the scene and its prefabs) moved since the last check
+  of all of them. `mirai build editor` ends with one line when that check finds problems, and
+  runs it only when a scene, a recipe or a library changed; it changes no scene.
 - **`set`** rewrites the file atomically, with the dependencies recomputed; if an assignment fails
   nothing is written. The value is JSON of the field's type; from a shell, texts, enum members and
   ids need no quotes, and in a struct the unnamed fields are kept. A number must fit exactly in its

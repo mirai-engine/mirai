@@ -16,9 +16,14 @@ import phys "plugins:physics/runtime"
 // `forget` seconds after it last did, or at once when it is destroyed. Each
 // looks only at those around it, found in a grid over the ground made every
 // tick (Sight). The rays of a tick are shared by all perceivers within
-// Behavior_Settings.rays, in turns. A perceiver far from the players (nav.Nav_Far), off with its
-// rows, perceives when its brain decides (nav.nav_far_decide), without rays:
-// the collision where it is is not loaded.
+// Behavior_Settings.rays, in turns; a perceiver cut short by them goes first
+// in the next tick, from where it stopped, so every subject in sight is
+// looked at again within as many ticks as there are candidates per ray. What
+// a perceiver saw last stays in sight a little farther and wider
+// (SIGHT_KEEP), so that at the edge it is not noticed and forgotten in turn.
+// A perceiver far from the players (nav.Nav_Far), off with its rows,
+// perceives when its brain decides (nav.nav_far_decide), without rays: the
+// collision where it is is not loaded.
 
 // A side: a perceiver notices the teams of its mask.
 @(names="TEAM_")
@@ -50,6 +55,7 @@ PERCEIVABLE_DEFAULT :: Perceivable{point=1}
 @(component,derived,description="What the perceiver remembers of what it saw and heard, and how sure it still is.")
 Perception :: struct {
     memory:ai.Perception_Memory `mirai:"transient,readonly"`,
+    next:u32 `mirai:"transient,hidden"`, // row of the Perceivable it looks at first in its next turn
 }
 
 // The work of perception, of the queries of places and of the influence maps
@@ -111,6 +117,7 @@ Perceiving :: struct {
 }
 
 SIGHT_CELL :: f32(16) // m across a cell of the grid the Perceivables are looked for in
+SIGHT_KEEP :: f32(1.1) // times its sight and angle within which a perceiver keeps what it saw last
 
 // The Perceivables of a tick by where they stand on the ground, for each
 // perceiver to find those around it. Not the state of the world.
@@ -170,9 +177,15 @@ perception_update :: proc(
         turn:=rays>0 || !sighted
         eye:=pose.position+mm.Vec3{0,p.eyes,0}
         forward:=mm.quat_forward(pose.rotation)
+        cut:=false
         if rays>0 {
-            for target in sight_around(sight,eye,p.sight,core.count(perceivables)) {
-                if rays<=0 {break}
+            // On from where the rays stopped its last turn, in the order of their table.
+            around:=sight_around(sight,eye,p.sight*SIGHT_KEEP,core.count(perceivables))
+            start:=0
+            for start<len(around) && around[start]<mine.next {start+=1}
+            mine.next=0
+            for target in around[start:] {
+                if rays<=0 {mine.next,cut=target,true;break}
                 subject:=core.entity_at(perceivables,int(target))
                 if subject==e {continue}
                 seen:=perceivables.values[target]
@@ -180,7 +193,7 @@ perception_update :: proc(
                 at,ok:=core.get(worlds,subject)
                 if !ok {continue}
                 point:=at.position+mm.Vec3{0,seen.point,0}
-                if !ai.sight_in_cone(eye,forward,point,p.sight,p.angle) {continue}
+                if !sees(&mine.memory,subject,p,eye,forward,point) {continue}
                 rays-=1
                 to:=point-eye
                 distance:=linalg.length(to)
@@ -192,7 +205,9 @@ perception_update :: proc(
                 }
             }
         }
-        if turn && sighted && rays<=0 && k+1<count {turns.next=u32((row+1)%count)}
+        if turn && sighted && rays<=0 {
+            if cut {turns.next=u32(row)} else if k+1<count {turns.next=u32((row+1)%count)}
+        }
         hear(&mine.memory,e,p,pose.position,heard,events,time)
         if turn {forget(&mine.memory,e,p,events,entities.ptr,time)}
         remembering_count(turns,remembered,mine.memory.count>0)
@@ -270,13 +285,13 @@ perceive_far :: proc(perceivers:^core.Table(Perceiver,$A),perceptions:^core.Tabl
         remembered:=mine.memory.count>0
         eye:=pose.position+mm.Vec3{0,p.eyes,0}
         forward:=mm.quat_forward(pose.rotation)
-        for target in sight_around(sight,eye,p.sight,len(perceivables.entities)) {
+        for target in sight_around(sight,eye,p.sight*SIGHT_KEEP,len(perceivables.entities)) {
             subject:=perceivables.entities[target]
             if subject==e {continue}
             seen:=perceivables.values[target]
             if u32(p.notices)&(1<<u32(seen.team))==0 {continue}
             at,ok:=core.get(worlds,subject)
-            if !ok || !ai.sight_in_cone(eye,forward,at.position+mm.Vec3{0,seen.point,0},p.sight,p.angle) {continue}
+            if !ok || !sees(&mine.memory,subject,p,eye,forward,at.position+mm.Vec3{0,seen.point,0}) {continue}
             if ai.memory_perceive(&mine.memory,u64(subject),at.position,.Sight,1,time.tick)==.New {
                 core.push(&events.queue,Perception_Event{kind=.Noticed,perceiver=e,subject=subject,sense=.Sight,position=at.position})
             }
@@ -285,6 +300,14 @@ perceive_far :: proc(perceivers:^core.Table(Perceiver,$A),perceptions:^core.Tabl
         forget(&mine.memory,e,p,events,entities,time)
         remembering_count(turns,remembered,mine.memory.count>0)
     }
+}
+
+// Whether a point is in the cone of a perceiver: wider and farther for a subject it saw last.
+@(private)
+sees :: proc(memory:^ai.Perception_Memory,subject:core.Entity,p:Perceiver,eye,forward,point:mm.Vec3) -> bool {
+    keep:=f32(1)
+    if o:=ai.memory_find(memory,u64(subject));o!=nil && .Sight in o.senses {keep=SIGHT_KEEP}
+    return ai.sight_in_cone(eye,forward,point,p.sight*keep,p.angle*keep)
 }
 
 @(private)

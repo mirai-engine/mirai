@@ -5,7 +5,6 @@ import "core:fmt"
 import "core:math"
 import "core:mem"
 import "core:reflect"
-import "core:strconv"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
@@ -257,14 +256,15 @@ fields_match :: proc(info:^runtime.Type_Info,needle:string) -> bool {
     if !is_struct {return false}
     for i in 0..<int(v.field_count) {
         tag:=reflect.Struct_Tag(v.tags[i])
-        if _,hidden:=core.field_option(tag,"hidden");hidden {continue}
-        if _,transient:=core.field_option(tag,"transient");transient {continue}
+        tagged:=field_tagged(v.tags[i])
+        if .Hidden in tagged.flags {continue}
+        if .Transient in tagged.flags {continue}
         if v.usings[i] {
             if fields_match(v.types[i],needle) {return true}
             continue
         }
         label:=readable(v.names[i])
-        if custom,found:=core.field_option(tag,"label");found && custom!="" {label=custom}
+        if custom:=tagged.label;custom!="" {label=custom}
         if base.contains_fold(label,needle) {return true}
     }
     return false
@@ -951,10 +951,11 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
     for i in 0..<int(v.field_count) {
         if i==skip {continue}
         tag:=reflect.Struct_Tag(v.tags[i])
-        if title,found:=core.field_option(tag,"section");found && title!="" && depth==0 {current=title}
-        if _,hidden:=core.field_option(tag,"hidden");hidden {continue}
-        if _,transient:=core.field_option(tag,"transient");transient {continue}
-        if modes,only:=core.field_option(tag,"mode");only && !mode_shows(c,v,origin,modes) {continue}
+        tagged:=field_tagged(v.tags[i])
+        if title:=tagged.section;title!="" && depth==0 {current=title}
+        if .Hidden in tagged.flags {continue}
+        if .Transient in tagged.flags {continue}
+        if modes:=tagged.mode;modes!="" && !mode_shows(c,v,origin,modes) {continue}
         if c.sections && depth==0 && current!=c.section {continue}
         if c.type==erender.Mesh_Renderer && v.names[i]=="materials" {continue}
         offset:=origin+v.offsets[i]
@@ -962,9 +963,9 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
             fields_rows(c,v.types[i],offset,depth,prefix)
             continue
         }
-        if c.sections && depth==0 && core_has(tag,"advanced")!=c.advanced {continue}
+        if c.sections && depth==0 && (.Advanced in tagged.hints)!=c.advanced {continue}
         label:=readable(v.names[i])
-        if custom,found:=core.field_option(tag,"label");found && custom!="" {
+        if custom:=tagged.label;custom!="" {
             label=custom
         } else if prefix!="" && info.id==mm.Transform {
             if v.names[i]=="position" {label="Pos"}
@@ -1145,9 +1146,10 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
     s:=c.s
     ctx:=s.gui.ctx
     if int(offset)+info.size>c.size {return}
-    _,readonly:=core.field_option(tag,"readonly")
-    unit,has_unit:=core.field_option(tag,"unit")
-    shown:=has_unit && unit!=""?fmt.tprintf("%s (%s)",label,unit):label
+    tagged:=field_tagged(string(tag))
+    readonly:=.Read_Only in tagged.flags
+    unit:=tagged.unit
+    shown:=unit!=""?fmt.tprintf("%s (%s)",label,unit):label
     key:=base.hash_combine(u64(c.index)<<32|u64(offset),0x6669656c64~c.held)|1
     p:=rawptr(&c.value[offset])
     if inspector_extension(c,info,offset,shown) {return}
@@ -1155,7 +1157,7 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
     #partial switch v in runtime.type_info_base(info).variant {
     case runtime.Type_Info_Struct: leaf=info.id==base.Asset_Id
     case runtime.Type_Info_Array:
-        _,text:=core.field_option(tag,"text")
+        text:=.Text in tagged.flags
         _,number:=runtime.type_info_base(v.elem).variant.(runtime.Type_Info_Float)
         _,integer:=runtime.type_info_base(v.elem).variant.(runtime.Type_Info_Integer)
         record,is_record:=runtime.type_info_base(v.elem).variant.(runtime.Type_Info_Struct)
@@ -1209,7 +1211,7 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
         row_end(ctx)
     case runtime.Type_Info_Integer,runtime.Type_Info_Float:
         if inspector_number_extension(c,info,shown,offset,key) {return}
-        if integer,is_integer:=v.(runtime.Type_Info_Integer);is_integer && !integer.signed && info.size==8 && core_has(tag,"hex") {
+        if integer,is_integer:=v.(runtime.Type_Info_Integer);is_integer && !integer.signed && info.size==8 && .Hex in tagged.hints {
             hex_row(c,shown,offset)
             return
         }
@@ -1228,7 +1230,7 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
         // name of a ui.Icon for each value, which its segment shows instead.
         icons:[ENUM_SEGMENTS]ui.Icon
         iconed:=false
-        if names,found:=core.field_option(tag,"icons");found && len(v.names)<=ENUM_SEGMENTS {
+        if names:=tagged.icons;names!="" && len(v.names)<=ENUM_SEGMENTS {
             iconed=true
             words:=strings.fields(names,context.temp_allocator)
             for at in 0..<len(v.names) {
@@ -1291,11 +1293,11 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
     case runtime.Type_Info_Array:
         if inspector_array_extension(c,info,name,shown,offset) {return}
         elem:=runtime.type_info_base(v.elem)
-        _,text:=core.field_option(tag,"text")
+        text:=.Text in tagged.flags
         if text && v.elem.size==1 {
             switch {
-            case core_has(tag,"data"):                 data_row(c,shown,offset,v.count)
-            case core_has(tag,"kind"):                 asset_path_row(c,shown,field_asset_kinds(c.s,tag,name),int(offset),v.count,key)
+            case .Data in tagged.hints:     data_row(c,shown,offset,v.count)
+            case tagged.asset_kinds!="":    asset_path_row(c,shown,field_asset_kinds(c.s,tag,name),int(offset),v.count,key)
             case:                                      text_row(c,shown,offset,v.count,key)
             }
             return
@@ -1303,7 +1305,7 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
         _,is_number:=elem.variant.(runtime.Type_Info_Float)
         _,is_integer:=elem.variant.(runtime.Type_Info_Integer)
         if (is_number || is_integer) && v.count>=2 && v.count<=4 {
-            if _,color:=core.field_option(tag,"color");color && is_number && v.elem.size==4 && v.count>=3 {
+            if .Color in tagged.flags && is_number && v.elem.size==4 && v.count>=3 {
                 color_row(c,shown,name,offset,v.count,key)
                 return
             }
@@ -1315,7 +1317,7 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
             return
         }
         shown_count:=min(v.count,INSPECTOR_ARRAY_ROWS)
-        if texts,is_texts:=elem.variant.(runtime.Type_Info_Array);v.elem.id==base.Asset_Id || text && is_texts && texts.elem_size==1 || core_has(tag,"trim") {
+        if texts,is_texts:=elem.variant.(runtime.Type_Info_Array);v.elem.id==base.Asset_Id || text && is_texts && texts.elem_size==1 || .Trim in tagged.hints {
             // References, texts and what the file trims: those set and one more.
             last:=-1
             for at in 0..<v.count {
@@ -1341,8 +1343,7 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
             return
         }
         // Under a section of its own name its fields need not repeat it.
-        section,_:=core.field_option(tag,"section")
-        fields_rows(c,info,offset,depth+1,"" if strings.equal_fold(section,label) else label)
+        fields_rows(c,info,offset,depth+1,"" if strings.equal_fold(tagged.section,label) else label)
     case:
         readonly_row(ctx,shown,serial.type_label(info))
     }
@@ -1648,14 +1649,14 @@ field_number :: proc(info:^runtime.Type_Info,tag:reflect.Struct_Tag) -> (desc:ui
     scale=1
     _,is_float:=runtime.type_info_base(info).variant.(runtime.Type_Info_Float)
     desc.integer=!is_float
-    if text,ok:=core.field_option(tag,"min");ok {desc.min,desc.has_min=strconv.parse_f64(text)}
-    if text,ok:=core.field_option(tag,"max");ok {desc.max,desc.has_max=strconv.parse_f64(text)}
+    field:=field_tagged(string(tag))
+    desc.min,desc.has_min,desc.max,desc.has_max=field.min,field.has_min,field.max,field.has_max
     if !is_float {
         if v,ok:=runtime.type_info_base(info).variant.(runtime.Type_Info_Integer);ok && !v.signed && !desc.has_min {desc.min,desc.has_min=0,true}
     }
-    if unit,found:=core.field_option(tag,"unit");found {desc.unit=unit}
+    desc.unit=field.unit
     switch {
-    case core_has(tag,"angle"):
+    case .Angle in field.flags:
         scale=f64(mm.DEG_PER_RAD)
         desc.unit="°"
         desc.decimals,desc.speed=1,0.2
@@ -1668,10 +1669,10 @@ field_number :: proc(info:^runtime.Type_Info,tag:reflect.Struct_Tag) -> (desc:ui
     return
 }
 
-@(private)
-core_has :: proc(tag:reflect.Struct_Tag,option:string) -> bool {
-    _,ok:=core.field_option(tag,option)
-    return ok
+// What the tag of a field says, as std/serial reads it.
+field_tagged :: proc(tag:string) -> serial.Field {
+    field,_:=serial.field_tag(tag)
+    return field
 }
 
 // One number of a component as a field.
@@ -1709,7 +1710,8 @@ vector_row :: proc(c:^Inspect,info:^runtime.Type_Info,v:runtime.Type_Info_Array,
     ctx:=c.s.gui.ctx
     // axes: the name of each, a letter (`axes=LTRB`) or words (`axes=Min Max Step`); X, Y, Z and W otherwise.
     names:=kit.AXIS_NAMES
-    axes,lettered:=core.field_option(tag,"axes")
+    axes:=field_tagged(string(tag)).axes
+    lettered:=axes!=""
     words:=strings.fields(axes,context.temp_allocator) if strings.contains(axes," ") else nil
     if v.count==4 && (axes=="LTRB" || axes=="TL TR BR BL") {
         box_row(c,v,tag,label,offset,key,axes=="LTRB")
@@ -1799,7 +1801,7 @@ keys_count :: proc(fields:runtime.Type_Info_Struct) -> (count:int) {
         case runtime.Type_Info_Float,runtime.Type_Info_Integer:
         case runtime.Type_Info_Array:
             _,float:=runtime.type_info_base(element.elem).variant.(runtime.Type_Info_Float)
-            if !float || element.elem.size!=4 || element.count<3 || element.count>4 || !core_has(reflect.Struct_Tag(fields.tags[i]),"color") {return 0}
+            if !float || element.elem.size!=4 || element.count<3 || element.count>4 || .Color not_in field_tagged(fields.tags[i]).flags {return 0}
         case: return 0
         }
     }
@@ -2327,7 +2329,7 @@ asset_kind_takes :: proc "contextless" (field:Asset_Kinds,kind:asset.Fourcc) -> 
 // spaces (`kind=.anim .character`), each of the engine or one a plugin declares
 // in its plugin.mirai; without one known, what its name suggests.
 field_asset_kinds :: proc(s:^Session,tag:reflect.Struct_Tag,name:string) -> (kinds:Asset_Kinds) {
-    if extensions,found:=core.field_option(tag,"kind");found {
+    if extensions:=field_tagged(string(tag)).asset_kinds;extensions!="" {
         count:=0
         for extension in strings.fields_iterator(&extensions) {
             kind,known:=asset.kind_of_extension(extension)

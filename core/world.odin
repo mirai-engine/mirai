@@ -3,7 +3,6 @@ package core
 import "base:runtime"
 import "core:hash/xxhash"
 import "core:mem"
-import "core:reflect"
 import "core:strings"
 
 // Which of the generated structs holds a table or a storage.
@@ -683,12 +682,3 @@ value_flat :: proc(info:^runtime.Type_Info) -> bool {
     return true
 }
 
-// The tag of a field, as `mirai:"..."` holds it: whether it has an option, and its value.
-field_option :: proc(tag:reflect.Struct_Tag,option:string) -> (value:string,ok:bool) {
-    text:=reflect.struct_tag_get(tag,"mirai")
-    for part in strings.split_iterator(&text,",") {
-        name,_,rest:=strings.partition(strings.trim_space(part),"=")
-        if name==option {return rest,true}
-    }
-    return "",false
-}

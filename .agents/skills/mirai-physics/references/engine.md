@@ -381,6 +381,10 @@ Manipulation:
   `NONE` for characters) and their poses are in its world frame: they do not move a child shape
   separately. Two proxies of the same body share a hold and the last request wins. The hold is
   copied with `Physics_State`.
+- A body or character with `scene.Section_Held` on (the player `scene_holds` holds where its
+  section is not loaded) is held kinematic and at rest where it is (`physics_section_holds`): no
+  step, gravity or move takes it, it still collides and is drawn, and a place moves it. Let go, it
+  is dynamic again, at rest.
 
 `^phys.Joint_Requests` (configuration, drives, world rotation, axes, `repair_joint`), sent to the
 entity of the joint:

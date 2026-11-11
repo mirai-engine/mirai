@@ -20,12 +20,20 @@ import "mirai:std/serial"
 BATCH_CALLS :: 256
 BATCH_SUMMARY :: "Runs calls of any methods in order in one request and answers what each answered; a param \"$N\" or \"$N.path\" takes the result of call N or a field of it. It stops at the first call that fails. With transaction their edits of the scene are one step of undo, taken back whole when one fails."
 
+Batch_Params :: struct {
+    calls:[]Batch_Call `mirai:"label=1 to 256 calls, run in their order"`,
+    transaction:bool `mirai:"optional,label=true: what the calls edit of the scene is one step of undo, taken back whole when one fails; what they write to files stays"`,
+}
+Batch_Call :: struct {
+    method:string `mirai:"label=Any method of the API but batch"`,
+    params:serial.Json `mirai:"optional,label=The params of that method; a string that is exactly '$N' or '$N.path' stands for the result of call N of this batch or for that field of it, as {'root':'$0.id'}; '$$' begins a text that really starts with $"`,
+}
 Batch_Result :: struct {
-    results:[1]Batch_Answer `mirai:"list,label=One per call in their order"`,
+    results:[]Batch_Answer `mirai:"label=One per call in their order"`,
 }
 Batch_Answer :: struct {
-    method:[64]u8 `mirai:"text"`,
-    result:u8 `mirai:"any,label=What the method answered as it answers a call"`,
+    method:string,
+    result:serial.Json `mirai:"label=What the method answered as it answers a call"`,
 }
 
 // The value with what "$N" and "$N.path" stand for in their place: answers
@@ -72,34 +80,25 @@ batch_value :: proc(value:json.Value,text:[]u8,answers:[][2]int) -> (out:json.Va
 
 batch :: proc(call:^Call) {
     server:=call.server
-    given:[2]string
-    calls,listed:=make([dynamic]string,call.allocator),false
-    if object_values(call.allocator,call.raw,{"calls","transaction"},given[:]) {calls,listed=json_elements(given[0],call.allocator)}
-    if !listed || len(calls)==0 || len(calls)>BATCH_CALLS {
+    p:=call_params(call,Batch_Params)
+    if len(p.calls)==0 || len(p.calls)>BATCH_CALLS {
         call_failf(call,INVALID_PARAMS,`calls must be 1 to %d calls: [{{"method":"...","params":{{...}}}}]`,BATCH_CALLS)
         return
     }
-    transaction:=given[1]=="true"
-    if transaction {
+    if p.transaction {
         if server.transaction==nil {call_fail(call,INVALID_PARAMS,"transaction is of a server that edits a scene; leave it out");return}
         if !server.transaction(server,call,true) {return}
     }
-    out:=call.out
-    serial.text_write_raw(out,`{"results":[`)
-    first:=out.count
-    answers:=make([dynamic][2]int,0,len(calls),call.allocator)
-    failure:Error
-    for text,at in calls {
-        fields:[2]string
-        name:string
-        method:^Method
-        if object_values(call.allocator,text,{"method","params"},fields[:]) {
-            name,_=json_string(fields[0])
-            method=method_find(server,name)
-        }
-        params:=fields[1]!=""?fields[1]:"{}"
+    out:serial.Writer
+    serial.writer_init(&out,4096,call.allocator)
+    answers:=make([dynamic][2]int,0,len(p.calls),call.allocator)
+    results:=make([]Batch_Answer,len(p.calls),call.allocator)
+    for &given,at in p.calls {
+        failure:Error
+        method:=method_find(server,given.method)
+        params:=given.params!=""?string(given.params):"{}"
         if method==nil {
-            failure={INVALID_PARAMS,fmt.tprintf(`%q is not a method of this editor; a call is {{"method":"...","params":{{...}}}}`,name),""}
+            failure={INVALID_PARAMS,fmt.tprintf(`%q is not a method of this editor; a call is {{"method":"...","params":{{...}}}}`,given.method),""}
         } else if strings.contains(params,`"$`) {
             problem:="params is not JSON"
             if value,malformed:=json.parse_string(params,parse_integers=true,allocator=context.temp_allocator);malformed==nil {
@@ -110,26 +109,24 @@ batch :: proc(call:^Call) {
             }
             if problem!="" {failure={INVALID_PARAMS,problem,""}}
         }
-        entry:=out.count
         if failure.code==0 {
-            serial.text_write_raw(out,at>0?`,{"method":`:`{"method":`);serial.text_write_string(out,name)
-            write_key(out,"result")
             start:=out.count
             mark:=base.arena_mark(&server.scratch)
-            if failed,_:=method_execute(server,method,params,out);failed.code!=0 {failure={failed.code,strings.clone(failed.message,context.temp_allocator),""}}
+            if failed,_:=method_execute(server,method,params,&out);failed.code!=0 {failure={failed.code,strings.clone(failed.message,context.temp_allocator),""}}
             base.arena_rewind(&server.scratch,mark)
             if failure.code==0 {
                 append(&answers,[2]int{start,out.count})
-                serial.write_u8(out,'}')
+                results[at].method=given.method
                 continue
             }
         }
-        done:=string(out.data[first:entry])
-        call_fail(call,failure.code,fmt.tprintf("calls[%d] %s: %s; the %d calls before it ran%s",at,name,failure.message,at,transaction?", and what they edited of the scene was taken back":""),fmt.tprintf(`{{"failed":%d,"results":[%s]}}`,at,done))
+        for &answer,i in answers {results[i].result=serial.Json(out.data[answer[0]:answer[1]])}
+        done,_:=serial.text_encode(results[:at],.Line,context.temp_allocator)
+        call_fail(call,failure.code,fmt.tprintf("calls[%d] %s: %s; the %d calls before it ran%s",at,given.method,failure.message,at,p.transaction?", and what they edited of the scene was taken back":""),fmt.tprintf(`{{"failed":%d,"results":%s}}`,at,string(done)))
         break
     }
-    if transaction && !server.transaction(server,call,false) {return}
-    if !call.failed {serial.text_write_raw(out,"]}")}
+    if p.transaction && !server.transaction(server,call,false) {return}
+    if call.failed {return}
+    for &answer,i in answers {results[i].result=serial.Json(out.data[answer[0]:answer[1]])}
+    call_result(call,Batch_Result).results=results
 }
-
-BATCH_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["calls"],"properties":{"calls":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"object","required":["method"],"additionalProperties":false,"properties":{"method":{"type":"string","description":"any method of the API but batch"},"params":{"type":"object","description":"the params of that method; a string that is exactly \"$N\" or \"$N.path\" stands for the result of call N of this batch or for that field of it, as {\"root\":\"$0.id\"}; \"$$\" begins a text that really starts with $"}}}},"transaction":{"type":"boolean","description":"true: what the calls edit of the scene is one step of undo, taken back whole when one fails; what they write to files stays"}}}`

@@ -8,7 +8,6 @@ import "mirai:editor/api"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 Body_Detect_Params :: struct {
@@ -27,26 +26,37 @@ Body_Set_Params :: struct {
 }
 Body_Part_Result :: struct {
     part:lib.Body_Part,
-    bone:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,label=Its path"`,
-    name:[64]u8 `mirai:"text"`,
+    bone:string `mirai:"label=Its path"`,
+    name:string,
     confidence:f32 `mirai:"label=0 to 1"`,
     manual:bool `mirai:"label=Whether a person set it"`,
 }
-Body_Result :: struct {
-    asset:base.Asset_Id,path:[1024]u8 `mirai:"text"`,dry_run:bool `mirai:"optional"`,
+// The body of a skeleton as the results that tell it give it.
+Body_Fields :: struct {
     up:mm.Vec3 `mirai:"label=The up of the body at rest; it faces -Z"`,axes_confidence:f32 `mirai:"label=0 to 1: how sure detection was of how the body stands"`,
-    parts:[len(lib.Body_Part)]Body_Part_Result,
-    missing:[len(lib.Body_Part)]lib.Body_Part `mirai:"label=Parts without a bone"`,
+    parts:[]Body_Part_Result,
+    missing:[]lib.Body_Part `mirai:"label=Parts without a bone"`,
     unassigned_total:u32,
-    unassigned:[32][aa.NODE_PATH_CAPACITY]u8 `mirai:"text,label=Bones outside the body"`,
-    fix:[256]u8 `mirai:"text,label=How to complete or correct the body; empty when it needs nothing"`,
+    unassigned:[]string `mirai:"label=Bones outside the body, the first of them"`,
+    fix:string `mirai:"label=How to complete or correct the body; empty when it needs nothing"`,
+}
+Body_Result :: struct {
+    using written:Authoring_Write_Result `mirai:"inline"`,
+    using body:Body_Fields `mirai:"inline"`,
+}
+// What animation.asset.inspect gives of the body of a .skeleton.
+Body_Inspect_Result :: struct {
+    asset:base.Asset_Id,
+    path:string,
+    using body:Body_Fields `mirai:"inline"`,
+    stored:bool `mirai:"label=The .skeleton keeps it; false: detected now"`,
 }
 
 @(private)
 body_register :: proc(s:^editor.Session) {
     detect:=Body_Detect_Params{keep_manual=true}
-    editor.api_method_register(s,Body_Detect_Params,Body_Result,{name="skeleton.body.detect",summary="Finds the body parts of a skeleton and its up from bone names, hierarchy and rest pose, and saves them in the .skeleton. A body faces -Z: the import turns its source to it (front of asset.import).",defaults=&detect,run=body_detect,writes_result=true})
-    editor.api_method_register(s,Body_Set_Params,Body_Result,{name="skeleton.body.set",summary="Corrects the body parts of a skeleton: the bone of each part it names, or none. Where the body faces is not set here: it faces -Z, and front of asset.import turns a source that does not.",run=body_set,writes_result=true})
+    editor.api_method_register(s,{params=type_info_of(Body_Detect_Params),result=type_info_of(Body_Result),name="skeleton.body.detect",summary="Finds the body parts of a skeleton and its up from bone names, hierarchy and rest pose, and saves them in the .skeleton. A body faces -Z: the import turns its source to it (front of asset.import).",defaults=&detect,run=body_detect})
+    editor.api_method_register(s,{params=type_info_of(Body_Set_Params),result=type_info_of(Body_Result),name="skeleton.body.set",summary="Corrects the body parts of a skeleton: the bone of each part it names, or none. Where the body faces is not set here: it faces -Z, and front of asset.import turns a source that does not.",run=body_set})
 }
 
 // The bone with this path or, failing that, this unique name; -1 for none or several.
@@ -155,55 +165,36 @@ body_save :: proc(s:^editor.Session,call:^api.Call,file:Authoring_File,id:base.A
     desc:=aa.Skeleton_Desc{id=id,bones=view.bones,sockets=view.sockets,source=view.source}
     if has {desc.body,desc.body_parts=&body,rows[:count]}
     if error:=aa.skeleton_document(&doc,&s.app.assets.types,desc,s.app.allocator);error!=.None {authoring_failure(call,"parts","Invalid_Body","each part on a bone of its own",fmt.tprintf("%v",error),"The body could not be saved",api.SERVER_ERROR if error==.Out_Of_Memory else api.INVALID_PARAMS);return}
-    Body_Written :: struct {view:aa.Skeleton_View,map_:lib.Body_Map}
-    written:=Body_Written{view,map_}
-    authoring_publish(s,call,file,&doc,proc(call:^api.Call,data:rawptr) {w:=(^Body_Written)(data);body_write(call,w.view,w.map_)},&written)
+    r:=api.call_result(call,Body_Result)
+    r.body=body_fields(call,view,map_)
+    authoring_publish(s,call,file,&doc,&r.written)
 }
 
-// The body fields of a result: parts, missing parts, bones outside the body and a fix.
+// The body of a result: parts, missing parts, bones outside the body and a fix.
 @(private)
-body_write :: proc(call:^api.Call,view:aa.Skeleton_View,map_:lib.Body_Map) {
-    out:=call.out
-    api.write_numbers(out,"up",map_.up)
-    api.write_key(out,"axes_confidence");api.write_number(out,map_.axes_confidence)
-    api.write_key(out,"parts");serial.text_write_raw(out,"[")
-    written:=0
+body_fields :: proc(call:^api.Call,view:aa.Skeleton_View,map_:lib.Body_Map) -> (r:Body_Fields) {
+    r.up,r.axes_confidence=map_.up,map_.axes_confidence
+    parts:=make([dynamic]Body_Part_Result,call.allocator)
+    missing:=make([dynamic]lib.Body_Part,call.allocator)
     for bone,part in map_.bones {
-        if bone<0 {continue}
-        if written>0 {serial.text_write_raw(out,",")};written+=1
-        serial.text_write_raw(out,"{");api.write_text(out,"part",fmt.tprintf("%v",part),true)
-        api.write_text(out,"bone",base.text_get(view.bones[bone].path[:]));api.write_text(out,"name",base.text_get(view.bones[bone].name[:]))
-        api.write_key(out,"confidence");api.write_number(out,map_.confidence[part]);api.write_bool(out,"manual",part in map_.manual)
-        serial.text_write_raw(out,"}")
+        if bone<0 {append(&missing,part);continue}
+        append(&parts,Body_Part_Result{part,strings.clone(base.text_get(view.bones[bone].path[:]),call.allocator),strings.clone(base.text_get(view.bones[bone].name[:]),call.allocator),map_.confidence[part],part in map_.manual})
     }
-    serial.text_write_raw(out,"]")
-    api.write_key(out,"missing");serial.text_write_raw(out,"[")
-    missing:=0
-    for bone,part in map_.bones {
-        if bone>=0 {continue}
-        if missing>0 {serial.text_write_raw(out,",")};missing+=1
-        serial.write_u8(out,'"');serial.text_write_raw(out,fmt.tprintf("%v",part));serial.write_u8(out,'"')
-    }
-    serial.text_write_raw(out,"]")
+    r.parts,r.missing=parts[:],missing[:]
     regions:=make([]i8,len(view.bones),call.allocator)
     outside:=make([]i32,len(view.bones),call.allocator)
     total,_:=lib.body_unassigned(body_parents(view,call.allocator),map_,regions,outside)
-    api.write_uint(out,"unassigned_total",u64(total))
-    api.write_key(out,"unassigned");serial.text_write_raw(out,"[")
-    for bone,i in outside[:min(total,32)] {
-        if i>0 {serial.text_write_raw(out,",")}
-        serial.write_u8(out,'"');serial.text_write_raw(out,base.text_get(view.bones[bone].path[:]));serial.write_u8(out,'"')
-    }
-    serial.text_write_raw(out,"]")
-    fix:=""
+    r.unassigned_total=u32(total)
+    r.unassigned=make([]string,min(total,32),call.allocator)
+    for bone,i in outside[:min(total,32)] {r.unassigned[i]=strings.clone(base.text_get(view.bones[bone].path[:]),call.allocator)}
     weakest:=lib.Body_Part.Pelvis;lowest:=f32(2)
     for bone,part in map_.bones {if bone>=0 && map_.confidence[part]<lowest {weakest,lowest=part,map_.confidence[part]}}
     switch {
-    case missing==len(lib.Body_Part): fix="No body part was recognized: name them with skeleton.body.set"
-    case missing>0: fix=fmt.tprintf("Missing parts can be set with skeleton.body.set, for example {{\"parts\":[{{\"part\":\"%v\",\"bone\":\"<path>\"}}]}}",body_first_missing(map_))
-    case lowest<.6: fix=fmt.tprintf("%v has confidence %.2f: check it and correct it with skeleton.body.set",weakest,lowest)
+    case len(missing)==len(lib.Body_Part): r.fix="No body part was recognized: name them with skeleton.body.set"
+    case len(missing)>0: r.fix=fmt.tprintf("Missing parts can be set with skeleton.body.set, for example {{\"parts\":[{{\"part\":\"%v\",\"bone\":\"<path>\"}}]}}",body_first_missing(map_))
+    case lowest<.6: r.fix=fmt.tprintf("%v has confidence %.2f: check it and correct it with skeleton.body.set",weakest,lowest)
     }
-    api.write_text(out,"fix",fix)
+    return
 }
 
 @(private)

@@ -62,8 +62,7 @@ route_next :: proc(s:^editor.Session,w:core.World_Ref,body:core.Entity,goal:[3]f
         if own,seated:=core.get(agents,body);seated {agent=own}
     }
     walk,_:=core.get(walks,body)
-    gravity:=linalg.length(phys.gravity_of_entity(core.Ref(phys.Physics_State){physics},body))
-    filter:=nav.agent_filter(n,class,agent,{walk.jump_height,walk.max_speed},core.has(swims,body),gravity)
+    filter:=nav.agent_filter(n,class,agent,walk,core.has(swims,body),nav.agent_gravity(core.Ref(phys.Physics_State){physics},body,character))
     settings:=n.classes[class].class
     mesh:=&n.classes[class].mesh
     extents:=mm.Vec3{settings.radius*2+0.5,settings.height,settings.radius*2+0.5}

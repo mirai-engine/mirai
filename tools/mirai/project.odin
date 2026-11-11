@@ -3,13 +3,17 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strconv"
 import "core:strings"
+import "core:time"
 import "mirai:asset"
 import "mirai:cook/build"
 import "mirai:cook/install"
 import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/serial"
+import "mirai:std/subprocess"
 
 NEW_USAGE :: "new <folder> [--name N] [--template T] | new --list"
 BUILD_USAGE :: "build tools [--debug]"
@@ -78,7 +82,71 @@ cmd_new :: proc(root:string,args:[]string) -> int {
 cmd_build_project :: proc(root:string,args:[]string) -> int {
     mode,rest:=build_mode_take(args[1:])
     code,_,shaders_failed:=build_project(root,args[0]=="editor"?.Editor:.Game,rest,mode,server=args[0]=="server")
+    if code==0 && args[0]=="editor" {scenes_stale_report(root,len(rest)>0 && positional(rest[0])?rest[0]:".",mode)}
     return code!=0?code:shaders_failed?1:0
+}
+
+// One line after the editor of a project builds when its scenes or the recipes
+// of the engine and its plugins store what its game no longer reads (a
+// component it lost, a field under no name), with the command that names
+// them. mirai scene check runs only when a file it reads changed since the
+// last one (SCENES_STAMP: their sizes and times, and how many problems it
+// found), and checks again only the scenes whose key moved. Nothing is
+// changed: a scene is fixed by writing it.
+@(private="file")
+scenes_stale_report :: proc(root,folder:string,mode:Build_Mode) {
+    p,error:=project.open(folder,root,context.temp_allocator)
+    if error.code!=.None {return}
+    program:=project_engine_paths(root,folder,build.engine_mode_resolve(root,mode)).author_program
+    read:=make([dynamic]string,context.temp_allocator)
+    append(&read,project.folder_path(p.root,.Assets),build.plugins_libraries_folder(p.root),build.target_output(&p,.Editor,"",context.temp_allocator),program)
+    append(&read,..project.recipe_folders(&p,context.temp_allocator))
+    key:=u64(0)
+    for path in read {
+        key=base.hash_combine(key,base.name_hash(path))
+        if info,stat_error:=os.stat(path,context.temp_allocator);stat_error==nil {key=files_stat_key(key,info,".scene" if path==read[0] else "")}
+    }
+    stamp:=project.path(project.folder_path(p.root,.Generated,context.temp_allocator),"build",SCENES_STAMP,allocator=context.temp_allocator)
+    problems:=-1
+    if data,stamp_error:=serial.file_read(stamp,context.temp_allocator);stamp_error==.None {
+        r:=serial.reader_init(data)
+        if serial.read_u64(&r)==key {problems=int(serial.read_varint(&r))}
+        if r.failed {problems=-1}
+    }
+    if problems<0 {
+        command:=author_command(program,root,p.root,"scene",{"check"})
+        state,_,errors,run_error:=subprocess.exec({command=command[:]},context.temp_allocator)
+        if run_error!=nil || state.exit_code>1 {return}
+        problems=0
+        if at:=strings.last_index(string(errors),"check: ");at>=0 {
+            said:=string(errors[at+len("check: "):])
+            if space:=strings.index_byte(said,' ');space>0 {problems,_=strconv.parse_int(said[:space])}
+        }
+        w:serial.Writer
+        serial.writer_init(&w,allocator=context.temp_allocator)
+        serial.write_u64(&w,key)
+        serial.write_varint(&w,u64(problems))
+        _=serial.file_write_atomic(stamp,serial.writer_bytes(&w))
+    }
+    if problems>0 {fmt.printfln("%s: the scenes store data the game no longer reads (%d problems): mirai scene check --project \"%s\" names them",p.root,problems,p.root)}
+}
+
+// In the build folder of a project: what the last mirai scene check of the build read and found.
+SCENES_STAMP :: "scenes.stamp"
+
+// key with the size and time of a file, or with the paths, sizes and times of
+// the files under a folder whose names end in suffix.
+@(private="file")
+files_stat_key :: proc(key:u64,info:os.File_Info,suffix:string) -> u64 {
+    if info.type!=.Directory {return base.hash_combine(base.hash_combine(key,u64(info.size)),u64(time.time_to_unix_nano(info.modification_time)))}
+    entries,_:=os.read_all_directory_by_path(info.fullpath,context.temp_allocator)
+    slice.sort_by(entries,proc(a,b:os.File_Info) -> bool {return a.name<b.name})
+    key:=key
+    for entry in entries {
+        if strings.has_prefix(entry.name,".") || entry.type!=.Directory && !strings.has_suffix(entry.name,suffix) {continue}
+        key=files_stat_key(base.hash_combine(key,base.name_hash(entry.name)),entry,suffix)
+    }
+    return key
 }
 
 // mirai build engine [--release] [--force]: the binaries of the engine,
@@ -294,6 +362,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         }
         if generation.result.status!=.Failed && generation.result.message!="" {fmt.eprintln(generation.result.message)}
     }
+    rebuilt:bool
     {
         job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,engine=engine.mode})
         defer build.job_destroy(job)
@@ -336,8 +405,26 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         }
         if target==.Game && !shipped_report(job) {return 1,"",shaders_failed}
         output=strings.clone(result.output)
+        rebuilt=result.status==.Built
     }
+    if target==.Editor && rebuilt && !editor_methods_register(root,p.root,engine) {return 1,"",shaders_failed}
     return 0,output,shaders_failed
+}
+
+// Whether an editor of the build registers every method of the project and
+// its plugins: each library has its own types, which only a run of the
+// libraries together shows. It prints the methods that did not register.
+@(private="file")
+editor_methods_register :: proc(root,folder:string,engine:build.Engine_Paths) -> bool {
+    command:=[]string{engine.editor_program,"--project",folder,"--headless","--no-gpu","--frames","1","--no-api"}
+    state,_,stderr,error:=subprocess.exec({command=command,working_dir=root},context.temp_allocator)
+    if error!=nil {
+        fmt.eprintfln("mirai build: could not run %s to check its API: %v",command[0],error)
+        return false
+    }
+    if state.exit_code==0 {return true}
+    fmt.eprintfln("mirai build: the built editor does not open the API of %s (exit code %d):\n%s",folder,state.exit_code,string(stderr))
+    return false
 }
 
 // Why the compiler stopped at the memory it may use, and how to go on.

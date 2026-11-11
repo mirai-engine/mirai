@@ -574,7 +574,7 @@ body_labels_name_the_parts_and_regions_the_skeleton_keeps :: proc(t:^testing.T) 
     rig_test_advance(&w,&app,{dt=1.0/60,playing=true})
     if !testing.expect_value(t,len(w.playback.states),1) {return}
     state:=&w.playback.states[0]
-    hand,head,neck,spine,pelvis,thigh:=figure_bone(bones,"hand_l"),figure_bone(bones,"head"),figure_bone(bones,"neck_01"),figure_bone(bones,"spine_01"),figure_bone(bones,"pelvis"),figure_bone(bones,"thigh_l")
+    hand,head:=figure_bone(bones,"hand_l"),figure_bone(bones,"head")
     // A part is one bone wherever one is named; a region is no bone.
     testing.expect_value(t,bone_resolve(state,bone_ref("@hand_l")),hand)
     testing.expect_value(t,bone_resolve(state,bone_ref("@knee_l")),figure_bone(bones,"calf_l"))
@@ -583,16 +583,26 @@ body_labels_name_the_parts_and_regions_the_skeleton_keeps :: proc(t:^testing.T) 
     testing.expect_value(t,bone_resolve(state,bone_ref("@upper_body")),-1)
     testing.expect_value(t,bone_resolve(state,bone_ref("@tail")),-1)
     testing.expect_value(t,bone_resolve(state,bone_ref("hand_l")),hand)
-    // In a mask a region holds its bones, and wins over the part of its name.
-    upper,found:=bone_select(state,base.name_hash("@upper_body"))
-    testing.expect(t,found && upper.bone<0)
-    testing.expect(t,bone_selected(state,upper,spine) && bone_selected(state,upper,head) && bone_selected(state,upper,figure_bone(bones,"hand_r")))
-    testing.expect(t,!bone_selected(state,upper,pelvis) && !bone_selected(state,upper,thigh) && !bone_selected(state,upper,0))
-    region,_:=bone_select(state,base.name_hash("@head"))
-    testing.expect(t,region.bone<0 && bone_selected(state,region,neck) && !bone_selected(state,region,spine))
-    branch,_:=bone_select(state,base.name_hash("@hand_l"))
-    testing.expect(t,branch.bone==hand && bone_selected(state,branch,hand) && !bone_selected(state,branch,figure_bone(bones,"lowerarm_l")))
-    _,unknown:=bone_select(state,base.name_hash("@tail"));testing.expect(t,!unknown)
+    // In a mask a region holds its bones, and wins over the part of its name; a depth fades it in
+    // from where it starts, and several branches take the most each gives.
+    Mask_Case :: struct {name:string,over:Layer_Over,shares:[]struct {bone:string,share:f32}}
+    mask_cases:=[]Mask_Case{
+        {"a region",{0={base.name_hash("@upper_body"),0}},{{"spine_01",1},{"head",1},{"hand_r",1},{"pelvis",0},{"thigh_l",0},{"root",0}}},
+        {"a region over a depth",{0={base.name_hash("@upper_body"),3}},{{"spine_01",1.0/3},{"neck_01",2.0/3},{"clavicle_l",2.0/3},{"head",1},{"upperarm_l",1},{"pelvis",0}}},
+        {"a region that wins over its part",{0={base.name_hash("@head"),0}},{{"neck_01",1},{"spine_01",0}}},
+        {"a part over a depth",{0={base.name_hash("@shoulder_l"),2}},{{"upperarm_l",.5},{"lowerarm_l",1},{"hand_l",1},{"clavicle_l",0}}},
+        {"two branches",{0={base.name_hash("@hand_l"),0},1={base.name_hash("@arm_r"),4}},{{"hand_l",1},{"lowerarm_l",0},{"clavicle_r",.25},{"hand_r",1},{"head",0}}},
+        {"the whole pose",{},{{"root",1},{"pelvis",1},{"hand_l",1}}},
+    }
+    weights:=make([]f32,len(state.bindings),context.temp_allocator)
+    for c in mask_cases {
+        testing.expectf(t,layer_mask(state,c.over,weights),"%s: the rig has it",c.name)
+        for want in c.shares {
+            bone:=figure_bone(bones,want.bone) if want.bone!="root" else 0
+            testing.expectf(t,abs(weights[bone]-want.share)<1e-6,"%s: %s takes %v of the layer, not %v",c.name,want.bone,weights[bone],want.share)
+        }
+    }
+    testing.expect(t,!layer_mask(state,{0={base.name_hash("@tail"),0}},weights) && weights[hand]==0,"a branch the rig does not have moves nothing")
     // A final pose asked for a part moves its bone.
     animation_pose_final(&w.requests,rig,bone_ref("@hand_l"),{position={2,3,4},rotation=1,scale={1,1,1}})
     rig_test_advance(&w,&app,{dt=1.0/60,playing=true})

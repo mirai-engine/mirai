@@ -70,7 +70,8 @@ input_fixture :: proc(t:^testing.T,f:^Input_Fixture) -> bool {
     f.app.info=&f.info
     f.session=Session{info=&f.info,edit_world=&f.world,editor_world=&f.editor,app=&f.app,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,edits=&f.edits,inspector=&f.inspector,project_root=f.folder,has_project=true}
     history.edits_reset(&f.edits,edited_world(&f.session))
-    if !testing.expect(t,api_open(&f.session,0,true)==.None) {return false}
+    api_opened,api_problem:=api_open(&f.session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return false}
     state:=api_state(&f.session)
     state.poll_temp=context.temp_allocator
     if api.method_find(&state.server,"input.get")==nil {input_api_register(&f.session,state)}
@@ -119,7 +120,7 @@ the_bindings_are_set_as_settings_and_refused_with_the_fix :: proc(t:^testing.T) 
 
     text,error:=input_call(f,"input.get","{}")
     testing.expect_value(t,error.code,0)
-    for want in ([]string{`"tap_seconds":0.2`,`"hold_seconds":0.5`,`"action": "move"`,`["A", "D", "S", "W"]`,`["Left_X", "Left_Y"]`,`"changed":[]`}) {
+    for want in ([]string{`"tap_seconds": 0.2`,`"hold_seconds": 0.5`,`"action": "move"`,`["A", "D", "S", "W"]`,`["Left_X", "Left_Y"]`,`"changed": []`}) {
         testing.expectf(t,strings.contains(text,want),"%q is not in %s",want,text)
     }
 
@@ -128,7 +129,7 @@ the_bindings_are_set_as_settings_and_refused_with_the_fix :: proc(t:^testing.T) 
     file:=input_file(f)
     testing.expect(t,strings.contains(file,`"jump"`) && strings.contains(file,`["South"]`) && !strings.contains(file,`"move"`),file)
     text,_=input_call(f,"input.get",`{"actions":["jump"]}`)
-    testing.expect(t,strings.contains(text,`["J"]`) && strings.contains(text,`"changed":["jump"]`) && !strings.contains(text,`"move"`),text)
+    testing.expect(t,strings.contains(text,`["J"]`) && strings.contains(text,`"changed": ["jump"]`) && !strings.contains(text,`"move"`),text)
 
     cases:=[]struct{params:string,wants:[]string}{
         {`{"action":"jump","kind":"Button","bindings":[{"inputs":["A","D"]}]}`,{`"jump"`,"a Button reads one input"}},
