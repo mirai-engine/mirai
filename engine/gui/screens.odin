@@ -73,7 +73,7 @@ instance_slot :: proc "contextless" (is_world:bool,player:int) -> int {return is
 // The screens in order, the lowest left out past SCREEN_CAPACITY; a hidden
 // one only while it still shows something of its last build.
 @(private)
-plan_screens :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,screens:core.Read(UI_Screen),hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),seats:core.Read(inp.Seat),moves:core.Read(inp.Move_Input),time:core.Time,local_count:int,problems:^core.Problems) {
+plan_screens :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,screens:^core.Table(UI_Screen,.Read),hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),seats:^core.Table(inp.Seat,.Read),moves:^core.Table(inp.Move_Input,.Read),time:core.Time,local_count:int,problems:^core.Problems) {
     Candidate :: struct {entity:core.Entity,screen:UI_Screen,hiding:bool}
     ordered:[SCREEN_CAPACITY]Candidate
     count:=0
@@ -137,7 +137,7 @@ OWNER_DEPTH :: 8 // entities over one that are asked whose it is
 // Whose an entity is: the seat it is, the seat that drives it, or that of
 // the nearest entity over it that is one of those. owned: it is of a player,
 // or a body nobody drives; local: of the player of this machine in slot.
-screen_owner :: proc(seats:core.Read(inp.Seat),moves:core.Read(inp.Move_Input),parents:core.Read(core.Parent),e:core.Entity) -> (slot:int,owned,local:bool) {
+screen_owner :: proc(seats:^core.Table(inp.Seat,.Read),moves:^core.Table(inp.Move_Input,.Read),parents:^core.Table(core.Parent,.Read),e:core.Entity) -> (slot:int,owned,local:bool) {
     at:=e
     for _ in 0..<OWNER_DEPTH {
         seat:=at
@@ -169,7 +169,7 @@ Widget_Candidate :: struct {
 // out of sight keeps its instance, and one on a mesh its texture, without
 // being built.
 @(private)
-plan_widgets :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,widgets:core.Read(World_Widget),worlds:core.Read(core.World_Transform),meshes_of:core.Read(render.Mesh_Renderer),hidden:core.Read(render.Hidden),parents:core.Read(core.Parent),time:core.Time,players:int,problems:^core.Problems,preview:=false) {
+plan_widgets :: proc(gui:^Gui,app:^host.App,world:core.World_Ref,widgets:^core.Table(World_Widget,$A),worlds:^core.Table(core.World_Transform,$B),meshes_of:^core.Table(render.Mesh_Renderer,$C),hidden:^core.Table(render.Hidden,$D),parents:^core.Table(core.Parent,$E),time:core.Time,players:int,problems:^core.Problems,preview:=false) {
     clear(&gui.candidates)
     split:=players>1 && gui.views[1].known
     for row in 0..<core.count(widgets) {
@@ -713,7 +713,7 @@ instances_sweep :: proc(gui:^Gui) {
 // Modal is on top.
 @(private)
 modal_apply :: proc(
-    gui:^Gui,seat_state:core.Ref(inp.Seats),seats:core.Read(inp.Seat),requests:^inp.Seat_Requests,
+    gui:^Gui,seat_state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,$A),requests:^inp.Seat_Requests,
     contexts:core.Ref(inp.Input_Contexts),context_requests:^inp.Context_Requests,
 ) -> (on_top:bool) {
     for e in gui.unblock {

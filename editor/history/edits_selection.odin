@@ -41,7 +41,7 @@ edits_select :: proc(edits:^Edits,w:core.World_Ref,selection:^Selection) {
         if w.data!=nil {
             e:=selection.entities[0]
             name:=""
-            if names:=core.world_table_of(w,core.Name);names!=nil {name=core.name_get(core.read(names),e)}
+            if names:=core.world_table_of(w,core.Name);names!=nil {name=core.name_get(names,e)}
             label=fmt.tprintf("Select %s",name) if name!="" else fmt.tprintf("Select Entity %d",core.entity_index(e))
         }
     case:   label=fmt.tprintf("Select %d entities",len(selection.entities))

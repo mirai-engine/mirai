@@ -108,8 +108,8 @@ Gpu_Params :: struct {
 // that draw them.
 @(step="render",loops="game editor")
 lens_render :: proc(
-    state:^Lens_Gpu,lenses:core.Read(Lens),zones:core.Read(Lens_Volume),places:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),
-    exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),view:core.View,locals:core.Ref(camera.Local_Views),renderer:^render.Renderer,
+    state:^Lens_Gpu,lenses:^core.Table(Lens,.Read),zones:^core.Table(Lens_Volume,.Read),places:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    exposures:^core.Table(render.Exposure,.Read),view_volumes:^core.Table(render.View_Volume,.Read),view:core.View,locals:core.Ref(camera.Local_Views),renderer:^render.Renderer,
 ) {
     state.views={}
     if renderer==nil || core.count(lenses)==0 && core.count(zones)==0 {return}
@@ -133,8 +133,8 @@ lens_render :: proc(
 
 // How a view looks through its lens: its camera's own, or the one of where it is.
 view_lens :: proc(
-    lenses:core.Read(Lens),zones:core.Read(Lens_Volume),places:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),
-    exposures:core.Read(render.Exposure),view_volumes:core.Read(render.View_Volume),view:core.View,
+    lenses:^core.Table(Lens,$A),zones:^core.Table(Lens_Volume,$B),places:^core.Table(volume.Volume,$C),worlds:^core.Table(core.World_Transform,$D),
+    exposures:^core.Table(render.Exposure,$E),view_volumes:^core.Table(render.View_Volume,$F),view:core.View,
 ) -> (v:View_Lens) {
     own:=false
     if view.camera!=core.NONE {

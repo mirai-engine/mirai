@@ -32,7 +32,7 @@ terrain_panel :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
         if terrains!=nil && (selected_entity!=tool.selection || target==core.NONE) && core.has(terrains,selected_entity) {target=selected_entity}
         tool.selection=selected_entity
         if terrains!=nil && worlds!=nil && core.has(terrains,target) {
-            _=stroke_prepare(tool,app.assets,app.allocator,core.read(terrains),core.read(worlds),editor.Pick{entity=target})
+            _=stroke_prepare(tool,app.assets,app.allocator,terrains,worlds,editor.Pick{entity=target})
         } else if tool.stroke.id!={} {stroke_free(tool)}
     }
     terrain_heightmap_dialogs(s,tool,world,app)

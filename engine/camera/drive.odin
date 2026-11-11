@@ -33,10 +33,10 @@ Free_Camera :: struct {
 
 @(step="fixed",stage="input",after="camera_select input_drive")
 camera_drive :: proc(
-    seats:core.Read(input.Seat),moves:^core.Table(input.Move_Input),move_actions:input.Input_Of(input.Move_Action),look_actions:input.Input_Of(input.Look_Action),
-    bindings:core.Ref(input.Input_Map),follows:core.Read(Camera_Follow),shown:core.Ref(Cameras),cameras:core.Read(render.Camera),views:core.Ref(Camera_Views),
-    hierarchy:core.Ref(core.Hierarchy),parents:core.Read(core.Parent),locals:core.Read(core.Transform),worlds:core.Read(core.World_Transform),
-    verticals:core.Read(core.Vertical),remotes:core.Read(core.Remote),problems:^core.Problems,
+    seats:^core.Table(input.Seat,.Read),moves:^core.Table(input.Move_Input),move_actions:input.Input_Of(input.Move_Action),look_actions:input.Input_Of(input.Look_Action),
+    bindings:core.Ref(input.Input_Map),follows:^core.Table(Camera_Follow,.Read),shown:core.Ref(Cameras),cameras:^core.Table(render.Camera,.Read),views:core.Ref(Camera_Views),
+    hierarchy:core.Ref(core.Hierarchy),parents:^core.Table(core.Parent,.Read),locals:^core.Table(core.Transform,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    verticals:^core.Table(core.Vertical,.Read),remotes:^core.Table(core.Remote,.Read),problems:^core.Problems,
 ) {
     axes:=input.input_map_has(bindings.ptr,input.action_of(move_actions,.Move),.Axis2) && input.input_map_has(bindings.ptr,input.action_of(look_actions,.Look),.Axis2)
     for row in 0..<core.count(seats) {
@@ -55,7 +55,7 @@ camera_drive :: proc(
             first:input.Move_Input
             if placed,ok:=core.world_of(locals,parents,body);ok {first.look_yaw=yaw_in(vertical,placed.rotation)}
             core.add(moves,body,first)
-            move=core.added(moves,body)
+            move=core.staged(moves,body)
             if move==nil {continue}
         }
         if turned,ok:=core.get(verticals,body);ok {move.look_yaw=mm.angle_wrap(move.look_yaw+turned.turn)}
@@ -106,8 +106,8 @@ yaw_in :: proc "contextless" (vertical,rotation:mm.Quat) -> f32 {
 // once the seat drives something else.
 @(step="fixed",stage="input",after="camera_drive")
 camera_free :: proc(
-    es:core.Commands,free:^Free_Camera,seats:core.Read(input.Seat),seat_state:core.Ref(input.Seats),requests:^input.Seat_Requests,
-    cameras:^core.Table(render.Camera),transforms:^core.Table(core.Transform),moves:core.Read(input.Move_Input),
+    es:core.Commands,free:^Free_Camera,seats:^core.Table(input.Seat,.Read),seat_state:core.Ref(input.Seats),requests:^input.Seat_Requests,
+    cameras:^core.Table(render.Camera),transforms:^core.Table(core.Transform),moves:^core.Table(input.Move_Input,.Read),
     origin:core.Ref(scene.Play_Origin),network:core.Ref(core.Network),hierarchy:core.Ref(core.Hierarchy),time:core.Time,
 ) {
     seat:=seat_state.local_count>0?input.local_seat(seats,0):core.NONE

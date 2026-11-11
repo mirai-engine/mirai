@@ -50,7 +50,7 @@ change_entity :: proc(w:core.World_Ref,id:base.Entity_Id) -> core.Entity {
 // The id of an entity: in the World, or in the rows of Id of a step, on either side.
 @(private)
 change_step_id :: proc(w:core.World_Ref,step:^Edit_Step,e:core.Entity) -> base.Entity_Id {
-    if id:=core.id_of(core.read(core.world_table_of(w,core.Id)),e);id!=0 {return id}
+    if id:=core.id_of(core.world_table_of(w,core.Id),e);id!=0 {return id}
     if step==nil {return 0}
     for &rows in step.tables {
         if rows.table<0 || rows.table>=len(w.info.tables) || w.info.tables[rows.table].type!=core.Id {continue}

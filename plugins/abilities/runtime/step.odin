@@ -13,12 +13,12 @@ import phys "plugins:physics/runtime"
 @(params)
 Ability_World :: struct {
     time:core.Time,
-    seats:core.Read(inp.Seat),
-    characters:core.Read(phys.Character),
-    locomotions:core.Read(locomotion.Locomotion_State), // the modes the characters are in
-    worlds:core.Read(core.World_Transform),
-    remotes:core.Read(core.Remote),
-    paces:core.Read(core.Own_Pace), // the windows on the Own clock count the user's own time
+    seats:^core.Table(inp.Seat,.Read),
+    characters:^core.Table(phys.Character,.Read),
+    locomotions:^core.Table(locomotion.Locomotion_State,.Read), // the modes the characters are in
+    worlds:^core.Table(core.World_Transform,.Read),
+    remotes:^core.Table(core.Remote,.Read),
+    paces:^core.Table(core.Own_Pace,.Read), // the windows on the Own clock count the user's own time
     clock:core.Clock,
     physics:core.Ref(phys.Physics_State),
     moves:^locomotion.Locomotion_Requests,
@@ -414,7 +414,7 @@ start_block :: proc(w:^Ability_World,tick:u64,dt:f32,e:core.Entity,u:^Ability_Us
     if u.statuses&a.requires!=a.requires {return .Status_Missing}
     if u.statuses&a.blocked_by!=0 {return .Status_Blocked}
     if a.modes!=0 {
-        if w.locomotions.table==nil {return .Mode}
+        if w.locomotions==nil {return .Mode}
         c,found:=core.get(w.locomotions,e)
         if !found || u32(c.mode)>=32 || a.modes&Ability_Modes(u32(1)<<u32(c.mode))==0 {return .Mode}
     }

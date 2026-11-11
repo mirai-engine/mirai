@@ -124,7 +124,7 @@ entity_off :: #force_inline proc "contextless" (es:^Entities,e:Entity) -> bool {
 // settle calls it between functions, after settling Disabled and Parent and
 // the Hierarchy. False without memory: what it could not do waits for the
 // next settle.
-entities_activity :: proc(es:^Entities,disabled:Read(Disabled),hierarchy:Ref(Hierarchy)) -> bool {
+entities_activity :: proc(es:^Entities,disabled:^Table(Disabled,$A),hierarchy:Ref(Hierarchy)) -> bool {
     seen:=es.activity
     if !touched(disabled,&seen) && hierarchy.version==es.activity_tree {return true}
     if count(disabled)==0 && es.disabled==0 {

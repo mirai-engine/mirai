@@ -64,11 +64,11 @@ a_deadline_on_the_own_time_of_an_entity_counts_its_pace :: proc(t:^testing.T) {
     test_world_settle(&w)
     time:=Time{tick=10,dt=1.0/60}
     clock:=CLOCK_DEFAULT
-    testing.expect_value(t,deadline(own_time(time,clock,read(&w.paces),fast),1),u64(40))
-    testing.expect_value(t,deadline(own_time(time,clock,read(&w.paces),plain),1),u64(70))
+    testing.expect_value(t,deadline(own_time(time,clock,&w.paces,fast),1),u64(40))
+    testing.expect_value(t,deadline(own_time(time,clock,&w.paces,plain),1),u64(70))
     // In slow motion it keeps its pace: the ticks of the world last half as long for the others.
     clock.scale=0.5
-    testing.expect_value(t,deadline(own_time(time,clock,read(&w.paces),fast),1),u64(25))
+    testing.expect_value(t,deadline(own_time(time,clock,&w.paces,fast),1),u64(25))
     time.tick=40
-    testing.expect(t,abs(elapsed(own_time(time,clock,read(&w.paces),fast),10)-2)<1e-4)
+    testing.expect(t,abs(elapsed(own_time(time,clock,&w.paces,fast),10)-2)<1e-4)
 }

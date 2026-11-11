@@ -36,17 +36,17 @@ remote_follows_what_a_client_holds_on_a_server_and_a_new_role_clears_it :: proc(
     s.host_ready=true
     authority_follow(&s,ref)
     core.settle(&info,&world,nil)
-    testing.expect(t,core.owned(core.read(&world.remotes),e),"what a connection owns and predicts is decided here")
+    testing.expect(t,core.owned(&world.remotes,e),"what a connection owns and predicts is decided here")
 
     s.server.objects[1]={object=Object(1),entity=e}
     held:=[]wire.Command{{kind=.Authority_Changed,object=Object(1),connection=3}}
     server_commands(&s,ref,nil,held,&world.remote)
     core.settle(&info,&world,nil)
-    testing.expect(t,!core.owned(core.read(&world.remotes),e),"what a client holds is decided there")
+    testing.expect(t,!core.owned(&world.remotes,e),"what a client holds is decided there")
     back:=[]wire.Command{{kind=.Authority_Changed,object=Object(1),connection=0}}
     server_commands(&s,ref,nil,back,&world.remote)
     core.settle(&info,&world,nil)
-    testing.expect(t,core.owned(core.read(&world.remotes),e),"and here again when it gives it back")
+    testing.expect(t,core.owned(&world.remotes,e),"and here again when it gives it back")
 
     server_commands(&s,ref,nil,held,&world.remote)
     core.settle(&info,&world,nil)
@@ -81,19 +81,19 @@ remote_follows_the_replicas_a_client_neither_predicts_nor_holds :: proc(t:^testi
     defer session_destroy(&s)
     ref:=core.world_ref(&world,&info)
     r:=net_test_replica(&s,ref,e,.Shown,.Lent)
-    testing.expect(t,!core.owned(core.read(&world.remotes),e),"someone else's replica is decided by the server")
+    testing.expect(t,!core.owned(&world.remotes,e),"someone else's replica is decided by the server")
     r.role=.Held
     replica_classify(&s,ref,r)
     core.settle(&info,&world,nil)
-    testing.expect(t,core.owned(core.read(&world.remotes),e),"what it holds is decided here")
+    testing.expect(t,core.owned(&world.remotes,e),"what it holds is decided here")
     r.role=.Predicted
     replica_classify(&s,ref,r)
     core.settle(&info,&world,nil)
-    testing.expect(t,core.owned(core.read(&world.remotes),e),"and what it predicts")
+    testing.expect(t,core.owned(&world.remotes,e),"and what it predicts")
     r.role=.Shown
     replica_classify(&s,ref,r)
     core.settle(&info,&world,nil)
-    testing.expect(t,!core.owned(core.read(&world.remotes),e))
+    testing.expect(t,!core.owned(&world.remotes,e))
 }
 
 @(private="file")

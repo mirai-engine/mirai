@@ -85,7 +85,7 @@ a_body_that_changes_parent_where_it_is_is_no_teleport :: proc(t:^testing.T) {
     physics_test_step(&f)
     physics_test_step(&f)
     testing.expect_value(t,f.state.stats.teleports,u64(0))
-    world,_:=core.world_of(core.read(&f.transforms),core.read(&f.parents),box)
+    world,_:=core.world_of(&f.transforms,&f.parents,box)
     testing.expect(t,abs(world.position.x-5)<1e-3,"it stays where it was")
 }
 
