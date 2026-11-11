@@ -27,8 +27,15 @@ CHANNEL_BIRTHS :: 1024
 // kind channel of the same name.
 @(component)
 Particle_Channel :: struct {
-    name:core.Birth_Channel,
+    name:[core.CHANNEL_NAME_BYTES]u8 `mirai:"text"`,
     silent:bool, // its effect starts no particles at the births
+}
+
+// The channel an emitter listens to; 0: none.
+@(private)
+channel_key :: proc(listener:Particle_Channel) -> core.Birth_Channel {
+    listener:=listener
+    return core.birth_channel(base.text_get(listener.name[:]))
 }
 
 Channel_Record :: struct {
@@ -51,12 +58,12 @@ channels_step :: proc(clocks:^Particle_Clocks,pushed:[]core.Birth,listeners:core
     // The rings follow the channels some emitter names.
     for i:=len(clocks.channels)-1;i>=0;i-=1 {
         named:=false
-        for row in 0..<core.count(listeners) {named||=core.at(listeners,row).name==clocks.channels[i].name}
+        for row in 0..<core.count(listeners) {named||=channel_key(core.at(listeners,row))==clocks.channels[i].name}
         if !named {unordered_remove(&clocks.channels,i)}
     }
     for row in 0..<core.count(listeners) {
-        name:=core.at(listeners,row).name
-        if channel_ring(clocks,name)==nil {append(&clocks.channels,Channel_Ring{name=name})}
+        name:=channel_key(core.at(listeners,row))
+        if name!=0 && channel_ring(clocks,name)==nil {append(&clocks.channels,Channel_Ring{name=name})}
     }
     at:=time.playing?time.seconds+f64(time.dt):-1
     for &birth in pushed {
@@ -88,26 +95,19 @@ channel_preview :: proc(clocks:^Particle_Clocks,listener:Particle_Channel,positi
     if listener.silent {return}
     cycle:=max(duration,0.5)
     if before>0 && math.floor(before/cycle)==math.floor(after/cycle) {return}
-    if ring:=channel_ring(clocks,listener.name);ring!=nil {ring_record(ring,{position=position,count=CHANNEL_PREVIEW_COUNT},-1)}
+    if ring:=channel_ring(clocks,channel_key(listener));ring!=nil {ring_record(ring,{position=position,count=CHANNEL_PREVIEW_COUNT},-1)}
 }
 
-// The channels the resources of kind channel of a program read: those whose
-// constants have the names the program gives them (`//! resource displacers
-// channel` reads CHANNEL_DISPLACERS).
+// The channels the resources of kind channel of a program read: those of the
+// names the program gives them (`//! resource displacers channel` reads the
+// channel "displacers").
 @(private)
-channel_needs :: proc(a:^host.Assets,program:^Program,needs:^Program_Needs,info:^core.World_Info) -> (problem:string) {
+channel_needs :: proc(a:^host.Assets,program:^Program,needs:^Program_Needs) {
     found:=erender.program_find(a,base.text_get(program.name[:]),.Vfx) if a!=nil && program.id!=0 else nil
     if found==nil {return}
     for resource,at in found.resources[:min(len(found.resources),RESOURCES)] {
-        need:=&needs.resources[at]
-        if need.kind!=.Channel {continue}
-        value,named:=core.name_value(info,core.Birth_Channel,resource.name)
-        need.channel=core.Birth_Channel(value)
-        if !named && problem=="" {
-            problem=fmt.tprintf("Vfx program %s reads the channel %q, which no constant of core.Birth_Channel names: declare CHANNEL_%s :: core.Birth_Channel(n), n from %d in a game",base.text_get(program.name[:]),resource.name,strings.to_upper(resource.name,context.temp_allocator),core.CHANNEL_GAME)
-        }
+        if needs.resources[at].kind==.Channel {needs.resources[at].channel=core.birth_channel(resource.name)}
     }
-    return
 }
 
 channel_ring :: proc(clocks:^Particle_Clocks,name:core.Birth_Channel) -> ^Channel_Ring {

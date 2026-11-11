@@ -271,7 +271,7 @@ particles_sync :: proc(
         for need in shown.needs.resources {
             if need.kind==.Data {data_need(&sync.data,need.name,need.words,&used,problems,e)}
         }
-        if listener,listens:=core.get(listeners,e);listens && !listener.silent {desc.births.x,desc.births.y=channel_region(sync,listener.name)}
+        if listener,listens:=core.get(listeners,e);listens && !listener.silent {desc.births.x,desc.births.y=channel_region(sync,channel_key(listener))}
         desc.paused,desc.generation=paused,shown.generation
         if shown.has_sub {
             sub:=shown.sub_desc
@@ -372,7 +372,7 @@ shown_resolve :: proc(shown:^Emitter_Shown,app:^host.App,particle:base.Asset_Id,
     shown.sub={}
     shown.has_sub=false
     problem:=particle_program(a,particle,&shown.info,&given,&shown.program,&shown.needs)
-    if channels:=channel_needs(a,&shown.program,&shown.needs,app.info);problem=="" {problem=channels}
+    channel_needs(a,&shown.program,&shown.needs)
     shown.source_count=0
     if a!=nil && particle!={} {
         if view,ok:=effect_view(a,particle);ok {

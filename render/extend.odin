@@ -749,6 +749,17 @@ pass_texture_sample :: proc(s: ^Stage_Pass, slot: u32, desc: Pass_Texture_Desc, 
 	return false
 }
 
+// Binds at SLOT_PASS0 + slot, before a pass begins, the volume the passes of
+// the view asked for this frame by that name, as pass_texture_sample does;
+// in a view without it, a volume of the renderer that stands for it and holds
+// nothing meant to be read. False then.
+pass_volume_sample :: proc(s: ^Stage_Pass, slot: u32, name: string) -> bool {
+	if slot > SLOT_PASS9 - SLOT_PASS0 {return false}
+	if pass_texture_sample(s, slot, {name = name}) {return true}
+	rhi.cmd_bind_texture(s.pass.cmd, SLOT_PASS0 + slot, s.pass.r.display_lut)
+	return false
+}
+
 @(private)
 extension_texture_free :: proc(r: ^Renderer, entry: ^Extension_Texture) {
 	for texture in entry.textures {if texture != 0 {rhi.texture_destroy(r.device, texture)}}
