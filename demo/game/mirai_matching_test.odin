@@ -25,12 +25,8 @@ mirai_matching_selects_a_walking_clip :: proc(t:^testing.T) {
     root,found:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
     if !testing.expect(t,found && host.assets_init(&f.assets,{root=fmt.tprintf("%s/demo/assets",root),imported=fmt.tprintf("%s/demo/.mirai/imported",root),capacity=512})) {return}
     f.app={assets=&f.assets,allocator=context.allocator}
-    ids:[2]base.Asset_Id
-    for file,i in ([2]string{"characters/mirai/mirai_matching.character","models/mirai/mirai.glb/output_unwrapped.mesh"}) {
-        record,present:=asset.registry_find_path(&f.assets.registry,file)
-        if !testing.expectf(t,present,"the demo has %s",file) {return}
-        ids[i]=record.id
-    }
+    ids,ok:=mirai_assets(t,&f.assets,"characters/mirai/mirai_matching.character")
+    if !ok {return}
     actor:=core.create(&f.entities)
     core.add(&f.transforms,actor,core.TRANSFORM_IDENTITY);core.add(&f.worlds,actor,{rotation=1,scale={1,1,1}})
     core.add(&f.meshes,actor,render.Mesh_Renderer{mesh=ids[1]})
