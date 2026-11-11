@@ -258,11 +258,13 @@ shapes_collide :: proc(w:^World,a,b:^Shape,xf:Transform,speculative:f32,out:^[1+
 manifold_state_update :: proc "contextless" (state:^Manifold_State,local:^Local_Manifold) #no_bounds_check {
     old:=state^
     state.count=local.count
+    state.normal=local.count>0?local.normal:{}
     used,matched:[MANIFOLD_MAX_POINTS]bool
     for i in 0..<int(local.count) {
         id:=local.points[i].id
         state.ids[i]=id
         state.points[i]=local.points[i].point
+        state.separations[i]=local.points[i].separation
         state.normal_impulses[i]=0
         for j in 0..<int(old.count) {
             if old.ids[j]==id && !used[j] {
@@ -302,6 +304,26 @@ manifold_to_world :: proc "contextless" (out:^Manifold,local:^Local_Manifold,xf:
     }
 }
 
+@(private) CARRY_DISTANCE :: 0.001 // m that B may move in the frame of A before its manifolds are collided again
+@(private) CARRY_COS :: 0.9998477 // cosine of half the 2 degrees that B may turn in the frame of A
+
+// The manifolds of the last narrow phase with B at `relative` in the frame of A: each point keeps its place on
+// A and its place on B moves with B, so the separation follows the motion along the normal.
+@(private)
+manifolds_carry :: proc "contextless" (w:^World,contact:^Contact,relative:Transform,out:^[1+EXTRA_MANIFOLDS]Local_Manifold,count:int) #no_bounds_check {
+    move:=xf_mul(relative,xf_inv(contact.relative))
+    for m in 0..<count {
+        state:=m==0?&contact.manifold:&w.blocks[contact.extra].manifolds[m-1]
+        local:=&out[m]
+        local.normal,local.count=state.normal,state.count
+        for i in 0..<int(state.count) {
+            half:=0.5*state.separations[i]*state.normal
+            on_a,on_b:=state.points[i]-half,xf_point(move,state.points[i]+half)
+            local.points[i]={0.5*(on_a+on_b),dot(on_b-on_a,state.normal),state.ids[i]}
+        }
+    }
+}
+
 // Narrow phase of one contact. Writes only to the contact and its manifolds, so contacts update in parallel.
 @(private)
 contact_update :: proc(w:^World,index:i32) #no_bounds_check {
@@ -323,7 +345,21 @@ contact_update :: proc(w:^World,index:i32) #no_bounds_check {
     locals:[1+EXTRA_MANIFOLDS]Local_Manifold=---
     speculative:f32=SPECULATIVE_DISTANCE
     if .Character in (body_a.flags+body_b.flags) {speculative+=length(body_b.linear_velocity-body_a.linear_velocity)*w.step.dt}
-    count:=shapes_collide(w,a,b,xf_inv_mul(xf_a,xf_b),overlap?0:speculative,&locals,&contact.sat)
+    relative:=xf_inv_mul(xf_a,xf_b)
+    // Jolt's body pair cache: a pair that barely moved since its last narrow phase keeps its manifolds,
+    // moved with B. What the narrow phase decides beyond geometry (overlaps, one-way shapes, characters, twins
+    // and cuts) always collides.
+    carry:=!overlap && w.cut_count==0 && (a.flags+b.flags)&{.One_Way,.Twin}=={} && .Character not_in (body_a.flags+body_b.flags)
+    count:int
+    if carry && length2(relative.p-contact.relative.p)<=CARRY_DISTANCE*CARRY_DISTANCE && abs(q_dot(relative.q,contact.relative.q))>=CARRY_COS {
+        count=int(contact.manifold_count)
+        manifolds_carry(w,contact,relative,&locals,count)
+        contact.flags+={.Carried}
+    } else {
+        count=shapes_collide(w,a,b,relative,overlap?0:speculative,&locals,&contact.sat)
+        contact.relative=carry?relative:{}
+        contact.flags-={.Carried}
+    }
     if count>0 && (w.cut_count>0 || .Twin in (a.flags+b.flags)) {count=manifolds_cut(w,contact,a,b,xf_a,&locals,count)}
     // A shape that meets a one-way shape from its back goes through it for as long as the two touch.
     if count>0 && !overlap && .One_Way in (a.flags+b.flags) {
@@ -350,13 +386,14 @@ contact_update :: proc(w:^World,index:i32) #no_bounds_check {
             center_a=xf_point(to,xf_point(twin_through(w,a),center_a))
             center_b=xf_point(to,xf_point(twin_through(w,b),center_b))
         }
-        manifold_state_update(&contact.manifold,&locals[0])
+        carried:=.Carried in contact.flags
+        if !carried {manifold_state_update(&contact.manifold,&locals[0])}
         manifold_to_world(&w.manifolds[index],&locals[0],frame,center_a,center_b)
         if contact.extra>=0 {
             block:=&w.blocks[contact.extra]
             for i in 1..=EXTRA_MANIFOLDS {
                 if i>=count {locals[i].count=0}
-                manifold_state_update(&block.manifolds[i-1],&locals[i])
+                if !carried {manifold_state_update(&block.manifolds[i-1],&locals[i])}
                 manifold_to_world(&w.extra_manifolds[contact.extra][i-1],&locals[i],frame,center_a,center_b)
             }
         }

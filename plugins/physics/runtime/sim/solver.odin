@@ -221,7 +221,12 @@ world_step :: proc(w:^World,dt:f32) {
     joints_break(w)
     islands_sleep(w)
     step_hits(w)
-    for i in st.active[:st.active_count] {stamp(w,.Contacts,i);w.contacts[i].flags-={.Visited}}
+    w.stats.carried_contacts=0
+    for i in st.active[:st.active_count] {
+        stamp(w,.Contacts,i)
+        w.contacts[i].flags-={.Visited}
+        w.stats.carried_contacts+=int(.Carried in w.contacts[i].flags)
+    }
     w.stats.awake_bodies=st.awake_count
     w.stats.active_contacts=st.active_count
     w.stats.constraints=st.ref_count
