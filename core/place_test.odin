@@ -25,7 +25,7 @@ a_place_writes_a_free_transform_and_asks_the_owner_of_a_locked_one :: proc(t:^te
     jumps:Jumps
     defer delete(jumps.queue.items)
     problems:Problems
-    p:=Placer{&transforms,read(&parents),&places,&jumps}
+    p:=Placer{&transforms,cast(^Table(Parent,.Read))&parents,&places,&jumps}
 
     testing.expect(t,place(p,free_one,{1,2,3},teleport=false))
     value,_:=get(&transforms,free_one)

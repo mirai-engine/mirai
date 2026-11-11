@@ -192,7 +192,7 @@ an_animation_that_compresses_in_a_job_plays_once_it_is_ready_without_problems ::
     animation:=ANIMATION_DEFAULT;animation.asset=id;animation.loop=false;animation.fade=0;base.text_set(animation.clip[:],"walk")
     core.add(&w.animations,actor,animation)
     core.test_world_settle(&w)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
+    core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     problems:core.Problems
     extra:Test_Storages;defer test_storages_free(&extra)
@@ -244,7 +244,7 @@ a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready :: proc(t:
     animation:=ANIMATION_DEFAULT;animation.asset=CHARACTER;animation.fade=0
     core.add(&w.animations,actor,animation)
     core.test_world_settle(&w)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
+    core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     problems:core.Problems
     graphs:=Character_Assets{allocator=context.allocator};defer character_assets_free(&graphs)

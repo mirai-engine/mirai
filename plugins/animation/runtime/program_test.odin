@@ -85,7 +85,7 @@ a_program_blends_its_clips_with_curves_and_root_motion_under_the_layers_without_
     transforms:core.Table(core.Transform);defer core.table_destroy(&transforms)
     constraints:Animation_Constraints;defer constraints_free(&constraints)
     state.program.root.in_place=true
-    if bone,reference,pinned:=animation_root_reference(state,state.program.root,state.local[:],{});pinned {state.local[bone]=reference}
+    if bone,reference,pinned:=animation_root_reference(state,state.program.root,state.local[:],(^core.Table(core.Transform))(nil));pinned {state.local[bone]=reference}
     testing.expect_value(t,state.local[1].position,mm.Vec3{})
     copy(state.local[:],state.rest[:]);state.program.root.in_place=false
     resize(&state.program.from,len(state.local));copy(state.program.from[:],state.local[:])

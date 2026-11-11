@@ -19,7 +19,8 @@ ITEM_DEFAULT :: Item{stack=1}
 Pickup :: struct {item:core.Record(Item)}   // names a row: its table and its row id
 
 @(step="fixed")
-game_pickups :: proc(pickups:core.Read(Pickup),items:core.Records(Item),problems:^core.Problems) {
+game_pickups :: proc(pickups:^core.Table(Pickup,.Read),items:core.Records(Item),
+                     problems:^core.Problems) {
     for row in 0..<core.count(pickups) {
         ref:=core.at(pickups,row).item
         item,found:=core.record(items,ref,problems,core.entity_at(pickups,row))

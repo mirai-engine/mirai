@@ -240,12 +240,12 @@ object_retype :: proc(s:^Net_Session,w:core.World_Ref,slot:^Server_Object,disabl
         return true
     }
     if type==slot.type {return true}
-    local,has_pose:=core.get(core.read(core.world_table_of(w,core.Transform)),e)
+    local,has_pose:=core.get(core.world_table_of(w,core.Transform),e)
     if !has_pose {return true}
     t:=net_type(s,type)
     ids:=core.world_table_of(w,core.Id)
     of_prefab,_:=scene.prefab_instance(w,e)
-    pose:=Pose{id=core.id_of(core.read(ids),e),prefab=of_prefab.prefab,sections=section_ids(ids,slot.sections),position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,e,t),disabled=disabled,predict=slot.predict}
+    pose:=Pose{id=core.id_of(ids,e),prefab=of_prefab.prefab,sections=section_ids(ids,slot.sections),position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,e,t),disabled=disabled,predict=slot.predict}
     // Through rawptr: the host lets go of these locals below, which the escape analysis of Odin cannot tell.
     sources:[wire.MAX_FRAGMENTS]rawptr
     sources[0]=rawptr(&pose)
@@ -287,7 +287,7 @@ server_visibility :: proc(s:^Net_Session,w:core.World_Ref) {
     for &slot in server.objects[:changed?len(server.objects):0] {
         if slot.object==0 {continue}
         server.visibility_reads+=1
-        value,_:=core.get(core.read(visibility),slot.entity)
+        value,_:=core.get(visibility,slot.entity)
         if slot.visibility==value.mask {continue}
         if wire.object_set_visibility(h,slot.object,value.mask)==.None {slot.visibility=value.mask} else {told=false}
     }
@@ -295,7 +295,7 @@ server_visibility :: proc(s:^Net_Session,w:core.World_Ref) {
         if peer.connection==0 {continue}
         value:Visibility
         for row in 0..<(seats!=nil?core.count(seats):0) {
-            if Connection(seats.values[row].peer)==peer.connection {value,_=core.get(core.read(visibility),core.entity_at(seats,row));break}
+            if Connection(seats.values[row].peer)==peer.connection {value,_=core.get(visibility,core.entity_at(seats,row));break}
         }
         if peer.sees==value.sees {continue}
         if wire.connection_set_visibility(h,peer.connection,value.sees)==.None {peer.sees=value.sees} else {told=false}
@@ -418,7 +418,7 @@ gone_tell :: proc(s:^Net_Session,w:core.World_Ref,section:core.Entity,id:base.En
     reference,found:=core.get(references,section)
     if !found || reference.loaded=={} {return}
     server:=&s.server
-    message:=Net_Gone{section=core.id_of(core.read(core.world_table_of(w,core.Id)),section),changes=server.changes,count=1}
+    message:=Net_Gone{section=core.id_of(core.world_table_of(w,core.Id),section),changes=server.changes,count=1}
     message.ids[0]=id
     group:=section_group(s,message.section,false)
     if group==0 {
@@ -438,7 +438,7 @@ gone_tell :: proc(s:^Net_Session,w:core.World_Ref,section:core.Entity,id:base.En
 member_of :: proc(w:core.World_Ref,e,section:core.Entity) -> base.Entity_Id {
     if section==core.NONE {return 0}
     if members:=core.world_table_of(w,scene.Section_Member);members!=nil && core.raw_row(core.raw(members),e)<0 {return 0}
-    return core.id_of(core.read(core.world_table_of(w,core.Id)),e)
+    return core.id_of(core.world_table_of(w,core.Id),e)
 }
 
 // A message of the game that arrived waits in the session for the next tick, which has it in core.Net_Messages.
@@ -575,7 +575,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
     }
     // What a section that moved, loaded or changed its box holds is looked at again.
     if sections_moved(server,references,worlds) {
-        if !scene.section_boxes_build(&server.section_boxes,core.read(references),core.read(worlds)) {core.report(s.problems,core.NONE,"net.memory","out of memory to find the boxes of the sections: objects stay in the section they hang from; free memory")}
+        if !scene.section_boxes_build(&server.section_boxes,references,worlds) {core.report(s.problems,core.NONE,"net.memory","out of memory to find the boxes of the sections: objects stay in the section they hang from; free memory")}
         for &slot in server.objects {slot.placed={}}
     }
 
@@ -638,7 +638,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
                 if placed!=nil {
                     if instance:=(^scene.Prefab_Instance)(core.raw_find(core.raw(placed),type_info_of(scene.Prefab_Instance),e));instance!=nil {prefab=instance.prefab}
                 }
-                pose:=Pose{id=core.id_of(core.read(ids),e),prefab=prefab,sections=section_ids(ids,slot.sections),position=local.position,rotation=local.rotation,scale=local.scale,off=off,disabled=disabled,predict=config.predict}
+                pose:=Pose{id=core.id_of(ids,e),prefab=prefab,sections=section_ids(ids,slot.sections),position=local.position,rotation=local.rotation,scale=local.scale,off=off,disabled=disabled,predict=config.predict}
                 written=wire.object_write(h,object,0,&pose)==.None
                 if written {slot.off,slot.disabled,slot.predict=off,disabled,config.predict}
                 if written {s.stats.fragments_published+=1}
@@ -768,7 +768,7 @@ sections_moved :: proc(server:^Server,references:^core.Table(scene.Scene_Referen
 @(private)
 section_ids :: proc(ids:^core.Table(core.Id),sections:[wire.OBJECT_GROUPS]core.Entity) -> (out:[wire.OBJECT_GROUPS]base.Entity_Id) {
     for section,i in sections {
-        if section!=core.NONE {out[i]=core.id_of(core.read(ids),section)}
+        if section!=core.NONE {out[i]=core.id_of(ids,section)}
     }
     return
 }
@@ -779,7 +779,7 @@ section_ids :: proc(ids:^core.Table(core.Id),sections:[wire.OBJECT_GROUPS]core.E
 section_groups :: proc(s:^Net_Session,ids:^core.Table(core.Id),sections:[wire.OBJECT_GROUPS]core.Entity) -> (groups:wire.Groups) {
     for section,i in sections {
         if section==core.NONE {continue}
-        group:=section_group(s,core.id_of(core.read(ids),section),true)
+        group:=section_group(s,core.id_of(ids,section),true)
         if group==0 {return {}}
         groups[i]=u16(group)
     }
@@ -828,7 +828,7 @@ kept_off :: proc(w:core.World_Ref,e:core.Entity) -> bool {
 @(private)
 server_create :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,config:Replicate,ancestor:core.Entity,parent:Object) -> Object {
     h:=&s.host
-    local,has_pose:=core.get(core.read(core.world_table_of(w,core.Transform)),e)
+    local,has_pose:=core.get(core.world_table_of(w,core.Transform),e)
     if !has_pose {
         core.report(s.problems,e,"net.object","it is not replicated: it has no Transform; give it one")
         return 0
@@ -850,16 +850,16 @@ server_create :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,config:Repli
     hierarchy:=core.ref(core.world_storage_of(w,core.Hierarchy))
     references,worlds:=core.world_table_of(w,scene.Scene_Reference),core.world_table_of(w,core.World_Transform)
     sections:=sections_of(s,&s.server.section_boxes,&s.server.section_holding,worlds,hierarchy,e,section_of(hierarchy,references,e))
-    pose:=Pose{id=core.id_of(core.read(ids),e),prefab=of_prefab.prefab,sections=section_ids(ids,sections),position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,e,t),predict=config.predict}
+    pose:=Pose{id=core.id_of(ids,e),prefab=of_prefab.prefab,sections=section_ids(ids,sections),position=local.position,rotation=local.rotation,scale=local.scale,off=components_off(w,e,t),predict=config.predict}
     position:=local.position
-    if world,has:=core.get(core.read(core.world_table_of(w,core.World_Transform)),e);has {position=world.position}
+    if world,has:=core.get(core.world_table_of(w,core.World_Transform),e);has {position=world.position}
     desc:=wire.Object_Desc{
         type=type,user=u64(e),owner=owner_of(w,e),simulation=config.simulation,priority=config.priority,poll_interval=publish_interval(s,config.update_hz),
         filter=filter_of(config.audience),position=position,radius=config.radius,parent=parent,auto_authority=config.simulation==.Lent,
         groups=section_groups(s,ids,sections),
     }
     if visibility:=core.world_table_of(w,Visibility);visibility!=nil {
-        if value:=core.table_added(visibility,e);value!=nil {desc.visibility=value.mask} else if value,has:=core.get(visibility,e);has {desc.visibility=value.mask}
+        if value:=core.staged(visibility,e);value!=nil {desc.visibility=value.mask}
     }
     // Through rawptr: the host lets go of these locals below, which the escape analysis of Odin cannot tell.
     desc.sources[0]=rawptr(&pose)
@@ -923,9 +923,9 @@ server_scope :: proc(s:^Net_Session,slot:^Server_Object,config:Replicate,wait:bo
 // look_behind ticks before the input (its input delay): what it differs by
 // from the look this end had then is put right now, and in the looks kept since.
 @(step="fixed",loops="game",stage="intent")
-remote_look :: proc(session:core.Ref(Net_Session),inputs:^Remote_Inputs,seats:core.Read(input.Seat),moves:^core.Table(input.Move_Input),time:core.Time) {
+remote_look :: proc(session:core.Ref(Net_Session),inputs:^Remote_Inputs,seats:^core.Table(input.Seat,.Read),moves:^core.Table(input.Move_Input),time:core.Time) {
     if session.ptr==nil || session.mode!=.Server {return}
-    for seat in seats.table.values[:core.count(seats)] {
+    for seat in seats.values[:core.count(seats)] {
         if seat.peer==0 || seat.body==core.NONE {continue}
         entry:=remote_entry(inputs,Connection(seat.peer))
         move:=core.edit(moves,seat.body)

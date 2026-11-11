@@ -144,7 +144,7 @@ foliage_write :: proc(s:^editor.Session,a:^host.Assets,id:base.Asset_Id,source:^
 
 // The source of a Foliage, read again when it shows another source, another
 // revision or its file changed.
-edit_prepare :: proc(t:^Foliage_Tool,assets:^host.Assets,allocator:runtime.Allocator,foliages:core.Read(foliage.Foliage),e:core.Entity) -> bool {
+edit_prepare :: proc(t:^Foliage_Tool,assets:^host.Assets,allocator:runtime.Allocator,foliages:^core.Table(foliage.Foliage,$A),e:core.Entity) -> bool {
     a:=assets
     marker,known:=core.get(foliages,e)
     if a==nil || !known || marker.source=={} {return false}
@@ -238,7 +238,7 @@ edit_commit :: proc(s:^editor.Session,t:^Foliage_Tool,world:core.World_Ref,asset
 // what changes the file outside the tool (Save, Discard, a recovery) is the
 // source of the revision its Foliage show.
 @(step="frame",stage="begin",after="editor_tools")
-foliage_sync :: proc(s:^editor.Session,tool:^Foliage_Tool,foliages:core.Read(foliage.Foliage),assets:^host.Assets) {
+foliage_sync :: proc(s:^editor.Session,tool:^Foliage_Tool,foliages:^core.Table(foliage.Foliage,.Read),assets:^host.Assets) {
     a:=assets
     if a==nil || tool.stroke.active || tool.gizmo.drag.active || editor.playing(s) {return}
     editor.revision_sync(s,&tool.history,foliages,a,REVISIONS)
@@ -252,14 +252,14 @@ foliage_pointer :: proc(s:^editor.Session,tool:^Foliage_Tool,input:core.Input) {
 
 // The Foliage the tool edits: the one selected.
 @(private)
-target :: proc(s:^editor.Session,foliages:core.Read(foliage.Foliage)) -> core.Entity {
+target :: proc(s:^editor.Session,foliages:^core.Table(foliage.Foliage,$A)) -> core.Entity {
     #reverse for e in s.selection.entities {if core.has(foliages,e) {return e}}
     return core.NONE
 }
 
 @(step="frame")
 foliage_tool :: proc(
-    s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,foliages:core.Read(foliage.Foliage),worlds:core.Read(core.World_Transform),
+    s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,foliages:^core.Table(foliage.Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),
     grounds:core.Ref(foliage.Foliage_Ground),requests:^foliage.Foliage_Ground_Requests,resident:core.Ref(foliage.Foliage_Resident),
     assets:^host.Assets,allocator:runtime.Allocator,input:core.Input,frame:core.Frame_Time,
 ) {
@@ -290,7 +290,7 @@ foliage_tool :: proc(
 }
 
 @(step="ui",after="editor_panels")
-foliage_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,foliages:core.Read(foliage.Foliage),worlds:core.Read(core.World_Transform),grounds:core.Ref(foliage.Foliage_Ground),data:core.Ref(foliage.Foliage_Data),assets:^host.Assets,allocator:runtime.Allocator,input:core.Input) {
+foliage_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,foliages:^core.Table(foliage.Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),grounds:core.Ref(foliage.Foliage_Ground),data:core.Ref(foliage.Foliage_Data),assets:^host.Assets,allocator:runtime.Allocator,input:core.Input) {
     g:=s.gui
     if !g.begun || editor.playing(s) {return}
     tool_ready(tool);ctx:=g.ctx
@@ -309,7 +309,7 @@ foliage_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,
 // What the panel of the tool shows: a foliage to choose, or the mode, the
 // brush, what is under it and the types of the one selected.
 @(private)
-panel_rows :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,foliages:core.Read(foliage.Foliage),worlds:core.Read(core.World_Transform),grounds:core.Ref(foliage.Foliage_Ground),data:core.Ref(foliage.Foliage_Data),assets:^host.Assets,allocator:runtime.Allocator,input:core.Input) {
+panel_rows :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,foliages:^core.Table(foliage.Foliage,$A),worlds:^core.Table(core.World_Transform,$B),grounds:core.Ref(foliage.Foliage_Ground),data:core.Ref(foliage.Foliage_Data),assets:^host.Assets,allocator:runtime.Allocator,input:core.Input) {
     ctx:=s.gui.ctx
     e:=target(s,foliages)
     if e==core.NONE || !edit_prepare(tool,assets,allocator,foliages,e) {
@@ -596,7 +596,7 @@ types_remove :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,a
 
 // Without a Foliage selected the tool offers those of the scene and New foliage.
 @(private)
-choose_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,foliages:core.Read(foliage.Foliage)) {
+choose_panel :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,foliages:^core.Table(foliage.Foliage,$A)) {
     ctx:=s.gui.ctx
     kit.section(ctx,"Select or create a foliage","",80)
     for i in 0..<core.count(foliages) {
@@ -654,7 +654,7 @@ foliage_menu :: proc(s:^editor.Session,file:^asset.Registry_File) {
     world:=editor.edited_world(s)
     table:=core.world_table_of(world,foliage.Foliage)
     if tool==nil || table==nil {return}
-    foliages:=core.read(table)
+    foliages:=table
     e:=target(s,foliages)
     label:="Create foliage" if e==core.NONE else fmt.tprintf("Add to %s",editor.entity_label(world,e))
     if !ui.menu_item(ctx,ui.id(ctx,"foliage_add"),label,{icon=.Edit}) {return}

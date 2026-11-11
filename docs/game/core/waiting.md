@@ -14,11 +14,11 @@ Mine :: struct {
 }
 
 mine_light :: proc(mines:^core.Table(Mine),e:core.Entity,time:core.Time) {
-    if mine:=core.get(mines,e);mine!=nil {mine.bang_at=core.deadline(time,mine.fuse)}
+    if mine:=core.edit(mines,e);mine!=nil {mine.bang_at=core.deadline(time,mine.fuse)}
 }
 
 @(step="fixed",server)
-game_mines :: proc(mines:core.Read(Mine),commands:core.Commands,time:core.Time) {
+game_mines :: proc(mines:^core.Table(Mine,.Read),commands:core.Commands,time:core.Time) {
     for row in 0..<core.count(mines) {
         mine:=core.at(mines,row)
         if mine.bang_at==0 || !core.due(time,mine.bang_at) {continue}

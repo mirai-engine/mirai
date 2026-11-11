@@ -237,7 +237,7 @@ rig_slot_row :: proc "contextless" (table:^core.Table($T),entity:core.Entity,slo
     return row if row<end else -1
 }
 
-rigs_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),root_transform:mm.Transform,dt:f32,playback:^Playback=nil) -> bool {
+rigs_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),root_transform:mm.Transform,dt:f32,playback:^Playback=nil) -> bool {
     if state==nil || runtime==nil || !finite(dt) || dt<0 {return false}
     valid:=rigs_chains_apply(state,runtime,inputs,transforms,parents,root_transform,dt,playback)
     shaped:=rig_shapes_apply(state,runtime,inputs,transforms,parents,root_transform,playback)
@@ -265,7 +265,7 @@ rig_problem :: proc(problems:^core.Problems,rig:core.Entity,kind:Modifier_Kind,v
 }
 
 @(private)
-rigs_chains_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),root_transform:mm.Transform,dt:f32,playback:^Playback) -> bool {
+rigs_chains_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,.Read),root_transform:mm.Transform,dt:f32,playback:^Playback) -> bool {
     chain_first,chain_end:=rig_rows(&runtime.chain_ik,state.entity)
     multi_first,multi_end:=rig_rows(&runtime.multi_ik,state.entity)
     twist_first,twist_end:=rig_rows(&runtime.twist,state.entity)
@@ -288,7 +288,7 @@ rigs_chains_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constr
             binding.count=u8(count);rig_binding_publish(binding,state,runtime.geometry,.Chain_IK,current_slot)
         }
         if !config.enabled || config.weight<=0 {continue}
-        target,ok:=spatial_target_sample(config.target,&binding.target,playback,inputs.skeletons,core.read(transforms),parents,inputs.worlds)
+        target,ok:=spatial_target_sample(config.target,&binding.target,playback,inputs.skeletons,transforms,parents,inputs.worlds)
         if !ok {modifier_request_rejected(runtime,state.entity,.Missing_Target);rig_problem(inputs.problems,state.entity,.Chain_IK,&config,.Target);valid=false;continue}
         count:=int(binding.count)
         result,solved:=lib.skeleton_chain_ik(skeleton,state.local[:],state.world[:],binding.bones[:count],config.limits[:config.limit_count],{target=target.position,pole=config.pole,use_pole=config.use_pole,iterations=int(config.iterations),tolerance=config.tolerance},binding.points[:count],binding.solved[:count],binding.lengths[:count-1],config.weight,root_transform,config.reach)
@@ -315,7 +315,7 @@ rigs_chains_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constr
         if !config.enabled || config.weight<=0 {continue}
         targets_valid:=true
         for &effector,i in config.effectors[:config.effector_count] {
-            target,ok:=spatial_target_sample(effector.target,&binding.targets[i],playback,inputs.skeletons,core.read(transforms),parents,inputs.worlds);targets_valid &&=ok
+            target,ok:=spatial_target_sample(effector.target,&binding.targets[i],playback,inputs.skeletons,transforms,parents,inputs.worlds);targets_valid &&=ok
             bone:=binding.effectors[i].bone
             binding.effectors[i]={bone=bone,position=target.position,rotation=target.rotation,position_weight=effector.position_weight,rotation_weight=effector.rotation_weight}
         }
