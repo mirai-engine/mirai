@@ -68,12 +68,13 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
   [`Volume`](../../mirai-gameplay/references/libraries.md#volume) of its entity
   ([fluids](physics.md#fluids)): a `Plane` (below the height of the entity) or a
   `Box` (its extents times the scale), with density and current in the frame of the entity; with
-  zero density, a dry box over the fluids of lower `Volume.priority`. The entity's yaw turns the
-  box and its current; the blend and the mode of the `Volume` do nothing to a fluid. It is
+  zero density, a dry box over the fluids of lower `priority` (its own). The entity's yaw turns
+  the box and its current. It is
   `replicated`: a flood that the server decides reaches the clients.
 - `Force_Field`: a force that lasts on the bodies in the `Volume` of its entity (any shape; without
-  one, the whole world). `force_fields_step` (`fixed`, before `physics_prepare`) asks `apply_area`
-  for it each tick while it is on; its `along` turns with the entity. The editor part draws where
+  one, the whole world), rising over its own `blend` inside the border. `force_fields_step`
+  (`fixed`, before `physics_prepare`) asks `apply_area` for it each tick while it is on; its
+  `along` turns with the entity. The editor part draws where
   a selected one pushes (`force_field_preview`).
 - `Joint`, `Joint_State`: a joint is an entity of its own that joins `a`, or the body of its parent
   when `NONE`, with `b`, or the world when `NONE`, so a body has as many joints as there are. Its
@@ -560,6 +561,12 @@ read in a function of the `react` stage ([order](../../mirai-core/references/gen
 `a`, `b`, `entity` and `other` are the entities of the bodies; `collider_*`, those of the colliders
 that touched, which distinguish head, foot or weapon of the same body. `NONE` is a body without an
 entity; the detached ones of a destructible name their group entity, and the root group, the owner.
+A box or sphere [`Volume`](../../mirai-gameplay/references/libraries.md#volume) on an entity
+without a `Collider`, `Rigid_Body` or `Character` is a static sensor of preset `Trigger`, made by
+the sync from the volume (`zone_collider`): its overlaps are those of any sensor, with the volume's
+entity as `entity` and `collider`. A plane or an unbounded volume makes none: the solver holds no
+shape without an end. This is the one way a zone says what went in; there is no second test of
+"inside".
 
 ## Queries
 

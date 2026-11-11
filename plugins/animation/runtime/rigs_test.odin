@@ -416,6 +416,11 @@ look_and_ik_publish_their_residual_and_whether_they_reach_in_the_constraints_of_
     testing.expect(t,aimed_found && aimed.valid && aimed.reached && aimed.residual<1e-3 && aimed.angular_error<1e-3)
     _,beyond:=animation_rig_diagnostic(nil,rig,.Look,1,&cache);_,elsewhere:=animation_rig_diagnostic(nil,rig,.IK,0)
     testing.expect(t,!beyond && !elsewhere)
+    // With an offset (eyes above the bone) the ray from the offset passes through the target.
+    core.edit_at(&looks,0).offset={0,.2,-.1}
+    copy(state.local[:],state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0)
+    aimed,_=animation_rig_diagnostic(nil,rig,.Look,0,&cache)
+    testing.expect(t,problems.count==0 && aimed.valid && aimed.reached && aimed.residual<1e-3,"the eyes aim at the target")
     core.edit_at(&looks,0).target=spatial_point({5,1,0});core.edit_at(&looks,0).max_angle=.2
     copy(state.local[:],state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0)
     aimed,_=animation_rig_diagnostic(nil,rig,.Look,0,&cache)

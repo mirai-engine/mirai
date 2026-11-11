@@ -2,26 +2,29 @@ package volume
 
 import "core:math/linalg"
 import "mirai:core"
+import scene "mirai:engine/scene"
 import gpu "mirai:render"
 import mm "mirai:std/math"
 import "mirai:std/spatial"
 
-// One way to say where: every region of the world is a Volume. What happens
-// in it is another component of the same entity, of the library that does it:
-// a value that changes by zone (Gravity, Wind, Audio_Reverb, View_Volume,
-// fog), a fluid, a force, a trigger, a navigation area, what bends the grass.
-// Without a Volume a zone value rules the whole world, replacing, at
-// priority 0.
+// One way to say where: every region of the world is a Volume, a shape and
+// nothing else. What happens in it is another component of the same entity,
+// of the library that does it: a value that changes by zone (Gravity, Wind,
+// Audio_Reverb, View_Volume, fog), a fluid, a force, a navigation area, what
+// bends the grass. With the plugin physics a box or a sphere also tells the
+// game what bodies go in and out of it (Physics_Events.overlap_begin and
+// overlap_end). Without a Volume a zone value rules the whole world.
 //
 // A library that needs a region asks this one whether a point is in it
-// (depth, weight, holds) or whether a box meets it (overlaps): no component
-// carries a shape of its own.
+// (depth, weight, holds), whether a box meets it (overlaps) or what box holds
+// it (bounds), and takes any shape: no component carries a shape of its own.
 //
-// At a point the volumes that hold it are applied from the lowest priority up,
-// on top of the default of the library; among equal priorities the bigger
-// first, so a room inside a hall wins. Each replaces what is below by its
-// weight, or adds to it (combine). The weight is 1 inside and goes to 0 over
-// the last blend metres before the border.
+// How zone values meet is of the values, in their Zone: at a point the ones
+// whose volumes hold it are applied from the lowest priority up, on top of the
+// default of the library; among equal priorities the bigger first, so a room
+// inside a hall wins. Each replaces what is below by its weight, or adds to
+// it. The weight is 1 inside and goes to 0 over the last blend metres before
+// the border.
 //
 // What asks at one point (a view, the listener) gathers the volumes in one
 // pass (at). What asks at many points in a tick (the gravity of each body)
@@ -30,9 +33,8 @@ import "mirai:std/spatial"
 // those that may hold it; where none does, the point costs reading that value.
 //
 // An unbounded volume rules the whole world only when it comes with the root
-// scene: one of a section rules in the box of its section (scope, which the
-// scene library sets as the section loads), and nowhere while that box has
-// no size.
+// scene: one under a section rules in the box of that section
+// (scene.Scene_Reference.extents), and nowhere while that box has no size.
 
 Volume_Shape :: enum u8 {
     Unbounded, // the whole world
@@ -41,29 +43,42 @@ Volume_Shape :: enum u8 {
     Plane,     // everything under the plane through the entity whose normal is its up (+Y): a sea, a pit
 }
 
-Volume_Mode :: enum u8 {Replace,Add}
-
-@(component,replicated,description="Where what its entity does happens: a zone value (Gravity, Wind, Audio_Reverb, View_Volume), a fluid, a force, a trigger, a navigation area. The whole world, a box or a sphere scaled by the entity, or everything under the plane of the entity; faded over its blend. The higher priority goes on top; each replaces what is below or adds to it.")
+@(component,replicated,description="Where what its entity does happens: a zone value (Gravity, Wind, Audio_Reverb, View_Volume), a fluid, a force, a navigation area; with physics a box or a sphere also reports the bodies that go in and out. The whole world, a box or a sphere scaled by the entity, or everything under the plane of the entity.")
 Volume :: struct {
     shape:Volume_Shape,
     extents:[3]f32 `mirai:"min=0,unit=m"`,
-    blend:f32 `mirai:"min=0,unit=m"`, // inside its border, where its weight goes from 0 to 1
-    priority:i32,
-    mode:Volume_Mode,
-    scope:core.Entity `mirai:"transient,local,hidden"`,        // unbounded in a section: its reference, whose box bounds it
-    scope_extents:[3]f32 `mirai:"transient,local,hidden"`,     // half the size of that box, times the scale of the reference
 }
 
-VOLUME_DEFAULT :: Volume{shape=.Box,extents={5,5,5},blend=1}
+VOLUME_DEFAULT :: Volume{shape=.Box,extents={5,5,5}}
+
+Zone_Mode :: enum u8 {Replace,Add}
+
+// How a zone value meets the others where their volumes hold the same point.
+Zone :: struct {
+    blend:f32 `mirai:"min=0,unit=m"`, // inside the border of its Volume, where its weight goes from 0 to 1
+    priority:i32,                     // the higher goes on top
+    mode:Zone_Mode,
+}
+
+ZONE_DEFAULT :: Zone{blend=1}
 
 // A box of half that size along each axis, scaled by the entity.
-box :: proc "contextless" (half:[3]f32,blend:f32=0,priority:i32=0) -> Volume {return {shape=.Box,extents=half,blend=blend,priority=priority}}
+box :: proc "contextless" (half:[3]f32) -> Volume {return {shape=.Box,extents=half}}
 // A sphere of that radius, scaled by the entity.
-sphere :: proc "contextless" (radius:f32,blend:f32=0,priority:i32=0) -> Volume {return {shape=.Sphere,extents={radius,0,0},blend=blend,priority=priority}}
+sphere :: proc "contextless" (radius:f32) -> Volume {return {shape=.Sphere,extents={radius,0,0}}}
 // Everything under the entity, as its up (+Y) says where under is.
-plane :: proc "contextless" (blend:f32=0,priority:i32=0) -> Volume {return {shape=.Plane,blend=blend,priority=priority}}
-// The whole world; in a section, the box of its section.
+plane :: proc "contextless" () -> Volume {return {shape=.Plane}}
+// The whole world; under a section, the box of its section.
 world :: proc "contextless" () -> Volume {return {shape=.Unbounded}}
+
+// The tables where a volume is: its shape, its pose and, unbounded under a
+// section, the box of that section.
+Where :: struct {
+    volumes:^core.Table(Volume,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),
+    sections:^core.Table(scene.Scene_Reference,.Read),
+}
 
 // When a table of volumes changes: an unbounded volume with extents was meant
 // to be a box, and without its shape it rules everywhere.
@@ -150,10 +165,9 @@ overlaps :: proc "contextless" (v:Volume,pose:mm.Transform,box:spatial.Aabb) -> 
 }
 
 // Whether a volume placed at pose can hold a point: a shape of Volume_Shape,
-// a pose and a blend that are finite, and a size above zero where its shape
-// has one.
+// a pose that is finite, and a size above zero where its shape has one.
 valid :: proc "contextless" (v:Volume,pose:mm.Transform) -> bool {
-    if !pose_finite(pose) || !(v.blend>=0 && v.blend<=max(f32)) {return false}
+    if !pose_finite(pose) {return false}
     scale:=linalg.abs(pose.scale)
     switch v.shape {
     case .Unbounded,.Plane:
@@ -179,12 +193,13 @@ finite :: proc "contextless" (v:[3]f32) -> bool {
     return v.x>=-max(f32) && v.x<=max(f32) && v.y>=-max(f32) && v.y<=max(f32) && v.z>=-max(f32) && v.z<=max(f32)
 }
 
-// How much a volume placed at pose holds a point: 1 inside, 0 outside.
-weight :: proc "contextless" (v:Volume,pose:mm.Transform,point:[3]f32) -> f32 {
+// How much a volume placed at pose holds a point: 1 inside, 0 outside, and
+// rising over the last blend metres inside its border.
+weight :: proc "contextless" (v:Volume,pose:mm.Transform,point:[3]f32,blend:f32=0) -> f32 {
     d:=depth(v,pose,point)
     if !(d>=0) {return 0}
-    if !(v.blend>0) {return 1}
-    return min(d/v.blend,1)
+    if !(blend>0) {return 1}
+    return min(d/blend,1)
 }
 
 size :: proc "contextless" (v:Volume,pose:mm.Transform) -> f32 {
@@ -246,36 +261,37 @@ hits_add :: proc "contextless" (h:^Hits,hit:Hit) {
 }
 
 @(private)
-hit_of :: proc "contextless" (row:int,v:Volume,pose:mm.Transform,weight:f32) -> Hit {
-    return {row=i32(row),weight=weight,add=v.mode==.Add,priority=v.priority,size=size(v,pose)}
+hit_of :: proc "contextless" (row:int,v:Volume,pose:mm.Transform,zone:Zone,weight:f32) -> Hit {
+    return {row=i32(row),weight=weight,add=zone.mode==.Add,priority=zone.priority,size=size(v,pose)}
 }
 
 // Where the volume of e rules, as a shape at a pose: without a Volume, the
-// whole world; unbounded in a section, the box of its section. False where it
-// rules nowhere (no pose, or a section box without size).
-placed :: proc(volumes:^core.Table(Volume,$A),worlds:^core.Table(core.World_Transform,$B),e:core.Entity) -> (v:Volume,pose:mm.Transform,ok:bool) {
+// whole world; unbounded under a section, the box of that section. False
+// where it rules nowhere (no pose, or a section box without size).
+placed :: proc(at:Where,e:core.Entity) -> (v:Volume,pose:mm.Transform,ok:bool) {
     found:bool
-    v,found=core.get(volumes,e)
+    v,found=core.get(at.volumes,e)
     if !found {return {},mm.TRANSFORM_IDENTITY,true}
-    if v.shape==.Unbounded && v.scope!=core.NONE {
-        if v.scope_extents=={} {return}
-        at,scoped:=core.get(worlds,v.scope)
-        if !scoped {return}
-        v.shape,v.extents=.Box,v.scope_extents
-        return v,at.transform,true
+    if v.shape==.Unbounded {
+        section:=at.sections!=nil?core.ancestor_with(at.parents,at.sections,e):core.NONE
+        if section==core.NONE {return v,mm.TRANSFORM_IDENTITY,true}
+        reference,_:=core.get(at.sections,section)
+        box,boxed:=core.get(at.worlds,section)
+        if reference.extents=={} || !boxed {return}
+        return {shape=.Box,extents=reference.extents},box.transform,true
     }
-    if v.shape==.Unbounded {return v,mm.TRANSFORM_IDENTITY,true}
-    world,placed:=core.get(worlds,e)
+    world,placed:=core.get(at.worlds,e)
     return v,world.transform,placed
 }
 
 // The volumes of the value of table that hold point, in the order they are
 // applied, in one pass over them.
-gather :: proc(volumes:^core.Table(Volume,$B),worlds:^core.Table(core.World_Transform,$C),table:^core.Table($T,$A),point:[3]f32) -> (h:Hits) {
+gather :: proc(at:Where,table:^core.Table($T,$A),point:[3]f32) -> (h:Hits) {
     for row in 0..<core.count(table) {
-        v,pose,ok:=placed(volumes,worlds,core.entity_at(table,row))
+        v,pose,ok:=placed(at,core.entity_at(table,row))
         if !ok {continue}
-        if w:=weight(v,pose,point);w>0 {hits_add(&h,hit_of(row,v,pose,w))}
+        zone:=core.at(table,row).zone
+        if w:=weight(v,pose,point,zone.blend);w>0 {hits_add(&h,hit_of(row,v,pose,zone,w))}
     }
     return
 }
@@ -289,10 +305,10 @@ combine :: proc(h:Hits,value:$V,user:$U,value_of:proc(user:U,row:i32) -> V,mix:p
 }
 
 // The value of table at a point: every volume that holds it over fallback.
-at :: proc(volumes:^core.Table(Volume,$B),worlds:^core.Table(core.World_Transform,$C),table:^core.Table($T,$A),point:[3]f32,fallback:T,mix:proc(value:^T,by:T,weight:f32,add:bool)) -> T {
+at :: proc(zones:Where,table:^core.Table($T,$A),point:[3]f32,fallback:T,mix:proc(value:^T,by:T,weight:f32,add:bool)) -> T {
     if table==nil {return fallback}
     of :: proc(table:^core.Table(T,A),row:i32) -> T {return core.at(table,int(row))}
-    return combine(gather(volumes,worlds,table,point),fallback,table,of,mix)
+    return combine(gather(zones,table,point),fallback,table,of,mix)
 }
 
 // mix for a value that is numbers: lerp to replace, scaled to add.
@@ -302,16 +318,17 @@ mix_linear :: proc(value:^$T,by:T,weight:f32,add:bool) {
 
 // What an Index keeps of the volume of one row of the value.
 Place :: struct {
-    volume:Volume,      // as it rules: unbounded in a section, the box of its section
+    volume:Volume,      // as it rules: unbounded under a section, the box of that section
     pose:mm.Transform,  // of that shape
     world:mm.Transform, // of the entity of the value, which turns a gravity or a wind; the identity without one
+    zone:Zone,
     rules:bool,         // false: it rules nowhere
 }
 
 // The volumes of a value for a library that asks at many points: made again
 // by index_update only when a volume, a value or a place changed.
 Index :: struct {
-    seen:[2]core.Seen,         // the volumes and the values it was made from
+    seen:[3]core.Seen,         // the volumes, the values and the sections it was made from
     placed:core.Seen,          // and the places it compared
     made:bool,
     places:[dynamic]Place,     // one per row of the value
@@ -334,10 +351,12 @@ index_destroy :: proc(ix:^Index) {
 }
 
 @(private)
-place_of :: proc(volumes:^core.Table(Volume,$A),worlds:^core.Table(core.World_Transform,$B),e:core.Entity) -> (p:Place) {
-    p.volume,p.pose,p.rules=placed(volumes,worlds,e)
+place_of :: proc(at:Where,table:^core.Table($T,$A),row:int) -> (p:Place) {
+    e:=core.entity_at(table,row)
+    p.volume,p.pose,p.rules=placed(at,e)
     p.world=mm.TRANSFORM_IDENTITY
-    if world,found:=core.get(worlds,e);found {p.world=world.transform}
+    if world,found:=core.get(at.worlds,e);found {p.world=world.transform}
+    p.zone=core.at(table,row).zone
     return
 }
 
@@ -345,19 +364,19 @@ place_of :: proc(volumes:^core.Table(Volume,$A),worlds:^core.Table(core.World_Tr
 // or where they are changed. changed: it was made again, and what a library
 // combined from it is to be combined again. ok is false without memory: then
 // no volume holds any point until an update finds it.
-index_update :: proc(ix:^Index,volumes:^core.Table(Volume,$B),worlds:^core.Table(core.World_Transform,$C),table:^core.Table($T,$A)) -> (changed,ok:bool) {
-    moved:=core.touched(volumes,&ix.seen[0])
+index_update :: proc(ix:^Index,at:Where,table:^core.Table($T,$A)) -> (changed,ok:bool) {
+    moved:=core.touched(at.volumes,&ix.seen[0]) | core.touched(at.sections,&ix.seen[2])
     count:=0
     if table!=nil {
         moved|=core.touched(table,&ix.seen[1])
         count=core.count(table)
     }
-    placed:=core.touched(worlds,&ix.placed)
+    placed:=core.touched(at.worlds,&ix.placed)
     if ix.made && !moved {
         if !placed {return false,true}
         same:=true
         for p,row in ix.places {
-            if place_of(volumes,worlds,core.entity_at(table,row))!=p {same=false;break}
+            if place_of(at,table,row)!=p {same=false;break}
         }
         if same {return false,true}
     }
@@ -369,11 +388,11 @@ index_update :: proc(ix:^Index,volumes:^core.Table(Volume,$B),worlds:^core.Table
     if reserve(&ix.places,count)!=nil {return true,false}
     bounded,planes:=0,0
     for row in 0..<count {
-        p:=place_of(volumes,worlds,core.entity_at(table,row))
+        p:=place_of(at,table,row)
         append(&ix.places,p)
         if !p.rules {continue}
         switch p.volume.shape {
-        case .Unbounded:   hits_add(&ix.unbounded,hit_of(row,p.volume,p.pose,1))
+        case .Unbounded:   hits_add(&ix.unbounded,hit_of(row,p.volume,p.pose,p.zone,1))
         case .Plane:       planes+=1
         case .Box,.Sphere: bounded+=1
         }
@@ -412,16 +431,16 @@ index_hits :: proc(ix:^Index,point:[3]f32) -> (h:Hits,bounded:bool) {
         q:=spatial.dynamic_tree_query(&ix.tree,{point,point})
         for _,user in spatial.tree_query_next(&q) {
             p:=ix.places[user]
-            if w:=weight(p.volume,p.pose,point);w>0 {
-                hits_add(&h,hit_of(int(user),p.volume,p.pose,w))
+            if w:=weight(p.volume,p.pose,point,p.zone.blend);w>0 {
+                hits_add(&h,hit_of(int(user),p.volume,p.pose,p.zone,w))
                 bounded=true
             }
         }
     }
     for row in ix.planes {
         p:=ix.places[row]
-        if w:=weight(p.volume,p.pose,point);w>0 {
-            hits_add(&h,hit_of(int(row),p.volume,p.pose,w))
+        if w:=weight(p.volume,p.pose,point,p.zone.blend);w>0 {
+            hits_add(&h,hit_of(int(row),p.volume,p.pose,p.zone,w))
             bounded=true
         }
     }
@@ -434,12 +453,12 @@ index_hits :: proc(ix:^Index,point:[3]f32) -> (h:Hits,bounded:bool) {
 // they are: what a shader that combines them at each point gets, with
 // gpu_volume. rows takes their rows; past its length the lowest priorities
 // are left out.
-ordered :: proc(volumes:^core.Table(Volume,$B),worlds:^core.Table(core.World_Transform,$C),table:^core.Table($T,$A),rows:[]i32) -> int {
+ordered :: proc(at:Where,table:^core.Table($T,$A),rows:[]i32) -> int {
     h:Hits
     for row in 0..<core.count(table) {
-        v,pose,ok:=placed(volumes,worlds,core.entity_at(table,row))
+        v,pose,ok:=placed(at,core.entity_at(table,row))
         if !ok {continue}
-        hits_add(&h,hit_of(row,v,pose,1))
+        hits_add(&h,hit_of(row,v,pose,core.at(table,row).zone,1))
     }
     n:=min(h.count,len(rows))
     for i in 0..<n {rows[i]=h.hits[h.count-n+i].row}
@@ -454,15 +473,15 @@ Gpu_Volume :: struct {
 }
 #assert(size_of(Gpu_Volume)==80)
 
-gpu_volume :: proc "contextless" (v:Volume,pose:mm.Transform) -> (g:Gpu_Volume) {
+gpu_volume :: proc "contextless" (v:Volume,pose:mm.Transform,zone:Zone) -> (g:Gpu_Volume) {
     scale:=linalg.abs(pose.scale)
     switch v.shape {
     case .Unbounded,.Plane:
     case .Box:    g.shape.xyz=v.extents*scale
     case .Sphere: g.shape.x=v.extents.x*max(scale.x,scale.y,scale.z)
     }
-    g.shape.w=max(v.blend,0)
-    g.kind={u32(v.shape),u32(v.mode==.Add),0,0}
+    g.shape.w=max(zone.blend,0)
+    g.kind={u32(v.shape),u32(zone.mode==.Add),0,0}
     back:=mm.quat_inverse(pose.rotation)
     x,y,z:=mm.quat_rotate(back,{1,0,0}),mm.quat_rotate(back,{0,1,0}),mm.quat_rotate(back,{0,0,1})
     // The columns of the inverse rotation: row i of the matrix is axis i of the world seen from the volume.

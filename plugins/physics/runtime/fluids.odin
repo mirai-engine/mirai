@@ -3,6 +3,7 @@ package physics
 import "core:math"
 import "core:math/linalg"
 import "mirai:core"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import "core:slice"
 import "mirai:std/base"
@@ -42,14 +43,14 @@ waves_reach :: proc "contextless" (waves:Surface_Waves) -> f32 {
 // box and its current. A volume.Spline on the entity makes it water along its
 // path instead (a river), as deep as the height of the spline, whose current is
 // in the frame of the path: -Z along it toward its end. With density zero, the air of a box that takes the fluid of lower priority
-// (Volume.priority) out of where it is: a base under the sea, a room that
-// floods as the floor of its air rises. Where two fluids meet, or two dry
-// boxes, the one of higher priority decides. A fluid ends at its border: the
-// blend and the mode of its Volume do nothing to it.
+// out of where it is: a base under the sea, a room that floods as the floor
+// of its air rises. Where two fluids meet, or two dry boxes, the one of
+// higher priority decides. A fluid ends at its border.
 @(component,replicated,description="Water or another fluid in the Volume of its entity, a Plane (a sea) or a Box (a lake, a pool), or along the Spline of its entity (a river): bodies float in it by their density and characters swim in it. With density 0, a dry box that takes out the fluid of lower priority, as the air of a base under the sea.")
 Fluid :: struct {
     density:f32 `mirai:"min=0,unit=kg/m3"`, // 1000 fresh water, 1025 the sea; 0: dry, only in a box
     current:[3]f32 `mirai:"unit=m/s"`,      // in the frame of the entity
+    priority:i32,                           // where fluids or dry boxes meet, the higher decides
 }
 
 FLUID_DEFAULT :: Fluid{density=1000}
@@ -221,7 +222,7 @@ fluid_bodies :: proc(physics:core.Ref(Physics_State),out:[]Fluid_Body) -> int {
 fluids_sync :: proc(
     state:^Physics_State,fluids:^core.Table(Fluid,.Read),volumes:^core.Table(volume.Volume,.Read),locals:^core.Table(core.Transform,$A),parents:^core.Table(core.Parent,.Read),problems:^core.Problems,
     waves:^core.Table(Fluid_Waves,.Read)=nil,winds:^core.Table(volume.Wind,.Read)=nil,worlds:^core.Table(core.World_Transform,.Read)=nil,
-    splines:^core.Table(volume.Spline,.Read)=nil,ground:core.Ground_Query={},under:[]mm.Aabb=nil,
+    splines:^core.Table(volume.Spline,.Read)=nil,ground:core.Ground_Query={},under:[]mm.Aabb=nil,sections:^core.Table(scene.Scene_Reference,.Read)=nil,
 ) {
     if fluids==nil {return}
     seen:=core.version(fluids)+core.layout(fluids)+core.version(locals)+core.layout(locals)+core.version(parents)+core.layout(parents)+u64(state.epoch)
@@ -264,7 +265,7 @@ fluids_sync :: proc(
         shaped:=has_region && (region.shape==.Plane || region.shape==.Box)
         desc:=sim.Fluid_Desc{
             shape=region.shape==.Plane?.Plane:.Box,position=world.position,yaw=yaw_of(world.rotation),
-            density=fluid.density,current=fluid.current,priority=region.priority,user_data=u64(e),
+            density=fluid.density,current=fluid.current,priority=fluid.priority,user_data=u64(e),
         }
         if shaped && region.shape==.Box {desc.half_extents=region.extents*linalg.abs(world.scale)}
         path:[]mm.Path_Point
@@ -283,7 +284,7 @@ fluids_sync :: proc(
         has_waves:=false
         if waves!=nil {raised,has_waves=core.get(waves,e)}
         if has_waves && shaped && desc.shape==.Plane {
-            desc.waves=fluid_waves_of(raised,desc.yaw,volume_wind(winds,volumes,worlds,world.position))
+            desc.waves=fluid_waves_of(raised,desc.yaw,volume_wind(winds,{volumes,worlds,parents,sections},world.position))
         } else if has_waves && shaped {
             core.report(problems,e,"physics.fluid_waves","its Fluid_Waves makes no waves: a Box or a path holds still water; make its Volume a Plane, or remove the Fluid_Waves")
         }
@@ -328,9 +329,9 @@ fluids_sync :: proc(
 
 // The wind over a point of the water, x and z of the world.
 @(private)
-volume_wind :: proc(winds:^core.Table(volume.Wind,$A),volumes:^core.Table(volume.Volume,$B),worlds:^core.Table(core.World_Transform,$C),point:[3]f32) -> [2]f32 {
-    if winds==nil || volumes==nil || worlds==nil || core.count(winds)==0 {return {}}
-    blowing:=volume.wind_at(winds,volumes,worlds,point)
+volume_wind :: proc(winds:^core.Table(volume.Wind,$A),zones:volume.Where,point:[3]f32) -> [2]f32 {
+    if winds==nil || zones.volumes==nil || zones.worlds==nil || core.count(winds)==0 {return {}}
+    blowing:=volume.wind_at(winds,zones,point)
     return {blowing.x,blowing.z}
 }
 
@@ -346,7 +347,7 @@ fluids_overlaps_report :: proc(state:^Physics_State,problems:^core.Problems) {
             if !sim.fluid_valid(w,b.fluid) || (a.desc.density>0)!=(b.desc.density>0) || a.desc.priority!=b.desc.priority {continue}
             if !mm.aabb_overlaps(sim.fluid_bounds(w,a.fluid),sim.fluid_bounds(w,b.fluid)) {continue}
             kind:=a.desc.density>0?"fluid":"dry box"
-            core.report(problems,core.Entity(b.desc.user_data),"physics.fluid_overlap","its Fluid meets another %s (%v) of the same priority, so either may decide where they meet; give the Volume of the one that decides a higher priority, or move them apart",kind,core.Entity(a.desc.user_data))
+            core.report(problems,core.Entity(b.desc.user_data),"physics.fluid_overlap","its Fluid meets another %s (%v) of the same priority, so either may decide where they meet; give the Fluid that decides a higher priority, or move them apart",kind,core.Entity(a.desc.user_data))
         }
     }
 }

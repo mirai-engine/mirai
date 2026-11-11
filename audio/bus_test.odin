@@ -124,6 +124,31 @@ bus_low_pass_keeps_the_lows_and_removes_the_highs :: proc(t:^testing.T) {
     test_near(t,rms(out,0),full,1e-3)
 }
 
+// The water plugin sweeps the cutoff while the listener goes under: a
+// filter that jumped to its new coefficients would step the wave each chunk.
+@(test)
+bus_low_pass_sweep_has_no_steps :: proc(t:^testing.T) {
+    m:=test_mixer(t)
+    defer mixer_destroy(m)
+    bus,_:=bus_create(m)
+    desc:=VOICE_DEFAULT
+    desc.loop=true;desc.bus=bus
+    voice_play(m,test_stereo(t,m,RATE,proc(i:int) -> f32 {return 0.5*math.sin_f32(2*math.PI*100*f32(i)/RATE)}),desc)
+    last:f32
+    largest_step :: proc(out:[]f32,last:^f32) -> (step:f32) {
+        for k in 0..<len(out)/2 {step=max(step,abs(out[k*2]-last^));last^=out[k*2]}
+        return
+    }
+    unfiltered:=largest_step(test_render(m,4800),&last)
+    // From 16 kHz down to 300 Hz, a new cutoff every chunk.
+    swept:f32
+    for cutoff:=f32(16000);cutoff>300;cutoff*=0.7 {
+        bus_set_lowpass(m,bus,cutoff)
+        swept=max(swept,largest_step(test_render(m,CHUNK_FRAMES),&last))
+    }
+    testing.expectf(t,swept<=unfiltered,"the sweep steps by %v, the sine by %v",swept,unfiltered)
+}
+
 @(test)
 bus_is_ducked_while_another_one_is_loud :: proc(t:^testing.T) {
     m:=test_mixer(t)

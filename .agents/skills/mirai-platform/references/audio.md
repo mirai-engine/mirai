@@ -47,6 +47,9 @@ WAV, an Ogg Vorbis or a lossless file, told apart by their first bytes:
   them, in blocks that decode on their own, each indexed so that a stream starts at any frame.
   Decoding gives the same f32 as a 16-bit WAV of the same samples.
 
+- **Loop start.** `sound_set_loop_start` names the frame a loop goes back to at the end, so an
+  intro plays once; the `.sound` asset carries it, read on import from a WAV's sampler chunk or
+  a Vorbis `LOOPSTART` comment (`Pcm.loop_start`).
 - `sound_stream` decodes while playing and does not copy the file: it must stay in memory until
   the sound is destroyed and a later `mixer_update` frees it.
 - `sound_destroy` invalidates the handle at once and ends its voices; the memory is freed in a
@@ -75,8 +78,8 @@ feed, with its own decoder and a larger ring.
   `start_frame` far enough ahead is kept exactly.
 - A lossless block of a feed of the pool is decoded whole, once the rest of it fits the ring: a
   seek is block exact plus a discard.
-- `offset` seeks before the ring fills; a loop starts over from the beginning and is sample exact,
-  also for interpolating. `voice_set_loop(false)` ends at the next end of the sound, whatever was
+- `offset` seeks before the ring fills; a loop seeks to the loop start and is sample exact, also
+  for interpolating. `voice_set_loop(false)` ends at the next end of the sound, whatever was
   decoded ahead; turning a loop on applies at an end not decoded yet.
 - The pitch of a voice that plays from a feed has a cap of source frames per output frame.
 - No free feed: `voice_play` returns 0 (`feeds_busy`). A stolen voice holds its feed until the
@@ -91,8 +94,13 @@ feed, with its own decoder and a larger ring.
 is valid until a `mixer_update` sees the voice finish or until it is stolen; operations on an
 invalid one return false.
 
-- **Resampling** linear; with a step of exactly 1 the samples are copied. In a loop, the frame
-  after the last is the first, also for interpolating.
+- **Resampling.** A sound is converted to `MIXER_RATE` when the importer decodes it and kept as it
+  is when its file streams. A voice at its own pitch and rate copies its samples; a pitch, Doppler
+  or another rate (a streamed file's) takes Godot's cubic Hermite over four frames, which keeps
+  the highs a line between two frames dulls. The neighbours of a frame
+  are those it plays between: silence before the start and after the end, the frames across the
+  seam of a loop (its last frame and its loop start), and the frame before an offset (a feed
+  decodes it too).
 - **Pan.** Mono: constant power. Stereo: balance, lowers the side it moves away from.
 - **Fades**: an exact linear envelope to the sample. A voice that is leaving to stop does not
   accept another fade.
@@ -125,7 +133,9 @@ game's named buses belong to [`engine/audio`](../../mirai-gameplay/references/li
   `LIMITER_CEILING` brings the gain down to it at once, which holds `LIMITER_HOLD` and comes back
   in `LIMITER_RELEASE`. A mix that never reaches full scale comes out as it is.
 
-- Volume and mute are ramped within a chunk; a muted bus keeps its volume.
+- Volume and mute are ramped within a chunk; a muted bus keeps its volume. A new cutoff of its
+  low-pass runs beside the old filter for a chunk, whose memory it takes, and the output
+  crossfades from one to the other, so a sweep has no steps.
 - `bus_set_duck`: while the peak of the `source` bus, measured after its volume and its filter,
   exceeds `threshold`, the bus drops to `1-amount` in `attack` and returns in `release`. The master
   is not ducked and a bus does not duck itself.
@@ -180,12 +190,18 @@ binaural and panning effects.
 - With `delay` a spatial voice starts later by its distance at start over the speed of sound; it
   is not a delay line, so a source that moves afterwards only shifts its pitch by Doppler.
 - Doppler takes the velocities along the source-listener line and multiplies the pitch.
-- A stereo sound with a position is heard as one source (average of its channels).
+- A stereo sound with a position keeps its width by its `spread`, meters across it: on speakers
+  each channel pans from its own azimuth, half the angle the spread subtends to either side, so it
+  is wide up close and a point far away; on headphones each ear hears the mid and that share of
+  the side, Steam Audio's partial downmix of a stereo input, through the HRTF of its direction.
+  Mixed apart, it carries its mid and side through the EQ. The default spread is Unreal's, the
+  width of a pair of speakers, since a stereo recording placed in the world should keep its width
+  up close; 0 is a point source, its channels averaged.
 - The direct path and the pitch of a positional voice are recomputed on the audio thread when its
   place, its occlusion or the listener change; the HRTF only when its direction changed.
 
 ## What it does not do
 
-Resampling better than linear, more than one room reverb, reflections, pathing, baked or
+More than one room reverb, reflections, pathing, baked or
 convolution reverb from geometry (a later plugin), ambisonics, other HRTFs than the one shipped,
 sounds or output of more than two channels, and seeking or querying the position of a playing voice.
