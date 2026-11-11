@@ -204,7 +204,7 @@ Gpu_Emitter :: struct {
     world,previous:[3][4]f32,
     range:[4]u32,       // first slot of the pool, capacity, births this frame, FLAG_*
     random:[4]u32,      // seed, event target slot+1 (0: none), particles per event, groups of births
-    program:[4]u32,     // Vfx program (0: none), first slot of the drawn lists, Particle_Event its reports tell, unused
+    program:[4]u32,     // Vfx program (0: none), first slot of the drawn lists, Particle_Event its reports tell, bytes of the world buffer to the copy of the reports channel the frame writes (INVALID: it reports nothing)
     shape:[4]f32,       // size, w cone half-angle
     kinds:[4]u32,       // Particle_Shape, Particle_Render, Particle_Collision, Particle_Event
     lifetime_speed:[4]f32,
@@ -263,7 +263,7 @@ pool_buffer :: proc "contextless" (pool:^Pool,b:Pool_Buffer) -> erender.Buffer_D
     case .Particles: return {"vfx particles",count*size_of(Gpu_Particle)}
     case .Lists:     return {"vfx particle lists",3*count*size_of(u32)}
     case .State:     return {"vfx particle state",EMITTER_CAPACITY*size_of(Gpu_State)}
-    case .Events:    return {"vfx particle events",REPORTS_AT+REPORTS_BYTES}
+    case .Events:    return {"vfx particle events",EVENTS_AT+2*EVENT_CAPACITY*size_of(Gpu_Event)}
     case .Data:      return {"vfx particle data",pool_data_bytes(pool.capacity)}
     }
     return {}
@@ -334,7 +334,6 @@ Pool :: struct {
     birth_max:u32,           // most births of a channel an emitter takes this frame
     reset_max:u32,           // largest range that starts this frame
     sprites,meshes:bool,     // some live emitter draws them
-    reports:bool,            // some live emitter tells the game of its particles
     grids_at:u32,            // bytes of the rows of the frame to those of the grids
     volumes_at:u32,          // and to those of the volumes
     fields_at:u32,           // and to the gravity and the wind of the world (Gpu_Fields)
@@ -606,10 +605,13 @@ rows_of :: proc "contextless" (m:matrix[4,4]f32,origin:[3]f32) -> [3][4]f32 {
 pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool {
     pool:=&sync.pool
     if pool.rows_frame==pass.frame && !reset {return true}
-    pool.spawn_max,pool.birth_max,pool.reset_max,pool.sprites,pool.meshes,pool.reports,pool.steps=0,0,0,false,false,false,0
+    pool.spawn_max,pool.birth_max,pool.reset_max,pool.sprites,pool.meshes,pool.steps=0,0,0,false,false,0
     pool.births_max,pool.prepares=0,false
     pool.stage_count,pool.plan=0,{}
     if pool.slot_end==0 {return false}
+    // Where the reports of the frame go: the copy of their channel it writes.
+    reports_at:=max(u32)
+    if at:=data_find(&sync.data,REPORTS_CHANNEL);at>=0 {reports_at=data_base(sync)+sync.data.entries[at].offset+u32(pool.frame&1)*data_copy_bytes(REPORT_WORDS)}
     clear(&pool.frame_bytes)
     // The bones of the frame first, then the grids: the resources that read them name their bytes.
     append(&pool.frame_bytes,..([^]u8)(raw_data(sync.segments))[:len(sync.segments)*size_of(Gpu_Segment)])
@@ -687,7 +689,7 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         g.previous=rows_of(d.previous,origin)
         g.range={s.offset,s.capacity,spawn,flags}
         g.random.y,g.random.w=target,groups
-        if d.report!=.None {pool.reports=true}
+        g.program.w=reports_at if d.report!=.None else max(u32)
         g.step={pool.dt,step_dt,f32(pool.steps),pass.time}
         g.frame={max(u32),0,0,0}
         g.lights=light_share(d.lights,d.shadows,&lights_taken,pool.lights)
@@ -1028,10 +1030,6 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
         erender.pass_dispatch(pass,groups(pool.reset_max,64),u32(pool.slot_end))
     }
     events:=pool_buffer(pool,.Events)
-    if pool.reports {
-        head:=Reports_Head{origin=pass.origin}
-        erender.pass_buffer_write(pass,events,REPORTS_AT,&head,size_of(head))
-    }
     world:=world_buffer(sync)
     for step in 0..<pool.steps {
         params.parity,params.step,params.last=u32(pool.step&1),step,u32(step+1==pool.steps)
@@ -1088,7 +1086,6 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
     particles_lights(sync,pass)
     volumes_light(sync,pass,&params)
     world_textures_write(sync,pass)
-    if pool.reports {erender.pass_readback(pass,events,REPORTS_AT,reports_readback())}
     data_readback(sync,pass,u32(pool.frame&1))
     // Started: a frame simulated without a new list moves what there is and starts nothing.
     for &s in pool.slots[:pool.slot_end] {

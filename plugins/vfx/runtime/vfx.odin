@@ -187,8 +187,7 @@ particles_sync :: proc(
     winds:core.Read(volume.Wind),places:core.Read(volume.Volume),gravities:core.Read(volume.Gravity),
 ) {
     if sync==nil {return}
-    if reports!=nil {reports_read(reports,sync,app.renderer,id)}
-    if read!=nil {data_read(read,&sync.data,app.renderer,id,problems)}
+    data_read(read,reports,sync,app.renderer,id,problems)
     r,a:=app.renderer,app.assets
     sync.world,sync.world_id=erender.world_key(id),id
     clear(&sync.descs)
@@ -269,6 +268,7 @@ particles_sync :: proc(
         for need in shown.needs.resources {
             if need.kind==.Data {data_need(&sync.data,need.name,need.words,&used,problems,e)}
         }
+        if desc.report!=.None || shown.has_sub && shown.sub_desc.report!=.None {data_need(&sync.data,REPORTS_CHANNEL,REPORT_WORDS,&used,problems,e)}
         if listener,listens:=core.get(listeners,e);listens && !listener.silent {desc.births.x,desc.births.y=channel_region(sync,channel_key(listener))}
         desc.paused,desc.generation=paused,shown.generation
         if shown.has_sub {
@@ -322,7 +322,6 @@ particles_release :: proc(sync:^Particle_Sync,id:core.World_Id,renderer:^erender
         pool_release(renderer,id,&sync.pool)
         erender.buffer_release(renderer,id,world_buffer(sync).name)
         for name in sync.world_textures[:sync.world_texture_count] {erender.table_texture_release(renderer,id,world_texture_key(name))}
-        erender.readback_release(renderer,id,reports_readback().name)
         for entry in sync.data.entries {erender.readback_release(renderer,id,data_readback_desc(entry.name,entry.words).name)}
     }
     pool_free(&sync.pool)

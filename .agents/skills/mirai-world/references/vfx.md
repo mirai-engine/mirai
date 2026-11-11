@@ -282,10 +282,12 @@ A `Particles` node of a `.ui` asks on each frame it is shown for its effect in a
 `report` of an effect (or of its sub effect) names what the game hears from its particles: deaths
 or hits, with position, velocity and normal, through the emitter's entity.
 
-- The GPU writes them in the step they pass and the CPU reads them frames later without waiting for
-  it ([reads](../../mirai-rendering/references/views.md#extension-stages)): `Particle_Reports`
-  has those of the last frame that finished, once each. A frame stores `REPORT_CAPACITY`; the rest
-  are counted in `lost`.
+- The GPU writes them in the step they pass into a [data channel](#data-channels) of their own
+  (`REPORTS_CHANNEL`, which exists while some emitter reports), and the CPU reads them frames later
+  without waiting for it, as it reads a watched channel
+  ([reads](../../mirai-rendering/references/views.md#extension-stages)): `Particle_Reports` has
+  those of the last frame that finished, once each, placed in the world from the origin the head
+  of the channel's copy stores. A frame stores `DATA_ENTRIES`; the rest are counted in `lost`.
 - They are presentation (a decal, a sound, another effect): they are not deterministic or part of
   the world and decide nothing of the game. `Particle_Reports` is `presentation`: the generator
   rejects a `fixed` function that receives it
@@ -381,8 +383,8 @@ To the GPU:
   them. The pool's particles and events store the origin they are at (`Pool.origin`) and, when the
   origin moved, the **shift** pass (`Geometry`, before every view) moves them once, with no visible
   motion; a world that was not drawn takes it on returning. Grids store absolute cells and locate
-  a cell from the first one's corner (`Gpu_Grid.corner`). The reports and the particles that the
-  editor copies (`watched`) return to the world adding the origin.
+  a cell from the first one's corner (`Gpu_Grid.corner`). The reports and the particles that
+  `particle.instance.inspect` copies return to the world adding the origin.
 - A program also sees relative to the origin its emitter's transformation (`ctx.world`) and the
   view (`mirai_vfx_view`). Its `Attributes`, the words of its state and the entries of the data
   channels pass as they are: a place that they store is theirs to keep relative to the emitter or
@@ -471,7 +473,6 @@ Once per frame, in `Simulate`:
   - Indirect draw of what is alive and the counters.
   - Sorted list in shared memory (bitonic, up to `SORT_MAX`): back to front, or by age for a
     ribbon.
-  - With some emitter that reports, the readback of the frame's reports (`pass_readback`).
 
 In each view:
 

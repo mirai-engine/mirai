@@ -15,8 +15,8 @@ import erender "mirai:engine/render"
 // them asks; making the channels again is a load transaction: their entries
 // start empty. A game reads back the entries of the channels it watches
 // (data_watch): what the programs appended in a frame comes once, frames
-// later, without waiting for the GPU. It is presentation alone, as the
-// reports are: no function of fixed reads it.
+// later, without waiting for the GPU, as the reports do (REPORTS_CHANNEL).
+// It is presentation alone: no function of fixed reads it.
 
 DATA_ENTRIES :: 4096      // that the programs write to a channel in a frame
 DATA_CHANNELS :: 32       // of a world
@@ -86,7 +86,7 @@ data_free :: proc(d:^Data_Channels) {
 @(private)
 data_bytes :: proc "contextless" (words:u32) -> u32 {return 2*data_copy_bytes(words)}
 
-// The bytes of a copy: its counter, padding, then its entries.
+// The bytes of a copy: its counter, the origin of its frame, then its entries.
 @(private)
 data_copy_bytes :: proc "contextless" (words:u32) -> u32 {return 16+DATA_ENTRIES*words*4}
 
@@ -122,7 +122,7 @@ data_place :: proc(d:^Data_Channels,used:[DATA_CHANNELS]bool,watched:[]u64=nil) 
         entry.offset=offset
         offset+=data_bytes(entry.words)
         layout=base.hash_combine(layout,base.hash_combine(entry.name,u64(entry.words)))
-        entry.watched=false
+        entry.watched=entry.name==REPORTS_CHANNEL
         for name in watched {entry.watched||=name==entry.name}
     }
     if layout!=d.layout {d.made=false}
@@ -135,8 +135,9 @@ data_find :: proc(d:^Data_Channels,name:u64) -> int {
     return -1
 }
 
-// The channels in the world buffer this frame: the counter of the copy it
-// writes (parity) at zero. Made again, they start empty.
+// The channels in the world buffer this frame: the head of the copy it
+// writes (parity), its counter at zero and the origin of the renderer the
+// places of the frame are relative to. Made again, they start empty.
 @(private)
 data_frame :: proc(sync:^Particle_Sync,pass:^erender.Pass,parity:u32) {
     d:=&sync.data
@@ -147,8 +148,9 @@ data_frame :: proc(sync:^Particle_Sync,pass:^erender.Pass,parity:u32) {
         erender.pass_buffer_fill(pass,world,base_at,u64(d.bytes))
         d.made=true
     }
+    head:=[4]u32{0,transmute(u32)pass.origin.x,transmute(u32)pass.origin.y,transmute(u32)pass.origin.z}
     for entry in d.entries {
-        erender.pass_buffer_fill(pass,world,base_at+u64(entry.offset)+u64(parity)*u64(data_copy_bytes(entry.words)),4)
+        erender.pass_buffer_write(pass,world,base_at+u64(entry.offset)+u64(parity)*u64(data_copy_bytes(entry.words)),&head,size_of(head))
     }
 }
 
@@ -169,14 +171,21 @@ data_readback_desc :: proc(name:u64,words:u32) -> erender.Buffer_Desc {
     return {fmt.tprintf("vfx data %x",name),u64(data_copy_bytes(words))}
 }
 
-// What the GPU brought back of the watched channels since the last frame.
+// What the GPU brought back of the watched channels since the last frame,
+// and of the reports.
 @(private)
-data_read :: proc(read:^Particle_Data_Read,d:^Data_Channels,renderer:^erender.Renderer,id:core.World_Id,problems:^core.Problems) {
-    for &channel in read.channels {channel.fresh=false}
-    for entry in d.entries {
+data_read :: proc(read:^Particle_Data_Read,reports:^Particle_Reports,sync:^Particle_Sync,renderer:^erender.Renderer,id:core.World_Id,problems:^core.Problems) {
+    if read!=nil {for &channel in read.channels {channel.fresh=false}}
+    if reports!=nil {clear(&reports.reports)}
+    for entry in sync.data.entries {
         if !entry.watched {continue}
         bytes,frame,ok:=erender.readback(renderer,id,data_readback_desc(entry.name,entry.words).name)
         if !ok {continue}
+        if entry.name==REPORTS_CHANNEL {
+            if reports!=nil {reports_take(reports,&sync.pool,bytes,frame)}
+            continue
+        }
+        if read==nil {continue}
         channel:^Data_Read
         for &each in read.channels {if each.name==entry.name {channel=&each}}
         if channel==nil {

@@ -825,33 +825,51 @@ particle_channel_births_start_where_the_game_says :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
-// An effect whose report names death tells the game of each particle that
-// dies, frames later, with the entity of its emitter.
+// An effect whose report names death or collision tells the game, through the
+// reports channel, of each particle that dies or hits the scene, once, frames
+// later, with the entity of its emitter and, of a hit, the normal of the floor.
 @(test)
-particle_reports_tell_the_game_of_deaths :: proc(t: ^testing.T) {
+particle_reports_tell_the_game_of_deaths_and_hits :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)
 	defer free(f)
 	if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
+	gpu.scene_update(r, 0, {{object_id = 1, mesh = f.cube, transform = trs({0, -0.6, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}}, true)
 	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	brief := test_emitter(1, {0, 0, 0})
 	brief.lifetime, brief.report, brief.owner = {0.05, 0.05}, .Death, core.Entity(77)
+	// Thrown over the floor, each dies at its first hit: one report each.
+	falls := test_emitter(2, {-1.5, 0, 0})
+	falls.lifetime, falls.velocity, falls.acceleration = {5, 5}, {{2, 0, 0}, {2, 0, 0}}, {0, -9.8, 0}
+	falls.collision, falls.collision_life, falls.report, falls.owner = .World, 1, .Collision, core.Entity(78)
+	used: [DATA_CHANNELS]bool
+	data_need(&f.sync.data, REPORTS_CHANNEL, REPORT_WORDS, &used, nil, core.NONE)
+	data_place(&f.sync.data, used)
 	reports: Particle_Reports
 	defer particle_reports_free(&reports)
 	DT :: f32(1.0 / 60)
-	heard := 0
-	for i in 0 ..< 12 {
+	heard: [2]int
+	for i in 0 ..< 45 {
 		brief.spawns = test_burst(9) if i == 0 else {}
-		testing.expect(t, frame_emitters(f, &f.sync, {brief}, DT))
+		falls.spawns = test_burst(4) if i == 0 else {}
+		testing.expect(t, frame_emitters(f, &f.sync, {brief, falls}, DT))
 		testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
-		reports_read(&reports, &f.sync, f.app.renderer, core.World_Id{index = 1})
+		data_read(nil, &reports, &f.sync, f.app.renderer, core.World_Id{index = 1}, nil)
 		for report in reports.reports {
-			testing.expect(t, report.entity == core.Entity(77) && report.kind == .Death)
-			heard += 1
+			switch report.entity {
+			case 77:
+				testing.expect(t, report.kind == .Death)
+				heard[0] += 1
+			case 78:
+				testing.expectf(t, report.kind == .Collision && report.normal.y > 0.9 && report.position.y > -0.5 && report.position.y < 0, "a hit over the floor %v", report)
+				heard[1] += 1
+			case:
+				testing.expectf(t, false, "a report of no emitter %v", report)
+			}
 		}
 	}
-	testing.expect_value(t, heard, 9)
+	testing.expect_value(t, heard, [2]int{9, 4})
 	testing.expect_value(t, reports.lost, u32(0))
 	expect_clean(t, f.device)
 }
