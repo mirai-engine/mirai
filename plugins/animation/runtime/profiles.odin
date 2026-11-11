@@ -46,6 +46,7 @@ pose_profile_check :: proc(profile:Pose_Profile) -> bool {
     if len(profile.ik)>POSE_CONSTRAINTS || len(profile.look)>POSE_CONSTRAINTS || len(profile.limits)>POSE_CONSTRAINTS {return false}
     for value in profile.ik {
         if !profile_bone(value.root) || !profile_bone(value.joint) || !profile_bone(value.end) || !spatial_target_valid(value.target,false) || !profile_vector(value.pole) || !profile_weight(value.weight) {return false}
+        if !finite(value.reach.soft_distance) || value.reach.soft_distance<0 || !finite(value.reach.max_stretch) || value.reach.max_stretch<0 {return false}
     }
     for value in profile.look {
         if !profile_bone(value.bone) || !spatial_target_valid(value.target,false) || !profile_vector(value.forward) || !finite(value.max_angle) || value.max_angle<0 || !profile_weight(value.weight) {return false}

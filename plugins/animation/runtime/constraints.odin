@@ -19,6 +19,7 @@ IK_Constraint :: struct {
     target:Spatial_Target `mirai:"optional"`,
     pole:mm.Vec3,
     hold:IK_Hold `mirai:"optional"`,
+    reach:lib.Chain_Reach `mirai:"optional"`, // a softened approach to full extension and how far the bones may stretch past it
     weight:f32 `mirai:"min=0,max=1"`,
     enabled:bool,
 }
@@ -250,7 +251,7 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         target,ok:=spatial_target_sample(config.target,&rig.targets[0][at],playback,inputs.skeletons,core.read(transforms),parents,inputs.worlds)
         if !ok {constraint_problem(problems,state.entity,.IK,at,.Target);if rig_runtime!=nil {modifier_request_rejected(rig_runtime,state.entity,.Missing_Target)};continue}
         held:=state.local[end].rotation if end>=0 && end<len(state.local) else 1
-        if !lib.skeleton_ik(skeleton,state.local[:],state.world[:],root,joint,end,target.position,config.pole,config.weight,parent_world) {constraint_problem(problems,state.entity,.IK,at,.Solve);continue}
+        if !lib.skeleton_ik(skeleton,state.local[:],state.world[:],root,joint,end,target.position,config.pole,config.weight,parent_world,config.reach) {constraint_problem(problems,state.entity,.IK,at,.Solve);continue}
         if config.hold!=.World {
             if config.hold==.Joint {state.local[end].rotation=mm.quat_slerp(state.local[end].rotation,held,config.weight)} else {
                 parent:=state.parents[end]

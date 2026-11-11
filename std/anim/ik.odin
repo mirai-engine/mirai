@@ -38,7 +38,9 @@ two_bone_pole_from_pose :: proc "contextless" (root,joint,end:math.Transform,tar
     return pole,anim_vec3_valid(pole)
 }
 
-two_bone_ik :: proc "contextless" (root,joint,end:math.Transform,target,pole:math.Vec3,weight:f32=1) -> (result:IK_Result,ok:bool) {
+// With reach, the end eases in toward full extension and the two bones stretch past it, as a chain
+// does (chain_reach): the joint keeps a bounded speed as the target leaves reach.
+two_bone_ik :: proc "contextless" (root,joint,end:math.Transform,target,pole:math.Vec3,weight:f32=1,reach:Chain_Reach={}) -> (result:IK_Result,ok:bool) {
     result={root,joint,end,false}
     if !anim_transform_valid(root) || !anim_transform_valid(joint) || !anim_transform_valid(end) || !anim_vec3_valid(target) || !anim_vec3_valid(pole) || !anim_finite(weight) {return}
     upper,lower:=joint.position-root.position,end.position-joint.position
@@ -47,10 +49,17 @@ two_bone_ik :: proc "contextless" (root,joint,end:math.Transform,target,pole:mat
     delta:=target-root.position
     distance:=linalg.length(delta)
     if !anim_finite(distance) {return}
+    goal,stretch:=distance,f32(1)
+    if reach!={} {
+        adjusted,scale,reach_ok:=chain_reach(root.position,target,a+b,reach)
+        if !reach_ok {return}
+        goal,stretch=linalg.length(adjusted-root.position),scale
+    }
     direction,valid:=anim_unit(delta)
     if !valid {direction,_=anim_unit(end.position-root.position);if direction=={} {direction=upper/a}}
-    minimum,maximum:=abs(a-b),a+b
-    reach:=clamp(distance,minimum,maximum)
+    long_a,long_b:=a*stretch,b*stretch
+    minimum,maximum:=abs(long_a-long_b),long_a+long_b
+    span:=clamp(goal,minimum,maximum)
     bend:=pole-root.position
     bend-=direction*linalg.dot(bend,direction)
     bend,valid=anim_unit(bend)
@@ -60,27 +69,28 @@ two_bone_ik :: proc "contextless" (root,joint,end:math.Transform,target,pole:mat
         if !valid {bend=anim_perpendicular(direction)}
     }
     along:f32
-    if reach>1e-6 {along=f32((f64(a)*f64(a)+f64(reach)*f64(reach)-f64(b)*f64(b))/(2*f64(reach)))}
-    height:=cmath.sqrt(max(a*a-along*along,0))
+    if span>1e-6 {along=f32((f64(long_a)*f64(long_a)+f64(span)*f64(span)-f64(long_b)*f64(long_b))/(2*f64(span)))}
+    height:=cmath.sqrt(max(long_a*long_a-along*along,0))
     solved_joint:=root.position+direction*along+bend*height
-    solved_end:=root.position+direction*reach
-    upper_turn:=anim_between(upper/a,(solved_joint-root.position)/a)
-    lower_turn:=anim_between(lower/b,(solved_end-solved_joint)/b)
+    solved_end:=root.position+direction*span
+    upper_turn:=anim_between(upper/a,(solved_joint-root.position)/long_a)
+    lower_turn:=anim_between(lower/b,(solved_end-solved_joint)/long_b)
     weight:=math.saturate(weight)
     upper_turn=math.quat_slerp(1,upper_turn,weight)
     lower_turn=math.quat_slerp(1,lower_turn,weight)
+    shown:=1+(stretch-1)*weight
     result.root.rotation=linalg.normalize0(upper_turn*root.rotation)
     result.joint.rotation=linalg.normalize0(lower_turn*joint.rotation)
-    result.joint.position=root.position+math.quat_rotate(upper_turn,upper)
-    result.end.position=result.joint.position+math.quat_rotate(lower_turn,lower)
-    result.reached=distance>=minimum && distance<=maximum
+    result.joint.position=root.position+math.quat_rotate(upper_turn,upper*shown)
+    result.end.position=result.joint.position+math.quat_rotate(lower_turn,lower*shown)
+    result.reached=abs(distance-span)<=maximum*1e-5
     return result,true
 }
 
-skeleton_ik :: proc "contextless" (s:Skeleton,local,world:[]math.Transform,root,joint,end:int,target,pole:math.Vec3,weight:f32=1,root_transform:math.Transform=math.TRANSFORM_IDENTITY) -> bool {
+skeleton_ik :: proc "contextless" (s:Skeleton,local,world:[]math.Transform,root,joint,end:int,target,pole:math.Vec3,weight:f32=1,root_transform:math.Transform=math.TRANSFORM_IDENTITY,reach:Chain_Reach={}) -> bool {
     if !skeleton_validate(s) || len(local)!=len(s.rest) || len(world)!=len(local) || root<0 || joint<0 || end<0 || root>=len(local) || joint>=len(local) || end>=len(local) || s.parents[joint]!=i32(root) || s.parents[end]!=i32(joint) {return false}
     if !pose_world(s.parents,local,world,root_transform) {return false}
-    solved,ok:=two_bone_ik(world[root],world[joint],world[end],target,pole,weight)
+    solved,ok:=two_bone_ik(world[root],world[joint],world[end],target,pole,weight,reach)
     if !ok {return false}
     if !pose_ik_local(s.parents,local,world,root,joint,end,solved,root_transform) {return false}
     return pose_world(s.parents,local,world,root_transform)

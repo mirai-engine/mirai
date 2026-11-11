@@ -405,7 +405,7 @@ hostile_skeletons_and_solvers_reject_invalid_inputs :: proc(t:^testing.T) {
         testing.expect(t,!applied || !(outside(chain[0]) || outside(chain[1]) || outside(chain[2])),"A solved chain with a bone out of range was applied")
         masked:=base.hostile_int(&h,7)-2
         testing.expect(t,!outside(masked) || !pose_mask_branch(skeleton,masked,base.hostile_f32(&h),mask[:]),"A mask from a bone out of range was written")
-        solved,reaches:=two_bone_ik(rest[0],rest[1],rest[2],hostile_vec4(&h).xyz,hostile_vec4(&h).xyz,base.hostile_f32(&h))
+        solved,reaches:=two_bone_ik(rest[0],rest[1],rest[2],hostile_vec4(&h).xyz,hostile_vec4(&h).xyz,base.hostile_f32(&h),{base.hostile_f32(&h),base.hostile_f32(&h)})
         for joint in ([3]math.Transform{solved.root,solved.joint,solved.end}) {
             testing.expect(t,!reaches || (numbers(joint.position.x,joint.position.y,joint.position.z) && numbers(abs(joint.rotation))),"A solved chain is not of numbers")
         }
