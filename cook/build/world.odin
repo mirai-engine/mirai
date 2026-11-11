@@ -34,7 +34,7 @@ import "mirai:std/serial"
 // and the game/ of the project go into World and Shared; the editor and the
 // editor/ of plugins and of the project into Editor_World.
 
-CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,keep,persist,single,far,derived,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw,mind,act,test_world,editor"
+CUSTOM_ATTRIBUTES :: "component,storage,step,loops,stage,after,before,server,shared,locks,host,by_world,copy,copy_kept,swap,free,replicated,setting,description,queue,keep,persist,single,far,derived,reset,net_message,from,reliable,params,names,name_bits,name,name_requires,presentation,record,actions,draw,mind,act,was,test_world,editor"
 
 PHASES :: [7]string{"input","fixed","frame","late","ui","render","release"}
 UI_PHASE :: 4 // where the interfaces are built: the engine and the editor draw in it, a game shows .ui documents
@@ -2435,8 +2435,8 @@ table_row :: proc(w:^strings.Builder,index:int,t:^Type,name,offset:string,place:
     type:=type_text(t)
     fields:=len(t.fields)>0?fmt.tprintf("fields_%s[:]",t.field):"nil"
     base:=t.pkg!=nil && t.pkg.path=="mirai:core" && t.file!=nil && !strings.has_suffix(t.file.fullpath,"_test.odin")
-    NAMED :: "    tables[%d]={{name=%q,library=%q,type=typeid_of(%s),info=type_info_of(%s),offset=%s,place=.%v,shared=%v,replicated=.%v,game=%v,default=%s,description=%q,fields=%s,single=%v,far=%v,derived=%v,base=%v,locks=%s}}\n"
-    fmt.sbprintf(w,named?NAMED:"    tables[%d]={{%q,%q,typeid_of(%s),type_info_of(%s),%s,.%v,%v,.%v,%v,%s,%q,%s,%v,%v,%v,%v,%s,false}}\n",index,name,t.pkg!=nil?t.pkg.name:"",type,type,offset,place,t.shared,t.replication,game || of_game(t),t.default,t.description,fields,t.single,t.far,t.derived,base,locks)
+    NAMED :: "    tables[%d]={{name=%q,library=%q,type=typeid_of(%s),info=type_info_of(%s),offset=%s,place=.%v,shared=%v,replicated=.%v,game=%v,default=%s,description=%q,fields=%s,single=%v,far=%v,derived=%v,was=%q,base=%v,locks=%s}}\n"
+    fmt.sbprintf(w,named?NAMED:"    tables[%d]={{%q,%q,typeid_of(%s),type_info_of(%s),%s,.%v,%v,.%v,%v,%s,%q,%s,%v,%v,%v,%q,%v,%s,false}}\n",index,name,t.pkg!=nil?t.pkg.name:"",type,type,offset,place,t.shared,t.replication,game || of_game(t),t.default,t.description,fields,t.single,t.far,t.derived,t.was,base,locks)
 }
 
 // The row of info.storages of a storage of a type, as table_row.

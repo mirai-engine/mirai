@@ -42,7 +42,7 @@ DOCUMENT_EVENTS :: [?]string{"shown","hidden","clicked"}
 
 DOC_STATES :: [?]struct{key:string,states:ui.Style_States}{{"hover",{.Hovered}},{"focus",{.Focused}},{"pressed",{.Pressed}},{"disabled",{.Disabled}},{"selected",{.Selected}},{"over",{.Over}}}
 // The fields a parameter of a widget can go to.
-DOC_PARAM_FIELDS :: [ui.Tree_Param_Field]string{.Text="text",.Style="style",.Data="data",.Bind_Text="bind_text",.Bind_Value="bind_value",.Bind_Visible="bind_visible",.Bind_Selected="bind_selected",.Bind_Disabled="bind_disabled",.Bind_Items="bind_items",.Bind_Image="bind_image",.Bind_Tint="bind_tint",.Bind_Variant="bind_variant",.Variant="variant",.Action="action",.Tag="tag",.Accepts="accepts"}
+DOC_PARAM_FIELDS :: [ui.Tree_Param_Field]string{.Text="text",.Style="style",.Data="data",.Bind_Text="bind_text",.Bind_Value="bind_value",.Bind_Visible="bind_visible",.Bind_Selected="bind_selected",.Bind_Disabled="bind_disabled",.Bind_Items="bind_items",.Bind_Key="bind_key",.Bind_Image="bind_image",.Bind_Tint="bind_tint",.Bind_Variant="bind_variant",.Variant="variant",.Action="action",.Tag="tag",.Accepts="accepts"}
 
 doc_failed :: proc(reading:^Reading,format:string,args:..any) -> bool {
     reading_failf(reading,format,..args)
@@ -840,6 +840,7 @@ doc_param_slot :: proc(n:^ui.Tree_Node,field:ui.Tree_Param_Field) -> []u8 {
     case .Bind_Selected: return n.bind_selected[:]
     case .Bind_Disabled: return n.bind_disabled[:]
     case .Bind_Items:    return n.bind_items[:]
+    case .Bind_Key:      return n.bind_key[:]
     case .Bind_Image:    return n.bind_image[:]
     case .Bind_Tint:     return n.bind_tint[:]
     case .Bind_Variant:  return n.bind_variant[:]
@@ -871,7 +872,7 @@ doc_param_value :: proc(w:^Doc_Write,row:int,p:^ui.Tree_Param) -> (value:string,
     case .Style:
         if int(target.style)<len(r.styles) && records_style_named(r,int(target.style)) {return records_style_name(r,int(target.style)),true}
         return "",false
-    case .Data,.Bind_Text,.Bind_Value,.Bind_Visible,.Bind_Selected,.Bind_Disabled,.Bind_Items,.Bind_Image,.Bind_Tint,.Bind_Variant,.Variant,.Action,.Tag,.Accepts:
+    case .Data,.Bind_Text,.Bind_Value,.Bind_Visible,.Bind_Selected,.Bind_Disabled,.Bind_Items,.Bind_Key,.Bind_Image,.Bind_Tint,.Bind_Variant,.Variant,.Action,.Tag,.Accepts:
         return serial.text_field(doc_param_slot(target,p.field)),true
     }
     return "",false
@@ -930,7 +931,7 @@ doc_node_fields_write :: proc(w:^Doc_Write,row:int,n:^ui.Tree_Node,root_params:[
         for group in ui.Node_Field {
             if group in groups {continue}
             #partial switch group {
-            case .Bindings:   append(&skip,"bind_text","bind_value","bind_visible","bind_selected","bind_disabled","bind_items","bind_image","bind_tint","bind_variant","data")
+            case .Bindings:   append(&skip,"bind_text","bind_value","bind_visible","bind_selected","bind_disabled","bind_items","bind_key","bind_image","bind_tint","bind_variant","data")
             case .Visibility: append(&skip,"selected","disabled")
             case .Variant:    append(&skip,"variant")
             case .Layer:      append(&skip,"layer")
@@ -1751,7 +1752,7 @@ doc_instance_field :: proc(key:string) -> (field:ui.Node_Field,ok:bool) {
     case "action","hold":  return .Action,true
     case "nav","order","flags": return .Focus,true
     case "tag","accepts","ghost": return .Drag,true
-    case "bind_text","bind_value","bind_visible","bind_selected","bind_disabled","bind_items","bind_image","bind_tint","bind_variant","data": return .Bindings,true
+    case "bind_text","bind_value","bind_visible","bind_selected","bind_disabled","bind_items","bind_key","bind_image","bind_tint","bind_variant","data": return .Bindings,true
     }
     if _,is_layout:=doc_layout_key(key);is_layout {return .Layout,true}
     return .Text,false
@@ -2152,7 +2153,8 @@ document_paths_check :: proc(args:^Tree_Args,r:^Records,root:int) -> bool {
         n:=&r.nodes[row]
         path:=serial.text_field(problem.path[:])
         key:=fmt.tprintf("bind_%s",doc_enum_text(problem.binding))
-        scope,scoped:=node_scope(info,r.nodes[:],row)
+        // A key is a field of the element of its List: where the node it holds starts.
+        scope,scoped:=node_scope(info,r.nodes[:],row+1 if problem.binding==.Key else row)
         why:=path_why(info,scope,path,problem.takes) if scoped else "the game does not have it"
         if failed>0 {strings.write_string(&b,"; ")}
         failed+=1

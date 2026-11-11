@@ -65,13 +65,10 @@ Move_Mix :: enum u8 {
     Override, // replaces it on every axis, without gravity or ground, for as long as it lasts
 }
 
-// A velocity on top of the locomotion for a number of ticks: dash, wind, conveyor.
+// A velocity on top of the locomotion for a number of ticks: dash, wind, conveyor. The body reaches
+// it within the tick, as every drive of the locomotion (drives_reach).
 Layered_Move :: struct {
     velocity:[3]f32 `mirai:"unit=m/s"`, // world axes
-    // N: the limit of the force of an Override, 0 taking the traction force; an Additive adds it to the
-    // force of the locomotion, so that the body follows an added velocity that changes faster than
-    // traction drives it (root motion), which the locomotion would otherwise count as its own
-    force:f32 `mirai:"min=0,unit=N"`,
     ticks:u32,                          // left
     mix:Move_Mix,
     id:u32,                             // meaning given by the game
@@ -205,7 +202,7 @@ locomotion_step :: proc(
     characters:^core.Table(phys.Character,.Read),states:^core.Table(Locomotion_State),moves:^core.Table(phys.Character_Move),inputs:^core.Table(input.Move_Input),
     walks:^core.Table(Walk,.Read),flights:^core.Table(Fly,.Read),swims:^core.Table(Swim,.Read),slides:^core.Table(Slide,.Read),mantles:^core.Table(Mantle,.Read),tacticals:^core.Table(Tactical_Sprint,.Read),ledges:^core.Table(Ledge_Jump,.Read),
     found:^core.Table(phys.Character_State,.Read),motions:^core.Table(core.Motion,.Read),
-    locals:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),remotes:^core.Table(core.Remote,.Read),physics:core.Ref(phys.Physics_State),
+    locals:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),remotes:^core.Table(core.Remote,.Read),physics:core.Ref(phys.Physics_State),places:core.Ref(core.Places),
     paces:^core.Table(core.Own_Pace,.Read),walk_actions:input.Input_Of(Walk_Action),requests:^Locomotion_Requests,time:core.Time,clock:core.Clock,problems:^core.Problems,
 ) {
     for asked in core.take(&requests.queue) {
@@ -261,16 +258,23 @@ locomotion_step :: proc(
             } else if core.owned(remotes,e) {move_input.look_yaw=c.yaw}
             c.ready=true
         }
+        ground,_:=core.get(found,e)
+        motion,_:=core.get(motions,e)
+        // Placed at rest (a respawn), it starts over where it is put: at rest, facing there, falling if it walks.
+        for placed in places.queue.items {
+            if placed.entity!=e || !placed.at_rest {continue}
+            c^={mode=MODE_FALLING if core.has(walks,e) else c.mode,ready=true,yaw=phys.look_yaw_of(frame,placed.rotation)}
+            if move_input!=nil && core.owned(remotes,e) {move_input.look_yaw=c.yaw}
+            ground,motion={},{}
+        }
         asked:input.Move_Input
         if move_input!=nil {asked=move_input^}
         pace:=core.pace_of(clock,paces,e)
-        ground,_:=core.get(found,e)
         c.yaw=mm.angle_wrap(c.yaw+ground.ground_turn)
         if body.turn_speed>0 {
             c.yaw=mm.angle_wrap(mm.angle_approach(c.yaw,asked.look_yaw,body.turn_speed*time.dt*pace))
         } else {c.yaw=asked.look_yaw}
         given:=move_facing(asked,c.yaw,frame)
-        motion,_:=core.get(motions,e)
         next:phys.Character_Move
         walk:Maybe(Walk)
         if found_walk,has:=core.get(walks,e);has {walk=found_walk}
@@ -317,6 +321,7 @@ locomotion_step :: proc(
         } else {
             next.value=locomotion_move_paced(c,body,walk,fly,swim,extra,ground,frame,given,jump,input.action_of(walk_actions,.Sprint),input.action_of(walk_actions,.Crouch),motion.linear,phys.gravity_of_entity(physics,e)*body.gravity_scale*locomotion_gravity(c^),time.dt,pace)
         }
+        drives_reach(&next.value,motion.linear,ground,frame,capsule.mass,time.dt)
         next.value.gravity_scale=c.gravity
         next.height=0
         if walking,ok:=walk.?;ok && c.crouched {next.height=walking.crouch_height}
@@ -358,14 +363,23 @@ move_facing :: proc "contextless" (asked:input.Move_Input,yaw:f32,frame:mm.Quat)
     return facing
 }
 
-// Direction of the move of an input in the axes of its yaw (move_facing) in
-// the world, across the up of the frame of the vertical, at most 1 long.
-move_wish :: proc "contextless" (move_input:input.Move_Input,frame:mm.Quat) -> [3]f32 {
+// The move of an input in the axes of its yaw (move_facing) in the world,
+// across the up of the frame of the vertical, as a share of the top speed of
+// a mode, at most 1 long: a velocity input asks for top speed at most.
+move_wish :: proc "contextless" (move_input:input.Move_Input,frame:mm.Quat,top:f32) -> [3]f32 {
     s,c:=cmath.sincos(move_input.look_yaw)
-    m:=move_input.move
+    m:=move_share(move_input,top)
     wish:=[3]f32{c*m.x+s*m.z,0,c*m.z-s*m.x}
     if l:=linalg.length(wish);l>1 {wish/=l}
     return mm.quat_rotate(frame,wish)
+}
+
+// The move of an input as a share of the top speed of a mode, at most 1 long.
+move_share :: proc "contextless" (move_input:input.Move_Input,top:f32) -> [3]f32 {
+    m:=move_input.move
+    if move_input.velocity {m=m/top if top>0 else {}}
+    if l:=linalg.length(m);!(l<=1) {m=m/l if l<=max(f32) else {}}
+    return m
 }
 
 // Within this angle of where it looks a move may sprint: cos 60°.
@@ -420,7 +434,8 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
     released:=!held && loco.jump_held
     loco.jump_held=held
     v:=velocity-additive_delivered(velocity,loco.added,loco.driven)
-    wish:=move_wish(move_input,frame)
+    // Its direction; how far it asks is a share of the top speed of each mode.
+    wish:=move_wish(move_input,frame,walk.max_speed)
     // Into the water and out of it by the depth of the water over the ground, the same both ways; never in
     // the middle of a move that overrides the locomotion, as climbing out.
     if swim,swims:=swim.?;swims && loco.mode!=MODE_FLYING && !overriding(loco) {
@@ -436,9 +451,7 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
         loco.jumped,loco.coyote,loco.crouched,loco.sprint_active,loco.ledge_jumping=false,0,false,false,false
         current:=ground.fluid_velocity
         relative:=v-current
-        aim:=move_input.move
-        if l:=linalg.length(aim);l>1 {aim/=l}
-        aim=mm.quat_rotate(look,aim)
+        aim:=mm.quat_rotate(look,move_share(move_input,swim.speed))
         surfaced:=ground.head_depth<=0 && linalg.dot(aim,up)>=0
         flat:=across(relative,up)
         drift:=across(current,up)
@@ -449,7 +462,7 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
             // Out onto a ledge or a raft: a climb, for a jump against the drag of the water takes no one out.
             // It takes the feet to the surface at the speed of a jump, which then takes them jump_height over it.
             if speed:=cmath.sqrt(2*linalg.length(gravity)*walk.jump_height);pressed && speed*dt>0 && loco.move_count<LAYERED_MOVE_CAPACITY {
-                loco.moves[loco.move_count]={velocity=up*speed+wish*swim.speed,ticks=max(u32(cmath.ceil(max(ground.depth,0)/(speed*dt))),1),mix=.Override}
+                loco.moves[loco.move_count]={velocity=up*speed+move_wish(move_input,frame,swim.speed)*swim.speed,ticks=max(u32(cmath.ceil(max(ground.depth,0)/(speed*dt))),1),mix=.Override}
                 loco.move_count+=1
                 loco.mode,loco.jumped=MODE_FALLING,true
             }
@@ -463,9 +476,7 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
         }
     } else if loco.mode==MODE_FLYING {
         loco.jumped,loco.coyote,loco.crouched,loco.sprint_active,loco.ledge_jumping=false,0,false,false,false
-        aim:=move_input.move
-        if l:=linalg.length(aim);l>1 {aim/=l}
-        aim=mm.quat_rotate(look,aim)
+        aim:=mm.quat_rotate(look,move_share(move_input,fly.speed))
         move.air={mm.approach_point(v,aim*fly.speed,fly.acceleration*dt),traction}
         move.flags={.Airborne,.Drive_Vertical,.No_Gravity}
     } else {
@@ -557,9 +568,9 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
             if move.ground.force==0 {
                 speed:=walk_speed(walk,move_input,sprint_held,loco.mode==MODE_CROUCHING,boost)
                 desired:[3]f32
-                if wish!={} {
-                    along:=wish-up*(linalg.dot(wish,n)/linalg.dot(n,up))
-                    desired=along*(speed*linalg.length(wish)/linalg.length(along))
+                if share:=move_wish(move_input,frame,speed);share!={} {
+                    along:=share-up*(linalg.dot(share,n)/linalg.dot(n,up))
+                    desired=along*(speed*linalg.length(share)/linalg.length(along))
                 }
                 rate:=desired=={}?walk.braking:walk.acceleration
                 if desired!={} && loco.sprint_active && tactical.acceleration_multiplier>0 {rate*=tactical.acceleration_multiplier}
@@ -571,9 +582,10 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
         move.air={velocity=across(v,up)}
         if wish!={} && walk.air_control>0 {
             speed:=walk_speed(walk,move_input,sprint_held,false,boost)
+            share:=move_wish(move_input,frame,speed)
             // A ledge jump is steered, not slowed.
             if loco.ledge_jumping {speed=max(speed,linalg.length(move.air.velocity))}
-            move.air={mm.approach_point(move.air.velocity,wish*speed,walk.air_control*walk.acceleration*dt),walk.air_control*traction}
+            move.air={mm.approach_point(move.air.velocity,share*speed,walk.air_control*walk.acceleration*dt),walk.air_control*traction}
             // Ground too steep to walk is not climbed from the air either.
             if ground.ground_normal!={} && !ground.walkable && ground.ground_distance<=body.step_height {
                 flat:=across(ground.ground_normal,up)
@@ -628,7 +640,6 @@ additive_delivered :: proc "contextless" (velocity,added,driven:[3]f32) -> [3]f3
 // the game.
 layers_apply :: proc(loco:^Locomotion_State,move:^phys.Character_Drive,traction:f32,pace:f32=1) {
     added:[3]f32
-    extra:f32 // the force the Additive ones add
     kept:u32
     loco.layer_time+=pace
     spent:=u32(loco.layer_time)
@@ -638,12 +649,11 @@ layers_apply :: proc(loco:^Locomotion_State,move:^phys.Character_Drive,traction:
         switch layered.mix {
         case .Additive:
             added+=layered.velocity
-            extra+=layered.force
             if move.ground.force==0 {move.ground.force=traction}
             if move.air.force==0 {move.air.force=traction}
         case .Override:
-            added={};extra=0
-            drive:=phys.Drive{layered.velocity,layered.force>0?layered.force:traction}
+            added={}
+            drive:=phys.Drive{layered.velocity,traction}
             move.ground,move.air=drive,drive
             move.flags+={.Airborne,.Drive_Vertical,.No_Gravity}
             move.flags-={.Float}
@@ -659,8 +669,27 @@ layers_apply :: proc(loco:^Locomotion_State,move:^phys.Character_Drive,traction:
     loco.added=added
     move.ground.velocity+=added
     move.air.velocity+=added
-    move.ground.force+=extra
-    move.air.force+=extra
+}
+
+// The force of each drive of a move raised to what reaches its velocity within the tick from the
+// velocity of the body, along its ground for the one of the ground: how fast a character gets there
+// is the acceleration of its mode, and its traction force only how hard it holds it against what
+// pushes it. A drive without force stays off.
+@(private)
+drives_reach :: proc "contextless" (move:^phys.Character_Drive,velocity:[3]f32,ground:phys.Character_State,frame:mm.Quat,mass,dt:f32) {
+    if !(mass>0) || !(dt>0) {return}
+    up:=mm.quat_rotate(frame,{0,1,0})
+    n:=ground.ground_normal
+    if linalg.dot(n,up)<=0 {n=up}
+    if move.ground.force>0 {
+        miss:=move.ground.velocity-(velocity-ground.ground_velocity)
+        move.ground.force=max(move.ground.force,mass*linalg.length(miss-n*linalg.dot(miss,n))/dt)
+    }
+    if move.air.force>0 {
+        miss:=move.air.velocity-velocity-move.launch
+        if .Drive_Vertical not_in move.flags {miss-=up*linalg.dot(miss,up)}
+        move.air.force=max(move.air.force,mass*linalg.length(miss)/dt)
+    }
 }
 
 // A move of the time of a character in the time of the world, at its pace:

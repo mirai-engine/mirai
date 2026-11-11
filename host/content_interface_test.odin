@@ -157,16 +157,16 @@ a_node_and_a_row_read_one_key_of_every_strings_in_each_language :: proc(t:^testi
     cases:=[]struct{language:string,said:[4]string}{
         {"es",{"Jugar","Salir","Back","menu.none"}},
         {"en",{"Play","Salir","Back","menu.none"}},
+        {"en-GB",{"Play","Salir","Back","menu.none"}},
         {"fr",{"Jugar","Salir","Back","menu.none"}},
         {"",{"Jugar","Salir","Back","menu.none"}},
     }
     for c in cases {
-        language:=base.name_hash(c.language) if c.language!="" else 0
         instance:ui.Tree_Instance
-        if !testing.expect(t,ui.tree_instance_init(&instance,&tree,nil,texts,language)) {return}
+        if !testing.expect(t,ui.tree_instance_init(&instance,&tree,nil,texts,c.language)) {return}
         defer ui.tree_instance_destroy(&instance)
         for node,i in nodes {
-            row,found:=core.text(texts,title[i],language)
+            row,found:=core.text(texts,title[i],c.language)
             testing.expectf(t,instance.texts[node]==c.said[i],"the node of %s in %q says %q",base.text_get(title[i].key[:]),c.language,instance.texts[node])
             testing.expectf(t,found==(i<3) && (!found || row==c.said[i]),"the row of %s in %q says %q",base.text_get(title[i].key[:]),c.language,row)
         }
@@ -175,7 +175,7 @@ a_node_and_a_row_read_one_key_of_every_strings_in_each_language :: proc(t:^testi
     if !extra(t,&f,&types,"Return") {return}
     testing.expect(t,assets_refresh(&f.assets,{"z_extra.strings"}))
     testing.expect(t,app_texts(&f.app)==texts && texts.generation==2)
-    said,_:=core.text(texts,"menu.back",base.name_hash("es"))
+    said,_:=core.text(texts,"menu.back","es")
     testing.expect_value(t,said,"Return")
 }
 

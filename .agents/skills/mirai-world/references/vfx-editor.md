@@ -17,8 +17,8 @@ storage whose only field is the provider, with its default:
   `recipes/particles.scene`; `scene.write` with `preset` `particles` creates it. It is the card of
   `Particle_Emitter`: the icon of its entities and of its section.
 - `Vfx_Inspector` (`editor.Inspector_Provider`): the [section](#particle_emitter-section) of
-  `Particle_Emitter`; `within` says that `Particle_Override` and `Particle_Parameters` are shown
-  inside it, with no section of their own or place in the scene API.
+  `Particle_Emitter`; `within` says that `Particle_Override` is shown inside it, with no section
+  of its own or place in the scene API.
 - `Vfx_Api` (`editor.Api_Provider`): the `particle.*` methods
   ([methods](../../mirai-agent-api/references/methods.md#components-and-assets)).
 
@@ -50,9 +50,8 @@ Code: `instance.odin`.
   file, in the same step as what changes on the entity.
 - A value's arrow returns it to its reference: the prefab's value, then the effect's and, without
   an effect, the default.
-- On the box, revert returns the entity's values and parameters (`Particle_Override`,
-  `Particle_Parameters`) to the effect, and apply writes them into the effect for all the entities
-  that use it.
+- On the box, revert returns the entity's values and parameters (`Particle_Override`) to the
+  effect, and apply writes them into the effect for all the entities that use it.
 - What is hidden is defined by the `hidden` list of the effect's file (by its document, code or
   `particle.set`).
 - The default effect has no file: its values are changed on the entity but not applied.
@@ -93,8 +92,8 @@ the left and **Effect** with the rows on the right, in the editor's document col
 
 - **Image**: the [preview](#effect-preview) at the document's time, in a texture
   `PARTICLE_SIDE` pixels on a side, square and as large as fits in its area. What the rows change
-  and the file does not have yet is shown as the values of an instance (`preview_values`:
-  `Particle_Override` and `Particle_Parameters`); the assets and the program are written at once.
+  and the file does not have yet is shown as the values of an instance (`preview_values`, a
+  `Particle_Override`); the assets and the program are written at once.
   The signature of what it shows (time, values, parameters, assets revision) is computed in the UI;
   `Asset_Document_Provider.between` draws it between frames when it changes.
 - **Playback** (`editor.asset_playback_strip`, that of the animation document without lanes): one
@@ -119,8 +118,6 @@ the left and **Effect** with the rows on the right, in the editor's document col
   the file.
 - If the file is read again (undo, the API, another write), each value that the rows did not
   change takes the file's; the parameters and the hidden ones, whole.
-- The effect's `resources` have no rows: the document writes them as it read them and
-  `particle.set` changes them.
 - A frame without changes does not draw the image.
 
 ## Thumbnails

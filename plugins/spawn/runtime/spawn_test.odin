@@ -12,7 +12,11 @@ Spawn_World :: struct {
     bodies:core.Table(Seat_Body),
     points:core.Table(Spawn_Point),
     seats:core.Table(input.Seat),
+    transforms:core.Table(core.Transform),
+    parents:core.Table(core.Parent),
     hierarchy:core.Hierarchy,
+    places:core.Places,
+    jumps:core.Jumps,
 }
 
 @(test)
@@ -132,5 +136,29 @@ the_place_the_editor_asks_comes_before_the_points_for_player_1_once :: proc(t:^t
     a.origin.asked=false
     at,asked,_=spawn_where(&a,{kind=.Spawn,seat=first})
     testing.expect(t,at==point && !asked,"the camera of a Play not asked from a place leaves the points first")
+    testing.expect_value(t,problems.count,0)
+}
+
+// A body the game respawns is asked of the owner of its Transform (physics) at its point at rest:
+// it stops there instead of keeping the speed it fell at.
+@(test)
+a_respawned_body_is_placed_at_rest_at_its_point :: proc(t:^testing.T) {
+    w:Spawn_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    es:=&w.entities
+    point,body:=core.create(es),core.create(es)
+    core.add(&w.points,point,Spawn_Point{})
+    core.add(&w.transforms,point,core.Transform{position={1,2,3},rotation=1,scale=1})
+    core.add(&w.transforms,body,core.Transform{position={0,-40,0},rotation=1,scale=1})
+    test_world_settle(&w)
+    resize(&w.transforms.owners,core.entity_index(body)+1)
+    w.transforms.owners[core.entity_index(body)]=core.Row_Owner{generation=core.entity_generation(body),id=1}
+    spawning:Spawning
+    problems:core.Problems
+    a:=Apply{seats=core.read(&w.seats),points=core.read(&w.points),placer={&w.transforms,core.read(&w.parents),&w.places,&w.jumps},spawning=&spawning,problems=&problems}
+    testing.expect(t,respawn_body(&a,{kind=.Respawn,entity=body}))
+    asked:=w.places.queue.items[:]
+    testing.expect(t,len(asked)==1 && asked[0].entity==body && asked[0].position==[3]f32{1,2,3} && asked[0].at_rest,"it is placed at its point at rest")
     testing.expect_value(t,problems.count,0)
 }

@@ -9,8 +9,7 @@ import "plugins:vfx/runtime/effect"
 
 // What an emitter reads besides its values: the surface or the bones its
 // Surface or Bones shape starts particles on, and the resources its Vfx
-// program declares
-// (`//! resource name kind`), in rows the GPU finds through the emitter (its
+// program declares (`//! resource name kind`), in rows the GPU finds through the emitter (its
 // shape first, then those of its program in their order). A surface is the
 // mesh an entity draws in the frame, as the renderer has it: a skin moves its
 // triangles, and a particle that keeps one follows it. The area of its
@@ -23,8 +22,8 @@ RESOURCE_ROWS :: 1+RESOURCES
 // The entities whose surfaces an emitter reads.
 @(component)
 Particle_Bindings :: struct {
-    surface:core.Entity,                // what its Surface or Bones shape starts particles on: the mesh it draws; NONE: the mesh of its effect, or what its entity draws
-    sources:[RESOURCES]Particle_Source, // what each resource of its program reads, by name, or the one of its index without a name; over the sources of its effect
+    surface:core.Entity,                // what its Surface or Bones shape starts particles on: the mesh it draws; NONE: what its own entity draws
+    sources:[RESOURCES]Particle_Source, // what each resource of its program reads, by name, or the one of its index without a name
 }
 
 Particle_Source :: struct {
@@ -61,27 +60,17 @@ Gpu_Resource :: struct {
 #assert(size_of(Gpu_Resource)==112)
 
 // The resources an emitter reads in this frame: the surface or the bones of
-// its shape and those its program needs, from what the entity binds, then
-// what its effect gives. A resource without a source has kind None: the
-// program reads nothing from it.
+// its shape and those its program needs, from what the entity binds. A
+// resource without a source has kind None: the program reads nothing from it.
 @(private)
 emitter_resources :: proc(
-    sync:^Particle_Sync,shown:^Emitter_Shown,info:^effect.Particle_Info,sources:[]effect.Particle_Resource,bindings:^Particle_Bindings,
-    e:core.Entity,transform:mm.Mat4,extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,
+    sync:^Particle_Sync,shown:^Emitter_Shown,info:^effect.Particle_Info,bindings:^Particle_Bindings,
+    e:core.Entity,extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,
 ) -> (resources:[RESOURCE_ROWS]Resource_Desc) {
-    of_entity :: proc(sync:^Particle_Sync,kind:Resource_Kind,extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,$A),worlds:^core.Table(core.World_Transform,$B),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,e:core.Entity) -> Resource_Desc {
-        return entity_bones(sync,drawn,meshes,worlds,id,assets,renderer,e) if kind==.Bones else entity_surface(extras,drawn,meshes,worlds,id,assets,renderer,e)
-    }
-    of_asset :: proc(sync:^Particle_Sync,kind:Resource_Kind,assets:^host.Assets,renderer:^erender.Renderer,mesh:base.Asset_Id,transform:mm.Mat4) -> Resource_Desc {
-        return asset_bones(sync,assets,renderer,mesh,transform) if kind==.Bones else asset_surface(assets,renderer,mesh,transform)
-    }
-    if info.shape==.Surface || info.shape==.Bones {
-        kind:=Resource_Kind.Bones if info.shape==.Bones else .Surface
-        switch {
-        case bindings.surface!=core.NONE: resources[0]=of_entity(sync,kind,extras,drawn,meshes,worlds,id,assets,renderer,bindings.surface)
-        case info.surface_mesh!={}: resources[0]=of_asset(sync,kind,assets,renderer,info.surface_mesh,transform)
-        case: resources[0]=of_entity(sync,kind,extras,drawn,meshes,worlds,id,assets,renderer,e)
-        }
+    source:=bindings.surface if bindings.surface!=core.NONE else e
+    #partial switch info.shape {
+    case .Surface: resources[0]=entity_surface(extras,drawn,meshes,worlds,id,assets,renderer,source)
+    case .Bones: resources[0]=entity_bones(sync,drawn,meshes,worlds,id,assets,renderer,source)
     }
     for need,at in shown.needs.resources {
         // The source the emitter binds it to: by its name, or the one of its index without a name.
@@ -125,13 +114,8 @@ emitter_resources :: proc(
             if source!=core.NONE {resources[1+at]={kind=.Emitter,emitter=u64(source)}}
             continue
         }
-        if need.kind!=.Surface && need.kind!=.Bones {continue}
-        if source!=core.NONE {
-            resources[1+at]=of_entity(sync,need.kind,extras,drawn,meshes,worlds,id,assets,renderer,source)
-            continue
-        }
-        for &given in sources {
-            if base.name_hash(base.text_get(given.name[:]))==need.name && given.mesh!={} {resources[1+at]=of_asset(sync,need.kind,assets,renderer,given.mesh,transform)}
+        if need.kind==.Surface && source!=core.NONE {
+            resources[1+at]=entity_surface(extras,drawn,meshes,worlds,id,assets,renderer,source)
         }
     }
     // Where each was the frame before: the first frame, where it is.
@@ -151,14 +135,6 @@ first_over :: proc "contextless" (needs:^Program_Needs) -> int {
         if stage.kind==.Cells && (first<0 || int(stage.over)<first) {first=int(stage.over)}
     }
     return first
-}
-
-// The surface of a mesh asset at a transform.
-@(private)
-asset_surface :: proc(assets:^host.Assets,renderer:^erender.Renderer,mesh:base.Asset_Id,transform:mm.Mat4) -> Resource_Desc {
-    entry:=host.assets_mesh(assets,mesh)
-    if entry==nil {return {}}
-    return surface_of(renderer,entry.handle,transform)
 }
 
 // The surface an entity draws in the frame: the mesh a visual instance draws

@@ -623,7 +623,7 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
         if problem=="" {stages_declared,problem=program_stages(name,directives.stages[:],resources,context.temp_allocator)}
         if problem!="" {
             declared=false
-            report(&c,.Error,"mirai.directives",i32(max(directives.line,1)),1,problem,"declare `//! resource name surface|channel|bones|grid|emitter|data` and `//! stage name over particles|<grid> [iterations N] [neighbors radius] [writes grid,grid]` as mirai_vfx.slang says")
+            report(&c,.Error,"mirai.directives",i32(max(directives.line,1)),1,problem,"declare `//! resource name surface|channel|grid|emitter|data` and `//! stage name over particles|<grid> [iterations N] [neighbors radius] [writes grid,grid]` as mirai_vfx.slang says")
         }
         prelude=vfx_prelude(name,resources)
     }

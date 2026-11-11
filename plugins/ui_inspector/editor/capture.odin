@@ -28,7 +28,7 @@ Ui_Capture_Params :: struct {
     node:[ui.TREE_NAME_CAPACITY]u8 `mirai:"text,optional,label=A node shown in states whatever the pointer does"`,
     states:ui.Style_States `mirai:"optional,label=Those node shows"`,
     variant:[ui.TREE_NAME_CAPACITY]u8 `mirai:"text,optional,label=The variant its nodes take when they choose none, as a screen chooses it"`,
-    language:[24]u8 `mirai:"text,optional,label=Of its localized texts, as gui.Language names it; empty: the one they are written in"`,
+    language:[gui.LANGUAGE_CODE]u8 `mirai:"text,optional,label=The code of the language of its localized texts (es; pt-BR), as base.text finds it; empty: the one they are written in"`,
     family:ui.Prompt_Family `mirai:"optional,label=The device its prompts show"`,
     seconds:f32 `mirai:"optional,min=0,max=10,unit=s,label=What its nodes play as they appear runs this long before the capture"`,
 }
@@ -54,10 +54,7 @@ api_ui_capture :: proc(s:^editor.Session,call:^api.Call) {
     settings:=cast(^gui.UI_Settings)editor.setting_value(s,gui.UI_Settings)
     stage:=STAGE_DEFAULT
     stage.family=p.family
-    if name:=serial.text_field(p.language[:]);name!="" {
-        for language in gui.Language {if fmt.tprintf("%v",language)==name {stage.language,stage.chosen=language,true}}
-        if !stage.chosen {api.call_failf(call,api.INVALID_PARAMS,"language '%s' is none of the gui.Language names (English, Spanish, ...)",name);return}
-    }
+    stage.language=p.language
     file,writable:=editor.api_capture_file(s,call,serial.text_field(p.path[:]),"ui.png",app.allocator)
     if !writable {return}
     defer delete(file,app.allocator)
