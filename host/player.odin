@@ -43,7 +43,7 @@ Player_Options :: struct {
     capture:string,
     input:string,
     frames:int,
-    players:int,        // local players; 0: what the scene says
+    players:int,        // local players; 0: one
     window:[4]i32,      // where the window goes, in screen coordinates; zero: centered
     surface:[3]f32,     // pixels and density of the image another process shows (player_surface.odin); zero: none
     arguments:[dynamic]string, // what it does not read itself, for the libraries
@@ -89,7 +89,7 @@ PLAYER_USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] 
   --input       input script: lines "<first frame> <last frame> <what>...", with keys (W, Space),
                 buttons (mouse:Left), mouse movement per frame (look:dx,dy) and the position of the
                 pointer in window points (pointer:x,y), which stays there until another line moves it; no window
-  --players     local split-screen players, from 1 to 4; if omitted, as many as the scene says
+  --players     local split-screen players, from 1 to 4; if omitted, one
   --show-window  a window also with --frames, --input or --capture
   --window      window position and size, frame included, in screen coordinates; with --frames, --input
                 or --capture also give --show-window

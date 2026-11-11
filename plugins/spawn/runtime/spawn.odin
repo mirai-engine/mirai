@@ -1,6 +1,7 @@
 package spawn
 
 import "mirai:core"
+import cam "mirai:engine/camera"
 import input "mirai:engine/input"
 import scene "mirai:engine/scene"
 import "mirai:host"
@@ -9,22 +10,24 @@ import mm "mirai:std/math"
 
 // Bodies at spawn points. A Spawn_Point is a place where bodies of its prefab
 // appear: those of the players when its `players` is on, and those the game
-// asks for (enemies, pickups) when it is off. With Spawn_Settings.players every
-// seat (local or of a connection) that has no body gets one at a point of the
-// players, of the point's prefab or else Spawn_Settings.prefab: it arrived,
-// its body was destroyed, it came back. spawn gives a body when the game asks,
-// to a seat or to nobody, and respawn places an existing body at a point.
-// Without a point asked for, the points of its kind (of the players for a
-// seat or a body a seat drives, the others otherwise) are used in turn, in the
-// order of the table. On a client the server decides: it spawns nothing. In
-// the Play of the editor a player's body without a point appears where the
-// editor put the player (Play_Origin); one it asked for there (Play from here)
-// is the first body of player 1, before any point.
+// asks for (enemies, pickups) when it is off. A player's body appears at the
+// point asked for, or else at the next point with players on, in turn in the
+// order of the table; its prefab is the one the request names, or else the
+// point's, or else Spawn_Settings.prefab, the body of the project. While a
+// player's body is to be had that way (the project names one, or a point with
+// players on does), every seat (local or of a connection) that has no body
+// gets one: it arrived, its body was destroyed, it came back. spawn gives a
+// body when the game asks, to a seat or to nobody (at the points with players
+// off), and respawn places an existing body at a point of its kind. On a
+// client the server decides: it spawns nothing. In the Play of the editor a
+// player's body without a point appears where the editor put the player
+// (Play_Origin); one it asked for there (Play from here) is the first body of
+// player 1, before any point.
 
 SPAWN_CAPACITY :: 8 // bodies that appear for seats in one tick
 SPAWN_RETRY :: 0.5  // s the seats wait after a body could not appear for one
 
-@(component,description="A place where bodies of its prefab appear: with players on, one for each seat that has none when the project setting Spawn_Settings.players is on; with it off, those the game asks for with spawn.spawn, such as enemies.")
+@(component,description="A place where bodies of its prefab appear: with players on, one for each seat that has none, of its prefab or else of the project setting Spawn_Settings.prefab; with it off, those the game asks for with spawn.spawn, such as enemies.")
 Spawn_Point :: struct {
     prefab:base.Asset_Id, // what appears here; none: the point only places bodies the request or Spawn_Settings.prefab names
     players:bool,         // the players' bodies appear here; off: only what the game spawns without a seat
@@ -33,13 +36,14 @@ Spawn_Point :: struct {
 // A body that appeared for a seat: it goes when its seat goes (a player who
 // left the game).
 @(component,description="A body the spawn library gave to a seat: it is destroyed when that seat goes away.")
-Seat_Body :: struct {}
+Seat_Body :: struct {
+    seat:core.Entity `mirai:"transient,readonly"`,
+}
 
 // How spawn gives bodies to the players. A project setting.
 @(storage,setting)
 Spawn_Settings :: struct {
-    players:bool,         // every seat without a body gets one at a spawn point; off: the game gives them bodies
-    prefab:base.Asset_Id `mirai:"with=Drivable"`, // the body of a player where the request and the point name none
+    prefab:base.Asset_Id, // the body of a player where the request and the point name none; none and no point with one: the game gives them bodies
 }
 
 // What this library derives while the world runs.
@@ -94,7 +98,6 @@ Apply :: struct {
     commands:core.Commands,
     assets:^host.Assets,
     bodies:^core.Table(Seat_Body),
-    drivables:core.Read(input.Drivable),
     seats:core.Read(input.Seat),
     points:core.Read(Spawn_Point),
     placer:core.Placer,
@@ -110,11 +113,9 @@ Apply :: struct {
 
 // The bodies whose seat went away go with it, before input_drive lets go of them.
 @(step="fixed",stage="input",before="input_drive")
-spawn_seat_bodies :: proc(es:core.Commands,hierarchy:core.Ref(core.Hierarchy),bodies:core.Read(Seat_Body),drivables:core.Read(input.Drivable)) {
+spawn_seat_bodies :: proc(es:core.Commands,hierarchy:core.Ref(core.Hierarchy),bodies:core.Read(Seat_Body)) {
     for row in 0..<core.count(bodies) {
-        body:=core.entity_at(bodies,row)
-        driven,_:=core.get(drivables,body)
-        if driven.seat!=core.NONE && !core.alive(es.entities,driven.seat) {core.destroy_tree(es.entities,hierarchy,body)}
+        if seat:=core.at(bodies,row).seat;!core.alive(es.entities,seat) {core.destroy_tree(es.entities,hierarchy,core.entity_at(bodies,row))}
     }
 }
 
@@ -122,11 +123,11 @@ spawn_seat_bodies :: proc(es:core.Commands,hierarchy:core.Ref(core.Hierarchy),bo
 // appear to their seats in the same tick.
 @(step="fixed",stage="input",after="input_seats")
 spawn_step :: proc(
-    commands:core.Commands,assets:^host.Assets,drivables:core.Read(input.Drivable),bodies:^core.Table(Seat_Body),
+    commands:core.Commands,assets:^host.Assets,free:core.Ref(cam.Free_Camera),bodies:^core.Table(Seat_Body),
     seats:core.Read(input.Seat),points:core.Read(Spawn_Point),placer:core.Placer,driving:^input.Seat_Requests,requests:^Spawn_Requests,spawning:^Spawning,
     settings:core.Ref(Spawn_Settings),network:core.Ref(core.Network),time:core.Time,origin:core.Ref(scene.Play_Origin),at_origin:^Spawned_At_Origin,problems:^core.Problems,
 ) {
-    a:=Apply{commands=commands,assets=assets,bodies=bodies,drivables=drivables,seats=seats,points=points,placer=placer,driving=driving,spawning=spawning,at_origin=at_origin,problems=problems}
+    a:=Apply{commands=commands,assets=assets,bodies=bodies,seats=seats,points=points,placer=placer,driving=driving,spawning=spawning,at_origin=at_origin,problems=problems}
     if settings.ptr!=nil {a.settings=settings.ptr^}
     if origin.ptr!=nil {a.origin=origin.ptr^}
     client:=network.role==.Client
@@ -134,16 +135,17 @@ spawn_step :: proc(
         switch request.kind {
         case .Spawn:
             if client {
-                core.report(problems,request.seat,"spawn.client_spawn","a client asked to spawn a body for this seat: in a network game the server gives bodies; ask on the server, or turn on Spawn_Settings.players")
+                core.report(problems,request.seat,"spawn.client_spawn","a client asked to spawn a body for this seat: in a network game the server gives bodies; ask on the server, or give Spawn_Settings.prefab the body of the players")
             } else {spawn_body(&a,request)}
         case .Respawn:
             respawn_body(&a,request)
         }
     }
-    if client || !settings.players || !core.due(time,spawning.retry_after) {return}
+    if client || !core.due(time,spawning.retry_after) || !prefab_found(&a) {return}
     for row in 0..<core.count(seats) {
         seat:=core.entity_at(seats,row)
-        if input.body_of(drivables,seat)!=core.NONE {continue}
+        // The camera player 1 flies without a body is not one.
+        if body:=input.body_of(seats,seat);body!=core.NONE && body!=free.entity {continue}
         given:=false
         for other in a.given[:a.given_count] {given ||= other==seat}
         if given {continue}
@@ -152,6 +154,17 @@ spawn_step :: proc(
             return
         }
     }
+}
+
+// Whether a seat can be given a body without naming its prefab: the project
+// names one, or a point of the players does.
+@(private)
+prefab_found :: proc(a:^Apply) -> bool {
+    if a.settings.prefab!={} {return true}
+    for point in a.points.table.values[:core.count(a.points)] {
+        if point.players && point.prefab!={} {return true}
+    }
+    return false
 }
 
 // The point asked for, or else the next one in turn of the players' or of
@@ -228,14 +241,14 @@ spawn_body :: proc(a:^Apply,r:Spawn_Request) -> bool {
         a.given[a.given_count]=r.seat
         a.given_count+=1
         input.drive(a.driving,r.seat,root)
-        core.add(a.bodies,root,Seat_Body{})
+        core.add(a.bodies,root,Seat_Body{r.seat})
     }
     return true
 }
 
 @(private)
 respawn_body :: proc(a:^Apply,r:Spawn_Request) -> bool {
-    point:=spawn_pick(a,r.entity,r.point,input.seat_of(a.drivables,r.entity)!=core.NONE,false) or_return
+    point:=spawn_pick(a,r.entity,r.point,input.seat_of(a.seats,r.entity)!=core.NONE,false) or_return
     placed:=mm.Transform{a.origin.position,a.origin.rotation,{1,1,1}}
     if point!=core.NONE {placed=spawn_place(a,point) or_return}
     if !core.place(a.placer,r.entity,placed.position,placed.rotation) {

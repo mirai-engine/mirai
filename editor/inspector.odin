@@ -57,7 +57,6 @@ Inspector :: struct {
     gesture_frame:u64,        // the last frame its field was built
     picker:Color_Session,
     list:Choice_List,
-    list_with:[dynamic]base.Asset_Id, // the prefabs the open list offers when its field names a component they must have (with=)
     geometry_choice:Geometry_Choice,
     post_process:Post_Process_Editor,
     add_filter:[64]u8,
@@ -97,7 +96,6 @@ Choice_List :: struct {
     geometry:bool,
     field:ui.Id,
     path:int,          // a text of this many bytes takes the path of the asset under the assets folder instead of its id
-    with:bool,         // it offers only Inspector.list_with
     scroll:f32,
 }
 
@@ -953,7 +951,7 @@ geometry_set :: proc(s:^Session,t:^core.Table_Info,entities:[]core.Entity,shape:
 fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,prefix:string) {
     v,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
     if !is_struct {return}
-    current:=""
+    current,titled:="",""
     first:=true
     skip:=-1
     folded:=false // in a section that is closed
@@ -965,6 +963,7 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
         if title,found:=core.field_option(tag,"section");found && title!="" && depth==0 {current=title}
         if _,hidden:=core.field_option(tag,"hidden");hidden {continue}
         if _,transient:=core.field_option(tag,"transient");transient {continue}
+        if modes,only:=core.field_option(tag,"mode");only && !mode_shows(c,v,origin,modes) {continue}
         if c.sections && depth==0 && current!=c.section {continue}
         if c.type==erender.Mesh_Renderer && v.names[i]=="materials" {continue}
         offset:=origin+v.offsets[i]
@@ -982,7 +981,10 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
         }
         if prefix!="" {label=fmt.tprintf("%s %s",prefix,strings.to_lower(label,context.temp_allocator))}
         if depth==0 && c.needle!="" && !base.contains_fold(label,c.needle) {continue}
-        if title,found:=core.field_option(tag,"section");found && title!="" && depth==0 && !c.sections {
+        // A section starts at the first of its fields shown.
+        if depth==0 && !c.sections && current!=titled {
+            titled=current
+            title:=current
             if banded {fold_band_end(c.s);banded=false}
             folded=false
             // Searching, the rows that have it show without their part.
@@ -1009,6 +1011,23 @@ fields_rows :: proc(c:^Inspect,info:^runtime.Type_Info,origin:uintptr,depth:int,
         }
         field_row(c,v.types[i],tag,v.names[i],label,offset,depth,description)
     }
+}
+
+// Whether a field tagged mode=A|B shows: while the field mode of its struct,
+// an enum, is one of those values.
+@(private)
+mode_shows :: proc(c:^Inspect,v:runtime.Type_Info_Struct,origin:uintptr,modes:string) -> bool {
+    for i in 0..<int(v.field_count) {
+        if v.names[i]!="mode" {continue}
+        name,named:=reflect.enum_name_from_value_any(any{rawptr(&c.value[origin+v.offsets[i]]),v.types[i].id})
+        if !named {return true}
+        rest:=modes
+        for want in strings.split_iterator(&rest,"|") {
+            if want==name {return true}
+        }
+        return false
+    }
+    return true
 }
 
 // Two masks of the same names as one table, with one arrow that reverts both.
@@ -1179,8 +1198,7 @@ field_row :: proc(c:^Inspect,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name
         entity_row(c,shown,int(offset),key)
         return
     case base.Asset_Id:
-        with,_:=core.field_option(tag,"with")
-        asset_row(c,shown,field_asset_kinds(s,tag,name),int(offset),key,with)
+        asset_row(c,shown,field_asset_kinds(s,tag,name),int(offset),key)
         return
     }
     if core.named_type_of(c.w.info,info.id)!=nil {
@@ -2222,7 +2240,7 @@ asset_field_dropped :: proc(s:^Session,id:ui.Id,kinds:Asset_Kinds,label:string) 
 // shows it in the content browser. An asset of its kinds dropped on it is
 // assigned; one of another kind is refused.
 @(private)
-asset_row :: proc(c:^Inspect,label:string,kinds:Asset_Kinds,offset:int,key:u64,with:="") {
+asset_row :: proc(c:^Inspect,label:string,kinds:Asset_Kinds,offset:int,key:u64) {
     s:=c.s
     ctx:=s.gui.ctx
     th:=&ctx.theme
@@ -2241,8 +2259,7 @@ asset_row :: proc(c:^Inspect,label:string,kinds:Asset_Kinds,offset:int,key:u64,w
         open:=s.inspector.list.key==key
         if ui.button(ctx,id,{label=shown,icon=.Chevron_Down,icon_after=true,icon_color=th.text_muted,icon_size=13,style=.Well,width=-1,height=MATERIAL_ROW,size=th.font_small,padding=7,active=open}).clicked && !open {
             anchor,_:=ui.widget_rect(ctx,id)
-            list_open(s,{key=key,table=c.index,storage=c.storage,held=c.held,offset=offset,kinds=kinds,with=with!=""},anchor)
-            if with!="" {prefabs_with(s,with,&s.inspector.list_with)}
+            list_open(s,{key=key,table=c.index,storage=c.storage,held=c.held,offset=offset,kinds=kinds},anchor)
         }
         if kinds[0]==asset.KIND_SOUND {asset_field_hear(c,ui.id(ctx,"asset_hear",offset+1),id_value)}
         asset_field_find(s,ui.id(ctx,"asset_find",offset+1),id_value)
@@ -2311,23 +2328,6 @@ asset_path_row :: proc(c:^Inspect,label:string,kinds:Asset_Kinds,offset,count:in
     }
     asset_field_find(s,ui.id(ctx,"asset_find",offset+1),value)
     ui.box_end(ctx,{})
-}
-
-// The prefabs of the registry that have a component named name, as read
-// once when a list opens: a body for a seat is a prefab with a Drivable.
-@(private)
-prefabs_with :: proc(s:^Session,name:string,into:^[dynamic]base.Asset_Id) {
-    clear(into)
-    if s.app.assets==nil {return}
-    reader:Prefab_Reader
-    prefab_reader_begin(s,&reader)
-    defer prefab_reader_end(&reader)
-    for &file in s.app.assets.registry.files {
-        if !asset.registry_prefab(&file) {continue}
-        if scene,error:=asset.resolver_take(&reader.resolver,file.id);error==.None && scene!=nil {
-            if _,found:=asset.scene_component(scene,name);found {append(into,file.id)}
-        }
-    }
 }
 
 // Whether a path of the registry is a file of the assets folder, not of a mount.
@@ -2455,7 +2455,6 @@ list_build :: proc(s:^Session,w:core.World_Ref) {
             for &file in a.registry.files {
                 if file.state!=.Asset || !asset_kind_takes(l.kinds,file.kind) || !asset.registry_listed(&file) || !base.contains_fold(file.path,filter) {continue}
                 if l.path>0 && (len(file.path)>=l.path || !asset_under_root(&a.registry,file.path)) {continue}
-                if l.with && !slice.contains(ins.list_with[:],file.id) {continue}
                 if content_part(&a.registry,&file) {
                     append(&parts,&file)
                     continue

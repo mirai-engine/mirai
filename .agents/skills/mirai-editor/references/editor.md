@@ -315,9 +315,9 @@ Public API for tools in [extensions](extensions.md#simulation-and-pose-confirmat
 action on the selection, run the scene like Simulate, without the players' input, with the view
 from that camera (one that follows, one that brings an action or one of a cinematic).
 
-- The focused view comes from `ecamera.Camera_Preview`, which the editor writes in the copy,
-  whichever camera its seat has. The viewport draws no grid, disks, gizmo or outlines and receives
-  no gestures.
+- The focused seat of the copy sees through that camera by a camera override whose owner is the
+  seat (`camera_preview_frame`), whichever camera its body has. The viewport draws no grid,
+  disks, gizmo or outlines and receives no gestures.
 - A bar at the bottom offers the document's cameras; choosing one shows it with the transition of
   its activation, or that of the one it leaves, and selects it.
 - Details edits the shown camera on the copy: it is seen immediately and is not an undo step. Keep

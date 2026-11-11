@@ -64,7 +64,7 @@ PENDING_EVENTS :: 1024 // messages of a type that wait for the next tick (a paus
 
 // An entity the network replicates. The game gives it with the entity (in its
 // prefab or its scene), and the network reads it. Its owner, the connection
-// that predicts it, is that of the seat that drives it (input.Drivable). Its
+// that predicts it, is that of the seat that drives it (input.Seat.body). Its
 // closest ancestor in the hierarchy with Replicate is its parent on the
 // network: it is seen by whoever sees that one, and made after it.
 @(component,description="The network replicates this entity: the server sends it to the clients that should see it.")

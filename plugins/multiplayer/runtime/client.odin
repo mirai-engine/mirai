@@ -1687,18 +1687,10 @@ spawns_settle :: proc(s:^Net_Session,w:core.World_Ref,time:^core.Time) {
 @(private)
 driven_look :: proc(w:core.World_Ref) -> (look:[2]f32,ok:bool) {
     seats:=core.world_table_of(w,input.Seat)
-    drivables:=core.world_table_of(w,input.Drivable)
     moves:=core.world_table_of(w,input.Move_Input)
-    if seats==nil || drivables==nil || moves==nil {return}
-    seat:=input.local_seat(core.read(seats),0)
-    if seat==core.NONE {return}
-    for row in 0..<core.count(drivables) {
-        if drivables.values[row].seat!=seat {continue}
-        move,has:=core.get(moves,core.entity_at(drivables,row))
-        if !has {return}
-        return {move.look_yaw,move.look_pitch},true
-    }
-    return
+    if seats==nil || moves==nil {return}
+    move:=core.get(moves,input.body_of(core.read(seats),input.local_seat(core.read(seats),0))) or_return
+    return {move.look_yaw,move.look_pitch},true
 }
 
 // The actions of the first local seat, the one that drives what the server

@@ -12,7 +12,6 @@ import "mirai:std/serial"
 Player_Inspect_World :: struct {
     using world:core.Test_World,
     using scene_tables:Test_Scene,
-    bodies:core.Table(input.Drivable),
     seats:core.Table(input.Seat),
     players:input.Seats,
     shown:render.View_Camera,
@@ -35,14 +34,13 @@ play_player_reads_the_live_seat_without_changing_the_document :: proc(t:^testing
     core.add(&running.names,body,core.name_make("Driven body"))
     core.add(&running.transforms,body,core.Transform{position={4,5,6},rotation=1,scale={1,1,1}})
     core.add(&running.transforms,camera,core.Transform{position={8,9,10},rotation=1,scale={1,1,1}})
-    core.add(&running.bodies,body,input.Drivable{seat=seat,camera=camera})
-    core.add(&running.seats,seat,input.Seat{})
+    core.add(&running.seats,seat,input.Seat{body=body})
     core.settle(&info,&running,nil)
     running.players.local_count,running.shown.entity=1,camera
     running.time.tick,running.time.seconds=9,1.5
     session:=Session{mode=.Play,info=&info,edit_world=&edited}
     session.runs[0]={world=&running}
-    version:=running.bodies.version
+    version:=running.seats.version
     value:=play_player_snapshot(core.world_ref(&running,&info))
     testing.expect(t,value.available && value.tick==9 && value.seconds==1.5)
     testing.expect_value(t,value.seat.id,"0x0000000000000007")
@@ -50,7 +48,7 @@ play_player_reads_the_live_seat_without_changing_the_document :: proc(t:^testing
     testing.expect(t,value.body.entity!="" && value.body.id=="")
     testing.expect_value(t,value.body.position,([3]f32{4,5,6}))
     testing.expect_value(t,value.camera.position,([3]f32{8,9,10}))
-    testing.expect_value(t,running.bodies.version,version)
+    testing.expect_value(t,running.seats.version,version)
     testing.expect_value(t,edited.entities.alive,0)
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
     method:=api.Method{params_id=Api_Play_Player_Params}
