@@ -62,7 +62,7 @@ gltf_morphs_keep_sparse_named_targets_node_weights_and_every_weight_interpolatio
     testing.expect_value(t,anim.track_evaluate(model.animations[0].tracks[0].keys,.Float,.5).x,f32(1))
     testing.expect_value(t,anim.track_evaluate(model.animations[1].tracks[0].keys,.Float,.5).x,f32(0))
     testing.expect_value(t,anim.track_evaluate(model.animations[2].tracks[0].keys,.Float,.5).x,f32(1.25))
-    report,written:=importer.import_write(&model,fmt.tprintf("%s/assets",folder));defer importer.report_destroy(&report)
+    report,written,_:=write_model(t,&model,"write-morphs");defer importer.report_destroy(&report)
     if !testing.expectf(t,written.code==.None,"%s",written.message) {return}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     for item in report.assets {

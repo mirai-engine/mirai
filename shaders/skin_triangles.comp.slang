@@ -1,4 +1,5 @@
 #include "native.slang"
+//! software rays
 #include "common.slang"
 #include "skin_jobs.slang"
 #define MIRAI_GROUP_X 64

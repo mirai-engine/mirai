@@ -12,11 +12,13 @@ import "mirai:std/geom"
 
 // Level 0 of a mesh the import of a model of the demo builds, in the space
 // and with the submeshes of its asset. relative: the source under
-// demo/source/models, and the mesh of it.
+// demo/assets, and the mesh of it.
 @(private="file")
 demo_level0 :: proc(t:^testing.T,folder,relative:string,file:^asset.Asset,types:^asset.Types) -> (vertices:[]asset.Vertex,indices:[]u32,submeshes:[]importer.Submesh,ok:bool) {
     source,name:=filepath.dir(relative),filepath.base(relative)
-    report,import_error:=import_source(fmt.tprintf("%smodels/%s",DEMO,source),fmt.tprintf("%s/%s",folder,filepath.base(source)),{textures=.Uncompressed,max_texture_size=4})
+    copied:=copy_in(folder,DEMO,source)
+    if filepath.ext(source)==".obj" {copy_in(folder,DEMO,"gallery/vase.mtl","gallery/vase_color.png")}
+    report,import_error:=import_source(copied,{textures=.Uncompressed,max_texture_size=4})
     if !testing.expectf(t,import_error.code==.None,"%s: %s",source,import_error.message) {return}
     defer importer.report_destroy(&report)
     written,found:=written_of(&report,asset.KIND_MESH,name)
@@ -42,9 +44,9 @@ the_cluster_dag_of_demo_meshes_cuts_without_cracks_with_errors_that_grow :: proc
     types:asset.Types
     asset.types_init(&types)
     defer asset.types_destroy(&types)
-    folder:=base.test_folder(t,"cluster-dag")
+    folder,_:=test_project(t,"cluster-dag")
     if folder=="" {return}
-    for relative in ([]string{"vase.obj/Vase","plant.gltf/Plant","mirai/mirai.glb/output_unwrapped"}) {
+    for relative in ([]string{"gallery/vase.obj/Vase","gallery/plant.gltf/Plant","characters/mirai/mirai.glb/output_unwrapped"}) {
         file:asset.Asset
         vertices,indices,submeshes,ok:=demo_level0(t,folder,relative,&file,&types)
         if !ok {return}
