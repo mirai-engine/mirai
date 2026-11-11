@@ -507,6 +507,10 @@ entity_sync :: proc(s:^Sync,e:core.Entity) {
     link_touch(state,l)
     was:=l^
     defer if l^!=was {slot_stamp(state,state.link_stamps[:],at)}
+    if world:=world_pose(s,e);!sim.finite(world.position,world.scale) || !sim.finite(world.rotation) {
+        core.report(s.problems,e,"physics.transform","its world Transform is not finite (position %v, rotation %v, scale %v), so the simulation keeps its body as it was: write finite values to its Transform and to those of its parents",world.position,world.rotation,world.scale)
+        return
+    }
     rigid,has_rigid:=core.get(s.rigids,e)
     collider,has_collider:=core.get(s.colliders,e)
     config,has_character:=core.get(s.characters,e)
@@ -534,7 +538,7 @@ body_sync :: proc(s:^Sync,e:core.Entity,l:^Link,rigid:Rigid_Body,has_rigid,rigid
     w:=&state.world
     world:=world_pose(s,e)
     pose:=sim.Transform{world.position,world.rotation}
-    scale:=linalg.abs(world.scale)
+    scale:=world.scale
     type:=has_rigid?rigid.type:Body_Type.Static
     created,mass_changed:=false,false
     if l.kind!=.Body || !sim.body_valid(w,l.body) {
@@ -597,6 +601,7 @@ body_sync :: proc(s:^Sync,e:core.Entity,l:^Link,rigid:Rigid_Body,has_rigid,rigid
                 state.stats.shapes_destroyed+=1+pieces_shapes_destroy(s,l)
             }
             geometry_release(s,l)
+            if _,sheared:=compound_relative(s,e,core.NONE);sheared {shape_problem(s,e,collider,.Sheared)}
             if failure:=collider_shapes_make(s,l,e,l.body,collider,scale,filter);failure!=.None {shape_problem(s,e,collider,failure)}
             l.made=key
             mass_changed=true
@@ -637,9 +642,12 @@ compound_owner :: proc(s:^Sync,e:core.Entity) -> core.Entity {
 
 // Where e is in the frame of the body of owner, which has no scale: its
 // Transform and those between the two, under the world scale of owner. It
-// does not depend on where the body is, so it only changes with them.
+// does not depend on where the body is, so it only changes with them. With
+// owner NONE, where e is in the world. sheared: a Transform of the chain turns
+// under a scale that is not the same along the turned axes, a shear that a
+// shape cannot take.
 @(private)
-compound_relative :: proc(s:^Sync,e,owner:core.Entity) -> mm.Transform {
+compound_relative :: proc(s:^Sync,e,owner:core.Entity) -> (relative:mm.Transform,sheared:bool) {
     chain:[64]core.Entity
     depth:=0
     for at:=e;at!=owner && at!=core.NONE && depth<len(chain); {
@@ -648,12 +656,28 @@ compound_relative :: proc(s:^Sync,e,owner:core.Entity) -> mm.Transform {
         parent,ok:=core.get(s.parents,at)
         at=ok?parent.entity:core.NONE
     }
-    relative:=mm.TRANSFORM_IDENTITY
+    relative=mm.TRANSFORM_IDENTITY
     if above,ok:=core.world_of(s.locals,s.parents,owner);ok {relative.scale=above.scale}
     #reverse for at in chain[:depth] {
-        if local,ok:=core.get(s.locals,at);ok {relative=mm.transform_compose(relative,core.to_math(local))}
+        local,ok:=core.get(s.locals,at)
+        if !ok {continue}
+        sheared||=!scale_turns(local.rotation,relative.scale)
+        relative=mm.transform_compose(relative,core.to_math(local))
     }
-    return relative
+    return
+}
+
+// Whether a scale under a rotation is still a scale along the turned axes: R^T S R is diagonal (Jolt's
+// ScaleHelpers::CanScaleBeRotated).
+@(private)
+scale_turns :: proc "contextless" (rotation:mm.Quat,scale:[3]f32) -> bool {
+    r:=linalg.matrix3_from_quaternion(rotation)
+    for i in 0..<3 {
+        for j in i+1..<3 {
+            if !(abs(r[0,i]*scale.x*r[0,j]+r[1,i]*scale.y*r[1,j]+r[2,i]*scale.z*r[2,j])<1e-6) {return false}
+        }
+    }
+    return true
 }
 
 @(private)
@@ -668,8 +692,8 @@ compound_sync :: proc(s:^Sync,e:core.Entity,l:^Link,collider:Collider,owner:core
         s.unmade=true
         return
     }
-    relative:=compound_relative(s,e,owner)
-    scale:=linalg.abs(relative.scale)
+    relative,sheared:=compound_relative(s,e,owner)
+    scale:=relative.scale
     shown:=shown_of(s,e,collider)
     filter:=collision_of(s,e,collider,collider_changed)
     key:=shape_key(collider,scale,relative,shown)
@@ -688,6 +712,7 @@ compound_sync :: proc(s:^Sync,e:core.Entity,l:^Link,collider:Collider,owner:core
     }
     state.stats.shapes_destroyed+=pieces_shapes_destroy(s,l)
     geometry_release(s,l)
+    if sheared {shape_problem(s,e,collider,.Sheared)}
     if failure:=collider_shapes_make(s,l,e,holder.body,collider,scale,filter,&relative);failure!=.None {shape_problem(s,e,collider,failure)}
     l.kind,l.owner,l.body,l.made=.Compound,owner,holder.body,key
 }
@@ -903,15 +928,18 @@ collision_of :: proc(s:^Sync,e:core.Entity,collider:Collider,changed:bool) -> si
     return filter
 }
 
+// A negative axis of the scale mirrors the collider: its center goes to the other side, and a symmetric
+// primitive keeps its size.
 @(private)
 collider_desc :: proc "contextless" (collider:Collider,scale:[3]f32,filter:sim.Filter,e:core.Entity) -> sim.Shape_Desc {
     desc:=sim.SHAPE_DESC_DEFAULT
+    size:=linalg.abs(scale)
     switch collider.kind {
     case .Hull,.Mesh,.Heightfield,.External:
-    case .Box:     desc.geometry=sim.Box{collider.size*scale}
-    case .Sphere:  desc.geometry=sim.Sphere{collider.size.x*max(scale.x,scale.y,scale.z)}
-    case .Capsule: desc.geometry=sim.Capsule{collider.size.x*max(scale.x,scale.z),collider.size.y*scale.y}
-    case .Cylinder: desc.geometry=sim.Cylinder{collider.size.x*max(scale.x,scale.z),collider.size.y*scale.y}
+    case .Box:     desc.geometry=sim.Box{collider.size*size}
+    case .Sphere:  desc.geometry=sim.Sphere{collider.size.x*max(size.x,size.y,size.z)}
+    case .Capsule: desc.geometry=sim.Capsule{collider.size.x*max(size.x,size.z),collider.size.y*size.y}
+    case .Cylinder: desc.geometry=sim.Cylinder{collider.size.x*max(size.x,size.z),collider.size.y*size.y}
     }
     desc.convex_radius=collider_round(collider,scale)
     desc.transform.p=collider.center*scale
@@ -1060,12 +1088,8 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
     for request in requests {
         if area_apply(s,request) {continue}
         e:=request.entity
-        valid:=true
-        for value in request.linear {valid=valid && value>=-max(f32) && value<=max(f32)}
-        for value in request.angular {valid=valid && value>=-max(f32) && value<=max(f32)}
-        if request.at_point {for value in request.point {valid=valid && value>=-max(f32) && value<=max(f32)}}
-        if !valid {
-            request_problem(s,e,request.kind,"physics.request_value","its linear, angular or point values are not finite","send finite values")
+        if !sim.finite(request.linear,request.angular,request.point,request.position) || !sim.finite(request.rotation) {
+            request_problem(s,e,request.kind,"physics.request_value","its position, rotation, linear, angular or point values are not finite","send finite values")
             continue
         }
         l:=link_find(state,e)
@@ -1087,9 +1111,7 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
                 pose_write(s,l,e,{request.position,turned})
                 state.stats.teleports+=1
             case .Velocity:         sim.character_launch(w,l.character,request.linear,true)
-            case .Impulse:
-                config,_:=core.get(s.characters,e)
-                sim.character_launch(w,l.character,request.linear/max(config.mass,1e-3))
+            case .Impulse:          sim.character_launch(w,l.character,request.linear/sim.character_desc(w,l.character).mass)
             case .Force:            sim.body_apply_force(w,sim.character_body(w,l.character),request.linear)
             case .Area_Force,.Area_Impulse,.Area_Strain:
             case .Kinematic,.Manipulate,.Release_Manipulation: request_problem(s,e,request.kind,"physics.request_character","a Character moves by its Character_Move","teleport it, give it a velocity or an impulse, or write its Character_Move")
@@ -1127,13 +1149,6 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
                 pose_write(s,l,e,{request.position,rotation})
             }
         case .Manipulate:
-            valid:=true
-            for value in request.position {valid=valid && value<=max(f32) && value>=-max(f32)}
-            for value in ([4]f32{rotation.x,rotation.y,rotation.z,rotation.w}) {valid=valid && value<=max(f32) && value>=-max(f32)}
-            if !valid {
-                request_problem(s,e,request.kind,"physics.request_value","its position or rotation is not finite","send finite values")
-                continue
-            }
             qscale:=max(abs(rotation.x),abs(rotation.y),abs(rotation.z),abs(rotation.w))
             rotation=linalg.normalize(quaternion(x=rotation.x/qscale,y=rotation.y/qscale,z=rotation.z/qscale,w=rotation.w/qscale))
             h:=held_take(state,e)
