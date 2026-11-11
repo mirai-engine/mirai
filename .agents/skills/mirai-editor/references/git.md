@@ -10,7 +10,8 @@ nothing of the session), what the operations need of the session (`editor/git.od
 ## Operations
 
 - An operation is a list of git commands that run one at a time as child processes
-  (`platform.process_start`); `git_poll` follows them between frames and in a headless editor's
+  ([`subprocess.start`](../../mirai-std/references/subprocess.md) with pipes); `git_poll` follows
+  them between frames and in a headless editor's
   loop, without blocking. On finishing, the state is read again (`status --porcelain=v2`, `log`,
   the remote).
 - Without anyone asking (`git_schedule`) these run: the first check on opening the project; a

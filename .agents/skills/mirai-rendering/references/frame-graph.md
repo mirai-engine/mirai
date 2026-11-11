@@ -128,6 +128,9 @@ or interleave its own passes.
       moves with the jitter next to a high-contrast edge (a checkerboard, or its reflection), and
       clipped to it the average of the previous frames jumped on every frame. A light change on a
       smooth surface remains outside the box.
+    - Samples are weighed and clipped as light exposed by the view's exposure, compressed: a
+      highlight weighs by how bright it shows, whatever the light scale. The history stays in
+      render units.
     - Where the `Blend` stage covered the pixel (`Targets.reactive`) the history weighs less.
       Where the pixel's shadow block was marked because what casts its shadow changed
       ([shadows](lights.md#shadows)), the pixel keeps what a moving one keeps: a shadow that moves
