@@ -400,7 +400,7 @@ a_rollback_gives_the_readers_of_each_table_the_rows_it_brought_back :: proc(t:^t
         for &frame,k in frames {world_destroy(&info,.World,&frame);delete(marks[k])}
     }
     ref:=world_ref(&w,&info)
-    random:=t.seed|1
+    random:=u64(27) // its rollbacks bring back gone rows of indices born after the copy
     next :: proc(random:^u64,n:int) -> int {
         random^~=random^<<13;random^~=random^>>7;random^~=random^<<17
         return int(random^%u64(n))

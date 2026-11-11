@@ -100,6 +100,9 @@ hierarchy_settle :: proc(h:^Hierarchy,parents:^Table(Parent,$A),es:^Entities) ->
         for e in es.doomed {moved=hierarchy_orphan(h,e) || moved}
         for e in c.gone {
             cut_drop(h,e)
+            // Gone in a World rolled back from: an index the tree has not, or another's.
+            i:=entity_index(e)
+            if row:=rows_at(raw(parents),i);i>=len(h.parent) || row!=0 && parents.entities[row-1]!=e {continue}
             if hierarchy_unlink(h,e) {
                 log_push(&h.moved,e,HIERARCHY_MOVED)
                 moved=true
