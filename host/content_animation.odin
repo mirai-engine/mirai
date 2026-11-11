@@ -146,7 +146,7 @@ content_animation_start :: proc(app:^App,entry:^Content_Animation) -> bool {
     load.read_ns=time.duration_nanoseconds(time.tick_since(started))
     entry.load=load
     if load.compress && jobs.worker_count(&app.jobs)>1 {
-        jobs.run(&app.jobs,jobs.OWNER,content_animation_build,load,&load.counter)
+        jobs.run(&app.jobs,jobs.OWNER,.Background,content_animation_build,load,&load.counter)
         return true
     }
     content_animation_build(load,jobs.OWNER)

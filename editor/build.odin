@@ -471,13 +471,12 @@ build_results_free :: proc(b:^Build_State) {
 build_tools :: proc(s:^Session) {
     b:=s.build
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     if b.phase==.Running {
-        ui.label(ctx,fmt.tprintf("%.0f s",time.duration_seconds(time.tick_since(b.started))),th.font_small,th.text_muted)
+        ui.label(ctx,fmt.tprintf("%.0f s",time.duration_seconds(time.tick_since(b.started))),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
         return
     }
     state:=command_state(s,"build")
-    if ui.button(ctx,ui.id(ctx,"build_run"),{label="Build",style=.Field,height=24,width=72,center=true,size=th.font_small,disabled=state.disabled}).clicked {command_run(s,"build")}
+    if ui.button(ctx,ui.id(ctx,"build_run"),{label="Build",variant="field",height=24,width=72,center=true,size=ui.metric(ctx,"font_small"),disabled=state.disabled}).clicked {command_run(s,"build")}
 }
 
 FAILURE_TEXTS :: [build.Failure]string{
@@ -497,10 +496,9 @@ FAILURE_TEXTS :: [build.Failure]string{
 build_panel_build :: proc(s:^Session,height:f32) {
     b:=s.build
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     texts:=FAILURE_TEXTS
     status:string
-    color:=th.text_muted
+    color:=ui.tone(ctx,"text_muted")
     switch b.phase {
     case .Idle:       status="No build yet"
     case .Running:    status="Building..."
@@ -508,9 +506,9 @@ build_panel_build :: proc(s:^Session,height:f32) {
     case .Up_To_Date: status="Up to date"
     case .Failed:
         status=fmt.tprintf("Failed after %.1f s: %s",b.seconds,texts[b.failure])
-        color=th.danger
+        color=ui.tone(ctx,"danger")
     }
-    ui.label(ctx,status,th.font_small,color,0)
+    ui.label(ctx,status,ui.metric(ctx,"font_small"),color,0)
     room:=max(height-26,CONSOLE_ROW)
     colors:=LEVEL_COLORS
     if len(b.diagnostics)>0 {
@@ -522,8 +520,8 @@ build_panel_build :: proc(s:^Session,height:f32) {
                 level:=d.severity==.Error?Console_Level.Error:.Warning
                 if ui.box(ctx,{width=ui.fixed(6),height=ui.fixed(6),fill=colors[level],radius=3}) {}
                 where_:=fmt.tprintf("%s(%d:%d)",filepath.base(d.file),d.line,d.column)
-                ui.label(ctx,where_,th.font_small,th.text_muted)
-                ui.label(ctx,d.message,th.font_small,colors[level],0)
+                ui.label(ctx,where_,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+                ui.label(ctx,d.message,ui.metric(ctx,"font_small"),colors[level],0)
             }
         }
         ui.list_end(ctx,list,len(b.diagnostics),last,CONSOLE_ROW)
@@ -533,7 +531,7 @@ build_panel_build :: proc(s:^Session,height:f32) {
     if text=="" {text=b.shaders_text}
     if text!="" {
         if ui.scroll_area(ctx,ui.id(ctx,"build_text"),&b.text_scroll,{height=ui.fixed(room)}) {
-            ui.text(ctx,text,ui.prose(ctx,th.font_small,th.text_muted))
+            ui.text(ctx,text,ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted")))
         }
     }
 }

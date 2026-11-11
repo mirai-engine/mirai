@@ -250,7 +250,7 @@ a_seat_camera_is_settled_with_its_driving_before_its_move :: proc(t:^testing.T) 
     output:=world_generate(&p)
     if !testing.expectf(t,len(output.errors)==0,"%v",output.errors) {return}
     calls:=calls_of(output.game_world,"game_fixed")
-    order:=[]string{"input_drive","camera_select","locomotion_seat"}
+    order:=[]string{"input_drive","camera_select","camera_drive"}
     at:=make([]int,len(order))
     for name,i in order {
         at[i]=-1

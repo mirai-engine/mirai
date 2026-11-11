@@ -9,7 +9,6 @@ import mm "mirai:std/math"
 Sources_World :: struct {
     using world:core.Test_World,
     seats:core.Table(input.Seat),
-    drivables:core.Table(input.Drivable),
     marks:core.Table(Streaming_Source),
     worlds:core.Table(core.World_Transform),
     motions:core.Table(core.Motion),
@@ -32,18 +31,18 @@ sources_that_do_not_fit_are_a_problem_and_only_a_move_is_looked_at_again :: proc
     }
     core.test_world_settle(&w)
     sources:Streaming_Sources
-    run :: proc(sources:^Streaming_Sources,seats:^core.Table(input.Seat),drivables:^core.Table(input.Drivable),marks:^core.Table(Streaming_Source),worlds:^core.Table(core.World_Transform),motions:^core.Table(core.Motion),problems:^core.Problems) {
-        scene_sources(sources,{},{},core.read(seats),core.read(drivables),core.read(marks),core.read(worlds),core.read(motions),problems)
+    run :: proc(sources:^Streaming_Sources,seats:^core.Table(input.Seat),marks:^core.Table(Streaming_Source),worlds:^core.Table(core.World_Transform),motions:^core.Table(core.Motion),problems:^core.Problems) {
+        scene_sources(sources,{},{},core.read(seats),core.read(marks),core.read(worlds),core.read(motions),problems)
     }
-    run(&sources,&w.seats,&w.drivables,&w.marks,&w.worlds,&w.motions,problems)
+    run(&sources,&w.seats,&w.marks,&w.worlds,&w.motions,problems)
     testing.expect_value(t,sources.count,SOURCES_MAX)
     testing.expect(t,core.problem_find(problems,core.NONE,"scene.sources")!=nil,"the sources past SOURCES_MAX are a problem")
     revision:=sources.revision
     core.edit(&w.worlds,first).position.x+=SOURCE_MOVE/2
-    run(&sources,&w.seats,&w.drivables,&w.marks,&w.worlds,&w.motions,problems)
+    run(&sources,&w.seats,&w.marks,&w.worlds,&w.motions,problems)
     testing.expect_value(t,sources.revision,revision)
     core.edit(&w.worlds,first).position.x+=SOURCE_MOVE
-    run(&sources,&w.seats,&w.drivables,&w.marks,&w.worlds,&w.motions,problems)
+    run(&sources,&w.seats,&w.marks,&w.worlds,&w.motions,problems)
     testing.expect_value(t,sources.revision,revision+1)
 }
 
@@ -80,16 +79,16 @@ the_view_streams_ahead_of_where_it_moves_unless_it_jumped :: proc(t:^testing.T) 
     defer core.test_world_destroy(&w)
     problems:=new(core.Problems);defer free(problems)
     sources:Streaming_Sources
-    run :: proc(sources:^Streaming_Sources,view:core.View,dt:f32,seats:^core.Table(input.Seat),drivables:^core.Table(input.Drivable),marks:^core.Table(Streaming_Source),worlds:^core.Table(core.World_Transform),motions:^core.Table(core.Motion),problems:^core.Problems) {
-        scene_sources(sources,view,{dt=dt},core.read(seats),core.read(drivables),core.read(marks),core.read(worlds),core.read(motions),problems)
+    run :: proc(sources:^Streaming_Sources,view:core.View,dt:f32,seats:^core.Table(input.Seat),marks:^core.Table(Streaming_Source),worlds:^core.Table(core.World_Transform),motions:^core.Table(core.Motion),problems:^core.Problems) {
+        scene_sources(sources,view,{dt=dt},core.read(seats),core.read(marks),core.read(worlds),core.read(motions),problems)
     }
     view:=core.View{position={0,0,0},size={640,480}}
-    run(&sources,view,0.1,&w.seats,&w.drivables,&w.marks,&w.worlds,&w.motions,problems)
+    run(&sources,view,0.1,&w.seats,&w.marks,&w.worlds,&w.motions,problems)
     testing.expect(t,sources.count==1 && sources.items[0].ahead==sources.items[0].position,"a view seen once has not moved")
     view.position={1,0,0}
-    run(&sources,view,0.1,&w.seats,&w.drivables,&w.marks,&w.worlds,&w.motions,problems)
+    run(&sources,view,0.1,&w.seats,&w.marks,&w.worlds,&w.motions,problems)
     testing.expectf(t,abs(sources.items[0].ahead.x-(1+10*SOURCE_PREFETCH))<1e-4,"at 10 m/s it streams ahead: %v",sources.items[0].ahead)
     view.position,view.cut={500,0,0},true
-    run(&sources,view,0.1,&w.seats,&w.drivables,&w.marks,&w.worlds,&w.motions,problems)
+    run(&sources,view,0.1,&w.seats,&w.marks,&w.worlds,&w.motions,problems)
     testing.expect(t,sources.items[0].ahead==sources.items[0].position,"a jump is not a motion")
 }

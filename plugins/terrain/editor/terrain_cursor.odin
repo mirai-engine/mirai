@@ -146,6 +146,6 @@ pending_draw :: proc(s:^editor.Session,tool:^Terrain_Tool) {
     }
     ends:=[2][3]f32{p.a,p.b}
     for i in 0..<handles {
-        if at,seen:=pending_screen(s,stroke,ends[i]);seen {ui.draw_circle(ctx,at,6,ctx.theme.accent);ui.draw_circle(ctx,at,3.5,{255,255,255,255})}
+        if at,seen:=pending_screen(s,stroke,ends[i]);seen {ui.draw_circle(ctx,at,6,ui.tone(ctx,"accent"));ui.draw_circle(ctx,at,3.5,{255,255,255,255})}
     }
 }

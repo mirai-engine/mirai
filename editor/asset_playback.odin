@@ -69,14 +69,14 @@ asset_playback_strip :: proc(s:^Session,p:^Asset_Playback,duration:f32,lanes:[]T
 
 // The sun of a preview, in the room the toolbar leaves the document.
 asset_preview_sun :: proc(s:^Session,sun:^bool) {
-    g:=s.gui;ctx:=g.ctx;th:=&ctx.theme
+    g:=s.gui;ctx:=g.ctx
     rect,found:=asset_toolbar(g)
     if !found || rect.w<=0 {return}
     if ui.box(ctx,{width=ui.fixed(rect.w),height=ui.fixed(rect.h),padding={12,0,0,0},gap=8,align_y=.Center,float={to=.Surface,offset={rect.x,rect.y},layer=ui.LAYER_BAR}}) {
         ui.id_push(ctx,shell_id(g,"asset_playback"))
         defer ui.id_pop(ctx)
-        if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(18),fill=th.border}) {}
-        if ui.button(ctx,ui.id(ctx,"sun"),{icon=.Sun,tip="Preview sunlight",style=.Tab,active=sun^,width=26,height=ctx.theme.control}).clicked {sun^=!sun^}
+        if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(18),fill=ui.tone(ctx,"border")}) {}
+        if ui.button(ctx,ui.id(ctx,"sun"),{icon=.Sun,tip="Preview sunlight",variant="tab",active=sun^,width=26,height=ui.metric(ctx,"control")}).clicked {sun^=!sun^}
     }
 }
 
@@ -90,5 +90,5 @@ asset_column_end :: proc(ctx:^ui.Context) {ui.box_end(ctx,{})}
 
 // The line between two columns.
 asset_column_divider :: proc(ctx:^ui.Context) {
-    if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=ctx.theme.border}) {}
+    if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=ui.tone(ctx,"border")}) {}
 }

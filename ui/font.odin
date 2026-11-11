@@ -54,7 +54,7 @@ FONT_FACES_MAX :: 96  // faces of a font on demand, with those asked for; other 
 FONT_DENSITY_MIN :: f32(0.5)
 FONT_DENSITY_MAX :: f32(4)
 
-// The faces of the editor, in CSS pixels: the sizes of THEME_EDITOR and those
+// The faces of the editor, in CSS pixels: the sizes of the editor's theme and those
 // a step around them.
 Face_Desc :: struct {font:u8,size:i32}
 FONT_FACES_EDITOR :: [?]Face_Desc{

@@ -67,7 +67,7 @@ a_tree_loaded_from_records_is_laid_out_and_drawn_like_the_one_built_in_code :: p
     testing.expect_value(t,loaded.tree.images[0].quad.data,u32(9))
 
     a,b:Context
-    testing.expect(t,context_init(&a,TEST_SMALL) && context_init(&b,TEST_SMALL))
+    testing.expect(t,test_context_init(&a,TEST_SMALL) && test_context_init(&b,TEST_SMALL))
     defer {context_destroy(&a);context_destroy(&b)}
     input:=test_input()
     // The menu appears and fades in: the animation of both runs alike.
@@ -208,7 +208,7 @@ the_layers_of_a_tree_count_from_the_layer_it_is_built_in :: proc(t:^testing.T) {
         return -1
     }
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     frame:=test_frame(&ctx,&input,build,&scene)
@@ -258,7 +258,7 @@ a_tree_that_nests_more_than_a_frame_holds_is_drawn_and_counted :: proc(t:^testin
         if s.floating {box_end(ctx,{float={to=.Surface}})}
     }
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     for c in cases {
@@ -328,7 +328,7 @@ a_leaf_floats_from_its_parent_and_its_events_say_where :: proc(t:^testing.T) {
         for e in s.events[:result.count] {if e.kind==.Clicked {s.count+=1;s.at=e.rect}}
     }
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     test_frame(&ctx,&input,build,&scene)

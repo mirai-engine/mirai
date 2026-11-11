@@ -14,7 +14,7 @@ text_caret_blinks_at_text_height_and_restarts_on_input_without_allocating :: pro
     counter:Test_Counter
     desc:=TEST_SMALL
     desc.allocator=test_counter(&counter,context.allocator)
-    testing.expect(t,context_init(&ctx,desc));defer context_destroy(&ctx)
+    testing.expect(t,test_context_init(&ctx,desc));defer context_destroy(&ctx)
     s:Test_Caret
     input:=test_input()
     test_frame(&ctx,&input,test_caret_build,&s)

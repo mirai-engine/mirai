@@ -10,6 +10,7 @@ import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 AI_AGENT_ICON_COUNT :: 6 // glyphs of agents that come by command: those of Claude and Codex follow
@@ -142,9 +143,9 @@ ai_agent_avatar_draw :: proc(ctx:^ui.Context,rect:ui.Rect,index:u8,color:ui.Colo
     }
     if attention {
         center:=[2]f32{rect.x+rect.w-2*unit,rect.y+2*unit}
-        ui.draw_circle(ctx,center,7*unit,ctx.theme.popup)
+        ui.draw_circle(ctx,center,7*unit,ui.tone(ctx,"popup"))
         ui.draw_circle(ctx,center,5.5*unit,color)
-        ink:=ctx.theme.bar_top
+        ink:=ui.tone(ctx,"bar_top")
         if band>1 {
             // A question: the hook of a '?' over its dot.
             hook:=[5][2]f32{center+{-1.6*unit,-1.4*unit},center+{0,-2.6*unit},center+{1.6*unit,-1.4*unit},center+{0,-.2*unit},center+{0,.6*unit}}
@@ -169,7 +170,7 @@ ai_chat_settings_button :: proc(s:^Session) {
     g:=s.gui;ctx:=g.ctx
     popup:=shell_id(g,"ai_settings_popup")
     id:=shell_id(g,"library_settings")
-    if ui.button(ctx,id,{icon=ui.icon_user(u8(User_Icon.Gear)),icon_color=ctx.theme.text_muted,icon_size=15,style=.Ghost,width=24,height=24,active=ui.popup_is_open(ctx,popup)}).clicked {
+    if ui.button(ctx,id,{icon=ui.icon_user(u8(User_Icon.Gear)),icon_color=ui.tone(ctx,"text_muted"),icon_size=15,variant="ghost",width=24,height=24,active=ui.popup_is_open(ctx,popup)}).clicked {
         anchor,_:=ui.widget_rect(ctx,id)
         ai_memory_ui_refresh(s)
         ui.popup_open(ctx,popup,anchor)
@@ -211,7 +212,7 @@ ai_chat_agents_height :: proc(s:^Session,width,height:f32) -> f32 {
 // the dots of those that work and how many changes wait.
 @(private)
 ai_chat_status_build :: proc(s:^Session,working,changes:int) {
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     id:=ui.id(ctx,"agent_status")
     it:=ui.interact(ctx,id)
     if it.clicked {m.agents_open=!m.agents_open}
@@ -221,7 +222,7 @@ ai_chat_status_build :: proc(s:^Session,working,changes:int) {
         part:=changes==1?"1 change to review":fmt.tprintf("%d changes to review",changes)
         text=text!=""?fmt.tprintf("%s · %s",text,part):part
     }
-    if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(AI_STATUS_HEIGHT),gap=8,padding={6,0,6,0},align_y=.Center,fill=it.hot?ui.color_hover(th):{},radius=th.radius_control}) {
+    if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(AI_STATUS_HEIGHT),gap=8,padding={6,0,6,0},align_y=.Center,fill=it.hot?ui.color_hover(ctx):{},radius=ui.metric(ctx,"radius_control")}) {
         if working>0 {
             dots:=min(working,AI_STATUS_DOTS)
             if ui.box(ctx,{width=ui.fixed(f32(dots-1)*12+15),height=ui.fixed(15)}) {
@@ -229,13 +230,13 @@ ai_chat_status_build :: proc(s:^Session,working,changes:int) {
                 for &task in m.tasks[:m.task_count] {
                     if drawn==dots {break}
                     if !ai_session_row_shown(s,&task) || ai_task_finished(&task) {continue}
-                    if ui.box(ctx,{width=ui.fixed(15),height=ui.fixed(15),align_x=.Center,align_y=.Center,fill=th.panel,radius=7.5,float={to=.Parent,offset={f32(drawn)*12,0}}}) {pulse_dot(ctx,ai_agent_color(&task),true,11)}
+                    if ui.box(ctx,{width=ui.fixed(15),height=ui.fixed(15),align_x=.Center,align_y=.Center,fill=ui.tone(ctx,"panel"),radius=7.5,float={to=.Parent,offset={f32(drawn)*12,0}}}) {pulse_dot(ctx,ai_agent_color(&task),true,11)}
                     drawn+=1
                 }
             }
         }
-        ui.label(ctx,text,th.font_small,th.text_muted,0)
-        ui.icon(ctx,m.agents_open?.Chevron_Up:.Chevron_Down,th.text_muted,11)
+        ui.label(ctx,text,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
+        ui.icon(ctx,m.agents_open?.Chevron_Up:.Chevron_Down,ui.tone(ctx,"text_muted"),11)
     }
 }
 
@@ -255,10 +256,9 @@ ai_session_badge :: proc(m:^Ai,task:^Ai_Task,buffer:[]u8) -> string {
 
 @(private)
 ai_session_badge_build :: proc(ctx:^ui.Context,text:string,color:ui.Color) {
-    th:=&ctx.theme
-    width:=max(ui.text_width(&ctx.font,text,th.font_caption,int(ui.FONT_SEMIBOLD))+8,16)
+    width:=max(ui.text_width(&ctx.font,text,ui.metric(ctx,"font_caption"),int(ui.FONT_SEMIBOLD))+8,16)
     if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(16),align_x=.Center,align_y=.Center,fill=color,radius=8}) {
-        ui.label(ctx,text,th.font_caption,th.well,font=ui.FONT_SEMIBOLD)
+        ui.label(ctx,text,ui.metric(ctx,"font_caption"),ui.tone(ctx,"well"),font=ui.FONT_SEMIBOLD)
     }
 }
 
@@ -267,7 +267,7 @@ ai_session_badge_build :: proc(ctx:^ui.Context,text:string,color:ui.Color) {
 // the dot while it works. A click inspects it.
 @(private)
 ai_chat_agents_build :: proc(s:^Session,width,panel_height:f32) {
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     working,changes,_:=ai_units_count(s)
     if working==0 && changes==0 {m.agents_open=false;return}
     ai_chat_status_build(s,working,changes)
@@ -289,22 +289,22 @@ ai_chat_agents_build :: proc(s:^Session,width,panel_height:f32) {
             // The title takes the row but its color, its glyph and what it waits for.
             finishable:=ai_task_finished(&task) && !task.review_finished
             room:=width-2-7-18-7-8-(24 if badge!="" || working else 0)-(20 if run_find(s,task.id)!=nil else 0)-(29 if current else 0)-(29 if finishable else 0)
-            label:=ai_chat_menu_label(ctx,full,max(room,1),th.font_small)
+            label:=ai_chat_menu_label(ctx,full,max(room,1),ui.metric(ctx,"font_small"))
             if it.hot && label!=full {ui.tooltip(ctx,full)}
-            fill:=th.toggle_on if current else (th.raised if it.hot else th.card)
-            stroke:=th.toggle_on_stroke if current else th.border
-            if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(AI_AGENT_ROW),gap=7,align_y=.Center,padding={0,0,8,0},fill=fill,stroke=stroke,stroke_width=1,radius=th.radius_control}) {
+            fill:=ui.tone(ctx,"toggle_on") if current else (ui.tone(ctx,"raised") if it.hot else ui.tone(ctx,"card"))
+            stroke:=ui.tone(ctx,"toggle_on_stroke") if current else ui.tone(ctx,"border")
+            if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(AI_AGENT_ROW),gap=7,align_y=.Center,padding={0,0,8,0},fill=fill,stroke=stroke,stroke_width=1,radius=ui.metric(ctx,"radius_control")}) {
                 if ui.box(ctx,{width=ui.fixed(2),height=ui.fixed(AI_AGENT_ROW-2),fill=color}) {}
                 ui.icon(ctx,ai_agent_glyph(&task),color,18)
-                ui.label(ctx,label,th.font_small,th.text,0)
+                ui.label(ctx,label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0)
                 if run_find(s,task.id)!=nil {ui.icon(ctx,.Play,color,13)}
                 if working {pulse_dot(ctx,color,true)}
                 if badge!="" {ai_session_badge_build(ctx,badge,color)}
-                if current && ui.button(ctx,ui.id(ctx,"agent_details",task.id),{icon=ui.icon_user(u8(User_Icon.List)),icon_color=th.text_muted,icon_size=14,tip="Details",style=.Ghost,width=22,height=22,active=m.details==task.id}).clicked {
+                if current && ui.button(ctx,ui.id(ctx,"agent_details",task.id),{icon=ui.icon_user(u8(User_Icon.List)),icon_color=ui.tone(ctx,"text_muted"),icon_size=14,tip="Details",variant="ghost",width=22,height=22,active=m.details==task.id}).clicked {
                     m.details=0 if m.details==task.id else task.id
                 }
                 // Done with it: what it changed is kept and the session leaves the rows.
-                if finishable && ui.button(ctx,ui.id(ctx,"agent_finish",task.id),{icon=.Check,icon_color=th.accent,icon_size=13,tip="Finish",style=.Ghost,width=22,height=22}).clicked {
+                if finishable && ui.button(ctx,ui.id(ctx,"agent_finish",task.id),{icon=.Check,icon_color=ui.tone(ctx,"accent"),icon_size=13,tip="Finish",variant="ghost",width=22,height=22}).clicked {
                     ai_task_finish(s,m,&task)
                 }
             }
@@ -360,7 +360,7 @@ pulse_dot :: proc(ctx:^ui.Context,color:ui.Color,working:bool,side:f32=7) {
 // putting all of them back and keeping all of them; unfolded, a row per
 // change that walks to it, puts it back or keeps it.
 ai_chat_task_actions :: proc(s:^Session,task:^Ai_Task,width:f32) {
-    ctx:=s.gui.ctx;m:=s.ai;th:=&ctx.theme
+    ctx:=s.gui.ctx;m:=s.ai
     if !ai_task_reviewable(task) && !task.needs_build {return}
     count:=ai_review_count(task)
     // A walk through the changes of another unit, from its card, is left alone.
@@ -370,22 +370,22 @@ ai_chat_task_actions :: proc(s:^Session,task:^Ai_Task,width:f32) {
     if ai_task_reviewable(task) && count>0 {
         buffer:[64]u8
         card:=ui.id(ctx,"review_card")
-        if ui.box(ctx,{id=card,width=ui.GROW,height=ui.fixed(ai_review_card_height(count,m.review_open)),direction=.Column,gap=2,padding=ui.padding_all(4),fill=th.popup,stroke=th.divider,stroke_width=1,radius=th.radius_popup}) {
+        if ui.box(ctx,{id=card,width=ui.GROW,height=ui.fixed(ai_review_card_height(count,m.review_open)),direction=.Column,gap=2,padding=ui.padding_all(4),fill=ui.tone(ctx,"popup"),stroke=ui.tone(ctx,"divider"),stroke_width=1,radius=ui.metric(ctx,"radius_popup")}) {
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_ACTION_ROW),gap=3,align_y=.Center}) {
                 fold:=ui.id(ctx,"review_header")
                 it:=ui.interact(ctx,fold)
                 label:=count==1?"1 change":fmt.bprintf(buffer[:],"%d changes",count)
-                if ui.box(ctx,{id=fold,width=ui.FIT,height=ui.fixed(24),gap=6,padding={6,0,6,0},align_y=.Center,fill=it.hot?ui.color_hover(th):{},radius=th.radius_control}) {
-                    ui.icon(ctx,m.review_open?.Chevron_Down:.Chevron_Right,th.text_faint,9)
-                    ui.label(ctx,label,th.font_small,th.text,font=ui.FONT_SEMIBOLD)
+                if ui.box(ctx,{id=fold,width=ui.FIT,height=ui.fixed(24),gap=6,padding={6,0,6,0},align_y=.Center,fill=it.hot?ui.color_hover(ctx):{},radius=ui.metric(ctx,"radius_control")}) {
+                    ui.icon(ctx,m.review_open?.Chevron_Down:.Chevron_Right,ui.tone(ctx,"text_faint"),9)
+                    ui.label(ctx,label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
                 }
                 if it.clicked {m.review_open=!m.review_open}
                 ui.spacer(ctx)
-                if ui.button(ctx,ui.id(ctx,"revert"),{icon=.Revert,icon_color=th.text_muted,style=.Ghost,width=22,height=22,icon_size=12,disabled=task.files_changed || !ai_review_revertible(s,&task.review)}).clicked {
+                if ui.button(ctx,ui.id(ctx,"revert"),{icon=.Revert,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=22,height=22,icon_size=12,disabled=task.files_changed || !ai_review_revertible(s,&task.review)}).clicked {
                     ai_review_revert_all(s,task)
                     return
                 }
-                if ui.button(ctx,ui.id(ctx,"finish"),{label="Accept all",style=.Accent,height=22,size=th.font_small,padding=10}).clicked {
+                if ui.button(ctx,ui.id(ctx,"finish"),{label="Accept all",variant="accent",height=22,size=ui.metric(ctx,"font_small"),padding=10}).clicked {
                     ai_task_finish(s,m,task)
                     return
                 }
@@ -403,7 +403,7 @@ ai_chat_task_actions :: proc(s:^Session,task:^Ai_Task,width:f32) {
     if task.needs_build {
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(AI_ACTION_ROW),align_y=.Center}) {
             ui.spacer(ctx)
-            if ui.button(ctx,ui.id(ctx,"build"),{label="Build",icon=ui.icon_user(u8(User_Icon.Component)),style=.Accent,height=24}).clicked {command_run(s,"build")}
+            if ui.button(ctx,ui.id(ctx,"build"),{label="Build",icon=ui.icon_user(u8(User_Icon.Component)),variant="accent",height=24}).clicked {command_run(s,"build")}
         }
     }
 }
@@ -422,7 +422,7 @@ ai_pointer_on :: proc(ctx:^ui.Context,id:ui.Id) -> bool {
 // under it.
 @(private)
 ai_review_change_row :: proc(s:^Session,task:^Ai_Task,index:int) -> (changed:bool) {
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     w:=edited_world(s)
     ids:=len(task.review.changed_ids)
     name,status:="",u8('M')
@@ -447,17 +447,17 @@ ai_review_change_row :: proc(s:^Session,task:^Ai_Task,index:int) -> (changed:boo
     id:=ui.id(ctx,"review_change",index)
     it:=ui.interact(ctx,id)
     walked:=m.review_task==task.id && m.review_at==index
-    fill:=th.chip_on if walked || it.hot else ui.Color{}
+    fill:=ui.tone(ctx,"chip_on") if walked || it.hot else ui.Color{}
     actions:=walked || ai_pointer_on(ctx,id)
-    if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(AI_CHANGE_ROW),gap=7,align_y=.Center,padding={8,0,3,0},fill=fill,stroke=walked?th.text:{},stroke_width=1.5,radius=th.radius_control}) {
+    if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(AI_CHANGE_ROW),gap=7,align_y=.Center,padding={8,0,3,0},fill=fill,stroke=walked?ui.tone(ctx,"text"):{},stroke_width=1.5,radius=ui.metric(ctx,"radius_control")}) {
         letter:=[1]u8{status}
-        color:=status=='A'?th.success:status=='D'?th.danger:th.text_muted
-        if ui.box(ctx,{width=ui.fixed(9),height=ui.FIT}) {ui.label(ctx,string(letter[:]),th.font_small,color,font=ui.FONT_SEMIBOLD)}
-        ui.label(ctx,name,th.font_small,th.text_label,0)
+        color:=status=='A'?ui.tone(ctx,"success"):status=='D'?ui.tone(ctx,"danger"):ui.tone(ctx,"text_muted")
+        if ui.box(ctx,{width=ui.fixed(9),height=ui.FIT}) {ui.label(ctx,string(letter[:]),ui.metric(ctx,"font_small"),color,font=ui.FONT_SEMIBOLD)}
+        ui.label(ctx,name,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),0)
         if actions {
             message:string
             resolved:=false
-            if ui.button(ctx,ui.id(ctx,"review_change_revert",index),{icon=.Revert,icon_color=th.text_muted,style=.Ghost,width=20,height=20,icon_size=12}).clicked {
+            if ui.button(ctx,ui.id(ctx,"review_change_revert",index),{icon=.Revert,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=20,height=20,icon_size=12}).clicked {
                 resolved=true
                 switch {
                 case index<ids:
@@ -467,7 +467,7 @@ ai_review_change_row :: proc(s:^Session,task:^Ai_Task,index:int) -> (changed:boo
                 case:          message=ai_review_file_revert(s,m,task,task.review.changed_files[index-ids])
                 }
             }
-            if !resolved && ui.button(ctx,ui.id(ctx,"review_change_keep",index),{icon=.Check,icon_color=th.accent,style=.Ghost,width=20,height=20,icon_size=12}).clicked {
+            if !resolved && ui.button(ctx,ui.id(ctx,"review_change_keep",index),{icon=.Check,icon_color=ui.tone(ctx,"accent"),variant="ghost",width=20,height=20,icon_size=12}).clicked {
                 resolved=true
                 switch {
                 case index<ids:
@@ -513,21 +513,21 @@ ai_review_entity_bar :: proc(s:^Session,w:core.World_Ref,e:core.Entity,width:f32
 // The walk goes on from the change that was in sight.
 @(private)
 ai_review_bar :: proc(s:^Session,task:^Ai_Task,id:base.Entity_Id,width:f32) {
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     color:=ai_agent_color(task)
     ui.id_push(ctx,ui.id(ctx,"agent_bar",task.id))
     defer ui.id_pop(ctx)
     ids:=task.review.changed_ids[:]
     walked:=m.review_task==task.id && m.review_at>=0 && m.review_at<len(ids) && ids[m.review_at]==id
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=4,align_y=.Center,padding={5,0,4,0},fill=ui.color_alpha(color,22),stroke=ui.color_alpha(color,80),radius=th.radius_popup}) {
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=4,align_y=.Center,padding={5,0,4,0},fill=ui.color_alpha(color,22),stroke=ui.color_alpha(color,80),radius=ui.metric(ctx,"radius_popup")}) {
         ui.icon(ctx,ai_agent_icon(task),color,18)
-        ui.label(ctx,ai_chat_menu_label(ctx,base.text_get(task.title[:]),max(width-116,1)),th.font_small,th.text,0)
+        ui.label(ctx,ai_chat_menu_label(ctx,base.text_get(task.title[:]),max(width-116,1)),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0)
         ui.spacer(ctx)
-        if ui.button(ctx,ui.id(ctx,"revert_entity"),{icon=.Revert,icon_color=th.text_muted,style=.Ghost,width=24,height=24}).clicked {
+        if ui.button(ctx,ui.id(ctx,"revert_entity"),{icon=.Revert,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=24,height=24}).clicked {
             if message:=ai_review_entity_revert(s,m,task,id);message!="" {notify(s,message);return}
             ai_review_resolved(s,task,id,walked)
         }
-        if ui.button(ctx,ui.id(ctx,"accept_entity"),{icon=.Check,icon_color=color,style=.Ghost,width=24,height=24,look=&ui.Node_Style{fill=ui.color_alpha(color,32),stroke=ui.color_alpha(color,65),radius=th.radius_control}}).clicked {
+        if ui.button(ctx,ui.id(ctx,"accept_entity"),{icon=.Check,icon_color=color,variant="ghost",width=24,height=24,look=&ui.Node_Style{fill=ui.color_alpha(color,32),stroke=ui.color_alpha(color,65),radius=ui.metric(ctx,"radius_control")}}).clicked {
             ai_review_entity_accept(s,m,task,id)
             ai_review_resolved(s,task,id,walked)
         }
@@ -588,7 +588,7 @@ ai_review_shown :: proc(s:^Session) -> (task:^Ai_Task,id:base.Entity_Id,ok:bool)
 // that keeps the deletion or puts it back, and its components, read only.
 @(private)
 ai_review_deleted_details :: proc(s:^Session,w:core.World_Ref,task:^Ai_Task,id:base.Entity_Id,width,max_height:f32) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     transaction:=ai_review_deletion(w,task,id)
     if transaction==nil {return}
     before:=make([]^history.Change_Row,len(w.info.tables),context.temp_allocator)
@@ -599,10 +599,10 @@ ai_review_deleted_details :: proc(s:^Session,w:core.World_Ref,task:^Ai_Task,id:b
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(30),gap=3,align_y=.Center}) {
             icon,color:=ui.Icon.Group,GROUP_COLOR
             if mesh,shown:=ai_review_deleted_value(w,task,id,erender.Mesh_Renderer);shown {icons:=SHAPE_ICONS;icon,color=mesh.mesh!={}?.Mesh:icons[mesh.shape],MESH_COLOR}
-            if ui.box(ctx,{width=ui.fixed(27),height=ui.fixed(27),fill=th.field,radius=th.radius_control,align_x=.Center,align_y=.Center}) {ui.icon(ctx,icon,ui.color_alpha(color,140),18)}
-            ui.label(ctx,ai_review_deleted_name(w,task,id),th.font,th.text_muted,0)
+            if ui.box(ctx,{width=ui.fixed(27),height=ui.fixed(27),fill=ui.tone(ctx,"field"),radius=ui.metric(ctx,"radius_control"),align_x=.Center,align_y=.Center}) {ui.icon(ctx,icon,ui.color_alpha(color,140),18)}
+            ui.label(ctx,ai_review_deleted_name(w,task,id),ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"),0)
             ui.spacer(ctx)
-            ui.label(ctx,"Deleted",th.font_small,th.text_faint)
+            ui.label(ctx,"Deleted",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
         }
         ai_review_bar(s,task,id,width)
         ui.disabled_begin(ctx)
@@ -616,9 +616,9 @@ ai_review_deleted_details :: proc(s:^Session,w:core.World_Ref,task:^Ai_Task,id:b
                     labels:=[3]string{"Position","Rotation","Scale"}
                     decimals:=[3]int{3,1,3}
                     for row,i in rows {
-                        if ui.property(ctx,labels[i]) {
+                        if kit.property(ctx,labels[i]) {
                             values:=[3]f64{f64(row.x),f64(row.y),f64(row.z)}
-                            ui.vector_field(ctx,ui.id(ctx,"deleted_transform",i+1),values[:],{number={decimals=decimals[i],unit=i==1?"°":""}})
+                            kit.vector_field(ctx,ui.id(ctx,"deleted_transform",i+1),values[:],{number={decimals=decimals[i],unit=i==1?"°":""}})
                             ui.spacer(ctx,16,1)
                         }
                     }
@@ -642,7 +642,6 @@ ai_review_deleted_details :: proc(s:^Session,w:core.World_Ref,task:^Ai_Task,id:b
 @(private)
 ai_chat_question_height :: proc(ctx:^ui.Context,task:^Ai_Task,width:f32) -> f32 {
     if task==nil || task.question==.None || !ai_task_finished(task) {return 0}
-    th:=&ctx.theme
     options:[AI_QUESTION_OPTIONS][]u8
     count:=min(ai_question_options(task,options[:]),len(options))
     rows,used:=0,f32(0)
@@ -653,14 +652,14 @@ ai_chat_question_height :: proc(ctx:^ui.Context,task:^Ai_Task,width:f32) -> f32 
     switch task.question {
     case .None,.Text:
     case .Confirm:
-        for label in ([2]string{"Yes","No"}) {place(&rows,&used,width,ui.text_width(&ctx.font,label,th.font_small)+22)}
+        for label in ([2]string{"Yes","No"}) {place(&rows,&used,width,ui.text_width(&ctx.font,label,ui.metric(ctx,"font_small"))+22)}
     case .Single:
-        for index in 0..<count {place(&rows,&used,width,min(ui.text_width(&ctx.font,string(options[index]),th.font_small)+22,width))}
+        for index in 0..<count {place(&rows,&used,width,min(ui.text_width(&ctx.font,string(options[index]),ui.metric(ctx,"font_small"))+22,width))}
     case .Multi:
-        for index in 0..<count {place(&rows,&used,width,min(ui.text_width(&ctx.font,string(options[index]),th.font_small)+34,width))}
-        place(&rows,&used,width,ui.text_width(&ctx.font,"Send",th.font_small)+22)
+        for index in 0..<count {place(&rows,&used,width,min(ui.text_width(&ctx.font,string(options[index]),ui.metric(ctx,"font_small"))+34,width))}
+        place(&rows,&used,width,ui.text_width(&ctx.font,"Send",ui.metric(ctx,"font_small"))+22)
     }
-    place(&rows,&used,width,ui.text_width(&ctx.font,"Other...",th.font_small)+22)
+    place(&rows,&used,width,ui.text_width(&ctx.font,"Other...",ui.metric(ctx,"font_small"))+22)
     return f32(rows)*26+f32(rows-1)*6
 }
 
@@ -669,7 +668,7 @@ ai_chat_question_height :: proc(ctx:^ui.Context,task:^Ai_Task,width:f32) -> f32 
 @(private)
 ai_chat_question_build :: proc(s:^Session,task:^Ai_Task,width:f32) {
     if task.question==.None || !ai_task_finished(task) {return}
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     color:=ai_agent_color(task)
     if m.picked_task!=task.id {m.picked_task=task.id;m.picked={}}
     // The answer is the next message of the conversation; the question goes
@@ -698,32 +697,32 @@ ai_chat_question_build :: proc(s:^Session,task:^Ai_Task,width:f32) {
     }
     defer if open {ui.box_end(ctx,{})}
     // The text of a choice is part of its look: without it the label does not show.
-    appearance:=ui.Node_Style{fill=ui.color_alpha(color,26),stroke=ui.color_alpha(color,80),radius=13,text={size=th.font_small,color=th.text}}
+    appearance:=ui.Node_Style{fill=ui.color_alpha(color,26),stroke=ui.color_alpha(color,80),radius=13,text={size=ui.metric(ctx,"font_small"),color=ui.tone(ctx,"text")}}
     switch task.question {
     case .None:
     case .Text:
     case .Confirm:
         for label,index in ([2]string{"Yes","No"}) {
-            size:=ui.text_width(&ctx.font,label,th.font_small)+22
+            size:=ui.text_width(&ctx.font,label,ui.metric(ctx,"font_small"))+22
             place(ctx,&open,&used,width,size)
-            if ui.button(ctx,ui.id(ctx,"confirm",index+1),{label=label,width=size,height=ctx.theme.control,size=th.font_small,center=true,look=&appearance}).clicked {answer(s,task,label)}
+            if ui.button(ctx,ui.id(ctx,"confirm",index+1),{label=label,width=size,height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_small"),center=true,look=&appearance}).clicked {answer(s,task,label)}
         }
     case .Single:
         for index in 0..<count {
             label:=string(options[index])
-            size:=min(ui.text_width(&ctx.font,label,th.font_small)+22,width)
+            size:=min(ui.text_width(&ctx.font,label,ui.metric(ctx,"font_small"))+22,width)
             place(ctx,&open,&used,width,size)
-            if ui.button(ctx,ui.id(ctx,"choice",index+1),{label=ai_chat_menu_label(ctx,label,size-22),width=size,height=ctx.theme.control,size=th.font_small,center=true,look=&appearance}).clicked {answer(s,task,label)}
+            if ui.button(ctx,ui.id(ctx,"choice",index+1),{label=ai_chat_menu_label(ctx,label,size-22),width=size,height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_small"),center=true,look=&appearance}).clicked {answer(s,task,label)}
         }
     case .Multi:
         for index in 0..<count {
             label:=string(options[index])
-            size:=min(ui.text_width(&ctx.font,label,th.font_small)+34,width)
+            size:=min(ui.text_width(&ctx.font,label,ui.metric(ctx,"font_small"))+34,width)
             place(ctx,&open,&used,width,size)
             picked:=&m.picked[index]
             style:=appearance
             if !picked^ {style={fill=ui.color_alpha(color,8),stroke=ui.color_alpha(color,40),radius=13,text=appearance.text}}
-            if ui.button(ctx,ui.id(ctx,"choice",index+1),{label=ai_chat_menu_label(ctx,label,size-34),icon=picked^?.Checkbox_Checked:.Checkbox,icon_color=color,icon_size=12,width=size,height=ctx.theme.control,size=th.font_small,look=&style}).clicked {picked^=!picked^}
+            if ui.button(ctx,ui.id(ctx,"choice",index+1),{label=ai_chat_menu_label(ctx,label,size-34),icon=picked^?.Checkbox_Checked:.Checkbox,icon_color=color,icon_size=12,width=size,height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_small"),look=&style}).clicked {picked^=!picked^}
         }
         chosen:[AI_QUESTION_BYTES]u8
         length:=0
@@ -732,13 +731,13 @@ ai_chat_question_build :: proc(s:^Session,task:^Ai_Task,width:f32) {
             if length>0 {length+=copy(chosen[length:],", ")}
             length+=copy(chosen[length:],options[index])
         }
-        size:=ui.text_width(&ctx.font,"Send",th.font_small)+22
+        size:=ui.text_width(&ctx.font,"Send",ui.metric(ctx,"font_small"))+22
         place(ctx,&open,&used,width,size)
-        if ui.button(ctx,ui.id(ctx,"send_choices"),{label="Send",style=.Accent,width=size,height=ctx.theme.control,size=th.font_small,center=true,disabled=length==0}).clicked {
+        if ui.button(ctx,ui.id(ctx,"send_choices"),{label="Send",variant="accent",width=size,height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_small"),center=true,disabled=length==0}).clicked {
             answer(s,task,string(chosen[:length]))
         }
     }
-    size:=ui.text_width(&ctx.font,"Other...",th.font_small)+22
+    size:=ui.text_width(&ctx.font,"Other...",ui.metric(ctx,"font_small"))+22
     place(ctx,&open,&used,width,size)
-    if ui.button(ctx,ui.id(ctx,"other"),{label="Other...",style=.Ghost,width=size,height=ctx.theme.control,size=th.font_small,center=true}).clicked {m.focus=true}
+    if ui.button(ctx,ui.id(ctx,"other"),{label="Other...",variant="ghost",width=size,height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_small"),center=true}).clicked {m.focus=true}
 }

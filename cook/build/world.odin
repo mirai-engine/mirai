@@ -1506,7 +1506,7 @@ rules_check :: proc(g:^Generator) {
     stages:=STAGES
     network,has_network:=g.by_key["mirai:core.Network"]
     tick_input:=g.by_key["mirai:core.Input"]
-    tick_actions:=g.by_key["mirai:engine/input.Actions"]
+    seats_state:=g.by_key["mirai:engine/input.Seats"]
     for s in g.steps {
         if s.server && (!has_network || network.kind!=.Storage) {
             append(&g.errors,fmt.aprintf("%s: %s is server, and the world has no core.Network to know whether this end decides the rules",s.where_,s.name))
@@ -1543,7 +1543,7 @@ rules_check :: proc(g:^Generator) {
             if s.loops[0] && step_outside_fixed(s) && (param.kind==.Storage_Value || param.kind==.Storage_Ref) {
                 if param.type==tick_input {
                     append(&g.errors,fmt.aprintf("%s: %s runs outside fixed and receives core.Input as %s, which there holds the values of the last tick: a frame without a tick repeats its edges and misses what is new; receive core.Frame_Input, or read it in a fixed step",s.where_,s.name,param.name))
-                } else if param.type==tick_actions {
+                } else if param.type==seats_state && param.bundle!=nil && param.bundle.key=="mirai:engine/input.Input_Of" {
                     append(&g.errors,fmt.aprintf("%s: %s runs outside fixed and receives the actions of the tick as %s: a frame without a tick repeats its edges and misses what is new; receive input.Frame_Input_Of(E), or read them in a fixed step",s.where_,s.name,param_text(param)))
                 }
             }

@@ -59,6 +59,8 @@ end_init :: proc(t:^testing.T,f:^End,name:string,role:core.Network_Role) -> bool
 @(private="file")
 end_destroy :: proc(f:^End) {
     destruct.cache_destroy(f.app.assets,&f.app.jobs,&f.cache);jobs.system_destroy(&f.app.jobs)
+    parts_forget(&f.session);delete(f.session.parts);f.session.parts=nil
+    outbox_forget(f);delete(f.outbox.parts);f.outbox.parts=nil
     core.test_world_destroy(&f.w)
     host.assets_destroy(&f.assets)
     net_free(&f.net)
@@ -129,14 +131,38 @@ end_pair :: proc(t:^testing.T,a,b:^End,name:string) -> (server,client:core.Entit
     return server,client,true
 }
 
-// What the server sent, as the client receives it.
+// What the server sent, as the client receives it: its parts in the session of the client.
 @(private="file")
-end_received :: proc(a:^End) -> multiplayer.Journal_Inbox {
+end_received :: proc(a,b:^End) -> multiplayer.Journal_Inbox {
     ops:=make([dynamic]core.Message(multiplayer.Net_Journal_Op),context.temp_allocator)
     parts:=make([dynamic]core.Message(multiplayer.Net_Journal_Part),context.temp_allocator)
     for item in core.take(&a.outbox.queue) {heard(&ops,&a.outbox,item);heard(&parts,&a.outbox,item)}
     clear(&a.outbox.bytes)
-    return {ops={ops[:]},parts={parts[:]}}
+    parts_forget(&b.session)
+    HEAD :: size_of(multiplayer.Journal_Part_Head)
+    for part in a.outbox.parts {
+        arrived:=multiplayer.Journal_Arrived{bytes=make([]u8,len(part.bytes)-HEAD)}
+        mem.copy(&arrived.head,raw_data(part.bytes),HEAD)
+        copy(arrived.bytes,part.bytes[HEAD:])
+        append(&b.session.parts,arrived)
+    }
+    outbox_forget(a)
+    return {ops={ops[:]},parts={parts[:]},session=core.ref(&b.session)}
+}
+
+// The parts a client held for its tick.
+@(private="file")
+parts_forget :: proc(s:^multiplayer.Net_Session) {
+    for part in s.parts {delete(part.bytes)}
+    clear(&s.parts)
+}
+
+// What a server sent, gone.
+@(private="file")
+outbox_forget :: proc(a:^End) {
+    clear(&a.outbox.queue.items)
+    for part in a.outbox.parts {delete(part.bytes)}
+    clear(&a.outbox.parts)
 }
 
 // A message an outbox queued, when it is a T.
@@ -155,7 +181,7 @@ a_fracture_of_the_server_breaks_the_client_alike :: proc(t:^testing.T) {
     defer end_destroy(&b)
     server,client,ok:=end_pair(t,&a,&b,"alike")
     if !ok {return}
-    events:=end_received(&a)
+    events:=end_received(&a,&b)
     rewinds:multiplayer.Net_Rewinds
     defer delete(rewinds.queue.items)
     destruct_net_receive(events,core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
@@ -178,7 +204,7 @@ a_correction_that_goes_back_before_a_fracture_applies_it_where_it_was_first_appl
     defer saved_destroy(&saved)
     testing.expect(t,end_save(t,&saved,&b))
     for _ in 3..=7 {end_tick(&b)}
-    events:=end_received(&a)
+    events:=end_received(&a,&b)
     rewinds:multiplayer.Net_Rewinds
     defer delete(rewinds.queue.items)
     destruct_net_receive(events,core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
@@ -202,7 +228,7 @@ a_fracture_of_a_tick_the_client_simulated_asks_to_go_back_and_is_applied_at_its_
     defer saved_destroy(&saved)
     testing.expect(t,end_save(t,&saved,&b))
     for _ in 3..=7 {end_tick(&b)}
-    events:=end_received(&a)
+    events:=end_received(&a,&b)
     rewinds:multiplayer.Net_Rewinds
     defer delete(rewinds.queue.items)
     destruct_net_receive(events,core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
@@ -229,28 +255,25 @@ a_connection_that_enters_the_world_gets_the_state_of_what_is_broken :: proc(t:^t
     defer end_destroy(&b)
     _,_,ok:=end_pair(t,&a,&b,"arrives")
     if !ok {return}
-    clear(&a.outbox.queue.items)
+    outbox_forget(&a)
     connection:=multiplayer.Connection(7)
     core.push(&a.connections.events,multiplayer.Connection_Event{kind=.Connected,connection=connection})
     end_tick(&a)
-    testing.expect_value(t,len(a.outbox.queue.items),0)
+    testing.expect(t,len(a.outbox.queue.items)==0 && len(a.outbox.parts)==0)
     clear(&a.connections.events.items)
     core.push(&a.connections.events,multiplayer.Connection_Event{kind=.Entered,connection=connection})
     end_tick(&a)
-    states:=0
     parts:=make([dynamic]core.Message(multiplayer.Net_Journal_Part),context.temp_allocator)
     for item in a.outbox.queue.items {
         if item.to==connection {heard(&parts,&a.outbox,item)}
     }
-    for part in parts {
-        states+=1
-        testing.expect_value(t,part.value.after,u32(1))
-    }
-    testing.expect(t,states>0,"the state of what is broken goes to the connection that entered the world")
-    clear(&a.outbox.queue.items)
+    for part in parts {testing.expect_value(t,part.value.after,u32(1))}
+    for part in a.outbox.parts {testing.expect_value(t,part.to,connection)}
+    testing.expect(t,len(parts)>0 && len(parts)==len(a.outbox.parts),"the state of what is broken goes to the connection that entered the world")
+    outbox_forget(&a)
     clear(&a.connections.events.items)
     end_tick(&a)
-    testing.expect_value(t,len(a.outbox.queue.items),0)
+    testing.expect(t,len(a.outbox.queue.items)==0 && len(a.outbox.parts)==0)
 }
 
 // A scene that replaces the world of a client takes what this library knew of
@@ -265,7 +288,7 @@ a_scene_that_replaces_the_world_forgets_its_logs_and_the_server_sends_what_is_br
     defer end_destroy(&c)
     server,client,ok:=end_pair(t,&a,&b,"scene")
     if !ok {return}
-    events:=end_received(&a)
+    events:=end_received(&a,&b)
     rewinds:multiplayer.Net_Rewinds
     defer delete(rewinds.queue.items)
     destruct_net_receive(events,core.ref(&b.authority),&b.net,{tick=b.tick+1},&rewinds,core.ref(&b.root),&b.problems)
@@ -284,13 +307,14 @@ a_scene_that_replaces_the_world_forgets_its_logs_and_the_server_sends_what_is_br
 
     // The server loads a game where it is broken: a scene that replaces its world.
     a.root.changes+=1
-    clear(&a.outbox.queue.items)
+    outbox_forget(&a)
     connection:=multiplayer.Connection(7)
     core.push(&a.connections.events,multiplayer.Connection_Event{kind=.Entered,connection=connection})
     end_tick(&a)
     clear(&a.connections.events.items)
     for item in a.outbox.queue.items {testing.expect_value(t,item.to,connection)}
-    chunks:=end_received(&a)
+    for part in a.outbox.parts {testing.expect_value(t,part.to,connection)}
+    chunks:=end_received(&a,&c)
     destruct_net_receive(chunks,core.ref(&c.authority),&c.net,{tick=c.tick+1},&rewinds,core.ref(&c.root),&c.problems)
     for _ in 0..<2 {end_tick(&c)}
     testing.expect_value(t,core.at(&c.states,core.row_of(&c.states,again)).sequence,u32(1))
