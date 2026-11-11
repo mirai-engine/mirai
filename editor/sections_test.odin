@@ -154,7 +154,7 @@ a_section_turned_on_or_off_in_the_view_is_no_edit_and_its_reference_keeps_what_i
     // Off: it goes, outside the undo too.
     testing.expect_value(t,section_view_set(s,w,f.r,.Unloaded),"")
     sections_watch(s,&f.watch,w)
-    core.world_destroy_tree(w,c)
+    core.destroy(core.world_entities(w),c)
     core.edit(&f.world.references,f.r).loaded={}
     core.world_settle(w)
     sections_watched(s,&f.watch,w)
@@ -400,7 +400,6 @@ a_reference_a_step_makes_loads_in_that_step_and_what_hangs_from_a_reference_gone
     history.edits_reset(&f.edits,w)
     core.destroy(core.world_entities(w),f.r)
     core.world_settle(w)
-    testing.expect(t,entity_alive(w,hung))
     sections_watch(s,&f.watch,w)
     sections_watched(s,&f.watch,w)
     testing.expect(t,!entity_alive(w,hung),"what hung from it goes with it")

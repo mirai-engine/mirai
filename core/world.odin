@@ -151,6 +151,7 @@ World_Info :: struct {
     settles:Settle_Info, // what settle and the procedures of world_data look for in tables and storages
     loops:[Loop][Phase]Loop_Proc,
     events_age:proc(world:rawptr,ticked:bool), // ages every log (events_age) of a World, those a fixed function reads only when ticked: what runs a frame of a World calls it at its end
+    events_rewind:proc(world:rawptr), // leaves each cursor of a reader of the frame at most at the end of its log, after the World was replaced under it (world_restore, world_swap)
     order:[Loop][Phase][]i32, // the steps each loop calls, by index, in its order
     tables_by_type,storages_by_type:map[typeid]int, // index in tables and in storages, by_world aside: world_info_index
     schema:^World_Schema, // world_info_index
@@ -418,11 +419,6 @@ entity_tables :: proc(w:World_Ref,e:Entity,allocator:=context.temp_allocator) ->
         if raw_find(world_table_at(w,&t),t.info,e)!=nil {append(&found,&t)}
     }
     return found[:]
-}
-
-// Destroys an entity and everything under it, from code outside the loop.
-world_destroy_tree :: proc(w:World_Ref,e:Entity) {
-    destroy_tree(world_entities(w),ref(world_storage_of(w,Hierarchy)),e)
 }
 
 // Gives dst what src holds of the run, not of its entities: the storages

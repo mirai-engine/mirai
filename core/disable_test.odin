@@ -261,6 +261,39 @@ World_Of_Locks :: struct {
     owner:Table(Lock_Owner),
 }
 
+@(private)
+@(component,locks="Lock_Owner")
+Lock_Rival :: struct {value:i32}
+
+@(private)
+@(test_world)
+World_Of_Rivals :: struct {
+    using world:Test_World,
+    rivals:Table(Lock_Rival),
+    bodies:Table(Lock_Body),
+    owner:Table(Lock_Owner),
+}
+
+// A function hands what a lock takes from one component to another of its
+// entity, removing one and adding the other, whatever order their tables
+// settle in.
+@(test)
+a_lock_passes_from_a_component_removed_to_one_added_in_one_function :: proc(t:^testing.T) {
+    w:World_Of_Rivals
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    e:=create(&w.entities)
+    add(&w.bodies,e,Lock_Body{1})
+    test_world_settle(&w)
+    remove(&w.bodies,e);add(&w.rivals,e,Lock_Rival{2})
+    test_world_settle(&w)
+    testing.expect(t,!has(&w.bodies,e) && row_of(&w.rivals,e)>=0 && row_of(&w.rivals,e)<count(&w.rivals))
+    remove(&w.rivals,e);add(&w.bodies,e,Lock_Body{3})
+    test_world_settle(&w)
+    testing.expect(t,!has(&w.rivals,e) && row_of(&w.bodies,e)>=0 && row_of(&w.bodies,e)<count(&w.bodies))
+    testing.expect(t,w.owner.owners[entity_index(e)].generation==entity_generation(e) && w.owner.owners[entity_index(e)].id!=0)
+}
+
 @(test)
 a_component_on_owns_what_its_locks_take_and_one_off_lets_it_go :: proc(t:^testing.T) {
     w:World_Of_Locks

@@ -164,7 +164,7 @@ particles_tick :: proc(
         if time.playing && clock.done && emitter.destroy_when_done {append(&done,e)}
     }
     for e in done {
-        if subtree_done(emitters,clocks,hierarchy,e) {core.destroy_tree(entities.entities,hierarchy,e)}
+        if subtree_done(emitters,clocks,hierarchy,e) {core.destroy(entities,e)}
     }
 }
 

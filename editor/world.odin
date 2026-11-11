@@ -257,7 +257,7 @@ entities_delete :: proc(s:^Session,entities:[]core.Entity) {
         // What a section holds goes with its reference, which is among them.
         if section_locked(s,w,e) {continue}
         if prefab_member_locked(s,w,e) {kept=true;continue}
-        core.world_destroy_tree(w,e)
+        core.destroy(core.world_entities(w),e)
     }
     if kept {notify(s,"A member of a prefab instance stays: turn it off, or unlink the instance")}
     selection:=w.data==s.edit_world?document_selection(s):s.selection
