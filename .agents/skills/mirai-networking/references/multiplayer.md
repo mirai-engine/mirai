@@ -612,8 +612,10 @@ One rule says how it lives (`replica_wanted`):
 **Predicted spawns.** A `fixed` function that makes an entity on both ends in the tick of the
 input that causes it (a projectile) marks it with `multiplayer.predict_spawn(spawns, e, seat)`,
 which queues it in `Net_Spawns`. At the end of the tick (`spawns_take`) it gets the `Id` both ends
-draw from the connection of the seat, the tick and how many that seat made before it in that tick
-(`spawn_id`), and, on a client, `Predicted_Spawn`. The queue is part of the `World`: a tick that
+draw from the connection of the seat, the tick, its kind (`spawn_kind`: its prefab, or without one
+the fragments it replicates) and how many of that kind the seat made before it in that tick
+(`spawn_id`), and, on a client, `Predicted_Spawn`. A spawn the server skips shifts none of another
+kind. The queue is part of the `World`: a tick that
 runs again numbers its spawns alike. `predict_kept` queues an entity that has its `Id` already and
 that its library keeps (`Predicted_Spawn.kept`).
 

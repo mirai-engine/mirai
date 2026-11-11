@@ -1639,22 +1639,35 @@ replica_adopt :: proc(s:^Net_Session,w:core.World_Ref,id:base.Entity_Id,e:core.E
 }
 
 // The spawns of the tick get the Id both ends draw (one of a seat: from its
-// connection, the tick and how many that seat made before it in the tick),
-// and a client marks what it made for the replica of the server's to take.
+// connection, the tick, its kind and how many of that kind the seat made
+// before it in the tick), and a client marks what it made for the replica of
+// the server's to take.
 @(private)
 spawns_take :: proc(s:^Net_Session,w:core.World_Ref,made:[]Spawn,tick:u64) {
     if len(made)==0 {return}
+    kinds:=make([]u64,len(made),context.temp_allocator)
     for item,i in made {
         if !core.alive(core.world_entities(w),item.entity) {continue}
         if !item.kept {
+            kinds[i]=spawn_kind(s,w,item.entity)
             sequence:u32
-            for before in made[:i] {sequence+=u32(!before.kept && before.peer==item.peer)}
+            for before,k in made[:i] {sequence+=u32(!before.kept && before.peer==item.peer && kinds[k]==kinds[i])}
             connection:=item.peer!=0?Connection(item.peer):own_connection(core.ref(s))
-            core.add(core.world_table_of(w,core.Id),item.entity,core.Id{spawn_id(connection,tick,sequence)})
+            core.add(core.world_table_of(w,core.Id),item.entity,core.Id{spawn_id(connection,tick,kinds[i],sequence)})
         }
         if s.mode==.Client {core.add(core.world_table_of(w,Predicted_Spawn),item.entity,Predicted_Spawn{tick=tick,kept=item.kept})}
     }
     core.world_settle(w)
+}
+
+// What an entity a player makes is, alike on both ends: the prefab it was
+// spawned from, or, made without one, the fragments it replicates.
+@(private)
+spawn_kind :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity) -> u64 {
+    if instance,found:=scene.prefab_instance(w,e);found && instance.prefab!={} {return base.hash64(mem.ptr_to_bytes(&instance.prefab),1)}
+    kinds:[wire.MAX_FRAGMENTS]wire.Fragment_Id
+    count,_:=entity_kinds(s,w,e,&kinds)
+    return base.hash64(mem.slice_to_bytes(kinds[:count]),2)
 }
 
 // What a replica that took an entity this client made keeps of it: one the

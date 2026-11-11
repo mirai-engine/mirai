@@ -85,6 +85,7 @@ Net_Test_Shared :: struct {
     colliders:phys.Collider_Meshes,
     spawn_at:u64, // the tick in which the game makes entities on both ends (predict_spawn); 0: none
     spawns:int,   // how many it makes then; 0: one
+    late:bool,    // each second one has Net_Test_Late too: of another kind (a grenade beside a bullet)
     sent:int,     // the messages it sent with them
     outbox:^Net_Outbox, // what the server sends from, when the test sends messages
 }
@@ -204,6 +205,7 @@ net_test_fixed :: proc(world,shared,editor,application:rawptr) {
             e:=core.create(&w.entities)
             core.add(&w.transforms,e,core.Transform{position={f32(k),5,0},rotation=1,scale={1,1,1}})
             core.add(&w.values,e,Net_Test_Value{})
+            if sh.late && k%2==1 {core.add(&w.lates,e,Net_Test_Late{})}
             predict_spawn(&w.made,e,{})
         }
         sh.sent+=int(send(&w.outbox,u32(1)))

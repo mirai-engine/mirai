@@ -342,15 +342,18 @@ Spawn :: struct {
 }
 
 // Requests: at the end of the tick the network gives each spawn of a seat the
-// Id both ends draw, from the connection of the seat, the tick and how many
-// that seat made before it in the tick, and marks on a client what it made.
+// Id both ends draw, from the connection of the seat, the tick, what it is and
+// how many of its kind that seat made before it in the tick, and marks on a
+// client what it made.
 @(storage,queue)
 Net_Spawns :: struct {queue:core.Queue(Spawn)}
 
 // The Id both ends give an entity a player makes in a tick: from the
-// connection of that player, the tick and which of its spawns of the tick it is.
-spawn_id :: proc(connection:Connection,tick:u64,sequence:u32) -> base.Entity_Id {
-    key:=[3]u64{u64(connection),tick,u64(sequence)}
+// connection of that player, the tick, its kind (spawn_kind) and which of the
+// player's spawns of that kind in the tick it is. A spawn the server skips
+// does not shift the others: a bullet never takes the place of a grenade.
+spawn_id :: proc(connection:Connection,tick:u64,kind:u64,sequence:u32) -> base.Entity_Id {
+    key:=[4]u64{u64(connection),tick,kind,u64(sequence)}
     return base.Entity_Id(base.hash64(mem.ptr_to_bytes(&key),NET_PROTOCOL_ID)|1)
 }
 
