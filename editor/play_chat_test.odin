@@ -18,7 +18,7 @@ the_chat_opens_only_while_the_game_is_paused :: proc(t:^testing.T) {
     if p==nil {return}
     defer platform.destroy(p)
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     world:Play_Chat_Input_World
     if !core.test_world_init(t,&world) {return}

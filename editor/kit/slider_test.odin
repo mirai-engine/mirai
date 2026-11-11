@@ -1,33 +1,34 @@
-package ui
+package kit
 
 import "core:testing"
+import "mirai:ui"
 
 Slider_Test :: struct {
     value:f64,
-    result:Number_Result,
+    result:ui.Number_Result,
     disabled:bool,
-    field:Number_Field,
+    field:ui.Number_Field,
 }
 
-slider_test_build :: proc(ctx:^Context,user:rawptr) {
+slider_test_build :: proc(ctx:^ui.Context,user:rawptr) {
     s:=(^Slider_Test)(user)
-    if panel(ctx,id(ctx,"panel"),{width=fixed(240),height=FIT,padding=padding_all(8)}) {
+    if ui.panel(ctx,ui.id(ctx,"panel"),{width=ui.fixed(240),height=ui.FIT,padding=ui.padding_all(8)}) {
         field:=s.field
         if !field.has_min && !field.has_max {field.min,field.max,field.has_min,field.has_max=0,1,true,true}
         field.disabled=s.disabled
-        s.result=slider_field(ctx,id(ctx,"value"),&s.value,field)
+        s.result=slider_field(ctx,ui.id(ctx,"value"),&s.value,field)
     }
 }
 
 @(test)
 slider_drag_and_typed_value_share_limits_and_cancellation :: proc(t:^testing.T) {
-    ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
-    defer context_destroy(&ctx)
+    ctx:ui.Context
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
+    defer ui.context_destroy(&ctx)
     s:=Slider_Test{value=0.2}
     input:=test_input()
     test_frame(&ctx,&input,slider_test_build,&s)
-    track:=id_derive(&ctx,id(&ctx,"value"),"track")
+    track:=ui.id_derive(&ctx,ui.id(&ctx,"value"),"track")
     rect:=test_rect(t,&ctx,track)
     test_point(&input,rect)
     test_frame(&ctx,&input,slider_test_build,&s)
@@ -44,7 +45,7 @@ slider_drag_and_typed_value_share_limits_and_cancellation :: proc(t:^testing.T) 
     testing.expect_value(t,s.value,0.2)
     test_release(&input)
     test_frame(&ctx,&input,slider_test_build,&s)
-    number:=id_derive(&ctx,id(&ctx,"value"),"number")
+    number:=ui.id_derive(&ctx,ui.id(&ctx,"value"),"number")
     test_click(&ctx,&input,slider_test_build,&s,number)
     testing.expect(t,s.result.editing)
     test_type(&input,"4")
@@ -68,45 +69,45 @@ slider_drag_and_typed_value_share_limits_and_cancellation :: proc(t:^testing.T) 
     s.value=0
     s.field={min=-1e308,max=1e308,has_min=true,has_max=true}
     test_frame(&ctx,&input,slider_test_build,&s)
-    _,overflow_track:=widget_rect(&ctx,track)
-    _,overflow_number:=widget_rect(&ctx,id(&ctx,"value"))
+    _,overflow_track:=ui.widget_rect(&ctx,track)
+    _,overflow_number:=ui.widget_rect(&ctx,ui.id(&ctx,"value"))
     testing.expect(t,!overflow_track && overflow_number)
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
 }
 
 Dropdown_Search_Test :: struct {selected:int,changes:int,clipped:bool,scroll:[2]f32}
 
-dropdown_search_test_build :: proc(ctx:^Context,user:rawptr) {
+dropdown_search_test_build :: proc(ctx:^ui.Context,user:rawptr) {
     s:=(^Dropdown_Search_Test)(user)
-    if panel(ctx,id(ctx,"panel"),{width=fixed(240),height=FIT,padding=padding_all(8)}) {
+    if ui.panel(ctx,ui.id(ctx,"panel"),{width=ui.fixed(240),height=ui.FIT,padding=ui.padding_all(8)}) {
         if s.clipped {
-            if scroll_area(ctx,id(ctx,"scroll"),&s.scroll,{height=fixed(ctx.theme.row)}) {dropdown_search_test_choice(ctx,s)}
+            if ui.scroll_area(ctx,ui.id(ctx,"scroll"),&s.scroll,{height=ui.fixed(ui.metric(ctx,"row"))}) {dropdown_search_test_choice(ctx,s)}
         } else {dropdown_search_test_choice(ctx,s)}
     }
 }
 
-dropdown_search_test_choice :: proc(ctx:^Context,s:^Dropdown_Search_Test) {
-    if dropdown(ctx,id(ctx,"kind"),{list={"Box","Sphere","Spot light","Directional light"}},&s.selected,{width=-1,searchable=true}) {s.changes+=1}
+dropdown_search_test_choice :: proc(ctx:^ui.Context,s:^Dropdown_Search_Test) {
+    if ui.dropdown(ctx,ui.id(ctx,"kind"),{list={"Box","Sphere","Spot light","Directional light"}},&s.selected,{width=-1,searchable=true}) {s.changes+=1}
 }
 
 @(test)
 searchable_dropdown_filters_and_chooses_with_keyboard :: proc(t:^testing.T) {
-    ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
-    defer context_destroy(&ctx)
+    ctx:ui.Context
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
+    defer ui.context_destroy(&ctx)
     s:=Dropdown_Search_Test{clipped=true}
     input:=test_input()
     test_frame(&ctx,&input,dropdown_search_test_build,&s)
-    test_click(&ctx,&input,dropdown_search_test_build,&s,id(&ctx,"kind"))
-    list:=id_derive(&ctx,id(&ctx,"kind"),"list")
-    search:=id_derive(&ctx,list,"search")
+    test_click(&ctx,&input,dropdown_search_test_build,&s,ui.id(&ctx,"kind"))
+    list:=ui.id_derive(&ctx,ui.id(&ctx,"kind"),"list")
+    search:=ui.id_derive(&ctx,list,"search")
     testing.expect_value(t,ctx.edit.id,search)
     test_type(&input,"SP")
     test_frame(&ctx,&input,dropdown_search_test_build,&s)
     test_frame(&ctx,&input,dropdown_search_test_build,&s)
-    _,box:=widget_rect(&ctx,id_derive(&ctx,list,"row",1))
-    _,sphere:=widget_rect(&ctx,id_derive(&ctx,list,"row",2))
-    _,spot:=widget_rect(&ctx,id_derive(&ctx,list,"row",3))
+    _,box:=ui.widget_rect(&ctx,ui.id_derive(&ctx,list,"row",1))
+    _,sphere:=ui.widget_rect(&ctx,ui.id_derive(&ctx,list,"row",2))
+    _,spot:=ui.widget_rect(&ctx,ui.id_derive(&ctx,list,"row",3))
     testing.expect(t,!box && sphere && spot)
     test_key(&input,.Down)
     test_frame(&ctx,&input,dropdown_search_test_build,&s)
@@ -114,9 +115,9 @@ searchable_dropdown_filters_and_chooses_with_keyboard :: proc(t:^testing.T) {
     test_frame(&ctx,&input,dropdown_search_test_build,&s)
     testing.expect_value(t,s.selected,1)
     testing.expect_value(t,s.changes,1)
-    testing.expect(t,!popup_is_open(&ctx,list) && ctx.edit.id==0)
-    test_click(&ctx,&input,dropdown_search_test_build,&s,id(&ctx,"kind"))
-    test_click(&ctx,&input,dropdown_search_test_build,&s,id_derive(&ctx,list,"row",3))
+    testing.expect(t,!ui.popup_is_open(&ctx,list) && ctx.edit.id==0)
+    test_click(&ctx,&input,dropdown_search_test_build,&s,ui.id(&ctx,"kind"))
+    test_click(&ctx,&input,dropdown_search_test_build,&s,ui.id_derive(&ctx,list,"row",3))
     testing.expect_value(t,s.selected,2)
     testing.expect_value(t,s.changes,2)
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
@@ -124,22 +125,22 @@ searchable_dropdown_filters_and_chooses_with_keyboard :: proc(t:^testing.T) {
 
 @(test)
 a_slider_drags_cancels_and_steps_the_same_with_any_look :: proc(t:^testing.T) {
-    Looked :: struct {value:f64,result:Number_Result,look:^Node_Style}
-    build :: proc(ctx:^Context,user:rawptr) {
+    Looked :: struct {value:f64,result:ui.Number_Result,look:^ui.Node_Style}
+    build :: proc(ctx:^ui.Context,user:rawptr) {
         s:=cast(^Looked)user
-        if panel(ctx,id(ctx,"panel"),{width=fixed(240),height=FIT,padding=padding_all(8)}) {
-            s.result=slider(ctx,id(ctx,"value"),&s.value,{min=0,max=8,step=2,width=fixed(200),look=s.look})
+        if ui.panel(ctx,ui.id(ctx,"panel"),{width=ui.fixed(240),height=ui.FIT,padding=ui.padding_all(8)}) {
+            s.result=ui.slider(ctx,ui.id(ctx,"value"),&s.value,{min=0,max=8,step=2,width=ui.fixed(200),look=s.look})
         }
     }
     style:=TEST_CONTROL_STYLE
-    for look in ([]^Node_Style{nil,&style}) {
-        ctx:Context
-        testing.expect(t,context_init(&ctx,TEST_SMALL))
-        defer context_destroy(&ctx)
+    for look in ([]^ui.Node_Style{nil,&style}) {
+        ctx:ui.Context
+        testing.expect(t,test_context_init(&ctx,TEST_SMALL))
+        defer ui.context_destroy(&ctx)
         s:=Looked{value=2,look=look}
         input:=test_input()
         test_frame(&ctx,&input,build,&s)
-        value:=id(&ctx,"value")
+        value:=ui.id(&ctx,"value")
         rect:=test_rect(t,&ctx,value)
         input.pointer={rect.x+rect.w-1,rect.y+rect.h*0.5}
         test_frame(&ctx,&input,build,&s)
@@ -165,11 +166,11 @@ a_slider_drags_cancels_and_steps_the_same_with_any_look :: proc(t:^testing.T) {
         test_key(&input,.Left)
         test_frame(&ctx,&input,build,&s)
         testing.expect(t,s.value==0 && !s.result.changed,"It stays in its range")
-        paint:^Paint
+        paint:^ui.Paint
         for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Slider {paint=&p}}
         if !testing.expect(t,paint!=nil) {continue}
         if look==nil {
-            testing.expect(t,paint.fill2==ctx.theme.accent && paint.radius*2==SLIDER_KNOB,"Without a look it is the slider of the theme")
+            testing.expect(t,paint.fill2==ui.tone(&ctx,"accent") && paint.radius*2==ui.SLIDER_KNOB,"Without a look it is the slider of the theme")
         } else {
             testing.expect(t,paint.fill==look.track && paint.fill2==look.mark && paint.stroke==look.knob && test_near(paint.radius*2,rect.h),"With one, every color is its look's and the knob is as tall as it")
         }

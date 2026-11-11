@@ -105,7 +105,7 @@ test_hud_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 a_tree_of_nodes_builds_the_widgets_it_describes :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Hud_Tree
     test_hud_init(t,&s)
@@ -145,7 +145,7 @@ a_tree_of_nodes_builds_the_widgets_it_describes :: proc(t:^testing.T) {
 @(test)
 the_state_of_a_node_is_what_its_last_build_showed :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Hud_Tree
     test_hud_init(t,&s)
@@ -203,9 +203,9 @@ test_hud_events :: proc(s:^Test_Hud_Tree,kind:Tree_Event_Kind) -> (found:Tree_Ev
 @(test)
 nodes_report_events_and_write_their_bound_fields :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     s:Test_Hud_Tree
     test_hud_init(t,&s)
     defer test_hud_destroy(&s)
@@ -348,7 +348,7 @@ bindings_must_name_fields_the_value_has :: proc(t:^testing.T) {
 @(test)
 a_tree_copied_byte_by_byte_builds_the_same_frame :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Hud_Tree
     test_hud_init(t,&s,true)
@@ -377,7 +377,7 @@ a_tree_copied_byte_by_byte_builds_the_same_frame :: proc(t:^testing.T) {
     testing.expect(t,tree_instance_init(&copied.instance,&copied.tree,test_host(&copied.host,&copied.schema,copied.type,&copied.values)))
     defer tree_instance_destroy(&copied.instance)
     other:Context
-    testing.expect(t,context_init(&other,TEST_SMALL))
+    testing.expect(t,test_context_init(&other,TEST_SMALL))
     defer context_destroy(&other)
     second:=test_frame(&other,&input,test_hud_build,&copied)
     testing.expect_value(t,len(second.vertices),len(vertices))
@@ -389,7 +389,7 @@ a_tree_copied_byte_by_byte_builds_the_same_frame :: proc(t:^testing.T) {
 @(test)
 nodes_play_the_animations_of_their_set :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Hud_Tree
     test_hud_init(t,&s,true)
@@ -426,7 +426,7 @@ nodes_play_the_animations_of_their_set :: proc(t:^testing.T) {
 @(test)
 the_same_tree_builds_twice_under_different_scopes :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Hud_Tree
     test_hud_init(t,&s)

@@ -76,7 +76,7 @@ asset_image_draw :: proc(s:^Session,image:^Asset_Image,side:u32,signature:u64,ve
     host.assets_commit(a)
     image.renderer=a.renderer
     image.made=gpu.renderer_pipelines_made(a.renderer)
-    field:=s.gui.ctx.theme.field
+    field:=ui.tone(s.gui.ctx,"field")
     handle,ok:=gpu.renderer_preview(a.renderer,&image.target,image.key,image.name,vertices,materials,side,image.size,{f32(field.r)/255,f32(field.g)/255,f32(field.b)/255},fit,view,light,channel)
     image.texture,image.ready=handle,ok
     // A frame takes a few images: one that found no room asks again in the next.
@@ -93,7 +93,7 @@ asset_image_show :: proc(s:^Session,image:^Asset_Image,height:=ui.GROW) -> (it:u
     found:bool
     if rect,found=ui.widget_rect(ctx,area);found {image.area={rect.w,rect.h}}
     it=ui.interact(ctx,area,{.Scroll})
-    if ui.box(ctx,{id=area,width=ui.GROW,height=height,align_x=.Center,align_y=.Center,fill=ctx.theme.field,track=true}) {
+    if ui.box(ctx,{id=area,width=ui.GROW,height=height,align_x=.Center,align_y=.Center,fill=ui.tone(ctx,"field"),track=true}) {
         a:=s.app.assets
         if !image.ready || image.texture==0 || a==nil || a.renderer==nil {return}
         index:=gpu.ui_image(a.renderer,image.texture)

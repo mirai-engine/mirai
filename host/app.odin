@@ -73,7 +73,7 @@ App_Desc :: struct {
 // is an argument the player does not understand.
 Launch :: struct {
     scene:string,
-    players:int,        // local players asked for, splitting the screen; 0: what the scene says
+    players:int,        // --players: the local players of the run (input.Run_Players); 0: not asked
     arguments:[]string, // what the player does not read itself
     taken:[]bool,       // by argument: a library read it
 }

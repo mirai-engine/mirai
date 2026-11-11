@@ -7,6 +7,7 @@ import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The modes of inspection of the viewport: what it shows instead of its lit
@@ -239,7 +240,7 @@ view_mode_build :: proc(s: ^Session) {
 		label = entry.title if entry.title != "" else entry.label
 	}
 	id, popup := shell_id(g, "view_mode"), shell_id(g, "view_mode_popup")
-	if ui.button(ctx, id, {label = label, icon = .Chevron_Down, icon_after = true, style = .Ghost, height = 26, size = ctx.theme.font_small, active = ui.popup_is_open(ctx, popup)}).clicked {
+	if ui.button(ctx, id, {label = label, icon = .Chevron_Down, icon_after = true, variant = "ghost", height = 26, size = ui.metric(ctx,"font_small"), active = ui.popup_is_open(ctx, popup)}).clicked {
 		anchor, _ := ui.widget_rect(ctx, id)
 		ui.popup_open(ctx, popup, {anchor.x, anchor.y + anchor.h, anchor.w, 0})
 	}
@@ -281,10 +282,10 @@ viewport_exposure_build :: proc(s: ^Session) {
 	if ui.menu_item(ctx, ui.id(ctx, "exposure_scene"), "Scene", {checked = v.exposure_source == .Scene}) {v.exposure_source = .Scene}
 	if ui.menu_item(ctx, ui.id(ctx, "exposure_camera"), "Camera", {checked = v.exposure_source == .Camera, disabled = !v.exposure.own}) {v.exposure_source = .Camera}
 	if ui.menu_item(ctx, ui.id(ctx, "exposure_manual"), "Manual", {checked = v.exposure_source == .Manual}) {v.exposure_source = .Manual}
-	if ui.box(ctx, {width = ui.GROW, height = ui.fixed(ctx.theme.control), padding = {6, 0, 6, 0}, gap = 7, align_y = .Center}) {
-		ui.label(ctx, "EV100", ctx.theme.font_small, ctx.theme.text, 40)
+	if ui.box(ctx, {width = ui.GROW, height = ui.fixed(ui.metric(ctx,"control")), padding = {6, 0, 6, 0}, gap = 7, align_y = .Center}) {
+		ui.label(ctx, "EV100", ui.metric(ctx,"font_small"), ui.tone(ctx,"text"), 40)
 		ev100 := f64(v.ev100)
-		if ui.slider_field(ctx, ui.id(ctx, "exposure_ev100"), &ev100, {min = -10, max = 24, has_min = true, has_max = true, decimals = 1, speed = 0.05, height = 22}).changed {
+		if kit.slider_field(ctx, ui.id(ctx, "exposure_ev100"), &ev100, {min = -10, max = 24, has_min = true, has_max = true, decimals = 1, speed = 0.05, height = 22}).changed {
 			v.ev100 = f32(ev100)
 			v.exposure_source = .Manual
 		}

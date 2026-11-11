@@ -10,7 +10,7 @@ test_leaf :: proc(ctx:^Context,name:string,index:int,l:Layout) {
 @(test)
 a_wrap_goes_on_in_another_row_where_the_next_child_does_not_fit :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     build :: proc(ctx:^Context,user:rawptr) {
         if box(ctx,{id=id(ctx,"wrap"),width=fixed(200),height=FIT,direction=.Wrap,gap=10,padding=padding_all(5),track=true}) {
@@ -34,7 +34,7 @@ a_wrap_goes_on_in_another_row_where_the_next_child_does_not_fit :: proc(t:^testi
 @(test)
 a_stack_lays_its_children_over_one_another_by_their_alignment :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     build :: proc(ctx:^Context,user:rawptr) {
         if box(ctx,{id=id(ctx,"stack"),width=FIT,height=FIT,direction=.Stack,padding=padding_all(4),align_x=.Center,align_y=.End,track=true}) {
@@ -56,7 +56,7 @@ a_stack_lays_its_children_over_one_another_by_their_alignment :: proc(t:^testing
 @(test)
 a_child_aligns_itself_across_its_parent_and_stretches :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     build :: proc(ctx:^Context,user:rawptr) {
         if box(ctx,{id=id(ctx,"column"),width=fixed(100),height=FIT,direction=.Column,align_x=.Start,track=true}) {
@@ -85,7 +85,7 @@ a_child_aligns_itself_across_its_parent_and_stretches :: proc(t:^testing.T) {
 @(test)
 an_aspect_gives_one_axis_from_the_other :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     build :: proc(ctx:^Context,user:rawptr) {
         if box(ctx,{id=id(ctx,"row"),width=fixed(300),height=FIT,gap=0,track=true}) {
@@ -106,7 +106,7 @@ an_aspect_gives_one_axis_from_the_other :: proc(t:^testing.T) {
 @(test)
 growing_children_share_what_is_left_by_their_weights :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     build :: proc(ctx:^Context,user:rawptr) {
         if box(ctx,{id=id(ctx,"row"),width=fixed(420),height=fixed(10),gap=10,track=true}) {
@@ -128,7 +128,7 @@ a_grid_takes_the_widths_of_its_tracks_and_children_span_columns :: proc(t:^testi
     ctx:Context
     desc:=TEST_SMALL
     desc.max_grid_tracks=2
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     build :: proc(ctx:^Context,user:rawptr) {
         tracks:=grid_tracks_add(ctx,{count=4,columns={0=fixed(50),1=FIT,2=GROW,3={kind=.Grow,value=3}}})
@@ -170,7 +170,7 @@ a_grid_takes_the_widths_of_its_tracks_and_children_span_columns :: proc(t:^testi
 @(test)
 a_float_that_contains_itself_flips_and_stays_inside_the_surface :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     build :: proc(ctx:^Context,user:rawptr) {
         if box(ctx,{id=id(ctx,"anchor"),width=fixed(40),height=fixed(20),float={to=.Surface,offset={770,560}},track=true}) {

@@ -79,8 +79,8 @@ test_game_number :: proc(s:^Test_Game,node:int) -> f64 {return bound_number(raw_
 test_game_context :: proc(t:^testing.T,ctx:^Context,s:^Test_Game,font:=false) {
     desc:=TEST_FONT if font else TEST_SMALL
     desc.navigation=true
-    testing.expect(t,context_init(ctx,desc))
-    ctx.theme.activate_on_press=false
+    testing.expect(t,test_context_init(ctx,desc))
+    ctx.release_activates=true
     ctx.game={
         user=s,
         texts=&s.texts,language=TEST_LANGUAGE,
@@ -510,7 +510,7 @@ rich_text_breaks_its_words_with_their_styles :: proc(t:^testing.T) {
     testing.expect(t,spans[5].text=="now" && spans[5].style.color==Color{255,136,0,255})
     testing.expect(t,spans[7].text=="<odd>","What is not a tag is text")
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     input:=test_input()
     build :: proc(ctx:^Context,user:rawptr) {
@@ -528,7 +528,7 @@ rich_text_breaks_its_words_with_their_styles :: proc(t:^testing.T) {
 @(test)
 a_progress_fills_from_the_side_its_style_says :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     build :: proc(ctx:^Context,user:rawptr) {
         if box(ctx,{direction=.Column,gap=4}) {
