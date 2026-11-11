@@ -1124,7 +1124,11 @@ obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:^core.Tabl
             o:=&b.obstacles.values[at]
             if o.box!=box {
                 if o.blocks {mark_box(n,o.box,limits,volumes=true)}
-                o.box,o.volume,o.still,o.blocks=box,volume,0,false
+                // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+                o.box=box
+                o.volume=volume
+                o.still=0
+                o.blocks=false
             }
         } else if at<0 {continue}
         o:=&b.obstacles.values[at]

@@ -55,20 +55,21 @@ no_store_of_an_aggregate_of_more_than_64_bytes :: proc(t:^testing.T) {
     if !testing.expect_value(t,open_error.code,project.Error_Code.None) {return}
     generated,written:=generated_write(&p,.Editor)
     if !testing.expectf(t,written,"the demo generates no world: %v",generated.errors) {return}
+    // The project sees its plugins and game/ through the declarations of their libraries, as it builds.
+    plugins_decl:=project.path(folder,"plugins","decl")
+    project_decl:=project.path(folder,"plugins","decl-project")
+    _=os.make_directory_all(project_decl)
     for &lib in plugin_libraries(&p,true,context.temp_allocator) {
-        // The demo's own code compiles with the project, below.
-        if lib.project {continue}
         lib.stage=project.path(folder,"plugins",lib.stage[strings.last_index_byte(lib.stage,'/')+1:])
         // A name for the import library its stage links: IR links nothing.
         plugin_library_name(p.root,&lib,0,context.temp_allocator)
         failed:=plugin_library_prepare(&lib,nil)
         if !testing.expectf(t,len(failed)==0,"%v",failed) {return}
-        if !ir(t,root,compiler,project.path(lib.stage,PLUGIN_ENTRY),project.path(folder,"ir",lib.family),flags[:],fmt.tprintf("-collection:mirai=%s",decl),fmt.tprintf("-collection:%s=%s",STAGE_COLLECTION,lib.stage),fmt.tprintf("-collection:plugins=%s",project.path(folder,"plugins","decl"))) {return}
+        if !ir(t,root,compiler,project.path(lib.stage,PLUGIN_ENTRY),project.path(folder,"ir",lib.family),flags[:],fmt.tprintf("-collection:mirai=%s",decl),fmt.tprintf("-collection:%s=%s",STAGE_COLLECTION,lib.stage),fmt.tprintf("-collection:plugins=%s",plugins_decl),fmt.tprintf("-collection:project=%s",project_decl)) {return}
     }
-    // The project sees the plugins through the declarations of their libraries, as it builds.
     extra:=generated_flags(p.root,context.temp_allocator)
     if !ir(t,root,compiler,generated_folder(p.root,.Editor,context.temp_allocator),project.path(folder,"ir/demo"),flags[:],
-        fmt.tprintf("-collection:mirai=%s",decl),fmt.tprintf("-collection:project=%s",p.root),fmt.tprintf("-collection:plugins=%s",project.path(folder,"plugins","decl")),extra[0]) {return}
+        fmt.tprintf("-collection:mirai=%s",decl),fmt.tprintf("-collection:project=%s",project_decl),fmt.tprintf("-collection:plugins=%s",plugins_decl),extra[0]) {return}
 
     large:=0
     walker:=os.walker_create(project.path(folder,"ir"))

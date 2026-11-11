@@ -142,7 +142,9 @@ authoring_clip_inspect :: proc(s:^editor.Session,call:^api.Call,p:^Asset_Inspect
     r.clips=make([]Asset_Clip_Name,len(view.clips),call.allocator)
     for &clip,i in r.clips {clip.name=view.clips[i].name}
     clip:=view.clips[selected]
-    r.clip,r.root=clip.name,clip.root
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    r.clip=clip.name
+    r.root=clip.root
     tracks:=view.tracks[clip.first_track:][:clip.track_count]
     first:=min(int(p.offset),len(tracks))
     r.tracks_total,r.tracks=u32(len(tracks)),make([]Asset_Clip_Track,min(first+int(p.limit),len(tracks))-first,call.allocator)
@@ -194,7 +196,12 @@ authoring_track_inspect :: proc(s:^editor.Session,call:^api.Call,p:^Asset_Inspec
     track:=view.tracks[clip.first_track+u32(selected)]
     keys:=view.keys[track.first_key:][:track.key_count]
     base.text_set(r.path[:],file.path)
-    r.clip,r.target,r.property,r.slot,r.keys_total=clip.name,track.target,track.property,track.slot,u32(len(keys))
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    r.clip=clip.name
+    r.target=track.target
+    r.property=track.property
+    r.slot=track.slot
+    r.keys_total=u32(len(keys))
     r.keys=authoring_page(call,keys,p.offset,p.limit)
 }
 

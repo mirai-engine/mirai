@@ -20,6 +20,7 @@
 *.fracture binary
 *.foliage binary
 *.navmesh binary
+*.paint binary
 *.physics_cache binary
 *.terrain binary
 *.particle merge=mirai diff=mirai -text

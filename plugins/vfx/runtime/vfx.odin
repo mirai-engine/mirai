@@ -349,14 +349,15 @@ births_since :: proc(clock:^Emitter_Clock,started:^u64) -> (spawns:[SPAWNS]Parti
 // its mesh: it is resolved again.
 @(private)
 shown_resolve :: proc(shown:^Emitter_Shown,a:^host.Assets,renderer:^erender.Renderer,particle:base.Asset_Id,override:^Particle_Override,ids:[2]u64,needs:^Program_Needs) -> bool {
-    ready:bool
-    shown.desc,ready=emitter_desc(particle_resolve(a,particle,override),a,renderer,ids[0])
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    desc,ready:=emitter_desc(particle_resolve(a,particle,override),a,renderer,ids[0])
+    shown.desc=desc
     d:=&shown.desc
     problem:=particle_program(a,particle,&d.info,override,&d.program,needs)
     shown.sub_desc={}
     if d.info.trigger!=.None && d.info.sub_particle!={} {
-        sub_ready:bool
-        shown.sub_desc,sub_ready=emitter_desc(particle_resolve(a,d.info.sub_particle,nil),a,renderer,ids[1])
+        sub_desc,sub_ready:=emitter_desc(particle_resolve(a,d.info.sub_particle,nil),a,renderer,ids[1])
+        shown.sub_desc=sub_desc
         sub:=&shown.sub_desc
         if sub_problem:=particle_program(a,d.info.sub_particle,&sub.info,nil,&sub.program);problem=="" {problem=sub_problem}
         sub.capacity+=min(d.capacity*d.info.sub_count,1<<16)
