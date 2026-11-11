@@ -70,10 +70,8 @@ void PrepareLuma(FfxInt32x2 iGlobalId, FfxInt32 iLocalIndex)
 {
 #define PixelsPerThreadX 2
 #define PixelsPerThreadY 2
-#pragma unroll
     for (FfxInt32 y = 0; y < PixelsPerThreadY; y++)
     {
-#pragma unroll
         for (FfxInt32 x = 0; x < PixelsPerThreadX; x++)
         {
             FfxInt32x2 pos = iGlobalId * FfxInt32x2(PixelsPerThreadX, PixelsPerThreadY) + FfxInt32x2(x, y);

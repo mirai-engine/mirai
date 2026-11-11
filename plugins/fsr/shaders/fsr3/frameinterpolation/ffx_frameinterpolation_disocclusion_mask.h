@@ -86,11 +86,7 @@ FfxFloat32 ComputeDepthClip(FfxUInt32 estimatedIndex, FfxFloat32x2 fUvSample, Ff
 
                 if (fDepthDiff > 0.0f) {
 
-#if FFX_FRAMEINTERPOLATION_OPTION_INVERTED_DEPTH
                     const FfxFloat32 fPlaneDepth = ffxMin(fPrevDepthSample, fCurrentDepthSample);
-#else
-                    const FfxFloat32 fPlaneDepth = ffxMax(fPrevDepthSample, fCurrentDepthSample);
-#endif
 
                     const FfxFloat32x3 fCenter = GetViewSpacePosition(FfxInt32x2(RenderSize() * 0.5f), RenderSize(), fPlaneDepth);
                     const FfxFloat32x3 fCorner = GetViewSpacePosition(FfxInt32x2(0, 0), RenderSize(), fPlaneDepth);

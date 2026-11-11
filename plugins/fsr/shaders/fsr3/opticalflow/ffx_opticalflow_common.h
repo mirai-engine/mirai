@@ -23,15 +23,11 @@
 #if !defined(FFX_OPTICALFLOW_COMMON_H)
 #define FFX_OPTICALFLOW_COMMON_H
 
-#if defined(FFX_GPU)
-
 #define SCD_OUTPUT_SCENE_CHANGE_SLOT            0
 #define SCD_OUTPUT_HISTORY_BITS_SLOT            1
 #define SCD_OUTPUT_COMPLETED_WORKGROUPS_SLOT    2
 
-
 #define ffxClamp(x, a, b) (ffxMax(a, ffxMin(b, x)))
-
 
 FfxUInt32 GetPackedLuma(FfxInt32 width, FfxInt32 x, FfxUInt32 luma0, FfxUInt32 luma1, FfxUInt32 luma2, FfxUInt32 luma3)
 {
@@ -62,21 +58,14 @@ FfxUInt32 GetPackedLuma(FfxInt32 width, FfxInt32 x, FfxUInt32 luma0, FfxUInt32 l
 
 FfxUInt32 Sad(FfxUInt32 a, FfxUInt32 b)
 {
-#if FFX_OPTICALFLOW_USE_MSAD4_INSTRUCTION == 1
-    return msad4(a, FfxUInt32x2(b, 0), FfxUInt32x4(0, 0, 0, 0)).x;
-#else
     return abs(FfxInt32((a >> 0) & 0xffu) - FfxInt32((b >> 0) & 0xffu)) +
         abs(FfxInt32((a >> 8) & 0xffu) - FfxInt32((b >> 8) & 0xffu)) +
         abs(FfxInt32((a >> 16) & 0xffu) - FfxInt32((b >> 16) & 0xffu)) +
         abs(FfxInt32((a >> 24) & 0xffu) - FfxInt32((b >> 24) & 0xffu));
-#endif
 }
 
 FfxUInt32x4 QSad(FfxUInt32 a0, FfxUInt32 a1, FfxUInt32 b)
 {
-#if FFX_OPTICALFLOW_USE_MSAD4_INSTRUCTION == 1
-    return msad4(b, FfxUInt32x2(a0, a1), FfxUInt32x4(0, 0, 0, 0));
-#else
     FfxUInt32x4 sad;
     sad.x = Sad(a0, b);
 
@@ -91,9 +80,6 @@ FfxUInt32x4 QSad(FfxUInt32 a0, FfxUInt32 a1, FfxUInt32 b)
     a0 = (a0 >> 8) | ((a1 & 0xffu) << 24);
     sad.w = Sad(a0, b);
     return sad;
-#endif
 }
-
-#endif  // #if defined(FFX_GPU)
 
 #endif //!defined(FFX_OPTICALFLOW_COMMON_H)

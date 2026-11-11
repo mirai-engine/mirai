@@ -86,10 +86,6 @@ FfxFloat32x4 SpdReduce4(FfxFloat32x4 v0, FfxFloat32x4 v1, FfxFloat32x4 v2, FfxFl
     return (v0 + v1 + v2 + v3) * 0.25;
 }
 
-#ifdef FFX_HALF
-#undef FFX_HALF
-#endif
-
 // https://github.com/GPUOpen-Effects/FidelityFX-SPD/blob/master/docs/FidelityFX_SPD.pdf
 #include "../spd/ffx_spd.h" // Mirai: the SPD of the SDK beside this folder
 
