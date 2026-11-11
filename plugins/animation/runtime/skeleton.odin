@@ -12,10 +12,14 @@ import mm "mirai:std/math"
 import lib "mirai:std/anim"
 import "base:runtime"
 
-// A mesh that shows the pose of a rig of its skeleton instead of posing its own;
-// with a skeleton of its own it is a rig that follows that one (Rig.leader).
-@(component,description="Uses another entity's evaluated pose to deform this mesh: clothing and meshes that share one rig. A mesh of another skeleton, as a head, follows it on the bones of the same name and keeps its own animation on the rest.")
-Pose_Source :: struct {rig:core.Entity}
+// The one link by which a rig takes the pose of another (Rig.leader). At stage Finished a mesh of
+// the same skeleton shows the finished pose of rig instead of posing its own, and one of another
+// skeleton follows it on the bones they share by name; at stage Sampled it takes the pose rig
+// sampled, before the modifiers of rig, mapped by those names or by the Chain Retarget rows of
+// its .character, and adapts it with its own modifiers (a live retarget).
+Pose_Stage :: enum u8 {Finished,Sampled}
+@(component,description="Takes the pose of another rig: clothing that shares it, a head of another skeleton that follows it by bone names, or, at stage Sampled, a character of other proportions that plays its animation through bone names or the chains of its .character.")
+Pose_Source :: struct {rig:core.Entity,stage:Pose_Stage}
 
 // A bone by its path, or by its name when no other bone has it. A text that
 // starts with BODY_LABEL names a part of the body of the skeleton instead
@@ -120,7 +124,7 @@ skeleton_assets_free :: proc(cache:^Skeleton_Assets) {
 }
 
 // Advances when what the plugin reads of the assets may have changed: a file
-// of the registry, on disk or unsaved in its memory, or what the host gave out
+// of the registry, on disk or in its memory, or what the host gave out
 // of one. A content looks at its record again only then. Never 0.
 @(private)
 assets_stamp :: proc "contextless" (assets:^host.Assets) -> u64 {return assets.revision+assets.registry.revision+1}
@@ -202,7 +206,7 @@ skeleton_mirror_pairs :: proc(bones:[]asset.Skeleton_Bone,allocator:=context.all
 }
 
 skeleton_bind :: proc(playback:^Playback,state:^Playing,content:^Skeleton_Content,clip:^host.Content_Animation,transforms:^core.Table(core.Transform)) -> bool {
-    root,exists:=core.get(core.read(transforms),state.entity)
+    root,exists:=core.get(transforms,state.entity)
     if !exists {return false}
     count:=len(content.bones)+1
     next:Playing
@@ -280,24 +284,43 @@ bone_named :: proc(state:^Playing,hash:u64) -> int {
     return found
 }
 
-// What a reference of a mask or an over holds: a bone and the bones below
-// it, or with bone -1, regions of the body.
-Bone_Selection :: struct {bone:int,regions:lib.Body_Regions}
+// A branch of the body a layer moves: a bone, @part or @region and the bones below it. The share of
+// the layer grows by 1/depth a bone down from where the branch starts, so the layer fades in along
+// the chain instead of cutting at it; 0 and 1 cut.
+LAYER_BRANCHES :: 4
+Layer_Branch :: struct {bone:Bone_Ref,depth:u8 `mirai:"optional"`}
+Layer_Over :: [LAYER_BRANCHES]struct {bone:u64,depth:u8} // the branches of a layer by base.name_hash of their reference; none: the whole pose
 
-bone_select :: proc(state:^Playing,hash:u64) -> (selection:Bone_Selection,ok:bool) {
-    if bone:=bone_named(state,hash);bone>=0 {return {bone=bone},true}
-    if state.body=={} {return {bone=-1},false}
-    part,regions,is_part,is_region:=body_label(hash)
-    if is_region && len(state.regions)==len(state.parents) {return {bone=-1,regions=regions},true}
-    if is_part && state.body[part]>0 {return {bone=int(state.body[part])},true}
-    return {bone=-1},false
-}
-
-bone_selected :: proc "contextless" (state:^Playing,selection:Bone_Selection,bone:int) -> bool {
-    if selection.bone<0 {return lib.body_region_inside(state.regions[bone],selection.regions)}
-    at:=bone
-    for at>selection.bone {at=int(state.parents[at])}
-    return at==selection.bone
+// The share of its layer each bone of state takes, into weights by binding: the most any branch of
+// over gives it, or all of it without branches. False for a branch this rig does not have.
+layer_mask :: proc(state:^Playing,over:Layer_Over,weights:[]f32) -> bool {
+    n:=len(weights)
+    if over=={} {slice.fill(weights,1);return true}
+    slice.zero(weights)
+    for branch in over {
+        if branch.bone==0 {continue}
+        root:=bone_named(state,branch.bone)
+        regions:lib.Body_Regions
+        if root<0 {
+            if state.body=={} {return false}
+            part,named,is_part,is_region:=body_label(branch.bone)
+            if is_region && len(state.regions)==n {regions=named} else if is_part && state.body[part]>0 {root=int(state.body[part])} else {return false}
+        }
+        step:=1/f32(max(branch.depth,1))
+        for b in 0..<n {
+            // Bones of the branch from b up to where it starts; parents come before their bones.
+            steps:=0
+            if root<0 {
+                for at:=b;at>=0 && lib.body_region_inside(state.regions[at],regions);at=int(state.parents[at]) {steps+=1}
+            } else {
+                at:=b
+                for at>root {at=int(state.parents[at]);steps+=1}
+                steps=steps+1 if at==root else 0
+            }
+            weights[b]=max(weights[b],min(f32(steps)*step,1))
+        }
+    }
+    return true
 }
 
 bone_target :: proc(state:^Playing,reference:Bone_Ref) -> u64 {

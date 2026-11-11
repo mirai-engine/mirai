@@ -6,7 +6,9 @@ import "core:log"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:render/abi"
 import "mirai:std/base"
+import "mirai:std/serial"
 
 // The programs of shaders/materials: a source that declares one in its first
 // line (//! mirai <domain> <name>) gives one.
@@ -67,7 +69,7 @@ programs_of :: proc(f:^Programs_Fixture) -> (catalog:Catalog,problem:string) {
 }
 
 @(private="file")
-program_named :: proc(catalog:Catalog,name:string) -> (Program,bool) {
+program_named :: proc(catalog:Catalog,name:string) -> (abi.Program,bool) {
     for program in catalog.programs {if program.name==name {return program,true}}
     return {},false
 }
@@ -94,26 +96,24 @@ namespace Fixture {
     fixture,found:=program_named(catalog,"Fixture")
     testing.expect(t,found,"the program of the project is in the catalog")
     if !found {return}
-    testing.expect_value(t,fixture.domain,"surface")
+    testing.expect_value(t,fixture.domain,abi.Program_Domain.Surface)
     testing.expect_value(t,fixture.source,"project/typed.slang")
     testing.expect_value(t,len(fixture.parameters),4)
     tint,index,enabled,texture:=fixture.parameters[0],fixture.parameters[1],fixture.parameters[2],fixture.parameters[3]
-    testing.expect(t,tint.name=="tint" && tint.kind=="float32" && tint.components==3 && tint.offset==0 && tint.color && tint.default_list)
+    testing.expect(t,tint.name=="tint" && tint.kind==.Float && tint.components==3 && tint.offset==0 && tint.color)
     testing.expect(t,tint.group=="Look" && index.group=="","a parameter keeps the group it names")
-    testing.expect_value(t,tint.defaults[1],Default(Number{is_float=true,float=0.5}))
-    testing.expect_value(t,tint.defaults[0],Default(Number{integer=1}))
+    testing.expect_value(t,tint.defaults,[4]f64{1,0.5,0.25,0})
     testing.expect_value(t,index.offset,12)
-    testing.expect_value(t,index.kind,"int32")
-    testing.expect_value(t,index.defaults[0],Default(Number{integer=-2}))
-    testing.expect_value(t,index.min,Number{integer=-10})
-    testing.expect_value(t,enabled.defaults[0],Default(false))
-    testing.expect_value(t,enabled.min,Number{is_float=true,float=-1e20})
-    testing.expect(t,texture.kind=="texture" && texture.srgb && !texture.normal)
-    testing.expect_value(t,texture.defaults[0],Default(""))
+    testing.expect_value(t,index.kind,abi.Program_Kind.Int)
+    testing.expect_value(t,index.defaults[0],-2)
+    testing.expect_value(t,index.min,-10)
+    testing.expect_value(t,enabled.defaults[0],0)
+    testing.expect_value(t,enabled.min,-1e20)
+    testing.expect(t,texture.kind==.Texture && texture.srgb && !texture.normal)
     // The built-in programs come first, in the order of their files.
     testing.expect_value(t,catalog.programs[0].name,"ColorGrade")
-    testing.expect_value(t,catalog.programs[0].id,1)
-    testing.expect_value(t,fixture.id,len(catalog.programs))
+    testing.expect_value(t,catalog.programs[0].id,u32(1))
+    testing.expect_value(t,int(fixture.id),len(catalog.programs))
 
     own_bytes,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_FOLDER,"Fixture",SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
     own:=string(own_bytes)
@@ -121,19 +121,20 @@ namespace Fixture {
     testing.expect(t,strings.contains(own,"#include \"programs/project/typed.slang\""))
     testing.expect(t,strings.contains(own,"    p.tint=float3(packed[0].x,packed[0].y,packed[0].z);\n    p.index=asint(packed[0].w);\n    p.enabled=(asuint(packed[1].x)!=0);\n    p.map=asuint(packed[1].y);\n"),own)
     testing.expect(t,strings.contains(own,"value=Fixture::evaluate(ctx,mirai_load_Fixture(packed));return true;"),own)
-    testing.expect(t,!strings.contains(own,"ocean.slang") && !strings.contains(own,"color_grade"),"the include of a program has that program alone")
+    testing.expect(t,!strings.contains(own,"screen_blur") && !strings.contains(own,"color_grade"),"the include of a program has that program alone")
     dispatch_bytes,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
     dispatch:=string(dispatch_bytes)
-    testing.expect(t,!strings.contains(dispatch,"Fixture") && !strings.contains(dispatch,"ocean.slang") && strings.contains(dispatch,"{return false;}"),"the include of the generation evaluates no program")
+    testing.expect(t,!strings.contains(dispatch,"Fixture") && strings.contains(dispatch,"{return false;}"),"the include of the generation evaluates no program")
     post_bytes,_:=os.read_entire_file(path_join(f.output,"include",POSTPROCESS_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
     post:=string(post_bytes)
     testing.expect(t,strings.contains(post,"programs/builtin/color_grade.slang") && strings.contains(post,"    case 1: return ColorGrade::evaluate(ctx,mirai_load_ColorGrade(packed));"),post)
-    testing.expect(t,!strings.contains(post,"Fixture") && !strings.contains(post,"ocean.slang") && !strings.contains(post,"mirai_evaluate_program"))
+    testing.expect(t,!strings.contains(post,"Fixture") && !strings.contains(post,"ui_shine.slang") && !strings.contains(post,"mirai_evaluate_program"))
     testing.expect(t,os.is_file(path_join(f.output,"include/programs/project/helpers.slang",allocator=context.temp_allocator)),"the generation carries the sources it includes")
-    testing.expect(t,os.is_file(path_join(f.output,"include/programs/builtin/ocean.slang",allocator=context.temp_allocator)))
-    stored,_:=os.read_entire_file(path_join(f.output,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
-    testing.expect(t,strings.contains(string(stored),"\"default\": [\n            1,\n            0.5,\n            0.25\n          ],\n          \"min\": 0,\n          \"max\": 10,"),"the catalog keeps numbers as the source wrote them")
-    testing.expect(t,strings.contains(string(stored),"\"min\": -1e+20,\n          \"max\": 1e+20,"))
+    testing.expect(t,os.is_file(path_join(f.output,"include/programs/builtin/color_grade.slang",allocator=context.temp_allocator)))
+    stored,_:=os.read_entire_file(path_join(f.output,abi.SHADER_CATALOG,allocator=context.temp_allocator),context.temp_allocator)
+    read:abi.Shader_Catalog
+    testing.expect_value(t,serial.text_decode(string(stored),&read,context.temp_allocator),"")
+    testing.expect(t,len(read.programs)==len(catalog.programs) && read.programs[len(read.programs)-1].parameters[0].defaults==tint.defaults,"the catalog reads back as it was written")
 
     first:=catalog.fingerprint
     fixture_write(t,f.project,"shaders/helpers.slang","float3 sample_color(float x) {return float3(2*x,x,x);}\n")
@@ -182,9 +183,9 @@ programs_reject_a_name_declared_twice_or_reserved :: proc(t:^testing.T) {
     fixture_write(t,f.project,"shaders/a.slang","//! mirai postprocess pbr\nnamespace pbr {struct Parameters {float amount;};}\n")
     _,problem=programs_of(&f)
     testing.expect(t,strings.contains(problem,"duplicate/reserved program name pbr"),problem)
-    fixture_write(t,f.project,"shaders/a.slang","//! mirai surface Ocean\nnamespace Ocean {struct Parameters {float amount;};}\n")
+    fixture_write(t,f.project,"shaders/a.slang","//! mirai postprocess ColorGrade\nnamespace ColorGrade {struct Parameters {float amount;};}\n")
     _,problem=programs_of(&f)
-    testing.expect(t,strings.contains(problem,"duplicate/reserved program name Ocean"),"a project cannot take the name of a built-in program")
+    testing.expect(t,strings.contains(problem,"duplicate/reserved program name ColorGrade"),"a project cannot take the name of a built-in program")
 }
 
 @(test)
@@ -200,7 +201,7 @@ programs_take_parameter_ranges_within_the_bounds_of_the_loader :: proc(t:^testin
     program,found:=program_named(catalog,"Range")
     testing.expect(t,found)
     if !found {return}
-    testing.expect_value(t,program.parameters[0].min,Number{is_float=true,float=-1e30})
+    testing.expect_value(t,program.parameters[0].min,-1e30)
     for bounds in ([][2]string{{"-1e+31","1e+30"},{"-1e+30","1e+31"},{"false","1"},{"-1","true"},{"2","1"},{"\"0\"","1"}}) {
         declare(t,&f,bounds[0],bounds[1])
         _,problem=programs_of(&f)
@@ -224,7 +225,7 @@ programs_reuse_a_warm_reflection_and_reflect_again_only_what_changed :: proc(t:^
     testing.expect_value(t,f.runner.runs,0)
     testing.expect_value(t,warm.fingerprint,cold.fingerprint)
     cached,found:=program_named(warm,"Cached")
-    testing.expect(t,found && cached.size==16 && len(cached.parameters)==1 && cached.parameters[0].kind=="float32","a cached reflection gives the same parameters")
+    testing.expect(t,found && cached.size==16 && len(cached.parameters)==1 && cached.parameters[0].kind==.Float,"a cached reflection gives the same parameters")
     // The same program in another project, or another checkout, is the same entry.
     elsewhere:=base.test_folder(t,"shaders")
     if elsewhere=="" {return}
@@ -286,8 +287,8 @@ parameter_metadata_publishes_a_new_catalog_without_reflecting_or_changing_dispat
     program,found:=program_named(next,"Metadata")
     testing.expect(t,found)
     if found {
-        testing.expect(t,program.parameters[0].color && program.parameters[0].max==Number{integer=2})
-        testing.expect_value(t,program.parameters[0].defaults[0],Default(Number{is_float=true,float=0.25}))
+        testing.expect(t,program.parameters[0].color && program.parameters[0].max==2)
+        testing.expect_value(t,program.parameters[0].defaults[0],0.25)
         testing.expect(t,program.parameters[1].srgb && program.parameters[1].normal,"texture interpretation is refreshed")
     }
     invalid,_:=strings.replace_all(changed,"\"max\":2","\"max\":0",context.temp_allocator)
@@ -306,9 +307,9 @@ programs_without_a_project_are_the_built_in_ones :: proc(t:^testing.T) {
     catalog,problem:=programs_generate(&f.runner,root,"",f.output,f.slangc,f.version,f.cache,allocator=context.temp_allocator)
     testing.expect_value(t,problem,"")
     testing.expect_value(t,len(catalog.programs),builtin_programs())
-    domains:=make(map[string]string,context.temp_allocator)
+    domains:=make(map[string]abi.Program_Domain,context.temp_allocator)
     for program in catalog.programs {domains[program.name]=program.domain}
-    testing.expect(t,domains["ColorGrade"]=="postprocess" && domains["Ocean"]=="surface","each built-in program keeps the domain its source declares")
+    testing.expect(t,domains["ColorGrade"]==.Postprocess && domains["Ui_Shine"]==.Ui,"each built-in program keeps the domain its source declares")
     // What the engine has committed is this catalog, byte for byte.
     committed,_:=os.read_entire_file(path_join(root,"shaders/build/catalog.json",allocator=context.temp_allocator),context.temp_allocator)
     generated,_:=os.read_entire_file(path_join(f.output,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
@@ -346,7 +347,7 @@ program_declaration_and_metadata_lines_are_recognized :: proc(t:^testing.T) {
 // The compilations of a cold reflection: a Surface program has its alpha
 // probed too (alpha_probe), unless the cache has it.
 reflections :: proc(catalog:Catalog,probes:=true) -> (runs:int) {
-    for program in catalog.programs {runs+=program.domain=="vfx" || probes && program.domain=="surface"?2:1}
+    for program in catalog.programs {runs+=program.domain==.Vfx || probes && program.domain==.Surface?2:1}
     return
 }
 
@@ -364,6 +365,7 @@ surface_coverage_holds_the_programs_whose_alpha_is_not_the_default :: proc(t:^te
         {"Mapped","s.alpha=mirai_sample_texture(ctx,p.map,ctx.uv0,ctx.lod).a;",true},
         {"Mixed","Mirai_Surface hole=s;hole.alpha=0.0;s=mirai_surface_mix(s,hole,p.tint.y);",true},
         {"Constant","s.alpha=0.25;",true},
+        {"Built","s=mirai_surface_standard(ctx);s.emission+=p.tint;",true}, // the alpha of its material
     }
     for c in cases {
         fixture_write(t,f.project,fmt.tprintf("shaders/%s.slang",c.name),fmt.tprintf("//! mirai surface %s\nnamespace %s {{struct Parameters {{float3 tint;uint map;}}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{Mirai_Surface s=mirai_surface_default(ctx);%sreturn s;}}}}\n",c.name,c.name,c.body))
@@ -377,11 +379,13 @@ surface_coverage_holds_the_programs_whose_alpha_is_not_the_default :: proc(t:^te
         testing.expectf(t,found && program.coverage==c.coverage,"%s: coverage %v",c.name,program.coverage)
         listed:=strings.contains(coverage,fmt.tprintf("alpha=%s::evaluate(",c.name))
         testing.expectf(t,listed==c.coverage,"%s is in the coverage include: %v",c.name,listed)
+        testing.expectf(t,program.standard==(c.name=="Built"),"%s: only a program that names the standard model of its material builds on it",c.name)
         own,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_FOLDER,c.name,SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
         testing.expectf(t,strings.contains(string(own),fmt.tprintf("#ifndef MIRAI_PROGRAM_%s",c.name)),"%s: one source for both includes of a stage",c.name)
     }
     stored,_:=os.read_entire_file(path_join(f.output,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
     testing.expect(t,strings.contains(string(stored),"\"coverage\": true"))
+    testing.expect(t,strings.contains(string(stored),"\"standard\": true"))
     // The cache keeps what the probe found.
     f.runner.runs=0
     warm,_:=programs_of(&f)
@@ -423,7 +427,7 @@ vfx_programs_load_their_attributes_and_dispatch_three_entries :: proc(t:^testing
     catalog,problem:=programs_of(&f)
     testing.expect_value(t,problem,"")
     drift,found:=program_named(catalog,"Drift")
-    testing.expect(t,found && drift.domain=="vfx" && drift.attributes==16 && len(drift.parameters)==1)
+    testing.expect(t,found && drift.domain==.Vfx && drift.attributes==16 && len(drift.parameters)==1)
     include,_:=os.read_entire_file(path_join(f.output,"include",VFX_FOLDER,"Drift",VFX_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
     text:=string(include)
     testing.expect(t,strings.contains(text,"Drift::Attributes mirai_attributes_load_Drift(uint at)"))
@@ -435,30 +439,16 @@ vfx_programs_load_their_attributes_and_dispatch_three_entries :: proc(t:^testing
     catalog,problem=programs_of(&f)
     testing.expect_value(t,problem,"")
     drift,found=program_named(catalog,"Drift")
-    testing.expect(t,found && len(drift.resources)==2 && drift.resources[0]==Resource{"body","surface",false,0} && drift.resources[1]==Resource{"hits","channel",false,0})
+    testing.expect(t,found && len(drift.resources)==2 && drift.resources[0]==abi.Program_Resource{"body",.Surface,false,0} && drift.resources[1]==abi.Program_Resource{"hits",.Channel,false,0})
     include,_=os.read_entire_file(path_join(f.output,"include",VFX_FOLDER,"Drift",VFX_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
     testing.expect(t,strings.contains(string(include),"namespace Drift {static const uint body=0u;static const uint hits=1u;}"))
-    written,_:=os.read_entire_file(path_join(f.output,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
-    listed:=0
-    if root,parsed:=json.parse(written,allocator=context.temp_allocator);parsed==.None {
-        for entry in root.(json.Object)["programs"].(json.Array) {
-            program:=entry.(json.Object)
-            if program["name"].(json.String)!="Drift" {continue}
-            for resource in program["resources"].(json.Array) {
-                listed+=1
-                kinds:=[2]string{"surface","channel"}
-                testing.expect(t,listed<=2 && resource.(json.Object)["kind"].(json.String)==kinds[min(listed,2)-1])
-            }
-        }
-    }
-    testing.expect_value(t,listed,2)
     // A program that moves its particles, reads another emitter and writes a cleared grid in a stage over its particles.
-    fixture_write(t,f.project,"shaders/drift.slang","//! mirai vfx Drift\n//! moves\n//! resource leader emitter\n//! resource counts grid cleared\n//! stage count over particles writes counts\nnamespace Drift {struct Parameters {float speed;}; struct Attributes {uint hits;};\nvoid initialize(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid count(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {mirai_vfx_grid_word_add(ctx,counts,int3(0),0u,1u);a.hits=mirai_vfx_emitter_alive(ctx,leader);}\nvoid update(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid render(Mirai_Vfx_Context ctx,Parameters p,Mirai_Vfx_Particle particle,Attributes a,inout Mirai_Vfx_Visual visual) {}}\n")
+    fixture_write(t,f.project,"shaders/drift.slang","//! mirai vfx Drift\n//! moves\n//! resource leader emitter\n//! resource counts grid cleared\n//! stage count over particles writes counts\nnamespace Drift {struct Parameters {float speed;}; struct Attributes {uint hits;};\nvoid initialize(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid count(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {mirai_vfx_grid_word_add(ctx,counts,int3(0),0u,1u);a.hits=mirai_vfx_emitter_capacity(ctx,leader);}\nvoid update(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid render(Mirai_Vfx_Context ctx,Parameters p,Mirai_Vfx_Particle particle,Attributes a,inout Mirai_Vfx_Visual visual) {}}\n")
     catalog,problem=programs_of(&f)
     testing.expect_value(t,problem,"")
     drift,found=program_named(catalog,"Drift")
-    testing.expect(t,found && drift.moves && len(drift.resources)==2 && drift.resources[0]==Resource{"leader","emitter",false,0} && drift.resources[1]==Resource{"counts","grid",true,0})
-    testing.expect(t,found && len(drift.stages)==1 && len(drift.stages[0].writes)==1 && drift.stages[0].writes[0]=="counts")
+    testing.expect(t,found && drift.moves && len(drift.resources)==2 && drift.resources[0]==abi.Program_Resource{"leader",.Emitter,false,0} && drift.resources[1]==abi.Program_Resource{"counts",.Grid,true,0})
+    testing.expect(t,found && len(drift.stages)==1 && drift.stages[0].writes==1<<1)
     // A stage writes only grids the program declares.
     fixture_write(t,f.project,"shaders/drift.slang","//! mirai vfx Drift\n//! resource leader emitter\n//! stage count over particles writes leader\nnamespace Drift {struct Parameters {float speed;}; struct Attributes {uint hits;};\nvoid initialize(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid count(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid update(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid render(Mirai_Vfx_Context ctx,Parameters p,Mirai_Vfx_Particle particle,Attributes a,inout Mirai_Vfx_Visual visual) {}}\n")
     _,problem=programs_of(&f)
@@ -468,28 +458,28 @@ vfx_programs_load_their_attributes_and_dispatch_three_entries :: proc(t:^testing
     _,problem=programs_of(&f)
     testing.expectf(t,strings.contains(problem,"Drift.body: a resource is of kind") && strings.contains(problem,"surface"),"%s",problem)
     // Its stages, over particles or a grid it reads, go to the catalog and to the dispatchers of their kind.
-    stages_source:="//! mirai vfx Drift\n//! resource field grid\n//! stage push over particles neighbors 0.5 iterations 2\n//! stage relax over field iterations 3\nnamespace Drift {struct Parameters {float speed;}; struct Attributes {uint hits;};\nvoid initialize(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid push(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid relax(Mirai_Vfx_Cell cell,Parameters p) {}\nvoid update(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid render(Mirai_Vfx_Context ctx,Parameters p,Mirai_Vfx_Particle particle,Attributes a,inout Mirai_Vfx_Visual visual) {}}\n"
+    stages_source:="//! mirai vfx Drift\n//! resource field grid\n//! stage push over particles iterations 2\n//! stage relax over field iterations 3\nnamespace Drift {struct Parameters {float speed;}; struct Attributes {uint hits;};\nvoid initialize(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid push(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid relax(Mirai_Vfx_Cell cell,Parameters p) {}\nvoid update(Mirai_Vfx_Context ctx,Parameters p,inout Mirai_Vfx_Particle particle,inout Attributes a) {}\nvoid render(Mirai_Vfx_Context ctx,Parameters p,Mirai_Vfx_Particle particle,Attributes a,inout Mirai_Vfx_Visual visual) {}}\n"
     fixture_write(t,f.project,"shaders/drift.slang",stages_source)
     catalog,problem=programs_of(&f)
     testing.expect_value(t,problem,"")
     drift,found=program_named(catalog,"Drift")
     testing.expect(t,found && len(drift.stages)==2)
     if found && len(drift.stages)==2 {
-        testing.expect(t,drift.stages[0].name=="push" && drift.stages[0].over=="particles" && drift.stages[0].neighbors==0.5 && drift.stages[0].iterations==2)
-        testing.expect(t,drift.stages[1].name=="relax" && drift.stages[1].over=="field" && drift.stages[1].iterations==3)
+        testing.expect(t,drift.stages[0].name=="push" && drift.stages[0].over==abi.PROGRAM_STAGE_PARTICLES && drift.stages[0].iterations==2)
+        testing.expect(t,drift.stages[1].name=="relax" && drift.stages[1].over==0 && drift.stages[1].iterations==3)
     }
     include,_=os.read_entire_file(path_join(f.output,"include",VFX_FOLDER,"Drift",VFX_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
     testing.expect(t,strings.contains(string(include),"Drift::push(ctx,mirai_load_Drift(packed),value,a)"))
     testing.expect(t,strings.contains(string(include),"case 1: Drift::relax(cell,mirai_load_Drift(packed));return true;"))
-    // A stage over what is not a grid, no iterations, neighbors over a grid and a name of the contract are refused.
+    // A stage over what is not a grid, no iterations, an unknown word and a name of the contract are refused.
     refused:=[4][2]string{
         {"//! stage relax over hits","a stage goes over particles or over a grid"},
         {"//! stage push over particles iterations 0","iterations is a number"},
-        {"//! stage relax over field neighbors 1","neighbors is a radius"},
+        {"//! stage push over particles neighbors 1","a stage takes iterations or writes, not neighbors"},
         {"//! stage update over particles","initialize, update and render are not stages"},
     }
     for case_ in refused {
-        fixture_write(t,f.project,"shaders/drift.slang",strings.concatenate({"//! mirai vfx Drift\n//! resource field grid\n",case_[0],"\n",stages_source[len("//! mirai vfx Drift\n//! resource field grid\n//! stage push over particles neighbors 0.5 iterations 2\n//! stage relax over field iterations 3\n"):]},context.temp_allocator))
+        fixture_write(t,f.project,"shaders/drift.slang",strings.concatenate({"//! mirai vfx Drift\n//! resource field grid\n",case_[0],"\n",stages_source[len("//! mirai vfx Drift\n//! resource field grid\n//! stage push over particles iterations 2\n//! stage relax over field iterations 3\n"):]},context.temp_allocator))
         _,problem=programs_of(&f)
         testing.expectf(t,strings.contains(problem,case_[1]),"%s gives %q",case_[0],problem)
     }
@@ -518,12 +508,12 @@ float4 evaluate(Mirai_Ui_Context ctx,Parameters p) {
     catalog,problem:=programs_of(&f)
     testing.expect_value(t,problem,"")
     pulse,found:=program_named(catalog,"Pulse")
-    testing.expect(t,found && pulse.domain=="ui" && pulse.size==16 && len(pulse.parameters)==3)
+    testing.expect(t,found && pulse.domain==.Ui && pulse.size==16 && len(pulse.parameters)==3)
     if !found {return}
     testing.expect(t,pulse.parameters[2].name=="center" && pulse.parameters[2].offset==8)
     for name in ([]string{"Ui_Radial_Wipe","Ui_Dissolve","Ui_Shine","Ui_Gradient_Sweep"}) {
         builtin,listed:=program_named(catalog,name)
-        testing.expectf(t,listed && builtin.domain=="ui" && builtin.size<=16,"%s is a built-in ui program of at most four floats",name)
+        testing.expectf(t,listed && builtin.domain==.Ui && builtin.size<=16,"%s is a built-in ui program of at most four floats",name)
     }
     read :: proc(f:^Programs_Fixture,name:string) -> string {
         bytes,_:=os.read_entire_file(path_join(f.output,"include",name,allocator=context.temp_allocator),context.temp_allocator)
@@ -534,13 +524,11 @@ float4 evaluate(Mirai_Ui_Context ctx,Parameters p) {
     testing.expect(t,strings.contains(ui,"    p.rate=packed[0].x;\n    p.strength=packed[0].y;\n    p.center=float2(packed[0].z,packed[0].w);\n"),ui)
     testing.expect(t,strings.contains(ui,fmt.tprintf("    case %d: return Pulse::evaluate(ctx,mirai_load_Pulse(packed));",pulse.id)))
     testing.expect(t,strings.contains(ui,"float4 mirai_evaluate_ui(uint id,float4 packed[16],Mirai_Ui_Context ctx) {switch(id) {") && strings.contains(ui,"default:return ctx.color;}}"),ui)
-    testing.expect(t,!strings.contains(ui,"ocean.slang") && !strings.contains(ui,"color_grade.slang") && !strings.contains(ui,"mirai_evaluate_program"),"the ui include has the ui programs alone")
+    testing.expect(t,!strings.contains(ui,"screen_blur.slang") && !strings.contains(ui,"color_grade.slang") && !strings.contains(ui,"mirai_evaluate_program"),"the ui include has the ui programs alone")
     for other in ([]string{SURFACE_INCLUDE,POSTPROCESS_INCLUDE,VFX_INCLUDE}) {
         text:=read(&f,other)
         testing.expectf(t,!strings.contains(text,"Pulse") && !strings.contains(text,"ui_shine"),"%s has no ui program",other)
     }
-    stored,_:=os.read_entire_file(path_join(f.output,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
-    testing.expect(t,strings.contains(string(stored),"\"name\": \"Pulse\",\n      \"domain\": \"ui\","))
 }
 
 // A layout that lacks a parameter the program declares is not that program's.
@@ -601,26 +589,25 @@ programs_that_move_vertices_declare_their_function_and_reach :: proc(t:^testing.
     }
     fixture_write(t,f.project,"shaders/sway.slang",program("Sway","//! vertex animated reach 0.25","float strength;"))
     fixture_write(t,f.project,"shaders/spread.slang",program("Spread","//! vertex reach distance","float3 color;float distance;"))
+    fixture_write(t,f.project,"shaders/still.slang","//! mirai surface Still\nnamespace Still {struct Parameters {float amount;}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return mirai_surface_default(ctx);}}\n")
     catalog,problem:=programs_of(&f)
     testing.expect_value(t,problem,"")
     sway,has_sway:=program_named(catalog,"Sway")
     spread,has_spread:=program_named(catalog,"Spread")
-    ocean,_:=program_named(catalog,"Ocean")
-    if !testing.expect(t,has_sway && has_spread) {return}
-    testing.expect(t,sway.vertex.declared && sway.vertex.animated && sway.vertex.reach==0.25 && sway.vertex.reach_parameter=="")
-    testing.expect(t,spread.vertex.declared && !spread.vertex.animated && spread.vertex.reach_parameter=="distance")
-    testing.expect(t,!ocean.vertex.declared,"a program without the line moves no vertices")
+    still,has_still:=program_named(catalog,"Still")
+    if !testing.expect(t,has_sway && has_spread && has_still) {return}
+    testing.expect(t,sway.vertex.declared && sway.vertex.animated && sway.vertex.reach==0.25 && sway.vertex.reach_offset<0)
+    testing.expect(t,spread.vertex.declared && !spread.vertex.animated && spread.vertex.reach_offset==12)
+    testing.expect(t,!still.vertex.declared,"a program without the line moves no vertices")
     listed :: proc(names:[]string,name:string) -> bool {
         for n in names {if n==name {return true}}
         return false
     }
-    testing.expect(t,listed(catalog.vertex,"Sway") && listed(catalog.vertex,"Spread") && listed(catalog.vertex,"Pieces") && !listed(catalog.vertex,"Ocean"))
+    testing.expect(t,listed(catalog.vertex,"Sway") && listed(catalog.vertex,"Spread") && !listed(catalog.vertex,"Still"))
     own,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_FOLDER,"Sway",SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
     testing.expect(t,strings.contains(string(own),"inout Mirai_Vertex value) {value=Sway::vertex(ctx,mirai_load_Sway(packed));return true;}"),string(own))
-    still,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_FOLDER,"Ocean",SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
-    testing.expect(t,strings.contains(string(still),NO_VERTEX_PROGRAM),"a program that moves no vertices has the function that moves none")
-    stored,_:=os.read_entire_file(path_join(f.output,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
-    testing.expect(t,strings.contains(string(stored),"\"reach\": \"distance\"") && strings.contains(string(stored),"\"animated\": true"),string(stored))
+    unmoved,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_FOLDER,"Still",SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
+    testing.expect(t,strings.contains(string(unmoved),NO_VERTEX_PROGRAM),"a program that moves no vertices has the function that moves none")
 
     Refused :: struct {line,fields,says:string}
     refused:=[]Refused{

@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:std/serial"
+import "mirai:std/base"
 
 @(private="file")
 Inner :: struct {on:bool,level:i32}
@@ -44,7 +45,7 @@ settings_read_what_the_file_has_and_keep_the_rest :: proc(t:^testing.T) {
 @(test)
 settings_layers_read_from_the_code_up_and_keep_what_differs :: proc(t:^testing.T) {
     folder,_:=os.make_directory_temp("","mirai-settings",context.temp_allocator)
-    defer os.remove_all(folder)
+    defer base.remove_all(folder)
     root,engine:=path(folder,"project",allocator=context.temp_allocator),path(folder,"engine",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(root)==nil)
     project_file,engine_file:=settings_file(.Project,root,engine,context.temp_allocator),settings_file(.Engine,root,engine,context.temp_allocator)
@@ -133,7 +134,7 @@ settings_layers_read_from_the_code_up_and_keep_what_differs :: proc(t:^testing.T
 @(test)
 settings_files_of_the_machine_of_another_version_are_not_read :: proc(t:^testing.T) {
     folder,_:=os.make_directory_temp("","mirai-settings",context.temp_allocator)
-    defer os.remove_all(folder)
+    defer base.remove_all(folder)
     root,engine:=path(folder,"project",allocator=context.temp_allocator),path(folder,"engine",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(path(engine,".mirai",allocator=context.temp_allocator))==nil && os.make_directory_all(root)==nil)
     engine_file:=settings_file(.Engine,root,engine,context.temp_allocator)
@@ -161,7 +162,7 @@ settings_files_of_the_machine_of_another_version_are_not_read :: proc(t:^testing
 @(test)
 settings_base_is_the_code_of_this_machine :: proc(t:^testing.T) {
     folder,_:=os.make_directory_temp("","mirai-settings",context.temp_allocator)
-    defer os.remove_all(folder)
+    defer base.remove_all(folder)
     root,engine:=path(folder,"project",allocator=context.temp_allocator),path(folder,"engine",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(root)==nil)
     engine_file:=settings_file(.Engine,root,engine,context.temp_allocator)
@@ -189,7 +190,7 @@ settings_base_is_the_code_of_this_machine :: proc(t:^testing.T) {
 @(test)
 settings_merge_gives_what_the_layers_read :: proc(t:^testing.T) {
     folder,_:=os.make_directory_temp("","mirai-settings",context.temp_allocator)
-    defer os.remove_all(folder)
+    defer base.remove_all(folder)
     root,engine:=path(folder,"project",allocator=context.temp_allocator),path(folder,"engine",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(path(engine,".mirai",allocator=context.temp_allocator))==nil)
     machine:=[]string{"Sample"}
@@ -225,7 +226,7 @@ settings_merge_gives_what_the_layers_read :: proc(t:^testing.T) {
 @(test)
 a_worktree_keeps_the_engine_layer_in_its_main_checkout :: proc(t:^testing.T) {
     folder,_:=os.make_directory_temp("","mirai-checkout",context.temp_allocator)
-    defer os.remove_all(folder)
+    defer base.remove_all(folder)
     main,_:=strings.replace_all(path(folder,"main",allocator=context.temp_allocator),"\\","/",context.temp_allocator)
     // Git writes the gitdir of a worktree with forward slashes on every system.
     tree:=path(main,".git","worktrees","side",allocator=context.temp_allocator)
@@ -276,6 +277,37 @@ a_list_of_entries_is_written_up_to_the_last_that_differs :: proc(t:^testing.T) {
     read:=[]Setting{{name="Entries",info=type_info_of(Entries),value=&back}}
     testing.expect_value(t,settings_parse(text,read).code,Error_Code.None)
     testing.expect_value(t,back,value)
+}
+
+@(private="file") Keyed :: struct {entries:[4]Entry `mirai:"keyed"`}
+
+// A keyed list is layered by the names of its entries: a layer writes the
+// entries that differ from the one with their name below, or that it lacks,
+// and reading it replaces those whole and keeps the rest; an entry with no
+// name and more entries than the list holds are errors.
+@(test)
+a_keyed_list_is_layered_by_the_names_of_its_entries :: proc(t:^testing.T) {
+    under,value:Keyed
+    copy(under.entries[0].name[:],"a");under.entries[0].value=1
+    copy(under.entries[1].name[:],"b");under.entries[1].value=2
+    value=under
+    value.entries[1].value=3
+    copy(value.entries[3].name[:],"c");value.entries[3].value=4
+    settings:=[]Setting{{name="Keyed",info=type_info_of(Keyed),value=&value}}
+    below:=[]Setting{{name="Keyed",info=type_info_of(Keyed),value=&under}}
+    text:=settings_text(settings,below,allocator=context.temp_allocator)
+    testing.expectf(t,!strings.contains(text,`"a"`) && strings.contains(text,`"b"`) && strings.contains(text,`"c"`),"only b and c: %s",text)
+
+    back:=under
+    read:=[]Setting{{name="Keyed",info=type_info_of(Keyed),value=&back}}
+    testing.expect_value(t,settings_parse(text,read).code,Error_Code.None)
+    testing.expect(t,back.entries[0]==under.entries[0] && back.entries[1].value==3 && back.entries[2].value==4,"a kept, b replaced, c in the first free entry")
+
+    full:=`{"Keyed": {"entries": [{"name": "d"}, {"name": "e"}, {"name": "f"}]}}`
+    nameless:=`{"Keyed": {"entries": [{"value": 1}]}}`
+    for bad in ([]string{full,nameless}) {
+        testing.expectf(t,settings_parse(bad,read).code==.Text,"%s is refused",bad)
+    }
 }
 
 @(test)

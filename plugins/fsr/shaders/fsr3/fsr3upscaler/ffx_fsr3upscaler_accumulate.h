@@ -26,19 +26,15 @@ void Accumulate(const AccumulationPassCommonParams params, FFX_PARAMETER_INOUT A
     data.fHistoryWeight *= FfxFloat32(data.fHistoryWeight > FSR3UPSCALER_FP16_MIN);
     data.fHistoryWeight = ffxMax(FSR3UPSCALER_EPSILON, data.fHistoryWeight + data.fUpsampledWeight);
 
-#if FFX_FSR3UPSCALER_OPTION_HDR_COLOR_INPUT
     //YCoCg -> RGB -> Tonemap -> YCoCg (Use RGB tonemapper to avoid color desaturation)
     data.fUpsampledColor    = RGBToYCoCg(Tonemap(YCoCgToRGB(data.fUpsampledColor)));
     data.fHistoryColor      = RGBToYCoCg(Tonemap(YCoCgToRGB(data.fHistoryColor)));
-#endif
 
     const FfxFloat32 fAlpha = ffxSaturate(data.fUpsampledWeight / data.fHistoryWeight);
     data.fHistoryColor      = ffxLerp(data.fHistoryColor, data.fUpsampledColor, fAlpha);
     data.fHistoryColor      = YCoCgToRGB(data.fHistoryColor);
 
-#if FFX_FSR3UPSCALER_OPTION_HDR_COLOR_INPUT
     data.fHistoryColor      = InverseTonemap(data.fHistoryColor);
-#endif
 }
 
 void RectifyHistory(

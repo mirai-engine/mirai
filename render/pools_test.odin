@@ -28,7 +28,7 @@ pools_grid :: proc(r: ^Renderer, cells: int) -> (Mesh_Handle, bool) {
 
 @(test)
 a_small_pool_growth_keeps_its_data_with_aligned_copies :: proc(t: ^testing.T) {
-	settings:=DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+	settings:=DEFAULT_SETTINGS;settings.gi_enabled,settings.taa=false,false
 	f: Fixture
 	if !fixture_init(t, &f, 64, 64, settings) {return}
 	defer fixture_destroy(&f)
@@ -54,7 +54,7 @@ a_small_pool_growth_keeps_its_data_with_aligned_copies :: proc(t: ^testing.T) {
 @(test)
 a_pool_without_memory_leaves_out_what_asked_and_draws_the_rest :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
+	settings.gi_enabled, settings.taa = false, false
 	f: Fixture
 	if !fixture_init(t, &f, 64, 64, settings) {return}
 	defer fixture_destroy(&f)
@@ -64,7 +64,7 @@ a_pool_without_memory_leaves_out_what_asked_and_draws_the_rest :: proc(t: ^testi
 
 	small, added := pools_grid(r, 8)
 	if !testing.expect(t, added, r.error) {return}
-	scene_set(r, {Instance_Desc{object_id = 1, mesh = small, transform = Mat4(1)}}, nil, {}, {})
+	scene_given(r, {Instance_Desc{object_id = 1, mesh = small, transform = Mat4(1)}}, nil, {}, {})
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	held := rhi.buffer_size(device, s.vertex_buffer)
 
@@ -98,11 +98,23 @@ a_pool_without_memory_leaves_out_what_asked_and_draws_the_rest :: proc(t: ^testi
 	}
 	// The mesh that goes from before the large one leaves its room free between them, as the stats say.
 	before := r.stats.geometry_free
-	scene_set(r, {Instance_Desc{object_id = 2, mesh = large, transform = Mat4(1)}}, nil, {}, {})
+	scene_given(r, {Instance_Desc{object_id = 2, mesh = large, transform = Mat4(1)}}, nil, {}, {})
 	testing.expect(t, mesh_remove(r, small))
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	vertices := u64((8 + 1) * (8 + 1)) * size_of(u32)
 	testing.expectf(t, r.stats.geometry_free >= before + vertices && r.stats.geometry_free_largest >= vertices && r.stats.geometry_free_largest <= r.stats.geometry_free, "free %d, largest %d", r.stats.geometry_free, r.stats.geometry_free_largest)
+	// What instances give over their rows lives in the index pool: without room for it they show their rows as they are, and the renderer says so.
+	s.pool_bytes_max = 1
+	given: Instance_Material_Values
+	given.count = INSTANCE_VALUES_MAX
+	for &entry in given.entries {entry = {row = 0, word = 1 << INSTANCE_VALUE_COUNT_SHIFT}}
+	many := make([]Instance_Desc, 4096)
+	defer delete(many)
+	for &desc, i in many {desc = {object_id = u64(i + 1), mesh = large, transform = Mat4(1), material_values = given}}
+	scene_given(r, many, nil, {}, {})
+	said: [1024]u8
+	problem := geometry_refused_problem(r, said[:])
+	testing.expect(t, strings.contains(problem, "what their entities give"), problem)
 }
 
 // A mesh at rest traced by hardware has its BLAS made smaller frames after
@@ -110,7 +122,7 @@ a_pool_without_memory_leaves_out_what_asked_and_draws_the_rest :: proc(t: ^testi
 @(test)
 blas_of_a_mesh_at_rest_is_compacted :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.reflections, settings.taa = false, false
+	settings.taa = false
 	f: Fixture
 	if !fixture_init(t, &f, 64, 64, settings) {return}
 	defer fixture_destroy(&f)
@@ -119,7 +131,7 @@ blas_of_a_mesh_at_rest_is_compacted :: proc(t: ^testing.T) {
 	if !r.hardware_rt {fmt.eprintln("compaction test skipped: rays are traced by software");return}
 	mesh, added := pools_grid(r, 64)
 	if !testing.expect(t, added, r.error) {return}
-	scene_set(r, {Instance_Desc{object_id = 1, mesh = mesh, transform = Mat4(1)}}, nil, {}, {})
+	scene_given(r, {Instance_Desc{object_id = 1, mesh = mesh, transform = Mat4(1)}}, nil, {}, {})
 	camera := Camera{position = {32, 20, -10}, forward = {0, -20, 40}, up = {0, 1, 0}, fov_y = 60, near = 0.1, far = 200, exposure = UNIT_EXPOSURE}
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	_, built := rhi.accel_memory(device)

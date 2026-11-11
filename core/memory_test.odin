@@ -4,16 +4,37 @@ import "base:runtime"
 import "core:mem"
 import "core:testing"
 
+// A World and the next version of it: a table changes its type, one goes and one comes.
+@(private)
+@(test_world)
+Memory_From :: struct {
+    using world:Test_World,
+    kept:Table(i32) `mirai:"name=Kept"`,
+    gone:Table(u8) `mirai:"name=Gone"`,
+    score:i32 `mirai:"name=Score"`,
+}
+
+@(private)
+@(test_world)
+Memory_To :: struct {
+    using world:Test_World,
+    kept:Table(i64) `mirai:"name=Kept"`,
+    added:Table(u8) `mirai:"name=Added"`,
+    score:i32 `mirai:"name=Score"`,
+}
+
 // What tables, entities, maps, queues and a migration ask their allocator
 // for, with the memory ending at each request in turn: the call answers
 // false, or the queue counts what it dropped, with what it had as it was and
 // nothing left allocated; with memory enough it goes through.
 @(test)
 core_calls_without_memory_fail_whole :: proc(t:^testing.T) {
-    from_tables:=[]Table_Info{{name="Kept",type=i32,info=type_info_of(i32)},{name="Gone",type=u8,info=type_info_of(u8)}}
-    to_tables:=[]Table_Info{{name="Kept",type=i64,info=type_info_of(i64)},{name="Added",type=u8,info=type_info_of(u8)}}
-    storages:=[]Storage_Info{{name="Score",type=i32,info=type_info_of(i32)}}
-    from,to:=World_Info{tables=from_tables,storages=storages},World_Info{tables=to_tables,storages=storages}
+    from,from_made:=test_info(t,Memory_From)
+    if !from_made {return}
+    defer test_info_destroy(&from)
+    to,to_made:=test_info(t,Memory_To)
+    if !to_made {return}
+    defer test_info_destroy(&to)
     Call :: enum {Table_Settle,Entities_Clear,Map_Reserve,Offer,Migration}
     for call in Call {
         done,refused:=false,false
@@ -48,7 +69,7 @@ core_calls_without_memory_fail_whole :: proc(t:^testing.T) {
                     allocation.remaining=0
                     table_settle(&table,&es)
                     c:=changes(&table,&seen)
-                    testing.expect(t,!has(&table,e) && c.all && cap(table.gone)==0)
+                    testing.expect(t,!has(&table,e) && c.all && cap(table.gone.items)==0)
                 }
                 allocation.remaining=max(int)
                 table_destroy(&table)

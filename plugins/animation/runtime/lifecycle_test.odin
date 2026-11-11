@@ -33,9 +33,10 @@ bone_references_reject_overflow_embedded_zero_and_unterminated_storage_without_t
     testing.expect_value(t,root_motion_sample(&library,{},Root_Motion{bone=invalid,translation=true},1),ROOT_DELTA_DEFAULT)
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Lifecycle_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     modifiers:Modifier_Runtime,
 }
@@ -43,10 +44,10 @@ Lifecycle_World :: struct {
 @(test)
 recreated_skeletons_get_distinct_bindings_and_replace_constraint_and_grounding_bone_indices :: proc(t:^testing.T) {
     w:Lifecycle_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     rig:=core.create(&w.entities)
-    core.add(&w.transforms,rig,core.TRANSFORM_IDENTITY);core.test_world_settle(&w)
+    core.add(&w.transforms,rig,core.TRANSFORM_IDENTITY);test_world_settle(&w)
     playback:Playback;defer playback_free(&playback)
     bones:=[3]asset.Skeleton_Bone{
         {parent=-1,translation={0,1,0},rotation=1,scale={1,1,1}},
@@ -76,7 +77,7 @@ recreated_skeletons_get_distinct_bindings_and_replace_constraint_and_grounding_b
     append(&constraints.rows[0],0)
     inputs:=Constraint_Inputs{ik=core.read(&w.modifiers.ik)}
     testing.expect(t,constraints_bind(state,inputs,&constraints))
-    testing.expect_value(t,constraints.bones[0][0],[4]int{1,2,3,0})
+    testing.expect_value(t,constraints.bones[0][0],[3]int{1,2,3})
     playing_free(state)
     state.entity=rig
     expanded:[4]asset.Skeleton_Bone
@@ -89,7 +90,7 @@ recreated_skeletons_get_distinct_bindings_and_replace_constraint_and_grounding_b
     testing.expect(t,grounding_bind(&grounding,0,state,config,1,nil))
     testing.expect_value(t,record.bones[0],[3]int{2,3,4})
     testing.expect(t,constraints_bind(state,inputs,&constraints))
-    testing.expect_value(t,constraints.bones[0][0],[4]int{2,3,4,0})
+    testing.expect_value(t,constraints.bones[0][0],[3]int{2,3,4})
     testing.expect_value(t,len(state.previous),len(state.local))
 }
 

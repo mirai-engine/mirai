@@ -4,14 +4,17 @@ import "base:runtime"
 import "core:mem"
 import "core:testing"
 
-@(private="file") Before_Spin :: struct {speed:f32,axis:[3]f32}
-@(private="file") After_Spin :: struct {axis:[3]f32,turns:i32,speed:f64}
-@(private="file") Kept_Tag :: struct {value:u32}
-@(private="file") Added_Tag :: struct {value:u32}
-@(private="file") Before_Score :: struct {points:i32}
-@(private="file") After_Score :: struct {lives:u8,points:i64}
+@(private) Before_Spin :: struct {speed:f32,axis:[3]f32}
+@(private) After_Spin :: struct {axis:[3]f32,turns:i32,speed:f64}
+@(private) Kept_Tag :: struct {value:u32}
+@(private) Added_Tag :: struct {value:u32}
+@(private) Before_Score :: struct {points:i32}
+@(private) After_Score :: struct {lives:u8,points:i64}
+@(private) AFTER_SPIN_DEFAULT :: After_Spin{turns=7}
+@(private) AFTER_SCORE_DEFAULT :: After_Score{lives=3}
 
-@(private="file")
+@(private)
+@(test_world)
 Before_World :: struct {
     using world:Test_World,
     spin:Table(Before_Spin) `mirai:"name=Spin"`,
@@ -19,22 +22,14 @@ Before_World :: struct {
     score:Before_Score `mirai:"name=Score"`,
 }
 
-@(private="file")
+@(private)
+@(test_world)
 After_World :: struct {
     using world:Test_World,
     kept:Table(Kept_Tag),
     added:Table(Added_Tag),
     spin:Table(After_Spin) `mirai:"name=Spin"`,
     score:After_Score `mirai:"name=Score"`,
-}
-
-// What the new library starts its rows and its storage with.
-@(private="file")
-after_types :: proc(types:^[dynamic]Test_Type) {
-    append(types,
-        test_type(After_Spin,default=proc(dst:^After_Spin) {dst^={turns=7}}),
-        test_type(After_Score,default=proc(dst:^After_Score) {dst.lives=3}),
-    )
 }
 
 @(test)
@@ -46,7 +41,7 @@ a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
     context.allocator=allocator
 
     before,before_ok:=test_info(t,Before_World)
-    after,after_ok:=test_info(t,After_World,after_types)
+    after,after_ok:=test_info(t,After_World)
     if !before_ok || !after_ok {return}
 
     old:=new(Before_World)
@@ -72,11 +67,11 @@ a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
     mem.free(old)
 
     testing.expect(t,fresh.entities.alive==2,"The entities move")
-    spin:=get(read(&fresh.spin),a) or_else After_Spin{}
+    spin:=get(&fresh.spin,a) or_else After_Spin{}
     testing.expect(t,spin.speed==2.5 && spin.axis=={0,1,0} && spin.turns==7,"A field takes its value by name; a new one its default")
-    other:=get(read(&fresh.spin),b) or_else After_Spin{}
+    other:=get(&fresh.spin,b) or_else After_Spin{}
     testing.expect(t,other.speed==-1)
-    kept:=get(read(&fresh.kept),b) or_else Kept_Tag{}
+    kept:=get(&fresh.kept,b) or_else Kept_Tag{}
     testing.expect(t,kept.value==42 && !has(&fresh.kept,a),"A table of the same layout moves")
     testing.expect(t,count(&fresh.added)==0)
     testing.expect(t,fresh.score.points==1234 && fresh.score.lives==3,"A storage converts over what the new library starts it with")
@@ -86,7 +81,7 @@ a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
     // It says that it waits where the new World looks for it, not where the old one did.
     testing.expect(t,fresh.entities.pending[2] && !fresh.entities.pending[0] && !fresh.entities.pending[1])
     testing.expect(t,table_settle(&fresh.spin,&fresh.entities))
-    testing.expect(t,(get(read(&fresh.spin),c) or_else After_Spin{}).speed==9)
+    testing.expect(t,(get(&fresh.spin,c) or_else After_Spin{}).speed==9)
     world_destroy(&after,.World,fresh)
     mem.free(fresh)
     world_migration_destroy(&m)
@@ -95,10 +90,11 @@ a_world_migrates_to_another_layout_by_names :: proc(t:^testing.T) {
     testing.expect_value(t,len(tracking.allocation_map),0)
 }
 
-@(private="file") Test_Action :: distinct u8
-@(private="file") Aim_Tag :: struct {action:Test_Action}
+@(private) Test_Action :: distinct u8
+@(private) Aim_Tag :: struct {action:Test_Action}
 
-@(private="file")
+@(private)
+@(test_world)
 Aim_World :: struct {
     using world:Test_World,
     aim:Table(Aim_Tag),
@@ -135,7 +131,7 @@ a_world_keeps_its_actions_by_name_when_their_numbers_move :: proc(t:^testing.T) 
     fresh:=new(Aim_World)
     testing.expect(t,world_init(&before,.World,fresh,allocator))
     place_migrate(&m,.World,old,fresh,allocator)
-    testing.expect_value(t,(get(read(&fresh.aim),a) or_else Aim_Tag{}).action,Test_Action(2))
+    testing.expect_value(t,(get(&fresh.aim,a) or_else Aim_Tag{}).action,Test_Action(2))
     world_destroy(&before,.World,old);mem.free(old)
     world_destroy(&before,.World,fresh);mem.free(fresh)
     world_migration_destroy(&m)

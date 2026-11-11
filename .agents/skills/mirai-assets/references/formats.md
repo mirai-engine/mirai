@@ -36,7 +36,7 @@ terrain sends over the network, editor thumbnails, the shaders the executables e
 - **Packs.** A write says how hard it compresses (`Pack`): `PACK_EDIT` for what the editor,
   imports and the game save. A cook hands the packs of `cook/compressor/lz`: `SHIP` for the
   cooking of a shipped game, which writes every asset again with `document_repack` (its chunks
-  and the pages of a mesh), and `QUICK` for the cook of a `--dev` game, a few times faster and a
+  and the pages of a mesh), and `QUICK` for the cook of a dev game, a few times faster and a
   little larger. All decode the same way.
 - **Pieces.** A chunk over `PACK_PIECE` is a run of LZ streams of that many raw bytes, each
   decoding without the others (the library's `seekChunkReset`): a scene load decodes them at once
@@ -122,9 +122,9 @@ Owner of everything it contains; `asset/document.odin` builds by tables, columns
 
 `asset.KINDS` gives extension, fourcc, name and version of each engine type; their tables are in
 their `asset/<type>.odin` and `mirai asset info` shows them. Contract of each: [kinds.md](kinds.md);
-scenes and prefabs: [scenes.md](scenes.md). The plugins' types are declared and validated by their
-plugin without adding them to the core: `.pose`, `.blend` and `.agraph`
-([animation](../../mirai-animation/references/animation.md)),
+scenes and their prefab instances: [scenes.md](scenes.md). The plugins' types are declared and
+validated by their plugin without adding them to the core:
+[`.character`](../../mirai-animation/references/animation.md#components-and-shared-data),
 [`.foliage`](../../mirai-world/references/foliage.md#format),
 [`.terrain`](../../mirai-world/references/terrain.md) and
 [`.physics_cache`](../../mirai-plugins/references/physics-cache.md).
@@ -141,18 +141,12 @@ plugin without adding them to the core: `.pose`, `.blend` and `.agraph`
   (`Texture_Mip`, with all the layers of each level), `texels` bulk.
 - **`.mat`** (`MAT `): `material` (`Material_Info`), `imported` (`Material_Info`, of an imported
   material: what the source gave), `parameters`, `overlays`, `hidden`.
-- **`.scene`, `.prefab`** (`SCEN`, `PRFB`): `entities`, a table per component, `scene`,
-  `instances`, `members`, `overrides` and `off` (turned-off components).
+- **`.scene`** (`SCEN`): `entities`, a table per component (those of prefab instances among
+  them), `scene`, `overrides` and `off` (turned-off components). `Header_Flag.Prefab` makes it a
+  [prefab](scenes.md#prefab).
 - **`.anim`** (`ANIM`): `clips` (`Animation_Clip`), `tracks` (`Animation_Track`), `keys`
-  (`anim.Keyframe`), `markers` (`Animation_Marker`) and the bulk `streams`, empty but in a cooked
-  `.anim`.
-- **`.pose`** (`POSE`): constraint tables of the [animation
-  plugin](../../mirai-animation/references/animation.md): `ik`, `look`, `limits`, `contacts`,
-  `grounding`, `retarget`.
-- **`.blend`** (`BLND`): `blend` (`Blend_Info`), `samples` (`Blend_Sample`), `segments`,
-  `triangles`; defined and validated by the animation plugin.
-- **`.agraph`** (`AGRF`): `graph` (`Graph_Info`), `parameters`, `events`, `nodes`, `states`,
-  `transitions`; defined and validated by the animation plugin.
+  (`anim.Keyframe`), `markers` (`Animation_Marker`, a moment or, with a duration, a span) and the
+  bulk `streams`, empty but in a cooked `.anim`.
 - **`.sound`** (`SND `): `sound` (`Sound_Info`) and one of two bulk tables: `samples` (`i16`) or
   `file` (`u8`).
 - **`.sound_set`** (`SSET`): `sound_set` (`Sound_Set_Info`).
@@ -162,8 +156,8 @@ plugin without adding them to the core: `.pose`, `.blend` and `.agraph`
   ([records](kinds.md#records)).
 - **`.particle`** (`PART`, of the [`vfx`](../../mirai-world/references/vfx.md#format) plugin):
   `particle` (`Particle_Info`), `parameters` (`Particle_Parameter`), `hidden` (`Particle_Field`).
-- **`.fracture`** (`FRAC`): `fracture` (`Fracture_Info`), `pieces`, `connections`, `clusters`,
-  `vertices` (`Vertex`) and `indices` local to each piece.
+- **`.fracture`** (`FRAC`, of the `destruct` plugin): `fracture` (`Fracture_Info`), `pieces`,
+  `connections`, `clusters`, `vertices` (`Vertex`) and `indices` local to each piece.
 - **`.foliage`** (`FOLI`): `foliage` (`Foliage_Info`), `types`, `cells`, and LZ bulk `manual`
   and `overrides`; defined and validated by the
   [foliage](../../mirai-world/references/foliage.md#format) plugin.
@@ -223,8 +217,22 @@ scan opens every file and writes it again.
 - With a cache, `Registry.removed` gathers the ids that no file is anymore, also those deleted with
   the program closed. Whoever keeps something per asset (the
   [previews](../../mirai-editor/references/panels.md#previews)) reads them and empties it.
+- `Registry_File.flags` are those of the header: `registry_prefab` reads from them whether a scene
+  is a prefab ([prefab](scenes.md#prefab)).
 - `registry_dependents` comes from an inverse index built with each change: how many use an asset is
   its length, without walking the files (`asset.list` reports it as `used_by`).
+- **Imported folders.** An assets folder may have an imported folder with it (that of the root
+  and of each mount: `.mirai/imported/` of the project or the plugin): what the
+  [imports](../../mirai-imports/references/imports.md#identity-and-reimport) of its sources build
+  that nobody edits, never versioned, each file named by its id and the key of what it was built
+  from. A scan reads the sidecars it walks (`asset/sidecar.odin`, the one reader of the format)
+  and lists each output of the cache like any asset (`Registry_File.imported` is that key) at
+  `<folder of the sidecar>/<folder it names>/<name><extension>`; two outputs of one kind and
+  name are told apart by their index, and a path another file or output has takes the name of
+  the source: never the order of a scan. One whose source is gone is not listed, and one that
+  moved is listed there at the next scan, which a refresh of a sidecar or of its source runs.
+  `registry_file_path` gives the file of either folder. A cooked folder has none: the cook
+  writes every asset at its path.
 - **Mounts.** `registry_mount` adds a folder under a prefix (a plugin's assets, in
   `plugins/<name>`). A prefix that starts with a dot belongs to the program's assets (the editor's,
   in `.editor`): they are found by id and by path, but a project's lists omit them
@@ -237,7 +245,8 @@ scan opens every file and writes it again.
   neither by id nor by path, and stays in `Registry.refused` until a scan, a refresh of its path or
   the unmount. `host` opens a guest file with a byte limit far below the default one
   (`ASSETS_GUEST_LIMIT`, read and decompressed).
-- **In-memory files** (`registry_memory.odin`): what an editor changed and did not write. While a
+- **In-memory files** (`registry_memory.odin`): what an editor changed in a step that has not ended
+  and so has not written. While a
   path is in memory, its registry entry is what that content says and `registry_read` gives its
   bytes; a scan or a refresh keep it, the cache and the index do not store it, and
   `registry_memory_write` writes it and forgets it. A file outside the folders (a program's `.slang`
@@ -253,14 +262,18 @@ scan opens every file and writes it again.
 - **Repeated ids.** Several files with one id are copies made outside the editor of one of them.
   With `Registry.resolve_duplicates` (the registry of `host.assets_init`), the oldest is the
   original (`file_newer`) and each copy receives, in the registry's memory, an id of its own derived
-  from the one it had and from its path, so it is the same on each scan until saved; it stops being
-  part of another asset and an output of an import. An unedited copy follows its file; one that was
-  already in memory with the repeated id is an edit and keeps it. A tool that only reads
-  (`mirai asset ls`, cooking) does not activate it and sees the pair in `r.duplicates`.
+  from the one it had and from its path, so it is the same on each scan until its file is written
+  with it; it stops being part of another asset and an output of an import. An unedited copy follows
+  its file; one that was already in memory with the repeated id is an edit and keeps it. A tool that
+  only reads (`mirai asset ls`, cooking) does not activate it and sees the pair in `r.duplicates`.
+  The cook refuses the pair (`Duplicate_Id`, naming both files): which one the editor takes depends
+  on the creation times of a machine, so a game ships neither until the copy is written with its own
+  id.
 
 ## Text
 
-`document_text_write` produces the JSON that `mirai asset dump` prints and `unpack` saves:
+`document_text_write` produces the JSON that `mirai asset dump` prints and `unpack` saves, of
+every kind but a scene and a `.ui`, whose text is their document ([CLI](cli.md#subcommands)):
 `mirai_asset`, the header (`kind`, `kind_version`, `id`, `owner` only on a part of another asset,
 `flags`), `dependencies`, the optional `schema` and the `tables`, each with its columns and `data`.
 

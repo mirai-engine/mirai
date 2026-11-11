@@ -19,7 +19,7 @@ bench_terrain_volume_memory :: proc(t:^testing.T) {
             for i in 0..<24 {
                 a:=f32(i)*0.45
                 center:=[3]f32{math.cos(a)*f32(s.samples.x)*0.3,-f32(s.samples.y)*0.25+math.sin(a*2)*3,math.sin(a)*f32(s.samples.z)*0.3}*s.cell
-                source_edit(s,{kind=.Remove,center=center,radius=5*s.cell,amount=1})
+                source_edit(s,{kind=.Carve,center=center,radius=5*s.cell,amount=1})
             }
             for i in 0..<12 {
                 a:=f32(i)*0.9
@@ -27,7 +27,8 @@ bench_terrain_volume_memory :: proc(t:^testing.T) {
                 source_edit(s,{kind=.Add,center=center,radius=6*s.cell,amount=1})
             }
         }
-        sizes:=[?][3]int{{65,17,65},{129,65,129},{129,129,129}}
+        // The last ones pass what a Volume once reached along an axis.
+        sizes:=[?][3]int{{65,17,65},{129,65,129},{129,129,129},{513,129,513},{513,513,513},{2049,257,2049}}
         for samples in sizes {for carved in ([2]bool{false,true}) {
             tracking:mem.Tracking_Allocator
             mem.tracking_allocator_init(&tracking,context.allocator)
@@ -41,31 +42,35 @@ bench_terrain_volume_memory :: proc(t:^testing.T) {
             }
             held:=tracking.current_memory_allocated
             snapshot:Source
-            testing.expect(t,source_clone(&snapshot,&s,allocator,editable=false))
+            testing.expect(t,source_clone(&snapshot,&s,allocator))
             snapshot_bytes:=tracking.current_memory_allocated-held
             data,error:=source_bytes(&s,base.Asset_Id{7,7},&types,context.allocator)
             testing.expect_value(t,error,asset.Error.None)
             dense:=samples.x*samples.y*samples.z*4
             name:=fmt.tprintf("%dx%dx%d %s",samples.x,samples.y,samples.z,carved?"caves":"box")
             fmt.printfln("BENCH | %s | dense %d | source %d | snapshot %d | file %d |",name,dense,held,snapshot_bytes,len(data))
-            when VERSION>=6 {
-                // Read from its file with a viewer at the middle of its top: the
-                // blocks the chunks within REACH of it read, with their halo.
-                REACH :: 24
-                g:=&s.distances
-                needed:=make([]bool,len(g.pages),context.temp_allocator)
-                counts:=chunk_counts(&s)
-                for i in 0..<counts.x*counts.y*counts.z {
-                    low,high,_:=chunk_region(&s,chunk_coord(&s,i))
-                    a:=source_origin(&s)+[3]f32{f32(low.x),f32(low.y),f32(low.z)}*s.cell
-                    b:=source_origin(&s)+[3]f32{f32(high.x),f32(high.y),f32(high.z)}*s.cell
-                    outside:=[3]f32{max(a.x,0,-b.x),max(a.y,0,-b.y),max(a.z,0,-b.z)}
-                    if outside.x*outside.x+outside.y*outside.y+outside.z*outside.z<=REACH*REACH {chunk_pages_mark(&s,i,needed)}
+            // With a viewer at the middle of its top: the blocks the chunks
+            // within REACH of it read, with their halo.
+            REACH :: 24
+            g:=&s.field
+            counts:=chunk_counts(&s)
+            needed:=make([]bool,len(g.pages));defer delete(needed)
+            for i in 0..<counts.x*counts.y*counts.z {
+                low,high,_:=chunk_region(&s,chunk_coord(&s,i))
+                a:=source_origin(&s)+[3]f32{f32(low.x),f32(low.y),f32(low.z)}*s.cell
+                b:=source_origin(&s)+[3]f32{f32(high.x),f32(high.y),f32(high.z)}*s.cell
+                outside:=[3]f32{max(a.x,0,-b.x),max(a.y,0,-b.y),max(a.z,0,-b.z)}
+                if outside.x*outside.x+outside.y*outside.y+outside.z*outside.z<=REACH*REACH {
+                    from,to,_:=chunk_pages_region(&s,i)
+                    from,to=grid_pages(g,from,to)
+                    for pz in from.z..=min(to.z,g.counts.z-1) {for py in from.y..=min(to.y,g.counts.y-1) {for px in from.x..=min(to.x,g.counts.x-1) {
+                        if slot,_:=grid_find(g,{px,py,pz});slot>=0 {needed[slot]=true}
+                    }}}
                 }
-                near:=0
-                for page,i in g.pages {if needed[i] {near+=len(page.values)}}
-                fmt.printfln("BENCH | %s | blocks %d | with values %d | resident near a viewer %d |",name,len(g.pages),grid_dense(g),near*4)
             }
+            near:=0
+            for page,slot in g.pages {if needed[slot] {near+=len(page.values)}}
+            fmt.printfln("BENCH | %s | blocks %d | slots %d | values %d | directory %d | resident near a viewer %d |",name,g.counts.x*g.counts.y*g.counts.z,len(g.pages),grid_dense(g)*4,grid_tables_bytes(g),near*4)
             delete(data)
             source_destroy(&snapshot)
             source_destroy(&s)

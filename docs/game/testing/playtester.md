@@ -19,7 +19,8 @@ template enables; its tools reach the plugin through `call`, so nothing else pay
 ```bash
 mirai rpc --project . play.observe '{"targets":["Door*"],"nearest":3}'
 mirai rpc --project . play.observe '{"step":{"for":20,"keys":["W"]},"targets":["Door*"]}'
-mirai rpc --project . play.get '{"entity": "Player","field":"world_position"}' --select value
+mirai rpc --project . play.check '{"conditions":[{"entity":"Player","field":"world_position"}]}' \
+  --select results[0].value
 mirai rpc --project . play.check '{"conditions":[{"entity":"Door","compare":"Gone"}]}' \
   --select passed
 ```
@@ -31,8 +32,9 @@ mirai rpc --project . play.check '{"conditions":[{"entity":"Door","compare":"Gon
   (negative: left) and `elevation`; turn with `mouse_delta` by that much, then step forward.
   `targets` match component or entity names; `*` stands for any run of characters.
 - `play.observe` with `step` is act plus observe in one call: use only it in a loop.
-- Cost grows down the list: `play.check` (yes or no), `play.get` (one value), `play.observe`,
-  `play.inspect` (with `components`, whole entities), an image. Take the cheapest that answers.
+- Cost grows down the list: `play.check` (yes or no, or one value), `play.observe`,
+  `scene.inspect` with `"world": "Game"` (with `components`, whole entities), an image. Take the
+  cheapest that answers.
 - `--select a,b.c,d[0]` keeps only those fields of any answer.
 
 ## Images

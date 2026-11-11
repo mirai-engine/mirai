@@ -34,7 +34,7 @@ a_pool_without_memory_is_refused_and_holds_no_table :: proc(t:^testing.T) {
             limit.remaining=max(int)
             if made {break}
             refused=true
-            testing.expectf(t,pool.slots==nil && pool.order==nil && pool.free==nil && pool.attribute_free==nil && pool.gpu==nil && pool.draws==nil,"a pool of %d with %d requests served keeps tables",capacity,served)
+            testing.expectf(t,pool.slots==nil && pool.order==nil && pool.free.free==nil && pool.attribute_free.free==nil && pool.gpu==nil && pool.draws==nil,"a pool of %d with %d requests served keeps tables",capacity,served)
         }
         testing.expectf(t,made && refused && pool.capacity==capacity && len(pool.slots)==EMITTER_CAPACITY,"a pool of %d: refused without memory, and made with it",capacity)
         pool_free(&pool,limited)
@@ -53,7 +53,7 @@ a_channel_without_memory_waits_with_its_births :: proc(t:^testing.T) {
     defer delete(clocks.channels)
     if !testing.expect(t,resize(&clocks.channels,1)==nil) {return}
     ring:=&clocks.channels[0]
-    ring.name,ring.count,ring.emitted=Particle_Channel_Name(CHANNEL_GAME),1,1
+    ring.name,ring.count,ring.emitted=core.birth_channel("impacts"),1,1
     problems:core.Problems
     given,waited:=false,false
     for served:=0;!given && served<8;served+=1 {

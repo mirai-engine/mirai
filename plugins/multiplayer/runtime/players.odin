@@ -14,17 +14,23 @@ import wire "mirai:net"
 // gets it back, and so does the player of a seat of a saved game. What happens
 // to its body is for whoever gave it (spawn.Seat_Body goes with its seat). A
 // body is owned by the connection of its seat, and so is the seat: what makes
-// the client of that connection predict it and its view follow it. A client
-// drives with its first local seat the body the server lets it predict.
+// the client of that connection predict it and its view follow it. On a
+// client the replica of the seat of its player is its local seat 0, which
+// drives the body the server lets it predict; the seats of the other players
+// are of another end.
 
-@(step="fixed",loops="game",stage="begin",after="net_tick_head")
+// The peer a client gives the replicas of the seats of the other players.
+OTHER_END :: ~u64(0)
+
+@(step="fixed",loops="game",stage="begin")
 net_seats :: proc(
-    es:^core.Entities,seats:^core.Table(input.Seat),absents:^core.Table(Seat_Absent),disabled:^core.Table(core.Disabled),
-    objects:^core.Table(Replicate),transforms:^core.Table(core.Transform),keeps:^core.Table(core.Keep),links:core.Read(Net_Link),
+    es:core.Commands,seats:^core.Table(input.Seat),absents:^core.Table(Seat_Absent),disabled:^core.Table(core.Disabled),
+    objects:^core.Table(Replicate),transforms:^core.Table(core.Transform),keeps:^core.Table(core.Keep),links:^core.Table(Net_Link,.Read),remotes:^core.Table(core.Remote,.Read),
     bindings:core.Ref(input.Input_Map),connections:core.Ref(Remote_Inputs),network:core.Ref(core.Network),
-    hierarchy:core.Ref(core.Hierarchy),settings:core.Ref(Net_Settings),time:core.Time,
+    settings:core.Ref(Net_Settings),time:core.Time,
 ) {
     serving:=network.role==.Server
+    if network.role==.Client {client_seats(es,seats,links,remotes)}
     if serving {
         // The connections with a seat, on or off, by the index of their connection.
         seated:[wire.MAX_CONNECTIONS/64]u64
@@ -73,7 +79,7 @@ net_seats :: proc(
         connection:=Connection(value.peer)
         if serving && connected(connections,connection) {
             sent,_:=remote_input(connections,connection)
-            input.seat_receive(value,bindings.ptr,sent)
+            input.seat_receive(value,bindings.ptr,sent,time.dt)
             continue
         }
         // A connection that left: its seat waits for its player, or goes.
@@ -82,13 +88,37 @@ net_seats :: proc(
             absent(absents,disabled,seat,time.tick+u64(max(waits,1)))
             continue
         }
-        core.destroy_tree(es,hierarchy,seat)
+        core.destroy(es,seat)
     }
     if serving {
         for at in 0..<len(absents.entities) {
-            if until:=absents.values[at].until;until!=0 && time.tick>=until {core.destroy_tree(es,hierarchy,absents.entities[at])}
+            if until:=absents.values[at].until;until!=0 && time.tick>=until {core.destroy(es,absents.entities[at])}
         }
     }
+}
+
+// A client: the replica of the seat of its player (the one it holds) is its
+// local seat 0, and takes what the seat made before it arrived held; the
+// others are of another end.
+@(private)
+client_seats :: proc(es:core.Commands,seats:^core.Table(input.Seat),links:^core.Table(Net_Link,.Read),remotes:^core.Table(core.Remote,.Read)) {
+    own,made:=core.NONE,core.NONE
+    for row in 0..<core.count(seats) {
+        e:=core.entity_at(seats,row)
+        value:=seats.values[row]
+        switch {
+        case !core.has(links,e):
+            if input.seat_local(value) && value.slot==0 {made=e}
+        case core.has(remotes,e):
+            if value.peer==0 {core.edit_at(seats,row).peer=OTHER_END}
+        case:
+            own=e
+        }
+    }
+    if own==core.NONE || made==core.NONE {return}
+    // Both are of this machine and of slot 0: the replica takes the seat whole.
+    core.edit(seats,own)^=seats.values[core.row_of(seats,made)]
+    core.destroy(es.entities,made)
 }
 
 // The seat of a player that no connection has, on or off: only when a
@@ -127,32 +157,72 @@ connected :: proc(connections:core.Ref(Remote_Inputs),connection:Connection) -> 
 // of the seat that drives a body; 0 for one no remote seat drives.
 @(private)
 owner_of :: proc(w:core.World_Ref,e:core.Entity) -> Connection {
-    drivables,seats:=core.world_table_of(w,input.Drivable),core.world_table_of(w,input.Seat)
+    seats:=core.world_table_of(w,input.Seat)
     if seats==nil {return 0}
-    if seat,is:=core.get(core.read(seats),e);is {return Connection(seat.peer)}
-    if drivables==nil {return 0}
-    driven,_:=core.get(core.read(drivables),e)
-    seat,_:=core.get(core.read(seats),driven.seat)
+    if seat,is:=core.get(seats,e);is {return Connection(seat.peer)}
+    seat,_:=core.get(seats,input.seat_of(core.read(seats),e))
     return Connection(seat.peer)
+}
+
+// A client: the seat it drives with acts on what its devices gave as many
+// ticks ago as its input delay (wire.Input_Delay, by the round trip), with
+// seat_receive, as the server will: both ends derive the same edges. It keeps
+// two lines of what it held: the one the devices feed (outside the World: it
+// moves only when a tick runs first), which net_input_take gives it before
+// they do, and the one the game sees, which net_input_delay gives back before
+// the delayed actions reach it. A tick that runs again keeps its delay.
+@(step="fixed",loops="game",stage="input",before="input_seats")
+net_input_take :: proc(session:^Net_Session,seats:^core.Table(input.Seat),time:core.Time) {
+    seat:=delayed_seat(session,seats)
+    if seat==nil {return}
+    c:=&session.client
+    c.delayed=seat^
+    if !time.resimulating {seat.actions,seat.held,seat.rearm,seat.fed=c.fed_seat.actions,c.fed_seat.held,c.fed_seat.rearm,c.fed_seat.fed}
+}
+
+@(step="fixed",loops="game",stage="input",after="input_seats")
+net_input_delay :: proc(session:^Net_Session,seats:^core.Table(input.Seat),bindings:core.Ref(input.Input_Map),time:core.Time,problems:^core.Problems) {
+    seat:=delayed_seat(session,seats)
+    if seat==nil {return}
+    c:=&session.client
+    tick:=u32(time.tick)
+    if !time.resimulating {
+        c.fed_seat=seat^
+        sent,ok:=input.seat_remote(seats,input.local_seat(seats,0),bindings.ptr)
+        if !ok {core.report(problems,core.NONE,"net.input_axes","more than %d axis actions of the seat that drives were away from zero in one tick, and the server got only the first %d; give the actions that move together fewer axes, or make some of them buttons",input.REMOTE_AXES,input.REMOTE_AXES)}
+        c.taken[int(tick)%len(c.taken)]={tick+1,sent,u8(wire.clock_state(&session.host).input_delay)}
+    }
+    seat.actions,seat.held,seat.rearm,seat.fed=c.delayed.actions,c.delayed.held,c.delayed.rearm,c.delayed.fed
+    now:=c.taken[int(tick)%len(c.taken)]
+    from:=tick-u32(now.tick==tick+1?now.delay:0)
+    taken:=c.taken[int(from)%len(c.taken)]
+    input.seat_receive(seat,bindings.ptr,taken.tick==from+1?taken.actions:{},time.dt)
+}
+
+// The seat a client drives with; nil on a server.
+@(private)
+delayed_seat :: proc(session:^Net_Session,seats:^core.Table(input.Seat)) -> ^input.Seat {
+    if !session.host_ready || session.mode!=.Client {return nil}
+    return core.edit(seats,input.local_seat(seats,0))
 }
 
 // A client: its first local seat asks to drive the body the server lets it
 // predict, and to let go of a replicated one it no longer predicts.
-@(step="fixed",loops="game",stage="input",before="input_drive")
+@(step="fixed",loops="game",stage="input")
 net_driving :: proc(
-    links:core.Read(Net_Link),replicas:core.Read(core.Pose_Target),elsewhere:core.Read(core.Remote),
-    drivables:core.Read(input.Drivable),seats:core.Read(input.Seat),requests:^input.Seat_Requests,network:core.Ref(core.Network),
+    links:^core.Table(Net_Link,.Read),replicas:^core.Table(core.Pose_Target,.Read),elsewhere:^core.Table(core.Remote,.Read),
+    moves:^core.Table(input.Move_Input,.Read),seats:^core.Table(input.Seat,.Read),requests:^input.Seat_Requests,network:core.Ref(core.Network),
 ) {
     if network.role==.Client {
         seat:=input.local_seat(seats,0)
         if seat==core.NONE {return}
         predicted:=core.NONE
-        for row in 0..<core.count(drivables) {
-            body:=core.entity_at(drivables,row)
+        for row in 0..<core.count(moves) {
+            body:=core.entity_at(moves,row)
             if !core.has(links,body) {continue}
             // What this client predicts as its own: a replica the server simulates that no other end decides.
             own:=core.has(replicas,body) && core.owned(elsewhere,body)
-            driver:=core.at(drivables,row).seat
+            driver:=input.seat_of(seats,body)
             if !own && driver==seat {
                 input.release(requests,seat)
             } else if own && driver==core.NONE && predicted==core.NONE {

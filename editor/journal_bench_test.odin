@@ -16,9 +16,10 @@ import erender "mirai:engine/render"
 @(private="file") EDITOR_JOURNAL_BENCH :: #config(EDITOR_JOURNAL_BENCH,false)
 @(private="file") ENTITIES :: #config(EDITOR_JOURNAL_ENTITIES,20000)
 
-@(private="file")
+@(private)
+@(test_world)
 Bench_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -52,23 +53,23 @@ journal_memory_of_a_large_scene :: proc(t:^testing.T) {
     defer mem.tracking_allocator_destroy(&tracking)
     context.allocator=mem.tracking_allocator(&tracking)
     world:=new(Bench_World);defer free(world)
-    if !core.test_world_init(t,world,test_types) {return}
-    defer core.test_world_destroy(world)
-    info:=core.test_world_info(world)
-    w:=core.test_world_ref(world)
+    if !test_world_init(t,world) {return}
+    defer test_world_destroy(world)
+    info:=test_world_info(world)
+    w:=test_world_ref(world)
     // Groups of ten cubes under the first, and a derived cube in each group.
     group:=core.NONE
     for i in 0..<ENTITIES {
         if i%10==0 {group=bench_create(world,u64(i+1),core.NONE,true)} else {bench_create(world,u64(i+1),group,true)}
         if i%10==9 {bench_create(world,0,group,false)}
     }
-    core.test_world_settle(world)
+    test_world_settle(world)
     // Room for what the steps add, so that the World does not grow while the editor is measured.
     for &table in info.tables {
         t:=core.world_table_at(w,&table)
         rows:=len(t.entities)+256
-        runtime.__dynamic_array_reserve(&t.values,table.info.size,table.info.align,rows)
-        reserve(&t.entities,rows);reserve(&t.stamps,rows);reserve(&t.off,rows);reserve(&t.rows,len(world.entities.generation)+256)
+        core.raw_rows_reserve(t,table.info.size,table.info.align,rows)
+        reserve(&t.rows,len(world.entities.generation)+256)
         reserve(&t.pending,16);runtime.__dynamic_array_reserve(&t.added,table.info.size,table.info.align,16)
     }
     reserve(&world.entities.generation,len(world.entities.generation)+256)
@@ -87,12 +88,12 @@ journal_memory_of_a_large_scene :: proc(t:^testing.T) {
         base:=tracking.current_memory_allocated
         for k in 0..<100 {
             history.edits_begin(&edits,&selection,"Move")
-            core.get(&world.transforms,world.transforms.entities[k*7]).position.y+=1
+            core.edit(&world.transforms,world.transforms.entities[k*7]).position.y+=1
             history.edits_end(&edits)
             history.edits_commit(&edits,w,&selection)
             history.edits_begin(&edits,&selection,"Add")
             bench_create(world,u64(ENTITIES+k+1),core.NONE,true)
-            core.test_world_settle(world)
+            test_world_settle(world)
             history.edits_end(&edits)
             history.edits_commit(&edits,w,&selection)
         }
@@ -106,7 +107,7 @@ journal_memory_of_a_large_scene :: proc(t:^testing.T) {
         cancel=tracking.current_memory_allocated-base
         history.edits_begin(&edits,&selection,"Delete")
         core.destroy(&world.entities,world.ids.entities[ENTITIES/2])
-        core.test_world_settle(world)
+        test_world_settle(world)
         history.edits_end(&edits)
         start=time.tick_now()
         history.edits_commit(&edits,w,&selection)
@@ -123,7 +124,7 @@ journal_memory_of_a_large_scene :: proc(t:^testing.T) {
         collab_tables_build(&s,st)
         collab_journal_reset(&s,st)
         collab_bytes=tracking.current_memory_allocated-base
-        core.get(&world.transforms,world.transforms.entities[3]).position.z+=1
+        core.edit(&world.transforms,world.transforms.entities[3]).position.z+=1
         start=time.tick_now()
         collab_edits_send(&s,st)
         tick_ms=time.duration_milliseconds(time.tick_since(start))

@@ -3,10 +3,10 @@ package monitors
 import "core:math"
 import "core:math/linalg"
 import "mirai:core"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import erender "mirai:engine/render"
 import "mirai:host"
-import "mirai:std/base"
 import mm "mirai:std/math"
 
 // Screens that show what a camera sees. The image of a camera is a feed:
@@ -70,6 +70,7 @@ Fed :: struct {
 Monitors :: struct {
     fed:[FEED_CAPACITY]Fed,
     frame:u64,
+    seen:core.Seen, // of the screens: one that went stops showing its image
 }
 
 @(private)
@@ -122,18 +123,18 @@ asked_of :: proc "contextless" (asked:[]Asked,screen:Screen) -> int {
 }
 
 // What the screens ask of their cameras into the frame, each feed at the
-// level its screens ask for, and the screens drawn with the image of theirs.
+// level its screens ask for, and the image of each screen as the screen
+// its entity shows at run time (erender.Material_Live).
 @(step="render",loops="game editor",before="render_sync")
 monitors_render :: proc(
-    state:^Monitors,screens:core.Read(Screen),cameras:core.Read(erender.Camera),exposures:core.Read(erender.Exposure),
-    meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),parents:core.Read(core.Parent),
-    tints:core.Read(erender.Tint),overrides:core.Read(erender.Material_Override),hidden:core.Read(erender.Hidden),
-    highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),layers:core.Read(erender.Layers),
-    view:core.View,app:^host.App,frame:core.Frame_Time,view_volumes:core.Read(erender.View_Volume),volumes:core.Read(volume.Volume),
-    locals:core.Read(core.Transform),
+    state:^Monitors,screens:^core.Table(Screen,.Read),cameras:^core.Table(erender.Camera,.Read),exposures:^core.Table(erender.Exposure,.Read),
+    meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),
+    lives:^core.Table(erender.Material_Live),hidden:^core.Table(erender.Hidden,.Read),
+    view:core.View,app:^host.App,view_volumes:^core.Table(erender.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
 ) {
     if app.renderer==nil || app.assets==nil {return}
     state.frame+=1
+    for e in core.changes(screens,&state.seen).gone {erender.material_screen(lives,e,{})}
     if core.count(screens)==0 {
         for &fed in state.fed {fed.entity=core.NONE}
         return
@@ -218,7 +219,7 @@ monitors_render :: proc(
             }
             seen:core.View
             erender.view_of_camera(&seen,cameras,exposures,worlds,a.camera,{f32(width),f32(height)})
-            erender.view_volume_expose(&seen,view_volumes,volumes,worlds)
+            erender.view_volume_expose(&seen,view_volumes,{volumes,worlds,parents,sections,splines})
             // A level left alone for long has histories of another moment.
             stale:=fed.drawn[level]==0 || state.frame-fed.drawn[level]>interval*UNSEEN_INTERVAL+1
             if !erender.view_texture_draw(&app.extras,fed.textures[level],seen,width,height,stale,erender.pipeline_standard(app.renderer,a.light?.Light:.Full)) {continue}
@@ -231,32 +232,12 @@ monitors_render :: proc(
     for row in 0..<core.count(screens) {
         e:=core.entity_at(screens,row)
         screen:=core.at(screens,row)
+        texture:erender.Texture_Handle
         feed:=screen.width>=LEVEL_MIN_SIZE && screen.height>=LEVEL_MIN_SIZE?asked_of(asked[:count],screen):-1
-        if feed<0 || asked[feed].place<0 {continue}
-        fed:=&state.fed[asked[feed].place]
-        static,has_mesh:=core.get(meshes,e)
-        world,placed:=core.get(worlds,e)
-        if fed.shown<0 || fed.textures[fed.shown]==0 || !has_mesh || !placed || erender.is_hidden(hidden,parents,e) {continue}
-        tint:=erender.TINT_DEFAULT
-        if value,exists:=core.get(tints,e);exists {tint=value}
-        override,_:=core.get(overrides,e)
-        anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,locals,cameras,e)
-        shown,usable:=erender.mesh_instance(app.assets,static,transform,tint,override)
-        shown.anchor=anchor
-        if !usable {continue}
-        row_shown,at:=erender.mesh_slot_row(app.assets,static,&shown,screen.slot)
-        values:=host.assets_material_values(app.assets,row_shown)
-        values.textures[.Emission]=fed.textures[fed.shown]
-        values.emission=screen.brightness
-        values.base_color=0
-        values.textures[.Base_Color]=0
-        lit,derived:=host.assets_material_derive(app.assets,values)
-        if !derived {continue}
-        if at!=nil {at^=lit+1} else {shown.material=erender.Material_Handle(lit)}
-        shown.object_id=u64(e)
-        shown.copy_owner,shown.replace_source=base.name_hash("monitors"),true
-        shown.highlight=erender.instance_outline(highlights,outlines,e)
-        if in_layers,exists:=core.get(layers,e);exists {shown.layers=in_layers.mask}
-        erender.instance_add(&app.extras,shown)
+        if feed>=0 && asked[feed].place>=0 {
+            if fed:=&state.fed[asked[feed].place];fed.shown>=0 {texture=fed.textures[fed.shown]}
+        }
+        // The slot of the screen gives the image as its light, and reflects none.
+        erender.material_screen(lives,e,{texture,u8(min(screen.slot,erender.MATERIAL_SLOTS-1)),true,screen.brightness})
     }
 }

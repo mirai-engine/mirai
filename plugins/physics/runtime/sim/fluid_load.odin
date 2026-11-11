@@ -43,17 +43,30 @@ shape_drag_default :: proc "contextless" (type:Shape_Type) -> f32 {
 
 @(private) WET_DRY :: 4 // dry boxes a body can be in at once; more are ignored
 @(private) WET_COLUMN :: 4
+@(private) WET_TERMS :: 2+2*WET_DRY // of a second water: it, less the first, less each dry box, plus the first in each
+@(private) WET_NEAR :: 8 // fluids whose box meets the box of a body that it looks for its waters among
 
-// What a body in a fluid meets in a step, found once from its box and read in every substep.
+// A water a body is in.
 @(private)
-Wet :: struct {
-    fluid:i32,     // slot; -1 for a body in no fluid
-    character:i32, // slot of the character of the body, -1 for another body
+Wet_Water :: struct {
+    fluid:i32,     // slot
+    segment:i32,   // of a path: the one nearest the body, where every substep starts to look
     surface:Plane, // free surface over the body: the plane that touches it over its center
     height:f32,    // of the surface over its center
     current:Vec3,
     density:f32,
-    dry:[WET_DRY]i32,
+}
+
+// What a body in a fluid meets in a step, found once from its box and read in every substep: the water it
+// is in and another it reaches across a border (a river into a lake), each with its own region, the second
+// without what the first holds.
+@(private)
+Wet :: struct {
+    waters:[2]Wet_Water,
+    water_count:i32,
+    character:i32, // slot of the character of the body, -1 for another body; a character is in its first water
+    current:Vec3,  // that the drags pull toward: of its waters, by the drag of each in the last substep
+    dry:[WET_DRY]i32, // over one of its waters in priority
     dry_count:i32,
     column:[WET_COLUMN]Fluid_Interval, // a character: the fluid in its column
     column_count:i32,
@@ -64,7 +77,7 @@ Wet :: struct {
 
 // The planes of one part of the region of a fluid around a body, keeping dot(n,p)<=d: the fluid (sign 1),
 // or the fluid inside a dry box, taken out (sign -1). Interface planes are those between fluid and air.
-@(private) TERM_PLANES :: 12
+@(private) TERM_PLANES :: 18 // two waters and a dry box
 @(private)
 Fluid_Term :: struct {
     planes:[TERM_PLANES]Plane,
@@ -135,11 +148,12 @@ fluids_prepare :: proc(w:^World) {
     for &cs in st.characters[:st.character_count] {
         if cs.c<0 {continue}
         wet:=&st.wet[cs.c]
-        if wet.fluid<0 {continue}
+        if wet.water_count==0 {continue}
         wet.character=cs.character
         body:=&w.bodies[cs.body]
+        water:=&wet.waters[0]
         column:[FLUID_COLUMN_DRY+1]Fluid_Interval
-        count:=fluid_column(w,wet.fluid,body.position,&column)
+        count:=fluid_column(w,water.fluid,fluid_spot(w,water.fluid,body.position,water.segment),body.position,&column)
         wet.column_count=i32(min(count,WET_COLUMN))
         copy(wet.column[:],column[:wet.column_count])
     }
@@ -150,38 +164,50 @@ fluids_prepare_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check 
     w:=(^World)(data)
     st:=&w.step
     for i in first..<last {
-        st.wet[i]={fluid=-1,character=-1}
+        st.wet[i]={character=-1}
         if st.params[i].inv_mass==0 {continue}
         wet_find(w,&w.bodies[st.awake[i]],st.bodies[i].v*st.dt,&st.wet[i])
     }
 }
 
-// The fluid a body is in, over the box of its shapes swept by `reach`, and the dry boxes it meets.
+// The waters a body is in, by the rule of fluid_find at its center, at the lowest point of its box and at
+// the corners of its bottom, among the fluids its box swept by `reach` meets; and the dry boxes it meets.
 @(private)
 wet_find :: proc "contextless" (w:^World,body:^Body,reach:Vec3,wet:^Wet) #no_bounds_check {
-    wet^={fluid=-1,character=-1}
+    wet^={character=-1}
     if body.shape_list<0 {return}
-    box:=w.shapes[body.shape_list].aabb
-    for s:=w.shapes[body.shape_list].next;s>=0;s=w.shapes[s].next {box=math.aabb_merge(box,w.shapes[s].aabb)}
-    box=math.aabb_merge(box,{box.min+reach,box.max+reach})
-    fluid:=i32(-1)
+    shapes:=w.shapes[body.shape_list].aabb
+    for s:=w.shapes[body.shape_list].next;s>=0;s=w.shapes[s].next {shapes=math.aabb_merge(shapes,w.shapes[s].aabb)}
+    box:=math.aabb_merge(shapes,{shapes.min+reach,shapes.max+reach})
+    near:[WET_NEAR]i32
+    near_count:=0
     for &f,k in w.fluids[:w.fluid_high] {
-        if f.generation&1==0 || f.density<=0 || !math.aabb_overlaps(fluid_aabb(&f),box) {continue}
-        if fluid<0 || f.priority>w.fluids[fluid].priority {fluid=i32(k)}
+        if f.generation&1==0 || f.density<=0 || !math.aabb_overlaps(f.bounds,box) || near_count==WET_NEAR {continue}
+        near[near_count]=i32(k)
+        near_count+=1
     }
-    if fluid<0 {return}
-    f:=&w.fluids[fluid]
+    if near_count==0 {return}
+    c,lo,hi:=body.center,shapes.min,shapes.max
+    for probe in ([6]Vec3{c,{c.x,lo.y,c.z},lo,{hi.x,lo.y,lo.z},{lo.x,lo.y,hi.z},{hi.x,lo.y,hi.z}}) {
+        fluid,_:=fluid_find(w,probe,near[:near_count])
+        if fluid<0 || wet.water_count>0 && wet.waters[0].fluid==fluid {continue}
+        spot:=fluid_spot(w,fluid,c)
+        wet.waters[wet.water_count]={fluid=fluid,segment=spot.segment,surface={spot.normal,dot(spot.normal,Vec3{c.x,spot.top,c.z})},height=spot.top,current=spot.current,density=w.fluids[fluid].density}
+        wet.water_count+=1
+        if wet.water_count==len(wet.waters) {break}
+    }
+    if wet.water_count==0 {return}
+    wet.current=wet.waters[0].current
     for key:=body.contact_list;key>=0; {
         contact:=&w.contacts[key>>1]
         key=contact.edges[key&1].next
         if contact.flags&{.Touching,.Overlap}=={.Touching} {wet.supported=true;break}
     }
-    height,normal:=fluid_surface_at(w,f,body.center.x,body.center.z)
-    wet.fluid,wet.density,wet.current,wet.height=fluid,f.density,fluid_current(f),height
-    wet.surface={normal,dot(normal,Vec3{body.center.x,height,body.center.z})}
+    priority:=w.fluids[wet.waters[0].fluid].priority
+    for water in wet.waters[1:wet.water_count] {priority=min(priority,w.fluids[water.fluid].priority)}
     for &d,k in w.fluids[:w.fluid_high] {
-        if d.generation&1==0 || d.density>0 || d.priority<=f.priority || wet.dry_count==WET_DRY {continue}
-        if !math.aabb_overlaps(fluid_aabb(&d),box) {continue}
+        if d.generation&1==0 || d.density>0 || d.priority<=priority || wet.dry_count==WET_DRY {continue}
+        if !math.aabb_overlaps(d.bounds,box) {continue}
         wet.dry[wet.dry_count]=i32(k)
         wet.dry_count+=1
     }
@@ -208,7 +234,7 @@ fluid_bodies :: proc(w:^World,out:[]Fluid_Body,skip:=0) -> int {
     count:=0
     for index,i in st.awake[:st.awake_count] {
         wet:=&st.wet[i]
-        if wet.fluid<0 {continue}
+        if wet.water_count==0 {continue}
         if at:=count-skip;at>=0 && at<len(out) {
             body:=&w.bodies[index]
             whole:f32
@@ -223,15 +249,15 @@ fluid_bodies :: proc(w:^World,out:[]Fluid_Body,skip:=0) -> int {
                 }
             }
             out[at]={body=body_handle(w,index),user_data=body.user_data,center=body.center,velocity=body.linear_velocity,
-                volume=wet.volume,whole=whole,surface=wet.height,reach=body.max_extent}
+                volume=wet.volume,whole=whole,surface=wet.waters[0].height,reach=body.max_extent}
         }
         count+=1
     }
     return count
 }
 
-// The accelerations the fluid gives an awake body at the start of a substep, and its implicit drags: k
-// such that dv/dt = -k |v-u| (v-u) and dw/dt = -angular |w| I^-1 w.
+// The accelerations the fluids give an awake body at the start of a substep, and its implicit drags: k
+// such that dv/dt = -k |v-u| (v-u), u the current of the drags (Wet.current), and dw/dt = -angular |w| I^-1 w.
 @(private)
 fluid_forces :: proc(w:^World,i:int,worker:int) -> (linear,angular:Vec3,k,angular_k:f32) #no_bounds_check {
     st:=&w.step
@@ -240,35 +266,43 @@ fluid_forces :: proc(w:^World,i:int,worker:int) -> (linear,angular:Vec3,k,angula
     params:=&st.params[i]
     body:=&w.bodies[st.awake[i]]
     g:=body.gravity_scale*body_gravity_of(w,body)
-    rho:=wet.density
-    flow:=sb.v-wet.current
-    load:Fluid_Load
-    if wet.character>=0 {
-        load=character_load(w,wet,body,sb,flow)
-    } else {
-        load=body_load(w,body,body.center+sb.dp,sb.dq*params.q0,wet,flow,&st.clips[worker])
-    }
-    k=0.5*rho*load.drag*params.inv_mass
-    wet.volume=max(load.volume,0)
-    if load.volume<=0 {return}
     reach:=body.max_extent
-    angular_k=0.5*rho*load.cd_volume*reach*reach
-    center:=load.moment/load.volume
-    buoyancy:=-rho*load.volume*g
-    force:=buoyancy
-    torque:=cross(center,buoyancy)
-    if gravity:=length(g);load.area>0 && gravity>0 {
-        // A pressure against the vertical velocity of each point of the waterline.
-        beta:=2*FLUID_DAMPING_RATIO*rho*cmath.sqrt(gravity*load.volume/load.area)
-        c:=load.area_moment/load.area
-        xx:=load.area_xx-load.area*c.x*c.x
-        zz:=load.area_zz-load.area*c.z*c.z
-        xz:=load.area_xz-load.area*c.x*c.z
-        om:=sb.w
-        heave:=-beta*load.area*dot(sb.v+cross(om,c)-wet.current,UP)*UP
-        force+=heave
-        torque+=cross(c,heave)-beta*Vec3{zz*om.x-xz*om.z,0,xx*om.z-xz*om.x}
+    force,torque,pulled:Vec3
+    wet.volume=0
+    for &water,j in wet.waters[:wet.character>=0?1:wet.water_count] {
+        rho:=water.density
+        flow:=sb.v-water.current
+        load:Fluid_Load
+        if wet.character>=0 {
+            load=character_load(w,wet,body,sb,flow)
+        } else {
+            load=body_load(w,body,body.center+sb.dp,sb.dq*params.q0,wet,j,flow,&st.clips[worker])
+        }
+        drag:=0.5*rho*load.drag*params.inv_mass
+        k+=drag
+        pulled+=drag*water.current
+        if load.volume<=0 {continue}
+        wet.volume+=load.volume
+        angular_k+=0.5*rho*load.cd_volume*reach*reach
+        center:=load.moment/load.volume
+        buoyancy:=-rho*load.volume*g
+        force+=buoyancy
+        torque+=cross(center,buoyancy)
+        if gravity:=length(g);load.area>0 && gravity>0 {
+            // A pressure against the vertical velocity of each point of the waterline.
+            beta:=2*FLUID_DAMPING_RATIO*rho*cmath.sqrt(gravity*load.volume/load.area)
+            c:=load.area_moment/load.area
+            xx:=load.area_xx-load.area*c.x*c.x
+            zz:=load.area_zz-load.area*c.z*c.z
+            xz:=load.area_xz-load.area*c.x*c.z
+            om:=sb.w
+            heave:=-beta*load.area*dot(sb.v+cross(om,c)-water.current,UP)*UP
+            force+=heave
+            torque+=cross(c,heave)-beta*Vec3{zz*om.x-xz*om.z,0,xx*om.z-xz*om.x}
+        }
     }
+    wet.current=wet.water_count>1 && wet.character<0 && k>0?pulled/k:wet.waters[0].current
+    if wet.volume<=0 {return}
     linear=params.inv_mass*force
     angular=params.inv_inertia*torque
     // Floating still is not enough to sleep: it must also stay so for the time to sleep.
@@ -276,11 +310,11 @@ fluid_forces :: proc(w:^World,i:int,worker:int) -> (linear,angular:Vec3,k,angula
     return
 }
 
-// What of a body with its center of mass at com and turned by q is in its fluid, relative to com.
+// What of a body with its center of mass at com and turned by q is in its water `water`, relative to com.
 @(private)
-body_load :: proc(w:^World,body:^Body,com:Vec3,q:Quat,wet:^Wet,flow:Vec3,clip:^Clip_Scratch) -> (load:Fluid_Load) {
-    terms:[1+WET_DRY]Fluid_Term
-    count:=fluid_terms(w,wet,com,&terms)
+body_load :: proc(w:^World,body:^Body,com:Vec3,q:Quat,wet:^Wet,water:int,flow:Vec3,clip:^Clip_Scratch) -> (load:Fluid_Load) {
+    terms:[WET_TERMS]Fluid_Term
+    count:=fluid_terms(w,wet,water,com,body.max_extent,&terms)
     frame:=Transform{-q_rotate(q,body.local_center),q} // the body frame, relative to the center of mass
     for s:=body.shape_list;s>=0;s=w.shapes[s].next {
         shape:=&w.shapes[s]
@@ -290,35 +324,65 @@ body_load :: proc(w:^World,body:^Body,com:Vec3,q:Quat,wet:^Wet,flow:Vec3,clip:^C
     return
 }
 
-// The parts of the region of the fluid of a body, with planes relative to its center of mass.
+// The parts of the region of one water of a body that reaches reach from its center of mass, with planes
+// relative to that center: the water, less the first water of the second, less the dry prisms over it.
 @(private)
-fluid_terms :: proc "contextless" (w:^World,wet:^Wet,com:Vec3,terms:^[1+WET_DRY]Fluid_Term) -> int #no_bounds_check {
+fluid_terms :: proc "contextless" (w:^World,wet:^Wet,water:int,com:Vec3,reach:f32,terms:^[WET_TERMS]Fluid_Term) -> int #no_bounds_check {
     shift :: #force_inline proc "contextless" (p:Plane,com:Vec3) -> Plane {return {p.n,p.d-dot(p.n,com)}}
-    fluid:=&terms[0]
-    fluid.sign=1
-    fluid.planes[0]=shift(wet.surface,com)
-    fluid.interface=1
-    fluid.count=1
-    f:=&w.fluids[wet.fluid]
-    if f.shape==.Box {
-        planes:=fluid_box_planes(f)
-        for plane,k in planes {
-            if k==3 {continue} // the top is the surface
-            fluid.planes[fluid.count]=shift(plane,com)
-            fluid.count+=1
-        }
-    }
-    count:=1
-    for d in wet.dry[:wet.dry_count] {
-        term:=&terms[count]
-        term^=fluid^
-        term.sign=-1
-        for plane,k in fluid_box_planes(&w.fluids[d]) {
-            if k==2 {term.interface|=1<<u32(term.count)} // the floor of the air is the surface under it
+    // The floor and the walls of a prism near the body.
+    prism :: proc "contextless" (w:^World,fluid:i32,com:Vec3,reach:f32,term:^Fluid_Term) {
+        f:=&w.fluids[fluid]
+        term.planes[term.count]=shift({-UP,-(f.position.y-f.depth)},com)
+        term.count+=1
+        walls:[PRISM_WALLS]Plane
+        for plane in walls[:prism_walls(fluid_points(w,fluid),com,reach,&walls)] {
             term.planes[term.count]=shift(plane,com)
             term.count+=1
         }
-        count+=1
+    }
+    // The surface of a water and the walls and floor of its shape.
+    region :: proc "contextless" (w:^World,water:^Wet_Water,com:Vec3,reach:f32,term:^Fluid_Term) {
+        term.planes[term.count]=shift(water.surface,com)
+        term.count+=1
+        f:=&w.fluids[water.fluid]
+        if f.shape==.Path {
+            spot:=path_spot(fluid_points(w,water.fluid),com.x,com.z,water.segment)
+            water.segment=spot.segment
+            for plane in path_planes(spot) {
+                term.planes[term.count]=shift(plane,com)
+                term.count+=1
+            }
+        } else if f.shape==.Prism {
+            prism(w,water.fluid,com,reach,term)
+        }
+    }
+    own:=&wet.waters[water]
+    terms[0]={sign=1,interface=1}
+    region(w,own,com,reach,&terms[0])
+    count:=1
+    if water>0 {
+        terms[1]=terms[0]
+        terms[1].sign=-1
+        region(w,&wet.waters[0],com,reach,&terms[1])
+        count=2
+    }
+    // Each dry prism over it in priority takes itself out of what is left: of a second water, the water less
+    // the first, so what both take out is given back once.
+    bases:=count
+    priority:=w.fluids[own.fluid].priority
+    for d in wet.dry[:wet.dry_count] {
+        if w.fluids[d].priority<=priority {continue}
+        for base in 0..<bases {
+            term:=&terms[count]
+            term^=terms[base]
+            term.sign=-term.sign
+            term.planes[term.count]=shift({UP,w.fluids[d].position.y},com)
+            term.count+=1
+            term.interface|=1<<u32(term.count) // the floor of the air is the surface under it
+            prism(w,d,com,reach,term)
+            count+=1
+
+        }
     }
     return count
 }

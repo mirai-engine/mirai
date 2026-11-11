@@ -192,11 +192,11 @@ document_text_is_stable_and_says_everything :: proc(t:^testing.T) {
     serial.writer_reset(&w)
     document_row_write(&doc,&w,1,1)
     testing.expect_value(t,string(serial.writer_bytes(&w)),`{"id": "0x0000000000000020", "name": "saw", "value": {"weight": 0.25, "tags": ["Cold", "Wet"], "offset": [2, 3]}}`)
-    // For a diff: what a row or a type added before would change is left out.
+    // For a diff: what a type added before would change is left out.
     serial.writer_reset(&w)
     document_text_write(&doc,&w,{diff=true})
     diffed:=string(serial.writer_bytes(&w))
-    testing.expect(t,strings.contains(diffed,`{"item": "0x0000000000000020", "count": 7}`) && !strings.contains(diffed,`"type": `),"rows refer to rows by key and columns do not tell the index of their type")
+    testing.expect(t,strings.contains(diffed,`"type_name": "Tool_Item"`) && !strings.contains(diffed,`"type": `),"columns do not tell the index of their type")
     free_all(context.temp_allocator)
 }
 
@@ -237,7 +237,7 @@ document_text_reads_back_the_same_bytes_for_every_kind :: proc(t:^testing.T) {
     // A named integer keeps its names, and that it moves by them, through the text.
     types.schema.named=make(map[typeid]serial.Named,context.temp_allocator)
     types.schema.named[Test_Channel_Name]={choices={{"impacts",16}},by_name=true}
-    scene:Scene;scene_init(&scene,&types,KIND_SCENE,{6,6});defer scene_destroy(&scene)
+    scene:Scene;scene_init(&scene,&types,{6,6});defer scene_destroy(&scene)
     for i in 1..=40 {
         id:=base.Entity_Id(i*3)
         scene_entity_add(&scene,id,i>1?base.Entity_Id(3):0,i%2==0?"even":"ödd ☃")

@@ -14,7 +14,7 @@ test_markdown_context :: proc(t:^testing.T,ctx:^Context,owner:^Font,desc:=TEST_M
     desc:=desc
     if !testing.expect(t,font_init(owner,nil,nil,1,on_demand=true)) {return false}
     desc.font=owner
-    if !testing.expect(t,context_init(ctx,desc)) {font_destroy(owner);return false}
+    if !testing.expect(t,test_context_init(ctx,desc)) {font_destroy(owner);return false}
     return true
 }
 
@@ -49,8 +49,9 @@ TEST_MARKDOWN_TEXTS :: [?]string{
     "- item\n\n  ```\n  line one\n  \tline two\n  ```\n- [Point Light 1](entity:3)",
 }
 
+// Every case of the corpus builds at every width, with a height when it says something.
 @(test)
-markdown_height_is_the_height_markdown_builds :: proc(t:^testing.T) {
+markdown_builds_each_case_at_each_width :: proc(t:^testing.T) {
     ctx:Context
     owner:Font
     if !test_markdown_context(t,&ctx,&owner) {return}
@@ -85,9 +86,7 @@ markdown_height_is_the_height_markdown_builds :: proc(t:^testing.T) {
     testing.expect_value(t,dropped_total(&ctx.stats),u32(0))
     for c,i in s.cases {
         rect:=test_rect(t,&ctx,id(&ctx,"case",i+1))
-        expected:=markdown_height(&ctx,c.text,c.width,c.style)
-        testing.expectf(t,test_near(rect.h,expected),"%q at %v: built %v, measured %v",c.text,c.width,rect.h,expected)
-        testing.expectf(t,c.text=="" || expected>0,"%q has a height",c.text)
+        testing.expectf(t,c.text=="" || rect.h>0,"%q at %v has a height",c.text,c.width)
     }
 }
 
@@ -100,8 +99,17 @@ test_markdown_build :: proc(ctx:^Context,user:rawptr) {
         if clicked:=markdown(ctx,id(ctx,"markdown"),s.text,s.width,s.style);clicked!="" {s.clicked=clicked}
     }
 }
+// The height markdown builds text with in width, in a frame of its own.
+test_markdown_height :: proc(ctx:^Context,text:string,width:f32,style:Markdown_Style={}) -> f32 {
+    s:=Test_Markdown{text=text,width=width,style=style}
+    input:=test_input(800,60000)
+    test_frame(ctx,&input,test_markdown_build,&s)
+    rect,_:=widget_rect(ctx,id(ctx,"panel"))
+    return rect.h
+}
 @(private="file")
 test_markdown_paint :: proc(ctx:^Context,text:string) -> ^Paint {
+    for &p in test_text_pieces(ctx) {if strings.trim_right(p.text," ")==text {return &p}}
     for &p in ctx.paints[:ctx.paint_count] {if strings.trim_right(p.text," ")==text {return &p}}
     return nil
 }
@@ -112,8 +120,7 @@ markdown_lays_out_each_kind_of_block :: proc(t:^testing.T) {
     owner:Font
     if !test_markdown_context(t,&ctx,&owner) {return}
     defer {context_destroy(&ctx);font_destroy(&owner)}
-    th:=&ctx.theme
-    body:=th.font_small
+    body:=metric(&ctx,"font_small")
     line:=math.floor(body*PARAGRAPH_LINE)
     s:=Test_Markdown{width=600,text="# Big\n\n## Middle\n\n### Small\n\nSome **strong** words, *em* and _em_ too, `a_code` and <b>tags</b>.\nSame paragraph.\n\n- bullet\n  - nested\n\n3. third\n\n> quoted\n\n---\n\n```odin\nx := 1\n```"}
     input:=test_input(800,2000)
@@ -127,36 +134,36 @@ markdown_lays_out_each_kind_of_block :: proc(t:^testing.T) {
     strong:=test_markdown_paint(&ctx,"strong")
     testing.expect(t,strong!=nil && strong.style.font==FONT_SEMIBOLD,"Bold is SemiBold")
     testing.expect(t,test_markdown_paint(&ctx,"Some")!=nil && test_markdown_paint(&ctx,"Some").style.font==FONT_REGULAR)
-    for &p in ctx.paints[:ctx.paint_count] {
+    for &p in test_text_pieces(&ctx) {
         testing.expectf(t,strings.index_byte(p.text,'*')<0 && strings.index(p.text,"_em_")<0,"The markers of emphasis are left out: %q",p.text)
     }
     code:=test_markdown_paint(&ctx,"a_code")
-    testing.expect(t,code!=nil && code.kind==.Box && code.style.font==FONT_MONO && code.fill==th.chip_on,"Inline code is a chip in the monospace face")
+    testing.expect(t,code!=nil && code.kind==.Box && code.style.font==FONT_MONO && code.fill==tone(&ctx,"chip_on"),"Inline code is a chip in the monospace face")
     html:=false
-    for &p in ctx.paints[:ctx.paint_count] {if strings.contains(p.text,"<b>tags</b>.") {html=true}}
+    for &p in test_text_pieces(&ctx) {if strings.contains(p.text,"<b>tags</b>.") {html=true}}
     testing.expect(t,html,"HTML stays as text")
     testing.expect(t,test_markdown_paint(&ctx,"Same paragraph.")!=nil,"A paragraph goes on in its next line")
     bullets:=0
-    for &p in ctx.paints[:ctx.paint_count] {if p.text=="•" {bullets+=1}}
+    for &p in test_text_pieces(&ctx) {if p.text=="•" {bullets+=1}}
     testing.expect_value(t,bullets,2)
     testing.expect(t,test_markdown_paint(&ctx,"3.")!=nil,"An ordered item shows its number")
     quoted:=test_markdown_paint(&ctx,"quoted")
-    testing.expect(t,quoted!=nil && quoted.text_color==th.text_muted)
+    testing.expect(t,quoted!=nil && quoted.style.color==tone(&ctx,"text_muted"))
     rules,bars:=0,0
     for &p in ctx.paints[:ctx.paint_count] {
-        if p.kind==.Rect && p.fill==th.divider {rules+=1}
-        if p.kind==.Rect && p.fill==th.border {bars+=1}
+        if p.kind==.Rect && p.fill==tone(&ctx,"divider") {rules+=1}
+        if p.kind==.Rect && p.fill==tone(&ctx,"border") {bars+=1}
     }
     testing.expect_value(t,rules,1)
     testing.expect_value(t,bars,1)
     mono:=test_markdown_paint(&ctx,"x := 1")
     testing.expect(t,mono!=nil && mono.style.font==FONT_MONO,"Code is in the monospace face")
     block:=false
-    for &p in ctx.paints[:ctx.paint_count] {if p.fill==th.well && p.radius==th.radius_popup {block=true}}
+    for &p in ctx.paints[:ctx.paint_count] {if p.fill==tone(&ctx,"well") && p.radius==metric(&ctx,"radius_popup") {block=true}}
     testing.expect(t,block,"A code block has a darker rounded background")
     // A line break inside a paragraph is a space: these are one line each.
-    testing.expect_value(t,markdown_height(&ctx,"one\ntwo",600),line)
-    testing.expect_value(t,markdown_height(&ctx,"one\n\ntwo",600),2*line+math.floor(body*2/3))
+    testing.expect_value(t,test_markdown_height(&ctx,"one\ntwo",600),line)
+    testing.expect_value(t,test_markdown_height(&ctx,"one\n\ntwo",600),2*line+math.floor(body*2/3))
 }
 
 @(test)
@@ -165,7 +172,7 @@ markdown_pills_do_not_break_and_wrap_whole :: proc(t:^testing.T) {
     owner:Font
     if !test_markdown_context(t,&ctx,&owner) {return}
     defer {context_destroy(&ctx);font_destroy(&owner)}
-    body:=ctx.theme.font_small
+    body:=metric(&ctx,"font_small")
     line:=math.floor(body*PARAGRAPH_LINE)
     name:="Point Light 1"
     pill:=text_width(&ctx.font,name,body)+2*MARKDOWN_PILL_PAD
@@ -180,7 +187,7 @@ markdown_pills_do_not_break_and_wrap_whole :: proc(t:^testing.T) {
     testing.expect(t,test_near(r.w,pill) && test_near(r.h,line),"A pill keeps its whole name")
     testing.expectf(t,test_near(r.y,line) && test_near(r.x,0),"The pill goes whole to the next line: %v",r)
     p:=test_markdown_paint(&ctx,name)
-    testing.expect(t,p!=nil && p.stroke==ctx.theme.text,"The selected pill is outlined")
+    testing.expect(t,p!=nil && p.stroke==tone(&ctx,"text"),"The selected pill is outlined")
     // Wider than the line, it is cut to the line.
     s.width=pill*0.5
     test_frame(&ctx,&input,test_markdown_build,&s)
@@ -188,7 +195,7 @@ markdown_pills_do_not_break_and_wrap_whole :: proc(t:^testing.T) {
     r=test_rect(t,&ctx,id_derive(&ctx,markdown_id,"link",1))
     testing.expect(t,test_near(r.w,s.width) && test_near(r.x,0))
     // A label resolve writes replaces the text of the link.
-    testing.expect(t,markdown_height(&ctx,"[Wet stone](asset:a.mat)",1000,{resolve=test_markdown_resolve})==line)
+    testing.expect(t,test_markdown_height(&ctx,"[Wet stone](asset:a.mat)",1000,{resolve=test_markdown_resolve})==line)
     s.text,s.width="[Wet stone](asset:a.mat)",1000
     test_frame(&ctx,&input,test_markdown_build,&s)
     testing.expect(t,test_markdown_paint(&ctx,"Wet stone (asset)")!=nil)
@@ -223,7 +230,7 @@ markdown_reports_the_target_of_a_live_link_clicked :: proc(t:^testing.T) {
     test_point(&input,test_rect(t,&ctx,id_derive(&ctx,markdown_id,"link",1)))
     test_frame(&ctx,&input,test_markdown_build,&s)
     lit:=test_markdown_paint(&ctx,"the docs")
-    testing.expect(t,lit!=nil && lit.fill==ctx.theme.chip_on && lit.text_color==ctx.theme.accent)
+    testing.expect(t,lit!=nil && lit.fill==tone(&ctx,"chip_on") && lit.style.color==tone(&ctx,"accent"))
 }
 
 @(test)
@@ -232,7 +239,7 @@ markdown_wraps_a_long_line_of_code_at_characters :: proc(t:^testing.T) {
     owner:Font
     if !test_markdown_context(t,&ctx,&owner) {return}
     defer {context_destroy(&ctx);font_destroy(&owner)}
-    body:=ctx.theme.font_small
+    body:=metric(&ctx,"font_small")
     size:=body-1
     line:=math.floor(size*MARKDOWN_CODE_LINE)
     pad:=math.floor(body*2/3)
@@ -240,9 +247,9 @@ markdown_wraps_a_long_line_of_code_at_characters :: proc(t:^testing.T) {
     text:="```\n0123456789012345678901234567890123456789\n```"
     advance:=text_width(&ctx.font,"0",size,FONT_MONO)
     testing.expect(t,test_near(text_width(&ctx.font,code,size,FONT_MONO),40*advance,0.05),"Digits of the monospace face are as wide as each other")
-    testing.expect_value(t,markdown_height(&ctx,text,2*pad+41*advance),line+2*pad)
+    testing.expect_value(t,test_markdown_height(&ctx,text,2*pad+41*advance),line+2*pad)
     // Ten characters to a line: four lines.
-    testing.expect_value(t,markdown_height(&ctx,text,2*pad+10.5*advance),4*line+2*pad)
+    testing.expect_value(t,test_markdown_height(&ctx,text,2*pad+10.5*advance),4*line+2*pad)
     s:=Test_Markdown{text=text,width=2*pad+10.5*advance}
     input:=test_input(800,600)
     test_frame(&ctx,&input,test_markdown_build,&s)
@@ -255,9 +262,9 @@ markdown_breaks_lines_at_spaces_and_inside_a_word_wider_than_the_line :: proc(t:
     owner:Font
     if !test_markdown_context(t,&ctx,&owner) {return}
     defer {context_destroy(&ctx);font_destroy(&owner)}
-    body:=ctx.theme.font_small
+    body:=metric(&ctx,"font_small")
     line:=math.floor(body*PARAGRAPH_LINE)
-    width :: proc(ctx:^Context,text:string) -> f32 {return text_width(&ctx.font,text,ctx.theme.font_small)}
+    width :: proc(ctx:^Context,text:string) -> f32 {return text_width(&ctx.font,text,metric(ctx,"font_small"))}
     // fits: the widest text that still fits its line; first: what the first line then shows.
     Case :: struct {text,fits,first:string,lines:f32}
     cases:=[]Case{
@@ -273,8 +280,9 @@ markdown_breaks_lines_at_spaces_and_inside_a_word_wider_than_the_line :: proc(t:
     input:=test_input(800,600)
     for c in cases {
         s:=Test_Markdown{text=c.text,width=width(&ctx,c.fits)+0.5}
-        testing.expectf(t,markdown_height(&ctx,s.text,s.width)==c.lines*line,"%q in the width of %q: %v lines",c.text,c.fits,markdown_height(&ctx,s.text,s.width)/line)
         test_frame(&ctx,&input,test_markdown_build,&s)
+        height:=test_rect(t,&ctx,id(&ctx,"panel")).h
+        testing.expectf(t,height==c.lines*line,"%q in the width of %q: %v lines",c.text,c.fits,height/line)
         testing.expectf(t,test_markdown_paint(&ctx,c.first)!=nil,"%q in the width of %q starts with %q",c.text,c.fits,c.first)
     }
 }
@@ -327,8 +335,6 @@ markdown_builds_a_stable_frame_without_allocating :: proc(t:^testing.T) {
     test_frame(&ctx,&input,test_markdown_build,&s)
     requests:=counter.requests
     test_frame(&ctx,&input,test_markdown_build,&s)
-    markdown_height(&ctx,s.text,s.width,s.style)
-    test_frame(&ctx,&input,test_markdown_build,&s)
     testing.expect_value(t,counter.requests,requests)
     testing.expect_value(t,dropped_total(&ctx.stats),u32(0))
 }
@@ -339,7 +345,7 @@ markdown_draws_a_button_pill_with_its_icon_in_the_fill_of_the_accent :: proc(t:^
     owner:Font
     if !test_markdown_context(t,&ctx,&owner) {return}
     defer {context_destroy(&ctx);font_destroy(&owner)}
-    body:=ctx.theme.font_small
+    body:=metric(&ctx,"font_small")
     name:="Try the arena"
     s:=Test_Markdown{width=600,text="[Try the arena](play:scenes/arena.scene)",style={resolve=test_markdown_resolve}}
     input:=test_input(800,600)
@@ -348,6 +354,6 @@ markdown_draws_a_button_pill_with_its_icon_in_the_fill_of_the_accent :: proc(t:^
     r:=test_rect(t,&ctx,id_derive(&ctx,id(&ctx,"markdown"),"link",1))
     testing.expectf(t,test_near(r.w,text_width(&ctx.font,name,body)+2*MARKDOWN_PILL_PAD+body+6),"its icon widens the pill: %v",r)
     p:=test_markdown_paint(&ctx,name)
-    testing.expect(t,p!=nil && p.fill==ctx.theme.accent && p.text_color==ctx.theme.on_accent && p.icon==.Play,"a button is the accent with its icon")
-    testing.expect(t,markdown_height(&ctx,s.text,600,s.style)==math.floor(body*PARAGRAPH_LINE),"a button keeps the line")
+    testing.expect(t,p!=nil && p.fill==tone(&ctx,"accent") && p.style.color==tone(&ctx,"on_accent") && p.icon==.Play,"a button is the accent with its icon")
+    testing.expect(t,test_rect(t,&ctx,id(&ctx,"panel")).h==math.floor(body*PARAGRAPH_LINE),"a button keeps the line")
 }

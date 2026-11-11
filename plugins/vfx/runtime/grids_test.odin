@@ -5,9 +5,10 @@ import "mirai:core"
 import "mirai:std/base"
 import mm "mirai:std/math"
 
-@(private="file")
+@(private)
+@(test_world)
 Grids_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     grids:core.Table(Particle_Grid),
     volumes:core.Table(Particle_Volume),
     textures:core.Table(Particle_World_Texture),
@@ -33,11 +34,11 @@ grids_fixture_add :: proc(f:^Grids_Fixture,name:string) -> core.Entity {
 }
 
 @(private="file")
-grids_fixture_settle :: proc(f:^Grids_Fixture) {core.test_world_settle(&f.w)}
+grids_fixture_settle :: proc(f:^Grids_Fixture) {test_world_settle(&f.w)}
 
 @(private="file")
 grids_fixture_sync :: proc(f:^Grids_Fixture) {
-    grids_sync(&f.g,core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.read(&f.worlds),{},&f.problems)
+    grids_sync(&f.g,&f.grids,&f.volumes,&f.textures,&f.worlds,{},&f.problems)
 }
 
 // Deleting and adding grids leaves each new one with its own entity, and of
@@ -45,10 +46,10 @@ grids_fixture_sync :: proc(f:^Grids_Fixture) {
 @(test)
 grids_keep_their_entities_and_names_as_entities_come_and_go :: proc(t:^testing.T) {
     f:Grids_Fixture
-    if !core.test_world_init(t,&f.w,test_types) {return}
+    if !test_world_init(t,&f.w) {return}
     defer {
         grids_free(&f.g)
-        core.test_world_destroy(&f.w)
+        test_world_destroy(&f.w)
     }
     plume:=grids_fixture_add(&f,"plume")
     fluid:=grids_fixture_add(&f,"fluid")
@@ -76,7 +77,7 @@ grids_keep_their_entities_and_names_as_entities_come_and_go :: proc(t:^testing.T
     again:=grids_fixture_add(&f,"fluid")
     core.destroy(&f.entities,waves)
     grids_fixture_settle(&f)
-    testing.expect(t,core.entity_at(core.read(&f.grids),0)==again,"the new one is in the first row")
+    testing.expect(t,core.entity_at(&f.grids,0)==again,"the new one is in the first row")
     grids_fixture_sync(&f)
     testing.expect_value(t,grid_find(&f.g,base.name_hash("fluid")),grid_of_entity(&f.g,copy))
     testing.expect_value(t,grid_of_entity(&f.g,again),-1)
@@ -88,10 +89,10 @@ grids_keep_their_entities_and_names_as_entities_come_and_go :: proc(t:^testing.T
 @(test)
 emitters_read_the_grids_they_bind_or_their_own :: proc(t:^testing.T) {
     f:Grids_Fixture
-    if !core.test_world_init(t,&f.w,test_types) {return}
+    if !test_world_init(t,&f.w) {return}
     defer {
         grids_free(&f.g)
-        core.test_world_destroy(&f.w)
+        test_world_destroy(&f.w)
     }
     fluid:=grids_fixture_add(&f,"fluid")
     river:=grids_fixture_add(&f,"river")
@@ -107,7 +108,7 @@ emitters_read_the_grids_they_bind_or_their_own :: proc(t:^testing.T) {
     shown.needs.stages[0]={kind=.Cells,over=0}
     shown.needs.stages[1]={kind=.Cells,over=1}
     read :: proc(sync:^Particle_Sync,shown:^Emitter_Shown,bindings:^Particle_Bindings,e:core.Entity) -> (grids:[2]int) {
-        resources:=emitter_resources(sync,shown,&shown.info,nil,bindings,e,{},nil,{},{},{},nil,nil)
+        resources:=emitter_resources(sync,shown,bindings,e,nil,nil,nil,nil,{},nil,nil)
         for &g,at in grids {g=resources[1+at].kind==.Grid?int(resources[1+at].first):-1}
         return
     }
@@ -127,15 +128,4 @@ emitters_read_the_grids_they_bind_or_their_own :: proc(t:^testing.T) {
     // A name no grid has reads nothing: what it binds is not looked for elsewhere.
     base.text_set(bound.sources[0].grid[:],"lake")
     testing.expect_value(t,read(&sync,&shown,&bound,river)[0],-1)
-}
-
-// A bake given up is no longer pending, and a later one can be asked.
-@(test)
-a_grid_bake_given_up_is_no_longer_pending :: proc(t:^testing.T) {
-    sync:=new(Particle_Sync);defer free(sync)
-    defer delete(sync.grids.entries)
-    append(&sync.grids.entries,Grid_Entry{entity=core.Entity(7),name=1,cells={2,1,1},layers=1})
-    testing.expect(t,grid_bake_ask(sync,core.Entity(7)) && grid_bake_pending(sync))
-    grid_bake_cancel(sync)
-    testing.expect(t,!grid_bake_pending(sync))
 }

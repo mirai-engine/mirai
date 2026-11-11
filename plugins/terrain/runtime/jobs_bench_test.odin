@@ -42,7 +42,7 @@ bench_terrain_update_while_a_brush_edits :: proc(t:^testing.T) {
         owner:=core.create(&w.entities)
         core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
         core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-        core.test_world_settle(&w.w)
+        test_world_settle(&w.w)
         w.settings={heightfields=1024,meshes=1024}
         settings:=Terrain_Settings{samples=64*1024*1024,lod_distance=-1}
         for _ in 0..<3 {terrain_bench_tick(&w,&resident,&app,settings)}
@@ -52,7 +52,7 @@ bench_terrain_update_while_a_brush_edits :: proc(t:^testing.T) {
             // Strokes at the corner of four chunks, moving along it.
             corner:=f32(cells)*(kind==.Heightfield?4:1)-f32(samples.x-1)*0.5
             center:=[3]f32{corner+f32(tick%8)*0.25,0,corner}
-            brush:=Brush{kind=kind==.Heightfield?.Raise:.Remove,center=center,radius=6,amount=0.05}
+            brush:=Brush{kind=kind==.Heightfield?.Raise:.Carve,center=center,radius=6,amount=0.05}
             dig(&w.terrain_requests,brush,owner)
             times[tick]=terrain_bench_tick(&w,&resident,&app,settings)
             // The rest of a frame of 60 Hz, in which the jobs may run.
@@ -73,11 +73,11 @@ bench_terrain_update_while_a_brush_edits :: proc(t:^testing.T) {
 
 @(private="file")
 terrain_bench_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,settings:Terrain_Settings) -> f64 {
-    commands:=core.commands_of(core.test_world_ref(&w.w))
+    commands:=core.commands_of(test_world_ref(&w.w))
     start:=time.tick_now()
     test_step(&w.terrain,commands,resident,app,&w.problems,settings)
     elapsed:=time.duration_milliseconds(time.tick_since(start))
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     return elapsed
 }
 

@@ -29,7 +29,7 @@ import vfx "plugins:vfx/runtime"
 // stands on it.
 
 IMPRINT_GRID :: "imprint"
-CHANNEL_STAMPS :: vfx.Particle_Channel_Name(6)
+CHANNEL_STAMPS :: "stamps"
 
 GROUND_CAPACITY :: 256  // meshes drawn displaced at once, over every Imprint_Ground
 STAMP_CAPACITY :: 64    // stamps that walk with a stride at once
@@ -110,16 +110,14 @@ stride_print :: proc "contextless" (stride:^Stride,stamp:Imprint_Stamp,at,forwar
 // one near the ground under it presses as far as stamp_press says, a rut
 // swept from where it was the tick before or, with a stride, a print each
 // stride it goes.
-@(step="fixed",loops="game editor",stage="end",after="transforms_propagate")
-imprint_stamps :: proc(steps:^Imprint_Steps,stamps:core.Read(Imprint_Stamp),worlds:core.Read(core.World_Transform),physics:core.Ref(phys.Physics_State),channels:^vfx.Particle_Channels,time:core.Time,frame:core.Frame_Time) {
+@(step="fixed",loops="game editor",stage="end")
+imprint_stamps :: proc(steps:^Imprint_Steps,stamps:^core.Table(Imprint_Stamp,.Read),worlds:^core.Table(core.World_Transform,.Read),physics:core.Ref(phys.Physics_State),births:^core.Births,time:core.Time,frame:core.Frame_Time) {
     dt:=time.dt if time.playing else frame.dt
     steps.tick+=1
     if !(dt>0) || core.count(stamps)==0 {return}
-    for row in 0..<core.count(stamps) {
-        e:=core.entity_at(stamps,row)
-        stamp:=core.at(stamps,row)
-        world,placed:=core.get(worlds,e)
-        if !placed || !(stamp.radius>0) || !(stamp.depth>0) {continue}
+    placed:=core.join(stamps,worlds)
+    for e,stamp,world in core.each_joined(&placed) {
+        if !(stamp.radius>0) || !(stamp.depth>0) {continue}
         bottom:=world.transform.position-{0,stamp.bottom,0}
         // From a little over its bottom, down to what it stands on.
         lift:=min(stamp.radius,0.25)
@@ -136,16 +134,16 @@ imprint_stamps :: proc(steps:^Imprint_Steps,stamps:core.Read(Imprint_Stamp),worl
             if press<=0 {stride.travelled=0;continue}
             print,ok:=stride_print(stride,stamp,hit.point,forward,moved)
             if !ok {continue}
-            vfx.channel_emit(channels,CHANNEL_STAMPS,vfx.Channel_Birth{
-                position=print,velocity=forward,size=stamp.radius,count=1,
+            core.push(&births.queue,core.Birth{
+                channel=core.birth_channel(CHANNEL_STAMPS),position=print,velocity=forward,size=stamp.radius,count=1,
                 values={press,stamp.berm,STAMP_PRINT,max(stamp.length,2*stamp.radius)},
             })
             steps.pressed+=1
             continue
         }
         if press<=0 {continue}
-        vfx.channel_emit(channels,CHANNEL_STAMPS,vfx.Channel_Birth{
-            position=hit.point,velocity=motion/dt,size=stamp.radius,count=1,values={press,stamp.berm,STAMP_RUT,0},
+        core.push(&births.queue,core.Birth{
+            channel=core.birth_channel(CHANNEL_STAMPS),position=hit.point,velocity=motion/dt,size=stamp.radius,count=1,values={press,stamp.berm,STAMP_RUT,0},
         })
         steps.pressed+=1
     }
@@ -211,11 +209,10 @@ Imprint_Gpu :: struct {
 // field may have changed written in the Geometry stage.
 @(step="render",loops="game editor",before="render_sync")
 imprint_render :: proc(
-    state:^Imprint_Gpu,grounds:core.Read(Imprint_Ground),meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
-    parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),tints:core.Read(erender.Tint),overrides:core.Read(erender.Material_Override),
-    hidden:core.Read(erender.Hidden),highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),
-    layers:core.Read(erender.Layers),locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),
-    steps:core.Ref(Imprint_Steps),sync:core.Ref(vfx.Particle_Sync),app:^host.App,frame:core.Frame_Time,id:core.World_Id,
+    state:^Imprint_Gpu,grounds:^core.Table(Imprint_Ground,.Read),meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),hidden:^core.Table(erender.Hidden,.Read),offsets:^core.Table(erender.Draw_Offset,.Read),
+    locals:^core.Table(core.Transform,.Read),cameras:^core.Table(erender.Camera,.Read),
+    steps:core.Ref(Imprint_Steps),sync:core.Ref(vfx.Particle_Sync),app:^host.App,frame:core.Frame_Time,id:core.World_Id,poses:^erender.Posed_Meshes,
 ) {
     if state==nil || app.renderer==nil || app.assets==nil {return}
     state.world=erender.world_key(id)
@@ -243,7 +240,7 @@ imprint_render :: proc(
             // The entity and those under it, depth first, DEPTH deep at most.
             e,depth:=root,0
             for e!=core.NONE {
-                displace(state,e,ground,write,meshes,worlds,parents,tints,overrides,hidden,highlights,outlines,offsets,layers,locals,cameras,app.assets,app.renderer,&app.extras,frame,place,start,low,high,made)
+                displace(state,e,ground,write,meshes,worlds,parents,hidden,offsets,locals,cameras,app.assets,app.renderer,poses,frame,place,start,low,high,made)
                 i:=core.entity_index(e)
                 if depth<DEPTH && i<len(h.first_child) && h.first_child[i]!=core.NONE {e,depth=h.first_child[i],depth+1;continue}
                 // Up to the nearest that has a next sibling, never past the root.
@@ -258,35 +255,29 @@ imprint_render :: proc(
         }
     }
     for &displaced in state.displaced {
-        if !displaced.valid || displaced.seen==state.frame {continue}
-        erender.mesh_remove(app.renderer,displaced.mesh)
-        displaced={}
+        if displaced.valid && displaced.seen!=state.frame {displaced_drop(app.renderer,poses,&displaced)}
     }
     if state.job_count>0 {erender.frame_pass(app.renderer,.Geometry,imprint_record,state)}
 }
 
-// A mesh under an Imprint_Ground: drawn through its copy while the region
-// reaches its box, and the copy written when its field may have changed.
+// A mesh under an Imprint_Ground: drawn through its copy, the posed mesh of
+// its entity, while the region reaches its box, and the copy written when its
+// field may have changed.
 @(private)
 displace :: proc(
-    state:^Imprint_Gpu,e:core.Entity,ground:Imprint_Ground,write:bool,meshes:core.Read(erender.Mesh_Renderer),worlds:core.Read(core.World_Transform),
-    parents:core.Read(core.Parent),tints:core.Read(erender.Tint),overrides:core.Read(erender.Material_Override),hidden:core.Read(erender.Hidden),
-    highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),offsets:core.Read(erender.Draw_Offset),layers:core.Read(erender.Layers),
-    locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),assets:^host.Assets,renderer:^erender.Renderer,extras:^host.Frame_Extras,frame:core.Frame_Time,
+    state:^Imprint_Gpu,e:core.Entity,ground:Imprint_Ground,write:bool,meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),hidden:^core.Table(erender.Hidden,.Read),offsets:^core.Table(erender.Draw_Offset,.Read),
+    locals:^core.Table(core.Transform,.Read),cameras:^core.Table(erender.Camera,.Read),assets:^host.Assets,renderer:^erender.Renderer,poses:^erender.Posed_Meshes,frame:core.Frame_Time,
     place:vfx.World_Texture_Place,start:[2]i32,low,high:[2]f64,made:u64,
 ) {
     static,has_mesh:=core.get(meshes,e)
     world,placed:=core.get(worlds,e)
     if !has_mesh || !placed || core.has(hidden,e) {return}
-    tint:=erender.TINT_DEFAULT
-    if value,exists:=core.get(tints,e);exists {tint=value}
-    override,_:=core.get(overrides,e)
-    anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,locals,cameras,e)
-    shown,usable:=erender.mesh_instance(assets,static,transform,tint,override)
-    shown.anchor=anchor
+    source,usable:=erender.mesh_handle(assets,static)
     // A mesh whose geometry still goes to the GPU has no vertices to copy yet: it is drawn as it is.
-    if !usable || erender.mesh_uploading(renderer,shown.mesh) {return}
-    rest_min,rest_max,known:=erender.mesh_bounds(renderer,shown.mesh)
+    if !usable || erender.mesh_uploading(renderer,source) {return}
+    anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,locals,cameras,e)
+    rest_min,rest_max,known:=erender.mesh_bounds(renderer,source)
     if !known {return}
     // The box of the mesh in the world, level: whether the region reaches it.
     corner_low,corner_high:=[2]f64{max(f64),max(f64)},[2]f64{-max(f64),-max(f64)}
@@ -304,15 +295,12 @@ displace :: proc(
     }
     if at<0 {return}
     displaced:=&state.displaced[at]
-    if displaced.valid && (displaced.entity!=e || displaced.source!=shown.mesh) {
-        erender.mesh_remove(renderer,displaced.mesh)
-        displaced^={}
-    }
+    if displaced.valid && (displaced.entity!=e || displaced.source!=source) {displaced_drop(renderer,poses,displaced)}
     fresh:=false
     if !displaced.valid {
-        mesh,created:=erender.deformable_create(renderer,shown.mesh)
+        mesh,created:=erender.deformable_create(renderer,source)
         if !created {return}
-        displaced^={entity=e,source=shown.mesh,mesh=mesh,rest_min=rest_min,rest_max=rest_max,valid=true}
+        displaced^={entity=e,source=source,mesh=mesh,rest_min=rest_min,rest_max=rest_max,valid=true}
         fresh=true
     }
     displaced.seen=state.frame
@@ -343,11 +331,15 @@ displace :: proc(
             }
         }
     }
-    shown.mesh,shown.object_id=displaced.mesh,u64(e)
-    shown.copy_owner,shown.replace_source=base.name_hash("imprint"),true
-    shown.highlight=erender.instance_outline(highlights,outlines,e)
-    if in_layers,exists:=core.get(layers,e);exists {shown.layers=in_layers.mask}
-    erender.instance_add(extras,shown)
+    if !erender.posed_set(poses,e,{mesh=displaced.mesh}) {displaced_drop(renderer,poses,displaced)}
+}
+
+// Its entity draws its own mesh again, and the copy goes.
+@(private)
+displaced_drop :: proc(renderer:^erender.Renderer,poses:^erender.Posed_Meshes,displaced:^Displaced) {
+    erender.posed_drop(poses,displaced.entity)
+    erender.mesh_remove(renderer,displaced.mesh)
+    displaced^={}
 }
 
 @(private)

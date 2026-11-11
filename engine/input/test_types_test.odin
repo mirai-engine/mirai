@@ -2,20 +2,13 @@ package input
 
 import "mirai:core"
 
-// What the declarations of this library name: core.Test_Types.
-test_types :: proc(types:^[dynamic]core.Test_Type) {
-    append(types,
-        core.test_type(Look_Actions,default=proc(dst:^Look_Actions) {dst^=look_actions_default()}),
-        core.test_type(Local_Multiplayer,default=proc(dst:^Local_Multiplayer) {dst^=LOCAL_MULTIPLAYER_DEFAULT}),
-    )
-}
-
 // The world the tests of this library share.
 @(private)
+@(test_world)
 Test_Seats :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     seats:core.Table(Seat),
-    drivables:core.Table(Drivable),
+    moves:core.Table(Move_Input),
     worlds:core.Table(core.World_Transform),
     remotes:core.Table(core.Remote),
     hold_requests:Hold_Requests,

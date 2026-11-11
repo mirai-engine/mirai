@@ -7,7 +7,6 @@ import "mirai:editor/api"
 import "mirai:editor/history"
 import "mirai:project"
 import "mirai:std/base"
-import "mirai:std/serial"
 import "mirai:ui"
 
 // Who last changed an entity or an asset, written where the review of a turn
@@ -87,13 +86,13 @@ ai_provenance_row :: proc(s:^Session,kind:Ai_Provenance_Kind,ref:string) -> f32 
     if m==nil || m.store.db==nil || ref=="" {return 0}
     view:=ai_provenance_view(m,kind,ref)
     if !view.found {return 0}
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     id:=ui.id(ctx,"ai_provenance")
     it:=ui.interact(ctx,id)
-    color:=it.hot?th.text_muted:th.text_faint
+    color:=it.hot?ui.tone(ctx,"text_muted"):ui.tone(ctx,"text_faint")
     if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(AI_PROVENANCE_ROW),padding={11,0,7,0},gap=6,align_y=.Center}) {
-        ui.label(ctx,base.text_get(view.title[:]),th.font_caption,color,0)
-        ui.label(ctx,ai_time_ago(time.to_unix_nanoseconds(time.now())/1_000_000-view.at),th.font_caption,color)
+        ui.label(ctx,base.text_get(view.title[:]),ui.metric(ctx,"font_caption"),color,0)
+        ui.label(ctx,ai_time_ago(time.to_unix_nanoseconds(time.now())/1_000_000-view.at),ui.metric(ctx,"font_caption"),color)
     }
     if it.clicked {ai_provenance_open(s,view.conversation,view.sequence)}
     return AI_PROVENANCE_ROW
@@ -141,16 +140,16 @@ Ai_Provenance_Params :: struct {
 Ai_Provenance_Result :: struct {
     found:bool `mirai:"label=An agent changed it; the other fields are empty otherwise"`,
     conversation:int `mirai:"label=The chat or subagent that changed it last; ai.history takes it as id"`,
-    title:[256]u8 `mirai:"text"`,
-    prompt:[AI_MESSAGE_BYTES]u8 `mirai:"text,label=What the user asked in that turn"`,
-    model:[128]u8 `mirai:"text"`,
-    effort:[32]u8 `mirai:"text"`,
+    title:string,
+    prompt:string `mirai:"label=What the user asked in that turn"`,
+    model:string,
+    effort:string,
     date:int `mirai:"label=When it changed it; Unix time in milliseconds"`,
 }
 
 @(private)
 ai_provenance_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="ai.provenance",summary="Who last changed an entity or an asset through a turn of an agent: the conversation, its title, the prompt of that turn, the model, the effort and the date.",params=Ai_Provenance_Params,result=Ai_Provenance_Result,writes_result=true,flags={.Read_Only,.Idempotent},run=ai_method_provenance})
+    api_register(s,st,{name="ai.provenance",summary="Who last changed an entity or an asset through a turn of an agent: the conversation, its title, the prompt of that turn, the model, the effort and the date.",params=type_info_of(Ai_Provenance_Params),result=type_info_of(Ai_Provenance_Result),flags={.Read_Only,.Idempotent},run=ai_method_provenance})
 }
 
 @(private)
@@ -173,14 +172,5 @@ ai_method_provenance :: proc(s:^Session,call:^api.Call) {
         line:[1]ai_store.Stored_Line
         if count,_:=ai_store.page(&m.store,provenance.conversation,i64(provenance.sequence)+1,line[:]);count==1 && line[0].sequence==provenance.sequence && line[0].kind==.Prompt {prompt=line[0].text}
     }
-    w:=call.out
-    serial.write_u8(w,'{')
-    api.write_bool(w,"found",found,true)
-    api.write_int(w,"conversation",i64(provenance.conversation))
-    api.write_text(w,"title",title)
-    api.write_text(w,"prompt",prompt)
-    api.write_text(w,"model",model)
-    api.write_text(w,"effort",effort)
-    api.write_int(w,"date",provenance.at)
-    serial.write_u8(w,'}')
+    api.call_result(call,Ai_Provenance_Result)^={found,int(provenance.conversation),title,prompt,model,effort,int(provenance.at)}
 }

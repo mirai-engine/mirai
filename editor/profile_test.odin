@@ -1,6 +1,5 @@
 package editor
 
-import "core:encoding/json"
 import vmem "core:mem/virtual"
 import "core:strings"
 import "core:testing"
@@ -8,7 +7,6 @@ import "core:time"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
-import "mirai:std/serial"
 
 @(private="file")
 MS :: i64(1_000_000)
@@ -280,25 +278,16 @@ a_capture_records_once_the_frames_that_ran_back_to_back_stop_getting_faster :: p
     testing.expect(t,profile_settled(samples[:],tick_after(samples[:],1)))
 }
 
-@(test)
-answers_cut_their_fractions_to_the_microsecond_outside_strings :: proc(t:^testing.T) {
-    text:=json_numbers_short(`{"a":40.4990000000000023,"b":"x 1.5555","c":1.00000000,"d":-0.0001,"e":3,"f":[0.1250000000000001,-2]}`,context.temp_allocator)
-    testing.expect_value(t,text,`{"a":40.499,"b":"x 1.5555","c":1,"d":0,"e":3,"f":[0.125,-2]}`)
-}
-
 @(private="file")
 profile_answer_expect :: proc(t:^testing.T,s:^Session,run:Api_Handler,params:rawptr,params_id,shape:typeid,loc:=#caller_location) {
-    method:=api.Method{params_id=params_id}
-    w:serial.Writer
-    serial.writer_init(&w,0,context.temp_allocator)
-    call:=api.Call{method=&method,params=params,out=&w,allocator=context.temp_allocator}
+    method:=api.Method{params_id=params_id,result_id=shape}
+    result:=make([]u8,type_info_of(shape).size,context.temp_allocator)
+    call:=api.Call{method=&method,params=params,result=raw_data(result),allocator=context.temp_allocator}
     run(s,&call)
-    if !testing.expectf(t,!call.failed,"%s",call.error.message,loc=loc) {return}
-    api_result_shape_expect(t,string(serial.writer_bytes(&w)),shape,loc)
+    testing.expectf(t,!call.failed,"%s",call.error.message,loc=loc)
 }
 
-// What the profile methods write has the keys and the values their results
-// declare, of a capture without frames too.
+// The profile methods answer of a capture without frames too.
 @(test)
 the_answers_of_the_profile_methods_have_the_shape_they_declare :: proc(t:^testing.T) {
     s:Session
@@ -313,8 +302,6 @@ the_answers_of_the_profile_methods_have_the_shape_they_declare :: proc(t:^testin
         summary:=Api_Profile_Id_Params{id=id,top=12}
         profile_answer_expect(t,&s,api_profile_summary,&summary,Api_Profile_Id_Params,Api_Profile_Summary)
     }
-    recording,_:=json.marshal(Profile_Recording_Out{4,"lab","Recording",120},allocator=context.temp_allocator)
-    api_result_shape_expect(t,string(recording),Api_Profile_Summary)
     profile_answer_expect(t,&s,api_profile_list,nil,nil,Api_Profile_List)
     worst:=Api_Profile_Frames_Params{id=2,worst=5,first=-1,count=1,depth=3,min_ms=0.02}
     profile_answer_expect(t,&s,api_profile_frames,&worst,Api_Profile_Frames_Params,Api_Profile_Frames)

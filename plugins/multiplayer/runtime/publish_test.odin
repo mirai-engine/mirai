@@ -23,7 +23,7 @@ replicated_joints_suspend_missing_targets_and_preserve_explicit_world_targets ::
 state_and_owner_refused_by_a_full_frame_are_sent_on_the_next_interval :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     apps:[2]host.App
@@ -47,23 +47,23 @@ state_and_owner_refused_by_a_full_frame_are_sent_on_the_next_interval :: proc(t:
     sessions[0].problems,sessions[1].problems=&problems[0],&problems[1]
     testing.expect_value(t,wire.host_connect(&sessions[1].host,wire.address_memory(0)),wire.Error.None)
     outbox:Net_Outbox;defer core.value_free(&outbox,type_info_of(Net_Outbox))
-    server_events,client_events:Net_Events
-    defer core.value_free(&server_events,type_info_of(Net_Events));defer core.value_free(&client_events,type_info_of(Net_Events))
     server,client:=&worlds[0],&worlds[1]
     connected:Connection
     for tick in 1..<80 {
         now:=f64(tick)/60
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
-        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server_events,&server.remote)
+        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server.remote)
         for event in net_test_arrived(&sessions[0]) {if event.kind==.Connected {connected=event.connection}}
-        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
+        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
+        // What it shows in the past takes its components when the display reaches their state.
+        client_place(&sessions[1],core.world_ref(client,&info),f64(max(u32)),nil,false)
         switch tick {
         case 21:
             for e in entities[0] {core.add(&server.objects,e,net_test_replicate(audience=.Always))}
         case 40:
             testing.expect(t,connected!=0)
-            core.get(&server.transforms,entities[0][0]).position={5,0,0}
+            core.edit(&server.transforms,entities[0][0]).position={5,0,0}
             net_test_own(server,entities[0][1],connected)
             core.settle(&info,server,nil)
             object:=wire.object_of_user(&sessions[0].host,u64(entities[0][0]))
@@ -71,10 +71,10 @@ state_and_owner_refused_by_a_full_frame_are_sent_on_the_next_interval :: proc(t:
             for _ in 0..=sessions[0].host.desc.frame_ops {error=wire.object_set_priority(&sessions[0].host,object,1)}
             testing.expect_value(t,error,wire.Error.Full)
         case 79:
-            moved,_:=core.get(core.read(&client.links),entities[1][0])
+            moved,_:=core.get(&client.links,entities[1][0])
             r:=replica_of(&sessions[1],moved.object)
             testing.expect(t,r!=nil && abs(r.pose.position.x-5)<1e-3)
-            link,_:=core.get(core.read(&client.links),entities[1][1])
+            link,_:=core.get(&client.links,entities[1][1])
             owned:=replica_of(&sessions[1],link.object)
             testing.expect(t,owned!=nil && owned.role==.Predicted)
         }
@@ -89,7 +89,7 @@ state_and_owner_refused_by_a_full_frame_are_sent_on_the_next_interval :: proc(t:
 net_test_late_reference :: proc(t:^testing.T,body:bool) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     apps:[2]host.App
@@ -99,7 +99,7 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
         net_test_init(&world,&info)
         entities[index][0]=net_test_body(&world,&info,1)
         entities[index][1]=net_test_body(&world,&info,2,{1,0,0})
-        for e in entities[index] {core.get(&world.values,e).force=0}
+        for e in entities[index] {core.edit(&world.values,e).force=0}
         shares[index].info=&info
         apps[index]={allocator=context.allocator,tick_dt=1.0/60,shared=&shares[index]}
         if body {net_test_physics(&world,&shares[index],&apps[index])}
@@ -117,8 +117,6 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
     sessions[0].problems,sessions[1].problems=&problems[0],&problems[1]
     testing.expect_value(t,wire.host_connect(&sessions[1].host,wire.address_memory(0)),wire.Error.None)
     outbox:Net_Outbox;defer core.value_free(&outbox,type_info_of(Net_Outbox))
-    server_events,client_events:Net_Events
-    defer core.value_free(&server_events,type_info_of(Net_Events));defer core.value_free(&client_events,type_info_of(Net_Events))
     server,client:=&worlds[0],&worlds[1]
     source,target:=entities[0][0],entities[0][1]
     replica,visitor:=entities[1][0],entities[1][1]
@@ -127,22 +125,26 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
         now:=f64(tick)/60
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
-        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server_events,&server.remote)
+        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server.remote)
         for event in net_test_arrived(&sessions[0]) {if event.kind==.Connected {connected=event.connection}}
-        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
+        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
+        // What it shows in the past takes its components when the display reaches their state.
+        client_place(&sessions[1],core.world_ref(client,&info),f64(max(u32)),nil,false)
         switch tick {
         case 21:
-            core.get(&server.values,source).target=target
+            core.edit(&server.values,source).target=target
             core.add(&server.objects,source,net_test_replicate(audience=.Always,update_hz=10,simulation=body?.Lent:.Server))
             if body {
-                core.add(&server.joints,source,phys.joint_fixed(target))
+                joint:=phys.joint_fixed(target)
+                joint.a=source
+                core.add(&server.joints,source,joint)
                 core.settle(&info,server,nil)
                 net_test_physics(server,&shares[0],&apps[0])
             }
         case 31:
             if body {testing.expect(t,authority_grant(&sessions[0],source,connected))}
         case 34:
-            value,_:=core.get(core.read(&client.values),replica)
+            value,_:=core.get(&client.values,replica)
             testing.expect_value(t,value.target,core.NONE)
             if body {
                 testing.expect(t,!core.has(&client.joints,replica))
@@ -162,18 +164,18 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
         case 41:
             if body {testing.expect(t,authority_grant(&sessions[0],source,0))}
         case 46,70:
-            value,_:=core.get(core.read(&client.values),replica)
+            value,_:=core.get(&client.values,replica)
             testing.expect_value(t,value.target,visitor)
             if body {
-                joint,has:=core.get(core.read(&client.joints),replica)
-                testing.expect(t,has && joint.target==visitor)
+                joint,has:=core.get(&client.joints,replica)
+                testing.expect(t,has && joint.b==visitor)
                 net_test_physics(client,&shares[1],&apps[1])
                 testing.expect_value(t,client.state.world.joint_count,i32(1))
             }
         case 47:
             core.remove(&server.objects,target)
         case 55:
-            value,_:=core.get(core.read(&client.values),replica)
+            value,_:=core.get(&client.values,replica)
             testing.expect_value(t,value.target,core.NONE)
             if body {
                 testing.expect(t,!core.has(&client.joints,replica))
@@ -182,18 +184,20 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
             }
         case 71:
             if body {
-                core.add(&server.joints,source,phys.joint_fixed(core.NONE))
+                joint:=phys.joint_fixed(core.NONE)
+                joint.a=source
+                core.add(&server.joints,source,joint)
                 core.settle(&info,server,nil)
                 net_test_physics(server,&shares[0],&apps[0])
-            } else {core.get(&server.values,source).target=core.NONE}
+            } else {core.edit(&server.values,source).target=core.NONE}
         case 84:
             if body {
-                joint,has:=core.get(core.read(&client.joints),replica)
-                testing.expect(t,has && joint.target==core.NONE)
+                joint,has:=core.get(&client.joints,replica)
+                testing.expect(t,has && joint.b==core.NONE)
                 net_test_physics(client,&shares[1],&apps[1])
                 testing.expect_value(t,client.state.world.joint_count,i32(1))
             } else {
-                value,_:=core.get(core.read(&client.values),replica)
+                value,_:=core.get(&client.values,replica)
                 testing.expect_value(t,value.target,core.NONE)
             }
         }
@@ -208,7 +212,7 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
 a_body_replicates_the_collision_and_contact_rules_of_its_collider :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     apps:[2]host.App
@@ -233,8 +237,6 @@ a_body_replicates_the_collision_and_contact_rules_of_its_collider :: proc(t:^tes
     sessions[0].problems,sessions[1].problems=&problems[0],&problems[1]
     testing.expect_value(t,wire.host_connect(&sessions[1].host,wire.address_memory(0)),wire.Error.None)
     outbox:Net_Outbox;defer core.value_free(&outbox,type_info_of(Net_Outbox))
-    server_events,client_events:Net_Events
-    defer core.value_free(&server_events,type_info_of(Net_Events));defer core.value_free(&client_events,type_info_of(Net_Events))
     server,client:=&worlds[0],&worlds[1]
     changed:=phys.collider_box({0.1,0.1,0.1})
     changed.preset,changed.surface_speed,changed.one_way,changed.dominance=1,{0,0,2},true,4
@@ -243,15 +245,17 @@ a_body_replicates_the_collision_and_contact_rules_of_its_collider :: proc(t:^tes
         now:=f64(tick)/60
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
-        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server_events,&server.remote)
-        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
+        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server.remote)
+        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
+        // What it shows in the past takes its components when the display reaches their state.
+        client_place(&sessions[1],core.world_ref(client,&info),f64(max(u32)),nil,false)
         switch tick {
         case 21:
             for e in entities[0] {core.add(&server.objects,e,net_test_replicate(audience=.Always))}
         case 40:
             core.add(&server.colliders,entities[0][0],changed)
         case 69:
-            collider,has:=core.get(core.read(&client.colliders),entities[1][0])
+            collider,has:=core.get(&client.colliders,entities[1][0])
             expected:=changed
             expected.group=entities[1][1]
             testing.expectf(t,has && collider==expected,"the client holds %v",collider)
@@ -270,7 +274,7 @@ an_object_the_host_has_no_room_for_names_the_capacity_to_raise :: proc(t:^testin
     full :: proc(t:^testing.T,settings:Net_Settings,entities:int) -> (problems:core.Problems,last:core.Entity) {
         info,described:=net_test_info(t)
         if !described {return}
-        defer core.test_info_destroy(&info)
+        defer test_info_destroy(&info)
         world:Net_Test_World
         net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
         for index in 0..<entities {
@@ -311,7 +315,7 @@ settings_the_host_refuses_name_their_field_and_its_range :: proc(t:^testing.T) {
     refused :: proc(t:^testing.T,replication:wire.Replication_Desc,field,range:string) {
         info,described:=net_test_info(t)
         if !described {return}
-        defer core.test_info_destroy(&info)
+        defer test_info_destroy(&info)
         world:Net_Test_World
         net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
         app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60}
@@ -355,7 +359,7 @@ the_port_of_the_game_is_a_setting_that_must_be_a_udp_port :: proc(t:^testing.T) 
     testing.expect_value(t,settings_resolve({},1.0/60).port,DEFAULT_PORT)
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
     app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60}

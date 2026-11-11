@@ -1,10 +1,7 @@
 package anim
 
 import "base:runtime"
-import "core:fmt"
-import "core:os"
 import "core:testing"
-import "core:mem"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
@@ -27,7 +24,7 @@ program_test_content :: proc(t:^testing.T,content:^host.Content_Animation) -> Pl
     content.lib.clips[2].first_marker,content.lib.clips[2].marker_count=1,1
     content.lib.clips[3]=content.lib.clips[0];content.lib.clips[3].loop=.Loop
     content.lib.clips[5]=content.lib.clips[2];content.lib.clips[5].loop=.Loop
-    content.markers=make([]u64,1);content.markers[0]=base.name_hash("step")
+    content.markers=make([]host.Content_Marker,1);content.markers[0].name=base.name_hash("step")
     return state
 }
 
@@ -40,21 +37,24 @@ program_test_sync_markers :: proc(content:^host.Content_Animation) {
     markers:=[4]lib.Marker{{time=.2,id=0},{time=1.2,id=1},{time=.1,id=0},{time=.4,id=1}};copy(content.lib.markers,markers[:])
     for index in ([2]int{0,3}) {content.lib.clips[index].first_marker,content.lib.clips[index].marker_count=0,2}
     for index in ([2]int{2,5}) {content.lib.clips[index].first_marker,content.lib.clips[index].marker_count=2,2}
-    delete(content.markers);content.markers=make([]u64,2);content.markers[0],content.markers[1]=base.name_hash("step"),base.name_hash("lift")
+    delete(content.markers);content.markers=make([]host.Content_Marker,2);content.markers[0].name,content.markers[1].name=base.name_hash("step"),base.name_hash("lift")
 }
 
+// The program of one group of clips, as the search of the locomotion of a .character leaves it.
 @(private)
-program_test_graph :: proc() -> [5]Graph_Node {
-    nodes:[5]Graph_Node
-    for &node,i in nodes {node=GRAPH_NODE_DEFAULT;node.loop,node.sync_mode=false,.Independent;base.text_set(node.name[:],fmt.tprintf("node%d",i))}
-    base.text_set(nodes[0].clip[:],"walk");base.text_set(nodes[1].clip[:],"run");base.text_set(nodes[2].clip[:],"wave")
-    nodes[3].kind=.Blend;nodes[3].left,nodes[3].right,nodes[3].weight=0,1,.25
-    nodes[4].kind=.Layer;nodes[4].left,nodes[4].right,nodes[4].weight=3,2,.5;base.text_set(nodes[4].over[:],"hip")
-    return nodes
+program_test_output :: proc(leaves:..Program_Leaf) -> Program_Output {
+    output:=Program_Output{count=1}
+    output.groups[0]={count=u8(len(leaves)),weight=1,root_weight=1,key=1}
+    for leaf,i in leaves {output.groups[0].leaves[i]=leaf}
+    return output
+}
+@(private)
+program_test_leaf :: proc(clip:string,key:u32,weight:f32=1,loop:=false,sync:=false) -> Program_Leaf {
+    return {clip=base.name_hash(clip),key=key,weight=weight,speed=1,loop=loop,sync=sync}
 }
 
 @(test)
-animation_programs_blend_weighted_poses_curves_root_motion_and_masked_layers_without_allocations :: proc(t:^testing.T) {
+a_program_blends_its_clips_with_curves_and_root_motion_under_the_layers_without_allocations :: proc(t:^testing.T) {
     problems:core.Problems
     content:host.Content_Animation;defer program_test_content_free(&content)
     playback:Playback;defer playback_free(&playback)
@@ -62,14 +62,18 @@ animation_programs_blend_weighted_poses_curves_root_motion_and_masked_layers_wit
     resize(&playback.rows,2);playback.rows[1]=1
     testing.expect(t,tracks_bind(&playback,state,&content))
     events:Animation_Events;defer delete(events.items)
-    nodes:=program_test_graph();profile:=Graph_Profile{info={animation={1,2},output=4},nodes=nodes[:]}
-    if !testing.expect(t,graph_check(profile)) {return}
-    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)};ok:=program_node(output,profile,4,nil,nil,nil,{})
-    if !testing.expect(t,ok && output.count==2 && output.groups[output.primary].count==2) {return}
+    built:=program_test_output(program_test_leaf("walk",0,.75),program_test_leaf("run",256,.25));output:=&built
     animation:=ANIMATION_DEFAULT;animation.loop=false;animation.root_motion=.Extract
     playback.frame,state.seen=1,1;state.program.ready=true
-    if !testing.expect(t,program_players(state,output,&content,animation,&events,&playback,.5,-1,&problems)) {return}
-    program_pose(&playback,state,&content,animation,output,{})
+    // The wave plays over the branch of the hip at half its weight.
+    testing.expect(t,test_layer(state,1,"wave",over="hip",weight=.5,loop=false))
+    pose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,output:^Program_Output,events:^Animation_Events,dt:f32,problems:^core.Problems) -> bool {
+        if !program_buffers(state,content) || !program_players(state,output,content,animation,events,playback,dt,-1,problems) || !program_pose(playback,state,content,animation,output) {return false}
+        layers_advance(playback,state,content,animation,events,0,problems)
+        pose_layers(playback,state,content,animation)
+        return true
+    }
+    if !testing.expect(t,pose(&playback,state,&content,animation,output,&events,.5,&problems)) {return}
     testing.expect(t,abs(state.local[1].position.x-.875)<1e-5)
     testing.expect(t,abs(state.local[3].position.z-.375)<1e-5 && state.local[3].position.y==0)
     testing.expect_value(t,state.local[2].position,mm.Vec3{0,.5,0})
@@ -77,11 +81,11 @@ animation_programs_blend_weighted_poses_curves_root_motion_and_masked_layers_wit
     delta,present:=animation_root_delta(&playback,state.entity)
     testing.expect(t,present && abs(delta.translation.x-.875)<1e-5)
     testing.expect_value(t,len(events.items),2)
-    for event in events.items {testing.expect(t,event.entity==state.entity && event.marker==base.name_hash("step"))}
+    for event in events.items {testing.expect(t,event.entity==state.entity && event.kind==.Marker && event.name==base.name_hash("step") && event.action==0)}
     transforms:core.Table(core.Transform);defer core.table_destroy(&transforms)
     constraints:Animation_Constraints;defer constraints_free(&constraints)
     state.program.root.in_place=true
-    constraints_apply(state,&playback,{},&constraints,&transforms,{},0)
+    if bone,reference,pinned:=animation_root_reference(state,state.program.root,state.local[:],(^core.Table(core.Transform))(nil));pinned {state.local[bone]=reference}
     testing.expect_value(t,state.local[1].position,mm.Vec3{})
     copy(state.local[:],state.rest[:]);state.program.root.in_place=false
     resize(&state.program.from,len(state.local));copy(state.program.from[:],state.local[:])
@@ -95,8 +99,8 @@ animation_programs_blend_weighted_poses_curves_root_motion_and_masked_layers_wit
     steady:=true
     for _ in 0..<100 {
         clear(&events.items)
-        steady &&=program_players(state,output,&content,animation,&events,&playback,0,-1,&problems)
-        program_pose(&playback,state,&content,animation,output,{})
+        copy(state.local[:],state.rest[:])
+        steady &&=pose(&playback,state,&content,animation,output,&events,0,&problems)
     }
     context=saved
     testing.expect(t,steady && state.program.players[0].player.time==before)
@@ -109,11 +113,8 @@ synchronized_program_players_share_phase_across_clip_durations_and_emit_only_the
     state:=program_test_content(t,&content);defer playing_free(&state)
     playback:Playback;defer playback_free(&playback)
     events:Animation_Events;defer delete(events.items)
-    nodes:=program_test_graph();nodes[0].sync_mode,nodes[1].sync_mode=.Markers,.Markers
-    base.text_set(nodes[0].sync_group[:],"locomotion");base.text_set(nodes[1].sync_group[:],"locomotion")
-    nodes[0].loop,nodes[1].loop=true,true
-    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)};ok:=program_node(output,{info={animation={1,2},output=3},nodes=nodes[:]},3,nil,nil,nil,{})
-    if !testing.expect(t,ok) {return}
+    built:=program_test_output(program_test_leaf("walk",0,.75,true,true),program_test_leaf("run",256,.25,true,true));output:=&built
+    output.groups[0].mode=.Markers
     animation:=ANIMATION_DEFAULT;animation.root_motion=.Extract
     if !testing.expect(t,program_players(&state,output,&content,animation,&events,&playback,.5,-1,nil)) {return}
     group:=output.groups[0]
@@ -144,19 +145,17 @@ synchronized_program_players_preserve_marker_phase_when_new_samples_take_the_lea
     testing.expect(t,tracks_bind(&playback,&state,&content))
     walk:=Program_Leaf{key=0,weight=1,speed=1,loop=true,sync=true};walk.clip=base.name_hash("walk")
     run:=Program_Leaf{key=256,weight=.9,speed=1,loop=true,sync=true};run.clip=base.name_hash("run")
-    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)}
-    if !testing.expect(t,program_output_prepare(output,1,1)) {return}
-    output.count,output.instruction_count=1,1;output.groups[0]={count=1,weight=1,root_weight=1,leaves={0=walk}}
+    built:=program_test_output(walk);output:=&built
     animation:=ANIMATION_DEFAULT;animation.root_motion=.Extract
-    if !testing.expect(t,program_players(&state,output,&content,animation,&events,&playback,.7,-1,&problems) && program_pose(&playback,&state,&content,animation,output,{})) {return}
+    if !testing.expect(t,program_buffers(&state,&content) && program_players(&state,output,&content,animation,&events,&playback,.7,-1,&problems) && program_pose(&playback,&state,&content,animation,output)) {return}
     testing.expect_value(t,len(events.items),1)
     clear(&events.items)
     output.groups[0].leaves[0]=run;output.groups[0].leaves[0].weight=1
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    valid:=program_players(&state,output,&content,animation,&events,&playback,0,-1,&problems) && program_pose(&playback,&state,&content,animation,output,{})
+    valid:=program_players(&state,output,&content,animation,&events,&playback,0,-1,&problems) && program_pose(&playback,&state,&content,animation,output)
     exclusive_handoff:=abs(state.time-.25)<1e-5 && state.motion.translation.x==0 && len(events.items)==0
     output.groups[0].count=2;output.groups[0].leaves[0]=walk;output.groups[0].leaves[0].weight=.1;output.groups[0].leaves[1]=run
-    valid &&=program_players(&state,output,&content,animation,&events,&playback,0,-1,&problems) && program_pose(&playback,&state,&content,animation,output,{})
+    valid &&=program_players(&state,output,&content,animation,&events,&playback,0,-1,&problems) && program_pose(&playback,&state,&content,animation,output)
     leader:=state.program.players[output.groups[0].leaves[1].player].player
     follower:=state.program.players[output.groups[0].leaves[0].player].player
     phase,phase_valid:=lib.sync_phase(&content.lib,leader)
@@ -164,16 +163,16 @@ synchronized_program_players_preserve_marker_phase_when_new_samples_take_the_lea
     no_repeated_events:=len(events.items)==0
     root_at_handoff:=state.motion.translation.x
     output.groups[0].leaves[0].weight=.9;output.groups[0].leaves[1].weight=.1
-    valid &&=program_players(&state,output,&content,animation,&events,&playback,.1,-1,&problems) && program_pose(&playback,&state,&content,animation,output,{})
+    valid &&=program_players(&state,output,&content,animation,&events,&playback,.1,-1,&problems) && program_pose(&playback,&state,&content,animation,output)
     leader=state.program.players[output.groups[0].leaves[0].player].player
     follower=state.program.players[output.groups[0].leaves[1].player].player
     existing_leader_continuity:=abs(leader.time-.8)<1e-5 && abs(follower.time-.28)<1e-5 && abs(state.motion.translation.x-.102)<1e-5
     output.groups[0].count=1;output.groups[0].leaves[0]=run;output.groups[0].leaves[0].weight=1
-    valid &&=program_players(&state,output,&content,animation,&events,&playback,.5,-1,&problems) && program_pose(&playback,&state,&content,animation,output,{})
-    retired_leader:=abs(state.time-.78)<1e-5 && abs(state.motion.translation.x-2)<1e-5 && len(events.items)==1 && events.items[0].marker==base.name_hash("lift")
+    valid &&=program_players(&state,output,&content,animation,&events,&playback,.5,-1,&problems) && program_pose(&playback,&state,&content,animation,output)
+    retired_leader:=abs(state.time-.78)<1e-5 && abs(state.motion.translation.x-2)<1e-5 && len(events.items)==1 && events.items[0].name==base.name_hash("lift")
     clear(&events.items)
     output.groups[0].count=2;output.groups[0].leaves[0]=walk;output.groups[0].leaves[0].weight=.75;output.groups[0].leaves[1]=run;output.groups[0].leaves[1].weight=.25
-    valid &&=program_players(&state,output,&content,animation,&events,&playback,.1,-1,&problems) && program_pose(&playback,&state,&content,animation,output,{})
+    valid &&=program_players(&state,output,&content,animation,&events,&playback,.1,-1,&problems) && program_pose(&playback,&state,&content,animation,output)
     leader=state.program.players[output.groups[0].leaves[0].player].player
     follower=state.program.players[output.groups[0].leaves[1].player].player
     reentry:=abs(leader.time-(1.2+(.38/.7)+.1))<1e-5 && abs(follower.time-.85)<1e-5 && abs(state.motion.translation.x-.145)<1e-5 && len(events.items)==0
@@ -193,9 +192,7 @@ synchronized_program_players_preserve_once_completion_and_leave_independent_samp
     events:Animation_Events;defer delete(events.items)
     walk:=Program_Leaf{key=0,weight=1,speed=1,sync=true};walk.clip=base.name_hash("walk")
     run:=Program_Leaf{key=256,weight=1,speed=1,sync=true};run.clip=base.name_hash("run")
-    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)}
-    if !testing.expect(t,program_output_prepare(output,1,1)) {return}
-    output.count,output.instruction_count=1,1;output.groups[0]={count=1,weight=1,root_weight=1,leaves={0=walk}}
+    built:=program_test_output(walk);output:=&built
     animation:=ANIMATION_DEFAULT;animation.loop=false;animation.root_motion=.Extract
     if !testing.expect(t,program_players(&state,output,&content,animation,&events,&playback,2,-1,&problems)) {return}
     testing.expect(t,state.ended && state.time==2)
@@ -223,31 +220,12 @@ synchronized_program_players_preserve_once_completion_and_leave_independent_samp
 }
 
 @(test)
-shared_graph_nodes_preserve_full_root_motion_and_do_not_double_animation_events :: proc(t:^testing.T) {
-    content:host.Content_Animation;defer program_test_content_free(&content)
-    state:=program_test_content(t,&content);defer playing_free(&state)
-    playback:Playback;defer playback_free(&playback)
-    events:Animation_Events;defer delete(events.items)
-    nodes:=program_test_graph();nodes[3].left,nodes[3].right,nodes[3].weight=0,0,.5
-    profile:=Graph_Profile{info={animation={1,2},output=3},nodes=nodes[:]}
-    testing.expect(t,graph_check(profile))
-    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)};ok:=program_node(output,profile,3,nil,nil,nil,{})
-    if !testing.expect(t,ok) {return}
-    animation:=ANIMATION_DEFAULT;animation.loop=false;animation.root_motion=.Extract
-    testing.expect(t,program_players(&state,output,&content,animation,&events,&playback,.5,-1,nil))
-    testing.expect(t,abs(state.motion.translation.x-.5)<1e-5)
-    testing.expect_value(t,len(events.items),1)
-}
-
-@(test)
 program_players_allocate_only_for_programs_replay_once_clips_and_retire_optional_buffers :: proc(t:^testing.T) {
     content:host.Content_Animation;defer program_test_content_free(&content)
     state:=program_test_content(t,&content);defer playing_free(&state)
     playback:Playback;defer playback_free(&playback)
     events:Animation_Events;defer delete(events.items)
-    nodes:=program_test_graph()
-    output:=new(Program_Output);defer {program_output_free(output);mem.free(output)};ok:=program_node(output,{info={animation={1,2}},nodes=nodes[:]},0,nil,nil,nil,{})
-    if !testing.expect(t,ok) {return}
+    built:=program_test_output(program_test_leaf("walk",0));output:=&built
     animation:=ANIMATION_DEFAULT;animation.loop=false
     testing.expect(t,state.program.players==nil && state.program.from==nil && state.program.from_curves==nil)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
@@ -268,7 +246,44 @@ program_players_allocate_only_for_programs_replay_once_clips_and_retire_optional
     assets:host.Assets
     app:=host.App{assets=&assets,allocator=context.allocator}
     animation.asset={5,6}
-    _,programmed,valid:=program_resolve(&state,animation,&app,nil,nil,0,nil)
+    _,programmed,valid:=program_resolve(&state,animation,&app,nil,0)
     testing.expect(t,valid && !programmed && cap(state.program.players)==0 && cap(state.program.from)==0 && cap(state.program.from_curves)==0 && !state.program.ready)
     testing.expect(t,slots!=nil)
+}
+
+@(test)
+a_layer_over_a_program_keeps_its_scalar_curves :: proc(t:^testing.T) {
+    content:host.Content_Animation; defer program_test_content_free(&content)
+    playback:Playback; defer playback_free(&playback)
+    append(&playback.states, program_test_content(t,&content)); state:=&playback.states[0]
+    resize(&playback.rows,2); playback.rows[1]=1; playback.frame,state.seen=1,1
+    testing.expect(t,tracks_bind(&playback,state,&content))
+    content.lib.clips[1].first_track,content.lib.clips[1].track_count=2,4
+    content.lib.clips[4]=content.lib.clips[1]; content.lib.clips[4].loop=.Loop
+    built:=program_test_output(program_test_leaf("walk",0));output:=&built
+    animation:=ANIMATION_DEFAULT; animation.loop=false
+    testing.expect(t,test_layer(state,1,"wave",loop=false))
+    events:Animation_Events; defer delete(events.items)
+    testing.expect(t,program_buffers(state,&content) && program_players(state,output,&content,animation,&events,&playback,0,-1,nil))
+    testing.expect(t,program_pose(&playback,state,&content,animation,output))
+    layers_advance(&playback,state,&content,animation,&events,0,nil)
+    pose_layers(&playback,state,&content,animation)
+    sample_layer_curves(state,&content,animation)
+    got:=animation_curve(&playback,state.entity,"pulse",default_value=2)
+    testing.expect_value(t,state.local[2].position.y,f32(1))
+    testing.expect_value(t,got,f32(6))
+}
+
+@(test)
+a_program_whose_clips_differ_in_root_channels_is_refused_before_clocks_or_events :: proc(t:^testing.T) {
+    content:host.Content_Animation; defer program_test_content_free(&content)
+    state:=program_test_content(t,&content); defer playing_free(&state)
+    playback:Playback; defer playback_free(&playback)
+    events:Animation_Events; defer delete(events.items)
+    content.roots[2].translation=false; content.roots[2].rotation=true
+    built:=program_test_output(program_test_leaf("walk",0,.75),program_test_leaf("run",256,.25));output:=&built
+    animation:=ANIMATION_DEFAULT; animation.loop=false; animation.root_motion=.In_Place
+    testing.expect(t,!program_players(&state,output,&content,animation,&events,&playback,.5,-1,nil))
+    testing.expect_value(t,state.program.error,Program_Error.Incompatible_Root)
+    testing.expect(t,state.program.frame==0 && len(events.items)==0 && state.motion.translation=={})
 }

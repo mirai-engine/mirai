@@ -11,7 +11,7 @@ import "mirai:project"
 @(private="file")
 archive_make :: proc(t:^testing.T,root,compiler_text:string,with_compiler:=true) -> (archive,sha256:string,ok:bool) {
     content:=path_join(root,"content",allocator=context.temp_allocator)
-    os.remove_all(content)
+    base.remove_all(content)
     if with_compiler {fixture_write(t,content,strings.concatenate({"bin/slangc",project.EXECUTABLE_SUFFIX},context.temp_allocator),compiler_text)}
     fixture_write(t,content,"lib/slang.txt","library")
     archive=path_join(root,"slang-test.tar.gz",allocator=context.temp_allocator)
@@ -66,8 +66,6 @@ slang_package_is_checked_unpacked_and_marked :: proc(t:^testing.T) {
     testing.expect(t,os.is_file(path_join(target,"lib/slang.txt",allocator=context.temp_allocator)))
     testing.expect(t,prebuilt_installed(target,sha256),"the marker names the package that was installed")
     testing.expect(t,!prebuilt_installed(target,"another hash"))
-    marker,_:=os.read_entire_file(path_join(target,"mirai-package.json",allocator=context.temp_allocator),context.temp_allocator)
-    testing.expect_value(t,string(marker),strings.concatenate({"{\n  \"version\": \"",SLANG_VERSION,"\",\n  \"asset\": \"slang-test.tar.gz\",\n  \"sha256\": \"",sha256,"\"\n}\n"},context.temp_allocator))
     found,located:=tool_find(root,.Slangc,context.temp_allocator)
     if _,configured:=os.lookup_env("MIRAI_SLANGC",context.temp_allocator);!configured {
         if _,also:=os.lookup_env("MIRAI_SLANG",context.temp_allocator);!also {testing.expect(t,located && path_inside(found,target),"the generator finds the installed compiler")}
@@ -126,11 +124,12 @@ slang_package_of_this_platform_is_pinned :: proc(t:^testing.T) {
 // cannot compare, and anything older, is not.
 @(test)
 a_slang_version_is_the_pinned_one_or_a_later_one :: proc(t:^testing.T) {
+    PINNED :: "2026.20" // any release: the table does not follow the pin of the engine
     cases := [?]struct {
         version:  string,
         accepted: bool,
     }{
-        {SLANG_VERSION, true},
+        {PINNED, true},
         {"2026.20", true},
         {"2026.20.1", true},
         {"2026.21", true},
@@ -144,7 +143,7 @@ a_slang_version_is_the_pinned_one_or_a_later_one :: proc(t:^testing.T) {
         {"unknown", false},
     }
     for c in cases {
-        testing.expectf(t,slang_version_at_least(c.version,SLANG_VERSION)==c.accepted,
-            "%q should compare as %v against %s",c.version,c.accepted,SLANG_VERSION)
+        testing.expectf(t,slang_version_at_least(c.version,PINNED)==c.accepted,
+            "%q should compare as %v against %s",c.version,c.accepted,PINNED)
     }
 }

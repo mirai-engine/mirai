@@ -10,15 +10,22 @@
   Quality presets, frame limit and vsync belong to whoever presents (`rhi.swapchain_set_vsync`).
 - Exposure belongs to each camera ([exposure](display.md#exposure)), not to the settings.
 - `trace_mode` selects the tracer; `hardware_ray_tracing_active` says whether the hardware one is
-  used and `Renderer.hardware_rt_note` why not. Changing it builds the structures of the other
-  ([tracer in use](gi.md#bvh-and-acceleration-structures)).
-- `reference_lights` and `reference_gi` replace the direct and indirect light with their
-  references ([shadows](lights.md#shadows), [indirect](gi.md#indirect-reference)).
-- A change recreates only what depends on it: the states of the additional and texture views
-  always; the main targets with the resolution; the probe volume with its shape and its budget;
-  the glass targets with `glass_layers` (waits for the device). What changes the image the
-  histories keep (`colored_shadows`, the reflection ones, the references) discards them;
-  `colored_shadows` also restarts the probes. `page_pool_bytes` recreates nothing: the
+  used and `Renderer.hardware_rt_note` why not. Changing it makes the pipelines and builds the
+  structures of the other ([tracer in use](gi.md#bvh-and-acceleration-structures)); if the
+  software pipelines are not made, `renderer_apply_settings` returns `false` and changes nothing.
+- A change starts again only what was made with the fields that changed, in every view; the rest,
+  histories, exposure and probes, stays, so a slider drag keeps them:
+  - the main targets with `resolution` (several window views remake theirs in their next frame;
+    texture views draw at the size of their texture); the glass targets with `glass_layers`. Only
+    these wait for the device;
+  - the probe volume with its shape, `colored_shadows` or `sun_shadows`; its probes gather again
+    everywhere, keeping the volume, with `gi_strength`, `light_budget` or `sun_radius`. With
+    either, the worlds not shown lose the light they kept;
+  - the histories that hold what the change alters: glass and TAA with `colored_shadows`,
+    `sun_shadows`, `reflection_light_budget` and `reflections`. The direct light and the
+    reflections keep none;
+  - the texture levels with `texture_max_size` and `texture_pool_megabytes`.
+- `page_pool_bytes` recreates nothing: the
   [pages](scene.md#scene-and-instances) region is reserved once, with the first mesh that uses
   it, inside the vertex pool and before the blocks of the meshes that arrive later; a later
   change waits for the renderer to start again.
@@ -28,23 +35,21 @@
 
 ## Scene resolution
 
-- The window views draw the scene at `render_scale` of their points (on Retina, 1 is half the
-  pixels of the drawable per axis) and TAA brings it to the drawable resolution. A texture view
-  draws it at the size of the texture.
-- `render_height` (0: `render_scale`) replaces that scale with a fraction of the lines the window
-  views span together, never above one pixel per point nor below the minimum of `render_scale`. The
-  cost per pixel does not grow with the output, and in split screen all take the same scale.
+- `Settings.resolution` is a target of lines: the window views draw that fraction of the lines
+  they span together, never above one pixel per point (on Retina, half the pixels of the drawable
+  per axis) nor below `RENDER_SCALE_MIN`. The cost per pixel does not grow with the output, and in
+  split screen all take the same scale. TAA brings the image to the drawable resolution. A
+  texture view draws it at the size of the texture.
 - The UI, panels, lines and outline are drawn after TAA at the drawable resolution: a budget does
   not blur them. Textures are read with a mip bias of `log2` of the scale, which keeps their
   detail.
 - Changing the size, the number of views or the target recreates their targets.
-- `Graphics_Settings.render_scale` is the only control a game sets: above 0 it is used as it is;
-  0 follows `preset_height`, the target of the last preset. No setting stores the preset: what
-  names one (a control, `graphics_preset` of `settings.set`, the code of a game) writes its fields
-  with `graphics_preset_apply`, before the fields that go on top; `graphics_quality_of` computes
-  the one the fields are at, and `graphics_apply` only reads. At the window of the render check,
-  presets from Medium up stay at one pixel per point, so a check compares the same image with the
-  same cost.
+- `Graphics_Settings.resolution` is that target; each preset writes its own. No setting stores
+  the preset: what names one (a control, `graphics_preset` of `settings.set`, the code of a game)
+  writes its fields with `graphics_preset_apply`, before the fields that go on top;
+  `graphics_quality_of` computes the one the fields are at, and `graphics_apply` only reads. At
+  the window of the render check, presets from Medium up stay at one pixel per point, so a check
+  compares the same image with the same cost.
 
 ## Inspection modes
 

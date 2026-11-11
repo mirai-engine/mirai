@@ -38,7 +38,7 @@ incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors
             core.add(&w.transforms,author,core.TRANSFORM_IDENTITY)
             core.add(&w.statics,author,render.Mesh_Renderer{})
         }
-        core.test_world_settle(&w.w)
+        test_world_settle(&w.w)
         terrain_test_update(&w,&resident,&app)
         terrain_test_update(&w,&resident,&app)
         if !testing.expect(t,len(resident.owners)==1 && len(w.chunks.values)==4) {return}
@@ -47,7 +47,7 @@ incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors
         switch damage {
         case .Local,.Local_Restored:
             core.remove(&w.transforms,stale)
-            core.test_world_settle(&w.w)
+            test_world_settle(&w.w)
             tables:=terrain_test_tables(&w)
             testing.expect(t,!chunk_entity_matches(&tables,stale,owner,{},0))
             // Restored where its mesh is relative to: the place of its chunk.
@@ -68,14 +68,12 @@ incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors
             core.remove(&w.parents,author)
             core.add(&w.colliders,author,phys.collider_box({1.25,2.5,3.75}))
         }
-        core.test_world_settle(&w.w)
+        test_world_settle(&w.w)
         if damage==.Wrong_Parent {
-            testing.expect_value(t,w.transforms.layout,resident.gc_stamps[0])
-            testing.expect_value(t,w.parents.layout,resident.gc_stamps[1])
-            testing.expect(t,w.parents.version!=resident.gc_stamps[2])
-            testing.expect_value(t,w.chunks.layout,resident.gc_stamps[3])
-            testing.expect_value(t,w.ids.layout,resident.gc_stamps[4])
-            testing.expect_value(t,w.terrains.layout,resident.gc_stamps[5])
+            // Only a parent written: the prune sees it all the same.
+            shapes,parents:=resident.gc_shapes,resident.gc_parents
+            testing.expect(t,!(core.reshaped(&w.transforms,&shapes[0]) | core.reshaped(&w.chunks,&shapes[1]) | core.reshaped(&w.ids,&shapes[2]) | core.reshaped(&w.terrains,&shapes[3])))
+            testing.expect(t,core.touched(&w.parents,&parents))
         }
         terrain_test_update(&w,&resident,&app)
         testing.expect_value(t,w.data.epoch,epoch)
@@ -92,27 +90,27 @@ incomplete_terrain_chunks_are_reconstructed_without_ghosts_or_changes_to_authors
         for chunk,row in w.chunks.values {
             e:=w.chunks.entities[row]
             testing.expect(t,chunk_entity_matches(&tables,e,chunk.owner,chunk.coord,chunk.depth))
-            shown,_:=core.get(core.read(&w.statics),e)
+            shown,_:=core.get(&w.statics,e)
             testing.expect(t,host.assets_mesh_generated(&assets,shown.mesh))
         }
         if author!=core.NONE {
-            static,_:=core.get(core.read(&w.statics),author)
-            transform,_:=core.get(core.read(&w.transforms),author)
+            static,_:=core.get(&w.statics,author)
+            transform,_:=core.get(&w.transforms,author)
             testing.expect(t,core.alive(&w.entities,author) && core.has(&w.ids,author) && static.mesh=={} && !core.has(&w.chunks,author))
             testing.expect_value(t,transform.position.x,damage==.Author?f32(72):f32(0))
             testing.expect(t,!core.has(&w.parents,author))
             if damage==.Author {
-                marker,_:=core.get(core.read(&w.terrains),author)
-                collider,_:=core.get(core.read(&w.colliders),author)
-                identity,_:=core.get(core.read(&w.ids),author)
+                marker,_:=core.get(&w.terrains,author)
+                collider,_:=core.get(&w.colliders,author)
+                identity,_:=core.get(&w.ids,author)
                 testing.expect(t,marker==(Terrain{source=id,revision=1,solid=true}) && identity.value==2)
                 testing.expect_value(t,collider,phys.collider_box({1.25,2.5,3.75}))
             } else {testing.expect(t,!core.has(&w.colliders,author))}
         }
         terrain_test_update(&w,&resident,&app)
-        stamps,structure,version:=resident.gc_stamps,assets.structure,w.statics.version
+        shapes,parents,structure,version:=resident.gc_shapes,resident.gc_parents,assets.structure,w.statics.version
         for _ in 0..<5 {terrain_test_update(&w,&resident,&app)}
-        testing.expect_value(t,resident.gc_stamps,stamps)
+        testing.expect(t,resident.gc_shapes==shapes && resident.gc_parents==parents)
         testing.expect_value(t,assets.structure,structure)
         testing.expect_value(t,w.statics.version,version)
         testing.expect_value(t,w.entities.alive,len(w.ids.values)+expected)

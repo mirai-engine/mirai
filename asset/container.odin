@@ -244,7 +244,8 @@ piece_decode :: proc(work:^Piece_Work,first,last:int,worker:int) {
 pack_reach :: proc "contextless" (size:u64) -> u64 {return size/PACK_BLOCK_MIN*compressor.BLOCK_LEN}
 
 Header_Flag :: enum u32 {
-    Cooked, // built by an importer from a source file: edits belong in the source
+    Cooked,   // built by an importer from a source file: edits belong in the source
+    Prefab,   // a scene placed as instances, with exactly one root: what whoever made it chose, never derived from its entities
 }
 Header_Flags :: bit_set[Header_Flag;u32]
 
@@ -255,7 +256,7 @@ Header :: struct {
     kind_version:u16, // of what the kind stores
     flags:Header_Flags,
     id:base.Asset_Id,
-    owner:base.Asset_Id, // the asset it is a part of, which made it (the prefab of an import); zero for one of its own
+    owner:base.Asset_Id, // the asset it is a part of, which made it (the scene of an import); zero for one of its own
     chunk_count:u32,
     alignment:u32,    // the largest alignment of a chunk: a file held in memory aligned to it gives aligned chunks
     directory_offset:u64,

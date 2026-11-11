@@ -39,8 +39,7 @@ of a network session and in the editor API. `Entities.ids` translates it to the 
 time:
 
 - `entity_of` answers according to the last settle of the `Id` table: one that was added and not
-  yet settled is not found; a destroyed entity stops being found immediately. `id_of` reads without
-  stamping the row.
+  yet settled is not found; a destroyed entity stops being found immediately. `id_of` reads the row.
 - The index follows the `changes` of the `Id` table; `world_copy` and `world_swap` carry it with
   the world without rereading it (`ids_moved`), and a hand-copied world rereads its table.
 - If two entities have the same `Id`, the first one indexed has it and, when it leaves, another.
@@ -62,20 +61,33 @@ table holds no memory: a table costs what its rows cost, not what the entities o
 The enabled rows come first: walking a component is walking `0..<count(t)`. Removing a row moves
 another into its place, with its stamp, without mixing the two sections.
 
-- **Writing is requesting the row.** `get`, `at` and `writable` on `^Table`, and `free` on a
-  `shared` table, give `^T` and stamp the row with a new `version`; on a `Read` they give the value.
-  `row_of` and `has` look without stamping. None of them sees a disabled row.
+- **One handle, two accesses.** A function writes with `^Table(T)` and only reads with
+  `^Table(T,.Read)`, the same table cast by the generated call: the access is part of the type, so
+  a write through a read is a compile error, and every read procedure takes `^Table(T,$A)`.
+- **Reading stamps nothing.** `get` (value and whether it was found) and `at` (the value of a row)
+  answer on either access, as `row_of` and `has` do. None of them sees a disabled row. `join` of
+  two or three tables and `each_joined` walk the rows of the first whose entity has the others on
+  and give the entity and the values; the join's `row` is the row of the first, for `edit_at`.
+- **Writing is requesting the row.** `edit` and `edit_at`, and `free` on a `shared` table, give
+  `^T`, stamp the row with a new `version` at once and keep a copy of the bytes it had at the first
+  ask of the function. The settle after the function gives back its stamp to a row whose bytes did
+  not change, and the version too when no row changed and nothing else wrote: what a function
+  computes every tick and seldom changes is asked for and written as it is. `writable` stamps every
+  row for good.
+- **Stamps come in pages.** `page_stamps` keeps, for each `STAMP_PAGE` rows, the newest stamp
+  written in them: a reader of what changed skips the pages written before it looked.
 - **Structural changes wait.** `add` (adds or replaces), `remove`, `disable` and `enable` wait in
   `pending` until `table_settle`, which applies them in order and discards those of entities that
   are not alive. It reserves room for all the additions first: without memory it applies none and
   they wait for the next settle. There are never two rows per index: the new generation replaces
   the old one.
-- **What waits is finished in the function.** `added(t, e)` gives the value of the last pending
-  `add` to write (valid until the next `add` to the table) and `staged`, that or the enabled row: a
-  function finishes what it created without settling the world. `staged_has` says whether the entity
+- **What waits is finished in the function.** `staged(t, e)` gives the value of the last pending
+  `add` to write (valid until the next `add` to the table), or else the enabled row: a function
+  finishes what it created without settling the world. `staged_has` says whether the entity
   will have the row on, with what waits counted.
-- `version` and `layout` only grow, also after `table_copy` and `table_swap`: a reader never sees a
-  repeated stamp.
+- `version` and `layout` only grow, also after `table_copy` and `table_swap`, except that the edits
+  of a function that wrote nothing take `version` back where they found it; the next write goes
+  above every version handed out, so a reader never sees a repeated stamp.
 - The `base` tables (the components of `core`) follow their entity even when it is disabled;
   `disable` on them is a `core.fail`.
 - **Copying what changed.** `table_copy_changed(dst, src, &mark)` is for a `dst` that is kept as a
@@ -85,7 +97,14 @@ another into its place, with its stamp, without mixing the two sections.
   before it is used again. After `host.app_world_replace`, `copy_marks_follow` keeps the marks
   valid. Going back to such a copy with its marks brings back only what the world changed since
   ([replace](host.md#the-application)): a table says it changed with its `version` and its
-  `layout`, which also move when who owns its rows does, and a storage with its revision.
+  `layout`, which also move when who owns its rows does, and a storage with the stamp of its row.
+- **New rows.** `added(t, row)` says the row has its value from an `add` and no function of its
+  writer asked for it yet: the writer asks it, before or after it asks for the row, to set up what
+  the row starts with in its first tick; the row is no longer added when that function settles,
+  even with the bytes it had. It is the parity of the stamp of the row, so a copy and a rollback
+  keep it, and a row turned off and on stays added. A stateful object keeps the phase it is in and
+  the tick it entered it, and derives the rest from `core.Time`; it has no field that says it was
+  set up.
 - **Owners.** `@(component,locks="core.Transform")` makes each row the owner of the `Transform` row
   of its entity; the others write with `free`, which gives `nil` on an owned row. The lock names the
   locked table by its distance within the world, not by a pointer, because the world is copied in
@@ -96,11 +115,19 @@ another into its place, with its stamp, without mixing the two sections.
 
 A reader keeps one `core.Seen` per table and calls `changes(t, &seen)`, which advances it:
 
-- `since`: the rows with a greater stamp were written, added or enabled.
+- `each_changed(t, &c)` gives, in a `for`, the rows written, added or enabled since: every row with
+  `all`, none when `written` is false. It is the only walk of what changed; `changed(t, c, row)`
+  answers for one row, for a reader that walks another table and looks up the row of its entity.
 - `gone`: the entities whose row stopped being enabled since the last read (some may have come
   back, among the stamped ones); valid until the next settle.
 - `all`: the reader did not see the rows that exist (the table was copied, swapped or cleared, or
-  the log discarded entries) and walks all of them.
+  the log discarded entries) and walks all of them. A rollback that takes back rows in place
+  ([replace](host.md#the-application)) gives them as written, not `all`.
+- **A reader that makes again whole what it derives** does not walk rows: `touched(t, &seen)` says
+  whether anything changed in the table since it looked, and `reshaped(t, &shape)` whether its rows
+  are others (added, removed, turned on or off, replaced whole) whatever was written in them, for
+  what orders or indexes the rows of a table written every tick. Both advance what they are given;
+  a reader of several tables joins them with `|`, which asks every one.
 - The `gone` log gets its room when the first entity leaves a table, and from then on never
   allocates in a settle: its room grows with the rows, when they are reserved (twice those that
   exist, `GONE_CAPACITY` at least), and when full it discards its oldest half. What leaves between
@@ -143,11 +170,43 @@ write: a prefab, a piece of terrain, a piece of something broken.
   A request queue of a library has fixed room: its procs `offer` (or `refuse` what is invalid) and
   return nothing, and the owner's `queue_serve` step keeps the room from its settings and reports
   once what was dropped or refused.
-- In a **request** (`@(storage,queue)`) many push and one library takes; in an **event**
-  (`@(storage,events)`) the owning library empties it and fills it every tick and the others read.
-  Any other storage is written by a single library, except `@(storage,shared)`.
+- In a **request** (`@(storage,queue)`) many push and one library takes. Any other storage is
+  written by a single library, except `@(storage,shared)`.
+- **Events** are logs, `core.Events(T)` fields of a storage: the owning library pushes what
+  happened and never clears. Each reader gets what came since it last looked, whatever its
+  cadence: a function that receives the storage to read finds exactly that in `items` (the
+  generated call keeps its cursor), and code outside the loops keeps a cursor and asks
+  `log_since`. Whoever runs a World ages its logs at the end of a frame (`host`, with
+  `World_Info.events_age`; `world_events_age` after a `world_run` of a World no loop runs), those
+  a `fixed` function reads only when the frame ran a tick. A test that calls the owner by hand
+  reads the log it holds: it clears it between ticks, or keeps a cursor.
+- **One log read by cursor.** `core.Log(T)` is the append-only log behind `Events`, the `gone` of a
+  table and the `moved` of the `Hierarchy`; each owner keeps only its trim rule (the age of
+  `Events`, a room whose older half goes when full for the other two). `log_since` gives what came
+  since a cursor, or says `whole` to a reader that fell behind the trim or holds the cursor of
+  another log, which reads the state whole (for `Events`, what the log holds).
+- There are two ways to learn that something happened and no more: state, read by change
+  (`changes`, `touched`, `added`), and occurrences, read by cursor.
 - `Ref(S)` is a read-only pointer to a storage: writing through it is a bug that the generator does
   not see.
+
+## Waiting
+
+A wait is the tick it ends at, plain data in a component or a storage: it is copied and rolled
+back with the world, and a save keeps it with the clock.
+
+- `deadline(time, seconds)` is the tick that many seconds after the one that runs, and
+  `due(time, at)` says whether it came; a deadline nobody set, 0, has, and `NEVER` never does.
+  `elapsed(time, since)` gives the seconds since a tick; `ticks_of` and `seconds_of` convert.
+  Seconds become ticks with the `dt` of the clock, so a wait lasts the same at any tick rate.
+- The row is written when the wait starts and when it ends: nothing counts down tick by tick.
+- An entity with an `Own_Pace` waits on `own_time(time, clock, paces, e)`, the clock at the pace it
+  has now. What must follow a pace that changes during the wait adds its own time up every tick.
+- A request may wait in its queue: `later(&q, time, seconds, item)` carries its due tick, and the
+  owner takes with `take_due(&q, time)` what was pushed and what is due. An owner that takes with
+  `take` refuses what was pushed for later, and its `queue_serve` reports it. A queue is not
+  saved: a wait that a save must keep is a deadline in a component.
+- There is no coroutine and no `await`: what waits and then acts is a component with its tick.
 
 ## Core storages
 
@@ -162,13 +221,14 @@ are `copy=false`: they are neither copied nor cleared. `Jumps` and `Hierarchy` a
   - `resimulating`: the network repeats ticks that already ran to correct a prediction. The
     rollback sets it; `tick`, `seconds` and `dt` come back with the copy of the world and the
     repeated ticks advance them up to the present. What is not simulation is not repeated:
-    `audio.play*` makes no sound and `multiplayer.send` does not enqueue. What entered the tick is
-    repeated: each repeated tick receives the UI events it received the first time
-    ([gui](../../mirai-gameplay/references/libraries.md#gui)).
+    `audio_requests` drops the sounds it asks for and `multiplayer.send` does not enqueue. What
+    entered the tick is repeated: each repeated tick receives the UI events it received the first
+    time ([gui](../../mirai-gameplay/references/libraries.md#gui)).
     What stays in the `World` (a prefab, a counter, the clock of a particle emitter) is repeated the
     same as the first time.
 - `Frame_Time` (`copy=false`): the frame the world runs, not its simulation. `accumulator` (seconds
-  of frames that the ticks have not simulated yet), `dt` (of the frame), `alpha` (fraction of the
+  of frames that the ticks have not simulated yet, up to half a tick past either end while the
+  [ticks are kept steady](host.md)), `dt` (of the frame), `alpha` (fraction of the
   frame between the last two ticks; 1 in the editor loop and when creating the world), `phase` (the
   one that is running) and `dilation` (how much faster or slower than the frames the ticks run; -1
   stops them). A Play and a rollback neither copy nor swap it: it stays as the frame has it. `host`
@@ -197,7 +257,7 @@ are `copy=false`: they are neither copied nor cleared. `Jumps` and `Hierarchy` a
   fixed step is a single one, and each library that moves an entity through time compensates:
   - the locomotion of its `Character` and the turn of the seat
     ([locomotion](../../mirai-physics/references/engine.md#own-pace));
-  - its animation, its pose modifiers and its `Keyframe_Path` advance `dt * pace_of`.
+  - its animation and its pose modifiers advance `dt * pace_of`.
   - The camera that follows it already runs with the `dt` of the frame (`late`), which does not
     scale.
   - What it throws or fires follows the world clock unless the game gives it its own `Own_Pace`; a
@@ -216,7 +276,7 @@ are `copy=false`: they are neither copied nor cleared. `Jumps` and `Hierarchy` a
 - `Jumps`: jumps of the tick. `jump(jumps, e, by)`: `e` appears somewhere else without passing
   through the middle, carried by the rigid transformation `by`.
 - `Hierarchy`: the tree of `Parent` ([the `Hierarchy`](#the-hierarchy)).
-- `Propagation`: order and scratch of `transforms_propagate`.
+- `Propagation`: what `transforms_propagate` keeps between passes.
 - `World_Id` (`copy=false`): which world of its application this is, a handle (index and
   generation) that no world made later repeats. `host` sets it when creating the world; copying and
   swapping worlds do not move it, so a replaced world keeps its own. What the application stores
@@ -272,6 +332,32 @@ library that simulates sets `World_Queries.open` once (physics); `world_query` g
 the touched support is now, to follow what moves underneath. A query of another world is opened
 with its `World_Ref`.
 
+## Ground
+
+`core/ground.odin`: the same shape for the ground. The library that makes it sets
+`Ground_Queries.open` once and pushes where the ground changed to its logs (terrain, in
+`terrain_update`); the storage is not `shared`, so its one writer runs before the readers of its
+stage. `ground_query` gives a `Ground_Query` or, without one, one without a probe, and whoever
+reads it keeps its own default (foliage the plane of its entity).
+The probe answers the highest ground along a line: `Ground` with the point, normal and layer
+weights, `None` where no ground covers it, `Empty` where ground covers it without a surface, and
+`Unloaded` where it is not in memory, far from every viewer, which a change announces when it loads;
+`coarse` asks for the cheaper answer from what stays in memory. Where the ground changed is two
+`core.Events` of boxes of the world, read as any other: `changed` (its surface, for foliage) and
+`unloaded` (whether its collision is loaded, which `Ground_Query.unloaded` names, for
+navigation). The query is valid during the function that opens it, and its probe may run from the
+jobs of that function.
+
+## Births
+
+`core/births.odin`: births of effects by channel in the `Births` queue. A channel is a name
+(`birth_channel` hashes it with `base.name_hash`, as the data channels of `vfx` are keyed): the code
+that pushes and the component that listens say the same text, and no library hands out ids.
+Whoever pushes (terrain
+dust, imprint stamps, water splashes, a game's impacts) does not know who draws them; `vfx` takes
+them in `fixed` ([channels](../../mirai-world/references/vfx.md#channels)), and without it they are
+let go.
+
 ## Transform and hierarchy
 
 - `Transform` (`shared`) is local to the parent; the libraries that own it declare `locks`.
@@ -290,9 +376,10 @@ owned one is requested in the `Places` queue. `core.Placer` is a
 
 - With `teleport` it is a jump (`jump`) and the drawing does not interpolate the path;
   `teleport=false` is for what moves frame by frame (a cinematic).
-- The owning library takes its requests in `fixed` with `before="places_drop"` and leaves the
-  others. `places_drop` (`simulate`) reports what nobody took as the problem `core.place`; what is
-  requested afterwards waits for the next tick.
+- The owning library takes its requests in `fixed`, in the `simulate` stage, and leaves the
+  others: a function that receives `^core.Places` runs before `places_drop`, which reports what
+  nobody took as the problem `core.place`. What is requested in a later stage waits for the next
+  tick.
 - `at_rest` stops what the owner moves (a respawn, a reset); the owner takes it from the request.
   The default keeps the velocity, which a portal needs.
 - This is how the `spawn` plugin, portals and cinematics place things without importing physics.
@@ -307,11 +394,13 @@ inside a function is seen after it.
 - **Cycles.** A `Parent` that would put its entity under itself is left out of the tree: the entity
   is a root until a link changes, and it is retried every time (a log warning names it). A `Parent`
   to an entity that is not alive also leaves it a root.
+- Destroying an entity destroys, at the settle, what hangs from it, also what a `Parent` of the
+  same function hangs from it; a child to keep is taken out first.
 
 ### Queries
 
 Downward, over the `Hierarchy` and without allocating (`first_child`, `next_sibling`,
-`subtree_next`, `destroy_tree`); upward, over `Parent`, which is always up to date
+`subtree_next`); upward, over `Parent`, which is always up to date
 (`ancestor_with`, `is_under`). Nobody builds their own child index or walks `Parent` by hand.
 
 - `subtree_next` gives parents before children:
@@ -328,9 +417,11 @@ Downward, over the `Hierarchy` and without allocating (`first_child`, `next_sibl
 `std/math`, which keeps the shape of the child under parents with uneven scale. The authoring
 hierarchy is not a spatial structure: culling, physics and queries use their own.
 
-- It sorts everything only if the `layout` of `Transform` or the `version` of the `Hierarchy`
-  changes; otherwise it composes the stamped rows and what hangs from them, and only stamps a
-  `World_Transform` whose value changed.
+- It composes what changed and what hangs from it, higher entities first: the `Transform` rows
+  stamped, the entities whose link moved (`Hierarchy.moved`, a `core.Log` read by cursor as the
+  `gone` of a table) and the children of one that lost its `Transform`. It composes
+  everything only when it had not seen the rows or the tree there are (a World copied over, more
+  links moved than the log holds), and only stamps a `World_Transform` whose value changed.
 - A jump (`Jumps`) carries by `by` also the `previous` of the entity and of what hangs from it: who
   interpolates does so on the arrival side and never shows the path. The owner of the transform
   requests it on the tick where it applies it; physics, on every teleport.
@@ -376,7 +467,8 @@ library.
   ([classes](generator.md#attributes)).
 - `world_copy_changed` takes only the tables that changed and the storages that were written,
   with their `copy_kept` if they have one, and keeps `copy_marks_count` marks for it. A `World`
-  holds a revision for each storage, which moves when a function receives the storage with `^S`
+  holds a stamp for each storage, the one of its one row, which `core.Stamp(S)` gives a function
+  for `core.touched` and which moves when a function receives the storage with `^S`
   ([generated functions](generator.md#generated-functions)), when code outside the loop asks for it
   (`world_storage`, `world_storage_of`, `world_storage_at`: what writes a storage outside the loop
   reaches it through one of these), when `core.settle` changes the `Hierarchy`, and when the world
@@ -455,10 +547,11 @@ the schema and the editor and the API, the rows.
 - The rows are read-only and live outside the `World`, in the application: Play, copies and
   rollback do not copy them, and all worlds read the same ones. What changes in a save goes in
   components that name rows.
-- `core.Text` is a localized text of a row: the table stores the text in the language the game is
-  written in and its translations under its id. `core.record_text(rows, text, language)` gives it in
-  the language of the `name_hash` of its code (that of `gui.ui_language`) and, without a translation
-  or with 0, the original.
+- `core.Text` is a text a player reads, as a field of a row or of a component: the key of a
+  `.strings` ([one store](../../mirai-assets/references/kinds.md#texts)). A function receives
+  `^core.Texts`, every `.strings` of the assets as one table, and `core.text(texts, text, language)`
+  gives what a `core.Text` or a key by name says in the language of a code (`gui.ui_language`),
+  as `base.text` finds it.
 - `host` loads the tables of a type the first time a function asks for it, and again when one of its
   files changes (on disk or in the editor's memory), appears or leaves: editing a row during Play
   is seen on the next tick; `records_generation` changes with each load, so what a function builds
@@ -466,7 +559,8 @@ the schema and the editor and the API, the rows.
   (`host.app_records_failed`). The demo uses rows for its inventory, a dialogue and the waves of a
   horde ([demo](../../mirai-gameplay/references/demo.md#game-data)).
 - If the struct changes, the rows are read by field name, like every asset: a new field takes the
-  default of the type (`NAME_DEFAULT`) and a renamed one starts over.
+  default of the type (`NAME_DEFAULT`) and a renamed one keeps its values only with
+  `mirai:"was=<earlier name>"` ([migration](../../mirai-assets/references/serial.md#stdserial)).
 - `World_Info.records` describes each type; `Record_Info.ref` is the `typeid` of its `Record(T)`,
   because reflection does not know which `T` it is: `core.record_of_ref` gives the type of a field.
 
@@ -502,26 +596,36 @@ those that happen in the loop are reported as [problems](#problems).
 
 ## Test worlds
 
-A test that needs a world declares a struct and lets `core` describe it
-(`core/test_world_test.odin`): no test writes `Table_Info` or `Storage_Info` rows, nor the init,
-destroy, settle, copy and swap of its tables.
+A test that needs a world declares its struct in a `_test.odin` and marks it `@(test_world)`: the
+[generator](generator.md#outputs) writes its `World_Info` as it writes that of a game, from the
+attributes, the defaults and the procedures of the package that declares each type, into
+`worlds_gen_test.odin` of the package of the test. No test writes `Table_Info` or `Storage_Info`
+rows, nor says again what an attribute says.
 
-- The struct starts with `using world:core.Test_World`; each other field is a `core.Table(T)` of a
-  component or the value of a storage. What the attributes of `T` say is read from the source that
-  declares it, through the `core.declared_read` the generator uses: a test world cannot say
-  something else of a type than a generated one. A type a test file declares may have no attribute,
-  and takes the default its test gives it.
-- What the application and the editor hold go in two more structs, given to `core.test_info`: a
-  `@(storage,host)` as a value, a `by_world` one as a `core.By_World(T)`.
-- `core.test_world_init` makes a world that holds its own `World_Info`, for a test of one world;
-  `core.test_info` gives the `World_Info` alone, which says of each table and storage what a
-  generated one says, for a test that hands it to the application, the editor or a history.
-- Reflection does not find the defaults (`NAME_DEFAULT`, `name_default()`) nor the procedures the
-  attributes name. A library that declares them exports `test_types` from a test file, which adds
-  them with `core.test_type` and calls the `test_types` of the libraries it uses; the world is
-  given the one of its library. A world that lacks one fails saying which entry to add.
+- The struct starts with `using world:Test_World`, the header the generated file gives its package
+  (the entities and a revision for each storage); each other field is a `core.Table(T)` of a
+  component, an array of them with its count as a number (a table per element, named
+  `<T>_<index>`) or the value of a storage. A type a test file declares may have no attribute: a
+  plain component or storage, whose default is its `NAME_DEFAULT` or `name_default()` as for any
+  other. The tag of a field takes `mirai:"game"` (the game of a project declares it) and
+  `mirai:"name=Spin"` (the name its table or storage goes by).
+- What the application and the editor hold go in two more structs the attribute names,
+  `@(test_world,host="Shared_Struct",editor="Editor_Struct")`: a `@(storage,host)` as a value, a
+  `by_world` one as a `core.By_World(T)`.
+- The world, the structs it names and the types of their fields are declared at the top of a file
+  and are not private to it: the generated file of the package reads them.
+- `test_world_init(t,&w)` makes a world that holds its own `World_Info`, for a test of one world
+  (`test_world_destroy`, `test_world_settle`, `test_world_ref`, `test_world_copy`); `test_info(t,W)`
+  gives the `World_Info` alone, for a test that hands it to the application, the editor or a
+  history (`test_info_destroy`; `test_info_index` after the test gave it names or records). They
+  are of the package of the test, written with its worlds: a test calls them without `core.`.
+- `mirai check` and `mirai test` write the file of the package and of those it imports before
+  they compile, and a check or a test of a project those of its packages; an error says which
+  field of which world is wrong and what to write. Git keeps only that of `core`: the `mirai` tool
+  is built from `core`, whose tests the compiler reads, before it can generate anything.
 - A library whose tables other libraries need in their tests exports them as a struct those hold
   with `using`, with the step that runs on them: `physics.Test_Physics` and `physics.test_step`.
-- Test files of an imported package are compiled into every build of tests, and into no other.
+- The compiler reads the test files of every package a build reads from its folder; the libraries
+  of the engine and of a project are built from stages without them.
 - A test that writes files takes its folder from `base.test_folder`, which removes it when the test
   ends.

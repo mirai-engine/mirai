@@ -8,7 +8,7 @@ import "mirai:std/base"
 import erender "mirai:engine/render"
 import mm "mirai:std/math"
 
-POSE_CURVE_ROWS :: 4096 // rows of curve_poses, and of curve_drives, of a .pose
+POSE_CURVE_ROWS :: 4096 // rows of curve_poses, and of curve_drives, of a .character
 
 // A pose that a Float curve brings to a bone, as the poses of a face (a blink,
 // an open jaw, a phoneme): with the value of curve, from 0 to 1, the bone
@@ -60,9 +60,8 @@ CURVE_DRIVE_DEFAULT :: Curve_Drive{scale=1,high=1,weight=1,enabled=true}
 // frames of a flipbook face, a switch) when it is positive. parameter names a
 // value of the material (emission, roughness...) or a parameter of its
 // program; slot is the material slot of the mesh, or every slot with every.
-// It is drawn over the Material_Override of the entity without changing it:
-// each distinct value is a material of its own, so few values (a step) cost
-// little and a value that changes in every frame makes one in every frame.
+// It is a value each mesh of the rig shows at run time (erender.Material_Live)
+// while the curve plays, over the one the entity authors under that name.
 Curve_Material :: struct {
     rig:core.Entity `mirai:"transient"`,
     curve:[64]u8 `mirai:"text"`,
@@ -227,7 +226,7 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
            pose_first<pose_end && len(runtime.curve_pose_states)!=len(runtime.curve_poses.values) && resize(&runtime.curve_pose_states,len(runtime.curve_poses.values))!=nil ||
            material_first<material_end && len(runtime.curve_material_states)!=len(runtime.curve_materials.values) && resize(&runtime.curve_material_states,len(runtime.curve_materials.values))!=nil ||
            pose_first<pose_end && len(runtime.curve_full)<len(state.local) && resize(&runtime.curve_full,len(state.local))!=nil {
-            memory_problem(problems,state.entity,"the curve poses and drives of its pose profile");state.driven_ready=false;return false
+            memory_problem(problems,state.entity,"the curve poses and drives of its .character");state.driven_ready=false;return false
         }
     }
     leader:=constraint_playing(playback,state.leader) if followed else nil
@@ -293,7 +292,7 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
             binding.rig,binding.bound,binding.generation,binding.geometry,binding.ready=state.entity,state.bound,state.generation,runtime.geometry,true
         }
         if binding.bone<=0 || int(binding.bone)>=len(state.local) {
-            core.report(problems,state.entity,"animation.curve_pose_bone","a curve pose of the pose profile of this rig, of curve '%s', names bone '%s', which its skeleton does not have, so it does not move; %s",base.text_get(config.curve[:]),base.text_get(config.bone.path[:]),bone_fix(config.bone))
+            core.report(problems,state.entity,"animation.curve_pose_bone","a curve pose of the .character of this rig, of curve '%s', names bone '%s', which its skeleton does not have, so it does not move; %s",base.text_get(config.curve[:]),base.text_get(config.bone.path[:]),bone_fix(config.bone))
             valid=false
             continue
         }
@@ -322,21 +321,20 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
     return valid
 }
 
-// The material values that the curves of rig give over the Material_Override
-// of a mesh with slots material slots, in override itself, a copy the caller
-// draws with. fits is false when they do not fit in it (the others still
-// apply); moved, when the rig has curve materials at all.
+// Gives the material values that the curves of rig move to the Material_Live
+// of entity, a mesh of it with slots material slots, and takes away those of
+// the curves that do not play, and the component with the last of them.
+// False when they do not fit in it (the others still apply).
 @(private)
-curve_materials_apply :: proc(runtime:^Modifier_Runtime,rig:^Playing,slots:int,override:^erender.Material_Override) -> (fits,moved:bool) {
+curve_materials_apply :: proc(runtime:^Modifier_Runtime,rig:^Playing,slots:int,lives:^core.Table(erender.Material_Live),entity:core.Entity) -> (fits:bool) {
     fits=true
     if runtime==nil || rig==nil {return}
     first,end:=rig_rows(&runtime.curve_materials,rig.entity)
     if first>=end {return}
-    moved=true
+    live:=core.staged(lives,entity)
     curves:=playing_curves(rig)
     for row in first..<end {
         config:=&runtime.curve_materials.values[row]
-        if !config.enabled {continue}
         // The names curve_poses_apply hashed for the rig, and where it found its curve.
         name,parameter,slot:=u64(0),u64(0),i32(-1)
         if row<len(runtime.curve_material_states) && runtime.curve_material_states[row].ready && runtime.curve_material_states[row].rig==rig.entity && runtime.curve_material_states[row].geometry==runtime.geometry {
@@ -345,29 +343,22 @@ curve_materials_apply :: proc(runtime:^Modifier_Runtime,rig:^Playing,slots:int,o
         } else {
             name,parameter=base.name_hash(base.text_get(config.curve[:])),base.name_hash(base.text_get(config.parameter[:]))
         }
-        curve:=curve_slot(curves,name,&slot)
-        if curve==nil || curve.weight<=0 {continue}
-        amount:=curve.value.x
+        curve:=config.enabled?curve_slot(curves,name,&slot):nil
+        amount:=curve!=nil?curve.value.x:0
         if config.step>0 {amount=math.floor(amount/config.step+.5)*config.step}
         value:=config.offset+config.scale*amount
-        if !finite(value.x) || !finite(value.y) || !finite(value.z) || !finite(value.w) {continue}
+        plays:=curve!=nil && curve.weight>0 && finite(value.x) && finite(value.y) && finite(value.z) && finite(value.w)
         for target in 0..<max(slots,1) {
             if !config.every && target!=int(config.slot) {continue}
-            fits &&=material_override_value(override,u8(target),parameter,value)
+            if !plays {
+                if live!=nil {erender.material_value_drop(live,parameter,target)}
+                continue
+            }
+            if live==nil {live=erender.material_live(lives,entity)}
+            if live!=nil {fits &&=erender.material_value(live,parameter,value,target)}
         }
     }
+    if live!=nil && live^=={} {core.remove(lives,entity)}
     return
 }
 
-// Sets the value of a parameter of a slot in an override, replacing the one it has.
-@(private)
-material_override_value :: proc "contextless" (override:^erender.Material_Override,slot:u8,name:u64,value:[4]f32) -> bool {
-    count:=min(int(override.count),len(override.names))
-    for i in 0..<count {
-        if override.slots[i]==slot && override.names[i]==name {override.values[i]=value;return true}
-    }
-    if count>=len(override.names) {return false}
-    override.slots[count],override.names[count],override.values[count]=slot,name,value
-    override.count=u32(count+1)
-    return true
-}

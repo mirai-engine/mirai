@@ -166,24 +166,24 @@ TEXT_CASES :: []Text_Case{
 @(private)
 corpus_texts :: proc(ctx:^Context,user:rawptr) {
     for c in TEXT_CASES {
-        if box(ctx,{id=id(ctx,c.name),width=fixed(c.width),height=FIT,track=true}) {paragraph(ctx,c.text,c.size)}
+        if box(ctx,{id=id(ctx,c.name),width=fixed(c.width),height=FIT,track=true}) {text(ctx,c.text,prose(ctx,c.size))}
     }
     if box(ctx,{id=id(ctx,"pair"),width=fixed(180),height=FIT,gap=8,track=true}) {
-        paragraph(ctx,"the first of two runs that share a row",12)
-        paragraph(ctx,"and the second one",12)
+        text(ctx,"the first of two runs that share a row",prose(ctx,12))
+        text(ctx,"and the second one",prose(ctx,12))
     }
     if box(ctx,{id=id(ctx,"column"),width=fixed(150),height=FIT,direction=.Column,padding=padding_all(4),gap=2,track=true}) {
-        paragraph(ctx,"a column takes the width of its parent and breaks the text to it",12)
-        paragraph(ctx,"short",12)
+        text(ctx,"a column takes the width of its parent and breaks the text to it",prose(ctx,12))
+        text(ctx,"short",prose(ctx,12))
     }
     if box(ctx,{id=id(ctx,"beside"),width=fixed(200),height=FIT,gap=4,track=true}) {
         if box(ctx,{id=id(ctx,"beside.icon"),width=fixed(24),height=fixed(24),track=true}) {}
         if box(ctx,{id=id(ctx,"beside.text"),width=GROW,height=FIT,direction=.Column,track=true}) {
-            paragraph(ctx,"what is left of the row once the icon is in",12)
+            text(ctx,"what is left of the row once the icon is in",prose(ctx,12))
         }
     }
     if box(ctx,{id=id(ctx,"clipped"),width=fixed(100),height=FIT,clip_x=true,track=true}) {
-        paragraph(ctx,"a clip moves what does not fit instead of breaking it",12)
+        text(ctx,"a clip moves what does not fit instead of breaking it",prose(ctx,12))
     }
 }
 
@@ -209,7 +209,12 @@ test_layout_commands :: proc(ctx:^Context,out:[]Test_Command) -> int {
     for c,i in t.commands[:min(t.command_count,len(out))] {
         n:=&t.nodes[c.node]
         out[i]={c.kind,n.id,"",n.box}
-        if c.kind==.Text {out[i].text,out[i].rect,_=layout_line(t,c)}
+        if c.kind==.Text {
+            line:=&t.lines[c.line]
+            piece:=&t.pieces[line.pieces_first]
+            out[i].text=t.spans[piece.span].text[piece.start:][:piece.length]
+            out[i].rect={line.x,line.y,line.width,line.height}
+        }
     }
     return t.command_count
 }
@@ -217,7 +222,7 @@ test_layout_commands :: proc(ctx:^Context,out:[]Test_Command) -> int {
 @(test)
 boxes_are_placed_where_the_layout_always_placed_them :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input(CORPUS_SIZE.x,CORPUS_SIZE.y)
     input.safe=CORPUS_SAFE
@@ -234,7 +239,7 @@ boxes_are_placed_where_the_layout_always_placed_them :: proc(t:^testing.T) {
 @(test)
 what_is_drawn_follows_the_layers_and_closes_its_clips :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input(CORPUS_SIZE.x,CORPUS_SIZE.y)
     input.safe=CORPUS_SAFE
@@ -261,7 +266,7 @@ paragraphs_break_into_the_lines_they_always_did :: proc(t:^testing.T) {
         desc:=TEST_FONT
         desc.max_text_words=words
         ctx:Context
-        testing.expect(t,context_init(&ctx,desc))
+        testing.expect(t,test_context_init(&ctx,desc))
         defer context_destroy(&ctx)
         input:=test_input(CORPUS_SIZE.x,CORPUS_SIZE.y)
         input.safe=CORPUS_SAFE
@@ -275,7 +280,7 @@ paragraphs_break_into_the_lines_they_always_did :: proc(t:^testing.T) {
         frame_end(&ctx)
         testing.expect_value(t,ctx.stats.dropped_elements,u32(0))
         walked:=0
-        for r in ctx.layout.runs[:ctx.layout.run_count] {if r.measure.words_first<0 {walked+=1}}
+        for r in ctx.layout.spans[:ctx.layout.span_count] {if r.measure.words_first<0 {walked+=1}}
         testing.expectf(t,(walked>0)==(words>0),"%d words: %d runs walked",words,walked)
         for want in GOLDEN_TEXT_BOXES {
             got:=test_rect(t,&ctx,id(&ctx,want.name))
@@ -301,11 +306,11 @@ paragraphs_break_into_the_lines_they_always_did :: proc(t:^testing.T) {
 @(test)
 a_frame_that_shows_the_same_text_measures_none_of_it :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     input:=test_input(CORPUS_SIZE.x,CORPUS_SIZE.y)
     test_frame(&ctx,&input,corpus_texts,nil)
-    runs:=u32(ctx.layout.run_count)
+    runs:=u32(ctx.layout.span_count)
     testing.expect(t,runs>0)
     testing.expect_value(t,ctx.stats.text_measured+ctx.stats.text_reused,runs)
     test_frame(&ctx,&input,corpus_texts,nil)
@@ -318,7 +323,7 @@ text_that_fills_more_than_half_the_measures_is_not_measured_again :: proc(t:^tes
     desc:=TEST_FONT
     desc.max_text_words=64
     ctx:Context
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     input:=test_input(CORPUS_SIZE.x,CORPUS_SIZE.y)
     // 16 runs of three words: 48 of the 64 a frame holds.
@@ -327,7 +332,7 @@ text_that_fills_more_than_half_the_measures_is_not_measured_again :: proc(t:^tes
         buffer:[32]u8
         for i in 0..<RUNS {
             if box(ctx,{id=id(ctx,"run",i+1),width=fixed(40),height=FIT,track=true}) {
-                paragraph(ctx,fmt.bprintf(buffer[:],"unique run %d",i+1),12)
+                text(ctx,fmt.bprintf(buffer[:],"unique run %d",i+1),prose(ctx,12))
             }
         }
     }
@@ -351,7 +356,7 @@ text_that_fills_more_than_half_the_measures_is_not_measured_again :: proc(t:^tes
 @(test)
 a_world_panel_is_laid_out_from_the_origin_of_its_surface :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input(800,600)
     // The panel takes, in the second frame, the place of an element that was
@@ -408,7 +413,7 @@ GOLDEN_BOXES :: []Golden_Box{
     {"float.under.b",{504,96,120,12}},
     {"main.centered",{424,87,200,40}},
     {"main.centered.in",{494,101,60,12}},
-    {"main.bottom",{532.5,130,91.5,20}},
+    {"main.bottom",{533,130,91,20}},
     {"percent",{424,153,200,100}},
     {"percent.a",{504,153,40,27}},
     {"percent.b",{474,185,100,18}},
@@ -444,9 +449,9 @@ GOLDEN_BOXES :: []Golden_Box{
     {"nested.grow",{320,332,200,20}},
     {"nested.grow.half",{320,332,100,10}},
     {"nested.fixed",{520,332,100,20}},
-    {"float.wide",{320,352,0,6}},
+    {"float.wide",{320,352,150,6}},
     {"float.fill",{0,476,640,4}},
-    {"float.part",{640,0,0,0}},
+    {"float.part",{480,0,160,48}},
     {"glass",{0,460,60,20}},
     {"glass.in",{5,465,10,10}},
 }
@@ -481,7 +486,7 @@ GOLDEN_LINES :: []Golden_Box{
     {"and more of them",{560,19,100.488,19}},
     {"first",{680,0,22.125,19}},
     {"third",{680,38,25.594,19}},
-    {"unbreakablewordthatiswiderthanthebox ",{880,0,228.469,19}},
+    {"unbreakablewordthatiswiderthanthebox",{880,0,225.094,19}},
     {"and then some more",{880,19,116.467,19}},
     {"12 puntos y una línea",{1060,0,118.992,19}},
     {"bastante larga que no",{1060,19,123.064,19}},
@@ -497,7 +502,7 @@ GOLDEN_LINES :: []Golden_Box{
     {"the cards",{1390,32,44.253,16}},
     {" starts and",{1460,0,59.83,19}},
     {"ends with a",{1460,19,65.004,19}},
-    {"space ",{1460,38,37.764,19}},
+    {"space",{1460,38,34.389,19}},
     {"x",{1540,0,6.551,19}},
     {"the first of",{1541,0,58.529,19}},
     {"two runs that",{1541,19,74.373,19}},
@@ -599,7 +604,7 @@ GOLDEN_COMMANDS :: []Golden_Command{
 @(test)
 what_floats_in_a_box_that_cuts_its_floats_is_cut_by_it :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     Test :: struct {cut:bool}
     build :: proc(ctx:^Context,user:rawptr) {
@@ -621,7 +626,7 @@ what_floats_in_a_box_that_cuts_its_floats_is_cut_by_it :: proc(t:^testing.T) {
 @(test)
 what_floats_in_nested_boxes_that_cut_their_floats_is_cut_by_all_of_them :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     // The stage of a preview moved past the left of its area: what floats on
     // the stage does not show beside the area.

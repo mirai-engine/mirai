@@ -1,5 +1,6 @@
 package mirai_render
 
+import "mirai:render/abi"
 import "mirai:rhi"
 import "mirai:std/base"
 
@@ -9,8 +10,8 @@ import "mirai:std/base"
 // vertices, which the stage of each of those programs writes from the rest of
 // its clusters (surface_vertices__<program>.comp) before the Geometry stage of
 // a frame in which what it reads changed: the transform of the instance, the
-// rows of its materials (its parameters, those of a Material_Override too)
-// and, of an animated program, the time. The previous vertices are those the
+// rows of its materials (their parameters), the values the instance gives
+// over them and, of an animated program, the time. The previous vertices are those the
 // frame before showed. Raster, shadows, rays (the pose's tree and BLAS, refit
 // like a skin's), culling (its box grows by the reach of the programs) and
 // motion vectors read that geometry; no pass moves vertices of its own. A
@@ -27,12 +28,15 @@ Instance_Vertex :: struct {
 }
 
 // What the programs of the materials of an instance of mesh do to its
-// vertices. material: the row in place of the slots' (GPU_NONE: theirs).
+// vertices. material: the row in place of the slots' (GPU_NONE: theirs);
+// values: those the instance gives over its rows (Gpu_Instance.material_values).
 @(private)
-instance_vertex :: proc(r: ^Renderer, mesh: Mesh_Record, material: u32, slots: [32]u32) -> (v: Instance_Vertex) {
+instance_vertex :: proc(r: ^Renderer, mesh: Mesh_Record, material: u32, slots: [32]u32, values: u32 = 0) -> (v: Instance_Vertex) {
 	s := &r.scene
 	palette := slots
 	v.inputs = base.HASH_SEED
+	given := values
+	for word in instance_material_values_block(s, given) {v.inputs = base.hash_mix(v.inputs, u64(word))}
 	for packed in s.indices[mesh.slot_word:][:mesh.slot_count] {
 		row := instance_row(packed, material, &palette)
 		if int(row) >= len(s.materials) || s.materials[row].program_id == 0 {continue}
@@ -45,6 +49,7 @@ instance_vertex :: proc(r: ^Renderer, mesh: Mesh_Record, material: u32, slots: [
 		if offset := program.vertex.reach_offset; offset >= 0 {
 			words := transmute([PROGRAM_PARAMETER_BYTES / 4]u32)values.custom_params
 			reach = transmute(f32)words[offset / 4]
+			if shown := instance_row_words(s, given, row); shown != nil {reach = transmute(f32)shown[PARAMETERS_AT + int(offset / 4)]}
 			if !(reach >= 0) || reach > 1e30 {reach = 0}
 		}
 		v.reach = max(v.reach, reach)
@@ -117,7 +122,6 @@ displaced_swap :: proc(r: ^Renderer, index: u32, mesh: Mesh_Handle) {
 	m.first_instance = i32(index)
 	inst.meta.x = u32(mesh) | u32(ray_cut_always(m^)) << INSTANCE_RAY_SHIFT
 	s.ray_cuts_stale = true
-	r.textures.residency.stale = true
 	if !pose_instance_box(s, index) {
 		instance_touch(s, index)
 	}
@@ -193,7 +197,7 @@ displaced_prepare :: proc(r: ^Renderer) {
 		v: Instance_Vertex
 		if index := m.first_instance; index >= 0 {
 			inst := &s.instances[index]
-			v = instance_vertex(r, m^, inst.meta.y, inst.slot_materials)
+			v = instance_vertex(r, m^, inst.meta.y, inst.slot_materials, inst.material_values)
 			for row in inst.world {for value in row {v.inputs = base.hash_mix(v.inputs, u64(transmute(u32)value))}}
 			for row in inst.prev_world {for value in row {v.inputs = base.hash_mix(v.inputs, u64(transmute(u32)value))}}
 			if v.animated {v.inputs = base.hash_mix(v.inputs, u64(transmute(u32)r.time) << 32 | u64(transmute(u32)r.previous_time))}
@@ -250,13 +254,11 @@ displaced_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 			if next == max(u32) {break}
 			last = next
 			program := program_of_id(r, next)
-			pipeline := program_compute(r, &r.vertex_stages, program^, "surface_vertices", "surface vertices")
+			pipeline := program_compute(r, &r.vertex_stages, program^, "surface_vertices")
 			if pipeline == 0 {written = false; continue}
 			if !begun {
 				begun = true
 				rhi.cmd_timestamp(cmd, "surface vertices")
-				for buffer in ([]rhi.Buffer{s.instance_buffer, s.material_buffer, s.mesh_buffer, s.index_buffer}) {rhi.cmd_barrier_buffer(cmd, buffer, .Shader_Read)}
-				rhi.cmd_barrier_buffer(cmd, s.vertex_buffer, .Shader_Write)
 			}
 			params := Displace_Params {
 				mesh = u32(handle), clusters = posed_clusters(s, mesh), instance = index, program = next,
@@ -278,7 +280,6 @@ displaced_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 		// What was not written is written when its pipeline is there.
 		if written {skin.fresh = false} else {skin.inputs = 0}
 	}
-	if begun {rhi.cmd_barrier_buffer(cmd, s.vertex_buffer, .Shader_Read)}
 	return true
 }
 

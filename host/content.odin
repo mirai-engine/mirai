@@ -1,6 +1,7 @@
 package host
 
 import "base:runtime"
+import "core:os"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
@@ -13,7 +14,7 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 import "mirai:ui"
 
-// The interfaces, animations, sounds, sound sets, fonts, texts and prompts of
+// The interfaces, animations, sounds, sound sets, fonts and prompts of
 // the application's assets, loaded the first time a component names them and
 // shared by every world. An asset whose file changes is loaded again where
 // it is; generation tells whoever holds state made for the old one, and no
@@ -25,7 +26,7 @@ CONTENT_CAPACITY :: 256
 // The fonts App.ui_font has before any is added: those of ui.font_init without fonts.
 CONTENT_UI_FONTS :: ui.FONT_DEFAULTS
 
-Content_Kind :: enum u8 {Ui,Animation,Sound,Sound_Set,Font,Strings,Prompts}
+Content_Kind :: enum u8 {Ui,Animation,Sound,Sound_Set,Font,Prompts}
 
 Content_Stamp :: struct {
     id:base.Asset_Id,
@@ -50,12 +51,20 @@ Content_Animation :: struct {
     lib:anim.Library,
     clip_count:int,
     roots:[]asset.Animation_Root,
-    markers:[]u64, // name_hash of each marker: anim.Marker.id is its index
+    markers:[]Content_Marker, // of each marker: anim.Marker.id is its index
     names:[][asset.ANIMATION_NAME_CAPACITY]u8, // of each clip
     morphs:[]Content_Morph, // its curves of morph weights, each once
+    fields:[]Content_Field, // its curves that drive a field of a component, each once
     load:^Content_Animation_Load, // a load of its file under way (content_animation.odin)
     adopted:u32, // generation of its first load when a job made it; 0 when it loaded at once
 }
+// The name_hash of the name of a marker and of its target (0: none); a marker on an entity keeps its
+// name too, the action it plays there.
+Content_Marker :: struct {
+    name,target:u64,
+    text:[asset.ANIMATION_NAME_CAPACITY]u8,
+}
+
 // A curve "<path>/@morph/<target>": the name_hash of the curve and of the target, which binds a
 // mesh that names no path to the curve of each of its targets.
 Content_Morph :: struct {curve,target:u64}
@@ -76,6 +85,34 @@ content_animation_morphs :: proc(view:asset.Animation_View,allocator:runtime.All
     if error!=nil {return nil,false}
     copy(morphs,found[:])
     return morphs,true
+}
+
+// A curve "<path>/@field/<Component>.<field>": the name_hash of the curve and of the path of the
+// entity it drives below the one that plays the clip (0: that entity), and the field it writes.
+Content_Field :: struct {
+    curve,node:u64,
+    property:anim.Property, // Float or Vector
+    slot:u8,
+    component:[asset.ANIMATION_NAME_CAPACITY]u8, // the name of the component, as the world names its table
+    field:[asset.ANIMATION_FIELD_CAPACITY]u8,    // the path of the field inside it, as std/serial reads it
+}
+
+// The curves of an animation that drive a field, each once.
+content_animation_fields :: proc(view:asset.Animation_View,allocator:runtime.Allocator) -> (fields:[]Content_Field,ok:bool) {
+    found:=make([dynamic]Content_Field,context.temp_allocator)
+    for &track in view.tracks {
+        if track.property!=.Float && track.property!=.Vector {continue}
+        text:=serial.text_field(track.target[:])
+        node,component,path:=asset.animation_field_target(text) or_continue
+        field:=Content_Field{curve=base.name_hash(text),node=base.name_hash(node) if node!="" else 0,property=track.property,slot=track.slot}
+        copy(field.component[:],component);copy(field.field[:],path)
+        if !slice.contains(found[:],field) {append(&found,field)}
+    }
+    error:runtime.Allocator_Error
+    fields,error=make([]Content_Field,len(found),allocator)
+    if error!=nil {return nil,false}
+    copy(fields,found[:])
+    return fields,true
 }
 
 // Adds the looping copy of the first `count` clips of a library.
@@ -103,17 +140,6 @@ Content_Font :: struct {
     added:bool, // it is a font of App.ui_font
 }
 
-// A .strings, with the texts found by the name_hash of a language and of a key.
-Content_Strings :: struct {
-    using stamp:Content_Stamp,
-    text:[]u8,
-    languages:[]u64, // name_hash of the code of each language
-    codes:[]asset.String_Language,
-    keys:[]u64,      // name_hash of the name of each key
-    entries:[]asset.String_Entry,
-    slots:[]u32,     // entry+1 by the hash of its language and key, the next free slot on a collision; 0 is empty
-}
-
 // A .prompts: the images of its inputs, whose textures prompts_find gives.
 Content_Prompts :: struct {
     using stamp:Content_Stamp,
@@ -128,11 +154,12 @@ Content_Sound_Set :: struct {
     last:int, // the variation chosen last; -1: none
 }
 
-// What plays for a .sound or a .sound_set: a sound of the mixer, and the
-// volume and pitch it takes over those it is played at.
+// What plays for a .sound or a .sound_set: a sound of the mixer, the volume
+// and pitch it takes over those it is played at, and how audio.play hears it.
 Sound_Pick :: struct {
     sound:audio.Sound,
     volume,pitch:f32,
+    hearing:asset.Sound_Hearing,
 }
 
 Content_Stats :: struct {
@@ -153,7 +180,6 @@ Content :: struct {
     sound_sets:[dynamic]Content_Sound_Set,
     rng:base.Rng,                    // of the variations of the sets
     fonts:[dynamic]Content_Font,
-    texts:[dynamic]Content_Strings,
     prompts:[dynamic]Content_Prompts,
     retired:[dynamic]asset.Asset, // files of streams that were replaced or unloaded
     free:[Content_Kind][dynamic]u32, // entries that unloaded content left
@@ -175,22 +201,21 @@ app_content :: proc(app:^App) -> ^Content {
     if error!=nil {return nil}
     c.allocator=app.allocator
     c.index=make(map[base.Asset_Id]Content_Ref,app.allocator)
-    errors:[7]runtime.Allocator_Error
+    errors:[6]runtime.Allocator_Error
     c.uis,errors[0]=make([dynamic]Content_Ui,0,CONTENT_CAPACITY,app.allocator)
     c.animations,errors[1]=make([dynamic]Content_Animation,0,CONTENT_CAPACITY,app.allocator)
     c.sounds,errors[2]=make([dynamic]Content_Sound,0,CONTENT_CAPACITY,app.allocator)
     c.sound_sets,errors[3]=make([dynamic]Content_Sound_Set,0,CONTENT_CAPACITY,app.allocator)
     c.rng=base.rng_make(0x736f756e64)
     c.fonts,errors[4]=make([dynamic]Content_Font,0,ui.FONT_CAPACITY,app.allocator)
-    c.texts,errors[5]=make([dynamic]Content_Strings,0,CONTENT_CAPACITY,app.allocator)
-    c.prompts,errors[6]=make([dynamic]Content_Prompts,0,CONTENT_CAPACITY,app.allocator)
+    c.prompts,errors[5]=make([dynamic]Content_Prompts,0,CONTENT_CAPACITY,app.allocator)
     c.retired=make([dynamic]asset.Asset,app.allocator)
     for &free in c.free {free=make([dynamic]u32,app.allocator)}
     failed:=reserve(&c.index,CONTENT_CAPACITY*4)!=nil
     for error in errors {failed||=error!=nil}
     if failed {
         delete(c.index);delete(c.uis);delete(c.animations);delete(c.sounds);delete(c.sound_sets);delete(c.retired)
-        delete(c.fonts);delete(c.texts);delete(c.prompts)
+        delete(c.fonts);delete(c.prompts)
         for free in c.free {delete(free)}
         free(c,app.allocator)
         return nil
@@ -214,13 +239,12 @@ app_content_destroy :: proc(app:^App) {
         if entry.id!={} {content_sound_free(app,&entry,true)}
     }
     for &entry in c.fonts {delete(entry.data,c.allocator);delete(entry.next,c.allocator)}
-    for &entry in c.texts {content_strings_free(c,&entry)}
     for &entry in c.prompts {delete(entry.images,c.allocator)}
     for free in c.free {delete(free)}
     for &file in c.retired {asset.asset_close(&file)}
     delete(c.retired)
     delete(c.index);delete(c.uis);delete(c.animations);delete(c.sounds);delete(c.sound_sets)
-    delete(c.fonts);delete(c.texts);delete(c.prompts)
+    delete(c.fonts);delete(c.prompts)
     free(c,app.allocator)
     app.content=nil
 }
@@ -249,8 +273,8 @@ content_ui_free :: proc(c:^Content,entry:^Content_Ui) {
 @(private)
 content_animation_free :: proc(c:^Content,entry:^Content_Animation) {
     anim.library_destroy(&entry.lib)
-    delete(entry.markers,c.allocator);delete(entry.names,c.allocator);delete(entry.roots,c.allocator);delete(entry.morphs,c.allocator)
-    entry.markers,entry.names,entry.roots,entry.morphs,entry.clip_count=nil,nil,nil,nil,0
+    delete(entry.markers,c.allocator);delete(entry.names,c.allocator);delete(entry.roots,c.allocator);delete(entry.morphs,c.allocator);delete(entry.fields,c.allocator)
+    entry.markers,entry.names,entry.roots,entry.morphs,entry.fields,entry.clip_count=nil,nil,nil,nil,nil,0
 }
 // The mixer reads the file of a stream until its audio thread lets go of the
 // sound, which nothing reports: the file of a stream that is replaced stays
@@ -349,7 +373,8 @@ content_sound_load :: proc(app:^App,id:base.Asset_Id,entry:^Content_Sound) -> bo
     file:asset.Asset
     content_open(a,id,asset.KIND_SOUND,&file,entry) or_return
     view,error:=asset.sound_view(&file,&a.types)
-    if error!=.None {
+    // A sound the importer coded is at the rate of the mixer; one at another is imported again.
+    if error!=.None || view.info.encoding==.Lossless && view.info.sample_rate!=audio.MIXER_RATE {
         asset.asset_close(&file)
         return false
     }
@@ -358,6 +383,10 @@ content_sound_load :: proc(app:^App,id:base.Asset_Id,entry:^Content_Sound) -> bo
     data:=view.lossless if view.info.encoding==.Lossless else view.file
     stream:=.Stream in view.info.flags
     if stream {sound,failed=audio.sound_stream(mixer,data)} else {sound,failed=audio.sound_load(mixer,data)}
+    if failed==.None && !audio.sound_set_loop_start(mixer,sound,int(view.info.loop_start)) {
+        audio.sound_destroy(mixer,sound)
+        failed=.Invalid_Data
+    }
     if failed!=.None {
         asset.asset_close(&file)
         return false
@@ -385,66 +414,6 @@ content_font_read :: proc(app:^App,id:base.Asset_Id,stamp:^Content_Stamp) -> (da
     if data,allocation=make([]u8,len(view.file),c.allocator);allocation!=nil {return}
     copy(data,view.file)
     return data,true
-}
-
-@(private="file")
-content_strings_free :: proc(c:^Content,entry:^Content_Strings) {
-    delete(entry.text,c.allocator);delete(entry.languages,c.allocator);delete(entry.codes,c.allocator);delete(entry.keys,c.allocator)
-    delete(entry.entries,c.allocator);delete(entry.slots,c.allocator)
-    entry.text,entry.languages,entry.codes,entry.keys,entry.entries,entry.slots=nil,nil,nil,nil,nil,nil
-}
-
-@(private="file")
-strings_slot :: #force_inline proc "contextless" (language,key:u64) -> u64 {return base.hash_combine(language,key)}
-
-@(private="file")
-content_strings_load :: proc(app:^App,id:base.Asset_Id,entry:^Content_Strings) -> bool {
-    a,c:=app.assets,app.content
-    file:asset.Asset
-    content_open(a,id,asset.KIND_STRINGS,&file,entry) or_return
-    defer asset.asset_close(&file)
-    view,error:=asset.strings_view(&file,&a.types)
-    if error!=.None {return false}
-    slots:=1
-    for slots<len(view.entries)*2 {slots*=2}
-    loaded:Content_Strings
-    e1,e2,e3,e4,e5,e6:runtime.Allocator_Error
-    loaded.text,e1=make([]u8,len(view.text),c.allocator)
-    loaded.languages,e2=make([]u64,len(view.languages),c.allocator)
-    loaded.keys,e3=make([]u64,len(view.keys),c.allocator)
-    loaded.entries,e4=make([]asset.String_Entry,len(view.entries),c.allocator)
-    loaded.slots,e5=make([]u32,slots,c.allocator)
-    loaded.codes,e6=make([]asset.String_Language,len(view.languages),c.allocator)
-    ok:=e1==nil && e2==nil && e3==nil && e4==nil && e5==nil && e6==nil
-    if ok {
-        copy(loaded.text,view.text);copy(loaded.entries,view.entries);copy(loaded.codes,view.languages)
-        for &language,i in view.languages {loaded.languages[i]=base.name_hash(base.text_get(language.code[:]))}
-        for &key,i in view.keys {loaded.keys[i]=base.name_hash(base.text_get(key.name[:]))}
-        // Two names of one hash could not be told apart.
-        ok=!slice_repeats(loaded.languages) && !slice_repeats(loaded.keys)
-    }
-    if !ok {
-        content_strings_free(c,&loaded)
-        return false
-    }
-    mask:=u64(slots-1)
-    for e,i in loaded.entries {
-        at:=strings_slot(loaded.languages[e.language],loaded.keys[e.key])&mask
-        for loaded.slots[at]!=0 {at=(at+1)&mask}
-        loaded.slots[at]=u32(i+1)
-    }
-    content_strings_free(c,entry)
-    entry.text,entry.languages,entry.codes,entry.keys,entry.entries,entry.slots=loaded.text,loaded.languages,loaded.codes,loaded.keys,loaded.entries,loaded.slots
-    return true
-}
-
-@(private="file")
-slice_repeats :: proc(values:[]u64) -> bool {
-    sorted:=make([]u64,len(values),context.temp_allocator)
-    copy(sorted,values)
-    slice.sort(sorted)
-    for i in 1..<len(sorted) {if sorted[i]==sorted[i-1] {return true}}
-    return false
 }
 
 @(private="file")
@@ -650,36 +619,9 @@ app_ui_fonts_apply :: proc(app:^App) {
     for &entry in c.fonts {c.fonts_waiting||=entry.id!={} && !entry.failed && !entry.added || entry.next!=nil}
 }
 
-// The text of a key in a language of a .strings, by the name_hash of the
-// code of the language and of the name of the key. It belongs to the
-// strings. Nothing is allocated.
-strings_text :: proc "contextless" (s:^Content_Strings,language:u64,key:u64) -> (text:string,found:bool) {
-    if s==nil || len(s.slots)==0 {return}
-    mask:=u64(len(s.slots)-1)
-    for at:=strings_slot(language,key)&mask;;at=(at+1)&mask {
-        index:=s.slots[at]
-        if index==0 {return}
-        e:=&s.entries[index-1]
-        if s.languages[e.language]==language && s.keys[e.key]==key {return string(s.text[e.offset:][:e.length]),true}
-    }
-}
-
-// The texts of a .strings, loaded the first time. nil for the zero id, an
-// asset that is not a .strings or cannot be loaded, and when no room is left.
-content_strings :: proc(app:^App,id:base.Asset_Id) -> ^Content_Strings {
-    c:=app_content(app)
-    if c==nil || id=={} {return nil}
-    entry,fresh:=content_slot(c,&c.texts,id,.Strings)
-    if entry==nil {return nil}
-    if fresh {
-        scope:=load_asset_begin(&app.load_profile)
-        content_loaded(c,entry,content_strings_load(app,id,entry))
-        load_asset_end(&app.load_profile,scope,id,.Interface,entry.size,entry.failed)
-    }
-    return entry.failed?nil:entry
-}
-
-// The pack of prompts of a .prompts, loaded the first time. nil as content_strings.
+// The pack of prompts of a .prompts, by its id, loaded the first time. nil for
+// the zero id, an asset that is not a .prompts or cannot be loaded, and when
+// no room is left.
 content_prompts :: proc(app:^App,id:base.Asset_Id) -> ^Content_Prompts {
     c:=app_content(app)
     if c==nil || id=={} {return nil}
@@ -727,11 +669,12 @@ content_sound_set :: proc(app:^App,id:base.Asset_Id) -> ^Content_Sound_Set {
 // What plays for a .sound, at its volume and pitch, or for a .sound_set: one
 // of its sounds by their weights, not the last one when it says no_repeat,
 // with a volume and a pitch from its ranges. A sound of the set that does not
-// load is left out. Zero when nothing of it can play.
+// load is left out. A .sound is heard as SOUND_HEARING_DEFAULT. Zero when
+// nothing of it can play.
 content_sound_pick :: proc(app:^App,id:base.Asset_Id) -> Sound_Pick {
     set:=content_sound_set(app,id)
     if set==nil {
-        if sound:=content_sound(app,id);sound!={} {return {sound,1,1}}
+        if sound:=content_sound(app,id);sound!={} {return {sound,1,1,asset.SOUND_HEARING_DEFAULT}}
         return {}
     }
     c:=app.content
@@ -759,7 +702,7 @@ content_sound_pick :: proc(app:^App,id:base.Asset_Id) -> Sound_Pick {
     }
     set.last=chosen
     info:=&set.info
-    return {sounds[chosen],mm.random_range(&c.rng,info.volume_min,info.volume_max),mm.random_range(&c.rng,info.pitch_min,info.pitch_max)}
+    return {sounds[chosen],mm.random_range(&c.rng,info.volume_min,info.volume_max),mm.random_range(&c.rng,info.pitch_min,info.pitch_max),info.hearing}
 }
 
 // The generation of what content_sound_pick plays for a .sound or a
@@ -798,9 +741,6 @@ content_refresh :: proc(app:^App) -> (reloaded:int) {
         done(c,&entry,read,&reloaded)
         c.fonts_waiting||=read
     }
-    for &entry in c.texts {
-        if entry.id!={} && changed(registry,&entry) {done(c,&entry,content_strings_load(app,entry.id,&entry),&reloaded)}
-    }
     for &entry in c.prompts {
         if entry.id!={} && changed(registry,&entry) {done(c,&entry,content_prompts_load(app,entry.id,&entry),&reloaded)}
     }
@@ -827,7 +767,7 @@ content_refresh :: proc(app:^App) -> (reloaded:int) {
     return
 }
 
-// Unloads the interfaces, animations, sounds, sets, texts and prompts that no
+// Unloads the interfaces, animations, sounds, sets and prompts that no
 // scope of the assets reaches (assets_scope_set): their memory is freed, a
 // sound leaves the mixer, and their entries are there for the next ones.
 // Fonts stay, as App.ui_font keeps them. Asking for one again
@@ -856,9 +796,6 @@ content_collect :: proc(app:^App) -> (unloaded:int) {
             c.sounds[ref.index]={}
         case .Sound_Set:
             c.sound_sets[ref.index]={}
-        case .Strings:
-            content_strings_free(c,&c.texts[ref.index])
-            c.texts[ref.index]={}
         case .Prompts:
             delete(c.prompts[ref.index].images,c.allocator)
             c.prompts[ref.index]={}
@@ -876,7 +813,13 @@ content_collect :: proc(app:^App) -> (unloaded:int) {
 project_asset_mounts :: proc(p:^project.Project,allocator:=context.allocator) -> []asset.Registry_Mount {
     mounts:=make([dynamic]asset.Registry_Mount,allocator)
     for folder in project.asset_folders(p,allocator) {
-        if folder.prefix!="" {append(&mounts,asset.Registry_Mount{folder=folder.path,prefix=folder.prefix})}
+        if folder.prefix!="" {append(&mounts,asset.Registry_Mount{folder=folder.path,prefix=folder.prefix,imported=folder.imported})}
+    }
+    // The far meshes the editor made, where the assets are not cooked: a game that runs them shows them.
+    assets:=project.folder_path(p.root,.Assets,context.temp_allocator)
+    far:=project.cache_path(p.root,project.FAR_CACHE,allocator=allocator)
+    if !os.exists(project.path(assets,asset.REGISTRY_INDEX,allocator=context.temp_allocator)) && (os.is_dir(far) || os.make_directory_all(far)==nil) {
+        append(&mounts,asset.Registry_Mount{folder=far,prefix=project.FAR_PREFIX})
     }
     return mounts[:]
 }

@@ -49,8 +49,8 @@ Code: `editor/api/` (package `api`: server, JSON-RPC, MCP, schemas, client),
   until ACP completes the turn and a write fails. `finish` finishes the turn of its header and
   `agent.spawn` starts a subagent from it; both are listed only to a request that has one
   (`Method_Flag.Turn`), and `agent.spawn` fails unless the turn is the main chat's.
-- A turn does not discard the user's unsaved work: `engine.shutdown`, `scene.open`,
-  `editor.recover` with `discard` and closing a document with changes fail, asking it to ask.
+- A turn does not replace the user's work: `engine.shutdown`, `scene.open` and `scene.new` fail,
+  asking it to ask.
 - A tagged write closes the user's previous gesture and, if it succeeds, attributes to the turn
   only the new transactions of that request
   ([change review](../../mirai-editor/references/ai-review.md)); without the header, to no agent.
@@ -78,24 +78,25 @@ named by `.mirai/session.json` (pid, mode and arguments) and `api.json`; its log
   binaries or a library older than the latest, they warn and continue with what it loaded until
   `restart`. An editor of the project with a window is not reused, trampled or closed (`start`,
   `restart` and `stop` fail with its pid); a headless one that does not respond is not trampled
-  either: `stop --discard` closes it.
+  either: `stop --force` closes it.
 - **Build with an open session.** Windows does not replace loaded binaries, but it moves them: the
   build moves the ones a program runs to `.mirai/engine/<mode>/retired/` and writes in their place
-  (`build.engine_unlock`), and a later build deletes them once nothing runs them. If `mirai build
-  editor`, `edit`, `play` or `capture` rebuild the engine the project's session runs, they close it
-  (with its players), build and reopen it on the new binaries; if the engine does not build, it
-  stays closed. Every other program that runs them (another session, a person's editor) goes on
-  with the binaries it started with and is named; it takes the new ones when it starts again. An
-  editor whose engine was rebuilt restarts on the new one as soon as its next Build ends, a
-  headless one too, between calls, instead of loading the library into the old one: it runs the
-  program and reads the stamp of the folder it started from (`Session.program`), not where the
-  system says its moved executable is, and the session record follows it to the new process, so
-  the next call reaches it through the port file, its `build.status`
-  says `Built`, and `mirai session` still knows it as the project's. `mirai build engine` does not
-  restart sessions: it names them.
-- `stop` never saves: unsaved changes (from `editor.documents` and `asset.unsaved`) are discarded
-  automatically if all are copies under `.mirai/tmp/`; otherwise it fails listing them and
-  `--discard` discards them.
+  (`build.engine_unlock`), and a later build deletes them once nothing runs them. `mirai build
+  editor` ends by handing the project's session what it built (`build.start` target `built`):
+  engine libraries whose declarations stand are taken in place, then the library and the shaders,
+  and the command says in a line after how long the session runs them; otherwise the session
+  restarts on the new binaries with its documents and the line says why
+  ([taking a build in place](../../mirai-projects/references/projects.md#engine-binaries)). Every
+  other program that runs them (another session, a person's editor) goes on with the binaries it
+  started with and is named; it takes the new ones at its next Build. An editor reads the stamp of
+  the folder it started from (`Session.program`), not where the system says its moved executable
+  is, and the session record follows it to a restarted process, so the next call reaches it
+  through the port file and `mirai session` still knows it as the project's. `mirai build engine`
+  does not hand builds to sessions: it names them.
+- `stop` asks the editor to quit and leaves its files as they are: every edit was written when its
+  step ended. `--force` ends an editor that does not answer. Of a copy, it deletes the copy. Every
+  edit is written to its file, so what is only to be tried or verified is done on a copy
+  (`start --copy`; [AGENTS.md](../../../../AGENTS.md#verification)).
 - **Orphans**: editors that run from the checkout's `.mirai/engine/` and that the `api.json` of
   their project does not name. `status` (0 if the session responds) lists them and
   `stop --orphans [project]` closes the headless ones, never one with a window.
@@ -115,7 +116,7 @@ console, `stats` and, with `--reference`, `diff`
 ([`mirai image`](image.md)). It exits with 1 if there are validation errors or if the SSIM against
 `--reference` is below `--threshold`. Each capture starts the window clock at zero (`seconds` of
 `capture`): a scene loaded again and captured again draws the same frames. `--repeat` loads
-the scene again (that of `--scene` or the document's file, if it has no unsaved changes), returns
+the scene again (that of `--scene` or the document's file), returns
 to the same camera, captures and gives its SSIM; what remains is what two renderers do not share
 and, below `REPEAT_SSIM`, it warns that a higher threshold compares noise. `--view` shows a mode of
 `editor.view_mode.list` and when done restores the one the session had; `collision` is not visible
@@ -157,15 +158,22 @@ runs `cook/author.command` in the engine's `mirai-author` program
 first when it is not current, as `mirai import` does. What a game-writing agent is told:
 [text sources](../../../../docs/game/assets/text-sources.md).
 
-- **Documents as files.** `source/<path>.ui.json` is the asset `assets/<path>.ui`, and so
-  `.scene.json` and `.prefab.json`. `read <asset>` prints the document or writes it to `--out`;
-  `read --sources` writes one per asset of the project (not of its plugins); `write` takes those
-  files or a folder of them, or `<asset> <file>` for a file kept elsewhere, and tries again what
-  failed while a round writes something, so a file may use one the same run makes.
+- **The asset is the source.** `read <asset>` prints its document or writes it to `--out`, and
+  `write <asset> <file>` makes the asset say the document of a file; no copy of the text is kept
+  beside the assets.
+- **One writer of scenes.** `scene write` runs `scene_apply` (`cook/author/scene_document.odin`),
+  which `scene.write` of the editor runs too, on the file as its `Scene_Target`
+  (`cook/author/scene_file.odin`), and then writes the file as the editor does: its
+  entities loaded into a world of the game and captured (`engine/scene.capture`), so the same
+  document gives the same bytes with and without an editor. The entities a document makes take
+  their ids from the sequence of whoever makes them.
 - **A write** is the one of the API method: what it refuses is refused with its message and the
   file stays as it was; a file that already says the document is not written. An asset that does
   not exist is made with an id that follows from its path. A `.ui` written with other `params`
   takes along the files that use it as a widget, as the editor does.
+- **`ui check` checks the `draw` of each `Draw` node** against the `@(draw)` procedures of the
+  built game. The node names game code asks a screen for are checked at run time, per screen:
+  `gui.names` in `engine.diagnostics`.
 - **Types of the game.** The paths an interface binds and the components of a scene are read
   against the `editor` library of the project, which also has the cards of its plugins. Only
   `ui read` runs without it: the tool refuses every other command, with the `mirai build editor`
@@ -195,17 +203,16 @@ mirai rpc <method> [key=value...|json|-|--file F] [--select FIELDS]
   [--wait-until CONDITION]
   [--project P] [--port N] [--timeout S]
 mirai rpc describe [plugin|method|prefix|method...] [--project P|--port N]
-mirai rpc --batch <calls.jsonl|-> [the same options]
 ```
 
 - Params are `key=value` arguments or one JSON object (`{}` if missing; `-` from stdin).
   `key=value` needs no quoting in any shell: a value that parses as JSON is that JSON and any
   other is text, and dots in a key make objects inside
-  (`mirai rpc scene.set entity=Floor name=Ground position=[0,1,0]`); a number or a boolean goes as
+  (`mirai rpc camera.set position=[0,2,8] target=[0,1,0]`); a number or a boolean goes as
   its text to a field that takes only a string. A value that a shell would split or that needs a
   list of texts goes in the object form.
 - `--project P` takes the port from its `api.json` and, when the project has no editor open,
-  starts its headless `--dev` session as `mirai session start` does and then makes the call,
+  starts its headless dev session as `mirai session start` does and then makes the call,
   saying so on stderr; a method that only makes sense with an editor already open
   (`RPC_NEEDS_OPEN_EDITOR`) never starts one and fails without an editor. Without `--project` or
   `--port`, the port is that of `MIRAI_API_PORT` or the editor of the project at or above the
@@ -217,12 +224,8 @@ mirai rpc --batch <calls.jsonl|-> [the same options]
   process is alive but uses no CPU for `api.CLIENT_HUNG_SECONDS` is `-32095`, naming its pid and
   its log. Knowing the process needs a port file: with `--port` only that of the project at or
   above the current folder. A call to `MIRAI_API_PORT` sends `MIRAI_AI_TASK`
-  ([context](#ai-turn-context)). `--batch` reads one `{"method","params"}` call per line, from a
-  file or from stdin (`-`), over one connection, so many calls cost one process; it prints a JSON
-  array with the result of each and stops at the first error, whose entry says its `line`. A value
-  of the params that is exactly `$N` or `$N.path` (the paths of
-  `--select`, as `$0.id` or `$1.entities[0].id`) stands for the result of the call N or that field
-  of it, and `$$` writes a literal `$`.
+  ([context](#ai-turn-context)). Many calls cost one process and one request as the params of
+  one [`batch`](methods.md#scene), in a file (`mirai rpc batch --file calls.json`) or from stdin.
 - Output: the result on stdout and code 0; an error, on stderr as `{"error":{...}}` and code 1;
   invalid arguments, `Usage:` and code 2. From the client: `-32099` with no editor listening,
   `-32097` when `--timeout` runs out, `-32096` if it closed the connection without answering (it
@@ -355,27 +358,30 @@ when the server opens; code reload rebuilds methods and schemas without closing 
   under the assets folder, with or without its extension, checked against the field's `kind`;
   results keep ids. A miss lists the nearest paths of that kind.
 - **Params are taken as they can only be meant**, in one place before anything reads them
-  (`api.params_shape`, over the JSON Schema of the method, with or without a type): a key that is
+  (`api.params_shape`, over the JSON Schema of the method): a key that is
   the singular or the plural of one field, a
   single value where a list goes, a list of one where a single value goes, and a number or a
   boolean, as its text, where the schema takes only a string. A list of several for a single
   value fails saying so.
-- **A key the params do not declare is `-32602`**, with the same words for a typed method and
-  for one that reads them by hand: an object of a `params_schema` that has `properties` takes
-  only those, unless it says `"additionalProperties":true` or gives the schema of the others
-  (an object keyed by component name).
+- **A key the params do not declare is `-32602`**; a method without a params type takes none.
+  What only the world gives a shape (an object keyed by component name) is a `serial.Json` field,
+  which takes any JSON.
 - **A name of a registry is matched as a person writes it** (`base.name_find`): components, enum
   members of params and values, input keys and presets, without minding case, underscores, spaces
   or hyphens. It resolves only when exactly one candidate fits; otherwise the error says which
   fit or the nearest ones, when any is close for the length of the name. It is for what comes
   through the API: assets and binary data are read exactly.
-- **Params and result are flat structs.** A field is required unless its tag carries `optional`;
-  when absent, it takes the value from the method's `defaults`, or zero.
-  - Text: `[N]u8` with tag `text`, up to N bytes.
+- **Params and result are structs, and they are the only description of a method.** A field is
+  required unless its tag carries `optional`; when absent or `null`, it takes the value from the
+  method's `defaults`, or zero. A method without a result type answers `null`, and an optional
+  field of a result that holds nothing (zero, empty) is left out of the answer.
+  - Text: `[N]u8` with tag `text`, up to N bytes, or a `string` of any length.
+  - A list of any length is a slice (`[]T`) and any JSON value a `serial.Json` field, which holds
+    its text; both live in the scratch of the call, so a request that does not fit fails. A type
+    does not hold itself: a nested document is a `serial.Json` field.
   - `min`/`max` bound numbers and each element of an array; `label` is the schema description and
     `unit`, its unit (`x-unit`).
   - An array of numbers has exactly its length; another array, up to its length.
-  - `any` on a param takes any JSON, which its handler reads from `Call.raw`.
   - `clamp` on an integer that only bounds how much a method answers: past its `max` it takes it,
     and the result says so in `_clamped`. Other ranges fail.
   - A fixed array with tag `trim` is written up to its last element with any non-zero byte
@@ -394,12 +400,18 @@ when the server opens; code reload rebuilds methods and schemas without closing 
 - **Hexadecimal ids.** An entity (`core.Id`) is taken as a string of up to 16 digits
   (`"00a1b2c3d4e5f607"`, also with `0x`) and answered with `0x` and all its digits; an asset, 32
   digits without it. A live `core.Entity` handle has the form of an id and appears as `entity`
-  (`play.inspect`, `play.player`).
+  (`scene.inspect` of a game, `play.player`).
 - **Transforms local to the parent**: `rotation_deg` in Euler degrees, position in meters and
   scale in factors. `world_position` is read-only.
-- **Free-form methods** (`scene.*`, `editor.input`, `camera.set`, `*.inspect`, `*.list`…) read or
-  write the JSON by hand. They declare `params_schema` and, if the result has a known shape,
-  `result_schema`.
+- **`Call.raw` is the text of the params as their types say them**: a handler that reads a
+  `serial.Json` field, or still reads its params from the text, gets the names of enums as the
+  type has them. A handler that writes its result itself declares its type the same way
+  (`writes_result`); a result whose type is `serial.Json` has no declared shape.
+- **A method the state of the editor does not allow now** (no game plays, or one does) fails with
+  `-32001`, whose `data.fix` names the method that changes it (`play.start`, `play.stop`).
+- **What a method does to the editor is in its flags** (`api.Method_Flag`), which
+  `engine.describe` lists: it only reads, it draws the scene, it runs as the user would, it
+  changes the view and not the document.
 - The values of a component are the JSON of its schema: fields in the order of the type, enums by
   name, entity references as Id. `transient` fields are neither written nor accepted.
 
@@ -408,7 +420,7 @@ when the server opens; code reload rebuilds methods and schemas without closing 
 - **Concurrency control belongs to the engine**: no method takes or returns revisions. A scene
   edit touches only the fields it names; if two authors write the same field, the last one's
   stays, and the user reverts it with the turn's change review or with undo.
-- **Replacements of a whole file** (the animation `*.set` with `asset`, `pose.profile.set`,
+- **Replacements of a whole file** (the animation `*.set` with `asset`, `animation.modifier.set`,
   `skeleton.*`, `animation.clip.set`, `material.program.edit` with `source`): the last wins, as in
   the scene; each one is an undo step of the caller and, in an AI turn, enters its change review.
 - Before editing, the server cancels the user's tools (a gizmo drag goes back) and records their
@@ -420,8 +432,8 @@ when the server opens; code reload rebuilds methods and schemas without closing 
   the API outside a turn or the user) and `history.*` moves the caller's
   ([undo per author](../../mirai-editor/references/document.md#undo-by-author); `ai.revert`,
   `ai.review.accept` and `ai.retry`: [contract](../../mirai-editor/references/ai-review.md)).
-- During Play or Simulate, scene edits, history, saving, prefabs and asset authoring **work on the
-  document and the assets**: the game runs on its copy and sees an asset that changes when it is
-  read again, as with any write on disk. What opens a view over the viewport (a section, a material
-  document) or simulates on the document (`placement.drop`) waits for Edit; `simulation.apply`
+- During Play or Simulate, scene edits, history, prefabs and asset authoring **work on the document
+  and the assets**: the game runs on its copy and sees an asset that changes when it is read again;
+  nothing is written until it stops. What opens a view over the viewport (a section, a material
+  document) or simulates on the document (`physics.settle`) waits for Edit; `simulation.apply`
   commits transforms into the document with one undo ([methods](methods.md#simulation)).

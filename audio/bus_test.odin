@@ -19,39 +19,41 @@ bus_volume_and_mute_scale_what_plays_into_it :: proc(t:^testing.T) {
     effects,_:=bus_create(m)
     desc:=VOICE_DEFAULT
     desc.loop=true
+    // Levels that tell the buses apart in their sum, under full scale.
+    unit:=f32(1.0/128)
     one:=test_stereo(t,m,64,test_one)
-    desc.bus=music
+    desc.bus=music;desc.volume=unit
     voice_play(m,one,desc)
-    desc.bus=effects;desc.volume=10
+    desc.bus=effects;desc.volume=10*unit
     voice_play(m,one,desc)
-    desc.bus=BUS_MASTER;desc.volume=100
+    desc.bus=BUS_MASTER;desc.volume=100*unit
     voice_play(m,one,desc)
     out:=test_render(m,4)
-    test_near(t,out[0],111,1e-4)
-    test_near(t,out[1],-111,1e-4)
+    test_near(t,out[0],111*unit,1e-4)
+    test_near(t,out[1],-111*unit,1e-4)
     testing.expect(t,bus_set_volume(m,music,0.5))
     testing.expect_value(t,bus_volume(m,music),f32(0.5))
     out=test_render(m,CHUNK_FRAMES+4)
     // Ramped across a chunk, like every other change of gain.
-    test_near(t,out[0],111,1e-4)
-    test_near(t,out[(CHUNK_FRAMES/2)*2],110.75,1e-3)
-    test_near(t,out[CHUNK_FRAMES*2],110.5,1e-4)
+    test_near(t,out[0],111*unit,1e-4)
+    test_near(t,out[(CHUNK_FRAMES/2)*2],110.75*unit,1e-5)
+    test_near(t,out[CHUNK_FRAMES*2],110.5*unit,1e-4)
     testing.expect(t,bus_set_mute(m,effects,true))
     testing.expect(t,bus_muted(m,effects) && !bus_muted(m,music))
     test_render(m,CHUNK_FRAMES)
     out=test_render(m,4)
-    test_near(t,out[0],100.5,1e-4)
+    test_near(t,out[0],100.5*unit,1e-4)
     // The volume of a muted bus is kept for when it comes back.
     bus_set_volume(m,effects,2)
     bus_set_mute(m,effects,false)
     test_render(m,CHUNK_FRAMES)
     out=test_render(m,4)
-    test_near(t,out[0],120.5,1e-4)
+    test_near(t,out[0],120.5*unit,1e-4)
     // The master scales everything, buses included.
     bus_set_volume(m,BUS_MASTER,0.1)
     test_render(m,CHUNK_FRAMES)
     out=test_render(m,4)
-    test_near(t,out[0],12.05,1e-4)
+    test_near(t,out[0],12.05*unit,1e-5)
     bus_set_mute(m,BUS_MASTER,true)
     test_render(m,CHUNK_FRAMES)
     out=test_render(m,4)
@@ -122,6 +124,31 @@ bus_low_pass_keeps_the_lows_and_removes_the_highs :: proc(t:^testing.T) {
     test_near(t,rms(out,0),full,1e-3)
 }
 
+// The water plugin sweeps the cutoff while the listener goes under: a
+// filter that jumped to its new coefficients would step the wave each chunk.
+@(test)
+bus_low_pass_sweep_has_no_steps :: proc(t:^testing.T) {
+    m:=test_mixer(t)
+    defer mixer_destroy(m)
+    bus,_:=bus_create(m)
+    desc:=VOICE_DEFAULT
+    desc.loop=true;desc.bus=bus
+    voice_play(m,test_stereo(t,m,RATE,proc(i:int) -> f32 {return 0.5*math.sin_f32(2*math.PI*100*f32(i)/RATE)}),desc)
+    last:f32
+    largest_step :: proc(out:[]f32,last:^f32) -> (step:f32) {
+        for k in 0..<len(out)/2 {step=max(step,abs(out[k*2]-last^));last^=out[k*2]}
+        return
+    }
+    unfiltered:=largest_step(test_render(m,4800),&last)
+    // From 16 kHz down to 300 Hz, a new cutoff every chunk.
+    swept:f32
+    for cutoff:=f32(16000);cutoff>300;cutoff*=0.7 {
+        bus_set_lowpass(m,bus,cutoff)
+        swept=max(swept,largest_step(test_render(m,CHUNK_FRAMES),&last))
+    }
+    testing.expectf(t,swept<=unfiltered,"the sweep steps by %v, the sine by %v",swept,unfiltered)
+}
+
 @(test)
 bus_is_ducked_while_another_one_is_loud :: proc(t:^testing.T) {
     m:=test_mixer(t)
@@ -132,16 +159,16 @@ bus_is_ducked_while_another_one_is_loud :: proc(t:^testing.T) {
     testing.expect(t,bus_set_duck(m,music,{source=speech,threshold=0.05,amount=0.75,attack=attack,release=release}))
     desc:=VOICE_DEFAULT
     desc.loop=true;desc.bus=music
-    one:=test_stereo(t,m,64,test_one)
+    one:=test_stereo(t,m,64,proc(i:int) -> f32 {return 0.5}) // under full scale with the speech over it
     voice_play(m,one,desc)
     out:=test_render(m,RATE/10)
     // Nothing on the speech bus: the music is left alone.
-    test_near(t,out[len(out)-2],1,1e-6)
-    desc.bus=speech;desc.volume=0.04
+    test_near(t,out[len(out)-2],0.5,1e-6)
+    desc.bus=speech;desc.volume=0.08
     quiet:=voice_play(m,one,desc)
     out=test_render(m,RATE/10)
     // Below the threshold: music plus the quiet speech.
-    test_near(t,out[len(out)-2],1.04,1e-5)
+    test_near(t,out[len(out)-2],0.54,1e-5)
     voice_stop(m,quiet)
     desc.volume=0.5
     loud:=voice_play(m,one,desc)
@@ -150,27 +177,91 @@ bus_is_ducked_while_another_one_is_loud :: proc(t:^testing.T) {
     // It comes down steadily, never below its ducked level, and gets there in the attack time.
     previous:=f32(2)
     for i in CHUNK_FRAMES..<len(out)/2 {
-        music_level:=out[i*2]-0.5
-        testing.expect(t,music_level<=previous+1e-5 && music_level>=0.25-1e-5)
+        music_level:=out[i*2]-0.25
+        testing.expect(t,music_level<=previous+1e-5 && music_level>=0.125-1e-5)
         previous=music_level
     }
-    test_near(t,out[len(out)-2],0.25+0.5,1e-4)
-    test_near(t,out[(CHUNK_FRAMES+attack_frames/2)*2],0.625+0.5,0.2)
+    test_near(t,out[len(out)-2],0.125+0.25,1e-4)
+    test_near(t,out[(CHUNK_FRAMES+attack_frames/2)*2],0.3125+0.25,0.1)
     // The speech ends: the music comes back in the release time, not before.
     voice_stop(m,loud)
     test_render(m,CHUNK_FRAMES)
     release_frames:=int(release*RATE)
     out=test_render(m,release_frames/2)
-    testing.expect(t,out[len(out)-2]>0.5 && out[len(out)-2]<0.8)
+    testing.expect(t,out[len(out)-2]>0.25 && out[len(out)-2]<0.4)
     out=test_render(m,release_frames/2+2*CHUNK_FRAMES)
-    test_near(t,out[len(out)-2],1,1e-4)
+    test_near(t,out[len(out)-2],0.5,1e-4)
     // An amount of zero ends the ducking; a muted source ducks nothing.
     bus_set_mute(m,speech,true)
     voice_play(m,one,desc)
     out=test_render(m,RATE/10)
-    test_near(t,out[len(out)-2],1,1e-4)
+    test_near(t,out[len(out)-2],0.5,1e-4)
     bus_set_mute(m,speech,false)
     testing.expect(t,bus_set_duck(m,music,{source=speech}))
     out=test_render(m,RATE/5)
-    test_near(t,out[len(out)-2],1.5,1e-4)
+    test_near(t,out[len(out)-2],0.75,1e-4)
+}
+
+// An ambience bus sends into the effects bus: the volume of effects reaches
+// it. A bus sends only to the master or to one created before it.
+@(test)
+a_bus_sends_into_one_created_before_it :: proc(t:^testing.T) {
+    m:=test_mixer(t)
+    defer mixer_destroy(m)
+    effects,_:=bus_create(m)
+    ambience,_:=bus_create(m)
+    testing.expect_value(t,bus_send(m,ambience),BUS_MASTER)
+    testing.expect(t,bus_set_send(m,ambience,effects))
+    testing.expect_value(t,bus_send(m,ambience),effects)
+    for refused in ([?][2]Bus{{effects,ambience},{ambience,ambience},{BUS_MASTER,BUS_MASTER},{Bus(9),BUS_MASTER}}) {
+        testing.expectf(t,!bus_set_send(m,refused[0],refused[1]),"%v cannot send to %v",refused[0],refused[1])
+    }
+    testing.expect_value(t,bus_send(m,effects),BUS_MASTER)
+    desc:=VOICE_DEFAULT
+    desc.loop=true;desc.bus=ambience;desc.volume=0.5
+    voice_play(m,test_stereo(t,m,64,test_one),desc)
+    bus_set_volume(m,effects,0.5)
+    bus_set_volume(m,ambience,0.5)
+    test_render(m,CHUNK_FRAMES)
+    out:=test_render(m,4)
+    test_near(t,out[0],0.125)
+    // Back to the master, the volume of effects no longer reaches it.
+    testing.expect(t,bus_set_send(m,ambience,BUS_MASTER))
+    test_render(m,CHUNK_FRAMES)
+    out=test_render(m,4)
+    test_near(t,out[0],0.25)
+}
+
+// A sum of loud voices comes out at full scale at most, at once, and comes
+// back after its hold and release; a quiet mix comes out as it is.
+@(test)
+the_master_limiter_holds_a_loud_mix_under_full_scale :: proc(t:^testing.T) {
+    for channels in 1..=2 {
+        m:=test_mixer(t,{channels=channels})
+        defer mixer_destroy(m)
+        desc:=VOICE_DEFAULT
+        desc.loop=true
+        // A centered mono sound: at its level on one speaker, by the pan law on two.
+        level:=f32(1) if channels==1 else f32(math.SQRT_TWO/2)
+        quiet_mix :: proc(t:^testing.T,out:[]f32,channels:int,level:f32,from:int) {
+            for x,i in out {
+                if !test_near(t,x,test_small(from+i/channels)*level,1e-6) {break}
+            }
+        }
+        quiet:=voice_play(m,test_mono(t,m,RATE,test_small),desc)
+        quiet_mix(t,test_render(m,RATE/10),channels,level,0)
+        voice_stop(m,quiet)
+        test_render(m,CHUNK_FRAMES)
+        loud:[8]Voice
+        for &voice in loud {voice=voice_play(m,test_mono(t,m,64,test_one),desc)}
+        out:=test_render(m,RATE/10)
+        peak:=f32(0)
+        for x in out {peak=max(peak,abs(x))}
+        testing.expectf(t,peak<=LIMITER_CEILING && peak>0.99*LIMITER_CEILING,"%d channels: a mix of 8 at full scale peaks at %v",channels,peak)
+        for voice in loud {voice_stop(m,voice)}
+        test_render(m,int((LIMITER_HOLD+LIMITER_RELEASE)*RATE)+CHUNK_FRAMES)
+        mixer_update(m)
+        quiet=voice_play(m,test_mono(t,m,RATE,test_small),desc)
+        quiet_mix(t,test_render(m,RATE/10),channels,level,0)
+    }
 }

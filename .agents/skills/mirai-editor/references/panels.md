@@ -28,7 +28,7 @@ macOS the window controls are attached to the top right corner, so a pointer tak
 lands on Close. In a narrow window the bar drops its dividers and some labels (`BAR_WIDE`,
 `BAR_ROOMY`). The toolbar:
 
-- It carries save, undo and redo, Move/Rotate/Scale, the snap magnet, World/Local, camera speed and
+- It carries undo and redo, Move/Rotate/Scale, the snap magnet, World/Local, camera speed and
   the **Tools** menu, and avatars, Find, inspection mode, Graphics, Session and run at the end; in
   Play avatars, Graphics and run remain.
 - **Tools** (`tools_menu_build`) gathers the plugins' tools and the
@@ -39,8 +39,8 @@ lands on Close. In a narrow window the bar drops its dividers and some labels (`
   Stop, and in Simulate Apply transforms. Advancing one tick at a time is API-only (`play.step`).
 - `Graphics_Settings.show_fps` shows the counter next to the Graphics button, only where that
   button is; in the standalone game it goes at the top right.
-- A prefab document omits run and scene graphics and offers Preview sunlight
-  ([prefabs](prefabs.md#operations)).
+- A prefab document omits scene graphics and offers its variants and Preview sunlight
+  ([prefabs](prefabs.md#prefab-document)); it runs as any scene.
 - There is one avatar per agent working in the document and per other editor of the session, with
   the glyph and color of its [figure](editor.md#figures-of-whoever-works); a click opens its menu.
   While watching, the bar says "Watching", hides the edit tools and shows Stop.
@@ -256,12 +256,11 @@ the `World` (cancelling a drag leaves no trace):
   top) and then the nearest surface. Without `ghosts` it does not see what is hidden or off, so
   that nothing rests or is painted on a ghost; the selection click, the rectangle and the focus
   pass `ghosts_shown(s)`.
-- The ray first tests each mesh's box (the asset's, without reading the mesh) and enters only those
-  it crosses. `Picker` reads a mesh's triangles the first time something needs them and builds its
-  BVH when a ray reaches its box: a click costs what its ray reaches, not the scene. Rectangle,
-  focus and boxes use only the box.
-- A mesh leaves the cache only when its geometry changes: a generated one on being released (its
-  ids are immutable), a file one when size or date change in the registry.
+- The ray first tests each mesh's box (the asset's) and enters only those it crosses, through the
+  renderer ([`mesh_ray`](../../mirai-rendering/references/ui.md#offscreen-ui)): the mesh as it is
+  drawn, posed included, with the renderer's software tree or the one it makes the first time a
+  ray reaches the box under hardware tracing, kept until the mesh goes. The editor keeps no
+  triangles or trees of its own. Rectangle, focus and boxes use only the box.
 - A derived geometry without `Id` selects its first ancestor with `Id` (`entity_author`), with the
   real hit; likewise in rectangle, Select All and focus. The
   [AI context](ai-tasks.md#project-data) groups them by owner.
@@ -323,7 +322,7 @@ not change the world or the history and Play does not see it. On turning it off,
 recovers its sun and sky from `Render_Sync`. It is per tab, starts off and is not saved. The
 scene's local lights remain and the exposure is the one chosen below.
 
-- API: `editor.action` with `studio_light` toggles it; `editor.inspect` gives its `checked`.
+- It is what a person sees and no method: View > Studio light; `editor.inspect` gives its `checked`.
 
 ### Viewport exposure
 
@@ -380,7 +379,7 @@ scene; an asset document has none.
   its files (`section_cost`, counted again when the world or the assets change, at most every
   `MAP_COST_SECONDS`).
 - Turning on, off and traveling belong to the view, not edits: they do not enter undo nor are they
-  saved ([section view](document.md#section-view)). The same data and actions are in the API
+  written ([section view](document.md#section-view)). The same data and actions are in the API
   (`editor.sections`, `editor.section_view`, `editor.section_travel`).
 
 ## Create
@@ -434,12 +433,12 @@ which does not change size so that few projects do not leave a large empty windo
   and Cancel: in the launcher, on the project's row; if it is not in the list (Open folder, a new
   one) or over a project, in a dialog with the steps (the world, then the editor and the shaders at
   once). It appears in the frame it is requested and compilation starts in the next. The launcher
-  ends; the editor of a project ends as on exit, asking about what was not saved, and cancelling
+  ends; the editor of a project ends as on exit, asking only if agents work, and cancelling
   leaves the project unopened. Closed, the process waits for the editor it started, which writes in
   its same terminal: `mirai edit` ends with the last editor.
 - **New project**, or a template of the list, shows the form with that template; Create copies it
-  (`build.project_create`) and opens it; with Initialize Git repository, the new editor starts with
-  `--git-init` and makes the repository.
+  (`build.project_create`) and opens it; the new editor starts with `--git-init` and makes the
+  repository, with the remote and Git LFS the form says.
 - Beside it, Plugins is a list with a check per plugin the project can receive: those of the
   engine and the template, on as the template names them and reread on changing it; those of the
   catalog, off; and the added repositories. The automatic ones do not appear: they arrive with
@@ -481,13 +480,14 @@ The Content Browser tab shows the registry of the assets of the project and its 
 - **Selection of the viewport**: its toggle shows only what the selected entities hold and what
   that uses (`content_selection_read`, `host.entity_asset_ids`), read again when the selection, the
   registry or the document change.
-- **Strip** under the search: a toggle per family (Prefab, Model, Material, Scene, Plugins) with the
-  glyph of its cards in the color of its kind (the others fade while some are on), each named only
-  in its tooltip; a funnel opens the rest (Texture, Animation, Sound, UI), with their glyphs too,
-  and lights up while
-  one of them is on, and a cross by it, there only while a filter is on, clears them and the
-  viewport selection. They combine; none active shows everything. Model gathers meshes, fractures
-  and physics caches; Sound, sounds and sound sets; Plugins, every kind of a plugin ([types of a
+- **Strip** under the search: a toggle per family (Prefab, Model, Material, Scene, Texture,
+  Animation, Sound, UI, Plugins) with the glyph of its cards in the color of its kind, each named
+  only in its tooltip. One family at a time: another one takes its place, the one on turns it off,
+  and while one is on the others fade; a cross after them, there only while a filter is on, clears
+  it and the viewport selection. Prefab and Scene are one kind of file told apart by the kind its
+  header says, in its color, with its icon and under its filter ([what a prefab is](prefabs.md)).
+  None active shows everything. Model gathers meshes, fractures and physics caches; Sound, sounds and
+  sound sets; Plugins, every kind of a plugin ([types of a
   plugin](extensions.md#asset-types-of-a-plugin)). A part of an import appears in its folder when
   the filters leave out its owner (Model shows the meshes of an imported prefab). Skeletons are not
   listed: the mesh that uses them represents them (`content_listed`).
@@ -530,8 +530,8 @@ that of the last thing clicked (`Content.place`). They are off outside Edit and 
 - Choosing an entry empties search and filters and puts at the top of the list a line with a free
   name to type over; an invalid or taken name warns and leaves the line.
 - A folder and a scene are written immediately, like import. The rest is a step of the scene's
-  history and stays in memory unsaved, like `material.set` with `path`; what belongs to a plugin
-  is written by its plugin in the next frame. What was created opens in its document if its type
+  history, written when it ends, like `material.set` with `path`; what belongs to a plugin is
+  written by its plugin in the next frame. What was created opens in its document if its type
   has one.
 - Empty folders are seen while nothing filters (`Registry.folders`), except those of a plugin, the
   engine or the editor. `asset.create` does the same.
@@ -539,13 +539,13 @@ that of the last thing clicked (`Content.place`). They are off outside Edit and 
 **Delete** (`asset_delete.odin`): Delete of a card's menu, or Del or Backspace with a focused card
 (`content_focused`, which `shortcuts_run` looks at before the entity Delete), opens
 `Modal.Delete_Asset` with the asset, its parts and what uses it. Confirming sends it to the trash
-(`platform.trash`) immediately, without undo or Save: it is an operation on files, like import.
-What uses it keeps the reference and what was unsaved of it is discarded. Assets of a plugin, the
+(`platform.trash`) immediately, without undo: it is an operation on files, like import.
+What uses it keeps the reference. Assets of a plugin, the
 engine or the editor, an open scene or prefab, are not deleted, nor outside Edit; the modal says
 why.
 
-**Rename, move and duplicate** (`asset_move.odin`) also change the files immediately, without undo
-or Save, and rescan the registry. Identity is the id, so references, Recent, Favorites and open
+**Rename, move and duplicate** (`asset_move.odin`) also change the files immediately, without undo,
+and rescan the registry. Identity is the id, so references, Recent, Favorites and open
 documents follow the asset; the selection passes to it (`Content.reveal`).
 
 - A card: Rename (F2) puts in its folder the Create line with its name; Duplicate (Ctrl+D); Move to
@@ -559,11 +559,10 @@ documents follow the asset; the selection passes to it (`Content.reveal`).
   nothing moves. The link with the source does not change: `Import_Info.source` names the source
   from the project and reimporting finds the outputs by their `Import_Info`
   ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)).
-- **Unsaved.** What has changes in memory is neither moved nor renamed, nor is a folder that has
-  them: the error asks to save or discard them. The history names the moved files at their new
-  path, so that undo and redo write there, and the project's `start_scene` follows its scene.
-- **Duplicate** writes beside it, with a free name (`asset_create_path`), what the editor shows,
-  also what is unsaved. The asset and its parts receive new ids and what they name between them
+- **History and references.** The history names the moved files at their new path, so that undo
+  and redo write there, and the project's `start_scene` follows its scene.
+- **Duplicate** writes beside it, with a free name (`asset_create_path`), what the editor shows.
+  The asset and its parts receive new ids and what they name between them
   passes to the copies; a copy is not an output of an import (without `owner` outside what was
   copied, without `Import_Info` or `Cooked`). A folder is copied whole: its assets so, its empty
   folders and its other files as they are.
@@ -589,8 +588,6 @@ documents follow the asset; the selection passes to it (`Content.reveal`).
   placing or assigning (`Content.picked`; `Content.selected` is the last). A click where there is
   no card, row or folder empties the selection; with Ctrl or Shift it does not.
 - The star appears at the top left on hover, and stays on the favorites.
-- An asset with unsaved changes carries the prototype's dot (`UNSAVED_COLOR`) at the top right
-  ([unsaved assets](document.md#tabs)).
 - **Clips of a library:** the card of an `.anim` with clips carries an arrow on the right that
   shows its clips after it, each with the thumbnail of its pose and the play icon in the accent
   while it does not have it. A search finds the library by its clips
@@ -602,7 +599,7 @@ documents follow the asset; the selection passes to it (`Content.reveal`).
   The owner unfolds its parts in the order of their paths (`Content.parts`), except a prefab. A
   part also appears in its folder while a search finds it, in Recent and Favorites and with Show
   parts of imports; one whose owner is not there is shown as an asset of its own.
-- **Variants of a prefab:** the arrow of a `.prefab` is only there if it has
+- **Variants of a prefab:** the arrow of a `.scene` is only there if it has
   [variants](prefabs.md#variants), and shows them (`Content.variants`, read once per change of the
   registry of the prefabs that nest another).
 - It lists the engine's types (`asset.KINDS`) and the plugin ones that a plugin opens as a document
@@ -619,7 +616,9 @@ documents follow the asset; the selection passes to it (`Content.reveal`).
 
 Gestures:
 
-- **Dragging a prefab**: places it linked ([prefabs](prefabs.md)).
+- **Dragging a prefab**: places it linked ([prefabs](prefabs.md)). **Dragging a scene** with
+  several roots places a `Scene_Reference` to it, a section; a prefab becomes a section by naming
+  it in the `scene` of a `Scene_Reference`.
 - **Dragging a mesh**: creates an entity with that mesh, resting on the surface.
 - **Dragging a material**: assigns it to the mesh under the pointer.
 - **Dropping a card on the name, chip or cell of a folder**: moves it there.
@@ -670,7 +669,7 @@ browser cards and asset fields):
   shown.
 - A subject that changed keeps its old image until it has the new one, and waits for an open edit
   to finish. The cell that has gone longest without being requested is reused.
-- The signature is `Thumbnail_Subject`: mesh, `Tint`, `Material_Override`, rotation, scale, the
+- The signature is `Thumbnail_Subject`: mesh, `Material_Values`, rotation, scale, the
   revision of the loaded assets and that of the registry (every file that changes, loaded or not,
   makes the subject be looked at again) and, for what is not a mesh alone, the type whose provider
   draws it, what poses it and its clip, the document and its root.
@@ -680,25 +679,25 @@ browser cards and asset fields):
   takes the tangents from its corners. From a mesh the finest level that fits in what remains of
   the total 400000 triangles is taken (a skin poses only the first); if none fits, it is left out
   whole. Its materials and textures are loaded.
-- **Prefabs** (`preview_document`, `thumbnail_subjects.odin`): the entities of the saved document
+- **Prefabs** (`preview_document`, `thumbnail_subjects.odin`): the entities of the document's file
   that show a `Mesh_Renderer`, where their `Transform` and their hierarchy put them, with their
-  `Tint` and their `Material_Override`; `Hidden` leaves out the entity and what hangs from it. A
+  `Material_Values`; `Hidden` leaves out the entity and what hangs from it. A
   skin is seen as it stores its vertices. Everything is framed from the studio's direction. A mesh
-  with the same `Tint` and values is read once for all the entities that show it.
+  with the same `Material_Values` is read once for all the entities that show it.
 - **Scenes** (`preview_scene`): the first thing the editor showed of the scene the first time it
   opened it (`scene_open`: menu, tab, API or initial scene; not a prefab), while it has no stored
   view; afterwards, what the viewport shows when **View > Update scene thumbnail** is chosen
-  (action `Scene_Thumbnail`, `editor.action` `scene_thumbnail`; disabled outside Edit, with an
-  asset document in front or with a scene that is not a saved asset) or **Update thumbnail** in its
+  (`scene.thumbnail`; off outside Edit, with an
+  asset document in front or with a scene without a file) or **Update thumbnail** in its
   card's menu while it is open in a tab (`scene_thumbnail_update`: if it is not in front, it
-  brings its tab and takes the view that tab kept). On saving it, a notice says "Scene thumbnail
+  brings its tab and takes the view that tab kept). Once stored, a notice says "Scene thumbnail
   updated". `THUMBNAIL_CAPTURE_WAIT` frames after opening it, or between the frames of the action,
   `thumbnail_scene_capture` draws the world alone from the viewport's camera, like `capture`
   without the UI (`host.app_capture_world`, 512×512 and `API_CAPTURE_SETTLE` frames), reduces it
   to the two sizes, stores it in `.mirai/thumbs` with the fixed key `THUMBNAIL_CAPTURED` and puts
   it in the cells that already show the scene. It is not taken if by then there is a Play, another
   scene or an asset document in front. A scene that was never opened shows its icon: it is not
-  drawn with the studio. Saving it, editing it or reopening it does not change the view. It fills
+  drawn with the studio. Editing it or reopening it does not change the view. It fills
   the card as a texture.
 - **Types of a plugin** (`preview_provided`): the types a `Thumbnail_Provider` names show what its
   provider says, which also draws what is not a mesh alone
@@ -711,7 +710,7 @@ browser cards and asset fields):
   asset and size, with premultiplied alpha in LZ and the key it was drawn with.
   - The key (`thumbnail_store_key`) combines `THUMBNAIL_RENDERER`, the size, the subject without
     the revision and the `content_hash` of the asset and of the whole dependency closure the
-    subject names, as the registry has it (also what is unsaved). Saving the asset or a dependency
+    subject names, as the registry has it. Changing the asset or a dependency
     gives another key and the preview is redrawn.
   - When the signature changes, a cell that already has the image of the current key is not
     redrawn; otherwise, the file is read (up to `THUMBNAIL_LOADS` per frame, apart from drawing) and
@@ -732,7 +731,7 @@ browser cards and asset fields):
 ## Asset documents
 
 `asset_documents.odin`. An asset opens in a tab next to the scenes, like `AssetWorkspace.vue` of
-the prototype; tabs, history, Save and closing in [document](document.md#asset-documents).
+the prototype; tabs, history and closing in [document](document.md#asset-documents).
 
 - With a document in front, the active scene stays loaded underneath but is neither drawn nor
   handed to the renderer (`App.ui_only`, which also draws the previews' images of the panels); in
@@ -744,7 +743,7 @@ the prototype; tabs, history, Save and closing in [document](document.md#asset-d
 - **Left column**: the shared panel takes the whole height. Details, the viewport tools, the gizmo,
   picking, placement, what is drawn over the scene and Play are not there; `tool_on` is false and
   `tool_set` does not turn on.
-- **Toolbar**: Save, Undo and Redo of the document and, in the rest (`asset_toolbar`), what the
+- **Toolbar**: Undo and Redo of the document and, in the rest (`asset_toolbar`), what the
   document reproduces; on the right Find, Graphics and Session. The chat opens from its tab of the
   left panel.
 - It is opened by a double click in the content browser, the file row in an AI review,
@@ -774,13 +773,13 @@ the user looks at the result, adjusts values and chooses among variants.
 - **Variants** (`editor.material.variants`, from the agent): below the preview, with the same view
   and channel. A click shows one in place of the material without changing it; with one shown,
   **Apply** puts its values in the material (a history step) and **Save as new** writes beside it
-  `<material> <variant>.mat`, unsaved and without opening it, so that the variants continue.
+  `<material> <variant>.mat`, without opening it, so that the variants continue.
 - **Details** (`asset_workspace_details`): a card per group (metadata `group`) of the program's
   non-texture parameters, or those of the standard model. A drag changes the material in memory
   (`host.assets_material_set`) and the `.mat` is written once when the gesture ends, one history
   step. In an imported material, the arrow of a standard value returns to it what the source gave
   (`material_base`, `material.revert`). A click on a value's name chooses it.
-- It rereads the source the editor has (unsaved or the file's, `file_read`) when it changes
+- It rereads the source the editor has (`file_read`) when it changes
   (`file_stamp`), for its review and to know whether it reads time.
 - **Request:** each frame leaves in `Ai.material` the material, the program, the chosen values, the
   channel if it is not Lit and the last variant put; the composer shows them as chips and the
@@ -799,9 +798,9 @@ of its column.
   column; what is longest is edited alone on the right. The first column is the row's name, which
   is renamed by typing.
 - **Cells:** a draggable or typed number, a checkbox, a list of an `enum` or of a named id, an
-  asset button, the text of a `[N]u8` and, of a `core.Text`, the text in the language the game is
-  written in (translations go through `records.set` or the CSV). A `core.Record` is the list of
-  the rows of its type (`record_choice`), the same as in the inspector.
+  asset button, the text of a `[N]u8` and, of a `core.Text`, its key of the `.strings` (what the
+  key says goes through `texts.set` or `mirai texts`). A `core.Record` is the list of the rows of
+  its type (`record_choice`), the same as in the inspector.
 - **Add row** adds a row with the type's default after the chosen one; **Duplicate** copies it with
   other text ids; **Delete** removes it. The visible rows are the only ones built.
 - What the grid and the right column change is a copy of the table, which is written as a step of
@@ -818,14 +817,19 @@ plugin [vfx](../../mirai-world/references/vfx-editor.md#particle-document).
 ## Import
 
 `import_file(s, path)` converts a source file into project assets, only in `Edit`, with
-`sources.import_source` like `mirai import`. The source can be outside the project, and then it
-does not save its settings beside it (`no_save`): reimporting finds it by its path. What is
-written stays in the assets folder, in that of its type or in `folder` (`asset_folder_clean`).
+`sources.import_source` like `mirai import`. A source in the assets of the project or of a plugin
+imports where it is; one from outside the project is first copied into `folder`
+(`asset_folder_clean`, the folder of the browser), and one in the project but outside its assets
+is refused. The source is versioned with its sidecar beside what it makes, and what it builds
+that nobody edits goes to the imported folder
+([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). The imported folder
+is brought up to date with the sources by the build that opens the editor
+([sync](../../mirai-imports/references/imports.md#sync)).
 File > Import, the content browser, a file dropped on the window and `asset.import` call it. It
 imports in a thread of its own, with its own job system, while the editor keeps drawing; the
 content browser shows the dot of what works. `import_poll`, between frames, takes what it wrote on
 finishing. One import runs at a time and, while it runs, nothing else writes assets: another
-import, saving (`scene_save`, `assets_save`), creating, deleting, converting and writing prefabs
+import, writing the document, creating, deleting and writing prefabs
 fail with `import_busy`, which says what is being imported. What the file is is told by its
 content (`sources.source_kind`, with the formats of the engine and of the plugins); the dialog
 offers those formats, the plugins' whole sources and the image and sound extensions. Formats and
@@ -836,21 +840,26 @@ output folders in [importers](../../mirai-imports/SKILL.md).
   imported before the formats and takes no folder.
 - An image is sRGB unless its settings or its name say it is data or a normal (`sources.image_use`,
   which `mirai import` applies too); `asset.import {image}` chooses it.
-- An import's settings stay beside the source (`<source>.import`); reimporting writes the same
-  assets with their ids where they are and keeps what did not change.
-  `import_file(s, path, into)` updates an import from a moved or renamed source
-  ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)). Textures with
+- The sidecar of a source (`<source>.import`) keeps its settings and the id of each asset;
+  reimporting writes the same assets with their ids where they are and keeps what did not change.
+  Textures with
   the same image and settings and meshes with the same geometry and settings come from their caches
   ([textures](../../mirai-imports/references/imports.md#texture-cache),
   [meshes](../../mirai-imports/references/imports.md#mesh-cache)).
 - On finishing, the written files are refreshed in the registry and the replaced assets are
   reloaded; if Surface programs were written (`Import_Report.programs`), the project's programs
   are published (`programs_publish_request`) without waiting for another change.
-- **Parts.** Meshes and skeletons of a model, and the materials and textures that are only its,
-  are parts of its prefab (`asset.Header.owner`,
+- **Parts.** Meshes and skeletons of a model, and the materials and textures that are only its, are
+  parts of its prefab (`asset.Header.owner`,
   [rule](../../mirai-imports/references/imports.md#parts)). `asset_detach`
-  (`editor/assets_parts.odin`, `asset.detach`) takes one out of its owner as an unsaved edit with
-  undo: it only clears `owner`, and the import leaves it out; there is no UI that calls it yet. A
+  (`editor/assets_parts.odin`, `asset.detach`) takes one out of its owner as an edit of its file
+  with undo: it only clears `owner`, and the import leaves it out; there is no UI that calls it yet.
+- **What an import keeps in the imported folder is not edited where it is.** Moving, renaming,
+  detaching or deleting a part on its own is refused, saying to duplicate it. Moving the root of
+  an import of the cache (`asset_move`, the texture of an image) moves its source and sidecar, and
+  moving a folder moves the sources in it: the registry lists their assets there at once, without
+  an import. Deleting the root of an import (its prefab, the texture of an image) gives the import
+  up: its source and its sidecar go to the trash with what only the import can build. A
   copy made outside the editor receives an id of its own on scanning
   ([repeated ids](../../mirai-assets/references/formats.md#registry)).
 
@@ -867,8 +876,11 @@ sections that fold like those of the settings dialog: Quality and Frame rate.
 - Antialiasing is not part of the presets: Off, TAA and the
   [techniques](../../mirai-rendering/references/views.md#antialiasing-techniques) of the active
   plugins; one that no plugin offers is shown as TAA, which is what is drawn.
-- A plugin adds rows with the fields of its machine setting that carry `graphics=Label` in the tag:
-  an enum or a bool.
+- A row is a field of a machine setting, of the engine or of a plugin, whose tag carries
+  `graphics=Label`: a bool or an enum (its values, named by `choices=A|B` or by their names), a
+  number with the values `choices` lists (`label:value`, or a label that is its value), or the text
+  of the antialiasing technique. The rows of the section `Frames` go to Frame rate. There is no
+  list of options apart from the tags.
 - A choice is applied instantly to the edited world and stored in the engine layer
   (`settings.mirai` in `project.machine_folder`: the main checkout's `.mirai`, which its worktrees
   share). A value the project fixes wins again on rereading. It does not touch the document or its
@@ -913,9 +925,9 @@ plugins and the game, with the Details rows.
   the new world.
 - Input (`input_settings.odin`, only in the Project layer): a card per action declared by the code
   of the game or an active plugin, with its type, its bindings and the arrow that returns it to the
-  code's default, and one for the tap and hold ticks. What the window edits and writes is
-  [`input.mirai`](../../mirai-gameplay/references/control.md#actions); the key images are another
-  thing, of UI (`UI_Settings.prompt_images`).
+  code's default, and one for the tap and hold seconds. What the window edits is the setting
+  [`Input_Settings`](../../mirai-gameplay/references/control.md#actions), which the generic
+  categories leave out; the key images are another thing, of UI (`UI_Settings.prompt_images`).
   - The card is that of the other categories, with a rule between rows. A binding shows its device
     in the label column and each input with the prompt the game would draw (the image from
     `prompt_images` or from the pack of `UI_Settings.prompts`, or the drawing), and its label
@@ -930,9 +942,10 @@ plugins and the game, with the Details rows.
     two or four consecutive keys; a key of a key binding is changed alone. What does not serve the
     type is ignored; Escape cancels and a click while listening binds the mouse button without
     doing anything else.
-  - A change takes effect when its gesture ends; a file that cannot be read is shown and blocks
-    editing.
-- API: `settings.get` and `settings.set`; input, `input.get` and `input.set`; the manifest and the
+  - A change takes effect at once in the edited world and the Plays, and the project's file takes
+    it when its gesture ends; an action back to the code's default leaves the setting.
+- API: `settings.get` and `settings.set` (the bindings too, in `Input_Settings`); `input.get` lists
+  every action with what drives it; the manifest and the
   plugins, `project.get` and `project.set`
   ([catalog](../../mirai-agent-api/references/methods.md#project)).
 
@@ -952,7 +965,7 @@ or compilation.
   compared as the field stores them; `{}`, all that have the component. With neither, the first
   entity that has the component.
 - A button (`name` unique in the panel, `sets` with up to 12 targets and its `value`) is a variant:
-  it puts each field at its value, with the JSON that `scene.set` and `settings.set` accept (up to
+  it puts each field at its value, with the JSON that `scene.write` and `settings.set` accept (up to
   159 bytes), without those fields having a row. The entities of a `where` are looked up when it is
   pressed, so it reaches those created after saving the panel. Buttons are pressed in any order: if
   one sets fields of a target (same component or setting, `entity` and `where`), it sets all those

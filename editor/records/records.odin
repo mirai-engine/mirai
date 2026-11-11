@@ -14,7 +14,7 @@ import "mirai:std/serial"
 // the layout of the program, which a change writes back whole as an edit of
 // the file. What the grid of its document and the records.* methods share.
 
-ID_BITS :: 53 // ids of rows and texts: whole in the numbers of JSON
+ID_BITS :: 53 // ids of rows: whole in the numbers of JSON
 
 Edit :: struct {
     id:base.Asset_Id,
@@ -24,13 +24,11 @@ Edit :: struct {
     ids:[dynamic]u64,
     names:[dynamic]asset.Records_Name,
     values:[]u8,  // size_of the type per row, aligned for it
-    texts:[dynamic]asset.Records_Text,
-    text:[dynamic]u8,
     allocator:runtime.Allocator,
 }
 
 destroy :: proc(e:^Edit) {
-    delete(e.ids);delete(e.names);delete(e.texts);delete(e.text)
+    delete(e.ids);delete(e.names)
     mem.free_bytes(e.values,e.allocator)
     e^={}
 }
@@ -69,8 +67,7 @@ row_find :: proc(e:^Edit,name:string) -> int {
     return -1
 }
 
-// A table as its file says now, unsaved in the memory of the registry or on
-// disk; message says why it cannot be changed when it cannot.
+// A table as its file says now, in the memory of the registry or on disk; message says why it cannot be changed when it cannot.
 load :: proc(registry:^asset.Registry,types:^asset.Types,info:^core.World_Info,id:base.Asset_Id,e:^Edit,allocator:=context.allocator) -> (message:string) {
     record,found:=asset.registry_find(registry,id)
     if !found || record.kind!=asset.KIND_RECORDS {return "It is not a .records of the assets: asset.list with kind Records lists them"}
@@ -102,12 +99,8 @@ load :: proc(registry:^asset.Registry,types:^asset.Types,info:^core.World_Info,i
     }
     e.ids=make([dynamic]u64,allocator)
     e.names=make([dynamic]asset.Records_Name,allocator)
-    e.texts=make([dynamic]asset.Records_Text,allocator)
-    e.text=make([dynamic]u8,allocator)
     append(&e.ids,..view.ids)
     append(&e.names,..view.names)
-    append(&e.texts,..view.texts)
-    append(&e.text,..view.text)
     return ""
 }
 
@@ -124,8 +117,6 @@ create :: proc(info:^core.World_Info,index:int,id:base.Asset_Id,file:string,e:^E
     e.values,_=values_alloc(&info.records[index],0,allocator)
     e.ids=make([dynamic]u64,allocator)
     e.names=make([dynamic]asset.Records_Name,allocator)
-    e.texts=make([dynamic]asset.Records_Text,allocator)
-    e.text=make([dynamic]u8,allocator)
 }
 
 // The bytes of the file of the table as it is, in the temporary allocator;
@@ -140,7 +131,6 @@ file_bytes :: proc(e:^Edit,types:^asset.Types,info:^core.World_Info) -> (bytes:[
         if row>=0 {return nil,fmt.tprintf("row %d (%s): %s",row,row_name(e,row),problem)}
         return nil,problem
     }
-    texts,text:=texts_compact(e)
     rows:=len(e.ids)
     images:=make([]u8,len(e.values),context.temp_allocator)
     if rows>0 {serial.value_write(&ws.records[e.record].layout,images,raw_data(e.values),rows)}
@@ -148,55 +138,10 @@ file_bytes :: proc(e:^Edit,types:^asset.Types,info:^core.World_Info) -> (bytes:[
         id=e.id,type=type_name(info,e.record),
         ids=e.ids[:],names=e.names[:],
         schema=&ws.schema,value_type=ws.records[e.record].type,images=images,
-        texts=texts,text=text,
     }
     error:asset.Error
     if bytes,error=asset.records_bytes(types,desc,context.temp_allocator);error!=.None {return nil,fmt.tprintf("the table could not be written: %v",error)}
     return bytes,""
-}
-
-// The texts the rows still name, their bytes one after the other.
-@(private)
-texts_compact :: proc(e:^Edit) -> (texts:[]asset.Records_Text,text:[]u8) {
-    named:=make(map[u64]bool,context.temp_allocator)
-    for row in 0..<len(e.ids) {text_ids(e,row,&named)}
-    kept:=make([dynamic]asset.Records_Text,context.temp_allocator)
-    bytes:=make([dynamic]u8,context.temp_allocator)
-    for &entry in e.texts {
-        if !named[entry.text] || entry.length==0 && serial.text_field(entry.language[:])!="" {continue}
-        copied:=entry
-        copied.offset=u32(len(bytes))
-        append(&bytes,..e.text[entry.offset:][:entry.length])
-        append(&kept,copied)
-    }
-    return kept[:],bytes[:]
-}
-
-// The ids of the texts a row names.
-@(private)
-text_ids :: proc(e:^Edit,row:int,out:^map[u64]bool) {
-    for offset in text_offsets(e.info) {
-        id:=(cast(^core.Text)&e.values[row*e.info.size+offset]).id
-        if id!=0 {out[id]=true}
-    }
-}
-
-// The offsets of the core.Text fields of a type, in its fields, structs and arrays.
-text_offsets :: proc(info:^runtime.Type_Info,allocator:=context.temp_allocator) -> []int {
-    out:=make([dynamic]int,allocator)
-    walk :: proc(info:^runtime.Type_Info,offset:int,out:^[dynamic]int,depth:int) {
-        if depth>16 {return}
-        if info.id==core.Text {append(out,offset);return}
-        if info.id==base.Asset_Id {return}
-        #partial switch v in runtime.type_info_base(info).variant {
-        case runtime.Type_Info_Struct:
-            for i in 0..<int(v.field_count) {walk(v.types[i],offset+int(v.offsets[i]),out,depth+1)}
-        case runtime.Type_Info_Array:
-            for at in 0..<v.count {walk(v.elem,offset+at*v.elem_size,out,depth+1)}
-        }
-    }
-    walk(info,0,&out,0)
-    return out[:]
 }
 
 // A new id for a row or a text, the next of the sequence ids: not 0, within
@@ -253,24 +198,9 @@ row_add :: proc(e:^Edit,ids:^u64,name:string,value:[]u8=nil,after:=-1,default:pr
     return row,""
 }
 
-// A copy of a row after it, under name: its texts are copied under new ids,
-// so changing one does not change the other.
+// A copy of a row after it, under name.
 row_duplicate :: proc(e:^Edit,ids:^u64,row:int,name:string) -> (copied:int,message:string) {
-    value:=slice.clone(row_bytes(e,row),context.temp_allocator)
-    if copied,message=row_add(e,ids,name,value,row);message!="" {return}
-    for offset in text_offsets(e.info) {
-        text:=cast(^core.Text)&e.values[copied*e.info.size+offset]
-        if text.id==0 {continue}
-        old:=text.id
-        text.id=text_id_new(e,ids)
-        for i in 0..<len(e.texts) {
-            entry:=e.texts[i]
-            if entry.text!=old {continue}
-            language:=serial.text_field(entry.language[:])
-            text_put(e,text.id,strings.clone(language,context.temp_allocator),strings.clone(string(e.text[entry.offset:][:entry.length]),context.temp_allocator))
-        }
-    }
-    return copied,""
+    return row_add(e,ids,name,slice.clone(row_bytes(e,row),context.temp_allocator),row)
 }
 
 row_remove :: proc(e:^Edit,row:int) {
@@ -307,52 +237,3 @@ row_move :: proc(e:^Edit,from,to:int) {
     inject_at(&e.names,to,name)
 }
 
-// A new id of a text, one no text of the table has.
-text_id_new :: proc(e:^Edit,ids:^u64) -> u64 {
-    taken:=make([dynamic]u64,context.temp_allocator)
-    for entry in e.texts {append(&taken,entry.text)}
-    for row in 0..<len(e.ids) {
-        for offset in text_offsets(e.info) {append(&taken,(cast(^core.Text)&e.values[row*e.info.size+offset]).id)}
-    }
-    return id_new(ids,taken[:])
-}
-
-// The text of a core.Text in a language ("" for the one the game is written in).
-text_get :: proc(e:^Edit,text:u64,language:string) -> (value:string,found:bool) {
-    for &entry in e.texts {
-        if entry.text==text && serial.text_field(entry.language[:])==language {return string(e.text[entry.offset:][:entry.length]),true}
-    }
-    return
-}
-
-// Puts the text of a core.Text in a language, in the order of the texts.
-text_put :: proc(e:^Edit,text:u64,language:string,value:string) {
-    offset:=u32(len(e.text))
-    append(&e.text,..transmute([]u8)value)
-    for &entry,at in e.texts {
-        entry_language:=serial.text_field(entry.language[:])
-        if entry.text==text && entry_language==language {
-            entry.offset,entry.length=offset,u32(len(value))
-            return
-        }
-        if entry.text>text || entry.text==text && entry_language>language {
-            added:=asset.Records_Text{text=text,offset=offset,length=u32(len(value))}
-            base.text_set(added.language[:],language)
-            inject_at(&e.texts,at,added)
-            return
-        }
-    }
-    added:=asset.Records_Text{text=text,offset=offset,length=u32(len(value))}
-    base.text_set(added.language[:],language)
-    append(&e.texts,added)
-}
-
-// Writes the text of the core.Text at an offset of a row in a language,
-// giving the field a text of its own the first time.
-text_set :: proc(e:^Edit,ids:^u64,row,offset:int,language:string,value:string) -> (message:string) {
-    if len(language)>=asset.RECORDS_LANGUAGE {return fmt.tprintf("%q is not a code of a language: \"es\", \"pt-BR\"",language)}
-    text:=cast(^core.Text)&e.values[row*e.info.size+offset]
-    if text.id==0 {text.id=text_id_new(e,ids)}
-    text_put(e,text.id,language,value)
-    return ""
-}

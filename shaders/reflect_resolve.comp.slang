@@ -1,7 +1,7 @@
 #include "native.slang"
-//! variant glass MIRAI_GLASS_RESOLVE=1
-// Filters the traced reflections of this frame, which composite (or, for the
-// variant of a layer of glass, the pass that lights the layer) takes for the
+//! constant glass MIRAI_GLASS_RESOLVE
+// Filters the traced reflections of this frame, which composite (or, for a
+// layer of glass, the pass that lights the layer) takes for the
 // share of each specular lobe that was traced. Nothing of another frame comes
 // in: each cell traced the stratum of the lobe of its place in a fixed pattern
 // (reflect_pattern_stratum), and a reflection that is not a mirror is the mean
@@ -37,11 +37,8 @@ struct Params_Block { float shared_from; float pad0; float pad1; float pad2; };
 // The roughness the trace pass decided a pixel by: a layer of glass has only
 // the one specular antialiasing widened, the opaque G-buffer the material's.
 float decided_roughness(int2 p, float4 normal) {
-#ifdef MIRAI_GLASS_RESOLVE
-    return normal.a + ROUGHNESS_ROUNDING;
-#else
+    if (MIRAI_GLASS_RESOLVE) return normal.a + ROUGHNESS_ROUNDING;
     return g_motion.Load(int3(p, 0)).b + ROUGHNESS_ROUNDING;
-#endif
 }
 
 // The ray that stands for pixel q, and the pixel it was traced from.

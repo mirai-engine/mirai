@@ -5,16 +5,19 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
+import wire "mirai:net"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 import physics "plugins:physics/runtime"
 
-@(private="file")
+@(private)
+@(test_world)
 Removal_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     parents:core.Table(core.Parent),
+    transforms:core.Table(core.Transform),
     foliages:core.Table(Foliage),
     removed:core.Table(Foliage_Removed),
     data:Foliage_Data,
@@ -33,7 +36,7 @@ Removal_Test :: struct {
 // A world of Foliage and what is taken out of them, with one source of id: nil when it could not be made.
 @(private="file")
 removal_init :: proc(t:^testing.T,r:^Removal_Test,id:base.Asset_Id) -> ^Source {
-    if !core.test_world_init(t,&r.w,test_types) {return nil}
+    if !test_world_init(t,&r.w) {return nil}
     r.app=host.App{allocator=context.allocator}
     r.network.role=.Server
     append(&r.data.entries,Data_Entry{id=id,epoch=1})
@@ -41,7 +44,7 @@ removal_init :: proc(t:^testing.T,r:^Removal_Test,id:base.Asset_Id) -> ^Source {
 }
 
 @(private="file")
-removal_destroy :: proc(r:^Removal_Test) {core.test_world_destroy(&r.w)}
+removal_destroy :: proc(r:^Removal_Test) {test_world_destroy(&r.w)}
 
 // A Foliage of the source of the world, with an Id when id is not 0.
 @(private="file")
@@ -49,15 +52,15 @@ removal_foliage :: proc(r:^Removal_Test,id:base.Entity_Id) -> core.Entity {
     e:=core.create(&r.w.entities)
     if id!=0 {core.add(&r.w.ids,e,core.Id{value=id})}
     core.add(&r.w.foliages,e,Foliage{source=r.data.entries[0].id})
-    core.test_world_settle(&r.w)
+    test_world_settle(&r.w)
     return e
 }
 
 @(private="file")
 removal_step :: proc(r:^Removal_Test) {
     w:=&r.w
-    foliage_removals(&r.removals,&r.requests,&w.removed,core.read(&w.foliages),core.read(&w.ids),core.ref(&r.data),core.ref(&r.network),core.commands(w,core.test_world_info(w)),r.app.allocator,&r.problems)
-    core.test_world_settle(w)
+    foliage_removals(&r.removals,&r.requests,&w.removed,core.read(&w.foliages),core.read(&w.ids),core.ref(&r.data),core.ref(&r.network),core.commands(w,test_world_info(w)),r.app.allocator,&r.problems)
+    test_world_settle(w)
 }
 
 // The game asks to take out a manual tree and generated instances: the end
@@ -88,7 +91,7 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     r.network.role=.Client
     foliage_remove(&r.requests,{wood,coord,MANUAL|u64(manual)})
     removal_step(&r)
-    testing.expect_value(t,core.count(core.read(&r.w.removed)),0)
+    testing.expect_value(t,core.count(&r.w.removed),0)
     r.network.role=.Server
     foliage_remove(&r.requests,{wood,coord,MANUAL|u64(manual)})
     foliage_remove(&r.requests,{wood,coord,MANUAL|u64(manual)})
@@ -97,28 +100,29 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
     foliage_remove(&r.requests,{wood,{5,5},MANUAL|u64(manual)})
     foliage_remove(&r.requests,{bare,coord,MANUAL|u64(manual)})
     removal_step(&r)
-    removed:=core.read(&r.w.removed)
+    removed:=&r.w.removed
     testing.expect_value(t,core.count(removed),2)
     for row in 0..<core.count(removed) {
         e:=core.entity_at(removed,row)
-        parent,_:=core.get(core.read(&r.w.parents),e)
+        parent,_:=core.get(&r.w.parents,e)
         page:=core.at(removed,row)
         testing.expect(t,parent.entity==wood && page.foliage==500,"it hangs from its Foliage and names it by its Id")
         testing.expect(t,page.count==1 && page.instances[0].id==(page.coord==coord?MANUAL|u64(manual):generated),"one entity for each cell, with what was taken out of it once")
     }
     testing.expect(t,r.problems.count>0,"a Foliage without an Id says why it cannot")
     // The same again writes nothing.
-    version:=core.version(core.read(&r.w.removed))
+    seen:core.Seen
+    _=core.touched(&r.w.removed,&seen)
     foliage_remove(&r.requests,{wood,coord,MANUAL|u64(manual)})
     removal_step(&r)
-    testing.expect_value(t,core.version(core.read(&r.w.removed)),version)
+    testing.expect(t,!core.touched(&r.w.removed,&seen))
     // Another of the generated cell goes to its entity, and the other cell keeps its hash.
     gone:=removed_owner(&r.removals,wood)
     _,manual_hash:=removed_cell(gone,coord)
     foliage_remove(&r.requests,{wood,{0,0},other})
     removal_step(&r)
     removal_step(&r)
-    testing.expect_value(t,core.count(core.read(&r.w.removed)),2)
+    testing.expect_value(t,core.count(&r.w.removed),2)
     gone=removed_owner(&r.removals,wood)
     if !testing.expect(t,gone!=nil && len(gone.items)==3) {return}
     testing.expect(t,removed_owner(&r.removals,bare)==nil)
@@ -148,11 +152,11 @@ instances_taken_out_are_one_entity_for_each_cell_that_the_cell_leaves_out :: pro
         testing.expect(t,found && hit.foliage==wood && hit.coord==cell.coord && hit.instance!=generated && hit.instance!=other)
     }
     // Taking the entity of a cell away puts its instances back.
-    removed=core.read(&r.w.removed)
+    removed=&r.w.removed
     for row in 0..<core.count(removed) {
         if core.at(removed,row).coord==coord {core.destroy(&r.w.entities,core.entity_at(removed,row));break}
     }
-    core.test_world_settle(&r.w)
+    test_world_settle(&r.w)
     removal_step(&r)
     gone=removed_owner(&r.removals,wood)
     testing.expect(t,gone!=nil && len(gone.items)==2)
@@ -202,12 +206,13 @@ thousands_of_instances_taken_out_of_a_few_cells_are_a_few_entities :: proc(t:^te
         testing.expect_value(t,len(work.placed),0)
     }
     testing.expect_value(t,len(gone.items),len(all))
-    testing.expect_value(t,core.count(core.read(&r.w.removed)),entities)
+    testing.expect_value(t,core.count(&r.w.removed),entities)
     testing.expect(t,entities<=len(all)/100,"a few entities for thousands of instances")
     // A tick without requests writes nothing.
-    version:=core.version(core.read(&r.w.removed))
+    seen:core.Seen
+    _=core.touched(&r.w.removed,&seen)
     removal_step(&r)
-    testing.expect_value(t,core.version(core.read(&r.w.removed)),version)
+    testing.expect(t,!core.touched(&r.w.removed,&seen))
 }
 
 // A saved game names a manual instance by its id, so it is the same one
@@ -228,10 +233,10 @@ a_saved_game_takes_out_the_same_instance_after_its_source_is_edited :: proc(t:^t
     wood:=removal_foliage(&r,500)
     foliage_remove(&r.requests,{wood,{0,0},MANUAL|u64(cut)})
     removal_step(&r)
-    if !testing.expect_value(t,core.count(core.read(&r.w.removed)),1) {return}
+    if !testing.expect_value(t,core.count(&r.w.removed),1) {return}
     // What the saved game keeps: the entity's component, written as a row of a document. The level is its asset.
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    taken:=core.at(core.read(&r.w.removed),0)
+    taken:=core.at(&r.w.removed,0)
     document:asset.Document;asset.document_init(&document,asset.fourcc("SAVE"),{1,2});defer asset.document_destroy(&document)
     _,put:=asset.document_put_row(&document,&types,"removed",&taken)
     testing.expect_value(t,put,asset.Error.None)
@@ -264,7 +269,7 @@ a_saved_game_takes_out_the_same_instance_after_its_source_is_edited :: proc(t:^t
     page:=core.create(&loaded.w.entities)
     core.add(&loaded.w.parents,page,core.Parent{entity=again})
     core.add(&loaded.w.removed,page,saved)
-    core.test_world_settle(&loaded.w)
+    test_world_settle(&loaded.w)
     removal_step(&loaded)
     ids,_:=removed_cell(removed_owner(&loaded.removals,again),{0,0})
     work:Build_Work
@@ -276,4 +281,36 @@ a_saved_game_takes_out_the_same_instance_after_its_source_is_edited :: proc(t:^t
     testing.expect(t,source_instance_remove(level,{0,0},cut))
     cell_build(level,source_cell(level,{0,0}),{},&work,ids)
     testing.expect_value(t,len(work.placed),2)
+}
+
+// The entity of a cell is one fragment of the protocol whose ids change
+// apart: one more id taken out sends its own entries and the count, a small
+// part of what its creation sends a client that comes later.
+@(test)
+an_instance_taken_out_later_sends_a_small_part_of_its_cell :: proc(t:^testing.T) {
+    schema:serial.Schema;serial.schema_init(&schema);defer serial.schema_destroy(&schema)
+    index,added:=serial.schema_add(&schema,Foliage_Removed)
+    testing.expect(t,added,schema.error)
+    p:wire.Protocol;wire.protocol_init(&p);defer wire.protocol_destroy(&p)
+    type,registered:=wire.type_register(&p,"Foliage_Removed",{{schema=&schema,type=index}})
+    if !testing.expect(t,added && registered,"a page of a cell fits in an object") {return}
+    wire.protocol_seal(&p)
+    desc:=&p.types[type]
+    testing.expect(t,desc.words<=wire.MAX_STATE_WORDS)
+    // The change bits of the count and of each entry.
+    bit_of :: proc(desc:^wire.Object_Type,offset:uintptr) -> int {
+        for leaf in desc.leaves {if uintptr(leaf.source)==offset {return int(leaf.bit)}}
+        return -1
+    }
+    count_bit:=bit_of(desc,offset_of(Foliage_Removed,count))
+    if !testing.expect(t,count_bit>=0) {return}
+    entries:=offset_of(Foliage_Removed,instances)
+    first:=bit_of(desc,entries)
+    testing.expect(t,first>=0 && first!=count_bit)
+    for k in 0..<REMOVED_PAGE {
+        bit:=bit_of(desc,entries+uintptr(k*size_of(Removed_Instance)))
+        if !testing.expect(t,bit>=0 && bit!=count_bit) {return}
+        sent:=int(desc.bit_max_bits[count_bit])+int(desc.bit_max_bits[bit])
+        if !testing.expect(t,sent*16<desc.max_bits,"one id taken out sends a sixteenth of the cell at most") {return}
+    }
 }

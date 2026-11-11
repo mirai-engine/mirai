@@ -7,12 +7,6 @@ import "core:mem"
 import "core:os"
 import "core:strings"
 import "mirai:asset"
-import importer "mirai:cook/import"
-import "mirai:cook/import/sources"
-import "mirai:core"
-import game "mirai:demo/game"
-import gui "mirai:engine/gui"
-import render "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
@@ -34,7 +28,7 @@ morph_accessor :: proc(out:^Morph_Gltf,bytes:[]u8,count,components:int,component
 
 @(private)
 morph_jelly_source :: proc(o:^Out) -> string {
-    folder :: "source/models/morph-playground"
+    folder :: "assets/characters/jelly"
     os.make_directory_all(path(o,folder))
     sphere:geom.Mesh_Buffer;geom.mesh_buffer_init(&sphere,context.temp_allocator);geom.sphere_build(&sphere,1,24,12)
     positions,normals:=make([dynamic]mm.Vec3,context.temp_allocator),make([dynamic]mm.Vec3,context.temp_allocator)
@@ -108,38 +102,18 @@ morph_jelly_source :: proc(o:^Out) -> string {
     accessors:=strings.to_string(gltf.accessors)
     json:=fmt.tprintf(`{{"asset":{{"version":"2.0","generator":"Mirai Odin morph playground"}},"buffers":[{{"uri":"jelly.bin","byteLength":%d}}],"bufferViews":[%s],"accessors":[%s],"materials":[{{"name":"Candy","pbrMetallicRoughness":{{"metallicFactor":0,"roughnessFactor":0.42}}}}],"meshes":[{{"name":"Party Jelly","weights":[0,0,0,0],"extras":{{"targetNames":["Squash","Smile","Blink","Wobble"]}},"primitives":[{{"attributes":{{"POSITION":%d,"NORMAL":%d,"COLOR_0":%d,"JOINTS_0":%d,"WEIGHTS_0":%d}},"indices":%d,"material":0,"targets":[%s]}}]}}],"nodes":[{{"name":"Jelly","mesh":0}},{{"name":"JellySkinned","mesh":0,"skin":0}},{{"name":"Root","children":[3]}},{{"name":"Top","translation":[0,1.2,0]}}],"skins":[{{"name":"Jelly bones","joints":[2,3],"inverseBindMatrices":%d}}],"scenes":[{{"nodes":[0,1,2]}}],"scene":0,"animations":[%s]}}`,len(gltf.bytes),strings.to_string(gltf.views),accessors,p,n,color,joint,weight,index,strings.to_string(targets),ibm,strings.to_string(animations))
     if os.write_entire_file(path(o,folder+"/jelly.bin"),gltf.bytes[:])!=nil || os.write_entire_file(path(o,folder+"/jelly.gltf"),json)!=nil {o.content.failed=true}
-    return "morph-playground/jelly.gltf"
+    return folder+"/jelly.gltf"
 }
 
-// Three jellies of morph targets: clips of shapes mixed by a graph with an additive layer, the
-// same shapes under skinning, and signed weights.
+// The jelly of morph targets of the gallery, a source written here that a build imports, and its moods: a
+// layer that mixes its clips of shapes and an additive layer over it.
 @(private)
-gallery_morphs :: proc(g:^Gallery_Build,places:[3]Gallery_Place) {
-    o,s:=g.o,g.s
-    source:=morph_jelly_source(o);if o.content.failed {return};import_model(o,source);if o.content.failed {return}
-    logical:=fmt.tprintf("source/models/%s",source)
-    model,error:=importer.import_model(path(o,logical),sources.FORMATS[:],{root=fmt.tprintf("%s/demo",o.root)})
-    if error.code!=.None {fmt.eprintln(error.message);o.content.failed=true;return};defer importer.model_destroy(&model)
-    animation:=imported_id(o,logical,asset.KIND_ANIMATION,"jelly")
-    graph:=asset.content_id(PROJECT,"graph","jelly_moods")
-    nodes:=[3]anim.Graph_Node{anim.GRAPH_NODE_DEFAULT,anim.GRAPH_NODE_DEFAULT,anim.GRAPH_NODE_DEFAULT}
-    node_names:=[3]string{"Party","Sleepy","Mood"}
-    for &node,i in nodes {base.text_set(node.name[:],node_names[i])}
-    base.text_set(nodes[0].clip[:],"JellyDance");base.text_set(nodes[1].clip[:],"Sleepy");nodes[2].kind=.Blend;nodes[2].left,nodes[2].right,nodes[2].weight_param=0,1,0
-    parameter:=anim.Graph_Parameter{min=0,max=1};base.text_set(parameter.name[:],"Mood")
-    asset.content_check(&o.content,"jelly_moods.agraph",anim.graph_save(path(o,"assets/characters/jelly/jelly_moods.agraph"),&o.content.types,graph,{info={animation=animation,output=2},nodes=nodes[:],parameters={parameter}}))
-    actor_names:=[3]string{"Jelly mixer","Jelly bones","Jelly extremes"}
-    titles:=[3]string{"5.2  Morph mix","5.3  Morphs under bones","5.4  Signed morph weights"}
-    details:=[3]string{"morph clips + graph + additive layer","the same shapes, before skeletal skinning","weights past 1 and below 0, per instance"}
-    podium_colors:=[3]mm.Vec4{{.5,.23,.85,1},{.95,.28,.45,1},{.95,.65,.12,1}}
-    for i in 0..<3 {
-        origin:=places[i].origin+mm.Vec3{0,.21,0};skinned:=i==1;mesh:=model.meshes[1 if skinned else 0]
-        actor:=asset.builder_entity(s,actor_names[i],{position=origin})
-        asset.builder_set(s,actor,render.Mesh_Renderer{mesh=imported_id(o,logical,asset.KIND_MESH,mesh.name)})
-        clip:=anim.ANIMATION_DEFAULT;clip.asset=graph;anim.animation_play(&clip,"Rubber",.2,layer=1,mode=.Additive,weight=.25);asset.builder_set(s,actor,clip)
-        weights:=anim.Morph_Weights{source=core.Entity(actor)};base.text_set(weights.path[:],"JellySkinned" if skinned else "Jelly");asset.builder_set(s,actor,weights)
-        asset.builder_set(s,actor,game.Morph_Playground{variant=u8(i)})
-        podium:=asset.builder_entity(s,"Candy podium",{position=origin+mm.Vec3{0,-.13,0},scale={2.55,.24,2.35}});asset.builder_set(s,podium,render.Mesh_Renderer{shape=.Cylinder});asset.builder_set(s,podium,render.Tint{color=podium_colors[i]})
-        gallery_item(g,actor,.Morph,places[i],titles[i],details[i])
-    }
+gallery_morphs :: proc(o:^Out) {
+    source:=morph_jelly_source(o);if o.content.failed {return}
+    animation:=imported_id(o,source,asset.KIND_ANIMATION,"jelly")
+    // Its moods over the dance: how sleepy it is, and how much the rubber adds, by the weights the game sets.
+    layers:=[2]anim.Stack_Layer{anim.STACK_LAYER_DEFAULT,anim.STACK_LAYER_DEFAULT}
+    base.text_set(layers[0].name[:],"Mood");base.text_set(layers[0].clip[:],"Sleepy");layers[0].sync,layers[0].weight,layers[0].fade=true,0,0
+    base.text_set(layers[1].name[:],"Rubber");base.text_set(layers[1].clip[:],"Rubber");layers[1].mode,layers[1].weight,layers[1].fade=.Additive,.25,.2
+    gallery_set(o,"characters/jelly","jelly_moods",animation,{actions={layers=layers[:]}})
 }

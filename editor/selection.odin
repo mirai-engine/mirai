@@ -14,16 +14,9 @@ selection_click_target :: proc(s:^Session,w:core.World_Ref,e:core.Entity,individ
     return link.instance
 }
 
-// Copy keeps the ids of the selected roots, not the entities: Paste finds
-// them in the scene as it is then, after undo, redo or a reload.
-selection_copy :: proc(s:^Session,w:core.World_Ref) {
-    clear(&s.copied)
-    for e in history.selection_roots(s.selection,w) {
-        if id:=api_entity_id(w,e);id!=0 {append(&s.copied,id)}
-    }
-}
-
-// The copied roots that the World has.
+// The copied roots that the World has: Copy keeps their ids, not the
+// entities (Copy), so Paste finds them in the scene as it is then,
+// after undo, redo or a reload.
 copied_entities :: proc(s:^Session,w:core.World_Ref,allocator:=context.temp_allocator) -> []core.Entity {
     found:=make([dynamic]core.Entity,allocator)
     for id in s.copied {

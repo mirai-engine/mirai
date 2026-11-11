@@ -1,6 +1,7 @@
 package mirai_audio
 
 import "base:runtime"
+import "core:math"
 import "core:sync"
 import "core:thread"
 
@@ -25,8 +26,11 @@ Error :: enum u8 {
     Unsupported_Format, // a sample format or channel count the mixer does not play
 }
 
+// Frames a second the mixer renders: those its HRTF was measured at. The
+// device converts them to its own rate (platform.audio_device_open).
+MIXER_RATE :: 48000
+
 Mixer_Desc :: struct {
-    sample_rate:int,      // 48000 when zero
     channels:int,         // 1 or 2; 2 when zero
     voice_capacity:int,   // 64 when zero
     bus_capacity:int,     // the master included; 8 when zero
@@ -37,7 +41,8 @@ Mixer_Desc :: struct {
     feed_frames:int,      // frames buffered ahead for each of them, rounded up to a power of two; two lossless blocks when zero. A lossless file of blocks longer than half of it is decoded whole when it loads
     decoder_thread:bool,  // decode on a thread of the mixer; false: voice_play and mixer_update decode on the calling thread
     command_capacity:int, // commands the game thread can queue between two chunks, rounded up to a power of two; 1024 when zero
-    speed_of_sound:f32,   // meters per second, for Doppler; 343 when zero
+    speed_of_sound:f32,   // meters per second, for Doppler and delay; 343 when zero
+    output:Output_Kind,   // what the output plays on; mixer_set_output changes it
     allocator:runtime.Allocator, // context.allocator when unset
 }
 
@@ -68,10 +73,11 @@ Mixer_Stats :: struct {
 
 @(private)
 Command_Kind :: enum u8 {
-    Voice_Play,Voice_Stop,Voice_Pause,Voice_Volume,Voice_Pitch,Voice_Pan,Voice_Loop,Voice_Fade,Voice_Place,Voice_Lowpass,Voice_Reverb,
-    Bus_Volume,Bus_Mute,Bus_Lowpass,Bus_Duck,Bus_Reverb,
+    Voice_Play,Voice_Stop,Voice_Pause,Voice_Volume,Voice_Pitch,Voice_Pan,Voice_Loop,Voice_Fade,Voice_Place,Voice_Occlusion,Voice_Reverb,
+    Bus_Volume,Bus_Mute,Bus_Lowpass,Bus_Duck,Bus_Reverb,Bus_Send,
     Reverb,
     Listener,
+    Output,
     Sound_Release,
 }
 @(private)
@@ -112,6 +118,7 @@ Mixer :: struct {
     reverb_shadow:Reverb_Shadow,
     free_feeds:[]u32,free_feed_count:int, // feeds of the pool
     counters:Mixer_Stats,
+    output:Output_Kind,
 
     // Feeds: the pool first, then one per stream.
     feeds:[]Feed,
@@ -133,9 +140,29 @@ Mixer :: struct {
     reverb:Reverb_Unit,  // the room
     reverb_bus:u16,      // where the room returns
     bus_reverbs:[]Reverb_Unit,
+    limiter:Limiter,
     scratch:[]f32,     // source frames of a voice that plays from a feed, laid out in a row
     listener:Listener,
     listener_serial:u32,
+    output_now:Output_Kind,
+    binaural_ready:bool, // binaural_init was done before output_now was ever headphones
+    spatial_mono,spatial_old:[]f32, // CHUNK_FRAMES per channel: a spatial voice before it is placed
+    hrtf:Hrtf,
+    conv:Fft, // of the binaural convolution
+    // Per voice slot (binaural.odin): the HRTF spectra of both ears and the last input.
+    binaural_spectra:[]f32, // complex
+    binaural_dry:[]f32,
+    // Per bus and ear: what its voices add up to in the chunk (complex) and the
+    // ring of binaural_ring frames still to play.
+    binaural_sums,binaural_rings:[]f32,
+    binaural_used:[]bool,
+    binaural_left:[]i32, // per bus: frames of its rings that may still hold sound
+    binaural_ring:int,
+    binaural_read:int, // where the rings play from
+    binaural_kept:int, // samples the last chunk fell over
+    binaural_window:[]f32, // the rise over BINAURAL_OVERLAP samples
+    binaural_windowed,binaural_wet,binaural_input:[]f32,
+    binaural_dry_spectrum:[]f32, // complex
 
     // Written by the audio thread, read by the game thread; atomic.
     finished:[]u32,        // per voice slot: generation of the voice that last ended there
@@ -148,15 +175,17 @@ mixer_create :: proc(desc:Mixer_Desc) -> (m:^Mixer,error:Error) {
     allocator:=desc.allocator
     if allocator.procedure==nil {allocator=context.allocator}
     channels:=desc.channels if desc.channels!=0 else 2
-    if channels<1 || channels>2 || desc.sample_rate<0 || desc.sample_rate>384000 {return nil,.Invalid_Desc}
+    if channels<1 || channels>2 {return nil,.Invalid_Desc}
     if desc.voice_capacity<0 || desc.bus_capacity<0 || desc.bus_capacity>int(max(u16)) || desc.sound_capacity<0 || desc.stream_capacity<0 || desc.feed_capacity<0 || desc.feed_capacity>MIXER_CAPACITY_MAX || desc.voice_capacity>MIXER_CAPACITY_MAX || desc.stream_capacity>MIXER_CAPACITY_MAX || desc.command_capacity>MIXER_CAPACITY_MAX {return nil,.Invalid_Desc}
     if desc.feed_frames<0 || desc.feed_frames>MIXER_RING_FRAMES_MAX || desc.stream_frames<0 || desc.stream_frames>MIXER_RING_FRAMES_MAX {return nil,.Invalid_Desc}
     failed:runtime.Allocator_Error
     if m,failed=new(Mixer,allocator);failed!=nil {return nil,.Out_Of_Memory}
     m.allocator=allocator
-    m.sample_rate=desc.sample_rate if desc.sample_rate>0 else 48000
+    m.sample_rate=MIXER_RATE
     m.channels=channels
     m.speed_of_sound=desc.speed_of_sound if desc.speed_of_sound>0 else 343
+    if desc.output!=.Headphones && desc.output!=.Speakers {mixer_destroy(m);return nil,.Invalid_Desc}
+    m.output,m.output_now=desc.output,desc.output
     if error=mixer_init(m,desc);error!=.None {
         mixer_destroy(m)
         return nil,error
@@ -233,6 +262,41 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
     for &bus in m.bus_shadows {bus.volume=1}
     for &bus in m.buses {bus.volume=1;bus.gain=1;bus.duck_gain=1;bus.duck_gain_now=1}
     m.listener.rotation=1
+    m.limiter.gain=1
+    if m.spatial_mono,failed=make([]f32,CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.spatial_old,failed=make([]f32,CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
+    if desc.output==.Headphones {
+        binaural_init(m) or_return
+        m.binaural_ready=true
+    }
+    return .None
+}
+
+// The HRTF and what binaural output needs per voice and bus, built the first
+// time the output is headphones and kept after.
+@(private)
+binaural_init :: proc(m:^Mixer) -> (error:Error) {
+    if m.conv.n>0 {return .None}
+    defer if error!=.None {binaural_destroy(m)}
+    allocator:=m.allocator
+    failed:runtime.Allocator_Error
+    voices,buses:=len(m.voices),len(m.buses)
+    hrtf_load(&m.hrtf,MIXER_RATE,allocator) or_return
+    fft_init(&m.conv,BINAURAL_WINDOW+m.hrtf.samples-1,allocator) or_return
+    bins:=m.conv.n/2+1
+    m.binaural_ring=next_pow2(m.conv.n+BINAURAL_OVERLAP)
+    if m.binaural_spectra,failed=make([]f32,voices*2*bins*2,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_sums,failed=make([]f32,buses*2*bins*2,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_rings,failed=make([]f32,buses*2*m.binaural_ring,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_used,failed=make([]bool,buses,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_left,failed=make([]i32,buses,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_input,failed=make([]f32,CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_dry,failed=make([]f32,voices*2*BINAURAL_OVERLAP,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_window,failed=make([]f32,BINAURAL_OVERLAP,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_windowed,failed=make([]f32,m.conv.n,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_wet,failed=make([]f32,m.conv.n,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_dry_spectrum,failed=make([]f32,2*2*bins,allocator);failed!=nil {return .Out_Of_Memory}
+    for &w,i in m.binaural_window {w=0.5*(1+math.cos(math.PI*(f32(i)/f32(BINAURAL_OVERLAP-1)-1)))}
     return .None
 }
 
@@ -255,7 +319,22 @@ mixer_destroy :: proc(m:^Mixer) {
     for unit in m.bus_reverbs {delete(unit.memory,allocator)}
     delete(m.bus_reverbs,allocator)
     delete(m.scratch,allocator)
+    delete(m.spatial_mono,allocator);delete(m.spatial_old,allocator)
+    binaural_destroy(m)
     free(m,allocator)
+}
+
+@(private)
+binaural_destroy :: proc(m:^Mixer) {
+    allocator:=m.allocator
+    hrtf_destroy(&m.hrtf,allocator)
+    fft_destroy(&m.conv,allocator)
+    delete(m.binaural_spectra,allocator);delete(m.binaural_rings,allocator);delete(m.binaural_dry,allocator)
+    delete(m.binaural_window,allocator);delete(m.binaural_windowed,allocator);delete(m.binaural_wet,allocator)
+    delete(m.binaural_dry_spectrum,allocator);delete(m.binaural_sums,allocator);delete(m.binaural_used,allocator)
+    delete(m.binaural_left,allocator);delete(m.binaural_input,allocator)
+    m.binaural_spectra,m.binaural_rings,m.binaural_dry,m.binaural_window,m.binaural_windowed,m.binaural_wet=nil,nil,nil,nil,nil,nil
+    m.binaural_dry_spectrum,m.binaural_sums,m.binaural_used,m.binaural_left,m.binaural_input=nil,nil,nil,nil,nil
 }
 
 // Frames rendered since the mixer was created: the time base of Voice_Desc.start_frame.
@@ -315,10 +394,12 @@ command_pop :: proc "contextless" (m:^Mixer,command:^Command) -> bool {
     return true
 }
 
-// Renders len(out)/channels frames, interleaved, replacing what out held.
-// The samples are not clamped: a mix louder than full scale goes above 1.
+// Renders len(out)/channels frames, interleaved, replacing what out held,
+// under LIMITER_CEILING.
 // Safe to call from an audio thread: it takes no lock and allocates nothing.
 mixer_render :: proc "contextless" (m:^Mixer,out:[]f32) {
+    float_mode:=denormals_flush()
+    defer denormals_restore(float_mode)
     frames:=len(out)/m.channels
     done:=0
     for done<frames {
@@ -344,7 +425,7 @@ commands_apply :: proc "contextless" (m:^Mixer) {
                 if v.has_next {feed_release(m,&v.next)}
                 v.next=command.start;v.has_next=true
             }
-        case .Voice_Stop,.Voice_Pause,.Voice_Volume,.Voice_Pitch,.Voice_Pan,.Voice_Loop,.Voice_Fade,.Voice_Place,.Voice_Lowpass,.Voice_Reverb:
+        case .Voice_Stop,.Voice_Pause,.Voice_Volume,.Voice_Pitch,.Voice_Pan,.Voice_Loop,.Voice_Fade,.Voice_Place,.Voice_Occlusion,.Voice_Reverb:
             voice_command(m,&command)
         case .Bus_Volume:m.buses[command.index].volume=command.value
         case .Bus_Mute:m.buses[command.index].muted=command.flag
@@ -356,9 +437,15 @@ commands_apply :: proc "contextless" (m:^Mixer) {
             m.reverb.params=reverb_command(&command)
             m.reverb_bus=u16(command.index)
         case .Bus_Reverb:m.bus_reverbs[command.index].params=reverb_command(&command)
+        case .Bus_Send:m.buses[command.index].send=Bus(command.frames)
         case .Listener:
             m.listener={command.vectors[0],command.vectors[1],command.rotation}
             m.listener_serial+=1
+        case .Output:
+            m.output_now=Output_Kind(command.index)
+            m.binaural_ready||=m.output_now==.Headphones
+            // What a voice kept for the other output starts over.
+            for &v in m.voices {v.binaural_live=false}
         case .Sound_Release:
             for &v,i in m.voices {
                 if v.has_next && v.next.sound==command.index {voice_next_cancel(m,u32(i))}
@@ -387,6 +474,7 @@ chunk_render :: proc "contextless" (m:^Mixer,out:[]f32,n:int) {
         if v.phase!=.Free {active+=1}
     }
     sync.atomic_store_explicit(&m.voices_active,active,.Relaxed)
+    binaural_flush(m,n)
     room:=raw_data(m.bus_buffers[int(m.reverb_bus)*CHUNK_FRAMES*2:])
     reverb_run(&m.reverb,raw_data(m.reverb_input),room,n)
     buses_mix(m,out,n)

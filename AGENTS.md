@@ -34,14 +34,21 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
   through SDL3; platform differences go in files with build tags and the same signatures. A single
   Slang source: SPIR-V, MSL and bindings are generated and never edited by hand. No empty backends.
 - **No legacy or backward compatibility.** Formats and APIs are versioned; an incompatible change
-  updates all its consumers in the same task.
+  updates all its consumers in the same task. What was deleted leaves no alias, flag, fallback or
+  hint: a removed method is an unknown method. A default or a behavior is decided on its merits,
+  not to keep what there is or the assets of today.
 - **Common entities and capabilities through components.** Identity, transform and hierarchy are
   the base of every entity; presets are creation recipes
-  ([core](.agents/skills/mirai-core/SKILL.md)).
+  ([core](.agents/skills/mirai-core/SKILL.md)). A generic component plus data, never a component
+  per case; a rule about a type is an attribute on the type that the generator records, never a
+  list of types kept elsewhere.
 - **Games and plugins use a simple public API** (`core`, `host`, `engine/*`, `std`, `ui`, `asset`);
   the engine has no rules of a game. Whoever uses the API, a person or an AI over MCP, declares the
   result they want, and on invalid input gets an error that says what failed and how to fix it. A
   plugin extends the renderer through `engine/render`, without importing `render` or `rhi`.
+- **Few concepts, a simple surface.** The API, the editor and the formats show as few concepts as
+  the job needs. Where what is simple to use and what is simple to build pull apart, the
+  difficulty stays inside the engine, never with whoever uses it.
 - **Physics and game networking are first-party plugins** (`physics`, `multiplayer`): fixed step,
   authoritative server, prediction and rollback, no bit-exact lockstep across architectures. The
   `net` transport stays in the engine: editor collaboration uses it and cannot be turned off.
@@ -63,12 +70,21 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 
 ## Scope and done
 
+- **Root fixes, not workarounds.** A problem is fixed where it is caused, also in third-party code
+  that lives in the repository, which is ours to edit or rewrite: no wrapper, define, suppressed
+  warning or special case around it. If the root fix is large, tell the user its size and wait
+  for the answer instead of choosing the workaround.
 - **A defect found during a task** is fixed in it if it blocks the task or is in what the task
   touches; if it is a large change that needs a decision, ask the user.
 - **A defect of a dependency** (Odin, Slang, SDL): prepare the upstream fix (minimal repro, PR or
   issue) and, until it is released and integrated, a workaround with a comment that names it; an
   Odin one also gets its entry in [Odin workarounds](docs/ODIN_WORKAROUNDS.md). Publishing the PR
   or issue requires the user's confirmation.
+- **Code or data taken from another project** under an open-source license (MIT, Apache, BSD,
+  zlib, GPL and the like), translated or adapted, gets its entry in
+  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) in the same task: the project, its license, the
+  copyright holder as its repository states it and where it ends up. The final report lists it
+  under **Derived code**.
 - **Done** is every requested point implemented and verified as [Verification](#verification)
   says. The final message lists what was left unverified or approximate.
 - **If what is missing is structural** (another technique, a new system), stop and ask.
@@ -80,12 +96,16 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 
 - **One piece of data, one place, one writer.** Do not copy state into another struct or deliver
   it twice.
-- **Each frame does only what changed.**
+- **Each frame does only what changed**, and where it changes: what is decided per instance is
+  computed once on the CPU when it changes, never again per pixel in a shader.
+- **A simplification ends with fewer lines** of code that is not tests than it started with
+  (`git diff --shortstat main...HEAD -- '*.odin' ':!*_test.odin'`, and the same for `*.slang`); if
+  it cannot, the report says why.
 - **What is optional goes in a plugin**: what some games use adds no state or code to the core.
 - **Performance.** If the task seeks performance or adds measurable work per frame or tick, measure
   once, when it is finished, with `mirai bench compare --base main`
   ([profiling](.agents/skills/mirai-agent-api/references/methods.md#profiling)): it alternates
-  pairs of both builds, built alike at `--dev`, without validation, VSync or frame limit, and
+  pairs of both builds, built alike in dev, without validation, VSync or frame limit, and
   writes the table. Never after
   each step nor with homemade pair scripts. A change that does not move the cost (UI, tools) needs
   no base: `profile.capture` in the open session is enough. If other tasks are compiling or
@@ -129,10 +149,10 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 The shell, the command table, the flow of a session and how to hand a command to the user:
 [common commands](.agents/skills/mirai-projects/references/projects.md#common-commands).
 
-- An agent passes `--dev` to `build`, `edit`, `play`, `session` and `capture`, and `render check`
-  and `bench compare` are `--dev` by themselves: two builds of the same mode compare. **`--release`
-  only when the task cannot do without it or the user asks for it**: a budget in absolute numbers.
-  If the user's editor holds the `--dev` build of the checkout, work in a worktree.
+- Every command builds in dev unless `--release` is given; `render check` and `bench compare`
+  build both sides alike: two builds of the same mode compare. **`--release` only when the task
+  cannot do without it or the user asks for it**: a budget in absolute numbers.
+  If the user's editor holds the dev build of the checkout, work in a worktree.
 - Against an editor: `mirai session start`, `mirai rpc` or `mirai capture`, and
   `mirai session stop`. Do not launch `mirai-editor` by hand, write HTTP clients, or parse the
   output of `rpc` with scripts: `--select` and `--wait-until` instead of `json.load` and `sleep`.
@@ -143,35 +163,34 @@ The shell, the command table, the flow of a session and how to hand a command to
 
 ## Verification
 
-Verify in steps and stop at the first one that is enough for what changed:
+Three levels, each run by one party; none repeats what another runs, and the report of each says
+what ran and what it left for the next.
 
-1. `mirai check` of each touched package. Always, before building or testing.
-2. The focal tests the area's skill names, with `mirai test`.
-3. If the change runs in the engine: `mirai build editor --dev` of the affected project and one
-   real call per touched method or flow, in a session.
-4. If the change is visible: a capture without validation errors compared with its reference. For
-   rendering or importing, `mirai capture` from the reference camera with `--reference` and an SSIM
-   threshold; for editor UI, `capture` with `ui`. At most two capture iterations of your
-   own before showing the user the image and the doubt; in a visual review with the user, each
-   round is shown to them. Crops, zoom and pixels with `mirai image`, not with scripts. Looking at
-   how something looks does not require removing the frame limit or VSync.
+- **The agent that writes a change**: `mirai check` of each touched package, always, then the tests
+  of what it touched with `mirai test` (the focal ones the area's skill names; the GPU ones, with
+  validation, only if `render`, `shaders`, `rhi` or the GPU part of the area changed). Only
+  documentation or skills: `uv run scripts/check_docs.py` (links, anchors, frontmatter and
+  symlink); `ui` or `editor`: `uv run scripts/check_ui_style.py` too. A change to `tools/mirai`,
+  the generator, a component or a step also takes one real build of the affected project, which
+  runs the generator.
+- **The integrator, once for each batch of branches it merges**: `mirai build editor` of the
+  affected project, the touched packages whole without GPU, the scenarios (`mirai play test`),
+  `mirai scene check` and, if the batch touches `render`, `shaders` or `rhi`, the cost of one view
+  against `main` (`mirai render check --views`). A merge without code conflicts takes only
+  `mirai check` of the packages it brings.
+- **The close of a task of many branches**, on a machine with no other load: every test package
+  with validation, the
+  [render check](.agents/skills/mirai-rendering/references/verification.md#render-check) and the
+  build of the game. Full suites, reference captures of all areas, and build and frame times run
+  only here.
 
-| What was touched | How far to verify |
-| --- | --- |
-| Only documentation or skills | `uv run scripts/check_docs.py` (links, anchors, frontmatter and symlink) |
-| CPU packages (`std`, `core`, `physics`, `net`, `cook`, `asset`) | Steps 1 and 2 |
-| `tools/mirai`, the generator or the build | 1, 2 and a real build of the engine and the affected project |
-| `ui` or `editor` | 1 to 3 and `uv run scripts/check_ui_style.py`; if the visible part changes, the capture with the UI |
-| `render`, `shaders` or `rhi` | 1 to 4, with the GPU tests with validation; the render check, below |
-| A merge without code conflicts | `mirai check` of the packages it brings; no captures unless it touches `render/`, `shaders/` or assets |
-
-**Render check.** When a change needs it and which one, once at the end:
-[render check](.agents/skills/mirai-rendering/references/verification.md#render-check).
-
-The table is a guide: the agent decides how far to go according to the size of the change, and its
-report says what ran and what it left for integration. Full suites, reference captures of all
-areas, and build and frame times run only once, at final integration, on a machine with no other
-load.
+Whoever works alone on a change does the integrator's part for it. If it runs in the engine: one
+real call per touched method or flow, in a session. If it is visible: a capture without validation
+errors compared with its reference; for rendering or importing, `mirai capture` from the reference
+camera with `--reference` and an SSIM threshold; for editor UI, `capture` with `ui`. At most two
+capture iterations of your own before showing the user the image and the doubt; in a visual review
+with the user, each round is shown to them. Crops, zoom and pixels with `mirai image`, not with
+scripts. Looking at how something looks does not require removing the frame limit or VSync.
 
 - If a protocol, an authentication or persistence changes, check the minimal real path early,
   before extending the implementation.
@@ -183,13 +202,14 @@ load.
   the task: it is reported.
 - **Iterate on what is visible in seconds.** Before touching a shader or a material, confirm in the
   scene what draws what is seen (`scene.inspect` of the entity, its material and its program).
-  While iterating, a single `--dev` session open on that scene: a material program is changed with
+  While iterating, a single dev session open on that scene: a material program is changed with
   `material.program.edit`, another shader of the project or of a plugin with
   `mirai shaders --project P`, which asks the open editor for it; both publish first what the
-  viewport draws. An engine shader (`shaders/`) needs `mirai build editor` and restarting the
-  session. Then `capture` or `mirai capture` and `mirai image`. No `render check` or
-  `--release` builds per round: the check runs once at the end and only if the change is global; a
-  quality one does not measure cost.
+  viewport draws. An engine shader (`shaders/`) is published by `mirai build editor` into the
+  open session the same way; one that changes its bindings rebuilds and restarts it. Then
+  `capture` or `mirai capture` and `mirai image`. No `render check` or `--release` builds per
+  round: the check runs once at the end and only if the change is global; a quality one does not
+  measure cost.
 - **New tests.** Before adding one, look for the one that already covers that behavior and extend
   it. One test per behavior or contract, not one per parameter variant (cases go in a table), in
   the layer that implements it and not again from each consumer. It checks invariants, not sizes,
@@ -199,12 +219,12 @@ load.
 - A path is not verified without its build and run. What only runs on another platform is stated in
   the final report, with its command and its expected result; there is no separate file for that.
 - If a test fails, first tell a product defect apart from a wrong fixture. A test that already
-  fails on `main` is stated in the report.
+  fails on `main` is stated in the report. A change does not land by deleting a test case or
+  widening a limit: a case that no longer applies is named in the report, with the reason.
 - Preserve local changes. Report what was checked and in which environment.
-- Gestures (drag, drag and drop) in the native editor are tested by the user: ask for them with a
-  numbered list of concrete actions.
-- Against an open editor, work on a copy: `scene.save` only to `.mirai/tmp/`, never over a
-  versioned asset.
+- Against an open editor every edit is written to its file. To try or verify something of your
+  own, work on a copy under `.mirai/tmp/` (`mirai session start --copy`, or `asset.move` with
+  `copy`); edit a versioned asset itself only when the task asks for that change.
 
 ## Parallel work
 
@@ -220,9 +240,10 @@ load.
   beyond the assignment, ask the user before widening it.
 - **Dependencies.** Before investigating a defect of Odin, Slang or SDL, look for it in the
   [workarounds](docs/ODIN_WORKAROUNDS.md) and in the upstream issues and PRs.
-- A subagent that writes code delivers with `mirai check` and its focal CPU tests, without building
-  the editor or the game, opening sessions or running GPU tests; whoever launched it integrates and
-  validates. A research one does not modify versioned files and may build and measure.
+- A subagent that writes code delivers at the first level of [Verification](#verification),
+  without opening sessions, capturing or measuring; whoever launched it integrates and validates.
+  A research one does not modify versioned files and may build and measure. A failure found at
+  integration becomes a check of the integrator, not a step added to the brief of every agent.
 
 ## Token spending
 
@@ -231,9 +252,10 @@ Every turn rereads the whole context: the cost grows with its size and with the 
 - **Short waits.** No command blocks for more than 4 minutes or polls with `sleep`, `until`,
   `tail -f` or a long `timeout`: what takes longer runs in the background and is read once when it
   finishes. A longer wait expires the cache and the next turn writes the context again.
-- **Closed assignment.** The prompt of a session or subagent names a concrete item, what done is
-  and how it is verified; "solve section X" is not an assignment. The final report has at most 300
-  words and does not copy diffs or outputs.
+- **Closed assignment.** The prompt of a session or subagent names a concrete item, the result
+  that makes it done and the test that proves it, not the mechanism, unless the mechanism is a
+  contract already decided; "solve section X" is not an assignment. The final report has at most
+  150 words and does not copy diffs or outputs.
 - **Child sessions.** A child session does not launch subagents except for large, independent
   parts. After a cutoff by limit they are resumed in batches, not with a message to all.
 - **Model and effort per task.** Research, audits, triage, documentation and merges without
@@ -241,4 +263,5 @@ Every turn rereads the whole context: the cost grows with its size and with the 
   design architecture, never in a session that coordinates others.
 - **Read just enough.** Large files by range or section, `rg -m`, outputs with `--select`,
   `--quiet` or `tail`; independent searches together in one call or in parallel. Transcripts of
-  other sessions are not read: their report is enough.
+  other sessions are not read: their report is enough. The source of another engine is read to
+  design a new shape, not to fix a defect.

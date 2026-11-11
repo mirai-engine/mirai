@@ -34,7 +34,6 @@ Filter :: enum u8 {
     Always,  // every connection
     Owner,   // only the owning connection
     Spatial, // connections whose view reaches the object
-    Custom,  // only connections the game lets in with object_set_relevance
     None,    // no connection
 }
 
@@ -68,12 +67,23 @@ Replication_Desc :: struct {
     // its ticks in the handshake and a client takes them. Default 0.5, at most HISTORY_MAX_SECONDS
     history_seconds:f32,
     input_lead:f32,        // ticks of input the server should have in hand, default 2
+    input_delay:Input_Delay, // client: how far ahead of its own tick it submits its input, by the round trip it measures
     interpolation_delay:f32, // ticks behind the server that remote objects are shown besides the jitter, default 2.5
     display_jump:f32,      // client: seconds the display of remote objects may fall behind where it should be before it jumps there; default 30 ticks
     display_dilation:f32,  // client: how much faster or slower than its ticks the display may run to catch up, default 0.1
     object_stats:bool,     // keep bits sent per object
     groups:int,            // server: groups an object can be of (object_set_groups), from 1; default 1024, at most 65535
 }
+
+// How a client delays its input by the round trip, in seconds: the first cover
+// of it by delay (at least min), the next predict by prediction, and what is
+// beyond by delay again, so a correction replays at most predict. Its tick runs
+// as much less ahead of the server. Zero takes the default: min 0, cover
+// 0.05, predict 0.1. A negative min or cover is none; a negative predict has
+// no bound: past cover the input is never delayed.
+Input_Delay :: struct {min,cover,predict:f32}
+
+INPUT_DELAY_MAX :: 15 // ticks a client delays its input at the most
 
 Object_Desc :: struct {
     type:Type_Id,
@@ -90,6 +100,7 @@ Object_Desc :: struct {
     poll_interval:int,              // ticks between turns, default 1: a polled object is read only on its turn, which object_poll_due tells
     auto_authority:bool,            // Lent: the first client to ask gets it without consulting the game
     groups:Groups,                  // a connection sees it only while it has one of them (connection_set_group); none: of no group
+    visibility:u32,                 // a connection sees it only while it shares a bit with it (connection_set_visibility); 0: any
 }
 
 Input_Status :: enum u8 {
@@ -163,6 +174,7 @@ Front :: struct {
     input_seen:[]bool,
     server_connection:Connection,
     history:int, // client: the ticks of history the server announced when it accepted
+    published:u32, // the tick host_publish closed last: what is sent now is of the next
 }
 
 @(private)
@@ -192,6 +204,12 @@ repl_init :: proc(h:^Host) -> Error {
     if d.display_jump<=0 {d.display_jump=f32(CLOCK_JUMP_TICKS)/f32(h.desc.tick_rate)}
     if d.display_dilation<=0 {d.display_dilation=CLOCK_MAX_DILATION}
     if d.groups<=0 {d.groups=1024}
+    delays,defaults:=transmute([3]f32)d.input_delay,[3]f32{0,0.05,0.1}
+    for &value,i in delays {
+        if !(abs(value)<=max(f32)) {return refuse(h,"replication.input_delay","finite seconds in min, cover and predict; 0 takes the default, below 0 none")}
+        value=value==0?defaults[i]:value>0?value:i==2?max(f32):0
+    }
+    d.input_delay=transmute(Input_Delay)delays
     if d.groups>GROUPS_MAX {return refuse(h,"replication.groups","at most 65535; 0 takes 1024")}
     f:=&h.front
     protocol:=h.desc.protocol
@@ -311,6 +329,7 @@ Create_Payload :: struct {
     simulation:Simulation,
     auto:bool,
     groups:Groups,
+    visibility:u32,
 }
 
 @(private)
@@ -354,7 +373,7 @@ object_create :: proc(h:^Host,desc:Object_Desc) -> (Object,Error) {
     staged:Create_Buffer
     payload:=&staged.payload
     payload^={owner=desc.owner,parent=desc.parent,position=desc.position,radius=desc.radius,
-        priority=desc.priority<=0?1:desc.priority,type=desc.type,filter=desc.filter,simulation=desc.simulation,auto=desc.auto_authority,groups=desc.groups}
+        priority=desc.priority<=0?1:desc.priority,type=desc.type,filter=desc.filter,simulation=desc.simulation,auto=desc.auto_authority,groups=desc.groups,visibility=desc.visibility}
     words:=staged.words[:type.words]
     o^={generation=generation,type=desc.type,flags={.Alive},simulation=desc.simulation,user=desc.user,sources=desc.sources}
     user_set(f,desc.user,index)
@@ -379,6 +398,33 @@ object_create :: proc(h:^Host,desc:Object_Desc) -> (Object,Error) {
         f.poll_count+=1
     }
     return object,.None
+}
+
+// Server: the object is of another type from now on, with the state its
+// sources hold: every connection that has its replica takes both in its place,
+// and the replica goes on. Full when the state does not fit state_words or the
+// frame: try again after the next publish.
+object_retype :: proc(h:^Host,object:Object,type:Type_Id,sources:[MAX_FRAGMENTS]rawptr) -> Error {
+    f:=&h.front
+    protocol:=h.desc.protocol
+    o:=front_object(h,object)
+    if o==nil || h.desc.mode!=.Server || protocol==nil || int(type)>=type_count(protocol) {return .Invalid}
+    if o.type==type {return .None}
+    sources:=sources
+    before,after:=&protocol.types[o.type],&protocol.types[type]
+    size:=int(offset_of(Create_Buffer,words))+after.words*4
+    if f.state_words-before.words+after.words>h.desc.replication.state_words || !op_fits(h,size) {return .Full}
+    staged:Create_Buffer
+    staged.payload.type=type
+    words:=staged.words[:after.words]
+    for fragment in 0..<after.fragment_count {
+        if sources[fragment]!=nil {fragment_quantize(protocol,after,fragment,sources[fragment],words,h,front_to_reference)}
+    }
+    if !op_push(h,{kind=.Object_Retype,handle=u64(object)},mem.ptr_to_bytes(&staged)[:size]) {return .Full}
+    f.state_words+=after.words-before.words
+    o.type,o.dirty,o.sources=type,0,sources
+    f.binding_revision+=1
+    return .None
 }
 
 @(private)
@@ -568,11 +614,19 @@ object_set_parent :: proc(h:^Host,object,parent:Object) -> Error {
     if parent==object || parent!=0 && front_object(h,parent)==nil {return .Invalid}
     return object_op(h,object,{kind=.Object_Parent,value=u64(parent)})
 }
-// Server: whether the connection sees the object while its filter is Custom. A
-// new object, and a connection that arrives, start with none.
-object_set_relevance :: proc(h:^Host,object:Object,connection:Connection,relevant:bool) -> Error {
-    if connection==0 {return .Invalid}
-    return object_op(h,object,{kind=.Object_Relevance,value=u64(connection),a=u8(relevant)})
+// Server: the visibility bits of an object, like collision layers: whatever
+// its filter and its groups let, a connection sees it only while it shares a
+// bit with it (connection_set_visibility), and so its children. 0: it asks for
+// none. Teams, fog of war and what is private to some players are bits.
+object_set_visibility :: proc(h:^Host,object:Object,mask:u32) -> Error {
+    return object_op(h,object,{kind=.Object_Visibility,c=mask})
+}
+
+// Server: the visibility bits a connection has. One that arrives has none: it
+// sees the objects that ask for none.
+connection_set_visibility :: proc(h:^Host,connection:Connection,mask:u32) -> Error {
+    if h.desc.mode!=.Server || connection==0 {return .Invalid}
+    return op_push(h,{kind=.Connection_Visibility,handle=u64(connection),c=mask})?.None:.Full
 }
 
 // Server: the groups of an object: whatever its filter, a connection sees it
@@ -678,12 +732,13 @@ event_send :: proc(h:^Host,event:Event_Id,object:Object,payload:rawptr,connectio
     words:=h.front.words[:type.desc.words]
     mem.zero_slice(words)
     fragment_quantize(protocol,&type.desc,0,payload,words,h,front_to_reference)
-    buffer:[EVENT_MAX_BYTES+16]u8
+    buffer:[RELIABLE_EVENT_MAX_BYTES+16]u8
     w:serial.Bit_Writer
     serial.bit_writer_init(&w,buffer[:])
     serial.bit_write(&w,u64(System_Message.Event),3)
     serial.bit_write(&w,u64(event),16)
     serial.bit_write(&w,u64(object),64)
+    if h.desc.mode==.Server {serial.bit_write(&w,u64(h.front.published+1),32)}
     state_write(&w,&type.desc,type.desc.all,words,nil)
     if w.overflow {return .Too_Large}
     data:=serial.bit_writer_flush(&w)
@@ -779,6 +834,7 @@ host_publish :: proc(h:^Host,tick:u32) {
             if .Dormant not_in o.flags && .Listed not_in o.flags && poll_due(o,tick) {front_publish(h,o,index,max(Fragment_Mask))}
         }
     }
+    f.published=tick
     op_push(h,{kind=.Tick,c=tick})
     frame_submit(h)
 }
@@ -848,7 +904,12 @@ front_absorb :: proc(h:^Host,buffer:^Command_Buffer) {
                 f.binding_revision+=1
             }
         case .Object_Created:
-            if !server {
+            if !server && command.retyped {
+                // The replica goes on: what the game bound it to stays.
+                o:=&f.objects[index]
+                o.type,o.role,o.simulation,o.dirty=command.type,command.role,command.simulation,0
+                f.binding_revision+=1
+            } else if !server {
                 f.objects[index]={generation=base.handle_generation(base.Handle(command.object)),type=command.type,flags={.Alive},role=command.role,simulation=command.simulation}
             }
         case .Object_Destroyed:

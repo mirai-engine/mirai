@@ -229,6 +229,45 @@ curves_pass_through_their_points :: proc(t:^testing.T) {
     testing.expect(t,test_close3(b_spline(a,b,c,d,1),b_spline(b,c,d,e,0)))
 }
 
+// A path sampled by length goes through its points, its samples about a piece
+// apart, never rises between two points that do not rise, stays in its box,
+// and fits what holds them, whatever the points are.
+@(test)
+a_sampled_path_goes_through_its_points_and_fits :: proc(t:^testing.T) {
+    points:=[]Path_Point{{{0,0,0},2,1,1},{{0,0,-10},4,1,3},{{10,-1,-10},4,3,1}}
+    out:[64]Path_Point
+    count:=path_sample(points,1,out[:])
+    testing.expect(t,count>=21 && count<=23,"about a piece apart")
+    testing.expect(t,out[0]==points[0] && out[count-1]==points[2])
+    through:=false
+    for p in out[:count] {through||=p==points[1]}
+    testing.expect(t,through,"through every point")
+    box:=path_box(points)
+    for i in 1..<count {
+        gap:=linalg.length(out[i].position-out[i-1].position)
+        testing.expectf(t,gap>0.5 && gap<1.3,"a gap of %v",gap)
+        testing.expectf(t,out[i].position.y<=out[i-1].position.y,"it falls at %d: %v after %v",i,out[i].position.y,out[i-1].position.y)
+        testing.expectf(t,aabb_contains_point(aabb_expand(box,1e-4),out[i].position),"%v in its box %v",out[i].position,box)
+    }
+    testing.expect(t,abs(out[5].width-3)<1e-5 && out[5].height==1 && abs(out[5].speed-2)<1e-5,"width, height and speed in proportion")
+    // Too few samples for a piece: they spread out, and the ends stay.
+    short:[8]Path_Point
+    count=path_sample(points,1,short[:])
+    testing.expect(t,count>=3 && count<=8 && short[count-1]==points[2])
+    nan:=math.nan_f32()
+    for c in ([]struct{points:[]Path_Point,piece:f32,room:int}{
+        {points[:1],1,64},{points,0,64},{points,nan,64},{points,1,3},
+        {{{{nan,0,0},1,1,0},{{0,0,1},1,1,0}},1,64},{{{{0,0,0},1,1,0},{{1e38,0,0},1,1,0}},1,64},{{{{0,0,0},1,1,0},{{0,0,0},1,1,0}},1,64},
+    }) {
+        written:=path_sample(c.points,c.piece,out[:c.room])
+        testing.expect(t,written==0 || written>=len(c.points) && written<=c.room)
+    }
+    for segment in ([]int{-1,2,max(int)}) {
+        p,_:=path_at(points,segment,0.5)
+        testing.expect_value(t,p,Path_Point{})
+    }
+}
+
 @(test)
 arc_table_gives_constant_speed :: proc(t:^testing.T) {
     SAMPLES :: 65
@@ -264,58 +303,3 @@ arc_table_gives_constant_speed :: proc(t:^testing.T) {
     testing.expect_value(t,arc_table_parameter(lengths[:3],0.5),f32(1))
 }
 
-@(test)
-keyframed_curve_follows_its_keys :: proc(t:^testing.T) {
-    keys:=[4]Curve_Key{
-        {time=0,value=0,interpolation=.Linear},
-        {time=1,value=10,interpolation=.Step},
-        {time=2,value=20,slope_out=0,interpolation=.Cubic},
-        {time=4,value=0,slope_in=0},
-    }
-    testing.expect_value(t,curve_evaluate(keys[:],-1),f32(0))
-    testing.expect_value(t,curve_evaluate(keys[:],0.25),f32(2.5))
-    testing.expect_value(t,curve_evaluate(keys[:],1),f32(10))
-    testing.expect_value(t,curve_evaluate(keys[:],1.99),f32(10))
-    testing.expect_value(t,curve_evaluate(keys[:],2),f32(20))
-    testing.expect_value(t,curve_evaluate(keys[:],3),f32(10))
-    testing.expect(t,curve_evaluate(keys[:],2.2)>19 && curve_evaluate(keys[:],3.8)<1,"Flat slopes ease out of and into the keys")
-    testing.expect_value(t,curve_evaluate(keys[:],4),f32(0))
-    testing.expect_value(t,curve_evaluate(keys[:],9),f32(0))
-    testing.expect_value(t,curve_evaluate(nil,1),f32(0))
-    testing.expect_value(t,curve_evaluate(keys[:1],5),f32(0))
-    // Slopes are per unit of time, whatever the length of the segment.
-    ramp:=[2]Curve_Key{{time=10,value=0,slope_out=3},{time=14,value=12,slope_in=3}}
-    for x in ([3]f32{10.5,12,13.9}) {testing.expect(t,test_close(curve_evaluate(ramp[:],x),(x-10)*3,1e-4))}
-    // Playback forward, backward and with jumps finds the same values.
-    segment:=0
-    for step in 0..=80 {
-        x:=f32(step)*0.06-0.3
-        testing.expect_value(t,curve_evaluate_from(keys[:],x,&segment),curve_evaluate(keys[:],x))
-    }
-    for step:=80;step>=0;step-=3 {
-        x:=f32(step)*0.06-0.3
-        testing.expect_value(t,curve_evaluate_from(keys[:],x,&segment),curve_evaluate(keys[:],x))
-    }
-    segment=99
-    testing.expect_value(t,curve_evaluate_from(keys[:],0.5,&segment),f32(5))
-    testing.expect_value(t,segment,0)
-    testing.expect_value(t,curve_evaluate_from(nil,0.5,&segment),f32(0))
-}
-
-@(test)
-smooth_slopes_make_a_curve_through_the_keys :: proc(t:^testing.T) {
-    keys:=[4]Curve_Key{{time=0,value=0},{time=1,value=1},{time=2,value=4},{time=3,value=9}}
-    curve_smooth_slopes(keys[:])
-    testing.expect_value(t,keys[1].slope_in,f32(2))
-    testing.expect_value(t,keys[1].slope_out,f32(2))
-    testing.expect_value(t,keys[2].slope_out,f32(4))
-    testing.expect_value(t,keys[0].slope_out,f32(1))
-    testing.expect_value(t,keys[3].slope_in,f32(5))
-    // The keys are samples of x squared: the curve stays close to it between them.
-    for x:=f32(1);x<=2;x+=0.125 {testing.expect(t,test_close(curve_evaluate(keys[:],x),x*x,1e-3))}
-    for key in keys {testing.expect_value(t,curve_evaluate(keys[:],key.time),key.value)}
-    single:=[1]Curve_Key{{time=1,value=5}}
-    curve_smooth_slopes(single[:])
-    testing.expect_value(t,single[0].slope_out,f32(0))
-    curve_smooth_slopes(nil)
-}

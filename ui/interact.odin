@@ -16,7 +16,7 @@ Interaction :: struct {
     focused:bool,
     pressed:bool,  // the left button went down on it this frame
     released:bool, // the left button it held came up this frame
-    clicked:bool,  // activated: by the pointer (on press or on release, as the theme says) or by navigation
+    clicked:bool,  // activated: by the pointer (on press, or on release with Context.release_activates) or by navigation
     double:bool,   // pressed with the second click of a double click
     right:bool,    // the right button went down on it this frame
 }
@@ -43,14 +43,19 @@ effect_hit :: proc(ctx:^Context,index:u16,point:[2]f32) -> bool {
     return true
 }
 
+// Whether point, on the surface of w, is over what is seen of it.
+@(private)
+widget_contains :: proc(ctx:^Context,w:^Widget,point:[2]f32) -> bool {
+    p:=point
+    if w.scope!=0 && int(w.scope)<ctx.previous_scope_count {p=affine_apply(ctx.previous_scopes[w.scope],point)}
+    return rect_contains(w.area,p) && effect_hit(ctx,w.effect_clip,point)
+}
+
 @(private)
 widget_hit :: proc(ctx:^Context,surface:u16,point:[2]f32) -> ^Widget {
     best:^Widget
     for &w in ctx.previous[:ctx.previous_count] {
-        if w.surface!=surface || .Passive in w.flags {continue}
-        p:=point
-        if w.scope!=0 && int(w.scope)<ctx.previous_scope_count {p=affine_apply(ctx.previous_scopes[w.scope],point)}
-        if !rect_contains(w.area,p) || !effect_hit(ctx,w.effect_clip,point) {continue}
+        if w.surface!=surface || .Passive in w.flags || !widget_contains(ctx,&w,point) {continue}
         if best==nil || w.layer>=best.layer {best=&w}
     }
     return best
@@ -63,10 +68,7 @@ widget_under :: proc(ctx:^Context,id:Id) -> bool {
     if ctx.input.pointer_absent || id==0 {return false}
     w:=widget_previous(ctx,id)
     if w==nil || ctx.hot!=0 && w.layer<ctx.hot_layer {return false}
-    point:=ctx.screen_pointer if w.surface==0 else ctx.previous_panels[w.surface-1].pointer
-    p:=point
-    if w.scope!=0 && int(w.scope)<ctx.previous_scope_count {p=affine_apply(ctx.previous_scopes[w.scope],point)}
-    return rect_contains(w.area,p) && effect_hit(ctx,w.effect_clip,point)
+    return widget_contains(ctx,w,ctx.screen_pointer if w.surface==0 else ctx.previous_panels[w.surface-1].pointer)
 }
 
 @(private)
@@ -78,14 +80,11 @@ input_route :: proc(ctx:^Context) {
     if hit!=nil {
         ctx.over=true;ctx.hot=hit.id;ctx.hot_layer=hit.layer
         if ctx.input.wheel!={} {
-            // The wheel belongs to the innermost scroll area of that layer under the pointer.
+            // The wheel belongs to the innermost scroll area of that layer under the pointer that can move that way.
             point:=ctx.screen_pointer if hit.surface==0 else ctx.previous_panels[hit.surface-1].pointer
             target:^Widget
             for &w in ctx.previous[:ctx.previous_count] {
-                if .Scroll not_in w.flags || w.surface!=hit.surface || w.layer<hit.layer {continue}
-                p:=point
-                if w.scope!=0 && int(w.scope)<ctx.previous_scope_count {p=affine_apply(ctx.previous_scopes[w.scope],point)}
-                if !rect_contains(w.area,p) || !effect_hit(ctx,w.effect_clip,point) {continue}
+                if .Scroll not_in w.flags || w.surface!=hit.surface || w.layer<hit.layer || !widget_contains(ctx,&w,point) || !scroll_room(ctx,&w) {continue}
                 if target==nil || w.layer>=target.layer {target=&w}
             }
             if target!=nil {ctx.wheel_target=target.id}
@@ -114,14 +113,14 @@ input_frame_end :: proc(ctx:^Context) {
 // A ring around the widget navigation is on, over everything else.
 @(private)
 focus_ring_draw :: proc(ctx:^Context,effect:u16=0) {
-    if ctx.focus==0 || !ctx.focus_ring || ctx.theme.focus[3]==0 {return}
+    if ctx.focus==0 || !ctx.focus_ring || tone(ctx,"focus")[3]==0 {return}
     for &w in ctx.widgets[:ctx.widget_count] {
         if w.id!=ctx.focus || .Passive in w.flags || .Disabled in w.flags || w.effect_clip!=effect || w.area.w<=0 || w.area.h<=0 {continue}
         visible:=true
         for index:=w.effect_clip;index!=0;index=ctx.effects[index].parent {e:=&ctx.effects[index];if e.opacity<=0 || e.suppressed {visible=false;break}}
         if !visible {continue}
         paint_select(ctx,w.surface,w.scope)
-        draw_rounded_stroke(ctx,{w.rect.x-2,w.rect.y-2,w.rect.w+4,w.rect.h+4},ctx.theme.radius_control+2,2,ctx.theme.focus)
+        draw_rounded_stroke(ctx,{w.rect.x-2,w.rect.y-2,w.rect.w+4,w.rect.h+4},metric(ctx,"radius_control")+2,2,tone(ctx,"focus"))
         return
     }
 }
@@ -150,7 +149,7 @@ interact :: proc(ctx:^Context,id:Id,flags:Widget_Flags={}) -> (it:Interaction) {
     }
     if it.hot && .Right in ctx.input.pressed && !ctx.right_press_used {it.right=true;ctx.right_press_used=true}
     it.focused=ctx.focus==id
-    it.clicked=it.pressed if ctx.theme.activate_on_press else it.released&&it.hot
+    it.clicked=it.released&&it.hot if ctx.release_activates else it.pressed
     if ctx.activate==id && ctx.activate!=0 {it.clicked=true}
     return
 }

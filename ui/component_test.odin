@@ -31,9 +31,9 @@ test_components :: proc(r:^Test_Components) -> Tree_Data {
         tree_override_record(&texts,2,"action",{.Text,.Visibility},{text="Locked",disabled=true}),
     }
     r.variants={
-        tree_variant_record(1,"accent",{},{fields={.Fill},tokens={fill=.Accent}}),
-        tree_variant_record(1,"",{.Hovered},{fields={.Fill},tokens={fill=.Field_Hover}}),
-        tree_variant_record(1,"",{.Disabled},{fields={.Fill,.Text_Size,.Text_Color},tokens={fill=.Field,text=.Text_Faint},values={text={size=14}}}),
+        tree_variant_record(1,"accent",{},{fields={.Fill},values={fill={112,80,240,255}}}),
+        tree_variant_record(1,"",{.Hovered},{fields={.Fill},values={fill={52,52,61,255}}}),
+        tree_variant_record(1,"",{.Disabled},{fields={.Fill,.Text_Size,.Text_Color},values={fill={44,44,52,255},text={size=14,color={142,142,153,255}}}}),
     }
     return {text=texts[:],nodes=r.nodes[:],styles=r.styles[:],components=r.templates[:],component_nodes=r.component_nodes[:],overrides=r.overrides[:],variants=r.variants[:]}
 }
@@ -64,7 +64,7 @@ components_expand_once_with_independent_names_overrides_and_variants :: proc(t:^
     ctx:Context
     desc:=TEST_SMALL
     desc.allocator=test_counter(&owned,context.allocator)
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     input:=test_input()
     frame:=test_frame(&ctx,&input,build,&scene)
@@ -134,31 +134,28 @@ nested_components_keep_local_override_paths_and_expanded_parents :: proc(t:^test
 }
 
 @(test)
-style_rules_resolve_tokens_variant_and_state_precedence :: proc(t:^testing.T) {
-    theme:=THEME_EDITOR
+style_rules_resolve_variant_and_state_precedence :: proc(t:^testing.T) {
     base_style:=Node_Style{fill={1,2,3,255},radius=8,stroke_width=1,text={size=14,color={255,255,255,255}}}
     rules:=[]Style_Variant{
         {patch={fields={.Fill},values={fill={10,0,0,255}}}},
-        {variant=style_variant("accent"),patch={fields={.Fill},tokens={fill=.Accent}}},
+        {variant=style_variant("accent"),patch={fields={.Fill},values={fill={60,0,0,255}}}},
         {states={.Selected},patch={fields={.Fill},values={fill={20,0,0,255}}}},
         {states={.Hovered},patch={fields={.Fill},values={fill={30,0,0,255}}}},
         {states={.Pressed},patch={fields={.Fill},values={fill={40,0,0,255}}}},
-        {states={.Disabled},patch={fields={.Fill,.Text_Size,.Text_Color},tokens={fill=.Field,text=.Text_Faint},values={text={size=14}}}},
+        {states={.Disabled},patch={fields={.Fill,.Text_Size,.Text_Color},values={fill={70,0,0,255},text={size=14,color={80,80,80,255}}}}},
         {states={.Hovered},variant=style_variant("accent"),patch={fields={.Fill},values={fill={50,0,0,255}}}},
     }
-    normal:=style_resolve(&theme,base_style,rules)
+    normal:=style_resolve(base_style,rules)
     testing.expect_value(t,normal.fill,Color{10,0,0,255})
     testing.expect(t,normal.radius==8 && normal.stroke_width==1)
-    accent:=style_resolve(&theme,base_style,rules,0,style_variant("accent"))
-    testing.expect_value(t,accent.fill,theme.accent)
-    theme.accent={120,10,240,255}
-    testing.expect_value(t,style_resolve(&theme,base_style,rules,0,style_variant("accent")).fill,theme.accent)
-    hovered:=style_resolve(&theme,base_style,rules,0,style_variant("accent"),{.Selected,.Hovered})
+    accent:=style_resolve(base_style,rules,0,style_variant("accent"))
+    testing.expect_value(t,accent.fill,Color{60,0,0,255})
+    hovered:=style_resolve(base_style,rules,0,style_variant("accent"),{.Selected,.Hovered})
     testing.expect_value(t,hovered.fill,Color{50,0,0,255})
-    pressed:=style_resolve(&theme,base_style,rules,0,style_variant("accent"),{.Selected,.Hovered,.Pressed})
+    pressed:=style_resolve(base_style,rules,0,style_variant("accent"),{.Selected,.Hovered,.Pressed})
     testing.expect_value(t,pressed.fill,Color{40,0,0,255})
-    disabled:=style_resolve(&theme,base_style,rules,0,style_variant("accent"),{.Selected,.Hovered,.Pressed,.Disabled})
-    testing.expect(t,disabled.fill==theme.field && disabled.text.color==theme.text_faint)
+    disabled:=style_resolve(base_style,rules,0,style_variant("accent"),{.Selected,.Hovered,.Pressed,.Disabled})
+    testing.expect(t,disabled.fill==Color{70,0,0,255} && disabled.text.color==Color{80,80,80,255})
 }
 
 @(test)
@@ -178,7 +175,6 @@ a_tree_keeps_the_rules_of_each_style_in_the_order_they_resolve :: proc(t:^testin
     defer tree_destroy(&tree)
     unordered:=make([]Style_Variant,len(table),context.temp_allocator)
     for &rule,i in table {unordered[i]={style=rule.style,variant=style_variant(serial.text_field(rule.variant[:])),states=rule.states,patch=rule.patch}}
-    theme:=THEME_EDITOR
     kept:=0
     for style in 0..<u16(len(styles)) {
         rules:=tree_style_rules(&tree,style)
@@ -190,12 +186,12 @@ a_tree_keeps_the_rules_of_each_style_in_the_order_they_resolve :: proc(t:^testin
         for variant in ([2]u64{0,style_variant("big")}) {
             for bits in 0..=STYLE_STATES_NAMED {
                 states:=transmute(Style_States)bits
-                testing.expect_value(t,style_resolve(&theme,styles[style],rules,style,variant,states).fill,style_resolve(&theme,styles[style],unordered,style,variant,states).fill)
+                testing.expect_value(t,style_resolve(styles[style],rules,style,variant,states).fill,style_resolve(styles[style],unordered,style,variant,states).fill)
             }
         }
     }
     testing.expect_value(t,kept,len(table))
-    testing.expect_value(t,style_resolve(&theme,styles[2],tree_style_rules(&tree,2),2,0,{.Pressed}).fill,Color{16,0,0,255})
+    testing.expect_value(t,style_resolve(styles[2],tree_style_rules(&tree,2),2,0,{.Pressed}).fill,Color{16,0,0,255})
 }
 
 @(test)
@@ -207,7 +203,7 @@ a_button_draws_the_gradient_border_shadow_and_disabled_variant_of_its_look :: pr
         rules:=[1]Style_Variant{{states={.Disabled},patch={fields={.Fill,.Fill2,.Stroke},values={fill={40,40,40,255},fill2={40,40,40,255},stroke={90,90,90,255}}}}}
         if box(ctx,{width=fixed(96),height=fixed(64),padding=padding_all(8)}) {
             styled:=id(ctx,"styled")
-            look:=style_resolve(&ctx.theme,{
+            look:=style_resolve({
                 fill={255,0,0,255},fill2={0,0,255,255},stroke={0,255,0,255},radius=12,stroke_width=4,
                 shadow=true,shadow_color={255,255,255,255},shadow_blur=3,
             },rules[:],states=widget_states(ctx,styled,false,s.disabled))
@@ -216,7 +212,7 @@ a_button_draws_the_gradient_border_shadow_and_disabled_variant_of_its_look :: pr
         }
     }
     ctx:Context
-    testing.expect(t,context_init(&ctx,{no_font=true}))
+    testing.expect(t,test_context_init(&ctx,{no_font=true}))
     defer context_destroy(&ctx)
     input:=test_input(96,64)
     frame:=test_frame(&ctx,&input,build,&scene)
@@ -264,7 +260,7 @@ tree_state_bindings_select_the_style_and_disable_the_bound_button :: proc(t:^tes
     testing.expect(t,tree_instance_init(&s.instance,&s.tree,test_host(&s.host,&s.schema,s.type,&s.values)))
     defer tree_instance_destroy(&s.instance)
     ctx:Context
-    testing.expect(t,context_init(&ctx,{no_font=true}))
+    testing.expect(t,test_context_init(&ctx,{no_font=true}))
     defer context_destroy(&ctx)
     input:=test_input(96,64)
     s.values.paused,s.values.muted=true,true
@@ -326,7 +322,7 @@ component_namespaces_preserve_unnamed_node_ids_and_long_root_names :: proc(t:^te
     testing.expect(t,tree_instance_init(&scene.instance,&scene.tree,nil))
     defer tree_instance_destroy(&scene.instance)
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     test_frame(&ctx,&input,test_hud_build,&scene)

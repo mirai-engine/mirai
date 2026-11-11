@@ -22,7 +22,7 @@ Render_Stage :: enum u8 {
 	Direct,       // the sun and the local lights
 	Reflections,  // traced reflections of the smoothest surfaces
 	World,        // the probe volume, with the first view of the window
-	Indirect,     // the contact occlusion of the probe volume
+	Indirect,     // the light of the probe volume at each pixel, with its contact occlusion
 	Composite,    // direct and indirect light, emission
 	Lit,          // the Lit passes of extensions: what lies between the eye and the lit opaque scene
 	Transparency, // overlays, glass and the Blend stage of extensions
@@ -46,9 +46,8 @@ Render_Resource :: enum u8 {
 	Highlight,    // the selection mask
 	Direct,       // reflected direct light
 	Reflections,  // the filtered traced reflections, for the share of each lobe they stand for
-	Gi,           // the light of the probe volume at each pixel: around the normal by its contact occlusion and around the specular lobe, packed (light_pack)
+	Gi,           // the light of the probe volume at each pixel: around the normal by its contact occlusion and around the specular lobe, packed (light_pack); written by a custom pass in place of the Indirect stage, the diffuse indirect light itself (rgb, RGBA32_Float), which the composite takes in place of the probe volume's and which keeps what the pass left in the frame before
 	Probes,       // the irradiance of the probe volume, shared by every view
-	Hdr,          // the light of the opaque scene, kept for the next frame: without a relative emission
 	Display,      // the image before temporal resolve
 	Taa,          // the resolved image at output size, kept for the next frame
 	Ldr,          // the final image; for the passes after the Output stage, without what is drawn over it
@@ -125,7 +124,7 @@ Render_Pipeline_Handle :: distinct u64
 // The pipelines of the renderer, which are always there.
 Standard_Pipeline :: enum u8 {
 	Full,  // everything the settings ask for
-	Light, // without contact occlusion or traced reflections, each pixel tracing hard shadows: for views shown small
+	Light, // without contact occlusion or traced reflections: for views shown small
 }
 
 RENDER_PIPELINE_CAPACITY :: 16
@@ -160,6 +159,7 @@ Render_Plan :: struct {
 	stages:      bit_set[Render_Stage],
 	jitter:      Render_Jitter,
 	generates:   bool, // passes after the Output stage write Generated
+	gi_given:    bool, // a custom pass writes Gi
 	resources:   [CUSTOM_RESOURCE_CAPACITY]Render_Resource_Desc,
 	declared:    bit_set[0 ..< CUSTOM_RESOURCE_CAPACITY],
 	first_use:   [CUSTOM_RESOURCE_CAPACITY]i8, // the place in order of the first and last pass that uses each resource; -1: none
@@ -177,7 +177,7 @@ custom_index :: proc "contextless" (id: Render_Resource) -> int {return int(id) 
 
 // The resources with a copy of the previous frame.
 @(private)
-builtin_history :: proc "contextless" (id: Render_Resource) -> bool {return id == .Hdr || id == .Taa || id == .Hiz}
+builtin_history :: proc "contextless" (id: Render_Resource) -> bool {return id == .Taa || id == .Hiz}
 
 // What the stages of the renderer read and write.
 @(private)
@@ -211,14 +211,13 @@ stage_contract :: proc(stage: Render_Stage, pass: ^Plan_Pass) {
 	case .World:
 		writes(pass, .Probes)
 	case .Indirect:
-		reads(pass, .Normal, .Linear_Depth, .Motion, .Emission)
-		use(pass, .Hdr, .Read, previous = true, optional = true)
+		reads(pass, .Normal, .Linear_Depth, .Motion)
 		use(pass, .Probes, .Read, optional = true)
 		writes(pass, .Gi)
 	case .Composite:
 		reads(pass, .Albedo, .Normal, .Emission, .Linear_Depth, .Motion, .Direct)
 		for resource in ([]Render_Resource{.Reflectance, .Reflections, .Gi, .Probes}) {use(pass, resource, .Read, optional = true)}
-		writes(pass, .Hdr, .Display)
+		writes(pass, .Display)
 	case .Lit:
 		reads(pass, .Linear_Depth, .Display)
 		writes(pass, .Display)
@@ -244,7 +243,7 @@ stage_contract :: proc(stage: Render_Stage, pass: ^Plan_Pass) {
 @(private)
 custom_writable :: proc "contextless" (id: Render_Resource) -> bool {
 	#partial switch id {
-	case .Direct, .Reflections, .Gi, .Hdr, .Display, .Taa, .Generated: return true
+	case .Direct, .Reflections, .Gi, .Display, .Taa, .Generated: return true
 	}
 	return id >= .Custom0
 }
@@ -331,7 +330,7 @@ plan_compile :: proc(plan: ^Render_Plan, desc: Render_Pipeline_Desc, buffer: []u
 			if use.resource == .Depth && use.access == .Write {return fail(buffer, "render pipeline: custom pass %s writes Depth, which only stages write; read it, or write Linear_Depth in a resource of its own", pass.name)}
 			if use.resource == .Exposure && use.access == .Write {return fail(buffer, "render pipeline: custom pass %s writes Exposure, which the Output stage measures; read it", pass.name)}
 			if use.access == .Write && !custom_writable(use.resource) {
-				return fail(buffer, "render pipeline: custom pass %s writes %v, which a custom pass can only read; it may write Direct, Reflections, Gi, Hdr, Display, Taa, Generated or a resource of its own", pass.name, use.resource)
+				return fail(buffer, "render pipeline: custom pass %s writes %v, which a custom pass can only read; it may write Direct, Reflections, Gi, Display, Taa, Generated or a resource of its own", pass.name, use.resource)
 			}
 			after := output_at >= 0
 			if use.access == .Write && after && use.resource < .Custom0 && use.resource != .Generated {
@@ -343,7 +342,7 @@ plan_compile :: proc(plan: ^Render_Plan, desc: Render_Pipeline_Desc, buffer: []u
 			if use.previous {
 				history := builtin_history(use.resource) if use.resource < .Custom0 else plan.resources[custom_index(use.resource)].history
 				if !history || use.access == .Write {
-					return fail(buffer, "render pipeline: custom pass %s reads the previous %v; only Hdr, Taa, Hiz and resources declared with history have one, and it is read only", pass.name, use.resource)
+					return fail(buffer, "render pipeline: custom pass %s reads the previous %v; only Taa, Hiz and resources declared with history have one, and it is read only", pass.name, use.resource)
 				}
 			}
 		}
@@ -405,7 +404,11 @@ plan_compile :: proc(plan: ^Render_Plan, desc: Render_Pipeline_Desc, buffer: []u
 		plan.order[plan.order_count] = u8(at)
 		plan.order_count += 1
 		plan.stages += {pass.stage}
-		for use in pass.uses[:pass.use_count] {plan.generates ||= use.resource == .Generated && use.access == .Write}
+		for use in pass.uses[:pass.use_count] {
+			plan.generates ||= use.resource == .Generated && use.access == .Write
+			plan.gi_given ||= pass.stage == .Custom && use.resource == .Gi && use.access == .Write
+		}
+		if plan.gi_given && .Indirect in seen {return fail(buffer, "render pipeline: custom pass %s writes Gi and the pipeline has the Indirect stage, which writes it too; leave the Indirect stage out to give Gi", plan_pass_name(&pass))}
 		for use in pass.uses[:pass.use_count] {
 			if use.resource < .Custom0 {continue}
 			index := custom_index(use.resource)
@@ -672,7 +675,6 @@ pass_resource_of :: proc(p: ^Pass, resource: Render_Resource, previous: bool) ->
 	case .Reflections:  return texture_or_dummy(p.r, p.reflections), 0
 	case .Gi:           return p.gi, 0
 	case .Probes:       return texture_or_dummy(p.r, p.r.ddgi.irradiance if p.r.ddgi.valid else 0), 0
-	case .Hdr:          return t.hdr[at], 0
 	case .Display:      return t.display, 0
 	case .Taa:          return t.taa[at], 0
 	case .Ldr:          return t.ldr, 0

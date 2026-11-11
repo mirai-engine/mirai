@@ -81,7 +81,6 @@ navigation_view_modes :: proc(s:^editor.Session,view:^Nav_View) {
         editor.view_mode_declare(s,{name=collision,label=fmt.tprintf("%s: collision",name),title=fmt.tprintf("Navigation: what the mesh of %s is made of",name),group="Advanced",submenu="Navigation",icon=.Layers,reason=reason,record=navigation_view_record})
         if strings.equal_fold(current,collision) && reason=="" {view.shown,view.collision=i,true}
     }
-    if editor.document_is_prefab(s) {view.shown=-1}
 }
 
 @(step="render",after="render_sync")
@@ -111,7 +110,7 @@ navigation_view_lines :: proc(s:^editor.Session,view:^Nav_View,extras:^host.Fram
     if len(view.agents)==0 {resize(&view.agents,2*NAV_VIEW_AGENT_LINES)}
     agent_lines:=erender.debug_lines_make(view.agents[:],depth_test=false)
     for e in s.selection.entities {
-        p,found:=core.get(core.read(paths),e)
+        p,found:=core.get(paths,e)
         if !found || p.class<0 || int(p.class)>=n.count {continue}
         if nav.class_in_volume(n,int(p.class)) {draw_flier(&agent_lines,&n.classes[p.class].volume,p)} else {draw_agent(&agent_lines,&n.classes[p.class].mesh,p)}
     }

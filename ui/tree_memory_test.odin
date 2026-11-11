@@ -72,7 +72,7 @@ tree_calls_without_memory_fail_whole :: proc(t:^testing.T) {
                 testing.expectf(t,ok==(len(linked.component_nodes)>0),"%d requests served: the records of the widget or none",served)
             case .Instance:
                 instance:Tree_Instance
-                ok=tree_instance_init(&instance,&whole,nil,0,limited)
+                ok=tree_instance_init(&instance,&whole,nil,nil,"",limited)
                 if ok || instance.allocator.procedure!=nil {tree_instance_destroy(&instance)}
             }
             testing.expectf(t,len(tracking.allocation_map)==0 && len(tracking.bad_free_array)==0,"%v with %d requests served: %d left allocated",call,served,len(tracking.allocation_map))

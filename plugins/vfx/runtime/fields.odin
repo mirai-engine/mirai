@@ -20,6 +20,7 @@ Gpu_Gravity :: struct {
     volumes:[GRAVITY_VOLUMES]volume.Gpu_Volume,
     pulls:[GRAVITY_VOLUMES][4]f32,   // Down: xyz its acceleration, m/s2; Center: xyz its center
     centers:[GRAVITY_VOLUMES][4]f32, // x 1 toward a center; y its acceleration, m/s2; z its surface, m (0: as strong at any distance)
+    outlines:volume.Gpu_Outlines,
 }
 
 // particles.slang: what pool_prepare puts in the rows of the frame for the
@@ -29,22 +30,22 @@ Gpu_Fields :: struct {
     gravity:Gpu_Gravity,
     wind:volume.Gpu_Wind,
 }
-#assert(size_of(Gpu_Fields)==16+16+GRAVITY_VOLUMES*(80+32)+size_of(volume.Gpu_Wind))
+#assert(size_of(Gpu_Fields)==16+16+GRAVITY_VOLUMES*(80+32)+size_of(volume.Gpu_Outlines)+size_of(volume.Gpu_Wind))
 
 // The gravity and the wind of the world, from its fields.
-fields_of :: proc(gravities:core.Read(volume.Gravity),winds:core.Read(volume.Wind),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform)) -> (f:Gpu_Fields) {
+fields_of :: proc(gravities:^core.Table(volume.Gravity,$A),winds:^core.Table(volume.Wind,.Read),zones:volume.Where) -> (f:Gpu_Fields) {
     f.fallback.xyz=volume.GRAVITY_WORLD
-    if winds.table!=nil {f.wind=volume.gpu_wind(winds,volumes,worlds)}
-    if gravities.table==nil {return}
+    if winds!=nil {f.wind=volume.gpu_wind(winds,zones)}
+    if gravities==nil {return}
     rows:[GRAVITY_VOLUMES]i32
-    n:=volume.ordered(volumes,worlds,gravities,rows[:])
+    n:=volume.ordered(zones,gravities,rows[:])
     g:=&f.gravity
     for i in 0..<n {
         e:=core.entity_at(gravities,int(rows[i]))
-        v,at,_:=volume.placed(volumes,worlds,e)
-        world,_:=core.get(worlds,e)
+        v,at,outline,_:=volume.placed(zones,e)
+        world,_:=core.get(zones.worlds,e)
         field:=core.at(gravities,int(rows[i]))
-        g.volumes[i]=volume.gpu_volume(v,at)
+        g.volumes[i]=volume.gpu_volume(v,at,field.zone,outline,&g.outlines)
         switch field.pull {
         case .Down:
             g.pulls[i].xyz=volume.gravity_of(field,world.transform,{})

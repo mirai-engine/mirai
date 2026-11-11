@@ -9,10 +9,11 @@
 #endif
 
 // `surface` false: a point that is not on a surface (a particle of the vfx plugin), whose
-// normal is only a direction to read around.
-void sample_probes_around(float3 position, float3 normal, float3 view_dir, Probe_Directions directions, out float3 light[PROBE_READS], float viewer_distance = -1.0, bool surface = true) {
+// normal is only a direction to read around. w: the share of each light that
+// comes from the sky (probe_specular).
+void sample_probes_around(float3 position, float3 normal, float3 view_dir, Probe_Directions directions, out float4 light[PROBE_READS], float viewer_distance = -1.0, bool surface = true) {
     [ForceUnroll]
-    for (int d = 0; d < PROBE_READS; d++) light[d] = float3(0.0);
+    for (int d = 0; d < PROBE_READS; d++) light[d] = float4(0.0);
     if (frame.volume_atlas.w == 0u || directions.wants == 0u) return;
     if (viewer_distance < 0.0) viewer_distance = eye_distance(position);
     probe_volume_light(position, normal, view_dir, viewer_distance, directions, surface, light);
@@ -27,10 +28,10 @@ void sample_probes_around(float3 position, float3 normal, float3 view_dir, Probe
         float4 through[3];
         float share = mirai_probe_gate(position, direction, beyond, front, through);
         if (share <= 0.0) continue;
-        float3 there[PROBE_READS];
+        float4 there[PROBE_READS];
         probe_volume_light(beyond, normalize(transform_vector(through, normal)), front, viewer_distance, probe_directions(normalize(transform_vector(through, direction))), surface, there);
-        float3 here = d == 0u ? light[0] : (d == 1u ? light[1] : light[2]);
-        float3 mixed = lerp(here, there[0], share);
+        float4 here = d == 0u ? light[0] : (d == 1u ? light[1] : light[2]);
+        float4 mixed = lerp(here, there[0], share);
         light[0] = d == 0u ? mixed : light[0];
         light[1] = d == 1u ? mixed : light[1];
         light[2] = d == 2u ? mixed : light[2];
@@ -38,9 +39,9 @@ void sample_probes_around(float3 position, float3 normal, float3 view_dir, Probe
 #endif
 }
 float3 sample_probes_towards(float3 position, float3 normal, float3 view_dir, float3 direction, float viewer_distance = -1.0, bool surface = true) {
-    float3 light[PROBE_READS];
+    float4 light[PROBE_READS];
     sample_probes_around(position, normal, view_dir, probe_directions(direction), light, viewer_distance, surface);
-    return light[0];
+    return light[0].rgb;
 }
 float3 sample_probes(float3 position, float3 normal, float3 view_dir, float viewer_distance = -1.0) {
     return sample_probes_towards(position, normal, view_dir, normal, viewer_distance);
@@ -57,11 +58,13 @@ float3 indirect_irradiance(float3 position, float3 normal, float3 view_dir, bool
     return sample_probes_towards(position, normal, view_dir, normal, -1.0, surface) * frame.gi_strength;
 }
 
-// The same around `direction`, for a specular lobe of that roughness that
-// gathers from there.
-float3 indirect_radiance(float3 position, float3 normal, float3 view_dir, float3 direction, float roughness) {
-    if (!indirect_cached()) return sky_radiance(direction, roughness);
-    return sample_probes_towards(position, normal, view_dir, direction) * frame.gi_strength;
+// What a specular lobe of that roughness gathers around `direction` from what
+// the probes hold there (`around`, w the share of it from the sky): the probes
+// hold the sky blurred over a hemisphere, so that share is the sky itself as
+// sharp as the lobe, as without the probes; a rough lobe keeps what they hold.
+float3 probe_specular(float4 around, float3 direction, float roughness) {
+    float sky = around.w * (1.0 - roughness);
+    return sky > 0.0 ? lerp(around.rgb, sky_radiance(direction, roughness), sky) : around.rgb;
 }
 
 // What indirect_lobes reads: the light around the normal, and around the
@@ -70,10 +73,10 @@ float3 indirect_radiance(float3 position, float3 normal, float3 view_dir, float3
 #define INDIRECT_SPECULAR (1u << PROBE_SPECULAR)
 #define INDIRECT_COAT (1u << PROBE_COAT)
 
-// The light around a point of shading `s` that indirect_irradiance and
-// indirect_radiance give, for the lobes in `wants`, from one read of the
-// probe volume; zero for the others. A point that lets light through also
-// gets the irradiance around its other side.
+// The light around a point of shading `s` for the lobes in `wants`, from one
+// read of the probe volume, or without it from the sky; zero for the others.
+// A point that lets light through also gets the irradiance around its other
+// side.
 Indirect indirect_lobes(float3 position, float3 normal, float3 view_dir, Shading s, uint wants, float occlusion) {
     Indirect light = indirect_make(float3(0.0), float3(0.0), occlusion);
     light.coat_radiance = float3(0.0);
@@ -90,11 +93,11 @@ Indirect indirect_lobes(float3 position, float3 normal, float3 view_dir, Shading
         if ((wants & INDIRECT_COAT) != 0u) light.coat_radiance = sky_radiance(directions.at[PROBE_COAT], s.coat_roughness);
         return light;
     }
-    float3 around[PROBE_READS];
+    float4 around[PROBE_READS];
     sample_probes_around(position, normal, view_dir, directions, around);
-    light.irradiance = around[PROBE_DIFFUSE] * frame.gi_strength;
-    light.radiance = around[PROBE_SPECULAR] * frame.gi_strength;
-    light.coat_radiance = around[PROBE_COAT] * frame.gi_strength;
+    light.irradiance = around[PROBE_DIFFUSE].rgb * frame.gi_strength;
+    light.radiance = probe_specular(around[PROBE_SPECULAR], directions.at[PROBE_SPECULAR], s.roughness) * frame.gi_strength;
+    light.coat_radiance = probe_specular(around[PROBE_COAT], directions.at[PROBE_COAT], s.coat_roughness) * frame.gi_strength;
     return light;
 }
 

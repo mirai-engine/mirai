@@ -1,52 +1,33 @@
 #include "native.slang"
-// The clusters the maps of the shadows draw this frame (shadow_maps.slang): a
-// thread for each instance, of the scene or of a batch, and each map lists
-// the clusters of the instance that reach into the frustum of the map, for
-// shadow_map.vert to draw. They are those of the cut of the view
-// (cluster_cut): what casts a shadow is what the view draws, at the detail
-// its distance from the eye asks for. The clusters of an instance with masked
-// or blended materials go apart, from the end of the list, to be drawn with
-// their coverage.
+// The first pass of the cull of the clusters the maps of the shadows draw
+// this frame (shadow_maps.slang, shadow_cull.slang): a thread for each
+// instance, of the scene or of a batch, and each map. An instance that may
+// cast a shadow into the frustum of the map hands the clusters the cut of the
+// view can take of it (instance_clusters) to shadow_clusters.comp in chunks,
+// as cull.comp hands those the view draws to cull_clusters.comp: what casts a
+// shadow is what the view draws, at the detail its distance from the eye asks
+// for. Chunks past the capacity of their list are counted, and it grows for
+// the frames after.
 #include "trace.slang"
 #include "cut.slang"
 #include "shadow_maps.slang"
+#include "shadow_cull.slang"
+#include "cull_stats.slang"
 #define MIRAI_GROUP_X 256
 #define MIRAI_GROUP_Y 1
 #define MIRAI_GROUP_Z 1
 
-// instances: of the scene and of the batches drawn; maps: drawn this frame;
-// rows: of the words of the lights; glass: 1 while the maps keep the tint of
-// glass, which takes the instances all of glass among those whose materials
-// say where.
-struct Params_Block { uint instances; uint maps; uint rows; uint glass; };
-[[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
-// The clusters to draw: the instance, the cluster and the map.
-[[vk::binding(SLOT_PASS1, 0)]] RWStructuredBuffer<uint4> entries : register(MIRAI_REGISTER(u, SLOT_PASS1), space0);
-// The draws of them (two Draw_Indirect), whose instances count them: those
-// that hide whole, then those whose materials say where.
-[[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint> draw : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
+// Up to CULL_CHUNK clusters of an instance for a map: the instance, the map, the first cluster and how many.
+[[vk::binding(SLOT_PASS1, 0)]] RWStructuredBuffer<uint4> chunks : register(MIRAI_REGISTER(u, SLOT_PASS1), space0);
+[[vk::binding(SLOT_PASS2, 0)]] RWStructuredBuffer<uint> shadow_state : register(MIRAI_REGISTER(u, SLOT_PASS2), space0);
+[[vk::binding(SLOT_PASS3, 0)]] RWStructuredBuffer<Stats_Block> stats : register(MIRAI_REGISTER(u, SLOT_PASS3), space0);
 
+// The surface of a body of a medium: an open sheet of a solid such as water,
+// whose light the volume of the medium gives.
 bool glass_sheet(Instance inst) {
     Mesh mesh = meshes[instance_mesh(inst)];
-    return (mesh.flags & MESH_FLAG_CLOSED) == 0u && material_solid(material_row(material_of(inst, 0u)));
-}
-
-// Whether a map takes cluster k of an instance: in the cut of the view and,
-// where its box is known (at rest, or posed by the skin this frame), reaching
-// into the frustum.
-bool cluster_taken(Instance inst, float scale, Mesh mesh, uint k, bool posed, Shadow_Map m) {
-    Cluster c = mesh_cluster(mesh, k);
-    if (!cluster_in_cut(inst, scale, mesh, c, frame.cut.x)) return false;
-    float3 low, high;
-    if (posed) {
-        Posed_Bounds pose;
-        if (!posed_bounds(mesh, k, pose)) return true;
-        instance_world_box(inst, pose.low, pose.high, low, high);
-    } else {
-        cluster_world_box(inst, mesh, c, low, high);
-    }
-    return shadow_map_reaches(m, low, high);
+    return (mesh.flags & MESH_FLAG_CLOSED) == 0u && material_solid(material_row(material_of(inst, 0u), inst.material_values));
 }
 
 [shader("compute")]
@@ -65,27 +46,25 @@ void main(uint3 id : SV_DispatchThreadID) {
     Instance inst = scene_instance(instance);
     if ((inst.meta.w & INSTANCE_FLAG_HIDDEN) != 0u) return;
     // Glass casts no shadow: it takes its place only in the tint of the maps,
-    // and not the surface of a body of a medium, an open sheet of a solid such
-    // as water, whose light the volume of the medium gives.
+    // and not a glass sheet.
     if ((inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u && (params.glass == 0u || glass_sheet(inst))) return;
     Shadow_Map m = shadow_map_at(shadow_data, params.rows, map);
     if (!shadow_map_reaches(m, inst.bounds_min.xyz - reach, inst.bounds_max.xyz + reach)) return;
     Mesh mesh = meshes[instance_mesh(inst)];
     if (mesh.vertex_count == 0u || mesh.cluster_count == 0u) return;
-    float scale = instance_scale(inst);
-    bool posed = mesh.posed_word != INVALID;
-    uint taken = 0u;
-    for (uint k = 0u; k < mesh.cluster_count; k++) {
-        if (cluster_taken(inst, scale, mesh, k, posed, m)) taken++;
+    uint2 clusters = instance_clusters(inst, mesh);
+    uint count = (clusters.y + CULL_CHUNK - 1u) / CULL_CHUNK;
+    uint base;
+    InterlockedAdd(shadow_state[SHADOW_CHUNK_COUNT], count, base);
+    uint kept = base >= params.chunk_capacity ? 0u : min(count, params.chunk_capacity - base);
+    if (kept < count) InterlockedAdd(stats[0].dropped[CULL_LIST_SHADOW_CHUNKS], count - kept);
+    for (uint k = 0u; k < kept; k++) {
+        uint first = k * CULL_CHUNK;
+        chunks[base + k] = uint4(instance, map, clusters.x + first, min(CULL_CHUNK, clusters.y - first));
     }
-    if (taken == 0u) return;
-    bool tested = (inst.meta.w & (INSTANCE_FLAG_ALPHA_TESTED | INSTANCE_FLAG_BLENDED)) != 0u;
-    uint first;
-    InterlockedAdd(draw[tested ? 5u : 1u], taken, first);
-    uint room = tested ? SHADOW_TESTED_ENTRIES : SHADOW_ENTRIES - SHADOW_TESTED_ENTRIES;
-    for (uint k = 0u; k < mesh.cluster_count && first < room; k++) {
-        if (!cluster_taken(inst, scale, mesh, k, posed, m)) continue;
-        entries[tested ? SHADOW_ENTRIES - 1u - first : first] = uint4(instance, k, map, 0u);
-        first++;
+    if (kept > 0u) {
+        uint total = base + kept;
+        InterlockedMax(shadow_state[SHADOW_CLUSTER_DISPATCH], min(total, CULL_DISPATCH_X));
+        InterlockedMax(shadow_state[SHADOW_CLUSTER_DISPATCH + 1u], (total + CULL_DISPATCH_X - 1u) / CULL_DISPATCH_X);
     }
 }

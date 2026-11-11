@@ -11,7 +11,7 @@ sparks_react :: proc(reports:core.Ref(vfx.Particle_Reports), spawner:scene.Spawn
     for r in reports.reports {
         if r.kind != .Collision {continue}
         // r.entity (the emitter), r.position, r.velocity, r.normal of what it hit
-        scene.spawn(spawner, "arena/Scorch.prefab", {position=r.position}, transient=true)
+        scene.spawn(spawner, "arena/Scorch.scene", {position=r.position}, transient=true)
     }
 }
 ```
@@ -24,3 +24,5 @@ sparks_react :: proc(reports:core.Ref(vfx.Particle_Reports), spawner:scene.Spawn
 - Reports are presentation: not deterministic, not rolled back, never a game decision (damage,
   score). A `fixed` function that receives `Particle_Reports` fails to generate.
 - A frame keeps a limited number of reports; the rest are counted in `lost`.
+- A `Collision` report is a bounce: a particle that lands reports each bounce once, and nothing
+  while it rests or slides on the surface.

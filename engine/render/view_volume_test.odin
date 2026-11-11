@@ -13,22 +13,23 @@ import "mirai:std/base"
 @(test)
 a_view_takes_the_look_of_the_volume_it_is_in :: proc(t:^testing.T) {
     w:Render_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     level:=VIEW_VOLUME_DEFAULT
     level.exposure.compensation=-1
     tunnel:=VIEW_VOLUME_DEFAULT
     tunnel.exposure.compensation=2
     tunnel.tint={1,0,0}
+    tunnel.zone.blend=2
     tunnel.layers[0]={material=base.Asset_Id{1,2},enabled=true,fade=0.25}
     a,b:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.view_volumes,a,level)
     core.add(&w.view_volumes,b,tunnel)
-    core.add(&w.volumes,b,volume.Volume{shape=.Box,extents={4,4,4},blend=2})
+    core.add(&w.volumes,b,volume.box({4,4,4}))
     core.add(&w.worlds,b,core.World_Transform{transform={rotation=1,scale=1}})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     at :: proc(w:^Render_World,x:f32) -> View_Volume {
-        return view_volume_at(core.read(&w.view_volumes),core.read(&w.volumes),core.read(&w.worlds),{x,0,0})
+        return view_volume_at(core.read(&w.view_volumes),{volumes=core.read(&w.volumes),worlds=core.read(&w.worlds)},{x,0,0})
     }
     outside:=at(&w,10)
     testing.expect_value(t,outside.exposure.compensation,f32(-1))
@@ -42,10 +43,10 @@ a_view_takes_the_look_of_the_volume_it_is_in :: proc(t:^testing.T) {
     testing.expect(t,border.layers[0].enabled)
     view:=core.View{position={0,0,0}}
     view.exposure={mode=.Manual,ev100=12,own=true}
-    view_volume_expose(&view,core.read(&w.view_volumes),core.read(&w.volumes),core.read(&w.worlds))
+    view_volume_expose(&view,core.read(&w.view_volumes),{volumes=core.read(&w.volumes),worlds=core.read(&w.worlds)})
     testing.expect_value(t,view.exposure.ev100,f32(12))
     view.exposure={}
-    view_volume_expose(&view,core.read(&w.view_volumes),core.read(&w.volumes),core.read(&w.worlds))
+    view_volume_expose(&view,core.read(&w.view_volumes),{volumes=core.read(&w.volumes),worlds=core.read(&w.worlds)})
     testing.expect(t,view.exposure.own && view.exposure.compensation==2 && view.exposure.tint==[3]f32{1,0,0},"without its own, that of where it is")
 }
 

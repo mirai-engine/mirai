@@ -67,11 +67,15 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
     case .Image:
         image(ctx,{id=node_id,quad=image_ref.quad,tint=style.fill,width=node.layout.width,height=node.layout.height,border=image_ref.border,border_uv=image_ref.border_uv,fit=image_ref.fit,size=image_ref.size})
     case .Progress:
+        // The bar redraws when its fill moves a pixel.
+        if r:=bound_range(b.instance,bound.value);r!=nil && r.step!=0 {
+            if rect,laid:=widget_rect(ctx,node_id);laid && rect.w*ctx.scale>=1 {r.step,r.floor=1/(rect.w*ctx.scale),false}
+        }
         progress(ctx,{id=node_id,value=f32(shown),width=node.layout.width,height=node.layout.height,
             fill=style.fill,track=style.track,stroke=style.stroke,corners=style.radius,quad=image_ref.quad,border=image_ref.border,border_uv=image_ref.border_uv,
             fill_mode=style.fill_mode,stroke_width=style.stroke_width,program=tree.programs[node.style] if int(node.style)<len(tree.programs) else 0,program_values=style.program_values})
     case .Button:
-        tree_button(ctx,b,node,index,slot,node_id,item,base_style,style,image_ref,content,selected,disabled)
+        tree_button(ctx,b,node,index,slot,node_id,values,item,base_style,style,image_ref,content,selected,disabled)
     case .Checkbox:
         value:=bound.value.bound && current!=0
         if checkbox(ctx,node_id,&value,disabled,style,node.layout.width,node.layout.height) {
@@ -152,13 +156,21 @@ tree_build_leaf :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,nod
         if node.particle!={} && ctx.game.particles!=nil && size.x>0 && size.y>0 {quad=ctx.game.particles(ctx.game.user,node_id,node.particle,size)}
         tint:=style.fill if style.fill[3]>0 else Color{255,255,255,255}
         image(ctx,{id=node_id,quad=quad,tint=tint if quad!={} else {},width=node.layout.width,height=node.layout.height})
+    case .Draw:
+        data:[]u8
+        if bound.value.bound && values!=nil {data=([^]u8)(rawptr(uintptr(values)+uintptr(bound.value.offset)))[:bound.value.size]}
+        widget_add(ctx,node_id,{.Passive})
+        element_leaf(ctx,{id=node_id,layout={width=node.layout.width,height=node.layout.height},custom=paint_add(ctx,{kind=.Draw,draw={
+            name=node.draw,fill=style.fill,stroke=style.stroke,track=style.track,knob=style.knob,mark=style.mark,
+            text=style.text,radius=style.radius,stroke_width=style.stroke_width,data=data,item=i32(item),
+        }})})
     }
     tree_drop_target(ctx,b,node,index,node_id,item)
 }
 
 // The options of a Selector or a Dropdown: the elements of the array its
 // items bind, whose enums its text maps to what they show, or its text
-// separated by '|', each a translation when the node is localized.
+// separated by '|', as its key says it when the node is localized.
 @(private)
 tree_options :: proc(b:^Tree_Build,index:int,values:rawptr,content:string) -> Options {
     o:=&b.instance.bounds[index].options
@@ -172,19 +184,16 @@ tree_options :: proc(b:^Tree_Build,index:int,values:rawptr,content:string) -> Op
 // the placeholder of a Field.
 @(private)
 tree_own_text :: proc(b:^Tree_Build,node:^Node,index:int) -> string {
-    tree,instance:=b.tree,b.instance
-    if .Localized in node.flags && index<len(instance.texts) {
-        shown:=instance.texts[index]
-        return string(tree.strings[shown.offset:][:shown.length])
-    }
-    return string(tree.strings[node.text_offset:][:node.text_length])
+    return b.instance.texts[index]
 }
 
 // A Button: clicked by the pointer, by navigation or by its action; with a
 // hold, only once the pointer or the action has held it that long, while a
-// bar of mark a fifth of its text tall fills along its bottom.
+// bar of mark a fifth of its text tall fills along its bottom. One that binds
+// a value writes its choice there when clicked, as a Radio does, and reports
+// Changed after Clicked.
 @(private)
-tree_button :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,node_id:Id,item:i32,base_style,style:^Node_Style,image_ref:Node_Image,content:string,selected,disabled:bool) {
+tree_button :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,node_id:Id,values:rawptr,item:i32,base_style,style:^Node_Style,image_ref:Node_Image,content:string,selected,disabled:bool) {
     instance:=b.instance
     state:=&instance.slot[slot]
     it:=button(ctx,node_id,{label=content,look=style,layout=&node.layout,image=image_ref,block=true,disabled=disabled})
@@ -218,6 +227,10 @@ tree_button :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,node_id
         tree_emit(b,{name=node.name,node=i32(index),kind=.Clicked,item=item})
         tree_sound(ctx,base_style,.Press)
         state.clicked=true
+        if bound:=instance.bounds[index].value;bound.bound {
+            bound_write(values,bound,f64(node.choice))
+            tree_emit(b,{name=node.name,node=i32(index),kind=.Changed,item=item,value=f64(node.choice)})
+        }
     }
     if !takes {return}
     if instance.bar_next_count>=TREE_BAR {ctx.stats.dropped_tree+=1;return}
@@ -468,26 +481,9 @@ rich_parse :: proc(content:string,base_style:Text_Style,out:[]Rich_Span) -> (cou
     return count,false
 }
 
-@(private)
-Rich_Build :: struct {
-    id:Id,
-    spans:[]Rich_Span,
-    flow:Flow(int),          // the line being filled; the run of a piece is its span
-    align:Align,
-    height:f32,              // of an empty line
-    images:[]Node_Image,
-    link:Color,
-    left:int,                // characters still shown; negative: all
-    links:[RICH_SPANS]^Paint, // the pieces of links, which the pointer over any piece of theirs underlines
-    named:[RICH_SPANS]u64,
-    link_count:int,
-    hot,clicked:u64,
-}
-
 // Text whose words take the styles, links, images and prompts its markup
-// gives them, broken into lines as wide as the element as the layout breaks
-// its text (at the width the last frame gave it when it grows); lines align
-// as its style says. images: what <img=name> names, by Node_Image.name, as
+// gives them: one text (text.odin) the layout breaks into lines at the width
+// it gives the element. images: what <img=name> names, by Node_Image.name, as
 // tall as a line of its text; link: the color of links (the text's when
 // transparent), underlined while the pointer is over one; reveal: the part of
 // its characters shown, 0 to 1. Returns the name of the link clicked; 0: none.
@@ -495,119 +491,48 @@ rich_text :: proc(ctx:^Context,id:Id,content:string,style:Text_Style,layout:Layo
     spans:[RICH_SPANS]Rich_Span
     count,lost:=rich_parse(content,style,spans[:])
     if lost {ctx.stats.dropped_tree+=1}
-    width:=layout.width.value if layout.width.kind==.Fixed else ctx.size.x
-    if layout.width.kind!=.Fixed {if r,found:=widget_rect(ctx,id);found {width=r.w}}
-    widget_add(ctx,id,{.Passive})
-    if !element_open(ctx,{id=id,layout={width=layout.width if layout.width!={} else fixed(width),height=layout.height,direction=.Column}}) {
-        element_close(ctx)
-        return
-    }
-    r:=Rich_Build{id=id,spans=spans[:count],align=style.align_x,height=style.size*TEXT_LINE,images=images,link=link,left=-1}
-    r.flow.width=width
-    if reveal<1 {
-        total:=0
-        for &span in r.spans {total+=utf8.rune_count_in_string(span.text) if span.prompt==0 && span.image==0 else 1}
-        r.left=int(math.round(f32(total)*max(reveal,0)))
-    }
-    font:=&ctx.font
-    for &span,index in r.spans {
-        if span.prompt!=0 || span.image!=0 {
-            rich_put(ctx,&r,{width=rich_inline_width(&r,&span),box=true,run=index})
-            continue
-        }
-        face:=int(span.style.font)
-        walk:=Layout_Walk{font=font,text=span.text,size=span.style.size,face=face,space=text_width(font," ",span.style.size,face)}
-        for {
-            word,_,more:=layout_walk(&walk)
-            if !more {break}
-            if word.length==0 {rich_flush(ctx,&r);continue}
-            rich_put(ctx,&r,{text=span.text[word.start:][:word.length],width=word.width,size=span.style.size,font=span.style.font,run=index})
-        }
-    }
-    if r.flow.count>0 {rich_flush(ctx,&r)}
-    element_close(ctx)
-    for paint,i in r.links[:r.link_count] {
-        if r.named[i]==r.hot && paint!=nil {paint.decoration+={.Underline}}
-    }
-    return r.clicked
-}
-
-// The width of a prompt or an image of a rich text.
-@(private)
-rich_inline_width :: proc(r:^Rich_Build,span:^Rich_Span) -> f32 {
-    if span.prompt!=0 {return span.style.size*1.3*1.2}
-    high:=span.style.size*TEXT_LINE
-    for image in r.images {
-        if image.name==span.image && image.size.x>0 && image.size.y>0 {return high*image.size.x/image.size.y}
-    }
-    return high
-}
-
-// Puts a piece on the line, after building the lines it does not fit in.
-@(private)
-rich_put :: proc(ctx:^Context,r:^Rich_Build,piece:Flow_Piece(int)) {
-    piece:=piece
-    for !flow_put(&r.flow,&ctx.font,&piece) {rich_flush(ctx,r)}
-}
-
-// Builds the pieces of a line of a rich text in a row as tall as its tallest.
-@(private)
-rich_flush :: proc(ctx:^Context,r:^Rich_Build) {
-    line:=flow_line(&r.flow,&ctx.font)
-    high:=r.height if len(line)==0 else 0
-    for piece in line {high=max(high,r.spans[piece.run].style.size*TEXT_LINE)}
-    box_begin(ctx,{layout={width=GROW,height=fixed(max(high,1)),direction=.Row,align_x=r.align,align_y=.Center}})
-    for &piece in line {
-        span:=&r.spans[piece.run]
-        shown:=r.left!=0
-        if span.prompt!=0 || span.image!=0 {
-            if r.left>0 {r.left-=1}
-            if span.prompt!=0 {
-                if shown {prompt(ctx,0,span.prompt,span.style,{height=fixed(span.style.size*1.3)})} else {element_leaf(ctx,{layout={width=fixed(piece.width),height=fixed(span.style.size*1.3)}})}
-                continue
+    whole:=style
+    whole.wrap=.Words
+    if !text_begin(ctx,whole) {return}
+    for &span in spans[:count] {
+        look:=Text_Span{font=span.style.font,size=span.style.size,color=span.style.color,decoration=span.decoration}
+        if span.style.font==style.font && span.style.size==style.size && span.style.color==style.color && span.decoration=={} {look={}}
+        named:Id
+        hot:=false
+        if span.link!=0 {
+            named=id_derive(ctx,id,"link",int(u32(span.link))+1)
+            hot=ctx.hot==named
+            if link[3]>0 {look.font,look.size,look.color=span.style.font,span.style.size,link}
+            if hot {
+                look.font,look.size=span.style.font,span.style.size
+                if look.color=={} {look.color=span.style.color}
+                look.decoration+={.Underline}
             }
+        }
+        switch {
+        case span.prompt!=0:
+            prompt_boxes(ctx,span.prompt,span.style.size*1.3)
+        case span.image!=0:
+            high:=span.style.size*TEXT_LINE
+            width:=high
             paint:Paint
-            for image in r.images {
+            for image in images {
                 if image.name!=span.image {continue}
                 frame:=image_frame(image,0)
                 paint=image_paint({quad=frame.quad,fit=.Contain,size=frame.size})
+                if image.size.x>0 && image.size.y>0 {width=high*image.size.x/image.size.y}
                 break
             }
-            paint.hidden=!shown
-            rich_piece(ctx,r,span,{layout={width=fixed(piece.width),height=fixed(span.style.size*TEXT_LINE)}},paint)
-            continue
+            if named!=0 && interact(ctx,named).clicked {clicked=span.link}
+            text_box(ctx,width,high,paint,named)
+        case named!=0:
+            if text_link(ctx,named,span.text,look).clicked {clicked=span.link}
+        case:
+            text_span(ctx,span.text,look)
         }
-        text:=piece.text
-        style:=span.style
-        style.align_x,style.align_y,style.wrap,style.ellipsis=.Start,.Start,.None,false
-        if span.link!=0 && r.link[3]>0 {style.color=r.link}
-        paint:=Paint{kind=.Text_Block,text=text,style=style,decoration=span.decoration}
-        if r.left>=0 {
-            count:=utf8.rune_count_in_string(text)
-            paint.revealed=i32(min(r.left,count))+1
-            r.left=max(r.left-count,0)
-        }
-        rich_piece(ctx,r,span,{layout={width=fixed(piece.width),height=fixed(span.style.size*TEXT_LINE)}},paint)
     }
-    box_end(ctx,{})
-    flow_next(&r.flow)
-}
-
-// A piece of a rich text: one of a link takes the pointer.
-@(private)
-rich_piece :: proc(ctx:^Context,r:^Rich_Build,span:^Rich_Span,e:Element,paint:Paint) {
-    e:=e
-    if span.link!=0 && r.link_count<len(r.links) {
-        e.id=id_derive(ctx,r.id,"link",r.link_count+1)
-        it:=interact(ctx,e.id,{})
-        if it.hot {r.hot=span.link}
-        if it.clicked {r.clicked=span.link}
-    }
-    p:=paint_add(ctx,paint)
-    if span.link!=0 && r.link_count<len(r.links) {
-        r.links[r.link_count],r.named[r.link_count]=p,span.link
-        r.link_count+=1
-    }
-    e.custom=p
-    element_leaf(ctx,e)
+    rest:=layout
+    rest.direction,rest.padding,rest.gap={},{},0
+    text_end(ctx,rest,id,reveal)
+    return
 }

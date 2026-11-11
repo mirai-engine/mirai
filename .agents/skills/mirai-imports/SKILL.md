@@ -2,12 +2,12 @@
 name: mirai-imports
 description: Mirai importers that convert OBJ, glTF/GLB, USD, FBX, static and skinned meshes, morph
   targets, sockets and animations, and images (HDR, 16-bit, cubes and arrays) to .mesh, .skeleton,
-  .mat, .tex and .anim, WAV and Ogg Vorbis to .sound, TrueType and OpenType fonts to .font, CSV
-  texts to .strings and prompt manifests to .prompts with their atlases (`cook/import`, its formats
+  .mat, .tex and .anim, WAV and Ogg Vorbis to .sound, TrueType and OpenType fonts to .font and
+  prompt manifests to .prompts with their atlases (`cook/import`, its formats
   `cook/import/obj`, `gltf`, `usd` and `fbx` (ufbx), `cook/import/sources`, `cook/textures`,
   `cook/rig` template rigs, `cook/cache`, the `mirai import` command), and the formats and whole
   sources a plugin adds to the editor (`Import_Format_Provider`, `Import_Source_Provider`). Use when
-  importing or verifying a model, animation, texture, font, texts or prompts, when changing or
+  importing or verifying a model, animation, texture, font or prompts, when changing or
   adding an import format, when importing with a plugin or when regenerating the demo's imported
   assets.
 ---
@@ -20,8 +20,11 @@ the assets.
 ## Map
 
 - Packages, `import_source`, the imported model and CLI: [imports.md](references/imports.md#api).
-- Ids, reimporting, moved outputs, a moved or renamed source (`into`) and parts with `owner`:
-  [Identity](references/imports.md#identity-and-reimport).
+- Where a source lives (in the assets, beside what it makes), its sidecar (settings, folder, ids),
+  what an import keeps in the imported folder and what in the assets, reimporting, a moved or
+  renamed source and parts with `owner`: [Identity](references/imports.md#identity-and-reimport).
+- A checkout without its imported folder, what a build imports and when a source is imported
+  again: [Sync](references/imports.md#sync).
 - Adding or changing a format (`Format`, `Reader`, `Source_Space`, version):
   [Formats](references/imports.md#formats).
 - Import cache and versions: [Cache](references/imports.md#import-cache),
@@ -37,7 +40,7 @@ the assets.
   [glTF/GLB](references/imports.md#gltf-and-glb) (skeletons, morph targets, clips, meshopt),
   [USD](references/imports.md#usd), [FBX](references/imports.md#fbx) (ufbx, its binding and its
   fixtures), [sounds](references/imports.md#sounds), [fonts](references/imports.md#fonts),
-  [texts](references/imports.md#texts) and [prompts](references/imports.md#prompts).
+  and [prompts](references/imports.md#prompts).
 - Formats of `.mesh`, `.mat`, `.tex`, `.anim` and the version rule: [asset
   types](../mirai-assets/references/formats.md#asset-types) and
   [versions](../mirai-assets/references/formats.md#versions); verifying what was written: [asset
@@ -50,14 +53,18 @@ the assets.
 
 ## Workflow
 
-1. **Importing a file.** [`mirai import`](references/imports.md#what-is-written) with the
-   source's settings; review the assets with `mirai asset verify`, `ls` and `info`. The editor,
-   the CLI and `tools/demo_content` import with the same `sources.import_source`: same assets,
-   prefab included.
-2. **From code.** `sources.import_source(path,folder,options)` writes everything; for the model
+1. **Importing a file.** Put it in `assets/`, in the folder of its theme beside what it makes
+   (the editor copies a file from outside into the folder of the browser), and
+   [`mirai import`](references/imports.md#what-is-written) it; review the assets with
+   `mirai asset verify`, `ls` and `info`. Commit the source, its `.import` and the documents it
+   wrote beside it; what it wrote in `.mirai/imported/` is never versioned. The editor, the CLI,
+   the sync of builds and the content tools import with the same `sources.import_source`: same
+   assets, prefab included.
+2. **From code.** `sources.import_source(path,options)` writes everything; for the model
    without writing it, `importer.import_model(path,sources.FORMATS[:],options)` reads it into an
    `Imported_Model` (plain data, no engine components) and `importer.import_write` writes its
-   assets; `cook/prefab.model_prefab` builds the prefab.
+   assets; `cook/prefab.model_prefab` builds the prefab in the types of the game
+   (`Import_Options.world`: the session's, or those of the project's editor library).
 3. **Adding a format.** A `cook/import/<format>` package that does not import the other formats,
    with its `FORMAT :: importer.Format{...}` and a line in `sources.FORMATS`
    ([how](references/imports.md#adding-a-format)). Its own options live in it (`Format.data`).
@@ -65,12 +72,11 @@ the assets.
    the writer changes, `IMPORTER_VERSION`. Assets of the previous version are rebuilt on the next
    import.
 5. **Importing with a plugin.** An editor plugin provides an `Import_Format_Provider` (one more
-   model format) or an `Import_Source_Provider` (a source that imports whole); the editor adds
-   them to `sources.FORMATS`, which holds only the engine's own
-   ([plugins](references/imports.md#plugin-formats)).
-6. **Regenerating the demo's imported assets.** `tools/demo_content` imports `demo/source/textures`
-   and `demo/source/models` with `import_source`, each image with the use its name says:
-   [generated content](../mirai-gameplay/references/demo.md#generated-content).
+   model format) or an `Import_Source_Provider` (a source that imports whole); the editor and the
+   import program of the engine add its formats to `sources.FORMATS`, which holds only the
+   engine's own ([plugins](references/imports.md#plugin-formats)).
+6. **Regenerating imported assets.** `mirai build` builds what is missing or stale of a project
+   and its plugins once its target stands ([sync](references/imports.md#sync)).
 
 ## Invariants
 
@@ -85,25 +91,42 @@ the assets.
   place after the read: from the `front` its settings state, or else, for a file that is a rig,
   from where its body is found facing ([front](references/imports.md#front)).
 - **The source is not modified.** The same bytes and options give the same assets.
-- **An asset's id lives in its header and nothing derives it.** The first import gives random ids;
-  reimporting writes each part in its file and with its id, even if it was moved or renamed in the
-  source, and a moved or renamed source keeps its import
-  ([identity](references/imports.md#identity-and-reimport)). Only what is surely part of a model
-  belongs to its prefab (`owner`), and it is decided once ([parts](references/imports.md#parts)).
+- **A source lives in the assets, beside what it makes, in folders by theme.** Never a folder per
+  asset type; the browser filters by type. One outside the assets is refused. Decided by the
+  owner.
+- **The ids of an import live in the sidecar of its source, and nothing derives them.** The first
+  import gives random ids and `<source>.import` lists them; importing again, on any machine and
+  in any order of sources, gives each part the asset it had by its kind and name, even if its
+  document was moved, and a source moved or renamed with its sidecar keeps its import
+  ([identity](references/imports.md#identity-and-reimport)). A part renamed in the source is a
+  new asset. Only what is surely part of a model belongs to its prefab (`owner`), and it is
+  decided once ([parts](references/imports.md#parts)).
+- **An import never touches another.** Two models that embed the same image get a texture each,
+  encoded once in the content cache; no import edits the files or the sidecar of another source.
+  Decided by the owner.
+- **What nobody edits is a cache of the source, never versioned, whatever reads it.** The meshes,
+  textures, sounds and fonts of every import, of an engine format or of a plugin's, are files of
+  the imported folder of its root (`.mirai/imported/`), named by their ids and listed by where
+  their sidecar is, built again from the source and its sidecar by
+  [sync](references/imports.md#sync); materials, prefabs, skeletons, clips, texts and prompts,
+  which the editor edits, are documents of `assets/`. Decided by the owner.
+- **The source, its sidecar and the build decide the cache.** The same three give the same files,
+  byte for byte: a clone, a worktree and a branch switch are brought up to date by the same sync,
+  explicitly, in `mirai build`; the editor never imports by itself.
 - **Reimporting keeps what a person changed.** A material stores what the source gave and the next
   import rewrites only that: fields changed afterwards stay, like the overrides of a prefab
   ([materials](references/imports.md#what-is-written)).
-- **An import's cache is each asset's `Import_Info`**: source (size and hash), writer and format
-  version, and only the settings the asset is made from. A mesh or texture whose file is already
-  the one that would be written is kept; the rest is rebuilt, and a texture of the same image and
-  settings or a mesh of the same geometry and settings comes from the project cache.
+- **What an asset was built from is its `Import_Info`**: source (size and hash), writer and format
+  version, and only the settings the asset is made from. Whether a file of the cache is current
+  is said once, by its name (the key of what the import builds from); the rest is rebuilt, and a
+  texture of the same image and settings or a mesh of the same geometry and settings comes from
+  the content cache.
 - **In parallel, the same bytes.** What is expensive (levels, clusters and colliders of a mesh,
-  levels of a texture) is built in jobs; what decides ids, files and what is shared is written in a
-  single thread, in the usual order. Importing with or without the job system gives the same
-  files.
+  levels of a texture) is built in jobs; what decides ids and files is written in a single thread,
+  in the usual order. Importing with or without the job system gives the same files.
 - **Without an optimizer, close and with the same bytes.** The hot loops (BLAKE3 of the payloads,
   the quadrics of simplification) do four values per instruction with `#simd[4]` and add in the
-  order of the scalar loop: the tool and the `--dev` engine (`-o:minimal`) write the same as
+  order of the scalar loop: the tool and the dev engine (`-o:minimal`) write the same as
   `--release`.
 - **Importing is a transaction.** `import_model` leaves nothing if it fails (own arena, freed by
   `model_destroy`); `import_write` removes the files it created if it fails midway. Errors name
@@ -131,9 +154,9 @@ the assets.
   time samples fail with a named error. What is ignored without breaking the source (material
   extensions with no equivalent, missing images) leaves a warning.
 - **Settings live with the source.** `<source>.import` decides how it is imported and wins over the
-  options of whoever imports (except `ignore_stored`); `import_source` writes it unless
-  `no_save`. Everything that changes an asset is a setting, also the alpha coverage of a loose
-  image. An unreadable settings file is an error, not the defaults.
+  options of whoever imports (except `ignore_stored`); every import writes it. Everything that
+  changes an asset is a setting, also the alpha coverage of a loose image. An unreadable sidecar
+  is an error, not the defaults nor new ids.
 - **What is imported is used as is.** Levels of detail and colliders are made on import and stored
   in the `.mesh`; loading does not recompute them.
 - **Simple collision: the source's wins.** The colliders the source brings are the mesh's
@@ -143,7 +166,8 @@ the assets.
   `RDO_LAMBDA_DEFAULT` unless the setting `rdo_lambda` says otherwise.
 - **The editor never waits for the final encode** (`textures.Encode_Speed`): its imports take the
   Final of the texture cache, else build Fast (no RDO, low effort, `Texture_Flag.Fast`), and the
-  cook encodes a Fast texture again as Final from its source. `mirai import` and tools build Final.
+  sync of a build or of a cook builds a Fast texture again as Final from its source. `mirai import`
+  and tools build Final, and so does the editor for a texture that is a document.
 - **One algorithm, once.** Mips, color rules and block compression in `cook/textures` (the
   encoder is `cook/compressor/texture`); PBR conversions in `cook/import/pbr.odin`; triangulation,
   simplification, hulls and convex decomposition in `std/geom`; transforms with `std/math`.
@@ -160,27 +184,35 @@ the assets.
   cache, settings, fuzz, CLI); `cook/textures` (decoding, mips, BC blocks and their RDO lambda,
   inverted green, round trip through `.tex`, cache by content; HDR, every BC6H mode, 16-bit and
   layers in `layers_test.odin`). The fixtures of `assets/fixtures/` and the models of
-  `demo/source/models` import (without warnings) and what is written reads back with `asset`.
+  `demo/assets` import (without warnings) and what is written reads back with `asset`.
 - Caches: `cook/textures/cache_test.odin` and `cook/import/sources/cache_test.odin` (a texture or
   a mesh that another import built is taken from the cache);
   `cook/build/cook_cache_test.odin` (a cook takes the blocks of a texture from the cache of its
-  content) and `cook/import/sources/cook_test.odin` (a fast texture is encoded again as final
-  from its source).
+  content) and `cook/import/sources/cook_test.odin` (the sync of a cook builds a fast texture
+  final from its source).
 - Parallel: import a map with `mirai import --rebuild` over a copy of an import made without the
   job system (or before the change) and compare the trees with `diff -r`: the same bytes.
 - Also test `cook/prefab` if the imported hierarchy changes, and `asset` if an asset format or its
   version changes.
-- Fonts, texts and prompts: `cook/import/interface_test.odin` (rejected collections, CSV per
-  RFC 4180, power-of-two atlases without overlap) and `cook/import/sources/fuzz_test.odin`
+- Fonts and prompts: `cook/import/interface_test.odin` (rejected collections, power-of-two
+  atlases without overlap) and `cook/import/sources/fuzz_test.odin`
   (damaged files are imported or refused). After changing the prompt importer, import the
   `prompts_kenney` pack again
   ([command](../mirai-plugins/references/plugins.md#first-party-plugins)) and verify it with
   `mirai asset verify`.
-- Identity and reimport: `cook/import/sources/reimport_test.odin` (the parts of an import name
-  their prefab and keep their ids where they were moved, a source moved or renamed keeps the ids of
-  its import, when a material is a part of a model and when two models lose it as a part) and
+- Identity, the imported folder and sync: `cook/import/sources/reimport_test.odin` (the parts of
+  an import name their prefab and keep their ids where they were moved, a source keeps the ids of
+  its import with its sidecar, a part renamed in the source is a new one, two models with the same
+  image get a texture each and neither touches the other, a checkout without its imported folder
+  gets the same assets byte for byte and only what changed is imported again, the sources of a
+  plugin format build in the cache and sync reads them with the formats of the plugins, a source
+  outside the assets is refused, when a material is a part of a model),
+  `asset/registry_test.odin` (the listing of the cache by where the sidecar is, never by the order
+  of a scan), `cook/import/sources/settings_test.odin` (a sidecar that is not one is refused) and
   `cook/import/sources/write_test.odin` (importing again keeps what was changed in a material and
-  takes the rest from the source).
+  takes the rest from the source). After changing what an import writes, prove it on the demo:
+  delete `demo/.mirai/imported`, `mirai build editor demo`, and `git status` shows no sidecar
+  or document changed.
 - `cook/import/sources/cli_test.odin` needs `MIRAI_ROOT` (defined by `mirai test`); run it when
   touching `cook/import/sources/command.odin`. It imports in-process with `command`; the whole
   path (`mirai import` → `mirai-import`) needs the built engine.

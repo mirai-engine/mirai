@@ -1,12 +1,12 @@
 ---
 name: mirai-world
-description: Mirai world content plugins - `terrain` (heightfield, mesh and volume terrain, chunks,
-  material layers, digging, with the `terrain_vfx` dust and the `terrain_debris` pieces), `foliage`
-  (cells, impostors, wind, collision, with the `foliage_terrain` bridge), `water` (waves, caustics,
-  foam, wakes), `imprint` (footprints in snow, mud and sand), `vfx` (GPU particles, `.particle`
-  effects, grids and volumes), `navigation` (automatic navmesh, links, agents, with the
-  `navigation_terrain` bridge), `behavior` (AI minds, smart objects, perception, influence maps) and
-  `shapes` (editable outlines and solids of brush entities). Use when sculpting or painting terrain,
+description: Mirai world content plugins - `terrain` (heightfield and volume terrain, chunks,
+  material layers, digging, dust, the ground contract, with the `terrain_debris` pieces), `foliage`
+  (cells, impostors, wind, collision, ground), `water` (waves, caustics, foam, wakes), `imprint`
+  (footprints in snow, mud and sand), `vfx` (GPU particles, `.particle` effects, births by channel,
+  grids and volumes), `navigation` (automatic navmesh, links, agents), `behavior` (AI minds, smart
+  objects, perception, influence maps) and `shapes` (editable solids of a polygon and brush
+  entities, and splines of roads, paths and rivers). Use when sculpting or painting terrain,
   scattering vegetation, making water, snow or particles, making enemies and NPCs walk and decide,
   or changing any of those plugins.
 ---
@@ -21,8 +21,9 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
 
 ## Map
 
-- `vfx` (particles: `.particle` format, emitters and clocks, GPU pools and passes, Vfx programs
-  with surfaces, bones, channels and grids, stages and neighbors, volumes, events to the game):
+- `vfx` (particles: `.particle` format, emitters and clocks, GPU pools and passes, surfaces and
+  bones of a shape, Vfx programs with surfaces, channels and grids, stages, volumes, events to the
+  game):
   [format](references/vfx.md#format), [game](references/vfx.md#game),
   [surfaces, bones and resources](references/vfx.md#surfaces-bones-and-resources),
   [grids and stages](references/vfx.md#grids-and-stages),
@@ -47,7 +48,7 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   stamps, displacement of the ground meshes as seen by rays):
   [the field](references/imprint.md#the-field), [stamps](references/imprint.md#stamps),
   [what is drawn](references/imprint.md#what-is-drawn) and [scene](references/imprint.md#scene)
-- `water` (the `Fluid_Volume`s drawn as water: glass surface, `fog` medium, caustics, foam,
+- `water` (the `Fluid`s drawn as water: glass surface, `fog` medium, caustics, foam,
   splashes and wakes from physics): [appearance](references/water.md#appearance),
   [what physics shows](references/water.md#what-physics-shows),
   [sound](references/water.md#sound), [scene](references/water.md#scene) and
@@ -58,22 +59,23 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   [format](references/terrain.md#canonical-format),
   [geometry and collision](references/terrain.md#geometry-and-collision),
   [materials and layers](references/terrain.md#materials-and-layers),
-  [mesh authoring](references/terrain.md#mesh-authoring), [tool](references/terrain.md#tool),
-  [API](references/terrain.md#api),
+  [tool](references/terrain.md#tool), [API](references/terrain.md#api),
   [editing during Play](references/terrain.md#editing-during-play),
   [publishing and residency](references/terrain.md#jobs-publishing-and-residency) and
   [open worlds](references/terrain.md#limits-in-open-worlds)
   - Network edits and the `terrain_multiplayer` bridge: [network](references/terrain.md#network)
   - Material under the surface of a Volume (strata, veins, `terrain.interior`):
     [interior](references/terrain.md#volume-interior)
-  - What digging removes (`Terrain_Digs`), the `terrain_vfx` dust and the `terrain_debris` pieces
-    and drops: [what digging leaves](references/terrain.md#what-digging-leaves)
-  - Quadtree, far nodes, coarse grid and piece budget:
-    [quadtree](references/terrain.md#quadtree-and-nodes)
-- `foliage` (`.foliage`, cells, generator, overrides and orphans, ground and its `foliage_terrain`
-  bridge, per-cell batches, types from prefabs, octahedral impostors and canopy in rays, wind by
-  variants and by hook, bending by `Foliage_Bender`, collision by resident cells, brush and
-  instance selection): [source](references/foliage.md#entity-and-source),
+  - What digging removes (`Terrain_Digs`), the dust and the `terrain_debris` pieces and drops:
+    [what digging leaves](references/terrain.md#what-digging-leaves)
+  - The ground it gives `core.Ground_Queries` (foliage, navigation):
+    [ground](references/terrain.md#ground)
+  - Quadtree of a Heightfield and octree of a Volume, far nodes, coarse grid and piece budget:
+    [tree](references/terrain.md#tree-and-nodes)
+- `foliage` (`.foliage`, cells, generator, overrides and orphans, ground read from
+  `core.Ground_Queries`, per-cell batches, types from prefabs, octahedral impostors and canopy in
+  rays, wind by variants and by hook, bending by `Foliage_Bender`, collision by resident cells,
+  brush and instance selection): [source](references/foliage.md#entity-and-source),
   [format](references/foliage.md#format), [cells](references/foliage.md#layers-of-a-cell),
   [ground](references/foliage.md#ground), [drawing](references/foliage.md#drawing),
   [impostor and crown](references/foliage.md#far-impostor-and-crown),
@@ -90,8 +92,6 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   - Tiles per section, stitching, baking of each section and coarse graph:
     [sections](references/navigation.md#sections); agents that keep going far from the players
     (`scene.Roaming`, `Nav_Far`): [the far field](references/navigation.md#the-far-field)
-- `navigation_terrain` (automatic bridge: where the terrain collision is not loaded, for the
-  navmesh): [meshes](references/navigation.md#meshes)
 - `behavior` (minds by name, enemies with minds, perception, smart objects, place queries,
   influence maps, `behavior.*`): [minds](references/behavior.md#minds),
   [enemies with minds](references/behavior.md#enemies-with-minds),
@@ -99,14 +99,16 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   [influence maps](references/behavior.md#influence-maps),
   [perception](references/behavior.md#perception), [places](references/behavior.md#places) and
   [API](references/behavior.md#api)
-- The library under navigation and minds (A*, tiled navmesh, steering, the `Mind` loop and its
+- The library under navigation and minds (A*, tiled navmesh, avoidance, the `Mind` loop and its
   actions): [minds](../mirai-std/references/ai.md#decisions-minds-mindodin) and
   [navigation](../mirai-std/references/ai.md#navigation) of `std/ai`
-- `shapes` (editable outlines and solids of brush entities saved as source, stamps and vertex
-  edits, bevels of the rims of an outline, the derived child with mesh and collider, static or
-  dynamic; the Shapes tool and `shapes.*`):
+- `shapes` (editable solids of a polygon and brush entities saved as source, stamps and vertex
+  edits, bevels of the rims of a polygon, the derived child with mesh and collider, static or
+  dynamic; the ribbons of roads along a `volume.Spline` with a material; the
+  Shapes tool and `shapes.*`):
   [source and derived](references/shapes.md#source-and-derived),
   [static and dynamic](references/shapes.md#static-and-dynamic),
+  [splines](references/shapes.md#splines),
   [editing](references/shapes.md#editing) and [Shapes tool](references/shapes.md#shapes-tool)
 - Using them from a game (volumes, mining and dig-and-break games, the demo):
   [gameplay](../mirai-gameplay/SKILL.md)
@@ -115,8 +117,7 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
 
 1. Open only the sections the Map names for the plugin.
 2. Enable the plugin in `plugins` of `project.mirai`; its dependencies are enabled automatically and
-   come earlier in the order. The automatic bridges (`terrain_vfx`, `foliage_terrain`,
-   `navigation_terrain`) are active when both sides are present.
+   come earlier in the order.
 3. Change its `runtime/` and `editor/` parts as
    [the plugin system](../mirai-plugins/SKILL.md#workflow) says, and update the demo project if it
    uses the plugin.
@@ -132,6 +133,11 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   a component or revisioned source. Runtime can publish resident chunks without a file and save
   on explicit request. Lifetimes: [terrain](references/terrain.md),
   [host](../mirai-core/references/host.md) and [preview](../mirai-editor/references/extensions.md).
+- Terrain: two representations, Heightfield and Volume, and no third; a brush is an intent
+  (`Brush_Kind`) that both take, and what is wrong with it is an error that says the fix.
+- Content plugins meet each other through the `core` contracts, never through a bridge plugin:
+  the ground (`core.Ground_Queries`, which terrain gives) and births of effects (`core.Births`,
+  which vfx takes).
 - AI over the network: the minds decide on the server.
 - Navigation: automatic navmesh by tiles from the collision.
 - Far-away simulation: automatic coarse simulation through the portal graph.
@@ -157,5 +163,3 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   `engine.describe`. Discovery, order or validation of manifests:
   [project verification](../mirai-projects/SKILL.md#verification). Editor tools:
   [mirai-editor](../mirai-editor/SKILL.md#verification).
-- Direct gestures (clicks on surfaces, drags, brushes) are tested by the user; the rest, by API and
-  captures.

@@ -15,14 +15,14 @@ import mm "mirai:std/math"
 @(test)
 ai_scene_outlines_follow_pending_authors_and_keep_selection_without_steady_allocations :: proc(t:^testing.T) {
     world:Pick_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     owner,derived,other,selected:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     core.add(&world.ids,owner,{value=1});core.add(&world.ids,other,{value=2});core.add(&world.ids,selected,{value=3})
     core.add(&world.parents,derived,{entity=owner})
     for e in ([4]core.Entity{owner,derived,other,selected}) {core.add(&world.meshes,e,{shape=.Cube});core.add(&world.transforms,e,core.TRANSFORM_IDENTITY)}
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     m:=new(Ai);defer free(m)
     m.task_count=2
     m.tasks[0].world,m.tasks[1].world=&world,&world
@@ -82,7 +82,7 @@ ai_scene_outlines_follow_pending_authors_and_keep_selection_without_steady_alloc
     testing.expect(t,ai_scene_task_visible(&session,ref,&m.tasks[0]),"closing the browser does not hide scene figures")
     testing.expect(t,!ai_scene_task_visible(&session,ref,&m.tasks[1]),"Finish removes a scene figure")
     other_world:Pick_Test_World
-    testing.expect(t,!ai_scene_task_visible(&session,core.world_ref(&other_world,core.test_world_info(&world)),&m.tasks[0]),"a task never appears on another document")
+    testing.expect(t,!ai_scene_task_visible(&session,core.world_ref(&other_world,test_world_info(&world)),&m.tasks[0]),"a task never appears on another document")
     m.task_count=3
     m.tasks[2].world,m.tasks[2].state=&world,.Running
     testing.expect(t,!ai_scene_task_visible(&session,ref,&m.tasks[2]),"a turn without context that changed nothing is not in the scene")
@@ -127,7 +127,7 @@ ai_sent_context_is_not_evicted_before_its_review_is_finished :: proc(t:^testing.
 @(test)
 ai_scene_figures_render_as_transient_geometry_and_reuse_descriptors :: proc(t:^testing.T) {
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     mounts:=[1]asset.Registry_Mount{{folder=EDITOR_ASSETS,prefix=EDITOR_ASSETS_PREFIX}}
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",asset_mounts=mounts[:],window_desc={size={128,128}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
@@ -172,28 +172,36 @@ ai_scene_figures_render_as_transient_geometry_and_reuse_descriptors :: proc(t:^t
     testing.expect_value(t,instance.slot_materials[4],u32(0))
     color:=agent_color(int(task.color_index))
     linear:=mm.srgb_to_linear([3]f32{f32(color[0])/255,f32(color[1])/255,f32(color[2])/255})
+    // The instance holds the color of each colored part over the row of its material.
+    held :: proc(instance:gpu.Instance_Desc,row:u32,at:uintptr,value:[3]f32) -> bool {
+        values,want,found:=instance.material_values,transmute([3]u32)value,0
+        for entry in values.entries[:values.count] {
+            first,count:=entry.word&(1<<gpu.INSTANCE_VALUE_COUNT_SHIFT-1),entry.word>>gpu.INSTANCE_VALUE_COUNT_SHIFT
+            for c in u32(0)..<3 {
+                word:=u32(at/4)+c
+                if entry.row==row && word>=first && word<first+count && entry.words[word-first]==want[c] {found+=1}
+            }
+        }
+        return found==3
+    }
     for slot in PRESENCE_COLOR_SLOTS {
         row:=instance.slot_materials[slot]
-        if testing.expect(t,row>0,"each colored part has its own derived material") {
-            values:=host.assets_material_values(app.assets,row-1)
-            testing.expect_value(t,values.info.base_color,linear)
-            if slot==PRESENCE_STARS_SLOT {
-                testing.expect_value(t,values.info.emission,linear)
-            }
+        if testing.expect(t,row>0,"each colored part shows the material of its slot") {
+            testing.expectf(t,held(instance,row-1,offset_of(gpu.Gpu_Material,base_color),linear),"slot %d holds its color",slot)
+            if slot==PRESENCE_STARS_SLOT {testing.expect(t,held(instance,row-1,offset_of(gpu.Gpu_Material,emission),linear),"the stars glow in it")}
         }
     }
     other:Presence
     other_color:=agent_color(1)
     testing.expect(t,presence_prepare(&session,&other,figure.at+{0.75,0,0},math.PI,other_color,agent_level(1),100))
-    for slot in PRESENCE_COLOR_SLOTS {
-        testing.expect(t,other.instance.slot_materials[slot]>0 && other.instance.slot_materials[slot]!=instance.slot_materials[slot],"different figures retain different colors")
-    }
+    testing.expect(t,other.instance.material_values!=instance.material_values,"different figures retain different colors")
 
     host.assets_commit(app.assets)
     renderer:=app.renderer
     instances:=[2]gpu.Instance_Desc{instance,other.instance}
     for &shown in instances {shown.highlight=0}
-    gpu.scene_set(renderer,instances[:],nil,{direction={0.3,0.8,0.6},color={1,1,1},illuminance=math.PI,enabled=true},{background={},use_background=true})
+    gpu.scene_set_environment(renderer,{direction={0.3,0.8,0.6},color={1,1,1},illuminance=math.PI,enabled=true},{background={},use_background=true})
+    gpu.scene_update(renderer,0,instances[:],true)
     camera:=gpu.Camera{position={0.375,0.5,2.4},forward={0,-0.05,-2.4},up={0,1,0},fov_y=45,near=0.05,far=100}
     for _ in 0..<4 {testing.expect(t,gpu.renderer_frame(renderer,{camera=camera}),renderer.error)}
     rhi.device_wait_idle(app.device)

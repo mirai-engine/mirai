@@ -3,6 +3,7 @@ package ui
 import "core:math"
 import "core:mem"
 import "core:testing"
+import std_anim "mirai:std/anim"
 
 // The HUD of test_hud_fill with its animated menu, as records.
 Test_Hud_Records :: struct {
@@ -11,7 +12,7 @@ Test_Hud_Records :: struct {
     images:[1]Tree_Image,
     anims:[2]Tree_Anim,
     tracks:[2]Tree_Track,
-    keys:[4]Keyframe,
+    keys:[4]std_anim.Keyframe,
     anim_sets:[1]Anim_Set,
     variants:[2]Tree_Style_Variant,
     text:[dynamic]u8,
@@ -66,7 +67,7 @@ a_tree_loaded_from_records_is_laid_out_and_drawn_like_the_one_built_in_code :: p
     testing.expect_value(t,loaded.tree.images[0].quad.data,u32(9))
 
     a,b:Context
-    testing.expect(t,context_init(&a,TEST_SMALL) && context_init(&b,TEST_SMALL))
+    testing.expect(t,test_context_init(&a,TEST_SMALL) && test_context_init(&b,TEST_SMALL))
     defer {context_destroy(&a);context_destroy(&b)}
     input:=test_input()
     // The menu appears and fades in: the animation of both runs alike.
@@ -126,7 +127,7 @@ records_that_contradict_themselves_load_no_tree :: proc(t:^testing.T) {
     r.anims[0].count=3
     refused(t,&tree,data,"tracks outside the table")
     data=test_hud_records(&r)
-    r.anim_sets[0].pressed=3
+    r.anim_sets[0].clicked=3
     refused(t,&tree,data,"an animation outside the table")
     // A group plays only animations of earlier rows: no cycles.
     data=test_hud_records(&r)
@@ -156,7 +157,7 @@ an_enum_without_a_name_loads_no_tree :: proc(t:^testing.T) {
         {cast(^u8)&node.layout.width.kind,"width.kind"},{cast(^u8)&node.layout.height.kind,"height.kind"},{cast(^u8)&node.layout.direction,"direction"},
         {cast(^u8)&node.layout.align_x,"align_x"},{cast(^u8)&node.layout.align_y,"align_y"},
         {cast(^u8)&r.styles[0].text.align_x,"text.align_x"},{cast(^u8)&r.styles[0].text.align_y,"text.align_y"},{cast(^u8)&r.styles[0].text.wrap,"text.wrap"},
-        {cast(^u8)&r.anims[0].kind,"anim kind"},{cast(^u8)&r.anims[0].loop,"anim loop"},{cast(^u8)&r.tracks[0].property,"track property"},{cast(^u8)&r.keys[1].ease,"key ease"},
+        {cast(^u8)&r.anims[0].kind,"anim kind"},{cast(^u8)&r.anims[0].loop,"anim loop"},{cast(^u8)&r.tracks[0].property,"track property"},{cast(^u8)&r.keys[1].ease,"key ease"},{cast(^u8)&r.keys[1].interpolation,"key interpolation"},
     }
     for entry in cases {
         kept:=entry.field^
@@ -169,7 +170,7 @@ an_enum_without_a_name_loads_no_tree :: proc(t:^testing.T) {
     tree_destroy(&tree)
     // The last value of each enum is one of them.
     node.float={to=.Parent,anchor=.Bottom_Right,pivot=.Bottom_Right}
-    r.keys[1].ease=.Out_Bounce
+    r.keys[1].ease=.Bounce_In_Out;r.keys[1].interpolation=.Cubic_Spline
     testing.expect(t,tree_load(&tree,data,{textures={7}}))
     tree_destroy(&tree)
 }
@@ -207,7 +208,7 @@ the_layers_of_a_tree_count_from_the_layer_it_is_built_in :: proc(t:^testing.T) {
         return -1
     }
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     frame:=test_frame(&ctx,&input,build,&scene)
@@ -257,7 +258,7 @@ a_tree_that_nests_more_than_a_frame_holds_is_drawn_and_counted :: proc(t:^testin
         if s.floating {box_end(ctx,{float={to=.Surface}})}
     }
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     for c in cases {
@@ -327,7 +328,7 @@ a_leaf_floats_from_its_parent_and_its_events_say_where :: proc(t:^testing.T) {
         for e in s.events[:result.count] {if e.kind==.Clicked {s.count+=1;s.at=e.rect}}
     }
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     test_frame(&ctx,&input,build,&scene)

@@ -432,14 +432,5 @@ FfxInt32x2 ComputeHrPosFromLrPos(FfxInt32x2 iPxLrPos)
     FfxInt32x2   iPxHrPos        = FfxInt32x2(floor(fLrPosInHr));
     return iPxHrPos;
 }
-#if FFX_HALF
-FFX_MIN16_I2 ComputeHrPosFromLrPos(FFX_MIN16_I2 iPxLrPos)
-{
-    FFX_MIN16_F2 fSrcJitteredPos = FFX_MIN16_F2(iPxLrPos) + FFX_MIN16_F(0.5f) - FFX_MIN16_F2(Jitter());
-    FFX_MIN16_F2 fLrPosInHr      = (fSrcJitteredPos / FFX_MIN16_F2(RenderSize())) * FFX_MIN16_F2(DisplaySize());
-    FFX_MIN16_I2 iPxHrPos        = FFX_MIN16_I2(floor(fLrPosInHr));
-    return iPxHrPos;
-}
-#endif
 
 #endif //!defined(FFX_FRAMEINTERPOLATION_COMMON_H)

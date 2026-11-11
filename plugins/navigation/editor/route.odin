@@ -7,6 +7,7 @@ import "mirai:editor"
 import "mirai:std/ai"
 import mm "mirai:std/math"
 import nav "plugins:navigation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // The way a drive of play.step takes through the navigation meshes: the next
@@ -46,23 +47,22 @@ route_next :: proc(s:^editor.Session,w:core.World_Ref,body:core.Entity,goal:[3]f
     if n==nil {return {}}
     if !n.ready {return {state=.Waiting}}
     if n.count==0 {return {}}
-    characters,colliders,walks:=core.world_table_of(w,phys.Character),core.world_table_of(w,phys.Collider),core.world_table_of(w,phys.Walk)
-    swims,worlds:=core.world_table_of(w,phys.Swim),core.world_table_of(w,core.World_Transform)
+    characters,colliders,walks:=core.world_table_of(w,phys.Character),core.world_table_of(w,phys.Collider),core.world_table_of(w,locomotion.Walk)
+    swims,worlds:=core.world_table_of(w,locomotion.Swim),core.world_table_of(w,core.World_Transform)
     physics:=core.world_storage_of(w,phys.Physics_State)
     if characters==nil || colliders==nil || walks==nil || swims==nil || worlds==nil || physics==nil {return {}}
-    character,is_character:=core.get(core.read(characters),body)
-    collider,collides:=core.get(core.read(colliders),body)
-    pose,placed:=core.get(core.read(worlds),body)
+    character,is_character:=core.get(characters,body)
+    collider,collides:=core.get(colliders,body)
+    pose,placed:=core.get(worlds,body)
     if !is_character || !collides || !placed {return {}}
     class,_,_:=nav.class_of(n,character,collider,pose.scale,.Surface)
     if class<0 || nav.class_in_volume(n,class) {return {}}
     agent:=nav.NAV_AGENT_DEFAULT
     if agents:=core.world_table_of(w,nav.Nav_Agent);agents!=nil {
-        if own,seated:=core.get(core.read(agents),body);seated {agent=own}
+        if own,seated:=core.get(agents,body);seated {agent=own}
     }
-    walk,_:=core.get(core.read(walks),body)
-    gravity:=linalg.length(phys.gravity_of_entity(core.Ref(phys.Physics_State){physics},body))
-    filter:=nav.agent_filter(n,class,agent,{walk.jump_height,walk.max_speed},core.has(core.read(swims),body),gravity)
+    walk,_:=core.get(walks,body)
+    filter:=nav.agent_filter(n,class,agent,walk,core.has(swims,body),nav.agent_gravity(core.Ref(phys.Physics_State){physics},body,character))
     settings:=n.classes[class].class
     mesh:=&n.classes[class].mesh
     extents:=mm.Vec3{settings.radius*2+0.5,settings.height,settings.radius*2+0.5}

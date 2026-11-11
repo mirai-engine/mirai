@@ -19,14 +19,16 @@ KEY_W :: Input_Code(87)
 KEY_S :: Input_Code(83)
 KEY_E :: Input_Code(69)
 
-input_make :: proc(t:^testing.T,tap:u32=3,hold:u32=5) -> Input {
+TEST_DT :: f32(1.0/60)
+
+input_make :: proc(t:^testing.T) -> Input {
     in_:Input
-    testing.expect(t,input_init(&in_,{max_actions=8,max_bindings=12,tap_ticks=tap,hold_ticks=hold}))
+    testing.expect(t,input_init(&in_,{max_actions=8,max_bindings=12}))
     return in_
 }
 step :: proc(in_:^Input,codes:[]Input_Code,down:bool) {
     for code in codes {input_set_code(in_,code,down)}
-    input_update(in_)
+    input_update(in_,TEST_DT)
 }
 
 @(test)
@@ -35,16 +37,16 @@ button_reports_pressed_held_and_released_on_the_right_ticks :: proc(t:^testing.T
     defer input_destroy(&in_)
     jump:=input_add_action(&in_,.Button,base.name_hash("jump"))
     testing.expect(t,input_bind_code(&in_,jump,KEY_SPACE))
-    input_update(&in_)
+    input_update(&in_,TEST_DT)
     testing.expect(t,!action_down(&in_,jump) && !action_pressed(&in_,jump))
     step(&in_,{KEY_SPACE},true)
     testing.expect(t,action_down(&in_,jump) && action_pressed(&in_,jump) && !action_released(&in_,jump))
-    testing.expect(t,near(action_value(&in_,jump),1) && action_state(&in_,jump).held_ticks==1)
-    input_update(&in_)
-    testing.expect(t,action_down(&in_,jump) && !action_pressed(&in_,jump) && action_state(&in_,jump).held_ticks==2)
+    testing.expect(t,near(action_value(&in_,jump),1) && action_state(&in_,jump).held==TEST_DT)
+    input_update(&in_,TEST_DT)
+    testing.expect(t,action_down(&in_,jump) && !action_pressed(&in_,jump) && near(action_state(&in_,jump).held,2*TEST_DT))
     step(&in_,{KEY_SPACE},false)
-    testing.expect(t,!action_down(&in_,jump) && action_released(&in_,jump) && action_state(&in_,jump).held_ticks==0)
-    input_update(&in_)
+    testing.expect(t,!action_down(&in_,jump) && action_released(&in_,jump) && action_state(&in_,jump).held==0)
+    input_update(&in_,TEST_DT)
     testing.expect(t,!action_released(&in_,jump))
     testing.expect_value(t,input_find_action(&in_,base.name_hash("jump")),jump)
     testing.expect_value(t,input_find_action(&in_,base.name_hash("fly")),Action(0))
@@ -58,37 +60,37 @@ a_press_and_release_between_two_updates_is_not_lost :: proc(t:^testing.T) {
     input_bind_code(&in_,jump,KEY_SPACE)
     input_set_code(&in_,KEY_SPACE,true)
     input_set_code(&in_,KEY_SPACE,false)
-    input_update(&in_)
+    input_update(&in_,TEST_DT)
     state:=action_state(&in_,jump)
     testing.expect(t,state.pressed && state.released && state.tapped && !state.down)
-    input_update(&in_)
+    input_update(&in_,TEST_DT)
     testing.expect(t,action_state(&in_,jump)==Action_State{})
 }
 
+// The tap and the hold are thresholds in seconds: at 60 and at 120 Hz they
+// come at the tick nearest to TAP_SECONDS and HOLD_SECONDS.
 @(test)
 tap_and_hold_are_told_apart_by_how_long_the_button_was_down :: proc(t:^testing.T) {
-    in_:=input_make(t,3,5)
-    defer input_destroy(&in_)
-    act:=input_add_action(&in_,.Button)
-    input_bind_code(&in_,act,KEY_E)
-    step(&in_,{KEY_E},true)
-    input_update(&in_)
-    step(&in_,{KEY_E},false)
-    testing.expect(t,action_tapped(&in_,act) && action_state(&in_,act).released_held==2)
-    step(&in_,{KEY_E},true)
-    started:=0
-    for _ in 0..<7 {
-        input_update(&in_)
-        if action_hold_started(&in_,act) {started+=1}
-    }
-    testing.expect(t,started==1 && action_holding(&in_,act))
-    step(&in_,{KEY_E},false)
-    testing.expect(t,!action_tapped(&in_,act) && action_released(&in_,act) && action_state(&in_,act).released_held==8)
-    step(&in_,{KEY_E},true)
-    for tick in 2..=6 {
-        input_update(&in_)
-        testing.expect_value(t,action_hold_started(&in_,act),tick==5)
-        testing.expect_value(t,action_holding(&in_,act),tick>=5)
+    for hz in ([]f32{60,120}) {
+        dt:=1/hz
+        tap,hold:=int(TAP_SECONDS*hz+0.5),int(HOLD_SECONDS*hz+0.5)
+        in_:=input_make(t)
+        defer input_destroy(&in_)
+        act:=input_add_action(&in_,.Button)
+        input_bind_code(&in_,act,KEY_E)
+        for ticks in ([]int{tap,tap+1}) {
+            input_set_code(&in_,KEY_E,true)
+            for _ in 0..<ticks {input_update(&in_,dt)}
+            input_set_code(&in_,KEY_E,false)
+            input_update(&in_,dt)
+            testing.expectf(t,action_released(&in_,act) && action_tapped(&in_,act)==(ticks==tap),"%v Hz, held %d ticks",hz,ticks)
+            testing.expect(t,near(action_state(&in_,act).released_held,f32(ticks)*dt))
+        }
+        input_set_code(&in_,KEY_E,true)
+        for tick in 1..=hold+2 {
+            input_update(&in_,dt)
+            testing.expectf(t,action_hold_started(&in_,act)==(tick==hold) && action_holding(&in_,act)==(tick>=hold),"%v Hz, tick %d",hz,tick)
+        }
     }
 }
 
@@ -121,17 +123,27 @@ analog_axes_apply_scale_and_dead_zone_continuously :: proc(t:^testing.T) {
     testing.expect(t,input_bind_axis(&in_,look,axis_gamepad(0,2),0.2))
     for sample in ([][2]f32{{0.1,0},{0.2,0},{0.6,0.5},{1,1},{-0.6,-0.5},{-1,-1},{3,1}}) {
         input_set_axis(&in_,axis_gamepad(0,2),sample[0])
-        input_update(&in_)
+        input_update(&in_,TEST_DT)
         testing.expectf(t,near(action_value(&in_,look),sample[1]),"axis %f read %f",sample[0],action_value(&in_,look))
     }
     testing.expect(t,action_down(&in_,look))
     inverted:=input_add_action(&in_,.Axis)
     input_bind_axis(&in_,inverted,axis_gamepad(0,2),0,-1)
-    input_update(&in_)
+    input_update(&in_,TEST_DT)
     testing.expect(t,near(action_value(&in_,inverted),-1))
     input_set_axis(&in_,axis_gamepad(0,2),0)
-    input_update(&in_)
+    input_update(&in_,TEST_DT)
     testing.expect(t,!action_down(&in_,look) && action_released(&in_,look))
+    // The scale multiplies what is past the dead zone, beyond 1 too: a sensitivity of 3.
+    fast:=input_add_action(&in_,.Axis)
+    input_bind_axis(&in_,fast,axis_gamepad(0,2),0.2,3)
+    stick:=input_add_action(&in_,.Axis2)
+    input_bind_axes_2d(&in_,stick,axis_gamepad(0,2),axis_gamepad(0,3),0.2,3)
+    for sample in ([][2]f32{{0.1,0},{0.6,1.5},{1,3},{-1,-3}}) {
+        input_set_axis(&in_,axis_gamepad(0,2),sample[0])
+        input_update(&in_,TEST_DT)
+        testing.expectf(t,near(action_value(&in_,fast),sample[1]) && near(action_vector(&in_,stick).x,sample[1]),"axis %f read %f and %v",sample[0],action_value(&in_,fast),action_vector(&in_,stick))
+    }
 }
 
 @(test)
@@ -179,16 +191,16 @@ analog_sticks_use_a_radial_dead_zone :: proc(t:^testing.T) {
     move:=input_add_action(&in_,.Axis2)
     testing.expect(t,input_bind_axes_2d(&in_,move,axis_gamepad(0,0),axis_gamepad(0,1),0.2))
     input_set_axis(&in_,axis_gamepad(0,0),0.14);input_set_axis(&in_,axis_gamepad(0,1),0.14)
-    input_update(&in_)
+    input_update(&in_,TEST_DT)
     testing.expect(t,action_vector(&in_,move)==math.Vec2{}) // the length is 0.198
     input_set_axis(&in_,axis_gamepad(0,0),0.1);input_set_axis(&in_,axis_gamepad(0,1),0.1)
-    input_update(&in_)
+    input_update(&in_,TEST_DT)
     testing.expect(t,action_vector(&in_,move)==math.Vec2{})
     input_set_axis(&in_,axis_gamepad(0,0),0.6);input_set_axis(&in_,axis_gamepad(0,1),0)
-    input_update(&in_)
+    input_update(&in_,TEST_DT)
     testing.expect(t,near_vec(action_vector(&in_,move),math.Vec2{0.5,0}))
     input_set_axis(&in_,axis_gamepad(0,0),1);input_set_axis(&in_,axis_gamepad(0,1),1)
-    input_update(&in_)
+    input_update(&in_,TEST_DT)
     testing.expect(t,near_vec(action_vector(&in_,move),math.Vec2{0.70710678,0.70710678}) && near(action_value(&in_,move),1))
 }
 
@@ -199,13 +211,13 @@ a_trigger_can_press_a_button_action :: proc(t:^testing.T) {
     aim:=input_add_action(&in_,.Button)
     testing.expect(t,input_bind_axis_button(&in_,aim,axis_gamepad(0,4),0.5))
     input_set_axis(&in_,axis_gamepad(0,4),0.4)
-    input_update(&in_)
+    input_update(&in_,TEST_DT)
     testing.expect(t,!action_down(&in_,aim))
     input_set_axis(&in_,axis_gamepad(0,4),0.5)
-    input_update(&in_)
+    input_update(&in_,TEST_DT)
     testing.expect(t,action_pressed(&in_,aim))
     input_set_axis(&in_,axis_gamepad(0,4),0)
-    input_update(&in_)
+    input_update(&in_,TEST_DT)
     testing.expect(t,action_released(&in_,aim))
 }
 
@@ -219,10 +231,10 @@ releasing_everything_lets_go_of_held_codes_and_axes :: proc(t:^testing.T) {
     input_bind_axis(&in_,look,Axis_Code(3),0)
     step(&in_,{KEY_W},true)
     input_set_axis(&in_,Axis_Code(3),1)
-    input_update(&in_)
+    input_update(&in_,TEST_DT)
     testing.expect(t,action_down(&in_,run) && action_down(&in_,look))
     input_release_all(&in_)
-    input_update(&in_)
+    input_update(&in_,TEST_DT)
     testing.expect(t,!action_down(&in_,run) && !action_down(&in_,look) && action_released(&in_,run) && action_released(&in_,look))
 }
 
@@ -247,7 +259,7 @@ input_refuses_what_does_not_fit_or_does_not_match :: proc(t:^testing.T) {
     bad:Input
     testing.expect(t,!input_init(&bad,{}) && !input_init(&bad,{max_actions=1,max_bindings=1,code_count=70000}))
     input_unbind(&in_,0)
-    input_update(&bad)
+    input_update(&bad,TEST_DT)
 }
 
 @(test)
@@ -262,7 +274,7 @@ unbounded_axes_pass_through_scaled_without_dead_zone_or_limit :: proc(t:^testing
     input_set_axis(&in_,Axis_Code(0),30)
     input_set_axis(&in_,Axis_Code(1),-40)
     input_set_axis(&in_,Axis_Code(2),0.05)
-    input_update(&in_)
+    input_update(&in_,TEST_DT)
     testing.expect_value(t,action_vector(&in_,look),[2]f32{15,-20})
     testing.expect_value(t,action_value(&in_,look),25)
     testing.expect_value(t,action_value(&in_,scroll),0.1)
@@ -300,10 +312,10 @@ a_held_chord_takes_its_codes_from_the_shorter_bindings :: proc(t:^testing.T) {
     zoom:=input_add_action(&wheel,.Axis)
     testing.expect(t,input_bind_delta(&wheel,scroll,Axis_Code(3)) && input_bind_delta(&wheel,zoom,Axis_Code(3)) && input_chord(&wheel,KEY_SHIFT))
     input_set_axis(&wheel,Axis_Code(3),2)
-    input_update(&wheel)
+    input_update(&wheel,TEST_DT)
     testing.expect(t,action_value(&wheel,scroll)==2 && action_value(&wheel,zoom)==0)
     input_set_code(&wheel,KEY_SHIFT,true)
-    input_update(&wheel)
+    input_update(&wheel,TEST_DT)
     testing.expect(t,action_value(&wheel,scroll)==0 && action_value(&wheel,zoom)==2)
 }
 

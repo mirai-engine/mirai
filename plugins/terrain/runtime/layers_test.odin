@@ -40,7 +40,6 @@ painted_weights_stay_normalized_and_keep_the_proportions_of_the_other_layers :: 
 layers_fixture :: proc(t:^testing.T,s:^Source,kind:Source_Kind) {
     switch kind {
     case .Heightfield:testing.expect(t,source_make(s,.Heightfield,{70,1,9},1,8))
-    case .Mesh:testing.expect(t,source_make(s,.Mesh,{70,1,9},1,8))
     case .Volume:testing.expect(t,source_make(s,.Volume,{17,9,9},1,8))
     }
     rock:=LAYER_DEFAULT
@@ -57,7 +56,7 @@ layers_fixture :: proc(t:^testing.T,s:^Source,kind:Source_Kind) {
 @(test)
 terrain_layers_and_weights_round_trip_in_the_terrain_file_for_every_source :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    for kind in ([3]Source_Kind{.Heightfield,.Mesh,.Volume}) {
+    for kind in ([2]Source_Kind{.Heightfield,.Volume}) {
         original,loaded,cloned:Source
         defer source_destroy(&original);defer source_destroy(&loaded);defer source_destroy(&cloned)
         layers_fixture(t,&original,kind)
@@ -102,29 +101,23 @@ terrain_layers_and_weights_round_trip_in_the_terrain_file_for_every_source :: pr
 
 @(test)
 painting_marks_only_the_chunks_whose_vertices_read_the_weights :: proc(t:^testing.T) {
-    height,mesh:Source
-    defer source_destroy(&height);defer source_destroy(&mesh)
+    height:Source
+    defer source_destroy(&height)
     layers_fixture(t,&height,.Heightfield)
-    layers_fixture(t,&mesh,.Mesh)
     change:=source_edit(&height,{kind=.Paint,center=source_origin(&height)+{20,0,4},radius=1.5,amount=1,layer=2})
     low,high:=chunk_range(&height,change)
     testing.expect(t,low.x>=1 && high.x<=3)
-    change=source_edit(&mesh,{kind=.Paint,center=source_origin(&mesh)+{20,0,4},radius=1.5,amount=1,layer=2})
-    testing.expect(t,change.mesh && change.changed)
-    marked:=0
-    for dirty,i in mesh.mesh_changed {if dirty {marked+=1;testing.expect(t,i>=1 && i<=3)}}
-    testing.expect(t,marked>0 && marked<=3)
-    testing.expect_value(t,source_edit(&height,{kind=.Paint,center={},radius=1,amount=1,layer=3}).error,Edit_Error.Invalid)
+    testing.expect_value(t,source_edit(&height,{kind=.Paint,center={},radius=1,amount=1,layer=3}).error,Edit_Error.Layer)
     // A new source has one layer, which covers it all: painting it changes nothing, and there is no other.
     fresh:Source;defer source_destroy(&fresh)
     testing.expect(t,source_make(&fresh,.Heightfield,{9,1,9},1,4))
     painted:=source_edit(&fresh,{kind=.Paint,center={},radius=1,amount=1})
     testing.expect(t,painted.error==.None && !painted.changed)
-    testing.expect_value(t,source_edit(&fresh,{kind=.Paint,center={},radius=1,amount=1,layer=1}).error,Edit_Error.Invalid)
+    testing.expect_value(t,source_edit(&fresh,{kind=.Paint,center={},radius=1,amount=1,layer=1}).error,Edit_Error.Layer)
 }
 
 @(test)
-chunks_carry_the_layer_weights_in_their_uvs_and_keep_other_slots_mapped :: proc(t:^testing.T) {
+chunks_carry_the_layer_weights_in_their_uvs :: proc(t:^testing.T) {
     height:Source;defer source_destroy(&height)
     layers_fixture(t,&height,.Heightfield)
     _=source_edit(&height,{kind=.Paint,center=source_origin(&height)+{4,0,4},radius=2,amount=1,layer=1})
@@ -142,21 +135,6 @@ chunks_carry_the_layer_weights_in_their_uvs_and_keep_other_slots_mapped :: proc(
     for x in 0..<9 {for z in 0..<9 {source_set(&height,{x,0,z},f32(x)*3)}}
     testing.expect(t,chunk_build(&height,{0,0,0},&mesh,false))
     testing.expect(t,mesh.uv1s[3*9+3].x>0.99)
-    // A Mesh source: the vertices of slot 0 take the weights, those another slot shares keep their uvs.
-    source:Source;defer source_destroy(&source)
-    layers_fixture(t,&source,.Mesh)
-    first:=&source.mesh_chunks[0].geometry
-    first.materials[0]=1
-    original_uv:=first.uvs[first.indices[0]]
-    testing.expect(t,chunk_build(&source,{0,0,0},&mesh,false))
-    m:=&mesh.geometry
-    testing.expect(t,len(m.positions)>len(first.positions))
-    testing.expect_value(t,len(m.colors),len(m.positions))
-    testing.expect_value(t,m.uvs[m.indices[0]],original_uv)
-    for slot,triangle in m.materials {
-        if slot!=0 {continue}
-        for corner in 0..<3 {v:=m.indices[triangle*3+corner];testing.expect(t,abs(m.uvs[v].x+m.uvs[v].y+mesh.uv1s[v].x+mesh.uv1s[v].y-1)<1e-4)}
-    }
 }
 
 @(test)
@@ -196,11 +174,11 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     owner:=core.create(&w.entities)
     core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     terrain_test_update(&w,&resident,&app)
     // A new source shows its one layer in every chunk.
     testing.expect(t,core.count(&w.statics)>0)
-    testing.expect_value(t,len(w.overrides.values),16)
+    testing.expect_value(t,layered_chunks(&w),16)
     for row in 0..<core.count(&w.statics) {
         if w.statics.entities[row]!=owner {testing.expect_value(t,w.statics.values[row].materials[0],LAYERS_MATERIAL)}
     }
@@ -212,13 +190,13 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     terrain_test_update(&w,&resident,&app)
     testing.expect(t,core.problem_find(&w.problems,owner,"terrain.layer_invalid")!=nil)
     testing.expect_value(t,w.data.entries[0].source.layer_count,u32(2))
-    testing.expect_value(t,len(w.overrides.values),16)
+    testing.expect_value(t,layered_chunks(&w),16)
     for row in 0..<core.count(&w.statics) {
         e:=w.statics.entities[row]
         if e==owner {continue}
         shown:=w.statics.values[row]
         testing.expect_value(t,shown.materials[0],LAYERS_MATERIAL)
-        override,_:=core.get(core.read(&w.overrides),e)
+        override,_:=core.get(&w.looks,e)
         testing.expect_value(t,override.values[3].x,f32(8))
     }
     before:[16]base.Asset_Id
@@ -239,7 +217,7 @@ layered_terrains_show_the_layered_material_and_repaint_only_touched_chunks :: pr
     terrain_test_update(&w,&resident,&app)
     testing.expect_value(t,w.data.entries[0].source.layer_count,u32(1))
     testing.expect(t,core.problem_find(&w.problems,owner,"terrain.layer_invalid")!=nil)
-    testing.expect_value(t,len(w.overrides.values),16)
+    testing.expect_value(t,layered_chunks(&w),16)
 }
 
 // A source whose layers a program of its own blends keeps it in its file,
@@ -271,11 +249,11 @@ a_program_of_the_source_blends_its_layers_in_place_of_terrain_layers :: proc(t:^
     owner:=core.create(&w.entities)
     core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     terrain_test_update(&w,&resident,&app)
     testing.expect(t,core.count(&w.statics)>0)
     for row in 0..<core.count(&w.statics) {testing.expect_value(t,w.statics.values[row].materials[0],blend)}
-    testing.expect_value(t,len(w.overrides.values),0)
+    testing.expect_value(t,layered_chunks(&w),0)
     // Without it, the layers blend their materials again.
     read.layers_material={}
     testing.expect_value(t,chunk_materials(&read)[0],LAYERS_MATERIAL)

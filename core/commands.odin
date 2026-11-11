@@ -20,9 +20,11 @@ commands :: #force_inline proc "contextless" (data:rawptr,info:^World_Info) -> C
 // The commands of a World that generic code holds whole.
 commands_of :: #force_inline proc "contextless" (w:World_Ref) -> Commands {return commands(w.data,w.info)}
 
-commands_create :: proc(c:Commands) -> Entity {return create(c.entities)}
+commands_create :: proc(c:Commands) -> Entity {return entity_create(c.entities)}
+create :: proc{entity_create,commands_create}
 
-commands_destroy :: proc(c:Commands,e:Entity) -> bool {return destroy(c.entities,e)}
+commands_destroy :: proc(c:Commands,e:Entity) -> bool {return entity_destroy(c.entities,e)}
+destroy :: proc{entity_destroy,commands_destroy}
 
 // Gives the entity a row of T at the end of the function. An entity that has
 // one already keeps it: its table has its writer.
@@ -59,5 +61,5 @@ commands_remove :: proc(c:Commands,e:Entity,$T:typeid) {
 // The row of T an add of this function waits to give the entity; nil without one.
 commands_added :: proc(c:Commands,e:Entity,$T:typeid) -> ^T {
     t:=world_table_of(World_Ref{c.data,c.info,.World},T)
-    return t!=nil?added(t,e):nil
+    return t!=nil?cast(^T)raw_added(raw(t),type_info_of(T),e):nil
 }

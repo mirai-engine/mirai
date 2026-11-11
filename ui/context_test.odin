@@ -29,6 +29,14 @@ test_rect :: proc(t:^testing.T,ctx:^Context,id:Id,loc:=#caller_location) -> Rect
     return rect
 }
 test_near :: proc(a,b:f32,tolerance:f32=0.01) -> bool {return abs(a-b)<=tolerance}
+// The layout rounds the edges of a box to device pixels: at density 1 an edge
+// moves at most this far from where the layout put it, and a size twice as far.
+PIXEL_EDGE :: f32(0.5)
+// Whether got is want with its edges rounded to device pixels at density 1.
+test_rect_snapped :: proc(got,want:Rect) -> bool {
+    return test_near(got.x,want.x,PIXEL_EDGE) && test_near(got.y,want.y,PIXEL_EDGE) &&
+        test_near(got.x+got.w,want.x+want.w,PIXEL_EDGE) && test_near(got.y+got.h,want.y+want.h,PIXEL_EDGE)
+}
 test_rect_near :: proc(a,b:Rect,tolerance:f32=0.01) -> bool {
     return test_near(a.x,b.x,tolerance)&&test_near(a.y,b.y,tolerance)&&test_near(a.w,b.w,tolerance)&&test_near(a.h,b.h,tolerance)
 }
@@ -38,6 +46,81 @@ test_press :: proc(input:^Input,clicks:u8=1) {input_button(input,.Left,true,clic
 test_release :: proc(input:^Input) {input_button(input,.Left,false)}
 test_key :: proc(input:^Input,key:Key) {
     input.keys_pressed+={key};input.keys_repeated+={key}
+}
+// The paint of the last frame that shows this text.
+// The paint of what says text: a widget that draws it, or the text whose first span it is.
+test_paint :: proc(ctx:^Context,text:string) -> ^Paint {
+    for &p in test_text_pieces(ctx) {if p.text==text {return &p}}
+    for &p in ctx.paints[:ctx.paint_count] {if p.text==text {return &p}}
+    return nil
+}
+// Every piece of every line of the texts of the frame as the paint it would
+// be: what it says, its style, the fill behind it, and Box when it is a chip.
+test_text_pieces :: proc(ctx:^Context) -> []Paint {
+    t:=&ctx.layout
+    out:=make([dynamic]Paint,context.temp_allocator)
+    for &leaf in t.texts[:t.text_count] {
+        own:=cast(^Paint)t.nodes[leaf.node].custom
+        for &line in t.lines[leaf.lines_first:][:leaf.lines_len] {
+            for &piece in t.pieces[line.pieces_first:][:line.pieces_len] {
+                s:=&t.spans[piece.span]
+                if s.box {continue}
+                style,decoration:=text_piece_style(own,s)
+                p:=own^
+                p.kind,p.text,p.style,p.size,p.decoration,p.icon,p.stroke=.Box if s.pad>0 else .None,s.text[piece.start:][:piece.length],style,style.size,decoration,s.icon,s.edge
+                p.fill=s.back
+                append(&out,p)
+            }
+        }
+    }
+    return out[:]
+}
+// The paint of the element that holds the text that says text: the box of a
+// button, a row or a field.
+test_holder :: proc(ctx:^Context,text:string) -> ^Paint {
+    t:=&ctx.layout
+    for &n,leaf in t.nodes[:t.node_count] {
+        p:=cast(^Paint)n.custom
+        if n.text<0 || p==nil || p.text!=text {continue}
+        for &holder in t.nodes[:t.node_count] {
+            for kid in t.kids[holder.kids_first:][:holder.kids_len] {if int(kid)==leaf {return cast(^Paint)holder.custom}}
+        }
+    }
+    return nil
+}
+// The paint of the element id.
+test_element_paint :: proc(ctx:^Context,id:Id) -> ^Paint {
+    index:=layout_index(&ctx.layout,id)
+    return cast(^Paint)ctx.layout.nodes[index].custom if index>0 else nil
+}
+// Where the text that says text was laid out.
+test_text_rect :: proc(ctx:^Context,text:string) -> Rect {
+    for &n in ctx.layout.nodes[:ctx.layout.node_count] {
+        if p:=cast(^Paint)n.custom;n.text>=0 && p!=nil && p.text==text {return n.box}
+    }
+    return {}
+}
+// The caret of the text being edited, while it shows.
+test_caret :: proc(ctx:^Context) -> ^Paint {
+    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Caret {return &p}}
+    return nil
+}
+// Whether a paint is that of a text.
+test_paint_is_text :: proc(p:Paint) -> bool {return p.kind==.None && p.style.size>0}
+// The lines the layout broke the text of the element id into, as they are drawn.
+test_text_lines :: proc(ctx:^Context,id:Id,out:[]string) -> int {
+    t:=&ctx.layout
+    index:=layout_index(t,id)
+    if index==0 || t.nodes[index].text<0 {return 0}
+    leaf:=&t.texts[t.nodes[index].text]
+    for &line,i in t.lines[leaf.lines_first:][:leaf.lines_len] {
+        if i>=len(out) {break}
+        out[i]=""
+        if line.pieces_len==0 {continue}
+        first,last:=&t.pieces[line.pieces_first],&t.pieces[line.pieces_first+line.pieces_len-1]
+        if first.span==last.span {out[i]=t.spans[first.span].text[first.start:last.start+last.length]}
+    }
+    return int(leaf.lines_len)
 }
 test_type :: proc(input:^Input,text:string) {for c in text {input_text(input,c)}}
 
@@ -58,7 +141,7 @@ test_counter :: proc(counter:^Test_Counter,backing:runtime.Allocator) -> runtime
 @(test)
 context_is_created_with_the_capacities_of_its_desc :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,{max_elements=512,max_text_words=1024,max_clips=12,max_widgets=64,max_paints=128,max_vertices=1000,max_commands=8,max_text=256,max_scopes=4,max_panels=2,no_font=true}))
+    testing.expect(t,test_context_init(&ctx,{max_elements=512,max_text_words=1024,max_clips=12,max_widgets=64,max_paints=128,max_vertices=1000,max_commands=8,max_text=256,max_scopes=4,max_panels=2,no_font=true}))
     defer context_destroy(&ctx)
     testing.expect_value(t,len(ctx.widgets),64)
     testing.expect_value(t,len(ctx.paints),128)
@@ -71,7 +154,6 @@ context_is_created_with_the_capacities_of_its_desc :: proc(t:^testing.T) {
     testing.expect_value(t,len(ctx.layout.nodes),513)
     testing.expect_value(t,len(ctx.layout.measures[0].words),1024)
     testing.expect_value(t,len(ctx.layout.measures[1].chars),256)
-    testing.expect_value(t,ctx.theme,THEME_EDITOR)
 }
 
 @(test)
@@ -94,7 +176,7 @@ context_creation_fails_without_memory_and_leaves_nothing :: proc(t:^testing.T) {
         ctx:Context
         desc:=TEST_SMALL
         desc.allocator={procedure=limited_proc,data=&limited}
-        if context_init(&ctx,desc) {context_destroy(&ctx);created=true;break}
+        if test_context_init(&ctx,desc) {context_destroy(&ctx);created=true;break}
         testing.expect_value(t,len(ctx.layout.nodes),0)
         testing.expect_value(t,len(ctx.widgets),0)
     }
@@ -104,7 +186,7 @@ context_creation_fails_without_memory_and_leaves_nothing :: proc(t:^testing.T) {
 @(test)
 ids_depend_on_name_index_and_scope_and_are_never_zero :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     a,b,c:=id(&ctx,"row"),id(&ctx,"row",1),id(&ctx,"column")
     testing.expect(t,a!=b && a!=c && b!=c)
@@ -124,7 +206,7 @@ ids_depend_on_name_index_and_scope_and_are_never_zero :: proc(t:^testing.T) {
 @(test)
 widgets_are_found_by_id_as_the_previous_frame_left_them :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     twice,once,later:=id(&ctx,"twice"),id(&ctx,"once"),id(&ctx,"later")
@@ -149,7 +231,7 @@ frame_text_outlives_the_buffer_it_came_from_and_counts_what_does_not_fit :: proc
     ctx:Context
     desc:=TEST_SMALL
     desc.max_text=16
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     input:=test_input()
     frame_begin(&ctx,input)
@@ -171,7 +253,7 @@ frame_text_outlives_the_buffer_it_came_from_and_counts_what_does_not_fit :: proc
 @(test)
 boxes_are_laid_out_in_rows_and_columns :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input(800,600)
     test_frame(&ctx,&input,proc(ctx:^Context,user:rawptr) {
@@ -190,14 +272,14 @@ boxes_are_laid_out_in_rows_and_columns :: proc(t:^testing.T) {
     testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"a")),{10,20,100,50}))
     testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"b")),{120,20,250,50}))
     testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"rest")),{10,75,180,185}))
-    testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"c")),{170,157.5,20,20}))
+    testing.expect(t,test_rect_snapped(test_rect(t,&ctx,id(&ctx,"c")),{170,157.5,20,20}))
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
 }
 
 @(test)
 floating_boxes_hang_from_the_surface_and_from_its_safe_area :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input(800,600)
     input.safe={40,10,20,30}
@@ -221,7 +303,7 @@ elements_beyond_the_capacity_are_refused_and_counted :: proc(t:^testing.T) {
     ctx:Context
     desc:=TEST_SMALL
     desc.max_elements=64
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     input:=test_input()
     frame:=test_frame(&ctx,&input,proc(ctx:^Context,user:rawptr) {
@@ -287,7 +369,7 @@ nesting_beyond_a_stack_is_not_applied_is_counted_and_unwinds :: proc(t:^testing.
         {"suspended clips",LAYOUT_DEPTH+POPUP_DEPTH,proc(ctx:^Context,i:int) {clips_suspend(ctx)},proc(ctx:^Context,i:int) {clips_resume(ctx)},clips},
     }
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     for c in cases {
@@ -350,7 +432,7 @@ a_frame_with_ends_missing_or_repeated_is_closed_and_counted :: proc(t:^testing.T
         },false},
     }
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     testing.expect_value(t,len(frame_end(&ctx).vertices),0)
     testing.expect_value(t,ctx.stats.layout_errors,u32(1))

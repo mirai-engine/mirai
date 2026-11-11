@@ -7,7 +7,9 @@ import "core:math"
 import "core:os"
 import "core:slice"
 import "core:strings"
-import "core:thread"
+import "mirai:render/abi"
+import "mirai:std/base"
+import "mirai:std/jobs"
 
 // Checks one program without publishing it: the rules below read its source
 // for the mistakes programs are written with, and Slang compiles it where it
@@ -66,7 +68,7 @@ FOREIGN :: [?][2]string{
 // What a program of each domain calls besides its own functions.
 @(private="file")
 MIRAI_API :: [Program_Domain]string{
-    .Surface="Slang intrinsics, the functions of the program and mirai_sample_texture(ctx, index, uv, lod), mirai_sample_texture_level(index, uv, level), mirai_sample_texture_grad(index, uv, dx, dy), mirai_surface_default(ctx) and mirai_surface_mix(a, b, mask)",
+    .Surface="Slang intrinsics, the functions of the program and mirai_sample_texture(ctx, index, uv, lod), mirai_sample_texture_level(index, uv, level), mirai_sample_texture_grad(index, uv, dx, dy), mirai_surface_default(ctx), mirai_surface_standard(ctx), mirai_surface_mix(a, b, mask), mirai_noise(ctx, metres), mirai_sample_triplanar(ctx, index, metres, sharpness) and mirai_height_blend(first, second, mask, contrast)",
     .Postprocess="Slang intrinsics, the functions of the program and mirai_scene_color(ctx, uv), mirai_scene_depth(ctx, uv), mirai_scene_normal(ctx, uv), mirai_outline(ctx, uv), mirai_sample_texture(ctx, index, uv, lod) and mirai_sample_texture_level(index, uv, level)",
     .Vfx="Slang intrinsics, the functions of the program and mirai_vfx_random(seed) and mirai_vfx_texture(index, uv, level)",
     .Ui="Slang intrinsics, the functions of the program and mirai_sample_texture_level(index, uv, level)",
@@ -512,7 +514,7 @@ Check_Compile :: struct {
     ok:bool,
 }
 
-// On a thread of its own: its output is in the heap and the caller frees it.
+// On a job of its own: its output is in the heap and the caller frees it.
 @(private="file")
 check_compile_run :: proc(job:^Check_Compile) {
     job.output,job.ok=tool_run(job.runner,job.command,runtime.heap_allocator())
@@ -580,7 +582,7 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
     temporary,temporary_error:=os.make_directory_temp("","mirai-program-check-*",context.temp_allocator)
     if temporary_error!=nil {result.error=strings.clone("the folder of the check could not be created",allocator);return}
     temporary=path_clean(temporary,context.temp_allocator)
-    defer os.remove_all(temporary)
+    defer base.remove_all(temporary)
     include:=path_join(temporary,"include",allocator=context.temp_allocator)
     copied:=path_join(include,"programs",allocator=context.temp_allocator)
     label,folder:=program_label(options,path)
@@ -614,7 +616,7 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
     reflected:=false
     // A Vfx program declares its resources and stages; the indices of its resources go before it.
     directives:=program_directives(text)
-    stages_declared:[]Vfx_Stage
+    stages_declared:[]abi.Program_Stage
     prelude:string
     declared:=true
     if c.domain==.Vfx {
@@ -622,7 +624,7 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
         if problem=="" {stages_declared,problem=program_stages(name,directives.stages[:],resources,context.temp_allocator)}
         if problem!="" {
             declared=false
-            report(&c,.Error,"mirai.directives",i32(max(directives.line,1)),1,problem,"declare `//! resource name surface|channel|bones|grid|emitter|data` and `//! stage name over particles|<grid> [iterations N] [neighbors radius] [writes grid,grid]` as mirai_vfx.slang says")
+            report(&c,.Error,"mirai.directives",i32(max(directives.line,1)),1,problem,"declare `//! resource name surface|channel|grid|emitter|data` and `//! stage name over particles|<grid> [iterations N] [writes grid,grid]` as mirai_vfx.slang says")
         }
         prelude=vfx_prelude(name,resources)
     }
@@ -671,10 +673,12 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
                 result.error=fmt.aprintf("could not write %s for the check",failed,allocator=allocator)
                 return
             }
-            // own: the include of the Vfx program, before those of the generation.
-            command :: proc(slangc,source,stage,output:string,own,include,root,project,folder:string,sources:[]Source) -> []string {
+            // own: the include of the Vfx program, before those of the generation. A stage reads
+            // its constants (`//! constant`) as the build gives them.
+            command :: proc(slangc,source,stage,output:string,own,include,root,project,folder:string,sources:[]Source,constants:[]Constant=nil) -> []string {
                 out:=make([dynamic]string,context.temp_allocator)
                 append(&out,slangc,source,"-entry","main","-matrix-layout-column-major","-O0","-line-directive-mode","none","-warnings-disable","40100,41035",SLANG_DIAGNOSTICS_FLAG,"-stage",stage)
+                for constant,id in constants {append(&out,fmt.tprintf("-D%s="+CONSTANT_SYMBOL,constant.define,id))}
                 if own!="" {append(&out,"-I",own)}
                 append(&out,"-I",include)
                 for engine in ENGINE_INCLUDES {append(&out,"-I",path_join(root,engine,allocator=context.temp_allocator))}
@@ -685,7 +689,7 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
                 append(&out,"-o",strings.concatenate({output,".spv"},context.temp_allocator))
                 return out[:]
             }
-            jobs:=make([dynamic]Check_Compile,context.temp_allocator)
+            compiles:=make([dynamic]Check_Compile,context.temp_allocator)
             if c.domain==.Surface {
                 raster_path:=path_join(temporary,"check_raster.frag.slang",allocator=context.temp_allocator)
                 ray_path:=path_join(temporary,"check_ray.comp.slang",allocator=context.temp_allocator)
@@ -693,8 +697,8 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
                     result.error=strings.clone("the stages of the check could not be written",allocator)
                     return
                 }
-                append(&jobs,Check_Compile{runner=&runner,stage="raster",command=command(slangc,raster_path,"fragment",raster_path,"",include,options.root,options.project,folder,options.sources)})
-                append(&jobs,Check_Compile{runner=&runner,stage="ray",command=command(slangc,ray_path,"compute",ray_path,"",include,options.root,options.project,folder,options.sources)})
+                append(&compiles,Check_Compile{runner=&runner,stage="raster",command=command(slangc,raster_path,"fragment",raster_path,"",include,options.root,options.project,folder,options.sources)})
+                append(&compiles,Check_Compile{runner=&runner,stage="ray",command=command(slangc,ray_path,"compute",ray_path,"",include,options.root,options.project,folder,options.sources)})
             }
             stages,kinds:=CHECK_STAGES,SLANG_STAGES
             sources:=make([dynamic]string,context.temp_allocator)
@@ -712,20 +716,21 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
                 stage:=path_name(source)
                 _,kind,_:=stage_of(stage)
                 output:=path_join(temporary,stage,allocator=context.temp_allocator)
-                append(&jobs,Check_Compile{runner=&runner,stage=strings.trim_suffix(stage,".slang"),command=command(slangc,source,kinds[kind],output,own_folder if c.domain==.Vfx else "",include,options.root,options.project,folder,options.sources)})
+                append(&compiles,Check_Compile{runner=&runner,stage=strings.trim_suffix(stage,".slang"),command=command(slangc,source,kinds[kind],output,own_folder if c.domain==.Vfx else "",include,options.root,options.project,folder,options.sources,constants(string(sources_file(&files,source).data),context.temp_allocator))})
             }
-            threads:=make([]^thread.Thread,len(jobs),context.temp_allocator)
-            for &job,i in jobs {threads[i]=thread.create_and_start_with_poly_data(&job,check_compile_run)}
-            for t,i in threads {
-                if t==nil {check_compile_run(&jobs[i]);continue}
-                thread.join(t);thread.destroy(t)
-            }
-            defer for job in jobs {delete(job.output,runtime.heap_allocator())}
-            compiled=len(jobs)>0
-            for job in jobs {compiled&&=job.ok}
+            // Every compilation at once: each waits on slangc.
+            js:jobs.Job_System
+            run :: proc(compiles:^[dynamic]Check_Compile,first,last,worker:int) {for &compile in compiles[first:last] {check_compile_run(&compile)}}
+            if jobs.system_init(&js,{threads=max(len(compiles)-1,0)}) {
+                jobs.parallel_for(&js,jobs.OWNER,len(compiles),1,run,&compiles)
+                jobs.system_destroy(&js)
+            } else {run(&compiles,0,len(compiles),jobs.OWNER)}
+            defer for job in compiles {delete(job.output,runtime.heap_allocator())}
+            compiled=len(compiles)>0
+            for job in compiles {compiled&&=job.ok}
             entry:=entry_line(&c)
             found:=make([dynamic]Diagnostic,context.temp_allocator)
-            for job in jobs {
+            for job in compiles {
                 said:=slang_diagnostics(job.output,context.temp_allocator)
                 diagnostics_place(said,copies,roots,context.temp_allocator)
                 each: for &d in said {
@@ -744,7 +749,7 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
                 }
             }
             for &d in found {
-                if len(jobs)>1 && strings.count(d.stage,",")==len(jobs)-1 {d.stage="all"}
+                if len(compiles)>1 && strings.count(d.stage,",")==len(compiles)-1 {d.stage="all"}
                 if !rule_explains(diagnostics[:static_count],d) {append(&diagnostics,d)}
             }
         }

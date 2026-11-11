@@ -5,7 +5,7 @@ import "core:math"
 // Vector icons drawn with the primitives of draw.odin on a 16 unit grid, so
 // they stay sharp at any size and density. Values from Custom on are the
 // drawings the context was given (icon_custom_set), and from User on they are
-// drawn by Context_Desc.draw_user.
+// drawn by Context.draw_user.
 Icon :: enum u8 {
     None,Cube,Mesh,Light,Sun,Group,Prefab,Eye,Eye_Off,Plus,Cross,Play,Check,Import,Move,Rotate,Refresh,
     Checkbox,Checkbox_Checked,Scale,Grid,Sphere,Cylinder,Cone,Prism,Pyramid,Spot,Spawn,Stop,Relative,Absolute,
@@ -100,7 +100,7 @@ icon_arc :: proc(center:[2]f32,rx,ry,from,to:f32) -> (points:[17][2]f32) {
 
 draw_icon :: proc(ctx:^Context,icon:Icon,r:Rect,color:Color) {
     if icon>=.User {
-        if ctx.draw_user!=nil {ctx.draw_user(ctx,r,u32(icon)-u32(Icon.User),0,color)}
+        if ctx.draw_user!=nil {ctx.draw_user(ctx.draw_user_data,ctx,{name=u64(icon)-u64(Icon.User),rect=r,fill=color,item=-1})}
         return
     }
     if icon>=.Custom {
@@ -318,7 +318,7 @@ draw_icon :: proc(ctx:^Context,icon:Icon,r:Rect,color:Color) {
         draw_line(ctx,c+{-4.5*u,-7.5*u},c+{-4.5*u,7*u},1.6,color)
         draw_triangle(ctx,c+{-4.5*u,-7.5*u},c+{6.5*u,-4*u},c+{-4.5*u,-0.5*u},color)
         draw_ellipse(ctx,c+{-4.5*u,7*u},3.5*u,1.2*u,color_alpha(color,140))
-    // The icons of the prototype drawn on a 24 unit grid, at two thirds.
+    // Drawn on a 24 unit grid, at two thirds.
     case .Palette:
         draw_ring(ctx,c,6*u,1.5*u,color)
         for p in ([3][2]f32{{-3,-2},{1,-3.5},{3,0}}) {draw_circle(ctx,c+p*u,u,color)}

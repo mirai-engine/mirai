@@ -12,7 +12,7 @@ import "mirai:platform"
 a_paused_client_whose_server_closes_runs_its_ticks_at_the_pace_of_the_frames :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     apps:[2]host.App
@@ -39,8 +39,8 @@ a_paused_client_whose_server_closes_runs_its_ticks_at_the_pace_of_the_frames :: 
         now=f64(tick)/60
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
-        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server.received,&server.remote)
-        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client.received)
+        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server.remote)
+        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
         if sessions[1].status==.Connected {break}
     }
     if !testing.expect(t,sessions[1].status==.Connected,"the client connects") {return}

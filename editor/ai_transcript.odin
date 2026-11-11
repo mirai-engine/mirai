@@ -10,7 +10,7 @@ AI_TRANSCRIPT_BYTES :: 48*1024
 AI_TRANSCRIPT_LINES :: 512
 AI_LINE_BYTES :: 1024
 AI_DECLINED_NOTE :: "Rejected changes"
-AI_UNSAVED_NOTE :: "Changes not in the saved scene"
+AI_UNDONE_NOTE :: "Changes undone"
 AI_RESTORED_NOTE :: "Changes taken back for review"
 
 Ai_Line :: struct {
@@ -25,7 +25,8 @@ Ai_Transcript :: struct {
     lines:[AI_TRANSCRIPT_LINES]Ai_Line,
     count:int,
     dropped:int, // lines that were forgotten: the first one kept has this index
-    heights:[AI_TRANSCRIPT_LINES]f32, // of each line in the chat, at heights_width and heights_size; 0 until measured
+    heights:[AI_TRANSCRIPT_LINES]f32, // of each line in the chat, at heights_width and heights_size; 0 until measured, below 0 its last one until measured again
+    built:[AI_TRANSCRIPT_LINES]bool,  // Markdown and live reports built since they changed: the row of the last frame is their height
     heights_width,heights_size:f32,
     heights_held:int, // the first line of the user that had not reached the agent when they were measured
 }
@@ -49,6 +50,7 @@ ai_transcript_drop :: proc(t:^Ai_Transcript) {
     t.used-=start
     copy(t.lines[:],t.lines[drop:t.count])
     copy(t.heights[:],t.heights[drop:t.count])
+    copy(t.built[:],t.built[drop:t.count])
     t.count-=drop
     t.dropped+=drop
     for &line in t.lines[:t.count] {line.offset-=u32(start)}
@@ -82,7 +84,7 @@ ai_transcript_add :: proc(t:^Ai_Transcript,text:string,kind:ai_store.Line_Kind=.
 ai_transcript_touch :: proc(t:^Ai_Transcript,index:int) {
     kind:=t.lines[index].kind
     for i:=index;i>=0;i-=1 {
-        t.heights[i]=0
+        t.heights[i],t.built[i]=-abs(t.heights[i]),false
         if i==0 || t.lines[i-1].kind!=kind {break}
     }
 }
@@ -92,7 +94,7 @@ ai_transcript_touch :: proc(t:^Ai_Transcript,index:int) {
 ai_transcript_declined :: proc(t:^Ai_Transcript) -> int {
     for index:=t.count-1;index>=0;index-=1 {
         text,kind:=ai_transcript_line(t,index)
-        if kind==.Note && (text==AI_DECLINED_NOTE || text==AI_UNSAVED_NOTE) {return index}
+        if kind==.Note && (text==AI_DECLINED_NOTE || text==AI_UNDONE_NOTE) {return index}
     }
     return -1
 }

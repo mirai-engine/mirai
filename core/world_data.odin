@@ -18,8 +18,8 @@ storage_of :: #force_inline proc "contextless" (data:rawptr,s:^Storage_Info) -> 
 entities_of :: #force_inline proc "contextless" (info:^World_Info,world:rawptr) -> ^Entities {return cast(^Entities)(uintptr(world)+info.entities)}
 
 @(private="file")
-ids_of :: #force_inline proc "contextless" (info:^World_Info,world:rawptr,id:int) -> Read(Id) {
-    return {cast(^Table(Id))table_of(world,&info.tables[id])}
+ids_of :: #force_inline proc "contextless" (info:^World_Info,world:rawptr,id:int) -> ^Table(Id) {
+    return cast(^Table(Id))table_of(world,&info.tables[id])
 }
 
 @(private="file")
@@ -64,6 +64,8 @@ world_init :: proc(info:^World_Info,place:Place,data:rawptr,allocator:runtime.Al
     for &s in info.storages {
         if s.place==place && !s.by_world && s.default!=nil {s.default(storage_of(data,&s))}
     }
+    // What a storage starts as is its first value: who reads it by change takes it.
+    if place==.World {revisions_moved(revisions_of(info,data))}
     return true
 }
 
@@ -124,13 +126,12 @@ copy_marked :: proc(info:^World_Info,dst,src:rawptr,marks:[]Copy_Mark) -> bool {
     for &s,k in info.storages {
         if s.place!=.World || s.local {continue}
         a,b:=storage_of(dst,&s),storage_of(src,&s)
-        marked:=changed && from_revisions!=nil
-        if marked && !storage_changed(&marks[first+k],from_revisions[k]) {
+        if changed && !storage_changed(&marks[first+k],from_revisions[k]) {
             when CHECK_WRITES {if s.procs.copy==nil && s.procs.copy_kept==nil {storage_check(a,b,s.info,s.name)}}
             continue
         }
         if !storage_copy(&s,a,b,changed) {return false}
-        if marked {storage_copied(&marks[first+k],&to_revisions[k],from_revisions[k])}
+        if changed {storage_copied(&marks[first+k],&to_revisions[k],from_revisions[k])}
     }
     if !changed {revisions_copied(to_revisions,from_revisions)}
     if found.id>=0 {ids_moved(to,ids_of(info,dst,found.id),synced)}
@@ -146,18 +147,22 @@ table_kept :: #force_inline proc "contextless" (t:^Raw_Table,mark:Copy_Mark) -> 
 
 @(private="file")
 storage_kept :: #force_inline proc "contextless" (revisions:[]u64,k:int,mark:Copy_Mark) -> bool {
-    return revisions!=nil && mark.valid && mark.version==revisions[k]
+    return mark.valid && mark.version==revisions[k]
 }
 
 // Makes the World dst what src holds, for a src that world_copy_changed
 // keeps as a copy of dst with marks: the tables dst still has as that copy
 // took them, with nothing pending, and the storages whose revision did not
-// move since, stay as they are, and their readers see no change. The others
-// are copied into stage, a third World, and then traded with dst without
-// allocating. All or nothing: false without memory, with dst as it was. With
-// fewer marks than copy_marks_count all of it is copied and traded. mixed:
-// stage is left with parts of several Worlds, to stage another copy in or
-// to clear, never to run; false after all of it was traded.
+// move since, stay as they are, and their readers see no change. A table of
+// flat values that still holds the rows of the copy, on and off, takes back
+// in place the rows that differ (raw_restore): its readers see those rows
+// alone; a storage of plain data takes back its bytes. The other tables and
+// storages are copied into stage, a third World, and then traded with dst
+// without allocating, and their readers read them whole. All or nothing:
+// false without memory, with dst as it was. With fewer marks than
+// copy_marks_count all of it is copied and traded. mixed: stage is left with
+// parts of several Worlds, to stage another copy in or to clear, never to
+// run; false after all of it was traded.
 world_restore :: proc(info:^World_Info,dst,src,stage:rawptr,marks:[]Copy_Mark) -> (ok,mixed:bool) {
     if dst==src {return true,false}
     if len(marks)<copy_marks_count(info) {
@@ -173,32 +178,36 @@ world_restore :: proc(info:^World_Info,dst,src,stage:rawptr,marks:[]Copy_Mark) -
     revisions,staged:=revisions_of(info,dst),revisions_of(info,stage)
     first:=len(info.tables)
     for &t,at in info.tables {
-        if t.place!=.World || table_kept(table_of(dst,&t),marks[at]) {continue}
+        live:=table_of(dst,&t)
+        if t.place!=.World || table_kept(live,marks[at]) || t.flat && restore_since(live,table_of(src,&t),marks[at])>=0 {continue}
         if !raw_copy(table_of(stage,&t),table_of(src,&t),t.info,t.flat) {return false,true}
     }
     for &s,k in info.storages {
-        if s.place!=.World || s.local || storage_kept(revisions,k,marks[first+k]) {continue}
+        if s.place!=.World || s.local || storage_kept(revisions,k,marks[first+k]) || s.flat && s.procs=={} {continue}
         if !storage_copy(&s,storage_of(stage,&s),storage_of(src,&s),false) {return false,true}
     }
     slice.ptr_swap_non_overlapping(to,held,size_of(Entities))
     for &t,at in info.tables {
         if t.place!=.World {continue}
-        live:=table_of(dst,&t)
-        if table_kept(live,marks[at]) {table_waits(live,false)} else {raw_swap(live,table_of(stage,&t))}
+        live,from:=table_of(dst,&t),table_of(src,&t)
+        if table_kept(live,marks[at]) {
+            table_waits(live,false)
+        } else if since:=restore_since(live,from,marks[at]);t.flat && since>=0 {
+            raw_restore(live,from,t.info.size,since)
+        } else {raw_swap(live,table_of(stage,&t))}
     }
     for &s,k in info.storages {
         if s.place!=.World || s.local || storage_kept(revisions,k,marks[first+k]) {continue}
         x,y:=storage_of(dst,&s),storage_of(stage,&s)
-        if s.procs.swap!=nil {s.procs.swap(x,y)} else {slice.ptr_swap_non_overlapping(x,y,s.info.size)}
-        if revisions!=nil {
-            revision:=max(revisions[k],staged[k])+1
-            revisions[k],staged[k]=revision,revision
-        }
+        if s.flat && s.procs=={} {mem.copy(x,storage_of(src,&s),s.info.size)} else if s.procs.swap!=nil {s.procs.swap(x,y)} else {slice.ptr_swap_non_overlapping(x,y,s.info.size)}
+        revisions[k]=max(revisions[k],staged[k])+1
+        staged[k]=revisions[k]
     }
     if found.id>=0 {
         ids_moved(to,ids_of(info,dst,found.id),synced)
         ids_moved(held,ids_of(info,stage,found.id),false)
     }
+    if info.events_rewind!=nil {info.events_rewind(dst)}
     return true,true
 }
 
@@ -224,6 +233,18 @@ world_swap :: proc(info:^World_Info,a,b:rawptr) {
         ids_moved(ea,ids_of(info,a,found.id),b_synced)
         ids_moved(eb,ids_of(info,b,found.id),a_synced)
     }
+    if info.events_rewind!=nil {info.events_rewind(a);info.events_rewind(b)}
+}
+
+// Where two Worlds of one info differ, as the first storage that says diff=
+// and finds a difference tells it, written into buf: its name and that text;
+// empty when none does. What a divergence already found asks, never a tick.
+world_diff :: proc(info:^World_Info,a,b:rawptr,buf:[]byte) -> (storage,text:string) {
+    for &s in info.storages {
+        if s.place!=.World || s.procs.diff==nil {continue}
+        if text=s.procs.diff(storage_of(a,&s),storage_of(b,&s),buf);text!="" {return s.name,text}
+    }
+    return
 }
 
 // Takes every entity and row of a World, and its storages derived from them

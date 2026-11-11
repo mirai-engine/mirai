@@ -26,6 +26,8 @@ Vfx_Editor :: struct {
     ready:bool,
     document:Effect_Document,
     thumbnail:Effect_Preview, // where the thumbnails of effects are drawn
+    watch:u64,                // the emitter of the edited world particle.instance.inspect looks at; 0: none
+    watched:^vfx.Particle_Sync, // of the edited world, in the frame it copies that emitter back
 }
 
 vfx_editor_free :: proc(v:^Vfx_Editor) {
@@ -53,7 +55,7 @@ vfx_editor_of :: proc(s:^editor.Session) -> ^Vfx_Editor {
 
 @(storage)
 Vfx_Documents :: struct {provider:editor.Asset_Document_Provider}
-VFX_DOCUMENTS_DEFAULT :: Vfx_Documents{provider={kinds={0=effect.KIND},count=1,creates={0},create=effect_create,between=effect_document_between}}
+VFX_DOCUMENTS_DEFAULT :: Vfx_Documents{provider={kinds={0=effect.PARTICLE_KIND},count=1,creates={0},create=effect_create,between=effect_document_between}}
 
 // The empty effect Create and asset.create make: the defaults of a new one.
 @(private)
@@ -63,25 +65,19 @@ effect_create :: proc(s:^editor.Session,kind:asset.Fourcc,id:base.Asset_Id) -> [
     return bytes if error==.None else nil
 }
 
+// A click on the card of an effect gives it to the emitters of the selection.
 @(storage)
-Vfx_Kinds :: struct {provider:editor.Asset_Kind_Provider}
-VFX_KINDS_DEFAULT :: Vfx_Kinds{provider={
-    kinds={
-        0={kind=effect.KIND,label="Particle",color=EFFECT_COLOR,icon=.Particles,extension=effect.EXTENSION,field="particle"},
-        1={kind=gridfile.KIND,label="Grid state",color=GRID_STATE_COLOR,icon=.Grid,extension=gridfile.EXTENSION,field="cached"},
-    },
-    count=2,
-    clicked=effect_clicked,
-}}
+Vfx_Clicks :: struct {provider:editor.Asset_Click_Provider}
+VFX_CLICKS_DEFAULT :: Vfx_Clicks{provider={kind=effect.PARTICLE_KIND,clicked=effect_clicked}}
 
 @(storage)
 Vfx_Thumbnails :: struct {provider:editor.Thumbnail_Provider}
-VFX_THUMBNAILS_DEFAULT :: Vfx_Thumbnails{provider={kinds={0=effect.KIND},count=1,subject=effect_subject,image=effect_image}}
+VFX_THUMBNAILS_DEFAULT :: Vfx_Thumbnails{provider={kinds={0=effect.PARTICLE_KIND},count=1,subject=effect_subject,image=effect_image}}
 
 @(storage)
 Vfx_Cards :: struct {provider:editor.Card_Provider}
 VFX_CARDS_DEFAULT :: Vfx_Cards{provider={
-    cards={0={label="Particles",group="Logic",icon=.Particles,color=PARTICLES_COLOR,lift=0.5,make=emitter_make,component=vfx.Particle_Emitter}},
+    cards={0={recipe="particles",group="Logic",icon=.Particles,color=PARTICLES_COLOR,component=vfx.Particle_Emitter}},
     count=1,
 }}
 
@@ -92,11 +88,6 @@ VFX_INSPECTOR_DEFAULT :: Vfx_Inspector{provider={component=vfx_sections,field=em
 @(storage)
 Vfx_Api :: struct {provider:editor.Api_Provider}
 VFX_API_DEFAULT :: Vfx_Api{provider={register=api_register}}
-
-@(private)
-emitter_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
-    if t:=core.world_table_of(w,vfx.Particle_Emitter);t!=nil {core.add(t,e,vfx.PARTICLE_EMITTER_DEFAULT)}
-}
 
 // The emitters of the selection take the effect whose card was clicked, as one step.
 @(private)
@@ -117,9 +108,10 @@ effect_clicked :: proc(s:^editor.Session,w:core.World_Ref,file:^asset.Registry_F
 @(step="ui",after="editor_panels")
 vfx_document :: proc(s:^editor.Session,v:^Vfx_Editor,assets:^host.Assets,frame:core.Frame_Time) {
     if v.thumbnail.world!=nil && s.frame>v.thumbnail.used+PREVIEW_IDLE {preview_free(&v.thumbnail)}
+    watch_ask(s,v)
     g:=s.gui
     d:=editor.asset_document_active(s)
-    if d==nil || d.kind!=effect.KIND || editor.playing(s) {
+    if d==nil || d.kind!=effect.PARTICLE_KIND || editor.playing(s) {
         if v.document.preview.world!=nil {
             preview_free(&v.document.preview)
             v.document.image.ready,v.document.image.signature=false,0
@@ -135,7 +127,7 @@ vfx_document :: proc(s:^editor.Session,v:^Vfx_Editor,assets:^host.Assets,frame:c
 // emitter shows it.
 @(step="ui",after="editor_panels")
 vfx_drop :: proc(s:^editor.Session) {
-    drop,ok:=editor.asset_drop_take(s,effect.KIND)
+    drop,ok:=editor.asset_drop_take(s,effect.PARTICLE_KIND)
     if !ok || editor.playing(s) {return}
     w:=editor.shown_world(s)
     if !editor.entity_has(w,drop.entity,vfx.Particle_Emitter) {return}

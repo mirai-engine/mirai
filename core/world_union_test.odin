@@ -4,10 +4,11 @@ import "base:runtime"
 import "core:mem"
 import "core:testing"
 
-@(private="file") Union_Link :: struct {target:Entity,weight:f32}
-@(private="file") @(component,single) Union_Sky :: struct {light:f32}
+@(private) Union_Link :: struct {target:Entity,weight:f32}
+@(private) @(component,single) Union_Sky :: struct {light:f32}
 
-@(private="file")
+@(private)
+@(test_world)
 Union_World :: struct {
     using world:Test_World,
     parents:Table(Parent),
@@ -43,14 +44,14 @@ a_world_joins_another_with_its_entities_named_anew :: proc(t:^testing.T) {
     test_world_settle(&live)
     new_root,new_child:=made[entity_index(root)],made[entity_index(child)]
     testing.expect(t,alive(&live.entities,new_root) && alive(&live.entities,new_child))
-    link,_:=get(read(&live.links),new_root)
+    link,_:=get(&live.links,new_root)
     testing.expect_value(t,link.target,new_child)
-    testing.expect(t,!has(read(&live.links),new_child),"what was off stays off")
+    testing.expect(t,!has(&live.links,new_child),"what was off stays off")
     off_row:=raw_row(raw(&live.links),new_child)
     testing.expect(t,off_row>=0 && live.links.values[off_row].target==new_root)
-    up,_:=get(read(&live.parents),new_child)
+    up,_:=get(&live.parents,new_child)
     testing.expect_value(t,up.entity,new_root)
-    top,_:=get(read(&live.parents),new_root)
+    top,_:=get(&live.parents,new_root)
     testing.expect_value(t,top.entity,anchor)
     testing.expect_value(t,live.entities.alive,3)
     testing.expect_value(t,count(&live.parents),2)
@@ -78,10 +79,10 @@ only_what_hangs_from_the_roots_asked_for_joins :: proc(t:^testing.T) {
     test_world_settle(&next)
     testing.expect_value(t,next.entities.alive,2)
     new_seat,new_body:=made[entity_index(seat)],made[entity_index(body)]
-    testing.expect(t,!has(read(&next.parents),new_seat),"it is a root")
-    up,_:=get(read(&next.parents),new_body)
+    testing.expect(t,!has(&next.parents,new_seat),"it is a root")
+    up,_:=get(&next.parents,new_body)
     testing.expect_value(t,up.entity,new_seat)
-    link,_:=get(read(&next.links),new_body)
+    link,_:=get(&next.links,new_body)
     testing.expect_value(t,link.target,NONE)
 }
 
@@ -93,7 +94,7 @@ a_join_makes_an_entity_for_each_one_and_allocates_nothing_with_room :: proc(t:^t
     tracker:mem.Tracking_Allocator
     mem.tracking_allocator_init(&tracker,context.allocator);defer mem.tracking_allocator_destroy(&tracker)
     live,apart:Union_World
-    if !test_world_init(t,&live,allocator=mem.tracking_allocator(&tracker)) {return}
+    if !test_world_init(t,&live) {return}
     defer test_world_destroy(&live)
     info:=test_world_info(&live)
     if !test_world_init(t,&apart) {return}
@@ -114,9 +115,9 @@ a_join_makes_an_entity_for_each_one_and_allocates_nothing_with_room :: proc(t:^t
     testing.expect_value(t,live.entities.alive,4)
     testing.expect_value(t,count(&live.parents),3)
     joined:=made[entity_index(lone)]
-    up,_:=get(read(&live.parents),joined)
+    up,_:=get(&live.parents,joined)
     testing.expect_value(t,up,Parent{anchor,5})
-    link,_:=get(read(&live.links),joined)
+    link,_:=get(&live.links,joined)
     testing.expect_value(t,link.target,joined)
 
     // Gone again, the room it took stays for the next join.

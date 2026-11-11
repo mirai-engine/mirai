@@ -4,7 +4,8 @@
 // its program updates it and the forces of its effect move it (a program
 // that moves its particles ages and moves them alone): acceleration, the
 // gravity and the wind of where it is, curl noise, an attractor and drag,
-// then collision against the depth of the frame or the traced scene. It
+// then collision against the traced scene: a hit, or a contact that keeps it
+// on the surface without one. It
 // dies into the free list of its emitter, with an event for the emitter that
 // follows it. In the last step of the frame it goes on the list that is
 // drawn, and a lit one keeps the light it receives: the sun with its shadow
@@ -66,6 +67,22 @@ void event_push(uint slot, uint trigger, float3 position, float3 velocity, uint 
     particle_event_store(params.parity, at, ev);
 }
 
+// Tells the game of a particle whose emitter's reports name what happened to
+// it: an entry of the reports channel (vfx.REPORTS_CHANNEL), whose copy of the
+// frame program.w names.
+void particle_report(uint slot, uint kind, float3 position, float3 velocity, float3 normal) {
+    uint2 reports = particle_emitters[slot].program.zw;
+    if (reports.x != kind || reports.y == INVALID) return;
+    uint entry;
+    particle_world_bytes.InterlockedAdd(reports.y, 1u, entry);
+    if (entry >= PARTICLE_DATA_ENTRIES) return;
+    uint at = reports.y + 16u + entry * PARTICLE_REPORT_WORDS * 4u;
+    particle_world_bytes.Store2(at, uint2(slot, kind));
+    particle_world_bytes.Store3(at + 8u, asuint(position));
+    particle_world_bytes.Store3(at + 20u, asuint(velocity));
+    particle_world_bytes.Store3(at + 32u, asuint(normal));
+}
+
 void release(uint index, uint slot, uint2 range) {
     particles[index].lifetime = 0.0;
     uint at;
@@ -73,12 +90,23 @@ void release(uint index, uint slot, uint2 range) {
     if (at < range.y) particle_lists[range.x + at] = index - range.x;
 }
 
-// Bounces off a surface of normal n the particle went into.
-void bounce(inout float3 velocity, float3 n, float2 collide) {
-    float into = dot(velocity, n);
-    if (into >= 0.0) return;
-    float3 normal = n * into;
-    velocity = (velocity - normal) * (1.0 - collide.y) - normal * collide.x;
+// Speed into a surface (m/s) below which a particle stays on it instead of bouncing.
+#define PARTICLE_REST_SPEED 0.5
+
+// A particle that goes into a surface of normal n faster than the rest speed, or
+// than twice what the acceleration a gives it in the step h, bounces (collide.x
+// of its normal speed) and it is a hit: true. Slower, it stays on the surface
+// without a hit. Both lose tangent speed by friction (collide.y) times the normal
+// speed stopped (Coulomb): one at rest slows by friction times its weight each
+// second, whatever the step.
+bool respond(inout float3 velocity, float3 n, float3 a, float h, float2 collide) {
+    float into = -dot(velocity, n);
+    if (into <= 0.0) return false;
+    bool hit = into > max(PARTICLE_REST_SPEED, 2.0 * max(-dot(a, n), 0.0) * h);
+    float kept = hit ? into * collide.x : 0.0;
+    float3 tangent = velocity + n * into;
+    velocity = tangent * max(1.0 - collide.y * (into + kept) / max(length(tangent), 1e-6), 0.0) + n * kept;
+    return hit;
 }
 
 [shader("compute")]
@@ -137,26 +165,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         bool hit = false;
         float3 normal = float3(0.0, 1.0, 0.0);
         uint collision = particle_emitters[slot].kinds.z;
-        if (collision == PARTICLE_COLLISION_SCREEN) {
-            float4 clip = view_clip_unjittered(next);
-            if (clip.w > 0.0 && view_depth(next) > frame.camera_position.w) {
-                float2 uv = clip.xy / clip.w * float2(0.5, -0.5) + 0.5;
-                if (all(uv > float2(0.0)) && all(uv < float2(1.0))) {
-                    int2 pixel = int2(uv * frame.resolution);
-                    float surface = g_depth.Load(int3(pixel, 0)).r;
-                    float depth = dot(next - frame.camera_position.xyz, frame.camera_forward.xyz);
-                    float thickness = max(0.25, length(velocity) * h * 2.0) + radius;
-                    // The pixels of a nested view show another place: nothing there to collide with.
-                    if (surface > 0.0 && depth + radius > surface && depth - radius < surface + thickness) {
-                        normal = normalize(gbuffer_normal(pixel));
-                        if (dot(velocity, normal) < 0.0) {
-                            hit = true;
-                            next = position_from_depth(uv, surface) + normal * radius;
-                        }
-                    }
-                }
-            }
-        } else if (collision == PARTICLE_COLLISION_WORLD) {
+        if (collision == PARTICLE_COLLISION_WORLD) {
             float3 travel = next - v.position;
             float distance = length(travel);
             if (distance > 1e-5) {
@@ -172,9 +181,8 @@ void main(uint3 id : SV_DispatchThreadID) {
                 }
             }
         }
-        if (hit) {
-            float4 collide = particle_emitters[slot].collide;
-            bounce(velocity, normal, collide.xy);
+        float4 collide = particle_emitters[slot].collide;
+        if (hit && respond(velocity, normal, acceleration, h, collide.xy)) {
             v.age += collide.z * v.lifetime;
             event_push(slot, PARTICLE_EVENT_COLLISION, next, velocity, p.color);
             particle_report(slot, PARTICLE_EVENT_COLLISION, next, velocity, normal);

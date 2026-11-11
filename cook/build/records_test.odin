@@ -47,7 +47,7 @@ Ammo :: struct {count:u16}
 @(component)
 Holder :: struct {weapon:core.Record(Weapon)}
 @(step="fixed")
-fire :: proc(weapons:core.Records(Weapon),holders:core.Read(Holder)) {}
+fire :: proc(weapons:core.Records(Weapon),holders:^core.Table(Holder,.Read)) {}
 `
     output,ok:=records_fixture(t,source)
     if !ok {return}
@@ -82,5 +82,25 @@ records_that_are_not_plain_game_data_are_errors :: proc(t:^testing.T) {
         found:=false
         for message in output.errors {found||=strings.contains(message,c.wanted)}
         testing.expectf(t,found,"%q not in %v",c.wanted,output.errors)
+    }
+}
+
+// A procedure @(draw="name") of the game is in World_Info.draws of both
+// worlds, by the name the Draw nodes of the interfaces say.
+@(test)
+a_draw_procedure_reaches_the_world_info_by_its_name :: proc(t:^testing.T) {
+    source:=`package game
+import "mirai:ui"
+@(draw="minimap")
+minimap_draw :: proc(ctx:^ui.Context,node:ui.Draw_Node) {}
+@(draw="graph")
+graph_draw :: proc(ctx:^ui.Context,node:ui.Draw_Node) {}
+`
+    output,ok:=records_fixture(t,source)
+    if !ok {return}
+    if !testing.expectf(t,len(output.errors)==0,"%v",output.errors) {return}
+    for text in ([]string{output.game_world,output.editor_world}) {
+        testing.expectf(t,strings.contains(text,`draws[0]={"minimap",rawptr(p_game.minimap_draw)}`) && strings.contains(text,`draws[1]={"graph",rawptr(p_game.graph_draw)}`),"%s",text)
+        testing.expect(t,strings.contains(text,"draws:=make([]p_core.Draw_Info,2)") && strings.contains(text,"info.draws=draws"))
     }
 }

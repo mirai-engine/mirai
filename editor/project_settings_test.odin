@@ -11,8 +11,8 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-@(private="file") Api_Test_World :: struct {using world:core.Test_World}
-@(private="file") Api_Test_Editor :: struct {api:Api}
+@(test_world,editor="Settings_Api_Editor") @(private) Settings_Api_World :: struct {using world:Test_World}
+@(private) Settings_Api_Editor :: struct {api:Api}
 
 @(private="file")
 api_test_execute :: proc(state:^Api_State,out:^serial.Writer,name,params:string) -> api.Error {
@@ -49,23 +49,24 @@ project_set_writes_project_mirai_only_when_all_of_it_is_valid :: proc(t:^testing
     testing.expect(t,os.write_entire_file(project.path(root,"assets/scenes/main.scene",allocator=context.temp_allocator),"")==nil)
     testing.expect(t,os.write_entire_file(project.path(root,"icon.png",allocator=context.temp_allocator),"")==nil)
 
-    info,made:=core.test_info(t,Api_Test_World,core.Test_None,Api_Test_Editor,test_types)
+    info,made:=test_info(t,Settings_Api_World)
     if !made {return}
-    defer core.test_info_destroy(&info)
-    world:Api_Test_World
+    defer test_info_destroy(&info)
+    world:Settings_Api_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
     defer core.world_destroy(&info,.World,&world)
     selection:history.Selection;defer delete(selection.entities)
     viewport:Viewport;gui:Editor_Ui;edits:history.Edits;defer history.edits_free(&edits)
     inspector:Inspector
-    editor:Api_Test_Editor
+    editor:Settings_Api_Editor
     app:host.App
     // Without the root of the engine a change of the plugins starts no build.
     building:Build_State
     processes:Player_Processes
     session:=Session{info=&info,edit_world=&world,editor_world=&editor,app=&app,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,inspector=&inspector,build=&building,processes=&processes,project_root=root,assets_root=project.path(root,"assets",allocator=context.temp_allocator),has_project=true}
     history.edits_reset(&edits,edited_world(&session))
-    if !testing.expect(t,api_open(&session,0,true)==.None) {return};defer api_close(&session)
+    api_opened,api_problem:=api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return};defer api_close(&session)
     state:=api_state(&session);state.poll_temp=context.temp_allocator
     if api.method_find(&state.server,"project.get")==nil {project_api_register(&session,state)}
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
@@ -99,7 +100,7 @@ project_set_writes_project_mirai_only_when_all_of_it_is_valid :: proc(t:^testing
         {`{"identifier":"com studio"}`,"com.studio.game"},
         {`{"icon":"missing.png"}`,"does not exist in the project"},
         {`{"start_scene":"scenes/none.scene"}`,"does not exist"},
-        {`{"window":{"width":0}}`,"go from 1 to"},
+        {`{"window":{"width":0}}`,"window.width must be at least 1"},
         {`{"title":"Game"}`,"title"},
         {`{"name":""}`,"name is missing"},
     }

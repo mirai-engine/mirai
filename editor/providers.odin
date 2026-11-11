@@ -3,6 +3,7 @@ package editor
 import "base:runtime"
 import "core:fmt"
 import "core:log"
+import "core:reflect"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
@@ -16,13 +17,17 @@ import mm "mirai:std/math"
 // an Editor storage whose sole field is the provider, filled by its default
 // procedure. Without the plugin, what it provides is not there.
 
-// The bodies of Simular (physics): the gizmo drives a body without changing
-// what the scene saves.
+// The bodies of Simulate (physics): the gizmo drives a body without changing
+// what the scene saves, and a Simulate limited to some entities moves them alone.
 Simulation_Provider :: struct {
     owner:proc(w:core.World_Ref,e:core.Entity) -> core.Entity,                          // the entity whose body e is part of; none without a body
     move:proc(w:core.World_Ref,e:core.Entity,position:[3]f32,rotation:mm.Quat) -> bool, // heads the body of its owner e there while held
     release:proc(w:core.World_Ref,e:core.Entity) -> bool,
-    settle:proc(w:core.World_Ref,app:^host.App), // takes what was written as its own without simulating time
+    step:proc(w:core.World_Ref,app:^host.App,dt:f32) -> bool, // advances its simulation alone by dt; 0 takes what was written as its own
+    // Readies a copy of the document so that only moving move, each with a core.Motion that says
+    // when it rests, and every other body is still. A problem names what is wrong and how to fix
+    // it; at is the index in moving it is about, -1 for none.
+    limit:proc(w:core.World_Ref,app:^host.App,moving:[]core.Entity) -> (at:int,problem:string),
 }
 
 // What a plugin adds to Play: a game of its own that the Play button starts
@@ -33,10 +38,8 @@ Simulation_Provider :: struct {
 Play_Provider :: struct {
     // Play was asked from Edit: taken when the plugin starts its game instead,
     // with why it could not. online and ping come from play.start: -1, what
-    // its menu says. saved_only plays with the saved files without asking.
-    start:proc(s:^Session,online,ping:int,saved_only:bool) -> (taken:bool,error:string),
-    confirmed:proc(s:^Session), // the question about unsaved assets its start asked was answered: it goes on
-    verb:proc(s:^Session) -> string, // what that question goes on to do: "Play", "Join"
+    // its menu says.
+    start:proc(s:^Session,online,ping:int) -> (taken:bool,error:string),
     menu:proc(s:^Session),      // its rows in the menu of the Play button
     active:proc(s:^Session) -> bool, // its game runs: Play and Simulate wait, and Stop ends it
     stop:proc(s:^Session),
@@ -75,8 +78,9 @@ Preferences_Provider :: struct {
     default:proc(dst:rawptr),
 }
 
-// The kinds of asset of a plugin that the content browser lists: the name of
-// each in the list and on its filter, its icon and the color of its cards.
+// A kind of asset of a plugin that the content browser lists, as the
+// manifest of the plugin declares it (project.Asset_Kind): the name of each in
+// the list and on its filter, its icon and the color of its cards.
 Asset_Kind :: struct {
     kind:asset.Fourcc,
     label:string,
@@ -86,12 +90,11 @@ Asset_Kind :: struct {
     field:string,     // a word: an Asset_Id field whose name has it takes the kind; empty: none
     scene_data:bool,  // what a scene makes of itself: the browser lists it with the Plugins filter or a search
 }
-ASSET_KINDS_OF_PROVIDER :: 8
-Asset_Kind_Provider :: struct {
-    kinds:[ASSET_KINDS_OF_PROVIDER]Asset_Kind,
-    count:int,
-    // A click on the card of one of them in the content browser, out of Play
-    // and with the scene in front: what it does to the selection.
+
+// A click on the card of an asset of a kind in the content browser, out of
+// Play and with the scene in front: what it does to the selection.
+Asset_Click_Provider :: struct {
+    kind:asset.Fourcc,
     clicked:proc(s:^Session,w:core.World_Ref,file:^asset.Registry_File),
 }
 
@@ -119,7 +122,7 @@ Route_Provider :: struct {
     next:proc(s:^Session,w:core.World_Ref,body:core.Entity,goal:[3]f32) -> Route,
 }
 
-// What the plugin that moves a body in a game says of it (physics: its
+// What the plugins that move a body of a game say of it (physics, locomotion:
 // characters): the drive of play.step and the playtest plugin read it with
 // play_stance and play_body_measure, never by the name of a component. known
 // is false for a body that is not one it moves.
@@ -160,9 +163,11 @@ Providers :: struct {
     inspector_count:int,
     components:[PROVIDER_CAPACITY]Component_Provider,
     component_count:int,
-    kinds:[PROVIDER_CAPACITY*ASSET_KINDS_OF_PROVIDER]Asset_Kind,
-    kind_clicks:[PROVIDER_CAPACITY*ASSET_KINDS_OF_PROVIDER]proc(s:^Session,w:core.World_Ref,file:^asset.Registry_File),
+    declared:[PROVIDER_CAPACITY]project.Asset_Kind, // of the manifests: what kinds names
+    kinds:[PROVIDER_CAPACITY]Asset_Kind,
     kind_count:int,
+    clicks:[PROVIDER_CAPACITY]Asset_Click_Provider,
+    click_count:int,
     menus:[PROVIDER_CAPACITY]Asset_Menu_Provider,
     menu_count:int,
     runs:[PROVIDER_CAPACITY]Run_Provider,
@@ -183,10 +188,24 @@ providers :: proc(s:^Session) -> ^Providers {
     p.component_count=provided_all(s,p.components[:])
     p.menu_count=provided_all(s,p.menus[:])
     p.run_count=provided_all(s,p.runs[:])
-    kinds:[PROVIDER_CAPACITY]Asset_Kind_Provider
-    for &provider in kinds[:provided_all(s,kinds[:])] {
-        for kind in provider.kinds[:clamp(provider.count,0,len(provider.kinds))] {
-            p.kinds[p.kind_count],p.kind_clicks[p.kind_count]=kind,provider.clicked
+    p.click_count=provided_all(s,p.clicks[:])
+    if !s.has_project {return p}
+    opened,error:=project.open(s.project_root,s.engine_root,context.temp_allocator)
+    if error.code!=.None {return p}
+    for index in opened.active {
+        for &kind in opened.plugins[index].manifest.asset_kinds {
+            if base.text_len(kind.label[:])==0 || p.kind_count>=len(p.kinds) {continue}
+            p.declared[p.kind_count]=kind
+            d:=&p.declared[p.kind_count]
+            icon,known:=reflect.enum_from_name(ui.Icon,base.text_get(d.icon[:]))
+            if !known {
+                if user,is_user:=reflect.enum_from_name(User_Icon,base.text_get(d.icon[:]));is_user {icon=ui.icon_user(u8(user))}
+            }
+            p.kinds[p.kind_count]={
+                kind=asset.Fourcc(u32(d.kind[0])|u32(d.kind[1])<<8|u32(d.kind[2])<<16|u32(d.kind[3])<<24),
+                label=base.text_get(d.label[:]),color={d.color.r,d.color.g,d.color.b,255},icon=icon,
+                extension=base.text_get(d.extension[:]),field=base.text_get(d.field[:]),scene_data=d.scene_data,
+            }
             p.kind_count+=1
         }
     }
@@ -223,29 +242,10 @@ run_tell_ended :: proc(s:^Session,r:^Run) {
     for &each in p.runs[:p.run_count] {if each.ended!=nil {each.ended(s,r)}}
 }
 
-// The kinds of asset the plugins declare (Asset_Kind_Provider).
+// The kinds of asset the manifests of the active plugins declare with a label.
 asset_plugin_kinds :: proc(s:^Session) -> []Asset_Kind {
     p:=providers(s)
     return p.kinds[:p.kind_count]
-}
-
-// What the kinds a provider registers and those the manifest of its plugin
-// declares (asset_kinds, what is known of them without loading the plugin)
-// differ in; "" when they are the same extensions.
-asset_kinds_differ :: proc(provider:Asset_Kind_Provider,m:^project.Plugin_Manifest,allocator:=context.temp_allocator) -> string {
-    provider:=provider
-    registered:=provider.kinds[:clamp(provider.count,0,len(provider.kinds))]
-    declared:=0
-    for &kind in m.asset_kinds {
-        extension:=base.text_get(kind.extension[:])
-        if extension=="" {continue}
-        declared+=1
-        found:=false
-        for each in registered {found||=each.extension==extension}
-        if !found {return fmt.aprintf("%s declares the asset kind %s, which the plugin does not register",project.PLUGIN_FILE,extension,allocator=allocator)}
-    }
-    if declared!=len(registered) {return fmt.aprintf("%s declares %d asset kinds and the plugin registers %d",project.PLUGIN_FILE,declared,len(registered),allocator=allocator)}
-    return ""
 }
 
 // What a plugin declares of a kind of asset; nil for a kind of the engine or of none.
@@ -264,9 +264,9 @@ asset_plugin_kind_of_extension :: proc(s:^Session,extension:string) -> ^Asset_Ki
 // plugin takes the clicks of its kind.
 asset_kind_click :: proc(s:^Session,w:core.World_Ref,file:^asset.Registry_File) -> bool {
     p:=providers(s)
-    for &each,i in p.kinds[:p.kind_count] {
-        if each.kind!=file.kind || p.kind_clicks[i]==nil {continue}
-        p.kind_clicks[i](s,w,file)
+    for each in p.clicks[:p.click_count] {
+        if each.kind!=file.kind || each.clicked==nil {continue}
+        each.clicked(s,w,file)
         return true
     }
     return false
@@ -361,7 +361,7 @@ simulation_owner :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> core.Enti
 
 // What was written becomes the simulation's own, without simulating time.
 simulation_settle :: proc(s:^Session,w:core.World_Ref) {
-    if p:=providers(s);p.simulates {p.simulation.settle(w,s.app)}
+    if p:=providers(s);p.simulates {p.simulation.step(w,s.app,0)}
 }
 
 // The game of the plugin that plays one runs (Play_Provider.active).
@@ -383,10 +383,10 @@ play_plugin_poll :: proc(s:^Session) {
 
 // Play from Edit: the game of the plugin when it takes it. taken is false for a Play alone.
 @(private)
-play_plugin_start :: proc(s:^Session,online,ping:int,saved_only:bool) -> (taken:bool,error:string) {
+play_plugin_start :: proc(s:^Session,online,ping:int) -> (taken:bool,error:string) {
     p:=providers(s)
     if !p.plays || p.play.start==nil {return}
-    taken,error=p.play.start(s,online,ping,saved_only)
+    taken,error=p.play.start(s,online,ping)
     // A new Play of the user, on the network: the last one kept goes.
     if taken {replay_free(s)}
     return

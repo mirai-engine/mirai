@@ -53,19 +53,31 @@ vk_set_name :: proc(d: ^Device, type: vk.ObjectType, handle: u64, name: string) 
 	vk_loader_unlock(d)
 }
 
-// Memory types that satisfy `required`, those with every `preferred` flag
-// and none of `avoided` first, so allocation can fall back when a preferred
-// heap is exhausted (e.g. the 256 MiB device-local host-visible heap without
-// resizable BAR).
+// The memory types of bits that take a resource of a kind, the best first, so
+// allocation falls back when a heap is exhausted: those with every preferred
+// flag and no avoided one, then those with the preferred flags, then the rest
+// with the required ones. GPU memory falls back last to system memory, which
+// the device reads over the bus: a slower frame instead of a refused resource.
+// A device with device memory the CPU does not see keeps GPU resources out of
+// the small heap the CPU sees of it (BAR), which uploads use.
 @(private)
-vk_memory_candidates :: proc(d: ^Device, bits: u32, required, preferred: vk.MemoryPropertyFlags, avoided: vk.MemoryPropertyFlags = {}) -> (types: [32]u32, count: int) {
-	for pass in 0 ..< 2 {
-		for i in 0 ..< d.memory_properties.memoryTypeCount {
+vk_memory_candidates :: proc "contextless" (properties: ^vk.PhysicalDeviceMemoryProperties, bits: u32, kind: Memory) -> (types: [32]u32, count: int) {
+	required, preferred, avoided: vk.MemoryPropertyFlags
+	switch kind {
+	case .GPU:      preferred = {.DEVICE_LOCAL}; avoided = {.HOST_VISIBLE}
+	case .Upload:   required = {.HOST_VISIBLE, .HOST_COHERENT}; preferred = {.DEVICE_LOCAL}
+	case .Readback: required = {.HOST_VISIBLE, .HOST_COHERENT}; preferred = {.HOST_CACHED}
+	case .Staging:  required = {.HOST_VISIBLE, .HOST_COHERENT}; avoided = {.DEVICE_LOCAL}
+	}
+	for pass in 0 ..< 3 {
+		if pass == 1 && kind == .GPU && count > 0 {continue}
+		for i in 0 ..< min(properties.memoryTypeCount, 32) {
 			if bits & (1 << i) == 0 {continue}
-			flags := d.memory_properties.memoryTypes[i].propertyFlags
+			flags := properties.memoryTypes[i].propertyFlags
 			if required & flags != required {continue}
-			has_preferred := preferred & flags == preferred && avoided & flags == {}
-			if (pass == 0) != has_preferred {continue}
+			rank := 2
+			if preferred & flags == preferred {rank = 0 if avoided & flags == {} else 1}
+			if rank != pass {continue}
 			types[count] = i
 			count += 1
 		}
@@ -270,7 +282,20 @@ texture_create :: proc(d: ^Device, desc: Texture_Desc) -> Texture {
 			d.dvk.CreateImageView(d.handle, &view_info, nil, &t.mip_views[mip])
 		}
 	}
-	t.layout = .UNDEFINED
+	// A pass draws into one layer through a 2D view of it.
+	if layers > 1 && (.Color_Target in desc.usage || .Depth_Target in desc.usage) {
+		err: mem.Allocator_Error
+		t.layer_views, err = make([]vk.ImageView, t.desc.mip_levels * layers, d.allocator)
+		if err != nil {set_error(d, "texture %s: no memory for the views of its layers", desc.name); vk_release_texture(d, &t); return 0}
+		view_info.viewType = .D2
+		view_info.subresourceRange.levelCount = 1
+		view_info.subresourceRange.layerCount = 1
+		for &view, i in t.layer_views {
+			view_info.subresourceRange.baseMipLevel = u32(i) / layers
+			view_info.subresourceRange.baseArrayLayer = u32(i) % layers
+			d.dvk.CreateImageView(d.handle, &view_info, nil, &view)
+		}
+	}
 	vk_set_name(d, .IMAGE, u64(t.image), desc.name)
 	return Texture(pool_add(&d.textures, t))
 }
@@ -278,20 +303,29 @@ texture_create :: proc(d: ^Device, desc: Texture_Desc) -> Texture {
 @(private)
 vk_release_texture :: proc(d: ^Device, t: ^Vk_Texture) {
 	for v in t.mip_views {if v != 0 {d.dvk.DestroyImageView(d.handle, v, nil)}}
+	vk_layer_views_release(d, t.layer_views)
 	if t.view != 0 {d.dvk.DestroyImageView(d.handle, t.view, nil)}
 	if t.image != 0 {d.dvk.DestroyImage(d.handle, t.image, nil)}
 	vk_memory_unbind(d, t.memory)
 }
 
 texture_destroy :: proc(d: ^Device, texture: Texture) {
-	if t := pool_get(&d.textures, base.Handle(texture)); t == nil || t.swapchain {return}
-	for entry, index in d.table_textures {if entry == texture {texture_table_set(d, u32(index), 0)}}
+	kept := pool_get(&d.textures, base.Handle(texture))
+	if kept == nil || kept.swapchain {return}
+	from, to := table_refs_range(d.table_textures[:], texture, kept.table)
+	for index in from ..< to {if d.table_textures[index] == texture {texture_table_set(d, u32(index), 0)}}
 	t, _ := pool_remove(&d.textures, base.Handle(texture))
 	if t.shared != 0 {vk_shared_close(t.shared)}
-	e := Vk_Deferred{image = t.image, memory = t.memory}
+	e := Vk_Deferred{image = t.image, memory = t.memory, layer_views = t.layer_views}
 	e.views[0] = t.view
 	for v, i in t.mip_views {e.views[i + 1] = v}
 	vk_defer(d, e)
+}
+
+@(private)
+vk_layer_views_release :: proc(d: ^Device, views: []vk.ImageView) {
+	for v in views {if v != 0 {d.dvk.DestroyImageView(d.handle, v, nil)}}
+	delete(views, d.allocator)
 }
 
 texture_desc :: proc(d: ^Device, texture: Texture) -> Texture_Desc {
@@ -420,7 +454,7 @@ texture_table_set :: proc(d: ^Device, index: u32, texture: Texture) -> bool {
 	}
 	shown := texture if texture != 0 else d.table_default
 	t := pool_get(&d.textures, base.Handle(shown))
-	if t == nil || t.desc.usage != {.Sampled} || t.layout != .SHADER_READ_ONLY_OPTIMAL {
+	if t == nil || t.desc.usage != {.Sampled} || t.levels[0].layout != .SHADER_READ_ONLY_OPTIMAL {
 		set_error(d, "texture table entry %d needs an uploaded texture with the Sampled usage alone", index)
 		return false
 	}
@@ -428,6 +462,8 @@ texture_table_set :: proc(d: ^Device, index: u32, texture: Texture) -> bool {
 		set_error(d, "texture table entry %d: shaders read the table as 2D textures of one layer", index)
 		return false
 	}
+	before := pool_get(&d.textures, base.Handle(d.table_textures[index]))
+	table_refs_move(&before.table if before != nil else nil, &t.table if texture != 0 else nil, index)
 	d.table_textures[index] = texture
 	table_changed(&d.table_changes, index)
 	return true
@@ -541,6 +577,13 @@ vk_release_pipeline :: proc(d: ^Device, p: ^Vk_Pipeline) {
 	if p.set_layout != 0 {d.dvk.DestroyDescriptorSetLayout(d.handle, p.set_layout, nil)}
 }
 
+// The name of a pipeline, kept with it.
+@(private)
+vk_pipeline_name :: proc(p: ^Vk_Pipeline) -> string {return string(p.name_bytes[:p.name_length])}
+
+@(private)
+vk_pipeline_named :: proc(p: ^Vk_Pipeline, name: string) {p.name_length = u8(copy(p.name_bytes[:], name))}
+
 // Holds a pipeline made on any thread; 0 when the pool is full.
 @(private)
 vk_pipeline_add :: proc(d: ^Device, p: ^Vk_Pipeline) -> Pipeline {
@@ -589,23 +632,51 @@ vk_pipeline_cache_close :: proc(d: ^Device, key: u64, cache: vk.PipelineCache, f
 	if error != nil {return}
 	if d.dvk.GetPipelineCacheData(d.handle, cache, &size, raw_data(data)) != .SUCCESS || size == 0 {delete(data, d.allocator); return}
 	defer delete(data, d.allocator)
-	sync.guard(&d.pipelines_kept.lock)
-	pipeline_store_put(&d.pipelines_kept, key, data[:size])
+	sync.lock(&d.pipelines_kept.lock)
+	due := pipeline_store_put(&d.pipelines_kept, key, data[:size])
+	sync.unlock(&d.pipelines_kept.lock)
+	if due {pipeline_store_save(&d.pipelines_kept, string(d.store_path[:d.store_path_len]))}
+}
+
+// What the constants of a shader are in a pipeline, as the driver takes them:
+// each one it declares, as a VkBool32.
+@(private)
+Vk_Specialization :: struct {
+	info:    vk.SpecializationInfo,
+	entries: [MAX_SHADER_CONSTANTS]vk.SpecializationMapEntry,
+	values:  [MAX_SHADER_CONSTANTS]b32,
+}
+
+// nil for a shader without constants. s outlives the creation of the pipeline.
+@(private)
+vk_specialization :: proc "contextless" (s: ^Vk_Specialization, code: ^Shader_Code, constants: Shader_Constants) -> ^vk.SpecializationInfo {
+	count := min(len(code.constants), MAX_SHADER_CONSTANTS)
+	if count == 0 {return nil}
+	for id in 0 ..< count {
+		s.entries[id] = {constantID = u32(id), offset = u32(id * size_of(b32)), size = size_of(b32)}
+		s.values[id] = b32(id in constants)
+	}
+	s.info = {mapEntryCount = u32(count), pMapEntries = &s.entries[0], dataSize = count * size_of(b32), pData = &s.values[0]}
+	return &s.info
 }
 
 pipeline_create_compute :: proc(d: ^Device, desc: Compute_Pipeline_Desc) -> Pipeline {
 	if !vk_pipeline_room(d) {return 0}
-	p := Vk_Pipeline{bind_point = .COMPUTE, name = desc.name}
+	p := Vk_Pipeline{bind_point = .COMPUTE}
+	vk_pipeline_named(&p, desc.name)
 	if desc.shader == nil || desc.shader.stage != .Compute {set_error(d, "compute pipeline %s needs a compute shader", desc.name); return 0}
+	if !shader_constants_valid(d, desc.name, desc.shader, desc.constants) {return 0}
 	if !vk_merge_bindings(d, &p, {.Compute}, desc.shader) {vk_release_pipeline(d, &p); return 0}
 	module := vk_shader_module(d, desc.shader)
 	if module == 0 {vk_release_pipeline(d, &p); return 0}
 	defer d.dvk.DestroyShaderModule(d.handle, module, nil)
 	feedback: vk.PipelineCreationFeedback
 	feedback_info := vk.PipelineCreationFeedbackCreateInfo{sType = .PIPELINE_CREATION_FEEDBACK_CREATE_INFO, pPipelineCreationFeedback = &feedback}
+	specialization: Vk_Specialization
 	info := vk.ComputePipelineCreateInfo{
 		sType = .COMPUTE_PIPELINE_CREATE_INFO, pNext = &feedback_info,
-		stage = {sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.COMPUTE}, module = module, pName = "main"},
+		stage = {sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.COMPUTE}, module = module, pName = "main",
+			pSpecializationInfo = vk_specialization(&specialization, desc.shader, desc.constants)},
 		layout = p.layout,
 	}
 	key := pipeline_key_compute(desc)
@@ -633,17 +704,22 @@ vk_compare :: proc "contextless" (c: Compare) -> vk.CompareOp {
 
 pipeline_create_graphics :: proc(d: ^Device, desc: Graphics_Pipeline_Desc) -> Pipeline {
 	if !vk_pipeline_room(d) {return 0}
-	p := Vk_Pipeline{bind_point = .GRAPHICS, name = desc.name}
+	p := Vk_Pipeline{bind_point = .GRAPHICS}
+	vk_pipeline_named(&p, desc.name)
 	if desc.vertex == nil || desc.fragment == nil {set_error(d, "graphics pipeline %s needs vertex and fragment shaders", desc.name); return 0}
+	if !shader_constants_valid(d, desc.name, desc.vertex, desc.vertex_constants) || !shader_constants_valid(d, desc.name, desc.fragment, desc.fragment_constants) {return 0}
 	if !vk_merge_bindings(d, &p, {.Vertex, .Fragment}, desc.vertex, desc.fragment) {vk_release_pipeline(d, &p); return 0}
 	vertex := vk_shader_module(d, desc.vertex)
 	fragment := vk_shader_module(d, desc.fragment)
 	defer if vertex != 0 {d.dvk.DestroyShaderModule(d.handle, vertex, nil)}
 	defer if fragment != 0 {d.dvk.DestroyShaderModule(d.handle, fragment, nil)}
 	if vertex == 0 || fragment == 0 {vk_release_pipeline(d, &p); return 0}
+	specializations: [2]Vk_Specialization
 	stages := [2]vk.PipelineShaderStageCreateInfo{
-		{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.VERTEX}, module = vertex, pName = "main"},
-		{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.FRAGMENT}, module = fragment, pName = "main"},
+		{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.VERTEX}, module = vertex, pName = "main",
+			pSpecializationInfo = vk_specialization(&specializations[0], desc.vertex, desc.vertex_constants)},
+		{sType = .PIPELINE_SHADER_STAGE_CREATE_INFO, stage = {.FRAGMENT}, module = fragment, pName = "main",
+			pSpecializationInfo = vk_specialization(&specializations[1], desc.fragment, desc.fragment_constants)},
 	}
 	vertex_input := vk.PipelineVertexInputStateCreateInfo{sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO}
 	assembly := vk.PipelineInputAssemblyStateCreateInfo{sType = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, topology = .LINE_LIST if desc.topology == .Lines else .TRIANGLE_LIST}

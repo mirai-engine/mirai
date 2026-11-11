@@ -36,7 +36,7 @@ TEST_CONTROL_STYLE :: Node_Style{
 @(test)
 game_controls_take_every_color_corner_and_size_from_their_style :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     s:=Test_Controls{style=TEST_CONTROL_STYLE,volume=0.5}
     input:=test_input()
@@ -48,27 +48,26 @@ game_controls_take_every_color_corner_and_size_from_their_style :: proc(t:^testi
     for &p in ctx.paints[:ctx.paint_count] {
         #partial switch p.kind {
         case .Slider:slider=&p
-        case .Box:if p.icon_color==style.mark {check=&p}
-        case .Field:if p.placeholder=="Name" {field=&p}
         case .Arrow:if p.fill==style.mark {arrows+=1}
         }
     }
+    check,field=test_element_paint(&ctx,id(&ctx,"on")),test_element_paint(&ctx,id(&ctx,"name"))
     testing.expect(t,slider!=nil && slider.fill==style.track && slider.fill2==style.mark && slider.stroke==style.knob && slider.corners==style.radius && slider.value==0.5)
     testing.expect(t,check!=nil && check.fill==style.fill && check.stroke==style.stroke && check.corners==style.radius && check.stroke_width==2)
-    testing.expect(t,field!=nil && field.fill==style.fill && field.corners==style.radius && field.text_color==style.text.color && field.placeholder=="Name")
+    testing.expect(t,field!=nil && field.fill==style.fill && field.corners==style.radius && test_paint(&ctx,"Name").style.color==color_alpha(style.text.color,style.text.color[3]/2),"its placeholder is its text at half")
     testing.expect_value(t,arrows,5) // two of the selector, two of the number and the one of the dropdown
     // Without a size, a control is a line of its text and its room tall, ten of its sizes wide; a checkbox is a line square.
     line:=10*TEXT_LINE
-    testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"volume")),{8,8,100,line+10}))
+    testing.expect(t,test_rect_snapped(test_rect(t,&ctx,id(&ctx,"volume")),{8,8,100,line+10}))
     on:=test_rect(t,&ctx,id(&ctx,"on"))
-    testing.expect(t,test_near(on.w,line) && test_near(on.h,line))
-    testing.expect(t,test_near(slider.radius,(line+10)*0.5),"The knob is as tall as the slider")
+    testing.expect(t,test_near(on.w,line,2*PIXEL_EDGE) && test_near(on.h,line,2*PIXEL_EDGE))
+    testing.expect(t,test_near(slider.radius,(line+10)*0.5,PIXEL_EDGE),"The knob is as tall as the slider")
     // A password shows a mark for each character, and the theme gives nothing.
     copy(s.secret[:],"abc");s.secret_length=3
     test_frame(&ctx,&input,test_controls_build,&s)
     testing.expect(t,test_paint(&ctx,"***")!=nil)
     for &p in ctx.paints[:ctx.paint_count] {
-        testing.expect(t,p.fill!=ctx.theme.accent && p.fill!=ctx.theme.well,"No control takes a color of the theme")
+        testing.expect(t,p.fill!=tone(&ctx,"accent") && p.fill!=tone(&ctx,"well"),"No control takes a color of the theme")
     }
 }
 
@@ -77,9 +76,9 @@ game_controls_step_type_and_choose_by_pointer_and_keys :: proc(t:^testing.T) {
     ctx:Context
     desc:=TEST_FONT
     desc.navigation=true
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     s:=Test_Controls{style=TEST_CONTROL_STYLE}
     input:=test_input()
     build:=test_controls_build

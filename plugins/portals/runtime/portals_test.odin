@@ -107,17 +107,42 @@ a_character_that_falls_into_the_floor_comes_out_of_a_wall_upright_and_in_front_o
     testing.expect(t,near(feet+[3]f32{0,1.6,0},mm.transform_point(through_of(wall,other),{10.05,1.6,0.2})))
 }
 
+@(test)
+a_mirror_sends_what_is_in_front_of_it_as_far_behind :: proc(t:^testing.T) {
+    // A face at x = 2 that looks towards +x.
+    m:=reflection({1,0,0,-2})
+    testing.expect_value(t,m*[4]f32{5,1,-3,1},[4]f32{-1,1,-3,1})
+    // What is on the face stays where it is, and a direction along it keeps its way.
+    testing.expect_value(t,m*[4]f32{2,7,4,1},[4]f32{2,7,4,1})
+    testing.expect_value(t,m*[4]f32{0,1,0,0},[4]f32{0,1,0,0})
+    testing.expect_value(t,m*[4]f32{1,0,0,0},[4]f32{-1,0,0,0})
+    // Mirroring twice gives the world back, and it turns the world inside out once.
+    twice:=m*m
+    for row in 0..<4 {
+        for column in 0..<4 {testing.expect(t,abs(twice[row,column]-(row==column?1:0))<1e-5)}
+    }
+    testing.expect(t,abs(linalg.determinant(m)+1)<1e-5)
+    // A tilted face keeps distances, and what is in front of it goes as far behind.
+    normal:=linalg.normalize([3]f32{1,2,-0.5})
+    tilted:=reflection({normal.x,normal.y,normal.z,0.75})
+    a,b:=[4]f32{3,-1,2,1},[4]f32{-4,0.5,6,1}
+    testing.expect(t,abs(linalg.length((tilted*a-tilted*b).xyz)-linalg.length((a-b).xyz))<1e-4)
+    testing.expect(t,abs(linalg.dot(normal,(tilted*a).xyz)+0.75+linalg.dot(normal,a.xyz)+0.75)<1e-4)
+}
+
 // Far from the centre of the world, the gates a view gets relative to the
 // origin the renderer draws from find the opening and carry what crosses it
-// as the world does; a light behind a gate moves with the origin, the sun
-// does not.
+// as the world does, a mirror by its reflection; a light behind a gate moves
+// with the origin, the sun does not.
 @(test)
 gates_go_to_the_shaders_relative_to_the_origin :: proc(t:^testing.T) {
     state:Portals_Gpu
     entrance:=mm.Transform{{-18000.5,2.3,9000.25},mm.quat_axis_angle({0,1,0},math.PI/2),{3.3,4.6,1}}
     exit:=mm.Transform{{-17800,2.3,9100},1,{1,1,1}}
+    mirror:=mm.Transform{{-17900.25,1.5,9050.5},mm.quat_axis_angle({0,1,0},-0.4),{2,1.5,1}}
     state.gates[0]={entrance=entrance,exit=exit}
-    state.count=1
+    state.gates[1]={entrance=mirror,exit=mirror,mirror=true}
+    state.count=2
     state.constants.lights[0]={position_range={-17790,3,9105,10}}
     state.constants.lights[1]={position_range={0,1,0,0}}
     state.constants.light_count=2
@@ -131,15 +156,21 @@ gates_go_to_the_shaders_relative_to_the_origin :: proc(t:^testing.T) {
     front:=entrance.position+mm.quat_rotate(entrance.rotation,[3]f32{0,0,1})
     testing.expect(t,near(apply(c.gates[0].to_local,front-origin),{0,0,1}))
     testing.expect(t,near(apply(c.gates[0].through,front-origin),mm.transform_point(through_of(entrance,exit),front)-origin))
+    // Relative to the origin already: so far out, a place of the world is not kept to a millimetre.
+    seen:=mirror.position-origin+mm.quat_rotate(mirror.rotation,[3]f32{0.3,-0.2,1.5})
+    testing.expect(t,near(apply(c.gates[1].to_local,seen),{0.15,-0.2/1.5,1.5}))
+    behind:=mirror.position-origin+mm.quat_rotate(mirror.rotation,[3]f32{0.3,-0.2,-1.5})
+    testing.expect(t,near(apply(c.gates[1].through,seen),behind))
     testing.expect(t,near(c.lights[0].position_range.xyz,[3]f32{-17790,3,9105}-origin))
     testing.expect_value(t,c.lights[1].position_range,[4]f32{0,1,0,0})
 }
 
 // A world of the physics without gravity, where the tests below do what
 // portals_collision and portals_travel do for a traveler every tick.
-@(private="file")
+@(private)
+@(test_world)
 Lab_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using physics:phys.Test_Physics,
     twins:core.Table(phys.Body_Twin),
     cuts:core.Table(phys.Collider_Cuts),
@@ -155,7 +186,7 @@ Lab :: struct {
 
 @(private="file")
 lab_init :: proc(t:^testing.T,lab:^Lab) -> bool {
-    if !core.test_world_init(t,&lab.w,phys.test_types) {return false}
+    if !test_world_init(t,&lab.w) {return false}
     lab.settings={bodies=64,shapes=64,contacts=512,joints=4,characters=4,hulls=4,meshes=4,heightfields=4,fluids=4,events=64}
     lab.whole=true
     return true
@@ -164,7 +195,7 @@ lab_init :: proc(t:^testing.T,lab:^Lab) -> bool {
 @(private="file")
 lab_destroy :: proc(lab:^Lab) {
     phys.test_host_destroy(&lab.host)
-    core.test_world_destroy(&lab.w)
+    test_world_destroy(&lab.w)
 }
 
 @(private="file")
@@ -182,9 +213,9 @@ lab_box :: proc(lab:^Lab,type:phys.Body_Type,position,half:[3]f32,rotation:mm.Qu
 // Makes the bodies of the rows and applies the requests, without a step.
 @(private="file")
 lab_settle :: proc(lab:^Lab) {
-    core.test_world_settle(&lab.w)
+    test_world_settle(&lab.w)
     phys.test_step(&lab.physics,&lab.host,0)
-    core.test_world_settle(&lab.w)
+    test_world_settle(&lab.w)
 }
 
 @(private="file")
@@ -199,7 +230,7 @@ lab_frame :: proc(lab:^Lab,wall:core.Entity,portal:mm.Transform,face,depth:f32) 
     for box in rim_boxes(portal.scale.xy,face,depth) {
         lab_box(lab,.Static,portal.position+mm.quat_rotate(portal.rotation,box.center),box.half,portal.rotation)
     }
-    cuts,_:=core.get(core.read(&lab.cuts),wall)
+    cuts,_:=core.get(&lab.cuts,wall)
     cuts.boxes[cuts.count]=hole_box(portal,depth)
     cuts.count+=1
     core.add(&lab.cuts,wall,cuts)
@@ -219,7 +250,7 @@ lab_tick :: proc(lab:^Lab,traveler:core.Entity,openings:[]Opening) -> bool {
         if core.has(&lab.twins,traveler) {core.remove(&lab.twins,traveler)}
         if core.has(&lab.cuts,traveler) {core.remove(&lab.cuts,traveler)}
     }
-    core.test_world_settle(&lab.w)
+    test_world_settle(&lab.w)
     phys.physics_twins(&lab.state,core.read(&lab.twins),core.read(&lab.cuts),&lab.problems)
     return near
 }
@@ -227,7 +258,7 @@ lab_tick :: proc(lab:^Lab,traveler:core.Entity,openings:[]Opening) -> bool {
 @(private="file")
 lab_step :: proc(lab:^Lab) {
     phys.test_step(&lab.physics,&lab.host,1.0/60)
-    core.test_world_settle(&lab.w)
+    test_world_settle(&lab.w)
 }
 
 // A body whose center went into an opening comes out of its exit, with its velocity turned.
@@ -283,7 +314,7 @@ a_body_halfway_through_an_opening_meets_what_is_in_front_of_the_exit :: proc(t:^
         at:=lab_body(&lab,cube)
         testing.expectf(t,abs(at.pose.position.z-0.1)<0.03 && abs(at.pose.position.x)<1e-3,"the cube is at %v",at.pose.position)
         testing.expectf(t,linalg.length(at.linear)<0.05,"the cube moves at %v",at.linear)
-        testing.expect_value(t,core.count(core.read(&lab.cuts)),1)
+        testing.expect_value(t,core.count(&lab.cuts),1)
         testing.expect_value(t,lab.problems.count,0)
     }
     {
@@ -353,8 +384,8 @@ the_twin_of_a_body_goes_once_it_is_through :: proc(t:^testing.T) {
     // Out of the exit and on its way, with no twin, cut or copy left: nothing is where a copy would be.
     out:=lab_body(&lab,cube).pose.position
     testing.expectf(t,out.x>21 && abs(out.z-0.3)<1e-3,"the cube is at %v",out)
-    testing.expect_value(t,core.count(core.read(&lab.twins)),0)
-    testing.expect_value(t,core.count(core.read(&lab.cuts)),0)
+    testing.expect_value(t,core.count(&lab.twins),0)
+    testing.expect_value(t,core.count(&lab.cuts),0)
     found:[4]core.Entity
     copied,_:=phys.overlap_sphere(core.ref(&lab.state),mm.transform_point(through_of(openings[1].entrance,openings[1].exit),out),0.5,found[:])
     testing.expect_value(t,copied,0)
@@ -384,14 +415,14 @@ a_body_halfway_through_an_opening_steps_again_the_same_from_a_snapshot :: proc(t
     }
     first:[8]u64
     run(&lab,cube,openings[:],first[:])
-    testing.expect(t,core.has(core.read(&lab.twins),cube),"the snapshot is taken halfway in")
+    testing.expect(t,core.has(&lab.twins,cube),"the snapshot is taken halfway in")
     snapshot:Lab_World
-    if !core.test_world_init(t,&snapshot,phys.test_types) {return}
-    defer core.test_world_destroy(&snapshot)
-    testing.expect(t,core.test_world_copy(&snapshot,&lab.w))
+    if !test_world_init(t,&snapshot) {return}
+    defer test_world_destroy(&snapshot)
+    testing.expect(t,test_world_copy(&snapshot,&lab.w))
     once,again:[40]u64
     run(&lab,cube,openings[:],once[:])
-    testing.expect(t,core.test_world_copy(&lab.w,&snapshot))
+    testing.expect(t,test_world_copy(&lab.w,&snapshot))
     run(&lab,cube,openings[:],again[:])
     testing.expect(t,once==again)
 }

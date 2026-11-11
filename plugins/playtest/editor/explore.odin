@@ -10,7 +10,6 @@ import "mirai:editor"
 import "mirai:editor/api"
 import input "mirai:engine/input"
 import "mirai:std/base"
-import "mirai:std/serial"
 
 // A bot that plays with no model, for no tokens: the same seed on the same
 // game plays the same ticks. In World it picks the cell of the world it has
@@ -67,18 +66,18 @@ Api_Play_Explore_Result :: struct {
     stopped:Api_Explore_Stop `mirai:"label=Why it ended: Ticks its limit; Run_Ended the game ended; No_Body the seat drives nothing; No_Ui nothing to press; Ui_Covered every button it reached; No_Progress presses lead nowhere new; Blocked_By_Ui a modal screen nothing closes"`,
     cells:int `mirai:"label=Cells of the world it was in"`,
     pages:int `mirai:"label=Distinct sets of buttons it reached"`,
-    activated:[1][EXPLORE_UI_KEY]u8 `mirai:"list,text,label=Buttons pressed as screen|name"`,
+    activated:[]string `mirai:"label=Buttons pressed as screen|name"`,
     activated_more:int `mirai:"optional,label=Those that did not fit"`,
-    never:[1][EXPLORE_UI_KEY]u8 `mirai:"list,text,label=Buttons seen or laid out and never pressed"`,
+    never:[]string `mirai:"label=Buttons seen or laid out and never pressed"`,
     never_more:int `mirai:"optional,label=Those that did not fit"`,
-    exits:[1]Api_Play_Explore_Exit `mirai:"list,label=Each time the game asked to quit: the run went on"`,
+    exits:[]Api_Play_Explore_Exit `mirai:"label=Each time the game asked to quit: the run went on"`,
     passed:bool `mirai:"label=No violation"`,
-    violations:[1]Api_Play_Qa_Violation `mirai:"list,label=As play.qa.report gives them"`,
-    repros:[1][editor.API_PATH_BYTES]u8 `mirai:"list,text,label=A scenario per kind of violation"`,
-    repro_error:[256]u8 `mirai:"optional,text,label=Why some repro could not be written"`,
+    violations:[]Api_Play_Qa_Violation `mirai:"label=As play.qa.report gives them"`,
+    repros:[]string `mirai:"label=A scenario per kind of violation"`,
+    repro_error:string `mirai:"optional,label=Why some repro could not be written"`,
 }
 Api_Play_Explore_Exit :: struct {
-    node:[EXPLORE_UI_KEY]u8 `mirai:"text,label=The button pressed last; empty when none was"`,
+    node:string `mirai:"label=The button pressed last; empty when none was"`,
     tick:u64,
 }
 
@@ -146,7 +145,7 @@ Explore_Run :: struct {
 @(private)
 explore_api_register :: proc(s:^editor.Session) {
     defaults:=Api_Play_Explore_Params{seed=1,cell=2}
-    editor.api_method_register(s,{name="play.explore",summary="A bot with no model that plays the game of the caller, deterministic by seed and bounded by ticks: World goes to the least visited cells as a drive of play.step goes, Ui presses every visible button. Says what it covered and the violations of the QA monitors with their repros; a button that asks to quit is listed and does not end the run.",params=Api_Play_Explore_Params,params_info=type_info_of(Api_Play_Explore_Params),result=Api_Play_Explore_Result,result_info=type_info_of(Api_Play_Explore_Result),writes_result=true,defaults=&defaults,run=api_play_explore})
+    editor.api_method_register(s,{params=type_info_of(Api_Play_Explore_Params),result=type_info_of(Api_Play_Explore_Result),name="play.explore",summary="A bot with no model that plays the game of the caller, deterministic by seed and bounded by ticks: World goes to the least visited cells as a drive of play.step goes, Ui presses every visible button. Says what it covered and the violations of the QA monitors with their repros; a button that asks to quit is listed and does not end the run.",defaults=&defaults,run=api_play_explore})
 }
 
 // ---------------------------------------------------------------- cells
@@ -605,66 +604,31 @@ api_play_explore :: proc(s:^editor.Session,call:^api.Call) {
 
 @(private)
 api_play_explore_write :: proc(s:^editor.Session,call:^api.Call,x:^Explore_Run,p:^Api_Play_Explore_Params,r:^editor.Run) {
-    out:=call.out
-    serial.write_u8(out,'{')
-    api.write_text(out,"mode",fmt.tprint(p.mode),true)
-    api.write_uint(out,"seed",p.seed)
-    api.write_int(out,"ran",i64(x.ran))
-    api.write_text(out,"stopped",fmt.tprint(x.stopped))
-    api.write_int(out,"cells",i64(x.cells.count))
-    api.write_int(out,"pages",i64(x.ui.page_count))
-    activated,never:=make([dynamic]string,context.temp_allocator),make([dynamic]string,context.temp_allocator)
-    for &node in x.ui.nodes[:x.ui.node_count] {append(node.activated?&activated:&never,base.text_get(node.key[:]))}
-    explore_names_write(out,"activated",activated[:])
-    explore_names_write(out,"never",never[:])
-    api.write_key(out,"exits");serial.write_u8(out,'[')
-    for e,i in x.exits {
-        if i>0 {serial.write_u8(out,',')}
-        serial.write_u8(out,'{')
-        api.write_text(out,"node",e.node,true)
-        api.write_uint(out,"tick",e.tick)
-        serial.write_u8(out,'}')
-    }
-    serial.write_u8(out,']')
+    result:=api.call_result(call,Api_Play_Explore_Result)
+    result^={mode=p.mode,seed=p.seed,ran=x.ran,stopped=x.stopped,cells=x.cells.count,pages=x.ui.page_count}
+    activated,never:=make([dynamic]string,call.allocator),make([dynamic]string,call.allocator)
+    for &node in x.ui.nodes[:x.ui.node_count] {append(node.activated?&activated:&never,strings.clone(base.text_get(node.key[:]),call.allocator))}
+    result.activated,result.activated_more=activated[:min(len(activated),API_EXPLORE_NAMES)],max(len(activated)-API_EXPLORE_NAMES,0)
+    result.never,result.never_more=never[:min(len(never),API_EXPLORE_NAMES)],max(len(never)-API_EXPLORE_NAMES,0)
+    result.exits=make([]Api_Play_Explore_Exit,len(x.exits),call.allocator)
+    for e,i in x.exits {result.exits[i]={e.node,e.tick}}
     q:^Run_Qa
     if r!=nil {q=qa_of(s,r)}
-    passed:=q==nil || q.violation_count==0 && q.dropped==0
-    api.write_bool(out,"passed",passed)
-    if q==nil {
-        api.write_key(out,"violations");serial.text_write_raw(out,"[]")
-        api.write_key(out,"repros");serial.text_write_raw(out,"[]")
-        serial.write_u8(out,'}')
-        return
-    }
-    qa_violations_write(s,out,q)
-    api.write_key(out,"repros");serial.write_u8(out,'[')
-    written:=0
-    failed:string
+    result.passed=q==nil || q.violation_count==0 && q.dropped==0
+    if q==nil {return}
+    result.violations=qa_violations(q,call.allocator)
+    repros:=make([dynamic]string,call.allocator)
     kinds:bit_set[Api_Qa_Kind]
     for &v in q.violations[:q.violation_count] {
-        if v.kind in kinds || written==API_EXPLORE_REPROS {continue}
+        if v.kind in kinds || len(repros)==API_EXPLORE_REPROS {continue}
         kinds+={v.kind}
         file,problem:=qa_repro_write(s,call,r,&v,call.allocator)
         if problem!="" {
-            if failed=="" {failed=problem}
+            if result.repro_error=="" {result.repro_error=problem}
             continue
         }
-        if written>0 {serial.write_u8(out,',')}
-        serial.text_write_string(out,file)
-        written+=1
+        append(&repros,file)
     }
-    serial.write_u8(out,']')
-    if failed!="" {api.write_text(out,"repro_error",failed)}
-    serial.write_u8(out,'}')
+    result.repros=repros[:]
 }
 
-@(private)
-explore_names_write :: proc(out:^serial.Writer,key:string,names:[]string) {
-    api.write_key(out,key);serial.write_u8(out,'[')
-    for name,i in names[:min(len(names),API_EXPLORE_NAMES)] {
-        if i>0 {serial.write_u8(out,',')}
-        serial.text_write_string(out,name)
-    }
-    serial.write_u8(out,']')
-    if len(names)>API_EXPLORE_NAMES {api.write_int(out,fmt.tprintf("%s_more",key),i64(len(names)-API_EXPLORE_NAMES))}
-}

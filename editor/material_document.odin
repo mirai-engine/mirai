@@ -15,6 +15,7 @@ import "mirai:project"
 import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The document of a material: its preview takes the workspace, lit or showing
@@ -198,14 +199,14 @@ material_pick_toggle :: proc(w:^Material_Document,name:string,add:bool) {
 // Ctrl or Shift beside the others; picked, it is lit.
 @(private)
 material_value_label :: proc(s:^Session,w:^Material_Document,name,label:string,index:int) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     id:=ui.id(ctx,"pick",index+1)
     it:=ui.interact(ctx,id,{})
     picked:=material_pick_index(w,name)>=0
-    color:=th.text_label
-    if it.hot {color=th.text}
-    if picked {color=th.accent}
-    if ui.box(ctx,{id=id,width=ui.fixed(th.label_width),height=ui.GROW,align_y=.Center}) {ui.column_label(ctx,label,color)}
+    color:=ui.tone(ctx,"text_label")
+    if it.hot {color=ui.tone(ctx,"text")}
+    if picked {color=ui.tone(ctx,"accent")}
+    if ui.box(ctx,{id=id,width=ui.fixed(ui.metric(ctx,"label_width")),height=ui.GROW,align_y=.Center}) {kit.column_label(ctx,label,color)}
     if it.clicked {material_pick_toggle(w,name,.Primary in ctx.input.modifiers || .Shift in ctx.input.modifiers)}
 }
 
@@ -236,7 +237,7 @@ material_document_parameters :: proc(s:^Session,w:^Material_Document) {
         if !material_card(s,title,.Material) {continue}
         for &parameter,index in program.parameters {
             if parameter.kind==.Texture || parameter.group!=group {continue}
-            ui.box_begin(s.gui.ctx,{width=ui.GROW,height=ui.fixed(s.gui.ctx.theme.row),gap=4,align_y=.Center})
+            ui.box_begin(s.gui.ctx,{width=ui.GROW,height=ui.fixed(ui.metric(s.gui.ctx,"row")),gap=4,align_y=.Center})
             material_value_label(s,w,parameter.name,readable(parameter.name),index)
             material_parameter_field(s,w,&parameter,index,gpu.program_parameter_get(&desc.custom_params,&parameter))
             ui.box_end(s.gui.ctx,{})
@@ -268,13 +269,13 @@ material_card_end :: proc(s:^Session,title:string,icon:ui.Icon,open:bool) {
 // number and a field per component for more.
 @(private)
 material_parameter_field :: proc(s:^Session,w:^Material_Document,parameter:^gpu.Program_Parameter,index:int,numbers:[4]f64) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     count:=clamp(int(parameter.components),1,4)
     key:=base.hash_combine(base.hash_combine(w.material[0],w.material[1]),base.name_hash(parameter.name))
     if parameter.kind==.Bool {
         for axis in 0..<count {
             on:=numbers[axis]!=0
-            if ui.button(ctx,ui.id(ctx,"toggle",index*4+axis+1),{label=on?"On":"Off",style=.Tab,size=th.font_small,width=-1,center=true,active=on}).clicked {
+            if ui.button(ctx,ui.id(ctx,"toggle",index*4+axis+1),{label=on?"On":"Off",variant="tab",size=ui.metric(ctx,"font_small"),width=-1,center=true,active=on}).clicked {
                 next:=numbers
                 next[axis]=on?0:1
                 if !material_write(s,w.material,{kind=.Value,name=parameter.name,value=next,parameter=asset.Parameter_Kind(parameter.kind),components=parameter.components}) {notify(s,"The material could not be written")}
@@ -290,7 +291,7 @@ material_parameter_field :: proc(s:^Session,w:^Material_Document,parameter:^gpu.
     results:[4]ui.Number_Result
     axes:=numbers
     if count==1 {
-        results[0]=ui.slider_field(ctx,ui.id(ctx,"parameter",index+1),&axes[0],field)
+        results[0]=kit.slider_field(ctx,ui.id(ctx,"parameter",index+1),&axes[0],field)
     } else {
         results=number_fields(ctx,ui.id(ctx,"parameter",index+1),axes[:count],{number=field,channels=parameter.color})
     }
@@ -332,12 +333,12 @@ material_document_standard :: proc(s:^Session,w:^Material_Document,info:asset.Ma
         count:=len(row.values)
         axes:[4]f64
         for value,axis in row.values {axes[axis]=f64(value)}
-        ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(ctx.theme.row),gap=4,align_y=.Center})
+        ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center})
         material_value_label(s,w,row.path,row.label,index)
         results:[4]ui.Number_Result
         id:=ui.id(ctx,"standard",index+1)
         if count==1 {
-            results[0]=ui.slider_field(ctx,id,&axes[0],row.field)
+            results[0]=kit.slider_field(ctx,id,&axes[0],row.field)
         } else {
             results=number_fields(ctx,id,axes[:count],{number=row.field,channels=true})
         }
@@ -353,7 +354,7 @@ material_document_standard :: proc(s:^Session,w:^Material_Document,info:asset.Ma
             if r.ended {material_document_end(s,w,axis_key,r.cancelled)}
         }
         if imported!=nil {
-            if slice.equal(slice.to_bytes(row.values),slice.to_bytes(row.source)) {ui.spacer(ctx,22,1)} else if ui.button(ctx,ui.id(ctx,"standard_revert",index+1),{icon=.Revert,style=.Ghost,width=22,height=22}).clicked {
+            if slice.equal(slice.to_bytes(row.values),slice.to_bytes(row.source)) {ui.spacer(ctx,22,1)} else if ui.button(ctx,ui.id(ctx,"standard_revert",index+1),{icon=.Revert,variant="ghost",width=22,height=22}).clicked {
                 if !material_write(s,w.material,{kind=.Revert,paths={row.path}}) {notify(s,"The material could not be written")}
             }
         }
@@ -478,7 +479,7 @@ material_variant_set :: proc(s:^Session,w:^Material_Document) {
 }
 
 // Writes the material with the values of the variant the preview shows as a
-// new material beside it, named after both, unsaved like the rest of the
+// new material beside it, named after both, as a step of the
 // document. Its document does not open: the variants stay to save others.
 @(private)
 material_variant_save :: proc(s:^Session,w:^Material_Document) {
@@ -563,7 +564,7 @@ material_previews_draw :: proc(s:^Session,w:^Material_Document) {
 // shape it draws the material on.
 @(private)
 material_toolbar :: proc(s:^Session,w:^Material_Document) {
-    g:=s.gui;ctx:=g.ctx;th:=&ctx.theme
+    g:=s.gui;ctx:=g.ctx
     rect,found:=asset_toolbar_whole(g)
     if !found || rect.w<=0 || w.material=={} {return}
     if ui.box(ctx,{width=ui.fixed(rect.w),height=ui.fixed(rect.h),gap=8,align_x=.Center,align_y=.Center,float={to=.Surface,offset={rect.x,rect.y},layer=ui.LAYER_BAR}}) {
@@ -573,12 +574,12 @@ material_toolbar :: proc(s:^Session,w:^Material_Document) {
         labels:=make([]string,len(Material_Channel),context.temp_allocator)
         for channel in Material_Channel {labels[int(channel)]=names[channel]}
         current:=int(w.channel)
-        ui.tabs(ctx,ui.id(ctx,"channel"),labels,&current,ui.fixed(f32(len(labels))*80),th.control)
+        kit.tabs(ctx,ui.id(ctx,"channel"),labels,&current,ui.fixed(f32(len(labels))*80),ui.metric(ctx,"control"))
         w.channel=Material_Channel(current)
-        if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(18),fill=th.border}) {}
+        if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(18),fill=ui.tone(ctx,"border")}) {}
         icons,shapes:=MATERIAL_SHAPE_ICONS,MATERIAL_SHAPE_NAMES
         for shape in Material_Shape {
-            if ui.button(ctx,ui.id(ctx,"shape",int(shape)+1),{icon=icons[shape],tip=shapes[shape],style=.Tab,active=w.shape==shape,width=26,height=th.control}).clicked {w.shape=shape}
+            if ui.button(ctx,ui.id(ctx,"shape",int(shape)+1),{icon=icons[shape],tip=shapes[shape],variant="tab",active=w.shape==shape,width=26,height=ui.metric(ctx,"control")}).clicked {w.shape=shape}
         }
     }
 }
@@ -586,7 +587,7 @@ material_toolbar :: proc(s:^Session,w:^Material_Document) {
 // The workspace: the preview, with the variants under it, and Details at its
 // right; what the preview shows is chosen in the toolbar.
 material_document_build :: proc(s:^Session) {
-    g:=s.gui;ctx:=g.ctx;th:=&ctx.theme
+    g:=s.gui;ctx:=g.ctx
     w:=&s.materials.document
     a:=s.app.assets
     if w.material!={} && a!=nil {
@@ -604,7 +605,7 @@ material_document_build :: proc(s:^Session) {
         defer ui.id_pop(ctx)
         if w.material=={} {
             asset_heading(ctx,"Program")
-            if ui.box(ctx,{width=ui.GROW,height=ui.GROW,align_x=.Center,align_y=.Center,fill=th.well}) {ui.label(ctx,base.text_get(w.program[:]),th.font,th.text_muted)}
+            if ui.box(ctx,{width=ui.GROW,height=ui.GROW,align_x=.Center,align_y=.Center,fill=ui.tone(ctx,"well")}) {ui.label(ctx,base.text_get(w.program[:]),ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"))}
             return
         }
         preview:=&s.materials.preview
@@ -617,24 +618,24 @@ material_document_build :: proc(s:^Session) {
             defer ui.box_end(ctx,{})
             // A click shows a variant in the preview; Apply sets it on the material, Save as new writes it apart.
             if ui.box(ctx,asset_heading_box(ctx)) {
-                ui.label(ctx,"Variants",th.font,th.text,font=ui.FONT_MEDIUM)
+                ui.label(ctx,"Variants",ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_MEDIUM)
                 ui.spacer(ctx)
                 if w.chosen>0 {
-                    if ui.button(ctx,ui.id(ctx,"variant_save"),{label="Save as new",style=.Field,size=th.font_small,height=24,padding=10}).clicked {material_variant_save(s,w)}
-                    if ui.button(ctx,ui.id(ctx,"variant_apply"),{label="Apply",style=.Accent,size=th.font_small,height=24,padding=12}).clicked {material_variant_set(s,w)}
+                    if ui.button(ctx,ui.id(ctx,"variant_save"),{label="Save as new",variant="field",size=ui.metric(ctx,"font_small"),height=24,padding=10}).clicked {material_variant_save(s,w)}
+                    if ui.button(ctx,ui.id(ctx,"variant_apply"),{label="Apply",variant="accent",size=ui.metric(ctx,"font_small"),height=24,padding=12}).clicked {material_variant_set(s,w)}
                 }
             }
             asset_heading_end(ctx)
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(MATERIAL_VARIANT_CELL+38),gap=8,padding={12,8,12,8},fill=th.card}) {
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(MATERIAL_VARIANT_CELL+38),gap=8,padding={12,8,12,8},fill=ui.tone(ctx,"card")}) {
                 for &variant,i in w.variants[:w.variant_count] {
                     ui.id_push(ctx,ui.id(ctx,"variant",i+1))
                     chosen:=w.chosen==i+1
                     if ui.box(ctx,{width=ui.fixed(MATERIAL_VARIANT_CELL),height=ui.GROW,direction=.Column,gap=4,align_x=.Center}) {
-                        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(MATERIAL_VARIANT_CELL),stroke=chosen?th.accent:th.rule,stroke_width=chosen?2:1,radius=th.radius_control,padding=ui.padding_all(1)}) {
+                        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(MATERIAL_VARIANT_CELL),stroke=chosen?ui.tone(ctx,"accent"):ui.tone(ctx,"rule"),stroke_width=chosen?2:1,radius=ui.metric(ctx,"radius_control"),padding=ui.padding_all(1)}) {
                             cell,_:=asset_image_show(s,&variant.image)
                             if cell.clicked {w.chosen=chosen?0:i+1}
                         }
-                        ui.label(ctx,base.text_get(variant.label[:]),th.font_small,chosen?th.text:th.text_muted,MATERIAL_VARIANT_CELL)
+                        ui.label(ctx,base.text_get(variant.label[:]),ui.metric(ctx,"font_small"),chosen?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted"),MATERIAL_VARIANT_CELL)
                     }
                     ui.id_pop(ctx)
                 }
@@ -649,20 +650,17 @@ material_document_build :: proc(s:^Session) {
         ui.id_push(ctx,details_id)
         defer ui.id_pop(ctx)
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(INSPECTOR_HEAD),padding={11,0,7,0},gap=6,align_y=.Center}) {
-            ui.icon(ctx,.Material,th.text_muted,15)
+            ui.icon(ctx,.Material,ui.tone(ctx,"text_muted"),15)
             title:=""
             if d:=asset_document_active(s);d!=nil {title=asset_document_title(s,d)}
-            ui.label(ctx,title,th.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,title,ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
         }
         origin:=ai_provenance_asset_row(s)
-        if ui.scroll_area(ctx,ui.id(ctx,"details"),&w.details_scroll,{height=ui.FIT,max_height=max(room-INSPECTOR_HEAD-origin,40),padding={8,7,8,8},gap=7,fade=th.panel}) {
+        if ui.scroll_area(ctx,ui.id(ctx,"details"),&w.details_scroll,{height=ui.FIT,max_height=max(room-INSPECTOR_HEAD-origin,40),padding={8,7,8,8},gap=7,fade=ui.tone(ctx,"panel")}) {
             material_document_parameters(s,w)
         }
     }
 }
-
-@(private)
-MATERIAL_DOCUMENT_SCHEMA :: `{"type":"object","properties":{"material":{"type":"string","description":"A material: its path under the assets folder, or its id; absent or empty closes the material document in front"},"parameters":{"type":"array","maxItems":16,"items":{"type":"string"},"description":"Values of the material to pick, which the next message takes as context: parameters of its program by name, or base_color, roughness, metallic and emission of the standard model"},"channel":{"enum":["lit","base_color","roughness","metallic","normal","emission"],"description":"What the preview shows, which the next message takes as context: the lit sphere, or one value the material writes"}},"additionalProperties":false}`
 
 Api_Material_Document_Result :: struct {
     open:bool,
@@ -671,62 +669,47 @@ Api_Material_Document_Result :: struct {
     channel:[16]u8 `mirai:"text"`,
 }
 
-@(private)
-MATERIAL_VARIANTS_SCHEMA :: `{"type":"object","properties":{"material":{"type":"string","description":"A material: its path under the assets folder, or its id; absent: the one of the material document in front"},"variants":{"type":"array","maxItems":6,"items":{"type":"object","properties":{"label":{"type":"string","maxLength":31},"values":{"type":"object","description":"Those of material.set by parameter of its program (or base_color, roughness, metallic and emission of the standard model): a number, a bool, or an array of its components, inside the range of the parameter","additionalProperties":{}}},"required":["label","values"],"additionalProperties":false},"description":"Replaces the variants; an empty array takes them out"}},"required":["variants"],"additionalProperties":false}`
-
 Api_Material_Variants_Result :: struct {
     count:int,
 }
 
+Api_Editor_Material_Show_Params_Channel :: enum u8 {lit,base_color,roughness,metallic,normal,emission}
+Api_Editor_Material_Show_Params :: struct {
+    material:string `mirai:"optional,label=A material: its path under the assets folder, or its id; absent or empty closes the material document in front"`,
+    parameters:[]string `mirai:"optional,label=At most 16. Values of the material to pick, which the next message takes as context: parameters of its program by name, or base_color, roughness, metallic and emission of the standard model"`,
+    channel:Api_Editor_Material_Show_Params_Channel `mirai:"optional,label=What the preview shows, which the next message takes as context: the lit sphere, or one value the material writes"`,
+}
+
+Api_Editor_Material_Variants_Params_Variants :: struct {
+    label:string,
+    values:serial.Json `mirai:"label=Those of material.set by parameter of its program (or base_color, roughness, metallic and emission of the standard model): a number, a bool, or an array of its components, inside the range of the parameter"`,
+}
+Api_Editor_Material_Variants_Params :: struct {
+    material:string `mirai:"optional,label=A material: its path under the assets folder, or its id; absent: the one of the material document in front"`,
+    variants:[]Api_Editor_Material_Variants_Params_Variants `mirai:"label=At most 6. Replaces the variants; an empty array takes them out"`,
+}
+
 @(private)
 material_document_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="editor.material.show",params_schema=MATERIAL_DOCUMENT_SCHEMA,summary="Opens the document of a material for the user in a tab next to the scenes, with its preview, its variants and its values; without material it closes the one in front.",result=Api_Material_Document_Result,flags={.Idempotent},run=api_material_document})
-    api_register(s,st,{name="editor.material.variants",params_schema=MATERIAL_VARIANTS_SCHEMA,summary="Proposes to the user sets of values of a material, each on its own sphere in its document, which it opens; the material changes only when a click on one sets them, as one undo step.",result=Api_Material_Variants_Result,flags={.Idempotent},run=api_material_variants})
+    api_register(s,st,{name="editor.material.show",params=type_info_of(Api_Editor_Material_Show_Params),summary="Opens the document of a material for the user in a tab next to the scenes, with its preview, its variants and its values; without material it closes the one in front.",result=type_info_of(Api_Material_Document_Result),flags={.Idempotent},run=api_material_document})
+    api_register(s,st,{name="editor.material.variants",params=type_info_of(Api_Editor_Material_Variants_Params),summary="Proposes to the user sets of values of a material, each on its own sphere in its document, which it opens; the material changes only when a click on one sets them, as one undo step.",result=type_info_of(Api_Material_Variants_Result),flags={.Idempotent},run=api_material_variants})
 }
 
 @(private)
 api_material_document :: proc(s:^Session,call:^api.Call) {
-    a:Rpc_Args
-    rpc_init(&a,call,call.raw)
-    o:Rpc_Object
-    material:[256]u8
-    name:string
-    picks:[MATERIAL_PICKS][64]u8
-    pick_count:=0
-    picking:=false // parameters was given: the picks it names replace those there were
-    channel_text:[16]u8
-    channel:=""
-    if !rpc_object_begin(&a,"params") {return}
-    for key in rpc_next(&a,&o) {
-        switch key {
-        case "material":
-            name,_=rpc_text(&a,"material",material[:])
-        case "parameters":
-            picking=true
-            if !serial.text_accept(&a.r,'[') {rpc_fail(&a,"parameters must be an array of names");return}
-            for i:=0;!serial.text_accept(&a.r,']');i+=1 {
-                if i>0 && !serial.text_accept(&a.r,',') {rpc_fail(&a,"parameters must be an array of names");return}
-                if pick_count>=len(picks) {rpc_fail(&a,"parameters takes at most %d names",len(picks));return}
-                rpc_text(&a,"a parameter",picks[pick_count][:len(picks[0])-1])
-                pick_count+=1
-            }
-        case "channel":
-            channel,_=rpc_text(&a,"channel",channel_text[:])
-        }
-    }
-    if a.failed {return}
+    p:=api.call_params(call,Api_Editor_Material_Show_Params)
+    name:=p.material
+    picking:=api.call_given(call,"parameters") // the picks it names replace those there were
+    if len(p.parameters)>MATERIAL_PICKS {api.call_failf(call,api.INVALID_PARAMS,"parameters takes at most %d names",MATERIAL_PICKS);return}
+    channel_ids:=MATERIAL_CHANNEL_IDS
+    channel:=api.call_given(call,"channel")?channel_ids[Material_Channel(p.channel)]:""
     if name=="" {
-        if material_document_shown(s) {asset_document_close_now(s,s.asset_shown-1)}
+        if material_document_shown(s) {asset_document_close(s,s.asset_shown-1)}
         api.call_result(call,Api_Material_Document_Result)^={}
         return
     }
-    chosen:=Material_Channel.Lit
-    if channel!="" {
-        found:=false
-        for id,c in MATERIAL_CHANNEL_IDS {if id==channel {chosen,found=c,true}}
-        if !found {api.call_failf(call,api.INVALID_PARAMS,"%q is not a channel: lit, base_color, roughness, metallic, normal or emission",channel);return}
-    }
-    if playing(s) {api.call_fail(call,api.SERVER_ERROR,"A game is playing; the document of a material opens in Edit");return}
+    chosen:=Material_Channel(p.channel)
+    if playing(s) {api_playing(call,"the document of a material opens in Edit");return}
     id,found:=asset_named(s,call,name,asset.KIND_MATERIAL,".mat","a material")
     if !found {return}
     if !asset_document_show(s,id) {api.call_failf(call,api.SERVER_ERROR,"The document of %s could not open: %s",name,string(s.toast[:s.toast_length]));return}
@@ -736,13 +719,12 @@ api_material_document :: proc(s:^Session,call:^api.Call) {
     material_document_read(s,w)
     if picking {
         known:=material_value_names(s,w)
-        for i in 0..<pick_count {
-            pick:=base.text_get(picks[i][:])
+        for pick in p.parameters {
             if pick!="" && !slice.contains(known,pick) {api.call_failf(call,api.INVALID_PARAMS,"%q is not a value of the material (material.inspect lists them)",pick);return}
         }
         w.pick_count=0
-        for i in 0..<pick_count {
-            if pick:=base.text_get(picks[i][:]);pick!="" {material_pick_toggle(w,pick,true)}
+        for pick in p.parameters {
+            if pick!="" {material_pick_toggle(w,pick,true)}
         }
     }
     if channel!="" {w.channel=chosen}
@@ -771,56 +753,26 @@ material_value_names :: proc(s:^Session,w:^Material_Document) -> []string {
 
 @(private)
 api_material_variants :: proc(s:^Session,call:^api.Call) {
-    a:Rpc_Args
-    rpc_init(&a,call,call.raw)
-    o:Rpc_Object
-    material:[256]u8
-    name:string
+    p:=api.call_params(call,Api_Editor_Material_Variants_Params)
+    name:=p.material
     variants:[MATERIAL_VARIANTS]Material_Variant
-    count:=0
-    listed:=false
+    count:=len(p.variants)
     raw:[MATERIAL_VARIANTS][MATERIAL_VARIANT_VALUES]string // the JSON of each value, read once the program is known
-    if !rpc_object_begin(&a,"params") {return}
-    for key in rpc_next(&a,&o) {
-        switch key {
-        case "material":
-            name,_=rpc_text(&a,"material",material[:])
-        case "variants":
-            listed=true
-            if !serial.text_accept(&a.r,'[') {rpc_fail(&a,"variants must be an array");return}
-            for i:=0;!serial.text_accept(&a.r,']');i+=1 {
-                if i>0 && !serial.text_accept(&a.r,',') {rpc_fail(&a,"variants must be an array");return}
-                if count>=len(variants) {rpc_fail(&a,"variants takes at most %d",len(variants));return}
-                v:=&variants[count]
-                vo:Rpc_Object
-                if !rpc_object_begin(&a,"a variant") {return}
-                labelled:=false
-                for field in rpc_next(&a,&vo) {
-                    switch field {
-                    case "label":
-                        _,labelled=rpc_text(&a,"label",v.label[:len(v.label)-1])
-                    case "values":
-                        values:Rpc_Object
-                        if !rpc_object_begin(&a,"values") {return}
-                        for value_name in rpc_next(&a,&values) {
-                            if v.count>=MATERIAL_VARIANT_VALUES {rpc_fail(&a,"a variant takes at most %d values",MATERIAL_VARIANT_VALUES);return}
-                            base.text_set(v.values[v.count].name[:],value_name)
-                            raw[count][v.count],_=rpc_raw(&a)
-                            v.count+=1
-                        }
-                    case:
-                        rpc_fail(&a,"%s is not a field of a variant: label or values",field)
-                    }
-                }
-                if a.failed {return}
-                if !labelled {rpc_fail(&a,"a variant needs its label");return}
-                count+=1
-            }
+    if count>MATERIAL_VARIANTS {api.call_failf(call,api.INVALID_PARAMS,"variants takes at most %d",MATERIAL_VARIANTS);return}
+    for &given,i in p.variants {
+        v:=&variants[i]
+        if given.label=="" {api.call_failf(call,api.INVALID_PARAMS,"variants[%d] needs its label",i);return}
+        base.text_set(v.label[:len(v.label)-1],given.label)
+        values,is_object:=api.json_members(string(given.values))
+        if !is_object && given.values!="" {api.call_failf(call,api.INVALID_PARAMS,"variants[%d].values is an object of values by name",i);return}
+        if len(values)>MATERIAL_VARIANT_VALUES {api.call_failf(call,api.INVALID_PARAMS,"a variant takes at most %d values",MATERIAL_VARIANT_VALUES);return}
+        for value,k in values {
+            base.text_set(v.values[k].name[:],value.name)
+            raw[i][k]=value.value
         }
+        v.count=len(values)
     }
-    if a.failed {return}
-    if !listed {api.call_fail(call,api.INVALID_PARAMS,"variants is required: an array, empty to take them out");return}
-    if playing(s) {api.call_fail(call,api.SERVER_ERROR,"A game is playing; the document of a material opens in Edit");return}
+    if playing(s) {api_playing(call,"the document of a material opens in Edit");return}
     id:base.Asset_Id
     if name!="" {
         found:bool

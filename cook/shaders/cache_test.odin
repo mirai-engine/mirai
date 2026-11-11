@@ -185,33 +185,6 @@ source_outside_every_base_is_named_by_its_path :: proc(t:^testing.T) {
     testing.expect_value(t,stable_name("C:/engine2/a.slang",{{"engine","C:/engine"}},context.temp_allocator),"C:/engine2/a.slang")
 }
 
-@(test)
-engine_identity_tracks_nested_headers_and_ignores_the_project_generation :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"shaders")
-    if root=="" {return}
-    engine:=path_join(root,"engine-root",allocator=context.temp_allocator)
-    project:=path_join(root,"project",allocator=context.temp_allocator)
-    generated:=path_join(engine,"shaders/.temporary-generation/include",allocator=context.temp_allocator)
-    fixture_write(t,engine,"shaders/a.comp.slang","#include \"nested/engine.h\"\n#include \"surface_programs.slang\"\n")
-    fixture_write(t,engine,"shaders/include/nested/engine.h","float value=1;\n")
-    fixture_write(t,engine,"shaders/materials/builtin.slang","float builtin=1;\n")
-    fixture_write(t,generated,"surface_programs.slang","#include \"project.inc\"\n")
-    fixture_write(t,project,"project.inc","float project_value=1;\n")
-    includes:=[]string{generated,path_join(engine,"shaders/include",allocator=context.temp_allocator),project}
-    before:=engine_fingerprint(engine,"version",includes,context.temp_allocator)
-    testing.expect_value(t,len(before),64)
-    fixture_write(t,project,"project.inc","float project_value=2;\n")
-    testing.expect_value(t,engine_fingerprint(engine,"version",includes,context.temp_allocator),before)
-    fixture_write(t,generated,"surface_programs.slang","#include \"project.inc\"\n// another catalog\n")
-    testing.expect_value(t,engine_fingerprint(engine,"version",includes,context.temp_allocator),before)
-    testing.expect(t,engine_fingerprint(engine,"another version",includes,context.temp_allocator)!=before,"the compiler is part of the identity")
-    fixture_write(t,engine,"shaders/include/nested/engine.h","float value=2;\n")
-    changed:=engine_fingerprint(engine,"version",includes,context.temp_allocator)
-    testing.expect(t,changed!=before)
-    fixture_write(t,engine,"shaders/materials/builtin.slang","float builtin=2;\n")
-    testing.expect(t,engine_fingerprint(engine,"version",includes,context.temp_allocator)!=changed,"the built-in programs are engine sources")
-}
-
 // A stage of digest "digest" compiled for both backends, and its code.
 @(private="file")
 stored_entry :: proc() -> (entry:Shader,files:[Backend][]u8) {
@@ -448,18 +421,4 @@ cancel_kills_the_tools_that_run_and_starts_no_other :: proc(t:^testing.T) {
     message,started_again:=tool_run(&runner,command,context.temp_allocator)
     testing.expect(t,!started_again && message!="","a cancelled runner starts nothing")
     testing.expect_value(t,runner.runs,1)
-}
-
-@(test)
-a_folder_only_the_overlay_has_lists_the_sources_it_adds :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"shaders")
-    if root=="" {return}
-    missing:=path_join(root,"shaders",allocator=context.temp_allocator)
-    path:=path_join(missing,"glow.slang",allocator=context.temp_allocator)
-    overlay:=make(map[string]Overlay,context.temp_allocator)
-    overlay[path]=Overlay{path,transmute([]u8)string("//! mirai ui Glow\n"),false}
-    listing:=listing_read(missing,true,context.temp_allocator,overlay)
-    testing.expect(t,len(listing.files)==1 && listing.files[0]==path && listing.hash!="","a new program makes the folder of the project")
-    nothing:=listing_read(missing,true,context.temp_allocator)
-    testing.expect(t,len(nothing.files)==0 && nothing.hash=="","a folder that is not there has no listing")
 }

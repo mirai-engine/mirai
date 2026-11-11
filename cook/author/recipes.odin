@@ -1,41 +1,77 @@
 package author
 
 import "base:runtime"
+import "core:fmt"
 import "core:mem"
-import "core:reflect"
+import "core:os"
+import "core:slice"
 import "core:strings"
+import "mirai:asset"
 import "mirai:core"
+import escene "mirai:engine/scene"
 import "mirai:std/base"
-import mm "mirai:std/math"
 
-// The recipes the plugins of a project add to the presets: the cards of their
-// editor packages, which the editor reads from the library of the project
-// (editor.plugin_recipes). make gives an entity of a world the components of
-// the recipe at index.
-Plugin_Recipes :: struct {
-    labels:[]string,
-    scales:[][3]f32, // of the entity each makes; zero: one
-    make:proc(user:rawptr,index:int,w:core.World_Ref,e:core.Entity),
-    user:rawptr,
+// A recipe: a prefab of one entity in a recipes folder of the engine or of a
+// plugin (project.recipe_folders). Create, the API and a document place a
+// copy of its entity: its components, and of its transform the rotation and
+// the scale; its height is how far above what it is placed on one with no body
+// stands. The name of its file is the one a document gives in preset.
+Recipe :: struct {
+    name:string,  // of its file, without .scene
+    path:string,
+    label:string, // the name of its entity: that of its card and of what it makes
+    local:core.Transform,
 }
 
-// How a command finds the recipes of the plugins of a library.
-Plugin_Recipes_Proc :: proc(info:^core.World_Info,allocator:runtime.Allocator) -> Plugin_Recipes
+// The recipes of the folders, each folder in the order of its names; a name
+// an earlier folder has, and a file that is not a prefab of one entity, are
+// left out.
+recipes_read :: proc(folders:[]string,allocator:=context.allocator) -> []Recipe {
+    out:=make([dynamic]Recipe,allocator)
+    types:asset.Types
+    asset.types_init(&types,context.temp_allocator)
+    for folder in folders {
+        entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
+        if error!=nil {continue}
+        slice.sort_by(entries,proc(a,b:os.File_Info) -> bool {return a.name<b.name})
+        next: for entry in entries {
+            if entry.type==.Directory || !strings.has_suffix(entry.name,".scene") {continue}
+            name:=entry.name[:len(entry.name)-len(".scene")]
+            for known in out {if known.name==name {continue next}}
+            path:=strings.concatenate({folder,"/",entry.name},context.temp_allocator)
+            scene:asset.Scene
+            if asset.scene_load(&scene,&types,path,context.temp_allocator)!=.None || .Prefab not_in scene.doc.flags || asset.scene_entity_count(&scene)!=1 {continue}
+            record:=asset.scene_entity(&scene,0)
+            identity:=core.TRANSFORM_IDENTITY
+            local,_:=asset.scene_get(&scene,record.id,"Transform",core.Transform,&identity)
+            append(&out,Recipe{strings.clone(name,allocator),strings.clone(path,allocator),strings.clone(record.name,allocator),local})
+        }
+    }
+    return out[:]
+}
 
-// The recipe a name means, as base.name_find takes it: a preset by its
-// place, or past them a card of a plugin by its label, in the order of labels.
-recipe_named :: proc(name:string,labels:[]string) -> (index:int,found:bool) {
-    if preset,_:=base.name_find(name,reflect.enum_field_names(Preset));preset>=0 {return preset,true}
-    at,_:=base.name_find(name,labels)
-    return len(Preset)+at,at>=0
+recipes_free :: proc(recipes:[]Recipe,allocator:=context.allocator) {
+    for recipe in recipes {
+        delete(recipe.name,allocator)
+        delete(recipe.path,allocator)
+        delete(recipe.label,allocator)
+    }
+    delete(recipes,allocator)
+}
+
+// The recipe a name means, as base.name_find takes it.
+recipe_named :: proc(recipes:[]Recipe,name:string) -> (index:int,found:bool) {
+    names:=make([]string,len(recipes),context.temp_allocator)
+    for recipe,i in recipes {names[i]=recipe.name}
+    index,_=base.name_find(name,names)
+    return index,index>=0
 }
 
 // What is wrong with a name recipe_named does not take, with the nearest ones.
-recipe_problem :: proc(name:string,labels:[]string) -> string {
-    names:=make([dynamic]string,context.temp_allocator)
-    for each in reflect.enum_field_names(Preset) {append(&names,strings.to_lower(each,context.temp_allocator))}
-    append(&names,..labels)
-    return base.name_problem(name,"a preset or the card of a plugin",names[:])
+recipe_problem :: proc(recipes:[]Recipe,name:string) -> string {
+    names:=make([]string,len(recipes),context.temp_allocator)
+    for recipe,i in recipes {names[i]=recipe.name}
+    return base.name_problem(name,"a recipe",names)
 }
 
 // The offsets of the Entity fields of a type.
@@ -102,32 +138,19 @@ scratch_world_free :: proc(scratch:^Scratch_World) {
     scratch^={}
 }
 
-// The components a recipe gives the entity it makes: a preset by its place,
-// or past them one of the plugins. The entity is made in the scratch world and
-// goes at once.
-recipe_parts :: proc(scratch:^Scratch_World,index:int,plugins:Plugin_Recipes,allocator:runtime.Allocator) -> []Part {
-    w:=scratch.w
-    e:=core.create(core.world_entities(w))
-    if t:=core.world_table_of(w,core.Transform);t!=nil {core.add(t,e,core.TRANSFORM_IDENTITY)}
+// The components the entity of a recipe gives, as w lays them out: it is
+// placed in w and goes at once. problem: why there are none.
+recipe_parts :: proc(w:core.World_Ref,types:^asset.Types,recipe:Recipe,allocator:runtime.Allocator) -> (parts:[]Part,problem:string) {
+    bytes,error:=os.read_entire_file(recipe.path,context.temp_allocator)
+    if error!=nil {return nil,fmt.tprintf("the recipe %s could not be read",recipe.path)}
+    file:asset.Asset
+    if asset.asset_open(&file,bytes,context.temp_allocator)!=.None {return nil,fmt.tprintf("the recipe %s is not a scene; mirai asset verify says what its file has",recipe.path)}
+    defer asset.asset_close(&file)
+    report,placed:=escene.instantiate(w,&file,types,{transient=true})
+    if placed!=.None {return nil,fmt.tprintf("the recipe %s could not be placed: %s",recipe.path,escene.error_text(placed))}
     core.world_settle(w)
-    if index<len(Preset) {
-        preset_components(w,e,Preset(index))
-    } else if at:=index-len(Preset);at<len(plugins.labels) && plugins.make!=nil {
-        plugins.make(plugins.user,at,w,e)
-    }
+    parts=entity_parts(w,report.root,allocator)
+    core.destroy(core.world_entities(w),report.root)
     core.world_settle(w)
-    parts:=entity_parts(w,e,allocator)
-    core.destroy(core.world_entities(w),e)
-    core.world_settle(w)
-    return parts
-}
-
-// What a recipe gives the entity it makes besides components: the rotation
-// of a preset, the scale of a card.
-recipe_place :: proc(index:int,plugins:Plugin_Recipes) -> (rotation:mm.Quat,scale:[3]f32) {
-    rotation,scale=1,{1,1,1}
-    if index<0 {return}
-    if index<len(Preset) {rotation=preset_rotation(Preset(index))}
-    else if at:=index-len(Preset);at<len(plugins.scales) && plugins.scales[at]!={} {scale=plugins.scales[at]}
-    return
+    return parts,""
 }

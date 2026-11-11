@@ -3,7 +3,7 @@ package platform
 import "base:runtime"
 
 // The operating system layer: window, input, clock and frame pacing,
-// clipboard and dialogs, child processes, file watching, paths and the audio
+// clipboard and dialogs, file watching, paths and the audio
 // device. It knows nothing of the editor, the renderer or the world. A Platform belongs to the thread that created it; a windowed one
 // must be created on the main thread, and a process holds at most one.
 
@@ -29,7 +29,6 @@ Platform_Desc :: struct {
     drop_bytes:int,      // bytes of their paths; 8192 when zero
     region_capacity:int, // window regions; 1024 when zero
     clipboard_bytes:int, // headless clipboard; 65536 when zero
-    process_capacity:int, // 16 when zero
     watch_capacity:int,   // 8 when zero
     allocator:runtime.Allocator, // context.allocator when unset
 }
@@ -46,7 +45,6 @@ Stats :: struct {
     drops_dropped:u64,
     regions_dropped:u64,
     gamepads_ignored:u64,
-    processes_exhausted:u64,
     watches_exhausted:u64,
 }
 
@@ -76,7 +74,6 @@ Platform :: struct {
     title:[TITLE_CAPACITY]u8,title_length:int,
     clipboard:[]u8,clipboard_length:int,
     dialog:Dialog,
-    processes:Process_Table,
     watches:Watch_Table,
     audio:Audio_Device,
 }
@@ -114,7 +111,6 @@ platform_init :: proc(p:^Platform,desc:Platform_Desc) -> Error {
         if store.paths,failed=make([]Drop_Path,drops,allocator);failed!=nil {return .Out_Of_Memory}
     }
     if p.window.regions,failed=make([]Window_Region,desc.region_capacity if desc.region_capacity>0 else 1024,allocator);failed!=nil {return .Out_Of_Memory}
-    if !process_table_init(p,desc.process_capacity if desc.process_capacity>0 else 16) {return .Out_Of_Memory}
     if !watch_table_init(p,desc.watch_capacity if desc.watch_capacity>0 else 8) {return .Out_Of_Memory}
 
     f:=&s.frame
@@ -148,7 +144,6 @@ destroy :: proc(p:^Platform) {
     if p==nil {return}
     audio_device_close(p)
     watch_table_destroy(p)
-    process_table_destroy(p)
     dialog_abandon(p)
     if !p.headless {window_close(p)}
     allocator:=p.allocator
@@ -174,6 +169,8 @@ frame_begin :: proc(p:^Platform) {
     if !p.headless {
         window_rect_apply(&p.window)
         window_pump(p,now)
+    } else if p.audio.subsystem {
+        audio_device_pump(p)
     }
     for i in 0..<s.pending_count {input_apply(p,s.pending[i])}
     s.pending_count=0

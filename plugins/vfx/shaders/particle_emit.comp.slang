@@ -201,7 +201,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             float3 local_velocity = lerp(e.velocity_a.xyz, e.velocity_b.xyz, float3(random01(seed), random01(seed), random01(seed)));
             velocity = s.normal * speed + transform_vector(e.world, local_velocity) + s.velocity * e.spin.w;
         } else if (e.kinds.x == PARTICLE_SHAPE_BONES) {
-            Mirai_Vfx_Bone b = particle_bone_sample(particle_resource(slot, 0u), seed, frame_dt);
+            Particle_Bone b = particle_bone_sample(particle_resource(slot, 0u), seed, frame_dt);
             if (!b.valid) return;
             // Away from the bone, across it, by up to the radius of the shape.
             float3 side = cross(b.axis, abs(b.axis.y) < 0.99 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0));

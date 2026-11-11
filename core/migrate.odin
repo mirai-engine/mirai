@@ -10,8 +10,9 @@ import "mirai:std/serial"
 // takes a component, a storage or a plugin that changed without starting
 // again. A table or a storage that keeps its name, its place and the hash of
 // the layout of its type moves whole; one whose type changed is converted by
-// the names of its fields (serial.Migration); a new one starts as the new
-// library makes it, and one that is gone is freed with the old library.
+// the names of its fields (serial.Migration); a table is also found by a name
+// it had (@(component,was=)); a new one starts as the new library makes it,
+// and one that is gone is freed with the old library.
 //
 // A place migrates into a struct the new library initialized (fresh): what
 // moves is swapped into it, so the old struct keeps what the new library made
@@ -63,7 +64,7 @@ world_migration_make :: proc(m:^World_Migration,from,to:^World_Info,allocator:=c
     for &t,i in to.tables {
         m.table_sources[i]=-1
         for &old,j in from.tables {
-            if old.name!=t.name || old.place!=t.place {continue}
+            if old.name!=t.name && !serial.names_hold(t.was,old.name) || old.place!=t.place {continue}
             m.table_sources[i]=j
             m.table_map[j]=i
             m.tables[i]=layout_kept(m,old.info,t.info,renumbered)?.Move:.Convert
@@ -225,8 +226,12 @@ table_take :: proc(dst,src:^Raw_Table) {
 // shape, and every one of a type that is not plain data, start at the default.
 @(private="file")
 table_convert :: proc(m:^World_Migration,from,to:^Table_Info,t,old_table:^Raw_Table) {
-    // What waits to be added is of the old type: none does after a settle.
+    // What waits to be added is of the old type: none does after a settle. So is what the
+    // edits kept: the rows asked for stay written.
+    edits_drop(t)
+    when CHECK_WRITES {clear(&t.settled.values)}
     t.added,old_table.added=old_table.added,t.added
+    t.edited,old_table.edited=old_table.edited,t.edited
     count:=t.values.len
     old:=t.values
     size,align:=to.info.size,to.info.align
@@ -238,9 +243,10 @@ table_convert :: proc(m:^World_Migration,from,to:^Table_Info,t,old_table:^Raw_Ta
     if values.data!=nil {values_convert(m,from.info,to.info,to.default,(cast([^]u8)values.data)[:size*count],(cast([^]u8)old.data)[:from.info.size*count],count)}
     if values.data==nil && count>0 {
         // The rows cannot stay without values: they go, as with a table that is gone.
-        clear(&t.entities);clear(&t.stamps);clear(&t.off);clear(&t.turns);clear(&t.owners)
+        clear(&t.entities);clear(&t.stamps);clear(&t.page_stamps);clear(&t.off);clear(&t.turns);clear(&t.owners)
         rows_zero(t)
         t.on=0
+        t.version=version_top(t)+1
         t.layout+=1
     }
     // The old values go to the struct the old library destroys.

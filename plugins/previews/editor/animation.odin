@@ -47,6 +47,7 @@ Part :: struct {
 Subject :: struct {
     root:core.Entity,
     key:u64, // of what it was gathered from: 0 when nothing was
+    seen:[8]core.Seen, // the tables of the scene it was gathered from
     parts:[PART_CAPACITY]Part,
     part_count:int,
     worlds:[PART_CAPACITY]mm.Transform, // of the parts in the pose last sampled, in the space of the parent of the root
@@ -58,6 +59,8 @@ Subject :: struct {
     short:bool, // parts or triangles were left out
     fit:[2][3]f32,
     fit_key:u64,
+    clip:anim.Clip, // the one last sampled, at time; 0: at rest
+    time:f32,
 }
 
 // What a clip of the asset is.
@@ -113,7 +116,6 @@ Animation :: struct {
     lib:anim.Library,
     clips:[]Clip_Info,
     markers:[]asset.Animation_Marker,
-    pose:anim.Pose,
     subject:Subject,
 }
 
@@ -126,8 +128,7 @@ Scene :: struct {
     hierarchy:core.Ref(core.Hierarchy),
     meshes:^core.Table(erender.Mesh_Renderer),
     hidden:^core.Table(erender.Hidden),
-    tints:^core.Table(erender.Tint),
-    overrides:^core.Table(erender.Material_Override),
+    tints:^core.Table(erender.Material_Values),
     animations:^core.Table(eanim.Animation),
     skins:^core.Table(eanim.Pose_Source),
 }
@@ -136,8 +137,8 @@ Scene :: struct {
 scene_of :: proc(w:core.World_Ref) -> Scene {
     return {
         transforms=core.world_table_of(w,core.Transform),names=core.world_table_of(w,core.Name),targets=core.world_table_of(w,eanim.Animation_Target),parents=core.world_table_of(w,core.Parent),hierarchy=core.ref(core.world_storage_of(w,core.Hierarchy)),
-        meshes=core.world_table_of(w,erender.Mesh_Renderer),hidden=core.world_table_of(w,erender.Hidden),tints=core.world_table_of(w,erender.Tint),
-        overrides=core.world_table_of(w,erender.Material_Override),animations=core.world_table_of(w,eanim.Animation),
+        meshes=core.world_table_of(w,erender.Mesh_Renderer),hidden=core.world_table_of(w,erender.Hidden),tints=core.world_table_of(w,erender.Material_Values),
+        animations=core.world_table_of(w,eanim.Animation),
         skins=core.world_table_of(w,eanim.Pose_Source),
     }
 }
@@ -156,10 +157,9 @@ animation_destroy :: proc(p:^Animation,allocator:runtime.Allocator) {
 @(private)
 animation_unload :: proc(p:^Animation,allocator:runtime.Allocator) {
     if p.lib.clips!=nil {anim.library_destroy(&p.lib)}
-    if p.pose.entries!=nil {anim.pose_destroy(&p.pose)}
     delete(p.clips,allocator)
     delete(p.markers,allocator)
-    p.lib,p.pose,p.clips,p.markers={},{},nil,nil
+    p.lib,p.clips,p.markers={},nil,nil
     p.loaded,p.stamp={},{}
 }
 
@@ -182,7 +182,7 @@ animation_load :: proc(a:^host.Assets,allocator:runtime.Allocator,p:^Animation) 
     desc:=asset.animation_library_desc(view)
     desc.allocator=allocator
     if !anim.library_init(&p.lib,desc) {return}
-    if len(view.clips)>0 && asset.animation_clips_add(view,&p.lib)==0 || !anim.pose_init(&p.pose,max(len(view.tracks),1),allocator) {
+    if len(view.clips)>0 && asset.animation_clips_add(view,&p.lib)==0 {
         animation_unload(p,allocator)
         p.loaded,p.stamp=p.chosen,stamp
         return
@@ -208,30 +208,39 @@ animation_clip :: proc(p:^Animation) -> anim.Clip {
     return 1
 }
 
+// A clip of a library at a time of it; clip 0 is none.
+Clip_Time :: struct {lib:^anim.Library,clip:anim.Clip,time:f32}
+
+// What the tracks of a clip give a target at its time, over local.
 @(private)
-pose_put :: proc(pose:^anim.Pose,target:u64,local:^mm.Transform) {
-    if value,_,ok:=anim.pose_position(pose,target);ok {local.position=value}
-    if value,_,ok:=anim.pose_rotation(pose,target);ok {local.rotation=value}
-    if value,_,ok:=anim.pose_scale(pose,target);ok {local.scale=value}
+clip_put :: proc(at:Clip_Time,target:u64,local:^mm.Transform) {
+    if at.lib==nil || !anim.clip_valid(at.lib,at.clip) {return}
+    player:=anim.player_make(at.clip);player.time=at.time
+    time:=anim.player_time(at.lib,player)
+    for track in anim.clip_tracks(at.lib,at.clip) {
+        if track.target!=target || track.slot!=0 {continue}
+        value:=anim.clip_evaluate(at.lib,track,time)
+        #partial switch track.property {
+        case .Position: local.position=value.xyz
+        case .Rotation: local.rotation=linalg.normalize0(anim.vec4_quat(value))
+        case .Scale: local.scale=value.xyz
+        }
+    }
 }
 
 // The transforms of the parts at a time of a clip; at rest without one.
 @(private)
 subject_pose :: proc(p:^Animation,clip:anim.Clip,time:f32) {
     sub:=&p.subject
-    sampled:=clip!=0 && p.pose.entries!=nil
-    if p.pose.entries!=nil {anim.pose_clear(&p.pose)}
-    if sampled {
-        player:=anim.player_make(clip)
-        player.time=time
-        anim.pose_blend(&p.pose,&p.lib,player)
-    }
+    sampled:=clip!=0 && p.lib.clips!=nil
+    sub.clip,sub.time=clip if sampled else 0,time
+    at:=Clip_Time{&p.lib,sub.clip,time}
     for i in 0..<sub.part_count {
         part:=&sub.parts[i]
         local:=part.local
         if sampled {
-            if i==0 {pose_put(&p.pose,0,&local)}
-            if part.target!=0 {pose_put(&p.pose,part.target,&local)}
+            if i==0 {clip_put(at,0,&local)}
+            if part.target!=0 {clip_put(at,part.target,&local)}
         }
         sub.worlds[i]=part.parent<0?local:mm.transform_compose(sub.worlds[part.parent],local)
     }
@@ -291,9 +300,9 @@ subject_fit :: proc(p:^Animation,clip:anim.Clip) {
 // A part that shows a mesh: its triangles, skinned when the mesh has a
 // skeleton and no Pose_Source follows another rig.
 @(private)
-part_mesh_add :: proc(a:^host.Assets,sub:^Subject,part:^Part,mesh:erender.Mesh_Renderer,tint:erender.Tint,override:^erender.Material_Override,rig:core.Entity) {
+part_mesh_add :: proc(a:^host.Assets,sub:^Subject,part:^Part,mesh:erender.Mesh_Renderer,tint:erender.Material_Values,rig:core.Entity) {
     skinned:=Subject_Skin{rig=rig,part=sub.part_count-1,rig_part=-1}
-    switch editor.triangles_append(a,mesh,tint,override,mm.TRANSFORM_IDENTITY,TRIANGLE_CAPACITY*3-len(sub.locals),&sub.locals,&sub.materials) {
+    switch editor.triangles_append(a,mesh,tint,mm.TRANSFORM_IDENTITY,TRIANGLE_CAPACITY*3-len(sub.locals),&sub.locals,&sub.materials) {
     case .Nothing:
     case .No_Room: sub.short=true
     case .Added:
@@ -314,31 +323,26 @@ part_add :: proc(a:^host.Assets,scene:Scene,sub:^Subject,e:core.Entity,parent:i3
     sub.part_count+=1
     part^={entity=e,parent=parent,local=mm.TRANSFORM_IDENTITY,first=u32(len(sub.locals))}
     if scene.transforms!=nil {
-        if t,ok:=core.get(core.read(scene.transforms),e);ok {part.local=core.to_math(t)}
+        if t,ok:=core.get(scene.transforms,e);ok {part.local=core.to_math(t)}
     }
     if scene.targets!=nil {
-        if target,ok:=core.get(core.read(scene.targets),e);ok {part.target=base.name_hash(base.text_get(target.path[:]))}
+        if target,ok:=core.get(scene.targets,e);ok {part.target=base.name_hash(base.text_get(target.path[:]))}
     }
     if part.target==0 && scene.names!=nil {
-        if text:=core.name_get(core.read(scene.names),e);text!="" {part.target=base.name_hash(text)}
+        if text:=core.name_get(scene.names,e);text!="" {part.target=base.name_hash(text)}
     }
     if scene.meshes==nil {return}
-    mesh,has_mesh:=core.get(core.read(scene.meshes),e)
+    mesh,has_mesh:=core.get(scene.meshes,e)
     if !has_mesh || scene.hidden!=nil && core.has(scene.hidden,e) {return}
-    tint:=erender.TINT_DEFAULT
+    tint:=erender.MATERIAL_VALUES_DEFAULT
     if scene.tints!=nil {
-        if value,ok:=core.get(core.read(scene.tints),e);ok {tint=value}
-    }
-    overridden:erender.Material_Override
-    override:^erender.Material_Override
-    if scene.overrides!=nil {
-        if value,ok:=core.get(core.read(scene.overrides),e);ok {overridden,override=value,&overridden}
+        if value,ok:=core.get(scene.tints,e);ok {tint=value}
     }
     rig:=e
     if scene.skins!=nil {
-        if skin,found:=core.get(core.read(scene.skins),e);found {rig=skin.rig}
+        if skin,found:=core.get(scene.skins,e);found {rig=skin.rig}
     }
-    part_mesh_add(a,sub,part,mesh,tint,override,rig)
+    part_mesh_add(a,sub,part,mesh,tint,rig)
 }
 
 // Reads the subtree of an entity from the World, in preorder.
@@ -393,18 +397,15 @@ subject_gather_mesh :: proc(app:^host.App,w:core.World_Ref,sub:^Subject,mesh:bas
     part:=&sub.parts[0]
     sub.part_count=1
     part^={entity=core.NONE,parent=-1,local=mm.TRANSFORM_IDENTITY}
-    part_mesh_add(app.assets,sub,part,{mesh=mesh},erender.TINT_DEFAULT,nil,core.NONE)
+    part_mesh_add(app.assets,sub,part,{mesh=mesh},erender.MATERIAL_VALUES_DEFAULT,core.NONE)
     subject_end(app,w,sub)
 }
 
-// What changes the subject: the tables that describe it and the assets it is made of.
+// Whether a table that describes the subject changed since seen, which it moves to now.
 @(private)
-scene_key :: proc(scene:Scene,root:core.Entity,mesh:base.Asset_Id,a:^host.Assets,reloads:u64) -> u64 {
-    version :: proc(t:^core.Table($T)) -> u64 {return t!=nil?t.version+t.layout:0}
-    return signature_of({
-        u64(root),mesh[0],mesh[1],version(scene.transforms),version(scene.names),version(scene.targets),version(scene.parents),version(scene.meshes),version(scene.hidden),
-        version(scene.tints),version(scene.overrides),version(scene.skins),a!=nil?a.revision:0,reloads,
-    })
+scene_touched :: proc(scene:Scene,seen:^[8]core.Seen) -> bool {
+    return core.touched(scene.transforms,&seen[0]) | core.touched(scene.names,&seen[1]) | core.touched(scene.targets,&seen[2]) | core.touched(scene.parents,&seen[3]) | core.touched(scene.meshes,&seen[4]) |
+        core.touched(scene.hidden,&seen[5]) | core.touched(scene.tints,&seen[6]) | core.touched(scene.skins,&seen[7])
 }
 
 // The entity of the scene a clip of the asset plays on: one whose Animation
@@ -424,9 +425,10 @@ animation_scene_subject :: proc(s:^editor.Session,scene:Scene,chosen:base.Asset_
 animation_refresh :: proc(s:^editor.Session,app:^host.App,w:core.World_Ref,scene:Scene,p:^Animation,root:core.Entity) {
     a:=app.assets
     clip:=animation_clip(p)
-    key:=scene_key(scene,root,p.mesh,a,app.shaders.reloads)
+    // The subject and the assets it is made of.
+    key:=signature_of({u64(root),p.mesh[0],p.mesh[1],a!=nil?a.revision:0,app.shaders.reloads})
     sub:=&p.subject
-    if key!=sub.key || sub.renderer!=app.renderer {
+    if scene_touched(scene,&sub.seen) || key!=sub.key || sub.renderer!=app.renderer {
         if p.mesh!={} {subject_gather_mesh(app,w,sub,p.mesh,key)} else {subject_gather(app,w,scene,sub,root,key)}
     }
     fit_key:=signature_of({sub.key,u64(p.loaded[0]),u64(p.stamp[1]),u64(clip)})
@@ -453,7 +455,6 @@ animation_document :: proc(s:^editor.Session,previews:^Previews,w:core.World_Ref
     chosen:=d.id
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     a:=app.assets
     scene:=scene_of(w)
     if p.chosen!=chosen {
@@ -483,7 +484,7 @@ animation_document :: proc(s:^editor.Session,previews:^Previews,w:core.World_Ref
     animation_toolbar(s,p,clip)
     animation_clips(s,p,clip)
     subject_name:=""
-    if p.mesh!={} {subject_name=editor.asset_name_of(a,p.mesh)} else if scene.names!=nil {subject_name=core.name_get(core.read(scene.names),root)}
+    if p.mesh!={} {subject_name=editor.asset_name_of(a,p.mesh)} else if scene.names!=nil {subject_name=core.name_get(scene.names,root)}
     animation_say(d,p,clip,duration,subject_name)
     document,details,room:=editor.asset_workspace_details(s)
     id:=ui.id_derive(ctx,DOCUMENT_SCOPE,"animation")
@@ -525,7 +526,7 @@ animation_say :: proc(d:^editor.Asset_Document,p:^Animation,clip:anim.Clip,durat
 // asset that chooses another, as the Hierarchy does.
 @(private)
 animation_toolbar :: proc(s:^editor.Session,p:^Animation,clip:anim.Clip) {
-    g:=s.gui;ctx:=g.ctx;th:=&ctx.theme
+    g:=s.gui;ctx:=g.ctx
     rect,found:=editor.asset_toolbar_whole(g)
     if !found || rect.w<=0 || len(p.clips)==0 {return}
     if ui.box(ctx,{width=ui.fixed(rect.w),height=ui.fixed(rect.h),align_x=.Center,align_y=.Center,float={to=.Surface,offset={rect.x,rect.y},layer=ui.LAYER_BAR}}) {
@@ -534,7 +535,7 @@ animation_toolbar :: proc(s:^editor.Session,p:^Animation,clip:anim.Clip) {
         names:=make([]string,len(p.clips),context.temp_allocator)
         for &info,i in p.clips {names[i]=base.text_get(info.name[:])}
         selected:=max(int(clip)-1,0)
-        if ui.dropdown(ctx,ui.id(ctx,"clip"),{list=names},&selected,{width=200,height=th.control,searchable=len(names)>10}) {
+        if ui.dropdown(ctx,ui.id(ctx,"clip"),{list=names},&selected,{width=200,height=ui.metric(ctx,"control"),searchable=len(names)>10}) {
             base.text_set(p.clip_name[:],names[selected])
             p.time,p.playing=0,false
         }
@@ -619,15 +620,15 @@ animation_timeline :: proc(s:^editor.Session,p:^Animation,a:^host.Assets,clip:an
         }
     }
     if ui.popup(ctx,naming,{width=200}) {
-        result:=ui.text_field(ctx,field,p.marker.name[:],&p.marker.length,{height=ctx.theme.control,placeholder="Marker name"})
+        result:=ui.text_field(ctx,field,p.marker.name[:],&p.marker.length,{height=ui.metric(ctx,"control"),placeholder="Marker name"})
         if result.committed || result.cancelled {ui.popup_close(ctx,naming)}
         if name:=strings.trim_space(string(p.marker.name[:p.marker.length]));result.committed && name!="" {animation_marker_write(s,a,p,clip,name,false)}
     }
 }
 
 // Writes the marker of the menu of the timeline into the clip, with name, or
-// takes it out with remove: the .anim changes in memory, unsaved, as a step of
-// the history of the document. Markers keep the order of their times.
+// takes it out with remove: the .anim changes as a step of the history of
+// the document. Markers keep the order of their times.
 @(private)
 animation_marker_write :: proc(s:^editor.Session,a:^host.Assets,p:^Animation,clip:anim.Clip,name:string,remove:bool,label:="") -> bool {
     if a==nil || clip==0 || p.loaded=={} {return false}
@@ -652,7 +653,7 @@ animation_marker_write :: proc(s:^editor.Session,a:^host.Assets,p:^Animation,cli
         for marker,i in markers {
             if marker.time>p.marker.time {at=i;break}
         }
-        inject_at(&markers,at,asset.Animation_Marker_Desc{p.marker.time,name})
+        inject_at(&markers,at,asset.Animation_Marker_Desc{time=p.marker.time,name=name})
     }
     edited.markers=markers[:]
     doc:asset.Document
@@ -668,19 +669,19 @@ animation_marker_write :: proc(s:^editor.Session,a:^host.Assets,p:^Animation,cli
 // height it can take.
 @(private)
 animation_details :: proc(s:^editor.Session,p:^Animation,models:^Thumbnail_Models,a:^host.Assets,clip:anim.Clip,width,room:f32) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(editor.INSPECTOR_HEAD),padding={11,0,7,0},gap=6,align_y=.Center}) {
-        ui.icon(ctx,.Rotate,th.text_muted,15)
+        ui.icon(ctx,.Rotate,ui.tone(ctx,"text_muted"),15)
         title:=clip!=0?base.text_get(p.clips[clip-1].name[:]):editor.asset_name_of(a,p.chosen)
-        ui.label(ctx,title,th.font_heading,th.text,0,font=ui.FONT_SEMIBOLD)
+        ui.label(ctx,title,ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)
     }
     origin:=editor.ai_provenance_asset_row(s)
-    if ui.scroll_area(ctx,ui.id(ctx,"details"),&p.details_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD-origin,40),padding={8,7,8,8},gap=7,fade=th.panel}) {animation_cards(s,p,models,a,clip,width)}
+    if ui.scroll_area(ctx,ui.id(ctx,"details"),&p.details_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD-origin,40),padding={8,7,8,8},gap=7,fade=ui.tone(ctx,"panel")}) {animation_cards(s,p,models,a,clip,width)}
 }
 
 @(private)
 animation_cards :: proc(s:^editor.Session,p:^Animation,models:^Thumbnail_Models,a:^host.Assets,clip:anim.Clip,width:f32) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     if clip!=0 {
         if details_card(s,p,.Clip,"Clip",.Play) {
             info:=&p.clips[clip-1]
@@ -712,9 +713,9 @@ animation_cards :: proc(s:^editor.Session,p:^Animation,models:^Thumbnail_Models,
             if candidate.mesh==p.mesh {selected=i+1}
         }
         editor.row_begin(ctx,"Subject")
-        if ui.dropdown(ctx,ui.id(ctx,"subject"),{list=names},&selected,{width=-1,height=th.row,searchable=len(names)>10}) {p.mesh=selected>0?meshes[selected-1].mesh:{}}
+        if ui.dropdown(ctx,ui.id(ctx,"subject"),{list=names},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=len(names)>10}) {p.mesh=selected>0?meshes[selected-1].mesh:{}}
         editor.row_end(ctx)
-        if p.subject.short {ui.label(ctx,"Part of the subject is left out",th.font_small,th.text_muted)}
+        if p.subject.short {ui.label(ctx,"Part of the subject is left out",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
     }
 }
 

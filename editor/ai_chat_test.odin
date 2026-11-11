@@ -18,7 +18,7 @@ ai_chat_test_paint :: proc(ctx:^ui.Context,text:string) -> ^ui.Paint {
 @(test)
 ai_chat_agent_icons_select_tasks_and_finish_review :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m,has_project=true}
@@ -109,7 +109,7 @@ ai_chat_agent_icons_select_tasks_and_finish_review :: proc(t:^testing.T) {
 @(test)
 asking_the_agent_about_a_range_of_the_play_attaches_it_to_the_next_message :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m,has_project=true}
@@ -146,7 +146,7 @@ asking_the_agent_about_a_range_of_the_play_attaches_it_to_the_next_message :: pr
 @(test)
 ai_chat_draws_the_first_prompt_and_does_not_reuse_another_conversations_scroll :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m}
@@ -174,7 +174,7 @@ ai_chat_draws_the_first_prompt_and_does_not_reuse_another_conversations_scroll :
 @(test)
 ai_chat_builds_only_the_messages_in_sight_and_remeasures_a_growing_answer :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m}
@@ -191,11 +191,14 @@ ai_chat_builds_only_the_messages_in_sight_and_remeasures_a_growing_answer :: pro
     }
     painted:=frame(&s,task)
     testing.expect(t,!painted.overflow && ctx.stats.layout_errors==0)
+    // The first frame builds every message to measure it; the next only those in sight.
+    frame(&s,task)
     testing.expectf(t,ctx.stats.elements<60,"only the messages in sight become elements: %d",ctx.stats.elements)
     total:f32
     for h in task.transcript.heights[:task.transcript.count] {total+=h}
     testing.expect(t,m.scroll==total-200,"a new chat opens at its last message")
-    // The answer that streams grows its own line and only that one is measured again.
+    // The answer that streams grows its own line and only that one is measured again, by the
+    // frame that builds it.
     ai_transcript_add(&task.transcript,"And the lamp?",.Prompt)
     task.stream_open=true
     ai_transcript_add(&task.transcript,"Done.",.Output)
@@ -204,7 +207,8 @@ ai_chat_builds_only_the_messages_in_sight_and_remeasures_a_growing_answer :: pro
     before:=task.transcript.heights[last]
     second:=task.transcript.heights[last-1]
     ai_stream_add(&s,task," The table sits under the window and the lamp beside it, both inside the light of the sun.")
-    testing.expect(t,task.transcript.heights[last]==0 && task.transcript.heights[last-1]==second)
+    testing.expect(t,!task.transcript.built[last] && task.transcript.heights[last-1]==second)
+    frame(&s,task)
     frame(&s,task)
     testing.expect(t,task.transcript.heights[last]>before,"the grown answer takes more lines")
     total=0
@@ -217,7 +221,7 @@ ai_chat_builds_only_the_messages_in_sight_and_remeasures_a_growing_answer :: pro
 @(test)
 ai_chat_keeps_partial_failed_changes_available_for_review :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m}
@@ -265,7 +269,7 @@ ai_chat_keeps_partial_failed_changes_available_for_review :: proc(t:^testing.T) 
 @(test)
 ai_chat_settings_use_the_header_gear_for_connections_and_scene_agents :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m}
@@ -298,7 +302,7 @@ ai_chat_settings_use_the_header_gear_for_connections_and_scene_agents :: proc(t:
 @(test)
 ai_chat_hides_tools_and_viewport_context_and_only_lists_supported_codex_models :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m}
@@ -345,14 +349,14 @@ ai_chat_hides_tools_and_viewport_context_and_only_lists_supported_codex_models :
 @(test)
 ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testing.T) {
     world:Shell_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     entity:=core.create(&world.entities)
     core.add(&world.names,entity,core.name_make("Selected entity"))
     core.add(&world.transforms,entity,core.TRANSFORM_IDENTITY)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     ai:=new(Ai)
@@ -361,7 +365,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     viewport:Viewport
     selection:history.Selection
     defer delete(selection.entities)
-    session:=Session{info=core.test_world_info(&world),edit_world=&world,app=&app,gui=&g,viewport=&viewport,selection=&selection,ai=ai}
+    session:=Session{info=test_world_info(&world),edit_world=&world,app=&app,gui=&g,viewport=&viewport,selection=&selection,ai=ai}
     history.selection_set(&selection,{entity})
     for _ in 0..<3 {
         ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
@@ -405,12 +409,12 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     testing.expect(t,found,"selection is automatically displayed in the AI composer")
     testing.expect(t,chip.w<240,"the context chip fits its entity name instead of growing to the composer width")
     filled:=false
-    for paint in ctx.paints[:ctx.paint_count] {if paint.radius==ctx.theme.radius_control && paint.fill==ctx.theme.field {filled=true;break}}
+    for paint in ctx.paints[:ctx.paint_count] {if paint.radius==ui.metric(&ctx,"radius_control") && paint.fill==ui.tone(&ctx,"field") {filled=true;break}}
     testing.expect(t,filled,"selected context sits on the gray of a field")
     second:=core.create(&world.entities)
     core.add(&world.names,second,core.name_make("A"))
     core.add(&world.transforms,second,core.TRANSFORM_IDENTITY)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     history.selection_set(&selection,{entity,second})
     for _ in 0..<2 {
         ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
@@ -423,7 +427,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     second_chip,second_found:=ui.widget_rect(&ctx,ui.id(&ctx,"context",2))
     ui.id_pop(&ctx)
     testing.expect(t,second_found && first_chip.y==second_chip.y && second_chip.w<60,"short entity chips share a row and keep their own width")
-    core.get(&world.names,second)^=core.name_make("An entity whose very long name should fit inside the composer without pushing the send button out")
+    core.edit(&world.names,second)^=core.name_make("An entity whose very long name should fit inside the composer without pushing the send button out")
     for _ in 0..<2 {
         ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
         ai_chat_content_build(&session,280,420)
@@ -468,14 +472,14 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     testing.expect(t,chat_found && chat.w<=280.01,"long file paths cannot enlarge the chat panel")
     full_title:="Read the exposed skill catalog and then inspect the live player through the Mirai MCP server without changing the scene"
     short_title:=ai_chat_menu_label(&ctx,full_title,200)
-    testing.expect(t,len(short_title)<len(full_title) && ui.text_width(&ctx.font,short_title,ctx.theme.font_small)<=200.01,"conversation titles fit the history popup without changing stored text")
+    testing.expect(t,len(short_title)<len(full_title) && ui.text_width(&ctx.font,short_title,ui.metric(&ctx,"font_small"))<=200.01,"conversation titles fit the history popup without changing stored text")
     for _ in 0..<5 {
         extra:=core.create(&world.entities)
         core.add(&world.names,extra,core.name_make("Another selected entity"))
         core.add(&world.transforms,extra,core.TRANSFORM_IDENTITY)
         history.selection_add(&selection,extra)
     }
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     for height in ([2]f32{300,390}) {
         for region in ([2]bool{false,true}) {
             ai.has_region=region
@@ -521,7 +525,7 @@ ai_tool_notes_are_the_steps_of_a_turn_with_what_each_worked_on :: proc(t:^testin
     testing.expect_value(t,ai_call_target(&s,`{"name":"Crate","preset":"Cube"}`,buffer[:]),"Crate")
     testing.expect_value(t,ai_call_target(&s,`{"path":"materials/floor.mat"}`,buffer[:]),"floor.mat")
     testing.expect_value(t,ai_call_target(&s,`{"ids":[4,5,6]}`,buffer[:]),"3 entities")
-    testing.expect_value(t,ai_call_target(&s,`{"operations":[{},{}]}`,buffer[:]),"2 operations")
+    testing.expect_value(t,ai_call_target(&s,`{"calls":[{},{}]}`,buffer[:]),"2 calls")
     testing.expect_value(t,ai_call_target(&s,`not json`,buffer[:]),"")
     refs:[256]u8
     testing.expect_value(t,ai_call_refs(`{"path":"materials/floor.mat","ids":["0x2a","7",3]}`,refs[:]),"materials/floor.mat 0x000000000000002a 0x0000000000000007")
@@ -542,7 +546,7 @@ ai_answers_are_one_markdown_message_with_the_entities_they_name_as_pills :: proc
     testing.expect_value(t,ai_entity_marks_plain("Moved [Crate 4](entity:7) beside [Table](entity:9).",buffer[:]),"Moved Crate 4 beside Table.")
     testing.expect_value(t,ai_entity_marks_plain("No marks here",buffer[:]),"No marks here")
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m}
@@ -558,15 +562,19 @@ ai_answers_are_one_markdown_message_with_the_entities_they_name_as_pills :: proc
     tr:=&task.transcript
     ai_transcript_add(tr,"Light the table",.Prompt)
     ai_transcript_add(tr,"I added a light over [Table](entity:3):\n\n```odin\nlight := 1\n```\n\n- [Point Light 1](entity:4)",.Output)
-    ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
-    ai_transcript_draw(&s,m,task,400,300)
-    painted:=ui.frame_end(&ctx)
+    painted:ui.Frame
+    for _ in 0..<2 {
+        ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
+        ai_transcript_draw(&s,m,task,400,300)
+        painted=ui.frame_end(&ctx)
+    }
     testing.expect(t,!painted.overflow && ctx.stats.layout_errors==0)
     shown:[AI_TRANSCRIPT_LINES]bool
     ai_transcript_shown(task,shown[:tr.count])
     message:=ai_message_text(tr,1,shown[:tr.count])
     testing.expect(t,strings.has_suffix(message,"](entity:4)") && strings.contains(message,"```odin\nlight := 1\n```"),"the lines of the answer join by their breaks")
-    testing.expect_value(t,tr.heights[1],AI_MESSAGE_GAP+ui.markdown_height(&ctx,message,300,ai_markdown_style(&s,ctx.theme.font_small)))
+    answer,_:=ui.widget_rect(&ctx,ui.id(&ctx,"line",1))
+    testing.expect(t,tr.heights[1]==answer.h && answer.h>AI_MESSAGE_GAP,"its height is that of what it builds")
     for index in 2..<tr.count {testing.expectf(t,tr.heights[index]==0,"line %d goes on the answer",index)}
 }
 
@@ -606,7 +614,7 @@ ai_history_lists_only_chats_without_a_row_and_says_how_long_ago :: proc(t:^testi
     testing.expect_value(t,ai_time_ago(2*86_400_000),"2d")
     testing.expect_value(t,ai_time_ago(15*86_400_000),"2w")
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m}
@@ -631,7 +639,7 @@ ai_history_lists_only_chats_without_a_row_and_says_how_long_ago :: proc(t:^testi
 @(test)
 ai_sessions_say_what_they_wait_for_and_are_answered_in_their_thread :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m,has_project=true}
@@ -750,7 +758,7 @@ ai_chat_test_units :: proc(m:^Ai) {
 @(test)
 ai_chat_has_one_status_line_and_no_new_chat_button :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m,has_project=true}
@@ -780,7 +788,7 @@ ai_chat_has_one_status_line_and_no_new_chat_button :: proc(t:^testing.T) {
 @(test)
 ai_a_finished_subagent_is_a_card_in_the_thread_of_the_main_chat :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m,has_project=true}
@@ -818,7 +826,7 @@ ai_a_finished_subagent_is_a_card_in_the_thread_of_the_main_chat :: proc(t:^testi
 @(test)
 ai_a_subagent_is_inspected_from_its_own_view_and_written_to :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     m:=new(Ai);defer free(m);ai_connections_reset(m)
     s:=Session{gui=&g,ai=m,has_project=true}
@@ -828,9 +836,7 @@ ai_a_subagent_is_inspected_from_its_own_view_and_written_to :: proc(t:^testing.T
     m.selected=2
     ai_chat_test_frame(&s);ai_chat_test_frame(&s)
     testing.expect(t,ai_chat_test_paint(&ctx,"Main chat")!=nil && ai_chat_test_paint(&ctx,"Working")!=nil,"the way back and its state")
-    named:=false
-    for &paint in ctx.paints[:ctx.paint_count] {named|=paint.placeholder=="Message Cover..."}
-    testing.expect(t,named,"the composer names it")
+    testing.expect(t,ai_chat_test_paint(&ctx,"Message Cover...")!=nil,"the composer names it")
     testing.expect(t,ai_chat_test_paint(&ctx,"Luna 6")==nil,"no selector of the model")
     ui.id_push(&ctx,shell_id(&g,"ai_chat"))
     _,stop_found:=ui.widget_rect(&ctx,ui.id(&ctx,"stop"))

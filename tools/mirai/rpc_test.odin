@@ -241,15 +241,15 @@ describe_without_arguments_shows_the_index_of_the_methods :: proc(t:^testing.T) 
     context.allocator=context.temp_allocator
     listing:=`{"server":{"name":"mirai","version":"6"},
         "core":[{"name":"engine.describe","summary":"Lists the methods"},{"name":"scene.add","summary":"Adds entities"}],
-        "others":[{"plugin":"editor","methods":"scene.save scene.open"},{"plugin":"animation","methods":"animation.play"}],
+        "others":[{"plugin":"editor","methods":"scene.new scene.open"},{"plugin":"animation","methods":"animation.play"}],
         "active_plugins":["animation"],"other_plugins":["terrain"]}`
     text:=rpc_describe_list_text(listing)
-    for line in ([]string{"core\n  engine.describe  Lists the methods\n  scene.add        Adds entities\n","\neditor\n  scene.save scene.open\n","\nanimation\n  animation.play\n","\ninactive plugins: terrain\n","mirai rpc describe <method>"}) {
+    for line in ([]string{"core\n  engine.describe  Lists the methods\n  scene.add        Adds entities\n","\neditor\n  scene.new scene.open\n","\nanimation\n  animation.play\n","\ninactive plugins: terrain\n","mirai rpc describe <method>"}) {
         testing.expectf(t,strings.contains(text,line),"%q in:\n%s",line,text)
     }
     testing.expect(t,rpc_describe_is_plugin(listing,"animation") && rpc_describe_is_plugin(listing,"terrain") && rpc_describe_is_plugin(listing,"editor"))
     testing.expect(t,!rpc_describe_is_plugin(listing,"scene.") && !rpc_describe_is_plugin(listing,"scene.add"),"a prefix or a method is not a plugin")
-    testing.expect_value(t,api.names_similar(rpc_listed_names(listing),"scene.ad",context.temp_allocator),"scene.add, scene.save, scene.open")
+    testing.expect_value(t,api.names_similar(rpc_listed_names(listing),"scene.ad",context.temp_allocator),"scene.add, scene.new, scene.open")
 }
 
 // Quoting a JSON object differs per shell: key=value arguments need none.

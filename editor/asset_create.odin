@@ -6,6 +6,7 @@ import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
+import "mirai:core"
 import "mirai:editor/api"
 import "mirai:editor/history"
 import "mirai:host"
@@ -13,20 +14,21 @@ import "mirai:std/base"
 import "mirai:ui"
 
 // New assets of Create in the content browser and of asset.create: a folder,
-// a scene, a material, a sound set, a table of texts (no languages yet), a
+// a scene, a prefab (a scene of that kind with its one root), a material, a sound set, a table of texts (no languages yet), a
 // font (the Inter of the editor, for another one import its file), or a kind a plugin creates
 // (Asset_Document_Provider.creates), such as a particle effect. A folder and a scene are written
-// at once, as an import writes: a scene opens from its file. The others are a
-// step of the history of the scene and stay unsaved in memory until Save, as
-// material.set with path leaves them. The plugin of a kind it creates gives the bytes
+// at once, as an import writes: a scene or a prefab opens from its file. The others are a
+// step of the history of the scene, written when it ends, as material.set
+// with path writes them. The plugin of a kind it creates gives the bytes
 // of its empty file (Asset_Document_Provider.create), which are written the
 // same way.
 
 ASSET_CREATE_FOLDER :: asset.Fourcc(0) // what Create makes that is not an asset
+ASSET_CREATE_PREFAB :: asset.Fourcc(1) // what Create makes as a .scene of kind Prefab
 ASSET_CREATE_NAME :: 64                // bytes of a name Create gives
 
 Api_Asset_Create_Params :: struct {
-    kind:[32]u8 `mirai:"text,label=What to make: folder; scene; material; sound_set; strings (a table of texts without languages); font (Inter; import a TTF or OTF for another); particle or a kind a plugin creates (such as ui)"`,
+    kind:[32]u8 `mirai:"text,label=What to make: folder; scene; prefab; material; sound_set; strings (a table of texts without languages); font (Inter; import a TTF or OTF for another); particle or a kind a plugin creates (such as ui)"`,
     folder:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The folder under the assets folder it goes in; none: the root"`,
     name:[ASSET_CREATE_NAME]u8 `mirai:"text,optional,label=Its name without extension; none: New and its kind numbered while it is taken"`,
 }
@@ -34,14 +36,13 @@ Api_Asset_Create_Params :: struct {
 Api_Asset_Create_Result :: struct {
     id:[base.ASSET_ID_TEXT]u8 `mirai:"text,label=The id of the asset; empty for a folder"`,
     path:[API_PATH_BYTES]u8 `mirai:"text,label=Its path under the assets folder"`,
-    unsaved:bool `mirai:"label=It stays in memory until asset.save; a folder and a scene are on disk at once"`,
 }
 
 // What Create makes, in the order it lists them: what the editor makes, then
 // the kinds plugins create.
 asset_create_kinds :: proc(s:^Session) -> []asset.Fourcc {
     kinds:=make([dynamic]asset.Fourcc,context.temp_allocator)
-    append(&kinds,ASSET_CREATE_FOLDER,asset.KIND_SCENE,asset.KIND_MATERIAL,asset.KIND_SOUND_SET,asset.KIND_STRINGS,asset.KIND_FONT)
+    append(&kinds,ASSET_CREATE_FOLDER,asset.KIND_SCENE,ASSET_CREATE_PREFAB,asset.KIND_MATERIAL,asset.KIND_SOUND_SET,asset.KIND_STRINGS,asset.KIND_FONT)
     if s.info==nil {return kinds[:]}
     found:[PROVIDER_CAPACITY]Asset_Document_Provider
     for &provider in found[:provided_all(s,found[:])] {
@@ -59,12 +60,18 @@ asset_create_kinds :: proc(s:^Session) -> []asset.Fourcc {
 @(private)
 asset_create_plugin :: proc(kind:asset.Fourcc) -> bool {
     switch kind {
-    case ASSET_CREATE_FOLDER,asset.KIND_SCENE,asset.KIND_MATERIAL,asset.KIND_SOUND_SET,asset.KIND_STRINGS,asset.KIND_FONT: return false
+    case ASSET_CREATE_FOLDER,asset.KIND_SCENE,ASSET_CREATE_PREFAB,asset.KIND_MATERIAL,asset.KIND_SOUND_SET,asset.KIND_STRINGS,asset.KIND_FONT: return false
     }
     return true
 }
 
-asset_create_label :: proc(s:^Session,kind:asset.Fourcc) -> string {return "Folder" if kind==ASSET_CREATE_FOLDER else asset_kind_label(s,kind)}
+asset_create_label :: proc(s:^Session,kind:asset.Fourcc) -> string {
+    switch kind {
+    case ASSET_CREATE_FOLDER: return "Folder"
+    case ASSET_CREATE_PREFAB: return "Prefab"
+    }
+    return asset_kind_label(s,kind)
+}
 
 // The name Create gives first, and the step of history it is: New and the
 // label, each word capitalized.
@@ -77,6 +84,7 @@ asset_create_default :: proc(s:^Session,kind:asset.Fourcc) -> string {
 }
 
 asset_create_extension :: proc(s:^Session,kind:asset.Fourcc) -> string {
+    if kind==ASSET_CREATE_PREFAB {return SCENE_EXTENSION}
     if declared:=asset_plugin_kind(s,kind);declared!=nil {return declared.extension}
     info,_:=asset.kind_info(kind)
     return info.extension
@@ -86,6 +94,7 @@ asset_create_extension :: proc(s:^Session,kind:asset.Fourcc) -> string {
 // _ for its spaces, or the extension of a kind of a plugin without its dot.
 asset_create_kind_name :: proc(s:^Session,kind:asset.Fourcc) -> string {
     if kind==ASSET_CREATE_FOLDER {return "folder"}
+    if kind==ASSET_CREATE_PREFAB {return "prefab"}
     if declared:=asset_plugin_kind(s,kind);declared!=nil && len(declared.extension)>1 {return declared.extension[1:]}
     info,_:=asset.kind_info(kind)
     name,_:=strings.replace_all(info.name," ","_",context.temp_allocator)
@@ -170,7 +179,7 @@ asset_create_gesture :: proc(s:^Session,label:string) -> (opened,ready:bool) {
 
 // Makes a new asset of kind at path, a path of the assets with its extension
 // (asset_create_path), with id: a folder or a scene at once on disk, another
-// kind as an edit, unsaved; the empty file of a kind of a plugin is what its
+// kind as an edit; the empty file of a kind of a plugin is what its
 // plugin gives. Returns what failed, as how to correct it; "" when it was made.
 asset_create :: proc(s:^Session,kind:asset.Fourcc,path:string,id:base.Asset_Id) -> string {
     if refusal:=asset_create_refusal(s);refusal!="" {return refusal}
@@ -181,10 +190,16 @@ asset_create :: proc(s:^Session,kind:asset.Fourcc,path:string,id:base.Asset_Id) 
         if os.make_directory_all(file)!=nil && !os.is_dir(file) {return fmt.tprintf("%s could not be made",path)}
         host.assets_scan(a)
         return ""
-    case asset.KIND_SCENE:
+    case asset.KIND_SCENE,ASSET_CREATE_PREFAB:
         scene:asset.Scene
-        if asset.scene_init(&scene,&a.types,asset.KIND_SCENE,id)!=.None {return "The scene could not be made"}
+        if asset.scene_init(&scene,&a.types,id)!=.None {return "The scene could not be made"}
         defer asset.scene_destroy(&scene)
+        if kind==ASSET_CREATE_PREFAB {
+            scene.doc.flags+={.Prefab}
+            root:=asset.scene_new_id(&scene)
+            place:=core.TRANSFORM_IDENTITY
+            if _,added:=asset.scene_entity_add(&scene,root,0,asset_name(path));added!=.None || asset.scene_set(&scene,root,"Transform",&place)!=.None {return "The prefab could not be made"}
+        }
         if folder:=filepath.dir(file);!os.is_dir(folder) {_=os.make_directory_all(folder)}
         if asset.scene_save(&scene,file)!=.None {return fmt.tprintf("%s could not be written",path)}
         assets_wrote(s,file)
@@ -277,7 +292,7 @@ api_asset_create :: proc(s:^Session,call:^api.Call) {
     id:base.Asset_Id
     if kind!=ASSET_CREATE_FOLDER {id=asset_id_new(s)}
     switch {
-    case kind==ASSET_CREATE_FOLDER || kind==asset.KIND_SCENE:
+    case kind==ASSET_CREATE_FOLDER || kind==asset.KIND_SCENE || kind==ASSET_CREATE_PREFAB:
         if problem:=asset_create(s,kind,path,id);problem!="" {
             api.call_fail(call,api.SERVER_ERROR,problem)
             return
@@ -291,5 +306,4 @@ api_asset_create :: proc(s:^Session,call:^api.Call) {
     result:=api.call_result(call,Api_Asset_Create_Result)
     if id!={} {base.asset_id_format(id,result.id[:])}
     base.text_set(result.path[:],path)
-    result.unsaved=kind!=ASSET_CREATE_FOLDER && kind!=asset.KIND_SCENE
 }

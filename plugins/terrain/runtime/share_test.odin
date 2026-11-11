@@ -9,8 +9,8 @@ import "core:testing"
 @(private="file")
 share_heightfield :: proc(t:^testing.T,s:^Source,allocator:=context.allocator) -> bool {
     if !testing.expect(t,source_make(s,.Heightfield,{257,1,257},1,16,allocator)) {return false}
-    if !testing.expect(t,grid_prepare(&s.heights,{},{256,0,256},s.allocator)) {return false}
-    for z in 0..<257 {for x in 0..<257 {grid_set(&s.heights,x,z,math.sin(f32(x)*0.05)*4+math.cos(f32(z)*0.07)*3)}}
+    if !testing.expect(t,grid_prepare(&s.field,{},{256,0,256},s.allocator)) {return false}
+    for z in 0..<257 {for x in 0..<257 {grid_set(&s.field,x,z,math.sin(f32(x)*0.05)*4+math.cos(f32(z)*0.07)*3)}}
     return true
 }
 
@@ -40,12 +40,13 @@ a_copy_shares_its_pages_and_a_write_on_either_side_leaves_the_other_as_it_was ::
         if kind==.Heightfield {
             if !share_heightfield(t,&source) {return}
         } else if !testing.expect(t,source_make(&source,.Volume,{97,97,97},1,16)) {return}
-        g:=source_samples_grid(&source)
+        g:=&source.field
         tracking:mem.Tracking_Allocator
         mem.tracking_allocator_init(&tracking,context.allocator);defer mem.tracking_allocator_destroy(&tracking)
         if !testing.expect(t,data_source_copy(&copied,&source)) {return}
-        c:=source_samples_grid(&copied)
+        c:=&copied.field
         for page,i in g.pages {testing.expect(t,raw_data(page.values)==raw_data(c.pages[i].values),"the copy holds the values of the source")}
+        testing.expect_value(t,len(c.pages),len(g.pages))
         // What a copy allocates is its tables, less than the values of one page.
         {
             context.allocator=mem.tracking_allocator(&tracking)
@@ -57,11 +58,13 @@ a_copy_shares_its_pages_and_a_write_on_either_side_leaves_the_other_as_it_was ::
         at:=kind==.Heightfield?[3]int{32,0,32}:[3]int{40,46,40}
         point:=source_point(&source,at)
         before:=source_value(&source,at)
-        brush:=kind==.Heightfield?Brush{kind=.Raise,center=point,radius=2,amount=0.5,falloff=.Smooth,hardness=0.5}:Brush{kind=.Remove,center=point,radius=1.5,amount=1}
+        brush:=kind==.Heightfield?Brush{kind=.Raise,center=point,radius=2,amount=0.5,falloff=.Smooth,hardness=0.5}:Brush{kind=.Carve,center=point,radius=1.5,amount=1}
         testing.expect(t,source_edit(&source,brush).changed)
         testing.expect(t,source_value(&source,at)!=before)
         testing.expect_value(t,source_value(&copied,at),before)
         touched,_:=grid_page_at(g,at)
+        touched=grid_slot(g,touched)
+        if !testing.expect(t,touched>=0 && touched==grid_slot(c,grid_id(g,touched)),"the copy holds its pages where the source does") {return}
         testing.expect(t,raw_data(g.pages[touched].values)!=raw_data(c.pages[touched].values),"the source took values of its own")
         shared:=0
         for page,i in g.pages {if page.values!=nil && raw_data(page.values)==raw_data(c.pages[i].values) {shared+=1}}
@@ -78,11 +81,11 @@ a_copy_shares_its_pages_and_a_write_on_either_side_leaves_the_other_as_it_was ::
     }
 }
 
-// The coarse grid of a Heightfield and the sections of a Mesh go the same
-// way: a copy holds them with the source, and an edit gives the source the
-// parts it writes, leaving the copy what it read.
+// The coarse grid of a Heightfield goes the same way: a copy holds it with
+// the source, and an edit gives the source the parts it writes, leaving the
+// copy what it read.
 @(test)
-a_copy_shares_the_coarse_grid_and_the_sections_of_a_mesh_until_an_edit_writes_them :: proc(t:^testing.T) {
+a_copy_shares_the_coarse_grid_until_an_edit_writes_it :: proc(t:^testing.T) {
     tracking:mem.Tracking_Allocator
     mem.tracking_allocator_init(&tracking,context.allocator);defer mem.tracking_allocator_destroy(&tracking)
     context.allocator=mem.tracking_allocator(&tracking)
@@ -90,8 +93,8 @@ a_copy_shares_the_coarse_grid_and_the_sections_of_a_mesh_until_an_edit_writes_th
         // 1025 samples a side: a coarse grid of 129, 3 by 3 pages.
         source,copied:Source;defer source_destroy(&source);defer source_destroy(&copied)
         if !testing.expect(t,source_make(&source,.Heightfield,{1025,1,1025},1,64)) {return}
-        if !testing.expect(t,grid_prepare(&source.heights,{},{1024,0,1024},source.allocator)) {return}
-        for z in 0..<1025 {for x in 0..<1025 {grid_set(&source.heights,x,z,math.sin(f32(x)*0.05)*4)}}
+        if !testing.expect(t,grid_prepare(&source.field,{},{1024,0,1024},source.allocator)) {return}
+        for z in 0..<1025 {for x in 0..<1025 {grid_set(&source.field,x,z,math.sin(f32(x)*0.05)*4)}}
         if !testing.expect(t,source_coarse_build(&source,nil)) {return}
         if !testing.expect(t,data_source_copy(&copied,&source)) {return}
         g,c:=&source.coarse.heights,&copied.coarse.heights
@@ -103,31 +106,6 @@ a_copy_shares_the_coarse_grid_and_the_sections_of_a_mesh_until_an_edit_writes_th
         testing.expect_value(t,grid_get(c,4,4),before)
         testing.expect(t,raw_data(g.pages[0].values)!=raw_data(c.pages[0].values),"the source took its own page")
         for page,i in g.pages[1:] {testing.expect(t,raw_data(page.values)==raw_data(c.pages[i+1].values),"the pages the edit did not reach stay shared")}
-    }
-    {
-        height,source,copied:Source;defer source_destroy(&height);defer source_destroy(&source);defer source_destroy(&copied)
-        if !testing.expect(t,source_make(&height,.Heightfield,{33,1,33},1,4)) || !testing.expect(t,source_convert_heightfield(&source,&height,4)) {return}
-        if !testing.expect(t,data_source_copy(&copied,&source)) {return}
-        for &chunk,i in source.mesh_chunks {
-            if len(chunk.geometry.positions)>0 {testing.expect(t,raw_data(chunk.geometry.positions)==raw_data(copied.mesh_chunks[i].geometry.positions),"the copy holds the sections")}
-        }
-        snapshot:Source;defer source_destroy(&snapshot)
-        if !testing.expect(t,source_clone(&snapshot,&source)) {return}
-        brush:=Brush{kind=.Raise,center={-10,0,-10},normal={0.5,1,0},radius=2,amount=0.25}
-        change:=source_edit(&source,brush)
-        testing.expect(t,change.changed && change.error==.None)
-        replaced,shared:=0,0
-        for &chunk,i in source.mesh_chunks {
-            testing.expect(t,mesh_equal(&copied.mesh_chunks[i].geometry,&snapshot.mesh_chunks[i].geometry),"the copy keeps what it read")
-            if len(chunk.geometry.positions)==0 {continue}
-            if raw_data(chunk.geometry.positions)==raw_data(copied.mesh_chunks[i].geometry.positions) {shared+=1} else {replaced+=1}
-        }
-        testing.expect(t,replaced>0 && shared>replaced,"the edit replaced only the sections it changed")
-        // An edit of the copy leaves the source as it is.
-        edited:Source;defer source_destroy(&edited)
-        if !testing.expect(t,source_clone(&edited,&source)) {return}
-        testing.expect(t,source_edit(&copied,brush).changed)
-        for &chunk,i in source.mesh_chunks {testing.expect(t,mesh_equal(&chunk.geometry,&edited.mesh_chunks[i].geometry))}
     }
     testing.expect_value(t,len(tracking.allocation_map),0)
 }
@@ -150,9 +128,9 @@ the_pages_a_copy_holds_outlive_the_source_they_came_from :: proc(t:^testing.T) {
     testing.expect(t,first.current_memory_allocated>0 && first.current_memory_allocated<held,"the values the copy holds stay; the tables of the source go")
     testing.expect_value(t,source_value(&copied,{100,0,200}),expected)
     // The copy holds them alone now: it writes them in place.
-    values:=raw_data(copied.heights.pages[1+5*3].values)
+    values:=raw_data(copied.field.pages[1+5*3].values)
     testing.expect(t,share_raise(&copied,{1,3}).changed)
-    testing.expect_value(t,raw_data(copied.heights.pages[1+5*3].values),values)
+    testing.expect_value(t,raw_data(copied.field.pages[1+5*3].values),values)
     source_destroy(&copied)
     testing.expect_value(t,len(first.allocation_map),0)
     testing.expect_value(t,len(second.allocation_map),0)
@@ -168,12 +146,12 @@ a_ring_of_snapshots_holds_only_what_changed_within_it_and_lets_go_of_what_leaves
     entry.id={5,5}
     if !share_heightfield(t,&entry.source) {return}
     if !testing.expect(t,data_chunks_allocate(entry,context.allocator)) {return}
-    pages:=len(entry.source.heights.pages)
+    pages:=len(entry.source.field.pages)
     ring:[RING]Terrain_Data
     defer {for &snapshot in ring {terrain_data_free(&snapshot)}}
     grids :: proc(live:^Terrain_Data,ring:^[RING]Terrain_Data) -> (list:[RING+1]^Grid(f32)) {
-        list[0]=&live.entries[0].source.heights
-        for &snapshot,i in ring {list[i+1]=len(snapshot.entries)>0?&snapshot.entries[0].source.heights:list[0]}
+        list[0]=&live.entries[0].source.field
+        for &snapshot,i in ring {list[i+1]=len(snapshot.entries)>0?&snapshot.entries[0].source.field:list[0]}
         return
     }
     // A brush a tick, on a page another tick touched too or on a new one:
@@ -200,8 +178,8 @@ a_ring_of_snapshots_holds_only_what_changed_within_it_and_lets_go_of_what_leaves
 @(test)
 stable_snapshots_and_rollbacks_of_a_world_allocate_nothing :: proc(t:^testing.T) {
     original:=context;defer context=original
-    failure:=Mesh_Conversion_Failure{owner=context.allocator,remaining=max(int)}
-    context.allocator=runtime.Allocator{mesh_conversion_failure_allocator,&failure}
+    failure:=Failing_Allocator{owner=context.allocator,remaining=max(int)}
+    context.allocator=runtime.Allocator{failing_allocator,&failure}
     live,snapshot:Terrain_Data;defer terrain_data_free(&live);defer terrain_data_free(&snapshot)
     live.settings=TERRAIN_SETTINGS_DEFAULT;live.ready=true
     resize(&live.entries,1)

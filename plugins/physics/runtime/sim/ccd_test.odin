@@ -49,10 +49,7 @@ ccd_transfers_momentum_to_a_sleeping_target_and_wakes_its_joint_island :: proc(t
     a:=test_bullet(&w,{-1,0,0},{200,0,0},true)
     b:=test_bullet(&w,{},{},false)
     c:=test_bullet(&w,{0,2,0},{},false)
-    jd:=Joint_Desc{}
-    jd.type,jd.body_a,jd.body_b=.Distance,b,c
-    jd.length=2
-    joint_create(&w,jd)
+    joint_create(&w,test_distance(b,c,2,2))
     body_set_awake(&w,b,false)
     testing.expect(t,!body_is_awake(&w,b) && !body_is_awake(&w,c))
     world_step(&w,1.0/60)
@@ -196,16 +193,16 @@ continuous_collision_uses_immutable_sweeps_with_threads_and_after_restore :: pro
             test_bullet(w,{1,0,z},{-200,0,0},true)
         }
     }
-    before:=make([]byte,world_snapshot_size(&a))
-    defer delete(before)
-    world_snapshot(&a,before)
+    before:World
+    defer world_destroy(&before)
+    test_keep(&before,&a)
     for _ in 0..<40 {
         world_step(&a,1.0/60)
         world_step(&b,1.0/60)
         testing.expect_value(t,world_hash(&a),world_hash(&b))
     }
     final:=world_hash(&a)
-    testing.expect(t,world_restore(&a,before))
+    testing.expect(t,test_restore(&a,&before))
     test_steps(&a,40)
     testing.expect_value(t,world_hash(&a),final)
 }
@@ -225,47 +222,59 @@ test_bullet :: proc(w:^World,position,velocity:Vec3,bullet:bool,geometry:Geometr
 }
 
 @(test)
-bullets_do_not_cross_thin_walls :: proc(t:^testing.T) {
-    w:World
-    testing.expect(t,test_world(&w))
-    defer world_destroy(&w)
-    test_body(&w,Box{{0.01,2,2}},{0,0,0},.Static)
-    slow:=test_bullet(&w,{-3,0,0},{100,0,0},false)
-    fast:=test_bullet(&w,{-3,0.5,0.3},{100,0,0},true)
-    box:=test_bullet(&w,{-3,-0.5,-0.3},{100,30,0},true,Box{{0.05,0.02,0.08}})
-    body_set_velocity(&w,box,{100,30,0},{20,30,10})
-    test_steps(&w,30)
-    // Without the flag it moves 1.7 m per step and never sees the 2 cm wall.
-    testing.expect(t,body_position(&w,slow).x>40)
-    testing.expect(t,body_position(&w,fast).x< -0.05)
-    testing.expect(t,body_position(&w,box).x< -0.02)
-    testing.expect(t,body_position(&w,fast).x> -1)
-    body_set_bullet(&w,slow,true)
-    body_set_transform(&w,slow,{-3,0,0},QUAT_IDENTITY)
-    test_steps(&w,30)
-    testing.expect(t,body_position(&w,slow).x< -0.05)
+small_fast_bodies_do_not_cross_meshes_heightfields_or_thin_walls :: proc(t:^testing.T) {
+    Target :: enum {Mesh,Wall,Heightfield}
+    geometries:=[3]proc(size:f32)->Geometry{
+        proc(size:f32)->Geometry {return Sphere{size}},
+        proc(size:f32)->Geometry {return Box{{size,size,size}}},
+        proc(size:f32)->Geometry {return Capsule{size,size}},
+    }
+    sizes:=[3]f32{0.05,0.15,0.5}
+    speeds:=[4]f32{5,20,80,200}
+    for target in Target {
+        for bullet in ([2]bool{false,true}) {
+            w:World
+            testing.expect(t,test_world(&w))
+            defer world_destroy(&w)
+            // The surface is the plane y=0, or x=0 for the wall, which is 2 cm thick.
+            switch target {
+            case .Mesh:
+                mesh,_:=test_grid_mesh(&w,8,60)
+                test_static_shape(&w,mesh)
+            case .Heightfield:
+                field,_:=test_heights(&w,31,31,{2,1,2},proc(column,row:int)->f32 {return 0})
+                test_static_shape(&w,field,{-30,0,-30})
+            case .Wall:
+                test_static_shape(&w,Box{{0.01,30,30}},{-0.01,0,0})
+            }
+            normal:=target==.Wall?Vec3{-1,0,0}:Vec3{0,1,0}
+            bodies:[len(geometries)*len(sizes)*len(speeds)]Body_Handle
+            for &body,i in bodies {
+                size,speed:=sizes[i/len(speeds)%len(sizes)],speeds[i%len(speeds)]
+                along:=Vec3{f32(i%6)*4-10,0,f32(i/6)*4-10}
+                if target==.Wall {along={0,along.x,along.z}}
+                // Starts close enough that the fastest cross the surface within the first step.
+                body=test_bullet(&w,along+normal*(2*size+0.6*speed/60),-normal*speed,bullet,geometries[i/(len(speeds)*len(sizes))](size))
+                body_set_velocity(&w,body,-normal*speed,{3,5,7})
+            }
+            test_steps(&w,30)
+            for body,i in bodies {
+                testing.expectf(t,dot(body_position(&w,body),normal)>0,"%v bullet=%v body %v crossed: %v",target,bullet,i,body_position(&w,body))
+            }
+        }
+    }
 }
 
 @(test)
-bullets_land_on_meshes_heightfields_and_moving_bodies :: proc(t:^testing.T) {
+bullets_land_on_moving_bodies :: proc(t:^testing.T) {
     w:World
     testing.expect(t,test_world(&w))
     defer world_destroy(&w)
-    mesh,_:=test_grid_mesh(&w,8,16)
-    test_static_shape(&w,mesh)
-    field,_:=test_heights(&w,9,9,{2,1,2},proc(column,row:int)->f32 {return 0})
-    test_static_shape(&w,field,{100,0,0})
-    on_mesh:=test_bullet(&w,{0.3,20,0.2},{0,-200,0},true)
-    on_field:=test_bullet(&w,{108.3,20,8.2},{0,-200,0},true)
-    through:=test_bullet(&w,{3.3,20,0.2},{0,-200,0},false)
     // A plate that crosses the path: the bullet is stopped where the plate is at the end of the step.
     plate:=test_bullet(&w,{50,5,0},{0,0,0},false,Box{{2,0.02,2}})
     body_set_gravity_scale(&w,plate,0)
     on_plate:=test_bullet(&w,{50,20,0},{0,-200,0},true)
     test_steps(&w,20)
-    testing.expect(t,body_position(&w,on_mesh).y>0)
-    testing.expect(t,body_position(&w,on_field).y>0)
-    testing.expect(t,body_position(&w,through).y< -10)
     testing.expect(t,body_position(&w,on_plate).y>body_position(&w,plate).y)
     testing.expect(t,body_linear_velocity(&w,plate).y<0)
 }

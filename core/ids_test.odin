@@ -3,7 +3,8 @@ package core
 import "core:testing"
 import "mirai:std/base"
 
-@(private="file")
+@(private)
+@(test_world)
 Id_World :: struct {
     using world:Test_World,
     ids:Table(Id),
@@ -31,13 +32,13 @@ an_entity_is_found_by_its_id_from_the_settle_that_adds_it :: proc(t:^testing.T) 
     testing.expect_value(t,entity_of(&w.entities,9),b)
     testing.expect_value(t,entity_of(&w.entities,0),NONE)
     testing.expect_value(t,entity_of(&w.entities,8),NONE)
-    testing.expect_value(t,id_of(read(&w.ids),a),base.Entity_Id(7))
-    testing.expect_value(t,id_of(read(&w.ids),plain),base.Entity_Id(0))
-    testing.expect_value(t,id_of(Read(Id){},a),base.Entity_Id(0))
+    testing.expect_value(t,id_of(&w.ids,a),base.Entity_Id(7))
+    testing.expect_value(t,id_of(&w.ids,plain),base.Entity_Id(0))
+    testing.expect_value(t,id_of((^Table(Id))(nil),a),base.Entity_Id(0))
     version:=w.ids.version
-    _=id_of(read(&w.ids),b)
+    _=id_of(&w.ids,b)
     testing.expect_value(t,w.ids.version,version)
-    testing.expect(t,ids_synced(&w.entities,read(&w.ids)))
+    testing.expect(t,ids_synced(&w.entities,&w.ids))
     // A settle with nothing new leaves it as it was.
     seen:=w.entities.ids.seen
     test_world_settle(&w)
@@ -52,7 +53,7 @@ the_index_follows_writes_removals_destruction_and_undo :: proc(t:^testing.T) {
     a,b,c:=id_world_add(&w,7),id_world_add(&w,9),id_world_add(&w,13)
     test_world_settle(&w)
 
-    get(&w.ids,a).value=11
+    edit(&w.ids,a).value=11
     test_world_settle(&w)
     testing.expect_value(t,entity_of(&w.entities,7),NONE)
     testing.expect_value(t,entity_of(&w.entities,11),a)
@@ -157,7 +158,7 @@ the_index_travels_with_copied_and_swapped_worlds :: proc(t:^testing.T) {
     if !test_world_init(t,&play) {return}
     defer test_world_destroy(&play)
     testing.expect(t,test_world_copy(&play,&a))
-    testing.expect(t,ids_synced(&play.entities,read(&play.ids)))
+    testing.expect(t,ids_synced(&play.entities,&play.ids))
     testing.expect_value(t,entity_of(&play.entities,21),first)
     late:=id_world_add(&play,22)
     test_world_settle(&play)
@@ -165,7 +166,7 @@ the_index_travels_with_copied_and_swapped_worlds :: proc(t:^testing.T) {
     testing.expect_value(t,entity_of(&a.entities,22),NONE)
 
     test_world_swap(&a,&b)
-    testing.expect(t,ids_synced(&a.entities,read(&a.ids)) && ids_synced(&b.entities,read(&b.ids)))
+    testing.expect(t,ids_synced(&a.entities,&a.ids) && ids_synced(&b.entities,&b.ids))
     testing.expect_value(t,entity_of(&a.entities,31),other)
     testing.expect_value(t,entity_of(&b.entities,21),first)
     testing.expect_value(t,entity_of(&a.entities,21),NONE)
@@ -178,9 +179,9 @@ the_index_travels_with_copied_and_swapped_worlds :: proc(t:^testing.T) {
     if !test_world_init(t,&plain) {return}
     defer test_world_destroy(&plain)
     testing.expect(t,entities_copy(&plain.entities,&b.entities) && table_copy(&plain.ids,&b.ids) && table_copy(&plain.names,&b.names))
-    testing.expect(t,!ids_synced(&plain.entities,read(&plain.ids)))
+    testing.expect(t,!ids_synced(&plain.entities,&plain.ids))
     test_world_settle(&plain)
-    testing.expect(t,ids_synced(&plain.entities,read(&plain.ids)))
+    testing.expect(t,ids_synced(&plain.entities,&plain.ids))
     testing.expect_value(t,entity_of(&plain.entities,21),first)
 }
 
@@ -234,9 +235,9 @@ an_index_without_memory_reads_its_table_whole_once_there_is :: proc(t:^testing.T
     allocation.remaining=0
     test_world_settle(&w)
     testing.expect_value(t,entity_of(&w.entities,17),NONE)
-    testing.expect(t,w.entities.ids.whole && !ids_synced(&w.entities,read(&w.ids)))
+    testing.expect(t,w.entities.ids.whole && !ids_synced(&w.entities,&w.ids))
     allocation.remaining=1<<30
     test_world_settle(&w)
     testing.expect_value(t,entity_of(&w.entities,17),e)
-    testing.expect(t,ids_synced(&w.entities,read(&w.ids)))
+    testing.expect(t,ids_synced(&w.entities,&w.ids))
 }

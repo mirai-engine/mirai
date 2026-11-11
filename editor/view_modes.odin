@@ -7,6 +7,7 @@ import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The modes of inspection of the viewport: what it shows instead of its lit
@@ -126,11 +127,11 @@ view_modes_begin :: proc(modes: ^View_Modes) {modes.count = 0}
 
 // What the viewport shows in this frame: the mode of the renderer (black
 // where it cannot show it) or of a plugin that can show it, which the frame
-// names. Nothing in a Play or a prefab, whose views are lit; a mode no longer
+// names. Nothing in a Play; a mode no longer
 // declared goes back to Lit.
 @(step="render",after="render_sync")
 view_mode_render :: proc(s: ^Session, v: ^Viewport, modes: ^View_Modes, app: ^host.App) {
-	if s.mode == .Play || document_is_prefab(s) {return}
+	if s.mode == .Play {return}
 	w := shown_world(s)
 	entry, found := view_mode_resolve(app.renderer, modes, w, view_mode_current(v))
 	if !found {
@@ -239,7 +240,7 @@ view_mode_build :: proc(s: ^Session) {
 		label = entry.title if entry.title != "" else entry.label
 	}
 	id, popup := shell_id(g, "view_mode"), shell_id(g, "view_mode_popup")
-	if ui.button(ctx, id, {label = label, icon = .Chevron_Down, icon_after = true, style = .Ghost, height = 26, size = ctx.theme.font_small, active = ui.popup_is_open(ctx, popup)}).clicked {
+	if ui.button(ctx, id, {label = label, icon = .Chevron_Down, icon_after = true, variant = "ghost", height = 26, size = ui.metric(ctx,"font_small"), active = ui.popup_is_open(ctx, popup)}).clicked {
 		anchor, _ := ui.widget_rect(ctx, id)
 		ui.popup_open(ctx, popup, {anchor.x, anchor.y + anchor.h, anchor.w, 0})
 	}
@@ -281,10 +282,10 @@ viewport_exposure_build :: proc(s: ^Session) {
 	if ui.menu_item(ctx, ui.id(ctx, "exposure_scene"), "Scene", {checked = v.exposure_source == .Scene}) {v.exposure_source = .Scene}
 	if ui.menu_item(ctx, ui.id(ctx, "exposure_camera"), "Camera", {checked = v.exposure_source == .Camera, disabled = !v.exposure.own}) {v.exposure_source = .Camera}
 	if ui.menu_item(ctx, ui.id(ctx, "exposure_manual"), "Manual", {checked = v.exposure_source == .Manual}) {v.exposure_source = .Manual}
-	if ui.box(ctx, {width = ui.GROW, height = ui.fixed(ctx.theme.control), padding = {6, 0, 6, 0}, gap = 7, align_y = .Center}) {
-		ui.label(ctx, "EV100", ctx.theme.font_small, ctx.theme.text, 40)
+	if ui.box(ctx, {width = ui.GROW, height = ui.fixed(ui.metric(ctx,"control")), padding = {6, 0, 6, 0}, gap = 7, align_y = .Center}) {
+		ui.label(ctx, "EV100", ui.metric(ctx,"font_small"), ui.tone(ctx,"text"), 40)
 		ev100 := f64(v.ev100)
-		if ui.slider_field(ctx, ui.id(ctx, "exposure_ev100"), &ev100, {min = -10, max = 24, has_min = true, has_max = true, decimals = 1, speed = 0.05, height = 22}).changed {
+		if kit.slider_field(ctx, ui.id(ctx, "exposure_ev100"), &ev100, {min = -10, max = 24, has_min = true, has_max = true, decimals = 1, speed = 0.05, height = 22}).changed {
 			v.ev100 = f32(ev100)
 			v.exposure_source = .Manual
 		}
@@ -345,24 +346,22 @@ Api_View_Mode_Params :: struct {
 	mode: [VIEW_MODE_NAME_BYTES]u8 `mirai:"text,label=A mode that editor.view_mode.list lists: lit or base_color or direct or shadows... or one of a plugin such as collision or collision.<layer>"`,
 }
 
-@(private)
-API_VIEW_MODE_SCHEMA :: `{"type":"object","properties":{"mode":{"type":"string"},"label":{"type":"string"},"group":{"type":"string"},"submenu":{"type":"string"},"available":{"type":"boolean"},"reason":{"type":"string"}},"required":["mode","label","group","submenu","available","reason"],"additionalProperties":false}`
-@(private)
-API_VIEW_MODES_SCHEMA :: `{"type":"object","properties":{"current":{"type":"string"},"modes":{"type":"array","items":` + API_VIEW_MODE_SCHEMA + `}},"required":["current","modes"],"additionalProperties":false}`
-
 // A mode as the API gives it: its name, its label, its group and submenu in
 // the menu, and why it cannot be shown now when it cannot.
 @(private)
-api_view_mode_write :: proc(call: ^api.Call, entry: View_Mode_Entry) {
-	out := call.out
-	serial.write_u8(out, '{')
-	api.write_text(out, "mode", entry.name, true)
-	api.write_text(out, "label", entry.label)
-	api.write_text(out, "group", entry.group)
-	api.write_text(out, "submenu", entry.submenu)
-	api.write_bool(out, "available", entry.available)
-	api.write_text(out, "reason", entry.reason)
-	serial.write_u8(out, '}')
+Api_View_Mode :: struct {
+	mode, label, group, submenu: string,
+	available:                   bool,
+	reason:                      string,
+}
+Api_View_Modes :: struct {
+	current: string,
+	modes:   []Api_View_Mode,
+}
+
+@(private)
+api_view_mode_of :: proc(entry: View_Mode_Entry) -> Api_View_Mode {
+	return {entry.name, entry.label, entry.group, entry.submenu, entry.available, entry.reason}
 }
 
 @(private)
@@ -371,16 +370,10 @@ api_view_modes :: proc(s: ^Session, call: ^api.Call) {
 	if r == nil {api.call_fail(call, api.SERVER_ERROR, "The editor has no renderer: it runs without a GPU"); return}
 	buffer: [VIEW_MODE_ENTRY_CAPACITY]View_Mode_Entry
 	entries := view_mode_entries(r, s.view_modes, shown_world(s), buffer[:])
-	out := call.out
-	serial.write_u8(out, '{')
-	api.write_text(out, "current", view_mode_current(s.viewport), true)
-	api.write_key(out, "modes")
-	serial.write_u8(out, '[')
-	for entry, i in entries {
-		if i > 0 {serial.write_u8(out, ',')}
-		api_view_mode_write(call, entry)
-	}
-	serial.text_write_raw(out, "]}")
+	result := api.call_result(call, Api_View_Modes)
+	result.current = view_mode_current(s.viewport)
+	result.modes = make([]Api_View_Mode, len(entries), call.allocator)
+	for entry, i in entries {result.modes[i] = api_view_mode_of(entry)}
 }
 
 @(private)
@@ -388,16 +381,15 @@ api_view_mode :: proc(s: ^Session, call: ^api.Call) {
 	r := s.app.renderer
 	if r == nil {api.call_fail(call, api.SERVER_ERROR, "The editor has no renderer: it runs without a GPU"); return}
 	name := base.text_get(api.call_params(call, Api_View_Mode_Params).mode[:])
-	if document_is_prefab(s) {api.call_fail(call, api.INVALID_PARAMS, "The view of a prefab shows its lit image: open a scene to inspect it"); return}
 	entry, found := view_mode_resolve(r, s.view_modes, shown_world(s), name)
 	if !found {api.call_failf(call, api.INVALID_PARAMS, "%q is not a view mode; editor.view_mode.list lists them", name); return}
 	if !entry.available {api.call_failf(call, api.INVALID_PARAMS, "%s cannot be shown now: %s", entry.name, entry.reason); return}
 	base.text_set(s.viewport.view_mode[:], entry.name)
-	api_view_mode_write(call, entry)
+	api.call_result(call, Api_View_Mode)^ = api_view_mode_of(entry)
 }
 
 @(private)
 view_modes_api_register :: proc(s: ^Session, st: ^Api_State) {
-	api_register(s, st, {name = "editor.view_mode.list", summary = "The modes of inspection of the viewport, of the core and of the plugins: where the menu shows each, the one shown and why one cannot be shown now.", result_schema = API_VIEW_MODES_SCHEMA, flags = {.Read_Only}, run = api_view_modes})
-	api_register(s, st, {name = "editor.view_mode.set", summary = "Shows a mode of inspection in the viewport instead of the lit image. A Play shows the lit image of its game.", params = Api_View_Mode_Params, result_schema = API_VIEW_MODE_SCHEMA, flags = {.Idempotent}, run = api_view_mode})
+	api_register(s, st, {name = "editor.view_mode.list", summary = "The modes of inspection of the viewport, of the core and of the plugins: where the menu shows each, the one shown and why one cannot be shown now.",result=type_info_of(Api_View_Modes), flags = {.Read_Only}, run = api_view_modes})
+	api_register(s, st, {name = "editor.view_mode.set", summary = "Shows a mode of inspection in the viewport instead of the lit image. A Play shows the lit image of its game.", params=type_info_of(Api_View_Mode_Params),result=type_info_of(Api_View_Mode), flags = {.Idempotent}, run = api_view_mode})
 }

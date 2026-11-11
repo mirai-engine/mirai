@@ -1,7 +1,7 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-//! variant color MIRAI_GLASS_MEANS=1
-//! variant color_hw MIRAI_GLASS_MEANS=1 MIRAI_HW_RT=1
+// color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
+//! constant color MIRAI_GLASS_MEANS
 // The camera inside a solid of glass (params.medium, the blended instance
 // under the top of whose box it is), after glass.comp lit the nearest layer:
 // at a back face of the solid, the view leaves it, bending out within the
@@ -25,7 +25,7 @@
 // in the thinner medium. Each adds to the image under what the solid absorbs
 // between the camera and the face.
 float3 leaving_reflectance(Material m, Glass g, out bool out_way) {
-    float ior = material_ior(m);
+    float ior = m.ior;
     float cos_inside = saturate(dot(g.view, g.normal));
     float sin2_outside = ior * ior * (1.0 - cos_inside * cos_inside);
     out_way = sin2_outside < 1.0;
@@ -57,7 +57,7 @@ void medium_find(uint instance) {
         if (hit.instance != instance) { origin += up * (hit.t + 1e-3); continue; }
         uint row;
         float3 face = triangle_face(hit.instance, hit.primitive, row);
-        Material m = material_row(row);
+        Material m = material_row(row, material_values_of(hit.instance));
         if (dot(face, up) > 0.0 && m.alpha_mode == ALPHA_BLEND && material_solid(m)) {
             float top = origin.y + hit.t;
             medium_inside = frame.camera_position.y < top ? 1u : 0u;
@@ -88,7 +88,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint local : SV_GroupIndex) {
             float far = length(position_from_depth(uv, opaque_depth(uv)) - lens);
             // A ray that starts under the top and goes up leaves the solid at it, unseen as a layer edge on.
             if (medium_near != 0u && eye.y > 1e-4) far = min(far, (medium_top - lens.y) / eye.y);
-            Material medium = material_row(medium_row);
+            Material medium = material_row(medium_row, material_values_of(params.medium - 1u));
             float3 seen = scene.Load(int3(p, 0)).rgb * material_absorption(medium, far) + solid_scatter(medium, params.medium - 1u, lens, eye, far, medium_top);
             out_color[p] = float4(finite_or_zero(seen), 1.0);
         }
@@ -100,18 +100,17 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint local : SV_GroupIndex) {
     if ((gbuffer_bits_unpack(normal) & GBUFFER_GLASS_EXIT) != 0u) {
         // The view leaves the solid it started in.
         uint2 ids = layer_ids.Load(int3(p, 0));
-        Material m = material_row(ids.x);
+        Material m = material_row(ids.x, material_values_of(ids.y));
         Glass g = glass_of(p, uv, depth, layer_albedo.Load(int3(p, 0)), normal, layer_emission.Load(int3(p, 0)));
-        uint seed = seed_for(uint2(p), frame.frame_index, 23u);
         float bias = 1e-3 + 2e-4 * depth;
         bool out_way;
         float3 reflectance = leaving_reflectance(m, g, out_way);
         float3 near_absorbed = material_absorption(m, near);
         float3 seen = g.emission * near_absorbed + solid_scatter(m, ids.y, frame.camera_position.xyz, view_direction(uv), near, medium_top);
         if (out_way) {
-            float3 out_direction = refract(-g.view, g.normal, material_ior(m));
+            float3 out_direction = refract(-g.view, g.normal, m.ior);
             Glass_Walk w = walk_start(g.position + out_direction * bias, out_direction, 0u);
-            walk_show(w, depth, g.roughness, uv, seed);
+            walk_show(w, depth, g.roughness, uv);
             seen += w.radiance * surface_filter(m, g.base_color, g.alpha, reflectance) * near_absorbed;
         }
         // Back in, its reflection, traced with the layer (reflect.comp), which takes what the solid
@@ -123,7 +122,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint local : SV_GroupIndex) {
         return;
     }
     if (inside) {
-        Material medium = material_row(medium_row);
+        Material medium = material_row(medium_row, material_values_of(params.medium - 1u));
         float3 seen = out_color[p].rgb * material_absorption(medium, near) + solid_scatter(medium, params.medium - 1u, frame.camera_position.xyz, view_direction(uv), near, medium_top);
         out_color[p] = float4(finite_or_zero(seen), 1.0);
     }

@@ -1,6 +1,7 @@
 package multiplayer
 
 import "core:strings"
+import "core:mem"
 import "core:testing"
 import "mirai:core"
 import input "mirai:engine/input"
@@ -31,9 +32,26 @@ Pair :: struct {
     tick:u64,
 }
 
+// A message of 6 KB, 4 KB of it an array of bytes, from a client: more than a datagram carries.
 @(private="file")
-pair_init :: proc(t:^testing.T,p:^Pair,server_scene,client_scene:base.Asset_Id,follows:=true) -> bool {
+Net_Test_Big :: struct {values:[511]u32,count:u32,bytes:[4096]u8}
+
+// A message of the server about an entity: the level its Net_Test_Value has from the tick it is sent in.
+@(private="file")
+Net_Test_Said :: struct {level:f32}
+
+// game: the protocol has Net_Test_Big and Net_Test_Said after the messages of the session.
+@(private="file")
+pair_init :: proc(t:^testing.T,p:^Pair,server_scene,client_scene:base.Asset_Id,follows:=true,game:=false) -> bool {
     p.info=net_test_info(t,follows=follows) or_return
+    if game {
+        messages:=make([]core.Message_Info,len(p.info.messages)+2)
+        copy(messages,p.info.messages)
+        messages[len(messages)-2]={name="Net_Test_Big",library="multiplayer",type=Net_Test_Big,info=type_info_of(Net_Test_Big),from=.Client,reliable=true}
+        messages[len(messages)-1]={name="Net_Test_Said",library="multiplayer",type=Net_Test_Said,info=type_info_of(Net_Test_Said),from=.Server,reliable=true}
+        delete(p.info.messages)
+        p.info.messages=messages
+    }
     for &world,index in p.worlds {
         net_test_init(&world,&p.info)
         p.shares[index].info=&p.info
@@ -60,7 +78,7 @@ pair_destroy :: proc(p:^Pair) {
     for &app in p.apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     for &share in p.shares {phys.collider_meshes_destroy(&share.colliders)}
     delete(p.info.messages)
-    core.test_info_destroy(&p.info)
+    test_info_destroy(&p.info)
 }
 
 // A frame of both ends as the loop runs it: what arrived, the seats of the
@@ -78,14 +96,14 @@ pair_frame :: proc(p:^Pair,ticks:=true) {
         session.now=p.now
         world_follow(&session,refs[index])
     }
-    server_commands(&p.sessions[0],refs[0],p.apps[0].assets,wire.host_poll(&p.sessions[0].host),&server.received,&server.remote)
+    server_commands(&p.sessions[0],refs[0],p.apps[0].assets,wire.host_poll(&p.sessions[0].host),&server.remote)
     if p.sessions[1].host_ready {
-        client_commands(&p.sessions[1],refs[1],p.apps[1].assets,p.apps[1].allocator,wire.host_poll(&p.sessions[1].host),&client.received)
+        client_commands(&p.sessions[1],refs[1],p.apps[1].assets,p.apps[1].allocator,wire.host_poll(&p.sessions[1].host))
         if !p.sessions[1].ended {client_clock(&p.sessions[1],refs[1],&p.apps[1])}
         core.clock_requests(&client.clock_requests,&client.clock,core.ref(&client.network),&p.problems[1])
     }
-    net_seats(&server.entities,&server.seats,&server.absents,&server.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),
-        core.ref(&p.bindings),core.ref(&server.remote),core.ref(&server.network),core.ref(&server.hierarchy),{},server.time)
+    net_seats({entities=&server.entities},&server.seats,&server.absents,&server.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),core.read(&server.remotes),
+        core.ref(&p.bindings),core.ref(&server.remote),core.ref(&server.network),{},server.time)
     core.settle(&p.info,server,nil)
     if ticks {
         p.tick+=1
@@ -160,13 +178,17 @@ a_scene_change_keeps_the_players_and_replicates_the_new_world_once_the_client_lo
     testing.expect_value(t,own_connection(core.ref(&p.sessions[1])),connection)
     testing.expect(t,core.has(&client.links,adopted),"the replica takes the entity of the scene with its Id")
     if !testing.expect_value(t,core.count(&server.seats),1) {return}
-    testing.expect_value(t,core.at(core.read(&server.seats),0).player,player_id({42,0}))
-    mirrored:=false
+    testing.expect_value(t,core.at(&server.seats,0).player,player_id({42,0}))
+    // Seat.peer and Seat.player stay on each end: on the client its replica is its one seat of this
+    // machine, slot 0.
+    mirrored,own:=false,0
     for row in 0..<core.count(&client.seats) {
-        value:=core.at(core.read(&client.seats),row)
-        mirrored ||= value.peer==u64(connection) && value.player==0 && core.has(&client.links,core.entity_at(&client.seats,row))
+        value:=core.at(&client.seats,row)
+        if !input.seat_local(value) || value.slot!=0 {continue}
+        own+=1
+        mirrored ||= core.has(&client.links,core.entity_at(&client.seats,row))
     }
-    testing.expect(t,mirrored,"the seat of the player reaches the client with its peer, without its id")
+    testing.expect(t,mirrored && own==1,"the seat of the player reaches the client as its one seat of this machine, without its id")
 
     pair_load(p,0,LEVEL_B,2)
     // The client is still loading: the new world does not reach it.
@@ -174,7 +196,7 @@ a_scene_change_keeps_the_players_and_replicates_the_new_world_once_the_client_lo
     testing.expect_value(t,len(client.scene_requests.queue.items),1)
     testing.expect_value(t,linked(client),0)
     testing.expect_value(t,core.count(&server.seats),1)
-    testing.expect_value(t,core.at(core.read(&server.seats),0).peer,u64(connection))
+    testing.expect_value(t,core.at(&server.seats,0).peer,u64(connection))
     testing.expect_value(t,len(server.remote.entries),1)
     for &slot in p.sessions[0].server.objects {
         if slot.object!=0 {testing.expect(t,slot.entity==core.NONE || core.has(&server.objects,slot.entity),"no object of the old world names an entity of the new one")}
@@ -252,38 +274,220 @@ a_client_follows_the_pause_and_the_time_scale_of_its_server :: proc(t:^testing.T
     testing.expect(t,!client.clock.paused && p.problems[1].count==1)
 }
 
-// Who arrives and who leaves reaches the fixed functions in the first tick
-// after it, once, however many frames go without a tick; a tick run again has
-// those it had.
+// Who arrives and who leaves, and the messages that arrive, reach the fixed
+// functions in the first tick after them, once, however many frames go
+// without a tick; a tick run again has those it had.
 @(test)
-the_connections_that_come_and_go_reach_the_first_tick_after_them :: proc(t:^testing.T) {
+the_connections_and_the_messages_that_arrive_reach_the_first_tick_after_them :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
     app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60}
     s:Net_Session
-    defer delete(s.arrived)
+    // One message of the game, as protocol_build leaves it.
+    received:[1]core.Net_Arrived
+    s.received=received[:]
+    defer {delete(s.arrived);delete(received[0].blocks)}
     ref:=core.world_ref(&world,&info)
-    tick :: proc(ref:core.World_Ref,app:^host.App,s:^Net_Session,w:^Net_Test_World) -> int {
-        net_tick_head(ref,app,s,&w.remote,&w.connections,nil)
-        return len(w.connections.events.items)
+    // The connection events a reader of each tick gets, and the messages the tick has.
+    seen:u64
+    arrived:[]Connection_Event
+    tick :: proc(ref:core.World_Ref,app:^host.App,s:^Net_Session,w:^Net_Test_World,seen:^u64,arrived:^[]Connection_Event) -> [2]int {
+        net_tick_head(ref,app,s,&w.remote,&w.connections,&w.messages,nil)
+        arrived^,_=core.log_since(w.connections.events.log,seen)
+        return {len(arrived^),len(core.inbox(&w.messages,0,u32).items)}
+    }
+    // As event_deliver leaves it.
+    message :: proc(s:^Net_Session,value:u32) {
+        p:=&s.received[0]
+        if resize(&p.blocks,((p.count+1)*size_of(core.Message(u32))+15)/16)!=nil {return}
+        ([^]core.Message(u32))(raw_data(p.blocks))[p.count]={value=value,sender=4}
+        p.count+=1
     }
     append(&s.arrived,Connection_Event{kind=.Connected,connection=1})
-    testing.expect_value(t,tick(ref,&app,&s,&world),1)
-    testing.expect_value(t,tick(ref,&app,&s,&world),0)
+    message(&s,10)
+    testing.expect_value(t,tick(ref,&app,&s,&world,&seen,&arrived),[2]int{1,1})
+    testing.expect_value(t,tick(ref,&app,&s,&world,&seen,&arrived),[2]int{0,0})
     // Two frames without a tick.
     append(&s.arrived,Connection_Event{kind=.Connected,connection=2})
+    message(&s,11)
     append(&s.arrived,Connection_Event{kind=.Disconnected,connection=1,reason=.Timeout})
-    testing.expect_value(t,tick(ref,&app,&s,&world),2)
-    testing.expect_value(t,world.connections.events.items[1],Connection_Event{kind=.Disconnected,connection=1,reason=.Timeout})
+    message(&s,12)
+    testing.expect_value(t,tick(ref,&app,&s,&world,&seen,&arrived),[2]int{2,2})
+    testing.expect_value(t,arrived[1],Connection_Event{kind=.Disconnected,connection=1,reason=.Timeout})
+    second:=core.inbox(&world.messages,0,u32).items[1]
+    testing.expect(t,second.value==12 && second.sender==4,"in the order they arrived, with who sent them")
     world.time.resimulating=true
     append(&s.arrived,Connection_Event{kind=.Connected,connection=3})
-    testing.expect_value(t,tick(ref,&app,&s,&world),2)
+    message(&s,13)
+    testing.expect_value(t,tick(ref,&app,&s,&world,&seen,&arrived),[2]int{0,2})
     world.time.resimulating=false
-    testing.expect_value(t,tick(ref,&app,&s,&world),1)
+    testing.expect_value(t,tick(ref,&app,&s,&world,&seen,&arrived),[2]int{1,1})
+}
+
+// A message of 6 KB with an array of 4 KB of bytes a client sends reaches the
+// inbox of its type on the server whole, with the connection that sent it.
+@(test)
+a_typed_message_of_6_kb_with_4_kb_of_bytes_reaches_the_inbox_of_its_type_whole :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    p:=new(Pair)
+    defer free(p)
+    if !pair_init(t,p,LEVEL_A,LEVEL_A,game=true) {return}
+    defer pair_destroy(p)
+    server,client:=&p.worlds[0],&p.worlds[1]
+    for _ in 0..<60 {pair_frame(p)}
+    if !testing.expect(t,p.sessions[1].client.answered) {return}
+    connection:=own_connection(core.ref(&p.sessions[1]))
+    value:Net_Test_Big
+    for &v,i in value.values {v=u32(i*2654435761)}
+    for &b,i in value.bytes {b=u8(i*31+i/256)}
+    value.count=len(value.values)
+    testing.expect(t,send(&client.outbox,value))
+    events_send(&p.sessions[1],&client.outbox)
+    testing.expect(t,len(client.outbox.queue.items)==0 && len(client.outbox.bytes)==0,"what was sent leaves the outbox")
+    index:=len(p.info.messages)-2
+    for _ in 0..<60 {
+        pair_frame(p)
+        messages_fill(&p.sessions[0],&server.messages)
+        if items:=core.inbox(&server.messages,index,Net_Test_Big).items;len(items)>0 {
+            testing.expect(t,len(items)==1 && items[0].value==value && Connection(items[0].sender)==connection && items[0].about==core.NONE,"whole, once, from its client")
+            testing.expect_value(t,p.problems[0].count,0)
+            return
+        }
+    }
+    testing.expect(t,false,"the message arrives")
+}
+
+// A message the server sends about an entity in the tick it changes a
+// component of it reaches a client, over a link that loses, repeats and
+// reorders, never before the replica shows that change; one sent about it in
+// a tick that changes nothing arrives too.
+@(test)
+a_message_about_an_entity_is_read_after_the_state_of_its_tick :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    p:=new(Pair)
+    defer free(p)
+    if !pair_init(t,p,LEVEL_A,LEVEL_A,game=true) {return}
+    defer pair_destroy(p)
+    for index in 0..<2 {wire.sim_endpoint_conditions(&p.network,index,{latency=0.04,jitter=0.01,loss=0.2,duplicate=0.1,reorder=0.1,reorder_delay=0.03})}
+    server,client:=&p.worlds[0],&p.worlds[1]
+    p.shares[0].outbox=&server.outbox
+    thing:=pair_thing(server,&p.info,7,true)
+    core.add(&server.values,thing,Net_Test_Value{})
+    core.settle(&p.info,server,nil)
+    for _ in 0..<120 {pair_frame(p)}
+    if !testing.expect(t,p.sessions[1].client.answered) {return}
+    said:=len(p.info.messages)-1
+    sent,read:=0,0
+    for frame in 0..<400 {
+        // Every fourth frame the level rises with a message; between them, a message with the level it has.
+        if frame<200 && frame%2==0 {
+            level:=f32(frame/4+1)
+            if frame%4==0 {core.edit(&server.values,thing).force=level}
+            sent+=int(send(&server.outbox,Net_Test_Said{level},about=thing))
+        }
+        pair_frame(p)
+        messages_fill(&p.sessions[1],&client.messages)
+        for item in core.inbox(&client.messages,said,Net_Test_Said).items {
+            shown,_:=core.get(&client.values,item.about)
+            testing.expectf(t,shown.force>=item.value.level,"the message of level %v is read when the replica shows %v",item.value.level,shown.force)
+            read+=1
+        }
+    }
+    testing.expect_value(t,read,sent)
+    testing.expect_value(t,p.problems[1].count,0)
+}
+
+// A replicated status that comes and goes on a lent object travels as its
+// presence in the pose: the client that holds it toggles it ten times, the
+// server follows, and nothing is re-typed or taken back. A component the type
+// never listed widens it once, and the holder keeps it.
+@(test)
+a_status_that_comes_and_goes_on_a_lent_object_keeps_its_type_and_its_holder :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    p:=new(Pair)
+    defer free(p)
+    if !pair_init(t,p,LEVEL_A,LEVEL_A) {return}
+    defer pair_destroy(p)
+    server,client:=&p.worlds[0],&p.worlds[1]
+    thing:=pair_thing(server,&p.info,7,true)
+    core.edit(&server.objects,thing).simulation=.Lent
+    core.add(&server.lates,thing,Net_Test_Late{level=1})
+    core.settle(&p.info,server,nil)
+    for _ in 0..<120 {pair_frame(p)}
+    if !testing.expect(t,p.sessions[1].client.answered) {return}
+    object:=wire.object_of_user(&p.sessions[0].host,u64(thing))
+    connection:=own_connection(core.ref(&p.sessions[1]))
+    testing.expect_value(t,wire.authority_grant(&p.sessions[0].host,object,connection),wire.Error.None)
+    for _ in 0..<30 {pair_frame(p)}
+    r:=replica_with(&p.sessions[1],7)
+    if !testing.expect(t,r!=nil && r.role==.Held && core.has(&client.lates,r.entity),"the client holds the replica, with its status") {return}
+    held:=r.entity
+    for toggle in 0..<10 {
+        if toggle%2==0 {core.remove(&client.lates,held)} else {core.add(&client.lates,held,Net_Test_Late{level=1})}
+        core.settle(&p.info,client,nil)
+        for _ in 0..<12 {pair_frame(p)}
+        testing.expectf(t,core.has(&server.lates,thing)==core.has(&client.lates,held),"toggle %d: the server follows the status of the holder",toggle)
+    }
+    slot:=&p.sessions[0].server.objects[object_index(object)]
+    testing.expect(t,p.sessions[0].stats.retyped==0 && slot.holder==connection && r.role==.Held && r.entity==held,"no re-type, and the holder keeps it")
+    // A component the type never listed: it widens once, and the holder keeps it and takes the component.
+    core.add(&server.values,thing,Net_Test_Value{force=2})
+    core.settle(&p.info,server,nil)
+    for _ in 0..<30 {pair_frame(p)}
+    value,has_value:=core.get(&client.values,held)
+    testing.expect(t,p.sessions[0].stats.retyped==1 && slot.holder==connection && r.role==.Held && has_value && value.force==2,"widened once, still held, with the new component")
+    testing.expect_value(t,p.problems[0].count,0)
+    testing.expect_value(t,p.problems[1].count,0)
+}
+
+// A ball the server throws at the body a client drives, at 15 m/s over a
+// round trip of 100 ms, turns predicted before the client simulates the tick
+// it hits the body in, so the client meets it where it really is: the hit
+// needs no correction after it.
+@(test)
+a_ball_thrown_at_a_driven_body_turns_predicted_before_it_hits :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    p:=new(Pair)
+    defer free(p)
+    if !pair_init(t,p,LEVEL_A,LEVEL_A) {return}
+    defer pair_destroy(p)
+    for index in 0..<2 {wire.sim_endpoint_conditions(&p.network,index,{latency=0.05})}
+    server,client:=&p.worlds[0],&p.worlds[1]
+    // Both bodies are of the scene of both ends: each replica takes the one of its Id.
+    body,ball:core.Entity
+    #reverse for &world in p.worlds {
+        body,ball=net_test_body(&world,&p.info,1,{0,0,0}),net_test_body(&world,&p.info,2,{12,0,0})
+        // Thicker than the 0.25 m the ball goes in a tick, so the hit is not tunneled through.
+        for e in ([2]core.Entity{body,ball}) {
+            core.edit(&world.values,e).force=0
+            core.edit(&world.colliders,e)^=phys.collider_box({0.25,0.25,0.25})
+        }
+    }
+    for _ in 0..<60 {pair_frame(p)}
+    if !testing.expect(t,p.sessions[1].client.answered) {return}
+    for e in ([2]core.Entity{body,ball}) {core.add(&server.objects,e,net_test_replicate(audience=.Always))}
+    net_test_own(server,body,own_connection(core.ref(&p.sessions[1])))
+    core.settle(&p.info,server,nil)
+    for _ in 0..<120 {pair_frame(p)}
+    driven,thrown:=replica_with(&p.sessions[1],1),replica_with(&p.sessions[1],2)
+    if !testing.expect(t,driven!=nil && thrown!=nil && driven.mode==.Predicted && thrown.mode==.Interpolated,"the client predicts its body and shows the ball") {return}
+    phys.set_velocity(&server.requests,ball,{-15,0,0},{})
+    switched,hit:u64
+    corrected:u64
+    for _ in 0..<120 {
+        pair_frame(p)
+        // What a frame of the client compares and switches before its next ticks.
+        client_reconcile(&p.sessions[1],core.world_ref(client,&p.info),&p.apps[1],1.0/60)
+        if switched==0 && thrown.mode==.Predicted {switched=p.tick+LEAD}
+        local,_:=core.get(&server.transforms,ball)
+        if hit==0 && local.position.x<0.3 {hit,corrected=p.tick,p.sessions[1].stats.corrected}
+    }
+    testing.expectf(t,switched!=0 && hit!=0 && switched<hit,"the ball turned predicted at tick %d of the client, and hit the body at tick %d",switched,hit)
+    testing.expectf(t,p.sessions[1].stats.corrected==corrected,"%d corrections after the hit",p.sessions[1].stats.corrected-corrected)
 }
 
 // The reference of a section, loaded or not.
@@ -309,8 +513,8 @@ pair_member :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,se
 // A section of a client loads, with what it brings, or drops it.
 @(private="file")
 pair_load_section :: proc(w:^Net_Test_World,info:^core.World_Info,section:core.Entity,loaded:bool,member:=core.NONE) {
-    core.get(&w.references,section).loaded=loaded?LEVEL_A:{}
-    if !loaded {core.destroy_tree(&w.entities,core.ref(&w.hierarchy),member)}
+    core.edit(&w.references,section).loaded=loaded?LEVEL_A:{}
+    if !loaded {core.destroy(&w.entities,member)}
     core.settle(info,w,nil)
 }
 
@@ -396,8 +600,8 @@ a_replica_of_a_section_that_is_not_loaded_waits_for_it :: proc(t:^testing.T) {
 @(private="file")
 pair_box :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,loaded:bool,position,extents:[3]f32) -> core.Entity {
     e:=pair_section(w,info,id,loaded)
-    core.get(&w.references,e).extents=extents
-    core.get(&w.transforms,e).position=position
+    core.edit(&w.references,e).extents=extents
+    core.edit(&w.transforms,e).position=position
     core.add(&w.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale={1,1,1}}})
     core.settle(info,w,nil)
     return e
@@ -408,7 +612,7 @@ pair_box :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,loade
 @(private="file")
 pair_placed :: proc(w:^Net_Test_World,info:^core.World_Info,id:base.Entity_Id,section:core.Entity,position:[3]f32,replicated:bool) -> core.Entity {
     e:=pair_member(w,info,id,section,replicated)
-    core.get(&w.transforms,e).position=position
+    core.edit(&w.transforms,e).position=position
     core.add(&w.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale={1,1,1}}})
     core.settle(info,w,nil)
     return e
@@ -480,7 +684,7 @@ what_the_server_keeps_of_a_section_wins_over_what_a_client_kept :: proc(t:^testi
     chest:=pair_member(server,&p.info,101,room,true)
     core.add(&server.values,chest,Net_Test_Value{force=5})
     hidden:=pair_member(server,&p.info,103,room,true)
-    core.get(&server.objects,hidden).audience=.Custom
+    core.add(&server.visibility,hidden,Visibility{mask=1})
     // A section the server dropped after a crate in it was destroyed.
     yard:=pair_section(server,&p.info,300,false)
     stone:=core.create(&server.entities)
@@ -502,7 +706,7 @@ what_the_server_keeps_of_a_section_wins_over_what_a_client_kept :: proc(t:^testi
     for _ in 0..<60 {pair_frame(p)}
     r:=replica_with(&p.sessions[1],101)
     testing.expect(t,r!=nil && r.entity==kept_chest,"the chest takes the entity it kept")
-    value,_:=core.get(core.read(&client.values),kept_chest)
+    value,_:=core.get(&client.values,kept_chest)
     testing.expect_value(t,value.force,5)
     testing.expect(t,!core.alive(&client.entities,crate),"what the server left a tombstone of goes")
     testing.expect(t,core.alive(&client.entities,well))

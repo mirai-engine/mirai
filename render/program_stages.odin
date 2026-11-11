@@ -2,13 +2,15 @@ package mirai_render
 
 import "core:fmt"
 import "core:strings"
+import "mirai:asset"
 import "mirai:rhi"
 
 // The raster stages of Surface programs (`//! per surface program`): a stage
 // of the engine compiled for one program, <stem>__<program>[_<variant>],
 // draws the materials of that program, and the stage itself those without
 // one. The pipeline of a program is that of the stage with the fragment stage
-// of the program, asked for when a draw first needs it (pipeline_thread.odin);
+// of the program, asked for ahead of time when the program first gets rows in
+// the scene (programs_ask), or when a draw first needs it (pipeline_thread.odin);
 // until it is made, the stage itself draws those materials as their rows. A
 // draw of the clusters the cull listed takes those of one program
 // (gbuffer_programs_draw); one of the clusters of an instance, the clusters
@@ -41,9 +43,10 @@ program_graphics_entry :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32
 // The pipeline that draws the materials of a Surface program for the stage
 // whose pipeline is target^; target^ until it is made, or while the shaders
 // in use have no stage of that program. now: a draw that is read back at once
-// (a thumbnail) waits for it.
+// (a thumbnail) waits for it. early: asked ahead of time, before a draw needs
+// it, which raises it.
 @(private)
-program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now := false) -> rhi.Pipeline {
+program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now := false, early := false) -> rhi.Pipeline {
 	if program == 0 || program == GPU_NONE {return target^}
 	entry, found := program_graphics_entry(r, target, program)
 	if entry == nil {return target^}
@@ -51,14 +54,35 @@ program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now 
 		entry^ = {target = target, program = program}
 		if desc, ok := pipeline_desc_of(r, target); ok && desc.fragment != nil {
 			if entry.code = program_stage(r, desc.fragment, program); entry.code != nil {
-				desc.fragment = entry.code
-				if !pipeline_make(r, &entry.pipeline, graphics = desc, now = now) {entry^ = {}}
+				desc.fragment, desc.name = entry.code, entry.code.name
+				if !pipeline_make(r, &entry.pipeline, graphics = desc, now = now, early = early) {entry^ = {}}
 			}
 		}
-	} else if entry.pipeline == 0 && entry.code != nil && now {
-		renderer_pipelines_wait(r)
+	} else if entry.pipeline == 0 && entry.code != nil && !early {
+		pipeline_urgent(r, &entry.pipeline)
+		if now {renderer_pipelines_wait(r, &entry.pipeline)}
 	}
 	return entry.pipeline if entry.pipeline != 0 else target^
+}
+
+// When a program first gets rows in the scene, with pipelines_async: the
+// pipelines its rows are drawn with on the camera and evaluated with on the
+// rays, asked for ahead of time, behind what frames ask for.
+@(private)
+programs_ask :: proc(r: ^Renderer) {
+	s := &r.scene
+	s.programs_arrived = false
+	if !r.pipelines_async {return}
+	for row in s.materials {
+		if row.program_id == 0 || row.program_id == GPU_NONE {continue}
+		glass := row.alpha_mode == u32(asset.Alpha_Mode.Blend)
+		for id in ([]Pipeline_Id{.Glass_Layer, .Glass_Filter} if glass else []Pipeline_Id{.Gbuffer, .Gbuffer_Plain, .Gbuffer_Layers}) {
+			program_graphics(r, &r.pipelines[id], row.program_id, early = true)
+		}
+		for program in renderer_programs(r) {
+			if program.id == row.program_id && program.domain == .Surface {points_pipeline(r, program, early = true)}
+		}
+	}
 }
 
 // With the GPU idle: when the shaders they were made from, or the pipelines

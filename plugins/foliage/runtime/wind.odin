@@ -34,17 +34,17 @@ BEND_LEAN_MAX :: f32(1.4)    // radians, the most a bender leans foliage
 BEND_RADIUS_MAX :: f32(4)    // metres
 
 // Leans the foliage that sways in the hook (types without shadows: grass)
-// away from it, by its lean at its middle falling to none at its radius:
-// grass where a body passes. Each point leans by the red of its vertex color,
-// as the wind moves it. The boxes the views cull those types by hold the most
-// a bender can lean them (BEND_LEAN_MAX, Batch_Desc.reach); no ray sees it.
-@(component,description="Leans the grass and the foliage that sways without shadows away from it, as where a body passes.")
+// away from it, by its lean at its middle falling to none at the radius of
+// the Volume of its entity, a Sphere of BEND_RADIUS_MAX at most: grass where
+// a body passes. Each point leans by the red of its vertex color, as the wind
+// moves it. The boxes the views cull those types by hold the most a bender
+// can lean them (BEND_LEAN_MAX, Batch_Desc.reach); no ray sees it.
+@(component,description="Leans the grass and the foliage that sways without shadows away from it, as where a body passes, as far as the Volume of its entity reaches, up to 4 m.")
 Foliage_Bender :: struct {
-    radius:f32 `mirai:"min=0,max=4,unit=m"`,    // around its entity, where foliage leans
     lean:f32 `mirai:"min=0,max=1.4,unit=rad"`,  // how far foliage at its middle leans
 }
 
-FOLIAGE_BENDER_DEFAULT :: Foliage_Bender{radius=0.8,lean=1}
+FOLIAGE_BENDER_DEFAULT :: Foliage_Bender{lean=1}
 
 // foliage_wind.slang: what the hook reads in the constants of each view.
 Gpu_Bender :: struct {
@@ -153,15 +153,16 @@ wind_set_free :: proc(renderer:^render.Renderer,set:^Wind_Set) {
 // sway with the wind at the first streaming source. The benders nearest that
 // source go to the hook too.
 @(step="render",loops="game editor")
-foliage_wind :: proc(resident:^Foliage_Resident,winds:core.Read(volume.Wind),volumes:core.Read(volume.Volume),worlds:core.Read(core.World_Transform),sources:core.Ref(scene.Streaming_Sources),benders:core.Read(Foliage_Bender),frame:core.Frame_Time,renderer:^render.Renderer) {
+foliage_wind :: proc(resident:^Foliage_Resident,winds:^core.Table(volume.Wind,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),sources:core.Ref(scene.Streaming_Sources),benders:^core.Table(Foliage_Bender,.Read),frame:core.Frame_Time,renderer:^render.Renderer) {
     if resident==nil || len(resident.owners)==0 {return}
-    resident.wind=volume.gpu_wind(winds,volumes,worlds)
+    zones:=volume.Where{volumes,worlds,parents,sections,splines}
+    resident.wind=volume.gpu_wind(winds,zones)
     at:=[3]f32{}
     if sources.ptr!=nil && sources.ptr.count>0 {at=sources.ptr.items[0].position} else if len(resident.owners)>0 {at=resident.owners[0].transform.position}
-    benders_gather(resident,benders,worlds,frame,at)
+    benders_gather(resident,benders,volumes,worlds,frame,at)
     render.frame_pass(renderer,.Mask,foliage_wind_record,resident)
     if len(resident.winds)>0 {
-        value:=volume.wind_at(winds,volumes,worlds,at)
+        value:=volume.wind_at(winds,zones,at)
         velocity:=value.xyz
         if speed:=linalg.length(velocity);speed>WIND_SPEED_MAX {velocity*=WIND_SPEED_MAX/speed}
         resident.sway={velocity.x,velocity.y,velocity.z,value.w}
@@ -180,7 +181,7 @@ foliage_wind :: proc(resident:^Foliage_Resident,winds:core.Read(volume.Wind),vol
 
 // The BENDERS benders nearest `at` where they are drawn this frame, each
 // with where it was the frame before (the motion vectors of what it bends).
-benders_gather :: proc(resident:^Foliage_Resident,benders:core.Read(Foliage_Bender),worlds:core.Read(core.World_Transform),frame:core.Frame_Time,at:[3]f32) {
+benders_gather :: proc(resident:^Foliage_Resident,benders:^core.Table(Foliage_Bender,$A),volumes:^core.Table(volume.Volume,$B),worlds:^core.Table(core.World_Transform,$C),frame:core.Frame_Time,at:[3]f32) {
     before:=resident.benders
     count:=resident.bender_count
     resident.bender_count=0
@@ -188,10 +189,15 @@ benders_gather :: proc(resident:^Foliage_Resident,benders:core.Read(Foliage_Bend
         e:=core.entity_at(benders,row)
         bender:=core.at(benders,row)
         world,placed:=core.get(worlds,e)
-        if !placed || !(bender.radius>0) || !(bender.lean>0) {continue}
+        if !placed || !(bender.lean>0) {continue}
+        // As far as the box of its Volume reaches; without one, as far as a bender can.
+        reach,_:=core.get(volumes,e)
+        box:=volume.bounds(reach,world.transform)
+        radius:=max(box.max.x-box.min.x,box.max.y-box.min.y,box.max.z-box.min.z)*0.5
+        if !(radius>0) {continue}
         shown:=Bender_Shown{
             entity=e,position=render.drawn_transform(world,frame).position,
-            radius=min(bender.radius,BEND_RADIUS_MAX),lean=min(bender.lean,BEND_LEAN_MAX),
+            radius=min(radius,BEND_RADIUS_MAX),lean=min(bender.lean,BEND_LEAN_MAX),
         }
         shown.previous=shown.position
         for old in before[:count] {if old.entity==e {shown.previous=old.position;break}}

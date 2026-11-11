@@ -7,12 +7,14 @@ import render "mirai:render"
 
 // What a frame of the game loop gave its world besides its state: how long
 // it lasted, the time its fixed ticks came from (Frame_Time.accumulator, once
-// the clock and a step moved it), the input its first tick and the frame
-// saw and the content it found loaded. Played again over the World it found,
-// it runs the same.
+// the clock and a step moved it) and how many ran, the input its first tick
+// and the frame saw and the content it found loaded. Played again over the
+// World it found, it runs the same.
 Frame_Record :: struct {
     dt:f64,
     accumulator:f64,
+    lag:f64, // Frame_Time.lag once its ticks were decided
+    ticks:int,
     input:core.Input,
     frame_input:core.Input,
     content:u32, // Content.generations when it began: a first load a job made after is pending
@@ -77,7 +79,7 @@ app_recording_frame :: proc(app:^App,rec:^World_Recording,world:rawptr,out:[]f32
     })
     extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
     clear(&extras.instances)
-    extras.ui_texture_count,extras.effect_view_count,extras.probe_count,extras.slot_texture_count=0,0,0,0
+    extras.ui_texture_count,extras.effect_view_count,extras.probe_count=0,0,0
     app.camera_cut=false
     app.inspection={}
     app.view_count=0

@@ -107,7 +107,7 @@ revision_walk :: proc(h:^Revision_History($Step,$Source,$Stamp),id:base.Asset_Id
     return true
 }
 
-// The file of a source changed outside the tool (Save, Discard, a recovery)
+// The file of a source changed outside the tool (the history of the editor, git)
 // while its owners stayed at the revision of its head: that revision holds
 // fresh from here on, and the head takes it.
 revision_rebase :: proc(h:^Revision_History($Step,$Source,$Stamp),src:Revision_Source(Step,Source,Stamp),id:base.Asset_Id,revision:u32,head,fresh:^Source) {
@@ -122,7 +122,7 @@ revision_rebase :: proc(h:^Revision_History($Step,$Source,$Stamp),src:Revision_S
 // there and are written to their files; follow, if given, gets each that
 // moved, with the steps it applied. What changes a file outside the tool is
 // what the revision its owners are at holds.
-revision_sync :: proc(s:^Session,h:^Revision_History($Step,$Source,$Stamp),markers:core.Read($Marker),a:^host.Assets,src:Revision_Source(Step,Source,Stamp),user:rawptr=nil,follow:proc(user:rawptr,held:^Revision_Head(Source,Stamp),path:[]int)=nil) {
+revision_sync :: proc(s:^Session,h:^Revision_History($Step,$Source,$Stamp),markers:^core.Table($Marker,$A),a:^host.Assets,src:Revision_Source(Step,Source,Stamp),user:rawptr=nil,follow:proc(user:rawptr,held:^Revision_Head(Source,Stamp),path:[]int)=nil) {
     if core.count(markers)>0 && s.edits!=nil && h.initial!=s.edits.initial {
         _=history.edits_sync_initial(s.edits,edited_world(s))
         h.initial=s.edits.initial

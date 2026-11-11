@@ -1,26 +1,48 @@
-# Clips on props, layers, curves and root motion
+# Clips on props, curves and root motion
 
-For entities that no `.match` drives: a door, a lift, a pickup, a scripted creature.
-`Animation.asset` may be a `.anim` (a library of clips); the field `clip` picks one.
+For entities that no `.character` drives: a door, a lift, a pickup, a light, a cutscene, a scripted
+creature. `Animation.asset` may be a `.anim` (a library of clips); the field `clip` picks one. A
+clip is the one way to move a value over time: there is no other keyed component.
 
-## Play, layer, seek
+## What a clip moves
+
+The target of each track says what it drives, by text:
+
+| Target | Drives |
+| --- | --- |
+| empty | the entity with the `Animation` |
+| `Leaf` | the entity below it named `Leaf` |
+| `Guard` | an entity anywhere with `Animation_Target{path="Guard", animation=<the animated one>}` |
+| `Lamp/@field/Point_Light.intensity` | that field of that component of `Lamp` (`@field/...` alone: of the animated entity) |
+
+- Position, Rotation and Scale tracks are local to the parent of what they move: put the
+  `Animation` on a parent placed in the world and move its children by name, and one clip serves
+  every door of the game.
+- A Float track writes a number, a `bool` or a member of a bit set (from 0.5 up); a Vector track a
+  vector or a color. A track that names something the game lacks is a problem of the entity.
+- A clip writes only while it moves. Paused, stopped or ended it leaves what it drove where it is,
+  free for the game to move.
+- Make the clip with the editor API: `animation.clip.create` (`path`, `name`), then one
+  `animation.track.set` per track (`target`, `property`, `keys` with `time`, `value`, `ease`,
+  `interpolation`), and assign it with `animation.play`. A hold is two keys with the same value.
+
+## Play and seek
 
 ```odin
-// animations:^core.Table(anim.Animation), requests:^anim.Animation_Requests
-if a:=core.get(animations,door);a!=nil {
-    anim.animation_play(a,"open",.2,loop=false)          // layer 0: cross-fades from the clip
-    anim.animation_play(a,"wave",layer=1,over="@upper_body",weight=1)  // layers 1 to 3
-    anim.animation_weight(a,1,.5)                        // weight of a layer, reached over its fade
-    anim.animation_stop(a,1,.2)                          // fades a layer out and frees it
-    a.playing=false                                      // pause; speed < 0 plays backwards
-}
-anim.animation_seek(requests,door,0)                     // next tick, skipping markers
+// requests:^anim.Animation_Requests
+anim.animation_command(requests,door,.Play)              // opens: from its start, in the next tick
+anim.animation_command(requests,door,.Resume,speed=-1)   // closes from where it is
+anim.animation_command(requests,door,.Pause)             // .Stop rewinds and waits
+anim.animation_seek(requests,door,0.5)                   // jumps there, skipping markers
 ```
 
-- `over` names a bone (its branch) or a body region (`@upper_body`, `@arm_l`) that the skeleton
-  maps; `mode=.Additive` with `reference` adds what a clip changes over a reference pose (an emote
-  over a stand); `mesh_space=true` keeps an Override branch's turn whatever the base turns above.
-- Layer 0 is the entity's own clip; actions use layers 1 to 3.
+- The commands are the same for a door, a lift and a cutscene, from any step. `Animation.playing`
+  and `speed` in the scene only say whether it starts by itself, and at what speed; once the world
+  plays, only commands change it. `anim.animation_playing(playback.ptr,door)` says what it does now.
+- Another clip of the same `.anim` is `anim.animation_clip(core.edit(animations,e),"close")`: it
+  cross-fades into it from its start and plays as the last command said.
+- What plays over the clip (a wave over the arm, a mix by a value, an action) is a layer or an
+  action of a `.character` over that `.anim`, as for a character: [actions.md](actions.md).
 
 ## Read progress, curves and markers
 
@@ -32,17 +54,48 @@ glow:=anim.animation_curve(playback.ptr,e,"pulse")       // Float curve of the c
 
 - `animation_vector` reads a Vector curve; `animation_bone_transform(playback.ptr,rig,bone)`
   gives a finished bone pose in the world.
-- A marker the clip crosses arrives in `Animation_Events.items` (`entity`, `marker` as
-  `base.name_hash`, `fraction` of the tick); for a clip that blends several, `event_policy`
-  picks which markers fire. Count arrivals by a marker of the clip, not by elapsed time.
-- Parameters of an `.agraph` are set by name: `anim.animation_parameter(a,"Mood",.5)`.
+- A marker the clip crosses arrives in `Animation_Events.items` as a `Marker` event (`entity`,
+  `name` as `base.name_hash`, `fraction` of the tick); for a clip that blends several,
+  `event_policy` picks which markers fire. Count arrivals by a marker of the clip, not by
+  elapsed time.
+
+## A cutscene
+
+A cinematic is a clip (plugin `cinematics`, which needs `animation`) of an entity that also has a
+`Cinematic`; each camera or actor out of it has an `Animation_Target` that names it. A marker of
+the clip on a camera is a shot: from its time on the seat (`Cinematic.seat`, none: the focused
+player) sees through it, blended in over the marker's duration as `cam.camera_override` blends,
+with the actions of `Cinematic.block_mask` blocked. A marker on another actor plays the action of
+its name there until a span ends, or the clip for a moment, driven by the clip (`anim.play_at`):
+paused, sought or scrubbed in the editor, the actor shows the pose of that time.
+
+"The camera moves from A to B, then cuts to C while the character waves" is a timeline entity
+(`Animation` + `Cinematic`), the cameras `Cam` and `C` and the character `Hero` as actors, and one
+clip: Position and Rotation keys of `Cam` from A at 0 to B at 3, a marker `Shot` on `Cam` at 0, a
+marker `Shot` on `C` at 3 and a marker `Wave` on `Hero` at 3 lasting 2. The editor API builds it:
+`scene.write` (the timeline is `preset` `cinematic` with the clip as `Animation.asset`; an actor
+is an entity with an `Animation_Target` whose `animation` is the id of the timeline),
+`animation.key.set` and `animation.marker.set`.
+
+```odin
+anim.animation_command(requests,intro,.Play)             // as any clip
+// cinematics:^core.Table(cine.Cinematic,.Read), events:core.Ref(anim.Animation_Events)
+if c,ok:=core.get(cinematics,intro);ok && c.status==.Completed {start_the_level()}
+for event in events.items {
+    if event.entity==intro && event.name==base.name_hash("door_slam") {slam()}  // a .Marker
+}
+```
+
+- In a network game the server commands the clip, every client follows it and the server plays
+  the actions of the actors.
+- What the clip moved is the game's again when the clip ends.
 
 ## Root motion
 
 `Animation.root_motion` is `Extract` (the clip's root movement is reported per tick) or `In_Place`
 (reported too, and the root bone is held at its reference so the pose stays on the entity). A
-`Character` whose `.action` has `body_move` is moved by the engine and the game does not convert
-root motion. Any other body moves itself:
+`Character` that plays an action with `body_move` is moved by the engine and the game does not
+convert root motion. Any other body moves itself:
 
 ```odin
 if d,ok:=anim.animation_root_delta(playback.ptr,e);ok {
@@ -53,16 +106,15 @@ if d,ok:=anim.animation_root_delta(playback.ptr,e);ok {
 }
 ```
 
-- Run it in a `fixed` step after `animation_sample`:
-  `@(step="fixed",stage="apply",after="animation_sample")`.
+- Run it in a `fixed` step of the stage of `animation_sample`, `@(step="fixed",stage="apply")`:
+  reading `anim.Playback` puts it after the sampling.
 - A body owned by physics is never written directly: ask physics, or use `body_move`.
 - A seek gives no displacement, and every source blended must share the root bone or the
   evaluation is rejected (a problem of the entity).
 
 ## Pitfalls
 
-- `animation_play` on layer 0 keeps the entity's `loop`; pass `loop=false` for a one-shot and
-  test `ended` only for a clip that does not loop.
+- `animation_clip` keeps the entity's `loop`; pass `loop=false` for a one-shot and test `ended`
+  only for a clip that does not loop.
 - A clip name the asset lacks is a problem of the entity, not an error at the call.
-- Changing `Animation.library` restarts the program; it replaces clips by name.
-- A `.blend` as `Animation.asset` fails: it lives under an `Additive` of an `.agraph`.
+- Changing `Animation.library` restarts the locomotion of the set; it replaces clips by name.

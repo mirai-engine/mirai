@@ -22,18 +22,16 @@ RADIUS_MIN :: f32(0.1)
 RADIUS_MAX :: f32(500)
 RADIUS_STEP :: f32(1.15) // what [ and ] multiply the radius by
 
-// What Raise, Lower and Flatten of a 3D Terrain move along: the surface under
-// each touch, the one under the press, or the view.
-Brush_Plane :: enum u8 {Surface,Locked,View}
-// The shapes of Shapes; Selected is a closed mesh of the scene, for a 3D Terrain.
+// The shapes of Shapes; Selected is a closed mesh of the scene, which a Volume takes as samples.
 Shape_Kind :: enum u8 {Sphere,Capsule,Box,Selected}
+// What a stroke over a Heightfield keeps of its press: nothing, its Z (it runs along X) or its X.
+Stroke_Axis :: enum u8 {Free,X,Z}
 
 // A brush of the Sculpt list; Set height is Flatten to a typed height.
 Sculpt_Brush :: struct {kind:terrain.Brush_Kind,level:bool,name:string}
 
 @(rodata) HEIGHTFIELD_BRUSHES := [?]Sculpt_Brush{{.Raise,false,"Raise"},{.Lower,false,"Lower"},{.Smooth,false,"Smooth"},{.Flatten,false,"Flatten"},{.Ramp,false,"Ramp"},{.Flatten,true,"Set height"},{.Terrace,false,"Terrace"},{.Noise,false,"Noise"},{.Erode,false,"Erode"}}
-@(rodata) MESH_BRUSHES := [?]Sculpt_Brush{{.Raise,false,"Raise"},{.Lower,false,"Lower"},{.Smooth,false,"Smooth"},{.Flatten,false,"Flatten"},{.Flatten,true,"Set height"},{.Grab,false,"Grab"},{.Grow,false,"Grow"},{.Refine,false,"Refine"}}
-@(rodata) VOLUME_BRUSHES := [?]Sculpt_Brush{{.Add,false,"Add"},{.Remove,false,"Remove"},{.Smooth,false,"Smooth"},{.Flatten,false,"Flatten"},{.Flatten,true,"Set height"},{.Grow,false,"Grow"},{.Noise,false,"Noise"}}
+@(rodata) VOLUME_BRUSHES := [?]Sculpt_Brush{{.Add,false,"Add"},{.Carve,false,"Remove"},{.Raise,false,"Raise"},{.Lower,false,"Lower"},{.Smooth,false,"Smooth"},{.Flatten,false,"Flatten"},{.Flatten,true,"Set height"},{.Noise,false,"Noise"}}
 @(rodata) BRUSH_KEYS := [9]core.Key{.One,.Two,.Three,.Four,.Five,.Six,.Seven,.Eight,.Nine}
 // The keys the tool takes from the shortcuts of the editor while it is on.
 TOOL_KEYS :: core.Keys{.F,.Left_Bracket,.Right_Bracket,.One,.Two,.Three,.Four,.Five,.Six,.Seven,.Eight,.Nine}
@@ -43,13 +41,12 @@ TOOL_KEYS :: core.Keys{.F,.Left_Bracket,.Right_Bracket,.One,.Two,.Three,.Four,.F
 sculpt_brushes :: proc(kind:terrain.Source_Kind) -> []Sculpt_Brush {
     switch kind {
     case .Heightfield: return HEIGHTFIELD_BRUSHES[:]
-    case .Mesh:        return MESH_BRUSHES[:]
     case .Volume:      return VOLUME_BRUSHES[:]
     }
     return nil
 }
 @(private)
-tool_shaping :: proc "contextless" (t:^Terrain_Tool) -> bool {return t.brush==.Union || t.brush==.Subtract}
+tool_shaping :: proc "contextless" (t:^Terrain_Tool) -> bool {return t.shaping && (t.brush==.Add || t.brush==.Carve)}
 @(private)
 tool_sculpting :: proc "contextless" (t:^Terrain_Tool) -> bool {return !tool_painting(t) && !tool_holing(t) && !tool_shaping(t)}
 
@@ -59,14 +56,10 @@ brush_fit :: proc(tool:^Terrain_Tool,kind:terrain.Source_Kind) {
     switch {
     case tool_painting(tool): return
     case tool_holing(tool): if kind==.Heightfield {return}
-    case tool_shaping(tool):
-        if kind!=.Heightfield {
-            if tool.shape==.Selected && kind!=.Mesh {tool.shape=.Sphere}
-            return
-        }
+    case tool_shaping(tool): if kind==.Volume {return}
     case: for brush in sculpt_brushes(kind) {if brush.kind==tool.brush && brush.level==tool.level {return}}
     }
-    tool.brush,tool.level=sculpt_brushes(kind)[0].kind,false
+    tool.brush,tool.level,tool.shaping=sculpt_brushes(kind)[0].kind,false,false
 }
 
 // The brush with the key index+1 of the mode it is in, which takes back the
@@ -77,7 +70,7 @@ brush_choose :: proc(s:^editor.Session,tool:^Terrain_Tool,index:int) {
     switch {
     case tool_painting(tool): if index<2 {tool.brush=index==0?.Paint:.Erase}
     case tool_holing(tool):   if index<2 {tool.brush=index==0?.Hole:.Fill}
-    case tool_shaping(tool):  if index<len(Shape_Kind) && (Shape_Kind(index)!=.Selected || tool.stroke.source.kind==.Mesh) {tool.shape=Shape_Kind(index)}
+    case tool_shaping(tool):  if index<len(Shape_Kind) {tool.shape=Shape_Kind(index)}
     case:
         brushes:=sculpt_brushes(tool.stroke.source.kind)
         if index<len(brushes) {tool.brush,tool.level=brushes[index].kind,brushes[index].level}
@@ -90,14 +83,12 @@ brush_inverse :: proc "contextless" (kind:terrain.Brush_Kind) -> terrain.Brush_K
     #partial switch kind {
     case .Raise:    return .Lower
     case .Lower:    return .Raise
-    case .Add:      return .Remove
-    case .Remove:   return .Add
+    case .Add:      return .Carve
+    case .Carve:    return .Add
     case .Paint:    return .Erase
     case .Erase:    return .Paint
     case .Hole:     return .Fill
     case .Fill:     return .Hole
-    case .Union:    return .Subtract
-    case .Subtract: return .Union
     }
     return kind
 }
@@ -108,8 +99,7 @@ brush_inverse :: proc "contextless" (kind:terrain.Brush_Kind) -> terrain.Brush_K
 @(private)
 brush_held :: proc(tool:^Terrain_Tool,modifiers:ui.Modifiers,eraser:=false) -> (kind:terrain.Brush_Kind,level,capped:bool) {
     kind,level=tool.brush,tool.level
-    drag:=kind==.Grab || kind==.Grow || kind==.Refine || kind==.Ramp
-    if tool_sculpting(tool) && !drag && .Shift in modifiers {return .Smooth,false,false}
+    if tool_sculpting(tool) && kind!=.Ramp && .Shift in modifiers {return .Smooth,false,false}
     if (.Primary in modifiers || eraser) && !level {kind=brush_inverse(kind)}
     capped=(kind==.Raise || kind==.Lower) && tool.stroke.source.kind==.Heightfield && (tool.capped!=(.Alt in modifiers))
     return
@@ -119,7 +109,7 @@ brush_held :: proc(tool:^Terrain_Tool,modifiers:ui.Modifiers,eraser:=false) -> (
 @(private)
 brush_strong :: proc "contextless" (kind:terrain.Brush_Kind) -> bool {
     #partial switch kind {
-    case .Grab,.Grow,.Refine,.Union,.Subtract,.Hole,.Fill,.Ramp: return false
+    case .Hole,.Fill,.Ramp: return false
     }
     return true
 }
@@ -133,7 +123,7 @@ stroke_original :: proc(tool:^Terrain_Tool) -> ^terrain.Source {
     return &stroke.source
 }
 
-// A press on the selected terrain: a stroke, a drag, or the ramp or shape it
+// A press on the selected terrain: a stroke, or the ramp or shape it
 // places. Ctrl and a press with Set height take the height under it instead.
 @(private)
 stroke_begin :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,input:core.Input,view:core.View) -> bool {
@@ -146,16 +136,10 @@ stroke_begin :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,i
     _,forward:=core.view_ray(view,view.size*0.5)
     stroke.view=-linalg.normalize0((stroke.to_local*[4]f32{forward.x,forward.y,forward.z,0}).xyz)
     stroke.first,stroke.last,stroke.normal=local,local,normal
-    // Flatten keeps the plane of the press: its height on a grid, the
-    // surface or the view of a 3D Terrain, and a level one for Set height.
+    // Flatten keeps the height of the press, or the one of Set height.
     stroke.target=local.y
-    if stroke.source.kind==.Mesh {
-        if tool.plane==.View {stroke.normal=stroke.view}
-        if tool.level {stroke.normal={0,1,0}}
-        stroke.target=linalg.dot(stroke.normal,local)
-    }
     if tool.level {stroke.target=tool.height}
-    if tool_shaping(tool) || tool.brush==.Ramp {pending_begin(tool,local)} else {stroke_drag_begin(tool,local,view)}
+    if tool_shaping(tool) || tool.brush==.Ramp {pending_begin(tool,local)}
     stroke.active=true
     if editor.revision_applied(&tool.history,stroke.id)==nil {append(&tool.applied,Applied{source=stroke.id,revision=stroke.revision,stamp=stroke.stamp})}
     return true
@@ -164,13 +148,7 @@ stroke_begin :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,i
 @(private)
 stroke_apply :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,input:core.Input,view:core.View,frame:core.Frame_Time) {
     stroke:=&tool.stroke
-    if stroke.drag.active {stroke_drag_apply(s,tool,world,input,view);return}
     kind,level,capped:=brush_held(tool,s.gui.ctx.input.modifiers,input.eraser)
-    if kind==.Refine {
-        if stroke.applied_once {return}
-        if local,normal,ok:=stroke_point(stroke,s.viewport,input.mouse_position);ok {stroke.applied_once=true;stroke_touch(s,tool,world,kind,level,capped,local,normal,1,input.pressure)}
-        return
-    }
     // As TerraBrush: while held it touches at most BRUSH_RATE times a second
     // with the time it waited, so a second held does the same at any rate.
     stroke.waited+=frame.dt
@@ -230,11 +208,7 @@ stroke_under :: proc(tool:^Terrain_Tool,v:^editor.Viewport,at:[2]f32) -> (point,
 // now: on a grid, its height there.
 @(private)
 stroke_carry :: proc(tool:^Terrain_Tool,point,normal:[3]f32) -> ([3]f32,[3]f32,bool) {
-    stroke:=&tool.stroke
-    point:=point
-    if stroke.source.kind==.Heightfield {point.y=terrain.source_height(&stroke.source,point.x,point.z);return point,normal,true}
-    reach:=brush_of(tool).radius/stroke.scale
-    if hit,hit_normal,on:=terrain.source_ray(&stroke.source,point+normal*reach,-normal);on && linalg.length(hit-point)<=reach*2 {return hit,hit_normal,true}
+    point,normal:=terrain.source_carry(&tool.stroke.source,point,normal,brush_of(tool).radius/tool.stroke.scale)
     return point,normal,true
 }
 
@@ -252,26 +226,17 @@ stroke_touch :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,k
     brush.capped=capped
     #partial switch kind {
     case .Raise,.Lower,.Noise: brush.amount=strength*radius*RAISE_PER_PASS*share
-    case .Refine:              brush.amount=1
     case .Erode:               brush.amount=strength*clamp(share*BRUSH_RATE/PASSES_PER_SECOND,0,1)
     case:                      brush.amount=strength>=1?1:1-math.pow(1-strength,share)
     }
     if !(brush.amount>0) {return}
-    if stroke.source.kind==.Mesh {
-        switch tool.plane {
-        case .Surface:
-        case .Locked: brush.normal=stroke.normal
-        case .View:   brush.normal=stroke.view
-        }
-        if kind==.Flatten {brush.normal=stroke.normal}
-    }
     // Each touch of a spinning alpha takes another turn.
     if b.spin && brush.alpha!=nil {
         r:=mm.rng_make(base.hash_u64(tool.touches))
         brush.turn=mm.random_f32(&r)*math.TAU
     }
-    change:=terrain.source_edit(&stroke.source,brush,terrain_vertex_budget(world,stroke.id))
-    if change.error!=.None {edit_error(s,change.error);return}
+    change:=terrain.source_edit(&stroke.source,brush)
+    if change.error!=.None {edit_error(s,change.error,brush.kind);return}
     stroke_changed(stroke,change)
 }
 
@@ -282,13 +247,13 @@ brush_make :: proc(tool:^Terrain_Tool,kind:terrain.Brush_Kind,point,normal:[3]f3
     stroke:=&tool.stroke
     b:=brush_of(tool)
     brush:=terrain.Brush{
-        kind=kind,center=point,normal=normal,radius=b.radius/stroke.scale,target=stroke.target,max_edge=tool.edge_length/stroke.scale,
+        kind=kind,center=point,radius=b.radius/stroke.scale,target=stroke.target,
         layer=u32(tool.layer),falloff=b.falloff,hardness=clamp(b.hardness,0,0.95),
         way=tool.way,interval=max(tool.interval,0.01)/stroke.scale,riser=clamp(tool.riser,0,1),scale=max(tool.noise_scale,0.1)/stroke.scale,
         seed=u32(stroke.id[0]),turn=b.turn,
     }
-    if stroke.source.kind!=.Mesh {brush.alpha=alpha_of(tool,b)}
-    if b.slope_filter && stroke.source.kind==.Heightfield {
+    brush.alpha=alpha_of(tool,b)
+    if b.slope_filter {
         low,high:=clamp(min(b.slope.x,b.slope.y),0,math.PI/2),clamp(max(b.slope.x,b.slope.y),0,math.PI/2)
         // A zero slope is no filter for the runtime: the flat alone is a range a little above it.
         brush.slope,brush.slope_invert={low,max(high,low+1e-6)},b.slope_invert

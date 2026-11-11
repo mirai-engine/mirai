@@ -12,9 +12,8 @@ import "mirai:ui"
 // what it is: its length, its channels, its sample rate and whether it is
 // decoded while it plays. That of a .sound_set shows its sounds with their
 // weights and the ranges of volume and pitch it draws from, as rows of
-// Details; what they change is written into the .sound_set, in memory and
-// unsaved, once the UI lets go of it: a step of the history of the document
-// each time. Play, in the toolbar of both, plays it to be heard, and a set
+// Details; what they change is written into the .sound_set once the UI lets
+// go of it: a step of the history of the document each time. Play, in the toolbar of both, plays it to be heard, and a set
 // chooses one of its sounds each time.
 
 WAVE_WIDTH :: 1024
@@ -121,8 +120,7 @@ sound_wave :: proc(s:^editor.Session,p:^Sound) {
     signature:=signature_of({p.id[0],p.id[1],p.revision})
     if p.image.signature==signature {return}
     if len(p.pixels)!=WAVE_WIDTH*WAVE_HEIGHT*4 && resize(&p.pixels,WAVE_WIDTH*WAVE_HEIGHT*4)!=nil {return}
-    th:=&s.gui.ctx.theme
-    field,wave,middle:=th.field,editor.asset_color(asset.KIND_SOUND),th.border
+    field,wave,middle:=ui.tone(s.gui.ctx,"field"),editor.asset_color(asset.KIND_SOUND),ui.tone(s.gui.ctx,"border")
     for x in 0..<WAVE_WIDTH {
         peak:=p.peaks[x]
         top:=int((1-peak[1])*0.5*f32(WAVE_HEIGHT-1)+0.5)
@@ -141,15 +139,15 @@ sound_wave :: proc(s:^editor.Session,p:^Sound) {
 // Play or stop, in the room the toolbar leaves the document.
 @(private)
 sound_bar :: proc(s:^editor.Session,m:^mixer.Mixer,p:^Sound) {
-    g:=s.gui;ctx:=g.ctx;th:=&ctx.theme
+    g:=s.gui;ctx:=g.ctx
     rect,found:=editor.asset_toolbar(g)
     if !found || rect.w<=0 {return}
     if ui.box(ctx,{width=ui.fixed(rect.w),height=ui.fixed(rect.h),padding={12,0,0,0},gap=8,align_y=.Center,float={to=.Surface,offset={rect.x,rect.y},layer=ui.LAYER_BAR}}) {
         ui.id_push(ctx,ui.id_derive(ctx,DOCUMENT_SCOPE,"sound_bar"))
         defer ui.id_pop(ctx)
-        if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(18),fill=th.border}) {}
+        if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(18),fill=ui.tone(s.gui.ctx,"border")}) {}
         heard:=editor.sound_heard(s,p.id)
-        if ui.button(ctx,ui.id(ctx,"play"),{icon=heard?.Stop:.Play,tip=heard?"Stop sound":"Play sound",style=.Tab,active=heard,width=26,height=th.control,disabled=m==nil || !p.read}).clicked {
+        if ui.button(ctx,ui.id(ctx,"play"),{icon=heard?.Stop:.Play,tip=heard?"Stop sound":"Play sound",variant="tab",active=heard,width=26,height=ui.metric(s.gui.ctx,"control"),disabled=m==nil || !p.read}).clicked {
             if heard {
                 editor.sound_hear_stop(s)
             } else if !editor.sound_hear(s,p.id) {
@@ -210,7 +208,6 @@ sound_document :: proc(s:^editor.Session,previews:^Previews,assets:^host.Assets,
 @(private)
 sound_facts :: proc(s:^editor.Session,p:^Sound) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     stored:="Decoded while it plays" if .Stream in p.info.flags else "Decoded whole when it loads"
     facts:=[4][2]string{
         {"Length",fmt.tprintf("%.2f s",p.seconds)},
@@ -220,9 +217,9 @@ sound_facts :: proc(s:^editor.Session,p:^Sound) {
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3,padding={8,8,10,8}}) {
         for fact in facts {
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=8,align_y=.Center}) {
-                ui.label(ctx,fact[0],th.font_small,th.text_muted,th.label_width)
-                ui.label(ctx,fact[1],th.font_small,th.text)
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center}) {
+                ui.label(ctx,fact[0],ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),ui.metric(ctx,"label_width"))
+                ui.label(ctx,fact[1],ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
             }
         }
     }
@@ -232,7 +229,6 @@ sound_facts :: proc(s:^editor.Session,p:^Sound) {
 @(private)
 sound_set_chances :: proc(s:^editor.Session,assets:^host.Assets,p:^Sound) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     total:=f32(0)
     for variation in p.held.sounds {
         if variation.sound!={} {total+=variation.weight>0?variation.weight:1}
@@ -240,11 +236,11 @@ sound_set_chances :: proc(s:^editor.Session,assets:^host.Assets,p:^Sound) {
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3,padding={8,8,10,8}}) {
         for variation in p.held.sounds {
             if variation.sound=={} {continue}
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=8,align_y=.Center}) {
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center}) {
                 ui.icon(ctx,.Sound,editor.asset_color(asset.KIND_SOUND),13)
-                ui.label(ctx,editor.asset_name_of(assets,variation.sound),th.font_small,th.text)
+                ui.label(ctx,editor.asset_name_of(assets,variation.sound),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
                 ui.spacer(ctx)
-                ui.label(ctx,fmt.tprintf("%.0f %%",100*(variation.weight>0?variation.weight:1)/total),th.font_small,th.text_muted)
+                ui.label(ctx,fmt.tprintf("%.0f %%",100*(variation.weight>0?variation.weight:1)/total),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
             }
         }
     }
@@ -255,7 +251,6 @@ sound_set_chances :: proc(s:^editor.Session,assets:^host.Assets,p:^Sound) {
 @(private)
 sound_set_rows :: proc(s:^editor.Session,p:^Sound) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     used:=0
     for variation,i in p.held.sounds {
         if variation!={} {used=i+1}
@@ -268,7 +263,7 @@ sound_set_rows :: proc(s:^editor.Session,p:^Sound) {
                 editor.held_field_row(s,variation,"sound",fmt.tprintf("Sound %d",i+1))
                 if p.held.sounds[i].sound!={} {editor.held_field_row(s,variation,"weight")}
             }
-            if i<used && ui.button(ctx,ui.id(ctx,"remove",i+1),{icon=.Cross,style=.Ghost,width=th.row,height=th.row}).clicked {removed=i}
+            if i<used && ui.button(ctx,ui.id(ctx,"remove",i+1),{icon=.Cross,variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {removed=i}
         }
     }
     if removed>=0 {
@@ -278,4 +273,6 @@ sound_set_rows :: proc(s:^editor.Session,p:^Sound) {
     ui.spacer(ctx,1,6)
     values:=editor.Held_Values{key=KEY_SOUND_SET,info=type_info_of(asset.Sound_Set_Info),value=&p.held,defaults=&p.base}
     for field in ([5]string{"volume_min","volume_max","pitch_min","pitch_max","no_repeat"}) {editor.held_field_row(s,values,field)}
+    hearing:=editor.Held_Values{key=KEY_SOUND_SET+asset.SOUND_SET_CAPACITY+1,info=type_info_of(asset.Sound_Hearing),value=&p.held.hearing,defaults=&p.base.hearing}
+    for field in ([6]string{"attenuation","min_distance","max_distance","rolloff","reverb","priority"}) {editor.held_field_row(s,hearing,field)}
 }

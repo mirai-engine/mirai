@@ -1,43 +1,133 @@
 package shapes_editor
 
+import "core:math"
+import "core:mem"
 import "core:math/linalg"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/history"
+import volume "mirai:engine/volume"
 import shapes "plugins:shapes/runtime"
 import mm "mirai:std/math"
 
-// The corners of an outline shape: a drag moves one, an insertion or a
-// removal changes one; each is one step. A move the shape refuses (edges
-// that would cross) does not apply and the corner stays where it was last
-// taken.
+// The corners of an entity: the polygon of its Shape or the points of its
+// volume.Spline, a loop when its Volume is an Outline (a lake). A drag moves
+// one, an insertion or a removal changes one; each is one step. A move the
+// polygon or the loop refuses (edges that would cross) does not apply and the
+// corner stays where it was last taken.
 
 CORNER_REACH :: f32(10) // points of the window from a corner or an edge within which the pointer takes it
 
 Corner_Op :: enum u8 {Move,Insert,Remove}
+
+// What the corners of an entity are: the polygon of its Shape, in its local
+// XY, or else the points of its Spline in its local XZ: a loop at the top of
+// its Volume when that is an Outline, else an open path.
+Corners :: struct {
+    spline:bool,
+    closed:bool,
+    top:f32, // of the Outline, over the entity
+    shape:shapes.Shape,
+    path:volume.Spline,
+}
 
 Corner_Drag :: struct {
     active:bool,
     opened:bool, // its step is open: a move applied
     entity:core.Entity,
     vertex:int,
-    shape:shapes.Shape, // as the drag leaves it
+    corners:Corners, // as the drag leaves them
 }
 
 // What the pointer is over: a corner or else an edge, by its first corner,
-// and the point of that edge nearest to it, in the local XY.
+// and the point of that edge nearest to it, in the plane of the corners.
 Corner_Hover :: struct {
     entity:core.Entity,
     vertex,edge:int, // -1: none
     at:[2]f32,
 }
 
-corner_drag_begin :: proc(drag:^Corner_Drag,e:core.Entity,vertex:int,shape:shapes.Shape) {
-    drag^={active=true,entity=e,vertex=vertex,shape=shape}
+// The corners of an entity: those of the polygon of its Shape, else those of its Spline.
+corners_of :: proc(w:core.World_Ref,e:core.Entity) -> (c:Corners,found:bool) {
+    if shape,ok:=editor.entity_get(w,e,shapes.Shape);ok && shape.loop_count>0 {return {shape=shape},true}
+    if path,ok:=editor.entity_get(w,e,volume.Spline);ok {
+        zone,_:=editor.entity_get(w,e,volume.Volume)
+        return {spline=true,closed=zone.shape==.Outline,top=zone.extents.y,path=path},true
+    }
+    return
 }
 
-// Moves the corner of the drag to a point of the local XY of the shape, in
-// the step of the drag, which the first move that applies opens.
+corner_count :: proc(c:^Corners) -> int {
+    return c.spline?min(int(c.path.count),volume.SPLINE_POINTS):min(int(c.shape.point_count),shapes.SHAPE_POINTS)
+}
+
+// A corner in the plane of the corners.
+corner_at :: proc(c:^Corners,vertex:int) -> [2]f32 {
+    if c.spline {return c.path.points[vertex].position.xz}
+    return c.shape.points[vertex]
+}
+
+// Writes the corners of an entity, in the step that is open.
+corners_write :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity,c:^Corners) -> bool {
+    if !c.spline {
+        _,info:=core.world_table(w,shapes.Shape)
+        return info!=nil && shape_write(s,w,info,e,&c.shape)
+    }
+    _,info:=core.world_table(w,volume.Spline)
+    return info!=nil && editor.field_write(s,info,{e},0,mem.ptr_to_bytes(&c.path))
+}
+
+// Moves, inserts or removes a corner: on a polygon, and on the loop of an
+// outline, as a Shape allows; on a spline a point inserted takes the width and
+// height in proportion between the ends of its edge, and a path keeps two
+// points.
+corner_apply :: proc(c:^Corners,op:Corner_Op,index:int,at:[2]f32) -> shapes.Shape_Error {
+    vertex :: proc(s:^shapes.Shape,op:Corner_Op,index:int,at:[2]f32) -> shapes.Shape_Error {
+        switch op {
+        case .Move:   return shapes.shape_vertex_move(s,index,at)
+        case .Insert: return shapes.shape_vertex_insert(s,index,at)
+        case .Remove: return shapes.shape_vertex_remove(s,index)
+        }
+        return .Invalid
+    }
+    if !c.spline {return vertex(&c.shape,op,index,at)}
+    p:=&c.path
+    count:=corner_count(c)
+    if c.closed {
+        if op==.Insert && count>=volume.SPLINE_POINTS {return .Too_Many_Points}
+        loop:=new(shapes.Shape,context.temp_allocator)
+        if loop==nil {return .Invalid}
+        loop.point_count,loop.loop_count,loop.loops[0]=u16(count),1,u16(count)
+        for q,i in p.points[:count] {loop.points[i]=q.position.xz}
+        if error:=vertex(loop,op,index,at);error!=.None {return error}
+    }
+    if !(at.x-at.x==0 && at.y-at.y==0) || index<0 || index>=count-(op==.Insert && !c.closed?1:0) {return .Invalid}
+    switch op {
+    case .Move:
+        p.points[index].position.xz=at
+    case .Insert:
+        if count>=volume.SPLINE_POINTS {return .Too_Many_Points}
+        a,b:=p.points[index],p.points[(index+1)%count]
+        along:=segment_along(a.position.xz,b.position.xz,at)
+        copy(p.points[index+2:count+1],p.points[index+1:count])
+        p.points[index+1]={linalg.lerp(a.position,b.position,along),math.lerp(a.width,b.width,along),math.lerp(a.height,b.height,along),math.lerp(a.speed,b.speed,along)}
+        p.points[index+1].position.xz=at
+        p.count+=1
+    case .Remove:
+        if count<=(c.closed?3:2) {return .Invalid}
+        copy(p.points[index:count-1],p.points[index+1:count])
+        p.points[count-1]={}
+        p.count-=1
+    }
+    return .None
+}
+
+corner_drag_begin :: proc(drag:^Corner_Drag,e:core.Entity,vertex:int,c:Corners) {
+    drag^={active=true,entity=e,vertex=vertex,corners=c}
+}
+
+// Moves the corner of the drag to a point of the plane of the corners, in the
+// step of the drag, which the first move that applies opens.
 corner_drag_move :: proc(s:^editor.Session,drag:^Corner_Drag,to:[2]f32) -> shapes.Shape_Error {
     if !drag.active {return .Invalid}
     // A call of the API or an undo closed the step of the drag: it ends there.
@@ -45,18 +135,16 @@ corner_drag_move :: proc(s:^editor.Session,drag:^Corner_Drag,to:[2]f32) -> shape
         drag^={}
         return .Invalid
     }
-    t:=drag.shape
-    if error:=shapes.shape_vertex_move(&t,drag.vertex,to);error!=.None {return error}
-    if t.points[drag.vertex]==drag.shape.points[drag.vertex] {return .None}
+    c:=drag.corners
+    if error:=corner_apply(&c,.Move,drag.vertex,to);error!=.None {return error}
+    if corner_at(&c,drag.vertex)==corner_at(&drag.corners,drag.vertex) {return .None}
     w:=editor.editing_world(s)
-    _,info:=core.world_table(w,shapes.Shape)
-    if info==nil {return .Invalid}
     if !drag.opened {
         if !history.edits_begin(s.edits,s.selection,"Move corner") {return .Invalid}
         drag.opened=true
     }
-    if !shape_write(s,w,info,drag.entity,&t) {return .Invalid}
-    drag.shape=t
+    if !corners_write(s,w,drag.entity,&c) {return .Invalid}
+    drag.corners=c
     return .None
 }
 
@@ -71,65 +159,109 @@ corner_drag_cancel :: proc(s:^editor.Session,drag:^Corner_Drag) {
     drag^={}
 }
 
-// Inserts or removes a corner of an outline shape, or moves one, in the
-// step that is open or in one of its own named label. index: the corner, or
-// the edge by its first corner for an insertion; at: in the local XY.
+// Inserts or removes a corner of an entity, or moves one, in the step that is
+// open or in one of its own named label. index: the corner, or the edge by its
+// first corner for an insertion; at: in the plane of the corners.
 corner_edit :: proc(s:^editor.Session,e:core.Entity,op:Corner_Op,index:int,at:[2]f32,label:string) -> shapes.Shape_Error {
     w:=editor.editing_world(s)
-    _,info:=core.world_table(w,shapes.Shape)
-    shape,found:=editor.entity_get(w,e,shapes.Shape)
-    if info==nil || !found || shape.kind!=.Outline {return .Invalid}
-    error:shapes.Shape_Error
-    switch op {
-    case .Move:   error=shapes.shape_vertex_move(&shape,index,at)
-    case .Insert: error=shapes.shape_vertex_insert(&shape,index,at)
-    case .Remove: error=shapes.shape_vertex_remove(&shape,index)
-    }
-    if error!=.None {return error}
+    c,found:=corners_of(w,e)
+    if !found {return .Invalid}
+    if error:=corner_apply(&c,op,index,at);error!=.None {return error}
     opened:=!s.edits.open
     if opened && !history.edits_begin(s.edits,s.selection,label) {return .Invalid}
-    written:=shape_write(s,w,info,e,&shape)
+    written:=corners_write(s,w,e,&c)
     if opened {
         if written {history.edits_end(s.edits)} else {history.edits_cancel(s.edits,w)}
     }
     return written?.None:.Invalid
 }
 
-// The corner, or else the edge, of a shape placed at t that is within
-// CORNER_REACH of a point of the window; local is the pointer on its plane.
-corner_hover :: proc(s:^editor.Session,shape:^shapes.Shape,t:mm.Transform,pointer:[2]f32,local:[2]f32,on_plane:bool) -> (hover:Corner_Hover) {
-    hover.vertex,hover.edge=-1,-1
-    count:=min(int(shape.point_count),shapes.SHAPE_POINTS)
-    best:=CORNER_REACH
-    for p,i in shape.points[:count] {
-        screen,seen:=editor.viewport_screen(s.viewport,mm.transform_point(t,{p.x,p.y,0}))
-        if d:=linalg.distance(screen,pointer);seen && d<=best {hover.vertex,best=i,d}
+// The plane the corners of an entity placed at t lie on, as a transform whose
+// local XY holds them: its local XY for a polygon; its local XZ for a spline,
+// at the top of an outline, else at the height of a point over the plane of the
+// entity, or at its plane for -1.
+corner_plane :: proc(t:mm.Transform,c:^Corners,vertex:int) -> mm.Transform {
+    if !c.spline {return t}
+    up:=c.top
+    if !c.closed {up=vertex>=0 && vertex<volume.SPLINE_POINTS?c.path.points[vertex].position.y+c.path.points[vertex].height:0}
+
+    return mm.transform_compose(t,{{0,up,0},mm.quat_axis_angle({1,0,0},0.5*math.PI),{1,1,1}})
+}
+
+// A corner of an entity placed at t, in the world.
+corner_world :: proc(t:mm.Transform,c:^Corners,vertex:int) -> [3]f32 {
+    p:=corner_at(c,vertex)
+    return mm.transform_point(corner_plane(t,c,vertex),{p.x,p.y,0})
+}
+
+// The edges of the corners, each by its first corner and the one it runs to:
+// the loops of a polygon and of an outline close, an open path does not.
+corner_edges :: proc(c:^Corners,out:^[dynamic][2]int) {
+    count:=corner_count(c)
+    if c.spline {
+        for i in 0..<count-(c.closed?0:1) {append(out,[2]int{i,(i+1)%count})}
+        return
     }
-    if hover.vertex>=0 || !on_plane {return}
-    best=CORNER_REACH
+
     first:=0
-    for l in 0..<min(int(shape.loop_count),shapes.SHAPE_LOOPS) {
-        n:=int(shape.loops[l])
+    for l in 0..<min(int(c.shape.loop_count),shapes.SHAPE_LOOPS) {
+        n:=int(c.shape.loops[l])
         if first+n>count {break}
-        for i in 0..<n {
-            a,b:=shape.points[first+i],shape.points[first+(i+1)%n]
-            sa,seen_a:=editor.viewport_screen(s.viewport,mm.transform_point(t,{a.x,a.y,0}))
-            sb,seen_b:=editor.viewport_screen(s.viewport,mm.transform_point(t,{b.x,b.y,0}))
-            if !seen_a || !seen_b {continue}
-            if d:=linalg.distance(segment_nearest(sa,sb,pointer),pointer);d<=best {
-                hover.edge,best=first+i,d
-                hover.at=segment_nearest(a,b,local)
-            }
-        }
+        for i in 0..<n {append(out,[2]int{first+i,first+(i+1)%n})}
         first+=n
+    }
+}
+
+// The corner nearest to a point of the plane of the corners, and the edge
+// nearest to it with the point of that edge nearest to it.
+corner_near :: proc(c:^Corners,p:[2]f32) -> (vertex,edge:int,at:[2]f32) {
+    vertex,edge=-1,-1
+    best:=max(f32)
+    for i in 0..<corner_count(c) {
+        if d:=linalg.length2(corner_at(c,i)-p);d<best {vertex,best=i,d}
+    }
+    best=max(f32)
+    edges:=make([dynamic][2]int,context.temp_allocator)
+    corner_edges(c,&edges)
+    for e in edges {
+        a,b:=corner_at(c,e[0]),corner_at(c,e[1])
+        q:=a+(b-a)*segment_along(a,b,p)
+        if d:=linalg.length2(q-p);d<best {edge,at,best=e[0],q,d}
     }
     return
 }
 
+// The corner, or else the edge, of an entity placed at t that is within
+// CORNER_REACH of a point of the window.
+corner_hover :: proc(s:^editor.Session,c:^Corners,t:mm.Transform,pointer:[2]f32) -> (hover:Corner_Hover) {
+    hover.vertex,hover.edge=-1,-1
+    best:=CORNER_REACH
+    for i in 0..<corner_count(c) {
+        screen,seen:=editor.viewport_screen(s.viewport,corner_world(t,c,i))
+        if d:=linalg.distance(screen,pointer);seen && d<=best {hover.vertex,best=i,d}
+    }
+    if hover.vertex>=0 {return}
+    best=CORNER_REACH
+    edges:=make([dynamic][2]int,context.temp_allocator)
+    corner_edges(c,&edges)
+    for edge in edges {
+        sa,seen_a:=editor.viewport_screen(s.viewport,corner_world(t,c,edge[0]))
+        sb,seen_b:=editor.viewport_screen(s.viewport,corner_world(t,c,edge[1]))
+        if !seen_a || !seen_b {continue}
+        along:=segment_along(sa,sb,pointer)
+        if d:=linalg.distance(sa+(sb-sa)*along,pointer);d<=best {
+            a,b:=corner_at(c,edge[0]),corner_at(c,edge[1])
+            hover.edge,hover.at,best=edge[0],a+(b-a)*along,d
+        }
+    }
+    return
+}
+
+// How far along ab the point of it nearest to p is, from 0 at a to 1 at b.
 @(private)
-segment_nearest :: proc "contextless" (a,b,p:[2]f32) -> [2]f32 {
+segment_along :: proc "contextless" (a,b,p:[2]f32) -> f32 {
     ab:=b-a
     length:=ab.x*ab.x+ab.y*ab.y
-    if !(length>0) {return a}
-    return a+ab*clamp(((p.x-a.x)*ab.x+(p.y-a.y)*ab.y)/length,0,1)
+    if !(length>0) {return 0}
+    return clamp(((p.x-a.x)*ab.x+(p.y-a.y)*ab.y)/length,0,1)
 }

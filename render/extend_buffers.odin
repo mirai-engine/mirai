@@ -86,15 +86,9 @@ pass_buffer :: proc(s: ^Stage_Pass, slot: u32, desc: Extension_Buffer_Desc) -> (
 	return true, made
 }
 
-// Makes what the dispatches before wrote in a buffer of the world readable
-// by the draws of the next pass of the stage, or as their indirect
-// arguments: before pass_gbuffer_begin or pass_blend_begin, which take no
-// barriers. False for a buffer the world does not have with that size.
-pass_buffer_ready :: proc(s: ^Stage_Pass, desc: Extension_Buffer_Desc, indirect := false) -> bool {
-	entry := extension_buffer_find(s.pass.r, s.world, desc)
-	if entry == nil {return false}
-	rhi.cmd_barrier_buffer(s.pass.cmd, entry.buffer, .Indirect_Read if indirect else .Shader_Read)
-	return true
+// Whether the world holds a buffer under a description, with that size.
+pass_buffer_held :: proc(s: ^Stage_Pass, desc: Extension_Buffer_Desc) -> bool {
+	return extension_buffer_find(s.pass.r, s.world, desc) != nil
 }
 
 // Copies bytes into a buffer of the world at offset, through the memory of
@@ -182,8 +176,6 @@ pass_lights :: proc(s: ^Stage_Pass, lights, nodes: u32) -> (room: Pass_Lights, o
 	region := scene.light_region
 	if s.stage != .Simulate || region.lights == 0 || lights > SLOT_PASS9 - SLOT_PASS0 || nodes > SLOT_PASS9 - SLOT_PASS0 || scene.light_buffer == 0 || scene.light_tree_buffer == 0 {return}
 	cmd := s.pass.cmd
-	rhi.cmd_barrier_buffer(cmd, scene.light_buffer, .Shader_Write)
-	rhi.cmd_barrier_buffer(cmd, scene.light_tree_buffer, .Shader_Write)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0 + lights, scene.light_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0 + nodes, scene.light_tree_buffer)
 	scene.light_region_written = true
@@ -206,8 +198,7 @@ pass_indices :: proc(s: ^Stage_Pass, indices: Pass_Indices) {
 
 // Draws with the arguments of an indexed draw (index count, instance count,
 // first index, vertex offset, first instance) a buffer of the world holds at
-// offset, as a dispatch before wrote them; pass_buffer_ready with indirect
-// made them readable before the pass began.
+// offset, as a dispatch before wrote them.
 pass_draw_indexed_indirect :: proc(s: ^Stage_Pass, desc: Extension_Buffer_Desc, offset: u64) {
 	if entry := extension_buffer_find(s.pass.r, s.world, desc); entry != nil {rhi.cmd_draw_indexed_indirect(s.pass.cmd, entry.buffer, offset, 1, size_of(rhi.Draw_Indexed_Indirect))}
 }

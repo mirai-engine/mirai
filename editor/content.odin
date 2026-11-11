@@ -10,6 +10,7 @@ import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The families of the kinds the filters of the browser take: those of the
@@ -20,9 +21,10 @@ Content_Categories :: bit_set[Content_Category;u16]
 CONTENT_STRIP_CATEGORIES :: [?]Content_Category{.Prefab,.Mesh,.Material,.Scene,.Plugin}
 CONTENT_MENU_CATEGORIES :: [?]Content_Category{.Texture,.Animation,.Sound,.Ui}
 CONTENT_CATEGORY_LABELS :: [Content_Category]string{.Prefab="Prefab",.Mesh="Model",.Material="Material",.Scene="Scene",.Plugin="Plugins",.Texture="Texture",.Animation="Animation",.Sound="Sound",.Ui="UI"}
-// The kind whose glyph and color a filter carries; the Plugins filter has its own.
-CONTENT_CATEGORY_KINDS :: [Content_Category]asset.Fourcc{.Prefab=asset.KIND_PREFAB,.Mesh=asset.KIND_MESH,.Material=asset.KIND_MATERIAL,.Scene=asset.KIND_SCENE,.Plugin=0,.Texture=asset.KIND_TEXTURE,.Animation=asset.KIND_ANIMATION,.Sound=asset.KIND_SOUND,.Ui=asset.KIND_UI}
+// The kind whose glyph and color a filter carries; the Plugins and Prefab filters have their own.
+CONTENT_CATEGORY_KINDS :: [Content_Category]asset.Fourcc{.Prefab=0,.Mesh=asset.KIND_MESH,.Material=asset.KIND_MATERIAL,.Scene=asset.KIND_SCENE,.Plugin=0,.Texture=asset.KIND_TEXTURE,.Animation=asset.KIND_ANIMATION,.Sound=asset.KIND_SOUND,.Ui=asset.KIND_UI}
 CONTENT_PLUGIN_COLOR :: ui.Color{214,107,255,255} // of every kind of a plugin
+PREFAB_ASSET_COLOR :: ui.Color{63,126,255,255}    // of a .scene whose header says Prefab, as Unreal draws a Blueprint
 
 CONTENT_ROW :: f32(28)        // a row of the list
 CONTENT_CONTROL :: f32(28)    // the row of the search and its buttons
@@ -82,11 +84,8 @@ CONTENT_USERS_GROUP :: u64(6)
 // line under its thumbnail, its filter and its fields in Details.
 asset_color :: proc "contextless" (kind:asset.Fourcc) -> ui.Color {
     switch kind {
-    case asset.KIND_PREFAB:        return {63,126,255,255}  // Blueprint
     case asset.KIND_MESH:          return {0,255,255,255}   // Static Mesh
     case asset.KIND_SKELETON:      return {105,181,205,255} // Skeleton
-    case asset.KIND_FRACTURE:      return {180,120,110,255} // Geometry Collection
-    case asset.KIND_PHYSICS_CACHE: return {255,127,40,255}  // Chaos Cache Collection
     case asset.KIND_MATERIAL:      return {64,192,64,255}   // Material
     case asset.KIND_TEXTURE:       return {192,64,64,255}   // Texture
     case asset.KIND_ANIMATION:     return {80,123,72,255}   // Animation Sequence
@@ -108,11 +107,30 @@ asset_kind_color :: proc(s:^Session,kind:asset.Fourcc) -> ui.Color {
     return asset_color(kind)
 }
 
-// The color of an asset of the registry: that of its type, and that of a
-// Skeletal Mesh for a mesh on a skeleton.
+// The color of an asset of the registry: that of its type, that of a
+// Skeletal Mesh for a mesh on a skeleton, and its own for a prefab.
 asset_file_color :: proc(s:^Session,file:^asset.Registry_File) -> ui.Color {
     if file.kind==asset.KIND_MESH && asset.registry_skeleton(&s.app.assets.registry,file)!={} {return {241,163,241,255}}
+    if asset.registry_prefab(file) {return PREFAB_ASSET_COLOR}
     return asset_kind_color(s,file.kind)
+}
+
+// The icon of an asset of the registry, with the color of its type.
+asset_file_icon :: proc(s:^Session,file:^asset.Registry_File) -> (icon:ui.Icon,color:ui.Color) {
+    if asset.registry_prefab(file) {return .Prefab,PREFAB_ASSET_COLOR}
+    return asset_icon(s,file.kind)
+}
+
+// The type of an asset of the registry as a tooltip says it.
+asset_file_label :: proc(s:^Session,file:^asset.Registry_File) -> string {
+    return "Prefab" if asset.registry_prefab(file) else asset_kind_label(s,file.kind)
+}
+
+// The family of an asset of the registry, as the filters of the browser take it.
+content_file_category :: proc "contextless" (file:^asset.Registry_File) -> Content_Category {
+    if asset.registry_prefab(file) {return .Prefab}
+    category,_:=content_category(file.kind)
+    return category
 }
 
 // The icon of a kind of the engine or of a plugin, with its color.
@@ -125,7 +143,6 @@ asset_icon :: proc(s:^Session,kind:asset.Fourcc) -> (icon:ui.Icon,color:ui.Color
 // The icon of a kind of the engine.
 asset_engine_icon :: proc "contextless" (kind:asset.Fourcc) -> ui.Icon {
     switch kind {
-    case asset.KIND_PREFAB:        return .Prefab
     case asset.KIND_MESH:          return .Mesh
     case asset.KIND_MATERIAL:      return .Sphere
     case asset.KIND_TEXTURE:       return .Texture
@@ -134,8 +151,6 @@ asset_engine_icon :: proc "contextless" (kind:asset.Fourcc) -> ui.Icon {
     case asset.KIND_SOUND,asset.KIND_SOUND_SET: return .Sound
     case asset.KIND_SKELETON:      return .Axis
     case asset.KIND_UI:            return .Layers
-    case asset.KIND_FRACTURE:      return .Collider
-    case asset.KIND_PHYSICS_CACHE: return .History
     case asset.KIND_FONT:          return .Edit
     case asset.KIND_STRINGS:       return .Split
     case asset.KIND_PROMPTS:       return .Target
@@ -152,7 +167,6 @@ asset_kind_label :: proc(s:^Session,kind:asset.Fourcc) -> string {
 
 asset_type_label :: proc(kind:asset.Fourcc) -> string {
     switch kind {
-    case asset.KIND_PREFAB:        return "Prefab"
     case asset.KIND_MESH:          return "Mesh"
     case asset.KIND_MATERIAL:      return "Material"
     case asset.KIND_TEXTURE:       return "Texture"
@@ -162,8 +176,6 @@ asset_type_label :: proc(kind:asset.Fourcc) -> string {
     case asset.KIND_SOUND:         return "Sound"
     case asset.KIND_SOUND_SET:     return "Sound set"
     case asset.KIND_UI:            return "UI"
-    case asset.KIND_FRACTURE:      return "Fracture"
-    case asset.KIND_PHYSICS_CACHE: return "Physics cache"
     case asset.KIND_FONT:          return "Font"
     case asset.KIND_STRINGS:       return "Texts"
     case asset.KIND_PROMPTS:       return "Prompts"
@@ -175,8 +187,7 @@ asset_type_label :: proc(kind:asset.Fourcc) -> string {
 // The family of a kind; engine is false for a kind of a plugin.
 content_category :: proc "contextless" (kind:asset.Fourcc) -> (category:Content_Category,engine:bool) {
     switch kind {
-    case asset.KIND_PREFAB:   return .Prefab,true
-    case asset.KIND_MESH,asset.KIND_SKELETON,asset.KIND_FRACTURE,asset.KIND_PHYSICS_CACHE: return .Mesh,true
+    case asset.KIND_MESH,asset.KIND_SKELETON: return .Mesh,true
     case asset.KIND_MATERIAL: return .Material,true
     case asset.KIND_TEXTURE:  return .Texture,true
     case asset.KIND_ANIMATION:return .Animation,true
@@ -548,12 +559,10 @@ content_clip_found :: proc(name,filter:string) -> bool {
     return false
 }
 
-// Whether the filters of kinds take a kind.
+// Whether the filters of kinds take a file.
 @(private)
-content_kind_taken :: proc(c:^Content,kind:asset.Fourcc) -> bool {
-    if c.categories=={} {return true}
-    category,_:=content_category(kind)
-    return category in c.categories
+content_file_taken :: proc(c:^Content,file:^asset.Registry_File) -> bool {
+    return c.categories=={} || content_file_category(file) in c.categories
 }
 
 // Whether the browser lists a file: an asset of a kind of the engine, or of a
@@ -585,7 +594,7 @@ content_cover_of :: proc(registry:^asset.Registry,prefix:string) -> i32 {
 // Whether the browser lists a file under the filters of kinds.
 @(private)
 content_listed :: proc(c:^Content,file:^asset.Registry_File,opened:[]asset.Fourcc) -> bool {
-    return content_shown(file,opened) && content_kind_taken(c,file.kind)
+    return content_shown(file,opened) && content_file_taken(c,file)
 }
 
 // Whether a file is a part of an import: its header names an owner
@@ -697,10 +706,10 @@ content_owned :: proc(list:[]Content_Part,owner:base.Asset_Id) -> []Content_Part
 // prefab that needs another is read, once per change of the registry.
 @(private)
 content_variant_base :: proc(registry:^asset.Registry,types:^asset.Types,file:^asset.Registry_File) -> base.Asset_Id {
-    if types==nil || file.kind!=asset.KIND_PREFAB || file.state!=.Asset {return {}}
+    if types==nil || !asset.registry_prefab(file) {return {}}
     nests:=false
     for id in asset.registry_dependencies(registry,file) {
-        if dependency,found:=asset.registry_find(registry,id);found && dependency.kind==asset.KIND_PREFAB {nests=true;break}
+        if dependency,found:=asset.registry_find(registry,id);found && asset.registry_prefab(dependency) {nests=true;break}
     }
     if !nests {return {}}
     scene:asset.Scene
@@ -709,10 +718,10 @@ content_variant_base :: proc(registry:^asset.Registry,types:^asset.Types,file:^a
     return base_id
 }
 
-// Whether an asset is used by another. A scene is never unused: nothing holds it.
+// Whether an asset is used by another. A scene that is no prefab is never unused: nothing holds it.
 @(private)
 content_referenced :: proc(c:^Content,file:^asset.Registry_File) -> bool {
-    if file.kind==asset.KIND_SCENE {return true}
+    if file.kind==asset.KIND_SCENE && !asset.registry_prefab(file) {return true}
     _,found:=slice.binary_search_by(c.referenced[:],file.id,proc(a,b:base.Asset_Id) -> slice.Ordering {
         if a==b {return .Equal}
         return .Less if a[0]<b[0] || a[0]==b[0] && a[1]<b[1] else .Greater
@@ -782,7 +791,7 @@ content_matches :: proc(c:^Content,b:^Content_Build,file:^asset.Registry_File,ma
     if b.filter=="" {
         if marked || c.selection_only || c.view.show_parts || !content_part(b.registry,file) {return true}
         owner,_:=asset.registry_find(b.registry,file.owner)
-        return !content_kind_taken(c,owner.kind)
+        return !content_file_taken(c,owner)
     }
     return content_score(c,file,b.filter)>=0
 }
@@ -803,7 +812,7 @@ content_cards_add :: proc(c:^Content,b:^Content_Build,files:[]i32) {
         append(&c.cards,Content_Card{file=index,name=asset_name(file.path)})
         open:=slice.contains(c.unfolded[:],file.id)
         // A prefab opens to its variants; the parts of its import show in their folders.
-        parts:=content_owned(c.variants[:],file.id) if file.kind==asset.KIND_PREFAB else content_parts_of(c,file.id)
+        parts:=content_owned(c.variants[:],file.id) if asset.registry_prefab(file) else content_parts_of(c,file.id)
         if len(parts)>0 {
             c.cards[at].holds,c.cards[at].open=true,open
             if open {
@@ -1171,7 +1180,7 @@ content_reveal_open :: proc(c:^Content,registry:^asset.Registry) {
     }
     if content_part(registry,file) && !c.view.show_parts {
         // A prefab opens to its variants, not its parts: they show in their folder.
-        if owner,_:=asset.registry_find(registry,file.owner);owner.kind==asset.KIND_PREFAB {
+        if owner,_:=asset.registry_find(registry,file.owner);asset.registry_prefab(owner) {
             c.view.show_parts=true
         } else {
             file=owner
@@ -1309,7 +1318,8 @@ content_create_id :: proc(g:^Editor_Ui) -> ui.Id {return shell_id(g,"content_cre
 
 @(private)
 content_create_icon :: proc(s:^Session,kind:asset.Fourcc) -> (icon:ui.Icon,color:ui.Color) {
-    if kind==ASSET_CREATE_FOLDER {return ui.icon_user(u8(User_Icon.Folder)),s.gui.ctx.theme.text_muted}
+    if kind==ASSET_CREATE_FOLDER {return ui.icon_user(u8(User_Icon.Folder)),ui.tone(s.gui.ctx,"text_muted")}
+    if kind==ASSET_CREATE_PREFAB {return .Prefab,PREFAB_ASSET_COLOR}
     return asset_icon(s,kind)
 }
 
@@ -1328,7 +1338,7 @@ content_create_open :: proc(s:^Session,folder:string,anchor:ui.Rect,on_folder:=f
 content_create_button :: proc(s:^Session,id:ui.Id,height:f32=22) {
     ctx:=s.gui.ctx
     popup:=content_create_id(s.gui)
-    if ui.button(ctx,id,{icon=.Plus,icon_color=ctx.theme.text_muted,tip="Create",style=.Toggle,width=height,height=height,disabled=s.content==nil || files_registry(s)==nil,active=ui.popup_is_open(ctx,popup)}).clicked && !ui.popup_is_open(ctx,popup) {
+    if ui.button(ctx,id,{icon=.Plus,icon_color=ui.tone(ctx,"text_muted"),tip="Create",variant="toggle",width=height,height=height,disabled=s.content==nil || files_registry(s)==nil,active=ui.popup_is_open(ctx,popup)}).clicked && !ui.popup_is_open(ctx,popup) {
         anchor,_:=ui.widget_rect(ctx,id)
         content_create_open(s,string(s.content.place[:s.content.place_length]),anchor)
     }
@@ -1371,8 +1381,8 @@ content_create_menu :: proc(s:^Session) {
         if c.create_on_folder {
             ui.menu_separator(ctx)
             off:=asset_create_refusal(s)!=""
-            if ui.menu_item(ctx,ui.id(ctx,"rename"),"Rename",{icon=action_icon(.Rename),disabled=off}) {content_rename_begin(s,{},folder)}
-            if ui.menu_item(ctx,ui.id(ctx,"duplicate"),"Duplicate",{icon=action_icon(.Duplicate),disabled=off}) {
+            if ui.menu_item(ctx,ui.id(ctx,"rename"),command_label(s,"asset_rename"),{icon=command_icon(s,"asset_rename"),disabled=off}) {content_rename_begin(s,{},folder)}
+            if ui.menu_item(ctx,ui.id(ctx,"duplicate"),command_label(s,"asset_duplicate"),{icon=command_icon(s,"asset_duplicate"),disabled=off}) {
                 if _,message:=asset_folder_duplicate(s,folder);message!="" {notify(s,message)}
             }
             if ui.submenu(ctx,ui.id(ctx,"move"),"Move to",{icon=ui.icon_user(u8(User_Icon.Folder)),disabled=off}) {content_move_items(s,{},folder)}
@@ -1399,7 +1409,7 @@ content_move_items :: proc(s:^Session,id:base.Asset_Id,from:string) {
         if folder[0]!='.' && !content_mounted(r,folder) {append(&folders,folder[:len(folder)-1])}
     }
     for folder,i in folders {
-        if ui.menu_item(ctx,ui.id(ctx,"move",i+1),folder if folder!="" else "Assets",{icon=ui.icon_user(u8(User_Icon.Folder)),icon_color=ctx.theme.text_muted,disabled=folder==here || from!="" && (folder==from || asset_path_inside(folder,from))}) {
+        if ui.menu_item(ctx,ui.id(ctx,"move",i+1),folder if folder!="" else "Assets",{icon=ui.icon_user(u8(User_Icon.Folder)),icon_color=ui.tone(ctx,"text_muted"),disabled=folder==here || from!="" && (folder==from || asset_path_inside(folder,from))}) {
             message:string
             if id!={} {_,message=asset_move(s,id,folder,"")} else {_,message=asset_folder_move(s,from,folder,"")}
             if message!="" {notify(s,message)}
@@ -1589,7 +1599,7 @@ content_settings_popup :: proc(g:^Editor_Ui) -> ui.Id {return shell_id(g,"conten
 content_settings_button :: proc(s:^Session,id:ui.Id,height:f32=22) {
     ctx:=s.gui.ctx
     popup:=content_settings_popup(s.gui)
-    if ui.button(ctx,id,{icon=ui.icon_user(u8(User_Icon.Gear)),icon_color=ctx.theme.text_muted,style=.Toggle,width=height,height=height,disabled=s.content==nil,active=ui.popup_is_open(ctx,popup)}).clicked && !ui.popup_is_open(ctx,popup) {
+    if ui.button(ctx,id,{icon=ui.icon_user(u8(User_Icon.Gear)),icon_color=ui.tone(ctx,"text_muted"),variant="toggle",width=height,height=height,disabled=s.content==nil,active=ui.popup_is_open(ctx,popup)}).clicked && !ui.popup_is_open(ctx,popup) {
         anchor,_:=ui.widget_rect(ctx,id)
         ui.popup_open(ctx,popup,anchor)
     }
@@ -1601,16 +1611,15 @@ content_settings_build :: proc(s:^Session,content_view:bool) {
     c:=s.content
     if c==nil {return}
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     popup:=content_settings_popup(s.gui)
     if ui.popup(ctx,popup,{width=230}) {
         ui.id_push(ctx,popup)
         if content_view {
             ui.menu_header(ctx,"Layout")
-            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding=ui.padding_all(2),gap=2,fill=th.field,radius=4}) {
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding=ui.padding_all(2),gap=2,fill=ui.tone(ctx,"field"),radius=4}) {
                 labels:=[Content_Arrangement]string{.Names="Names",.Tabs="Tabs",.Cards="Cards"}
                 for arrangement in Content_Arrangement {
-                    if !ui.button(ctx,ui.id(ctx,"layout",int(arrangement)+1),{label=labels[arrangement],style=.Tab,active=c.view.arrangement==arrangement,width=-1,height=24,size=th.font_small,padding=4,center=true}).clicked {continue}
+                    if !ui.button(ctx,ui.id(ctx,"layout",int(arrangement)+1),{label=labels[arrangement],variant="tab",active=c.view.arrangement==arrangement,width=-1,height=24,size=ui.metric(ctx,"font_small"),padding=4,center=true}).clicked {continue}
                     c.view.arrangement=arrangement
                     c.scroll=0
                 }
@@ -1625,10 +1634,10 @@ content_settings_build :: proc(s:^Session,content_view:bool) {
             }
         } else {
             // The browser has its own slider, under its search.
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control),padding={6,0,6,0},gap=7,align_y=.Center}) {
-                ui.label(ctx,"Size",th.font_small,th.text,32)
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),padding={6,0,6,0},gap=7,align_y=.Center}) {
+                ui.label(ctx,"Size",ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),32)
                 level:=f64(content_level(c.view))
-                if ui.slider_field(ctx,ui.id(ctx,"size"),&level,{min=0,max=CONTENT_LEVELS,has_min=true,has_max=true,integer=true,height=22}).changed {
+                if kit.slider_field(ctx,ui.id(ctx,"size"),&level,{min=0,max=CONTENT_LEVELS,has_min=true,has_max=true,integer=true,height=22}).changed {
                     content_level_set(&c.view,int(level))
                     c.scroll=0
                 }
@@ -1638,7 +1647,7 @@ content_settings_build :: proc(s:^Session,content_view:bool) {
         if ui.menu_item(ctx,ui.id(ctx,"reload"),"Refresh assets",{icon=.Refresh,disabled=s.app.assets==nil}) {
             if asset.registry_scan(&s.app.assets.registry)!=.None {notify(s,"The asset folder could not be read")}
         }
-        if ui.menu_item(ctx,ui.id(ctx,"import"),"Import",{icon=.Import,disabled=action_state(s,.Import).disabled}) {action_run(s,.Import)}
+        command_menu_item(s,ui.id(ctx,"import"),"import","Import")
         ui.id_pop(ctx)
     }
 }
@@ -1646,15 +1655,14 @@ content_settings_build :: proc(s:^Session,content_view:bool) {
 @(private)
 // points: the side it is shown at. clip: of an animation, from 1; 0: the asset.
 content_preview :: proc(s:^Session,file:^asset.Registry_File,points:f32,clip:u32=0) -> (icon:ui.Icon,color:ui.Color,quad:ui.Quad) {
-    icon,color=asset_icon(s,file.kind)
+    icon,color=asset_file_icon(s,file)
     a:=s.app.assets
     if a.renderer==nil {return}
     switch file.kind {
     case asset.KIND_MATERIAL:  quad=ui.quad_whole(host.UI_QUAD_MATERIAL_PREVIEW,host.assets_material_row(a,file.id))
     case asset.KIND_MESH:      quad=preview_geometry(s,.None,file.id,points)
     case asset.KIND_TEXTURE:   quad=texture_quad(s,file.id)
-    case asset.KIND_PREFAB:    quad=preview_document(s,file.id,points)
-    case asset.KIND_SCENE:     quad=preview_scene(s,file.id,points)
+    case asset.KIND_SCENE:     quad=preview_document(s,file.id,points) if asset.registry_prefab(file) else preview_scene(s,file.id,points)
     case:                      quad=preview_provided(s,file,clip,points)
     }
     if quad.kind!=.Solid {icon=.None}
@@ -1667,7 +1675,6 @@ content_preview :: proc(s:^Session,file:^asset.Registry_File,points:f32,clip:u32
 // click on it does is the caller's.
 asset_list_row_begin :: proc(s:^Session,id:ui.Id,value:base.Asset_Id,kind:asset.Fourcc,label:string,selected:bool) -> (it:ui.Interaction) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     it=ui.interact(ctx,id,{.Focusable})
     file:^asset.Registry_File
     if value!={} && s.app!=nil && s.app.assets!=nil {file,_=asset.registry_find(&s.app.assets.registry,value)}
@@ -1679,7 +1686,7 @@ asset_list_row_begin :: proc(s:^Session,id:ui.Id,value:base.Asset_Id,kind:asset.
         icon,_:=asset_icon(s,kind)
         asset_frame(s,20,color,CONTENT_FRAME_EDGE,1,{},icon,color,kind)
     }
-    ui.label(ctx,label,th.font,th.text,0,font=ui.FONT_MEDIUM if selected else 0)
+    ui.label(ctx,label,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_MEDIUM if selected else 0)
     return
 }
 
@@ -1688,9 +1695,8 @@ asset_list_row_begin :: proc(s:^Session,id:ui.Id,value:base.Asset_Id,kind:asset.
 // the keyboard, the only light one, while the keys moved to it.
 @(private)
 asset_row_box :: proc(ctx:^ui.Context,id:ui.Id,indent:f32,selected,hot,keyboard:bool) -> ui.Box {
-    th:=&ctx.theme
-    fill:=th.accent_soft if selected else (th.field if hot else {})
-    return {id=id,width=ui.GROW,height=ui.fixed(CONTENT_ROW),padding={indent,3,4,3},gap=7,align_y=.Center,fill=fill,stroke=th.text if keyboard else {},stroke_width=CONTENT_RING_WIDTH,radius=3}
+    fill:=ui.tone(ctx,"accent_soft") if selected else (ui.tone(ctx,"field") if hot else {})
+    return {id=id,width=ui.GROW,height=ui.fixed(CONTENT_ROW),padding={indent,3,4,3},gap=7,align_y=.Center,fill=fill,stroke=ui.tone(ctx,"text") if keyboard else {},stroke_width=CONTENT_RING_WIDTH,radius=3}
 }
 
 // Whether the keys moved to a card or a row: it shows the ring of the
@@ -1702,8 +1708,7 @@ content_keyboard :: proc(ctx:^ui.Context,it:ui.Interaction) -> bool {return it.f
 // of the keyboard while the keys moved to it.
 @(private)
 asset_card_box :: proc(ctx:^ui.Context,id:ui.Id,view:Content_View,cell:f32,selected,keyboard:bool,names:u8=2) -> ui.Box {
-    th:=&ctx.theme
-    return {id=id,width=ui.fixed(cell),height=ui.fixed(content_card_height(view,cell,names)),direction=.Column,gap=CONTENT_NAME_GAP,fill=th.accent_soft if selected else {},stroke=th.text if keyboard else {},stroke_width=CONTENT_RING_WIDTH}
+    return {id=id,width=ui.fixed(cell),height=ui.fixed(content_card_height(view,cell,names)),direction=.Column,gap=CONTENT_NAME_GAP,fill=ui.tone(ctx,"accent_soft") if selected else {},stroke=ui.tone(ctx,"text") if keyboard else {},stroke_width=CONTENT_RING_WIDTH}
 }
 asset_list_row_end :: proc(s:^Session) {ui.box_end(s.gui.ctx,{})}
 
@@ -1728,7 +1733,6 @@ asset_card_begin :: proc(s:^Session,id:ui.Id,value:base.Asset_Id,kind:asset.Four
     view:=asset_cards_view(s)
     if view.mode==.List {return asset_list_row_begin(s,id,value,kind,label,selected)}
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     it=ui.interact(ctx,id,{.Focusable})
     file:^asset.Registry_File
     if value!={} && s.app!=nil && s.app.assets!=nil {file,_=asset.registry_find(&s.app.assets.registry,value)}
@@ -1738,7 +1742,7 @@ asset_card_begin :: proc(s:^Session,id:ui.Id,value:base.Asset_Id,kind:asset.Four
     } else {
         color:=asset_kind_color(s,kind)
         icon,_:=asset_icon(s,kind)
-        edge,width:=asset_frame_edge(th,it.hot,selected)
+        edge,width:=asset_frame_edge(ctx,it.hot,selected)
         asset_frame(s,cell,color,edge,width,{},icon,color,kind)
     }
     names:=content_shows_names(view)
@@ -1760,26 +1764,19 @@ asset_card_float :: proc(s:^Session) -> ui.Float {
 // cut and the pointer on the cell shows it whole.
 @(private)
 content_name_cut :: proc(ctx:^ui.Context,name:string,cell:f32,names:u8=2) -> bool {
-    lines:=ui.text_lines(&ctx.font,name,ctx.theme.font_small,cell-2,.Words)
-    count:=0
-    for {
-        _,_,ok:=ui.text_lines_next(&lines)
-        if !ok {break}
-        count+=1
-        if count>int(names if names>0 else 2) {return true}
-    }
-    return false
+    size:=ui.metric(ctx,"font_small")
+    lines:=f32(names if names>0 else 2)*CONTENT_NAME_LINE
+    return ui.text_height(ctx,name,{size=size,wrap=.Words,line_height=CONTENT_NAME_LINE/size},cell-2)>lines+0.01
 }
 
 // The name under the thumbnail of a cell, in up to names lines as wide as it,
 // the last ending in an ellipsis when more does not fit.
 @(private)
 content_name :: proc(ctx:^ui.Context,name:string,selected:bool,cell:f32,names:u8=2,ink:ui.Color={}) {
-    th:=&ctx.theme
     color:=ink
-    if color=={} {color=th.text if selected else th.text_muted}
+    if color=={} {color=ui.tone(ctx,"text") if selected else ui.tone(ctx,"text_muted")}
     if ui.box(ctx,{width=ui.fixed(cell),height=ui.fixed(f32(names if names>0 else 2)*CONTENT_NAME_LINE),padding={1,0,1,0}}) {
-        style:=ui.Text_Style{font=ui.FONT_MEDIUM if selected else 0,size=th.font_small,color=color,wrap=.Words,ellipsis=true,line_height=CONTENT_NAME_LINE/th.font_small}
+        style:=ui.Text_Style{font=ui.FONT_MEDIUM if selected else 0,size=ui.metric(ctx,"font_small"),color=color,wrap=.Words,ellipsis=true,line_height=CONTENT_NAME_LINE/ui.metric(ctx,"font_small")}
         ui.text(ctx,name,style,ui.GROW,ui.GROW)
     }
 }
@@ -1787,9 +1784,9 @@ content_name :: proc(ctx:^ui.Context,name:string,selected:bool,cell:f32,names:u8
 // The border of a thumbnail and its width: faint, lighter under the
 // pointer, and violet while it is selected.
 @(private)
-asset_frame_edge :: proc(th:^ui.Theme,hot,selected:bool) -> (ui.Color,f32) {
-    if selected {return th.toggle_on_stroke,1}
-    return th.border if hot else CONTENT_FRAME_EDGE,1
+asset_frame_edge :: proc(ctx:^ui.Context,hot,selected:bool) -> (ui.Color,f32) {
+    if selected {return ui.tone(ctx,"toggle_on_stroke"),1}
+    return ui.tone(ctx,"border") if hot else CONTENT_FRAME_EDGE,1
 }
 
 // The thumbnail of an asset of a card, a row or a field: its preview over a
@@ -1799,12 +1796,11 @@ asset_frame_edge :: proc(th:^ui.Theme,hot,selected:bool) -> (ui.Color,f32) {
 @(private)
 asset_thumbnail :: proc(s:^Session,file:^asset.Registry_File,side:f32,hot:bool=false,clip:u32=0,selected:bool=false) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     color:=asset_file_color(s,file)
     icon,_,quad:=content_preview(s,file,side,clip)
     if clip>0 && quad.kind==.Solid {icon=.Play}
-    edge,width:=asset_frame_edge(th,hot,selected)
-    asset_frame(s,side,color,edge,width,quad,icon,th.accent if clip>0 else color,file.kind)
+    edge,width:=asset_frame_edge(ctx,hot,selected)
+    asset_frame(s,side,color,edge,width,quad,icon,ui.tone(ctx,"accent") if clip>0 else color,file.kind)
 }
 
 // The thumbnail of a cell of the browser: square at its corners, with no
@@ -1813,19 +1809,18 @@ asset_thumbnail :: proc(s:^Session,file:^asset.Registry_File,side:f32,hot:bool=f
 @(private)
 content_thumbnail :: proc(s:^Session,file:^asset.Registry_File,side:f32,hot:bool,clip:u32,selected,armed,first:bool) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     color:=asset_file_color(s,file)
     icon,_,quad:=content_preview(s,file,side,clip)
     if clip>0 && quad.kind==.Solid {icon=.Play}
     edge:ui.Color
     width:=f32(1)
     switch {
-    case armed:    edge,width=th.text,2
-    case selected: edge=th.toggle_on_stroke
-    case first:    edge=th.text_muted
-    case hot:      edge=th.border
+    case armed:    edge,width=ui.tone(ctx,"text"),2
+    case selected: edge=ui.tone(ctx,"toggle_on_stroke")
+    case first:    edge=ui.tone(ctx,"text_muted")
+    case hot:      edge=ui.tone(ctx,"border")
     }
-    asset_frame(s,side,color,edge,width,quad,icon,th.accent if clip>0 else color,file.kind,radius=0)
+    asset_frame(s,side,color,edge,width,quad,icon,ui.tone(ctx,"accent") if clip>0 else color,file.kind,radius=0)
 }
 
 // The clip a card of a clip is in its animation, from 1; 0 for the card of a file.
@@ -1863,7 +1858,7 @@ content_star :: proc(s:^Session,id:ui.Id,asset_id:base.Asset_Id,favorite:bool,fl
     ctx:=s.gui.ctx
     side:=f32(13) if small else 18
     if ui.box(ctx,{width=ui.FIT,height=ui.FIT,float=float,fill={20,22,27,217} if float.to!=.None else {},radius=3}) {
-        if ui.button(ctx,id,{icon=ui.icon_user(u8(User_Icon.Star_Filled if favorite else User_Icon.Star)),icon_color=STAR_COLOR if favorite else ctx.theme.text_muted,style=.Ghost,width=side,height=side,icon_size=side*0.66,padding=-1,center=true}).clicked {
+        if ui.button(ctx,id,{icon=ui.icon_user(u8(User_Icon.Star_Filled if favorite else User_Icon.Star)),icon_color=STAR_COLOR if favorite else ui.tone(ctx,"text_muted"),variant="ghost",width=side,height=side,icon_size=side*0.66,padding=-1,center=true}).clicked {
             content_favorite_toggle(s.content,asset_id)
         }
     }
@@ -1874,7 +1869,7 @@ content_star :: proc(s:^Session,id:ui.Id,asset_id:base.Asset_Id,favorite:bool,fl
 content_expander :: proc(s:^Session,card:Content_Card,key:u64,float:ui.Float) {
     ctx:=s.gui.ctx
     if ui.box(ctx,{width=ui.FIT,height=ui.FIT,float=float,fill={20,22,27,217} if float.to!=.None else {},radius=3}) {
-        if ui.button(ctx,ui.id(ctx,"content_unfold",int(key)),{icon=.Chevron_Down if card.open else .Chevron_Right,icon_color=ctx.theme.text_muted,style=.Ghost,width=16,height=22,icon_size=12}).clicked {
+        if ui.button(ctx,ui.id(ctx,"content_unfold",int(key)),{icon=.Chevron_Down if card.open else .Chevron_Right,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=16,height=22,icon_size=12}).clicked {
             content_unfold(s.content,s.app.assets.registry.files[card.file].id)
         }
     }
@@ -1912,10 +1907,10 @@ content_item_tip :: proc(s:^Session,card:Content_Card,file:^asset.Registry_File)
     if card.clip>0 {return "Clip"}
     if content_part(registry,file) {
         owner,_:=asset.registry_find(registry,file.owner)
-        return fmt.tprintf("%s, in %s",asset_kind_label(s,file.kind),asset_name(owner.path))
+        return fmt.tprintf("%s, in %s",asset_file_label(s,file),asset_name(owner.path))
     }
-    if agent:=ai_asset_mark(s,file.path);agent!=nil {return fmt.tprintf("%s · %s",asset_kind_label(s,file.kind),ai_chat_title(base.text_get(agent.title[:])))}
-    return asset_kind_label(s,file.kind)
+    if agent:=ai_asset_mark(s,file.path);agent!=nil {return fmt.tprintf("%s · %s",asset_file_label(s,file),ai_chat_title(base.text_get(agent.title[:])))}
+    return asset_file_label(s,file)
 }
 
 // The mark of an asset a unit changed and that waits for review, in the color of its agent.
@@ -1924,8 +1919,8 @@ content_review_badge :: proc(ctx:^ui.Context,agent:^Ai_Task,float:ui.Float) {
     if ui.box(ctx,{width=ui.fixed(CONTENT_REVIEW_BADGE),height=ui.fixed(CONTENT_REVIEW_BADGE),fill=ai_agent_color(agent),stroke=CONTENT_FRAME,stroke_width=1,radius=CONTENT_REVIEW_BADGE*0.5,float=float}) {}
 }
 
-// A cell of the grid or a row of the list, with its star, the arrow of a
-// library and the mark of unsaved changes.
+// A cell of the grid or a row of the list, with its star and the arrow of a
+// library.
 @(private)
 // whole: its line is all in sight; the buttons that float over a cell stay out
 // of one the edge of the list cuts, as floats are not clipped. first: the first
@@ -1933,7 +1928,6 @@ content_review_badge :: proc(ctx:^ui.Context,agent:^Ai_Task,float:ui.Float) {
 content_item :: proc(s:^Session,card:Content_Card,group:u64,cell:f32,whole,first:bool,names:u8=2) -> (it:ui.Interaction,id:ui.Id) {
     c:=s.content
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     registry:=&s.app.assets.registry
     file:=&registry.files[card.file]
     key:=content_card_key(file.path,card,group)
@@ -1943,16 +1937,12 @@ content_item :: proc(s:^Session,card:Content_Card,group:u64,cell:f32,whole,first
     star:=ui.id(ctx,"content_star",int(key))
     favorite:=card.clip==0 && content_favorite(&c.marks,file.id)
     starred:=card.clip==0 && (favorite || it.hot || ctx.hot==star)
-    unsaved:=card.clip==0 && asset_unsaved(s,file.id)
     reviewed:=ai_asset_mark(s,file.path) if card.clip==0 else nil
     shown:=content_shows_names(c.view)
     if c.view.mode==.List {
         if ui.box(ctx,asset_row_box(ctx,id,CONTENT_INSET,selected,it.hot,content_keyboard(ctx,it))) {
             asset_thumbnail(s,file,20,clip=content_clip_index(c,card))
-            ui.label(ctx,card.name,th.font,th.text,0,font=ui.FONT_MEDIUM if selected else 0)
-            if unsaved {
-                if ui.box(ctx,{width=ui.fixed(5),height=ui.fixed(5),fill=UNSAVED_COLOR,radius=2.5}) {}
-            }
+            ui.label(ctx,card.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_MEDIUM if selected else 0)
             if reviewed!=nil {content_review_badge(ctx,reviewed,{})}
             if card.holds {content_expander(s,card,key,{})}
             if starred {content_star(s,star,file.id,favorite)} else {ui.spacer(ctx,18,18)}
@@ -1966,9 +1956,6 @@ content_item :: proc(s:^Session,card:Content_Card,group:u64,cell:f32,whole,first
         inset:=f32(3)
         if starred && whole {content_star(s,star,file.id,favorite,{to=.Parent,anchor=.Top_Left,pivot=.Top_Left,offset={inset,inset}},small=!shown)}
         if card.holds && whole && (shown || it.hot || card.open) {content_expander(s,card,key,{to=.Parent,anchor=.Top_Right,pivot=.Center_Right,offset={-2,cell*0.5}})}
-        if unsaved && whole {
-            if ui.box(ctx,{width=ui.fixed(5),height=ui.fixed(5),fill=UNSAVED_COLOR,radius=2.5,float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right,offset={-inset-2,inset+2}}}) {}
-        }
         if reviewed!=nil && whole {content_review_badge(ctx,reviewed,{to=.Parent,anchor=.Top_Left,pivot=.Bottom_Left,offset={inset,cell-inset-CONTENT_BAR}})}
     }
     if it.hot && (shown || reviewed!=nil) {
@@ -1997,31 +1984,30 @@ content_folder_icon :: proc(virtual:Content_Virtual) -> ui.Icon {
 content_folder_cell :: proc(s:^Session,card:Content_Card,id:ui.Id,cell:f32,names:u8,marked:bool) -> (it:ui.Interaction) {
     c:=s.content
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     it=ui.interact(ctx,id,{.Focusable})
     icon:=content_folder_icon(card.virtual)
     keyboard:=content_keyboard(ctx,it)
     if c.view.mode==.List {
         if ui.box(ctx,asset_row_box(ctx,id,CONTENT_INSET,marked,it.hot,keyboard)) {
-            ui.icon(ctx,icon,th.text_muted,16)
-            ui.label(ctx,card.name,th.font,th.text,0)
+            ui.icon(ctx,icon,ui.tone(ctx,"text_muted"),16)
+            ui.label(ctx,card.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0)
         }
         return
     }
     shown:=content_shows_names(c.view)
-    if ui.box(ctx,{id=id,width=ui.fixed(cell),height=ui.fixed(content_card_height(c.view,cell,names)),direction=.Column,gap=CONTENT_NAME_GAP,stroke=th.text if keyboard else {},stroke_width=CONTENT_RING_WIDTH}) {
-        fill:=th.accent_soft if marked else (th.field_hover if it.hot else th.field)
+    if ui.box(ctx,{id=id,width=ui.fixed(cell),height=ui.fixed(content_card_height(c.view,cell,names)),direction=.Column,gap=CONTENT_NAME_GAP,stroke=ui.tone(ctx,"text") if keyboard else {},stroke_width=CONTENT_RING_WIDTH}) {
+        fill:=ui.tone(ctx,"accent_soft") if marked else (ui.tone(ctx,"field_hover") if it.hot else ui.tone(ctx,"field"))
         if ui.box(ctx,{width=ui.fixed(cell),height=ui.fixed(cell),direction=.Column,align_x=.Center,align_y=.Center,gap=2,fill=fill,clip_x=true,clip_y=true}) {
             cover:ui.Quad
             if card.cover>0 {cover=texture_quad(s,s.app.assets.registry.files[card.cover-1].id)}
             if cover.kind!=.Solid {
                 ui.image(ctx,{quad=cover,width=ui.GROW,height=ui.GROW})
             } else {
-                ui.icon(ctx,icon,th.text_muted,cell*0.44)
+                ui.icon(ctx,icon,ui.tone(ctx,"text_muted"),cell*0.44)
             }
-            if !shown {ui.label(ctx,card.name,th.font_caption,th.text,cell-4,center=true)}
+            if !shown {ui.label(ctx,card.name,ui.metric(ctx,"font_caption"),ui.tone(ctx,"text"),cell-4,center=true)}
         }
-        if shown {content_name(ctx,card.name,false,cell,names,ink=th.text)}
+        if shown {content_name(ctx,card.name,false,cell,names,ink=ui.tone(ctx,"text"))}
     }
     if it.hot && (!shown || content_name_cut(ctx,card.name,cell,names)) {ui.tooltip(ctx,card.folder if card.virtual==.None else card.name)}
     return
@@ -2032,29 +2018,28 @@ content_folder_cell :: proc(s:^Session,card:Content_Card,id:ui.Id,cell:f32,names
 @(private)
 content_header :: proc(s:^Session,line:Content_Line,id:ui.Id,width:f32,marked:bool=false) -> ui.Interaction {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     it:=ui.interact(ctx,id,{.Focusable})
     header:=line.kind==.Header
     height:=CONTENT_HEADER if header else CONTENT_SUBHEADER
-    fill:=th.accent_soft if marked else (th.field if it.hot else (th.panel if header else {}))
-    icon,color:=ui.icon_user(u8(User_Icon.Folder)),th.text_faint
+    fill:=ui.tone(ctx,"accent_soft") if marked else (ui.tone(ctx,"field") if it.hot else (ui.tone(ctx,"panel") if header else {}))
+    icon,color:=ui.icon_user(u8(User_Icon.Folder)),ui.tone(ctx,"text_faint")
     #partial switch line.virtual {
-    case .Recent:    icon,color=.History,th.text_muted
-    case .Scene:     icon,color=ui.icon_user(u8(User_Icon.Scene)),th.text_muted
+    case .Recent:    icon,color=.History,ui.tone(ctx,"text_muted")
+    case .Scene:     icon,color=ui.icon_user(u8(User_Icon.Scene)),ui.tone(ctx,"text_muted")
     case .Favorites: icon,color=ui.icon_user(u8(User_Icon.Star_Filled)),STAR_COLOR
     }
     folded:=content_folded(s.content,line.group)
     if ui.box(ctx,{id=id,width=ui.fixed(width),height=ui.fixed(height),padding={2,0,2,0},gap=6,align_y=.Center,fill=fill}) {
-        if ui.button(ctx,ui.id_derive(ctx,id,"fold"),{icon=folded?.Chevron_Right:.Chevron_Down,icon_color=th.text_faint,icon_size=10,style=.Ghost,width=16,height=height-4}).clicked {content_fold_flip(s.content,line.group)}
+        if ui.button(ctx,ui.id_derive(ctx,id,"fold"),{icon=folded?.Chevron_Right:.Chevron_Down,icon_color=ui.tone(ctx,"text_faint"),icon_size=10,variant="ghost",width=16,height=height-4}).clicked {content_fold_flip(s.content,line.group)}
         ui.icon(ctx,icon,color,14)
         if line.cover>0 {
             cover:=texture_quad(s,s.app.assets.registry.files[line.cover-1].id)
-            if ui.box(ctx,{width=ui.fixed(CONTENT_COVER),height=ui.fixed(CONTENT_COVER),fill=th.field,radius=2,clip_x=true,clip_y=true}) {
+            if ui.box(ctx,{width=ui.fixed(CONTENT_COVER),height=ui.fixed(CONTENT_COVER),fill=ui.tone(ctx,"field"),radius=2,clip_x=true,clip_y=true}) {
                 if cover.kind!=.Solid {ui.image(ctx,{quad=cover,width=ui.GROW,height=ui.GROW})}
             }
         }
         name:=line.name if header else strings.join(strings.split(line.name,"/",context.temp_allocator)," / ",context.temp_allocator)
-        ui.label(ctx,name,th.font if header else th.font_small,th.text if header || it.hot else th.text_muted,0,font=ui.FONT_MEDIUM if header else 0)
+        ui.label(ctx,name,ui.metric(ctx,"font") if header else ui.metric(ctx,"font_small"),ui.tone(ctx,"text") if header || it.hot else ui.tone(ctx,"text_muted"),0,font=ui.FONT_MEDIUM if header else 0)
     }
     if it.hot {ui.tooltip(ctx,line.path if line.virtual==.None else line.name)}
     return it
@@ -2128,7 +2113,6 @@ content_more_popup :: proc(g:^Editor_Ui) -> ui.Id {return shell_id(g,"content_mo
 content_more_menu :: proc(s:^Session) {
     c:=s.content
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     popup:=content_more_popup(s.gui)
     if ui.popup(ctx,popup,{min_width=150}) {
         ui.id_push(ctx,popup)
@@ -2137,10 +2121,10 @@ content_more_menu :: proc(s:^Session) {
         for category in CONTENT_MENU_CATEGORIES {
             id:=ui.id(ctx,"category",int(category)+1)
             it:=ui.interact(ctx,id,{.Focusable})
-            if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(th.control),padding={8,0,8,0},gap=8,align_y=.Center,fill=ui.color_hover(th) if it.hot else {},radius=th.radius_control}) {
+            if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),padding={8,0,8,0},gap=8,align_y=.Center,fill=ui.color_hover(ctx) if it.hot else {},radius=ui.metric(ctx,"radius_control")}) {
                 ui.icon(ctx,content_category_icon(category),content_category_color(category),13)
-                ui.label(ctx,labels[category],th.font,th.text,0)
-                if category in c.categories {ui.icon(ctx,.Check,th.text_muted,10)}
+                ui.label(ctx,labels[category],ui.metric(ctx,"font"),ui.tone(ctx,"text"),0)
+                if category in c.categories {ui.icon(ctx,.Check,ui.tone(ctx,"text_muted"),10)}
             }
             if it.clicked {
                 c.categories~={category}
@@ -2153,7 +2137,11 @@ content_more_menu :: proc(s:^Session) {
 @(private)
 content_category_color :: proc "contextless" (category:Content_Category) -> ui.Color {
     kinds:=CONTENT_CATEGORY_KINDS
-    return CONTENT_PLUGIN_COLOR if category==.Plugin else asset_color(kinds[category])
+    #partial switch category {
+    case .Plugin: return CONTENT_PLUGIN_COLOR
+    case .Prefab: return PREFAB_ASSET_COLOR
+    }
+    return asset_color(kinds[category])
 }
 
 // The glyph of a filter: that of the cards of its kind.
@@ -2170,7 +2158,6 @@ content_category_icon :: proc "contextless" (category:Content_Category) -> ui.Ic
 content_search_row :: proc(s:^Session,filter_id:ui.Id) -> (take_first:bool) {
     c:=s.content
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(CONTENT_CONTROL),gap=4,align_y=.Center}) {
         editing:=ctx.edit.id==filter_id
         if search_field(s,filter_id,c.filter[:],&c.filter_length,"Search assets") {
@@ -2181,7 +2168,7 @@ content_search_row :: proc(s:^Session,filter_id:ui.Id) -> (take_first:bool) {
             }
         }
         take_first=editing && .Enter in ctx.input.keys_pressed && c.filter_length>0
-        if ui.button(ctx,ui.id(ctx,"content_selection"),{icon=.Target,icon_color=th.text_muted,tip="Selection in the viewport",style=.Toggle,active=c.selection_only,width=CONTENT_CONTROL,height=CONTENT_CONTROL}).clicked {
+        if ui.button(ctx,ui.id(ctx,"content_selection"),{icon=.Target,icon_color=ui.tone(ctx,"text_muted"),tip="Selection in the viewport",variant="toggle",active=c.selection_only,width=CONTENT_CONTROL,height=CONTENT_CONTROL}).clicked {
             c.selection_only=!c.selection_only
             c.scroll=0
             c.revision+=1
@@ -2203,7 +2190,6 @@ content_filters_clear :: proc(c:^Content) {
 content_strip_row :: proc(s:^Session) {
     c:=s.content
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(CONTENT_STRIP_ROW),gap=CONTENT_RAIL_GAP,align_y=.Center}) {
         labels:=CONTENT_CATEGORY_LABELS
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(CONTENT_STRIP_ROW),gap=CONTENT_FILTERS_GAP}) {
@@ -2211,7 +2197,7 @@ content_strip_row :: proc(s:^Session) {
                 on:=category in c.categories
                 // Each in the color of its kind; while some are on, the others fade.
                 color:=ui.color_alpha(content_category_color(category),255 if on || c.categories=={} else 80)
-                if ui.button(ctx,ui.id(ctx,"content_category",int(category)+1),{icon=content_category_icon(category),icon_size=14,icon_color=color,tip=labels[category],style=.Toggle,active=on,width=CONTENT_STRIP_ROW+4,height=CONTENT_STRIP_ROW}).clicked {
+                if ui.button(ctx,ui.id(ctx,"content_category",int(category)+1),{icon=content_category_icon(category),icon_size=14,icon_color=color,tip=labels[category],variant="toggle",active=on,width=CONTENT_STRIP_ROW+4,height=CONTENT_STRIP_ROW}).clicked {
                     c.categories~={category}
                     c.scroll=0
                 }
@@ -2223,11 +2209,11 @@ content_strip_row :: proc(s:^Session) {
         it:=ui.interact(ctx,id,{.Focusable})
         lit:=c.categories&{.Texture,.Animation,.Sound,.Ui}!={}
         if ui.box(ctx,{width=ui.fixed(CONTENT_FILTERS+CONTENT_FILTERS_CLEAR+2*CONTENT_FILTERS_GAP),height=ui.fixed(CONTENT_STRIP_ROW),padding={0,0,CONTENT_FILTERS_GAP,0},gap=CONTENT_FILTERS_GAP}) {
-            if ui.box(ctx,{id=id,width=ui.fixed(CONTENT_FILTERS),height=ui.fixed(CONTENT_STRIP_ROW),align_x=.Center,align_y=.Center,fill=th.text if lit else (th.field if it.hot || opened else {}),radius=2}) {
-                ui.icon(ctx,.Filter,th.panel if lit else th.text_muted,12)
+            if ui.box(ctx,{id=id,width=ui.fixed(CONTENT_FILTERS),height=ui.fixed(CONTENT_STRIP_ROW),align_x=.Center,align_y=.Center,fill=ui.tone(ctx,"text") if lit else (ui.tone(ctx,"field") if it.hot || opened else {}),radius=2}) {
+                ui.icon(ctx,.Filter,ui.tone(ctx,"panel") if lit else ui.tone(ctx,"text_muted"),12)
             }
             if c.categories!={} || c.selection_only {
-                if ui.button(ctx,ui.id(ctx,"content_filters_clear"),{icon=.Cross,icon_size=12,icon_color=th.text_muted,tip="Clear filters",style=.Ghost,width=CONTENT_FILTERS_CLEAR,height=CONTENT_STRIP_ROW}).clicked {content_filters_clear(c)}
+                if ui.button(ctx,ui.id(ctx,"content_filters_clear"),{icon=.Cross,icon_size=12,icon_color=ui.tone(ctx,"text_muted"),tip="Clear filters",variant="ghost",width=CONTENT_FILTERS_CLEAR,height=CONTENT_STRIP_ROW}).clicked {content_filters_clear(c)}
             }
         }
         if it.hot {ui.tooltip(ctx,"More filters")}
@@ -2237,7 +2223,7 @@ content_strip_row :: proc(s:^Session) {
         }
         level:=f64(content_level(c.view))
         zoom:=ui.id(ctx,"content_size")
-        if ui.slider_field(ctx,zoom,&level,{width=ui.fixed(CONTENT_ZOOM_WIDTH),height=CONTENT_STRIP_ROW,min=0,max=CONTENT_LEVELS,has_min=true,has_max=true,integer=true,bare=true}).changed {
+        if kit.slider_field(ctx,zoom,&level,{width=ui.fixed(CONTENT_ZOOM_WIDTH),height=CONTENT_STRIP_ROW,min=0,max=CONTENT_LEVELS,has_min=true,has_max=true,integer=true,bare=true}).changed {
             content_level_set(&c.view,int(level))
             c.scroll=0
         }
@@ -2250,7 +2236,6 @@ content_strip_row :: proc(s:^Session) {
 content_tabs_build :: proc(s:^Session,act:^Content_Actions,width:f32) -> (height:f32) {
     c:=s.content
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     Chip :: struct {virtual:Content_Virtual,label,path:string,row:int}
     chips:=make([dynamic]Chip,context.temp_allocator)
     labels:=CONTENT_VIRTUAL_LABELS
@@ -2258,7 +2243,7 @@ content_tabs_build :: proc(s:^Session,act:^Content_Actions,width:f32) -> (height
     for virtual in ([3]Content_Virtual{.Recent,.Scene,.Favorites}) {append(&chips,Chip{virtual=virtual,label=labels[virtual]})}
     for tab in c.tabs {append(&chips,Chip{label=tab.name,path=tab.path,row=tab.row})}
     at:=string(c.at.folder[:c.at.length])
-    chip_width :: proc(ctx:^ui.Context,text:string) -> f32 {return ui.text_width(&ctx.font,text,ctx.theme.font)+2*CONTENT_TAB_PADDING+1}
+    chip_width :: proc(ctx:^ui.Context,text:string) -> f32 {return ui.text_width(&ctx.font,text,ui.metric(ctx,"font"))+2*CONTENT_TAB_PADDING+1}
     rows:=0
     for i:=0;i<len(chips); {
         row:=chips[i].row
@@ -2313,21 +2298,19 @@ content_tabs_build :: proc(s:^Session,act:^Content_Actions,width:f32) -> (height
 
 @(private)
 content_tab_draw :: proc(ctx:^ui.Context,id:ui.Id,label:string,on:bool,it:ui.Interaction,marked:bool) {
-    th:=&ctx.theme
-    fill:=th.accent_soft if marked else (th.text if on else (th.field_hover if it.hot else th.field))
+    fill:=ui.tone(ctx,"accent_soft") if marked else (ui.tone(ctx,"text") if on else (ui.tone(ctx,"field_hover") if it.hot else ui.tone(ctx,"field")))
     if ui.box(ctx,{id=id,width=ui.FIT,height=ui.fixed(CONTENT_TAB),padding={CONTENT_TAB_PADDING,0,CONTENT_TAB_PADDING,0},align_y=.Center,fill=fill,radius=3}) {
-        ui.label(ctx,label,th.font,th.panel if on else th.text_muted)
+        ui.label(ctx,label,ui.metric(ctx,"font"),ui.tone(ctx,"panel") if on else ui.tone(ctx,"text_muted"))
     }
 }
 
 // A name of the breadcrumb, after a slash unless it is the first.
 @(private)
 content_crumb :: proc(ctx:^ui.Context,id:ui.Id,name:string,last,slash,marked:bool) -> (it:ui.Interaction) {
-    th:=&ctx.theme
     it=ui.interact(ctx,id,{.Focusable})
-    if slash {ui.label(ctx,"/",th.font,th.text_faint)}
-    if ui.box(ctx,{id=id,width=ui.FIT,height=ui.GROW,align_y=.Center,fill=th.accent_soft if marked else {}}) {
-        ui.label(ctx,name,th.font,th.text if last || it.hot else th.text_muted)
+    if slash {ui.label(ctx,"/",ui.metric(ctx,"font"),ui.tone(ctx,"text_faint"))}
+    if ui.box(ctx,{id=id,width=ui.FIT,height=ui.GROW,align_y=.Center,fill=ui.tone(ctx,"accent_soft") if marked else {}}) {
+        ui.label(ctx,name,ui.metric(ctx,"font"),ui.tone(ctx,"text") if last || it.hot else ui.tone(ctx,"text_muted"))
     }
     return
 }
@@ -2345,9 +2328,8 @@ content_back_shown :: proc(c:^Content) -> bool {
 content_crumbs_build :: proc(s:^Session,act:^Content_Actions) {
     c:=s.content
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(CONTENT_BACK_ROW),gap=4,align_y=.Center,clip_x=true}) {
-        if ui.button(ctx,ui.id(ctx,"content_back"),{icon=ui.icon_user(u8(User_Icon.Back)),icon_color=th.text,icon_size=13,tip="Back",style=.Ghost,width=CONTENT_BACK_ROW,height=CONTENT_BACK_ROW}).clicked {act.back=true}
+        if ui.button(ctx,ui.id(ctx,"content_back"),{icon=ui.icon_user(u8(User_Icon.Back)),icon_color=ui.tone(ctx,"text"),icon_size=13,tip="Back",variant="ghost",width=CONTENT_BACK_ROW,height=CONTENT_BACK_ROW}).clicked {act.back=true}
         registry:=&s.app.assets.registry
         if len(c.trail)>0 {
             for id,i in c.trail {
@@ -2360,8 +2342,8 @@ content_crumbs_build :: proc(s:^Session,act:^Content_Actions) {
             content_folder_take(s,act,root,content_crumb(ctx,root,"Project",c.at.length==0 && c.at.virtual==.None,false,content_folder_marked(s,root,.None,"")),.None,"",reset=true)
             if c.at.virtual!=.None {
                 labels:=CONTENT_VIRTUAL_LABELS
-                ui.label(ctx,"/",th.font,th.text_faint)
-                ui.label(ctx,labels[c.at.virtual],th.font,th.text)
+                ui.label(ctx,"/",ui.metric(ctx,"font"),ui.tone(ctx,"text_faint"))
+                ui.label(ctx,labels[c.at.virtual],ui.metric(ctx,"font"),ui.tone(ctx,"text"))
             } else {
                 start,index:=0,1
                 for i in 0..=len(folder) {
@@ -2436,7 +2418,7 @@ content_asset_action :: proc(s:^Session,w:core.World_Ref,card:Content_Card,it:ui
     // While an asset document covers the scene, a click does nothing to it.
     scene:=!scene_covered(s)
     switch {
-    case it.double && s.mode!=.Play && file.kind!=asset.KIND_SCENE && file.kind!=asset.KIND_PREFAB && asset_document_opens(s,file.kind):
+    case it.double && s.mode!=.Play && file.kind!=asset.KIND_SCENE && asset_document_opens(s,file.kind):
         g.drag,g.placement={},{}
         content_used(s,file.id)
         asset_document_open(s,file.id)
@@ -2446,7 +2428,7 @@ content_asset_action :: proc(s:^Session,w:core.World_Ref,card:Content_Card,it:ui
             material_assign(s,w,meshes[:],file.id)
         }
     case it.clicked && s.mode!=.Play && scene && asset_kind_click(s,w,file):
-    case (file.kind==asset.KIND_SCENE || file.kind==asset.KIND_PREFAB) && it.double && s.mode==.Edit:
+    case file.kind==asset.KIND_SCENE && it.double && s.mode==.Edit:
         g.drag,g.placement={},{}
         content_used(s,file.id)
         return file.path
@@ -2488,9 +2470,9 @@ content_menu :: proc(s:^Session,w:core.World_Ref) -> (open:string) {
     if ui.popup(ctx,popup,{min_width=200}) {
         ui.id_push(ctx,popup)
         defer ui.id_pop(ctx)
-        document:=file.kind==asset.KIND_SCENE || file.kind==asset.KIND_PREFAB
+        document:=file.kind==asset.KIND_SCENE
         opens:=document?s.mode==.Edit:s.mode!=.Play && asset_document_opens(s,file.kind)
-        icon,_:=asset_icon(s,file.kind)
+        icon,_:=asset_file_icon(s,file)
         if ui.menu_item(ctx,ui.id(ctx,"open"),"Open",{icon=icon,disabled=!opens}) {
             g.drag,g.placement={},{}
             content_used(s,file.id)
@@ -2514,7 +2496,7 @@ content_menu :: proc(s:^Session,w:core.World_Ref) -> (open:string) {
                 if heard {sound_hear_stop(s)} else {sound_hear(s,file.id)}
             }
         }
-        if file.kind==asset.KIND_PREFAB {
+        if asset.registry_prefab(file) {
             if ui.menu_item(ctx,ui.id(ctx,"variant"),"Create variant",{icon=.Prefab,disabled=s.mode!=.Edit || watching(s)}) {
                 path:=prefab_variant_path(s,file.id)
                 _,error:=prefab_variant_create(s,file.id,path)
@@ -2523,7 +2505,7 @@ content_menu :: proc(s:^Session,w:core.World_Ref) -> (open:string) {
             }
         }
         if file.kind==asset.KIND_SCENE && scene_tab(s,file.id)>=0 {
-            if ui.menu_item(ctx,ui.id(ctx,"thumbnail"),"Update thumbnail",{icon=action_icon(.Scene_Thumbnail),disabled=s.mode!=.Edit || !scene_thumbnails_kept(s)}) {scene_thumbnail_update(s,file.id)}
+            if ui.menu_item(ctx,ui.id(ctx,"thumbnail"),"Update thumbnail",{icon=command_icon(s,"scene_thumbnail"),disabled=s.mode!=.Edit || !scene_thumbnails_kept(s)}) {scene_thumbnail_update(s,file.id)}
         }
         asset_plugin_menus(s,file)
         if ui.menu_item(ctx,ui.id(ctx,"ask"),"Ask agent",{icon=.Sparkle,disabled=!s.has_project}) {
@@ -2540,10 +2522,10 @@ content_menu :: proc(s:^Session,w:core.World_Ref) -> (open:string) {
         // Duplicating and moving scan the registry again: what follows names the asset by its id.
         id:=file.id
         off:=asset_create_refusal(s)!=""
-        if ui.menu_item(ctx,ui.id(ctx,"rename"),"Rename",{icon=action_icon(.Rename),shortcut=shortcut_text(ACTION_SHORTCUTS[.Rename]),disabled=off}) {content_rename_begin(s,id)}
-        if ui.menu_item(ctx,ui.id(ctx,"duplicate"),"Duplicate",{icon=action_icon(.Duplicate),shortcut=shortcut_text(ACTION_SHORTCUTS[.Duplicate]),disabled=off}) {content_duplicate(s,id)}
+        if ui.menu_item(ctx,ui.id(ctx,"rename"),command_label(s,"asset_rename"),{icon=command_icon(s,"asset_rename"),shortcut=command_shortcut_text(s,"asset_rename"),disabled=off}) {content_rename_begin(s,id)}
+        if ui.menu_item(ctx,ui.id(ctx,"duplicate"),command_label(s,"asset_duplicate"),{icon=command_icon(s,"asset_duplicate"),shortcut=command_shortcut_text(s,"asset_duplicate"),disabled=off}) {content_duplicate(s,id)}
         if ui.submenu(ctx,ui.id(ctx,"move"),"Move to",{icon=ui.icon_user(u8(User_Icon.Folder)),disabled=off}) {content_move_items(s,id,"")}
-        if ui.menu_item(ctx,ui.id(ctx,"delete"),"Delete",{icon=action_icon(.Delete),shortcut="Del",danger=true,disabled=s.mode!=.Edit || watching(s)}) {asset_delete_ask(s,id)}
+        if ui.menu_item(ctx,ui.id(ctx,"delete"),command_label(s,"asset_delete"),{icon=command_icon(s,"asset_delete"),shortcut=command_shortcut_text(s,"asset_delete"),danger=true,disabled=s.mode!=.Edit || watching(s)}) {asset_delete_ask(s,id)}
     }
     return
 }
@@ -2587,17 +2569,16 @@ content_reveal :: proc(s:^Session,id:base.Asset_Id) {
 content_preview_float :: proc(s:^Session,card:Content_Card,rect,area:ui.Rect) {
     c:=s.content
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     file:=&s.app.assets.registry.files[card.file]
     side:=CONTENT_PREVIEW+10
     x:=clamp(rect.x+rect.w*0.5-side*0.5-area.x,0,max(area.w-side,0))
     top:=rect.y-area.y
     above:=top>CONTENT_PREVIEW_ROOM
     float:=ui.Float{to=.Parent,anchor=.Top_Left,pivot=.Bottom_Left if above else .Top_Left,offset={x,top-4 if above else top+rect.h+4}}
-    if ui.box(ctx,{width=ui.fixed(side),height=ui.FIT,direction=.Column,padding=ui.padding_all(4),float=float,fill=th.field,stroke=th.border,stroke_width=1,radius=4}) {
+    if ui.box(ctx,{width=ui.fixed(side),height=ui.FIT,direction=.Column,padding=ui.padding_all(4),float=float,fill=ui.tone(ctx,"field"),stroke=ui.tone(ctx,"border"),stroke_width=1,radius=4}) {
         asset_thumbnail(s,file,CONTENT_PREVIEW,clip=content_clip_index(c,card))
-        ui.text(ctx,card.name,{size=th.font,color=th.text,wrap=.Words},ui.GROW,ui.FIT)
-        ui.text(ctx,content_folder_of(file.path),{size=th.font_caption,color=th.text_muted,wrap=.Words},ui.GROW,ui.FIT)
+        ui.text(ctx,card.name,{size=ui.metric(ctx,"font"),color=ui.tone(ctx,"text"),wrap=.Words},ui.GROW,ui.FIT)
+        ui.text(ctx,content_folder_of(file.path),{size=ui.metric(ctx,"font_caption"),color=ui.tone(ctx,"text_muted"),wrap=.Words},ui.GROW,ui.FIT)
     }
 }
 
@@ -2606,7 +2587,6 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
     c:=s.content
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     a:=s.app.assets
     filter_id:=ui.id(ctx,"content_filter")
     if content_typing(c,ctx) {
@@ -2626,9 +2606,9 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
         used:=CONTENT_CONTROL+CONTENT_PANEL_GAP+CONTENT_STRIP_ROW
         take_first:=content_search_row(s,filter_id)
         content_strip_row(s)
-        if import_working(s) {used+=th.row+CONTENT_PANEL_GAP}
+        if import_working(s) {used+=ui.metric(ctx,"row")+CONTENT_PANEL_GAP}
         if a==nil {
-            ui.label(ctx,"No assets folder",th.font_small,th.text_faint)
+            ui.label(ctx,"No assets folder",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
             return
         }
         if !a.indexed && len(a.registry.files)==0 && a.registry.revision==0 {
@@ -2647,7 +2627,7 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
         if c.creating && asset_create_refusal(s)!="" {content_create_end(c)}
         if c.created!={} {content_created(s,&a.registry)}
         if c.reveal!={} {content_reveal_open(c,&a.registry)}
-        lines:=content_lines(c,&a.registry,width,opened,scene_kinds[:],&ctx.font,th.font_small)
+        lines:=content_lines(c,&a.registry,width,opened,scene_kinds[:],&ctx.font,ui.metric(ctx,"font_small"))
         searching:=strings.trim_space(string(c.filter[:c.filter_length]))!="" && len(c.trail)==0
         if take_first && searching && len(c.cards)>0 && c.cards[0].file>=0 {content_arm(s,&a.registry.files[c.cards[0].file],c.cards[0].name)}
         if c.view.arrangement==.Tabs && len(c.trail)==0 {used+=CONTENT_PANEL_GAP+content_tabs_build(s,&act,width)}
@@ -2669,7 +2649,7 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
                 top+=h
             }
             content_zoom(&c.view,notches)
-            lines=content_lines(c,&a.registry,width,opened,scene_kinds[:],&ctx.font,th.font_small)
+            lines=content_lines(c,&a.registry,width,opened,scene_kinds[:],&ctx.font,ui.metric(ctx,"font_small"))
             c.scroll,top=0,0
             search: for line,i in lines {
                 if line.kind==.Cards && anchor.file>=0 {
@@ -2720,7 +2700,7 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
         first,last:=ui.rows_begin(ctx,list,&c.scroll,c.heights[:],ui.GROW,room)
         top:f32
         for h in c.heights[:first] {top+=h}
-        if len(lines)==0 {ui.label(ctx,"No results",th.font_small,th.text_faint)}
+        if len(lines)==0 {ui.label(ctx,"No results",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))}
         hovered:=Content_Card{file=-1}
         hovered_id:ui.Id
         first_card:=searching && len(c.cards)>0 && c.cards[0].file>=0
@@ -2736,7 +2716,7 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
                 content_folder_take(s,&act,id,it,line.virtual,line.path)
             case .Label:
                 if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(CONTENT_SUBHEADER),padding={2,0,2,0},align_y=.Center}) {
-                    ui.label(ctx,line.name,th.font_small,th.text_muted,0)
+                    ui.label(ctx,line.name,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
                 }
             case .Create:
                 act.finish|=content_create_line(s)
@@ -2770,7 +2750,7 @@ content_build :: proc(s:^Session,w:core.World_Ref,height:f32,width:f32=CONTENT_W
                 for h in c.heights[:header] {head_top+=h}
             }
             if header>=0 && head_top<c.scroll {
-                if ui.box(ctx,{width=ui.fixed(width),height=ui.FIT,direction=.Column,fill=th.panel,float={to=.Parent,anchor=.Top_Left,pivot=.Top_Left,offset={0,c.scroll-CONTENT_PIN_BLEED}}}) {
+                if ui.box(ctx,{width=ui.fixed(width),height=ui.FIT,direction=.Column,fill=ui.tone(ctx,"panel"),float={to=.Parent,anchor=.Top_Left,pivot=.Top_Left,offset={0,c.scroll-CONTENT_PIN_BLEED}}}) {
                     ui.spacer(ctx,-1,CONTENT_PIN_BLEED)
                     pinned:=lines[header]
                     pin:=ui.id(ctx,"content_sticky")

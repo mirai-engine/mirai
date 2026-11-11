@@ -9,7 +9,8 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 // Files of the folder whose content is held in memory and not on disk: what
-// an editor changed and did not write. Until it is written or dropped, a file
+// an editor changed in a step that has not ended, or what a tool reads
+// without writing. Until it is written or dropped, a file
 // in memory is what the registry and registry_read answer for its path, and a
 // removed one is a file that is not there. Scans keep them; the record of a
 // file in memory takes the size of its content and the time it last changed.
@@ -45,6 +46,7 @@ registry_memory_remove :: proc(r:^Registry,path:string) -> Error {
 // file when there is none. Not dropped when memory held nothing for it;
 // Out_Of_Memory when it is dropped and the records had none to follow.
 registry_memory_drop :: proc(r:^Registry,path:string) -> (dropped:bool,error:Error) {
+    path:=strings.clone(path,context.temp_allocator) // it may be the one memory holds, which forgetting frees
     if !registry_memory_forget(r,path) {return false,.None}
     if registry_outside(path) {
         r.revision+=1
@@ -119,6 +121,12 @@ registry_memory_write :: proc(r:^Registry,path:string) -> Error {
     } else {
         if folder:=filepath.dir(full);!os.is_dir(folder) && os.make_directory_all(folder)!=nil {return .IO}
         if serial.file_write_atomic(full,held.data)!=.None {return .IO}
+        // The file takes the time of its record: who read what memory held
+        // finds the same record once the file answers, and reads nothing again.
+        if at,known:=r.by_path[path];known {
+            changed:=time.unix(0,r.files[at].time)
+            _=os.change_times(full,changed,changed)
+        }
     }
     _,error:=registry_memory_drop(r,path)
     return error
@@ -178,11 +186,13 @@ registry_memory_take :: proc(r:^Registry,path:string) -> (held:^Registry_Memory,
     return &r.memory[len(r.memory)-1],.None
 }
 
+MEMORY_TIME_STEP :: 100 // ns: what the time of a file keeps on every file system the engine runs on
+
 // The record of a file in memory follows its new content, with a time that
-// no earlier change of it had.
+// no earlier change of it had and that its file can take (registry_memory_write).
 @(private="file")
 registry_memory_changed :: proc(r:^Registry,held:^Registry_Memory) -> Error {
-    r.memory_time=max(time.time_to_unix_nano(time.now()),r.memory_time+1)
+    r.memory_time=max(time.time_to_unix_nano(time.now())/MEMORY_TIME_STEP*MEMORY_TIME_STEP,r.memory_time+MEMORY_TIME_STEP)
     previous:=registry_path_id(r,held.path)
     recorded:=registry_memory_record(r,held)
     r.revision+=1
@@ -202,6 +212,8 @@ registry_path_id :: proc(r:^Registry,path:string) -> base.Asset_Id {
 registry_file_remove :: proc(r:^Registry,path:string) {
     for file,at in r.files {
         if file.path!=path {continue}
+        // Out of the lookup until the index is made again: its place is another file's now.
+        delete_key(&r.by_path,path)
         delete(file.path,r.allocator)
         ordered_remove(&r.files,at)
         return

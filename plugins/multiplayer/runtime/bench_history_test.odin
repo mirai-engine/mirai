@@ -1,6 +1,7 @@
 package multiplayer
 
 import "core:fmt"
+import "core:mem"
 import "core:testing"
 import "core:time"
 import "mirai:core"
@@ -87,8 +88,9 @@ History_Bench_Extra :: struct {
 History_Bench_Flat :: struct {words:[60][32]u64}
 
 @(private)
+@(test_world)
 History_Bench_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using net:Net_Test_Tables,
     using extra:History_Bench_Extra,
     flat:History_Bench_Flat,
@@ -187,9 +189,9 @@ history_bench_micro :: proc(cost:History_Bench_Cost) -> f64 {return cost.copies>
 @(test)
 cost_of_the_history_of_a_client :: proc(t:^testing.T) {
     when !NET_HISTORY_BENCH {return}
-    info,described:=core.test_info(t,History_Bench_World,net_test_types)
+    info,described:=test_info(t,History_Bench_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     shared:=Net_Test_Shared{info=&info}
     defer phys.collider_meshes_destroy(&shared.colliders)
     assets:host.Assets
@@ -260,4 +262,99 @@ cost_of_the_history_of_a_client :: proc(t:^testing.T) {
     fmt.printf("| Copy of a tick | %.1f µs | %.1f µs |\n",history_bench_micro(steady_whole),history_bench_micro(steady_changed))
     fmt.printf("| Copy of a replayed tick | %.1f µs | %.1f µs |\n",history_bench_micro(replay_whole),history_bench_micro(replay_changed))
     fmt.printf("| Physics state, in both | %.1f µs | |\n",history_bench_micro(physics_cost))
+}
+
+// The bytes a whole copy of a table moves.
+@(private)
+history_bench_table_bytes :: proc(table:^core.Raw_Table,size:int) -> int {
+    return table.values.len*size+len(table.entities)*size_of(core.Entity)+(len(table.stamps)+len(table.page_stamps)+len(table.turns))*size_of(u64)+len(table.off)+len(table.owners)*size_of(core.Row_Owner)+len(table.rows)*core.ROWS_PAGE*size_of(i32)
+}
+
+// What a correction costs on the same world, counted: the rows a reader of
+// every table goes through after it, and the bytes it copies into the World
+// (a table its readers read whole was copied whole; otherwise its rows read
+// were copied) and into storages.
+// Opt-in: mirai test plugins/multiplayer/runtime rows_and_bytes_of_a_rollback -define:NET_HISTORY_BENCH=true
+@(test)
+rows_and_bytes_of_a_rollback :: proc(t:^testing.T) {
+    when !NET_HISTORY_BENCH {return}
+    info,described:=test_info(t,History_Bench_World)
+    if !described {return}
+    defer test_info_destroy(&info)
+    shared:=Net_Test_Shared{info=&info}
+    defer phys.collider_meshes_destroy(&shared.colliders)
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=base.test_folder(t,"rollback"),capacity=64})) {return}
+    defer host.assets_destroy(&assets)
+    app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60,shared=&shared,assets=&assets}
+    defer {host.app_world_scratch_free(&app);delete(app.worlds)}
+    world:=new(History_Bench_World)
+    defer free(world)
+    history_bench_world(world,&shared,&app)
+    defer core.world_destroy(&info,.World,world)
+    ref:=core.world_ref(world,&info)
+    slots:=make([]History_Bench_World,HISTORY_BENCH_SLOTS)
+    defer delete(slots)
+    marks:=make([][]core.Copy_Mark,HISTORY_BENCH_SLOTS)
+    defer delete(marks)
+    for i in 0..<HISTORY_BENCH_SLOTS {
+        history_bench_init(&slots[i],&info)
+        marks[i]=make([]core.Copy_Mark,core.copy_marks_count(&info))
+    }
+    defer for i in 0..<HISTORY_BENCH_SLOTS {core.world_destroy(&info,.World,&slots[i]);delete(marks[i])}
+    seen:=make([]core.Seen,len(info.tables))
+    defer delete(seen)
+    before:=make([]u8,size_of(History_Bench_World))
+    defer delete(before)
+    corrections,rows,whole_tables,table_bytes,storage_bytes,storage_differ,storage_pages:=0,0,0,0,0,0,0
+    for tick in 1..=600 {
+        if tick%30==0 && tick>HISTORY_BENCH_SLOTS {
+            start:=tick-15
+            from:=start%HISTORY_BENCH_SLOTS
+            for &table,k in info.tables {_=core.raw_changes(core.world_table_at(ref,&table),&seen[k])}
+            revisions:=world.storage_revisions
+            copy(before,mem.ptr_to_bytes(world))
+            if !testing.expect(t,host.app_world_replace(&app,world,&slots[from],marks[from])) {return}
+            for other,k in marks {if k!=from {core.copy_marks_follow(ref,marks[from],other)}}
+            core.copy_marks_follow(ref,marks[from],marks[from])
+            corrections+=1
+            for &table,k in info.tables {
+                raw:=core.world_table_at(ref,&table)
+                c:=core.raw_changes(raw,&seen[k],true)
+                read:=0
+                for _ in core.raw_each_changed(raw,&c) {read+=1}
+                rows+=read
+                if c.all {
+                    whole_tables+=1
+                    table_bytes+=history_bench_table_bytes(raw,table.info.size)
+                } else {table_bytes+=read*(table.info.size+size_of(u64))}
+            }
+            page:=-1
+            for &storage,k in info.storages {
+                if storage.place!=.World || world.storage_revisions[k]==revisions[k] {continue}
+                storage_bytes+=storage.info.size
+                // What a World copied by dirty pages of 4 KiB would copy of its inline bytes.
+                after:=mem.ptr_to_bytes(world)
+                for at in int(storage.offset)..<int(storage.offset)+storage.info.size {
+                    if after[at]==before[at] {continue}
+                    storage_differ+=1
+                    if at>>12!=page {page=at>>12;storage_pages+=1}
+                }
+            }
+            for again in start..<tick {
+                world.time.tick=u64(again)
+                slot:=again%HISTORY_BENCH_SLOTS
+                testing.expect(t,core.world_copy_changed(&info,&slots[slot],world,marks[slot]))
+                net_test_physics(world,&shared,&app)
+            }
+        }
+        world.time.tick=u64(tick)
+        slot:=tick%HISTORY_BENCH_SLOTS
+        testing.expect(t,core.world_copy_changed(&info,&slots[slot],world,marks[slot]))
+        net_test_physics(world,&shared,&app)
+    }
+    total:=0
+    for &table in info.tables {total+=int(core.world_table_at(ref,&table).values.len)}
+    fmt.printf("rollback of 15 ticks: %d tables, %d rows, %d corrections\n",len(info.tables),total,corrections)
+    fmt.printf("| Rows read again | %d |\n| Tables read whole | %d |\n| Bytes into tables | %d |\n| Bytes into storages | %d |\n| Their bytes that differ | %d |\n| Their dirty pages of 4 KiB | %d |\n",rows/corrections,whole_tables/corrections,table_bytes/corrections,storage_bytes/corrections,storage_differ/corrections,storage_pages/corrections)
 }

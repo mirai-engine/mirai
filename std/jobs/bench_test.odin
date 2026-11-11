@@ -62,34 +62,10 @@ bench_job_overhead :: proc(t:^testing.T) {
         elapsed:=best_of(20,proc(data:rawptr) {
             js:=cast(^Job_System)data
             counter:Counter
-            for _ in 0..<JOBS {run(js,OWNER,nothing,nil,&counter)}
+            for _ in 0..<JOBS {run(js,OWNER,.Frame,nothing,nil,&counter)}
             wait(js,OWNER,&counter)
         },&js)
         log.infof("run+wait %d empty jobs, %d workers: %v (%.1f ns per job)",JOBS,threads+1,elapsed,f64(time.duration_nanoseconds(elapsed))/JOBS)
-        system_destroy(&js)
-    }
-}
-
-@(test)
-bench_graph_of_a_hundred_nodes :: proc(t:^testing.T) {
-    testing.set_fail_timeout(t,120*time.Second)
-    Run :: struct {js:^Job_System,g:^Graph}
-    g:Graph
-    testing.expect(t,graph_init(&g,{node_capacity=100,edge_capacity=400}))
-    defer graph_destroy(&g)
-    for node in 0..<100 {
-        graph_add(&g,nothing,nil)
-        if node>=10 {graph_depend(&g,node,node-10);graph_depend(&g,node,node-10+(node*7)%10)}
-    }
-    for threads in ([]int{0,3}) {
-        js:Job_System
-        testing.expect(t,system_init(&js,{threads=threads}))
-        run:=Run{&js,&g}
-        elapsed:=best_of(2000,proc(data:rawptr) {
-            run:=cast(^Run)data
-            graph_run(run.js,OWNER,run.g)
-        },&run)
-        log.infof("graph of 100 empty nodes in 10 levels, %d workers: %v",threads+1,elapsed)
         system_destroy(&js)
     }
 }

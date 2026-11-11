@@ -3,10 +3,117 @@ package editor
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:testing"
+import "mirai:core"
 import "mirai:editor/api"
+import "mirai:editor/history"
+import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/serial"
+
+@(private)
+@(test_world,editor="Api_Test_Editor")
+Reload_Test_World :: struct {using world:Test_World}
+
+@(private) Reload_Gone :: struct {hits:u32}
+@(private) Reload_Kept :: struct {value:u32}
+
+@(private)
+@(test_world)
+Reload_Before :: struct {
+    using world:Test_World,
+    gone:core.Table(Reload_Gone),
+    kept:core.Table(Reload_Kept),
+}
+
+@(private)
+@(test_world)
+Reload_After :: struct {
+    using world:Test_World,
+    kept:core.Table(Reload_Kept),
+}
+
+@(private)
+@(test_world)
+Reload_Renamed :: struct {
+    using world:Test_World,
+    hits:core.Table(Reload_Gone) `mirai:"name=Reload_Hits"`,
+    kept:core.Table(Reload_Kept),
+}
+
+// A build that leaves out a component the open documents hold rows of is not taken, and says
+// which one and how many rows; one renamed with @(component,was=) is the same table.
+@(test)
+a_build_that_drops_rows_of_a_document_is_not_taken :: proc(t:^testing.T) {
+    world:Reload_Before
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    after,described:=test_info(t,Reload_After)
+    if !described {return}
+    defer test_info_destroy(&after)
+    e:=core.create(&world.entities)
+    core.add(&world.gone,e,Reload_Gone{3})
+    test_world_settle(&world)
+    build:Build_State
+    build.play.pending=true
+    s:=Session{info=test_world_info(&world),edit_world=&world,build=&build}
+    library:=host.Project_Library{info=after}
+    testing.expect_value(t,library_migrate(&s,&library),Library_Reload.Refused)
+    error:=base.text_get(build.play_error[:])
+    testing.expectf(t,strings.contains(error,"Reload_Gone") && strings.contains(error,"(1 rows in 1 documents)"),"%s",error)
+    renamed,renamed_described:=test_info(t,Reload_Renamed)
+    if !renamed_described {return}
+    defer test_info_destroy(&renamed)
+    for &table in renamed.tables {
+        if table.name=="Reload_Hits" {table.was="Reload_Gone"}
+    }
+    m:core.World_Migration
+    defer core.world_migration_destroy(&m)
+    testing.expect(t,core.world_migration_make(&m,s.info,&renamed))
+    testing.expect_value(t,library_rows_dropped(&s,&m),"")
+}
+
+// A gesture queued in the frame a build swaps the library, and a call that arrives before the
+// methods are registered again, never run the handler of the code the swap replaced; a call of a
+// plugin that waits holds the swap, since its own code is of the library it came from.
+@(test)
+nothing_registered_before_a_swap_runs_after_it :: proc(t:^testing.T) {
+    world:Api_Test_Editor
+    edits:history.Edits
+    info,described:=test_info(t,Reload_Test_World)
+    if !described {return}
+    defer test_info_destroy(&info)
+    provider:=&info.storages[info.storages_by_type[Api_Test_Provider]]
+    session:=Session{info=&info,editor_world=&world,edits=&edits}
+    api_opened,api_problem:=api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return}
+    defer api_close(&session)
+    st:=api_state(&session)
+    st.poll_temp=context.temp_allocator
+    method:=api.method_find(&st.server,"test.plugin")
+    if !testing.expect(t,method!=nil && (^Api_Entry)(method.user).provided) {return}
+    shortcuts_run(&session,{.F9},{})
+    testing.expect_value(t,st.commands.asked_count,1)
+    // The swap: the new library gives the provider, and library_reload counts a generation.
+    provider.default=api_test_provider_v2
+    session.library_generation+=1
+    commands_run(&session)
+    testing.expect_value(t,session.frames,0)
+    testing.expect_value(t,st.commands.asked_count,0)
+    testing.expect(t,command_state(&session,"test.plugin").disabled)
+    shortcuts_run(&session,{.F9},{})
+    testing.expect_value(t,st.commands.asked_count,0)
+    out:serial.Writer
+    serial.writer_init(&out)
+    defer serial.writer_destroy(&out)
+    _,ok:=api.method_execute(&st.server,method,"{}",&out)
+    testing.expect(t,!ok)
+    st.in_call,st.waiting,st.provided_calls=1,1,1
+    testing.expect(t,library_busy(&session))
+    st.in_call,st.waiting,st.provided_calls=0,0,0
+}
 
 // The binaries of a build of the engine are where the editor started from, also once the build
 // moved the running ones aside, which some systems then name as the executable.
@@ -19,7 +126,7 @@ the_engine_of_an_editor_is_the_folder_it_started_from :: proc(t:^testing.T) {
 }
 
 // The record of mirai session follows an editor to the one it starts in its place, keeping the
-// mode and the arguments; a record of another editor stays as it is.
+// arguments; a record of another editor stays as it is.
 @(test)
 the_session_record_follows_an_editor_that_restarts :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
@@ -34,11 +141,11 @@ the_session_record_follows_an_editor_that_restarts :: proc(t:^testing.T) {
     }
     s:=Session{has_project=true,project_root=folder}
     for owner,i in ([]int{os.get_pid(),os.get_pid()+1}) {
-        record:=fmt.tprintf(`{{"pid": %d, "mode": "dev", "args": ["--api-port", "0"]}}`,owner)
+        record:=fmt.tprintf(`{{"pid": %d, "args": ["--api-port", "0"]}}`,owner)
         testing.expect(t,os.write_entire_file(path,record)==nil)
         session_record_follow(&s,4242)
         followed:=read(path)
         testing.expect_value(t,followed.pid,i==0?4242:owner)
-        testing.expect(t,followed.mode=="dev" && len(followed.args)==2 && followed.args[1]=="0")
+        testing.expect(t,len(followed.args)==2 && followed.args[1]=="0")
     }
 }

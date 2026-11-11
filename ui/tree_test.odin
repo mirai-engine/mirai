@@ -105,7 +105,7 @@ test_hud_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 a_tree_of_nodes_builds_the_widgets_it_describes :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Hud_Tree
     test_hud_init(t,&s)
@@ -119,7 +119,7 @@ a_tree_of_nodes_builds_the_widgets_it_describes :: proc(t:^testing.T) {
     // Bound fields are what the nodes show.
     testing.expect(t,test_paint(&ctx,"Hero")!=nil && test_paint(&ctx,"Player")==nil,"The bound text replaces the one of the node")
     score:=test_paint(&ctx,"120")
-    testing.expect(t,score!=nil && score.kind==.Text_Block && score.style.size==12)
+    testing.expect(t,score!=nil && test_paint_is_text(score^) && score.style.size==12)
     bar:^Paint
     for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Progress {bar=&p}}
     testing.expect(t,bar!=nil && bar.value==0.75 && bar.fill==Color{200,40,40,255} && bar.fill2==Color{30,30,30,255})
@@ -136,7 +136,7 @@ a_tree_of_nodes_builds_the_widgets_it_describes :: proc(t:^testing.T) {
     testing.expect(t,test_rect_near(test_rect(t,&ctx,tree_element_id(&ctx,"resume")),{10,76,90,30}))
     // A checkbox without a size is a line of its text square (16, of the first style), centered in the row.
     side:=16*TEXT_LINE
-    testing.expect(t,test_rect_near(test_rect(t,&ctx,tree_element_id(&ctx,"mute")),{108,76+(30-side)*0.5,side,side}))
+    testing.expect(t,test_rect_snapped(test_rect(t,&ctx,tree_element_id(&ctx,"mute")),{108,76+(30-side)*0.5,side,side}))
     testing.expect_value(t,s.event_count,0)
 }
 
@@ -145,7 +145,7 @@ a_tree_of_nodes_builds_the_widgets_it_describes :: proc(t:^testing.T) {
 @(test)
 the_state_of_a_node_is_what_its_last_build_showed :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Hud_Tree
     test_hud_init(t,&s)
@@ -203,9 +203,9 @@ test_hud_events :: proc(s:^Test_Hud_Tree,kind:Tree_Event_Kind) -> (found:Tree_Ev
 @(test)
 nodes_report_events_and_write_their_bound_fields :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     s:Test_Hud_Tree
     test_hud_init(t,&s)
     defer test_hud_destroy(&s)
@@ -348,7 +348,7 @@ bindings_must_name_fields_the_value_has :: proc(t:^testing.T) {
 @(test)
 a_tree_copied_byte_by_byte_builds_the_same_frame :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Hud_Tree
     test_hud_init(t,&s,true)
@@ -370,14 +370,14 @@ a_tree_copied_byte_by_byte_builds_the_same_frame :: proc(t:^testing.T) {
     mem.copy(raw_data(target.anim_sets),raw_data(source.anim_sets),source.anim_set_count*size_of(Anim_Set));target.anim_set_count=source.anim_set_count
     mem.copy(raw_data(target.strings),raw_data(source.strings),source.string_length);target.string_length=source.string_length
     a,b:=&source.anims,&target.anims
-    mem.copy(raw_data(b.keys),raw_data(a.keys),a.key_count*size_of(Keyframe));b.key_count=a.key_count
+    mem.copy(raw_data(b.keys),raw_data(a.keys),a.key_count*size_of(b.keys[0]));b.key_count=a.key_count
     mem.copy(raw_data(b.tracks),raw_data(a.tracks),a.track_count*size_of(Anim_Track));b.track_count=a.track_count
     mem.copy(raw_data(b.nodes),raw_data(a.nodes),a.node_count*size_of(Anim_Node));b.node_count=a.node_count
     copied.values=s.values
     testing.expect(t,tree_instance_init(&copied.instance,&copied.tree,test_host(&copied.host,&copied.schema,copied.type,&copied.values)))
     defer tree_instance_destroy(&copied.instance)
     other:Context
-    testing.expect(t,context_init(&other,TEST_SMALL))
+    testing.expect(t,test_context_init(&other,TEST_SMALL))
     defer context_destroy(&other)
     second:=test_frame(&other,&input,test_hud_build,&copied)
     testing.expect_value(t,len(second.vertices),len(vertices))
@@ -389,7 +389,7 @@ a_tree_copied_byte_by_byte_builds_the_same_frame :: proc(t:^testing.T) {
 @(test)
 nodes_play_the_animations_of_their_set :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Hud_Tree
     test_hud_init(t,&s,true)
@@ -426,7 +426,7 @@ nodes_play_the_animations_of_their_set :: proc(t:^testing.T) {
 @(test)
 the_same_tree_builds_twice_under_different_scopes :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Hud_Tree
     test_hud_init(t,&s)

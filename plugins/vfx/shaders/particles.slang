@@ -39,7 +39,7 @@ struct Particle_Emitter {
     float4 collide;       // bounce, friction, life lost
     float4 look;          // stretch, soft, intensity, flipbook speed
     float4 attractor;
-    uint4 mesh;           // vertex count of a draw of the clusters of level 0 of its mesh (geometry.slang), the mesh, PARTICLE_FACING_*, material row
+    uint4 mesh;           // vertex count of a draw of the clusters of level 0 of its mesh (geometry.slang), the mesh, 0, material row
     uint4 flipbook;
     float4 size_curve[2];
     float4 size_times[2];
@@ -52,9 +52,6 @@ struct Particle_Emitter {
     float4 light;         // intensity (cd), range, radius (0: half the size of the particle)
     uint4 lights;         // its share of the room of the frame: x the first of its lights with shadows, y how many; z, w those without
     uint4 data;           // bytes of particle_data to the Attributes of its range, bytes of those of a particle, its age (bits), particles it started before the frame
-    float4 mesh_rotation; // of Mesh particles: the quaternion (xyz, w) of length one the mesh takes before the rotation of the particle
-    float4 mesh_axis;     // of Mesh particles: xyz the axis of length one their rotation turns them about in the frame of mesh.z
-    float4 mesh_scale;    // of Mesh particles: xyz of the mesh on each axis, times the size of the particle; w the largest
 };
 
 struct Particle_State {
@@ -102,25 +99,13 @@ struct Particle_Event {
 #define PARTICLE_RENDER_RIBBON 3u
 #define PARTICLE_RENDER_MESH 4u
 
-// effect.Particle_Facing: the frame a Mesh particle turns its mesh in.
-#define PARTICLE_FACING_RANDOM 0u
-#define PARTICLE_FACING_ENTITY 1u
-#define PARTICLE_FACING_CAMERA_POSITION 2u
-#define PARTICLE_FACING_CAMERA_PLANE 3u
-
-#define PARTICLE_COLLISION_SCREEN 1u
-#define PARTICLE_COLLISION_WORLD 2u
+#define PARTICLE_COLLISION_WORLD 1u
 #define PARTICLE_EVENT_DEATH 1u
 #define PARTICLE_EVENT_COLLISION 2u
 
 #define PARTICLE_EVENT_CAPACITY 16384u
 #define PARTICLE_EVENTS_AT 64u // words of particle_queue before the events: their counts and dispatches
 #define PARTICLE_EVENT_WORDS 8u
-// After the events: how many reports the frame wrote and the origin of their places
-// (vfx.Reports_Head), then the reports (vfx.Gpu_Report).
-#define PARTICLE_REPORTS_AT (PARTICLE_EVENTS_AT + 2u * PARTICLE_EVENT_CAPACITY * PARTICLE_EVENT_WORDS)
-#define PARTICLE_REPORT_CAPACITY 1024u
-#define PARTICLE_REPORT_WORDS 12u
 
 // The resources of an emitter in particle_frame: the surface of its shape,
 // then those of its program, in the order it declares them.
@@ -134,7 +119,7 @@ struct Particle_Event {
 #define PARTICLE_RESOURCE_EMITTER 5u
 #define PARTICLE_RESOURCE_DATA 6u
 #define PARTICLE_DATA_ENTRIES 4096u      // vfx.DATA_ENTRIES
-#define PARTICLE_DATA_GAME_ENTRIES 256u  // vfx.DATA_GAME_ENTRIES
+#define PARTICLE_REPORT_WORDS 11u        // vfx.REPORT_WORDS
 #define PARTICLE_SEGMENT_BYTES 64u
 // The stages of an emitter after its resources (vfx.Gpu_Stage).
 #define PARTICLE_STAGES 32u
@@ -190,7 +175,9 @@ float4 particle_frame_row(uint at) { return asfloat(particle_frame.Load4(at)); }
 // gravity where no Gravity rules, then every Gravity and every Wind in the order they apply.
 #define PARTICLE_GRAVITY_VOLUMES 8u // vfx.GRAVITY_VOLUMES
 #define PARTICLE_FIELDS_GRAVITY 16u
-#define PARTICLE_FIELDS_WIND (PARTICLE_FIELDS_GRAVITY + 16u + PARTICLE_GRAVITY_VOLUMES * 112u)
+// volume.Gpu_Outlines: its count and its rows.
+#define PARTICLE_OUTLINES_BYTES (16u + VOLUME_OUTLINE_POINTS * 8u)
+#define PARTICLE_FIELDS_WIND (PARTICLE_FIELDS_GRAVITY + 16u + PARTICLE_GRAVITY_VOLUMES * 112u + PARTICLE_OUTLINES_BYTES)
 
 Gpu_Volume particle_frame_volume(uint at) {
     Gpu_Volume v;
@@ -201,6 +188,12 @@ Gpu_Volume particle_frame_volume(uint at) {
     v.kind = particle_frame.Load4(at + 64u);
     return v;
 }
+
+// The points of a Gpu_Outlines at bytes at of particle_frame.
+struct Particle_Outlines : IVolume_Outlines {
+    uint at;
+    float2 outline_point(uint i) { float4 r = particle_frame_row(at + 16u + (i >> 1) * 16u); return (i & 1u) != 0u ? r.zw : r.xy; }
+};
 
 // What a Gravity pulls with at p, as volume gravity_of: along xyz of pull, or toward
 // it as a center with the acceleration y and the surface z of center.
@@ -222,16 +215,18 @@ float3 particle_fields(uint slot, uint at, float3 p) {
     float4 gravity = float4(particle_frame_row(at).xyz, 0.0);
     uint g = at + PARTICLE_FIELDS_GRAVITY;
     uint pulls = g + 16u + PARTICLE_GRAVITY_VOLUMES * 80u;
+    Particle_Outlines pulled = {g + 16u + PARTICLE_GRAVITY_VOLUMES * 112u};
     for (uint i = 0u; i < min(particle_frame.Load(g), PARTICLE_GRAVITY_VOLUMES); i++) {
         Gpu_Volume v = particle_frame_volume(g + 16u + i * 80u);
-        float w = volume_weight(v, p);
+        float w = volume_weight(v, p, pulled);
         if (w > 0.0) gravity = volume_mix(gravity, float4(particle_gravity_of(particle_frame_row(pulls + i * 16u), particle_frame_row(pulls + PARTICLE_GRAVITY_VOLUMES * 16u + i * 16u), p), 0.0), w, v);
     }
     float4 wind = float4(0.0);
     uint winds = at + PARTICLE_FIELDS_WIND;
+    Particle_Outlines blown = {winds + 16u + WIND_VOLUMES * 96u};
     for (uint i = 0u; i < min(particle_frame.Load(winds), WIND_VOLUMES); i++) {
         Gpu_Volume v = particle_frame_volume(winds + 16u + i * 80u);
-        float w = volume_weight(v, p);
+        float w = volume_weight(v, p, blown);
         if (w > 0.0) wind = volume_mix(wind, particle_frame_row(winds + 16u + WIND_VOLUMES * 80u + i * 16u), w, v);
     }
     return gravity.xyz * particle_emitters[slot].noise.w + wind.xyz * particle_emitters[slot].acceleration.w;
@@ -330,10 +325,10 @@ Particle_Volume_Row particle_volume_at(uint at) {
 }
 
 // A stage of an emitter (vfx.Gpu_Stage): its kind, the resource row of its grid, its
-// iterations, the radius of its neighbors, the grid resources it writes besides its
-// own and those of them that start the stage at zero, a bit each.
+// iterations, the grid resources it writes besides its own and those of them that
+// start the stage at zero, a bit each.
 struct Particle_Stage {
-    uint kind; uint row; uint iterations; float neighbors;
+    uint kind; uint row; uint iterations;
     uint writes; uint clears;
 };
 
@@ -343,9 +338,8 @@ Particle_Stage particle_stage_of(uint slot, uint k) {
     if (frame_at == INVALID || k >= PARTICLE_STAGES) return s;
     uint at = frame_at + PARTICLE_RESOURCES * PARTICLE_RESOURCE_BYTES + k * PARTICLE_STAGE_BYTES;
     uint4 w = particle_frame.Load4(at);
-    uint2 x = particle_frame.Load2(at + 16u);
-    s.kind = w.x; s.row = w.y; s.iterations = w.z; s.neighbors = asfloat(w.w);
-    s.writes = x.x; s.clears = x.y;
+    s.kind = w.x; s.row = w.y; s.iterations = w.z; s.writes = w.w;
+    s.clears = particle_frame.Load(at + 16u);
     return s;
 }
 
@@ -374,21 +368,6 @@ Particle_Event particle_event_load(uint half, uint at) {
     ev.velocity = asfloat(uint3(particle_queue[base + 4u], particle_queue[base + 5u], particle_queue[base + 6u]));
     ev.color = particle_queue[base + 7u];
     return ev;
-}
-
-// Tells the game of a particle whose emitter's reports name what happened to it.
-void particle_report(uint slot, uint kind, float3 position, float3 velocity, float3 normal) {
-    if (particle_emitters[slot].program.z != kind) return;
-    uint at;
-    InterlockedAdd(particle_queue[PARTICLE_REPORTS_AT], 1u, at);
-    if (at >= PARTICLE_REPORT_CAPACITY) return;
-    uint base = PARTICLE_REPORTS_AT + 4u + at * PARTICLE_REPORT_WORDS;
-    particle_queue[base] = asuint(position.x); particle_queue[base + 1u] = asuint(position.y); particle_queue[base + 2u] = asuint(position.z);
-    particle_queue[base + 3u] = slot;
-    particle_queue[base + 4u] = asuint(velocity.x); particle_queue[base + 5u] = asuint(velocity.y); particle_queue[base + 6u] = asuint(velocity.z);
-    particle_queue[base + 7u] = kind;
-    particle_queue[base + 8u] = asuint(normal.x); particle_queue[base + 9u] = asuint(normal.y); particle_queue[base + 10u] = asuint(normal.z);
-    particle_queue[base + 11u] = 0u;
 }
 
 void particle_event_store(uint half, uint at, Particle_Event ev) {
@@ -527,77 +506,15 @@ float particle_puff(float2 tile, float seed) {
     return disc * disc * saturate(0.35 + n * 1.1);
 }
 
-// A turn by angle about an axis of length one.
-float3x3 particle_axis_rotation(float3 axis, float angle) {
+// Rotation of a particle mesh: about an axis of its own.
+float3x3 particle_rotation(uint seed, float angle) {
+    uint s = seed * 31u + 7u;
+    float3 axis = normalize(float3(random01(s), random01(s), random01(s)) * 2.0 - 1.0 + float3(0.0, 1e-3, 0.0));
     float c = cos(angle), si = sin(angle), t = 1.0 - c;
     return float3x3(
         t * axis.x * axis.x + c, t * axis.x * axis.y - si * axis.z, t * axis.x * axis.z + si * axis.y,
         t * axis.x * axis.y + si * axis.z, t * axis.y * axis.y + c, t * axis.y * axis.z - si * axis.x,
         t * axis.x * axis.z - si * axis.y, t * axis.y * axis.z + si * axis.x, t * axis.z * axis.z + c);
-}
-
-// Rotation of a particle mesh: about an axis of its own.
-float3x3 particle_rotation(uint seed, float angle) {
-    uint s = seed * 31u + 7u;
-    float3 axis = normalize(float3(random01(s), random01(s), random01(s)) * 2.0 - 1.0 + float3(0.0, 1e-3, 0.0));
-    return particle_axis_rotation(axis, angle);
-}
-
-// The turn of a quaternion (xyz, w) of length one.
-float3x3 particle_quaternion_rotation(float4 q) {
-    float3 q2 = q.xyz * 2.0;
-    float xx = q.x * q2.x, yy = q.y * q2.y, zz = q.z * q2.z;
-    float xy = q.x * q2.y, xz = q.x * q2.z, yz = q.y * q2.z;
-    float wx = q.w * q2.x, wy = q.w * q2.y, wz = q.w * q2.z;
-    return float3x3(
-        1.0 - (yy + zz), xy - wz, xz + wy,
-        xy + wz, 1.0 - (xx + zz), yz - wx,
-        xz - wy, yz + wx, 1.0 - (xx + yy));
-}
-
-// How a Mesh particle turns its mesh, from the space of the mesh to that of
-// the simulation (particle_world_vector takes it on to the world): the frame
-// of its facing, its rotation (which its spin moves) about the axis of the
-// effect, then the turn of the mesh. A Random facing turns it about an axis
-// of the particle's own instead of a frame and that axis. The frame of the
-// camera: X toward it (Camera_Position) or against its forward (Camera_Plane),
-// Z across X and the up of the world (or of the camera), Y across Z and X.
-float3x3 particle_mesh_turn(uint slot, Particle p) {
-    float3x3 mesh_turn = particle_quaternion_rotation(particle_emitters[slot].mesh_rotation);
-    uint facing = particle_emitters[slot].mesh.z;
-    if (facing == PARTICLE_FACING_RANDOM) return mul(particle_rotation(p.seed, p.rotation), mesh_turn);
-    float3x3 turn = mul(particle_axis_rotation(particle_emitters[slot].mesh_axis.xyz, p.rotation), mesh_turn);
-    if (facing != PARTICLE_FACING_CAMERA_POSITION && facing != PARTICLE_FACING_CAMERA_PLANE) return turn;
-    float3 toward, up;
-    if (facing == PARTICLE_FACING_CAMERA_POSITION) {
-        toward = to_eye(particle_world(slot, p.position));
-        float along = dot(toward, float3(0.0, 1.0, 0.0));
-        up = abs(along) > 0.99 ? float3(along > 0.0 ? -1.0 : 1.0, 0.0, 0.0) : float3(0.0, 1.0, 0.0);
-    } else {
-        toward = -normalize(frame.camera_forward.xyz);
-        up = frame.view[1].xyz;
-    }
-    if ((particle_emitters[slot].range.w & PARTICLE_FLAG_LOCAL) != 0u) {
-        toward = inverse_transform_vector(particle_emitters[slot].world, toward);
-        up = inverse_transform_vector(particle_emitters[slot].world, up);
-    }
-    float3 c0 = normalize(toward);
-    float3 c2 = normalize(cross(c0, up));
-    float3 c1 = cross(c2, c0);
-    float3x3 facing_frame = float3x3(c0.x, c1.x, c2.x, c0.y, c1.y, c2.y, c0.z, c1.z, c2.z);
-    return mul(facing_frame, turn);
-}
-
-// The normal and the tangent of a mesh scaled on each axis: the normal by the
-// inverse of the scale (its cofactors, so a flat axis keeps it), the tangent
-// by the scale; each as it was where the scale leaves nothing of it.
-float3 particle_mesh_normal(float3 n, float3 scale) {
-    float3 scaled = n * float3(scale.y * scale.z, scale.z * scale.x, scale.x * scale.y);
-    return dot(scaled, scaled) > 1e-20 ? scaled : n;
-}
-float3 particle_mesh_tangent(float3 t, float3 scale) {
-    float3 scaled = t * scale;
-    return dot(scaled, scaled) > 1e-20 ? scaled : t;
 }
 
 #endif

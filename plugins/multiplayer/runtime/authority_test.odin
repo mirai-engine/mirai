@@ -1,6 +1,5 @@
 package multiplayer
 
-import "core:fmt"
 import "core:strings"
 import "core:testing"
 import "mirai:core"
@@ -17,7 +16,7 @@ import "mirai:std/base"
 remote_follows_what_a_client_holds_on_a_server_and_a_new_role_clears_it :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -37,21 +36,19 @@ remote_follows_what_a_client_holds_on_a_server_and_a_new_role_clears_it :: proc(
     s.host_ready=true
     authority_follow(&s,ref)
     core.settle(&info,&world,nil)
-    testing.expect(t,core.owned(core.read(&world.remotes),e),"what a connection owns and predicts is decided here")
+    testing.expect(t,core.owned(&world.remotes,e),"what a connection owns and predicts is decided here")
 
     s.server.objects[1]={object=Object(1),entity=e}
-    events:Net_Events
-    defer core.value_free(&events,type_info_of(Net_Events))
     held:=[]wire.Command{{kind=.Authority_Changed,object=Object(1),connection=3}}
-    server_commands(&s,ref,nil,held,&events,&world.remote)
+    server_commands(&s,ref,nil,held,&world.remote)
     core.settle(&info,&world,nil)
-    testing.expect(t,!core.owned(core.read(&world.remotes),e),"what a client holds is decided there")
+    testing.expect(t,!core.owned(&world.remotes,e),"what a client holds is decided there")
     back:=[]wire.Command{{kind=.Authority_Changed,object=Object(1),connection=0}}
-    server_commands(&s,ref,nil,back,&events,&world.remote)
+    server_commands(&s,ref,nil,back,&world.remote)
     core.settle(&info,&world,nil)
-    testing.expect(t,core.owned(core.read(&world.remotes),e),"and here again when it gives it back")
+    testing.expect(t,core.owned(&world.remotes,e),"and here again when it gives it back")
 
-    server_commands(&s,ref,nil,held,&events,&world.remote)
+    server_commands(&s,ref,nil,held,&world.remote)
     core.settle(&info,&world,nil)
     session_destroy(&s)
     authority_follow(&s,ref)
@@ -66,7 +63,7 @@ remote_follows_what_a_client_holds_on_a_server_and_a_new_role_clears_it :: proc(
 remote_follows_the_replicas_a_client_neither_predicts_nor_holds :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -84,48 +81,77 @@ remote_follows_the_replicas_a_client_neither_predicts_nor_holds :: proc(t:^testi
     defer session_destroy(&s)
     ref:=core.world_ref(&world,&info)
     r:=net_test_replica(&s,ref,e,.Shown,.Lent)
-    testing.expect(t,!core.owned(core.read(&world.remotes),e),"someone else's replica is decided by the server")
+    testing.expect(t,!core.owned(&world.remotes,e),"someone else's replica is decided by the server")
     r.role=.Held
     replica_classify(&s,ref,r)
     core.settle(&info,&world,nil)
-    testing.expect(t,core.owned(core.read(&world.remotes),e),"what it holds is decided here")
+    testing.expect(t,core.owned(&world.remotes,e),"what it holds is decided here")
     r.role=.Predicted
     replica_classify(&s,ref,r)
     core.settle(&info,&world,nil)
-    testing.expect(t,core.owned(core.read(&world.remotes),e),"and what it predicts")
+    testing.expect(t,core.owned(&world.remotes,e),"and what it predicts")
     r.role=.Shown
     replica_classify(&s,ref,r)
     core.settle(&info,&world,nil)
-    testing.expect(t,!core.owned(core.read(&world.remotes),e))
+    testing.expect(t,!core.owned(&world.remotes,e))
+}
+
+@(private)
+@(component,replicated)
+Net_Test_Names :: struct {names:[]string}
+
+@(private)
+@(test_world)
+Names_World :: struct {
+    using world:Test_World,
+    names:core.Table(Net_Test_Names),
+}
+
+// An array of bytes travels as one field, so its bytes must fit one part of a state.
+@(private)
+@(component,replicated)
+Net_Test_Wide :: struct {bytes:[1024]u8}
+
+@(private)
+@(test_world)
+Wide_World :: struct {
+    using world:Test_World,
+    wide:core.Table(Net_Test_Wide),
 }
 
 // A replicated component the protocol cannot carry opens no network: the
 // problem and the reason of the session name the component and why.
 @(test)
 a_replicated_component_that_does_not_fit_the_protocol_is_refused_with_its_fix :: proc(t:^testing.T) {
-    Net_Test_Names :: struct {names:[]string}
-    tables:=[]core.Table_Info{{name="Net_Test_Names",type=Net_Test_Names,info=type_info_of(Net_Test_Names),replicated=.All}}
-    problems:core.Problems
-    s:=Net_Session{allocator=context.allocator,problems=&problems}
-    info:=core.World_Info{tables=tables}
-    testing.expect(t,!protocol_build(&s,core.world_ref(nil,&info)))
-    session_destroy(&s)
-    refusal:=base.text_get(s.refusal[:])
-    testing.expectf(t,strings.contains(refusal,"Net_Test_Names does not fit the protocol") && strings.contains(refusal,"not plain data"),"%s",refusal)
-    testing.expect_value(t,problems.count,1)
-    testing.expect_value(t,base.text_get(problems.entries[0].code[:]),"net.protocol")
+    refused :: proc(t:^testing.T,$W:typeid,name,why:string) {
+        info,described:=test_info(t,W)
+        if !described {return}
+        defer test_info_destroy(&info)
+        problems:core.Problems
+        s:=Net_Session{allocator=context.allocator,problems=&problems}
+        testing.expect(t,!protocol_build(&s,core.world_ref(nil,&info)))
+        session_destroy(&s)
+        refusal:=base.text_get(s.refusal[:])
+        testing.expectf(t,strings.contains(refusal,name) && strings.contains(refusal,"does not fit the protocol") && strings.contains(refusal,why),"%s",refusal)
+        testing.expect_value(t,problems.count,1)
+        testing.expect_value(t,base.text_get(problems.entries[0].code[:]),"net.protocol")
+    }
+    refused(t,Names_World,"Net_Test_Names","not plain data")
+    refused(t,Wide_World,"Net_Test_Wide","one of its fields encodes in more than")
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Crowded_World :: struct {
-    es:core.Entities,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     worlds:core.Table(core.World_Transform),
-    sources:core.Table(scene.Prefab_Source),
+    instances:core.Table(scene.Prefab_Instance),
     motions:core.Table(core.Motion),
     moves:core.Table(input.Move_Input),
-    values:[COMPONENTS+1]core.Table(Net_Test_Value),
+    values:[14]core.Table(Net_Test_Value), // one more than an object carries
 }
+#assert(len(Crowded_World{}.values)==COMPONENTS+1)
 
 // A body with a driver and more replicated components than an object carries
 // besides its pose, motion and driver is not replicated, and the problem says
@@ -133,33 +159,15 @@ Crowded_World :: struct {
 @(test)
 an_entity_with_more_replicated_components_than_an_object_carries_is_not_replicated :: proc(t:^testing.T) {
     w:Crowded_World
-    core.entities_init(&w.es)
-    defer {
-        core.table_destroy(&w.transforms);core.table_destroy(&w.worlds);core.table_destroy(&w.sources);core.table_destroy(&w.motions);core.table_destroy(&w.moves)
-        for &table in w.values {core.table_destroy(&table)}
-        core.entities_destroy(&w.es)
-    }
-    tables:[len(w.values)+5]core.Table_Info
-    tables[0]={name="core.Transform",type=core.Transform,info=type_info_of(core.Transform),offset=offset_of(Crowded_World,transforms)}
-    tables[1]={name="core.World_Transform",type=core.World_Transform,info=type_info_of(core.World_Transform),offset=offset_of(Crowded_World,worlds)}
-    tables[2]={name="scene.Prefab_Source",type=scene.Prefab_Source,info=type_info_of(scene.Prefab_Source),offset=offset_of(Crowded_World,sources)}
-    tables[3]={name="core.Motion",type=core.Motion,info=type_info_of(core.Motion),offset=offset_of(Crowded_World,motions)}
-    tables[4]={name="input.Move_Input",type=input.Move_Input,info=type_info_of(input.Move_Input),offset=offset_of(Crowded_World,moves)}
-    for k in 0..<len(w.values) {
-        offset:=offset_of(Crowded_World,values)+uintptr(k*size_of(core.Table(Net_Test_Value)))
-        tables[5+k]={name=fmt.tprintf("Net_Test_Value_%d",k),type=Net_Test_Value,info=type_info_of(Net_Test_Value),offset=offset,replicated=.All}
-    }
-    info:=core.World_Info{tables=tables[:]}
-    ref:=core.world_ref(&w,&info)
-    e:=core.create(&w.es)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    ref:=test_world_ref(&w)
+    e:=core.create(&w.entities)
     core.add(&w.transforms,e,core.TRANSFORM_IDENTITY)
     core.add(&w.motions,e,core.Motion{})
     core.add(&w.moves,e,input.Move_Input{})
-    core.table_settle(&w.transforms,&w.es);core.table_settle(&w.motions,&w.es);core.table_settle(&w.moves,&w.es)
-    for &table in w.values {
-        core.add(&table,e,Net_Test_Value{})
-        core.table_settle(&table,&w.es)
-    }
+    for &table in w.values {core.add(&table,e,Net_Test_Value{})}
+    test_world_settle(&w)
     problems:core.Problems
     s:=Net_Session{allocator=context.allocator,problems=&problems}
     defer session_destroy(&s)

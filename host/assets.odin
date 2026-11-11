@@ -40,6 +40,7 @@ ASSETS_MESH_NONE :: render.Mesh_Handle(max(u32))
 
 Assets_Desc :: struct {
     root:string,               // folder of the asset registry
+    imported:string,           // the imported folder that goes with root (asset.Registry); "" for none
     cache:string,              // file where the registry keeps what it scanned; "" for none
     renderer:^render.Renderer, // nil: nothing is uploaded
     allocator:mem.Allocator,   // context.allocator when unset
@@ -48,7 +49,7 @@ Assets_Desc :: struct {
     mounts:[]asset.Registry_Mount, // folders seen beside root under a prefix: the assets of active plugins
 }
 
-Assets_Kind :: enum u8 {Mesh,Texture,Material,Scene,Shape,Document,Fracture}
+Assets_Kind :: enum u8 {Mesh,Texture,Material,Scene,Shape,Document}
 
 Assets_Problem :: enum u8 {
     Missing,     // no file of the registry is that asset
@@ -134,13 +135,15 @@ assets_render_geometry_destroy :: proc(out:^Mesh_Render_Geometry) {
 // slots, as assets_mesh_generate would (levels: in a DAG of clusters, else
 // level 0 alone), with the cuts of its rays as the
 // renderer of limits traces them. Scratch from the temporary allocator of
-// the thread. Any thread. False when the streams do not match or without memory.
-assets_render_geometry_make :: proc(mesh:geom.Mesh,uv1s:[]geom.Vec2,slots:int,out:^Mesh_Render_Geometry,limits:Assets_Limits,tangents:[][4]f32=nil,levels:=false) -> bool {
+// the thread. locked, empty or one per vertex: with levels, the vertices
+// they keep where they are, as those of a border another mesh shares. Any
+// thread. False when the streams do not match or without memory.
+assets_render_geometry_make :: proc(mesh:geom.Mesh,uv1s:[]geom.Vec2,slots:int,out:^Mesh_Render_Geometry,limits:Assets_Limits,tangents:[][4]f32=nil,levels:=false,locked:[]bool=nil) -> bool {
     count:=len(mesh.positions)
-    if count==0 || len(mesh.normals)!=count || len(mesh.uvs)!=0 && len(mesh.uvs)!=count || len(uv1s)!=0 && len(uv1s)!=count || slots>asset.MESH_MAX_SLOTS {return false}
+    if count==0 || len(mesh.normals)!=count || len(mesh.uvs)!=0 && len(mesh.uvs)!=count || len(uv1s)!=0 && len(uv1s)!=count || len(locked)!=0 && len(locked)!=count || slots>asset.MESH_MAX_SLOTS {return false}
     for index in mesh.indices {if int(index)>=count {return false}}
     for slot in mesh.materials[:slots>0?len(mesh.materials):0] {if int(slot)>=slots {return false}}
-    return assets_render_geometry(mesh,mesh.normals,uv1s,slots,out,limits,tangents,levels)
+    return assets_render_geometry(mesh,mesh.normals,uv1s,slots,out,limits,tangents,levels,locked)
 }
 
 Assets_Texture :: struct {
@@ -170,7 +173,7 @@ Assets_Stats :: struct {
     loads:int,             // assets read from their file
     reloads:int,
     unloads:int,           // assets that assets_collect unloaded
-    streamed:int,          // ranges of levels given to textures that follow their distance
+    streamed:int,          // ranges of levels given to textures that follow what the GPU samples
     errors_dropped:int,    // errors that did not fit in the list
 }
 
@@ -257,10 +260,10 @@ assets_init :: proc(a:^Assets,desc:Assets_Desc) -> bool {
     allocator:=desc.allocator.procedure!=nil?desc.allocator:context.allocator
     capacity:=desc.capacity>0?desc.capacity:ASSETS_DEFAULT_CAPACITY
     a^={allocator=allocator,renderer=desc.renderer}
-    listed:=asset.registry_init(&a.registry,desc.root,desc.cache,allocator)
+    listed:=asset.registry_init(&a.registry,desc.root,desc.cache,allocator,desc.imported)
     // A copy of an asset made outside the editor gets an id of its own.
     a.registry.resolve_duplicates=true
-    for mount in desc.mounts {listed&&=asset.registry_mount(&a.registry,mount.folder,mount.prefix)}
+    for mount in desc.mounts {listed&&=asset.registry_mount(&a.registry,mount.folder,mount.prefix,mount.imported)}
     asset.types_init(&a.types,allocator)
     a.index=make(map[base.Asset_Id]Assets_Ref,allocator)
     a.derived=make(map[u64]u32,allocator)
@@ -354,12 +357,16 @@ assets_unmount :: proc(a:^Assets,prefix:string) -> asset.Error {
     return asset.registry_unmount(&a.registry,prefix)
 }
 
-// The files of the folder changed in memory and not written: what an editor
-// has unsaved (asset.Registry_Memory). Assets read them instead of the disk.
-assets_unsaved :: proc(a:^Assets) -> []asset.Registry_Memory {return a.registry.memory[:]}
-
 assets_errors :: proc(a:^Assets) -> []Assets_Error {return a.errors[:]}
 assets_errors_clear :: proc(a:^Assets) {clear(&a.errors)}
+
+// The id of the asset at a path of the folder, as its file is spelled
+// ("arena/Chrome.mat"): what code that names an asset by path resolves.
+assets_id :: proc(a:^Assets,path:string) -> (id:base.Asset_Id,found:bool) {
+    if a==nil {return}
+    file:=asset.registry_find_path(&a.registry,path) or_return
+    return file.id,file.id!={}
+}
 
 // How a message names an asset: its path in the folder, or its id, written in
 // buffer, when the folder has no file with it. Without allocating.
@@ -421,9 +428,8 @@ assets_open :: proc(a:^Assets,id:base.Asset_Id,kind:Assets_Kind,file:^asset.Asse
     case .Mesh:     expected=record.kind==asset.KIND_MESH
     case .Texture:  expected=record.kind==asset.KIND_TEXTURE
     case .Material: expected=record.kind==asset.KIND_MATERIAL
-    case .Scene:    expected=record.kind==asset.KIND_SCENE || record.kind==asset.KIND_PREFAB
+    case .Scene:    expected=record.kind==asset.KIND_SCENE
     case .Document: expected=record.kind==document
-    case .Fracture: expected=record.kind==asset.KIND_FRACTURE
     }
     if !expected {return .Wrong_Kind,.Invalid,false}
     detail=assets_file(a,id,record.kind,file)
@@ -896,7 +902,7 @@ assets_render_geometry_add :: proc(a:^Assets,made:^Mesh_Render_Geometry,slot_mat
 // slots: of the mesh, which mesh.materials gives each triangle; 0: none.
 // Scratch from the temporary allocator. False without memory.
 @(private="file")
-assets_render_geometry :: proc(mesh:geom.Mesh,normals:[]geom.Vec3,uv1s:[]geom.Vec2,slots:int,out:^Mesh_Render_Geometry,limits:Assets_Limits,tangents:[][4]f32=nil,levels:=false) -> bool {
+assets_render_geometry :: proc(mesh:geom.Mesh,normals:[]geom.Vec3,uv1s:[]geom.Vec2,slots:int,out:^Mesh_Render_Geometry,limits:Assets_Limits,tangents:[][4]f32=nil,levels:=false,locked:[]bool=nil) -> bool {
     scratch:=context.temp_allocator
     count:=len(mesh.positions)
     flags:asset.Mesh_Flags
@@ -913,12 +919,14 @@ assets_render_geometry :: proc(mesh:geom.Mesh,normals:[]geom.Vec3,uv1s:[]geom.Ve
         return v
     }
     vertices:=make([dynamic]asset.Vertex,0,count,scratch)
+    locks:=make([dynamic]bool,0,len(locked),scratch)
     indices,failed:=make([]u32,len(mesh.indices),scratch)
     if failed!=nil || vertices==nil && count>0 {return false}
     given:=len(tangents)==count
     if given && (slots<=1 || len(mesh.materials)==0) {
         // A vertex of each source vertex: with one slot and their tangents nothing splits them.
         for index in 0..<count {append(&vertices,vertex_make(mesh,normals,uv1s,u32(index),0,tangents[index],&flags))}
+        append(&locks,..locked)
         copy(indices,mesh.indices)
     } else {
         corners:[][4]f32
@@ -937,6 +945,7 @@ assets_render_geometry :: proc(mesh:geom.Mesh,normals:[]geom.Vec3,uv1s:[]geom.Ve
                 vertex=u32(len(vertices))
                 known[key]=vertex
                 append(&vertices,vertex_make(mesh,normals,uv1s,index,slot,corners[at],&flags))
+                if len(locked)!=0 {append(&locks,locked[index])}
             }
             indices[at]=vertex
         }
@@ -947,7 +956,7 @@ assets_render_geometry :: proc(mesh:geom.Mesh,normals:[]geom.Vec3,uv1s:[]geom.Ve
     out.geometry={}
     out.ahead={}
     out.slots=slots
-    source:=asset.Mesh_Source{vertices=vertices[:],flags=flags}
+    source:=asset.Mesh_Source{vertices=vertices[:],flags=flags,locked=locks[:]}
     built:=asset.mesh_build_dag(source,indices,&out.geometry,allocator) if levels else asset.mesh_build(source,indices,nil,&out.geometry,allocator)
     if !built {return false}
     if !limits.renderer {return true}
@@ -1092,8 +1101,8 @@ assets_texture_first :: proc(view:asset.Texture_View,limits:render.Texture_Limit
 }
 
 // The levels of a texture the renderer takes: from `from`, or the first one
-// its side allows, to the last; for a device that does not sample blocks, or
-// a renderer told not to use them, decoded to RGBA8, and BC6H to RGBA16F.
+// its side allows, to the last; for a device that does not sample blocks,
+// decoded to RGBA8, and BC6H to RGBA16F.
 // The levels of one layer name the file as their source, whose other levels
 // the renderer can ask for; an array or a cube takes every level its side
 // allows at once. Any thread.
@@ -1358,7 +1367,7 @@ assets_program_value :: proc(a:^Assets,program:^render.Program,params:^[16]rende
 
 // The row of the renderer for a material, loading its textures. A Surface
 // program replaces the standard model: of its maps only the normal map is
-// read. A texture that failed is only shown as base color.
+// read, unless it builds on that model (render.Program.standard). A texture that failed is only shown as base color.
 @(private="file")
 assets_material_desc :: proc(a:^Assets,material:^Assets_Material,id:base.Asset_Id) -> render.Material_Desc {
     desc:=render.Material_Desc{info=material.info}
@@ -1367,7 +1376,7 @@ assets_material_desc :: proc(a:^Assets,material:^Assets_Material,id:base.Asset_I
         assets_fail(a,id,.Material,.Unsupported)
     }
     for source,which in asset.material_maps(&desc.maps) {
-        if program!=nil && which!=.Normal {continue}
+        if program!=nil && which!=.Normal && !program.standard {continue}
         texture:=assets_texture_image(a,source.texture)
         if texture!=nil && (!texture.failed || which==.Base_Color) {desc.textures[which]=texture.handle}
     }
@@ -1468,15 +1477,16 @@ Assets_Limits :: struct {
 }
 
 // On the thread of the assets. tail: textures come with their levels of
-// side render.TEXTURE_TAIL at most, and their distance asks for the others
+// side render.TEXTURE_TAIL at most, and what the GPU samples of them asks for the others
 // once something shows them: those of what loads far away, as a section.
 assets_limits :: proc(a:^Assets,tail:=false) -> Assets_Limits {
     if a==nil || a.renderer==nil {return {}}
     return {true,render.texture_limits(a.renderer),tail,!render.hardware_ray_tracing_active(a.renderer)}
 }
 
-// A mesh, a texture or a material a job read, checked and decoded
-// (assets_prepare), for assets_take to give to the renderer. Its failure is
+// A mesh, a texture, a material or the document of a scene a job read,
+// checked and decoded (assets_prepare), for assets_take to give to the
+// renderer or keep open. Its failure is
 // kept: taking it records it as loading would.
 Assets_Prepared :: struct {
     source:Assets_Source,
@@ -1511,6 +1521,7 @@ assets_prepare :: proc(prepared:^Assets_Prepared,limits:Assets_Limits,types:^ass
     case asset.KIND_MESH:     prepared.kind=.Mesh
     case asset.KIND_TEXTURE:  prepared.kind=.Texture
     case asset.KIND_MATERIAL: prepared.kind=.Material
+    case asset.KIND_SCENE:    prepared.kind=.Scene
     case:
         prepared.problem,prepared.detail=.Wrong_Kind,.Invalid
         return
@@ -1522,6 +1533,8 @@ assets_prepare :: proc(prepared:^Assets_Prepared,limits:Assets_Limits,types:^ass
     prepared.opened=true
     prepared.renderer=limits.renderer
     #partial switch prepared.kind {
+    case .Scene:
+        prepared.ok=true
     case .Mesh:
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         mesh,problem,detail,ok:=assets_mesh_view(&prepared.file,types)
@@ -1619,6 +1632,21 @@ assets_take :: proc(a:^Assets,prepared:^Assets_Prepared,over_frames:=false) -> A
         if entry==nil {return .Taken}
         if ok {problem,detail,ok=assets_material_install(a,prepared.material,entry)}
         assets_material_loaded(a,entry,problem,detail,ok)
+    case .Scene:
+        at,room:=assets_slot(&a.scenes,&a.free_scenes,&a.regions[3])
+        if !room {
+            assets_fail(a,id,.Scene,.Capacity)
+            return .Taken
+        }
+        a.index[id]={.Scene,at}
+        a.stats.scenes+=1
+        a.scenes[at]={kind=asset.KIND_SCENE,failed=!ok}
+        if ok {
+            a.scenes[at].file=prepared.file
+            prepared.file,prepared.opened={},false
+        } else {
+            assets_fail(a,id,.Scene,problem,detail)
+        }
     }
     return taken
 }
@@ -1764,16 +1792,6 @@ assets_material_values :: proc(a:^Assets,row:u32) -> render.Material_Desc {
     return row>0 && int(row)<=len(a.material_descs)?a.material_descs[row-1]:render.DEFAULT_MATERIAL
 }
 
-// The row of a material seen through an opacity: its alpha is scaled and an
-// opaque material blends. Without room the material stays as it is.
-assets_material_faded :: proc(a:^Assets,row:u32,alpha:f32) -> u32 {
-    values:=assets_material_values(a,row)
-    values.opacity*=clamp(alpha,0,1)
-    if values.alpha_mode==.Opaque {values.alpha_mode=.Blend}
-    faded,ok:=assets_material_derive(a,values)
-    return ok?faded:row
-}
-
 // The layers a material draws over the instance that shows it: one per
 // enabled overlay whose material loads, in order. A layer is the row of its
 // material, or a derived row when the material that owns the overlay stores
@@ -1828,7 +1846,7 @@ assets_scene :: proc(a:^Assets,id:base.Asset_Id) -> ^asset.Asset {return assets_
 // kept open where it is as scenes are, and read again when its file changes
 // (a.revision moves). nil when it cannot be loaded.
 assets_document :: proc(a:^Assets,id:base.Asset_Id,kind:asset.Fourcc) -> ^asset.Asset {
-    return assets_open_document(a,id,.Scene if kind==asset.KIND_SCENE || kind==asset.KIND_PREFAB else .Document,kind)
+    return assets_open_document(a,id,.Scene if kind==asset.KIND_SCENE else .Document,kind)
 }
 
 // A document of assets_document whose tables its plugin refuses: a problem
@@ -1900,7 +1918,7 @@ assets_reload :: proc(a:^Assets,id:base.Asset_Id) -> bool {
     detail:asset.Error
     ok,removed,rebuild,derived:bool
     switch ref.kind {
-    case .Shape,.Fracture:
+    case .Shape:
     case .Mesh:
         entry:=&a.meshes[ref.index]
         fresh:Assets_Mesh
@@ -2094,7 +2112,7 @@ assets_unload :: proc(a:^Assets,gone:[]base.Asset_Id) -> int {
     for id in gone {
         ref:=a.index[id]
         switch ref.kind {
-        case .Shape,.Fracture:
+        case .Shape:
         case .Mesh:
             entry:=&a.meshes[ref.index]
             // A failed entry shows the stand-in, which is not its own.
@@ -2158,7 +2176,7 @@ assets_textures_reload :: proc(a:^Assets,before:render.Settings) {
     if r==nil {return}
     was,now:=render.texture_limits_of(r,before),render.texture_limits(r)
     pool :: proc "contextless" (megabytes:u32) -> u64 {return megabytes==0?max(u64):u64(megabytes)}
-    all:=was.blocks!=now.blocks || pool(r.settings.texture_pool_megabytes)<pool(before.texture_pool_megabytes)
+    all:=pool(r.settings.texture_pool_megabytes)<pool(before.texture_pool_megabytes)
     grown:=pool(r.settings.texture_pool_megabytes)>pool(before.texture_pool_megabytes)
     side:=min(was.max_size,now.max_size)
     Loaded :: struct {id:base.Asset_Id,index:u32,bytes:u64}

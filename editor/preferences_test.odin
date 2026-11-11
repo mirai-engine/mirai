@@ -75,13 +75,13 @@ preferences_keep_what_differs_from_the_code_and_come_back :: proc(t:^testing.T) 
     testing.expect(t,f.v.snap && f.v.fly_speed==9 && f.v.grid==0.5)
     testing.expect(t,f.console.hidden=={.Debug,.Info} && f.n.players==3 && !f.ai.show_agents_in_scene)
     // Nothing changed: nothing is written; a Play keeps its layout out of the file.
-    written:=f.p.written
+    written:=f.p.kept.written
     preferences_save(&f.s)
-    testing.expect_value(t,f.p.written,written)
+    testing.expect_value(t,f.p.kept.written,written)
     f.s.mode=.Play
     f.g.layout.left_open=false
     preferences_save(&f.s)
-    testing.expect_value(t,f.p.written,written)
+    testing.expect_value(t,f.p.kept.written,written)
 }
 
 // A headless editor, as agents and tests run it, keeps the preferences of
@@ -178,13 +178,13 @@ the_navigation_of_the_browser_is_kept_in_the_project :: proc(t:^testing.T) {
     content_navigation_restore(&f.c,&registry)
     expect_kept(t,&f.c)
     testing.expect(t,!f.c.restore)
-    written:=f.p.marks_written
+    written:=f.p.marks.written
     preferences_save(&f.s)
-    testing.expect_value(t,f.p.marks_written,written)
+    testing.expect_value(t,f.p.marks.written,written)
 }
 
-@(private="file") Preferences_World :: struct {using world:core.Test_World}
-@(private="file") Preferences_Editor :: struct {api:Api}
+@(test_world,editor="Preferences_Editor") @(private) Preferences_World :: struct {using world:Test_World}
+@(private) Preferences_Editor :: struct {api:Api}
 
 // preferences.set changes the areas it names at once and the file keeps what
 // differs from the code; preferences.get says both.
@@ -197,9 +197,9 @@ preferences_are_read_and_changed_through_the_api :: proc(t:^testing.T) {
     preferences_test_open(f,folder)
     preferences_open(&f.s,{})
     defer delete(f.p.file)
-    info,made:=core.test_info(t,Preferences_World,core.Test_None,Preferences_Editor,test_types)
+    info,made:=test_info(t,Preferences_World)
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Preferences_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
     defer core.world_destroy(&info,.World,&world)
@@ -211,7 +211,8 @@ preferences_are_read_and_changed_through_the_api :: proc(t:^testing.T) {
     f.s.info,f.s.edit_world,f.s.editor_world,f.s.app=&info,&world,&editor,&app
     f.s.selection,f.s.edits,f.s.inspector=&selection,&edits,&inspector
     history.edits_reset(&edits,edited_world(&f.s))
-    if !testing.expect(t,api_open(&f.s,0,true)==.None) {return};defer api_close(&f.s)
+    api_opened,api_problem:=api_open(&f.s,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return};defer api_close(&f.s)
     state:=api_state(&f.s);state.poll_temp=context.temp_allocator
     if api.method_find(&state.server,"preferences.get")==nil {preferences_api_register(&f.s,state)}
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)

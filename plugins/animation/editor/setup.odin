@@ -37,50 +37,50 @@ Setup_Blend_Sample :: struct {
     weights:[anim.MATCH_BLEND]f32 `mirai:"min=0,max=1,label=Eight: one per clip of the blend in its order, 0 past its clips; they play as shares of their sum, above 0"`,
     speed:f32 `mirai:"optional,min=0,unit=m/s,label=The speed it travels at; omitted is measured from its blended feet"`,
 }
-// Locomotion clips that loop, last the same and are in phase, searched as one clip per sample.
+// Locomotion clips that loop and are in phase, searched as one clip per sample.
 Setup_Blend :: struct {
-    clips:[anim.MATCH_BLEND][64]u8 `mirai:"text,label=2 to 8 looping locomotion clips of one mode and duration, in phase (the directions of a set); they leave the .match as clips of their own"`,
+    clips:[anim.MATCH_BLEND][64]u8 `mirai:"text,label=2 to 8 looping locomotion clips of one mode, in phase (the directions of a set); they leave the locomotion as clips of their own"`,
     samples:[SETUP_BLEND_SAMPLES]Setup_Blend_Sample `mirai:"optional,label=The points of the blend the search can pick, each played as those clips at its weights"`,
     min_rate:f32 `mirai:"optional,min=0,label=The least share of its speed each sample plays at, in place of min_rate of the setup; omitted or 0 keeps that"`,
     max_rate:f32 `mirai:"optional,min=0,label=The most share of its speed each sample plays at, with min_rate"`,
 }
 
 Setup_Params :: struct {
-    entity:editor.Api_Entity_Text `mirai:"text,entity,optional,label=The rig: the entity with the skinned mesh, whose Animation and Pose_Modifiers get the assets. Or skeleton"`,
-    skeleton:base.Asset_Id `mirai:"optional,label=The .skeleton instead of id: only writes the assets and returns them, with library"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,optional,label=The rig: the entity with the skinned mesh, whose Animation gets the .character. Or skeleton"`,
+    skeleton:base.Asset_Id `mirai:"optional,label=The .skeleton instead of id: only writes the .character and returns it, with library"`,
     library:base.Asset_Id `mirai:"optional,label=The .anim with its clips; empty takes what id plays"`,
     clips:[SETUP_CLIPS][64]u8 `mirai:"text,optional,label=The clips of the library to classify by name; omitted is all of them"`,
     speeds:[anim.MATCH_CLIPS]Setup_Speed `mirai:"optional,label=The m/s a locomotion clip travels at instead of the one measured from its feet"`,
     rates:[anim.MATCH_CLIPS]Setup_Rate `mirai:"optional,label=The least and most share of its own speed a locomotion clip plays at, in place of min_rate and max_rate: a set authored slower than it is played (a crouch), or a jog kept from beating a sprint"`,
-    blends:[SETUP_BLENDS]Setup_Blend `mirai:"optional,label=Blends of locomotion clips in the .match, sampled at the weights of each sample (as a blend space sampled for motion matching)"`,
-    min_rate:f32 `mirai:"optional,min=0,label=The least share of its own speed a locomotion clip plays at to follow the body; omitted is the default of a .match"`,
+    blends:[SETUP_BLENDS]Setup_Blend `mirai:"optional,label=Blends of locomotion clips, sampled at the weights of each sample (as a blend space sampled for motion matching)"`,
+    min_rate:f32 `mirai:"optional,min=0,label=The least share of its own speed a locomotion clip plays at to follow the body; omitted is the default of a .character"`,
     max_rate:f32 `mirai:"optional,min=0,label=The most share of its own speed a locomotion clip plays at, at least min_rate"`,
     trajectory_direction:f32 `mirai:"optional,min=0,label=Weight of where the body faces along its trajectory; 0 for a body that never turns, as one that walks sideways"`,
-    landing_marker:[64]u8 `mirai:"text,optional,label=The marker of first contact on the clips that land (a jump), played to reach it when the body lands; omitted is the default of a .match, empty plays no landing"`,
-    landing_rates:[2]f32 `mirai:"optional,min=0,label=The least and most rate a clip plays at to reach its landing marker when the body lands; omitted is the default of a .match"`,
-    want:Setup_Wants `mirai:"optional,label=Locomotion (a .match of the clips told apart by name: idle and walk to sprint walk, a fall or air loop falls, jump and land enter falling and walking, swim and fly; the physics plugin moves it); Look (head); Foot_Ik (grounding); Hand_Ik (reach); Gestures (an .action that plays each clip that is not locomotion over the upper body or one arm). Omitted is all of them"`,
-    folder:[1024]u8 `mirai:"text,optional,label=Folder of the assets; empty puts them by the clips"`,
-    name:[64]u8 `mirai:"text,optional,label=Base name of the files; empty takes the skeleton's"`,
-    replace:bool `mirai:"optional,label=Overwrites files of a previous setup"`,
+    landing_marker:[64]u8 `mirai:"text,optional,label=The marker of first contact on the clips that land (a jump), played to reach it when the body lands; omitted is the default of a .character, empty plays no landing"`,
+    landing_rates:[2]f32 `mirai:"optional,min=0,label=The least and most rate a clip plays at to reach its landing marker when the body lands; omitted is the default of a .character"`,
+    want:Setup_Wants `mirai:"optional,label=Locomotion (the clips told apart by name: idle and walk to sprint walk, a fall or air loop falls, jump and land enter falling and walking, swim and fly; the physics plugin moves it); Look (head); Foot_Ik (grounding); Hand_Ik (reach); Gestures (actions that play each clip that is not locomotion over the upper body or one arm). Omitted is all of them"`,
+    folder:[1024]u8 `mirai:"text,optional,label=Folder of the .character; empty puts it by the clips"`,
+    name:[64]u8 `mirai:"text,optional,label=Name of the .character; empty takes the skeleton's"`,
+    replace:bool `mirai:"optional,label=Overwrites the .character of a previous setup"`,
     dry_run:bool `mirai:"optional,label=Plans and answers without writing"`,
 }
-Setup_Asset_Result :: struct {kind:[16]u8 `mirai:"text"`,path:[1024]u8 `mirai:"text"`,asset:base.Asset_Id,replaced:bool}
-Setup_Capability_Result :: struct {want:Setup_Want,status:Setup_Status,detail:[4096]u8 `mirai:"text"`,fix:[1024]u8 `mirai:"text,label=How to make it Ready"`}
-// A clip of the .match: the Locomotion_Mode it serves; entry: it starts that mode; told: its
+Setup_Asset_Result :: struct {kind,path:string,asset:base.Asset_Id,replaced:bool}
+Setup_Capability_Result :: struct {want:Setup_Want,status:Setup_Status,detail:string,fix:string `mirai:"label=How to make it Ready"`}
+// A locomotion clip: the Locomotion_Mode it serves; entry: it starts that mode; told: its
 // speed came from speeds; rates: its own from rates.
-Setup_Match_Clip_Result :: struct {clip:[64]u8 `mirai:"text"`,mode:[32]u8 `mirai:"text"`,entry,loop:bool,speed:f32 `mirai:"unit=m/s"`,told:bool `mirai:"optional"`,rates:[2]f32 `mirai:"optional"`}
-// A blend of the .match: its clips, the mode they serve, how many samples it has and its own rates.
-Setup_Blend_Result :: struct {clips:[anim.MATCH_BLEND][64]u8 `mirai:"text"`,mode:[32]u8 `mirai:"text"`,samples:u32,rates:[2]f32 `mirai:"optional"`}
-Setup_Clips_Result :: struct {locomotion:[anim.MATCH_CLIPS]Setup_Match_Clip_Result,blends:[SETUP_BLENDS]Setup_Blend_Result `mirai:"optional"`,gestures:[SETUP_GESTURES][64]u8 `mirai:"text"`}
+Setup_Match_Clip_Result :: struct {clip,mode:string,entry,loop:bool,speed:f32 `mirai:"unit=m/s"`,told:bool `mirai:"optional"`,rates:[2]f32 `mirai:"optional"`}
+// A blend of locomotion clips: its clips, the mode they serve, how many samples it has and its own rates.
+Setup_Blend_Result :: struct {clips:[]string,mode:string,samples:u32,rates:[2]f32 `mirai:"optional"`}
+Setup_Clips_Result :: struct {locomotion:[]Setup_Match_Clip_Result,blends:[]Setup_Blend_Result `mirai:"optional"`,gestures:[]string}
 Setup_Result :: struct {
-    id:base.Entity_Id `mirai:"optional"`,skeleton:base.Asset_Id `mirai:"optional"`,dry_run:bool `mirai:"optional"`,body:[16]u8 `mirai:"text,label=stored or detected"`,
-    assets:[4]Setup_Asset_Result,capabilities:[len(Setup_Want)]Setup_Capability_Result,clips:Setup_Clips_Result,
+    id:base.Entity_Id `mirai:"optional"`,skeleton:base.Asset_Id `mirai:"optional"`,dry_run:bool `mirai:"optional"`,body:string `mirai:"label=stored or detected"`,
+    assets:[]Setup_Asset_Result,capabilities:[]Setup_Capability_Result,clips:Setup_Clips_Result,
 }
 
 @(private)
 setup_register :: proc(s:^editor.Session) {
     defaults:=Setup_Params{want=SETUP_ALL}
-    authoring_method_register(s,{name="animation.character.setup",summary="Makes a character move: writes and assigns the assets of each capability from its skeleton's body and its clips (a .match of its locomotion clips, which its Character of the physics plugin drives, and the profiles of the intents of animation.request), and says how ready each is. One step of undo.",params=Setup_Params,params_info=type_info_of(Setup_Params),defaults=&defaults,run=setup},Setup_Result,type_info_of(Setup_Result))
+    editor.api_method_register(s,{params=type_info_of(Setup_Params),result=type_info_of(Setup_Result),name="animation.character.setup",summary="Makes a character move: writes the .character of each capability from its skeleton's body and its clips (the locomotion of its clips, which its Character of the physics plugin drives, its gestures, and the modifiers of the intents of animation.request), sets it as its Animation.asset, and says how ready each is. One step of undo.",defaults=&defaults,run=setup})
 }
 
 // What a clip of the library is by the words of its name. Landing enters walking and Jumping enters
@@ -90,9 +90,9 @@ Setup_Class :: enum u8 {None,Walking,Landing,Falling,Jumping,Swimming,Flying,Cro
 @(private)
 SETUP_CLASS_MODES :: [Setup_Class]string{.None="",.Walking="walking",.Landing="walking",.Falling="falling",.Jumping="falling",.Swimming="swimming",.Flying="flying",.Crouching="crouching",.Sliding="sliding"}
 @(private)
-Setup_Clip :: struct {name:string,class:Setup_Class,mode:u16,loop:bool,speed,duration:f32,root,told:bool,rates:[2]f32}
+Setup_Clip :: struct {name:string,class:Setup_Class,mode:u16,loop:bool,speed,duration:f32,told:bool,rates:[2]f32}
 @(private)
-Setup_Clips :: struct {all:[dynamic]Setup_Clip,locomotion:[dynamic]Setup_Clip,walk:string,root_motion:bool,gestures:[dynamic]string}
+Setup_Clips :: struct {all:[dynamic]Setup_Clip,locomotion:[dynamic]Setup_Clip,gestures:[dynamic]string}
 
 // The class of a clip by the words of its name (split at separators, case and digits, so a word
 // starts a token: Walk_Fwd, JogStart, MM_Land): land, a fall or air loop, jump or takeoff, swim,
@@ -187,18 +187,15 @@ setup_clips :: proc(call:^api.Call,animation:asset.Animation_View,skeleton:asset
             continue
         }
         class,loop:=setup_class(name)
-        value:=Setup_Clip{name=name,class=class,loop=loop,speed=linalg.length(metrics.travel),duration=metrics.duration,root=!metrics.in_place}
+        value:=Setup_Clip{name=name,class=class,loop=loop,speed=linalg.length(metrics.travel),duration=metrics.duration}
         for &speed in p.speeds[:told] {if base.text_get(speed.clip[:])==name {value.speed,value.told=speed.speed,true}}
         for &rate in p.rates[:rated] {if base.text_get(rate.clip[:])==name {value.rates={rate.min_rate,rate.max_rate}}}
         if class==.None && !sampled.frames.loop {value.loop=false}
         append(&clips.all,value)
     }
-    walking:=false;slowest:f32
+    walking:=false
     for value in clips.all {if value.class==.Walking {walking=true}}
-    for &value in clips.all {
-        if !walking && value.class==.None && value.loop && (value.speed<.15 || value.speed>=.4) {value.class=.Walking}
-        if value.class==.Walking && value.loop && value.speed>=.15 && (clips.walk=="" || value.speed<slowest) {clips.walk,clips.root_motion,slowest=value.name,value.root,value.speed}
-    }
+    for &value in clips.all {if !walking && value.class==.None && value.loop && (value.speed<.15 || value.speed>=.4) {value.class=.Walking}}
     for value in clips.all {
         has :: proc(name:string,words:[]string) -> bool {
             lower:=strings.to_lower(name,context.temp_allocator)
@@ -334,7 +331,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     pose:anim.Pose_Profile
     looks:=make([dynamic]anim.Look_Constraint,call.allocator)
     hands:=make([dynamic]anim.IK_Constraint,call.allocator)
-    grounding:=make([dynamic]anim.Foot_Grounding,call.allocator)
+    grounding:anim.Foot_Grounding
     if .Look in want {
         if mapped(body,.Head) {
             head:=world[body.bones[.Head]]
@@ -371,35 +368,32 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         }
     }
     if .Foot_Ik in want {
+        // Its legs and body are those of the body of the skeleton: their bones stay empty.
         feet:=anim.FOOT_GROUNDING_DEFAULT
-        feet.body=bone(skeleton,body,.Pelvis);feet.up=up
+        feet.up=up
         feet.max_rise=.15;feet.trace_above=.55;feet.trace_below=.9;feet.blend_time=.08
         for side in 0..<2 {
             parts:=[4]lib.Body_Part{.Hip_L,.Knee_L,.Foot_L,.Toe_L} if side==0 else {.Hip_R,.Knee_R,.Foot_R,.Toe_R}
             if !mapped(body,parts[0],parts[1],parts[2]) {continue}
             leg:=anim.GROUNDED_LEG_DEFAULT
-            // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-            leg.hip=bone(skeleton,body,parts[0])
-            leg.knee=bone(skeleton,body,parts[1])
-            leg.foot=bone(skeleton,body,parts[2])
-            leg.contact_bone=bone(skeleton,body,parts[3]) if body.bones[parts[3]]>=0 else leg.foot
             foot:=world[body.bones[parts[2]]]
             leg.foot_up=mm.quat_rotate(conj(foot.rotation),up)
             leg.sole_height=max(0,linalg.dot(foot.position,up))
             if body.bones[parts[3]]>=0 {leg.contact_offset=max(0,linalg.dot(world[body.bones[parts[3]]].position,up))}
             leg.pole_offset={};leg.max_distance=.55;leg.contact_height=.04
-            feet.legs[feet.count]=leg;feet.count+=1
+            feet.legs[side]=leg;feet.count+=1
         }
-        if feet.count>0 && feet.body.path[0]!=0 {
-            append(&grounding,feet)
-            say(&capabilities[.Foot_Ik],.Ready if feet.count==2 else .Partial,"the feet stand on the ground under them, with physics colliders","" if feet.count==2 else "Set hip, knee and foot of both legs with skeleton.body.set")
-        } else {say(&capabilities[.Foot_Ik],.Missing,"the body has no pelvis or complete leg","Set pelvis, hip, knee and foot with skeleton.body.set")}
+        if feet.count==2 && body.bones[.Pelvis]>=0 {
+            grounding=feet
+            say(&capabilities[.Foot_Ik],.Ready,"the feet stand on the ground under them, with physics colliders","")
+        } else {say(&capabilities[.Foot_Ik],.Missing,"the body has no pelvis or not both legs","Set pelvis, and hip, knee and foot of both legs with skeleton.body.set")}
     }
-    pose.look,pose.ik,pose.grounding=looks[:],hands[:],grounding[:]
+    pose.look,pose.ik=looks[:],hands[:]
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    pose.grounding=grounding
 
-    // Locomotion: a .match of the clips by mode, which the Character of the body drives; the warping
-    // of the motion profile stretches the stride of a walk to the speed of the body.
-    motion:anim.Motion_Profile
+    // Locomotion: the clips by mode, which the Character of the body drives; the warping stretches
+    // the stride of a walk to the speed of the body.
     locomotion:=false
     blend_count:int;blend_members,blend_samples:[SETUP_BLENDS]int
     rates:=[2]f32{anim.MATCH_INFO_DEFAULT.min_rate,anim.MATCH_INFO_DEFAULT.max_rate}
@@ -414,7 +408,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             clip:=value;clip.mode=mode;append(&clips.locomotion,clip)
         }
         if len(clips.locomotion)>anim.MATCH_CLIPS {
-            authoring_failure(call,"clips","Capacity",fmt.tprintf("at most %d locomotion clips",anim.MATCH_CLIPS),fmt.tprintf("%d: %s",len(clips.locomotion),setup_locomotion_detail(clips.locomotion[:],modes,3)),"The library has more locomotion clips than a .match takes",fix=fmt.tprintf("Pass clips: the at most %d idle, walk, run, jump, fall, swim or fly clips the character uses, and its gestures",anim.MATCH_CLIPS))
+            authoring_failure(call,"clips","Capacity",fmt.tprintf("at most %d locomotion clips",anim.MATCH_CLIPS),fmt.tprintf("%d: %s",len(clips.locomotion),setup_locomotion_detail(clips.locomotion[:],modes,3)),"The library has more locomotion clips than a .character takes",fix=fmt.tprintf("Pass clips: the at most %d idle, walk, run, jump, fall, swim or fly clips the character uses, and its gestures",anim.MATCH_CLIPS))
             return
         }
         told,_:=api.params_array_count(call,"speeds")
@@ -422,14 +416,14 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             name:=base.text_get(value.clip[:])
             found:=false
             for clip in clips.locomotion {found ||= clip.name==name}
-            if !found {authoring_failure(call,fmt.tprintf("speeds[%d].clip",i),"Not_Locomotion","a locomotion clip",name,"Only the clips of the .match have a speed",fix="Leave it out of speeds, or rename the clip so that its words say how it moves (idle, walk, run, jump, fall, swim, fly)");return}
+            if !found {authoring_failure(call,fmt.tprintf("speeds[%d].clip",i),"Not_Locomotion","a locomotion clip",name,"Only the locomotion clips have a speed",fix="Leave it out of speeds, or rename the clip so that its words say how it moves (idle, walk, run, jump, fall, swim, fly)");return}
         }
         rated,_:=api.params_array_count(call,"rates")
         for &value,i in p.rates[:min(rated,len(p.rates))] {
             name:=base.text_get(value.clip[:])
             found:=false
             for clip in clips.locomotion {found ||= clip.name==name}
-            if !found {authoring_failure(call,fmt.tprintf("rates[%d].clip",i),"Not_Locomotion","a locomotion clip",name,"Only the clips of the .match have rates",fix="Leave it out of rates, or rename the clip so that its words say how it moves (idle, walk, run, jump, fall, swim, fly)");return}
+            if !found {authoring_failure(call,fmt.tprintf("rates[%d].clip",i),"Not_Locomotion","a locomotion clip",name,"Only the locomotion clips have rates",fix="Leave it out of rates, or rename the clip so that its words say how it moves (idle, walk, run, jump, fall, swim, fly)");return}
         }
         counted:bool
         blend_count,blend_members,blend_samples,counted=setup_blend_counts(call)
@@ -438,7 +432,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         for b in 0..<blend_count {
             blend:=&p.blends[b];path:=fmt.tprintf("blends[%d]",b)
             members:=blend_members[b]
-            if members<2 || members>anim.MATCH_BLEND {authoring_failure(call,fmt.tprintf("%s.clips",path),"Blend_Size",fmt.tprintf("2 to %d clips",anim.MATCH_BLEND),fmt.tprintf("%d",members),fmt.tprintf("A blend mixes from 2 to %d clips",anim.MATCH_BLEND),fix=fmt.tprintf("Name 2 to %d looping locomotion clips; a clip alone goes in the .match by itself",anim.MATCH_BLEND));return}
+            if members<2 || members>anim.MATCH_BLEND {authoring_failure(call,fmt.tprintf("%s.clips",path),"Blend_Size",fmt.tprintf("2 to %d clips",anim.MATCH_BLEND),fmt.tprintf("%d",members),fmt.tprintf("A blend mixes from 2 to %d clips",anim.MATCH_BLEND),fix=fmt.tprintf("Name 2 to %d looping locomotion clips; a clip alone is a locomotion clip by itself",anim.MATCH_BLEND));return}
             first:Setup_Clip
             for k in 0..<members {
                 name:=base.text_get(blend.clips[k][:]);at:=fmt.tprintf("%s.clips[%d]",path,k)
@@ -450,9 +444,6 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
                 if !clip.loop {authoring_failure(call,at,"Not_Loop","a looping clip",name,"The clips of a blend loop in phase",fix="Make it loop with animation.clip.edit Make_Loop, or leave it out of the blend");return}
                 if k==0 {first=clip;continue}
                 if clip.mode!=first.mode {authoring_failure(call,at,"Mixed_Modes",fmt.tprintf("a clip of the mode of %s",first.name),name,"The clips of a blend serve one locomotion mode",fix="Blend clips of one mode: idle, walk, jog and run walk; a fall or air loop falls");return}
-                if frame:=1/anim.MATCH_INFO_DEFAULT.rate;abs(clip.duration-first.duration)>frame {
-                    authoring_failure(call,at,"Unequal_Duration",fmt.tprintf("%.3f s, as %s, within %.3f s",first.duration,first.name,frame),fmt.tprintf("%.3f s",clip.duration),"The clips of a blend last the same and are in phase: the same share of each is the same moment of the step",fix="Blend clips of one duration, or retime one with animation.clip.edit");return
-                }
             }
             if blend_samples[b]==0 {authoring_failure(call,fmt.tprintf("%s.samples",path),"Required","at least one sample","none","A blend plays only at its samples",fix="Pass samples, each with eight weights, one per clip of the blend in its order and 0 past them: [1,0,0,0,0,0,0,0] plays the first alone, [0.5,0.5,0,0,0,0,0,0] half and half");return}
             if blend.min_rate!=0 || blend.max_rate!=0 {
@@ -472,7 +463,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         for &value,i in p.rates[:min(rated,len(p.rates))] {
             if name:=base.text_get(value.clip[:]);setup_blended(p,blend_count,blend_members,name) {authoring_failure(call,fmt.tprintf("rates[%d].clip",i),"Blended","a clip that is no member of a blend",name,"A clip of a blend plays at the rates of its blend",fix="Give min_rate and max_rate to the blend instead");return}
         }
-        if sampled>anim.MATCH_SAMPLES {authoring_failure(call,"blends","Capacity",fmt.tprintf("at most %d samples in all",anim.MATCH_SAMPLES),fmt.tprintf("%d",sampled),"The blends have more samples than a .match takes",fix="Sample the blends more coarsely");return}
+        if sampled>anim.MATCH_SAMPLES {authoring_failure(call,"blends","Capacity",fmt.tprintf("at most %d samples in all",anim.MATCH_SAMPLES),fmt.tprintf("%d",sampled),"The blends have more samples than a .character takes",fix="Sample the blends more coarsely");return}
         if authoring_field_present(call,"min_rate") {rates[0]=p.min_rate}
         if authoring_field_present(call,"max_rate") {rates[1]=p.max_rate}
         if !(rates[0]>0) || !(rates[0]<=rates[1]) {authoring_failure(call,"min_rate","Invalid_Rate","0 < min_rate <= max_rate",fmt.tprintf("min_rate %v, max_rate %v",rates[0],rates[1]),"A clip plays between a positive least and a greater most share of its speed",fix="Pass min_rate above 0 and max_rate at least min_rate; 1 plays a clip at its own speed");return}
@@ -492,8 +483,6 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             say(&capabilities[.Locomotion],.Ready if fix=="" else .Partial,detail,fix)
         }
     }
-    files:[dynamic]Setup_File
-    files=make([dynamic]Setup_File,call.allocator)
     folder:=base.text_get(p.folder[:])
     if folder=="" {
         record,_:=asset.registry_find(&s.app.assets.registry,library)
@@ -508,36 +497,20 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         if at:=strings.last_index_byte(name,'.');at>0 {name=name[:at]}
         if name=="" {name="character"}
     }
-    plan :: proc(s:^editor.Session,call:^api.Call,files:^[dynamic]Setup_File,folder,name,kind,extension:string,replace:bool) -> (^Setup_File,bool) {
-        relative:=fmt.aprintf("%s/%s%s",folder,name,extension,allocator=call.allocator) if folder!="" else fmt.aprintf("%s%s",name,extension,allocator=call.allocator)
-        file:=Setup_File{kind=kind,extension=extension,path=editor.scene_file(s,relative,call.allocator)}
-        if existing,read:=editor.file_read(s,file.path);read {
-            if !replace {authoring_failure(call,"replace","Already_Exists","new files, or replace true",relative,"A previous setup left this file",fix="Pass replace true to overwrite it, or another name or folder");return nil,false}
-            if header,error:=asset.header_read(existing);error==.None {file.id=header.id}
-            file.replaced=true
-        }
-        if file.id=={} {rng:=base.rng_make(s.id_state~platform.clock_ns());file.id=base.asset_id_random(&rng);s.id_state=rng.state}
-        append(files,file)
-        return &files[len(files)-1],true
+    relative:=fmt.aprintf("%s/%s.character",folder,name,allocator=call.allocator) if folder!="" else fmt.aprintf("%s.character",name,allocator=call.allocator)
+    file:=Setup_File{kind="Character",extension=".character",path=editor.scene_file(s,relative,call.allocator)}
+    if existing,read:=editor.file_read(s,file.path);read {
+        if !p.replace {authoring_failure(call,"replace","Already_Exists","a new file, or replace true",relative,"A previous setup left this file",fix="Pass replace true to overwrite it, or another name or folder");return}
+        if header,error:=asset.header_read(existing);error==.None {file.id=header.id}
+        file.replaced=true
     }
-    types:=&s.app.assets.types
-    if len(pose.look)+len(pose.ik)+len(pose.grounding)>0 {
-        file,planned:=plan(s,call,&files,folder,name,"Pose",".pose",p.replace);if !planned {return}
-        if anim.pose_profile_document(&file.doc,types,file.id,pose,call.allocator)!=.None {authoring_failure(call,"pose","Invalid_Profile","a valid pose profile","refused","The pose profile could not be built",api.SERVER_ERROR);return}
-    }
-    pose_id:=files[len(files)-1].id if len(files)>0 else base.Asset_Id{}
-    match_id,motion_id:base.Asset_Id
+    if file.id=={} {rng:=base.rng_make(s.id_state~platform.clock_ns());file.id=base.asset_id_random(&rng);s.id_state=rng.state}
+    set:=anim.character_set_make(library);set.pose=pose
     if locomotion {
-        match_file,planned:=plan(s,call,&files,folder,name,"Match",".match",p.replace);if !planned {return}
-        match_id=match_file.id
-        info:=anim.MATCH_INFO_DEFAULT;info.animation=library
+        info:=&set.match.info
         // A loop keeps its phase and a body that does not move stands: searching inside a loop
         // every tick, or walking against a wall, would restart the same frames and freeze the legs.
         info.keep_loop_phase,info.stationary_speed=true,SETUP_STATIONARY_SPEED
-        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
-        info.left_foot=bone(skeleton,body,.Foot_L)
-        info.right_foot=bone(skeleton,body,.Foot_R)
-        info.hips=bone(skeleton,body,.Pelvis)
         info.min_rate,info.max_rate=rates[0],rates[1]
         if authoring_field_present(call,"trajectory_direction") {info.trajectory_direction=p.trajectory_direction}
         if authoring_field_present(call,"landing_marker") {info.landing_marker=p.landing_marker}
@@ -557,36 +530,16 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             for sample in blend.samples[:blend_samples[b]] {append(&samples,anim.Match_Sample{source=u32(len(sources)),weights=sample.weights,speed=sample.speed})}
             append(&sources,source)
         }
-        if anim.match_document(&match_file.doc,types,match_id,{info=info,clips=sources[:],samples=samples[:]},call.allocator)!=.None {authoring_failure(call,"locomotion","Invalid_Match","clips of the library with names shorter than 64 bytes","refused","The motion matching library could not be built",api.SERVER_ERROR);return}
-        motion_file,motion_planned:=plan(s,call,&files,folder,name,"Motion",".motion",p.replace);if !motion_planned {return}
-        motion_id=motion_file.id
-        warp:=anim.POSE_WARP_PROFILE_DEFAULT
-        warp.orientation,warp.stride=true,true;warp.max_angle=mm.PI*.4;warp.min_stride,warp.max_stride=.05,1.5
-        warp.pelvis=bone(skeleton,body,.Pelvis)
-        spine:[16]i32
-        count,_:=lib.body_spine(parents,body,spine[:])
-        for index in spine[:min(count,2)] {warp.spine[warp.spine_count]=anim.bone_ref(base.text_get(skeleton.bones[index].path[:]));warp.spine_count+=1}
-        for side in 0..<2 {
-            parts:=[3]lib.Body_Part{.Hip_L,.Knee_L,.Foot_L} if side==0 else {.Hip_R,.Knee_R,.Foot_R}
-            if !mapped(body,..parts[:]) {continue}
-            warp.legs[warp.count]={hip=bone(skeleton,body,parts[0]),knee=bone(skeleton,body,parts[1]),foot=bone(skeleton,body,parts[2])};warp.count+=1
+        set.match.clips,set.match.samples=sources[:],samples[:]
+        // The warping turns and stretches the legs of the body toward the velocity of the Character.
+        if mapped(body,.Pelvis,.Hip_L,.Knee_L,.Foot_L) || mapped(body,.Pelvis,.Hip_R,.Knee_R,.Foot_R) {
+            warp:=&set.motion.warp
+            warp.orientation,warp.stride=true,true;warp.max_angle=mm.PI*.4;warp.min_stride,warp.max_stride=.05,1.5
         }
-        if warp.pelvis.path[0]==0 || warp.count==0 {warp.orientation,warp.stride=false,false}
-        windows:=make([dynamic]anim.Motion_Window,call.allocator)
-        // With root motion a walk can be warped to arrive where it is sent.
-        if clips.walk!="" && clips.root_motion {
-            window:=anim.MOTION_WINDOW_DEFAULT;window.start=0;window.animation=library
-            for &clip in clips_view.clips {if base.text_get(clip.name[:])==clips.walk {window.end=setup_clip_duration(clips_view,&clip)}}
-            base.text_set(window.clip[:],clips.walk);base.text_set(window.name[:],"locomote")
-            if window.end>0 {append(&windows,window)}
-        }
-        motion={info={pose=warp},windows=windows[:]}
-        if anim.motion_profile_document(&motion_file.doc,types,motion_id,motion,call.allocator)!=.None {authoring_failure(call,"locomotion","Invalid_Motion","a motion profile of the body","refused","The motion profile could not be built",api.SERVER_ERROR);return}
     }
-    actions_id:base.Asset_Id
     if .Gestures in want {
         if len(clips.gestures)>SETUP_GESTURES {
-            authoring_failure(call,"clips","Capacity",fmt.tprintf("at most %d gestures",SETUP_GESTURES),fmt.tprintf("%d: %s",len(clips.gestures),setup_names(clips.gestures[:])),"The library has more gestures than an .action takes",fix=fmt.tprintf("Pass clips with the locomotion and at most %d gestures the character uses, or leave Gestures out of want",SETUP_GESTURES))
+            authoring_failure(call,"clips","Capacity",fmt.tprintf("at most %d gestures",SETUP_GESTURES),fmt.tprintf("%d: %s",len(clips.gestures),setup_names(clips.gestures[:])),"The library has more gestures than a .character takes",fix=fmt.tprintf("Pass clips with the locomotion and at most %d gestures the character uses, or leave Gestures out of want",SETUP_GESTURES))
             return
         }
         spine:[16]i32
@@ -597,9 +550,16 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         } else if over.path[0]==0 {say(&capabilities[.Gestures],.Missing,"the body has no spine to play gestures over","Set pelvis and neck with skeleton.body.set")
         } else {
             definitions:=make([dynamic]anim.Action_Definition,call.allocator)
-            define :: proc(definitions:^[dynamic]anim.Action_Definition,name,clip:string,layer:u8,over:anim.Bone_Ref) {
-                value:=anim.ACTION_DEFINITION_DEFAULT;value.layer,value.over=layer,over;value.fade_in,value.fade_out=.2,.25
-                base.text_set(value.name[:],name);base.text_set(value.clip[:],clip)
+            layers:=make([dynamic]anim.Stack_Layer,call.allocator)
+            // A layer of the set a gesture plays in: over the upper body, fading in along the spine
+            // to the bones it carries so the waist does not break, or over one arm.
+            layer :: proc(layers:^[dynamic]anim.Stack_Layer,name:string,over:anim.Bone_Ref,depth:int=0) {
+                value:=anim.STACK_LAYER_DEFAULT;value.over[0]={over,u8(clamp(depth,0,255))};base.text_set(value.name[:],name)
+                append(layers,value)
+            }
+            define :: proc(definitions:^[dynamic]anim.Action_Definition,name,clip,layer:string) {
+                value:=anim.ACTION_DEFINITION_DEFAULT;value.fade_in,value.fade_out=.2,.25
+                base.text_set(value.name[:],name);base.text_set(value.clip[:],clip);base.text_set(value.layer[:],layer)
                 append(definitions,value)
             }
             arm_l:=bone(skeleton,body,.Clavicle_L) if body.bones[.Clavicle_L]>=0 else bone(skeleton,body,.Shoulder_L)
@@ -608,116 +568,83 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
                 if arm_l.path[0]!=0 {arm_l=anim.bone_ref(anim.BODY_LABEL+"arm_l")}
                 if arm_r.path[0]!=0 {arm_r=anim.bone_ref(anim.BODY_LABEL+"arm_r")}
             }
+            layer(&layers,"Upper_Body",over,count+1)
+            if arm_l.path[0]!=0 {layer(&layers,"Arm_L",arm_l)}
+            if arm_r.path[0]!=0 {layer(&layers,"Arm_R",arm_r)}
             for clip in clips.gestures {
-                define(&definitions,clip,clip,1,over)
-                if arm_l.path[0]!=0 {define(&definitions,fmt.tprintf("%s Arm_L",clip),clip,2,arm_l)}
-                if arm_r.path[0]!=0 {define(&definitions,fmt.tprintf("%s Arm_R",clip),clip,3,arm_r)}
+                define(&definitions,clip,clip,"Upper_Body")
+                if arm_l.path[0]!=0 {define(&definitions,fmt.tprintf("%s Arm_L",clip),clip,"Arm_L")}
+                if arm_r.path[0]!=0 {define(&definitions,fmt.tprintf("%s Arm_R",clip),clip,"Arm_R")}
             }
-            file,planned:=plan(s,call,&files,folder,name,"Actions",".action",p.replace);if !planned {return}
-            actions_id=file.id
-            if anim.action_profile_document(&file.doc,types,actions_id,{info={animation=library},actions=definitions[:]},call.allocator)!=.None {authoring_failure(call,"gestures","Invalid_Actions","gestures of the library","refused","The gestures could not be built",api.SERVER_ERROR);return}
+            set.actions={layers=layers[:],actions=definitions[:]}
             say(&capabilities[.Gestures],.Ready,fmt.tprintf("%d gestures over the upper body or one arm",len(clips.gestures)),"")
         }
     }
-    defer for &file in files {asset.document_destroy(&file.doc)}
-    for &file in files {
-        bytes:serial.Writer;serial.writer_init(&bytes,4096,call.allocator)
-        if asset.document_write(&file.doc,&bytes)!=.None {authoring_failure(call,file.kind,"Serialization","a valid document","refused","An asset could not be serialized",api.SERVER_ERROR);return}
-        file.bytes=serial.writer_bytes(&bytes)
-    }
+    // A document outgrows the scratch of a request.
+    if anim.character_document(&file.doc,&s.app.assets.types,file.id,set,context.temp_allocator)!=.None {authoring_failure(call,"clips","Invalid_Character","clips of the library with names shorter than 64 bytes","refused","The .character could not be built",api.SERVER_ERROR);return}
+    defer asset.document_destroy(&file.doc)
+    bytes:serial.Writer;serial.writer_init(&bytes,4096,context.temp_allocator)
+    if asset.document_write(&file.doc,&bytes)!=.None {authoring_failure(call,file.kind,"Serialization","a valid document","refused","The .character could not be serialized",api.SERVER_ERROR);return}
+    file.bytes=serial.writer_bytes(&bytes)
     dry_run:=authoring_dry_run(call)
     if !dry_run {
-        // One step of undo for the files and the components of the rig; without a history only the
-        // writes.
+        // One step of undo for the file and the Animation of the rig; without a history only the
+        // write.
         gesture:=s.edits!=nil
         if gesture && !editor.api_edit_begin(s,call,"Character setup") {return}
-        for &file in files {
-            if !editor.file_write(s,file.path,file.bytes,"Character setup") {
-                authoring_failure(call,file.kind,"Write_Error","an asset write",file.path,"An asset could not be written",api.SERVER_ERROR)
-                if gesture {editor.api_edit_end(s,call,false)}
-                return
-            }
-        }
-        if rigged && locomotion {
-            // The values of the program it played before name parameters the .match lacks.
-            animation.asset,animation.library,animation.motion=match_id,{},motion_id
-            animation.clip,animation.parameters,animation.parameter_names={},{},{}
-            animation.speed,animation.playing=1,true
-            // The Character moves the body: the clips that carry a root play it in place.
-            for &clip in clips_view.clips {if clip.root.translation || clip.root.rotation {animation.root_motion=.In_Place;break}}
+        if !editor.file_write(s,file.path,file.bytes,"Character setup") {
+            authoring_failure(call,file.kind,"Write_Error","an asset write",file.path,"The .character could not be written",api.SERVER_ERROR)
+            if gesture {editor.api_edit_end(s,call,false)}
+            return
         }
         if rigged {
-            if actions_id!={} {animation.actions=actions_id}
-            core.add(core.world_table_of(w,anim.Animation),e,animation)
-            if pose_id!={} && len(files)>0 && files[0].kind=="Pose" {
-                modifiers,present:=editor.entity_get(w,e,anim.Pose_Modifiers)
-                if !present {modifiers=anim.POSE_MODIFIERS_DEFAULT}
-                modifiers.profile=pose_id
-                core.add(core.world_table_of(w,anim.Pose_Modifiers),e,modifiers)
+            animation.asset,animation.library=file.id,{}
+            if locomotion {
+                animation.clip={}
+                animation.speed,animation.playing=1,true
+                // The Character moves the body: the clips that carry a root play it in place.
+                for &clip in clips_view.clips {if clip.root.translation || clip.root.rotation {animation.root_motion=.In_Place;break}}
             }
+            core.add(core.world_table_of(w,anim.Animation),e,animation)
             core.world_settle(w)
         }
         if gesture && !editor.api_edit_end(s,call,true) {return}
     }
-    out:=call.out
-    serial.text_write_raw(out,"{")
-    if rigged {api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,e))} else {api.write_key(out,"skeleton",true);serial.write_u8(out,'"');serial.text_write_asset_id(out,p.skeleton);serial.write_u8(out,'"')}
-    if dry_run {api.write_bool(out,"dry_run",true)}
-    api.write_text(out,"body",body_source)
-    api.write_key(out,"assets");serial.text_write_raw(out,"[")
-    for &file,i in files {
-        if i>0 {serial.text_write_raw(out,",")}
-        serial.text_write_raw(out,"{");api.write_text(out,"kind",file.kind,true);api.write_text(out,"path",file.path)
-        api.write_key(out,"asset");serial.write_u8(out,'"');serial.text_write_asset_id(out,file.id);serial.write_u8(out,'"');api.write_bool(out,"replaced",file.replaced);serial.text_write_raw(out,"}")
-    }
-    serial.text_write_raw(out,"]")
-    api.write_key(out,"capabilities");serial.text_write_raw(out,"[")
-    written:=0
+    // The answer is written after the library closes and the temporary memory goes: its texts are copies.
+    r:=api.call_result(call,Setup_Result)
+    if rigged {r.id=editor.api_entity_id(w,e)} else {r.skeleton=p.skeleton}
+    r.dry_run,r.body=dry_run,body_source
+    r.assets=make([]Setup_Asset_Result,1,call.allocator)
+    r.assets[0]={file.kind,file.path,file.id,file.replaced}
+    shown:=make([dynamic]Setup_Capability_Result,call.allocator)
     for &value,which in capabilities {
-        if value.status==.Skipped {continue}
-        if written>0 {serial.text_write_raw(out,",")};written+=1
-        serial.text_write_raw(out,"{");api.write_text(out,"want",fmt.tprintf("%v",which),true);api.write_text(out,"status",fmt.tprintf("%v",value.status))
-        api.write_text(out,"detail",value.detail);api.write_text(out,"fix",value.fix);serial.text_write_raw(out,"}")
+        if value.status!=.Skipped {append(&shown,Setup_Capability_Result{which,value.status,strings.clone(value.detail,call.allocator),strings.clone(value.fix,call.allocator)})}
     }
-    serial.text_write_raw(out,"]")
-    api.write_key(out,"clips");serial.text_write_raw(out,`{"locomotion":[`)
+    r.capabilities=shown[:]
     modes:=locomotion_modes(s.info)
-    listed:=0
+    matched:=make([dynamic]Setup_Match_Clip_Result,call.allocator)
     for clip in clips.locomotion {
         if setup_blended(p,blend_count,blend_members,clip.name) {continue}
-        if listed>0 {serial.text_write_raw(out,",")};listed+=1
         mode,_:=locomotion_mode_name(modes,clip.mode)
-        serial.text_write_raw(out,"{");api.write_text(out,"clip",clip.name,true);api.write_text(out,"mode",mode)
-        api.write_bool(out,"entry",clip.class==.Landing || clip.class==.Jumping || clip.class==.Sliding && !clip.loop);api.write_bool(out,"loop",clip.loop)
-        api.write_key(out,"speed");api.write_number(out,clip.speed)
-        if clip.told {api.write_bool(out,"told",true)}
-        if clip.rates[0]>0 {api.write_numbers(out,"rates",[]f32{clip.rates[0],clip.rates[1]})}
-        serial.text_write_raw(out,"}")
+        append(&matched,Setup_Match_Clip_Result{clip=strings.clone(clip.name,call.allocator),mode=mode,entry=clip.class==.Landing || clip.class==.Jumping || clip.class==.Sliding && !clip.loop,loop=clip.loop,speed=clip.speed,told=clip.told,rates=clip.rates[0]>0?{clip.rates[0],clip.rates[1]}:{}})
     }
-    serial.text_write_raw(out,`],"blends":[`)
+    r.clips.locomotion=matched[:]
+    r.clips.blends=make([]Setup_Blend_Result,blend_count,call.allocator)
     for &blend,b in p.blends[:blend_count] {
-        if b>0 {serial.text_write_raw(out,",")}
-        serial.text_write_raw(out,`{"clips":[`)
-        mode:string
+        shown:=&r.clips.blends[b]
+        shown.clips=make([]string,blend_members[b],call.allocator)
         for k in 0..<blend_members[b] {
-            name:=base.text_get(blend.clips[k][:])
-            if k>0 {serial.text_write_raw(out,",")}
-            serial.text_write_string(out,name)
-            for clip in clips.locomotion {if clip.name==name {mode,_=locomotion_mode_name(modes,clip.mode)}}
+            name:=strings.clone(base.text_get(blend.clips[k][:]),call.allocator)
+            shown.clips[k]=name
+            for clip in clips.locomotion {if clip.name==name {shown.mode,_=locomotion_mode_name(modes,clip.mode)}}
         }
-        serial.text_write_raw(out,"]");api.write_text(out,"mode",mode);api.write_uint(out,"samples",u64(blend_samples[b]))
-        if blend.min_rate>0 {api.write_numbers(out,"rates",[]f32{blend.min_rate,blend.max_rate})}
-        serial.text_write_raw(out,"}")
+        shown.samples=u32(blend_samples[b])
+        if blend.min_rate>0 {shown.rates={blend.min_rate,blend.max_rate}}
     }
-    serial.text_write_raw(out,`],"gestures":[`)
-    if .Gestures in want do for gesture,i in clips.gestures {if i>0 {serial.text_write_raw(out,",")};serial.write_u8(out,'"');serial.text_write_raw(out,gesture);serial.write_u8(out,'"')}
-    serial.text_write_raw(out,"]}}")
-}
-
-@(private)
-setup_clip_duration :: proc(view:asset.Animation_View,clip:^asset.Animation_Clip) -> (duration:f32) {
-    for track in view.tracks[clip.first_track:][:clip.track_count] {if track.key_count>0 {duration=max(duration,view.keys[track.first_key+track.key_count-1].time)}}
-    return
+    if .Gestures in want {
+        r.clips.gestures=make([]string,len(clips.gestures),call.allocator)
+        for name,i in clips.gestures {r.clips.gestures[i]=strings.clone(name,call.allocator)}
+    }
 }
 
 // The locomotion modes of the project: the names of Locomotion_Mode, the type of the physics plugin,

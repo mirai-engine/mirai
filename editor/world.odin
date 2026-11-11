@@ -2,7 +2,6 @@ package editor
 
 import "base:runtime"
 import "core:fmt"
-import "core:math/linalg"
 import "core:mem"
 import "core:strconv"
 import "core:strings"
@@ -10,8 +9,6 @@ import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/history"
 import eaudio "mirai:engine/audio"
-import evolume "mirai:engine/volume"
-import ecamera "mirai:engine/camera"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -21,16 +18,6 @@ import "mirai:ui"
 // open. They work on any World through its tables, and on the components of
 // the engine that every scene entity has: Id, Name, Transform and Parent.
 
-// What the Create panel and the API make: recipes of components, not kinds.
-Preset :: author.Preset
-
-Preset_Card :: struct {
-    label:string,
-    icon:ui.Icon,
-    color:ui.Color,
-    lift:f32, // m above what it is placed on, for what has no body
-}
-
 MESH_COLOR :: ui.Color{140,180,240,255}
 PREFAB_COLOR :: ui.Color{120,200,255,255} // a linked prefab: its icon and the name of its root
 GROUP_COLOR :: ui.Color{175,165,230,255}
@@ -39,43 +26,11 @@ CAMERA_ICON :: ui.Icon(u8(ui.Icon.User)+u8(User_Icon.Camera))
 LIGHT_COLOR :: ui.Color{255,214,140,255}
 SOUND_COLOR :: ui.Color{150,140,240,255}
 
-PRESETS :: [Preset]Preset_Card{
-    .Empty={"Group",.Group,GROUP_COLOR,0},
-    .Cube={"Cube",.Cube,MESH_COLOR,0},
-    .Sphere={"Sphere",.Sphere,MESH_COLOR,0},
-    .Cylinder={"Cylinder",.Cylinder,MESH_COLOR,0},
-    .Cone={"Cone",.Cone,MESH_COLOR,0},
-    .Capsule={"Capsule",.Cylinder,MESH_COLOR,0},
-    .Plane={"Plane",.Plane,MESH_COLOR,0},
-    .Prism={"Prism",.Prism,MESH_COLOR,0},
-    .Pyramid={"Pyramid",.Pyramid,MESH_COLOR,0},
-    .Point_Light={"Point light",.Light,LIGHT_COLOR,1.5},
-    .Spot_Light={"Spot light",.Spot,LIGHT_COLOR,3},
-    .Sun={"Sun",.Sun,LIGHT_COLOR,2},
-    .Rect_Light={"Rectangle light",.Area_Light,LIGHT_COLOR,1.5},
-    .Camera={"Camera",CAMERA_ICON,CAMERA_COLOR,1.6},
-    .Isometric_Camera={"Isometric",CAMERA_ICON,CAMERA_COLOR,1.6},
-    .Top_Down_Camera={"Top-down",CAMERA_ICON,CAMERA_COLOR,1.6},
-    .Side_Camera={"Side view",CAMERA_ICON,CAMERA_COLOR,1.6},
-    .First_Person_Camera={"First person",CAMERA_ICON,CAMERA_COLOR,1.6},
-    .Third_Person_Camera={"Third person",CAMERA_ICON,CAMERA_COLOR,1.6},
-    .Aim_Camera={"Aim",CAMERA_ICON,CAMERA_COLOR,1.6},
-    .Sound={"Sound",.Sound,SOUND_COLOR,1},
-    .Reverb_Zone={"Reverb zone",.Collider,SOUND_COLOR,3},
-}
-
-// The mode of engine/camera a camera preset follows the player in.
-@(private)
-preset_camera_mode :: proc "contextless" (preset:Preset) -> (ecamera.Camera_Preset,bool) {
-    return author.preset_camera_mode(preset)
-}
-
 SHAPE_ICONS :: [erender.Shape]ui.Icon{.None=.Mesh,.Cube=.Cube,.Sphere=.Sphere,.Cylinder=.Cylinder,.Cone=.Cone,.Capsule=.Cylinder,.Plane=.Plane,.Prism=.Prism,.Pyramid=.Pyramid}
 
 Create_Desc :: struct {
-    preset:Preset,
-    card:int,              // its place in cards(), for the card of a plugin; 0: the preset
-    name:string,           // the name of the preset when empty; a number follows a name that is taken
+    recipe:string,         // the name of the recipe it is made from; empty: an entity with no components
+    name:string,           // the label of the recipe when empty; a number follows a name that is taken
     named:bool,            // name is taken as it is, even when another entity has it
     parent:core.Entity,
     transform:core.Transform, // the identity when zero
@@ -88,7 +43,7 @@ entity_alive :: proc(w:core.World_Ref,e:core.Entity) -> bool {return core.alive(
 entity_name :: proc(w:core.World_Ref,e:core.Entity) -> string {
     names:=core.world_table_of(w,core.Name)
     if names==nil {return ""}
-    return core.name_get(core.read(names),e)
+    return core.name_get(names,e)
 }
 
 // The name of an entity, or one made of its index when it has none.
@@ -100,7 +55,7 @@ entity_label :: proc(w:core.World_Ref,e:core.Entity,allocator:=context.temp_allo
 entity_parent :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
     parents:=core.world_table_of(w,core.Parent)
     if parents==nil {return core.NONE}
-    if parent,ok:=core.get(core.read(parents),e);ok {return parent.entity}
+    if parent,ok:=core.get(parents,e);ok {return parent.entity}
     return core.NONE
 }
 
@@ -117,13 +72,13 @@ entity_children :: proc(w:core.World_Ref,e:core.Entity,allocator:=context.temp_a
 entity_under :: proc(w:core.World_Ref,e,ancestor:core.Entity) -> bool {
     parents:=core.world_table_of(w,core.Parent)
     if parents==nil {return e==ancestor && e!=core.NONE}
-    return core.is_under(core.read(parents),e,ancestor)
+    return core.is_under(parents,e,ancestor)
 }
 
 entity_local :: proc(w:core.World_Ref,e:core.Entity) -> mm.Transform {
     transforms:=core.world_table_of(w,core.Transform)
     if transforms==nil {return mm.TRANSFORM_IDENTITY}
-    if t,ok:=core.get(core.read(transforms),e);ok {return core.to_math(t)}
+    if t,ok:=core.get(transforms,e);ok {return core.to_math(t)}
     return mm.TRANSFORM_IDENTITY
 }
 
@@ -132,7 +87,7 @@ entity_world :: proc(w:core.World_Ref,e:core.Entity) -> mm.Transform {
     transforms:=core.world_table_of(w,core.Transform)
     parents:=core.world_table_of(w,core.Parent)
     if transforms==nil || parents==nil {return mm.TRANSFORM_IDENTITY}
-    world,_:=core.world_of(core.read(transforms),core.read(parents),e)
+    world,_:=core.world_of(transforms,parents,e)
     return world
 }
 
@@ -226,22 +181,25 @@ name_free :: proc(w:core.World_Ref,name:string,allocator:=context.temp_allocator
 order_next :: proc(w:core.World_Ref,parent:core.Entity) -> i32 {
     parents:=core.world_table_of(w,core.Parent)
     if parents==nil || parent==core.NONE {return 0}
-    last,ok:=core.get(core.read(parents),core.last_child(entity_hierarchy(w),parent))
+    last,ok:=core.get(parents,core.last_child(entity_hierarchy(w),parent))
     return ok?max(last.order+1,0):0
 }
 
 // ---------------------------------------------------------------- edits
 
-// Creates an entity of a preset with Id, Name and Transform, under parent
+// Creates an entity of a recipe with Id, Name and Transform, under parent
 // when it is given. Its components appear when the function ends.
 entity_create :: proc(s:^Session,desc:Create_Desc) -> core.Entity {
     if watching(s) {return core.NONE}
     // While a section is edited in its world, what is added without a parent goes inside it.
     if parent:=desc.parent!=core.NONE?desc.parent:section_editing(s);section_target_refused(s,parent) {return core.NONE}
-    index:=max(desc.card,int(desc.preset))
-    all:=cards(s)
-    if index>=len(all) {return core.NONE}
-    opened,edit_ready:=edit_open(s,fmt.tprintf("Add %s",all[index].label))
+    label:=desc.name if desc.name!="" else "Entity"
+    if desc.recipe!="" {
+        recipe,found:=recipe_of(s,desc.recipe)
+        if !found {return core.NONE}
+        if desc.name=="" {label=recipe.label}
+    }
+    opened,edit_ready:=edit_open(s,fmt.tprintf("Add %s",label))
     if !edit_ready {return core.NONE}
     defer edit_close(s,opened)
     return entity_make(s,editing_world(s),desc)
@@ -252,57 +210,38 @@ entity_create :: proc(s:^Session,desc:Create_Desc) -> core.Entity {
 entity_make :: proc(s:^Session,w:core.World_Ref,desc:Create_Desc) -> core.Entity {
     desc:=desc
     if desc.transform=={} {desc.transform=core.TRANSFORM_IDENTITY}
-    if index:=max(desc.card,int(desc.preset));index<len(Preset) && desc.transform.rotation==1 {desc.transform.rotation=preset_rotation(Preset(index))}
-    root:=document_root(s,w)
-    if root==core.NONE && w.data==s.edit_world {root=section_editing(s)}
+    label:="Entity"
+    parts:[]author.Part
+    if desc.recipe!="" {
+        recipe,found:=recipe_of(s,desc.recipe)
+        if !found || s.app==nil || s.app.assets==nil {return core.NONE}
+        problem:string
+        if parts,problem=author.recipe_parts(w,&s.app.assets.types,recipe,context.temp_allocator);problem!="" {return core.NONE}
+        label=recipe.label
+        if desc.transform.rotation==1 {desc.transform.rotation=recipe.local.rotation}
+        if card,carded:=card_of_recipe(s,desc.recipe);carded {card_place(s,card,parts,&desc.transform)}
+    }
+    root:=core.NONE
+    if w.data==s.edit_world {root=section_editing(s)}
     if root!=core.NONE && desc.parent==core.NONE && !playing(s) {
-        transform:=desc.transform=={}?core.TRANSFORM_IDENTITY:desc.transform
-        local,ok:=mm.transform_relative(core.to_math(transform),entity_world(w,root))
+        local,ok:=mm.transform_relative(core.to_math(desc.transform),entity_world(w,root))
         if !ok {return core.NONE}
         desc.parent,desc.transform=root,core.from_math(local)
     }
+    if recipe,found:=recipe_of(s,desc.recipe);found {desc.transform.scale*=recipe.local.scale}
     es:=core.world_entities(w)
-    all:=cards(s)
-    index:=max(desc.card,int(desc.preset))
-    if index>=len(all) {return core.NONE}
-    card:=all[index]
     e:=core.create(es)
-    transform:=desc.transform
-    if transform=={} {transform=core.TRANSFORM_IDENTITY}
-    if card.scale!={} {transform.scale*=card.scale}
-    if t:=core.world_table_of(w,core.Transform);t!=nil {core.add(t,e,transform)}
+    if t:=core.world_table_of(w,core.Transform);t!=nil {core.add(t,e,desc.transform)}
     if t:=core.world_table_of(w,core.Id);t!=nil {core.add(t,e,core.Id{core.id_new(es,&s.id_state)})}
     if t:=core.world_table_of(w,core.Name);t!=nil {
-        name:=desc.named?desc.name:name_free(w,desc.name!=""?desc.name:card.label)
+        name:=desc.named?desc.name:name_free(w,desc.name!=""?desc.name:label)
         core.add(t,e,core.name_make(name))
     }
     if desc.parent!=core.NONE && core.alive(es,desc.parent) {
         if t:=core.world_table_of(w,core.Parent);t!=nil {core.add(t,e,core.Parent{desc.parent,order_next(w,desc.parent)})}
     }
-    if card.make!=nil {card.make(s,w,e)} else {preset_components(w,e,Preset(index))}
+    for part in parts {core.raw_add(core.world_table_at(w,part.t),part.t.info,e,raw_data(part.value))}
     return e
-}
-
-@(private)
-preset_components :: proc(w:core.World_Ref,e:core.Entity,preset:Preset) {
-    author.preset_components(w,e,preset)
-}
-
-// A sound placed in the scene: a spatial source in a loop that the room
-// reverberates and walls hide.
-sound_components :: proc(w:core.World_Ref,e:core.Entity,sound:base.Asset_Id) {
-    author.sound_components(w,e,sound)
-}
-
-// How a preset turns what it makes when no rotation is given: a sun shines
-// from the morning of SUN_DIRECTION and a spot down. Lights shine toward -Z.
-preset_rotation :: proc(preset:Preset) -> mm.Quat {
-    return author.preset_rotation(preset)
-}
-
-// The primitive a preset shows; None for one without a body.
-preset_shape :: proc "contextless" (preset:Preset) -> erender.Shape {
-    return author.preset_shape(preset)
 }
 
 // Destroys entities and everything under them.
@@ -318,13 +257,12 @@ entities_delete :: proc(s:^Session,entities:[]core.Entity) {
         // What a section holds goes with its reference, which is among them.
         if section_locked(s,w,e) {continue}
         if prefab_member_locked(s,w,e) {kept=true;continue}
-        if e==document_root(s,w) {continue}
-        core.world_destroy_tree(w,e)
+        core.destroy(core.world_entities(w),e)
     }
     if kept {notify(s,"A member of a prefab instance stays: turn it off, or unlink the instance")}
     selection:=w.data==s.edit_world?document_selection(s):s.selection
     for e in entities {
-        if e==document_root(s,w) || prefab_member_locked(s,w,e) {continue}
+        if prefab_member_locked(s,w,e) {continue}
         for i:=len(selection.entities)-1;i>=0;i-=1 {
             if entity_under(w,selection.entities[i],e) {ordered_remove(&selection.entities,i)}
         }
@@ -332,25 +270,43 @@ entities_delete :: proc(s:^Session,entities:[]core.Entity) {
     selection.serial+=1
 }
 
+// Puts entities under a new group at their center, where they hang from when they share a parent
+// and at the top otherwise. NONE when it could not.
+entities_group :: proc(s:^Session,w:core.World_Ref,entities:[]core.Entity) -> core.Entity {
+    if len(entities)==0 {return core.NONE}
+    center:[3]f32
+    for e in entities {center+=entity_world(w,e).position}
+    center/=f32(len(entities))
+    opened,edit_ready:=edit_open(s,"Group")
+    if !edit_ready {return core.NONE}
+    defer edit_close(s,opened)
+    parent:=entity_parent(w,entities[0])
+    for e in entities[1:] {
+        if entity_parent(w,e)!=parent {parent=core.NONE;break}
+    }
+    group:=entity_create(s,{name="Group",parent=parent,transform={position=center,rotation=1,scale={1,1,1}}})
+    if group==core.NONE {return core.NONE}
+    // The group exists once settled: its children are placed relative to where it will be.
+    core.world_settle(w)
+    for e in entities {entity_reparent(s,e,group)}
+    return group
+}
+
 // Copies entities with everything under them, next to their originals:
 // what a scene saves of each, with references inside a copy pointing to the
 // copy. Returns the copies of the entities given, in their order.
 entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",allocator:=context.temp_allocator) -> []core.Entity {
-    if watching(s) || section_refused(s,..entities) {return nil}
-    w:=editing_world(s)
-    es:=core.world_entities(w)
-    if len(entities)==0 {return nil}
-    if root:=document_root(s,w);root!=core.NONE {
-        for e in entities {
-            if e==root {
-                _,ok:=mm.transform_relative(entity_world(w,root),entity_world(w,root))
-                if !ok {return nil}
-            }
-        }
-    }
+    if watching(s) || section_refused(s,..entities) || len(entities)==0 {return nil}
     opened,edit_ready:=edit_open(s,label)
     if !edit_ready {return nil}
     defer edit_close(s,opened)
+    return entities_copy(s,editing_world(s),entities,allocator)
+}
+
+// entities_duplicate in a world, without a step of undo.
+@(private)
+entities_copy :: proc(s:^Session,w:core.World_Ref,entities:[]core.Entity,allocator:=context.temp_allocator) -> []core.Entity {
+    es:=core.world_entities(w)
     sources:=make([dynamic]core.Entity,context.temp_allocator)
     roots:=make([dynamic]int,context.temp_allocator)
     gather :: proc(w:core.World_Ref,e:core.Entity,out:^[dynamic]core.Entity) {
@@ -377,11 +333,11 @@ entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",
         return false
     }
     for &t in w.info.tables {
-        if t.place!=.World || !author.type_saved(t.info) {continue}
+        if t.place!=.World || t.derived {continue}
         table:=core.world_table_at(w,&t)
         info:=t.info
         offsets:=entity_offsets(t.info)
-        transient:=history.transient_ranges(t.info)
+        transient:=history.transient_ranges(w.info,t.info)
         buffer:=make([]u8,max(info.size,1),context.temp_allocator)
         for source,at in sources {
             value:=core.raw_find(table,t.info,source)
@@ -413,12 +369,6 @@ entities_duplicate :: proc(s:^Session,entities:[]core.Entity,label:="Duplicate",
     }
     if len(sources)>0 {
         core.world_settle(w)
-        if root:=document_root(s,w);root!=core.NONE {
-            for at in roots {
-                if entity_parent(w,copies[at])==core.NONE {entity_reparent(s,copies[at],root)}
-            }
-            core.world_settle(w)
-        }
         prefab_copies_settle(w,copies)
     }
     result:=make([]core.Entity,len(roots),allocator)
@@ -435,7 +385,7 @@ entity_rename :: proc(s:^Session,e:core.Entity,name:string) -> bool {
     opened,edit_ready:=edit_open(s,"Rename")
     if !edit_ready {return false}
     defer edit_close(s,opened)
-    if row:=core.get(names,e);row!=nil {
+    if row:=core.edit(names,e);row!=nil {
         row^=core.name_make(text)
     } else {
         core.add(names,e,core.name_make(text))
@@ -449,23 +399,28 @@ entity_rename :: proc(s:^Session,e:core.Entity,name:string) -> bool {
 entity_reparent :: proc(s:^Session,e,parent:core.Entity) -> bool {
     if watching(s) {return false}
     w:=editing_world(s)
-    parent:=parent
-    if root:=document_root(s,w);root!=core.NONE && w.data==s.edit_world {
-        if e==root {return parent==core.NONE}
-        if parent==core.NONE {parent=root}
-    }
     parents:=core.world_table_of(w,core.Parent)
     transforms:=core.world_table_of(w,core.Transform)
     if parents==nil || !entity_alive(w,e) || parent!=core.NONE && (!entity_alive(w,parent) || entity_under(w,parent,e)) {return false}
     if entity_parent(w,e)==parent {return true}
     if section_refused(s,e) || section_target_refused(s,parent) || prefab_member_locked(s,w,e) {return false}
-    local:=mm.TRANSFORM_IDENTITY
-    if transforms!=nil {local=core.local_under(core.read(transforms),core.read(parents),parent,entity_world(w,e)) or_return}
+    if transforms!=nil {
+        if _,holds:=core.local_under(transforms,parents,parent,entity_world(w,e));!holds {return false}
+    }
     opened,edit_ready:=edit_open(s,"Parent")
     if !edit_ready {return false}
     defer edit_close(s,opened)
-    if transforms!=nil {
-        if row:=core.get(transforms,e);row!=nil {row^=core.from_math(local)}
+    return entity_hang(w,e,parent)
+}
+
+// Hangs an entity of a world from another, NONE for the root, where it is in the world. False
+// when a parent without size on an axis cannot hold it there.
+@(private)
+entity_hang :: proc(w:core.World_Ref,e,parent:core.Entity) -> bool {
+    parents:=core.world_table_of(w,core.Parent)
+    if transforms:=core.world_table_of(w,core.Transform);transforms!=nil {
+        local:=core.local_under(transforms,parents,parent,entity_world(w,e)) or_return
+        if row:=core.edit(transforms,e);row!=nil {row^=core.from_math(local)}
     }
     if parent==core.NONE {core.remove(parents,e)} else {core.add(parents,e,core.Parent{parent,order_next(w,parent)})}
     return true
@@ -477,12 +432,12 @@ entity_order_set :: proc(s:^Session,e:core.Entity,order:i32) {
     w:=editing_world(s)
     parents:=core.world_table_of(w,core.Parent)
     if parents==nil {return}
-    current,placed:=core.get(core.read(parents),e)
+    current,placed:=core.get(parents,e)
     if !placed || current.order==order {return}
     opened,edit_ready:=edit_open(s,"Order")
     if !edit_ready {return}
     defer edit_close(s,opened)
-    if row:=core.get(parents,e);row!=nil {row.order=order}
+    if row:=core.edit(parents,e);row!=nil {row.order=order}
 }
 
 entity_hidden_set :: proc(s:^Session,e:core.Entity,hidden:bool) {
@@ -506,7 +461,7 @@ transform_set :: proc(s:^Session,e:core.Entity,t:mm.Transform) -> bool {
     opened,edit_ready:=edit_open(s,"Transform")
     if !edit_ready {return false}
     defer edit_close(s,opened)
-    row:=w.data==s.edit_world?core.get(transforms,e):core.free(transforms,e)
+    row:=w.data==s.edit_world?core.edit(transforms,e):core.free(transforms,e)
     if row==nil {return false}
     row^=core.from_math(t)
     return true
@@ -602,7 +557,7 @@ field_write :: proc(s:^Session,t:^core.Table_Info,entities:[]core.Entity,offset:
     written:=false
     for e in entities {
         if t.type==core.Transform && s.mode!=.Edit && core.owner(cast(^core.Table(core.Transform))table,e)!=0 {continue}
-        value:=core.raw_get(table,t.info,e)
+        value:=core.raw_author(table,t.info,e)
         if value==nil {continue}
         mem.copy(rawptr(uintptr(value)+uintptr(offset)),raw_data(bytes),len(bytes))
         written=true

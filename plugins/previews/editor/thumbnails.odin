@@ -27,7 +27,7 @@ thumbnail_subject :: proc(s:^editor.Session,file:^asset.Registry_File,clip:u32,s
     case asset.KIND_ANIMATION:
         model:=thumbnail_animation_model(&p.models,a,file.id)
         switch {
-        case model.mesh!={}:     subject^={mesh={mesh=model.mesh},tint=erender.TINT_DEFAULT,provider=file.kind,pose=file.id,clip=max(clip,1)}
+        case model.mesh!={}:     subject^={mesh={mesh=model.mesh},tint=erender.MATERIAL_VALUES_DEFAULT,provider=file.kind,pose=file.id,clip=max(clip,1)}
         case model.document!={}: subject^={document=model.document,root=model.root}
         case:                    return false
         }
@@ -46,35 +46,32 @@ thumbnail_triangles :: proc(s:^editor.Session,subject:^editor.Thumbnail_Subject,
     a:=app.assets
     if a==nil || app.renderer==nil {return false}
     first:=len(vertices)
-    if editor.triangles_append(a,subject.mesh,subject.tint,nil,mm.TRANSFORM_IDENTITY,editor.THUMBNAIL_TRIANGLES*3-first,vertices,materials)!=.Added {return false}
+    if editor.triangles_append(a,subject.mesh,subject.tint,mm.TRANSFORM_IDENTITY,editor.THUMBNAIL_TRIANGLES*3-first,vertices,materials)!=.Added {return false}
     skin:Subject_Skin
     defer subject_skin_free(app.renderer,&skin)
     if !skin_geometry_read(&skin.geometry,a,subject.mesh.mesh) || !subject_skin_ready(app,core.world_ref(s.editor_world,s.info,.Editor),&skin) {return false}
-    pose:anim.Pose
-    posed:=subject.pose!={} && animation_halfway(a,subject.pose,subject.clip,&pose)
-    return skin_pose(app.renderer,&skin,&pose if posed else nil,mm.TRANSFORM_IDENTITY) && skin_place(&skin,vertices[first:])
+    lib:anim.Library
+    at:Clip_Time
+    if subject.pose!={} {at,_=animation_halfway(a,subject.pose,subject.clip,&lib)}
+    return skin_pose(app.renderer,&skin,at,mm.TRANSFORM_IDENTITY) && skin_place(&skin,vertices[first:])
 }
 
-// The pose of the clip-th clip of an animation, from 1, halfway through it;
+// The clip-th clip of an animation, from 1, halfway through it, read into lib;
 // the last clip for one past them. Temporary memory. False when the
 // animation cannot be read.
 @(private)
-animation_halfway :: proc(a:^host.Assets,id:base.Asset_Id,clip:u32,pose:^anim.Pose) -> bool {
+animation_halfway :: proc(a:^host.Assets,id:base.Asset_Id,clip:u32,lib:^anim.Library) -> (at:Clip_Time,ok:bool) {
     data:asset.Asset
-    if host.assets_file(a,id,asset.KIND_ANIMATION,&data)!=.None {return false}
+    if host.assets_file(a,id,asset.KIND_ANIMATION,&data)!=.None {return}
     defer asset.asset_close(&data)
     view,error:=asset.animation_view(&data,&a.types)
-    if error!=.None || len(view.clips)==0 {return false}
+    if error!=.None || len(view.clips)==0 {return}
     one:=view
     one.clips=view.clips[clamp(int(clip),1,len(view.clips))-1:][:1]
     desc:=asset.animation_library_desc(one)
     desc.allocator=context.temp_allocator
-    lib:anim.Library
-    if !anim.library_init(&lib,desc) {return false}
-    played:=asset.animation_clips_add(one,&lib)
-    if played==0 || !anim.pose_init(pose,max(int(one.clips[0].track_count),1),context.temp_allocator) {return false}
-    player:=anim.player_make(played)
-    player.time=anim.clip_duration(&lib,played)*0.5
-    anim.pose_blend(pose,&lib,player)
-    return true
+    if !anim.library_init(lib,desc) {return}
+    played:=asset.animation_clips_add(one,lib)
+    if played==0 {return}
+    return {lib,played,anim.clip_duration(lib,played)*0.5},true
 }

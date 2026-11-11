@@ -105,9 +105,7 @@ light_grid_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 	if cells == 0 || s.light_grid_buffer == 0 {return}
 	Params :: struct {origin: Vec3, cell: f32, size: [3]u32, cells, lights, grow, rows, pad0: u32}
 	params := Params{origin = s.light_grid.origin, cell = s.light_grid.cell, size = s.light_grid.size, cells = cells, lights = u32(len(s.lights) + light_region_lights(s.light_region)), rows = u32(s.light_grid.rows)}
-	for b in ([]rhi.Buffer{s.light_buffer, s.light_tree_buffer}) {rhi.cmd_barrier_buffer(cmd, b, .Shader_Read)}
 	for id in ([]Pipeline_Id{.Light_Grid_Weights, .Light_Grid_Count, .Light_Grid_Scan, .Light_Grid_Fill}) {
-		rhi.cmd_barrier_buffer(cmd, s.light_grid_buffer, .Shader_Write)
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[id])
 		set_params(cmd, &params)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.light_grid_buffer)
@@ -117,7 +115,6 @@ light_grid_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) {
 		case:                     rhi.cmd_dispatch(cmd, groups(cells, 64))
 		}
 	}
-	rhi.cmd_barrier_buffer(cmd, s.light_grid_buffer, .Shader_Read)
 }
 
 // Places the grid again when a light changed and makes its buffer; the frame

@@ -42,7 +42,7 @@ tree_layout_patch :: proc "contextless" (node,v:^Tree_Node) {
 
 @(private)
 tree_node_patch :: proc "contextless" (node:^Tree_Node,fields:Node_Fields,v:^Tree_Node) {
-    if .Text in fields {node.text,node.text_id,node.fields=v.text,v.text_id,v.fields}
+    if .Text in fields {node.text,node.fields=v.text,v.fields}
     if .Style in fields {node.style=v.style}
     if .Layout in fields {tree_layout_patch(node,v)}
     if .Float in fields {node.float=v.float}
@@ -50,7 +50,7 @@ tree_node_patch :: proc "contextless" (node:^Tree_Node,fields:Node_Fields,v:^Tre
     if .Animations in fields {node.anims=v.anims}
     if .Bindings in fields {
         node.bind_text=v.bind_text;node.bind_value=v.bind_value;node.bind_visible=v.bind_visible;node.bind_selected=v.bind_selected;node.bind_disabled=v.bind_disabled
-        node.bind_items=v.bind_items;node.bind_image=v.bind_image;node.bind_tint=v.bind_tint;node.bind_variant=v.bind_variant
+        node.bind_items=v.bind_items;node.bind_key=v.bind_key;node.bind_image=v.bind_image;node.bind_tint=v.bind_tint;node.bind_variant=v.bind_variant
         node.data=v.data
     }
     if .Visibility in fields {node.selected=v.selected;node.disabled=v.disabled}
@@ -58,7 +58,7 @@ tree_node_patch :: proc "contextless" (node:^Tree_Node,fields:Node_Fields,v:^Tre
     if .Layer in fields {node.layer=v.layer}
     if .Clip in fields {node.clip=v.clip}
     if .Block in fields {node.block=v.block}
-    if .Values in fields {node.index,node.count,node.choice,node.range,node.limit,node.delay,node.particle=v.index,v.count,v.choice,v.range,v.limit,v.delay,v.particle}
+    if .Values in fields {node.index,node.count,node.choice,node.range,node.limit,node.delay,node.particle,node.draw=v.index,v.count,v.choice,v.range,v.limit,v.delay,v.particle,v.draw}
     if .Action in fields {node.action=v.action;node.hold=v.hold}
     if .Focus in fields {node.nav=v.nav;node.order=v.order;node.flags=v.flags}
     if .Drag in fields {node.tag,node.accepts,node.ghost=v.tag,v.accepts,v.ghost}

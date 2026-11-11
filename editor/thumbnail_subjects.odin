@@ -65,7 +65,7 @@ thumbnail_provider :: proc(s:^Session,kind:asset.Fourcc) -> (provider:Thumbnail_
 }
 
 // The kinds of asset of the plugins that the browser lists: those a plugin
-// opens as documents or declares (Asset_Kind_Provider).
+// opens as documents or declares in its plugin.mirai.
 @(private)
 content_plugin_kinds :: proc(s:^Session,allocator:=context.temp_allocator) -> []asset.Fourcc {
     kinds:=make([dynamic]asset.Fourcc,allocator)
@@ -117,8 +117,7 @@ document_triangles :: proc(a:^host.Assets,document:base.Asset_Id,root:base.Entit
     if renderers==nil {return false}
     identity:=core.TRANSFORM_IDENTITY
     transforms,placed:=document_column(&data,&view,&a.types,"Transform",core.Transform,&identity)
-    tints,tinted:=document_column(&data,&view,&a.types,"Tint",erender.Tint)
-    overrides,overridden:=document_column(&data,&view,&a.types,"Material_Override",erender.Material_Override)
+    tints,tinted:=document_column(&data,&view,&a.types,"Material_Values",erender.Material_Values)
     hidden:=make([]bool,count,context.temp_allocator)
     for &component in view.components {
         if component.name!="Hidden" {continue}
@@ -163,10 +162,9 @@ document_triangles :: proc(a:^host.Assets,document:base.Asset_Id,root:base.Entit
         if !shown[row] || hidden[row] || under!=nil && !under[row] {continue}
         room:=THUMBNAIL_TRIANGLES*3-len(vertices)
         if room<3 {break}
-        Look :: struct {mesh:erender.Mesh_Renderer,tint:erender.Tint,override:erender.Material_Override}
-        look:=Look{mesh=renderers[row],tint=erender.TINT_DEFAULT}
+        Look :: struct {mesh:erender.Mesh_Renderer,tint:erender.Material_Values}
+        look:=Look{mesh=renderers[row],tint=erender.MATERIAL_VALUES_DEFAULT}
         if tinted!=nil && tinted[row] {look.tint=tints[row]}
-        if overridden!=nil && overridden[row] {look.override=overrides[row]}
         key:=base.hash64(mem.ptr_to_bytes(&look))
         shape:Document_Mesh
         read:=false
@@ -175,7 +173,7 @@ document_triangles :: proc(a:^host.Assets,document:base.Asset_Id,root:base.Entit
         }
         if !read {
             shape={key=key,first=len(locals)}
-            triangles_append(a,look.mesh,look.tint,&look.override,mm.TRANSFORM_IDENTITY,THUMBNAIL_TRIANGLES*3-len(locals),&locals,materials)
+            triangles_append(a,look.mesh,look.tint,mm.TRANSFORM_IDENTITY,THUMBNAIL_TRIANGLES*3-len(locals),&locals,materials)
             shape.count=len(locals)-shape.first
             append(&meshes,shape)
         }
@@ -276,7 +274,7 @@ scene_thumbnails_kept :: proc(s:^Session) -> bool {
 // Whether the scene in front is one of the assets, whose view can be its thumbnail.
 @(private)
 scene_thumbnail_takes :: proc(s:^Session) -> bool {
-    if !scene_thumbnails_kept(s) || scene_covered(s) {return false}
+    if !scene_thumbnails_kept(s) || scene_covered(s) || document_is_prefab(s) {return false}
     file,found:=asset.registry_find(&s.app.assets.registry,s.document.id)
     return found && file.kind==asset.KIND_SCENE
 }

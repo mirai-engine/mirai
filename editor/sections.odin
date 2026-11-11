@@ -8,7 +8,6 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/api"
 import "mirai:editor/history"
-import "mirai:std/serial"
 import "mirai:host"
 import erender "mirai:engine/render"
 import scene "mirai:engine/scene"
@@ -27,14 +26,14 @@ import "mirai:ui"
 // sections load, drop or turn there goes to the image of the journal without
 // a step.
 
-SECTIONS_EDITED :: 64 // sections a document keeps for Save once they were edited in their world
+SECTIONS_EDITED :: 64 // sections a document writes once they were edited in their world
 SECTION_TRAVEL_DISTANCE :: f32(200) // m: past it the camera goes into a big section instead of framing it whole
 
 // The sections of a document in the editor; each tab keeps its own, and
 // what its view shows of them is in the scene.Section_Views of its World.
 Document_Sections :: struct {
-    edit:core.Entity, // the reference whose section is edited in its world: the rest reads only, and Save writes its scene too
-    edited:[SECTIONS_EDITED]base.Entity_Id, // the references edited in their world since the document opened: Save writes the scenes that changed
+    edit:core.Entity, // the reference whose section is edited in its world: the rest reads only, and its scene is written too
+    edited:[SECTIONS_EDITED]base.Entity_Id, // the references edited in their world since the document opened: the scenes that changed are written
     edited_count:int,
 }
 
@@ -44,10 +43,6 @@ Section_Shown :: enum u8 {Unloaded,Loading,Loaded,Active}
 
 // Places a reference to the scene id at point and loads what it holds under it.
 section_place :: proc(s:^Session,id:base.Asset_Id,point:[3]f32,name:string) -> core.Entity {
-    if document_is_prefab(s) {
-        notify(s,"A prefab cannot hold a scene: place the scene in a scene, or the prefab in this one")
-        return core.NONE
-    }
     a:=s.app.assets
     if a==nil || s.document==nil {return core.NONE}
     if id==s.document.id {
@@ -66,16 +61,17 @@ section_place :: proc(s:^Session,id:base.Asset_Id,point:[3]f32,name:string) -> c
     e:=entity_create(s,{name=name,transform={position=point,rotation=1,scale={1,1,1}}})
     if e==core.NONE {return core.NONE}
     if t:=core.world_table_of(w,scene.Scene_Reference);t!=nil {core.add(t,e,scene.Scene_Reference{scene=id,loaded=id})}
-    if error:=section_instantiate(s,w,e,file,{});error!=.None {notify(s,fmt.tprintf("The scene could not be placed: %s",scene.error_text(error)))}
+    if error:=section_instantiate(s,w,e,file);error!=.None {notify(s,fmt.tprintf("The scene could not be placed: %s",scene.error_text(error)))}
     return e
 }
 
-// Instantiates file under the reference e: its Ids combined with that of e,
-// its unbounded volumes ruling in the box of e.
+// Instantiates file under the reference e: its Ids combined with that of e.
 @(private)
-section_instantiate :: proc(s:^Session,w:core.World_Ref,e:core.Entity,file:^asset.Asset,extents:[3]f32) -> scene.Error {
+section_instantiate :: proc(s:^Session,w:core.World_Ref,e:core.Entity,file:^asset.Asset) -> scene.Error {
     path:=[1]base.Asset_Id{s.document.id}
-    _,error:=scene.instantiate(w,file,&s.app.assets.types,{parent=e,documents=scene.assets_documents(s.app.assets),salt=api_entity_id(w,e),path=path[:],scope=e,scope_extents=extents})
+    stored:=make([dynamic]scene.Stored,context.temp_allocator)
+    _,error:=scene.instantiate(w,file,&s.app.assets.types,{parent=e,documents=scene.assets_documents(s.app.assets),salt=api_entity_id(w,e),path=path[:],stored=&stored})
+    stored_log(s,stored[:])
     return error
 }
 
@@ -94,21 +90,21 @@ sections_sync :: proc(s:^Session) {
     if hierarchy==nil {return}
     image:=sections_image(s,w)
     for row in 0..<core.count(references) {
-        reference:=core.at(core.read(references),row)
+        reference:=core.at(references,row)
         e:=core.entity_at(references,row)
         changed:=reference.rule==.With_Document && reference.state!=.Unloaded && reference.loaded!={} && reference.loaded!=reference.scene
         made:=reference.loaded=={} && section_made(image,e) && section_wanted(s,w,e)!=.Unloaded
         if !changed && !made {continue}
         for child:=core.first_child(core.ref(hierarchy),e);child!=core.NONE; {
             next:=core.next_sibling(core.ref(hierarchy),child)
-            core.world_destroy_tree(w,child)
+            core.destroy(core.world_entities(w),child)
             child=next
         }
-        loaded:=core.at(references,row)
+        loaded:=core.edit_at(references,row)
         loaded.loaded,loaded.held=reference.scene,false
         file:=host_scene(s,reference.scene)
         if file==nil || reference.scene==s.document.id {continue}
-        if error:=section_instantiate(s,w,e,file,reference.extents);error!=.None {
+        if error:=section_instantiate(s,w,e,file);error!=.None {
             notify(s,fmt.tprintf("The scene of %s could not be loaded: %s",entity_name(w,e),scene.error_text(error)))
         }
     }
@@ -135,27 +131,26 @@ section_made :: proc(image:^history.Journal_Table,e:core.Entity) -> bool {return
 @(private)
 section_reload :: proc(s:^Session,w:core.World_Ref,e:core.Entity) {
     references:=core.world_table_of(w,scene.Scene_Reference)
-    reference:=core.get(references,e)
-    if reference==nil || reference.loaded=={} {return}
+    reference,found:=core.get(references,e)
+    if !found || reference.loaded=={} {return}
     file:=host_scene(s,reference.scene)
     gone:=section_entities(w,e)
     h:=entity_hierarchy(w)
     for child:=core.first_child(h,e);child!=core.NONE; {
         next:=core.next_sibling(h,child)
-        core.world_destroy_tree(w,child)
+        core.destroy(core.world_entities(w),child)
         child=next
     }
     core.world_settle(w)
     if file!=nil {
-        if error:=section_instantiate(s,w,e,file,reference.extents);error!=.None {
+        if error:=section_instantiate(s,w,e,file);error!=.None {
             notify(s,fmt.tprintf("The scene of %s could not be loaded again: %s",entity_name(w,e),scene.error_text(error)))
         }
     }
     core.world_settle(w)
-    reference=core.get(references,e)
-    if reference!=nil {
-        reference.loaded,reference.held={},false
-        if file!=nil {reference.loaded=reference.scene}
+    if written:=core.edit(references,e);written!=nil {
+        written.loaded,written.held={},false
+        if file!=nil {written.loaded=written.scene}
     }
     journal_take_entities(s.edits,w,gone)
     journal_take_entities(s.edits,w,section_entities(w,e))
@@ -226,7 +221,7 @@ section_of :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
     if references==nil || core.count(references)==0 || parents==nil {return core.NONE}
     at:=e
     for depth:=0;depth<1024;depth+=1 {
-        parent,placed:=core.get(core.read(parents),at)
+        parent,placed:=core.get(parents,at)
         if !placed {return core.NONE}
         at=parent.entity
         if core.has(references,at) {return at}
@@ -248,7 +243,7 @@ section_holder :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
             if row:=core.raw_row(core.raw(proxies),at);row>=0 {return proxies.values[row].reference}
         }
         if at!=e && core.raw_row(core.raw(references),at)>=0 {return at}
-        parent,placed:=core.get(core.read(parents),at)
+        parent,placed:=core.get(parents,at)
         if !placed {return core.NONE}
         at=parent.entity
     }
@@ -281,7 +276,7 @@ container_kind :: proc(w:core.World_Ref,e:core.Entity) -> Container_Kind {
 
 container_color :: proc(s:^Session,kind:Container_Kind) -> (icon,text:ui.Color) {
     switch kind {
-    case .Prefab:  return asset_kind_color(s,asset.KIND_PREFAB),PREFAB_TEXT
+    case .Prefab:  return PREFAB_ASSET_COLOR,PREFAB_TEXT
     case .Section: return SECTION_COLOR,SECTION_TEXT
     case .None:
     }
@@ -318,7 +313,7 @@ entity_within :: proc(w:core.World_Ref,e,top:core.Entity) -> bool {
     return false
 }
 
-// The file of the document in front, for where a section is: "Untitled" before it is saved.
+// The file of the document in front, for where a section is: "Untitled" without a file.
 document_label :: proc(s:^Session) -> string {
     if s.document==nil || s.document.path_length==0 {return "Untitled"}
     return filepath.base(document_path(s.document))
@@ -333,7 +328,7 @@ api_section_preview :: proc(s:^Session,call:^api.Call) {
     w:=edited_world(s)
     p:=core.world_storage_of(w,erender.Environment_Preview)
     if s.mode!=.Edit || p==nil {
-        api.call_fail(call,api.INVALID_PARAMS,"The preview of a section is of Edit: stop Play or Simulate first")
+        api_playing(call,"the preview of a section is of Edit")
         return
     }
     if params.entity[0]==0 {
@@ -343,12 +338,7 @@ api_section_preview :: proc(s:^Session,call:^api.Call) {
         if !ok {return}
         if !section_previewed(w,e) {section_preview_toggle(s,w,e)}
     }
-    w_out:=call.out
-    serial.text_write_raw(w_out,`{"sky":`)
-    serial.text_write_string(w_out,fmt.tprintf("0x%016x",u64(api_entity_id(w,p.sky))))
-    serial.text_write_raw(w_out,`,"sun":`)
-    serial.text_write_string(w_out,fmt.tprintf("0x%016x",u64(api_entity_id(w,p.sun))))
-    serial.write_u8(w_out,'}')
+    api.call_result(call,Api_Section_Preview_Result)^={api_entity_id(w,p.sky),api_entity_id(w,p.sun)}
 }
 
 // The entity of the Scene_Reference id names; none, with the call failed, for another.
@@ -488,15 +478,10 @@ selection_section_locked :: proc(s:^Session,w:core.World_Ref) -> bool {
     return false
 }
 
-// Edits the section of reference in its world, or stops with none. What the
-// one left keeps unsaved, Save still writes.
+// Edits the section of reference in its world, or stops with none.
 section_edit_set :: proc(s:^Session,reference:core.Entity) {
-    if reference!=core.NONE && document_is_prefab(s) {return}
     w:=edited_world(s)
     d:=&s.document.sections
-    if left:=section_editing(s);left!=core.NONE && left!=reference && section_unsaved(s,w,left) {
-        notify(s,fmt.tprintf("%s keeps its unsaved changes: Save writes them to %s",entity_label(w,left),section_scene_name(s,w,left)))
-    }
     views:=core.world_storage_of(w,scene.Section_Views)
     if d.edit!=core.NONE && d.edit!=reference && views!=nil {scene.section_view(views,d.edit,{},false)}
     if reference!=core.NONE {
@@ -504,7 +489,7 @@ section_edit_set :: proc(s:^Session,reference:core.Entity) {
         if id==0 {return}
         if !slice.contains(d.edited[:d.edited_count],id) {
             if d.edited_count==len(d.edited) {
-                notify(s,fmt.tprintf("%d sections were edited in their world since the scene opened: save and open it again to edit another",SECTIONS_EDITED))
+                notify(s,fmt.tprintf("%d sections were edited in their world since the scene opened: open it again to edit another",SECTIONS_EDITED))
                 return
             }
             d.edited[d.edited_count]=id
@@ -531,16 +516,16 @@ section_capture :: proc(s:^Session,w:core.World_Ref,reference:core.Entity,captur
     switch {
     case r.loaded=={}:
         // Unloaded, what changed in it waits dormant under its reference.
-        if len(entity_children(w,reference))>0 {return "",false,"its changes wait while it is off: turn it on to save them"}
+        if len(entity_children(w,reference))>0 {return "",false,"its changes wait while it is off: turn it on to write them"}
         return "",false,""
     case r.loaded!=r.scene: return "",false,"it is loading"
-    case r.held:                         return "",false,"it is loaded and off: turn it on to save it"
+    case r.held:                         return "",false,"it is loaded and off: turn it on to write it"
     }
     path=scene_file(s,file.path)
     previous:asset.Scene
     had:=asset.scene_load(&previous,&a.types,path)==.None
     defer if had {asset.scene_destroy(&previous)}
-    if _,error:=scene.capture(w,captured,&a.types,{section=reference,previous=had?&previous:nil,kind=asset.KIND_SCENE,id=r.scene});error!=.None {
+    if _,error:=scene.capture(w,captured,&a.types,{section=reference,previous=had?&previous:nil,id=r.scene});error!=.None {
         return "",false,fmt.tprintf("it could not be captured: %s",scene.error_text(error))
     }
     if prefab_overrides_put(s,captured,had?previous.overrides[:]:nil)!=.None {
@@ -556,7 +541,7 @@ section_capture :: proc(s:^Session,w:core.World_Ref,reference:core.Entity,captur
 
 // Whether the section of reference holds what its scene does not: changed
 // while it is loaded and on, or waiting dormant while it is off.
-section_unsaved :: proc(s:^Session,w:core.World_Ref,reference:core.Entity) -> bool {
+section_changed :: proc(s:^Session,w:core.World_Ref,reference:core.Entity) -> bool {
     r,ok:=entity_get(w,reference,scene.Scene_Reference)
     switch {
     case !ok: return false
@@ -589,11 +574,11 @@ section_save :: proc(s:^Session,reference:core.Entity) -> (result:Section_Write,
     others:=make([dynamic]core.Entity,context.temp_allocator)
     for row in 0..<core.count(references) {
         e:=core.entity_at(references,row)
-        if e!=reference && core.at(core.read(references),row).scene==r.scene {append(&others,e)}
+        if e!=reference && core.at(references,row).scene==r.scene {append(&others,e)}
     }
     d:=&s.document.sections
     for e in others {
-        if slice.contains(d.edited[:d.edited_count],api_entity_id(w,e)) && section_unsaved(s,w,e) {
+        if slice.contains(d.edited[:d.edited_count],api_entity_id(w,e)) && section_changed(s,w,e) {
             notify(s,fmt.tprintf("%s shows the scene %s saved from %s: what changed in it is gone",entity_label(w,e),section_scene_name(s,w,e),entity_label(w,reference)))
         }
         section_reload(s,w,e)
@@ -603,8 +588,8 @@ section_save :: proc(s:^Session,reference:core.Entity) -> (result:Section_Write,
 
 // Writes the scene of every section edited in its world that changed: the
 // one edited first, so that it wins over another reference to the same
-// scene. False, with a notice, when one could not be written: the document
-// stays unsaved.
+// scene. False, with a notice, when one could not be written: the next flush
+// tries again.
 sections_save :: proc(s:^Session) -> bool {
     w:=edited_world(s)
     d:=&s.document.sections
@@ -625,21 +610,29 @@ sections_save :: proc(s:^Session) -> bool {
         case .Written: append(&written,r.scene)
         case .Failed:
             ok=false
-            notify(s,fmt.tprintf("The section %s was not saved: %s",entity_label(w,e),why))
+            notify(s,fmt.tprintf("The section %s was not written: %s",entity_label(w,e),why))
         }
     }
     return ok
 }
 
 Api_Section_Edit_Params :: struct {
-    entity:Api_Entity_Text `mirai:"text,entity,optional,label=The entity of a Scene_Reference whose section is edited in its world: Save writes its scene too, and the rest reads only; omitted stops"`,
+    entity:Api_Entity_Text `mirai:"text,entity,optional,label=The entity of a Scene_Reference whose section is edited in its world: its steps write its scene, and the rest reads only; omitted stops"`,
+}
+
+Api_Section_Edit_Result :: struct {
+    editing:base.Entity_Id `mirai:"label=The section edited in its world now; 0 for none"`,
+}
+Api_Section_Preview_Result :: struct {
+    sky:base.Entity_Id `mirai:"label=The Sky the viewport previews; 0 for that of the document"`,
+    sun:base.Entity_Id `mirai:"label=The sun the viewport previews; 0 for that of the document"`,
 }
 
 api_section_edit :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Api_Section_Edit_Params)
     w:=edited_world(s)
-    if s.mode!=.Edit || document_is_prefab(s) {
-        api.call_fail(call,api.INVALID_PARAMS,"A section is edited in its world in Edit, in a scene: stop Play or Simulate, or open the scene")
+    if s.mode!=.Edit {
+        api.call_fail(call,api.INVALID_PARAMS,"A section is edited in its world in Edit: stop Play or Simulate")
         return
     }
     e:=core.NONE
@@ -647,19 +640,12 @@ api_section_edit :: proc(s:^Session,call:^api.Call) {
         ok:bool
         if e,ok=api_section_reference(call,w,params.entity[:]);!ok {return}
     }
-    left:=section_editing(s)
-    kept:=left!=core.NONE && left!=e && section_unsaved(s,w,left)
     section_edit_set(s,e)
     if section_editing(s)!=e {
-        api.call_failf(call,api.SERVER_ERROR,"%d sections were edited in their world since the scene opened: scene.save, then scene.open it again to edit another",SECTIONS_EDITED)
+        api.call_failf(call,api.SERVER_ERROR,"%d sections were edited in their world since the scene opened: scene.open it again to edit another",SECTIONS_EDITED)
         return
     }
-    out:=call.out
-    serial.text_write_raw(out,`{"editing":`)
-    api.write_id(out,api_entity_id(w,e))
-    serial.text_write_raw(out,`,"unsaved":`)
-    api.write_id(out,kept?api_entity_id(w,left):0)
-    serial.write_u8(out,'}')
+    api.call_result(call,Api_Section_Edit_Result).editing=api_entity_id(w,e)
 }
 
 // ---------------------------------------------------------------- the view
@@ -721,7 +707,7 @@ Sections_Watch :: struct {
     taken:[dynamic]core.Entity,
     made:[dynamic]core.Entity,    // references a gesture made, which the view keeps unloaded until their step loads them (sections_sync)
     references:core.Seen,         // of the Scene_Reference table of world, for the references that went
-    proxies:u64,                  // the version of the table of scene.Section_Proxy before
+    proxies:core.Seen,            // the table of scene.Section_Proxy before
     proxied:[dynamic]core.Entity, // the far forms there were before: one that goes is theirs too
     world:rawptr,
 }
@@ -745,12 +731,12 @@ sections_watch :: proc(s:^Session,watch:^Sections_Watch,world:core.World_Ref) {
     if core.count(references)==0 {return}
     clear(&watch.proxied)
     if proxies:=core.world_table_of(world,scene.Section_Proxy);proxies!=nil {
-        watch.proxies=core.version(core.read(proxies))
-        for row in 0..<core.count(core.read(proxies)) {append(&watch.proxied,core.entity_at(core.read(proxies),row))}
+        _=core.touched(proxies,&watch.proxies)
+        for row in 0..<core.count(proxies) {append(&watch.proxied,core.entity_at(proxies,row))}
     }
     for row in 0..<core.count(references) {
         e:=core.entity_at(references,row)
-        r:=core.at(core.read(references),row)
+        r:=core.at(references,row)
         append(&watch.marks,Section_Mark{e,r.loaded,r.far,r.held})
         if section_made(image,e) && !slice.contains(watch.made[:],e) {
             append(&watch.made,e)
@@ -793,7 +779,7 @@ sections_orphans_drop :: proc(s:^Session,watch:^Sections_Watch,world:core.World_
         append(&dropped,e)
         append(&dropped,..section_entities(world,e))
     }
-    for e in orphans {core.world_destroy_tree(world,e)}
+    for e in orphans {core.destroy(core.world_entities(world),e)}
     core.world_settle(world)
     journal_take_entities(s.edits,world,dropped[:])
 }
@@ -807,12 +793,12 @@ sections_watched :: proc(s:^Session,watch:^Sections_Watch,world:core.World_Ref) 
     if s.mode!=.Edit || world.data!=s.edit_world || s.edits==nil || len(watch.marks)==0 {return}
     references:=core.world_table_of(world,scene.Scene_Reference)
     if references==nil {return}
-    if proxies:=core.world_table_of(world,scene.Section_Proxy);proxies!=nil && core.version(core.read(proxies))!=watch.proxies {
+    if proxies:=core.world_table_of(world,scene.Section_Proxy);proxies!=nil && core.touched(proxies,&watch.proxies) {
         sections_take_in(s,watch,world)
         return
     }
     for m in watch.marks {
-        r,found:=core.get(core.read(references),m.entity)
+        r,found:=core.get(references,m.entity)
         if !found || r.loaded!=m.loaded || r.held!=m.held || r.far!=m.far {
             sections_take_in(s,watch,world)
             return
@@ -889,13 +875,12 @@ sections_take_in :: proc(s:^Session,watch:^Sections_Watch,w:core.World_Ref) {
     for &t,i in w.info.tables {
         if i>=len(edits.saved) || !edits.saved[i] {continue}
         table:=core.world_table_at(w,&t)
-        c:=core.raw_changes(table,&watch.seen[i])
-        if !c.all && table.version<=c.since && len(c.gone)==0 {continue}
+        c:=core.raw_changes(table,&watch.seen[i],off=true)
         for e in c.gone {
             if theirs(watch,edits,w,e,parent_table) && history.history_is_author(authors,e) {history.journal_take(edits,w,i,e)}
         }
-        for e,row in table.entities {
-            if !c.all && table.stamps[row]<=c.since {continue}
+        for row in core.raw_each_changed(table,&c) {
+            e:=table.entities[row]
             if theirs(watch,edits,w,e,parent_table) && history.history_is_author(authors,e) {history.journal_take(edits,w,i,e)}
         }
     }

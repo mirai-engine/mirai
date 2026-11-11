@@ -45,17 +45,14 @@ effect_read :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) -> (f:Effe
     return f,true
 }
 
-// The values of an instance and its program parameters are shown inside the
-// section of its Particle_Emitter.
+// The values of an instance are shown inside the section of its Particle_Emitter.
 @(private)
-emitter_within :: proc(type:typeid) -> bool {
-    return type==vfx.Particle_Override || type==vfx.Particle_Parameters
-}
+emitter_within :: proc(type:typeid) -> bool {return type==vfx.Particle_Override}
 
 // The effect of a live emitter has a box of its own after the fields (emitter_section).
 @(private)
-emitter_field :: proc(c:editor.Inspector_Context,info:^runtime.Type_Info,offset:uintptr,label:string) -> bool {
-    return c.table!=nil && c.table.type==vfx.Particle_Emitter && len(c.entities)>0 && offset==offset_of(vfx.Particle_Emitter,particle) && info.id==base.Asset_Id
+emitter_field :: proc(c:editor.Inspector_Context,type:typeid,offset:uintptr,label:string) -> bool {
+    return c.table!=nil && c.table.type==vfx.Particle_Emitter && len(c.entities)>0 && offset==offset_of(vfx.Particle_Emitter,particle) && type==base.Asset_Id
 }
 
 // The sections of the vfx plugin in Details.
@@ -79,7 +76,7 @@ bindings_section :: proc(c:editor.Inspector_Context) -> bool {
     if found==nil {return true}
     bindings,_:=editor.entity_get(c.world,active,vfx.Particle_Bindings)
     for resource,at in found.resources[:min(len(found.resources),vfx.RESOURCES)] {
-        if resource.kind!=.Surface && resource.kind!=.Bones && resource.kind!=.Grid && resource.kind!=.Emitter {continue}
+        if resource.kind!=.Surface && resource.kind!=.Grid && resource.kind!=.Emitter {continue}
         slot:=at
         for &source,i in bindings.sources {
             if base.text_get(source.resource[:])==resource.name {slot=i;break}
@@ -99,7 +96,6 @@ emitter_section :: proc(c:editor.Inspector_Context) -> bool {
     if c.table==nil || c.table.type!=vfx.Particle_Emitter || len(c.entities)==0 {return false}
     s:=c.session
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     ins:=s.inspector
     single:=len(c.entities)==1
     active:=c.entities[len(c.entities)-1]
@@ -112,24 +108,23 @@ emitter_section :: proc(c:editor.Inspector_Context) -> bool {
     for e in c.entities {
         if other,ok:=editor.entity_get(c.world,e,vfx.Particle_Emitter);ok && other.particle!=particle {same=false}
     }
-    editor.inspector_fields(c,c.table.info)
+    editor.inspector_fields(c)
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(editor.MATERIAL_ROW),gap=4,align_y=.Center}) {
-        ui.label(ctx,"Particle",th.font_small,th.text_label,th.label_width)
-        given,_:=editor.entity_get(c.world,active,vfx.Particle_Parameters)
-        local:=single && (f.override.count>0 || given.count>0)
+        ui.label(ctx,"Particle",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),ui.metric(ctx,"label_width"))
+        local:=single && f.override.count>0
         open:=editor.asset_list_shown(s,c.table,offset)
         revert:bool
         label,quad:="Multiple",ui.Quad{}
-        if same {label,quad=editor.asset_label_of(s,particle,"Default"),editor.asset_quad(s,effect.KIND,particle,editor.MATERIAL_ROW)}
-        clicked,anchor,dropped:=editor.asset_box(s,"particle",1,label,quad,open,local?&revert:nil,effect.KIND,particle if same else {})
-        if clicked {editor.asset_list_open(s,c.table,offset,effect.KIND,"Default",anchor)}
+        if same {label,quad=editor.asset_label_of(s,particle,"Default"),editor.asset_quad(s,effect.PARTICLE_KIND,particle,editor.MATERIAL_ROW)}
+        clicked,anchor,dropped:=editor.asset_box(s,"particle",1,label,quad,open,local?&revert:nil,effect.PARTICLE_KIND,particle if same else {})
+        if clicked {editor.asset_list_open(s,c.table,offset,effect.PARTICLE_KIND,"Default",anchor)}
         if dropped!={} {editor.field_write(s,c.table,c.entities,offset,mem.ptr_to_bytes(&dropped))}
         if revert {particle_revert(s,active)}
-        if local && f.particle!={} && ui.button(ctx,ui.id(ctx,"apply"),{icon=.Save_Prefab,style=.Ghost,width=22,height=editor.MATERIAL_ROW}).clicked {particle_apply(s,active)}
+        if local && f.particle!={} && ui.button(ctx,ui.id(ctx,"apply"),{icon=.Save_Prefab,variant="ghost",width=22,height=editor.MATERIAL_ROW}).clicked {particle_apply(s,active)}
         inspected:=editor.inspect_component(s,c.world,vfx.Particle_Emitter,c.entities)
         inspected.width=c.width
         editor.field_reset_button(&inspected,offset,size_of(base.Asset_Id))
-        if single && ui.button(ctx,ui.id(ctx,"parameters"),{icon=unfolded?.Chevron_Down:.Chevron_Right,style=.Ghost,width=th.row,height=editor.MATERIAL_ROW}).clicked {editor.inspector_section_toggle(ins,key)}
+        if single && ui.button(ctx,ui.id(ctx,"parameters"),{icon=unfolded?.Chevron_Down:.Chevron_Right,variant="ghost",width=ui.metric(ctx,"row"),height=editor.MATERIAL_ROW}).clicked {editor.inspector_section_toggle(ins,key)}
     }
     if !single || !unfolded {return true}
     inherited:vfx.Particle_Override
@@ -173,22 +168,10 @@ particle_value_write :: proc(s:^editor.Session,e:core.Entity,offset:int,bytes:[]
             assets=true
             continue
         }
-        name:=base.name_hash(value.path)
-        at:=-1
-        for stored,i in override.names[:min(int(override.count),len(override.names))] {
-            if stored==name {at=i;break}
+        if error:=vfx.value_put(&override,base.name_hash(value.path),now);error!=.None {
+            editor.notify(s,vfx.error_message(error))
+            return false
         }
-        if at<0 {
-            if int(override.count)>=vfx.PARTICLE_OVERRIDE_CAPACITY {
-                editor.notify(s,fmt.tprintf("An entity changes up to %d values of its particle",vfx.PARTICLE_OVERRIDE_CAPACITY))
-                return false
-            }
-            at=int(override.count)
-            override.count+=1
-        }
-        override.names[at]=name
-        override.values[at]={}
-        copy(override.values[at][:],now)
         values=true
     }
     opened,edit_ready:=editor.edit_open(s,"Particle")
@@ -207,15 +190,12 @@ particle_value_write :: proc(s:^editor.Session,e:core.Entity,offset:int,bytes:[]
 @(private)
 particle_revert :: proc(s:^editor.Session,e:core.Entity) -> bool {
     w:=editor.shown_world(s)
-    values,parameters:=core.world_table_of(w,vfx.Particle_Override),core.world_table_of(w,vfx.Particle_Parameters)
-    has_values:=values!=nil && core.has(values,e)
-    has_parameters:=parameters!=nil && core.has(parameters,e)
-    if !has_values && !has_parameters {return false}
+    values:=core.world_table_of(w,vfx.Particle_Override)
+    if values==nil || !core.has(values,e) {return false}
     opened,edit_ready:=editor.edit_open(s,"Revert particle")
     if !edit_ready {return false}
     defer editor.edit_close(s,opened)
-    if has_values {core.remove(values,e)}
-    if has_parameters {core.remove(parameters,e)}
+    core.remove(values,e)
     return true
 }
 
@@ -227,10 +207,7 @@ particle_apply :: proc(s:^editor.Session,e:core.Entity) -> bool {
     f:=effect_read(s,w,e) or_return
     file:=particle_file(s,f.particle)
     file.info=f.shown
-    given,_:=editor.entity_get(w,e,vfx.Particle_Parameters)
-    for &parameter in given.values[:min(given.count,vfx.PARTICLE_PARAMETER_CAPACITY)] {
-        if stored:=effect.particle_parameter_find(file.parameters[:],base.text_get(parameter.name[:]));stored!=nil {stored^=parameter} else {append(&file.parameters,parameter)}
-    }
+    instance_parameters(s,&f.override,&file)
     opened,edit_ready:=editor.edit_open(s,"Apply to particle")
     if !edit_ready {return false}
     defer editor.edit_close(s,opened)

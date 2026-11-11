@@ -29,8 +29,8 @@ and the tick it started, and derives everything else from the tick against the s
 - `abilities.inspect`, `abilities.check`, `abilities.use`, and authoring with `records.*`:
   [API](references/abilities.md#api).
 - Rows of game data, `core.Record`, `@(names)` and `@(name_bits)`:
-  [core](../mirai-core/SKILL.md); the animation an ability plays (layered actions,
-  `match_play`): [animation](../mirai-animation/SKILL.md); layered moves and the `Character`:
+  [core](../mirai-core/SKILL.md); the animation an ability plays (an action of the `.character`,
+  `play`): [animation](../mirai-animation/SKILL.md); layered moves and the `Character`:
   [physics](../mirai-physics/SKILL.md); input actions and seats:
   [control](../mirai-gameplay/references/control.md#actions).
 
@@ -42,8 +42,8 @@ and the tick it started, and derives everything else from the tick against the s
    `records.import`): one `Ability` per technique and one `Ability_Kit` per weapon or character.
    Then `abilities.check` until it returns no problems.
 3. Give the character an `Ability_User` with its kit and attribute entries; the seat that drives
-   it fires the inputs. The animation of each ability is an action of its `Animation` or a clip of
-   its `.match`.
+   it fires the inputs. The animation of each ability is an action of the `.character` of its
+   `Animation`.
 4. The game reacts to `Ability_Events` (cues for VFX, sound and camera; `Depleted` for death or a
    broken weapon) and asks through `Ability_Requests` (`ability_use`, `ability_cancel`,
    `ability_effect`, `ability_kit_set`).
@@ -91,5 +91,5 @@ and the tick it started, and derives everything else from the tick against the s
   charges, a copy halfway that runs the same future, a cancel that leaves
   nothing, replicas, lasting effects with stacks, cleanse and immunity, invalid sheets and
   requests, and a stable tick without allocations).
-- Methods: `mirai generate demo`, `mirai build editor demo --dev` and, in a session on a copy,
+- Methods: `mirai generate demo`, `mirai build editor demo` and, in a session on a copy,
   `abilities.check`, `abilities.inspect` and `abilities.use` against rows written with `records.*`.

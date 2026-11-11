@@ -1,6 +1,7 @@
 package main
 
 import "core:fmt"
+import "core:odin/ast"
 import "core:os"
 import "core:strings"
 import "core:time"
@@ -15,7 +16,7 @@ Command :: struct {name,usage,summary:string,run:proc(root:string,args:[]string)
 COMMANDS :: [?]Command{
     {"build",BUILD_USAGE,"Builds the mirai tool into bin/",cmd_build},
     {"build",BUILD_ENGINE_USAGE,"Builds the engine libraries, their declarations and the programs that load a project",cmd_build},
-    {"build",BUILD_PROJECT_USAGE,"Builds the editor, the game or the dedicated server of a project",cmd_build},
+    {"build",BUILD_PROJECT_USAGE,"Builds the editor, the game or the dedicated server of a project; the game to ship with --release",cmd_build},
     {"generate",GENERATE_USAGE,"Generates the world of a project from the attributes of its packages",cmd_generate},
     {"edit",EDIT_USAGE,"Generates, builds and opens the editor of a project",cmd_edit},
     {"play",PLAY_USAGE,"Generates, builds and plays a project without cooking its assets",cmd_play},
@@ -44,11 +45,11 @@ COMMANDS :: [?]Command{
     {"rpc",RPC_USAGE,"Calls a method of the editor of the project or of the given port, shows fields of the response or waits for a state; describe shows the params of the methods",cmd_rpc},
     {"docs",DOCS_USAGE,"Prints the game documentation of this engine: the index, a topic or one section of it",cmd_docs},
     {"mcp",MCP_USAGE,"MCP server over stdio that forwards to the editor of the project or of the given port; gives the editor tools and those of the plugins in --plugins",cmd_mcp},
-    {"texts",TEXTS_USAGE,"Takes the translatable texts of the project's .ui files to a CSV to translate, and back, through the open editor",cmd_texts},
+    {"texts",TEXTS_USAGE,"Lists, sets and checks the texts of a project by key (its .strings, which its interfaces, its game data and its code show), and takes them to a CSV for translators and back, with no editor",cmd_texts},
     {"ui",UI_USAGE,"Reads, writes and checks the interfaces of a project as the documents ui.inspect gives and ui.write takes, with no editor",cmd_ui},
-    {"scene",SCENE_USAGE,"Reads, writes and checks the scenes and prefabs of a project as the documents scene.inspect gives with root and scene.write takes, with no editor",cmd_scene},
+    {"scene",SCENE_USAGE,"Reads, writes and checks the scenes of a project as the documents scene.inspect gives with root and scene.write takes, with no editor",cmd_scene},
     {"content",CONTENT_USAGE,"Runs the content tool of a project, which writes the assets it makes from code",cmd_content},
-    {"import","import <file> --out <folder> [--max-texture N]","Imports a model, an image, a sound, a font, CSV texts or a prompts manifest as .mesh, .mat, .tex, .sound, .font, .strings and .prompts assets",cmd_import},
+    {"import","import <file> [--max-texture N]","Imports a model, an image, a sound, a font, CSV texts or a prompts manifest in the assets of a project or a plugin as .mesh, .mat, .tex, .sound, .font, .strings and .prompts assets",cmd_import},
 }
 
 main :: proc() {
@@ -84,6 +85,7 @@ installed_runs :: proc(args:[]string) -> bool {
 
 usage :: proc() {
     fmt.eprintln("Usage: mirai <command> [arguments]")
+    fmt.eprintln("A command that builds or picks engine binaries is dev unless --release is given; package is always --release, and the game to ship is build game --release.")
     for command in COMMANDS {fmt.eprintfln("  %-52s %s",command.usage,command.summary)}
 }
 
@@ -130,7 +132,7 @@ run_compiler :: proc(root:string,command:[]string,what:string) -> int {
         kept=min(seen,len(PATTERN)-1)
         copy(window[:kept],window[seen-kept:seen])
     }
-    state,wait_error:=os.process_wait(process)
+    state,wait_error:=subprocess.wait(&process)
     if wait_error!=nil {fmt.eprintfln("mirai: %s: %v",command[0],wait_error);return 127}
     if state.exit_code!=0 && out_of_memory {fmt.eprintln(out_of_memory_text(what))}
     if state.exit_code!=0 && !said && build.compiler_crashed(state.exit_code) && memory>0 {
@@ -142,7 +144,7 @@ run_compiler :: proc(root:string,command:[]string,what:string) -> int {
 run_with :: proc(root:string,command:[]string,stdout:^os.File,limits:=subprocess.Limits{}) -> int {
     process,error:=subprocess.start({working_dir=root,command=command,stdin=os.stdin,stdout=stdout,stderr=os.stderr},limits)
     if error!=nil {fmt.eprintfln("mirai: could not run %s: %v",command[0],error);return 127}
-    state,wait_error:=os.process_wait(process)
+    state,wait_error:=subprocess.wait(&process)
     if wait_error!=nil {fmt.eprintfln("mirai: %s: %v",command[0],wait_error);return 127}
     return state.exit_code
 }
@@ -242,17 +244,49 @@ cmd_check :: proc(root:string,args:[]string) -> int {
     command:=odin_command(root,"check",folder!=""?folder:args[0])
     // A check is no test build: the tests that run generated shaders are asked for (rhi.TEST_SHADERS).
     append(&command,"-no-entry-point","-define:MIRAI_TEST_SHADERS=true","-ignore-unused-defineables")
+    // Its sources, its tests included, are parsed once: for the collections and for the lints.
+    files:=package_parse(folder) if folder!="" else nil
     if folder!="" {
-        collections,ok:=package_collections(root,folder,args[1:])
+        collections,ok:=package_collections(root,folder,files,args[1:])
         if !ok {return 1}
         append(&command,..collections)
     }
     append(&command,..args[1:])
+    if folder!="" && !test_worlds(root,folder) {return 1}
     code:=run(root,command[:])
-    if code==0 && folder!="" && alloc_lint_applies(root,folder) && !alloc_lint_package(folder) {return 1}
-    if code==0 && folder!="" && plugin_api_lint_applies(folder) && !plugin_api_lint_folder(folder) {return 1}
-    if code==0 && folder!="" && solver_lint_applies(root,folder) && !solver_lint_package(folder) {return 1}
-    return code
+    if code!=0 || folder=="" {return code}
+    if plugin_api_lint_applies(folder) && !plugin_api_lint_folder(folder) {return 1}
+    return 0 if lints_run(files,alloc_lint_applies(root,folder),solver_lint_applies(root,folder)) else 1
+}
+
+// Writes the World_Info of the test worlds a package and those it imports declare
+// (build.test_worlds_write), which a check and a build of tests from the sources of the engine
+// read. False after saying what is wrong in one.
+test_worlds :: proc(root,folder:string) -> bool {
+    stamp:=fmt.tprintf("%s.worlds",build.test_executable(join(root,"bin","tests"),root,folder,context.temp_allocator))
+    errors:=build.test_worlds_write(root,project_of(folder),{folder},true,stamp,context.temp_allocator)
+    for e in errors {fmt.eprintfln("mirai: %s",e)}
+    return len(errors)==0
+}
+
+// The sources of a package folder, its tests included, parsed; what does not parse is left out,
+// for the compiler to say.
+package_parse :: proc(folder:string) -> []^ast.File {
+    errors:=make([dynamic]string,context.temp_allocator)
+    _,files,ok:=build.sources_read(folder,&errors,tests=true)
+    return files if ok else nil
+}
+
+// The lints of mirai check on the parsed sources of a package: the allocations whose error is
+// dropped in what is no test (alloc) and the imports of the solver of physics (solver). False
+// after printing what one finds.
+lints_run :: proc(files:[]^ast.File,alloc,solver:bool) -> bool {
+    clean:=true
+    for file in files {
+        if alloc && !strings.has_suffix(file.fullpath,"_test.odin") && !alloc_lint_print(file) {clean=false}
+        if solver && !solver_lint_print(file) {clean=false}
+    }
+    return clean
 }
 
 // The code of a project, as build.check checks it: the world generated from
@@ -262,13 +296,13 @@ check_project :: proc(root,folder:string) -> int {
     opened,error:=project.open(folder,root,context.temp_allocator)
     if error.code!=.None {fmt.eprintfln("mirai check: could not open the project %s",folder);return 1}
     clean:=plugin_api_lint_project(&opened)
-    job:=build.job_run({project=&opened,target=.Editor,action=.Check})
+    // Against the declarations an agent builds with: a check comes before a dev build.
+    job:=build.job_run({project=&opened,target=.Editor,action=.Check,engine=.Dev})
     defer build.job_destroy(job)
     for d in job.result.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
     if job.result.status==.Built {
         game:=join(folder,project.FOLDER_NAMES[.Game])
-        if !solver_lint_package(game) {return 1}
-        return 1 if alloc_lint_applies(root,game) && !alloc_lint_package(game) || !clean else 0
+        return 0 if lints_run(package_parse(game),alloc_lint_applies(root,game),true) && clean else 1
     }
     if len(job.result.diagnostics)==0 {fmt.eprintln(job.result.text)}
     return 1

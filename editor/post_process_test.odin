@@ -53,8 +53,9 @@ post_process_inspect_counts_the_effects_up_to_a_layer_on_each_side :: proc(t:^te
 	testing.expect(t,ok && effects==[2]u8{1,0},"a layer the renderer cannot use is not counted")
 }
 
+@(test_world)
 Post_Process_Test_World :: struct {
-	using world:core.Test_World,
+	using world:Test_World,
 	using scene_tables:Test_Scene,
 	volumes:core.Table(erender.View_Volume),
 }
@@ -62,19 +63,19 @@ Post_Process_Test_World :: struct {
 @(test)
 the_fade_of_a_layer_is_edited_under_its_row_as_one_undo_step :: proc(t:^testing.T) {
 	world:Post_Process_Test_World
-	if !core.test_world_init(t,&world,test_types) {return}
-	defer core.test_world_destroy(&world)
-	info:=core.test_world_info(&world)
+	if !test_world_init(t,&world) {return}
+	defer test_world_destroy(&world)
+	info:=test_world_info(&world)
 	e:=core.create(&world.entities)
 	core.add(&world.ids,e,core.Id{1})
 	core.add(&world.transforms,e,core.TRANSFORM_IDENTITY)
 	volume:erender.View_Volume
 	volume.layers[0]={enabled=true} // the row reads no asset without a material
 	core.add(&world.volumes,e,volume)
-	core.test_world_settle(&world)
+	test_world_settle(&world)
 
 	ctx:ui.Context
-	if !testing.expect(t,ui.context_init(&ctx,{no_font=true})) {return}
+	if !testing.expect(t,test_ui_init(&ctx,{no_font=true})) {return}
 	defer ui.context_destroy(&ctx)
 	gui:=Editor_Ui{ctx=&ctx}
 	edits:history.Edits
@@ -89,12 +90,12 @@ the_fade_of_a_layer_is_edited_under_its_row_as_one_undo_step :: proc(t:^testing.
 	defer delete(selection.entities)
 	history.selection_set(&selection,{e})
 	fade :: proc(w:^Post_Process_Test_World,e:core.Entity) -> f32 {
-		v,_:=core.get(core.read(&w.volumes),e)
+		v,_:=core.get(&w.volumes,e)
 		return v.layers[0].fade
 	}
 	frame :: proc(s:^Session,w:^Post_Process_Test_World,e:core.Entity,input:ui.Input) {
 		ui.frame_begin(s.gui.ctx,input)
-		v,_:=core.get(core.read(&w.volumes),e)
+		v,_:=core.get(&w.volumes,e)
 		if ui.box(s.gui.ctx,{width=ui.fixed(320),height=ui.FIT,direction=.Column}) {post_process_row(s,0,v.layers[0])}
 		ui.frame_end(s.gui.ctx)
 	}

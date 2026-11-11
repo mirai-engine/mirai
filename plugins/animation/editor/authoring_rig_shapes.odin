@@ -22,7 +22,7 @@ Profile_Corrective_Params :: struct {
     driver:anim.Bone_Ref,
     bone:anim.Bone_Ref `mirai:"optional"`,
     curve:[64]u8 `mirai:"optional,text,label=A Float curve it adds to (such as a morph target of the rig's mesh)"`,
-    samples:[anim.RIG_POSE_SAMPLES]anim.Pose_Corrective_Sample,
+    samples:[anim.RIG_POSE_SAMPLES]anim.Pose_Corrective_Sample `mirai:"trim"`,
     weight:f32 `mirai:"optional,min=0,max=1"`,
     apply_pose,enabled:bool `mirai:"optional"`,
 }

@@ -9,7 +9,7 @@ import "mirai:std/base"
 // The journal of the edited World, in Edits: the image of what the World held
 // when the journal last took it (the rows of the tables a scene saves and the
 // entities), the steps of undo with what the rows they changed were, and,
-// while collaboration or the recovery log read it, the rows the image took
+// while collaboration reads it, the rows the image took
 // since. Readers keep
 // a cursor of their own: undo its place in the steps, the review of an agent
 // the state of a step, collaboration its place in the changes.
@@ -205,7 +205,7 @@ turned_rows_drop :: proc(w:core.World_Ref,es:^core.Entities,marks:[]u8,bound:int
 
 // Whether a table changed since its image was taken.
 journal_moved :: proc "contextless" (t:^core.Raw_Table,image:^Journal_Table) -> bool {
-    return t.version!=image.seen.version || t.gone_first+u64(len(t.gone))!=image.seen.gone
+    return t.version!=image.seen.version || core.log_end(t.gone)!=image.seen.gone
 }
 
 journal_diff :: proc(t:^core.Raw_Table,image:^Journal_Table,size:int,ranges:[][2]int,authors:History_Authors,only_authors:bool) -> (d:Journal_Diff) {
@@ -215,6 +215,18 @@ journal_diff :: proc(t:^core.Raw_Table,image:^Journal_Table,size:int,ranges:[][2
     return
 }
 
+// Each entity of a diff once, however many times its row went: what a step
+// records. The other diffs take a change that makes a later visit of the
+// same entity equal, and do not allocate. False without memory for it.
+journal_diff_once :: proc(d:^Journal_Diff) -> bool {
+    if len(d.c.gone)<2 {return true}
+    gone,error:=slice.clone(d.c.gone,context.temp_allocator)
+    if error!=nil {return false}
+    slice.sort(gone)
+    d.c.gone=slice.unique(gone)
+    return true
+}
+
 @(private)
 journal_differ :: proc(d:^Journal_Diff,image_row,row:int) -> bool {
     if image_row<0 || row<0 {return image_row!=row}
@@ -222,9 +234,9 @@ journal_differ :: proc(d:^Journal_Diff,image_row,row:int) -> bool {
 }
 
 // The next row the World and the image disagree on: of the entities whose
-// row went or turned off, once each, and of the rows stamped since; of every
-// row of both when the table holds rows the image did not see. Rows are
-// visited from the last, so a row dropped meanwhile does not hide another.
+// row went or turned off, once each after journal_diff_once, and of the rows
+// stamped since; of every row of both when the table holds rows the image did
+// not see. Rows are visited from the last, so a row dropped meanwhile does not hide another.
 journal_diff_next :: proc(d:^Journal_Diff) -> (r:Journal_Row,ok:bool) {
     t,image:=d.table,d.image
     for {
@@ -237,7 +249,7 @@ journal_diff_next :: proc(d:^Journal_Diff) -> (r:Journal_Row,ok:bool) {
             }
             e:=d.c.gone[d.at]
             d.at+=1
-            if slice.contains(d.c.gone[:d.at-1],e) || d.only_authors && !history_is_author(d.authors,e) {continue}
+            if d.only_authors && !history_is_author(d.authors,e) {continue}
             row:=core.raw_row(t,e)
             if row>=0 && t.stamps[row]>d.c.since {continue}
             if image_row:=journal_row(image,e);journal_differ(d,image_row,row) {return {e,image_row,row},true}
@@ -302,7 +314,7 @@ journal_ranges :: proc(edits:^Edits,w:core.World_Ref) -> bool {
         cached:=&edits.ranges[index]
         if index>=len(edits.saved) || !edits.saved[index] || cached.info==table.info {continue}
         error:runtime.Allocator_Error
-        ranges:=transient_ranges(table.info,context.allocator,&error)
+        ranges:=transient_ranges(w.info,table.info,context.allocator,&error)
         if error!=nil {delete(ranges);return false}
         delete(cached.ranges)
         cached.info,cached.ranges=table.info,ranges
@@ -329,7 +341,7 @@ journal_sync :: proc(edits:^Edits,w:core.World_Ref) -> bool {
         size:=info.info.size
         d:=journal_diff(table,image,size,edits.ranges[i].ranges,authors,only_authors && i!=id)
         for r in journal_diff_next(&d) {
-            if edits.reading || edits.logging {
+            if edits.reading {
                 change:=Journal_Change{entity=r.entity,id=journal_id(edits,w,id,r.entity),table=i32(i),present=r.image_row>=0,off=r.image_row>=0 && image.off[r.image_row]}
                 if edits.reading && change.present {
                     at:=edits.change_values_first+u64(len(edits.change_values))
@@ -586,9 +598,8 @@ world_turned_prune :: proc(w:core.World_Ref,marks:[]u8,bound:int,transforms:core
     core.world_settle(w)
 }
 
-// What the image took since a reader looked at cursor, which then points
-// past it. Collaboration and the recovery log read the changes, each with
-// its own cursor: what both read goes (journal_read_done, journal_log_done).
+// What the image took since collaboration looked at cursor, which then points
+// past it; what it read goes (journal_read_done).
 journal_read :: proc(edits:^Edits,cursor:^u64) -> []Journal_Change {
     end:=edits.changes_first+u64(len(edits.changes))
     from:=clamp(cursor^,edits.changes_first,end)
@@ -610,18 +621,11 @@ journal_read_done :: proc(edits:^Edits,cursor:u64) {
     journal_trim(edits)
 }
 
-// The recovery log wrote what it read up to cursor.
-journal_log_done :: proc(edits:^Edits,cursor:u64) {
-    edits.logged=cursor
-    journal_trim(edits)
-}
-
 @(private)
 journal_trim :: proc(edits:^Edits) {
     end:=edits.changes_first+u64(len(edits.changes))
     first:=end
     if edits.reading {first=min(first,edits.read_done)}
-    if edits.logging {first=min(first,edits.logged)}
     read:=int(clamp(first,edits.changes_first,end)-edits.changes_first)
     remove_range(&edits.changes,0,read)
     edits.changes_first+=u64(read)
@@ -636,7 +640,7 @@ journal_trim :: proc(edits:^Edits) {
 // Forgets the changes for every reader: the World they were of was replaced.
 journal_changes_drop :: proc(edits:^Edits) {
     end:=edits.changes_first+u64(len(edits.changes))
-    edits.read_done,edits.logged=end,end
+    edits.read_done=end
     journal_trim(edits)
 }
 
@@ -646,16 +650,7 @@ journal_reading :: proc(edits:^Edits,on:bool) -> (cursor:u64) {
     end:=edits.changes_first+u64(len(edits.changes))
     journal_read_done(edits,end)
     if !on {shrink(&edits.change_values)}
-    if !on && !edits.logging {shrink(&edits.changes)}
-    return end
-}
-
-// Starts or stops the reading of the recovery log, which sees from now on.
-journal_logging :: proc(edits:^Edits,on:bool) -> (cursor:u64) {
-    edits.logging=on
-    end:=edits.changes_first+u64(len(edits.changes))
-    journal_log_done(edits,end)
-    if !on && !edits.reading {shrink(&edits.changes)}
+    if !on {shrink(&edits.changes)}
     return end
 }
 

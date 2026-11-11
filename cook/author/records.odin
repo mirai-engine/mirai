@@ -7,6 +7,7 @@ import "core:slice"
 import "core:strings"
 import "core:time"
 import "mirai:asset"
+import std_anim "mirai:std/anim"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -26,11 +27,10 @@ Records :: struct {
     images:[dynamic]ui.Tree_Image,
     anims:[dynamic]ui.Tree_Anim,
     tracks:[dynamic]ui.Tree_Track,
-    keys:[dynamic]ui.Keyframe,
+    keys:[dynamic]std_anim.Keyframe,
     parts:[dynamic]ui.Anim,
     anim_sets:[dynamic]ui.Anim_Set,
     fonts:[dynamic]ui.Tree_Font,
-    translations:[dynamic]ui.Tree_Translation,
     grid_tracks:[dynamic]ui.Grid_Tracks,
     text:[dynamic]u8, // what the texts of the records name; an edited text goes at its end, until records_text_compact
     tokens:[dynamic]ui.Tree_Token,
@@ -60,7 +60,6 @@ records_load :: proc(r:^Records,data:ui.Tree_Data,allocator:runtime.Allocator) -
     list(&r.parts,data.parts,&ok,allocator)
     list(&r.anim_sets,data.anim_sets,&ok,allocator)
     list(&r.fonts,data.fonts,&ok,allocator)
-    list(&r.translations,data.translations,&ok,allocator)
     list(&r.grid_tracks,data.grid_tracks,&ok,allocator)
     list(&r.text,data.text,&ok,allocator)
     list(&r.tokens,data.tokens,&ok,allocator)
@@ -77,7 +76,7 @@ records_load :: proc(r:^Records,data:ui.Tree_Data,allocator:runtime.Allocator) -
 records_destroy :: proc(r:^Records) {
     if r.allocator.procedure==nil {return}
     delete(r.nodes);delete(r.styles);delete(r.style_infos);delete(r.variants);delete(r.overrides);delete(r.images)
-    delete(r.anims);delete(r.tracks);delete(r.keys);delete(r.parts);delete(r.anim_sets);delete(r.fonts);delete(r.translations);delete(r.grid_tracks);delete(r.text)
+    delete(r.anims);delete(r.tracks);delete(r.keys);delete(r.parts);delete(r.anim_sets);delete(r.fonts);delete(r.grid_tracks);delete(r.text)
     delete(r.tokens);delete(r.token_uses);delete(r.params)
     delete(r.components)
     r^={}
@@ -86,7 +85,7 @@ records_destroy :: proc(r:^Records) {
 // The records as a tree takes them, joined in the temporary allocator.
 records_data :: proc(r:^Records) -> ui.Tree_Data {
     return {nodes=r.nodes[:],styles=r.styles[:],variants=r.variants[:],components=r.components[:],
-        overrides=r.overrides[:],images=r.images[:],anims=r.anims[:],tracks=r.tracks[:],keys=r.keys[:],parts=r.parts[:],anim_sets=r.anim_sets[:],fonts=r.fonts[:],style_infos=r.style_infos[:],translations=r.translations[:],
+        overrides=r.overrides[:],images=r.images[:],anims=r.anims[:],tracks=r.tracks[:],keys=r.keys[:],parts=r.parts[:],anim_sets=r.anim_sets[:],fonts=r.fonts[:],style_infos=r.style_infos[:],
         grid_tracks=r.grid_tracks[:],text=r.text[:],tokens=r.tokens[:],token_uses=r.token_uses[:],params=r.params[:]}
 }
 
@@ -99,13 +98,12 @@ records_text_set :: proc(r:^Records,s:^ui.Tree_String,text:string) {
     s^=ui.tree_string_add(&r.text,text)
 }
 
-// Keeps in the texts only what nodes, overrides and translations name, in that order: what an edit left behind goes.
+// Keeps in the texts only what nodes and overrides name, in that order: what an edit left behind goes.
 records_text_compact :: proc(r:^Records) {
     kept:=make([dynamic]u8,0,len(r.text),r.allocator)
     keep :: proc(r:^Records,kept:^[dynamic]u8,s:^ui.Tree_String) {s^=ui.tree_string_add(kept,records_text(r,s^))}
     for &n in r.nodes {keep(r,&kept,&n.text)}
     for &o in r.overrides {keep(r,&kept,&o.values.text)}
-    for &t in r.translations {keep(r,&kept,&t.text)}
     delete(r.text)
     r.text=kept
 }
@@ -115,7 +113,6 @@ records_text_compact :: proc(r:^Records) {
 records_tidy :: proc(r:^Records) {
     records_keys_sort(r)
     records_collect(r)
-    records_texts_prune(r)
     slice.stable_sort_by(r.token_uses[:],proc(a,b:ui.Tree_Token_Use) -> bool {
         if a.style!=b.style {return a.style<b.style}
         if a.states!=b.states {return transmute(u8)a.states<transmute(u8)b.states}
@@ -368,7 +365,7 @@ records_remove :: proc(r:^Records,row:int) {
     records_shift(r,row,-count)
 }
 
-// Removes a node and what it holds, with their translations; the focus and
+// Removes a node and what it holds; the focus and
 // the ghost of the other nodes that named them name nothing.
 records_delete :: proc(r:^Records,row:int) {
     list:=&r.nodes
@@ -382,7 +379,6 @@ records_delete :: proc(r:^Records,row:int) {
         for &nav in n.nav {if slice_has(names[:],serial.text_field(nav[:])) {nav={}}}
         if slice_has(names[:],serial.text_field(n.ghost[:])) {n.ghost={}}
     }
-    records_texts_prune(r)
 }
 
 // Copies a node and what it holds right after it, with the overrides of its
@@ -399,7 +395,6 @@ records_duplicate :: proc(r:^Records,row:int) -> int {
         records_rows_own(r,&list[i],{.Image,.Animations})
     }
     for &o in r.overrides {if int(o.instance)>=at && int(o.instance)<at+count {records_rows_own(r,&o.values,o.fields)}}
-    records_texts_renew(r,list[at:at+count],r.translations[:])
     return at
 }
 
@@ -418,55 +413,10 @@ records_rows_own :: proc(r:^Records,n:^ui.Tree_Node,fields:ui.Node_Fields) {
     }
 }
 
-// A new id for a localized text, unique in the project: the moment it is
-// made, the file and the row it is made for.
-records_text_id :: proc(r:^Records,salt:int) -> u64 {
-    id:=base.hash_combine(u64(time.now()._nsec),base.hash_combine(u64(uintptr(r)),u64(salt)))
-    return id if id!=0 else 1
-}
-
-// Gives the localized nodes of a copy ids of their own, with copies of the
-// translations they had in from: a copy is another text, not the same one.
-records_texts_renew :: proc(r:^Records,nodes:[]ui.Tree_Node,from:[]ui.Tree_Translation) {
-    from:=slice.clone(from,context.temp_allocator)
-    for &n,i in nodes {
-        if n.text_id==0 {continue}
-        old:=n.text_id
-        n.text_id=records_text_id(r,i)
-        for t in from {
-            if t.id!=old {continue}
-            copied:=t
-            copied.id=n.text_id
-            append(&r.translations,copied)
-        }
-    }
-}
-
-// The translations no node or override names any more go.
-records_texts_prune :: proc(r:^Records) {
-    used :: proc(r:^Records,id:u64) -> bool {
-        for &n in r.nodes {if n.text_id==id {return true}}
-        for &o in r.overrides {if o.values.text_id==id {return true}}
-        return false
-    }
-    for i:=len(r.translations)-1;i>=0;i-=1 {
-        if !used(r,r.translations[i].id) {ordered_remove(&r.translations,i)}
-    }
-}
-
-// The text of a node in a language: its translation, or -1.
-records_translation :: proc(r:^Records,id:u64,code:string) -> int {
-    if id==0 {return -1}
-    for &t,i in r.translations {
-        if t.id==id && serial.text_field(t.language[:])==code {return i}
-    }
-    return -1
-}
-
 KIND_NAMES :: [ui.Node_Kind]string{.Box="box",.Text="text",.Image="image",.Progress="progress",.Button="button",.Checkbox="checkbox",.Spacer="spacer",.Component="component",
     .Scroll="scroll",.Switcher="switcher",.List="list",.Prompt="prompt",.Slider="slider",.Field="field",.Selector="selector",.Dropdown="dropdown",.Radio="radio",
     .Tooltip="tooltip",.Rich_Text="rich_text",.View="view",.Action_Bar="action_bar",.Number="number",.Tabs="tabs",.Popup="popup",.Modal="modal",
-    .Context_Menu="context_menu",.Radial="radial",.Particles="particles"}
+    .Context_Menu="context_menu",.Radial="radial",.Particles="particles",.Draw="draw"}
 
 // Names a node after base_name and the first number no other node of its scope uses.
 records_name_unique :: proc(r:^Records,row:int,base_name:string) {
@@ -564,14 +514,6 @@ records_changed_row :: proc(before,after:^Records,chosen:int) -> int {
     for i in 0..<min(len(before.images),len(after.images)) {
         if !records_same(&before.images[i],&after.images[i]) {return taker(b[:],chosen,image,i)}
     }
-    // A translation: the node whose text it is.
-    changed:=u64(0)
-    for i in 0..<max(len(before.translations),len(after.translations)) {
-        if i>=len(before.translations) {changed=after.translations[i].id;break}
-        if i>=len(after.translations) {changed=before.translations[i].id;break}
-        if !records_same(&before.translations[i],&after.translations[i]) {changed=after.translations[i].id;break}
-    }
-    if changed!=0 {for &n,i in b {if n.text_id==changed {return i}}}
     return -1
 }
 
@@ -839,7 +781,7 @@ property_default :: proc "contextless" (property:ui.Anim_Property) -> [4]f32 {
     case .Scale:            return {1,1,0,0}
     case .Opacity:          return {1,0,0,0}
     case .Color:            return {1,1,1,1}
-    case .Width,.Height,.Value,.Frame,.Reveal: return {}
+    case .Value,.Frame,.Reveal: return {}
     }
     return {}
 }
@@ -848,7 +790,7 @@ property_default :: proc "contextless" (property:ui.Anim_Property) -> [4]f32 {
 // seconds; returns its row.
 records_clip :: proc(r:^Records,name:string,property:ui.Anim_Property,from,to:[4]f32,duration:f32) -> int {
     first_key:=u32(len(r.keys))
-    append(&r.keys,ui.Keyframe{time=0,value=from},ui.Keyframe{time=duration,value=to,ease=.Out_Cubic})
+    append(&r.keys,std_anim.Keyframe{time=0,value=from},std_anim.Keyframe{time=duration,value=to,ease=.Cubic_Out})
     append(&r.tracks,ui.Tree_Track{property=property,first_key=first_key,key_count=2})
     a:=ui.Tree_Anim{kind=.Clip,first=u32(len(r.tracks)-1),count=1}
     ui.tree_text_set(a.name[:],name)
@@ -862,7 +804,7 @@ records_track_add :: proc(r:^Records,anim:int,property:ui.Anim_Property) -> bool
     if a.kind!=.Clip || a.count>=ui.TREE_CLIP_TRACKS {return false}
     at:=int(a.first+a.count)
     key:=u32(len(r.keys))
-    append(&r.keys,ui.Keyframe{value=property_default(property)})
+    append(&r.keys,std_anim.Keyframe{value=property_default(property)})
     inject_at(&r.tracks,at,ui.Tree_Track{property=property,first_key=key,key_count=1})
     // Clips whose tracks come after it move by one.
     for &other,i in r.anims {
@@ -890,7 +832,7 @@ records_track_remove :: proc(r:^Records,anim,track:int) {
 records_key_add :: proc(r:^Records,track:int) {
     t:=&r.tracks[track]
     at:=int(t.first_key+t.key_count)
-    key:=ui.Keyframe{}
+    key:=std_anim.Keyframe{}
     if t.key_count>0 {key=r.keys[at-1];key.time+=1}
     inject_at(&r.keys,at,key)
     for &other,i in r.tracks {
@@ -919,7 +861,7 @@ records_keys_remove :: proc(r:^Records,at,count:int) {
 records_keys_sort :: proc(r:^Records) {
     for t in r.tracks {
         if u64(t.first_key)+u64(t.key_count)>u64(len(r.keys)) {continue}
-        slice.stable_sort_by(r.keys[t.first_key:][:t.key_count],proc(a,b:ui.Keyframe) -> bool {return a.time<b.time})
+        slice.stable_sort_by(r.keys[t.first_key:][:t.key_count],proc(a,b:std_anim.Keyframe) -> bool {return a.time<b.time})
     }
 }
 
@@ -942,7 +884,6 @@ records_param_set :: proc(r:^Records,row:int,p:^ui.Tree_Param,value:string,style
     #partial switch p.field {
     case .Text:
         records_text_set(r,&target.text,value)
-        target.text_id=0
     case .Style:
         target.style=u16(style)
     case:
@@ -1003,10 +944,9 @@ records_override_field :: proc(r:^Records,override:int,field:ui.Node_Field,on:bo
     o.fields+={field}
     v,n:=&o.values,node
     m:Merge
-    if source!=nil {m=merge_begin(r,source,false)}
+    if source!=nil {m=merge_begin(r,source)}
     switch field {
     case .Text:
-        v.text_id=n.text_id
         v.fields=n.fields
         v.text=merge_text(&m,n.text) if source!=nil else n.text
     case .Style:      v.style=merge_style(&m,int(n.style)) if source!=nil else n.style
@@ -1018,7 +958,7 @@ records_override_field :: proc(r:^Records,override:int,field:ui.Node_Field,on:bo
     case .Animations: v.anims=merge_set(&m,n.anims) if source!=nil else n.anims
     case .Bindings:
         v.bind_text=n.bind_text;v.bind_value=n.bind_value;v.bind_visible=n.bind_visible;v.bind_selected=n.bind_selected;v.bind_disabled=n.bind_disabled
-        v.bind_items=n.bind_items;v.bind_image=n.bind_image;v.bind_tint=n.bind_tint;v.bind_variant=n.bind_variant;v.data=n.data
+        v.bind_items=n.bind_items;v.bind_key=n.bind_key;v.bind_image=n.bind_image;v.bind_tint=n.bind_tint;v.bind_variant=n.bind_variant;v.data=n.data
     case .Visibility: v.selected,v.disabled=n.selected,n.disabled
     case .Variant:    v.variant=n.variant
     case .Layer:      v.layer=n.layer
@@ -1080,7 +1020,7 @@ records_takes :: proc(nodes:[]ui.Tree_Node,parent:int) -> bool {
 
 // Moves a node of the tree and what it holds inside parent (-1: a root),
 // before the node at row before, or last when before is -1, with its
-// overrides and translations. Returns where it went; -1 when it cannot: into
+// overrides. Returns where it went; -1 when it cannot: into
 // itself or into what takes no other node.
 records_place :: proc(r:^Records,row,parent,before:int,replacing:=false) -> int {
     list:=r.nodes[:]
@@ -1117,7 +1057,7 @@ clip_destroy :: proc(clip:^Clip_Nodes) {
 records_copy :: proc(r:^Records,row:int,clip:^Clip_Nodes,allocator:=context.allocator) {
     if row<0 || row>=len(r.nodes) {return}
     clip_destroy(clip)
-    records_extract(r,row,&clip.records,allocator,false)
+    records_extract(r,row,&clip.records,allocator)
 }
 
 // Puts a copy of what clip holds inside the row chosen when it holds nodes,
@@ -1134,7 +1074,7 @@ records_paste :: proc(r:^Records,row:int,clip:^Clip_Nodes) -> int {
 // allocator: only the rows they use, with texts of their own. False for a
 // node of another kind.
 records_widget_data :: proc(r:^Records,row:int,out:^Records,allocator:runtime.Allocator) -> bool {
-    if row<0 || row>=len(r.nodes) || r.nodes[row].kind!=.Box || !records_extract(r,row,out,allocator,true) {return false}
+    if row<0 || row>=len(r.nodes) || r.nodes[row].kind!=.Box || !records_extract(r,row,out,allocator) {return false}
     // The root of a widget lays out where its instance puts it.
     out.nodes[0].float={}
     records_widget_params(out)
@@ -1142,11 +1082,11 @@ records_widget_data :: proc(r:^Records,row:int,out:^Records,allocator:runtime.Al
 }
 
 // A node of the tree and what it holds as records of their own.
-records_extract :: proc(r:^Records,row:int,out:^Records,allocator:runtime.Allocator,renew:bool) -> bool {
+records_extract :: proc(r:^Records,row:int,out:^Records,allocator:runtime.Allocator) -> bool {
     style:=[1]ui.Node_Style{r.styles[0]}
     if !records_load(out,{styles=style[:]},allocator) {return false}
     block:=records_block(r,row)
-    m:=merge_begin(out,r,renew)
+    m:=merge_begin(out,r)
     if merge_put(&m,block.nodes[:],block.overrides[:],0,-1)<0 {
         records_destroy(out)
         return false
@@ -1164,14 +1104,12 @@ records_extract :: proc(r:^Records,row:int,out:^Records,allocator:runtime.Alloca
 Merge :: struct {
     dst,src:^Records,
     styles,anims,fonts,components:[]int,
-    renew:bool,  // localized texts get ids of their own
-    salt:int,    // of the ids it made
     named:bool,  // the images of src with a name, which <img=...> shows, are in dst
     failed:bool, // a table of dst is full
 }
 
-merge_begin :: proc(dst,src:^Records,renew:bool) -> Merge {
-    return {dst=dst,src=src,renew=renew,styles=make([]int,len(src.styles),context.temp_allocator),anims=make([]int,len(src.anims),context.temp_allocator),
+merge_begin :: proc(dst,src:^Records) -> Merge {
+    return {dst=dst,src=src,styles=make([]int,len(src.styles),context.temp_allocator),anims=make([]int,len(src.anims),context.temp_allocator),
         fonts=make([]int,len(src.fonts),context.temp_allocator),components=make([]int,len(src.components),context.temp_allocator)}
 }
 
@@ -1196,7 +1134,6 @@ merge_put :: proc(m:^Merge,nodes:[]ui.Tree_Node,overrides:[]ui.Tree_Override,at,
 
 merge_node :: proc(m:^Merge,n:^ui.Tree_Node) {
     n.text=merge_text(m,n.text)
-    merge_translations(m,n)
     n.style=merge_style(m,int(n.style))
     n.image=merge_image(m,n.image)
     n.anims=merge_set(m,n.anims)
@@ -1217,10 +1154,7 @@ merge_node :: proc(m:^Merge,n:^ui.Tree_Node) {
 // others name nothing.
 merge_override :: proc(m:^Merge,o:^ui.Tree_Override) {
     v:=&o.values
-    if .Text in o.fields {
-        v.text=merge_text(m,v.text)
-        merge_translations(m,v)
-    } else {v.text,v.text_id={},0}
+    v.text=merge_text(m,v.text) if .Text in o.fields else {}
     v.style=merge_style(m,int(v.style)) if .Style in o.fields else 0
     v.image=merge_image(m,v.image) if .Image in o.fields else 0
     v.anims=merge_set(m,v.anims) if .Animations in o.fields else 0
@@ -1229,22 +1163,6 @@ merge_override :: proc(m:^Merge,o:^ui.Tree_Override) {
 }
 
 merge_text :: proc(m:^Merge,s:ui.Tree_String) -> ui.Tree_String {return ui.tree_string_add(&m.dst.text,records_text(m.src,s))}
-
-// The translations of a localized node go with it, under an id of its own when renew.
-merge_translations :: proc(m:^Merge,n:^ui.Tree_Node) {
-    if n.text_id==0 {return}
-    old:=n.text_id
-    if m.renew {
-        m.salt+=1
-        n.text_id=records_text_id(m.dst,m.salt)
-    }
-    for t in m.src.translations {
-        if t.id!=old {continue}
-        copied:=t
-        copied.id,copied.text=n.text_id,merge_text(m,t.text)
-        append(&m.dst.translations,copied)
-    }
-}
 
 merge_font :: proc(m:^Merge,font:u8) -> u8 {
     if int(font)<ui.FONT_TREE {return font}

@@ -165,7 +165,7 @@ font_weights_are_faces_of_their_own :: proc(t:^testing.T) {
 @(test)
 font_atlas_is_rebuilt_as_a_transaction_when_the_density_changes :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     revision,height:=ctx.font.revision,ctx.font.height
     testing.expect(t,context_set_density(&ctx,1),"The same density changes nothing")
@@ -202,7 +202,6 @@ font_takes_several_fonts_and_sizes :: proc(t:^testing.T) {
 @(test)
 text_wraps_at_words_and_newlines :: proc(t:^testing.T) {
     // Without an atlas every character but the space is half a size wide, and a space a quarter.
-    font:Font
     Case :: struct {text:string,width:f32,wrap:Text_Wrap,lines:[]string}
     cases:=[]Case{
         {"alpha beta gamma",60,.Words,{"alpha beta","gamma"}},
@@ -213,9 +212,9 @@ text_wraps_at_words_and_newlines :: proc(t:^testing.T) {
         // A word and the space after it fit, or the word starts the next line.
         {"alpha beta",49,.Words,{"alpha beta"}},
         {"alpha beta gamma",49,.Words,{"alpha","beta gamma"}},
-        // A word wider than the line takes one of its own, whole.
-        {"unbreakable word",20,.Words,{"unbreakable","word"}},
-        {"a unbreakable b",20,.Words,{"a","unbreakable","b"}},
+        // A word wider than the line starts one and breaks after its last character that fits.
+        {"unbreakable word",20,.Words,{"unbr","eaka","ble","word"}},
+        {"a unbreakable b",20,.Words,{"a","unbr","eaka","ble","b"}},
         // A line ends before the spaces it breaks at; one that does not fit after a word starts the next line.
         {"aaaa  bbbb",25,.Words,{"aaaa","bbbb"}},
         {"aaaa  bbbb",24,.Words,{"aaaa"," bbbb"}},
@@ -226,21 +225,21 @@ text_wraps_at_words_and_newlines :: proc(t:^testing.T) {
         {"a\n",100,.Words,{"a",""}},
         {"\n",100,.Words,{"",""}},
     }
+    ctx:Context
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL));defer context_destroy(&ctx)
     for c in cases {
-        it:=text_lines(&font,c.text,10,c.width,c.wrap)
-        for {
-            start,end,ok:=text_lines_next(&it)
+        e:Text_Edit
+        text_edit_begin(&e,1,c.text,multiline=true)
+        e.wrap=c.width if c.wrap==.Words else 0
+        it:=text_edit_lines(&ctx,&e,10)
+        row:=0
+        for ;;row+=1 {
+            start,end,ok:=text_edit_lines_next(&it)
             if !ok {break}
-            testing.expectf(t,it.row<len(c.lines) && c.text[start:end]==c.lines[min(it.row,len(c.lines)-1)],"%q at %v: line %d is %q",c.text,c.width,it.row,c.text[start:end])
+            testing.expectf(t,row<len(c.lines) && c.text[start:end]==c.lines[min(row,len(c.lines)-1)],"%q at %v: line %d is %q",c.text,c.width,row,c.text[start:end])
         }
-        testing.expectf(t,it.row+1==len(c.lines),"%q at %v: %d lines",c.text,c.width,it.row+1)
+        testing.expectf(t,row==len(c.lines),"%q at %v: %d lines",c.text,c.width,row)
     }
-    _,_,width:=text_line(&font,"alpha beta gamma",10,60,.Words)
-    testing.expect_value(t,width,f32(47.5))
-    // The empty line a newline at the end starts is the caret's: the text itself is no taller.
-    testing.expect_value(t,text_line_count(&font,"a\n",10,100,.Words),1)
-    testing.expect_value(t,text_line_count(&font,"a\n\nb",10,100,.None),3)
-    testing.expect_value(t,text_line_count(&font,"",10,100,.Words),1)
 }
 
 @(test)
@@ -280,7 +279,7 @@ a_font_on_demand_rasterizes_what_the_contexts_that_borrow_it_draw :: proc(t:^tes
     a,b:Context
     desc:=TEST_FONT
     desc.font=&owner
-    testing.expect(t,context_init(&a,desc) && context_init(&b,desc))
+    testing.expect(t,test_context_init(&a,desc) && test_context_init(&b,desc))
     draw :: proc(ctx:^Context,user:rawptr) {draw_text(ctx,"Transform",10,10,11,{255,255,255,255})}
     input:=test_input()
     // The first frame asks for the glyphs; the owner rasterizes them and the next one draws them.
@@ -353,7 +352,7 @@ a_context_that_asks_its_owner_draws_new_glyphs_in_the_same_frame :: proc(t:^test
     desc.font=&owner
     desc.font_ask=proc(user:rawptr) {font_update((^Font)(user),grow=false)}
     desc.font_user=&owner
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     draw :: proc(ctx:^Context,user:rawptr) {draw_text(ctx,"Transform",10,10,11,{255,255,255,255},FONT_SEMIBOLD)}
     input:=test_input()
@@ -424,6 +423,42 @@ font_reads_cff_outlines_and_the_kerning_of_greek_and_cyrillic :: proc(t:^testing
     a,zhe,alpha:=font_index(&font,0,'A'),font_index(&font,0,'Ж'),font_index(&font,0,'α')
     testing.expect_value(t,metrics_kerning(m,a,a),f32(-50))
     testing.expect_value(t,metrics_kerning(m,zhe,alpha),f32(-120)) // a lookup of 'cyrl' alone
+}
+
+@(test)
+a_glyph_a_font_lacks_is_drawn_from_inter :: proc(t:^testing.T) {
+    ctx:Context
+    desc:=TEST_FONT
+    fonts:=[2][]byte{FONT_INTER,TEST_CFF}
+    desc.fonts=fonts[:]
+    testing.expect(t,test_context_init(&ctx,desc))
+    defer context_destroy(&ctx)
+    font:=&ctx.font
+    question:=font_index(font,1,'?')
+    // from: the font that draws it; -1: '?', which neither has.
+    Case :: struct {character:string,from:int}
+    for c in ([]Case{{"A",1},{"Ж",1},{"B",0},{"П",0},{"и",0},{"é",0},{"\U0001f600",-1}}) {
+        pen:=text_pen(font,14,1)
+        advance:f32
+        for r in c.character {_,advance=text_pen_step(&pen,r)}
+        if c.from<0 {
+            testing.expectf(t,pen.previous==question && pen.from==1,"%q is '?'",c.character)
+            continue
+        }
+        testing.expectf(t,pen.from==c.from && pen.previous!=question && font.metrics[c.from].available[pen.previous],"%q comes from font %v, not %v",c.character,c.from,pen.from)
+        testing.expectf(t,advance==text_width(font,c.character,14,c.from),"%q advances as in the font that has it",c.character)
+    }
+    // Drawn with the glyph of Inter's face, whatever the font of the text.
+    build :: proc(ctx:^Context,user:rawptr) {draw_text(ctx,"Привет",0,0,14,{255,255,255,255},1)}
+    input:=test_input()
+    frame:=test_frame(&ctx,&input,build)
+    testing.expect_value(t,len(frame.vertices),6*6)
+    pe:=font_face(font,0,14).glyphs[font_index(font,1,'П')].uv
+    corner:=frame.vertices[0].uv
+    for v in frame.vertices[:6] {corner={min(corner.x,v.uv.x),min(corner.y,v.uv.y)}}
+    // At whichever phase the pen puts it.
+    phase:=(corner.x-pe.x)/pe.w
+    testing.expectf(t,abs(corner.y-pe.y)<1e-5 && abs(phase-math.round(phase))<1e-3 && phase>-0.001 && phase<4,"'П' is drawn from Inter: %v, %v",corner,pe)
 }
 
 @(test)

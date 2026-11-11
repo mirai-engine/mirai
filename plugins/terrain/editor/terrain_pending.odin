@@ -104,18 +104,16 @@ pending_brush :: proc(tool:^Terrain_Tool) -> terrain.Brush {
         sides:=max(tool.ramp_sides,0)/stroke.scale
         return {kind=.Ramp,center=p.a,delta=p.b-p.a,radius=radius+sides,hardness=min(radius/(radius+sides),0.99),falloff=brush_of(tool).falloff,amount=1}
     }
-    brush:=terrain.Brush{kind=tool.brush,center=p.a,radius=radius,amount=1,rotation=1}
+    brush:=terrain.Brush{kind=tool.brush,center=p.a,radius=radius,amount=1,rotation=1,layer=u32(tool.layer),blend=max(tool.blend,0)/stroke.scale}
     switch tool.shape {
     case .Sphere,.Selected: brush.shape=.Sphere
     case .Capsule: brush.shape,brush.delta=.Capsule,p.b-p.a
     case .Box: brush.shape,brush.extent=.Box,radius
     }
-    if stroke.source.kind==.Volume {brush.blend=max(tool.blend,0)/stroke.scale}
     return brush
 }
 
-// Shows what a ramp or a shape of a grid or a volume does, on the source as it
-// was: a boolean of a 3D Terrain waits for Apply.
+// Shows what a ramp or a shape does, on the source as it was.
 @(private)
 pending_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref) {
     stroke:=&tool.stroke
@@ -125,9 +123,9 @@ pending_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
     if p.shown {stroke_changed(stroke,terrain.source_restore(&stroke.source,stroke_original(tool),p.low,p.high))}
     p.shown=false
     p.brush=brush
-    if stroke.source.kind==.Mesh || p.kind==.Ramp && linalg.length(p.b.xz-p.a.xz)<stroke.source.cell {return}
+    if p.kind==.Ramp && linalg.length(p.b.xz-p.a.xz)<stroke.source.cell {return}
     change:=terrain.source_edit(&stroke.source,brush)
-    if change.error!=.None {edit_error(s,change.error);return}
+    if change.error!=.None {edit_error(s,change.error,brush.kind);return}
     p.low,p.high,p.shown=change.low,change.high,change.changed
     stroke_changed(stroke,change)
 }
@@ -136,11 +134,6 @@ pending_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Re
 pending_apply :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,assets:^host.Assets) {
     stroke:=&tool.stroke
     label:=stroke.pending.kind==.Ramp?"Ramp":"Shape"
-    if stroke.source.kind==.Mesh {
-        change:=terrain.source_edit(&stroke.source,pending_brush(tool),terrain_vertex_budget(world,stroke.id))
-        // What failed stays placed: it can be moved and applied again.
-        if change.error!=.None {edit_error(s,change.error);return}
-        stroke_changed(stroke,change)
-    } else {pending_preview(s,tool,world)}
+    pending_preview(s,tool,world)
     stroke_end(s,tool,world,assets,label=label)
 }

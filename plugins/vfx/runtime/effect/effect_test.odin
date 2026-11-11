@@ -14,7 +14,7 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     info.rate,info.render,info.material,info.sub_particle,info.trigger=120,.Ribbon,{3,4},{5,6},.Death
     info.bursts[1]={time=0.5,count=9,cycles=2,interval=0.1}
     info.velocity={{-1,2,0},{1,3,0}}
-    info.rate_over_cycle.values[1]=0.25
+    info.size_over_life.values[1]=0.25
     base.text_set(info.program[:],"Swirl")
     hidden:[2]Particle_Field
     base.text_set(hidden[0].name[:],"noise")
@@ -32,7 +32,7 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     defer asset.asset_close(&a)
     view,error:=particle_view(&a,&types)
     testing.expect_value(t,error,asset.Error.None)
-    testing.expect(t,view.info^==info)
+    testing.expect(t,view.info==info)
     testing.expect(t,len(view.hidden)==2 && serial.text_field(view.hidden[1].name[:])=="bursts")
     testing.expect(t,particle_hidden(view.hidden,"noise") && !particle_hidden(view.hidden,"rate"))
     testing.expect(t,len(view.parameters)==2 && view.parameters[0]==parameters[0])
@@ -74,7 +74,7 @@ particle_lights_cast_shadows_only_when_the_effect_asks :: proc(t:^testing.T) {
     Before :: struct {rate:f32,lights:u32,light_intensity:f32,light_range:f32}
     before:=Before{rate=30,lights=4,light_intensity=10,light_range=2}
     doc:asset.Document
-    asset.document_init(&doc,KIND,{1,2})
+    asset.document_init(&doc,PARTICLE_KIND,{1,2})
     doc.kind_version=VERSION
     _,error:=asset.document_put_row(&doc,&types,"particle",&before)
     testing.expect_value(t,error,asset.Error.None)
@@ -100,56 +100,6 @@ particle_lights_cast_shadows_only_when_the_effect_asks :: proc(t:^testing.T) {
     testing.expect(t,found && value.kind==.Bool && value.offset==offset_of(Particle_Info,light_shadows))
 }
 
-// The facing, spin axis, rotation and scale of the mesh of Mesh particles
-// are written and read back as they are; their zeros stand for X, no turn
-// and a scale of one.
-@(test)
-mesh_particles_keep_their_facing_axis_rotation_and_scale :: proc(t:^testing.T) {
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    info:=PARTICLE_DEFAULTS
-    info.render,info.facing,info.spin_axis=.Mesh,.Camera_Plane,{0,0,2}
-    info.mesh_rotation,info.mesh_scale={0,0.70710677,0,0.70710677},{0.5,3,0.25}
-    path:=fmt.tprintf("%s/blade.particle",base.test_folder(t,"effect"))
-    testing.expect_value(t,particle_save(path,&types,{id={3,4},info=info}),asset.Error.None)
-    a:asset.Asset
-    testing.expect_value(t,asset.asset_load(&a,path),asset.Error.None)
-    defer asset.asset_close(&a)
-    view,error:=particle_view(&a,&types)
-    testing.expect_value(t,error,asset.Error.None)
-    if error!=.None {return}
-    testing.expect(t,view.info^==info)
-    testing.expect_value(t,view.info.facing,Particle_Facing.Camera_Plane)
-    testing.expect_value(t,view.info.mesh_scale,[3]f32{0.5,3,0.25})
-    for field in ([?]string{"facing","spin_axis","mesh_rotation","mesh_scale"}) {
-        _,found:=particle_value_at(field)
-        testing.expectf(t,found,"an instance can change %s",field)
-    }
-
-    axis,rotation,scale:=particle_mesh_placement(info.spin_axis,info.mesh_rotation,info.mesh_scale)
-    testing.expect_value(t,axis,[3]f32{0,0,1})
-    testing.expect(t,abs(rotation.y-0.70710677)<1e-6 && abs(rotation.w-0.70710677)<1e-6)
-    testing.expect_value(t,scale,info.mesh_scale)
-    axis,rotation,scale=particle_mesh_placement({},{},{})
-    testing.expect(t,axis==[3]f32{1,0,0} && rotation==[4]f32{0,0,0,1} && scale==[3]f32{1,1,1})
-
-    bad:=info
-    bad.mesh_scale.y=math.inf_f32(1)
-    testing.expect_value(t,particle_validate({info=&bad}).field,"mesh_scale")
-    bad=info
-    bad.mesh_rotation.w=math.nan_f32()
-    testing.expect_value(t,particle_validate({info=&bad}).field,"mesh_rotation")
-    bad=info
-    bad.spin_axis.x=math.nan_f32()
-    testing.expect_value(t,particle_validate({info=&bad}).field,"spin_axis")
-    bad=info
-    bad.mesh_scale.z=-1
-    testing.expect_value(t,particle_validate({info=&bad}).field,"mesh_scale")
-    bad=info
-    bad.facing=Particle_Facing(7)
-    testing.expect_value(t,particle_validate({info=&bad}).field,"facing")
-    testing.expect_value(t,particle_save(path,&types,{id={3,4},info=bad}),asset.Error.Invalid)
-}
-
 @(test)
 invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
     Case :: struct {change:proc(p:^Particle_Info),field:string}
@@ -158,7 +108,7 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
         {proc(p:^Particle_Info) {p.shell=2},"shell"},
         {proc(p:^Particle_Info) {p.size_over_life.times[2]=0.1},"size_over_life"},
         {proc(p:^Particle_Info) {p.color_over_life.times[0]=-1},"color_over_life"},
-        {proc(p:^Particle_Info) {p.rate_over_cycle.values[3]=-1},"rate_over_cycle"},
+        {proc(p:^Particle_Info) {p.size_over_life.values[3]=-1},"size_over_life"},
         {proc(p:^Particle_Info) {p.render=Particle_Render(9)},"render"},
         {proc(p:^Particle_Info) {p.emission_mode=asset.Emission_Mode(7)},"emission_mode"},
         {proc(p:^Particle_Info) {p.bursts[3].interval=-1},"bursts"},
@@ -166,21 +116,21 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
     for c in cases {
         info:=PARTICLE_DEFAULTS
         c.change(&info)
-        problem:=particle_validate({info=&info})
+        problem:=particle_validate({info=info})
         testing.expect_value(t,problem.field,c.field)
         testing.expect(t,problem.message!="")
     }
     info:=PARTICLE_DEFAULTS
-    testing.expect_value(t,particle_validate({info=&info}).message,"")
+    testing.expect_value(t,particle_validate({info=info}).message,"")
 
     parameters:[2]Particle_Parameter
     base.text_set(parameters[0].name[:],"count")
     parameters[0].kind,parameters[0].components,parameters[0].value=.Uint,1,{-1,0,0,0}
-    testing.expect_value(t,particle_validate({info=&info,parameters=parameters[:1]}).field,"parameters")
+    testing.expect_value(t,particle_validate({info=info,parameters=parameters[:1]}).field,"parameters")
     parameters[0].value={3,0,0,0}
     parameters[1]=parameters[0]
-    testing.expect_value(t,particle_validate({info=&info,parameters=parameters[:1]}).message,"")
-    testing.expect_value(t,particle_validate({info=&info,parameters=parameters[:]}).field,"parameters")
+    testing.expect_value(t,particle_validate({info=info,parameters=parameters[:1]}).message,"")
+    testing.expect_value(t,particle_validate({info=info,parameters=parameters[:]}).field,"parameters")
 }
 
 @(test)

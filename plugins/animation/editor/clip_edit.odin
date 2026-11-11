@@ -1,6 +1,7 @@
 package animation_editor
 
 import "core:fmt"
+import "core:strings"
 import "core:math/linalg"
 import aa "mirai:asset"
 import "mirai:editor"
@@ -66,32 +67,33 @@ Analyze_Params :: struct {
 Metric_Pair :: struct {mean,max:f32}
 Metric_Limit_Result :: struct {part:lib.Body_Part,frames:u32 `mirai:"label=Frames past its limit"`,worst:f32 `mirai:"unit=rad,label=How far past the worst frame went"`}
 Metric_Contact_Result :: struct {foot:lib.Foot,start,end:f32 `mirai:"unit=s"`}
-Metric_Fix :: struct {problem:[128]u8 `mirai:"text"`,edit:Clip_Edit_Step `mirai:"label=A step of animation.clip.edit that fixes it"`}
+Metric_Fix :: struct {problem:string,edit:serial.Json `mirai:"label=A step of animation.clip.edit that fixes it"`}
 Metrics_Result :: struct {
-    duration:f32 `mirai:"unit=s"`,frames:u32,loop:bool,root:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,label=The root bone; empty for a clip in place"`,
+    duration:f32 `mirai:"unit=s"`,frames:u32,loop:bool,root:string `mirai:"label=The root bone; empty for a clip in place"`,
     travel:mm.Vec3 `mirai:"unit=m/s,label=Velocity of the body over the ground: that of its root or for a clip in place the one its feet push at"`,
     speed:f32 `mirai:"unit=m/s"`,in_place:bool,
-    contacts_total:u32,contacts:[64]Metric_Contact_Result `mirai:"label=Foot contacts with the ground"`,
+    contacts_total:u32,contacts:[]Metric_Contact_Result `mirai:"label=Foot contacts with the ground"`,
     foot_slide_left,foot_slide_right:Metric_Pair `mirai:"unit=m/s,label=Speed of a standing foot over the ground"`,
     penetration:Metric_Pair `mirai:"unit=m,label=How far a foot or toe goes below its height at rest"`,
     jerk:Metric_Pair `mirai:"unit=m/s³,label=Change of acceleration of the parts"`,
     seam_position:f32 `mirai:"unit=m,label=The last frame against the first relative to the root"`,
     seam_rotation:f32 `mirai:"unit=rad"`,
     seam_velocity:f32 `mirai:"unit=m/s,label=How much more the speed changes across the seam than between frames inside"`,
-    limits:[len(lib.Body_Part)]Metric_Limit_Result `mirai:"label=Knees bent backwards; elbows folded too far and the head turned too far"`,
-    fixes:[8]Metric_Fix,
+    limits:[]Metric_Limit_Result `mirai:"label=Knees bent backwards; elbows folded too far and the head turned too far"`,
+    fixes:[]Metric_Fix,
 }
 Clip_Edit_Result :: struct {
-    asset:base.Asset_Id,path:[1024]u8 `mirai:"text"`,dry_run:bool `mirai:"optional"`,
-    clip:[64]u8 `mirai:"text"`,before,after:Metrics_Result,
+    using written:Authoring_Write_Result `mirai:"inline"`,
+    clip:string,
+    before,after:Metrics_Result,
 }
 
 @(private)
 clip_edit_register :: proc(s:^editor.Session) {
     edit:=Clip_Edit_Params{rate=60}
     analyze:=Analyze_Params{rate=60,contacts=16}
-    authoring_method_register(s,{name="animation.clip.edit",summary="Edits a clip with verbs applied in order into a new clip and measures it before and after as animation.analyze does. The body of the skeleton is the one it stores, or one found in memory for the call.",params=Clip_Edit_Params,params_info=type_info_of(Clip_Edit_Params),defaults=&edit,run=clip_edit},Clip_Edit_Result,type_info_of(Clip_Edit_Result))
-    authoring_method_register(s,{name="animation.analyze",summary="Measures a clip on its skeleton (travel, foot contacts and slide, penetration, jerk, loop seam and joint limits) and suggests the clip edits that fix what it finds.",params=Analyze_Params,params_info=type_info_of(Analyze_Params),defaults=&analyze,flags={.Read_Only},run=clip_analyze},Metrics_Result,type_info_of(Metrics_Result))
+    editor.api_method_register(s,{params=type_info_of(Clip_Edit_Params),result=type_info_of(Clip_Edit_Result),name="animation.clip.edit",summary="Edits a clip with verbs applied in order into a new clip and measures it before and after as animation.analyze does. The body of the skeleton is the one it stores, or one found in memory for the call.",defaults=&edit,run=clip_edit})
+    editor.api_method_register(s,{params=type_info_of(Analyze_Params),result=type_info_of(Metrics_Result),name="animation.analyze",summary="Measures a clip on its skeleton (travel, foot contacts and slide, penetration, jerk, loop seam and joint limits) and suggests the clip edits that fix what it finds.",defaults=&analyze,flags={.Read_Only},run=clip_analyze})
 }
 
 // A clip sampled on its skeleton for metrics and edits.
@@ -163,7 +165,7 @@ clip_sample :: proc(call:^api.Call,animation:aa.Animation_View,index:int,skeleto
     sampled.frames={rate=exact,bones=n,curves=len(curves),local=make([]mm.Transform,count*n,allocator),values=make([]mm.Vec4,count*len(curves),allocator)}
     if !lib.frames_sample_clip(&library,handle,bindings,sampled.rig.rest,curves[:],sampled.frames) {authoring_failure(call,"clip","Invalid_Clip","finite keys","sampling failed","The clip could not be sampled");return}
     sampled.markers=make([dynamic]aa.Animation_Marker_Desc,allocator)
-    for &marker in animation.markers[clip.first_marker:][:clip.marker_count] {append(&sampled.markers,aa.Animation_Marker_Desc{marker.time,base.text_get(marker.name[:])})}
+    for &marker in animation.markers[clip.first_marker:][:clip.marker_count] {append(&sampled.markers,aa.Animation_Marker_Desc{marker.time,base.text_get(marker.name[:]),marker.duration,base.text_get(marker.target[:])})}
     switch loop {
     case .Loop: sampled.frames.loop=true
     case .Once: sampled.frames.loop=false
@@ -182,55 +184,39 @@ clip_measure :: proc(rig:lib.Body_Rig,frames:lib.Frames,contacts:[]lib.Contact) 
 
 // The metrics of a clip and the edits that would fix what they show.
 @(private)
-metrics_write :: proc(out:^serial.Writer,key:string,rig:lib.Body_Rig,bones:[]aa.Skeleton_Bone,frames:lib.Frames,contact_limit:int,first:=false) -> bool {
+metrics_of :: proc(call:^api.Call,rig:lib.Body_Rig,bones:[]aa.Skeleton_Bone,frames:lib.Frames,contact_limit:int) -> (r:Metrics_Result,ok:bool) {
     contacts:=make([]lib.Contact,min(contact_limit,64),context.temp_allocator)
-    metrics,ok:=clip_measure(rig,frames,contacts)
-    if !ok {return false}
-    if key!="" {api.write_key(out,key,first);serial.text_write_raw(out,"{")} else {serial.text_write_raw(out,"{")}
-    number :: proc(out:^serial.Writer,key:string,value:f32,first:=false) {api.write_key(out,key,first);api.write_number(out,value)}
-    pair :: proc(out:^serial.Writer,key:string,value:lib.Metric_Stat) {api.write_key(out,key);serial.text_write_raw(out,"{");number(out,"mean",value.mean,true);number(out,"max",value.max);serial.text_write_raw(out,"}")}
-    number(out,"duration",metrics.duration,true);api.write_uint(out,"frames",u64(lib.frames_count(frames)));api.write_bool(out,"loop",frames.loop)
-    api.write_text(out,"root",base.text_get(bones[metrics.root].path[:]) if metrics.root>=0 && int(metrics.root)<len(bones) else "")
-    api.write_numbers(out,"travel",metrics.travel);number(out,"speed",linalg.length(metrics.travel));api.write_bool(out,"in_place",metrics.in_place)
-    api.write_uint(out,"contacts_total",u64(metrics.contacts))
-    api.write_key(out,"contacts");serial.text_write_raw(out,"[")
-    for contact,i in contacts[:min(metrics.contacts,len(contacts))] {
-        if i>0 {serial.text_write_raw(out,",")}
-        serial.text_write_raw(out,"{");api.write_text(out,"foot",fmt.tprintf("%v",contact.foot),true)
-        number(out,"start",f32(contact.first)/frames.rate);number(out,"end",f32(contact.last)/frames.rate);serial.text_write_raw(out,"}")
-    }
-    serial.text_write_raw(out,"]")
-    pair(out,"foot_slide_left",metrics.foot_slide[.Left]);pair(out,"foot_slide_right",metrics.foot_slide[.Right])
-    pair(out,"penetration",metrics.penetration);pair(out,"jerk",metrics.jerk)
-    number(out,"seam_position",metrics.seam_position);number(out,"seam_rotation",metrics.seam_rotation);number(out,"seam_velocity",metrics.seam_velocity)
-    api.write_key(out,"limits");serial.text_write_raw(out,"[")
-    written:=0
+    metrics:=clip_measure(rig,frames,contacts) or_return
+    pair :: proc(value:lib.Metric_Stat) -> Metric_Pair {return {value.mean,value.max}}
+    r.duration,r.frames,r.loop=metrics.duration,u32(lib.frames_count(frames)),frames.loop
+    if metrics.root>=0 && int(metrics.root)<len(bones) {r.root=strings.clone(base.text_get(bones[metrics.root].path[:]),call.allocator)}
+    r.travel,r.speed,r.in_place=metrics.travel,linalg.length(metrics.travel),metrics.in_place
+    r.contacts_total=u32(metrics.contacts)
+    r.contacts=make([]Metric_Contact_Result,min(metrics.contacts,len(contacts)),call.allocator)
+    for &shown,i in r.contacts {shown={contacts[i].foot,f32(contacts[i].first)/frames.rate,f32(contacts[i].last)/frames.rate}}
+    r.foot_slide_left,r.foot_slide_right=pair(metrics.foot_slide[.Left]),pair(metrics.foot_slide[.Right])
+    r.penetration,r.jerk=pair(metrics.penetration),pair(metrics.jerk)
+    r.seam_position,r.seam_rotation,r.seam_velocity=metrics.seam_position,metrics.seam_rotation,metrics.seam_velocity
+    limits:=make([dynamic]Metric_Limit_Result,call.allocator)
     for stat,part in metrics.limits {
-        if stat.frames==0 {continue}
-        if written>0 {serial.text_write_raw(out,",")};written+=1
-        serial.text_write_raw(out,"{");api.write_text(out,"part",fmt.tprintf("%v",part),true);api.write_uint(out,"frames",u64(stat.frames));number(out,"worst",stat.worst);serial.text_write_raw(out,"}")
+        if stat.frames>0 {append(&limits,Metric_Limit_Result{part,u32(stat.frames),stat.worst})}
     }
-    serial.text_write_raw(out,"]")
-    api.write_key(out,"fixes");serial.text_write_raw(out,"[")
-    fixes:=0
-    fix :: proc(out:^serial.Writer,count:^int,problem,edit:string) {
-        if count^>0 {serial.text_write_raw(out,",")};count^+=1
-        serial.text_write_raw(out,"{");api.write_text(out,"problem",problem,true);api.write_key(out,"edit");serial.text_write_raw(out,edit);serial.text_write_raw(out,"}")
-    }
+    r.limits=limits[:]
+    fixes:=make([dynamic]Metric_Fix,call.allocator)
     slide:=max(metrics.foot_slide[.Left].mean,metrics.foot_slide[.Right].mean)
-    if slide>.05 {fix(out,&fixes,fmt.tprintf("feet slide %.2f m/s while they stand",slide),`{"verb":"Lock_Feet"}`)}
-    if metrics.penetration.max>.01 {fix(out,&fixes,fmt.tprintf("a foot goes %.3f m under the floor",metrics.penetration.max),`{"verb":"Offset","part":"Pelvis","direction":"Up","strength":"Slight"}`)}
+    if slide>.05 {append(&fixes,Metric_Fix{fmt.tprintf("feet slide %.2f m/s while they stand",slide),`{"verb":"Lock_Feet"}`})}
+    if metrics.penetration.max>.01 {append(&fixes,Metric_Fix{fmt.tprintf("a foot goes %.3f m under the floor",metrics.penetration.max),`{"verb":"Offset","part":"Pelvis","direction":"Up","strength":"Slight"}`})}
     if frames.loop && metrics.seam_position>.01*metrics.height {
-        fix(out,&fixes,fmt.tprintf("the loop jumps %.3f m at its seam",metrics.seam_position),`{"verb":"Make_Loop"}`)
+        append(&fixes,Metric_Fix{fmt.tprintf("the loop jumps %.3f m at its seam",metrics.seam_position),`{"verb":"Make_Loop"}`})
     } else if frames.loop && metrics.seam_velocity>.1*metrics.height {
-        fix(out,&fixes,fmt.tprintf("the loop changes speed by %.2f m/s at its seam",metrics.seam_velocity),`{"verb":"Make_Loop"}`)
+        append(&fixes,Metric_Fix{fmt.tprintf("the loop changes speed by %.2f m/s at its seam",metrics.seam_velocity),`{"verb":"Make_Loop"}`})
     }
-    if metrics.jerk.mean>400 {fix(out,&fixes,fmt.tprintf("motion shakes (jerk %.0f m/s3)",metrics.jerk.mean),`{"verb":"Smooth","amount":0.3}`)}
+    if metrics.jerk.mean>400 {append(&fixes,Metric_Fix{fmt.tprintf("motion shakes (jerk %.0f m/s3)",metrics.jerk.mean),`{"verb":"Smooth","amount":0.3}`})}
     for side in ([2]lib.Body_Part{.Knee_L,.Knee_R}) {
-        if metrics.limits[side].frames>0 {fix(out,&fixes,fmt.tprintf("%v bends backwards on %d frames",side,metrics.limits[side].frames),fmt.tprintf(`{{"verb":"Offset","part":"%v","direction":"Forward","strength":"Slight"}}`,side))}
+        if metrics.limits[side].frames>0 {append(&fixes,Metric_Fix{fmt.tprintf("%v bends backwards on %d frames",side,metrics.limits[side].frames),serial.Json(fmt.tprintf(`{{"verb":"Offset","part":"%v","direction":"Forward","strength":"Slight"}}`,side))})}
     }
-    serial.text_write_raw(out,"]}")
-    return true
+    r.fixes=fixes[:]
+    return r,true
 }
 
 @(private)
@@ -242,7 +228,9 @@ clip_analyze :: proc(s:^editor.Session,call:^api.Call) {
     index,found:=authoring_clip_index(call,animation,base.text_get(p.clip[:]));if !found {return}
     skeleton,has:=clip_skeleton(s,call,p.skeleton,p.entity[:],&skeleton_file);if !has {return}
     sampled,sampled_ok:=clip_sample(call,animation,index,skeleton,p.rate,p.loop);if !sampled_ok {return}
-    if !metrics_write(call.out,"",sampled.rig,skeleton.bones,sampled.frames,int(p.contacts)) {authoring_failure(call,"clip","Unmeasured","frames that compose on the skeleton","metrics failed","The clip could not be measured",api.SERVER_ERROR)}
+    measured,measured_ok:=metrics_of(call,sampled.rig,skeleton.bones,sampled.frames,int(p.contacts))
+    if !measured_ok {authoring_failure(call,"clip","Unmeasured","frames that compose on the skeleton","metrics failed","The clip could not be measured",api.SERVER_ERROR);return}
+    api.call_result(call,Metrics_Result)^=measured
 }
 
 // The lib edit of a step, after checking that it names what its verb needs.
@@ -348,7 +336,7 @@ clip_edit :: proc(s:^editor.Session,call:^api.Call) {
         for marker in markers {
             times:[64]f32
             count:=lib.clip_edit_times(edit,frames,marker.time,times[:])
-            for time in times[:min(count,len(times))] {append(&moved,aa.Animation_Marker_Desc{time,marker.name})}
+            for time in times[:min(count,len(times))] {append(&moved,aa.Animation_Marker_Desc{time,marker.name,marker.duration,marker.target})}
         }
         frames,markers=output,moved
     }
@@ -396,14 +384,11 @@ clip_edit :: proc(s:^editor.Session,call:^api.Call) {
     }
     doc:aa.Document;defer aa.document_destroy(&doc)
     if error:=aa.animation_document(&doc,&s.app.assets.types,{id=id,clips=clips,source=target_view.source if !created else nil},s.app.allocator);error!=.None {authoring_failure(call,"edits","Invalid_Result","keys and markers within the clip capacities",fmt.tprintf("%v",error),"The edited clip could not be stored",api.SERVER_ERROR if error==.Out_Of_Memory else api.INVALID_PARAMS);return}
-    Written :: struct {sampled:^Clip_Sampled,frames:lib.Frames,name:string,skeleton:aa.Skeleton_View}
-    written:=Written{&sampled,frames,name,skeleton}
-    authoring_publish(s,call,target,&doc,proc(call:^api.Call,data:rawptr) {
-        w:=(^Written)(data)
-        api.write_text(call.out,"clip",w.name)
-        metrics_write(call.out,"before",w.sampled.rig,w.skeleton.bones,w.sampled.frames,16)
-        metrics_write(call.out,"after",w.sampled.rig,w.skeleton.bones,w.frames,16)
-    },&written)
+    r:=api.call_result(call,Clip_Edit_Result)
+    r.clip=strings.clone(name,call.allocator)
+    r.before,_=metrics_of(call,sampled.rig,skeleton.bones,sampled.frames,16)
+    r.after,_=metrics_of(call,sampled.rig,skeleton.bones,frames,16)
+    authoring_publish(s,call,target,&doc,&r.written)
 }
 
 // Whether every bone track of an .anim names a bone of the skeleton: the clips of a library move
@@ -466,6 +451,6 @@ clip_desc :: proc(sampled:Clip_Sampled,frames:lib.Frames,name:string,markers:[]a
         append(&tracks,aa.Animation_Track_Desc{target=base.text_get(curve.target[:]),property=curve.property,slot=curve.slot,keys=keys})
     }
     kept:=make([dynamic]aa.Animation_Marker_Desc,allocator)
-    for marker in markers {if marker.time<=duration+1e-4 {append(&kept,aa.Animation_Marker_Desc{min(marker.time,duration),marker.name})}}
+    for marker in markers {if marker.time<=duration+1e-4 {append(&kept,aa.Animation_Marker_Desc{min(marker.time,duration),marker.name,min(marker.duration,duration-min(marker.time,duration)),marker.target})}}
     return {name=name,tracks=tracks[:],markers=kept[:],root=sampled.root}
 }

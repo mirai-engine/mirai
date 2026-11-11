@@ -7,6 +7,8 @@ import "core:slice"
 // the context, so typing never allocates. No shaping and no IME.
 
 TEXT_EDIT_CAPACITY :: 64<<10
+TEXT_EDIT_STEPS :: 100       // edits undo goes back through
+TEXT_EDIT_HISTORY :: 64<<10  // bytes of the text they removed and inserted; a larger edit forgets them all
 
 Text_Filter :: enum u8 {
     Any,    // printable ASCII
@@ -16,6 +18,20 @@ Text_Filter :: enum u8 {
 
 @(private)
 Edit_Drag :: enum u8 {None,Caret,Select}
+
+// What an edit was: a run of typing, of Backspace or of Delete is one step of
+// undo, and so is a paste over a selection.
+@(private)
+Edit_Kind :: enum u8 {Other,Type,Paste,Back,Forward}
+
+// One step of undo: removed bytes at at gave way to inserted ones. Both are
+// in Text_Edit.history from first on, the removed first.
+@(private)
+Edit_Step :: struct {
+    at,removed,inserted,first:i32,
+    cursor,anchor:i32, // before it
+    kind:Edit_Kind,
+}
 
 Text_Edit :: struct {
     id:Id,              // the field being edited; 0: none
@@ -36,6 +52,11 @@ Text_Edit :: struct {
     drag:Edit_Drag,
     caret_started:f64,
     font:u8,            // of the text: what the caret and the lines are measured with; the field sets it each frame
+    steps:[TEXT_EDIT_STEPS]Edit_Step,
+    history:[TEXT_EDIT_HISTORY]u8,
+    done:int,           // steps undo can take back
+    step_count:int,     // steps kept: those after done are what redo does again
+    joins:bool,         // the last step takes the next edit of its kind that goes on from it
 }
 
 text_edit_accepts :: proc "contextless" (filter:Text_Filter,c:u8) -> bool {
@@ -66,46 +87,105 @@ text_edit_begin :: proc "contextless" (e:^Text_Edit,id:Id,initial:string,filter:
 }
 text_edit_value :: proc "contextless" (e:^Text_Edit) -> string {return string(e.buffer[:e.length])}
 text_edit_selection :: proc "contextless" (e:^Text_Edit) -> (lo,hi:int) {return min(e.anchor,e.cursor),max(e.anchor,e.cursor)}
-text_edit_select_all :: proc "contextless" (e:^Text_Edit) {e.anchor=0;e.cursor=e.length}
+text_edit_select_all :: proc "contextless" (e:^Text_Edit) {e.anchor=0;e.cursor=e.length;e.joins=false}
 text_edit_move :: proc "contextless" (e:^Text_Edit,index:int,extend:bool) {
     e.cursor=clamp(index,0,e.length)
     if !extend {e.anchor=e.cursor}
+    e.joins=false
 }
-// The run of characters of one class around index: letters, digits and '_',
-// spaces, or the rest. Numbers and codes are one word.
+// The class of a character for words: letters, digits and '_' (0), spaces and
+// line breaks (1), or the rest (2).
+@(private="file")
+text_edit_class :: proc "contextless" (c:u8) -> int {
+    switch c {
+    case 'a'..='z','A'..='Z','0'..='9','_':return 0
+    case ' ','\n':return 1
+    }
+    return 2
+}
+// The run of characters of one class around index. Numbers and codes are one word.
 text_edit_word :: proc "contextless" (e:^Text_Edit,index:int) -> (lo,hi:int) {
     if e.length==0 || e.filter!=.Any {return 0,e.length}
-    class :: proc "contextless" (c:u8) -> int {
-        switch c {
-        case 'a'..='z','A'..='Z','0'..='9','_':return 0
-        case ' ':return 1
-        }
-        return 2
-    }
     lo=clamp(index,0,e.length-1);hi=lo+1
-    kind:=class(e.buffer[lo])
-    for lo>0 && class(e.buffer[lo-1])==kind {lo-=1}
-    for hi<e.length && class(e.buffer[hi])==kind {hi+=1}
+    kind:=text_edit_class(e.buffer[lo])
+    for lo>0 && text_edit_class(e.buffer[lo-1])==kind {lo-=1}
+    for hi<e.length && text_edit_class(e.buffer[hi])==kind {hi+=1}
     return
 }
-// The lines of the text being edited.
+// Where a word away from index is, as Godot moves the caret by words: the
+// start of the word before it (step < 0) or the end of the one after it.
 @(private)
-text_edit_lines :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32) -> Text_Lines {
-    wrap:Text_Wrap=.Words if e.multiline && e.wrap>0 else .None
-    return text_lines(&ctx.font,text_edit_value(e),size,e.wrap,wrap,int(e.font))
+text_edit_word_step :: proc "contextless" (e:^Text_Edit,index,step:int) -> int {
+    i:=clamp(index,0,e.length)
+    if step<0 {
+        for i>0 && text_edit_class(e.buffer[i-1])==1 {i-=1}
+        if i>0 {i,_=text_edit_word(e,i-1)}
+    } else {
+        for i<e.length && text_edit_class(e.buffer[i])==1 {i+=1}
+        if i<e.length {_,i=text_edit_word(e,i)}
+    }
+    return i
+}
+// The lines of the text being edited as the text of its field breaks them,
+// walked in order by text_edit_lines_next.
+@(private)
+Edit_Lines :: struct {
+    text:string,
+    lines:[]Layout_Line,
+    pieces:[]Layout_Piece,
+    row,at:int,
+}
+@(private)
+text_edit_lines :: proc(ctx:^Context,e:^Text_Edit,size:f32) -> (it:Edit_Lines) {
+    it.text=text_edit_value(e)
+    if !text_begin(ctx,{font=e.font,size=size,wrap=.Words if e.multiline && e.wrap>0 else .None},measure=true) {return}
+    text_span(ctx,it.text)
+    ctx.text_open.open=false
+    t:=&ctx.layout
+    text:=&t.texts[t.text_count]
+    lines,pieces:=t.line_count,t.piece_count
+    layout_text_wrap(t,&ctx.font,text,e.wrap,true)
+    // What was broken stays until the next text is measured.
+    it.lines,it.pieces=t.lines[lines:t.line_count],t.pieces[:t.piece_count]
+    t.line_count,t.piece_count,t.span_count=lines,pieces,int(text.spans_first)
+    return
+}
+// The byte range of the next line. A line keeps the spaces before its line
+// break and none of those it wraps at; a text that ends in a line break has
+// one more, empty, line.
+@(private)
+text_edit_lines_next :: proc "contextless" (it:^Edit_Lines) -> (start,end:int,ok:bool) {
+    row:=it.row
+    if row>len(it.lines) {return}
+    it.row+=1
+    if row==len(it.lines) {
+        if it.text!="" && it.text[len(it.text)-1]!='\n' {return}
+        return len(it.text),len(it.text),true
+    }
+    line:=&it.lines[row]
+    start,end=it.at,it.at
+    if line.pieces_len>0 {
+        first,last:=&it.pieces[line.pieces_first],&it.pieces[line.pieces_first+line.pieces_len-1]
+        start,end=int(first.start),int(last.start+last.length)
+        spaces:=end
+        for spaces<len(it.text) && it.text[spaces]==' ' {spaces+=1}
+        if spaces==len(it.text) || it.text[spaces]=='\n' {end=spaces} else {for end>start && it.text[end-1]==' ' {end-=1}}
+    }
+    it.at=end+1 if end<len(it.text) && it.text[end]=='\n' else end
+    return start,end,true
 }
 // The line index is on: its row and its byte range, and how many lines the
 // text has.
 @(private)
-text_edit_line_of :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32,index:int) -> (row,start,end,count:int) {
+text_edit_line_of :: proc(ctx:^Context,e:^Text_Edit,size:f32,index:int) -> (row,start,end,count:int) {
     it:=text_edit_lines(ctx,e,size)
     found:=false
     for {
-        line_start,line_end,ok:=text_lines_next(&it)
+        line_start,line_end,ok:=text_edit_lines_next(&it)
         if !ok {break}
-        count=it.row+1
+        count+=1
         if !found {
-            row,start,end=it.row,line_start,line_end
+            row,start,end=count-1,line_start,line_end
             found=index<=line_end
         }
     }
@@ -113,20 +193,20 @@ text_edit_line_of :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32,inde
 }
 // Byte range of line row, or of the last line when the text has fewer.
 @(private)
-text_edit_line_at :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32,row:int) -> (start,end:int) {
+text_edit_line_at :: proc(ctx:^Context,e:^Text_Edit,size:f32,row:int) -> (start,end:int) {
     it:=text_edit_lines(ctx,e,size)
     for {
-        line_start,line_end,ok:=text_lines_next(&it)
+        line_start,line_end,ok:=text_edit_lines_next(&it)
         if !ok {break}
         start,end=line_start,line_end
-        if it.row>=row {break}
+        if it.row>row {break}
     }
     return
 }
 // Moves the caret step lines, keeping the units it had from the start of its
 // line. Past the first or the last line it goes to the edge of the text.
 @(private)
-text_edit_line_move :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32,step:int,extend:bool) {
+text_edit_line_move :: proc(ctx:^Context,e:^Text_Edit,size:f32,step:int,extend:bool) {
     row,start,end,count:=text_edit_line_of(ctx,e,size,e.cursor)
     text:=text_edit_value(e)
     if e.goal_x<0 {e.goal_x=text_width(&ctx.font,text[start:clamp(e.cursor,start,end)],size,int(e.font))}
@@ -139,48 +219,130 @@ text_edit_line_move :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32,st
     text_edit_move(e,line_start+text_index_at(&ctx.font,text[line_start:line_end],size,e.goal_x,f=int(e.font)),extend)
 }
 
-text_edit_delete_selection :: proc "contextless" (e:^Text_Edit) -> bool {
-    lo,hi:=text_edit_selection(e)
-    if lo==hi {return false}
+// Puts text in the place of bytes lo..hi, the caret after it. text may be
+// what lies after the text in the buffer, where a paste reads it.
+@(private)
+text_edit_splice :: proc(e:^Text_Edit,lo,hi:int,text:string) {
     copy(e.buffer[lo:],e.buffer[hi:e.length])
     e.length-=hi-lo
-    e.cursor=lo;e.anchor=lo
+    copy(e.buffer[e.length:],text)
+    slice.rotate_right(e.buffer[lo:e.length+len(text)],len(text))
+    e.length+=len(text)
+    e.cursor=lo+len(text);e.anchor=e.cursor
     e.changes+=1
+}
+// Replaces bytes lo..hi with text as an edit of kind that undo takes back;
+// what does not fit in the capacity is dropped.
+@(private)
+text_edit_replace :: proc(e:^Text_Edit,lo,hi:int,text:string,kind:Edit_Kind) {
+    text:=text[:clamp(e.capacity-e.length+hi-lo,0,len(text))]
+    if lo==hi && text=="" {return}
+    text_edit_record(e,lo,hi,text,kind)
+    text_edit_splice(e,lo,hi,text)
+}
+// Keeps the edit about to replace bytes lo..hi with text: in the last step
+// when it goes on from it, as a run of typing does, or in a new one, for which
+// the oldest steps make room.
+@(private)
+text_edit_record :: proc "contextless" (e:^Text_Edit,lo,hi:int,text:string,kind:Edit_Kind) {
+    joins:=e.joins && e.done>0 && kind!=.Other
+    e.joins=true
+    e.step_count=e.done
+    used:=0
+    if e.done>0 {
+        s:=&e.steps[e.done-1]
+        used=int(s.first+s.removed+s.inserted)
+        if joins && s.kind==kind && used+hi-lo+len(text)<=TEXT_EDIT_HISTORY {
+            switch {
+            case lo==hi && lo==int(s.at+s.inserted) && (kind==.Type || kind==.Paste):
+                copy(e.history[used:],text)
+                s.inserted+=i32(len(text))
+                return
+            case text=="" && s.inserted==0 && kind==.Back && hi==int(s.at):
+                copy(e.history[int(s.first)+hi-lo:],e.history[s.first:used])
+                copy(e.history[s.first:],e.buffer[lo:hi])
+                s.at,s.removed=i32(lo),s.removed+i32(hi-lo)
+                return
+            case text=="" && s.inserted==0 && kind==.Forward && lo==int(s.at):
+                copy(e.history[used:],e.buffer[lo:hi])
+                s.removed+=i32(hi-lo)
+                return
+            }
+        }
+    }
+    size:=hi-lo+len(text)
+    if size>TEXT_EDIT_HISTORY {
+        e.done,e.step_count,e.joins=0,0,false
+        return
+    }
+    drop:=0
+    for drop<e.done && (e.done-drop>=TEXT_EDIT_STEPS || used-int(e.steps[drop].first)+size>TEXT_EDIT_HISTORY) {drop+=1}
+    if drop>0 {
+        base:=int(e.steps[drop].first) if drop<e.done else used
+        copy(e.history[:],e.history[base:used])
+        copy(e.steps[:],e.steps[drop:e.done])
+        e.done-=drop
+        for &s in e.steps[:e.done] {s.first-=i32(base)}
+        used-=base
+    }
+    e.steps[e.done]={at=i32(lo),removed=i32(hi-lo),inserted=i32(len(text)),first=i32(used),cursor=i32(e.cursor),anchor=i32(e.anchor),kind=kind}
+    copy(e.history[used:],e.buffer[lo:hi])
+    copy(e.history[used+hi-lo:],text)
+    e.done+=1
+    e.step_count=e.done
+}
+// Takes back the last edit, with the caret and selection it had before.
+text_edit_undo :: proc(e:^Text_Edit) -> bool {
+    if e.done==0 {return false}
+    e.done-=1
+    s:=e.steps[e.done]
+    text_edit_splice(e,int(s.at),int(s.at+s.inserted),string(e.history[s.first:][:s.removed]))
+    e.cursor,e.anchor,e.joins=int(s.cursor),int(s.anchor),false
+    return true
+}
+// Does again the edit undo took back last.
+text_edit_redo :: proc(e:^Text_Edit) -> bool {
+    if e.done>=e.step_count {return false}
+    s:=e.steps[e.done]
+    e.done+=1
+    text_edit_splice(e,int(s.at),int(s.at+s.removed),string(e.history[s.first+s.removed:][:s.inserted]))
+    e.joins=false
+    return true
+}
+
+text_edit_delete_selection :: proc(e:^Text_Edit) -> bool {
+    lo,hi:=text_edit_selection(e)
+    if lo==hi {return false}
+    text_edit_replace(e,lo,hi,"",.Other)
     return true
 }
 // Replaces the selection with c.
-text_edit_insert :: proc "contextless" (e:^Text_Edit,c:u8) {
+text_edit_insert :: proc(e:^Text_Edit,c:u8) {
     if !text_edit_takes(e,c) {return}
-    text_edit_delete_selection(e)
-    if e.length>=e.capacity {return}
-    copy(e.buffer[e.cursor+1:e.length+1],e.buffer[e.cursor:e.length])
-    e.buffer[e.cursor]=c;e.length+=1;e.cursor+=1;e.anchor=e.cursor
-    e.changes+=1
+    lo,hi:=text_edit_selection(e)
+    typed:=[1]u8{c}
+    text_edit_replace(e,lo,hi,string(typed[:]),.Type)
 }
-text_edit_remove :: proc "contextless" (e:^Text_Edit,at:int) {
+// Removes the character at, before the caret (Backspace) or after it (Delete).
+text_edit_remove :: proc(e:^Text_Edit,at:int) {
     if at<0 || at>=e.length {return}
-    copy(e.buffer[at:e.length-1],e.buffer[at+1:e.length])
-    e.length-=1
-    e.changes+=1
-    if e.cursor>at {e.cursor-=1}
-    e.anchor=e.cursor
+    text_edit_replace(e,at,at+1,"",.Back if at<e.cursor else .Forward)
 }
 
-// Puts the clipboard at the caret in one move: it is read into the room after
-// the text, and what the filter takes turns into place.
+// Puts the clipboard in the place of the selection as one edit: it is read
+// into the room after the text, and what the filter takes turns into place.
 @(private)
 text_edit_paste :: proc(ctx:^Context,e:^Text_Edit) {
-    text_edit_delete_selection(e)
+    lo,hi:=text_edit_selection(e)
+    text_edit_replace(e,lo,hi,"",.Paste)
     room:=e.buffer[e.length:e.capacity]
     count:=clamp(ctx.clipboard_get(ctx.clipboard_user,room),0,len(room))
     kept:=0
     for c in room[:count] {
         if text_edit_takes(e,c) {room[kept]=c;kept+=1}
     }
-    if kept==0 {return}
-    slice.rotate_right(e.buffer[e.cursor:e.length+kept],kept)
-    e.length+=kept;e.cursor+=kept;e.anchor=e.cursor
-    e.changes+=1
+    text_edit_replace(e,lo,lo,string(room[:kept]),.Paste)
+    e.joins=false
 }
 
 // Applies the keys and the text of one frame. Returns true when the text changed.
@@ -196,19 +358,28 @@ text_edit_keys :: proc(ctx:^Context,e:^Text_Edit,size:f32) -> bool {
             if .X in in_.keys_pressed {text_edit_delete_selection(e)}
         }
         if .V in in_.keys_repeated && ctx.clipboard_get!=nil {text_edit_paste(ctx,e)}
+        if .Z in in_.keys_repeated {
+            if shift {text_edit_redo(e)} else {text_edit_undo(e)}
+        }
+        if .Y in in_.keys_repeated {text_edit_redo(e)}
     } else {
         for c in in_.text[:in_.text_count] {text_edit_insert(e,c)}
     }
-    if .Backspace in in_.keys_repeated && !text_edit_delete_selection(e) {text_edit_remove(e,e.cursor-1)}
-    if .Delete in in_.keys_repeated && !text_edit_delete_selection(e) {text_edit_remove(e,e.cursor)}
+    // With Primary, Backspace, Delete and the arrows go by words.
+    if .Backspace in in_.keys_repeated && !text_edit_delete_selection(e) {
+        if primary {text_edit_replace(e,text_edit_word_step(e,e.cursor,-1),e.cursor,"",.Other)} else {text_edit_remove(e,e.cursor-1)}
+    }
+    if .Delete in in_.keys_repeated && !text_edit_delete_selection(e) {
+        if primary {text_edit_replace(e,e.cursor,text_edit_word_step(e,e.cursor,1),"",.Other)} else {text_edit_remove(e,e.cursor)}
+    }
     // Without Shift an arrow collapses a selection to that edge instead of stepping.
     if .Left in in_.keys_repeated {
         lo,hi:=text_edit_selection(e)
-        text_edit_move(e,e.cursor-1 if shift||lo==hi else lo,shift)
+        text_edit_move(e,(text_edit_word_step(e,e.cursor,-1) if primary else e.cursor-1) if shift||lo==hi else lo,shift)
     }
     if .Right in in_.keys_repeated {
         lo,hi:=text_edit_selection(e)
-        text_edit_move(e,e.cursor+1 if shift||lo==hi else hi,shift)
+        text_edit_move(e,(text_edit_word_step(e,e.cursor,1) if primary else e.cursor+1) if shift||lo==hi else hi,shift)
     }
     if e.multiline {
         if .Up in in_.keys_repeated {text_edit_line_move(ctx,e,size,-1,shift);by_line=true}
@@ -243,12 +414,13 @@ text_edit_reveal :: proc(ctx:^Context,e:^Text_Edit,size,room,height:f32) {
     e.scroll=clamp(e.scroll,0,max(text_width(&ctx.font,text,size,int(e.font))-room,0))
 }
 
-// The caret index under a point of the field, by line when the text wraps.
+// The caret index under a point of the text of the field, which is in a, by
+// line when the text wraps.
 @(private)
-text_edit_index_at :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32,a:Text_Area,cell:bool=false) -> int {
+text_edit_index_at :: proc(ctx:^Context,e:^Text_Edit,size:f32,a:Rect,cell:bool=false) -> int {
     x:=ctx.pointer.x-a.x+e.scroll
     if !e.multiline {return text_index_at(&ctx.font,text_edit_value(e),size,x,cell,int(e.font))}
-    row:=max(int((ctx.pointer.y-a.y+e.scroll_y)/a.line),0)
+    row:=max(int((ctx.pointer.y-a.y+e.scroll_y)/(size*TEXT_LINE)),0)
     start,end:=text_edit_line_at(ctx,e,size,row)
     return start+text_index_at(&ctx.font,text_edit_value(e)[start:end],size,x,cell,int(e.font))
 }
@@ -256,7 +428,7 @@ text_edit_index_at :: proc "contextless" (ctx:^Context,e:^Text_Edit,size:f32,a:T
 // A press on the field being edited: the first click places the caret (Shift
 // extends the selection), the second selects a word, or places the caret too
 // without words, and the third everything.
-text_edit_press :: proc(ctx:^Context,e:^Text_Edit,size:f32,a:Text_Area,words:=true) {
+text_edit_press :: proc(ctx:^Context,e:^Text_Edit,size:f32,a:Rect,words:=true) {
     switch {
     case ctx.input.clicks>=3:
         text_edit_select_all(e)
@@ -267,9 +439,10 @@ text_edit_press :: proc(ctx:^Context,e:^Text_Edit,size:f32,a:Text_Area,words:=tr
         e.drag=.Caret
     }
     e.goal_x=-1
+    e.joins=false
 }
 // While the button of that press is held: moving the pointer selects.
-text_edit_drag :: proc(ctx:^Context,e:^Text_Edit,size:f32,a:Text_Area) {
+text_edit_drag :: proc(ctx:^Context,e:^Text_Edit,size:f32,a:Rect) {
     if e.drag==.None {return}
     if ctx.pointer!=ctx.press {e.drag=.Select}
     if e.drag==.Select {text_edit_move(e,text_edit_index_at(ctx,e,size,a),true)}
@@ -293,15 +466,13 @@ edit_request :: proc(ctx:^Context,id:Id) {ctx.edit_request=id;ctx.edit_request_f
 
 // One frame of the field being edited: the pointer on it, the keys and the
 // caret kept in sight. tab: 1 or -1 when Tab or Shift+Tab ended the edit.
-// pad and font: those of field_text_area and of the text.
 @(private)
-field_edit_update :: proc(ctx:^Context,id:Id,it:Interaction,size:f32,label:string,words:=true,marked:=false,pad:f32=0,font:u8=0,icon:=Icon.None) -> (event:Edit_Event,tab:int) {
+field_edit_update :: proc(ctx:^Context,id:Id,it:Interaction,size:f32,words:=true,font:u8=0) -> (event:Edit_Event,tab:int) {
     e:=&ctx.edit
     cursor,anchor:=e.cursor,e.anchor
     e.frame=ctx.stats.frame
     e.font=font
-    rect,_:=widget_rect(ctx,id)
-    area:=field_text_area(ctx,rect,label,size,e.multiline,marked,pad,icon)
+    area,_:=widget_rect(ctx,field_area(ctx,id))
     e.wrap=area.w
     in_:=&ctx.input
     // A click elsewhere applies the text.
@@ -323,27 +494,78 @@ field_edit_update :: proc(ctx:^Context,id:Id,it:Interaction,size:f32,label:strin
     }
     if text_edit_keys(ctx,e,size) {event=.Changed}
     if it.pressed || event==.Changed || e.cursor!=cursor || e.anchor!=anchor {e.caret_started=ctx.time}
-    if rect.w>0 {text_edit_reveal(ctx,e,size,area.w,area.h)}
+    if area.w>0 {text_edit_reveal(ctx,e,size,area.w,area.h)}
     return
 }
 
+// The well of a field: an outline that lightens under the pointer, and the
+// accent while it is edited, which keeps the fill.
 @(private)
-field_paint :: proc(ctx:^Context,id:Id,it:Interaction,text:string,size:f32,label:string,strip:Color,placeholder:string,held,disabled:bool,icon:=Icon.None) -> ^Paint {
-    th:=&ctx.theme
+field_paint :: proc(ctx:^Context,id:Id,it:Interaction,held,disabled:bool,strip:Color) -> ^Paint {
+    radius:=metric(ctx,"radius_control")
+    stroke:=tone(ctx,"well_stroke_hover") if it.hot && !disabled else tone(ctx,"well_stroke")
+    if ctx.edit.id==id && id!=0 {stroke=tone(ctx,"accent")}
+    return paint_add(ctx,{kind=.Field,fill=tone(ctx,"field_active") if held else tone(ctx,"well"),stroke=stroke,corners={radius,radius,radius,radius},strip=strip})
+}
+
+// What a field shows, in a row inside its padding: its icon or the label of
+// its axis, its text, with the selection and the caret while it is edited, or
+// its placeholder while it is empty, and its unit.
+@(private)
+Field_Look :: struct {
+    text,placeholder,label,unit:string,
+    style:Text_Style,      // of its text
+    faint,selection:Color, // of the placeholder and of the selected text
+    icon:Icon,
+    multiline:bool,
+}
+// The look of a field of the theme.
+@(private)
+field_look :: proc(ctx:^Context,text:string,size:f32,font:u8,disabled:bool) -> Field_Look {
+    return {text=text,style={font=font,size=size,color=tone(ctx,"text_faint") if disabled else tone(ctx,"text")},faint=tone(ctx,"text_faint"),selection=tone(ctx,"text_select")}
+}
+// The room between the sides of a field and what it shows: that of the
+// editor when pad is 0; the unit keeps the right end.
+@(private)
+field_padding :: proc "contextless" (f:^Field_Look,pad:f32,marked:bool) -> [4]f32 {
+    top:=(pad if pad>0 else 5) if f.multiline else 0
+    return {pad if pad>0 else 11 if marked else 8,top,5 if f.unit!="" else pad if pad>0 else 8,top}
+}
+// The element of the text of a field: what the pointer places the caret in.
+@(private)
+field_area :: proc(ctx:^Context,id:Id) -> Id {return id_derive(ctx,id,"text")}
+
+@(private)
+field_content :: proc(ctx:^Context,id:Id,f:Field_Look) {
     e:=&ctx.edit
     editing:=e.id==id && id!=0
-    // A well with an outline that lightens under the pointer; editing keeps
-    // the fill: the accent outline marks it and the selection shows on the text.
-    fill:=th.field_active if held else th.well
-    stroke:=th.well_stroke_hover if it.hot && !disabled else th.well_stroke
-    paint:=Paint{kind=.Field,fill=fill,stroke=stroke,text=text,text_color=th.text_faint if disabled else th.text,size=size,caret=-1,label=label,strip=strip,placeholder=placeholder,icon=icon}
-    if editing {
+    if f.icon!=.None {
+        icon(ctx,f.icon,tone(ctx,"text_muted"),FIELD_ICON)
+    } else if f.label!="" {text(ctx,f.label,{font=FONT_MEDIUM,size=metric(ctx,"font_axis"),color=tone(ctx,"text"),align_y=.Center},FIT,GROW)}
+    area:=field_area(ctx,id)
+    style:=f.style
+    style.align_y=.Start if f.multiline else .Center
+    style.wrap=.Words if f.multiline else .None
+    // While it is edited, the text moves inside its clip to keep the caret in sight.
+    scroller:=Box{id=area,track=true,width=GROW,height=GROW,align_y=style.align_y,clip_x=!f.multiline,clip_y=f.multiline,scroll={e.scroll,e.scroll_y}}
+    if editing {box_begin(ctx,scroller)}
+    if text_begin(ctx,style) {
         lo,hi:=text_edit_selection(e)
-        paint.stroke=th.accent
-        paint.text=text_edit_value(e);paint.caret=e.cursor;paint.selection={lo,hi};paint.scroll=e.scroll
-        paint.caret_hidden=int(max(ctx.time-e.caret_started,0)*2)%2!=0
+        lo,hi=clamp(lo,0,len(f.text)),clamp(hi,0,len(f.text))
+        caret:=clamp(e.cursor,0,len(f.text))
+        if !editing {lo,hi,caret=0,0,len(f.text)}
+        text_span(ctx,f.text[:lo if hi>lo else caret])
+        if hi>lo {text_span(ctx,f.text[lo:hi],{back=f.selection})}
+        if editing && hi<=lo && int(max(ctx.time-e.caret_started,0)*2)%2==0 {text_box(ctx,0,0,{kind=.Caret,fill=style.color})}
+        text_span(ctx,f.text[hi if hi>lo else caret:])
+        if f.text=="" && f.placeholder!="" {
+            if editing && !f.multiline {text_put(ctx,{width=2})}
+            text_span(ctx,f.placeholder,{font=style.font,size=style.size,color=f.faint})
+        }
+        if editing {text_end(ctx,{width=GROW if f.multiline else FIT})} else {text_end(ctx,{width=GROW,height=GROW},area)}
     }
-    return paint_add(ctx,paint)
+    if editing {box_end(ctx,scroller)}
+    if f.unit!="" {text(ctx,f.unit,{size=FIELD_UNIT,color=tone(ctx,"text_faint") if f.style.color==tone(ctx,"text_faint") else tone(ctx,"text_muted"),align_y=.Center},FIT,GROW)}
 }
 
 Text_Field :: struct {
@@ -373,7 +595,6 @@ Text_Field :: struct {
     padding:f32,         // units between its sides and its text; 0: those of the editor
     limit:int,           // bytes it takes; 0: as many as the buffer holds
     adjusts:bool,        // left and right are the caller's while it has the focus and is not typed
-    open:bool,           // its element stays open for what the caller builds in it, who closes it when result.open
 }
 Text_Result :: struct {
     editing:bool,
@@ -382,18 +603,16 @@ Text_Result :: struct {
     committed:bool, // Enter, Tab or a click elsewhere ended the edit
     cancelled:bool, // Escape ended it; the buffer keeps what it had
     tab:int,        // 1 or -1 when Tab or Shift+Tab ended it
-    open:bool,      // Text_Field.open: its element is open
 }
 
 // A field that edits the text in buffer[:length^].
 text_field :: proc(ctx:^Context,id:Id,buffer:[]u8,length:^int,field:Text_Field={}) -> (result:Text_Result) {
     field:=field
     field.disabled|=ctx.disabled_depth>0
-    th:=&ctx.theme
     e:=&ctx.edit
     look:=field.style
     if field.disabled && e.id==id && id!=0 {e^={};result.cancelled=true}
-    size:=field.size if field.size>0 else th.font_small
+    size:=field.size if field.size>0 else metric(ctx,"font_small")
     font:=field.font
     if look!=nil {
         if look.text.size>0 {size=look.text.size}
@@ -405,7 +624,7 @@ text_field :: proc(ctx:^Context,id:Id,buffer:[]u8,length:^int,field:Text_Field={
     if it.hot && !field.disabled {ctx.cursor=.Text}
     if e.id==id && id!=0 {
         e.newline=field.enter_inserts
-        event,tab:=field_edit_update(ctx,id,it,size,field.label,marked=field.strip[3]>0,pad=field.padding,font=font,icon=field.icon)
+        event,tab:=field_edit_update(ctx,id,it,size,font=font)
         switch event {
         case .None:
         case .Changed:
@@ -428,39 +647,34 @@ text_field :: proc(ctx:^Context,id:Id,buffer:[]u8,length:^int,field:Text_Field={
         e.font=font
         // The press that starts a field of a game places its caret.
         if look!=nil && it.pressed {
-            if rect,found:=widget_rect(ctx,id);found {text_edit_press(ctx,e,size,field_text_area(ctx,rect,field.label,size,field.multiline,field.strip[3]>0,field.padding,field.icon))}
+            if area,found:=widget_rect(ctx,field_area(ctx,id));found {text_edit_press(ctx,e,size,area)}
         }
         result.began=true
     }
     result.editing=e.id==id && id!=0
-    paint:=field_paint(ctx,id,it,string(buffer[:length^]),size,field.label,field.strip,field.placeholder,false,field.disabled,field.icon)
+    f:=field_look(ctx,text_edit_value(e) if result.editing else string(buffer[:length^]),size,font,field.disabled)
+    f.placeholder,f.label,f.icon,f.multiline=field.placeholder,field.label,field.icon,field.multiline
+    if field.password {
+        masked:=text_reserve(ctx,len(f.text))
+        for &c in masked {c='*'}
+        f.text=text_commit(ctx,string(masked))
+    }
+    if !field.disabled && field.color[3]>0 {f.style.color=field.color}
+    paint:=field_paint(ctx,id,it,false,field.disabled,field.strip)
     if paint!=nil {
-        paint.multiline=field.multiline
-        paint.style.font=font
-        paint.padding=field.padding
-        paint.scroll_y=e.scroll_y if result.editing else 0
-        if field.password {
-            masked:=text_reserve(ctx,len(paint.text))
-            for &c in masked {c='*'}
-            paint.text=text_commit(ctx,string(masked))
-        }
-        if !field.disabled && field.color[3]>0 {paint.text_color=field.color}
         if field.bare {paint.fill={};paint.stroke={}}
-        if field.inline && !result.editing {paint.fill={};paint.stroke=th.border if it.hot && !field.disabled else {}}
-        if look!=nil {field_paint_look(paint,look)}
+        if field.inline && !result.editing {paint.fill={};paint.stroke=tone(ctx,"border") if it.hot && !field.disabled else {}}
+        if look!=nil {field_paint_look(paint,&f,look)}
     }
     height:=field.height
     if height<=0 {
         line:=size*TEXT_LINE
         if look!=nil {
             height=f32(max(field.rows,1))*line+2*field.padding if field.multiline else line+2*field.padding
-        } else {height=f32(max(field.rows,1))*line+10 if field.multiline else th.row}
+        } else {height=f32(max(field.rows,1))*line+10 if field.multiline else metric(ctx,"row")}
     }
-    element:=Element{id=id,layout={width=(field.width if field.width!={} else GROW),height=fixed(height)},custom=paint}
-    if field.open {
-        element.layout.direction,element.layout.align_y=.Row,.Center
-        result.open=element_open(ctx,element)
-    } else {element_leaf(ctx,element)}
+    if element_open(ctx,{id=id,layout={width=(field.width if field.width!={} else GROW),height=fixed(height),padding=field_padding(&f,field.padding,field.strip[3]>0),gap=4 if field.icon!=.None else 6,align_y=.Center},custom=paint}) {field_content(ctx,id,f)}
+    element_close(ctx)
     return
 }
 

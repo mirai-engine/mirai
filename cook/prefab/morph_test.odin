@@ -22,9 +22,9 @@ morph_prefabs_keep_the_weights_a_node_sets_apart_from_its_mesh :: proc(t:^testin
     assets:=importer.Import_Report{mesh_ids=ids[:],animation_id={3,4}}
     folder:=base.test_folder(t,"morph-prefab")
     if folder=="" {return}
-    file:=fmt.tprintf("%s/morph-prefab.prefab",folder)
+    file:=fmt.tprintf("%s/morph-prefab.scene",folder)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    _,error:=model_prefab(&model,&assets,&types,{31,32},"Faces",file)
+    _,error:=model_prefab(&model,&assets,&types,import_world(t),{31,32},"Faces",file)
     if !testing.expect_value(t,error,Error.None) {return}
     scene:asset.Scene
     if !testing.expect_value(t,asset.scene_load(&scene,&types,file),asset.Error.None) {return}

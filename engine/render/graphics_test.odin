@@ -55,21 +55,21 @@ graphics_default_without_a_device_is_the_high_preset :: proc(t:^testing.T) {
 }
 
 @(test)
-a_scale_set_by_hand_is_used_as_it_is_and_zero_follows_the_target_of_the_preset :: proc(t:^testing.T) {
+the_resolution_of_the_settings_is_the_target_of_lines_of_the_renderer :: proc(t:^testing.T) {
     g:=GRAPHICS_SETTINGS_DEFAULT
     settings:=gpu.DEFAULT_SETTINGS
-    settings.render_scale=0.5
+    settings.resolution=360
     s:=graphics_render_settings(settings,g,{type=.Discrete})
-    testing.expect(t,s.render_scale==1 && s.render_height==1080)
-    g.render_scale=0.5
+    testing.expect_value(t,s.resolution,u32(1080))
+    g.resolution=720
     s=graphics_render_settings(settings,g,{type=.Discrete})
-    testing.expect(t,s.render_scale==0.5 && s.render_height==0)
+    testing.expect_value(t,s.resolution,u32(720))
     testing.expect(t,s.sun_shadows)
     g.sun_shadows=false
     testing.expect(t,!graphics_render_settings(settings,g,{type=.Discrete}).sun_shadows)
     presets:=GRAPHICS_PRESETS
     for preset in Graphics_Quality {
-        if preset>.Low && preset!=.Custom {testing.expect(t,presets[preset].preset_height>=presets[Graphics_Quality(int(preset)-1)].preset_height)}
+        if preset>.Low && preset!=.Custom {testing.expect(t,presets[preset].resolution>=presets[Graphics_Quality(int(preset)-1)].resolution)}
     }
 }
 
@@ -78,19 +78,29 @@ a_preset_named_moves_the_fields_and_what_they_are_at_is_computed :: proc(t:^test
     presets:=GRAPHICS_PRESETS
     g:=GRAPHICS_SETTINGS_DEFAULT
     testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.High)
-    // A preset named over a scale set by hand: it follows the target of the preset again.
-    g.render_scale=0.5
+    // A preset named over a resolution set by hand: it takes the target of the preset again.
+    g.resolution=600
     testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Custom)
     graphics_preset_apply(&g,.Low)
-    testing.expect(t,g.render_scale==0 && g.preset_height==presets[.Low].preset_height && g.reflections==.Off)
+    testing.expect(t,g.resolution==presets[.Low].resolution && g.light_samples==presets[.Low].light_samples)
     testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Low)
     // A field changed by hand leaves the others where the preset put them.
-    g.reflections=.Traced
-    testing.expect(t,g.preset_height==presets[.Low].preset_height)
+    g.light_samples=31
+    testing.expect(t,g.resolution==presets[.Low].resolution)
     testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Custom)
     // Naming the preset again reaches it.
     graphics_preset_apply(&g,.Low)
-    testing.expect(t,g.reflections==.Off)
+    testing.expect(t,g.light_samples==presets[.Low].light_samples)
+    // Traced reflections are off unless chosen, and no preset changes them.
+    // expect_value, not ==: constant_field_compare of docs/ODIN_WORKAROUNDS.md.
+    testing.expect_value(t,GRAPHICS_SETTINGS_DEFAULT.reflections,gpu.Reflections.Off)
+    testing.expect_value(t,gpu.DEFAULT_SETTINGS.reflections,gpu.Reflections.Off)
+    g.reflections=.Detailed
+    for preset in Graphics_Quality {
+        at:=g
+        graphics_preset_apply(&at,preset)
+        testing.expectf(t,at.reflections==.Detailed,"%v changed the reflections",preset)
+    }
     // What is not of the quality counts for none.
     g.frame_limit,g.vsync,g.show_fps,g.antialiasing=0,false,false,{}
     testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Low)
@@ -113,7 +123,7 @@ applying_the_graphics_settings_writes_none_of_them :: proc(t:^testing.T) {
     low:=GRAPHICS_SETTINGS_DEFAULT
     graphics_preset_apply(&low,.Low)
     scaled:=low
-    scaled.render_scale=0.5
+    scaled.resolution=540
     for wanted in ([]Graphics_Settings{GRAPHICS_SETTINGS_DEFAULT,own,low,scaled}) {
         g:=wanted
         graphics_apply({&g},sync,app)
@@ -179,9 +189,8 @@ a_preset_keeps_a_pixel_per_point_within_the_lines_of_its_target :: proc(t:^testi
     presets:=GRAPHICS_PRESETS
     // At the window of the render check the presets it runs draw every pixel, as before.
     for preset in ([]Graphics_Quality{.Medium,.High,.Ultra}) {
-        testing.expect_value(t,gpu.views_render_scale(1,presets[preset].preset_height,900,1),f32(1))
+        testing.expect_value(t,gpu.views_render_scale(presets[preset].resolution,900,1),f32(1))
     }
-    testing.expect_value(t,gpu.views_render_scale(1,presets[.Low].preset_height,900,1),f32(0.8))
-    testing.expect_value(t,gpu.views_render_scale(1,presets[.High].preset_height,2160,1),f32(0.5))
-    testing.expect_value(t,gpu.views_render_scale(0.5,0,2160,1),f32(0.5))
+    testing.expect_value(t,gpu.views_render_scale(presets[.Low].resolution,900,1),f32(0.8))
+    testing.expect_value(t,gpu.views_render_scale(presets[.High].resolution,2160,1),f32(0.5))
 }

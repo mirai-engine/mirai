@@ -50,7 +50,6 @@ Batch_Desc :: struct {
 	cull_distance:  f32,  // metres from the eye where they are gone; 0: never
 	vertex:         Vec4, // the four numbers the vertex hook of the shaders reads of it (wind)
 	reach:          f32,  // metres the vertex hook moves a point of an instance at most: the boxes the views cull its instances by grow by it
-	values:         Vec4, // the four numbers of extensions (instance_values)
 	object_id:      u64,  // what its instances give as object id
 }
 
@@ -115,7 +114,7 @@ Batch_State :: struct {
 	free:            [dynamic]u32,
 	drawn:           [dynamic]u32,               // the record of each batch drawn
 	rows:            [dynamic]Gpu_Instance,      // the row of each, after the instances of the instance table
-	boxes:           [dynamic]Bvh_Item,          // its box
+	boxes:           [dynamic]mm.Aabb,           // its box
 	traced:          [dynamic]u32,               // the batches drawn that rays meet with a tree, an item of the software TLAS each
 	hw:              [dynamic]Batch_Hw,          // the batches drawn that rays meet, whose instances a native TLAS holds
 	hw_count:        int,                        // those instances
@@ -151,7 +150,7 @@ batches_init :: proc(r: ^Renderer) {
 	b.free = make([dynamic]u32, a)
 	b.drawn = make([dynamic]u32, a)
 	b.rows = make([dynamic]Gpu_Instance, a)
-	b.boxes = make([dynamic]Bvh_Item, a)
+	b.boxes = make([dynamic]mm.Aabb, a)
 	b.traced = make([dynamic]u32, a)
 	b.hw = make([dynamic]Batch_Hw, a)
 	b.reflective = make([dynamic]Reflective_Instance, a)
@@ -238,14 +237,14 @@ batch_tree_build :: proc(r: ^Renderer, record: ^Batch_Record) {
 	s := &r.scene
 	if record.count == 0 || record.tree_nodes > 0 || batch_classes(record.desc.flags, false) == 0 {return}
 	mesh := s.meshes[record.desc.mesh]
-	items, items_error := make([]Bvh_Item, record.count, r.allocator)
+	items, items_error := make([]mm.Aabb, record.count, r.allocator)
 	if items_error != nil {set_error(r, "batch tree of %d instances: out of memory", record.count);return}
 	defer delete(items, r.allocator)
 	for &item, k in items {
 		words := s.indices[record.words + u32(k) * BATCH_WORDS:][:BATCH_WORDS]
 		instance := transmute(Batch_Instance)[BATCH_WORDS]u32{words[0], words[1], words[2], words[3], words[4]}
 		a, z := rows_bounds(batch_instance_rows(instance), mesh.bounds_min, mesh.bounds_max)
-		item = {bounds_min = a, bounds_max = z, center = (a + z) * 0.5}
+		item = {a, z}
 	}
 	nodes := make([dynamic]Gpu_Bvh_Node, 0, 0, r.allocator)
 	order := make([dynamic]u32, 0, 0, r.allocator)
@@ -304,7 +303,6 @@ batch_set :: proc(r: ^Renderer, handle: Batch_Handle, world: u64, desc: Batch_De
 	}
 	for value in desc.vertex {if !finite(value) {return handle, "batch_set: a number of Batch_Desc.vertex is not finite"}}
 	if !finite(desc.reach) || desc.reach < 0 {return handle, "batch_set: Batch_Desc.reach is negative or not finite; give the metres the vertex hook moves a point at most, or 0"}
-	for value in desc.values {if !finite(value) {return handle, "batch_set: a number of Batch_Desc.values is not finite"}}
 	for instance, i in instances {
 		_, across, along := batch_instance_unpack(instance)
 		if !finite(instance.position.x) || !finite(instance.position.y) || !finite(instance.position.z) {
@@ -483,13 +481,13 @@ batches_build :: proc(r: ^Renderer) {
 			world_inv = {desc.vertex, {offset.x, offset.y, offset.z, desc.reach}, {}},
 			// Rays meet the instances of a batch in the cut its mesh always has.
 			meta = {u32(desc.mesh) | (u32(ray_cut_always(s.meshes[desc.mesh])) << INSTANCE_RAY_SHIFT if int(desc.mesh) < len(s.meshes) else 0), material, u32(desc.object_id), flags},
-			bounds_min = {low.x, low.y, low.z, desc.values.z},
-			bounds_max = {high.x, high.y, high.z, desc.values.w},
-			tint = {desc.tint.x, desc.tint.y, desc.tint.z, desc.values.x},
-			emission = {0, 0, 0, desc.values.y},
+			bounds_min = {low.x, low.y, low.z, 0},
+			bounds_max = {high.x, high.y, high.z, 0},
+			tint = {desc.tint.x, desc.tint.y, desc.tint.z, 0},
+			emission = {0, 0, 0, 0},
 			slot_materials = slots,
 		})
-		append(&b.boxes, Bvh_Item{bounds_min = low, bounds_max = high, center = (low + high) * 0.5})
+		append(&b.boxes, mm.Aabb{low, high})
 		b.bounds_min, b.bounds_max = linalg.min(b.bounds_min, low), linalg.max(b.bounds_max, high)
 		if reflectance && !glass && layers != 0 {append(&b.reflective, Reflective_Instance{drawn, layered})}
 		for _ in 0 ..< groups {append(&s.indices, drawn)}
@@ -526,7 +524,7 @@ bits :: #force_inline proc "contextless" (v: u32) -> f32 {return transmute(f32)v
 
 // The box of a reference of the software TLAS: an instance, or past them a batch drawn.
 @(private)
-tlas_item :: proc "contextless" (s: ^Scene_State, ref: u32) -> ^Bvh_Item {
+tlas_item :: proc "contextless" (s: ^Scene_State, ref: u32) -> ^mm.Aabb {
 	index := int(ref &~ TLAS_REF_GLASS)
 	if index < len(s.tlas_items) {return &s.tlas_items[index]}
 	return &s.batch.boxes[index - len(s.instances)]
@@ -600,32 +598,9 @@ tlas_instances_record :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> int {
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.tlas_instance_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_INDICES, s.index_buffer)
 	set_params(cmd, &params)
-	rhi.cmd_barrier_buffer(cmd, s.index_buffer, .Shader_Read)
-	rhi.cmd_barrier_buffer(cmd, s.tlas_instance_buffer, .Shader_Write)
 	batch_groups := groups(u32(s.batch.hw_count), 64)
 	rhi.cmd_dispatch(cmd, min(batch_groups, rhi.TLAS_DISPATCH_X), (batch_groups + rhi.TLAS_DISPATCH_X - 1) / rhi.TLAS_DISPATCH_X)
 	return total
-}
-
-// Gives a batch the four numbers of extensions (Batch_Desc.values, what
-// instance_values reads), as an extension that is not its owner gives them:
-// its row changes in place, without building the tables again, and it
-// keeps them until it is set again. False for a handle that names no batch
-// or a value that is not finite.
-batch_values_set :: proc(r: ^Renderer, handle: Batch_Handle, values: Vec4) -> bool {
-	s := &r.scene
-	index, ok := batch_index(s, handle)
-	if !ok {return false}
-	for value in values {if value - value != 0 {return false}}
-	record := &s.batch.records[index]
-	if record.desc.values == values {return true}
-	record.desc.values = values
-	if s.batch.built && record.drawn >= 0 && int(record.drawn) < len(s.batch.rows) {
-		row := &s.batch.rows[record.drawn]
-		row.tint.w, row.emission.w, row.bounds_min.w, row.bounds_max.w = values.x, values.y, values.z, values.w
-		s.batch.upload = true
-	}
-	return true
 }
 
 // What a batch is, as whoever goes through the batches reads it.
@@ -633,7 +608,6 @@ Batch_Info :: struct {
 	handle:    Batch_Handle,
 	world:     u64,
 	object_id: u64,
-	values:    Vec4,
 	mesh:      Mesh_Handle,
 	count:     int,
 }
@@ -644,7 +618,7 @@ batch_info :: proc(r: ^Renderer, index: int) -> (info: Batch_Info, ok: bool) {
 	records := r.scene.batch.records[:]
 	if index < 0 || index >= len(records) || !records[index].used {return}
 	record := &records[index]
-	return {handle = Batch_Handle(u64(record.generation) << 32 | u64(index + 1)), world = record.world, object_id = record.desc.object_id, values = record.desc.values, mesh = record.desc.mesh, count = int(record.count)}, true
+	return {handle = Batch_Handle(u64(record.generation) << 32 | u64(index + 1)), world = record.world, object_id = record.desc.object_id, mesh = record.desc.mesh, count = int(record.count)}, true
 }
 
 batch_records :: proc(r: ^Renderer) -> int {return len(r.scene.batch.records)}

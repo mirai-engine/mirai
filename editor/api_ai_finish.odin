@@ -21,7 +21,7 @@ Api_Ai_Finish_Result :: struct {accepted:bool}
 
 @(private)
 api_ai_finish_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="finish",flags={.Core,.Turn},summary="Call exactly once when the current task is complete: it is the only tool that writes the answer of the agent to the chat. The editor knows the turn by the MCP server of the agent. The task stays running until its ACP turn ends.",params=Api_Ai_Finish_Params,result=Api_Ai_Finish_Result,run=api_ai_finish})
+    api_register(s,st,{name="finish",flags={.Core,.Turn,.View},summary="Call exactly once when the current task is complete: it is the only tool that writes the answer of the agent to the chat. The editor knows the turn by the MCP server of the agent. The task stays running until its ACP turn ends.",params=type_info_of(Api_Ai_Finish_Params),result=type_info_of(Api_Ai_Finish_Result),run=api_ai_finish})
 }
 
 @(private)

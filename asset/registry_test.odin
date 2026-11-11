@@ -37,7 +37,7 @@ registry_scans_headers_and_answers_by_id_path_and_dependency :: proc(t:^testing.
     write_material(t,&types,fmt.tprintf("%s/materials/copy.mat",root),{3,3},wood)
     write_material(t,&types,fmt.tprintf("%s/.mirai/hidden.mat",root),{6,6},wood)
     write_material(t,&types,fmt.tprintf("%s/materials/staging.mat.123.tmp",root),{7,7},wood)
-    scene:Scene;scene_init(&scene,&types,KIND_SCENE,{8,8})
+    scene:Scene;scene_init(&scene,&types,{8,8})
     scene_entity_add(&scene,1,0,"wall")
     mesh:=Test_Mesh{material={4,4}}
     scene_set(&scene,1,"Mesh",&mesh)
@@ -538,6 +538,8 @@ registry_mounts_a_guest_folder_that_never_takes_an_id_the_registry_has :: proc(t
         testing.expect_value(t,registry_refresh(&r,{"user/levels/late.tex","user/levels/fake.tex"}),Error.None)
         _,seen:=registry_find(&r,late)
         testing.expect(t,seen && len(r.refused)==1)
+        testing.expect_value(t,registry_refresh(&r,r.refused[:]),Error.None)
+        testing.expectf(t,len(r.refused)==1 && r.refused[0]=="user/levels/fake.tex","%v: the refused paths themselves are refused again, not %q",mode,r.refused[:])
         if mode==.Scanned {
             testing.expect_value(t,registry_scan(&r),Error.None)
             _,kept:=registry_find(&r,own)
@@ -552,5 +554,73 @@ registry_mounts_a_guest_folder_that_never_takes_an_id_the_registry_has :: proc(t
         testing.expect(t,!gone && !gone_late && still && len(r.refused)==0 && len(r.mounts)==0 && r.revision>revision)
         testing.expect_value(t,registry_unmount(&r,"user"),Error.Not_Found)
         os.remove(fmt.tprintf("%s/levels/late.tex",guest))
+    }
+}
+
+// What the imports of the sources of a folder build that nobody edits is in
+// the imported folder that goes with it, each file named by its id and the
+// key of what it was built from, and is listed where the sidecar that lists it
+// is now, in the folder it names: never by the order of a scan. A sidecar
+// that moves with its source moves the listing, also through a refresh; one
+// whose source is gone lists nothing.
+@(test)
+registry_lists_the_imported_folder_by_where_the_sources_are :: proc(t:^testing.T) {
+    types:Types;types_init(&types);defer types_destroy(&types)
+    folder:=base.test_folder(t,"registry-imported")
+    if folder=="" {return}
+    root:=fmt.tprintf("%s/game/assets",folder)
+    imported:=fmt.tprintf("%s/game/.mirai/imported",folder)
+    plugin:=fmt.tprintf("%s/pack/assets",folder)
+    plugin_imported:=fmt.tprintf("%s/pack/.mirai/imported",folder)
+    for made in ([]string{fmt.tprintf("%s/props/crate",root),fmt.tprintf("%s/kit",root),imported,plugin,plugin_imported}) {os.make_directory_all(made)}
+    wood,body,lid,second,atlas,lost,unbuilt,other:=base.Asset_Id{1,1},base.Asset_Id{2,2},base.Asset_Id{3,3},base.Asset_Id{10,10},base.Asset_Id{5,5},base.Asset_Id{6,6},base.Asset_Id{7,7},base.Asset_Id{9,9}
+    pixels:[16]u8
+    sidecar :: proc(t:^testing.T,source,folder:string,present:bool,outputs:[]Import_Output) {
+        listed:=make([dynamic]Import_Output,context.temp_allocator)
+        append(&listed,..outputs)
+        text:=sidecar_text(`{"lods": "None"}`,{folder=folder,outputs=listed},context.temp_allocator)
+        testing.expect_value(t,serial.file_write_atomic(fmt.tprintf("%s%s",source,SIDECAR_EXTENSION),transmute([]u8)text),serial.File_Error.None)
+        if present {testing.expect_value(t,serial.file_write_atomic(source,transmute([]u8)string("a source")),serial.File_Error.None)}
+    }
+    sidecar(t,fmt.tprintf("%s/props/wood.png",root),"",true,{{kind=KIND_TEXTURE,name="wood",id=wood}})
+    sidecar(t,fmt.tprintf("%s/props/crate.glb",root),"crate",true,{{kind=KIND_SCENE,name="crate",id={8,8}},{kind=KIND_TEXTURE,name="body",id=body,part=true},{kind=KIND_TEXTURE,name="lid",id=lid},{kind=KIND_TEXTURE,name="lid",index=1,id=second},{kind=KIND_TEXTURE,name="later",id=unbuilt}})
+    sidecar(t,fmt.tprintf("%s/props/crate.obj",root),"crate",true,{{kind=KIND_TEXTURE,name="body",id=other}})
+    sidecar(t,fmt.tprintf("%s/props/gone.png",root),"",false,{{kind=KIND_TEXTURE,name="gone",id=lost}})
+    sidecar(t,fmt.tprintf("%s/atlas.png",plugin),"",true,{{kind=KIND_TEXTURE,name="atlas",id=atlas}})
+    Built :: struct {imported:string,id:base.Asset_Id,key:u64,listed:string}
+    built:=[]Built{
+        {imported,wood,0x11,"props/wood.tex"},{imported,body,0x22,"props/crate/body (crate.glb).tex"},{imported,lid,0x22,"props/crate/lid.tex"},
+        {imported,second,0x22,"props/crate/lid (1).tex"},{imported,other,0x55,"props/crate/body (crate.obj).tex"},{plugin_imported,atlas,0x33,"plugins/pack/atlas.tex"},{imported,lost,0x44,""},
+    }
+    for b in built {testing.expect_value(t,texture_save(imported_file(b.imported,b.id,b.key,".tex",context.temp_allocator),&types,{id=b.id,width=2,height=2,format=.RGBA8,mips={pixels[:]}}),Error.None)}
+    write_material(t,&types,fmt.tprintf("%s/props/crate/Wood.mat",root),{4,4},wood)
+
+    cache:=fmt.tprintf("%s/registry.cache",folder)
+    for pass in 0..<2 {
+        r:Registry;registry_init(&r,root,cache,imported=imported);defer registry_destroy(&r)
+        testing.expect(t,registry_mount(&r,plugin,"plugins/pack",plugin_imported))
+        testing.expect_value(t,registry_scan(&r),Error.None)
+        testing.expectf(t,pass==0 || r.stats.opened==0,"the second scan reads its cache: %v",r.stats)
+        for b in built {
+            file,found:=registry_find(&r,b.id)
+            if b.listed=="" {
+                testing.expect(t,!found,"what a source that is gone gave is not listed")
+                continue
+            }
+            if !testing.expectf(t,found && file.path==b.listed && file.imported==b.key,"%v is listed at %s, not %s",b.id,b.listed,file.path) {continue}
+            testing.expect_value(t,registry_file_path(&r,file.path,context.temp_allocator),imported_file(b.imported,b.id,b.key,".tex",context.temp_allocator))
+        }
+        _,pending:=registry_find(&r,unbuilt)
+        missing:=make([dynamic]Registry_Missing,context.temp_allocator)
+        registry_missing(&r,&missing)
+        testing.expect(t,!pending && len(missing)==0,"an output that is not built is not listed, and one in the imported folder is not missing")
+        if pass==0 {continue}
+        // The source moves with its sidecar: its assets are listed there once the editor refreshes what moved, as they are.
+        for end in ([2]string{"",SIDECAR_EXTENSION}) {testing.expect(t,os.rename(fmt.tprintf("%s/props/crate.glb%s",root,end),fmt.tprintf("%s/kit/box.glb%s",root,end))==nil)}
+        testing.expect_value(t,registry_refresh(&r,{"props/crate.glb","kit/box.glb"+SIDECAR_EXTENSION}),Error.None)
+        moved,again:=registry_find(&r,body)
+        testing.expect(t,again && moved.path=="kit/crate/body.tex" && moved.imported==0x22,"the asset is listed where its source is, with its id and its file")
+        alone,listed:=registry_find(&r,other)
+        testing.expect(t,listed && alone.path=="props/crate/body.tex","a path no other output has takes no source name")
     }
 }

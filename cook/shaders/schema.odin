@@ -1,7 +1,9 @@
 package shaders
 
 import "core:fmt"
+import "core:math"
 import "core:reflect"
+import "core:strconv"
 import "core:strings"
 import "mirai:asset"
 import "mirai:render/abi"
@@ -105,6 +107,12 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"AIR_TRANSMITTANCE_TEXTURE",abi.AIR_TRANSMITTANCE_TEXTURE)
     u(&b,"AIR_SCATTERING_TEXTURE",abi.AIR_SCATTERING_TEXTURE)
     u(&b,"AIR_SKY_TEXTURE",abi.AIR_SKY_TEXTURE)
+    u(&b,"TEXTURE_FEEDBACK_FIRST",abi.TEXTURE_FEEDBACK_FIRST)
+    i(&b,"TEXTURE_FEEDBACK_SLOT",abi.TEXTURE_FEEDBACK_SLOT)
+    f(&b,"TEXTURE_FEEDBACK_LOW",abi.TEXTURE_FEEDBACK_LOW)
+    f(&b,"TEXTURE_FEEDBACK_STEPS",abi.TEXTURE_FEEDBACK_STEPS)
+    u(&b,"TEXTURE_FEEDBACK_CODES",abi.TEXTURE_FEEDBACK_CODES)
+    f(&b,"MATERIAL_ANISOTROPY",abi.MATERIAL_ANISOTROPY)
 
     i(&b,"NESTED_VIEW_CAPACITY",abi.NESTED_VIEW_CAPACITY)
     i(&b,"VOLUME_CASCADES_MAX",abi.VOLUME_CASCADES_MAX)
@@ -116,7 +124,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"MOVED_LIGHTS_ALL",abi.MOVED_LIGHTS_ALL)
     f(&b,"ORIGIN_STEP",abi.ORIGIN_STEP)
     u(&b,"FRAME_FLAG_GI",abi.FRAME_FLAG_GI)
-    u(&b,"FRAME_FLAG_GI_REFERENCE",abi.FRAME_FLAG_GI_REFERENCE)
+    u(&b,"FRAME_FLAG_GI_GIVEN",abi.FRAME_FLAG_GI_GIVEN)
     u(&b,"FRAME_FLAG_HW_RT",abi.FRAME_FLAG_HW_RT)
     u(&b,"FRAME_FLAG_STUDIO",abi.FRAME_FLAG_STUDIO)
     u(&b,"FRAME_FLAG_GRID",abi.FRAME_FLAG_GRID)
@@ -188,8 +196,6 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"SHADOW_SPOT_FACE",abi.SHADOW_SPOT_FACE)
     u(&b,"SHADOW_MAP_ORTHOGRAPHIC",abi.SHADOW_MAP_ORTHOGRAPHIC)
     i(&b,"SUN_MAP_ROWS",abi.SUN_MAP_ROWS)
-    u(&b,"SHADOW_ENTRIES",abi.SHADOW_ENTRIES)
-    u(&b,"SHADOW_TESTED_ENTRIES",abi.SHADOW_TESTED_ENTRIES)
     u(&b,"CONTACT_RAYS",abi.CONTACT_RAYS)
     f(&b,"SHARED_RAY_ROUGHNESS",abi.REFLECTION_SHARED_ROUGHNESS)
     i(&b,"DISTANCE_TILE",abi.DISTANCE_TILE)
@@ -209,6 +215,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     i(&b,"DEPTH_PROBE_CELLS",abi.DEPTH_PROBE_CELLS)
     f(&b,"DEPTH_PROBE_CELL",abi.DEPTH_PROBE_CELL)
     i(&b,"WIND_VOLUMES",abi.WIND_VOLUMES)
+    i(&b,"VOLUME_OUTLINE_POINTS",abi.VOLUME_OUTLINE_POINTS)
 
     u(&b,"POINTS_CAPACITY",abi.POINTS_CAPACITY)
     u(&b,"POINTS_PROGRAMS",abi.POINTS_PROGRAMS)
@@ -233,6 +240,11 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"PROGRAMS_DISPATCH",abi.PROGRAMS_DISPATCH)
     u(&b,"PROGRAMS_HEADER",abi.PROGRAMS_HEADER)
     u(&b,"PROGRAM_PARAMETER_BYTES",abi.PROGRAM_PARAMETER_BYTES)
+    u(&b,"INSTANCE_VALUES_MAX",abi.INSTANCE_VALUES_MAX)
+    u(&b,"INSTANCE_VALUES_HEADER",abi.INSTANCE_VALUES_HEADER)
+    u(&b,"INSTANCE_ROW_WORDS",abi.INSTANCE_ROW_WORDS)
+    u(&b,"MATERIAL_WORDS",abi.MATERIAL_WORDS)
+    u(&b,"MATERIAL_BLOCK_WORDS",abi.MATERIAL_BLOCK_WORDS)
     for name,value in reflect.enum_field_names(abi.Debug_View) {u(&b,strings.concatenate({"DEBUG_",strings.to_upper(name,context.temp_allocator)},context.temp_allocator),u32(value))}
     strings.write_string(&b,"#endif\n")
     return strings.to_string(b)
@@ -251,4 +263,51 @@ number :: proc(value:f32) -> string {
     b:=strings.builder_make(context.temp_allocator)
     float_text(&b,f64(value),32)
     return strings.to_string(b)
+}
+
+// The shortest decimal that reads back as the same float of `bits` bits:
+// "0.5", "100.0", "1e+20", "1e-05". Exponents below -4 or from 16 use
+// scientific notation.
+@(private)
+float_text :: proc(builder:^strings.Builder,value:f64,bits:=64) {
+    if math.is_nan(value) {strings.write_string(builder,"NaN");return}
+    if math.is_inf(value) {strings.write_string(builder,"-Infinity" if value<0 else "Infinity");return}
+    if value==0 {strings.write_string(builder,"-0.0" if math.sign_bit(value) else "0.0");return}
+    buffer:[64]u8
+    // "+d.ddddde+XX": the shortest digits, one of them before the point.
+    scientific:=string(strconv.generic_ftoa(buffer[:],value,'e',-1,bits,{.Plus}))
+    negative:=scientific[0]=='-'
+    scientific=scientific[1:]
+    at:=strings.index_byte(scientific,'e')
+    exponent,_:=strconv.parse_int(scientific[at+1:],10)
+    digits_buffer:[32]u8
+    count:=0
+    for c in transmute([]u8)scientific[:at] {
+        if c!='.' {digits_buffer[count]=c;count+=1}
+    }
+    for count>1 && digits_buffer[count-1]=='0' {count-=1}
+    digits:=string(digits_buffer[:count])
+    if negative {strings.write_byte(builder,'-')}
+    switch {
+    case exponent< -4 || exponent>=16:
+        strings.write_string(builder,digits[:1])
+        if count>1 {strings.write_byte(builder,'.');strings.write_string(builder,digits[1:])}
+        strings.write_byte(builder,'e')
+        strings.write_byte(builder,'-' if exponent<0 else '+')
+        magnitude:=abs(exponent)
+        if magnitude<10 {strings.write_byte(builder,'0')}
+        strings.write_int(builder,magnitude)
+    case exponent<0:
+        strings.write_string(builder,"0.")
+        for _ in 0..<(-exponent-1) {strings.write_byte(builder,'0')}
+        strings.write_string(builder,digits)
+    case count<=exponent+1:
+        strings.write_string(builder,digits)
+        for _ in 0..<(exponent+1-count) {strings.write_byte(builder,'0')}
+        strings.write_string(builder,".0")
+    case:
+        strings.write_string(builder,digits[:exponent+1])
+        strings.write_byte(builder,'.')
+        strings.write_string(builder,digits[exponent+1:])
+    }
 }

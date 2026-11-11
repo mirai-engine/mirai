@@ -17,7 +17,7 @@ and extend them with [ui.write](ui/writing-ui.md); do not write another menu sys
 
 - Restyle the menus, add a page, a button or an option, apply and save settings:
   [menus-settings.md](ui/menus-settings.md).
-- A HUD, a counter or bar, a sign in the world, a panel on a mesh:
+- A HUD, a counter or bar, a sign in the world, a panel on a mesh, a minimap drawn by code:
   [hud-panels.md](ui/hud-panels.md).
 - Named styles, tokens, states, widgets and animations: [styles.md](ui/styles.md).
 - Write a `.ui` (ui.write): [writing-ui.md](ui/writing-ui.md); translate: [texts.md](ui/texts.md).
@@ -27,7 +27,7 @@ and extend them with [ui.write](ui/writing-ui.md); do not write another menu sys
 ## Screens
 
 A screen is an entity with a `UI_Screen`; its `.ui` binds paths to components of that entity or
-to storages (`Status.message`, `Shell.page`).
+to storages. No step draws widgets: code draws a [`Draw` node](ui/hud-panels.md#custom-drawing).
 
 ```odin
 hud:=gui.UI_Screen{asset=hud_id}                              // Passive: draws, takes no input
@@ -44,25 +44,24 @@ menu:=gui.UI_Screen{asset=shell_id,order=10,input=.Modal}     // over the HUD, f
 
 ## Events
 
-A frame step reads what the widgets asked, once each, also while the clock is stopped:
+A fixed or a frame step reads what the widgets asked in `gui.UI_Events`, once each:
 
 ```odin
 @(step="frame")
-menu_frame :: proc(g:^gui.Gui, screens:core.Read(Menu_Screen), options:^Menu_Options) {
-    screen:=core.entity_at(screens,0)
-    events:=gui.events_this_frame(g)
-    if gui.clicked(events,screen,"menu_play") {start_game()}
-    if value,ok:=gui.changed_value(events,screen,"difficulty");ok {options.difficulty=i32(value)}
+menu_frame :: proc(ui:core.Ref(gui.UI_Events),menus:^core.Table(Menu_Screen,.Read),opts:^Options) {
+    screen:=core.entity_at(menus,0)
+    if gui.clicked(ui.ptr,screen,"menu_play") {start_game()}
+    if value,ok:=gui.changed_value(ui.ptr,screen,"difficulty");ok {opts.difficulty=i32(value)}
 }
 ```
 
-- Names are `base.name_hash` of the node name. A control bound to a setting writes it and the
-  engine keeps it; any other bound value the game writes on `Changed`, or the control goes back to
-  the field. Asking for a name the screen lacks is a problem `gui.names` once at run time.
+- Names are `base.name_hash` of the node name; one the screen lacks is a `gui.names` problem. A
+  control bound to a storage writes it (a setting is also kept); one bound to a component asks,
+  and the game writes it on `Changed`. A `Button` with `bind_value` writes its `choice` there.
 - The helpers (`clicked`, `changed`, `changed_value`, `submitted`, `dropped`, `back`,
-  `menu_pressed`...) take a frame's `gui.events_this_frame(g)` or a tick's `UI_Events` storage: a
-  fixed step reads the storage and sees nothing while the clock is stopped, as under a pause menu.
-- `gui.menu_pressed(events)` is the `menu` action (Escape, Start, rebound in `input.mirai` like
+  `menu_pressed`...) take that storage. While the clock is stopped, as under a pause menu, no tick
+  runs: a frame step reads them then, and a fixed step in the next tick.
+- `gui.menu_pressed(events)` is the `menu` action (Escape, Start, rebound in `Input_Settings` like
   any other) when no interface used that Escape: what opens and closes a menu.
 
 ## Focus

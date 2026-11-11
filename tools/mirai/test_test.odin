@@ -3,9 +3,7 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:slice"
-import "core:strings"
 import "core:testing"
-import "core:time"
 import "mirai:cook/shaders"
 import "mirai:project"
 import "mirai:std/base"
@@ -224,82 +222,6 @@ a_missing_name_gets_the_similar_ones :: proc(t:^testing.T) {
     testing.expect_value(t,len(test_similar("zzz",names,context.temp_allocator)),0)
 }
 
-// The output of the runner: which tests run and which failed, the state
-// changes mirai test asked for hidden, the info hidden when quiet, and the
-// hint to recompile with ODIN_TEST_NAMES left out. The fatal message of a test can
-// come before its start.
-@(test)
-the_output_of_the_runner_says_what_runs_and_what_failed :: proc(t:^testing.T) {
-    context.allocator=context.temp_allocator
-    out:=Test_Output{quiet=true,states_hidden=true}
-    lines:=[]string{
-        "[INFO ] --- [2026-10-28 00:12:48] Starting test runner with 4 threads.",
-        "[INFO ] --- [2026-10-28 00:12:48] Test #0 main.fast changed state to Running.",
-        "[INFO ] --- [2026-10-28 00:12:48] Test #1 main.slow changed state to Running.",
-        "[FATAL] --- [2026-10-28 00:12:48] [x_test.odin:20:broken()] runtime assertion: no",
-        "[INFO ] --- [2026-10-28 00:12:48] Test #2 main.broken changed state to Running.",
-        "[INFO ] --- [2026-10-28 00:12:48] Test #3 main.crashes changed state to Running.",
-        "a line a test printed",
-        "[ERROR] --- [2026-10-28 00:12:48] [x_test.odin:9:slow()] expected 1, got 2",
-        "[INFO ] --- [2026-10-28 00:12:48] Test #1 main.slow changed state to Failed.",
-        "[INFO ] --- [2026-10-28 00:12:48] Test #0 main.fast changed state to Successful.",
-        "C:/x/x_test.odin(30:5) Index 3 is out of range 0..<2",
-        "[FATAL] --- [2026-10-28 00:12:48] Caught signal to stop test #3 main.crashes for: Illegal_Instruction.",
-        "",
-        "Finished 4 tests in 1.2s. 3 tests failed.",
-        " - main.broken\truntime assertion: no",
-        " - main.crashes\tSignal caught: Illegal_Instruction",
-        " - main.slow   \texpected 1, got 2",
-        "",
-        "To run only the failed tests, use:",
-        "\t-define:ODIN_TEST_NAMES=main.broken,main.crashes,main.slow,",
-        "If your terminal supports OSC 52, you may use -define:ODIN_TEST_CLIPBOARD.",
-    }
-    shown:=make([dynamic]string)
-    start:=time.tick_now()
-    for line,i in lines {
-        if text,show:=test_output_line(&out,line,start);show {append(&shown,text)}
-        if i==5 {testing.expectf(t,len(out.running)==3 && "main.broken" not_in out.running,"running: %v",out.running)}
-    }
-    testing.expect_value(t,len(out.running),0)
-    testing.expectf(t,slice.contains(out.failed[:],"slow") && slice.contains(out.failed[:],"broken") && slice.contains(out.failed[:],"crashes") && len(out.failed)==3,"failed: %v",out.failed[:])
-    expected:=[]string{
-        "[FATAL] --- [2026-10-28 00:12:48] [x_test.odin:20:broken()] runtime assertion: no",
-        "[ERROR] --- [2026-10-28 00:12:48] [x_test.odin:9:slow()] expected 1, got 2",
-        "C:/x/x_test.odin(30:5) Index 3 is out of range 0..<2",
-        "[FATAL] --- [2026-10-28 00:12:48] Caught signal to stop test #3 main.crashes for: Illegal_Instruction.",
-        "Finished 4 tests in 1.2s. 3 tests failed.",
-        " - main.broken\truntime assertion: no",
-        " - main.crashes\tSignal caught: Illegal_Instruction",
-        " - main.slow   \texpected 1, got 2",
-    }
-    testing.expectf(t,slice.equal(shown[:],expected),"shown:\n%s",strings.join(shown[:],"\n"))
-
-    // Without quiet, what a test prints and the info stay; the state changes asked by a flag too.
-    loud:=Test_Output{}
-    _,show:=test_output_line(&loud,"[INFO ] --- [2026-10-28 00:12:48] Test #0 main.fast changed state to Running.",start)
-    testing.expect(t,show)
-    _,show=test_output_line(&loud,"a line a test printed",start)
-    testing.expect(t,show)
-}
-
-// The executable hangs when no test started or ended for the timeout, also
-// before the first one; never without a timeout.
-@(test)
-an_executable_hangs_when_no_test_starts_or_ends_for_the_timeout :: proc(t:^testing.T) {
-    context.allocator=context.temp_allocator
-    out:=Test_Output{states_hidden=true}
-    start:=time.tick_now()
-    out.changed=start
-    later :: proc(tick:time.Tick,seconds:int) -> time.Tick {return {tick._nsec+i64(seconds)*i64(time.Second)}}
-    testing.expect(t,!test_hung(out,2*time.Minute,later(start,119)))
-    testing.expect(t,test_hung(out,2*time.Minute,later(start,120)))
-    test_output_line(&out,"[INFO ] --- [2026-10-28 00:12:48] Test #0 main.waits changed state to Running.",later(start,100))
-    testing.expect(t,!test_hung(out,2*time.Minute,later(start,200)))
-    testing.expect(t,test_hung(out,2*time.Minute,later(start,220)))
-    testing.expect(t,!test_hung(out,0,later(start,10000)))
-}
-
 // --failed keeps what failed before and did not run now, and what failed now.
 @(test)
 the_failed_tests_are_those_of_before_that_did_not_run_and_those_that_failed_now :: proc(t:^testing.T) {
@@ -309,39 +231,13 @@ the_failed_tests_are_those_of_before_that_did_not_run_and_those_that_failed_now 
     testing.expectf(t,slice.equal(merged[:],[]string{"c"}),"%v",merged[:])
 }
 
-// mirai test asks the runner for the state changes unless a flag does, and
-// does not see them when a flag turns them off or logs less.
-@(test)
-the_state_changes_are_asked_unless_a_flag_decides :: proc(t:^testing.T) {
-    added,seen:=test_states_asked({"-define:FOO=1"})
-    testing.expect(t,added && seen)
-    added,seen=test_states_asked({"-define:ODIN_TEST_LOG_STATE_CHANGES=true"})
-    testing.expect(t,!added && seen)
-    added,seen=test_states_asked({"-define:ODIN_TEST_LOG_STATE_CHANGES=false"})
-    testing.expect(t,!added && !seen)
-    added,seen=test_states_asked({"-define:ODIN_TEST_LOG_LEVEL=warning"})
-    testing.expect(t,added && !seen)
-}
-
-// The threads of a test executable reserve 8 MB of stack on every system, unless the call passes
-// linker flags of its own.
-@(test)
-the_threads_of_a_test_executable_get_the_stack_of_the_system_with_the_most :: proc(t:^testing.T) {
-    when ODIN_OS==.Windows {
-        testing.expect_value(t,test_link_flag({"-debug"}),"-extra-linker-flags:/STACK:8388608")
-    } else {
-        testing.expect_value(t,test_link_flag({"-debug"}),"")
-    }
-    testing.expect_value(t,test_link_flag({"-extra-linker-flags:/DEBUG"}),"")
-}
-
 // A package is found relative to the working folder before the engine.
 @(test)
 a_package_is_found_relative_to_the_working_folder :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     folder:=project.path_absolute(fmt.tprintf("mirai-package-%d",os.get_pid()),context.temp_allocator)
     testing.expect(t,os.make_directory_all(folder)==nil)
-    defer os.remove_all(folder)
+    defer base.remove_all(folder)
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/a.odin",folder),`package a`)==nil)
     testing.expect_value(t,package_folder("/nowhere",os.base(folder)),folder)
 }

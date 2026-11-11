@@ -7,10 +7,6 @@ import "mirai:std/base"
 // What the network gives the editor: Play on the network (network_play.odin),
 // its preferences and its methods of the API.
 
-Api_Join_Params :: struct {
-    saved_only:bool `mirai:"optional,label=Join with what the files hold although assets have unsaved changes; without it they fail the call"`,
-}
-
 Api_Network_Result :: struct {
     phase:Net_Play_Phase `mirai:"label=Waiting: the server of Play to listen before its online players start (poll play.network.status); a guest for the scene of the host, or for its router to map the port when it plays from outside its network"`,
     role:Net_Play_Role `mirai:"label=Server: this editor serves the game; Client: a guest plays the game of the host"`,
@@ -23,8 +19,8 @@ Api_Network_Result :: struct {
 
 @(private)
 net_play_api_register :: proc(s:^editor.Session) {
-    editor.api_method_register(s,{name="play.join",summary="A guest of the session joins the game its host serves on the network with a player of its own, on the scene the server runs. Outside a turn only.",params=Api_Join_Params,params_info=type_info_of(Api_Join_Params),result=Api_Network_Result,result_info=type_info_of(Api_Network_Result),run=api_play_join})
-    editor.api_method_register(s,{name="play.network.status",summary="The state of the game on the network.",result=Api_Network_Result,result_info=type_info_of(Api_Network_Result),flags={.Read_Only},run=api_play_network_status})
+    editor.api_method_register(s,{result=type_info_of(Api_Network_Result),name="play.join",summary="A guest of the session joins the game its host serves on the network with a player of its own, on the scene the server runs. Outside a turn only.",run=api_play_join})
+    editor.api_method_register(s,{name="play.network.status",summary="The state of the game on the network.",result=type_info_of(Api_Network_Result),flags={.Read_Only},run=api_play_network_status})
 }
 
 @(private)
@@ -47,12 +43,6 @@ api_play_join :: proc(s:^editor.Session,call:^api.Call) {
     if editor.ai_task_of_call(s,call)!=0 {
         api.call_fail(call,api.SERVER_ERROR,"A turn plays its own run with play.start; a network game opens windows for the user")
         return
-    }
-    if !api.call_params(call,Api_Join_Params).saved_only {
-        if error:=editor.play_unsaved(s);error!="" {
-            api.call_fail(call,api.SERVER_ERROR,error)
-            return
-        }
     }
     n:=net_play_of(s)
     if n==nil {return}

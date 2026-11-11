@@ -1,6 +1,5 @@
 package main
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:hash"
 import "core:math"
@@ -15,12 +14,13 @@ import img "mirai:cook/image"
 import "mirai:cook/workspace"
 import "mirai:editor/api"
 import "mirai:project"
+import "mirai:std/serial"
 import "mirai:std/subprocess"
 
-RENDER_USAGE :: "render check [project] [--base main|<ref>|<checkout>|<report.json>|none] [--checkout C] [--views a,b] [--sizes WxH,...] [--rerun <report.json>] [--quality] [--dev|--release] [--fresh-base] [--wait S] [--allow-load] [--out folder] | render compare <base.json> <report.json>"
+RENDER_USAGE :: "render check [project] [--base main|<ref>|<checkout>|<report.json>|none] [--checkout C] [--views a,b] [--sizes WxH,...] [--rerun <report.json>] [--quality] [--release] [--fresh-base] [--wait S] [--allow-load] [--out folder] | render compare <base.json> <report.json>"
 
 // mirai render check: the views of render_check.mirai of a project as its
-// editor shows them, built --dev (--release for the figures of the CPU, which
+// editor shows them, built dev (--release for the figures of the CPU, which
 // an optimized build alone gives) and measured alone among the checkouts:
 // the cost of the frame and of each GPU pass, how much the image changes
 // between captures of a still view, its mean luminance and the captures. It
@@ -68,10 +68,16 @@ Render_View :: struct {
     name,scene:string,
     position,target:[]f64,
     fov:f64,           // degrees, vertical; 0 keeps the camera of the editor
-    play:[]json.Value, // play.step calls before the camera is placed, in order; "repeat" calls one that many times
+    play:[]Render_Step, // play.step calls before the camera is placed, in order
     luma:f64,          // mean linear luminance its art direction gives the view; 0: none
     fly:Render_Fly,
     push:Render_Push,
+}
+
+// A call of play.step with its params; repeat: that many times, one without it.
+Render_Step :: struct {
+    repeat:int `mirai:"optional"`,
+    step:serial.Json,
 }
 
 // An entity of the scene pushed from one place to another while the camera
@@ -146,9 +152,9 @@ Render_Run :: struct {
     name:string, // head or base
     checkout,project,commit,editor:string,
     quality:bool,          // measured without the cost (--quality)
-    dev:bool,              // built --dev
+    dev:bool,              // built dev
     loaded:bool,           // something else loaded the GPU while it measured
-    conditions:json.Value, // of the first profile.capture
+    conditions:serial.Json, // of the first profile.capture
     notes:[dynamic]string,
     measures:[dynamic]Render_Measure,
     repeats:[dynamic]Render_Measure, // the views whose cost was measured again, alone
@@ -274,14 +280,14 @@ render_check :: proc(root:string,args:[]string) -> int {
         head.project=join(head.checkout,relative)
         head.editor=render_editor_program(head.checkout,o.release)
         if head.editor=="" {
-            fmt.eprintfln("mirai render: %s has no built editor; build it there (mirai build editor %s %s)",head.checkout,relative,render_mode_flag(o.release))
+            fmt.eprintfln("mirai render: %s has no built editor; build it there (mirai build editor %s%s)",head.checkout,relative,render_mode_flag(o.release))
             return 1
         }
     } else {
         head.checkout,head.project=root,folder
         mode:=Build_Mode.Release if o.release else .Dev
         if code,_,_:=build_project(root,.Editor,{folder},mode);code!=0 {return code}
-        head.editor=build.engine_paths(root,mode,context.temp_allocator).editor_program
+        head.editor=project_engine_paths(root,folder,mode).editor_program
     }
     device:=render_device()
     base_target:Render_Target
@@ -301,14 +307,14 @@ render_check :: proc(root:string,args:[]string) -> int {
         run.name="base"
         base_run=run
         if !o.quality && !run.quality && run.dev==o.release {
-            append(&report.warnings,fmt.aprintf("%s was built %s and this check %s: the cost is not compared",o.base,render_mode_flag(!run.dev),render_mode_flag(o.release)))
+            append(&report.warnings,fmt.aprintf("%s was built %s and this check %s: the cost is not compared",o.base,render_mode_name(!run.dev),render_mode_name(o.release)))
         }
     case os.is_dir(o.base):
         base_target={name="base",checkout=project.path_absolute(o.base)}
         base_target.project=join(base_target.checkout,relative)
         base_target.editor=render_editor_program(base_target.checkout,o.release)
         if base_target.editor=="" {
-            fmt.eprintfln("mirai render: %s has no built editor; build it there (mirai build editor %s %s)",base_target.checkout,relative,render_mode_flag(o.release))
+            fmt.eprintfln("mirai render: %s has no built editor; build it there (mirai build editor %s%s)",base_target.checkout,relative,render_mode_flag(o.release))
             return 1
         }
     case:
@@ -432,7 +438,6 @@ render_options_parse :: proc(args:[]string) -> (o:Render_Options,problem:string)
         case "--wait":       option=&wait
         case "--quality":    o.quality=true;continue
         case "--release":    o.release=true;continue
-        case "--dev":        o.release=false;continue
         case "--fresh-base": o.fresh_base=true;continue
         case "--allow-load": o.allow_load=true;continue
         }
@@ -534,7 +539,7 @@ render_saved_path :: proc(root,commit:string) -> string {
 
 // What a measure of a build depends on besides its commit: the tool that
 // takes it, the project, the GPU, the view, its size and the frames of the
-// plan, and whether it was built --dev. Two checks with the same key measure
+// plan, and whether it was built dev. Two checks with the same key measure
 // the same images.
 render_base_key :: proc(project,device:string,plan:Render_Plan,view:Render_View,size:[2]int,dev:=false) -> string {
     Keyed :: struct {
@@ -545,7 +550,7 @@ render_base_key :: proc(project,device:string,plan:Render_Plan,view:Render_View,
         view:Render_View,
     }
     keyed:=Keyed{RENDER_SAVED_VERSION,project,device,size,plan.warmup,plan.frames,plan.interval,plan.captures,view}
-    text,_:=json.marshal(keyed,{sort_maps_by_key=true},context.temp_allocator)
+    text,_:=serial.text_encode(keyed,.Line,context.temp_allocator)
     return fmt.aprintf("%s%016x",dev?"dev-":"",hash.fnv64a(text))
 }
 
@@ -554,7 +559,7 @@ render_saved_load :: proc(path:string) -> (saved:[dynamic]Render_Saved) {
     data,error:=os.read_entire_file(path,context.temp_allocator)
     if error!=nil {return}
     // One that cannot be read is measured again and written over.
-    if json.unmarshal(data,&saved)!=nil {return {}}
+    if serial.text_decode(string(data),&saved)!="" {return {}}
     return
 }
 
@@ -606,7 +611,7 @@ render_base_save :: proc(root:string,report:Render_Report,commit,device:string,p
         }
     }
     if count==0 {return}
-    text,_:=json.marshal(saved[:],{pretty=true},context.temp_allocator)
+    text,_:=serial.text_encode(saved[:],.Pretty,context.temp_allocator)
     folder:=filepath.dir(path)
     if os.make_directory_all(folder)!=nil && !os.is_dir(folder) || os.write_entire_file(path,text)!=nil {
         fmt.eprintfln("mirai render: could not save the base in %s",path)
@@ -673,7 +678,7 @@ render_plan_load :: proc(folder,views,sizes:string) -> (plan:Render_Plan,ok:bool
     path:=project.path(folder,RENDER_PLAN_FILE,allocator=context.temp_allocator)
     data,error:=os.read_entire_file(path,context.allocator)
     if error!=nil {fmt.eprintfln("mirai render: %s is missing: the list of views the check measures",path);return}
-    if json.unmarshal(data,&plan)!=nil {fmt.eprintfln("mirai render: %s is not JSON with sizes, warmup, frames, interval, captures and views",path);return}
+    if problem:=serial.text_decode(string(data),&plan);problem!="" {fmt.eprintfln("mirai render: %s: %s",path,problem);return}
     if sizes!="" {
         list:=make([dynamic][2]int)
         for text in strings.split(sizes,",",context.temp_allocator) {
@@ -711,7 +716,7 @@ render_plan_load :: proc(folder,views,sizes:string) -> (plan:Render_Plan,ok:bool
             return
         }
         for step in view.play {
-            if _,is_object:=step.(json.Object);!is_object {fmt.eprintfln("mirai render: %s: %s: each step of play is an object with the params of play.step",path,view.name);return}
+            if _,is_object:=api.json_members(string(step.step));!is_object {fmt.eprintfln("mirai render: %s: %s: each step of play has the params of play.step in step",path,view.name);return}
         }
         if view.fly.frames<0 || view.fly.frames>0 && len(view.position)!=3 {
             fmt.eprintfln("mirai render: %s: %s: fly.frames is 0 or more, and a view that flies needs position and target",path,view.name)
@@ -733,9 +738,12 @@ render_size_parse :: proc(text:string) -> (size:[2]int,ok:bool) {
     return {w,h},w_ok && h_ok
 }
 
-// What selects the mode of a build on the command line.
+// What selects the mode of a build on the command line, after the command: dev unless --release.
 @(private)
-render_mode_flag :: proc(release:bool) -> string {return "--release" if release else "--dev"}
+render_mode_flag :: proc(release:bool) -> string {return " --release" if release else ""}
+
+@(private)
+render_mode_name :: proc(release:bool) -> string {return "release" if release else "dev"}
 
 // The editor a checkout built in that mode: --release also where builds
 // before the modes left it.
@@ -819,7 +827,7 @@ render_base_prepare :: proc(root,ref,relative:string,release:=false) -> (target:
     shell,_:=shell_executable()
     fmt.eprintfln("mirai render: building %s (%s) in %s",ref,commit[:10],folder)
     slashed,_:=strings.replace_all(launcher,"\\","/",context.temp_allocator)
-    if run(folder,{shell,slashed,"build","editor",relative,render_mode_flag(release)})!=0 {fmt.eprintfln("mirai render: could not build the editor of %s",ref);return}
+    if run(folder,{shell,slashed,"build","editor",relative,"--release"} if release else {shell,slashed,"build","editor",relative})!=0 {fmt.eprintfln("mirai render: could not build the editor of %s",ref);return}
     target={name="base",checkout=folder,project=join(folder,relative),editor=render_editor_program(folder,release)}
     return target,target.editor!="",false
 }
@@ -863,14 +871,12 @@ render_session :: proc(report:^Render_Report,r:^Render_Run,target:Render_Target,
         case:
             fmt.eprintfln("mirai render: %s %dx%d %s: frame %.2f ms, GPU %.2f ms, stability %.3f (worst %.3f), luminance %.4f",label,size.x,size.y,view.name,m.frame_ms,m.gpu_ms,m.stability,m.stability_worst,m.luma)
         }
-        if conditions,is_object:=r.conditions.(json.Object);is_object && report.device=="" {
-            if device,is_string:=conditions["device"].(json.String);is_string {report.device=device}
-        }
+        if report.device=="" {report.device,_=api.json_string(api.json_member(string(r.conditions),"device"))}
         append(measures,m)
     }
     Status :: struct {validation_errors,asset_errors:int}
     status:Status
-    if text,ok:=render_call(&e,"engine.status",{});ok {_=json.unmarshal_string(text,&status)}
+    if text,ok:=render_call(&e,"engine.status",struct{}{});ok {serial.text_decode(text,&status,skip_unknown=true)}
     if status.validation_errors>0 || status.asset_errors>0 {
         append(&r.notes,fmt.aprintf("%dx%d: %d validation errors and %d asset errors (engine.diagnostics describes them)",size.x,size.y,status.validation_errors,status.asset_errors))
     }
@@ -880,22 +886,24 @@ render_session :: proc(report:^Render_Report,r:^Render_Run,target:Render_Target,
 // One call; a build older than the check does not take every field: the
 // call goes again without it, and the run says so.
 @(private="file")
-render_call :: proc(e:^Render_Editor,method:string,params:json.Object) -> (result:string,ok:bool) {
-    params:=params
+render_call :: proc(e:^Render_Editor,method:string,params:any) -> (result:string,ok:bool) {
+    encoded,_:=serial.text_encode(params,.Line,context.temp_allocator,sparse=true)
+    text:=string(encoded)
     for {
-        response,err,called:=headless_call(e,method,params)
+        response,err,called:=api.rpc_call(e.port,method,text,1,RENDER_TIMEOUT_MS,context.allocator)
         if called {return response,true}
         if err.code==api.INVALID_PARAMS {
             MARK :: `unknown field "`
             if at:=strings.index(err.message,MARK);at>=0 {
                 rest:=err.message[at+len(MARK):]
                 field:=rest[:max(strings.index_byte(rest,'"'),0)]
-                if field in params {
-                    delete_key(&params,field)
+                members,_:=api.json_members(text)
+                kept:=make([dynamic]string,context.temp_allocator)
+                for member in members {if member.name!=field {append(&kept,fmt.tprintf("%s:%s",serial.text_quote(member.name),member.value))}}
+                if len(kept)<len(members) {
+                    text=fmt.tprintf("{{%s}}",strings.join(kept[:],",",context.temp_allocator))
                     note:=fmt.aprintf("%s does not take %s in this build: measured without it",method,field)
-                    known:=false
-                    for n in e.run.notes {known||=n==note}
-                    if !known {append(&e.run.notes,note)}
+                    if !slice.contains(e.run.notes[:],note) {append(&e.run.notes,note)}
                     continue
                 }
             }
@@ -905,30 +913,11 @@ render_call :: proc(e:^Render_Editor,method:string,params:json.Object) -> (resul
     }
 }
 
+// A capture of the window with the interface, frames after the last call.
 @(private="file")
-render_vector :: proc(values:[]f64) -> json.Value {
-    list:=make(json.Array,0,len(values),context.temp_allocator)
-    for v in values {append(&list,json.Value(v))}
-    return list
-}
-
-// The value with the whole numbers parsing gave as floats made integers: the
-// params of the API that count take no fractions.
-@(private="file")
-render_integral :: proc(value:json.Value) -> json.Value {
-    #partial switch v in value {
-    case json.Float:
-        if v==math.floor(v) && abs(v)<1e15 {return json.Integer(i64(v))}
-    case json.Array:
-        list:=make(json.Array,0,len(v),context.temp_allocator)
-        for item in v {append(&list,render_integral(item))}
-        return list
-    case json.Object:
-        object:=make(json.Object,len(v),context.temp_allocator)
-        for key,item in v {object[key]=render_integral(item)}
-        return object
-    }
-    return value
+render_capture :: proc(e:^Render_Editor,path:string,frames:int) -> bool {
+    _,ok:=render_call(e,"capture",struct{path:string,ui:bool,frames:int}{path,true,frames})
+    return ok
 }
 
 // A view of the plan: its scene (and its Play), its camera with the exposure
@@ -937,35 +926,34 @@ render_integral :: proc(value:json.Value) -> json.Value {
 @(private="file")
 render_measure :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,size:[2]int,folder:string) -> (m:Render_Measure) {
     m.view,m.size,m.luma_target=view.name,size,view.luma
-    params:=make(json.Object,context.temp_allocator)
-    params["path"]=view.scene
-    if _,ok:=render_call(e,"scene.open",params);!ok {
+    scene:=view.scene
+    // A view that pushes an entity edits its scene, which the editor writes at once: it runs on a copy.
+    if view.push.frames>0 {
+        source:=project.path(project.folder_path(e.run.project,.Assets,context.temp_allocator),view.scene,allocator=context.temp_allocator)
+        copied:=project.path_absolute(project.path(e.run.project,".mirai/tmp/render",filepath.base(view.scene),allocator=context.temp_allocator),context.temp_allocator)
+        if data,read:=os.read_entire_file(source,context.temp_allocator);read==nil {
+            _=os.make_directory_all(filepath.dir(copied))
+            if serial.file_write_atomic(copied,data)==.None {scene=copied}
+        }
+    }
+    if _,ok:=render_call(e,"scene.open",struct{path:string}{scene});!ok {
         m.scene_missing=!os.is_file(project.path(project.folder_path(e.run.project,.Assets,context.temp_allocator),view.scene,allocator=context.temp_allocator))
         m.failure=m.scene_missing?fmt.aprintf("this build has no scene %s",view.scene):"scene.open failed"
         return
     }
     playing:=false
-    defer if playing {_,_=render_call(e,"play.stop",nil)}
+    defer if playing {_,_=render_call(e,"play.stop",struct{}{})}
     if len(view.play)>0 {
-        if _,ok:=render_call(e,"play.start",nil);!ok {m.failure="play.start failed";return}
+        if _,ok:=render_call(e,"play.start",struct{}{});!ok {m.failure="play.start failed";return}
         playing=true
         for step in view.play {
-            object:=render_integral(step).(json.Object)
-            repeat:=1
-            if count,has:=object["repeat"].(json.Integer);has {repeat=int(count)}
-            delete_key(&object,"repeat")
-            for _ in 0..<repeat {
-                if _,ok:=render_call(e,"play.step",object);!ok {m.failure="play.step failed";return}
+            for _ in 0..<max(step.repeat,1) {
+                if _,ok:=render_call(e,"play.step",step.step);!ok {m.failure="play.step failed";return}
             }
         }
     }
     if len(view.position)==3 {
-        camera:=make(json.Object,context.temp_allocator)
-        camera["position"]=render_vector(view.position)
-        camera["target"]=render_vector(view.target)
-        if view.fov>0 {camera["fov"]=view.fov}
-        camera["exposure"]="scene"
-        if _,ok:=render_call(e,"camera.set",camera);!ok {m.failure="camera.set failed";return}
+        if _,ok:=render_call(e,"camera.set",Camera_Set{position=view.position,target=view.target,fov=view.fov,exposure="scene"});!ok {m.failure="camera.set failed";return}
     }
     // The captures come a fixed count of frames after the camera was set,
     // which restarts the jitter of the view: profile.capture runs frames by
@@ -973,49 +961,40 @@ render_measure :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,size:[
     if !headless_step(e,plan.warmup+plan.frames) {m.failure="engine.step failed";return}
     Status :: struct {render_width,render_height:int,gpu_memory:struct {used_mb,budget_mb:f64}}
     status:Status
-    if status_text,ok:=render_call(e,"engine.status",nil);ok {_=json.unmarshal_string(status_text,&status)}
+    if status_text,ok:=render_call(e,"engine.status",struct{}{});ok {serial.text_decode(status_text,&status,skip_unknown=true)}
     m.render={status.render_width,status.render_height}
     m.memory_used_mb,m.memory_budget_mb=status.gpu_memory.used_mb,status.gpu_memory.budget_mb
     images:=make([dynamic]string)
     for i in 0..<plan.captures {
         path:=join(folder,fmt.tprintf("%s-%d.png",view.name,i+1))
         path,_=strings.replace_all(path,"\\","/")
-        capture:=make(json.Object,context.temp_allocator)
-        capture["path"]=path
-        capture["ui"]=true
-        capture["frames"]=json.Integer(i==0?1:plan.interval)
-        if _,ok:=render_call(e,"capture",capture);!ok {m.failure="capture failed";return}
+        if !render_capture(e,path,i==0?1:plan.interval) {m.failure="capture failed";return}
         append(&images,path)
     }
     m.images=images[:]
     Rects :: struct {window:struct {size:[2]f64},layout:struct {bar,left,right,bottom:[4]f64}}
     rects:Rects
-    if inspect,ok:=render_call(e,"editor.inspect",nil);ok {_=json.unmarshal_string(inspect,&rects)}
+    if inspect,ok:=render_call(e,"editor.inspect",struct{}{});ok {serial.text_decode(inspect,&rects,skip_unknown=true)}
     m.diff_map=join(folder,fmt.tprintf("%s-diff.png",view.name))
     m.diff_map,_=strings.replace_all(m.diff_map,"\\","/")
     region,measured:=render_images(&m,rects.window.size,rects.layout.bar,rects.layout.left,rects.layout.right,rects.layout.bottom)
     m.region={region.x,region.y,region.w,region.h}
     if !measured {m.failure="the captures could not be read or compared";return}
     if !e.run.quality {
-        profile:=make(json.Object,context.temp_allocator)
-        profile["frames"]=json.Integer(plan.frames)
-        profile["advance"]=true
-        profile["label"]=view.name
-        profile["top"]=json.Integer(64)
-        text,profiled:=render_call(e,"profile.capture",profile)
+        text,profiled:=render_call(e,"profile.capture",Profile_Capture{plan.frames,true,view.name,64})
         if !profiled {m.failure="profile.capture failed";return}
         Summary :: struct {
             frame:struct {p50_ms,p95_ms,cpu_ms,gpu_ms:f64},
             gpu:[]struct {name:string,mean_ms:f64},
-            conditions:json.Value,
+            conditions:serial.Json,
         }
         summary:Summary
-        if json.unmarshal_string(text,&summary)!=nil {m.failure="profile.capture gave no summary";return}
+        if serial.text_decode(text,&summary,skip_unknown=true)!="" {m.failure="profile.capture gave no summary";return}
         m.frame_ms,m.frame_p95_ms,m.gpu_ms,m.cpu_ms=summary.frame.p50_ms,summary.frame.p95_ms,summary.frame.gpu_ms,summary.frame.cpu_ms
         passes:=make([]Render_Pass,len(summary.gpu))
         for pass,i in summary.gpu {passes[i]={pass.name,pass.mean_ms}}
         m.passes=passes
-        if e.run.conditions==nil {e.run.conditions=summary.conditions}
+        if e.run.conditions=="" {e.run.conditions=summary.conditions}
     }
     if view.fly.frames>0 {
         free:=render_free_region(rects.window.size,int(rects.window.size.x),int(rects.window.size.y),rects.layout.bar,rects.layout.left,rects.layout.right,rects.layout.bottom)
@@ -1032,36 +1011,23 @@ render_measure :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,size:[
 @(private="file")
 render_push :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,folder:string,region:img.Region,m:^Render_Measure) -> string {
     push:=view.push
-    camera:=make(json.Object,context.temp_allocator)
-    camera["position"]=render_vector(view.position)
-    camera["target"]=render_vector(view.target)
-    if view.fov>0 {camera["fov"]=view.fov}
-    camera["exposure"]="manual"
-    camera["ev100"]=push.ev100
-    if _,ok:=render_call(e,"camera.set",camera);!ok {return "camera.set failed before the push"}
+    if _,ok:=render_call(e,"camera.set",Camera_Set{view.position,view.target,view.fov,"manual",push.ev100});!ok {return "camera.set failed before the push"}
     place :: proc(e:^Render_Editor,push:Render_Push,share:f64) -> bool {
         at:=make([]f64,3,context.temp_allocator)
         for i in 0..<3 {at[i]=push.from[i]+(push.to[i]-push.from[i])*share}
-        params:=make(json.Object,context.temp_allocator)
-        params["entity"]=push.entity
-        params["position"]=render_vector(at)
-        _,ok:=render_call(e,"scene.set",params)
+        Moved :: struct {position:[]f64}
+        _,ok:=render_call(e,"scene.write",struct{root:string,entities:[]Moved}{push.entity,{{at}}})
         return ok
     }
     capture :: proc(e:^Render_Editor,folder,name:string,frames:int) -> (path:string,ok:bool) {
         path,_=strings.replace_all(join(folder,name),"\\","/")
-        params:=make(json.Object,context.temp_allocator)
-        params["path"]=path
-        params["ui"]=true
-        params["frames"]=json.Integer(frames)
-        _,ok=render_call(e,"capture",params)
-        return
+        return path,render_capture(e,path,frames)
     }
     if !place(e,push,0) || !headless_step(e,plan.warmup) {return "the push could not start"}
     midway:=push.frames/2
     moving:string
     for k in 1..=push.frames {
-        if !place(e,push,f64(k)/f64(push.frames)) {return "scene.set failed during the push"}
+        if !place(e,push,f64(k)/f64(push.frames)) {return "scene.write failed during the push"}
         if k==midway {
             ok:bool
             if moving,ok=capture(e,folder,fmt.tprintf("%s-push-moving.png",view.name),1);!ok {return "capture failed during the push"}
@@ -1075,7 +1041,7 @@ render_push :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,folder:st
     }
     settled,settled_ok:=capture(e,folder,fmt.tprintf("%s-push-settled.png",view.name),plan.warmup)
     if !settled_ok {return "capture failed once the push settled"}
-    if !place(e,push,f64(midway)/f64(push.frames)) {return "scene.set failed going back midway"}
+    if !place(e,push,f64(midway)/f64(push.frames)) {return "scene.write failed going back midway"}
     moving_settled,moving_ok:=capture(e,folder,fmt.tprintf("%s-push-moving-settled.png",view.name),plan.warmup)
     if !moving_ok {return "capture failed midway settled"}
     _=place(e,push,0)
@@ -1121,51 +1087,28 @@ render_settle_frames :: proc(distances:[]f64,frames:[]int,share:f64) -> int {
 @(private="file")
 render_fly :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,folder:string,center:[2]f64,region:img.Region,m:^Render_Measure) -> string {
     fly:=view.fly
-    camera:=make(json.Object,context.temp_allocator)
-    camera["position"]=render_vector(view.position)
-    camera["target"]=render_vector(view.target)
-    if view.fov>0 {camera["fov"]=view.fov}
-    camera["exposure"]="manual"
-    camera["ev100"]=fly.ev100
-    if _,ok:=render_call(e,"camera.set",camera);!ok {return "camera.set failed before the flight"}
+    if _,ok:=render_call(e,"camera.set",Camera_Set{view.position,view.target,view.fov,"manual",fly.ev100});!ok {return "camera.set failed before the flight"}
     if !headless_step(e,plan.warmup) {return "engine.step failed before the flight"}
-    keys:=make(json.Array,0,len(fly.keys),context.temp_allocator)
-    for key in fly.keys {append(&keys,json.String(key))}
-    right:=make(json.Array,0,1,context.temp_allocator)
-    append(&right,json.String("right"))
-    events:=make(json.Array,0,fly.frames+2,context.temp_allocator)
-    press:=make(json.Object,context.temp_allocator)
-    at:=center
-    press["mouse_position"]=render_vector(at[:])
-    press["mouse_buttons"]=right
-    append(&events,press)
-    for _ in 0..<fly.frames {
-        held:=make(json.Object,context.temp_allocator)
-        held["mouse_buttons"]=right
-        held["keys"]=keys
-        held["mouse_delta"]=render_vector(fly.turn[:])
-        append(&events,held)
+    // A mouse_position or a mouse_delta left out keeps the pointer; keys and buttons listed are those held.
+    Event :: struct {
+        mouse_position:[]f64 `mirai:"optional"`,
+        mouse_buttons,keys:[]string,
+        mouse_delta:[]f64 `mirai:"optional"`,
     }
-    release:=make(json.Object,context.temp_allocator)
-    release["mouse_buttons"]=make(json.Array,context.temp_allocator)
-    release["keys"]=make(json.Array,context.temp_allocator)
-    append(&events,release)
+    at,turn:=center,fly.turn
+    right:=[]string{"right"}
+    events:=make([dynamic]Event,0,fly.frames+2,context.temp_allocator)
+    append(&events,Event{mouse_position=at[:],mouse_buttons=right})
+    for _ in 0..<fly.frames {append(&events,Event{mouse_buttons=right,keys=fly.keys,mouse_delta=turn[:]})}
+    append(&events,Event{})
     for start:=0;start<len(events);start+=RENDER_FLY_EVENTS {
-        chunk:=make(json.Array,0,RENDER_FLY_EVENTS,context.temp_allocator)
-        append(&chunk,..events[start:min(start+RENDER_FLY_EVENTS,len(events))])
-        input:=make(json.Object,context.temp_allocator)
-        input["events"]=chunk
-        if _,ok:=render_call(e,"editor.input",input);!ok {return "editor.input failed during the flight"}
+        if _,ok:=render_call(e,"editor.input",struct{events:[]Event}{events[start:min(start+RENDER_FLY_EVENTS,len(events))]});!ok {return "editor.input failed during the flight"}
     }
     paths:[3]string
     for name,i in ([3]string{"moving","after","settled"}) {
         if i==2 && !headless_step(e,plan.warmup) {return "engine.step failed after the flight"}
         path,_:=strings.replace_all(join(folder,fmt.tprintf("%s-%s.png",view.name,name)),"\\","/")
-        capture:=make(json.Object,context.temp_allocator)
-        capture["path"]=path
-        capture["ui"]=true
-        capture["frames"]=json.Integer(i==1?RENDER_MOTTLE_AFTER-1:1)
-        if _,ok:=render_call(e,"capture",capture);!ok {return "capture failed during the flight"}
+        if !render_capture(e,path,i==1?RENDER_MOTTLE_AFTER-1:1) {return "capture failed during the flight"}
         paths[i]=path
     }
     images:[3]img.Image
@@ -1304,7 +1247,7 @@ render_measure_find :: proc(list:[]Render_Measure,view:string,size:[2]int) -> (m
 render_report_load :: proc(path:string) -> (report:Render_Report,ok:bool) {
     data,error:=os.read_entire_file(path,context.allocator)
     if error!=nil {fmt.eprintfln("mirai render: could not read %s",path);return}
-    if json.unmarshal(data,&report)!=nil {fmt.eprintfln("mirai render: %s is not a report of mirai render check",path);return}
+    if problem:=serial.text_decode(string(data),&report);problem!="" {fmt.eprintfln("mirai render: %s is not a report of mirai render check: %s",path,problem);return}
     return report,true
 }
 
@@ -1391,12 +1334,12 @@ render_montages :: proc(report:^Render_Report,out:string) {
 // that could not be measured.
 @(private="file")
 render_finish :: proc(report:^Render_Report,path:string) -> int {
-    text,_:=json.marshal(report^,{pretty=true},context.temp_allocator)
+    text,_:=serial.text_encode(report^,.Pretty,context.temp_allocator)
     if os.write_entire_file(path,text)!=nil {fmt.eprintfln("mirai render: could not write %s",path)}
     head,_:=render_run_named(report^,"head")
     base,has_base:=render_run_named(report^,"base")
     fmt.printfln("Render check of %s on %s",report.project,report.device!=""?report.device:"an unnamed GPU")
-    fmt.printfln("  head %s, built %s",head.commit,render_mode_flag(!head.dev))
+    fmt.printfln("  head %s, built %s",head.commit,render_mode_name(!head.dev))
     if has_base {fmt.printfln("  base %s",base.commit!=""?base.commit:"(report)")}
     fmt.println()
     fmt.printfln("%-16s %-10s %-34s %-30s %s","view","size","frame ms (p50)","stability (luma MAE)","mean luminance")

@@ -3,6 +3,7 @@ package asset
 import "base:runtime"
 import "core:mem"
 import "core:fmt"
+import "core:strings"
 import "core:testing"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -21,38 +22,10 @@ import "mirai:std/serial"
 transform :: proc(x,y,z:f32) -> Test_Transform {return {position={x,y,z},rotation=1,scale={1,1,1}}}
 
 @(test)
-scene_builder_names_components_by_type_and_stops_at_the_first_error :: proc(t:^testing.T) {
-    content:Content;content_init(&content,"builder_test");defer content_destroy(&content)
-    testing.expect(t,content_id("builder_test","mesh","a")!=content_id("other","mesh","a"))
-
-    b:Scene_Builder;builder_init(&b,&content,KIND_PREFAB,{0x61,0x62});defer builder_destroy(&b)
-    root:=builder_entity(&b,"Root",{position={1,2,3}})
-    child:=builder_entity(&b,"Child",{scale={2,2,2}},root)
-    builder_set(&b,child,Test_Light{{1,1,1},3,10})
-    testing.expect(t,b.scene.info.root==root && !b.failed && !content.failed)
-    placed,found:=scene_get(&b.scene,root,"Transform",Test_Transform)
-    testing.expect(t,found && placed==transform(1,2,3))
-    scaled,_:=scene_get(&b.scene,child,"Transform",Test_Transform)
-    testing.expect(t,scaled.rotation==1 && scaled.scale=={2,2,2})
-    light,lit:=scene_get(&b.scene,child,"Test_Light",Test_Light)
-    testing.expect(t,lit && light.intensity==3)
-
-    testing.expect_value(t,builder_entity(&b,"Second root"),base.Entity_Id(0))
-    testing.expect(t,b.failed && content.failed)
-    builder_set(&b,child,Test_Mesh{})
-    _,set_after:=scene_get(&b.scene,child,"Test_Mesh",Test_Mesh)
-    testing.expect(t,!set_after)
-
-    invalid:Scene_Builder;builder_init(&invalid,&content,KIND_MATERIAL,{1,1});defer builder_destroy(&invalid)
-    testing.expect(t,invalid.failed)
-    testing.expect_value(t,builder_entity(&invalid,"Nothing"),base.Entity_Id(0))
-}
-
-@(test)
 scene_builds_saves_and_loads_entities_and_components :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     scene:Scene
-    testing.expect_value(t,scene_init(&scene,&types,KIND_SCENE,{0x51,0x52}),Error.None)
+    testing.expect_value(t,scene_init(&scene,&types,{0x51,0x52}),Error.None)
     defer scene_destroy(&scene)
     root,child,other:=base.Entity_Id(0x10),base.Entity_Id(0x20),base.Entity_Id(0x30)
     scene_entity_add(&scene,root,0,"Root")
@@ -139,8 +112,7 @@ scene_builds_saves_and_loads_entities_and_components :: proc(t:^testing.T) {
 scene_refuses_entities_and_hierarchies_that_cannot_be :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     scene:Scene
-    testing.expect_value(t,scene_init(&scene,&types,KIND_MESH,{}),Error.Invalid)
-    scene_init(&scene,&types,KIND_PREFAB,{1,1})
+    scene_init(&scene,&types,{1,1})
     defer scene_destroy(&scene)
     _,error:=scene_entity_add(&scene,0,0,"zero")
     testing.expect_value(t,error,Error.Invalid)
@@ -188,7 +160,7 @@ scene_refuses_entities_and_hierarchies_that_cannot_be :: proc(t:^testing.T) {
 @(test)
 scene_removes_entities_with_what_hangs_from_them :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    scene:Scene;scene_init(&scene,&types,KIND_SCENE,{2,2});defer scene_destroy(&scene)
+    scene:Scene;scene_init(&scene,&types,{2,2});defer scene_destroy(&scene)
     // 1 -> 2 -> 3, 1 -> 4, 5
     parents:=[5]base.Entity_Id{0,1,2,1,0}
     for parent,i in parents {
@@ -230,7 +202,7 @@ scene_removes_entities_with_what_hangs_from_them :: proc(t:^testing.T) {
 
 @(private="file")
 patched_scene_bytes :: proc(t:^testing.T,types:^Types,w:^serial.Writer,patch:proc(doc:^Document)) -> []u8 {
-    scene:Scene;scene_init(&scene,types,KIND_SCENE,{3,3})
+    scene:Scene;scene_init(&scene,types,{3,3})
     for i in 1..=3 {
         scene_entity_add(&scene,base.Entity_Id(i),i>1?base.Entity_Id(i-1):0,"e")
         light:=Test_Light{intensity=f32(i)}
@@ -300,7 +272,7 @@ scene_reads_components_stored_with_another_layout :: proc(t:^testing.T) {
     Old_Light :: struct {intensity:f64,color:[3]f32}
     old_types:Types;types_init(&old_types);defer types_destroy(&old_types)
     types:Types;types_init(&types);defer types_destroy(&types)
-    scene:Scene;scene_init(&scene,&old_types,KIND_SCENE,{4,4})
+    scene:Scene;scene_init(&scene,&old_types,{4,4})
     scene_entity_add(&scene,1,0,"lamp")
     scene_entity_add(&scene,2,0,"other")
     old:=Old_Light{2.5,{1,0,0}}
@@ -326,11 +298,11 @@ scene_reads_components_stored_with_another_layout :: proc(t:^testing.T) {
 
 @(private="file")
 lamp_prefab :: proc(prefab:^Scene,types:^Types,radius:f32,color:[3]f32) {
-    scene_init(prefab,types,KIND_PREFAB,{0xa,0xa})
+    scene_init(prefab,types,{0xa,0xa})
+    prefab.doc.flags+={.Prefab}
     scene_entity_add(prefab,1,0,"Lamp")
     scene_entity_add(prefab,2,1,"Bulb")
     scene_entity_add(prefab,3,1,"Shade")
-    prefab.info.root=1
     for id in ([]base.Entity_Id{1,2,3}) {
         value:=transform(0,f32(id),0)
         scene_set(prefab,id,"Transform",&value)
@@ -365,7 +337,7 @@ instance_count :: proc(scene:^Scene) -> int {return len(scene_instance_roots(sce
 prefab_instances_copy_entities_and_point_references_at_the_copies :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     prefab:Scene;lamp_prefab(&prefab,&types,1,{1,0,0});defer scene_destroy(&prefab)
-    scene:Scene;scene_init(&scene,&types,KIND_SCENE,{0xb,0xb});defer scene_destroy(&scene)
+    scene:Scene;scene_init(&scene,&types,{0xb,0xb});defer scene_destroy(&scene)
     scene_entity_add(&scene,100,0,"Room")
     scene_entity_add(&scene,101,100,"Chair")
     root_a,error_a:=scene_instantiate(&scene,&prefab,{0xa,0xa},100)
@@ -403,7 +375,7 @@ prefab_instances_copy_entities_and_point_references_at_the_copies :: proc(t:^tes
     testing.expect_value(t,scene_read(&loaded,&types,serial.writer_bytes(&w)),Error.None)
     defer scene_destroy(&loaded)
     placed,_:=scene_instance(&loaded,root_a)
-    testing.expect(t,instance_count(&loaded)==2 && placed==Instance{{0xa,0xa},0} && member_count(&loaded)==6 && len(loaded.overrides)==1)
+    testing.expect(t,instance_count(&loaded)==2 && placed==Prefab_Instance{{0xa,0xa},0} && member_count(&loaded)==6 && len(loaded.overrides)==1)
     testing.expect(t,scene_overridden(&loaded,bulb,light_hash(),"intensity"))
     asset:Asset
     testing.expect_value(t,asset_open(&asset,serial.writer_bytes(&w)),Error.None)
@@ -422,7 +394,7 @@ prefab_instances_copy_entities_and_point_references_at_the_copies :: proc(t:^tes
 prefab_update_keeps_what_an_instance_overrides :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     prefab:Scene;lamp_prefab(&prefab,&types,1,{1,0,0});defer scene_destroy(&prefab)
-    scene:Scene;scene_init(&scene,&types,KIND_SCENE,{0xb,0xb});defer scene_destroy(&scene)
+    scene:Scene;scene_init(&scene,&types,{0xb,0xb});defer scene_destroy(&scene)
     root_a,_:=scene_instantiate(&scene,&prefab,{0xa,0xa},0)
     a:=root_a
     b,_:=scene_instantiate(&scene,&prefab,{0xa,0xa},0)
@@ -500,10 +472,9 @@ prefab_update_keeps_what_an_instance_overrides :: proc(t:^testing.T) {
 
 @(private="file")
 plug_prefab :: proc(prefab:^Scene,types:^Types) {
-    scene_init(prefab,types,KIND_PREFAB,{0xe,0xe})
+    scene_init(prefab,types,{0xe,0xe})
     scene_entity_add(prefab,1,0,"Plug")
     scene_entity_add(prefab,2,1,"Pin")
-    prefab.info.root=1
 }
 
 @(private="file")
@@ -515,14 +486,14 @@ gone :: proc(scene:^Scene,ids:..base.Entity_Id) -> bool {
 }
 
 @(test)
-prefab_node_that_leaves_takes_what_hangs_from_it_and_what_named_it_names_none :: proc(t:^testing.T) {
+a_member_that_leaves_gives_what_the_scene_added_under_it_to_the_nearest_member_left :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     plug:Scene;plug_prefab(&plug,&types);defer scene_destroy(&plug)
     // The Lamp brings a Plug under its Bulb.
     prefab:Scene;lamp_prefab(&prefab,&types,1,{1,0,0});defer scene_destroy(&prefab)
     plug_root,error:=scene_instantiate(&prefab,&plug,{0xe,0xe},2)
     testing.expect_value(t,error,Error.None)
-    scene:Scene;scene_init(&scene,&types,KIND_SCENE,{0xb,0xb});defer scene_destroy(&scene)
+    scene:Scene;scene_init(&scene,&types,{0xb,0xb});defer scene_destroy(&scene)
     room,watcher:=base.Entity_Id(100),base.Entity_Id(101)
     scene_entity_add(&scene,room,0,"Room")
     scene_entity_add(&scene,watcher,0,"Watcher")
@@ -564,20 +535,31 @@ prefab_node_that_leaves_takes_what_hangs_from_it_and_what_named_it_names_none ::
     // The Bulb leaves the Lamp, with the Plug under it.
     scene_entities_remove(&prefab,{2})
     testing.expect(t,instance_count(&prefab)==0 && member_count(&prefab)==0 && scene_entity_count(&prefab)==2)
-    testing.expect_value(t,scene_instance_update(&scene,a,&prefab),Error.None)
-    testing.expect_value(t,scene_instance_update(&scene,b,&prefab),Error.None)
+    reparented:=0
+    testing.expect_value(t,scene_instance_update(&scene,a,&prefab,&reparented),Error.None)
+    testing.expect_value(t,scene_instance_update(&scene,b,&prefab,&reparented),Error.None)
 
-    // The member goes with its overrides, what was added under it and the instances under it.
-    testing.expect(t,gone(&scene,bulb_a,bulb_b,sticker,corner,plug_a,pin_a,placed_root,placed_pin))
-    testing.expect_value(t,scene_entity_count(&scene),6)
-    testing.expect(t,instance_count(&scene)==2 && scene_entity_instance(&scene,shade_a)==a)
-    testing.expect_value(t,member_count(&scene),4)
-    testing.expect(t,len(scene.overrides)==1 && scene.overrides[0].entity==shade_a)
-    // What named any of them names none, also what the Shade overrides; the rest is kept.
+    // The member goes with its overrides and the members under it; what the scene added under
+    // it, the Sticker and its Plug, hangs from the Lamp root after its Shade, as a Child override.
+    testing.expect(t,gone(&scene,bulb_a,bulb_b,plug_a,pin_a))
+    testing.expect_value(t,reparented,2)
+    testing.expect_value(t,scene_entity_count(&scene),10)
+    for id in ([]base.Entity_Id{sticker,placed_root}) {
+        record:=scene_entity(&scene,int(scene.index[id]))
+        testing.expect(t,record.parent==root_a && record.order>scene_entity(&scene,int(scene.index[shade_a])).order)
+        child:=false
+        for override in scene.overrides {child||=override.entity==id && override.kind==.Child}
+        testing.expect(t,child)
+    }
+    testing.expect_value(t,scene_entity(&scene,int(scene.index[corner])).parent,sticker)
+    testing.expect(t,instance_count(&scene)==3 && scene_entity_instance(&scene,shade_a)==a && scene_entity_instance(&scene,placed_pin)==placed_root)
+    testing.expect_value(t,member_count(&scene),6)
+    testing.expect_value(t,len(scene.overrides),3)
+    // What named the members that left names none, also what the Shade overrides; the rest is kept.
     room_follow,_:=scene_get(&scene,room,"Follow",Test_Follow)
     testing.expect_value(t,room_follow,Test_Follow{})
     watcher_follow,_:=scene_get(&scene,watcher,"Follow",Test_Follow)
-    testing.expect_value(t,watcher_follow,Test_Follow{offset={1,2,3}})
+    testing.expect_value(t,watcher_follow,Test_Follow{target=base.Entity(corner),anchor=placed_pin,offset={1,2,3}})
     shade_follow,_:=scene_get(&scene,shade_a,"Follow",Test_Follow)
     testing.expect_value(t,shade_follow,Test_Follow{target=base.Entity(root_a),offset={0,0,1}})
     shade_b_follow,_:=scene_get(&scene,member(&scene,b,3),"Follow",Test_Follow)
@@ -607,7 +589,7 @@ prefab_overrides_cover_the_parts_inside_them :: proc(t:^testing.T) {
     testing.expect(t,!path_covers("a","ab") && !path_covers("a.b","a") && !path_covers("a.b","a.c"))
     types:Types;types_init(&types);defer types_destroy(&types)
     prefab:Scene;lamp_prefab(&prefab,&types,1,{1,0,0});defer scene_destroy(&prefab)
-    scene:Scene;scene_init(&scene,&types,KIND_SCENE,{0xb,0xb});defer scene_destroy(&scene)
+    scene:Scene;scene_init(&scene,&types,{0xb,0xb});defer scene_destroy(&scene)
     scene_entity_add(&scene,100,0,"loose")
     a,_:=scene_instantiate(&scene,&prefab,{0xa,0xa},0)
     bulb:=member(&scene,a,2)
@@ -643,7 +625,7 @@ prefab_inside_a_prefab_keeps_each_level_of_overrides :: proc(t:^testing.T) {
     hash:=light_hash()
     lamp:Scene;lamp_prefab(&lamp,&types,1,{1,1,1});defer scene_destroy(&lamp)
     // Room holds a Lamp and sets its intensity to 2.
-    room:Scene;scene_init(&room,&types,KIND_PREFAB,{0xc,0xc});defer scene_destroy(&room)
+    room:Scene;scene_init(&room,&types,{0xc,0xc});defer scene_destroy(&room)
     scene_entity_add(&room,1,0,"Room")
     inner,_:=scene_instantiate(&room,&lamp,{0xa,0xa},1)
     room_bulb:=member(&room,inner,2)
@@ -652,7 +634,7 @@ prefab_inside_a_prefab_keeps_each_level_of_overrides :: proc(t:^testing.T) {
     scene_set(&room,room_bulb,LIGHT,&light)
     scene_override_add(&room,room_bulb,hash,"intensity")
 
-    scene:Scene;scene_init(&scene,&types,KIND_SCENE,{0xd,0xd});defer scene_destroy(&scene)
+    scene:Scene;scene_init(&scene,&types,{0xd,0xd});defer scene_destroy(&scene)
     placed,error:=scene_instantiate(&scene,&room,{0xc,0xc},0)
     testing.expect_value(t,error,Error.None)
     // The Lamp of Room is no instance of the scene, and what Room set on it is of Room.
@@ -707,7 +689,7 @@ prefab_inside_a_prefab_keeps_each_level_of_overrides :: proc(t:^testing.T) {
 components_turned_off_survive_saving_and_go_with_their_component :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     scene:Scene
-    testing.expect_value(t,scene_init(&scene,&types,KIND_SCENE,{0x61,0x62}),Error.None)
+    testing.expect_value(t,scene_init(&scene,&types,{0x61,0x62}),Error.None)
     defer scene_destroy(&scene)
     a,b:=base.Entity_Id(0x10),base.Entity_Id(0x20)
     scene_entity_add(&scene,a,0,"A");scene_entity_add(&scene,b,0,"B")
@@ -746,7 +728,7 @@ prefab_instances_follow_what_their_prefab_turns_off_unless_they_turned_it :: pro
     types:Types;types_init(&types);defer types_destroy(&types)
     prefab:Scene;lamp_prefab(&prefab,&types,1,{1,0,0});defer scene_destroy(&prefab)
     scene_component_turn(&prefab,2,light_hash(),true)
-    scene:Scene;scene_init(&scene,&types,KIND_SCENE,{0xb,0xb});defer scene_destroy(&scene)
+    scene:Scene;scene_init(&scene,&types,{0xb,0xb});defer scene_destroy(&scene)
     a,_:=scene_instantiate(&scene,&prefab,{0xa,0xa},0)
     b,_:=scene_instantiate(&scene,&prefab,{0xa,0xa},0)
     bulb_a,bulb_b:=member(&scene,a,2),member(&scene,b,2)
@@ -780,7 +762,7 @@ override_kinds :: proc(scene:^Scene) -> (kinds:[Override_Kind]int) {
 prefab_instances_keep_the_entities_they_add_through_updates :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     prefab:Scene;lamp_prefab(&prefab,&types,1,{1,0,0});defer scene_destroy(&prefab)
-    scene:Scene;scene_init(&scene,&types,KIND_SCENE,{0xb,0xb});defer scene_destroy(&scene)
+    scene:Scene;scene_init(&scene,&types,{0xb,0xb});defer scene_destroy(&scene)
     root,_:=scene_instantiate(&scene,&prefab,{0xa,0xa},0)
     a:=root
     bulb,shade:=member(&scene,a,2),member(&scene,a,3)
@@ -813,24 +795,13 @@ prefab_instances_keep_the_entities_they_add_through_updates :: proc(t:^testing.T
     testing.expect_value(t,scene_read(&loaded,&types,serial.writer_bytes(&w)),Error.None)
     defer scene_destroy(&loaded)
     testing.expect(t,len(loaded.overrides)==1 && override_kinds(&loaded)==kinds)
-
-    // What was added under a member that leaves the prefab goes with it.
-    scene_entities_remove(&prefab,{2})
-    testing.expect_value(t,scene_instance_update(&scene,a,&prefab),Error.None)
-    _,bulb_left:=scene_entity_find(&scene,bulb)
-    _,wire_left:=scene_entity_find(&scene,500)
-    _,plug_left:=scene_entity_find(&scene,501)
-    testing.expect(t,!bulb_left && !wire_left && !plug_left)
-    shade_parent,_=parent_of(&scene,shade)
-    testing.expect_value(t,shade_parent,root)
-    testing.expect_value(t,override_kinds(&scene)[.Child],0)
 }
 
 @(test)
 prefab_entities_an_instance_adds_go_into_the_prefab_and_come_back_out :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     prefab:Scene;lamp_prefab(&prefab,&types,1,{1,0,0});defer scene_destroy(&prefab)
-    scene:Scene;scene_init(&scene,&types,KIND_SCENE,{0xb,0xb});defer scene_destroy(&scene)
+    scene:Scene;scene_init(&scene,&types,{0xb,0xb});defer scene_destroy(&scene)
     root,_:=scene_instantiate(&scene,&prefab,{0xa,0xa},0)
     a:=root
     bulb,shade:=member(&scene,a,2),member(&scene,a,3)
@@ -902,9 +873,9 @@ stale_prefab_instances_resolve_against_the_files_of_their_prefabs :: proc(t:^tes
     lamp:Scene;lamp_prefab(&lamp,&types,1,{1,1,1});defer scene_destroy(&lamp)
     test_file_put(t,&files,&lamp)
     // Room holds a Lamp at intensity 2; the level holds a Room and a Lamp.
-    room:Scene;scene_init(&room,&types,KIND_PREFAB,{0xc,0xc});defer scene_destroy(&room)
+    room:Scene;scene_init(&room,&types,{0xc,0xc});defer scene_destroy(&room)
+    room.doc.flags+={.Prefab}
     scene_entity_add(&room,1,0,"Room")
-    room.info.root=1
     inner,_:=scene_instantiate(&room,&lamp,{0xa,0xa},1)
     room_lamp,_:=scene_instance(&room,inner)
     testing.expect_value(t,room_lamp.stamp,lamp.stamp)
@@ -914,7 +885,7 @@ stale_prefab_instances_resolve_against_the_files_of_their_prefabs :: proc(t:^tes
     scene_set(&room,room_bulb,LIGHT,&light)
     scene_override_add(&room,room_bulb,light_hash(),"intensity")
     test_file_put(t,&files,&room)
-    level:Scene;scene_init(&level,&types,KIND_SCENE,{0xd,0xd});defer scene_destroy(&level)
+    level:Scene;scene_init(&level,&types,{0xd,0xd});defer scene_destroy(&level)
     placed,_:=scene_instantiate(&level,&room,{0xc,0xc},0)
     lone,_:=scene_instantiate(&level,&lamp,{0xa,0xa},0)
     test_file_put(t,&files,&level)
@@ -976,12 +947,80 @@ stale_prefab_instances_resolve_against_the_files_of_their_prefabs :: proc(t:^tes
     testing.expect(t,!resolver_instance_stale(&other,of_room))
 }
 
+// A prefab is a scene its header says is one, with one root: a variant is a
+// prefab whose root is an instance of another, entities that are there become
+// an instance of a prefab that says which of its entities each stands for,
+// and a prefab made a scene places nothing from then on, while what it placed
+// before stays as it is.
+@(test)
+a_prefab_is_a_scene_of_that_kind_and_stops_being_one_when_made_a_scene :: proc(t:^testing.T) {
+    types:Types;types_init(&types);defer types_destroy(&types)
+    files:Test_Files
+    files.assets=make(map[base.Asset_Id]^Asset)
+    defer {
+        for _,a in files.assets {asset_close(a);free(a)}
+        delete(files.assets)
+    }
+    LAMP,TALL :: base.Asset_Id{0xa,0xa},base.Asset_Id{0xc,0xc}
+    lamp:Scene;lamp_prefab(&lamp,&types,1,{1,1,1});defer scene_destroy(&lamp)
+    test_file_put(t,&files,&lamp)
+    testing.expect(t,asset_prefab(files.assets[LAMP]))
+
+    tall:Scene;scene_init(&tall,&types,TALL);defer scene_destroy(&tall)
+    tall.doc.flags+={.Prefab}
+    _,placed:=scene_instantiate(&tall,&lamp,LAMP,0)
+    testing.expect_value(t,placed,Error.None)
+    base_of,variant:=prefab_variant_base(&tall)
+    testing.expect(t,variant && base_of==LAMP)
+    _,plain:=prefab_variant_base(&lamp)
+    testing.expect(t,!plain)
+    test_file_put(t,&files,&tall)
+    testing.expect(t,asset_prefab(files.assets[TALL]),"a variant is a prefab as any other")
+    holds,asked:=prefab_holds({&files,test_files_open},&types,TALL,LAMP)
+    testing.expect(t,holds && asked==.None)
+
+    // A post that is there, a lamp in all but the range of its glow, becomes an instance of the lamp.
+    level:Scene;scene_init(&level,&types,{0xd,0xd});defer scene_destroy(&level)
+    scene_entity_add(&level,20,0,"Floor")
+    there:=make(map[base.Entity_Id]base.Entity_Id,context.temp_allocator)
+    there[1],there[2],there[3]=10,11,12
+    testing.expect_value(t,scene_copy(&level,&lamp,&there),Error.None)
+    glow,_:=scene_get(&level,11,LIGHT,Test_Light)
+    glow.range=9
+    scene_set(&level,11,LIGHT,&glow)
+    short:=make(map[base.Entity_Id]base.Entity_Id,context.temp_allocator)
+    short[1],short[2]=10,11
+    _,refused:=scene_instance_adopt(&level,&lamp,LAMP,&short)
+    testing.expect_value(t,refused,Error.Invalid)
+    root,adopted:=scene_instance_adopt(&level,&lamp,LAMP,&there)
+    testing.expect(t,adopted==.None && root==10)
+    held,_:=scene_instance(&level,root)
+    testing.expect(t,held==Prefab_Instance{LAMP,lamp.stamp} && member(&level,root,2)==11 && member(&level,root,3)==12)
+    testing.expect(t,scene_overridden(&level,11,light_hash(),"range") && !scene_overridden(&level,11,light_hash(),"intensity"))
+
+    // The lamp gains a second root and is made a scene: no prefab.
+    scene_entity_add(&lamp,4,0,"Second root")
+    lamp.doc.flags-={.Prefab}
+    test_file_put(t,&files,&lamp)
+    testing.expect(t,!asset_prefab(files.assets[LAMP]))
+    _,rooted:=prefab_root(&lamp)
+    testing.expect(t,!rooted)
+    _,again:=scene_instantiate(&level,&lamp,LAMP,0)
+    testing.expect_value(t,again,Error.Invalid)
+    r:Prefab_Resolver;resolver_init(&r,&types,{&files,test_files_open});defer resolver_destroy(&r)
+    testing.expect_value(t,resolver_check(&r,LAMP).state,Resolve_State.Missing)
+    testing.expect(t,!resolver_instance_stale(&r,held))
+    before:=scene_entity_count(&level)
+    changed,error:=scene_resolve(&r,&level)
+    testing.expect(t,!changed && error==.None && scene_entity_count(&level)==before,"what it placed stays as it is")
+}
+
 // Reading the view of an open scene again, as every spawn of a prefab does,
 // takes no more of the memory of the asset.
 @(test)
 a_scene_view_read_again_takes_no_more_memory :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
-    scene:Scene;scene_init(&scene,&types,KIND_PREFAB,{0x5,0x5})
+    scene:Scene;scene_init(&scene,&types,{0x5,0x5})
     scene_entity_add(&scene,1,0,"lamp")
     light:=Test_Light{{1,0,0},2,10}
     scene_set(&scene,1,LIGHT,&light)
@@ -1021,13 +1060,13 @@ scene_calls_without_memory_fail_whole :: proc(t:^testing.T) {
     if !testing.expect_value(t,view_error,Error.None) {return}
     // The prefab as a registry holds it in memory, for whoever resolves instances of it.
     registry:Registry;registry_init(&registry,"");defer registry_destroy(&registry)
-    if !testing.expect_value(t,registry_memory_set(&registry,"lamp.prefab",serial.writer_bytes(&out)),Error.None) {return}
+    if !testing.expect_value(t,registry_memory_set(&registry,"lamp.scene",serial.writer_bytes(&out)),Error.None) {return}
     text:serial.Writer;serial.writer_init(&text);defer serial.writer_destroy(&text)
     if !testing.expect_value(t,document_text_write(&prefab.doc,&text,{schema=true}),Error.None) {return}
     Call :: enum {View_Check,Instantiate,Set,Remove,Diff,From_Asset,Prefab_File,Text_Read,Tangents}
     for call in Call {
         scene:Scene
-        if !testing.expect_value(t,scene_init(&scene,&types,KIND_SCENE,{0xb,0xb},limited),Error.None) {return}
+        if !testing.expect_value(t,scene_init(&scene,&types,{0xb,0xb},limited),Error.None) {return}
         defer scene_destroy(&scene)
         root,placed:=scene_instantiate(&scene,&prefab,{0xa,0xa},0)
         if !testing.expect_value(t,placed,Error.None) {return}
@@ -1092,3 +1131,56 @@ scene_calls_without_memory_fail_whole :: proc(t:^testing.T) {
     }
 }
 
+
+@(private="file") Glow_V1 :: struct {color:[3]f32,range:f32}
+@(private="file") Glow_V2 :: struct {tint:[3]f32 `mirai:"was=color"`,range:f32}
+
+@(private="file")
+glow_prefab :: proc(prefab:^Scene,types:^Types,name:string,value:^$T) {
+    scene_init(prefab,types,{0xa,0xa})
+    prefab.doc.flags+={.Prefab}
+    scene_entity_add(prefab,1,0,"Lamp")
+    scene_set(prefab,1,name,value)
+}
+
+// A field renamed with was= and a component renamed (@(component,was=)) are the same field and
+// component to an instance, whichever of the two documents was written first: what it overrides
+// stays, and the rest follows the prefab.
+@(test)
+an_override_of_a_renamed_field_or_component_survives_an_update_of_its_stale_instance :: proc(t:^testing.T) {
+    types:Types;types_init(&types);defer types_destroy(&types)
+    first:Scene;glow_prefab(&first,&types,"Glow",&Glow_V1{color={1,0,0},range=2});defer scene_destroy(&first)
+    scene:Scene;scene_init(&scene,&types,{0xb,0xb});defer scene_destroy(&scene)
+    painted,_:=scene_instantiate(&scene,&first,{0xa,0xa},0)
+    plain,_:=scene_instantiate(&scene,&first,{0xa,0xa},0)
+    scene_set(&scene,painted,"Glow",&Glow_V1{color={0,0,1},range=2})
+    testing.expect_value(t,scene_override_add(&scene,painted,base.name_hash("Glow"),"color"),Error.None)
+    // The prefab is saved after the rename of the field; the scene is not.
+    renamed:Scene;glow_prefab(&renamed,&types,"Glow",&Glow_V2{tint={0,1,0},range=5});defer scene_destroy(&renamed)
+    // Then the scene takes the new layout, with its override still named color.
+    retyped:Scene;glow_prefab(&retyped,&types,"Glow",&Glow_V2{tint={1,1,1},range=7});defer scene_destroy(&retyped)
+    // Then the component is renamed Halo.
+    halo:Scene;glow_prefab(&halo,&types,"Halo",&Glow_V2{tint={1,1,0},range=9});defer scene_destroy(&halo)
+    halo_table,_:=scene_component(&halo,"Halo")
+    halo.doc.schema.types[halo.doc.tables[halo_table].columns[1].type].was=strings.clone("Glow",halo.doc.schema.allocator)
+    Step :: struct {prefab:^Scene,name:string,painted,plain:Glow_V2}
+    steps:=[]Step{
+        {&renamed,"Glow",{{0,0,1},5},{{0,1,0},5}},
+        {&retyped,"Glow",{{0,0,1},7},{{1,1,1},7}},
+        {&halo,"Halo",{{0,0,1},9},{{1,1,0},9}},
+    }
+    for step,at in steps {
+        if at==1 {
+            table,_:=scene_component(&scene,"Glow")
+            source,_:=scene_component(&retyped,"Glow")
+            testing.expect_value(t,document_column_retype(&scene.doc,table,1,&retyped.doc.schema,retyped.doc.tables[source].columns[1].type),Error.None)
+        }
+        for root in ([]base.Entity_Id{painted,plain}) {testing.expect_value(t,scene_instance_update(&scene,root,step.prefab),Error.None)}
+        painted_glow,_:=scene_get(&scene,painted,step.name,Glow_V2)
+        plain_glow,_:=scene_get(&scene,plain,step.name,Glow_V2)
+        testing.expectf(t,painted_glow==step.painted && plain_glow==step.plain,"step %d: %v %v",at,painted_glow,plain_glow)
+        testing.expect(t,len(scene.overrides)==1 && scene.overrides[0].component==base.name_hash(step.name))
+    }
+    _,old_name:=scene_component(&scene,"Glow")
+    testing.expect(t,!old_name)
+}

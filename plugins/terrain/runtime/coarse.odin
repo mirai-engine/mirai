@@ -50,13 +50,13 @@ coarse_grid :: proc(g:^Grid($T),size:[2]int,allocator:runtime.Allocator) -> bool
 // A sample of the coarse grid: from the grid, or from the samples without one.
 @(private)
 coarse_value :: #force_inline proc "contextless" (s:^Source,i,j:int) -> f32 {
-    if len(s.coarse.heights.pages)>0 {return grid_get(&s.coarse.heights,i,j)}
-    return grid_get(&s.heights,coarse_position(i,int(s.samples.x)),coarse_position(j,int(s.samples.z)))
+    if !grid_none(&s.coarse.heights) {return grid_get(&s.coarse.heights,i,j)}
+    return grid_get(&s.field,coarse_position(i,int(s.samples.x)),coarse_position(j,int(s.samples.z)))
 }
 
 @(private)
 coarse_weight :: #force_inline proc "contextless" (s:^Source,i,j:int) -> [4]f32 {
-    if len(s.coarse.weights.pages)>0 {return weights_float(grid_get(&s.coarse.weights,i,j))}
+    if !grid_none(&s.coarse.weights) {return weights_float(grid_get(&s.coarse.weights,i,j))}
     return weights_float(grid_get(&s.weights,coarse_position(i,int(s.samples.x)),coarse_position(j,int(s.samples.z))))
 }
 
@@ -114,7 +114,7 @@ coarse_page :: proc(g:^Grid($T),i:int,file:string,read:^Page_Reader,scratch:[]T)
     if page.values!=nil {return page.values,{},true}
     if !grid_absent(g,i) {return nil,page.fill,true}
     _,count:=grid_page_extent(g,i)
-    if !page_load(g.blocks[i],file,read,mem.slice_to_bytes(scratch[:count])) {return}
+    if !page_load(grid_block(g,i),file,read,mem.slice_to_bytes(scratch[:count])) {return}
     return scratch[:count],{},true
 }
 
@@ -213,7 +213,7 @@ coarse_rows :: proc(rows:^Coarse_Rows,first,last:int,worker:int) {
     heights,heights_error:=make([]f32,PAGE*PAGE,context.temp_allocator)
     band,band_error:=make([]f32,band_rows*nx,context.temp_allocator)
     if !read_ok || heights_error!=nil || band_error!=nil {intrinsics.atomic_store(&rows.failed,true);return}
-    g:=&s.heights
+    g:=&s.field
     for cz in first..<last {
         low,high:=cz*cells,min(cz*cells+cells,nz-1)
         b0,b1:=low/COARSE*COARSE,min((high+COARSE-1)/COARSE*COARSE,nz-1)
@@ -255,7 +255,7 @@ coarse_weights_fill :: proc(s:^Source,c:^Coarse,read:^Page_Reader) -> bool {
 
 // The weights of the coarse grid again, after the layers of a source changed.
 source_coarse_weights :: proc(s:^Source) -> bool {
-    if s.kind!=.Heightfield || len(s.coarse.heights.pages)==0 {return true}
+    if grid_none(&s.coarse.heights) {return true}
     c:=&s.coarse
     read:Page_Reader
     if !page_reader_init(&read,context.temp_allocator) {return false}
@@ -267,7 +267,7 @@ source_coarse_weights :: proc(s:^Source) -> bool {
 // pages are in memory, and the ranges of the chunks it touched. Its pages
 // there take values of their own first; false without memory for them.
 source_coarse_update :: proc(s:^Source,low,high:[3]int,ranges:[][2]f32) -> bool {
-    if s.kind!=.Heightfield || len(s.coarse.heights.pages)==0 {return true}
+    if grid_none(&s.coarse.heights) {return true}
     c:=&s.coarse
     nx,nz:=int(s.samples.x),int(s.samples.z)
     // The points of the coarse grid within the region: from the first multiple of COARSE, and the last row or column.
@@ -276,15 +276,15 @@ source_coarse_update :: proc(s:^Source,low,high:[3]int,ranges:[][2]f32) -> bool 
     if high.x>=nx-1 {last.x=c.size.x-1}
     if high.z>=nz-1 {last.y=c.size.y-1}
     if first.x<=last.x && first.y<=last.y {
-        if !grid_prepare(&c.heights,{first.x,0,first.y},{last.x,0,last.y},s.allocator) || len(c.weights.pages)>0 && !grid_prepare(&c.weights,{first.x,0,first.y},{last.x,0,last.y},s.allocator) {return false}
+        if !grid_prepare(&c.heights,{first.x,0,first.y},{last.x,0,last.y},s.allocator) || !grid_none(&c.weights) && !grid_prepare(&c.weights,{first.x,0,first.y},{last.x,0,last.y},s.allocator) {return false}
         for j in first.y..=last.y {
             z:=coarse_position(j,nz)
             if z<low.z || z>high.z {continue}
             for i in first.x..=last.x {
                 x:=coarse_position(i,nx)
                 if x<low.x || x>high.x {continue}
-                grid_set(&c.heights,i,j,grid_get(&s.heights,x,z))
-                if len(c.weights.pages)>0 {grid_set(&c.weights,i,j,grid_get(&s.weights,x,z))}
+                grid_set(&c.heights,i,j,grid_get(&s.field,x,z))
+                if !grid_none(&c.weights) {grid_set(&c.weights,i,j,grid_get(&s.weights,x,z))}
             }
         }
     }
@@ -292,7 +292,7 @@ source_coarse_update :: proc(s:^Source,low,high:[3]int,ranges:[][2]f32) -> bool 
     cells:=int(s.chunk_cells)
     counts:=chunk_counts(s)
     for z in max(low.z,0)..=min(high.z,nz-1) {for x in max(low.x,0)..=min(high.x,nx-1) {
-        h:=grid_get(&s.heights,x,z)
+        h:=grid_get(&s.field,x,z)
         cx,cz:=min(x/cells,counts.x-1),min(z/cells,counts.z-1)
         for dz in 0..<2 {for dx in 0..<2 {
             at:=[2]int{cx-dx,cz-dz}
@@ -316,7 +316,7 @@ Sample_View :: struct {
 @(private)
 sample_at :: #force_inline proc "contextless" (v:Sample_View,x,z:int) -> f32 {
     if v.band!=nil {return v.band[(z-v.b0)*v.nx+x]}
-    return grid_get(&v.s.heights,x,z)
+    return grid_get(&v.s.field,x,z)
 }
 
 // The errors of chunk coord of a Heightfield: each level, the bilinear blend

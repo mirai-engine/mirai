@@ -1,6 +1,5 @@
 package main
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:math"
 import "core:os"
@@ -13,12 +12,13 @@ import "mirai:cook/build"
 import "mirai:cook/workspace"
 import "mirai:editor/api"
 import "mirai:project"
+import "mirai:std/serial"
 import "mirai:std/subprocess"
 
-BENCH_USAGE :: "bench compare [project] [--base main|<ref>|<checkout>] [--scene S] [--camera x,y,z,tx,ty,tz[,fov]] [--size WxH] [--pairs N] [--frames N] [--warmup N] [--dev|--release] [--out folder]"
+BENCH_USAGE :: "bench compare [project] [--base main|<ref>|<checkout>] [--scene S] [--camera x,y,z,tx,ty,tz[,fov]] [--size WxH] [--pairs N] [--frames N] [--warmup N] [--release] [--out folder]"
 
 // mirai bench compare: the cost of the frames of a project in this checkout
-// against --base, both built alike (--dev unless --release) and measured alone among the checkouts
+// against --base, both built alike (dev unless --release) and measured alone among the checkouts
 // in headless editors, which pace nothing and validate nothing. The two
 // editors stay open and take turns, head, base, base, head..., so that what
 // drifts while they measure (clocks, heat, the rest of the machine) falls on
@@ -41,7 +41,7 @@ Bench_Options :: struct {
     camera:[]f64, // position and target, and the vertical fov in degrees when there is a seventh
     size:[2]int,
     pairs,frames,warmup:int,
-    release:bool, // both builds at --release; --dev otherwise, as a render check
+    release:bool, // both builds at --release; dev otherwise, as a render check
 }
 
 Bench_Section :: enum u8 {Frame,Parts,Passes,Zones}
@@ -54,6 +54,7 @@ BENCH_TITLES :: [Bench_Section]string{
 // What the editor answers to profile.capture that the comparison reads.
 Bench_Summary :: struct {
     frame:struct {p50_ms,p95_ms,cpu_ms,gpu_ms:f64},
+    conditions:serial.Json,
     parts:[]struct {name:string,mean_ms:f64},
     gpu:[]struct {name:string,mean_ms:f64},
     zones:[]struct {name,thread:string,self_ms:f64},
@@ -88,7 +89,7 @@ Bench_Build :: struct {name,checkout,project,commit,editor:string}
 Bench_Capture :: struct {
     run:string,
     pair:int,
-    summary:json.Value, // as profile.capture answered it
+    summary:serial.Json, // as profile.capture answered it
 }
 
 Bench_Report :: struct {
@@ -121,7 +122,7 @@ bench_options :: proc(args:[]string) -> (o:Bench_Options,error:string) {
             o.folder,folder_given=option,true
             continue
         }
-        if option=="--release" || option=="--dev" {o.release=option=="--release";continue}
+        if option=="--release" {o.release=true;continue}
         switch option {
         case "--base","--scene","--out","--camera","--size","--pairs","--frames","--warmup":
         case: return o,fmt.tprintf("there is no option %s",option)
@@ -210,14 +211,14 @@ bench_compare :: proc(root:string,args:[]string) -> int {
     report:=Bench_Report{release=o.release,project=relative,date=render_stamp(false),scene=o.scene,camera=o.camera,size=o.size,pairs=o.pairs,frames=o.frames,warmup=o.warmup}
     head:=Bench_Build{name="head",checkout=root,project=folder}
     if code,_,_:=build_project(root,.Editor,{folder},mode);code!=0 {return code}
-    head.editor=build.engine_paths(root,mode).editor_program
+    head.editor=project_engine_paths(root,folder,mode).editor_program
     base:Bench_Build
     if os.is_dir(o.base) {
         base={name="base",checkout=project.path_absolute(o.base)}
         base.project=join(base.checkout,relative)
-        base.editor=build.engine_paths(base.checkout,mode).editor_program
+        base.editor=project_engine_paths(base.checkout,base.project,mode).editor_program
         if !os.is_file(base.editor) {
-            fmt.eprintfln("mirai bench: %s has no editor built at %s; build it there (mirai build editor %s %s)",base.checkout,render_mode_flag(o.release),relative,render_mode_flag(o.release))
+            fmt.eprintfln("mirai bench: %s has no editor built at %s; build it there (mirai build editor %s%s)",base.checkout,render_mode_name(o.release),relative,render_mode_flag(o.release))
             return 1
         }
     } else {
@@ -251,17 +252,16 @@ bench_compare :: proc(root:string,args:[]string) -> int {
         if !bench_prepare(&e,o) {return 1}
     }
     summaries:[2][dynamic]Bench_Summary
-    conditions:[2]json.Value
+    conditions:[2]serial.Json
     for run,k in bench_order(o.pairs) {
         name,pair:=report.runs[run].name,k/2+1
         text,ok:=bench_capture(&editors[run],o,fmt.tprintf("%s %d",name,pair))
         if !ok {return 1}
         summary:Bench_Summary
-        value,parse_error:=json.parse_string(text,parse_integers=true)
-        if parse_error!=nil || json.unmarshal_string(text,&summary)!=nil {fmt.eprintfln("mirai bench: %s: profile.capture gave no summary",name);return 1}
-        append(&report.captures,Bench_Capture{name,pair,value})
+        if serial.text_decode(text,&summary,skip_unknown=true)!="" {fmt.eprintfln("mirai bench: %s: profile.capture gave no summary",name);return 1}
+        append(&report.captures,Bench_Capture{name,pair,serial.Json(text)})
         append(&summaries[run],summary)
-        if object,is_object:=value.(json.Object);is_object && conditions[run]==nil {conditions[run]=object["conditions"]}
+        if conditions[run]=="" {conditions[run]=summary.conditions}
         fmt.eprintfln("mirai bench: %s %d/%d: frame %.3f ms, CPU %.3f ms, GPU %.3f ms",name,pair,o.pairs,summary.frame.p50_ms,summary.frame.cpu_ms,summary.frame.gpu_ms)
     }
     for &e in editors {headless_close(&e)}
@@ -273,7 +273,7 @@ bench_compare :: proc(root:string,args:[]string) -> int {
 
     markdown:=bench_markdown(report)
     json_path,markdown_path:=join(out,"bench.json"),join(out,"bench.md")
-    text,_:=json.marshal(report,{pretty=true,use_enum_names=true},context.temp_allocator)
+    text,_:=serial.text_encode(report,.Pretty,context.temp_allocator)
     if os.write_entire_file(json_path,text)!=nil {fmt.eprintfln("mirai bench: could not write %s",json_path)}
     if os.write_entire_file(markdown_path,transmute([]u8)markdown)!=nil {fmt.eprintfln("mirai bench: could not write %s",markdown_path)}
     fmt.print(markdown)
@@ -284,7 +284,7 @@ bench_compare :: proc(root:string,args:[]string) -> int {
 }
 
 @(private="file")
-bench_call :: proc(e:^Headless_Editor,method:string,params:json.Object) -> (result:string,ok:bool) {
+bench_call :: proc(e:^Headless_Editor,method:string,params:any) -> (result:string,ok:bool) {
     response,err,called:=headless_call(e,method,params)
     if !called {fmt.eprintfln("mirai bench: %s: %s: %s",e.label,method,api.error_text(err,context.temp_allocator));return "",false}
     return response,true
@@ -294,16 +294,11 @@ bench_call :: proc(e:^Headless_Editor,method:string,params:json.Object) -> (resu
 @(private="file")
 bench_prepare :: proc(e:^Headless_Editor,o:Bench_Options) -> bool {
     if o.scene!="" {
-        params:=make(json.Object,context.temp_allocator)
-        params["path"]=o.scene
-        if _,ok:=bench_call(e,"scene.open",params);!ok {return false}
+        if _,ok:=bench_call(e,"scene.open",struct{path:string}{o.scene});!ok {return false}
     }
     if len(o.camera)>0 {
-        position,target:=make(json.Array,0,3,context.temp_allocator),make(json.Array,0,3,context.temp_allocator)
-        for k in 0..<3 {append(&position,json.Value(o.camera[k]));append(&target,json.Value(o.camera[3+k]))}
-        camera:=make(json.Object,context.temp_allocator)
-        camera["position"],camera["target"],camera["exposure"]=position,target,"scene"
-        if len(o.camera)==7 {camera["fov"]=o.camera[6]}
+        camera:=Camera_Set{position=o.camera[0:3],target=o.camera[3:6],exposure="scene"}
+        if len(o.camera)==7 {camera.fov=o.camera[6]}
         if _,ok:=bench_call(e,"camera.set",camera);!ok {return false}
     }
     return headless_step(e,o.warmup)
@@ -313,35 +308,29 @@ bench_prepare :: proc(e:^Headless_Editor,o:Bench_Options) -> bool {
 @(private="file")
 bench_capture :: proc(e:^Headless_Editor,o:Bench_Options,label:string) -> (text:string,ok:bool) {
     if !headless_step(e,BENCH_RESUME) {return}
-    params:=make(json.Object,context.temp_allocator)
-    params["frames"]=json.Integer(o.frames)
-    params["advance"]=true
-    params["label"]=label
-    params["top"]=json.Integer(64)
-    return bench_call(e,"profile.capture",params)
+    return bench_call(e,"profile.capture",Profile_Capture{o.frames,true,label,64})
 }
 
 // What tells the two runs apart besides the code: the conditions of their
 // first captures but the entities, which the code may change, and the
 // threads; a build that validates. Two builds of different modes differ in
 // their optimization, which is one of the conditions.
-bench_conditions :: proc(report:^Bench_Report,conditions:[2]json.Value) {
-    head,_:=conditions[0].(json.Object)
-    base,_:=conditions[1].(json.Object)
-    if device,is_string:=head["device"].(json.String);is_string {report.device=device}
+bench_conditions :: proc(report:^Bench_Report,conditions:[2]serial.Json) {
+    values:[2]map[string]string
+    for &run,i in values {
+        run=make(map[string]string,context.temp_allocator)
+        members,_:=api.json_members(string(conditions[i]))
+        for member in members {run[member.name]=api.json_compact(member.value)}
+        if run["validation"]=="true" {append(&report.warnings,fmt.aprintf("%s measured with the validation of the graphics API: the times are inflated",report.runs[i].name))}
+    }
+    report.device,_=api.json_string(values[0]["device"])
     keys:=make([dynamic]string,context.temp_allocator)
-    for key in head {append(&keys,key)}
-    for key in base {if key not_in head {append(&keys,key)}}
+    for key in values[0] {append(&keys,key)}
+    for key in values[1] {if key not_in values[0] {append(&keys,key)}}
     slice.sort(keys[:])
     for key in keys {
-        if key=="entities" || key=="workers" {continue}
-        a,_:=json.marshal(head[key],allocator=context.temp_allocator)
-        b,_:=json.marshal(base[key],allocator=context.temp_allocator)
-        if string(a)!=string(b) {append(&report.warnings,fmt.aprintf("head and base were not measured alike: %s is %s in head and %s in base",key,string(a),string(b)))}
-    }
-    for run,i in ([2]json.Object{head,base}) {
-        name:=report.runs[i].name
-        if validation,_:=run["validation"].(json.Boolean);validation {append(&report.warnings,fmt.aprintf("%s measured with the validation of the graphics API: the times are inflated",name))}
+        if key=="entities" || key=="workers" || values[0][key]==values[1][key] {continue}
+        append(&report.warnings,fmt.aprintf("head and base were not measured alike: %s is %s in head and %s in base",key,values[0][key],values[1][key]))
     }
 }
 
@@ -485,7 +474,7 @@ bench_markdown :: proc(r:Bench_Report) -> string {
         camera=fmt.tprintf("camera `%s`",strings.join(numbers,",",context.temp_allocator))
     }
     device:=r.device!=""?r.device:"an unnamed GPU"
-    bench_wrap(&b,fmt.tprintf("`mirai bench compare` of %s on %s: %d alternating pairs (head, base, base, head…) of %d frames at %dx%d, %s and %s, after %d frames of warmup. Headless editors built at `%s`, without VSync, frame limit or validation. Each cell is the median of the captures ± the median of their distances to it; Δ is the median of the head - base differences of each pair, and the last column, the smallest and the largest: if they cross 0, the pairs do not agree on the sign.",r.date,device,r.pairs,r.frames,r.size.x,r.size.y,scene,camera,r.warmup,render_mode_flag(r.release)),BENCH_LINE)
+    bench_wrap(&b,fmt.tprintf("`mirai bench compare` of %s on %s: %d alternating pairs (head, base, base, head…) of %d frames at %dx%d, %s and %s, after %d frames of warmup. Headless editors built `%s`, without VSync, frame limit or validation. Each cell is the median of the captures ± the median of their distances to it; Δ is the median of the head - base differences of each pair, and the last column, the smallest and the largest: if they cross 0, the pairs do not agree on the sign.",r.date,device,r.pairs,r.frames,r.size.x,r.size.y,scene,camera,r.warmup,render_mode_name(r.release)),BENCH_LINE)
     titles:=BENCH_TITLES
     for section in Bench_Section {
         first:=true

@@ -6,8 +6,9 @@ import "mirai:host"
 import "mirai:platform"
 import "mirai:ui"
 
-@(private="file")
-Play_Chat_Input_World :: struct {using world:core.Test_World,time:core.Time,input:core.Input,frame:core.Frame_Input,frame_time:core.Frame_Time}
+@(private)
+@(test_world)
+Play_Chat_Input_World :: struct {using world:Test_World,time:core.Time,input:core.Input,frame:core.Frame_Input,frame_time:core.Frame_Time}
 
 // While the game plays Tab is its own and the chat stays closed; in the pause
 // Tab opens it, and resuming closes it and gives the capture back.
@@ -18,12 +19,12 @@ the_chat_opens_only_while_the_game_is_paused :: proc(t:^testing.T) {
     if p==nil {return}
     defer platform.destroy(p)
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     world:Play_Chat_Input_World
-    if !core.test_world_init(t,&world) {return}
-    defer core.test_world_destroy(&world)
-    info:=core.test_world_info(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    info:=test_world_info(&world)
     app:=host.App{info=info,platform=p,tick_dt=1.0/60,max_ticks=8,game_input_excluded={.F1}}
     defer delete(app.worlds)
     viewport:Viewport

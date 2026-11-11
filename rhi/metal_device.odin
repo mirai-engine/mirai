@@ -30,6 +30,7 @@ Mtl_Texture :: struct {
 	format:    MTL.PixelFormat,
 	swapchain: bool, // handle is the current drawable texture, not owned
 	surface:   rawptr, // the IOSurface of a shared texture, owned
+	table:     Table_Refs,
 }
 
 Mtl_Slot :: struct {
@@ -55,7 +56,8 @@ Mtl_Pipeline :: struct {
 
 Mtl_Shader :: struct {
 	fingerprint: [32]u8, // source and entry bytes; Shader_Code can be released after creation
-	library: ^MTL.Library,
+	constants: Shader_Constants, // what the function was specialized with
+	library: ^MTL.Library, // of the source: the functions of its other constants share it
 	function: ^MTL.Function,
 	users: u32,
 }
@@ -90,6 +92,8 @@ Mtl_Frame :: struct {
 	upload_ptr:  [^]u8,
 	upload_size: u64,
 	upload_used: u64,
+	oversized:       [MAX_FRAME_OVERSIZED]Buffer, // see frame_alloc
+	oversized_count: int,
 	deletions:   [dynamic]^NS.Object, // released once the slot's command buffer completed
 	ranges:      [dynamic][3]u64,     // block, offset and size of the arena given back then
 	queries:     ^MTL.CounterSampleBuffer, // two samples per encoder, at its start and its end; nil without stage boundary sampling
@@ -243,6 +247,7 @@ Device :: struct {
 	failure_buffer: [FAILURE_TEXT_BYTES]u8,
 	lose_asked:     bool, // device_lose
 	lose_provoked:  bool,
+	refuse:         Pipeline_Refusal,
 	presenter:      Presenter,
 	present:        Mtl_Present,
 	pipeline_lock:  sync.Mutex, // pipelines are made on other threads too: guards their pool and that of shaders
@@ -321,6 +326,8 @@ device_create :: proc(desc: Device_Desc) -> (device: ^Device, error: string) {
 	d.capacities = device_capacities(desc.capacities)
 	d.on_message, d.message_user = desc.on_message, desc.message_user
 	ok := mtl_create_pools(d) && mtl_create_device(d, desc)
+	// Every Metal device of a Mac presents to the layer of its windows.
+	if ok && desc.surface != {} {ok = mtl_swapchain_create(d, desc.surface)}
 	if !ok {
 		error = strings.clone(d.error, context.temp_allocator)
 		device_destroy(d)
@@ -392,12 +399,13 @@ mtl_create_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	if (desc.validation || env_flag("MIRAI_VALIDATION") == "1") && !d.info.features.validation {
 		if d.on_message != nil {d.on_message(.Validation_Warning, "validation requested; run with MTL_DEBUG_LAYER=1 to enable Metal API validation", d.message_user)}
 	}
-	rt_env := env_flag("MIRAI_RT")
-	d.info.features.ray_query = bool(MTL.Device_supportsRaytracing(d.device)) && desc.allow_hardware_ray_tracing && rt_env != "software" && rt_env != "0"
+	// Metal traces rays by hardware alone: allow_hardware_ray_tracing and MIRAI_RT choose the tracer only on Vulkan.
+	d.info.features.ray_query = bool(MTL.Device_supportsRaytracing(d.device))
 	d.info.features.draw_indirect_count = false
 	d.info.features.texture_bc = bool(MTL.Device_supportsBCTextureCompression(d.device))
 	d.info.features.timestamps = false
 	d.info.features.clip_distance = true
+	d.info.features.stop_place = true
 
 	upload_size := desc.upload_bytes_per_frame if desc.upload_bytes_per_frame > 0 else 16 * 1024 * 1024
 
@@ -426,7 +434,7 @@ mtl_create_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	MTL.Device_sampleTimestamps(d.device, &d.clock_cpu, &d.clock_gpu)
 
 	for &f, i in d.frames {
-		f.upload = mtl_create_buffer(d, Buffer_Desc{size = upload_size, usage = {.Uniform, .Storage, .Index, .Indirect, .Transfer_Src, .Transfer_Dst, .Accel_Input}, memory = .Upload, name = fmt.tprintf("frame upload %d", i)})
+		f.upload = mtl_create_buffer(d, Buffer_Desc{size = upload_size, usage = TRANSIENT_USAGE, memory = .Upload, name = fmt.tprintf("frame upload %d", i)})
 		if f.upload == 0 {
 			if counter_descriptor != nil {mtl_release(counter_descriptor)}
 			return false
@@ -654,7 +662,7 @@ device_validation_forget :: proc(d: ^Device) {}
 // What the device made for itself, which device_stats leaves out.
 @(private)
 device_own :: proc(d: ^Device) -> (buffers, textures, pipelines: int) {
-	for f in d.frames {if f.upload != 0 {buffers += 1}}
+	for f in d.frames {buffers += int(f.upload != 0) + f.oversized_count}
 	if d.scratch != 0 {buffers += 1}
 	if d.compact_sizes != 0 {buffers += 1}
 	if d.table_default != 0 {textures += 1}
@@ -692,10 +700,51 @@ mtl_wait :: proc(d: ^Device, cmd: ^MTL.CommandBuffer, what: string) -> bool {
 			if MTL.CommandBufferError(NS.Error_code(err)) == .Timeout {failure = .Hung}
 			description = NS.String_odinString(NS.Error_localizedDescription(err))
 		}
-		device_fail(d, failure, "the %s command buffer failed: %s", what, description)
+		stopped_buffer: [256]u8
+		stopped := mtl_stopped(err, stopped_buffer[:])
+		device_fail(d, failure, "the %s command buffer failed: %s%s%s", what, description, "; the GPU stopped in " if stopped != "" else "", stopped)
 		return false
 	}
 	return d.failure == .None
+}
+
+// The encoder of a failed command buffer that faulted, or else the first that
+// did not complete, by its label and the debug groups open in it; "" when
+// the error does not say.
+@(private)
+mtl_stopped :: proc(err: ^NS.Error, out: []u8) -> string {
+	if err == nil {return ""}
+	infos := cast(^NS.Array)NS.Dictionary_objectForKey(NS.Error_userInfo(err), cast(NS.id)MTL.CommandBufferEncoderInfoErrorKey)
+	if infos == nil {return ""}
+	stopped: ^MTL.CommandBufferEncoderInfo
+	for i in 0 ..< NS.Array_count(infos) {
+		info := cast(^MTL.CommandBufferEncoderInfo)NS.Array_object(infos, i)
+		state := MTL.CommandBufferEncoderInfo_errorState(info)
+		if state == .Faulted {stopped = info; break}
+		if state != .Completed && stopped == nil {stopped = info}
+	}
+	if stopped == nil {return ""}
+	signposts := MTL.CommandBufferEncoderInfo_debugSignposts(stopped)
+	names: [MAX_LABEL_DEPTH + 1]^NS.String
+	names[0] = MTL.CommandBufferEncoderInfo_label(stopped)
+	count := 1
+	for i in 0 ..< (NS.Array_count(signposts) if signposts != nil else 0) {
+		if count < len(names) {names[count] = cast(^NS.String)NS.Array_object(signposts, i); count += 1}
+	}
+	return mtl_labels_text(names[:count], out)
+}
+
+// Names joined by " > ", the empty ones left out.
+@(private)
+mtl_labels_text :: proc(names: []^NS.String, out: []u8) -> string {
+	text := strings.builder_from_bytes(out)
+	for name in names {
+		value := NS.String_odinString(name) if name != nil else ""
+		if value == "" {continue}
+		if strings.builder_len(text) > 0 {strings.write_string(&text, " > ")}
+		strings.write_string(&text, value)
+	}
+	return strings.to_string(text)
 }
 
 // ---------------------------------------------------------------- deletion
@@ -862,7 +911,11 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 			}
 		}
 	}
-	f.cmd = MTL.CommandQueue_commandBuffer(d.queue)
+	// A failed frame says which encoder faulted (mtl_stopped).
+	cmd_desc := MTL.CommandBufferDescriptor.alloc()->init()
+	MTL.CommandBufferDescriptor_setErrorOptions(cmd_desc, {.EncoderExecutionStatus})
+	f.cmd = MTL.CommandQueue_commandBufferWithDescriptor(d.queue, cmd_desc)
+	mtl_release(cmd_desc)
 	if f.cmd == nil {
 		mtl_release_drawable(d)
 		mtl_drain_frame_pool(f)
@@ -895,8 +948,12 @@ mtl_release_drawable :: proc(d: ^Device) {
 frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	if !d.in_frame || cmd != &d.frames[d.slot].list {set_error(d, "frame_end without the list its frame_begin gave"); return false}
 	f := &d.frames[d.slot]
+	frame_oversized_release(d)
 	if cmd.in_render_pass {cmd_end_render_pass(cmd)}
 	mtl_end_encoder(cmd)
+	// A provoked loss names the labels the frame left open: where a GPU that completed it stopped.
+	open_buffer: [256]u8
+	open := mtl_labels_text(cmd.labels[:cmd.label_count], open_buffer[:]) if d.lose_asked else ""
 	mtl_release_labels(cmd)
 	presented := d.swapchain.drawable != nil
 	if presented {
@@ -915,7 +972,7 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	// A failed command buffer reports at the next wait; this one, once it completed.
 	if device_lose_take(d) {
 		MTL.CommandBuffer_waitUntilCompleted(f.cmd)
-		device_fail(d, .Lost, "the frame command buffer failed: the GPU device was lost")
+		device_fail(d, .Lost, "the frame command buffer failed: the GPU device was lost%s%s", "; the GPU stopped in " if open != "" else "", open)
 	}
 	// f.cmd stays retained until frame_begin reuses this slot, so draining the
 	// pool only drops the autoreleased encoders and the drawable.
@@ -927,22 +984,6 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 }
 
 frame_number :: proc(d: ^Device) -> u64 {return d.frame_number}
-
-frame_alloc :: proc(d: ^Device, size: u64, alignment: u64 = 256) -> Transient {
-	// Between frames the slot may still be in flight and frame_begin resets
-	// the ring, so transient memory only exists while a frame is recorded.
-	if !d.in_frame {set_error(d, "frame_alloc outside a frame: transient memory exists between frame_begin and frame_end"); return {}}
-	f := &d.frames[d.slot]
-	align := max(alignment, d.info.uniform_alignment, d.info.storage_alignment, 16)
-	offset := align_up(f.upload_used, align)
-	if offset + size > f.upload_size {
-		d.stats.exhausted += 1
-		set_error(d, "frame upload ring exhausted (%d of %d bytes)", offset + size, f.upload_size)
-		return {}
-	}
-	f.upload_used = offset + size
-	return {ptr = &f.upload_ptr[offset], buffer = f.upload, offset = offset, size = size}
-}
 
 // ---------------------------------------------------------------- immediate transactions
 
@@ -990,10 +1031,10 @@ immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {
 
 // Surface_Desc.metal_layer is the CAMetalLayer of the window (for example from
 // SDL_Metal_GetLayer). The layer is retained until device_destroy.
-swapchain_create :: proc(d: ^Device, surface: Surface_Desc) -> bool {
+@(private)
+mtl_swapchain_create :: proc(d: ^Device, surface: Surface_Desc) -> bool {
 	NS.scoped_autoreleasepool()
-	if surface.metal_layer == nil {set_error(d, "Surface_Desc.metal_layer is nil"); return false}
-	if d.has_swapchain {set_error(d, "the device already has a swapchain"); return false}
+	if surface.metal_layer == nil {set_error(d, "a window needs Surface_Desc.metal_layer, the CAMetalLayer the platform layer gives"); return false}
 	sc := &d.swapchain
 	sc.layer = cast(^CA.MetalLayer)surface.metal_layer
 	mtl_retain(sc.layer)

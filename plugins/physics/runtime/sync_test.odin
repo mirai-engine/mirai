@@ -81,13 +81,13 @@ a_sync_of_the_sealed_rows_gives_what_a_sync_of_every_body_gives :: proc(t:^testi
     for tick in 0..<80 {
         for f in ([2]^Physics_Test{sealed,whole}) {
             if tick%2==0 {
-                holder:=core.get(&f.transforms,scene.holder)
+                holder:=core.edit(&f.transforms,scene.holder)
                 holder.position.x+=0.05
                 holder.rotation=mm.quat_axis_angle({0,1,0},f32(tick)*0.01)
                 if tick==40 {holder.scale={1.5,1,1.5}}
             }
-            core.get(&f.transforms,scene.free_entity).position.y=9+f32(tick)*0.1
-            if tick==51 {core.get(&f.transforms,scene.wall).position.y=1}
+            core.edit(&f.transforms,scene.free_entity).position.y=9+f32(tick)*0.1
+            if tick==51 {core.edit(&f.transforms,scene.wall).position.y=1}
         }
         // A sync of every body leaves its scratch as it was.
         clear(&sealed.state.sealed)
@@ -99,7 +99,7 @@ a_sync_of_the_sealed_rows_gives_what_a_sync_of_every_body_gives :: proc(t:^testi
         testing.expect_value(t,sealed.state.stats,whole.state.stats)
         for row in 0..<core.count(&whole.transforms) {
             e:=core.entity_at(&whole.transforms,row)
-            pose,_:=core.get(core.read(&sealed.transforms),e)
+            pose,_:=core.get(&sealed.transforms,e)
             if !testing.expectf(t,pose==whole.transforms.values[row],"entity %v differs at tick %v",e,tick) {return}
         }
         if tick>=20 {
@@ -159,7 +159,7 @@ back_tick :: proc(f:^Physics_Test,scene:Back_Scene,tick:int) -> (dt:f32) {
     case tick==120:             set_velocity(&f.requests,scene.placed,{0,2,0})
     // Left at rest while it moves: asleep without a step.
     case tick==125:             core.add(&f.replicas,scene.placed,core.Pose_Target{placed=1,rest=true,position={6,0.5,2},rotation=1,scale={1,1,1}})
-    case tick==150:             _=proxy_set(&f.state,scene.ghost,body_of(core.ref(&f.state),scene.kicked),{3,0.5,0},1)
+    case tick==150:             _=proxy_set(&f.state,scene.ghost,body_of(core.ref(&f.state),scene.kicked))
     case tick>=160 && tick<180: manipulation_target(&f.requests,scene.wall,{-3+f32(tick-159)*0.02,1,0})
     case tick==180:             manipulation_end(&f.requests,scene.wall)
     case tick==210:             set_velocity(&f.requests,scene.kicked,{0,3,0})
@@ -170,7 +170,7 @@ back_tick :: proc(f:^Physics_Test,scene:Back_Scene,tick:int) -> (dt:f32) {
     case tick==340:             proxy_remove(&f.state,scene.ghost)
     case tick==345:
         // The editor places a body while nothing is stepped.
-        core.get(&f.transforms,scene.stack[0]).position.x=1
+        core.edit(&f.transforms,scene.stack[0]).position.x=1
         dt=0
     case tick==350:             apply_impulse(&f.requests,scene.stack[0],{0,2,0})
     case tick==400:             teleport(&f.requests,scene.kicked,{3,4,0})
@@ -222,5 +222,5 @@ the_rows_of_what_moved_are_those_a_walk_of_every_link_brings_back :: proc(t:^tes
     }
     testing.expect_value(t,moved.problems.count,walked.problems.count)
     testing.expect_value(t,moved.problems.count,0)
-    testing.expect(t,core.has(core.read(&moved.bodies),scene.ghost),"the proxy got the Motion of its body")
+    testing.expect(t,core.has(&moved.bodies,scene.ghost),"the proxy got the Motion of its body")
 }

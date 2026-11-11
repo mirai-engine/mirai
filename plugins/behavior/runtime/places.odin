@@ -6,6 +6,7 @@ import "mirai:std/ai"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import nav "plugins:navigation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // Queries of places: where to take cover, where to flank, where to flee, whom
@@ -13,7 +14,7 @@ import phys "plugins:physics/runtime"
 // point (rings, a grid, the points of the navigation mesh joined to it) or
 // takes entities or the offers of smart objects as them,
 // keeps those on the navigation mesh of the querier, measures each by its
-// tests and scores them with the considerations of utility; the best come
+// tests and scores them with their considerations; the best come
 // back in the Place_Result of the querier, with the request it answers.
 // Queries run in order of arrival, Behavior_Settings.queries of them a tick.
 
@@ -92,7 +93,7 @@ place_query :: proc(r:^Place_Requests,query:Place_Query) -> u32 {
 Place_Status :: enum u8 {None,Waiting,Found,Empty}
 
 // The answer to the last query of an agent. Behavior is its only writer.
-@(component,description="The best places of the last query of places of this agent, best first, with their scores.")
+@(component,derived,description="The best places of the last query of places of this agent, best first, with their scores.")
 Place_Result :: struct {
     request:u32 `mirai:"readonly,transient"`,
     status:Place_Status `mirai:"readonly,transient"`,
@@ -124,11 +125,12 @@ places_free :: proc(p:^Places) {
 @(step="fixed",stage="react",server)
 places_run :: proc(
     requests:^Place_Requests,places:^Places,results:^core.Table(Place_Result),settings:core.Ref(Behavior_Settings),
-    worlds:core.Read(core.World_Transform),perceivers:core.Read(Perceiver),perceivables:core.Read(Perceivable),paths:core.Read(nav.Nav_Path),
-    agents:core.Read(nav.Nav_Agent),walks:core.Read(phys.Walk),swims:core.Read(phys.Swim),
+    worlds:^core.Table(core.World_Transform,.Read),perceivers:^core.Table(Perceiver,.Read),perceivables:^core.Table(Perceivable,.Read),paths:^core.Table(nav.Nav_Path,.Read),
+    agents:^core.Table(nav.Nav_Agent,.Read),characters:^core.Table(phys.Character,.Read),walks:^core.Table(locomotion.Walk,.Read),swims:^core.Table(locomotion.Swim,.Read),
     navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),
-    objects:core.Read(Smart_Object),states:core.Read(Smart_State),claims:^Claims,influence:core.Ref(Influence),time:core.Time,problems:^core.Problems,
+    smart:Smart_View,influence:core.Ref(Influence),problems:^core.Problems,
 ) {
+    if len(requests.queue.items)==0 && len(places.waiting)==0 {return}
     for query in core.take(&requests.queue) {
         append(&places.waiting,query)
         result:=core.staged(results,query.querier)
@@ -147,9 +149,8 @@ places_run :: proc(
         if row!=nil && row.request!=query.request {continue}
         budget-=1
         result:Place_Result
-        filter:=place_filter(navigation,query.querier,paths,agents,walks,swims,physics)
-        smart:=Smart_View{objects=objects,states=states,worlds=worlds,claims=claims,time=time.seconds,tick=time.tick}
-        if !place_run(places,query,&result,worlds,perceivers,perceivables,paths,navigation,physics,&filter,&smart,agents,influence.ptr) {
+        filter:=place_filter(navigation,query.querier,paths,agents,characters,walks,swims,physics)
+        if !place_run(places,query,&result,worlds,perceivers,perceivables,paths,navigation,physics,&filter,smart,agents,influence.ptr) {
             core.report(problems,query.querier,"behavior.memory","no memory for the path search of a place query: its Path tests find no path to any place; free memory")
         }
         if row!=nil {row^=result}
@@ -165,22 +166,22 @@ places_run :: proc(
 }
 
 // What the querier walks and crosses, for the Path measure: as navigation moves it.
-place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,paths:core.Read(nav.Nav_Path),agents:core.Read(nav.Nav_Agent),walks:core.Read(phys.Walk),swims:core.Read(phys.Swim),physics:core.Ref(phys.Physics_State)) -> ai.Nav_Filter {
+place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,paths:^core.Table(nav.Nav_Path,$A),agents:^core.Table(nav.Nav_Agent,$B),characters:^core.Table(phys.Character,$E),walks:^core.Table(locomotion.Walk,$C),swims:^core.Table(locomotion.Swim,$D),physics:core.Ref(phys.Physics_State)) -> ai.Nav_Filter {
     if navigation.ptr==nil || !navigation.ready || navigation.count==0 {return {}}
     class:=0
     if p,found:=core.get(paths,querier);found && p.class>=0 && int(p.class)<navigation.count {class=int(p.class)}
     agent,_:=core.get(agents,querier)
     walk,_:=core.get(walks,querier)
-    gravity:=linalg.length(phys.gravity_of_entity(physics,querier))
-    return nav.agent_filter(navigation.ptr,class,agent,{walk.jump_height,walk.max_speed},core.has(swims,querier),gravity)
+    character,_:=core.get(characters,querier)
+    return nav.agent_filter(navigation.ptr,class,agent,walk,core.has(swims,querier),nav.agent_gravity(physics,querier,character))
 }
 
 // Runs one query into a result.
-place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:core.Read(core.World_Transform),perceivers:core.Read(Perceiver),perceivables:core.Read(Perceivable),paths:core.Read(nav.Nav_Path),navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),filter:^ai.Nav_Filter,smart:^Smart_View,agents:core.Read(nav.Nav_Agent),influence:^Influence) -> (memory:bool) {
+place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^core.Table(core.World_Transform,$A),perceivers:^core.Table(Perceiver,$B),perceivables:^core.Table(Perceivable,$C),paths:^core.Table(nav.Nav_Path,$D),navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),filter:^ai.Nav_Filter,smart:Smart_View,agents:^core.Table(nav.Nav_Agent,$E),influence:^Influence) -> (memory:bool) {
     query:=query
     memory=true
     result^={request=query.request,status=.Empty,offers=-1}
-    at_context :: proc(worlds:core.Read(core.World_Transform),querier:core.Entity,from:Place_Context,target:core.Entity,point:[3]f32) -> (pose:mm.Transform,ok:bool) {
+    at_context :: proc(worlds:^core.Table(core.World_Transform,$A),querier:core.Entity,from:Place_Context,target:core.Entity,point:[3]f32) -> (pose:mm.Transform,ok:bool) {
         switch from {
         case .Querier: if p,found:=core.get(worlds,querier);found {return p.transform,true}
         case .Target: if p,found:=core.get(worlds,target);found {return p.transform,true}
@@ -223,7 +224,7 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:c
     case .Perceivables:
         for row in 0..<core.count(perceivables) {
             e:=core.entity_at(perceivables,row)
-            if e==query.querier || u32(query.teams)&(1<<u32(perceivables.table.values[row].team))==0 || count>=PLACE_CANDIDATES {continue}
+            if e==query.querier || u32(query.teams)&(1<<u32(perceivables.values[row].team))==0 || count>=PLACE_CANDIDATES {continue}
             pose,found:=core.get(worlds,e)
             if !found || linalg.length(pose.position-center.position)>query.outer {continue}
             candidates[count],sources[count]=pose.position,e
@@ -235,7 +236,7 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:c
         if a,found:=core.get(agents,query.querier);found {user.abilities=a.abilities}
         for row in 0..<core.count(smart.objects) {
             e:=core.entity_at(smart.objects,row)
-            object:=smart.objects.table.values[row]
+            object:=smart.objects.values[row]
             for offer,i in object.offers {
                 if offer.use!=query.use || count>=PLACE_CANDIDATES {continue}
                 state,_:=core.get(smart.states,e)
@@ -302,7 +303,7 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:c
 }
 
 @(private)
-place_measure :: proc(test:Place_Test,from:mm.Transform,candidate:mm.Vec3,querier:core.Entity,perceivers:core.Read(Perceiver),physics:core.Ref(phys.Physics_State),influence:^Influence) -> f32 {
+place_measure :: proc(test:Place_Test,from:mm.Transform,candidate:mm.Vec3,querier:core.Entity,perceivers:^core.Table(Perceiver,$A),physics:core.Ref(phys.Physics_State),influence:^Influence) -> f32 {
     source,target:=test.from,test.target
     #partial switch test.measure {
     case .Distance:

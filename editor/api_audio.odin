@@ -17,7 +17,7 @@ import "mirai:std/serial"
 
 // Whether the editor plays this asset to be heard now.
 sound_heard :: proc(s:^Session,id:base.Asset_Id) -> bool {
-    return s.heard_sound.sound==id && eaudio.playing(s.app.mixer,s.heard)
+    return s.heard_sound.sound==id && s.app.mixer!=nil && mixer.voice_valid(s.app.mixer,s.heard)
 }
 
 // Plays an asset to be heard, at its own volume and pitch on the master bus,
@@ -26,13 +26,16 @@ sound_hear :: proc(s:^Session,id:base.Asset_Id,volume:f32=1,pitch:f32=1) -> bool
     return sound_hear_source(s,{sound=id,bus=eaudio.BUS_MASTER,volume=volume,pitch=pitch})
 }
 
-// Plays the sound of a source as it is set (eaudio.play_source), with the
-// buses as the settings of the project say.
+// Plays the sound of a source as it is set, in no place, with the buses as
+// the settings of the project say.
 sound_hear_source :: proc(s:^Session,source:eaudio.Audio_Source) -> bool {
     sound_hear_stop(s)
+    if s.app.mixer==nil {return false}
     content_used(s,source.sound)
     eaudio.buses_apply(s.app.mixer,core.world_storage_of(edited_world(s),eaudio.Audio_Settings),core.world_storage_of(edited_world(s),eaudio.Audio_Volumes))
-    s.heard=eaudio.play_source(s.app,{},source)
+    heard:=source
+    heard.spatial=false
+    s.heard=eaudio.voice_start(s.app.mixer,s.app,heard,core.NONE,nil)
     if s.heard=={} {return false}
     s.heard_sound=source
     return true
@@ -45,12 +48,17 @@ sound_hear_tune :: proc(s:^Session,source:eaudio.Audio_Source) {
         sound_hear_source(s,source)
         return
     }
-    eaudio.source_tune(s.app.mixer,s.heard,source)
+    m:=s.app.mixer
+    mixer.voice_set_volume(m,s.heard,source.volume)
+    mixer.voice_set_pitch(m,s.heard,source.pitch>0?source.pitch:1)
+    mixer.voice_set_pan(m,s.heard,source.pan)
+    mixer.voice_set_loop(m,s.heard,source.loop)
+    mixer.voice_set_reverb(m,s.heard,source.reverb)
     s.heard_sound=source
 }
 
 sound_hear_stop :: proc(s:^Session) {
-    if s.heard!={} {eaudio.stop(s.app.mixer,s.heard)}
+    if s.heard!={} && s.app.mixer!=nil {mixer.voice_stop(s.app.mixer,s.heard)}
     s.heard,s.heard_sound={},{}
 }
 
@@ -94,24 +102,27 @@ Api_Audio_Stop_Result :: struct {
 }
 
 @(private)
-SOUND_SET_PARAMS_SCHEMA :: `{"type":"object","properties":{"sound_set":{"type":"string","description":"A sound set: its path under the assets folder, or its id"},"path":{"type":"string","description":"sound_set.set: in place of sound_set, a new sound set at this path under the assets folder, made over the defaults; it fails when that file exists"},"values":{"type":"object","description":"Fields of the sound set to change, as sound_set.inspect shows them; sounds holds .sound paths or ids, as asset.list gives them"}},"additionalProperties":false}`
-
-@(private)
 Api_Sound_Set_Result :: struct {
     sound_set:base.Asset_Id,
-    path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=Under the assets folder"`,
-    values:u8 `mirai:"any,label=Its sounds by id with their weights; the ranges of volume and pitch it draws from and whether it repeats a sound; as sound_set.set takes them"`,
-    sounds:u8 `mirai:"any,label=A list with the path of each of its sounds; empty for one the assets do not have"`,
+    path:string `mirai:"optional,label=Under the assets folder"`,
+    values:asset.Sound_Set_Info `mirai:"label=Its sounds by id with their weights; the ranges of volume and pitch it draws from and whether it repeats a sound; as sound_set.set takes them"`,
+    sounds:[]string `mirai:"label=The path of each of its sounds; empty for one the assets do not have"`,
+}
+
+Api_Sound_Set_Params :: struct {
+    sound_set:string `mirai:"optional,label=A sound set: its path under the assets folder, or its id"`,
+    path:string `mirai:"optional,label=sound_set.set: in place of sound_set, a new sound set at this path under the assets folder, made over the defaults; it fails when that file exists"`,
+    values:serial.Json `mirai:"optional,label=Fields of the sound set to change, as sound_set.inspect shows them; sounds holds .sound paths or ids, as asset.list gives them"`,
 }
 
 @(private)
 audio_api_register :: proc(s:^Session,st:^Api_State) {
     play:=Api_Audio_Play_Params{volume=1,pitch=1}
-    api_register(s,st,{name="audio.status",summary="The mixer of the editor with its counters and its buses, and what audio.play plays.",result=Api_Audio_Status,flags={.Read_Only},run=api_audio_status})
-    api_register(s,st,{name="audio.play",params=Api_Audio_Play_Params,defaults=&play,result=Api_Audio_Play_Result,summary="Plays a .sound, or one sound of a .sound_set with its ranges, to be heard in the editor out of every world in place of what played, as Play sound of the content browser does.",run=api_audio_play})
-    api_register(s,st,{name="audio.stop",result=Api_Audio_Stop_Result,summary="Stops what audio.play or the content browser plays.",flags={.Idempotent},run=api_audio_stop})
-    api_register(s,st,{name="sound_set.inspect",params_schema=SOUND_SET_PARAMS_SCHEMA,summary="The values of a sound set (.sound_set) and the paths of its sounds.",result=Api_Sound_Set_Result,writes_result=true,flags={.Read_Only},run=api_sound_set_inspect})
-    api_register(s,st,{name="sound_set.set",params_schema=SOUND_SET_PARAMS_SCHEMA,summary="Changes the sounds, weights and ranges of a sound set (.sound_set) for every source and call that plays it, or makes a new one at path over the defaults.",result=Api_Sound_Set_Result,writes_result=true,run=api_sound_set_set})
+    api_register(s,st,{name="audio.status",summary="The mixer of the editor with its counters and its buses, and what audio.play plays.",result=type_info_of(Api_Audio_Status),flags={.Read_Only},run=api_audio_status})
+    api_register(s,st,{name="audio.play",params=type_info_of(Api_Audio_Play_Params),defaults=&play,result=type_info_of(Api_Audio_Play_Result),summary="Plays a .sound, or one sound of a .sound_set with its ranges, to be heard in the editor out of every world in place of what played, as Play sound of the content browser does.",run=api_audio_play})
+    api_register(s,st,{name="audio.stop",result=type_info_of(Api_Audio_Stop_Result),summary="Stops what audio.play or the content browser plays.",flags={.Idempotent},run=api_audio_stop})
+    api_register(s,st,{name="sound_set.inspect",params=type_info_of(Api_Sound_Set_Params),summary="The values of a sound set (.sound_set) and the paths of its sounds.",result=type_info_of(Api_Sound_Set_Result),flags={.Read_Only},run=api_sound_set_inspect})
+    api_register(s,st,{name="sound_set.set",params=type_info_of(Api_Sound_Set_Params),summary="Changes the sounds, weights and ranges of a sound set (.sound_set) for every source and call that plays it, or makes a new one at path over the defaults.",result=type_info_of(Api_Sound_Set_Result),run=api_sound_set_set})
 }
 
 @(private)
@@ -203,7 +214,7 @@ api_audio_stop :: proc(s:^Session,call:^api.Call) {
 
 // ---------------------------------------------------------------- sound sets
 
-// The values a set has in its file, as it is now: unsaved in memory, or on disk.
+// The values a set has in its file, as it is now: in memory, or on disk.
 sound_set_file :: proc(s:^Session,id:base.Asset_Id) -> (info:asset.Sound_Set_Info,ok:bool) {
     a:=s.app.assets
     if a==nil {return}
@@ -262,36 +273,28 @@ api_sound_set_write :: proc(s:^Session,call:^api.Call,id:base.Asset_Id) {
         api.call_fail(call,api.SERVER_ERROR,api_asset_read_problem(s,id,"sound set"))
         return
     }
-    out:=call.out
-    asset_named_write(s,out,"sound_set",id)
-    asset_values_write(out,"values",&info)
-    api.write_key(out,"sounds")
-    serial.write_u8(out,'[')
-    first:=true
+    r:=api.call_result(call,Api_Sound_Set_Result)
+    r.sound_set,r.path=id,asset_path(s,id)
+    r.values=info
+    sounds:=make([dynamic]string,call.allocator)
     for variation in info.sounds {
-        if variation.sound=={} {continue}
-        if !first {serial.write_u8(out,',')}
-        first=false
-        serial.text_write_string(out,asset_path(s,variation.sound))
+        if variation.sound!={} {append(&sounds,asset_path(s,variation.sound))}
     }
-    serial.write_u8(out,']')
-    serial.write_u8(out,'}')
+    r.sounds=sounds[:]
 }
 
 @(private)
 api_sound_set_inspect :: proc(s:^Session,call:^api.Call) {
-    p,read:=asset_params(call,"sound_set")
-    if !read {return}
-    id,found:=asset_named(s,call,p.named,asset.KIND_SOUND_SET,".sound_set","a sound set")
+    p:=api.call_params(call,Api_Sound_Set_Params)
+    id,found:=asset_named(s,call,p.sound_set,asset.KIND_SOUND_SET,".sound_set","a sound set")
     if !found {return}
     api_sound_set_write(s,call,id)
 }
 
 @(private)
 api_sound_set_set :: proc(s:^Session,call:^api.Call) {
-    p,read:=asset_params(call,"sound_set")
-    if !read {return}
-    t,found:=asset_target(s,call,&p,"sound_set",asset.KIND_SOUND_SET,".sound_set","a sound set")
+    p:=api.call_params(call,Api_Sound_Set_Params)
+    t,found:=asset_target(s,call,p.sound_set,p.path,"sound_set",asset.KIND_SOUND_SET,".sound_set","a sound set")
     if !found {return}
     info:=asset.SOUND_SET_DEFAULTS
     if !t.created {
@@ -301,7 +304,7 @@ api_sound_set_set :: proc(s:^Session,call:^api.Call) {
             return
         }
     }
-    if !asset_values_read(call,p.values,&info) {return}
+    if !asset_values_read(call,string(p.values),&info) {return}
     if refusal:=sound_set_refusal(s,info);refusal!="" {
         api.call_fail(call,api.INVALID_PARAMS,refusal)
         return

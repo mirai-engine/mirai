@@ -42,30 +42,30 @@ rig_shape_profiles_roundtrip_and_refuse_repeated_samples_and_degenerate_splines 
     profile:=Pose_Profile{spline_ik={rig_shapes_spline({{0,0,0},{0,1,0},{1,2,0},{1,3,0}})},correctives={rig_shapes_corrective()},follow={follow},curve_poses={pose},curve_drives={drive}}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     doc:asset.Document;defer asset.document_destroy(&doc)
-    if !testing.expect_value(t,pose_profile_document(&doc,&types,{3,4},profile),asset.Error.None) {return}
-    testing.expect_value(t,doc.kind_version,u16(POSE_VERSION))
-    path:=fmt.tprintf("%s/shapes.pose",base.test_folder(t,"rig-shapes"))
+    if !testing.expect_value(t,character_document(&doc,&types,{3,4},{match={info=MATCH_INFO_DEFAULT},motion={warp=POSE_WARP_PROFILE_DEFAULT},pose=profile}),asset.Error.None) {return}
+    testing.expect_value(t,doc.kind_version,u16(CHARACTER_VERSION))
+    path:=fmt.tprintf("%s/shapes.character",base.test_folder(t,"rig-shapes"))
     testing.expect_value(t,asset.document_save(&doc,path),asset.Error.None)
     file:asset.Asset
     if !testing.expect_value(t,asset.asset_load(&file,path),asset.Error.None) {return}
     defer asset.asset_close(&file)
-    view,read:=pose_profile_view(&file,&types)
+    set,read:=character_view(&file,&types);view:=set.pose
     testing.expect_value(t,read,asset.Error.None)
     testing.expect(t,len(view.spline_ik)==1 && view.spline_ik[0].controls[3].position==mm.Vec3{1,3,0} && view.correctives[0].samples[1].curve_value==1 && view.follow[0].target.kind==.Socket)
     testing.expect(t,len(view.curve_poses)==1 && view.curve_poses[0]==pose && len(view.curve_drives)==1 && view.curve_drives[0]==drive)
-    // A profile of the current version without curve poses, drives and materials is incomplete,
-    // and one of another version is refused.
+    // A set of the current version without curve poses, drives and materials is incomplete, and
+    // one of another version is refused.
     for name in ([3]string{"curve_poses","curve_drives","curve_materials"}) {
         if table,found:=asset.document_table(&doc,name);found {asset.document_table_remove(&doc,table)}
     }
-    for version,i in ([2]u16{POSE_VERSION,POSE_VERSION-1}) {
+    for version,i in ([2]u16{CHARACTER_VERSION,CHARACTER_VERSION+1}) {
         doc.kind_version=version
         bytes,written:=asset.document_bytes(&doc,context.temp_allocator)
         if !testing.expect_value(t,written,asset.Error.None) {continue}
         old:asset.Asset
         if !testing.expect_value(t,asset.asset_open(&old,bytes,context.temp_allocator),asset.Error.None) {continue}
         defer asset.asset_close(&old)
-        _,error:=pose_profile_view(&old,&types)
+        _,error:=character_view(&old,&types)
         switch i {
         case 0: testing.expect_value(t,error,asset.Error.Not_Found)
         case 1: testing.expect_value(t,error,asset.Error.Version)
@@ -181,18 +181,18 @@ spatial_bone_and_socket_targets_read_the_sampled_pose_and_keep_their_binding :: 
     append(&skeletons.contents,Skeleton_Content{id=state.skeleton,sockets=sockets})
     target:=spatial_bone(source,"joint3")
     binding:Spatial_Target_Binding;defer delete(binding.path)
-    result,ok:=spatial_target_sample(target,&binding,&playback,&skeletons,{},{},core.read(&worlds))
+    result,ok:=spatial_target_sample(target,&binding,&playback,&skeletons,(^core.Table(core.Transform))(nil),nil,core.read(&worlds))
     testing.expect(t,ok && linalg.length(result.position-mm.Vec3{20,1,0})<1e-5,"the root of a skeleton is its entity, the others its sampled pose")
     target=spatial_socket(source,"grip",{{0,0,.5},1,{1,1,1}})
-    result,ok=spatial_target_sample(target,&binding,&playback,&skeletons,{},{},core.read(&worlds))
+    result,ok=spatial_target_sample(target,&binding,&playback,&skeletons,(^core.Table(core.Transform))(nil),nil,core.read(&worlds))
     testing.expect(t,ok && linalg.length(result.position-mm.Vec3{20,1.2,.5})<1e-5)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
-    for _ in 0..<32 {value,valid:=spatial_target_sample(target,&binding,&playback,&skeletons,{},{},core.read(&worlds));stable &&=valid && value==result}
+    for _ in 0..<32 {value,valid:=spatial_target_sample(target,&binding,&playback,&skeletons,(^core.Table(core.Transform))(nil),nil,&worlds);stable &&=valid && value==result}
     context=saved
     testing.expect(t,stable)
     state.bound+=1;state.targets[3]=base.name_hash("missing");state.aliases[3]=state.targets[3]
-    _,ok=spatial_target_sample(target,&binding,&playback,&skeletons,{},{},core.read(&worlds))
+    _,ok=spatial_target_sample(target,&binding,&playback,&skeletons,(^core.Table(core.Transform))(nil),nil,&worlds)
     testing.expect(t,!ok,"a rebound rig without the bone of the socket")
     testing.expect(t,!spatial_target_valid(spatial_entity(core.NONE)) && spatial_target_valid(spatial_entity(core.NONE),false),"a profile names the kind; the goal, the entity")
 }
@@ -246,7 +246,7 @@ ik_holds_the_rotation_it_is_asked_and_look_keeps_its_up_axis :: proc(t:^testing.
     for hold in IK_Hold {
         if hold==.Target {continue}
         copy(state.local[:],state.rest[:]);state.local[3].rotation=bent
-        core.at(&iks,0).hold=hold;cache.stamps={}
+        core.edit_at(&iks,0).hold=hold;cache.stamps={}
         testing.expect(t,lib.pose_world(state.parents[:],state.local[:],state.world[:]))
         held:=state.world[3].rotation
         constraints_apply(&state,&playback,{ik=core.read(&iks),problems=&problems},&cache,&transforms,{},0)
@@ -267,22 +267,21 @@ ik_holds_the_rotation_it_is_asked_and_look_keeps_its_up_axis :: proc(t:^testing.
     testing.expect(t,linalg.dot(mm.quat_rotate(state.world[3].rotation,look.forward),aimed)>.9999 && linalg.dot(up,wanted)>.9999,"the bone aims and its up axis turns to world_up around the aim")
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Rig_Shapes_World :: struct {
-    using world:core.Test_World,
-    configs:core.Table(Pose_Modifiers),
+    using world:Test_World,
     animations:core.Table(Animation),
     attachments:core.Table(Bone_Attachment),
     playback:Playback,
     modifiers:Modifier_Runtime,
-    requests:Modifier_Requests,
+    requests:Animation_Requests,
 }
 
 @(test)
 named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(t:^testing.T) {
     problems:core.Problems
     directory:=base.test_folder(t,"modifier-identity")
-    path:=fmt.tprintf("%s/rig.pose",directory)
     head,eyes:=LOOK_CONSTRAINT_DEFAULT,LOOK_CONSTRAINT_DEFAULT
     head.bone,eyes.bone=bone_ref("head"),bone_ref("eyes")
     hands:=MULTI_IK_CONSTRAINT_DEFAULT;base.text_set(hands.name[:],"hands");hands.root=bone_ref("joint1")
@@ -290,51 +289,51 @@ named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(
     for &effector,i in hands.effectors[:2] {effector=MULTI_IK_EFFECTOR_DEFAULT;effector.bone=bone_ref("joint2" if i==0 else "joint3");base.text_set(effector.name[:],"Left" if i==0 else "Right")}
     id:=base.Asset_Id{817,819}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    if !testing.expect_value(t,pose_profile_save(path,&types,id,{look={head,eyes},multi_ik={hands}}),asset.Error.None) {return}
+    if !test_character_save(t,directory,"rig",&types,id,{pose={look={head,eyes},multi_ik={hands}}}) {return}
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return}
     defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
     w:Rig_Shapes_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     rig:=core.create(&w.entities)
-    core.add(&w.configs,rig,Pose_Modifiers{profile=id,weight=1,enabled=true});core.test_world_settle(&w)
-    profiles:Pose_Assets;defer pose_assets_free(&profiles)
+    player:=ANIMATION_DEFAULT;player.asset=id;core.add(&w.animations,rig,player);test_world_settle(&w)
+    profiles:Character_Assets;defer character_assets_free(&profiles)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
-    prepare :: proc(w:^Rig_Shapes_World,profiles:^Pose_Assets,skeletons:^Skeleton_Assets,app:^host.App) -> bool {
-        return modifier_prepare(&w.modifiers,core.read(&w.configs),core.read(&w.animations),core.read(&w.attachments),profiles,skeletons,&w.playback,app.assets,app.allocator,nil)
+    prepare :: proc(w:^Rig_Shapes_World,profiles:^Character_Assets,skeletons:^Skeleton_Assets,app:^host.App) -> bool {
+        return modifier_prepare(&w.modifiers,&w.animations,&w.attachments,profiles,skeletons,&w.playback,app.assets,app.allocator,nil)
     }
     if !testing.expect(t,prepare(&w,&profiles,&skeletons,&app)) {return}
     modifier_goal(&w.requests,{rig=rig,kind=.Look,target=spatial_point({1,2,3}),weight=1,enabled=true})
     modifier_control(&w.requests,{rig=rig,kind=.Look,weight=.25,enabled=true})
     modifier_goal(&w.requests,{rig=rig,kind=.Multi_IK,target=spatial_point({7,8,9}),weight=1,enabled=true})
-    modifier_take(&w.modifiers,&w.requests,core.read(&w.configs),&problems)
+    modifier_take(&w.modifiers,&w.requests,&problems,0)
     testing.expect(t,len(w.modifiers.goals)==2 && w.modifiers.look.values[0].weight==.25)
     modifier_goal_named(&w.requests,&w.modifiers,{rig=rig,kind=.Look,target=spatial_point({3,4,5}),weight=1,enabled=true},"head")
     modifier_control_named(&w.requests,&w.modifiers,{rig=rig,kind=.Look,weight=.6,enabled=true},"head")
     modifier_goal_named(&w.requests,&w.modifiers,{rig=rig,kind=.Multi_IK,target=spatial_point({9,8,7}),weight=1,enabled=true},"hands")
     // The profile reorders its looks and effectors: what was asked by slot goes; by name, follows.
     hands.effectors[0],hands.effectors[1]=hands.effectors[1],hands.effectors[0]
-    testing.expect_value(t,pose_profile_save(path,&types,id,{look={eyes,head},multi_ik={hands}}),asset.Error.None)
+    test_character_save(t,directory,"rig",&types,id,{pose={look={eyes,head},multi_ik={hands}}})
     record,found:=asset.registry_find(&assets.registry,id)
     if !testing.expect(t,found) {return}
     record.time+=1;assets.revision+=1
     if !testing.expect(t,prepare(&w,&profiles,&skeletons,&app)) {return}
     testing.expect(t,len(w.modifiers.goals)==0 && w.modifiers.look.values[0].weight==1 && w.modifiers.look.values[1].weight==1)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    modifier_take(&w.modifiers,&w.requests,core.read(&w.configs),&problems)
+    modifier_take(&w.modifiers,&w.requests,&problems,0)
     context=saved
     testing.expect(t,w.modifiers.look.values[0].target.position=={} && w.modifiers.look.values[1].target.position==mm.Vec3{3,4,5} && w.modifiers.look.values[1].weight==.6)
     testing.expect(t,w.modifiers.multi_ik.values[0].effectors[1].target.position==mm.Vec3{9,8,7} && w.modifiers.multi_ik.values[0].effectors[0].target.position=={} && problems.count==0)
-    controls:Modifier_Requests;defer delete(controls.controls.items)
+    controls:Animation_Requests;defer delete(controls.controls.items)
     modifier_goal_named(&w.requests,&w.modifiers,{rig=rig,kind=.Multi_IK,effector=1,target=spatial_point({}),weight=1,enabled=true},"hands")
     modifier_control_named(&controls,&w.modifiers,{rig=rig,kind=.Look,weight=0},"head")
     hands.effector_count=1
-    testing.expect_value(t,pose_profile_save(path,&types,id,{look={eyes},multi_ik={hands}}),asset.Error.None)
+    test_character_save(t,directory,"rig",&types,id,{pose={look={eyes},multi_ik={hands}}})
     record.time+=1;assets.revision+=1
     if !testing.expect(t,prepare(&w,&profiles,&skeletons,&app)) {return}
-    modifier_take(&w.modifiers,&w.requests,core.read(&w.configs),&problems)
+    modifier_take(&w.modifiers,&w.requests,&problems,0)
     testing.expect(t,problems.count==1 && core.problem_find(&problems,rig,"animation.modifier_effector")!=nil && modifier_request_error(&w.modifiers,rig)==.Missing_Effector)
     modifier_controls_take(&w.modifiers,&controls,&problems,0)
     testing.expect(t,problems.count==2 && core.problem_find(&problems,rig,"animation.modifier_name")!=nil && modifier_request_error(&w.modifiers,rig)==.Missing_Operation && w.modifiers.look.values[0].weight==1)

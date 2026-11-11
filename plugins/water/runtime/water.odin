@@ -12,10 +12,11 @@ import mm "mirai:std/math"
 import fog "plugins:fog/runtime"
 import phys "plugins:physics/runtime"
 
-// Water: the Fluid_Volume rows of the physics drawn as water, from the same
+// Water: the Fluid rows of the physics drawn as water, from the same
 // fluids the physics floats bodies in. Each surface is a solid of the glass
 // of the renderer: a plane, an open grid around the camera on its waves; a
-// box, its cube. Under it, a medium of the fog plugin that takes the light of
+// box, a lake in its basin, that grid cut at its walls; a river, a ribbon
+// along its path (river.odin). Under a plane and a box, a medium of the fog plugin that takes the light of
 // the sun that crosses it; the dry boxes take both out of where they are, and
 // their floor of air under a surface is a surface of its own. The light of
 // the sun on what is under the water carries caustics. A volume draws as
@@ -27,7 +28,7 @@ WATER_IOR :: f32(1.333)
 CAUSTIC_TEXELS :: 256 // across the caustic pattern
 LENS_WIDTH :: f32(0.01) // m of the surface over and under the near plane where its line shows on the lens
 
-@(component,description="How the water of the Fluid_Volume of this entity looks: the material of its surface, and of its solid what it absorbs and scatters. A Fluid_Volume without it looks as the default.")
+@(component,description="How the water of the Fluid of this entity looks: the material of its surface, and of its solid what it absorbs and scatters. A Fluid without it looks as the default.")
 Water :: struct {
     material:base.Asset_Id,                          // of its surface and its solid; zero: a glass of water with the program of Water_Settings and the values below
     attenuation_color:[3]f32 `mirai:"color"`,        // what the water leaves of white light that crosses attenuation_distance of it
@@ -82,8 +83,10 @@ Water_Gpu :: struct {
     looks:[CAPACITY]Water_Look,
     look_count:int,
     air:u32,       // the row of the air of a dry box the camera is in; 0 until one is
-    looks_seen:u64, // the versions of the Water rows and of the assets the looks were made with
+    waters_seen:core.Seen, // the Water rows the looks were made with
+    looks_seen:u64, // and the rounds of the assets
     sheets:[CAPACITY]Sheet,
+    ribbons:[CAPACITY]Ribbon,
     sheet_pipeline:render.Pipeline,
     frame:u64,
 }
@@ -160,10 +163,12 @@ extinction :: proc "contextless" (look:Water) -> f32 {
     return taken/look.attenuation_distance
 }
 
-// The box of a fluid of the physics, whose sides are its scale.
+// The box of the world around a prism of the physics from its floor to its still surface, whose sides are
+// its scale.
 @(private)
-fluid_box :: proc "contextless" (desc:phys.Fluid_Desc) -> mm.Transform {
-    return {desc.position,mm.quat_axis_angle({0,1,0},desc.yaw),2*desc.half_extents}
+fluid_box :: proc "contextless" (info:phys.Fluid_Info) -> mm.Transform {
+    low,high:=[3]f32{info.bounds.min.x,info.top-info.desc.depth,info.bounds.min.z},[3]f32{info.bounds.max.x,info.top,info.bounds.max.z}
+    return {0.5*(low+high),1,high-low}
 }
 
 // How deep a plane reaches under its surface for its medium, and how far sideways from the camera.
@@ -182,12 +187,13 @@ waves_time :: proc(physics:core.Ref(phys.Physics_State),time:core.Time,frame:cor
 // the passes of the light under it and what goes over its glass.
 @(step="render",loops="game editor",before="render_sync")
 water_render :: proc(
-    state:^Water_Gpu,media:^fog.Fog_Media,waters:core.Read(Water),physics:core.Ref(phys.Physics_State),
+    state:^Water_Gpu,media:^fog.Fog_Media,waters:^core.Table(Water,.Read),physics:core.Ref(phys.Physics_State),
     settings:Water_Settings,view:core.View,app:^host.App,time:core.Time,frame:core.Frame_Time,
 ) {
     state.count,state.caustic,state.ior=0,false,WATER_IOR
     state.frame+=1
     defer sheets_release(state,app.renderer)
+    defer ribbons_release(state,app.assets)
     if app.renderer==nil || app.assets==nil {return}
     found:[CAPACITY]phys.Fluid_Info
     far:=f32(1e30)
@@ -206,32 +212,30 @@ water_render :: proc(
     // A derived row lasts while the rounds of the assets keep it: a new round asks for them again.
     settings:=settings
     program:=base.text_get(settings.surface_program[:])
-    if seen:=core.version(waters)+core.layout(waters)+app.assets.revision+app.assets.appearance+base.name_hash(program);seen!=state.looks_seen {
+    if seen:=app.assets.revision+app.assets.appearance+base.name_hash(program);core.touched(waters,&state.waters_seen) | (seen!=state.looks_seen) {
         state.looks_seen,state.look_count,state.air=seen,0,0
     }
     state.time=waves_time(physics,time,frame,app)
     lens:=false
     materials:[CAPACITY]u32
     kept:[CAPACITY]phys.Fluid_Info
-    for info in found[:count] {
+    for info,i in found[:count] {
         desc:=info.desc
         look,custom:=core.get(waters,info.entity)
         if !custom {look=WATER_DEFAULT}
         dry:=desc.density<=0
         made:=look_of(state,app.assets,info.entity,look,program)
+        if desc.shape==.Path {
+            ribbon_place(state,app,physics,found[:count],i,made.row)
+            continue
+        }
         body:Gpu_Body
-        box:=fluid_box(desc)
+        box:=fluid_box(info)
         top:=info.top
         reach:=phys.waves_reach(desc.waves)
         if desc.shape==.Plane {
             // The plane follows the camera: its grid by whole steps, its medium as it is, from under its troughs.
             box={{view.position.x,top-reach-0.5*PLANE_DEPTH,view.position.z},1,{2*PLANE_REACH,PLANE_DEPTH,2*PLANE_REACH}}
-        } else if !dry {
-            if instance,usable:=render.mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix(box));usable {
-                instance.material=render.Material_Handle(made.row)
-                instance.object_id,instance.copy_owner=u64(info.entity),base.name_hash("water")
-                render.instance_add(&app.extras,instance)
-            }
         }
         if dry && phys.fluid_holds(physics,info.fluid,view.position) {
             // The camera in a dry box is in its air: a solid of glass that bends and holds nothing, which the
@@ -274,11 +278,13 @@ water_render :: proc(
         desc:=info.desc
         if desc.shape==.Plane {
             sheet_place(state,app.assets,app.renderer,&app.extras,view,i,info.entity,materials[i])
-        } else if desc.density<=0 && !crosses_plane(state,i) && floor_in_fluid(physics,desc) {
+        } else if desc.density>0 {
+            sheet_place(state,app.assets,app.renderer,&app.extras,view,i,info.entity,materials[i],physics,&kept[i])
+        } else if !crosses_water(state,i) && floor_in_fluid(physics,desc) {
             // The floor of the air of a dry box in a fluid is a surface of that fluid, seen from over it; where the
-            // box crosses the surface of a plane, the sheet of the plane goes down to it instead.
-            box:=fluid_box(desc)
-            floor:=mm.Transform{desc.position-{0,desc.half_extents.y,0},box.rotation,{box.scale.x,1,box.scale.z}}
+            // box crosses the surface of a water, the sheet of the water goes down to it instead.
+            box:=fluid_box(info)
+            floor:=mm.Transform{box.position-{0,0.5*box.scale.y,0},1,{box.scale.x,1,box.scale.z}}
             if instance,usable:=render.mesh_instance(app.assets,{shape=.Plane},mm.transform_matrix(floor));usable {
                 instance.material=render.Material_Handle(materials[i])
                 instance.object_id,instance.copy_owner=u64(info.entity),base.name_hash("water floor")
@@ -318,7 +324,8 @@ lens_reach :: proc "contextless" (view:core.View) -> f32 {
 @(private)
 floor_in_fluid :: proc(physics:core.Ref(phys.Physics_State),dry:phys.Fluid_Desc) -> bool {
     FLOOR_PROBE :: f32(1e-3) // m under and over the floor where the fluid is looked for
-    floor:=dry.position-{0,dry.half_extents.y,0}
+    floor:=dry.position-{0,dry.depth,0}
+
     under,_,wet:=phys.fluid_at(physics,floor-{0,FLOOR_PROBE,0})
     over,_,found:=phys.fluid_at(physics,floor+{0,FLOOR_PROBE,0})
     return wet && under.density>0 && found && over.fluid==under.fluid && over.density==0

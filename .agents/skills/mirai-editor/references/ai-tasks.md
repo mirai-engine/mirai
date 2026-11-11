@@ -125,7 +125,7 @@ End of the turn:
   entity goes as `[Name](entity:ID)` and an asset the agent created or changed as
   `[Name](asset:path)`, which the thread shows as pills. A scene for the user to try goes as
   `[What to try](play:path)`, which the thread draws as a button: it opens the scene if it is not
-  the open one (what Open asks, like saving, goes first) and plays it once it is in place
+  the open one (what Open asks goes first) and plays it once it is in place
   (`ai_play_scene`, `Ai.play_after`). The stable block and the `finish` schema ask for it this way.
 - `finish_called` records the request, but the turn stays `running` until the final ACP response;
   if that arrives without `finish`, the turn fails with the reason visible. A system turn (the
@@ -373,19 +373,21 @@ The chat outlives any native context of its agent.
   resumes the same native session, once (`ai_resume_native_mark`). The subagents that were working
   come back `interrupted`: nothing starts them but a message to them, and the handoff lists them.
   Closing the editor with agents working still asks
-  ([exiting](document.md#exiting-with-changes-or-agents-working)).
+  ([exiting](document.md#quitting-new-and-open-with-agents-working)).
 
 ## Project data
 
 One SQLite database, `<project>/.mirai/ai/chat.db` (package `editor/ai_store`, WAL, without
 credentials), holds what Mirai queries and updates; several editors of the same project share it.
-The review of each conversation
-(`.mirai/ai/chats/<id>.review.json`, [review](ai-review.md#persistence-and-capacity)), the captures
-and the turn folders stay files.
+The captures and the turn folders stay files; the
+[review](ai-review.md#the-record-and-its-capacity) of a turn lives in memory.
 
-- **A frame never waits for the database.** A write that finds another editor writing is kept by
-  the store with a copy of what it binds, and the poll of the chats runs what was kept in the
-  order it was written (`ai_persist_poll`); closing the editor does wait, so nothing kept is lost.
+- **A frame never waits for the database.** A chat is saved at its events (a message, a step of
+  its turn, the end, a review, a full transcript), never on a stable frame. A write that finds
+  another editor writing is kept by the store with a copy of what it binds, and the poll of the
+  chats runs what was kept in the order it was written (`ai_persist_poll`); closing the editor
+  does wait, so nothing kept is lost. Each save is a transaction in WAL mode: a crash loses only
+  what streamed since the last event and what was still kept.
   What is read is what reached the database, and what shows its rows reads them again when a kept
   write lands. A write whose result is needed at once (the id of a new chat or annotation) is
   never kept: with the database busy it fails and says to try again.
@@ -502,7 +504,7 @@ The turns' runs are in [Play](editor.md#play).
 - The turn carries a snapshot of the live world: local seat, the body it drives, camera, transforms
   and clock. `play.player` shares that function; its live handles allow inspecting entities created
   in the game without `Id`. The instructions ask for read-only observations with `play.player`,
-  `play.status` and `play.inspect` with `include_runtime:true`.
+  `play.status` and `scene.inspect` of the game with `include_runtime:true`.
 - Scene editing by API writes to the document even if Play runs
   ([API](../../mirai-agent-api/references/methods.md#play)).
 
@@ -545,7 +547,7 @@ the name of its client (`X-Mirai-Client`,
   Codex, the dot while it works, its figure, its steps and the same review as the agents of the
   editor, and it is inspected like a subagent, but it is not one (`Archived` kind); its edits are
   steps of that turn, and its `history.undo` undoes them. Otherwise it acts as the user does: it
-  plays the user's Play, chooses what is watched and is not refused the user's unsaved work.
+  plays the user's Play, chooses what is watched.
 - The turn ends with `ai.turn_end`, which the `Stop` hook of Claude Code in the
   [templates](../../mirai-gameplay/references/demo.md#templates) calls, or after
   `AI_EXTERNAL_IDLE` without calls; its answer stays in its own app, and it does not see `finish`,

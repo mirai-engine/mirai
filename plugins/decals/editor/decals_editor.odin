@@ -17,7 +17,7 @@ Decals_Cards :: struct {provider:editor.Card_Provider}
 decals_cards_default :: proc() -> (cards:Decals_Cards) {
     cards.provider.count=1
     cards.provider.cards[0]={
-        label="Decal",group="Logic",color={245,170,120,255},scale={1,0.5,1},component=decals.Decal,make=decal_make,
+        recipe="decal",group="Logic",color={245,170,120,255},component=decals.Decal,
         // A surface, and what comes down onto it.
         drawing=ui.icon_drawing(
             ui.icon_part(.Loop,{{-6.5,2.5},{0,-1},{6.5,2.5},{0,6}}),
@@ -29,16 +29,11 @@ decals_cards_default :: proc() -> (cards:Decals_Cards) {
     return
 }
 
-@(private)
-decal_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
-    if t:=core.world_table_of(w,decals.Decal);t!=nil {core.add(t,e,decals.DECAL_DEFAULT)}
-}
-
 @(storage)
 Decals_Gizmo :: struct {vertices:[GIZMO_VERTICES]erender.Debug_Vertex}
 
 // The box of each selected decal, and the way its image goes onto what is inside.
-@(step="frame",after="editor_tools")
+@(step="frame")
 decals_gizmo :: proc(s:^editor.Session,gizmo:^Decals_Gizmo,app:^host.App) {
     draw :: proc(lines:^erender.Debug_Lines,w:core.World_Ref,e:core.Entity,_:decals.Decal) {
         placed:=editor.entity_world(w,e)

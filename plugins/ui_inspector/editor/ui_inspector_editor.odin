@@ -17,12 +17,11 @@ import "mirai:ui"
 // The document of a .ui, in a tab next to the scenes: the interface as the
 // game builds it and the properties of the node chosen, with its nodes in
 // the Hierarchy of the left panel.
-// What the document changes goes to the file of the asset in memory,
-// unsaved, as a step of the history of the document once the UI lets go of
-// it (a drag, a typed value, a popup); undo, redo and Save are those of every
-// asset document. The file is read again when it or the history changes and
-// nothing waits to be written: after undo, redo, Save or a change from
-// outside. What waits goes to its document before another comes to the
+// What the document changes goes to the file of the asset as a step of the
+// history of the document once the UI lets go of it (a drag, a typed value,
+// a popup); undo and redo are those of every asset document. The file is
+// read again when it or the history changes and nothing waits to be written:
+// after undo, redo or a change from outside. What waits goes to its document before another comes to the
 // front, Play starts or the API reads a .ui.
 
 SCOPE :: ui.Id(0x75696e73)
@@ -35,7 +34,7 @@ UI_RENAMES :: 8   // nodes of the tree renamed before a write, which the .ui tha
 @(storage)
 Ui_Documents :: struct {provider:editor.Asset_Document_Provider}
 ui_documents_default :: proc() -> Ui_Documents {
-    return {provider={kinds={0=asset.KIND_UI},count=1,hierarchy={0},flat={0},creates={0},create=ui_create,actions={.Copy,.Paste,.Duplicate,.Delete,.Rename}}}
+    return {provider={kinds={0=asset.KIND_UI},count=1,hierarchy={0},flat={0},creates={0},create=ui_create}}
 }
 
 // The bytes of the empty .ui Create of the content browser and asset.create make.
@@ -90,8 +89,8 @@ Ui_Inspector :: struct {
     rename_count:int,
     imports:Imports_Cache, // the widgets the records of the document name
     drag:Node_Drag,
-    request_seen:u64,      // the last Asset_Document.request_serial run
     texts:Texts_Edit,      // what the popup of texts of a localized node edits
+    languages:Texts_Languages,
     pick_prefix:[ui.TREE_PATH_CAPACITY]u8, // the path the list of a binding walked so far
     pick_length:int,
     pick_scroll:[2]f32,
@@ -139,7 +138,6 @@ ui_inspector_document :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App,in
         for open in ([]Section{.Node,.Layout,.Style,.Component}) {u.open[open]=true}
         u.stage=STAGE_DEFAULT
         u.drag.row=-1
-        u.request_seen=d.request_serial
     }
     inspector_sync(s,u,a,d.id,d.history.cursor)
     // What it binds that the game does not have, once a gesture ends and after each build.
@@ -172,7 +170,7 @@ ui_inspector_document :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App,in
         defer ui.id_pop(ctx)
         if ui.box(ctx,{width=ui.GROW,height=ui.GROW,align_x=.Center,align_y=.Center}) {
             switch {
-            case u.failed:          ui.label(ctx,"The file cannot be read",ctx.theme.font_small,ctx.theme.text_muted)
+            case u.failed:          ui.label(ctx,"The file cannot be read",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
             case !u.read:
             case:                   preview_column(s,u,app)
             }
@@ -192,7 +190,7 @@ ui_inspector_document :: proc(s:^editor.Session,u:^Ui_Inspector,app:^host.App,in
             }
             // What another node shows has another length: kept, the offset could show nothing.
             if u.scrolled!=u.selected {u.properties_scroll,u.scrolled={},u.selected}
-            if ui.scroll_area(ctx,ui.id(ctx,"properties"),&u.properties_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD-origin-editor.SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=ctx.theme.panel}) {
+            if ui.scroll_area(ctx,ui.id(ctx,"properties"),&u.properties_scroll,{height=ui.FIT,max_height=max(room-editor.INSPECTOR_HEAD-origin-editor.SEARCH_BAR,40),padding={8,7,8,8},gap=7,fade=ui.tone(ctx,"panel")}) {
                 properties(s,u,a,details.width.value)
             }
         }

@@ -3,6 +3,7 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strings"
 import "core:testing"
 import "mirai:cook/workspace"
 import "mirai:project"
@@ -24,61 +25,41 @@ a_session_leaves_the_default_api_port_to_the_users_editor :: proc(t:^testing.T) 
 @(test)
 session_options_take_their_flags_and_leave_the_rest_to_the_editor :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    options,problem:=session_options({"--dev","--discard","--copy","--timeout","30","--frames","5","--dev"})
+    options,problem:=session_options({"--release","--force","--copy","--timeout","30","--frames","5","--dev"})
     testing.expect_value(t,problem,"")
-    testing.expect_value(t,options.mode,Build_Mode.Dev)
-    testing.expect(t,options.discard && options.copy && !options.no_build && !options.orphans)
+    testing.expect_value(t,options.mode,Build_Mode.Release)
+    testing.expect(t,options.force && options.copy && !options.no_build && !options.orphans)
     testing.expect_value(t,options.timeout,30)
-    testing.expect(t,slice.equal(options.editor_args,[]string{"--frames","5"}))
+    testing.expect(t,slice.equal(options.editor_args,[]string{"--frames","5","--dev"}),"--dev is no flag of theirs: it goes to the editor")
     options,problem=session_options({})
     testing.expect_value(t,problem,"")
-    testing.expect_value(t,options.mode,Build_Mode.Keep)
+    testing.expect(t,options.mode==.Dev,"dev unless --release is asked for")
     testing.expect_value(t,options.timeout,180)
     testing.expect_value(t,len(options.editor_args),0)
 }
 
+// Every command that builds or picks engine binaries takes its mode from
+// build_mode_take (session through session_options): dev unless --release.
 @(test)
-session_options_refuse_both_modes_and_a_timeout_that_is_no_number :: proc(t:^testing.T) {
+build_mode_is_dev_unless_release_is_asked_for :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    for args in ([][]string{{"--dev","--release"},{"--timeout"},{"--timeout","0"},{"--timeout","x"}}) {
+    Case :: struct {args:[]string,mode:Build_Mode}
+    cases:=[]Case{{{"demo"},.Dev},{{"demo","--release"},.Release},{{"--release","demo"},.Release}}
+    for c in cases {
+        mode,rest:=build_mode_take(c.args)
+        testing.expectf(t,mode==c.mode && slice.equal(rest,[]string{"demo"}),"build_mode_take %v: %v %v",c.args,mode,rest)
+        options,problem:=session_options(c.args)
+        testing.expectf(t,problem=="" && options.mode==c.mode,"session_options %v: %v %q",c.args,options.mode,problem)
+    }
+}
+
+@(test)
+session_options_refuse_a_timeout_that_is_no_number :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    for args in ([][]string{{"--timeout"},{"--timeout","0"},{"--timeout","x"}}) {
         _,problem:=session_options(args)
         testing.expectf(t,problem!="","%v is refused",args)
     }
-}
-
-// Unsaved changes go alone only when every one is of a copy under
-// .mirai/tmp/ of the project: a scene outside the assets folder is named by
-// its file, and the rest relative to the assets folder or to the project.
-@(test)
-only_unsaved_copies_under_mirai_tmp_go_without_discard :: proc(t:^testing.T) {
-    context.allocator=context.temp_allocator
-    folder:="C:/proyectos/demo" when ODIN_OS==.Windows else "/proyectos/demo"
-    copy:=fmt.tprintf("%s/.mirai/tmp/prueba.scene",folder)
-    testing.expect(t,session_discardable(folder,{}))
-    testing.expect(t,session_discardable(folder,{copy,".mirai/tmp/shaders/x.slang"}))
-    testing.expect(t,!session_discardable(folder,{copy,"scenes/main.scene"}),"a scene of the assets")
-    testing.expect(t,!session_discardable(folder,{copy,"materials/rock.mat"}),"an asset")
-    testing.expect(t,!session_discardable(folder,{""}),"a scene never saved")
-    testing.expect(t,!session_discardable(folder,{fmt.tprintf("%s/.mirai/tmp/../../assets/x.scene",folder)}),"out of tmp by ..")
-    testing.expect(t,!session_discardable(folder,{fmt.tprintf("%s/.mirai/tmpx/a.scene",folder)}),"a folder that starts like tmp")
-    testing.expect(t,!session_discardable(folder,{"C:/otro/.mirai/tmp/a.scene" when ODIN_OS==.Windows else "/otro/.mirai/tmp/a.scene"}),"tmp of another project")
-    when ODIN_OS==.Windows {
-        testing.expect(t,session_discardable(folder,{`c:\PROYECTOS\demo\.mirai\tmp\b.scene`}),"backslashes and another case")
-    }
-}
-
-@(test)
-the_unsaved_paths_are_the_dirty_scenes_and_the_unsaved_assets :: proc(t:^testing.T) {
-    context.allocator=context.temp_allocator
-    documents:=`{"active":0,"documents":[{"index":0,"path":"C:/p/.mirai/tmp/a.scene","dirty":true,"preview_sun":false},{"index":1,"path":"scenes/main.scene","dirty":false,"preview_sun":false},{"index":2,"path":"","dirty":true,"preview_sun":false}],"asset":-1,"assets":[{"index":0,"path":"materials/rock.mat","kind":"material","dirty":true,"undo":1,"redo":0}]}`
-    assets:=`{"assets":[{"path":"materials/rock.mat","removed":false,"asset":"00112233445566778899aabbccddeeff","kind":"material"},{"path":"shaders/water.slang","removed":false,"kind":"program"}],"scene":["materials/rock.mat"]}`
-    paths,ok:=session_unsaved_parse(documents,assets)
-    testing.expect(t,ok)
-    testing.expect(t,slice.equal(paths,[]string{"C:/p/.mirai/tmp/a.scene","","materials/rock.mat","shaders/water.slang"}),"dirty scenes, then assets once")
-    paths,ok=session_unsaved_parse(`{"documents":[]}`,`{"assets":[]}`)
-    testing.expect(t,ok && len(paths)==0)
-    _,ok=session_unsaved_parse("not json",assets)
-    testing.expect(t,!ok)
 }
 
 // The project comes from --project, relative to where the program runs when
@@ -130,14 +111,13 @@ the_role_and_the_record_come_from_the_files_of_the_project :: proc(t:^testing.T)
     testing.expect(t,os.write_entire_file(project.path(folder,".mirai","api.json"),fmt.tprintf(`{{"port":7999,"pid":%d,"manual":true}}`,pid))==nil)
     editor:=Engine_Process{pid=pid,program="mirai-editor",project=folder,headless=true,read=true}
     testing.expect_value(t,engine_process_role(editor),Engine_Role.Reachable)
-    testing.expect(t,os.write_entire_file(project.path(folder,".mirai",SESSION_FILE),fmt.tprintf(`{{"pid":%d,"mode":"dev","args":["--frames","2"]}}`,pid))==nil)
+    testing.expect(t,os.write_entire_file(project.path(folder,".mirai",SESSION_FILE),fmt.tprintf(`{{"pid":%d,"args":["--frames","2"]}}`,pid))==nil)
     testing.expect_value(t,engine_process_role(editor),Engine_Role.Session)
     other:=editor
     other.pid=pid+1
     testing.expect_value(t,engine_process_role(other),Engine_Role.Orphan)
     record,found:=session_record(folder)
     testing.expect(t,found)
-    testing.expect_value(t,session_record_mode(record),Build_Mode.Dev)
     testing.expect(t,slice.equal(record.args,[]string{"--frames","2"}))
     file,alive:=session_find(folder)
     testing.expect(t,alive && file.port==7999 && file.manual,"this process is the one the port file names")
@@ -162,7 +142,7 @@ a_session_copy_takes_the_project_and_its_caches_without_the_files_of_its_editor 
     context.allocator=context.temp_allocator
     folder:=base.test_folder(t,"copy")
     if folder=="" {return}
-    kept:=[]string{project.PROJECT_FILE,"assets/scenes/main.scene","game/game.odin","source/art.fbx",
+    kept:=[]string{project.PROJECT_FILE,"assets/scenes/main.scene","game/game.odin","assets/props/art.fbx",
         ".mirai/cache/registry/index",".mirai/thumbs/main.png"}
     left:=[]string{".git/HEAD",".mirai/api.json",".mirai/session.json",".mirai/session.lock",
         ".mirai/session.log",".mirai/editor.dll",".mirai/editor-live-12-0.dll",".mirai/gen/world.odin",
@@ -239,7 +219,7 @@ a_sync_brings_only_the_files_named_into_a_copy :: proc(t:^testing.T) {
         data,_:=os.read_entire_file(project.path(root,file),context.temp_allocator)
         return string(data)
     }
-    for file in ([]string{project.PROJECT_FILE,"game/blade.odin","game/game.odin","assets/items/Blade.prefab","assets/old.tex"}) {write(t,folder,file,"before")}
+    for file in ([]string{project.PROJECT_FILE,"game/blade.odin","game/game.odin","assets/items/Blade.scene","assets/old.tex"}) {write(t,folder,file,"before")}
     copy,lock,problem:=session_copy(folder)
     if !testing.expect_value(t,problem,"") {return}
     workspace.lock_release(&lock)
@@ -247,18 +227,18 @@ a_sync_brings_only_the_files_named_into_a_copy :: proc(t:^testing.T) {
     // Another session half-edits game.odin; this one changes blade.odin and the prefab and deletes old.tex.
     write(t,folder,"game/game.odin","half edited")
     write(t,folder,"game/blade.odin","after")
-    write(t,folder,"assets/items/Blade.prefab","after")
+    write(t,folder,"assets/items/Blade.scene","after")
     testing.expect(t,os.remove(project.path(folder,"assets/old.tex"))==nil)
 
-    plan,refused:=session_sync_plan(folder,copy,{"assets/items/Blade.prefab",`assets\old.tex`})
+    plan,refused:=session_sync_plan(folder,copy,{"assets/items/Blade.scene",`assets\old.tex`})
     if !testing.expect_value(t,refused,"") {return}
     testing.expect(t,!plan.rebuild,"assets alone are read again")
-    plan,refused=session_sync_plan(folder,copy,{"game/blade.odin","assets/items/Blade.prefab","assets/old.tex"})
+    plan,refused=session_sync_plan(folder,copy,{"game/blade.odin","assets/items/Blade.scene","assets/old.tex"})
     if !testing.expect_value(t,refused,"") {return}
     testing.expect(t,plan.rebuild,"code asks for a restart")
     testing.expect_value(t,session_sync_apply(folder,copy,plan),"")
     testing.expect_value(t,read(copy,"game/blade.odin"),"after")
-    testing.expect_value(t,read(copy,"assets/items/Blade.prefab"),"after")
+    testing.expect_value(t,read(copy,"assets/items/Blade.scene"),"after")
     testing.expect_value(t,read(copy,"game/game.odin"),"before")
     testing.expect(t,!os.exists(project.path(copy,"assets/old.tex")),"what the project deleted leaves the copy")
 

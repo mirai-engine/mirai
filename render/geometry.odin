@@ -47,7 +47,6 @@ Mesh_Record :: struct {
 	position_step, uv_step, uv1_step, lod_reach: f32,
 	bounds_min, bounds_max:          Vec3,
 	slab_axes:                       u32,
-	uv_density:                      [MESH_UV_ENTRIES][2]f32, // of each of its slots (mesh_uv_density)
 	triangle_count:                  u32, // of level 0
 	rays:                            [asset.MESH_RAY_LEVELS]Mesh_Ray_Record,
 	ray_count:                       u32,
@@ -259,14 +258,12 @@ Mesh_Ray_Cut :: struct {
 	triangles:  []Gpu_Bvh_Triangle,
 	error:      f32,
 }
-// The cuts a mesh is traced with, level 0 first, and the density of its uv
-// (mesh_uv_density), which its textures stream by: made on any thread ahead
-// of mesh_add_geometry, or by it.
+// The cuts a mesh is traced with, level 0 first: made on any thread ahead of
+// mesh_add_geometry, or by it.
 Mesh_Rays :: struct {
 	cuts:       [asset.MESH_RAY_LEVELS]Mesh_Ray_Cut,
 	count:      int,
 	software:   bool, // the cuts have their trees
-	uv_density: [MESH_UV_ENTRIES][2]f32,
 	allocator:  mem.Allocator,
 }
 
@@ -375,7 +372,6 @@ mesh_rays_build :: proc(g: asset.Mesh_Geometry, software: bool, allocator := con
 		}
 		if software && !cut_tree(g, cut, allocator) {return}
 	}
-	rays.uv_density = mesh_uv_density(g)
 	return rays, true
 }
 
@@ -397,12 +393,12 @@ cluster_triangle_positions :: proc "contextless" (g: asset.Mesh_Geometry, cluste
 // The software tree of a cut over its triangles at rest.
 @(private = "file")
 cut_tree :: proc(g: asset.Mesh_Geometry, cut: ^Mesh_Ray_Cut, allocator: mem.Allocator) -> bool {
-	items, items_error := make([]Bvh_Item, len(cut.primitives), allocator)
+	items, items_error := make([]mm.Aabb, len(cut.primitives), allocator)
 	if items_error != nil {return false}
 	defer delete(items, allocator)
 	for primitive, t in cut.primitives {
 		a, b, c := primitive_positions(g, primitive)
-		items[t] = {bounds_min = linalg.min(linalg.min(a, b), c), bounds_max = linalg.max(linalg.max(a, b), c), center = (a + b + c) / 3}
+		items[t] = {linalg.min(linalg.min(a, b), c), linalg.max(linalg.max(a, b), c)}
 	}
 	nodes := make([dynamic]Gpu_Bvh_Node, 0, 0, allocator)
 	order := make([dynamic]u32, 0, 0, allocator)
@@ -415,7 +411,7 @@ cut_tree :: proc(g: asset.Mesh_Geometry, cut: ^Mesh_Ray_Cut, allocator: mem.Allo
 	for index, at in order {
 		primitive := cut.primitives[index]
 		a, b, c := primitive_positions(g, primitive)
-		cut.triangles[at] = {v0 = a, primitive = primitive, e1 = {b.x - a.x, b.y - a.y, b.z - a.z, 0}, e2 = {c.x - a.x, c.y - a.y, c.z - a.z, 0}}
+		cut.triangles[at] = {v0 = a, primitive = primitive, v1 = {b.x, b.y, b.z, 0}, v2 = {c.x, c.y, c.z, 0}}
 	}
 	return true
 }
@@ -532,7 +528,6 @@ mesh_register :: proc(r: ^Renderer, g: asset.Mesh_Geometry, given_words: []u32, 
 		append(&s.pages.streamed, u32(handle))
 	}
 	m.slab_axes = ahead.slab_axes if checked else mesh_slab_axes(g, m.bounds_min, m.bounds_max)
-	m.uv_density = given.uv_density
 	// Cuts made here go now: nothing keeps them for the upload.
 	deferred := later != nil && given == rays
 	if given.software {mesh_rays_publish(r, m, given^, deferred)}

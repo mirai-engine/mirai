@@ -133,7 +133,6 @@ authoritative_apply :: proc(s:^Net_Session,w:core.World_Ref,tick:u32,baseline:bo
             wire.object_read(&s.host,&command,0,&pose,max(u64))
             if t.motion>=0 {wire.object_read(&s.host,&command,t.motion,&motion,max(u64))}
             pose_apply(s,w,r.entity,t,pose,motion,false)
-            if command.tick==r.tick {r.exact=true}
         }
     }
     core.world_settle(w)
@@ -163,28 +162,35 @@ references_refresh :: proc(s:^Net_Session,w:core.World_Ref) {
     core.world_settle(w)
 }
 
+// The Move_Input of a replica another end drives, from a state of the server.
+@(private)
+driver_apply :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica,command:^wire.Command) {
+    t:=net_type(s,r.type)
+    moves:=core.world_table_of(w,input.Move_Input)
+    driver:Driver_State
+    if t.driver<0 || moves==nil || !wire.object_read(&s.host,command,t.driver,&driver,max(u64)) || !driver.has_move {return}
+    if old,has:=core.get(moves,r.entity);!has || old!=driver.move {core.add(moves,r.entity,driver.move)}
+}
+
+// What another end drives and this client simulates runs each tick with the
+// Move_Input the server had at it: the last one not later than the tick, or
+// else the newest. What is interpolated takes it with its state (replica_show).
 @(private)
 client_inputs :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) {
-    moves:=core.world_table_of(w,input.Move_Input)
     es:=core.world_entities(w)
     for &r in s.client.replicas[:s.client.replica_high] {
-        if r.object==0 || r.role==.Predicted || r.role==.Held || !core.alive(es,r.entity) {continue}
+        if r.object==0 || r.role==.Predicted || r.role==.Held || r.mode==.Interpolated || !core.alive(es,r.entity) {continue}
         t:=net_type(s,r.type)
         if t.driver<0 {continue}
         command:=replica_command(s,&r)
         if historic,found:=authoritative_command(s,&r,tick,false);found {command=historic}
-        driver:Driver_State
-        if !wire.object_read(&s.host,&command,t.driver,&driver,max(u64)) {continue}
         if s.client.sync_fed!=nil {
             feed(&s.client,r.object);feed(&s.client,command.tick==tick)
             for leaf in s.protocol.types[t.type].leaves {
                 if int(leaf.fragment)==t.driver {feed_bytes(&s.client,mem.slice_to_bytes(command.words[leaf.word:][:leaf.words]))}
             }
         }
-        if moves!=nil && driver.has_move {
-            old,has:=core.get(core.read(moves),r.entity)
-            if !has || old!=driver.move {core.add(moves,r.entity,driver.move)}
-        }
+        driver_apply(s,w,&r,&command)
     }
     core.world_settle(w)
 }

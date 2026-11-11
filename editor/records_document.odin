@@ -3,13 +3,13 @@ package editor
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
-import "core:reflect"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/records"
 import "mirai:host"
 import "mirai:std/base"
+import "mirai:std/serial"
 import "mirai:ui"
 
 // The document of a table of game data (.records): a grid with a row per
@@ -63,9 +63,7 @@ Records_Document :: struct {
 Records_Column :: struct {
     label:string,
     offset:int,
-    info:^runtime.Type_Info,
-    tag:reflect.Struct_Tag,
-    name:string,        // of the field, for the kind of asset it takes
+    field:serial.Field, // its description in the schema of the world
     description:string, // of its field on the type
     width:f32,
 }
@@ -164,44 +162,44 @@ records_columns_make :: proc(s:^Session,r:^Records_Document) {
     delete(r.defaults)
     r.defaults=make([]u8,info.info.size)
     if info.default!=nil {info.default(raw_data(r.defaults))}
-    fields,is_struct:=runtime.type_info_base(info.info).variant.(runtime.Type_Info_Struct)
-    if !is_struct {return}
-    for i in 0..<int(fields.field_count) {
+    ws:=s.app.info.schema
+    if ws==nil {return}
+    for field in serial.schema_fields(&ws.schema,ws.records[r.edit.record].type) {
         description:=""
         for f in info.fields {
-            if f.name==fields.names[i] {description=f.text}
+            if f.name==field.name {description=f.text}
         }
-        records_columns_add(s,r,fields.types[i],reflect.Struct_Tag(fields.tags[i]),fields.names[i],readable(fields.names[i]),int(fields.offsets[i]),description,0)
+        records_columns_add(s,r,&ws.schema,field,readable(field.name),int(field.offset),description,0)
     }
 }
 
 @(private="file")
-records_columns_add :: proc(s:^Session,r:^Records_Document,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name,label:string,offset:int,description:string,depth:int) {
-    column :: proc(r:^Records_Document,info:^runtime.Type_Info,tag:reflect.Struct_Tag,name,label:string,offset:int,description:string,width:f32) {
-        append(&r.columns,Records_Column{label=strings.clone(label),offset=offset,info=info,tag=tag,name=name,description=description,width=width})
+records_columns_add :: proc(s:^Session,r:^Records_Document,schema:^serial.Schema,field:serial.Field,label:string,offset:int,description:string,depth:int) {
+    column :: proc(r:^Records_Document,field:serial.Field,label:string,offset:int,description:string,width:f32) {
+        append(&r.columns,Records_Column{label=strings.clone(label),offset=offset,field=field,description=description,width=width})
     }
-    if info.id==core.Text {
-        column(r,info,tag,name,label,offset,description,RECORDS_TEXT_WIDTH)
+    type:=schema.types[field.type]
+    if type.kind==.Asset || core.record_of_ref(s.app.info,type.id)>=0 || core.named_type_of(s.app.info,type.id)!=nil {
+        column(r,field,label,offset,description,RECORDS_CELL_WIDTH)
         return
     }
-    if info.id==base.Asset_Id || core.record_of_ref(s.app.info,info.id)>=0 || core.named_type_of(s.app.info,info.id)!=nil {
-        column(r,info,tag,name,label,offset,description,RECORDS_CELL_WIDTH)
-        return
-    }
-    #partial switch v in runtime.type_info_base(info).variant {
-    case runtime.Type_Info_Boolean,runtime.Type_Info_Integer,runtime.Type_Info_Float,runtime.Type_Info_Enum:
-        column(r,info,tag,name,label,offset,description,RECORDS_CELL_WIDTH)
-    case runtime.Type_Info_Array:
-        if _,text:=core.field_option(tag,"text");text && v.elem.size==1 {
-            column(r,info,tag,name,label,offset,description,RECORDS_TEXT_WIDTH)
+    #partial switch type.kind {
+    case .Bool,.Int,.Uint,.Float,.Enum,.Entity,.Entity_Id:
+        column(r,field,label,offset,description,RECORDS_CELL_WIDTH)
+    case .Array:
+        elem:=schema.types[type.elem]
+        if .Text in field.flags && elem.size==1 {
+            column(r,field,label,offset,description,RECORDS_TEXT_WIDTH)
             return
         }
-        if v.count>RECORDS_ARRAY_COLUMNS || depth>=RECORDS_COLUMN_DEPTH {return}
-        for at in 0..<v.count {records_columns_add(s,r,v.elem,tag,name,fmt.tprintf("%s %d",label,at+1),offset+at*v.elem_size,description,depth+1)}
-    case runtime.Type_Info_Struct:
+        if .Rotation in field.flags || type.count>RECORDS_ARRAY_COLUMNS || depth>=RECORDS_COLUMN_DEPTH {return}
+        element:=field
+        element.type=type.elem
+        for at in 0..<int(type.count) {records_columns_add(s,r,schema,element,fmt.tprintf("%s %d",label,at+1),offset+at*int(elem.size),description,depth+1)}
+    case .Struct:
         if depth>=RECORDS_COLUMN_DEPTH {return}
-        for i in 0..<int(v.field_count) {
-            records_columns_add(s,r,v.types[i],reflect.Struct_Tag(v.tags[i]),v.names[i],fmt.tprintf("%s %s",label,readable(v.names[i])),offset+int(v.offsets[i]),description,depth+1)
+        for inner in serial.schema_fields(schema,field.type) {
+            records_columns_add(s,r,schema,inner,fmt.tprintf("%s %s",label,readable(inner.name)),offset+int(inner.offset),description,depth+1)
         }
     }
 }
@@ -211,20 +209,19 @@ records_columns_add :: proc(s:^Session,r:^Records_Document,info:^runtime.Type_In
 @(private="file")
 records_grid :: proc(s:^Session,r:^Records_Document,app:^host.App) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     if !r.read {
-        if ui.box(ctx,{width=ui.GROW,height=ui.GROW,padding={12,12,12,12}}) {ui.label(ctx,base.text_get(r.problem[:]),th.font_small,th.text_muted)}
+        if ui.box(ctx,{width=ui.GROW,height=ui.GROW,padding={12,12,12,12}}) {ui.label(ctx,base.text_get(r.problem[:]),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
         return
     }
     e:=&r.edit
     if description:=s.app.info.records[e.record].description;description!="" {
-        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={12,6,12,6}}) {ui.paragraph(ctx,description,th.font_small,th.text_muted)}
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={12,6,12,6}}) {ui.text(ctx,description,ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted")))}
     }
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control+12),padding={12,6,12,6},gap=6,align_y=.Center}) {
-        if ui.button(ctx,ui.id(ctx,"add"),{label="Add row",icon=.Plus,style=.Field,height=th.control}).clicked {records_grid_add(s,r)}
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")+12),padding={12,6,12,6},gap=6,align_y=.Center}) {
+        if ui.button(ctx,ui.id(ctx,"add"),{label="Add row",icon=.Plus,variant="field",height=ui.metric(ctx,"control")}).clicked {records_grid_add(s,r)}
         if r.selected>=0 {
-            if ui.button(ctx,ui.id(ctx,"duplicate"),{label="Duplicate",style=.Field,height=th.control}).clicked {records_grid_duplicate(s,r)}
-            if ui.button(ctx,ui.id(ctx,"remove"),{label="Delete",style=.Field,height=th.control}).clicked {
+            if ui.button(ctx,ui.id(ctx,"duplicate"),{label="Duplicate",variant="field",height=ui.metric(ctx,"control")}).clicked {records_grid_duplicate(s,r)}
+            if ui.button(ctx,ui.id(ctx,"remove"),{label="Delete",variant="field",height=ui.metric(ctx,"control")}).clicked {
                 records.row_remove(e,r.selected)
                 r.selected=min(r.selected,records.row_count(e)-1)
                 r.changed=true
@@ -233,15 +230,15 @@ records_grid :: proc(s:^Session,r:^Records_Document,app:^host.App) {
     }
     width:=f32(RECORDS_NAME_WIDTH)
     for c in r.columns {width+=c.width}
-    row_height:=th.row+4
+    row_height:=ui.metric(ctx,"row")+4
     // The names of the columns stay on top while the rows scroll under them.
     r.header_scroll={r.scroll[0],0}
     if ui.scroll_area(ctx,ui.id(ctx,"header"),&r.header_scroll,{width=ui.GROW,height=ui.fixed(row_height),axes=.Horizontal}) {
-        if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(row_height),align_y=.Center,fill=th.card}) {
-            if ui.box(ctx,{width=ui.fixed(RECORDS_NAME_WIDTH),height=ui.GROW,padding={12,0,6,0},align_y=.Center}) {ui.label(ctx,"Name",th.font_small,th.text_muted)}
+        if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(row_height),align_y=.Center,fill=ui.tone(ctx,"card")}) {
+            if ui.box(ctx,{width=ui.fixed(RECORDS_NAME_WIDTH),height=ui.GROW,padding={12,0,6,0},align_y=.Center}) {ui.label(ctx,"Name",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
             for c,at in r.columns {
                 header:=ui.id(ctx,"header",at+1)
-                if ui.box(ctx,{id=header,width=ui.fixed(c.width),height=ui.GROW,padding={6,0,6,0},align_y=.Center,clip_x=true,track=c.description!=""}) {ui.label(ctx,c.label,th.font_small,th.text_muted)}
+                if ui.box(ctx,{id=header,width=ui.fixed(c.width),height=ui.GROW,padding={6,0,6,0},align_y=.Center,clip_x=true,track=c.description!=""}) {ui.label(ctx,c.label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
                 if c.description!="" {
                     area,shown:=ui.widget_rect(ctx,header)
                     inspector_description(s,header,c.description,shown && ctx.popup.count==0 && ui.rect_contains(area,ctx.pointer))
@@ -249,7 +246,7 @@ records_grid :: proc(s:^Session,r:^Records_Document,app:^host.App) {
             }
         }
     }
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=th.border}) {}
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"border")}) {}
     area_id:=ui.id(ctx,"rows")
     area,_:=ui.widget_rect(ctx,area_id)
     count:=records.row_count(e)
@@ -271,12 +268,11 @@ records_grid :: proc(s:^Session,r:^Records_Document,app:^host.App) {
 @(private="file")
 records_grid_row :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,width,height:f32) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     e:=&r.edit
     ui.id_push(ctx,ui.Id(e.ids[row]))
     defer ui.id_pop(ctx)
     line:=ui.id(ctx,"row")
-    fill:=r.selected==row ? th.accent_soft : ui.Color{}
+    fill:=r.selected==row ? ui.tone(ctx,"accent_soft") : ui.Color{}
     if ui.box(ctx,{id=line,width=ui.fixed(width),height=ui.fixed(height),align_y=.Center,fill=fill,track=true}) {
         if ui.box(ctx,{width=ui.fixed(RECORDS_NAME_WIDTH),height=ui.GROW,padding={8,2,6,2},align_y=.Center}) {records_name_cell(s,r,row)}
         for &c,at in r.columns {
@@ -286,16 +282,15 @@ records_grid_row :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,wi
         }
     }
     if area,shown:=ui.widget_rect(ctx,line);shown && .Left in ctx.input.pressed && ui.rect_contains(area,ctx.pointer) && ctx.popup.count==0 {r.selected=row}
-    if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(1),fill=th.row_rule}) {}
+    if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(1),fill=ui.tone(ctx,"row_rule")}) {}
 }
 
 @(private="file")
 records_name_cell :: proc(s:^Session,r:^Records_Document,row:int) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     buffer:[asset.RECORDS_NAME]u8
     length:=copy(buffer[:asset.RECORDS_NAME-1],records.row_name(&r.edit,row))
-    result:=ui.text_field(ctx,ui.id(ctx,"name"),buffer[:asset.RECORDS_NAME-1],&length,{height=th.row,size=th.font_small})
+    result:=ui.text_field(ctx,ui.id(ctx,"name"),buffer[:asset.RECORDS_NAME-1],&length,{height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small")})
     if !result.changed {return}
     if problem:=records.row_rename(&r.edit,row,string(buffer[:length]));problem!="" {notify(s,problem)} else {r.changed=true}
 }
@@ -304,81 +299,54 @@ records_name_cell :: proc(s:^Session,r:^Records_Document,row:int) {
 @(private="file")
 records_cell :: proc(s:^Session,r:^Records_Document,app:^host.App,row:int,c:^Records_Column,at:int) -> (changed:bool) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     e:=&r.edit
-    value:=records.row_bytes(e,row)[c.offset:][:c.info.size]
+    type:=s.app.info.schema.schema.types[c.field.type]
+    value:=records.row_bytes(e,row)[c.offset:][:type.size]
     p:=raw_data(value)
     id:=ui.id(ctx,"cell",at+1)
-    switch {
-    case c.info.id==core.Text:
-        return records_text_cell(s,r,row,c,id)
-    case c.info.id==base.Asset_Id:
+    if type.kind==.Asset {
         key:=KEY_RECORDS_ROW~(u64(row)<<20|u64(at))
-        return held_asset_button(s,id,key,field_asset_kinds(s,c.tag,c.name),cast(^base.Asset_Id)p,c.width-6)
+        return held_asset_button(s,id,key,field_asset_kinds(s,c.field),cast(^base.Asset_Id)p,c.width-6)
     }
-    if record:=core.record_of_ref(s.app.info,c.info.id);record>=0 {
+    if record:=core.record_of_ref(s.app.info,type.id);record>=0 {
         return record_choice(s,id,record,cast(^core.Record_Id)&value[size_of(base.Asset_Id)],cast(^base.Asset_Id)p,ui.fixed(c.width-6))
     }
-    if names:=core.names_of(s.app.info,c.info.id);len(names)>0 {
-        options:=make([]string,len(names),context.temp_allocator)
-        current:=i64(number_read(p,c.info))
-        selected:=-1
+    names:=core.names_of(s.app.info,type.id)
+    choices:=s.app.info.schema.schema.choices[type.first:][:type.count] if type.kind==.Enum else nil
+    if len(names)>0 || type.kind==.Enum {
+        options:=make([]string,max(len(names),len(choices)),context.temp_allocator)
+        selected:=choice_at(p,len(value),choices)
         for n,i in names {
             options[i]=n.name
-            if n.value==current {selected=i}
+            if n.value==i64(number_read(p,type)) {selected=i}
         }
-        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=th.row,searchable=true}) && selected>=0 {
-            number_write(p,c.info,f64(names[selected].value))
+        for choice,i in choices {options[i]=readable(choice.name)}
+        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=len(names)>0}) && selected>=0 {
+            chosen:=names[selected].value if len(names)>0 else choices[selected].value
+            copy(value,mem.ptr_to_bytes(&chosen)[:len(value)])
             return true
         }
         return false
     }
-    #partial switch v in runtime.type_info_base(c.info).variant {
-    case runtime.Type_Info_Boolean:
+    #partial switch type.kind {
+    case .Bool:
         return ui.checkbox(ctx,id,cast(^bool)p)
-    case runtime.Type_Info_Integer,runtime.Type_Info_Float:
-        desc,scale:=field_number(c.info,c.tag)
-        desc.height=th.row
-        number:=number_read(p,c.info)*scale
+    case .Int,.Uint,.Float,.Entity,.Entity_Id:
+        desc,scale:=field_number(c.field,type)
+        desc.height=ui.metric(ctx,"row")
+        number:=number_read(p,type)*scale
         result:=ui.number_field(ctx,id,&number,desc)
-        if result.changed {number_write(p,c.info,number/scale)}
+        if result.changed {number_write(p,type,number/scale)}
         return result.changed
-    case runtime.Type_Info_Enum:
-        current:=i64(number_read(p,v.base))
-        selected:=-1
-        options:=make([]string,len(v.names),context.temp_allocator)
-        for name,i in v.names {
-            options[i]=readable(name)
-            if i64(v.values[i])==current {selected=i}
-        }
-        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=th.row}) && selected>=0 {
-            number_write(p,v.base,f64(v.values[selected]))
-            return true
-        }
-    case runtime.Type_Info_Array:
+    case .Array:
         length:=base.text_len(value)
-        result:=ui.text_field(ctx,id,value[:len(value)-1],&length,{height=th.row,size=th.font_small})
+        result:=ui.text_field(ctx,id,value[:len(value)-1],&length,{height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small")})
         if result.changed || result.committed {
             mem.zero_slice(value[length:])
             return true
         }
     }
     return false
-}
-
-// The text of a core.Text in the language the game is written in.
-@(private="file")
-records_text_cell :: proc(s:^Session,r:^Records_Document,row:int,c:^Records_Column,id:ui.Id) -> (changed:bool) {
-    ctx:=s.gui.ctx
-    th:=&ctx.theme
-    e:=&r.edit
-    text:=(cast(^core.Text)&records.row_bytes(e,row)[c.offset]).id
-    shown,_:=records.text_get(e,text,"")
-    buffer:[1024]u8
-    length:=copy(buffer[:],shown)
-    if !ui.text_field(ctx,id,buffer[:],&length,{height=th.row,size=th.font_small}).changed {return false}
-    records.text_set(e,&s.id_state,row,c.offset,"",strings.clone(string(buffer[:length]),context.temp_allocator))
-    return true
 }
 
 @(private="file")
@@ -424,23 +392,9 @@ records_details :: proc(s:^Session,r:^Records_Document,app:^host.App) {
             for f in record.fields {
                 if f.name==name {description=f.text}
             }
-            if fields.types[i].id==core.Text {
-                records_text_row(s,r,int(fields.offsets[i]),readable(name),i)
-                continue
-            }
             if held_field_row(s,h,name,description=description) {r.changed=true}
         }
     }
-}
-
-// A text of the row as a field of its own, in the language the game is written in.
-@(private="file")
-records_text_row :: proc(s:^Session,r:^Records_Document,offset:int,label:string,at:int) {
-    ctx:=s.gui.ctx
-    row_begin(ctx,label)
-    column:=Records_Column{offset=offset,info=type_info_of(core.Text)}
-    if records_text_cell(s,r,r.selected,&column,ui.id(ctx,"text",at+1)) {r.changed=true}
-    row_end(ctx)
 }
 
 // ---------------------------------------------------------------- references
@@ -451,7 +405,6 @@ records_text_row :: proc(s:^Session,r:^Records_Document,offset:int,label:string,
 // the list changed it.
 record_choice :: proc(s:^Session,id:ui.Id,record:int,row:^core.Record_Id,table:^base.Asset_Id,width:ui.Size) -> (changed:bool) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     set:=host.app_record_set(s.app,record)
     tables:=0
     if set!=nil {tables=len(set.tables)}
@@ -470,8 +423,8 @@ record_choice :: proc(s:^Session,id:ui.Id,record:int,row:^core.Record_Id,table:^
         options[i+1]=name
         if entry.table==table^ && entry.row==row^ {selected=i+1}
     }
-    if ui.box(ctx,{width=width,height=ui.fixed(th.row),gap=2,align_y=.Center}) {
-        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=th.row,searchable=true,empty="Missing"}) && selected>=0 {
+    if ui.box(ctx,{width=width,height=ui.fixed(ui.metric(ctx,"row")),gap=2,align_y=.Center}) {
+        if ui.dropdown(ctx,id,{list=options},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=true,empty="Missing"}) && selected>=0 {
             if selected==0 {
                 table^,row^={},0
             } else {
@@ -479,7 +432,7 @@ record_choice :: proc(s:^Session,id:ui.Id,record:int,row:^core.Record_Id,table:^
             }
             changed=true
         }
-        if table^!={} && ui.button(ctx,ui.id_derive(ctx,id,"open"),{icon=.Chevron_Right,style=.Ghost,width=th.row,height=th.row}).clicked {
+        if table^!={} && ui.button(ctx,ui.id_derive(ctx,id,"open"),{icon=.Chevron_Right,variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {
             name:=""
             if set!=nil {
                 if at:=core.record_index(set,table^,row^,set.size);at>=0 {name=base.text_get(set.rows[at].name[:])}

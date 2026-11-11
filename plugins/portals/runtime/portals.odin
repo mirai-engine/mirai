@@ -10,15 +10,18 @@ import mm "mirai:std/math"
 // Portals: an opening that shows another place of the scene and leads to it.
 // What is in front of a portal continues behind its exit, turned around, so
 // two portals that name each other join two places as a door joins two rooms.
-// The other side is drawn as a nested view of each view that sees the
-// opening, rays that go into it go on from the exit, and the lights behind it
-// reach this side through it (gpu.odin). What has a Traveler goes through.
+// A mirror is a portal whose exit is its own plane: what is in front of it
+// continues behind it, reflected. The other side is drawn as a nested view
+// of each view that sees the opening, rays that go into it go on from the
+// exit, and the lights behind a portal reach this side through it (gpu.odin).
+// What has a Traveler goes through a portal; nothing goes through a mirror.
 
-PORTAL_CAPACITY :: 8
+PORTAL_CAPACITY :: 16
 
-@(component,description="An opening that shows the place of another entity and leads to it. It is the unit square of this entity seen from its +Z; its scale is its size.")
+@(component,description="An opening that shows the place of another entity and leads to it, or a mirror. It is the unit square of this entity seen from its +Z; its scale is its size.")
 Portal :: struct {
     exit:core.Entity,    // what is in front of this portal continues behind that entity: a portal that leads back, or any entity
+    mirror:bool,         // what is in front continues behind its own plane, reflected, and exit is not read
     ellipse:bool,        // the opening is the ellipse inside the square
     layers:u32,          // the layers of meshes seen through it; 0: every one
     wall:core.Entity,    // the collider the opening is cut into while it leads somewhere; NONE: it stands free
@@ -37,9 +40,9 @@ Crossing :: struct {
 
 // Who goes through a portal in this tick. Whoever keeps a direction of its
 // own for a traveler, as where it looks, turns it by `turn`.
-@(storage,events)
+@(storage)
 Portal_Crossings :: struct {
-    queue:core.Queue(Crossing),
+    queue:core.Events(Crossing),
 }
 
 // How near the eye of the view is to the way of the traveler it looks through the eyes of.
@@ -86,19 +89,28 @@ crosses :: proc "contextless" (portal:mm.Transform,ellipse:bool,a,b:[3]f32) -> (
     return share,abs(at.x)<=0.5 && abs(at.y)<=0.5
 }
 
-// The portal the way from a to b goes into first, where it is and what it carries by.
-@(private)
-portal_crossed :: proc(portals:core.Read(Portal),worlds:core.Read(core.World_Transform),a,b:[3]f32) -> (portal:core.Entity,entrance,through:mm.Transform,found:bool) {
-    first:=f32(2)
-    for row in 0..<core.count(portals) {
-        e:=core.entity_at(portals,row)
-        config:=core.at(portals,row)
-        placed,has_place:=core.get(worlds,e)
-        exit,has_exit:=core.get(worlds,config.exit)
-        if !has_place || !has_exit {continue}
-        share,crossed:=crosses(placed.transform,config.ellipse,a,b)
-        if !crossed || share>=first {continue}
-        portal,entrance,through,first,found=e,placed.transform,through_of(placed.transform,exit.transform),share,true
+// The transform that mirrors the world in a plane: xyz its unit normal, w its offset.
+reflection :: proc "contextless" (plane:[4]f32) -> (m:mm.Mat4) {
+    m=1
+    for row in 0..<3 {
+        for column in 0..<3 {m[row,column]-=2*plane[row]*plane[column]}
+        m[row,3]=-2*plane.w*plane[row]
+    }
+    return
+}
+
+// The portal that leads somewhere the way from a to b goes into first, where
+// it is, what it carries by and after which share of the way. Mirrors carry
+// nothing.
+portal_way :: proc(portals:^core.Table(Portal,$A),worlds:^core.Table(core.World_Transform,$B),a,b:[3]f32) -> (portal:core.Entity,entrance,through:mm.Transform,share:f32,found:bool) {
+    share=2
+    openings:=core.join(portals,worlds)
+    for e,config,placed in core.each_joined(&openings) {
+        if config.mirror {continue}
+        exit:=core.get(worlds,config.exit) or_continue
+        at,crossed:=crosses(placed.transform,config.ellipse,a,b)
+        if !crossed || at>=share {continue}
+        portal,entrance,through,share,found=e,placed.transform,through_of(placed.transform,exit.transform),at,true
     }
     return
 }
@@ -111,24 +123,21 @@ portal_crossed :: proc(portals:core.Read(Portal),worlds:core.Read(core.World_Tra
 // behind the exit, and its next way does not start at the entrance. A
 // traveler this end drives looks where the portal turned its look, also out
 // of a floor.
-@(step="fixed",loops="game",stage="input",before="locomotion_seat")
+@(step="fixed",loops="game",stage="input",before="camera_drive")
 portals_travel :: proc(
-    portals:core.Read(Portal),travelers:core.Read(Traveler),worlds:core.Read(core.World_Transform),
-    motions:core.Read(core.Motion),characters:core.Read(phys.Character_State),
-    colliders:core.Read(phys.Collider),moves:^core.Table(inp.Move_Input),remotes:core.Read(core.Remote),
+    portals:^core.Table(Portal,.Read),travelers:^core.Table(Traveler,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    motions:^core.Table(core.Motion,.Read),characters:^core.Table(phys.Character_State,.Read),
+    colliders:^core.Table(phys.Collider,.Read),moves:^core.Table(inp.Move_Input),remotes:^core.Table(core.Remote,.Read),
     placer:core.Placer,requests:^phys.Body_Requests,crossings:^Portal_Crossings,
 ) {
-    core.queue_clear(&crossings.queue)
     if core.count(portals)==0 {return}
-    for row in 0..<core.count(travelers) {
-        e:=core.entity_at(travelers,row)
-        world,placed:=core.get(worlds,e)
-        motion,moving:=core.get(motions,e)
-        _,walking:=core.get(characters,e)
-        // Only the physics carries an entity: one it does not move stays where it is.
-        if !placed || !moving || world.previous==world.transform {continue}
-        point:=core.at(travelers,row).point
-        portal,_,through,found:=portal_crossed(portals,worlds,mm.transform_point(world.previous,point),mm.transform_point(world.transform,point))
+    // Only the physics carries an entity: one it does not move stays where it is.
+    carried:=core.join(travelers,worlds,motions)
+    for e,traveler,world,motion in core.each_joined(&carried) {
+        if world.previous==world.transform {continue}
+        walking:=core.has(characters,e)
+        point:=traveler.point
+        portal,_,through,_,found:=portal_way(portals,worlds,mm.transform_point(world.previous,point),mm.transform_point(world.transform,point))
         if !found {continue}
         if !walking {
             core.place(placer,e,mm.transform_point(through,world.position),through.rotation*world.rotation)
@@ -138,12 +147,12 @@ portals_travel :: proc(
             exit,_:=core.get(worlds,config.exit)
             capsule,_:=core.get(colliders,e)
             look:=mm.quat_forward(world.rotation)
-            if move,driven:=core.get(core.read(moves),e);driven {look=mm.quat_forward(mm.quat_from_euler({move.look_pitch,move.look_yaw,0}))}
+            if move,driven:=core.get(moves,e);driven {look=mm.quat_forward(mm.quat_from_euler({move.look_pitch,move.look_yaw,0}))}
             feet,yaw:=character_through(through,exit.transform,world.transform,point,look,capsule)
             core.place(placer,e,feet,mm.quat_axis_angle({0,1,0},yaw))
             phys.set_velocity(requests,e,mm.quat_rotate(through.rotation,motion.linear))
         }
-        if move:=core.get(moves,e);move!=nil && core.owned(remotes,e) {look_through(move,through.rotation)}
+        if move:=core.edit(moves,e);move!=nil && core.owned(remotes,e) {look_through(move,through.rotation)}
         core.push(&crossings.queue,Crossing{who=e,portal=portal,turn=through.rotation})
     }
 }
@@ -212,7 +221,7 @@ way_distance2 :: proc "contextless" (p,a,b:[3]f32) -> f32 {
 // itself from there in RIGHTING_TIME.
 @(step="late",loops="game",stage="end",after="camera_view")
 portals_view :: proc(
-    portals:core.Read(Portal),travelers:core.Read(Traveler),worlds:core.Read(core.World_Transform),
+    portals:^core.Table(Portal,.Read),travelers:^core.Table(Traveler,.Read),worlds:^core.Table(core.World_Transform,.Read),
     crossings:core.Ref(Portal_Crossings),last:^Portal_View,view:^core.View,time:core.Time,frame:core.Frame_Time,
 ) {
     view.carried={}
@@ -221,14 +230,14 @@ portals_view :: proc(
         last.eye,last.rotation,last.seen,last.righting,last.shift=view.position,view.rotation,true,1,{}
         return
     }
-    for row in 0..<core.count(travelers) {
-        world,placed:=core.get(worlds,core.entity_at(travelers,row))
-        if !placed || world.previous==world.transform {continue}
-        point:=core.at(travelers,row).point
+    placed:=core.join(travelers,worlds)
+    for _,traveler,world in core.each_joined(&placed) {
+        if world.previous==world.transform {continue}
+        point:=traveler.point
         a,b:=mm.transform_point(world.previous,point),mm.transform_point(world.transform,point)
         // The view looks through the eyes of the traveler whose way it is on.
         if way_distance2(view.position,a,b)>RIDE_DISTANCE*RIDE_DISTANCE {continue}
-        _,entrance,through,found:=portal_crossed(portals,worlds,a,b)
+        _,entrance,through,_,found:=portal_way(portals,worlds,a,b)
         // Its eye is behind the opening already: it sees what it will see from there.
         if !found || mm.quat_rotate(conj(entrance.rotation),view.position-entrance.position).z>=0 {continue}
         view.position=mm.transform_point(through,view.position)
@@ -272,7 +281,7 @@ portals_view :: proc(
             config:=core.at(portals,row)
             entrance,placed:=core.get(worlds,core.entity_at(portals,row))
             exit,has_exit:=core.get(worlds,config.exit)
-            if !placed || !has_exit {continue}
+            if !placed || !has_exit || config.mirror {continue}
             // The view is where the portal takes its last eye, and not near that eye.
             through:=through_of(entrance.transform,exit.transform)
             taken:=linalg.length2(view.position-mm.transform_point(through,last.eye))

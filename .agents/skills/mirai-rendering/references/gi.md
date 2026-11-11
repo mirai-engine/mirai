@@ -15,9 +15,11 @@ Each technique states its status; what is listed as prepared is not implemented.
 
 ### BVH and acceleration structures
 
-- **BVH** (implemented, `render/bvh.odin`). SAH by bins with a depth that limits the shader
+- **BVH** (implemented, `render/bvh.odin`). Built by the one SAH builder of `std/spatial`
+  (`bvh_build`), its nodes uploaded as it lays them out, with a depth that limits the shader
   stack; compute traversal nearest-first, bounded by the nearest hit and with early exit for
-  shadow rays.
+  shadow rays. Its triangle test is watertight, as the hardware one: no ray passes between two
+  triangles through the edge or corner they share, so each triangle keeps its corners whole.
 - **BLAS / TLAS** (implemented). One BLAS per ray cut of each mesh in object space, persistent:
   editing transform, material or visibility does not rebuild it. Cut 0 is level 0; the coarser
   ones are cuts of the DAG that the file stores (`ray_errors`). `ray_cuts_update` chooses the
@@ -44,13 +46,17 @@ Each technique states its status; what is listed as prepared is not implemented.
   software BVH (`rays[k].bvh_node_count` 0). When switching to software,
   `renderer_apply_settings` builds the one of each mesh that lacks it (one pose, from its bind
   vertices); when going back to hardware, the missing BLAS. Poses refit only the structure in use.
-  - The software TLAS is kept on the CPU with any tracer (it costs per instance) and is uploaded
-    to the GPU only when tracing in software.
-  - Hardware RT requires all the `_hw` variants of the passes (`hardware_pipelines_ready`): with
-    it no pass traverses the software BVH.
+  - The software TLAS (the tree of the instances) is built and kept only when tracing in software
+    (`Scene_State.tlas_off` with hardware RT): it stays stale until a switch to software rebuilds
+    it, and only then does it have GPU buffers.
+  - A device makes only the pipelines of the tracer in use (`tracer_settle`): the other one's are
+    made when settings switch to it, or at start when hardware RT falls back. Hardware RT requires
+    the `hw` variant of every stage that traces rays (`tracer_missing`): with it no pass traverses
+    the software BVH.
 - **Hardware ray tracing** (implemented). Inline ray queries in the `_hw` variants of direct
   light, probes, contact occlusion and reflections; SPIRV-Cross translates them to Metal. The
-  self-test and the fallback to software protect it ([RHI](rhi.md#hardware-ray-tracing)).
+  self-test protects it, with the fallback to software on Vulkan
+  ([RHI](rhi.md#hardware-ray-tracing)).
 - **Hybrid rendering** (implemented). G-buffer by rasterization; shadows, bounces and probes by
   tracing in compute.
 - **SDF tracing** (prepared). `trace.slang` is the only provider interface: an SDF or surface
@@ -173,6 +179,11 @@ other and do not see the corner of a table or the floor under a wardrobe.
   already reads a cascade whose probes see through thin walls.
 - `sample_probes_around` gives the light around several directions of a point (normal, specular
   lobe and coat) with a single choice of probes and weights; `sample_probes` reads one.
+- **Specular from the probes.** Each texel of the irradiance atlas also keeps the share of its
+  light that comes from the sky (its rays that meet nothing; beyond the cascades, all of it). A
+  specular lobe takes that share as the sky itself as sharp as its roughness (`probe_specular`),
+  not as the blur of a hemisphere, and a rough lobe keeps what the probes hold: with reflections
+  `Off` a mirror under an open sky shows the sky as without GI, and under a roof it does not.
 
 ## Glass in the indirect
 
@@ -214,19 +225,23 @@ keeps `Renderer_Desc.worlds` (edit and play).
 
 ## Indirect reference
 
-`Settings.reference_gi` replaces the volume and the contact occlusion with what they approximate
-(`pass_gi_reference`, `shaders/gi_reference.comp.slang`):
+What the tests compare the volume and the contact occlusion with: not in the renderer games run,
+but a custom pass of the tests (`render/reference_test.odin`, stage
+`render/testdata/gi_reference.comp.slang` in `TEST_GENERATION`) that writes `Gi` in place of the
+`Indirect` stage ([given light](views.md#render-pipelines)):
 
 - Each pixel traces `GI_REFERENCE_PATHS` paths per frame by the cosine. At each surface it adds
   its emission (unless a light represents it) and the light of the sun and of each local light by
-  a ray to a point of each (`reference_lighting`, the same as `reference_lights`), and continues;
+  a ray to a point of each (`reference_lighting`, the same as the reference of the lights), and
+  continues;
   Russian roulette cuts from the third bounce, up to `GI_REFERENCE_BOUNCES`. A ray with no hit
   sees the sky.
 - The side of the surface the ray arrived at is that of its triangle, not that of the
   interpolated normal.
-- `Targets.gi_reference` stores the mean and the frames it gathers; it starts over when
-  instances, materials, lights, the camera or the GI history change. Composite and the debug views
-  take its mean instead of the volume.
+- `Gi` (`Targets.gi_given`) stores the mean and the frames it gathers; it starts over when the
+  view loses its history, the camera or the settings change, or the test says so (another
+  scene). Composite and the debug views take a `Gi` a custom pass wrote as the diffuse indirect
+  light instead of the volume's.
 - White furnace test: `gi_reference_gives_the_light_of_a_white_furnace`, with each tracer.
 - Scenes and metrics that use it: [measuring GI](verification.md#measuring-gi).
 
@@ -300,8 +315,7 @@ absorption and a tent-shaped ozone layer. The world is flat and horizontal at th
 - **Aerial perspective** per view (`Targets.aerial`, `air_aerial.comp`): columns over the view
   without jitter in slices along it up to `AIR_AERIAL_DISTANCE`, each texel the air light to the
   end of its slice and the mean transmittance. It is recomputed when the camera, the sun or the
-  air change. Composite applies it to the image that is shown (`out_display`) and not to the scene
-  light that the next frame traces; the fog of the `fog` plugin is composed on top in `Lit`: they
-  are two media and they add up, without counting anything twice. Glass and what blends afterwards
-  do not take it.
+  air change. Composite applies it to the image that is shown (`out_display`); the fog of the
+  `fog` plugin is composed on top in `Lit`: they are two media and they add up, without counting
+  anything twice. Glass and what blends afterwards do not take it.
 - Nothing is sampled: each table integrates with fixed steps, and a still view recomputes none.

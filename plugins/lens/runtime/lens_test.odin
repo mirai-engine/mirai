@@ -6,9 +6,10 @@ import "mirai:core"
 import render "mirai:engine/render"
 import volume "mirai:engine/volume"
 
-@(private="file")
+@(private)
+@(test_world)
 Fixture :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     lenses:core.Table(Lens),
     zones:core.Table(Lens_Volume),
     places:core.Table(volume.Volume),
@@ -19,7 +20,7 @@ Fixture :: struct {
 
 @(private="file")
 look :: proc(f:^Fixture,view:core.View) -> View_Lens {
-    return view_lens(core.read(&f.lenses),core.read(&f.zones),core.read(&f.places),core.read(&f.worlds),core.read(&f.exposures),core.read(&f.view_volumes),view)
+    return view_lens(&f.lenses,&f.zones,{volumes=core.read(&f.places),worlds=core.read(&f.worlds)},&f.exposures,&f.view_volumes,view)
 }
 
 // Half way into the border of a volume that replaces, its numbers are half
@@ -56,8 +57,8 @@ the_circle_of_confusion_follows_the_aperture_and_the_focal_length :: proc(t:^tes
 @(test)
 a_camera_with_its_own_lens_and_exposure_keeps_them :: proc(t:^testing.T) {
     f:Fixture
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
     zone:=core.create(&f.entities)
     core.add(&f.zones,zone,Lens_Volume{lens={bloom=0.04,focus=10,sensor=0.024}})
     view_volume:=render.VIEW_VOLUME_DEFAULT
@@ -66,7 +67,7 @@ a_camera_with_its_own_lens_and_exposure_keeps_them :: proc(t:^testing.T) {
     core.add(&f.worlds,zone,core.World_Transform{transform={rotation=1,scale=1}})
     cam:=core.create(&f.entities)
     core.add(&f.worlds,cam,core.World_Transform{transform={rotation=1,scale=1}})
-    core.test_world_settle(&f)
+    test_world_settle(&f)
     free:=look(&f,core.View{position={0,1,0},camera=core.NONE})
     testing.expect(t,free.used)
     testing.expect_value(t,free.lens.bloom,f32(0.04))
@@ -76,13 +77,13 @@ a_camera_with_its_own_lens_and_exposure_keeps_them :: proc(t:^testing.T) {
     exposure:=render.EXPOSURE_DEFAULT
     exposure.aperture=1.4
     core.add(&f.exposures,cam,exposure)
-    core.test_world_settle(&f)
+    test_world_settle(&f)
     through:=look(&f,core.View{camera=cam})
     testing.expect(t,through.used && through.lens.depth_of_field && through.lens.bloom==0)
     testing.expect_value(t,through.aperture,f32(1.4))
     // A lens with every effect off draws nothing.
     plain:=core.create(&f.entities)
     core.add(&f.lenses,plain,LENS_DEFAULT)
-    core.test_world_settle(&f)
+    test_world_settle(&f)
     testing.expect(t,!look(&f,core.View{camera=plain}).used)
 }

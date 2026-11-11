@@ -5,6 +5,7 @@ import "base:runtime"
 import "core:os"
 import "core:slice"
 import "core:sync"
+import "core:time"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -18,10 +19,15 @@ import "mirai:std/serial"
 // A driver puts in the blob of each pipeline what all of them share (NVIDIA a
 // dictionary of megabytes), so blobs are kept as chunks cut by their content,
 // each stored once: the same bytes give the same chunks wherever they sit.
+//
+// The file is written while the run adds to it, so a run that crashes, is
+// killed or loses its device keeps what it compiled; each write takes in what
+// another process wrote there meanwhile.
 PIPELINE_STORE_MAGIC :: u32(0x5350_494d) // "MIPS"
 PIPELINE_STORE_VERSION :: u32(2)
 PIPELINE_STORE_BYTES :: 256 << 20 // the most a store file holds, and the chunks a run adds in memory
 PIPELINE_STORE_RUNS :: 8          // runs an entry stays in the file without being used
+PIPELINE_STORE_SAVE_PARTS :: 64   // the file is written each time a run added this part of the limit
 PIPELINE_CHUNK_MIN :: 2 << 10
 PIPELINE_CHUNK_MAX :: 64 << 10
 PIPELINE_CHUNK_BITS :: 13         // a cut after PIPELINE_CHUNK_MIN has 1 chance in 2^13 per byte
@@ -56,9 +62,12 @@ Pipeline_Store :: struct {
 	by_id:     base.Hash_Map(u32), // id[0] of a chunk that holds data -> its index
 	entries:   [dynamic]Pipeline_Entry,
 	owned:     int, // bytes of the chunks this run added
+	unsaved:   int, // bytes of the chunks added since the file was written
 	uses:      u64,
 	gear:      [256]u64, // the value of each byte in the rolling hash that cuts chunks
 	lock:      sync.Mutex, // pipelines are created on several threads
+	saving:    bool,       // a thread writes the file; another that would skips
+	stamp:     [2]i64,     // modification time and size of the file as this store last read or wrote it
 	allocator: runtime.Allocator,
 }
 
@@ -89,7 +98,7 @@ pipeline_store_clear :: proc(s: ^Pipeline_Store) {
 	delete(s.chunks)
 	delete(s.entries)
 	base.hash_map_destroy(&s.by_id)
-	s.chunks, s.entries, s.owned = {}, {}, 0
+	s.chunks, s.entries, s.owned, s.unsaved = {}, {}, 0, 0
 	s.chunks.allocator = s.allocator
 	s.entries.allocator = s.allocator
 }
@@ -100,9 +109,18 @@ pipeline_store_clear :: proc(s: ^Pipeline_Store) {
 // save replaces it.
 pipeline_store_load :: proc(s: ^Pipeline_Store, path: string) {
 	serial.file_remove_stale(path)
+	s.stamp = pipeline_file_stamp(path, s.allocator)
 	data, error := serial.file_read(path, s.allocator, limit = i64(s.limit))
 	if error != .None || data == nil {return}
 	if !pipeline_store_decode(s, data) {delete(data, s.allocator)}
+}
+
+@(private = "file")
+pipeline_file_stamp :: proc(path: string, allocator: runtime.Allocator) -> [2]i64 {
+	info, error := os.stat(path, allocator)
+	if error != nil {return {}}
+	defer os.file_info_delete(info, allocator)
+	return {time.to_unix_nanoseconds(info.modification_time), info.size}
 }
 
 // Takes data as the file of the store when it is valid for its device.
@@ -197,8 +215,9 @@ pipeline_chunk_length :: proc(gear: ^[256]u64, data: []u8) -> int {
 
 // Keeps a copy of data, the blob of this run for key. Past the limit the
 // pipelines this run used longest ago go first; a blob that does not fit at all
-// is not kept.
-pipeline_store_put :: proc(s: ^Pipeline_Store, key: u64, data: []u8) {
+// is not kept. due: what was added since the file was written calls for
+// pipeline_store_save.
+pipeline_store_put :: proc(s: ^Pipeline_Store, key: u64, data: []u8) -> (due: bool) {
 	if i := pipeline_store_index(s, key); i >= 0 {pipeline_store_drop(s, i)}
 	if len(data) == 0 || len(data) > s.limit {return}
 	for s.owned + len(data) > s.limit {
@@ -229,7 +248,9 @@ pipeline_store_put :: proc(s: ^Pipeline_Store, key: u64, data: []u8) {
 	if _, append_error := append(&s.entries, Pipeline_Entry{key = key, chunks = chunks, size = len(data), used = s.uses}); append_error != nil {
 		for c in chunks {pipeline_store_release(s, c)}
 		delete(chunks, s.allocator)
+		return
 	}
+	return s.unsaved >= s.limit / PIPELINE_STORE_SAVE_PARTS
 }
 
 @(private = "file")
@@ -261,6 +282,7 @@ pipeline_store_chunk :: proc(s: ^Pipeline_Store, bytes: []u8) -> (index: u32, ok
 	// Another chunk with the same id[0] keeps the slot: this one is only not shared.
 	if !base.hash_map_contains(&s.by_id, id[0]) {base.hash_map_set(&s.by_id, id[0], index)}
 	s.owned += len(data)
+	s.unsaved += len(data)
 	return index, true
 }
 
@@ -349,18 +371,45 @@ pipeline_store_encode :: proc(s: ^Pipeline_Store, allocator := context.allocator
 }
 
 // Replaces the file of path with what pipeline_store_encode gives, in one
-// rename; with nothing to keep it removes it.
+// rename; with nothing to keep it removes it. The entries another process
+// wrote to the file since this store read or wrote it are taken in first, as
+// of earlier runs, while this run's additions leave room. Takes s.lock; one
+// save runs at a time, and one asked meanwhile is skipped: false.
 pipeline_store_save :: proc(s: ^Pipeline_Store, path: string) -> bool {
+	if _, first := sync.atomic_compare_exchange_strong(&s.saving, false, true); !first {return false}
+	defer sync.atomic_store(&s.saving, false)
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+	theirs: Pipeline_Store
+	stamp := pipeline_file_stamp(path, s.allocator)
+	if stamp != s.stamp && stamp != {} {
+		pipeline_store_init(&theirs, s.device, s.limit, s.allocator)
+		pipeline_store_load(&theirs, path)
+	}
+	defer pipeline_store_destroy(&theirs)
+	sync.lock(&s.lock)
+	for e in theirs.entries {
+		if pipeline_store_index(s, e.key) >= 0 || s.owned + e.size > s.limit {continue}
+		blob := pipeline_store_find(&theirs, e.key, s.allocator)
+		if blob == nil {continue}
+		pipeline_store_put(s, e.key, blob)
+		delete(blob, s.allocator)
+		if n := len(s.entries); n > 0 && s.entries[n - 1].key == e.key {s.entries[n - 1].used, s.entries[n - 1].age = 0, e.age}
+	}
 	data, ok := pipeline_store_encode(s, s.allocator)
+	s.unsaved = 0
+	sync.unlock(&s.lock)
 	defer delete(data, s.allocator)
 	if !ok {return false}
 	if data == nil {return os.remove(path) == nil || !os.exists(path)}
-	return serial.file_write_atomic(path, data) == .None
+	if serial.file_write_atomic(path, data) != .None {return false}
+	s.stamp = pipeline_file_stamp(path, s.allocator)
+	return true
 }
 
 // The keys of pipelines: what the driver compiles of them, never their names.
 pipeline_key_compute :: proc(desc: Compute_Pipeline_Desc) -> u64 {
-	return base.hash64(shader_code_bytes(desc.shader^), u64(Shader_Stage.Compute) + 1)
+	constants := desc.constants
+	return base.hash64(([^]u8)(&constants)[:size_of(constants)], base.hash64(shader_code_bytes(desc.shader^), u64(Shader_Stage.Compute) + 1))
 }
 
 pipeline_key_graphics :: proc(desc: Graphics_Pipeline_Desc) -> u64 {
@@ -373,8 +422,10 @@ pipeline_key_graphics :: proc(desc: Graphics_Pipeline_Desc) -> u64 {
 		depth_compare:              Compare,
 		cull:                       Cull_Mode,
 		topology:                   Topology,
+		constants:                  [2]Shader_Constants,
 	}
-	state := State{depth_format = desc.depth_format, depth_test = desc.depth_test, depth_write = desc.depth_write, cull = desc.cull, topology = desc.topology}
+	state := State{depth_format = desc.depth_format, depth_test = desc.depth_test, depth_write = desc.depth_write, cull = desc.cull, topology = desc.topology,
+		constants = {desc.vertex_constants, desc.fragment_constants}}
 	if desc.depth_test {state.depth_compare = desc.depth_compare}
 	count := clamp(desc.color_count, 0, MAX_COLOR_TARGETS)
 	state.count = u8(count)

@@ -9,6 +9,7 @@ SCROLL_GUTTER :: SCROLL_BAR+4 // the room at the right or the bottom of content 
 SCROLL_THUMB :: f32(20)    // shortest thumb
 SCROLL_FADE :: [2]f32{7,20} // how far the content fades into the edges of an area with fade, top and bottom
 SCROLL_STICK :: f32(1200)  // layout units a second the stick all the way over moves the content
+WHEEL_STEP :: f32(36)       // layout units a notch of the wheel scrolls
 SCROLL_PAGE :: f32(0.9)    // of the area, what Page Up and Page Down move the content
 
 // The axes an area scrolls in. Across, its content is as wide as it asks
@@ -17,25 +18,17 @@ Scroll_Axes :: enum u8 {Vertical,Horizontal,Both}
 
 Scroll :: struct {
     using layout:Layout, // of the content; width and height are those of the area. Vertical: always a column
-    step:f32,            // units per wheel notch; the theme's when 0
+    step:f32,            // units per wheel notch; WHEEL_STEP when 0
     max_height:f32,      // with a FIT height: the area stops growing here
     fade:Color,          // what is under the area: content scrolled past an edge fades into it there; transparent: none
     axes:Scroll_Axes,
 }
 
 @(private)
-scroll_content_id :: proc(ctx:^Context,id:Id) -> Id {
-    id_push(ctx,id)
-    defer id_pop(ctx)
-    return ui_id(ctx,"content")
-}
+scroll_content_id :: proc(ctx:^Context,id:Id) -> Id {return id_derive(ctx,id,"content")}
 
 @(private)
-scroll_bar_id :: proc(ctx:^Context,id:Id,vertical:bool) -> Id {
-    id_push(ctx,id)
-    defer id_pop(ctx)
-    return ui_id(ctx,"bar" if vertical else "bar_x")
-}
+scroll_bar_id :: proc(ctx:^Context,id:Id,vertical:bool) -> Id {return id_derive(ctx,id,"bar" if vertical else "bar_x")}
 
 @(private)
 scroll_moves :: #force_inline proc "contextless" (axes:Scroll_Axes) -> [2]bool {return {axes!=.Vertical,axes!=.Horizontal}}
@@ -78,14 +71,15 @@ scroll_follow_focus :: proc(ctx:^Context,id:Id,offset:^[2]f32,moves:[2]bool,view
 
 // What the wheel, the keys and the stick do to the offset of the area id
 // this frame, on the axes it moves. Shift turns the wheel sideways, and an
-// area that only scrolls sideways takes the wheel so. view, content: their
+// area that only scrolls sideways, or whose content fits its height, takes
+// the wheel so. view, content: their
 // sizes, for the page keys and End.
 @(private)
 scroll_move :: proc(ctx:^Context,id:Id,offset:^[2]f32,moves:[2]bool,step:f32,view,content:[2]f32) {
     in_:=&ctx.input
-    step:=step if step>0 else ctx.theme.wheel_step
+    step:=step if step>0 else WHEEL_STEP
     if ctx.wheel_target==id && in_.wheel!={} {
-        sideways:=moves.x && (.Shift in in_.modifiers || !moves.y)
+        sideways:=moves.x && (.Shift in in_.modifiers || !moves.y || content.y<=view.y+0.5)
         if moves.y && !sideways {offset.y-=in_.wheel.y*step}
         if moves.x {offset.x+=in_.wheel.x*step-(in_.wheel.y*step if sideways else 0)}
     }
@@ -98,6 +92,18 @@ scroll_move :: proc(ctx:^Context,id:Id,offset:^[2]f32,moves:[2]bool,step:f32,vie
         if .End in in_.keys_pressed {offset[axis]=max(content[axis]-view[axis],0)}
     }
     for axis in 0..<2 {if moves[axis] {offset[axis]+=in_.scroll[axis]*SCROLL_STICK*in_.dt}}
+}
+
+// Whether the area w can still move its content the way the wheel turns, by
+// the rectangles of the last frame. An area without content of its own pans
+// or zooms, and Ctrl and the wheel zoom: they take any wheel.
+@(private)
+scroll_room :: proc(ctx:^Context,w:^Widget) -> bool {
+    content:=widget_previous(ctx,scroll_content_id(ctx,w.id))
+    if content==nil || .Primary in ctx.input.modifiers {return true}
+    v,c,wheel:=w.rect,content.rect,ctx.input.wheel
+    if .Shift in ctx.input.modifiers || c.h<=v.h+0.5 {wheel={wheel.x-wheel.y,0}}
+    return wheel.y>0 && c.y<v.y-0.5 || wheel.y<0 && c.y+c.h>v.y+v.h+0.5 || wheel.x<0 && c.x<v.x-0.5 || wheel.x>0 && c.x+c.w>v.x+v.w+0.5
 }
 
 // The area the page keys and the stick move this frame: the innermost one
@@ -114,10 +120,7 @@ scroll_route :: proc(ctx:^Context) {
     areas:=ctx.previous[:ctx.previous_count]
     if !in_.pointer_absent {
         for &w in areas {
-            if .Scroll not_in w.flags || w.surface!=0 || ctx.hot!=0 && w.layer<ctx.hot_layer {continue}
-            p:=ctx.screen_pointer
-            if w.scope!=0 && int(w.scope)<ctx.previous_scope_count {p=affine_apply(ctx.previous_scopes[w.scope],p)}
-            if !rect_contains(w.area,p) || !effect_hit(ctx,w.effect_clip,ctx.screen_pointer) {continue}
+            if .Scroll not_in w.flags || w.surface!=0 || ctx.hot!=0 && w.layer<ctx.hot_layer || !widget_contains(ctx,&w,ctx.screen_pointer) {continue}
             if target==nil || w.layer>=target.layer {target=&w}
         }
     }
@@ -153,7 +156,6 @@ scroll_bar :: proc(ctx:^Context,id:Id,offset:^f32,vertical:bool) {
     if !vertical {room,length=view.w,content.w}
     span:=max(length-room,offset^)
     if !found || span<=0.5 || room<=0 {return}
-    th:=&ctx.theme
     bar:=scroll_bar_id(ctx,id,vertical)
     thumb:=max(room*room/length,min(SCROLL_THUMB,room))
     travel:=max(room-thumb,0)
@@ -164,7 +166,7 @@ scroll_bar :: proc(ctx:^Context,id:Id,offset:^f32,vertical:bool) {
         offset^=clamp(ctx.scroll_grab+moved*span/travel,0,span)
     }
     along:=travel*(offset^/span if span>0 else 0)
-    color:=th.text_faint if it.active || it.hot else th.border
+    color:=tone(ctx,"text_faint") if it.active || it.hot else tone(ctx,"border")
     e:=Element{id=bar,custom=paint_add(ctx,{kind=.Rect,fill=color,radius=SCROLL_BAR*0.5})}
     if vertical {
         e.layout={width=fixed(SCROLL_BAR),height=fixed(thumb)}
@@ -277,11 +279,13 @@ list_begin :: proc(ctx:^Context,id:Id,offset:^f32,count:int,row_height,height:f3
     box_begin(ctx,{id=id,width=GROW,height=fixed(height),direction=.Column,clip_y=true,scroll={0,offset^}})
     scroll_clip_mark(ctx,id)
     widget_add(ctx,id,{.Passive,.Scroll})
+    box_begin(ctx,{id=scroll_content_id(ctx,id),width=GROW,height=FIT,direction=.Column,track=true})
     spacer(ctx,-1,f32(first)*row_height)
     return
 }
 list_end :: proc(ctx:^Context,id:Id,count,last:int,row_height:f32) {
     spacer(ctx,-1,f32(count-last)*row_height)
+    box_end(ctx,{id=scroll_content_id(ctx,id)})
     box_end(ctx,{id=id,clip_y=true})
 }
 
@@ -321,34 +325,3 @@ rows_end :: proc(ctx:^Context,id:Id,offset:^f32,heights:[]f32,last:int) {
     box_end(ctx,{id=id,clip_y=true})
 }
 
-Tree_Row :: struct {
-    label:string,
-    depth:int,
-    folder:bool,     // shows a chevron: open tells which
-    open:bool,
-    icon:Icon,       // of a leaf
-    icon_color:Color,
-    quad:Quad,       // preview of a leaf, instead of its icon
-    selected:bool,
-    height:f32,      // 34 when 0
-    indent:f32,      // units per depth; 14 when 0
-}
-// A row of a tree of folders and items: a click on a folder is for the caller
-// to open or close it.
-tree_row :: proc(ctx:^Context,id:Id,r:Tree_Row) -> Interaction {
-    th:=&ctx.theme
-    height:=r.height if r.height>0 else 34
-    b:=Button{label=r.label,style=.Ghost,width=-1,height=height,size=th.font_small,icon_size=height-8,active=r.selected}
-    if r.folder {
-        b.icon=.Chevron_Down if r.open else .Chevron_Right
-        b.icon_color=th.text_muted;b.icon_size=10
-    } else if r.quad.kind!=.Solid {b.quad=r.quad} else {
-        b.icon=r.icon;b.icon_color=r.icon_color if r.icon_color!={} else th.text_muted
-    }
-    it:Interaction
-    if box(ctx,{width=GROW,height=fixed(height)}) {
-        if r.depth>0 {spacer(ctx,f32(r.depth)*(r.indent if r.indent>0 else 14),1)}
-        it=button(ctx,id,b)
-    }
-    return it
-}

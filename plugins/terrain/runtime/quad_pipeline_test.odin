@@ -16,10 +16,10 @@ import "mirai:std/jobs"
 @(private="file")
 quad_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,settings:Terrain_Settings,view:=core.View{}) {
     if w.settings=={} {w.settings={bodies=256,shapes=256,contacts=64,joints=1,characters=1,hulls=1,meshes=256,heightfields=256}}
-    test_step(&w.terrain,core.commands_of(core.test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view)
-    core.test_world_settle(&w.w)
+    test_step(&w.terrain,core.commands_of(test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view)
+    test_world_settle(&w.w)
     terrain_test_physics(w,app)
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
 }
 
 @(private="file")
@@ -75,7 +75,7 @@ quad_owner :: proc(w:^Terrain_Test_World,id:base.Asset_Id,position:[3]f32={}) ->
     core.add(&w.transforms,owner,place)
     core.add(&w.worlds,owner,core.World_Transform{transform={position=place.position,rotation=place.rotation,scale=place.scale}})
     core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     return owner
 }
 
@@ -111,7 +111,7 @@ a_streamed_terrain_never_disappears_far_away_and_covers_itself_once_as_the_viewe
     testing.expect(t,resident.sources[0].chunks[quad_total(&o.quad)-1].shown,"the root of a streamed source stays built")
     testing.expect_value(t,len(w.statics.values),nodes+chunks)
     s:=&w.data.entries[0].source
-    testing.expect(t,grid_dense(&s.heights)<len(s.heights.pages)*PAGE*PAGE/2,"the pages far from the viewer are not in memory")
+    testing.expect(t,grid_dense(&s.field)<len(s.field.pages)*PAGE*PAGE/2,"the pages far from the viewer are not in memory")
     hit,ok:=phys.raycast({&w.state},corner+{0,20,0},{0,-1,0})
     testing.expect(t,ok && abs(hit.point.y)<1)
     _,ok=phys.raycast({&w.state},{110,20,110},{0,-1,0})
@@ -257,38 +257,6 @@ sixty_four_terrains_of_one_source_stream_without_holes_caps_or_allocations :: pr
     }
 }
 
-// A streamed Mesh terrain shows its far sections as nodes that keep their border.
-@(test)
-a_streamed_mesh_terrain_shows_its_far_sections_as_nodes :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"terrain")
-    id:=base.Asset_Id{329,330}
-    source:Source;defer source_destroy(&source)
-    lod_mesh_source(t,&source,64,1,16,20)
-    source.revision=1
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    testing.expect_value(t,source_save(&source,fmt.tprintf("%s/source.terrain",root),id,&types),asset.Error.None)
-    assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root=root,capacity=256}));defer host.assets_destroy(&assets)
-    app:=host.App{assets=&assets,allocator=context.allocator}
-    w:Terrain_Test_World
-    if !terrain_test_world_init(t,&w) {return}
-    defer terrain_test_world_free(&w)
-    resident:Terrain_Resident;defer terrain_resident_free(&resident)
-    quad_owner(&w,id)
-    low:=source.mesh_origin
-    quad_viewer(&w,low+{2,0,2})
-    // Level 0 within 2 m: farther, the view opens no node down to its sections.
-    settings:=Terrain_Settings{resident_distance=10,lod_distance=2}
-    quad_settle(&w,&resident,&app,settings)
-    o:=&resident.owners[0]
-    holes,overlaps:=quad_coverage(o)
-    testing.expect(t,holes==0 && overlaps==0)
-    nodes:=0
-    for node,i in o.nodes {if node.visible && i>=o.quad.first[1] {nodes+=1}}
-    testing.expect(t,nodes>0 && o.nodes[0].visible)
-    testing.expect_value(t,len(w.statics.values),len(w.chunks.values))
-    testing.expect_value(t,w.problems.count,0)
-}
-
 // A node chosen by its error opens and closes within LOD_HYSTERESIS of its
 // spacing too: wherever the view stops, from near to far, choosing the levels
 // again keeps what was chosen, and a still view builds nothing. Chunks of 63
@@ -312,7 +280,7 @@ a_still_view_builds_nothing_once_settled_at_any_distance_for_chunks_of_odd_cells
     defer terrain_test_world_free(&w)
     resident:Terrain_Resident;defer terrain_resident_free(&resident)
     // Without colliders no chunk is needed: the error and the spacing alone open the nodes.
-    core.get(&w.terrains,quad_owner(&w,id)).solid=false
+    core.edit(&w.terrains,quad_owner(&w,id)).solid=false
     view:=core.VIEW_DEFAULT
     view.size={1440,900}
     opened,closed:=false,false

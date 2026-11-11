@@ -12,7 +12,7 @@ struct Stage_Output { [[vk::location(0)]] float4 out_color : SV_Target0; };
 [shader("fragment")]
 Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position) {
     Stage_Output output;
-    Material base = material_row(input.in_material);
+    Material base = fragment_material(input);
     if (base.alpha_mode == ALPHA_BLEND || !fragment_mask_covers(input, frame.texturing.x)) discard;
     Material overlay = material_row(params.overlay_material);
     float3 view = to_eye(input.in_world);

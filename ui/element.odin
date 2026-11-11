@@ -5,8 +5,12 @@ package ui
 Element :: struct {
     id:Id,
     layout:Layout,
+    row_span:u8,      // Box.row_span
+    row_tracks:u16,   // Box.row_tracks
     float:Float,
     contain:bool,     // floating: kept inside its surface (Box.contain)
+    inset:[4]f32,     // Box.inset
+    from:Maybe(Rect), // Box.from
     clip:Element_Clip,
     custom:rawptr,    // the Paint drawn for the container
     user_data:rawptr, // the Clip that closes its scissor, or the paint of its end marker
@@ -22,18 +26,20 @@ Element_Clip :: struct {x,y:bool,scroll:[2]f32,floats:bool}
 @(private)
 layout_start :: proc(ctx:^Context) {
     if ctx.layout_started {return}
-    layout_begin(&ctx.layout,ctx.size)
+    layout_begin(&ctx.layout,ctx.size,ctx.scale*ctx.font.density)
     ctx.layout_started=true
 }
 
-@(private)
 element_open :: proc(ctx:^Context,e:Element) -> bool {
     // What a retained subtree lays out in the flow of the surface cannot be drawn apart.
     if ctx.retaining!=0 && e.float.to==.None && ctx.layout.open_len<=1 {ctx.retained[ctx.retaining-1].capturable=false}
     refused:=ctx.skipped>0 || ctx.elements+ELEMENT_RESERVE>=ctx.max_elements
     if !refused {
         layout_start(ctx)
-        refused=!layout_open(&ctx.layout,e,element_float(ctx,e.float,e.contain))
+        float:=element_float(ctx,e.float,e.contain)
+        float.inset=e.inset
+        if rect,hung:=e.from.?;hung && float.to!=.None {float.to,float.parent,float.hung,float.rect=.Root,0,true,rect}
+        refused=!layout_open(&ctx.layout,e,float)
     }
     if refused {
         if ctx.skipped==0 {ctx.stats.dropped_elements+=1}
@@ -43,23 +49,14 @@ element_open :: proc(ctx:^Context,e:Element) -> bool {
     ctx.elements+=1
     return true
 }
-@(private)
 element_close :: proc(ctx:^Context) {
     if ctx.skipped>0 {ctx.skipped-=1;return}
     layout_close(&ctx.layout)
 }
 // An element without children.
-@(private)
 element_leaf :: proc(ctx:^Context,e:Element) {
     element_open(ctx,e)
     element_close(ctx)
-}
-// A run of text the layout measures and breaks into lines, drawn with paint.
-@(private)
-element_text :: proc(ctx:^Context,paint:^Paint,text:string,size:f32) {
-    layout_start(ctx)
-    if !layout_text(&ctx.layout,&ctx.font,text,size,paragraph_line(size,paint.style.line_height),u8(paint.style.font),paint) {ctx.stats.dropped_elements+=1;return}
-    ctx.elements+=1
 }
 
 // What a floating container hangs from. A world panel is a surface of its
@@ -158,11 +155,7 @@ layout_paint :: proc(ctx:^Context) {
                 composition_end(ctx)
             }
         case .Text:
-            text,line,run:=layout_line(t,command)
-            if p:=cast(^Paint)n.custom;p!=nil && !p.hidden {
-                paint_select(ctx,p.surface,p.scope)
-                draw_text_decorated(ctx,text,line.x,line.y+text_leading(run.size,run.line_height),p.style)
-            }
+            text_draw_line(ctx,n,command.line)
         case .Scissor_Start:
             if depth>=SCISSOR_DEPTH {excess+=1;ctx.stats.dropped_clips+=1;continue}
             kinds[depth]=.None

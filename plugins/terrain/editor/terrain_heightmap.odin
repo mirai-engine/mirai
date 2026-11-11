@@ -9,6 +9,7 @@ import "mirai:host"
 import "mirai:platform"
 import terrain "plugins:terrain/runtime"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The heightmap of a Heightfield after it is made: Import puts the heights of
@@ -25,8 +26,8 @@ import "mirai:ui"
 heightmap_fields :: proc(s:^editor.Session,tool:^Terrain_Tool) {
     ctx:=s.gui.ctx
     scale,offset:=f64(tool.height_scale),f64(tool.height_offset)
-    if ui.property(ctx,"Height scale") {if ui.number_field(ctx,ui.id(ctx,"height_scale"),&scale,{width=ui.fixed(FIELD_WIDTH),min=0,max=100000,has_min=true,has_max=true,speed=0.1,unit="m"}).changed {tool.height_scale=f32(scale)}}
-    if ui.property(ctx,"Height offset") {if ui.number_field(ctx,ui.id(ctx,"height_offset"),&offset,{width=ui.fixed(FIELD_WIDTH),min= -100000,max=100000,has_min=true,has_max=true,speed=0.1,unit="m"}).changed {tool.height_offset=f32(offset)}}
+    if kit.property(ctx,"Height scale") {if ui.number_field(ctx,ui.id(ctx,"height_scale"),&scale,{width=ui.fixed(FIELD_WIDTH),min=0,max=100000,has_min=true,has_max=true,speed=0.1,unit="m"}).changed {tool.height_scale=f32(scale)}}
+    if kit.property(ctx,"Height offset") {if ui.number_field(ctx,ui.id(ctx,"height_offset"),&offset,{width=ui.fixed(FIELD_WIDTH),min= -100000,max=100000,has_min=true,has_max=true,speed=0.1,unit="m"}).changed {tool.height_offset=f32(offset)}}
 }
 
 @(private)
@@ -56,7 +57,7 @@ heightmap_import :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_R
     if stroke.id=={} || stroke.active || stroke.source.kind!=.Heightfield {return false}
     bytes,error:=serial.file_read(path,context.temp_allocator,limit=64*1024*1024)
     if error!=.None {editor.notify(s,fmt.tprintf("The heightmap %s could not be read: %v",path,error));return false}
-    heightmap,decode:=textures.heightmap_decode(bytes,terrain.HEIGHT_SAMPLES_MAX,context.temp_allocator)
+    heightmap,decode:=textures.heightmap_decode(bytes,terrain.SAMPLES_MAX,context.temp_allocator)
     if decode!=.None {editor.notify(s,fmt.tprintf("Heightmap: %v",decode));return false}
     if !stroke_baseline(tool) {editor.notify(s,"The terrain history could not be stored");return false}
     next:terrain.Source
@@ -70,11 +71,11 @@ heightmap_import :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_R
         for i in 0..<int(stroke.source.layer_count) {terrain.source_layer_set(&next,i,stroke.source.layers[i])}
         next.revision=stroke.source.revision
     }
-    if !terrain.grid_prepare(&next.heights,{},{heightmap.width-1,0,heightmap.height-1},next.allocator) {editor.notify(s,"There is not enough memory for the heightmap");return false}
+    if !terrain.grid_prepare(&next.field,{},{heightmap.width-1,0,heightmap.height-1},next.allocator) {editor.notify(s,"There is not enough memory for the heightmap");return false}
     for value,i in heightmap.values {
         height:=value*tool.height_scale+tool.height_offset
         if abs(height)>terrain.HEIGHT_LIMIT {editor.notify(s,"Heightmap heights exceed the terrain limit");return false}
-        terrain.grid_set(&next.heights,i%heightmap.width,i/heightmap.width,height)
+        terrain.grid_set(&next.field,i%heightmap.width,i/heightmap.width,height)
     }
     // A swap by single stores until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     previous:=stroke.source
@@ -95,11 +96,11 @@ heightmap_export :: proc(s:^editor.Session,tool:^Terrain_Tool,path:string) -> bo
     source:=&stroke.source
     width,height:=int(source.samples.x),int(source.samples.z)
     low,high:=f32(max(f32)),f32(-max(f32))
-    for z in 0..<height {for x in 0..<width {h:=terrain.grid_get(&source.heights,x,z);low,high=min(low,h),max(high,h)}}
+    for z in 0..<height {for x in 0..<width {h:=terrain.grid_get(&source.field,x,z);low,high=min(low,h),max(high,h)}}
     span:=max(high-low,1e-6)
     values,error:=make([]f32,width*height,context.temp_allocator)
     if error!=nil {editor.notify(s,"There is not enough memory for the heightmap");return false}
-    for z in 0..<height {for x in 0..<width {values[x+width*z]=(terrain.grid_get(&source.heights,x,z)-low)/span}}
+    for z in 0..<height {for x in 0..<width {values[x+width*z]=(terrain.grid_get(&source.field,x,z)-low)/span}}
     bytes,encode:=textures.heightmap_encode(values,width,height,context.temp_allocator)
     if encode!=.None {editor.notify(s,fmt.tprintf("Heightmap: %v",encode));return false}
     file:=path
@@ -119,15 +120,15 @@ resize_fields :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
     current:=[2]int{int(stroke.source.samples.x),int(stroke.source.samples.z)}
     for &n,axis in tool.resize {if n<2 {n=current[axis]}}
     x,z:=f64(tool.resize.x),f64(tool.resize.y)
-    if ui.property(ctx,"Samples X") {if ui.number_field(ctx,ui.id(ctx,"resize_x"),&x,{width=ui.fixed(FIELD_WIDTH),min=3,max=f64(terrain.HEIGHT_SAMPLES_MAX),has_min=true,has_max=true,speed=1,integer=true}).changed {tool.resize.x=resize_even(int(x),current.x)}}
-    if ui.property(ctx,"Samples Z") {if ui.number_field(ctx,ui.id(ctx,"resize_z"),&z,{width=ui.fixed(FIELD_WIDTH),min=3,max=f64(terrain.HEIGHT_SAMPLES_MAX),has_min=true,has_max=true,speed=1,integer=true}).changed {tool.resize.y=resize_even(int(z),current.y)}}
-    if tool.resize!=current && ui.button(ctx,ui.id(ctx,"resize"),{label="Resize",style=.Field,width=-1,center=true}).clicked {terrain_resize(s,tool,world,assets,tool.resize)}
+    if kit.property(ctx,"Samples X") {if ui.number_field(ctx,ui.id(ctx,"resize_x"),&x,{width=ui.fixed(FIELD_WIDTH),min=3,max=f64(terrain.SAMPLES_MAX),has_min=true,has_max=true,speed=1,integer=true}).changed {tool.resize.x=resize_even(int(x),current.x)}}
+    if kit.property(ctx,"Samples Z") {if ui.number_field(ctx,ui.id(ctx,"resize_z"),&z,{width=ui.fixed(FIELD_WIDTH),min=3,max=f64(terrain.SAMPLES_MAX),has_min=true,has_max=true,speed=1,integer=true}).changed {tool.resize.y=resize_even(int(z),current.y)}}
+    if tool.resize!=current && ui.button(ctx,ui.id(ctx,"resize"),{label="Resize",variant="field",width=-1,center=true}).clicked {terrain_resize(s,tool,world,assets,tool.resize)}
 }
 
 @(private)
 resize_even :: proc "contextless" (wanted,current:int) -> int {
-    n:=clamp(wanted,3,terrain.HEIGHT_SAMPLES_MAX)
-    if (n-current)%2!=0 {n+=n<terrain.HEIGHT_SAMPLES_MAX?1:-1}
+    n:=clamp(wanted,3,terrain.SAMPLES_MAX)
+    if (n-current)%2!=0 {n+=n<terrain.SAMPLES_MAX?1:-1}
     return n
 }
 

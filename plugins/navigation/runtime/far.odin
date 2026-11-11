@@ -5,6 +5,7 @@ import "mirai:core"
 import scene "mirai:engine/scene"
 import "mirai:std/ai"
 import mm "mirai:std/math"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // What moves by itself where the players are not. An agent with somewhere to
@@ -53,7 +54,7 @@ nav_far_decide :: proc "contextless" (time:core.Time) -> bool {
 }
 
 @(private)
-far_ticks :: #force_inline proc "contextless" (time:core.Time) -> u64 {return max(u64(NAV_FAR_PERIOD/time.dt+0.5),1)}
+far_ticks :: #force_inline proc "contextless" (time:core.Time) -> u64 {return max(core.ticks_of(time,NAV_FAR_PERIOD),1)}
 
 // The search over the coarse graph, made the first time.
 @(private)
@@ -141,18 +142,18 @@ far_walk :: proc "contextless" (far:^Nav_Far,position:mm.Vec3,dt:f32) -> mm.Vec3
 // which its route and its goal are of; 0 on the surface. Its Collider may be
 // off, with the agent far.
 @(private)
-far_lift :: proc "contextless" (n:^Navigation,colliders:core.Read(phys.Collider),e:core.Entity,class:i8,scale:[3]f32) -> mm.Vec3 {
-    if class<0 || int(class)>=n.count || !class_in_volume(n,int(class)) || colliders.table==nil {return {}}
-    collider:=cast(^phys.Collider)core.raw_find(core.raw(colliders.table),type_info_of(phys.Collider),e)
+far_lift :: proc "contextless" (n:^Navigation,colliders:^core.Table(phys.Collider,$A),e:core.Entity,class:i8,scale:[3]f32) -> mm.Vec3 {
+    if class<0 || int(class)>=n.count || !class_in_volume(n,int(class)) || colliders==nil {return {}}
+    collider:=cast(^phys.Collider)core.raw_find(core.raw(colliders),type_info_of(phys.Collider),e)
     if collider==nil {return {}}
     return {0,(collider.size.x+collider.size.y)*abs(scale.y),0}
 }
 
 // A request to an agent that is far changes where it goes; false when it is not far.
 @(private)
-far_request :: proc(paths:^core.Table(Nav_Path),fars:^core.Table(Nav_Far),asked:Nav_Request,worlds:core.Read(core.World_Transform)) -> bool {
-    far:=cast(^Nav_Far)core.raw_get(core.raw(fars),type_info_of(Nav_Far),asked.entity)
-    p:=cast(^Nav_Path)core.raw_get(core.raw(paths),type_info_of(Nav_Path),asked.entity)
+far_request :: proc(paths:^core.Table(Nav_Path),fars:^core.Table(Nav_Far),asked:Nav_Request,worlds:^core.Table(core.World_Transform,$A)) -> bool {
+    far:=cast(^Nav_Far)core.raw_edit(core.raw(fars),type_info_of(Nav_Far),asked.entity)
+    p:=cast(^Nav_Path)core.raw_edit(core.raw(paths),type_info_of(Nav_Path),asked.entity)
     if far==nil || p==nil {return false}
     #partial switch asked.kind {
     case .Move_To:
@@ -176,9 +177,9 @@ far_request :: proc(paths:^core.Table(Nav_Path),fars:^core.Table(Nav_Far),asked:
 // The part of navigation_agents for what is far, after the agents moved.
 @(private)
 agents_far :: proc(
-    n:core.Ref(Navigation),builds:core.Ref(Navigation_Builds),a:^Navigation_Agents,agents:core.Read(Nav_Agent),paths:^core.Table(Nav_Path),
+    n:core.Ref(Navigation),builds:core.Ref(Navigation_Builds),a:^Navigation_Agents,agents:^core.Table(Nav_Agent,$A),paths:^core.Table(Nav_Path),
     fars:^core.Table(Nav_Far),roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),
-    walks:core.Read(phys.Walk),flights:core.Read(phys.Fly),swims:core.Read(phys.Swim),colliders:core.Read(phys.Collider),worlds:core.Read(core.World_Transform),
+    walks:^core.Table(locomotion.Walk,$B),flights:^core.Table(locomotion.Fly,$C),swims:^core.Table(locomotion.Swim,$D),colliders:^core.Table(phys.Collider,$E),worlds:^core.Table(core.World_Transform,$F),
     placer:core.Placer,bodies:^phys.Body_Requests,events:^Nav_Events,time:core.Time,
 ) {
     if n.ptr==nil || builds.ptr==nil || !n.ready || !time.playing || time.dt<=0 {return}
@@ -186,7 +187,7 @@ agents_far :: proc(
     // Roaming follows whether an agent has somewhere to go; one that has, where only away sections are, goes far.
     for row in 0..<core.count(paths) {
         e:=core.entity_at(paths,row)
-        p:=core.at(core.read(paths),row)
+        p:=core.at(paths,row)
         moving:=p.state==.Waiting || p.state==.Moving || p.state==.Crossing
         if moving!=core.has(roamings,e) {
             if moving {core.add(roamings,e,scene.Roaming{})} else {core.remove(roamings,e)}
@@ -215,7 +216,7 @@ agents_far :: proc(
         far_route(n.ptr,a,s,&far,int(p.class),center,p.goal)
         core.add(fars,e,far)
         core.add(disabled,e,core.Disabled{})
-        written:=core.get(paths,e)
+        written:=core.edit(paths,e)
         written.through,written.velocity=false,{}
     }
     // What is far steps every NAV_FAR_PERIOD, and looks at once when a section comes or goes.
@@ -226,8 +227,8 @@ agents_far :: proc(
     if !step && !changed {return}
     for row:=0;row<len(fars.entities);row+=1 {
         e:=fars.entities[row]
-        far:=cast(^Nav_Far)core.raw_get(core.raw(fars),type_info_of(Nav_Far),e)
-        p:=cast(^Nav_Path)core.raw_get(core.raw(paths),type_info_of(Nav_Path),e)
+        far:=cast(^Nav_Far)core.raw_edit(core.raw(fars),type_info_of(Nav_Far),e)
+        p:=cast(^Nav_Path)core.raw_edit(core.raw(paths),type_info_of(Nav_Path),e)
         pose,placed:=core.get(worlds,e)
         if far==nil || p==nil || !placed {continue}
         // The route of one that flies or swims is of its middle.

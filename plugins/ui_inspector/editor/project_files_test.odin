@@ -16,7 +16,7 @@ import "mirai:std/serial"
 import "mirai:ui"
 
 // A project whose .ui only the memory of the registry holds, as an editor
-// leaves them unsaved.
+// holds them until their step is written.
 @(private="file")
 Project :: struct {
     root:string,
@@ -45,162 +45,6 @@ project_put :: proc(t:^testing.T,p:^Project,path:string,id:base.Asset_Id,data:ui
 @(private="file")
 project_records :: proc(t:^testing.T,p:^Project,id:base.Asset_Id,r:^author.Records,loc:=#caller_location) -> bool {
     return testing.expect(t,author.records_read(author.assets_of(&p.assets),id,r,context.temp_allocator),"the .ui reads",loc=loc)
-}
-
-// ---------------------------------------------------------------- texts
-
-@(private="file") MENU_ID :: base.Asset_Id{0x3e,1}
-@(private="file") GAME_LANGUAGES :: gui.Languages{.English,.Spanish,.French}
-
-// A menu with two localized texts, one with no Spanish, and one that is not.
-@(private="file")
-menu_records :: proc(t:^testing.T,r:^author.Records,translated:bool) -> bool {
-    texts:=make([dynamic]u8,context.temp_allocator)
-    nodes:=[]ui.Tree_Node{
-        ui.tree_node_record(&texts,-1,{kind=.Box,name="menu"}),
-        ui.tree_node_record(&texts,0,{kind=.Text,name="play",text="Play, \"now\"\nor later",flags={.Localized},text_id=0xa1}),
-        ui.tree_node_record(&texts,0,{kind=.Button,name="quit,all",text="Quit",flags={.Localized},text_id=0xb2}),
-        ui.tree_node_record(&texts,0,{kind=.Text,name="hint",text="Not localized"}),
-    }
-    if !testing.expect(t,author.records_load(r,{text=texts[:],nodes=nodes,styles={{}}},context.temp_allocator)) {return false}
-    if translated {
-        node_text_set(r,&r.nodes[1],1,.Spanish,.English,"Jugar, \"ya\"\r\no luego")
-        node_text_set(r,&r.nodes[1],1,.French,.English,"Jouer")
-        node_text_set(r,&r.nodes[2],2,.French,.English,"Quitter")
-    }
-    return true
-}
-
-// The rows of the CSV of a menu, parsed as ui.text.import reads them.
-@(private="file")
-menu_csv :: proc(r:^author.Records) -> (text:string,rows:[][]string,count:int) {
-    order:=texts_csv_order(GAME_LANGUAGES,.English)
-    b:=strings.builder_make(context.temp_allocator)
-    texts_csv_header(&b,order)
-    count=texts_csv_file(&b,"ui/menu, main.ui",MENU_ID,r,order,.English)
-    text=strings.to_string(b)
-    return text,csv_rows(text),count
-}
-
-// The rows after the first, accepted against the registry; why of each rejected.
-@(private="file")
-csv_accept :: proc(p:^Project,rows:[][]string,rejected:^[dynamic]Texts_Rejected) -> []Texts_Row {
-    accepted:=make([dynamic]Texts_Row,context.temp_allocator)
-    for row,i in rows[1:] {
-        if len(row)==1 && row[0]=="" {continue}
-        parsed,why:=texts_csv_row(&p.assets.registry,row,i+2,len(rows[0]))
-        if why!="" {append(rejected,Texts_Rejected{i+2,why});continue}
-        append(&accepted,parsed)
-    }
-    return accepted[:]
-}
-
-@(test)
-texts_go_to_a_csv_and_back_with_commas_quotes_and_lines :: proc(t:^testing.T) {
-    p:Project
-    if !project_init(t,&p,"texts") {return}
-    defer project_destroy(&p)
-    source:author.Records
-    if !menu_records(t,&source,true) {return}
-    if !project_put(t,&p,"ui/menu.ui",MENU_ID,author.records_data(&source)) {return}
-
-    text,rows,count:=menu_csv(&source)
-    testing.expect_value(t,count,2)
-    if !testing.expect_value(t,len(rows),3) {return}
-    testing.expect_value(t,strings.join(rows[0],"|",context.temp_allocator),"file|asset|node|id|en|es|fr")
-    testing.expect_value(t,rows[1][0],"ui/menu, main.ui")
-    testing.expect_value(t,rows[1][3],"00000000000000a1")
-    testing.expect_value(t,rows[1][4],"Play, \"now\"\nor later")
-    testing.expect_value(t,rows[1][5],"Jugar, \"ya\"\r\no luego")
-    testing.expect_value(t,rows[2][2],"quit,all")
-    testing.expect_value(t,rows[2][5],"")
-    testing.expect_value(t,rows[2][6],"Quitter")
-    testing.expect(t,strings.contains(text,`"Play, ""now""`),"A quote inside a field is doubled")
-
-    // The same CSV into the menu without translations gives back every text.
-    target:author.Records
-    if !menu_records(t,&target,false) {return}
-    columns,why:=texts_csv_columns(rows,GAME_LANGUAGES)
-    if !testing.expect_value(t,why,"") {return}
-    rejected:=make([dynamic]Texts_Rejected,context.temp_allocator)
-    accepted:=csv_accept(&p,rows,&rejected)
-    testing.expect_value(t,len(accepted),2)
-    testing.expect(t,texts_csv_apply(&target,MENU_ID,accepted,columns,.English,&rejected))
-    testing.expect_value(t,len(rejected),0)
-    for row in 0..<len(source.nodes) {
-        for language in GAME_LANGUAGES {
-            testing.expectf(t,node_text_in(&target,&target.nodes[row],language,.English)==node_text_in(&source,&source.nodes[row],language,.English),"node %d in %v",row,language)
-        }
-    }
-    again_text,_,_:=menu_csv(&target)
-    testing.expect_value(t,again_text,text)
-
-    // An empty cell changes nothing; another text replaces the one there.
-    rows[1][5]=""
-    rows[1][6]="Jouer, enfin"
-    rows[2][4]=""
-    accepted=csv_accept(&p,rows,&rejected)
-    testing.expect(t,texts_csv_apply(&target,MENU_ID,accepted,columns,.English,&rejected))
-    testing.expect_value(t,node_text_in(&target,&target.nodes[1],.Spanish,.English),"Jugar, \"ya\"\r\no luego")
-    testing.expect_value(t,node_text_in(&target,&target.nodes[1],.French,.English),"Jouer, enfin")
-    testing.expect_value(t,node_text_in(&target,&target.nodes[2],.English,.English),"Quit")
-    testing.expect_value(t,node_text_in(&target,&target.nodes[2],.Spanish,.English),"")
-
-    // Lines a spreadsheet ends with \r\n, and a last one without its end.
-    crlf:=fmt.tprintf("file,asset,node,id,en,es\r\nui/menu.ui,%s,play,00000000000000a1,,\"Sí, \"\"ya\"\"\"",rows[1][1])
-    parsed:=csv_rows(crlf)
-    if testing.expect_value(t,len(parsed),2) && testing.expect_value(t,len(parsed[1]),6) {
-        testing.expect_value(t,parsed[0][5],"es")
-        testing.expect_value(t,parsed[1][5],"Sí, \"ya\"")
-    }
-}
-
-@(test)
-a_csv_of_texts_says_why_it_refuses_a_language_the_game_lacks_and_rows_of_no_text :: proc(t:^testing.T) {
-    p:Project
-    if !project_init(t,&p,"texts-refused") {return}
-    defer project_destroy(&p)
-    r:author.Records
-    if !menu_records(t,&r,true) {return}
-    if !project_put(t,&p,"ui/menu.ui",MENU_ID,author.records_data(&r)) {return}
-    _,rows,_:=menu_csv(&r)
-
-    // A column of a language the game is not in.
-    _,why:=texts_csv_columns(rows,{.English,.Spanish})
-    testing.expect(t,strings.contains(why,"column fr") && strings.contains(why,"Project Settings > UI"),why)
-    _,why=texts_csv_columns(rows,{.English,.Spanish,.French,.German})
-    testing.expect_value(t,why,"")
-    _,why=texts_csv_columns({{"asset","file","node","id","en"}},GAME_LANGUAGES)
-    testing.expect(t,strings.contains(why,"file,asset,node,id"),why)
-
-    id:[32]u8
-    menu:=base.asset_id_format(MENU_ID,id[:])
-    other:[32]u8
-    unknown:=base.asset_id_format({0x99,9},other[:])
-    csv:=fmt.tprintf("file,asset,node,id,en,es,fr\nui/menu.ui,%s,play,00000000000000a1,,Jugar,\n" +
-        "ui/menu.ui,not-an-id,play,00000000000000a1,,,\n" +
-        "ui/gone.ui,%s,play,00000000000000a1,,,\n" +
-        "ui/menu.ui,%s,play,00000000000000A1,,,\n" +
-        "ui/menu.ui,%s,play,0000000000000000,,,\n" +
-        "ui/menu.ui,%s,play\n" +
-        "ui/menu.ui,%s,hint,00000000000000c3,,Pista,\n",menu,unknown,menu,menu,menu,menu)
-    parsed:=csv_rows(csv)
-    columns,columns_why:=texts_csv_columns(parsed,GAME_LANGUAGES)
-    if !testing.expect_value(t,columns_why,"") {return}
-    rejected:=make([dynamic]Texts_Rejected,context.temp_allocator)
-    accepted:=csv_accept(&p,parsed,&rejected)
-    testing.expect(t,texts_csv_apply(&r,MENU_ID,accepted,columns,.English,&rejected))
-    testing.expect_value(t,node_text_in(&r,&r.nodes[1],.Spanish,.English),"Jugar")
-    testing.expect_value(t,node_text_in(&r,&r.nodes[3],.Spanish,.English),"")
-    if !testing.expect_value(t,len(rejected),6) {return}
-    expected:=[6]struct{line:int,says:string}{
-        {3,"is not an asset id"},{4,"is not a .ui of the project"},{5,"16 hexadecimal digits"},
-        {6,"16 hexadecimal digits"},{7,"fewer columns"},{8,"no localized node with id 00000000000000c3"},
-    }
-    for e,i in expected {
-        testing.expect_value(t,rejected[i].line,e.line)
-        testing.expect(t,strings.contains(rejected[i].reason,e.says),rejected[i].reason)
-    }
 }
 
 // ---------------------------------------------------------------- renames
@@ -491,13 +335,14 @@ what_make_widget_declares_and_what_a_person_changes :: proc(t:^testing.T) {
 
 // ---------------------------------------------------------------- the paths a write binds
 
-@(private="file") Game_Slot :: struct {label:[16]u8,count:i32}
-@(private="file") Game_Status :: struct {health:f32,hits:i32,message:[32]u8,slots:[3]Game_Slot}
-@(private="file") Game_Hotbar :: struct {slots:[3]Game_Slot,chosen:i32}
-@(private="file") Game_Enemy :: struct {label:[16]u8,health:f32}
-@(private="file")
+@(private) Game_Slot :: struct {label:[16]u8,count:i32}
+@(private) Game_Status :: struct {health:f32,hits:i32,message:[32]u8,slots:[3]Game_Slot}
+@(private) Game_Hotbar :: struct {slots:[3]Game_Slot,chosen:i32}
+@(private) Game_Enemy :: struct {label:[16]u8,health:f32}
+@(private)
+@(test_world)
 Game_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     status:core.Table(Game_Status) `mirai:"game,name=Status"`,
     enemies:core.Table(Game_Enemy) `mirai:"game,name=Enemy"`,
     hotbar:Game_Hotbar `mirai:"game,name=Hotbar"`,
@@ -529,9 +374,9 @@ a_write_refuses_the_paths_the_game_lacks_and_changes_nothing :: proc(t:^testing.
     p:Project
     if !project_init(t,&p,"paths") {return}
     defer project_destroy(&p)
-    info,described:=core.test_info(t,Game_World)
+    info,described:=test_info(t,Game_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     app:=host.App{allocator=context.allocator,assets=&p.assets,info=&info}
     s:=editor.Session{app=&app,assets_root=p.root,headless=true}
     write :: proc(s:^editor.Session,file,node,document:string) -> (message:string,ok:bool) {
@@ -543,7 +388,7 @@ a_write_refuses_the_paths_the_game_lacks_and_changes_nothing :: proc(t:^testing.
         api_tree_write(s,&call)
         return call.error.message,!call.failed && answer.ok
     }
-    // What the files hold before: saved, with nothing waiting for Save.
+    // What the files hold before, on disk.
     files:=[?]struct{path:string,id:base.Asset_Id,document:string}{{"hud/stat.ui",STAT_ID,PATHS_STAT},{"hud/hud.ui",HUD_ID,PATHS_HUD},{"hud/stale.ui",STALE_ID,PATHS_STALE}}
     for f in files {
         if _,made:=project_doc(t,&p,f.path,f.id,f.document);!made {return}
@@ -590,8 +435,8 @@ a_write_refuses_the_paths_the_game_lacks_and_changes_nothing :: proc(t:^testing.
         message,written:=write(&s,c.asset,c.node,c.document)
         if !testing.expectf(t,!written,"%s was written",c.document) {continue}
         for part in c.says {testing.expectf(t,strings.contains(message,part),"%s\nlacks: %s\nsays:  %s",c.document,part,message)}
-        _,unsaved:=asset.registry_memory_find(&p.assets.registry,c.asset)
-        testing.expectf(t,!unsaved,"%s waits for Save after a refused write",c.asset)
+        _,held:=asset.registry_memory_find(&p.assets.registry,c.asset)
+        testing.expectf(t,!held,"the registry holds %s after a refused write",c.asset)
     }
     testing.expect(t,saved(&p,"hud/hud.ui")==hud_before,"the file is as it was")
     host.assets_scan(&p.assets)
@@ -622,8 +467,8 @@ a_write_refuses_the_paths_the_game_lacks_and_changes_nothing :: proc(t:^testing.
     }
     testing.expect(t,holds(&hud,"slots","cell") && holds(&hud,"cell","slot") && holds(&hud,"enemies","foe"),doc_text(&p,&hud))
     testing.expect(t,author.document_row_of(&hud,"enemy")<0 && author.records_subtree(hud.nodes[:],author.document_row_of(&hud,"enemies"))==1,"what the List held went")
-    _,unsaved:=asset.registry_memory_find(&p.assets.registry,"hud/stale.ui")
-    testing.expect(t,unsaved,"a write the game takes waits for Save")
+    _,held:=asset.registry_memory_find(&p.assets.registry,"hud/stale.ui")
+    testing.expect(t,held,"the registry holds a write the game takes until its step is written")
     // Written whole, the file answers for every path it holds.
     stale:author.Records
     if !project_records(t,&p,STALE_ID,&stale) {return}

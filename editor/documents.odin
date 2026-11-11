@@ -19,8 +19,6 @@ Document_Tab :: struct {
     inspector:Inspector,
     outliner:Outliner,
     prefabs:Prefabs,
-    recovery:Recovery_Chain,
-    quit_approved:bool,
 }
 
 documents_ensure :: proc(s:^Session) {
@@ -33,7 +31,6 @@ documents_ensure :: proc(s:^Session) {
 swap_values :: proc(a,b:^$T) {slice.ptr_swap_non_overlapping(a,b,size_of(T))}
 
 document_tab_exchange :: proc(s:^Session,tab:^Document_Tab) {
-    recovery_park(s)
     s.edit_world,tab.world=tab.world,s.edit_world
     swap_values(s.document,&tab.document)
     // Who edits stays with the document in front.
@@ -47,13 +44,11 @@ document_tab_exchange :: proc(s:^Session,tab:^Document_Tab) {
     swap_values(s.inspector,&tab.inspector)
     swap_values(s.outliner,&tab.outliner)
     if p:=prefabs_of(s);p!=nil {swap_values(p,&tab.prefabs)}
-    swap_values(&s.recovery.chain,&tab.recovery)
 }
 
 document_tab_free :: proc(s:^Session,tab:^Document_Tab) {
     if tab.world==nil {return}
     ai_document_closed(s,tab.world)
-    recovery_chain_close(s,&tab.recovery,false)
     host.app_world_free(s.app,tab.world)
     document_previous_free(&tab.document)
     history.edits_free(&tab.edits)
@@ -82,6 +77,8 @@ document_activate :: proc(s:^Session,index:int) -> bool {
     s.inspector.gesture=0
     settings_flush(s)
     history.edits_commit(s.edits,edited_world(s),s.selection)
+    // A tab at the back holds what its file does.
+    document_flush(s)
     document_tab_exchange(s,&s.documents[s.active_document])
     document_tab_exchange(s,&s.documents[index])
     s.active_document=index
@@ -93,14 +90,8 @@ document_activate :: proc(s:^Session,index:int) -> bool {
     s.gui.drag,s.gui.placement={},{}
     s.inspector.picker,s.inspector.list={},{}
     if s.materials!=nil {s.materials.color,s.materials.list={},{} }
-    if s.picker!=nil {picker_clear(s.picker)}
-    if document_is_prefab(s) && !document_dirty(s) {
-        assets_rescan(s)
-        if file,found:=asset.registry_find(&s.app.assets.registry,s.document.id);found && s.document.source_stamp!=([2]i64{file.size,file.time}) {
-            selected:=selected_ids(s)
-            if scene_open(s,document_file(s.document))==.None {select_ids(s,selected)}
-        }
-    }
+    if document_is_prefab(s) {assets_rescan(s)}
+    document_file_follow(s)
     if prefab_linked(s) {
         for state in prefab_instances(s) {
             if state.stale {prefab_refresh(s,{});break}
@@ -109,8 +100,20 @@ document_activate :: proc(s:^Session,index:int) -> bool {
     return true
 }
 
-// Opens a scene or a prefab, or brings its tab. One scene is open at a time,
-// beside any number of prefabs: another scene takes the tab of the one open.
+// The file of the document in front is not the one it read or wrote: it
+// changed outside the editor (git, a tool, another tab that wrote the prefab),
+// and the document reads it again, with a new history.
+document_file_follow :: proc(s:^Session) {
+    d:=s.document
+    if s.app.assets==nil || d.id=={} || document_file(d)=="" {return}
+    file,found:=asset.registry_find(&s.app.assets.registry,d.id)
+    if !found || d.source_stamp==([2]i64{file.size,file.time}) {return}
+    selected:=selected_ids(s)
+    if scene_open(s,document_file(d))==.None {select_ids(s,selected)} else {document_source_stamp(s)}
+}
+
+// Opens a scene, or brings its tab. One scene is open at a time, beside any
+// number of prefabs: another scene takes the tab of the one open.
 document_open_tab :: proc(s:^Session,path:string) -> Document_Error {
     if s.app.assets==nil {return .No_Assets}
     if !collab_can_open(s) {return .Rejected}
@@ -121,7 +124,7 @@ document_open_tab :: proc(s:^Session,path:string) -> Document_Error {
         d:=index==s.active_document?s.document:&tab.document
         if document_file(d)==file {document_activate(s,index);return .None}
     }
-    if scene:=document_scene_tab(s);scene>=0 && !path_is_prefab(path) {
+    if scene:=document_scene_tab(s);scene>=0 && !path_is_prefab(s,path) {
         previous:=s.active_document
         document_activate(s,scene)
         if error:=scene_open(s,path);error!=.None {
@@ -181,12 +184,17 @@ document_holds_file :: proc(s:^Session,path:string) -> bool {
 document_scene_tab :: proc(s:^Session) -> int {
     for &tab,index in s.documents {
         d:=index==s.active_document?s.document:&tab.document
-        if d.previous==nil || d.previous.doc.kind!=asset.KIND_PREFAB {return index}
+        if !d.prefab {return index}
     }
     return -1
 }
 
-path_is_prefab :: proc(path:string) -> bool {return strings.has_suffix(path,".prefab")}
+// Whether the file a path names is a prefab, as its header says; a path that names no file yet is none.
+path_is_prefab :: proc(s:^Session,path:string) -> bool {
+    if s.app==nil || s.app.assets==nil {return false}
+    file,found:=asset.registry_find_path(&s.app.assets.registry,scene_path(s,scene_file(s,path)))
+    return found && asset.registry_prefab(file)
+}
 
 // Others lose what they do when the scene changes: the guests of the session,
 // or this end its place in it, and the agents at work.
@@ -195,109 +203,38 @@ scene_switch_interrupts :: proc(s:^Session) -> bool {
 }
 
 document_close :: proc(s:^Session,index:int) {
-    if !document_activate(s,index) {return}
-    assets:=document_closing_assets(s)
-    if document_dirty(s) || len(assets)>0 {confirm_open(s,.Close,assets);return}
-    document_close_active(s)
-}
-
-// The unsaved assets the active document uses that no other open document
-// does: closing or replacing it asks about them, in the temporary allocator.
-document_closing_assets :: proc(s:^Session) -> []string {
-    used:=make([dynamic]string,context.temp_allocator)
-    world_unsaved_assets(s,edited_world(s),&used)
-    if len(used)==0 {return nil}
-    other:=make([dynamic]string,context.temp_allocator)
-    for &tab,index in s.documents {
-        if index==s.active_document || tab.world==nil {continue}
-        world_unsaved_assets(s,core.world_ref(tab.world,s.info),&other)
-        for i:=len(used)-1;i>=0;i-=1 {
-            for path in other {
-                if path==used[i] {unordered_remove(&used,i);break}
-            }
-        }
-    }
-    return used[:]
-}
-
-// Whether a document shows assets with unsaved changes: its tab is marked.
-// Asked again only when the unsaved files or the history of the document change.
-document_uses_unsaved :: proc(s:^Session,index:int) -> bool {
-    if len(assets_unsaved(s))==0 {return false}
-    active:=index==s.active_document
-    if !active && (index>=len(s.documents) || s.documents[index].world==nil) {return false}
-    world:=active?s.edit_world:s.documents[index].world
-    key:=[2]u64{s.app.assets.registry.revision,history.edits_state(active?s.edits:&s.documents[index].edits)}
-    g:=s.gui
-    for &known in g.unsaved_uses {
-        if known.world==world && known.key==key {return known.uses}
-    }
-    used:=make([dynamic]string,context.temp_allocator)
-    world_unsaved_assets(s,core.world_ref(world,s.info),&used)
-    for &known in g.unsaved_uses {
-        if known.world==world {
-            known.key,known.uses=key,len(used)>0
-            return known.uses
-        }
-    }
-    append(&g.unsaved_uses,Unsaved_Use{world,key,len(used)>0})
-    return len(used)>0
+    if document_activate(s,index) {document_close_active(s)}
 }
 
 document_close_active :: proc(s:^Session) {
     if len(s.documents)<=1 {scene_new(s);return}
     index:=s.active_document
     document_activate(s,index>0?index-1:1)
-    recovery_chain_close(s,&s.documents[index].recovery,true)
     document_tab_free(s,&s.documents[index])
     for i in index..<len(s.documents)-1 {s.documents[i]=s.documents[i+1]}
     resize(&s.documents,len(s.documents)-1)
     if s.active_document>index {s.active_document-=1}
 }
 
-documents_dirty :: proc(s:^Session) -> bool {
-    if document_dirty(s) {return true}
-    for index in 0..<len(s.documents) {
-        if document_tab_dirty(s,index) {return true}
-    }
-    return false
+// The editor ends, and the editor of the project asked for next starts;
+// while agents work it asks first, and then about the pending changes, which
+// it keeps or discards before it ends.
+documents_quit :: proc(s:^Session,agents_asked:=false,pending_asked:=false) {
+    if !agents_asked && ai_working_count(s)>0 {confirm_open(s,.Quit);return}
+    if !pending_asked && git_quit_ask(s) {return}
+    if projects_next_start(s) {s.quit=true}
 }
 
-// Whether the document of a tab has changes its file does not.
-document_tab_dirty :: proc(s:^Session,index:int) -> bool {
-    if index==s.active_document {return document_dirty(s)}
-    tab:=&s.documents[index]
-    return tab.document.unsaved || history.edits_scene_state(&tab.edits)!=tab.document.saved
-}
-
-documents_quit_next :: proc(s:^Session) {
-    documents_ensure(s)
-    for &tab,index in s.documents {
-        if tab.quit_approved {continue}
-        d:=index==s.active_document?s.document:&tab.document
-        e:=index==s.active_document?s.edits:&tab.edits
-        // Agents work only on the active document: quitting asks while they do.
-        if !d.unsaved && history.edits_scene_state(e)==d.saved && (index!=s.active_document || ai_working_count(s)==0) {continue}
-        // The first question lists every unsaved asset too, so none is asked twice.
-        document_activate(s,index)
-        confirm_open(s,.Quit,assets_unsaved_paths(s))
-        return
-    }
-    // With no document to ask about: every asset still unsaved.
-    if unsaved:=assets_unsaved_paths(s);len(unsaved)>0 {
-        confirm_open(s,.Quit,unsaved)
-        return
-    }
-    if !projects_next_start(s) {return}
-    s.quit=true
-}
+// The dot of a tab whose file has what is not kept.
+PENDING_DOT :: 5
+PENDING_COLOR :: ui.Color{201,181,239,255}
 
 // A tab of the strip: those of the scenes first, then those of the assets.
 @(private)
 Strip_Tab :: struct {
     label:string,
     icon:ui.Icon,
-    dirty,active:bool,
+    pending,active:bool, // pending: its file has what is not kept
     asset:int, // the index of its asset document; -1 for a scene
 }
 
@@ -311,23 +248,27 @@ strip_tab :: proc(s:^Session,index:int) -> (tab:Strip_Tab) {
         tab.asset=index-scenes
         d:=&s.asset_documents[tab.asset]
         tab.label,tab.icon=asset_document_title(s,d),asset_document_icon(s,d)
-        tab.dirty,tab.active=asset_document_dirty(s,d),s.asset_shown==tab.asset+1
+        tab.active=s.asset_shown==tab.asset+1
+        if path:=asset_document_path(s,d);path!="" {
+            if r:=files_registry(s);r!=nil && !asset.registry_outside(path) {path=asset.registry_file_path(r,path,context.temp_allocator)}
+            tab.pending=git_pending(s,path)
+        }
         return
     }
     tab.asset=-1
-    d,e:=s.document,s.edits
-    if index!=s.active_document && index<len(s.documents) {d,e=&s.documents[index].document,&s.documents[index].edits}
+    d:=s.document
+    if index!=s.active_document && index<len(s.documents) {d=&s.documents[index].document}
     tab.label=document_title(d)
-    tab.icon=d.previous!=nil && d.previous.doc.kind==asset.KIND_PREFAB?.Prefab:.Scene
-    tab.dirty=d.unsaved || history.edits_scene_state(e)!=d.saved || document_uses_unsaved(s,index)
+    tab.pending=git_pending(s,document_file(d))
+    tab.icon=d.prefab?.Prefab:.Scene
     tab.active=index==s.active_document && !scene_covered(s)
     return
 }
 
 @(private)
 document_tab_width :: proc(s:^Session,tab:Strip_Tab,room:f32) -> f32 {
-    width:=ui.text_width(&s.gui.ctx.font,tab.label,s.gui.ctx.theme.font)+54
-    if tab.dirty {width+=ui.text_width(&s.gui.ctx.font," •",s.gui.ctx.theme.font)}
+    width:=ui.text_width(&s.gui.ctx.font,tab.label,ui.metric(s.gui.ctx,"font"))+54
+    if tab.pending {width+=PENDING_DOT+18}
     return clamp(width,90,max(room,90))
 }
 
@@ -361,14 +302,14 @@ documents_build :: proc(s:^Session) {
     g.documents_width=available
     if ctx.wheel_target==strip_id {
         delta:=ctx.input.wheel.x!=0?ctx.input.wheel.x:ctx.input.wheel.y
-        g.documents_scroll-=delta*ctx.theme.wheel_step
+        g.documents_scroll-=delta*ui.WHEEL_STEP
     }
     g.documents_scroll=clamp(g.documents_scroll,0,limit)
     if ui.box(ctx,{id=id,width=ui.GROW,height=ui.GROW,gap=3,align_y=.End,track=true}) {
         if overflow {
             previous:=shell_id(g,"documents_previous")
             named_add(g,previous)
-            if ui.button(ctx,previous,{label="←",tip="Previous documents",style=.Ghost,width=22,height=28,size=ctx.theme.font,disabled=g.documents_scroll<=0}).clicked {
+            if ui.button(ctx,previous,{label="←",tip="Previous documents",variant="ghost",width=22,height=28,size=ui.metric(ctx,"font"),disabled=g.documents_scroll<=0}).clicked {
                 g.documents_scroll=max(g.documents_scroll-max(strip_width*0.6,90),0)
             }
         }
@@ -379,7 +320,6 @@ documents_build :: proc(s:^Session) {
                 tab:=strip_tab(s,index)
                 active:=tab.active
                 label:=tab.label
-                if tab.dirty {label=ui.text_commit(ctx,fmt.bprintf(ui.text_reserve(ctx,len(label)+4),"%s •",label))}
                 width:=document_tab_width(s,tab,room)
                 tab_id:=shell_id(g,"document_tab",index+1)
                 close_id:=shell_id(g,"document_close",index+1)
@@ -390,23 +330,27 @@ documents_build :: proc(s:^Session) {
                 }
                 surface:=ui.interact(ctx,surface_id,{.Focusable})
                 hot:=surface.hot || ctx.hot==tab_id || ctx.hot==close_id
-                fill:=active?ctx.theme.panel:ctx.theme.bar_bottom
-                if hot {fill=active?ui.color_shade(fill,1.15):ctx.theme.field_hover}
-                text_color:=active || hot?ctx.theme.text:ctx.theme.text_muted
-                appearance:=ui.Node_Style{text={size=ctx.theme.font,color=text_color}}
+                fill:=active?ui.tone(ctx,"panel"):ui.tone(ctx,"bar_bottom")
+                if hot {fill=active?ui.color_shade(fill,1.15):ui.tone(ctx,"field_hover")}
+                text_color:=active || hot?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted")
+                appearance:=ui.Node_Style{text={size=ui.metric(ctx,"font"),color=text_color}}
                 // The whole height of the bar takes its clicks, up to the edge of the window.
-                if ui.box(ctx,{id=surface_id,width=ui.fixed(width),height=ui.fixed(ctx.theme.bar_height),align_y=.Center}) {
-                    if ui.box(ctx,{id=shell_id(g,"document_look",index+1),track=true,width=ui.fixed(width),height=ui.fixed(active?ctx.theme.bar_height:ctx.theme.control),gap=1,padding={2,0,2,0},align_y=.Center,fill=fill,radius=4}) {
+                if ui.box(ctx,{id=surface_id,width=ui.fixed(width),height=ui.fixed(ui.metric(ctx,"bar_height")),align_y=.Center}) {
+                    if ui.box(ctx,{id=shell_id(g,"document_look",index+1),track=true,width=ui.fixed(width),height=ui.fixed(active?ui.metric(ctx,"bar_height"):ui.metric(ctx,"control")),gap=1,padding={2,0,2,0},align_y=.Center,fill=fill,radius=4}) {
                         if active {
                             if ui.box(ctx,{width=ui.fixed(width),height=ui.fixed(4),fill=fill,float={to=.Parent,anchor=.Bottom_Left,pivot=.Bottom_Left,layer=ui.LAYER_BAR}}) {}
                         }
-                        if ui.button(ctx,tab_id,{label=label,icon=tab.icon,width=-1,height=ctx.theme.control,size=ctx.theme.font,icon_size=12,look=&appearance}).clicked || surface.clicked {
+                        if ui.button(ctx,tab_id,{label=label,icon=tab.icon,width=-1,height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font"),icon_size=12,look=&appearance}).clicked || surface.clicked {
                             switch {
                             case tab.asset>=0: asset_document_request(s,tab.asset)
                             case:              s.document_request=index;s.requests+={.Document_Switch}
                             }
                         }
-                        close:=ui.Node_Style{fill=ctx.hot==close_id?ui.color_alpha(ctx.theme.text,65):ui.Color{},radius=12,text={color=text_color}}
+                        if tab.pending {
+                            if ui.box(ctx,{width=ui.fixed(PENDING_DOT),height=ui.fixed(PENDING_DOT),fill=PENDING_COLOR,radius=PENDING_DOT*0.5}) {}
+                            ui.spacer(ctx,5,1)
+                        }
+                        close:=ui.Node_Style{fill=ctx.hot==close_id?ui.color_alpha(ui.tone(ctx,"text"),65):ui.Color{},radius=12,text={color=text_color}}
                         if ui.button(ctx,close_id,{icon=.Cross,width=19,height=19,icon_size=10,icon_color=text_color,look=&close}).clicked {
                             switch {
                             case tab.asset>=0: s.asset_request=tab.asset;s.requests+={.Asset_Close}
@@ -421,7 +365,7 @@ documents_build :: proc(s:^Session) {
         if overflow {
             next:=shell_id(g,"documents_next")
             named_add(g,next)
-            if ui.button(ctx,next,{label="→",tip="Next documents",style=.Ghost,width=22,height=28,size=ctx.theme.font,disabled=g.documents_scroll>=limit}).clicked {
+            if ui.button(ctx,next,{label="→",tip="Next documents",variant="ghost",width=22,height=28,size=ui.metric(ctx,"font"),disabled=g.documents_scroll>=limit}).clicked {
                 g.documents_scroll=min(g.documents_scroll+max(strip_width*0.6,90),limit)
             }
         }
@@ -429,12 +373,7 @@ documents_build :: proc(s:^Session) {
 }
 
 document_is_prefab :: proc(s:^Session) -> bool {
-    return s.document!=nil && s.document.previous!=nil && s.document.previous.doc.kind==asset.KIND_PREFAB
-}
-
-document_root :: proc(s:^Session,w:core.World_Ref) -> core.Entity {
-    if !document_is_prefab(s) {return core.NONE}
-    return core.entity_of(core.world_entities(w),s.document.previous.info.root)
+    return s.document!=nil && s.document.prefab
 }
 
 // Who loses what they do when the scene changes, for the question that asks

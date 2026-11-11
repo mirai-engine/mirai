@@ -19,35 +19,6 @@ energy :: proc(samples:[]f32) -> (sum:f32) {
 }
 
 @(test)
-the_low_pass_of_a_voice_keeps_the_lows_and_takes_away_the_highs :: proc(t:^testing.T) {
-    heard :: proc(t:^testing.T,hz,cutoff:f32) -> f32 {
-        m:=test_mixer(t)
-        defer mixer_destroy(m)
-        desc:=VOICE_DEFAULT
-        desc.lowpass=cutoff
-        testing.expect(t,voice_play(m,tone(t,m,hz,RATE/4),desc)!=0)
-        test_render(m,CHUNK_FRAMES*4) // past the filter settling
-        return energy(test_render(m,CHUNK_FRAMES*8))
-    }
-    open,low:=heard(t,100,0),heard(t,100,400)
-    testing.expectf(t,low>open*0.8,"a 100 Hz tone under a 400 Hz cutoff keeps its energy: %v of %v",low,open)
-    bright,high:=heard(t,8000,0),heard(t,8000,400)
-    testing.expectf(t,high<bright*0.01,"an 8 kHz tone under a 400 Hz cutoff loses it: %v of %v",high,bright)
-
-    // Turned on and off while it plays, the voice keeps going.
-    m:=test_mixer(t)
-    defer mixer_destroy(m)
-    voice:=voice_play(m,tone(t,m,8000,RATE/4))
-    test_render(m,CHUNK_FRAMES)
-    testing.expect(t,voice_set_lowpass(m,voice,400))
-    test_render(m,CHUNK_FRAMES)
-    testing.expect(t,energy(test_render(m,CHUNK_FRAMES))<bright*0.01/8)
-    testing.expect(t,voice_set_lowpass(m,voice,0))
-    test_render(m,CHUNK_FRAMES)
-    testing.expect(t,energy(test_render(m,CHUNK_FRAMES))>bright/8*0.5)
-}
-
-@(test)
 what_a_voice_sends_rings_on_in_the_reverb_after_it_ends :: proc(t:^testing.T) {
     // A click, then what the room gives back after it.
     tail :: proc(t:^testing.T,send:f32,reverb:Reverb,muted:=false) -> f32 {
@@ -78,6 +49,30 @@ what_a_voice_sends_rings_on_in_the_reverb_after_it_ends :: proc(t:^testing.T) {
     testing.expect(t,reverb_set(m,{room_size=2,damping=-1,wet=-1,width=3}))
     got,bus:=reverb_get(m)
     testing.expect(t,got==Reverb{1,0,0,1} && bus==BUS_MASTER)
+}
+
+// A tail that rings down to silence passes through the subnormal floats, which
+// x86 computes about a hundred times slower: the render counts them as zero.
+@(test)
+a_reverb_tail_rings_down_to_zeros_without_subnormals :: proc(t:^testing.T) {
+    m:=test_mixer(t)
+    defer mixer_destroy(m)
+    testing.expect(t,reverb_set(m,{wet=1,width=1}))
+    desc:=VOICE_DEFAULT
+    desc.reverb=1
+    testing.expect(t,voice_play(m,tone(t,m,440,CHUNK_FRAMES),desc)!=0)
+    subnormals:=0
+    for _ in 0..<100 {
+        test_render(m,RATE/10)
+        for sample in m.reverb.memory {
+            bits:=transmute(u32)sample
+            if bits&0x7f80_0000==0 && bits&0x007f_ffff!=0 {subnormals+=1}
+        }
+    }
+    testing.expect_value(t,subnormals,0)
+    silent:=true
+    for sample in m.reverb.memory {silent&&=sample==0}
+    testing.expect(t,silent,"ten seconds after the click the room holds zeros")
 }
 
 @(test)

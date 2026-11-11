@@ -4,7 +4,9 @@ import "core:fmt"
 import "mirai:cook/author"
 import "mirai:editor"
 import "mirai:host"
+import std_anim "mirai:std/anim"
 import "mirai:std/base"
+import mm "mirai:std/math"
 import "mirai:std/serial"
 import "mirai:ui"
 
@@ -32,7 +34,7 @@ anim_names :: proc(r:^author.Records) -> []string {
 // x and y, an angle, an opacity, a color that multiplies, a size, a value, a
 // frame or the part of the text shown.
 @(private)
-key_row :: proc(p:^Pane,property:ui.Anim_Property,key:^ui.Keyframe) -> (changed:bool) {
+key_row :: proc(p:^Pane,property:ui.Anim_Property,key:^std_anim.Keyframe) -> (changed:bool) {
     v:=&key.value
     d:=author.property_default(property)
     pair :: proc(p:^Pane,label:string,v:^[4]f32,d:[4]f32,about:string) -> bool {
@@ -50,8 +52,6 @@ key_row :: proc(p:^Pane,property:ui.Anim_Property,key:^ui.Keyframe) -> (changed:
     case .Rotation: changed=one(p,"Rotation",Key_Angle,v,d,"How far it turns clockwise, in radians")
     case .Opacity:  changed=one(p,"Opacity",Unit_Value,v,d,"0: it does not show; 1: as it is")
     case .Color:    changed=value_row(p,"Color",Color_Value,v,d,"What its colors are multiplied by; white leaves them")
-    case .Width:    changed=one(p,"Width",Positive_Value,v,d,"Its width, which the layout around it follows")
-    case .Height:   changed=one(p,"Height",Positive_Value,v,d,"Its height, which the layout around it follows")
     case .Value:    changed=one(p,"Value",Key_Number,v,d,"What a Progress, a Slider or a Number shows in place of its value")
     case .Frame:    changed=one(p,"Frame",Positive_Value,v,d,"The frame of the sheet of sprites of its image")
     case .Reveal:   changed=one(p,"Reveal",Unit_Value,v,d,"The part of the characters of its text shown, 0 to 1")
@@ -63,7 +63,6 @@ key_row :: proc(p:^Pane,property:ui.Anim_Property,key:^ui.Keyframe) -> (changed:
 section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
     ctx:=p.s.gui.ctx
     u:=p.u
-    th:=&ctx.theme
     r:=&u.records
     names:=anim_names(r)
     // The list and what removes one on a line; what makes one under it, to
@@ -71,7 +70,7 @@ section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4,align_y=.Center}) {
         chosen:=u.anim+1
         if ui.dropdown(ctx,ui.id(ctx,"anim"),{list=names},&chosen,{width=-1}) {u.anim=chosen-1}
-        if ui.button(ctx,ui.id(ctx,"anim_remove"),{icon=ui.icon_user(u8(editor.User_Icon.Trash)),icon_size=13,icon_color=th.text_muted,tip="Delete",style=.Ghost,width=th.row,height=th.row,disabled=u.anim<0 || u.anim>=len(r.anims)}).clicked {
+        if ui.button(ctx,ui.id(ctx,"anim_remove"),{icon=ui.icon_user(u8(editor.User_Icon.Trash)),icon_size=13,icon_color=ui.tone(ctx,"text_muted"),tip="Delete",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row"),disabled=u.anim<0 || u.anim>=len(r.anims)}).clicked {
             author.records_anim_remove(r,u.anim)
             u.anim=min(u.anim,len(r.anims)-1)
             changed(u,"Delete animation")
@@ -93,7 +92,7 @@ section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
     if u.anim<0 || u.anim>=len(r.anims) {return}
     a:=&r.anims[u.anim]
     edit(u,"Animation",value_row(p,"Name",Name_Value,&a.name,a.name,"What the game names to play it on a node"))
-    edit(u,"Animation",value_row(p,"Loop",Enum_Value(ui.Anim_Loop),&a.loop,ui.Anim_Loop.Once))
+    edit(u,"Animation",value_row(p,"Loop",Enum_Value(std_anim.Loop),&a.loop,std_anim.Loop.Once))
     if a.kind==.Clip {
         removed_track:=-1
         for t in 0..<int(a.count) {
@@ -103,7 +102,7 @@ section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4,align_y=.Center}) {
                 if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {
                     property:=track.property
-                    if value_row(p,fmt.tprintf("Track %d",t+1),Enum_Value(ui.Anim_Property),&property,track.property,"What it changes: Width and Height move the layout around it, the others only how it is drawn") {
+                    if value_row(p,fmt.tprintf("Track %d",t+1),Enum_Value(ui.Anim_Property),&property,track.property,"What it changes of how it is drawn; the layout around it stays") {
                         // Keys of another property start from what that property holds alone.
                         if property!=track.property {
                             for &key in r.keys[track.first_key:][:track.key_count] {key.value=author.property_default(property)}
@@ -112,7 +111,7 @@ section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
                         changed(u,"Animation")
                     }
                 }
-                if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove track",style=.Ghost,width=th.row,height=th.row,disabled=a.count<=1}).clicked {removed_track=t}
+                if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove track",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row"),disabled=a.count<=1}).clicked {removed_track=t}
             }
             removed_key:=-1
             for k in 0..<int(track.key_count) {
@@ -121,8 +120,11 @@ section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
                 edit(u,"Animation",value_row(p,"Time",Seconds_Value,&key.time,key.time))
                 edit(u,"Animation",key_row(p,track.property,key))
                 if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4,align_y=.Center}) {
-                    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {edit(u,"Animation",value_row(p,"Ease",Enum_Value(ui.Ease),&key.ease,ui.Ease.Linear))}
-                    if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove key",style=.Ghost,width=th.row,height=th.row,disabled=track.key_count<=1}).clicked {removed_key=k}
+                    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {
+                        edit(u,"Animation",value_row(p,"Ease",Enum_Value(mm.Ease),&key.ease,mm.Ease.Linear))
+                        edit(u,"Animation",value_row(p,"Interpolation",Enum_Value(std_anim.Interpolation),&key.interpolation,std_anim.Interpolation.Linear))
+                    }
+                    if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove key",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row"),disabled=track.key_count<=1}).clicked {removed_key=k}
                 }
                 ui.id_pop(ctx)
             }
@@ -152,7 +154,7 @@ section_animations :: proc(p:^Pane,n:^ui.Tree_Node) {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {
                 if list_row(p,fmt.tprintf("Part %d",part+1),&chosen,earlier) && chosen>0 {r.parts[at]=chosen;changed(u,"Animation")}
             }
-            if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove part",style=.Ghost,width=th.row,height=th.row}).clicked {removed=part}
+            if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove part",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {removed=part}
         }
         ui.id_pop(ctx)
     }
@@ -192,7 +194,6 @@ section_component :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     s:=p.s
     u:=p.u
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     r:=&u.records
     // The widgets it can be a use of: a file it uses for its styles has no one root.
     names:=make([dynamic]string,context.temp_allocator)
@@ -212,7 +213,7 @@ section_component :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     if advanced(p) {component_fields_rows(p,n)}
     component:=&r.components[chosen]
     bind_only(p,"Data",n.data[:],.Data,"What the paths of its widget that start with @ read: a struct or an entity of the game, so one widget shows the health of the player in one place and of an enemy in another")
-    if ui.button(ctx,ui.id(ctx,"open"),{label=fmt.tprintf("Open %s",editor.asset_name_of(a,component.widget,"missing")),style=.Ghost,height=th.row}).clicked {
+    if ui.button(ctx,ui.id(ctx,"open"),{label=fmt.tprintf("Open %s",editor.asset_name_of(a,component.widget,"missing")),variant="ghost",height=ui.metric(ctx,"row")}).clicked {
         editor.asset_document_open(s,component.widget)
     }
     if p.readonly {return}
@@ -227,7 +228,7 @@ section_component :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
         ui.id_push(ctx,ui.id(ctx,"override",row+1))
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4,align_y=.Center}) {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {edit(u,"Override",value_row(p,"Node",Name_Value,&o.node,o.node,"The node of the widget it changes, by its name; one inside a widget of the widget, by both names: outer/inner"))}
-            if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove override",style=.Ghost,width=th.row,height=th.row}).clicked {removed=row}
+            if ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove override",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {removed=row}
         }
         field_names:=NODE_FIELD_NAMES
         // What an instance usually changes of a widget; the rest in Advanced, or once it is set.
@@ -294,7 +295,6 @@ section_parameters :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     s:=p.s
     u:=p.u
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     r:=&u.records
     fields:=author.DOC_PARAM_FIELDS
     slot:=.Slot in n.flags
@@ -314,7 +314,7 @@ section_parameters :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
                     if why:=author.records_param_valid_name(r,i);why!="" {param.name=before;editor.notify(s,why)} else {changed(u,"Parameter")}
                 }
             }
-            if !p.readonly && ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove parameter",style=.Ghost,width=th.row,height=th.row}).clicked {removed=i}
+            if !p.readonly && ui.button(ctx,ui.id(ctx,"remove"),{icon=.Cross,tip="Remove parameter",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {removed=i}
         }
         node_name:=serial.text_field(param.node[:])
         chosen:=0
@@ -351,7 +351,7 @@ section_parameters :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
         ui.id_pop(ctx)
     }
     if removed>=0 {ordered_remove(&r.params,removed);changed(u,"Remove parameter")}
-    if !p.readonly && ui.button(ctx,ui.id(ctx,"param_add"),{label="Add parameter",icon=.Plus,style=.Ghost,height=th.row}).clicked {
+    if !p.readonly && ui.button(ctx,ui.id(ctx,"param_add"),{label="Add parameter",icon=.Plus,variant="ghost",height=ui.metric(ctx,"row")}).clicked {
         author.records_param_add(r)
         changed(u,"Add parameter")
     }
@@ -423,6 +423,7 @@ override_rows :: proc(p:^Pane,a:^host.Assets,o:^ui.Tree_Override,field:ui.Node_F
         edit(u,"Override",binding_row(p,"Selected field",&v.bind_selected,"A bool: it is in the Selected state while it is true"))
         edit(u,"Override",binding_row(p,"Disabled field",&v.bind_disabled,"A bool: it takes no input while it is true"))
         edit(u,"Override",binding_row(p,"Items field",&v.bind_items,"An array a List builds its node for"))
+        edit(u,"Override",binding_row(p,"Key field",&v.bind_key,"A field of the element of a List that tells its items apart"))
         edit(u,"Override",binding_row(p,"Image field",&v.bind_image,"An asset id of a texture it shows"))
         edit(u,"Override",binding_row(p,"Tint field",&v.bind_tint,"A color in place of its fill"))
         edit(u,"Override",binding_row(p,"Variant field",&v.bind_variant,"A text or an enum that names its variant"))

@@ -33,17 +33,17 @@ Action :: distinct u16
 
 Action_Kind :: enum u8 {
     Button, // down or up
-    Axis,   // a value from -1 to 1
-    Axis2,  // a vector of at most unit length, except from unbounded axes
+    Axis,   // a value from -1 to 1 times the scale of its binding
+    Axis2,  // a vector at most as long as the scale of its binding, except from unbounded axes
 }
 
 Binding_Kind :: enum u8 {
     Code,        // Button: down while the code is
     Axis_Above,  // Button: down while the axis, times `scale`, reaches `dead_zone` (a trigger used as a button)
     Code_Axis,   // Axis: from a negative and a positive code, times `scale`
-    Analog,      // Axis: an analog axis times `scale`, with a dead zone
-    Codes_2D,    // Axis2: left, right, down and up codes; diagonals keep unit length
-    Analog_2D,   // Axis2: two analog axes times `scale`, with a radial dead zone
+    Analog,      // Axis: an analog axis with a dead zone, times `scale`
+    Codes_2D,    // Axis2: left, right, down and up codes, times `scale`; diagonals keep its length
+    Analog_2D,   // Axis2: two analog axes with a radial dead zone, times `scale`
     Delta,       // Axis: an unbounded axis times `scale`, as is: mouse movement, a wheel
     Delta_2D,    // Axis2: two unbounded axes times `scale`; the vector is not limited to unit length
 }
@@ -65,11 +65,11 @@ Action_State :: struct {
     down:bool,          // a button is held, or an axis is away from zero
     pressed:bool,       // became down this tick
     released:bool,      // stopped being down this tick
-    tapped:bool,        // released after at most `tap_ticks` ticks held
-    hold_started:bool,  // has been held for `hold_ticks` ticks, as of this tick
-    holding:bool,       // has been held for at least `hold_ticks` ticks
-    held_ticks:u32,     // ticks held so far, counting this one; 0 when up
-    released_held:u32,  // on the tick it was released: how long it had been held
+    tapped:bool,        // released after being held at most `tap` seconds
+    hold_started:bool,  // has been held for `hold` seconds, as of this tick
+    holding:bool,       // has been held for at least `hold` seconds
+    held:f32,           // s held so far, counting this tick; 0 when up
+    released_held:f32,  // s, on the tick it was released: how long it had been held
     value:f32,          // Axis: the value; Axis2: its length; Button: 1 while down
     vector:math.Vec2,   // Axis2
 }
@@ -84,7 +84,7 @@ Input :: struct {
     accum:[]Accum,
     taken,taken_axes:[]u8, // per code and axis: the most codes of a held chord that uses it this update
     code_count,axis_count,action_count,binding_count:int,
-    tap_ticks,hold_ticks:u32,
+    tap,hold:f32,          // s
     chorded:bool,          // some binding has a chord
     failed:u64,
     allocator:runtime.Allocator,
@@ -93,16 +93,16 @@ Input_Desc :: struct {
     max_actions,max_bindings:int,
     code_count:int,                // 512 when 0
     axis_count:int,                // 64 when 0
-    tap_ticks,hold_ticks:u32,      // TAP_TICKS and HOLD_TICKS when 0
+    tap,hold:f32,                  // s; TAP_SECONDS and HOLD_SECONDS when 0
     allocator:runtime.Allocator,   // context.allocator when unset
 }
 
-TAP_TICKS :: 12
-HOLD_TICKS :: 30
+TAP_SECONDS :: f32(0.2)
+HOLD_SECONDS :: f32(0.5)
 
 input_init :: proc(in_:^Input,desc:Input_Desc) -> bool {
     allocator:=desc.allocator if desc.allocator.procedure!=nil else context.allocator
-    in_^={allocator=allocator,tap_ticks=desc.tap_ticks if desc.tap_ticks>0 else TAP_TICKS,hold_ticks=desc.hold_ticks if desc.hold_ticks>0 else HOLD_TICKS}
+    in_^={allocator=allocator,tap=desc.tap if desc.tap>0 else TAP_SECONDS,hold=desc.hold if desc.hold>0 else HOLD_SECONDS}
     in_.code_count=desc.code_count if desc.code_count>0 else 512
     in_.axis_count=desc.axis_count if desc.axis_count>0 else 64
     if desc.max_actions<=0 || desc.max_actions>int(max(u16)) || desc.max_bindings<=0 || desc.max_bindings>max(int)/size_of(Binding) || in_.code_count>int(max(u16))+1 || in_.axis_count>int(max(u16))+1 {in_^={};return false}
@@ -166,11 +166,11 @@ input_bind_code :: proc "contextless" (in_:^Input,action:Action,code:Input_Code)
 input_bind_axis_button :: proc "contextless" (in_:^Input,action:Action,axis:Axis_Code,threshold:f32=0.5,scale:f32=1) -> bool {return input_bind(in_,action,.Axis_Above,{u16(axis),0,0,0},scale,threshold)}
 // An axis action reads -1 while `negative` is held and +1 while `positive` is, times `scale`.
 input_bind_codes_axis :: proc "contextless" (in_:^Input,action:Action,negative,positive:Input_Code,scale:f32=1) -> bool {return input_bind(in_,action,.Code_Axis,{u16(negative),u16(positive),0,0},scale,0)}
-// An axis action reads an analog axis times `scale`; values inside `dead_zone` read 0 and the rest is rescaled so the range stays continuous up to 1.
+// An axis action reads an analog axis: values inside `dead_zone` read 0 and the rest is rescaled so the range stays continuous up to 1, then times `scale`.
 input_bind_axis :: proc "contextless" (in_:^Input,action:Action,axis:Axis_Code,dead_zone:f32=0.15,scale:f32=1) -> bool {return input_bind(in_,action,.Analog,{u16(axis),0,0,0},scale,dead_zone)}
-// A 2D action built from four codes.
-input_bind_codes_2d :: proc "contextless" (in_:^Input,action:Action,left,right,down,up:Input_Code) -> bool {return input_bind(in_,action,.Codes_2D,{u16(left),u16(right),u16(down),u16(up)},1,0)}
-// A 2D action read from two analog axes with a radial dead zone.
+// A 2D action built from four codes, times `scale`.
+input_bind_codes_2d :: proc "contextless" (in_:^Input,action:Action,left,right,down,up:Input_Code,scale:f32=1) -> bool {return input_bind(in_,action,.Codes_2D,{u16(left),u16(right),u16(down),u16(up)},scale,0)}
+// A 2D action read from two analog axes with a radial dead zone, then times `scale`.
 input_bind_axes_2d :: proc "contextless" (in_:^Input,action:Action,x,y:Axis_Code,dead_zone:f32=0.2,scale:f32=1) -> bool {return input_bind(in_,action,.Analog_2D,{u16(x),u16(y),0,0},scale,dead_zone)}
 // An axis action reads an unbounded axis times `scale`, without dead zone or limit: the movement of the mouse or a wheel since the last tick.
 input_bind_delta :: proc "contextless" (in_:^Input,action:Action,axis:Axis_Code,scale:f32=1) -> bool {return input_bind(in_,action,.Delta,{u16(axis),0,0,0},scale,0)}
@@ -260,9 +260,9 @@ input_feed_action :: proc "contextless" (in_:^Input,action:Action,down:bool,axis
 }
 
 // Computes the state of every action from the codes and axes as they are
-// now and from what input_feed_action gave: call it once per tick, after the
-// host reported them.
-input_update :: proc "contextless" (in_:^Input) {
+// now and from what input_feed_action gave: call it once per tick of dt
+// seconds, after the host reported them.
+input_update :: proc "contextless" (in_:^Input,dt:f32) {
     bindings:=in_.bindings[:in_.binding_count]
     if in_.chorded {
         for &taken in in_.taken {taken=0}
@@ -289,7 +289,7 @@ input_update :: proc "contextless" (in_:^Input) {
     }
     for action in 0..<in_.action_count {
         total:=in_.accum[action]
-        input_finish(in_,action,in_.kinds[action],total.down,total.quick,total.axis,total.vector)
+        input_finish(in_,action,in_.kinds[action],total.down,total.quick,total.axis,total.vector,dt)
     }
     for &total in in_.accum[:in_.action_count] {total={}}
     base.bits_clear_all(in_.latched_down)
@@ -311,15 +311,15 @@ binding_read :: proc "contextless" (in_:^Input,binding:^Binding) -> (r:Accum) {
     case .Code_Axis:
         r.axis=binding.scale*(code_axis(in_,binding.codes[1])-code_axis(in_,binding.codes[0]))
     case .Analog:
-        r.axis=dead_zone_scalar(in_.axes[binding.codes[0]]*binding.scale,binding.dead_zone)
+        r.axis=dead_zone_scalar(in_.axes[binding.codes[0]],binding.dead_zone)*binding.scale
     case .Codes_2D:
         v:=math.Vec2{code_axis(in_,binding.codes[1])-code_axis(in_,binding.codes[0]),code_axis(in_,binding.codes[3])-code_axis(in_,binding.codes[2])}
         if v.x!=0 && v.y!=0 {v*=0.70710678}
-        r.vector=v
+        r.vector=v*binding.scale
     case .Analog_2D:
-        raw:=math.Vec2{in_.axes[binding.codes[0]],in_.axes[binding.codes[1]]}*binding.scale
+        raw:=math.Vec2{in_.axes[binding.codes[0]],in_.axes[binding.codes[1]]}
         length:=linalg.length(raw)
-        if length>binding.dead_zone {r.vector=raw/length*min((length-binding.dead_zone)/max(1-binding.dead_zone,1e-6),1)}
+        if length>binding.dead_zone {r.vector=raw/length*min((length-binding.dead_zone)/max(1-binding.dead_zone,1e-6),1)*binding.scale}
     case .Delta:
         r.axis=in_.axes[binding.codes[0]]*binding.scale
     case .Delta_2D:
@@ -352,7 +352,7 @@ chord_overruled :: proc "contextless" (in_:^Input,binding:^Binding) -> bool {
 }
 
 @(private)
-input_finish :: proc "contextless" (in_:^Input,action:int,kind:Action_Kind,button_down,quick:bool,axis:f32,vector:math.Vec2) {
+input_finish :: proc "contextless" (in_:^Input,action:int,kind:Action_Kind,button_down,quick:bool,axis:f32,vector:math.Vec2,dt:f32) {
     down:bool
     value:f32
     switch kind {
@@ -360,23 +360,26 @@ input_finish :: proc "contextless" (in_:^Input,action:int,kind:Action_Kind,butto
     case .Axis: value=axis;down=axis!=0
     case .Axis2: value=linalg.length(vector);down=value>0
     }
-    in_.states[action]=action_step(in_.states[action],down,quick,value,kind==.Axis2?vector:{},in_.tap_ticks,in_.hold_ticks)
+    in_.states[action]=action_step(in_.states[action],down,quick,value,kind==.Axis2?vector:{},dt,in_.tap,in_.hold)
 }
 
 // The state of an action this tick, from whether it is down with its value
-// and vector, and from its state the tick before: the edges, the tap and the
-// hold. quick: it went down and up inside the tick, so it is not down.
-action_step :: proc "contextless" (previous:Action_State,down,quick:bool,value:f32,vector:math.Vec2,tap_ticks,hold_ticks:u32) -> (state:Action_State) {
+// and vector, and from its state the tick before, dt seconds ago: the edges,
+// the tap and the hold. quick: it went down and up inside the tick, so it is
+// not down. A threshold is met by the tick nearest to it, so the tap and the
+// hold last the same at any tick rate.
+action_step :: proc "contextless" (previous:Action_State,down,quick:bool,value:f32,vector:math.Vec2,dt,tap,hold:f32) -> (state:Action_State) {
+    dt:=dt if dt>0 else 0
     state.down,state.value,state.vector=down,value,vector
     state.pressed=state.down && !previous.down
     state.released=!state.down && previous.down
     if quick && !state.down && !previous.down {state.pressed=true;state.released=true}
-    if state.down {state.held_ticks=previous.held_ticks+1 if previous.down else 1}
+    if state.down {state.held=previous.held+dt if previous.down else dt}
     if state.released {
-        state.released_held=previous.held_ticks
-        state.tapped=previous.held_ticks<=tap_ticks
+        state.released_held=previous.held
+        state.tapped=previous.held<=tap+dt*0.5
     }
-    state.holding=state.down && state.held_ticks>=hold_ticks
+    state.holding=state.down && state.held>=hold-dt*0.5
     state.hold_started=state.holding && !previous.holding
     return
 }

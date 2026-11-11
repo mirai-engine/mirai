@@ -19,7 +19,7 @@ TRANSFORM_DEFAULT :: TRANSFORM_IDENTITY
 
 // Where an entity is in the world, and where it was at the tick before: the
 // render draws it between the two. Only transforms_propagate writes it.
-@(component,description="World position, rotation and scale computed from the entity hierarchy.")
+@(component,derived,description="World position, rotation and scale computed from the entity hierarchy.")
 World_Transform :: struct {
     using transform:mm.Transform `mirai:"transient"`,
     previous:mm.Transform `mirai:"transient"`,
@@ -71,7 +71,7 @@ Places :: struct {
 @(params)
 Placer :: struct {
     transforms:^Table(Transform),
-    parents:Read(Parent),
+    parents:^Table(Parent,.Read),
     places:^Places,
     jumps:^Jumps,
 }
@@ -91,8 +91,8 @@ place :: proc(p:Placer,e:Entity,position:[3]f32,rotation:mm.Quat=1,teleport:=tru
         push(&p.places.queue,Place_Request{e,position,rotation,at_rest})
         return true
     }
-    was,_:=world_of(read(p.transforms),p.parents,e)
-    world_set(row,read(p.transforms),p.parents,e,position,rotation) or_return
+    was,_:=world_of(p.transforms,p.parents,e)
+    world_set(row,p.transforms,p.parents,e,position,rotation) or_return
     if teleport {
         turn:=rotation*conj(was.rotation)
         jump(p.jumps,e,{position-mm.quat_rotate(turn,was.position),turn,{1,1,1}})
@@ -110,18 +110,17 @@ places_drop :: proc(places:^Places,problems:^Problems) {
 // What transforms_propagate keeps between passes.
 @(storage)
 Propagation :: struct {
-    order:[dynamic]Entity,        // the entities with Transform, parents before children
     worlds:[dynamic]mm.Transform, // by entity index: the world of its last pass
-    position:[dynamic]i32,        // by entity index: where it is in order
     computed:[dynamic]u32,        // by entity index: the pass that computed it last
     listed:[dynamic]u32,          // by entity index: the tick its row was put in moving
     moving,spare:[dynamic]Entity, // rows computed since the tick whose previous is not their transform
     dirty:[dynamic]Ordered,
     pass,ticks:u32,
-    built_tree,built_locals,seen_locals:u64,
+    seen_locals:Seen,
+    seen_tree:u64,                // of the links of the Hierarchy that moved
 }
 
-Ordered :: struct {position:i32,entity:Entity}
+Ordered :: struct {depth:i32,entity:Entity}
 
 // The most parents a walk up through Parent goes through (world_of,
 // ancestor_with, is_under, depth_of): a chain of parents that goes round ends
@@ -134,12 +133,14 @@ from_math :: #force_inline proc "contextless" (t:mm.Transform) -> Transform {ret
 
 // After every tick and every frame. In a tick what the entities were becomes
 // their previous world transform; after a frame what the frame moved keeps
-// the previous of the tick. Only the transforms written since the last pass
-// and what hangs from them are computed again; all of them when entities
-// gained or lost a Transform or the hierarchy changed. An entity hangs from
-// its parent in the Hierarchy when that one has a Transform too.
+// the previous of the tick. Only what changed since the last pass and what
+// hangs from it are computed again: the transforms written, the entities that
+// gained a Transform, those whose link in the Hierarchy moved and the children
+// of one that lost its Transform. All of them when the pass had not seen the
+// rows or the tree there are, as after a World was copied over. An entity
+// hangs from its parent in the Hierarchy when that one has a Transform too.
 @(step="fixed late",loops="game editor",stage="end")
-transforms_propagate :: proc(locals:Read(Transform),hierarchy:Ref(Hierarchy),worlds:^Table(World_Transform),propagation:^Propagation,jumps:^Jumps,frame:Frame_Time) {
+transforms_propagate :: proc(locals:^Table(Transform,.Read),hierarchy:Ref(Hierarchy),worlds:^Table(World_Transform),propagation:^Propagation,jumps:^Jumps,frame:Frame_Time) {
     transforms_compute(locals,hierarchy,worlds,propagation,frame.phase==.Fixed)
     if frame.phase!=.Fixed {return}
     for jumped in take(&jumps.queue) {
@@ -149,7 +150,7 @@ transforms_propagate :: proc(locals:Read(Transform),hierarchy:Ref(Hierarchy),wor
                 continue
             }
             if row:=row_of(worlds,e);row>=0 {
-                world:=at(worlds,row)
+                world:=edit_at(worlds,row)
                 world.previous=mm.transform_compose(jumped.by,world.previous)
             }
             e=subtree_next(hierarchy,jumped.entity,e)
@@ -158,7 +159,7 @@ transforms_propagate :: proc(locals:Read(Transform),hierarchy:Ref(Hierarchy),wor
 }
 
 @(private)
-transforms_compute :: proc(locals:Read(Transform),h:Ref(Hierarchy),worlds:^Table(World_Transform),p:^Propagation,tick:bool) {
+transforms_compute :: proc(locals:^Table(Transform,$A),h:Ref(Hierarchy),worlds:^Table(World_Transform),p:^Propagation,tick:bool) {
     p.pass+=1
     previous_moving:[]Entity
     if tick {
@@ -167,46 +168,56 @@ transforms_compute :: proc(locals:Read(Transform),h:Ref(Hierarchy),worlds:^Table
         clear(&p.moving)
         previous_moving=p.spare[:]
     }
-    if p.built_tree!=h.version || p.built_locals!=layout(locals) || len(p.position)!=raw_indices(raw(locals.table)) {
-        if !propagation_order(locals,h,p) {return}
-        for e in p.order {transform_compute(locals,h,worlds,p,e,tick)}
+    c:=changes(locals,&p.seen_locals)
+    moved:[]Entity
+    whole:bool
+    if h.ptr!=nil {moved,whole=log_since(h.moved,&p.seen_tree)}
+    if size:=raw_indices(raw(locals));len(p.worlds)<size && (resize(&p.worlds,size)!=nil || resize(&p.computed,size)!=nil || resize(&p.listed,size)!=nil) {
+        p.seen_locals.gone=max(u64) // the next pass has not seen these rows
+        return
+    }
+    if c.all || whole {
+        for row in 0..<count(locals) {
+            root:=entity_at(locals,row)
+            if parent:=parent_of(h,root);parent==NONE || !has(locals,parent) {subtree_compute(locals,h,worlds,p,root,tick)}
+        }
         for i:=len(worlds.entities)-1;i>=0;i-=1 {
             if !has(locals,worlds.entities[i]) {remove(worlds,worlds.entities[i])}
         }
-    } else if version(locals)!=p.seen_locals {
-        clear(&p.dirty)
-        for row in 0..<count(locals) {
-            if stamp(locals,row)<=p.seen_locals {continue}
-            e:=entity_at(locals,row)
-            append(&p.dirty,Ordered{p.position[entity_index(e)],e})
+    } else {
+        // Whoever hangs higher is computed first, and brings what hangs from it.
+        dirty :: proc(locals:^Table(Transform,$A),h:Ref(Hierarchy),p:^Propagation,e:Entity) {
+            if !has(locals,e) {return}
+            depth:=i32(0)
+            for at:=parent_of(h,e);at!=NONE;at=parent_of(h,at) {depth+=1}
+            append(&p.dirty,Ordered{depth,e})
         }
-        slice.sort_by(p.dirty[:],proc(a,b:Ordered) -> bool {return a.position<b.position})
+        clear(&p.dirty)
+        for row in each_changed(locals,&c) {dirty(locals,h,p,entity_at(locals,row))}
+        for e in moved {dirty(locals,h,p,e)}
+        for e in c.gone {
+            if has(locals,e) {continue}
+            remove(worlds,e)
+            for child:=first_child(h,e);child!=NONE;child=next_sibling(h,child) {dirty(locals,h,p,child)}
+        }
+        slice.sort_by(p.dirty[:],proc(a,b:Ordered) -> bool {return a.depth<b.depth})
         for item in p.dirty {
-            if p.computed[entity_index(item.entity)]==p.pass {continue}
-            for at:=item.entity;at!=NONE; {
-                if !has(locals,at) {
-                    at=subtree_next(h,item.entity,at,false)
-                    continue
-                }
-                transform_compute(locals,h,worlds,p,at,tick)
-                at=subtree_next(h,item.entity,at)
-            }
+            if p.computed[entity_index(item.entity)]!=p.pass {subtree_compute(locals,h,worlds,p,item.entity,tick)}
         }
     }
-    p.seen_locals=version(locals)
     // What moved the tick before and not in this one stops between two places.
     for e in previous_moving {
         if i:=entity_index(e);i<len(p.computed) && p.computed[i]==p.pass {continue}
         row:=row_of(worlds,e)
         if row>=0 && worlds.values[row].previous!=worlds.values[row].transform {
-            world:=at(worlds,row)
+            world:=edit_at(worlds,row)
             world.previous=world.transform
         }
     }
 }
 
 @(private)
-transform_compute :: proc(locals:Read(Transform),h:Ref(Hierarchy),worlds:^Table(World_Transform),p:^Propagation,e:Entity,tick:bool) {
+transform_compute :: proc(locals:^Table(Transform,$A),h:Ref(Hierarchy),worlds:^Table(World_Transform),p:^Propagation,e:Entity,tick:bool) {
     i:=entity_index(e)
     local,_:=get(locals,e)
     world:=to_math(local)
@@ -219,7 +230,7 @@ transform_compute :: proc(locals:Read(Transform),h:Ref(Hierarchy),worlds:^Table(
         current:=worlds.values[row]
         next:=World_Transform{world,tick?current.transform:current.previous}
         // A row is written only when it changes: its readers see what moved.
-        if next!=current {at(worlds,row)^=next}
+        if next!=current {edit_at(worlds,row)^=next}
         if next.previous!=next.transform && p.listed[i]!=p.ticks+1 {
             p.listed[i]=p.ticks+1
             append(&p.moving,e)
@@ -229,40 +240,22 @@ transform_compute :: proc(locals:Read(Transform),h:Ref(Hierarchy),worlds:^Table(
     }
 }
 
-// The entities with Transform, each one after the one it hangs from: from
-// each that hangs from none with a Transform, its subtree down to those
-// without one. False without memory: it is built again on the next pass.
+// An entity and what hangs from it, down to those without a Transform.
 @(private)
-propagation_order :: proc(locals:Read(Transform),h:Ref(Hierarchy),p:^Propagation) -> bool {
-    size:=raw_indices(raw(locals.table))
-    if resize(&p.order,count(locals))!=nil || resize(&p.worlds,size)!=nil || resize(&p.position,size)!=nil || resize(&p.computed,size)!=nil || resize(&p.listed,size)!=nil {
-        p.built_locals=layout(locals)-1
-        return false
-    }
-    n:=0
-    for row in 0..<count(locals) {
-        root:=entity_at(locals,row)
-        if parent:=parent_of(h,root);parent!=NONE && has(locals,parent) {continue}
-        for at:=root;at!=NONE; {
-            if !has(locals,at) {
-                at=subtree_next(h,root,at,false)
-                continue
-            }
-            p.position[entity_index(at)]=i32(n)
-            p.order[n]=at
-            n+=1
-            at=subtree_next(h,root,at)
+subtree_compute :: proc(locals:^Table(Transform,$A),h:Ref(Hierarchy),worlds:^Table(World_Transform),p:^Propagation,root:Entity,tick:bool) {
+    for at:=root;at!=NONE; {
+        if !has(locals,at) {
+            at=subtree_next(h,root,at,false)
+            continue
         }
+        transform_compute(locals,h,worlds,p,at,tick)
+        at=subtree_next(h,root,at)
     }
-    base.truncate(&p.order,n)
-    p.built_tree=h.version
-    p.built_locals=layout(locals)
-    return true
 }
 
 // The world transform of an entity from its locals, without waiting for the
 // next propagation: for a function that moved something and needs it now.
-world_of :: proc(locals:Read(Transform),parents:Read(Parent),e:Entity) -> (world:mm.Transform,ok:bool) {
+world_of :: proc(locals:^Table(Transform,$A),parents:^Table(Parent,$B),e:Entity) -> (world:mm.Transform,ok:bool) {
     chain:[HIERARCHY_DEPTH+1]Entity
     n:=0
     at:=e
@@ -282,15 +275,15 @@ world_of :: proc(locals:Read(Transform),parents:Read(Parent),e:Entity) -> (world
     return world,true
 }
 
-name_get :: proc(names:Read(Name),e:Entity) -> string {
-    if row:=row_of(names,e);row>=0 {return base.text_get(names.table.values[row].text[:])}
+name_get :: proc(names:^Table(Name,$A),e:Entity) -> string {
+    if row:=row_of(names,e);row>=0 {return base.text_get(names.values[row].text[:])}
     return ""
 }
 
 // The first entity with that name; NONE without one. It walks the names.
-entity_named :: proc(names:Read(Name),text:string) -> Entity {
+entity_named :: proc(names:^Table(Name,$A),text:string) -> Entity {
     for row in 0..<count(names) {
-        if base.text_equal(names.table.values[row].text[:],text) {return entity_at(names,row)}
+        if base.text_equal(names.values[row].text[:],text) {return entity_at(names,row)}
     }
     return NONE
 }

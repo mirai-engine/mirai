@@ -1,6 +1,6 @@
 ---
 name: mirai-assets
-description: Mirai binary assets (.scene, .prefab, .mat, .mesh, .tex, .anim, .sound, .sound_set,
+description: Mirai binary assets (.scene, prefabs, .mat, .mesh, .tex, .anim, .sound, .sound_set,
   .ui, .font, .strings, .prompts, .records and those of plugins, such as .terrain and .foliage),
   their container, the `asset` package, the registry, prefab resolution (`cook/prefab`), the
   compression of assets (`std/compressor`, `cook/compressor`), `std/serial` and the `mirai asset`
@@ -12,7 +12,8 @@ description: Mirai binary assets (.scene, .prefab, .mat, .mesh, .tex, .anim, .so
 
 The packages are `std/serial` (streams, schemas, migration, paths, JSON), the codecs
 (`std/compressor` and its packages, `cook/compressor/lz`, `cook/compressor/bc7split`) and
-`asset` (container, compression, typed tables, asset types, scene/prefab, registry).
+`asset` (container, compression, typed tables, asset types, scenes and their prefab instances,
+registry).
 
 ## Map
 
@@ -39,8 +40,8 @@ The packages are `std/serial` (streams, schemas, migration, paths, JSON), the co
   [records](references/kinds.md#records) and [prompts](references/kinds.md#prompts). A plugin's
   types are its own: `.particle` ([vfx](../mirai-world/references/vfx.md#format)), `.terrain`,
   `.foliage`.
-- Scenes, prefabs, instances and overrides:
-  [scene and prefab](references/scenes.md#scene-and-prefab),
+- Scenes, what makes one a prefab, instances and overrides:
+  [scene](references/scenes.md#scene), [prefab](references/scenes.md#prefab),
   [prefab instances](references/scenes.md#prefab-instances) and
   [resolution](references/scenes.md#resolution-against-the-current-prefab).
 
@@ -48,16 +49,24 @@ The packages are `std/serial` (streams, schemas, migration, paths, JSON), the co
 
 1. **Look before touching.** Inspect with the [CLI](references/cli.md); the file's schema allows
    reading any type.
-2. **Editing an existing asset.** `mirai asset set` or `unpack`/`pack`
-   ([CLI](references/cli.md)). From code: `asset.Document`, or `asset.Scene` for scenes and
-   prefabs. In a game they are files of `assets/` written through the API or the editor; only the
-   demo's tool writes them with `asset.Scene_Builder`. Meshes from code go through
+2. **Editing an existing asset.** `mirai asset set` or `unpack`/`pack`; a scene or a `.ui`, by
+   its document (`mirai scene|ui read` and `write`), its only text: `dump` and the diffs of git
+   print it ([CLI](references/cli.md)). From code: `asset.Document`, or `asset.Scene` for
+   scenes. Scenes and prefabs, the demo's too, are files of `assets/` written by `scene.write`,
+   `mirai scene write` or the editor; no code builds them. Meshes from code go through
    `asset.content_mesh` over the shapes of `std/geom`
    ([content tool](../../../docs/game/assets/content-tool.md)).
 3. **Changing a serialized struct.** A component or a record of a game changes without a version
    or a converter: the reader migrates its rows by field name.
-   - Renaming a field makes it another one: the previous value is lost and the new one takes the
-     default.
+   - Renaming a field keeps its values only when it says the names it had:
+     `mirai:"was=<earlier name> <one before>"`; a renamed component says them on its type,
+     `@(component,was="<earlier name>")`. A path (an override, a `@field/` target) names a field
+     by any name it had, a table under an earlier name is the component's, and the names travel
+     in the schema of every file written since, so a newer file also reads into an older layout
+     (a prefab saved after the rename, a scene before it). A stored field the type has under no
+     name is a loss, never silent: the editor's console says it on load (`engine.diagnostics`
+     for an agent) and `mirai asset verify` prints it, with the scene, the component and the
+     field.
    - A change in what an asset type stores (a field of its rows too) or in what a value means
      raises its `*_VERSION`: files of another version fail with `Version` and are made again
      ([version rule](references/formats.md#versions)).
@@ -89,7 +98,7 @@ The packages are `std/serial` (streams, schemas, migration, paths, JSON), the co
   `owner` says which asset it is a part of ([container](references/formats.md#container)).
 - **Persistent identity.** What is stored names entities by `Entity_Id` and assets by `Asset_Id`,
   never by runtime index. The only stored position is the `entity` column of a component table. In
-  scenes and prefabs a `base.Entity` field contains the `Entity_Id` of its target.
+  a scene a `base.Entity` field contains the `Entity_Id` of its target.
 - **Dependencies are derived** from the `Asset_Id`s the values name; there is no separate list.
 - **Nothing in the file is trusted without validating.** `blob_open`, `schema_read` and
   `asset_open` validate header, directory, schema and tables; each `*_view` validates ranges of its
@@ -115,8 +124,13 @@ The packages are `std/serial` (streams, schemas, migration, paths, JSON), the co
 - `asset.Types` is the context with the schema of the program's types: it is created once and
   passed to reads and writes.
 - **Atomic writing.** `document_save` and `scene_save` write a temporary and rename;
-  `mirai asset set` does not leave the file half-written if a value is invalid.
+  `mirai asset set` does not leave the file half-written if a value is invalid. The readers of
+  `std/serial` share delete and the rename has POSIX semantics, so a save replaces a file that
+  is being read; on Windows it waits a moment for a scanner that holds the file.
 - **A scene is one file**, not one per entity.
+- **The header says Scene or Prefab.** One `.scene` extension and kind; `Header_Flag.Prefab` is
+  what whoever made the file chose, never guessed from its roots, and a prefab has exactly one root
+  ([prefab](references/scenes.md#prefab)).
 - **A guest mount never takes an id the registry has**: what the program shipped wins over what a
   player adds ([guest mounts](references/formats.md#registry)).
 
@@ -133,9 +147,16 @@ The packages are `std/serial` (streams, schemas, migration, paths, JSON), the co
     small levels) and the blocks and planes of fields in `texture_blocks_test.odin`;
   - animation, skeleton, skin and fracture: `content_test.odin`, `kinds_test.odin`,
     `skeleton_test.odin` and `fracture_test.odin` of `asset`; font, texts and prompts:
-    `asset/interface_kinds_test.odin`; game data tables: `asset/records_test.odin`;
-  - versions: `asset/versions_test.odin`; a plugin's own steps, in its plugin (`.match` and
-    `.pose`);
+    `asset/interface_kinds_test.odin`; the one table of texts and its fallback:
+    `std/base/texts_test.odin` and `host/content_interface_test.odin`; the tools of the texts
+    (keys, CSV, what is missing): `cook/author/texts_test.odin`; game data tables:
+    `asset/records_test.odin`;
+  - versions: `asset/versions_test.odin`; a plugin's own steps, in its plugin (`.character`); a
+    renamed field and what a load reports it loses:
+    `a_renamed_field_keeps_its_value_through_each_name_it_had` of `std/serial` and
+    `a_scene_saved_with_another_layout_of_a_component_loads_it_by_field_names` of `engine/scene`;
+  - the document of a scene or a `.ui` from a file outside the assets (what `dump` and git
+    show): `the_commands_read_write_and_check_the_document_of_an_asset` of `cook/author`;
   - registry: `asset/registry_test.odin` and, in the editor, `editor/content_test.odin`;
   - layers of an imported material: `asset/kinds_test.odin`, and the overrides shared with prefabs
     in the editor, `editor/prefabs_test.odin`;
@@ -149,7 +170,7 @@ The packages are `std/serial` (streams, schemas, migration, paths, JSON), the co
   with `--release`) and `asset/types_memory_test.odin`. If schema validation changes, add
   `hostile_schema_binary` and `hostile_random_schemas_validate` of `std/serial/hostile_test.odin`
   with `--release` and `-define:SERIAL_HOSTILE_ROUNDS=20000`.
-- `.pose`, `.blend` and `.agraph` are verified in their [plugin](../mirai-plugins/SKILL.md).
+- `.character` is verified in its [plugin](../mirai-animation/SKILL.md).
 - Compression: `mirai test std/compressor/lz` and `mirai test cook/compressor/lz` (every level
   decodes through `std/compressor`),
   `asset/container_test.odin` (chunks with alignment and compression) and the pages in

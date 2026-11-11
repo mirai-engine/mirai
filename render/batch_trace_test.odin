@@ -67,8 +67,7 @@ trace_at :: proc(image: Trace_Image, p: [2]f32) -> Vec3 {
 @(test)
 a_batch_casts_the_shadows_and_shows_in_the_reflections_of_its_instances :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.occlusion_culling = false
-	settings.reflections = true
+	settings.reflections = .Detailed
 	f: Fixture
 	if !fixture_init(t, &f, 160, 96, settings) {return}
 	defer fixture_destroy(&f)
@@ -99,13 +98,13 @@ a_batch_casts_the_shadows_and_shows_in_the_reflections_of_its_instances :: proc(
 		applied := r.settings
 		applied.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, applied))
-		scene_set(r, posts[:2], nil, sun, sky)
+		scene_given(r, posts[:2], nil, sun, sky)
 		empty := trace_frame(t, r, camera)
 		defer delete(empty.pixels)
-		scene_set(r, posts[:], nil, sun, sky)
+		scene_given(r, posts[:], nil, sun, sky)
 		instanced := trace_frame(t, r, camera)
 		defer delete(instanced.pixels)
-		scene_set(r, posts[:2], nil, sun, sky)
+		scene_given(r, posts[:2], nil, sun, sky)
 		handle, error := batch_set(r, 0, r.world_key, {mesh = box, tint = color, flags = {.Casts_Shadow, .Ray_Visible}}, batched[:])
 		testing.expect_value(t, error, "")
 		batch := trace_frame(t, r, camera)
@@ -144,7 +143,6 @@ TLAS_INSTANCES :: #config(TLAS_INSTANCES, 0)
 a_native_tlas_larger_than_the_upload_ring_is_built_and_met :: proc(t: ^testing.T) {
 	RING :: 4 << 20
 	settings := DEFAULT_SETTINGS
-	settings.occlusion_culling = false
 	settings.trace_mode = .Hardware
 	device := shared_device.create_or_skip(t, {on_message = rhi.message_print, app_name = "mirai large tlas test", validation = true, allow_hardware_ray_tracing = true, upload_bytes_per_frame = RING})
 	if device == nil {return}
@@ -165,7 +163,7 @@ a_native_tlas_larger_than_the_upload_ring_is_built_and_met :: proc(t: ^testing.T
 	sun := Sun_Desc{direction = {0.70710678, 0.70710678, 0}, color = {1, 1, 1}, illuminance = 1.5 * math.PI, enabled = true}
 	camera := Camera{position = {0, 7, 4}, forward = {0, -7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 500, exposure = UNIT_EXPOSURE}
 	shadow := trace_pixel(r, camera, {-1, 0, 0})
-	scene_set(r, {floor}, nil, sun, {sky = {0.3, 0.4, 0.6}})
+	scene_given(r, {floor}, nil, sun, {sky = {0.3, 0.4, 0.6}})
 	empty := trace_frame(t, r, camera)
 	defer delete(empty.pixels)
 	_, error := batch_set(r, 0, r.world_key, {mesh = box, tint = {0.8, 0.3, 0.2}, flags = {.Casts_Shadow}}, batched)

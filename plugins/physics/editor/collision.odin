@@ -1,13 +1,13 @@
 package physics_editor
 
 import "mirai:editor"
-import "base:runtime"
 import "core:fmt"
 import "core:mem"
-import "core:reflect"
 import "mirai:core"
 import "mirai:std/base"
+import "mirai:std/serial"
 import phys "plugins:physics/runtime"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // Categories, presets and masks of categories are ids with names that the
@@ -38,7 +38,7 @@ collision_categories :: proc(info:^core.World_Info,allocator:=context.temp_alloc
 // The preset of a collider, chosen by name; typing a new one declares it. Choosing Custom keeps what the
 // collider was as its own. Its sensor, belongs and collides show those of its preset, in gray.
 @(private)
-collision_collider_field :: proc(c:editor.Inspector_Context,info:^runtime.Type_Info,offset:uintptr,label:string) -> bool {
+collision_collider_field :: proc(c:editor.Inspector_Context,type:typeid,offset:uintptr,label:string) -> bool {
     if c.table==nil || c.table.type!=phys.Collider || len(c.entities)==0 {return false}
     table:=core.world_table_at(c.world,c.table)
     first:=cast(^phys.Collider)core.raw_find(table,c.table.info,c.entities[0])
@@ -57,7 +57,7 @@ collision_collider_field :: proc(c:editor.Inspector_Context,info:^runtime.Type_I
         case offset_of(phys.Collider,sensor):
             editor.row_begin(ctx,label)
             sensor:=of.sensor
-            if ui.toggle_switch(ctx,ui.id(ctx,"collider_preset_sensor"),&sensor) {
+            if kit.toggle_switch(ctx,ui.id(ctx,"collider_preset_sensor"),&sensor) {
                 of.sensor=sensor
                 collision_preset_customize(c.session,c.table,table,c.entities,of,{.Sensor},settings)
             }
@@ -95,7 +95,7 @@ collision_preset_choice :: proc(c:editor.Inspector_Context,table:^core.Raw_Table
     chosen:=phys.Collision_Preset(0)
     changed:=false
     editor.row_begin(ctx,label)
-    if ui.dropdown(ctx,ui.id(ctx,"collider_preset",1),{list=options},&selected,{width=-1,height=ctx.theme.row,searchable=true,empty=phys.collision_name(c.world.info,phys.Collision_Preset,i64(current))},&created) {
+    if ui.dropdown(ctx,ui.id(ctx,"collider_preset",1),{list=options},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=true,empty=phys.collision_name(c.world.info,phys.Collision_Preset,i64(current))},&created) {
         chosen,changed=phys.Collision_Preset(presets[selected].value),true
     }
     editor.row_end(ctx)
@@ -196,7 +196,7 @@ collision_category_choice :: proc(c:^editor.Inspect,label,id:string,at:int,curre
     }
     created:string
     editor.row_begin(ctx,label)
-    if ui.dropdown(ctx,ui.id(ctx,id,at+1),{list=options},&selected,{width=-1,height=ctx.theme.row,searchable=true,empty=phys.collision_name(c.w.info,phys.Collision_Category,i64(current))},&created) {
+    if ui.dropdown(ctx,ui.id(ctx,id,at+1),{list=options},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=true,empty=phys.collision_name(c.w.info,phys.Collision_Category,i64(current))},&created) {
         value,changed=phys.Collision_Category(categories[selected].value),true
     }
     editor.row_end(ctx)
@@ -218,7 +218,7 @@ collision_declare_row :: proc(c:^editor.Inspect,label,id:string,type:typeid,type
     selected:=-1
     created:string
     editor.row_begin(ctx,label)
-    ui.dropdown(ctx,ui.id(ctx,id,1),{list=options},&selected,{width=-1,height=ctx.theme.row,searchable=true,empty="Type a name to declare"},&created)
+    ui.dropdown(ctx,ui.id(ctx,id,1),{list=options},&selected,{width=-1,height=ui.metric(ctx,"row"),searchable=true,empty="Type a name to declare"},&created)
     editor.row_end(ctx)
     if created=="" {return}
     if _,error:=editor.names_create(c.s,c.w.info,type,created);error!=.None {editor.notify(c.s,editor.names_error_text(error,type_name,created))}
@@ -228,11 +228,10 @@ collision_declare_row :: proc(c:^editor.Inspect,label,id:string,type:typeid,type
 @(private)
 collision_undeclared_row :: proc(c:^editor.Inspect,id:string,at:int,text:string) -> (removed:bool) {
     ctx:=c.s.gui.ctx
-    th:=&ctx.theme
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
-        ui.label(ctx,text,th.font_small,th.text_muted,0)
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
+        ui.label(ctx,text,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0)
         ui.spacer(ctx,-1,1)
-        removed=ui.button(ctx,ui.id(ctx,id,at+1),{label="Remove",style=.Ghost,height=th.row,size=th.font_small}).clicked
+        removed=ui.button(ctx,ui.id(ctx,id,at+1),{label="Remove",variant="ghost",height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small")}).clicked
     }
     return
 }
@@ -261,10 +260,9 @@ collision_layers_matrix :: proc(c:^editor.Inspect,at:int,belongs,collides:phys.C
 @(private)
 collision_settings_presets :: proc(c:^editor.Inspect,settings:^phys.Collision_Settings) {
     ctx:=c.s.gui.ctx
-    th:=&ctx.theme
     if collision_section(c,"Categories") {
         for entry in collision_categories(c.w.info) {
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),align_y=.Center}) {ui.label(ctx,editor.readable(entry.name),th.font_small,th.text_label,0)}
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),align_y=.Center}) {ui.label(ctx,editor.readable(entry.name),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),0)}
         }
         collision_declare_row(c,"New category","declare_category",phys.Collision_Category,"Collision_Category")
         editor.fold_band_end(c.s)
@@ -275,10 +273,10 @@ collision_settings_presets :: proc(c:^editor.Inspect,settings:^phys.Collision_Se
         preset:=phys.Collision_Preset(entry.value)
         if preset==phys.PRESET_CUSTOM {continue}
         setting:=phys.collision_preset_setting(settings,preset)
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),align_y=.Center}) {ui.label(ctx,editor.readable(entry.name),th.font_small,th.text,0,font=ui.FONT_SEMIBOLD)}
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),align_y=.Center}) {ui.label(ctx,editor.readable(entry.name),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0,font=ui.FONT_SEMIBOLD)}
         next:=setting
         editor.row_begin(ctx,"Sensor")
-        if ui.toggle_switch(ctx,ui.id(ctx,"preset_sensor",at+1),&next.sensor) {}
+        if kit.toggle_switch(ctx,ui.id(ctx,"preset_sensor",at+1),&next.sensor) {}
         editor.row_end(ctx)
         if belongs,collides,changed:=collision_layers_matrix(c,at,setting.belongs,setting.collides);changed {next.belongs,next.collides=belongs,collides}
         if next==setting {continue}
@@ -301,17 +299,19 @@ collision_settings_presets :: proc(c:^editor.Inspect,settings:^phys.Collision_Se
 @(private)
 collision_push_force_field :: proc(c:^editor.Inspect,offset:uintptr,key:u64) {
     ctx:=c.s.gui.ctx
-    field:=reflect.struct_field_by_name(phys.Collision_Push,"force")
-    desc,scale:=editor.field_number(field.type,field.tag)
-    value:=editor.number_read(&c.value[offset],field.type)*scale
+    force:serial.Field
+    for field in editor.type_fields(c.w.info,type_info_of(phys.Collision_Push)) {if field.name=="force" {force=field}}
+    number:=serial.Type{kind=.Float,size=size_of(f32)}
+    desc,scale:=editor.field_number(force,number)
+    value:=editor.number_read(&c.value[offset],number)*scale
     editor.row_begin(ctx,"Force")
-    r:=ui.slider_field(ctx,ui.id(ctx,"push_force",int(offset)+1),&value,desc)
+    r:=kit.slider_field(ctx,ui.id(ctx,"push_force",int(offset)+1),&value,desc)
     stepped:=c.held==0 || c.panel!=nil
     if stepped {editor.gesture_follow(c.s,key,r,editor.readable(c.name))}
     if r.changed {
         buffer:[8]u8
-        editor.number_write(raw_data(buffer[:]),field.type,value/scale)
-        collision_value_write(c,int(offset),buffer[:field.type.size])
+        editor.number_write(raw_data(buffer[:]),number,value/scale)
+        collision_value_write(c,int(offset),buffer[:number.size])
     }
     if r.ended && stepped {editor.gesture_end(c.s,key)}
     editor.row_end(ctx)
@@ -342,13 +342,13 @@ collision_settings_pushes :: proc(c:^editor.Inspect,settings:^phys.Collision_Set
 // The categories and presets the code declares, each preset with what Collision_Settings says of it, the
 // entries for values it does not declare, and the pushes set with one more to fill.
 @(private)
-collision_settings_field :: proc(c:^editor.Inspect,info:^runtime.Type_Info,name,label:string,offset:uintptr) -> bool {
+collision_settings_field :: proc(c:^editor.Inspect,type:typeid,name,label:string,offset:uintptr) -> bool {
     if c.type!=phys.Collision_Settings {return false}
     settings:=cast(^phys.Collision_Settings)c.value
     switch {
-    case name=="presets" && offset==offset_of(phys.Collision_Settings,presets) && info.size==size_of(settings.presets):
+    case name=="presets" && offset==offset_of(phys.Collision_Settings,presets):
         collision_settings_presets(c,settings)
-    case name=="pushes" && offset==offset_of(phys.Collision_Settings,pushes) && info.size==size_of(settings.pushes):
+    case name=="pushes" && offset==offset_of(phys.Collision_Settings,pushes):
         collision_settings_pushes(c,settings,offset)
     case: return false
     }

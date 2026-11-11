@@ -16,16 +16,17 @@ import eanim "plugins:animation/runtime"
 
 PREVIEW_MIRAI_AVATAR :: #config(PREVIEW_MIRAI_AVATAR,false)
 
-@(private="file")
+@(private)
+@(test_world,host="Avatar_Shared")
 Avatar_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     skins:core.Table(eanim.Pose_Source),
     meshes:core.Table(erender.Mesh_Renderer),
 }
 
-@(private="file")
+@(private)
 Avatar_Shared :: struct {skeletons:eanim.Skeleton_Assets}
 
 @(test)
@@ -34,15 +35,15 @@ preview_loads_and_samples_the_imported_mirai_avatar_assets :: proc(t:^testing.T)
         device:=shared_device.take_or_skip(t,hardware_rt=false)
         if device==nil {return}
         renderer:gpu.Renderer
-        settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections=false,false
+        settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled=false
         if !testing.expect(t,gpu.renderer_init(&renderer,{device=device,width=64,height=64,settings=settings}),renderer.error) {return}
         defer gpu.renderer_destroy(&renderer)
         assets:host.Assets
         if !testing.expect(t,host.assets_init(&assets,{root="demo/assets",renderer=&renderer})) {return}
         defer host.assets_destroy(&assets)
-        info,described:=core.test_info(t,Avatar_World,Avatar_Shared,core.Test_None,eanim.test_types)
+        info,described:=test_info(t,Avatar_World)
         if !described {return}
-        defer core.test_info_destroy(&info)
+        defer test_info_destroy(&info)
         shared:Avatar_Shared;defer core.world_destroy(&info,.Shared,&shared)
         app:=host.App{assets=&assets,renderer=&renderer,allocator=context.allocator,shared=&shared}
         w:Avatar_World

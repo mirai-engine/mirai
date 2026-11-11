@@ -16,7 +16,7 @@ Monitors_Cards :: struct {provider:editor.Card_Provider}
 monitors_cards_default :: proc() -> (cards:Monitors_Cards) {
     cards.provider.count=1
     cards.provider.cards[0]={
-        label="Screen",group="Logic",color={150,200,255,255},body=.Cube,scale={1.6,0.9,0.04},component=monitors.Screen,make=screen_make,
+        recipe="screen",group="Logic",color={150,200,255,255},component=monitors.Screen,
         // A monitor on its stand, with something playing.
         drawing=ui.icon_drawing(
             ui.icon_part(.Loop,{{-6.5,-5.5},{6.5,-5.5},{6.5,3},{-6.5,3}}),
@@ -28,17 +28,11 @@ monitors_cards_default :: proc() -> (cards:Monitors_Cards) {
     return
 }
 
-@(private)
-screen_make :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity) {
-    if t:=core.world_table_of(w,erender.Mesh_Renderer);t!=nil {core.add(t,e,erender.Mesh_Renderer{shape=.Cube})}
-    if t:=core.world_table_of(w,monitors.Screen);t!=nil {core.add(t,e,monitors.SCREEN_DEFAULT)}
-}
-
 @(storage)
 Monitors_Gizmo :: struct {vertices:[GIZMO_VERTICES]erender.Debug_Vertex}
 
 // From each selected screen to the camera it shows.
-@(step="frame",after="editor_tools")
+@(step="frame")
 monitors_gizmo :: proc(s:^editor.Session,gizmo:^Monitors_Gizmo,app:^host.App) {
     draw :: proc(lines:^erender.Debug_Lines,w:core.World_Ref,e:core.Entity,screen:monitors.Screen) {
         if !editor.entity_alive(w,screen.camera) {return}

@@ -15,13 +15,14 @@ PACKAGE_USAGE :: "package engine --out <folder>"
 
 // What a package of the engine takes of what git keeps: the sources the
 // generator of a world reads and a shipped game compiles, the shaders the
-// projects compile with, the templates, the skills of the agents, the game
-// documentation mirai docs serves, the license of the engine and the notices of what it carries of others. cook/
-// and tools/ are in its binaries; their sources stay behind, as do the tests.
+// projects compile with, the templates, the recipes of Create, the skills of
+// the agents, the game documentation mirai docs serves, the license of the
+// engine and the notices of what it carries of others. cook/ and tools/ are
+// in its binaries; their sources stay behind, as do the tests.
 @(private="file")
 PACKAGE_TRACKED :: [?]string{
     "asset","audio","core","editor","engine","host","net","platform","plugins","project","render","rhi","std","ui",
-    "shaders","templates","assets/fonts",".agents/skills","docs/game","LICENSE-MIT","LICENSE-APACHE","THIRD_PARTY_NOTICES.md",
+    "shaders","templates","recipes","assets/fonts",".agents/skills","docs/game","LICENSE-MIT","LICENSE-APACHE","THIRD_PARTY_NOTICES.md",
 }
 // Generated from those sources, and kept by git in no checkout.
 @(private="file")
@@ -78,7 +79,7 @@ cmd_package :: proc(root:string,args:[]string) -> int {
 
     lock:=build_lock(root,"package engine")
     defer workspace.lock_release(&lock)
-    if _,_,released:=engine_release(root,"",.Release,"package engine");!released {return 1}
+    engine_release("",build.engine_paths(root,.Release,context.temp_allocator).folder,"package engine")
     if !ensure_runtime_dependencies(root) {fmt.eprintln("mirai package: the C libraries could not be built; mirai deps shows why");return 1}
     if code:=engine_report(build.engine_build({engine_root=root,mode=.Release}),root);code!=0 {return code}
 
@@ -110,8 +111,18 @@ cmd_package :: proc(root:string,args:[]string) -> int {
 
     // The plugin libraries, built by the engine just packaged: their fingerprints are those of its projects.
     if !package_plugins(out) {return 1}
-    _=os.remove_all(join(out,".mirai","tmp"))
-    _=os.remove_all(workspace.cache_folder(out,"locks",context.temp_allocator))
+    // What the imports of the plugins build, which no checkout has: an installed engine imports nothing.
+    imported:=make([dynamic]string,context.temp_allocator)
+    plugins,_:=os.read_all_directory_by_path(join(out,"plugins"),context.temp_allocator)
+    for plugin in plugins {
+        if os.is_dir(join(out,"plugins",plugin.name,"assets")) {append(&imported,join(out,"plugins",plugin.name))}
+    }
+    if ok,message:=build.imports_sync(build.engine_paths(out,.Release,context.temp_allocator).import_program,imported[:]);!ok {
+        fmt.eprintfln("mirai package: could not import the sources of the plugins: %s",message)
+        return 1
+    }
+    _=base.remove_all(join(out,".mirai","tmp"))
+    _=base.remove_all(workspace.cache_folder(out,"locks",context.temp_allocator))
 
     total:i64
     files:=0
@@ -294,7 +305,7 @@ package_plugins :: proc(out:string) -> bool {
     }
     for optimization in ([2]project.Optimization{.Minimal,.Speed}) {
         scratch:=join(out,".mirai","tmp",fmt.tprintf("plugins-%v",optimization))
-        _=os.remove_all(scratch)
+        _=base.remove_all(scratch)
         if os.make_directory_all(scratch)!=nil {fmt.eprintfln("mirai package: could not write to %s",scratch);return false}
         m.build.optimization=optimization
         if error:=project.manifest_write(join(scratch,project.PROJECT_FILE),&m);error.code!=.None {fmt.eprintfln("mirai package: %s",project_error_text(scratch,error));return false}

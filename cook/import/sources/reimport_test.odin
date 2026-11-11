@@ -4,13 +4,20 @@ import "core:c"
 import "core:encoding/base64"
 import "core:fmt"
 import "core:math"
+import "core:mem"
 import "core:os"
+import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "core:time"
 import stbi "vendor:stb/image"
 import "mirai:asset"
+import "mirai:core"
 import importer "mirai:cook/import"
+import "mirai:cook/prefab"
+import "mirai:cook/import/gltf"
+import "mirai:project"
 import "mirai:std/base"
 
 // A box with two materials, the first with the image wood.png next to it.
@@ -29,9 +36,9 @@ box_source :: proc(folder,file:string,first,second:string,roughness:="0.5") -> s
 }
 
 @(private="file")
-box_import :: proc(t:^testing.T,source,root:string,into:base.Asset_Id={}) -> (report:importer.Import_Report,ok:bool) {
+box_import :: proc(t:^testing.T,source,root:string) -> (report:importer.Import_Report,ok:bool) {
     error:importer.Error
-    report,error=import_source(source,fmt.tprintf("%s/assets/models/box",root),{root=root,textures=.Uncompressed,no_save=true,into=into})
+    report,error=import_source(source,{world=prefab.import_world(t),root=root,textures=.Uncompressed})
     ok=testing.expectf(t,error.code==.None,"%s: %s",source,error.message)
     return
 }
@@ -56,15 +63,19 @@ slot_materials :: proc(t:^testing.T,report:^importer.Import_Report,types:^asset.
     return {view.slots[0].material,view.slots[1].material}
 }
 
+// What an import of a project builds that nobody edits is of its imported
+// folder, named by its id; what the editor edits is of its assets, in the
+// folder of the import beside the source, found by its id wherever it was
+// moved.
 @(test)
 the_parts_of_an_import_name_its_prefab_and_keep_their_ids_where_they_were_moved :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"reimport-moved")
+    root,assets:=test_project(t,"reimport-moved")
     if root=="" {return}
-    os.make_directory_all(fmt.tprintf("%s/source",root))
-    source:=box_source(fmt.tprintf("%s/source",root),"box.gltf","Wood","Paint")
+    os.make_directory_all(fmt.tprintf("%s/models",assets))
+    source:=box_source(fmt.tprintf("%s/models",assets),"box.gltf","Wood","Paint")
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     first,ok:=box_import(t,source,root);if !ok {return};defer importer.report_destroy(&first)
-    prefab,has_prefab:=written_of(&first,asset.KIND_PREFAB,"box")
+    prefab,has_prefab:=written_of(&first,asset.KIND_SCENE,"box")
     wood,has_wood:=written_of(&first,asset.KIND_MATERIAL,"Wood")
     if !testing.expect(t,has_prefab && has_wood && prefab.id!={} && prefab.id==first.prefab) {return}
     // The mesh is a part; Wood, whose island reaches across its texture, and Paint, without one, are not.
@@ -74,16 +85,26 @@ the_parts_of_an_import_name_its_prefab_and_keep_their_ids_where_they_were_moved 
         testing.expectf(t,header.owner==(written.kind==asset.KIND_MESH?prefab.id:base.Asset_Id{}),"%s: owner %v",written.path,header.owner)
     }
     testing.expect(t,strings.has_prefix(wood.detail,"of its own: an island"),wood.detail)
+    for written in first.assets {
+        cached:=asset.import_cached(written.kind)
+        testing.expectf(t,strings.contains(written.path,cached?"/.mirai/imported/":"/assets/models/box/"),"%s: of the %s",written.path,cached?"imported folder":"assets")
+    }
+    sidecar,found,_:=importer.sidecar_load(source,context.temp_allocator)
+    testing.expect(t,found && sidecar.folder=="box" && len(sidecar.outputs)==len(first.assets),"the sidecar next to the source lists what it gives and where")
+    for output in sidecar.outputs {
+        written,listed:=written_of(&first,output.kind,output.kind==asset.KIND_SCENE?"box":output.name)
+        testing.expectf(t,listed && written.id==output.id && output.part==(output.kind==asset.KIND_MESH),"%s is listed with its id: %v",output.name,output)
+    }
     a,loaded:=read_asset(t,prefab,&types)
     if loaded {
         info,error:=asset.import_info(&a,&types)
-        testing.expect(t,error==.None && info!=nil && string_of(info.source[:])=="source/box.gltf" && .Cooked in a.blob.header.flags,"the prefab records its import")
+        testing.expect(t,error==.None && info!=nil && string_of(info.source[:])=="assets/models/box.gltf" && .Cooked in a.blob.header.flags,"the prefab records its import")
         asset.asset_close(&a)
     }
 
     // The material moved to another folder is written there with its id.
-    os.make_directory_all(fmt.tprintf("%s/assets/materials",root))
-    moved:=fmt.tprintf("%s/assets/materials/Wood.mat",root)
+    os.make_directory_all(fmt.tprintf("%s/materials",assets))
+    moved:=fmt.tprintf("%s/materials/Wood.mat",assets)
     testing.expect(t,os.rename(wood.path,moved)==nil)
     again,again_ok:=box_import(t,source,root);if !again_ok {return};defer importer.report_destroy(&again)
     testing.expect_value(t,len(again.assets),len(first.assets))
@@ -98,92 +119,83 @@ the_parts_of_an_import_name_its_prefab_and_keep_their_ids_where_they_were_moved 
     testing.expect_value(t,len(again.warnings),0)
 }
 
+// The ids of an import are those its sidecar lists: a source moved, renamed
+// or changed keeps them as long as its sidecar goes with it, and a copy of
+// the source alone is another import.
 @(test)
-a_source_moved_or_renamed_keeps_the_ids_of_its_import :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"reimport-renamed")
+a_source_keeps_the_ids_of_its_import_with_its_sidecar_and_a_copy_without_it_is_another_import :: proc(t:^testing.T) {
+    root,assets:=test_project(t,"reimport-renamed")
     if root=="" {return}
-    os.make_directory_all(fmt.tprintf("%s/source/props",root))
-    source:=box_source(fmt.tprintf("%s/source",root),"box.gltf","Wood","Paint")
+    os.make_directory_all(fmt.tprintf("%s/props",assets))
+    source:=box_source(assets,"box.gltf","Wood","Paint")
     first,ok:=box_import(t,source,root);if !ok {return};defer importer.report_destroy(&first)
 
-    // Moved and renamed with the same bytes: found by them.
-    crate:=fmt.tprintf("%s/source/props/crate.gltf",root)
-    _=os.write_entire_file(fmt.tprintf("%s/source/props/wood.png",root),png_bytes(4,4,{150,90,40}))
-    testing.expect(t,os.rename(source,crate)==nil)
+    // Moved, renamed and changed, with its sidecar.
+    crate:=box_source(fmt.tprintf("%s/props",assets),"crate.gltf","Wood","Paint","0.8")
+    testing.expect(t,os.rename(fmt.tprintf("%s.import",source),fmt.tprintf("%s.import",crate))==nil && os.remove(source)==nil)
     moved,moved_ok:=box_import(t,crate,root);if !moved_ok {return};defer importer.report_destroy(&moved)
     testing.expect_value(t,moved.prefab,first.prefab)
     for written in first.assets {
-        same,found:=written_of(&moved,written.kind,written.kind==asset.KIND_PREFAB?"crate":written.name)
-        testing.expectf(t,found && same.id==written.id && same.path==written.path,"%s keeps its id and its file",written.name)
+        same,found:=written_of(&moved,written.kind,written.kind==asset.KIND_SCENE?"crate":written.name)
+        // A file of the imported folder is named by what it is built from, which changed.
+        testing.expectf(t,found && same.id==written.id && (same.path==written.path || asset.import_cached(written.kind)),"%s keeps its id and its file",written.name)
     }
+    testing.expect_value(t,len(moved.warnings),0)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    prefab,_:=written_of(&moved,asset.KIND_PREFAB,"crate")
-    if a,loaded:=read_asset(t,prefab,&types);loaded {
+    scene,_:=written_of(&moved,asset.KIND_SCENE,"crate")
+    if a,loaded:=read_asset(t,scene,&types);loaded {
         info,_:=asset.import_info(&a,&types)
-        testing.expect(t,info!=nil && string_of(info.source[:])=="source/props/crate.gltf","the import names the source where it is now")
+        testing.expect(t,info!=nil && string_of(info.source[:])=="assets/props/crate.gltf","the import names the source where it is now")
         asset.asset_close(&a)
     }
 
-    // Renamed and changed: into names the import.
-    barrel:=box_source(fmt.tprintf("%s/source/props",root),"barrel.gltf","Wood","Paint","0.8")
-    os.remove(crate)
-    renamed,renamed_ok:=box_import(t,barrel,root,into=first.prefab);if !renamed_ok {return};defer importer.report_destroy(&renamed)
-    testing.expect_value(t,renamed.prefab,first.prefab)
-    for written in first.assets {
-        if written.kind==asset.KIND_PREFAB {continue}
-        same,found:=written_of(&renamed,written.kind,written.name)
-        testing.expectf(t,found && same.id==written.id,"%s keeps its id",written.name)
+    // The same bytes without the sidecar: an import of its own, which takes nothing of the other.
+    copy:=box_source(assets,"copy.gltf","Wood","Paint","0.8")
+    second,second_error:=import_source(copy,{world=prefab.import_world(t),root=root,textures=.Uncompressed})
+    if !testing.expectf(t,second_error.code==.None,"%s",second_error.message) {return};defer importer.report_destroy(&second)
+    testing.expect(t,second.prefab!={} && second.prefab!=first.prefab,"the copy writes a prefab of its own")
+    for written in second.assets {
+        for other in first.assets {testing.expectf(t,other.id!=written.id,"%s has an id of its own",written.path)}
     }
-    _,wrong:=import_source(barrel,fmt.tprintf("%s/assets/models/box",root),{root=root,textures=.Uncompressed,no_save=true,into=renamed.material_ids[0]})
-    testing.expect(t,wrong.code==.Not_Found && strings.contains(wrong.message,"into names the prefab"),wrong.message)
 }
 
+// A part is found by its kind and name alone: one renamed in the source is
+// a new asset, and the one that left stays as it is, with a warning.
 @(test)
-a_copy_of_a_source_that_is_still_there_is_an_import_of_its_own_and_says_so :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"reimport-copy")
+a_material_renamed_in_the_source_is_a_new_one_and_a_part_taken_out_is_left_alone :: proc(t:^testing.T) {
+    root,assets:=test_project(t,"reimport-parts")
     if root=="" {return}
-    os.make_directory_all(fmt.tprintf("%s/source/copy",root))
-    source:=box_source(fmt.tprintf("%s/source",root),"box.gltf","Wood","Paint")
-    first,ok:=box_import(t,source,root);if !ok {return};defer importer.report_destroy(&first)
-    copy:=box_source(fmt.tprintf("%s/source/copy",root),"box.gltf","Wood","Paint")
-    second,second_ok:=box_import(t,copy,root);if !second_ok {return};defer importer.report_destroy(&second)
-    testing.expect(t,second.prefab!=first.prefab,"the copy writes a prefab of its own")
-    warned:=false
-    for warning in second.warnings {warned||=strings.contains(warning,"has the bytes of source/box.gltf")}
-    testing.expectf(t,warned,"the import says which source it is a copy of: %v",second.warnings)
-}
-
-@(test)
-a_material_renamed_in_the_source_keeps_its_id_and_a_part_taken_out_is_left_alone :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"reimport-parts")
-    if root=="" {return}
-    os.make_directory_all(fmt.tprintf("%s/source",root))
-    source:=box_source(fmt.tprintf("%s/source",root),"box.gltf","Wood","Paint")
+    source:=box_source(assets,"box.gltf","Wood","Paint")
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     first,ok:=box_import(t,source,root);if !ok {return};defer importer.report_destroy(&first)
     wood,_:=written_of(&first,asset.KIND_MATERIAL,"Wood")
     paint,_:=written_of(&first,asset.KIND_MATERIAL,"Paint")
 
-    // Renamed in the source, the material is the same asset by its place.
-    box_source(fmt.tprintf("%s/source",root),"box.gltf","Oak","Paint")
+    // Renamed in the source, the material is another asset: what named Wood does not get Oak.
+    box_source(assets,"box.gltf","Oak","Paint")
     renamed,renamed_ok:=box_import(t,source,root);if !renamed_ok {return};defer importer.report_destroy(&renamed)
     oak,has_oak:=written_of(&renamed,asset.KIND_MATERIAL,"Oak")
-    testing.expect(t,has_oak && oak.id==wood.id && oak.path==wood.path)
-    testing.expect_value(t,slot_materials(t,&renamed,&types),[2]base.Asset_Id{wood.id,paint.id})
+    testing.expect(t,has_oak && oak.id!=wood.id && oak.path!=wood.path && header_of(wood.path).id==wood.id)
+    testing.expect_value(t,slot_materials(t,&renamed,&types),[2]base.Asset_Id{oak.id,paint.id})
+    left:=false
+    for warning in renamed.warnings {left||=strings.contains(warning,"Wood.mat is no longer in the source")}
+    testing.expectf(t,left,"the import says Wood left: %v",renamed.warnings)
 
-    // Taken out of the prefab, the mesh stays out: the import keeps the decision.
-    mesh,_:=written_of(&first,asset.KIND_MESH,"Box")
+    // Whether a mesh is a part is decided once and kept in the sidecar: taken out there, it stays out.
+    mesh,_:=written_of(&renamed,asset.KIND_MESH,"Box")
     testing.expect(t,header_of(mesh.path).owner==first.prefab)
-    testing.expect_value(t,asset.file_owner_set(mesh.path,{}),asset.Error.None)
+    file:=fmt.tprintf("%s.import",source)
+    listed,_:=os.read_entire_file(file,context.temp_allocator)
+    taken_out,replaced:=strings.replace(string(listed),", \"part\": true","",1,context.temp_allocator)
+    testing.expect(t,replaced && os.write_entire_file(file,taken_out)==nil)
     after,after_ok:=box_import(t,source,root);if !after_ok {return};defer importer.report_destroy(&after)
     box,has_box:=written_of(&after,asset.KIND_MESH,"Box")
-    testing.expect(t,has_box && box.id==mesh.id && box.path==mesh.path)
-    header:=header_of(mesh.path)
+    testing.expect(t,has_box && box.id==mesh.id)
+    header:=header_of(box.path)
     testing.expect(t,header.owner=={} && .Cooked in header.flags,"the part taken out keeps its id and its import, and stays out of its owner")
-    testing.expect_value(t,slot_materials(t,&after,&types),[2]base.Asset_Id{wood.id,paint.id})
 
     // Forced, every material and texture is a part.
-    forced,forced_ok:=import_source(source,fmt.tprintf("%s/assets/models/box",root),{root=root,textures=.Uncompressed,no_save=true,parts=.All})
+    forced,forced_ok:=import_source(source,{world=prefab.import_world(t),root=root,textures=.Uncompressed,parts=.All,ignore_stored=true})
     if !testing.expectf(t,forced_ok.code==.None,"%s",forced_ok.message) {return};defer importer.report_destroy(&forced)
     for written in forced.assets {
         if written.kind==asset.KIND_MATERIAL || written.kind==asset.KIND_TEXTURE {testing.expectf(t,header_of(written.path).owner==first.prefab,"%s is forced into the prefab",written.name)}
@@ -254,12 +266,11 @@ atlas_images :: proc(folder:string) {
 
 @(test)
 a_material_is_a_part_only_when_its_texture_is_an_atlas_of_one_model :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"parts-rule")
+    root,assets:=test_project(t,"parts-rule")
     if root=="" {return}
-    folder:=fmt.tprintf("%s/source",root)
-    atlas_images(folder)
-    source:=atlas_source(folder,"props.gltf",{"atlas","waves","across","shared"})
-    report,error:=import_source(source,fmt.tprintf("%s/assets/models/props",root),{root=root,textures=.Uncompressed,no_save=true})
+    atlas_images(assets)
+    source:=atlas_source(assets,"props.gltf",{"atlas","waves","across","shared"})
+    report,error:=import_source(source,{world=prefab.import_world(t),root=root,textures=.Uncompressed})
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return};defer importer.report_destroy(&report)
     reason :: proc(material:string) -> string {
         switch material {
@@ -272,7 +283,7 @@ a_material_is_a_part_only_when_its_texture_is_an_atlas_of_one_model :: proc(t:^t
         return "?"
     }
     for written in report.assets {
-        if written.kind==asset.KIND_PREFAB {continue}
+        if written.kind==asset.KIND_SCENE {continue}
         part:=written.kind==asset.KIND_MESH || written.name=="Atlas" || written.name=="atlas"
         owner:=header_of(written.path).owner
         testing.expectf(t,owner==(part?report.prefab:base.Asset_Id{}),"%s: owner %v",written.path,owner)
@@ -280,153 +291,228 @@ a_material_is_a_part_only_when_its_texture_is_an_atlas_of_one_model :: proc(t:^t
     }
 }
 
+// Two models that embed the same image each get a texture and a material of
+// their own, encoded once in the content cache: neither import changes a
+// file or a sidecar of the other, and each keeps its atlas as a part.
 @(test)
-a_second_model_with_the_same_textures_takes_its_material_and_both_lose_it_as_a_part :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"parts-shared")
+two_models_with_the_same_image_get_a_texture_each_and_neither_touches_the_other :: proc(t:^testing.T) {
+    root,assets:=test_project(t,"parts-two-models")
     if root=="" {return}
-    atlas_images(fmt.tprintf("%s/source/first",root))
-    atlas_images(fmt.tprintf("%s/source/second",root))
-    first_source:=atlas_source(fmt.tprintf("%s/source/first",root),"crate.gltf",{"atlas","waves","across","shared"})
-    first,error:=import_source(first_source,fmt.tprintf("%s/assets/crate",root),{root=root,textures=.Uncompressed,no_save=true})
+    atlas_images(fmt.tprintf("%s/first",assets))
+    atlas_images(fmt.tprintf("%s/second",assets))
+    cache:=fmt.tprintf("%s/cache/textures",root)
+    first_source:=atlas_source(fmt.tprintf("%s/first",assets),"crate.gltf",{"atlas","waves","across","shared"})
+    first,error:=import_source(first_source,{world=prefab.import_world(t),root=root,texture_cache=cache})
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return};defer importer.report_destroy(&first)
     atlas,_:=written_of(&first,asset.KIND_MATERIAL,"Atlas")
     texture,_:=written_of(&first,asset.KIND_TEXTURE,"atlas")
     testing.expect(t,header_of(atlas.path).owner==first.prefab && header_of(texture.path).owner==first.prefab)
-
-    second_source:=atlas_source(fmt.tprintf("%s/source/second",root),"barrel.gltf",{"atlas","waves","across","shared"})
-    second,second_error:=import_source(second_source,fmt.tprintf("%s/assets/barrel",root),{root=root,textures=.Uncompressed,no_save=true})
-    if !testing.expectf(t,second_error.code==.None,"%s",second_error.message) {return};defer importer.report_destroy(&second)
-    testing.expect_value(t,second.material_ids[0],atlas.id)
-    testing.expect_value(t,second.image_ids[0],texture.id)
-    _,wrote_material:=written_of(&second,asset.KIND_MATERIAL,"Atlas")
-    _,wrote_texture:=written_of(&second,asset.KIND_TEXTURE,"atlas")
-    testing.expect(t,!wrote_material && !wrote_texture,"what the project has is not written twice")
-    testing.expect(t,header_of(atlas.path).owner=={} && header_of(texture.path).owner=={},"used by two models, they are parts of neither")
-    mesh,_:=written_of(&first,asset.KIND_MESH,"Body")
-    testing.expect_value(t,header_of(mesh.path).owner,first.prefab)
-}
-
-// The editor writes a texture Fast until the cook encodes it again: the
-// next import of the editor with that image takes it as one written Final.
-@(test)
-a_second_model_imported_by_the_editor_takes_the_texture_the_first_wrote_fast :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"parts-shared-fast")
-    if root=="" {return}
-    os.make_directory_all(fmt.tprintf("%s/source/chair",root))
-    os.make_directory_all(fmt.tprintf("%s/source/table",root))
-    chair_source:=box_source(fmt.tprintf("%s/source/chair",root),"chair.gltf","Wood","Paint")
-    table_source:=box_source(fmt.tprintf("%s/source/table",root),"table.gltf","Wood","Paint")
-    chair,error:=import_source(chair_source,fmt.tprintf("%s/assets/chair",root),{root=root,fast_textures=true,no_save=true})
-    if !testing.expectf(t,error.code==.None,"%s",error.message) {return};defer importer.report_destroy(&chair)
-    texture,found:=written_of(&chair,asset.KIND_TEXTURE,"wood")
-    if !testing.expect(t,found) {return}
-    table,table_error:=import_source(table_source,fmt.tprintf("%s/assets/table",root),{root=root,fast_textures=true,no_save=true})
-    if !testing.expectf(t,table_error.code==.None,"%s",table_error.message) {return};defer importer.report_destroy(&table)
-    testing.expect_value(t,table.image_ids[0],texture.id)
-    _,wrote:=written_of(&table,asset.KIND_TEXTURE,"wood")
-    testing.expect(t,!wrote,"the image is not written twice")
-}
-
-@(test)
-a_second_model_with_the_same_textures_and_other_values_writes_a_material_of_its_own :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"parts-shared-values")
-    if root=="" {return}
-    os.make_directory_all(fmt.tprintf("%s/source/chair",root))
-    os.make_directory_all(fmt.tprintf("%s/source/table",root))
-    chair_source:=box_source(fmt.tprintf("%s/source/chair",root),"chair.gltf","Wood","Paint",roughness="0.5")
-    table_source:=box_source(fmt.tprintf("%s/source/table",root),"table.gltf","Wood","Paint",roughness="0.9")
-    chair,error:=import_source(chair_source,fmt.tprintf("%s/assets/chair",root),{root=root,textures=.Uncompressed,no_save=true})
-    if !testing.expectf(t,error.code==.None,"%s",error.message) {return};defer importer.report_destroy(&chair)
-    table,table_error:=import_source(table_source,fmt.tprintf("%s/assets/table",root),{root=root,textures=.Uncompressed,no_save=true})
-    if !testing.expectf(t,table_error.code==.None,"%s",table_error.message) {return};defer importer.report_destroy(&table)
-    testing.expect_value(t,table.image_ids[0],chair.image_ids[0])
-    testing.expect(t,table.material_ids[0]!=chair.material_ids[0],"a material the source gives other values is no material of another import")
-    _,wrote:=written_of(&table,asset.KIND_MATERIAL,"Wood")
-    testing.expect(t,wrote)
-}
-
-@(test)
-an_image_imported_on_its_own_takes_no_texture_of_a_model_whose_source_moved :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"reimport-image-model")
-    if root=="" {return}
-    os.make_directory_all(fmt.tprintf("%s/source",root))
-    source:=box_source(fmt.tprintf("%s/source",root),"box.gltf","Wood","Paint")
-    first,ok:=box_import(t,source,root);if !ok {return};defer importer.report_destroy(&first)
-    texture,found:=written_of(&first,asset.KIND_TEXTURE,"wood")
-    if !testing.expect(t,found) {return}
-    testing.expect_value(t,os.rename(source,fmt.tprintf("%s/source/moved.gltf.old",root)),nil)
-    image,error:=import_source(fmt.tprintf("%s/source/wood.png",root),fmt.tprintf("%s/assets/textures",root),{root=root,no_save=true})
-    if !testing.expectf(t,error.code==.None,"%s",error.message) {return};defer importer.report_destroy(&image)
-    if !testing.expect_value(t,len(image.assets),1) {return}
-    testing.expect(t,image.assets[0].id!=texture.id && image.assets[0].path!=texture.path,"the texture of the model stays its own")
-    testing.expect_value(t,header_of(texture.path).id,texture.id)
-}
-
-// mirai import does not write an earlier output outside --out unless asked:
-// with --root reaching the live import, a scratch --out fails and leaves it
-// alone; --copy makes a separate import there, --in-place updates the live one.
-@(test)
-mirai_import_writes_nothing_outside_out_unless_asked :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"reimport-outside")
-    if root=="" {return}
-    os.make_directory_all(fmt.tprintf("%s/source",root))
-    source:=box_source(fmt.tprintf("%s/source",root),"box.gltf","Wood","Paint")
-    first,ok:=box_import(t,source,root);if !ok {return};defer importer.report_destroy(&first)
-    prefab,_:=written_of(&first,asset.KIND_PREFAB,"box")
-    live,_:=os.read_entire_file(prefab.path,context.temp_allocator)
-    live_mesh,_:=written_of(&first,asset.KIND_MESH,"Box")
-    mesh_bytes,_:=os.read_entire_file(live_mesh.path,context.temp_allocator)
-    run :: proc(args:..string) -> (code:int,out,err:string) {
-        output,errors:=strings.builder_make(context.temp_allocator),strings.builder_make(context.temp_allocator)
-        code=command(args,strings.to_writer(&output),strings.to_writer(&errors))
-        return code,strings.to_string(output),strings.to_string(errors)
-    }
-    scratch:=fmt.tprintf("%s/assets/scratch",root)
-    unchanged :: proc(path:string,bytes:[]u8) -> bool {
-        now,_:=os.read_entire_file(path,context.temp_allocator)
-        return slice.equal(now,bytes)
-    }
-
-    code,_,err:=run(source,"--out",scratch,"--root",root,"--uncompressed","--no-save","--rebuild")
-    testing.expect_value(t,code,1)
-    testing.expect(t,strings.contains(err,"box.prefab") && strings.contains(err,"--in-place") && strings.contains(err,"--copy"),err)
-    testing.expect(t,unchanged(prefab.path,live) && unchanged(live_mesh.path,mesh_bytes),"the live import is left as it was")
-    entries,_:=os.read_all_directory_by_path(scratch,context.temp_allocator)
-    testing.expect_value(t,len(entries),0)
-
-    code,_,err=run(source,"--out",scratch,"--root",root,"--uncompressed","--no-save","--copy")
-    testing.expect_value(t,code,0)
-    testing.expect(t,unchanged(prefab.path,live) && unchanged(live_mesh.path,mesh_bytes),"a copy leaves the live import alone")
-    copied:=header_of(fmt.tprintf("%s/box.prefab",scratch))
-    testing.expect(t,copied.id!={} && copied.id!=prefab.id,"the copy has an id of its own")
-
-    code,_,err=run(source,"--in-place","--copy","--out",scratch)
-    testing.expect_value(t,code,2)
-
-    // With the copy there, each import of the source updates the one in its folder.
-    box:=fmt.tprintf("%s/assets/models/box",root)
-    copy_bytes,_:=os.read_entire_file(fmt.tprintf("%s/box.prefab",scratch),context.temp_allocator)
-    out:string
-    code,out,err=run(source,"--out",box,"--root",root,"--uncompressed","--no-save","--rebuild")
-    testing.expectf(t,code==0,"%s",err)
-    testing.expect(t,!strings.contains(out,"warning:"),out)
-    testing.expect(t,unchanged(fmt.tprintf("%s/box.prefab",scratch),copy_bytes),"the copy is left alone")
+    Kept :: struct {path:string,bytes:[]u8}
+    kept:=make([dynamic]Kept,context.temp_allocator)
+    sidecar:=fmt.tprintf("%s.import",first_source)
+    sidecar_bytes,_:=os.read_entire_file(sidecar,context.temp_allocator)
+    append(&kept,Kept{sidecar,sidecar_bytes})
     for written in first.assets {
-        testing.expectf(t,strings.contains(out,written.path),"%s is written again where it is: %s",written.path,out)
+        bytes,_:=os.read_entire_file(written.path,context.temp_allocator)
+        append(&kept,Kept{written.path,bytes})
     }
+    cached,_:=os.read_all_directory_by_path(cache,context.temp_allocator)
 
-    // A part moved outside --out is refused too, and --in-place writes it where it is.
-    wood,_:=written_of(&first,asset.KIND_MATERIAL,"Wood")
-    os.make_directory_all(fmt.tprintf("%s/assets/materials",root))
-    moved:=fmt.tprintf("%s/assets/materials/Wood.mat",root)
-    testing.expect(t,os.rename(wood.path,moved)==nil)
-    code,_,err=run(source,"--out",box,"--root",root,"--uncompressed","--no-save")
-    testing.expect_value(t,code,1)
-    testing.expect(t,strings.contains(err,"Wood.mat"),err)
-    code,_,err=run(source,"--out",box,"--root",root,"--uncompressed","--no-save","--in-place")
-    testing.expect_value(t,code,0)
-    testing.expect_value(t,header_of(moved).id,wood.id)
-    testing.expect(t,!os.exists(wood.path),"the material stays where it was moved")
+    second_source:=atlas_source(fmt.tprintf("%s/second",assets),"barrel.gltf",{"atlas","waves","across","shared"})
+    second,second_error:=import_source(second_source,{world=prefab.import_world(t),root=root,texture_cache=cache})
+    if !testing.expectf(t,second_error.code==.None,"%s",second_error.message) {return};defer importer.report_destroy(&second)
+    second_atlas,wrote_material:=written_of(&second,asset.KIND_MATERIAL,"Atlas")
+    second_texture,wrote_texture:=written_of(&second,asset.KIND_TEXTURE,"atlas")
+    testing.expect(t,wrote_material && wrote_texture && second_atlas.id!=atlas.id && second_texture.id!=texture.id,"each model names a texture and a material of its own")
+    testing.expect(t,header_of(second_atlas.path).owner==second.prefab && header_of(second_texture.path).owner==second.prefab,"and each keeps them as its parts")
+    for file in kept {
+        bytes,_:=os.read_entire_file(file.path,context.temp_allocator)
+        testing.expectf(t,slice.equal(bytes,file.bytes),"%s is as the first import left it",file.path)
+    }
+    again,_:=os.read_all_directory_by_path(cache,context.temp_allocator)
+    testing.expectf(t,len(again)==len(cached),"the images are encoded once: %d entries of the cache, then %d",len(cached),len(again))
+}
+
+// A checkout has the sources and their sidecars, and not what they build that
+// nobody edits: sync builds that again, the same assets, whatever the order
+// its sources come in, and builds nothing when nothing changed.
+@(test)
+a_checkout_without_its_imported_folder_gets_the_same_assets_from_its_sources :: proc(t:^testing.T) {
+    root,assets:=test_project(t,"sync")
+    if root=="" {return}
+    atlas_images(fmt.tprintf("%s/set/crate",assets))
+    atlas_images(fmt.tprintf("%s/set/barrel",assets))
+    crate:=atlas_source(fmt.tprintf("%s/set/crate",assets),"crate.gltf",{"atlas","waves","across","shared"})
+    barrel:=atlas_source(fmt.tprintf("%s/set/barrel",assets),"barrel.gltf",{"atlas","waves","across","shared"})
+    _=os.write_entire_file(fmt.tprintf("%s/sign.png",assets),png_bytes(8,8,{200,40,40}))
+    sources:=[3]string{crate,barrel,fmt.tprintf("%s/sign.png",assets)}
+    Built :: struct {path:string,id:base.Asset_Id,bytes:[]u8}
+    built:=make([dynamic]Built,context.temp_allocator)
+    caches:=Sync_Options{texture_cache=fmt.tprintf("%s/cache/textures",root),mesh_cache=fmt.tprintf("%s/cache/meshes",root),library=test_library}
+    context.user_ptr=prefab.import_world(t)
+    for source in sources {
+        report,error:=import_source(source,{world=prefab.import_world(t),root=root,textures=.Uncompressed,texture_cache=caches.texture_cache,mesh_cache=caches.mesh_cache})
+        if !testing.expectf(t,error.code==.None,"%s: %s",source,error.message) {return}
+        for written in report.assets {append(&built,Built{path=strings.clone(written.path,context.temp_allocator),id=written.id})}
+        importer.report_destroy(&report)
+    }
+    for &file in built {file.bytes,_=os.read_entire_file(file.path,context.temp_allocator)}
+    sidecars:[3]string
+    for source,at in sources {
+        text,_:=os.read_entire_file(fmt.tprintf("%s.import",source),context.temp_allocator)
+        sidecars[at]=string(text)
+    }
+    imported:=fmt.tprintf("%s/.mirai/imported",root)
+    cached:=0
+    for file in built {cached+=int(strings.has_prefix(file.path,imported))}
+    testing.expect(t,cached>0 && cached<len(built),"an import of a project writes to its imported folder and to its assets")
+
+    // Up to date: nothing is imported.
+    current:=sync(root,caches,context.temp_allocator)
+    testing.expectf(t,current.sources==3 && current.imported==0 && current.removed==0 && len(current.failures)==0,"%v",current)
+
+    // What a clone has: no imported folder.
+    testing.expect(t,base.remove_all(fmt.tprintf("%s/.mirai",root))==nil)
+    cloned:=sync(root,caches,context.temp_allocator)
+    testing.expectf(t,cloned.sources==3 && cloned.imported==3 && len(cloned.failures)==0 && len(cloned.warnings)==0,"%v",cloned)
+    for file in built {
+        bytes,read_error:=os.read_entire_file(file.path,context.temp_allocator)
+        testing.expectf(t,read_error==nil && header_of(file.path).id==file.id && slice.equal(bytes,file.bytes),"%s is the asset it was, byte for byte",file.path)
+    }
+    for source,at in sources {
+        text,_:=os.read_entire_file(fmt.tprintf("%s.import",source),context.temp_allocator)
+        testing.expectf(t,string(text)==sidecars[at],"the sidecar of %s is as it was",source)
+    }
+    again:=sync(root,caches,context.temp_allocator)
+    testing.expectf(t,again.imported==0 && len(again.failures)==0,"%v",again)
+
+    // A source settled on disk is hashed once: the next build takes its hash from the cache of
+    // the root without reading it, so a hash the cache says gives another key.
+    sign:=fmt.tprintf("%s/sign.png",assets)
+    an_hour_ago:=time.time_add(time.now(),-time.Hour)
+    testing.expect(t,os.change_times(sign,an_hour_ago,an_hour_ago)==nil)
+    testing.expect_value(t,sync(root,caches,context.temp_allocator).imported,0)
+    memo:=project.cache_path(root,importer.SOURCE_HASHES,allocator=context.temp_allocator)
+    hashes:=importer.source_hashes_load(memo,context.temp_allocator)
+    remembered:=""
+    for file in hashes.files {
+        if strings.has_suffix(file,"/sign.png") {remembered=file}
+    }
+    if !testing.expectf(t,remembered!="","%v",hashes.files) {return}
+    known:=hashes.files[remembered]
+    hashes.files[remembered]={known.size,known.modified,known.hash+1}
+    hashes.changed=true
+    importer.source_hashes_save(&hashes,memo)
+    testing.expect_value(t,sync(root,caches,context.temp_allocator).imported,1)
+    // Without the cache the bytes decide again.
+    testing.expect(t,os.remove(memo)==nil)
+    testing.expect_value(t,sync(root,caches,context.temp_allocator).imported,1)
+
+    // The registry lists what the imported folder holds by where its source is now.
+    Listed :: struct {id:base.Asset_Id,path:string}
+    listing :: proc(t:^testing.T,root:string) -> (listed:[dynamic]Listed,missing:int) {
+        r:asset.Registry
+        asset.registry_init(&r,fmt.tprintf("%s/assets",root),imported=fmt.tprintf("%s/.mirai/imported",root))
+        defer asset.registry_destroy(&r)
+        testing.expect_value(t,asset.registry_scan(&r),asset.Error.None)
+        listed=make([dynamic]Listed,context.temp_allocator)
+        for file in r.files {
+            if file.imported!=0 {append(&listed,Listed{file.id,strings.clone(file.path,context.temp_allocator)})}
+        }
+        lost:=make([dynamic]asset.Registry_Missing,context.temp_allocator)
+        asset.registry_missing(&r,&lost)
+        return listed,len(lost)
+    }
+    path_of :: proc(listed:[]Listed,path:string) -> (id:base.Asset_Id,found:bool) {
+        for entry in listed {
+            if entry.path==path {return entry.id,true}
+        }
+        return
+    }
+    before,missing:=listing(t,root)
+    body,has_body:=path_of(before[:],"set/crate/crate/Body.mesh")
+    keg,has_keg:=path_of(before[:],"set/barrel/barrel/Body.mesh")
+    atlas,has_atlas:=path_of(before[:],"set/crate/crate/atlas.tex")
+    _,has_sign:=path_of(before[:],"sign.tex")
+    testing.expectf(t,has_body && has_keg && has_atlas && has_sign && missing==0 && len(before)==cached,"what an import gives with its documents, the texture of an image beside it: %v",before[:])
+
+    // A source that changed is imported again, and it alone; a file it reads counts as the source.
+    _=os.write_entire_file(fmt.tprintf("%s/sign.png",assets),png_bytes(8,8,{40,40,200}))
+    changed:=sync(root,caches,context.temp_allocator)
+    testing.expectf(t,changed.imported==1 && len(changed.failures)==0,"%v",changed)
+    _=os.write_entire_file(fmt.tprintf("%s/set/crate/across.png",assets),png_pixels(64,64,gradient_green))
+    read:=sync(root,caches,context.temp_allocator)
+    testing.expectf(t,read.imported==1 && len(read.failures)==0,"an image a model reads changed: %v",read)
+
+    // A folder with two sources moves, one of them is renamed and another source is deleted: at
+    // once, without an import, every asset is listed where its source is, with the id it had,
+    // what names them still finds them and nothing of the deleted source is listed.
+    testing.expect(t,os.rename(fmt.tprintf("%s/set",assets),fmt.tprintf("%s/props",assets))==nil)
+    for end in ([2]string{"",".import"}) {testing.expect(t,os.rename(fmt.tprintf("%s/props/barrel/barrel.gltf%s",assets,end),fmt.tprintf("%s/props/barrel/keg.gltf%s",assets,end))==nil)}
+    testing.expect(t,os.remove(fmt.tprintf("%s/sign.png",assets))==nil)
+    after,after_missing:=listing(t,root)
+    moved_body,_:=path_of(after[:],"props/crate/crate/Body.mesh")
+    moved_keg,_:=path_of(after[:],"props/barrel/barrel/Body.mesh")
+    moved_atlas,_:=path_of(after[:],"props/crate/crate/atlas.tex")
+    testing.expectf(t,moved_body==body && moved_keg==keg && moved_atlas==atlas && body!={} && keg!={} && after_missing==0 && len(after)==len(before)-1,"%v",after[:])
+    for entry in after {testing.expectf(t,strings.has_prefix(entry.path,"props/"),"%s is listed where its source is",entry.path)}
+    // Nothing changed in what they are built from: the next build imports nothing, and removes what the deleted source gave.
+    again_synced:=sync(root,caches,context.temp_allocator)
+    testing.expectf(t,again_synced.sources==2 && again_synced.imported==0 && again_synced.removed==1 && len(again_synced.failures)==0,"%v",again_synced)
+}
+
+// A format of models a plugin adds, which no format of the engine reads: glTF after a magic of its own.
+@(private="file") PROBE_MAGIC :: "PROBE:"
+@(private="file")
+probe_sniff :: proc(head:[]u8) -> importer.Sniff {return .Content if strings.has_prefix(string(head),PROBE_MAGIC) else .No}
+@(private="file")
+probe_read :: proc(r:^importer.Reader,bytes:[]u8) -> bool {return gltf.FORMAT.read(r,bytes[len(PROBE_MAGIC):])}
+@(private="file")
+probe_format :: proc() -> importer.Format {
+    probe:=gltf.FORMAT
+    probe.name,probe.extensions,probe.sniff,probe.read="Probe",{0=".probe"},probe_sniff,probe_read
+    return probe
+}
+
+// Every import goes to the cache, whatever reads it: a format a plugin adds
+// too, which sync reads again from the plugins of the project, and a source
+// outside the assets is refused, saying where it goes.
+@(test)
+the_sources_of_a_plugin_format_build_in_the_cache_and_a_source_outside_the_assets_is_refused :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"sync-plugin")
+    if root=="" {return}
+    outside:=fmt.tprintf("%s/downloads",root)
+    project:=fmt.tprintf("%s/game",root)
+    os.make_directory_all(outside)
+    os.make_directory_all(fmt.tprintf("%s/assets",project))
+    box:=box_source(outside,"box.gltf","Wood","Paint")
+    _,refused:=import_source(box,{world=prefab.import_world(t),root=project,textures=.Uncompressed})
+    testing.expect(t,refused.code==.Not_Found && strings.contains(refused.message,"assets") && !os.exists(fmt.tprintf("%s.import",box)),refused.message)
+
+    formats:=make([dynamic]importer.Format,context.temp_allocator)
+    append(&formats,..FORMATS[:])
+    append(&formats,probe_format())
+    crate:=box_source(fmt.tprintf("%s/assets",project),"crate.probe","Wood","Paint")
+    text,_:=os.read_entire_file(crate,context.temp_allocator)
+    _=os.write_entire_file(crate,transmute([]u8)strings.concatenate({PROBE_MAGIC,string(text)},context.temp_allocator))
+    first,error:=import_source(crate,{world=prefab.import_world(t),root=project,textures=.Uncompressed},formats[:])
+    if !testing.expectf(t,error.code==.None,"%s",error.message) {return};defer importer.report_destroy(&first)
+    mesh,has_mesh:=written_of(&first,asset.KIND_MESH,"Box")
+    testing.expect(t,has_mesh && strings.contains(mesh.path,"/.mirai/imported/"),"what a plugin format gives that nobody edits is of the cache")
+    // A clone: sync builds it again with the formats of the plugins, and says so without them.
+    caches:=Sync_Options{texture_cache=fmt.tprintf("%s/cache/textures",root),mesh_cache=fmt.tprintf("%s/cache/meshes",root)}
+    testing.expect(t,base.remove_all(fmt.tprintf("%s/.mirai",project))==nil)
+    lacking:=sync(project,caches,context.temp_allocator)
+    testing.expectf(t,len(lacking.failures)==1 && strings.contains(lacking.failures[0],"no format"),"%v",lacking)
+    context.user_ptr=prefab.import_world(t)
+    caches.library=proc(root:string,allocator:mem.Allocator) -> (formats:[]importer.Format,world:^core.World_Info,release:proc(state:rawptr),state:rawptr,problem:string) {
+        listed:=make([]importer.Format,1,allocator)
+        listed[0]=probe_format()
+        return listed,(^core.World_Info)(context.user_ptr),nil,nil,""
+    }
+    synced:=sync(project,caches,context.temp_allocator)
+    testing.expectf(t,synced.sources==1 && synced.imported==1 && len(synced.failures)==0,"%v",synced)
+    testing.expect(t,os.exists(mesh.path),"the mesh is built again where it was")
 }
 
 // An image with no settings holds what its name says, from mirai import as
@@ -434,9 +520,8 @@ mirai_import_writes_nothing_outside_out_unless_asked :: proc(t:^testing.T) {
 // given once stays in its settings.
 @(test)
 an_image_on_its_own_holds_what_its_name_says_until_its_settings_say_otherwise :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"image-use")
-    if root=="" {return}
-    out:=fmt.tprintf("%s/textures",root)
+    _,assets:=test_project(t,"image-use")
+    if assets=="" {return}
     run :: proc(args:..string) -> (code:int,err:string) {
         output,errors:=strings.builder_make(context.temp_allocator),strings.builder_make(context.temp_allocator)
         code=command(args,strings.to_writer(&output),strings.to_writer(&errors))
@@ -446,21 +531,21 @@ an_image_on_its_own_holds_what_its_name_says_until_its_settings_say_otherwise ::
         settings,_,_:=importer.settings_load(source)
         return settings.image
     }
-    masks:=fmt.tprintf("%s/T_Katana_SpecularMasks.png",root)
-    diffuse:=fmt.tprintf("%s/T_Katana_Diffuse.png",root)
+    masks:=fmt.tprintf("%s/T_Katana_SpecularMasks.png",assets)
+    diffuse:=fmt.tprintf("%s/T_Katana_Diffuse.png",assets)
     for path in ([?]string{masks,diffuse}) {_=os.write_entire_file(path,png_bytes(4,4,{10,200,30}))}
 
-    code,err:=run(masks,"--out",out,"--uncompressed")
+    code,err:=run(masks,"--uncompressed")
     testing.expectf(t,code==0,"%s",err)
     testing.expect_value(t,stored(masks),importer.Image_Use.Data)
-    code,err=run(diffuse,"--out",out,"--uncompressed")
+    code,err=run(diffuse,"--uncompressed")
     testing.expectf(t,code==0,"%s",err)
     testing.expect_value(t,stored(diffuse),importer.Image_Use.Color)
 
     // Given once, the use stays: the name no longer decides.
-    code,err=run(masks,"--out",out,"--uncompressed","--srgb")
+    code,err=run(masks,"--uncompressed","--srgb")
     testing.expectf(t,code==0,"%s",err)
-    code,err=run(masks,"--out",out,"--uncompressed")
+    code,err=run(masks,"--uncompressed")
     testing.expectf(t,code==0,"%s",err)
     testing.expect_value(t,stored(masks),importer.Image_Use.Color)
 
@@ -476,9 +561,10 @@ an_image_on_its_own_holds_what_its_name_says_until_its_settings_say_otherwise ::
 // A skeleton too old to read gives up what a person set on it, and the import says so, keeping its id.
 @(test)
 importing_over_a_skeleton_of_an_older_version_says_what_it_did_not_keep :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"old-skeleton")
+    root,folder:=test_project(t,"old-skeleton")
     if folder=="" {return}
-    first,error:=import_source(FIXTURES+"skeletal-analytic.glb",folder,{textures=.Uncompressed,no_save=true})
+    source:=copy_in(root,FIXTURES,"skeletal-analytic.glb")
+    first,error:=import_source(source,{world=prefab.import_world(t),textures=.Uncompressed})
     if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
     defer importer.report_destroy(&first)
     skeleton:importer.Written
@@ -488,7 +574,7 @@ importing_over_a_skeleton_of_an_older_version_says_what_it_did_not_keep :: proc(
     old:=asset.SKELETON_VERSION-1
     data[10],data[11]=u8(old),u8(old>>8)
     testing.expect(t,os.write_entire_file(skeleton.path,data)==nil)
-    again,failed:=import_source(FIXTURES+"skeletal-analytic.glb",folder,{textures=.Uncompressed,no_save=true})
+    again,failed:=import_source(source,{world=prefab.import_world(t),textures=.Uncompressed})
     if !testing.expectf(t,failed.code==.None,"%s",failed.message) {return}
     defer importer.report_destroy(&again)
     told:=false

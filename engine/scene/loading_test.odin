@@ -15,14 +15,20 @@ import mm "mirai:std/math"
 @(private) Loading_Model :: struct {mesh:base.Asset_Id}
 
 @(private)
+@(test_world)
 Loading_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
+    worlds:core.Table(core.World_Transform),
     parents:core.Table(core.Parent),
     models:core.Table(Loading_Model),
     references:core.Table(Scene_Reference),
+    instances:core.Table(Prefab_Instance),
+    pendings:core.Table(Prefab_Pending),
+    disabled:core.Table(core.Disabled),
+    forms:Prefab_Forms,
 }
 
 // A project in a temporary folder of assets, with job threads or without,
@@ -41,7 +47,7 @@ Loading_Project :: struct {
 loading_open :: proc(t:^testing.T,p:^Loading_Project,name:string,threads:int) -> bool {
     p.folder=base.test_folder(t,fmt.tprintf("loading-%s",name))
     if p.folder=="" {return false}
-    p.info=core.test_info(t,Loading_World,test_types) or_return
+    p.info=test_info(t,Loading_World) or_return
     asset.types_init(&p.types)
     if !testing.expect(t,host.assets_init(&p.assets,{root=p.folder,capacity=64})) {return false}
     p.app={info=&p.info,assets=&p.assets,allocator=context.allocator}
@@ -60,7 +66,7 @@ loading_close :: proc(p:^Loading_Project) {
     host.assets_marks_free(&p.app.asset_marks)
     host.assets_destroy(&p.assets)
     asset.types_destroy(&p.types)
-    core.test_info_destroy(&p.info)
+    test_info_destroy(&p.info)
 }
 
 // A mesh of about bytes of clusters, with the material of its slot.
@@ -83,8 +89,9 @@ loading_mesh :: proc(t:^testing.T,p:^Loading_Project,id:base.Asset_Id,bytes:int,
 
 // A scene with an entity for each mesh, and the references given.
 @(private)
-loading_scene :: proc(t:^testing.T,p:^Loading_Project,id:base.Asset_Id,meshes:[]base.Asset_Id,references:[]Scene_Reference=nil,kind:=asset.KIND_SCENE) {
-    document:asset.Scene;asset.scene_init(&document,&p.types,kind,id);defer asset.scene_destroy(&document)
+loading_scene :: proc(t:^testing.T,p:^Loading_Project,id:base.Asset_Id,meshes:[]base.Asset_Id,references:[]Scene_Reference=nil,prefab:=false) {
+    document:asset.Scene;asset.scene_init(&document,&p.types,id);defer asset.scene_destroy(&document)
+    if prefab {document.doc.flags+={.Prefab}}
     for mesh,i in meshes {
         asset.scene_entity_add(&document,base.Entity_Id(i+1),0,"Model")
         asset.scene_set(&document,base.Entity_Id(i+1),"Loading_Model",&Loading_Model{mesh})
@@ -93,9 +100,7 @@ loading_scene :: proc(t:^testing.T,p:^Loading_Project,id:base.Asset_Id,meshes:[]
         asset.scene_entity_add(&document,base.Entity_Id(100+i),0,"Section")
         asset.scene_set(&document,base.Entity_Id(100+i),"Scene_Reference",&reference)
     }
-    if kind==asset.KIND_PREFAB && len(meshes)>0 {document.info.root=1}
-    extension:=kind==asset.KIND_PREFAB?"prefab":"scene"
-    testing.expect_value(t,asset.scene_save(&document,fmt.tprintf("%s/%x-%x.%s",p.folder,id[0],id[1],extension)),asset.Error.None)
+    testing.expect_value(t,asset.scene_save(&document,fmt.tprintf("%s/%x-%x.scene",p.folder,id[0],id[1])),asset.Error.None)
 }
 
 // Steps loads frame after frame, each at most until it is done, waiting for
@@ -176,7 +181,7 @@ a_load_reads_in_jobs_and_a_large_asset_goes_in_a_frame_alone :: proc(t:^testing.
     testing.expect_value(t,p.assets.stats.loads,4)
     _,error=load_end(job,host.app_world_ref(&p.app,p.world))
     testing.expect_value(t,error,Error.None)
-    testing.expect_value(t,core.count(core.read(&p.world.models)),2)
+    testing.expect_value(t,core.count(&p.world.models),2)
 }
 
 // A load in phases is the record of the scene: the documents and entities
@@ -251,7 +256,7 @@ a_load_waits_for_the_animations_its_world_can_play :: proc(t:^testing.T) {
     tracks:=[1]asset.Animation_Track_Desc{{target="hips",property=.Position,keys=keys[:]}}
     clips:=[1]asset.Animation_Clip_Desc{{name="walk",tracks=tracks[:]}}
     testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/walk.anim",p.folder),&p.types,{id=CLIPS,clips=clips[:]}),asset.Error.None)
-    loading_scene(t,&p,PREFAB,{CLIPS},kind=asset.KIND_PREFAB)
+    loading_scene(t,&p,PREFAB,{CLIPS},prefab=true)
     loading_scene(t,&p,LEVEL,{PREFAB})
     host.assets_scan(&p.assets)
 
@@ -352,15 +357,15 @@ the_sections_loading_tell_how_far_they_are :: proc(t:^testing.T) {
     LAMP :: base.Asset_Id{0x5ec,2}
     meshes:=[2]base.Asset_Id{{0x5ec,3},{0x5ec,4}}
     for mesh in meshes {loading_mesh(t,&p,mesh,host.LOAD_FRAME_BYTES*6/10)}
-    loading_scene(t,&p,LAMP,meshes[1:],kind=asset.KIND_PREFAB)
+    loading_scene(t,&p,LAMP,meshes[1:],prefab=true)
     {
         lamp:asset.Scene
         file:asset.Asset
-        if !testing.expect_value(t,asset.asset_load(&file,fmt.tprintf("%s/%x-%x.prefab",p.folder,LAMP[0],LAMP[1])),asset.Error.None) {return}
+        if !testing.expect_value(t,asset.asset_load(&file,fmt.tprintf("%s/%x-%x.scene",p.folder,LAMP[0],LAMP[1])),asset.Error.None) {return}
         defer asset.asset_close(&file)
         testing.expect_value(t,asset.scene_from_asset(&lamp,&p.types,&file),asset.Error.None)
         defer asset.scene_destroy(&lamp)
-        room:asset.Scene;asset.scene_init(&room,&p.types,asset.KIND_SCENE,ROOM);defer asset.scene_destroy(&room)
+        room:asset.Scene;asset.scene_init(&room,&p.types,ROOM);defer asset.scene_destroy(&room)
         asset.scene_entity_add(&room,1,0,"Model")
         asset.scene_set(&room,1,"Loading_Model",&Loading_Model{meshes[0]})
         _,placed:=asset.scene_instantiate(&room,&lamp,LAMP,0)
@@ -382,8 +387,11 @@ the_sections_loading_tell_how_far_they_are :: proc(t:^testing.T) {
     defer {for l in loads.items {if l.job!=nil {load_free(l.job)}}}
     step :: proc(p:^Loading_Project,world:core.World_Ref,requests:^Section_Requests,loads:^Section_Loads,loading:^Section_Loading,problems:^core.Problems) {
         p.app.stats.frames+=1
+        // A frame with time to spare: what it takes is decided by bytes, not by how loaded the machine is.
+        b:=&p.assets.loads
+        b.frame,b.seconds,b.bytes,b.served=p.app.stats.frames,-3600,0,0
         w:=cast(^Loading_World)world.data
-        scene_sections(world,&p.app,&w.references,requests,loads,loading,{},{},nil,problems)
+        scene_sections(world,&p.app,&w.references,requests,{},core.read(&w.worlds),core.read(&w.ids),loads,loading,{},{},nil,nil,problems)
         core.settle(&p.info,w,nil)
     }
     // Its scene is read and asks for the prefab its instance follows.
@@ -394,17 +402,17 @@ the_sections_loading_tell_how_far_they_are :: proc(t:^testing.T) {
     testing.expect_value(t,item.loading.phase,Load_Phase.Reading)
     testing.expect_value(t,item.loading.scene,ROOM)
     testing.expect(t,item.loading.done==1 && item.loading.total==2,"read one of the two documents found")
-    // The prefab, and the first mesh: the second does not fit in the frame.
+    // The prefab, for what spawns it, and the first mesh: the second does not fit in the frame.
     step(&p,world,&requests,&loads,&loading,&problems)
     if !testing.expect_value(t,loading.count,1) {return}
     item=loading.items[0]
     testing.expect_value(t,item.loading.phase,Load_Phase.Warming)
-    testing.expect(t,item.loading.done==1 && item.loading.total==2,"one of its two meshes")
+    testing.expect(t,item.loading.done==2 && item.loading.total==3,"the prefab and one of its two meshes")
     step(&p,world,&requests,&loads,&loading,&problems)
     testing.expect_value(t,loading.count,0)
-    reference,_:=core.get(core.read(&w.references),e)
+    reference,_:=core.get(&w.references,e)
     testing.expect_value(t,reference.loaded,ROOM)
-    testing.expect_value(t,core.count(core.read(&w.models)),2)
+    testing.expect_value(t,core.count(&w.models),2)
 }
 
 // A section load that waits for the libraries ends once a frame passed in
@@ -427,4 +435,86 @@ a_load_waits_while_a_library_names_what_it_names :: proc(t:^testing.T) {
     named:=make([dynamic]base.Asset_Id,context.temp_allocator)
     loads_waiting(&loads,&named)
     testing.expect_value(t,len(named),1)
+}
+
+// A spawn of a prefab that is not loaded reads nothing in the call: its root
+// comes at once, alone, where it was asked, and jobs read the prefab and the
+// mesh it names; within frames the root takes them and keeps what it was
+// given meanwhile. A scene load reads the prefabs its fields name,
+// with what they take: a spawn after it is whole in the call.
+@(test)
+a_spawn_of_a_prefab_not_loaded_returns_its_root_and_jobs_fill_it :: proc(t:^testing.T) {
+    p:Loading_Project
+    if !loading_open(t,&p,"spawn",2) {return}
+    defer loading_close(&p)
+    MESH :: base.Asset_Id{0x5a,1}
+    PREFAB :: base.Asset_Id{0x5a,2}
+    LEVEL :: base.Asset_Id{0x5a,3}
+    loading_mesh(t,&p,MESH,host.LOAD_FRAME_BYTES/8)
+    loading_scene(t,&p,PREFAB,{MESH},prefab=true)
+    loading_scene(t,&p,LEVEL,{PREFAB})
+    host.assets_scan(&p.assets)
+    w:=host.app_world_ref(&p.app,p.world)
+    warms:Prefab_Warms
+    defer prefab_warms_free(&warms)
+
+    report,error:=spawn_prefab(core.commands_of(w),&p.assets,{prefab=PREFAB,transform={position={1,2,3}}})
+    root:=report.root
+    testing.expect_value(t,error,Error.None)
+    testing.expect(t,p.assets.stats.loads==0 && !host.assets_loaded(&p.assets,PREFAB),"the call reads nothing")
+    core.add(&p.world.models,root,Loading_Model{LEVEL})
+    core.world_settle(w)
+    pose,_:=core.get(&p.world.transforms,root)
+    testing.expect(t,core.raw_row(core.raw(&p.world.pendings),root)>=0 && !core.has(&p.world.names,root) && pose.position==[3]f32{1,2,3},"its root alone, where it was asked")
+    started:=time.tick_now()
+    for frame:=0;core.raw_row(core.raw(&p.world.pendings),root)>=0;frame+=1 {
+        p.app.stats.frames+=1
+        spawns_fill(w,&p.app,&warms,nil)
+        core.world_settle(w)
+        if !testing.expect(t,time.duration_seconds(time.tick_since(started))<60,"the spawn is filled") {return}
+        thread.yield()
+    }
+    testing.expect_value(t,len(warms.items),0)
+    testing.expect(t,host.assets_loaded(&p.assets,PREFAB) && host.assets_loaded(&p.assets,MESH) && p.assets.stats.loads==2,"jobs read the prefab and its mesh")
+    model,_:=core.get(&p.world.models,root)
+    name,_:=core.get(&p.world.names,root)
+    testing.expect(t,core.has(&p.world.models,root) && model.mesh==LEVEL && base.text_get(name.text[:])=="Model","it keeps what it was given, with the rest of its prefab")
+    pose,_=core.get(&p.world.transforms,root)
+    testing.expect_value(t,pose.position,[3]f32{1,2,3})
+
+    // A copy of an entity of a section that is not loaded waits the same way, and takes it.
+    section:=PREFAB
+    section[1]=5
+    loading_scene(t,&p,section,{MESH,MESH})
+    host.assets_scan(&p.assets)
+    loads:=p.assets.stats.loads
+    copied,copy_error:=spawn_member(core.commands_of(w),&p.assets,section,0,2,{position={4,0,0},rotation=1,scale={1,1,1}})
+    testing.expect(t,copy_error==.None && p.assets.stats.loads==loads && !host.assets_loaded(&p.assets,section),"the call reads nothing")
+    core.world_settle(w)
+    for core.raw_row(core.raw(&p.world.pendings),copied.root)>=0 {
+        p.app.stats.frames+=1
+        spawns_fill(w,&p.app,&warms,nil)
+        core.world_settle(w)
+        if !testing.expect(t,time.duration_seconds(time.tick_since(started))<60,"the copy is filled") {return}
+        thread.yield()
+    }
+    copied_model,copied_has:=core.get(&p.world.models,copied.root)
+    testing.expect(t,copied_has && copied_model.mesh==MESH && !core.has(&p.world.ids,copied.root),"the entity of the section, without an Id")
+
+    // A scene whose field names the prefab reads it with what it takes: the next spawn is whole at once.
+    other:=PREFAB
+    other[1]=4
+    loading_scene(t,&p,other,{MESH},prefab=true)
+    loading_scene(t,&p,LEVEL,{other})
+    host.assets_scan(&p.assets)
+    job,begun:=load_begin(&p.app,LEVEL)
+    if !testing.expect_value(t,begun,Error.None) {return}
+    frames:=make([dynamic]Loading_Frame,context.temp_allocator)
+    if !loading_frames(t,&p,{job},&frames) {return}
+    testing.expect(t,host.assets_loaded(&p.assets,other),"the load read the prefab its field names")
+    _,error=load_end(job,w)
+    testing.expect_value(t,error,Error.None)
+    report,error=spawn_prefab(core.commands_of(w),&p.assets,{prefab=other})
+    core.world_settle(w)
+    testing.expect(t,error==.None && core.has(&p.world.models,report.root) && core.raw_row(core.raw(&p.world.pendings),report.root)<0,"whole in the call")
 }

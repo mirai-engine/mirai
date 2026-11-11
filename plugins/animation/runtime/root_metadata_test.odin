@@ -43,9 +43,10 @@ root_motion_leaves_out_the_transform_the_entity_was_bound_with :: proc(t:^testin
     testing.expectf(t,mm.quat_angle(turned,turn)<1e-5,"its turn is its own: %v",turned)
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Root_Metadata_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     names:core.Table(core.Name),
@@ -68,31 +69,33 @@ selected_clip_root_metadata_drives_extraction_and_in_place_without_a_rebuilt_tab
     source.roots[2].translation,source.roots[2].rotation=false,true
     append(&content.animations,source);content.index[source.id]={kind=.Animation,index=0}
     w:Root_Metadata_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     actor,hip:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.transforms,actor,core.TRANSFORM_IDENTITY);core.add(&w.transforms,hip,core.TRANSFORM_IDENTITY);core.add(&w.parents,hip,{entity=actor})
     name:core.Name;base.text_set(name.text[:],"hip");core.add(&w.names,hip,name)
     animation:=ANIMATION_DEFAULT;animation.asset=source.id;animation.loop=false;animation.fade=0;animation.root_motion=.Extract;base.text_set(animation.clip[:],"walk")
     core.add(&w.animations,actor,animation)
-    core.test_world_settle(&w)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
+    test_world_settle(&w)
+    core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
+    extra:Test_Storages;defer test_storages_free(&extra)
     for stage in 0..<5 {
         switch stage {
-        case 1: animation_play(core.get(&w.animations,actor),"run",fade=0,loop=false)
-        case 2: core.get(&w.animations,actor).root_motion=.None
-        case 3: value:=core.get(&w.animations,actor);value.root_motion=.In_Place;animation_play(value,"walk",fade=0,loop=false)
-        case 4: animation_play(core.get(&w.animations,actor),"wave",fade=1,loop=false)
+        case 1: animation_clip(core.edit(&w.animations,actor),"run",fade=0,loop=false)
+        case 2: core.edit(&w.animations,actor).root_motion=.None
+        case 3: value:=core.edit(&w.animations,actor);value.root_motion=.In_Place;animation_clip(value,"walk",fade=0,loop=false)
+        case 4: animation_clip(core.edit(&w.animations,actor),"wave",fade=1,loop=false)
         }
-        animation_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),{},&w.playback,&app,{dt=.25,playing=true},{},&skeletons,&problems)
+        test_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),&w.playback,&app,{dt=.25,playing=true},{},&skeletons,&problems,&extra)
         state:=&w.playback.states[0]
+        rooted:=state.root.translation || state.root.rotation
         switch stage {
-        case 0: testing.expect(t,state.has_base_root && state.base_root.translation && abs(state.motion.translation.x-.25)<1e-5)
-        case 1: testing.expect(t,state.clip==2 && state.has_base_root && !state.base_root.translation && state.base_root.rotation && state.motion.translation=={})
-        case 2: testing.expect(t,!state.has_base_root && state.motion.translation=={})
-        case 3: testing.expect(t,state.base_root.in_place && state.local[1].position==state.rest[1].position,"an in-place clip blends its root at rest")
-        case 4: testing.expect(t,!state.has_base_root && lib.fader_fading(state.fader) && state.local[1].position==state.rest[1].position,"a clip fading out under one without root motion keeps its root in place")
+        case 0: testing.expect(t,rooted && state.root.translation && abs(state.motion.translation.x-.25)<1e-5)
+        case 1: testing.expect(t,state.clip==2 && rooted && !state.root.translation && state.root.rotation && state.motion.translation=={})
+        case 2: testing.expect(t,!rooted && state.motion.translation=={})
+        case 3: testing.expect(t,state.root.in_place && state.local[1].position==state.rest[1].position,"an in-place clip blends its root at rest")
+        case 4: testing.expect(t,!rooted && lib.fader_fading(state.fader) && state.local[1].position==state.rest[1].position,"a clip fading out under one without root motion keeps its root in place")
         }
         animation_finish(&w.playback,{problems=&problems},&w.constraints,&w.transforms,core.read(&w.parents),.25,nil,{})
         if stage>=3 {testing.expect(t,state.local[1].position==state.rest[1].position)}

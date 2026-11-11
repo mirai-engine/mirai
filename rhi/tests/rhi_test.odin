@@ -5,6 +5,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:strings"
 import "core:math"
+import "core:mem"
 import "core:sync"
 import "core:testing"
 import "core:time"
@@ -46,8 +47,10 @@ rhi_fill_buffer_sets_every_byte_of_its_range_only :: proc(t: ^testing.T) {
 	expect_clean(t, d)
 }
 
-// A loss stops every submission and wait at once, keeps its first cause,
-// and the device is still destroyed cleanly.
+// A loss stops every submission and wait at once, keeps its first cause with
+// where the GPU stopped (the labels left open and the pipeline bound, by the
+// name it was made with even after that text went), and the device is still
+// destroyed cleanly.
 @(test)
 rhi_a_lost_device_fails_every_submission_and_wait_at_once :: proc(t: ^testing.T) {
 	d := test_device(t)
@@ -55,15 +58,29 @@ rhi_a_lost_device_fails_every_submission_and_wait_at_once :: proc(t: ^testing.T)
 	defer rhi.device_destroy(d)
 	buffer := rhi.buffer_create(d, {size = 16, usage = {.Storage}, memory = .GPU, name = "lost"})
 	testing.expect(t, buffer != 0, rhi.device_error(d))
+	name := [?]u8{'f', 'i', 'l', 'l', ' ', 'L', 'a', 'v', 'a'}
+	pipeline := rhi.pipeline_create_compute(d, {shader = rhi.test_shader("fill.comp"), name = string(name[:])})
+	testing.expect(t, pipeline != 0, rhi.device_error(d))
+	name = {}
 	cmd, ok := rhi.frame_begin(d)
 	testing.expect(t, ok, rhi.device_error(d))
 	if !ok {return}
+	rhi.cmd_push_label(cmd, "A")
 	rhi.cmd_fill_buffer(cmd, buffer, 0, 16, 1)
+	rhi.cmd_pop_label(cmd)
+	rhi.cmd_push_label(cmd, "B")
+	rhi.cmd_bind_pipeline(cmd, pipeline)
+	rhi.cmd_fill_buffer(cmd, buffer, 0, 16, 2)
 	rhi.device_lose(d)
 	testing.expect(t, !rhi.frame_end(d, cmd), "the submission of the frame reports the loss")
 	failure, text := rhi.device_failure(d)
 	testing.expect_value(t, failure, rhi.Device_Failure.Lost)
-	testing.expectf(t, text == "vkQueueSubmit2 reported the GPU device lost (provoked by device_lose)" || text == "the frame command buffer failed: the GPU device was lost (provoked by device_lose)", "the cause names the call that found it: %s", text)
+	testing.expectf(t, strings.has_prefix(text, "vkQueueSubmit2 reported the GPU device lost") || strings.has_prefix(text, "the frame command buffer failed: the GPU device was lost"), "the cause names the call that found it: %s", text)
+	testing.expectf(t, strings.has_suffix(text, "(provoked by device_lose)"), "the cause says it was provoked: %s", text)
+	if rhi.device_info(d).features.stop_place {
+		testing.expectf(t, strings.contains(text, "stopped in B") && !strings.contains(text, "A > B"), "the cause names the label left open, not the one closed: %s", text)
+		when rhi.SHADER_FORMAT == .Spirv {testing.expectf(t, strings.contains(text, "pipeline fill Lava"), "and the pipeline bound: %s", text)}
+	}
 	started := time.tick_now()
 	_, began := rhi.frame_begin(d)
 	testing.expect(t, !began, "no frame begins on a lost device")
@@ -76,6 +93,7 @@ rhi_a_lost_device_fails_every_submission_and_wait_at_once :: proc(t: ^testing.T)
 	rhi.device_lose(d)
 	_, again := rhi.device_failure(d)
 	testing.expect_value(t, again, text)
+	rhi.pipeline_destroy(d, pipeline)
 	rhi.buffer_destroy(d, buffer)
 	expect_clean(t, d)
 }
@@ -145,6 +163,58 @@ rhi_buffer_round_trip_and_compute :: proc(t: ^testing.T) {
 	expect_clean(t, d)
 }
 
+// One code serves the pipelines of each set of its constants, which the
+// driver compiles it with; a constant it does not declare makes no pipeline.
+@(test)
+rhi_pipelines_of_one_shader_differ_by_their_constants :: proc(t: ^testing.T) {
+	d := test_device(t)
+	if d == nil {return}
+	defer rhi.device_destroy(d)
+	code := rhi.test_shader("constant.comp")
+	doubled, found := rhi.shader_constant(code, "double")
+	testing.expect(t, found && doubled == rhi.Shader_Constants{rhi.CONSTANT_COMP_DOUBLE}, "the shader names its constant")
+	COUNT :: 64
+	output := rhi.buffer_create(d, {size = COUNT * size_of(f32), usage = {.Storage}, memory = .GPU, name = "output"})
+	testing.expect(t, output != 0, rhi.device_error(d))
+	Case :: struct {constants: rhi.Shader_Constants, expected: f32}
+	for c in ([]Case{{{}, 1}, {doubled, 2}, {{}, 1}}) {
+		pipeline := rhi.pipeline_create_compute(d, {shader = code, constants = c.constants, name = "constant"})
+		testing.expect(t, pipeline != 0, rhi.device_error(d))
+		if pipeline == 0 {return}
+		cmd, ok := rhi.frame_begin(d)
+		testing.expect(t, ok, rhi.device_error(d))
+		if !ok {return}
+		rhi.cmd_bind_pipeline(cmd, pipeline)
+		rhi.cmd_bind_buffer(cmd, 0, output)
+		rhi.cmd_dispatch(cmd, 1)
+		testing.expect(t, rhi.frame_end(d, cmd), rhi.device_error(d))
+		rhi.device_wait_idle(d)
+		result: [COUNT]f32
+		testing.expect(t, rhi.buffer_read_slice(d, output, 0, result[:]), rhi.device_error(d))
+		for value, i in result {
+			if value != c.expected {
+				testing.expectf(t, false, "constants %v, element %d: %f != %f", c.constants, i, value, c.expected)
+				break
+			}
+		}
+		rhi.pipeline_destroy(d, pipeline)
+	}
+	undeclared := rhi.Shader_Constants{rhi.MAX_SHADER_CONSTANTS - 1}
+	testing.expect_value(t, rhi.pipeline_create_compute(d, {shader = code, constants = undeclared, name = "undeclared"}), rhi.Pipeline(0))
+	testing.expect(t, strings.contains(rhi.device_error(d), "constant"), rhi.device_error(d))
+	graphics := rhi.Graphics_Pipeline_Desc{
+		vertex = rhi.test_shader("triangle.vert"), fragment = rhi.test_shader("triangle.frag"),
+		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, name = "undeclared",
+	}
+	for stage in 0 ..< 2 {
+		desc := graphics
+		if stage == 0 {desc.vertex_constants = {0}} else {desc.fragment_constants = {0}}
+		testing.expect_value(t, rhi.pipeline_create_graphics(d, desc), rhi.Pipeline(0))
+	}
+	rhi.buffer_destroy(d, output)
+	expect_clean(t, d)
+}
+
 @(test)
 rhi_raster_uses_y_up_clip_space :: proc(t: ^testing.T) {
 	d := test_device(t)
@@ -164,12 +234,23 @@ rhi_raster_uses_y_up_clip_space :: proc(t: ^testing.T) {
 		{{0.8, -0.8, 0.5, 1}, {0, 0, 1, 1}},
 		{{0, 0.9, 0.5, 1}, {1, 0, 0, 1}},
 	}
+	// A compute copy writes the vertices the pass reads in the same frame, and
+	// nothing declares that read: the pass transitions what its draws bind.
+	source := rhi.buffer_create(d, {size = size_of(vertices), usage = {.Storage}, memory = .GPU, name = "source"})
 	buffer := rhi.buffer_create(d, {size = size_of(vertices), usage = {.Storage}, memory = .GPU, name = "vertices"})
-	rhi.buffer_upload_slice(d, buffer, 0, vertices[:])
+	rhi.buffer_upload_slice(d, source, 0, vertices[:])
+	fill := rhi.pipeline_create_compute(d, {shader = rhi.test_shader("fill.comp"), name = "fill"})
+	testing.expect(t, fill != 0, rhi.device_error(d))
 	cmd, ok := rhi.frame_begin(d)
 	testing.expect(t, ok)
 	if !ok {return}
-	rhi.cmd_barrier_buffer(cmd, buffer, .Shader_Read)
+	Params :: struct {count: u32, scale, offset: f32, pad: u32}
+	params := Params{count = size_of(vertices) / size_of(f32), scale = 1}
+	rhi.cmd_bind_pipeline(cmd, fill)
+	rhi.cmd_set_constants(cmd, 0, &params, size_of(params))
+	rhi.cmd_bind_buffer(cmd, 1, source)
+	rhi.cmd_bind_buffer(cmd, 2, buffer)
+	rhi.cmd_dispatch(cmd, 1)
 	pass := rhi.Render_Pass_Desc{color_count = 1, name = "triangle"}
 	pass.colors[0] = {texture = target, load = .Clear, store = .Store, clear = {0, 0.5, 0, 1}}
 	rhi.cmd_begin_render_pass(cmd, &pass)
@@ -187,7 +268,69 @@ rhi_raster_uses_y_up_clip_space :: proc(t: ^testing.T) {
 	testing.expectf(t, pixels[bottom + 2] > 150 && pixels[bottom] < 120, "base color near the bottom row: %v", pixels[bottom:bottom + 4])
 	testing.expectf(t, pixels[1] > 100 && pixels[0] < 10, "clear color outside the triangle: %v", pixels[0:4])
 	rhi.buffer_destroy(d, buffer)
+	rhi.buffer_destroy(d, source)
 	rhi.texture_destroy(d, target)
+	rhi.pipeline_destroy(d, pipeline)
+	rhi.pipeline_destroy(d, fill)
+	expect_clean(t, d)
+}
+
+// A pass draws into one mip of a texture while it samples another, and into
+// one layer of an array while the others keep what they had.
+@(test)
+rhi_a_pass_draws_into_one_mip_or_layer_of_a_texture :: proc(t: ^testing.T) {
+	d := test_device(t)
+	if d == nil {return}
+	defer rhi.device_destroy(d)
+	SIZE :: 8
+	chain := rhi.texture_create(d, {width = SIZE, height = SIZE, mip_levels = 2, format = .RGBA8_Unorm, usage = {.Color_Target, .Sampled, .Transfer_Src}, name = "chain"})
+	array := rhi.texture_create(d, {width = SIZE, height = SIZE, layers = 2, format = .RGBA8_Unorm, usage = {.Color_Target, .Sampled, .Transfer_Src}, name = "array"})
+	small := rhi.texture_create(d, {width = SIZE / 2, height = SIZE / 2, format = .RGBA8_Unorm, usage = {.Sampled, .Transfer_Src}, name = "second mip"})
+	sampler := rhi.sampler_create(d, {filter = .Nearest, name = "point"})
+	pipeline := rhi.pipeline_create_graphics(d, {
+		vertex = rhi.test_shader("triangle.vert"), fragment = rhi.test_shader("sample.frag"),
+		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, name = "sample",
+	})
+	testing.expect(t, chain != 0 && array != 0 && small != 0 && pipeline != 0, rhi.device_error(d))
+	texels: [SIZE * SIZE * 4]u8
+	for i in 0 ..< SIZE * SIZE {texels[i * 4], texels[i * 4 + 1], texels[i * 4 + 2], texels[i * 4 + 3] = 200, 100, 50, 255}
+	testing.expect(t, rhi.texture_upload(d, chain, texels[:], SIZE * 4), rhi.device_error(d))
+	Vertex :: struct {position, color: [4]f32}
+	// One triangle over the target; the color is where it samples.
+	vertices := [3]Vertex{{{-1, -1, 0.5, 1}, {0.5, 0.5, 0, 1}}, {{3, -1, 0.5, 1}, {0.5, 0.5, 0, 1}}, {{-1, 3, 0.5, 1}, {0.5, 0.5, 0, 1}}}
+	buffer := rhi.buffer_create(d, {size = size_of(vertices), usage = {.Storage}, memory = .GPU, name = "vertices"})
+	rhi.buffer_upload_slice(d, buffer, 0, vertices[:])
+	cmd, ok := rhi.frame_begin(d)
+	testing.expect(t, ok)
+	if !ok {return}
+	Case :: struct {target: rhi.Texture, mip, layer: u32, draw: bool}
+	cases := [?]Case{{chain, 1, 0, true}, {array, 0, 0, false}, {array, 0, 1, true}}
+	for c in cases {
+		pass := rhi.Render_Pass_Desc{color_count = 1, name = "into one part"}
+		pass.colors[0] = {texture = c.target, mip = c.mip, layer = c.layer, load = .Clear, store = .Store, clear = {0, 0.25, 0, 1}}
+		rhi.cmd_begin_render_pass(cmd, &pass)
+		if c.draw {
+			rhi.cmd_bind_pipeline(cmd, pipeline)
+			rhi.cmd_bind_buffer(cmd, 0, buffer)
+			rhi.cmd_bind_texture(cmd, 1, chain, 0)
+			rhi.cmd_bind_sampler(cmd, 2, sampler)
+			rhi.cmd_draw(cmd, 3)
+		}
+		rhi.cmd_end_render_pass(cmd)
+	}
+	rhi.cmd_copy_texture(cmd, chain, small, src_mip = 1)
+	testing.expect(t, rhi.frame_end(d, cmd), rhi.device_error(d))
+	rhi.device_wait_idle(d)
+	seen: [SIZE * SIZE * 4]u8
+	testing.expect(t, rhi.texture_read(d, small, seen[:SIZE * SIZE]), rhi.device_error(d))
+	testing.expectf(t, mem.compare(seen[:SIZE * SIZE], texels[:SIZE * SIZE]) == 0, "the second mip holds what the first had: %v", seen[:4])
+	testing.expect(t, rhi.texture_read(d, chain, seen[:]), rhi.device_error(d))
+	testing.expectf(t, seen == texels, "the sampled mip keeps its texels: %v", seen[:4])
+	testing.expect(t, rhi.texture_read(d, array, seen[:]), rhi.device_error(d))
+	testing.expectf(t, [4]u8{seen[0], seen[1], seen[2], seen[3]} == {0, 64, 0, 255}, "the layer the pass did not draw into keeps its clear: %v", seen[:4])
+	rhi.buffer_destroy(d, buffer)
+	for texture in ([]rhi.Texture{chain, array, small}) {rhi.texture_destroy(d, texture)}
+	rhi.sampler_destroy(d, sampler)
 	rhi.pipeline_destroy(d, pipeline)
 	expect_clean(t, d)
 }
@@ -309,6 +452,10 @@ rhi_texture_table_is_indexed_per_invocation :: proc(t: ^testing.T) {
 	output = run(t, d, pipeline, sampler, queries, results)
 	testing.expectf(t, near(output[0], {1, 1, 1, 1}) && near(output[6], {1, 1, 1, 1}), "entries 3 and far after their texture was destroyed: %v %v", output[0], output[6])
 	testing.expectf(t, near(output[2], {0.2158, 0.2158, 0.2158, 1}), "the other entries stay: %v", output[2])
+	// And a texture in one entry too.
+	rhi.texture_destroy(d, gray)
+	output = run(t, d, pipeline, sampler, queries, results)
+	testing.expectf(t, near(output[2], {1, 1, 1, 1}), "the entry of a texture in one entry after it was destroyed: %v", output[2])
 	expect_clean(t, d)
 }
 
@@ -376,48 +523,53 @@ rhi_pipelines_are_made_on_other_threads_while_frames_are_recorded :: proc(t: ^te
 	expect_clean(t, d)
 }
 
-// Devices made and destroyed at the same time by several threads, as the
-// tests of a package or the sessions of a tool do: the loader lock of the
-// application keeps the Vulkan loader to one of them at a time.
+// Devices made, used and destroyed one after another and then at the same
+// time by several threads, as the tests of a package or the sessions of a tool
+// do: the loader lock of the application keeps the Vulkan loader to one of
+// them at a time. The NVIDIA driver of Windows ended the process within a few
+// devices in a row when none other was alive (shared_device.keep_one).
 @(test)
-rhi_devices_are_created_and_destroyed_on_several_threads_with_one_loader_lock :: proc(t: ^testing.T) {
+rhi_devices_are_created_and_destroyed_in_turn_and_on_several_threads :: proc(t: ^testing.T) {
 	THREADS :: 4
 	ROUNDS :: 3
+	IN_TURN :: 24
 	Shared :: struct {
 		lock:                               sync.Mutex,
 		created, refused, wrong, complaints: i64,
 	}
+	use :: proc(shared: ^Shared, round: int) {
+		d, _ := rhi.device_create({app_name = "mirai rhi threads", validation = true, upload_bytes_per_frame = 1 << 20, loader_lock = &shared.lock})
+		if d == nil {
+			intrinsics.atomic_add(&shared.refused, 1)
+			return
+		}
+		values, echo: [256]u32
+		for &value, at in values {value = u32(at * (round + 3))}
+		buffer := rhi.buffer_create(d, {size = size_of(values), usage = {.Storage}, memory = .GPU, name = "threads"})
+		if buffer == 0 || !rhi.buffer_upload_slice(d, buffer, 0, values[:]) || !rhi.buffer_read_slice(d, buffer, 0, echo[:]) || echo != values {
+			intrinsics.atomic_add(&shared.wrong, 1)
+		}
+		intrinsics.atomic_add(&shared.complaints, i64(rhi.device_validation_errors(d)))
+		rhi.device_destroy(d)
+		intrinsics.atomic_add(&shared.created, 1)
+	}
 	work :: proc(shared: ^Shared) {
 		defer free_all(context.temp_allocator)
-		for round in 0 ..< ROUNDS {
-			d, _ := rhi.device_create({app_name = "mirai rhi threads", validation = true, upload_bytes_per_frame = 1 << 20, loader_lock = &shared.lock})
-			if d == nil {
-				intrinsics.atomic_add(&shared.refused, 1)
-				continue
-			}
-			values, echo: [256]u32
-			for &value, at in values {value = u32(at * (round + 3))}
-			buffer := rhi.buffer_create(d, {size = size_of(values), usage = {.Storage}, memory = .GPU, name = "threads"})
-			if buffer == 0 || !rhi.buffer_upload_slice(d, buffer, 0, values[:]) || !rhi.buffer_read_slice(d, buffer, 0, echo[:]) || echo != values {
-				intrinsics.atomic_add(&shared.wrong, 1)
-			}
-			intrinsics.atomic_add(&shared.complaints, i64(rhi.device_validation_errors(d)))
-			rhi.device_destroy(d)
-			intrinsics.atomic_add(&shared.created, 1)
-		}
+		for round in 0 ..< ROUNDS {use(shared, round)}
 	}
 	// One device first: without a GPU the test has nothing to say.
 	first := test_device(t)
 	if first == nil {return}
 	rhi.device_destroy(first)
 	shared: Shared
+	for round in 0 ..< IN_TURN {use(&shared, round)}
 	threads: [THREADS]^thread.Thread
 	for &worker in threads {worker = thread.create_and_start_with_poly_data(&shared, work)}
 	for worker in threads {
 		thread.join(worker)
 		thread.destroy(worker)
 	}
-	testing.expect_value(t, shared.created, THREADS * ROUNDS)
+	testing.expect_value(t, shared.created, IN_TURN + THREADS * ROUNDS)
 	testing.expect_value(t, shared.refused, 0)
 	testing.expect_value(t, shared.wrong, 0)
 	testing.expect_value(t, shared.complaints, 0)
@@ -495,7 +647,7 @@ rhi_texture_upload_writes_a_region_alone :: proc(t: ^testing.T) {
 
 // A texture takes on the GPU the bytes of another as they are, into its own
 // sRGB encoding too, each time it is copied; one of another size is refused
-// and keeps what it had.
+// and keeps what it had, and takes the mip of a chain of its size.
 @(test)
 rhi_copy_texture_carries_the_bytes_into_another_texture :: proc(t: ^testing.T) {
 	d := test_device(t)
@@ -530,7 +682,18 @@ rhi_copy_texture_carries_the_bytes_into_another_texture :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, rhi.texture_read(d, small, seen[:SIZE * SIZE]), rhi.device_error(d))
 	for b in seen[:SIZE * SIZE] {if b != 40 {testing.expect(t, false, "a texture of another size keeps what it had"); break}}
-	for texture in ([]rhi.Texture{source, encoded, same, small}) {rhi.texture_destroy(d, texture)}
+	// A mip of a chain into the first of a texture of its size.
+	chain := rhi.texture_create(d, {width = SIZE, height = SIZE, mip_levels = 2, format = .RGBA8_Unorm, usage = {.Sampled}, name = "copy chain"})
+	second: [SIZE * SIZE]u8
+	for &b, i in second {b = u8(i * 3 + 1)}
+	testing.expect(t, chain != 0 && rhi.texture_upload_levels(d, chain, {texels[:], second[:]}), rhi.device_error(d))
+	cmd := rhi.immediate_begin(d)
+	rhi.cmd_copy_texture(cmd, chain, small, src_mip = 1)
+	for texture in ([]rhi.Texture{chain, small}) {rhi.cmd_barrier_texture(cmd, texture, .Shader_Read)}
+	testing.expect(t, rhi.immediate_end(d, cmd), rhi.device_error(d))
+	testing.expect(t, rhi.texture_read(d, small, seen[:SIZE * SIZE]), rhi.device_error(d))
+	testing.expect(t, mem.compare(seen[:SIZE * SIZE], second[:]) == 0, "the smaller texture holds the second mip of the chain")
+	for texture in ([]rhi.Texture{source, encoded, same, small, chain}) {rhi.texture_destroy(d, texture)}
 	expect_clean(t, d)
 }
 

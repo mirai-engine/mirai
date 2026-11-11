@@ -13,11 +13,10 @@ import "mirai:std/serial"
 // has, and the swap counts it as kept. A step that holds a file an editor
 // also writes outside the history puts its side whatever it holds.
 //
-// An asset file of the folder is not written: its content stays in the
-// memory of the registry of the assets, unsaved, until it is saved, and what
-// it holds is what the registry holds. The Slang source of a program stays
-// there too, by its absolute path. A content equal to the disk is no change.
-// Other files are written at once.
+// An asset file of the folder is held by the registry of the assets until
+// the editor writes it at the end of its step, and what it holds is what the
+// registry holds. A content equal to the disk is no change. Other files (the
+// Slang source of a program) are written at once.
 
 EDITS_FILE_BYTES :: 64<<20 // a file larger than this is written without its history
 
@@ -37,17 +36,16 @@ edit_file_free :: proc(file:^Edit_File) {
 
 edit_file_bytes :: proc(file:^Edit_File) -> int {return len(file.path)+len(file.held)+len(file.other)}
 
-// The path in the registry of a file whose changes stay in its memory: a file
-// of the assets, or the source of a program by its absolute path.
-file_unsaved :: proc(r:^asset.Registry,path:string) -> (relative:string,ok:bool) {
-    if r!=nil && strings.has_suffix(path,".slang") && asset.registry_outside(path) {return path,true}
+// The path in the registry of a file it holds until its step ends: a file
+// of the assets.
+file_held :: proc(r:^asset.Registry,path:string) -> (relative:string,ok:bool) {
     return asset.registry_relative(r,path)
 }
 
 // What a file holds now, or not present: what the registry keeps of it in
 // memory, else the disk. ok false when it exists but cannot be read.
 file_contents :: proc(r:^asset.Registry,path:string,allocator:=context.allocator) -> (data:[]u8,present,ok:bool) {
-    if relative,unsaved:=file_unsaved(r,path);unsaved {
+    if relative,kept:=file_held(r,path);kept {
         if held,found:=asset.registry_memory_find(r,relative);found {
             if held.removed {return nil,false,true}
             bytes,error:=make([]u8,len(held.data),allocator)
@@ -75,10 +73,10 @@ file_holds :: proc(r:^asset.Registry,path:string,present:bool,expected:[]u8) -> 
     return ok && exists==present && (!present || string(current)==string(expected))
 }
 
-// Puts one side of a file: its bytes, or no file. One the registry keeps goes
-// to its memory, which forgets it when it is what the disk holds.
+// Puts one side of a file: its bytes, or no file. One the registry holds goes
+// to it, which forgets it when it is what the disk holds.
 file_put :: proc(r:^asset.Registry,path:string,present:bool,bytes:[]u8) -> bool {
-    if relative,unsaved:=file_unsaved(r,path);unsaved {
+    if relative,kept:=file_held(r,path);kept {
         if file_on_disk(path,present,bytes) {
             asset.registry_memory_drop(r,relative)
             return true

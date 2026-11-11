@@ -20,8 +20,8 @@ difference with the catalog, it rules.
 - Connecting a client, limits, errors, MCP: [the server](references/api.md#the-server),
   [method conventions](references/api.md#method-conventions) and
   [MCP over HTTP](references/api.md#mcp-over-http).
-- Calling from the terminal: [`mirai rpc`](references/api.md#mirai-rpc) (also `--batch`, many
-  calls over one connection, whose calls can name the results of earlier ones) and
+- Calling from the terminal: [`mirai rpc`](references/api.md#mirai-rpc) (`mirai rpc batch --file`:
+  many calls as one request, whose calls can name the results of earlier ones) and
   [`mirai mcp`](references/api.md#mirai-mcp); reading only some fields or waiting for a state
   without `sleep` loops: [`--select` and `--wait-until`](references/api.md#fields-and-waits); the
   params and result of a method, with an example, and the methods of a plugin:
@@ -39,10 +39,9 @@ difference with the catalog, it rules.
 - Walking the player to a place, with no bot, and turning the view at something: `play.step` with
   `drive` or `look_at` ([drive](../../../docs/game/testing/scenario.md#drive)).
 - Writing or changing a `.ui` (one nested document by name: `ui.write asset=<path>
-  document=@<file>
-  save=true`, `ui.inspect` reads it back): [writing-ui](../../../docs/game/ui/writing-ui.md).
-- Reading, checking or writing the documents of interfaces, scenes and prefabs with no editor,
-  from files of text under `source/`:
+  document=@<file>`, `ui.inspect` reads it back): [writing-ui](../../../docs/game/ui/writing-ui.md).
+- Reading, checking or writing the documents of interfaces and scenes with no editor,
+  from files of text:
   [`mirai ui` and `mirai scene`](references/api.md#mirai-ui-and-mirai-scene).
 - Testing a game as a person plays it (a click, a double click, a hold of some seconds, a look)
   and asserting on what the camera shows: [testing like a player](#testing-like-a-player).
@@ -65,7 +64,7 @@ difference with the catalog, it rules.
   [editor and viewport](references/methods.md#editor-and-viewport),
   [collision](references/methods.md#collision), [cinematics](references/methods.md#cinematics),
   [ragdoll](references/methods.md#ragdoll), [interfaces](references/methods.md#interfaces),
-  [painting and placement](references/methods.md#painting-and-placement),
+  [painting and shapes](references/methods.md#painting-and-shapes),
   [profiling](references/methods.md#profiling), [history](references/methods.md#history),
   [scene](references/methods.md#scene), [spatial queries](references/methods.md#spatial-queries),
   [editor documents](references/methods.md#editor-documents), [Play](references/methods.md#play),
@@ -100,7 +99,7 @@ difference with the catalog, it rules.
 
 1. Open it with `mirai edit` (window or manual mode and port per
    [arguments](../mirai-editor/references/editor.md#arguments)) or, without a window and in the
-   background, with `mirai session start [project] --dev`, on a free port that is never 7940
+   background, with `mirai session start [project]`, on a free port that is never 7940
    unless `--api-port` names one; `mirai rpc --project <project>` (and `mirai mcp`) finds the port
    and starts that session when the project has none. If the user's
    windowed editor holds the project, `--copy` opens a session on a fresh copy under its
@@ -114,9 +113,10 @@ difference with the catalog, it rules.
    with `components`), `component.list` (components, fields, ranges
    and initial values), `asset.list`; a single field with `--select` (`_select` in a call of MCP),
    and a state that takes time (`play.network.status`) with `--wait-until` (`_wait_until`).
-3. Edit: each edit touches only the fields it names. Edits that succeed or fail together go in
-   `scene.batch`. Building or rewriting a group of entities: `scene.write` with a nested document,
-   the one `scene.inspect` with `root` gives.
+3. Edit the entities with `scene.write`, its `entities` the `tree` `scene.inspect` with `root`
+   gives: it names only what it adds or changes; with `replace` it declares all there is under
+   `root`, and what it leaves out goes. Calls of several methods that succeed or fail together
+   go in `batch` with `transaction`.
 4. Verify with `scene.inspect` or `capture`; undo with `history.undo`. A method that fails
    changes nothing.
 5. Debugging a game: `play.history` with `trace` reads what happened at past ticks, `verify`
@@ -126,11 +126,11 @@ difference with the catalog, it rules.
    it into the running editor: the scene,
    the Play and the history stay, also with a new or changed component
    ([build](references/methods.md#build)). A large scene is not loaded again for each change.
-   `mirai session restart [project]` is only for engine code: it builds and opens another
-   session with the same arguments, and `mirai build editor` also restarts it if it has to
-   replace the engine binaries it runs ([sessions](references/api.md#sessions)).
-7. Close with `engine.shutdown` (`discard` to discard unsaved changes) or with
-   `mirai session stop`.
+   After engine code or an engine shader, `mirai build editor` hands the build to the session:
+   in place when only bodies or shader code changed, otherwise restarting it with its documents
+   and the reason ([sessions](references/api.md#sessions)). `mirai session restart [project]`
+   opens another session with the same arguments.
+7. Close with `engine.shutdown` or with `mirai session stop`; the files already hold every edit.
 
 ### Testing like a player
 
@@ -173,14 +173,15 @@ positions misses both.
 ### Adding or changing a method
 
 1. Register it with `api_register` in the editor or in a
-   [plugin provider](../mirai-editor/references/extensions.md#api-methods), with flat structs
-   for params and result ([conventions](references/api.md#method-conventions)). The `summary` is
-   one sentence about what it is for; what each field is goes in its `label=`, without commas.
-   A field that only bounds how much it answers takes the `clamp` tag.
-2. If the handler writes the result by hand, declare its shape with `result=R` and
-   `writes_result=true` (`list`, `any` and `key=` in the tags) and test what is written with
-   `api.result_mismatch`; `params_schema` for params read by hand and `result_schema` written by
-   hand only for what a struct does not describe.
+   [plugin provider](../mirai-editor/references/extensions.md#api-methods), with a struct for
+   its params and one for its result ([conventions](references/api.md#method-conventions)): they
+   are its only description. The `summary` is one sentence about what it is for; what each field
+   is goes in its `label=`, the last option of its tag. A field that only bounds how much it
+   answers takes the `clamp` tag; what the method does to the editor is in its `flags`.
+2. The handler reads `call.params` and fills `call.result`; a list of any length is a slice it
+   makes in `call.allocator`. A handler that still writes its JSON itself says
+   `writes_result=true`, and its test checks what it wrote against the result type with
+   `api.result_mismatch`.
 3. Document it in the [catalog](references/methods.md) only with what the schema does not say.
 4. A contract change (name, params, result, error code) updates its consumers in the same task:
    `editor/ai_context.odin` (instructions to the agent), plugins and this skill; an incompatible
@@ -209,7 +210,9 @@ positions misses both.
   same ([protocol](references/api.md#concurrency-transactions-and-undo)).
 - Answers name entities by `core.Id`, or a live one by its handle (`0x` and 16 hexadecimal digits
   in a string), and assets by `Asset_Id` (32 digits).
-- Methods and their schemas are server data; they are not duplicated by hand elsewhere.
+- Methods and their schemas are server data; they are not duplicated by hand elsewhere. The
+  schema of a method is derived from the structs of its params and its result: nothing writes a
+  JSON Schema by hand.
 - Each method belongs to the editor or to the plugin whose provider registers it. MCP lists only
   the editor core (the methods with the `Core` flag: the basics of a scene) and the `call` tool,
   which runs any other method by name; `X-Mirai-Plugins` adds those of those plugins (`*`: all
@@ -235,9 +238,10 @@ positions misses both.
   `std/serial/text_test.odin` (a reader of loose names) and
   `editor/api_runtime_inspect_test.odin` (a name of a component or a key resolves as it is
   written or says the nearest).
-- Declared results: `editor/api/schema_test.odin` (a result the handler writes is described by its
-  type; the description of the methods has the shape it declares); those of an editor method, with
-  `api_result_shape_expect` of `editor/api_result_shape_test.odin` in its test, as
+- Declared params and results: `editor/api/schema_test.odin` (a method is described by its types
+  alone, lists of any length and any JSON included; a result the handler writes is described by
+  its type; the description of the methods has the shape it declares); those of an editor
+  method, with `api_result_shape_expect` of `editor/api_result_shape_test.odin` in its test, as
   `editor/ai_api_test.odin` does.
 - Writers of a recording (EXR, 16-bit PNG, WAV): `mirai test cook/movie`; its contact sheet and
   the grid of its cells: `cook/image/image_test.odin`; the held actions of its manifest:
@@ -256,8 +260,8 @@ positions misses both.
   `mirai test plugins/playtest/editor`; its filmstrip, live.
 - `mirai image` and the measure of `mirai capture`: `mirai test cook/image`; `mirai capture`
   against a project with GPU and `mirai test tools/mirai` if the CLI changes.
-- `mirai session`: `mirai test tools/mirai` covers options, the free API port, discarding copies
-  of `.mirai/tmp/`, sweeping the copies whose editor ended and process roles
+- `mirai session`: `mirai test tools/mirai` covers options, the free API port, deleting copies,
+  sweeping the copies whose editor ended and process roles
   (`tools/mirai/session_test.odin`); `restart`, the build with an open session and
   `stop --orphans` are tested with a real editor.
 - `mirai rpc` (`--select`, `--wait-until`, `describe`): `mirai test tools/mirai` and
@@ -270,7 +274,7 @@ positions misses both.
   those of its skill.
 - `editor/api/mcp_test.odin` shrinks the receiving socket buffer for large images: run it when
   touching partial sends.
-- Live: `mirai session start demo --dev` (`build.start` after changing project code,
+- Live: `mirai session start demo` (`build.start` after changing project code,
   `mirai session restart demo` after changing engine code),
   repeat the change with `mirai rpc ... --project demo` checking `mirai rpc describe`,
   `scene.inspect`, `history.undo` and `capture`, and `mirai session stop demo`.

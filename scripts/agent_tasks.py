@@ -74,7 +74,6 @@ TASKS = ROOT / "tests" / "agent_tasks"
 # Every editor method the runner calls; a rename of the API changes only these.
 INSPECT = "scene.inspect"
 WRITE = "scene.write"
-SAVE = "scene.save"
 PLAY_CHECK = "play.check"
 CAMERA = "camera.set"
 UI_INSPECT = "ui.inspect"
@@ -109,7 +108,7 @@ class Session:
     """A headless editor on a fresh copy of a project, which closing deletes."""
 
     def __init__(self, project: Path):
-        printed = mirai("session", "start", project.as_posix(), "--dev", "--copy")
+        printed = mirai("session", "start", project.as_posix(), "--copy")
         lines = [line for line in printed.splitlines() if line.startswith("{")]
         if not lines:
             raise Fatal(f"mirai session start printed no session: {printed[-2000:]}")
@@ -130,7 +129,7 @@ class Session:
         return answer["result"]
 
     def stop(self):
-        mirai("session", "stop", self.project.as_posix(), "--discard")
+        mirai("session", "stop", self.project.as_posix(), "--force")
 
 
 class Scene:
@@ -479,9 +478,7 @@ def set_up_scene(task: dict, session: Session):
     if "scene" not in task:
         return
     document = json.loads((TASKS / "scenes" / f"{task['scene']}.json").read_text("utf-8"))
-    for entity in document["entities"]:
-        session.rpc(WRITE, {"entities": [entity]})
-    session.rpc(SAVE, {"path": (session.project / ".mirai" / "tmp" / "task.scene").as_posix()})
+    session.rpc(WRITE, {"entities": document["entities"]})
 
 
 def base_project(template: str, out: Path, built: set[str]) -> Path:
@@ -491,7 +488,7 @@ def base_project(template: str, out: Path, built: set[str]) -> Path:
     if template not in built:
         if not (project / "project.mirai").exists():
             mirai("new", project.as_posix(), "--template", template)
-        mirai("build", "editor", project.as_posix(), "--dev")
+        mirai("build", "editor", project.as_posix())
         built.add(template)
     return project
 

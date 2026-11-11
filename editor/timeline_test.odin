@@ -73,7 +73,7 @@ an_end_of_the_range_set_at_a_frame_keeps_the_other_before_or_after_it :: proc(t:
 @(test)
 the_ruler_asks_for_its_menu_at_a_frame_and_the_agent_button_needs_a_range :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}));defer ui.context_destroy(&ctx)
     g:=Editor_Ui{ctx=&ctx}
     s:=Session{gui=&g}
     strip:Timeline
@@ -126,14 +126,14 @@ copy_range_names_the_time_and_what_plays_and_nothing_else :: proc(t:^testing.T) 
     testing.expect(t,!off,"A range that is off is no range")
     r,ok:=play_range_of(&s,&run,&strip,120,1000)
     testing.expect(t,ok && r.from==1030 && r.to==1090,"Frames count from the oldest tick")
-    testing.expect_value(t,ai_range_text(&r),"Range: ticks 1030 to 1090\nRun: 3\nScene: unsaved")
+    testing.expect_value(t,ai_range_text(&r),"Range: ticks 1030 to 1090\nRun: 3\nScene: no file")
     document_name(&document,"levels/arena.scene","C:/games/demo/assets/levels/arena.scene")
     r,_=play_range_of(&s,&run,&strip,120,1000)
     testing.expect_value(t,ai_range_text(&r),"Range: ticks 1030 to 1090\nRun: 3\nScene: levels/arena.scene")
     others:=[?]struct{range:Ai_Range,path,name,text:string}{
         {{kind=.Asset,from=12,to=40,rate=30},"hero/moves.anim","jump","Range: frames 12 to 40 at 30 fps\nAsset: hero/moves.anim\nClip: jump"},
         {{kind=.Asset,from=0,to=9,rate=30},"fx/smoke.particle","","Range: frames 0 to 9 at 30 fps\nAsset: fx/smoke.particle"},
-        {{kind=.Cinematic,from=60,to=120},"levels/arena.scene","Intro","Range: ticks 60 to 120\nCinematic: Intro\nScene: levels/arena.scene"},
+        {{kind=.Clip,from=60,to=120},"levels/arena.scene","Intro","Range: ticks 60 to 120\nClip of: Intro\nScene: levels/arena.scene"},
     }
     for &c in others {
         base.text_set(c.range.path[:],c.path);base.text_set(c.range.name[:],c.name)

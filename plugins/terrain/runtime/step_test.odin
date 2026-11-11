@@ -27,7 +27,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
     id:=base.Asset_Id{93,94}
     testing.expect_value(t,source_save(&source,fmt.tprintf("%s/source.terrain",root),id,&types),asset.Error.None)
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root=root,window_desc={size={160,120}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)
@@ -57,25 +57,25 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
     view.fov=50*mm.RAD_PER_DEG
     owner:=core.create(&worlds[0].entities)
     core.add(&worlds[0].transforms,owner,core.TRANSFORM_IDENTITY)
-    core.add(&worlds[0].tints,owner,render.Tint{color={1,1,1,1},emission={3,3,3}})
+    core.add(&worlds[0].looks,owner,render.Material_Values{color={1,1,1,1},emission={3,3,3}})
     core.add(&worlds[0].terrains,owner,Terrain{source=id,revision=1})
     reference:[]u8;defer delete(reference)
     preview:base.Asset_Id
     scratch:Chunk_Mesh;chunk_mesh_init(&scratch);defer chunk_mesh_destroy(&scratch)
     for pass in 0..<6 {
         current:=0
-        if pass==2 || pass==4 {core.test_world_copy(&worlds[1].w,&worlds[0].w);current=1}
+        if pass==2 || pass==4 {test_world_copy(&worlds[1].w,&worlds[0].w);current=1}
         w:=&worlds[current]
         if pass==1 {
             duplicate:=core.create(&w.entities)
             transform:=core.TRANSFORM_IDENTITY;transform.position.x=72
             core.add(&w.transforms,duplicate,transform)
-            core.add(&w.tints,duplicate,render.Tint{color={0,1,0,1},emission={3,3,3}})
+            core.add(&w.looks,duplicate,render.Material_Values{color={0,1,0,1},emission={3,3,3}})
             core.add(&w.terrains,duplicate,Terrain{source=id,revision=1})
         }
-        core.test_world_settle(&w.w)
+        test_world_settle(&w.w)
         terrain_test_update(w,&resident,app)
-        core.hierarchy_settle(&hierarchies[current],core.read(&w.parents),&w.entities)
+        core.hierarchy_settle(&hierarchies[current],&w.parents,&w.entities)
         core.transforms_propagate(core.read(&w.transforms),core.ref(&hierarchies[current]),&poses[current],&propagations[current],&jumps,{})
         core.table_settle(&poses[current],&w.entities)
         testing.expect_value(t,len(w.chunks.values),pass==0?4:8)
@@ -85,7 +85,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
             testing.expect(t,chunk_build(&w.data.entries[0].source,{0,0,0},&scratch))
             for &position in scratch.geometry.positions {position.y+=0.2}
             made:bool
-            preview,made=chunk_publish(app.assets,.Heightfield,&scratch,false)
+            preview,made=chunk_publish(app.assets,&scratch,false)
             testing.expect(t,made)
         } else if preview!={} {testing.expect(t,host.assets_mesh_release(app.assets,preview));preview={}}
         for _ in 0..<3 {
@@ -94,8 +94,8 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
                 for marker,row in w.chunks.values {
                     if marker.coord!=([3]i32{}) {continue}
                     e:=w.chunks.entities[row]
-                    world,_:=core.get(core.read(&poses[current]),e)
-                    tint,_:=core.get(core.read(&w.tints),e)
+                    world,_:=core.get(&poses[current],e)
+                    tint,_:=core.get(&w.looks,e)
                     instance,usable:=render.mesh_instance(app.assets,{mesh=preview},mm.transform_matrix(world.transform),tint)
                     testing.expect(t,usable)
                     instance.object_id,instance.copy_owner,instance.copy_variant,instance.replace_source=u64(e),99,1,true
@@ -105,7 +105,8 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
             host.app_camera_set(app,host.camera_from_view(view),view.cut,view.carried)
             outlines:core.Table(render.Outline);defer core.table_destroy(&outlines)
             outline_styles:=render.OUTLINE_STYLES_DEFAULT
-            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},core.read(&poses[current]),core.read(&w.statics),core.read(&w.tints),core.read(&hidden),core.read(&elsewhere),core.read(&w.parents),{},core.read(&suns),core.read(&points),core.read(&spots),core.read(&rects),core.read(&emissions),core.read(&skies),core.read(&posts),{},core.read(&w.overrides),core.read(&highlights),core.read(&outlines),{&outline_styles},core.read(&offsets),core.read(&layers),{},{},{},{})
+            lives:core.Table(render.Material_Live);defer core.table_destroy(&lives)
+            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},&poses[current],&w.statics,&w.looks,&lives,&hidden,&elsewhere,&w.parents,{},&suns,&points,&spots,&rects,&emissions,&skies,&posts,{},&highlights,&outlines,{&outline_styles},&offsets,&layers,{},{},{},{},nil)
             host.app_frame_end(app)
         }
         if pass==4 {continue}
@@ -151,7 +152,7 @@ terrains_of_a_shared_source_keep_one_set_of_pieces_each_across_world_copies :: p
     duplicate:=core.NONE
     for pass in 0..<6 {
         current:=0
-        if pass==2 || pass==4 {core.test_world_copy(&worlds[1].w,&worlds[0].w);current=1}
+        if pass==2 || pass==4 {test_world_copy(&worlds[1].w,&worlds[0].w);current=1}
         w:=&worlds[current]
         if pass==1 {
             duplicate=core.create(&w.entities)
@@ -159,7 +160,7 @@ terrains_of_a_shared_source_keep_one_set_of_pieces_each_across_world_copies :: p
             core.add(&w.transforms,duplicate,transform)
             core.add(&w.terrains,duplicate,Terrain{source=id,revision=1})
         }
-        core.test_world_settle(&w.w)
+        test_world_settle(&w.w)
         terrain_test_update(w,&resident,&app)
         testing.expect_value(t,len(w.chunks.values),pass==0?4:8)
         testing.expect_value(t,len(resident.owners),pass==0?1:2)
@@ -193,7 +194,7 @@ restored_entity_handles_do_not_turn_authors_into_cached_terrain_chunks :: proc(t
     for index in 2..<4 {core.add(&w.ids,core.create(&w.entities),{value=base.Entity_Id(index)})}
     core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,owner,Terrain{source=id,revision=1})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     authors:core.Entities;core.entities_init(&authors);defer core.entities_destroy(&authors)
     core.entities_copy(&authors,&w.entities)
     terrain_test_update(&w,&resident,&app)
@@ -202,7 +203,7 @@ restored_entity_handles_do_not_turn_authors_into_cached_terrain_chunks :: proc(t
     epoch:=w.data.epoch
     core.entities_copy(&w.entities,&authors)
     core.table_clear(&w.chunks);core.table_clear(&w.parents);core.table_clear(&w.transforms)
-    core.table_clear(&w.statics);core.table_clear(&w.colliders);core.table_clear(&w.tints);core.table_clear(&w.overrides)
+    core.table_clear(&w.statics);core.table_clear(&w.colliders);core.table_clear(&w.looks)
     core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.statics,owner,render.Mesh_Renderer{})
     duplicate:=core.create(&w.entities)
@@ -212,7 +213,7 @@ restored_entity_handles_do_not_turn_authors_into_cached_terrain_chunks :: proc(t
     core.add(&w.transforms,duplicate,transform)
     core.add(&w.terrains,duplicate,Terrain{source=id,revision=1})
     if !keep_original {core.remove(&w.terrains,owner)}
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     terrain_test_update(&w,&resident,&app)
     testing.expect_value(t,w.data.epoch,epoch)
     testing.expect_value(t,len(w.chunks.values),keep_original?8:4)
@@ -220,17 +221,17 @@ restored_entity_handles_do_not_turn_authors_into_cached_terrain_chunks :: proc(t
     testing.expect_value(t,len(resident.sources),keep_original?2:1)
     testing.expect_value(t,resident.stats.built,u64(8))
     for author in ([2]core.Entity{owner,duplicate}) {
-        static,_:=core.get(core.read(&w.statics),author)
+        static,_:=core.get(&w.statics,author)
         testing.expect(t,core.alive(&w.entities,author),"retiring a cached owner does not destroy a new author that reused its chunk handle")
         testing.expect(t,static.mesh=={} && !core.has(&w.chunks,author),"an author keeps its recipe when a previous derived handle aliases it")
         count:=0
         for chunk,row in w.chunks.values {
             if chunk.owner!=author {continue}
             e:=w.chunks.entities[row]
-            parent,_:=core.get(core.read(&w.parents),e)
+            parent,_:=core.get(&w.parents,e)
             testing.expect(t,!core.has(&w.ids,e) && parent.entity==author)
             if chunk.coord==([3]i32{}) {
-                shown,_:=core.get(core.read(&w.statics),e)
+                shown,_:=core.get(&w.statics,e)
                 testing.expect_value(t,shown.mesh,resident_source_find(&resident,id,author).chunks[0].mesh)
             }
             count+=1
@@ -272,22 +273,22 @@ changing_the_source_retires_only_previous_chunks_before_publishing_the_new_shape
             core.add(&w.terrains,e,Terrain{source=ids[1],revision=1,solid=true})
         }
     }
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     terrain_test_update(&w,&resident,&app)
     if !testing.expect(t,len(w.chunks.values)==(preloaded?8:4) && len(resident.owners)==(preloaded?3:1)) {return}
     if preloaded {
         for e in shared {
-            marker,_:=core.get(core.read(&w.terrains),e)
+            marker,_:=core.get(&w.terrains,e)
             testing.expect(t,marker.revision==7,"cold load aligns all owners to the canonical file revision")
         }
     }
     previous:[4]core.Entity
     copy(previous[:],resident.owners[0].chunks)
     retired:[4]base.Asset_Id
-    bound,_:=core.get(core.read(&w.terrains),owner)
+    bound,_:=core.get(&w.terrains,owner)
     mine:=resident_source_find(&resident,bound.source,owner)
     for chunk,index in mine.chunks[:mine.quad.first[1]] {retired[index]=chunk.mesh}
-    core.get(&w.terrains,owner).source=ids[1]
+    core.edit(&w.terrains,owner).source=ids[1]
     terrain_test_update(&w,&resident,&app)
     for e in previous {testing.expect(t,!core.alive(&w.entities,e),"previous chunks retire before the new source publishes")}
     for id in retired {testing.expect(t,!host.assets_mesh_generated(&assets,id),"the unused source releases its immutable geometry")}
@@ -295,15 +296,15 @@ changing_the_source_retires_only_previous_chunks_before_publishing_the_new_shape
     // Each terrain has its own pieces.
     if !testing.expect(t,len(resident.owners)==(preloaded?3:1) && len(resident.sources)==(preloaded?3:1) && len(w.chunks.values)==(preloaded?6:2)) {return}
     for value in resident.owners {if value.entity==owner {copy(current[:],value.chunks)}}
-    marker,_:=core.get(core.read(&w.terrains),owner)
+    marker,_:=core.get(&w.terrains,owner)
     testing.expect(t,marker.revision==7,"binding another source does not retain the previous source revision")
-    static,_:=core.get(core.read(&w.statics),owner)
+    static,_:=core.get(&w.statics,owner)
     testing.expect(t,static.mesh=={} && !core.has(&w.chunks,owner))
     testing.expect_value(t,len(w.colliders.values),preloaded?6:2)
     for e in current {
-        chunk,_:=core.get(core.read(&w.chunks),e)
-        parent,_:=core.get(core.read(&w.parents),e)
-        shown,_:=core.get(core.read(&w.statics),e)
+        chunk,_:=core.get(&w.chunks,e)
+        parent,_:=core.get(&w.parents,e)
+        shown,_:=core.get(&w.statics,e)
         testing.expect(t,core.alive(&w.entities,e) && !core.has(&w.ids,e) && chunk.owner==owner && parent.entity==owner && host.assets_mesh_generated(&assets,shown.mesh))
     }
     built,structure,version,loads,markers_version:=resident.stats.built,assets.structure,w.statics.version,w.data.stats.loads,w.terrains.version
@@ -329,8 +330,9 @@ terrain_test_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alig
 
 // A world of terrains.
 @(private)
+@(test_world)
 Terrain_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using terrain:Test_Terrain,
 }
 
@@ -343,17 +345,17 @@ Terrain_Test_World :: struct {
 }
 
 @(private)
-terrain_test_world_init :: proc(t:^testing.T,w:^Terrain_Test_World) -> bool {return core.test_world_init(t,&w.w,test_types)}
+terrain_test_world_init :: proc(t:^testing.T,w:^Terrain_Test_World) -> bool {return test_world_init(t,&w.w)}
 
 @(private)
 terrain_test_world_free :: proc(w:^Terrain_Test_World) {
-    core.test_world_destroy(&w.w)
+    test_world_destroy(&w.w)
     phys.collider_meshes_destroy(&w.collision_meshes)
 }
 
 @(private)
-// Puts a source in the memory of the registry of the assets, unsaved, as the
-// editor writes it.
+// Puts a source in the memory of the registry of the assets, as the editor
+// holds it until its step is written.
 terrain_test_write :: proc(t:^testing.T,assets:^host.Assets,path:string,source:^Source,id:base.Asset_Id) {
     bytes,error:=source_bytes(source,id,&assets.types)
     defer delete(bytes)
@@ -362,7 +364,7 @@ terrain_test_write :: proc(t:^testing.T,assets:^host.Assets,path:string,source:^
 }
 
 terrain_test_tables :: proc(w:^Terrain_Test_World) -> Chunk_Tables {
-    return {core.commands_of(core.test_world_ref(&w.w)),&w.chunks,core.read(&w.transforms),core.read(&w.parents),core.read(&w.ids),&w.colliders,&w.statics,&w.tints,&w.overrides}
+    return {core.commands_of(test_world_ref(&w.w)),&w.chunks,core.read(&w.transforms),core.read(&w.parents),core.read(&w.ids),&w.colliders,&w.statics,&w.looks}
 }
 
 // A dig in the world edits the terrain it touches, in the space of its source;
@@ -370,8 +372,8 @@ terrain_test_tables :: proc(w:^Terrain_Test_World) -> Chunk_Tables {
 @(test)
 a_dig_finds_the_terrain_it_touches_and_reads_in_its_space :: proc(t:^testing.T) {
     w:Terrain_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     append(&w.data.entries,Data_Source{id={1,0}})
     testing.expect(t,source_make(&w.data.entries[0].source,.Heightfield,{33,1,33},1,32))
     near,far:=core.create(&w.entities),core.create(&w.entities)
@@ -379,8 +381,8 @@ a_dig_finds_the_terrain_it_touches_and_reads_in_its_space :: proc(t:^testing.T) 
         core.add(&w.terrains,e,Terrain{source={1,0},solid=true})
         core.add(&w.worlds,e,core.World_Transform{transform={position={f32(i)*500,0,0},rotation=1,scale=2}})
     }
-    core.test_world_settle(&w)
-    brush:=Brush{kind=.Raise,center={510,1,6},radius=4,amount=1,normal={0,1,0},rotation=1}
+    test_world_settle(&w)
+    brush:=Brush{kind=.Raise,center={510,1,6},radius=4,amount=1,rotation=1}
     resolved,ok:=edit_resolve(Edit_Request{brush=brush},&w.data,core.read(&w.terrains),core.read(&w.worlds))
     testing.expect(t,ok && resolved.owner==far)
     testing.expect_value(t,resolved.brush.center,[3]f32{5,0.5,3})
@@ -404,17 +406,17 @@ terrain_test_update :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app
 
 terrain_test_tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,time:core.Time={},view:=core.View{},settings:=TERRAIN_TEST_SETTINGS) {
     if w.settings=={} {w.settings={bodies=64,shapes=64,contacts=64,joints=1,characters=1,hulls=1,meshes=64,heightfields=64}}
-    test_step(&w.terrain,core.commands_of(core.test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view)
-    core.test_world_settle(&w.w)
+    test_step(&w.terrain,core.commands_of(test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view)
+    test_world_settle(&w.w)
     terrain_test_physics(w,app,time)
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
 }
 
 // The physics that follows terrain_update in a tick.
 terrain_test_physics :: proc(w:^Terrain_Test_World,app:^host.App,time:core.Time={}) {
     phys.physics_step(&w.state,core.ref(&w.settings),&w.requests,&w.events,&w.collision_meshes,app,time,
         core.read(&w.rigids),core.read(&w.colliders),core.read(&w.characters),core.read(&w.moves),&w.joints,
-        core.read(&w.statics),core.read(&w.parents),core.read(&w.names),&w.transforms,&w.bodies,core.read(&w.replicas),&w.character_states,&w.joint_states,{},nil,{},{},nil,nil,&w.problems,{},{},{},{},{},{})
+        core.read(&w.statics),core.read(&w.parents),core.read(&w.names),&w.transforms,&w.bodies,core.read(&w.replicas),&w.character_states,&w.joint_states,{},nil,{},{},nil,nil,&w.problems,{},{},{},{},{},{},{},{},{},{})
 }
 
 @(test)
@@ -440,7 +442,7 @@ terrain_copy_republishes_identical_chunks_without_losing_contacts_or_changing_re
     core.add(&w.transforms,ball,core.Transform{position={-0.25,0.49,-0.25},rotation=1,scale={1,1,1}})
     core.add(&w.rigids,ball,phys.RIGID_BODY_DYNAMIC)
     core.add(&w.colliders,ball,phys.collider_sphere(0.5))
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     tick:=core.Time{playing=true,dt=1.0/60}
     for _ in 0..<12 {terrain_test_update(w,&resident,&app,tick)}
     body:=phys.body_of({&w.state},ball)
@@ -450,7 +452,7 @@ terrain_copy_republishes_identical_chunks_without_losing_contacts_or_changing_re
     }
     testing.expect(t,info(w,body).contacts>0)
     cloned:=&worlds[1]
-    core.test_world_copy(&cloned.w,&w.w)
+    test_world_copy(&cloned.w,&w.w)
     hash:=phys.state_hash({&cloned.state})
     velocity:=info(cloned,body).linear
     terrain_test_update(cloned,&resident,&app)
@@ -490,10 +492,10 @@ terrain_runtime_publishes_only_dirty_chunks_and_copies_play_and_rollback_with_co
     owner:=core.create(&w.entities)
     core.add(&w.transforms,owner,core.Transform{position={10,4,20},rotation=1,scale={1,1,1}})
     core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     terrain_test_update(w,&resident,&app)
     if !testing.expectf(t,len(w.data.entries)>0,"source load failed: files %v, problems %v, root %s",assets.registry.files[:],core.problems_list(&w.problems),root) {return}
-    marker,_:=core.get(core.read(&w.terrains),owner)
+    marker,_:=core.get(&w.terrains,owner)
     testing.expect_value(t,marker.revision,u32(1))
     testing.expect_value(t,len(w.chunks.values),16)
     testing.expect_value(t,len(w.colliders.values),16)
@@ -520,13 +522,13 @@ terrain_runtime_publishes_only_dirty_chunks_and_copies_play_and_rollback_with_co
     testing.expect_value(t,w.statics.version,version);testing.expect_value(t,assets.structure,structure)
     testing.expect_value(t,resident.stats.built,built);testing.expect_value(t,w.data.stats.loads,u64(1))
     copy_world:=&worlds[1]
-    core.test_world_copy(&copy_world.w,&w.w)
+    test_world_copy(&copy_world.w,&w.w)
     dig(&copy_world.terrain_requests,{kind=.Raise,center={-6,0,-6},radius=0.4,amount=1},owner)
     terrain_test_update(copy_world,&resident,&app)
     testing.expect_value(t,source_value(&w.data.entries[0].source,{2,0,2}),f32(1))
     hit,hit_ok=phys.raycast({&copy_world.state},{4,20,14},{0,-1,0})
     testing.expect(t,hit_ok && abs(hit.point.y-6)<1e-4)
-    core.test_world_copy(&copy_world.w,&w.w)
+    test_world_copy(&copy_world.w,&w.w)
     terrain_test_update(copy_world,&resident,&app)
     hit,hit_ok=phys.raycast({&copy_world.state},{4,20,14},{0,-1,0})
     testing.expect(t,hit_ok && abs(hit.point.y-5)<1e-4)
@@ -537,7 +539,7 @@ terrain_runtime_publishes_only_dirty_chunks_and_copies_play_and_rollback_with_co
     testing.expect_value(t,copy_world.data.stats.saves,u64(1))
     testing.expect_value(t,w.problems.count+copy_world.problems.count,0)
     testing.expect_value(t,copy_world.problems.count,0)
-    core.remove(&copy_world.terrains,owner);core.test_world_settle(&copy_world.w)
+    core.remove(&copy_world.terrains,owner);test_world_settle(&copy_world.w)
     terrain_test_update(copy_world,&resident,&app)
     testing.expect_value(t,len(copy_world.chunks.values),0)
     testing.expect_value(t,len(copy_world.data.entries),0)
@@ -563,10 +565,11 @@ volume_runtime_keeps_empty_chunk_identity_and_updates_collision_when_material_ap
     owner:=core.create(&w.entities)
     core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-    core.test_world_settle(&w.w);terrain_test_update(&w,&resident,&app)
+    test_world_settle(&w.w);terrain_test_update(&w,&resident,&app)
     testing.expect_value(t,len(w.chunks.values),8)
     testing.expect_value(t,len(w.colliders.values),4)
-    identities:[8]core.Entity
+    // Its eight chunks, and the root over them.
+    identities:[9]core.Entity
     copy(identities[:],resident.owners[0].chunks)
     dig(&w.terrain_requests,{kind=.Add,center={0,3,0},radius=1.5,amount=1},owner)
     terrain_test_update(&w,&resident,&app)
@@ -575,7 +578,7 @@ volume_runtime_keeps_empty_chunk_identity_and_updates_collision_when_material_ap
     testing.expect(t,len(w.colliders.values)>4)
     for e,i in resident.owners[0].chunks {testing.expect_value(t,e,identities[i])}
     testing.expect_value(t,len(w.digs.digs.items),0)
-    dig(&w.terrain_requests,{kind=.Remove,center={0,0,0},radius=30,amount=1},owner)
+    dig(&w.terrain_requests,{kind=.Carve,center={0,0,0},radius=30,amount=1},owner)
     terrain_test_update(&w,&resident,&app)
     // What it took is published once: the box of the source and what Add gave it.
     testing.expect_value(t,len(w.digs.digs.items),1)
@@ -594,7 +597,7 @@ volume_runtime_keeps_empty_chunk_identity_and_updates_collision_when_material_ap
 }
 
 @(test)
-terrain_runtime_reads_unsaved_sources_and_follows_a_discard_without_reloading_each_frame :: proc(t:^testing.T) {
+terrain_runtime_reads_sources_the_registry_holds_and_follows_them_without_reloading_each_frame :: proc(t:^testing.T) {
     root:=base.test_folder(t,"terrain")
     source:Source;testing.expect(t,source_make(&source,.Heightfield,{9,1,9},1,4));defer source_destroy(&source)
     source.revision=1
@@ -610,12 +613,12 @@ terrain_runtime_reads_unsaved_sources_and_follows_a_discard_without_reloading_ea
     owner,added:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY);
     core.add(&w.terrains,owner,Terrain{source=id,revision=1,solid=true})
-    core.test_world_settle(&w.w);terrain_test_update(&w,&resident,&app)
+    test_world_settle(&w.w);terrain_test_update(&w,&resident,&app)
     testing.expect_value(t,w.data.stats.loads,u64(1))
     middle:=[3]int{4,0,4}
     source_set(&source,middle,3);source.revision=2
     terrain_test_write(t,&assets,"source.terrain",&source,id)
-    core.get(&w.terrains,owner).revision=2
+    core.edit(&w.terrains,owner).revision=2
     for _ in 0..<4 {terrain_test_update(&w,&resident,&app)}
     testing.expect_value(t,w.data.stats.loads,u64(2))
     testing.expect_value(t,source_value(&w.data.entries[0].source,middle),f32(3))
@@ -624,12 +627,12 @@ terrain_runtime_reads_unsaved_sources_and_follows_a_discard_without_reloading_ea
     testing.expect(t,!os.exists(fmt.tprintf("%s/terrain/new.terrain",root)))
     core.add(&w.transforms,added,core.TRANSFORM_IDENTITY);
     core.add(&w.terrains,added,Terrain{source=fresh,solid=true})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     for _ in 0..<4 {terrain_test_update(&w,&resident,&app)}
     testing.expect_value(t,w.data.stats.loads,u64(3))
     testing.expect_value(t,len(w.data.entries),2)
-    // Discard: the file on disk answers again, and the owners keep the
-    // revision of their history.
+    // The registry lets the file go: the disk answers again, and the owners
+    // keep the revision of their history.
     {dropped,_:=asset.registry_memory_drop(&assets.registry,"source.terrain");testing.expect(t,dropped)}
     for _ in 0..<4 {terrain_test_update(&w,&resident,&app)}
     testing.expect_value(t,w.data.stats.loads,u64(4))
@@ -637,7 +640,7 @@ terrain_runtime_reads_unsaved_sources_and_follows_a_discard_without_reloading_ea
     if !testing.expect(t,entry!=nil) {return}
     testing.expect_value(t,source_value(&entry.source,middle),f32(0))
     testing.expect_value(t,entry.source.revision,u32(1))
-    testing.expect_value(t,core.get(&w.terrains,owner).revision,u32(2))
+    testing.expect_value(t,core.at(&w.terrains,core.row_of(&w.terrains,owner)).revision,u32(2))
     testing.expect_value(t,w.problems.count,0)
 }
 
@@ -654,7 +657,7 @@ terrains_that_cannot_load_or_be_edited_report_their_entity_and_the_fix :: proc(t
     owner,stranger:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY);
     core.add(&w.terrains,owner,Terrain{source=missing,solid=true})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     dig(&w.terrain_requests,{kind=.Raise,center={0,0,0},radius=1,amount=1},stranger)
     dig(&w.terrain_requests,{kind=.Raise,center={0,0,0},radius=1,amount=1},owner)
     for _ in 0..<3 {terrain_test_update(&w,&resident,&app)}

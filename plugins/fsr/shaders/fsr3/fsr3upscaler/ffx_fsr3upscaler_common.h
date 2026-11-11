@@ -23,10 +23,7 @@
 #if !defined(FFX_FSR3UPSCALER_COMMON_H)
 #define FFX_FSR3UPSCALER_COMMON_H
 
-#if defined(FFX_GPU)
 #pragma warning(error   : 3206)  // treat vector truncation warnings as errors
-#pragma warning(disable : 3205)  // conversion from larger type to smaller
-#pragma warning(disable : 3571)  // in ffxPow(f, e), f could be negative
 
 FFX_STATIC const FfxFloat32 FSR3UPSCALER_FP16_MIN           = 6.10e-05f;
 FFX_STATIC const FfxFloat32 FSR3UPSCALER_FP16_MAX           = 65504.0f;
@@ -51,7 +48,6 @@ FFX_STATIC const FfxFloat32 fAccumulationMaxOnMotion        = 3.0f * fUpsampleLa
 #define SHADING_CHANGE_SET_SIZE 5
 FFX_STATIC const FfxInt32 iShadingChangeMipStart = 0;
 FFX_STATIC const FfxFloat32 fShadingChangeSamplePow = 1.0f / 1.0f;
-
 
 FFX_STATIC const FfxFloat32 fLockThreshold  = 1.0f;
 FFX_STATIC const FfxFloat32 fLockMax        = 2.0f;
@@ -339,13 +335,8 @@ FfxFloat32x3 GetViewSpacePositionInMeters(FfxInt32x2 iViewportPos, FfxInt32x2 iV
 
 FfxFloat32 GetMaxDistanceInMeters()
 {
-#if FFX_FSR3UPSCALER_OPTION_INVERTED_DEPTH
     return GetViewSpaceDepth(0.0f) * ViewSpaceToMetersFactor();
-#else
-    return GetViewSpaceDepth(1.0f) * ViewSpaceToMetersFactor();
-#endif
 }
-
 
 struct BilinearSamplingData
 {
@@ -397,7 +388,5 @@ FfxFloat32 PointToPlaneDistance(PlaneData plane, FfxFloat32x3 fPoint)
 {
     return abs(dot(plane.fNormal, fPoint) + plane.fDistanceFromOrigin);
 }
-
-#endif // #if defined(FFX_GPU)
 
 #endif //!defined(FFX_FSR3UPSCALER_COMMON_H)

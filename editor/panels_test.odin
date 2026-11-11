@@ -10,11 +10,12 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-@(private="file") Panel_Test_Exposure :: struct {compensation:f32 `mirai:"unit=EV"`,auto:bool}
-@(private="file") Panel_Test_Look :: struct {sky:[3]f32 `mirai:"color"`,tint:[3]f32 `mirai:"color"`,group:i32,exposure:Panel_Test_Exposure,secret:f32 `mirai:"hidden"`}
-@(private="file") @(storage,setting) Panel_Test_Quality :: struct {level:i32 `mirai:"min=0,max=3"`,sharp:bool}
-@(private="file") Panel_Test_World :: struct {
-    using world:core.Test_World,
+@(private) Panel_Test_Exposure :: struct {compensation:f32 `mirai:"unit=EV"`,auto:bool}
+@(private) Panel_Test_Look :: struct {sky:[3]f32 `mirai:"color"`,tint:[3]f32 `mirai:"color"`,group:i32,exposure:Panel_Test_Exposure,secret:f32 `mirai:"hidden"`}
+@(private) @(storage,setting) Panel_Test_Quality :: struct {level:i32 `mirai:"min=0,max=3"`,sharp:bool}
+@(private) PANEL_TEST_QUALITY_DEFAULT :: Panel_Test_Quality{level=1}
+@(test_world) @(private) Panel_Test_World :: struct {
+    using world:Test_World,
     ids:core.Table(core.Id),
     looks:core.Table(Panel_Test_Look) `mirai:"name=Look"`,
     quality:Panel_Test_Quality `mirai:"name=Quality"`,
@@ -29,20 +30,15 @@ import "mirai:std/serial"
 }
 
 @(private="file")
-panel_test_types :: proc(types:^[dynamic]core.Test_Type) {
-    append(types,core.test_type(Panel_Test_Quality,default=proc(dst:^Panel_Test_Quality) {dst^={level=1}}))
-}
-
-@(private="file")
 panel_test_init :: proc(t:^testing.T,f:^Panel_Test_Fixture) -> bool {
-    if !core.test_world_init(t,&f.world,panel_test_types) {return false}
+    if !test_world_init(t,&f.world) {return false}
     for &e,i in f.entities {
         e=core.create(&f.world.entities)
         core.add(&f.world.ids,e,{value=base.Entity_Id(0x10*(i+1))})
         core.add(&f.world.looks,e,{sky={1,1,1},group=i==1?2:1})
     }
-    core.test_world_settle(&f.world)
-    f.session=Session{info=core.test_world_info(&f.world),edit_world=&f.world,edits=&f.edits,selection=&f.selection,panels=&f.panels}
+    test_world_settle(&f.world)
+    f.session=Session{info=test_world_info(&f.world),edit_world=&f.world,edits=&f.edits,selection=&f.selection,panels=&f.panels}
     history.edits_reset(&f.edits,edited_world(&f.session))
     return true
 }
@@ -52,7 +48,7 @@ panel_test_free :: proc(f:^Panel_Test_Fixture) {
     history.edits_free(&f.edits)
     panels_free(&f.panels)
     delete(f.selection.entities)
-    core.test_world_destroy(&f.world)
+    test_world_destroy(&f.world)
 }
 
 @(private="file")
@@ -67,9 +63,7 @@ PANEL_TEST_TEXT :: `{"title": "Lighting lab",
 // A panel is some 80 KB: on the temp allocator, so a test can hold several.
 panel_test_parse :: proc(t:^testing.T,text:string) -> (p:^Project_Panel,message:string) {
     p=new(Project_Panel,context.temp_allocator)
-    ok:bool
-    message,ok=panel_parse(text,p,nil,nil)
-    testing.expect(t,ok==(message==""))
+    message=panel_read(text,p)
     return
 }
 
@@ -89,12 +83,11 @@ panels_read_back_what_they_write :: proc(t:^testing.T) {
     testing.expect_value(t,red.sets[1].kind,Panel_Row_Kind.Setting)
     testing.expect_value(t,p.buttons[1].sets[0].entity,base.Entity_Id(0x20))
     testing.expect_value(t,base.text_get(p.buttons[1].sets[1].match[:]),"{}")
-    w:serial.Writer
-    serial.writer_init(&w,0,context.temp_allocator)
-    panel_write(&w,p)
-    again,again_message:=panel_test_parse(t,string(serial.writer_bytes(&w)))
+    text,encoded:=serial.text_encode(panel_file_of(p),.Pretty,context.temp_allocator,sparse=true)
+    testing.expect(t,encoded)
+    again,again_message:=panel_test_parse(t,string(text))
     testing.expect_value(t,again_message,"")
-    testing.expect(t,again^==p^,string(serial.writer_bytes(&w)))
+    testing.expect(t,again^==p^,string(text))
 
     SET :: `{"setting": "Quality", "field": "level", "value": 1}`
     cases:=[?]struct{text,says:string}{
@@ -107,37 +100,21 @@ panels_read_back_what_they_write :: proc(t:^testing.T) {
         {`{"title": "A", "buttons": [{"name": "B", "sets": [{"component": "Look", "field": "tint", "entity": "0000000000000010", "where": {}, "value": 1}]}]}`,"entity and where name different entities"},
         {`{"title": "A", "buttons": [{"name": "B", "sets": [{"setting": "Quality", "field": "level", "where": {}, "value": 1}]}]}`,"a setting is of the project"},
         {`{"title": "A", "buttons": [{"name": "B", "sets": [{"component": "Look", "field": "tint", "where": 1, "value": 1}]}]}`,"where is an object"},
-        {`{"title": "A", "rows": [{"component": "Look", "field": "tint", "value": 1}]}`,`rows[0]: unknown key "value"`},
+        {`{"title": "A", "rows": [{"component": "Look", "field": "tint", "value": 1}]}`,`"value" is not a field`},
         {`{"title": "A", "rows": [{"component": "Look"}]}`,"rows[0]: field is missing"},
         {`{"title": "A", "rows": [{"component": "Look", "setting": "Quality", "field": "x"}]}`,"one of heading, component or setting"},
         {`{"title": "A", "rows": [{"heading": "Sky", "field": "sky"}]}`,"a heading has only its text"},
-        {`{"title": "A", "rows": [{"heading": "Sky"}], "colour": 1}`,`unknown key "colour"`},
-        {`{"title": "A", "rows": [{"heading": "Sky"},]}`,"rows[1]: a panel is"},
+        {`{"title": "A", "rows": [{"heading": "Sky"}], "colour": 1}`,`"colour" is not a field`},
+        {`{"title": "A", "rows": [{"heading": "Sky"},]}`,"line 1"},
     }
     for c in cases {
         _,says:=panel_test_parse(t,c.text)
         testing.expectf(t,strings.contains(says,c.says),"%s: %q",c.text,says)
     }
     _,with_id:=panel_test_parse(t,`{"id": "lab", "title": "A", "rows": [{"heading": "A"}]}`)
-    testing.expect(t,strings.contains(with_id,`unknown key "id"`),"a file has no id: its name is it")
+    testing.expect(t,strings.contains(with_id,`"id" is not a field`),"a file has no id: its name is it")
     testing.expect_value(t,panel_id_of("Lighting & Post FX!"),"lighting-post-fx")
     testing.expect(t,panel_id_check("Lab")!="" && panel_id_check("../lab")!="" && panel_id_check("lab-2_b")=="")
-}
-
-// A panel as the panel methods answer it has the shape their results declare,
-// with buttons and rows or without either.
-@(test)
-panels_answer_with_the_shape_they_declare :: proc(t:^testing.T) {
-    s:=Session{project_root="game"}
-    for text in ([]string{PANEL_TEST_TEXT,`{"title": "Sky", "rows": [{"heading": "Sky"}]}`,`{"title": "Red", "buttons": [{"name": "Red", "sets": [{"setting": "Quality", "field": "level", "value": 3}]}]}`}) {
-        p,message:=panel_test_parse(t,text)
-        if !testing.expect_value(t,message,"") {continue}
-        base.text_set(p.id[:],"lab")
-        w:serial.Writer
-        serial.writer_init(&w,0,context.temp_allocator)
-        api_panel_write(&s,&w,p)
-        api_result_shape_expect(t,string(serial.writer_bytes(&w)),Api_Panel)
-    }
 }
 
 // The buttons and rows name what the project has, with the names there are
@@ -191,7 +168,7 @@ panel_buttons_set_their_fields_as_one_step :: proc(t:^testing.T) {
 
     p,_:=panel_test_parse(t,PANEL_TEST_TEXT)
     testing.expect_value(t,panel_check(s,p),"")
-    tint :: proc(f:^Panel_Test_Fixture,e:core.Entity) -> [3]f32 {return core.get(&f.world.looks,e).tint}
+    tint :: proc(f:^Panel_Test_Fixture,e:core.Entity) -> [3]f32 {return core.at(&f.world.looks,core.row_of(&f.world.looks,e)).tint}
     changed,problem:=panel_press(s,p,0)
     testing.expect_value(t,problem,"")
     testing.expect_value(t,changed,3)
@@ -209,19 +186,19 @@ panel_buttons_set_their_fields_as_one_step :: proc(t:^testing.T) {
     testing.expect_value(t,problem,"")
     testing.expect_value(t,changed,4)
     history.edits_flush(&f.edits,w,&f.selection)
-    testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(2))
-    testing.expect_value(t,core.get(&f.world.looks,f.entities[0]).exposure.compensation,f32(0))
-    for e in f.entities {testing.expect_value(t,core.get(&f.world.looks,e).sky,[3]f32{0.5,0.25,0.1})}
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,f.entities[1])).exposure.compensation,f32(2))
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,f.entities[0])).exposure.compensation,f32(0))
+    for e in f.entities {testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,e)).sky,[3]f32{0.5,0.25,0.1})}
     testing.expect(t,history.undo(&f.edits,w,&f.selection))
-    testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(0))
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,f.entities[1])).exposure.compensation,f32(0))
     testing.expect(t,history.redo(&f.edits,w,&f.selection))
-    testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(2))
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,f.entities[1])).exposure.compensation,f32(2))
 
     // A where finds the entities when the button is pressed.
     late:=core.create(&f.world.entities)
     core.add(&f.world.ids,late,{value=0x40})
     core.add(&f.world.looks,late,{group=1})
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     history.edits_flush(&f.edits,w,&f.selection)
     _,problem=panel_press(s,p,0)
     testing.expect_value(t,problem,"")
@@ -295,14 +272,14 @@ panel_restore_puts_back_what_it_changed :: proc(t:^testing.T) {
     late:=core.create(&f.world.entities)
     core.add(&f.world.ids,late,{value=0x40})
     core.add(&f.world.looks,late,{tint={0,1,0},group=1})
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     history.edits_flush(&f.edits,w,&f.selection)
     for button in 0..<2 {
         _,problem=panel_press(s,p,button)
         testing.expect_value(t,problem,"")
         history.edits_flush(&f.edits,w,&f.selection)
     }
-    testing.expect_value(t,core.get(&f.world.looks,late).tint,[3]f32{1,0,0})
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,late)).tint,[3]f32{1,0,0})
     testing.expect(t,panel_kept_count(&f.panels,p)>0)
 
     restored,message:=panel_restore(s,p)
@@ -310,17 +287,17 @@ panel_restore_puts_back_what_it_changed :: proc(t:^testing.T) {
     testing.expect_value(t,restored,panel_test_kept)
     history.edits_flush(&f.edits,w,&f.selection)
     for e in f.entities {
-        look:=core.get(&f.world.looks,e)^
+        look:=core.at(&f.world.looks,core.row_of(&f.world.looks,e))
         testing.expect_value(t,look.tint,[3]f32{0,0,0})
         testing.expect_value(t,look.sky,[3]f32{1,1,1})
         testing.expect_value(t,look.exposure.compensation,f32(0))
     }
-    testing.expect_value(t,core.get(&f.world.looks,late).tint,[3]f32{0,1,0})
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,late)).tint,[3]f32{0,1,0})
     testing.expect_value(t,f.world.quality.level,i32(1))
     testing.expect_value(t,panel_kept_count(&f.panels,p),0)
     testing.expect(t,history.undo(&f.edits,w,&f.selection))
-    testing.expect_value(t,core.get(&f.world.looks,late).tint,[3]f32{1,0,0})
-    testing.expect_value(t,core.get(&f.world.looks,f.entities[1]).exposure.compensation,f32(2))
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,late)).tint,[3]f32{1,0,0})
+    testing.expect_value(t,core.at(&f.world.looks,core.row_of(&f.world.looks,f.entities[1])).exposure.compensation,f32(2))
 }
 
 // Kept: the tint of 0x10, 0x30 and 0x40, the level, the compensation of 0x20

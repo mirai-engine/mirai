@@ -8,11 +8,13 @@ import "mirai:host"
 
 // The shell of the game: main menu, pause and graphics settings, with mouse
 // and keyboard. assets/menu/shell.ui is one Modal screen with a page per
-// Shell_Page; Shell.page says which shows, and
-// shell_frame is the only code that changes it. Add a screen by adding a
-// member of Shell_Page and a page named like it there. The engine does the
-// rest: gui.menu_pressed is Escape or Start, UI_Screen.pause stops the clock
-// while the screen shows, and the mouse is free while a Modal is up.
+// Shell_Page; Shell.page says which shows. The buttons that go to a page
+// write it there themselves (they bind Shell.page and say the page in
+// choice), and shell_frame changes it for the Menu action and for what a
+// button does besides. Add a screen by adding a member of Shell_Page, a page
+// named like it there and a button that writes it. The engine does the rest:
+// gui.menu_pressed is Escape or Start, UI_Screen.pause stops the clock while
+// the screen shows, and the mouse is free while a Modal is up.
 //
 // Its settings page binds the fields of Graphics_Settings and Display_Settings
 // directly: its selectors write them and the engine keeps them. The preset
@@ -37,12 +39,9 @@ Shell :: struct {
     quality:render.Graphics_Quality, // what shell.ui shows: render.graphics_quality_of of the settings
 }
 
-// What shell.ui asked for in this frame.
+// What the buttons of shell.ui do besides changing the page.
 @(private="file")
 shell_events :: proc(events:^gui.UI_Events,screen:core.Entity,shell:^Shell,solo:bool,scenes:^scene.Scene_Requests,graphics:^render.Graphics_Settings,app:^host.App) {
-    if gui.clicked(events,screen,"menu_play") || gui.clicked(events,screen,"pause_resume") {shell.page=.Playing}
-    if gui.clicked(events,screen,"pause_settings") {shell.page=.Settings}
-    if gui.clicked(events,screen,"settings_back") {shell.page=.Pause}
     if gui.clicked(events,screen,"menu_exit") {host.app_exit(app,0)}
     if preset,changed:=gui.changed_value(events,screen,"settings_quality");changed {render.graphics_preset_apply(graphics,render.Graphics_Quality(int(preset)))}
     if gui.clicked(events,screen,"pause_quit") {
@@ -57,14 +56,14 @@ shell_events :: proc(events:^gui.UI_Events,screen:core.Entity,shell:^Shell,solo:
 // and the buttons reach. The screens follow the page.
 @(step="frame")
 shell_frame :: proc(
-    shell:^Shell,g:^gui.Gui,shell_screens:core.Read(Shell_Screen),ui_screens:^core.Table(gui.UI_Screen),huds:core.Read(Shell_Hud),
+    shell:^Shell,ui_events:core.Ref(gui.UI_Events),shell_screens:^core.Table(Shell_Screen,.Read),ui_screens:^core.Table(gui.UI_Screen),huds:^core.Table(Shell_Hud,.Read),
     network:core.Ref(core.Network),scenes:^scene.Scene_Requests,hidden:^core.Table(render.Hidden),graphics:^render.Graphics_Settings,app:^host.App,
 ) {
     solo:=network.role==.Standalone
     if !solo && shell.page==.Menu {shell.page=.Playing}
 
     screen,_:=core.sole(shell_screens)
-    events:=gui.events_this_frame(g)
+    events:=ui_events.ptr
     shell_events(events,screen,shell,solo,scenes,graphics,app)
     shell.quality=render.graphics_quality_of(graphics^)
 
@@ -78,7 +77,7 @@ shell_frame :: proc(
 
     // The world runs behind the main menu and stops under the pause and settings pages.
     frozen:=shell.page==.Pause || shell.page==.Settings
-    if value,found:=core.get(core.read(ui_screens),screen);found && value.pause!=frozen {core.get(ui_screens,screen).pause=frozen}
+    if value:=core.edit(ui_screens,screen);value!=nil {value.pause=frozen}
     render.set_hidden(hidden,screen,shell.page==.Playing)
     if hud,found:=core.sole(huds);found {render.set_hidden(hidden,hud,shell.page==.Menu)}
 }

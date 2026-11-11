@@ -12,7 +12,7 @@ import "mirai:rhi"
 @(test)
 debug_views_show_their_buffers_and_say_what_they_cannot_show :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.taa = false
+	settings.taa, settings.reflections = false, .Traced
 	f: Fixture
 	if !fixture_init(t, &f, 96, 96, settings) {return}
 	defer fixture_destroy(&f)
@@ -36,7 +36,7 @@ debug_views_show_their_buffers_and_say_what_they_cannot_show :: proc(t: ^testing
 	// Four lights over the left half, none over the right.
 	lights: [4]Light_Desc
 	for &light, i in lights {light = {position = {-2 + 0.3 * f32(i), 1.2, -0.5 + 0.3 * f32(i)}, color = {1, 1, 1}, intensity = 1 * math.PI, range = 2.5, radius = 0.05}}
-	scene_set(r, instances, lights[:], {direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}, {sky = {0.2, 0.3, 0.5}})
+	scene_given(r, instances, lights[:], {direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 1 * math.PI, enabled = true}, {sky = {0.2, 0.3, 0.5}})
 	camera := Camera{position = {0, 6, 0.001}, forward = {0, -6, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 3 {renderer_frame(r, {camera = camera})}
 	albedo := r.main.targets.albedo

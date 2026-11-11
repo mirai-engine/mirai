@@ -10,8 +10,8 @@ import "core:testing"
 @(test)
 the_author_program_is_told_the_project_and_the_engine_it_works_for :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
-    folder,rest,ok:=author_project_take({"write","source","--project","games/arena","hud.ui.json"})
-    testing.expect(t,ok && folder=="games/arena" && slice.equal(rest,[]string{"write","source","hud.ui.json"}))
+    folder,rest,ok:=author_project_take({"write","hud/hud.ui","--project","games/arena","hud.json"})
+    testing.expect(t,ok && folder=="games/arena" && slice.equal(rest,[]string{"write","hud/hud.ui","hud.json"}))
     folder,rest,ok=author_project_take({"check"})
     testing.expect(t,ok && folder=="." && slice.equal(rest,[]string{"check"}))
     _,_,ok=author_project_take({"check","--project"})
@@ -26,10 +26,10 @@ the_author_program_is_told_the_project_and_the_engine_it_works_for :: proc(t:^te
 a_command_that_reads_the_types_of_the_game_needs_its_library_current :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     testing.expect(t,!author_needs_library("ui",{"read","hud/hud.ui"}))
-    testing.expect(t,author_needs_library("ui",{"write","source"}) && author_needs_library("ui",{"check"}) && author_needs_library("scene",{"read","a.scene"}))
+    testing.expect(t,author_needs_library("ui",{"write","hud/hud.ui","hud.json"}) && author_needs_library("ui",{"check"}) && author_needs_library("scene",{"read","a.scene"}))
     testing.expect_value(t,author_library_problem(.Current,"/p",true),"")
     for state in ([]build.Target_State{.Missing,.Stale}) {
         problem:=author_library_problem(state,"/p",true)
-        testing.expect(t,strings.contains(problem,`mirai build editor "/p" --dev`),problem)
+        testing.expect(t,strings.contains(problem,`mirai build editor "/p"`),problem)
     }
 }

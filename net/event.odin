@@ -20,6 +20,7 @@ event_deliver :: proc(h:^Host,p:^Peer,channel:int,rd:^serial.Bit_Reader) -> Even
     r:=&h.back.repl
     id:=int(serial.bit_read(rd,16))
     object:=serial.bit_read(rd,64)
+    tick:=r.server?r.remote_tick:u32(serial.bit_read(rd,32))
     if rd.error || id>=len(r.protocol.events) {return .Bad}
     type:=&r.protocol.events[id]
     if (r.server && .From_Client not_in type.flags) || (.Reliable in type.flags)!=(channel==CHANNEL_SYSTEM) {return .Bad}
@@ -37,7 +38,7 @@ event_deliver :: proc(h:^Host,p:^Peer,channel:int,rd:^serial.Bit_Reader) -> Even
             if r.live[index]!=1 || u64(object_handle(r,index))!=object {return .Missing}
         }
     }
-    command:=command_push(h,{kind=.Event,event=Event_Id(id),object=Object(object),connection=handle,tick=r.remote_tick},nil,type.desc.words)
+    command:=command_push(h,{kind=.Event,event=Event_Id(id),object=Object(object),connection=handle,tick=tick},nil,type.desc.words)
     if command!=nil {copy(command.words,words)}
     return .Delivered
 }
@@ -99,7 +100,7 @@ event_pop :: proc(r:^Repl,out:[]u8) -> (time:f64,size:int) {
 events_flush :: proc(h:^Host,p:^Peer) {
     r:=&h.back.repl
     left:=r.events.used
-    buffer:[EVENT_MAX_BYTES+32]u8
+    buffer:[RELIABLE_EVENT_MAX_BYTES+32]u8
     for left>0 {
         time,size:=event_pop(r,buffer[:])
         left-=12+size
@@ -133,7 +134,11 @@ event_fanout :: proc(h:^Host,to,object:u64,sent:u8,data:[]u8) {
     if r.server && object!=0 && !about {return}
     for &p in h.back.peers {
         if p.state!=.Connected || (to!=0 && u64(peer_handle(h,&p))!=to) || r.server && p.repl.held && !held {continue}
-        if r.server && about && (p.repl.link[o]==.None || p.repl.link[o]>=.Pending_Destroy) {continue}
+        if r.server && about {
+            if p.repl.link[o]==.None || p.repl.link[o]>=.Pending_Destroy {continue}
+            p.repl.flags[o]|=LINK_TICK
+            if p.repl.link[o]==.Created {bitset_set(p.repl.work,o)}
+        }
         channel_queue(h,&p,reliable?CHANNEL_SYSTEM:CHANNEL_EVENTS,data)
     }
 }
@@ -142,7 +147,7 @@ event_fanout :: proc(h:^Host,to,object:u64,sent:u8,data:[]u8) {
 @(private)
 events_replay :: proc(h:^Host) {
     r:=&h.back.repl
-    buffer:[EVENT_MAX_BYTES+32]u8
+    buffer:[RELIABLE_EVENT_MAX_BYTES+32]u8
     for r.deferred.used>0 {
         header:[3]u64
         ring_read(&r.deferred,mem.slice_data_cast([]u8,header[:]))

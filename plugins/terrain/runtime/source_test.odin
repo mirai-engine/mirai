@@ -28,7 +28,6 @@ terrain_sources_save_load_and_clone_preserve_both_representations :: proc(t:^tes
         got,ok:=source_load(&loaded,path,&types)
         testing.expect(t,ok && got==id)
         testing.expect_value(t,loaded.info,original.info)
-        testing.expect_value(t,len(loaded.slots),0)
         for z in 0..<samples.z {for y in 0..<samples.y {for x in 0..<samples.x {testing.expect_value(t,source_value(&loaded,{x,y,z}),source_value(&original,{x,y,z}))}}}
         testing.expect(t,source_clone(&cloned,&loaded))
         testing.expect_value(t,cloned.layers[0].material,original.layers[0].material)
@@ -36,10 +35,10 @@ terrain_sources_save_load_and_clone_preserve_both_representations :: proc(t:^tes
         testing.expect_value(t,source_value(&loaded,at),f32(-0.75))
         testing.expect_value(t,source_value(&original,at),f32(-0.75))
         if kind==.Heightfield {
-            _,page_samples:=grid_page_extent(&loaded.heights,0)
-            testing.expect_value(t,grid_dense(&loaded.heights),page_samples)
-            testing.expect_value(t,raw_data(cloned.heights.pages[0].values)==raw_data(loaded.heights.pages[0].values),false)
-        } else {testing.expect_value(t,raw_data(cloned.distances.pages[0].values)==raw_data(loaded.distances.pages[0].values),false)}
+            _,page_samples:=grid_page_extent(&loaded.field,0)
+            testing.expect_value(t,grid_dense(&loaded.field),page_samples)
+            testing.expect_value(t,raw_data(cloned.field.pages[0].values)==raw_data(loaded.field.pages[0].values),false)
+        } else {testing.expect_value(t,raw_data(cloned.field.pages[0].values)==raw_data(loaded.field.pages[0].values),false)}
     }
 }
 
@@ -48,7 +47,9 @@ terrain_sources_reject_invalid_dimensions_values_and_unavailable_memory :: proc(
     source:Source;defer source_destroy(&source)
     testing.expect(t,!source_make(&source,.Heightfield,{5,2,5},1,4))
     testing.expect(t,!source_make(&source,.Volume,{5,1,5},1,4))
-    testing.expect(t,!source_make(&source,.Volume,{130,5,5},1,4))
+    // A Volume reaches as far as a Heightfield; past its chunks it takes more cells in each.
+    testing.expect(t,!source_make(&source,.Volume,{SAMPLES_MAX+1,5,5},1,4))
+    testing.expect(t,!source_make(&source,.Volume,{4097,4097,4097},1,4) && source_valid({kind=.Volume,samples={4097,4097,4097},cell=1,chunk_cells=256,layer_count=1,layers={0=LAYER_DEFAULT}}))
     testing.expect(t,!source_make(&source,.Heightfield,{5,1,5},0,4))
     testing.expect(t,!source_make(&source,.Heightfield,{5,1,5},1,3))
     testing.expect(t,!source_make(&source,.Heightfield,{5,1,5},1,4,runtime.nil_allocator()))
@@ -56,11 +57,11 @@ terrain_sources_reject_invalid_dimensions_values_and_unavailable_memory :: proc(
     testing.expect(t,source_value(&source,{1,1,1})<0)
     source_destroy(&source)
     testing.expect(t,source_make(&source,.Heightfield,{5,1,5},1,4))
-    source.heights.pages[0].fill=f32(0h7fc00000)
+    source.field.pages[0].fill=f32(0h7fc00000)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     path:=fmt.tprintf("%s/invalid.terrain",base.test_folder(t,"terrain"))
     testing.expect_value(t,source_save(&source,path,{1,2},&types),asset.Error.Invalid)
-    source.heights.pages[0].fill=0
+    source.field.pages[0].fill=0
     testing.expect(t,source_set(&source,{0,0,0},HEIGHT_LIMIT+1))
     testing.expect_value(t,source_save(&source,path,{1,2},&types),asset.Error.Invalid)
 }
@@ -118,17 +119,13 @@ chunk_collision_masks_remove_flat_seams_and_preserve_convex_crests_and_source_bo
 
 @(test)
 chunk_visual_build_preserves_geometry_and_reuses_collision_buffers_for_all_sources :: proc(t:^testing.T) {
-    height,volume,mesh_source:Source
-    defer source_destroy(&height);defer source_destroy(&volume);defer source_destroy(&mesh_source)
+    height,volume:Source
+    defer source_destroy(&height);defer source_destroy(&volume)
     if !testing.expect(t,source_make(&height,.Heightfield,{9,1,9},1,4)) {return}
     source_set(&height,{3,0,3},0.75)
     if !testing.expect(t,source_make(&volume,.Volume,{9,9,9},1,4)) {return}
-    if !testing.expect(t,source_convert_heightfield(&mesh_source,&height,4)) {return}
-    mesh_source.layers[0].material={7,8}
-    mesh_source.mesh_chunks[0].geometry.colors[0]={0.1,0.2,0.3,1}
-    mesh_source.mesh_chunks[0].geometry.uvs[0]={0.25,0.75}
     reused:Chunk_Mesh;chunk_mesh_init(&reused);defer chunk_mesh_destroy(&reused)
-    for source in ([3]^Source{&height,&volume,&mesh_source}) {
+    for source in ([2]^Source{&height,&volume}) {
         expected:Chunk_Mesh;chunk_mesh_init(&expected);defer chunk_mesh_destroy(&expected)
         if !testing.expect(t,chunk_build(source,{0,0,0},&expected)) {return}
         testing.expect(t,len(expected.geometry.indices)>0)
@@ -144,9 +141,6 @@ chunk_visual_build_preserves_geometry_and_reuses_collision_buffers_for_all_sourc
             testing.expect(t,slice.equal(a.materials[:],b.materials[:]))
             if testing.expect_value(t,len(reused.uv1s),len(expected.uv1s)) {
                 for uv,i in expected.uv1s {testing.expect_value(t,reused.uv1s[i],uv)}
-            }
-            if testing.expect_value(t,len(reused.materials),len(expected.materials)) {
-                for material,i in expected.materials {testing.expect_value(t,reused.materials[i],material)}
             }
             if collision {
                 if testing.expect_value(t,len(reused.disabled_edges),len(expected.disabled_edges)) {
@@ -202,16 +196,16 @@ terrain_brushes_mark_only_touched_chunks_including_border_normals :: proc(t:^tes
     for z in 0..<4 {for x in 0..<4 {if chunk_touched(&source,{i32(x),0,i32(z)},change) {count+=1}}}
     testing.expect_value(t,count,4)
     testing.expect(t,source_edit(&source,{kind=.Smooth,center={0,50,0},radius=0.4,amount=1}).changed)
-    held:=raw_data(source.heights.pages[0].values)
+    held:=raw_data(source.field.pages[0].values)
     scratch:=raw_data(source.scratch)
     source.allocator=runtime.nil_allocator()
     testing.expect(t,source_edit(&source,{kind=.Lower,center={0,50,0},radius=0.4,amount=0.5}).changed)
     testing.expect(t,source_edit(&source,{kind=.Smooth,center={0,50,0},radius=0.4,amount=1}).changed)
     source.allocator=context.allocator
     testing.expect_value(t,source_value(&source,{32,0,32}),f32(0))
-    testing.expect_value(t,raw_data(source.heights.pages[0].values),held);testing.expect_value(t,raw_data(source.scratch),scratch)
-    _,page_samples:=grid_page_extent(&source.heights,0)
-    testing.expect_value(t,grid_dense(&source.heights),page_samples)
+    testing.expect_value(t,raw_data(source.field.pages[0].values),held);testing.expect_value(t,raw_data(source.scratch),scratch)
+    _,page_samples:=grid_page_extent(&source.field,0)
+    testing.expect_value(t,grid_dense(&source.field),page_samples)
     source.allocator=runtime.nil_allocator()
     testing.expect_value(t,source_edit(&source,{kind=.Raise,center={32,0,32},radius=0.4,amount=1}).error,Edit_Error.Out_Of_Memory)
     source.allocator=context.allocator
@@ -223,7 +217,7 @@ volume_removal_creates_a_cavity_with_a_roof_and_addition_refills_it :: proc(t:^t
     source:Source;testing.expect(t,source_make(&source,.Volume,{17,17,17},1,8));defer source_destroy(&source)
     center:=[3]f32{0,-3,0}
     testing.expect(t,source_density(&source,center)<0)
-    testing.expect(t,source_edit(&source,{kind=.Remove,center=center,radius=1.5,amount=1}).changed)
+    testing.expect(t,source_edit(&source,{kind=.Carve,center=center,radius=1.5,amount=1}).changed)
     testing.expect(t,source_density(&source,center)>0)
     for direction in ([2][3]f32{{0,1,0},{0,-1,0}}) {
         point,normal,ok:=source_ray(&source,center,direction)
@@ -249,15 +243,11 @@ volume_removal_creates_a_cavity_with_a_roof_and_addition_refills_it :: proc(t:^t
 }
 
 @(test)
-volume_picking_hits_the_tetra_surface_and_reuses_its_cell_buffer :: proc(t:^testing.T) {
+volume_picking_hits_the_tetra_surface :: proc(t:^testing.T) {
     source:Source;testing.expect(t,source_make(&source,.Volume,{3,3,3},1,4));defer source_destroy(&source)
-    testing.expect(t,grid_init(&source.distances,source.distances.size,1,source.allocator))
+    testing.expect(t,grid_init(&source.field,source.field.size,1,source.allocator))
     testing.expect(t,source_set(&source,{0,0,0},-1))
-    held:=raw_data(source.ray_mesh.positions)
-    allocator:=source.ray_mesh.positions.allocator
-    source.ray_mesh.positions.allocator=runtime.nil_allocator()
-    source.ray_mesh.normals.allocator=runtime.nil_allocator()
-    source.ray_mesh.indices.allocator=runtime.nil_allocator()
+    context.allocator=runtime.nil_allocator()
     for _ in 0..<4 {
         hit,normal,ok:=source_ray(&source,{-1,-1,-1},{1,1,1})
         testing.expect(t,ok)
@@ -265,8 +255,6 @@ volume_picking_hits_the_tetra_surface_and_reuses_its_cell_buffer :: proc(t:^test
         testing.expect(t,normal.x+normal.y+normal.z>0)
         testing.expectf(t,source_density(&source,hit)>0.7,"the trilinear field intentionally differs from the tetra surface")
     }
-    source.ray_mesh.positions.allocator=allocator;source.ray_mesh.normals.allocator=allocator;source.ray_mesh.indices.allocator=allocator
-    testing.expect_value(t,raw_data(source.ray_mesh.positions),held)
 }
 
 @(test)
@@ -276,7 +264,7 @@ published_chunks_keep_heightfield_geometry_uv_channels_and_immutable_lifetimes :
     source_set(&source,{5,0,4},3)
     mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
     testing.expect(t,chunk_build(&source,{1,0,1},&mesh))
-    id,ok:=chunk_publish(&assets,source.kind,&mesh);testing.expect(t,ok)
+    id,ok:=chunk_publish(&assets,&mesh);testing.expect(t,ok)
     field,found:=host.assets_heightfield(&assets,id);testing.expect(t,found)
     testing.expect_value(t,field.origin,[3]f32{0,0,0})
     testing.expect_value(t,field.cell,[3]f32{2,1,2})
@@ -284,7 +272,7 @@ published_chunks_keep_heightfield_geometry_uv_channels_and_immutable_lifetimes :
     testing.expect_value(t,field.heights[1],f32(3))
     source_set(&source,{5,0,4},10)
     testing.expect(t,chunk_build(&source,{1,0,1},&mesh))
-    next,added:=chunk_publish(&assets,source.kind,&mesh);testing.expect(t,added && next!=id)
+    next,added:=chunk_publish(&assets,&mesh);testing.expect(t,added && next!=id)
     testing.expect_value(t,field.heights[1],f32(3))
     testing.expect(t,host.assets_mesh_release(&assets,id))
     _,found=host.assets_heightfield(&assets,id);testing.expect(t,!found)
@@ -297,7 +285,6 @@ published_chunks_keep_heightfield_geometry_uv_channels_and_immutable_lifetimes :
 // each other and with the source.
 chunk_in_terrain :: proc(mesh:^Chunk_Mesh) {
     for &p in mesh.geometry.positions {p+=mesh.origin}
-    for &p in mesh.collision.positions {p+=mesh.origin}
 }
 
 // A chunk far from the centre of a terrain of kilometres is in its own space:

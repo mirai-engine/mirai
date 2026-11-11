@@ -1,8 +1,9 @@
 ---
 name: mirai-std
 description: Mirai standard library for games, with the packages `std/base`, `std/jobs`, `std/math`,
-  `std/anim` (clips, poses, motion matching, inertialization, IK), `std/ai` (A*, tiled navmesh, flow
-  fields, steering, utility), `std/input`, `std/geom`, `std/spatial` and `std/subprocess`. Use when
+  `std/anim` (clips, poses, motion matching, inertialization, IK), `std/ai` (A*, tiled navmesh,
+  avoidance, minds, considerations), `std/input`, `std/geom`, `std/spatial` and `std/subprocess`.
+  Use when
   changing, extending or consuming any of those packages; enemies and NPCs that decide are in
   `mirai-world`.
 ---
@@ -18,10 +19,11 @@ description: Mirai standard library for games, with the packages `std/base`, `st
   [hashing, identities and randomness](references/base.md#hashing-identities-and-randomness),
   [radix sort](references/base.md#radix-sort-sortodin) and
   [profile zones](references/base.md#profile-zones-profileodin).
-- Work-stealing scheduler, `parallel_for` and task graphs (a loop function spreads its work with
+- Work-stealing scheduler and `parallel_for` (a loop function spreads its work with
   them): [workers](references/jobs.md#workers),
   [tasks and counters](references/jobs.md#tasks-and-counters),
-  [parallel_for](references/jobs.md#parallel_for), [task graphs](references/jobs.md#task-graphs),
+  [frame and background classes](references/jobs.md#classes),
+  [parallel_for](references/jobs.md#parallel_for),
   [temporary memory](references/jobs.md#temporary-memory) and
   [without threads](references/jobs.md#without-threads).
 - Transforms and TRS composition, Euler, cameras, shapes and intersections, scalars, easing, curves,
@@ -34,9 +36,9 @@ description: Mirai standard library for games, with the packages `std/base`, `st
   [easing and curves](references/math.md#easing-and-curves-easeodin-curveodin),
   [random and noise](references/math.md#random-and-noise-randomodin-noiseodin) and
   [color](references/math.md#color-and-quantization-colorodin-quantizeodin).
-- Tweens, clips, additive blend spaces, poses, blending, IK and retarget:
-  [tweens](references/anim.md#tweens-tweenodin-loopodin),
-  [clips](references/anim.md#tracks-keys-and-clips-trackodin-clipodin),
+- Keys, clips, additive blend spaces, poses, blending, IK and retarget:
+  [loops](references/anim.md#loops-loopodin),
+  [keys and clips](references/anim.md#tracks-keys-and-clips-trackodin-clipodin),
   [playback](references/anim.md#playback-and-events-playerodin),
   [blending](references/anim.md#blending-poseodin),
   [blend spaces](references/anim.md#blend-spaces-blend_spaceodin),
@@ -61,13 +63,12 @@ description: Mirai standard library for games, with the packages `std/base`, `st
     [body](references/anim-body.md#body-map-bodyodin),
     [metrics](references/anim-body.md#metrics-metricsodin) and
     [editing verbs](references/anim-body.md#editing-verbs-editodin-edit_bodyodin).
-- A*, grids, flow fields, steering and utility: [A*](references/ai.md#a-search-searchodin),
-  [grid](references/ai.md#grid-and-flow-fields-gridodin-flowfieldodin),
-  [flow fields](references/ai.md#flow-fields-flowfieldodin),
-  [steering](references/ai.md#steering-steeringodin) and
-  [utility](references/ai.md#utility-utilityodin).
-  - Tiled navmesh, queries, corridor and jump and drop links:
-    [navigation](references/ai.md#navigation); its construction from triangles:
+- A*, stepping aside and scoring: [A*](references/ai.md#a-search-searchodin),
+  [avoidance](references/ai.md#avoidance-between-agents-avoidanceodin) (ORCA among agents and
+  walls) and [considerations](references/ai.md#considerations-considerationodin).
+  - Tiled navmesh, queries, one search for many who go to one end, corridor and jump and drop
+    links: [navigation](references/ai.md#navigation); its construction from triangles, and again
+    from the field a build kept:
     [tiles](references/ai.md#tile-building-nav_buildodin); the volume for what flies or
     swims: [sparse octree](references/ai.md#volume-nav_volumeodin); how the regions of a mesh are
     joined: [coarse graph](references/ai.md#coarse-graph-nav_coarseodin).
@@ -106,7 +107,8 @@ description: Mirai standard library for games, with the packages `std/base`, `st
   [std/serial](../mirai-assets/references/serial.md#stdserial).
 - What the structure of a `.ui` is judged by (`std/ui_format`):
   [interface](../mirai-assets/references/kinds.md#interface).
-- Child processes without console windows: [API](references/subprocess.md#api) and
+- Child processes, their tree, their pipes read every frame and their console windows:
+  [API](references/subprocess.md#api), [tree](references/subprocess.md#tree) and
   [Windows](references/subprocess.md#windows).
 
 ## Workflow
@@ -146,12 +148,15 @@ description: Mirai standard library for games, with the packages `std/base`, `st
   what the agent knows lives in its components, and the scenario is used through smart objects and
   influence maps in `behavior`.
 - In `anim`, `ai` and `input`:
-  - The shared definitions (`Library`, `Match_Database`, `Utility`, `Navmesh`, `Input`) are created
+  - The shared definitions (`Library`, `Match_Database`, `Nav_Mesh`, `Input`) are created
     with fixed capacities and do not change when used.
   - The state of what is played or decided (`Player`, `Fader`, `Inertial_State`, `Mind`,
     `Action_State`) is plain, without pointers or slices, and is copied for snapshots.
 - Containers and allocators are not safe across threads, except `Spsc_Queue` (one producer and one
   consumer) and the profile zones (one ring per thread).
+- A job that a frame does not wait for (loads, bakes, builds, disk writes) is `.Background`; a
+  thread waiting for frame work never runs one, so it never becomes a frame hitch
+  ([classes](references/jobs.md#classes)).
 - `Handle(0)` is null. A released handle never becomes valid again, not even after
   `handle_pool_clear`.
 - The `std/math` package is declared `mirai_math` because Odin requires unique package names and

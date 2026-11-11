@@ -2,12 +2,12 @@ package editor
 
 import "core:fmt"
 import "core:log"
-import "core:math/linalg"
 import "core:os"
 import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/history"
 import eaudio "mirai:engine/audio"
@@ -19,7 +19,6 @@ import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
-import mm "mirai:std/math"
 import "mirai:std/subprocess"
 import "mirai:ui"
 
@@ -52,12 +51,7 @@ Mode :: enum u8 {Edit,Play,Paused,Simulate,Simulation_Paused,Watch}
 
 Request :: enum u8 {
     Play,    // copy the edited World and run its game loop
-    Simulate,
-    Apply_Simulation,
-    Recover,Discard_Recovery,
     Stop,    // discard the World of the Play
-    Pause,
-    Resume,
     Resume_Here, // from the frame the history went back to, dropping what came after it
     New,     // an empty scene, without asking
     Open,    // Session.open_path, without asking
@@ -65,14 +59,9 @@ Request :: enum u8 {
     Quit,    // ends without asking
     Document_Switch,
     Document_Close,
-    Document_Discard,
     Asset_Switch,  // Session.asset_request comes to the front; -1: the scene
-    Asset_Close,   // Session.asset_request closes, asking about its asset
-    Asset_Discard, // Session.asset_request closes without asking
+    Asset_Close,   // Session.asset_request closes
     Quit_Check,
-    Camera_Preview, // preview Camera_Preview_Run.request
-    Camera_Keep,    // end previewing, keeping what the cameras became
-    Camera_Discard, // end previewing without it
 }
 Requests :: bit_set[Request;u64]
 
@@ -110,7 +99,7 @@ USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] [--hidd
   --api-port    port of the agent API (JSON-RPC and MCP); 7940 if missing, or a free one when it is taken; 0: a free one, never 7940
   --no-api      without the agent API
   --share       shares the scene with other editors; port 7950 if missing. Prints the invitation code
-  --join        joins the session of another editor with the code of its invitation (K7Q2-9XMA-PL3F-0B2C)
+  --join        joins the session of another editor with the code of its invitation (R2M0-253B-DK5G-0W87-M0MA-3CP3-TKJZ-C1RR-EJT)
   --name        name in the shared session
   --project     project folder; the current one if missing
   --scene       scene to open: a file or a path relative to the assets folder
@@ -126,13 +115,11 @@ USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] [--hidd
 // The arguments the editor was started with.
 Options :: struct {
     project,scene,engine,capture:string,
-    restore:string,  // a scene file the restart left: loaded instead of scene, which stays the path of the document
-    documents:string,
+    documents:string, // the tabs a restart left (documents_restore)
     gpu_lost:string, // what stopped the GPU of the editor whose restart this is
     built:bool,      // a Build of the editor whose restart this is succeeded: its library is the one loaded
     view:string,     // the camera: "x,y,z,yaw,pitch,distance"
     select:string,   // Ids of the entities selected, in hexadecimal, separated by commas
-    dirty:bool,      // the restored scene had unsaved changes
     frames,width,height:int,
     density:f32,     // headless: pixels per point; 0: 1
     headless,no_gpu,validation,hidden:bool,
@@ -157,10 +144,13 @@ Session :: struct {
     info:^core.World_Info,
     libraries:[dynamic]host.Project_Library, // loaded by Builds after the first: they stay until the editor ends
     library_generation:int,
-    cards:[CARD_CAPACITY]Card,                   // of cards(): the presets and those of the plugins of the library in use
+    cards:[CARD_CAPACITY]Card,                   // of cards(): those of the editor and of the plugins of the library in use
     card_tables:[CARD_CAPACITY]^core.Table_Info, // of the component each one is the icon of
     card_count:int,
+    cards_editor:int,                            // the first card of a plugin
     cards_library:int,                           // library_generation+1 of the cards held
+    recipes:[]author.Recipe,
+    recipes_library:int,                         // library_generation+1 of the recipes held
     providers:Providers,                         // of the plugins of the library in use
     edit_world:rawptr,   // the World being edited
     runs:[EDITOR_RUNS]Run,
@@ -170,7 +160,7 @@ Session :: struct {
     watch:Watch,
     edit_orbit:Orbit,
     edit_selection:history.Selection, // that of the document while the editor shows a game
-    recovery:Recovery,
+    flush:Files_Flush,
     events:platform.Crash_Events, // what the crash report names before a fault (events.odin)
     events_turns:u64,             // the turns of the history whose steps were noted
     editor_world:rawptr,
@@ -185,7 +175,8 @@ Session :: struct {
     project_root:string, // absolute, with forward slashes
     engine_root:string,  // empty when unknown: Build cannot run
     program:string,      // the executable it started from, as named then, with forward slashes: a build that moves the running binaries aside (build.engine_unlock) leaves the new ones there
-    engine_stamp:string, // of the binaries it started from (build.engine_stamp_of): a build of the engine afterwards changes the one beside them
+    engine_stamp:string, // of the binaries of the engine it runs (build.engine_stamp_of): a build of the engine afterwards changes the one beside them
+    library_stamp:string, // of the library of the project it loaded last (build.target_stamp_of)
     assets_root:string,
     has_project:bool,    // the folder has a project.mirai
     settings_unsaved:bool, // a setting changed that the file of its layer does not have yet
@@ -202,6 +193,9 @@ Session :: struct {
     gpu_failure:Gpu_Failure_Reaction, // what the editor did once its GPU stopped working (gpu_failure.odin)
     open_path:[1024]u8,open_length:int,
     open_confirmed:bool, // the scene of open_path replaces the open one: the question was answered
+    new_prefab:bool,     // what New makes: a prefab, or a scene
+    new_path:[DOCUMENT_PATH_BYTES]u8, // the file New was given
+    new_length:int,
     frame:u64,
     quit:bool,
     frames:int,          // frames to run before it ends; 0: until it is asked to
@@ -229,7 +223,6 @@ Session :: struct {
     gui:^Editor_Ui,
     console:^Console,
     build:^Build_State,
-    picker:^Picker,
     outliner:^Outliner,
     inspector:^Inspector,
     content:^Content,
@@ -250,6 +243,7 @@ Session :: struct {
     panels:^Project_Panels,
     git:^Git,
     projects:^Projects,
+    api:^Api,
     profiles:Profiles,
 }
 
@@ -293,7 +287,7 @@ run_player :: proc "contextless" (s:^Session,owner,player:int) -> ^Run {
 }
 
 // What a new run asks of its world before its first tick: how many players
-// sit at it (0: what the scene says).
+// sit at it.
 run_configure :: proc(s:^Session,r:^Run,players:int) {
     if run:=core.world_storage_of(run_ref(s,r),input.Run_Players);run!=nil {run.count=players}
 }
@@ -337,8 +331,7 @@ notify :: proc(s:^Session,text:string) {
 // What the editor is doing, for whoever drives it: an agent, a test.
 Status :: struct {
     mode:Mode,
-    document:string,  // path of the scene; empty for one never saved
-    dirty:bool,
+    document:string,  // path of the scene; empty before it has a file
     entities:int,     // alive in the World shown
     selected:int,
     active:core.Entity,
@@ -352,7 +345,6 @@ Status :: struct {
 status :: proc(s:^Session) -> (st:Status) {
     st.mode=s.mode
     st.document=document_path(s.document)
-    st.dirty=document_dirty(s)
     st.entities=core.world_entities(shown_world(s)).alive
     st.selected=len(s.selection.entities)
     st.active=history.selection_active(s.selection)
@@ -369,21 +361,21 @@ capture :: proc(s:^Session,path:string) -> bool {return host.app_capture(s.app,p
 
 // The main of the editor of a project: open, a frame after another until
 // it ends, close.
-run :: proc(info:^core.World_Info,args:[]string) -> int {
+run :: proc(info:^core.World_Info,args:[]string,frame:proc(s:^Session) -> bool) -> int {
     s,code:=open(info,args)
     if s==nil {return code}
     previous:=context.logger
     context.logger=console_logger(s.console,previous)
     gpu_failure_notify(s)
-    for advance(s) {}
+    for frame(s) {}
     context.logger=previous
-    next:os.Process
+    next:subprocess.Process
     starts:=s.projects!=nil && s.projects.starts
     if starts {next=s.projects.started}
     code=close(s)
     // The editor it started writes to the same terminal: mirai edit ends with it.
     if starts {
-        if state,error:=os.process_wait(next);error==nil {code=state.exit_code}
+        if state,error:=subprocess.wait(&next);error==nil {code=state.exit_code}
     }
     return code
 }
@@ -422,7 +414,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
         window_desc=window,vsync=windowed,fixed_dt=windowed?0:HEADLESS_DT,
         // Without a window the mixer plays to nowhere, in real time: what play.record mixes is there.
         audio=windowed || !options.no_gpu?.Device:.None,audio_driver=windowed?"":"dummy",
-        assets_root=os.is_dir(assets)?assets:"",assets_cache=project.cache_path(root,project.REGISTRY_CACHE,allocator=context.temp_allocator),
+        assets_root=os.is_dir(assets)?assets:"",assets_imported=project.imported_path(root,context.temp_allocator),assets_cache=project.cache_path(root,project.REGISTRY_CACHE,allocator=context.temp_allocator),
         animation_cache=project.cache_path(root,project.ANIMATION_CACHE,allocator=context.temp_allocator),
         asset_mounts=mounts[:],shaders_root=root,
     })
@@ -445,6 +437,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     program,_:=os.get_executable_path(context.temp_allocator)
     s.program,_=strings.replace_all(program,"\\","/")
     s.engine_stamp=engine_stamp_here(s)
+    s.library_stamp=library_stamp_here(s)
     s.assets_root=strings.clone(assets)
     s.has_project=has_project
     if has_project {s.build.sources=code_fingerprint(root)}
@@ -463,15 +456,10 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
 
     if options.view!="" {view_parse(&s.viewport.orbit,options.view)}
     scene:=options.scene
-    if scene=="" && options.restore=="" && has_project {scene=project.start_scene(root,context.temp_allocator)}
+    if scene=="" && options.documents=="" && has_project {scene=project.start_scene(root,context.temp_allocator)}
     switch {
     case options.documents!="":
-        if why:=documents_restore(s,options.documents);why!="" {log.errorf("The document tabs could not all be restored; the recovery files were kept: %s",why)}
-    case options.restore!="":
-        if error:=document_restore(s,options.restore,options.scene,options.dirty);error!=.None {
-            log.errorf("the restarted scene could not be read: %s",document_error_text(error))
-        }
-        _=os.remove(options.restore)
+        if why:=documents_restore(s,options.documents);why!="" {log.errorf("The document tabs could not all be opened again: %s",why)}
     case scene!="":
         if error:=scene_open(s,scene);error!=.None {
             fmt.eprintfln("mirai: could not open the scene %s: %s",scene,document_error_text(error))
@@ -482,8 +470,8 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
         }
     }
     if options.select!="" {select_ids(s,options.select)}
-    if options.restore=="" {recovery_open(s)}
-    if !services_open(s,options) && options.headless && options.frames==0 {
+    // A headless editor is driven through its API: one that cannot open it ends.
+    if !services_open(s,options) && options.headless {
         close(s)
         return nil,EDITOR_API
     }
@@ -554,10 +542,6 @@ close :: proc(s:^Session) -> int {
     tools_release(s)
     preferences_close(s)
     services_close(s)
-    // A normal end leaves no chain; one for the GPU kept what it needs.
-    recovery_chains_close(s,s.gpu_failure!=.Ended)
-    if s.recovery.assets_owned {os.remove_all(recovery_assets_own(s))}
-    recovery_log_destroy(s)
     events_close(s)
     app,edit_world,editor_world:=s.app,s.edit_world,s.editor_world
     session_destroy(s)
@@ -732,41 +716,27 @@ between_frames :: proc(s:^Session) {
     play_history_seek(s)
     watch_update(s)
     play_plugin_poll(s)
-    recovery_update(s)
+    events_steps(s)
+    files_flush(s)
     asset_documents_retain(s)
 }
 
 @(private)
 requests_run :: proc(s:^Session) {
     requests:=s.requests
-    s.requests-={.Play,.Simulate,.Apply_Simulation,.Stop,.Pause,.Resume,.Resume_Here,.New,.Open,.Restart,.Quit,.Recover,.Discard_Recovery,.Document_Switch,.Document_Close,.Document_Discard,.Asset_Switch,.Asset_Close,.Asset_Discard,.Quit_Check,.Camera_Preview,.Camera_Keep,.Camera_Discard}
-    if .Recover in requests {
-        if _,why:=recovery_resolve(s,false);why!="" {notify(s,why)}
-    }
-    if .Discard_Recovery in requests {
-        if _,why:=recovery_resolve(s,true);why!="" {notify(s,why)}
-    }
-    if .Stop in requests {
-        switch {
-        case s.mode==.Watch:   watch_stop(s)
-        case playing(s):       play_stop(s)
-        case play_plugin_active(s): play_plugin_stop(s)
-        }
-    }
-    if .Apply_Simulation in requests && simulating(s) {simulation_apply_selection(s)}
-    if .Camera_Keep in requests {camera_preview_end(s,true)}
-    if .Camera_Discard in requests {camera_preview_end(s,false)}
-    if .Camera_Preview in requests && !playing(s) && !camera_preview_start(s,s.camera_run.request) {notify(s,"The camera could not be previewed")}
+    s.requests-={.Play,.Stop,.Resume_Here,.New,.Open,.Restart,.Quit,.Document_Switch,.Document_Close,.Asset_Switch,.Asset_Close,.Quit_Check}
+    if .Stop in requests {shown_stop(s)}
     if .Play in requests && playing(s) {s.play_asked={}}
     if .Play in requests && !playing(s) && !play_build_first(s,{request=true}) && !play_start(s) {notify(s,"The game could not start")}
-    if .Simulate in requests && !playing(s) && !simulation_start(s) {notify(s,"The simulation could not start")}
-    if .Pause in requests && (s.mode==.Play || s.mode==.Simulate) {play_pause(s,true)}
-    if .Resume in requests && play_paused(s) {play_pause(s,false)}
     if .Resume_Here in requests && play_paused(s) {play_pause(s,false,here=true)}
     if .New in requests {
         runs_stop(s)
         asset_document_activate(s,-1)
-        scene_new(s)
+        scene_new(s,s.new_prefab)
+        if s.new_length>0 {
+            if error:=document_file_give(s,string(s.new_path[:s.new_length]));error!=.None {notify(s,document_error_text(error))}
+            s.new_length=0
+        }
     }
     if .Open in requests {open_run(s)}
     if .Document_Switch in requests {
@@ -774,14 +744,22 @@ requests_run :: proc(s:^Session) {
         document_activate(s,s.document_request)
     }
     if .Document_Close in requests {document_close(s,s.document_request)}
-    if .Document_Discard in requests {document_close_active(s)}
     if .Asset_Switch in requests {asset_document_activate(s,s.asset_request)}
     if .Asset_Close in requests {asset_document_close(s,s.asset_request)}
-    if .Asset_Discard in requests {asset_document_close_now(s,s.asset_request)}
     asset_documents_prune(s)
-    if .Quit_Check in requests {documents_quit_next(s)}
+    if .Quit_Check in requests {documents_quit(s)}
     if .Restart in requests {restart(s,{"--built"})}
     if .Quit in requests {s.quit=true}
+}
+
+// Ends what the editor shows in place of the document: the watch of another
+// run, the game of the user, or the one a plugin plays.
+shown_stop :: proc(s:^Session) {
+    switch {
+    case s.mode==.Watch:        watch_stop(s)
+    case playing(s):            play_stop(s)
+    case play_plugin_active(s): play_plugin_stop(s)
+    }
 }
 
 // Opens the scene of open_path, or asks first what the open one would lose.
@@ -789,14 +767,13 @@ open_run :: proc(s:^Session) {
     path:=string(s.open_path[:s.open_length])
     scene:=document_scene_tab(s)
     // Another scene takes the place of the one open: who would lose what
-    // they do, or what is unsaved, is asked about first.
-    replaces:=scene>=0 && !path_is_prefab(path) && !document_holds_file(s,path)
+    // they do is asked about first.
+    replaces:=scene>=0 && !path_is_prefab(s,path) && !document_holds_file(s,path)
     if replaces && !s.open_confirmed {
         asset_document_activate(s,-1)
         document_activate(s,scene)
-        assets:=document_closing_assets(s)
-        if document_dirty(s) || len(assets)>0 || scene_switch_interrupts(s) || !collab_can_open(s) {
-            confirm_open(s,.Open_Scene,assets)
+        if scene_switch_interrupts(s) || !collab_can_open(s) {
+            confirm_open(s,.Open_Scene)
             return
         }
     }
@@ -840,8 +817,8 @@ play_start :: proc(s:^Session,simulate:=false,owner:int=0) -> bool {
         log.info("Play of an agent")
         return true
     }
-    // The players of Play share the screen , as many as the
-    // selector says, and a plugin readies the world for its game.
+    // The players of Play share the screen, as many as the selector says,
+    // and a plugin readies the world for its game.
     run_configure(s,r,s.play_players!=nil?s.play_players.players:PLAY_PLAYERS_DEFAULT.players)
     // Play starts with the environment that is on, not with the preview of a section.
     if preview:=core.world_storage_of(host.app_world_ref(s.app,r.world),erender.Environment_Preview);preview!=nil {preview^={}}
@@ -916,15 +893,23 @@ run_create :: proc(s:^Session,owner,player:int) -> ^Run {
     }
     if r==nil {return nil}
     if !history.edits_commit(s.edits,edited_world(s),s.selection) && s.edits.error!=.No_Change {notify(s,history.edits_error_text(s.edits.error));return nil}
-    if !recovery_protect(s) {return nil}
+    files_flush(s,true)
+    world:=document_copy(s)
+    if world==nil {return nil}
+    s.run_serial+=1
+    r^={world=world,id=s.run_serial,owner=owner,player=player,document=history.edits_scene_state(s.edits)}
+    return r
+}
+
+// A World that copies the edited one, which Play and Simulate run: nil without memory.
+@(private)
+document_copy :: proc(s:^Session) -> rawptr {
     world:=host.app_world_create(s.app)
     if world==nil {return nil}
     // Physics takes the edits since the last frame as its own, or the copy reads them as written by another.
     simulation_settle(s,edited_world(s))
     if !core.world_copy(s.info,world,s.edit_world) {host.app_world_free(s.app,world);return nil}
-    s.run_serial+=1
-    r^={world=world,id=s.run_serial,owner=owner,player=player,document=history.edits_scene_state(s.edits)}
-    return r
+    return world
 }
 
 // Ends the run of the user and returns to Edit. A turn that began inside it
@@ -1017,11 +1002,8 @@ play_view_restore :: proc(s:^Session) {
     history.selection_prune(s.selection,edited_world(s))
 }
 
-// Asks to end: with unsaved changes the editor asks first.
-quit_request :: proc(s:^Session) {
-    for &tab in s.documents {tab.quit_approved=false}
-    s.requests+={.Quit_Check}
-}
+// Asks to end: while agents work the editor asks first.
+quit_request :: proc(s:^Session) {s.requests+={.Quit_Check}}
 
 // The editor starts again on the library a Build left, with the scene as
 // it is: written to a file the new one reads and removes. extra: arguments
@@ -1049,7 +1031,7 @@ restart :: proc(s:^Session,extra:[]string=nil) -> bool {
     append(&command,exe,"--project",s.project_root,"--documents",file)
     for arg in s.args {append(&command,arg)}
     append(&command,..extra)
-    process,error:=subprocess.start({command=command[:],stdin=os.stdin,stdout=os.stdout,stderr=os.stderr})
+    process,error:=subprocess.detached({command=command[:],stdin=os.stdin,stdout=os.stdout,stderr=os.stderr})
     if error!=nil {
         log.errorf("%s could not be started: %v",exe,error)
         notify(s,"The built editor could not be started")
@@ -1114,7 +1096,6 @@ session_bind :: proc(s:^Session) -> bool {
     s.gui=core.world_storage_of(ref,Editor_Ui)
     s.console=core.world_storage_of(ref,Console)
     s.build=core.world_storage_of(ref,Build_State)
-    s.picker=core.world_storage_of(ref,Picker)
     s.outliner=core.world_storage_of(ref,Outliner)
     s.inspector=core.world_storage_of(ref,Inspector)
     s.content=core.world_storage_of(ref,Content)
@@ -1132,7 +1113,8 @@ session_bind :: proc(s:^Session) -> bool {
     s.panels=core.world_storage_of(ref,Project_Panels)
     s.git=core.world_storage_of(ref,Git)
     s.projects=core.world_storage_of(ref,Projects)
-    return !(s.selection==nil || s.edits==nil || s.document==nil || s.viewport==nil || s.gui==nil || s.console==nil || s.build==nil || s.picker==nil || s.outliner==nil || s.inspector==nil || s.content==nil || s.materials==nil || s.thumbnails==nil || s.graphics==nil || s.preferences==nil || s.importer==nil || s.finder==nil || s.ai==nil || s.play_players==nil || s.play_history==nil || s.processes==nil || s.view_modes==nil || s.panels==nil || s.git==nil || s.projects==nil)
+    s.api=core.world_storage_of(ref,Api)
+    return !(s.selection==nil || s.edits==nil || s.document==nil || s.viewport==nil || s.gui==nil || s.console==nil || s.build==nil || s.outliner==nil || s.inspector==nil || s.content==nil || s.materials==nil || s.thumbnails==nil || s.graphics==nil || s.preferences==nil || s.importer==nil || s.finder==nil || s.ai==nil || s.play_players==nil || s.play_history==nil || s.processes==nil || s.view_modes==nil || s.panels==nil || s.git==nil || s.projects==nil)
 }
 
 // What Session holds that core.value_free cannot free: the arenas of the
@@ -1156,19 +1138,21 @@ session_destroy :: proc(s:^Session) {
     import_end(s)
     projects_cancel(s)
     plugins_git_free(s)
+    if s.git!=nil {git_entities_free(&s.git.entities)}
     ai_destroy(s)
     thumbnails_destroy(s)
     gui_destroy(s.gui)
     document_previous_free(s.document)
-    picker_clear(s.picker)
     history.edits_free(s.edits)
     delete(s.edit_selection.entities)
     s.edit_selection={}
     delete(s.copied)
     s.copied=nil
+    author.recipes_free(s.recipes)
+    s.recipes=nil
     console_destroy(s.console)
     settings_engine_free(s)
-    delete(s.project_root);delete(s.engine_root);delete(s.program);delete(s.engine_stamp);delete(s.assets_root);delete(s.capture);delete(s.gpu_lost_before)
+    delete(s.project_root);delete(s.engine_root);delete(s.program);delete(s.engine_stamp);delete(s.library_stamp);delete(s.assets_root);delete(s.capture);delete(s.gpu_lost_before)
     for arg in s.args {delete(arg)}
     delete(s.args)
     s.project_root,s.engine_root,s.program,s.assets_root,s.capture,s.gpu_lost_before,s.args="","","","","","",{}
@@ -1192,13 +1176,11 @@ options_read :: proc(args:[]string) -> (o:Options,ok:bool) {
         case "--scene":      o.scene=value(args,&i) or_return
         case "--engine":     o.engine=value(args,&i) or_return
         case "--capture":    o.capture=value(args,&i) or_return
-        case "--restore":    o.restore=value(args,&i) or_return
         case "--documents":  o.documents=value(args,&i) or_return
         case "--gpu-lost":   o.gpu_lost=value(args,&i) or_return
         case "--built":      o.built=true
         case "--view":       o.view=value(args,&i) or_return
         case "--select":     o.select=value(args,&i) or_return
-        case "--dirty":      o.dirty=true
         case "--frames":     o.frames=number(args,&i) or_return
         case "--width":      o.width=number(args,&i) or_return
         case "--height":     o.height=number(args,&i) or_return
@@ -1250,7 +1232,7 @@ options_passed :: proc(args:[]string) -> []string {
         case "--engine","--width","--height","--density","--api-port","--name":
             if i+1<len(args) {append(&kept,args[i],args[i+1])}
             i+=1
-        case "--project","--scene","--restore","--documents","--gpu-lost","--view","--select","--frames","--capture","--join":
+        case "--project","--scene","--documents","--gpu-lost","--view","--select","--frames","--capture","--join":
             i+=1
         }
     }

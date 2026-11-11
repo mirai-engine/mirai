@@ -1,5 +1,6 @@
 package multiplayer
 
+import "core:mem"
 import "mirai:core"
 import input "mirai:engine/input"
 import "mirai:std/base"
@@ -18,8 +19,8 @@ import wire "mirai:net"
 // replicates. Each different set is a type of the protocol that both ends
 // compose from the list its creation carries: nothing is registered, and the
 // order of the libraries does not matter. The structures declared
-// @(net_message) are the messages: send them with send, read them with
-// event_read.
+// @(net_message) are the messages: send them with send; a function that
+// receives a core.Inbox(T) reads those of type T that arrived for its tick.
 //
 // On a client, what the server simulates is a core.Pose_Target: whoever owns the
 // Transform of the entity takes the pose the network writes there.
@@ -37,24 +38,32 @@ collection_get :: wire.collection_get
 collection_remove :: wire.collection_remove
 collection_count :: wire.collection_count
 
-// Which connections receive an entity.
+// Which connections receive an entity; of them, those Visibility lets.
 Audience :: enum u8 {
     Near,   // connections whose view reaches it
     Always, // every connection
     Owner,  // only the owner
-    Custom, // only connections the game lets in with relevance_set
+}
+
+// Who sees what, as data, like collision layers. Of the connections its
+// audience reaches, an entity with a mask reaches those whose seat has one of
+// its bits in sees; without Visibility or bits, it asks for none, and a seat
+// has none. The server reads it when it changes; it does not travel.
+@(component,description="Who sees this entity on the network (mask), and, on the seat of a player, what that player sees (sees): a connection receives it when they share a bit.")
+Visibility :: struct {
+    mask:u32,
+    sees:u32,
 }
 
 NET_PROTOCOL_ID :: 0x4d495241
 DEFAULT_PORT :: 27500 // of Net_Settings.port
 PLAYER_NET :: 5 // the exit code of a player whose client could not join its server, or lost it with nobody watching
 COMPONENTS :: wire.MAX_FRAGMENTS-3 // replicated components of an entity, besides its pose, motion and driver
-EVENT_BYTES :: 256
-PAUSED_EVENTS :: 1024 // messages Net_Events keeps for the first frame of a paused game; later ones are dropped and reported
+PENDING_EVENTS :: 1024 // messages of a type that wait for the next tick (a paused game runs none); later ones are dropped and reported
 
 // An entity the network replicates. The game gives it with the entity (in its
 // prefab or its scene), and the network reads it. Its owner, the connection
-// that predicts it, is that of the seat that drives it (input.Drivable). Its
+// that predicts it, is that of the seat that drives it (input.Seat.body). Its
 // closest ancestor in the hierarchy with Replicate is its parent on the
 // network: it is seen by whoever sees that one, and made after it.
 @(component,description="The network replicates this entity: the server sends it to the clients that should see it.")
@@ -63,13 +72,14 @@ Replicate :: struct {
     audience:Audience,
     priority:f32 `mirai:"min=0"`,
     update_hz:f32 `mirai:"min=0"`, // 0: publish every tick
-    radius:f32 `mirai:"min=0,unit=m"`,
+    radius:f32 `mirai:"min=0,unit=m"`, // of its bounds: added to the reach of the views that see it, and swept by a client to tell it is about to touch what it drives
+    predict:bool, // clients simulate it ahead of the server always, not only while it is in reach of what they drive: a ball to intercept
 }
 
 REPLICATE_DEFAULT :: Replicate{priority=1,radius=1}
 
 // What the network knows of an entity it replicates: its object. Only this library writes it.
-@(component)
+@(component,derived)
 Net_Link :: struct {
     object:Object `mirai:"transient,readonly,local"`,
 }
@@ -91,7 +101,9 @@ Pose :: struct {
     rotation:mm.Quat `mirai:"bits=15"`,
     scale:[3]f32,
     off:u16 `mirai:"bits=13"`, // a bit by replicated component of its type: turned off by itself
+    absent:u16 `mirai:"bits=13"`, // a bit by replicated component of its type the entity lacks: the replica drops it
     disabled:bool,
+    predict:bool, // Replicate.predict
 }
 #assert(COMPONENTS<=13)
 
@@ -123,6 +135,8 @@ Input_Packet :: struct {
     // with fraction; has_view false while the clock has not placed it.
     view_behind:f32 `mirai:"min=0,max=255,precision=0.00390625"`,
     has_view:bool,
+    // How many ticks before the one of this input the look is of: the input delay of its client.
+    look_behind:u8 `mirai:"bits=4"`,
 }
 
 // What drives a replicated body: its Move_Input, which every end that has it
@@ -144,20 +158,16 @@ Net_Settings :: struct {
     timeout:f64,             // seconds of silence after which the other end is given up. 10
     connect_timeout:f64,     // client. 5
     max_objects:int,         // replicated entities; a client needs as many as its server. 1024
-    max_resimulate:int,      // client: ticks it may simulate again in one frame; what does not fit is closed by correction_time. 0.3 s of ticks, at most the history (replication.history_seconds)
+    max_resimulate:int,      // client: ticks it may simulate again in one frame; what does not fit is put where the server carries it. 0.3 s of ticks, at most the history (replication.history_seconds)
     resimulate_budget:int,   // client: ticks it may simulate again per second. The tick rate
     critical_ticks:int,      // client: ticks a replica stays critical after it last shared an island of the simulation with what the client drives. Half a second
     predicted_capacity:int,  // client: replicas simulated ahead of the server at once. 256
-    // client: what the server simulates and this client does not drive is shown interpolated,
-    // behind the server by Clock.display, instead of simulated ahead: where it was, not where it
-    // may be. Hits are then judged in that past (rewind.odin).
-    interpolate_others:bool,
+    rewind_entities:int,     // server: entities with Rewind whose pose each tick remembers. 64
     view_radius:f32,         // server: meters around what a connection owns that count as near. 128
     position_tolerance:f32,  // client: meters a prediction may be off before it is corrected. 0.05
     velocity_tolerance:f32,  // m/s and rad/s. 0.5
     rotation_tolerance:f32,  // radians. 0.07
     scale_tolerance:f32,     // 0.001
-    correction_time:f32,     // client: seconds in which an error that is not simulated again is closed by two thirds. 0.1
     sync_test:int,           // client, to debug: ticks it goes back before each frame to run each again and compare with the first time (net.sync_test); 0: none. At most the history
     // server: seconds the view a client says it saw (Input_Packet.view_behind) may be off from
     // the one its round trip, jitter, input lead and interpolation delay give, before the server
@@ -180,42 +190,37 @@ Connection_Event :: struct {
     reason:Disconnect_Reason,
 }
 
-// Who arrived and who left, for the fixed functions: at the start of each tick
-// the network leaves here what happened since the tick before. A frame
-// without ticks keeps it for the next tick, and of a frame with several only
-// the first has it.
+// Who arrived and who left: at the start of each tick the network pushes
+// what happened since the tick before, which each reader gets once.
 @(storage)
-Net_Connections :: struct {events:core.Queue(Connection_Event)}
+Net_Connections :: struct {events:core.Events(Connection_Event)}
 
-// An event of the protocol that arrived: read it with event_read.
-Received :: struct {
-    type:typeid,
-    sender:Connection, // server: the client that sent it
-    about:core.Entity,
-    size:u16,
-    data:[EVENT_BYTES]u8,
-}
-
-// Event: this library clears it at each frame and pushes the messages that
-// arrived. It stays when a scene replaces the world in the frame.
-@(storage,events,keep)
-Net_Events :: struct {
-    received:core.Queue(Received),
-}
-
-// An event to send. Requests: the games push, this library takes them.
+// A message to send. Requests: the games push, this library takes them.
 Outgoing :: struct {
     type:typeid,
     about:core.Entity,
     to:Connection,
-    size:u16,
-    data:[EVENT_BYTES]u8,
+    at:u32, // of its value in Net_Outbox.bytes
+}
+
+// A part a journal hands to stream whole to one connection on its channel of
+// parts (JOURNAL_CHANNEL).
+Outgoing_Part :: struct {
+    to:Connection,
+    bytes:[]u8, // its head and its LZ bytes
+    sent:int,   // bytes of it the host took
 }
 
 // Not copied with the world: a correction that brings back an older copy
 // keeps what waits to be sent.
 @(storage,queue,copy=false)
-Net_Outbox :: struct {queue:core.Queue(Outgoing)}
+Net_Outbox :: struct {
+    queue:core.Queue(Outgoing),
+    bytes:[dynamic]u8,
+    parts:[dynamic]Outgoing_Part, // in order for each connection, none waiting for another connection's
+
+    replaying:bool `mirai:"readonly"`, // what runs now runs again (core.Time.resimulating): it sent the first time
+}
 
 // Client: ticks the client already simulated that a library learned were
 // different, from a reason the network does not compare, as a fracture of
@@ -226,19 +231,6 @@ Net_Outbox :: struct {queue:core.Queue(Outgoing)}
 Net_Rewinds :: struct {queue:core.Queue(u32)}
 
 rewind :: proc(rewinds:^Net_Rewinds,tick:u32) {core.push(&rewinds.queue,tick)}
-
-// Client: entities a library made here for what a replica of the server
-// stands for, by the Id both ends give it. At the end of the tick each takes
-// the place of the entity of its replica.
-Adoption :: struct {
-    id:base.Entity_Id,
-    entity:core.Entity,
-}
-
-@(storage,queue)
-Net_Adoptions :: struct {queue:core.Queue(Adoption)}
-
-adopt :: proc(adoptions:^Net_Adoptions,id:base.Entity_Id,e:core.Entity) {core.push(&adoptions.queue,Adoption{id,e})}
 
 // The actions a connection sent for the tick being simulated, on a server.
 // Updated at the start of every tick; status says whether they arrived in time.
@@ -251,8 +243,11 @@ Remote_Input :: struct {
     status:wire.Input_Status,
     tick:u32,
     view:f64, // the tick of the server, with fraction, its client showed the others at when it sent this input; 0: unknown
-    look:[2]f32, // yaw and pitch of the body it drives, as its client left them
+    look:[2]f32, // yaw and pitch of the body it drives, as its client left them look_behind ticks before this one
     has_look:bool,
+    look_behind:u8,
+    looks:[wire.INPUT_DELAY_MAX+1][2]f32, // by tick modulo its length: the look that body had here after each of the last ticks
+    looks_kept:u8,                   // how many of them are of this connection
 }
 
 // The connections stay when a scene replaces the world, and so do their seats.
@@ -323,23 +318,60 @@ Net_Gone :: struct {
 @(storage,persist)
 Net_Identity :: struct {secret:[2]u64}
 
-// Sends a message, a @(net_message): from a server to one connection, or to every one
-// that has the entity it is about (to all when it is about none); from a
-// client, to the server. False while resimulating: it was sent the first time.
-send :: proc(outbox:^Net_Outbox,time:core.Time,value:$T,about:=core.NONE,to:Connection=0) -> bool {
-    #assert(size_of(T)<=EVENT_BYTES)
-    if time.resimulating {return false}
-    value:=value
-    item:=Outgoing{type=T,about=about,to=to,size=size_of(T)}
-    copy(item.data[:],([^]u8)(&value)[:size_of(T)])
-    core.push(&outbox.queue,item)
-    return true
+// Client: an entity this client made in a tick for what the server makes too
+// (predict_spawn, predict_kept). The replica the server sends for it takes it;
+// when none does within the history, one the replica would own goes, and one
+// a library keeps loses only this mark. Only the network writes it.
+@(component,derived,description="An entity this client made ahead of its server: the replica the server sends takes it, or it goes.")
+Predicted_Spawn :: struct {
+    tick:u64 `mirai:"transient,readonly"`,
+    kept:bool `mirai:"transient,readonly"`, // the library that made it keeps it: it outlives its replica
 }
 
-// The value of a received event, when it is a T.
-event_read :: proc(item:Received,$T:typeid) -> (value:T,ok:bool) {
-    if item.type!=T || int(item.size)!=size_of(T) {return}
-    item:=item
-    copy(([^]u8)(&value)[:size_of(T)],item.data[:size_of(T)])
-    return value,true
+// An entity a fixed function made in the tick that the replica of the
+// server's takes: one of a seat (peer: its Seat.peer), or one a library keeps,
+// which has the Id both ends draw already.
+Spawn :: struct {
+    entity:core.Entity,
+    peer:u64,
+    kept:bool,
+}
+
+// Requests: at the end of the tick the network gives each spawn of a seat the
+// Id both ends draw, from the connection of the seat, the tick, what it is and
+// how many of its kind that seat made before it in the tick, and marks on a
+// client what it made.
+@(storage,queue)
+Net_Spawns :: struct {queue:core.Queue(Spawn)}
+
+// The Id both ends give an entity a player makes in a tick: from the
+// connection of that player, the tick, its kind (spawn_kind) and which of the
+// player's spawns of that kind in the tick it is. A spawn the server skips
+// does not shift the others: a bullet never takes the place of a grenade.
+spawn_id :: proc(connection:Connection,tick:u64,kind:u64,sequence:u32) -> base.Entity_Id {
+    key:=[4]u64{u64(connection),tick,kind,u64(sequence)}
+    return base.Entity_Id(base.hash64(mem.ptr_to_bytes(&key),NET_PROTOCOL_ID)|1)
+}
+
+// For a fixed function that makes an entity on both ends in the same tick, as
+// the shot of the player a client predicts, with seat the seat that makes it:
+// the replica of the server's takes the client's, also after a correction ran
+// the tick again.
+predict_spawn :: proc(spawns:^Net_Spawns,e:core.Entity,seat:input.Seat) {core.push(&spawns.queue,Spawn{entity=e,peer=seat.peer})}
+
+// For a library that makes on a client, for what the server makes too, an
+// entity of its own with the Id both ends draw (the piece of a fracture): the
+// replica takes it, and the library keeps it.
+predict_kept :: proc(spawns:^Net_Spawns,e:core.Entity) {core.push(&spawns.queue,Spawn{entity=e,kept=true})}
+
+// Sends a message, a @(net_message): from a server to one connection, or to every one
+// that has the entity it is about (to all when it is about none); from a
+// client, to the server. False in a tick that runs again: it sent the first time.
+send :: proc(outbox:^Net_Outbox,value:$T,about:=core.NONE,to:Connection=0) -> bool {
+    if outbox.replaying {return false}
+    value:=value
+    at:=len(outbox.bytes)
+    append(&outbox.bytes,..mem.ptr_to_bytes(&value))
+    core.push(&outbox.queue,Outgoing{type=T,about=about,to=to,at=u32(at)})
+    return true
 }

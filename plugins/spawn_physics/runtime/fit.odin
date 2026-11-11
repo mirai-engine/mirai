@@ -15,14 +15,14 @@ import spawn "plugins:spawn/runtime"
 
 SPAWN_FIT_REACH :: f32(2) // m the bottom of the shape goes down from the place for something to stand on
 
-@(step="fixed",stage="input",after="spawn_step")
-spawn_fit :: proc(at_origin:core.Ref(spawn.Spawned_At_Origin),colliders:core.Read(phys.Collider),physics:core.Ref(phys.Physics_State),placer:core.Placer) {
+@(step="fixed",stage="input")
+spawn_fit :: proc(at_origin:core.Ref(spawn.Spawned_At_Origin),colliders:^core.Table(phys.Collider,.Read),physics:core.Ref(phys.Physics_State),placer:core.Placer) {
     for body in at_origin.items {
         collider,ok:=core.get(colliders,body)
         if !ok || collider.sensor {continue}
         shape,below:=fit_shape(collider)
         if shape==nil {continue}
-        placed:=core.world_of(core.read(placer.transforms),placer.parents,body) or_continue
+        placed:=core.world_of(placer.transforms,placer.parents,body) or_continue
         down:=linalg.normalize0(phys.gravity(physics))
         if down=={} {down={0,-1,0}}
         center:=placed.position+mm.quat_rotate(placed.rotation,collider.center)

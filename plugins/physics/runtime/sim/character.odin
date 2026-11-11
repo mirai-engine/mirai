@@ -61,8 +61,9 @@ Character_Move :: struct {
     // adhesion and pushes scale by the square and its up turns by it; whoever moves it scales its drives
     // and launch by it. Zero: 1.
     pace:f32,
+    gravity_scale:f32, // times the gravity_scale of its desc, the one a game asks for a while; zero: 1
 }
-#assert(size_of(Character_Move)==60)
+#assert(size_of(Character_Move)==64)
 
 @(private)
 move_pace :: #force_inline proc "contextless" (m:Character_Move) -> f32 {return m.pace>0?m.pace:1}
@@ -155,11 +156,17 @@ Ground :: struct {
 }
 
 @(private)
-character_get :: #force_inline proc "contextless" (w:^World,h:Character_Handle) -> (^Character,i32) {
+character_read :: #force_inline proc "contextless" (w:^World,h:Character_Handle) -> (^Character,i32) {
     index:=base.handle_index(base.Handle(h))
     generation:=base.handle_generation(base.Handle(h))
     if index>=u32(w.character_high) || generation&1==0 || w.characters[index].generation!=generation {return nil,-1}
     return &w.characters[index],i32(index)
+}
+@(private)
+character_get :: #force_inline proc "contextless" (w:^World,h:Character_Handle) -> (^Character,i32) {
+    ch,index:=character_read(w,h)
+    if ch!=nil {stamp(w,.Characters,index)}
+    return ch,index
 }
 
 @(private)
@@ -171,23 +178,24 @@ character_mass_set :: proc(w:^World,body:Body_Handle,d:^Character_Desc) {
 
 @(private)
 character_desc_valid :: proc "contextless" (d:^Character_Desc) -> bool {
-    return d.max_slope>0 && d.max_slope<0.5*PI && d.push_force>=0 && d.push_force<=max(f32) &&
-        d.density>=0 && d.density<=max(f32) && d.drag>=0 && d.drag<=max(f32) && d.up_speed>=0 && d.up_speed<=max(f32)
+    return finite(d.radius,d.height,d.mass,d.max_slope,d.step_height,d.traction_force,d.adhesion_force,d.gravity_scale,d.push_force,d.density,d.drag,d.up_speed) &&
+        d.max_slope>0 && d.max_slope<0.5*PI && d.push_force>=0 && d.density>=0 && d.drag>=0 && d.up_speed>=0
 }
 
 character_valid :: proc(w:^World,h:Character_Handle) -> bool {
-    ch,_:=character_get(w,h)
+    ch,_:=character_read(w,h)
     return ch!=nil
 }
 
 // A character standing with its feet at `position`, turned as `rotation`, whose +Y is its up: a dynamic body
-// with a capsule along the up that floats one step height above the ground and never sleeps. Its up_frame
+// with a capsule along the up that floats one step height above the ground. It sleeps standing still with
+// nothing to do, and a new move, a launch or a change of the world or of what it stands on wakes it. Its up_frame
 // is `frame` turned to that up, and the yaw of its move that of the rotation in it. Null when the description
 // is not usable or a capacity (characters, bodies, shapes) is exhausted.
 character_create :: proc(w:^World,desc:Character_Desc,position:Vec3,rotation:=QUAT_IDENTITY,frame:=QUAT_IDENTITY) -> Character_Handle {
     d:=desc
+    if !character_desc_valid(&d) || !finite(position) || !finite(rotation,frame) {return {}}
     if !(d.radius>0 && d.mass>0 && d.step_height>=0 && d.height>=2*d.radius+d.step_height) {return {}}
-    if !character_desc_valid(&d) {return {}}
     if d.drag==0 {d.drag=CD_HUMAN}
     if w.character_free<0 && int(w.character_high)>=len(w.characters) {
         w.stats.character_capacity_exhausted+=1
@@ -201,7 +209,6 @@ character_create :: proc(w:^World,desc:Character_Desc,position:Vec3,rotation:=QU
     body_desc.rotation=character_rotation(up_frame,yaw)
     body_desc.gravity_scale=d.gravity_scale
     body_desc.locks=ANGULAR_LOCKS
-    body_desc.sleep_disabled=true
     body_desc.user_data=d.user_data
     body:=body_create(w,body_desc)
     half:=character_half_segment(&d)
@@ -218,6 +225,7 @@ character_create :: proc(w:^World,desc:Character_Desc,position:Vec3,rotation:=QU
         return {}
     }
     character_mass_set(w,body,&d)
+    stamp(w,.Bodies,i32(base.handle_index(base.Handle(body))))
     w.bodies[base.handle_index(base.Handle(body))].flags+={.Character}
     index:=w.character_free
     if index>=0 {
@@ -228,6 +236,7 @@ character_create :: proc(w:^World,desc:Character_Desc,position:Vec3,rotation:=QU
     }
     w.character_count+=1
     ch:=&w.characters[index]
+    stamp(w,ch)
     ch^={desc=d,body=body,shape=shape,generation=ch.generation+1,next_free=-1}
     ch.move={ground={force=d.traction_force},yaw=yaw}
     ch.state.ground={.Stale}
@@ -245,30 +254,57 @@ character_destroy :: proc(w:^World,h:Character_Handle) {
     w.character_count-=1
 }
 
-// What drives the character from the next step on.
-character_set_move :: proc(w:^World,h:Character_Handle,move:Character_Move) {
-    if ch,_:=character_get(w,h);ch!=nil {ch.move=move}
+// What drives the character from the next step on. Another move than the one it has wakes it.
+character_set_move :: proc(w:^World,h:Character_Handle,move:Character_Move) -> bool {
+    if !finite(move.ground.velocity,move.air.velocity,move.launch) || !finite(move.ground.force,move.air.force,move.yaw,move.float_height,move.pace,move.gravity_scale) {return false}
+    ch,index:=character_read(w,h)
+    if ch==nil {return false}
+    if ch.move==move {return true}
+    stamp(w,.Characters,index)
+    ch.move=move
+    character_wake(w,ch)
+    return true
+}
+
+@(private)
+character_wake :: proc(w:^World,ch:^Character) {
+    if _,body:=body_read(w,ch.body);body>=0 {body_wake(w,body)}
 }
 character_move :: proc(w:^World,h:Character_Handle) -> Character_Move {
-    ch,_:=character_get(w,h)
+    ch,_:=character_read(w,h)
     return ch!=nil?ch.move:{}
 }
 character_state :: proc(w:^World,h:Character_Handle) -> Character_State {
-    ch,_:=character_get(w,h)
+    ch,_:=character_read(w,h)
     return ch!=nil?ch.state:{}
 }
 character_desc :: proc(w:^World,h:Character_Handle) -> Character_Desc {
-    ch,_:=character_get(w,h)
+    ch,_:=character_read(w,h)
     return ch!=nil?ch.desc:{}
 }
-// Changes how the capsule meets the ground. Its size, mass and filter stay as created.
-character_set_desc :: proc(w:^World,h:Character_Handle,desc:Character_Desc) {
+// Holds the character where it is, kinematic and at rest: no step moves it, and it still collides. Let go,
+// it is dynamic again, at rest, with its mass.
+character_set_held :: proc(w:^World,h:Character_Handle,held:bool) {
     ch,_:=character_get(w,h)
+    if ch==nil {return}
+    type:=Body_Type.Kinematic if held else .Dynamic
+    if body_type(w,ch.body)==type {return}
+    body_set_velocity(w,ch.body,{},{})
+    body_set_type(w,ch.body,type)
+    if !held {character_mass_set(w,ch.body,&ch.desc)}
+}
+
+// Changes how the capsule meets the ground. Its size, mass and filter stay as created.
+character_set_desc :: proc(w:^World,h:Character_Handle,desc:Character_Desc) -> bool {
     d:=desc
-    if ch==nil || !character_desc_valid(&d) {return}
+    if !character_desc_valid(&d) {return false}
+    ch,_:=character_get(w,h)
+    if ch==nil {return false}
     if d.drag==0 {d.drag=CD_HUMAN}
     d.radius,d.height,d.mass,d.step_height,d.filter=ch.desc.radius,ch.desc.height,ch.desc.mass,ch.desc.step_height,ch.desc.filter
     ch.desc=d
+    character_wake(w,ch)
+    return true
 }
 // Changes what the capsule and the probes of the character meet, keeping everything else.
 character_set_filter :: proc(w:^World,h:Character_Handle,filter:Filter) {
@@ -282,6 +318,7 @@ character_set_filter :: proc(w:^World,h:Character_Handle,filter:Filter) {
 // way, against the world with the filter of the character and fails, changing nothing, when something
 // is in its way (a ceiling). False also for a capsule that does not fit.
 character_set_height :: proc(w:^World,h:Character_Handle,height:f32) -> bool {
+    if !finite(height) {return false}
     ch,_:=character_get(w,h)
     if ch==nil || !(height>=2*ch.desc.radius+ch.desc.step_height) {return false}
     body,body_index:=body_get(w,ch.body)
@@ -317,40 +354,44 @@ character_set_locks :: proc(w:^World,h:Character_Handle,locks:Body_Flags) {
 }
 
 character_body :: proc(w:^World,h:Character_Handle) -> Body_Handle {
-    ch,_:=character_get(w,h)
+    ch,_:=character_read(w,h)
     return ch!=nil?ch.body:{}
 }
 // The capsule: shape_set_surface gives it the rules of its contacts, as its dominance.
 character_shape :: proc(w:^World,h:Character_Handle) -> Shape_Handle {
-    ch,_:=character_get(w,h)
+    ch,_:=character_read(w,h)
     return ch!=nil?ch.shape:{}
 }
 // Feet of the character.
 character_position :: proc(w:^World,h:Character_Handle) -> Vec3 {
-    ch,_:=character_get(w,h)
+    ch,_:=character_read(w,h)
     return ch!=nil?body_position(w,ch.body):{}
 }
 character_velocity :: proc(w:^World,h:Character_Handle) -> Vec3 {
-    ch,_:=character_get(w,h)
+    ch,_:=character_read(w,h)
     return ch!=nil?body_linear_velocity(w,ch.body):{}
 }
 // Teleports the feet; the velocity stays.
-character_set_position :: proc(w:^World,h:Character_Handle,position:Vec3) {
+character_set_position :: proc(w:^World,h:Character_Handle,position:Vec3) -> bool {
+    if !finite(position) {return false}
     ch,_:=character_get(w,h)
-    if ch==nil {return}
+    if ch==nil {return false}
     body_set_transform(w,ch.body,position,body_rotation(w,ch.body))
     ch.state.ground+={.Stale}
+    return true
 }
 // Turns the character as `rotation`, whose +Y is its up from now on: its up_frame turns to that up and the yaw
 // of its move becomes that of the rotation in it.
-character_set_rotation :: proc(w:^World,h:Character_Handle,rotation:Quat) {
+character_set_rotation :: proc(w:^World,h:Character_Handle,rotation:Quat) -> bool {
+    if !finite(rotation) {return false}
     ch,_:=character_get(w,h)
-    if ch==nil {return}
+    if ch==nil {return false}
     turned:=q_normalize(rotation)
     ch.state.up_frame=up_frame_turn(ch.state.up_frame,q_rotate(turned,UP))
     ch.move.yaw=up_frame_yaw(ch.state.up_frame,turned)
     body_set_transform(w,ch.body,body_position(w,ch.body),character_rotation(ch.state.up_frame,ch.move.yaw))
     ch.state.ground+={.Stale}
+    return true
 }
 // The up of a frame of the vertical: its +Y.
 up_frame_up :: #force_inline proc "contextless" (frame:Quat) -> Vec3 {return q_rotate(frame,UP)}
@@ -378,9 +419,10 @@ character_rotation :: #force_inline proc "contextless" (frame:Quat,yaw:f32) -> Q
 
 // Instant effect, applied at the next step: adds to the velocity of the character or replaces it. An
 // upward launch takes a walking character off the ground.
-character_launch :: proc(w:^World,h:Character_Handle,velocity:Vec3,override:=false) {
+character_launch :: proc(w:^World,h:Character_Handle,velocity:Vec3,override:=false) -> bool {
+    if !finite(velocity) {return false}
     ch,_:=character_get(w,h)
-    if ch==nil {return}
+    if ch==nil {return false}
     state:=&ch.state
     if override {
         state.effect_velocity,state.effect=velocity,.Set
@@ -388,6 +430,8 @@ character_launch :: proc(w:^World,h:Character_Handle,velocity:Vec3,override:=fal
         state.effect_velocity+=velocity
         if state.effect==.None {state.effect=.Add}
     }
+    character_wake(w,ch)
+    return true
 }
 
 
@@ -421,6 +465,8 @@ Character_Solver :: struct {
     floating:bool,                  // Float holds the head over the surface of a fluid
     float_separation:f32,           // m of the feet above where Float holds them, at the start of the step
     float_limit:f32,                // N s per substep
+    wedge:Vec3,                     // the ground normal of the faces that hold it (character_wedged); zero without
+    wedge_body:i32,
 }
 
 // Finds what is under the feet, along its up. A sphere a little thinner than the capsule is swept down from
@@ -463,12 +509,12 @@ character_probe :: proc(w:^World,ch:^Character,body:^Body,up:Vec3,fall:f32) -> (
         }
     }
     if ground.normal=={} {return {},-1}
-    if under,index:=body_get(w,ground.body);under!=nil {
+    if under,index:=body_read(w,ground.body);under!=nil {
         ground_index=index
         if under.type!=.Static {ground.velocity=under.linear_velocity+cross(under.angular_velocity,ground.point-under.center)}
     }
     // The surface of a conveyor carries the feet along it.
-    if surface,_:=shape_get(w,under_shape);surface!=nil && surface.surface_speed!={} {
+    if surface,_:=shape_read(w,under_shape);surface!=nil && surface.surface_speed!={} {
         moving:=q_rotate(shape_transform_of(w,surface).q,surface.surface_speed)
         ground.surface=moving-ground.normal*dot(moving,ground.normal)
         ground.velocity+=ground.surface
@@ -559,7 +605,7 @@ character_ground_now :: proc(w:^World,state:^Character_State) -> (ground:Ground,
         hit=true,walkable=.Walkable in state.ground,body=state.ground_body,point=state.ground_point,normal=state.ground_normal,
         surface=state.ground_surface,velocity=state.ground_surface,distance=state.ground_distance,
     }
-    if under,index:=body_get(w,ground.body);under!=nil {
+    if under,index:=body_read(w,ground.body);under!=nil {
         ground_index=index
         if under.type!=.Static {ground.velocity+=under.linear_velocity+cross(under.angular_velocity,ground.point-under.center)}
     }
@@ -576,8 +622,14 @@ characters_update :: proc(w:^World) {
     for i in 0..<w.character_high {
         ch:=&w.characters[i]
         if ch.generation&1==0 {continue}
-        body,index:=body_get(w,ch.body)
-        if body==nil || body.type!=.Dynamic || .Awake not_in body.flags {continue}
+        body,index:=body_read(w,ch.body)
+        if body==nil || body.type!=.Dynamic {continue}
+        if .Awake not_in body.flags {
+            // Asleep, it wakes when its ground may be gone or moves.
+            ground,_:=body_read(w,ch.state.ground_body)
+            if !w.grounds_stale && .Stale not_in ch.state.ground && (ground==nil || .Awake not_in ground.flags) {continue}
+            body_wake(w,index)
+        }
         st.characters[count]={character=i,body=index,ground=-1}
         count+=1
     }
@@ -587,11 +639,13 @@ characters_update :: proc(w:^World) {
     for &cs in st.characters[:count] {
         ch:=&w.characters[cs.character]
         body:=&w.bodies[cs.body]
+        stamp(w,ch)
+        stamp(w,body)
         was_standing:=.Standing in ch.state.ground
         turned:=ch.state.up_frame!=cs.next.up_frame
         ch.state=cs.next
         pace:=move_pace(cs.move)
-        body.gravity_scale=.No_Gravity in cs.move.flags?0:ch.desc.gravity_scale*pace*pace
+        body.gravity_scale=.No_Gravity in cs.move.flags?0:ch.desc.gravity_scale*(cs.move.gravity_scale!=0?cs.move.gravity_scale:1)*pace*pace
         body.rotation=character_rotation(cs.next.up_frame,cs.move.yaw)
         body.linear_velocity=cs.velocity
         // A turning up turns the capsule about the feet.
@@ -603,6 +657,8 @@ characters_update :: proc(w:^World) {
         // static one; moving, it wakes them.
         moving:=length(cs.velocity-cs.found.velocity)>body.sleep_threshold || length(cs.drive.velocity)>body.sleep_threshold || cs.move.launch!={}
         if moving {body_wake_touching(w,cs.body)}
+        // Only standing still on what rests, out of fluids, may it fall asleep.
+        if moving || !cs.standing || cs.floating || .In_Fluid in cs.next.fluid || cs.ground>=0 && .Awake in w.bodies[cs.ground].flags {body.sleep_time=0}
         if cs.ground<0 {continue}
         under:=&w.bodies[cs.ground]
         if under.type!=.Dynamic {continue}
@@ -622,11 +678,48 @@ characters_ground_task :: proc(data:rawptr,first,last,worker:int) {
     for cs in st.characters[first:last] {
         ch:=&w.characters[cs.character]
         body:=&w.bodies[cs.body]
+        stamp(w,ch)
         ground,_:=character_probe(w,ch,body,cs.up,max(-dot(body.linear_velocity,cs.up)*st.dt,0))
+        if !ground.walkable && cs.wedge!={} && dot(body.linear_velocity-ground.velocity,cs.up)<=LAND_SPEED {
+            ground={hit=true,walkable=true,body=body_handle(w,cs.wedge_body),point=body.position,normal=cs.wedge}
+            if under:=&w.bodies[cs.wedge_body];under.type!=.Static {ground.velocity=under.linear_velocity+cross(under.angular_velocity,ground.point-under.center)}
+        }
         character_ground_keep(&ch.state,ground)
         ch.state.wall_normal,ch.state.wall_push=character_wall(w,body,cs.up,cs.drive.velocity)
         character_fluid_keep(w,ch,body)
     }
+}
+
+// The ground of a capsule held by faces too steep to stand on, as in a V or between two rocks: the
+// normals of what it touches, when two differ and they add up to walkable ground (the floor of Godot's
+// CharacterBody3D from several walls). It cannot slide off them, so it is no fall. Read before the
+// contacts of a standing character are flattened. Zero without one; held, the body whose face lifts it
+// the most.
+@(private)
+character_wedged :: proc(w:^World,ch:^Character,body:^Body,up:Vec3) -> (normal:Vec3,held:i32) #no_bounds_check {
+    sum,first:Vec3
+    apart:=false
+    highest:=-max(f32)
+    for key:=body.contact_list;key>=0; {
+        index:=key>>1
+        contact:=&w.contacts[index]
+        side:=key&1
+        key=contact.edges[side].next
+        if contact.flags&{.Touching,.Overlap}!={.Touching} {continue}
+        for i in 0..<contact.manifold_count {
+            manifold:=i==0?&w.manifolds[index]:&w.extra_manifolds[contact.extra][i-1]
+            touching:=false
+            for point in manifold.points[:manifold.count] {touching=touching || point.separation<=CHARACTER_SKIN}
+            if !touching {continue}
+            out:=side==0?-manifold.normal:manifold.normal
+            if sum=={} {first=out} else {apart=apart || dot(out,first)<1-1e-4}
+            sum+=out
+            if lift:=dot(out,up);lift>highest {highest,held=lift,side==0?contact.body_b:contact.body_a}
+        }
+    }
+    l:=length(sum)
+    if !apart || !(l>0) || dot(sum,up)<l*cmath.cos(ch.desc.max_slope) {return {},-1}
+    return sum/l,held
 }
 
 // The boxes of a character whose up turned: a shape that left its fat box grows it to hold the new pose.
@@ -635,10 +728,11 @@ character_turned_proxies :: proc(w:^World,body:^Body) {
     xf:=body_transform_of(body)
     for s:=body.shape_list;s>=0;s=w.shapes[s].next {
         shape:=&w.shapes[s]
+        stamp(w,shape)
         shape.aabb=shape_aabb(w,shape,xf)
         if math.aabb_contains(shape.fat,shape.aabb) {continue}
         shape.fat=math.aabb_merge(shape.fat,shape_fat(shape.aabb))
-        shape.flags+={.Moved}
+        shape_moved(w,s)
         if shape.proxy>=0 {spatial.dynamic_tree_move(&w.trees[DYNAMIC_TREE],shape.proxy,shape.fat)}
     }
 }
@@ -655,14 +749,14 @@ character_fluid_keep :: proc(w:^World,ch:^Character,body:^Body) #no_bounds_check
     if !ok {return}
     state.head_depth=sample.normal.y>0?sample.height-head.y:head.y-sample.height
     state.depth=state.head_depth+d.height
-    fluid:=fluid_find(w,body.position)
+    fluid,spot:=fluid_find(w,body.position)
     if fluid<0 {return}
     column:[FLUID_COLUMN_DRY+1]Fluid_Interval
-    count:=fluid_column(w,fluid,body.position,&column)
+    count:=fluid_column(w,fluid,spot,body.position,&column)
     state.submersion=body_submersion(d,body.position.y,column[:count])
     if state.submersion>0 {
         state.fluid+={.In_Fluid}
-        state.fluid_velocity=fluid_current(&w.fluids[fluid])
+        state.fluid_velocity=spot.current
     }
     if state.head_depth>0 {state.fluid+={.Underwater}}
 }
@@ -808,6 +902,7 @@ characters_prepare :: proc(w:^World) #no_bounds_check {
         push:=(ch.desc.push_force>0?ch.desc.push_force:ch.desc.traction_force)*felt
         cs.push_limit=push*st.h
         pushes:=push<cs.drive.force
+        cs.wedge,cs.wedge_body=character_wedged(w,ch,body,cs.up)
         if !cs.standing {
             if pushes {character_pushes(w,&cs,body,.Drive_Vertical in cs.move.flags?Vec3{}:cs.up)}
             continue

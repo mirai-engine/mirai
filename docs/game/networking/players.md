@@ -7,45 +7,71 @@ connect again; the player's secret is kept in their profile, so a returning clie
 
 ## Bodies
 
-A seat drives a body that carries `inp.Drivable`. With `Spawn_Settings.players` on in
-`settings.mirai`, the `spawn` plugin gives each seat, local or remote, the prefab of a
-`Spawn_Point` and destroys it with the seat. Without it, the server asks:
+A seat drives a body (`Seat.body`). With a player prefab (`Spawn_Settings.prefab` in
+`settings.mirai`, or one on a `Spawn_Point` with `players` on) the `spawn` plugin gives each seat,
+local or remote, a body of it at a point with `players` on and destroys it with the seat; a point
+with `players` off is for what the game spawns, such as enemies
+([prefabs](../core/prefabs.md#at-spawn-points)). Without one, the server asks:
 
 ```odin
 @(step="fixed",server)
-give_bodies :: proc(seats:core.Read(inp.Seat),drivables:core.Read(inp.Drivable),
-    requests:^spawn.Spawn_Requests) {
+give_bodies :: proc(seats:^core.Table(inp.Seat,.Read),requests:^spawn.Spawn_Requests) {
     for row in 0..<core.count(seats) {
         seat:=core.entity_at(seats,row)
-        if inp.body_of(drivables,seat)==core.NONE {spawn.spawn(requests,seat,PLAYER_PREFAB)}
+        if core.at(seats,row).body==core.NONE {spawn.spawn(requests,seat,PLAYER_PREFAB)}
     }
 }
 ```
 
 `PLAYER_PREFAB` is the path in the assets of a prefab that carries `multiplayer.Replicate`.
-`inp.seat_of(drivables,body)` gives the seat of a body. A client takes only bodies it predicts;
-`spawn.spawn` on a client is refused (`spawn.client_spawn`).
+`inp.seat_of(seats,body)` gives the seat of a body. On a client the seat of its own player is the
+replica of the one the server made for its connection, its local seat 0; the seats of the other
+players are of another end. A client takes only bodies it predicts; `spawn.spawn` on a client is
+refused (`spawn.client_spawn`).
 
 ## Which connection is a seat
 
-`multiplayer.Connection(seat.peer)` is its connection: pass it as `to=` to `send`, or to
-`relevance_set`. `peer` is 0 for the seat of this machine.
+`multiplayer.Connection(seat.peer)` is its connection: pass it as `to=` to `send`. `peer` is 0 for
+the seat of this machine.
 
 ## Who sees what
 
-`Replicate.audience`: `Near` (connections whose view reaches it; `radius` widens it), `Always`,
-`Owner` (the connection of the seat that drives it) or `Custom`. For `Custom` the server says
-which connections see an entity:
+`Replicate.audience`: `Near` (connections whose view reaches it; `radius` widens it), `Always` or
+`Owner` (the connection of the seat that drives it). Teams, fog of war and what only some players
+see are data, like collision layers: `multiplayer.Visibility` on the entity says with `mask` whose
+it is, and on the seat of a player says with `sees` what that player sees. A connection gets the
+entity when they share a bit; an entity without `Visibility`, or with `mask` 0, asks for none.
 
 ```odin
-@(step="fixed",server)
-reveal :: proc(session:^multiplayer.Net_Session,e:core.Entity,peer:u64) {
-    multiplayer.relevance_set(session,e,multiplayer.Connection(peer),true)   // false hides it
-}
+core.add(visibility,flag,multiplayer.Visibility{mask=TEAM_RED})           // only the red team
+core.add(visibility,seat,multiplayer.Visibility{sees=TEAM_RED|SPECTATOR}) // what this player sees
 ```
 
-A new entity or connection starts hidden. `multiplayer.view_set(session,connection,position,
-radius)` sets where a connection without a body looks from, for `Near`.
+`multiplayer.view_set(session,connection,position,radius)` sets where a connection without a body
+looks from, for `Near`.
+
+## What a client predicts
+
+A client predicts the body it drives, and what that body touches or is joined to while it does;
+everything else it shows interpolated, a little in the past, pose and components of one same
+instant. `Replicate.predict` keeps an entity predicted always: a ball to intercept.
+
+A spawn that should not wait a round trip (a projectile) is made by the same `fixed` function on
+both ends, in the tick of the input that causes it, and marked with the seat that makes it:
+
+```odin
+e:=scene.spawn(spawner,ROCKET_PREFAB,at)     // on the server and on the shooter's client
+multiplayer.predict_spawn(spawns,e,seat)     // spawns: ^multiplayer.Net_Spawns
+```
+
+The replica of the server's takes the one the client made; one the server never makes goes after
+`Net_Settings.replication.history_seconds`.
+
+A client acts on its input some ticks later, on both ends alike, as its round trip asks:
+`Net_Settings.replication.input_delay` covers the first `cover` seconds of it with delay (at
+least `min`), the next `predict` seconds with prediction and the rest with delay again, so a
+correction never replays more than `predict`. A fast shooter that wants no delay sets `cover` and
+`predict` to -1.
 
 ## Who simulates
 

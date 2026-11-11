@@ -31,7 +31,7 @@ Pose_Scratch :: struct {
 // What the pose of a rig could not do in its job; animation_tick reports it.
 Pose_Faults :: struct {
     program,mirror,memory:bool,
-    layer_bone,layer_reference:u8, // a bit a layer
+    layer_reference:u16, // a bit a slot of the stack
 }
 
 // An entity of a tick between its clocks, which run in order on the owner thread, and what
@@ -41,7 +41,7 @@ Pose_Row :: struct {
     state:i32,   // in Playback.states
     content:i32, // in Playback.work_contents + 1; 0: it plays nothing
     programmed:bool,
-    animation:Animation, // as its actions left it
+    animation:Animation,
     dt,current_dt,sought:f32,
     distance,action_distance:^Animation_Distance_Request,
     distance_error:Distance_Error,
@@ -50,7 +50,7 @@ Pose_Row :: struct {
 }
 
 @(private)
-Pose_Batch :: struct {playback:^Playback,transforms:core.Read(core.Transform)}
+Pose_Batch :: struct {playback:^Playback,transforms:^core.Table(core.Transform,.Read)}
 
 @(private)
 track_map_free :: proc(shared:^Track_Map) {
@@ -166,16 +166,17 @@ pose_job_allocator_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,ali
 // The pose of one entity from the clocks its row left: it writes only its own state and the
 // scratch of its job.
 @(private)
-pose_row :: proc(playback:^Playback,row:^Pose_Row,transforms:core.Read(core.Transform),worker:int) {
+pose_row :: proc(playback:^Playback,row:^Pose_Row,transforms:^core.Table(core.Transform,$A),worker:int) {
     if row.content==0 {return}
     state:=&playback.states[row.state]
     content:=&playback.work_contents[row.content-1]
     if row.programmed {
-        if !program_pose(playback,state,content,row.animation,&state.program.output,transforms,worker) {row.faults.program=true;return}
-        row.faults=pose_layers(playback,state,&content.lib,row.animation,transforms,worker)
+        if !program_pose(playback,state,content,row.animation,&state.program.output,worker) {row.faults.program=true;return}
+        if root:=state.program.root;state.program.has_root && root.in_place {if bone,reference,ok:=animation_root_reference(state,root,state.local[:],transforms);ok {state.local[bone]=reference}}
+        row.faults=pose_layers(playback,state,content,row.animation,transforms,worker)
         sample_layer_curves(state,content,row.animation)
     } else {
-        row.faults=pose_sample(playback,state,&content.lib,row.animation,transforms,content,worker)
+        row.faults=pose_sample(playback,state,content,row.animation,transforms,worker)
         sample_curves(state,content,row.animation.weight,row.animation)
     }
     if row.animation.mirror && !playing_mirror(state,state.local[:]) {row.faults.mirror=true}
@@ -190,24 +191,21 @@ pose_rows :: proc(batch:^Pose_Batch,first,last:int,worker:int) {
 // The poses of the rows of a tick, in jobs when they are more than a range holds: each row is
 // independent, so the result does not depend on how they are split.
 @(private)
-pose_rows_run :: proc(playback:^Playback,transforms:core.Read(core.Transform),system:^jobs.Job_System,grain:int) {
+pose_rows_run :: proc(playback:^Playback,transforms:^core.Table(core.Transform,$A),system:^jobs.Job_System,grain:int) {
     count:=len(playback.work)
     if count==0 {return}
-    batch:=Pose_Batch{playback,transforms}
+    batch:=Pose_Batch{playback,core.read(transforms)}
     if system!=nil && grain>0 && count>grain && jobs.worker_count(system)>1 && pose_scratch_prepare(playback,jobs.worker_count(system),0) {
         jobs.parallel_for(system,jobs.OWNER,count,grain,pose_rows,&batch)
     } else {pose_rows(&batch,0,count,jobs.OWNER)}
 }
 
 @(private)
-pose_faults_report :: proc(problems:^core.Problems,e:core.Entity,faults:Pose_Faults) {
+pose_faults_report :: proc(problems:^core.Problems,e:core.Entity,faults:Pose_Faults,actions:^Action_Runtime=nil) {
     if faults.memory {memory_problem(problems,e,"the blend of its clips")}
-    for i in 0..<ANIMATION_LAYERS {
-        if faults.layer_bone&(u8(1)<<u8(i))!=0 {
-            core.report(problems,e,"animation.layer_bone","layer %d of the Animation of this entity plays over a bone, or a part or region of the body, that this rig does not have, so it plays nothing; give animation_play in over one of its bones, a part or region of its body (@upper_body), or none",i+1)
-        }
-        if faults.layer_reference&(u8(1)<<u8(i))!=0 {
-            core.report(problems,e,"animation.layer_reference","layer %d of the Animation of this entity adds its clip over a reference clip its animation does not have, so it plays nothing; give animation_play in reference_clip the name of one of its clips, or none to subtract its own clip",i+1)
+    for i in 0..<STACK_SLOTS {
+        if faults.layer_reference&(u16(1)<<u16(i))!=0 {
+            core.report(problems,e,"animation.layer_reference","layer '%s' of the .character of this entity adds its clip over a reference clip its animation does not have, so it plays nothing; give its reference_clip the name of one of its clips, or none to subtract the clip that plays",stack_slot_name(actions,e,i))
         }
     }
     if faults.mirror {

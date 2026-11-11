@@ -1,12 +1,9 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-//! variant unlayered MIRAI_GBUFFER_NO_LAYERS=1
-//! variant hw_unlayered MIRAI_HW_RT=1 MIRAI_GBUFFER_NO_LAYERS=1
+// unlayered: while no instance with layers is in sight (gbuffer.slang).
+//! constant unlayered MIRAI_GBUFFER_NO_LAYERS
 // color: the glass a light crosses colors it (direct_glass), with colored shadows.
-//! variant color MIRAI_DIRECT_GLASS=1
-//! variant color_hw MIRAI_DIRECT_GLASS=1 MIRAI_HW_RT=1
-//! variant unlayered_color MIRAI_DIRECT_GLASS=1 MIRAI_GBUFFER_NO_LAYERS=1
-//! variant hw_unlayered_color MIRAI_DIRECT_GLASS=1 MIRAI_HW_RT=1 MIRAI_GBUFFER_NO_LAYERS=1
+//! constant color MIRAI_DIRECT_GLASS
 // The pass of the direct light of a view (direct_samples.slang) that takes
 // the samples of each point of the lights no map of the view holds there: of
 // those a map holds, direct_maps.comp gave the light before, and this adds to
@@ -33,11 +30,9 @@
 // The filters of glass with a program wait for it (points.slang): the light
 // takes their means, and the resume (params.resume) adds what the exact ones
 // change of it.
-#ifdef MIRAI_DIRECT_GLASS
 #define MIRAI_RAY_FILTERS
 #define MIRAI_DEFER_FILTERS
 #define POINTS_SLOT SLOT_POINTS
-#endif
 #include "lighting.slang"
 #include "gbuffer.slang"
 #include "pixel.slang"
@@ -181,14 +176,12 @@ float direct_hit(float3 o, float3 w, float reach, uint2 mask) {
 // what the light gives the owner without it, which what the programs of the
 // glass change of that product is weighed by (filters_weigh).
 float3 direct_glass(float3 o, float3 w, float reach, float3 plain) {
-#ifdef MIRAI_DIRECT_GLASS
-    if (params.glass != 0u) {
+    if (MIRAI_DIRECT_GLASS) {
         filters_begin();
         float3 through = trace_glass_filter(o, w, reach);
         filters_weigh(plain);
         return through;
     }
-#endif
     return float3(1.0);
 }
 
@@ -199,8 +192,7 @@ float3 direct_glass(float3 o, float3 w, float reach, float3 plain) {
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
-#ifdef MIRAI_FILTER_POINTS
-    if (params.resume != 0u) {
+    if (MIRAI_DIRECT_GLASS && params.resume != 0u) {
         Point_Head head;
         if (!head_of_round(group.x * GROUP_SIZE + index, head)) return;
         int2 at = int2(head.owner & 0x7FFFu, head.owner >> 16u);
@@ -209,7 +201,6 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
         else out_samples[at] = float4(max(out_samples[at].rgb + change, float3(0.0)), out_samples[at].a);
         return;
     }
-#endif
     int scale = int(max(params.scale, 1u));
     int2 p = direct_group_pixel(group.xy, index);
     int2 source = p * scale;
@@ -282,10 +273,8 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
         Shadow_Map held;
         sun_given = direct_maps_give && sun_map_of(pixel.position, held);
         if (!sun_given) sun_glass = direct_glass(origin, frame.sun_direction.xyz, 1e5, float3(1.0));
-#ifdef MIRAI_FILTER_POINTS
         sun_chain = filter_chain;
         filter_chain = INVALID;
-#endif
         if (sun_given) sun = 0.0;
     }
     float total = sun;
@@ -435,11 +424,9 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
             }
         }
     }
-#ifdef MIRAI_FILTER_POINTS
     uint place_of = uint(p.x) | (uint(p.y) << 16u);
-    if (sun_chain != INVALID) head_append(point_head(INVALID, sun_chain, place_of | DIRECT_OWNER_SUN));
-    if (filter_chain != INVALID) head_append(point_head(INVALID, filter_chain, place_of));
-#endif
+    if (MIRAI_DIRECT_GLASS && sun_chain != INVALID) head_append(point_head(INVALID, sun_chain, place_of | DIRECT_OWNER_SUN));
+    if (MIRAI_DIRECT_GLASS && filter_chain != INVALID) head_append(point_head(INVALID, filter_chain, place_of));
     float seen = luminance(lit);
     float4 given_depth = float4(0.0);
     if (maps) {

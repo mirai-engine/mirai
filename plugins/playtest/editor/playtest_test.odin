@@ -16,27 +16,27 @@ import "mirai:platform"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-@(private="file") Probe_Health :: struct {points:f32,target:core.Entity}
-@(private="file") Probe_State :: enum u8 {Waiting,Playing,Won}
-@(private="file") Probe_Score :: struct {points:int,state:Probe_State,seen:core.Seen}
-@(private="file") Probe_Ping :: struct {entity:core.Entity,amount:int}
-@(private="file") Probe_Pings :: struct {queue:core.Queue(Probe_Ping)}
+@(private) Probe_Health :: struct {points:f32,target:core.Entity}
+@(private) Probe_State :: enum u8 {Waiting,Playing,Won}
+@(private) Probe_Score :: struct {points:int,state:Probe_State,seen:core.Seen}
+@(private) Probe_Ping :: struct {entity:core.Entity,amount:int}
+@(private) Probe_Pings :: struct {queue:core.Queue(Probe_Ping)}
 // What a plugin that moves bodies says of the hero.
-@(private="file") Probe_Stance :: struct {hero:editor.Stance,routes:int}
+@(private) Probe_Stance :: struct {hero:editor.Stance,routes:int}
 @(private="file") PROBE_MOVE :: input.Action(0)
 @(private="file") PROBE_JUMP :: input.Action(2)
 
 // A game whose tick adds a point to its score, and what its pings push.
-@(private="file")
+@(private)
+@(test_world,host="Probe_Shared",editor="Probe_Editor")
 Probe_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     health:core.Table(Probe_Health) `mirai:"game"`,
     seats:core.Table(input.Seat),
-    drivables:core.Table(input.Drivable),
     moves:core.Table(input.Move_Input),
     players:input.Seats,
     bindings:input.Input_Map,
@@ -53,10 +53,12 @@ Probe_World :: struct {
     quit_at:int, // the points at which the game asks to quit; 0: never
     stance:Probe_Stance,
 }
-@(private="file") Probe_Shared :: struct {problems:core.By_World(core.Problems)}
-@(private="file") Probe_Bodies :: struct {provider:editor.Body_Provider}
-@(private="file") Probe_Routes :: struct {provider:editor.Route_Provider}
-@(private="file") Probe_Editor :: struct {api:editor.Api,playtest:Playtest,provider:Playtest_Api,listener:Playtest_Listener,bodies:Probe_Bodies,routes:Probe_Routes}
+@(private) Probe_Shared :: struct {problems:core.By_World(core.Problems)}
+@(private) Probe_Bodies :: struct {provider:editor.Body_Provider}
+@(private) probe_bodies_default :: proc() -> Probe_Bodies {return {provider={standing=probe_standing}}}
+@(private) Probe_Routes :: struct {provider:editor.Route_Provider}
+@(private) probe_routes_default :: proc() -> Probe_Routes {return {provider={next=probe_route}}}
+@(private) Probe_Editor :: struct {api:editor.Api,playtest:Playtest,provider:Playtest_Api,listener:Playtest_Listener,bodies:Probe_Bodies,routes:Probe_Routes}
 
 // A plugin that knows no way and counts the times a drive asks it for one.
 @(private="file")
@@ -71,22 +73,13 @@ probe_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known:boo
     return stance==.Standing,stance!=.Unknown
 }
 
-@(private="file")
-probe_types :: proc(types:^[dynamic]core.Test_Type) {
-    test_types(types)
-    append(types,
-        core.test_type(Probe_Bodies,default=proc(dst:^Probe_Bodies) {dst^={provider={standing=probe_standing}}}),
-        core.test_type(Probe_Routes,default=proc(dst:^Probe_Routes) {dst^={provider={next=probe_route}}}),
-    )
-}
-
 // The seats take their holds and the devices of the tick, as engine/input runs them.
 @(private="file")
 probe_tick :: proc(data,shared,editor,app:rawptr) {
     w:=cast(^Probe_World)data
     input.input_holds(&w.seats,&w.holds,w.time,nil)
     for row in 0..<core.count(&w.seats) {
-        input.seat_feed(core.at(&w.seats,row),&w.input,&w.bindings,false)
+        input.seat_feed(core.edit_at(&w.seats,row),&w.input,&w.bindings,false,1.0/60)
     }
     w.score.points+=1
     for ping in core.take(&w.pings.queue) {w.score.points+=ping.amount}
@@ -94,12 +87,14 @@ probe_tick :: proc(data,shared,editor,app:rawptr) {
     if w.quit_at>0 && w.score.points==w.quit_at {host.app_exit(cast(^host.App)app,0)}
     // A driven body walks by the move action until a wall at x 6, and the jump
     // action drops it 5 meters.
-    if core.count(&w.drivables)==0 {return}
-    hero:=w.drivables.entities[0]
-    seat:=w.drivables.values[0].seat
+    seat,hero:=core.NONE,core.NONE
+    for value,row in w.seats.values {
+        if value.body!=core.NONE {seat,hero=w.seats.entities[row],value.body}
+    }
+    if hero==core.NONE {return}
     move:=input.seat_action(core.read(&w.seats),seat,PROBE_MOVE)
-    core.get(&w.moves,hero).move={move.vector.x,0,-move.vector.y}
-    place:=core.get(&w.transforms,hero)
+    core.edit(&w.moves,hero).move={move.vector.x,0,-move.vector.y}
+    place:=core.edit(&w.transforms,hero)
     place.position.x=clamp(place.position.x+move.vector.x,-100,6)
     if input.seat_action(core.read(&w.seats),seat,PROBE_JUMP).pressed {place.position.y-=5}
 }
@@ -129,10 +124,10 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     error:platform.Error
     f.p,error=platform.create({headless=true,fixed_dt=0.1,pacing=platform.Frame_Pacing{}})
     if !testing.expect_value(t,error,platform.Error.None) || f.p==nil {return false}
-    f.info=core.test_info(t,Probe_World,Probe_Shared,Probe_Editor,probe_types) or_return
+    f.info=test_info(t,Probe_World) or_return
     f.names={{type=input.Action,value=i64(PROBE_MOVE),name="move"},{type=input.Action,value=i64(PROBE_JUMP),name="jump"}}
     f.info.names=f.names[:]
-    core.test_info_index(&f.info)
+    test_info_index(&f.info)
     f.info.loops[.Game][.Fixed]=probe_tick
     f.app={info=&f.info,shared=&f.shared,platform=f.p,allocator=context.allocator,tick_dt=1.0/60,max_ticks=8}
     f.data=host.app_world_create(&f.app)
@@ -154,8 +149,8 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     f.gui={layout={left_open=true,right_open=true,library_tab=.Content,bottom_open=true}}
     f.s={app=&f.app,info=&f.info,edit_world=f.data,editor_world=&f.tools,edits=&f.edits,selection=&f.selection,viewport=&f.viewport,gui=&f.gui,document=&f.document,build=&f.build}
     history.edits_reset(&f.edits,editor.edited_world(&f.s))
-    f.document.saved=history.edits_state(&f.edits)
-    if !testing.expect(t,editor.api_open(&f.s,0,true)==.None) {return false}
+    api_opened,api_problem:=editor.api_open(&f.s,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return false}
     editor.api_state(&f.s).poll_temp=context.temp_allocator
     serial.writer_init(&f.out)
     return testing.expect(t,editor.play_start(&f.s))
@@ -173,7 +168,7 @@ probe_close :: proc(f:^Probe) {
     host.app_world_free(&f.app,f.data)
     delete(f.app.worlds)
     core.world_destroy(&f.info,.Shared,&f.shared)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
     platform.destroy(f.p)
 }
 
@@ -200,18 +195,15 @@ probe_frame :: proc(s:^editor.Session) -> bool {
 probe_drive :: proc(f:^Probe) {
     worlds:=[2]^Probe_World{cast(^Probe_World)f.data,cast(^Probe_World)editor.run_find(&f.s,0).world}
     for world in worlds {
-        core.add(&world.drivables,f.hero,input.Drivable{seat=f.seat})
+        core.edit(&world.seats,f.seat).body=f.hero
         core.add(&world.moves,f.hero,input.Move_Input{})
         world.view=core.View{rotation=1,fov=90*math.RAD_PER_DEG,near=0.1,size={800,600}}
         core.settle(&f.info,world,nil)
     }
     history.edits_reset(&f.edits,editor.edited_world(&f.s))
-    f.document.saved=history.edits_state(&f.edits)
     editor.api_state(&f.s).step_frame=probe_frame
 }
 
-// Where a repro goes: the project is set only while it is written, as a
-// fixture without a project starts its games without a recovery copy.
 @(private="file")
 probe_json :: proc(t:^testing.T,text:string) -> json.Object {
     value,error:=json.parse_string(text,allocator=context.temp_allocator)
@@ -237,7 +229,7 @@ play_observe_says_in_one_small_answer_what_a_decision_needs :: proc(t:^testing.T
     player,_:=answer["player"].(json.Object)
     position,_:=player["position"].(json.Array)
     testing.expect(t,len(position)==3 && position[0].(json.Float)==1,text)
-    testing.expect(t,"grounded" not_in player,"a body no plugin moves does not say")
+    testing.expect(t,"stance" not_in player,"a body no plugin moves does not say")
     targets,_:=answer["targets"].(json.Array)
     if testing.expect_value(t,len(targets),1) {
         foe,_:=targets[0].(json.Object)
@@ -252,8 +244,8 @@ play_observe_says_in_one_small_answer_what_a_decision_needs :: proc(t:^testing.T
     testing.expectf(t,error.code==0,"%v",error)
     testing.expect_value(t,api.result_mismatch(Api_Play_Observe,text),"")
     seen:=probe_json(t,text)
-    grounded,said:=seen["player"].(json.Object)["grounded"].(json.Boolean)
-    testing.expect(t,said && !grounded,"in the air, as the plugin that moves it says")
+    stance,said:=seen["player"].(json.Object)["stance"].(json.String)
+    testing.expect(t,said && stance!="Standing","in the air, as the plugin that moves it says")
     testing.expect_value(t,seen["ran"].(json.Float) or_else 0,2)
     testing.expect(t,"playing" not_in seen,"the state of the game is left out")
     problems,_:=seen["problems"].(json.Array)
@@ -290,7 +282,7 @@ the_monitors_report_a_violation_with_its_tick_place_and_severity :: proc(t:^test
     testing.expect(t,strings.contains(text,`"repro": true`),text)
     f.app.stats.frame_ms=80
     running:=cast(^Probe_World)editor.run_find(&f.s,0).world
-    transforms:=core.get(&running.transforms,f.foe)
+    transforms:=core.edit(&running.transforms,f.foe)
     transforms.scale.y=f32(math.inf_f32(1))
     error,_=probe_call(f,"play.step",`{"segments":[{"for":2,"keys":["Space"]},{"for":3}]}`)
     testing.expectf(t,error.code==0,"%v",error)
@@ -365,8 +357,15 @@ repro_replay_case :: proc(t:^testing.T,late:bool) {
     testing.expect_value(t,report.repro,fmt.tprintf("tests/scenarios/bug_%d.mirai",failing))
     written,read_error:=os.read_entire_file(fmt.tprintf("%s/%s",root,report.repro),context.temp_allocator)
     testing.expect(t,read_error==nil,report.repro)
-    testing.expect(t,strings.contains(string(written),`"method":"play.qa.report"`) && strings.contains(string(written),`"name":"move"`),string(written))
-    first_step,monitors:=strings.index(string(written),`"method":"play.step"`),strings.index(string(written),`"method":"play.qa.start"`)
+    scenario:editor.Scenario
+    testing.expect_value(t,serial.text_decode(string(written),&scenario,context.temp_allocator),"")
+    first_step,monitors,moves:=-1,-1,false
+    for step,i in scenario.steps {
+        if step.method=="play.step" && first_step<0 {first_step=i}
+        if step.method=="play.qa.start" && monitors<0 {monitors=i}
+        moves||=step.method=="play.input" && strings.contains(string(step.params),`"move"`)
+    }
+    testing.expect(t,len(scenario.steps)>0 && scenario.steps[len(scenario.steps)-1].method=="play.qa.report" && moves,string(written))
     testing.expectf(t,late==(first_step>=0 && first_step<monitors),"late %v: %s",late,string(written))
     error,_=probe_call(f,"play.stop",`{}`)
     testing.expect_value(t,error.code,0)

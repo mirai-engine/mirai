@@ -13,6 +13,7 @@ import "mirai:platform"
 import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The World tab: a map of the sections of the scene from above (Top) or
@@ -106,7 +107,7 @@ world_map_gather :: proc(s:^Session,m:^World_Map,w:core.World_Ref) {
     if references!=nil {
         for row in 0..<core.count(references) {
             e:=core.entity_at(references,row)
-            r:=core.at(core.read(references),row)
+            r:=core.at(references,row)
             pose:=entity_world(w,e)
             item:=Map_Item{reference=e,id=api_entity_id(w,e),point=map_plane(m.view,pose.position),shown=section_shown(s,w,e),edited=e==edited}
             _,item.overridden=section_view(s,w,e)
@@ -191,14 +192,14 @@ world_map_fit :: proc(m:^World_Map,rect:ui.Rect) {
 }
 
 @(private)
-shown_color :: proc(th:^ui.Theme,shown:Section_Shown) -> ui.Color {
+shown_color :: proc(ctx:^ui.Context,shown:Section_Shown) -> ui.Color {
     switch shown {
-    case .Unloaded: return th.text_faint
+    case .Unloaded: return ui.tone(ctx,"text_faint")
     case .Loading:  return ui.color_alpha(SECTION_COLOR,150)
     case .Loaded:   return ui.color_alpha(SECTION_COLOR,190)
     case .Active:   return SECTION_COLOR
     }
-    return th.text_faint
+    return ui.tone(ctx,"text_faint")
 }
 
 @(private)
@@ -206,25 +207,24 @@ world_map_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
     m:=world_map_of(s)
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     if m==nil {return}
     if m.fitted!=w.data {m.fitted,m.scale,m.chosen=w.data,0,0}
     world_map_gather(s,m,w)
     map_id:=ui.id(ctx,"world_map")
     rect,placed:=ui.widget_rect(ctx,map_id)
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control),gap=4,align_y=.Center}) {
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),gap=4,align_y=.Center}) {
         view:=int(m.view)
-        if ui.tabs(ctx,ui.id(ctx,"world_map_view"),{"Top","Side"},&view,ui.fixed(120),th.control) {
+        if kit.tabs(ctx,ui.id(ctx,"world_map_view"),{"Top","Side"},&view,ui.fixed(120),ui.metric(ctx,"control")) {
             m.view=World_Map_View(view)
             m.scale=0
             world_map_gather(s,m,w)
         }
         ui.spacer(ctx)
-        if ui.button(ctx,ui.id(ctx,"world_map_fit"),{icon=.Focus,icon_color=th.text_muted,icon_size=14,style=.Ghost,width=22,height=22}).clicked {m.scale=0}
+        if ui.button(ctx,ui.id(ctx,"world_map_fit"),{icon=.Focus,icon_color=ui.tone(ctx,"text_muted"),icon_size=14,variant="ghost",width=22,height=22}).clicked {m.scale=0}
     }
     if placed && m.scale<=0 {world_map_fit(m,rect)}
     if len(m.items)==0 {
-        ui.label(ctx,"This scene has no sections",th.font_small,th.text_muted)
+        ui.label(ctx,"This scene has no sections",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
         return
     }
     map_height:=clamp(height*0.5,120,320)
@@ -260,23 +260,23 @@ world_map_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
     if m.hovered>0 {m.name_length=copy(m.name[:],entity_label(w,m.items[m.hovered-1].reference))}
     world_map_costs(s,m,w)
     list:=ui.id(ctx,"world_map_list")
-    room:=max(height-th.control-map_height-16-3*8,OUTLINER_ROW*2)
+    room:=max(height-ui.metric(ctx,"control")-map_height-16-3*8,OUTLINER_ROW*2)
     first,last:=ui.list_begin(ctx,list,&m.scroll,len(m.items),OUTLINER_ROW,room)
     for index in first..<last {
         item:=m.items[index]
         if !entity_alive(w,item.reference) {continue}
         cost:=world_map_cost(m,item.id)
         if ui.box(ctx,{id=ui.id(ctx,"world_map_line",index+1),width=ui.GROW,height=ui.fixed(OUTLINER_ROW),align_y=.Center}) {
-            color:=shown_color(th,item.shown)
+            color:=shown_color(ctx,item.shown)
             // The dot of a section that loads is what works: it beats while it does.
             if item.shown==.Loading {color=ui.color_alpha(color,u8(110+100*(0.5+0.5*math.sin(f32(ctx.time)*6))))}
             row:=ui.row(ctx,ui.id(ctx,"world_map_row",index+1),{label=entity_label(w,item.reference),detail=cost.gpu>0?bytes_text(cost.gpu):"",icon=.Dot,icon_color=color,icon_size=12,text_color=item.edited?SECTION_TEXT:{},selected=item.id==m.chosen || m.hovered==index+1,height=OUTLINER_ROW})
             if row.clicked {world_map_travel(s,w,m,index)}
-            if item.overridden && ui.button(ctx,ui.id(ctx,"world_map_auto",index+1),{icon=.Revert,icon_color=th.text_muted,icon_size=13,style=.Ghost,width=22,height=OUTLINER_ROW}).clicked {
+            if item.overridden && ui.button(ctx,ui.id(ctx,"world_map_auto",index+1),{icon=.Revert,icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="ghost",width=22,height=OUTLINER_ROW}).clicked {
                 if why:=section_view_set(s,w,item.reference,.Active,true);why!="" {notify(s,why)}
             }
             on:=section_wanted(s,w,item.reference)!=.Unloaded
-            if ui.button(ctx,ui.id(ctx,"world_map_eye",index+1),{icon=on?.Eye:.Eye_Off,icon_color=item.overridden?th.accent:th.text_faint,icon_size=14,style=.Ghost,width=22,height=OUTLINER_ROW,disabled=item.edited}).clicked {
+            if ui.button(ctx,ui.id(ctx,"world_map_eye",index+1),{icon=on?.Eye:.Eye_Off,icon_color=item.overridden?ui.tone(ctx,"accent"):ui.tone(ctx,"text_faint"),icon_size=14,variant="ghost",width=22,height=OUTLINER_ROW,disabled=item.edited}).clicked {
                 if why:=section_view_set(s,w,item.reference,on?.Unloaded:.Active);why!="" {notify(s,why)}
             }
         }
@@ -285,7 +285,7 @@ world_map_build :: proc(s:^Session,w:core.World_Ref,width,height:f32) {
     shown:=m.hovered>0?m.items[m.hovered-1].id:m.chosen
     if shown!=0 {
         cost:=world_map_cost(m,shown)
-        ui.label(ctx,fmt.tprintf("%d entities · %d meshes · %d textures · GPU %s · files %s",cost.entities,cost.meshes,cost.textures,bytes_text(cost.gpu),bytes_text(cost.files)),th.font_label,th.text_muted)
+        ui.label(ctx,fmt.tprintf("%d entities · %d meshes · %d textures · GPU %s · files %s",cost.entities,cost.meshes,cost.textures,bytes_text(cost.gpu),bytes_text(cost.files)),ui.metric(ctx,"font_label"),ui.tone(ctx,"text_muted"))
     }
 }
 
@@ -372,22 +372,21 @@ section_cost :: proc(s:^Session,w:core.World_Ref,reference:core.Entity) -> (cost
 @(private)
 world_map_draw :: proc(ctx:^ui.Context,rect:ui.Rect,user:rawptr) {
     m:=(^World_Map)(user)
-    th:=&ctx.theme
-    ui.draw_rounded(ctx,rect,th.radius_control,th.well)
+    ui.draw_rounded(ctx,rect,ui.metric(ctx,"radius_control"),ui.tone(ctx,"well"))
     if m.scale<=0 {return}
     ui.clip_push(ctx,rect)
     defer ui.clip_pop(ctx)
     // A line every power of ten of meters that leaves MAP_GRID points between lines.
     step:=math.pow(10,math.ceil(math.log10(MAP_GRID/m.scale)))
     low,high:=map_from_screen(m,rect,{rect.x,rect.y}),map_from_screen(m,rect,{rect.x+rect.w,rect.y+rect.h})
-    grid:=ui.color_alpha(th.border,90)
+    grid:=ui.color_alpha(ui.tone(ctx,"border"),90)
     for x:=math.floor(low.x/step)*step;x<=high.x;x+=step {
         p:=map_to_screen(m,rect,{x,0}).x
-        ui.draw_line(ctx,{p,rect.y},{p,rect.y+rect.h},1,x==0?th.border:grid)
+        ui.draw_line(ctx,{p,rect.y},{p,rect.y+rect.h},1,x==0?ui.tone(ctx,"border"):grid)
     }
     for y:=math.floor(low.y/step)*step;y<=high.y;y+=step {
         p:=map_to_screen(m,rect,{0,y}).y
-        ui.draw_line(ctx,{rect.x,p},{rect.x+rect.w,p},1,y==0?th.border:grid)
+        ui.draw_line(ctx,{rect.x,p},{rect.x+rect.w,p},1,y==0?ui.tone(ctx,"border"):grid)
     }
     for &item,i in m.items {
         if i+1==m.hovered {continue}
@@ -397,26 +396,25 @@ world_map_draw :: proc(ctx:^ui.Context,rect:ui.Rect,user:rawptr) {
     for source in m.sources[:m.source_count] {
         at:=map_to_screen(m,rect,source.xy)
         if linalg.length(source.xy-m.camera)*m.scale<1 {continue}
-        if source.z>0 {ui.draw_ring(ctx,at,source.z*m.scale,1,ui.color_alpha(th.accent,90))}
-        ui.draw_circle(ctx,at,3,th.accent)
+        if source.z>0 {ui.draw_ring(ctx,at,source.z*m.scale,1,ui.color_alpha(ui.tone(ctx,"accent"),90))}
+        ui.draw_circle(ctx,at,3,ui.tone(ctx,"accent"))
     }
     // The camera: a wedge toward where it looks.
     at:=map_to_screen(m,rect,m.camera)
     forward:=m.camera_forward
     if forward=={} {forward={0,-1}}
     side:=[2]f32{-forward.y,forward.x}
-    ui.draw_triangle(ctx,at+forward*9,at-forward*5+side*6,at-forward*5-side*6,th.text)
+    ui.draw_triangle(ctx,at+forward*9,at-forward*5+side*6,at-forward*5-side*6,ui.tone(ctx,"text"))
     if m.hovered>0 && m.name_length>0 {
         item:=m.items[m.hovered-1]
         p:=map_to_screen(m,rect,item.point)
-        ui.draw_text(ctx,string(m.name[:m.name_length]),clamp(p.x+6,rect.x+4,rect.x+rect.w-4),clamp(p.y-th.font_small-6,rect.y+4,rect.y+rect.h-th.font_small-4),th.font_small,th.text)
+        ui.draw_text(ctx,string(m.name[:m.name_length]),clamp(p.x+6,rect.x+4,rect.x+rect.w-4),clamp(p.y-ui.metric(ctx,"font_small")-6,rect.y+4,rect.y+rect.h-ui.metric(ctx,"font_small")-4),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
     }
 }
 
 @(private)
 map_item_draw :: proc(ctx:^ui.Context,m:^World_Map,rect:ui.Rect,item:^Map_Item,hovered:bool) {
-    th:=&ctx.theme
-    color:=shown_color(th,item.shown)
+    color:=shown_color(ctx,item.shown)
     if item.count>=2 {
         points:[8][2]f32
         for p,i in item.outline[:item.count] {points[i]=map_to_screen(m,rect,p)}
@@ -429,10 +427,10 @@ map_item_draw :: proc(ctx:^ui.Context,m:^World_Map,rect:ui.Rect,item:^Map_Item,h
         if fill>0 {
             for i in 2..<item.count {ui.draw_triangle(ctx,points[0],points[i-1],points[i],ui.color_alpha(SECTION_COLOR,fill))}
         }
-        ui.draw_polyline(ctx,points[:item.count],hovered || item.id==m.chosen?2:1,hovered?th.text:color,item.count>=3)
+        ui.draw_polyline(ctx,points[:item.count],hovered || item.id==m.chosen?2:1,hovered?ui.tone(ctx,"text"):color,item.count>=3)
     }
     at:=map_to_screen(m,rect,item.point)
-    ui.draw_circle(ctx,at,item.overridden?4:3,item.overridden?th.accent:color)
+    ui.draw_circle(ctx,at,item.overridden?4:3,item.overridden?ui.tone(ctx,"accent"):color)
 }
 
 // ---------------------------------------------------------------- the API
@@ -452,74 +450,73 @@ SECTION_RULE_NAMES :: [scene.Section_Rule]string{.With_Document="With_Document",
 
 // One section, as editor.sections and the answers of its methods write it.
 @(private)
-api_section_write :: proc(s:^Session,out:^serial.Writer,w:core.World_Ref,e:core.Entity,costs:bool) {
-    r,_:=entity_get(w,e,scene.Scene_Reference)
+Api_Section :: struct {
+    id:base.Entity_Id `mirai:"label=The entity with the Scene_Reference"`,
+    name:string,
+    scene_:string `mirai:"name=scene,label=The path of its scene under the assets folder; empty when the registry does not have it"`,
+    rule:scene.Section_Rule,
+    asked:scene.Section_State `mirai:"label=What its reference asks"`,
+    view:string `mirai:"label=What the view of the editor asks instead: Active, Loaded or Unloaded; Auto when it follows the reference"`,
+    shown:Section_Shown `mirai:"label=What the editor shows of it now"`,
+    edited:bool `mirai:"label=Whether it is the section edited in its world"`,
+    position:[3]f32 `mirai:"label=In the world"`,
+    min:[3]f32 `mirai:"optional,label=Of the box of its extents in the world; without extents it has none"`,
+    max:[3]f32 `mirai:"optional"`,
+    cost:Api_Section_Cost `mirai:"optional,label=editor.sections: what loading it takes"`,
+}
+Api_Section_Cost :: struct {
+    entities,meshes,textures:int,
+    gpu_bytes,file_bytes:i64,
+}
+Api_Sections_Result :: struct {
+    sections:[]Api_Section,
+    sources:[]Api_Sections_Source `mirai:"label=The streaming sources of the edited world"`,
+    camera:Api_Sections_Camera `mirai:"label=The camera of the editor"`,
+}
+Api_Sections_Source :: struct {
+    position:[3]f32,
+    distance:f32,
+}
+Api_Sections_Camera :: struct {
+    position,forward:[3]f32,
+}
+
+api_section_of :: proc(s:^Session,w:core.World_Ref,e:core.Entity,costs:bool) -> (r:Api_Section) {
+    reference,_:=entity_get(w,e,scene.Scene_Reference)
     pose:=entity_world(w,e)
-    rules,states,shown_names:=SECTION_RULE_NAMES,SECTION_STATE_NAMES,SECTION_SHOWN_NAMES
-    serial.write_u8(out,'{')
-    api.write_key(out,"id",true)
-    api.write_id(out,api_entity_id(w,e))
-    api.write_text(out,"name",entity_label(w,e))
-    scene_path:=""
-    if s.app.assets!=nil {
-        if file,found:=asset.registry_find(&s.app.assets.registry,r.scene);found {scene_path=file.path}
-    }
-    api.write_text(out,"scene",scene_path)
-    api.write_text(out,"rule",rules[r.rule])
-    api.write_text(out,"asked",states[r.state])
+    states:=SECTION_STATE_NAMES
     view,overridden:=section_view(s,w,e)
-    api.write_text(out,"view",overridden?states[view]:"Auto")
-    api.write_text(out,"shown",shown_names[section_shown(s,w,e)])
-    api.write_bool(out,"edited",section_editing(s)==e)
-    api.write_numbers(out,"position",pose.position)
-    if r.extents!={} {
-        box:=section_box(r,pose)
-        low,high:=box[0],box[0]
-        for corner in box[1:] {low,high=linalg.min(low,corner),linalg.max(high,corner)}
-        api.write_numbers(out,"min",low)
-        api.write_numbers(out,"max",high)
+    r={id=api_entity_id(w,e),name=entity_label(w,e),rule=reference.rule,asked=reference.state,view=overridden?states[view]:"Auto",shown=section_shown(s,w,e),edited=section_editing(s)==e,position=pose.position}
+    if s.app.assets!=nil {
+        if file,found:=asset.registry_find(&s.app.assets.registry,reference.scene);found {r.scene_=file.path}
+    }
+    if reference.extents!={} {
+        box:=section_box(reference,pose)
+        r.min,r.max=box[0],box[0]
+        for corner in box[1:] {r.min,r.max=linalg.min(r.min,corner),linalg.max(r.max,corner)}
     }
     if costs {
         cost:=section_cost(s,w,e)
-        api.write_key(out,"cost")
-        serial.write_u8(out,'{')
-        api.write_int(out,"entities",i64(cost.entities),true)
-        api.write_int(out,"meshes",i64(cost.meshes))
-        api.write_int(out,"textures",i64(cost.textures))
-        api.write_int(out,"gpu_bytes",cost.gpu)
-        api.write_int(out,"file_bytes",cost.files)
-        serial.write_u8(out,'}')
+        r.cost={cost.entities,cost.meshes,cost.textures,cost.gpu,cost.files}
     }
-    serial.write_u8(out,'}')
+    return
 }
 
 api_sections :: proc(s:^Session,call:^api.Call) {
     w:=edited_world(s)
-    out:=call.out
-    serial.text_write_raw(out,`{"sections":[`)
+    r:=api.call_result(call,Api_Sections_Result)
     if references:=core.world_table_of(w,scene.Scene_Reference);references!=nil {
-        for row in 0..<core.count(references) {
-            if row>0 {serial.write_u8(out,',')}
-            api_section_write(s,out,w,core.entity_at(references,row),true)
-        }
+        r.sections=make([]Api_Section,core.count(references),call.allocator)
+        for &section,row in r.sections {section=api_section_of(s,w,core.entity_at(references,row),true)}
     }
-    serial.text_write_raw(out,`],"sources":[`)
     if sources:=core.world_storage_of(w,scene.Streaming_Sources);sources!=nil {
-        for source,i in sources.items[:min(sources.count,len(sources.items))] {
-            if i>0 {serial.write_u8(out,',')}
-            serial.write_u8(out,'{')
-            api.write_numbers(out,"position",source.position,true)
-            api.write_key(out,"distance")
-            api.write_number(out,source.distance)
-            serial.write_u8(out,'}')
-        }
+        listed:=sources.items[:min(sources.count,len(sources.items))]
+        r.sources=make([]Api_Sections_Source,len(listed),call.allocator)
+        for source,i in listed {r.sources[i]={source.position,source.distance}}
     }
     o:=s.viewport.orbit
     forward,_,_:=orbit_basis(o)
-    serial.text_write_raw(out,`],"camera":{`)
-    api.write_numbers(out,"position",orbit_position(o),true)
-    api.write_numbers(out,"forward",forward)
-    serial.text_write_raw(out,`}}`)
+    r.camera={orbit_position(o),forward}
 }
 
 api_section_view :: proc(s:^Session,call:^api.Call) {
@@ -545,7 +542,7 @@ api_section_view :: proc(s:^Session,call:^api.Call) {
         return
     }
     api_sections_settle(s)
-    api_section_write(s,call.out,edited_world(s),e,false)
+    api.call_result(call,Api_Section)^=api_section_of(s,edited_world(s),e,false)
 }
 
 api_section_travel :: proc(s:^Session,call:^api.Call) {
@@ -559,7 +556,7 @@ api_section_travel :: proc(s:^Session,call:^api.Call) {
     }
     if m:=world_map_of(s);m!=nil {m.chosen=api_entity_id(w,e)}
     api_sections_settle(s)
-    api_section_write(s,call.out,edited_world(s),e,false)
+    api.call_result(call,Api_Section)^=api_section_of(s,edited_world(s),e,false)
 }
 
 // What a section asked for is there when the call answers: its load, over

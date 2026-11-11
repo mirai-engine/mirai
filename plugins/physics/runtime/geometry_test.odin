@@ -258,7 +258,7 @@ a_rejected_heightfield_shape_releases_its_geometry_and_an_explicit_edit_can_retr
     testing.expect(t,link_find(&g.state,b).heightfield=={})
     core.remove(&g.colliders,a)
     geometry_test_step(&g)
-    core.get(&g.colliders,b).center.x=0.1
+    core.edit(&g.colliders,b).center.x=0.1
     geometry_test_step(&g)
     testing.expect(t,link_find(&g.state,b).heightfield!={})
     hit,hit_ok:=raycast({&g.state},{0.35,3,0.25},{0,-1,0})
@@ -303,7 +303,7 @@ volume_mesh_replacement_excavation_empty_chunks_and_parent_motion_keep_collision
     testing.expectf(t,after_ok && before.point.y-after.point.y>0.7,"excavation from %v to %v",before.point,after.point)
     old,old_ok:=raycast({&saved},{7,10,-5},{0,-1,0})
     testing.expect(t,old_ok && abs(old.point.y-1.65)<1e-4)
-    core.get(&g.transforms,owner).position={20,4,7}
+    core.edit(&g.transforms,owner).position={20,4,7}
     geometry_test_step(&g)
     _,ghost:=raycast({&g.state},{7,10,-5},{0,-1,0})
     testing.expect(t,!ghost)
@@ -342,7 +342,7 @@ adjacent_heightfield_chunks_with_distinct_origins_share_the_boundary_after_paren
         core.add(&g.statics,e,render.Mesh_Renderer{mesh=index==0?a:b})
     }
     for pass in 0..<2 {
-        if pass==1 {core.get(&g.transforms,owner).position={20,4,-10}}
+        if pass==1 {core.edit(&g.transforms,owner).position={20,4,-10}}
         geometry_test_step(&g)
         center:=pass==0?[3]f32{6,7,10}:[3]f32{20,7,-10}
         for offset in ([3]f32{-0.001,0,0.001}) {
@@ -397,7 +397,7 @@ physics_geometry_budgets_are_applied_once_and_exhausted_heightfields_can_be_reus
     geometry_test_step(&g)
     testing.expect_value(t,g.state.world.desc.heightfield_capacity,1)
     testing.expect(t,link_find(&g.state,chunks[1]).heightfield=={})
-    core.get(&g.colliders,chunks[1]).center.x=0.1
+    core.edit(&g.colliders,chunks[1]).center.x=0.1
     geometry_test_step(&g)
     testing.expect(t,link_find(&g.state,chunks[1]).heightfield!={})
     testing.expect(t,collider_ready({&g.state},chunks[1]))
@@ -586,6 +586,49 @@ cylinder_colliders_and_convex_radii_reach_the_simulation_at_the_scale_of_the_ent
     if refused!=nil {testing.expect(t,strings.contains(core.problem_text(refused),"convex_radius"),core.problem_text(refused))}
 }
 
+// A mesh mirrored by a negative scale collides where it is drawn, from the side it faces there. A collider
+// turned under a scale that is not uniform across the turn is sheared: a problem of its entity; a quarter turn,
+// also with the tilt of a few millionths of a radian a simulated rotation carries, is not.
+@(test)
+a_mirrored_mesh_collides_where_it_is_drawn :: proc(t:^testing.T) {
+    g:Geometry_Test
+    if !geometry_test_init(t,&g) {return}
+    defer geometry_test_destroy(&g)
+    // A ledge at y 1 from x 0.5 to 2.5, facing up, drawn mirrored from x -2.5 to -0.5.
+    corners:=[4]geom.Vec3{{0.5,1,-1},{2.5,1,-1},{0.5,1,1},{2.5,1,1}}
+    order:=[6]u32{0,2,1, 1,2,3}
+    mesh,made:=host.assets_mesh_generate(&g.assets,{positions=corners[:],indices=order[:]},options={no_lods=true,collision=true})
+    if !testing.expect(t,made) {return}
+    ledge:=core.create(&g.entities)
+    core.add(&g.transforms,ledge,core.Transform{{},1,{-1,1,1}})
+    core.add(&g.colliders,ledge,collider_mesh())
+    core.add(&g.statics,ledge,render.Mesh_Renderer{mesh=mesh})
+    ball:=core.create(&g.entities)
+    core.add(&g.transforms,ball,core.Transform{{-1.5,2,0},1,{1,1,1}})
+    core.add(&g.colliders,ball,collider_sphere(0.25))
+    core.add(&g.rigids,ball,RIGID_BODY_DYNAMIC)
+    parent:=core.create(&g.entities)
+    core.add(&g.transforms,parent,core.Transform{{0,0,-6},1,{2,1,1}})
+    turns:=[3]mm.Quat{mm.quat_axis_angle({0,1,0},0.25*linalg.PI),mm.quat_axis_angle({0,1,0},0.5*linalg.PI),mm.quat_axis_angle({0,0,1},1e-5)*mm.quat_axis_angle({0,1,0},0.5*linalg.PI)}
+    turned:[3]core.Entity
+    for &e,at in turned {
+        e=core.create(&g.entities)
+        core.add(&g.transforms,e,core.Transform{{f32(at)*3,0,0},turns[at],{1,1,1}})
+        core.add(&g.parents,e,core.Parent{entity=parent})
+        core.add(&g.colliders,e,collider_box({0.5,0.5,0.5}))
+    }
+    for _ in 0..<90 {physics_test_step(&g.f)}
+    rest:=physics_test_pose(&g.f,ball).position
+    testing.expectf(t,abs(rest.y-1.25)<0.02 && abs(rest.x+1.5)<0.02,"the ball rests on the mirrored ledge: %v",rest)
+    hit,hit_ok:=raycast({&g.state},{-1,4,0.6},{0,-1,0})
+    testing.expectf(t,hit_ok && hit.entity==ledge && abs(hit.point.y-1)<1e-3,"a ray down on the mirrored ledge: %v",hit)
+    _,beside:=raycast({&g.state},{1.5,4,0.6},{0,-1,0})
+    testing.expect(t,!beside,"nothing is where the ledge would be unmirrored")
+    testing.expect(t,core.problem_find(&g.problems,turned[0],"physics.collider_sheared")!=nil,"an eighth turn under a scale of (2,1,1) shears")
+    testing.expect(t,core.problem_find(&g.problems,turned[1],"physics.collider_sheared")==nil,"a quarter turn does not")
+    testing.expect(t,core.problem_find(&g.problems,turned[2],"physics.collider_sheared")==nil,"nor a quarter turn tilted by noise")
+}
+
 @(private="file")
 expect_close :: proc(t:^testing.T,value,expected:f32,loc:=#caller_location) {
     testing.expectf(t,abs(value-expected)<=1e-3,"got %v, expected %v",value,expected,loc=loc)
@@ -639,10 +682,12 @@ colliders_of_the_same_mesh_and_scale_share_one_slot_of_geometry :: proc(t:^testi
     for wall in walls {testing.expect(t,link_find(&copy,wall)!=nil && link_find(&copy,wall)^==link_find(&g.state,wall)^)}
     copied,_:=geometry_budget({&copy},.Hull)
     testing.expect_value(t,copied,2)
-    buffer:=make([]byte,sim.world_snapshot_capacity(&g.state.world))
-    defer delete(buffer)
-    written,saved:=sim.world_snapshot(&g.state.world,buffer)
-    testing.expect(t,saved && sim.world_restore(&g.state.world,buffer[:written]))
+    buffer:sim.World
+    defer sim.world_destroy(&buffer)
+    testing.expect(t,sim.world_kept_init(&buffer,&g.state.world,context.allocator))
+    _,saved:=sim.world_state_copy(&buffer,&g.state.world)
+    _,restored:=sim.world_state_copy(&g.state.world,&buffer)
+    testing.expect(t,saved && restored)
 
     // The slot goes with the last collider that uses it.
     for e in walls[:4] {core.remove(&g.colliders,e)}
@@ -818,7 +863,7 @@ the_pieces_of_a_hull_follow_their_mesh_copies_and_budgets :: proc(t:^testing.T) 
     defer state_destroy(&copy)
     testing.expect(t,state_copy(&copy,&f.state))
 
-    core.get(&f.statics,e).mesh=step_mesh
+    core.edit(&f.statics,e).mesh=step_mesh
     physics_test_step(&f,0)
     l:=link_find(&f.state,e)
     testing.expect(t,l!=nil && l.pieces.count==2)
@@ -828,7 +873,7 @@ the_pieces_of_a_hull_follow_their_mesh_copies_and_budgets :: proc(t:^testing.T) 
     testing.expect(t,hit_ok && hit.entity==e && abs(hit.point.y-1.5)<1e-3)
 
     // Four pieces do not fit in three hulls: no shape, and nothing held.
-    core.get(&f.statics,e).mesh=big_mesh
+    core.edit(&f.statics,e).mesh=big_mesh
     physics_test_step(&f,0)
     testing.expect(t,core.problem_find(&f.problems,e,"physics.geometry_budget")!=nil)
     l=link_find(&f.state,e)
@@ -838,7 +883,7 @@ the_pieces_of_a_hull_follow_their_mesh_copies_and_budgets :: proc(t:^testing.T) 
     for piece in f.state.pieces {testing.expect_value(t,piece,Piece{})}
 
     // A piece without volume is not a part of a body.
-    core.get(&f.statics,e).mesh=flat_mesh
+    core.edit(&f.statics,e).mesh=flat_mesh
     physics_test_step(&f,0)
     testing.expect(t,core.problem_find(&f.problems,e,"physics.collider_hull")!=nil)
     testing.expect(t,l.shape=={} && hulls_used(&f)==0)
@@ -846,7 +891,7 @@ the_pieces_of_a_hull_follow_their_mesh_copies_and_budgets :: proc(t:^testing.T) 
     testing.expect_value(t,meshes,0)
 
     // Removed, every slot is free; back from the copy, the L is there and collides.
-    core.get(&f.statics,e).mesh=l_mesh
+    core.edit(&f.statics,e).mesh=l_mesh
     physics_test_step(&f,0)
     testing.expect_value(t,sim.body_shapes(w,link_find(&f.state,e).body,shapes[:]),2)
     core.remove(&f.colliders,e)
@@ -858,10 +903,12 @@ the_pieces_of_a_hull_follow_their_mesh_copies_and_budgets :: proc(t:^testing.T) 
     testing.expect_value(t,hulls_used(&f),2)
     hit,hit_ok=raycast({&f.state},{1.5,5,0},{0,-1,0})
     testing.expect(t,hit_ok && hit.entity==e && abs(hit.point.y-1)<1e-3)
-    buffer:=make([]byte,sim.world_snapshot_capacity(w))
-    defer delete(buffer)
-    written,saved:=sim.world_snapshot(w,buffer)
-    testing.expect(t,saved && sim.world_restore(w,buffer[:written]))
+    buffer:sim.World
+    defer sim.world_destroy(&buffer)
+    testing.expect(t,sim.world_kept_init(&buffer,w,context.allocator))
+    _,saved:=sim.world_state_copy(&buffer,w)
+    _,restored:=sim.world_state_copy(w,&buffer)
+    testing.expect(t,saved && restored)
     // The rows lost the collider: the next step lets the copied pieces go.
     physics_test_step(&f,0)
     testing.expect_value(t,hulls_used(&f),0)

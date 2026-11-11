@@ -3,6 +3,7 @@ package host
 import "base:runtime"
 import "core:fmt"
 import "mirai:asset"
+import anim "mirai:std/anim"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -43,7 +44,6 @@ ui_tree_tables :: proc(doc:^asset.Document,types:^asset.Types,data:ui.Tree_Data)
     asset.document_put(doc,types,asset.UI_TABLE_ANIM_SETS,data.anim_sets) or_return
     asset.document_put(doc,types,asset.UI_TABLE_FONTS,data.fonts) or_return
     asset.document_put(doc,types,asset.UI_TABLE_STYLE_INFOS,data.style_infos) or_return
-    asset.document_put(doc,types,asset.UI_TABLE_TRANSLATIONS,data.translations,{},.LZ) or_return
     asset.document_put(doc,types,asset.UI_TABLE_GRID_TRACKS,data.grid_tracks) or_return
     asset.document_put(doc,types,asset.UI_TABLE_TOKENS,data.tokens) or_return
     asset.document_put(doc,types,asset.UI_TABLE_TOKEN_USES,data.token_uses) or_return
@@ -84,12 +84,11 @@ ui_tree_view :: proc(a:^asset.Asset,types:^asset.Types) -> (data:ui.Tree_Data,er
     data.images=rows(a,types,asset.UI_TABLE_IMAGES,ui.Tree_Image) or_return
     data.anims=rows(a,types,asset.UI_TABLE_ANIMS,ui.Tree_Anim) or_return
     data.tracks=rows(a,types,asset.UI_TABLE_TRACKS,ui.Tree_Track) or_return
-    data.keys=rows(a,types,asset.UI_TABLE_KEYS,ui.Keyframe) or_return
+    data.keys=rows(a,types,asset.UI_TABLE_KEYS,anim.Keyframe) or_return
     data.parts=rows(a,types,asset.UI_TABLE_PARTS,ui.Anim) or_return
     data.anim_sets=rows(a,types,asset.UI_TABLE_ANIM_SETS,ui.Anim_Set) or_return
     data.fonts=rows(a,types,asset.UI_TABLE_FONTS,ui.Tree_Font) or_return
     data.style_infos=rows(a,types,asset.UI_TABLE_STYLE_INFOS,ui.Tree_Style_Info) or_return
-    data.translations=rows(a,types,asset.UI_TABLE_TRANSLATIONS,ui.Tree_Translation) or_return
     data.grid_tracks=rows(a,types,asset.UI_TABLE_GRID_TRACKS,ui.Grid_Tracks) or_return
     data.tokens=rows(a,types,asset.UI_TABLE_TOKENS,ui.Tree_Token) or_return
     data.token_uses=rows(a,types,asset.UI_TABLE_TOKEN_USES,ui.Tree_Token_Use) or_return
@@ -100,7 +99,7 @@ ui_tree_view :: proc(a:^asset.Asset,types:^asset.Types) -> (data:ui.Tree_Data,er
 
 // The records of the widgets the components of a tree name, by row of
 // components, each linked already with the widgets it names, read from the
-// assets as the registry holds them (unsaved files included). files gets the
+// assets as the registry holds them, in memory or on disk. files gets the
 // stamp of every file read, to load the tree again when one changes. A
 // transaction: false when a widget is missing, is not a .ui, does not read,
 // or names through others a file that names it.

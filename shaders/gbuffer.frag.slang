@@ -6,15 +6,18 @@
 // the others keep only the unlit bit of the layers.
 //! variant plain MIRAI_GBUFFER_PLAIN=1
 //! variant layers MIRAI_GBUFFER_LAYERS=1
+// Both are variants: a stage declares its targets, and a pipeline has them all.
+// Behind a constant, Vulkan warns of a write to an absent target at each draw,
+// and the Metal source, made once, writes a color the pipeline has no target for.
 // nested: the pixels of a nested view, which keep their linear depth negative
 // and the index of the view in the alpha of the motion target.
-//! variant nested MIRAI_NESTED_PIXELS=1
-//! variant nested_plain MIRAI_NESTED_PIXELS=1 MIRAI_GBUFFER_PLAIN=1
-//! variant nested_layers MIRAI_NESTED_PIXELS=1 MIRAI_GBUFFER_LAYERS=1
+//! constant nested MIRAI_NESTED_PIXELS
 #ifndef MIRAI_GBUFFER_LAYERS
 // Without the layers target no instance with layers is in sight.
-#define MIRAI_MATERIAL_NO_LAYERS 1
+#define MIRAI_MATERIAL_NO_LAYERS true
 #endif
+// It reports the levels it samples of each texture (texture_feedback in scene.slang).
+#define MIRAI_TEXTURE_FEEDBACK
 #include "raster.slang"
 #include "gbuffer.slang"
 
@@ -86,9 +89,9 @@ Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position) {
 #ifdef MIRAI_INSTANCE_IDS
     output.g_instance = input.in_instance == INVALID ? 0u : input.in_instance + 1u;
 #endif
-#ifdef MIRAI_NESTED_PIXELS
-    output.g_motion.a = 1.0 + float(frame.view_index);
-    output.g_depth = -output.g_depth;
-#endif
+    if (MIRAI_NESTED_PIXELS) {
+        output.g_motion.a = 1.0 + float(frame.view_index);
+        output.g_depth = -output.g_depth;
+    }
     return output;
 }

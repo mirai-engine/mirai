@@ -26,19 +26,26 @@ Vk_Buffer :: struct {
 	fresh:    bool,            // of GPU memory, waiting in Device.fresh for the fill that zeroes it
 }
 
+// The hazard state of a mip of a texture; its layers share it.
+Vk_Level :: struct {
+	layout: vk.ImageLayout,
+	write:  Access,
+	reads:  bit_set[Access],
+}
+
 Vk_Texture :: struct {
-	image:     vk.Image,
-	memory:    Vk_Memory,
-	view:      vk.ImageView,
-	mip_views: [MAX_TEXTURE_MIPS]vk.ImageView,
-	desc:      Texture_Desc,
-	vk_format: vk.Format,
-	aspect:    vk.ImageAspectFlags,
-	layout:    vk.ImageLayout,
-	write:     Access,
-	reads:     bit_set[Access],
-	swapchain: bool,
-	shared:    uintptr, // the handle a shared texture exports, held while it lives (a file descriptor plus one, or a HANDLE)
+	image:       vk.Image,
+	memory:      Vk_Memory,
+	view:        vk.ImageView,
+	mip_views:   [MAX_TEXTURE_MIPS]vk.ImageView,
+	layer_views: []vk.ImageView, // a target with layers: one per mip and layer, mip after mip
+	desc:        Texture_Desc,
+	vk_format:   vk.Format,
+	aspect:      vk.ImageAspectFlags,
+	levels:      [MAX_TEXTURE_MIPS]Vk_Level, // a run of mips in one state takes one barrier
+	swapchain:   bool,
+	shared:      uintptr, // the handle a shared texture exports, held while it lives (a file descriptor plus one, or a HANDLE)
+	table:       Table_Refs,
 }
 
 Slot_Info :: struct {
@@ -55,7 +62,8 @@ Vk_Pipeline :: struct {
 	slots:      [MAX_BINDING_SLOTS]Slot_Info,
 	slot_mask:  u32,
 	uses_table: bool, // the layout has the texture table as set 1
-	name:       string,
+	name_bytes: [PIPELINE_NAME_BYTES]u8, // a copy of its name: what it was made from may go before it (vk_pipeline_name)
+	name_length: u8,
 }
 
 Vk_Accel :: struct {
@@ -85,6 +93,7 @@ Vk_Deferred :: struct {
 	memory:     Vk_Memory, // of the buffer or the image
 	image:      vk.Image,
 	views:      [MAX_TEXTURE_MIPS + 1]vk.ImageView,
+	layer_views: []vk.ImageView,
 	sampler:    vk.Sampler,
 	pipeline:   vk.Pipeline,
 	layout:     vk.PipelineLayout,
@@ -107,6 +116,8 @@ Vk_Frame :: struct {
 	upload_ptr:   [^]u8,
 	upload_size:  u64,
 	upload_used:  u64,
+	oversized:       [MAX_FRAME_OVERSIZED]Buffer, // see frame_alloc
+	oversized_count: int,
 	deletions:    [dynamic]Vk_Deferred, // reserved once; see vk_defer
 	queries:      vk.QueryPool,
 	passes:       bool, // the frame writes the timestamps of cmd_timestamp: timestamps_want was on when it began
@@ -118,6 +129,7 @@ Vk_Frame :: struct {
 	paced:        bool, // the frame draws into a pair of the presenter
 	begun_ns:     i64,
 	submitted_ns: i64,
+	marks:        Vk_Marks, // where the GPU went (vulkan_marks.odin)
 }
 
 Vk_Swapchain :: struct {
@@ -131,8 +143,13 @@ Vk_Swapchain :: struct {
 	present:     [dynamic]vk.Semaphore,
 	desc:        Surface_Desc,
 	stale:       bool,
+	lost:        bool, // the platform lost the surface (vk_surface_lost): atomic
+	tries:       int,  // frames that could not make the lost surface again
 	copyable:    bool, // its images take copies: the presenter can show its pairs through them
 }
+
+// Frames that try to make a lost surface again before the window stays without images.
+VK_SURFACE_TRIES :: 8
 
 PRESENT_SLOTS :: 2 * PRESENT_JOBS
 
@@ -220,7 +237,7 @@ Device :: struct {
 	table_taken:       []u32, // as long as the table: what a copy takes
 	table_limit:       int,   // the most entries the table grows to on this device
 	table_default:     Texture,
-	pipelines_kept:    Pipeline_Store, // with a path, read when created and written when destroyed
+	pipelines_kept:    Pipeline_Store, // with a path, read when created and written as it grows and when destroyed
 	store_path:        [512]u8,
 	store_path_len:    int,
 	timings:           [MAX_TIMESTAMPS]Gpu_Timing,
@@ -246,6 +263,7 @@ Device :: struct {
 	waited_out:        bool, // a wait passed GPU_WAIT_LIMIT_NS: the GPU may still run that work
 	lose_asked:        bool, // device_lose
 	lose_provoked:     bool,
+	refuse:            Pipeline_Refusal,
 	presenter:         Presenter,
 	present:           Vk_Present,
 	queue_lock:        sync.Mutex, // the presenter submits and presents from its thread too
@@ -282,11 +300,9 @@ vk_lost :: proc(d: ^Device, result: vk.Result, what: string) -> bool {
 			description = strings.trim_space(string(cstring(raw_data(info.description[:]))))
 		}
 	}
-	if description != "" {
-		device_fail(d, .Lost, "%s reported the GPU device lost: %s", what, description)
-	} else {
-		device_fail(d, .Lost, "%s reported the GPU device lost", what)
-	}
+	stopped_buffer: [256]u8
+	stopped := vk_stopped(d, stopped_buffer[:])
+	device_fail(d, .Lost, "%s reported the GPU device lost%s%s%s%s", what, ": " if description != "" else "", description, "; the GPU stopped in " if stopped != "" else "", stopped)
 	return true
 }
 
@@ -295,7 +311,9 @@ vk_lost :: proc(d: ^Device, result: vk.Result, what: string) -> bool {
 vk_waited :: proc(d: ^Device, result: vk.Result, what: string) -> bool {
 	if result != .TIMEOUT {return vk_check(d, result, what)}
 	d.waited_out = true
-	device_fail(d, .Hung, "%s: the GPU did not finish its work in %d s", what, GPU_WAIT_LIMIT_NS / 1_000_000_000)
+	stopped_buffer: [256]u8
+	stopped := vk_stopped(d, stopped_buffer[:])
+	device_fail(d, .Hung, "%s: the GPU did not finish its work in %d s%s%s", what, GPU_WAIT_LIMIT_NS / 1_000_000_000, "; it stopped in " if stopped != "" else "", stopped)
 	return false
 }
 
@@ -379,7 +397,12 @@ vk_create_pools :: proc(d: ^Device) -> bool {
 		err: runtime.Allocator_Error
 		f.deletions, err = make([dynamic]Vk_Deferred, 0, c.deletions, d.allocator)
 		ok &&= err == nil
+		f.list.commands, err = make([]Pass_Command, PASS_COMMAND_CAPACITY, d.allocator)
+		ok &&= err == nil
 	}
+	commands_error: runtime.Allocator_Error
+	d.immediate.commands, commands_error = make([]Pass_Command, PASS_COMMAND_CAPACITY, d.allocator)
+	ok &&= commands_error == nil
 	images_error, present_error: runtime.Allocator_Error
 	d.swapchain.images, images_error = make([dynamic]Texture, 0, 8, d.allocator)
 	d.swapchain.present, present_error = make([dynamic]vk.Semaphore, 0, 8, d.allocator)
@@ -401,7 +424,10 @@ vk_create_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	vk_loader_lock(d)
 	made := vk_create_instance_and_device(d, desc)
 	vk_loader_unlock(d)
-	return made && vk_finish_device(d, desc)
+	if !made || !vk_finish_device(d, desc) {return false}
+	if d.swapchain.surface == 0 {return true}
+	d.has_swapchain = true
+	return vk_recreate_swapchain(d)
 }
 
 @(private)
@@ -503,6 +529,11 @@ vk_create_instance_and_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	}
 	d.info.features.validation = validation
 
+	if desc.surface != {} {
+		if desc.surface.vulkan_create == nil || !d.surface_ext {set_error(d, "a window needs Surface_Desc.vulkan_create and VK_KHR_surface in Device_Desc.vulkan_instance_extensions, which the platform layer gives"); return false}
+		d.swapchain.desc = desc.surface
+		if !vk_surface_make(d) {return false}
+	}
 	if !vk_pick_physical_device(d, desc) {return false}
 	return vk_create_logical_device(d, desc)
 }
@@ -514,50 +545,139 @@ vk_finish_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 }
 
 @(private)
+Vk_Candidate :: struct {
+	type:   vk.PhysicalDeviceType,
+	name:   string,
+	family: int, // the queue family the device would use; -1: none, the device is not chosen
+}
+
+// The first queue family with graphics and compute that presents, given what
+// each family answered for the window's surface; with no window (nil) the first one.
+@(private)
+vk_queue_family :: proc "contextless" (families: []vk.QueueFamilyProperties, presents: []b32) -> int {
+	for f, i in families {
+		if .GRAPHICS not_in f.queueFlags || .COMPUTE not_in f.queueFlags {continue}
+		if presents == nil || i < len(presents) && presents[i] {return i}
+	}
+	return -1
+}
+
+// The device of those with a family: one whose name holds preferred first,
+// then discrete, integrated, virtual and CPU. -1: none.
+@(private)
+vk_pick :: proc(candidates: []Vk_Candidate, preferred: string) -> int {
+	best, best_score := -1, -1
+	for c, i in candidates {
+		if c.family < 0 {continue}
+		score := 0
+		#partial switch c.type {
+		case .DISCRETE_GPU:   score = 1000
+		case .INTEGRATED_GPU: score = 500
+		case .VIRTUAL_GPU:    score = 200
+		case .CPU:            score = 10
+		}
+		if preferred != "" && strings.contains(strings.to_lower(c.name, context.temp_allocator), strings.to_lower(preferred, context.temp_allocator)) {score += 100000}
+		if score > best_score {best, best_score = i, score}
+	}
+	return best
+}
+
+// Makes the surface of the window with the callback of the platform. Made
+// again after a loss, the queue of the device must still present to it.
+@(private)
+vk_surface_make :: proc(d: ^Device) -> bool {
+	sc := &d.swapchain
+	raw, ok := sc.desc.vulkan_create(d.instance, sc.desc.vulkan_user)
+	if !ok {set_error(d, "the platform could not create a Vulkan surface for the window"); return false}
+	sc.surface = vk.SurfaceKHR(raw)
+	if d.physical == nil {return true}
+	supported: b32
+	if d.ivk.GetPhysicalDeviceSurfaceSupportKHR(d.physical, d.queue_family, sc.surface, &supported) != .SUCCESS || !supported {
+		set_error(d, "the window's surface, made again, no longer takes images of %s: restart the application so it chooses a GPU that presents to the display", d.info.name)
+		return false
+	}
+	return true
+}
+
+// Whether a call on the window's surface found it lost (a display change, a
+// driver reset): the swapchain and the surface are made again when the next
+// frame begins. From any thread.
+@(private)
+vk_surface_lost :: proc "contextless" (d: ^Device, result: vk.Result) -> bool {
+	if result != .ERROR_SURFACE_LOST_KHR {return false}
+	sync.atomic_store(&d.swapchain.lost, true)
+	return true
+}
+
+// Makes the lost surface again from the window, with the GPU idle. After
+// VK_SURFACE_TRIES frames that could not, the window stays without images.
+@(private)
+vk_surface_remake :: proc(d: ^Device) -> bool {
+	sc := &d.swapchain
+	if sc.tries >= VK_SURFACE_TRIES {return false}
+	vk_destroy_swapchain(d)
+	sc.stale = true
+	if sc.surface != 0 {d.ivk.DestroySurfaceKHR(d.instance, sc.surface, nil); sc.surface = 0}
+	if !vk_surface_make(d) {
+		if sc.surface != 0 {d.ivk.DestroySurfaceKHR(d.instance, sc.surface, nil); sc.surface = 0}
+		sc.tries += 1
+		if sc.tries == VK_SURFACE_TRIES {
+			cause := strings.clone(d.error, context.temp_allocator)
+			set_error(d, "the window lost its Vulkan surface and %d frames could not make it again (%s): the window shows nothing until the application restarts", VK_SURFACE_TRIES, cause)
+		}
+		return false
+	}
+	sc.tries = 0
+	sync.atomic_store(&sc.lost, false)
+	return true
+}
+
+@(private)
 vk_pick_physical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	count: u32
 	d.ivk.EnumeratePhysicalDevices(d.instance, &count, nil)
 	if count == 0 {set_error(d, "no Vulkan physical devices"); return false}
 	devices := make([]vk.PhysicalDevice, count, context.temp_allocator)
 	d.ivk.EnumeratePhysicalDevices(d.instance, &count, raw_data(devices))
-	preferred := env_flag("MIRAI_GPU")
-	if preferred == "" {preferred = desc.preferred_device}
-	best_score := -1
-	for physical in devices {
+	surface := d.swapchain.surface
+	candidates := make([]Vk_Candidate, count, context.temp_allocator)
+	for physical, i in devices {
+		c := &candidates[i]
+		c.family = -1
 		props: vk.PhysicalDeviceProperties
 		d.ivk.GetPhysicalDeviceProperties(physical, &props)
+		c.type = props.deviceType
+		c.name = strings.clone(string(cstring(&props.deviceName[0])), context.temp_allocator)
 		if props.apiVersion < vk.API_VERSION_1_3 {continue}
 		ext_count: u32
 		d.ivk.EnumerateDeviceExtensionProperties(physical, nil, &ext_count, nil)
 		exts := make([]vk.ExtensionProperties, ext_count, context.temp_allocator)
 		d.ivk.EnumerateDeviceExtensionProperties(physical, nil, &ext_count, raw_data(exts))
-		if !has_extension(exts, "VK_KHR_push_descriptor") {continue}
+		if !has_extension(exts, "VK_KHR_push_descriptor") || surface != 0 && !has_extension(exts, "VK_KHR_swapchain") {continue}
 		family_count: u32
 		d.ivk.GetPhysicalDeviceQueueFamilyProperties(physical, &family_count, nil)
 		families := make([]vk.QueueFamilyProperties, family_count, context.temp_allocator)
 		d.ivk.GetPhysicalDeviceQueueFamilyProperties(physical, &family_count, raw_data(families))
-		family := -1
-		for f, i in families {
-			if .GRAPHICS in f.queueFlags && .COMPUTE in f.queueFlags {family = i; break}
+		presents: []b32
+		if surface != 0 {
+			presents = make([]b32, family_count, context.temp_allocator)
+			for &present, f in presents {
+				if d.ivk.GetPhysicalDeviceSurfaceSupportKHR(physical, u32(f), surface, &present) != .SUCCESS {present = false}
+			}
 		}
-		if family < 0 {continue}
-		score := 0
-		#partial switch props.deviceType {
-		case .DISCRETE_GPU:   score = 1000
-		case .INTEGRATED_GPU: score = 500
-		case .VIRTUAL_GPU:    score = 200
-		case .CPU:            score = 10
-		}
-		name := string(cstring(&props.deviceName[0]))
-		if preferred != "" && strings.contains(strings.to_lower(name, context.temp_allocator), strings.to_lower(preferred, context.temp_allocator)) {score += 100000}
-		if score > best_score {
-			best_score = score
-			d.physical = physical
-			d.queue_family = u32(family)
-			d.properties = props
-		}
+		c.family = vk_queue_family(families, presents)
 	}
-	if d.physical == nil {set_error(d, "no Vulkan 1.3 device with push descriptors and a graphics+compute queue"); return false}
+	preferred := env_flag("MIRAI_GPU")
+	if preferred == "" {preferred = desc.preferred_device}
+	best := vk_pick(candidates, preferred)
+	if best < 0 {
+		if surface != 0 {set_error(d, "no Vulkan 1.3 device with push descriptors has a graphics+compute queue that presents to the window: update the GPU driver, or connect the display to a GPU that has one"); return false}
+		set_error(d, "no Vulkan 1.3 device with push descriptors and a graphics+compute queue")
+		return false
+	}
+	d.physical = devices[best]
+	d.queue_family = u32(candidates[best].family)
+	d.ivk.GetPhysicalDeviceProperties(d.physical, &d.properties)
 	d.ivk.GetPhysicalDeviceMemoryProperties(d.physical, &d.memory_properties)
 	vk_memory_init(&d.memory, &d.memory_properties, d.properties.limits.maxMemoryAllocationCount, u64(d.properties.limits.bufferImageGranularity), d.allocator)
 	name := string(cstring(&d.properties.deviceName[0]))
@@ -696,6 +816,8 @@ vk_create_logical_device :: proc(d: ^Device, desc: Device_Desc) -> bool {
 	d.shared_memory = has_extension(exts, VK_SHARED_EXTENSION)
 	if d.shared_memory {append(&device_exts, VK_SHARED_EXTENSION)}
 	if d.fault_info {append(&device_exts, vk.EXT_DEVICE_FAULT_EXTENSION_NAME)}
+	d.info.features.stop_place = has_extension(exts, vk.AMD_BUFFER_MARKER_EXTENSION_NAME)
+	if d.info.features.stop_place {append(&device_exts, vk.AMD_BUFFER_MARKER_EXTENSION_NAME)}
 	calibrated, calibrated_khr := vk_calibrated_extension(d, exts)
 	if calibrated != nil {append(&device_exts, calibrated)}
 	d.memory_budget = has_extension(exts, vk.EXT_MEMORY_BUDGET_EXTENSION_NAME)
@@ -762,10 +884,15 @@ vk_create_frames :: proc(d: ^Device, desc: Device_Desc) -> bool {
 		if !vk_check(d, d.dvk.AllocateCommandBuffers(d.handle, &alloc, &f.cmd), "command buffer") {return false}
 		semaphore_info := vk.SemaphoreCreateInfo{sType = .SEMAPHORE_CREATE_INFO}
 		if !vk_check(d, d.dvk.CreateSemaphore(d.handle, &semaphore_info, nil, &f.acquire), "acquire semaphore") {return false}
-		f.upload = vk_create_buffer(d, Buffer_Desc{size = upload_size, usage = {.Uniform, .Storage, .Index, .Indirect, .Transfer_Src, .Transfer_Dst, .Accel_Input}, memory = .Upload, name = fmt.tprintf("frame upload %d", i)})
+		f.upload = vk_create_buffer(d, Buffer_Desc{size = upload_size, usage = TRANSIENT_USAGE, memory = .Upload, name = fmt.tprintf("frame upload %d", i)})
 		if f.upload == 0 {return false}
 		f.upload_ptr = cast([^]u8)pool_get(&d.buffers, base.Handle(f.upload)).mapped
 		f.upload_size = upload_size
+		if d.info.features.stop_place {
+			f.marks.buffer = vk_create_buffer(d, Buffer_Desc{size = 4 * MAX_FRAME_MARKS, usage = {.Transfer_Dst}, memory = .Readback, name = fmt.tprintf("frame marks %d", i)})
+			if f.marks.buffer == 0 {return false}
+			f.marks.words = cast([^]u32)pool_get(&d.buffers, base.Handle(f.marks.buffer)).mapped
+		}
 		if d.info.features.timestamps {
 			query_info := vk.QueryPoolCreateInfo{sType = .QUERY_POOL_CREATE_INFO, queryType = .TIMESTAMP, queryCount = MAX_TIMESTAMPS}
 			d.dvk.CreateQueryPool(d.handle, &query_info, nil, &f.queries)
@@ -792,9 +919,9 @@ device_destroy :: proc(d: ^Device) {
 		// A lost device returns at once; one device_lose failed still runs what it was given.
 		if !vk_idle(d) {d.dvk.DeviceWaitIdle(d.handle)}
 		vk_destroy_swapchain(d)
-		if d.swapchain.surface != 0 {d.ivk.DestroySurfaceKHR(d.instance, d.swapchain.surface, nil)}
 		for &f in d.frames {
 			if f.upload != 0 {buffer_destroy(d, f.upload)}
+			if f.marks.buffer != 0 {buffer_destroy(d, f.marks.buffer)}
 		}
 		if d.scratch != 0 {buffer_destroy(d, d.scratch)}
 		// The blocks of the arena are buffers, released below with the others.
@@ -835,6 +962,8 @@ device_destroy :: proc(d: ^Device) {
 		d.dvk.DestroyDevice(d.handle, nil)
 		vk_loader_unlock(d)
 	}
+	// Made before the device, so a device that was not made leaves it too.
+	if d.swapchain.surface != 0 && !d.waited_out {d.ivk.DestroySurfaceKHR(d.instance, d.swapchain.surface, nil)}
 	vk_loader_lock(d)
 	if d.messenger != 0 {d.ivk.DestroyDebugUtilsMessengerEXT(d.instance, d.messenger, nil)}
 	if d.instance != nil {d.ivk.DestroyInstance(d.instance, nil)}
@@ -843,7 +972,8 @@ device_destroy :: proc(d: ^Device) {
 	vk_memory_shutdown(d, false)
 	pipeline_store_destroy(&d.pipelines_kept)
 	delete(d.fresh)
-	for &f in d.frames {delete(f.deletions)}
+	for &f in d.frames {delete(f.deletions); delete(f.list.commands, d.allocator)}
+	delete(d.immediate.commands, d.allocator)
 	delete(d.swapchain.images)
 	delete(d.swapchain.present)
 	pool_destroy(&d.buffers, d.allocator)
@@ -895,7 +1025,7 @@ device_validation_messages :: proc(d: ^Device, out: []string) -> int {
 // What the device made for itself, which device_stats leaves out.
 @(private)
 device_own :: proc(d: ^Device) -> (buffers, textures, pipelines: int) {
-	for f in d.frames {if f.upload != 0 {buffers += 1}}
+	for f in d.frames {buffers += int(f.upload != 0) + int(f.marks.buffer != 0) + f.oversized_count}
 	for block in d.accel_blocks {if block != 0 {buffers += 1}}
 	if d.scratch != 0 {buffers += 1}
 	if d.staging != 0 {buffers += 1}
@@ -932,6 +1062,7 @@ vk_release_deferred :: proc(d: ^Device, e: ^Vk_Deferred) {
 	if e.set_layout != 0 {d.dvk.DestroyDescriptorSetLayout(d.handle, e.set_layout, nil)}
 	if e.descriptor_pool != 0 {d.dvk.DestroyDescriptorPool(d.handle, e.descriptor_pool, nil)}
 	for view in e.views {if view != 0 {d.dvk.DestroyImageView(d.handle, view, nil)}}
+	vk_layer_views_release(d, e.layer_views)
 	if e.image != 0 {d.dvk.DestroyImage(d.handle, e.image, nil)}
 	if e.buffer != 0 {d.dvk.DestroyBuffer(d.handle, e.buffer, nil)}
 	vk_memory_unbind(d, e.memory)
@@ -1049,26 +1180,23 @@ frame_begin :: proc(d: ^Device, present := true) -> (cmd: ^Command_List, ok: boo
 	}
 	if d.has_swapchain && present && !f.paced {
 		sc := &d.swapchain
-		if sc.stale {
-			if !vk_recreate_swapchain(d) || sc.stale {return nil, false}
-		}
-		if sc.handle == 0 {return nil, false}
+		if !swapchain_refresh(d) || sc.handle == 0 {return nil, false}
 		result := d.dvk.AcquireNextImageKHR(d.handle, sc.handle, GPU_WAIT_LIMIT_NS, f.acquire, 0, &f.image_index)
 		if result == .ERROR_OUT_OF_DATE_KHR {sc.stale = true; return nil, false}
+		if vk_surface_lost(d, result) {return nil, false}
 		// A compositor may hold the images of a hidden window: the frame is skipped, not the device.
 		if result == .TIMEOUT || result == .NOT_READY {return nil, false}
 		if result != .SUCCESS && result != .SUBOPTIMAL_KHR {vk_check(d, result, "vkAcquireNextImageKHR"); return nil, false}
 		if result == .SUBOPTIMAL_KHR {sc.stale = true}
 		f.acquired = true
 		texture := pool_get(&d.textures, base.Handle(sc.images[f.image_index]))
-		texture.layout = .UNDEFINED
-		texture.write = .None
-		texture.reads = {}
+		texture.levels = {}
 	}
 	d.dvk.ResetCommandPool(d.handle, f.pool, {})
 	begin := vk.CommandBufferBeginInfo{sType = .COMMAND_BUFFER_BEGIN_INFO, flags = {.ONE_TIME_SUBMIT}}
 	d.dvk.BeginCommandBuffer(f.cmd, &begin)
 	vk_list_reset(&f.list)
+	f.marks.serial, f.marks.sent, f.marks.count, f.marks.named = u32(d.frame_number) + 1, false, 0, 0
 	f.passes = false
 	if f.queries != 0 {
 		d.dvk.CmdResetQueryPool(f.cmd, f.queries, 0, MAX_TIMESTAMPS)
@@ -1086,6 +1214,7 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	if !d.in_frame || cmd != &d.frames[d.slot].list {set_error(d, "frame_end without the list its frame_begin gave"); return false}
 	f := &d.frames[d.slot]
 	pr := &d.presenter
+	frame_oversized_release(d)
 	if cmd.in_render_pass {cmd_end_render_pass(cmd)}
 	if f.acquired {cmd_barrier_texture(cmd, d.swapchain.images[f.image_index], .Present)}
 	if f.paced && pr.pair >= 0 {
@@ -1093,6 +1222,7 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	}
 	vk_flush_barriers(cmd)
 	if f.queries != 0 && !f.passes {vk_timestamp_write(f, "")}
+	vk_mark(cmd, .End)
 	d.dvk.EndCommandBuffer(f.cmd)
 
 	d.timeline_value += 1
@@ -1118,7 +1248,9 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 	submit.signalSemaphoreInfoCount = u32(signal_count)
 	submit.pSignalSemaphoreInfos = raw_data(signals[:])
 	sync.mutex_lock(&d.queue_lock)
-	ok := vk_check(d, d.dvk.QueueSubmit2(d.queue, 1, &submit, 0), "vkQueueSubmit2")
+	submitted := d.dvk.QueueSubmit2(d.queue, 1, &submit, 0)
+	f.marks.sent = submitted == .SUCCESS
+	ok := vk_check(d, submitted, "vkQueueSubmit2")
 	f.signal_value = d.timeline_value
 	f.submitted_ns = present_now_ns()
 	if ok && f.acquired {
@@ -1132,12 +1264,15 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 		}
 		result := d.dvk.QueuePresentKHR(d.queue, &present)
 		if result == .ERROR_OUT_OF_DATE_KHR || result == .SUBOPTIMAL_KHR {d.swapchain.stale = true}
-		else if result != .SUCCESS {ok = vk_check(d, result, "vkQueuePresentKHR") && ok}
+		else if result != .SUCCESS && !vk_surface_lost(d, result) {ok = vk_check(d, result, "vkQueuePresentKHR") && ok}
 		if result == .SUCCESS || result == .SUBOPTIMAL_KHR {present_count_direct(d)}
 	}
 	sync.mutex_unlock(&d.queue_lock)
 	if ok && f.paced {present_frame_end(d, generated, d.timeline_value, nil)}
-	if ok && device_lose_take(d) {ok = vk_check(d, .ERROR_DEVICE_LOST, "vkQueueSubmit2")}
+	if ok && device_lose_take(d) {
+		vk_wait_timeline(d, f.signal_value)
+		ok = vk_check(d, .ERROR_DEVICE_LOST, "vkQueueSubmit2")
+	}
 	f.acquired = false
 	d.in_frame = false
 	d.frame_number += 1
@@ -1146,22 +1281,6 @@ frame_end :: proc(d: ^Device, cmd: ^Command_List, generated := false) -> bool {
 }
 
 frame_number :: proc(d: ^Device) -> u64 {return d.frame_number}
-
-frame_alloc :: proc(d: ^Device, size: u64, alignment: u64 = 256) -> Transient {
-	// Between frames the slot may still be in flight and frame_begin resets
-	// the ring, so transient memory only exists while a frame is recorded.
-	if !d.in_frame {set_error(d, "frame_alloc outside a frame: transient memory exists between frame_begin and frame_end"); return {}}
-	f := &d.frames[d.slot]
-	align := max(alignment, d.info.uniform_alignment, d.info.storage_alignment, 16)
-	offset := align_up(f.upload_used, align)
-	if offset + size > f.upload_size {
-		d.stats.exhausted += 1
-		set_error(d, "frame upload ring exhausted (%d of %d bytes)", offset + size, f.upload_size)
-		return {}
-	}
-	f.upload_used = offset + size
-	return {ptr = &f.upload_ptr[offset], buffer = f.upload, offset = offset, size = size}
-}
 
 // ---------------------------------------------------------------- immediate transactions
 
@@ -1202,21 +1321,6 @@ immediate_end :: proc(d: ^Device, cmd: ^Command_List) -> bool {
 }
 
 // ---------------------------------------------------------------- swapchain
-
-swapchain_create :: proc(d: ^Device, surface: Surface_Desc) -> bool {
-	if !d.swapchain_ext {set_error(d, "VK_KHR_swapchain is not available"); return false}
-	if d.has_swapchain {set_error(d, "the device already has a swapchain"); return false}
-	if surface.vulkan_create == nil {set_error(d, "Vulkan surface callback missing"); return false}
-	raw, ok := surface.vulkan_create(d.instance, surface.vulkan_user)
-	if !ok {set_error(d, "platform could not create a Vulkan surface"); return false}
-	d.swapchain.surface = vk.SurfaceKHR(raw)
-	supported: b32
-	d.ivk.GetPhysicalDeviceSurfaceSupportKHR(d.physical, d.queue_family, d.swapchain.surface, &supported)
-	if !supported {set_error(d, "the graphics queue cannot present to this surface"); return false}
-	d.swapchain.desc = surface
-	d.has_swapchain = true
-	return vk_recreate_swapchain(d)
-}
 
 swapchain_resize :: proc(d: ^Device, width, height: u32) {
 	if !d.has_swapchain {return}
@@ -1261,8 +1365,10 @@ vk_destroy_swapchain :: proc(d: ^Device) {
 vk_recreate_swapchain :: proc(d: ^Device) -> bool {
 	if !vk_idle(d) {return false}
 	sc := &d.swapchain
+	if sync.atomic_load(&sc.lost) && !vk_surface_remake(d) {return false}
 	caps: vk.SurfaceCapabilitiesKHR
-	if !vk_check(d, d.ivk.GetPhysicalDeviceSurfaceCapabilitiesKHR(d.physical, sc.surface, &caps), "surface capabilities") {return false}
+	asked := d.ivk.GetPhysicalDeviceSurfaceCapabilitiesKHR(d.physical, sc.surface, &caps)
+	if vk_surface_lost(d, asked) || !vk_check(d, asked, "surface capabilities") {return false}
 	extent := caps.currentExtent
 	if extent.width == max(u32) {
 		extent.width = clamp(sc.desc.width, caps.minImageExtent.width, caps.maxImageExtent.width)
@@ -1320,7 +1426,8 @@ vk_recreate_swapchain :: proc(d: ^Device) -> bool {
 		for flag in vk.CompositeAlphaFlagKHR {if flag in caps.supportedCompositeAlpha {info.compositeAlpha = {flag}; break}}
 	}
 	new_handle: vk.SwapchainKHR
-	if !vk_check(d, d.dvk.CreateSwapchainKHR(d.handle, &info, nil, &new_handle), "vkCreateSwapchainKHR") {return false}
+	made := d.dvk.CreateSwapchainKHR(d.handle, &info, nil, &new_handle)
+	if vk_surface_lost(d, made) || !vk_check(d, made, "vkCreateSwapchainKHR") {return false}
 	vk_destroy_swapchain(d)
 	sc.handle = new_handle
 	sc.vk_format = chosen.format
@@ -1346,7 +1453,7 @@ vk_recreate_swapchain :: proc(d: ^Device) -> bool {
 		view: vk.ImageView
 		d.dvk.CreateImageView(d.handle, &view_info, nil, &view)
 		t := Vk_Texture{
-			image = image, view = view, vk_format = chosen.format, aspect = {.COLOR}, layout = .UNDEFINED, swapchain = true,
+			image = image, view = view, vk_format = chosen.format, aspect = {.COLOR}, swapchain = true,
 			desc = {width = extent.width, height = extent.height, mip_levels = 1, format = sc.format, usage = {.Color_Target, .Transfer_Dst, .Transfer_Src}},
 		}
 		append(&sc.images, Texture(pool_add(&d.textures, t)))
@@ -1362,12 +1469,12 @@ vk_recreate_swapchain :: proc(d: ^Device) -> bool {
 // ---------------------------------------------------------------- paced presentation (present.odin)
 
 @(private)
-swapchain_stale :: proc(d: ^Device) -> bool {return d.swapchain.stale}
+swapchain_stale :: proc(d: ^Device) -> bool {return d.swapchain.stale || sync.atomic_load(&d.swapchain.lost)}
 
-// Makes the swapchain again when it went stale; the presenter does not run.
+// Makes the swapchain again when it went stale or lost its surface; the presenter does not run.
 @(private)
 swapchain_refresh :: proc(d: ^Device) -> bool {
-	if !d.swapchain.stale {return true}
+	if !swapchain_stale(d) {return true}
 	return vk_recreate_swapchain(d) && !d.swapchain.stale
 }
 
@@ -1447,7 +1554,7 @@ present_image :: proc(d: ^Device, job: ^Present_Job, image: int) -> (u64, bool) 
 	}
 	index: u32
 	result := d.dvk.AcquireNextImageKHR(d.handle, pv.swapchain, GPU_WAIT_LIMIT_NS, pv.acquire[slot], 0, &index)
-	if result == .ERROR_OUT_OF_DATE_KHR {sync.atomic_store(&d.presenter.out_of_date, true); return 0, false}
+	if result == .ERROR_OUT_OF_DATE_KHR || vk_surface_lost(d, result) {sync.atomic_store(&d.presenter.out_of_date, true); return 0, false}
 	if result == .TIMEOUT || result == .NOT_READY {return 0, false}
 	if result != .SUCCESS && result != .SUBOPTIMAL_KHR {vk_check(d, result, "vkAcquireNextImageKHR"); return 0, false}
 	if result == .SUBOPTIMAL_KHR {sync.atomic_store(&d.presenter.out_of_date, true)}
@@ -1500,7 +1607,7 @@ present_image :: proc(d: ^Device, job: ^Present_Job, image: int) -> (u64, bool) 
 	sync.mutex_unlock(&d.queue_lock)
 	if !submitted {return 0, false}
 	pv.values[slot] = pv.value
-	if shown == .ERROR_OUT_OF_DATE_KHR || shown == .SUBOPTIMAL_KHR {sync.atomic_store(&d.presenter.out_of_date, true)}
+	if shown == .ERROR_OUT_OF_DATE_KHR || shown == .SUBOPTIMAL_KHR || vk_surface_lost(d, shown) {sync.atomic_store(&d.presenter.out_of_date, true)}
 	else if shown != .SUCCESS {vk_check(d, shown, "vkQueuePresentKHR")}
 	return pv.value, shown == .SUCCESS || shown == .SUBOPTIMAL_KHR
 }

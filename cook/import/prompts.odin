@@ -159,8 +159,8 @@ prompts_pack :: proc(sizes:[][2]int,allocator:=context.allocator) -> (places:[]P
     return places,list[:],true
 }
 
-// Imports a manifest of prompts as <name>.prompts and its atlases in folder.
-import_prompts :: proc(path,folder:string,options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
+// Imports a manifest of prompts as <name>.prompts and its atlases.
+import_prompts :: proc(path:string,options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
     caller:=context.temp_allocator
     scratch:mem.Dynamic_Arena
     mem.dynamic_arena_init(&scratch,allocator,allocator,block_size=1<<20,out_band_size=1<<20)
@@ -216,15 +216,15 @@ import_prompts :: proc(path,folder:string,options:Import_Options={},allocator:=c
     places,pages,packed:=prompts_pack(sizes,context.temp_allocator)
     if !packed {return {},error_make(.Limit,"%s: an image is larger than an atlas of %d texels on each side",path,PROMPTS_ATLAS_MAX-2*PROMPTS_PADDING,allocator=caller)}
 
-    report.allocator=allocator
-    report.assets.allocator=allocator
-    report.warnings.allocator=allocator
-    report.others.allocator=allocator
+    report_init(&report,allocator)
     w:Writer
-    ok:=writer_init(&w,folder,options,&report,allocator)
+    ok:=writer_init(&w,path,"",options,&report,allocator)
     w.options.textures,w.options.max_texture_size=.Uncompressed,PROMPTS_ATLAS_MAX
     defer asset.types_destroy(&w.types)
-    if ok {ok=prompts_write(&w,path,bytes,entries,of_entry,images[:],places,pages)}
+    if ok {
+        for file in files {writer_input(&w,file)}
+        ok=prompts_write(&w,path,bytes,entries,of_entry,images[:],places,pages) && writer_finish(&w)
+    }
     if ok && skipped>0 {append(&report.warnings,fmt.aprintf("%d images of %s say no input by their names and were left out; Project Settings > UI gives any input an image of its own",skipped,path,allocator=allocator))}
     if !ok {
         writer_rollback(&w)
@@ -238,21 +238,11 @@ import_prompts :: proc(path,folder:string,options:Import_Options={},allocator:=c
 @(private="file")
 prompts_write :: proc(w:^Writer,path:string,bytes:[]u8,entries:[]Prompts_Entry,of_entry:[]int,images:[]textures.Image,places:[]Prompts_Place,pages:[][2]int) -> bool {
     PAD :: PROMPTS_PADDING
-    source:=source_path(w.options,path)
+    source:=w.source
     file:=filepath.base(path)
     name:=file[:len(file)-len(PROMPTS_MANIFEST)] if strings.has_suffix(strings.to_lower(file,context.temp_allocator),PROMPTS_MANIFEST) else filepath.stem(file)
-    w.named=source
-    seen:=make(map[string]bool,context.temp_allocator)
-    target:=default_path(w,&seen,name,".prompts")
-    root:=earlier_root(w,asset.KIND_PROMPTS,source,u64(len(bytes)),base.hash64(bytes)) or_return
-    if root>=0 {
-        earlier:=&w.earlier[root]
-        earlier.taken=true
-        if earlier.imported {w.named=strings.clone(base.text_get(earlier.info.source[:]),context.temp_allocator)}
-        w.owner,target=earlier.id,earlier.path
-    } else {
-        w.owner,target=writer_id(w),fresh_path(w,target)
-    }
+    target:string
+    w.owner,target=root_take(w,asset.KIND_PROMPTS,name,".prompts")
 
     // The texels of each page: the images, each with its edge repeated around it.
     jobs:=make([]Texture_Job,len(pages),context.temp_allocator)
@@ -274,11 +264,12 @@ prompts_write :: proc(w:^Writer,path:string,bytes:[]u8,entries:[]Prompts_Entry,o
     }
     parts:=make([]Part,len(pages),context.temp_allocator)
     for &job,page in jobs {
-        parts[page]=Part{kind=asset.KIND_TEXTURE,name=job.name,index=page,extension=".tex",size=job.size,hash=job.hash,settings=textures.settings_hash(texture_options(w,job)),earlier=-1,shared=-1}
+        parts[page]=Part{kind=asset.KIND_TEXTURE,name=job.name,index=page,extension=".tex"}
     }
     parts_plan(w,parts)
+    for &part in parts {part.owner=w.owner}
+    parts_record(w,parts)
     for &part,page in parts {
-        if part.shared>=0 {continue}
         if !write_texture(w,jobs[page],part.id,w.owner,part.path,source) {
             if w.error.code==.None {writer_fail(w,.Write,"the atlas %s could not be built",part.path)}
             return false
@@ -300,6 +291,5 @@ prompts_write :: proc(w:^Writer,path:string,bytes:[]u8,entries:[]Prompts_Entry,o
     existed:=os.exists(target)
     if error:=asset.prompts_save(target,&w.types,{id=w.owner,images=rows,source=&info},context.temp_allocator);error!=.None {return save_failed(w,error,target)}
     record(w,w.owner,asset.KIND_PROMPTS,name,target,source,existed,fmt.tprintf("%d prompts of %d images in %d atlas%s",len(rows),len(images),len(pages),len(pages)==1?"":"es"))
-    earlier_left(w)
     return true
 }

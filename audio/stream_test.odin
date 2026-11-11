@@ -7,11 +7,11 @@ import "core:thread"
 
 @(private="file") TONE_LONG :: #load("testdata/tone_long.ogg") // 2 s of 330 Hz at 32 kHz, mono, amplitude 0.4
 
-// A stereo f32 WAV whose frame i holds i+1 on the left and its opposite on the right.
+// A stereo f32 WAV whose frame i holds test_ramp(i) on the left and its opposite on the right.
 @(private="file")
 ramp_wav :: proc(frames:int,rate:=RATE) -> []u8 {
     samples:=make([]f32le,frames*2,context.temp_allocator)
-    for i in 0..<frames {samples[i*2]=f32le(i+1);samples[i*2+1]=-f32le(i+1)}
+    for i in 0..<frames {samples[i*2]=f32le(test_ramp(i));samples[i*2+1]=-f32le(test_ramp(i))}
     return test_wav(3,2,rate,32,(cast([^]u8)raw_data(samples))[:len(samples)*4])
 }
 // Renders like a game does: a little audio, then an update, over and over.
@@ -39,7 +39,7 @@ stream_plays_exactly_what_its_file_holds :: proc(t:^testing.T) {
     // The file is five times the ring: it is decoded as it plays.
     out:=play_along(m,FRAMES+600)
     for i in 0..<FRAMES+600 {
-        want:=f32(i+1) if i<FRAMES else 0
+        want:=test_ramp(i) if i<FRAMES else 0
         if !test_near(t,out[i*2],want,0) || !test_near(t,out[i*2+1],-want,0) {break}
     }
     testing.expect(t,!voice_valid(m,voice))
@@ -50,7 +50,7 @@ stream_plays_exactly_what_its_file_holds :: proc(t:^testing.T) {
     voice=voice_play(m,sound,desc)
     out=play_along(m,300)
     for i in 0..<300 {
-        if !test_near(t,out[i*2],f32(i+1)*0.5,0) {break}
+        if !test_near(t,out[i*2],test_ramp(i)*0.5,0) {break}
     }
     // One voice at a time.
     testing.expect_value(t,voice_play(m,sound),Voice(0))
@@ -62,7 +62,7 @@ stream_plays_exactly_what_its_file_holds :: proc(t:^testing.T) {
     voice=voice_play(m,sound)
     testing.expect(t,voice!=0)
     out=play_along(m,10)
-    test_near(t,out[0],1,0)
+    test_near(t,out[0],test_ramp(0),0)
 }
 
 @(test)
@@ -70,13 +70,16 @@ looping_stream_wraps_without_a_seam_until_told_to_stop :: proc(t:^testing.T) {
     m:=test_mixer(t,{stream_frames=1024})
     defer mixer_destroy(m)
     FRAMES :: 1500
+    START :: 500
     sound,_:=sound_stream(m,ramp_wav(FRAMES))
+    // The decoder goes back to the loop start: the frames before it play once.
+    testing.expect(t,sound_set_loop_start(m,sound,START))
     desc:=VOICE_DEFAULT
     desc.loop=true
     voice:=voice_play(m,sound,desc)
     out:=play_along(m,FRAMES*4+100,step=173)
     for i in 0..<FRAMES*4+100 {
-        if !test_near(t,out[i*2],f32(i%FRAMES+1),0) {break}
+        if !test_near(t,out[i*2],test_ramp(i if i<FRAMES else START+(i-FRAMES)%(FRAMES-START)),0) {break}
     }
     // No more loops: it ends at an end of the file, the next one that was not decoded yet.
     testing.expect(t,voice_set_loop(m,voice,false))
@@ -85,7 +88,7 @@ looping_stream_wraps_without_a_seam_until_told_to_stop :: proc(t:^testing.T) {
     for i in 0..<FRAMES*3 {
         if out[i*2]!=0 {last=i}
     }
-    test_near(t,out[last*2],FRAMES,0)
+    test_near(t,out[last*2],test_ramp(FRAMES-1),0)
     testing.expect(t,last<FRAMES*2+100)
     testing.expect(t,!voice_valid(m,voice))
 }
@@ -102,7 +105,7 @@ starved_stream_goes_quiet_and_resumes_where_it_was :: proc(t:^testing.T) {
     for i in 0..<3000 {
         if out[i*2]==0 {continue}
         heard+=1
-        if !test_near(t,out[i*2],f32(heard),0) {break}
+        if !test_near(t,out[i*2],test_ramp(heard-1),0) {break}
     }
     testing.expect_value(t,heard,1024)
     testing.expect_value(t,out[2999*2],f32(0))
@@ -112,7 +115,7 @@ starved_stream_goes_quiet_and_resumes_where_it_was :: proc(t:^testing.T) {
     mixer_update(m)
     out=play_along(m,2000)
     for i in 0..<2000 {
-        if !test_near(t,out[i*2],f32(1024+i+1),0) {break}
+        if !test_near(t,out[i*2],test_ramp(1024+i),0) {break}
     }
 }
 

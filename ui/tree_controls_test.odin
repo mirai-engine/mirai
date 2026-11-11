@@ -56,8 +56,8 @@ test_shop_events :: proc(s:^Test_Shop,kind:Tree_Event_Kind,name:string) -> (foun
 test_shop_context :: proc(t:^testing.T,ctx:^Context,font:=false) {
     desc:=TEST_FONT if font else TEST_SMALL
     desc.navigation=true
-    testing.expect(t,context_init(ctx,desc))
-    ctx.theme.activate_on_press=false
+    testing.expect(t,test_context_init(ctx,desc))
+    ctx.release_activates=true
 }
 
 @(test)
@@ -162,13 +162,14 @@ templates_format_numbers_bools_enums_and_plurals_as_the_language_does :: proc(t:
     defer context_destroy(&ctx)
     input:=test_input()
     shows :: proc(t:^testing.T,ctx:^Context,input:^Input,s:^Test_Shop,language:string,texts:..string) {
-        ctx.game.language=base.name_hash(language) if language!="" else 0
+        ctx.game.language=language
         test_frame(ctx,input,test_shop_build,s)
         for text in texts {testing.expectf(t,test_paint(ctx,text)!=nil,"%s shows %q",language,text)}
     }
     shows(t,&ctx,&input,&s,"","12,345.25","1,234","Yes On","Arco Bow","1,234 coins","25.6%")
     shows(t,&ctx,&input,&s,"de","12.345,25","1.234")
     shows(t,&ctx,&input,&s,"es","12.345,25","1234","1234 coins")
+    shows(t,&ctx,&input,&s,"es-AR","12.345,25","1234") // a region without a row writes as its language
     shows(t,&ctx,&input,&s,"fr","12\u00a0345,25")
     s.values={coins=1,alive=false,weapon=.Staff}
     shows(t,&ctx,&input,&s,"en","1 coin","No Off","Staff Staff")
@@ -296,8 +297,172 @@ a_transition_carries_the_colors_of_a_node_between_its_states :: proc(t:^testing.
     testing.expect(t,back[0]<200 && back[0]>150)
 }
 
+// The layout transition of a style carries the rectangle of its node to a new layout: from where
+// it was drawn, through rectangles between both, to exactly where the layout puts it; a layout
+// that changes on the way starts again from where it is. A new size too, which the layout around
+// it follows. A node shown again, a style whose transition is only of its colors and what code
+// builds without a style, as the editor, go there at once. The context keeps as many rectangles
+// as its description says.
 @(test)
-animations_size_value_frame_and_reveal_their_node :: proc(t:^testing.T) {
+a_layout_transition_carries_the_rectangle_of_a_node_to_a_new_layout :: proc(t:^testing.T) {
+    s:Test_Shop
+    test_shop_init(t,&s)
+    defer test_shop_destroy(&s)
+    tree_style(&s.tree,{}) // what a node without a style takes
+    style,_:=tree_style(&s.tree,{layout_transition=0.25})
+    root:=tree_node(&s.tree,-1,{kind=.Box,name="row"})
+    lead:=tree_node(&s.tree,root,{kind=.Box,name="lead",layout={width=fixed(20),height=fixed(10)}})
+    mover:=tree_node(&s.tree,root,{kind=.Box,name="mover",style=style,layout={width=fixed(30),height=fixed(10)}})
+    tree_node(&s.tree,root,{kind=.Box,name="after",layout={width=fixed(10),height=fixed(10)}})
+    testing.expect(t,test_shop_instance(&s))
+    ctx:Context
+    test_shop_context(t,&ctx)
+    defer context_destroy(&ctx)
+    input:=test_input()
+    rect :: proc(t:^testing.T,ctx:^Context,name:string) -> Rect {return test_rect(t,ctx,tree_element_id(ctx,name))}
+    // Every container keeps its rectangle.
+    tracked :: proc(ctx:^Context,user:rawptr) {
+        s:=cast(^Test_Shop)user
+        s.result=tree_build(ctx,&s.tree,&s.instance,{events=s.events[:],changed=true,track=true})
+    }
+    frame:=test_frame(&ctx,&input,tracked,&s)
+    testing.expect(t,rect(t,&ctx,"mover")==Rect{20,0,30,10} && !frame.transitioning,"the first time it is where the layout puts it")
+    s.tree.nodes[lead].layout.width=fixed(100)
+    last:=f32(20)
+    for _ in 0..<5 {
+        frame=test_frame(&ctx,&input,tracked,&s)
+        x:=rect(t,&ctx,"mover").x
+        testing.expectf(t,x>last && x<100 && frame.transitioning,"on its way: %v after %v",x,last)
+        last=x
+    }
+    s.tree.nodes[lead].layout.width=fixed(0)
+    frame=test_frame(&ctx,&input,tracked,&s)
+    turned:=rect(t,&ctx,"mover").x
+    testing.expectf(t,turned<last && turned>0,"a new layout on the way starts from where it is: %v after %v",turned,last)
+    for _ in 0..<20 {frame=test_frame(&ctx,&input,tracked,&s)}
+    testing.expect(t,rect(t,&ctx,"mover")==Rect{0,0,30,10} && !frame.transitioning,"it ends exactly where the layout puts it")
+    s.tree.nodes[mover].layout.width=fixed(60)
+    test_frame(&ctx,&input,tracked,&s)
+    grown,after:=rect(t,&ctx,"mover"),rect(t,&ctx,"after")
+    testing.expectf(t,grown.w>30 && grown.w<60 && test_near(after.x,grown.w,PIXEL_EDGE),"its size on the way, which the layout around it follows: %v %v",grown,after)
+    for _ in 0..<20 {test_frame(&ctx,&input,tracked,&s)}
+    testing.expect(t,rect(t,&ctx,"mover").w==60 && rect(t,&ctx,"after").x==60)
+    elsewhere :: proc(ctx:^Context,user:rawptr) {if box(ctx,{id=id(ctx,"elsewhere"),width=fixed(10),height=fixed(10)}) {}}
+    test_frame(&ctx,&input,elsewhere,nil)
+    s.tree.nodes[lead].layout.width=fixed(50)
+    frame=test_frame(&ctx,&input,tracked,&s)
+    testing.expect(t,rect(t,&ctx,"mover").x==50 && !frame.transitioning,"shown again elsewhere, it does not slide from where it was")
+    s.tree.styles[style]={transition=0.25}
+    s.tree.nodes[lead].layout.width=fixed(5)
+    frame=test_frame(&ctx,&input,tracked,&s)
+    testing.expect(t,rect(t,&ctx,"mover").x==5 && !frame.transitioning,"a transition of colors does not move the layout")
+    s.tree.styles[style]={layout_transition=0.25}
+    small:Context
+    desc:=TEST_SMALL
+    desc.max_transitions=1
+    testing.expect(t,context_init(&small,desc))
+    defer context_destroy(&small)
+    s.tree.nodes[lead].style=style
+    test_frame(&small,&input,tracked,&s)
+    testing.expect_value(t,small.stats.dropped_transitions,u32(1))
+
+    lead_width:=f32(20)
+    built :: proc(ctx:^Context,user:rawptr) {
+        if box(ctx,{id=id(ctx,"code_row")}) {
+            spacer(ctx,(cast(^f32)user)^,10)
+            if box(ctx,{id=id(ctx,"code_box"),width=fixed(30),height=fixed(10),track=true}) {}
+        }
+    }
+    test_frame(&ctx,&input,built,&lead_width)
+    lead_width=100
+    frame=test_frame(&ctx,&input,built,&lead_width)
+    testing.expect(t,test_rect(t,&ctx,id(&ctx,"code_box")).x==100 && !frame.transitioning,"a widget of code goes to its new place at once")
+}
+
+// Where a field lies is chosen so that each one a test reads is a range of its own.
+Test_Row :: struct {number:i32,who:base.Entity,weight:f32,name:[8]u8 `mirai:"text"`}
+Test_Board :: struct {rows:[3]Test_Row,units:[3]base.Entity,count:i32}
+
+// The first of three rows goes and another comes in last: with a key, a number, a text or an
+// entity (an array of entities keys itself), the row after it is drawn between its old and its
+// new place and keeps the focus, and every row shows its own text, also where the bytes of its
+// place did not change. Without a key the rows stay with their places. A key that is no field
+// a List tells its items apart by fails the instance.
+@(test)
+a_list_with_a_key_carries_its_items_where_they_move :: proc(t:^testing.T) {
+    Case :: struct {items,key:string,follows:bool}
+    cases:=[?]Case{{"Test.rows","number",true},{"Test.rows","name",true},{"Test.rows","who",true},{"Test.units","",true},{"Test.rows","",false}}
+    Board :: struct {tree:^Widget_Tree,instance:^Tree_Instance,host:^Test_Host}
+    build :: proc(ctx:^Context,user:rawptr) {
+        b:=cast(^Board)user
+        tree_values_refresh(b.instance,&b.host.host,0)
+        tree_build(ctx,b.tree,b.instance,{})
+    }
+    schema:serial.Schema
+    serial.schema_init(&schema)
+    defer serial.schema_destroy(&schema)
+    type,_:=serial.schema_add(&schema,Test_Board)
+    for c in cases {
+        tree:Widget_Tree
+        testing.expect(t,tree_init(&tree))
+        defer tree_destroy(&tree)
+        tree_style(&tree,{})
+        moving,_:=tree_style(&tree,{layout_transition=0.25})
+        list:=tree_node(&tree,-1,{kind=.List,name="board",bind_items=c.items,bind_key=c.key,bind_value="Test.count",layout={direction=.Column}})
+        named:=c.items=="Test.rows"
+        row:=int(tree_node(&tree,list,{kind=.Button,name="row",style=moving,bind_text="name" if named else "",layout={width=fixed(40),height=fixed(10)}}))
+        board:=Test_Board{count=3}
+        rows :: proc(board:^Test_Board,names:[3]string,first:int) {
+            for &r,i in board.rows {
+                r={number=i32(first+i),who=base.Entity(first+i)}
+                copy(r.name[:],names[i])
+                board.units[i]=r.who
+            }
+        }
+        rows(&board,{"ann","bea","cid"},10)
+        host:Test_Host
+        instance:Tree_Instance
+        testing.expect(t,tree_instance_init(&instance,&tree,test_host(&host,&schema,type,&board)))
+        defer tree_instance_destroy(&instance)
+        ctx:Context
+        test_shop_context(t,&ctx)
+        defer context_destroy(&ctx)
+        input:=test_input()
+        b:=Board{&tree,&instance,&host}
+        test_frame(&ctx,&input,build,&b)
+        focus_set(&ctx,tree_node_element(&ctx,&tree,&instance,row,1))
+        test_frame(&ctx,&input,build,&b)
+        // Keyed by its name, a row is another item when its name changes; else each name moves up a row.
+        rows(&board,{"bea","cid","dot"} if c.key=="name" else {"ann","bea","cid"},11)
+        test_frame(&ctx,&input,build,&b)
+        moved:=tree_node_element(&ctx,&tree,&instance,row,0)
+        y:=test_rect(t,&ctx,moved).y
+        if c.follows {
+            testing.expectf(t,y>0 && y<10 && ctx.focus==moved,"%v: the row that moved up is on its way, %v, with the focus",c,y)
+        } else {
+            testing.expectf(t,y==0 && ctx.focus!=moved,"%v: without a key the place keeps its rectangle and its focus: %v",c,y)
+        }
+        for e in 0..<3 {
+            if !named {break}
+            kept:=instance.kept[tree_node_copy(&tree,&instance,row,e).slot]
+            shown:=string(instance.kept_bytes[kept.offset:][:kept.length])
+            testing.expectf(t,kept.valid && shown==serial.text_field(board.rows[e].name[:]),"%v: row %d shows %s",c,e,shown)
+        }
+    }
+    for bad in ([?][2]string{{"Test.rows","weight"},{"Test.rows","missing"},{"","number"}}) {
+        tree:Widget_Tree
+        testing.expect(t,tree_init(&tree))
+        defer tree_destroy(&tree)
+        tree_node(&tree,-1,{kind=.List,name="board",bind_items=bad[0],bind_key=bad[1],count=2})
+        board:Test_Board
+        host:Test_Host
+        instance:Tree_Instance
+        testing.expectf(t,!tree_instance_init(&instance,&tree,test_host(&host,&schema,type,&board)) && instance.failure.binding==.Key,"%v is refused as a key",bad)
+    }
+}
+
+@(test)
+animations_value_frame_and_reveal_their_node :: proc(t:^testing.T) {
     s:Test_Shop
     test_shop_init(t,&s)
     defer test_shop_destroy(&s)
@@ -305,15 +470,12 @@ animations_size_value_frame_and_reveal_their_node :: proc(t:^testing.T) {
     constant :: proc(lib:^Anim_Library,property:Anim_Property,x:f32) -> Anim {
         return anim_clip(lib,{{property,{{time=0,value={x,0,0,0}}}}})
     }
-    wide,_:=tree_anim_set(&s.tree,{shown=constant(lib,.Width,80)})
     filled,_:=tree_anim_set(&s.tree,{shown=constant(lib,.Value,0.25)})
     framed,_:=tree_anim_set(&s.tree,{shown=constant(lib,.Frame,1)})
     typed,_:=tree_anim_set(&s.tree,{shown=constant(lib,.Reveal,0.5)})
     sheet,_:=tree_image(&s.tree,{quad={.Image,3,{0,0,1,1}},frames={2,1},size={64,32}})
     style,_:=tree_style(&s.tree,{fill={255,255,255,255},text={size=12,color={255,255,255,255}}})
     root:=tree_node(&s.tree,-1,{kind=.Box,name="row"})
-    tree_node(&s.tree,root,{kind=.Box,name="wide",anims=wide,layout={width=fixed(20),height=fixed(10)}})
-    tree_node(&s.tree,root,{kind=.Box,name="after",layout={width=fixed(10),height=fixed(10)},flags={.Wrap_X}})
     tree_node(&s.tree,root,{kind=.Progress,name="bar",style=style,anims=filled,bind_value="Test.amount",layout={width=fixed(40),height=fixed(6)}})
     tree_node(&s.tree,root,{kind=.Image,name="sprite",style=style,image=sheet,anims=framed,layout={width=fixed(16),height=fixed(16)}})
     tree_node(&s.tree,root,{kind=.Text,name="line",style=style,anims=typed,text="abcd"})
@@ -325,8 +487,6 @@ animations_size_value_frame_and_reveal_their_node :: proc(t:^testing.T) {
     input:=test_input()
     test_frame(&ctx,&input,test_shop_build,&s)
     test_frame(&ctx,&input,test_shop_build,&s)
-    testing.expect_value(t,test_rect(t,&ctx,tree_element_id(&ctx,"wide")).w,f32(80))
-    testing.expect_value(t,test_rect(t,&ctx,tree_element_id(&ctx,"after")).x,f32(80))
     bar,sprite:^Paint
     for &p in ctx.paints[:ctx.paint_count] {
         if p.kind==.Progress {bar=&p}
@@ -339,14 +499,13 @@ animations_size_value_frame_and_reveal_their_node :: proc(t:^testing.T) {
 }
 
 @(test)
-the_focus_selection_and_clicks_play_their_animations :: proc(t:^testing.T) {
+a_click_plays_its_animation :: proc(t:^testing.T) {
     s:Test_Shop
     test_shop_init(t,&s)
     defer test_shop_destroy(&s)
     lib:=&s.tree.anims
-    focused:=anim_tween(lib,.Offset,{0,0,0,0},{4,0,0,0},0.1)
     clicked:=anim_tween(lib,.Scale,{1,1,0,0},{1.1,1.1,0,0},0.1)
-    set,_:=tree_anim_set(&s.tree,{focused=focused,clicked=clicked})
+    set,_:=tree_anim_set(&s.tree,{clicked=clicked})
     tree_node(&s.tree,-1,{kind=.Button,name="go",text="Go",anims=set,layout={width=fixed(40),height=fixed(20)}})
     testing.expect(t,test_shop_instance(&s))
     ctx:Context
@@ -354,9 +513,8 @@ the_focus_selection_and_clicks_play_their_animations :: proc(t:^testing.T) {
     defer context_destroy(&ctx)
     input:=test_input()
     test_frame(&ctx,&input,test_shop_build,&s)
-    ctx.focus,ctx.focus_ring=tree_element_id(&ctx,"go"),true
     test_frame(&ctx,&input,test_shop_build,&s)
-    testing.expect_value(t,s.instance.states[0].anim,focused)
+    testing.expect_value(t,s.instance.states[0].anim,Anim(0))
     test_point(&input,test_rect(t,&ctx,tree_element_id(&ctx,"go")))
     test_frame(&ctx,&input,test_shop_build,&s)
     test_press(&input);test_release(&input)
@@ -411,9 +569,7 @@ a_field_and_a_number_node_follow_their_flags_and_range :: proc(t:^testing.T) {
     input:=test_input()
     test_frame(&ctx,&input,test_shop_build,&s)
     test_frame(&ctx,&input,test_shop_build,&s)
-    placeholder:=false
-    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Field && p.placeholder=="Your pin" {placeholder=true}}
-    testing.expect(t,placeholder,"The text of a field is its placeholder while it is empty")
+    testing.expect(t,test_paint(&ctx,"Your pin")!=nil,"The text of a field is its placeholder while it is empty")
     test_click(&ctx,&input,test_shop_build,&s,tree_element_id(&ctx,"pin"))
     test_type(&input,"12345")
     test_frame(&ctx,&input,test_shop_build,&s)
@@ -442,9 +598,9 @@ rich_text_takes_italics_rules_links_and_images :: proc(t:^testing.T) {
     testing.expect(t,spans[0].decoration=={.Bold} && spans[0].style.font==FONT_SEMIBOLD,"A font without a heavier face of its own draws a synthetic bold")
     Test_Rich :: struct {clicked:u64,text:string}
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     input:=test_input()
     build :: proc(ctx:^Context,user:rawptr) {
         r:=cast(^Test_Rich)user
@@ -459,7 +615,7 @@ rich_text_takes_italics_rules_links_and_images :: proc(t:^testing.T) {
     for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Image {coin=&p}}
     testing.expect(t,coin!=nil && coin.quad.data==3,"An image of the tree goes in the line")
     // The pointer over a piece of a link underlines all of it, and a click reports its name.
-    first:=id_derive(&ctx,id(&ctx,"rich"),"link",1)
+    first:=id_derive(&ctx,id(&ctx,"rich"),"link",int(u32(base.name_hash("shop")))+1)
     test_point(&input,test_rect(t,&ctx,first))
     test_frame(&ctx,&input,build,&r)
     gold=test_paint(&ctx,"gold")

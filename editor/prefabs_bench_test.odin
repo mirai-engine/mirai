@@ -7,7 +7,7 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:editor/history"
 
-// The time of a Save, which derives the overrides of every instance, and of
+// The time of a write of the scene, which derives the overrides of every instance, and of
 // placing one instance more, in a scene that holds many. Run with
 //   mirai test editor prefab_save_and_placing_in_a_scene_of_many_instances -define:EDITOR_PREFAB_BENCH=true
 
@@ -34,7 +34,7 @@ prefab_save_and_placing_in_a_scene_of_many_instances :: proc(t:^testing.T) {
     filled:=time.tick_since(filling)
     // Every tenth instance holds something on its own.
     lamps:=&f.world.lamps
-    for row:=0;row<core.count(lamps);row+=10 {core.at(lamps,row).intensity=9}
+    for row:=0;row<core.count(lamps);row+=10 {core.edit_at(lamps,row).intensity=9}
     prefab_fixture_step(f)
 
     placing:=time.tick_now()

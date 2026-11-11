@@ -56,10 +56,11 @@ App_Desc :: struct {
     audio:Audio_Output,
     audio_driver:string,
 
-    root:string,                 // the project: its manifest, its input bindings, its settings
+    root:string,                 // the project: its manifest and its settings
     engine_root:string,          // the engine whose general settings lie under those of the project; empty: only the project's, as in a shipped game
     options:string,              // folder of the options the player chose (settings of the machine and input bindings) over those of the project; "": none, as in the editor
     assets_root:string,          // folder of cooked assets; its changes are reloaded
+    assets_imported:string,      // the imported folder that goes with assets_root, of a project that is not shipped; "": none
     assets_cache:string,         // file where the registry of assets_root keeps what it saw; "": none
     animation_cache:string,      // folder where the content keeps the .anim it compressed; "": none
     shaders_root:string,         // folder whose shader generation is loaded; "": the one that holds assets_root
@@ -72,7 +73,7 @@ App_Desc :: struct {
 // is an argument the player does not understand.
 Launch :: struct {
     scene:string,
-    players:int,        // local players asked for, splitting the screen; 0: what the scene says
+    players:int,        // --players: the local players of the run (input.Run_Players); 0: not asked
     arguments:[]string, // what the player does not read itself
     taken:[]bool,       // by argument: a library read it
 }
@@ -214,6 +215,7 @@ App :: struct {
     shaders:App_Shaders,
     content:^Content,
     records:App_Records, // the rows of the record types of the world, read once a function asks for them
+    texts:App_Texts,     // every .strings of the assets, read once something asks for a text
 
     launch:Launch,
     script_input:core.Input,
@@ -310,7 +312,7 @@ app_create :: proc(desc:App_Desc) -> (app:^App,error:App_Error) {
         }
     }
     if desc.assets_root!="" {
-        if error=app_assets_create(app,desc.assets_root,desc.assets_cache,desc.asset_mounts);error!=.None {
+        if error=app_assets_create(app,desc.assets_root,desc.assets_cache,desc.asset_mounts,desc.assets_imported);error!=.None {
             app_destroy(app)
             return nil,error
         }
@@ -341,6 +343,7 @@ app_destroy :: proc(app:^App) {
     }
     app_content_destroy(app)
     app_records_destroy(app)
+    app_texts_destroy(app)
     assets_marks_free(&app.asset_marks)
     app_assets_destroy(app)
     app_gpu_destroy(app)

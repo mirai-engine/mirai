@@ -1,7 +1,7 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-//! variant color MIRAI_GLASS_MEANS=1
-//! variant color_hw MIRAI_GLASS_MEANS=1 MIRAI_HW_RT=1
+// color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
+//! constant color MIRAI_GLASS_MEANS
 // The rays of the probes chosen this frame (ddgi_select.comp): each probe
 // traces the spherical Fibonacci set turned by the rotation of its cell, the
 // same every update. Hits trace their direct light and read the bounces of
@@ -13,6 +13,8 @@
 #define MIRAI_DIFFUSE_HITS
 // Small instances are not in the light this pass gathers (render.INSTANCE_FLAG_SMALL).
 #define MIRAI_TRACE_NO_SMALL
+// It reports the levels it samples of each texture (texture_feedback in scene.slang).
+#define MIRAI_TEXTURE_FEEDBACK
 #define POINTS_SLOT SLOT_POINTS
 #include "lighting.slang"
 #include "probe_update.slang"
@@ -54,9 +56,10 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         Hit hit = trace_ray(origin, dir, 0.0, params.max_distance, false, path);
         // What a ray finds beyond a gate of an extension lights the probe, and for
         // its visibility is as far as the gate: what is behind it is another place.
+        // A ray that meets the sky stores the whole distance, which no hit reaches.
         gate = path.gate;
         if (hit.instance == INVALID) {
-            ray_data[int2(ray, slot)] = float4(probe_light_encode(sky_radiance(path.direction) * path.glass), gate >= 0.0 ? gate : 1e4);
+            ray_data[int2(ray, slot)] = float4(probe_light_encode(sky_radiance(path.direction) * path.glass), gate >= 0.0 ? gate : params.max_distance);
             return;
         }
         // Each ray stands for an equal share of the sphere around the probe.

@@ -458,13 +458,13 @@ a_part_of_a_prefab_composes_with_its_instance_and_says_what_it_leaves_out :: pro
 the_parts_of_a_prefab_are_its_shown_meshes_placed_from_its_root :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     prefab:asset.Scene
-    testing.expect_value(t,asset.scene_init(&prefab,&types,asset.KIND_PREFAB,{0xf0,0xf1}),asset.Error.None)
+    testing.expect_value(t,asset.scene_init(&prefab,&types,{0xf0,0xf1}),asset.Error.None)
     defer asset.scene_destroy(&prefab)
+    prefab.doc.flags+={.Prefab}
     asset.scene_entity_add(&prefab,1,0,"Tree")
     asset.scene_entity_add(&prefab,2,1,"Trunk")
     asset.scene_entity_add(&prefab,3,2,"Crown")
     asset.scene_entity_add(&prefab,4,1,"Hidden")
-    prefab.info.root=1
     places:=[4]core.Transform{{position={5,0,0},rotation=1,scale=1},{position={0,1,0},rotation=1,scale=2},{position={1,0,0},rotation=1,scale=1},{rotation=1,scale=1}}
     for &place,i in places {asset.scene_set(&prefab,base.Entity_Id(i+1),"Transform",&place)}
     crown:=render.Mesh_Renderer{mesh={7,7}}
@@ -672,7 +672,7 @@ a_foliage_file_written_before_the_rules_reads_them_off_and_bad_rules_are_refused
     }
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     document:asset.Document
-    asset.document_init(&document,KIND,{7,8})
+    asset.document_init(&document,FOLIAGE_KIND,{7,8})
     defer asset.document_destroy(&document)
     document.kind_version=VERSION
     info:=Foliage_Info{seed=3,next_type=1}

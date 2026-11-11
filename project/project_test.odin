@@ -103,7 +103,12 @@ a_plugin_manifest_round_trips_as_json :: proc(t:^testing.T) {
     m.parts={.Runtime,.Editor,.Assets}
     base.text_set(m.icon[:],"art/icon.png")
     base.text_set(m.asset_kinds[0].extension[:],".terrain")
+    base.text_set(m.asset_kinds[0].kind[:],"TERR")
+    base.text_set(m.asset_kinds[0].label[:],"Terrain")
+    m.asset_kinds[0].color={168,124,72}
     base.text_set(m.asset_kinds[1].extension[:],".biome")
+    base.text_set(m.asset_kinds[1].kind[:],"BIOM")
+    base.text_set(m.asset_kinds[1].folder[:],"runtime/biome")
     m.asset_kinds[1].merged=true
     text:=plugin_text(&m,context.temp_allocator)
     testing.expect(t,strings.contains(text,`"extension": ".biome"`) && !strings.contains(text,`"extension": ""`),text)
@@ -226,6 +231,9 @@ a_bad_plugin_manifest_is_refused_with_what_and_where :: proc(t:^testing.T) {
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".Biome"}]}`,.Asset_Kind_Invalid,.None,".Biome"},
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome"}, {"extension": ".biome", "merged": true}]}`,.Asset_Kind_Invalid,.None,".biome"},
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"merged": true}]}`,.Asset_Kind_Invalid,.None,""},
+        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome"}]}`,.Asset_Kind_Invalid,.None,".biome"},
+        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome", "kind": "BIOM"}, {"extension": ".zone", "kind": "BIOM"}]}`,.Asset_Kind_Invalid,.None,".zone"},
+        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome", "kind": "BIOM", "folder": "../elsewhere"}]}`,.Asset_Kind_Invalid,.None,".biome"},
     }
     for c in cases {
         _,error:=plugin_parse(c.text)
@@ -561,10 +569,10 @@ a_plugin_folder_has_to_match_its_manifest :: proc(t:^testing.T) {
     testing.expect_value(t,error.code,Error_Code.Folder_Mismatch)
     testing.expect_value(t,base.text_get(error.plugin[:]),"moved")
     testing.expect_value(t,base.text_get(error.subject[:]),"renamed")
-    testing.expect(t,os.remove_all(path(plugins,"moved",allocator=context.temp_allocator))==nil)
+    testing.expect(t,base.remove_all(path(plugins,"moved",allocator=context.temp_allocator))==nil)
 
     test_plugin(t,plugins,"partial",{},{.Runtime,.Editor})
-    testing.expect(t,os.remove_all(path(plugins,"partial","editor",allocator=context.temp_allocator))==nil)
+    testing.expect(t,base.remove_all(path(plugins,"partial","editor",allocator=context.temp_allocator))==nil)
     _,error=open(root)
     testing.expect_value(t,error.code,Error_Code.Part_Missing)
     testing.expect_value(t,base.text_get(error.plugin[:]),"partial")
@@ -575,7 +583,7 @@ a_plugin_folder_has_to_match_its_manifest :: proc(t:^testing.T) {
     _,error=open(root)
     testing.expect_value(t,error.code,Error_Code.Part_Undeclared)
     testing.expect_value(t,base.text_get(error.subject[:]),"shaders")
-    testing.expect(t,os.remove_all(path(plugins,"partial",allocator=context.temp_allocator))==nil)
+    testing.expect(t,base.remove_all(path(plugins,"partial",allocator=context.temp_allocator))==nil)
 
     test_write(t,plugins,"broken",PLUGIN_FILE,text="{\n  \"name\": \"broken\",\n  \"version\": 1\n}")
     _,error=open(root)
@@ -674,7 +682,7 @@ plugins_order_without_memory_fails_whole :: proc(t:^testing.T) {
     }
 
     folder,_:=os.make_directory_temp("","mirai-settings",context.temp_allocator)
-    defer os.remove_all(folder)
+    defer base.remove_all(folder)
     root,engine:=path(folder,"project",allocator=context.temp_allocator),path(folder,"engine",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(path(engine,".mirai",allocator=context.temp_allocator))==nil)
     testing.expect(t,os.write_entire_file(settings_file(.Engine,root,engine,context.temp_allocator),`{"version": 3, "Sample": {"count": 2, "inner": {"level": 3}}}`)==nil)

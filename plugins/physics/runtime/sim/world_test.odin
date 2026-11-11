@@ -2,6 +2,8 @@ package mirai_physics
 
 import "core:testing"
 import cmath "core:math"
+import "core:math/rand"
+import "mirai:std/spatial"
 
 @(private)
 test_world :: proc(w:^World,bodies:=256,contacts:=2048) -> bool {
@@ -111,6 +113,140 @@ invalid_shapes_are_refused :: proc(t:^testing.T) {
     testing.expect_value(t,world_stats(&w).shapes,0)
 }
 
+@(private)
+Test_Inputs :: struct {body,kinematic,ground:Body_Handle,shape:Shape_Handle,character:Character_Handle,joint:Joint_Handle,hull:Hull_Handle}
+
+@(private)
+test_inputs_world :: proc(w:^World) -> (scene:Test_Inputs,ok:bool) {
+    test_character_world(w) or_return
+    scene.ground=test_ground(w)
+    scene.body=test_body(w,Sphere{0.5},{0,2,0})
+    scene.kinematic=test_body(w,Sphere{0.5},{3,2,0},.Kinematic)
+    shapes:[1]Shape_Handle
+    body_shapes(w,scene.body,shapes[:])
+    scene.shape=shapes[0]
+    scene.character=character_create(w,CHARACTER_DESC_DEFAULT,{6,0,0})
+    scene.joint=joint_create(w,test_distance(scene.body,scene.kinematic,1,4))
+    corners:=[8]Vec3{{-1,-1,-1},{1,-1,-1},{-1,1,-1},{1,1,-1},{-1,-1,1},{1,-1,1},{-1,1,1},{1,1,1}}
+    counts,indices:=BOX_FACE_COUNTS,BOX_FACE_INDICES
+    scene.hull=hull_create(w,{corners[:],counts[:],indices[:]}) or_return
+    test_steps(w,2)
+    return scene,scene.shape!={} && scene.character!={} && scene.joint!={}
+}
+
+TEST_INPUT_CALLS :: 36
+
+// Calls one creation or setter of the solver with the values of v; finite: every value it was given is a number.
+@(private)
+test_input_call :: proc(w:^World,scene:Test_Inputs,call:int,v:[16]f32) -> (ok,finite_values:bool) {
+    p,a:=Vec3{v[0],v[1],v[2]},Vec3{v[7],v[8],v[9]}
+    q:=Quat(quaternion(x=v[3],y=v[4],z=v[5],w=v[6]))
+    s,r:=v[10],v[11]
+    m:Mat3
+    for i in 0..<9 {m[i/3,i%3]=v[i]}
+    pq:=finite(p) && finite(q)
+    switch call {
+    case 0:  return body_set_transform(w,scene.body,p,q),pq
+    case 1:  return body_set_velocity(w,scene.body,p,a),finite(p,a)
+    case 2:  return body_set_linear_velocity(w,scene.body,p),finite(p)
+    case 3:  return body_set_angular_velocity(w,scene.body,a),finite(a)
+    case 4:  return body_set_kinematic_target(w,scene.kinematic,p,q,s),pq && finite(s)
+    case 5:  return body_apply_force(w,scene.body,p),finite(p)
+    case 6:  return body_apply_force_at(w,scene.body,p,a),finite(p,a)
+    case 7:  return body_apply_torque(w,scene.body,a),finite(a)
+    case 8:  return body_apply_impulse(w,scene.body,p),finite(p)
+    case 9:  return body_apply_impulse_at(w,scene.body,p,a),finite(p,a)
+    case 10: return body_apply_angular_impulse(w,scene.body,a),finite(a)
+    case 11: return body_set_mass_properties(w,scene.body,s,p,m),finite(s) && finite(p) && finite(m)
+    case 12: return body_set_mass(w,scene.body,s),finite(s)
+    case 13: return body_rest(w,scene.body,p,q),pq
+    case 14: return body_set_sleep_threshold(w,scene.body,s),finite(s)
+    case 15: return body_set_damping(w,scene.body,s,r),finite(s,r)
+    case 16: return body_set_gravity_scale(w,scene.body,s),finite(s)
+    case 17: return world_set_body_gravity(w,p,nil,nil),finite(p)
+    case 18: return world_set_gravity(w,p),finite(p)
+    case 19: return shape_set_rolling_resistance(w,scene.shape,s),finite(s)
+    case 20: return shape_set_material(w,scene.shape,s,r),finite(s,r)
+    case 21: return shape_set_surface(w,scene.shape,p,false,0),finite(p)
+    case 22: return shape_set_drag(w,scene.shape,s),finite(s)
+    case 23: return shape_set_density(w,scene.shape,s),finite(s)
+    case 24:
+        move:=Character_Move{ground={p,s},air={a,r},launch=p,yaw=s,float_height=r,pace=s,gravity_scale=r}
+        return character_set_move(w,scene.character,move),finite(p,a) && finite(s,r)
+    case 25:
+        desc:=CHARACTER_DESC_DEFAULT
+        desc.traction_force,desc.adhesion_force,desc.gravity_scale=s,r,s
+        return character_set_desc(w,scene.character,desc),finite(s,r)
+    case 26: return character_set_height(w,scene.character,s),finite(s)
+    case 27: return character_set_position(w,scene.character,p),finite(p)
+    case 28: return character_set_rotation(w,scene.character,q),finite(q)
+    case 29: return character_launch(w,scene.character,p),finite(p)
+    case 30: return joint_set_break(w,scene.joint,s,r),finite(s,r)
+    case 31: return hull_set_mass(w,scene.hull,s,p,m),finite(s) && finite(p) && finite(m)
+    case 32:
+        desc:=BODY_DESC_DEFAULT
+        desc.position,desc.rotation,desc.linear_velocity,desc.angular_velocity=p,q,a,p
+        desc.linear_damping,desc.angular_damping,desc.gravity_scale,desc.sleep_threshold=s,r,s,r
+        return body_create(w,desc)!={},pq && finite(a) && finite(s,r)
+    case 33:
+        desc:=SHAPE_DESC_DEFAULT
+        desc.geometry,desc.transform,desc.surface_speed=Box{{1+abs(s),1,1}},{p,q},a
+        desc.friction,desc.restitution,desc.density,desc.drag=r,r,s,r
+        return shape_create(w,scene.body,desc)!={},pq && finite(a) && finite(s,r)
+    case 34:
+        desc:=CHARACTER_DESC_DEFAULT
+        desc.push_force,desc.up_speed=abs(s),abs(r)
+        return character_create(w,desc,p,q)!={},pq && finite(s,r)
+    case 35:
+        desc:=test_distance(scene.body,scene.ground,0,1)
+        desc.frame_a,desc.break_force=Transform{p,q},abs(s)
+        return joint_create(w,desc)!={},pq && finite(s)
+    }
+    return false,true
+}
+
+@(test)
+values_that_are_not_finite_are_refused_and_change_nothing :: proc(t:^testing.T) {
+    w:World
+    defer world_destroy(&w)
+    scene,made:=test_inputs_world(&w)
+    if !testing.expect(t,made) {return}
+    valid:=[16]f32{1,2,3,0,0,0,1,0.5,-0.5,0.25,0.5,0.25,4,5,6,7}
+    for bad in ([3]f32{cmath.nan_f32(),cmath.inf_f32(1),cmath.inf_f32(-1)}) {
+        for slot in 0..<len(valid) {
+            v:=valid
+            v[slot]=bad
+            for call in 0..<TEST_INPUT_CALLS {
+                before:=world_hash(&w)
+                ok,finite_values:=test_input_call(&w,scene,call,v)
+                if finite_values {continue}
+                testing.expectf(t,!ok,"call %d took %v in value %d",call,bad,slot)
+                testing.expectf(t,world_hash(&w)==before,"call %d changed the world with %v in value %d",call,bad,slot)
+            }
+        }
+    }
+    for &tree in w.trees {testing.expect(t,spatial.dynamic_tree_validate(&tree))}
+}
+
+@(test)
+random_bytes_given_to_the_setters_never_break_the_world :: proc(t:^testing.T) {
+    w:World
+    defer world_destroy(&w)
+    scene,made:=test_inputs_world(&w)
+    if !testing.expect(t,made) {return}
+    rng:=rand.create(0x9e37)
+    gen:=rand.default_random_generator(&rng)
+    for _ in 0..<4000 {
+        v:[16]f32
+        for &value in v {value=transmute(f32)rand.uint32(gen)}
+        before:=world_hash(&w)
+        ok,finite_values:=test_input_call(&w,scene,rand.int_max(TEST_INPUT_CALLS,gen),v)
+        testing.expect(t,finite_values || !ok)
+        if !ok {testing.expect(t,world_hash(&w)==before)}
+    }
+    for &tree in w.trees {testing.expect(t,spatial.dynamic_tree_validate(&tree))}
+}
+
 @(test)
 mass_properties_come_from_the_shapes :: proc(t:^testing.T) {
     w:World
@@ -218,6 +354,30 @@ a_box_rests_on_the_ground_and_sleeps :: proc(t:^testing.T) {
     expect_near3(t,body_position(&w,box),{0,0.5,0},0.01)
     testing.expect_value(t,body_linear_velocity(&w,box),Vec3{})
     testing.expect_value(t,world_stats(&w).awake_bodies,0)
+}
+
+// A box made 15 cm into the ground is pushed out slowly, the velocity of the push taken away by the relaxation
+// each substep; with its rotation and sideways motion locked nothing else moves it. The move of that push keeps
+// it awake until it no longer overlaps.
+@(test)
+a_box_made_inside_the_ground_does_not_sleep_until_it_is_pushed_out :: proc(t:^testing.T) {
+    w:World
+    desc:=world_desc_default()
+    desc.body_capacity,desc.shape_capacity,desc.contact_capacity=8,8,64
+    desc.contact_speed=0.2
+    testing.expect(t,world_init(&w,desc))
+    defer world_destroy(&w)
+    test_ground(&w)
+    box:=test_body(&w,Box{{0.5,0.5,0.5}},{0,0.35,0})
+    body_set_locks(&w,box,{.Lock_Linear_X,.Lock_Linear_Z,.Lock_Angular_X,.Lock_Angular_Y,.Lock_Angular_Z})
+    for step in 0..<600 {
+        world_step(&w,1.0/60)
+        if body_is_awake(&w,box) {continue}
+        depth:=0.5-body_position(&w,box).y
+        testing.expectf(t,depth<0.005,"it fell asleep %v m inside the ground at step %v",depth,step)
+        return
+    }
+    testing.expect(t,false,"it never fell asleep")
 }
 
 @(private)

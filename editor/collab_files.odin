@@ -4,14 +4,15 @@ import "core:fmt"
 import "core:strings"
 import "mirai:asset"
 import "mirai:editor/history"
+import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
 // The asset files edited in a session travel with it: a material an agent
 // changed, a texture painted, a file undone. Each end sends what changed of
-// its own, in memory and unsaved like the edit, and the others put it in the
-// memory of their registries; the host passes it on. Whoever joins gets the
-// unsaved files of the host after the scene. A file over COLLAB_FILE_BYTES
+// its own, and the others put it in the memory of their registries: the host
+// passes it on and writes it, a guest holds it while it is in. Whoever joins
+// gets the files the host holds in memory after the scene. A file over COLLAB_FILE_BYTES
 // stays where it was edited, and every end is told so: the session cannot
 // make it the same for all, the repository of the project does.
 
@@ -36,8 +37,9 @@ collab_file_changed :: proc(s:^Session,relative:string) {
     append(&st.files_out,strings.clone(relative))
 }
 
-// What a file holds now, for the others: who sent it, its path, whether it is
-// there and its bytes. Not ok with its size when it is too large to travel.
+// What a file holds now, for the others, as a File message: who sent it, its
+// path, whether it is there and its bytes. Not ok with its size when it is
+// too large to travel.
 @(private)
 collab_file_payload :: proc(s:^Session,st:^Collab_State,relative:string) -> (payload:[]u8,size:int,ok:bool) {
     r:=files_registry(s)
@@ -46,7 +48,7 @@ collab_file_payload :: proc(s:^Session,st:^Collab_State,relative:string) -> (pay
     if !read {return}
     if len(data)>COLLAB_FILE_BYTES {return nil,len(data),false}
     w:serial.Writer
-    serial.writer_init(&w,len(data)+len(relative)+16,context.temp_allocator)
+    collab_begin(&w,.File,len(data)+len(relative)+16)
     serial.write_scalar(&w,st.self)
     serial.write_string(&w,relative)
     serial.write_scalar(&w,u8(present))
@@ -95,7 +97,7 @@ collab_unsent_drop :: proc(st:^Collab_State,relative:string) {
 @(private)
 collab_unsent_text :: proc(st:^Collab_State,unsent:^Collab_Unsent) -> string {
     path:=base.text_get(unsent.path[:])
-    if unsent.peer==st.self {return fmt.tprintf("%s is too large for the session: save it and share it through the repository of the project",path)}
+    if unsent.peer==st.self {return fmt.tprintf("%s is too large for the session: share it through the repository of the project",path)}
     peer:=&st.peers[unsent.peer]
     name:=peer.name_length>0?string(peer.name[:peer.name_length]):"another editor"
     return fmt.tprintf("%s of %s is too large for the session: get it from the repository of the project once they share it",path,name)
@@ -143,10 +145,10 @@ collab_files_send :: proc(s:^Session,st:^Collab_State) {
         case ok:
             collab_unsent_drop(st,relative)
             if st.role==.Guest {
-                collab_chunks_queue(&st.peers[0],.File,payload)
+                collab_queue(&st.peers[0],payload)
             } else {
                 for &peer,i in st.peers {
-                    if i!=0 && peer.used && peer.joined {collab_chunks_queue(&peer,.File,payload)}
+                    if i!=0 && peer.used && peer.joined {collab_queue(&peer,payload)}
                 }
             }
         case size>COLLAB_FILE_BYTES:
@@ -158,31 +160,39 @@ collab_files_send :: proc(s:^Session,st:^Collab_State) {
 }
 
 // The files a guest that joins needs besides the scene: those the host
-// changed and did not save, and word of those that do not travel.
+// holds in memory, and word of those that do not travel.
 @(private)
 collab_files_join :: proc(s:^Session,st:^Collab_State,peer:^Collab_Peer) {
     r:=files_registry(s)
     if r==nil {return}
+    send :: proc(s:^Session,st:^Collab_State,peer:^Collab_Peer,relative:string) {
+        if len(relative)==0 || relative[0]=='.' {return}
+        payload,size,ok:=collab_file_payload(s,st,relative)
+        if ok {collab_queue(peer,payload)} else if size>COLLAB_FILE_BYTES {collab_unsent_add(s,st,relative,int(st.self),size)}
+    }
     for &held in r.memory {
-        if asset.registry_outside(held.path) || len(held.path)==0 || held.path[0]=='.' {continue}
-        payload,size,ok:=collab_file_payload(s,st,held.path)
-        if ok {collab_chunks_queue(peer,.File,payload)} else if size>COLLAB_FILE_BYTES {collab_unsent_add(s,st,held.path,int(st.self),size)}
+        if !asset.registry_outside(held.path) {send(s,st,peer,held.path)}
+    }
+    // What the host changed since its last commit, which the checkout of the guest lacks.
+    if g:=s.git;g!=nil {
+        root:=base.text_get(g.root[:])
+        for &change in g.changes {
+            file:=project.path(root,base.text_get(change.path[:]),allocator=context.temp_allocator)
+            relative,inside:=asset.registry_relative(r,file)
+            if _,held:=asset.registry_memory_find(r,relative);inside && !held {send(s,st,peer,relative)}
+        }
     }
     for &unsent in st.unsent[:st.unsent_count] {collab_unsent_tell(st,&unsent,peer)}
 }
 
-// A chunk of a file from another end; the whole one changes here as there.
+// A file from another end; the whole one changes here as there.
 @(private)
-collab_file_receive :: proc(s:^Session,st:^Collab_State,from:int,r:^serial.Reader) {
-    sender:=&st.peers[st.role==.Host?from:0]
-    if _,complete:=collab_chunk_take(r,&sender.file_bytes,&sender.file_total);!complete {return}
-    payload:=sender.file_bytes[:]
-    in_:=serial.reader_init(payload)
-    origin:=int(serial.read_u8(&in_))
-    relative:=serial.read_string(&in_)
-    present:=serial.read_u8(&in_)!=0
-    data:=serial.read_bytes(&in_,serial.reader_remaining(&in_))
-    if in_.failed || origin>=COLLAB_PEERS || origin==int(st.self) || relative=="" || relative[0]=='.' || asset.registry_outside(relative) || strings.contains(relative,"..") {return}
+collab_file_receive :: proc(s:^Session,st:^Collab_State,from:int,message:[]u8,r:^serial.Reader) {
+    origin:=int(serial.read_u8(r))
+    relative:=serial.read_string(r)
+    present:=serial.read_u8(r)!=0
+    data:=serial.read_bytes(r,serial.reader_remaining(r))
+    if r.failed || origin>=COLLAB_PEERS || origin==int(st.self) || relative=="" || relative[0]=='.' || asset.registry_outside(relative) || strings.contains(relative,"..") {return}
     if st.role==.Host && origin!=from {return}
     if registry:=files_registry(s);registry!=nil {
         st.applying_file=true
@@ -192,7 +202,7 @@ collab_file_receive :: proc(s:^Session,st:^Collab_State,from:int,r:^serial.Reade
     collab_unsent_drop(st,relative)
     if st.role==.Host {
         for &peer,i in st.peers {
-            if i!=0 && i!=from && peer.used && peer.joined {collab_chunks_queue(&peer,.File,payload)}
+            if i!=0 && i!=from && peer.used && peer.joined {collab_queue(&peer,message)}
         }
     }
 }

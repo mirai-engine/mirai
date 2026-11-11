@@ -3,7 +3,7 @@ package host
 import "core:testing"
 import "mirai:core"
 
-@(private) Replay_World :: struct {using world:core.Test_World,time:core.Time,frame:core.Frame_Time,id:core.World_Id,corrected:bool}
+@(test_world,host="Replay_Shared") @(private) Replay_World :: struct {using world:Test_World,time:core.Time,frame:core.Frame_Time,id:core.World_Id,corrected:bool}
 @(private) Replay_Shared :: struct {problems:core.By_World(core.Problems)}
 
 @(private)
@@ -16,9 +16,9 @@ replay_world_fixed :: proc(world,shared,editor,app_data:rawptr) {
 
 @(test)
 a_resimulated_tick_counts_a_known_problem_once_and_keeps_a_new_one :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Replay_World,Replay_Shared,core.Test_None)
+    info,described:=test_info(t,Replay_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.loops[.Game][.Fixed]=replay_world_fixed
     shared:Replay_Shared
     if !testing.expect(t,core.world_init(&info,.Shared,&shared,context.allocator)) {return}

@@ -19,8 +19,8 @@ Area_Fixture :: struct {
 @(private)
 area_init :: proc(t: ^testing.T, f: ^Area_Fixture, loc := #caller_location) -> bool {
 	settings := DEFAULT_SETTINGS
-	settings.gi_enabled, settings.reflections, settings.taa = false, false, false
-	if !fixture_init(t, f, 96, 96, settings, loc = loc) {return false}
+	settings.gi_enabled, settings.taa = false, false
+	if !fixture_init(t, f, 96, 96, settings, programs = true, loc = loc) {return false}
 	vertices: [24]Mesh_Vertex
 	indices: [36]u32
 	normals := [6]Vec3{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}}
@@ -46,21 +46,19 @@ area_scene :: proc(f: ^Area_Fixture, lights: []Light_Desc, extra: []Instance_Des
 	instances := make([dynamic]Instance_Desc, context.temp_allocator)
 	append(&instances, Instance_Desc{object_id = 1, mesh = f.cube, transform = floor, tint = {1, 1, 1}})
 	append(&instances, ..extra)
-	scene_set(f.renderer, instances[:], lights, {}, {sky = {0, 0, 0}})
+	scene_given(f.renderer, instances[:], lights, {}, {sky = {0, 0, 0}})
 }
 
-// The direct light of every pixel, as a mean over `frames` frames.
+// The direct light of every pixel, as a mean over `frames` frames, of the
+// pipeline or of the reference of the lights.
 @(private)
 area_direct :: proc(t: ^testing.T, f: ^Area_Fixture, frames: int, reference: bool, pipeline: Render_Pipeline_Handle = 0) -> []Vec3 {
 	r := f.renderer
-	settings := r.settings
-	settings.reference_lights = reference
-	testing.expect(t, renderer_apply_settings(r, settings))
 	size := int(r.main.targets.width * r.main.targets.height)
 	sum := make([]Vec3, size, context.temp_allocator)
 	texels := make([]f16, size * 4, context.temp_allocator)
 	for _ in 0 ..< frames {
-		r.main_pipeline = pipeline
+		r.main_pipeline = reference_pipeline(r, {.Lights}, nil) if reference else pipeline
 		testing.expect(t, renderer_frame(r, {camera = f.camera}), r.error)
 		if !testing.expect(t, rhi.texture_read(f.device, r.main.targets.direct, ([^]u8)(raw_data(texels))[:len(texels) * 2])) {return sum}
 		for &value, i in sum {value += {f32(texels[i * 4]), f32(texels[i * 4 + 1]), f32(texels[i * 4 + 2])} / f32(frames)}
@@ -85,10 +83,11 @@ area_dump :: proc(f: ^Area_Fixture, values: []Vec3, name: string) {
 	stbi.write_png(path, i32(width), i32(height), 3, raw_data(pixels), i32(width * 3))
 }
 
-// The pixels of a grid over the view where the reference is lit, and how
-// far the light of each is from it at most, as a share of the reference.
+// The pixels of a grid over the view where the reference is lit, at least
+// `least` of the brightest, and how far the light of each is from it at most,
+// as a share of the reference.
 @(private)
-area_compare :: proc(f: ^Area_Fixture, approximate, reference: []Vec3) -> (worst: f32, lit: int, mean: f32, at: [2]int) {
+area_compare :: proc(f: ^Area_Fixture, approximate, reference: []Vec3, least: f32 = 0.05) -> (worst: f32, lit: int, mean: f32, at: [2]int) {
 	width, height := int(f.renderer.main.targets.width), int(f.renderer.main.targets.height)
 	// Over 5x5 pixels: the reference is a mean of random points.
 	around :: proc(values: []Vec3, width, x, y: int) -> f32 {
@@ -96,12 +95,18 @@ area_compare :: proc(f: ^Area_Fixture, approximate, reference: []Vec3) -> (worst
 		for dy in -2 ..= 2 {for dx in -2 ..= 2 {sum += area_luminance(values[(y + dy) * width + x + dx])}}
 		return sum / 25
 	}
+	// Within a few pixels of where the light stops, a pixel straddles its edge,
+	// and where a light touches the surface the mean of its points there spikes.
+	edge :: proc(values: []Vec3, width, x, y: int, dark: f32) -> bool {
+		for dy in -4 ..= 4 {for dx in -4 ..= 4 {if area_luminance(values[(y + dy) * width + x + dx]) < dark {return true}}}
+		return false
+	}
 	brightest: f32
-	for value in reference {brightest = max(brightest, area_luminance(value))}
+	for y := 4; y < height - 4; y += 8 {for x := 4; x < width - 4; x += 8 {brightest = max(brightest, around(reference, width, x, y))}}
 	for y := 4; y < height - 4; y += 8 {
 		for x := 4; x < width - 4; x += 8 {
 			want := around(reference, width, x, y)
-			if want < 0.05 * brightest {continue}
+			if want < least * brightest || edge(reference, width, x, y, 0.001 * brightest) {continue}
 			lit += 1
 			error := abs(around(approximate, width, x, y) - want) / want
 			mean += error
@@ -123,7 +128,7 @@ area_lights_give_what_their_points_give :: proc(t: ^testing.T) {
 	defer fixture_destroy(&f)
 	cases := [?]struct {name: string, light: Light_Desc, worst, mean: f32}{
 		{"rectangle above", {position = {0.3, 1.2, 0}, color = {1, 1, 1}, intensity = 3 * math.PI / 2, range = 20, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {2, 1}}, 0.06, 0.03},
-		{"tilted rectangle", {position = {0, 0.5, 0}, color = {1, 0.8, 0.6}, intensity = 3 * math.PI / 2.1, range = 20, direction = {0.8, -0.6, 0}, axis = {0, 0, 1}, size = {1.5, 1.4}}, 0.1, 0.03},
+		{"tilted rectangle", {position = {0, 0.5, 0}, color = {1, 0.8, 0.6}, intensity = 3 * math.PI / 2.1, range = 20, direction = {0.8, -0.6, 0}, axis = {0, 0, 1}, size = {1.5, 1.4}}, 0.06, 0.03},
 		{"capsule", {position = {0, 0.8, 0.2}, color = {0.7, 0.9, 1}, intensity = 3 * math.PI, range = 20, axis = {1, 0, 0.3}, length = 2.5, radius = 0.05}, 0.06, 0.03},
 	}
 	for c in cases {
@@ -132,7 +137,7 @@ area_lights_give_what_their_points_give :: proc(t: ^testing.T) {
 		reference := area_direct(t, &f, 64, true)
 		area_dump(&f, approximate, fmt.tprintf("%s approximation", c.name))
 		area_dump(&f, reference, fmt.tprintf("%s reference", c.name))
-		worst, lit, mean, at := area_compare(&f, approximate, reference)
+		worst, lit, mean, at := area_compare(&f, approximate, reference, 0.01)
 		testing.expectf(t, lit > 10, "%s: %d pixels of the grid are lit", c.name, lit)
 		testing.expectf(t, worst < c.worst && mean < c.mean, "%s: the light is up to %.1f%% (at %v) and %.1f%% on average from its reference", c.name, worst * 100, at, mean * 100)
 	}

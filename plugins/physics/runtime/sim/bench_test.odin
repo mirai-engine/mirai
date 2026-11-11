@@ -125,10 +125,7 @@ worker_threads_give_the_same_result_as_one_thread :: proc(t:^testing.T) {
         test_scene_edit(&b,step)
         world_step(&a,1.0/60)
         world_step(&b,1.0/60)
-        if world_hash(&a)!=world_hash(&b) {
-            testing.expectf(t,false,"threads changed the result at step %v",step)
-            return
-        }
+        if !test_same(t,&a,&b,"threads changed the result at step %v",step) {return}
     }
     testing.expect(t,world_stats(&b).active_contacts>200)
 }
@@ -237,8 +234,8 @@ bench_steps :: proc(t:^testing.T) {
         settle:=scene==.Spheres_5000?120:60
         single,stats:=bench_run(scene,nil,settle,BENCH_STEPS)
         multi,_:=bench_run(scene,&pool,settle,BENCH_STEPS)
-        fmt.printfln("BENCH %v: 1 thread median %.3f ms (best %.3f, mean %.3f), 4 threads median %.3f (best %.3f, mean %.3f); bodies %v awake %v islands %v contacts %v constraints %v joints %v colors %v overflow %v",
-            scene,single.median,single.best,single.mean,multi.median,multi.best,multi.mean,stats.bodies,stats.awake_bodies,stats.islands,stats.active_contacts,stats.constraints,stats.joints,stats.colors,stats.overflow_constraints)
+        fmt.printfln("BENCH %v: 1 thread median %.3f ms (best %.3f, mean %.3f), 4 threads median %.3f (best %.3f, mean %.3f); bodies %v awake %v islands %v contacts %v (carried %v) constraints %v joints %v colors %v overflow %v",
+            scene,single.median,single.best,single.mean,multi.median,multi.best,multi.mean,stats.bodies,stats.awake_bodies,stats.islands,stats.active_contacts,stats.carried_contacts,stats.constraints,stats.joints,stats.colors,stats.overflow_constraints)
         fmt.printfln("BENCH   median stages on 1 thread: pairs %.3f narrow %.3f prepare %.3f solve %.3f finalize %.3f sleep %.3f; on 4: narrow %.3f prepare %.3f solve %.3f",
             single.stages[0],single.stages[1],single.stages[2],single.stages[3],single.stages[4],single.stages[5],multi.stages[1],multi.stages[2],multi.stages[3])
     }
@@ -247,28 +244,47 @@ bench_steps :: proc(t:^testing.T) {
 @(test)
 bench_snapshot :: proc(t:^testing.T) {
     if !PHYSICS_BENCH {return}
-    w:=new(World)
+    w,kept:=new(World),new(World)
     defer free(w)
+    defer free(kept)
     testing.expect(t,test_world_threaded(w,nil,8192,65536,4096))
     defer world_destroy(w)
+    defer world_destroy(kept)
     w.desc.sleep_disabled=true
     bench_pyramid(w,63)
     for _ in 0..<60 {world_step(w,1.0/60)}
-    buffer:=make([]byte,world_snapshot_capacity(w))
-    defer delete(buffer)
-    size:=0
+    testing.expect(t,world_kept_init(kept,w,context.allocator))
     ROUNDS :: 200
+    size:int
+    whole,ticked,back:time.Duration
+    for _ in 0..<ROUNDS {
+        kept.lineage=0
+        start:=time.tick_now()
+        size,_=world_state_copy(kept,w)
+        whole+=time.tick_since(start)
+        world_step(w,1.0/60)
+        start=time.tick_now()
+        world_state_copy(kept,w)
+        ticked+=time.tick_since(start)
+        world_step(w,1.0/60)
+        start=time.tick_now()
+        world_state_copy(w,kept)
+        back+=time.tick_since(start)
+    }
     start:=time.tick_now()
-    for _ in 0..<ROUNDS {size,_=world_snapshot(w,buffer)}
-    save:=time.duration_milliseconds(time.tick_since(start))/ROUNDS
-    start=time.tick_now()
-    for _ in 0..<ROUNDS {world_restore(w,buffer[:size])}
-    load:=time.duration_milliseconds(time.tick_since(start))/ROUNDS
-    start=time.tick_now()
     hash:u64
     for _ in 0..<ROUNDS {hash~=world_hash(w)}
     hashing:=time.duration_milliseconds(time.tick_since(start))/ROUNDS
     stats:=world_stats(w)
-    fmt.printfln("BENCH snapshot of %v bodies, %v contacts: %v bytes, save %.4f ms, restore %.4f ms, hash %.4f ms",
-        stats.bodies,stats.contacts,size,save,load,hashing)
+    fmt.printfln("BENCH state copy of %v bodies, %v contacts, all awake: whole %v bytes %.4f ms, after a step %.4f ms, back %.4f ms, hash %.4f ms",
+        stats.bodies,stats.contacts,size,time.duration_milliseconds(whole)/ROUNDS,time.duration_milliseconds(ticked)/ROUNDS,time.duration_milliseconds(back)/ROUNDS,hashing)
+    // 1000 bodies asleep and 10 falling: what a predicted tick copies.
+    sleepers,copy:World
+    desc:=world_desc_default()
+    desc.body_capacity,desc.shape_capacity,desc.contact_capacity,desc.joint_capacity=1100,1100,4096,0
+    testing.expect(t,world_init(&sleepers,desc))
+    defer world_destroy(&sleepers)
+    defer world_destroy(&copy)
+    full,moving,still:=test_sleepers(&sleepers,&copy)
+    fmt.printfln("BENCH state copy of 1000 bodies asleep: whole %v bytes, a tick with 10 falling %v bytes, a tick with all at rest %v bytes",full,moving,still)
 }

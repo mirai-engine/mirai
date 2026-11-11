@@ -6,8 +6,9 @@ import "mirai:editor/history"
 import "mirai:host"
 import "mirai:platform"
 
+@(test_world)
 Play_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     time:core.Time,
     frame:core.Frame_Time,
@@ -36,12 +37,12 @@ Play_Test :: struct {
 }
 
 play_test_open :: proc(t:^testing.T,f:^Play_Test) -> bool {
-    f.info=core.test_info(t,Play_Test_World) or_return
+    f.info=test_info(t,Play_Test_World) or_return
     error:platform.Error
     f.p,error=platform.create({headless=true,fixed_dt=0.1,pacing=platform.Frame_Pacing{}})
     testing.expect_value(t,error,platform.Error.None)
     if f.p==nil {
-        core.test_info_destroy(&f.info)
+        test_info_destroy(&f.info)
         return false
     }
     f.info.loops[.Game][.Fixed]=play_test_tick
@@ -56,19 +57,20 @@ play_test_open :: proc(t:^testing.T,f:^Play_Test) -> bool {
     f.gui={layout={left_open=true,right_open=true,library_tab=.Content,bottom_open=true}}
     test_session_open(&f.edited,core.world_ref(f.data,&f.info))
     f.s.app=&f.app
-    f.document.saved=history.edits_state(&f.edits)
+    if !test_commands_open(t,&f.s,&f.commands) {return false}
     return true
 }
 
 play_test_close :: proc(f:^Play_Test) {
     runs_stop(&f.s)
+    test_commands_close(&f.s)
     test_session_close(&f.edited)
     delete(f.s.edit_selection.entities)
     host.app_world_scratch_free(&f.app)
     host.app_world_free(&f.app,f.data)
     delete(f.app.worlds)
     platform.destroy(f.p)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 @(test)
@@ -98,14 +100,15 @@ play_and_simulation_keep_the_document_and_step_exactly_one_tick :: proc(t:^testi
         testing.expect_value(t,world.ticks.count,0)
         game_frame(s)
         testing.expect_value(t,running.ticks.count,1)
-        core.get(&running.transforms,original).position.x=5
+        core.edit(&running.transforms,original).position.x=5
         viewport.orbit.target={8,9,10}
         history.selection_clear(selection)
         if simulate {
             history.selection_set(selection,{original})
-            testing.expect(t,action_run(s,.Apply_Simulation))
-            testing.expect(t,run_find(s,0).world==running && .Apply_Simulation in s.requests)
-            requests_run(s)
+            // The entry runs between frames, where the calls of agents do.
+            testing.expect(t,command_run(s,"apply_simulation"))
+            testing.expect(t,run_find(s,0).world==running)
+            commands_run(s)
             testing.expect_value(t,entity_local(edited_world(s),original).position.x,f32(5))
             testing.expect_value(t,edits.cursor,1)
             testing.expect(t,history.undo(edits,edited_world(s),selection))
@@ -165,13 +168,14 @@ the_user_and_agents_play_their_own_runs_at_once :: proc(t:^testing.T) {
     testing.expect(t,!running(s) && host.app_world_count(app)==1)
 }
 
+@(private) @(test_world) Detail_World :: struct {using world:Test_World,view:core.View}
+
 @(test)
 a_paused_play_draws_the_detail_its_camera_saw_while_the_editor_looks_elsewhere :: proc(t:^testing.T) {
-    Detail_World :: struct {using world:core.Test_World,view:core.View}
     world:Detail_World
-    if !core.test_world_init(t,&world) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     app:host.App
     v:Viewport;defer viewport_free(&v)
     v.orbit=ORBIT_DEFAULT

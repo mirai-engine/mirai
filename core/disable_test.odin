@@ -2,13 +2,28 @@ package core
 
 import "core:testing"
 
-@(private="file")
+@(private)
 Probe :: struct {value:i32}
 
-@(private="file")
+@(private)
 Probe_Tag :: struct {}
 
-@(private="file")
+@(private)
+@(component,single)
+Single_Probe :: struct {value:i32}
+
+@(private)
+@(test_world)
+World_Of_Single :: struct {
+    using world:Test_World,
+    disabled:Table(Disabled),
+    parents:Table(Parent),
+    probes:Table(Single_Probe),
+    hierarchy:Hierarchy,
+}
+
+@(private)
+@(test_world)
 World_Of_Probes :: struct {
     using world:Test_World,
     disabled:Table(Disabled),
@@ -39,7 +54,9 @@ the_settle_of_a_world_comes_only_to_the_tables_that_wait :: proc(t:^testing.T) {
     }
     cases:=[]Case{
         {"nothing waits",proc(w:^World_Of_Probes,root,child,other:Entity) {},0,nil},
-        {"a row written in place",proc(w:^World_Of_Probes,root,child,other:Entity) {get(&w.probes,child).value=5},0,nil},
+        // Its table waits for the settle, which compares the row with what it held.
+        {"a row written in place",proc(w:^World_Of_Probes,root,child,other:Entity) {edit(&w.probes,child).value=5},1,
+            proc(w:^World_Of_Probes,root,child,other:Entity) -> bool {return at(&w.probes,row_of(&w.probes,child)).value==5}},
         {"an add to one table",proc(w:^World_Of_Probes,root,child,other:Entity) {add(&w.probes,root,Probe{3})},1,
             proc(w:^World_Of_Probes,root,child,other:Entity) -> bool {return has(&w.probes,root)}},
         {"a remove by reflection",proc(w:^World_Of_Probes,root,child,other:Entity) {raw_remove(raw(&w.probes),root)},1,
@@ -124,7 +141,7 @@ a_component_turned_off_keeps_its_value_out_of_sight :: proc(t:^testing.T) {
     shape:=layout(&w.probes)
     test_world_settle(&w)
     testing.expect_value(t,count(&w.probes),2)
-    testing.expect(t,!has(&w.probes,a) && get(&w.probes,a)==nil && row_of(&w.probes,a)==-1)
+    testing.expect(t,!has(&w.probes,a) && !has(&w.probes,a) && row_of(&w.probes,a)==-1)
     testing.expect(t,layout(&w.probes)>shape)
     for row in 0..<count(&w.probes) {testing.expect(t,entity_at(&w.probes,row)!=a)}
     on,turned_off,found:=raw_state(raw(&w.probes),a)
@@ -142,7 +159,7 @@ a_component_turned_off_keeps_its_value_out_of_sight :: proc(t:^testing.T) {
     enable(&w.probes,a)
     test_world_settle(&w)
     testing.expect_value(t,count(&w.probes),3)
-    value,ok:=get(read(&w.probes),a)
+    value,ok:=get(&w.probes,a)
     testing.expect(t,ok && value==Probe{10})
     c2:=changes(&w.probes,&seen)
     testing.expect(t,!c2.all && len(c2.gone)==0)
@@ -229,22 +246,69 @@ a_disabled_entity_turns_off_what_hangs_from_it_and_keeps_what_was_off :: proc(t:
     testing.expect(t,!entity_off(&w.entities,reused))
 }
 
+@(private)
+Lock_Owner :: struct {value:u8}
+
+@(private)
+@(component,locks="Lock_Owner")
+Lock_Body :: struct {value:i32}
+
+@(private)
+@(test_world)
+World_Of_Locks :: struct {
+    using world:Test_World,
+    bodies:Table(Lock_Body),
+    owner:Table(Lock_Owner),
+}
+
+@(private)
+@(component,locks="Lock_Owner")
+Lock_Rival :: struct {value:i32}
+
+@(private)
+@(test_world)
+World_Of_Rivals :: struct {
+    using world:Test_World,
+    rivals:Table(Lock_Rival),
+    bodies:Table(Lock_Body),
+    owner:Table(Lock_Owner),
+}
+
+// A function hands what a lock takes from one component to another of its
+// entity, removing one and adding the other, whatever order their tables
+// settle in.
+@(test)
+a_lock_passes_from_a_component_removed_to_one_added_in_one_function :: proc(t:^testing.T) {
+    w:World_Of_Rivals
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    e:=create(&w.entities)
+    add(&w.bodies,e,Lock_Body{1})
+    test_world_settle(&w)
+    remove(&w.bodies,e);add(&w.rivals,e,Lock_Rival{2})
+    test_world_settle(&w)
+    testing.expect(t,!has(&w.bodies,e) && row_of(&w.rivals,e)>=0 && row_of(&w.rivals,e)<count(&w.rivals))
+    remove(&w.rivals,e);add(&w.bodies,e,Lock_Body{3})
+    test_world_settle(&w)
+    testing.expect(t,!has(&w.rivals,e) && row_of(&w.bodies,e)>=0 && row_of(&w.bodies,e)<count(&w.bodies))
+    testing.expect(t,w.owner.owners[entity_index(e)].generation==entity_generation(e) && w.owner.owners[entity_index(e)].id!=0)
+}
+
 @(test)
 a_component_on_owns_what_its_locks_take_and_one_off_lets_it_go :: proc(t:^testing.T) {
-    es:Entities;entities_init(&es);defer entities_destroy(&es)
-    bodies:Table(Probe);table_init(&bodies,"Body");defer table_destroy(&bodies)
-    owner:Table(u8);table_init(&owner,"Transform");defer table_destroy(&owner)
-    locks:=[1]Lock{{offset=lock_offset(&bodies,&owner),id=1,target="Transform",names={"","Body"}}}
-    bodies.locks=locks[:]
-    e:=create(&es)
-    add(&bodies,e,Probe{1})
-    table_settle(&bodies,&es)
+    w:World_Of_Locks
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    es,bodies,owner:=&w.entities,&w.bodies,&w.owner
+    e:=create(es)
+    add(bodies,e,Lock_Body{1})
+    table_settle(bodies,es)
     testing.expect_value(t,owner.owners[entity_index(e)].id,u16(1))
-    disable(&bodies,e)
-    table_settle(&bodies,&es)
+    disable(bodies,e)
+    table_settle(bodies,es)
     testing.expect_value(t,owner.owners[entity_index(e)],Row_Owner{})
-    enable(&bodies,e)
-    table_settle(&bodies,&es)
+    enable(bodies,e)
+    table_settle(bodies,es)
     testing.expect_value(t,owner.owners[entity_index(e)].id,u16(1))
 }
 
@@ -278,7 +342,7 @@ changes_read_the_table_whole_when_a_reader_falls_behind_or_it_is_replaced :: pro
     // each settle reading the table whole; one that falls behind more than
     // the room does.
     pushed:=0
-    for pushed<=cap(probes.gone) {
+    for pushed<=cap(probes.gone.items) {
         clear(&made)
         for i in 0..<GONE_CAPACITY+2 {
             e:=create(&es)
@@ -316,12 +380,11 @@ changes_read_the_table_whole_when_a_reader_falls_behind_or_it_is_replaced :: pro
 // entity is off is on once its entity is.
 @(test)
 a_single_component_follows_the_entities_turned_off_and_on :: proc(t:^testing.T) {
-    w:World_Of_Probes
+    w:World_Of_Single
     if !test_world_init(t,&w) {return}
     defer test_world_destroy(&w)
-    w.probes.single=true
     root,section:=create(&w.entities),create(&w.entities)
-    add(&w.probes,root,Probe{1});add(&w.probes,section,Probe{2})
+    add(&w.probes,root,Single_Probe{1});add(&w.probes,section,Single_Probe{2})
     test_world_settle(&w)
     enable(&w.probes,section)
     test_world_settle(&w)

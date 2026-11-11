@@ -27,15 +27,11 @@ and sets it moving; there is no step that depends on looking at the mesh by hand
    - Animal: poor coverage says the template did not take the shape of the mesh; another family is
      tried, or the mesh is reoriented (on +Y, facing -Z once imported).
    - Importing the same source again writes where the first time did, even if `folder` changes.
-4. **Placing it.** `prefab.instantiate` of the character prefab gives the rig entity. Its rest pose
-   is that of the template with the lengths of the character.
-5. **The clips to the character.** A `.pose` with `pose.profile.create` and two `retarget` rows:
-   `mode:"Paths"` with `translation:"Reference"` (each bone keeps its length; its `source_bone` and
-   `target_bone` are empty) and `mode:"Bone"` of the first bone under `root`
-   (`Armature/root/pelvis`, `Armature/root/Hips`) to itself with `translation:"Scaled"` (the height
-   of the hip follows that of the character). With it, `animation.retarget.bake` of the library
-   `.anim` from its `.skeleton` to that of the character: both have the same paths and the same
-   rest, so the map by paths is enough.
+4. **Placing it.** `scene.write` of an entity with `prefab` naming the character prefab gives the
+   rig entity. Its rest pose is that of the template with the lengths of the character.
+5. **The clips to the character.** `animation.retarget.bake` of the library `.anim` from its
+   `.skeleton` to that of the character, without a `character`: both have the same bone names and
+   the same rest, so each bone takes the bone of its name and keeps the length of the character.
 6. **Moving it.**
    - Humanoid: `animation.character.setup` with the baked `.anim` as `library`
      ([character](animation-authoring.md#character)), and `animation.capture` with `plays` of a

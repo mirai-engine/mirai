@@ -247,7 +247,7 @@ gt_near3 :: proc(t:^testing.T,value,expected:Vec3,tolerance:f32,loc:=#caller_loc
 }
 @(private="file")
 gt_finite :: proc(o:Gjk_Output) -> bool {
-    return is_finite3(o.point_a) && is_finite3(o.point_b) && is_finite3(o.normal) && o.distance-o.distance==0
+    return finite(o.point_a) && finite(o.point_b) && finite(o.normal) && o.distance-o.distance==0
 }
 @(private="file")
 gt_report :: proc(t:^testing.T,s:Gt_Stats,loc:=#caller_location) {
@@ -707,7 +707,7 @@ gjk_cast_of_random_shapes_stops_where_the_distance_reaches_zero :: proc(t:^testi
         if start.distance-radius<0.01 {continue}
         out:=gjk_cast(gt_proxy(&a),gt_proxy(&b),xf,translation)
         stats.cases+=1
-        if out.fraction-out.fraction!=0 || !is_finite3(out.point) || !is_finite3(out.normal) {
+        if out.fraction-out.fraction!=0 || !finite(out.point) || !finite(out.normal) {
             stats.failures+=1
             continue
         }
@@ -880,7 +880,7 @@ epa_penetration_of_random_hulls_matches_the_smallest_overlap_of_their_axes :: pr
         if !found || abs(depth)<1e-3 {continue}
         pen:=epa_penetration(gt_proxy(&a),gt_proxy(&b),xf)
         stats.cases+=1
-        if !is_finite3(pen.normal) || !is_finite3(pen.point_a) || !is_finite3(pen.point_b) {
+        if !finite(pen.normal) || !finite(pen.point_a) || !finite(pen.point_b) {
             stats.failures+=1
             continue
         }
@@ -946,7 +946,7 @@ epa_penetration_of_touching_boxes_has_no_depth :: proc(t:^testing.T) {
     }
     for xf in poses {
         pen:=epa_penetration(gt_proxy(&a),gt_proxy(&b),xf)
-        testing.expect(t,is_finite3(pen.normal) && is_finite3(pen.point_a) && is_finite3(pen.point_b))
+        testing.expect(t,finite(pen.normal) && finite(pen.point_a) && finite(pen.point_b))
         gt_near(t,pen.depth,0,1e-5)
         if pen.ok {gt_near3(t,pen.normal,normalize(Vec3{xf.p.x>1 ? 1 : 0,xf.p.y>1 ? 1 : 0,0}),1e-4)}
     }
@@ -1105,12 +1105,12 @@ convex_queries_stay_finite_for_degenerate_shapes_and_motions :: proc(t:^testing.
                 d:=gjk_distance(gt_proxy(&a),gt_proxy(&b),xf,nil,true)
                 if !gt_finite(d) || d.distance<0 || (d.normal!={} && abs(length(d.normal)-1)>1e-5) {failures+=1}
                 p:=epa_penetration(gt_proxy(&a),gt_proxy(&b),xf)
-                if !is_finite3(p.normal) || !is_finite3(p.point_a) || !is_finite3(p.point_b) || p.depth-p.depth!=0 {failures+=1}
+                if !finite(p.normal) || !finite(p.point_a) || !finite(p.point_b) || p.depth-p.depth!=0 {failures+=1}
                 if p.ok && (abs(length(p.normal)-1)>1e-5 || p.depth<0) {failures+=1}
                 if d.normal=={} && !(p.ok && p.depth>=a.radius+b.radius) {failures+=1}
                 for translation in translations {
                     c:=gjk_cast(gt_proxy(&a),gt_proxy(&b),xf,translation)
-                    if !is_finite3(c.normal) || !is_finite3(c.point) || !(c.fraction>=0 && c.fraction<=1) {failures+=1}
+                    if !finite(c.normal) || !finite(c.point) || !(c.fraction>=0 && c.fraction<=1) {failures+=1}
                 }
                 for end in ends {
                     o:=time_of_impact(gt_proxy(&a),gt_proxy(&b),gt_still(TRANSFORM_IDENTITY),gt_sweep(xf,end))

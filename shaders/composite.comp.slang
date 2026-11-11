@@ -1,6 +1,6 @@
 #include "native.slang"
 // unlayered: while no instance with layers is in sight (gbuffer.slang).
-//! variant unlayered MIRAI_GBUFFER_NO_LAYERS=1
+//! constant unlayered MIRAI_GBUFFER_NO_LAYERS
 // Final HDR composition: the direct light, the light around each pixel
 // (indirect_compose) and its emission. The irradiance comes from the probe
 // volume, darkened by its contact occlusion, or from the reference of the
@@ -10,7 +10,7 @@
 // leaves both lights of the probe volume at each pixel; the coat and the
 // other side of what lets light through read it here. Under an atmosphere,
 // the image shown takes the air between the eye and each pixel (its aerial
-// perspective, air_aerial.comp); what the next frame traces does not.
+// perspective, air_aerial.comp).
 #define GBUFFER_ALBEDO SLOT_PASS0
 #define GBUFFER_NORMAL SLOT_PASS1
 #define GBUFFER_EMISSION SLOT_PASS2
@@ -29,14 +29,11 @@ struct Params_Block { uint gathered; uint pad0; uint pad1; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 // With params.gathered, the light of the probe volume around the normal by its
 // contact occlusion and around the specular lobe, packed (contact_pixels.comp);
-// rgb with FRAME_FLAG_GI_REFERENCE: the reference of the indirect light (gi_reference.comp).
+// rgb with FRAME_FLAG_GI_GIVEN: the diffuse indirect light a custom pass of the pipeline gives.
 [[vk::binding(SLOT_PASS5, 0)]] Texture2D<float4> indirect_input : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);
 [[vk::binding(SLOT_PASS6, 0)]] Texture3D<float4> aerial : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);
 [[vk::binding(SLOT_PASS7, 0)]] Texture2D<float4> reflections : register(MIRAI_REGISTER(t, SLOT_PASS7), space0); // rgb the filtered traced reflection
-[[vk::binding(SLOT_PASS8, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_color : register(MIRAI_REGISTER(u, SLOT_PASS8), space0);
-// Lit HDR color kept free of debug views: next frame's screen-space tracing
-// reads it as the previous frame radiance, and lacks a relative emission.
-[[vk::binding(SLOT_PASS9, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_display : register(MIRAI_REGISTER(u, SLOT_PASS9), space0);
+[[vk::binding(SLOT_PASS8, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_display : register(MIRAI_REGISTER(u, SLOT_PASS8), space0);
 
 // What lies at distance along the ray of uv seen through the air: its light
 // times what crosses, plus what the air sends.
@@ -68,9 +65,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         }
 #endif
         float4 sky = float4(frame.background.w > 0.5 ? frame.background.rgb : sky_seen(sky_dir), 1.0);
-        out_color[p] = sky;
-        // Editor reference belongs behind transparency, while out_color stays
-        // free of it for next frame's screen-space radiance tracing.
+        // The editor's reference grid goes behind transparency.
         float3 backdrop = nested ? sky.rgb : ground_grid_background(sky.rgb, uv);
         out_display[p] = float4(backdrop, 1.0);
         return;
@@ -80,12 +75,12 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float4 motion = pixel_views.Load(int3(p, 0));
     Shading s = gbuffer_shading(g, pixel);
     float3 direct = direct_light.Load(int3(p, 0)).rgb;
-    bool reference = (frame.flags & (FRAME_FLAG_GI | FRAME_FLAG_GI_REFERENCE)) == (FRAME_FLAG_GI | FRAME_FLAG_GI_REFERENCE);
+    bool given = (frame.flags & (FRAME_FLAG_GI | FRAME_FLAG_GI_GIVEN)) == (FRAME_FLAG_GI | FRAME_FLAG_GI_GIVEN);
     bool gathered = params.gathered != 0u;
-    uint wants = (s.coat > 0.0 ? INDIRECT_COAT : 0u) | (gathered ? 0u : INDIRECT_SPECULAR | (reference ? 0u : INDIRECT_DIFFUSE));
+    uint wants = (s.coat > 0.0 ? INDIRECT_COAT : 0u) | (gathered ? 0u : INDIRECT_SPECULAR | (given ? 0u : INDIRECT_DIFFUSE));
     Indirect light = indirect_lobes(s.position, s.normal, s.view, s, wants, g.occlusion);
     float4 around = indirect_input.Load(int3(p, 0));
-    if (reference) light.irradiance = around.rgb * frame.gi_strength;
+    if (given) light.irradiance = around.rgb * frame.gi_strength;
     if (gathered) {
         light.irradiance = light_unpack(around.x);
         light.radiance = light_unpack(around.y);
@@ -94,12 +89,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     light.traced_coat = (g.bits & GBUFFER_TRACE_COAT) != 0u;
     light.traced_share = reflection_weight(motion.b + ROUGHNESS_ROUNDING);
     if (light.traced_share > 0.0) light.traced = reflections.Load(int3(p, 0)).rgb;
-    // Next frame's screen-space tracing reads out_color as the light of the
-    // scene: a relative emission shows in the image alone.
-    float3 relative = gbuffer_relative_emission(g);
-    float3 color = finite_or_zero(direct + indirect_compose(s, light) + g.emission - relative);
-    out_color[p] = float4(color, 1.0);
-    color += relative;
+    float3 color = finite_or_zero(direct + indirect_compose(s, light) + g.emission);
     if (frame.sky_map.y > 0.5 && frame.sun_direction.w > 0.5) color = aerial_perspective(color, uv, pixel.distance);
     switch (frame.debug_view) {
     case DEBUG_ALBEDO: color = g.base_color; break;

@@ -26,7 +26,7 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - Shipping and cooking: [shipped game](references/build.md#shipped-game),
   [dedicated server](references/build.md#dedicated-server) and
   [cooking](references/build.md#asset-cooking).
-- `--dev`/`--release` modes, per-part currency and the shared engine cache:
+- Dev and `--release` modes, per-part currency and the shared engine cache:
   [engine binaries](references/projects.md#engine-binaries) and
   [plugin libraries](references/projects.md#plugin-libraries).
 - Engine shipped as a binary, `engine.mirai`, `mirai package engine`, engine root and release
@@ -68,8 +68,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 1. A new manifest field goes into the struct, with its default in `manifest_default` and its check
    in `manifest_validate` or `plugin_validate`.
 2. A new engine package goes into `ENGINE_PACKAGES`, in the lowest
-   [library](references/projects.md#engine-binaries) that has what it imports, and, if it is
-   engine-time, into `engine_time_packages`.
+   [layer](references/projects.md#engine-binaries) that has what it imports and after the
+   packages it imports, and, if it is engine-time, into `engine_time_packages`.
 3. A change in what `declare` writes bumps `DECLARE_VERSION`.
 4. Update [projects.md](references/projects.md) or [build.md](references/build.md) in the same task
    if an invariant or a workflow changes.
@@ -84,14 +84,27 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   the tool imports. It is guarded by `the_tool_imports_no_package_of_the_engine`.
 - The generator reads syntax (`core:odin/parser`) and writes text. The generated packages are the
   only source of what goes into each binary: `gen/game` imports `host` and the libraries, nothing
-  from the editor; `gen/editor` and `gen/play` only export `mirai_project_info`.
+  from the editor; `gen/editor` only exports `mirai_project_info`.
 - A generic procedure, an `inline` one, one with `deferred_*` or one with an `any` in its
   signature is compiled in its caller: it is not exported. An `any` crossing into a library would
   carry a typeid its type table lacks (`%v` of a plugin's enum prints nothing).
 - A private procedure is declared and exported only when the declarations of its package name it:
   what `declare` copies as text and what it looks for names in are the same set.
+- What compiles against declarations, of the engine, its plugins or the project (one index),
+  follows the declarations its parsed sources name and what they reach: a name a local hides still
+  counts, and a type reached through a pointer too. More is followed, never less.
+- In dev a package that is edited often is a library of its own, and a library imports only
+  packages listed before its own in `ENGINE_PACKAGES`; an optimized build never splits a layer.
 - The project libraries and the engine ones share flags (`engine_flags`: `-custom-attribute` and
   the platform ones); their layouts depend on it.
+- A define is one value for every library of a build: one a `#config` of the engine reads builds
+  the engine apart, a declaration carries the value its `#config` took, and a library is never
+  loaded by engine binaries built with other defines.
+- Every test executable, of `mirai test` and of `build.test`, is built and run by one runner
+  (`cook/build/tests.odin`), is current by the content fingerprint of what its build read and
+  runs in the engine root: a relative path in a test is relative to the engine.
+- No library compiles a `_test.odin`: the engine, plugin and project libraries compile from
+  stages without them. A test helper a game's tests use is public API of the engine.
 - Only the shaders job (`Shaders_Job`, on its thread) writes to `project.shader_generation(root)`.
   `host` chooses what to load with `project.shader_generation_find`; do not duplicate that path.
 - Manifests are flat structs read and written by their schema; an unknown field is a read error.
@@ -102,8 +115,12 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   (`-export-dependencies:json`), not against what was generated; `engine_time_packages` defines it.
 - The compiler never writes over a published output: it writes with the job's prefix in
   `.mirai/build` and a successful build replaces it with a rename.
-- A plugin library compiles only when the plugin libraries it links are published; their
-  declarations are written before and do not wait.
+- The code of a project (`game/`, `editor/`, its plugins) compiles into libraries of its own, as
+  the engine plugins do; the library of the project is the generated world alone. The player runs
+  the game of that library: there is no second build of the game besides the one that ships.
+- Every declaration is written before anything compiles and does not wait. On Windows the import
+  library of each library is made from the module definition `declare` writes, so every library
+  compiles at once; elsewhere a library compiles only when the libraries it links are published.
 - `job_start` does not wait for the compiler and copies to its arena what it needs from the
   project: the `Project` can be closed afterwards.
 - Paths use `/` in everything that is stored, generated or compared.
@@ -121,9 +138,10 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 ## Verification
 
 - `mirai test project` (manifests, order, paths), `mirai test cook/build` (cooking, shaders, copy,
-  fingerprint, engine modes, `declare` and the IR without stores of aggregates of more than 64
-  bytes) and `mirai test tools/mirai` (ACP installer, C library cache, tests that declare the
-  sources, output of `mirai test`, known failures); `mirai check cook/build` and `mirai check
+  fingerprint, engine modes, `declare`, the IR without stores of aggregates of more than 64 bytes,
+  and the test runner: currency of an executable and what it reads from the output of
+  `core:testing`) and `mirai test tools/mirai` (ACP installer, C library cache, tests that declare
+  the sources, known failures); `mirai check cook/build` and `mirai check
   tools/mirai` if they change. Turns: `mirai test cook/workspace` (annotation of builds, who holds a
   lock) and `mirai test std/subprocess` (low priority of a child).
 - Generator or build: `mirai build editor` and `mirai build game --out <separate folder>` of the
@@ -134,10 +152,13 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   `the_tests_of_runtime_packages_import_no_engine_time_package` of `cook/build`.
 - Cache: changing an engine source and opening the editor rebuilds; repeating without changes
   reuses both builds ([reload](../mirai-editor/references/editor.md#build-and-reload)).
-- Fingerprint and shared cache: `mirai build engine --dev` twice (the second says "unchanged"
+- Fingerprint and shared cache: `mirai build engine` twice (the second says "unchanged"
   without waiting for a turn), a change in the body of a procedure (rebuilds only the library of
   its package) and in a worktree from `mirai worktree new` (reports "copied from the shared
   cache").
+- Defines: `a_define_the_engine_reads_builds_what_reads_it_with_one_layout` of `cook/build`; by
+  hand, a project with a define the engine reads builds only the libraries that read it and
+  those that name what it changed, in `<mode>-<hash>`, and building it again compiles nothing.
 - Environment: `mirai doctor` from a worktree without its own `.deps` finds Odin and the
   dependencies of the main checkout.
 - Installed engine: `project/project_test.odin` (told by its manifest) and, in `cook/build`,
@@ -145,8 +166,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   counts by its manifest, not its date) and `plugins_test.odin` (a plugin library is the same in
   every project). If the package changes, by hand:
   `mirai package engine --out <short folder>`, compress it, decompress it into another folder and,
-  with its `bin/mirai`, `new` of each template and `build editor --dev`, which does not compile
-  plugin libraries; then `edit --dev` opens the editor. The workflow YAML is validated with
+  with its `bin/mirai`, `new` of each template and `build editor`, which does not compile
+  plugin libraries; then `edit` opens the editor. The workflow YAML is validated with
   `actionlint`.
 - ACP installer in a temporary project: install, search, cancel and uninstall Codex, and
   `initialize` of the adapter with `CODEX_PATH` pointing at the binary, with Bun and with Bundled.

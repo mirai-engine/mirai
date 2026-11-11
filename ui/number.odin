@@ -92,7 +92,6 @@ number_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (re
     field:=field
     field.disabled|=ctx.disabled_depth>0
     field.typed_only|=field.stepper
-    th:=&ctx.theme
     e:=&ctx.edit
     s:=&ctx.scrub
     if field.disabled {
@@ -100,10 +99,10 @@ number_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (re
         if s.id==id && id!=0 {s^={};result.ended,result.cancelled=true,true}
     }
     look:=field.look
-    size:=field.size if field.size>0 else th.font_small
+    size:=field.size if field.size>0 else metric(ctx,"font_small")
     width:=field.width if field.width!={} else GROW
-    height:=field.height if field.height>0 else th.row
-    em:=th.font
+    height:=field.height if field.height>0 else metric(ctx,"row")
+    em:=metric(ctx,"font")
     font:u8
     pad:f32
     if look!=nil {
@@ -123,7 +122,7 @@ number_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (re
     it:=interact(ctx,id,{.Focusable}+({.Disabled} if field.disabled else {})+({.Adjusts} if field.stepper else {}))
     begin_edit:=false
     if e.id==id && id!=0 {
-        event,tab:=field_edit_update(ctx,id,it,size,field.label,false,field.strip[3]>0,pad,font,field.icon)
+        event,tab:=field_edit_update(ctx,id,it,size,false,font)
         #partial switch event {
         case .Commit:
             text:=strings.trim_space(text_edit_value(e))
@@ -173,7 +172,7 @@ number_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (re
             field_edit_begin(ctx,id,number_format(buffer[:],value^,0 if field.integer else NUMBER_EDIT_DECIMALS),.Number,TEXT_EDIT_CAPACITY,look==nil)
             e.font=font
             if look!=nil && it.pressed {
-                if rect,found:=widget_rect(ctx,id);found {text_edit_press(ctx,e,size,field_text_area(ctx,rect,field.label,size,false,field.strip[3]>0,pad,field.icon))}
+                if area,found:=widget_rect(ctx,field_area(ctx,id));found {text_edit_press(ctx,e,size,area)}
             }
             result.began=true
         }
@@ -181,26 +180,24 @@ number_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (re
     }
     result.editing=e.id==id && id!=0
     result.scrubbing=s.id==id && s.moved && id!=0
-    text:="Multiple" if field.mixed else number_text(ctx,value^,decimals)
-    paint:=field_paint(ctx,id,it,text,size,field.label,field.strip,"",s.id==id && id!=0,field.disabled,field.icon)
-    if paint!=nil {
-        paint.detail=field.unit
-        paint.padding=pad
-        paint.style.font=font
-        if look!=nil {field_paint_look(paint,look)}
-    }
-    element:=Element{id=id,layout={width=width,height=fixed(height)},custom=paint}
+    text:=text_edit_value(e) if result.editing else "Multiple" if field.mixed else number_text(ctx,value^,decimals)
+    f:=field_look(ctx,text,size,font,field.disabled)
+    f.label,f.icon,f.unit=field.label,field.icon,field.unit
+    paint:=field_paint(ctx,id,it,s.id==id && id!=0,field.disabled,field.strip)
+    if paint!=nil && look!=nil {field_paint_look(paint,&f,look)}
+    layout:=Layout{width=width,height=fixed(height),gap=4 if field.icon!=.None else 6,align_y=.Center}
     if !field.stepper {
-        element_leaf(ctx,element)
+        layout.padding=field_padding(&f,pad,field.strip[3]>0)
+        if element_open(ctx,{id=id,layout=layout,custom=paint}) {field_content(ctx,id,f)}
+        element_close(ctx)
         return
     }
     by:=field.step if field.step>0 else 1
     next:=value^
-    mark:=look.mark if look!=nil else th.text_muted
-    element.layout.direction,element.layout.align_y=.Row,.Center
-    if element_open(ctx,element) {
+    mark:=look.mark if look!=nil else tone(ctx,"text_muted")
+    if element_open(ctx,{id=id,layout=layout,custom=paint}) {
         if control_arrow(ctx,id_derive(ctx,id,"previous"),0,side,em,mark,field.disabled) {next-=by}
-        element_leaf(ctx,{layout={width=GROW,height=GROW}})
+        field_content(ctx,id,f)
         if control_arrow(ctx,id_derive(ctx,id,"next"),1,side,em,mark,field.disabled) {next+=by}
     }
     element_close(ctx)
@@ -215,11 +212,12 @@ number_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (re
 // its selection from the mark (or its text at a quarter) and its placeholder
 // from its text at half.
 @(private)
-field_paint_look :: proc "contextless" (paint:^Paint,look:^Node_Style) {
+field_paint_look :: proc "contextless" (paint:^Paint,f:^Field_Look,look:^Node_Style) {
     text:=look.text.color
-    paint.fill,paint.stroke,paint.stroke_width,paint.corners,paint.text_color=look.fill,look.stroke,look.stroke_width,look.radius,text
-    paint.fill2=look.mark if look.mark[3]>0 else color_alpha(text,text[3]/4)
-    paint.faint=color_alpha(text,text[3]/2)
+    paint.fill,paint.stroke,paint.stroke_width,paint.corners=look.fill,look.stroke,look.stroke_width,look.radius
+    f.style.color=text
+    f.selection=look.mark if look.mark[3]>0 else color_alpha(text,text[3]/4)
+    f.faint=color_alpha(text,text[3]/2)
 }
 
 Slider :: struct {
@@ -256,11 +254,10 @@ slider :: proc(ctx:^Context,id:Id,value:^f64,sl:Slider) -> (result:Number_Result
     width,height:=sl.width,sl.height
     knob,track:=SLIDER_KNOB,SLIDER_TRACK
     if look==nil {
-        th:=&ctx.theme
-        themed.track,themed.mark,themed.knob=th.rule,th.accent_soft if disabled else th.accent,th.text_faint if disabled else th.text
+        themed.track,themed.mark,themed.knob=tone(ctx,"rule"),tone(ctx,"accent_soft") if disabled else tone(ctx,"accent"),tone(ctx,"text_faint") if disabled else tone(ctx,"text")
         look=&themed
         if width=={} {width=GROW}
-        if height=={} {height=fixed(th.row)}
+        if height=={} {height=fixed(metric(ctx,"row"))}
     } else {
         line:f32
         width,height,line=control_size(ctx,width,height,look,GAME_WIDTH)
@@ -311,57 +308,3 @@ slider :: proc(ctx:^Context,id:Id,value:^f64,sl:Slider) -> (result:Number_Result
     element_leaf(ctx,{id=id,layout={width=width,height=height},custom=paint_add(ctx,paint)})
     return
 }
-
-// A slider of the editor followed by the field that types its value. Without
-// a finite range it is the field alone.
-slider_field :: proc(ctx:^Context,id:Id,value:^f64,field:Number_Field={}) -> (result:Number_Result) {
-    span:=field.max-field.min
-    if !field.has_min || !field.has_max || field.max<=field.min || math.is_nan(span) || math.is_inf(span) || math.is_nan(value^) || math.is_inf(value^) {
-        return number_field(ctx,id,value,field)
-    }
-    th:=&ctx.theme
-    height:=fixed(field.height if field.height>0 else th.row)
-    if box(ctx,{width=field.width if field.width!={} else GROW,height=height,gap=5,align_y=.Center}) {
-        result=slider(ctx,id_derive(ctx,id,"track"),value,{min=field.min,max=field.max,integer=field.integer,key_step=field.speed if field.speed>0 else span/100,height=height,disabled=field.disabled})
-        if !field.bare {
-            number:=field
-            number.width,number.typed_only=fixed(46+(text_width(&ctx.font,field.unit,FIELD_UNIT)+4 if field.unit!="" else 0)),true
-            typed:=number_field(ctx,id_derive(ctx,id,"number"),value,number)
-            result.changed|=typed.changed
-            result.began|=typed.began
-            result.ended|=typed.ended
-            result.cancelled|=typed.cancelled
-            result.editing,result.invalid,result.tab=typed.editing,typed.invalid,typed.tab
-        }
-    }
-    return
-}
-
-Vector_Field :: struct {
-    using number:Number_Field, // what every axis shares; the strip comes from the axis
-    channels:bool,   // R, G, B, A with the channel colors instead of X, Y, Z, W
-    mixed_axes:[4]bool,
-}
-
-// One number field per value, to be placed in a row. axis: the one the result
-// is about, or -1 when nothing happened.
-vector_field :: proc(ctx:^Context,id:Id,values:[]f64,field:Vector_Field={}) -> (result:Number_Result,axis:int) {
-    th:=&ctx.theme
-    axis=-1
-    count:=min(len(values),4)
-    id_push(ctx,id)
-    defer id_pop(ctx)
-    for i in 0..<count {
-        one:=field.number
-        one.strip=th.channel[i] if field.channels else th.axis[i]
-        one.mixed=field.mixed_axes[i] || field.number.mixed
-        r:=number_field(ctx,ui_axis_id(ctx,i),&values[i],one)
-        // Tab moves to the next component of the same property.
-        if r.tab>0 && i+1<count {edit_request(ctx,ui_axis_id(ctx,i+1))}
-        if r.tab<0 && i>0 {edit_request(ctx,ui_axis_id(ctx,i-1))}
-        if r!={} && (axis<0 || r.changed || r.began || r.ended) {result,axis=r,i}
-    }
-    return
-}
-@(private)
-ui_axis_id :: proc(ctx:^Context,axis:int) -> Id {return id(ctx,"axis",axis+1)}

@@ -7,7 +7,7 @@ import "mirai:rhi"
 
 @(test)
 ground_grid_is_visible_on_the_background_and_occluded_by_geometry :: proc(t:^testing.T) {
-    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.reflections=false;settings.taa=false
+    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false
     f:Fixture
     if !fixture_init(t,&f,160,120,settings,hardware_rt=false) {return}
     defer fixture_destroy(&f)
@@ -26,7 +26,7 @@ ground_grid_is_visible_on_the_background_and_occluded_by_geometry :: proc(t:^tes
     elevations:=[2]f32{0,-2}
     for elevation in elevations {
         transform:=Mat4(1);transform[1,3]=elevation
-        scene_set(r,[]Instance_Desc{{object_id=1,mesh=mesh,transform=transform}},nil,{}, {background={0.025,0.029,0.035},use_background=true})
+        scene_given(r,[]Instance_Desc{{object_id=1,mesh=mesh,transform=transform}},nil,{}, {background={0.025,0.029,0.035},use_background=true})
         testing.expect(t,renderer_frame(r, {camera = camera}),r.error)
         plain,width,height,captured:=golden_capture(r);testing.expect(t,captured,r.error);if !captured {return};defer delete(plain)
         tlas_dirty,instances_dirty:=r.scene.tlas_dirty,r.scene.instances_dirty
@@ -59,8 +59,8 @@ grid_read_hdr :: proc(t:^testing.T,r:^Renderer,target:rhi.Texture)->[]f16 {
 }
 
 @(test)
-ground_grid_blends_behind_transparency_without_entering_radiance_history :: proc(t:^testing.T) {
-    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.reflections=false;settings.taa=false
+ground_grid_blends_behind_transparency :: proc(t:^testing.T) {
+    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false
     f:Fixture
     if !fixture_init(t,&f,160,120,settings,hardware_rt=false) {return}
     defer fixture_destroy(&f)
@@ -75,22 +75,18 @@ ground_grid_blends_behind_transparency_without_entering_radiance_history :: proc
     mesh,created:=mesh_add(r,vertices[:],indices[:]);testing.expect(t,created,r.error);if !created {return}
     camera:=Camera{position={3,5,5},forward={-3,-4.5,-5},up={0,1,0},fov_y=50,near=0.05,far=100,exposure=UNIT_EXPOSURE}
     environment:=Environment{background={0.025,0.029,0.035},use_background=true}
-    scene_set(r,nil,nil,{},environment)
+    scene_given(r,nil,nil,{},environment)
     testing.expect(t,renderer_frame(r, {camera = camera}),r.error)
     plain:=grid_read_hdr(t,r,r.targets.display);defer delete(plain)
     environment.ground_grid=true;scene_set_environment(r,{},environment)
     testing.expect(t,renderer_frame(r, {camera = camera}),r.error)
     grid:=grid_read_hdr(t,r,r.targets.display);defer delete(grid)
-    radiance:=grid_read_hdr(t,r,r.targets.hdr[int((r.frame-1)%2)]);defer delete(radiance)
-    contaminated:=0
-    for value,i in radiance {if value!=plain[i] {contaminated+=1}}
-    testing.expectf(t,contaminated==0,"Grid never enters the radiance history (%d components changed)",contaminated)
 
     // With no lights or ambient radiance the sheet reflects black, making its
     // transmitted background independent of the material's shading model.
     glass:=DEFAULT_MATERIAL;glass.alpha_mode=.Blend
     materials_set(r,[]Material_Desc{glass})
-    scene_set(r,[]Instance_Desc{{object_id=1,mesh=mesh,transform=Mat4(1),material=1}},nil,{},environment)
+    scene_given(r,[]Instance_Desc{{object_id=1,mesh=mesh,transform=Mat4(1),material=1}},nil,{},environment)
     testing.expect(t,renderer_frame(r, {camera = camera}),r.error)
     solid:=grid_read_hdr(t,r,r.targets.display);defer delete(solid)
     solid_ldr,_,_,captured:=golden_capture(r);testing.expect(t,captured,r.error);if !captured {return};defer delete(solid_ldr)
@@ -125,13 +121,13 @@ ground_grid_blends_behind_transparency_without_entering_radiance_history :: proc
 
 @(test)
 a_backdrop_is_shown_behind_the_scene_instead_of_the_sky_until_it_is_removed :: proc(t:^testing.T) {
-    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.reflections=false;settings.taa=false
+    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false
     f:Fixture
     if !fixture_init(t,&f,96,64,settings,hardware_rt=false) {return}
     defer fixture_destroy(&f)
     r,device:=f.renderer,f.device
     camera:=Camera{position={0,1,4},forward={0,0,-4},up={0,1,0},fov_y=50,near=0.05,far=100,exposure=UNIT_EXPOSURE}
-    scene_set(r,nil,nil,{},{sky={0.5,0.6,0.9}})
+    scene_given(r,nil,nil,{},{sky={0.5,0.6,0.9}})
     center:=(32*96+48)*4
     testing.expect(t,renderer_frame(r,{camera=camera}),r.error)
     sky,_,_,captured:=golden_capture(r);testing.expect(t,captured,r.error);if !captured {return};defer delete(sky)

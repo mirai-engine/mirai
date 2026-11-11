@@ -14,32 +14,39 @@ pause, settings and HUD. Follow these steps; then [rules-test.md](third-person/r
 
 `project.mirai`: add `"terrain","foliage","water","fog"` to the `plugins` the game already has.
 Remove a plugin only after its imports are gone from `game/` and `tools/`. `settings.mirai` stays:
-`Spawn_Settings.players` gives each player a body at the `Spawn_Point`, with no spawn or camera
-code. A sunny scene needs no exposure setting and no fog: `render.SKY_DEFAULT` and a 100000 lux sun
-are a clear day, auto exposure meters it.
+`Spawn_Settings.prefab` names the player prefab, of which each player gets a body at the
+`Spawn_Point` (its `players` on), with no spawn or camera code. A sunny scene needs no exposure
+setting and no fog: `render.SKY_DEFAULT` and a 100000 lux sun are a clear day, auto exposure
+meters it.
 
 ## 2. The player
 
-`assets/player/Player.prefab` is the source of the player, as the scene and each `.ui` are: change
+`assets/player/Player.scene` is the source of the player, as the scene and each `.ui` are: change
 it through the API or the editor, and nothing writes over it. With the session open:
 
 ```sh
 P="mirai rpc --project ."
-$P scene.open '{"path":"player/Player.prefab"}'
-$P scene.set '{"entity":"Player","components":{
-  "Character":{"move_relative_to":"Camera","turn_speed":12},
-  "Walk":{"max_speed":7,"air_control":0.55,"coyote_time":0.13,
-          "jump_height":1.9,"jump_rise":0.11,"jump_cut":0.42}}}'
-$P scene.write '{"root":"Player view","entities":[{"name":"Player view","components":{
-  "Camera":{"fov":1.2217,"near":0.05,"active":true},"Audio_Listener":{},
-  "Camera_Follow":{"offset":[0,1.5,0],"distance":5,"pitch":0.3,"min_pitch":-0.3,"max_pitch":1.2,
-                   "turn":true,"recenter":1.5}}}]}'
-$P scene.add '{"name":"Body","parent":"Player","position":[0,0.9,0],"scale":[0.6,0.9,0.6],
-  "components":{"Mesh_Renderer":{"shape":"Capsule"},"Tint":{"color":[0.9,0.45,0.25,1]}}}'
-$P scene.save '{}'
+$P scene.open '{"path":"player/Player.scene"}'
+$P scene.write '{"root":"Player","entities":[{
+  "components":{
+    "Character":{"turn_speed":12},
+    "Walk":{"max_speed":7,"air_control":0.55,"coyote_time":0.13,
+            "jump_height":1.9,"jump_rise":0.11,"jump_cut":0.42}},
+  "children":[
+    {"name":"Player view","components":{
+      "Camera":{"fov":1.2217,"near":0.05,"active":true},"Audio_Listener":{},
+      "Camera_Follow":{"offset":[0,1.5,0],"distance":5,"pitch":0.3,"min_pitch":-0.3,"max_pitch":1.2,
+                       "turn":true,"recenter":1.5}}},
+    {"name":"Body","position":[0,0.9,0],"scale":[0.6,0.9,0.6],
+     "components":{"Mesh_Renderer":{"shape":"Capsule"},"Material_Values":{"color":[0.9,0.45,0.25,1]}}}]}]}'
 ```
 
-W goes where the camera looks and the body turns toward its movement. `Camera_Follow` starts as the
+One `scene.write` changes the fields it names of `Player` and of the child named
+`Player view`, makes `Body`, which no child is named yet, and leaves the rest of the prefab as it
+is.
+
+W goes where the camera looks and the body turns toward its movement: the camera under the body is
+the one its player sees through, and its mode says what forward is. `Camera_Follow` starts as the
 orbit camera, with a probe that keeps it out of walls; `pitch` is in radians and positive is above;
 the look action turns it and it swings back behind. Variable jump: hold or tap.
 
@@ -53,10 +60,9 @@ height ([water-fog.md](world/water-fog.md)):
 
 ```sh
 $P scene.open '{"path":"arena/main.scene"}'
-$P scene.add '{"name":"Sea","position":[0,-1,0],"components":{
-  "Fluid_Volume":{"shape":"Plane","density":1025},"Water":{},"Fluid_Waves":{}}}'
-$P scene.save '{}'
+$P scene.write '{"entities":[{"name":"Sea","position":[0,-1,0],"components":{
+  "Volume":{"shape":"Plane"},"Fluid":{"density":1025},"Water":{},"Fluid_Waves":{}}}]}'
 ```
 
-Hills and trees in one `--batch` file: [whole-scene.md](assets/whole-scene.md). A moving platform
+Hills and trees in one `batch` file: [whole-scene.md](assets/whole-scene.md). A moving platform
 or a zone: [platforms-triggers.md](character/platforms-triggers.md).

@@ -3,7 +3,6 @@ package core
 import "base:runtime"
 import "core:hash/xxhash"
 import "core:mem"
-import "core:reflect"
 import "core:strings"
 
 // Which of the generated structs holds a table or a storage.
@@ -28,19 +27,22 @@ Table_Info :: struct {
     fields:[]Field_Description, // of the fields of its struct that have a comment on their line
     single:bool, // @(component,single): the world uses one at a time; its table keeps one row on
     far:bool,    // @(component,far): its entity draws a far form of its own, which stays when its section unloads
+    derived:bool, // @(component,derived): only code adds it and nobody authors it: a save, a copy and the undo leave it out
+    was:string,   // @(component,was="Old Older"): the names it had; a table of a document under one of them is its table
     base:bool,   // a component of core, the base of every entity: on while its entity is disabled
     locks:[]Lock, // @(component,locks="..."): the rows of other tables of its struct a row on of this one owns
     flat:bool,   // world_info_index found that a value holds nothing behind a pointer: a copy of its bytes is a copy
 }
 
 // Which ends of a network session receive the values of a component of the
-// entities it replicates: @(component,replicated), replicated="owner" or
-// replicated="others".
+// entities it replicates: @(component,replicated), replicated="owner",
+// replicated="others" or replicated="object".
 Replication :: enum u8 {
     None,
     All,    // every end that has the entity
     Owner,  // only the end that owns it
     Others, // every end but the owner
+    Object, // every end: an entity with it is replicated without saying so, by the server to every connection
 }
 
 // Who sends a message of the network: @(net_message), from="client" or from="owner".
@@ -105,6 +107,7 @@ Storage_Procs :: struct {
     copy:proc(dst,src:rawptr) -> bool,      // copy="f"
     copy_kept:proc(dst,src:rawptr) -> bool, // copy_kept="f": into the copy a history keeps
     swap:proc(a,b:rawptr),                  // swap="f"
+    diff:proc(a,b:rawptr,buf:[]byte) -> string, // diff="f": where two values differ, written into buf; empty when they do not
     free:proc(value:rawptr),                // free="f"
     reset:proc(value:rawptr),               // reset="f": what clearing the World does to it
 }
@@ -117,6 +120,14 @@ Step_Info :: struct {
     call:Step_Proc, // the function as its loops call it: its binding, its settle and its time
 }
 
+// A procedure @(draw="name") of the game: what draws the Draw nodes of the
+// interfaces that name it. call is a proc(ctx:^ui.Context,node:ui.Draw_Node),
+// which the library that shows the interfaces calls.
+Draw_Info :: struct {
+    name:string,
+    call:rawptr,
+}
+
 // A phase of a loop: its functions, one after another in their order.
 Loop_Proc :: #type proc(world,shared,editor:rawptr,app:rawptr)
 Step_Proc :: #type proc(world,shared,editor:rawptr,app:rawptr)
@@ -126,7 +137,7 @@ World_Info :: struct {
     sizes:[Place]int,
     aligns:[Place]int,
     entities:uintptr, // offset of the Entities in World
-    revisions:uintptr, // offset in World of a u64 for each storage, as storages lists them: it grows when a function receives the storage to write, when code outside the loop asks for it (world_storage) and when the World is copied over, swapped or cleared. 0: a World made by hand, which has none and whose storages a copy always takes
+    revisions:uintptr, // offset in World of a u64 for each storage, as storages lists them: it grows when a function receives the storage to write, when code outside the loop asks for it (world_storage) and when the World is copied over, swapped or cleared
     tables:[]Table_Info,
     storages:[]Storage_Info,
     messages:[]Message_Info,
@@ -135,9 +146,12 @@ World_Info :: struct {
     name_bits:[]Name_Bits_Info, // the types @(name_bits)
     actions:[]Actions_Info,     // the enums @(actions), in the order of their values
     records:[]Record_Info,      // the types @(record)
+    draws:[]Draw_Info,          // the procedures @(draw)
     steps:[]Step_Info,
     settles:Settle_Info, // what settle and the procedures of world_data look for in tables and storages
     loops:[Loop][Phase]Loop_Proc,
+    events_age:proc(world:rawptr,ticked:bool), // ages every log (events_age) of a World, those a fixed function reads only when ticked: what runs a frame of a World calls it at its end
+    events_rewind:proc(world:rawptr), // leaves each cursor of a reader of the frame at most at the end of its log, after the World was replaced under it (world_restore, world_swap)
     order:[Loop][Phase][]i32, // the steps each loop calls, by index, in its order
     tables_by_type,storages_by_type:map[typeid]int, // index in tables and in storages, by_world aside: world_info_index
     schema:^World_Schema, // world_info_index
@@ -165,10 +179,9 @@ copy_marks_follow :: proc(w:World_Ref,restored,marks:[]Copy_Mark) {
 // The marks a copy of what changed takes: one per table, then one per storage.
 copy_marks_count :: proc "contextless" (info:^World_Info) -> int {return len(info.tables)+len(info.storages)}
 
-// The revisions of the storages of a World, as its World_Info lists them;
-// none in a World made by hand.
+// The revisions of the storages of a World, as its World_Info lists them.
 world_revisions :: proc "contextless" (w:World_Ref) -> []u64 {
-    if w.data==nil || w.info.revisions==0 || w.place!=.World {return nil}
+    if w.data==nil || w.place!=.World {return nil}
     return ([^]u64)(uintptr(w.data)+w.info.revisions)[:len(w.info.storages)]
 }
 
@@ -249,6 +262,12 @@ world_run :: proc(w:World_Ref,shared,editor,app:rawptr,loop:Loop,phase:Phase,lib
     if clock!=nil {clock^=kept_clock}
     if frame!=nil {frame^=kept_frame}
     return true
+}
+
+// Ages the logs of a World (events_age) that no loop of the application runs:
+// what steps one with world_run calls it after each step it gives it.
+world_events_age :: proc(w:World_Ref) {
+    if w.info.events_age!=nil && w.place==.World {w.info.events_age(w.data,true)}
 }
 
 // One value of a storage of the application for each of its Worlds, at the
@@ -376,7 +395,7 @@ world_storage :: proc(w:World_Ref,type:typeid) -> rawptr {
 // The storage at an index of info.storages, of the place of w, as
 // world_storage gives it.
 world_storage_at :: proc "contextless" (w:World_Ref,index:int) -> rawptr {
-    if w.info.revisions!=0 && w.place==.World {([^]u64)(uintptr(w.data)+w.info.revisions)[index]+=1}
+    if w.place==.World {([^]u64)(uintptr(w.data)+w.info.revisions)[index]+=1}
     return rawptr(uintptr(w.data)+w.info.storages[index].offset)
 }
 
@@ -400,11 +419,6 @@ entity_tables :: proc(w:World_Ref,e:Entity,allocator:=context.temp_allocator) ->
         if raw_find(world_table_at(w,&t),t.info,e)!=nil {append(&found,&t)}
     }
     return found[:]
-}
-
-// Destroys an entity and everything under it, from code outside the loop.
-world_destroy_tree :: proc(w:World_Ref,e:Entity) {
-    destroy_tree(world_entities(w),ref(world_storage_of(w,Hierarchy)),e)
 }
 
 // Gives dst what src holds of the run, not of its entities: the storages
@@ -664,12 +678,3 @@ value_flat :: proc(info:^runtime.Type_Info) -> bool {
     return true
 }
 
-// The tag of a field, as `mirai:"..."` holds it: whether it has an option, and its value.
-field_option :: proc(tag:reflect.Struct_Tag,option:string) -> (value:string,ok:bool) {
-    text:=reflect.struct_tag_get(tag,"mirai")
-    for part in strings.split_iterator(&text,",") {
-        name,_,rest:=strings.partition(strings.trim_space(part),"=")
-        if name==option {return rest,true}
-    }
-    return "",false
-}

@@ -14,8 +14,9 @@ Authoring_Context_Component :: struct {value:int}
 Authoring_Context_Derived :: struct {value:int `mirai:"transient"`}
 
 @(private)
+@(test_world)
 Authoring_Context_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     poses:core.Table(core.World_Transform),
     meshes:core.Table(erender.Mesh_Renderer),
@@ -26,10 +27,10 @@ Authoring_Context_World :: struct {
 @(test)
 hierarchy_and_ai_context_keep_authors_with_the_bounds_of_their_derived_geometry :: proc(t:^testing.T) {
     world:Authoring_Context_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    info:=core.test_world_info(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    info:=test_world_info(&world)
+    ref:=test_world_ref(&world)
     parent,owner:=core.create(&world.entities),core.create(&world.entities)
     left,right,empty,authored_child:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     core.add(&world.ids,parent,{value=1});core.add(&world.ids,owner,{value=2});core.add(&world.ids,authored_child,{value=3})
@@ -45,7 +46,7 @@ hierarchy_and_ai_context_keep_authors_with_the_bounds_of_their_derived_geometry 
     for e in ([4]core.Entity{left,right,empty,authored_child}) {core.add(&world.parents,e,{entity=owner})}
     for e in ([2]core.Entity{left,right}) {core.add(&world.meshes,e,{shape=.Cube})}
     core.add(&world.authored,owner,{value=42})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     testing.expect_value(t,len(entity_children(ref,owner)),4)
     children:=hierarchy_children(ref,owner)
     testing.expect(t,len(children)==1 && children[0]==authored_child,"Hierarchy preserves editable children and omits derived nodes")
@@ -53,10 +54,11 @@ hierarchy_and_ai_context_keep_authors_with_the_bounds_of_their_derived_geometry 
     viewport.view_matrix=mm.look_at({0,0,10},{},{0,1,0})
     viewport.projection=mm.perspective(50*mm.RAD_PER_DEG,800.0/600,0.1,100)
     viewport.view_projection=viewport.projection*viewport.view_matrix
-    picker:Picker
-    defer picker_clear(&picker);defer delete(picker.meshes)
-    app:host.App
-    session:=Session{info=info,edit_world=&world,app=&app,viewport=&viewport,picker=&picker}
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root="assets",capacity=4})) {return}
+    defer host.assets_destroy(&assets)
+    app:=host.App{assets=&assets}
+    session:=Session{info=info,edit_world=&world,app=&app,viewport=&viewport}
     task:=Ai_Task{region={0,0,800,600}}
     entities:=ai_entities_gather(&session,&task)
     if !testing.expect(t,len(entities)==1 && task.entities_total==1,"two visible chunks produce one author") {return}
@@ -89,7 +91,7 @@ hierarchy_and_ai_context_keep_authors_with_the_bounds_of_their_derived_geometry 
     core.add(&world.parents,late_chunk,{entity=owner})
     core.add(&world.transforms,late_chunk,core.TRANSFORM_IDENTITY)
     core.add(&world.meshes,late_chunk,{shape=.Cube})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     history.edits_cancel(&edits,ref)
     testing.expect(t,core.alive(&world.entities,late_chunk) && core.has(&world.meshes,late_chunk),"cancel without a gesture preserves derived entities added after history reset")
     copies:=entities_duplicate(&session,{owner})
@@ -97,13 +99,13 @@ hierarchy_and_ai_context_keep_authors_with_the_bounds_of_their_derived_geometry 
     testing.expect(t,world.entities.alive==9,"only the author and its authored child are duplicated")
     testing.expect(t,history.edits_commit(&edits,ref,&selection))
     history.edits_begin(&edits,&selection,"Terrain source")
-    core.get(&world.authored,owner).value=43
-    core.get(&world.meshes,left).shape=.Sphere
+    core.edit(&world.authored,owner).value=43
+    core.edit(&world.meshes,left).shape=.Sphere
     history.edits_end(&edits)
     testing.expect(t,history.edits_commit(&edits,ref,&selection))
     testing.expect(t,history.undo(&edits,ref,&selection))
-    authored,_:=core.get(core.read(&world.authored),owner)
-    derived,_:=core.get(core.read(&world.meshes),left)
+    authored,_:=core.get(&world.authored,owner)
+    derived,_:=core.get(&world.meshes,left)
     testing.expect_value(t,authored.value,42)
     testing.expect_value(t,derived.shape,erender.Shape.Sphere)
     testing.expect(t,history.redo(&edits,ref,&selection))
@@ -123,7 +125,7 @@ hierarchy_and_ai_context_keep_authors_with_the_bounds_of_their_derived_geometry 
     core.add(&world.poses,orphan,{})
     opaque:=core.create(&world.entities)
     core.add(&world.derived,opaque,{value=7})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     marks:=make([]u8,len(world.entities.generation),context.temp_allocator)
     marks[core.entity_index(orphan)]=history.ENTITY_TURNED
     marks[core.entity_index(opaque)]=history.ENTITY_TURNED

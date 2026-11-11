@@ -81,8 +81,12 @@ its `exit_code` and `script_hold`.
   content stays in that world for the next replacement, which does not allocate if it fits;
   `app_world_scratch_free` releases it when the next one is far off (opening a scene).
   - With the `marks` of a `src` that `core.world_copy_changed` keeps as a copy of `dst` (a tick of
-    the rollback history), only the tables and storages `dst` changed since that copy are copied
-    and swapped (`core.world_restore`): the rest stays where it is, and its readers see no change.
+    the rollback history), only what `dst` changed since that copy comes back
+    (`core.world_restore`): the rest stays where it is, and its readers see no change. A table of
+    flat values that still holds the rows of the copy, on and off, takes back in place the rows
+    whose value or whose being added differs, with new stamps, and its readers see those rows
+    alone; a table whose rows were added, removed or turned since, or whose values hold a
+    pointer, and the storages written, are copied and swapped, and their readers read them whole.
     That separate world is then left with parts of several, and is cleared before it is released.
 - `app_world_ref(app, data)` gives the `core.World_Ref`.
 - `app_user_folder(root)`: `<user data>/Mirai/<project name>`, created if missing; empty without a
@@ -102,9 +106,9 @@ its `exit_code` and `script_hold`.
 A GPU that stops working ([device
 loss](../../mirai-rendering/references/rhi.md#device-loss)) does not end the
 application by itself: frames keep going without drawing or waiting for the GPU and the worlds keep
-ticking. `app_gpu_failure` gives the failure and its text, which names the call that saw it and the
-probable cause: the project shaders if they were replaced recently (`GPU_FAILURE_SHADER_FRAMES`), a
-shader that does not finish if it was `Hung`. The first time it is reported in the log and as the
+ticking. `app_gpu_failure` gives the failure and its text, which names the call that saw it, where
+the GPU stopped, and the project shaders if they were replaced recently
+(`GPU_FAILURE_SHADER_FRAMES`). The first time it is reported in the log and as the
 problem `gpu.failure` of the player's world.
 
 - The player prints the text and exits with `PLAYER_GPU_LOST`.
@@ -130,11 +134,16 @@ spreads its work with `std/jobs`, as their owner (`jobs.OWNER`).
 **Game loop.**
 
 - It adds the `dt` of the frame times `1 + Frame_Time.dilation` and times the `core.Clock` of the
-  world (zero when paused) to `Frame_Time.accumulator` and simulates
-  `due = accumulator / tick_dt` ticks, at most `max_ticks_per_frame`; the rest is discarded and
-  counted in `ticks_dropped`. A world without `core.Time` or without `core.Frame_Time` does not run
-  the game loop. After each tick it subtracts `tick_dt` and advances the clock with
-  `core.time_advance`.
+  world (zero when paused) to `Frame_Time.accumulator` and simulates the ticks it completes, at
+  most `max_ticks_per_frame`; the rest is discarded and counted in `ticks_dropped`. A world
+  without `core.Time` or without `core.Frame_Time` does not run the game loop. After each tick it
+  subtracts `tick_dt` and advances the clock with `core.time_advance`.
+- The count of ticks per frame is kept steady (`ticks_steady`, after Godot's `MainTimerSync`):
+  while the last frames ran a typical count and the clock is within half a tick of it, a tick runs
+  that much early or late instead of frames alternating 0 and 2 ticks under timer jitter. Time is
+  never lost: the accumulator keeps the truth and `Frame_Time.lag` shifts the shown time so
+  `alpha` advances evenly between the last two ticks. Every world runs it, a server's too: what a
+  tick computes never depends on when it runs, and a recorded frame replays its count of ticks.
 - With `step=true`, `app_game_frame` runs one tick however long the frame lasts and without
   dilation: a world that advances only when asked (the steps of the editor and of agents).
 - The input of the ticks (`input_from_platform` plus that of the script) goes to `core.Input`: the
@@ -229,8 +238,6 @@ does not understand. What it does not say:
 - Without `--players`, the local players come from the scene, or none if the role of the world is
   `Server`; with it, a server also has local players.
 - `--surface` implies `--attached` ([image in another process](#image-in-another-process)).
-- `--library` is read by `host.launch` ([project libraries](#project-libraries)); the shipped
-  game ignores it.
 - `--validation` with errors prints the last one on stderr and exits with `PLAYER_VALIDATION`,
   unless it already failed with another code.
 - `--dedicated` is a server nobody plays on: no window, renderer or mixer, frames at the pace of
@@ -283,19 +290,18 @@ player is heard. The end of stdin terminates it.
   editor)` takes them to the layout of another library without moving them in address and makes it
   their `World_Info` ([migration](core.md#world-reflection)); it fails without changing anything
   if one does not fit in its reserve.
-- `host.launch` is the `main` of `mirai-player` (it loads `.mirai/play`, or `.mirai/editor` with
-  `--library editor`) and `editor.launch` that of `mirai-editor` (it loads `.mirai/editor`); if the
-  library does not load, they print the reason and exit with 2. From the `World_Info` of the
-  `editor` library the player makes the same game world as with `play`: an editor package declares
-  nothing of the `World` or of the `Shared`, nor steps of the game loop (the generator rejects it),
-  and the `Editor` place is not created outside the editor.
+- `host.launch` is the `main` of `mirai-player` and `editor.launch` that of `mirai-editor`; both
+  load `.mirai/editor` and, if the library does not load, print the reason and exit with 2. From
+  its `World_Info` the player makes the game world alone: an editor package declares nothing of
+  the `World` or of the `Shared`, nor steps of the game loop (the generator rejects it), and the
+  `Editor` place is not created outside the editor.
   The `--project` folder is made absolute: once it is said where its dependencies are, Windows does
   not look for a relative library in the current folder.
 
 ## Loaded assets
 
 `Assets` (a function receives it as `^host.Assets`; `host/assets.odin`) loads by `base.Asset_Id`
-meshes, textures, materials, scenes and prefabs, and the primitives (`Shape`). An asset is loaded
+meshes, textures, materials and scenes, and the primitives (`Shape`). An asset is loaded
 the first time it is asked for, as a transaction between frames; asking again is a lookup. Id zero
 is "none". The tables of each type reserve address space for `Assets_Desc.capacity` (by default, a
 million) and take memory as loads fill them: the quantity a world asks for (a terrain of thousands
@@ -306,7 +312,7 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
 - `assets_texture(a, id)`: `^Assets_Texture`.
 - `assets_material(a, id)`, `assets_material_row(a, id)`: `^Assets_Material` or its row in the
   renderer's material table.
-- `assets_scene(a, id)`: the open `^asset.Asset` of a `.scene` or `.prefab`.
+- `assets_scene(a, id)`: the open `^asset.Asset` of a `.scene`.
 - `assets_mesh_generate(a, geom.Mesh, slots, uv1s, options)`, `assets_mesh_release`: a mesh made at
   run time, with its own id and no file ([generated meshes](#generated-meshes)).
 - `assets_mesh_generated`, `assets_heightfield`, `assets_mesh_disabled_edges`: whether a generated
@@ -353,7 +359,7 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
   - A texture of more than `LOAD_FRAME_BYTES` that a load takes over several frames
     (`assets_take(..., over_frames=true)`) costs in its frame only its levels of side
     `TEXTURE_TAIL` (`assets_prepared_cost`); the others go up with the renderer's uploads
-    ([residency](../../mirai-rendering/references/materials.md#residency-by-distance)) and the
+    ([residency](../../mirai-rendering/references/materials.md#residency-by-sampling)) and the
     load ends when they have gone up (`app_assets_uploading`). Without room in that queue, it waits
     a frame. Whoever needs the result right away takes it whole.
   - A mesh that gives the pools more than `LOAD_FRAME_BYTES` right away (with skeleton, morphs,
@@ -372,13 +378,10 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
   like the far shape of a section). What the renderer is still uploading (the levels of a texture,
   the geometry of a mesh) waits until it has gone up. Without job threads it is released in the
   call.
-- `assets_unsaved(a)`: the files that the registry has in memory unwritten.
-  `app_asset_changed(app, path)` rereads what is loaded from a file that changed on disk or in
+- `app_asset_changed(app, path)` rereads what is loaded from a file that changed on disk or in
   memory, as when the watcher sees it.
-- `assets_fracture(a,id,&Asset)`: a validated `.fracture` view, valid until the caller closes the
-  file.
-- `assets_material_derive`, `assets_material_values`, `assets_material_faded`,
-  `assets_material_overlays`, `assets_postprocess`: derived rows of the material table, with the
+- `assets_material_derive`, `assets_material_values`, `assets_material_overlays`,
+  `assets_postprocess`: derived rows of the material table, with the
   values of a material as an entity or a layer shows it; equal values share a row.
 - `assets_appearance_begin/end`: a round; it releases the derived rows that nobody asked for.
 - `assets_commit`: delivers to the renderer the rows that changed, alone (`materials_update`), or
@@ -454,7 +457,8 @@ row.
 - **Scope and unloading.** `Assets_Scope` is whoever uses what is loaded (up to 16).
   `world_asset_ids` finds by type every `base.Asset_Id` of the tables and storages of a world (with
   `shared` and its id, also of its `by_world` storages), in structs, arrays, enumerated arrays,
-  slices and dynamic arrays, not behind pointers or in maps; `assets_collect` unloads what no scope
+  slices and dynamic arrays, not behind pointers or in maps; `world_owned_asset_ids`, by the world's
+  schema, those under a field tagged `owned`; `assets_collect` unloads what no scope
   reaches. `app_assets_mark` (at the start of each frame) maintains a scope with what all worlds
   mark and unloads when it changed: changing scene or unloading a section releases what nobody
   uses. An asset that the game uses must be named by a world (a component, a setting); the editor
@@ -471,15 +475,16 @@ row.
 - BC textures on a device that does not sample them are decoded to RGBA8, and BC6H to RGBA16F. An
   array or a cube is loaded whole; where a 2D image is sampled (material, program parameter, UI,
   decal, sky) it is `Unsupported` (`assets_texture_image`). The levels of a single-layer texture
-  follow its distance
-  ([residency](../../mirai-rendering/references/materials.md#residency-by-distance)):
+  follow what the GPU samples of it
+  ([residency](../../mirai-rendering/references/materials.md#residency-by-sampling)):
   `app_textures_stream` reads them from its file in jobs between frames and shares with the loads
   their part of each frame.
 
 ## Content
 
 `Content` (`app_content(app)`, `host/content.odin`) loads on demand what is not meshes or materials:
-`.ui`, `.anim`, `.sound`, `.sound_set`, `.font`, `.strings` and `.prompts`.
+`.ui`, `.anim`, `.sound`, `.sound_set`, `.font` and `.prompts`. The `.strings` are one table of
+the application, as the rows of the records (`host/texts.odin`).
 
 - Each entry carries a `generation` that changes with each load: whoever stores state made for the
   previous one rebuilds it.
@@ -518,7 +523,7 @@ row.
   compression that ended is still written.
 - **A world does not start playing while its animations compress.** `content_animations_start`
   starts the first load of every `.anim` some ids name, directly or through the assets they
-  depend on in the registry (a spawner's prefab, its `.match`), without following scenes, and
+  depend on in the registry (a spawner's prefab, its `.character`), without following scenes, and
   `content_animations_pending` says whether one still compresses or waits for them. A
   [scene load](../../mirai-gameplay/references/libraries.md#scene) ends once those of its World
   are loaded; the [editor](../../mirai-editor/references/editor.md#play) starts those of a scene

@@ -42,32 +42,32 @@ sample_curves :: proc(state:^Playing,content:^host.Content_Animation,weight:f32=
     sample_layer_curves(state,content,animation)
 }
 
+// The curves of the clips the slots of the stack play, over those of the base.
 sample_layer_curves :: proc(state:^Playing,content:^host.Content_Animation,animation:Animation) {
-    for &result in state.curves {
-        for &layer,i in state.layers {
-            asked:=animation.layers[i]
-            if layer.clip==0 || layer.weight<=0 || asked.curves==.Ignore {continue}
+    if state.stack==0 {return}
+    for &layer,i in state.layers[:state.stack] {
+        asked:=state.asked[i]
+        if layer.weight<=0 || asked.curves==.Ignore {continue}
+        players:[LAYER_PLAYERS]lib.Player
+        count:=layer_players(&layer,&players)
+        if count==0 {continue}
+        additive:=asked.mode==.Additive || asked.curves==.Additive
+        from:=lib.clip_find(&content.lib,asked.reference_clip) if additive && asked.reference_clip!=0 else 0
+        for &result in state.curves {
             overlay:=Curve_Output{target=result.target,property=result.property,slot=result.slot}
-            share:=lib.fader_current_weight(layer.fader)
-            curve_accumulate(&overlay,&content.lib,layer.fader.current,share)
-            sum:=share
-            for outgoing in layer.fader.outgoing[:layer.fader.outgoing_count] {
-                fade:=lib.fade_out_weight(outgoing);sum+=fade
-                curve_accumulate(&overlay,&content.lib,outgoing.player,fade)
-            }
+            sum:f32
+            for player in players[:count] {curve_accumulate(&overlay,&content.lib,player,player.weight);sum+=player.weight}
             if overlay.weight<=0 || sum<=0 {continue}
             alpha:=layer.weight*mm.saturate(animation.weight)*overlay.weight/sum
-            if asked.mode==.Additive || asked.curves==.Additive {
+            if additive {
                 // From the reference clip when it has the curve, as the bones; else from its own.
                 rest:=Curve_Output{target=result.target,property=result.property,slot=result.slot}
-                if from:=lib.clip_find(&content.lib,asked.reference_clip);asked.reference_clip!=0 && from!=0 {
+                if from!=0 {
                     reference:=lib.player_make(from);reference.time=asked.reference
                     curve_accumulate(&rest,&content.lib,reference,1)
                 }
                 if rest.weight<=0 {
-                    reference:=layer.fader.current;reference.time=asked.reference
-                    curve_accumulate(&rest,&content.lib,reference,share)
-                    for outgoing in layer.fader.outgoing[:layer.fader.outgoing_count] {reference=outgoing.player;reference.time=asked.reference;curve_accumulate(&rest,&content.lib,reference,lib.fade_out_weight(outgoing))}
+                    for player in players[:count] {reference:=player;reference.time=asked.reference;curve_accumulate(&rest,&content.lib,reference,player.weight)}
                 }
                 if rest.weight>0 {rest.value/=rest.weight}
                 result.value+=(overlay.value/overlay.weight-rest.value)*alpha

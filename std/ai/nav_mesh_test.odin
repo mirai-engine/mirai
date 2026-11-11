@@ -81,6 +81,9 @@ tiles_join_across_their_border_and_part_when_one_is_removed :: proc(t:^testing.T
     testing.expect(t,!nav_ref_valid(&mesh,path[count-1]))
     _,_,found:=nav_find_nearest_any(&mesh,b,{0.5,1,0.5})
     testing.expect(t,!found)
+    // The straight path through the part that is gone ends on the last polygon left, without the end.
+    n,complete=nav_straight_path(&mesh,a,b,path[:count],corners[:])
+    testing.expect(t,!complete && n==2 && corners[1].flags=={} && abs(corners[1].position.x-4)<1e-3)
 }
 
 @(test)
@@ -437,4 +440,197 @@ a_copied_mesh_answers_with_the_same_references :: proc(t:^testing.T) {
     // The copy owns its tiles: removing one from the source leaves it whole.
     nav_mesh_remove_tile(&mesh,{0,0})
     testing.expect(t,nav_link_of(&other,link)!=nil && nav_ref_valid(&other,second[0]))
+}
+
+// What walking a path costs once it is straightened and pulled, as an agent follows it.
+walked_cost :: proc(mesh:^Nav_Mesh,filter:^Nav_Filter,start,end:math.Vec3,path:[]Nav_Ref) -> (cost:f32,ok:bool) {
+    refs:[NAV_STRAIGHTEN_POLYS]Nav_Ref
+    if len(path)==0 || len(path)>len(refs) {return}
+    copy(refs[:],path)
+    count:=nav_path_straighten(mesh,filter,start,end,refs[:],len(path))
+    corners:[NAV_STRAIGHTEN_POLYS+2]Nav_Corner
+    at:[NAV_STRAIGHTEN_POLYS+2]int
+    n,complete:=nav_straight_path(mesh,start,end,refs[:count],corners[:])
+    if !complete || !nav_corner_indices(refs[:count],corners[:n],at[:n]) {return}
+    return nav_pulled_cost(mesh,filter,refs[:count],corners[:n],at[:n])
+}
+
+// A yard of 16 m with two walls to go around, a strip that costs, a pocket
+// nothing leads out of, and beyond a wall a strip joined to the yard by a
+// drop into the yard, a ladder both ways and a door the filter cannot open.
+toward_yard :: proc(t:^testing.T,mesh:^Nav_Mesh) -> (filter:Nav_Filter,drop,ladder,door:Nav_Ref) {
+    testing.expect(t,nav_mesh_init(mesh,{tile_width=16,climb=0.3,max_tiles=4,max_links=8}))
+    walkable:[256]bool
+    for &w,i in walkable {
+        x,z:=i%16,i/16
+        w=!(x==5 && z<=11) && !(x==10 && z>=4) && x!=13 && !(x==0 && z==14) && !(x==1 && z>=14)
+    }
+    yard:=cell_tile(t,{0,0},16,16,walkable[:],size=16)
+    for &p in yard.polys {
+        center:math.Vec3
+        for k in 0..<int(p.count) {center+=yard.vertices[p.vertices[k]]/f32(p.count)}
+        if center.x>6 && center.x<9 && center.z<5 {p.area=2}
+    }
+    testing.expect(t,nav_mesh_add_tile(mesh,yard))
+    drop=nav_mesh_add_link(mesh,{start={14.2,0,2.5},end={12.5,0,2.5},radius=0.3,area=NAV_AREA_WALKABLE})
+    ladder=nav_mesh_add_link(mesh,{start={12.5,0,12.5},end={14.2,0,12.5},radius=0.3,two_way=true,area=NAV_AREA_WALKABLE,cost=2})
+    door=nav_mesh_add_link(mesh,{start={12.5,0,8.5},end={14.2,0,8.5},radius=0.3,area=NAV_AREA_WALKABLE,need={abilities=2}})
+    testing.expect(t,drop!=0 && ladder!=0 && door!=0)
+    filter={can={up=max(f32),across=max(f32),down=max(f32),abilities=1}}
+    filter.costs[2]=3
+    return
+}
+
+@(test)
+one_search_toward_an_end_gives_every_follower_the_way_its_own_search_does :: proc(t:^testing.T) {
+    mesh:Nav_Mesh
+    filter,drop,ladder,door:=toward_yard(t,&mesh)
+    defer nav_mesh_destroy(&mesh)
+    shared,own:Nav_Query
+    testing.expect(t,nav_query_init(&shared,1024) && nav_query_init(&own,1024))
+    defer {nav_query_destroy(&shared);nav_query_destroy(&own)}
+    rng:=math.rng_make(5)
+    // In the yard, where those of the strip come by the drop; in the strip, where the yard comes only by the ladder.
+    ends:=[?]math.Vec3{{1.5,0,1.5},{15.5,0,8.5}}
+    for end,e in ends {
+        end_ref:=nearest(t,&mesh,end)
+        testing.expect(t,nav_toward_begin(&shared,&mesh,end_ref,end,&filter))
+        followers,searched,crossed_drop,crossed_ladder:=0,0,0,0
+        total_own,total_shared:f32
+        for _ in 0..<160 {
+            start:=math.Vec3{math.random_range(&rng,0,16),0,math.random_range(&rng,0,16)}
+            from,_,on:=nav_find_nearest_any(&mesh,start,{0.01,1,0.01})
+            if !on {continue}
+            mine,theirs:[NAV_STRAIGHTEN_POLYS]Nav_Ref
+            count,status,_:=nav_find_path(&own,&mesh,from,end_ref,start,end,&filter,mine[:])
+            searched+=own.search.stats.expanded
+            // In slices, as the agents of a tick share a budget.
+            reached:=Search_Status.Running
+            for reached==.Running {reached=nav_toward_reach(&shared,from,7)}
+            if status!=.Found {
+                testing.expectf(t,reached==.No_Path,"from %v no search of its own finds a way, the shared one says %v",start,reached)
+                shared_count,ok:=nav_toward_path(&shared,from,theirs[:])
+                testing.expect(t,!ok && shared_count==0)
+                continue
+            }
+            followers+=1
+            if !testing.expectf(t,reached==.Found,"from %v to %v: %v",start,end,reached) {continue}
+            shared_count,ok:=nav_toward_path(&shared,from,theirs[:])
+            if !testing.expect(t,ok && shared_count>0 && theirs[0]==from && theirs[shared_count-1]==end_ref) {continue}
+            for ref in theirs[:shared_count] {
+                testing.expect(t,ref!=door && nav_ref_flip(ref)!=door && nav_ref_flip(ref)!=drop,"The shared way crosses a link the wrong way or one the filter cannot")
+                if ref==drop {crossed_drop+=1}
+                if ref==ladder || nav_ref_flip(ref)==ladder {crossed_ladder+=1}
+            }
+            a,priced:=walked_cost(&mesh,&filter,start,end,mine[:count])
+            b,priced_shared:=walked_cost(&mesh,&filter,start,end,theirs[:shared_count])
+            // Each search picks its polygons by where it enters them, so neither way is the shortest: near each other, never below the line.
+            testing.expectf(t,priced && priced_shared && b<=a*1.05+1e-3 && b>=linalg.distance(start,end)-1e-3,"from %v to %v: %v by its own search, %v by the shared one",start,end,a,b)
+            total_own+=a
+            total_shared+=b
+        }
+        testing.expect(t,followers>100)
+        testing.expectf(t,abs(total_shared-total_own)<=total_own*0.02,"all the ways cost %v by their own searches and %v by the shared one",total_own,total_shared)
+        if e==0 {testing.expect(t,crossed_drop>0)} else {testing.expect(t,crossed_drop==0 && crossed_ladder>0)}
+        // One search for all of them: each polygon and link once, not once a follower.
+        testing.expectf(t,shared.search.stats.expanded<=len(mesh.tiles[0].data.polys)+4 && shared.search.stats.expanded*10<searched,"%d expanded by the shared search, %d by their own",shared.search.stats.expanded,searched)
+    }
+    // A path through a tile that went is none; neither is one asked of a search that goes the other way.
+    from:=nearest(t,&mesh,{8.5,0,8.5})
+    testing.expect_value(t,nav_toward_reach(&shared,from,max(int)),Search_Status.Found)
+    path:[64]Nav_Ref
+    _,short:=nav_toward_path(&shared,from,path[:1])
+    testing.expect(t,!short)
+    testing.expect(t,nav_mesh_remove_tile(&mesh,{0,0}))
+    _,ok:=nav_toward_path(&shared,from,path[:])
+    testing.expect(t,!ok)
+    testing.expect_value(t,nav_toward_reach(&own,from,8),Search_Status.Invalid)
+    testing.expect(t,!nav_toward_begin(&shared,&mesh,from,{},&filter) && !nav_toward_begin(&shared,nil,from,{},&filter) && !nav_toward_begin(&shared,&mesh,0,{},nil))
+    testing.expect_value(t,nav_toward_reach(&shared,from,8),Search_Status.Invalid)
+    empty:Nav_Query
+    testing.expect(t,!nav_toward_begin(&empty,&mesh,from,{},&filter))
+    _,ok=nav_toward_path(&empty,from,path[:])
+    testing.expect(t,!ok && nav_toward_reach(&empty,from,8)==.Invalid)
+}
+
+// The walls near a point come nearest first with the surface to their right;
+// they are kept while the agent stays within what they cover, and gathered
+// again when it goes on or a tile they come from is built again.
+@(test)
+the_walls_near_a_point_come_nearest_first_and_are_kept_while_they_cover_it :: proc(t:^testing.T) {
+    mesh:Nav_Mesh
+    filter,_,_,_:=toward_yard(t,&mesh)
+    defer nav_mesh_destroy(&mesh)
+    // Beside the wall of x=5 and near the border of z=0.
+    center:=math.Vec3{4.6,0,0.7}
+    ref:=nearest(t,&mesh,center)
+    boundary:Nav_Boundary
+    walls,gathered:=nav_boundary_update(&boundary,&mesh,ref,center,0.75,&filter)
+    testing.expect(t,gathered && len(walls)>=3)
+    previous:f32
+    beside,border:=false,false
+    for wall in walls {
+        along:=wall.b-wall.a
+        open:=math.Vec2{along.y,-along.x}
+        here:=math.Vec2{center.x,center.z}
+        testing.expectf(t,linalg.dot(here-wall.a,open)>0,"The surface is not to the right of the wall %v",wall)
+        on,_:=math.closest_point_segment(center,{{wall.a.x,0,wall.a.y},{wall.b.x,0,wall.b.y}})
+        d:=linalg.distance(on,center)
+        testing.expect(t,d>=previous-1e-4 && d<=1.5+1e-4,"The walls are not nearest first within twice the reach")
+        previous=d
+        beside||=wall.a.x==5 && wall.b.x==5
+        border||=wall.a.y==0 && wall.b.y==0
+    }
+    testing.expect(t,beside && border && walls[0].a.x==5)
+    // An agent that walks them does not cross them, whatever it prefers.
+    self:=Avoid_Agent(2){position={center.x,center.z},radius=0.4}
+    for k in 0..<16 {
+        s,c:=math.sincos_det(f32(k)*math.TAU/16)
+        v:=avoid_velocity(self,{c*3,s*3},3,nil,1.5,1.0/60,walls,0.5)
+        after:=self.position+v*0.5
+        testing.expectf(t,after.x<=5+1e-3 && after.y>=-1e-3,"Preferring %v it moves at %v, through a wall",math.Vec2{c*3,s*3},v)
+    }
+    // A step of 0.1 m keeps them; past what they cover, or asked farther, they are gathered again.
+    first:=boundary
+    held,again:=nav_boundary_update(&boundary,&mesh,ref,center+{0,0,0.1},0.75,&filter)
+    testing.expect(t,!again && len(held)==len(walls) && boundary==first)
+    _,again=nav_boundary_update(&boundary,&mesh,ref,center+{-0.8,0,0},0.75,&filter)
+    testing.expect(t,again)
+    _,again=nav_boundary_update(&boundary,&mesh,ref,center,2,&filter)
+    testing.expect(t,again)
+    // A filter that keeps out of the strip that costs has walls where it begins.
+    closed:=filter
+    closed.excluded=1<<2
+    strip:=math.Vec3{5.9,0,2.5}
+    strip_walls:Nav_Boundary
+    walls,_=nav_boundary_update(&strip_walls,&mesh,nearest(t,&mesh,strip),strip,0.25,&closed)
+    testing.expect(t,len(walls)>=1 && walls[0].a.x==6 && walls[0].b.x==6)
+    strip_walls={}
+    walls,_=nav_boundary_update(&strip_walls,&mesh,nearest(t,&mesh,strip),strip,0.025,&filter)
+    testing.expect_value(t,len(walls),0)
+    // The tile under it built again, without the wall: they are gathered again.
+    testing.expect(t,nav_mesh_add_tile(&mesh,cell_tile(t,{0,0},16,16,size=16)))
+    walls,again=nav_boundary_update(&boundary,&mesh,nearest(t,&mesh,center),center,0.75,&filter)
+    testing.expect(t,again)
+    for wall in walls {testing.expectf(t,wall.a.x!=5 || wall.b.x!=5,"the wall of the old tile %v stays",wall)}
+    // Nothing for what is not asked well, nor from a copy that holds nonsense.
+    nan:=transmute(f32)u32(0x7fc00000)
+    hostile:=[?]struct{mesh:^Nav_Mesh,ref:Nav_Ref,center:math.Vec3,reach:f32,filter:^Nav_Filter}{
+        {nil,ref,center,1,&filter},{&mesh,0,center,1,&filter},{&mesh,ref,center,1,nil},
+        {&mesh,ref,{nan,0,0},1,&filter},{&mesh,ref,center,nan,&filter},{&mesh,ref,center,-1,&filter},
+    }
+    for h,i in hostile {
+        broken:=Nav_Boundary{count=-7,range=nan,center={nan,0,0}}
+        walls,_=nav_boundary_update(&broken,h.mesh,h.ref,h.center,h.reach,h.filter)
+        testing.expectf(t,len(walls)==0 && broken.count==0,"case %d gives %d walls",i,len(walls))
+    }
+    broken:=Nav_Boundary{count=99,range=1e30,center=center}
+    walls,_=nav_boundary_update(&broken,&mesh,ref,center,1,&filter)
+    testing.expect(t,len(walls)<=AVOID_MAX_WALLS)
+    walls,gathered=nav_boundary_update(nil,&mesh,ref,center,1,&filter)
+    testing.expect(t,walls==nil && !gathered)
+    empty:Nav_Mesh
+    empty_walls:Nav_Boundary
+    walls,_=nav_boundary_update(&empty_walls,&empty,ref,center,3,&filter)
+    testing.expect_value(t,len(walls),0)
 }

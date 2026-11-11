@@ -2,34 +2,7 @@ package ui
 
 import "core:math"
 import "core:testing"
-
-@(test)
-easings_start_at_zero_and_end_at_one :: proc(t:^testing.T) {
-    for e in Ease {
-        testing.expectf(t,test_near(ease(e,1),1,0.0001),"%v ends at 1",e)
-        if e!=.Step {testing.expectf(t,test_near(ease(e,0),0,0.0001),"%v starts at 0",e)}
-        testing.expect_value(t,ease(e,-3),ease(e,0))
-        testing.expect_value(t,ease(e,7),ease(e,1))
-    }
-    testing.expect_value(t,ease(.Linear,0.25),f32(0.25))
-    testing.expect_value(t,ease(.Step,0.99),f32(0))
-    testing.expect_value(t,ease(.In_Quad,0.5),f32(0.25))
-    testing.expect_value(t,ease(.Out_Quad,0.5),f32(0.75))
-    testing.expect_value(t,ease(.In_Out_Quad,0.25),f32(0.125))
-    testing.expect_value(t,ease(.In_Cubic,0.5),f32(0.125))
-    testing.expect_value(t,ease(.Out_Cubic,0.5),f32(0.875))
-    testing.expect_value(t,ease(.In_Out_Cubic,0.5),f32(0.5))
-    testing.expect(t,ease(.Out_Back,0.6)>1,"Out_Back overshoots before it settles")
-    testing.expect(t,ease(.Out_Elastic,0.1)>1)
-    for e in ([6]Ease{.In_Quad,.Out_Quad,.In_Out_Quad,.In_Cubic,.Out_Cubic,.In_Out_Cubic}) {
-        previous:=f32(0)
-        for step in 1..=20 {
-            value:=ease(e,f32(step)/20)
-            testing.expectf(t,value>=previous,"%v never goes back",e)
-            previous=value
-        }
-    }
-}
+import std_anim "mirai:std/anim"
 
 @(test)
 a_track_interpolates_its_keys_and_holds_its_ends :: proc(t:^testing.T) {
@@ -37,8 +10,8 @@ a_track_interpolates_its_keys_and_holds_its_ends :: proc(t:^testing.T) {
     testing.expect(t,anim_library_init(&lib))
     defer anim_library_destroy(&lib)
     clip:=anim_clip(&lib,{
-        {.Offset,{{time=0.5,value={0,0,0,0}},{time=1.5,value={100,-50,0,0}},{time=2,value={100,0,0,0},ease=.In_Quad}}},
-        {.Opacity,{{time=0,value={0,0,0,0}},{time=1,value={1,0,0,0},ease=.Step}}},
+        {.Offset,{{time=0.5,value={0,0,0,0}},{time=1.5,value={100,-50,0,0}},{time=2,value={100,0,0,0},ease=.Quad_In}}},
+        {.Opacity,{{time=0,value={0,0,0,0}},{time=1,value={1,0,0,0},interpolation=.Step}}},
         {.Color,{{time=0,value={1,0,0,1}},{time=2,value={0,0,1,1}}}},
     })
     testing.expect(t,clip!=0)
@@ -105,7 +78,7 @@ loops_repeat_and_ping_pongs_come_back :: proc(t:^testing.T) {
     lib:Anim_Library
     testing.expect(t,anim_library_init(&lib))
     defer anim_library_destroy(&lib)
-    keys:=[2]Keyframe{{time=0,value={0,0,0,0}},{time=1,value={10,0,0,0}}}
+    keys:=[2]std_anim.Keyframe{{time=0,value={0,0,0,0}},{time=1,value={10,0,0,0}}}
     loop:=anim_clip(&lib,{{.Offset,keys[:]}},.Loop)
     pong:=anim_clip(&lib,{{.Offset,keys[:]}},.Ping_Pong)
     value:=ANIM_IDENTITY
@@ -135,7 +108,7 @@ a_full_library_refuses_new_animations :: proc(t:^testing.T) {
     lib:Anim_Library
     testing.expect(t,anim_library_init(&lib,{max_keys=4,max_tracks=2,max_anims=3,max_children=2}))
     defer anim_library_destroy(&lib)
-    keys:=[2]Keyframe{{time=0},{time=1,value={1,0,0,0}}}
+    keys:=[2]std_anim.Keyframe{{time=0},{time=1,value={1,0,0,0}}}
     a:=anim_clip(&lib,{{.Opacity,keys[:]}})
     b:=anim_clip(&lib,{{.Opacity,keys[:]}})
     testing.expect(t,a!=0 && b!=0)
@@ -149,17 +122,14 @@ a_full_library_refuses_new_animations :: proc(t:^testing.T) {
 }
 
 @(test)
-state_changes_play_the_animations_of_a_set :: proc(t:^testing.T) {
+being_shown_hidden_and_clicked_play_the_animations_of_a_set :: proc(t:^testing.T) {
     lib:Anim_Library
     testing.expect(t,anim_library_init(&lib))
     defer anim_library_destroy(&lib)
     set:=Anim_Set{
         shown=anim_tween(&lib,.Opacity,{0,0,0,0},{1,0,0,0},0.5,.Linear),
         hidden=anim_tween(&lib,.Opacity,{1,0,0,0},{0,0,0,0},0.5,.Linear),
-        hovered=anim_tween(&lib,.Scale,{1,1,0,0},{1.2,1.2,0,0},0.25,.Linear),
-        unhovered=anim_tween(&lib,.Scale,{1.2,1.2,0,0},{1,1,0,0},0.25,.Linear),
-        pressed=anim_tween(&lib,.Offset,{0,0,0,0},{0,4,0,0},0.1,.Linear),
-        released=anim_tween(&lib,.Offset,{0,4,0,0},{0,0,0,0},0.1,.Linear),
+        clicked=anim_tween(&lib,.Scale,{1,1,0,0},{1.2,1.2,0,0},0.25,.Linear),
     }
     state:Anim_State
     testing.expect(t,!anim_react(&lib,&state,set,{},0.1),"What was never shown is not built")
@@ -167,16 +137,11 @@ state_changes_play_the_animations_of_a_set :: proc(t:^testing.T) {
     testing.expect(t,test_near(state.value.opacity,0.5) && state.anim==set.shown)
     testing.expect(t,anim_react(&lib,&state,set,{shown=true},0.25) && state.value.opacity==1)
     testing.expect(t,anim_react(&lib,&state,set,{shown=true},1) && state.value.opacity==1)
-    // Hovering and pressing play theirs; what the previous one set stays.
-    anim_react(&lib,&state,set,{shown=true,hovered=true},0.125)
+    // A click plays its own; what the previous one set stays.
+    anim_react(&lib,&state,set,{shown=true,clicked=true},0.125)
     testing.expect(t,test_near(state.value.scale.x,1.1,0.001) && state.value.opacity==1)
-    anim_react(&lib,&state,set,{shown=true,hovered=true},0.5)
-    anim_react(&lib,&state,set,{shown=true,hovered=true,pressed=true},0.05)
-    testing.expect(t,test_near(state.value.offset.y,2,0.001) && test_near(state.value.scale.x,1.2,0.001))
-    anim_react(&lib,&state,set,{shown=true,hovered=true},0.1)
-    testing.expect(t,test_near(state.value.offset.y,0,0.001))
-    anim_react(&lib,&state,set,{shown=true},0.25)
-    testing.expect(t,test_near(state.value.scale.x,1,0.001))
+    anim_react(&lib,&state,set,{shown=true},0.5)
+    testing.expect(t,test_near(state.value.scale.x,1.2,0.001))
     // Hidden, it is still built while it fades out.
     testing.expect(t,anim_react(&lib,&state,set,{},0.25) && test_near(state.value.opacity,0.5))
     testing.expect(t,!anim_react(&lib,&state,set,{},0.25) && state.value.opacity==0)
@@ -185,10 +150,10 @@ state_changes_play_the_animations_of_a_set :: proc(t:^testing.T) {
     plain:Anim_State
     testing.expect(t,anim_react(&lib,&plain,{shown=set.shown},{shown=true},1))
     testing.expect(t,!anim_react(&lib,&plain,{shown=set.shown},{},0.01))
-    // A change without an animation does not hide one that comes with it.
+    // Shown and clicked at once, it plays how it is shown.
     together:Anim_State
-    anim_react(&lib,&together,{hovered=set.hovered},{shown=true,hovered=true},0.125)
-    testing.expect(t,together.anim==set.hovered && test_near(together.value.scale.x,1.1,0.001))
+    anim_react(&lib,&together,set,{shown=true,clicked=true},0.25)
+    testing.expect(t,together.anim==set.shown && test_near(together.value.opacity,0.5))
 }
 
 Test_Animated :: struct {value,inner:Anim_Value,nested:bool,clicks:int}
@@ -199,7 +164,7 @@ test_animated_build :: proc(ctx:^Context,user:rawptr) {
             if box(ctx,{id=id(ctx,"card"),width=fixed(200),height=fixed(100),fill={255,255,255,255}}) {
                 if s.nested {
                     if animated(ctx,id(ctx,"go"),s.inner) {
-                        if button(ctx,id(ctx,"go"),{label="Go",width=50,height=20,style=.Accent}).clicked {s.clicks+=1}
+                        if button(ctx,id(ctx,"go"),{label="Go",width=50,height=20,variant="accent"}).clicked {s.clicks+=1}
                     }
                 }
             }
@@ -210,7 +175,7 @@ test_animated_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 an_animated_element_is_drawn_through_its_transform :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Animated{value=ANIM_IDENTITY,inner=ANIM_IDENTITY}
     input:=test_input()
@@ -240,7 +205,7 @@ an_animated_element_is_drawn_through_its_transform :: proc(t:^testing.T) {
 @(test)
 nested_animations_compose_and_the_pointer_follows_them :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Animated{value=ANIM_IDENTITY,inner=ANIM_IDENTITY,nested=true}
     s.value.offset={300,0};s.value.opacity=0.5
@@ -273,7 +238,7 @@ animated_subtrees_beyond_the_capacity_are_drawn_in_place_and_counted :: proc(t:^
     ctx:Context
     desc:=TEST_SMALL
     desc.max_scopes=3
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     input:=test_input()
     frame:=test_frame(&ctx,&input,proc(ctx:^Context,user:rawptr) {

@@ -58,7 +58,8 @@ or interleave its own passes.
    - Phase 1 tests against the pyramid made with the depth of phase 0; after its G-buffer the
      pyramid is redone with that of both phases, which is the one that phase 0 of the next frame
      tests: what was rescued occludes from there.
-   - The cull lists (chunks, visible clusters and candidates) count what does not fit
+   - The cull lists (chunks, visible clusters and candidates, and the chunks and clusters of the
+     shadow maps) count what does not fit
      (`Stats.cull_dropped`) and grow to that for the following frames: a frame can show holes
      where a list fills for the first time, not again at that size.
    - Then, the `Simulate` extension stages (first window view, or texture view in a
@@ -79,8 +80,6 @@ or interleave its own passes.
      the sun gives its light, and add the lights that cast no shadows
      ([GPU lights](lights.md#gpu-lights)).
    - The points that trace their own rays (glass, overlays, the back side) use `direct_lighting`.
-     `reference_lights` is the same passes with many samples, without maps or half
-     resolution.
 6. **reflect**: the pixels smoother than `reflection_roughness` trace a ray from their lobe and a
    second pass filters the rays of the frame; it is omitted while no material of the table can go
    below that limit ([traced reflections](materials.md#traced-reflections)).
@@ -94,12 +93,12 @@ or interleave its own passes.
 9. **composite**: `direct + indirect_compose + emission`
    ([indirect composition](materials.md#indirect-composition)), or the view's
    [inspection mode](settings.md#inspection-modes). Under an atmosphere, the image that is shown
-   takes the aerial perspective; `Hdr`, the light that the next frame traces, does not.
+   takes the aerial perspective.
    - The specular lobe takes the traced reflection in the proportion that it traced and the
      volume around its dominant direction in the rest.
-   - The [grid](#reference-grid) is composed only in the background, outside the history.
+   - The [grid](#reference-grid) is composed only in the background.
    - With extension passes and without an inspection mode, the [`Lit`](views.md#extension-stages)
-     stage over the lit opaque image, without touching `Hdr`. With glass in view and `Lit`
+     stage over the lit opaque image. With glass in view and `Lit`
      passes, the raster of the layers (step 11) goes before: the stage runs behind the nearest
      layer and again in front, over the lit glass.
 10. **overlay**: up to four additional Surface materials per instance, in order, over opaque or
@@ -131,6 +130,9 @@ or interleave its own passes.
       moves with the jitter next to a high-contrast edge (a checkerboard, or its reflection), and
       clipped to it the average of the previous frames jumped on every frame. A light change on a
       smooth surface remains outside the box.
+    - Samples are weighed and clipped as light exposed by the view's exposure, compressed: a
+      highlight weighs by how bright it shows, whatever the light scale. The history stays in
+      render units.
     - Where the `Blend` stage covered the pixel (`Targets.reactive`) the history weighs less.
       Where the pixel's direct light was marked because what casts its shadow changed
       ([shadows](lights.md#shadows)), the pixel keeps what a moving one keeps: a shadow that moves
@@ -181,7 +183,7 @@ or interleave its own passes.
   [shapes](../../mirai-editor/references/editor.md#figures-of-whoever-works).
 - **Mask.** It draws only the highlighted instances, after the G-buffer and with its own depth
   buffer: the surrounding geometry does not clip it. It is rasterized without jitter at the
-  window point resolution, independent of `render_scale`, and respects the material's alpha
+  window point resolution, independent of `Settings.resolution`, and respects the material's alpha
   cutoff. The filter and the PostProcess (`mirai_outline`) read it, and they see only the game
   styles.
 - **Occlusion.** The visible depth is queried in scene coordinates, with its jitter and a

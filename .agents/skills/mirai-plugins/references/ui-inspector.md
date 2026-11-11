@@ -15,11 +15,10 @@ and the types of its tables, so the methods here and
 ## Document
 
 - Its provider (`editor.Asset_Document_Provider`) declares the type and that it has its own
-  hierarchy. Each change enters the document's history (`editor.file_write`) and Save writes the
-  file with `host.ui_tree_save`; records that `ui.tree_load` rejects are not saved, and the
-  warning says why. An undo or a redo reads the file again and chooses the node that changed
-  (`records_changed_row`); the file is re-read only when its size and time or the history cursor
-  change, not after its own write.
+  hierarchy. Each change enters the document's history (`editor.file_write`) and the flush writes
+  the file; records that `ui.tree_load` rejects are not written, and the warning says why. An undo
+  or a redo reads the file again and chooses the node that changed (`records_changed_row`); the file
+  is re-read only when its size and time or the history cursor change, not after its own write.
 - What a gesture leaves pending goes to its document's history (`inspector_flush`) before another
   document comes to the front, on Play and on each API call that reads or writes a `.ui`.
 - On writing, the keys of each track are left in time order and the rows that nothing uses go away
@@ -38,7 +37,7 @@ and the types of its tables, so the methods here and
   itself. The nodes of an unfolded instance are read-only (their own document changes them).
 - Copy, Paste, Duplicate and Delete act on all the chosen ones (a node inside another chosen one
   goes with it). **Make widget** moves a Box and what it has into a new `.ui` next to the file,
-  unsaved, with a parameter per named text or binding, and puts a use in its place: what is
+  with a parameter per named text or binding, and puts a use in its place: what is
   reusable is another `.ui`.
 - Copy stores the nodes as records of their own (`Clip_Nodes`) with the rows and texts that they
   use, so they paste into any `.ui` (`records_paste_rows`, `merge_put`): a named style of the same
@@ -89,8 +88,7 @@ and the types of its tables, so the methods here and
 - A named style does not change from a node: the first change makes the node an override (an
   unnamed style that `extends` it, marked with `*`), which says only what differs and follows later
   changes of the style in the rest. **Apply to style** writes it into the style, with its variants,
-  and its nodes return to it (`records_style_save`); **Revert** discards it. Save only writes the
-  file.
+  and its nodes return to it (`records_style_save`); **Revert** discards it.
 - Choosing a sound in Events on a node whose style is shared asks whether it goes to the node (an
   override) or to the style, which sounds it in all its nodes.
 - A style without nodes is deleted (`records_style_remove`); an override counts for its style.
@@ -104,8 +102,7 @@ and the types of its tables, so the methods here and
   templates and overrides of that style (`records_variant_rename`).
 - Each state, and each combination of states, is a rule of the style for that variant that sets
   only the fields that differ from what the node has without it (`look_begin` resolves it with
-  the other rules) and goes away when nothing changes. In a rule, each color chooses a theme color
-  (`Style_Patch.tokens`) or a literal value.
+  the other rules) and goes away when nothing changes.
 - In Edit, the preview shows the selected node in the states of the last opened fold.
 
 ### Node, layout, events and image
@@ -134,19 +131,19 @@ sequence or together parts of earlier rows (`records_part_add`, `records_part_re
 
 ### Texts
 
-- The bubble of the text row says whether the node is localized and opens a window with one row
-  per language of `UI_Settings.languages`: that of the language the interface is written in
-  (`UI_Settings.source`) is the node's text, and the others its translations, which the `.ui`
-  stores by the node's `text_id` (`records_translation`).
-- A text is not reused between nodes: the widget is reused. Duplicating or pasting gives another
-  id with copies of the translations (`records_texts_renew`); deleting takes them away
-  (`records_texts_prune`).
-- ASCII is typed, like all editable text; `ui.text.set` accepts any UTF-8. Languages that need an
+- The bubble of the text row says whether the node is localized and opens a window with its key
+  and one row per language its `.strings` name, plus one that adds a language by its code: what
+  the key says in each, read from and written to the `.strings` of the project
+  ([one store](../../mirai-assets/references/kinds.md#texts)) as a step of history of that file.
+  Turning Localized on makes the key from the text of the node; turning it off leaves the node
+  what the key said.
+- A key is shared: the nodes that name it, copies and pasted ones included, show one text, and
+  changing it in the window changes it for all of them.
+- ASCII is typed, like all editable text; `texts.set` accepts any UTF-8. Languages that need an
   IME do not have their glyphs in the editor font.
-- `ui.text.export` and `ui.text.import` (`mirai texts export|import <csv>`) carry the localized
-  texts of all the `.ui`s to a CSV and back, as history steps. The import finds each row by the
-  asset's and the text's id (so it follows a moved `.ui`), an empty cell changes nothing and it
-  returns the rejected rows with their reason.
+- `texts.export` and `texts.import` (`mirai texts export|import <csv>`) carry every text of the
+  project to a CSV and back; an empty cell changes nothing, and a CSV that does not read
+  changes nothing and says its line.
 - A **Prompt** is just the prompts of its action. The action of a button or a prompt is chosen
   among the game's `Action` constants; one that the game no longer has is marked.
 
@@ -175,7 +172,7 @@ An agent authors an interface without opening the document: it reads and writes 
 or changes a part with one method per part. The methods read free parameters: the fields go by the
 names of `ui.Tree_Node`, `ui.Node_Style` and `ui.Tree_Image` (`engine.describe` gives the schemas).
 A node is named by its name or by `#row`. Each write enters the document's history as a change
-made by hand, nothing is saved until Save, and one that would leave a tree that does not load
+made by hand, and one that would leave a tree that does not load
 changes nothing and says why.
 
 - `ui.inspect` gives the `.ui`, or with `node` that node and what it has, as the document that
@@ -185,19 +182,18 @@ changes nothing and says why.
   not give. Reading back names: what is written and read back is the same, and what the visual
   editor changed reads back by name too.
 - `ui.write` makes the file, or `node`, say what the document declares, in one step; a path that
-  does not exist yet makes the `.ui` and `save=true` writes the file (what an agent passes; a
-  person saves with Save). On the command line `document=@file` reads it from a file:
+  does not exist yet makes the `.ui`. On the command line `document=@file` reads it from a file:
   - The document's nodes replace those of the part: they are matched by name and type (an unnamed
     one, by place among the unnamed ones of its type in the same container) and keep what ties
-    them to the file (the `text_id` of their text, the overrides of an instance); the others are
+    them to the file (the overrides of an instance); the others are
     made and those that the document does not declare go away. What a node does not give is that
     of a new node of its type; without `style` or `look` it takes the style of its type
     ([styles](#styles)), and an empty `style` is none. A `look` is a style without family; with
     `extends` it is the override of that style, and the node says it instead of `style`.
-  - A node with `translations` (language code to text) is `Localized` and its translations become
-    those; one without is not, and what the file had under its `text_id` stays there, as when a
-    person turns Localized off. A node gets its `text_id` when it becomes localized or takes its
-    first translation, unless the document gives one; two nodes never share one.
+  - A node with `key` is `Localized`: the file keeps the key, the document gives beside it, in
+    `text`, what the key says in the language texts are written in, and writing it sets that
+    text in the `.strings`. An empty `key` is made from the text; a node without `key` is not
+    localized ([texts](../../../../docs/game/ui/texts.md)).
   - The tokens, styles and animations it names become what it says, `null` removes them
     (a style that some node takes is not removed) and those it does not name stay. Without
     `nodes`, no node changes.
@@ -230,7 +226,8 @@ changes nothing and says why.
   `bind_*`, `data` and `fields` of the node; `ui.check` returns the problems of all the `.ui`s, the
   paths the game lacks included; `ui.path.rename` rewrites a path prefix in all of them, also in the
   templates.
-- The per-language texts: `ui.texts`, `ui.text.set` and the CSV ones.
+- The texts by key, of the editor itself: `texts.list`, `texts.set`, `texts.missing`,
+  `texts.export` and `texts.import`.
 
 ## Document bar
 
@@ -261,11 +258,9 @@ that faces the camera) cards create the entity with the `.ui` chosen in the cont
 instances, duplicating a node, unused rows, keys in order, renames, override fields, problems of
 a check, the document (`ui_document_test.odin`, and over files `ui_files_test.odin`) and the
 commands on a copy of the game template (`command_test.odin`).
-`mirai test plugins/ui_inspector/editor`: pasting into another `.ui` with its rows, Make widget,
-the texts of a copy and the preview.
-Over a project in the registry's memory, `project_files_test.odin`: the texts CSV
-(`texts_go_to_a_csv_and_back_with_commas_quotes_and_lines`,
-`a_csv_of_texts_says_why_it_refuses_a_language_the_game_lacks_and_rows_of_no_text`), the rename in
+`mirai test plugins/ui_inspector/editor`: pasting into another `.ui` with its rows, Make widget
+and the preview.
+Over a project in the registry's memory, `project_files_test.odin`: the rename in
 the `.ui`s that use the widget
 (`a_renamed_node_renames_the_overrides_of_the_interfaces_that_use_its_widget`), the incremental
 check

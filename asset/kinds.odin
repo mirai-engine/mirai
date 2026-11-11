@@ -17,14 +17,11 @@ KIND_MESH :: Fourcc(u32('M')|u32('E')<<8|u32('S')<<16|u32('H')<<24)
 KIND_TEXTURE :: Fourcc(u32('T')|u32('E')<<8|u32('X')<<16|u32(' ')<<24)
 KIND_MATERIAL :: Fourcc(u32('M')|u32('A')<<8|u32('T')<<16|u32(' ')<<24)
 KIND_SCENE :: Fourcc(u32('S')|u32('C')<<8|u32('E')<<16|u32('N')<<24)
-KIND_PREFAB :: Fourcc(u32('P')|u32('R')<<8|u32('F')<<16|u32('B')<<24)
 KIND_ANIMATION :: Fourcc(u32('A')|u32('N')<<8|u32('I')<<16|u32('M')<<24)
 KIND_SKELETON :: Fourcc(u32('S')|u32('K')<<8|u32('E')<<16|u32('L')<<24)
 KIND_SOUND :: Fourcc(u32('S')|u32('N')<<8|u32('D')<<16|u32(' ')<<24)
 KIND_SOUND_SET :: Fourcc(u32('S')|u32('S')<<8|u32('E')<<16|u32('T')<<24)
 KIND_UI :: Fourcc(u32('U')|u32('I')<<8|u32(' ')<<16|u32(' ')<<24)
-KIND_FRACTURE :: Fourcc(u32('F')|u32('R')<<8|u32('A')<<16|u32('C')<<24)
-KIND_PHYSICS_CACHE :: Fourcc(u32('P')|u32('C')<<8|u32('A')<<16|u32('C')<<24)
 KIND_FONT :: Fourcc(u32('F')|u32('O')<<8|u32('N')<<16|u32('T')<<24)
 KIND_STRINGS :: Fourcc(u32('S')|u32('T')<<8|u32('R')<<16|u32('G')<<24)
 KIND_PROMPTS :: Fourcc(u32('P')|u32('R')<<8|u32('M')<<16|u32('T')<<24)
@@ -34,7 +31,7 @@ Kind_Info :: struct {
     kind:Fourcc,
     extension:string,
     name:string,
-    version:u16, // the kind_version this build writes and reads (kind_check); 0 for a kind whose plugin keeps it
+    version:u16, // the kind_version this build writes and reads (kind_check)
     presentation:bool, // only shown or heard: a dedicated server, which has neither renderer nor mixer, ships none
     merged:bool,       // a document of rows that are edited: git merges it row by row and diffs its values (mirai asset merge, dump); false: bulk an import, a bake or a recording makes, which git keeps whole
 }
@@ -44,14 +41,11 @@ KINDS :: [?]Kind_Info{
     {KIND_TEXTURE,".tex","texture",TEXTURE_VERSION,true,false},
     {KIND_MATERIAL,".mat","material",MATERIAL_VERSION,false,true},
     {KIND_SCENE,".scene","scene",SCENE_VERSION,false,true},
-    {KIND_PREFAB,".prefab","prefab",SCENE_VERSION,false,true},
     {KIND_ANIMATION,".anim","animation",ANIMATION_VERSION,false,false},
     {KIND_SKELETON,".skeleton","skeleton",SKELETON_VERSION,false,true},
     {KIND_SOUND,".sound","sound",SOUND_VERSION,true,false},
     {KIND_SOUND_SET,".sound_set","sound set",SOUND_SET_VERSION,true,true},
     {KIND_UI,".ui","ui",UI_VERSION,true,true},
-    {KIND_FRACTURE,".fracture","fracture",FRACTURE_VERSION,false,false},
-    {KIND_PHYSICS_CACHE,".physics_cache","physics cache",0,false,false},
     {KIND_FONT,".font","font",FONT_VERSION,true,false},
     {KIND_STRINGS,".strings","strings",STRINGS_VERSION,false,true},
     {KIND_PROMPTS,".prompts","prompts",PROMPTS_VERSION,true,true},
@@ -132,18 +126,16 @@ version_message :: proc(a:^Asset,types:^Types,path:string,current:u16=0,allocato
     info,_:=import_info(a,types)
     if info==nil {return copied(fmt.tprintf("%s; it was not imported: make it again",stale),allocator)}
     source:=serial.text_field(info.source[:])
-    folder:=parent(path)
-    if filepath.is_abs(source) {return copied(fmt.tprintf("%s; import its source again: mirai import %s --out %s",stale,source,folder),allocator)}
     // The source is named relative to the root of the import: the first folder above the asset that holds it.
-    root:=folder
+    root:=parent(path)
     for {
         joined,_:=filepath.join({root,source},context.temp_allocator)
-        if os.exists(joined) {return copied(fmt.tprintf("%s; import its source again: mirai import %s --out %s --root %s",stale,slashed(joined),folder,root),allocator)}
+        if os.exists(joined) {return copied(fmt.tprintf("%s; import its source again: mirai import %s",stale,slashed(joined)),allocator)}
         up:=parent(root)
         if up==root {break}
         root=up
     }
-    return copied(fmt.tprintf("%s; import its source %s again with mirai import into %s",stale,source,folder),allocator)
+    return copied(fmt.tprintf("%s; import its source %s again with mirai import",stale,source),allocator)
 }
 
 // Where an asset built from a source file came from: what an importer needs
@@ -219,7 +211,7 @@ text_set :: proc(field:[]u8,text:string) {
     copy(field,text[:count])
 }
 
-@(private)
+// Whether every value is a number: neither NaN nor infinite.
 finite :: proc "contextless" (values:..f32) -> bool {
     for value in values {
         if value-value!=0 {return false}

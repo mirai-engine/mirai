@@ -29,8 +29,8 @@ Scene_Result :: struct {
 Scene_Requests :: struct {queue:core.Queue(Scene_Request)}
 
 // Events: cleared at each frame, one per request served, after the load.
-@(storage,events,keep)
-Scene_Results :: struct {queue:core.Queue(Scene_Result)}
+@(storage,keep)
+Scene_Results :: struct {queue:core.Events(Scene_Result)}
 
 // Whether this world already asked for the scene the player was launched with.
 @(storage,keep)
@@ -39,7 +39,10 @@ Scene_Launch :: struct {
     first:bool, // the load under way is the one the player was launched with
 }
 
-request :: proc(requests:^Scene_Requests,scene:base.Asset_Id) {
+// Asks for a scene of the assets by its path ("arena/main.scene") or its id.
+request :: proc{request_path,request_id}
+
+request_id :: proc(requests:^Scene_Requests,scene:base.Asset_Id) {
     core.push(&requests.queue,Scene_Request{scene=scene})
 }
 
@@ -69,7 +72,6 @@ result_of :: proc(results:^Scene_Results,scene:base.Asset_Id,path:string="") -> 
 // Its result comes in the frame the scene replaces the world.
 @(step="input",loops="game editor")
 scene_requests :: proc(world:core.World_Ref,app:^host.App,requests:^Scene_Requests,results:^Scene_Results,launch:^Scene_Launch,loads:^Scene_Loads,loading:^Scene_Loading,root:core.Ref(Scene_Root),problems:^core.Problems) {
-    core.queue_clear(&results.queue)
     launched:=!launch.taken && app.launch.scene!=""
     if launched {
         launch.taken=true
@@ -102,7 +104,7 @@ scene_requests :: proc(world:core.World_Ref,app:^host.App,requests:^Scene_Reques
         if root.ptr!=nil {r.scene=root.scene}
         if r.scene=={} {
             core.push(&results.queue,Scene_Result{error=.Not_Found})
-            core.report(problems,core.NONE,"scene.restart","there is no scene to restart: the world did not come from a scene of the assets; load one with request or request_path first")
+            core.report(problems,core.NONE,"scene.restart","there is no scene to restart: the world did not come from a scene of the assets; load one with request first")
             return
         }
     }

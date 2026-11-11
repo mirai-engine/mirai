@@ -16,7 +16,7 @@ bench_sections_run :: proc(t:^testing.T,sections,objects:int) {
     SAMPLES :: 200
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -41,14 +41,16 @@ bench_sections_run :: proc(t:^testing.T,sections,objects:int) {
     problems:core.Problems
     session.problems=&problems
     hierarchy:=core.ref(&world.hierarchy)
-    boxes:=make([dynamic]Section_Box,context.temp_allocator)
-    section_boxes(&boxes,&world.references,&world.worlds)
+    boxes:scene.Section_Boxes
+    defer scene.section_boxes_destroy(&boxes)
+    testing.expect(t,scene.section_boxes_build(&boxes,core.read(&world.references),core.read(&world.worlds)))
+    holding:=make([dynamic]scene.Section_Box,context.temp_allocator)
     samples:[SAMPLES]f64
     held:=0
     for sample in 0..<SAMPLES+16 {
         started:=time.tick_now()
         for e,i in things {
-            in_them:=sections_of(&session,boxes[:],&world.worlds,hierarchy,e,references[i%sections])
+            in_them:=sections_of(&session,&boxes,&holding,&world.worlds,hierarchy,e,references[i%sections])
             held+=int(in_them[1]!=core.NONE)
         }
         if sample>=16 {samples[sample-16]=time.duration_seconds(time.tick_diff(started,time.tick_now()))*1000}

@@ -6,8 +6,6 @@ import "mirai:std/base"
 import NS "core:sys/darwin/Foundation"
 import MTL "vendor:darwin/Metal"
 
-MAX_LABEL_DEPTH :: 16
-
 Mtl_Encoder_Kind :: enum u8 {None, Render, Compute, Blit, Accel}
 
 Slot_Binding :: struct {
@@ -204,14 +202,14 @@ mtl_accel_encoder :: proc(c: ^Command_List) -> ^MTL.AccelerationStructureCommand
 // ---------------------------------------------------------------- hazards
 
 // Every resource uses MTLHazardTrackingModeTracked, so Metal inserts the
-// required waits itself. The barriers only keep the Vulkan usage rules.
+// waits a pass needs itself, as Vulkan derives them from what the pass binds;
+// the barriers only keep the Vulkan usage rules.
 cmd_barrier_buffer :: proc(c: ^Command_List, buffer: Buffer, access: Access) {
 	if pool_get(&c.device.buffers, base.Handle(buffer)) == nil {return}
 	assert(!c.in_render_pass, "rhi: buffer barriers must be recorded outside render passes")
 }
 
-cmd_barrier_texture :: proc(c: ^Command_List, texture: Texture, access: Access) {}
-cmd_barrier_accel :: proc(c: ^Command_List, accel: Accel) {}
+cmd_barrier_texture :: proc(c: ^Command_List, texture: Texture, access: Access, mip: i32 = -1) {}
 
 // ---------------------------------------------------------------- render passes
 
@@ -241,12 +239,17 @@ cmd_begin_render_pass :: proc(c: ^Command_List, desc: ^Render_Pass_Desc) {
 	for i in 0 ..< desc.color_count {
 		a := desc.colors[i]
 		t := pool_get(&d.textures, base.Handle(a.texture))
-		if t == nil || t.handle == nil {set_error(d, "render pass %s has an invalid color target", desc.name); return}
-		width = min(width, t.desc.width)
-		height = min(height, t.desc.height)
+		size: [2]u32
+		inside: bool
+		if t != nil && t.handle != nil {size, inside = attachment_extent(t.desc, a.mip, a.layer)}
+		if !inside {set_error(d, "render pass %s: its color target is not a texture or has no mip %d or layer %d", desc.name, a.mip, a.layer); return}
+		width = min(width, size.x)
+		height = min(height, size.y)
 		attachment := MTL.RenderPassColorAttachmentDescriptorArray_object(colors, NS.UInteger(i))
 		base := cast(^MTL.RenderPassAttachmentDescriptor)attachment
 		MTL.RenderPassAttachmentDescriptor_setTexture(base, t.handle)
+		MTL.RenderPassAttachmentDescriptor_setLevel(base, NS.UInteger(a.mip))
+		MTL.RenderPassAttachmentDescriptor_setSlice(base, NS.UInteger(a.layer))
 		MTL.RenderPassAttachmentDescriptor_setLoadAction(base, mtl_load_action(a.load))
 		MTL.RenderPassAttachmentDescriptor_setStoreAction(base, mtl_store_action(a.store))
 		clear := [4]f64{f64(a.clear[0]), f64(a.clear[1]), f64(a.clear[2]), f64(a.clear[3])}
@@ -256,12 +259,17 @@ cmd_begin_render_pass :: proc(c: ^Command_List, desc: ^Render_Pass_Desc) {
 	}
 	if desc.depth.texture != 0 {
 		t := pool_get(&d.textures, base.Handle(desc.depth.texture))
-		if t == nil || t.handle == nil {set_error(d, "render pass %s has an invalid depth target", desc.name); return}
-		width = min(width, t.desc.width)
-		height = min(height, t.desc.height)
+		size: [2]u32
+		inside: bool
+		if t != nil && t.handle != nil {size, inside = attachment_extent(t.desc, desc.depth.mip, desc.depth.layer)}
+		if !inside {set_error(d, "render pass %s: its depth target is not a texture or has no mip %d or layer %d", desc.name, desc.depth.mip, desc.depth.layer); return}
+		width = min(width, size.x)
+		height = min(height, size.y)
 		depth := MTL.RenderPassDescriptor_depthAttachment(rpd)
 		base := cast(^MTL.RenderPassAttachmentDescriptor)depth
 		MTL.RenderPassAttachmentDescriptor_setTexture(base, t.handle)
+		MTL.RenderPassAttachmentDescriptor_setLevel(base, NS.UInteger(desc.depth.mip))
+		MTL.RenderPassAttachmentDescriptor_setSlice(base, NS.UInteger(desc.depth.layer))
 		MTL.RenderPassAttachmentDescriptor_setLoadAction(base, mtl_load_action(desc.depth.load))
 		MTL.RenderPassAttachmentDescriptor_setStoreAction(base, mtl_store_action(desc.depth.store))
 		MTL.RenderPassDepthAttachmentDescriptor_setClearDepth(depth, f64(desc.depth.clear))
@@ -458,7 +466,7 @@ mtl_flush_bindings :: proc(c: ^Command_List, compute: bool) -> bool {
 			}
 		case .Sampled_Texture, .Storage_Texture:
 			t := pool_get(&d.textures, base.Handle(s.texture))
-			if t == nil {set_error(d, "pipeline %s: slot %d texture was destroyed", p.name, i); return false}
+			if t == nil {set_error(d, "pipeline %s: slot %d holds no texture: it was destroyed or a buffer is bound there", p.name, i); return false}
 			view := mtl_texture_view(t, s.mip)
 			if view == nil {set_error(d, "pipeline %s: slot %d texture has no mip %d or no drawable", p.name, i, s.mip); return false}
 			if compute {
@@ -649,18 +657,18 @@ cmd_copy_texture_to_buffer :: proc(c: ^Command_List, src: Texture, dst: Buffer, 
 	)
 }
 
-// Copies mip 0 of a texture into mip 0 of another, every layer, with its
-// bytes as they are: nothing converts between the sRGB encodings of the two.
-// What it copies between: texture_copy_problem; neither is the image of the
-// swapchain.
-cmd_copy_texture :: proc(c: ^Command_List, src: Texture, dst: Texture) {
+// Copies `mips` mips of a texture from src_mip into those of another from
+// dst_mip, every layer, with its bytes as they are: nothing converts between
+// the sRGB encodings of the two. What it copies between: texture_copy_problem;
+// neither is the image of the swapchain.
+cmd_copy_texture :: proc(c: ^Command_List, src: Texture, dst: Texture, src_mip: u32 = 0, dst_mip: u32 = 0, mips: u32 = 1) {
 	assert(!c.in_render_pass)
 	d := c.device
 	s := pool_get(&d.textures, base.Handle(src))
 	t := pool_get(&d.textures, base.Handle(dst))
 	if s == nil || t == nil || s.handle == nil || t.handle == nil {return}
 	if src == dst || s.swapchain || t.swapchain {set_error(d, "cmd_copy_texture: it copies between two textures of the device, not the image of the swapchain"); return}
-	if problem := texture_copy_problem(s.desc, t.desc); problem != "" {set_error(d, "cmd_copy_texture: %s", problem); return}
+	if problem := texture_copy_problem(s.desc, t.desc, src_mip, dst_mip, mips); problem != "" {set_error(d, "cmd_copy_texture: %s", problem); return}
 	source := s.handle
 	if s.format != t.format {
 		// A blit takes two textures of one pixel format. A view that changes
@@ -670,9 +678,12 @@ cmd_copy_texture :: proc(c: ^Command_List, src: Texture, dst: Texture) {
 		source = s.encoded
 	}
 	encoder := mtl_blit_encoder(c)
-	size := MTL.Size{NS.UInteger(s.desc.width), NS.UInteger(s.desc.height), 1}
-	for slice in 0 ..< NS.UInteger(max(s.desc.layers, 1)) {
-		MTL.BlitCommandEncoder_copyFromTexture(encoder, source, slice, 0, MTL.Origin{0, 0, 0}, size, t.handle, slice, 0, MTL.Origin{0, 0, 0})
+	for k in 0 ..< mips {
+		from, to := src_mip + k, dst_mip + k
+		size := MTL.Size{NS.UInteger(max(s.desc.width >> from, 1)), NS.UInteger(max(s.desc.height >> from, 1)), 1}
+		for slice in 0 ..< NS.UInteger(max(s.desc.layers, 1)) {
+			MTL.BlitCommandEncoder_copyFromTexture(encoder, source, slice, NS.UInteger(from), MTL.Origin{0, 0, 0}, size, t.handle, slice, NS.UInteger(to), MTL.Origin{0, 0, 0})
+		}
 	}
 }
 

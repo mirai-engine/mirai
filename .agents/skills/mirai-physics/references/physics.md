@@ -7,9 +7,10 @@ constants and parameters: `types.odin` and the comments of each file.
 ## World and memory
 
 - `world_init(&w,desc)` reserves everything according to `World_Desc`: capacities (bodies, shapes,
-  contacts, joints, hulls, meshes, heightfields, events, characters, fluids, destructibles, pieces,
-  connections, [static changes](#static-collision)), gravity, `substeps` (4 by default) and
-  stiffness parameters.
+  contacts, joints, hulls, meshes, heightfields, events, characters, fluids, breakables, pieces,
+  bonds, [static changes](#static-collision)), gravity, `substeps` (4 by default) and
+  stiffness parameters. The pools of [what breaks](destruction.md#with-the-world) wait for the
+  first breakable.
 - `world_desc_default()` gives the initial values; `world_destroy` frees; `world_step(&w,dt)`
   advances one tick.
 - `Body_Handle`, `Shape_Handle` and `Joint_Handle` are `distinct` generational handles. Zero is null
@@ -25,6 +26,8 @@ constants and parameters: `types.odin` and the comments of each file.
   (`world_set_body_gravity`, `body_gravity`); the gravity scale multiplies either one.
 - Mass, center and inertia come from the shapes (`density` in kg/m³). A dynamic without mass
   receives 1 kg. `body_set_mass_properties` sets them by hand.
+- Every creation and setter refuses a value that is not finite (NaN or infinite), as Box2D checks
+  its inputs: it returns a null handle or false and changes nothing.
 - 3×3 matrices are inverted with a tolerance relative to their scale: a 1 mm steel ball spins and a
   joint holds a 1e8 kg block.
 - Forces (`body_apply_force*`, `body_apply_torque`) accumulate until the step; impulses change the
@@ -32,19 +35,19 @@ constants and parameters: `types.odin` and the comments of each file.
   pose in one step, so that it pushes and carries. `body_set_transform` teleports; `body_set_type`
   discards the body's contacts.
 
-### Volume forces
+### Area forces
 
-- `world_apply_radial` (force, impulse or velocity change; a negative intensity attracts),
-  `world_apply_sphere_force`, `world_apply_box_force`, `world_apply_box_radial_force` and
-  `world_apply_plane_force` (an oriented box whose +Y face is the plane: the weight falls with
-  depth) apply to dynamics and return the amount applied and the validity of the request.
-- They walk the spatial tree with the query filter and deduplicate compound bodies in preallocated
+- `world_apply_area` (force, impulse or velocity change; radial from the center of the area, where
+  a negative intensity attracts, or along a vector) applies to dynamics and returns the amount
+  applied and the validity of the request.
+- The model has no shape for an area: `Area` is a box of the world that bounds it, which may have
+  no end, and a `weight` callback that says how much of it a point is in (0 outside, up to 1).
+  The integration gives `volume.weight` of a `Volume`, so the region is tested in one place.
+- It walks the spatial tree with the query filter and deduplicates compound bodies in preallocated
   scratch. The center of mass sets direction and weight; the force produces no torque.
-  `radial_weight`, `box_weight`, `plane_weight` and `noise_weight` are the same pure computation,
-  for gameplay fields.
-- `Radial_Falloff` are the curves of Chaos fields between the edge (0) and the center (1), and
-  `Weight_Range` takes them from `min` to `max` like Chaos `MinRange`/`MaxRange`; outside the volume
-  the weight is zero.
+- `Radial_Falloff` are the curves of Chaos fields over that weight, from the edge (0) to the inside
+  (1), and `Weight_Range` takes them from `min` to `max` like Chaos `MinRange`/`MaxRange`; outside
+  the area the weight is zero.
 - `Field_Noise` multiplies the weight by gradient noise (`noise_perlin3`) in the frame of the
   volume: a pure function of position and seed, stateless, the same with any number of workers.
 - A curve outside the enum, a non-finite range or a negative `scale` invalidate the request. A
@@ -65,7 +68,10 @@ constants and parameters: `types.odin` and the comments of each file.
   (its core is its planes moved inward, with `std/geom`), smaller than the distance from the center
   of mass to its nearest face. A negative or non-finite value rejects the shape; zero is the shape
   with sharp edges, at no added cost.
-- `mesh_create` builds the BVH and marks flat or concave internal edges as non-colliding.
+- `mesh_create` drops triangles without area and repeats of a triangle (the same corners in the same
+  turn) as Jolt's `Sanitize` does, then builds the BVH and marks flat or concave internal edges as
+  non-colliding: a sliver along an edge would switch it off. `Mesh_Desc.inside_out` turns every
+  triangle of mirrored vertices so it still faces where it did.
   **Triangles collide only by their front**, also for [bullets](#bullets): what arrives from behind
   a face passes through it. A thin wall that must stop from both sides carries two opposite layers
   or volume; a floor or a terrain, only its top face. That way what ended up behind a face comes out
@@ -167,6 +173,10 @@ inside.
     the broad phase runs again on the calling thread and what does not fit waits for the next step:
     which pairs are created does not depend on the workers.
   - A contact is destroyed when the fattened boxes stop overlapping.
+  - The static tree fills one insertion at a time; `world_rebuild_static`, which the integration
+    calls every tick before stepping, builds it whole again once the shapes inserted or moved in it
+    since its last build reach half of it: a load costs about two builds and a change now and then
+    its insertion. The count is tree state, so a copy repeats the same builds.
 - **Narrow phase.** One routine per unordered pair of types: closed forms between spheres,
   capsules and cylinder-sphere; 15-axis SAT for box-box; SAT with Gauss map pruning and axis cache
   for hulls and box-hull; GJK (plus SAT when the core penetrates) for sphere and capsule against
@@ -180,6 +190,10 @@ inside.
     need EPA, and points from clipping the support faces along the normal. Resting on a face that
     holds its lowest points, it takes that face without GJK; against a triangle, GJK sees only the
     part inside its box.
+- **Carried manifolds** (`Contact.relative`): a contact whose shape B barely moved and turned in
+  the frame of shape A since its last narrow phase keeps its manifolds, each point moved with B, as
+  Jolt's body pair cache does; `Stats.carried_contacts` counts them. Overlaps, one-way shapes,
+  characters, twins and cuts always collide.
 - **Axis cache** (`Contact.sat`): the axis of the last full search, reused if the hulls are still
   separated by it or if the face is still supported within `LINEAR_SLOP` of the depth of that
   search. The depth is not updated on a hit: a slow drift ends in another search.
@@ -200,8 +214,11 @@ inside.
   touch statics use the last colors and are solved at the end; those that find no color, serially
   and in order before the colors. `Contact_Block(N)` and `Joint_Block(N)` are SoA blocks of N lanes
   with `core:simd`: those of one color go four at a time, those without color in blocks of one lane
-  by the same code, without copies, and an empty lane gives null impulses. `SixDOF` and the angular
-  drives of `Spherical` go to the scalar solver (`joint_solve`) before the lanes of their color.
+  by the same code, without copies, and an empty lane gives null impulses. A joint whose axes no
+  kernel in lanes solves goes to the scalar solver (`joint_solve`) before the lanes of its color.
+- **What the step walks.** Bodies keep a list of the awake ones and shapes one of those that need
+  pairs, both in the state the snapshot copies: the narrow phase, the gathering of bodies and joints
+  and the gravity of the awake bodies walk them, in the order of the lists, never every slot.
 - **Islands and sleep.** Islands (`island.odin`) persist and are snapshot state.
   - A touching contact or a joint between two awake dynamics joins their islands at once (the
     smaller enters the larger). A kinematic is an island of its own, a static has none and a
@@ -209,6 +226,8 @@ inside.
   - A constraint that goes away only adds to `Island.removed`, and the island splits before
     sleeping: the candidates at once and, of the others, the one of the stillest body each step, so
     that what rests sleeps apart from what moves.
+  - The speed of a body for sleeping also counts half the speed of its displacement in the step:
+    the relaxation takes away the velocity of a push out of an overlap but not its move.
   - An island sleeps when all its bodies have been under their threshold for `TIME_TO_SLEEP`, and
     wakes whole: when an awake dynamic or a moving kinematic touches it, when neighboring joints,
     shapes or bodies change and through the functions that apply forces or velocities.
@@ -223,7 +242,12 @@ inside.
 
 ### Bullets
 
-An awake dynamic with `bullet` looks for its impacts inside the step (`ccd.odin`).
+Every awake dynamic whose farthest point moves in the step more than `CCD_SAFETY` of its smallest
+extent is swept against static shapes and stops at the first impact; the contacts of the next step
+answer it with every shape that touches (Box2D's fast bodies). If its shapes start the sweep
+touching, a sphere of `CCD_CORE` of that extent at its center of mass is swept instead: a body in
+contact still cannot go through. The rest of this section is what an awake dynamic with `bullet`
+adds (`ccd.odin`).
 
 - Only what moved is swept: the awake ones enter with their swept box in a scratch tree; sleeping
   and static ones are met in the world trees. It uses the relative trajectory and the rotation of
@@ -252,9 +276,10 @@ An awake dynamic with `bullet` looks for its impacts inside the step (`ccd.odin`
 
 ### Bullets and overlaps
 
-The same sweep looks for the convex shapes that only overlap with the bullet and that it was not
-touching at the start of the step, up to `CCD_OVERLAP_CAPACITY` per bullet and step (those that do
-not fit add to `Stats.ccd_overlaps_dropped`). Those it reaches before stopping and does not keep
+The same sweep looks for the convex shapes that only overlap with the swept body (static ones only,
+unless it is a bullet) and that it was not touching at the start of the step, up to
+`CCD_OVERLAP_CAPACITY` per body and step (those that do not fit add to
+`Stats.ccd_overlaps_dropped`). Those it reaches before stopping and does not keep
 touching at the end emit `overlap_begin` and `overlap_end` in that step, on both sides and with
 `crossed`: a trigger thinner than what the bullet travels is not lost. If it ends inside, the next
 step reports the entry as usual.
@@ -265,20 +290,35 @@ Water is not simulated: it is an analytic volume with a queryable surface, deter
 the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws it.
 
 - `fluid_create`, `fluid_set` and `fluid_destroy` (`Fluid_Desc`): a `Plane` (everything below the
-  height of its position, an ocean) or a `Box` rotated only in yaw, whose top face is the surface;
-  density, current in the volume frame and priority.
-  - With zero density it is a dry box: it removes the lowest-priority fluid where it is (a base
+  height of its position, an ocean), a `Prism` (the column over the loop of its points seen from
+  above, straight from each to the next and back to the first, from its `depth` under the height
+  of its position up to it: a lake, a pool, the air of a room), or a `Path` (a river): the points
+  of a curve (`math.path_at`), each with its width, its height as depth and its speed along, level
+  across, ending at its ends. `fluid_create` and `fluid_set` copy the points of a prism or a path
+  (`World.fluid_paths`, beside the slots). Each point of a path is lowered to the one before it,
+  and the curve keeps y monotone between points: the surface never rises downstream. Every query
+  evaluates the curve, so its length does not cap its detail. Density, current (in the world; of a
+  path, across and up, with z zero) and priority. The integration makes a `Volume` `Box` a prism
+  of its four corners turned by the yaw of its entity, an `Outline` a prism of the points of the
+  entity's `volume.Spline`, and a `Fluid` with a `Spline` and no such `Volume` a path: it lays the
+  points of the spline on the ground with the procedures of the `Spline`, and does it again when
+  the spline or its place changes, or when a box of `core.Ground_Queries.changed` overlaps its
+  reach.
+  - With zero density it is a dry prism: it removes the lowest-priority fluid where it is (a base
     under the sea). Flooding a room is raising the floor of its air with `fluid_set`.
-  - A fluid does not overlap another one, nor a dry box another dry box; where they would, the one
-    with the highest priority decides for the whole body.
+  - A fluid does not overlap another one, nor a dry prism another dry prism; where they would, the
+    one with the highest priority decides for the whole body.
   - Creating, changing or removing a fluid wakes the bodies it reached and those it reaches.
   - Fluids are a block of the snapshot. The scratch of the step is reserved with the first fluid
     (or when restoring a world that has them): a world without fluids neither has it nor pays for
     it.
-- **A single surface query.** `fluid_surface_at` (private) is the only place that knows the shape of
-  the surface: the height and the normal over (x, z), with the waves of the plane at the world's
-  time. All readers follow it.
-  - **Waves** (`Fluid_Desc.waves`, only of a plane; a box with waves is not created): a sum of
+- **A single surface query.** `fluid_spot` (private) is the only place that knows the shape of a
+  fluid: over (x, z), whether its column holds the point, the height and the normal of the surface
+  (with the waves of the plane at the world's time), its bottom and its current. All readers follow
+  it. Over a path it finds the nearest point of the curve (chords, then Newton); from the segment
+  of the last query it looks at that one and its two neighbours, and at all when the nearest is at
+  the edge of those.
+  - **Waves** (`Fluid_Desc.waves`, of a plane or a prism of water): a sum of
     Gerstner waves (`fluid_waves.odin`). The time is `world_time`, the seconds the world advanced,
     which go in the snapshot: a rollback returns to the same waves. `wave_terms` gives each wave at
     a time, with the phase reduced in f64 from a nearby origin (near the world center or far, early
@@ -287,7 +327,7 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
     inclination (`steepness`) is clipped so that the sum of k·A does not pass `WAVE_FOLD`: the
     surface never folds and Newton converges. The water shaders evaluate their twin in Slang on the
     same terms.
-  - What the plane reaches with its crests enters its box (`fluid_bounds`).
+  - What the crests reach enters the box of the volume (`fluid_bounds`).
   - `fluid_sample(w,point)` gives over it the height, the normal, the current and the density at the
     point: the surface over a wet point, the one below for a dry one, or the underside of the water
     (normal downward) for a point under all of it.
@@ -300,18 +340,28 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
     `Fluid_Info.top` is the still surface and `desc.waves` its waves, which it evaluates with
     `wave_terms` at `fluid_time`) and whether a point is in it, without subtracting dry boxes, with
     `fluid_holds`: it does not repeat the shape or the priority rule.
-  - **`Fluid_Waves`** (integration, replicated) on the entity of a flat `Fluid_Volume` describes its
-    waves: its own (amplitude, length and heading from the front of the entity) and those of the
+  - **`Fluid_Waves`** (integration, replicated) on the entity of a `Fluid` of a sea or a lake
+    describes its waves: its own
+ (amplitude, length and heading from the front of the entity) and those of the
     world's `Wind` where the volume is, a Pierson-Moskowitz sea in the waves that remain free, with
     its significant height from `wind`; `spread`, `steepness`, `speed` and `seed` are the artistic
-    options. Changing the wind or the component redoes the waves of the volume. On a box it is a
+    options. Changing the wind or the component redoes the waves of the volume. On a river it is a
     `physics.fluid_waves` problem.
-- **Bodies.** In each substep, in the velocity integration, for each awake dynamic whose box swept
-  by its velocity of the step touches a fluid:
+- **Bodies.** A body takes its water by the rule of `fluid_find` (the column that holds the point,
+  then priority) at its center, the lowest point of its box and the corners of its bottom, among
+  the fluids its box swept by its velocity of the step meets; never by the box of a fluid. It keeps
+  up to two: the second, across a border (a river into a lake), counts without what the first
+  holds, and a dry box over either in priority takes itself out of each. A character is in its
+  first. Two fluids meet (`fluids_meet`, the `physics.fluid_overlap` problem) by the same column
+  rule, never by their boxes. In each substep, in the velocity integration, for each awake
+  dynamic in a water:
   - The surface of a body in a step is the plane tangent to the waves over its center, at the start
     of the step: its waves lift it and tilt it.
   - Submerged volume and its center, exact per shape: boxes and hulls clipped by the planes of the
-    surface and of the walls of a box, with dry boxes subtracted; spheres, capsules and vertical
+    surface, the floor and the walls of a prism near the body (`prism_walls`: the edges within its
+    reach, but of two that meet where the loop turns in only the nearer, so the water on both sides
+    of a notch stays), with dry prisms subtracted; spheres, capsules and vertical
+
     cylinders in closed form between horizontal planes; a tilted capsule, as spheres on its axis; a
     sphere or a cylinder that cuts a wall, as a polyhedron of the same volume.
   - Buoyancy ρ V g at the submerged center, with the body's gravity: its gravity scale also scales
@@ -332,22 +382,27 @@ the snapshot; the [`water`](../../mirai-world/references/water.md) plugin draws 
 
 ## Joints
 
-`Joint_Desc` carries type, bodies and a frame per body whose X axis is the hinge, slide or twist
-axis; `joint_frames` computes them from an anchor and an axis in the world. Types: `Fixed`,
-`Spherical` (cone, twist and angular drives), `Revolute` and `Prismatic` (limit, motor, spring),
-`Distance` (rigid, spring or tension-only rope) and `SixDOF`.
+`Joint_Desc` carries the bodies, a frame per body whose X axis is the hinge, slide or twist axis
+(`joint_frames` computes them from an anchor and an axis in the world) and one six-axis record: each
+linear and angular axis (`Joint_Axis`) free, locked or limited, with a drive toward a position, a
+velocity or both, bounded by its force. There are no kinds: a kind is a pattern of the axes.
 
-- `SixDOF` configures each linear and angular axis (`Joint_Axis`). Translation is measured in frame
-  A; angular coordinates are the vector of the relative principal rotation, with branch at π, not
-  Euler angles. `Spherical` admits those drives on free axes and keeps its limits. The axes are a
-  block of their own of the snapshot (`World.joint_axes`) that a joint without axes does not walk.
-- `joint_configuration_error` rejects before creating state, also a motor or spring incompatible
-  with the type. `joint_set_axes` changes targets and budgets without erasing the warm start;
-  changing motion, drive flags or limits resets the impulse of that axis. `joint_drive_pose`
-  validates atomically, and `Disabled` suspends the drives keeping limits and targets.
+- Translation is measured in frame A; angular coordinates are the vector of the relative principal
+  rotation, with branch at π, not Euler angles. Two or three limited linear axes share one limit,
+  on the length of the offset across them (a rope, a rod), driven by the first of them. The swings
+  (Y and Z) limited together share a cone whose angle toward each side is the limit of that side.
+- The solver picks the kernel by the pattern (`joint_kernel_of`): all locked is fixed; linear
+  locked with one free turn is a hinge, angular locked with one free move a slider, linear locked
+  with free or round-coned swings a ball, three equally limited moves a distance. These go in lanes
+  with their limit and drive on their axis; any other pattern is solved one axis at a time with the
+  same meaning. The axes are a block of their own of the snapshot (`World.joint_axes`).
+- `joint_configuration_error` rejects before creating state. `joint_set_axes` changes targets and
+  budgets without erasing the warm start; changing motion, drive flags or limits resets the impulse
+  of that axis, and a change of kernel all of them. `joint_drive_pose` validates atomically and
+  frees the locked axes it drives, and `Disabled` suspends the drives keeping limits and targets.
 - On exceeding `break_force` or `break_torque` the joint is destroyed at the end of the step with a
   `Joint_Break_Event`.
-- Limits are rigid velocity constraints; only the correction of a violation is soft. A motor of any
+- Limits are rigid velocity constraints; only the correction of a violation is soft. A drive of any
   force stops at the limit.
 
 ## GJK
@@ -361,28 +416,29 @@ geometry.
 
 ## Snapshot and determinism
 
-- `world_snapshot_size`, `world_snapshot_capacity`, `world_snapshot(&w,buffer)` and
-  `world_restore(&w,buffer)` copy in blocks bodies, shapes, contacts, joints, joint axes, islands,
-  manifold blocks, characters, fluids, destructibles, pieces, connections and the two trees.
-- The block table is `snapshot_blocks`: a new state array is added there, with its counter in
-  `World_State`, which also stores gravity and the push rules. `world_hash` hashes that same state.
-- Restoring and simulating again repeats the original trajectory bit for bit in the same binary. A
-  snapshot can be restored in another world of the same capacities.
-- `world_state_copy(&dst, &src)` leaves in `dst` what `world_restore` would leave from a snapshot of
-  `src`, without the intermediate bytes or their hashes: the same blocks, trees and validations
-  (other capacities, geometry that `dst` does not have alive or pieces with another hull) and the
-  same count at the end. `dst` must already have the geometry that `src` names.
-- The header carries an XXH3 hash of itself and of all the content.
-- `world_restore` validates everything before writing and returns `false` with the world intact on:
-  - a short buffer or one with any byte changed;
-  - another version, other capacities or other element sizes;
-  - trees that do not fit;
-  - shapes that name hulls, meshes or heightfields that this world does not have alive;
-  - shapes that name a hull rebuilt later (`hull_rebuild` and `hull_set_mass` change the revision of
-    the slot, which the snapshot stores; `world_state_copy` compares it between the two worlds).
-- Outside the snapshot: the shared geometries (they must stay alive while a snapshot that uses them
-  exists), the events, the geometry of the manifolds, which is recomputed in the next step, and the
-  [static change log](#static-collision), which a restore leaves behind for all its readers.
+- The state is the arrays of `state_arrays` (bodies, shapes, contacts, joints and their axes,
+  islands, manifold blocks, characters, fluids, breakables, pieces, bonds), the two trees and
+  `World_State`, which also stores gravity, the push rules, twins and cuts. A new state array is
+  added to `state_arrays`, with its counter in `World_State`. `world_hash` hashes that state;
+  `world_diff` locates where two states first differ (the element, its slot, the field and both
+  values), and the determinism and snapshot tests compare worlds with it, so a divergence names
+  its cause. It reads only: a step pays nothing for it.
+- `world_state_copy(&dst,&src)` makes `dst` what `src` is; stepping both repeats the same steps bit
+  for bit. A snapshot is a world kept with `world_kept_init` (pools sized to what `src` uses, never
+  stepped) that takes a copy and gives it back. It returns the bytes written.
+- Each pool keeps a stamp per chunk of 64 slots: whoever writes a slot stamps its chunk (`stamp`,
+  the `*_get` accessors; `*_read` only reads). Two worlds of one timeline, a kept world and the one
+  it mirrors, copy only the chunks whose stamps differ; any other pair copies everything. A step
+  where nothing moved writes nothing, so its copy writes nothing.
+- A world put back keeps the hulls its piece slots own (newer geometry that a repeated cut rebuilds
+  under the same handle); slots used after its copy go back to zero, so generations repeat.
+- `dst` fails unchanged on other capacities, trees that do not fit, a world never made and, unless
+  it is a kept world, shapes that name hulls, meshes or heightfields it does not have alive or a
+  hull rebuilt since the copy (`hull_rebuild` and `hull_set_mass` change the revision of the slot,
+  which a kept world records).
+- Outside the state: the shared geometry, the events, the geometry of the manifolds, recomputed in
+  the next step, and the [static change log](#static-collision), which a copy that wrote anything
+  restarts for all its readers.
 - The result does not change with the number of workers.
 
 ## Queries
@@ -436,22 +492,27 @@ What whoever builds from the level needs, like the navmesh, without allocating.
   - a static body moved (`body_set_transform`: where it was and where it ended up), destroyed, or
     that becomes static or stops being so (`body_set_type`): the box of all its shapes.
 
-  It notes every static shape, also sensors; the step notes nothing, because it does not move
-  statics.
+  A sensor blocks nothing, so it is not static collision: it notes nothing, and its filter only
+  when it starts or stops blocking. The step notes nothing, because it does not move statics.
+- `static_bounds(w)` is the box around the static shapes that block, sensors left out, as of the
+  last `static_bounds_update(w)`, which makes it again only when the log moved; the plugin calls it
+  at the end of `physics_step`.
 - `static_changes(w,since,out) -> (next,count,overflow)` copies into `out` what was noted since the
   cursor `since`, from oldest to newest, and gives the cursor of the next read. Each reader keeps
   its own, zero at the start; a read that fills `out` leaves the rest for the next one.
   - `overflow`, without writing anything and with `next` at the newest: the reader fell behind more
-    than the ring, its cursor is not from this log, or since then a snapshot was restored or a state
-    was copied (`world_restore`, `world_state_copy`). The reader takes everything as changed.
-  - It is scratch: it is not in the snapshot or in `world_hash` and the simulation does not read it,
-    so it changes no result.
+    than the ring, its cursor is not from this log, or since then a state copy wrote into the world
+    (`world_state_copy`). The reader takes everything as changed.
+  - It is scratch: it is not in the state copy or in `world_hash` and the simulation does not read
+    it, so it changes no result.
 
 ## Events and diagnostics
 
 - `world_events` returns slices valid until the next step; `overlap_begin`/`overlap_end` go one per
   side, with `crossed` when a bullet crossed it in the step. Destroying shapes or bodies outside the
-  step emits no end events.
+  step emits no end events. A contact or overlap event carries in `users` the user data of its
+  bodies and shapes, which may be gone when it is read; `breaks` lists
+  [what broke](destruction.md#reading-and-replay).
 - `body_contacts` lists the contacts of an awake body, with the normal impulse of each point and the
   velocity with which they approached before solving it (`approach`). `world_stats` gives counts and
   exhausted capacities; `world_profile`, the time per stage.
@@ -467,8 +528,10 @@ not fit, uncolored constraints, shared consequences) runs on the calling thread,
 
 - Boxes are `math.Aabb` of `std/math`; `std/spatial` adds area, center, rays and sweeps.
 - `Dynamic_Tree`: AABB tree with insertion by area cost and rotations, and iterators without
-  allocation. A proxy that is not a live leaf of the tree is ignored: reads give zero and changes do
-  nothing. `dynamic_tree_snapshot` and `dynamic_tree_restore` copy `nodes[:node_high]`.
+  allocation. `dynamic_tree_rebuild` builds its internal nodes again with the binned surface area
+  split of `Bvh`, keeping every proxy. A proxy that is not a live leaf of the tree is ignored:
+  reads give zero and changes do nothing. Its nodes carry stamps by chunk (`std/base`
+  `chunk_stamp`), and `dynamic_tree_copy` takes the chunks whose stamps differ.
 - `Bvh`: static SAH BVH with bins and flat nodes; its queries deliver one leaf per call.
 
 ## Debug draw

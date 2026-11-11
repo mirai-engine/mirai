@@ -5,6 +5,8 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:rhi"
+import "mirai:std/serial"
 
 @(private="file")
 float_string :: proc(value:f64) -> string {
@@ -30,50 +32,29 @@ float_is_written_as_the_shortest_decimal_that_reads_back :: proc(t:^testing.T) {
 }
 
 @(test)
-json_is_written_one_member_per_line_with_two_spaces :: proc(t:^testing.T) {
-    writer:=json_writer(context.temp_allocator)
-    json_object_begin(&writer)
-    json_key(&writer,"version");json_integer(&writer,1)
-    json_key(&writer,"name");json_string(&writer,"a \"quoted\"\\path\n\tñ")
-    json_key(&writer,"empty");json_array_begin(&writer);json_array_end(&writer)
-    json_key(&writer,"nothing");json_object_begin(&writer);json_object_end(&writer)
-    json_key(&writer,"list");json_array_begin(&writer)
-    json_integer(&writer,-3)
-    json_bool(&writer,true)
-    json_number(&writer,{is_float=true,float=0.25})
-    json_number(&writer,{integer=7})
-    json_object_begin(&writer)
-    json_key(&writer,"slot");json_integer(&writer,19)
-    json_object_end(&writer)
-    json_array_end(&writer)
-    json_object_end(&writer)
-    expected:="{\n  \"version\": 1,\n  \"name\": \"a \\\"quoted\\\"\\\\path\\n\\t\\u00f1\",\n  \"empty\": [],\n  \"nothing\": {},\n  \"list\": [\n    -3,\n    true,\n    0.25,\n    7,\n    {\n      \"slot\": 19\n    }\n  ]\n}\n"
-    text:=string(json_finish(&writer))
-    testing.expect_value(t,text,expected)
-    _,parse_error:=json.parse_string(text,allocator=context.temp_allocator)
-    testing.expect_value(t,parse_error,json.Error.None)
-}
-
-@(test)
 shader_entry_survives_the_manifest :: proc(t:^testing.T) {
-    bindings:=[]Binding{{0,"Uniform_Buffer"},{2,"Sampler"},{34,"Texture_Table"}}
-    shader:=Shader{id="Gbuffer_Plain_Frag",name="gbuffer_plain.frag",stage=.Fragment,spv="gbuffer_plain.frag.spv",msl="gbuffer_plain.frag.metal",entry="main0",bindings=bindings,fingerprint="f",spv_hash="s",msl_hash="m",staged=true}
-    writer:=json_writer(context.temp_allocator)
-    shader_to_json(&writer,shader)
-    parsed,_:=json.parse(json_finish(&writer),parse_integers=true,allocator=context.temp_allocator)
-    read,ok:=shader_from_json(parsed.(json.Object),context.temp_allocator)
-    testing.expect(t,ok)
+    bindings:=[]Binding{{0,"Uniform_Buffer"},{2,"Sampler"},{35,"Texture_Table"}}
+    shader:=Shader{id="Gbuffer_Plain_Frag",name="gbuffer_plain.frag",stage=.Fragment,spv="gbuffer_plain.frag.spv",msl="gbuffer_plain.frag.metal",entry="main0",bindings=bindings,constants={"nested","other"},fingerprint="f",spv_hash="s",msl_hash="m",staged=true}
+    text,_:=serial.text_encode(shader,.Pretty,context.temp_allocator)
+    read:Shader
+    testing.expect_value(t,serial.text_decode(string(text),&read,context.temp_allocator),"")
+    testing.expect(t,shader_valid(read))
     testing.expect_value(t,read.id,shader.id)
     testing.expect_value(t,read.name,shader.name)
     testing.expect_value(t,read.stage,Stage.Fragment)
     testing.expect_value(t,read.msl,shader.msl)
     testing.expect_value(t,len(read.bindings),3)
     testing.expect_value(t,read.bindings[2],bindings[2])
+    testing.expect(t,len(read.constants)==2 && read.constants[0]=="nested" && read.constants[1]=="other","its constants keep their ids")
     testing.expect(t,!read.staged)
     // An entry that is not a shader is no entry.
-    broken,_:=json.parse_string("{\"id\":\"A\",\"name\":\"a\",\"stage\":\"Geometry\",\"bindings\":[],\"group\":[0,0,0]}",parse_integers=true,allocator=context.temp_allocator)
-    _,valid:=shader_from_json(broken.(json.Object),context.temp_allocator)
-    testing.expect(t,!valid)
+    broken:Shader
+    testing.expect(t,serial.text_decode("{\"id\":\"A\",\"name\":\"a\",\"stage\":\"Geometry\",\"bindings\":[],\"group\":[0,0,0]}",&broken,context.temp_allocator)!="")
+    for constants in ([]string{"[7]","[\"\"]","[\"a\",null]"}) {
+        unnamed:Shader
+        read_error:=serial.text_decode(fmt.tprintf("{{\"id\":\"A\",\"name\":\"a\",\"stage\":\"Compute\",\"bindings\":[],\"constants\":%s,\"group\":[0,0,0]}}",constants),&unnamed,context.temp_allocator)
+        testing.expectf(t,read_error!="" || !shader_valid(unnamed),"constants %s",constants)
+    }
 }
 
 @(test)
@@ -103,6 +84,52 @@ variants_are_the_source_and_its_variant_lines :: proc(t:^testing.T) {
     testing.expect(t,found[3].name=="tight" && found[3].defines[0]=="B")
 }
 
+// The source itself of a stage with the variant hw, or one that says so,
+// serves only the rays traced by software: Metal gets no code of it.
+@(test)
+a_stage_of_the_software_tracer_is_the_source_of_a_variant_hw_or_says_so :: proc(t:^testing.T) {
+    Case :: struct {text:string,variant:Variant,software:bool}
+    cases:=[?]Case{
+        {"//! variant hw MIRAI_HW_RT=1\n",{},true},
+        {"//! variant hw MIRAI_HW_RT=1\n",{name="hw"},false},
+        {"#include \"native.slang\"\n//! software rays\n",{},true},
+        {"//!variant hw A\n",{},true},
+        {"//! variant clip MIRAI_CLIP=1\n",{},false},
+        {"// ! software rays\n",{},false},
+        {"",{},false},
+    }
+    for c in cases {testing.expectf(t,software_rays(c.text,c.variant)==c.software,"%q of the variant %q",c.text,c.variant.name)}
+}
+
+@(test)
+constants_are_the_constant_lines_of_the_source_by_id :: proc(t:^testing.T) {
+    found:=constants("//! constant color MIRAI_COLORED\n#include \"x.slang\"\n//! constant unlayered MIRAI_NO_LAYERS\r\n//! constant\n//! constant alone\n//! constant too many words\n// ! constant no A\n//!constant tight B\n//! variant hw MIRAI_HW=1\n",context.temp_allocator)
+    testing.expect_value(t,len(found),3)
+    if len(found)!=3 {return}
+    testing.expect(t,found[0]==Constant{"color","MIRAI_COLORED"} && found[1]==Constant{"unlayered","MIRAI_NO_LAYERS"} && found[2]==Constant{"tight","B"},"in the order of their lines, which is their id")
+    testing.expect_value(t,len(constants("",context.temp_allocator)),0)
+    testing.expect_value(t,constants_problem(found,context.temp_allocator),"")
+    Case :: struct {name:string,declared:[]Constant,says:string}
+    crowded:=make([]Constant,rhi.MAX_SHADER_CONSTANTS+1,context.temp_allocator)
+    for &constant,i in crowded {constant={fmt.tprintf("c%d",i),fmt.tprintf("C%d",i)}}
+    for c in ([]Case{
+        {"as many as a pipeline sets",crowded[:rhi.MAX_SHADER_CONSTANTS],""},
+        {"one more",crowded,"at most"},
+        {"a name twice",{{"color","A"},{"color","B"}},"twice"},
+        {"a define twice",{{"color","A"},{"glass","A"}},"twice"},
+    }) {
+        problem:=constants_problem(c.declared,context.temp_allocator)
+        testing.expectf(t,(problem=="")==(c.says=="") && strings.contains(problem,c.says),"%s: %s",c.name,problem)
+    }
+    // native.slang declares the constant of each id a pipeline sets, and no other.
+    native,_:=os.read_entire_file(path_join(path_clean(ENGINE_ROOT,context.temp_allocator),"shaders/include/native.slang",allocator=context.temp_allocator),context.temp_allocator)
+    testing.expect_value(t,strings.count(string(native),"[vk::constant_id("),rhi.MAX_SHADER_CONSTANTS)
+    for id in 0..<rhi.MAX_SHADER_CONSTANTS {
+        declared:=fmt.tprintf("[vk::constant_id(%d)] const bool "+CONSTANT_SYMBOL+" = false;",id,id)
+        testing.expectf(t,strings.contains(string(native),declared),"native.slang declares %s",declared)
+    }
+}
+
 @(test)
 metal_entry_point_is_the_name_spirv_cross_gave_it :: proc(t:^testing.T) {
     name,ok:=metal_entry("#include <metal_stdlib>\nstatic inline float kernel_weight(float x) {return x;}\nkernel void main0(uint3 id [[thread_position_in_grid]])\n{\n}\n")
@@ -122,7 +149,7 @@ metal_texture_table_moves_to_the_buffer_index_of_the_rhi :: proc(t:^testing.T) {
     // What SPIRV-Cross writes for the texture table with --msl-argument-buffers.
     table:=`struct spvDescriptorSetBuffer1
 {
-    array<texture2d<float>, 1024> table [[id(34)]];
+    array<texture2d<float>, 1024> table [[id(35)]];
 };
 
 kernel void main0(constant spvDescriptorSetBuffer1& spvDescriptorSet1 [[buffer(1)]], device StructuredBuffer& queries [[buffer(1)]], sampler table_sampler [[sampler(2)]])
@@ -154,12 +181,6 @@ paths_sort_by_component_and_relate_with_slashes :: proc(t:^testing.T) {
     testing.expect(t,!path_less("a.b/c","a/z"))
     testing.expect(t,path_less("a/b","a/b/c") && !path_less("a/b/c","a/b"))
     testing.expect(t,!path_less("a/b","a/b"))
-    paths:=[]string{"s/include/x.slang","s/b.slang","s/a.slang","s/include/a/b.slang"}
-    sort_paths(paths)
-    testing.expect_value(t,paths[0],"s/a.slang")
-    testing.expect_value(t,paths[1],"s/b.slang")
-    testing.expect_value(t,paths[2],"s/include/a/b.slang")
-    testing.expect_value(t,paths[3],"s/include/x.slang")
     testing.expect_value(t,path_from("C:/e/shaders/build","C:/e/render",context.temp_allocator),"../shaders/build")
     testing.expect_value(t,path_from("C:/e/shaders/build/tests","C:/e/rhi",context.temp_allocator),"../shaders/build/tests")
     testing.expect_value(t,path_from("C:/e/out","C:/e",context.temp_allocator),"out")
@@ -184,7 +205,7 @@ resources_are_the_used_parameters_sorted_by_slot :: proc(t:^testing.T) {
     data:=reflection(t,`{"parameters":[
         {"name":"results","binding":{"kind":"descriptorTableSlot","index":4},"type":{"kind":"resource","baseShape":"structuredBuffer","access":"readWrite"}},
         {"name":"unused","binding":{"kind":"descriptorTableSlot","index":9},"type":{"kind":"resource","baseShape":"texture2D"}},
-        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":34},"type":{"kind":"array","elementCount":0,"elementType":{"kind":"resource","baseShape":"texture2D"}}},
+        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":35},"type":{"kind":"array","elementCount":0,"elementType":{"kind":"resource","baseShape":"texture2D"}}},
         {"name":"params","binding":{"kind":"descriptorTableSlot","index":1},"type":{"kind":"constantBuffer"}},
         {"name":"image","binding":{"kind":"descriptorTableSlot","index":20},"type":{"kind":"resource","baseShape":"texture2D","access":"readWrite"}},
         {"name":"scene","binding":{"kind":"descriptorTableSlot","index":29},"type":{"kind":"resource","baseShape":"accelerationStructure"}},
@@ -192,20 +213,20 @@ resources_are_the_used_parameters_sorted_by_slot :: proc(t:^testing.T) {
       "entryPoints":[{"name":"main","bindings":[
         {"name":"results","binding":{"kind":"descriptorTableSlot","index":4,"used":1}},
         {"name":"unused","binding":{"kind":"descriptorTableSlot","index":9,"used":0}},
-        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":34,"used":1}},
+        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":35,"used":1}},
         {"name":"params","binding":{"kind":"descriptorTableSlot","index":1,"used":true}},
         {"name":"image","binding":{"kind":"descriptorTableSlot","index":20,"used":1}},
         {"name":"scene","binding":{"kind":"descriptorTableSlot","index":29,"used":1}},
         {"name":"filter","binding":{"kind":"descriptorTableSlot","index":2,"used":1}}]}]}`)
     resources,problem:=reflected_resources(data,context.temp_allocator)
     testing.expect_value(t,problem,"")
-    expected:=[]Binding{{1,"Uniform_Buffer"},{2,"Sampler"},{4,"Storage_Buffer_RW"},{20,"Storage_Texture"},{29,"Accel"},{34,"Texture_Table"}}
+    expected:=[]Binding{{1,"Uniform_Buffer"},{2,"Sampler"},{4,"Storage_Buffer_RW"},{20,"Storage_Texture"},{29,"Accel"},{35,"Texture_Table"}}
     testing.expect_value(t,len(resources),len(expected))
     for binding,i in expected {if i<len(resources) {testing.expect_value(t,resources[i],binding)}}
     // A table with a size is not the one of the RHI, which grows.
     sized:=reflection(t,`{"parameters":[
-        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":34},"type":{"kind":"array","elementCount":1024,"elementType":{"kind":"resource","baseShape":"texture2D"}}}],
-      "entryPoints":[{"name":"main","bindings":[{"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":34,"used":1}}]}]}`)
+        {"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":35},"type":{"kind":"array","elementCount":1024,"elementType":{"kind":"resource","baseShape":"texture2D"}}}],
+      "entryPoints":[{"name":"main","bindings":[{"name":"table","binding":{"kind":"descriptorTableSlot","space":1,"index":35,"used":1}}]}]}`)
     _,problem=reflected_resources(sized,context.temp_allocator)
     testing.expect(t,strings.contains(problem,"texture table"),problem)
 }
@@ -216,10 +237,10 @@ resources_outside_the_portable_binding_abi_are_rejected :: proc(t:^testing.T) {
     cases:=[]Case{
         {`"binding":{"kind":"descriptorTableSlot","index":30},"type":{"kind":"constantBuffer"}`,"exceeds the 30 portable slots"},
         {`"binding":{"kind":"descriptorTableSlot","index":16},"type":{"kind":"samplerState"}`,"exceeds 16 Metal indices"},
-        {`"binding":{"kind":"descriptorTableSlot","index":34},"type":{"kind":"resource","baseShape":"texture2D"}`,"overlaps the texture table"},
+        {`"binding":{"kind":"descriptorTableSlot","index":35},"type":{"kind":"resource","baseShape":"texture2D"}`,"overlaps the texture table"},
         {`"binding":{"kind":"descriptorTableSlot","index":3},"type":{"kind":"array","elementCount":4,"elementType":{"kind":"resource","baseShape":"texture2D"}}`,"only set 0 scalar resources"},
         {`"binding":{"kind":"descriptorTableSlot","space":2,"index":3},"type":{"kind":"constantBuffer"}`,"only set 0 scalar resources"},
-        {`"binding":{"kind":"descriptorTableSlot","space":1,"index":34},"type":{"kind":"array","elementCount":0,"elementType":{"kind":"resource","baseShape":"textureCube"}}`,"must be Texture2D"},
+        {`"binding":{"kind":"descriptorTableSlot","space":1,"index":35},"type":{"kind":"array","elementCount":0,"elementType":{"kind":"resource","baseShape":"textureCube"}}`,"must be Texture2D"},
         {`"binding":{"kind":"uniform","offset":0},"type":{"kind":"scalar"}`,"explicit descriptor binding"},
         {`"binding":{"kind":"descriptorTableSlot","index":3},"type":{"kind":"resource","baseShape":"textureCube"}`,"unsupported resource type"},
         {`"binding":{"kind":"descriptorTableSlot","index":3},"type":{"kind":"struct"}`,"unsupported parameter type"},
@@ -284,8 +305,8 @@ odin_table_embeds_the_backends_compiled_with_the_reflected_bindings :: proc(t:^t
     }
     table:=string(odin_table(jobs,{.Vulkan,.Metal},"C:/e/shaders/build","C:/e/render","render","mirai:rhi","abc123","","",context.temp_allocator))
     expected:="// Code generated by mirai shaders. DO NOT EDIT.\npackage render\n\nimport \"mirai:rhi\"\n\n"+
-        "// Of the engine's shader sources these were compiled from. A shader generation\n// built for a project is loaded only while its manifest names the same one.\n"+
-        "SHADERS_FINGERPRINT :: \"abc123\"\n\nShader_Id :: enum u8 {\n\tFill_Comp,\n\tTriangle_Vert,\n}\n\nwhen rhi.SHADER_FORMAT == .Msl {\n\t@(rodata)\n\tSHADERS := [Shader_Id]rhi.Shader_Code{\n"+
+        "// Of what these stages share with the engine: their bindings, their constants and\n// the structs both read. A shader generation is loaded only while its manifest\n// names the same one, whatever the code of its stages.\n"+
+        "SHADERS_INTERFACE :: \"abc123\"\n\nShader_Id :: enum u8 {\n\tFill_Comp,\n\tTriangle_Vert,\n}\n\nwhen rhi.SHADER_FORMAT == .Msl {\n\t@(rodata)\n\tSHADERS := [Shader_Id]rhi.Shader_Code{\n"+
         "\t\t.Fill_Comp = {binary = {msl = #load(\"../shaders/build/fill.comp.metal\", string), msl_entry = \"main0\"}, name = \"fill.comp\", stage = .Compute,\n"+
         "\t\t\tthreadgroup = {64, 1, 1}, bindings = []rhi.Binding_Info{{slot = 0, kind = .Uniform_Buffer, stages = {.Compute}}, {slot = 1, kind = .Storage_Buffer, stages = {.Compute}}}},\n"+
         "\t\t.Triangle_Vert = {binary = {msl = #load(\"../shaders/build/triangle.vert.metal\", string), msl_entry = \"main0\"}, name = \"triangle.vert\", stage = .Vertex,\n"+
@@ -295,6 +316,14 @@ odin_table_embeds_the_backends_compiled_with_the_reflected_bindings :: proc(t:^t
         "\t\t.Triangle_Vert = {binary = {spirv = #load(\"../shaders/build/triangle.vert.spv\")}, name = \"triangle.vert\", stage = .Vertex,\n"+
         "\t\t\tthreadgroup = {0, 0, 0}, bindings = []rhi.Binding_Info{}},\n\t}\n}\n"
     testing.expect_value(t,table,expected)
+    // The constants of a source: each stage of it names them, and their ids are written once.
+    constant:=[]Job{
+        {source="C:/e/shaders/reflect.comp.slang",constants={"color","unlayered"},result={id="Reflect_Comp",name="reflect.comp",stage=.Compute,spv="reflect.comp.spv",constants={"color","unlayered"}}},
+        {source="C:/e/shaders/reflect.comp.slang",constants={"color","unlayered"},result={id="Reflect_Hw_Comp",name="reflect_hw.comp",stage=.Compute,spv="reflect_hw.comp.spv",constants={"color","unlayered"}}},
+    }
+    with_constants:=string(odin_table(constant,{.Vulkan},"C:/e/shaders/build","C:/e/render","render","mirai:rhi","abc123","","",context.temp_allocator))
+    testing.expect_value(t,strings.count(with_constants,"REFLECT_COMP_COLOR :: 0\nREFLECT_COMP_UNLAYERED :: 1\n"),1)
+    testing.expect_value(t,strings.count(with_constants,"bindings = []rhi.Binding_Info{}, constants = []string{\"color\", \"unlayered\"}},\n"),2)
     // One backend: the system of the other cannot build without it, and says how to have it.
     vulkan:=string(odin_table(jobs,{.Vulkan},"C:/e/shaders/build","C:/e/render","render","mirai:rhi","abc123","","",context.temp_allocator))
     testing.expect(t,strings.contains(vulkan,"when rhi.SHADER_FORMAT == .Msl {\n\t#panic(\"the shaders were generated without Metal code: run `mirai shaders --backends all`\")\n} else {\n\t@(rodata)\n"),vulkan)
@@ -306,14 +335,14 @@ odin_table_embeds_the_backends_compiled_with_the_reflected_bindings :: proc(t:^t
     testing.expect(t,strings.has_prefix(local,"// Code generated by mirai shaders. DO NOT EDIT.\npackage rhi\n\nwhen TEST_SHADERS {\n\nShader_Id :: enum u8 {\n\tTriangle_Vert,\n}\n"),"the table of the RHI tests names its own types, behind its guard")
     testing.expect(t,strings.has_suffix(local,"\t}\n}\n}\n"),"the guard closes after the table")
     testing.expect(t,strings.contains(local,"SHADERS := [Shader_Id]Shader_Code{") && strings.contains(local,"bindings = []Binding_Info{}") && strings.contains(local,"#load(\"../shaders/build/tests/triangle.vert.spv\")"))
-    testing.expect(t,!strings.contains(local,"SHADERS_FINGERPRINT"))
-    // Packed: the code is one stream per backend and each stage, of SHADERS and then of PROGRAM_SHADERS, its size in it.
-    packed:=string(odin_table(jobs,{.Vulkan,.Metal},"C:/e/shaders/build","C:/e/render","render","mirai:rhi","abc123","","",context.temp_allocator,jobs[1:],true,{.Vulkan={10,20,30},.Metal={11,21,31}}))
-    testing.expect(t,strings.contains(packed,"} else {\n\t@(rodata)\n\tSHADERS_PACKED := #load(\"../shaders/build/shaders.spv.lz\")\n\t@(rodata)\n\tSHADERS := [Shader_Id]Embedded_Shader{\n\t\t.Fill_Comp = {size = 10, code = {name = \"fill.comp\", stage = .Compute,\n"+
-        "\t\t\tthreadgroup = {64, 1, 1}, bindings = []rhi.Binding_Info{{slot = 0, kind = .Uniform_Buffer, stages = {.Compute}}, {slot = 1, kind = .Storage_Buffer, stages = {.Compute}}}}},\n"),packed)
-    testing.expect(t,strings.contains(packed,"\tPROGRAM_SHADERS := [1]Embedded_Shader{\n\t\t{size = 30, code = {name = \"triangle.vert\", stage = .Vertex,\n\t\t\tthreadgroup = {0, 0, 0}, bindings = []rhi.Binding_Info{}}},\n\t}\n}\n"),packed)
-    testing.expect(t,strings.contains(packed,"SHADERS_PACKED := #load(\"../shaders/build/shaders.metal.lz\")") && strings.contains(packed,"{size = 21, code = {binary = {msl_entry = \"main0\"}, name = \"triangle.vert\""),packed)
-    testing.expect(t,!strings.contains(packed,".spv\")") && !strings.contains(packed,".metal\", string)"),"no stage loads its own code")
+    testing.expect(t,!strings.contains(local,"SHADERS_INTERFACE"))
+    // Packed: the code is one stream per backend, and nothing in the table follows it: not even its size.
+    packed:=string(odin_table(jobs,{.Vulkan,.Metal},"C:/e/shaders/build","C:/e/render","render","mirai:rhi","abc123","","",context.temp_allocator,jobs[1:],true,true))
+    testing.expect(t,strings.contains(packed,"} else {\n\t@(private)\n\tshaders_packed :: proc \"contextless\" () -> []u8 {return #load(\"../shaders/build/shaders.spv.lz\")}\n\t@(rodata)\n\tSHADERS := [Shader_Id]rhi.Shader_Code{\n\t\t.Fill_Comp = {name = \"fill.comp\", stage = .Compute,\n"+
+        "\t\t\tthreadgroup = {64, 1, 1}, bindings = []rhi.Binding_Info{{slot = 0, kind = .Uniform_Buffer, stages = {.Compute}}, {slot = 1, kind = .Storage_Buffer, stages = {.Compute}}}},\n"),packed)
+    testing.expect(t,strings.contains(packed,"\tPROGRAM_SHADERS := [1]rhi.Shader_Code{\n\t\t{name = \"triangle.vert\", stage = .Vertex,\n\t\t\tthreadgroup = {0, 0, 0}, bindings = []rhi.Binding_Info{}},\n\t}\n}\n"),packed)
+    testing.expect(t,strings.contains(packed,"{return #load(\"../shaders/build/shaders.metal.lz\")}") && strings.contains(packed,"{binary = {msl_entry = \"main0\"}, name = \"triangle.vert\""),packed)
+    testing.expect(t,!strings.contains(packed,".spv\")") && !strings.contains(packed,".metal\", string)") && !strings.contains(packed,"size"),"no stage loads its own code or says its size")
 }
 
 // The constants shaders share with the CPU are written by the generation

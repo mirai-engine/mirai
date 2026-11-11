@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/kit"
 import "mirai:editor/history"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -18,8 +19,9 @@ import "mirai:std/serial"
 import "mirai:ui"
 
 @(private)
+@(test_world)
 Create_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -27,7 +29,7 @@ Create_Test_World :: struct {
     meshes:core.Table(erender.Mesh_Renderer),
     terrains:core.Table(terrain.Terrain),
     worlds:core.Table(core.World_Transform),
-    overrides:core.Table(erender.Material_Override),
+    overrides:core.Table(erender.Material_Values),
 }
 
 @(test)
@@ -87,16 +89,16 @@ terrain_panel_hides_creation_while_a_terrain_is_selected_and_reaches_it_on_short
     if !testing.expect_value(t,error,platform.Error.None) || p==nil {return}
     defer platform.destroy(p)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     owner:=core.create(&world.entities)
     core.add(&world.terrains,owner,terrain.Terrain{source={1,1},revision=1})
     core.add(&world.worlds,owner,core.World_Transform{})
     core.world_settle(ref)
     // On the heap: with the session and the app, a context on the stack of a test thread overflows it.
     ctx:=new(ui.Context);defer free(ctx)
-    if !testing.expect(t,ui.context_init(ctx,{})) {return}
+    if !testing.expect(t,ui.context_init(ctx,{}) && kit.theme_set(ctx)) {return}
     defer ui.context_destroy(ctx)
     app:=host.App{allocator=context.allocator,platform=p}
     selection:history.Selection;defer delete(selection.entities)
@@ -110,7 +112,7 @@ terrain_panel_hides_creation_while_a_terrain_is_selected_and_reaches_it_on_short
     tool.stroke.entity,tool.stroke.id=owner,{1,1}
     id:=ui.id_derive(ctx,PANEL_SCOPE,"panel")
     // A selected terrain shows its modes, not the controls to create another.
-    for kind in ([2]terrain.Source_Kind{.Heightfield,.Mesh}) {
+    for kind in ([2]terrain.Source_Kind{.Heightfield,.Volume}) {
         tool.stroke.source.kind=kind
         input:=ui.Input{size={1000,900},pointer_absent=true,dt=1.0/60}
         for _ in 0..<2 {create_test_tool_panel_frame(t,&s,&tool,ref,&input)}
@@ -121,18 +123,18 @@ terrain_panel_hides_creation_while_a_terrain_is_selected_and_reaches_it_on_short
     input:=ui.Input{size={1000,900},pointer_absent=true,dt=1.0/60}
     create_test_tool_panel_frame(t,&s,&tool,ref,&input)
     testing.expect(t,tool.stroke.id=={})
-    for kind in ([2]terrain.Source_Kind{.Heightfield,.Mesh}) {
+    for kind in ([2]terrain.Source_Kind{.Heightfield,.Volume}) {
         tool.create_kind=kind
         for height in ([2]f32{600,900}) {
             input=ui.Input{size={1000,height},pointer_absent=true,dt=1.0/60}
             tool.scroll=0
             for _ in 0..<2 {create_test_tool_panel_frame(t,&s,&tool,ref,&input)}
             panel,found:=ui.widget_rect(ctx,id)
-            testing.expect(t,found && panel.y==328 && panel.y+panel.h<=height-ctx.theme.margin+0.01)
+            testing.expect(t,found && panel.y==328 && panel.y+panel.h<=height-ui.metric(ctx,"margin")+0.01)
             tool.scroll=1e6
             create_test_tool_panel_frame(t,&s,&tool,ref,&input)
             button,button_found:=ui.widget_rect(ctx,ui.id_derive(ctx,id,"create"))
-            testing.expectf(t,button_found && button.y>=panel.y && button.y+button.h<=height-ctx.theme.margin,"%v at %g: New terrain is outside viewport: %v",kind,height,button)
+            testing.expectf(t,button_found && button.y>=panel.y && button.y+button.h<=height-ui.metric(ctx,"margin"),"%v at %g: New terrain is outside viewport: %v",kind,height,button)
             if height==600 {testing.expect(t,tool.scroll.y>0)}
         }
     }
@@ -151,15 +153,13 @@ create_test_tool_panel_frame :: proc(t:^testing.T,s:^editor.Session,tool:^Terrai
 }
 
 @(test)
-terrain_creation_separates_heightfield_mesh_and_volume_and_keeps_undo :: proc(t:^testing.T) {
-    create_test_plane(t,.Heightfield,0)
-    create_test_plane(t,.Mesh,0)
-    create_test_plane(t,.Mesh,8)
-    create_test_plane(t,.Volume,0)
+terrain_creation_separates_heightfield_and_volume_and_keeps_undo :: proc(t:^testing.T) {
+    create_test_plane(t,.Heightfield)
+    create_test_plane(t,.Volume)
 }
 
 @(private)
-create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
+create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/terrain/%s.terrain",root,terrain_kind_name(kind))
     assets:host.Assets
@@ -169,11 +169,11 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     if !testing.expect_value(t,error,platform.Error.None) || p==nil {return}
     defer platform.destroy(p)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     ctx:=new(ui.Context);defer free(ctx)
-    if !testing.expect(t,ui.context_init(ctx,{})) {return}
+    if !testing.expect(t,ui.context_init(ctx,{}) && kit.theme_set(ctx)) {return}
     defer ui.context_destroy(ctx)
     app:=host.App{allocator=context.allocator,assets=&assets,platform=p}
     selection:history.Selection;defer delete(selection.entities)
@@ -181,26 +181,23 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     history.edits_reset(&edits,ref)
     viewport:editor.Viewport
     gui:=editor.Editor_Ui{ctx=ctx,begun=true}
-    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,gui=&gui,id_state=331}
+    document:editor.Document
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,gui=&gui,id_state=331,document=&document}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
-    testing.expect_value(t,tool.create_kind,terrain.Source_Kind.Mesh)
-    testing.expect_value(t,tool.solid_depth,f32(8))
+    testing.expect_value(t,tool.create_kind,terrain.Source_Kind.Heightfield)
     tool.samples,tool.depth,tool.chunk_cells=5,5,4
     input:=ui.Input{size={800,600},pointer_absent=true,dt=1.0/60}
     create_test_frame(t,&s,&tool,&input)
     create_test_click(t,&s,&tool,&input,"source_kind")
     list:=ui.id_derive(ctx,ui.id(ctx,"source_kind"),"list")
-    index:=kind==.Heightfield?0:kind==.Mesh?1:2
-    for option in 0..<3 {
+    index:=int(kind)
+    for option in 0..<2 {
         rect,found:=ui.widget_rect(ctx,ui.id_derive(ctx,list,"row",option+1))
         testing.expect(t,found && rect.w>=200)
     }
     create_test_click_id(t,&s,&tool,&input,ui.id_derive(ctx,list,"row",index+1))
     testing.expect_value(t,tool.create_kind,kind)
-    tool.solid_depth=depth
     create_test_frame(t,&s,&tool,&input)
-    _,has_solid:=ui.widget_rect(ctx,ui.id(ctx,"create_solid"))
-    testing.expect_value(t,has_solid,kind==.Mesh)
     create_test_click(t,&s,&tool,&input,"create")
     if !testing.expect(t,history.edits_commit(&edits,ref,&selection)) {return}
     testing.expect_value(t,len(world.terrains.values),1)
@@ -209,18 +206,12 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     testing.expect_value(t,edits.cursor,1)
     source:terrain.Source;defer terrain.source_destroy(&source)
     testing.expect(t,!os.exists(path))
-    if !testing.expect(t,terrain.terrain_read(&source,&assets,core.get(&world.terrains,owner).source)) {return}
+    if !testing.expect(t,terrain.terrain_read(&source,&assets,core.at(&world.terrains,core.row_of(&world.terrains,owner)).source)) {return}
     testing.expect_value(t,source.kind,kind)
     // Every kind starts with one layer that covers all of it.
     testing.expect_value(t,source.layer_count,u32(1))
     testing.expect_value(t,terrain.source_weights_at(&source,terrain.source_origin(&source)),[4]f32{1,0,0,0})
-    if kind==.Mesh {
-        testing.expect_value(t,len(source.distances.pages),0)
-        mesh:geom.Mesh_Buffer;geom.mesh_buffer_init(&mesh);defer geom.mesh_buffer_destroy(&mesh)
-        testing.expect(t,terrain.source_mesh_collect(&source,&mesh))
-        testing.expect_value(t,geom.mesh_is_closed(mesh.positions[:],mesh.indices[:]),depth>0)
-        testing.expect(t,abs(geom.mesh_volume(mesh.positions[:],mesh.indices[:])-16*depth)<0.001)
-    } else if kind==.Volume {testing.expect_value(t,source.distances.size,[3]int{5,5,5})} else {testing.expect_value(t,source.heights.size,[3]int{5,1,5})}
+    if kind==.Volume {testing.expect_value(t,source.field.size,[3]int{5,5,5})} else {testing.expect_value(t,source.field.size,[3]int{5,1,5})}
     testing.expect(t,history.undo(&edits,ref,&selection))
     testing.expect_value(t,len(world.terrains.values),0)
     testing.expect(t,!editor.file_exists(&s,path))
@@ -228,6 +219,7 @@ create_test_plane :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     testing.expect_value(t,len(world.terrains.values),1)
     testing.expect_value(t,history.selection_active(&selection),owner)
     testing.expect(t,editor.file_exists(&s,path) && !os.exists(path))
+    testing.expect(t,editor.files_flush(&s,true) && os.exists(path))
 }
 
 // A Volume made on a Heightfield joins it and its field is the ground,
@@ -239,9 +231,9 @@ a_named_terrain_takes_the_name_and_a_missing_heightmap_says_its_path :: proc(t:^
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:history.Selection;defer delete(selection.entities)
     edits:history.Edits;defer history.edits_free(&edits)
@@ -259,7 +251,7 @@ a_named_terrain_takes_the_name_and_a_missing_heightmap_says_its_path :: proc(t:^
     tool.create_source,tool.samples,tool.chunk_cells=.Plane,5,4
     e:=terrain_create(&s,&tool,ref,app.assets,app.allocator,at={0,0,0},placed=true,name="Island")
     if !testing.expect(t,e!=core.NONE && history.edits_commit(&edits,ref,&selection)) {return}
-    name:=core.get(&world.names,e)
+    name:=core.edit(&world.names,e)
     testing.expect(t,name!=nil && base.text_get(name.text[:])=="Island","the entity takes the name")
     testing.expect(t,editor.file_exists(&s,fmt.tprintf("%s/terrain/Island.terrain",root)),"the file takes the name")
 }
@@ -271,9 +263,9 @@ a_volume_created_on_a_heightfield_is_filled_with_its_ground :: proc(t:^testing.T
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:history.Selection;defer delete(selection.entities)
     edits:history.Edits;defer history.edits_free(&edits)
@@ -288,7 +280,7 @@ a_volume_created_on_a_heightfield_is_filled_with_its_ground :: proc(t:^testing.T
     tool.create_kind=.Volume
     owner:=terrain_create(&s,&tool,ref,app.assets,app.allocator,at={10,0,10},placed=true,ground=ground)
     if !testing.expect(t,owner!=core.NONE && history.edits_commit(&edits,ref,&selection)) {return}
-    marker:=core.get(&world.terrains,owner)
+    marker,_:=core.get(&world.terrains,owner)
     testing.expect_value(t,marker.ground,editor.api_entity_id(ref,ground))
     volume:terrain.Source;defer terrain.source_destroy(&volume)
     if !testing.expect(t,terrain.terrain_read(&volume,&assets,marker.source)) {return}
@@ -299,63 +291,12 @@ a_volume_created_on_a_heightfield_is_filled_with_its_ground :: proc(t:^testing.T
 }
 
 @(test)
-mesh_terrain_creation_from_selection_preserves_authoring_and_undo :: proc(t:^testing.T) {
-    root:=base.test_folder(t,"terrain")
-    path:=fmt.tprintf("%s/terrain/3D Terrain.terrain",root)
-    assets:host.Assets
-    if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
-    defer host.assets_destroy(&assets)
-    world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
-    app:=host.App{allocator=context.allocator,assets=&assets}
-    selection:history.Selection;defer delete(selection.entities)
-    edits:history.Edits;defer history.edits_free(&edits)
-    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,id_state=971}
-    owner:=editor.entity_create(&s,{preset=.Cube,name="Rock",transform={position={4,5,6},rotation=1,scale={2,3,4}}})
-    core.world_settle(ref)
-    static:=core.get(&world.meshes,owner)^
-    static.materials[0]={71,72};core.add(&world.meshes,owner,static)
-    core.world_settle(ref)
-    transform:=core.get(&world.transforms,owner)^
-    history.selection_set(&selection,{owner})
-    history.edits_reset(&edits,ref)
-    tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
-    tool.create_source=.Selection;tool.create_kind=.Heightfield
-    terrain_create(&s,&tool,ref,app.assets,app.allocator)
-    testing.expect(t,!edits.open && !edits.commit && !os.exists(path))
-    testing.expect_value(t,len(world.terrains.values),0)
-    tool.create_kind=.Mesh
-    terrain_create(&s,&tool,ref,app.assets,app.allocator)
-    if !testing.expect(t,history.edits_commit(&edits,ref,&selection)) {return}
-    testing.expect_value(t,world.entities.alive,1)
-    testing.expect(t,core.has(&world.terrains,owner))
-    testing.expect_value(t,core.get(&world.transforms,owner)^,transform)
-    // The material it showed over its mesh is the one of the source.
-    testing.expect(t,!core.has(&world.meshes,owner))
-    testing.expect_value(t,history.selection_active(&selection),owner)
-    source:terrain.Source;defer terrain.source_destroy(&source)
-    loaded:=terrain.terrain_read(&source,&assets,core.get(&world.terrains,owner).source)
-    testing.expect(t,loaded && source.kind==.Mesh && len(source.distances.pages)==0 && !os.exists(path))
-    testing.expect_value(t,source.layers[0].material,static.materials[0])
-    testing.expect(t,history.undo(&edits,ref,&selection))
-    testing.expect(t,!core.has(&world.terrains,owner))
-    testing.expect_value(t,core.get(&world.meshes,owner)^,static)
-    testing.expect_value(t,core.get(&world.transforms,owner)^,transform)
-    testing.expect(t,history.redo(&edits,ref,&selection))
-    testing.expect(t,core.has(&world.terrains,owner))
-}
-
-@(test)
 heightmap_dialog_creates_scaled_terrain_with_one_undo_step :: proc(t:^testing.T) {
-    create_test_heightmap(t,.Heightfield,0)
-    create_test_heightmap(t,.Mesh,0)
-    create_test_heightmap(t,.Mesh,8)
+    create_test_heightmap(t,.Heightfield)
 }
 
 @(private)
-create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
+create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind) {
     root:=base.test_folder(t,"terrain")
     path:=fmt.tprintf("%s/height16.png",root)
     saved:=fmt.tprintf("%s/terrain/%s.terrain",root,terrain_kind_name(kind))
@@ -375,11 +316,11 @@ create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     if !testing.expect_value(t,error,platform.Error.None) || p==nil {return}
     defer platform.destroy(p)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     ctx:=new(ui.Context);defer free(ctx)
-    if !testing.expect(t,ui.context_init(ctx,{})) {return}
+    if !testing.expect(t,ui.context_init(ctx,{}) && kit.theme_set(ctx)) {return}
     defer ui.context_destroy(ctx)
     app:=host.App{allocator=context.allocator,assets=&assets,platform=p}
     selection:history.Selection;defer delete(selection.entities)
@@ -390,7 +331,7 @@ create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     gui:=editor.Editor_Ui{ctx=ctx,begun=true}
     s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,viewport=&viewport,gui=&gui,id_state=731}
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
-    tool.create_kind=kind;tool.create_source=.Heightmap;tool.solid_depth=depth;tool.height_scale=20;tool.height_offset=-3;tool.cell=0.5;tool.chunk_cells=4
+    tool.create_kind=kind;tool.create_source=.Heightmap;tool.height_scale=20;tool.height_offset=-3;tool.cell=0.5;tool.chunk_cells=4
     input:=ui.Input{size={800,600},pointer_absent=true,dt=1.0/60}
     create_test_frame(t,&s,&tool,&input)
     create_test_click(t,&s,&tool,&input,"heightmap")
@@ -416,31 +357,18 @@ create_test_heightmap :: proc(t:^testing.T,kind:terrain.Source_Kind,depth:f32) {
     testing.expect_value(t,edits.cursor,1)
     e:=history.selection_active(&selection)
     testing.expect(t,core.has(&world.terrains,e) && core.has(&world.ids,e))
-    testing.expect_value(t,core.get(&world.transforms,e).position,[3]f32{7,0,9})
+    testing.expect_value(t,core.at(&world.transforms,core.row_of(&world.transforms,e)).position,[3]f32{7,0,9})
     testing.expect(t,!core.has(&world.meshes,e),"a terrain shows the materials of its source")
-    marker:=core.get(&world.terrains,e)^
+    marker:=core.at(&world.terrains,core.row_of(&world.terrains,e))
     testing.expect(t,marker.solid && marker.revision==1)
     source:terrain.Source;defer terrain.source_destroy(&source)
     if !testing.expect(t,terrain.terrain_read(&source,&assets,marker.source) && !os.exists(saved)) {return}
     testing.expect_value(t,source.kind,kind)
     testing.expect_value(t,source.cell,f32(0.5))
     values:=[6]u16{0,1,255,256,32768,65535}
-    if kind==.Heightfield {
-        testing.expect_value(t,source.samples,[3]u32{3,1,2})
-        // Its file keeps them to the step of its heights, finer than 8 bits.
-        for value,i in values {testing.expect_value(t,terrain.source_value(&source,{i%3,0,i/3}),terrain.height_quantize(f32(value)/65535*20-3))}
-    } else {
-        testing.expect_value(t,len(source.distances.pages),0)
-        mesh:geom.Mesh_Buffer;geom.mesh_buffer_init(&mesh);defer geom.mesh_buffer_destroy(&mesh)
-        testing.expect(t,terrain.source_mesh_collect(&source,&mesh))
-        testing.expect_value(t,geom.mesh_is_closed(mesh.positions[:],mesh.indices[:]),depth>0)
-        for value,i in values {
-            expected:=[3]f32{(f32(i%3)-1)*0.5,f32(value)/65535*20-3,(f32(i/3)-0.5)*0.5}
-            found:=false
-            for p in mesh.positions {if p==expected {found=true;break}}
-            testing.expectf(t,found,"%v heightmap lost sample %d at %v",kind,i,expected)
-        }
-    }
+    testing.expect_value(t,source.samples,[3]u32{3,1,2})
+    // Its file keeps them to the step of its heights, finer than 8 bits.
+    for value,i in values {testing.expect_value(t,terrain.source_value(&source,{i%3,0,i/3}),terrain.height_quantize(f32(value)/65535*20-3))}
     testing.expect(t,history.undo(&edits,ref,&selection))
     testing.expect_value(t,len(world.terrains.values),0)
     testing.expect(t,!editor.file_exists(&s,saved))
@@ -458,9 +386,9 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
     defer host.assets_destroy(&assets)
     world:Create_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     app:=host.App{allocator=context.allocator,assets=&assets}
     selection:history.Selection;defer delete(selection.entities)
     edits:history.Edits;defer history.edits_free(&edits)
@@ -470,12 +398,13 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     tool:Terrain_Tool;tool_ready(&tool);defer terrain_tool_free(&tool)
     tool.create_kind=.Heightfield;tool.samples,tool.chunk_cells=5,4
     terrain_create(&s,&tool,ref,app.assets,app.allocator)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     if !testing.expect_value(t,len(world.terrains.values),1) {return}
     owner:=world.terrains.entities[0]
     id:=world.terrains.values[0].source
-    operand:=editor.entity_create(&s,{preset=.Cube,name="Operand"})
-    core.test_world_settle(&world)
+    operand:=editor.entity_create(&s,{name="Operand"})
+    core.add(&world.meshes,operand,erender.Mesh_Renderer{shape=.Cube})
+    test_world_settle(&world)
     history.selection_set(&selection,{owner,operand})
     history.edits_reset(&edits,ref)
     original:=test_held(t,&assets,relative)
@@ -486,16 +415,16 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     if !testing.expect(t,stroke_baseline(&tool)) {return}
     change:=terrain.source_edit(&tool.stroke.source,{kind=.Raise,center={0,0,0},radius=1,amount=2})
     if !testing.expect(t,change.changed && change.error==.None) {return}
-    cached_values:=raw_data(tool.stroke.source.heights.pages[0].values)
+    cached_values:=raw_data(tool.stroke.source.field.pages[0].values)
     stroke_end(&s,&tool,ref,app.assets)
     if !testing.expect(t,history.edits_commit(&edits,ref,&selection)) {return}
     testing.expect_value(t,edits.cursor,1)
     testing.expect_value(t,len(edits.steps),1)
-    testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(2))
+    testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(2))
     testing.expect_value(t,tool.stroke.id,id)
     testing.expect_value(t,tool.stroke.revision,u32(2))
-    testing.expect_value(t,raw_data(tool.stroke.source.heights.pages[0].values),cached_values)
-    testing.expect(t,!tool.stroke.active && !tool.stroke.changed && !tool.stroke.applied_once)
+    testing.expect_value(t,raw_data(tool.stroke.source.field.pages[0].values),cached_values)
+    testing.expect(t,!tool.stroke.active && !tool.stroke.changed)
     committed:=test_held(t,&assets,relative)
     defer delete(committed)
     testing.expect(t,string(committed)!=string(original))
@@ -507,7 +436,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     restored:=test_held(t,&assets,relative)
     defer delete(restored)
     testing.expect_value(t,string(restored),string(original))
-    testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(1))
+    testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(1))
     serial_before,bytes_before:=edits.serial,edits.bytes
     stats_before:=edits.stats
     stroke_free(&tool)
@@ -516,7 +445,7 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     change=terrain.source_edit(&tool.stroke.source,{kind=.Raise,center={0,0,0},radius=1,amount=9})
     if !testing.expect(t,change.changed && change.error==.None) {return}
     // A height the format refuses: the file cannot be written.
-    terrain.grid_set(&tool.stroke.source.heights,0,0,2*terrain.HEIGHT_LIMIT)
+    terrain.grid_set(&tool.stroke.source.field,0,0,2*terrain.HEIGHT_LIMIT)
     stroke_end(&s,&tool,ref,app.assets,consume=operand,label="Subtract terrain")
     testing.expect_value(t,string(s.toast[:s.toast_length]),"The terrain could not be written")
     testing.expect_value(t,edits.cursor,0)
@@ -525,35 +454,27 @@ failed_terrain_save_preserves_redo_snapshot_scene_and_committed_bytes :: proc(t:
     testing.expect_value(t,edits.bytes,bytes_before)
     testing.expect_value(t,edits.stats,stats_before)
     testing.expect(t,!edits.open && !edits.commit)
-    testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(1))
+    testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(1))
     testing.expect_value(t,editor.revision_applied(&tool.history,id).revision,u32(1))
     testing.expect(t,core.alive(&world.entities,operand) && core.has(&world.meshes,operand))
     testing.expect_value(t,len(selection.entities),2)
     testing.expect_value(t,history.selection_active(&selection),operand)
-    testing.expect(t,tool.stroke.id=={} && len(tool.stroke.source.heights.pages)==0)
+    testing.expect(t,tool.stroke.id=={} && len(tool.stroke.source.field.pages)==0)
     // The step to revision 2 still holds what redo brings back.
     testing.expect_value(t,len(tool.steps),1)
     at:=editor.revision_find(&tool.history,id,1,2)
-    if !testing.expect(t,at>=0 && len(tool.steps[at].heights.pages)==1) {return}
+    if !testing.expect(t,at>=0 && len(tool.steps[at].field.pages)==1) {return}
     redo_step:=&tool.steps[at]
     testing.expect_value(t,redo_step.info.revision,u32(2))
-    for value,i in redo_values {testing.expect_value(t,redo_step.heights.pages[0].page.values[i],value)}
+    for value,i in redo_values {testing.expect_value(t,redo_step.field.pages[0].page.values[i],value)}
     after_failure:=test_held(t,&assets,relative)
     defer delete(after_failure)
     testing.expect_value(t,string(after_failure),string(original))
     if !testing.expect(t,history.redo(&edits,ref,&selection)) {return}
     terrain_sync(&s,&tool,core.read(&world.terrains),app.assets)
-    testing.expect_value(t,core.get(&world.terrains,owner).revision,u32(2))
+    testing.expect_value(t,core.at(&world.terrains,core.row_of(&world.terrains,owner)).revision,u32(2))
     testing.expect_value(t,editor.revision_applied(&tool.history,id).revision,u32(2))
     after_redo:=test_held(t,&assets,relative)
     defer delete(after_redo)
     testing.expect_value(t,string(after_redo),string(committed))
-}
-
-// What git and the tools know of the kinds of the plugin without loading it.
-@(test)
-the_manifest_declares_the_asset_kinds_the_plugin_registers :: proc(t:^testing.T) {
-    m,error:=project.plugin_read(#directory+"../plugin.mirai")
-    testing.expect_value(t,error.code,project.Error_Code.None)
-    testing.expect_value(t,editor.asset_kinds_differ(TERRAIN_KINDS_DEFAULT.provider,&m),"")
 }

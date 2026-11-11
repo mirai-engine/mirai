@@ -1,9 +1,11 @@
 package author
 
 import "core:fmt"
+import "core:os"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import "mirai:core"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -11,7 +13,7 @@ import "mirai:ui"
 
 
 // A project whose .ui only the memory of the registry holds, as an editor
-// leaves them unsaved.
+// has them until their step ends.
 @(private="file")
 Project :: struct {
     root:string,
@@ -289,4 +291,30 @@ a_parameter_moved_in_a_widget_moves_what_its_uses_give :: proc(t:^testing.T) {
     project_records(t,&p,SCREEN_FILE_ID,&fresh)
     gone:=records_params_follow(p.assets,&fresh,ROW_ID,params_changes(before,before[1:]))
     testing.expect(t,gone.changed)
+}
+
+// The procedure a Draw names is one the game declares: one it lacks, or no
+// procedure at all, is a problem that says what to write, before it runs.
+@(test)
+draws_the_game_lacks_are_problems_before_it_runs :: proc(t:^testing.T) {
+    p:Project
+    if !project_init(t,&p,"draw-names") {return}
+    defer project_destroy(&p)
+    screen,ok:=project_doc(t,&p,"screen.ui",SCREEN_FILE_ID,`{"nodes":[{"name":"menu","kind":"Box","children":[
+        {"name":"map","kind":"Draw","draw":"minimap","width":40,"height":40},{"name":"blank","kind":"Draw"}]}]}`)
+    if !ok {return}
+    found:[4]Bind_Problem
+    declared:=[1]core.Draw_Info{{name="minimap"}}
+    info:=core.World_Info{draws=declared[:]}
+    testing.expect_value(t,draw_names_check(nil,&screen,found[:]),0)
+    if testing.expect_value(t,draw_names_check(&info,&screen,found[:]),1) {
+        text:=bind_problem_text(p.assets,&found[0])
+        testing.expectf(t,strings.contains(text,"Draw 'blank' has no draw"),"%s",text)
+    }
+    info.draws=nil
+    if testing.expect_value(t,draw_names_check(&info,&screen,found[:]),2) {
+        text:=bind_problem_text(p.assets,&found[0])
+        testing.expectf(t,strings.contains(text,"Draw 'map' names 'minimap'") && strings.contains(text,`@(draw="minimap")`),"%s",text)
+    }
+    testing.expect_value(t,draw_names_check(&info,&screen,found[:1]),1)
 }

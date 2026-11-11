@@ -39,7 +39,7 @@ FONT_DEFAULTS :: 4 // how many
 
 // The characters of the atlas: runs of code points, each with its glyphs
 // from index on, and the symbols of FONT_EXTRA. Latin glyphs are their code
-// point. The rest are drawn as '?'.
+// point. The rest are drawn as '?' (font_glyph).
 Font_Range :: struct {first,last:rune,index:int}
 FONT_RANGES :: [?]Font_Range{
     {0x0000,0x017f,0},                                // Basic Latin, Latin-1 Supplement, Latin Extended-A
@@ -54,7 +54,7 @@ FONT_FACES_MAX :: 96  // faces of a font on demand, with those asked for; other 
 FONT_DENSITY_MIN :: f32(0.5)
 FONT_DENSITY_MAX :: f32(4)
 
-// The faces of the editor, in CSS pixels: the sizes of THEME_EDITOR and those
+// The faces of the editor, in CSS pixels: the sizes of the editor's theme and those
 // a step around them.
 Face_Desc :: struct {font:u8,size:i32}
 FONT_FACES_EDITOR :: [?]Face_Desc{
@@ -653,16 +653,22 @@ font_glyph_rasterize :: proc(font:^Font,s:^Font_Session,face_index,index:int,gro
     return .Done
 }
 
-// The glyph of character among those of a font: '?' for the ones it lacks.
+// The font and the glyph that draw character in font f of a ready font: its
+// own, that of FONT_REGULAR (Inter in the fonts of the application) when f
+// lacks it, and '?' of f when both do.
 @(private)
-metrics_index :: #force_inline proc "contextless" (m:^Font_Metrics,character:rune) -> int {
-    index:=-1
+font_glyph :: #force_inline proc "contextless" (font:^Font,f:int,character:rune) -> (from,index:int) #no_bounds_check {
+    index=-1
     for r in FONT_RANGES {
         if character>=r.first && character<=r.last {index=r.index+int(character-r.first);break}
     }
     if index<0 {for extra,i in FONT_EXTRA {if character==extra {index=FONT_EXTRA_INDEX+i;break}}}
-    if index<0 || !m.available[index] {index=int('?')}
-    return index
+    switch {
+    case index<0:
+    case font.metrics[f].available[index]:return f,index
+    case font.metrics[FONT_REGULAR].available[index]:return FONT_REGULAR,index
+    }
+    return f,int('?')
 }
 
 // Font units of kerning between two glyphs of a font.
@@ -674,9 +680,12 @@ metrics_kerning :: #force_inline proc "contextless" (m:^Font_Metrics,left,right:
     return f32(k.values[int(k.left[left])*k.columns+int(k.right[right])])
 }
 
+// The glyph of character in font f or in the font that draws what f lacks
+// (font_glyph); -1 without an atlas.
 font_index :: #force_inline proc "contextless" (font:^Font,f:int,character:rune) -> int {
     if font==nil || !font.ready || f<0 || f>=font.font_count {return -1}
-    return metrics_index(&font.metrics[f],character)
+    _,index:=font_glyph(font,f,character)
+    return index
 }
 
 // The face of font f rasterized closest to pixels device pixels per em.
@@ -691,8 +700,14 @@ font_face :: proc "contextless" (font:^Font,f:int,pixels:f32) -> ^Face {
 }
 
 font_advance :: proc "contextless" (font:^Font,f:int,character:rune,size:f32) -> f32 {
-    if character=='\t' {return font_advance(font,f,' ',size)*4}
-    if index:=font_index(font,f,character);index>=0 {return font.metrics[f].advances[index]*size}
+    switch character {
+    case '\t':return font_advance(font,f,' ',size)*4
+    case '\n',0xad,0x200b:return 0
+    }
+    if font!=nil && font.ready && f>=0 && f<font.font_count {
+        from,index:=font_glyph(font,f,character)
+        return font.metrics[from].advances[index]*size
+    }
     // A context without a font still lays out; drawing text requires the atlas.
     if character==' ' {return size*0.25}
     return size*0.5
@@ -710,32 +725,28 @@ font_kern :: proc "contextless" (font:^Font,f,left,right:int,size:f32) -> f32 {
 // character before and the advance of the character. It reads the font once.
 Text_Pen :: struct {
     font:^Font,
-    metrics:^Font_Metrics, // nil without an atlas: characters take the widths of font_advance
     f:int,
     size:f32,
-    unit:f32,              // layout units per font unit
-    previous:int,          // glyph of the last character, -1 at the start, after a tab or a newline
+    ready:bool,    // false without an atlas: characters take the widths of font_advance
+    previous:int,  // glyph of the last character, -1 at the start, after a tab, a newline or what is not drawn
+    from:int,      // the font of that glyph (font_glyph)
 }
 text_pen :: proc "contextless" (font:^Font,size:f32,f:int=0) -> Text_Pen {
-    pen:=Text_Pen{font=font,f=f,size=size,previous=-1}
-    if font!=nil && font.ready && f>=0 && f<font.font_count {
-        pen.metrics=&font.metrics[f]
-        pen.unit=pen.metrics.unit*size
-    }
-    return pen
+    return {font=font,f=f,size=size,previous=-1,from=f,ready=font!=nil && font.ready && f>=0 && f<font.font_count}
 }
 // How far character moves the pen: its kerning with the character before
-// (kern) and its advance.
+// in the same font (kern) and its advance. A soft hyphen and a zero width
+// space take no room and draw nothing.
 text_pen_step :: #force_inline proc "contextless" (pen:^Text_Pen,character:rune) -> (kern,advance:f32) #no_bounds_check {
-    m:=pen.metrics
-    if m==nil || character=='\t' || character=='\n' {
+    if !pen.ready || character=='\t' || character=='\n' || character==0xad || character==0x200b {
         pen.previous=-1
-        return 0,font_advance(pen.font,pen.f,character,pen.size) if character!='\n' else 0
+        return 0,font_advance(pen.font,pen.f,character,pen.size)
     }
-    // metrics_index gives a glyph of the atlas.
-    index:=metrics_index(m,character)
-    kern=metrics_kerning(m,pen.previous,index)*pen.unit
-    pen.previous=index
+    // font_glyph gives a glyph of the atlas.
+    from,index:=font_glyph(pen.font,pen.f,character)
+    m:=&pen.font.metrics[from]
+    if from==pen.from {kern=metrics_kerning(m,pen.previous,index)*m.unit*pen.size}
+    pen.previous,pen.from=index,from
     return kern,m.advances[index]*pen.size
 }
 
@@ -762,71 +773,6 @@ TEXT_LINE :: f32(2478.0/2048.0)
 // centers a line, half of what the height has beyond the box goes above it.
 text_leading :: proc "contextless" (size,height:f32) -> f32 {
     return (height-size*TEXT_LINE)*0.5
-}
-
-// The next line of text no wider than width: broken at a newline, or with
-// Words where the layout breaks a paragraph (layout_break_next). A line keeps
-// the spaces before its newline and none of those it wraps at.
-text_line :: proc "contextless" (font:^Font,text:string,size,width:f32,wrap:Text_Wrap,f:int=0) -> (line,rest:string,line_width:f32) {
-    space:=text_width(font," ",size,f)
-    b:=layout_break(font,text,size,f,space,width if wrap==.Words else max(f32))
-    start,length,taken,_:=layout_break_next(&b)
-    end:=int(start+length)
-    switch {
-    case end+1<len(text) && text[end]==' ' && text[end+1]=='\n':
-        end+=1
-        taken+=space
-    case b.more:
-        for end>int(start) && text[end-1]==' ' {end-=1;taken-=space}
-    }
-    if b.more {rest=text[b.start:]}
-    return text[start:end],rest,taken
-}
-
-// Walks the lines of a wrapped text in order without storing them: each call
-// to text_lines_next gives the byte range of the next one. A text that ends
-// with a newline has one more, empty, line.
-Text_Lines :: struct {
-    font:^Font,
-    rest:string,
-    size,width:f32,
-    wrap:Text_Wrap,
-    f,offset:int,
-    row:int,  // of the line text_lines_next gave last
-    tail,done:bool,
-}
-text_lines :: proc "contextless" (font:^Font,text:string,size,width:f32,wrap:Text_Wrap,f:int=0) -> Text_Lines {
-    return {font=font,rest=text,size=size,width=width,wrap=wrap,f=f,row=-1}
-}
-text_lines_next :: proc "contextless" (it:^Text_Lines) -> (start,end:int,ok:bool) {
-    if it.done {return}
-    it.row+=1
-    if it.tail {
-        it.tail,it.done=false,true
-        return it.offset,it.offset,true
-    }
-    line,next,_:=text_line(it.font,it.rest,it.size,it.width,it.wrap,it.f)
-    start,end=it.offset,it.offset+len(line)
-    consumed:=len(it.rest)-len(next)
-    broke:=consumed>len(line) && it.rest[consumed-1]=='\n'
-    it.offset+=consumed
-    it.rest=next
-    if next=="" {
-        if broke {it.tail=true} else {it.done=true}
-    }
-    return start,end,true
-}
-
-// Lines text takes when wrapped to width.
-text_line_count :: proc "contextless" (font:^Font,text:string,size,width:f32,wrap:Text_Wrap,f:int=0) -> int {
-    count:=0
-    rest:=text
-    for {
-        _,rest,_=text_line(font,rest,size,width,wrap,f)
-        count+=1
-        if rest=="" {break}
-    }
-    return count
 }
 
 ELLIPSIS :: "…"

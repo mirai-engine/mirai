@@ -12,6 +12,7 @@ import "mirai:project"
 import "mirai:editor/acp"
 import "mirai:editor/api"
 import "mirai:std/base"
+import "mirai:std/subprocess"
 import "mirai:ui"
 
 AI_TASK_CAPACITY :: 16
@@ -102,7 +103,6 @@ Ai_Task :: struct {
     options:[AI_QUESTION_BYTES]u8, // one choice per line
     options_length:int,
     review_finished:bool,
-    review_deferred:bool, // restored while another scene was open: its review waits for that scene
     image_write:host.Png_Write, // of region.png, while a job writes it
     references:int, // the reference images of the message, reference-<n>.jpg from 1
     attachments:[AI_ATTACHMENTS]base.Asset_Id, // the assets the message is about
@@ -160,10 +160,10 @@ Ai :: struct {
     landed_seen:u64, // Store.landed when what shows rows of the store last read them
     login:bool,
     login_provider:Ai_Provider,
-    login_process:platform.Process,
+    login_process:subprocess.Process,
     login_cancelled:bool,
     connection_pending:Ai_Connection_Pending,
-    installer:platform.Process,
+    installer:subprocess.Process,
     install_operation:[32]u8,
     install_cancel:[AI_PATH_BYTES]u8,
     install_provider:Ai_Provider,
@@ -241,7 +241,8 @@ Ai :: struct {
     play_after:[AI_PATH_BYTES]u8, // a scene an answer asked to play: it plays once Open has put it in place
 }
 
-AI_DEFAULT :: Ai{view={show_agents_in_scene=true}}
+AI_VIEW_DEFAULT :: Ai_View{show_agents_in_scene=true}
+AI_DEFAULT :: Ai{view=AI_VIEW_DEFAULT}
 
 ai_task_find :: proc(m:^Ai,id:int) -> ^Ai_Task {
     for &task in m.tasks[:m.task_count] {
@@ -266,6 +267,7 @@ ai_task_reviewable :: proc "contextless" (task:^Ai_Task) -> bool {
 @(private)
 ai_document_closed :: proc(s:^Session,world:rawptr) {
     if s.ai==nil {return}
+    if world==s.edit_world {s.ai.pending=false}
     for &task in s.ai.tasks[:s.ai.task_count] {
         if task.world!=world || task.document_closed {continue}
         task.document_closed=true
@@ -290,7 +292,7 @@ ai_review_waiting_count :: proc(s:^Session) -> (count:int) {
 }
 
 // Stops the turns of the document that are still working. The API refuses
-// their calls from now on: what is saved or discarded next is all they did.
+// their calls from now on: what they wrote until then is all they did.
 ai_working_stop :: proc(s:^Session) {
     if s.ai==nil {return}
     for &task in s.ai.tasks[:s.ai.task_count] {
@@ -356,7 +358,6 @@ ai_input :: proc(s:^Session,m:^Ai) {
     for &task in m.tasks[:m.task_count] {
         if task.image_write.busy {host.app_png_write_poll(s.app,&task.image_write)}
         for &write in task.reference_writes {if write.busy {host.app_png_write_poll(s.app,&write)}}
-        if task.review_deferred {ai_task_review_follow(s,&task)}
     }
     if m.pending && s.frame>m.submit_frame {
         m.pending=false

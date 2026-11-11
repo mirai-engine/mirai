@@ -27,6 +27,7 @@ import "mirai:std/jobs"
 @(private="file") MAIN :: base.Asset_Id{4,1}
 @(private="file") HUD :: base.Asset_Id{5,1}
 @(private="file") PROP :: base.Asset_Id{6,1}
+@(private="file") LAMP :: base.Asset_Id{6,2}
 @(private="file") ABSENT :: base.Asset_Id{9,9}
 
 @(private="file")
@@ -67,7 +68,7 @@ scene_write :: proc(t:^testing.T,types:^asset.Types,path:string,kind:asset.Fourc
         return
     }
     scene:asset.Scene
-    asset.scene_init(&scene,types,kind,id)
+    asset.scene_init(&scene,types,id)
     defer asset.scene_destroy(&scene)
     asset.scene_entity_add(&scene,1,0,"thing")
     shown:=Shown{named}
@@ -76,7 +77,7 @@ scene_write :: proc(t:^testing.T,types:^asset.Types,path:string,kind:asset.Fourc
 }
 
 // main.scene -> crate.mesh -> wood.mat -> wood_color.tex, wood_normal.tex.
-// hud.ui -> icon.tex. prop.prefab -> crate.mesh. spare.mat -> blocks.tex,
+// hud.ui -> icon.tex. prop.scene -> crate.mesh. spare.mat -> blocks.tex,
 // lonely.mat -> unused.tex and lost.mat -> a texture that is no file: nothing
 // names them. notes.txt is no asset.
 @(private="file")
@@ -97,7 +98,7 @@ project_write :: proc(t:^testing.T,types:^asset.Types,assets:string) {
     testing.expect(t,asset.mesh_build({vertices=corners[:]},{0,2,1},nil,&geometry,context.temp_allocator))
     testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/models/crate.mesh",assets),types,{id=CRATE,geometry=geometry,slots=slots[:]}),asset.Error.None)
     scene_write(t,types,fmt.tprintf("%s/scenes/main.scene",assets),asset.KIND_SCENE,MAIN,CRATE)
-    scene_write(t,types,fmt.tprintf("%s/prefabs/prop.prefab",assets),asset.KIND_PREFAB,PROP,CRATE)
+    scene_write(t,types,fmt.tprintf("%s/prefabs/prop.scene",assets),asset.KIND_SCENE,PROP,CRATE)
     scene_write(t,types,fmt.tprintf("%s/ui/hud.ui",assets),asset.KIND_UI,HUD,ICON)
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/notes.txt",assets),"not an asset")==nil)
 }
@@ -136,7 +137,7 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     report:=cook_assets({assets=assets,output=output,manifest=manifest,allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,dropped:=names(&report)
-    testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh prefabs/prop.prefab scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")
+    testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh prefabs/prop.scene scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")
     testing.expect_value(t,dropped,"materials/lonely.mat materials/lost.mat materials/spare.mat notes.txt textures/blocks.tex textures/icon.tex textures/unused.tex ui/hud.ui ")
     testing.expect(t,report.roots==2 && len(report.missing)==0 && report.removed==0)
     for file in report.dropped {testing.expect(t,file.asset==(file.path!="notes.txt") && file.bytes>0)}
@@ -174,7 +175,7 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     report=cook_assets({assets=assets,output=output,manifest=manifest,allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,dropped=names(&report)
-    testing.expect_value(t,kept,"materials/lost.mat materials/spare.mat materials/wood.mat models/crate.mesh notes.txt prefabs/prop.prefab scenes/main.scene textures/blocks.tex textures/icon.tex textures/wood_color.tex textures/wood_normal.tex ui/hud.ui ")
+    testing.expect_value(t,kept,"materials/lost.mat materials/spare.mat materials/wood.mat models/crate.mesh notes.txt prefabs/prop.scene scenes/main.scene textures/blocks.tex textures/icon.tex textures/wood_color.tex textures/wood_normal.tex ui/hud.ui ")
     testing.expect_value(t,dropped,"materials/lonely.mat textures/unused.tex ")
     testing.expect_value(t,report.roots,6)
     testing.expect(t,len(report.missing)==1 && report.missing[0].path=="materials/lost.mat" && report.missing[0].id==ABSENT,"a dependency that is no file is reported")
@@ -202,7 +203,7 @@ a_cook_ships_what_the_scenes_and_the_roots_reach_as_the_runtime_loads_it :: proc
     report=cook_assets({assets=assets,output=server,manifest=manifest,server=true,allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,_=names(&report)
-    testing.expect_value(t,kept,"materials/lost.mat materials/spare.mat materials/wood.mat models/crate.mesh notes.txt prefabs/prop.prefab scenes/main.scene ")
+    testing.expect_value(t,kept,"materials/lost.mat materials/spare.mat materials/wood.mat models/crate.mesh notes.txt prefabs/prop.scene scenes/main.scene ")
     testing.expect(t,len(report.missing)==1 && report.missing[0].id==ABSENT,"a texture a material names is not missing on a server")
     testing.expect(t,!os.exists(fmt.tprintf("%s/textures",server)) && !os.exists(fmt.tprintf("%s/ui",server)))
     summary=cook_summary(&report,context.temp_allocator)
@@ -229,8 +230,16 @@ a_cook_that_cannot_be_what_was_asked_says_why :: proc(t:^testing.T) {
         report:=cook_assets({assets=assets,output=output,manifest=manifest,allocator=context.temp_allocator})
         testing.expectf(t,report.error==.Root_Missing && report.detail==root && !os.exists(output),"%s: %v %s",root,report.error,report.detail)
     }
+    // Two files with one id, as a copy made outside the editor has: which one is the asset depends on the machine.
+    testing.expect(t,os.remove(manifest)==nil)
+    copy:=fmt.tprintf("%s/materials/wood copy.mat",assets)
+    wood,_:=os.read_entire_file(fmt.tprintf("%s/materials/wood.mat",assets),context.temp_allocator)
+    testing.expect(t,os.write_entire_file(copy,wood)==nil)
+    twins:=cook_assets({assets=assets,output=output,allocator=context.temp_allocator})
+    testing.expectf(t,twins.error==.Duplicate_Id && strings.contains(twins.detail,"materials/wood.mat") && strings.contains(twins.detail,"materials/wood copy.mat") && !os.exists(output),"%v %s",twins.error,twins.detail)
+    testing.expect(t,os.remove(copy)==nil)
     // An output that cannot be a folder.
-    testing.expect(t,os.remove(manifest)==nil && os.write_entire_file(fmt.tprintf("%s/blocked",folder),"a file")==nil)
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/blocked",folder),"a file")==nil)
     blocked:=cook_assets({assets=assets,output=fmt.tprintf("%s/blocked/assets",folder),allocator=context.temp_allocator})
     testing.expect_value(t,blocked.error,Cook_Error.Write_Failed)
     // A project without scenes or roots ships an empty folder with its index.
@@ -259,11 +268,13 @@ a_cook_ships_every_asset_of_an_active_plugin_under_its_prefix :: proc(t:^testing
     BRUSH :: base.Asset_Id{7,1}
     material_write(t,&types,fmt.tprintf("%s/brushes/soft.mat",plugin),BRUSH,WOOD_COLOR,{})
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/readme.txt",plugin),"for the code of the plugin")==nil)
+    // A source and its sidecar stay behind: what its import made ships, not what it was made from.
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s/brushes/soft.png",plugin),"a source")==nil && os.write_entire_file(fmt.tprintf("%s/brushes/soft.png.import",plugin),"{}")==nil)
 
-    report:=cook_assets({assets=assets,output=output,plugins={{plugin,"plugins/probe"}},allocator=context.temp_allocator})
+    report:=cook_assets({assets=assets,output=output,plugins={{path=plugin,prefix="plugins/probe"}},allocator=context.temp_allocator})
     testing.expect_value(t,report.error,Cook_Error.None)
     kept,_:=names(&report)
-    testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh plugins/probe/brushes/soft.mat plugins/probe/readme.txt prefabs/prop.prefab scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")
+    testing.expect_value(t,kept,"materials/wood.mat models/crate.mesh plugins/probe/brushes/soft.mat plugins/probe/readme.txt prefabs/prop.scene scenes/main.scene textures/wood_color.tex textures/wood_normal.tex ")
     testing.expect(t,os.is_file(fmt.tprintf("%s/plugins/probe/brushes/soft.mat",output)) && os.is_file(fmt.tprintf("%s/plugins/probe/readme.txt",output)))
     indexed:asset.Registry
     asset.registry_init(&indexed,output);defer asset.registry_destroy(&indexed)
@@ -287,10 +298,10 @@ Glow :: struct {range:f32}
 
 @(private="file")
 glow_prefab_write :: proc(t:^testing.T,types:^asset.Types,path:string,range:f32) -> (lamp:asset.Scene) {
-    asset.scene_init(&lamp,types,asset.KIND_PREFAB,PROP)
+    asset.scene_init(&lamp,types,LAMP)
+    lamp.doc.flags+={.Prefab}
     asset.scene_entity_add(&lamp,1,0,"Lamp")
     asset.scene_entity_add(&lamp,2,1,"Bulb")
-    lamp.info.root=1
     glow:=Glow{range}
     asset.scene_set(&lamp,2,"Glow",&glow)
     testing.expect_value(t,asset.scene_save(&lamp,path),asset.Error.None)
@@ -320,10 +331,10 @@ a_cook_brings_the_prefab_instances_of_what_it_ships_up_to_date :: proc(t:^testin
     if folder=="" {return}
     assets,output:=fmt.tprintf("%s/project/assets",folder),fmt.tprintf("%s/ship/assets",folder)
     for inside in ([]string{"prefabs","scenes"}) {os.make_directory_all(fmt.tprintf("%s/%s",assets,inside))}
-    lamp_path,level_path:=fmt.tprintf("%s/prefabs/lamp.prefab",assets),fmt.tprintf("%s/scenes/level.scene",assets)
+    lamp_path,level_path:=fmt.tprintf("%s/prefabs/lamp.scene",assets),fmt.tprintf("%s/scenes/level.scene",assets)
     lamp:=glow_prefab_write(t,&types,lamp_path,1)
-    level:asset.Scene;asset.scene_init(&level,&types,asset.KIND_SCENE,MAIN);defer asset.scene_destroy(&level)
-    _,placed:=asset.scene_instantiate(&level,&lamp,PROP,0)
+    level:asset.Scene;asset.scene_init(&level,&types,MAIN);defer asset.scene_destroy(&level)
+    _,placed:=asset.scene_instantiate(&level,&lamp,LAMP,0)
     testing.expect_value(t,placed,asset.Error.None)
     testing.expect_value(t,asset.scene_save(&level,level_path),asset.Error.None)
     asset.scene_destroy(&lamp)
@@ -342,11 +353,11 @@ a_cook_brings_the_prefab_instances_of_what_it_ships_up_to_date :: proc(t:^testin
     // The prefab an instance places is a dependency of its scene: the scenes are the roots of this cook,
     // which reaches it through them, and a cook whose prefab is gone says so and ships the scene as it is.
     reached:=false
-    for file in report.files {reached||=file.path=="prefabs/lamp.prefab"}
+    for file in report.files {reached||=file.path=="prefabs/lamp.scene"}
     testing.expect(t,report.error==.None && reached && len(report.missing)==0)
     testing.expect_value(t,os.remove(lamp_path),nil)
     report=cook_assets({assets=assets,output=output,allocator=context.temp_allocator})
-    testing.expect(t,report.error==.None && len(report.missing)==1 && report.missing[0].id==PROP && report.scenes_resolved==0)
+    testing.expect(t,report.error==.None && len(report.missing)==1 && report.missing[0].id==LAMP && report.scenes_resolved==0)
     testing.expect_value(t,glow_range(t,&types,fmt.tprintf("%s/scenes/level.scene",output)),f32(1))
 }
 
@@ -364,11 +375,11 @@ a_cook_on_many_workers_writes_what_a_cook_on_one_does :: proc(t:^testing.T) {
         texture_write(t,&types,fmt.tprintf("%s/textures/tile_%02d.tex",assets,at),{8,u64(at)},{.Srgb},at%2==1)
         material_write(t,&types,fmt.tprintf("%s/materials/tile_%02d.mat",assets,at),{10,u64(at)},{8,u64(at)},{})
     }
-    lamp_path:=fmt.tprintf("%s/prefabs/lamp.prefab",assets)
+    lamp_path:=fmt.tprintf("%s/prefabs/lamp.scene",assets)
     lamp:=glow_prefab_write(t,&types,lamp_path,1)
     for at in 0..<6 {
-        level:asset.Scene;asset.scene_init(&level,&types,asset.KIND_SCENE,{11,u64(at)})
-        _,placed:=asset.scene_instantiate(&level,&lamp,PROP,0)
+        level:asset.Scene;asset.scene_init(&level,&types,{11,u64(at)})
+        _,placed:=asset.scene_instantiate(&level,&lamp,LAMP,0)
         testing.expect_value(t,placed,asset.Error.None)
         testing.expect_value(t,asset.scene_save(&level,fmt.tprintf("%s/scenes/level_%d.scene",assets,at)),asset.Error.None)
         asset.scene_destroy(&level)
@@ -455,5 +466,104 @@ a_cook_ships_animations_sampled_on_the_rest_pose_of_their_skeleton :: proc(t:^te
         played:=anim.vec4_quat(anim.clip_evaluate(&lib,anim.clip_tracks(&lib,1)[0],time))
         moved:=mm.quat_rotate(exact,{0,.03,0})-mm.quat_rotate(played,{0,.03,0})
         testing.expect(t,cmath.sqrt(moved.x*moved.x+moved.y*moved.y+moved.z*moved.z)<=anim.COMPRESS_DEFAULT.precision*1.05)
+    }
+}
+
+@(private="file") Far_Test_Renderer :: struct {mesh:base.Asset_Id}
+@(private="file") Far_Test_Reference :: struct {scene:base.Asset_Id}
+
+// A game that streams sections ships the far mesh of each scene a section
+// references beside it, which its runtime shows and does not make; one that
+// does not stream ships none.
+@(test)
+a_cook_writes_the_far_mesh_of_each_scene_a_section_references :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"cook-far")
+    if folder=="" {return}
+    WORLD :: base.Asset_Id{0xfa,0x10}
+    ROOM :: base.Asset_Id{0xfa,0x11}
+    SHEET :: base.Asset_Id{0xfa,0x12}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    assets:=fmt.tprintf("%s/assets",folder)
+    testing.expect(t,os.make_directory_all(fmt.tprintf("%s/rooms",assets))==nil)
+    vertices:=make([dynamic]asset.Vertex,context.temp_allocator)
+    indices:=make([dynamic]u32,context.temp_allocator)
+    for z in 0..=8 {for x in 0..=8 {append(&vertices,asset.Vertex{position={f32(x),0,f32(z)},normal=mm.normal_pack({0,1,0}),color=0xffffffff,tangent=mm.tangent_pack({1,0,0},1)})}}
+    for z in 0..<u32(8) {for x in 0..<u32(8) {a:=z*9+x;append(&indices,a,a+9,a+1,a+1,a+9,a+10)}}
+    g:asset.Mesh_Geometry
+    testing.expect(t,asset.mesh_build_dag({vertices=vertices[:]},indices[:],&g,context.temp_allocator))
+    testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/rooms/sheet.mesh",assets),&types,{id=SHEET,geometry=g}),asset.Error.None)
+    room:asset.Scene;asset.scene_init(&room,&types,ROOM)
+    asset.scene_entity_add(&room,1,0,"Floor")
+    asset.scene_set(&room,1,"Mesh_Renderer",&Far_Test_Renderer{SHEET})
+    testing.expect_value(t,asset.scene_save(&room,fmt.tprintf("%s/rooms/room.scene",assets)),asset.Error.None)
+    asset.scene_destroy(&room)
+    world:asset.Scene;asset.scene_init(&world,&types,WORLD)
+    asset.scene_entity_add(&world,1,0,"Room")
+    asset.scene_set(&world,1,"Scene_Reference",&Far_Test_Reference{ROOM})
+    testing.expect_value(t,asset.scene_save(&world,fmt.tprintf("%s/world.scene",assets)),asset.Error.None)
+    asset.scene_destroy(&world)
+
+    for streams in ([]bool{true,false}) {
+        output:=fmt.tprintf("%s/game-%v/assets",folder,streams)
+        report:=cook_assets({assets=assets,output=output,far=streams,quick=true,allocator=context.temp_allocator})
+        if !testing.expect_value(t,report.error,Cook_Error.None) {return}
+        path:=fmt.tprintf("%s/rooms/room.far.mesh",output)
+        testing.expect_value(t,report.far_meshes,streams?1:0)
+        testing.expect_value(t,os.exists(path),streams)
+        if !streams {continue}
+        shipped:asset.Registry
+        asset.registry_init(&shipped,output,"",context.temp_allocator)
+        defer asset.registry_destroy(&shipped)
+        testing.expect_value(t,asset.registry_load(&shipped,fmt.tprintf("%s/%s",output,asset.REGISTRY_INDEX)),asset.Error.None)
+        file,found:=asset.registry_find(&shipped,asset.far_mesh_id(ROOM))
+        testing.expect(t,found && file.kind==asset.KIND_MESH && file.path=="rooms/room.far.mesh","the index lists it by the id the runtime asks for")
+        // A cook that keeps keys makes it again only when what it is made of changed.
+        keys:=fmt.tprintf("%s/game.cook",folder)
+        for reused in ([]int{0,len(report.files)}) {
+            again:=cook_assets({assets=assets,output=output,far=true,quick=true,keys=keys,allocator=context.temp_allocator})
+            testing.expect(t,again.error==.None && again.far_meshes==1 && again.reused==reused,"a far mesh made of what it was is kept")
+        }
+    }
+}
+
+// A cook writes again only what changed: a file and every asset it is made of keep their
+// contents, and its output is as the cook before left it.
+@(test)
+a_cook_writes_again_only_what_is_made_of_what_changed :: proc(t:^testing.T) {
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    folder:=base.test_folder(t,"cook-keys")
+    if folder=="" {return}
+    assets,output,keys:=fmt.tprintf("%s/project/assets",folder),fmt.tprintf("%s/ship/assets",folder),fmt.tprintf("%s/ship.cook",folder)
+    project_write(t,&types,assets)
+    written :: proc(report:^Cook_Report) -> string {
+        b:=strings.builder_make(context.temp_allocator)
+        for file in report.files {
+            if !file.reused {fmt.sbprintf(&b,"%s ",file.path)}
+        }
+        return strings.to_string(b)
+    }
+    all:="materials/wood.mat models/crate.mesh prefabs/prop.scene scenes/main.scene textures/wood_color.tex textures/wood_normal.tex "
+    Step :: struct {name:string,change:proc(t:^testing.T,assets,output,keys:string),written:string}
+    steps:=[]Step{
+        {"the first cook",nil,all},
+        {"nothing changed",nil,""},
+        {"the wood changed: the mesh and the scenes are made of it",proc(t:^testing.T,assets,output,keys:string) {
+            types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+            material_write(t,&types,fmt.tprintf("%s/materials/wood.mat",assets),WOOD,WOOD_NORMAL,WOOD_COLOR)
+        },"materials/wood.mat models/crate.mesh prefabs/prop.scene scenes/main.scene "},
+        {"an output went",proc(t:^testing.T,assets,output,keys:string) {_=os.remove(fmt.tprintf("%s/textures/wood_color.tex",output))},"textures/wood_color.tex "},
+        {"the keys are random bytes",proc(t:^testing.T,assets,output,keys:string) {
+            noise:[64]u8
+            for &b,i in noise {b=u8(i*37+11)}
+            noise[0]=1 // the version: what follows is read, and is noise
+            testing.expect(t,os.write_entire_file(keys,noise[:])==nil)
+        },all},
+    }
+    for step in steps {
+        if step.change!=nil {step.change(t,assets,output,keys)}
+        report:=cook_assets({assets=assets,output=output,keys=keys,allocator=context.temp_allocator})
+        testing.expect_value(t,report.error,Cook_Error.None)
+        testing.expectf(t,written(&report)==step.written,"%s: %s",step.name,written(&report))
+        testing.expect_value(t,report.reused,len(report.files)-strings.count(step.written," "))
     }
 }

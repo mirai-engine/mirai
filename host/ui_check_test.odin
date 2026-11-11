@@ -8,6 +8,7 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import anim "mirai:std/anim"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -15,7 +16,7 @@ import "mirai:ui"
 
 // A tree with what the structure of a .ui links: a use of a widget, a List, a grid, clips of
 // several tracks, a sequence and a parallel, a track no clip plays, sets,
-// styles with a variant, style infos, a font and a translation.
+// styles with a variant, style infos, a font and a localized text.
 @(private="file")
 ui_check_base :: proc() -> (d:ui.Tree_Data) {
     a:=context.temp_allocator
@@ -24,11 +25,11 @@ ui_check_base :: proc() -> (d:ui.Tree_Data) {
         ui.tree_text_set(n.name[:],name)
         return
     }
-    // "Hi" node 1, "Hola" its translation, "Yo" an override, "Card" the label.
+    // "Hi" the key of node 1, "Yo" an override, "Card" the label.
     d.text=slice.clone(transmute([]u8)string("HiHolaYoCard"),a)
     d.nodes=make([]ui.Tree_Node,7,a)
     d.nodes[0]=named(.Box,-1,"root");d.nodes[0].style=1;d.nodes[0].anims=1
-    d.nodes[1]=named(.Text,0,"title");d.nodes[1].style=2;d.nodes[1].text={0,2};d.nodes[1].text_id=7;d.nodes[1].flags={.Localized}
+    d.nodes[1]=named(.Text,0,"title");d.nodes[1].style=2;d.nodes[1].text={0,2};d.nodes[1].flags={.Localized}
     d.nodes[2]=named(.Box,0,"grid");d.nodes[2].layout.direction=.Grid;d.nodes[2].layout.tracks=1;d.nodes[2].image=1
     d.nodes[3]=named(.Text,2,"card");d.nodes[3].text={8,4}
     d.nodes[4]=named(.List,2,"items")
@@ -41,13 +42,11 @@ ui_check_base :: proc() -> (d:ui.Tree_Data) {
     ui.tree_text_set(d.style_infos[2].name[:],"accent2")
     d.fonts=slice.clone([]ui.Tree_Font{{font={0xf0,2}}},a)
     d.images=slice.clone([]ui.Tree_Image{{texture={0x7e,2}}},a)
-    d.keys=slice.clone([]ui.Keyframe{{time=0},{time=0.2,value={1,0,0,0}},{time=0},{time=0.1},{time=0.3},{time=0},{time=0},{time=0.5}},a)
+    d.keys=slice.clone([]anim.Keyframe{{time=0},{time=0.2,value={1,0,0,0}},{time=0},{time=0.1},{time=0.3},{time=0},{time=0},{time=0.5}},a)
     d.tracks=slice.clone([]ui.Tree_Track{{.Opacity,0,2},{.Offset,2,3},{.Scale,5,1},{.Opacity,6,2}},a)
     d.parts=slice.clone([]ui.Anim{1,2,1,3},a)
     d.anims=slice.clone([]ui.Tree_Anim{{kind=.Clip,first=0,count=2},{kind=.Clip,first=2,count=1},{kind=.Sequence,first=0,count=2},{kind=.Parallel,first=2,count=2}},a)
-    d.anim_sets=slice.clone([]ui.Anim_Set{{shown=1,hidden=3,clicked=4},{hovered=2,focused=4,unselected=1}},a)
-    d.translations=make([]ui.Tree_Translation,1,a)
-    d.translations[0]={id=7,text={2,4}};ui.tree_text_set(d.translations[0].language[:],"es")
+    d.anim_sets=slice.clone([]ui.Anim_Set{{shown=1,hidden=3,clicked=4},{shown=2,hidden=4,clicked=1}},a)
     d.grid_tracks=slice.clone([]ui.Grid_Tracks{{count=2}},a)
     return
 }
@@ -58,17 +57,17 @@ ui_check_clone :: proc(d:ui.Tree_Data) -> (c:ui.Tree_Data) {
     c.nodes,c.styles,c.variants,c.components=slice.clone(d.nodes,a),slice.clone(d.styles,a),slice.clone(d.variants,a),slice.clone(d.components,a)
     c.overrides,c.images,c.anims=slice.clone(d.overrides,a),slice.clone(d.images,a),slice.clone(d.anims,a)
     c.tracks,c.keys,c.parts,c.anim_sets,c.fonts=slice.clone(d.tracks,a),slice.clone(d.keys,a),slice.clone(d.parts,a),slice.clone(d.anim_sets,a),slice.clone(d.fonts,a)
-    c.style_infos,c.translations,c.grid_tracks,c.text=slice.clone(d.style_infos,a),slice.clone(d.translations,a),slice.clone(d.grid_tracks,a),slice.clone(d.text,a)
+    c.style_infos,c.grid_tracks,c.text=slice.clone(d.style_infos,a),slice.clone(d.grid_tracks,a),slice.clone(d.text,a)
     return
 }
 
 // The field of a clone at the place of a field of the records it was cloned from.
 @(private="file")
 ui_check_moved :: proc(from,to:^ui.Tree_Data,field:any) -> any {
-    tables :: proc(d:^ui.Tree_Data) -> [16][]u8 {
+    tables :: proc(d:^ui.Tree_Data) -> [15][]u8 {
         to_bytes :: slice.to_bytes
         return {to_bytes(d.nodes),to_bytes(d.styles),to_bytes(d.variants),to_bytes(d.components),to_bytes(d.overrides),to_bytes(d.images),to_bytes(d.anims),
-            to_bytes(d.tracks),to_bytes(d.keys),to_bytes(d.parts),to_bytes(d.anim_sets),to_bytes(d.fonts),to_bytes(d.style_infos),to_bytes(d.translations),to_bytes(d.grid_tracks),d.text}
+            to_bytes(d.tracks),to_bytes(d.keys),to_bytes(d.parts),to_bytes(d.anim_sets),to_bytes(d.fonts),to_bytes(d.style_infos),to_bytes(d.grid_tracks),d.text}
     }
     at:=uintptr(field.data)
     clone:=tables(to)
@@ -104,7 +103,6 @@ ui_check_links :: proc(d:^ui.Tree_Data,out:^[dynamic]Ui_Link) {
     for &set,i in d.anim_sets {
         for &state,s in (^[size_of(ui.Anim_Set)/size_of(ui.Anim)]ui.Anim)(&set) {add(out,state,"anim_sets[%d][%d]",i,s)}
     }
-    for &tr,i in d.translations {add(out,tr.text.offset,"translations[%d].text.offset",i);add(out,tr.text.length,"translations[%d].text.length",i)}
 }
 
 // Rows and counts of the tables, which hold up to 8 rows, and around the
@@ -243,7 +241,7 @@ ui_records_come_back_from_their_file_row_by_row :: proc(t:^testing.T) {
     same(t,view.overrides,data.overrides,"overrides");same(t,view.images,data.images,"images");same(t,view.anims,data.anims,"anims")
     same(t,view.tracks,data.tracks,"tracks");same(t,view.keys,data.keys,"keys");same(t,view.parts,data.parts,"parts")
     same(t,view.anim_sets,data.anim_sets,"anim_sets");same(t,view.fonts,data.fonts,"fonts");same(t,view.style_infos,data.style_infos,"style_infos")
-    same(t,view.translations,data.translations,"translations");same(t,view.grid_tracks,data.grid_tracks,"grid_tracks");same(t,view.text,data.text,"text")
+    same(t,view.grid_tracks,data.grid_tracks,"grid_tracks");same(t,view.text,data.text,"text")
 }
 
 // Every field that links rows, set to the values around its limits, one at a
@@ -263,7 +261,7 @@ ui_check_refuses_what_tree_load_refuses_case_by_case :: proc(t:^testing.T) {
             ui_check_same(t,&types,d,fmt.tprintf("%s=%s",link.name,what))
         }
     }
-    TABLES :: [?]string{"nodes","styles","variants","components","overrides","images","anims","tracks","keys","parts","anim_sets","fonts","style_infos","translations","grid_tracks","text"}
+    TABLES :: [?]string{"nodes","styles","variants","components","overrides","images","anims","tracks","keys","parts","anim_sets","fonts","style_infos","grid_tracks","text"}
     for table,i in TABLES {
         for rows in 0..<64 {
             runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
@@ -288,9 +286,8 @@ ui_check_refuses_what_tree_load_refuses_case_by_case :: proc(t:^testing.T) {
             case 10: cuts=cut(&d.anim_sets,rows)
             case 11: cuts=cut(&d.fonts,rows)
             case 12: cuts=cut(&d.style_infos,rows)
-            case 13: cuts=cut(&d.translations,rows)
-            case 14: cuts=cut(&d.grid_tracks,rows)
-            case 15: cuts=cut(&d.text,rows)
+            case 13: cuts=cut(&d.grid_tracks,rows)
+            case 14: cuts=cut(&d.text,rows)
             }
             if !cuts {break}
             ui_check_same(t,&types,d,fmt.tprintf("%s cut to %d rows",table,rows))

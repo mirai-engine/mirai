@@ -39,7 +39,7 @@ the_interior_of_a_volume_shows_where_it_is_dug_and_what_fills_keeps_its_layer ::
     testing.expectf(t,ore>deep/10 && ore<deep*9/10,"pockets take part of the deep samples: %d of %d",ore,deep)
 
     // A pit: its floor shows what is at that depth, and the dig counts each layer.
-    change:=source_edit(&s,{kind=.Remove,center={0,0,0},radius=3,amount=1})
+    change:=source_edit(&s,{kind=.Carve,center={0,0,0},radius=3,amount=1})
     testing.expect(t,change.changed && change.error==.None)
     hemisphere:=f32(2)/3*math.PI*27
     testing.expectf(t,abs(s.dug.volume-hemisphere)<hemisphere*0.25,"a ball of 3 m at the surface takes about %v cubic metres, it took %v",hemisphere,s.dug.volume)
@@ -50,10 +50,10 @@ the_interior_of_a_volume_shows_where_it_is_dug_and_what_fills_keeps_its_layer ::
     testing.expect(t,hit && floor.y<-2.5)
     testing.expect(t,dominant(source_weights_at(&s,floor))>=2,"the floor of the pit shows rock or ore, not grass")
     // What Union fills with keeps its layer, and adds nothing to what is dug.
-    change=source_edit(&s,{kind=.Union,shape=.Sphere,center={0,-3,0},radius=1.2,amount=1,layer=0})
+    change=source_edit(&s,{kind=.Add,shape=.Sphere,center={0,-3,0},radius=1.2,amount=1,layer=0})
     testing.expect(t,change.changed && s.dug.volume==0)
     testing.expect_value(t,dominant(source_weights_at(&s,{0,-3,0})),0)
-    testing.expect_value(t,source_edit(&s,{kind=.Union,shape=.Sphere,center={0,-3,0},radius=1,amount=1,layer=4}).error,Edit_Error.Invalid)
+    testing.expect_value(t,source_edit(&s,{kind=.Add,shape=.Sphere,center={0,-3,0},radius=1,amount=1,layer=4}).error,Edit_Error.Layer)
 
     // The interior travels in the file, and a layer that goes takes its strata.
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -87,10 +87,10 @@ lowering_a_heightfield_counts_the_height_it_takes_by_layer :: proc(t:^testing.T)
     middle:=source_origin(&s)+{8,0,8}
     testing.expect(t,source_edit(&s,{kind=.Paint,center=middle+{6,0,0},radius=6,amount=1,layer=1,falloff=.Constant}).changed)
     before:=f32(0)
-    for z in 0..<17 {for x in 0..<17 {before+=grid_get(&s.heights,x,z)}}
+    for z in 0..<17 {for x in 0..<17 {before+=grid_get(&s.field,x,z)}}
     testing.expect(t,source_edit(&s,{kind=.Lower,center=middle,radius=4,amount=1}).changed)
     after:=f32(0)
-    for z in 0..<17 {for x in 0..<17 {after+=grid_get(&s.heights,x,z)}}
+    for z in 0..<17 {for x in 0..<17 {after+=grid_get(&s.field,x,z)}}
     testing.expect(t,abs(s.dug.volume-(before-after))<1e-3)
     testing.expect(t,s.dug.layers[0]>0 && s.dug.layers[1]>0 && s.dug.sum.y<0)
     testing.expect(t,source_edit(&s,{kind=.Raise,center=middle,radius=4,amount=1}).changed && s.dug.volume==0)

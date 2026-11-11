@@ -29,12 +29,11 @@ Api_Simulation_Move_Params :: struct {
     entity:Api_Entity_Text `mirai:"text,entity"`,
     position:[3]f32,
     rotation:[4]f32 `mirai:"optional"`,
-    release:bool `mirai:"optional,label=Release the body after reaching this target"`,
+    release:bool `mirai:"optional,label=Let the body go"`,
 }
 
 @(private)
 api_simulation_move :: proc(s:^Session,call:^api.Call) {
-    if !api_simulation_guard(s,call) {return}
     params:=api.call_params(call,Api_Simulation_Move_Params)
     e,named:=api_call_entity(call,shown_world(s),params.entity[:],game=true)
     if !named {return}

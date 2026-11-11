@@ -8,25 +8,27 @@ import gpu "mirai:render"
 import "mirai:rhi"
 import mm "mirai:std/math"
 
+@(private) @(test_world) Recorded_World :: struct {using world:Test_World}
+
 // A recording reads the image of its view wide: after the tonemap, the
 // window's image without its 8-bit steps; before it, the exposed linear light
 // beyond 1. GPU and validation.
 @(test)
 a_recording_reads_its_frames_wide_before_and_after_the_tonemap :: proc(t:^testing.T) {
-    Recorded_World :: struct {using world:core.Test_World}
     world:Recorded_World
-    if !core.test_world_init(t,&world) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={96,64}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)
-    app.info=core.test_world_info(&world)
+    app.info=test_world_info(&world)
     cube,made:=erender.mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix({position={0,0.5,0},rotation=1,scale={1,1,1}}),{color={0.2,0.9,0.5,1},emission={2,6,3}})
     if !testing.expect(t,made) {return}
     host.assets_commit(app.assets)
-    gpu.scene_set(app.renderer,{cube},nil,{},{background={0.3,0.05,0.02},use_background=true})
+    gpu.scene_set_environment(app.renderer,{},{background={0.3,0.05,0.02},use_background=true})
+    gpu.scene_update(app.renderer,0,{cube},true)
     host.app_camera_set(app,{position={0,1.2,4},forward={0,-0.7,-4},up={0,1,0},fov_y=40,near=0.05,far=100,exposure=gpu.UNIT_EXPOSURE},true)
     size:=[2]i32{64,48}
     images:[2][]f32

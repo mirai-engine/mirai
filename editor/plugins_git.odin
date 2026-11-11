@@ -132,12 +132,11 @@ plugins_git_row_actions :: proc(s:^Session,index:int) {
     ctx:=s.gui.ctx
     ui.id_push(ctx,ui.id(ctx,fmt.tprintf("git %s",name)))
     defer ui.id_pop(ctx)
-    th:=&ctx.theme
     busy:=plugins_git_busy(s) || s.build.phase==.Running
-    if available && ui.button(ctx,ui.id(ctx,"git_update"),{label=list.source_catalog[index]?"Update available":"Update",style=.Ghost,height=20,size=th.font_label,disabled=busy}).clicked {
+    if available && ui.button(ctx,ui.id(ctx,"git_update"),{label=list.source_catalog[index]?"Update available":"Update",variant="ghost",height=20,size=ui.metric(ctx,"font_label"),disabled=busy}).clicked {
         plugins_git_start(s,[]install.Step{{kind=.Update,text=name}},fmt.tprintf("Updating %s",name))
     }
-    if ui.button(ctx,ui.id(ctx,"git_remove"),{label="Remove",style=.Ghost,height=20,size=th.font_label,disabled=busy}).clicked {
+    if ui.button(ctx,ui.id(ctx,"git_remove"),{label="Remove",variant="ghost",height=20,size=ui.metric(ctx,"font_label"),disabled=busy}).clicked {
         plugins_git_start(s,[]install.Step{{kind=.Remove,text=name}},fmt.tprintf("Removing %s",name))
     }
 }
@@ -150,23 +149,22 @@ plugins_git_row_actions :: proc(s:^Session,index:int) {
 @(private)
 settings_plugins_git :: proc(s:^Session) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     pg:=&s.plugins_git
     busy:=plugins_git_busy(s) || s.build.phase==.Running
     ui.id_push(ctx,ui.id(ctx,"plugins_git"))
     defer ui.id_pop(ctx)
     if pg.job!=nil {
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=8,align_y=.Center}) {
-            pulse_dot(ctx,th.accent,true)
-            ui.label(ctx,base.text_get(pg.doing[:]),th.font_small,th.text,0)
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center}) {
+            pulse_dot(ctx,ui.tone(ctx,"accent"),true)
+            ui.label(ctx,base.text_get(pg.doing[:]),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0)
         }
     }
     if fold_section(s,ui.id(ctx,"add_fold"),PLUGINS_GIT_ADD_KEY,"Add from Git") {
         fold_band_begin(s)
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control),gap=6,align_y=.Center}) {
-            ui.text_field(ctx,ui.id(ctx,"url"),pg.url[:],&pg.url_length,{placeholder="https://github.com/user/plugin.git",live=true,height=th.control})
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),gap=6,align_y=.Center}) {
+            ui.text_field(ctx,ui.id(ctx,"url"),pg.url[:],&pg.url_length,{placeholder="https://github.com/user/plugin.git",live=true,height=ui.metric(ctx,"control")})
             url:=strings.trim_space(string(pg.url[:pg.url_length]))
-            if ui.button(ctx,ui.id(ctx,"add"),{label="Add",style=.Field,height=th.control,disabled=busy || url==""}).clicked {
+            if ui.button(ctx,ui.id(ctx,"add"),{label="Add",variant="field",height=ui.metric(ctx,"control"),disabled=busy || url==""}).clicked {
                 if plugins_git_start(s,[]install.Step{{kind=.Add,text=url}},fmt.tprintf("Adding %s",url)) {pg.url_length=0}
             }
         }
@@ -177,12 +175,12 @@ settings_plugins_git :: proc(s:^Session) {
     defer fold_band_end(s)
     catalog:=plugins_git_catalog(s)
     count:=catalog==nil?0:project.catalog_count(catalog)
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=6,align_y=.Center}) {
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=6,align_y=.Center}) {
         message:=base.text_get(pg.catalog_message[:])
         switch {
-        case message!="": ui.label(ctx,message,th.font_small,th.text_faint,0)
-        case count==0:    ui.label(ctx,"The catalog has no plugins yet",th.font_small,th.text_faint,0)
-        case:             ui.label(ctx,fmt.tprintf("%d %s",count,count==1?"plugin":"plugins"),th.font_small,th.text_faint,0)
+        case message!="": ui.label(ctx,message,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)
+        case count==0:    ui.label(ctx,"The catalog has no plugins yet",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)
+        case:             ui.label(ctx,fmt.tprintf("%d %s",count,count==1?"plugin":"plugins"),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),0)
         }
         ui.spacer(ctx)
         if ui.icon_button(ctx,ui.id(ctx,"refresh"),.Refresh,20,tip="Refresh",disabled=busy).clicked {
@@ -194,15 +192,15 @@ settings_plugins_git :: proc(s:^Session) {
         name:=base.text_get(entry.name[:])
         installed:=false
         for k in 0..<s.settings_plugins.count {installed|=base.text_get(s.settings_plugins.names[k][:])==name}
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row+12),gap=8,align_y=.Center}) {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")+12),gap=8,align_y=.Center}) {
             plugin_icon_draw(s,&pg.catalog_icons[i],plugin_icon_catalog(s,name),20)
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=2}) {
-                ui.label(ctx,name,th.font_small,th.text_label,0)
-                if description:=base.text_get(entry.description[:]);description!="" {ui.label(ctx,description,th.font_label,th.text_faint,0)}
+                ui.label(ctx,name,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),0)
+                if description:=base.text_get(entry.description[:]);description!="" {ui.label(ctx,description,ui.metric(ctx,"font_label"),ui.tone(ctx,"text_faint"),0)}
             }
             if installed {
-                ui.label(ctx,"Installed",th.font_label,th.text_faint)
-            } else if ui.button(ctx,ui.id(ctx,"install",i),{label="Install",style=.Field,height=22,size=th.font_label,disabled=busy}).clicked {
+                ui.label(ctx,"Installed",ui.metric(ctx,"font_label"),ui.tone(ctx,"text_faint"))
+            } else if ui.button(ctx,ui.id(ctx,"install",i),{label="Install",variant="field",height=22,size=ui.metric(ctx,"font_label"),disabled=busy}).clicked {
                 plugins_git_start(s,[]install.Step{{kind=.Install,text=name}},fmt.tprintf("Installing %s",name))
             }
         }

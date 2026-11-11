@@ -5,12 +5,13 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:std/base"
 
-@(private="file") Update_Lamp :: struct {range:f32,heat:f32 `mirai:"transient"`}
-@(private="file") Update_Link :: struct {target:core.Entity}
+@(private) Update_Lamp :: struct {range:f32,heat:f32 `mirai:"transient"`}
+@(private) Update_Link :: struct {target:core.Entity}
 
-@(private="file")
+@(private)
+@(test_world)
 Update_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -31,15 +32,15 @@ Update_Fixture :: struct {
 
 @(private="file")
 update_fixture_init :: proc(t:^testing.T,f:^Update_Fixture) -> (ref:core.World_Ref,ok:bool) {
-    core.test_world_init(t,&f.w,test_types) or_return
+    test_world_init(t,&f.w) or_return
     asset.types_init(&f.types)
-    return core.test_world_ref(&f.w),true
+    return test_world_ref(&f.w),true
 }
 
 @(private="file")
 update_fixture_destroy :: proc(f:^Update_Fixture) {
     asset.types_destroy(&f.types)
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
 }
 
 @(private="file")
@@ -63,7 +64,7 @@ update_put :: proc(t:^testing.T,f:^Update_Fixture,ref:core.World_Ref,document:^a
     testing.expect_value(t,asset.asset_open(&file,data),asset.Error.None)
     defer asset.asset_close(&file)
     report,error=update(ref,&file,&f.types,{scope=scope})
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
     return
 }
 
@@ -82,7 +83,7 @@ an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document 
     core.add(&w.lamps,bulb,Update_Lamp{range=1,heat=7})
     core.add(&w.links,bulb,Update_Link{other})
     core.add(&w.links,lamp,Update_Link{bulb})
-    core.test_world_settle(w)
+    test_world_settle(w)
 
     // A capture written back changes nothing, and what it names outside stays named.
     document:asset.Scene
@@ -113,11 +114,11 @@ an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document 
     held:=(^Update_Lamp)(core.raw_find(core.raw(&w.lamps),type_info_of(Update_Lamp),bulb))^
     _,turned,_:=core.raw_state(core.raw(&w.lamps),bulb)
     testing.expect(t,held==Update_Lamp{range=5,heat=7} && turned,"the value follows the document, what it does not save stays, and it is off")
-    testing.expect_value(t,core.name_get(core.read(&w.names),lamp),"Desk lamp")
-    testing.expect(t,!core.has(&w.links,lamp) && core.get(&w.links,bulb).target==other)
+    testing.expect_value(t,core.name_get(&w.names,lamp),"Desk lamp")
+    testing.expect(t,!core.has(&w.links,lamp) && core.at(&w.links,core.row_of(&w.links,bulb)).target==other)
     shade:=core.entity_of(&w.entities,50)
-    parent,_:=core.get(core.read(&w.parents),shade)
-    testing.expect(t,shade!=core.NONE && parent.entity==lamp && core.get(&w.links,shade).target==bulb && core.has(&w.transforms,shade))
+    parent,_:=core.get(&w.parents,shade)
+    testing.expect(t,shade!=core.NONE && parent.entity==lamp && core.at(&w.links,core.row_of(&w.links,shade)).target==bulb && core.has(&w.transforms,shade))
     testing.expect(t,!core.alive(&w.entities,cable) && core.alive(&w.entities,bulb) && core.alive(&w.entities,other))
     report,error=update_put(t,&f,ref,&document,scope)
     testing.expect(t,error==.None && report.components==0,"the world holds what the document says")
@@ -133,29 +134,7 @@ an_update_writes_what_differs_onto_the_entities_that_have_the_ids_of_a_document 
     asset.scene_set(&document,3,"Update_Link",&lost)
     asset.scene_entities_remove(&document,{50})
     report,error=update_put(t,&f,ref,&document,nil)
-    testing.expect(t,error==.None && report.dangling==1 && core.get(&w.links,bulb).target==core.NONE)
-}
-
-// asset declares the two components of the instances for a document, where
-// it cannot name the ones of a world: any drift of names, kinds or order
-// between them would read one as the other wrongly.
-@(test)
-the_components_of_prefab_instances_are_the_ones_asset_declares :: proc(t:^testing.T) {
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    Pair :: struct {world,document:typeid}
-    for pair in ([]Pair{{Prefab_Instance,asset.Instance},{Prefab_Member,asset.Member}}) {
-        world,document:=type_info_of(pair.world),type_info_of(pair.document)
-        testing.expect(t,world.size==document.size && world.align==document.align)
-    }
-    world_instance,_:=asset.types_index(&types,Prefab_Instance)
-    document_instance,_:=asset.types_index(&types,asset.Instance)
-    world_member,_:=asset.types_index(&types,Prefab_Member)
-    document_member,_:=asset.types_index(&types,asset.Member)
-    testing.expect_value(t,types.hashes[world_instance],types.hashes[document_instance])
-    testing.expect_value(t,types.hashes[world_member],types.hashes[document_member])
-    testing.expect(t,types.hashes[world_instance]!=types.hashes[world_member])
-    testing.expect_value(t,asset.COMPONENT_INSTANCE,"Prefab_Instance")
-    testing.expect_value(t,asset.COMPONENT_MEMBER,"Prefab_Member")
+    testing.expect(t,error==.None && report.dangling==1 && core.at(&w.links,core.row_of(&w.links,bulb)).target==core.NONE)
 }
 
 @(private="file")
@@ -173,11 +152,11 @@ the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :
     w:=&f.w
     LAMP :: base.Asset_Id{0x1a,2}
     lamp,level:asset.Scene
-    asset.scene_init(&lamp,&f.types,asset.KIND_PREFAB,LAMP);defer asset.scene_destroy(&lamp)
+    asset.scene_init(&lamp,&f.types,LAMP);defer asset.scene_destroy(&lamp)
+    lamp.doc.flags+={.Prefab}
     asset.scene_entity_add(&lamp,1,0,"Lamp")
     asset.scene_entity_add(&lamp,2,1,"Bulb")
-    lamp.info.root=1
-    asset.scene_init(&level,&f.types,asset.KIND_SCENE,{0x1a,3});defer asset.scene_destroy(&level)
+    asset.scene_init(&level,&f.types,{0x1a,3});defer asset.scene_destroy(&level)
     asset.scene_entity_add(&level,100,0,"Room")
     root_id,placed:=asset.scene_instantiate(&level,&lamp,LAMP,100)
     testing.expect_value(t,placed,asset.Error.None)
@@ -189,7 +168,7 @@ the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :
     if !update_file(t,&level,&file) {return}
     defer asset.asset_close(&file)
     _,error:=instantiate(ref,&file,&f.types)
-    core.test_world_settle(w)
+    test_world_settle(w)
     testing.expect_value(t,error,Error.None)
     root,bulb:=core.entity_of(&w.entities,root_id),core.entity_of(&w.entities,bulb_id)
     of_bulb,instance,member:=prefab_instance_of(ref,bulb)
@@ -199,7 +178,7 @@ the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :
 
     // A capture gives the document its instances back.
     captured:asset.Scene
-    _,error=capture(ref,&captured,&f.types,{kind=asset.KIND_SCENE,id={0x1a,3}})
+    _,error=capture(ref,&captured,&f.types,{id={0x1a,3}})
     testing.expect_value(t,error,Error.None)
     defer asset.scene_destroy(&captured)
     _,source,linked:=asset.scene_member(&captured,bulb_id)
@@ -207,9 +186,9 @@ the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :
 
     // A prefab that places the Lamp, copied while the world runs: its entities are of no instance.
     desk:asset.Scene
-    asset.scene_init(&desk,&f.types,asset.KIND_PREFAB,{0x1a,4});defer asset.scene_destroy(&desk)
+    asset.scene_init(&desk,&f.types,{0x1a,4});defer asset.scene_destroy(&desk)
+    desk.doc.flags+={.Prefab}
     asset.scene_entity_add(&desk,1,0,"Desk")
-    desk.info.root=1
     asset.scene_instantiate(&desk,&lamp,LAMP,1)
     copied:asset.Asset
     if !update_file(t,&desk,&copied) {return}
@@ -217,6 +196,6 @@ the_instances_of_a_document_are_components_of_its_entities_and_a_copy_has_none :
     rows:=[2]int{core.count(&w.instances),core.count(&w.members)}
     report:Report
     report,error=instantiate(ref,&copied,&f.types,{fresh=true})
-    core.test_world_settle(w)
+    test_world_settle(w)
     testing.expect(t,error==.None && report.entities==3 && rows==[2]int{core.count(&w.instances),core.count(&w.members)})
 }

@@ -2,18 +2,20 @@ package render
 
 import "mirai:core"
 import volume "mirai:engine/volume"
+import "core:testing"
 import "mirai:host"
+import gpu "mirai:render"
 
 // The World of the tests of this library: what its functions read and write.
 // It holds no core.Disabled, so the test that draws by its hierarchy settles it.
 @(private)
+@(test_world)
 Render_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     worlds:core.Table(core.World_Transform),
     locals:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     meshes:core.Table(Mesh_Renderer),
-    tints:core.Table(Tint),
     hidden:core.Table(Hidden),
     elsewhere:core.Table(Drawn_Elsewhere),
     suns:core.Table(Sun),
@@ -24,7 +26,8 @@ Render_World :: struct {
     skies:core.Table(Sky),
     view_volumes:core.Table(View_Volume),
     volumes:core.Table(volume.Volume),
-    overrides:core.Table(Material_Override),
+    values:core.Table(Material_Values),
+    lives:core.Table(Material_Live),
     highlights:core.Table(Highlight),
     outlines:core.Table(Outline),
     offsets:core.Table(Draw_Offset),
@@ -39,17 +42,68 @@ Render_World :: struct {
 // render_sync of a test world, as a frame without players, volumes or
 // cameras gives it: the camera of the application is set by the test.
 @(private)
-world_sync :: proc(w:^Render_World,sync:^Render_Sync,app:^host.App,id:core.World_Id={},hierarchy:core.Ref(core.Hierarchy)={}) {
-    render_sync(sync,app,id,core.FRAME_TIME_DEFAULT,{},core.read(&w.worlds),core.read(&w.meshes),core.read(&w.tints),core.read(&w.hidden),core.read(&w.elsewhere),core.read(&w.parents),hierarchy,core.read(&w.suns),core.read(&w.points),core.read(&w.spots),core.read(&w.rects),core.read(&w.emissions),core.read(&w.skies),core.read(&w.view_volumes),{},core.read(&w.overrides),core.read(&w.highlights),core.read(&w.outlines),{&w.outline_styles},core.read(&w.offsets),core.read(&w.layers),{},{},{},{})
+world_sync :: proc(w:^Render_World,sync:^Render_Sync,app:^host.App,id:core.World_Id={},hierarchy:core.Ref(core.Hierarchy)={},posed:^Posed_Meshes=nil) {
+    render_sync(sync,app,id,core.FRAME_TIME_DEFAULT,{},core.read(&w.worlds),core.read(&w.meshes),core.read(&w.values),core.read(&w.lives),core.read(&w.hidden),core.read(&w.elsewhere),core.read(&w.parents),hierarchy,core.read(&w.suns),core.read(&w.points),core.read(&w.spots),core.read(&w.rects),core.read(&w.emissions),core.read(&w.skies),core.read(&w.view_volumes),{},{},{},core.read(&w.highlights),core.read(&w.outlines),{&w.outline_styles},core.read(&w.offsets),core.read(&w.layers),{},{},{},{},posed)
 }
 
-// The scene of a test world as a frame that sets it whole gives the renderer: in whole.shown.
+// An application that draws nothing: assets over a renderer without a
+// device, which keeps the scene render_sync gives it.
 @(private)
-world_instances :: proc(w:^Render_World,whole:^Render_Sync,app:^host.App) -> bool {
-    t:=Sync_Tables{
-        worlds=core.read(&w.worlds),meshes=core.read(&w.meshes),tints=core.read(&w.tints),hidden=core.read(&w.hidden),elsewhere=core.read(&w.elsewhere),
-        parents=core.read(&w.parents),overrides=core.read(&w.overrides),highlights=core.read(&w.highlights),outlines=core.read(&w.outlines),
-        offsets=core.read(&w.offsets),layers=core.read(&w.layers),
+Sync_Fixture :: struct {
+    app:host.App,
+    assets:host.Assets,
+    renderer:gpu.Renderer,
+    world:Render_World,
+    sync:Render_Sync,
+}
+
+@(private)
+sync_fixture_init :: proc(t:^testing.T,f:^Sync_Fixture) -> bool {
+    f.renderer.allocator=context.allocator
+    if !testing.expect(t,gpu.scene_init(&f.renderer) && host.assets_init(&f.assets,{root="assets",capacity=64,renderer=&f.renderer})) {return false}
+    f.app.assets,f.app.renderer=&f.assets,&f.renderer
+    // Every shape is a triangle of its own: making the real ones asks the device what it takes.
+    corners:=[3]gpu.Mesh_Vertex{{position={0,0,0},normal={0,1,0}},{position={1,0,0},normal={0,1,0}},{position={0,0,1},normal={0,1,0}}}
+    for shape in Shape {
+        if shape==.None {continue}
+        handle,added:=gpu.mesh_add(&f.renderer,corners[:],{0,1,2})
+        if !testing.expect(t,added) {return false}
+        f.assets.shapes[shape]={handle=handle,vertex_count=3,index_count=3,bounds_max={1,0,1}}
+        f.assets.shapes_ready[shape]=true
     }
-    return instances_build(whole,app.assets,t,core.FRAME_TIME_DEFAULT,host.extras_instances(&app.extras))
+    return test_world_init(t,&f.world)
+}
+
+@(private)
+sync_fixture_destroy :: proc(f:^Sync_Fixture) {
+    sync_free(&f.sync)
+    test_world_destroy(&f.world)
+    host.extras_free(&f.app.extras)
+    host.assets_destroy(&f.assets)
+    gpu.scene_destroy(&f.renderer)
+}
+
+// A cube of the fixture's world at x.
+@(private)
+sync_cube :: proc(f:^Sync_Fixture,x:f32) -> core.Entity {
+    e:=core.create(&f.world.entities)
+    place:=core.World_Transform{transform={position={x,0,0},rotation=1,scale=1},previous={position={x,0,0},rotation=1,scale=1}}
+    core.add(&f.world.worlds,e,place)
+    core.add(&f.world.meshes,e,Mesh_Renderer{shape=.Cube})
+    return e
+}
+
+// A frame of the fixture, with a pose of the meshes: the instances the
+// renderer was given or moved in it. What it had of the frame before goes, as
+// the upload of a frame takes it.
+@(private)
+sync_frame :: proc(f:^Sync_Fixture,id:core.World_Id={},posed:^Posed_Meshes=nil) -> int {
+    test_world_settle(&f.world)
+    core.hierarchy_settle(&f.world.hierarchy,core.read(&f.world.parents),&f.world.entities)
+    s:=&f.renderer.scene
+    for &word in s.touched {word=0}
+    s.touched_count,s.lights_changed,s.changes=0,false,{}
+    world_sync(&f.world,&f.sync,&f.app,id,core.ref(&f.world.hierarchy),posed)
+    clear(&f.app.extras.instances)
+    return s.touched_count
 }

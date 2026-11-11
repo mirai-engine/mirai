@@ -1,6 +1,9 @@
 package serial
 
+import "core:fmt"
 import "core:mem"
+import "core:slice"
+import "core:strings"
 import "core:testing"
 import "mirai:std/base"
 
@@ -260,7 +263,7 @@ migration_with_the_same_layout_is_one_copy :: proc(t:^testing.T) {
     type_b,_:=schema_add(&b,Plain)
     m:Migration;migration_init(&m,&a,type_a,&b,type_b);defer migration_destroy(&m)
     testing.expect(t,m.identical)
-    testing.expect_value(t,m.added+m.removed+m.incompatible,0)
+    testing.expect_value(t,m.added+len(m.removed)+len(m.incompatible),0)
     source:=[3]Plain{{1,{1,2,3},.Sphere,7},{2,{4,5,6},.Capsule,8},{3,{7,8,9},.Box,9}}
     target:[3]Plain
     value_read(&m,&target,bytes_of(&source),3)
@@ -296,7 +299,8 @@ migration_matches_fields_by_name_and_converts_them :: proc(t:^testing.T) {
     m:Migration;migration_init(&m,&stored,old_type,&new_schema,new_type);defer migration_destroy(&m)
     testing.expect(t,!m.identical)
     testing.expect_value(t,m.added,2)   // New.added, and Part_V2.weight
-    testing.expect_value(t,m.removed,2) // Old.gone and Old.cache
+    // Old.gone; Old.cache is transient on both sides, so nothing of it is lost.
+    testing.expect(t,len(m.removed)==1 && m.removed[0]=="gone")
 
     old:=[2]Old{
         {id=0xaa,target=base.Entity(0xbb),mesh={1,2},speed=2.5,count=200,big=-1000,ratio=0.1,on=true,flags={.Static,.Debris},
@@ -360,7 +364,7 @@ migration_converts_numbers_by_value_and_saturates :: proc(t:^testing.T) {
     from_type,_:=schema_add(&a,From)
     to_type,_:=schema_add(&b,To)
     m:Migration;migration_init(&m,&a,from_type,&b,to_type);defer migration_destroy(&m)
-    testing.expect_value(t,m.incompatible,0)
+    testing.expect_value(t,len(m.incompatible),0)
     nan:=transmute(f64)u64(0x7ff8000000000000)
     cases:=[?]struct {from:From,to:To}{
         {{a=-5,b=300,c=1e9,d=-3.9,e=1<<40,f=true,g=max(u64),h=0,i=-1,j=nan,k=2,l=0.5,m=.Capsule,n=7,o=3,p=1.5},
@@ -423,12 +427,64 @@ migration_leaves_fields_of_another_shape_at_their_default :: proc(t:^testing.T) 
     from_type,_:=schema_add(&a,From)
     to_type,_:=schema_add(&b,To)
     m:Migration;migration_init(&m,&a,from_type,&b,to_type);defer migration_destroy(&m)
-    testing.expect_value(t,m.incompatible,5)
+    testing.expect(t,slice.equal(m.incompatible[:],[]string{"a","b","c","d","e"}),fmt.tprint(m.incompatible))
     from:=From{a={1,2,3},b=4,d={5,6},e=1}
     default:=To{a=7,b={8,9,10},c=11,d=12,e=.Mesh}
     out:To
     value_read(&m,&out,bytes_of(&from),1,&default)
     testing.expect_value(t,out,default)
+}
+
+// A field renamed in code says the names it had: a value stored under any of
+// them is read, through two renames too; a stored field the type has under no
+// name is listed by its path, and an earlier name that is another field's is
+// refused.
+@(test)
+a_renamed_field_keeps_its_value_through_each_name_it_had :: proc(t:^testing.T) {
+    Shape_V1 :: struct {radius:f32,sides:u8}
+    Shape_V3 :: struct {radius:f32}
+    Lamp_V1 :: struct {power:f32,gone:u32,shape:Shape_V1}
+    Lamp_V2 :: struct {strength:f32 `mirai:"was=power"`,shape:Shape_V1}
+    Lamp_V3 :: struct {force:f32 `mirai:"was=strength power"`,shape:Shape_V3}
+    Clash :: struct {power:f32,force:f32 `mirai:"was=power"`}
+    now:Schema;schema_init(&now);defer schema_destroy(&now)
+    now_type,_:=schema_add(&now,Lamp_V3)
+    stored:Schema;schema_init(&stored);defer schema_destroy(&stored)
+    v1,_:=schema_add(&stored,Lamp_V1)
+    v2,_:=schema_add(&stored,Lamp_V2)
+    first:=Lamp_V1{power=4,gone=9,shape={2,6}}
+    second:=Lamp_V2{strength=4,shape={2,6}}
+    cases:=[?]struct {from:Type_Index,value:[]u8,removed:[]string} {
+        {v1,bytes_of(&first),{"shape.sides","gone"}},
+        {v2,bytes_of(&second),{"shape.sides"}},
+    }
+    for entry in cases {
+        m:Migration;migration_init(&m,&stored,entry.from,&now,now_type);defer migration_destroy(&m)
+        out:Lamp_V3
+        value_read(&m,&out,entry.value,1)
+        testing.expect_value(t,out,Lamp_V3{force=4,shape={2}})
+        testing.expect_value(t,m.added,0)
+        testing.expect(t,slice.equal(m.removed[:],entry.removed),fmt.tprint(m.removed))
+    }
+    // The names travel in the binary schema: a file of the newest layout goes into the oldest.
+    w:Writer;writer_init(&w);defer writer_destroy(&w)
+    schema_write(&w,&now)
+    r:=reader_init(writer_bytes(&w))
+    filed:Schema
+    testing.expect_value(t,schema_read(&r,&filed),Schema_Error.None)
+    defer schema_destroy(&filed)
+    third:=Lamp_V3{force=4,shape={2}}
+    m:Migration;migration_init(&m,&filed,now_type,&stored,v1);defer migration_destroy(&m)
+    old:Lamp_V1
+    value_read(&m,&old,bytes_of(&third),1)
+    testing.expect_value(t,old,Lamp_V1{power=4,shape={2,0}})
+    // A path written before the renames names the field by any name it had.
+    for name in ([]string{"force","strength","power"}) {
+        _,part,error:=value_slice(&filed,now_type,bytes_of(&third),name)
+        testing.expectf(t,error==.None && (^f32)(raw_data(part))^==4,"%s: %v",name,error)
+    }
+    _,added:=schema_add(&now,Clash)
+    testing.expect(t,!added && strings.contains(now.error,"was=power"),now.error)
 }
 
 @(private="file") Action :: distinct u8

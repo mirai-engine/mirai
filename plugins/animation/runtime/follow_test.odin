@@ -5,8 +5,10 @@ import "core:math/linalg"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
+import scene "mirai:engine/scene"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -32,9 +34,10 @@ follow_rig :: proc(playback:^Playback,entity:core.Entity,skeleton:u64,names:[]st
     playback.rows[index]=i32(len(playback.states))
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Follow_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
 }
@@ -42,15 +45,15 @@ Follow_World :: struct {
 @(test)
 a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without_stable_allocations :: proc(t:^testing.T) {
     w:Follow_World
-    if !core.test_world_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     body,holder,head:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     body_place:=mm.Transform{{1,0,0},mm.quat_axis_angle({0,1,0},.7),{1,1,1}}
     holder_place:=mm.Transform{{0,2,3},mm.quat_axis_angle({1,0,0},.3),{1,1,1}}
     head_place:=mm.Transform{{5,0,0},mm.quat_axis_angle({0,0,1},-.4),{1,1,1}}
     core.add(&w.transforms,body,core.from_math(body_place));core.add(&w.transforms,holder,core.from_math(holder_place));core.add(&w.transforms,head,core.from_math(head_place))
     core.add(&w.parents,head,{entity=holder})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
 
     step:=mm.Transform{{0,.2,0},1,{1,1,1}}
     playback:Playback;defer playback_free(&playback)
@@ -87,7 +90,7 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
         playback.frame+=1
         for &state in playback.states {state.seen=playback.frame}
         copy(constraint_playing(playback,head).local[:],sampled)
-        animation_finish(playback,{problems=problems},cache,transforms,core.read(parents),1.0/60,nil,{},modifiers)
+        animation_finish(playback,{problems=problems},cache,transforms,parents,1.0/60,nil,{},modifiers)
     }
     check :: proc(t:^testing.T,playback:^Playback,body,head:core.Entity,body_place,holder_place:mm.Transform,jaw:mm.Quat) -> bool {
         leader,follower:=constraint_playing(playback,body),constraint_playing(playback,head)
@@ -219,9 +222,29 @@ curve_drives_combine_clamp_and_replace_and_full_poses_blend_before_additive_ones
     testing.expect(t,abs(value(&playback,face,"browUp")-.9)<1e-5 && abs(value(&playback,face,"smile"))<1e-5 && abs(value(&playback,face,"jaw_close")-.4)<1e-5)
 }
 
+// A world a scene is saved from, with the look of its entities.
+@(private)
+@(test_world)
+Look_World :: struct {
+    using world:Test_World,
+    ids:core.Table(core.Id),
+    parents:core.Table(core.Parent),
+    looks:core.Table(erender.Material_Values),
+    lives:core.Table(erender.Material_Live),
+    hierarchy:core.Hierarchy,
+}
+
 @(test)
-curve_materials_set_values_of_the_material_over_the_override_rounded_to_their_step :: proc(t:^testing.T) {
-    face:=core.entity_make(1,1)
+curve_materials_are_live_over_what_the_entity_authors_and_no_scene_saves_them :: proc(t:^testing.T) {
+    w:Look_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    face,bare:=core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.ids,face,core.Id{1});core.add(&w.ids,bare,core.Id{2})
+    own:=erender.MATERIAL_VALUES_DEFAULT
+    erender.material_value(&own,base.name_hash("frame"),{9,9,9,9},1) // the entity's own, which the curve goes over
+    core.add(&w.looks,face,own)
+    test_world_settle(&w)
     playback:Playback;defer playback_free(&playback)
     playback.frame=1
     follow_rig(&playback,face,3,{"","root"},{-1,0},{mm.TRANSFORM_IDENTITY,mm.TRANSFORM_IDENTITY})
@@ -236,37 +259,64 @@ curve_materials_set_values_of_the_material_over_the_override_rounded_to_their_st
     base.text_set(blush.curve[:],"blush");base.text_set(blush.parameter[:],"emission")
     testing.expect(t,pose_profile_check({curve_materials={frame,blush}}))
     testing.expect(t,modifier_append(&modifiers.curve_materials,face,frame) && modifier_append(&modifiers.curve_materials,face,blush))
-    override:erender.Material_Override
-    material_override_value(&override,1,base.name_hash("frame"),{9,9,9,9}) // the entity's own, which the curve replaces in the drawing
-    applied,moved:=curve_materials_apply(&modifiers,state,2,&override)
-    testing.expect(t,applied && moved)
-    find :: proc(o:^erender.Material_Override,slot:u8,name:string) -> (value:[4]f32,found:bool) {
-        for i in 0..<int(o.count) {if o.slots[i]==slot && o.names[i]==base.name_hash(name) {return o.values[i],true}}
+    apply :: proc(modifiers:^Modifier_Runtime,state:^Playing,w:^Look_World,e:core.Entity) -> (live:erender.Material_Live,fits:bool) {
+        fits=curve_materials_apply(modifiers,state,2,&w.lives,e)
+        test_world_settle(w)
+        live,_=core.get(&w.lives,e)
         return
     }
-    value,found:=find(&override,1,"frame")
-    testing.expect(t,found && value==[4]f32{3,3,3,3} && override.count==3,"rounded to its step, over the value of the override")
-    value,found=find(&override,0,"emission");testing.expect(t,found && value==[4]f32{0,0,.5,1})
-    value,found=find(&override,1,"emission");testing.expect(t,found && value==[4]f32{0,0,.5,1},"every slot")
+    find :: proc(o:^erender.Material_Live,slot:int,name:string) -> (value:[4]f32,found:bool) {
+        at:=erender.material_value_find(o,slot,base.name_hash(name))
+        return at>=0?o.values[at]:{},at>=0
+    }
+    drawn,applied:=apply(&modifiers,state,&w,face)
+    value,found:=find(&drawn,1,"frame")
+    testing.expect(t,applied && found && value==[4]f32{3,3,3,3} && drawn.count==3,"rounded to its step")
+    value,found=find(&drawn,0,"emission");testing.expect(t,found && value==[4]f32{0,0,.5,1})
+    value,found=find(&drawn,1,"emission");testing.expect(t,found && value==[4]f32{0,0,.5,1},"every slot")
     // The tick of the animation hashes their names and finds their curves once; the
     // drawing reads them, and a curve renamed in the row is found again by its name.
     problems:core.Problems
     testing.expect(t,curve_poses_apply(state,&playback,&modifiers,false,&problems) && len(modifiers.curve_material_states)==2)
     bound:=modifiers.curve_material_states[0]
     testing.expect(t,bound.ready && bound.rig==face && bound.to==base.name_hash("frame") && bound.slot>=0 && state.curves[bound.slot].target==base.name_hash("mouth_frame"))
-    drawn:erender.Material_Override
-    applied,moved=curve_materials_apply(&modifiers,state,2,&drawn)
-    value,found=find(&drawn,1,"frame");testing.expect(t,applied && moved && found && value==[4]f32{3,3,3,3})
+    drawn,applied=apply(&modifiers,state,&w,face)
+    value,found=find(&drawn,1,"frame");testing.expect(t,applied && found && value==[4]f32{3,3,3,3})
     base.text_set(modifiers.curve_materials.values[0].curve[:],"blush");modifiers.geometry+=1
     testing.expect(t,curve_poses_apply(state,&playback,&modifiers,false,&problems))
-    drawn={}
-    curve_materials_apply(&modifiers,state,2,&drawn)
+    drawn,_=apply(&modifiers,state,&w,face)
     value,found=find(&drawn,1,"frame");testing.expect(t,found && value==[4]f32{1,1,1,1},"blush .5 rounded to its step")
-    // A full override keeps what fits and says so; a bad row is refused by the profile.
-    full:erender.Material_Override
-    for i in 0..<erender.MATERIAL_OVERRIDE_CAPACITY {material_override_value(&full,0,u64(i+1),{})}
-    applied,moved=curve_materials_apply(&modifiers,state,2,&full)
-    testing.expect(t,!applied && moved && int(full.count)==erender.MATERIAL_OVERRIDE_CAPACITY)
+    // A curve that does not play takes its values away, and the component with the last.
+    for &curve in state.curves {curve.weight=0}
+    drawn,applied=apply(&modifiers,state,&w,face)
+    testing.expect(t,applied && !core.has(&w.lives,face))
+    for &curve in state.curves {curve.weight=1}
+    // A scene saves what the entities author: neither the values a curve moved nor the screen
+    // one shows, on the entity that authors a look and on the one that authors none.
+    drawn,applied=apply(&modifiers,state,&w,face)
+    bare_drawn,bare_applied:=apply(&modifiers,state,&w,bare)
+    erender.material_screen(&w.lives,face,{texture=7,lit=true,emission=200})
+    erender.material_screen(&w.lives,bare,{texture=7,lit=true,emission=200})
+    test_world_settle(&w)
+    core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
+    testing.expect(t,applied && bare_applied && drawn.count==3 && bare_drawn.count==3 && !core.has(&w.looks,bare),"a step authors nothing")
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    document:asset.Scene
+    _,error:=scene.capture(test_world_ref(&w),&document,&types,{id={1,2}})
+    if testing.expect_value(t,error,scene.Error.None) {
+        saved,kept:=asset.scene_get(&document,1,"Material_Values",erender.Material_Values)
+        testing.expect(t,kept && saved==own,"the scene keeps what the entity authored")
+        _,kept=asset.scene_get(&document,2,"Material_Values",erender.Material_Values)
+        _,live_kept:=asset.scene_component(&document,"Material_Live")
+        testing.expect(t,!kept && !live_kept,"none where none was authored, and nothing of what is live")
+        asset.scene_destroy(&document)
+    }
+    // A Material_Live that is full keeps what fits and says so; a bad row is refused by the profile.
+    live:=erender.material_live(&w.lives,face)
+    live^={}
+    for i in 0..<erender.MATERIAL_VALUES_CAPACITY {erender.material_value(live,u64(i+1),{},0)}
+    drawn,applied=apply(&modifiers,state,&w,face)
+    testing.expect(t,!applied && int(drawn.count)==erender.MATERIAL_VALUES_CAPACITY)
     nan:=f32(0);nan/=nan
     bad:=frame;bad.step=-1
     testing.expect(t,!pose_profile_check({curve_materials={bad}}))

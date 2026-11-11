@@ -47,9 +47,11 @@ are kept here and, where the license asks for it, in the header of the file.
 - **MikkTSpace** (zlib; © 2011 Morten S. Mikkelsen), <https://github.com/mmikk/MikkTSpace>.
   `std/geom/tangents.odin`, altered. Game.
 - **Box2D and Box3D** (MIT; © Erin Catto), <https://github.com/erincatto/box2d>.
-  `plugins/physics/runtime/sim` and `std/spatial/dynamic_tree.odin`. Game.
+  `plugins/physics/runtime/sim`, the drag of `plugins/physics/runtime/step.odin` and
+  `std/spatial/dynamic_tree.odin`. Game.
 - **Jolt Physics** (MIT; © 2021 Jorrit Rouwe), <https://github.com/jrouwe/JoltPhysics>.
-  `plugins/physics/runtime/sim/gjk.odin`. Game.
+  `gjk.odin`, `mesh.odin` and `contact.odin` of `plugins/physics/runtime/sim`, and the scale
+  checks of `plugins/physics/runtime/step.odin` and `geometry.odin`. Game.
 - **earcut** (ISC; © 2016 Mapbox), <https://github.com/mapbox/earcut>.
   `std/geom/triangulate.odin`. Game.
 - **Delaunator** (ISC; © 2021 Mapbox), <https://github.com/mapbox/delaunator>.
@@ -70,7 +72,34 @@ are kept here and, where the license asks for it, in the header of the file.
   The features, their normalization by kind and the search bounded by runs of rows of
   `std/anim/matching.odin`, altered. Game, with the `animation` plugin.
 - **Recast and Detour** (zlib; © 2009 Mikko Mononen),
-  <https://github.com/recastnavigation/recastnavigation>. `std/ai/nav_*.odin`, altered. Game.
+  <https://github.com/recastnavigation/recastnavigation>. `std/ai/nav_*.odin` and the path
+  following of `plugins/navigation/runtime/agents.odin`, altered. Game.
+- **RVO2 Library** (Apache-2.0; © 2008 University of North Carolina at Chapel Hill),
+  <https://github.com/snape/RVO2>. The obstacle lines of `std/ai/avoidance.odin`, altered. Game.
+- **Steam Audio** (Apache-2.0; © 2017-2023 Valve Corporation),
+  <https://github.com/ValveSoftware/steam-audio>. `audio/hrtf.odin`, `audio/binaural.odin`,
+  `audio/direct.odin`, the mix per ear and the delay of a voice of `audio/mix.odin`, and the
+  occlusion and transmission of `engine/audio/audio.odin`, altered. Game.
+- **Godot Engine** (MIT; © 2014-present Godot Engine contributors, © 2007-2014 Juan Linietsky,
+  Ariel Manzur), <https://github.com/godotengine/godot>. The Hermite resampling of
+  `audio/mix.odin`, the loop points of `audio/wav.odin`, the limiter and the filter coefficients
+  of `audio/bus.odin`, the steady ticks of `host/frame.odin`, the floor between two slopes of
+  `plugins/physics/runtime/sim/character.odin` and the start of a process of
+  `std/subprocess/subprocess_posix.odin`, altered. Game.
+- **Odin** `core:os` (BSD-3-Clause; © 2016-2025 Ginger Bill), <https://odin-lang.org>. The start
+  of a process of `std/subprocess/subprocess_posix.odin`, altered. Game.
+- **taffy** (MIT; © 2018 Visly Inc., © 2026 Taffy Authors),
+  <https://github.com/DioxusLabs/taffy>. The rounding to device pixels of
+  `ui/layout_tree.odin`. Game.
+- **ozz-animation** (MIT; © 2020 Guillaume Blanc),
+  <https://github.com/guillaumeblanc/ozz-animation>. The aim at a point of `std/anim/ik.odin`.
+  Game.
+- **pbrt-v4** (Apache-2.0; © 1998-2020 Matt Pharr, Wenzel Jakob and Greg Humphreys),
+  <https://github.com/mmp/pbrt-v4>. The watertight test of a ray and a triangle of
+  `shaders/include/trace.slang` and `std/math/ray.odin`, and the union of cones of
+  `render/light_tree.odin`. Game.
+- **lightyear** (MIT or Apache-2.0; © the lightyear contributors),
+  <https://github.com/cBournhonesque/lightyear>. The input delay of `net/clock.odin`. Game.
 - **MaterialX** (Apache-2.0; © Contributors to the MaterialX Project),
   <https://github.com/AcademySoftwareFoundation/MaterialX>. The sheen fit of
   `shaders/include/brdf.slang`. Game.
@@ -81,7 +110,8 @@ are kept here and, where the license asks for it, in the header of the file.
   `shaders/display_tables.comp.slang`. Game.
 - **AMD FidelityFX Super Resolution 3.1.4** (MIT; © 2024 Advanced Micro Devices, Inc.),
   <https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK>. `plugins/fsr/shaders/fsr3` (the
-  upscaler, optical flow, frame interpolation and SPD headers) and the pass sequence of
+  upscaler, optical flow, frame interpolation and SPD headers, altered: reduced to the one
+  configuration Mirai compiles, as their `UPSTREAM.md` says) and the pass sequence of
   `plugins/fsr/runtime/framegen.odin`, translated from `ffx_opticalflow.cpp` and
   `ffx_frameinterpolation.cpp`. Game, with the `fsr` plugin.
 
@@ -93,6 +123,10 @@ The files derived from Apache-2.0 work state their changes in their header.
   `assets/fonts/Inter-LICENSE.txt`.
 - **JetBrains Mono 2.304** (SIL OFL 1.1; © The JetBrains Mono Project Authors),
   <https://www.jetbrains.com/lp/mono>. Game, with `assets/fonts/JetBrainsMono-LICENSE.txt`.
+- **CIPIC HRTF Database**, the set `cipic_124` as Steam Audio ships it (free to reproduce and
+  use for any purpose, keeping its notice: Copyright (c) 2001 The Regents of the University of
+  California. All Rights Reserved), <https://github.com/ValveSoftware/steam-audio>.
+  `audio/hrtf/cipic_124.hrtf`. Game.
 - **Kenney Input Prompts 1.5A** (CC0 1.0; Kenney), <https://kenney.nl/assets/input-prompts>.
   Game, with the `prompts_kenney` plugin.
 - **Mesh2Motion** human rig, its reference model and the clips `walk` and `idle-a` (CC0 1.0;

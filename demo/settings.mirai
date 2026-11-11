@@ -1,10 +1,5 @@
 {
-  "Spawn_Settings": {
-    "players": true
-  },
   "UI_Settings": {
-    "scale": 1,
-    "languages": ["English", "Spanish"],
     "prompts": "81aa127badfbdbeb988b5d3a1c12ab30"
   },
   "Graphics_Settings": {

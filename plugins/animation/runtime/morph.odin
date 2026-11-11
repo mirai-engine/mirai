@@ -187,7 +187,7 @@ morph_rig_read :: proc(rig:^Skin_Rig,view:asset.Mesh_View,allocator:mem.Allocato
 // Whose animation drives the weights of an entity: the one named, itself
 // when it is a rig that follows another, the rig of its Pose_Source, or its
 // nearest animated ancestor.
-morph_source :: proc(entity:core.Entity,config:Morph_Weights,animations:core.Read(Animation),sources:core.Read(Pose_Source),parents:core.Read(core.Parent),playback:^Playback=nil) -> core.Entity {
+morph_source :: proc(entity:core.Entity,config:Morph_Weights,animations:^core.Table(Animation,$A),sources:^core.Table(Pose_Source,$B),parents:^core.Table(core.Parent,$C),playback:^Playback=nil) -> core.Entity {
     if config.source!=core.NONE {return config.source}
     if playback!=nil {if own:=constraint_playing(playback,entity);own!=nil && own.leader!=core.NONE {return entity}}
     if source,has:=core.get(sources,entity);has {return source.rig}
@@ -230,10 +230,10 @@ morph_bind :: proc(state:^Morph_Playing,rig:^Skin_Rig,config:Morph_Weights,path:
 
 // Composes the weights of the targets of every mesh that has them, from its
 // mesh, its Morph_Weights and the curves of the animation that drives it.
-@(step="fixed",loops="game editor",stage="react",after="animation_advance")
+@(step="fixed",loops="game editor",stage="react")
 animation_morph :: proc(
-    meshes:core.Read(erender.Mesh_Renderer),configs:core.Read(Morph_Weights),animations:core.Read(Animation),
-    targets:core.Read(Animation_Target),sources:core.Read(Pose_Source),parents:core.Read(core.Parent),
+    meshes:^core.Table(erender.Mesh_Renderer,.Read),configs:^core.Table(Morph_Weights,.Read),animations:^core.Table(Animation,.Read),
+    targets:^core.Table(Animation_Target,.Read),sources:^core.Table(Pose_Source,.Read),parents:^core.Table(core.Parent,.Read),
     playback:core.Ref(Playback),modifiers:core.Ref(Modifier_Runtime),cache:^Skin_Runtime,state:^Morph_Playback,libraries:^Source_Assets,app:^host.App,time:core.Time,
     problems:^core.Problems,
 ) {

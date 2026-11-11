@@ -1,18 +1,17 @@
 package navigation_editor
 
-import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:project"
 import "mirai:std/ai"
-import "mirai:std/serial"
 import nav "plugins:navigation/runtime"
 
-@(private="file")
+@(private)
+@(test_world)
 Agent_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     agents:core.Table(nav.Nav_Agent),
     paths:core.Table(nav.Nav_Path),
@@ -25,9 +24,9 @@ Agent_World :: struct {
 @(test)
 nav_agent_tells_what_a_far_agent_does :: proc(t:^testing.T) {
     world:Agent_World
-    if !core.test_world_init(t,&world,nav.test_types) {return}
-    defer core.test_world_destroy(&world)
-    session:=editor.Session{info=core.test_world_info(&world),edit_world=&world}
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    session:=editor.Session{info=test_world_info(&world),edit_world=&world}
     e:=core.create(&world.entities)
     core.add(&world.ids,e,core.Id{7})
     core.add(&world.agents,e,nav.NAV_AGENT_DEFAULT)
@@ -37,19 +36,18 @@ nav_agent_tells_what_a_far_agent_does :: proc(t:^testing.T) {
     far:=nav.Nav_Far{count=2,next=1,speed=3,complete=true}
     far.route[0],far.route[1]={10,0,0},{30,0,0}
     core.add(&world.fars,e,far)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     core.disable(&world.agents,e);core.disable(&world.paths,e);core.disable(&world.fars,e)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     testing.expect(t,!core.has(&world.agents,e))
-    out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
     params:Agent_Params;copy(params.entity[:],"0000000000000007")
-    method:=api.Method{params_id=Agent_Params}
-    call:=api.Call{method=&method,params=&params,out=&out,allocator=context.temp_allocator}
+    result:Nav_Agent_Result
+    method:=api.Method{params_id=Agent_Params,result_id=Nav_Agent_Result}
+    call:=api.Call{method=&method,params=&params,result=&result,allocator=context.temp_allocator}
     agent(&session,&call)
     testing.expect(t,!call.failed,call.error.message)
-    text:=string(serial.writer_bytes(&out))
-    testing.expectf(t,strings.contains(text,`"state":"Moving"`) && strings.contains(text,`"far":true`),"%s",text)
-    testing.expectf(t,strings.contains(text,`"position":[30,0,0]`) && !strings.contains(text,`"position":[10,0,0]`),"%s",text)
+    testing.expectf(t,result.state=="Moving" && result.far,"%v",result)
+    testing.expectf(t,len(result.corners)==1 && result.corners[0].position=={30,0,0},"%v",result.corners)
 }
 
 // The way a drive takes is the first corner past where the body stands, with
@@ -64,12 +62,4 @@ a_route_is_the_next_corner_and_what_is_left :: proc(t:^testing.T) {
     near:=[1]ai.Nav_Corner{{position={0.1,0,0}}}
     testing.expect_value(t,route_of(near[:],{}).state,editor.Route_State.None)
     testing.expect_value(t,route_of(nil,{}).state,editor.Route_State.None)
-}
-
-// What git and the tools know of the kinds of the plugin without loading it.
-@(test)
-the_manifest_declares_the_asset_kinds_the_plugin_registers :: proc(t:^testing.T) {
-    m,error:=project.plugin_read(#directory+"../plugin.mirai")
-    testing.expect_value(t,error.code,project.Error_Code.None)
-    testing.expect_value(t,editor.asset_kinds_differ(NAV_KINDS_DEFAULT.provider,&m),"")
 }

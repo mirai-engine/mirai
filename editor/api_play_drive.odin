@@ -134,7 +134,7 @@ Api_Drive :: struct {
 play_actions :: proc(s:^Session,m:^input.Input_Map,move_name,jump_name:string) -> (move,jump:input.Action,can_jump:bool,problem:string) {
     named :: proc(s:^Session,m:^input.Input_Map,name:string,kind:input.Action_Kind,what:string) -> (action:input.Action,problem:string) {
         found,declared:=core.name_value(s.info,input.Action,name)
-        if !declared || found<0 || found>=input.ACTION_CAPACITY || m.kinds[found]!=kind || m.declared&input.action_bit(input.Action(found))==0 {return 0,fmt.tprintf("%s %q is not a %v action: input.get lists them",what,name,kind)}
+        if !declared || found<0 || found>=input.ACTION_CAPACITY || m.actions[found].kind!=kind || m.declared&input.action_bit(input.Action(found))==0 {return 0,fmt.tprintf("%s %q is not a %v action: input.get lists them",what,name,kind)}
         return input.Action(found),""
     }
     has_move:=false
@@ -146,17 +146,18 @@ play_actions :: proc(s:^Session,m:^input.Input_Map,move_name,jump_name:string) -
         if jump,problem=named(s,m,jump_name,.Button,"jump");problem!="" {return}
         can_jump=true
     }
-    for &b in m.bindings[:m.binding_count] {
-        kind:=m.kinds[b.action]
-        if !has_move && kind==.Axis2 && b.count>0 && b.codes[0].device==.Key {move,has_move=b.action,true}
-        if !can_jump && kind==.Button && b.count==1 {
-            code:=b.codes[0]
-            if code.device==.Key && core.Key(code.code)==.Space || code.device==.Gamepad_Button && core.Gamepad_Button(code.code)==.South {jump,can_jump=b.action,true}
+    for &a,i in m.actions {
+        for &b in input.action_bindings(&a) {
+            first,_:=input.code_device(b.inputs[0])
+            if !has_move && a.kind==.Axis2 && first==.Key {move,has_move=input.Action(i),true}
+            if !can_jump && a.kind==.Button && (b.inputs[0]==.Space || b.inputs[0]==.South) {jump,can_jump=input.Action(i),true}
         }
     }
     if !has_move {
-        for &b in m.bindings[:m.binding_count] {
-            if m.kinds[b.action]==.Axis2 && b.count==2 && b.codes[0].device==.Gamepad_Axis && core.Gamepad_Axis(b.codes[0].code)==.Left_X {move,has_move=b.action,true;break}
+        search: for &a,i in m.actions {
+            for &b in input.action_bindings(&a) {
+                if a.kind==.Axis2 && b.inputs[0]==.Left_X {move,has_move=input.Action(i),true;break search}
+            }
         }
     }
     if !has_move {problem="The game binds no Axis2 action to keys or to the left stick: give the one that moves with move; input.get lists them"}
@@ -179,8 +180,8 @@ play_view_axes :: proc(w:core.World_Ref) -> (right,forward:[3]f32) {
 play_focused :: proc(w:core.World_Ref) -> (seat,body:core.Entity) {
     state,seats:=core.world_storage_of(w,input.Seats),core.world_table_of(w,input.Seat)
     if state==nil || seats==nil {return}
-    seat=input.focused(state,core.read(seats))
-    if drivables:=core.world_table_of(w,input.Drivable);drivables!=nil {body=input.body_of(core.read(drivables),seat)}
+    seat=input.focused(state,seats)
+    body=input.body_of(seats,seat)
     return
 }
 
@@ -211,7 +212,7 @@ api_drive_is :: proc(w:core.World_Ref,hit,e:core.Entity) -> bool {
 api_drive_has_top :: proc(w:core.World_Ref,e:core.Entity,world:[3]f32,box:mm.Aabb) -> bool {
     query:=api_drive_query(w)
     if query.probe==nil {return false}
-    if moves:=core.world_table_of(w,input.Move_Input);moves!=nil && core.has(core.read(moves),e) {return false}
+    if moves:=core.world_table_of(w,input.Move_Input);moves!=nil && core.has(moves,e) {return false}
     from:=world.y+box.max.y+1
     span:=box.max.y-box.min.y+2
     middle:=world+(box.min+box.max)*0.5

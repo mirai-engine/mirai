@@ -2,9 +2,9 @@ package editor
 
 import "base:runtime"
 import "core:mem"
-import "core:reflect"
 import "mirai:asset"
 import "mirai:std/base"
+import "mirai:std/serial"
 import "mirai:ui"
 
 // Values a panel holds and edits with the rows of Details: a value of a
@@ -60,13 +60,12 @@ held_take :: proc(c:^Inspect) {
 held_field_row :: proc(s:^Session,h:Held_Values,name:string,label:string="",description:string="") -> (changed:bool) {
     info:=h.info
     if info==nil || h.key==0 || h.value==nil || h.defaults==nil {return false}
-    fields,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
-    if !is_struct || h.key==0 || h.value==nil || h.defaults==nil {return false}
     c:=Inspect{s=s,w=shown_world(s),index=HELD_INDEX,held=h.key,write=h.write,user=h.user,name=h.name,type=info.id,value=cast([^]u8)h.value,defaults=cast([^]u8)h.defaults,size=info.size,width=h.width}
+    if !inspect_schema(&c,info) {return false}
     held_take(&c)
-    for i in 0..<int(fields.field_count) {
-        if fields.names[i]!=name {continue}
-        field_row(&c,fields.types[i],reflect.Struct_Tag(fields.tags[i]),name,label!=""?label:readable(name),fields.offsets[i],0,description)
+    for field in serial.schema_fields(c.schema,c.of) {
+        if field.name!=name {continue}
+        field_row(&c,field,label!=""?label:readable(name),uintptr(field.offset),0,description)
         break
     }
     return c.changed
@@ -77,7 +76,6 @@ held_field_row :: proc(s:^Session,h:Held_Values,name:string,label:string="",desc
 // among those panels hold, not 0. True when the list or a drop changed it.
 held_asset_button :: proc(s:^Session,id:ui.Id,key:u64,kinds:Asset_Kinds,value:^base.Asset_Id,width:f32) -> (changed:bool) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     if w:=&s.inspector.held;w.key==key && w.size==size_of(base.Asset_Id) {
         mem.copy(value,&w.bytes[0],size_of(base.Asset_Id))
         w^={}
@@ -88,12 +86,12 @@ held_asset_button :: proc(s:^Session,id:ui.Id,key:u64,kinds:Asset_Kinds,value:^b
         shown=asset_name(asset_path(s,value^))
         if shown=="" {shown="Missing"}
     }
-    side:=th.control-4
-    if ui.box(ctx,{id=id,width=ui.fixed(width),height=ui.fixed(th.control),gap=4,align_y=.Center,track=true}) {
+    side:=ui.metric(ctx,"control")-4
+    if ui.box(ctx,{id=id,width=ui.fixed(width),height=ui.fixed(ui.metric(ctx,"control")),gap=4,align_y=.Center,track=true}) {
         asset_field_thumbnail(s,ui.id_derive(ctx,id,"thumbnail"),kinds[0],value^,side)
         button:=ui.id_derive(ctx,id,"list")
         open:=s.inspector.list.key==key
-        if ui.button(ctx,button,{label=shown,icon=.Chevron_Down,icon_after=true,icon_color=th.text_muted,icon_size=13,style=.Field,width=-1,height=th.control,size=th.font_small,padding=7,active=open}).clicked && !open {
+        if ui.button(ctx,button,{label=shown,icon=.Chevron_Down,icon_after=true,icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="field",width=-1,height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_small"),padding=7,active=open}).clicked && !open {
             anchor,_:=ui.widget_rect(ctx,button)
             list_open(s,{key=key,held=key,kinds=kinds},anchor)
         }
@@ -106,13 +104,12 @@ held_asset_button :: proc(s:^Session,id:ui.Id,key:u64,kinds:Asset_Kinds,value:^b
 // while it has text, a cross that empties it.
 search_field :: proc(s:^Session,id:ui.Id,buffer:[]u8,length:^int,placeholder:string) -> (changed:bool) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),padding={7,0,2,0},gap=5,align_y=.Center,fill=th.field,stroke=th.accent if ctx.edit.id==id else th.border,stroke_width=1,radius=4}) {
-        ui.icon(ctx,ui.icon_user(u8(User_Icon.Search)),th.text_muted,13)
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),padding={7,0,2,0},gap=5,align_y=.Center,fill=ui.tone(ctx,"field"),stroke=ui.tone(ctx,"accent") if ctx.edit.id==id else ui.tone(ctx,"border"),stroke_width=1,radius=4}) {
+        ui.icon(ctx,ui.icon_user(u8(User_Icon.Search)),ui.tone(ctx,"text_muted"),13)
         result:=ui.text_field(ctx,id,buffer,length,{height=24,live=true,keep_caret=true,placeholder=placeholder,bare=true})
         changed=result.changed
         if result.cancelled && length^>0 {length^=0;changed=true}
-        if length^>0 && ui.button(ctx,ui.id_derive(ctx,id,"clear"),{icon=.Cross,icon_color=th.text_muted,style=.Ghost,width=22,height=22}).clicked {length^=0;changed=true}
+        if length^>0 && ui.button(ctx,ui.id_derive(ctx,id,"clear"),{icon=.Cross,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=22,height=22}).clicked {length^=0;changed=true}
     }
     return
 }

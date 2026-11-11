@@ -237,7 +237,7 @@ shape_instance :: proc(state:^physics.Physics_State,body:physics.Body_Handle,sha
 // Keeps the bodies of the foliage of the world equal to its sources, the
 // places of their entities and the cells the streaming sources keep resident.
 @(step="fixed",loops="game editor",stage="simulate",after="physics_prepare",before="physics_places")
-foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collision:core.Ref(physics.Collision_Settings),data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),removals:core.Ref(Foliage_Removals),foliages:core.Read(Foliage),worlds:core.Read(core.World_Transform),kept:core.Read(scene.Far_Kept),sources:core.Ref(scene.Streaming_Sources),time:core.Time,problems:^core.Problems) {
+foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collision:core.Ref(physics.Collision_Settings),data:core.Ref(Foliage_Data),grounds:core.Ref(Foliage_Ground),removals:core.Ref(Foliage_Removals),foliages:^core.Table(Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),kept:^core.Table(scene.Far_Kept,.Read),sources:core.Ref(scene.Streaming_Sources),time:core.Time,problems:^core.Problems) {
     if !state.ready || data.ptr==nil || time.resimulating {return}
     // Without settings every preset is the Default category, colliding with all.
     defaults:physics.Collision_Settings
@@ -246,16 +246,14 @@ foliage_physics :: proc(fp:^Foliage_Physics,state:^physics.Physics_State,collisi
         owner:=fp.owners[i]
         f,shown:=core.get(foliages,owner.entity)
         // What stands for a section that is not loaded collides with nothing.
-        if shown && f.source==owner.source && !(kept.table!=nil && core.has(kept,owner.entity)) {continue}
+        if shown && f.source==owner.source && !(kept!=nil && core.has(kept,owner.entity)) {continue}
         physics_owner_clear(fp,state,owner.entity)
         unordered_remove(&fp.owners,i)
     }
-    for row in 0..<core.count(foliages) {
-        e:=core.entity_at(foliages,row)
-        f:=core.at(foliages,row)
+    placed:=core.join(foliages,worlds)
+    for e,f,world in core.each_joined(&placed) {
         entry:=data_find(data.ptr,f.source)
-        world,placed:=core.get(worlds,e)
-        if entry==nil || !placed || (kept.table!=nil && core.has(kept,e)) {continue}
+        if entry==nil || (kept!=nil && core.has(kept,e)) {continue}
         ground:=ground_owner(grounds.ptr,e)
         revision:=ground!=nil?ground.revision:0
         streamed:=sources.ptr!=nil?sources.ptr.revision:0

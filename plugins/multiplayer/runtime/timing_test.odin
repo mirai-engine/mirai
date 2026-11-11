@@ -22,7 +22,6 @@ Timing_Shared :: struct {
     using base:Net_Test_Shared,
     now:f64,
     ran:int,               // ticks the client simulated
-    events:Net_Events,
     propagation:core.Propagation,
     jumps:core.Jumps,
     mover:core.Entity,     // of the client alone: it moves a fixed step each tick
@@ -40,7 +39,6 @@ Timing :: struct {
     network:wire.Sim_Network,
     platform:^platform.Platform,
     outbox:Net_Outbox,
-    server_events:Net_Events,
     server_tick:u32,
     server_time:f64,
     moved:core.Entity, // of the server: it moves speed along x each tick
@@ -64,9 +62,8 @@ timing_input :: proc(world,shared,editor,application:rawptr) {
     app:=cast(^host.App)application
     s:=sh.session
     ref:=core.world_ref(w,sh.info)
-    core.queue_clear(&sh.events.received)
     s.now=sh.now
-    client_commands(s,ref,app.assets,app.allocator,wire.host_poll(&s.host),&sh.events)
+    client_commands(s,ref,app.assets,app.allocator,wire.host_poll(&s.host))
     client_reconcile(s,ref,app,w.frame.dt)
     client_clock(s,ref,app)
 }
@@ -76,20 +73,18 @@ timing_fixed :: proc(world,shared,editor,application:rawptr) {
     w:=cast(^Net_Test_World)world
     sh:=cast(^Timing_Shared)shared
     sh.ran+=1
-    if local:=core.get(&w.transforms,sh.mover);local!=nil {local.position.x=f32(w.time.tick)*TIMING_STEP}
+    if local:=core.edit(&w.transforms,sh.mover);local!=nil {local.position.x=f32(w.time.tick)*TIMING_STEP}
     if sh.bare {
         app:=cast(^host.App)application
         ref:=core.world_ref(w,sh.info)
         core.revisions_moved(w.storage_revisions[:])
-        net_tick_head(ref,app,sh.session,&w.remote,nil,sh.session.problems)
+        net_tick_head(ref,app,sh.session,&w.remote,nil,nil,sh.session.problems)
         core.settle(sh.info,w,nil)
         core.pose_targets_place(core.read(&w.replicas),&w.transforms,&w.places)
         core.settle(sh.info,w,nil)
         outbox:Net_Outbox
-        adoptions:Net_Adoptions
-        net_tick_tail(ref,sh.session,&outbox,&adoptions,sh.session.problems)
+        net_tick_tail(ref,sh.session,&outbox,&w.made,sh.session.problems)
         core.value_free(&outbox,type_info_of(Net_Outbox))
-        core.value_free(&adoptions,type_info_of(Net_Adoptions))
         core.settle(sh.info,w,nil)
     } else {net_test_fixed(world,shared,editor,application)}
     timing_propagate(w,sh)
@@ -155,17 +150,15 @@ timing_destroy :: proc(x:^Timing) {
     for &session in x.sessions {if session.host_ready {session_destroy(&session)}}
     for &world in x.worlds {core.world_destroy(&x.info,.World,&world)}
     for &share in x.shares {
-        core.value_free(&share.events,type_info_of(Net_Events))
         core.value_free(&share.propagation,type_info_of(core.Propagation))
         core.value_free(&share.jumps,type_info_of(core.Jumps))
         phys.collider_meshes_destroy(&share.colliders)
     }
     for &app in x.apps {host.app_world_scratch_free(&app);delete(app.worlds)}
     core.value_free(&x.outbox,type_info_of(Net_Outbox))
-    core.value_free(&x.server_events,type_info_of(Net_Events))
     wire.sim_network_destroy(&x.network)
     if x.platform!=nil {platform.destroy(x.platform)}
-    core.test_info_destroy(&x.info)
+    test_info_destroy(&x.info)
 }
 
 // One frame of the client of dt seconds, and the ticks of the server that time completes.
@@ -180,8 +173,8 @@ timing_frame_run :: proc(x:^Timing,dt:f32) {
         x.server_time+=1.0/60
         x.server_tick+=1
         wire.host_update(&s.host,x.server_time)
-        server_commands(s,core.world_ref(server,&x.info),nil,wire.host_poll(&s.host),&x.server_events,&server.remote)
-        for row in 0..<core.count(&server.transforms) {core.at(&server.transforms,row).position.x+=x.speed}
+        server_commands(s,core.world_ref(server,&x.info),nil,wire.host_poll(&s.host),&server.remote)
+        for row in 0..<core.count(&server.transforms) {core.edit_at(&server.transforms,row).position.x+=x.speed}
         core.settle(&x.info,server,nil)
         server_publish(s,core.world_ref(server,&x.info),&x.outbox,x.server_tick)
     }
@@ -206,7 +199,7 @@ timing_replica :: proc(x:^Timing) -> core.Entity {
 @(private="file")
 timing_drawn :: proc(x:^Timing,e:core.Entity) -> (position:[3]f32,ok:bool) {
     client:=&x.worlds[1]
-    world,found:=core.get(core.read(&client.worlds),e)
+    world,found:=core.get(&client.worlds,e)
     if !found {return}
     return render.drawn_transform(world,client.frame).position,true
 }
@@ -235,13 +228,13 @@ client_frames_run_the_ticks_of_the_clock :: proc(t:^testing.T,period,spread:f32)
     for _ in 0..<int(3/period) {
         ran:=sh.ran
         timing_frame_run(x,timing_dt(&random,period,spread))
-        if client.frame.alpha<0 || client.frame.alpha>=1 {outside+=1}
+        if client.frame.alpha<0 || client.frame.alpha>1 {outside+=1}
         if u64(sh.ran-ran)!=client.time.tick-previous_tick {uneven+=1}
         drawn,_:=timing_drawn(x,sh.mover)
         if drawn.x<previous_drawn.x {backward+=1}
         previous_drawn,previous_tick=drawn,client.time.tick
     }
-    testing.expectf(t,outside==0,"alpha outside [0,1) in %d frames",outside)
+    testing.expectf(t,outside==0,"alpha outside [0,1] in %d frames",outside)
     testing.expectf(t,uneven==0,"%d frames ran other ticks than the clock of the world counted",uneven)
     testing.expectf(t,backward==0,"what moves steadily went back in %d frames",backward)
 }
@@ -310,7 +303,7 @@ an_interpolated_replica_whose_states_come_further_apart_keeps_moving :: proc(t:^
     if !timing_init(x,t,{latency=0.03,jitter=0.002}) {return}
     random:=u64(31)
     for _ in 0..<240 {timing_frame_run(x,timing_dt(&random,1.0/60,0))}
-    core.get(&x.worlds[0].objects,x.moved).update_hz=10
+    core.edit(&x.worlds[0].objects,x.moved).update_hz=10
     smallest,largest,stalled:=replica_steps(t,x,1.0/60,0,4)
     testing.expectf(t,stalled==0 && smallest>0.7 && largest<1.3,"steps between %v and %v of the steady one, still for %d frames",smallest,largest,stalled)
     c:=&x.sessions[1].client
@@ -335,7 +328,7 @@ an_interpolated_replica_over_a_jittery_link_keeps_moving :: proc(t:^testing.T) {
 an_interpolated_body_is_kinematic_until_this_client_simulates_it :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -364,7 +357,7 @@ an_interpolated_body_is_kinematic_until_this_client_simulates_it :: proc(t:^test
         r.tick=tick
         r.pose.position={f32(tick)*0.05,0,0}
         r.motion.linear={3,0,0}
-        replica_sample(&s,r)
+        replica_sample(&s,r,0)
     }
     body_type :: proc(w:^Net_Test_World,e:core.Entity) -> phys.Body_Type {
         info,_:=phys.body_info(core.ref(&w.state),phys.body_of(core.ref(&w.state),e))
@@ -375,7 +368,7 @@ an_interpolated_body_is_kinematic_until_this_client_simulates_it :: proc(t:^test
         net_test_fixed(&world,&shared,nil,&app)
     }
     testing.expect_value(t,body_type(&world,e),phys.Body_Type.Kinematic)
-    motion,_:=core.get(core.read(&world.bodies),e)
+    motion,_:=core.get(&world.bodies,e)
     testing.expectf(t,math.abs(motion.linear.x-3)<0.2 && math.abs(motion.linear.y)<0.2,"it goes as the interpolation does: %v",motion.linear)
     r.role=.Held
     replica_classify(&s,ref,r)
@@ -395,7 +388,7 @@ an_interpolated_body_is_kinematic_until_this_client_simulates_it :: proc(t:^test
 an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_gives_it_back :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -422,7 +415,7 @@ an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_give
         r.tick=tick
         r.pose.position={f32(tick)*0.05,0,0}
         r.motion.linear={3,0,0}
-        replica_sample(&s,r)
+        replica_sample(&s,r,0)
     }
     held:=[3]f32{0,2,0}
     for tick in 1..<30 {
@@ -430,8 +423,8 @@ an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_give
         phys.manipulation_target(&world.requests,e,held)
         net_test_fixed(&world,&shared,nil,&app)
     }
-    local,_:=core.get(core.read(&world.transforms),e)
-    motion,_:=core.get(core.read(&world.bodies),e)
+    local,_:=core.get(&world.transforms,e)
+    motion,_:=core.get(&world.bodies,e)
     testing.expectf(t,abs(local.position.x-1.5)<0.1 && abs(local.position.y)<0.05,"it is where the server has it: %v",local.position)
     testing.expectf(t,abs(motion.linear.x-3)<0.2 && abs(motion.linear.y)<0.2,"it goes as the interpolation does: %v",motion.linear)
     r.role=.Held
@@ -444,7 +437,7 @@ an_interpolated_body_follows_the_server_over_a_manipulation_of_the_game_and_give
         world.time.tick=u64(tick)
         net_test_fixed(&world,&shared,nil,&app)
     }
-    local,_=core.get(core.read(&world.transforms),e)
+    local,_=core.get(&world.transforms,e)
     testing.expectf(t,linalg.length(local.position-held)<0.01,"the manipulation of the game holds it again: %v",local.position)
     phys.manipulation_end(&world.requests,e)
     net_test_fixed(&world,&shared,nil,&app)

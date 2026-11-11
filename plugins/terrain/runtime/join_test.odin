@@ -25,7 +25,7 @@ a_joined_volume_meets_the_ground_on_the_sides_of_its_box_without_a_seam :: proc(
     join:=Chunk_Join{ground=&ground,offset={24,24},lift=-8}
     testing.expect(t,source_volume_ground(&volume,join))
     // A pit in its middle, away from the band.
-    testing.expect(t,source_edit(&volume,{kind=.Remove,center={0,1,0},radius=3,amount=1}).changed)
+    testing.expect(t,source_edit(&volume,{kind=.Carve,center={0,1,0},radius=3,amount=1}).changed)
     mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
     // Every sample of the Heightfield on the side x of the box is a vertex of the Volume there.
     found:[17]bool
@@ -40,7 +40,7 @@ a_joined_volume_meets_the_ground_on_the_sides_of_its_box_without_a_seam :: proc(
             // Along the side the Volume runs on the edge of the ground between its samples.
             z0:=clamp(int(z),0,15)
             t0:=z-f32(z0)
-            h:=grid_get(&ground.heights,24,24+z0)*(1-t0)+grid_get(&ground.heights,24,24+z0+1)*t0
+            h:=grid_get(&ground.field,24,24+z0)*(1-t0)+grid_get(&ground.field,24,24+z0+1)*t0
             testing.expectf(t,abs(at.y-h)<1e-4,"a vertex on the side at z %v stands at %v, the ground at %v",z,at.y,h)
             if abs(z-math.round(z))<1e-5 {found[int(math.round(z))]=true}
         }
@@ -69,7 +69,7 @@ a_volume_that_joins_a_heightfield_takes_its_cells_and_digs_under_them :: proc(t:
     testing.expect(t,join_test_ground(&ground))
     testing.expect(t,source_make(&volume,.Volume,{17,17,17},1,8))
     testing.expect(t,source_volume_ground(&volume,{ground=&ground,offset={24,24},lift=-8}))
-    testing.expect(t,source_edit(&volume,{kind=.Remove,center={0,1,0},radius=3,amount=1}).changed)
+    testing.expect(t,source_edit(&volume,{kind=.Carve,center={0,1,0},radius=3,amount=1}).changed)
     ground.revision,volume.revision=1,1
     ground_id,volume_id:=base.Asset_Id{91,1},base.Asset_Id{91,2}
     testing.expect_value(t,source_save(&ground,fmt.tprintf("%s/ground.terrain",root),ground_id,&types),asset.Error.None)
@@ -87,7 +87,7 @@ a_volume_that_joins_a_heightfield_takes_its_cells_and_digs_under_them :: proc(t:
     dug:=core.create(&w.entities)
     core.add(&w.transforms,dug,core.TRANSFORM_IDENTITY)
     core.add(&w.terrains,dug,Terrain{source=volume_id,solid=true,ground=7})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     view:=core.VIEW_DEFAULT
     view.position={0,6,0}
     for _ in 0..<3 {terrain_test_update(&w,&resident,&app,view=view)}
@@ -96,14 +96,14 @@ a_volume_that_joins_a_heightfield_takes_its_cells_and_digs_under_them :: proc(t:
     testing.expect(t,cut!=nil && len(cut.join.cuts)==1 && cut.join.cuts[0]==Join_Cut{{24,24},{40,40}})
     // The ground inside the box is the Volume's: at its middle, the bottom of its pit.
     hit,found:=phys.raycast({&w.state},{0,10,0},{0,-1,0})
-    surface:=grid_get(&ground.heights,32,32)
+    surface:=grid_get(&ground.field,32,32)
     testing.expectf(t,found && hit.point.y<surface-1.5,"the ray stops at %v, the ground at %v",hit.point,surface)
     // Within the band, the ground.
     hit,found=phys.raycast({&w.state},{-7.5,10,-2.5},{0,-1,0})
     testing.expect(t,found && abs(hit.point.y-source_height(&ground,-7.5,-2.5))<0.05)
     // A Volume moved off the samples of the ground joins nothing and says how far to move it.
     core.add(&w.transforms,dug,core.Transform{position={0.5,0,0},rotation=1,scale=1})
-    core.test_world_settle(&w.w)
+    test_world_settle(&w.w)
     for _ in 0..<2 {terrain_test_update(&w,&resident,&app,view=view)}
     testing.expect(t,core.problem_find(&w.problems,dug,"terrain.ground_misaligned")!=nil)
     cut=resident_source_find(&resident,ground_id,field)

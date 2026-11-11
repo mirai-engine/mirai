@@ -1,6 +1,5 @@
 package editor
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
@@ -57,13 +56,11 @@ Ai_Context_Camera :: struct {
 Ai_Context_Document :: struct {
     path:string,
     state:u64,
-    dirty:bool,
     entities:int,
 }
 // The asset document in front when the message was sent, instead of the scene.
 Ai_Context_Asset :: struct {
     path:string,
-    dirty:bool,
     picked:[]string, // what the user picked in it, by name: the nodes of an interface
     shown:string,    // what it showed, as its plugin says it: the clip and its time of an animation
 }
@@ -96,7 +93,7 @@ Ai_Context :: struct {
     project:Ai_Context_Project,
     api:Ai_Context_Api,
     engine:string,
-    player:Play_Player_Snapshot,
+    player:Api_Play_Player_Result,
     material:Ai_Context_Material,
     asset:Ai_Context_Asset,
     references:[]string, // the images the user attached, in the folder of the turn
@@ -191,7 +188,7 @@ ai_entity_id_text :: proc(w:core.World_Ref,e:core.Entity) -> string {
 ai_item_rect :: proc(s:^Session,item:Scene_Item) -> (rect:ui.Rect,ok:bool) {
     v:=s.viewport
     if item.body {
-        if low,high,known:=picker_bounds(s.picker,s.app.assets,item.mesh);known {
+        if low,high,known:=mesh_bounds(s.app.assets,item.mesh);known {
             return project_box(v,mm.transform_matrix(item.world),low,high)
         }
     }
@@ -298,7 +295,7 @@ ai_context_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity) -> bool 
             if text:=ai_entity_id_text(w,e);text!="" {append(&selection,text)}
         }
     }
-    document:=Ai_Context_Document{path=document_path(s.document),state=history.edits_scene_state(s.edits),dirty=document_dirty(s),entities=core.world_entities(w).alive}
+    document:=Ai_Context_Document{path=document_path(s.document),state=history.edits_scene_state(s.edits),entities=core.world_entities(w).alive}
     context_value:=Ai_Context{
         task=base.text_get(task.name[:]),mode=task.play?"play":"edit",instructions=ai_instructions_read(s),
         region={rect={task.region.x,task.region.y,task.region.w,task.region.h},window=task.window},
@@ -320,10 +317,10 @@ ai_context_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity) -> bool 
     if front!=nil {
         picked:=make([]string,front.picked_count,context.temp_allocator)
         for &name,i in picked {name=base.text_get(front.picked[i][:])}
-        context_value.asset={path=asset_document_path(s,front),dirty=asset_document_dirty(s,front),picked=picked,shown=strings.clone(base.text_get(front.shown[:]),context.temp_allocator)}
+        context_value.asset={path=asset_document_path(s,front),picked=picked,shown=strings.clone(base.text_get(front.shown[:]),context.temp_allocator)}
     }
-    data,error:=json.marshal(context_value,{pretty=true},context.temp_allocator)
-    if error!=nil {return false}
+    data,encoded:=serial.text_encode(context_value,.Pretty,context.temp_allocator)
+    if !encoded {return false}
     return os.write_entire_file(ai_task_path(s,task,AI_FILE_CONTEXT),data)==nil && ai_state_write(s,task,w)
 }
 
@@ -352,26 +349,20 @@ ai_state_write :: proc(s:^Session,task:^Ai_Task,w:core.World_Ref) -> bool {
     }
     scratch,memory:=make([]u8,max(st.largest,1),context.temp_allocator)
     if memory!=nil {return false}
-    out:serial.Writer
-    serial.writer_init(&out,0,context.temp_allocator)
-    serial.text_write_raw(&out,`{"tick":`);serial.text_write_int(&out,i64(tick))
-    api.write_key(&out,"entities");serial.write_u8(&out,'[')
-    first:=true
+    State :: struct {tick:u64,entities:[]Api_Inspect_Entity}
+    entities:=make([dynamic]Api_Inspect_Entity,context.temp_allocator)
     for e in s.selection.entities {
-        if !entity_alive(w,e) {continue}
-        if !first {serial.write_u8(&out,',')}
-        first=false
-        api_entity_write(s,w,&out,e,true,scratch,true,true)
+        if entity_alive(w,e) {append(&entities,api_entity_inspect(s,w,e,true,scratch,true,true))}
     }
-    serial.text_write_raw(&out,"]}")
-    return os.write_entire_file(path,serial.writer_bytes(&out))==nil
+    text,encoded:=serial.text_encode(State{tick,entities[:]},.Line,context.temp_allocator,sparse=true)
+    return encoded && os.write_entire_file(path,text)==nil
 }
 
 // The methods a turn uses most, named in the instructions by their MCP tool.
-AI_PROMPT_TOOLS :: [?]string{"scene.inspect","scene.write","scene.add","scene.set","scene.delete","scene.batch","play.start","play.step","scene.save","asset.save","play.inspect","play.check","capture","play.stop","view.viewport","asset.import","finish","engine.describe"}
+AI_PROMPT_TOOLS :: [?]string{"scene.inspect","scene.write","batch","play.start","play.step","play.check","capture","play.stop","view.viewport","asset.import","finish","engine.describe"}
 // The methods whose parameters go in the instructions, from the live
 // registry: most of what a turn does, without looking their schemas up.
-AI_PROMPT_SCHEMAS :: [?]string{"scene.inspect","scene.write","scene.add","scene.set","scene.delete","scene.batch","finish"}
+AI_PROMPT_SCHEMAS :: [?]string{"scene.inspect","scene.write","batch","finish"}
 
 // The instructions that hold for every turn: who the agent is, its rules, the
 // tools and their schemas and the memory of the project. The agent works on the
@@ -389,7 +380,7 @@ ai_prompt_stable :: proc(s:^Session,kind:ai_store.Conversation_Kind) -> string {
     strings.write_string(&b,"When `response` names entities of the scene, write each one as [Name](entity:ID) with the id the API gives it: the chat shows it as a pill that selects it. Name an asset you created or changed as [Name](asset:path), with its path under the assets folder (materials/Wet stone.mat): the pill opens its document.\n")
     fmt.sbprint(&b,"When you need the user to decide instead of guessing, finish with a `question` instead of closing the subject; their answer arrives as the next message of this conversation.\n")
     strings.write_string(&b,"- Your work is the game of this project: edit the open scene through the editor API, play it when the user asks to try or test something, and write game code (components, storages and loop functions) in the project folder when the request needs it. Do only what the request asks. The engine is not part of your work: do not read or change its source or its documentation, and do not write outside the project folder.\n")
-    fmt.sbprintf(&b,"- You build the code you write; the user never does. `%s` compiles it, answers when it ends with each error and its file and line, and a build that succeeds loads it into the running editor, new components and storages too, without closing it or ending this turn. `%s` checks the types without building, and `%s` runs the @(test) procedures of the project. `play_start` builds first by itself when an Odin source changed and answers when the game plays. Assets and shaders you change on disk are picked up by the editor at its next call.\n",ai_tool_name("build.start"),ai_tool_name("build.check"),ai_tool_name("build.test"))
+    fmt.sbprintf(&b,"- You build the code you write; the user never does. `%s` compiles it, answers when it ends with each error and its file and line, and a build that succeeds loads it into the running editor, new components and storages too, without closing it or ending this turn. `%s` checks the types without building, and `%s` runs the @(test) procedures of a package of the project and answers when they end with each one that failed. `play_start` builds first by itself when an Odin source changed and answers when the game plays. Assets and shaders you change on disk are picked up by the editor at its next call.\n",ai_tool_name("build.start"),ai_tool_name("build.check"),ai_tool_name("build.test"))
     if decl,plugins:=code_api_folders(s);decl!="" {
         fmt.sbprintf(&b,"- The public API the code of the project compiles against is in %s (the collection `mirai`)",decl)
         if plugins!="" {fmt.sbprintf(&b," and %s (the collection `plugins`)",plugins)}
@@ -469,12 +460,12 @@ ai_prompt_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity,detached:b
     if task.about!=0 {fmt.sbprintf(&b,"- %s\n",ai_about_note(s.ai,task.about))}
     fmt.sbprintf(&b,"- %s has the region, the camera, the selection and the open scene.\n",ai_task_path(s,task,AI_FILE_CONTEXT))
     if tick,paused:=ai_paused_tick(s,task);paused {
-        fmt.sbprintf(&b,"- The game of the user is paused at tick %d. Answer questions about it using read-only observations: `play.player`, `play.status` and `play.inspect` with `include_runtime=true`. Do not edit files or scenes, resume, step or stop the game, or mutate the paused world.\n",tick)
+        fmt.sbprintf(&b,"- The game of the user is paused at tick %d. Answer questions about it using read-only observations: `play.player`, `play.status` and `scene.inspect` with `world` `Game` with `include_runtime=true`. Do not edit files or scenes, resume, step or stop the game, or mutate the paused world.\n",tick)
         if os.exists(ai_task_path(s,task,AI_FILE_STATE)) {
             fmt.sbprintf(&b,"- %s has the entities the user selected in the paused game, which the message refers to, with the values of their components at tick %d, when they sent it.\n",ai_task_path(s,task,AI_FILE_STATE),tick)
         }
     } else if task.play {
-        strings.write_string(&b,"- The game is playing. Answer questions about the live game and player using read-only observations. The context includes a player snapshot; use `play.player`, `play.status` and `play.inspect` with `include_runtime=true` for current values, components of the body it drives and runtime storage. Do not edit files or scenes, stop or pause the game, or mutate the playing world.\n")
+        strings.write_string(&b,"- The game is playing. Answer questions about the live game and player using read-only observations. The context includes a player snapshot; use `play.player`, `play.status` and `scene.inspect` with `world` `Game` with `include_runtime=true` for current values, components of the body it drives and runtime storage. Do not edit files or scenes, stop or pause the game, or mutate the playing world.\n")
     }
     // How to use the methods of a plugin goes with them, in engine_describe;
     // here only when the message comes from a document of that plugin.
@@ -483,7 +474,6 @@ ai_prompt_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity,detached:b
     }
     if front:=asset_document_in_front(s);front!=nil && front.kind!=asset.KIND_MATERIAL {
         fmt.sbprintf(&b,"- This message comes from the document of %s, not from the scene",asset_document_path(s,front))
-        if asset_document_dirty(s,front) {strings.write_string(&b," (it has unsaved changes)")}
         if task.image {strings.write_string(&b,"; `view_viewport` shows it as the user saw it")}
         strings.write_string(&b,".\n")
         if shown:=base.text_get(front.shown[:]);shown!="" {fmt.sbprintf(&b,"- It showed %s.\n",shown)}
@@ -652,7 +642,6 @@ ai_task_create :: proc(s:^Session,m:^Ai,region:ui.Rect,prompt,agent:string,conti
             ai_context_drop(task)
         }
         if !task.review_finished {ai_task_finish(s,m,task)}
-        task.review_deferred=false
         task.state=.Queued;task.stop=false;task.exit_code=0;task.pid=0;task.seconds=0
         task.question=.None;task.options_length=0
         task.state_before=0;task.state_after=0;task.step_count=0;task.undone=false;task.declined=false;task.needs_build=false;task.files_changed=false

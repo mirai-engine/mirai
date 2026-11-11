@@ -19,8 +19,7 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - Shader generation (`cook/shaders/`, `mirai shaders`, `mirai setup slang`) →
   [shaders](references/shaders.md#shader-toolchain)
 - Programs and extensions of a project, reload in `host` →
-  [shaders](references/shaders.md#project-generation); unsaved sources of an editor
-  (`Options.overlay`) → [in-memory sources](references/shaders.md#in-memory-sources)
+  [shaders](references/shaders.md#project-generation)
 - Renderer, scene entry, pools and vertices (`render/`) →
   [scene](references/scene.md#scene-and-instances)
 - `scene_move`, `scene_update`, `materials_set` →
@@ -65,7 +64,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   thread) → [programs](references/materials.md#surface-programs-in-rays-and-raster); programs that
   move vertices (`//! vertex`, `displace.odin`) →
   [vertex functions](references/materials.md#vertex-functions); texture levels
-  by distance, `textures_pending` → [residency](references/materials.md#residency-by-distance)
+  by what the GPU samples, `textures_pending` →
+  [residency](references/materials.md#residency-by-sampling)
 - OpenPBR layers (coat, fuzz, anisotropy, diffuse transmission, unlit), tangents and normal maps →
   [layers](references/materials.md#layers-openpbr),
   [normal maps](references/materials.md#normal-maps-and-specular-antialiasing)
@@ -88,7 +88,7 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - Physical units of lights, sky and emission, light scale, exposure (EV100, auto, manual) →
   [display](references/display.md#units); display transform (Neutral or ACES 2.0, 3D LUT, HDR) →
   [display](references/display.md#display-transform)
-- Scene resolution, `render_scale` and a preset's target of lines →
+- Scene resolution (`Settings.resolution`) and a preset's target of lines →
   [resolution](references/settings.md#scene-resolution)
 - `render.Settings` → [settings](references/settings.md#settings); inspection modes of a view
   (`View_Inspection`, `Debug_View`) → [modes](references/settings.md#inspection-modes)
@@ -122,7 +122,13 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - The graphics API is the own `rhi` over Vulkan and Metal; wgpu is not used.
 - Each shader stage compiles in its own `slangc` process, even if other stages have the same
   defines.
+- What a pass chooses of a stage is a constant of its pipelines, not another compilation; a
+  variant is only for what the stage declares to the device
+  ([constants and variants](references/shaders.md#compilation)).
+- The engine has no Surface program: those of the tests are in `render/testdata/`.
 - A view's direct light costs its samples, not its lights: no pixel traces or reads one per light.
+- What is decided per instance (its class, the row of its material with its own values) is built
+  on the CPU when the instance is given: no stage builds it again per pixel or per hit.
 - A graphics option keeps a choice, and a preset a step above another, only where the image
   differs to the eye: what costs more and looks the same is not offered.
 - The display transform is a project setting, Neutral by default and ACES 2.0 by choice, baked
@@ -152,7 +158,11 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   reads an instance by index only with `scene_instance`.
 - A geometry regeneration registers an immutable version and withdraws the previous one, with free
   ranges and dirty ranges of the common pools, without compacting other geometry.
-- Local descriptor changes go through `scene_update`; `scene_set` is left for structural changes.
+- `render_sync` gives the renderer the world only by what changed: the rows written, added or gone
+  of the tables it reads, through `scene_update`, `scene_move`, `scene_tint`, `scene_light_update`
+  and `scene_light_remove`.
+  Another world, tables replaced whole and assets loaded again are the same changes, of every row:
+  there is no second path that builds the scene. A frame where nothing changed looks at no row.
 - Geometry publication is a common immediate transaction with reused staging, without
   `buffer_upload` or waits per pool; its cost counts in `cpu_prepare_ms`.
 - What is drawn over the finished image enters through `Frame_Desc` and does not change what a
@@ -169,7 +179,7 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   bounce factor, and the scene changes are marked by `Scene_State.changes`
   ([GI](references/gi.md#temporal-and-denoising)).
 - Another world, or the same one replaced by another scene, is announced with `scene_world` before
-  its `scene_set`; a lone `scene_set` is only an edit.
+  its scene is given; without it, what the scene is given is only an edit.
 - No engine stage evaluates a Surface program except its own (`//! per surface program`): raster
   uses the program's pipeline (`program_graphics`) and rays ask for it through the material points
   (`points.slang`); the traversal evaluates only the alpha of programs with coverage. A frame does
@@ -193,12 +203,17 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   with `MIRAI_VALIDATION=1` (Vulkan) or `MTL_DEBUG_LAYER=1` (Metal). No GPU test may report
   validation errors; a new one takes the shared device
   ([GPU environment](references/verification.md#gpu-environment)).
+- A change of `render_sync` runs `engine/render/sync_test.odin`, without a device: what the
+  renderer is given in a frame (the instances it touched, the light it marks) and what it has
+  against a world given whole.
 - A change that must preserve the image is checked with `MIRAI_GOLDEN=write:<dir>` before and
   `MIRAI_GOLDEN=compare:<dir>` after, on the same machine.
 - After regenerating shaders, the diff contains only the outputs of the touched sources, the
   manifest, the catalog and the table fingerprint.
 - Device loss: `rhi/tests/rhi_test.odin` and `host/gpu_failure_test.odin`; in a session,
   `engine.gpu_lose`. Metal, on a Mac: the same ones of `rhi/tests` with `MTL_DEBUG_LAYER=1`.
+  Device choice and a lost window surface: `rhi/vulkan_pick_test.odin` and
+  `host/surface_lost_test.odin`.
 - Device memory: `rhi/arena_test.odin` and `rhi/vulkan_memory_test.odin` (without a device) and
   `rhi/tests/pool_test.odin`.
 - Extensions: scenes of the render plugins. Benchmarks: only when touching a hot path.

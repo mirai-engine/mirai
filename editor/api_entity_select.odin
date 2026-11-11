@@ -1,6 +1,7 @@
 package editor
 
 import "core:fmt"
+import "core:slice"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor/api"
@@ -80,7 +81,7 @@ api_entity_find :: proc(w:core.World_Ref,text:string,allocator:=context.temp_all
 // The entity a text names; problem says what is wrong for whoever gave it.
 @(private="file")
 api_entity_named :: proc(w:core.World_Ref,text:string,game:bool,allocator:=context.temp_allocator) -> (e:core.Entity,problem:string) {
-    lister:=game?"play.inspect":"scene.inspect"
+    lister:=game?"scene.inspect with world Game":"scene.inspect"
     if text=="" {return core.NONE,fmt.aprintf("it must be the name of an entity, a path Parent/Child, an id or a handle; %s lists them",lister,allocator=allocator)}
     several:string
     if e,several=api_entity_find(w,text,allocator);e!=core.NONE {return e,""}
@@ -106,31 +107,27 @@ api_call_entity :: proc(call:^api.Call,w:core.World_Ref,field:[]u8,what:="entity
     return e,true
 }
 
-// The entity at the reader of params read by hand; null is none.
-rpc_entity :: proc(a:^Rpc_Args,w:core.World_Ref,what:string,game:=false) -> (e:core.Entity,ok:bool) {
-    if a.failed {return}
-    if serial.text_keyword(&a.r,"null") {return core.NONE,true}
-    text,read:=serial.text_string(&a.r)
-    if !read {return core.NONE,rpc_fail_type(a,"%s must be the name of an entity, a path Parent/Child, an id or a handle",what)}
-    problem:string
-    if e,problem=api_entity_select(w,text,what,game,a.call.allocator);problem!="" {return core.NONE,rpc_fail(a,"%s",problem)}
-    return e,true
-}
-
 // The entities of a list of texts of the params: each one named, and none
 // twice; false after failing the call.
-api_call_entities :: proc(call:^api.Call,w:core.World_Ref,texts:[][API_ENTITY_TEXT]u8,what:string,allocator:=context.temp_allocator) -> (entities:[]core.Entity,ok:bool) {
-    out:=make([dynamic]core.Entity,0,len(texts),allocator)
-    for &text,i in texts {
-        given:=base.text_get(text[:])
+api_call_entities :: proc(call:^api.Call,w:core.World_Ref,texts:[][API_ENTITY_TEXT]u8,what:string,allocator:=context.temp_allocator,game:=false) -> (entities:[]core.Entity,ok:bool) {
+    names:=make([]string,len(texts),context.temp_allocator)
+    for &text,i in texts {names[i]=base.text_get(text[:])}
+    return api_call_named(call,w,names,what,allocator,game)
+}
+
+// api_call_entities of a list of any length.
+api_call_named :: proc(call:^api.Call,w:core.World_Ref,names:[]string,what:string,allocator:=context.temp_allocator,game:=false) -> (entities:[]core.Entity,ok:bool) {
+    out:=make([dynamic]core.Entity,0,len(names),allocator)
+    for given,i in names {
         if given=="" {continue}
-        e,known:=api_call_entity(call,w,text[:],fmt.tprintf("%s[%d]",what,i))
-        if !known {return}
-        for other in out {
-            if other==e {
-                api.call_failf(call,api.INVALID_PARAMS,"%s[%d]: %q is listed twice; list each entity once",what,i,given)
-                return
-            }
+        e,problem:=api_entity_select(w,given,fmt.tprintf("%s[%d]",what,i),game,call.allocator)
+        if problem!="" {
+            api.call_fail(call,api.INVALID_PARAMS,problem)
+            return
+        }
+        if slice.contains(out[:],e) {
+            api.call_failf(call,api.INVALID_PARAMS,"%s[%d]: %q is listed twice; list each entity once",what,i,given)
+            return
         }
         append(&out,e)
     }

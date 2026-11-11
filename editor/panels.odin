@@ -12,6 +12,7 @@ import "mirai:project"
 import "mirai:rhi"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 import "mirai:editor/api"
 
@@ -153,7 +154,7 @@ panels_sync :: proc(s:^Session,panels:^Project_Panels) {
             continue
         }
         p:Project_Panel
-        if message,ok:=panel_parse(string(text),&p,nil,nil);!ok {
+        if message:=panel_read(string(text),&p);message!="" {
             log.warnf("%s: %s",entry.fullpath,message)
             continue
         }
@@ -206,356 +207,194 @@ panel_id_of :: proc(title:string) -> string {
 
 // ---------------------------------------------------------------- the file
 
-PANEL_USAGE :: `a panel is {"title": "...", "buttons": [{"name": "...", "sets": [<target> with "value": <value>]}], "rows": [{"heading": "..."} or <target> with an optional "label"]}, a target being {"component": "<Component>", "field": "<field>[.<nested>]"} with "entity": "<id>" or "where": {"<field>": <value>} or neither (the first entity that has it), or {"setting": "<Section>", "field": "..."}`
-
-@(private)
-Panel_Reader :: struct {
-    r:serial.Text_Reader,
-    at:string, // what is being read, for the messages
+// A panel as panels/<id>.mirai keeps it and panel.save takes it; its id is
+// the name of its file.
+Panel_File :: struct {
+    title:[PANEL_TITLE_BYTES]u8 `mirai:"text"`,
+    buttons:[]Panel_File_Button `mirai:"optional,label=Each a variant that sets fields of components or settings to values when pressed, on one entity or on every entity a where matches; those of the scene as one undo step"`,
+    rows:[]Panel_File_Row `mirai:"optional,label=Headings, and fields the user tunes with the controls of Details: of one entity, of every entity a where matches, or of a setting"`,
+}
+Panel_File_Button :: struct {
+    name:[PANEL_TITLE_BYTES]u8 `mirai:"text,label=Unique in the panel; what panel.apply takes as button"`,
+    sets:[]Panel_File_Set `mirai:"label=The fields it sets: a component with entity, where or neither (the first entity that has it), or a setting"`,
+}
+Panel_File_Set :: struct {
+    component:[PANEL_NAME_BYTES]u8 `mirai:"text,optional"`,
+    setting:[PANEL_NAME_BYTES]u8 `mirai:"text,optional,label=A section of the settings"`,
+    field:[PANEL_FIELD_BYTES]u8 `mirai:"text,label=A field of it, a nested one by its path with dots"`,
+    entity:base.Entity_Id `mirai:"optional"`,
+    match:serial.Json `mirai:"optional,name=where,label=The fields an entity must have; {} is every entity with the component"`,
+    value:serial.Json `mirai:"label=The JSON the field takes"`,
+}
+Panel_File_Row :: struct {
+    heading:[PANEL_TITLE_BYTES]u8 `mirai:"text,optional"`,
+    component:[PANEL_NAME_BYTES]u8 `mirai:"text,optional"`,
+    setting:[PANEL_NAME_BYTES]u8 `mirai:"text,optional"`,
+    field:[PANEL_FIELD_BYTES]u8 `mirai:"text,optional"`,
+    entity:base.Entity_Id `mirai:"optional"`,
+    match:serial.Json `mirai:"optional,name=where"`,
+    label:[PANEL_TITLE_BYTES]u8 `mirai:"text,optional,label=Of the field; its name when left out"`,
 }
 
+// Reads a panel from the text of its file; what is wrong with it, or "".
 @(private)
-panel_fail :: proc(pr:^Panel_Reader,format:string,args:..any) -> (string,bool) {
-    what:=fmt.tprintf(format,..args)
-    if pr.at!="" {what=fmt.tprintf("%s: %s",pr.at,what)}
-    if pr.r.error.code!=.None {
-        line,column:=serial.text_position(pr.r.text,pr.r.error.offset)
-        return fmt.tprintf("%s: malformed JSON at line %d column %d",what,line,column),false
-    }
-    return what,false
+panel_read :: proc(text:string,p:^Project_Panel) -> string {
+    file:Panel_File
+    if problem:=serial.text_decode(text,&file,context.temp_allocator);problem!="" {return problem}
+    return panel_from_file(&file,p)
 }
 
+// A panel from its file. It checks the shape, not the names of components and
+// fields: panel_check does.
 @(private)
-panel_text :: proc(pr:^Panel_Reader,buffer:[]u8,key:string) -> (string,bool) {
-    value,read:=serial.text_string(&pr.r)
-    if !read {return panel_fail(pr,"%s must be a string",key)}
-    if len(value)>=len(buffer) {return panel_fail(pr,"%s is longer than %d bytes",key,len(buffer)-1)}
-    base.text_set(buffer,value)
-    return "",true
-}
-
-// The JSON of the next value, as it is written, into a buffer.
-@(private)
-panel_raw :: proc(pr:^Panel_Reader,buffer:[]u8,key:string) -> (string,bool) {
-    serial.text_space(&pr.r)
-    start:=pr.r.offset
-    if !serial.text_skip(&pr.r) {return panel_fail(pr,"%s",key)}
-    value:=strings.trim_space(pr.r.text[start:pr.r.offset])
-    if len(value)>=len(buffer) {return panel_fail(pr,"%s is longer than %d bytes of JSON",key,len(buffer)-1)}
-    base.text_set(buffer,value)
-    return "",true
-}
-
-// Reads a panel from its JSON: the file, or the params of panel.save, which
-// also take id and open when they are not nil. It checks the shape, not the
-// names of components and fields: panel_check does.
-@(private)
-panel_parse :: proc(text:string,p:^Project_Panel,id:^[PANEL_ID_BYTES]u8,open:^bool) -> (message:string,ok:bool) {
-    p^={}
-    pr:Panel_Reader
-    serial.text_reader_init(&pr.r,text,context.temp_allocator)
-    r:=&pr.r
-    if !serial.text_accept(r,'{') {return panel_fail(&pr,"%s",PANEL_USAGE)}
-    has_title:=false
-    if !serial.text_accept(r,'}') {
-        for {
-            key,named:=serial.text_string(r)
-            if !named || !serial.text_expect(r,':') {return panel_fail(&pr,"%s",PANEL_USAGE)}
-            switch key {
-            case "title":
-                if m,k:=panel_text(&pr,p.title[:],"title");!k {return m,false}
-                has_title=true
-            case "buttons":
-                if !serial.text_accept(r,'[') {return panel_fail(&pr,"buttons must be an array of buttons")}
-                if serial.text_accept(r,']') {break}
-                for {
-                    if p.button_count>=PANEL_BUTTONS {return panel_fail(&pr,"a panel has up to %d buttons",PANEL_BUTTONS)}
-                    pr.at=fmt.tprintf("buttons[%d]",p.button_count)
-                    if m,k:=panel_button_parse(&pr,p,&p.buttons[p.button_count]);!k {return m,false}
-                    p.button_count+=1
-                    pr.at=""
-                    if serial.text_accept(r,',') {continue}
-                    if !serial.text_expect(r,']') {return panel_fail(&pr,"buttons")}
-                    break
-                }
-            case "rows":
-                if !serial.text_accept(r,'[') {return panel_fail(&pr,"rows must be an array of rows")}
-                if serial.text_accept(r,']') {break}
-                for {
-                    if p.row_count>=PANEL_ROWS {return panel_fail(&pr,"a panel has up to %d rows",PANEL_ROWS)}
-                    pr.at=fmt.tprintf("rows[%d]",p.row_count)
-                    row:=&p.rows[p.row_count]
-                    if m,k:=panel_target_parse(&pr,&row.place,row.label[:],nil);!k {return m,false}
-                    p.row_count+=1
-                    pr.at=""
-                    if serial.text_accept(r,',') {continue}
-                    if !serial.text_expect(r,']') {return panel_fail(&pr,"rows")}
-                    break
-                }
-            case "id":
-                if id==nil {return panel_fail(&pr,"unknown key %q: %s",key,PANEL_USAGE)}
-                if m,k:=panel_text(&pr,id[:],"id");!k {return m,false}
-            case "open":
-                if open==nil {return panel_fail(&pr,"unknown key %q: %s",key,PANEL_USAGE)}
-                switch {
-                case serial.text_keyword(r,"true"):  open^=true
-                case serial.text_keyword(r,"false"): open^=false
-                case: return panel_fail(&pr,"open must be true or false")
-                }
-            case:
-                return panel_fail(&pr,"unknown key %q: %s",key,PANEL_USAGE)
-            }
-            if serial.text_accept(r,',') {continue}
-            if !serial.text_expect(r,'}') {return panel_fail(&pr,"%s",PANEL_USAGE)}
-            break
+panel_from_file :: proc(file:^Panel_File,p:^Project_Panel) -> string {
+    p^={title=file.title}
+    if base.text_get(p.title[:])=="" {return "title is missing"}
+    if len(file.buttons)==0 && len(file.rows)==0 {return "a panel has buttons, rows or both"}
+    if len(file.buttons)>PANEL_BUTTONS {return fmt.tprintf("a panel has up to %d buttons",PANEL_BUTTONS)}
+    if len(file.rows)>PANEL_ROWS {return fmt.tprintf("a panel has up to %d rows",PANEL_ROWS)}
+    for &b,i in file.buttons {
+        at:=fmt.tprintf("buttons[%d]",i)
+        name:=base.text_get(b.name[:])
+        if name=="" {return fmt.tprintf("%s: name is missing",at)}
+        if len(b.sets)==0 {return fmt.tprintf("%s: sets is empty: a button sets at least one field",at)}
+        if len(b.sets)>PANEL_SETS {return fmt.tprintf("%s: a button sets up to %d fields",at,PANEL_SETS)}
+        for &other in p.buttons[:i] {
+            if base.text_get(other.name[:])==name {return fmt.tprintf("%s: %q is the name of another button",at,name)}
+        }
+        button:=&p.buttons[i]
+        button.name,button.set_count=b.name,len(b.sets)
+        for &set,k in b.sets {
+            set_at:=fmt.tprintf("%s.sets[%d]",at,k)
+            if problem:=panel_target_of(&button.sets[k].place,false,"",base.text_get(set.component[:]),base.text_get(set.setting[:]),set.field,set.entity,string(set.match));problem!="" {return fmt.tprintf("%s: %s",set_at,problem)}
+            value:=strings.trim_space(string(set.value))
+            if value=="" {return fmt.tprintf("%s: value is missing: the JSON the field takes",set_at)}
+            if len(value)>=PANEL_VALUE_BYTES {return fmt.tprintf("%s: value is longer than %d bytes of JSON",set_at,PANEL_VALUE_BYTES-1)}
+            base.text_set(button.sets[k].value[:],value)
         }
     }
-    if !serial.text_end(r) {return panel_fail(&pr,"%s",PANEL_USAGE)}
-    if !has_title || base.text_get(p.title[:])=="" {return "title is missing: "+PANEL_USAGE,false}
-    if p.button_count==0 && p.row_count==0 {return "a panel has buttons, rows or both: "+PANEL_USAGE,false}
-    return "",true
+    p.button_count=len(file.buttons)
+    for &r,i in file.rows {
+        row:=&p.rows[i]
+        heading:=base.text_get(r.heading[:])
+        if heading!="" && r.label[0]!=0 {return fmt.tprintf("rows[%d]: a heading has only its text",i)}
+        row.label=r.heading if heading!="" else r.label
+        if problem:=panel_target_of(&row.place,true,heading,base.text_get(r.component[:]),base.text_get(r.setting[:]),r.field,r.entity,string(r.match));problem!="" {return fmt.tprintf("rows[%d]: %s",i,problem)}
+    }
+    p.row_count=len(file.rows)
+    return ""
 }
 
+// The target of a row or of a set; what is wrong, or "".
 @(private)
-panel_button_parse :: proc(pr:^Panel_Reader,p:^Project_Panel,b:^Panel_Button) -> (string,bool) {
-    r:=&pr.r
-    if !serial.text_accept(r,'{') {return panel_fail(pr,`a button is {"name": "...", "sets": [...]}`)}
-    at:=pr.at
-    if !serial.text_accept(r,'}') {
-        for {
-            key,named:=serial.text_string(r)
-            if !named || !serial.text_expect(r,':') {return panel_fail(pr,"%s",PANEL_USAGE)}
-            switch key {
-            case "name":
-                if m,k:=panel_text(pr,b.name[:],"name");!k {return m,false}
-            case "sets":
-                if !serial.text_accept(r,'[') {return panel_fail(pr,"sets must be an array of the fields the button sets")}
-                if serial.text_accept(r,']') {break}
-                for {
-                    if b.set_count>=PANEL_SETS {return panel_fail(pr,"a button sets up to %d fields",PANEL_SETS)}
-                    pr.at=fmt.tprintf("%s.sets[%d]",at,b.set_count)
-                    set:=&b.sets[b.set_count]
-                    if m,k:=panel_target_parse(pr,&set.place,nil,set.value[:]);!k {return m,false}
-                    b.set_count+=1
-                    pr.at=at
-                    if serial.text_accept(r,',') {continue}
-                    if !serial.text_expect(r,']') {return panel_fail(pr,"sets")}
-                    break
-                }
-            case:
-                return panel_fail(pr,"unknown key %q: %s",key,PANEL_USAGE)
-            }
-            if serial.text_accept(r,',') {continue}
-            if !serial.text_expect(r,'}') {return panel_fail(pr,"%s",PANEL_USAGE)}
-            break
-        }
+panel_target_of :: proc(t:^Panel_Target,row:bool,heading,component,setting:string,field:[PANEL_FIELD_BYTES]u8,entity:base.Entity_Id,match:string) -> string {
+    match:=strings.trim_space(match)
+    if match=="null" {match=""}
+    t.field,t.entity=field,entity
+    kinds:=int(heading!="")+int(component!="")+int(setting!="")
+    if kinds!=1 {return row?"a row has one of heading, component or setting":"a set has one of component or setting"}
+    if match!="" && !strings.has_prefix(match,"{") {return `where is an object of the fields an entity must have: {"<field>": <value>}`}
+    if len(match)>=PANEL_MATCH_BYTES {return fmt.tprintf("where is longer than %d bytes of JSON",PANEL_MATCH_BYTES-1)}
+    base.text_set(t.match[:],match)
+    switch {
+    case heading!="":
+        t.kind=.Heading
+        if field[0]!=0 || entity!=0 || match!="" {return "a heading has only its text"}
+        return ""
+    case component!="": t.kind=.Component;base.text_set(t.target[:],component)
+    case:               t.kind=.Setting;base.text_set(t.target[:],setting)
     }
-    name:=base.text_get(b.name[:])
-    if name=="" {return panel_fail(pr,"name is missing")}
-    if b.set_count==0 {return panel_fail(pr,"sets is empty: a button sets at least one field")}
-    for &other in p.buttons[:p.button_count] {
-        if base.text_get(other.name[:])==name {return panel_fail(pr,"%q is the name of another button",name)}
-    }
-    return "",true
+    what:=t.kind==.Component?"component":"setting"
+    if field[0]==0 {return fmt.tprintf("field is missing: the field of the %s",what)}
+    if t.kind==.Setting && (entity!=0 || match!="") {return "a setting is of the project, not of entities"}
+    if entity!=0 && match!="" {return "entity and where name different entities: give one of them"}
+    return ""
 }
 
-// A row (label not nil) or a field a button sets (value not nil).
+// The file of a panel, in temporary memory.
 @(private)
-panel_target_parse :: proc(pr:^Panel_Reader,t:^Panel_Target,label,value:[]u8) -> (string,bool) {
-    r:=&pr.r
-    if !serial.text_accept(r,'{') {return panel_fail(pr,"%s",PANEL_USAGE)}
-    kinds:=0
-    has_value:=false
-    if !serial.text_accept(r,'}') {
-        for {
-            key,named:=serial.text_string(r)
-            if !named || !serial.text_expect(r,':') {return panel_fail(pr,"%s",PANEL_USAGE)}
-            switch {
-            case key=="heading" && label!=nil:
-                t.kind=.Heading
-                if m,k:=panel_text(pr,label,key);!k {return m,false}
-                kinds+=1
-            case key=="component" || key=="setting":
-                t.kind=key=="component"?.Component:.Setting
-                if m,k:=panel_text(pr,t.target[:],key);!k {return m,false}
-                kinds+=1
-            case key=="field":
-                if m,k:=panel_text(pr,t.field[:],key);!k {return m,false}
-            case key=="label" && label!=nil:
-                if m,k:=panel_text(pr,label,key);!k {return m,false}
-            case key=="value" && value!=nil:
-                if m,k:=panel_raw(pr,value,key);!k {return m,false}
-                has_value=true
-            case key=="where":
-                if serial.text_peek(r)!='{' {return panel_fail(pr,`where is an object of the fields an entity must have: {"<field>": <value>}`)}
-                if m,k:=panel_raw(pr,t.match[:],key);!k {return m,false}
-            case key=="entity":
-                if serial.text_keyword(r,"null") {
-                    t.entity=0
-                } else if serial.text_peek(r)=='"' {
-                    text,_:=serial.text_string(r)
-                    id,parsed:=serial.text_parse_hex(text)
-                    if !parsed {return panel_fail(pr,"entity must be the id of an entity, 16 hex digits in a string")}
-                    t.entity=base.Entity_Id(id)
-                } else {
-                    negative,magnitude,read:=serial.text_integer(r)
-                    if !read || negative {return panel_fail(pr,"entity must be the id of an entity, 16 hex digits in a string")}
-                    t.entity=base.Entity_Id(magnitude)
-                }
-            case:
-                return panel_fail(pr,"unknown key %q: %s",key,PANEL_USAGE)
-            }
-            if serial.text_accept(r,',') {continue}
-            if !serial.text_expect(r,'}') {return panel_fail(pr,"%s",PANEL_USAGE)}
-            break
+panel_file_of :: proc(p:^Project_Panel,allocator:=context.temp_allocator) -> (file:Panel_File) {
+    target :: proc(t:^Panel_Target,component,setting:^[PANEL_NAME_BYTES]u8) {
+        if t.kind==.Component {component^=t.target} else {setting^=t.target}
+    }
+    file.title=p.title
+    file.buttons=make([]Panel_File_Button,p.button_count,allocator)
+    for &b,i in p.buttons[:p.button_count] {
+        file.buttons[i]={name=b.name,sets=make([]Panel_File_Set,b.set_count,allocator)}
+        for &set,k in b.sets[:b.set_count] {
+            shown:=&file.buttons[i].sets[k]
+            target(&set.place,&shown.component,&shown.setting)
+            shown.field,shown.entity=set.field,set.entity
+            shown.match=serial.Json(strings.clone(base.text_get(set.match[:]),allocator))
+            shown.value=serial.Json(strings.clone(base.text_get(set.value[:]),allocator))
         }
     }
-    field:=base.text_get(t.field[:])
-    match:=base.text_get(t.match[:])
-    if kinds!=1 {return panel_fail(pr,label!=nil?"a row has one of heading, component or setting":"a set has one of component or setting")}
-    switch t.kind {
-    case .Heading:
-        if field!="" || t.entity!=0 || match!="" {return panel_fail(pr,"a heading has only its text")}
-        if base.text_get(label)=="" {return panel_fail(pr,"heading is empty")}
-    case .Component,.Setting:
-        what:=t.kind==.Component?"component":"setting"
-        if base.text_get(t.target[:])=="" {return panel_fail(pr,"the name of the %s is empty",what)}
-        if field=="" {return panel_fail(pr,"field is missing: the field of the %s",what)}
-        if t.kind==.Setting && (t.entity!=0 || match!="") {return panel_fail(pr,"a setting is of the project, not of entities")}
-        if t.entity!=0 && match!="" {return panel_fail(pr,"entity and where name different entities: give one of them")}
-    }
-    if value!=nil && !has_value {return panel_fail(pr,"value is missing: the JSON the field takes")}
-    return "",true
-}
-
-@(private)
-panel_target_write :: proc(w:^serial.Writer,t:^Panel_Target) {
-    serial.text_write_raw(w,t.kind==.Component?`"component": `:`"setting": `)
-    serial.text_write_string(w,base.text_get(t.target[:]))
-    serial.text_write_raw(w,`, "field": `)
-    serial.text_write_string(w,base.text_get(t.field[:]))
-    if t.entity!=0 {
-        serial.text_write_raw(w,`, "entity": `)
-        serial.text_write_string(w,fmt.tprintf("%016x",u64(t.entity)))
-    }
-    if match:=base.text_get(t.match[:]);match!="" {
-        serial.text_write_raw(w,`, "where": `)
-        serial.text_write_raw(w,match)
-    }
-}
-
-// The JSON of a panel as its file keeps it.
-@(private)
-panel_write :: proc(w:^serial.Writer,p:^Project_Panel) {
-    serial.text_write_raw(w,"{\n  \"title\": ")
-    serial.text_write_string(w,base.text_get(p.title[:]))
-    if p.button_count>0 {
-        serial.text_write_raw(w,",\n  \"buttons\": [")
-        for &b,i in p.buttons[:p.button_count] {
-            serial.text_write_raw(w,i>0?",\n    {\"name\": ":"\n    {\"name\": ")
-            serial.text_write_string(w,base.text_get(b.name[:]))
-            serial.text_write_raw(w,", \"sets\": [")
-            for &set,j in b.sets[:b.set_count] {
-                serial.text_write_raw(w,j>0?",\n      {":"\n      {")
-                panel_target_write(w,&set.place)
-                serial.text_write_raw(w,`, "value": `)
-                serial.text_write_raw(w,base.text_get(set.value[:]))
-                serial.write_u8(w,'}')
-            }
-            serial.text_write_raw(w,"]}")
+    file.rows=make([]Panel_File_Row,p.row_count,allocator)
+    for &row,i in p.rows[:p.row_count] {
+        shown:=&file.rows[i]
+        if row.kind==.Heading {
+            shown.heading=row.label
+            continue
         }
-        serial.text_write_raw(w,"\n  ]")
+        target(&row.place,&shown.component,&shown.setting)
+        shown.field,shown.entity,shown.label=row.field,row.entity,row.label
+        shown.match=serial.Json(strings.clone(base.text_get(row.match[:]),allocator))
     }
-    if p.row_count>0 {
-        serial.text_write_raw(w,",\n  \"rows\": [")
-        for &row,i in p.rows[:p.row_count] {
-            serial.text_write_raw(w,i>0?",\n    {":"\n    {")
-            label:=base.text_get(row.label[:])
-            if row.kind==.Heading {
-                serial.text_write_raw(w,`"heading": `)
-                serial.text_write_string(w,label)
-            } else {
-                panel_target_write(w,&row.place)
-                if label!="" {
-                    serial.text_write_raw(w,`, "label": `)
-                    serial.text_write_string(w,label)
-                }
-            }
-            serial.write_u8(w,'}')
-        }
-        serial.text_write_raw(w,"\n  ]")
-    }
-    serial.text_write_raw(w,"\n}\n")
+    return
 }
 
 // ---------------------------------------------------------------- fields and entities
 
-// The field of a target in the value of its component or setting.
+// The field of a target in the value of its component or setting: its
+// description, where it is in the value and its bytes.
 @(private)
 Panel_Field :: struct {
-    info:^runtime.Type_Info,
-    tag:reflect.Struct_Tag,
-    name:string,
+    field:serial.Field,
     offset:uintptr,
+    size:int,
 }
 
-// A field by its path of names joined by dots, through nested structs and
-// the fields they take with using; problem says why there is none.
+// A field by its path of names joined by dots, through nested structs, in
+// the type of a value; problem says why there is none.
 @(private)
-panel_field_find :: proc(info:^runtime.Type_Info,owner,path:string) -> (field:Panel_Field,problem:string) {
-    find :: proc(info:^runtime.Type_Info,name:string) -> (field:Panel_Field,found:bool) {
-        v,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
-        if !is_struct {return}
-        for i in 0..<int(v.field_count) {
-            if v.usings[i] {
-                if inner,ok:=find(v.types[i],name);ok {
-                    inner.offset+=v.offsets[i]
-                    return inner,true
-                }
-                continue
-            }
-            if v.names[i]==name {return {v.types[i],reflect.Struct_Tag(v.tags[i]),v.names[i],v.offsets[i]},true}
-        }
-        return
-    }
-    names :: proc(info:^runtime.Type_Info,out:^strings.Builder) {
-        v,_:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
-        for i in 0..<int(v.field_count) {
-            tag:=reflect.Struct_Tag(v.tags[i])
-            if _,hidden:=core.field_option(tag,"hidden");hidden {continue}
-            if _,transient:=core.field_option(tag,"transient");transient {continue}
-            if v.usings[i] {names(v.types[i],out);continue}
-            if strings.builder_len(out^)>0 {strings.write_string(out,", ")}
-            strings.write_string(out,v.names[i])
-        }
-    }
-    current:=info
+panel_field_find :: proc(s:^serial.Schema,type:serial.Type_Index,owner,path:string) -> (found:Panel_Field,problem:string) {
+    type:=type
     shown:=owner
     rest:=path
-    offset:uintptr
     for {
         name:=rest
-        dot:=strings.index_byte(rest,'.')
-        if dot>=0 {name,rest=rest[:dot],rest[dot+1:]} else {rest=""}
-        if _,is_struct:=runtime.type_info_base(current).variant.(runtime.Type_Info_Struct);!is_struct {
-            return {},fmt.tprintf("%s has no fields: it is a value",shown)
+        if dot:=strings.index_byte(rest,'.');dot>=0 {name,rest=rest[:dot],rest[dot+1:]} else {rest=""}
+        if s==nil || s.types[type].kind!=.Struct {return {},fmt.tprintf("%s has no fields: it is a value",shown)}
+        fields:=serial.schema_fields(s,type)
+        at:=-1
+        for field,i in fields {
+            if field.name==name && field_shown(field) {at=i;break}
         }
-        found,ok:=find(current,name)
-        _,hidden:=core.field_option(found.tag,"hidden")
-        _,transient:=core.field_option(found.tag,"transient")
-        if !ok || hidden || transient {
+        if at<0 {
             b:=strings.builder_make(context.temp_allocator)
-            names(current,&b)
+            for field in fields {
+                if !field_shown(field) {continue}
+                if strings.builder_len(b)>0 {strings.write_string(&b,", ")}
+                strings.write_string(&b,field.name)
+            }
             return {},fmt.tprintf("%s has no field %q; its fields are %s",shown,name,strings.to_string(b))
         }
-        offset+=found.offset
+        found.field=fields[at]
+        found.offset+=uintptr(fields[at].offset)
+        type=fields[at].type
         if rest=="" {
-            found.offset=offset
+            found.size=int(s.types[type].size)
             return found,""
         }
-        current=found.info
         shown=fmt.tprintf("%s.%s",shown,name)
     }
+}
+
+// The field of a target in the value of a component or a setting of type info.
+@(private)
+panel_field_of :: proc(w:core.World_Ref,info:^runtime.Type_Info,owner,path:string) -> (found:Panel_Field,problem:string) {
+    s,type:=type_schema(w.info,info)
+    return panel_field_find(s,type,owner,path)
 }
 
 @(private)
@@ -596,7 +435,7 @@ panel_value_nest :: proc(path,value:string) -> string {
 }
 
 // The value of a component (table not nil) or a setting with the JSON of one
-// field read over current, or over the default without it: what scene.set and
+// field read over current, or over the default without it: what scene.write and
 // settings.set accept for that field.
 @(private)
 panel_value_read :: proc(w:core.World_Ref,table:^core.Table_Info,info:^runtime.Type_Info,current:rawptr,path,value,what:string) -> (bytes:[]u8,problem:string) {
@@ -639,11 +478,11 @@ panel_match :: proc(w:core.World_Ref,table:^core.Table_Info,current:rawptr,match
         serial.text_space(&r)
         start:=r.offset
         if !serial.text_skip(&r) {return false,"where is malformed"}
-        field,missing:=panel_field_find(table.info,table.name,path)
+        field,missing:=panel_field_of(w,table.info,table.name,path)
         if missing!="" {return false,fmt.tprintf("where: %s",missing)}
         bytes,message:=panel_value_read(w,table,table.info,current,path,r.text[start:r.offset],fmt.tprintf("where.%s",path))
         if message!="" {return false,message}
-        if current!=nil && string(([^]u8)(current)[field.offset:][:field.info.size])!=string(bytes[field.offset:][:field.info.size]) {matched=false}
+        if current!=nil && string(([^]u8)(current)[field.offset:][:field.size])!=string(bytes[field.offset:][:field.size]) {matched=false}
         if serial.text_accept(&r,',') {continue}
         if !serial.text_expect(&r,'}') {return false,"where is malformed"}
         return
@@ -690,8 +529,7 @@ panel_inspect :: proc(s:^Session,w:core.World_Ref,t:^Panel_Target,defaults:[]u8)
         table:^core.Table_Info
         table,problem=panel_component(s,t)
         if problem!="" {return}
-        field,problem=panel_field_find(table.info,target,path)
-        if problem!="" {return}
+        if _,problem=panel_field_of(w,table.info,target,path);problem!="" {return}
         entities,missing:=panel_entities(s,w,table,t)
         if missing!="" {return {},{},missing}
         if len(entities)==0 {return {},{},fmt.tprintf("No entity has %s",target)}
@@ -699,14 +537,14 @@ panel_inspect :: proc(s:^Session,w:core.World_Ref,t:^Panel_Target,defaults:[]u8)
         at:=0
         for &other,i in w.info.tables {if &other==table {at=i;break}}
         c={s=s,w=w,t=table,index=at,table=raw,entities=entities[:],name=table.name,type=table.type,value=cast([^]u8)core.raw_find(raw,table.info,entities[0]),size=table.info.size}
+        inspect_schema(&c,table.info)
     case .Setting:
         storage:int
         storage,problem=panel_setting(s,t)
         if problem!="" {return}
         info:=&s.info.storages[storage]
-        field,problem=panel_field_find(info.info,target,path)
-        if problem!="" {return}
         c={s=s,w=w,index=SETTING_INDEX+storage,storage=storage+1,name=info.name,type=info.type,value=cast([^]u8)setting_data(s,storage),size=info.info.size}
+        inspect_schema(&c,info.info)
         if engine:=setting_engine_value(s,info.name);s.settings_layer==.Project && engine!=nil {
             c.defaults=cast([^]u8)engine
         } else if info.info.size<=len(defaults) {
@@ -714,14 +552,8 @@ panel_inspect :: proc(s:^Session,w:core.World_Ref,t:^Panel_Target,defaults:[]u8)
             c.defaults=raw_data(defaults)
         }
     }
+    if t.kind!=.Heading {field,problem=panel_field_find(c.schema,c.of,target,path)}
     return
-}
-
-@(private)
-panel_label :: proc(label:string,field:Panel_Field) -> string {
-    if label!="" {return label}
-    if custom,found:=core.field_option(field.tag,"label");found && custom!="" {return custom}
-    return readable(field.name)
 }
 
 // ---------------------------------------------------------------- buttons
@@ -751,7 +583,7 @@ panel_writes :: proc(s:^Session,w:core.World_Ref,b:^Panel_Button) -> (writes:[dy
         case .Component:
             table,missing:=panel_component(s,&set.place)
             if missing!="" {return writes,fmt.tprintf("%s: %s",at,missing)}
-            field,no_field:=panel_field_find(table.info,target,path)
+            field,no_field:=panel_field_of(w,table.info,target,path)
             if no_field!="" {return writes,fmt.tprintf("%s: %s",at,no_field)}
             entities,unknown:=panel_entities(s,w,table,&set.place)
             if unknown!="" {return writes,fmt.tprintf("%s: %s",at,unknown)}
@@ -759,17 +591,17 @@ panel_writes :: proc(s:^Session,w:core.World_Ref,b:^Panel_Button) -> (writes:[dy
             for e in entities {
                 bytes,message:=panel_value_read(w,table,table.info,core.raw_find(raw,table.info,e),path,value,what)
                 if message!="" {return writes,fmt.tprintf("%s: %s",at,message)}
-                append(&writes,Panel_Write{table=table,entity=e,offset=int(field.offset),bytes=bytes[field.offset:][:field.info.size]})
+                append(&writes,Panel_Write{table=table,entity=e,offset=int(field.offset),bytes=bytes[field.offset:][:field.size]})
             }
         case .Setting:
             storage,missing:=panel_setting(s,&set.place)
             if missing!="" {return writes,fmt.tprintf("%s: %s",at,missing)}
             info:=&s.info.storages[storage]
-            field,no_field:=panel_field_find(info.info,target,path)
+            field,no_field:=panel_field_of(w,info.info,target,path)
             if no_field!="" {return writes,fmt.tprintf("%s: %s",at,no_field)}
             bytes,message:=panel_value_read(w,nil,info.info,setting_data(s,storage),path,value,what)
             if message!="" {return writes,fmt.tprintf("%s: %s",at,message)}
-            append(&writes,Panel_Write{storage=storage,offset=int(field.offset),bytes=bytes[field.offset:][:field.info.size]})
+            append(&writes,Panel_Write{storage=storage,offset=int(field.offset),bytes=bytes[field.offset:][:field.size]})
         }
     }
     return
@@ -905,7 +737,7 @@ panel_check :: proc(s:^Session,p:^Project_Panel) -> string {
         if row.kind==.Component {
             table,missing:=panel_component(s,&row.place)
             if missing!="" {return fmt.tprintf("rows[%d]: %s",i,missing)}
-            if _,problem:=panel_field_find(table.info,table.name,base.text_get(row.field[:]));problem!="" {return fmt.tprintf("rows[%d]: %s",i,problem)}
+            if _,problem:=panel_field_of(w,table.info,table.name,base.text_get(row.field[:]));problem!="" {return fmt.tprintf("rows[%d]: %s",i,problem)}
         }
         if _,_,problem:=panel_inspect(s,w,&row.place,defaults);problem!="" && !strings.has_prefix(problem,"No entity has") {
             return fmt.tprintf("rows[%d]: %s",i,problem)
@@ -921,13 +753,13 @@ panel_check :: proc(s:^Session,p:^Project_Panel) -> string {
                 storage,missing:=panel_setting(s,&set.place)
                 if missing!="" {return fmt.tprintf("%s: %s",at,missing)}
                 info:=&s.info.storages[storage]
-                if _,problem:=panel_field_find(info.info,target,path);problem!="" {return fmt.tprintf("%s: %s",at,problem)}
+                if _,problem:=panel_field_of(w,info.info,target,path);problem!="" {return fmt.tprintf("%s: %s",at,problem)}
                 if _,problem:=panel_value_read(w,nil,info.info,setting_data(s,storage),path,base.text_get(set.value[:]),what);problem!="" {return fmt.tprintf("%s.value: %s",at,problem)}
                 continue
             }
             table,missing:=panel_component(s,&set.place)
             if missing!="" {return fmt.tprintf("%s: %s",at,missing)}
-            if _,problem:=panel_field_find(table.info,target,path);problem!="" {return fmt.tprintf("%s: %s",at,problem)}
+            if _,problem:=panel_field_of(w,table.info,target,path);problem!="" {return fmt.tprintf("%s: %s",at,problem)}
             if _,problem:=panel_value_read(w,table,table.info,nil,path,base.text_get(set.value[:]),what);problem!="" {return fmt.tprintf("%s.value: %s",at,problem)}
             if match:=base.text_get(set.match[:]);match!="" {
                 if _,problem:=panel_match(w,table,nil,match);problem!="" {return fmt.tprintf("%s.%s",at,problem)}
@@ -973,12 +805,10 @@ panel_variants_check :: proc(p:^Project_Panel) -> string {
 panel_store :: proc(s:^Session,panels:^Project_Panels,p:Project_Panel) -> (at:int,problem:string) {
     p:=p
     id:=base.text_get(p.id[:])
-    w:serial.Writer
-    serial.writer_init(&w,4096,context.temp_allocator)
-    panel_write(&w,&p)
-    if w.overflow>0 {return -1,"the panel does not fit in memory"}
+    text,encoded:=serial.text_encode(panel_file_of(&p),.Pretty,context.temp_allocator,sparse=true)
+    if !encoded {return -1,"the panel does not fit in memory"}
     _=os.make_directory_all(panel_folder(s))
-    if serial.file_write_atomic(panel_file(s,id),serial.writer_bytes(&w))!=.None {return -1,fmt.tprintf("%s cannot be written",panel_file(s,id))}
+    if serial.file_write_atomic(panel_file(s,id),text)!=.None {return -1,fmt.tprintf("%s cannot be written",panel_file(s,id))}
     if existing:=panel_find(panels,id);existing>=0 {
         p.scroll,p.attributes=panels.list[existing].scroll,panels.list[existing].attributes
         panels.list[existing]=p
@@ -1020,41 +850,40 @@ panels_build :: proc(s:^Session,g:^Editor_Ui,panels:^Project_Panels) {
 panel_build :: proc(s:^Session,p:^Project_Panel) -> (deleted:bool) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     id:=ui.id_derive(ctx,PANELS_SCOPE,base.text_get(p.id[:]))
     float:=tool_panel(g,id)
     width:=float.width.value-float.padding[0]-float.padding[2]
-    height:=ctx.size.y-float.offset.y-th.margin-float.padding[1]-float.padding[3]
+    height:=ctx.size.y-float.offset.y-ui.metric(ctx,"margin")-float.padding[1]-float.padding[3]
     if ui.panel(ctx,id,float) {
         ui.id_push(ctx,id)
         defer ui.id_pop(ctx)
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),align_y=.Center,gap=2}) {
-            ui.label(ctx,base.text_get(p.title[:]),th.font,th.text,width-24,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,base.text_get(p.title[:]),ui.metric(ctx,"font"),ui.tone(ctx,"text"),width-24,font=ui.FONT_SEMIBOLD)
             ui.spacer(ctx)
-            deleted=ui.button(ctx,ui.id(ctx,"delete"),{icon=ui.icon_user(u8(User_Icon.Trash)),icon_color=th.text_muted,style=.Ghost,width=22,height=22,icon_size=12}).clicked
+            deleted=ui.button(ctx,ui.id(ctx,"delete"),{icon=ui.icon_user(u8(User_Icon.Trash)),icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=22,height=22,icon_size=12}).clicked
         }
         for first:=0;first<p.button_count;first+=2 {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6}) {
                 for button in first..<min(first+2,p.button_count) {
                     name:=base.text_get(p.buttons[button].name[:])
-                    if ui.button(ctx,ui.id(ctx,"button",button+1),{label=name,style=.Field,width=-1,center=true}).clicked {
+                    if ui.button(ctx,ui.id(ctx,"button",button+1),{label=name,variant="field",width=-1,center=true}).clicked {
                         changed,problem:=panel_press(s,p,button)
                         if problem!="" {notify(s,problem)} else if changed==0 {notify(s,fmt.tprintf("%s: no entity matches",name))}
                     }
                 }
             }
         }
-        if ui.button(ctx,ui.id(ctx,"restore"),{label="Restore",icon=.Revert,style=.Ghost,width=-1,center=true,disabled=panel_kept_count(s.panels,p)==0}).clicked {
+        if ui.button(ctx,ui.id(ctx,"restore"),{label="Restore",icon=.Revert,variant="ghost",width=-1,center=true,disabled=panel_kept_count(s.panels,p)==0}).clicked {
             if _,problem:=panel_restore(s,p);problem!="" {notify(s,problem)}
         }
         w:=edited_world(s)
         if p.row_count>0 || p.button_count>0 {
-            if ui.scroll_area(ctx,ui.id(ctx,"rows"),&p.scroll,{width=ui.GROW,height=ui.FIT,max_height=max(height-24-(th.row+6)*f32((p.button_count+1)/2+1)-12,80),direction=.Column,gap=3}) {
+            if ui.scroll_area(ctx,ui.id(ctx,"rows"),&p.scroll,{width=ui.GROW,height=ui.FIT,max_height=max(height-24-(ui.metric(ctx,"row")+6)*f32((p.button_count+1)/2+1)-12,80),direction=.Column,gap=3}) {
                 for &row,i in p.rows[:p.row_count] {
                     ui.id_push(ctx,ui.id(ctx,"row",i+1))
                     defer ui.id_pop(ctx)
                     if row.kind==.Heading {
-                        ui.section(ctx,base.text_get(row.label[:]))
+                        kit.section(ctx,base.text_get(row.label[:]))
                         continue
                     }
                     panel_target_row(s,w,p,&row.place,base.text_get(row.label[:]),width)
@@ -1080,15 +909,15 @@ panel_target_row :: proc(s:^Session,w:core.World_Ref,p:^Project_Panel,t:^Panel_T
     c.panel=p
     c.held=base.hash_combine(base.name_hash(base.text_get(p.id[:])),u64(uintptr(t)-uintptr(p)))|1
     held_take(&c)
-    shown:=panel_label(label,field)
+    shown:=label if label!="" else field_label(field.field)
     for e in c.entities[min(1,len(c.entities)):] {
         other:=([^]u8)(core.raw_find(c.table,c.t.info,e))
-        if string(other[field.offset:][:field.info.size])!=string(c.value[field.offset:][:field.info.size]) {
+        if string(other[field.offset:][:field.size])!=string(c.value[field.offset:][:field.size]) {
             shown=fmt.tprintf("%s (mixed)",shown)
             break
         }
     }
-    field_row(&c,field.info,field.tag,field.name,shown,field.offset,0)
+    field_row(&c,field.field,shown,field.offset,0)
 }
 
 // Folded at first: the fields the buttons set, each once, as rows; one a
@@ -1096,8 +925,7 @@ panel_target_row :: proc(s:^Session,w:core.World_Ref,p:^Project_Panel,t:^Panel_T
 @(private)
 panel_attributes :: proc(s:^Session,w:core.World_Ref,p:^Project_Panel,width:f32) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
-    if !ui.collapsible(ctx,ui.id(ctx,"attributes"),"Attributes",&p.attributes).open {return}
+    if !kit.collapsible(ctx,ui.id(ctx,"attributes"),"Attributes",&p.attributes).open {return}
     shown:=make([dynamic]^Panel_Target,context.temp_allocator)
     for &b in p.buttons[:p.button_count] {
         next: for &set in b.sets[:b.set_count] {
@@ -1120,7 +948,7 @@ panel_attributes :: proc(s:^Session,w:core.World_Ref,p:^Project_Panel,width:f32)
                 if entities,problem:=panel_entities(s,w,table,t);problem=="" {caption=fmt.tprintf(len(entities)==1?"%s, %d entity":"%s, %d entities",caption,len(entities))}
             }
         }
-        ui.label(ctx,caption,th.font_small,th.text_faint,width)
+        ui.label(ctx,caption,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"),width)
         panel_target_row(s,w,p,t,"",width)
     }
 }

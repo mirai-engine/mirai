@@ -1,10 +1,12 @@
 package core
 
+import "core:slice"
 import "core:testing"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-@(private="file")
+@(private)
+@(test_world,host="Indexed_Shared",editor="Indexed_Editor")
 Indexed_World :: struct {
     using world:Test_World,
     parents:Table(Parent),
@@ -14,21 +16,21 @@ Indexed_World :: struct {
     progress:Progress,
 }
 
-@(private="file")
+@(private)
 Indexed_Shared :: struct {problems:By_World(Problems)}
 
-@(private="file")
+@(private)
 Indexed_Editor :: struct {only:Table(Editor_Only)}
 
-@(private="file") Editor_Only :: struct {}
+@(private) Editor_Only :: struct {}
 
-@(private="file") @(storage,persist)
+@(private) @(storage,persist)
 Progress :: struct {level:f32}
 
 @(test)
 an_indexed_world_info_finds_what_its_lists_hold_and_describes_its_values_once :: proc(t:^testing.T) {
     w:Indexed_World
-    indexed,ok:=test_info(t,Indexed_World,Indexed_Shared,Indexed_Editor)
+    indexed,ok:=test_info(t,Indexed_World)
     if !ok {return}
     defer test_info_destroy(&indexed)
     testing.expect(t,indexed.tables_by_type!=nil && indexed.storages_by_type!=nil && indexed.schema!=nil)
@@ -53,6 +55,20 @@ an_indexed_world_info_finds_what_its_lists_hold_and_describes_its_values_once ::
         at,found=world_table_index_of_hash(world_ref(&w,info,.Editor),base.name_hash("Editor_Only"))
         testing.expect(t,found && at==2)
     }
+    // A component renamed with @(component,was=) is found by every name it had, and its type
+    // carries them into the files written with it.
+    renamed:=listed
+    renamed.tables=slice.clone(listed.tables,context.temp_allocator)
+    renamed.tables[1].was="Placed Global_Transform"
+    for indexed_too in ([]bool{false,true}) {
+        if indexed_too {renamed.schema=world_schema_make(&renamed)}
+        for name in ([]string{"World_Transform","Placed","Global_Transform"}) {
+            at,found:=world_table_index_of_hash(world_ref(&w,&renamed),base.name_hash(name))
+            testing.expectf(t,found && at==1,"%s",name)
+        }
+    }
+    testing.expect_value(t,renamed.schema.schema.types[renamed.schema.tables[1].type].was,"Placed Global_Transform")
+    world_schema_destroy(renamed.schema)
 
     schema:=indexed.schema
     parent:=schema.tables[0]

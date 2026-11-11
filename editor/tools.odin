@@ -2,7 +2,6 @@ package editor
 
 import "core:path/filepath"
 import "mirai:project"
-import "core:math"
 import "core:strings"
 import "mirai:asset"
 import importer "mirai:cook/import"
@@ -14,7 +13,6 @@ import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 
 // What the tools of the editor do each frame besides drawing: the atlas of
 // previews the renderer is given, the files that arrive to be imported, and the popups and panels that float over
@@ -40,9 +38,8 @@ tools_popups :: proc(s:^Session,w:core.World_Ref) {
 API_IMPORT_SECONDS :: 1800
 
 Import_Params :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=The source file anywhere on disk; the editor reads it and writes only into the asset folder: a model (OBJ or glTF or GLB or USD or FBX or a format a plugin adds); an image; a sound (WAV or Ogg); a font (TTF or OTF); a table of texts (CSV) that becomes .strings; a manifest of prompts (.prompts.json) or a folder of their images that becomes .prompts; or a source a plugin imports whole, which writes where its importer says"`,
+    path:[API_PATH_BYTES]u8 `mirai:"text,label=The source file anywhere on disk; the editor reads it and writes only into the asset folder: a model (OBJ or glTF or GLB or USD or FBX or a format a plugin adds); an image; a sound (WAV or Ogg); a font (TTF or OTF); a manifest of prompts (.prompts.json) or a folder of their images that becomes .prompts; or a source a plugin imports whole, which writes where its importer says"`,
     folder:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The folder under the asset folder it goes in (a model keeps a folder of its name inside); without it, the root of the assets. A source a plugin imports whole takes none"`,
-    into:[API_PATH_BYTES]u8 `mirai:"text,optional,label=The import to update when its source was moved or renamed: the id of its prefab or texture or sound"`,
     profile:bool `mirai:"optional,label=Records where its time goes: the answer gives the seconds of each zone"`,
     seconds:int `mirai:"optional,min=1,max=7200,unit=s,label=How long it waits for the end of the import; past that it answers importing and the import goes on"`,
     rig:[16]u8 `mirai:"text,optional,label=Of a model: a template of Mesh2Motion fitted to its meshes and weighted to them, in place of what the source has: humanoid, fox, horse, bird, dragon, kaiju, shark, snake or spider, standing on +Y and facing -Z; source keeps the source's. Of a source in the project, the choice stays in its settings. Empty: what they say"`,
@@ -56,27 +53,27 @@ Import_Params :: struct {
 Import_Status_Result :: struct {
     importing:bool,
     ok:bool `mirai:"label=The last import that ended wrote its assets"`,
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=The source"`,
-    scene:[API_PATH_BYTES]u8 `mirai:"text,label=The scene a map became; empty for another source"`,
-    message:[IMPORT_MESSAGE_BYTES]u8 `mirai:"text"`,
-    warnings:[1][IMPORT_MESSAGE_BYTES]u8 `mirai:"list,text,label=What the last import that ended warned of: what it left out or assumed, and how to change it"`,
+    path:string `mirai:"label=The source"`,
+    scene:string `mirai:"label=The scene a map became; empty for another source"`,
+    message:string,
+    warnings:[]string `mirai:"label=What the last import that ended warned of: what it left out or assumed, and how to change it"`,
     seconds:f64 `mirai:"label=From the request until the editor took what it wrote"`,
     unzoned:f64 `mirai:"label=Of seconds, those no zone covers on the thread that imports and the editor's; with profile"`,
     publishing:bool `mirai:"label=The programs the last import wrote are being published; with profile, programs.publish is a zone once they are"`,
-    assets:[1]Import_Status_Asset `mirai:"list,label=What the last import that ended wrote"`,
-    zones:[1]Import_Status_Zone `mirai:"list,label=With profile: each zone of the last import by name and the zone that held it, the zones a zone held after it and one deeper, heaviest first"`,
+    assets:[]Import_Status_Asset `mirai:"label=What the last import that ended wrote"`,
+    zones:[]Import_Status_Zone `mirai:"label=With profile: each zone of the last import by name and the zone that held it, the zones a zone held after it and one deeper, heaviest first"`,
 }
 Import_Status_Zone :: struct {
-    name:[48]u8 `mirai:"text"`,
+    name:string,
     depth:int,
     seconds:f64 `mirai:"label=Summed over the threads"`,
     owner:f64 `mirai:"label=Of seconds, those on the thread that imports or the editor's"`,
     count:int,
 }
 Import_Status_Asset :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=Under the asset folder"`,
+    path:string `mirai:"label=Under the asset folder"`,
     asset:base.Asset_Id,
-    kind:[32]u8 `mirai:"text"`,
+    kind:string,
     kept:bool `mirai:"label=Its file already was what the import gives"`,
 }
 
@@ -86,10 +83,9 @@ Graphics_Status :: struct {
     vsync:bool,
     frame_generation:bool `mirai:"label=Asked for: only a technique that offers it (FSR 3.1) generates frames"`,
     generated:bool `mirai:"label=The last frame drew an image shown before its own"`,
-    render_scale:f32 `mirai:"label=The 3D image per point of the window; 0 follows the target of the preset"`,
-    preset_height:u32 `mirai:"label=The lines the last preset aims for; 0 is one per point"`,
+    resolution:u32 `mirai:"label=The lines the views of the window aim for, never above one pixel per point"`,
     antialiasing:[24]u8 `mirai:"text,label=The technique of the setting: off or taa or one a plugin offers"`,
-    options:[len(GRAPHICS_OPTION_LABELS)]Api_Graphics_Option `mirai:"label=Every option of the popup with its choices"`,
+    options:[GRAPHICS_ROWS_CAPACITY]Api_Graphics_Option `mirai:"trim,label=Every option of the popup with its choices"`,
     fps,gpu_ms:f32,
 }
 
@@ -110,12 +106,13 @@ tools_api_register :: proc(s:^Session,st:^Api_State) {
     materials_api_register(s,st)
     audio_api_register(s,st)
     records_api_register(s,st)
+    texts_api_register(s,st)
     programs_api_register(s,st)
     material_document_register(s,st)
     import_default:=Import_Params{seconds=API_IMPORT_SECONDS}
-    api_register(s,st,{name="asset.import",flags={.Core},summary="Imports a source file from anywhere on disk into the asset folder as the Import button of the content browser does: a model, an image, a sound, a font, a CSV of texts, prompts or a source a plugin imports. Answers when it ends, with whether it wrote its assets, what it said and what it wrote; importing it again updates those assets.",params=Import_Params,result=Import_Status_Result,writes_result=true,defaults=&import_default,run=api_asset_import})
-    api_register(s,st,{name="asset.import_status",summary="Whether an import runs, and of the last one that ended: whether it wrote its assets, what it said and what it wrote.",result=Import_Status_Result,writes_result=true,flags={.Read_Only},run=api_asset_import_status})
-    api_register(s,st,{name="graphics.status",summary="The graphics settings the renderer runs with (those of the game that plays while one does), the pacing of the frames and the cost of the last ones.",result=Graphics_Status,flags={.Read_Only},run=api_graphics_status})
+    api_register(s,st,{name="asset.import",flags={.Core},summary="Imports a source file from anywhere on disk into the asset folder as the Import button of the content browser does: a model, an image, a sound, a font, prompts or a source a plugin imports. Answers when it ends, with whether it wrote its assets, what it said and what it wrote; importing it again updates those assets.",params=type_info_of(Import_Params),result=type_info_of(Import_Status_Result),defaults=&import_default,run=api_asset_import})
+    api_register(s,st,{name="asset.import_status",summary="Whether an import runs, and of the last one that ended: whether it wrote its assets, what it said and what it wrote.",result=type_info_of(Import_Status_Result),flags={.Read_Only},run=api_asset_import_status})
+    api_register(s,st,{name="graphics.status",summary="The graphics settings the renderer runs with (those of the game that plays while one does), the pacing of the frames and the cost of the last ones.",result=type_info_of(Graphics_Status),flags={.Read_Only},run=api_graphics_status})
 }
 
 // A source is absolute or relative to the project, not to where the editor runs.
@@ -129,7 +126,7 @@ asset_import_source :: proc(s:^Session,path:string) -> string {
 @(private)
 api_asset_import :: proc(s:^Session,call:^api.Call) {
     params:=api.call_params(call,Import_Params)
-    path,into_text:=asset_import_source(s,base.text_get(params.path[:])),base.text_get(params.into[:])
+    path:=asset_import_source(s,base.text_get(params.path[:]))
     folder:=base.text_get(params.folder[:])
     if folder!="" {
         r:=files_registry(s)
@@ -140,14 +137,6 @@ api_asset_import :: proc(s:^Session,call:^api.Call) {
         refusal:string
         if folder,refusal=asset_folder_clean(r,folder);refusal!="" {
             api.call_failf(call,api.INVALID_PARAMS,"folder: %s",refusal)
-            return
-        }
-    }
-    into:base.Asset_Id
-    if into_text!="" {
-        problem:string
-        if into,problem=asset_resolve(s,into_text,"");problem!="" {
-            api.call_failf(call,api.INVALID_PARAMS,"into: %s",problem)
             return
         }
     }
@@ -190,77 +179,47 @@ api_asset_import :: proc(s:^Session,call:^api.Call) {
         }
         front=stated
     }
-    if !import_file(s,path,into,folder,params.profile,rig,image,skeleton,front) {
+    if !import_file(s,path,folder,params.profile,rig,image,skeleton,front) {
         api.call_fail(call,api.SERVER_ERROR,string(s.importer.message[:s.importer.message_length]))
         return
     }
     importing :: proc(s:^Session,user:rawptr) -> bool {return s.importer.running!=nil}
     api_wait(s,f64(params.seconds),nil,importing,"importing")
-    api_import_status_write(s,call.out)
+    api_import_status_answer(s,call)
 }
 
 @(private)
-api_asset_import_status :: proc(s:^Session,call:^api.Call) {api_import_status_write(s,call.out)}
+api_asset_import_status :: proc(s:^Session,call:^api.Call) {api_import_status_answer(s,call)}
 
 @(private)
-api_import_status_write :: proc(s:^Session,w:^serial.Writer) {
+api_import_status_answer :: proc(s:^Session,call:^api.Call) {
     status:=&s.importer.status
-    serial.text_write_raw(w,`{"importing":`);serial.text_write_raw(w,status.importing?"true":"false")
-    api.write_key(w,"ok");serial.text_write_raw(w,status.ok?"true":"false")
-    api.write_key(w,"path");serial.text_write_string(w,base.text_get(status.path[:]))
-    api.write_key(w,"scene");serial.text_write_string(w,base.text_get(status.scene[:]))
-    api.write_key(w,"message");serial.text_write_string(w,base.text_get(status.message[:]))
-    api.write_key(w,"warnings");serial.write_u8(w,'[')
-    for warning,i in s.importer.warnings {
-        if i>0 {serial.write_u8(w,',')}
-        serial.text_write_string(w,warning)
+    r:=api.call_result(call,Import_Status_Result)
+    r^={
+        importing=status.importing,ok=status.ok,path=base.text_get(status.path[:]),scene=base.text_get(status.scene[:]),message=base.text_get(status.message[:]),
+        warnings=s.importer.warnings[:],seconds=status.seconds,unzoned=status.unzoned,publishing=s.importer.publishing!={},
+        assets=make([]Import_Status_Asset,len(s.importer.written),call.allocator),zones=make([]Import_Status_Zone,len(s.importer.zones),call.allocator),
     }
-    serial.write_u8(w,']')
-    api.write_key(w,"seconds");serial.text_write_float(w,transmute(u64)status.seconds,8)
-    api.write_key(w,"unzoned");serial.text_write_float(w,transmute(u64)status.unzoned,8)
-    api.write_key(w,"publishing");serial.text_write_raw(w,s.importer.publishing!={}?"true":"false")
-    api.write_key(w,"assets");serial.write_u8(w,'[')
-    for written,i in s.importer.written {
-        if i>0 {serial.write_u8(w,',')}
-        serial.text_write_raw(w,`{"path":`);serial.text_write_string(w,written.path)
-        api.write_key(w,"asset");api_asset_write(w,written.id)
-        api.write_key(w,"kind");serial.text_write_string(w,api_asset_kind_name(s,written.kind))
-        api.write_key(w,"kept");serial.text_write_raw(w,written.kept?"true":"false")
-        serial.write_u8(w,'}')
-    }
-    serial.write_u8(w,']')
-    api.write_key(w,"zones");serial.write_u8(w,'[')
-    for zone,i in s.importer.zones {
-        if i>0 {serial.write_u8(w,',')}
-        serial.text_write_raw(w,`{"name":`);serial.text_write_string(w,zone.name)
-        api.write_key(w,"depth");serial.text_write_int(w,i64(zone.depth))
-        api.write_key(w,"seconds");serial.text_write_float(w,transmute(u64)zone.seconds,8)
-        api.write_key(w,"owner");serial.text_write_float(w,transmute(u64)zone.owner,8)
-        api.write_key(w,"count");serial.text_write_int(w,i64(zone.count))
-        serial.write_u8(w,'}')
-    }
-    serial.text_write_raw(w,"]}")
+    for written,i in s.importer.written {r.assets[i]={written.path,written.id,api_asset_kind_name(s,written.kind),written.kept}}
+    for zone,i in s.importer.zones {r.zones[i]={zone.name,int(zone.depth),zone.seconds,zone.owner,int(zone.count)}}
 }
 
 @(private)
 api_graphics_fill :: proc(s:^Session,result:^Graphics_Status,g:^erender.Graphics_Settings) {
     if g==nil {return}
     base.text_set(result.preset[:],graphics_quality_label(erender.graphics_quality_of(g^)))
-    result.frame_limit,result.vsync,result.render_scale,result.preset_height=g.frame_limit,g.vsync,g.render_scale,g.preset_height
+    result.frame_limit,result.vsync,result.resolution=g.frame_limit,g.vsync,g.resolution
     result.frame_generation=g.frame_generation
     technique:=g.antialiasing
     base.text_set(result.antialiasing[:],base.text_get(technique[:]))
-    option_labels:=GRAPHICS_OPTION_LABELS
-    offered:=erender.antialiasing_offered(s.app.renderer)
-    choices:=graphics_choices(g^,offered)
-    at:=0
-    for option in Graphics_Option {
-        row:=&result.options[at]
-        at+=1
-        base.text_set(row.name[:],option_labels[option])
-        labels:=graphics_labels(option,offered)
-        if choice:=int(choices[option]);choice>=0 && choice<len(labels) {base.text_set(row.choice[:],labels[choice])}
-        for label,i in labels[:min(len(labels),len(row.choices))] {base.text_set(row.choices[i][:],label)}
+    rows:=graphics_rows_of(s,erender.antialiasing_offered(s.app.renderer))
+    for &each,at in rows[:min(len(rows),len(result.options))] {
+        option:=&result.options[at]
+        info:=&s.info.storages[each.storage]
+        data:=rawptr(g) if info.type==erender.Graphics_Settings else graphics_setting_of(s,info)
+        base.text_set(option.name[:],each.label)
+        if choice:=graphics_row_choice(&each,data);choice>=0 {base.text_set(option.choice[:],each.choices[choice])}
+        for label,i in each.choices[:min(len(each.choices),len(option.choices))] {base.text_set(option.choices[i][:],label)}
     }
     result.fps=s.app.stats.fps
     if s.app.renderer!=nil {
@@ -311,7 +270,7 @@ asset_name_of :: proc(a:^host.Assets,id:base.Asset_Id,missing:="") -> string {
 }
 
 // The lines a plugin draws over each selected entity with a T while the
-// editor edits (the face of a mirror, the box of a decal), into vertices.
+// editor edits (the face of a portal, the box of a decal), into vertices.
 selection_gizmo :: proc(s:^Session,app:^host.App,vertices:[]gpu.Debug_Vertex,$T:typeid,draw:proc(lines:^gpu.Debug_Lines,w:core.World_Ref,e:core.Entity,value:T)) {
     if playing(s) || len(s.selection.entities)==0 {return}
     w:=shown_world(s)
@@ -321,26 +280,4 @@ selection_gizmo :: proc(s:^Session,app:^host.App,vertices:[]gpu.Debug_Vertex,$T:
         if value,ok:=entity_get(w,e,T);ok {draw(&lines,w,e,value)}
     }
     if lines.count>0 {host.extras_debug_lines_add(&app.extras,lines)}
-}
-
-// The outline of a face of side 1 on the XY plane of placed, an ellipse or a
-// rectangle, and the arrow of the side it shows (+Z).
-gizmo_face :: proc(lines:^gpu.Debug_Lines,placed:mm.Transform,ellipse:bool,color:[4]f32) {
-    SEGMENTS :: 32
-    if ellipse {
-        previous:=mm.transform_point(placed,{0.5,0,0})
-        for i in 1..=SEGMENTS {
-            angle:=f32(i)/SEGMENTS*2*math.PI
-            point:=mm.transform_point(placed,{0.5*math.cos(angle),0.5*math.sin(angle),0})
-            gpu.debug_line(lines,previous,point,color)
-            previous=point
-        }
-    } else {
-        corners:=[4][3]f32{{-0.5,-0.5,0},{0.5,-0.5,0},{0.5,0.5,0},{-0.5,0.5,0}}
-        for corner,i in corners {
-            gpu.debug_line(lines,mm.transform_point(placed,corner),mm.transform_point(placed,corners[(i+1)%4]),color)
-        }
-    }
-    shown:=mm.quat_rotate(placed.rotation,[3]f32{0,0,1})
-    gpu.debug_arrow(lines,placed.position,placed.position+shown*0.75,color)
 }

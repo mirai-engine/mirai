@@ -63,7 +63,7 @@ autosave_slot :: proc(state:^Save_State,app:^host.App,work:^Save_Work,count:i32)
 // replaced another or a Manual section turned on. It follows the world in
 // every frame, also while it may not autosave.
 @(private)
-autosave_watch :: proc(work:^Save_Work,game:^Save_Game,settings:Save_Settings,root:scene.Scene_Root,references:core.Read(scene.Scene_Reference)) -> bool {
+autosave_watch :: proc(work:^Save_Work,game:^Save_Game,settings:Save_Settings,root:scene.Scene_Root,references:^core.Table(scene.Scene_Reference,$A)) -> bool {
     due:=settings.autosave_interval>0 && game.played-game.saved>=f64(settings.autosave_interval)
     if root.changes!=work.changes {
         due||=settings.autosave_scene && work.scene!={}

@@ -7,10 +7,8 @@ import "mirai:editor"
 import "mirai:editor/api"
 import erender "mirai:engine/render"
 import "mirai:std/base"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
-Morph_Inspect_Params :: struct {entity:editor.Api_Entity_Text `mirai:"text,entity"`,handle:core.Entity `mirai:"transient"`,offset:u32 `mirai:"optional"`,limit:u32 `mirai:"optional,min=1,max=256,clamp"`,diagnostics:bool `mirai:"optional"`}
 Morph_Set_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     name:[64]u8 `mirai:"text,label=A target of the mesh; an instance weights up to 16"`,
@@ -33,9 +31,8 @@ Morph_Set_Result :: struct {id:base.Entity_Id,name:[64]u8 `mirai:"text"`,value:f
 
 @(private)
 morph_register :: proc(s:^editor.Session) {
-    inspect:=Morph_Inspect_Params{limit=256}
     set:=Morph_Set_Params{mode=.Override}
-    editor.api_method_register(s,{name="animation.morph.set",summary="Sets the weight of a morph target of a mesh instance by name. One step of undo in Edit; Play and Simulation change only the running world.",params=Morph_Set_Params,params_info=type_info_of(Morph_Set_Params),result=Morph_Set_Result,result_info=type_info_of(Morph_Set_Result),defaults=&set,run=morph_set})
+    editor.api_method_register(s,{params=type_info_of(Morph_Set_Params),result=type_info_of(Morph_Set_Result),name="animation.morph.set",summary="Sets the weight of a morph target of a mesh instance by name. One step of undo in Edit; Play and Simulation change only the running world.",defaults=&set,run=morph_set})
 }
 
 @(private)
@@ -55,37 +52,33 @@ morph_entity_id :: proc(w:core.World_Ref,e:core.Entity) -> base.Entity_Id {value
 morph_instance_source :: proc(w:core.World_Ref,e:core.Entity,config:anim.Morph_Weights) -> (core.Entity,Morph_Source_Kind) {
     animations,sources,parents:=core.world_table_of(w,anim.Animation),core.world_table_of(w,anim.Pose_Source),core.world_table_of(w,core.Parent)
     if animations==nil || sources==nil || parents==nil {return core.NONE,.None}
-    source:=anim.morph_source(e,config,core.read(animations),core.read(sources),core.read(parents),core.world_storage_of(w,anim.Playback))
+    source:=anim.morph_source(e,config,animations,sources,parents,core.world_storage_of(w,anim.Playback))
     if source==core.NONE {return source,.None}
     if config.source!=core.NONE {return source,.Explicit}
     if source==e {return source,.Own}
-    return source,.Pose_Source if core.has(core.read(sources),e) else .Ancestor
+    return source,.Pose_Source if core.has(sources,e) else .Ancestor
 }
 
 @(private)
-morph_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Morph_Inspect_Params)
-    w,e,okay:=subject(s,call,p.entity[:],p.handle);if !okay {return}
+morph_inspect :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.Entity,p:^Instance_Inspect_Params) -> (r:Instance_Morphs) {
     file:asset.Asset;defer asset.asset_close(&file)
     view,id,loaded:=morph_mesh_open(s,call,w,e,&file);if !loaded {return}
     config,_:=editor.entity_get(w,e,anim.Morph_Weights)
     stamp:u64
-    if configs:=core.world_table_of(w,anim.Morph_Weights);configs!=nil {if row:=core.row_of(core.read(configs),e);row>=0 {stamp=core.stamp(core.read(configs),row)+1}}
+    if configs:=core.world_table_of(w,anim.Morph_Weights);configs!=nil {if row:=core.row_of(configs,e);row>=0 {stamp=core.stamp(configs,row)+1}}
     source,kind:=morph_instance_source(w,e,config)
     path:=base.text_get(config.path[:]);if path=="" {if target,present:=editor.entity_get(w,e,anim.Animation_Target);present {path=base.text_get(target.path[:])}}
     state,available:=anim.animation_morph_state(core.world_storage_of(w,anim.Morph_Playback),e)
     error,unknown:=anim.morph_weights_check(config,view.morphs)
     evaluated:=available && state.mesh==id && state.stamp==stamp && len(state.weights)==len(view.morphs) && error!=.Invalid_Weights
-    out:=call.out;serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,e))
-    api.write_key(out,"mesh");serial.write_u8(out,'"');serial.text_write_asset_id(out,id);serial.write_u8(out,'"')
-    api.write_key(out,"source");api.write_id(out,morph_entity_id(w,source))
-    api.write_key(out,"source_kind");authoring_write_value(call,&kind,type_info_of(Morph_Source_Kind))
-    api.write_text(out,"path",path);api.write_uint(out,"total",u64(len(view.morphs)))
-    api.write_key(out,"targets");serial.write_u8(out,'[')
-    first:=min(int(p.offset),len(view.morphs));last:=min(first+int(p.limit),len(view.morphs))
-    for &target,i in view.morphs[first:last] {
+    r.id,r.mesh,r.source,r.source_kind,r.total=editor.api_entity_id(w,e),id,morph_entity_id(w,source),kind,u32(len(view.morphs))
+    base.text_set(r.path[:],path)
+    first:=min(int(p.offset),len(view.morphs))
+    r.targets=make([]Morph_Target_Result,min(first+int(p.limit),len(view.morphs))-first,call.allocator)
+    for &row,i in r.targets {
+        target:=view.morphs[first+i]
         name:=base.text_get(target.name[:])
-        row:=Morph_Target_Result{name=target.name,mesh_default=target.weight,default_value=target.weight,evaluated=evaluated}
+        row={name=target.name,mesh_default=target.weight,default_value=target.weight,evaluated=evaluated}
         if error!=.Invalid_Weights {for entry,j in config.names {if entry!=0 && entry==base.name_hash(name) {
             row.controlled,row.mode,row.value=true,config.modes[j],config.values[j]
             if row.mode==.Default {row.default_value=row.value}
@@ -93,25 +86,19 @@ morph_inspect :: proc(s:^editor.Session,call:^api.Call) {
         }}}
         row.final_weight=state.weights[first+i] if evaluated else row.default_value
         n:=copy(row.curve[:],path);n+=copy(row.curve[n:],"/@morph/");copy(row.curve[n:],name)
-        if i>0 {serial.write_u8(out,',')};authoring_write_value(call,&row,type_info_of(Morph_Target_Result))
     }
-    serial.write_u8(out,']')
-    if p.diagnostics {
-        diagnostic:=Morph_Diagnostic_Result{error=error,unknown=unknown,pending=!evaluated}
-        _,problems_total:=entity_problems(s.app,w,e,"animation.morph",diagnostic.problems[:]);diagnostic.problems_total=u32(problems_total)
-        if evaluated && (state.error==.Out_Of_Memory || state.error==.Invalid_Value) {diagnostic.error=state.error}
-        api.write_key(out,"diagnostic");authoring_write_value(call,&diagnostic,type_info_of(Morph_Diagnostic_Result))
-        api.write_key(out,"unresolved");serial.write_u8(out,'[');written:=0
-        for entry,j in config.names {
-            if entry==0 {continue}
-            known:=false;for &target in view.morphs {known ||= base.name_hash(base.text_get(target.name[:]))==entry}
-            if known {continue}
-            value:=Morph_Unresolved_Result{entry,config.values[j],config.modes[j]}
-            if written>0 {serial.write_u8(out,',')};authoring_write_value(call,&value,type_info_of(Morph_Unresolved_Result));written+=1
-        }
-        serial.write_u8(out,']')
+    if !p.diagnostics {return}
+    r.diagnostic={error=error,unknown=unknown,pending=!evaluated}
+    _,problems_total:=entity_problems(s.app,w,e,"animation.morph",r.diagnostic.problems[:]);r.diagnostic.problems_total=u32(problems_total)
+    if evaluated && (state.error==.Out_Of_Memory || state.error==.Invalid_Value) {r.diagnostic.error=state.error}
+    unresolved:=make([dynamic]Morph_Unresolved_Result,call.allocator)
+    for entry,j in config.names {
+        if entry==0 {continue}
+        known:=false;for &target in view.morphs {known ||= base.name_hash(base.text_get(target.name[:]))==entry}
+        if !known {append(&unresolved,Morph_Unresolved_Result{entry,config.values[j],config.modes[j]})}
     }
-    serial.write_u8(out,'}')
+    r.unresolved=unresolved[:]
+    return
 }
 
 @(private)

@@ -120,25 +120,28 @@ program_computes_publish :: proc(r: ^Renderer, table: ^Program_Computes, next: [
 }
 
 // The stage <stem>__<program>.comp of a Surface program; 0 until it is made
-// (pipeline_thread.odin), or when the shaders have none.
+// (pipeline_thread.odin), or when the shaders have none. early: as
+// program_graphics.
 @(private)
-program_compute :: proc(r: ^Renderer, table: ^Program_Computes, program: Program, stem, label: string) -> rhi.Pipeline {
+program_compute :: proc(r: ^Renderer, table: ^Program_Computes, program: Program, stem: string, early := false) -> rhi.Pipeline {
 	if program.id >= POINTS_PROGRAM_CAPACITY {return 0}
 	if !table.asked[program.id] {
 		table.asked[program.id] = true
 		name: [192]u8
 		if code := program_shader(r, fmt.bprintf(name[:], "%s__%s.comp", stem, program.name)); code != nil {
 			table.codes[program.id] = code
-			table.asked[program.id] = pipeline_make(r, &table.pipelines[program.id], compute = {shader = code, name = label})
+			table.asked[program.id] = pipeline_make(r, &table.pipelines[program.id], compute = {shader = code, name = code.name}, early = early)
 		}
+	} else if table.pipelines[program.id] == 0 && table.codes[program.id] != nil && !early {
+		pipeline_urgent(r, &table.pipelines[program.id])
 	}
 	return table.pipelines[program.id]
 }
 
 // The stage of a Surface program over its points.
 @(private)
-points_pipeline :: proc(r: ^Renderer, program: Program) -> rhi.Pipeline {
-	return program_compute(r, &r.points.stages, program, "surface_points", "surface points")
+points_pipeline :: proc(r: ^Renderer, program: Program, early := false) -> rhi.Pipeline {
+	return program_compute(r, &r.points.stages, program, "surface_points", early)
 }
 
 // Whether the passes of the frame need batches: a material of the scene has a program.
@@ -168,7 +171,6 @@ points_dispatch :: proc(p: ^Pass, mode: u32, x: u32 = 1, indirect: bool = false)
 	} else {
 		rhi.cmd_dispatch(cmd, x, 1)
 	}
-	rhi.cmd_barrier_buffer(cmd, m.buffer, .Shader_Write)
 }
 
 // Starts the batch of a pass: its threads after it append their points and
@@ -179,7 +181,6 @@ points_dispatch :: proc(p: ^Pass, mode: u32, x: u32 = 1, indirect: bool = false)
 points_begin :: proc(p: ^Pass, filters := false) -> bool {
 	m := &p.r.points
 	if !points_needed(p.r) || (filters && p.r.scene.programmed_glass == 0) {return false}
-	rhi.cmd_barrier_buffer(p.cmd, m.buffer, .Shader_Write)
 	points_dispatch(p, 0)
 	m.started = true
 	return true
@@ -194,13 +195,10 @@ points_resolve :: proc(p: ^Pass) {
 	m := &r.points
 	whole := r.scene.programs_used == 1
 	points_dispatch(p, 1, groups(max(m.programs, 1), 64))
-	rhi.cmd_barrier_buffer(cmd, m.buffer, .Indirect_Read)
 	if !whole {
 		points_dispatch(p, 2, indirect = true)
 		points_dispatch(p, 3)
-		rhi.cmd_barrier_buffer(cmd, m.buffer, .Indirect_Read)
 		points_dispatch(p, 4, indirect = true)
-		rhi.cmd_barrier_buffer(cmd, m.buffer, .Indirect_Read)
 	}
 	// The stages of the programs write the records of disjoint points: no barrier between them.
 	Params :: struct {program, whole, pad0, pad1: u32}
@@ -212,10 +210,10 @@ points_resolve :: proc(p: ^Pass) {
 		params := Params{program = program.id, whole = u32(whole)}
 		set_params(cmd, &params)
 		points_bind(p)
+		textures_feedback_bind(r, cmd)
 		args := POINTS_ARGS if whole else POINTS_HEADER + 3 * m.programs + 3 * program.id
 		rhi.cmd_dispatch_indirect(cmd, m.buffer, u64(args) * size_of(u32))
 	}
-	rhi.cmd_barrier_buffer(cmd, m.buffer, .Indirect_Read)
 }
 
 // A dispatch of the pipeline bound over the heads of the round, a group of
@@ -224,7 +222,6 @@ points_resolve :: proc(p: ^Pass) {
 points_resume :: proc(p: ^Pass) {
 	points_bind(p)
 	rhi.cmd_dispatch_indirect(p.cmd, p.r.points.buffer, POINTS_HEAD_ARGS * size_of(u32))
-	rhi.cmd_barrier_buffer(p.cmd, p.r.points.buffer, .Shader_Write)
 }
 
 // The rounds of a pass that started a batch (batch, from points_begin) and
@@ -249,7 +246,6 @@ points_end :: proc(r: ^Renderer, cmd: ^rhi.Command_List, slot: int) {
 	m := &r.points
 	if m.buffer == 0 || !m.started {return}
 	m.started = false
-	rhi.cmd_barrier_buffer(cmd, m.buffer, .Transfer_Read)
 	rhi.cmd_copy_buffer(cmd, m.buffer, POINTS_WANTED * size_of(u32), m.readback[slot], 0, size_of(u32))
 	rhi.cmd_barrier_buffer(cmd, m.readback[slot], .Host_Read)
 }

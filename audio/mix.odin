@@ -9,6 +9,7 @@ import "core:sync"
 Voice_Source :: struct {
     samples:[^]f32, // interleaved
     frames:u32,
+    loop_start:u32, // the frame a loop goes back to
     channels:u32,   // 1 or 2
     rate:u32,
     feed:i32,       // the feed it plays from; -1 for a sound decoded in memory
@@ -22,18 +23,24 @@ Voice_Start :: struct {
     volume,pitch,pan:f32,
     loop,paused,spatial:bool,
     fade_in:u32,     // frames
-    offset:u32,      // frames into the sound; for a feed, where its ring begins
+    offset:u32,      // frames into the sound; the ring of a feed begins a frame before, which interpolates the first
     start_frame:u64, // mixer clock
     position,velocity:[3]f32,
+    rotation:quaternion128,
     attenuation:Attenuation,
+    directivity:Directivity,
     doppler:f32,
-    lowpass,reverb:f32,
+    occlusion:f32,
+    transmission:[BANDS]f32,
+    reverb:f32,
 }
 Voice_Phase :: enum u8 {Free,Playing,Paused}
 Mix_Voice :: struct {
     phase:Voice_Phase,
     using start:Voice_Start,
     cursor:u64, // 32.32 frames into the source
+    wrapped:bool, // a loop went round: the frame before its loop start is its last
+    kept:[2]f32,  // a voice of a feed: the frame before those its ring holds
     // Gains from each source channel to each output: {left to left, left to
     // right, right to left, right to right}; a mono source uses the first two.
     // They are ramped from base to their new value over every chunk.
@@ -43,34 +50,47 @@ Mix_Voice :: struct {
     end_after_fade:bool,
     pausing,stopping:bool, // ramp to silence over this chunk, then pause or end
     orphan:bool,           // its handle was given to a voice that never started: it ends without a word
-    spatial_gain:[2]f32,spatial_pitch:f32,
+    spatial_pitch:f32,
     spatial_dirty:bool,listener_serial:u32,
-    // The filter and the send, ramped over every chunk from where they were:
-    // a coefficient of 1 lets everything through.
-    filter:f32,filter_state:[2]f32,
-    reverb_now:f32,
+    // The direct sound of a spatial voice: its gain and EQ, where it comes
+    // from in the listener's space, and what the last chunk ended with.
+    direct_gain:f32,
+    eq_target,eq_gains:[BANDS]f32,
+    eq:[2][BANDS]Biquad,eq_state:[2][2][BANDS]Biquad_State,eq_current:u8, // state per cascade and channel
+    eq_on:bool,
+    direction:[3]f32,
+    blend:f32, // share of its direction, below 1 within its near radius
+    spread:f32, // of a stereo voice: the angle from it to each of its channels, radians
+    binaural_live,binaural_direction_valid:bool,
+    binaural_clock:u64, // the chunk its next block continues from
+    binaural_direction:[3]f32, // that of its HRTF
+    binaural_blend:f32,        // that of its HRTF
+    // A binaural voice that went silent adds one more block, and then ends
+    // or, with tail_pause, pauses.
+    tail,tail_pause:bool,
+    reverb_now:f32, // the send, ramped over every chunk from where it was
     next:Voice_Start,has_next:bool,
 }
 
 voice_begin :: proc "contextless" (m:^Mixer,v:^Mix_Voice,start:Voice_Start) {
     v^={start=start}
     v.phase=.Paused if start.paused else .Playing
-    v.cursor=u64(start.offset)<<32 if start.source.feed<0 else 0
+    v.cursor=u64(start.offset if start.source.feed<0 else min(start.offset,1))<<32
     v.fade=1;v.fade_target=1
     if start.fade_in>0 {
         v.fade=0;v.fade_left=start.fade_in;v.fade_step=1/f32(start.fade_in)
     }
     v.spatial_dirty=true
-    v.spatial_gain={1,1};v.spatial_pitch=1
-    v.filter=lowpass_coefficient(start.lowpass,f32(m.sample_rate))
+    v.spatial_pitch=1
     v.reverb_now=start.reverb
+    if start.spatial && start.attenuation.delay {
+        // DirectSimulator::calcDelay, applied once to where the voice starts.
+        _,distance:=listener_direction(m.listener.position,m.listener.rotation,start.position)
+        frames:=min(f64(distance)/f64(m.speed_of_sound)*f64(m.sample_rate)+0.5,f64(max(u32)))
+        v.start_frame=max(v.start_frame,m.clock)+u64(frames)
+    }
 }
 
-// The coefficient of a one-pole low-pass: 1 for a cutoff of 0, or so high it passes everything.
-lowpass_coefficient :: proc "contextless" (cutoff_hz,sample_rate:f32) -> f32 {
-    if cutoff_hz<=0 || cutoff_hz>=sample_rate*0.49 {return 1}
-    return 1-math.exp(-2*math.PI*cutoff_hz/sample_rate)
-}
 // The game thread learns of the end through finished, unless the slot was
 // stolen: then it has already been given to another voice.
 voice_end :: proc "contextless" (m:^Mixer,index:u32) {
@@ -114,8 +134,8 @@ voice_command :: proc "contextless" (m:^Mixer,command:^Command) {
         case .Voice_Pitch:target.pitch=command.value
         case .Voice_Pan:target.pan=command.value
         case .Voice_Loop:target.loop=command.flag
-        case .Voice_Place:target.position=command.vectors[0];target.velocity=command.vectors[1]
-        case .Voice_Lowpass:target.lowpass=command.value
+        case .Voice_Place:target.position=command.vectors[0];target.velocity=command.vectors[1];target.rotation=command.rotation
+        case .Voice_Occlusion:target.occlusion=command.value;target.transmission=command.vectors[0]
         case .Voice_Reverb:target.reverb=command.value
         }
         return
@@ -124,11 +144,17 @@ voice_command :: proc "contextless" (m:^Mixer,command:^Command) {
     #partial switch command.kind {
     case .Voice_Stop:
         started:=m.clock>=v.start_frame
+        if v.tail {v.tail_pause=false;return}
         if v.phase==.Paused || !started {voice_end(m,command.index);return}
         if command.frames==0 {v.stopping=true;return}
         v.fade_target=0;v.fade_left=command.frames;v.fade_step=-v.fade/f32(command.frames)
         v.end_after_fade=true
     case .Voice_Pause:
+        if v.tail {
+            // Resumed before its last block: it goes on from there.
+            if !command.flag && v.tail_pause {v.tail,v.tail_pause=false,false}
+            return
+        }
         if command.flag {
             if v.phase==.Playing {
                 if m.clock>=v.start_frame {v.pausing=true} else {v.phase=.Paused}
@@ -150,26 +176,19 @@ voice_command :: proc "contextless" (m:^Mixer,command:^Command) {
         if command.frames==0 {v.fade=command.value;v.fade_left=0;return}
         v.fade_left=command.frames;v.fade_step=(command.value-v.fade)/f32(command.frames)
     case .Voice_Place:
-        v.position=command.vectors[0];v.velocity=command.vectors[1]
+        v.position=command.vectors[0];v.velocity=command.vectors[1];v.rotation=command.rotation
         v.spatial_dirty=true
-    case .Voice_Lowpass:v.lowpass=command.value
+    case .Voice_Occlusion:
+        v.occlusion=command.value;v.transmission=command.vectors[0]
+        v.spatial_dirty=true
     case .Voice_Reverb:v.reverb=command.value
     }
 }
 
-// Gains of a voice before its fade: volume, and pan or position.
+// Gains of a voice before its fade: volume, and pan or place.
 voice_gains :: proc "contextless" (m:^Mixer,v:^Mix_Voice) -> (gains:[4]f32) {
     sides:[2]f32
-    if v.spatial {
-        if v.spatial_dirty || v.listener_serial!=m.listener_serial {
-            v.spatial_gain,v.spatial_pitch=spatialize(m.listener,v.position,v.velocity,v.attenuation,v.doppler,m.speed_of_sound)
-            v.spatial_dirty=false;v.listener_serial=m.listener_serial
-        }
-        sides=v.spatial_gain*v.volume
-        // A stereo sound that has a place in the world is heard as one source.
-        if v.source.channels==2 {return {sides[0]*0.5,sides[1]*0.5,sides[0]*0.5,sides[1]*0.5}}
-        return {sides[0],sides[1],0,0}
-    }
+    if v.spatial {return spatial_gains(m,v)}
     if v.source.channels==2 {
         sides=balance_gains(v.pan)*v.volume
         return {sides[0],0,0,sides[1]}
@@ -200,18 +219,27 @@ voice_mix :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
 voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     v:=&m.voices[index]
     if clock+u64(n)<=v.start_frame {return}
+    if v.tail {
+        voice_tail(m,index,n,clock)
+        return
+    }
     offset:=0
     if clock<v.start_frame {offset=int(v.start_frame-clock)}
     target:=voice_gains(m,v)
     if v.pausing || v.stopping {target={}}
     if !v.base_valid {v.base=target;v.base_valid=true}
+    mixed:=target
+    pans:[2][4]f32
+    placed:=false
+    if v.spatial {pans,placed=spatial_apart(m,v,&v.base,&mixed)}
+    silent:=placed && mixed=={} && v.base=={}
     pitch:=clamp((v.pitch if v.pitch>0 else 1)*(v.spatial_pitch if v.spatial else 1),PITCH_MIN,PITCH_MAX)
     step:=u64(f64(pitch)*f64(v.source.rate)/f64(m.sample_rate)*f64(ONE))
     bus:=raw_data(m.bus_buffers[int(v.bus)*CHUNK_FRAMES*2:])
     out:=bus
-    // A voice that is filtered or sent is mixed apart first.
-    filter:=lowpass_coefficient(v.lowpass,f32(m.sample_rate))
-    apart:=filter<1 || v.filter<1 || v.reverb>0 || v.reverb_now>0
+    // A voice that is placed or sent is mixed apart first.
+    sent:=v.reverb>0 || v.reverb_now>0
+    apart:=placed || sent
     if apart {
         out=raw_data(m.voice_scratch)
         #no_bounds_check for i in offset*2..<n*2 {out[i]=0}
@@ -219,54 +247,95 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     span:=f32(n-offset)
     alive:=true
     if v.source.feed>=0 {
-        alive=feed_voice_mix(m,v,out,offset,n,min(step,FEED_STEP_MAX),target,span)
+        alive=feed_voice_mix(m,v,out,offset,n,min(step,FEED_STEP_MAX),mixed,span)
     } else {
-        alive,_=segments_mix(v,v.source.samples,u64(v.source.frames),v.loop,false,out,offset,n,max(step,1),target,span)
+        alive,_=segments_mix(v,v.source.samples,u64(v.source.frames),v.loop,false,false,out,offset,n,max(step,1),mixed,span)
     }
     v.base=target
-    if apart {voice_post(m,v,out,bus,offset,n,filter)}
-    if !alive || v.stopping {voice_end(m,index);return}
+    if placed && spatial_post(m,v,out,offset,n,pans,silent) {
+        // Binaural: its mid sent as one source, then added to the sums of its
+        // bus; a silent one adds nothing once its last block is complete. A
+        // stereo voice gives each ear the mid and its share of the side, the
+        // sine of the angle to each channel, as BinauralEffect blends the two
+        // channels of its input.
+        ears:=[2][]f32{m.binaural_input[:n],m.binaural_input[CHUNK_FRAMES:][:n]}
+        width:=v.blend*math.sin(v.spread)
+        #no_bounds_check for i in 0..<n {
+            mid,side:=out[i*2],out[i*2+1]
+            if i<offset {mid,side=0,0}
+            ears[0][i],ears[1][i]=mid+width*side,mid-width*side
+            out[i*2+1]=0
+        }
+        if sent {voice_post(m,v,out,nil,offset,n)}
+        if !silent || v.binaural_live && v.binaural_clock==clock {binaural_add(m,v,index,ears[:v.source.channels],v.direction,clock)}
+    } else if apart {
+        voice_post(m,v,out,bus,offset,n)
+    }
+    ended:=!alive || v.stopping
+    if (ended || v.pausing) && v.binaural_live && m.output_now==.Headphones && m.channels==2 {
+        // The samples its last block fell over still rise in one more block.
+        v.tail=true
+        v.tail_pause=!ended
+        v.stopping,v.pausing=false,false
+        return
+    }
+    if ended {voice_end(m,index);return}
     if v.pausing {v.pausing=false;v.phase=.Paused}
 }
 
-// Filters frames [from,to) of a voice mixed apart into its bus and sends them to the reverb.
-voice_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,src,bus:[^]f32,from,to:int,filter:f32) {
-    span:=f32(to-from)
-    a0,da:=v.filter,(filter-v.filter)/span
-    s0,ds:=v.reverb_now,(v.reverb-v.reverb_now)/span
+// Adds the silent block of a voice that went silent, which completes its last one.
+voice_tail :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
+    v:=&m.voices[index]
+    silence:=[2][]f32{m.binaural_input[:n],m.binaural_input[CHUNK_FRAMES:][:n]}
+    for &x in m.binaural_input {x=0}
+    binaural_add(m,v,index,silence[:v.source.channels],v.binaural_direction,clock)
+    v.tail=false
+    if !v.tail_pause {voice_end(m,index);return}
+    v.tail_pause=false
+    v.phase=.Paused
+    v.binaural_live=false
+}
+
+// Sends frames [from,to) of a voice mixed apart to the reverb, and adds them
+// to its bus when there is one.
+voice_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,src,bus:[^]f32,from,to:int) {
+    s0,ds:=v.reverb_now,(v.reverb-v.reverb_now)/f32(to-from)
     send:=raw_data(m.reverb_input)
-    left,right:=v.filter_state[0],v.filter_state[1]
     #no_bounds_check for k in from..<to {
-        ramp:=f32(k-from)
-        a:=a0+da*ramp
-        left+=a*(src[k*2]-left)
-        right+=a*(src[k*2+1]-right)
-        bus[k*2]+=left
-        bus[k*2+1]+=right
-        g:=s0+ds*ramp
+        left,right:=src[k*2],src[k*2+1]
+        if bus!=nil {
+            bus[k*2]+=left
+            bus[k*2+1]+=right
+        }
+        g:=s0+ds*f32(k-from)
         send[k*2]+=left*g
         send[k*2+1]+=right*g
     }
-    if abs(left)<1e-20 {left=0}
-    if abs(right)<1e-20 {right=0}
-    v.filter_state={left,right}
-    v.filter,v.reverb_now=filter,v.reverb
+    v.reverb_now=v.reverb
 }
 
 // Mixes output frames [from,to) of a chunk from a source laid out in memory.
 // Segments end where the fade ends and where the source ends or wraps.
-// holds: the last frame of the source has no neighbour yet (a stream that
-// is still being decoded), so it is not played. Returns false when the voice
-// has ended.
-segments_mix :: proc "contextless" (v:^Mix_Voice,samples:[^]f32,frames:u64,loop,holds:bool,out:[^]f32,from,to:int,step:u64,target:[4]f32,span:f32) -> (alive:bool,mixed:int) {
+// holds: the last frames of the source lack the neighbours they are
+// interpolated with (a stream that is still being decoded), so they are not
+// played. before: samples[-1] is the frame before the first, which a feed
+// keeps; otherwise it is silence, or the last frame once a loop wrapped.
+// Returns false when the voice has ended.
+segments_mix :: proc "contextless" (v:^Mix_Voice,samples:[^]f32,frames:u64,loop,holds,before:bool,out:[^]f32,from,to:int,step:u64,target:[4]f32,span:f32) -> (alive:bool,mixed:int) {
     at:=from
     stereo:=v.source.channels==2
     length:=frames<<32
+    // A loop goes back to start. Positions from low to below high have their
+    // four frames in memory; once a loop wrapped, the one at start does not.
+    start:=u64(v.source.loop_start)<<32 if !before else 0
+    low:=u64(0) if before else ONE
+    high:=(frames-2)<<32 if frames>2 else 0
     for at<to {
         if v.cursor>=length {
             if holds {return true,at-from}
             if !loop || frames==0 {return false,at-from}
-            v.cursor%=length
+            v.cursor=start+(v.cursor-length)%(length-start)
+            v.wrapped=true
         }
         segment:=to-at
         if v.fade_left>0 {segment=min(segment,int(v.fade_left))}
@@ -275,9 +344,8 @@ segments_mix :: proc "contextless" (v:^Mix_Voice,samples:[^]f32,frames:u64,loop,
         count:=0
         if direct {
             count=int(min(u64(segment),frames-index))
-        } else if limit:=(frames-1)<<32;v.cursor<limit {
-            // Positions below limit have the frame after them in memory.
-            count=int(min(u64(segment),(limit-1-v.cursor)/step+1))
+        } else if v.cursor>=(start+low if v.wrapped else low) && v.cursor<high {
+            count=int(min(u64(segment),(high-1-v.cursor)/step+1))
         }
         slow:=count==0
         if slow {
@@ -292,26 +360,23 @@ segments_mix :: proc "contextless" (v:^Mix_Voice,samples:[^]f32,frames:u64,loop,
         dst:=out[at*2:]
         switch {
         case slow:
-            // The last frame of the source: its neighbour is the first frame of a loop, or silence.
-            fraction:=f32(u32(v.cursor))*(1.0/4294967296.0)
-            a,b:[2]f32
+            // A frame next to an end of the source, whose neighbours are found one by one.
+            w:=hermite_weights(f32(u32(v.cursor))*(1.0/4294967296.0))
+            y:[2]f32
+            for c in 0..<int(v.source.channels) {
+                for k in 0..<4 {y[c]+=w[k]*edge_sample(v,samples,frames,loop,before,i64(index)+i64(k)-1,c)}
+            }
             if stereo {
-                a={samples[index*2],samples[index*2+1]}
-                if loop {b={samples[0],samples[1]}}
-                left,right:=a[0]+(b[0]-a[0])*fraction,a[1]+(b[1]-a[1])*fraction
-                dst[0]+=left*g0[0]+right*g0[2]
-                dst[1]+=left*g0[1]+right*g0[3]
+                dst[0]+=y[0]*g0[0]+y[1]*g0[2]
+                dst[1]+=y[0]*g0[1]+y[1]*g0[3]
             } else {
-                a[0]=samples[index]
-                if loop {b[0]=samples[0]}
-                sample:=a[0]+(b[0]-a[0])*fraction
-                dst[0]+=sample*g0[0]
-                dst[1]+=sample*g0[1]
+                dst[0]+=y[0]*g0[0]
+                dst[1]+=y[0]*g0[1]
             }
         case direct && stereo:mix_direct_stereo(dst,samples[index*2:],count,g0,dg)
         case direct:mix_direct_mono(dst,samples[index:],count,g0,dg)
-        case stereo:mix_linear_stereo(dst,samples,count,v.cursor,step,g0,dg)
-        case:mix_linear_mono(dst,samples,count,v.cursor,step,g0,dg)
+        case stereo:mix_hermite_stereo(dst,samples,count,v.cursor,step,g0,dg)
+        case:mix_hermite_mono(dst,samples,count,v.cursor,step,g0,dg)
         }
         v.cursor+=step*u64(count)
         at+=count
@@ -324,7 +389,8 @@ segments_mix :: proc "contextless" (v:^Mix_Voice,samples:[^]f32,frames:u64,loop,
     // A sound that ends exactly with the chunk ends now, not a chunk later.
     if v.cursor>=length && !holds {
         if !loop || frames==0 {return false,at-from}
-        v.cursor%=length
+        v.cursor=start+(v.cursor-length)%(length-start)
+        v.wrapped=true
     }
     return true,at-from
 }
@@ -345,28 +411,53 @@ mix_direct_stereo :: proc "contextless" (out:[^]f32,src:[^]f32,count:int,g0,dg:[
         out[k*2+1]+=left*(g0[1]+dg[1]*ramp)+right*(g0[3]+dg[3]*ramp)
     }
 }
-// Linear interpolation between the two source frames around the cursor.
-mix_linear_mono :: proc "contextless" (out:[^]f32,src:[^]f32,count:int,cursor,step:u64,g0,dg:[4]f32) {
+// Godot's AudioStreamPlaybackResampled::mix: a cubic Hermite (Catmull-Rom)
+// through the frame before the cursor, the one at it and the two after,
+// without Godot's delay of two frames. Flat within 0.4 dB to 10 kHz for a
+// 44.1 kHz sound, where a line between two frames loses 1.5 dB. As the
+// weights of the four frames, which the channels of a frame share.
+hermite_weights :: #force_inline proc "contextless" (mu:f32) -> [4]f32 {
+    mu2:=mu*mu
+    h11:=mu2*(mu-1)
+    z:=mu2-h11
+    h01:=z-h11
+    h10:=mu-z
+    return {-0.5*h10,1-h01-0.5*h11,h01+0.5*h10,0.5*h11}
+}
+// The sample of channel c of frame i of a source as it plays: beyond its
+// ends silence, the frame a feed kept before it, or the frames around a loop.
+edge_sample :: proc "contextless" (v:^Mix_Voice,samples:[^]f32,frames:u64,loop,before:bool,i:i64,c:int) -> f32 {
+    i:=i
+    start:=i64(v.source.loop_start)
+    switch {
+    case v.wrapped && i==start-1:i=i64(frames)-1
+    case i>=i64(frames):
+        if !loop {return 0}
+        i=start+(i-i64(frames))%(i64(frames)-start)
+    case i<0 && !before:return 0
+    }
+    return samples[int(i)*int(v.source.channels)+c]
+}
+mix_hermite_mono :: proc "contextless" (out:[^]f32,src:[^]f32,count:int,cursor,step:u64,g0,dg:[4]f32) {
     position:=cursor
     #no_bounds_check for k in 0..<count {
         ramp:=f32(k)
-        index:=position>>32
-        fraction:=f32(u32(position))*(1.0/4294967296.0)
-        a:=src[index]
-        sample:=a+(src[index+1]-a)*fraction
+        i:=int(position>>32)
+        w:=hermite_weights(f32(u32(position))*(1.0/4294967296.0))
+        sample:=w[0]*src[i-1]+w[1]*src[i]+w[2]*src[i+1]+w[3]*src[i+2]
         out[k*2]+=sample*(g0[0]+dg[0]*ramp)
         out[k*2+1]+=sample*(g0[1]+dg[1]*ramp)
         position+=step
     }
 }
-mix_linear_stereo :: proc "contextless" (out:[^]f32,src:[^]f32,count:int,cursor,step:u64,g0,dg:[4]f32) {
+mix_hermite_stereo :: proc "contextless" (out:[^]f32,src:[^]f32,count:int,cursor,step:u64,g0,dg:[4]f32) {
     position:=cursor
     #no_bounds_check for k in 0..<count {
         ramp:=f32(k)
-        index:=(position>>32)*2
-        fraction:=f32(u32(position))*(1.0/4294967296.0)
-        left:=src[index]+(src[index+2]-src[index])*fraction
-        right:=src[index+1]+(src[index+3]-src[index+1])*fraction
+        i:=int(position>>32)*2
+        w:=hermite_weights(f32(u32(position))*(1.0/4294967296.0))
+        left:=w[0]*src[i-2]+w[1]*src[i]+w[2]*src[i+2]+w[3]*src[i+4]
+        right:=w[0]*src[i-1]+w[1]*src[i+1]+w[2]*src[i+3]+w[3]*src[i+5]
         out[k*2]+=left*(g0[0]+dg[0]*ramp)+right*(g0[2]+dg[2]*ramp)
         out[k*2+1]+=left*(g0[1]+dg[1]*ramp)+right*(g0[3]+dg[3]*ramp)
         position+=step

@@ -15,7 +15,7 @@ to an unloaded library. Those of one type are looked up in a single place (`prov
 
 - **Data.** A tool's state is a flat `@(storage)` (`Paint_Tool`, `Terrain_Tool`); with memory of its
   own, `@(storage,free="proc")`. A `@(component)` of the editor package lives in `Editor`, not in
-  `World`: what must survive Play and saving goes in `runtime/`.
+  `World`: what must survive Play and the scene's file goes in `runtime/`.
 - **Functions.** They run by default in the `editor` loop and receive as parameters what they use:
   `^editor.Session`, its storage, `core.World_Ref` (the shown world), `core.Input`, `core.Time`, the
   part of the application they reach (`^host.Assets`, `^host.Frame_Extras`; `^host.App` for the
@@ -32,12 +32,14 @@ to an unloaded library. Those of one type are looked up in a single place (`prov
 
 Outline of `paint` and `terrain` (`plugins/*/editor/`):
 
-1. **Turn on.** `editor.tool_button` presents an entry of the Tools menu and returns its click; the
-   step calls `editor.tool_set(s, "paint", true)`, which keeps the name's hash in
-   `Viewport.plugin_tool`, and rereads `editor.tool_on(s, "paint")`. `tool_set(s, name, false)`
-   turns it off only if it is the active one.
-2. A key is handled only if `ctx.edit.id == 0`, without modifiers, with `g.modal == .None` and
-   `ctx.popup.count == 0`.
+1. **Turn on.** The register procedure of its `Api_Provider` calls
+   `editor.tool_entry(s, "paint", "Paint", icon, {key=.B, set=true})`: an entry of the Tools menu
+   with its shortcut that calls `editor.tool`, which a person and an agent turn it on and off with
+   ([commands](editor.md#commands-and-shortcuts)). The step reads `editor.tool_on(s, "paint")`;
+   `editor.tool_set` keeps the name's hash in `Viewport.plugin_tool`, and with `false` turns it off
+   only if it is the active one.
+2. A key of the tool besides its shortcut is handled only if `ctx.edit.id == 0`, without modifiers,
+   with `g.modal == .None` and `ctx.popup.count == 0`.
 3. **Collect input** in `input`: `s.viewport.hovered` says the pointer is over the scene and no UI
    takes it. While `s.viewport.pick.active` waits for a reference, the click belongs to that
    choice. `editor.tool_pointer` gives the three things: on, over the scene and a click that starts
@@ -60,7 +62,7 @@ Outline of `paint` and `terrain` (`plugins/*/editor/`):
 7. **Show.** Guides with `host.extras_debug_lines_add`; a ring of constant width on screen, with
    `viewport_screen` and `ui.draw_line` or `ui.draw_polyline`. The panel, only with the tool
    active: `if ui.panel(ctx, id, editor.tool_panel(g, id)) { controls }`. The result, with
-   `editor.notify`. What a component draws over the selection (a mirror's face, a decal's box) goes
+   `editor.notify`. What a component draws over the selection (a portal's face, a decal's box) goes
    through `editor.selection_gizmo`; `gizmo_face` is the outline of a face of side 1, ellipse or
    rectangle, with the arrow of its front.
 8. **Brushes.** `editor/brush.odin` is what the tools' brushes share (terrain and foliage):
@@ -73,9 +75,9 @@ Outline of `paint` and `terrain` (`plugins/*/editor/`):
    not the file. `editor/revision_history.odin` is the chain of revisions: the tool keeps the head
    of each source it edited (what the file has at the owners' revision) and steps between two
    revisions that undo and redo change with it. `revision_sync` takes each head to its owners'
-   revision and writes it; if the file changed outside (Save, Discard), the revision takes what it
-   has. A new step replaces what was undone since its revision; past `REVISION_STEPS_CAPACITY` the
-   oldest goes. What a step keeps, how it changes with the head and how the source is read and
+   revision and writes it; if the file changed outside (git, another tool), the revision takes what
+   it has. A new step replaces what was undone since its revision; past `REVISION_STEPS_CAPACITY`
+   the oldest goes. What a step keeps, how it changes with the head and how the source is read and
    written is given by the tool in a `Revision_Source`.
 
 **Authoring geometry preview** (used by [terrain](../../mirai-world/references/terrain.md)):
@@ -84,9 +86,9 @@ Outline of `paint` and `terrain` (`plugins/*/editor/`):
   visual instance of the frame (`host.extras_instance_add`, `replace_source` to substitute the shown
   entity), without changing components or history. The mesh is released on replacing it, cancelling
   or finishing, before `render_sync`.
-- To confirm, it writes the asset in the registry's memory, unsaved, and what is loaded reloads by
-  itself. A new copy per stroke (`.mesh` of paint) is a file of the step (`editor.file_write`); a
-  tool that keeps its own undo by revision (`.terrain`) writes it outside the history with
+- To confirm, it writes the asset (the registry holds it until the step ends) and what is loaded
+  reloads by itself. A new `.paint` per stroke is a file of the step (`editor.file_write`); a tool
+  that keeps its own undo by revision (`.terrain`) writes it outside the history with
   `editor.file_set`, and the step restores the component that keeps the revision.
 
 ## Cancelable previews
@@ -103,7 +105,7 @@ name:
   `edits_commit` do not confirm it.
 - The plugin keeps its temporary resources in its storage and, if `tool_preview_active` stops being
   true, releases them without writing the document. It keeps no row pointers between functions.
-- Changing tool, Play or Simulate, saving, replacing the scene, reloading code, closing the editor,
+- Changing tool, Play or Simulate, replacing the scene, reloading code, closing the editor,
   selecting from Hierarchy or the API and a scene write by API cancel it. Escape and Ctrl+Z with
   the gesture open only cancel; after confirming, Ctrl+Z undoes the whole step.
 - Details stays read-only while it lasts; confirming or cancelling leaves the tool on.
@@ -123,12 +125,9 @@ name:
 - It is passed to `ui.panel` and the controls are built inside the panel's positive block, which
   closes its scope on exit. `free_region` discounts these panels. An independent panel can use
   its own `anchor`/`pivot`.
-- `editor.view_toggle(g, id, label, active)` adds an entry in View and returns its click; the
-  plugin changes its state and builds the panel.
-- `tool_button` and `view_toggle` pass data to the next frame in fixed arrays of `Editor_Ui` (16
-  controls in total, copied strings, no allocations). A control that stops being presented
-  disappears in the next frame. The click returns to the step that presented it, without keeping
-  functions.
+- A panel of its own opens from View: an entry of the plugin with a procedure of the interface
+  (`editor.command_bind(s, {name=..., label=..., menu=.View, group=editor.MENU_GROUP_PLUGINS,
+  view=..., state=...})`), as `profiler` does; what the panel shows is data its methods give.
 - Use the inspector widgets (`ui.section`, `ui.property`, `ui.number_field`, `ui.toggle`,
   `ui.color_field`) and a `ui.Id` of its own scope (`ui.id_derive(ctx, SCOPE, "panel")`). The
   Details cards are `editor.card_begin`, `section_band` and `card_body_begin`, with their open state
@@ -167,7 +166,7 @@ A plugin opens asset types in tabs next to the scenes
   leaves out Graphics). A `ui` step `after="editor_panels"` takes `editor.asset_document_active(s)`
   and, if it is of its type, builds `ui.panel(ctx, id, editor.asset_workspace(g))`; with Details on
   the right, `editor.asset_workspace_details` gives the two panels. `editor.asset_toolbar(g)` is
-  the toolbar's place after Save, Undo and Redo, and `asset_toolbar_whole` the center of all of the
+  the toolbar's place after Undo and Redo, and `asset_toolbar_whole` the center of all of the
   bar after the tabs.
   The plugin's state follows the front document: on changing asset it rereads it.
 - **Playing.** `editor.timeline_strip` is the time strip of a document that plays. It does not own
@@ -178,8 +177,7 @@ A plugin opens asset types in tabs next to the scenes
 - **Editing.** What the document writes through `editor.file_write` (or a procedure that uses it,
   like `vfx`'s `particle_write`) is a step of its history; it is best to write when the UI releases
   the gesture, not on every frame of a drag. A step can write another asset (the texts a `.ui`
-  edits in its languages): the document's Save also writes those its steps changed, and the tab is
-  marked while any is unsaved (`asset_document_paths`).
+  edits in its languages): the flush also writes those its steps changed.
 - **Between frames.** `Asset_Document_Provider.between(s, d)` runs between frames while one of its
   documents is in front: what needs frames of its own from the renderer, like a world drawn into a
   texture (`host.app_world_draw`, the
@@ -193,16 +191,16 @@ A plugin opens asset types in tabs next to the scenes
 - **Settings.** `editor.settings_open(s, name)` opens Project Settings at that storage's setting,
   like the File menu.
 - The plugin's state follows the front document: on changing asset it rereads it.
-- **Edit actions.** `Asset_Document_Provider.actions` says which edit actions (Copy, Paste,
-  Duplicate, Delete...) its documents take: with one in front, their shortcuts do not run them on
-  the scene, but leave them in `Asset_Document.request` with another `request_serial`, and the
-  plugin runs each serial once.
-- **Create.** `Asset_Document_Provider.creates` says which of its types (of `asset.KINDS`) offer
-  the content browser's Create and `asset.create`. The editor chooses the path and id and calls
+- **Edit keys.** What works on what a document has chosen is entries its plugin binds with
+  `document` set to its kind (`command_bind`; `nodes_bind` of `ui_inspector`): they are on only
+  with one of its documents in front, where those of the scene are off, so they take the same
+  keys; its menus show them with `command_menu_item`.
+- **Create.** `Asset_Document_Provider.creates` says which of its types (of `asset.KINDS`) offer the
+  content browser's Create and `asset.create`. The editor chooses the path and id and calls
   `Asset_Document_Provider.create(s, kind, id)`, which returns the bytes of the empty file in the
-  temporary allocator (nil if it could not); the editor writes them immediately like its own types,
-  as an unsaved history step. This way no frame runs inside an API call. `ui_inspector` creates the
-  `.ui` this way: a root Box that grows to the surface and style 0.
+  temporary allocator (nil if it could not); the editor writes them immediately like its own types.
+  This way no frame runs inside an API call. `ui_inspector` creates the `.ui` this way: a root Box
+  that grows to the surface and style 0.
 - **AI context.** `editor.asset_document_pick` says what the user chose in the document: the chat
   shows it and sends it instead of the scene's selection. `editor.asset_document_show_say` says in
   one line what the document shows at that moment, which the message also carries.
@@ -220,21 +218,21 @@ A plugin opens asset types in tabs next to the scenes
 
 ## Asset types of a plugin
 
-An Editor storage whose only field is `editor.Asset_Kind_Provider` declares in its default the
-plugin's asset types that the content browser lists (`kinds`, up to `ASSET_KINDS_OF_PROVIDER`, and
-`count`), like the editor's types:
+The plugin's asset types are its `asset_kinds` in `plugin.mirai`
+([manifests](../../mirai-projects/references/projects.md#manifests)), the one declaration: the
+content browser lists the ones with a `label`, like the editor's types, and the build generates
+the constants the code names (`kinds_gen.odin`):
 
-- `label`: the type as a row says it and the name of its filter. `color` and `icon`: those of its
-  cards, fields, rows and tabs (`editor.asset_kind_color`, `asset_icon` and `asset_kind_label` read
-  them with the session).
+- `label`: the type as a row says it and the name of its filter. `color` and `icon` (a `ui.Icon`
+  or a `User_Icon` by name): those of its cards, fields, rows and tabs (`editor.asset_kind_color`,
+  `asset_icon` and `asset_kind_label` read them with the session).
 - `extension`: that of its files; `asset.list` names the type with it without the dot, and the
   `kind=` tag of a field, with it whole ([inspector](inspector.md#rows-by-reflection)).
 - `field`: a word; an `Asset_Id` field whose name has it takes the type.
-- The `asset_kinds` of the plugin's `plugin.mirai` list exactly these extensions
-  ([manifests](../../mirai-projects/references/projects.md#manifests)); a test of the editor part
-  holds it with `editor.asset_kinds_differ`.
-- `clicked` (of the provider): what a click on one's card does, outside Play and with the scene in
-  front (assigning it to the selection).
+
+An Editor storage whose only field is `editor.Asset_Click_Provider` says what a click on the card
+of one of its `kind` does, outside Play and with the scene in front (assigning it to the
+selection).
 
 One whose only field is `editor.Asset_Menu_Provider` adds, with `menu(s, file)`, its entries
 (`ui.menu_item`) to an asset card's menu. To show an asset of the type in a component like a
@@ -280,38 +278,32 @@ or without names): `editor.asset_cards(s, width)` gives the columns and the side
 
 ## Create cards
 
-An Editor storage whose only field is `editor.Card_Provider` adds cards to Create: its default
-fills `cards` and `count`, up to `CARD_PROVIDER_CAPACITY` = 8 per provider and `CARD_CAPACITY` = 64
-with the presets. `decals`, `monitors`, `portals` and `vfx` add Decal, Screen, Portal and Particles
-this way.
+A card shows a [recipe](document.md#recipes) in Create. An Editor storage whose only field is
+`editor.Card_Provider` adds a plugin's cards: its default fills `cards` and `count`, up to
+`CARD_PROVIDER_CAPACITY` = 8 per provider and `CARD_CAPACITY` = 64 with those of the editor
+(`EDITOR_CARDS`). `decals`, `monitors`, `portals` (Portal and Mirror), `fog`, `spawn`,
+`ui_inspector` and `vfx` add theirs this way, each over a scene in the `recipes/` of the plugin
+(`Recipes` part).
 
 Fields of `Card`:
 
-- `label`: name of the card and of the entity. `scene.add` accepts it in `preset`, case-insensitive
-  and with `_` for space.
-- `group`: Create section: `"Logic"`, `"Shapes"` or one of its own, which goes after those of the
-  editor (`CARD_GROUP_CAPACITY` = 8 sections). Empty: `Logic`.
+- `recipe`: the name of the recipe it places; a card whose recipe is not there is left out.
+  `label` is not given: `cards(s)` fills it with the name of the recipe's entity.
+- `group`: Create section: `"Logic"`, `"Shapes"` or one of its own, in the order the first card of
+  each comes in (`CARD_GROUP_CAPACITY` = 8 sections). Empty: `Logic`.
 - `icon`, `drawing`, `color`: an existing `ui.Icon` or, with empty `icon`, a drawing of its own
   ([icons as data](../../mirai-ui/references/ui.md#widgets)).
-- `body`: primitive of the preview on placing (`None`: a mark). `scale`: the entity's scale. `lift`:
-  meters above the support for what has no body.
-- `make`: `proc(s, w, e)` that adds the components; the entity already has `Id`, `Name`, `Transform`
-  and parent. It runs inside the undo step of the creation.
 - `component`: the component of which the card is the icon; the entity that has it shows it in
   outliner, Find, slots and its viewport disk, and the component's section in its header.
+- `chosen` and `facing`, what a card computes that a scene cannot hold: an empty `Asset_Id` field
+  of what it places whose `kind=` names the asset chosen in the content browser takes it (the
+  `.ui` of Interface, Panel and Billboard), and the placed entity turns to the camera (Panel).
 
 Rules:
 
-- `label` is the name of the card and of the entity; `scene.add` accepts it in `preset`,
-  case-insensitive and with `_` for space. A `group` of its own goes after the editor's sections;
-  empty, in Logic.
-- `make` runs inside the creation's undo step, on an entity that already has `Id`, `Name`,
-  `Transform` and parent.
-- The entity that has the card's `component` carries its icon in outliner, Find, slots and its
-  disk, and the component's section in its header.
-- `cards(s)` returns the presets first (a preset's index is its value) and then the cards.
-  Dragging, the placement click, Edit > Create and `scene.add` create the same:
-  `entity_create` with `Create_Desc.card`.
+- `cards(s)` returns those of the editor first and then those of the plugins. Dragging, the
+  placement click, Edit > Create and `scene.write` create the same: `entity_create` with
+  `Create_Desc.recipe`. The preview of a placement is the recipe's scene, as for a prefab.
 - What a selected entity shows besides the icon (a decal's box, a portal's opening and the path to
   its exit) is drawn by a `frame` `after="editor_tools"` step of the plugin with
   `host.extras_debug_lines_add`, outside a Play.
@@ -342,18 +334,22 @@ A plugin adds modes to the [mode menu](panels.md#inspection-mode) and to
   editor invokes that initializer, which the generator publishes in `World_Info`, and the provider
   calls `editor.api_method_register(s, descriptor)` per method, without running a frame. Reload
   rebuilds the registry between calls with those of the new library.
-- The `Type_Info` of `params` and `result` must come from the package that declares the structs, to
-  cross the loaded library; `engine.describe` and MCP expose those schemas.
+- The descriptor's `params` and `result` are the `type_info_of` of their structs, taken in the
+  library that declares them: each library has its own type table, so the editor cannot look up a
+  plugin's type. `mirai build editor` opens the built editor once with the project and fails with
+  every method that did not register. `engine.describe` and MCP expose those schemas.
+- A method a person runs too carries its entry in the same descriptor (`entry`: label, icon,
+  shortcut, menu, params and what it shows): the plugin writes the gesture once, in the method.
+  `editor.command_bind` gives a method more entries, with other params.
 - Handlers use `editor.shown_world`. A document write goes between
   `editor.api_edit_begin(s,call,label)` and `editor.api_edit_end(s,call,ok)`, which apply guards,
   cancellation and undo. An asset the plugin writes goes through `editor.file_write` inside that
-  pair: it enters the same step and the review of the turn that requested it, and stays unsaved
-  ([files](document.md#edits-and-undo)); to read it as it is, `editor.asset_read` or
+  pair: it enters the same step and the review of the turn that requested it, and the flush
+  writes it ([files](document.md#edits-and-undo)); to read it as it is, `editor.asset_read` or
   `host.assets_file`.
 - A tool that confirms through its [cancelable preview](#cancelable-previews) does not
   use that pair: after `editor.api_guard_edit` it opens the gesture, advances it and confirms or
-  cancels it inside the call, without leaving it open, and turns the tool that was on back on
-  (`placement.drop`).
+  cancels it inside the call, without leaving it open, and turns the tool that was on back on.
 - The elements of a params array that the call does not give keep their default;
   `api.params_array_count` says how many it gave.
 - An operation on the Play copy declares it in its contract. Evaluation stays in runtime: the
@@ -372,9 +368,10 @@ with an `Api_Step_Input` drives a run, and `editor.play_ui_screen` says what its
 
 What steers or watches a body in those runs asks the plugin that moves it, never a component by
 its name: an Editor storage whose only field is `editor.Body_Provider` answers for the bodies of
-its plugin (`physics`, for its characters), and `editor.play_stance` and `editor.play_body_measure`
-read it. A body no provider answers for is `Unknown`, which each reader handles and is not taken as
-standing, and is measured as `BODY_PERSON`.
+its plugin (`physics`, whether a character stands; `locomotion`, how a walker measures), and
+`editor.play_stance` and `editor.play_body_measure` read it. A body no provider answers for is
+`Unknown`, which each reader handles and is not taken as standing, and is measured as
+`BODY_PERSON`.
 
 A bot of a plugin walks a body with the drive of `play.step`, not with steering of its own:
 `editor.play_drive_to` makes one to a place, `editor.play_drive_steer` runs before each
@@ -391,10 +388,12 @@ and joins them with the engine's.
   those of `sources.FORMATS`, with the same reading, writing, cache and identity
   ([plugin formats](../../mirai-imports/references/imports.md#plugin-formats)); its
   `Format.folder` chooses the folder of the import. Its extensions enter the dialog's Models
-  filter and what the editor recognizes on dropping a file. With `prepare(s, allocator)`, the
-  editor asks it in its thread, before importing a model, for the format's options for that import
-  (`Format.data`, for example what other providers give), and `release(data, allocator)` releases
-  them on finishing.
+  filter and what the editor recognizes on dropping a file. With `prepare(assets, info,
+  allocator)` it gives, before a model is imported, the format's options for that import
+  (`Format.data`) from the registry of the project and the library of its plugins (for example
+  what other providers give), with no session: the import program of the engine prepares it the
+  same way when a build syncs the project (`import_library`). `release(data, allocator)`
+  releases them on finishing.
 - `editor.Import_Source_Provider{source}` gives a `Source_Importer`, a source the plugin imports
   whole and that is not a model, without a folder. Its fields are `name` (the dialog's filter and
   the messages), `extensions`, `claims(path, head)` (claims the file by its extension and its first
@@ -434,9 +433,9 @@ and joins them with the engine's.
   with a component the editor added (the `Collider` of a new `Character`).
 - The callbacks are read from the default of the current metadata, without pointers to a reloaded
   library. `Inspector_Context` delivers session, world, table, entities and width.
-- `inspector_fields` reuses generic fields, gestures and resets for a struct inside the component.
+- `inspector_fields` draws the generic rows, gestures and resets of the component under its own.
   Writes go through `field_write`, with the common undo.
-- The `animation` plugin uses it to capture `Keyframe_Path` frames and choose `Bone_Ref` by path;
+- The `animation` plugin uses it to choose `Bone_Ref` by path;
   `vfx`, for the `Particle_Emitter` section: its fields with `inspector_fields`, its effect's with
   `asset_box` and the instance's values with `held_field_row` and `write`.
 - For controls of its own (a curve editor) a [panel](#a-panel) is added.
@@ -444,8 +443,9 @@ and joins them with the engine's.
 ## Simulation and pose confirmation
 
 - `Simulation_Provider` (given by `physics`): the body an entity is part of, taking it to a pose
-  while held, releasing it and settling what was written without simulating time. Without it,
-  Simulate runs the same and the gizmo does not drag bodies. The editor keeps the inspector's
+  while held, releasing it, advancing its simulation alone (by 0: settling what was written) and
+  readying a copy where only some entities move. Without it, Simulate runs the same, the gizmo
+  does not drag bodies and nothing settles. The editor keeps the inspector's
   providers in its cache and does not call their defaults per field.
 - The editor reads `core.Network` ([network](../../mirai-core/references/core.md#network)): a data
   contract that serves any network plugin.
@@ -462,19 +462,17 @@ and joins them with the engine's.
   the simulation. `simulation_apply_poses(s, poses)`, only in Edit, receives world poses
   (`Simulation_Pose`, normalized quaternion), validates everything before changing, respects
   selected parents and records a single undo; it creates no entities nor applies components.
-- To create and arrange entities in one gesture, a tool combines the
-  [cancelable previews](#cancelable-previews) with the primitives of
-  [physics](../../mirai-physics/SKILL.md): it computes the poses in a copy of its own and confirms
-  through the document's gesture.
+- `simulate_until_rest(s, moving, ticks, rested)` is the
+  [Simulate limited](editor.md#simulate) to some entities, and `settle_begin` to `settle_write`
+  the same run a few ticks a frame: a tool that arranges entities by letting them fall uses them
+  instead of keeping a world of its own.
 
 ## A plugin's game and player processes
 
 A plugin that plays a game of its own from Play (`multiplayer`: a networked game) gives a
 `Play_Provider`. The editor queries it at fixed points and keeps nothing of the plugin:
 
-- On requesting Play from Edit (`start`), the plugin takes Play for its game or lets it continue;
-  with unsaved assets it asks with `confirm_open(s, .Play_Plugin, ...)` (the buttons carry their
-  `verb`) and continues in `confirmed`.
+- On requesting Play from Edit (`start`), the plugin takes Play for its game or lets it continue.
 - On the bar it gives its rows of the run menu (`menu`), its label (`label`) and Stop (`active`,
   `stop`); the run button keeps the mode's icon, with or without online players.
 - The user's run starts and ends (`play_begin`, `play_end`), a paused one keeps what it has open

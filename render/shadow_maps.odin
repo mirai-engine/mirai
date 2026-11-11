@@ -6,7 +6,7 @@ import "mirai:render/abi"
 import "mirai:rhi"
 
 // Shadow maps in place of the rays of the direct light for the lights that
-// light much of the view and for the sun (Settings.shadow_maps), drawn again
+// light much of the view and for the sun, drawn again
 // every frame: the cost of a frame is the same whatever moves. Each frame,
 // from the camera and the lights alone, the lights whose sphere covers
 // SHADOW_RASTER_SHARE of the view (and keep SHADOW_RASTER_KEEP once they do)
@@ -19,7 +19,6 @@ import "mirai:rhi"
 SHADOW_ATLAS :: u32(4096)
 SHADOW_MAPS_MAX :: 96
 SHADOW_MAP_ROWS :: abi.SHADOW_MAP_ROWS
-SHADOW_ENTRIES :: abi.SHADOW_ENTRIES
 SHADOW_DRAWS :: 2 // the clusters that hide whole, and those of masked or blended materials
 SHADOW_GROUP :: u32(256) // the threads of a group of shadow_maps.comp
 SHADOW_MAP_SMALLEST :: u32(128)
@@ -62,15 +61,23 @@ Shadow_Maps :: struct {
 	sun:  u32, // the first map of the sun | the count << 16; max(u32): none
 }
 
-// What the maps of a view keep: the buffers they are drawn from, and which
-// lights were rasterized the frame before (the margin between SHADOW_RASTER_KEEP
-// and SHADOW_RASTER_SHARE keeps a light from going back and forth).
+// The buffers the maps of a view are drawn from, which each view writes before
+// it reads them, as it does the atlas they share: the state of the cull of
+// their clusters and of the draws of them, and the words of the lights and
+// the maps. The lists of that cull are the scene's (Cull_List.Shadow_Chunks,
+// Shadow_Entries), which grow as those of the view do.
 Shadow_Buffers :: struct {
-	entries, draw: rhi.Buffer,
-	table:         rhi.Buffer, // data copied for the passes to read
-	raster:        [SHADOW_RASTER_LIGHTS]i32, // the lights rasterized the frame before
-	rastered:      int,
-	data:          rhi.Transient, // of this frame
+	state: rhi.Buffer, // Gpu_Shadow_State
+	table: rhi.Buffer, // data copied for the passes to read
+}
+
+// What the maps of a view keep: which lights were rasterized the frame before
+// (the margin between SHADOW_RASTER_KEEP and SHADOW_RASTER_SHARE keeps a light
+// from going back and forth).
+Shadow_Raster :: struct {
+	raster:   [SHADOW_RASTER_LIGHTS]i32, // the lights rasterized the frame before
+	rastered: int,
+	data:     rhi.Transient, // of this frame
 }
 
 // A map the plan wants, before it has its square of the atlas.
@@ -87,14 +94,9 @@ Shadow_Want :: struct {
 // How much of the view a light lights: the share of the screen its sphere
 // covers, 0 outside the frustum.
 @(private)
-shadow_light_share :: proc(light: Gpu_Light, eye, forward: Vec3, tan_y, aspect: f32, frustum: [6]Vec4, orthographic: bool, height: f32) -> f32 {
+shadow_light_share :: proc(light: Gpu_Light, eye, forward: Vec3, tan_y, aspect: f32, frustum: [6]Vec4) -> f32 {
 	c, range := light.position_range.xyz, light.position_range.w
-	if range <= 0 {return 0}
 	for plane in frustum {if linalg.dot(plane.xyz, c) + plane.w < -range {return 0}}
-	if orthographic {
-		r := range / max(0.5 * height, 1e-3)
-		return min(math.PI * r * r / (4 * aspect), 1)
-	}
 	d := linalg.length(c - eye)
 	if d <= range {return 1}
 	r := range / math.sqrt(d * d - range * range) / max(tan_y, 1e-4)
@@ -121,12 +123,14 @@ shadow_face_of :: proc(v: Vec3) -> u32 {
 }
 
 // The faces of the cube of a light through which it lights what the view
-// sees, each fitted to the points of the view it lights: points spread over
-// the part of the view its sphere covers, at the depths it spans.
+// sees, each whole: the part of the view its sphere covers, at the depths it
+// spans within the box of the scene (scene_low, scene_high), where its
+// surfaces are. A face fitted to a part of what the view sees through it left
+// out points the view sees there, which then traced rays; a light that takes
+// maps lights much of the view, which it sees through most of each face.
 @(private)
-shadow_light_faces :: proc(wants: ^[SHADOW_MAPS_MAX]Shadow_Want, count: ^int, light: Gpu_Light, index: int, share: f32, eye, forward, right, up: Vec3, tan_x, tan_y, near: f32) {
-	ACROSS :: 7
-	DEPTHS :: 5
+shadow_light_faces :: proc(wants: ^[SHADOW_MAPS_MAX]Shadow_Want, count: ^int, light: Gpu_Light, index: int, share: f32, eye, forward, right, up: Vec3, tan_x, tan_y, near: f32, scene_low, scene_high: Vec3, has_bounds: bool) {
+	SIDE :: 9
 	c, range := light.position_range.xyz, light.position_range.w
 	light_near := max(f32(0.05), light.size.x * 1.1)
 	radius := linalg.length(light.size.yz) if light.direction_cone.w == GPU_LIGHT_RECT else max(light.size.x, 0.01) + light.size.y
@@ -144,6 +148,15 @@ shadow_light_faces :: proc(wants: ^[SHADOW_MAPS_MAX]Shadow_Want, count: ^int, li
 		high = linalg.min(center + Vec2{radius / tan_x, radius / tan_y} * 1.2, Vec2{1, 1})
 	}
 	z0, z1 := max(depth - range, near), depth + range
+	if has_bounds {
+		nearest, farthest := max(f32), -max(f32)
+		for corner in 0 ..< 8 {
+			p := Vec3{scene_high.x if corner & 1 != 0 else scene_low.x, scene_high.y if corner & 2 != 0 else scene_low.y, scene_high.z if corner & 4 != 0 else scene_low.z}
+			along := linalg.dot(p - eye, forward)
+			nearest, farthest = min(nearest, along), max(farthest, along)
+		}
+		z0, z1 = max(z0, nearest), min(z1, farthest)
+	}
 	if z1 <= z0 {return}
 	// A spot no wider than a face: one map along its axis that holds the
 	// whole cone, with no seam between faces where the cone crosses them.
@@ -162,45 +175,61 @@ shadow_light_faces :: proc(wants: ^[SHADOW_MAPS_MAX]Shadow_Want, count: ^int, li
 		count^ += 1
 		return
 	}
-	bounds: [6]Vec4 // low x, low y, high x, high y of x / z, y / z
-	far: [6]f32
-	hits: [6]int
-	for f in 0 ..< 6 {bounds[f] = {1, 1, -1, -1}}
-	total := 0
-	for k in 0 ..< DEPTHS {
-		z := z0 + (z1 - z0) * f32(k) / f32(DEPTHS - 1)
-		for j in 0 ..< ACROSS {
-			for i in 0 ..< ACROSS {
-				s := Vec2{low.x + (high.x - low.x) * f32(i) / f32(ACROSS - 1), low.y + (high.y - low.y) * f32(j) / f32(ACROSS - 1)}
-				point := eye + forward * z + right * (s.x * tan_x * z) + up * (s.y * tan_y * z)
-				v := point - c
-				distance := linalg.length(v)
-				if distance > range || distance < 1e-4 {continue}
-				if spot && linalg.dot(v / distance, light.direction_cone.xyz) < light.direction_cone.w - 0.05 {continue}
-				if rect && linalg.dot(v, light.direction_cone.xyz) < 0 {continue}
-				f := shadow_face_of(v)
-				fr, fu, ff := shadow_face_axes(f)
-				lz := max(linalg.dot(v, ff), light_near)
-				at := Vec2{clamp(linalg.dot(v, fr) / lz, -1, 1), clamp(linalg.dot(v, fu) / lz, -1, 1)}
-				bounds[f] = {min(bounds[f].x, at.x), min(bounds[f].y, at.y), max(bounds[f].z, at.x), max(bounds[f].w, at.y)}
-				far[f] = max(far[f], lz)
-				hits[f] += 1
-				total += 1
+	// The faces it lights that part through, and the share of the atlas each
+	// takes. From inside it, every way from the light: each face it lights
+	// through, alike. From outside it, what it holds lies within what its
+	// sides show: points over its sides tell the faces, by how many fall on
+	// each.
+	weights: [6]f32
+	lateral := Vec2{linalg.dot(to, right) / (max(depth, 1e-6) * tan_x), linalg.dot(to, up) / (max(depth, 1e-6) * tan_y)}
+	if depth >= z0 && depth <= z1 && lateral.x >= low.x && lateral.x <= high.x && lateral.y >= low.y && lateral.y <= high.y {
+		for f in 0 ..< 6 {
+			fr, fu, ff := shadow_face_axes(u32(f))
+			// A spot or a rectangle lights through a face where one of its
+			// corners, the middles of its edges or its middle lies in its cone
+			// or before its plane.
+			for k in 0 ..< 9 {
+				d := linalg.normalize(ff + fr * f32(k % 3 - 1) + fu * f32(k / 3 - 1))
+				if spot && linalg.dot(d, light.direction_cone.xyz) < light.direction_cone.w - 0.05 {continue}
+				if rect && linalg.dot(d, light.direction_cone.xyz) < 0 {continue}
+				weights[f] = 1
+				break
+			}
+		}
+	} else {
+		// Along the depths, as far apart as the view widens.
+		ratio := z1 / z0
+		for side in 0 ..< 6 {
+			for j in 0 ..< SIDE {
+				for i in 0 ..< SIDE {
+					a, b := f32(i) / f32(SIDE - 1), f32(j) / f32(SIDE - 1)
+					z := z0 * math.pow(ratio, b)
+					s: Vec2
+					switch side {
+					case 0: z, s = z0, {low.x + (high.x - low.x) * a, low.y + (high.y - low.y) * b}
+					case 1: z, s = z1, {low.x + (high.x - low.x) * a, low.y + (high.y - low.y) * b}
+					case 2: s = {low.x, low.y + (high.y - low.y) * a}
+					case 3: s = {high.x, low.y + (high.y - low.y) * a}
+					case 4: s = {low.x + (high.x - low.x) * a, low.y}
+					case:   s = {low.x + (high.x - low.x) * a, high.y}
+					}
+					v := eye + forward * z + right * (s.x * tan_x * z) + up * (s.y * tan_y * z) - c
+					distance := linalg.length(v)
+					if distance > range || distance < 1e-4 {continue}
+					if spot && linalg.dot(v / distance, light.direction_cone.xyz) < light.direction_cone.w - 0.05 {continue}
+					if rect && linalg.dot(v, light.direction_cone.xyz) < 0 {continue}
+					weights[shadow_face_of(v)] += 1
+				}
 			}
 		}
 	}
-	if total == 0 {return}
-	for f in 0 ..< 6 {
-		if hits[f] == 0 || count^ >= SHADOW_MAPS_MAX {continue}
-		// A step of the grid of points around those that fell on it: what lies
-		// between them, and the taps of the soft shadows past the last.
-		b := bounds[f]
-		grow := max(0.25 * max(b.z - b.x, b.w - b.y), 0.1)
-		span := Vec4{max(b.x - grow, -1), max(b.y - grow, -1), min(b.z + grow, 1), min(b.w + grow, 1)}
+	total := weights[0] + weights[1] + weights[2] + weights[3] + weights[4] + weights[5]
+	for weight, f in weights {
+		if weight == 0 || count^ >= SHADOW_MAPS_MAX {continue}
 		fr, fu, ff := shadow_face_axes(u32(f))
 		wants[count^] = {
-			m = {origin = c, near = light_near, right = fr, far = min(range, far[f] * 1.25 + 0.1), up = fu, forward = ff, skip = skip, span = span},
-			light = index, face = u32(f), weight = share * f32(hits[f]) / f32(total),
+			m = {origin = c, near = light_near, right = fr, far = range, up = fu, forward = ff, skip = skip, span = {-1, -1, 1, 1}},
+			light = index, face = u32(f), weight = share * weight / total,
 		}
 		count^ += 1
 	}
@@ -276,7 +305,7 @@ shadow_sun_cascades :: proc(wants: ^[SHADOW_MAPS_MAX]Shadow_Want, count: ^int, t
 shadow_maps_plan :: proc(p: ^Pass) -> (maps: Shadow_Maps, ok: bool) {
 	r, t := p.r, p.t
 	s := &r.scene
-	b := &t.shadow_buffers
+	b := &t.shadow_raster
 	maps.sun = max(u32)
 	camera := p.camera
 	eye := p.frame.camera_position.xyz
@@ -293,16 +322,17 @@ shadow_maps_plan :: proc(p: ^Pass) -> (maps: Shadow_Maps, ok: bool) {
 	chosen: [SHADOW_RASTER_LIGHTS]int
 	shares: [SHADOW_RASTER_LIGHTS]f32
 	picked := 0
-	was :: proc(b: ^Shadow_Buffers, light: int) -> bool {
+	was :: proc(b: ^Shadow_Raster, light: int) -> bool {
 		for k in b.raster[:b.rastered] {if int(k) == light {return true}}
 		return false
 	}
 	for light, i in s.lights {
-		// A light turned off casts no shadow and takes no room of the atlas.
-		if !(light.color_intensity.w > 0) || !(max(light.color_intensity.x, light.color_intensity.y, light.color_intensity.z) > 0) {continue}
-		share := shadow_light_share(light, eye, forward, tan_y, aspect, p.frame.frustum, orthographic, camera.height)
+		if orthographic {break}
+		// A light turned off or with no place casts no shadow and takes no room of the atlas.
+		if !light_placed(light) || !(light.color_intensity.w > 0) || !(max(light.color_intensity.x, light.color_intensity.y, light.color_intensity.z) > 0) {continue}
+		share := shadow_light_share(light, eye, forward, tan_y, aspect, p.frame.frustum)
 		keep := SHADOW_RASTER_KEEP if was(b, i) else SHADOW_RASTER_SHARE
-		if orthographic || share < keep {continue}
+		if share < keep {continue}
 		at := picked
 		for at > 0 && shares[at - 1] < share {at -= 1}
 		if at >= SHADOW_RASTER_LIGHTS {continue}
@@ -319,7 +349,7 @@ shadow_maps_plan :: proc(p: ^Pass) -> (maps: Shadow_Maps, ok: bool) {
 	}
 	suns := count
 	for k in 0 ..< picked {
-		shadow_light_faces(&wants, &count, s.lights[chosen[k]], chosen[k], shares[k], eye, forward, right, up, tan_x, tan_y, near)
+		shadow_light_faces(&wants, &count, s.lights[chosen[k]], chosen[k], shares[k], eye, forward, right, up, tan_x, tan_y, near, s.bounds_min, s.bounds_max, s.has_bounds)
 	}
 	if count == 0 {return maps, true}
 	// The atlas left after the sun, shared by how much of the view each map
@@ -413,44 +443,47 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 	r, cmd, t := p.r, p.cmd, p.t
 	s := &r.scene
 	maps.sun = max(u32)
-	if !r.settings.shadow_maps || !p.draw {return}
+	if !p.draw {return}
 	planned, ok := shadow_maps_plan(p)
 	if !ok || planned.on == 0 {return}
-	b := &t.shadow_buffers
-	good := target(r, cmd, &t.shadow_atlas, SHADOW_ATLAS, SHADOW_ATLAS, .D32_Float, {.Depth_Target, .Sampled}, "shadow atlas")
-	entries_ok, _ := ensure_buffer(r, &b.entries, u64(SHADOW_ENTRIES) * 16, {.Storage}, "shadow map clusters")
-	draw_ok, _ := ensure_buffer(r, &b.draw, SHADOW_DRAWS * size_of(rhi.Draw_Indirect), {.Storage, .Indirect, .Transfer_Dst}, "shadow map draw")
-	table_ok, _ := ensure_buffer(r, &b.table, b.data.size, {.Storage, .Transfer_Dst}, "shadow maps")
-	if !good || !entries_ok || !draw_ok || !table_ok {return}
+	b, d := &t.shadow_raster, &r.shadow_buffers
+	good := target(r, cmd, &t.shadow_atlas, SHADOW_ATLAS, SHADOW_ATLAS, .D32_Float, {.Depth_Target, .Sampled}, "shadow atlas", shared = true)
+	state_ok, _ := ensure_buffer(r, &d.state, size_of(Gpu_Shadow_State), {.Storage, .Indirect, .Transfer_Dst}, "shadow map state")
+	table_ok, _ := ensure_buffer(r, &d.table, b.data.size, {.Storage, .Transfer_Dst}, "shadow maps")
+	if !good || !state_ok || !table_ok || s.shadow_chunks == 0 || s.shadow_entries == 0 {return}
 	// While glass colors light: what the glass in front of the depth of each texel lets through, and the
 	// depth of the nearest glass (shadow_tint of shadow_maps.slang).
 	tinted := r.settings.colored_shadows && len(s.translucent) > 0
 	if tinted {
-		tint_ok := target(r, cmd, &t.shadow_tint, SHADOW_ATLAS, SHADOW_ATLAS, .RGBA8_Unorm, {.Color_Target, .Sampled}, "shadow tint")
-		glass_ok := target(r, cmd, &t.shadow_glass, SHADOW_ATLAS, SHADOW_ATLAS, .D32_Float, {.Depth_Target, .Sampled}, "shadow glass")
+		tint_ok := target(r, cmd, &t.shadow_tint, SHADOW_ATLAS, SHADOW_ATLAS, .RGBA8_Unorm, {.Color_Target, .Sampled}, "shadow tint", shared = true)
+		glass_ok := target(r, cmd, &t.shadow_glass, SHADOW_ATLAS, SHADOW_ATLAS, .D32_Float, {.Depth_Target, .Sampled}, "shadow glass", shared = true)
 		tinted = tint_ok && glass_ok
 	}
-	Params :: struct {instances, maps, rows, glass: u32}
-	params := Params{instances = p.instance_count + p.batch_slots, maps = planned.maps, rows = planned.rows, glass = 1 if tinted else 0}
+	// shadow_cull.slang Params_Block.
+	Params :: struct {instances, maps, rows, glass, chunk_capacity, entry_capacity, pad0, pad1: u32}
+	params := Params{instances = p.instance_count + p.batch_slots, maps = planned.maps, rows = planned.rows, glass = 1 if tinted else 0, chunk_capacity = s.cull_capacity[.Shadow_Chunks], entry_capacity = s.cull_capacity[.Shadow_Entries]}
 	rhi.cmd_timestamp(cmd, "shadow cull")
-	for x in ([]rhi.Buffer{s.instance_buffer, s.vertex_buffer, s.index_buffer}) {rhi.cmd_barrier_buffer(cmd, x, .Shader_Read)}
-	start, start_at := rhi.frame_alloc_typed(r.device, rhi.Draw_Indirect, SHADOW_DRAWS)
+	start, start_at := rhi.frame_alloc_typed(r.device, Gpu_Shadow_State, 1)
 	if start == nil {return}
-	for &draw in start {draw = {vertex_count = CLUSTER_DRAW_VERTICES}}
-	rhi.cmd_copy_buffer(cmd, start_at.buffer, start_at.offset, b.draw, 0, SHADOW_DRAWS * size_of(rhi.Draw_Indirect))
-	rhi.cmd_copy_buffer(cmd, b.data.buffer, b.data.offset, b.table, 0, b.data.size)
-	rhi.cmd_barrier_buffer(cmd, b.table, .Shader_Read)
-	rhi.cmd_barrier_buffer(cmd, b.draw, .Shader_Write)
-	rhi.cmd_barrier_buffer(cmd, b.entries, .Shader_Write)
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Maps])
-	set_params(cmd, &params)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, b.table)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, b.entries)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, b.draw)
-	rhi.cmd_dispatch(cmd, groups(params.instances, SHADOW_GROUP), params.maps)
+	start[0] = {draws = {{vertex_count = CLUSTER_DRAW_VERTICES}, {vertex_count = CLUSTER_DRAW_VERTICES}}, cluster_dispatch = {0, 0, 1}}
+	rhi.cmd_copy_buffer(cmd, start_at.buffer, start_at.offset, d.state, 0, size_of(Gpu_Shadow_State))
+	rhi.cmd_copy_buffer(cmd, b.data.buffer, b.data.offset, d.table, 0, b.data.size)
+	// By instance and map, then by cluster over the chunks, as the cull of the view.
+	for pipeline in ([2]Pipeline_Id{.Shadow_Maps, .Shadow_Clusters}) {
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[pipeline])
+		set_params(cmd, &params)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, d.table)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, s.shadow_chunks)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, d.state)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, r.stats_buffer)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.shadow_entries)
+		if pipeline == .Shadow_Maps {
+			rhi.cmd_dispatch(cmd, groups(params.instances, SHADOW_GROUP), params.maps)
+		} else {
+			rhi.cmd_dispatch_indirect(cmd, d.state, u64(offset_of(Gpu_Shadow_State, cluster_dispatch)))
+		}
+	}
 	rhi.cmd_timestamp(cmd, "shadow atlas")
-	rhi.cmd_barrier_buffer(cmd, b.draw, .Indirect_Read)
-	rhi.cmd_barrier_buffer(cmd, b.entries, .Shader_Read)
 	params.glass = 0
 	pass := rhi.Render_Pass_Desc{name = "shadow atlas"}
 	pass.depth = {texture = t.shadow_atlas, load = .Clear, store = .Store, clear = 0}
@@ -458,9 +491,9 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 	for pipeline, i in ([SHADOW_DRAWS]Pipeline_Id{.Shadow_Map, .Shadow_Map_Tested}) {
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[pipeline])
 		set_params(cmd, &params)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, b.entries)
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, b.table)
-		rhi.cmd_draw_indirect(cmd, b.draw, u64(i) * size_of(rhi.Draw_Indirect), 1)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.shadow_entries)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS1, d.table)
+		rhi.cmd_draw_indirect(cmd, d.state, u64(i) * size_of(Gpu_Draw), 1)
 	}
 	rhi.cmd_end_render_pass(cmd)
 	if tinted {
@@ -476,15 +509,12 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 			rhi.cmd_begin_render_pass(cmd, &desc)
 			rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Map_Tint if i == 0 else .Shadow_Map_Glass])
 			set_params(cmd, &params)
-			rhi.cmd_bind_buffer(cmd, SLOT_PASS0, b.entries)
-			rhi.cmd_bind_buffer(cmd, SLOT_PASS1, b.table)
-			rhi.cmd_draw_indirect(cmd, b.draw, size_of(rhi.Draw_Indirect), 1)
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.shadow_entries)
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS1, d.table)
+			rhi.cmd_draw_indirect(cmd, d.state, size_of(Gpu_Draw), 1)
 			rhi.cmd_end_render_pass(cmd)
 		}
-		rhi.cmd_barrier_texture(cmd, t.shadow_tint, .Shader_Read)
-		rhi.cmd_barrier_texture(cmd, t.shadow_glass, .Depth_Read)
 	}
-	rhi.cmd_barrier_texture(cmd, t.shadow_atlas, .Depth_Read)
 	// What the passes after this one read of the maps (sun_shadow_seen, media.slang): the constants of
 	// the view are read when the frame runs.
 	count := 0
@@ -502,8 +532,6 @@ shadow_maps_pass :: proc(p: ^Pass) -> (maps: Shadow_Maps) {
 
 @(private)
 destroy_shadow_maps :: proc(r: ^Renderer, t: ^Targets) {
-	for texture in ([3]rhi.Texture{t.shadow_atlas, t.shadow_tint, t.shadow_glass}) {if texture != 0 {rhi.texture_destroy(r.device, texture)}}
-	b := &t.shadow_buffers
-	for x in ([]rhi.Buffer{b.entries, b.draw, b.table}) {if x != 0 {rhi.buffer_destroy(r.device, x)}}
-	t.shadow_atlas, t.shadow_tint, t.shadow_glass, t.shadow_buffers = 0, 0, 0, {}
+	shared_targets_release(r, targets_frame(&t.shadow_targets))
+	t.shadow_raster = {}
 }

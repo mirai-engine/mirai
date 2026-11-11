@@ -18,9 +18,9 @@ request and return, so it must admit simultaneous calls.
 - The `Job_System` does not move after being initialized. `system_destroy` executes what remains
   enqueued, stops the threads and releases the memory.
 - The threads inherit the `context` of whoever called `system_init` (logger, `context.allocator`).
-- Each worker has a fixed-capacity Chase-Lev deque: it pushes and pops at the bottom and the others
-  steal from the top. Without work, it tries its deque, steals from a random victim, yields the
-  processor a few times and sleeps on a futex until someone enqueues.
+- Each worker has a fixed-capacity Chase-Lev deque per class: it pushes and pops at the bottom and
+  the others steal from the top. Without work, it tries its deques, steals from a random victim,
+  yields the processor a few times and sleeps on a futex until someone enqueues.
 
 - `Worker_Ref` (system, index and `Profile`) is where code that does not receive a system of its own
   runs: whoever calls it passes it, and a task rebuilds it with its index (`worker_ref_at`). Without
@@ -29,14 +29,33 @@ request and return, so it must admit simultaneous calls.
 
 ## Tasks and counters
 
-- `run(&js, worker, procedure, data, &counter)` enqueues in the deque of the calling worker; it
-  accepts `proc(data:^T, worker:int)`. With the deque full it executes the task inside the call and
-  adds to `Stats.queue_full`.
+- `run(&js, worker, class, procedure, data, &counter)` enqueues in the deque of that class of the
+  calling worker; it accepts `proc(data:^T, worker:int)`. With the deque full it executes the task
+  inside the call and adds to `Stats.queue_full`.
 - A zeroed `Counter` is ready for use and must live until its tasks finish. `wait` returns when it
-  reaches zero; meanwhile it executes enqueued tasks, its own first, and sleeps only if there are
-  none. `pending` asks without waiting or executing.
+  reaches zero; meanwhile it executes the enqueued tasks [its class](#classes) allows, its own
+  first, and sleeps only if there are none. `pending` asks without waiting or executing.
 - Without threads, a task without a counter is executed before `run` returns; with a counter, at the
   latest inside `wait`.
+
+## Classes
+
+The rule of Unreal's scheduler, Godot's pool and enkiTS (`WaitforTask` with the lowest priority to
+run): what a frame waits for and what outlives frames never share a waiter.
+
+- `.Frame` is work a frame waits for, now or at its next call: loop functions, `parallel_for`,
+  render. `.Background` outlives frames: loads, bakes, navmesh builds, disk writes. A caller that
+  never waits for a task in the frame that queued it uses `.Background`.
+- A thread that waits outside a background task runs only frame tasks, so a long task never lands
+  inside a frame. With threads, the owner runs a background task only while it waits for that
+  task's counter and it is the last one it queued (Unreal's retraction): it waits for it anyway.
+- Inside a background task a wait runs both classes, so a task that waits for tasks of its own class
+  completes even when no other thread may take them; a `parallel_for` there queues background
+  helpers.
+- Background tasks run on all threads but one at once (at least one): frames keep the owner and a
+  helper. An idle thread takes a background task first while there is a place, so frames that
+  follow each other without a gap do not starve it.
+- A frame task does not wait for background work: with one thread nobody else could run it.
 
 ## `parallel_for`
 
@@ -47,18 +66,6 @@ request and return, so it must admit simultaneous calls.
 - The caller executes ranges alongside the others. It enqueues at most one helper task per worker,
   whatever `count` is; all take the next range from an atomic cursor.
 - It can be nested: a range may call `parallel_for` with its worker index.
-
-## Task graphs
-
-- A `Graph` is built once (`graph_add`, `graph_depend(&g, after, before)`) and executed as many
-  times as needed. A node runs when all those it depends on have finished.
-- `graph_run` returns when all have run; with a cycle it returns `false` without executing anything.
-- A pinned node (`graph_pin`) runs on the worker that called `graph_run`, never on another: what it
-  enqueues as owner of the system or is not shared between threads. While waiting, that worker runs
-  the pinned ones that became ready, in the order in which they became so, and the enqueued tasks;
-  whoever makes a pinned one ready wakes all those that sleep.
-- Without room, `graph_add` and `graph_depend` fail and add to `Graph.capacity_failures`.
-- A graph is built or executed by a single thread at a time, and does not move after `graph_init`.
 
 ## Temporary memory
 
@@ -73,9 +80,9 @@ request and return, so it must admit simultaneous calls.
 
 ## Without threads
 
-With `threads=0` everything runs on the caller with the same code paths: same ranges, same nodes,
-same results as long as the tasks do not depend on the order among them. It is the mode of tests and
-deterministic runs.
+With `threads=0` everything, of both classes, runs on the caller with the same code paths: same
+ranges, same nodes, same results as long as the tasks do not depend on the order among them. It is
+the mode of tests and deterministic runs.
 
 ## Profile zones and statistics
 
@@ -88,7 +95,7 @@ deterministic runs.
 
 ## Verification
 
-- After touching deques, waiting or graphs, repeat the executable at least 20 times and once with
+- After touching deques or waiting, repeat the executable at least 20 times and once with
   `--release`: `./mirai test std/jobs -keep-executable`.
 - Benchmarks:
   `./mirai test std/jobs --release -define:MIRAI_BENCH=true -define:ODIN_TEST_THREADS=1`.

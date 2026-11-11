@@ -30,17 +30,17 @@ chunks_without_a_collider_keep_their_triangles_on_the_cpu_only_while_the_world_d
         owner:=core.create(&w.entities)
         core.add(&w.transforms,owner,core.TRANSFORM_IDENTITY)
         core.add(&w.terrains,owner,Terrain{source=id,solid=true})
-        core.test_world_settle(&w.w)
+        test_world_settle(&w.w)
         for _ in 0..<3 {
-            test_step(&w.terrain,core.commands_of(core.test_world_ref(&w.w)),&resident,&app,&w.problems,time={playing=playing},view=core.VIEW_DEFAULT)
-            core.test_world_settle(&w.w)
+            test_step(&w.terrain,core.commands_of(test_world_ref(&w.w)),&resident,&app,&w.problems,time={playing=playing},view=core.VIEW_DEFAULT)
+            test_world_settle(&w.w)
             if work_busy(&w.data,nil) {work_wait(&w.data,nil)}
         }
         held,bare:=0,0
         for row in 0..<core.count(&w.chunks) {
             e:=core.entity_at(&w.chunks,row)
-            renderer,shown:=core.get(core.read(&w.statics),e)
-            if !shown || core.has(core.read(&w.colliders),e) {continue}
+            renderer,shown:=core.get(&w.statics,e)
+            if !shown || core.has(&w.colliders,e) {continue}
             geometry:geom.Mesh_Buffer
             geom.mesh_buffer_init(&geometry,context.temp_allocator)
             host.assets_geometry(&assets,renderer.mesh,.None,&geometry)

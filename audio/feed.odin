@@ -30,7 +30,8 @@ Feed_Phase :: enum u32 {Free,Starting,Running,Done}
 Feed :: struct {
     // Written by the game thread while the feed is Free; then the decoder's.
     decoder:Decoder,
-    offset:int,   // the frame the play begins at
+    offset:int,   // the frame the play begins at; its ring begins a frame before, which interpolates it
+    loop_start:int, // the frame a loop goes back to
     sound:u32,    // slot of the sound it decodes
     owner:Voice,  // the voice it was handed to last; game thread
     stream:bool,  // the feed of a stream: its decoder stays open from one play to the next
@@ -59,9 +60,9 @@ feed_phase_set :: #force_inline proc "contextless" (f:^Feed,phase:Feed_Phase) {
 // Readies a Free feed for a play that begins at offset. The audio thread may
 // see the voice before the decoder sees the feed: it then finds nothing to play.
 @(private)
-feed_prepare :: proc(m:^Mixer,f:^Feed,source:Decoder,sound:u32,offset:int,loop:bool) {
+feed_prepare :: proc(m:^Mixer,f:^Feed,source:Decoder,sound:u32,offset,loop_start:int,loop:bool) {
     if !f.stream {f.decoder=source}
-    f.offset=offset
+    f.offset,f.loop_start=offset,loop_start
     f.sound=sound
     sync.atomic_store_explicit(&f.loop,u32(loop),.Relaxed)
     sync.atomic_store_explicit(&f.write,0,.Relaxed)
@@ -127,7 +128,7 @@ feed_pump :: proc(m:^Mixer,f:^Feed) -> (busy:bool) {
     switch feed_phase(f) {
     case .Free,.Done:return false
     case .Starting:
-        decoder_seek(&f.decoder,f.offset)
+        decoder_seek(&f.decoder,f.offset-min(f.offset,1))
         feed_phase_set(f,.Running)
     case .Running:
     }
@@ -142,6 +143,8 @@ feed_pump :: proc(m:^Mixer,f:^Feed) -> (busy:bool) {
 @(private)
 feeder_main :: proc(t:^thread.Thread) {
     m:=(^Mixer)(t.data)
+    // The thread is the mixer's: nothing to restore.
+    _=denormals_flush()
     for !sync.atomic_load_explicit(&m.feeder_quit,.Acquire) {
         wake:=sync.atomic_load_explicit((^u32)(&m.feeder_wake),.Acquire)
         pump_lock(m)
@@ -206,12 +209,12 @@ feed_fill :: proc(m:^Mixer,f:^Feed) {
         write+=u64(got);free-=u64(got)
         sync.atomic_store_explicit(&f.write,write,.Release)
         if got>0 {rewound=false;continue}
-        // The end of the sound: start over for a loop, unless the sound is empty.
+        // The end of the sound: back to its loop start for a loop, unless nothing is left after it.
         if sync.atomic_load_explicit(&f.loop,.Relaxed)==0 || rewound {
             sync.atomic_store_explicit(&f.ended,1,.Release)
             return
         }
-        decoder_seek(d,0)
+        decoder_seek(d,f.loop_start)
         rewound=true
     }
 }
@@ -228,21 +231,23 @@ feed_voice_mix :: proc "contextless" (m:^Mixer,v:^Mix_Voice,out:[^]f32,from,to:i
     frames:=u64(v.source.frames)
     if !v.loop && frames>0 {
         // The decoder may have gone round already: the sound ends at its next end all the same.
-        first:=frames-u64(v.offset)
+        first:=frames-u64(v.offset)+u64(min(v.offset,1))
+        body:=frames-u64(v.source.loop_start)
         end:=first
-        if read>first {end=first+(read-first+frames-1)/frames*frames}
+        if read>first {end=first+(read-first+body-1)/body*body}
         if write>=end {write=end;ended=true}
     }
     mask:=f.capacity-1
     channels:=u64(v.source.channels)
     available:=write-read
-    needed:=(u64(u32(v.cursor))+step*u64(to-from))>>32+2
+    needed:=(u64(u32(v.cursor))+step*u64(to-from))>>32+3
     count:=min(available,needed)
-    // In two runs of samples: up to the end of the ring, and from its start.
+    // The frame played last, then in two runs of samples: up to the end of the ring, and from its start.
+    for c in 0..<channels {m.scratch[c]=v.kept[c]}
     at:=read&mask
     first:=min(count,f.capacity-at)*channels
     rest:=count*channels-first
-    dst:=raw_data(m.scratch)
+    dst:=raw_data(m.scratch[channels:])
     if f.ring32!=nil {
         src:=raw_data(f.ring32)
         #no_bounds_check {
@@ -259,7 +264,10 @@ feed_voice_mix :: proc "contextless" (m:^Mixer,v:^Mix_Voice,out:[^]f32,from,to:i
     // More of the sound is still to come after these frames, now or later.
     holds:=!ended || count<available
     mixed:int
-    alive,mixed=segments_mix(v,raw_data(m.scratch),count,false,holds,out,from,to,max(step,1),target,span)
+    alive,mixed=segments_mix(v,dst,count,false,holds,true,out,from,to,max(step,1),target,span)
+    if played:=v.cursor>>32;played>0 {
+        for c in 0..<channels {v.kept[c]=dst[(played-1)*channels+c]}
+    }
     sync.atomic_store_explicit(&f.read,read+v.cursor>>32,.Release)
     v.cursor&=ONE-1
     // Waiting for the first frames of a play is not running dry.

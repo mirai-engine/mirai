@@ -6,44 +6,38 @@ the steps and the selection are the package `editor/history`, which knows nothin
 
 ## Document and scenes
 
-`Document` is the open scene: `path`, relative to `assets/` if inside it, and `file`, absolute (one
-never saved has an empty `path` and is "Untitled"). `previous`, the `asset.Scene` it was read with,
-keeps what the `World` does not store: order of the roots and library tables the project does not
-have.
+`Document` is the open scene or prefab:
 
-- `path`: relative to `assets/` if inside it; `file`: absolute. A scene never saved has an empty
-  `path` and is called "Untitled".
-- `previous`: the `asset.Scene` it was read with; it keeps what the `World` does not store (order
-  of the roots, library tables the project does not have).
-- The asset id and the history state it was saved at.
+- `path`: relative to `assets/` if inside it; `file`: absolute. A document without a file has an
+  empty `path` and is called "Untitled".
+- `previous`: the `asset.Scene` it was read with or last wrote; it keeps what the `World` does
+  not store (order of the roots, library tables the project does not have).
+- The asset id and `written`, the history state its file holds.
 
 Procedures:
 
-- `scene_open(s, path)`: replaces the edited world with a scene or a prefab, by file or by path
-  under `assets/`. Stops a Play, starts a new history and deselects. It loads with
-  `scene.replace`, like the game: if reading, instantiating or copying fails, memory included, the
-  world stays as it was.
-- `scene_new(s)`: a scene without a file with two entities, `Sky` (with `SKY_DEFAULT`) and `Sun`
-  (the sun preset), without changes or history.
-- `scene_save(s, path="")`: writes to the document's file or to `path`. Without an extension it
-  adds `.prefab` to a prefab and `.scene` to a scene; a new file is another asset with its own id.
-  With neither, it opens the save dialog.
-- `document_write(s, file, as_document)`: writes the world; with `as_document` it becomes its file,
-  except in copies (recovery, restart).
-- `file_new`: replaces the active document; asks if it has unsaved changes.
+- `scene_open(s, path)`: replaces the edited world with a scene, by file or by path under
+  `assets/`; one whose header says Prefab is a
+  [prefab document](prefabs.md#prefab-document). Stops a Play, starts a new history and
+  deselects. It loads with `scene.replace`, like the game: if reading, instantiating or copying
+  fails, memory included, the world stays as it was.
+- `scene_new(s, prefab)`: a document without a file with two entities, `Sky` (with `SKY_DEFAULT`)
+  and `Sun` (the sun recipe), or a prefab with one empty root, without history.
+- `document_write(s, file, as_document)`: writes the world; with `as_document` it becomes its
+  file; otherwise it is a copy (what the players of a game read).
+- `file_new`: asks for the file first, then replaces the active document with a new one there
+  (`scene.new` takes it as `path`).
 - `file_open`, `file_open_path`: open a tab or activate the one that already has that file. **Only
   one scene** is open at a time, alongside any number of prefabs: another scene takes the tab of
   the open one (`document_scene_tab`), in the place of the one it replaces.
-- Before replacing the scene it asks (`Pending.Open_Scene`, and `New` likewise) if it has unsaved
-  changes or assets, if agents are working (they are stopped) or if there is a shared session: the
-  host's guests receive the new scene and lose what they were doing; a guest leaves the session
-  (`scene_switch_interrupts`, `scene_switch_others`). The API (`editor.document`) does not ask.
+- Before replacing the scene it asks (`Pending.Open_Scene`, and `New` likewise) if agents are
+  working (they are stopped) or if there is a shared session: the host's guests receive the new
+  scene and lose what they were doing; a guest leaves the session (`scene_switch_interrupts`,
+  `scene_switch_others`). The API (`editor.document`) does not ask.
 - `document_open_tab`, `document_activate`: open or activate the document's world between frames.
-- `document_close`: activates the tab and asks to save, discard or cancel if it has changes.
-- `document_dirty(s)`: the history state differs from the saved one, or the scene comes from a
-  restart with changes.
+- `document_close`: activates the tab and closes it; the file already holds what the document had.
 - File dialogs are the system's (`platform.dialog_show`), one at a time. In collaboration a guest
-  neither saves nor opens another scene without leaving the session
+  writes nothing and does not open another scene without leaving the session
   ([collaboration](collaboration.md)).
 
 ### Tabs
@@ -53,15 +47,9 @@ Procedures:
   per tab ([chats](ai-tasks.md)).
 - The generated storages contain only those of the active document; the swap happens between
   frames. Changing document stops the Play.
-- Save and undo act on the front tab: each scene or prefab has its `Edits`, with its selection
-  steps, and each asset document its history. Closing the last one leaves a new scene.
-- **Unsaved assets** ([files](#edits-and-undo)): the tab of a scene that uses any, also through
-  dependencies (`world_unsaved_assets`), carries the changes mark even if the scene is saved. Save
-  (Ctrl+S) of a scene that uses them opens **Save changes** with the scene and those assets: Save
-  all, Scene only or Cancel. Those the scene generates (`owned` fields, like the `.navmesh` of its
-  navigation) are not asked about: Save and `scene.save` save them with it. **Save all**
-  (Ctrl+Shift+S) saves the unsaved assets and each tab with changes that has a file; those without
-  one are reported.
+- Undo acts on the front tab: each scene, a prefab too, has its `Edits`, with its selection
+  steps, and each asset document its history. Closing the last tab leaves a new scene without a
+  file.
 - The active tab joins its background with the contextual toolbar; the inactive ones sit lower and
   separated. Hover lights the whole tab; the x adds a circular background.
 - Closing has its own target and does not activate the tab.
@@ -72,7 +60,7 @@ Procedures:
 - On activating a scene, the instances whose prefabs changed are updated, with their overrides. An
   open prefab without changes of its own is reread if its file changed; with changes it is kept.
 - The project settings are shared and are reread on activating a world.
-- The recovery of all tabs after a Build is in [restart](editor.md#build-and-reload).
+- The tabs a Build restarts the editor with are in [restart](editor.md#build-and-reload).
 
 ### Asset documents
 
@@ -81,10 +69,10 @@ Procedures:
 - `Session.asset_documents` has an `Asset_Document` per open asset (id and type, or the absolute
   path of the source of a lone program) with its `Asset_History`.
 - **Replacement:** opening another asset of the type of the front document opens it in that tab if
-  it has no unsaved changes, steps or gesture (`asset_document_reusable`); otherwise it opens
-  another. An already open asset brings its tab.
+  it has no steps or gesture (`asset_document_reusable`); otherwise it opens another. An already
+  open asset brings its tab.
 - One in front (`asset_shown`, `asset_document_active`) covers the scene, which remains the active
-  one: the API, the agents, `history.*` and Save all act on it, and its agents keep working.
+  one: the API, the agents and `history.*` act on it, and its agents keep working.
   Bringing it to the front stops the Play or what is watched, drops the tools and ends the
   gestures; a user Play, watching another run, New, Open, a Find result or a scene tab bring the
   scene.
@@ -94,30 +82,22 @@ Procedures:
   keeps its own. Field gestures (`gesture_begin`, `gesture_end`) open and close the document's.
   Undo and Redo walk that history; a file that another changed afterwards keeps its content. It has
   a cap (`ASSET_HISTORY_BYTES`) and is lost on closing.
-- **Changes:** the tab's dot is that of the asset in the registry's memory
-  (`asset_document_dirty`), also if the API or the inspector changed it. Save writes its asset.
-- **Closing:** an unsaved asset that no open scene uses asks Save, Discard or Cancel
-  (`Pending.Asset_Close`); one a scene uses stays unsaved and the scene's tab marks it. Closing the
-  front one brings the previous one and, without another, the scene. A document whose asset leaves
-  the registry is closed (`asset_documents_prune`).
+- **Closing:** drops the history. Closing the front one brings the previous one and, without
+  another, the scene. A document whose asset leaves the registry is closed
+  (`asset_documents_prune`).
 - The restart after Build reopens the asset tabs and the front one, without their history.
 - A plugin opens its types with an `Asset_Document_Provider`
   ([extensions](extensions.md#an-asset-document)).
 
-### Exiting with changes or agents working
+### Quitting, New and Open with agents working
 
-- On exit each document with changes is asked about, and the active one while an agent works
-  (agents work only on the active one). The first question also lists all unsaved assets, so
-  nothing is asked twice.
-- Closing a tab or New ask about the scene and about the unsaved assets only it uses
-  (`document_closing_assets`). Save writes what is listed and Discard gives those assets back what
-  their files have.
-- A plugin's game with unsaved assets asks first (`Pending.Play_Plugin`), because its players read
-  the files; by API it fails unless `saved_only`.
-- The dialog says how many agents are working and how many changes await review. Save and Discard,
-  also on closing a tab or with New, stop the agents first (`ai_working_stop`), and from that
-  moment the API rejects their calls; Cancel lets them work. The review that remains:
-  [persistence](ai-review.md#persistence-and-capacity).
+- Quitting while an agent works asks first (`Pending.Quit`), and so do New and Open of a scene
+  while agents work or a session is shared. Closing a tab asks nothing: its file holds it.
+  Quitting with [pending changes](git.md#pending-and-kept) lists them, to keep or discard.
+- The dialog says how many agents are working and how many changes await review. Accepting stops
+  the agents first (`ai_working_stop`), and from that moment the API rejects their calls; Cancel
+  lets them work. The review ends with the editor:
+  [the record](ai-review.md#the-record-and-its-capacity).
 
 ## Sections
 
@@ -130,9 +110,9 @@ double click in the content browser.
 - What hangs from a reference is edited in its scene: in this one it is read and not changed by
   any path. The edit procedures reject it (`section_refused`, and `section_target_refused` for
   what would go below a reference or something of its own) with a notice that names the section and
-  its scene; `scene.set`, `scene.delete`, `scene.duplicate` and `scene.add` fail with that text;
-  the gizmo does not appear (`selection_section_locked`) and Details shows it disabled. Save leaves
-  the section out.
+  its scene; `scene.write` fails with that text;
+  the gizmo does not appear (`selection_section_locked`) and Details shows it disabled. The
+  document's file leaves the section out.
 - A loaded reference whose `scene` changes (inspector, API) reloads the section in the same step,
   and one that a step makes (paste, duplicate, add the component) loads its own in that step
   instead of what was copied with it: `sections_sync` runs before each commit of the gesture and
@@ -143,12 +123,12 @@ double click in the content browser.
   `editor.section_edit`): its entities are edited in the scene that contains it; everything else is
   dimmed in the outliner and read-only (`section_locked`), and what is created without a parent
   goes inside it. It stays on while edited. Undo is the scene's.
-- **Save** writes the root and the scene of each section edited in its world since the document
-  was opened (`Document_Sections.edited`) whose capture differs from its file (`section_save`,
-  `Capture_Desc.section`, with the `Id`s of that scene kept by `Section_Member`), also after
-  stopping editing it: stopping editing or moving to another warns that it keeps unsaved changes. A
-  section that cannot be written (turned off with dormant changes, loading) leaves the document
-  unsaved and warns. The other references to that scene load it again outside of undo.
+- **The flush** writes the root and the scene of each section edited in its world since the
+  document was opened (`Document_Sections.edited`) whose capture differs from its file
+  (`section_save`, `Capture_Desc.section`, with the `Id`s of that scene kept by `Section_Member`),
+  also after stopping editing it. A section that cannot be written (turned off with dormant
+  changes, loading) warns, and the next flush tries again. The other references to that scene load
+  it again outside of undo.
 - Sections belong to each document (`Document.sections`): changing tabs does not carry along the
   one being edited.
 - **Environment preview** of a section: the sun of the Details header on its root (or
@@ -156,9 +136,6 @@ double click in the content browser.
   look of the view (exposure, tint) from inside its box, where its unbounded volumes rule
   (`render.Environment_Preview`), only in the editor view: it is not an edit nor saved, and Play
   starts without it.
-- `asset.convert` changes a scene to a prefab (a single root, without references) or a prefab to a
-  scene, with the same id, with the document closed; it does not change a scene that an open
-  document has as a section.
 
 ### Section view
 
@@ -187,78 +164,48 @@ saved and Play starts with what the references ask for.
 - What hung from a reference that no longer lives (an undo that did not have it) is destroyed
   outside undo, and the view forgets it (`sections_orphans_drop`).
 
-## Recovery and failures
+## The file is the editor's state
 
-Each open document has its recovery chain, with two parts and a number of its own
-(`Recovery_Chain.slot`), and none writes over an asset: what was not saved stays outside the
-project until Save. The front document's follows its steps; that of each other tab stays with it.
+What the editor has is what its files hold.
 
-Recovery journal (`editor/recovery_log.odin`):
+- **A step ends, its files are written** (`files_flush`, `edits_files.odin`, the one place): at the
+  end of a frame and of an API call, when no gesture is open and no game plays, the asset files a
+  step changed are written, then the document if its history state is not the one its file holds
+  (`document_flush`). Each file is atomic; a step of several is not atomic across them. A write
+  that fails is told once and tried again. At the end of a frame the document, like a file, waits
+  a short window after it last changed, so steps that follow one another cost one capture of the
+  world; the end of an API call does not wait.
+- **Inside an open gesture an asset file lives in the registry of the assets**
+  (`asset.registry_memory_*`): what draws it reads through the registry, and the flush writes it
+  100 ms after it last changed, so what a tool keeps writing during a stroke reaches the disk
+  once. It is a write buffer, not a state. The `.slang` source of a program is written at once.
+- **Undo and redo are steps**: they rewrite the files they change.
+- **Play never writes**: the flush waits while a game plays and writes at stop the asset edits
+  made meanwhile. Players in other processes read the files as they are.
+- **The file wins**: a document whose file changes outside the editor (git, a tool) is read again
+  at the next flush, with a new history (`document_file_follow`); the editor knows its own writes
+  by the stamp of what it wrote.
+- **A document without a file is not written.** File > New asks for the file first and `scene.new`
+  takes `path`, which must not exist; without it the document has none. In a window, the first
+  step of a document without a file asks once where to keep it, and File > Keep in a file
+  (`keep_file`, `document_file_give`) gives it one.
+- **A guest of a shared session writes nothing**: its host does. What the session gave the guest
+  goes when it leaves ([collaboration](collaboration.md)).
+- **A restart** of the editor (after a Build, after a GPU loss) carries only the tabs, with their
+  selection and camera; the files hold the documents
+  ([restart](editor.md#build-and-reload)).
+- To try or verify something against an open editor, work on a copy under `.mirai/tmp/`: every
+  edit is written to its file ([AGENTS.md](../../../../AGENTS.md#verification)).
 
-- Each step, undo or redo of the document is appended to `<project>/.mirai/autosave-<k>-<n>.log`
-  when the editor journal takes it (`Edits.logging`, one more reader of its changes): the rows it
-  left, by `Id`, in the collaboration's operation format and a CRC per record. The write reaches
-  the system in the step, so a process crash loses none, and the disk within `RECOVERY_LOG_SYNC`,
-  with `fsync` in a job.
-- A log is a chain of generations over a base: the document's saved file, when it started clean
-  and with a file, or a recovery copy. Another document in the tab, a code reload or becoming
-  clean again start another chain with the same number; closing the tab deletes its own. A record
-  that a crash cut ends the chain there.
-
-Recovery copy (`recovery_update`), the periodic autosave:
-
-- Saves `<project>/.mirai/autosave-<k>.scene` with the atomic scene save, when gestures and
-  previews end: `RECOVERY_COPY_INTERVAL` after the first change it does not have, as soon as the
-  log exceeds `RECOVERY_LOG_BYTES`, and immediately if the chain needs a base copy (without a file
-  or with changes at the start). Without a log (it could not be written) it copies again every
-  second. The frame captures the world with its prefabs' overrides and a job of `app.jobs`
-  encodes and writes; while it writes, another copy does not start.
-- The copy names the generation of the log that follows it (`Recovery_Info.log`); once written the
-  previous ones are deleted. This bounds how much is replayed at startup.
-- Before Play or Simulate, `recovery_protect` leaves every step in the log (or, without it,
-  updates the copy and waits for the write); if it fails, the run does not begin. Closing the
-  editor or deleting the copy wait for the write in progress.
-- It does not touch the original file, the selection, the history or the saved state. The
-  `editor_recovery` table keeps the original path; the copy keeps the authoring, not the Play or
-  Simulate state, the history or external files.
-- Unsaved assets are copied to `.mirai/recovery-assets-<n>/` shortly after changing
-  (`assets_unsaved_store`, with a manifest), never to the project folders, under a number of the
-  editor after every one it found; the copy is deleted when none remain and on a normal close.
-- A tab that goes to the back (`recovery_park`) leaves its steps in the log and on disk and, if its
-  log does not follow a base that a startup finds, a copy; in the background it writes nothing as
-  long as it does not change. It returns to the front with the same chain.
-
-On opening the project with a pending copy the editor offers **Recover**, **Later** and **Discard**
-(`editor.recover` by API). What is offered stays aside, in its own slots and asset folders, until
-the user decides: this editor loads, edits, saves and plays under other numbers and writes none of
-it, and without an answer the next startup offers it again:
-
-- Recover returns the unsaved assets to memory and, for each chain it found, loads the copy (or,
-  without a copy, the saved file that the log follows) with its original path, marked as modified
-  (without a path, Untitled), and replays the steps of the log on top the way those of another
-  editor are applied: the journal takes them without an undo step (`recovery_log_replay`). The
-  scene goes to the scene's tab; a prefab, or another scene, to a new tab. Save uses the original
-  destination. A tab with changes made meanwhile stays and the document opens beside it; an asset
-  this editor also has unsaved makes Recover fail with its name until it is saved or discarded.
-  There can be only assets. The load prepares a temporary world and replaces the open one only if
-  the scene can be instantiated; a chain that does not open stays offered, with the reason. What
-  was recovered stays in the same chain until a new copy has it.
-- An editor that ended because of its GPU left all its tabs (`recovery-tabs/`, with
-  `documents_save_restart`): Recover opens them like a restart, with their unsaved assets.
-- Discard deletes what is offered and leaves the chains of this editor; closing without resolving
-  the notice keeps it. A session's chains are deleted by its normal close and, that of each
-  document, by saving it
-  or undoing until it is clean. The internal restart uses its own snapshot and shows no notice.
-
-Native failures:
+## Failures
 
 - The launcher configures `<project>/.mirai/editor-crash.txt` as the crash report, unless
   `MIRAI_CRASH_REPORT` indicates another; it is kept on reopening and a later failure replaces it
   ([platform](../../mirai-platform/references/platform.md#crashes)).
 - The report ends with the events before the failure, oldest first (`editor/events.odin`,
   `<project>/.mirai/editor-events.txt`): keys and buttons with their modifiers and where, the
-  actions (`action_run`), the API methods and the document steps with their label and author, to
-  relate an input to the action and the procedure that failed.
+  entries a person ran (`command_run`), the API methods and the document steps with their label
+  and author, to relate an input to the method and the procedure that failed.
 - Odin's bounds checks stay active in the build. `MIRAI_CHECK_WRITES` diagnoses world writes that
   did not request their row; it costs and is not for measuring.
 
@@ -310,7 +257,7 @@ Procedures:
   `History_Move`.
 - `edits_reset` forgets the history after replacing the world. `edits_sync_initial` makes the image
   take the initial values resolved from assets and rejects any existing history. `edits_state` is
-  the stamp that the saved document compares; a step that left the in-order redo does not count.
+  the stamp that `Document.written` compares; a step that left the in-order redo does not count.
 - `edit_open(s, label) -> (opened, ready)` and `edit_close(s, opened)` (`edits.odin`) are the
   pattern of an edit procedure: it opens a gesture only if there is none, prepares its
   cancellation and closes it only if it opened it; whoever writes checks `ready`. With the Play
@@ -323,16 +270,14 @@ an animation asset) is part of the step of its gesture, with the same mechanism 
 - `file_write(s, path, bytes, label, remove=false)` changes (or deletes) the file as an edit:
   inside the open gesture or in a step of its own. With an asset document in front and without an
   open scene gesture, the step belongs to that document ([asset documents](#asset-documents)).
-  Whoever saves an asset serializes it to bytes (`asset.material_bytes`, `asset.document_bytes`,
+  Whoever writes an asset serializes it to bytes (`asset.material_bytes`, `asset.document_bytes`,
   the `effect.particle_bytes` of `vfx`) and passes it that way.
-- **An asset of the folder stays in memory, unsaved**: it goes to the registry's in-memory files
-  and what reads the file (`file_contents`, `file_read`, `asset_read`, `host.assets_file`) sees
-  that content. Content equal to the disk's stops being unsaved. `file_exists` answers with the
-  same.
-- **The `.slang` source of a program too**, with its absolute path in the registry's memory (it is
-  not a file of the folder: it does not appear in the content browser). Shader generation reads it
-  from there (`programs_overlay`, [generation](#unsaved-programs)).
-- The other files are written immediately.
+- **An asset of the folder waits in the registry until its step ends**: it goes to the registry's
+  in-memory files and what reads the file (`file_contents`, `file_read`, `asset_read`,
+  `host.assets_file`) sees that content; the flush writes it
+  ([the file is the state](#the-file-is-the-editors-state)). Content equal to the disk's is no
+  change. `file_exists` answers with the same.
+- The other files, such as the `.slang` source of a program, are written immediately.
 - The step keeps, per file, what was there before the gesture's first write and what the last one
   left; one that ends up the same leaves the gesture and one larger than `EDITS_FILE_BYTES` is
   written without history. Cancelling the gesture returns its files.
@@ -344,8 +289,8 @@ an animation asset) is part of the step of its gesture, with the same mechanism 
 - After changing, the asset is reloaded where it is loaded (`host.app_asset_changed`) and a
   `.slang` publishes the project's programs in a job; what undo, redo and a cancellation change is
   taken in `files_settle`, at the end of the frame and of each API call.
-- A step that only changed files does not count as a scene change: `edits_scene_state`, what the
-  saved document, recovery and prefabs compare, skips it.
+- A step that only changed files does not count as a scene change: `edits_scene_state`, what
+  `Document.written` and the prefabs compare, skips it.
 - An API call that writes files registers them between `api_edit_begin` and `api_edit_end`: so the
   step exists when the call ends and is attributed to the AI turn. During a Play the files change
   without a step.
@@ -374,12 +319,12 @@ Rules:
   leaves always changes generation.
 - With a Play running, `edits_commit` does not record the edits of the Play's world.
 - The [cancelable previews](extensions.md#cancelable-previews) use `Edits.preview`:
-  finishing a field or saving does not close the gesture; confirming leaves a step and cancelling
+  finishing a field does not close the gesture; confirming leaves a step and cancelling
   also restores the selection.
 
 ### Undo by author
 
-Ctrl+Z, `editor.action undo` and `history.undo` undo the last step of whoever asks, even if others
+Ctrl+Z is `history.undo` as the user: it undoes the last step of whoever asks, even if others
 edited afterwards, without overwriting what another wrote later.
 
 - **Author** (`Edit_Step.author`). `Edits.author` is that of what changes now: `EDIT_AUTHOR_USER`
@@ -443,33 +388,22 @@ closes it on finishing; `inspector_sweep` closes at the end of the frame that of
 stopped being built. The gizmo opens one per drag; Escape returns the initial transformations and
 ends without a step.
 
-### Unsaved programs
+### Programs
 
-- Each publication of the programs (`programs_start`) and the Build pass to `build.shaders_start`
-  the `.slang` sources held in memory (`programs_overlay`), and generation reads them instead of
-  their files ([overlay](../../mirai-rendering/references/shaders.md#in-memory-sources)). The
-  publication goes out to `<project>/.mirai/shaders`, as always.
-- Save (Save all, the scene dialog, `asset.save`) writes the `.slang` and does not publish: what is
-  published is already the file's. Discard (`asset.discard`, Discard) returns to the file and
-  publishes again. Undo, redo and the review of a turn change the memory as with an asset and
-  publish.
-- The restart after Build and recovery save the copy in `.sources/<path>` of their folder and
-  return it to memory, which publishes.
-- The scene uses the unsaved program of each of its materials (`world_unsaved_assets`): saving it
-  or closing its tab offers it as Program, and the API names it by its path under the project
-  (`unsaved_name`, `engine/...` for one of the engine).
-- A `mirai build` of another process generates from the files and the editor loads that generation
-  until the next publication.
+- A write of a `.slang` source publishes the project's programs in a job (`programs_start`, to
+  `<project>/.mirai/shaders`); generation reads the files. Undo, redo and the review of a turn
+  rewrite the file and publish.
+- A `mirai build` of another process generates from the files and the editor loads that
+  generation until the next publication.
 
 ## World edit procedures
 
 In `world.odin`. They operate on the shown world (during a Play, the Play's); each is an undo step
 except inside a gesture. What their signatures do not say:
 
-- `entity_create(s, Create_Desc)` gives `Id`, `Name` and `Transform`; `preset`, or `card` for the
-  [card of a plugin](extensions.md#create-cards), puts the components and scale of the
-  recipe. A repeated name takes the first free number (`name_free`, from the name's final number,
-  in linear time).
+- `entity_create(s, Create_Desc)` gives `Id`, `Name` and `Transform`; `recipe` puts the
+  components, rotation and scale of [that recipe](#recipes). A repeated name takes the first free
+  number (`name_free`, from the name's final number, in linear time).
 - `entities_delete` also destroys what hangs from it and does not touch members of a prefab
   instance.
 - `entities_duplicate` copies with the authoring children, with internal references pointing to the
@@ -491,25 +425,30 @@ except inside a gesture. What their signatures do not say:
   use. `entity_world` includes what moved this frame, `entity_hidden` also looks at ancestors and
   `entity_get` sees a turned-off component.
 
-`Preset` are creation recipes, not types: `Empty` (group), `Cube`, `Sphere`, `Cylinder`, `Cone`,
-`Capsule`, `Plane`, `Prism`, `Pyramid`, `Point_Light`, `Spot_Light`, `Rect_Light`, `Sun`, `Camera`,
-`Sound` (a spatial looping `Audio_Source` that sends to the room, without sound, and an
-`Audio_Occlusion`), `Reverb_Zone` and the cameras that follow the player in a mode
-(`Isometric_Camera`, `Top_Down_Camera`, `Side_Camera`, `First_Person_Camera`, `Third_Person_Camera`
-and `Aim_Camera`, which also carries a `Camera_Activation` without action: the `Camera_Follow` and
-lens of its `engine/camera` preset, in the Cameras section); the lights put `<COMPONENT>_DEFAULT`
-of `engine/render`. Without a given rotation, the sun looks from `SUN_DIRECTION` and the spot
-downward (`preset_rotation`): every light shines toward its -Z. An entity without a body is seen
-and picked as a disk in the viewport only if its icon says what it is (a light, a camera, a sound,
-a plugin's card; `entity_marked`). A group, or an entity whose components show themselves (a
-terrain, a foliage, a volume), carries no disk, like an empty object in other editors, and is
-picked in the outliner. Plugins add recipes as cards (Particles, of `vfx`). The sky is not a
-recipe: a new scene is born with a `Sky` entity and a `Sun` (`scene_new`).
-
 **Identity.** `core.Id` is the stable id of a scene entity (hexadecimal in API and files);
 `core.Entity`, index and generation, is valid only inside a world. The selection keeps handles and
 is valid between editing and playing because the Play's copy preserves them. The `core.Entity` of
 components travel as `Id` in scenes, collaboration and API (`entity_offsets`).
+
+## Recipes
+
+A recipe is what Create, a `preset` of `scene.write` and `entity_create` make an entity of: a
+`.scene` of one entity in `recipes/` of the engine or of an active plugin that declares the
+`Recipes` part (`project.recipe_folders`, read by `author.recipes_read`). The name of its file is
+the name a document gives; its entity's name is the label of its card and the name of what it
+makes. What is placed is a copy of that entity, not a link: its components
+(`author.recipe_parts`, the entity placed and taken away in the same world), its rotation unless
+one is given, and its scale times the one given. Its height is how far above the surface Create
+puts something with no body; the placed position is always the one given. Recipes are data: they
+are written with `mirai scene write` and their files are moved into `recipes/`; a value computed
+in code is not one, so the cameras hold the lens and follow of their `engine/camera` mode and the
+sun the rotation from `SUN_DIRECTION` as numbers. Lights shine toward their -Z.
+
+An entity without a body is seen and picked as a disk in the viewport only if its icon says what
+it is (a light, a camera, a sound, a plugin's card; `entity_marked`). A group, or an entity whose
+components show themselves (a terrain, a foliage, a volume), carries no disk, like an empty object
+in other editors, and is picked in the outliner. The sky is not a recipe: a new scene is born with
+a `Sky` entity and a `Sun` (`scene_new`).
 
 ## Selection
 

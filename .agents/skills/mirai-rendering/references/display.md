@@ -11,7 +11,8 @@ Each light source has the photometric unit of its type, as in `KHR_lights_punctu
   light. With `material`, the material emission tints it across its width; the brightness is that
   of the light.
 - **Sky, background and emission**: luminance in nits; with an image, `Sky.luminance` is that of
-  its white. The emission of materials, `Tint`, decals, unlit particles and `Screen.brightness` of
+  its white. The emission of materials, `Material_Values`, decals, unlit particles and
+  `Screen.brightness` of
   `monitors` are also nits, except the [exposure-relative one](#exposure-relative-emission).
 
 Render units:
@@ -20,7 +21,7 @@ Render units:
   irradiance of a light is stored as the luminance of the Lambert white it illuminates
   (lux / π): a diffuse of albedo `a` returns `a · D` and the specular lobe is multiplied by π
   ([BRDF](materials.md#brdf)).
-- **A single place** converts: `scene_set_lights` the local lights, `view_begin` the sun, the sky
+- **A single place** converts: `scene_light_update` the local lights, `view_begin` the sun, the sky
   and the background, and the shaders the emission with `render_units` (`frame.sky_color.w` is the
   scale).
 - The scale is a power of two that brings the strongest light close to one (`light_scale_of`),
@@ -133,7 +134,7 @@ the bias, and each doubling is one more EV. It is the one of unlits and the one 
 glTF.
 
 - In render units it is worth `emission / frame.exposure` (`emission_render_units`); that of
-  `Tint` takes the mode of its material. The G-buffer marks the pixel
+  an entity's `Material_Values` takes the mode of its material. The G-buffer marks the pixel
   (`GBUFFER_EMISSION_RELATIVE`).
 - **It does not illuminate:** the rays that gather light see it as zero (`hit_emission`);
   reflections and what the glass shows behind do (`MIRAI_HITS_SHOW_RELATIVE_EMISSION`).

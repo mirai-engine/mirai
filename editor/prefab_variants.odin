@@ -42,24 +42,23 @@ variant_prompt_open :: proc(s:^Session,anchor:ui.Id,base_id:base.Asset_Id,instan
 variant_prompt_build :: proc(s:^Session) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     p:=&g.variant
     popup:=variant_prompt_popup(g)
     if !ui.popup_is_open(ctx,popup) {return}
     create:=false
     if ui.popup(ctx,popup,{width=280,padding=12}) {
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control),gap=6,align_y=.Center}) {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),gap=6,align_y=.Center}) {
             field:=ui.id_derive(ctx,popup,"name")
             if p.focus {ui.edit_request(ctx,field);p.focus=false}
-            r:=ui.text_field(ctx,field,p.name[:len(p.name)-1],&p.length,{height=th.control,size=th.font_small})
+            r:=ui.text_field(ctx,field,p.name[:len(p.name)-1],&p.length,{height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_small")})
             if r.cancelled {ui.popup_close(ctx,popup)}
             create=r.committed && .Enter in ctx.input.keys_pressed
             empty:=strings.trim_space(string(p.name[:p.length]))==""
-            create|=ui.button(ctx,ui.id_derive(ctx,popup,"create"),{label=p.instance!=core.NONE?"Save variant":"Create variant",style=.Field,height=th.control,size=th.font_small,disabled=empty}).clicked
+            create|=ui.button(ctx,ui.id_derive(ctx,popup,"create"),{label=p.instance!=core.NONE?"Save variant":"Create variant",variant="field",height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_small"),disabled=empty}).clicked
         }
     }
     if !create {return}
-    name:=strings.trim_suffix(strings.trim_space(string(p.name[:p.length])),PREFAB_EXTENSION)
+    name:=strings.trim_suffix(strings.trim_space(string(p.name[:p.length])),SCENE_EXTENSION)
     if name=="" {return}
     if strings.contains_any(name,"/\\:*?\"<>|") {
         notify(s,"Give the variant a name without / \\ : * ? \" < > or |")
@@ -80,7 +79,6 @@ variant_prompt_build :: proc(s:^Session) {
 prefab_variants_build :: proc(s:^Session) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     a:=s.app.assets
     current:=s.document.id
     if a==nil || s.content==nil {return}
@@ -89,7 +87,7 @@ prefab_variants_build :: proc(s:^Session) {
     top:=len(chain)>0?chain[len(chain)-1]:current
     label:="Prefab"
     if file,_,found:=prefab_file(s,current);found {label=asset_name(file.path)}
-    if ui.menu_button(ctx,shell_id(g,"prefab_variants"),label,{height=TOOLBAR_BUTTON,size=th.font_small,popup={min_width=200}}) {
+    if ui.menu_button(ctx,shell_id(g,"prefab_variants"),label,{height=TOOLBAR_BUTTON,size=ui.metric(ctx,"font_small"),popup={min_width=200}}) {
         // Depth first, each variant under its base, one step further right.
         Entry :: struct {id:base.Asset_Id,depth:int}
         stack:=make([dynamic]Entry,context.temp_allocator)
@@ -105,7 +103,7 @@ prefab_variants_build :: proc(s:^Session) {
         }
     }
     create:=shell_id(g,"prefab_variant_new")
-    if ui.button(ctx,create,{icon=ui.icon_user(u8(User_Icon.Variant)),tip="Create variant",style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,active=ui.popup_is_open(ctx,variant_prompt_popup(g)) && g.variant.instance==core.NONE,disabled=s.mode!=.Edit}).clicked {
+    if ui.button(ctx,create,{icon=ui.icon_user(u8(User_Icon.Variant)),tip="Create variant",variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,active=ui.popup_is_open(ctx,variant_prompt_popup(g)) && g.variant.instance==core.NONE,disabled=s.mode!=.Edit}).clicked {
         variant_prompt_open(s,create,current)
     }
 }

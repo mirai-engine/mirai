@@ -14,7 +14,7 @@ plugin, through its `Inspector_Provider`. The Details panel is in [layout](panel
   Group selection and Create prefab. Below go a fixed search, the `Transform` (rotation in
   degrees), Hierarchy and a card per component that the scene stores.
 - Components with controls of their own have no card: `Transform`, `Name`, `Id`, `Parent`,
-  `Hidden`, `Disabled` and `Material_Override`.
+  `Hidden`, `Disabled` and `Material_Values`.
 - The checkbox of each card, except that of `Transform`, turns its component on or off without
   losing its values, like the entity's does for the entity; both are undo steps.
 - With several entities it shows the sections they all have and an edit goes to all; in the
@@ -85,8 +85,9 @@ While an AI turn awaits review ([review](ai-review.md#finish-revert-and-retry)):
 
 ## Rows by reflection
 
-Rows come from the reflection of the component's type (`fields_rows`, `field_row`); the type and
-the tag choose the row:
+Rows come from the schema of the type (`inspect_schema`, `fields_rows`, `field_row`): the world's
+for components, settings it saves and records, one made for the frame for another value; the kind
+of the field's type and what its tag says (`serial.Field`) choose the row:
 
 - A number with minimum and maximum is a slider with an editable number. An `enum` is a segmented
   control if there are few short names (`ENUM_SEGMENTS`) and otherwise a searchable list. A
@@ -106,9 +107,8 @@ the tag choose the row:
   in the content browser (`content_reveal`); double click on the thumbnail opens the asset in its
   document. A field that does not take any asset says so in its tag: an engine type or that of a
   plugin whose editor declares it ([asset types](extensions.md#asset-types-of-a-plugin));
-  several go separated by spaces (`kind=.anim .match .agraph`) and the first gives the empty
-  thumbnail. With `with=Component`, the list offers only the prefabs that have it (a player's
-  body: `with=Drivable`), read once on opening it. It receives a dropped asset of its types; one
+  several go separated by spaces (`kind=.anim .character`) and the first gives the empty
+  thumbnail. It receives a dropped asset of its types; one
   of another type is warned about. A `.sound` field also takes a `.sound_set` (`asset_kind_takes`)
   and carries Play or Stop; that of an `Audio_Source` sounds as configured (`eaudio.play_source`,
   without a place even if spatial) and follows its changes.
@@ -141,6 +141,8 @@ Tags `mirai:"..."`:
   field that opens the section goes on its own line. A struct in a section of its same name does not
   repeat that name in its fields (`Compensation` under `Exposure`). Every section folds the same
   way (`editor.fold_section`); `Advanced` starts folded. When searching, sections are shown open.
+- `mode=A|B`: the field shows only while the enum field `mode` of its struct is one of those values
+  (the fields of one mode of `Camera_Follow`); a section starts at the first of its fields shown.
 
 A field whose initial value matters is declared with `NAME_DEFAULT` or `name_default()` in the
 component's package, which the inspector uses when adding it (`component_default`). Names are
@@ -186,28 +188,28 @@ Transform row (Rotation in degrees), `{"Spot_Light":{...}}` for a component and 
   the standard model with its maps and layers (coat, fuzz and anisotropy show their other values
   with weight greater than zero) or the Surface program's parameters. Unlit hides the light values.
   With several slots, each one's label (`Material 1`, `Material 2`...) unfolds below it, with its
-  own open state, the parameters of its material, with its Apply and its Revert; the `Tint`, which
-  applies to all, goes once above them. With a single one, Color and Emission show the material
-  with the `Tint`.
-- Everything changed there belongs to the entity (`Material_Override` and `Tint`): values, maps,
+  own open state, the parameters of its material, with its Apply and its Revert; the color and
+  the emission of the entity, which apply to all, go once above them. With a single one, Color and
+  Emission show the material with them.
+- Everything changed there belongs to the entity (its `Material_Values`): values, maps,
   program textures and overlays. The inspector never writes the material; Apply to material and the
   [material document](panels.md#material-document) change it for everyone.
 - Apply to material (`material_apply`, `material.instance.apply`) writes into the material what the
-  entity changes of that slot, removes it from the entity and saves the file right away, like a
-  prefab's Apply, in one undo step; the other entities that show it take it, except in what they
+  entity changes of that slot and removes it from the entity, in one undo step, and the flush writes
+  the file. The other entities that show it take it, except in what they
   change. Revert material changes removes from the entity what it changes of that slot
   (`material_revert`); the overlays belong to the first one. Reverting a shader parameter keeps the
   other overrides.
 - Material and effect references have an arrow; a texture's returns to the prefab's or, without
   it, to the material's.
 - What the source gave is read from the material's file when the registry has other content for it
-  (`material_base`). Reimporting a model with a material changed and unsaved rebases it in memory
+  (`material_base`). Reimporting a model with a material changed rebases it
   (`material_rebase`): it follows the source like the file and keeps what was changed.
 - **Overlays** goes below Material, outside its box. Its layers (`Overlay`) are the material's
   until the entity changes one: from then on the entity has its own list, which replaces the
   material's, and its arrow returns to the prefab's or the material's.
-- `Tint` is edited in the material properties and never as a section; without a `Mesh_Renderer`
-  its data is kept but not shown.
+- `Material_Values` is edited in the material properties and never as a section; without a
+  `Mesh_Renderer` its data is kept but not shown.
 - A material of the content browser is assigned to the first slot of the selected meshes with a
   click, or by dropping it on a mesh in the scene (`material_assign`, one step).
 

@@ -86,7 +86,7 @@ Gpu_Nested :: struct {
 }
 
 FRAME_FLAG_GI           :: abi.FRAME_FLAG_GI
-FRAME_FLAG_GI_REFERENCE :: abi.FRAME_FLAG_GI_REFERENCE
+FRAME_FLAG_GI_GIVEN     :: abi.FRAME_FLAG_GI_GIVEN
 FRAME_FLAG_HW_RT        :: abi.FRAME_FLAG_HW_RT
 FRAME_FLAG_STUDIO       :: abi.FRAME_FLAG_STUDIO
 FRAME_FLAG_GRID         :: abi.FRAME_FLAG_GRID
@@ -145,11 +145,13 @@ Gpu_Instance :: struct {
 	bounds_min: Vec4,
 	bounds_max: Vec4,
 	tint:       Vec4,
-	emission:   Vec4, // the w of tint, emission, bounds_min and bounds_max: the values of extensions (scene_set_instance_values)
+	emission:   Vec4,
 	glass:      Vec4, // written on the GPU by glass_mean.comp after every upload (glass_means_record)
 	slot_materials: [32]u32,
 	wet:        f32,    // 0 dry to 1 soaked, which the materials read (scene_set_instance_wet)
-	reserved:   [3]u32, // the stride stays a multiple of 16, as Metal lays out a struct with float4
+	material_values: u32, // 1 + the word of the index pool where what it gives over the rows of its materials starts (Instance_Material_Values); 0: nothing
+	colors:     u32,    // its own color of each vertex of its mesh in the vertex pool, by index in the mesh (scene_set_instance_colors)
+	color_count: u32,   // the vertices of its mesh; 0: the colors of the mesh
 }
 #assert(size_of(Gpu_Instance) % 16 == 0)
 GPU_NONE :: max(u32)
@@ -261,6 +263,27 @@ MESH_FLAG_COLORS :: abi.MESH_FLAG_COLORS
 // draws what is in the pools and asks for what it lacks.
 MESH_FLAG_STREAMED :: abi.MESH_FLAG_STREAMED
 
+// What an instance gives over the rows of its materials, which the shaders
+// read where they read one of those rows at a point of it. It costs the
+// instance its words in the index pool and no row of the material table.
+INSTANCE_VALUES_MAX :: abi.INSTANCE_VALUES_MAX
+INSTANCE_VALUES_HEADER :: abi.INSTANCE_VALUES_HEADER
+INSTANCE_ROW_WORDS :: abi.INSTANCE_ROW_WORDS
+// What an instance is given of them: the words of a row that differ from the
+// table's, from which the renderer makes the row as the instance shows it.
+INSTANCE_VALUE_COUNT_SHIFT :: 16
+Instance_Material_Value :: struct {
+	row:   u32,    // of the material table: the words are for the points of the instance that show it
+	word:  u32,    // the first word of the row (Gpu_Material_Row) it gives; from INSTANCE_VALUE_COUNT_SHIFT, how many from it
+	words: [4]u32, // in place of those of the row
+}
+Instance_Material_Values :: struct {
+	count:   u32,
+	fade:    f32, // how much of every row it fades out, 0 none to 1 all: an opaque row it fades blends
+	entries: [INSTANCE_VALUES_MAX]Instance_Material_Value,
+}
+#assert(offset_of(Instance_Material_Values, entries) == abi.INSTANCE_VALUES_HEADER * size_of(u32))
+
 // uv' = linear * uv + offset: the transform of the material and that of the
 // map, composed. ray_lod: the texture level a ray adds for what they shrink.
 Gpu_Material_Map_Transform :: struct {linear:Vec4,offset:Vec2,uv_set:u32,ray_lod:f32}
@@ -320,14 +343,21 @@ Gpu_Material_Volume :: struct {
 	_:       f32,
 }
 
+Gpu_Material_Blocks :: struct {
+	coat:                 Gpu_Material_Coat,
+	fuzz:                 Gpu_Material_Fuzz,
+	anisotropy:           Gpu_Material_Anisotropy,
+	diffuse_transmission: Gpu_Material_Diffuse_Transmission,
+}
+#assert(size_of(Gpu_Material) == abi.MATERIAL_WORDS * size_of(u32))
+#assert(size_of(Gpu_Material_Blocks) == abi.MATERIAL_BLOCK_WORDS * size_of(u32))
+#assert(offset_of(Gpu_Material_Row, custom_params) == abi.MATERIAL_PARAMETERS_WORD * size_of(u32))
+
 // A row of the material table: the values, then what shading fetches at
 // the point that uses it.
 Gpu_Material_Row :: struct {
 	using shared:   Gpu_Material,
-	coat:           Gpu_Material_Coat,
-	fuzz:           Gpu_Material_Fuzz,
-	anisotropy:     Gpu_Material_Anisotropy,
-	diffuse_transmission: Gpu_Material_Diffuse_Transmission,
+	using blocks:   Gpu_Material_Blocks,
 	volume:         Gpu_Material_Volume,
 	map_transforms: [asset.Material_Map_Kind]Gpu_Material_Map_Transform,
 	custom_params:  [16]Vec4,
@@ -353,7 +383,7 @@ Gpu_Bvh_Node :: struct {
 Gpu_Bvh_Triangle :: struct {
 	v0:        Vec3,
 	primitive: u32, // index within the mesh
-	e1, e2:    Vec4,
+	v1, v2:    Vec4, // corners whole, so that one two triangles share is the same in both; w unused
 }
 
 Gpu_Probe :: struct {
@@ -379,7 +409,18 @@ Gpu_Cull_State :: struct {
 	candidate_count:  u32,
 	dropped:          [Cull_List]u32, // past the capacities of the lists of the cull
 }
-#assert(size_of(Gpu_Cull_State) == 80)
+#assert(size_of(Gpu_Cull_State) == 88)
+
+// What the cull of the clusters the maps of the shadows draw counts
+// (shadow_cull.slang): the draws of those that hide whole and of those of
+// masked or blended materials, the groups of its cluster pass over the chunks
+// and how many chunks its instance pass handed over.
+Gpu_Shadow_State :: struct {
+	draws:            [2]Gpu_Draw,
+	cluster_dispatch: [3]u32,
+	chunk_count:      u32,
+}
+#assert(size_of(Gpu_Shadow_State) == 48)
 
 Gpu_Cull_Stats :: struct {
 	visible_instances, visible_triangles, culled_instances, occluded_instances: u32,
@@ -397,14 +438,10 @@ Visible_Kind_Id :: enum {Levels, Single, Batch}
 
 // Indirect dispatch sizes of the glass passes, at render and at half
 // resolution. The cull pass leaves them at zero while no instance with
-// blended triangles passes its tests, and sets `seen` when one does.
+// blended triangles passes its tests.
 Gpu_Glass_Dispatch :: struct {
-	full: [3]u32,
-	seen: u32,
-	half: [3]u32,
-	pad:  u32,
+	full, half: [3]u32,
 }
-#assert(size_of(Gpu_Glass_Dispatch) == 32)
 
 // The parameters of a post-process effect (Post_Parameters of common.slang).
 Gpu_Post_Parameters :: struct {program,exposed,outlined:u32,fade:f32,values:[16]Vec4}
@@ -416,11 +453,13 @@ gbuffer_normal_decode :: proc "contextless" (texel: Vec4) -> (normal: Vec3, roug
 }
 
 // The lists of the cull of a view: chunks of the instance pass, visible
-// clusters of both phases, and clusters phase 0 found hidden. What does not
+// clusters of both phases, and clusters phase 0 found hidden; and of the cull
+// of its maps of the shadows, its chunks and the clusters the maps draw, of 16
+// bytes each (shadow_cull.slang). What does not
 // fit is dropped and counted (Gpu_Cull_State.dropped, Gpu_Cull_Stats.dropped),
 // and the renderer grows the list for the frames after: a frame may show
 // holes where a list first overflows, never again at that size.
 // Programs: the visible clusters of materials with a Surface program
 // (Scene_State.program_bins), which the G-buffer draws by program.
-Cull_List :: enum {Chunks, Visible, Candidates, Programs}
-CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Programs = 1 << 14}
+Cull_List :: enum {Chunks, Visible, Candidates, Programs, Shadow_Chunks, Shadow_Entries}
+CULL_START :: [Cull_List]u32{.Chunks = 1 << 16, .Visible = 1 << 18, .Candidates = 1 << 16, .Programs = 1 << 14, .Shadow_Chunks = 1 << 14, .Shadow_Entries = 1 << 18}

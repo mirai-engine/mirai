@@ -45,7 +45,7 @@ coarse_levels_take_normals_over_their_own_step_and_neighbors_share_them :: proc(
         source_set(&rough,{x,0,z},h+0.6*math.sin(f32(x)*math.PI/2))
     }}
     mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
-    lod:=Chunk_Lod{level=3,faces={3,3,3,3,3,3}}
+    lod:=Chunk_Lod{level=3,sides={3,3,3,3}}
     testing.expect(t,chunk_build(&rough,{0,0,0},&mesh,false,lod))
     chunk_in_terrain(&mesh)
     worst:=f32(0)
@@ -87,8 +87,8 @@ far_rays_find_a_large_paged_heightfield_and_chunks_keep_picking_triangles :: pro
     }
     assets:host.Assets;testing.expect(t,host.assets_init(&assets,{root="assets",capacity=8}));defer host.assets_destroy(&assets)
     mesh:Chunk_Mesh;chunk_mesh_init(&mesh);defer chunk_mesh_destroy(&mesh)
-    testing.expect(t,chunk_build(&s,{3,0,3},&mesh,false,{level=2,faces={2,2,2,2,2,2}}))
-    id,made:=chunk_publish(&assets,.Heightfield,&mesh,false,picking=true)
+    testing.expect(t,chunk_build(&s,{3,0,3},&mesh,false,{level=2,sides={2,2,2,2}}))
+    id,made:=chunk_publish(&assets,&mesh,false,picking=true)
     testing.expect(t,made)
     buffer:geom.Mesh_Buffer;geom.mesh_buffer_init(&buffer);defer geom.mesh_buffer_destroy(&buffer)
     testing.expect(t,host.assets_geometry(&assets,id,.None,&buffer) && len(buffer.indices)==len(mesh.geometry.indices),"a chunk without a collider keeps triangles to pick")

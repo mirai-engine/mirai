@@ -9,24 +9,18 @@ import "mirai:editor/api"
 import scene "mirai:engine/scene"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 import nav "plugins:navigation/runtime"
 
 // Keeps the .navmesh of each Navigation_Bake of the edited world as its
 // meshes: that of the scene, and that of each of its sections loaded in it.
-// Once they have settled after a change, each is written again, in memory
-// until it is saved.
+// Once they have settled after a change, each is written again.
 
 // A .navmesh in the browser and in the field of a Navigation_Bake.
-@(storage)
-Nav_Kinds :: struct {provider:editor.Asset_Kind_Provider}
-NAV_KINDS_DEFAULT :: Nav_Kinds{provider={kinds={0={kind=nav.BAKE_KIND,label="Navmesh",color={60,180,140,255},icon=.Plane,extension=nav.BAKE_EXTENSION,scene_data=true}},count=1}}
-
 @(storage)
 Nav_Bake_Kept :: struct {
     world:rawptr,
     revision:u64,
-    bakes:u64, // the version and layout of the Navigation_Bake rows written
+    bakes:core.Seen, // what the Navigation_Bake rows written were
 }
 
 // Whether no tile waits for a build or for its links; those that wait for
@@ -86,7 +80,7 @@ bake_path :: proc(s:^editor.Session,id:base.Asset_Id,section:core.Entity) -> (pa
         if beside=="" {return}
         dot:=strings.last_index_byte(beside,'.')
         stem:=beside[:dot] if dot>strings.last_index_byte(beside,'/') else beside
-        path=fmt.tprintf("%s%s",stem,nav.BAKE_EXTENSION)
+        path=fmt.tprintf("%s%s",stem,nav.NAVMESH_EXTENSION)
     }
     return path,asset.registry_file_path(registry,path,context.temp_allocator)
 }
@@ -99,13 +93,13 @@ navigation_bake_keep :: proc(s:^editor.Session,kept:^Nav_Bake_Kept) {
     n:=core.world_storage_of(w,nav.Navigation)
     bakes:=core.world_table_of(w,nav.Navigation_Bake)
     if n==nil || bakes==nil || core.count(bakes)==0 || !n.ready {return}
-    seen:=core.version(core.read(bakes))+core.layout(core.read(bakes))
-    if kept.world==w.data && kept.revision==n.revision && kept.bakes==seen {return}
+    seen:=kept.bakes
+    if !core.touched(bakes,&seen) && kept.world==w.data && kept.revision==n.revision {return}
     if !settled(n) {return}
     written:=true
     for row in 0..<core.count(bakes) {
         e:=core.entity_at(bakes,row)
-        bake:=core.at(core.read(bakes),row)
+        bake:=core.at(bakes,row)
         if bake.asset=={} {continue}
         filter,section:=bake_filter(w,e)
         _,file:=bake_path(s,bake.asset,section)
@@ -116,12 +110,9 @@ navigation_bake_keep :: proc(s:^editor.Session,kept:^Nav_Bake_Kept) {
     if written {kept^={w.data,n.revision,seen}}
 }
 
-@(private) BAKE_SCHEMA :: `{"type":"object","properties":{"asset":{"type":"string"},"path":{"type":"string"},"tiles":{"type":"integer"},"settled":{"type":"boolean"}},"required":["asset","path","tiles","settled"]}`
-
-// The scene, or the section edited in its world, saves its meshes: the first
+// The scene, or the section edited in its world, writes its meshes: the first
 // time it gets a .navmesh beside it and an entity whose Navigation_Bake names
-// it, in one undo step; the file stays in memory until the scene is saved,
-// and follows the meshes from then on.
+// it, in one undo step; the file follows the meshes from then on.
 @(private)
 bake_call :: proc(s:^editor.Session,call:^api.Call) {
     if editor.document_is_prefab(s) {api.call_fail(call,api.INVALID_PARAMS,"nav.bake works on a scene: open one");return}
@@ -131,7 +122,7 @@ bake_call :: proc(s:^editor.Session,call:^api.Call) {
     if n==nil || bakes==nil {api.call_fail(call,api.INVALID_PARAMS,"The scene has no navigation: activate the plugin navigation in project.mirai");return}
     table:=cast(^core.Table(nav.Navigation_Bake))bakes
     if !n.ready {api.call_fail(call,api.INVALID_PARAMS,"The navigation meshes are not made yet: the physics of the scene must be ready");return}
-    if s.document==nil || editor.document_path(s.document)=="" {api.call_fail(call,api.INVALID_PARAMS,"Save the scene first: its .navmesh goes beside it");return}
+    if s.document==nil || editor.document_path(s.document)=="" {api.call_fail(call,api.INVALID_PARAMS,"The scene has no file, and its .navmesh goes beside it: give it one (File > Keep in a file, or scene.new with a path)");return}
     section:=editor.section_editing(s)
     owner:=core.NONE
     for row in 0..<core.count(table) {
@@ -139,7 +130,7 @@ bake_call :: proc(s:^editor.Session,call:^api.Call) {
         if editor.section_of(w,e)==section {owner=e;break}
     }
     id:base.Asset_Id
-    if value,found:=core.get(core.read(table),owner);found {id=value.asset}
+    if value,found:=core.get(table,owner);found {id=value.asset}
     if id=={} {
         if section!=core.NONE {
             reference,_:=editor.entity_get(w,section,scene.Scene_Reference)
@@ -156,8 +147,8 @@ bake_call :: proc(s:^editor.Session,call:^api.Call) {
     if error!=.None {api.call_failf(call,api.SERVER_ERROR,"The meshes cannot be written: %v",error);return}
     if !editor.api_edit_begin(s,call,"Bake navigation") {return}
     if owner!=core.NONE {
-        core.get(table,owner).asset=id
-    } else if e:=editor.entity_create(s,{preset=.Empty,name="Navigation",parent=section});e!=core.NONE {
+        core.edit(table,owner).asset=id
+    } else if e:=editor.entity_create(s,{name="Navigation",parent=section});e!=core.NONE {
         value:=nav.Navigation_Bake{asset=id}
         editor.component_add(s,e,bakes_info,&value)
     }
@@ -165,11 +156,5 @@ bake_call :: proc(s:^editor.Session,call:^api.Call) {
     editor.api_edit_end(s,call,written)
     tiles:=0
     for i in 0..<n.count {for &tile in n.classes[i].mesh.tiles {if tile.used && (!filter.within || mm.aabb_overlaps(filter.inside,tile.data.bounds)) {tiles+=1}}}
-    out:=call.out
-    serial.text_write_raw(out,"{")
-    api.write_text(out,"asset",fmt.tprintf("%016x%016x",id[0],id[1]),true)
-    api.write_text(out,"path",path)
-    api.write_int(out,"tiles",i64(tiles))
-    api.write_bool(out,"settled",settled(n))
-    serial.text_write_raw(out,"}")
+    api.call_result(call,Nav_Bake_Result)^={id,path,tiles,settled(n)}
 }

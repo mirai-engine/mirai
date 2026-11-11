@@ -23,12 +23,14 @@ Work_Slot :: struct {
     counter:jobs.Counter,
     kind:Work_Kind,
     urgent:bool,      // taken in the call that made it
+    patient:bool,     // Build: taken once it ended, without waiting for it
+    reads:bool,       // its job reads the source: what writes the source waits for it
     phase:core.Phase, // of the call that made it
     epoch:u32,        // of the data then
     source:^Source,
     id:base.Asset_Id,
     owner:core.Entity, // Build: the terrain whose piece it is
-    index:int,        // of the chunk or node, or of the page in its grid
+    index:int,        // of the chunk or node, or the id of the page in its grid
     version:u32,      // Build: the change of the chunk or node it read
     key:Chunk_Key,
     limits:host.Assets_Limits, // Build: of the assets its mesh goes to
@@ -86,7 +88,7 @@ work_free :: proc(data:^Terrain_Data) {
 @(private)
 work_wait :: proc(data:^Terrain_Data,source:^Source) {
     for &slot in data.work {
-        if slot.kind==.None || source!=nil && slot.source!=source && slot.join.ground!=source || !jobs.pending(&slot.counter) {continue}
+        if slot.kind==.None || source!=nil && (!slot.reads || slot.source!=source && slot.join.ground!=source) || !jobs.pending(&slot.counter) {continue}
         jobs.wait(data.jobs,jobs.OWNER,&slot.counter)
     }
 }
@@ -111,7 +113,8 @@ work_slot :: proc(data:^Terrain_Data,urgent:bool) -> ^Work_Slot {
 @(private)
 work_start :: proc(data:^Terrain_Data,slot:^Work_Slot) {
     if data.jobs==nil {work_run(slot,jobs.OWNER);return}
-    jobs.run(data.jobs,jobs.OWNER,work_run,slot,&slot.counter)
+    // A patient slot is taken once it ended; the others are waited for by the next call of their phase.
+    jobs.run(data.jobs,jobs.OWNER,.Background if slot.patient && !slot.urgent else .Frame,work_run,slot,&slot.counter)
 }
 
 // The build of a chunk or a node, from its source as it is now; a node of a
@@ -127,6 +130,7 @@ work_build :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,owner:c
     slot.owner=owner
     slot.kind,slot.urgent,slot.phase,slot.epoch,slot.limits=.Build,urgent,phase,data.epoch,limits
     slot.source,slot.id,slot.index,slot.version,slot.key,slot.ok=&entry.source,entry.id,index,data_version(entry,index),key,false
+    slot.patient,slot.reads=piece_levels(&entry.source,&entry.quad,index),true
     slot.join={}
     clear(&slot.cuts)
     if join!=nil && key.join!=0 {
@@ -148,15 +152,14 @@ work_page :: proc(data:^Terrain_Data,slot:^Work_Slot,entry:^Data_Source,grid:Gri
     block:Page_Block
     size,count:=4,0
     switch grid {
-    case .Heights: block=s.heights.blocks[index];_,count=grid_page_extent(&s.heights,index)
-    case .Weights: block=s.weights.blocks[index];_,count=grid_page_extent(&s.weights,index)
-    case .Holes: block,size=s.holes.blocks[index],1;_,count=grid_page_extent(&s.holes,index)
-    case .Distances: block=s.distances.blocks[index];_,count=grid_page_extent(&s.distances,index)
+    case .Field:   block=grid_block(&s.field,index);_,count=grid_page_extent(&s.field,index)
+    case .Weights: block=grid_block(&s.weights,index);_,count=grid_page_extent(&s.weights,index)
+    case .Holes:   block,size=grid_block(&s.holes,index),1;_,count=grid_page_extent(&s.holes,index)
     }
     made:bool
     if slot.page,made=shared_make(u8,count*size,s.allocator);!made {return false}
-    slot.band=s.cell*SDF_BAND_CELLS
-    slot.kind,slot.urgent,slot.phase,slot.epoch=.Page,false,phase,data.epoch
+    slot.band=field_limit(s.info)
+    slot.kind,slot.urgent,slot.patient,slot.reads,slot.phase,slot.epoch=.Page,false,false,true,phase,data.epoch
     slot.source,slot.id,slot.index,slot.grid,slot.block,slot.file,slot.ok=s,entry.id,index,grid,block,s.file,false
     work_start(data,slot)
     return true
@@ -174,25 +177,29 @@ work_run :: proc(slot:^Work_Slot,worker:int) {
     switch slot.kind {
     case .None:
     case .Build:
+        if !slot.reads {chunk_render_prepare(&slot.mesh,slot.limits,true);return}
         s:=slot.source
         q:=quad_of(s)
         if slot.index<q.first[1] {
             slot.ok=chunk_build(s,chunk_coord(s,slot.index),&slot.mesh,slot.key.collision,slot.key.lod,slot.join)
         } else {
-            slot.ok=node_build(s,&q,slot.index,slot.key.lod,&slot.border,&slot.mesh)
+            slot.ok=node_build(s,&q,slot.index,slot.key.lod,&slot.border,&slot.mesh,slot.join)
         }
-        if slot.ok {chunk_render_prepare(s.kind,&slot.mesh,slot.limits)}
+        if slot.ok && !slot.patient {chunk_render_prepare(&slot.mesh,slot.limits)}
     case .Page:
         slot.ok=page_load(slot.block,slot.file,&slot.read,slot.page)
         if !slot.ok {break}
         switch slot.grid {
-        case .Heights: slot.ok=page_valid(slice.reinterpret([]f32,slot.page),height_valid)
+        case .Field:   slot.ok=values_within(slice.reinterpret([]f32,slot.page),slot.band)
         case .Weights: slot.ok=page_valid(slice.reinterpret([]Weights,slot.page),weights_full)
-        case .Holes: slot.ok=page_valid(slot.page,hole_valid)
-        case .Distances: slot.ok=distances_within(slice.reinterpret([]f32,slot.page),slot.band)
+        case .Holes:   slot.ok=page_valid(slot.page,hole_valid)
         }
     }
 }
+
+// Whether a piece shows in the levels of its clusters: a node of a Volume.
+@(private)
+piece_levels :: #force_inline proc "contextless" (s:^Source,q:^Quad,index:int) -> bool {return s.kind==.Volume && index>=q.first[1]}
 
 // Lets go of what a slot holds; it is free again.
 @(private)
@@ -208,6 +215,16 @@ work_release :: proc(slot:^Work_Slot) {
 @(private)
 work_due :: proc(data:^Terrain_Data,slot:^Work_Slot,phase:core.Phase) -> bool {
     if slot.kind==.None || slot.phase!=phase && !slot.urgent {return false}
-    if jobs.pending(&slot.counter) {jobs.wait(data.jobs,jobs.OWNER,&slot.counter)}
-    return true
+    // A node of a Volume, which builds the surface of many chunks, is taken
+    // once it ended, and its levels are a job of their own that reads no
+    // source: an edit does not wait for them.
+    for {
+        if jobs.pending(&slot.counter) {
+            if slot.patient && !slot.urgent {return false}
+            jobs.wait(data.jobs,jobs.OWNER,&slot.counter)
+        }
+        if !slot.patient || !slot.reads || !slot.ok {return true}
+        slot.reads=false
+        work_start(data,slot)
+    }
 }

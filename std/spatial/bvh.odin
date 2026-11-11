@@ -16,8 +16,10 @@ BVH_STACK_CAPACITY :: 64
 Bvh_Node :: struct {min:[3]f32, first:u32, max:[3]f32, count:u32}
 #assert(size_of(Bvh_Node)==32)
 
-// max_leaf_size 0 means 4.
-Bvh_Desc :: struct {max_leaf_size:int, allocator:mem.Allocator}
+// max_leaf_size 0 means 4. max_depth: the deepest a leaf may be, as a stack that walks the tree
+// bounds it; 0 means BVH_STACK_CAPACITY, more than that fails. Only a leaf at max_depth holds more
+// than max_leaf_size primitives.
+Bvh_Desc :: struct {max_leaf_size,max_depth:int, allocator:mem.Allocator}
 // Immutable after the build. nodes[0] is the root and no input gives no nodes. Children are laid out
 // depth first in pairs that start at an even index, so with nodes aligned to 64 bytes each pair is
 // one cache line; nodes[1] is the unused slot that keeps that parity. order holds the primitive
@@ -33,7 +35,7 @@ bvh_build :: proc(bvh:^Bvh, aabbs:[]Aabb, desc:Bvh_Desc) -> bool {
     boxes,error:=make([]Aabb,len(aabbs),context.temp_allocator)
     if error!=nil||len(boxes)!=len(aabbs) {return false}
     copy(boxes,aabbs)
-    return bvh_build_boxes(bvh,boxes,desc,BVH_STACK_CAPACITY)
+    return bvh_build_boxes(bvh,boxes,desc)
 }
 // Primitive i is the triangle indices[3i..3i+2]. Fails, leaving the Bvh empty, on an index out of
 // range or a vertex of a triangle that is not finite.
@@ -50,7 +52,7 @@ bvh_build_triangles :: proc(bvh:^Bvh, vertices:[][3]f32, indices:[]u32, desc:Bvh
         if va-va+(vb-vb)+(vc-vc)!={} {return false}
         box={vmin(va,vmin(vb,vc)),vmax(va,vmax(vb,vc))}
     }
-    return bvh_build_boxes(bvh,boxes,desc,BVH_STACK_CAPACITY)
+    return bvh_build_boxes(bvh,boxes,desc)
 }
 bvh_destroy :: proc(bvh:^Bvh) {
     delete(bvh.nodes,bvh.allocator)
@@ -62,8 +64,9 @@ bvh_bounds :: proc(bvh:^Bvh) -> Aabb {
 }
 
 // Reorders `boxes` together with the primitive order.
-@(private) bvh_build_boxes :: proc(bvh:^Bvh, boxes:[]Aabb, desc:Bvh_Desc, depth_limit:int) -> bool {
+@(private) bvh_build_boxes :: proc(bvh:^Bvh, boxes:[]Aabb, desc:Bvh_Desc) -> bool {
     count:=len(boxes)
+    if desc.max_depth<0||desc.max_depth>BVH_STACK_CAPACITY {return false}
     if count==0 {return true}
     if count>int(max(i32)) {return false}
     for box in boxes {
@@ -75,7 +78,7 @@ bvh_bounds :: proc(bvh:^Bvh) -> Aabb {
     order,order_error:=make([]u32,count,allocator)
     if order_error!=nil||len(order)!=count {return false}
     for &primitive,i in order {primitive=u32(i)}
-    builder:=Bvh_Builder{scratch,1,boxes,order,desc.max_leaf_size>0?desc.max_leaf_size:4,depth_limit}
+    builder:=Bvh_Builder{scratch,1,boxes,order,desc.max_leaf_size>0?desc.max_leaf_size:4,desc.max_depth>0?desc.max_depth:BVH_STACK_CAPACITY}
     bvh_node_build(&builder,0,0,count,0)
     nodes,nodes_error:=mem.make_aligned([]Bvh_Node,builder.node_count,64,allocator)
     if nodes_error!=nil||len(nodes)!=builder.node_count {delete(order,allocator);return false}
@@ -93,7 +96,7 @@ bvh_bounds :: proc(bvh:^Bvh) -> Aabb {
     }
     node:=&b.nodes[index]
     node.min=bounds.min;node.max=bounds.max
-    left:=count>1?bvh_split(b,first,count,bounds,centroids,depth):0
+    left:=count>1&&depth<b.depth_limit?bvh_split(b,first,count,bounds,centroids,depth):0
     if left==0 {node.first=u32(first);node.count=u32(count);return}
     child:=max(b.node_count,2)
     b.node_count=child+2

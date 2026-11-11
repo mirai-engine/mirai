@@ -1,7 +1,10 @@
 package editor
 
 import "core:fmt"
+import "core:os"
 import "core:testing"
+import "mirai:asset"
+import "mirai:core"
 import "mirai:editor/history"
 import "mirai:platform"
 import "mirai:std/base"
@@ -12,14 +15,14 @@ documents_test_frame :: proc(s:^Session,input:ui.Input) -> ui.Frame {
     ctx:=s.gui.ctx
     s.gui.named_count=0
     ui.frame_begin(ctx,input)
-    if ui.panel(ctx,ui.id(ctx,"documents_test_bar"),{width=ui.fixed(input.size.x),height=ui.fixed(ctx.theme.bar_height),padding=0,gap=0}) {documents_build(s)}
+    if ui.panel(ctx,ui.id(ctx,"documents_test_bar"),{width=ui.fixed(input.size.x),height=ui.fixed(ui.metric(ctx,"bar_height")),padding=0,gap=0}) {documents_build(s)}
     return ui.frame_end(ctx)
 }
 
 @(test)
 document_tabs_hover_as_one_surface_and_close_independently :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     gui:=Editor_Ui{ctx=&ctx}
     document:Document
@@ -42,9 +45,9 @@ document_tabs_hover_as_one_surface_and_close_independently :: proc(t:^testing.T)
     for _ in 0..<3 {frame=documents_test_frame(&session,input)}
     active,_:=ui.widget_rect(&ctx,shell_id(&gui,"document_look",1))
     idle,_:=ui.widget_rect(&ctx,shell_id(&gui,"document_look",2))
-    testing.expect(t,active.h==ctx.theme.bar_height && idle.y+idle.h<active.y+active.h,"the active document connects to the toolbar in front of the inactive tabs")
+    testing.expect(t,active.h==ui.metric(&ctx,"bar_height") && idle.y+idle.h<active.y+active.h,"the active document connects to the toolbar in front of the inactive tabs")
     surface,_:=ui.widget_rect(&ctx,shell_id(&gui,"document_surface",2))
-    testing.expect(t,surface.y<=active.y && surface.h==ctx.theme.bar_height,"an inactive tab takes clicks up to the edge of the window")
+    testing.expect(t,surface.y<=active.y && surface.h==ui.metric(&ctx,"bar_height"),"an inactive tab takes clicks up to the edge of the window")
     idle_fill:=shape_fill(frame,idle)
     tab,_:=ui.widget_rect(&ctx,shell_id(&gui,"document_tab",2))
     close,_:=ui.widget_rect(&ctx,shell_id(&gui,"document_close",2))
@@ -68,7 +71,7 @@ document_tabs_hover_as_one_surface_and_close_independently :: proc(t:^testing.T)
 @(test)
 document_tabs_scroll_and_reveal_the_active_document_with_clipped_native_regions :: proc(t:^testing.T) {
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     gui:=Editor_Ui{ctx=&ctx,documents_reveal=true}
     document:Document
@@ -101,7 +104,7 @@ document_tabs_scroll_and_reveal_the_active_document_with_clipped_native_regions 
     documents_test_frame(&session,{size={420,100},pointer_absent=true})
     gui.documents_scroll-=107
     documents_test_frame(&session,{size={420,100},pointer_absent=true})
-    gui.rects.bar={0,0,420,ctx.theme.bar_height}
+    gui.rects.bar={0,0,420,ui.metric(&ctx,"bar_height")}
     regions:[NAMED_CAPACITY+1]platform.Window_Region
     count:=shell_regions(&session,regions[:])
     for region in regions[:count] {
@@ -125,13 +128,14 @@ document_tabs_scroll_and_reveal_the_active_document_with_clipped_native_regions 
 @(test)
 the_question_before_opening_a_scene_keeps_the_other_requests_of_the_frame :: proc(t:^testing.T) {
     gui:Editor_Ui
-    defer delete(gui.confirm_assets)
     document:Document
     edits:history.Edits
-    s:=Session{gui=&gui,document=&document,edits=&edits}
+    // An agent at work in the open scene is asked about before it changes.
+    ai:=new(Ai);defer free(ai)
+    ai.task_count=1
+    s:=Session{gui=&gui,document=&document,edits=&edits,ai=ai}
     append(&s.documents,Document_Tab{})
     defer delete(s.documents)
-    document.unsaved=true
     s.open_length=copy(s.open_path[:],"scenes/other.scene")
     s.requests={.Open,.Quit}
     requests_run(&s)
@@ -143,17 +147,102 @@ the_question_before_opening_a_scene_keeps_the_other_requests_of_the_frame :: pro
 @(test)
 escape_closes_a_dialog_with_what_it_asks_about :: proc(t:^testing.T) {
     gui:Editor_Ui
-    defer delete(gui.confirm_assets)
     viewport:Viewport
     selection:history.Selection
     edits:history.Edits
     s:=Session{gui=&gui,edits=&edits,selection=&selection,viewport=&viewport}
-    for modal in ([]Modal{.Save_Changes,.Delete_Asset,.Git_Discard}) {
+    for modal in ([]Modal{.Confirm,.Delete_Asset,.Git_Discard}) {
         gui.modal=modal
-        confirm_assets_set(&gui,{"materials/clay.mat"})
+        if modal==.Confirm {
+            gui.pending=.New
+            escape_run(&s,&gui,&viewport,&selection)
+            testing.expect(t,gui.modal==.None && gui.pending==.None && .New not_in s.requests,"what the question waited for does not go on")
+            continue
+        }
         gui.delete_asset={1,2}
         base.text_set(gui.discard_path[:],"scenes/a.scene")
         escape_run(&s,&gui,&viewport,&selection)
-        testing.expectf(t,gui.modal==.None && len(gui.confirm_assets)==0 && gui.delete_asset=={} && base.text_get(gui.discard_path[:])=="","%v",modal)
+        testing.expectf(t,gui.modal==.None && gui.delete_asset=={} && base.text_get(gui.discard_path[:])=="","%v",modal)
     }
+}
+
+// Whether the scene of a file has an entity named name.
+@(private="file")
+documents_test_has :: proc(f:^Prefab_Fixture,file,name:string) -> bool {
+    loaded:asset.Scene
+    if asset.scene_load(&loaded,&f.assets.types,file,context.temp_allocator)!=.None {return false}
+    defer asset.scene_destroy(&loaded)
+    for &held in asset.scene_names(&loaded) {
+        if base.text_get(held[:])==name {return true}
+    }
+    return false
+}
+
+// A document without a file writes nothing; once it has one, every step that
+// ends reaches it, undo too, and an open gesture waits for its end.
+@(test)
+the_steps_of_a_document_reach_its_file_once_it_has_one :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(t,f,"document-flush")) {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    w:=edited_world(s)
+    entity_create(s,{name="Rock",named=true})
+    core.world_settle(w)
+    prefab_fixture_step(f)
+    testing.expect(t,files_flush(s,true))
+    testing.expect_value(t,asset.registry_scan(&f.assets.registry),asset.Error.None)
+    testing.expect(t,len(f.assets.registry.files)==0 && document_file(s.document)=="","no file is made for it")
+
+    testing.expect_value(t,document_file_give(s,"level.scene"),Document_Error.None)
+    file:=scene_file(s,"level.scene")
+    testing.expect(t,!os.exists(file),"the file is written by the next flush")
+    testing.expect(t,files_flush(s,true) && documents_test_has(f,file,"Rock"))
+
+    tree:=entity_create(s,{name="Tree",named=true})
+    core.world_settle(w)
+    prefab_fixture_step(f)
+    testing.expect(t,files_flush(s,true) && documents_test_has(f,file,"Tree"))
+    testing.expect(t,history.undo(&f.edits,w,&f.selection))
+    testing.expect(t,files_flush(s,true) && !documents_test_has(f,file,"Tree") && documents_test_has(f,file,"Rock"))
+    testing.expect(t,history.redo(&f.edits,w,&f.selection))
+    testing.expect(t,files_flush(s,true) && documents_test_has(f,file,"Tree"))
+
+    tree=api_entity(w,api_entity_id(w,tree))
+    opened,ready:=edit_open(s,"Rename")
+    testing.expect(t,ready && entity_rename(s,tree,"Oak"))
+    testing.expect(t,!files_flush(s,true) && !documents_test_has(f,file,"Oak"),"an open gesture is no step yet")
+    edit_close(s,opened)
+    prefab_fixture_step(f)
+    testing.expect(t,files_flush(s,true) && documents_test_has(f,file,"Oak"))
+}
+
+// The file of the document changed outside the editor: the next flush reads
+// it again, with a new history, and writes nothing over it.
+@(test)
+a_document_reads_its_file_again_when_it_changed_outside :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(t,f,"document-follow")) {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    w:=edited_world(s)
+    rock:=entity_create(s,{name="Rock",named=true})
+    core.world_settle(w)
+    prefab_fixture_step(f)
+    id:=api_entity_id(w,rock)
+    if !testing.expect_value(t,test_document_write(s,"level.scene"),Document_Error.None) {return}
+    file:=document_file(s.document)
+    testing.expect(t,len(f.edits.steps)>0)
+
+    outside:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&outside,&f.assets.types,file),asset.Error.None) {return}
+    asset.scene_entity_rename(&outside,id,"Boulder")
+    testing.expect_value(t,asset.scene_save(&outside,file),asset.Error.None)
+    asset.scene_destroy(&outside)
+    assets_wrote(s,file)
+
+    testing.expect(t,files_flush(s,true))
+    testing.expect_value(t,entity_name(w,api_entity(w,id)),"Boulder")
+    testing.expect_value(t,len(f.edits.steps),0)
+    testing.expect(t,documents_test_has(f,file,"Boulder"))
 }

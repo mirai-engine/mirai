@@ -36,7 +36,7 @@ import mm "mirai:std/math"
 // keeps which of them changed until the tree is built: only the texts that
 // read those are formatted again.
 
-Binding :: enum u8 {Text,Value,Visible,Selected,Disabled,Items,Image,Tint,Variant}
+Binding :: enum u8 {Text,Value,Visible,Selected,Disabled,Items,Key,Image,Tint,Variant}
 
 // A name kept in the strings of a tree.
 Name_Ref :: struct {offset,length:u32}
@@ -61,8 +61,9 @@ Bind_Host :: struct {
     // far apart they start, and a stamp that moves when any of them changes
     // or rows come and go (0: they are compared). nil data: no rows.
     rows:proc(user:rawptr,name:u64) -> (data:rawptr,count,stride:int,stamp:u64),
-    // Whether a control bound to a field of this storage writes it itself,
-    // instead of asking the game with a Changed event. nil: none does.
+    // Whether a control bound to a field of this storage writes it itself:
+    // its Changed event then says what it wrote instead of asking the game.
+    // nil: none does.
     commits:proc(user:rawptr,name:u64) -> bool,
 }
 
@@ -89,9 +90,12 @@ Bind_Region :: struct {
     unchanged:bool,    // outside arrays: its stamp did not move in the last refresh, so its bytes were not looked at
     pure:bool,         // Array: no entity is reached inside it, so it changes only with the bytes of its parent
 }
-// Bytes of a region the tree reads: where they are in the game and in the copy.
+// Bytes of a region the tree reads: where they are in the game and in the
+// copy. step: of an f32 shown only as its rounded multiples (floor: those at
+// or under it), what it must move to change what is shown; 0: any change
+// shows; -1: the bar of a Progress, exact until its pixels are known.
 @(private)
-Bind_Range :: struct {region:i32,src,dst,size:u32}
+Bind_Range :: struct {region:i32,src,dst,size:u32,step:f32,floor:bool}
 
 // Where the paths of a node start.
 @(private)
@@ -140,6 +144,7 @@ Node_Items :: struct {
     region:i32,
     bound:bool,
     rows:bool,  // of a table: as many elements as the table has rows now, up to count
+    key:Bound,  // in the frame of an element: what tells its item apart, its key field or its entity; unbound, its index
 }
 
 @(private)
@@ -280,7 +285,7 @@ bind_resolve :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string) -> (r
 // A field a node shows or reads. want: what it must hold; Option, what a
 // Selector or a Dropdown binds: a number, or an enum or text its options name.
 @(private)
-Bound_Want :: enum u8 {Shown,Number,Option,Asset,Color,Name,Entity}
+Bound_Want :: enum u8 {Shown,Number,Option,Asset,Color,Name,Entity,Data,Key}
 @(private)
 tree_bind_field :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string,want:Bound_Want) -> (bound:Bound,ok:bool) {
     if path=="" {return {},true}
@@ -288,17 +293,23 @@ tree_bind_field :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string,wan
     region,offset,field_type:=bind_resolve(instance,scope,path) or_return
     t:=serial.schema_type(schema,field_type)
     bound={offset=offset,size=t.size,region=region,kind=t.kind,bound=true}
+    // What a Draw hands its procedure: the bytes of the field, whatever it holds.
+    if want==.Data {
+        if t.size==0 {return {},false}
+        bind_want(instance,region,offset,t.size) or_return
+        return bound,true
+    }
     #partial switch t.kind {
     case .Bool,.Int,.Uint,.Float,.Enum:
         if t.kind==.Float && t.size!=4 && t.size!=8 {return {},false}
-        if want==.Asset || want==.Color || want==.Entity {return {},false}
+        if want==.Asset || want==.Color || want==.Entity || want==.Key && (t.kind==.Float || t.kind==.Bool) {return {},false}
         if t.kind==.Enum && want!=.Number {bound.choices_of,bound.choices_type=schema,field_type}
         if want==.Name && t.kind!=.Enum {return {},false}
     case .Array:
         elem:=serial.schema_type(schema,t.elem)
         bound.count,bound.elem=t.count,elem.kind
         switch {
-        case elem.kind==.Uint && elem.size==1 && (want==.Shown || want==.Name || want==.Option):
+        case elem.kind==.Uint && elem.size==1 && (want==.Shown || want==.Name || want==.Option || want==.Key):
             bound.text=true
         case want==.Color && (t.count==3 || t.count==4) && (elem.kind==.Float && elem.size==4 || elem.kind==.Uint && elem.size==1):
         case:
@@ -307,7 +318,7 @@ tree_bind_field :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string,wan
     case .Asset:
         if want!=.Asset {return {},false}
     case .Entity:
-        if want!=.Entity {return {},false}
+        if want!=.Entity && want!=.Key {return {},false}
     case:
         return {},false
     }
@@ -353,8 +364,8 @@ tree_option_chosen :: proc(values:rawptr,b:Bound,options:string) -> int {
 }
 
 // Writes what a Changed event of a control asks for into the game, for a node
-// bound to a field of a storage the host writes this way (Bind_Host.commits):
-// the settings of the game. False: the event is for the game to answer.
+// bound to a field of a storage the host writes this way (Bind_Host.commits).
+// False: the event is for the game to answer.
 tree_commit_event :: proc(instance:^Tree_Instance,event:Tree_Event,host:^Bind_Host) -> bool {
     if host==nil || host.commits==nil || event.kind!=.Changed || event.node<0 || int(event.node)>=len(instance.bounds) {return false}
     bound:=instance.bounds[event.node].value
@@ -437,13 +448,15 @@ tree_bind_items :: proc(instance:^Tree_Instance,scope:Bind_Scope,path:string,row
     if e==nil || e.size==0 || e.kind!=.Struct && e.kind!=.Entity {return}
     array:=bind_region(instance,{kind=.Array,frame=region_home(instance,region),parent=region,type=t.elem,src=offset,count=t.count,stride=e.size})
     if array<0 {return}
+    items={count=t.count,region=array,bound=true}
     if e.kind==.Struct {
         element={kind=.Struct,region=array,offset=0,type=t.elem}
     } else {
         element={kind=.Entity,region=array,offset=0}
         bind_want(instance,array,0,size_of(base.Entity)) or_return
+        items.key={size=size_of(base.Entity),region=array,kind=.Entity,bound=true}
     }
-    return {count=t.count,region=array,bound=true},element,true
+    return items,element,true
 }
 
 // Packs the ranges the tree reads, by region, and places the regions in
@@ -458,7 +471,13 @@ bind_plan :: proc(instance:^Tree_Instance) -> bool {
         if merged>0 {
             last:=&wanted[merged-1]
             if last.region==range.region && range.src<=last.src+last.size {
+                same:=last.src==range.src && last.size==range.size
+                if same && (last.step!=range.step || last.floor!=range.floor) {last.step,last.floor=0,false}
+                if same {continue}
+                // A field shown by its steps is a range of its own.
+                if (last.step!=0 || range.step!=0) && range.src==last.src+last.size {wanted[merged]=range;merged+=1;continue}
                 last.size=max(last.size,range.src+range.size-last.src)
+                last.step,last.floor=0,false
                 continue
             }
         }
@@ -531,6 +550,7 @@ bind_plan :: proc(instance:^Tree_Instance) -> bool {
         if !items.bound {continue}
         r:=&instance.regions[items.region]
         items.offset,items.stride=r.dst,r.size
+        rebase(instance,&items.key)
     }
     e:[3]runtime.Allocator_Error
     instance.values,e[0]=make([]u8,size,instance.allocator)
@@ -550,6 +570,18 @@ bound_dirty :: proc(instance:^Tree_Instance,b:Bound) -> bool {
         if b.offset<at+range.size && b.offset+b.size>at && instance.dirty[int(r.first)+i] {return true}
     }
     return false
+}
+
+// The range that holds exactly the field a bound reads; nil when none does.
+@(private)
+bound_range :: proc(instance:^Tree_Instance,b:Bound) -> ^Bind_Range {
+    if !b.bound || b.region<0 || int(b.region)>=len(instance.regions) {return nil}
+    r:=&instance.regions[b.region]
+    origin:=u32(0) if r.kind==.Array else r.dst
+    for &range in instance.ranges[r.first:][:r.ranges] {
+        if origin+range.dst==b.offset && range.size==b.size {return &range}
+    }
+    return nil
 }
 
 // Every range of a region changed, and those of the regions packed in its elements.
@@ -641,12 +673,21 @@ ranges_copy :: proc(instance:^Tree_Instance,region:i32,dst:[^]u8,src:rawptr,chan
         from:=rawptr(uintptr(src)+uintptr(range.src))
         to:=rawptr(&dst[range.dst])
         if mem.compare_ptrs(to,from,int(range.size))!=0 {
+            if range.step>0 && range_same_step(range,(^f32)(to)^,(^f32)(from)^) {continue}
             mem.copy(to,from,int(range.size))
             changed^=true
             instance.dirty[int(r.first)+i]=true
             instance.dirty_any=true
         }
     }
+}
+
+// Whether two values of an f32 range show the same: the same step of it.
+@(private)
+range_same_step :: proc "contextless" (range:Bind_Range,a,b:f32) -> bool {
+    if a-a!=0 || b-b!=0 {return false} // NaN or infinite: always shown anew
+    half:=f64(0) if range.floor else 0.5
+    return math.floor(f64(a)/f64(range.step)+half)==math.floor(f64(b)/f64(range.step)+half)
 }
 
 // True when bytes held something, now zero.
@@ -720,6 +761,16 @@ tree_template_parse :: proc(parts:^[dynamic]Template_Part,text:string,instance:^
             digits,digits_ok:=strconv.parse_int(spec)
             if !digits_ok || digits<0 || digits>9 {return true,false}
             part.format,part.decimals=.Decimals,u8(digits)
+        }
+        // An f32 that only a number of it shows changes the text by its shown steps.
+        if instance.host!=nil && kind==.Float && part.bound.size==4 && len(instance.ranges)>0 {
+            last:=&instance.ranges[len(instance.ranges)-1]
+            #partial switch part.format {
+            case .Default:          last.step=0.01
+            case .Decimals,.Pattern:last.step=f32(math.pow(10,-f64(part.decimals)))
+            case .Percent:          last.step=f32(math.pow(10,-f64(part.decimals)-2))
+            case .Clock,.Clock_Hours:last.step,last.floor=1,true
+            }
         }
         append(parts,part)
         i+=close+1
@@ -804,9 +855,9 @@ bound_text :: proc(ctx:^Context,values:rawptr,b:Bound) -> string {
     return number_text(ctx,bound_number(values,b),2 if b.kind==.Float else 0)
 }
 
-// A part of a template, written into buffer in a language (name_hash of its code).
+// A part of a template, written into buffer in a language, by its code.
 @(private)
-template_part_write :: proc(buffer:^strings.Builder,values:rawptr,part:^Template_Part,language:u64) {
+template_part_write :: proc(buffer:^strings.Builder,values:rawptr,part:^Template_Part,language:string) {
     if part.literal!="" {strings.write_string(buffer,part.literal);return}
     b:=part.bound
     switch part.format {
@@ -924,8 +975,8 @@ bound_name :: proc(values:rawptr,b:Bound) -> string {
 // ---------------------------------------------------------------- formats of a language
 
 // How a language writes numbers and chooses its plurals, by its code (that of
-// a translation, as engine/gui names the languages of a game). A language
-// without a row writes as the first one. Groups of French and Russian take a
+// a translation, as a .strings names it). A region without a row writes as
+// its language (es-AR as es), and a language without one as the first. Groups of French and Russian take a
 // no-break space, which the font has, in place of their narrow one.
 @(private)
 Number_Locale :: struct {
@@ -940,26 +991,24 @@ Plural_Rule :: enum u8 {
     One,         // one: 1, whole
     Zero_Or_One, // one: up to 1
     Slavic,      // one: 1, 21; few: 2 to 4, 22; many: 0, 5 to 20; other: fractions
-    Other,       // every number is other
 }
 @(private)
 NUMBER_LOCALES :: [?]Number_Locale{
     {"en",",",".",1,.One,false},
-    {"zh-Hans",",",".",1,.Other,false},
     {"ru","\u00a0",",",1,.Slavic,false},
     {"es",".",",",2,.One,true},
     {"es-419",",",".",1,.One,true},
     {"de",".",",",1,.One,false},
     {"fr","\u00a0",",",1,.Zero_Or_One,true},
-    {"ja",",",".",1,.Other,false},
     {"pt-BR",".",",",1,.Zero_Or_One,true},
-    {"ko",",",".",1,.Other,false},
     {"it",".",",",1,.One,true},
 }
 @(private)
-number_locale :: proc(language:u64) -> Number_Locale {
+number_locale :: proc(language:string) -> Number_Locale {
     locales:=NUMBER_LOCALES
-    for locale in locales {if base.name_hash(locale.code)==language {return locale}}
+    for code:=language;code!="";code=code[:max(strings.last_index_byte(code,'-'),0)] {
+        for locale in locales {if locale.code==code {return locale}}
+    }
     return locales[0]
 }
 
@@ -983,7 +1032,6 @@ plural_of :: proc(locale:Number_Locale,value:f64) -> Plural {
         if k%10==1 && k%100!=11 {return .One}
         if k%10>=2 && k%10<=4 && (k%100<12 || k%100>14) {return .Few}
         return .Many
-    case .Other:
     }
     if locale.millions && whole && i!=0 && math.mod(i,1e6)==0 {return .Many}
     return .Other

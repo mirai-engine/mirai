@@ -10,9 +10,10 @@ This is a Mirai game project.
   do not sweep it in advance.
 - Start from the code already here: it runs as it is and `README.md` says what each file is.
   Extend it instead of studying the engine.
-- A scene, a prefab and a `.ui` are files of `assets/`, the source of the game: change them with
-  `scene.write`, `scene.add`, `scene.set` and `scene.save` (or `ui.write`) or in the editor. Only
-  generated assets (`tools/content`) come from code, and nothing writes over what the API saved.
+- A scene (a prefab is one whose kind is Prefab, with one root) and a `.ui` are files of
+  `assets/`, the source of the game: change them with
+  `scene.write` (or `ui.write`) or in the editor, which write the file at once. Only
+  generated assets (`tools/content`) come from code, and nothing writes over what the API wrote.
 - Engine sources are not the documentation. Do not read them to learn the API.
 
 ## Verify
@@ -22,8 +23,8 @@ This is a Mirai game project.
 - A route or a chase is a scenario with the drive step of `play.step` (it steers the player to a
   point), never a bot script around `mirai rpc`.
 - Few turns: every turn pays for the whole context. Plan the change, make it in one edit, run
-  `mirai rpc --batch` for several calls, and verify once.
-- While looking at state, read only what you need with `play.get` and `--select`.
+  `mirai rpc batch --file` for several calls, and verify once.
+- While looking at state, read only what you need with `play.check` and `--select`.
 - Give `capture` a `path`: it answers only where the image is.
 
 ## Commands

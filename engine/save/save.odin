@@ -8,7 +8,6 @@ import "core:strings"
 import "core:time"
 import "mirai:asset"
 import "mirai:core"
-import inp "mirai:engine/input"
 import "mirai:engine/scene"
 import "mirai:host"
 import "mirai:std/base"
@@ -47,7 +46,7 @@ SLOT_CAPACITY :: 48
 LABEL_CAPACITY :: 64
 EXTENSION :: ".save"
 FOLDER :: "saves"
-VERSION :: u32(6)
+VERSION :: u32(7)
 CHECKPOINT :: "checkpoint" // the slot of the last checkpoint
 
 @(private) MAGIC :: [4]u8{'M','S','A','V'}
@@ -111,8 +110,8 @@ Save_Requests :: struct {queue:core.Queue(Request)}
 // Events: this library clears them at each frame and pushes one per request
 // served, and one per autosave it made by itself. A slot written later (its
 // thumbnail, a job) brings its own in the frame it is written.
-@(storage,events,keep)
-Save_Results :: struct {queue:core.Queue(Result)}
+@(storage,keep)
+Save_Results :: struct {queue:core.Events(Result)}
 
 // Where the slots are kept: the folder set, or <user data>/Mirai/<project>/saves.
 @(storage,host)
@@ -344,11 +343,10 @@ delete_slot :: proc(state:^Save_State,app:^host.App,slot:string) -> Error {
 @(step="input",loops="game")
 saves_serve :: proc(
     world:core.World_Ref,app:^host.App,requests:^Save_Requests,results:^Save_Results,state:^Save_State,work:^Save_Work,
-    thumbnails:^Save_Thumbnails,game:^Save_Game,settings:core.Ref(Save_Settings),profile:^Profile_State,bindings:core.Ref(inp.Input_Map),
+    thumbnails:^Save_Thumbnails,game:^Save_Game,settings:core.Ref(Save_Settings),profile:^Profile_State,
     authority:core.Ref(core.Network),frame:core.Ref(core.Frame_Time),clock:core.Ref(core.Clock),
-    references:core.Read(scene.Scene_Reference),problems:^core.Problems,
+    references:^core.Table(scene.Scene_Reference,.Read),problems:^core.Problems,
 ) {
-    core.queue_clear(&results.queue)
     if !profile.read {
         profile.read=true
         if error:=profile_read(world,app,state);error!=.None && error!=.Not_Found && error!=.Unavailable {
@@ -390,7 +388,7 @@ saves_serve :: proc(
         if !queued {core.push(&results.queue,result)}
     }
     if work==nil {return}
-    kept_watch(work,world,app,state,bindings.ptr,frame.dt,problems)
+    kept_watch(work,world,app,state,frame.dt,problems)
     root:scene.Scene_Root
     if r:=core.world_storage_of(world,scene.Scene_Root);r!=nil {root=r^}
     due:=autosave_watch(work,game,settings.ptr^,root,references)
@@ -469,7 +467,7 @@ capture :: proc(w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator
         if !yes {continue}
         e:=core.entity_make(index,es.generation[index])
         if !core.alive(es,e) {continue}
-        if value,_:=core.get(core.read(ids),e);value.value!=0 {continue}
+        if value,_:=core.get(ids,e);value.value!=0 {continue}
         id:=core.id_new(es,&state)
         core.add(ids,e,core.Id{id})
         append(&lent,e)
@@ -488,7 +486,7 @@ capture :: proc(w:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator
     // What a network session keeps on entities is of the session, not of the game.
     // A saved game holds no instances: nothing brings it up to date with a prefab.
     excluded:=[]typeid{core.Remote,core.Pose_Target,scene.Prefab_Instance,scene.Prefab_Member}
-    report,error:=scene.capture(w,&document,types,{kind=asset.KIND_SCENE,id=DOCUMENT,sections=true,excluded=excluded},allocator)
+    report,error:=scene.capture(w,&document,types,{id=DOCUMENT,sections=true,excluded=excluded},allocator)
     if error!=.None {return .Failed}
     defer asset.scene_destroy(&document)
     body:serial.Writer

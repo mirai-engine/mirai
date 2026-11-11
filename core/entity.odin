@@ -19,8 +19,9 @@ Entities :: struct {
     doomed:[dynamic]Entity,  // destroyed; world_settle removes their rows and frees their index
     off:[dynamic]bool,       // by index: it or something above it has Disabled
     turned:[dynamic]Entity,  // their off changed in this settle: the tables move their rows
-    walk:[dynamic]bool,      // by index, while entities_activity runs: under a Disabled
-    activity:u64,            // the versions and layouts of Disabled and the Hierarchy that off follows
+    walk:[dynamic]bool,      // by index, scratch of the settle: destroyed (hierarchy_doom), then under a Disabled (entities_activity)
+    activity:Seen,           // the Disabled that off follows
+    activity_tree:u64,       // and how far it read the moved of the Hierarchy
     alive:int,
     disabled:int,            // the entities off
     ids:Id_Index,            // the entities by their Id
@@ -76,7 +77,7 @@ entities_clear :: proc(es:^Entities) -> bool {
     clear(&es.doomed)
     clear(&es.off)
     clear(&es.turned)
-    es.activity=0
+    es.activity,es.activity_tree={},0
     es.alive=0
     es.disabled=0
     ids_clear(&es.ids)
@@ -84,12 +85,13 @@ entities_clear :: proc(es:^Entities) -> bool {
     return true
 }
 
-create :: proc(es:^Entities) -> Entity {
+// NONE without memory.
+entity_create :: proc(es:^Entities) -> Entity {
     index:int
     if len(es.free)>0 {
         index=int(pop(&es.free))
     } else {
-        append(&es.generation,1)
+        if _,error:=append(&es.generation,1);error!=nil {return NONE}
         index=len(es.generation)-1
     }
     es.alive+=1
@@ -97,12 +99,13 @@ create :: proc(es:^Entities) -> Entity {
 }
 
 // The handle stops being alive at once; its rows go with the next settle.
-destroy :: proc(es:^Entities,e:Entity) -> bool {
+// False for one not alive, and without memory, when it stays alive.
+entity_destroy :: proc(es:^Entities,e:Entity) -> bool {
     if !alive(es,e) {return false}
+    if _,error:=append(&es.doomed,e);error!=nil {return false}
     i:=entity_index(e)
     es.generation[i]+=1
     if es.generation[i]==0 {es.generation[i]=1}
-    append(&es.doomed,e)
     es.alive-=1
     return true
 }
@@ -118,20 +121,61 @@ entity_off :: #force_inline proc "contextless" (es:^Entities,e:Entity) -> bool {
     return i<len(es.off) && es.off[i]
 }
 
-// Makes off follow Disabled and the hierarchy when either changed, and lists
-// in turned the entities whose rows the other tables then move. The generated
-// settle calls it between functions, after settling Disabled and Parent and
-// the Hierarchy. False without memory: what it could not do waits for the
-// next settle.
-entities_activity :: proc(es:^Entities,disabled:Read(Disabled),hierarchy:Ref(Hierarchy)) -> bool {
-    seen:=version(disabled)+layout(disabled)+hierarchy.version
-    if seen==es.activity {return true}
-    if count(disabled)==0 && es.disabled==0 {
-        es.activity=seen
-        return true
+// Makes off follow Disabled and the hierarchy where either changed, and
+// lists in turned the entities whose rows the other tables then move: it
+// walks from what Disabled and the Hierarchy say changed, and every entity
+// only when one of them was replaced whole. The generated settle calls it
+// between functions, after settling Disabled and Parent and the Hierarchy.
+// False without memory: what it could not do waits for the next settle.
+entities_activity :: proc(es:^Entities,disabled:^Table(Disabled,$A),hierarchy:Ref(Hierarchy)) -> bool {
+    seen,read:=es.activity,es.activity_tree
+    c:=changes(disabled,&seen)
+    moved,whole:=log_since(hierarchy.moved,&read)
+    if !c.written && len(c.gone)==0 && len(moved)==0 && !whole {return true}
+    if count(disabled)>0 || es.disabled>0 {
+        // As long as the tree: what it moved may be past the generations, as
+        // after the editor's history took back the indices born since a step.
+        if resize(&es.off,max(len(es.generation),len(hierarchy.parent)))!=nil {return false}
+        if c.all || whole {
+            activity_whole(es,disabled,hierarchy) or_return
+        } else {
+            for e in c.gone {activity_follow(es,disabled,hierarchy,e) or_return}
+            for row in each_changed(disabled,&c) {activity_follow(es,disabled,hierarchy,entity_at(disabled,row)) or_return}
+            for e in moved {activity_follow(es,disabled,hierarchy,e) or_return}
+        }
     }
-    n:=len(es.generation)
-    if resize(&es.off,n)!=nil || resize(&es.walk,n)!=nil {return false}
+    es.activity,es.activity_tree=seen,read
+    return true
+}
+
+// Makes off of root, and of what hangs from it, follow its Disabled and the
+// off of what it hangs from; below one whose off stays, nothing changes.
+@(private="file")
+activity_follow :: proc(es:^Entities,disabled:^Table(Disabled,$A),hierarchy:Ref(Hierarchy),root:Entity) -> bool {
+    for at:=root;at!=NONE; {
+        i:=entity_index(at)
+        above:=parent_of(hierarchy,at)
+        live:=alive(es,at)
+        off:=live && (has(disabled,at) || above!=NONE && es.off[entity_index(above)])
+        if off==es.off[i] {
+            at=subtree_next(hierarchy,root,at,false)
+            continue
+        }
+        if live {
+            if _,error:=append(&es.turned,at);error!=nil {return false}
+        }
+        es.off[i]=off
+        es.disabled+=off?1:-1
+        at=subtree_next(hierarchy,root,at)
+    }
+    return true
+}
+
+// Makes off of every entity follow Disabled and the hierarchy.
+@(private="file")
+activity_whole :: proc(es:^Entities,disabled:^Table(Disabled,$A),hierarchy:Ref(Hierarchy)) -> bool {
+    n:=len(es.off)
+    if resize(&es.walk,n)!=nil {return false}
     slice.zero(es.walk[:])
     // Below an entity marked everything is marked: its walk stops there.
     for row in 0..<count(disabled) {
@@ -149,11 +193,12 @@ entities_activity :: proc(es:^Entities,disabled:Read(Disabled),hierarchy:Ref(Hie
     for i in 1..<n {
         off:=es.walk[i]
         if off==es.off[i] {continue}
-        if _,error:=append(&es.turned,entity_make(i,es.generation[i]));error!=nil {return false}
+        if i<len(es.generation) {
+            if _,error:=append(&es.turned,entity_make(i,es.generation[i]));error!=nil {return false}
+        }
         es.off[i]=off
         es.disabled+=off?1:-1
     }
-    es.activity=seen
     return true
 }
 

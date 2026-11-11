@@ -57,30 +57,6 @@ falloff_curve :: proc "contextless" (x:f32,falloff:Radial_Falloff) -> f32 {
     return 0
 }
 
-// Weight at `distance` from the center of a volume of `radius`: zero outside it or for values that are not
-// valid.
-radial_weight :: proc "contextless" (distance,radius:f32,falloff:Radial_Falloff,range:Weight_Range={}) -> f32 {
-    if !(radius>0 && radius<=max(f32) && distance>=0 && distance<=radius) || falloff>.Logarithmic || !weight_range_valid(range) {return 0}
-    return weight_from_range(range,falloff_curve(max(1-distance/radius,0),falloff))
-}
-
-// Weight in an oriented box, whose border is its surface.
-box_weight :: proc "contextless" (point,center,half:Vec3,rotation:Quat,falloff:Radial_Falloff,range:Weight_Range={}) -> f32 {
-    for value in half {if !(value>0 && value<=max(f32)) {return 0}}
-    local:=vabs(q_inv_rotate(q_normalize(rotation),point-center))/half
-    distance:=max(local.x,local.y,local.z)
-    return radial_weight(distance,1,falloff,range)
-}
-
-// Weight in an oriented box whose local +Y face is the plane: it is the center of the curve, and the border is
-// the -Y face, the whole depth of the box below it.
-plane_weight :: proc "contextless" (point,center,half:Vec3,rotation:Quat,falloff:Radial_Falloff,range:Weight_Range={}) -> f32 {
-    for value in half {if !(value>0 && value<=max(f32)) {return 0}}
-    local:=q_inv_rotate(q_normalize(rotation),point-center)/half
-    if !(abs(local.x)<=1 && abs(local.y)<=1 && abs(local.z)<=1) {return 0}
-    return radial_weight(1-local.y,2,falloff,range)
-}
-
 // Weight of the noise of a volume at a point: 1 without noise, zero for a noise that is not valid.
 noise_weight :: proc "contextless" (point,center:Vec3,rotation:Quat,noise:Field_Noise) -> f32 {
     if noise.scale==0 {return 1}
@@ -91,47 +67,28 @@ noise_weight :: proc "contextless" (point,center:Vec3,rotation:Quat,noise:Field_
     return weight_from_range(noise.range,value)
 }
 
-world_apply_radial :: proc(w:^World,center:Vec3,radius,strength:f32,falloff:Radial_Falloff=.Linear,impulse:=false,velocity_change:=false,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) -> (count:int,ok:bool) {
-    if !(radius>0 && radius<=max(f32) && strength>=-max(f32) && strength<=max(f32)) || velocity_change && !impulse {return 0,false}
-    return world_apply_volume(w,Sphere{radius},{center,QUAT_IDENTITY},{strength,0,0},{falloff,range,noise,false},true,impulse,velocity_change,filter)
+// A region of the world that forces and impulses are applied in, as whoever asks for them describes it:
+// the model has no shape of its own for it. `weight` says how much of the region a point is in, 0 outside
+// it and up to 1 inside; `bounds` is a box of the world that holds it, which may have no end.
+Area :: struct {
+    bounds:Aabb,
+    center:Vec3,   // what a radial push goes away from
+    rotation:Quat, // with the center, the frame of the noise
+    weight:proc "contextless" (user:rawptr,point:Vec3) -> f32,
+    user:rawptr,
 }
 
-world_apply_box_force :: proc(w:^World,center,half:Vec3,rotation:Quat,force:Vec3,falloff:Radial_Falloff=.Constant,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) -> (count:int,ok:bool) {
-    for value in half {if !(value>0 && value<=max(f32)) {return 0,false}}
-    return world_apply_volume(w,Box{half},{center,rotation},force,{falloff,range,noise,false},false,false,false,filter)
-}
-
-world_apply_sphere_force :: proc(w:^World,center:Vec3,radius:f32,force:Vec3,falloff:Radial_Falloff=.Constant,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) -> (count:int,ok:bool) {
-    if !(radius>0 && radius<=max(f32)) {return 0,false}
-    return world_apply_volume(w,Sphere{radius},{center,QUAT_IDENTITY},force,{falloff,range,noise,false},false,false,false,filter)
-}
-
-world_apply_box_radial_force :: proc(w:^World,center,half:Vec3,rotation:Quat,strength:f32,falloff:Radial_Falloff=.Linear,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) -> (count:int,ok:bool) {
-    for value in half {if !(value>0 && value<=max(f32)) {return 0,false}}
-    return world_apply_volume(w,Box{half},{center,rotation},{strength,0,0},{falloff,range,noise,false},true,false,false,filter)
-}
-
-// A force in a box weighted by plane_weight: strongest at its local +Y face, falling with the depth below it.
-world_apply_plane_force :: proc(w:^World,center,half:Vec3,rotation:Quat,force:Vec3,falloff:Radial_Falloff=.Linear,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) -> (count:int,ok:bool) {
-    for value in half {if !(value>0 && value<=max(f32)) {return 0,false}}
-    return world_apply_volume(w,Box{half},{center,rotation},force,{falloff,range,noise,true},false,false,false,filter)
-}
-
-@(private) Volume_Weight :: struct {falloff:Radial_Falloff,range:Weight_Range,noise:Field_Noise,plane:bool}
-
-@(private)
-world_apply_volume :: proc(w:^World,geometry:Geometry,transform:Transform,force:Vec3,weight:Volume_Weight,radial,impulse,velocity_change:bool,filter:Query_Filter) -> (count:int,ok:bool) {
-    if w==nil || len(w.bodies)==0 || weight.falloff>.Logarithmic || !weight_range_valid(weight.range) || !field_noise_valid(weight.noise) {return 0,false}
-    for value in transform.p {if !(value>=-max(f32) && value<=max(f32)) {return 0,false}}
-    for value in force {if !(value>=-max(f32) && value<=max(f32)) {return 0,false}}
-    for value in ([4]f32{transform.q.x,transform.q.y,transform.q.z,transform.q.w}) {if !(value>=-max(f32) && value<=max(f32)) {return 0,false}}
-    xf:=Transform{transform.p,q_normalize(transform.q)}
-    storage:[8]Vec3
-    proxy,valid:=query_proxy(w,geometry,&storage)
-    if !valid {return 0,false}
-    box:=proxy_aabb(proxy,xf)
-    for value in box.min {if !(value>=-max(f32) && value<=max(f32)) {return 0,false}}
-    for value in box.max {if !(value>=-max(f32) && value<=max(f32)) {return 0,false}}
+// A force (N) or, with `impulse`, an impulse (N s; a velocity change, m/s, with `velocity_change`) on every
+// dynamic body the filter sees whose center of mass is in the area, once per body. `radial` pushes away from
+// the center of the area by force.x (negative pulls in); without it the force is the vector. The falloff
+// curve takes the weight of the area at the body to the share of the force it gets, in `range`, scaled by
+// the noise. count: the bodies pushed. ok is false, and nothing is pushed, for values that are not valid.
+world_apply_area :: proc(w:^World,area:Area,force:Vec3,radial:=false,impulse:=false,velocity_change:=false,falloff:Radial_Falloff=.Linear,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) -> (count:int,ok:bool) {
+    if w==nil || len(w.bodies)==0 || area.weight==nil || falloff>.Logarithmic || !weight_range_valid(range) || !field_noise_valid(noise) || velocity_change && !impulse {return 0,false}
+    if !finite(area.center,force) || !finite(area.rotation) {return 0,false}
+    box:=area.bounds
+    for axis in 0..<3 {if !(box.min[axis]>=-max(f32) && box.max[axis]<=max(f32) && box.min[axis]<=box.max[axis]) {return 0,false}}
+    frame:=q_normalize(area.rotation)
     marks:=w.step.color_bits[:w.step.color_words]
     for &word in marks {word=0}
     query:=spatial.dynamic_tree_query(&w.trees[DYNAMIC_TREE],box)
@@ -142,19 +99,13 @@ world_apply_volume :: proc(w:^World,geometry:Geometry,transform:Transform,force:
         slot:=int(shape.body)
         bit:=u64(1)<<u32(slot&63)
         if marks[slot>>6]&bit!=0 {continue}
-        if _,touching:=shape_distance_local(w,shape,proxy,xf_inv_mul(shape_transform_of(w,shape),xf),0);!touching {continue}
         marks[slot>>6]|=bit
+        at:=area.weight(area.user,body.center)
+        if !(at>0) {continue}
         vector:=force
-        if radial {vector=normalize(body.center-transform.p)*force.x}
-        switch g in geometry {
-        case Sphere:
-            vector*=radial_weight(length(body.center-transform.p),g.radius,weight.falloff,weight.range)
-        case Box:
-            if weight.plane {vector*=plane_weight(body.center,xf.p,g.half_extents,xf.q,weight.falloff,weight.range)}
-            else {vector*=box_weight(body.center,xf.p,g.half_extents,xf.q,weight.falloff,weight.range)}
-        case Capsule,Cylinder,Hull_Handle,Mesh_Handle,Heightfield_Handle: continue
-        }
-        if weight.noise.scale!=0 {vector*=noise_weight(body.center,xf.p,xf.q,weight.noise)}
+        if radial {vector=normalize(body.center-area.center)*force.x}
+        vector*=weight_from_range(range,falloff_curve(min(at,1),falloff))
+        if noise.scale!=0 {vector*=noise_weight(body.center,area.center,frame,noise)}
         if vector=={} {continue}
         handle:=body_handle(w,shape.body)
         if impulse {

@@ -132,14 +132,14 @@ moving_and_renaming_an_asset_keep_its_id_and_what_names_it :: proc(t:^testing.T)
     testing.expect(t,strings.has_prefix(message,"folder:"),message)
     testing.expect_value(t,move_test_path(m,MOVE_TEST_TEXTURE),"Textures/Granite.tex")
 
-    // What is unsaved does not move until it is saved or discarded.
+    // What the registry holds until its step is written does not move until then.
     rock:=asset.registry_file_path(r,"Rocks/rock.mat",context.temp_allocator)
     testing.expect(t,file_write(s,rock,move_test_material_bytes(m,MOVE_TEST_ROCK,MOVE_TEST_OTHER),"Change rock"))
     files_test_commit(&m.files)
     _,message=asset_move(s,MOVE_TEST_ROCK,"Moved","")
-    testing.expect(t,strings.contains(message,"unsaved"),message)
+    testing.expect(t,strings.contains(message,"being edited"),message)
     testing.expect_value(t,move_test_path(m,MOVE_TEST_ROCK),"Rocks/rock.mat")
-    assets_discard(s,{"Rocks/rock.mat"})
+    testing.expect(t,files_flush(s,true))
     // The history names the file where it went: undo puts it back there.
     path,message=asset_move(s,MOVE_TEST_ROCK,"Moved","")
     testing.expect(t,message=="" && path=="Moved/rock.mat")
@@ -268,11 +268,11 @@ a_folder_moves_and_copies_with_all_it_holds :: proc(t:^testing.T) {
     path,moved=asset_folder_move(s,"World/Env","World","Biome")
     testing.expect(t,moved=="" && path=="World/Biome" && move_test_path(m,MOVE_TEST_ROCK)=="World/Biome/ground.mat")
 
-    // Unsaved files keep their folder where it is.
+    // A file a gesture holds in the registry keeps its folder where it is.
     testing.expect_value(t,asset.registry_memory_set(r,"World/Biome/ground.mat",move_test_material_bytes(m,MOVE_TEST_ROCK,{})),asset.Error.None)
     _,moved=asset_folder_move(s,"World/Biome","","")
-    testing.expect(t,strings.contains(moved,"unsaved"),moved)
-    assets_discard(s,{"World/Biome/ground.mat"})
+    testing.expect(t,strings.contains(moved,"being edited"),moved)
+    asset.registry_memory_drop(r,"World/Biome/ground.mat")
 
     copy,copied:=asset_folder_duplicate(s,"World/Biome")
     testing.expect(t,copied=="" && copy=="World/Biome 2",copied)
@@ -368,7 +368,7 @@ the_line_of_create_renames_a_card_and_a_card_let_go_on_a_folder_moves_there :: p
     testing.expect_value(t,os.make_directory_all(fmt.tprintf("%s/Materials",root)),os.Error(nil))
     testing.expect_value(t,os.make_directory_all(fmt.tprintf("%s/Archive",root)),os.Error(nil))
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{}))
+    testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
     assets:host.Assets
     if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}

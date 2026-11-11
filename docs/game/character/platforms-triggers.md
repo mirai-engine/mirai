@@ -10,7 +10,7 @@ standing on it travels with it and turns with it. Request its pose every tick:
 Lift :: struct {from,to:[3]f32, seconds:f32}
 
 @(step="fixed")
-game_lifts :: proc(lifts:core.Read(Lift),bodies:^phys.Body_Requests,time:core.Time) {
+game_lifts :: proc(lifts:^core.Table(Lift,.Read),bodies:^phys.Body_Requests,time:core.Time) {
     for row in 0..<core.count(lifts) {
         lift:=core.at(lifts,row)
         along:=0.5-0.5*math.cos(f32(time.seconds)/lift.seconds*2*math.PI)   // 0 to 1 and back
@@ -25,30 +25,30 @@ and `Rigid_Body` set to `phys.RIGID_BODY_KINEMATIC`. A conveyor belt needs no co
 `Collider.surface_speed` carries what stands on it.
 
 - `phys.Character_State` says what the character stands on: `standing`, `ground_velocity`,
-  `ground_turn`. With `move_relative_to=.Game`, add `ground_turn` to the `look_yaw` you write, or
-  the body rides the platform without turning with it.
+  `ground_turn`. A game that writes the `look_yaw` of a body adds `core.Vertical.turn` to it, or the
+  body rides the platform without turning with it.
 
 ## Trigger zones
 
-A zone is an entity with a `Collider` whose `preset` is `trigger` (`phys.PRESET_TRIGGER`): it
-blocks nothing and reports what overlaps it. Scale the entity to size it. `Heal_Zone` is a
-component of the game, `@(component) Heal_Zone :: struct {amount:f32}`.
+A zone is an entity with a box, sphere or outline `Volume` and no `Collider`: the physics makes it a
+sensor that blocks nothing and reports what goes in and out of it. `Heal_Zone` is a component of
+the game, `@(component) Heal_Zone :: struct {amount:f32}`.
 
 ```json
-{"method":"scene.add","params":{"name":"Heal zone","scale":[4,2,4],
- "components":{"Collider":{"preset":"trigger"},"Heal_Zone":{"amount":10}}}}
+{"method":"scene.write","params":{"entities":[{"name":"Heal zone",
+ "components":{"Volume":{"shape":"Box","extents":[4,2,4]},"Heal_Zone":{"amount":10}}}]}}
 ```
 
 Read the events in `stage="react"`; each pair gives one event per side:
 
 ```odin
 @(step="fixed",stage="react")
-game_zones :: proc(zones:core.Read(Heal_Zone),players:core.Read(Player),
+game_zones :: proc(zones:^core.Table(Heal_Zone,.Read),players:^core.Table(Player,.Read),
                    events:core.Ref(phys.Physics_Events),healths:^core.Table(Health)) {
     for event in events.overlap_begin.items {
         if !core.has(zones,event.collider) || !core.has(players,event.other) {continue}
-        zone,_:=core.get(zones,event.collider)     // a Read returns (value, found)
-        if health:=core.get(healths,event.other);health!=nil {health.hp+=zone.amount}
+        zone,_:=core.get(zones,event.collider)
+        if health:=core.edit(healths,event.other);health!=nil {health.hp+=zone.amount}
     }
 }
 ```
@@ -77,11 +77,14 @@ returns `(hit,ok)` with `hit.entity`, `hit.point`, `hit.normal`.
 
 ## Pitfalls that fail silently
 
-- A body that crosses a thin trigger within one tick, and is not a `bullet`, gives no event.
-- A `bullet` gives `overlap_begin` and `overlap_end` in the same tick (`crossed`): handle begin
-  before end when counting occupants.
+- A body that crosses a thin trigger within one tick gives `overlap_begin` and `overlap_end` in
+  the same tick (`crossed`): handle begin before end when counting occupants. A trigger on a
+  moving body sees it only if the body is a `bullet`.
 - Two static colliders never report each other; a zone over a sleeping dynamic body reports
-  only once it wakes (a `Character` never sleeps).
-- A new `Collider` blocks (preset `Default`): a zone must be given the trigger preset.
-- `PRESET_TRIGGER` sees every category. To see only players, declare a category and a preset in
-  code and in `Collision_Settings`, and name it in the zone's `Collider`.
+  only once it wakes, a `Character` standing still too.
+- A zone with a `Collider` reports only through that collider, which blocks unless its preset is
+  `trigger`; a `Plane` or `Unbounded` volume reports nothing.
+- A zone sees every category. To see only players, filter the events by a component of the
+  player, or give the zone a `Collider` with a preset declared in code and `Collision_Settings`.
+- A sensor carried by a moving body (a pickup, the reach of a weapon) is a `Collider` whose
+  `preset` is `trigger` on that body or on its child.

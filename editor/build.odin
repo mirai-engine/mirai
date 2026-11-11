@@ -1,23 +1,28 @@
 package editor
 
+import "base:intrinsics"
+import "base:runtime"
 import "core:fmt"
 import "core:log"
 import "core:os"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
+import "core:thread"
 import "core:time"
 import "mirai:cook/build"
 import "mirai:cook/install"
+import "mirai:cook/shaders"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:ui"
 
-// Build: the shaders of the project (with the sources of programs the editor
-// holds unsaved) and its library (the world generated from the attributes of
+// Build: the shaders of the project and its library (the world generated from the attributes of
 // its packages, its game and its plugins) are made without stopping the
 // editor. One that succeeds is loaded into the running editor, its worlds
-// migrated when their layout changed (reload.odin); one that fails leaves
-// this editor running and shows what the compiler said.
+// migrated when their layout changed (reload.odin), and so is what a build
+// outside the editor left, of the project or of the engine; one that fails
+// leaves this editor running and shows what the compiler said.
 // Play builds first when an Odin source of the project changed since the last
 // build that stood, and starts once the new code is loaded.
 // A build of the game (Target.Game) generates the shaders the game ships
@@ -36,9 +41,7 @@ Build_Diagnostic :: struct {
 Build_State :: struct {
     phase:Build_Phase,
     target:build.Target,      // of the build that runs or ran last: Editor or Game
-    job:^build.Job,
-    shaders:^build.Shaders_Job,
-    project:^project.Project, // open while the jobs run
+    run:^Build_Run,           // the build, check or run of the tests that runs, or the last check or run of the tests
     started:time.Tick,
     seconds:f64,
     failure:build.Failure,
@@ -57,7 +60,6 @@ Build_State :: struct {
     play_error:[256]u8, // why the Play that waited for the build did not start; empty when it did
     shader_sources:u64, // shaders_fingerprint of what was last published or seen on disk
     reload:bool,        // the library built waits to be loaded (build_reload)
-    probing:bool,       // a check or a run of the tests (code_probe)
 }
 
 // A Play that waits for the build of the code that changed.
@@ -65,75 +67,179 @@ Build_Play :: struct {
     pending:bool,
     request:bool, // the Play of the toolbar or of a shortcut; otherwise of play.start, with these
     owner,players,online,ping_ms:int,
-    saved_only:bool,
 }
 
 // Starts a build of the editor of the project, or of its game into folder
 // (empty: .mirai/game of the project).
 build_start :: proc(s:^Session,target:=build.Target.Editor,folder:="") -> bool {
-    b:=s.build
-    if b.phase==.Running || b.reload {return false}
-    if b.probing {
-        notify(s,"The code is being checked or tested; wait for it")
+    if s.build.reload {return false}
+    if error:=build_run_start(s,.Build,target,folder,"",nil,0);error!="" {
+        notify(s,error)
         return false
     }
-    // Both builds generate the world of the project in the same folder.
-    if player_building(s) {
-        notify(s,"The player of the project is being built; wait for it")
-        return false
-    }
-    if !s.has_project || s.engine_root=="" {
-        notify(s,"Build needs a project and the root of the engine")
-        return false
-    }
-    // A pull can move the commit of a plugin from git: its checkout follows before the build.
-    if install.sync_needed(s.project_root) {
-        if _,message:=install.sync(s.project_root,context.temp_allocator);message!="" {notify(s,message)}
-    }
-    p:=new(project.Project)
-    opened,error:=project.open(s.project_root,s.engine_root)
-    if error.code!=.None {
-        free(p)
-        log.errorf("the project could not be opened: %v",error.code)
-        notify(s,"The project could not be opened")
-        return false
-    }
-    p^=opened
-    build_results_free(b)
-    b.project=p
-    b.target=target
-    delete(b.game_folder)
-    b.game_folder=strings.clone(folder)
-    if target==.Game {
-        // The game ships the shaders as they are saved, generated before it is built.
-        b.shaders=build.shaders_start(p)
-    } else {
-        b.shaders=build.shaders_start(p,overlay=programs_overlay(s))
-        b.started_sources=code_fingerprint(s.project_root)
-        b.job=build.job_start({project=p,target=.Editor,dev=build.ENGINE_MODE_HERE==.Dev})
-    }
-    b.phase=.Running
-    b.started=time.tick_now()
     log.infof("build of the %s started",target==.Game?"game":"editor")
     return true
 }
 
-// Follows the jobs, and the game player.start runs; between frames.
+// A build, a check of the code or a run of the tests of a package, in the one
+// thread a project builds in: opening the project, generating its world,
+// hashing its plugin libraries and the test executable take seconds that no
+// frame waits for. The editor reads it only once done is set and the thread
+// joined (build_poll); a check or a run of the tests stays until the next one.
+Build_Run :: struct {
+    thread:^thread.Thread,
+    project_root,engine_root,folder,test_package:string,
+    runs:string,               // the folder of the binaries of the engine this editor runs
+    names:[]string,
+    action:build.Action,
+    target:build.Target,
+    seconds:f64,               // how long it may run before it is stopped; 0: no limit
+    started:time.Tick,
+    opened:bool,               // the project opened
+    shaders:^build.Shaders_Job,
+    job:^build.Job,
+    done,cancel:bool,          // atomic
+}
+
+// Starts a build of the editor or of the game into folder, a check of the
+// code or a run of the tests of test_package (names: those asked; none, all),
+// against the libraries this editor loads, and returns at once: build_poll
+// takes what it ended with. "" when it started.
+build_run_start :: proc(s:^Session,action:build.Action,target:build.Target,folder,test_package:string,names:[]string,seconds:f64) -> string {
+    b:=s.build
+    if build_busy(b) {return "A build, a check or a run of the tests is running: wait for it"}
+    if !s.has_project || s.engine_root=="" {return "It needs a project and the root of the engine: start the editor with --engine or MIRAI_ROOT"}
+    // A pull can move the commit of a plugin from git: its checkout follows before the build.
+    if action==.Build && install.sync_needed(s.project_root) {
+        if _,message:=install.sync(s.project_root,context.temp_allocator);message!="" {notify(s,message)}
+    }
+    build_run_free(b)
+    a:=runtime.heap_allocator()
+    r:=new(Build_Run,a)
+    r.project_root,r.engine_root,r.runs=strings.clone(s.project_root,a),strings.clone(s.engine_root,a),strings.clone(engine_folder_here(s),a)
+    r.folder,r.test_package=strings.clone(folder,a),strings.clone(test_package,a)
+    r.names=make([]string,len(names),a)
+    for name,i in names {r.names[i]=strings.clone(name,a)}
+    r.action,r.target,r.seconds,r.started=action,target,seconds,time.tick_now()
+    b.run=r
+    if action==.Build {
+        build_results_free(b)
+        b.target=target
+        if target==.Editor {b.started_sources=code_fingerprint(s.project_root)}
+        b.phase=.Running
+        b.started=r.started
+    }
+    r.thread=thread.create_and_start_with_poly_data(r,build_run)
+    if r.thread==nil {
+        build_run_free(b)
+        if action==.Build {b.phase=.Idle}
+        return "No thread could be started for it"
+    }
+    return ""
+}
+
+// The run, in its thread: the shaders of a build first (those of a game,
+// before the game), then its job, polled until both end or it is stopped.
+@(private)
+build_run :: proc(r:^Build_Run) {
+    context.allocator=runtime.heap_allocator()
+    defer intrinsics.atomic_store(&r.done,true)
+    p,error:=project.open(r.project_root,r.engine_root)
+    if error.code!=.None {return}
+    defer project.close(&p)
+    r.opened=true
+    stopped :: proc(r:^Build_Run) -> bool {
+        return intrinsics.atomic_load(&r.cancel) || r.seconds>0 && time.duration_seconds(time.tick_since(r.started))>r.seconds
+    }
+    if r.action==.Build {
+        r.shaders=build.shaders_start(&p)
+        if r.target==.Game {
+            for !build.shaders_poll(r.shaders) {
+                if stopped(r) {return}
+                time.sleep(10*time.Millisecond)
+            }
+            if r.shaders.result.status==.Failed {return}
+        }
+    }
+    r.job=build.job_start({project=&p,target=r.target,action=r.action,output=r.folder,test_package=r.test_package,test={names=r.names,quiet=true},dev=r.target==.Editor && build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE,runs=r.runs})
+    for {
+        ended:=build.job_poll(r.job)
+        if r.shaders!=nil {ended=build.shaders_poll(r.shaders) && ended}
+        if ended {break}
+        if stopped(r) {
+            build.job_cancel(r.job)
+            break
+        }
+        free_all(context.temp_allocator)
+        time.sleep(10*time.Millisecond)
+    }
+}
+
+// Joins the thread of a run that ended. True when it did now.
+@(private)
+build_run_join :: proc(b:^Build_State) -> bool {
+    r:=b.run
+    if r==nil || r.thread==nil || !intrinsics.atomic_load(&r.done) {return false}
+    thread.join(r.thread)
+    thread.destroy(r.thread)
+    r.thread=nil
+    return true
+}
+
+// Whether a build, a check or a run of the tests runs.
+build_busy :: proc(b:^Build_State) -> bool {
+    return b.run!=nil && !intrinsics.atomic_load(&b.run.done)
+}
+
+// The job of the last check or run of the tests once it ended; nil while it
+// runs or when its project could not be opened.
+build_run_job :: proc(b:^Build_State) -> ^build.Job {
+    if b.run==nil || b.run.thread!=nil {return nil}
+    return b.run.job
+}
+
+// Stops the run and frees it.
+@(private)
+build_run_free :: proc(b:^Build_State) {
+    r:=b.run
+    if r==nil {return}
+    b.run=nil
+    if r.thread!=nil {
+        intrinsics.atomic_store(&r.cancel,true)
+        thread.join(r.thread)
+        thread.destroy(r.thread)
+    }
+    a:=runtime.heap_allocator()
+    build.job_destroy(r.job)
+    build.shaders_destroy(r.shaders)
+    for name in r.names {delete(name,a)}
+    delete(r.names,a)
+    delete(r.project_root,a);delete(r.engine_root,a);delete(r.runs,a);delete(r.folder,a);delete(r.test_package,a)
+    free(r,a)
+}
+
+// Takes what a run left once its thread ended, and the game player.start
+// runs; between frames. A build is shown and its library loaded; a check or a
+// run of the tests stays for build.check and build.test.
 build_poll :: proc(s:^Session) {
     b:=s.build
     programs_poll(s)
     build_reload(s)
     player_launch_poll(s)
-    if b.phase!=.Running {return}
-    if b.shaders!=nil && !build.shaders_poll(b.shaders) {return}
-    if b.target==.Game && b.job==nil && b.shaders!=nil && b.shaders.result.status!=.Failed {
-        b.job=build.job_start({project=b.project,target=.Game,output=b.game_folder})
+    if !build_run_join(b) {return}
+    r:=b.run
+    if r.action!=.Build {return}
+    defer build_run_free(b)
+    b.seconds=time.duration_seconds(time.tick_since(b.started))
+    if !r.opened {
+        b.phase,b.failure=.Failed,.Generate
+        b.text=strings.clone("The project could not be opened")
+        notify(s,"The project could not be opened")
+        b.play={}
         return
     }
-    if b.job!=nil && !build.job_poll(b.job) {return}
-    b.seconds=time.duration_seconds(time.tick_since(b.started))
-    if b.shaders!=nil {
-        result:=&b.shaders.result
+    if r.shaders!=nil {
+        result:=&r.shaders.result
         switch result.status {
         case .Running,.None,.Up_To_Date,.Cancelled:
         case .Built:  log.infof("shaders built: %d programs, %d stages compiled",result.programs,result.compiled)
@@ -151,16 +257,15 @@ build_poll :: proc(s:^Session) {
             }
         }
     }
-    if b.job==nil {
+    if r.job==nil {
         // The shaders of a game failed: it is not built.
         b.phase=.Failed
         b.failure=.Shaders
         bottom_toggle_open(s.gui,.Build)
         notify(s,"The shaders of the game could not be generated")
-        build_jobs_free(b)
         return
     }
-    result:=&b.job.result
+    result:=&r.job.result
     b.failure=result.failure
     for d in result.diagnostics {
         append(&b.diagnostics,Build_Diagnostic{d.severity,strings.clone(d.file),d.line,d.column,strings.clone(d.message)})
@@ -178,7 +283,6 @@ build_poll :: proc(s:^Session) {
         b.game=strings.clone(result.output)
         log.infof("%s %s",result.output,result.status==.Built?"built":"is up to date")
         notify(s,fmt.tprintf("The game is %s: %s",result.status==.Built?"built":"up to date",result.output))
-        build_jobs_free(b)
         return
     }
     switch result.status {
@@ -195,9 +299,14 @@ build_poll :: proc(s:^Session) {
         b.phase=.Up_To_Date
         delete(b.output)
         b.output=strings.clone(result.output)
-        b.sources=b.started_sources
-        if !b.play.pending {notify(s,"The project is up to date")}
-        build_play_resume(s)
+        // What a build outside the editor left is loaded as one of its own.
+        if b.reload=library_stale(s);b.reload {
+            build_reload(s)
+        } else {
+            b.sources=b.started_sources
+            if !b.play.pending {notify(s,"The project is up to date")}
+            build_play_resume(s)
+        }
     case .Failed:
         b.phase=.Failed
         log.errorf("the build failed: %v",result.failure)
@@ -205,16 +314,6 @@ build_poll :: proc(s:^Session) {
         notify(s,b.play.pending?"The code does not build: the game did not start":"The build failed")
         b.play={}
     }
-    build_jobs_free(b)
-}
-
-@(private)
-build_jobs_free :: proc(b:^Build_State) {
-    build.job_destroy(b.job)
-    build.shaders_destroy(b.shaders)
-    project.close(b.project)
-    free(b.project)
-    b.job,b.shaders,b.project=nil,nil,nil
 }
 
 // What a build of the code of a project reads besides the engine: the Odin
@@ -272,7 +371,7 @@ files_fingerprint :: proc(path,extension:string,hash:^u64,depth:int) {
 // API: of the engine and of its plugins. Empty without the root of the engine.
 code_api_folders :: proc(s:^Session) -> (engine,plugins:string) {
     if s.engine_root=="" {return}
-    engine=build.engine_paths(s.engine_root,.Keep,context.temp_allocator).decl
+    engine=project.path(engine_folder_here(s),"decl",allocator=context.temp_allocator)
     manifest,error:=project.manifest_read(project.path(s.project_root,project.PROJECT_FILE,allocator=context.temp_allocator))
     if error.code!=.None {return}
     opened:=project.Project{manifest=manifest}
@@ -287,6 +386,9 @@ build_reload :: proc(s:^Session) {
     if !b.reload {return}
     switch library_reload(s) {
     case .Wait:
+    case .Refused:
+        b.reload=false
+        b.play={}
     case .Restart:
         b.reload=false
         b.play={}
@@ -329,48 +431,18 @@ build_play_resume :: proc(s:^Session) {
         s.requests+={.Play}
         return
     }
-    if error:=play_begin(s,play.owner,play.players,play.online,play.ping_ms,play.saved_only);error!="" {
+    if error:=play_begin(s,play.owner,play.players,play.online,play.ping_ms);error!="" {
         base.text_set(s.build.play_error[:],error)
         log.errorf("the game did not start after the build: %s",error)
         notify(s,"The game could not start")
     }
 }
 
-// Checks the code of the project or runs its tests, to the end or for
-// seconds at most, without loading anything: the editor draws frames
-// meanwhile. The job is the caller's to destroy.
-code_probe :: proc(s:^Session,action:build.Action,test_package:string,test_names:[]string,seconds:f64) -> (job:^build.Job,error:string) {
-    b:=s.build
-    if b.phase==.Running || b.probing {return nil,"A build is running; build.status says when it ends"}
-    if player_building(s) {return nil,"The player of the project is being built; wait for it"}
-    if !s.has_project || s.engine_root=="" {return nil,"It needs a project and the root of the engine"}
-    opened,open_error:=project.open(s.project_root,s.engine_root)
-    if open_error.code!=.None {return nil,"The project could not be opened"}
-    defer project.close(&opened)
-    b.probing=true
-    defer b.probing=false
-    job=build.job_start({project=&opened,target=.Editor,action=action,test_package=test_package,test_names=test_names})
-    started:=time.tick_now()
-    for !build.job_poll(job) {
-        if time.duration_seconds(time.tick_since(started))>seconds || api_stop_asked(s) || api_frames(s,1,0)==0 {
-            build.job_cancel(job)
-            break
-        }
-    }
-    return job,""
-}
-
 // Stops what runs: when the editor ends.
 build_cancel :: proc(s:^Session) {
     b:=s.build
     programs_cancel(s)
-    if b.job!=nil {build.job_destroy(b.job)}
-    if b.shaders!=nil {build.shaders_destroy(b.shaders)}
-    if b.project!=nil {
-        project.close(b.project)
-        free(b.project)
-    }
-    b.job,b.shaders,b.project=nil,nil,nil
+    build_run_free(b)
     if b.phase==.Running {b.phase=.Idle}
     b.play={}
     build_results_free(b)
@@ -393,18 +465,17 @@ build_results_free :: proc(b:^Build_State) {
 build_tools :: proc(s:^Session) {
     b:=s.build
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     if b.phase==.Running {
-        ui.label(ctx,fmt.tprintf("%.0f s",time.duration_seconds(time.tick_since(b.started))),th.font_small,th.text_muted)
+        ui.label(ctx,fmt.tprintf("%.0f s",time.duration_seconds(time.tick_since(b.started))),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
         return
     }
-    state:=action_state(s,.Build)
-    if ui.button(ctx,ui.id(ctx,"build_run"),{label="Build",style=.Field,height=24,width=72,center=true,size=th.font_small,disabled=state.disabled}).clicked {build_start(s)}
+    state:=command_state(s,"build")
+    if ui.button(ctx,ui.id(ctx,"build_run"),{label="Build",variant="field",height=24,width=72,center=true,size=ui.metric(ctx,"font_small"),disabled=state.disabled}).clicked {command_run(s,"build")}
 }
 
 FAILURE_TEXTS :: [build.Failure]string{
     .None="",.Engine_Missing="The root of the engine is not known",
-    .Engine_Incomplete="The installed engine lacks some of its binaries: unpack its package again",.Generate="The attributes of the packages are wrong",
+    .Engine_Incomplete="The installed engine lacks some of its binaries: unpack its package again",.Engine_Defines="The editor runs engine binaries built with other defines than the project's",.Generate="The attributes of the packages are wrong",
     .Compiler_Missing="No Odin compiler in MIRAI_ODIN or PATH",.Shaders="The shaders of the engine could not be generated",
     .Compiler_Failed="The compiler could not run",
     .Write_Failed="A generated file could not be written",.Compile="The code does not compile",
@@ -412,17 +483,16 @@ FAILURE_TEXTS :: [build.Failure]string{
     .Output_Locked="The editor could not be replaced",.Output_Invalid="The output folder is the project",
     .Engine_Time_Code="Engine-time code reached the game",.Copy_Failed="The files of the game could not be copied",
     .Settings_Invalid="A settings file of the engine or of the project is not valid",
-    .Cook_Failed="The assets could not be cooked",.Tests="Tests failed",.Cancelled="Cancelled",
+    .Cook_Failed="The assets could not be cooked",.Import_Failed="A source did not import",.Tests="Tests failed",.Cancelled="Cancelled",
 }
 
 @(private)
 build_panel_build :: proc(s:^Session,height:f32) {
     b:=s.build
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     texts:=FAILURE_TEXTS
     status:string
-    color:=th.text_muted
+    color:=ui.tone(ctx,"text_muted")
     switch b.phase {
     case .Idle:       status="No build yet"
     case .Running:    status="Building..."
@@ -430,9 +500,9 @@ build_panel_build :: proc(s:^Session,height:f32) {
     case .Up_To_Date: status="Up to date"
     case .Failed:
         status=fmt.tprintf("Failed after %.1f s: %s",b.seconds,texts[b.failure])
-        color=th.danger
+        color=ui.tone(ctx,"danger")
     }
-    ui.label(ctx,status,th.font_small,color,0)
+    ui.label(ctx,status,ui.metric(ctx,"font_small"),color,0)
     room:=max(height-26,CONSOLE_ROW)
     colors:=LEVEL_COLORS
     if len(b.diagnostics)>0 {
@@ -444,8 +514,8 @@ build_panel_build :: proc(s:^Session,height:f32) {
                 level:=d.severity==.Error?Console_Level.Error:.Warning
                 if ui.box(ctx,{width=ui.fixed(6),height=ui.fixed(6),fill=colors[level],radius=3}) {}
                 where_:=fmt.tprintf("%s(%d:%d)",filepath.base(d.file),d.line,d.column)
-                ui.label(ctx,where_,th.font_small,th.text_muted)
-                ui.label(ctx,d.message,th.font_small,colors[level],0)
+                ui.label(ctx,where_,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+                ui.label(ctx,d.message,ui.metric(ctx,"font_small"),colors[level],0)
             }
         }
         ui.list_end(ctx,list,len(b.diagnostics),last,CONSOLE_ROW)
@@ -455,7 +525,7 @@ build_panel_build :: proc(s:^Session,height:f32) {
     if text=="" {text=b.shaders_text}
     if text!="" {
         if ui.scroll_area(ctx,ui.id(ctx,"build_text"),&b.text_scroll,{height=ui.fixed(room)}) {
-            ui.paragraph(ctx,text,th.font_small,th.text_muted)
+            ui.text(ctx,text,ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted")))
         }
     }
 }

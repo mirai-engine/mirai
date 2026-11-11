@@ -1,6 +1,5 @@
 package main
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:slice"
@@ -10,9 +9,10 @@ import "core:time"
 import "mirai:cook/workspace"
 import "mirai:editor/api"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/serial"
 
-RPC_USAGE :: "rpc <method> [key=value...|json|-|--file F] [--select FIELDS] [--wait-until CONDITION] | rpc describe [plugin|method|prefix|method...] | rpc --batch <calls.jsonl|-> [--project P|--port N] [--timeout S] [--client NAME]"
+RPC_USAGE :: "rpc <method> [key=value...|json|-|--file F] [--select FIELDS] [--wait-until CONDITION] | rpc describe [plugin|method|prefix|method...] [--project P|--port N] [--timeout S] [--client NAME]"
 
 RPC_ENDING_WAIT :: 3*time.Second // how long an editor that stopped listening may go on counting as alive
 RPC_RESTART_PAUSE :: 250*time.Millisecond // between the calls of a --wait-until whose editor restarts
@@ -31,7 +31,6 @@ Connection :: struct {
     named:bool,     // --project named project, which a call may open a session of
     near:string,    // with a port: the project at or above the working folder, to know the process of an editor of that port
     client:string,  // the agent outside the editor that calls: --client, MIRAI_CLIENT, or claude-code from its shell
-    link:^api.Client_Connection, // --batch: one connection for all its calls
     rest:[dynamic]string,
 }
 
@@ -179,11 +178,11 @@ connection_ended :: proc(connection:Connection,method:string,err:api.Error) -> b
 // stderr, where all that mirai session start prints goes too: stdout is the
 // answer of the call.
 connection_session_start :: proc(connection:Connection) -> api.Error {
-    fmt.eprintfln("mirai: %s has no open editor; starting its headless session (mirai session start %s --dev)",connection.project,connection.project)
+    fmt.eprintfln("mirai: %s has no open editor; starting its headless session (mirai session start %s)",connection.project,connection.project)
     self,error:=os.get_executable_path(context.temp_allocator)
     if error!=nil {return {api.UNREACHABLE,fmt.tprintf("could not start the session of %s: %v",connection.project,error),""}}
-    if run_with(connection.root,{self,"session","start",connection.project,"--dev"},os.stderr)!=0 {
-        return {api.UNREACHABLE,fmt.tprintf("mirai session start %s --dev failed; what it said is above",connection.project),""}
+    if run_with(connection.root,{self,"session","start",connection.project},os.stderr)!=0 {
+        return {api.UNREACHABLE,fmt.tprintf("mirai session start %s failed; what it said is above",connection.project),""}
     }
     return {}
 }
@@ -195,7 +194,7 @@ rpc_call_waiting :: proc(connection:Connection,method,params:string,id:int) -> (
         editor,err=connection_ready(connection,method)
         if err.code!=0 {return}
         watch:=connection_watch(connection,editor,fmt.tprintf("mirai rpc %s",method))
-        result,err,called=api.rpc_call(editor.port,method,params,id,connection.timeout_ms,context.allocator,connection_task(connection,editor.port),connection.client,watch,connection.link,workspace.measurement(context.temp_allocator))
+        result,err,called=api.rpc_call(editor.port,method,params,id,connection.timeout_ms,context.allocator,connection_task(connection,editor.port),connection.client,watch,workspace.measurement(context.temp_allocator))
         if called || retried || !connection_ended(connection,method,err) {return}
     }
 }
@@ -216,9 +215,6 @@ cmd_rpc :: proc(root:string,args:[]string) -> int {
         return 2
     }
     switch connection.rest[0] {
-    case "--batch":
-        if len(connection.rest)!=2 {fmt.eprintfln("Usage: mirai %s",RPC_USAGE);return 2}
-        return rpc_batch(connection,connection.rest[1])
     case "describe":
         return rpc_describe(connection,connection.rest[1:])
     }
@@ -439,65 +435,55 @@ rpc_describe :: proc(connection:Connection,args:[]string) -> int {
     return 0
 }
 
+// An answer of engine.describe; what does not read as one has nothing.
+rpc_describe_read :: proc(text:string) -> (describe:api.Describe_Result) {
+    serial.text_decode(text,&describe,context.temp_allocator,skip_unknown=true)
+    return
+}
+
+// The texts of a list of text fields.
+@(private="file")
+rpc_texts :: proc(list:[][$N]u8) -> []string {
+    texts:=make([]string,len(list),context.temp_allocator)
+    for &text,i in list {texts[i]=base.text_get(text[:])}
+    return texts
+}
+
 // The names of the methods of an answer of engine.describe: the entries of
 // methods, or those of the index without params.
 rpc_listed_names :: proc(describe:string) -> []string {
+    d:=rpc_describe_read(describe)
     names:=make([dynamic]string,context.temp_allocator)
-    for key in ([]string{"methods","core"}) {
-        entries,_:=api.json_elements(api.json_member(describe,key))
-        for entry in entries {
-            if name,ok:=api.json_string(api.json_member(entry,"name"));ok {append(&names,name)}
-        }
-    }
-    groups,_:=api.json_elements(api.json_member(describe,"others"))
-    for group in groups {
-        text,_:=api.json_string(api.json_member(group,"methods"))
-        for name in strings.fields(text,context.temp_allocator) {append(&names,name)}
-    }
-    return names[:]
-}
-
-// The names of a list of strings of the index of engine.describe.
-@(private="file")
-rpc_listed_strings :: proc(listing,key:string) -> []string {
-    entries,_:=api.json_elements(api.json_member(listing,key))
-    names:=make([dynamic]string,context.temp_allocator)
-    for entry in entries {
-        if name,ok:=api.json_string(entry);ok {append(&names,name)}
-    }
+    for &method in d.methods {append(&names,base.text_get(method.name[:]))}
+    for &method in d.core {append(&names,base.text_get(method.name[:]))}
+    for &group in d.others {append(&names,..strings.fields(base.text_get(group.methods[:]),context.temp_allocator))}
     return names[:]
 }
 
 // Whether name is editor or a plugin engine.describe lists without params.
 rpc_describe_is_plugin :: proc(listing,name:string) -> bool {
-    return name=="editor" || slice.contains(rpc_listed_strings(listing,"active_plugins"),name) || slice.contains(rpc_listed_strings(listing,"other_plugins"),name)
+    d:=rpc_describe_read(listing)
+    return name=="editor" || slice.contains(rpc_texts(d.active_plugins),name) || slice.contains(rpc_texts(d.other_plugins),name)
 }
 
 // What mirai rpc describe prints without arguments: the core methods with
 // what each is for, the names of the others by plugin and the plugins the
 // project does not use.
 rpc_describe_list_text :: proc(listing:string) -> string {
-    core_methods,_:=api.json_elements(api.json_member(listing,"core"))
+    d:=rpc_describe_read(listing)
     width:=0
-    for method in core_methods {
-        name,_:=api.json_string(api.json_member(method,"name"))
-        width=max(width,len(name))
-    }
+    for &method in d.core {width=max(width,len(base.text_get(method.name[:])))}
     b:=strings.builder_make(context.temp_allocator)
-    if len(core_methods)>0 {strings.write_string(&b,"core\n")}
-    for method in core_methods {
-        name,_:=api.json_string(api.json_member(method,"name"))
-        summary,_:=api.json_string(api.json_member(method,"summary"))
-        fmt.sbprintf(&b,"  %s%s  %s\n",name,strings.repeat(" ",width-len(name),context.temp_allocator),summary)
+    if len(d.core)>0 {strings.write_string(&b,"core\n")}
+    for &method in d.core {
+        name:=base.text_get(method.name[:])
+        fmt.sbprintf(&b,"  %s%s  %s\n",name,strings.repeat(" ",width-len(name),context.temp_allocator),base.text_get(method.summary[:]))
     }
-    groups,_:=api.json_elements(api.json_member(listing,"others"))
-    for group in groups {
-        plugin,_:=api.json_string(api.json_member(group,"plugin"))
-        methods,_:=api.json_string(api.json_member(group,"methods"))
+    for &group in d.others {
         if strings.builder_len(b)>0 {strings.write_byte(&b,'\n')}
-        fmt.sbprintf(&b,"%s\n  %s\n",plugin,methods)
+        fmt.sbprintf(&b,"%s\n  %s\n",base.text_get(group.plugin[:]),base.text_get(group.methods[:]))
     }
-    if inactive:=rpc_listed_strings(listing,"other_plugins");len(inactive)>0 {
+    if inactive:=rpc_texts(d.other_plugins);len(inactive)>0 {
         fmt.sbprintf(&b,"\ninactive plugins: %s\n",strings.join(inactive,", ",context.temp_allocator))
     }
     strings.write_string(&b,"\nmirai rpc describe <method> gives its params and result; <plugin> or <prefix> the summaries of an area.\n")
@@ -508,31 +494,24 @@ rpc_describe_list_text :: proc(listing:string) -> string {
 // method, or only the one named name when it is listed, with its params, an
 // example of valid params and the fields of its result.
 rpc_describe_text :: proc(result,name:string) -> string {
-    methods,_:=api.json_elements(api.json_member(result,"methods"))
+    methods:=rpc_describe_read(result).methods
     exact:=false
-    for method in methods {
-        if method_name,_:=api.json_string(api.json_member(method,"name"));method_name==name {exact=true}
-    }
+    for &method in methods {exact||=base.text_get(method.name[:])==name}
     b:=strings.builder_make(context.temp_allocator)
-    for method in methods {
-        method_name,_:=api.json_string(api.json_member(method,"name"))
+    for &method in methods {
+        method_name:=base.text_get(method.name[:])
         if exact && method_name!=name {continue}
         if strings.builder_len(b)>0 {strings.write_byte(&b,'\n')}
         strings.write_string(&b,method_name)
-        if flags,_:=api.json_elements(api.json_member(method,"flags"));len(flags)>0 {
-            names:=make([]string,len(flags),context.temp_allocator)
-            for flag,i in flags {names[i],_=api.json_string(flag)}
-            fmt.sbprintf(&b," (%s)",strings.join(names,", ",context.temp_allocator))
-        }
+        if len(method.flags)>0 {fmt.sbprintf(&b," (%s)",strings.join(rpc_texts(method.flags),", ",context.temp_allocator))}
         strings.write_byte(&b,'\n')
-        if summary,_:=api.json_string(api.json_member(method,"summary"));summary!="" {fmt.sbprintf(&b,"  %s\n",summary)}
-        params:=api.json_member(method,"params")
+        if summary:=base.text_get(method.summary[:]);summary!="" {fmt.sbprintf(&b,"  %s\n",summary)}
+        params,result_schema:=string(method.params),string(method.result)
         if params=="" {continue}
         api.describe_params(&b,params)
         api.describe_example(&b,method_name,params)
-        result_schema:=api.json_member(method,"result")
-        switch {
-        case api.json_compact(api.json_member(result_schema,"properties"))!="" && api.json_compact(api.json_member(result_schema,"properties"))!="{}":
+        switch properties:=api.json_compact(api.json_member(result_schema,"properties"));{
+        case properties!="" && properties!="{}":
             strings.write_string(&b,"  result:\n")
             api.describe_fields(&b,result_schema,"",true,0)
         case api.json_compact(result_schema)=="{}" || result_schema=="":
@@ -542,115 +521,6 @@ rpc_describe_text :: proc(result,name:string) -> string {
         }
     }
     return strings.to_string(b)
-}
-
-// What the batch answered so far: each result, for the references of the calls after it.
-// A string that is exactly $N or $N.path stands for that result or its field
-// (the fields go as in --select); $$ begins a text that really starts with $.
-@(private="file")
-rpc_batch_value :: proc(value:json.Value,results:[]string) -> (out:json.Value,problem:string) {
-    #partial switch v in value {
-    case json.String:
-        text:=string(v)
-        if strings.has_prefix(text,"$$") {return json.String(text[1:]),""}
-        if len(text)<2 || text[0]!='$' || text[1]<'0' || text[1]>'9' {return value,""}
-        rest:=text[1:]
-        end:=strings.index_any(rest,".[")
-        digits:=end<0?rest:rest[:end]
-        n,valid:=strconv.parse_int(digits,10)
-        if !valid {return value,""}
-        if n<0 || n>=len(results) {return nil,fmt.tprintf("%s: the batch has %d results so far, $0 to $%d",text,len(results),len(results)-1)}
-        raw:=results[n]
-        if end>=0 {
-            field:=rest[end:]
-            if field[0]=='.' {field=field[1:]}
-            path,ok:=api.json_path_parse(field)
-            if !ok {return nil,fmt.tprintf("%s: %q is not a field path as --select takes it",text,field)}
-            found,missing:=api.json_at(raw,path)
-            if missing!="" {return nil,fmt.tprintf("%s: %s",text,missing)}
-            raw=found
-        }
-        parsed,parse_error:=json.parse(transmute([]u8)raw,parse_integers=true,allocator=context.temp_allocator)
-        if parse_error!=nil {return nil,fmt.tprintf("%s: the result is not JSON",text)}
-        return parsed,""
-    case json.Object:
-        resolved:=make(json.Object,len(v),context.temp_allocator)
-        for key,element in v {
-            resolved[key],problem=rpc_batch_value(element,results)
-            if problem!="" {return nil,problem}
-        }
-        return resolved,""
-    case json.Array:
-        for &element in v {
-            element,problem=rpc_batch_value(element,results)
-            if problem!="" {return nil,problem}
-        }
-        return v,""
-    }
-    return value,""
-}
-
-// mirai rpc --batch <file or ->: one call per line, {"method": "...", "params": {...}},
-// in order and over one connection; prints a JSON array with the result of each
-// and, at the first that fails, the line it is on and its error, and stops. A
-// value of the params that is exactly $N or $N.path (the same paths as --select)
-// stands for the result of the call N of the batch or for that field of it; $$
-// writes a literal $.
-@(private="file")
-rpc_batch :: proc(connection:Connection,file:string) -> int {
-    text:string
-    if file=="-" {
-        text=read_stdin()
-    } else {
-        data,error:=os.read_entire_file(file,context.allocator)
-        if error!=nil {fmt.eprintfln("mirai rpc: could not read %s",file);return 2}
-        text=string(data)
-    }
-    connection:=connection
-    link:api.Client_Connection
-    defer api.client_connection_close(&link)
-    connection.link=&link
-    Line :: struct {method:string,params:json.Value}
-    out:=strings.builder_make()
-    strings.write_string(&out,"[")
-    results:=make([dynamic]string)
-    failed:=false
-    number:=0
-    for line in strings.split_lines_iterator(&text) {
-        number+=1
-        trimmed:=strings.trim_space(line)
-        if trimmed=="" {continue}
-        call:Line
-        err:api.Error
-        params:="{}"
-        if json.unmarshal_string(trimmed,&call,allocator=context.temp_allocator)!=nil || call.method=="" {
-            err={api.INVALID_PARAMS,`not a call: write {"method": "...", "params": {...}}`,""}
-        } else if call.params!=nil {
-            resolved,problem:=rpc_batch_value(call.params,results[:])
-            if problem!="" {err={api.INVALID_PARAMS,problem,""}}
-            else {
-                encoded,marshal_error:=json.marshal(resolved,allocator=context.temp_allocator)
-                if marshal_error!=nil {return 2}
-                params=string(encoded)
-            }
-        }
-        if len(results)>0 {strings.write_string(&out,",")}
-        if err.code==0 {
-            result,call_error,called:=rpc_call_waiting(connection,call.method,params,number)
-            if called {
-                append(&results,result)
-                fmt.sbprintf(&out,"\n{{\"method\": %q, \"result\": %s}}",call.method,result)
-                continue
-            }
-            err=call_error
-        }
-        fmt.sbprintf(&out,"\n{{\"line\": %d, \"method\": %q, \"error\": %q}}",number,call.method,api.error_text(err,context.temp_allocator))
-        failed=true
-        break
-    }
-    strings.write_string(&out,"\n]")
-    fmt.println(strings.to_string(out))
-    return failed?1:0
 }
 
 params_is_object :: proc(text:string) -> bool {

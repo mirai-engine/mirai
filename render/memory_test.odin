@@ -3,6 +3,7 @@ package mirai_render
 import "base:runtime"
 import "core:strings"
 import "core:testing"
+import mm "mirai:std/math"
 
 // An allocator that serves `remaining` requests of its owner and refuses the rest.
 @(private)
@@ -19,12 +20,12 @@ memory_limit_proc :: proc(data: rawptr, mode: runtime.Allocator_Mode, size, alig
 }
 
 @(private = "file")
-MEMORY_CATALOG :: `{"programs":[{"id":3,"name":"Paint","domain":"vfx","attributes":8,"size":24,
-	"resources":[{"name":"field","kind":"grid"},{"name":"words","kind":"data","words":4}],
-	"stages":[{"name":"spread","iterations":2,"neighbors":1,"over":"field","writes":["field"]}],
+MEMORY_CATALOG :: `{"version":2,"programs":[{"id":3,"name":"Paint","domain":"Vfx","attributes":8,"size":24,
+	"resources":[{"name":"field","kind":"Grid"},{"name":"words","kind":"Data","words":4}],
+	"stages":[{"name":"spread","iterations":2,"over":0,"writes":1}],
 	"parameters":[
-		{"name":"image","kind":"texture","components":1,"offset":0,"default":"","min":0,"max":0,"srgb":true},
-		{"name":"steps","kind":"int32","components":2,"offset":4,"default":[-2,5],"min":-8,"max":8,"group":"Pattern"}]}]}`
+		{"name":"image","kind":"Texture","components":1,"offset":0,"srgb":true},
+		{"name":"steps","kind":"Int","components":2,"offset":4,"defaults":[-2,5,0,0],"min":-8,"max":8,"group":"Pattern"}]}]}`
 
 // What the renderer asks its allocator for without a device, with the memory
 // ending at each request in turn: the call is refused, says so where it has
@@ -34,8 +35,8 @@ MEMORY_CATALOG :: `{"programs":[{"id":3,"name":"Paint","domain":"vfx","attribute
 renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^testing.T) {
 	limit := Memory_Limit{owner = context.allocator, remaining = max(int)}
 	limited := runtime.Allocator{memory_limit_proc, &limit}
-	Call :: enum {Bvh, Light_Tree, Texture, Catalog, Scene_Init, Materials, Scene_Set, Scene_Update, Lights, Shader_Reload, Mesh}
-	SAYS :: bit_set[Call]{.Materials, .Scene_Set, .Scene_Update, .Lights, .Shader_Reload}
+	Call :: enum {Bvh, Light_Tree, Texture, Catalog, Scene_Init, Materials, Scene_Whole, Scene_Update, Lights, Shader_Reload, Mesh}
+	SAYS :: bit_set[Call]{.Materials, .Scene_Whole, .Scene_Update, .Lights, .Shader_Reload}
 
 	vertices: [8]Mesh_Vertex
 	for &v, i in vertices {
@@ -43,10 +44,10 @@ renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^tes
 		v.normal, v.color, v.tangent = v.position * 2, {1, 1, 1}, {1, 0, 0, 1}
 	}
 	indices := [36]u32{0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5}
-	items: [9]Bvh_Item
+	items: [9]mm.Aabb
 	for &item, i in items {
 		center := Vec3{f32(i % 3), f32(i / 3), 0} * 2
-		item = {bounds_min = center - 0.5, bounds_max = center + 0.5, center = center}
+		item = {center - 0.5, center + 0.5}
 	}
 	lights: [6]Gpu_Light
 	for &light, i in lights {
@@ -78,11 +79,11 @@ renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^tes
 		case .Light_Tree:
 			_, built := light_tree_build(&tree, &keys, &leaves, lights[:2])
 			if !testing.expect(t, built) {return}
-		case .Scene_Set, .Scene_Update:
+		case .Scene_Whole, .Scene_Update:
 			mesh, added := mesh_add(r, vertices[:], indices[:])
 			if !testing.expect(t, added) {return}
 			for &instance, i in instances {instance = {object_id = u64(i + 1), mesh = mesh, transform = Mat4(1), tint = {1, 1, 1}}}
-			if call == .Scene_Update && !testing.expect(t, scene_set(r, instances[:1], nil, {}, {})) {return}
+			if call == .Scene_Update && !testing.expect(t, scene_given(r, instances[:1], nil, {}, {})) {return}
 		}
 		held := [4]int{len(tree), len(leaves), len(s.instances), len(s.meshes)}
 		words := len(s.vertices) + len(s.indices)
@@ -114,13 +115,13 @@ renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^tes
 			case .Materials:
 				done = materials_set(r, materials[:])
 				if !done {testing.expectf(t, len(s.materials) == 0, "a table refused with %d requests served has no row", served)}
-			case .Scene_Set:
-				done = scene_set(r, instances[:], light_descs[:], {}, {})
+			case .Scene_Whole:
+				done = scene_update(r, 0, instances[:], true)
 			case .Scene_Update:
 				done = scene_update(r, 1, instances[1:])
 			case .Lights:
-				done = scene_set_lights(r, light_descs[:], {}, {})
-				if !done {testing.expectf(t, len(s.lights) == 0, "lights refused with %d requests served are not there", served)}
+				done = scene_light_update(r, 0, light_descs[0])
+				if !done {testing.expectf(t, len(s.lights) == 0, "a light refused with %d requests served is not there", served)}
 			case .Shader_Reload:
 				assets := Shader_Assets{owned = true}
 				candidate := renderer_shader_reload_begin(r, &assets)
@@ -138,10 +139,10 @@ renderer_calls_without_memory_are_refused_and_keep_what_they_had :: proc(t: ^tes
 		}
 		testing.expectf(t, done && refused, "%v: refused without memory, and with it it goes through", call)
 		#partial switch call {
-		case .Scene_Set, .Scene_Update:
+		case .Scene_Whole, .Scene_Update:
 			testing.expectf(t, len(s.instances) == len(instances), "%v: %d instances", call, len(s.instances))
 		case .Lights:
-			testing.expect_value(t, len(s.lights), len(light_descs))
+			testing.expect_value(t, len(s.lights), 1)
 		case .Materials:
 			testing.expect_value(t, len(s.materials), len(materials) + 1)
 		}

@@ -20,7 +20,7 @@ Stamp_Params :: struct {
     kind:shapes.Stamp_Kind `mirai:"optional"`,
     size:f32 `mirai:"optional,min=0.01,max=100,unit=m,label=Half the width of the square and the radius of the circle; the other kinds reach about as far"`,
     angle:f32 `mirai:"optional,angle"`,
-    cut:bool `mirai:"optional,label=Cuts the stamps out of every outline shape of the plane instead of adding them to one"`,
+    cut:bool `mirai:"optional,label=Cuts the stamps out of every polygon of the plane instead of adding them to one"`,
     material:base.Asset_Id `mirai:"optional,kind=.mat,label=Of a shape the stroke makes"`,
 }
 
@@ -31,10 +31,10 @@ Stamp_Result :: struct {
 }
 
 Corner_Params :: struct {
-    entity:editor.Api_Entity_Text `mirai:"text,entity,label=An outline shape"`,
+    entity:editor.Api_Entity_Text `mirai:"text,entity,label=A Shape with a polygon or a Spline"`,
     op:Corner_Op,
     at:[3]f32 `mirai:"unit=m,label=World point: the corner nearest it is moved or removed; a corner is inserted at the point of the nearest edge"`,
-    to:[3]f32 `mirai:"optional,unit=m,label=Where a moved corner goes, taken onto the plane of the shape"`,
+    to:[3]f32 `mirai:"optional,unit=m,label=Where a moved corner goes, taken onto the plane of the shape: its local XY, or the local XZ of a Spline"`,
 }
 
 Corner_Result :: struct {
@@ -45,9 +45,10 @@ Corner_Result :: struct {
 
 @(private)
 api_register :: proc(s:^editor.Session) {
+    editor.tool_entry(s,TOOL,"Shapes",.Prism,{key=.K,set=true})
     defaults:=Stamp_Params{size=SETTINGS_DEFAULT.size}
-    editor.api_method_register(s,{name="shapes.stamp",summary="Sweeps a stamp (square, circle, star, heart...) along world points over the outline shapes of a plane, as the Stamp mode of the Shapes tool: adding joins the area to the first shape it touches at the first point or makes one, cutting takes it out of every outline shape of the plane, splitting it into shapes or deleting it. One step of undo.",params=Stamp_Params,params_info=type_info_of(Stamp_Params),result=Stamp_Result,result_info=type_info_of(Stamp_Result),defaults=&defaults,run=api_stamp})
-    editor.api_method_register(s,{name="shapes.corner",summary="Moves, inserts or removes a corner of an outline shape at world points, as the Corners mode of the Shapes tool. A change that would make edges cross is refused. One step of undo.",params=Corner_Params,params_info=type_info_of(Corner_Params),result=Corner_Result,result_info=type_info_of(Corner_Result),run=api_corner})
+    editor.api_method_register(s,{params=type_info_of(Stamp_Params),result=type_info_of(Stamp_Result),name="shapes.stamp",summary="Sweeps a stamp (square, circle, star, heart...) along world points over the polygons of the shapes of a plane, as the Stamp mode of the Shapes tool: adding joins the area to the first shape it touches at the first point or makes one, cutting takes it out of every polygon of the plane, splitting it into shapes or deleting it. One step of undo.",defaults=&defaults,run=api_stamp})
+    editor.api_method_register(s,{params=type_info_of(Corner_Params),result=type_info_of(Corner_Result),name="shapes.corner",summary="Moves, inserts or removes a corner of the polygon of a Shape or a point of a Spline at world points, as the Corners mode of the Shapes tool; a point inserted on a Spline takes the width and height in proportion. A change that would make the edges of a polygon cross is refused. One step of undo.",run=api_corner})
 }
 
 @(private)
@@ -76,7 +77,7 @@ api_stamp :: proc(s:^editor.Session,call:^api.Call) {
         if error:=stroke_to(&stroke,local_of(plane,p.points[at]));error!=.None {refused=error}
     }
     if refused!=.None {api.call_failf(call,api.INVALID_PARAMS,"points: the stroke was refused: %s",shapes.shape_error_text(refused));return}
-    if !stroke_dirty(&stroke) {api.call_fail(call,api.INVALID_PARAMS,"points: the cut touches no outline shape of the plane; give points over a shape, or its id");return}
+    if !stroke_dirty(&stroke) {api.call_fail(call,api.INVALID_PARAMS,"points: the cut touches no polygon of the plane; give points over a shape, or its id");return}
     if !editor.api_edit_begin(s,call,p.cut?"Cut":"Stamp") {return}
     written:=stroke_sync(s,&stroke)
     if !written {api.call_fail(call,api.SERVER_ERROR,"The scene refused a shape of the stroke: an entity another editor holds or a section that is not edited")}
@@ -94,33 +95,29 @@ api_corner :: proc(s:^editor.Session,call:^api.Call) {
     w:=editor.edited_world(s)
     e,named:=editor.api_call_entity(call,w,p.entity[:])
     if !named {return}
-    shape,found:=editor.entity_get(w,e,shapes.Shape)
-    if !found || shape.kind!=.Outline {api.call_failf(call,api.INVALID_PARAMS,"entity %s has no outline Shape",base.text_get(p.entity[:]));return}
+    corners,found:=corners_of(w,e)
+    if !found {api.call_failf(call,api.INVALID_PARAMS,"entity %s has no corners: give it a Shape with a polygon or a Spline",base.text_get(p.entity[:]));return}
     if p.op==.Move && !editor.tool_call_given(call,"to") {api.call_fail(call,api.INVALID_PARAMS,"to: a move needs the world point the corner goes to");return}
     t:=editor.entity_world(w,e)
     if !shapes.scale_usable(t.scale) {api.call_failf(call,api.INVALID_PARAMS,"entity %s has a scale with a zero axis",base.text_get(p.entity[:]));return}
-    at,to:=local_of(t,p.at),local_of(t,p.to)
-    index:int
-    found_place:bool
-    switch p.op {
-    case .Move,.Remove: index,found_place=shapes.shape_vertex_near(&shape,at,1e30)
-    case .Insert:
-        edge,point,near:=shapes.shape_edge_near(&shape,at,1e30)
-        index,at,found_place=edge,point,near
-    }
-    if !found_place {api.call_failf(call,api.INVALID_PARAMS,"entity %s has no corners",base.text_get(p.entity[:]));return}
+    plane:=corner_plane(t,&corners,-1)
+    at,to:=local_of(plane,p.at),local_of(plane,p.to)
+    vertex,edge,on_edge:=corner_near(&corners,at)
+    index:=p.op==.Insert?edge:vertex
+    if index<0 {api.call_failf(call,api.INVALID_PARAMS,"entity %s has no corners",base.text_get(p.entity[:]));return}
+    if p.op==.Insert {at=on_edge}
     if p.op==.Move {at=to}
     if !editor.api_edit_begin(s,call,p.op==.Move?"Move corner":p.op==.Insert?"Insert corner":"Remove corner") {return}
     error:=corner_edit(s,e,p.op,index,at,"")
     switch {
     case error==.None:
-    case p.op==.Remove && error==.Invalid: api.call_fail(call,api.INVALID_PARAMS,"at: a loop keeps at least three corners")
+    case p.op==.Remove && error==.Invalid: api.call_fail(call,api.INVALID_PARAMS,"at: a loop keeps at least three corners, a Spline two")
     case error==.Self_Intersecting:        api.call_failf(call,api.INVALID_PARAMS,"%s: %s; give a point that keeps the loops apart",p.op==.Move?"to":"at",shapes.shape_error_text(error))
     case:                                  api.call_fail(call,api.INVALID_PARAMS,shapes.shape_error_text(error))
     }
     if !editor.api_edit_end(s,call,error==.None) {return}
-    now,_:=editor.entity_get(w,e,shapes.Shape)
+    now,_:=corners_of(w,e)
     out:=api.call_result(call,Corner_Result)
-    out.id,out.corners=editor.api_entity_id(w,e),u32(now.point_count)
+    out.id,out.corners=editor.api_entity_id(w,e),u32(corner_count(&now))
     out.corner=u32(p.op==.Insert?index+1:index)
 }

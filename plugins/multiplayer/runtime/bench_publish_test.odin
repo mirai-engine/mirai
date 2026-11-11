@@ -15,7 +15,7 @@ bench_publish_run :: proc(t:^testing.T,changed:bool,hz:f32) {
     SAMPLES :: 600
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -55,7 +55,7 @@ bench_publish_run :: proc(t:^testing.T,changed:bool,hz:f32) {
     mean:f64
     for tick in 1..=SAMPLES+96 {
         if changed {
-            for row in 0..<len(world.values.values) {core.at(&world.values,row).force=f32(tick)}
+            for row in 0..<len(world.values.values) {core.edit_at(&world.values,row).force=f32(tick)}
         }
         started:=time.tick_now()
         server_publish(&session,ref,&outbox,u32(tick))

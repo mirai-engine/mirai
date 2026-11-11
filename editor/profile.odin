@@ -1,6 +1,5 @@
 package editor
 
-import "base:runtime"
 import "core:fmt"
 import "core:math"
 import vmem "core:mem/virtual"
@@ -49,8 +48,7 @@ Profile_Conditions :: struct {
     window:[2]int,       // pixels of the drawable
     render:[2]int,       // pixels the scene is rendered at
     preset:string,
-    render_scale:f32,
-    preset_height:u32,
+    resolution:u32,
     vsync:bool,
     frame_limit:u32,
     refresh_hz:f32,      // of the display the window is on; 0 when unknown
@@ -194,7 +192,7 @@ profile_conditions :: proc(s:^Session) -> (c:Profile_Conditions) {
     }
     if g:=graphics_settings(s);g!=nil {
         c.preset=strings.clone(graphics_quality_label(erender.graphics_quality_of(g^)))
-        c.render_scale,c.preset_height,c.vsync,c.frame_limit=g.render_scale,g.preset_height,g.vsync,g.frame_limit
+        c.resolution,c.vsync,c.frame_limit=g.resolution,g.vsync,g.frame_limit
     }
     current:=status(s)
     c.document,c.entities=strings.clone(current.document),current.entities
@@ -403,7 +401,7 @@ profile_spread :: proc(values:[]f64) -> (s:Profile_Spread) {
 }
 
 // Rounded to the microsecond, which is what a time in milliseconds needs and keeps the answer short.
-profile_ms :: proc(ms:f64) -> f64 {return math.round(ms*1000)/1000}
+profile_ms :: proc(ms:f64) -> f32 {return f32(math.round(ms*1000)/1000)}
 
 // The zones of one name and thread kind, frame by frame.
 Profile_Aggregate :: struct {

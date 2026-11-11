@@ -82,7 +82,7 @@ import math "mirai:std/math"
 }
 @(private="file") tree_bytes :: proc(tree:^Dynamic_Tree) -> []byte {return slice.to_bytes(tree.nodes[:tree.node_high])}
 @(private="file") trees_equal :: proc(a,b:^Dynamic_Tree) -> bool {
-    return a.root==b.root&&a.free_list==b.free_list&&a.node_high==b.node_high&&a.proxy_count==b.proxy_count&&
+    return a.root==b.root&&a.free_list==b.free_list&&a.node_high==b.node_high&&a.proxy_count==b.proxy_count&&a.placed==b.placed&&
         mem.compare(tree_bytes(a),tree_bytes(b))==0
 }
 
@@ -212,7 +212,6 @@ dynamic_tree_clear_forgets_every_proxy_and_node :: proc(t:^testing.T) {
     dynamic_tree_clear(&tree)
     testing.expect_value(t,tree.proxy_count,i32(0))
     testing.expect_value(t,tree.node_high,i32(0))
-    testing.expect_value(t,dynamic_tree_snapshot_size(&tree),24)
     testing.expect(t,dynamic_tree_validate(&tree))
     q:=dynamic_tree_query(&tree,{{-100,-100,-100},{100,100,100}})
     _,_,found:=tree_query_next(&q)
@@ -439,6 +438,74 @@ dynamic_tree_stays_shallow_after_sorted_insertion :: proc(t:^testing.T) {
     testing.expectf(t,dynamic_tree_height(&tree)<=26,"height %d for %d sorted boxes on a diagonal",dynamic_tree_height(&tree),COUNT)
 }
 
+// A level of 10k boxes inserted in the order it was authored, row by row: the rebuild keeps every proxy
+// with its box and user, bounds less area, and gives the same tree for the same leaves.
+@(test)
+dynamic_tree_rebuild_lowers_the_area_of_a_level_and_keeps_every_proxy :: proc(t:^testing.T) {
+    SIDE :: 100
+    trees:[2]Dynamic_Tree
+    for &tree in trees {testing.expect(t,dynamic_tree_init(&tree,{proxy_capacity=SIDE*SIDE}))}
+    defer for &tree in trees {dynamic_tree_destroy(&tree)}
+    random:=random_make(13)
+    boxes:=make([]Aabb,SIDE*SIDE)
+    defer delete(boxes)
+    for &box,i in boxes {
+        corner:=[3]f32{f32(i%SIDE)*4,random_f32(&random,0,2),f32(i/SIDE)*4}
+        box={corner,corner+random_vector(&random,0.5,3.5)}
+        for &tree in trees {dynamic_tree_insert(&tree,box,u64(i))}
+    }
+    before:=dynamic_tree_area_ratio(&trees[0])
+    testing.expect_value(t,trees[0].placed,SIDE*SIDE)
+    testing.expect(t,dynamic_tree_rebuild(&trees[0]))
+    testing.expect_value(t,trees[0].placed,0)
+    testing.expect(t,dynamic_tree_validate(&trees[0]))
+    after:=dynamic_tree_area_ratio(&trees[0])
+    testing.expectf(t,after<0.9*before,"area ratio %f after the rebuild, %f before",after,before)
+    kept:=0
+    for &node,proxy in trees[0].nodes[:trees[0].node_high] {
+        if node.height==0 && node.child1==NULL_NODE && node.user<SIDE*SIDE && node.aabb==boxes[node.user] && dynamic_tree_user(&trees[0],i32(proxy))==node.user {kept+=1}
+    }
+    testing.expect_value(t,kept,SIDE*SIDE)
+    testing.expect(t,dynamic_tree_rebuild(&trees[1]))
+    testing.expect(t,trees_equal(&trees[0],&trees[1]))
+}
+
+// A box that is not finite or a temporary allocator without room leave the tree as it was; after a
+// rebuild what it finds is what it holds, and edits go on.
+@(test)
+dynamic_tree_rebuild_refuses_hostile_boxes_and_lack_of_memory :: proc(t:^testing.T) {
+    m:Model
+    testing.expect(t,model_init(&m,909))
+    defer dynamic_tree_destroy(&m.tree)
+    for _ in 0..<3000 {model_step(&m)}
+    nan:=transmute(f32)u32(0x7fc00000)
+    copied:=make([]byte,len(tree_bytes(&m.tree)))
+    defer delete(copied)
+    hostile,_:=dynamic_tree_insert(&m.tree,{{nan,0,0},{1,1,1}},MODEL_CAPACITY)
+    copy(copied,tree_bytes(&m.tree))
+    testing.expect(t,!dynamic_tree_rebuild(&m.tree))
+    testing.expect(t,mem.compare(copied,tree_bytes(&m.tree))==0)
+    dynamic_tree_remove(&m.tree,hostile)
+    copy(copied,tree_bytes(&m.tree))
+    buffer:[64]byte
+    arena:mem.Arena
+    mem.arena_init(&arena,buffer[:])
+    temp:=context.temp_allocator
+    context.temp_allocator=mem.arena_allocator(&arena)
+    testing.expect(t,!dynamic_tree_rebuild(&m.tree))
+    context.temp_allocator=temp
+    testing.expect(t,mem.compare(copied,tree_bytes(&m.tree))==0)
+    testing.expect(t,dynamic_tree_rebuild(&m.tree))
+    testing.expect(t,dynamic_tree_validate(&m.tree))
+    disagreed:=0
+    for round in 0..<300 {
+        if round%3==0 {model_step(&m)}
+        for kind in Expectation {disagreed+=int(!model_agrees(&m,kind))}
+    }
+    testing.expect_value(t,disagreed,0)
+    testing.expect(t,dynamic_tree_validate(&m.tree))
+}
+
 @(test)
 dynamic_tree_iterators_cross_a_chain_deeper_than_their_stack :: proc(t:^testing.T) {
     COUNT :: 300
@@ -517,121 +584,53 @@ dynamic_tree_is_deterministic_for_a_sequence_of_operations :: proc(t:^testing.T)
     testing.expect_value(t,order[0],order[1])
 }
 
+// A tree that only takes copies of another and gives them back: what did not change is not copied, and
+// what follows a copy back repeats.
 @(test)
-dynamic_tree_snapshot_restores_the_state_and_what_follows_it :: proc(t:^testing.T) {
+dynamic_tree_copy_takes_only_what_changed_and_what_follows_repeats :: proc(t:^testing.T) {
     m:Model
     testing.expect(t,model_init(&m,808))
     defer dynamic_tree_destroy(&m.tree)
     for _ in 0..<3000 {model_step(&m)}
-    size:=dynamic_tree_snapshot_size(&m.tree)
-    testing.expect_value(t,size,24+int(m.tree.node_high)*size_of(Tree_Node))
-    snapshot:=make([]byte,size+8)
-    defer delete(snapshot)
-    written,ok:=dynamic_tree_snapshot(&m.tree,snapshot)
-    testing.expect(t,ok)
-    testing.expect_value(t,written,size)
+    kept,later:Dynamic_Tree
+    testing.expect(t,dynamic_tree_init(&kept,{proxy_capacity=MODEL_CAPACITY})&&dynamic_tree_init(&later,{proxy_capacity=MODEL_CAPACITY}))
+    defer dynamic_tree_destroy(&kept)
+    defer dynamic_tree_destroy(&later)
+    stale,_:=dynamic_tree_insert(&kept,{{0,0,0},{1,1,1}},0)
+    dynamic_tree_insert(&kept,{{2,2,2},{3,3,3}},0)
+    dynamic_tree_remove(&kept,stale)
+    written,ok:=dynamic_tree_copy(&kept,&m.tree,true)
+    testing.expect(t,ok&&written>=len(tree_bytes(&m.tree)))
+    testing.expect(t,trees_equal(&m.tree,&kept)&&dynamic_tree_validate(&kept))
+    written,_=dynamic_tree_copy(&kept,&m.tree,false)
+    testing.expect_value(t,written,0)
     saved:=new_clone(m)
     defer free(saved)
-
-    other:Dynamic_Tree
-    testing.expect(t,dynamic_tree_init(&other,{proxy_capacity=MODEL_CAPACITY}))
-    defer dynamic_tree_destroy(&other)
-    stale,_:=dynamic_tree_insert(&other,{{0,0,0},{1,1,1}},0)
-    dynamic_tree_insert(&other,{{2,2,2},{3,3,3}},0)
-    dynamic_tree_remove(&other,stale)
-    read,restored:=dynamic_tree_restore(&other,snapshot)
-    testing.expect(t,restored)
-    testing.expect_value(t,read,size)
-    testing.expect(t,trees_equal(&m.tree,&other))
-    testing.expect(t,dynamic_tree_validate(&other))
-
-    // The original keeps going; rolled back, the same operations rebuild the same bytes.
     for _ in 0..<2000 {model_step(&m)}
-    testing.expect(t,!trees_equal(&m.tree,&other))
-    replay:=new_clone(saved^)
-    defer free(replay)
-    replay.tree=other
-    for _ in 0..<2000 {model_step(replay)}
-    other=replay.tree
-    testing.expect(t,trees_equal(&m.tree,&other))
-    read,restored=dynamic_tree_restore(&m.tree,snapshot[:size])
-    testing.expect(t,restored&&read==size)
-    testing.expect(t,m.tree.root==saved.tree.root&&m.tree.free_list==saved.tree.free_list&&m.tree.proxy_count==saved.tree.proxy_count)
-    testing.expect(t,mem.compare(tree_bytes(&m.tree),snapshot[24:size])==0)
-    saved.tree=m.tree
+    _,ok=dynamic_tree_copy(&later,&m.tree,true)
+    testing.expect(t,ok&&!trees_equal(&m.tree,&kept))
+    // Back to the kept tree, copying what changed, the same operations rebuild the same bytes.
+    _,ok=dynamic_tree_copy(&m.tree,&kept,false)
+    testing.expect(t,ok&&trees_equal(&m.tree,&kept))
+    tree:=m.tree
+    m=saved^
+    m.tree=tree
+    for _ in 0..<2000 {model_step(&m)}
+    testing.expect(t,trees_equal(&m.tree,&later))
+    _,ok=dynamic_tree_copy(&kept,&m.tree,false)
+    testing.expect(t,ok&&trees_equal(&m.tree,&kept))
     failures:=0
     for _ in 0..<200 {
-        if !model_agrees(saved,.Query) {failures+=1}
+        if !model_agrees(&m,.Query) {failures+=1}
     }
     testing.expect_value(t,failures,0)
-}
-
-@(test)
-dynamic_tree_snapshot_fails_when_the_buffer_is_too_small :: proc(t:^testing.T) {
-    tree:Dynamic_Tree
-    testing.expect(t,dynamic_tree_init(&tree,{proxy_capacity=4}))
-    defer dynamic_tree_destroy(&tree)
-    dynamic_tree_insert(&tree,{{0,0,0},{1,1,1}},0)
-    buffer:[24+48]byte
-    written,ok:=dynamic_tree_snapshot(&tree,buffer[:len(buffer)-1])
-    testing.expect(t,!ok&&written==0)
-    written,ok=dynamic_tree_snapshot(&tree,buffer[:])
-    testing.expect(t,ok&&written==len(buffer))
-}
-
-@(test)
-dynamic_tree_restore_rejects_bad_snapshots_and_leaves_the_tree_alone :: proc(t:^testing.T) {
-    big,small:Dynamic_Tree
-    testing.expect(t,dynamic_tree_init(&big,{proxy_capacity=16})&&dynamic_tree_init(&small,{proxy_capacity=4}))
-    defer dynamic_tree_destroy(&big)
+    // The nodes of a tree do not fit in a smaller one, which stays as it was.
+    small:Dynamic_Tree
+    testing.expect(t,dynamic_tree_init(&small,{proxy_capacity=4}))
     defer dynamic_tree_destroy(&small)
-    random:=random_make(909)
-    for i in 0..<16 {dynamic_tree_insert(&big,random_box(&random,10,1),u64(i))}
-    for i in 0..<3 {dynamic_tree_insert(&small,random_box(&random,10,1),u64(i))}
-    snapshot:[24+31*48]byte
-    written,_:=dynamic_tree_snapshot(&big,snapshot[:])
-    testing.expect_value(t,written,len(snapshot))
-    before:[24+7*48]byte
-    dynamic_tree_snapshot(&small,before[:])
-    unchanged :: proc(tree:^Dynamic_Tree, before:[]byte) -> bool {
-        now:[24+7*48]byte
-        written,ok:=dynamic_tree_snapshot(tree,now[:])
-        return ok&&mem.compare(now[:written],before[:written])==0
-    }
-    // 31 nodes do not fit a tree of 7.
-    read,ok:=dynamic_tree_restore(&small,snapshot[:])
-    testing.expect(t,!ok&&read==0)
-    testing.expect(t,unchanged(&small,before[:]))
-    // Truncated, before and after the header.
-    _,ok=dynamic_tree_restore(&big,snapshot[:10])
-    testing.expect(t,!ok)
-    _,ok=dynamic_tree_restore(&big,snapshot[:len(snapshot)-1])
-    testing.expect(t,!ok)
-    _,ok=dynamic_tree_restore(&big,nil)
-    testing.expect(t,!ok)
-    // Each header field out of range: magic, version, root, free list, node count, proxy count.
-    Header :: struct {magic,version:u32, root,free_list,node_high,proxy_count:i32}
-    corrupt :: proc(tree:^Dynamic_Tree, snapshot:[]byte, edit:proc(header:^Header)) -> bool {
-        bytes:[24+31*48]byte
-        mem.copy(&bytes,raw_data(snapshot),len(bytes))
-        edit((^Header)(&bytes))
-        _,ok:=dynamic_tree_restore(tree,bytes[:])
-        return ok
-    }
-    testing.expect(t,corrupt(&big,snapshot[:],proc(header:^Header) {}))
-    testing.expect(t,!corrupt(&big,snapshot[:],proc(header:^Header) {header.magic+=1}))
-    testing.expect(t,!corrupt(&big,snapshot[:],proc(header:^Header) {header.version+=1}))
-    testing.expect(t,!corrupt(&big,snapshot[:],proc(header:^Header) {header.root=31}))
-    testing.expect(t,!corrupt(&big,snapshot[:],proc(header:^Header) {header.root=-2}))
-    testing.expect(t,!corrupt(&big,snapshot[:],proc(header:^Header) {header.root=NULL_NODE}))
-    testing.expect(t,!corrupt(&big,snapshot[:],proc(header:^Header) {header.free_list=40}))
-    testing.expect(t,!corrupt(&big,snapshot[:],proc(header:^Header) {header.node_high=-1}))
-    testing.expect(t,!corrupt(&big,snapshot[:],proc(header:^Header) {header.node_high=32}))
-    testing.expect(t,!corrupt(&big,snapshot[:],proc(header:^Header) {header.proxy_count=-1}))
-    testing.expect(t,!corrupt(&big,snapshot[:],proc(header:^Header) {header.proxy_count=17}))
-    testing.expect(t,!corrupt(&big,snapshot[:],proc(header:^Header) {header.proxy_count=0}))
-    testing.expect(t,dynamic_tree_validate(&big))
-    testing.expect_value(t,big.proxy_count,i32(16))
+    dynamic_tree_insert(&small,{{0,0,0},{1,1,1}},7)
+    written,ok=dynamic_tree_copy(&small,&m.tree,true)
+    testing.expect(t,!ok&&written==0&&small.proxy_count==1&&dynamic_tree_user(&small,small.root)==7)
 }
 
 @(test)

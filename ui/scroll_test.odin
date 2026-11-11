@@ -4,6 +4,7 @@ import "core:testing"
 
 Test_Scroll :: struct {
     outer,inner:[2]f32,
+    inner_fits:bool, // the inner area holds one row instead of six
     list:f32,
     rows:int,
     count:int,
@@ -20,7 +21,7 @@ test_scroll_build :: proc(ctx:^Context,user:rawptr) {
         if scroll_area(ctx,id(ctx,"outer"),&s.outer,{width=fixed(200),height=FIT,max_height=300,padding=padding_all(10),gap=10}) {
             for i in 0..<s.rows {button(ctx,id(ctx,"row",i+1),{label="Row",width=-1,height=30})}
             if scroll_area(ctx,id(ctx,"inner"),&s.inner,{height=fixed(60)}) {
-                for i in 0..<6 {button(ctx,id(ctx,"inner_row",i+1),{label="Inner",width=-1,height=30})}
+                for i in 0..<(1 if s.inner_fits else 6) {button(ctx,id(ctx,"inner_row",i+1),{label="Inner",width=-1,height=30})}
             }
         }
     }
@@ -53,7 +54,7 @@ test_wheel :: proc(ctx:^Context,input:^Input,s:^Test_Scroll,notches:f32) {
 @(test)
 a_scroll_area_grows_to_its_limit_and_then_scrolls_with_the_wheel :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Scroll{rows=2}
     input:=test_input()
@@ -85,9 +86,28 @@ a_scroll_area_grows_to_its_limit_and_then_scrolls_with_the_wheel :: proc(t:^test
 }
 
 @(test)
-the_wheel_belongs_to_the_innermost_area_under_the_pointer :: proc(t:^testing.T) {
+the_wheel_belongs_to_the_innermost_area_under_the_pointer_that_can_move_that_way :: proc(t:^testing.T) {
+    // Six rows: the outer area can move 20 down, and the inner one 120.
+    cases:=[]struct{name:string,fits:bool,outer,inner,wheel,want_outer,want_inner:f32}{
+        {"the inner area has room",false,0,0,-1,0,36},
+        {"the inner area fits what it holds",true,0,0,-1,20,0},
+        {"the inner area is at its end",false,0,120,-1,20,120},
+        {"the inner area is at its top",false,20,0,1,0,0},
+    }
+    for c in cases {
+        ctx:Context
+        testing.expect(t,test_context_init(&ctx,TEST_SMALL))
+        defer context_destroy(&ctx)
+        s:=Test_Scroll{rows=6,inner_fits=c.fits,outer={0,c.outer},inner={0,c.inner}}
+        input:=test_input()
+        test_scroll_frame(&ctx,&input,&s)
+        test_scroll_frame(&ctx,&input,&s)
+        test_point(&input,test_rect(t,&ctx,id(&ctx,"inner")))
+        test_wheel(&ctx,&input,&s,c.wheel)
+        testing.expectf(t,s.outer.y==c.want_outer && s.inner.y==c.want_inner,"%s: outer %v and inner %v, expected %v and %v",c.name,s.outer.y,s.inner.y,c.want_outer,c.want_inner)
+    }
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Scroll{rows=2}
     input:=test_input()
@@ -111,7 +131,7 @@ the_wheel_belongs_to_the_innermost_area_under_the_pointer :: proc(t:^testing.T) 
 @(test)
 a_long_list_builds_only_the_rows_in_sight :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Scroll{count=1000}
     input:=test_input()
@@ -153,13 +173,13 @@ a_long_list_builds_only_the_rows_in_sight :: proc(t:^testing.T) {
 @(test)
 a_dialog_taller_than_the_surface_scrolls :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Scroll{modal=true}
     input:=test_input(800,400)
     test_scroll_frame(&ctx,&input,&s)
     dialog:=test_rect(t,&ctx,id(&ctx,"modal"))
-    testing.expect(t,test_near(dialog.h,400-2*ctx.theme.margin),"The dialog stops at the margins of the surface")
+    testing.expect(t,test_near(dialog.h,400-2*metric(&ctx,"margin")),"The dialog stops at the margins of the surface")
     input.pointer={400,200}
     test_wheel(&ctx,&input,&s,-2)
     testing.expect_value(t,s.modal_scroll,f32(72))
@@ -173,7 +193,7 @@ clipping_containers_beyond_the_capacity_are_refused_and_counted :: proc(t:^testi
     ctx:Context
     desc:=TEST_SMALL
     desc.max_clips=10
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     offsets:[14][2]f32
     input:=test_input()
@@ -192,7 +212,7 @@ clipping_containers_beyond_the_capacity_are_refused_and_counted :: proc(t:^testi
 @(test)
 the_bar_of_an_area_shows_what_is_in_sight_and_drags_it :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:=Test_Scroll{rows=2}
     input:=test_input()
@@ -230,7 +250,7 @@ the_bar_of_an_area_shows_what_is_in_sight_and_drags_it :: proc(t:^testing.T) {
 @(test)
 the_bar_of_an_area_in_a_panel_hangs_from_the_area :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     build :: proc(ctx:^Context,user:rawptr) {
         if panel(ctx,id(ctx,"moved"),{width=fixed(160),height=FIT,offset={420,90}}) {
@@ -253,7 +273,7 @@ the_keyboard_brings_the_widget_it_focuses_into_sight :: proc(t:^testing.T) {
     ctx:Context
     desc:=TEST_SMALL
     desc.navigation=true
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     s:=Test_Scroll{rows=12}
     input:=test_input()
@@ -291,7 +311,7 @@ the_keyboard_brings_the_widget_it_focuses_into_sight :: proc(t:^testing.T) {
 @(test)
 rows_of_different_heights_build_only_those_in_sight_and_keep_the_range :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     Test_Rows :: struct {heights:[200]f32,offset:f32,first,last,built:int}
     s:Test_Rows

@@ -7,6 +7,7 @@ import "mirai:core"
 import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:std/spatial"
 
 // A section of the world: the scene a reference names hangs from its entity
 // without being copied into the document that holds the reference. Loading
@@ -36,6 +37,7 @@ Section_State :: enum u8 {Active,Loaded,Unloaded}
 Scene_Reference :: struct {
     scene:base.Asset_Id,
     extents:[3]f32 `mirai:"min=0,unit=m"`, // half the size of the box of the section around its entity, times its scale: where its unbounded volumes rule and, streamed, where it is
+    distance:f32 `mirai:"min=0,unit=m"`,   // Spatial: how near its box a player comes for it to load; 0: the load distance of the streaming settings
     rule:Section_Rule,
     state:Section_State, // asked: with a network, the server asks and each end loads its own
     streamed:Section_State `mirai:"transient,local,readonly"`, // Spatial: what the streaming of this end wants, by where its players are
@@ -55,7 +57,7 @@ section_state :: proc "contextless" (reference:Scene_Reference) -> Section_State
 // hangs from a section loaded and off, and what is dormant. The reference
 // stays on, so the state of the section can still be asked; what its author
 // turned off stays off.
-@(component,description="Off because its section is loaded and off, or not loaded: on again with it.")
+@(component,derived,description="Off because its section is loaded and off, or not loaded: on again with it.")
 Section_Held :: struct {}
 
 // What stands for the section of reference while it is not loaded and on,
@@ -86,7 +88,7 @@ section_path :: proc(w:core.World_Ref,e:core.Entity,allocator:=context.temp_allo
     if references!=nil && parents!=nil {
         at:=e
         for _ in 0..<core.HIERARCHY_DEPTH {
-            parent,placed:=core.get(core.read(parents),at)
+            parent,placed:=core.get(parents,at)
             if !placed || parent.entity==core.NONE {break}
             at=parent.entity
             if reference:=(^Scene_Reference)(core.raw_find(core.raw(references),type_info_of(Scene_Reference),at));reference!=nil {append(&path,reference.scene)}
@@ -129,5 +131,69 @@ section_holds :: proc "contextless" (reference:Scene_Reference,pose:mm.Transform
 // has none.
 section_bounds :: proc "contextless" (reference:Scene_Reference,pose:mm.Transform) -> mm.Aabb {
     if reference.extents=={} {return mm.AABB_EMPTY}
-    return mm.aabb_transform({-reference.extents,reference.extents},mm.transform_matrix({pose.position,pose.rotation,{1,1,1}}))
+    half:=reference.extents*linalg.abs(pose.scale)
+    return mm.aabb_transform({-half,half},mm.transform_matrix({pose.position,pose.rotation,{1,1,1}}))
+}
+
+// The box of a section where it is.
+Section_Box :: struct {
+    entity:core.Entity, // of its Scene_Reference
+    reference:Scene_Reference,
+    pose:mm.Transform,
+}
+
+// The boxes of the sections of a world, in a tree of the boxes of the world
+// around them: the sections that hold a point are found among the boxes near
+// it, not by looking at every reference. Made again whole when a reference,
+// or where one is, changes.
+Section_Boxes :: struct {
+    boxes:[dynamic]Section_Box,
+    nodes:[dynamic]spatial.Bvh_Node,
+    order:[dynamic]u32,
+}
+
+// Makes the boxes of the references that have one, where worlds puts them.
+// False without memory: it holds none then.
+section_boxes_build :: proc(b:^Section_Boxes,references:^core.Table(Scene_Reference,$A),worlds:^core.Table(core.World_Transform,$B)) -> bool {
+    clear(&b.boxes);clear(&b.nodes);clear(&b.order)
+    bounds:=make([dynamic]mm.Aabb,context.temp_allocator)
+    for row in 0..<core.count(references) {
+        reference:=core.at(references,row)
+        e:=core.entity_at(references,row)
+        pose,placed:=core.get(worlds,e)
+        if !placed || reference.extents=={} {continue}
+        box:=section_bounds(reference,pose.transform)
+        if !spatial.aabb_valid(box) {continue}
+        if _,no_room:=append(&b.boxes,Section_Box{e,reference,pose.transform});no_room!=nil {return section_boxes_fail(b)}
+        if _,no_room:=append(&bounds,box);no_room!=nil {return section_boxes_fail(b)}
+    }
+    tree:spatial.Bvh
+    if !spatial.bvh_build(&tree,bounds[:],{allocator=context.temp_allocator}) {return section_boxes_fail(b)}
+    if resize(&b.nodes,len(tree.nodes))!=nil || resize(&b.order,len(tree.order))!=nil {return section_boxes_fail(b)}
+    copy(b.nodes[:],tree.nodes)
+    copy(b.order[:],tree.order)
+    return true
+}
+
+@(private)
+section_boxes_fail :: proc(b:^Section_Boxes) -> bool {
+    clear(&b.boxes);clear(&b.nodes);clear(&b.order)
+    return false
+}
+
+section_boxes_destroy :: proc(b:^Section_Boxes) {
+    delete(b.boxes);delete(b.nodes);delete(b.order)
+    b^={}
+}
+
+// The boxes that hold a point, appended to out.
+section_boxes_at :: proc(b:^Section_Boxes,point:[3]f32,out:^[dynamic]Section_Box) {
+    tree:=spatial.Bvh{nodes=b.nodes[:],order=b.order[:]}
+    q:=spatial.bvh_query(&tree,{point,point})
+    for leaf in spatial.bvh_query_next(&q) {
+        for at in leaf {
+            box:=b.boxes[at]
+            if section_holds(box.reference,box.pose,point) {append(out,box)}
+        }
+    }
 }

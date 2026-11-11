@@ -1,6 +1,7 @@
 package spatial
 
 import "core:mem"
+import "mirai:std/base"
 import math "mirai:std/math"
 
 NULL_NODE :: i32(-1)
@@ -15,9 +16,11 @@ Tree_Node :: struct {aabb:Aabb, user:u64, parent:i32, child1,child2:i32, height:
 
 Tree_Stats :: struct {insert_failures:u64}
 Dynamic_Tree_Desc :: struct {proxy_capacity:int, margin:f32, allocator:mem.Allocator}
-// nodes[:node_high] with root, free_list, node_high and proxy_count is the entire state.
-// node_high counts the node slots ever used.
-Dynamic_Tree :: struct {nodes:[]Tree_Node, root,free_list,node_high,proxy_count:i32, margin:f32, allocator:mem.Allocator, stats:Tree_Stats}
+// nodes[:node_high] with root, free_list, node_high, proxy_count and placed is the entire state.
+// node_high counts the node slots ever used; placed, the leaves inserted or moved since the tree was built
+// whole by dynamic_tree_rebuild. stamps: of the nodes by chunk (base.chunk_stamp), with the
+// revision that dynamic_tree_copy moves.
+Dynamic_Tree :: struct {nodes:[]Tree_Node, root,free_list,node_high,proxy_count,placed:i32, margin:f32, allocator:mem.Allocator, stats:Tree_Stats, stamps:[]u64, revision:u64}
 
 dynamic_tree_init :: proc(tree:^Dynamic_Tree, desc:Dynamic_Tree_Desc) -> bool {
     tree^={}
@@ -26,15 +29,21 @@ dynamic_tree_init :: proc(tree:^Dynamic_Tree, desc:Dynamic_Tree_Desc) -> bool {
     count:=2*desc.proxy_capacity-1
     nodes,error:=mem.make_aligned([]Tree_Node,count,64,allocator)
     if error!=nil||len(nodes)!=count {return false}
-    tree^={nodes=nodes,root=NULL_NODE,free_list=NULL_NODE,margin=max(desc.margin,0),allocator=allocator}
+    stamps,stamps_error:=make([]u64,base.chunks_of(count),allocator)
+    if stamps_error!=nil {
+        delete(nodes,allocator)
+        return false
+    }
+    tree^={nodes=nodes,root=NULL_NODE,free_list=NULL_NODE,margin=max(desc.margin,0),allocator=allocator,stamps=stamps,revision=1}
     return true
 }
 dynamic_tree_destroy :: proc(tree:^Dynamic_Tree) {
     delete(tree.nodes,tree.allocator)
+    delete(tree.stamps,tree.allocator)
     tree^={}
 }
 dynamic_tree_clear :: proc(tree:^Dynamic_Tree) {
-    tree.root=NULL_NODE;tree.free_list=NULL_NODE;tree.node_high=0;tree.proxy_count=0
+    tree.root=NULL_NODE;tree.free_list=NULL_NODE;tree.node_high=0;tree.proxy_count=0;tree.placed=0
 }
 
 @(private) node_alloc :: proc(tree:^Dynamic_Tree) -> i32 {
@@ -42,7 +51,9 @@ dynamic_tree_clear :: proc(tree:^Dynamic_Tree) {
     if index!=NULL_NODE {tree.free_list=tree.nodes[index].parent} else {index=tree.node_high;tree.node_high+=1}
     return index
 }
+@(private) node_written :: #force_inline proc "contextless" (tree:^Dynamic_Tree, index:i32) {base.chunk_stamp(tree.stamps,int(index),tree.revision)}
 @(private) node_free :: proc(tree:^Dynamic_Tree, index:i32) {
+    node_written(tree,index)
     tree.nodes[index].height=-1
     tree.nodes[index].parent=tree.free_list
     tree.free_list=index
@@ -98,7 +109,8 @@ dynamic_tree_clear :: proc(tree:^Dynamic_Tree) {
 
 // Swaps a child of the node with a grandchild from its other side when that shrinks the internal
 // child that receives it. The node keeps its box: it bounds the same leaves.
-@(private) node_rotate :: proc(nodes:[]Tree_Node, index:i32) -> (rotated:bool) #no_bounds_check {
+@(private) node_rotate :: proc(tree:^Dynamic_Tree, index:i32) -> (rotated:bool) #no_bounds_check {
+    nodes:=tree.nodes
     node:=&nodes[index]
     if node.height<2 {return false}
     children:=node_children(node)
@@ -120,6 +132,7 @@ dynamic_tree_clear :: proc(tree:^Dynamic_Tree) {
     pivot:=&nodes[pivot_index]
     grandchildren:=node_children(pivot)
     down,up,stay:=children[best_side],grandchildren[best_up],grandchildren[1-best_up]
+    for written in ([4]i32{index,pivot_index,down,up}) {node_written(tree,written)}
     children[best_side]=up;nodes[up].parent=index
     grandchildren[best_up]=down;nodes[down].parent=pivot_index
     pivot.aabb=math.aabb_merge(nodes[down].aabb,nodes[stay].aabb)
@@ -130,15 +143,19 @@ dynamic_tree_clear :: proc(tree:^Dynamic_Tree) {
 
 // A node left unchanged by a refit has unchanged ancestors: two in a row end the walk.
 @(private) REFIT_STABLE :: 2
-@(private) ancestors_refit :: proc(nodes:[]Tree_Node, first:i32) #no_bounds_check {
+@(private) ancestors_refit :: proc(tree:^Dynamic_Tree, first:i32) #no_bounds_check {
+    nodes:=tree.nodes
     stable:=0
     for index:=first;index!=NULL_NODE;index=nodes[index].parent {
         node:=&nodes[index]
         a,b:=&nodes[node.child1],&nodes[node.child2]
         box,height:=math.aabb_merge(a.aabb,b.aabb),1+max(a.height,b.height)
         changed:=box!=node.aabb||height!=node.height
-        node.aabb=box;node.height=height
-        if node_rotate(nodes,index)||changed {stable=0;continue}
+        if changed {
+            node_written(tree,index)
+            node.aabb=box;node.height=height
+        }
+        if node_rotate(tree,index)||changed {stable=0;continue}
         stable+=1
         if stable==REFIT_STABLE {return}
     }
@@ -146,15 +163,19 @@ dynamic_tree_clear :: proc(tree:^Dynamic_Tree) {
 
 @(private) leaf_insert :: proc(tree:^Dynamic_Tree, leaf:i32, start:i32) {
     nodes:=tree.nodes
+    tree.placed+=1
+    node_written(tree,leaf)
     nodes[leaf].parent=NULL_NODE
     if tree.root==NULL_NODE {tree.root=leaf;return}
     sibling:=sibling_find(nodes,start,nodes[leaf].aabb)
     old_parent:=nodes[sibling].parent
     parent:=node_alloc(tree)
+    node_written(tree,parent)
+    node_written(tree,sibling)
     nodes[parent]={aabb=math.aabb_merge(nodes[leaf].aabb,nodes[sibling].aabb),parent=old_parent,child1=sibling,child2=leaf,height=nodes[sibling].height+1}
-    if old_parent==NULL_NODE {tree.root=parent} else {node_child_replace(&nodes[old_parent],sibling,parent)}
+    if old_parent==NULL_NODE {tree.root=parent} else {node_written(tree,old_parent);node_child_replace(&nodes[old_parent],sibling,parent)}
     nodes[sibling].parent=parent;nodes[leaf].parent=parent
-    ancestors_refit(nodes,parent)
+    ancestors_refit(tree,parent)
 }
 @(private) leaf_remove :: proc(tree:^Dynamic_Tree, leaf:i32) -> (grandparent:i32) {
     nodes:=tree.nodes
@@ -162,10 +183,11 @@ dynamic_tree_clear :: proc(tree:^Dynamic_Tree) {
     parent:=nodes[leaf].parent
     grandparent=nodes[parent].parent
     sibling:=nodes[parent].child1==leaf?nodes[parent].child2:nodes[parent].child1
+    node_written(tree,sibling)
     nodes[sibling].parent=grandparent
-    if grandparent==NULL_NODE {tree.root=sibling} else {node_child_replace(&nodes[grandparent],parent,sibling)}
+    if grandparent==NULL_NODE {tree.root=sibling} else {node_written(tree,grandparent);node_child_replace(&nodes[grandparent],parent,sibling)}
     node_free(tree,parent)
-    ancestors_refit(nodes,grandparent)
+    ancestors_refit(tree,grandparent)
     return
 }
 
@@ -173,6 +195,7 @@ dynamic_tree_clear :: proc(tree:^Dynamic_Tree) {
 dynamic_tree_insert :: proc(tree:^Dynamic_Tree, aabb:Aabb, user:u64) -> (proxy:i32, ok:bool) {
     if 2*int(tree.proxy_count)>=len(tree.nodes) {tree.stats.insert_failures+=1;return NULL_NODE,false}
     proxy=node_alloc(tree)
+    node_written(tree,proxy)
     tree.nodes[proxy]={aabb=aabb,user=user,parent=NULL_NODE,child1=NULL_NODE,child2=NULL_NODE}
     leaf_insert(tree,proxy,tree.root)
     tree.proxy_count+=1
@@ -192,6 +215,7 @@ dynamic_tree_move :: proc(tree:^Dynamic_Tree, proxy:i32, aabb:Aabb) {
 }
 @(private) leaf_move :: proc(tree:^Dynamic_Tree, proxy:i32, aabb:Aabb) {
     start:=leaf_remove(tree,proxy)
+    node_written(tree,proxy)
     tree.nodes[proxy].aabb=aabb
     // The search for the new sibling starts at the lowest ancestor that still contains the box.
     for start!=NULL_NODE&&!math.aabb_contains(tree.nodes[start].aabb,aabb) {start=tree.nodes[start].parent}
@@ -205,13 +229,70 @@ dynamic_tree_update :: proc(tree:^Dynamic_Tree, proxy:i32, tight:Aabb, displacem
     leaf_move(tree,proxy,aabb_translate_extend(math.aabb_expand(tight,tree.margin),displacement))
     return true
 }
+// Builds the internal nodes again by binned surface area, as bvh_build does, over the leaves, which
+// keep their proxies, boxes and users: a tree filled one insertion at a time, as the static shapes of
+// a level, is left as good as one built from all of them at once. A transaction: the scratch comes from
+// context.temp_allocator. Without it, or with a box that is not finite, the tree stays as it was.
+dynamic_tree_rebuild :: proc(tree:^Dynamic_Tree) -> bool {
+    count:=int(tree.proxy_count)
+    if count<3 {
+        tree.placed=0
+        return true
+    }
+    nodes:=tree.nodes[:tree.node_high]
+    boxes,boxes_error:=make([]Aabb,count,context.temp_allocator)
+    order,order_error:=make([]u32,count,context.temp_allocator)
+    built,built_error:=make([]Bvh_Node,2*count,context.temp_allocator)
+    // the proxy of each gathered leaf, then the node each node of the build becomes
+    ids,ids_error:=make([]i32,3*count,context.temp_allocator)
+    if boxes_error!=nil||order_error!=nil||built_error!=nil||ids_error!=nil||len(ids)!=3*count {return false}
+    leaves:=0
+    for &node,i in nodes {
+        if node.height!=0 {continue}
+        if leaves==count || !aabb_valid(node.aabb) {return false}
+        boxes[leaves],order[leaves],ids[leaves]=node.aabb,u32(leaves),i32(i)
+        leaves+=1
+    }
+    if leaves!=count {return false}
+    // Halving below the depth limit leaves one leaf per node.
+    builder:=Bvh_Builder{built,1,boxes,order,1,BVH_STACK_CAPACITY}
+    bvh_node_build(&builder,0,0,count,0)
+    // Every slot that is not a leaf is free, in ascending order: the nodes the build takes are the same
+    // for the same leaves.
+    tree.free_list=NULL_NODE
+    #reverse for &node,i in nodes {
+        node_written(tree,i32(i))
+        if node.height==0 {continue}
+        node.height=-1
+        node.parent=tree.free_list
+        tree.free_list=i32(i)
+    }
+    made:=ids[count:][:builder.node_count]
+    for b,i in built[:builder.node_count] {
+        if i!=1 {made[i]=b.count>0?ids[order[b.first]]:node_alloc(tree)}
+    }
+    // Children come after their parent in the build: walked backwards, their heights are ready.
+    #reverse for b,i in built[:builder.node_count] {
+        if i==1 || b.count>0 {continue}
+        a,c:=made[b.first],made[b.first+1]
+        nodes[made[i]]={aabb=Aabb{b.min,b.max},child1=a,child2=c,height=1+max(nodes[a].height,nodes[c].height)}
+        nodes[a].parent,nodes[c].parent=made[i],made[i]
+    }
+    tree.root=made[0]
+    nodes[tree.root].parent=NULL_NODE
+    tree.placed=0
+    return true
+}
 @(private) proxy_valid :: #force_inline proc "contextless" (tree:^Dynamic_Tree, proxy:i32) -> bool {
     return proxy>=0&&proxy<tree.node_high&&tree.nodes[proxy].height==0&&tree.nodes[proxy].child1==NULL_NODE
 }
 dynamic_tree_aabb :: proc(tree:^Dynamic_Tree, proxy:i32) -> Aabb {return proxy_valid(tree,proxy)?tree.nodes[proxy].aabb:{}}
 dynamic_tree_user :: proc(tree:^Dynamic_Tree, proxy:i32) -> u64 {return proxy_valid(tree,proxy)?tree.nodes[proxy].user:0}
 dynamic_tree_set_user :: proc(tree:^Dynamic_Tree, proxy:i32, user:u64) {
-    if proxy_valid(tree,proxy) {tree.nodes[proxy].user=user}
+    if proxy_valid(tree,proxy) && tree.nodes[proxy].user!=user {
+        node_written(tree,proxy)
+        tree.nodes[proxy].user=user
+    }
 }
 
 dynamic_tree_height :: proc(tree:^Dynamic_Tree) -> int {
@@ -419,45 +500,17 @@ dynamic_tree_sweep :: proc(tree:^Dynamic_Tree, aabb:Aabb, translation:[3]f32, ma
 }
 tree_sweep_next :: proc(s:^Tree_Sweep) -> (proxy:i32, user:u64, ok:bool) {return tree_cast_next((^Tree_Ray)(s),true)}
 
-@(private) TREE_SNAPSHOT_MAGIC :: u32(0x4552544d) // "MTRE"
-@(private) TREE_SNAPSHOT_VERSION :: u32(1)
-@(private) Tree_Snapshot_Header :: struct {magic,version:u32, root,free_list,node_high,proxy_count:i32}
-
-dynamic_tree_snapshot_size :: proc(tree:^Dynamic_Tree) -> int {
-    return size_of(Tree_Snapshot_Header)+int(tree.node_high)*size_of(Tree_Node)
-}
-// Header and nodes[:node_high] by block copy, in the layout of the machine.
-dynamic_tree_snapshot :: proc(tree:^Dynamic_Tree, dst:[]byte) -> (written:int, ok:bool) {
-    size:=dynamic_tree_snapshot_size(tree)
-    if len(dst)<size {return 0,false}
-    header:=Tree_Snapshot_Header{TREE_SNAPSHOT_MAGIC,TREE_SNAPSHOT_VERSION,tree.root,tree.free_list,tree.node_high,tree.proxy_count}
-    mem.copy_non_overlapping(raw_data(dst),&header,size_of(header))
-    mem.copy_non_overlapping(raw_data(dst[size_of(header):]),raw_data(tree.nodes),size-size_of(header))
-    return size,true
-}
-// The bytes of a tree snapshot at the start of `src` that dynamic_tree_restore would accept, without
-// touching the tree: false when it is malformed or does not fit the capacity.
-dynamic_tree_snapshot_check :: proc(tree:^Dynamic_Tree, src:[]byte) -> (read:int, ok:bool) {
-    header:Tree_Snapshot_Header
-    if len(src)<size_of(header) {return 0,false}
-    mem.copy_non_overlapping(&header,raw_data(src),size_of(header))
-    if header.magic!=TREE_SNAPSHOT_MAGIC||header.version!=TREE_SNAPSHOT_VERSION {return 0,false}
-    high:=header.node_high
-    if high<0||int(high)>len(tree.nodes) {return 0,false}
-    size:=size_of(header)+int(high)*size_of(Tree_Node)
-    if len(src)<size {return 0,false}
-    if header.root<NULL_NODE||header.root>=high||header.free_list<NULL_NODE||header.free_list>=high {return 0,false}
-    if header.proxy_count<0||2*i64(header.proxy_count)-1>i64(high)||(header.proxy_count==0)!=(header.root==NULL_NODE) {return 0,false}
-    return size,true
-}
-// Fails without touching the tree when the snapshot is malformed or does not fit the capacity.
-// The node block is trusted: dynamic_tree_validate checks one that comes from outside.
-dynamic_tree_restore :: proc(tree:^Dynamic_Tree, src:[]byte) -> (read:int, ok:bool) {
-    size:=dynamic_tree_snapshot_check(tree,src) or_return
-    header:Tree_Snapshot_Header
-    mem.copy_non_overlapping(&header,raw_data(src),size_of(header))
-    high:=header.node_high
-    mem.copy_non_overlapping(raw_data(tree.nodes),raw_data(src[size_of(header):]),size-size_of(header))
-    tree.root=header.root;tree.free_list=header.free_list;tree.node_high=high;tree.proxy_count=header.proxy_count
-    return size,true
+// Makes dst the tree src is, copying the chunks of nodes whose stamps differ, or all of them with whole:
+// a dst that only ever took copies of src, or src of it, keeps equal stamps where its nodes are equal. Both
+// stamp what they write next with a revision neither used. Returns the bytes of nodes written; false,
+// leaving dst as it was, when the nodes of src do not fit in it.
+dynamic_tree_copy :: proc(dst,src:^Dynamic_Tree, whole:bool) -> (written:int, ok:bool) {
+    if dst==src {return 0,true}
+    if src.node_high<0||int(src.node_high)>len(dst.nodes) {return 0,false}
+    nodes:=[1]base.Chunk_Copy{{mem.slice_to_bytes(dst.nodes),mem.slice_to_bytes(src.nodes),size_of(Tree_Node)}}
+    written=base.chunks_copy(nodes[:],dst.stamps,src.stamps,int(max(src.node_high,dst.node_high)),whole)
+    dst.root,dst.free_list,dst.node_high,dst.proxy_count,dst.placed=src.root,src.free_list,src.node_high,src.proxy_count,src.placed
+    revision:=max(dst.revision,src.revision)+1
+    dst.revision,src.revision=revision,revision
+    return written,true
 }

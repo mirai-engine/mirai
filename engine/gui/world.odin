@@ -7,8 +7,6 @@ import render "mirai:engine/render"
 import "mirai:host"
 import "mirai:platform"
 import gpu "mirai:render"
-import "mirai:std/base"
-import mm "mirai:std/math"
 import "mirai:ui"
 
 // The World_Widgets as each local player sees them. Each context places its
@@ -144,15 +142,14 @@ scene_hides :: proc(user:rawptr,point:[3]f32,share,metres:f32) -> bool {
     return hidden || !known
 }
 
-// Whether a view sees the mesh of a widget on it, as it was drawn in the last
-// frame (host.extras_slot_shown), and how far it is; one not drawn yet is seen.
+// Whether a view sees the mesh of a widget on it, as the renderer draws it,
+// and how far it is; one not drawn yet is seen.
 @(private)
-mesh_seen :: proc(renderer:^render.Renderer,extras:^host.Frame_Extras,view:^Player_View,e:core.Entity,position:[3]f32) -> (distance:f32,seen:bool) {
-    shown,drawn:=host.extras_slot_shown(extras,u64(e))
-    low,high,known:=render.mesh_bounds(renderer,shown.mesh)
-    if !drawn || !known {return linalg.length(position-view.camera.position),true}
-    m:=shown.transform
-    center:=(m*[4]f32{(low.x+high.x)*0.5,(low.y+high.y)*0.5,(low.z+high.z)*0.5,1}).xyz+shown.anchor
+mesh_seen :: proc(renderer:^render.Renderer,drawn:^render.Render_Sync,view:^Player_View,e:core.Entity,position:[3]f32) -> (distance:f32,seen:bool) {
+    mesh,m,placed:=render.instance_placed(renderer,drawn!=nil?render.instance_of(drawn,e):-1)
+    low,high,known:=render.mesh_bounds(renderer,mesh)
+    if !placed || !known {return linalg.length(position-view.camera.position),true}
+    center:=(m*[4]f32{(low.x+high.x)*0.5,(low.y+high.y)*0.5,(low.z+high.z)*0.5,1}).xyz
     scale:=max(linalg.length(m[0].xyz),linalg.length(m[1].xyz),linalg.length(m[2].xyz))
     return sphere_seen(view,center,linalg.length(high-low)*0.5*scale,false)
 }
@@ -165,7 +162,7 @@ Mesh_Surface :: struct {
     size:[2]u32,     // of the texture
     slot:u32,
     emission:f32,
-    planned:u64,     // the frame it was last planned in; one not planned in a frame goes
+    planned:u64,     // the frame it was last planned in; one not planned in a frame goes: without a texture, its mesh shows it until gui_meshes_render takes it away
     drawn:bool,      // the texture holds a frame of its panel
     ray:u32,         // 1 + the mesh of the world the renderer made a tree of for the ray (render.mesh_ray_prepare); 0: none
 }
@@ -207,24 +204,17 @@ mesh_surface_get :: proc(gui:^Gui,renderer:^render.Renderer,e:core.Entity,widget
 
 // Where the ray of the window meets each widget on a mesh, in the layout
 // units of its panel, for the routing of the next frame: the first texture
-// coordinates of the mesh there, as the last frame drew it, posed, offset or
-// carried (host.extras_slot_shown). A mesh the renderer cannot meet leaves the
-// plane of the panel to the ray.
+// coordinates of the mesh there, as the renderer draws it, posed, offset or
+// carried. A mesh the renderer cannot meet leaves the plane of the panel to
+// the ray.
 @(private)
-meshes_aim :: proc(gui:^Gui,assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,s:^Surface,p:int,ray:ui.World_Ray,meshes:core.Read(render.Mesh_Renderer),worlds:core.Read(core.World_Transform)) {
-    if p!=0 || !ray.valid || assets==nil {return}
+meshes_aim :: proc(gui:^Gui,renderer:^render.Renderer,drawn:^render.Render_Sync,s:^Surface,p:int,ray:ui.World_Ray) {
+    if p!=0 || !ray.valid || drawn==nil {return}
     for &entry in gui.plan {
         if entry.player!=p || entry.mesh<0 {continue}
-        shown,drawn:=host.extras_slot_shown(extras,u64(entry.entity))
-        if !drawn {
-            static,has:=core.get(meshes,entry.entity)
-            world,placed:=core.get(worlds,entry.entity)
-            if !has || !placed {continue}
-            mesh:=static.mesh!={}?host.assets_mesh(assets,static.mesh):host.assets_shape(assets,static.shape)
-            if mesh==nil || mesh.handle==host.ASSETS_MESH_NONE {continue}
-            shown={mesh=mesh.handle,transform=mm.transform_matrix(world.transform)}
-        }
-        distance,uv,hit:=render.mesh_ray(renderer,shown.mesh,shown.transform,ray.origin-shown.anchor,ray.direction)
+        mesh,transform,placed:=render.instance_placed(renderer,render.instance_of(drawn,entry.entity))
+        if !placed {continue}
+        distance,uv,_,hit:=render.mesh_ray(renderer,mesh,transform,ray.origin,ray.direction)
         id:=ui.id(s.ctx,"world",core.entity_index(entry.entity))
         ui.world_panel_aim(s.ctx,id,uv*entry.panel.size,distance,hit)
     }
@@ -251,7 +241,7 @@ meshes_sweep :: proc(gui:^Gui,renderer:^render.Renderer) {
         if mesh.texture==0 || mesh.planned==gui.frame {continue}
         render.ui_texture_remove(renderer,mesh.texture)
         ray_release(gui,renderer,at)
-        mesh={}
+        mesh={entity=mesh.entity}
     }
 }
 
@@ -266,13 +256,14 @@ ray_release :: proc(gui:^Gui,renderer:^render.Renderer,at:int) {
 }
 
 // The textures of the World_Widgets drawn on meshes, in the material slots
-// they name: as the base color, lit, or as light. Whatever draws the mesh
-// shows them (host.Slot_Texture).
+// they name: the screen their entities show at run time, as the base color,
+// lit, or as light. One whose widget went is taken away.
 @(step="render",before="render_sync")
-gui_meshes_render :: proc(gui:^Gui,renderer:^render.Renderer,extras:^host.Frame_Extras) {
-    if gui==nil || renderer==nil {return}
+gui_meshes_render :: proc(gui:^Gui,lives:^core.Table(render.Material_Live)) {
+    if gui==nil {return}
     for &mesh in gui.meshes {
-        if mesh.texture==0 || !mesh.drawn {continue}
-        host.extras_slot_texture_add(extras,{object=u64(mesh.entity),slot=mesh.slot,texture=mesh.texture,emission=mesh.emission})
+        if mesh.entity==core.NONE {continue}
+        render.material_screen(lives,mesh.entity,{mesh.drawn?mesh.texture:0,u8(mesh.slot),mesh.emission>0,mesh.emission})
+        if mesh.texture==0 {mesh={}}
     }
 }

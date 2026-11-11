@@ -3,7 +3,6 @@ package ui_inspector_editor
 import "base:runtime"
 import "core:fmt"
 import "core:slice"
-import "core:strconv"
 import "core:strings"
 import "mirai:asset"
 import "mirai:cook/author"
@@ -13,6 +12,7 @@ import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The bindings of the nodes: a path of the data of the game (ui.tree_bind)
@@ -172,17 +172,16 @@ bindable :: proc(p:^Pane,label:string,field:[]u8,kind:author.Bind_Kind,about:=""
         ui.box_begin(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column})
         return true
     }
-    th:=&ctx.theme
     row:=ui.id(ctx,"bound")
-    ui.box_begin(ctx,{id=row,width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center,track=about!=""})
-    ui.column_label(ctx,label)
+    ui.box_begin(ctx,{id=row,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center,track=about!=""})
+    kit.column_label(ctx,label)
     editor.row_description(p.s,row,about)
     failing:=bind_failing(p.u,bind_binding(p,field))
     chip:=ui.id(ctx,"path")
-    if ui.button(ctx,chip,{label=path_shown(path),icon=.Link,icon_size=12,icon_color=th.danger if failing else th.accent,style=.Field,width=-1,height=th.row,size=th.font_small,padding=6}).clicked {
+    if ui.button(ctx,chip,{label=path_shown(path),icon=.Link,icon_size=12,icon_color=ui.tone(ctx,"danger") if failing else ui.tone(ctx,"accent"),variant="field",width=-1,height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small"),padding=6}).clicked {
         bind_pick_open(p,ctx,chip,kind)
     }
-    if ui.button(ctx,ui.id(ctx,"unbind"),{icon=.Cross,icon_size=10,icon_color=th.text_muted,tip="Unbind",style=.Ghost,width=editor.REVERT_SIDE,height=editor.REVERT_SIDE}).clicked {
+    if ui.button(ctx,ui.id(ctx,"unbind"),{icon=.Cross,icon_size=10,icon_color=ui.tone(ctx,"text_muted"),tip="Unbind",variant="ghost",width=editor.REVERT_SIDE,height=editor.REVERT_SIDE}).clicked {
         if n:=selected_node(p.u);n!=nil {author.node_unbind(n,field)} else {for &b in field {b=0}}
         changed(p.u,"Unbind")
     }
@@ -194,11 +193,10 @@ bindable_end :: proc(p:^Pane,label:string,field:[]u8,kind:author.Bind_Kind,about
     if !p.bind_open {return}
     p.bind_open=false
     ctx:=p.s.gui.ctx
-    th:=&ctx.theme
     if free {ui.box_end(ctx,{})}
     bound:=serial.text_field(field)!=""
     button:=ui.id(ctx,"pick")
-    if ui.button(ctx,button,{icon=.Link,icon_size=13,icon_color=th.accent if bound else th.text_muted,tip="Bind to a field of the game",style=.Ghost,width=th.row,height=th.row,active=ui.popup_is_open(ctx,bind_popup(ctx))}).clicked {
+    if ui.button(ctx,button,{icon=.Link,icon_size=13,icon_color=ui.tone(ctx,"accent") if bound else ui.tone(ctx,"text_muted"),tip="Bind to a field of the game",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row"),active=ui.popup_is_open(ctx,bind_popup(ctx))}).clicked {
         bind_pick_open(p,ctx,button,kind)
     }
     bind_pick(p,field,kind)
@@ -211,7 +209,7 @@ bindable_end :: proc(p:^Pane,label:string,field:[]u8,kind:author.Bind_Kind,about
 @(private)
 bind_only :: proc(p:^Pane,label:string,field:[]u8,kind:author.Bind_Kind,about:="") -> (changes:bool) {
     if bindable(p,label,field,kind,about) {
-        if row(p,label,about) {ui.label(p.s.gui.ctx,"Not bound",p.s.gui.ctx.theme.font_small,p.s.gui.ctx.theme.text_faint)}
+        if row(p,label,about) {ui.label(p.s.gui.ctx,"Not bound",ui.metric(p.s.gui.ctx,"font_small"),ui.tone(p.s.gui.ctx,"text_faint"))}
     }
     return
 }
@@ -222,7 +220,7 @@ bind_binding :: proc(p:^Pane,field:[]u8) -> ui.Binding {
     n:=selected_node(p.u)
     if n==nil {return .Text}
     fields:=[ui.Binding][]u8{.Text=n.bind_text[:],.Value=n.bind_value[:],.Visible=n.bind_visible[:],.Selected=n.bind_selected[:],.Disabled=n.bind_disabled[:],
-        .Items=n.bind_items[:],.Image=n.bind_image[:],.Tint=n.bind_tint[:],.Variant=n.bind_variant[:]}
+        .Items=n.bind_items[:],.Key=n.bind_key[:],.Image=n.bind_image[:],.Tint=n.bind_tint[:],.Variant=n.bind_variant[:]}
     for f,binding in fields {if raw_data(f)==raw_data(field) {return binding}}
     return .Text
 }
@@ -244,20 +242,19 @@ bind_pick_open :: proc(p:^Pane,ctx:^ui.Context,anchor:ui.Id,kind:author.Bind_Kin
 bind_pick :: proc(p:^Pane,field:[]u8,kind:author.Bind_Kind) {
     s,u:=p.s,p.u
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     popup:=bind_popup(ctx)
     if !ui.popup_is_open(ctx,popup) {return}
     info:=s.app.info
     a:=s.app.assets
     nodes:=scope_nodes(u)
-    root,rooted:=author.node_scope(info,nodes,u.selected)
+    root,rooted:=author.node_scope(info,nodes,u.selected+1 if kind==.Key else u.selected)
     data:=widget_scope(u,a,info) if a!=nil else author.Path_Scope{}
     if ui.popup(ctx,popup,{min_width=280,search="Search",side=.Below}) {
         needle,searched:=ui.popup_search(ctx,popup)
         if searched {u.pick_scroll=0}
         prefix:=string(u.pick_prefix[:u.pick_length])
         if !rooted {
-            ui.label(ctx,"Bind the List around it to an array first",th.font_small,th.text_muted)
+            ui.label(ctx,"Bind the List around it to an array first",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
             return
         }
         scope:=root
@@ -274,15 +271,15 @@ bind_pick :: proc(p:^Pane,field:[]u8,kind:author.Bind_Kind) {
             back:=prefix[:max(strings.last_index_byte(prefix,'.'),0)]
             if prefix=="@" || !strings.contains(prefix,".") && !strings.has_prefix(prefix,"@") {back=""}
             if strings.has_prefix(prefix,"@") && !strings.contains(prefix,".") && prefix!="@" {back="@"}
-            if ui.row(ctx,ui.id(ctx,"back"),{label=path_shown(prefix),icon=.Chevron_Up,icon_size=11,accent=true,height=th.row}).clicked {
+            if ui.row(ctx,ui.id(ctx,"back"),{label=path_shown(prefix),icon=.Chevron_Up,icon_size=11,accent=true,height=ui.metric(ctx,"row")}).clicked {
                 u.pick_length=copy(u.pick_prefix[:],back)
             }
             if kind==.Data && scope.kind!=.Sources {
-                if ui.row(ctx,ui.id(ctx,"use"),{label=fmt.tprintf("Use %s",path_shown(prefix)),icon=.Check,icon_size=11,accent=true,height=th.row}).clicked {pick(p,field,prefix)}
+                if ui.row(ctx,ui.id(ctx,"use"),{label=fmt.tprintf("Use %s",path_shown(prefix)),icon=.Check,icon_size=11,accent=true,height=ui.metric(ctx,"row")}).clicked {pick(p,field,prefix)}
             }
             ui.menu_separator(ctx)
         } else if data.kind!=.Sources {
-            if ui.row(ctx,ui.id(ctx,"widget_data"),{label="Data of this widget",icon=.Prefab,icon_size=12,accent=true,height=th.row}).clicked {
+            if ui.row(ctx,ui.id(ctx,"widget_data"),{label="Data of this widget",icon=.Prefab,icon_size=12,accent=true,height=ui.metric(ctx,"row")}).clicked {
                 u.pick_length=copy(u.pick_prefix[:],"@")
             }
         }
@@ -293,7 +290,7 @@ bind_pick :: proc(p:^Pane,field:[]u8,kind:author.Bind_Kind) {
                 ctx:=p.s.gui.ctx
                 for path,i in paths {
                     any=true
-                    if ui.row(ctx,ui.id(ctx,"leaf",from+i+1),{label=path_shown(path),icon=.Link,icon_size=12,icon_color=ctx.theme.accent,accent=true,height=ctx.theme.row}).clicked {
+                    if ui.row(ctx,ui.id(ctx,"leaf",from+i+1),{label=path_shown(path),icon=.Link,icon_size=12,icon_color=ui.tone(ctx,"accent"),accent=true,height=ui.metric(ctx,"row")}).clicked {
                         ui.tree_text_set(field,path)
                         changed(p.u,"Bind")
                         ui.popup_close(ctx)
@@ -341,7 +338,7 @@ bind_pick :: proc(p:^Pane,field:[]u8,kind:author.Bind_Kind) {
                     case e.next.kind==.Entity && e.navigable: icon=.Link
                     case e.navigable:              icon=.Chevron_Right
                     }
-                    if ui.row(ctx,ui.id(ctx,"entry",i+1),{label=e.name,detail="storage" if e.storage else "",icon=icon,icon_size=12,icon_color=th.accent if e.fits else th.text_muted,accent=true,height=th.row}).clicked {
+                    if ui.row(ctx,ui.id(ctx,"entry",i+1),{label=e.name,detail="storage" if e.storage else "",icon=icon,icon_size=12,icon_color=ui.tone(ctx,"accent") if e.fits else ui.tone(ctx,"text_muted"),accent=true,height=ui.metric(ctx,"row")}).clicked {
                         if e.fits && !(e.navigable && kind==.Data) {pick(p,field,author.path_join(prefix,e.name))} else if e.navigable {
                             u.pick_length=copy(u.pick_prefix[:],author.path_join(prefix,e.name))
                             u.pick_scroll=0
@@ -349,7 +346,7 @@ bind_pick :: proc(p:^Pane,field:[]u8,kind:author.Bind_Kind) {
                     }
                 }
             }
-            if !any {ui.label(ctx,"Nothing here this binding takes",th.font_small,th.text_muted)}
+            if !any {ui.label(ctx,"Nothing here this binding takes",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
         }
     }
 }
@@ -393,10 +390,10 @@ text_field_rows :: proc(p:^Pane,n:^ui.Tree_Node) {
         // The name takes a field the first time; nothing changes until a path is chosen.
         at:=author.text_field_of(&p.u.records,n,name,true)
         if at<0 {
-            if row(p,label) {ui.label(ctx,fmt.tprintf("At most %d names",ui.TREE_TEXT_FIELDS),ctx.theme.font_small,ctx.theme.danger)}
+            if row(p,label) {ui.label(ctx,fmt.tprintf("At most %d names",ui.TREE_TEXT_FIELDS),ui.metric(ctx,"font_small"),ui.tone(ctx,"danger"))}
             continue
         }
-        bind_only(p,label,n.fields[at].path[:],.Shown,"The field of the game this name of the text shows; translations name it as the text does")
+        bind_only(p,label,n.fields[at].path[:],.Shown,"The field of the game this name of the text shows; every language of its key names it as the text does")
     }
 }
 
@@ -453,37 +450,36 @@ Ui_Empty_Params :: struct {}
 
 Ui_Paths_Result :: struct {
     scope:author.Path_Scope_Kind `mirai:"label=What the entries are: the sources; the fields of a struct; or the components of an entity"`,
-    entries:[1]Ui_Path_Entry `mirai:"list"`,
+    entries:[]Ui_Path_Entry,
 }
 Ui_Path_Entry :: struct {
-    name:[RESULT_TEXT_BYTES]u8 `mirai:"text,label=@ is the data an instance of the widget gives it"`,
-    path:[RESULT_TEXT_BYTES]u8 `mirai:"text,label=What prefix takes, and a bind_ key of ui.write"`,
-    type:[RESULT_TEXT_BYTES]u8 `mirai:"text,optional,label=Its type in the game; @ has none"`,
+    name:string `mirai:"label=@ is the data an instance of the widget gives it"`,
+    path:string `mirai:"label=What prefix takes, and a bind_ key of ui.write"`,
+    type:string `mirai:"optional,label=Its type in the game; @ has none"`,
     fits:bool `mirai:"label=Whether the binding takes it"`,
     navigable:bool `mirai:"label=Whether it is a prefix that goes on"`,
     storage:bool `mirai:"optional,label=A storage; absent: a component or a field"`,
 }
 Ui_Check_Result :: struct {
-    problems:[1]Ui_Check_Problem `mirai:"list,label=Each binding the game lacks once and each .ui that does not load; at most 16 by .ui"`,
+    problems:[]Ui_Check_Problem `mirai:"label=Each binding the game lacks once and each .ui that does not load; at most 16 by .ui"`,
 }
 Ui_Check_Problem :: struct {
-    asset:[editor.API_PATH_BYTES]u8 `mirai:"text,label=The name of the file of the .ui"`,
-    node:[ui.TREE_NAME_CAPACITY*2]u8 `mirai:"text,label=The node that fails: its name, or instance/node inside a widget; empty when it does not load"`,
-    binding:[24]u8 `mirai:"text,label=The binding that fails; Text (in braces) for a name in braces of the text; empty when it does not load"`,
-    path:[ui.TREE_PATH_CAPACITY]u8 `mirai:"text,label=What the binding names that the game does not have or cannot show there; empty for a name in braces or when it does not load"`,
+    asset:string `mirai:"label=The name of the file of the .ui"`,
+    node:string `mirai:"label=The node that fails: its name, or instance/node inside a widget; empty when it does not load"`,
+    binding:string `mirai:"label=The binding that fails; Text (in braces) for a name in braces of the text; empty when it does not load"`,
+    path:string `mirai:"label=What the binding names that the game does not have or cannot show there; empty for a name in braces or when it does not load"`,
     loads:bool `mirai:"label=False: it does not load because a widget it uses is missing or an override names a node its widget no longer has"`,
-    message:[RESULT_TEXT_BYTES]u8 `mirai:"text,label=What fails for a person"`,
+    message:string `mirai:"label=What fails for a person"`,
 }
 Ui_Rename_Result :: struct {
-    files:[1][editor.API_PATH_BYTES]u8 `mirai:"list,text,label=The paths of the .ui it changed; each waits for Save"`,
+    files:[]string `mirai:"label=The paths of the .ui it changed"`,
 }
 
 @(private)
 bind_api_register :: proc(s:^editor.Session) {
-    editor.api_method_register(s,{name="ui.paths",summary="Lists what a binding of a node of a .ui can take, one level of the data of the game at a time.",params=Ui_Paths_Params,params_info=type_info_of(Ui_Paths_Params),result=Ui_Paths_Result,result_info=type_info_of(Ui_Paths_Result),writes_result=true,flags={.Read_Only},run=api_paths})
-    editor.api_method_register(s,{name="ui.check",summary="Checks every .ui of the project against the types of the game of this build: the paths they bind that the game lacks, the names of styles, tokens, components and parameters that resolve to nothing, and each .ui that does not load with why.",params=Ui_Empty_Params,params_info=type_info_of(Ui_Empty_Params),result=Ui_Check_Result,result_info=type_info_of(Ui_Check_Result),writes_result=true,flags={.Read_Only},run=api_check})
-    editor.api_method_register(s,{name="ui.path.rename",summary="Follows a field or a source the code renamed in the paths of every .ui: bindings, widget data and the fields of texts. One step of history per file.",params=Ui_Rename_Params,params_info=type_info_of(Ui_Rename_Params),result=Ui_Rename_Result,result_info=type_info_of(Ui_Rename_Result),writes_result=true,run=api_rename})
-    texts_api_register(s)
+    editor.api_method_register(s,{params=type_info_of(Ui_Paths_Params),result=type_info_of(Ui_Paths_Result),name="ui.paths",summary="Lists what a binding of a node of a .ui can take, one level of the data of the game at a time.",flags={.Read_Only},run=api_paths})
+    editor.api_method_register(s,{params=type_info_of(Ui_Empty_Params),result=type_info_of(Ui_Check_Result),name="ui.check",summary="Checks every .ui of the project against the types of the game of this build: the paths they bind that the game lacks, the names of styles, tokens, components and parameters that resolve to nothing, and each .ui that does not load with why.",flags={.Read_Only},run=api_check})
+    editor.api_method_register(s,{params=type_info_of(Ui_Rename_Params),result=type_info_of(Ui_Rename_Result),name="ui.path.rename",summary="Follows a field or a source the code renamed in the paths of every .ui: bindings, widget data and the fields of texts. One step of history per file.",run=api_rename})
 }
 
 @(private)
@@ -511,14 +507,15 @@ api_node :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,name:string,r
 api_paths :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Ui_Paths_Params)
     binding,data,known:=api_binding(serial.text_field(p.binding[:]))
-    if !known {api.call_fail(call,api.INVALID_PARAMS,"binding is one of Text, Value, Visible, Selected, Disabled, Items, Image, Tint, Variant or Data");return}
+    if !known {api.call_fail(call,api.INVALID_PARAMS,"binding is one of Text, Value, Visible, Selected, Disabled, Items, Key, Image, Tint, Variant or Data");return}
     records:author.Records
     row,ok:=api_node(s,call,p.asset,serial.text_field(p.node[:]),&records)
     if !ok {return}
     info:=s.app.info
     kind:=author.Bind_Kind.Data if data else author.bind_kind(binding,records.nodes[row].kind)
     widget:=author.widget_scope_of(author.assets_of(s.app.assets),info,p.asset)
-    root,rooted:=author.node_scope(info,records.nodes[:],row,widget)
+    // A key is a field of the element of its List: where the node it holds starts.
+    root,rooted:=author.node_scope(info,records.nodes[:],row+1 if kind==.Key else row,widget)
     if !rooted {api.call_fail(call,api.INVALID_PARAMS,"the node is inside a List that binds no array: bind its Items first");return}
     prefix:=serial.text_field(p.prefix[:])
     scope:=root
@@ -527,32 +524,14 @@ api_paths :: proc(s:^editor.Session,call:^api.Call) {
         if !walked || next.kind==.Sources && prefix!="" {api.call_failf(call,api.INVALID_PARAMS,"prefix '%s' is not a source, a struct or an entity of the game; walk it one name at a time from the entries ui.paths gives",prefix);return}
         scope=next
     }
-    out:=call.out
-    serial.write_u8(out,'{')
-    names:=author.PATH_SCOPE_NAMES
-    api.write_text(out,"scope",names[scope.kind],true)
-    api.write_key(out,"entries");serial.write_u8(out,'[')
-    first:=true
+    entries:=make([dynamic]Ui_Path_Entry,call.allocator)
     // What an instance of this widget gives it, which its @ paths read.
-    if prefix=="" && widget.kind!=.Sources {
-        serial.text_write_raw(out,`{"name":"@","path":"@","fits":`)
-        serial.text_write_raw(out,"true" if author.type_fits(widget.info,kind) else "false")
-        serial.text_write_raw(out,`,"navigable":true}`)
-        first=false
-    }
+    if prefix=="" && widget.kind!=.Sources {append(&entries,Ui_Path_Entry{name="@",path="@",fits=author.type_fits(widget.info,kind),navigable=true})}
     for &e in author.path_entries(info,scope,kind) {
         if !e.navigable && !e.fits {continue}
-        if !first {serial.write_u8(out,',')};first=false
-        serial.write_u8(out,'{')
-        api.write_text(out,"name",e.name,true)
-        api.write_text(out,"path",author.path_join(prefix,e.name))
-        api.write_text(out,"type",fmt.tprintf("%v",e.info.id))
-        api.write_bool(out,"fits",e.fits)
-        api.write_bool(out,"navigable",e.navigable)
-        if e.storage {api.write_bool(out,"storage",true)}
-        serial.write_u8(out,'}')
+        append(&entries,Ui_Path_Entry{name=e.name,path=author.path_join(prefix,e.name),type=fmt.tprintf("%v",e.info.id),fits=e.fits,navigable=e.navigable,storage=e.storage})
     }
-    serial.text_write_raw(out,"]}")
+    api.call_result(call,Ui_Paths_Result)^={scope.kind,entries[:]}
 }
 
 // Writes records as a step of the history of the document of their .ui. A
@@ -595,7 +574,16 @@ api_check :: proc(s:^editor.Session,call:^api.Call) {
     defer author.bind_types_free(&types)
     problems:=make([dynamic]author.Bind_Problem,context.temp_allocator)
     author.bind_check_all(&problems,&types,context.allocator,author.assets_of(a),s.app.info)
-    author.problems_write(call.out,author.assets_of(a),problems[:])
+    result:=api.call_result(call,Ui_Check_Result)
+    result.problems=make([]Ui_Check_Problem,len(problems),call.allocator)
+    for &row,i in result.problems {
+        problem:=&problems[i]
+        row={node=strings.clone(serial.text_field(problem.name[:]),call.allocator),loads=problem.fault!=.Widget && problem.fault!=.Load,asset=author.file_name_of(author.assets_of(a),problem.asset,"missing"),message=author.bind_problem_text(author.assets_of(a),problem)}
+        #partial switch problem.fault {
+        case .Template: row.binding="Text (in braces)"
+        case .Path: row.binding,row.path=fmt.tprintf("%v",problem.binding),strings.clone(serial.text_field(problem.path[:]),call.allocator)
+        }
+    }
 }
 
 @(private)
@@ -606,9 +594,7 @@ api_rename :: proc(s:^editor.Session,call:^api.Call) {
     if from=="" || to=="" {api.call_fail(call,api.INVALID_PARAMS,"from and to are paths: Old_Name.field and New_Name.field");return}
     a:=s.app.assets
     if a==nil {api.call_fail(call,api.SERVER_ERROR,"the editor has no assets");return}
-    out:=call.out
-    serial.text_write_raw(out,`{"files":[`)
-    first:=true
+    files:=make([dynamic]string,call.allocator)
     for &file in a.registry.files {
         if file.kind!=asset.KIND_UI || file.id=={} {continue}
         records:author.Records
@@ -631,9 +617,8 @@ api_rename :: proc(s:^editor.Session,call:^api.Call) {
         for &o in records.overrides {count+=each(&o.values,from,to)}
         if count==0 {continue}
         if _,written:=records_write(s,file.id,&records,"Rename path");!written {continue}
-        if !first {serial.write_u8(out,',')};first=false
-        serial.text_write_string(out,file.path)
+        append(&files,strings.clone(file.path,call.allocator))
     }
-    serial.text_write_raw(out,"]}")
+    api.call_result(call,Ui_Rename_Result).files=files[:]
 }
 

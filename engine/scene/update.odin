@@ -57,21 +57,17 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
         if e:=core.entity_of(es,id);e!=core.NONE {going[e]=true}
     }
     if len(going)>0 {
-        above:=core.read(parent_table)
         for e,row in entities {
             if created[row] {continue}
             at:=e
             for _ in 0..=core.HIERARCHY_DEPTH {
-                parent,has:=core.get(above,at)
+                parent,has:=core.get(parent_table,at)
                 if !has {break}
                 at=parent.entity
                 if at in going {return {},.Invalid}
             }
         }
-        hierarchy:=core.world_storage_of(w,core.Hierarchy)
-        for e in going {
-            if hierarchy!=nil {core.destroy_tree(es,core.ref(hierarchy),e)} else {core.destroy(es,e)}
-        }
+        for e in going {core.destroy(es,e)}
     }
 
     for id,row in view.ids {
@@ -81,7 +77,7 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
         }
         if names==nil {continue}
         name:=core.Name{text=view.names[row]}
-        if held,has:=core.get(core.read(names),entities[row]);created[row] || !has || held!=name {core.add(names,entities[row],name)}
+        if held,has:=core.get(names,entities[row]);created[row] || !has || held!=name {core.add(names,entities[row],name)}
     }
 
     Off :: struct {entity:base.Entity_Id,component:u64}
@@ -95,7 +91,6 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
         if info.place!=w.place || is_structural(info.type) || info.type==Section_Member || value_type.type==serial.TYPE_NONE {continue}
         size:=info.info.size
         layout:=&value_type.layout
-        if size>0 && len(layout.runs)==0 {continue}
         table:=core.world_table_at(w,&info)
         hash:=base.name_hash(info.name)
         slice.fill(given,false)
@@ -135,7 +130,7 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
                     if turned {core.raw_disable(table,e)}
                     continue
                 case size>0 && !saved_same(layout,core.raw_find(table,info.info,e),value,scratch[:]):
-                    saved_put(layout,core.raw_get(table,info.info,e),value)
+                    saved_put(layout,core.raw_edit(table,info.info,e),value)
                     report.components+=1
                 }
                 if turned!=was_turned {
@@ -151,7 +146,7 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
                 // Every entity has one: the identity where the document gives none.
                 identity:=core.TRANSFORM_IDENTITY
                 held:=created[row]?nil:core.raw_find(table,info.info,e)
-                if held==nil {core.raw_add(table,info.info,e,&identity)} else if !saved_same(layout,held,&identity,scratch[:]) {saved_put(layout,core.raw_get(table,info.info,e),&identity)} else {continue}
+                if held==nil {core.raw_add(table,info.info,e,&identity)} else if !saved_same(layout,held,&identity,scratch[:]) {saved_put(layout,core.raw_edit(table,info.info,e),&identity)} else {continue}
                 report.components+=1
                 continue
             }
@@ -168,7 +163,6 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
     for order,row in view.orders {places[row]={order,u32(row)}}
     slice.sort_by(places,proc(a,b:Place) -> bool {return a.order<b.order || a.order==b.order && a.row<b.row})
     siblings:=make(map[u32]i32,context.temp_allocator)
-    above:=core.read(parent_table)
     for place in places {
         parent_row:=parents[place.row]
         if parent_row==NONE_ROW {
@@ -178,7 +172,7 @@ update :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Upd
         order:=siblings[parent_row]
         siblings[parent_row]=order+1
         wanted:=core.Parent{entities[parent_row],order}
-        if held,has:=core.get(above,entities[place.row]);created[place.row] || !has || held!=wanted {core.add(parent_table,entities[place.row],wanted)}
+        if held,has:=core.get(parent_table,entities[place.row]);created[place.row] || !has || held!=wanted {core.add(parent_table,entities[place.row],wanted)}
     }
     report.entities=count
     return report,.None

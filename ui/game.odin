@@ -57,12 +57,12 @@ image :: proc(ctx:^Context,i:Image) {
     element_leaf(ctx,{id=i.id,layout={width=i.width,height=i.height},custom=paint_add(ctx,image_paint(i))})
 }
 
-// An area its owner draws with Context_Desc.draw_user (kind, data): the layout
-// places it, the container that clips it cuts what it draws, and the pointer
-// on it is its interaction.
-canvas :: proc(ctx:^Context,id:Id,width,height:Size,kind:u32,data:u64,flags:Widget_Flags={}) -> Interaction {
+// An area Context.draw_user draws as node says: the layout places it, the
+// container that clips it cuts what it draws, and the pointer on it is its
+// interaction.
+canvas :: proc(ctx:^Context,id:Id,width,height:Size,node:Draw_Node,flags:Widget_Flags={}) -> Interaction {
     it:=interact(ctx,id,flags)
-    element_leaf(ctx,{id=id,layout={width=width,height=height},custom=paint_add(ctx,{kind=.User,user_kind=kind,user_data=data})})
+    element_leaf(ctx,{id=id,layout={width=width,height=height},custom=paint_add(ctx,{kind=.Draw,draw=node})})
     return it
 }
 
@@ -90,37 +90,6 @@ progress :: proc(ctx:^Context,p:Progress) {
     if p.quad_track.kind!=.Solid && p.track=={} {paint.fill2=white}
     widget_add(ctx,p.id,{.Passive})
     element_leaf(ctx,{id=p.id,layout={width=p.width,height=p.height},custom=paint_add(ctx,paint)})
-}
-
-// Text with a style of its own inside a box of width by height. A FIT width
-// is the width of the text on one line; a FIT height holds the lines the
-// text takes when wrapped to a fixed width. reveal: the part of its
-// characters drawn, 0 to 1, each where the whole text puts it (a typewriter).
-text :: proc(ctx:^Context,content:string,style:Text_Style,width:Size=FIT,height:Size=FIT,id:Id=0,reveal:f32=1) {
-    w,h:=width,height
-    font:=&ctx.font
-    f:=int(style.font)
-    line_height:=style.size*(style.line_height if style.line_height>0 else TEXT_LINE)
-    if w.kind==.Fit {w=fixed(text_width(font,content,style.size,f)+1)}
-    if h.kind==.Fit {
-        lines:=1
-        if w.kind==.Fixed {lines=text_line_count(font,content,style.size,w.value,style.wrap,f)} else {
-            for c in content {if c=='\n' {lines+=1}}
-        }
-        h=fixed(f32(lines)*line_height+2)
-    }
-    paint:=paint_add(ctx,{kind=.Text_Block,text=content,style=style,revealed=text_revealed(content,reveal)})
-    widget_add(ctx,id,{.Passive})
-    element_leaf(ctx,{id=id,layout={width=w,height=h},custom=paint})
-}
-
-// Paint.revealed for the part reveal (0 to 1) of the characters of a text.
-@(private)
-text_revealed :: proc "contextless" (content:string,reveal:f32) -> i32 {
-    if reveal>=1 {return 0}
-    count:=0
-    for _ in content {count+=1}
-    return i32(math.round(f32(count)*max(reveal,0)))+1
 }
 
 // A container placed from a point of the screen instead of the flow of its
@@ -191,14 +160,16 @@ GAME_ARROW :: f32(0.75) // the arrows of a selector, a number and a dropdown, in
 // Without a size, a control is a line of its text tall with GAME_PAD of
 // room above and below; a checkbox and a radio, a line of text square.
 Game_Control :: struct {
-    style:^Node_Style, // resolved for the state of the control; nil: nothing but its text, in the size of the theme
+    style:^Node_Style, // resolved for the state of the control; nil: nothing but its text, CONTROL_EM in size
     width,height:Size,
     disabled:bool,
 }
 
+CONTROL_EM :: f32(13) // the size of the text of a control whose look gives none
+
 @(private)
 control_em :: proc(ctx:^Context,style:^Node_Style) -> f32 {
-    return style.text.size if style.text.size>0 else ctx.theme.font
+    return style.text.size if style.text.size>0 else CONTROL_EM
 }
 // What the layout says, or sizes sizes of its text wide by a line with its room.
 @(private)
@@ -283,7 +254,7 @@ game_selector :: proc(ctx:^Context,id:Id,options:Options,current:^int,c:Game_Con
     if element_open(ctx,{id=id,layout={width=width,height=height,direction=.Row,align_y=.Center},custom=paint_add(ctx,game_background(style))}) {
         if control_arrow(ctx,id_derive(ctx,id,"previous"),0,side,em,style.mark,disabled) {next-=1}
         shown:=option(options,current^) if count>0 && current^>=0 else ""
-        element_leaf(ctx,{layout={width=GROW,height=GROW},custom=paint_add(ctx,{kind=.Text_Block,text=shown,style=text_style})})
+        text(ctx,shown,text_style,GROW,GROW)
         if control_arrow(ctx,id_derive(ctx,id,"next"),1,side,em,style.mark,disabled) {next+=1}
     }
     element_close(ctx)

@@ -1,6 +1,7 @@
 # Supports and procedural locomotion
 
-`Foot_Grounding` is the `grounding` table of a `.pose` profile activated by `Pose_Modifiers`: it
+`Foot_Grounding` is the `grounding` row of the `.character` a rig plays (none while its `count` is
+0): it
 joins the [procedural functions of `std/anim`](../../mirai-std/references/anim.md) with the ground
 of the world, over the dense pose of the rig. `Animated` adapts the pose of clips, blends or
 retarget; `Procedural` walks without `Animation`, clips or per-bone entities.
@@ -17,15 +18,18 @@ the preview.
 - Start from `FOOT_GROUNDING_DEFAULT` and `GROUNDED_LEG_DEFAULT`; the zero value is safe but does
   not configure a valid gait.
 - Up to 16 legs; `count` sets how many entries of `legs` are evaluated.
-- The definition is edited in the Grounding table of the profile
-  ([pose authoring](animation-authoring.md#skeletons-sockets-and-profiles)).
-- The runtime resolves `rig` to the entity that carries `Pose_Modifiers`. There is one grounding
-  definition per profile and an independent state per rig.
+- The definition is edited in the Grounding table of the set
+  ([modifier authoring](animation-authoring.md#skeletons-sockets-and-profiles)).
+- The rig is the entity that plays the set. There is one grounding definition per set and an
+  independent state per rig.
 - The global contact is modified with `Modifier_Goal{kind=.Grounding}` requests;
   `Modifier_Control{kind=.Grounding}` changes influence or activation with an independent fade,
   without touching that contact.
-- Each leg names `hip`, `knee` and `foot` with `Bone_Ref`: a direct chain of three internal bones.
-- `body` (optional) names the pelvis or body bone that is adjusted before the IK. The containing
+- Each leg is a direct chain of three internal bones, hip, knee and foot, with its toe as the
+  contact: the first two legs are those of the body of the skeleton (`@hip_l`, `@knee_l`,
+  `@foot_l`, `@toe_l` and their right side); a `Bone_Ref` in `hip`, `knee`, `foot` or
+  `contact_bone` overrides the part, and a leg past the body (a spider) names its bones.
+- `body` (empty: the pelvis of the body) is the bone that is adjusted before the IK. The containing
   root of the actor is not moved to correct supports.
 
 Parameters:
@@ -68,7 +72,8 @@ Parameters:
 Units:
 
 - Lengths in world units, durations in seconds.
-- There is no segment stretching: an out-of-reach target keeps the lengths and may leave a residual.
+- A leg stretches only by its `reach` (soft distance and stretch, as a chain); without it an
+  out-of-reach target keeps the lengths and may leave a residual.
 - Scales follow the common TRS contract of Mirai.
 
 ## Clip adaptation
@@ -166,7 +171,7 @@ Body:
 ## Execution and state
 
 - It runs after physics; within animation, after the retarget and the removal of root motion from
-  the pose and before the manual constraints and the sockets. Chain: contacts, foot height, body,
+  the pose and before the manual constraints and the sockets. Chain: supports, foot height, body,
   support corrections, two-segment IK and foot orientation.
 - Each leg queries its support with a ray; the other rays are only for a contact other than the
   ankle, a procedural foot in flight, the reference with zero strength or a correction. All respect
@@ -182,7 +187,7 @@ Body:
   or the set of configurations prepares again in a transaction; changing weights or strengths reuses
   the memory. Removing a component compacts its links; a lack of memory keeps the previous state.
 - Rig problems: `animation.grounding_config`, `grounding_bones`, `grounding_solve` (with the leg and
-  the step), `grounding_twice` and `animation.memory`.
+  the step) and `animation.memory`.
 
 ## Verification
 

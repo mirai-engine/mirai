@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:strings"
 import "mirai:asset"
 import "mirai:cook/author"
+import "mirai:core"
 import "mirai:editor"
 import "mirai:host"
 import "mirai:std/base"
@@ -18,11 +19,11 @@ import "mirai:ui"
 KIND_LABELS :: [ui.Node_Kind]string{.Box="Box",.Text="Text",.Image="Image",.Progress="Progress",.Button="Button",.Checkbox="Checkbox",.Spacer="Spacer",.Component="Component",
     .Scroll="Scroll",.Switcher="Switcher",.List="List",.Prompt="Prompt",.Slider="Slider",.Field="Field",.Selector="Selector",.Dropdown="Dropdown",.Radio="Radio",
     .Tooltip="Tooltip",.Rich_Text="Rich text",.View="View",.Action_Bar="Action bar",.Number="Number",.Tabs="Tabs",.Popup="Popup",.Modal="Modal",
-    .Context_Menu="Context menu",.Radial="Radial",.Particles="Particles"}
+    .Context_Menu="Context menu",.Radial="Radial",.Particles="Particles",.Draw="Draw"}
 
 // The kinds Add offers, in the order of its list.
 ADDED_KINDS :: [?]ui.Node_Kind{.Box,.Text,.Rich_Text,.Image,.Button,.Progress,.Checkbox,.Slider,.Field,.Selector,.Dropdown,.Radio,
-    .Number,.Prompt,.Action_Bar,.Scroll,.List,.Switcher,.Tabs,.Popup,.Modal,.Context_Menu,.Radial,.Tooltip,.View,.Particles,.Spacer}
+    .Number,.Prompt,.Action_Bar,.Scroll,.List,.Switcher,.Tabs,.Popup,.Modal,.Context_Menu,.Radial,.Tooltip,.View,.Particles,.Draw,.Spacer}
 
 // How a node looks in the hierarchy and in Add: by its kind, a box by its
 // direction, and a widget of another .ui as any widget of the user.
@@ -60,6 +61,7 @@ node_icon :: proc(n:^ui.Tree_Node) -> ui.Icon {
     case .Modal:           return .Focus
     case .Radial:          return .Target
     case .Particles:       return .Particles
+    case .Draw:            return .Edit
     }
     return .None
 }
@@ -265,7 +267,6 @@ widget_holds_document :: proc(u:^Ui_Inspector,a:^host.Assets,widget:base.Asset_I
 @(private)
 add_popup :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,popup:ui.Id,parent:int) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     r:=&u.records
     // Under the button, its rows in an area that scrolls.
     if ui.popup(ctx,popup,{min_width=220,search="Search",side=.Below}) {
@@ -292,7 +293,7 @@ add_popup :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,popup:ui.Id,p
                 if !base.contains_fold(path,needle) || widget_holds_document(u,a,file.id) {continue}
                 if !caption {
                     ui.menu_separator(ctx)
-                    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(20),padding={8,0,8,0},align_y=.Center}) {ui.label(ctx,"WIDGETS",th.font_caption,th.text_caption,font=ui.FONT_SEMIBOLD)}
+                    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(20),padding={8,0,8,0},align_y=.Center}) {ui.label(ctx,"WIDGETS",ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"),font=ui.FONT_SEMIBOLD)}
                     caption=true
                 }
                 if ui.menu_item(ctx,ui.id(ctx,"widget",i+1),path,{icon=.Prefab}) {
@@ -387,7 +388,6 @@ shown_rows :: proc(u:^Ui_Inspector,a:^host.Assets,filter:string) -> []Shown_Row 
 @(private)
 nodes_column :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     r:=&u.records
     x:=&u.ux
     ux_sync(u)
@@ -407,7 +407,7 @@ nodes_column :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets) {
     add:=ui.id(ctx,"add")
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={0,0,0,4},gap=4,align_y=.Center}) {
         popup:=ui.id_derive(ctx,add,"list")
-        if ui.button(ctx,add,{label="Add",icon=.Plus,icon_size=12,style=.Field,height=th.control,size=th.font_small,padding=8,active=ui.popup_is_open(ctx,popup)}).clicked {
+        if ui.button(ctx,add,{label="Add",icon=.Plus,icon_size=12,variant="field",height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_small"),padding=8,active=ui.popup_is_open(ctx,popup)}).clicked {
             anchor,_:=ui.widget_rect(ctx,add)
             ui.popup_open(ctx,popup,anchor)
         }
@@ -448,7 +448,7 @@ nodes_column :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets) {
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(NODE_ROW),align_y=.Center}) {
                 if shown.depth>0 {ui.spacer(ctx,f32(shown.depth)*NODE_INDENT,1)}
                 if shown.arrow && filter=="" {
-                    if ui.button(ctx,ui.id(ctx,"fold",i+1),{icon=.Chevron_Down if shown.open else .Chevron_Right,icon_color=th.text_muted,icon_size=10,style=.Ghost,width=16,height=NODE_ROW}).clicked {toggled=i}
+                    if ui.button(ctx,ui.id(ctx,"fold",i+1),{icon=.Chevron_Down if shown.open else .Chevron_Right,icon_color=ui.tone(ctx,"text_muted"),icon_size=10,variant="ghost",width=16,height=NODE_ROW}).clicked {toggled=i}
                 } else if arrows && filter=="" {ui.spacer(ctx,16,1)}
                 if x.rename==i {
                     rename_field(s,u,i)
@@ -470,9 +470,9 @@ nodes_column :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets) {
                 if r,found:=ui.widget_rect(ctx,row_id);found {
                     if area,shown:=ui.widget_rect(ctx,rows_id);shown && r.y>=area.y && r.y+r.h<=area.y+area.h {
                         detail:=kind if name!="" else ""
-                        room:=ui.text_width(&ctx.font,detail,th.font_small)+10 if detail!="" else 6
+                        room:=ui.text_width(&ctx.font,detail,ui.metric(ctx,"font_small"))+10 if detail!="" else 6
                         if ui.box(ctx,{width=ui.fixed(14),height=ui.fixed(14),align_x=.Center,align_y=.Center,float={to=.Surface,offset={r.x+r.w-room-16,r.y+(r.h-14)*0.5},layer=ui.LAYER_BAR+1}}) {
-                            ui.icon(ctx,.Link,th.accent,12)
+                            ui.icon(ctx,.Link,ui.tone(ctx,"accent"),12)
                         }
                     }
                 }
@@ -497,9 +497,9 @@ nodes_column :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets) {
         if area,found:=ui.widget_rect(ctx,rows_id);found {
             if drop.inside>=0 {
                 if rect,shown:=ui.widget_rect(ctx,ui.id(ctx,"node",drop.inside+1));shown {
-                    if ui.box(ctx,{width=ui.fixed(rect.w),height=ui.fixed(rect.h),float={to=.Surface,offset={rect.x,rect.y},layer=ui.LAYER_BAR+1},stroke=th.accent,stroke_width=1,radius=3}) {}
+                    if ui.box(ctx,{width=ui.fixed(rect.w),height=ui.fixed(rect.h),float={to=.Surface,offset={rect.x,rect.y},layer=ui.LAYER_BAR+1},stroke=ui.tone(ctx,"accent"),stroke_width=1,radius=3}) {}
                 }
-            } else if ui.box(ctx,{width=ui.fixed(area.w-8),height=ui.fixed(2),float={to=.Surface,offset={area.x+4,drop.line-1},layer=ui.LAYER_BAR+1},fill=th.accent}) {}
+            } else if ui.box(ctx,{width=ui.fixed(area.w-8),height=ui.fixed(2),float={to=.Surface,offset={area.x+4,drop.line-1},layer=ui.LAYER_BAR+1},fill=ui.tone(ctx,"accent")}) {}
         }
     }
     if .Left in ctx.input.down {return}
@@ -617,7 +617,6 @@ rename_field :: proc(s:^editor.Session,u:^Ui_Inspector,row:int) {
 @(private)
 widget_row :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,shown:Shown_Row,index:int,arrows:bool) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     x:=&u.ux
     widget:=node_widget(&u.records,&u.records.nodes[shown.instance])
     w:=widget_records(u,a,widget)
@@ -628,7 +627,7 @@ widget_row :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,shown:Shown_
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(NODE_ROW),align_y=.Center}) {
         ui.spacer(ctx,f32(shown.depth)*NODE_INDENT+(16 if arrows else 0),1)
         on:=x.peek.instance==shown.instance && x.peek.widget==widget && x.peek.row==shown.row && u.selected==shown.instance
-        it:=ui.row(ctx,ui.id(ctx,"peek",index+1),{label=name if name!="" else labels[n.kind],icon=node_icon(n),icon_size=14,icon_color=th.text_faint,selected=on,height=NODE_ROW})
+        it:=ui.row(ctx,ui.id(ctx,"peek",index+1),{label=name if name!="" else labels[n.kind],icon=node_icon(n),icon_size=14,icon_color=ui.tone(ctx,"text_faint"),selected=on,height=NODE_ROW})
         if it.pressed {
             choose_rows(u,{shown.instance})
             x.peek={instance=shown.instance,widget=widget,row=shown.row}
@@ -653,73 +652,103 @@ node_drop :: proc(list:[]ui.Tree_Node,i:int,rect:ui.Rect,y:f32) -> Node_Drop {
     return {parent=int(list[i].parent),before=before,inside=-1,line=rect.y+rect.h,ok=true}
 }
 
-// The menu of a node of the hierarchy, and what the Edit menu asks of the
-// document: on every node chosen.
+// The menu of a node of the hierarchy: the entries of the document, which
+// have the keys of those of the scene while a .ui is in front.
 @(private)
 nodes_actions :: proc(s:^editor.Session,u:^Ui_Inspector,a:^host.Assets,d:^editor.Asset_Document) {
     ctx:=s.gui.ctx
     r:=&u.records
     ux_sync(u)
-    popup:=ui.id_derive(ctx,SCOPE,"node_menu")
-    request:=editor.Action.Quit
-    asked:=false
-    if d.request_serial!=u.request_seen {
-        u.request_seen=d.request_serial
-        request,asked=d.request,true
-    }
-    if ui.popup(ctx,popup,{min_width=180}) {
-        none:=u.selected<0 || u.selected>=len(r.nodes)
-        shortcut :: proc(action:editor.Action) -> string {return editor.shortcut_text(editor.ACTION_SHORTCUTS[action])}
-        if ui.menu_item(ctx,ui.id(ctx,"menu_copy"),"Copy",{shortcut=shortcut(.Copy),disabled=none}) {request,asked=.Copy,true}
-        if ui.menu_item(ctx,ui.id(ctx,"menu_paste"),"Paste",{shortcut=shortcut(.Paste),disabled=len(u.clip.records.nodes)==0}) {request,asked=.Paste,true}
-        if ui.menu_item(ctx,ui.id(ctx,"menu_duplicate"),"Duplicate",{shortcut=shortcut(.Duplicate),disabled=none}) {request,asked=.Duplicate,true}
-        if ui.menu_item(ctx,ui.id(ctx,"menu_rename"),"Rename",{shortcut=shortcut(.Rename),disabled=none}) {request,asked=.Rename,true}
-        if ui.menu_item(ctx,ui.id(ctx,"menu_delete"),"Delete",{shortcut=shortcut(.Delete),disabled=none}) {request,asked=.Delete,true}
+    if ui.popup(ctx,ui.id_derive(ctx,SCOPE,"node_menu"),{min_width=180}) {
+        for entry,i in NODE_ENTRIES {editor.command_menu_item(s,ui.id(ctx,"menu_entry",i+1),entry)}
         ui.menu_separator(ctx)
-        box:=!none && r.nodes[u.selected].kind==.Box && len(chosen_rows(u))==1
+        box:=u.selected>=0 && u.selected<len(r.nodes) && r.nodes[u.selected].kind==.Box && len(chosen_rows(u))==1
         if ui.menu_item(ctx,ui.id(ctx,"menu_widget"),"Make widget",{disabled=!box}) {make_widget(s,u,a,d)}
     }
-    if !asked {return}
-    row:=u.selected if u.selected>=0 && u.selected<len(r.nodes) else -1
-    rows:=chosen_rows(u)
-    #partial switch request {
-    case .Copy:
-        if row>=0 {
-            author.records_copy_rows(r,rows,&u.clip,u.allocator)
-            u.clip.source=u.id
-        }
-    case .Paste:
-        clip:=&u.clip.records
-        for &template in clip.components {
-            if template.widget==u.id {
-                editor.notify(s,"An interface does not hold an instance of itself")
-                return
-            }
-        }
-        if pasted:=author.records_paste_rows(r,row,&u.clip);len(pasted)>0 {
-            choose_rows(u,pasted)
-            changed(u,"Paste node" if len(pasted)==1 else "Paste nodes")
-        } else if len(clip.nodes)>0 {editor.notify(s,"That node holds no other node: choose a container")}
-    case .Duplicate:
-        if row>=0 {
-            if copies:=author.records_duplicate_rows(r,rows);len(copies)>0 {
-                choose_rows(u,copies)
-                changed(u,"Duplicate node" if len(copies)==1 else "Duplicate nodes")
-            }
-        }
-    case .Rename:
-        if row>=0 {
-            rename_begin(u,row)
-            if !(s.gui.layout.left_open && s.gui.layout.library_tab==.Hierarchy) {editor.notify(s,"Hierarchy shows the name to type: open it in the left panel")}
-        }
-    case .Delete:
-        if row>=0 {
-            first:=author.selection_roots(r.nodes[:],rows)[0]
-            author.records_delete_rows(r,rows)
-            choose_rows(u,{min(first,len(r.nodes)-1)} if len(r.nodes)>0 else {})
-            changed(u,"Delete node" if len(rows)==1 else "Delete nodes")
+}
+
+NODE_ENTRIES :: [5]string{"ui_copy","ui_paste","ui_duplicate","ui_rename","ui_delete"}
+
+// The entries of the nodes of a .ui: what the document has chosen, in the
+// records it edits; Copy and Rename only change what the person sees.
+nodes_bind :: proc(s:^editor.Session) {
+    key :: proc(k:core.Key,modifiers:ui.Modifiers={}) -> editor.Shortcut {return {k,modifiers,true}}
+    entries:=[?]editor.Binding{
+        {name="ui_copy",view=node_copy,label="Copy",shortcut=key(.C,{.Primary}),state=node_state},
+        {name="ui_paste",view=node_paste,label="Paste",shortcut=key(.V,{.Primary}),state=node_state},
+        {name="ui_duplicate",view=node_duplicate,label="Duplicate",shortcut=key(.D,{.Primary}),state=node_state},
+        {name="ui_rename",view=node_rename,label="Rename",shortcut=key(.F2),state=node_state},
+        {name="ui_delete",view=node_delete,label="Delete",shortcut=key(.Delete),alternate=key(.Backspace),state=node_state},
+    }
+    for entry in entries {
+        entry:=entry
+        entry.document=asset.KIND_UI
+        editor.command_bind(s,entry)
+    }
+}
+
+// The document in front, the node it has chosen (-1: none) and the rows chosen.
+@(private="file")
+node_front :: proc(s:^editor.Session) -> (u:^Ui_Inspector,row:int,rows:[]int) {
+    u=core.world_storage_of(core.world_ref(s.editor_world,s.info,.Editor),Ui_Inspector)
+    ux_sync(u)
+    row=u.selected if u.selected>=0 && u.selected<len(u.records.nodes) else -1
+    return u,row,chosen_rows(u)
+}
+
+@(private="file")
+node_state :: proc(s:^editor.Session,b:^editor.Binding) -> editor.Command_State {
+    u,row,_:=node_front(s)
+    return {disabled=len(u.clip.records.nodes)==0 if b.name=="ui_paste" else row<0}
+}
+
+@(private="file")
+node_copy :: proc(s:^editor.Session) {
+    u,_,rows:=node_front(s)
+    author.records_copy_rows(&u.records,rows,&u.clip,u.allocator)
+    u.clip.source=u.id
+}
+
+@(private="file")
+node_paste :: proc(s:^editor.Session) {
+    u,row,_:=node_front(s)
+    clip:=&u.clip.records
+    for &template in clip.components {
+        if template.widget==u.id {
+            editor.notify(s,"An interface does not hold an instance of itself")
+            return
         }
     }
+    if pasted:=author.records_paste_rows(&u.records,row,&u.clip);len(pasted)>0 {
+        choose_rows(u,pasted)
+        changed(u,"Paste node" if len(pasted)==1 else "Paste nodes")
+    } else if len(clip.nodes)>0 {editor.notify(s,"That node holds no other node: choose a container")}
+}
+
+@(private="file")
+node_duplicate :: proc(s:^editor.Session) {
+    u,_,rows:=node_front(s)
+    if copies:=author.records_duplicate_rows(&u.records,rows);len(copies)>0 {
+        choose_rows(u,copies)
+        changed(u,"Duplicate node" if len(copies)==1 else "Duplicate nodes")
+    }
+}
+
+@(private="file")
+node_rename :: proc(s:^editor.Session) {
+    u,row,_:=node_front(s)
+    rename_begin(u,row)
+    if !(s.gui.layout.left_open && s.gui.layout.library_tab==.Hierarchy) {editor.notify(s,"Hierarchy shows the name to type: open it in the left panel")}
+}
+
+@(private="file")
+node_delete :: proc(s:^editor.Session) {
+    u,_,rows:=node_front(s)
+    r:=&u.records
+    first:=author.selection_roots(r.nodes[:],rows)[0]
+    author.records_delete_rows(r,rows)
+    choose_rows(u,{min(first,len(r.nodes)-1)} if len(r.nodes)>0 else {})
+    changed(u,"Delete node" if len(rows)==1 else "Delete nodes")
 }
 
 // A node renamed in Properties keeps a name no other node has,

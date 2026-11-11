@@ -7,7 +7,6 @@ import "core:slice"
 import "core:time"
 import "mirai:asset"
 import "mirai:core"
-import volume "mirai:engine/volume"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/jobs"
@@ -88,10 +87,12 @@ Load_Job :: struct {
     salt:base.Entity_Id, // a section: the Id of its reference
     cooked:bool,
     far:bool, // only what draws a far form of its own, kept (far_keep), and what that names
+    scenes:bool, // a warm: the scenes it names are read whatever roots they have (assets_unloaded)
     gated:bool, // a section: it waits for the libraries before it ends (Load_Phase.Waiting)
     whole:bool, // nothing on the screen to keep smooth: it has the job workers and the frames (host.assets_load_whole)
     passes:int, // frames it waited
     ready:bool, // a frame passed in which no library waited for what it names
+    stopped:bool, // no longer wanted: its jobs take no more work (load_stop)
     phase:Load_Phase,
     // Reading, in rounds: what the main thread found for a round, and what the round asked for that it has to find.
     queue:[dynamic]host.Assets_Source,
@@ -123,6 +124,29 @@ Load_Job :: struct {
 Load_Item :: struct {
     prepared:host.Assets_Prepared,
     ready:bool, // a job prepared it
+}
+
+// Starts reading in jobs assets and what they take that is not loaded: the
+// prefabs spawns wait for (Prefab_Pending), the far mesh of a section. A load
+// without a World, all Warming. nil, with the error, when it cannot start.
+assets_warm_begin :: proc(app:^host.App,ids:[]base.Asset_Id,documents:=false) -> (job:^Load_Job,error:Error) {
+    a:=app.assets
+    if a==nil {return nil,.No_Assets}
+    heap:=runtime.heap_allocator()
+    no_job:runtime.Allocator_Error
+    if job,no_job=new(Load_Job,heap);no_job!=nil {return nil,.Out_Of_Memory}
+    job^={app=app,cooked=a.indexed,scenes=documents,started=time.tick_now()}
+    job.names=make([dynamic]base.Asset_Id,heap)
+    job.animations=make([dynamic]base.Asset_Id,heap)
+    asset.types_init(&job.types,heap)
+    append(&job.names,..ids)
+    load_warm_begin(job)
+    if job.error!=.None {
+        error=job.error
+        load_free(job)
+        return nil,error
+    }
+    return job,.None
 }
 
 // Starts loading the scene id. nil, with the error, when it cannot start.
@@ -166,16 +190,15 @@ load_begin :: proc(app:^host.App,id:base.Asset_Id,request:Scene_Request={},salt:
 
 load_free :: proc(job:^Load_Job) {
     if job==nil {return}
-    // The jobs that prepare its assets take no other; the one that runs ends.
-    intrinsics.atomic_store(&job.next,len(job.items))
+    load_stop(job)
     if jobs.pending(&job.counter) {jobs.wait(&job.app.jobs,jobs.OWNER,&job.counter)}
     if job.world!=nil {
         host.app_assets_building(job.app,job.world,false)
         host.app_world_free(job.app,job.world)
     }
     if job.budget!=0 {host.assets_load_close(job.app.assets,job.budget)}
-    // A far form has no record: what it took counts in the current load.
-    if job.far {host.load_job_merge(job.app,&job.tally)}
+    // A far form or a warmed prefab has no record: what it took counts in the current load.
+    if job.record==0 && job.salt==0 {host.load_job_merge(job.app,&job.tally)}
     heap:=runtime.heap_allocator()
     for &source in job.queue {host.assets_source_free(&source)}
     delete(job.queue);delete(job.wanted)
@@ -192,10 +215,19 @@ load_free :: proc(job:^Load_Job) {
     free(job,heap)
 }
 
+// Its jobs take no more work: a round reads no other document and does not
+// instantiate, the jobs that prepare its assets take no other, and the one
+// that runs ends.
+@(private)
+load_stop :: proc(job:^Load_Job) {
+    intrinsics.atomic_store(&job.stopped,true)
+    intrinsics.atomic_store(&job.next,len(job.items))
+}
+
 // Runs a phase of the load in a job, or here without job threads.
 @(private)
 load_run :: proc(job:^Load_Job,phase:proc(job:^Load_Job,worker:int)) {
-    if jobs.worker_count(&job.app.jobs)>1 {jobs.run(&job.app.jobs,jobs.OWNER,phase,job,&job.counter)} else {phase(job,jobs.OWNER)}
+    if jobs.worker_count(&job.app.jobs)>1 {jobs.run(&job.app.jobs,jobs.OWNER,.Background,phase,job,&job.counter)} else {phase(job,jobs.OWNER)}
 }
 
 // The documents of the load, as instantiate reads them.
@@ -217,6 +249,7 @@ load_read :: proc(job:^Load_Job,worker:int) {
     reading:=host.load_phase_begin(job.app,.Read,worker)
     exhausted:=false
     for &source in job.queue {
+        if intrinsics.atomic_load(&job.stopped) {break}
         document,no_document:=new(asset.Asset)
         if no_document!=nil || host.assets_source_open(&source,document)!=.None {
             exhausted||=no_document!=nil
@@ -244,6 +277,7 @@ load_read :: proc(job:^Load_Job,worker:int) {
     for &source in job.queue {host.assets_source_free(&source)}
     clear(&job.queue)
     host.load_phase_end(job.app,reading,documents_read,&job.tally)
+    if intrinsics.atomic_load(&job.stopped) {return}
     if exhausted {
         job.error=.Out_Of_Memory
         return
@@ -305,7 +339,7 @@ load_step :: proc(job:^Load_Job,all:=false) -> bool {
             }
             for id in job.wanted {
                 file,found:=asset.registry_find(&a.registry,id)
-                if !found || file.kind!=asset.KIND_SCENE && file.kind!=asset.KIND_PREFAB {continue}
+                if !found || file.kind!=asset.KIND_SCENE {continue}
                 if source,known:=host.assets_source(a,id,runtime.heap_allocator());known {
                     append(&job.queue,source)
                     job.asked+=1
@@ -326,35 +360,54 @@ load_step :: proc(job:^Load_Job,all:=false) -> bool {
 }
 
 // The World is instantiated: what reads it on this thread does, and the
-// assets it names that are not loaded, with what they take, are read in jobs:
-// also what the other assets it names take, as the meshes of a foliage
-// source, but not what a scene takes, which is a section of its own.
+// assets it names are warmed (load_warm_begin).
 @(private)
 load_named :: proc(job:^Load_Job) {
-    app,a:=job.app,job.app.assets
+    app:=job.app
     host.app_assets_building(app,job.world,false)
     w:=host.app_world_ref(app,job.world)
     settling:=host.load_phase_begin(app,.Settle)
     propagate(w,app)
     references_resolve(w)
     host.load_phase_end(app,settling,0,&job.tally)
-    // Textures, then materials, which take them, then meshes, which take materials.
-    kinds:=[3]asset.Fourcc{asset.KIND_TEXTURE,asset.KIND_MATERIAL,asset.KIND_MESH}
-    lists:[3][dynamic]base.Asset_Id
+    load_warm_begin(job)
+}
+
+// The assets ids name that are not loaded, with what they take, in the order
+// they load: the documents of prefabs, which a spawn places, then textures,
+// materials, which take them, and meshes, which take materials. Also what
+// the other assets take, as the meshes of a foliage source or of a prefab,
+// but not what a scene of several roots takes, which is a section of its own;
+// with documents, the scenes ids names whatever roots they have.
+@(private)
+assets_unloaded :: proc(a:^host.Assets,ids:[]base.Asset_Id,documents:=false) -> (lists:[4][dynamic]base.Asset_Id) {
+    kinds:=[4]asset.Fourcc{asset.KIND_SCENE,asset.KIND_TEXTURE,asset.KIND_MATERIAL,asset.KIND_MESH}
     for &list in lists {list=make([dynamic]base.Asset_Id,context.temp_allocator)}
     seen:=make(map[base.Asset_Id]bool,context.temp_allocator)
     pending:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    append(&pending,..job.names[:])
+    append(&pending,..ids)
     for len(pending)>0 {
         id:=pop(&pending)
         if id in seen {continue}
         seen[id]=true
         file,found:=asset.registry_find(&a.registry,id)
-        if !found || host.assets_loaded(a,id) || file.kind==asset.KIND_SCENE {continue}
-        for kind,at in kinds {if file.kind==kind {append(&lists[at],id)}}
+        if !found || file.kind==asset.KIND_SCENE && !asset.registry_prefab(file) && !(documents && slice.contains(ids,id)) {continue}
+        if !host.assets_loaded(a,id) {
+            for kind,at in kinds {if file.kind==kind {append(&lists[at],id)}}
+        }
         append(&pending,..asset.registry_dependencies(&a.registry,file))
     }
-    count:=len(lists[0])+len(lists[1])+len(lists[2])
+    return
+}
+
+// The assets job.names names that are not loaded, with what they take
+// (assets_unloaded), read in jobs and given to the assets a part of each
+// frame (Load_Phase.Warming).
+@(private)
+load_warm_begin :: proc(job:^Load_Job) {
+    app,a:=job.app,job.app.assets
+    lists:=assets_unloaded(a,job.names[:],job.scenes)
+    count:=len(lists[0])+len(lists[1])+len(lists[2])+len(lists[3])
     items,no_items:=make([]Load_Item,count,runtime.heap_allocator())
     if no_items!=nil {
         job.error=.Out_Of_Memory
@@ -373,7 +426,7 @@ load_named :: proc(job:^Load_Job) {
     job.items=job.items[:count]
     host.content_animations_start(app,job.names[:],&job.animations)
     // A section loads ahead, far away: its textures come with their smallest
-    // levels, and their distance asks for the others once it shows them.
+    // levels, and the frames that sample them ask for the others.
     job.limits=host.assets_limits(a,tail=job.salt!=0)
     job.phase=.Warming
     job.budget=host.assets_load_open(a)
@@ -381,7 +434,7 @@ load_named :: proc(job:^Load_Job) {
     if workers:=jobs.worker_count(&app.jobs);workers>1 {
         asset.piece_decoders_init(&job.pieces,&app.jobs,runtime.heap_allocator())
         share:=workers if job.whole else max(workers/LOAD_WORKERS_SHARE,1)
-        for _ in 0..<min(share,count) {jobs.run(&app.jobs,jobs.OWNER,load_prepare,job,&job.counter)}
+        for _ in 0..<min(share,count) {jobs.run(&app.jobs,jobs.OWNER,.Background,load_prepare,job,&job.counter)}
     }
 }
 
@@ -436,8 +489,11 @@ load_warm :: proc(job:^Load_Job,all:bool,start:time.Tick,taken:^int) -> bool {
         taken^+=cost
         first=false
     }
-    // The jobs that prepared it are done before what they read goes.
-    if jobs.pending(&job.counter) {jobs.wait(&app.jobs,jobs.OWNER,&job.counter)}
+    // The jobs that prepared it are done before what they read goes: a frame waits for none.
+    if jobs.pending(&job.counter) {
+        if !all {return false}
+        jobs.wait(&app.jobs,jobs.OWNER,&job.counter)
+    }
     // The levels of the textures and the geometry of the meshes that go over frames are there before it ends.
     if !all && host.app_assets_uploading(app) {return false}
     // Nothing it can play holds a rest pose while its .anim compresses.
@@ -458,6 +514,14 @@ load_warm :: proc(job:^Load_Job,all:bool,start:time.Tick,taken:^int) -> bool {
 Load_Waits :: struct {assets:core.Queue(base.Asset_Id)}
 
 load_wait :: proc(waits:^Load_Waits,id:base.Asset_Id) {if waits!=nil {core.push(&waits.assets,id)}}
+
+// The loaded sections a library keeps as they are, on or off, though they are
+// to turn off or go: what shows in their place is not ready (a far mesh read
+// in jobs). A library names them in each frame until it is (section_stay).
+@(storage,queue)
+Section_Stays :: struct {queue:core.Queue(core.Entity)}
+
+section_stay :: proc(stays:^Section_Stays,e:core.Entity) {core.push(&stays.queue,e)}
 
 // What the loads of sections of a World that wait for the libraries name, appended to out.
 loads_waiting :: proc(loads:^Section_Loads,out:^[dynamic]base.Asset_Id) {
@@ -529,7 +593,7 @@ section_load_begin :: proc(app:^host.App,w:core.World_Ref,e:core.Entity) -> (job
     reference:=(^Scene_Reference)(core.raw_find(core.raw(references),type_info_of(Scene_Reference),e))
     if reference==nil {return nil,.Invalid}
     if slice.contains(section_path(w,e),reference.scene) {return nil,.Cycle}
-    return load_begin(app,reference.scene,{},core.id_of(core.read(ids),e))
+    return load_begin(app,reference.scene,{},core.id_of(ids,e))
 }
 
 // What a section load leaves. Before what it loaded joins the world under
@@ -573,8 +637,8 @@ section_load_end :: proc(job:^Load_Job,w:core.World_Ref,e:core.Entity) -> (repor
         for generation,index in apart_es.generation {
             x:=core.entity_make(index,generation)
             if index==0 || !core.alive(apart_es,x) {continue}
-            parent,_:=core.get(core.read(apart_parents),x)
-            of[index]=core.ancestor_with(core.read(apart_parents),core.read(inner),parent.entity)
+            parent,_:=core.get(apart_parents,x)
+            of[index]=core.ancestor_with(apart_parents,inner,parent.entity)
         }
     }
     made:[dynamic]core.Entity
@@ -585,15 +649,7 @@ section_load_end :: proc(job:^Load_Job,w:core.World_Ref,e:core.Entity) -> (repor
         return e!=core.NONE && index<len(made)?made[index]:core.NONE
     }
     sleepers_join(w,e,&sleepers,made[:],held)
-    if r:=(^Scene_Reference)(core.raw_get(core.raw(references),type_info_of(Scene_Reference),e));r!=nil {r.loaded,r.held=job.root,held}
-    // Its unbounded volumes rule in its box: they are found where they wait to join.
-    if places,joined_places:=core.world_table_of(apart,volume.Volume),core.world_table_of(w,volume.Volume);places!=nil && joined_places!=nil {
-        for row in 0..<core.raw_count(core.raw(places)) {
-            place:=(^volume.Volume)(core.raw_value(core.raw(places),type_info_of(volume.Volume),row))
-            if place.shape!=.Unbounded {continue}
-            if added:=core.added(joined_places,joined(made[:],core.raw(places).entities[row]));added!=nil {added.scope,added.scope_extents=e,reference.extents}
-        }
-    }
+    if r:=(^Scene_Reference)(core.raw_edit(core.raw(references),type_info_of(Scene_Reference),e));r!=nil {r.loaded,r.held=job.root,held}
     from,to:=core.world_storage_of(apart,Unresolved_References),core.world_storage_of(w,Unresolved_References)
     if from!=nil && to!=nil {
         for item in from.items {
@@ -654,8 +710,8 @@ apart_locals :: proc(apart:core.World_Ref) -> []base.Entity_Id {
     for row in 0..<core.raw_count(core.raw(members)) {
         x:=core.raw(members).entities[row]
         if parents!=nil && references!=nil {
-            parent,placed:=core.get(core.read(parents),x)
-            if placed && core.ancestor_with(core.read(parents),core.read(references),parent.entity)!=core.NONE {continue}
+            parent,placed:=core.get(parents,x)
+            if placed && core.ancestor_with(parents,references,parent.entity)!=core.NONE {continue}
         }
         append(&locals,(^Section_Member)(core.raw_value(core.raw(members),type_info_of(Section_Member),row)).local)
     }

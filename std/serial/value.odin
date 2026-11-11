@@ -3,6 +3,8 @@ package serial
 import "base:intrinsics"
 import "core:math"
 import "core:mem"
+import "core:strings"
+import "mirai:std/base"
 
 // The saved form of a value is its image: the bytes it has in memory under
 // its schema, with padding, transient fields and whatever follows the end of
@@ -73,7 +75,7 @@ layout_add :: proc(l:^Layout,s:^Schema,index:Type_Index,offset:u32) {
 // An array of one-byte integers: what a text field is.
 // A fixed array of texts: a text field of this type is a list of strings.
 type_is_texts :: proc(s:^Schema,index:Type_Index) -> bool {
-    return type_valid(s,index) && s.types[index].kind==.Array && type_is_bytes(s,s.types[index].elem)
+    return type_valid(s,index) && (s.types[index].kind==.Array || s.types[index].kind==.Slice) && type_is_bytes(s,s.types[index].elem)
 }
 
 type_is_bytes :: proc(s:^Schema,index:Type_Index) -> bool {
@@ -140,7 +142,8 @@ Op :: struct {
 Pair :: struct {from,to:i64}
 
 // How values of a stored type become values of another. Fields are matched by
-// name. Numbers convert by value and saturate at the range of the
+// name, or by a name the destination field had (Field.was), so a renamed field
+// keeps its value. Numbers convert by value and saturate at the range of the
 // destination; enum values and bit set members move by member name, and so do
 // the values and bits of an integer whose numbers are generated (by_name),
 // where a mask with every bit set stays so; arrays
@@ -152,10 +155,13 @@ Migration :: struct {
     identical:bool, // same layout and nothing transient: values are copied whole
     ops:[dynamic]Op,
     pairs:[dynamic]Pair,
-    added:int,        // destination fields without a source field
-    lacking:string,   // the first of them, named by the destination schema
-    removed:int,      // source fields without a destination field
-    incompatible:int, // fields of both whose types cannot be converted
+    added:int,      // destination fields without a source field
+    lacking:string, // the first of them, named by the destination schema
+    // What the stored values lose, by the path of the field in the source: a
+    // name of the source schema, or in temporary memory for a field inside
+    // another. Fields the destination has under no name (transient ones aside):
+    removed:[dynamic]string,
+    incompatible:[dynamic]string, // fields of both whose types cannot be converted: the destination keeps its default
 }
 
 // With a type that is not of its schema, or without memory, the migration
@@ -164,6 +170,8 @@ migration_init :: proc(m:^Migration,src:^Schema,src_type:Type_Index,dst:^Schema,
     m^={}
     m.ops=make([dynamic]Op,allocator)
     m.pairs=make([dynamic]Pair,allocator)
+    m.removed=make([dynamic]string,allocator)
+    m.incompatible=make([dynamic]string,allocator)
     if !type_valid(src,src_type) || !type_valid(dst,dst_type) {return .Invalid_Type}
     build:=Build{m=m,src=src,dst=dst}
     build.src_hashes=make([dynamic]u64,context.temp_allocator)
@@ -186,7 +194,7 @@ migration_init :: proc(m:^Migration,src:^Schema,src_type:Type_Index,dst:^Schema,
         }
     }
     m.src_size,m.dst_size=int(src.types[src_type].size),int(dst.types[dst_type].size)
-    migration_build(&build,src_type,dst_type,0,0)
+    migration_build(&build,src_type,dst_type,0,0,"")
     if build.refused {
         migration_destroy(m)
         return .Out_Of_Memory
@@ -195,7 +203,7 @@ migration_init :: proc(m:^Migration,src:^Schema,src_type:Type_Index,dst:^Schema,
     return .None
 }
 migration_destroy :: proc(m:^Migration) {
-    delete(m.ops);delete(m.pairs)
+    delete(m.ops);delete(m.pairs);delete(m.removed);delete(m.incompatible)
     m^={}
 }
 
@@ -272,7 +280,7 @@ number_class :: proc(s:^Schema,index:Type_Index) -> (class:Number_Class,ok:bool)
 }
 
 @(private="file")
-migration_build :: proc(b:^Build,src_index,dst_index:Type_Index,src_offset,dst_offset:u32) {
+migration_build :: proc(b:^Build,src_index,dst_index:Type_Index,src_offset,dst_offset:u32,path:string) {
     src_type,dst_type:=b.src.types[src_index],b.dst.types[dst_index]
     if dst_type.size==0 || src_type.size==0 {return}
     if b.src_hashes[src_index]==b.dst_hashes[dst_index] && !b.transient[dst_index] {
@@ -290,27 +298,24 @@ migration_build :: proc(b:^Build,src_index,dst_index:Type_Index,src_offset,dst_o
             lookup=make(map[u64]int,len(src_fields),context.temp_allocator)
             #reverse for field,at in src_fields {lookup[field.name_hash]=at}
         }
-        matched:=0
+        used,no_used:=make([]bool,len(src_fields),context.temp_allocator)
+        if no_used!=nil {
+            b.refused=true
+            return
+        }
         for field in dst_fields {
             size:=b.dst.types[field.type].size
+            at:=field_source(src_fields,lookup,field)
+            if at>=0 {used[at]=true}
             if .Transient in field.flags {
                 if size>0 {build_op(b,Op{kind=.Zero,dst_offset=dst_offset+field.offset,size=size})}
                 continue
-            }
-            at:=-1
-            if lookup!=nil {
-                if found,ok:=lookup[field.name_hash];ok {at=found}
-            } else {
-                for candidate,i in src_fields {
-                    if candidate.name_hash==field.name_hash {at=i;break}
-                }
             }
             if at<0 || .Transient in src_fields[at].flags {
                 if m.added==0 {m.lacking=field.name}
                 m.added+=1
                 continue
             }
-            matched+=1
             if .Text in field.flags && type_is_bytes(b.dst,field.type) && type_is_bytes(b.src,src_fields[at].type) {
                 // A text keeps the bytes that fit; what follows them is zero, not the default.
                 kept:=min(size,b.src.types[src_fields[at].type].size)
@@ -318,9 +323,11 @@ migration_build :: proc(b:^Build,src_index,dst_index:Type_Index,src_offset,dst_o
                 if size>kept {build_op(b,Op{kind=.Zero,dst_offset=dst_offset+field.offset+kept,size=size-kept})}
                 continue
             }
-            migration_build(b,src_fields[at].type,field.type,src_offset+src_fields[at].offset,dst_offset+field.offset)
+            migration_build(b,src_fields[at].type,field.type,src_offset+src_fields[at].offset,dst_offset+field.offset,field_path(path,src_fields[at].name))
         }
-        m.removed+=len(src_fields)-matched
+        for field,at in src_fields {
+            if !used[at] && .Transient not_in field.flags {build_lost(b,&m.removed,field_path(path,field.name))}
+        }
     case src_type.kind==.Array && dst_type.kind==.Array:
         count:=min(src_type.count,dst_type.count)
         src_elem,dst_elem:=b.src.types[src_type.elem],b.dst.types[dst_type.elem]
@@ -332,12 +339,12 @@ migration_build :: proc(b:^Build,src_index,dst_index:Type_Index,src_offset,dst_o
         loop:=len(m.ops)
         build_op(b,Op{kind=.Loop,src_offset=src_offset,dst_offset=dst_offset,size=count,src_stride=src_elem.size,dst_stride=dst_elem.size})
         if b.refused {return}
-        migration_build(b,src_type.elem,dst_type.elem,0,0)
+        migration_build(b,src_type.elem,dst_type.elem,0,0,path)
         body:=len(m.ops)-loop-1
         if body==0 {pop(&m.ops)}
         else {m.ops[loop].body=u32(body);b.barrier=len(m.ops)}
     case src_type.kind==.Asset || dst_type.kind==.Asset || src_type.kind==.Struct || dst_type.kind==.Struct || src_type.kind==.Array || dst_type.kind==.Array:
-        m.incompatible+=1
+        build_lost(b,&m.incompatible,path)
     case moves_values(dst_type) && names_values(src_type):
         first:=len(m.pairs)
         for from in b.src.choices[src_type.first:][:src_type.count] {
@@ -350,7 +357,7 @@ migration_build :: proc(b:^Build,src_index,dst_index:Type_Index,src_offset,dst_o
     case moves_values(dst_type):
         // A number becomes the member with its value, when there is one.
         class,_:=number_class(b.src,src_index)
-        if class==.Float || class==.Bool {m.incompatible+=1;return}
+        if class==.Float || class==.Bool {build_lost(b,&m.incompatible,path);return}
         first:=len(m.pairs)
         for to in b.dst.choices[dst_type.first:][:dst_type.count] {build_pair(b,Pair{to.value,to.value})}
         build_op(b,Op{kind=.Enum,src_class=class,src_size=u8(src_type.size),dst_size=u8(dst_type.size),src_offset=src_offset,dst_offset=dst_offset,first=u32(first),count=u32(len(m.pairs)-first)})
@@ -372,6 +379,48 @@ migration_build :: proc(b:^Build,src_index,dst_index:Type_Index,src_offset,dst_o
         }
         build_op(b,Op{kind=.Number,src_class=src_class,dst_class=dst_class,src_size=u8(src_type.size),dst_size=u8(dst_type.size),src_offset=src_offset,dst_offset=dst_offset})
     }
+}
+
+// The source field a destination field reads: the one with its name, else the
+// one with a name it had, else the one that had its name (a source newer than
+// the destination); -1 for none.
+@(private="file")
+field_source :: proc(fields:[]Field,lookup:map[u64]int,field:Field) -> int {
+    find :: proc(fields:[]Field,lookup:map[u64]int,hash:u64) -> int {
+        if lookup!=nil {return lookup[hash] or_else -1}
+        for candidate,i in fields {
+            if candidate.name_hash==hash {return i}
+        }
+        return -1
+    }
+    if at:=find(fields,lookup,field.name_hash);at>=0 {return at}
+    rest:=field.was
+    for name in strings.fields_iterator(&rest) {
+        if at:=find(fields,lookup,base.name_hash(name));at>=0 {return at}
+    }
+    for candidate,at in fields {
+        if names_hold(candidate.was,field.name) {return at}
+    }
+    return -1
+}
+
+// Whether a list of names separated by spaces (was=) holds a name.
+names_hold :: proc(names,name:string) -> bool {
+    rest:=names
+    for held in strings.fields_iterator(&rest) {
+        if held==name {return true}
+    }
+    return false
+}
+
+@(private="file")
+field_path :: proc(path,name:string) -> string {
+    return path=="" ? name : strings.concatenate({path,".",name},context.temp_allocator)
+}
+
+@(private="file")
+build_lost :: proc(b:^Build,list:^[dynamic]string,path:string) {
+    if _,err:=append(list,path);err!=nil {b.refused=true}
 }
 
 // A type whose values have names, and one whose values move by them: an

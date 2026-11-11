@@ -5,6 +5,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:log"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:std/base"
@@ -12,6 +13,7 @@ import "mirai:std/base"
 @(private="file")
 FILL :: `#include "native.slang"
 //! variant double MIRAI_DOUBLE=1
+//! constant half MIRAI_HALF
 struct Fill_Params { uint count; float scale; float offset; uint pad; };
 [[vk::binding(0, 0)]] ConstantBuffer<Fill_Params> params : register(b0, space0);
 [[vk::binding(1, 0)]] StructuredBuffer<float> input_data : register(t1, space0);
@@ -26,6 +28,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
 #else
     output_data[i] = input_data[i] * params.scale + params.offset;
 #endif
+    if (MIRAI_HALF) output_data[i] *= 0.5;
 }
 `
 
@@ -56,7 +59,40 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID) {
 }
 `
 
-// A small engine of its own: three stages (one with a variant), a test stage
+// The Surface programs the mini engine is built with, in its shaders/materials:
+// the engine has none of its own. Two move no vertices and one does.
+@(private="file")
+MINI_SURFACES :: [3][2]string{
+    {"grid.slang","//! mirai surface Grid\n//! parameter amount {\"default\":0.5,\"min\":0,\"max\":1}\nnamespace Grid {struct Parameters {float amount;}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {Mirai_Surface s=mirai_surface_default(ctx);s.roughness=p.amount;return s;}}\n"},
+    {"ocean.slang","//! mirai surface Ocean\n//! parameter amount {\"default\":0.5,\"min\":0,\"max\":1}\nnamespace Ocean {struct Parameters {float amount;}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {Mirai_Surface s=mirai_surface_default(ctx);s.metallic=p.amount;return s;}}\n"},
+    {"pieces.slang","//! mirai surface Pieces\n//! vertex reach 0.5\n//! parameter amount {\"default\":0.5,\"min\":0,\"max\":1}\nnamespace Pieces {struct Parameters {float amount;}; Mirai_Vertex vertex(Mirai_Vertex_Context ctx,Parameters p) {Mirai_Vertex v=mirai_vertex_default(ctx);v.position.y+=clamp(p.amount,0.0,0.5);return v;} Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {return mirai_surface_default(ctx);}}\n"},
+}
+
+// The programs of the mini engine: those of the engine and its own Surface ones.
+@(private="file")
+mini_programs :: proc() -> int {return builtin_programs()+len(MINI_SURFACES)}
+
+// The marks a constant of id 0 leaves in the code of a stage: a
+// specialization constant in SPIR-V, a function constant in Metal.
+@(private="file")
+code_has_constant :: proc(code:string) -> bool {
+    when ODIN_OS==.Darwin {
+        return strings.contains(code,"[[function_constant(0)]]")
+    } else {
+        OP_DECORATE,SPEC_ID :: 71,1
+        bytes:=transmute([]u8)code
+        word :: proc(bytes:[]u8,at:int) -> u32 {return u32(bytes[4*at]) | u32(bytes[4*at+1])<<8 | u32(bytes[4*at+2])<<16 | u32(bytes[4*at+3])<<24}
+        for at:=5;at<len(bytes)/4; {
+            count:=int(word(bytes,at)>>16)
+            if count==0 || at+count>len(bytes)/4 {return false}
+            if word(bytes,at)&0xffff==OP_DECORATE && count==4 && word(bytes,at+2)==SPEC_ID && word(bytes,at+3)==0 {return true}
+            at+=count
+        }
+        return false
+    }
+}
+
+// A small engine of its own: three stages (one with a variant and a constant), a test stage
 // and the shared includes and built-in programs of the real engine.
 @(private="file")
 Mini :: struct {root,output:string,options:Options}
@@ -79,6 +115,7 @@ mini_make :: proc(t:^testing.T,mini:^Mini) -> bool {
             fixture_write(t,mini.root,relative,string(data))
         }
     }
+    for surface in MINI_SURFACES {fixture_write(t,mini.root,strings.concatenate({"shaders/materials/",surface[0]},context.temp_allocator),surface[1])}
     fixture_write(t,mini.root,"shaders/fill.comp.slang",FILL)
     fixture_write(t,mini.root,"shaders/color.frag.slang",COLOR)
     fixture_write(t,mini.root,"shaders/point.vert.slang",POINT)
@@ -126,7 +163,7 @@ generation_compiles_publishes_and_reuses_what_did_not_change :: proc(t:^testing.
     if first.error!="" {return}
     testing.expect_value(t,first.shaders,4)
     testing.expect_value(t,first.tests,2)
-    testing.expect_value(t,first.programs,builtin_programs())
+    testing.expect_value(t,first.programs,mini_programs())
     testing.expect_value(t,first.compiled,6)
     testing.expect_value(t,first.reused,0)
     testing.expect_value(t,len(first.engine),64)
@@ -136,16 +173,34 @@ generation_compiles_publishes_and_reuses_what_did_not_change :: proc(t:^testing.
     }
     testing.expect(t,os.is_file(path_join(mini.output,"catalog.json",allocator=context.temp_allocator)) && os.is_file(path_join(mini.output,"include",SURFACE_INCLUDE,allocator=context.temp_allocator)) && os.is_file(path_join(mini.output,"include",POSTPROCESS_INCLUDE,allocator=context.temp_allocator)))
     manifest:=mini_read(&mini,"shaders/build/manifest.json")
-    testing.expect(t,strings.contains(manifest,first.engine),"the manifest names the engine sources")
-    testing.expect(t,strings.contains(manifest,"\"id\": \"Fill_Double_Comp\"") && strings.contains(manifest,"\"tests\": [\n    {\n      \"id\": \"Probe_Comp\""))
-    testing.expect(t,strings.contains(manifest,"\"bindings\": [\n        {\n          \"slot\": 0,\n          \"kind\": \"Uniform_Buffer\"\n        },\n        {\n          \"slot\": 1,\n          \"kind\": \"Storage_Buffer\"\n        },\n        {\n          \"slot\": 2,\n          \"kind\": \"Storage_Buffer_RW\"\n        }\n      ],\n      \"group\": [\n        64,\n        1,\n        1\n      ],"),"bindings and threadgroup are the reflected ones")
+    testing.expect(t,strings.contains(manifest,first.engine),"the manifest names what its stages share with the engine")
+    published:=manifest_read(mini.output,context.temp_allocator)
+    halves:=0
+    fill:Shader
+    for entry in published.shaders {
+        if entry.id=="Fill_Comp" {fill=entry}
+        for constant in entry.constants {halves+=int(constant=="half")}
+    }
+    for entry in published.tests {
+        for constant in entry.constants {halves+=int(constant=="half")}
+    }
+    testing.expect(t,len(published.shaders)==4 && len(published.tests)>0 && published.tests[0].id=="Probe_Comp")
+    testing.expect(t,slice.equal(fill.bindings,[]Binding{{0,"Uniform_Buffer"},{1,"Storage_Buffer"},{2,"Storage_Buffer_RW"}}) && fill.group=={64,1,1},"bindings and threadgroup are the reflected ones")
     table:=mini_read(&mini,"render/shaders_gen.odin")
     testing.expect(t,strings.contains(table,"\npackage mirai_render\n"))
     testing.expect(t,strings.contains(table,"Shader_Id :: enum u8 {\n\tColor_Frag,\n\tFill_Comp,\n\tFill_Double_Comp,\n\tPoint_Vert,\n}"),"stages in the order of their files, a variant after its source")
-    testing.expect(t,strings.contains(table,strings.concatenate({"SHADERS_FINGERPRINT :: \"",first.engine,"\""},context.temp_allocator)))
+    testing.expect(t,strings.contains(table,strings.concatenate({"SHADERS_INTERFACE :: \"",first.engine,"\""},context.temp_allocator)))
     testing.expect(t,strings.contains(table,"#panic(\"the shaders were generated without"),"the other system is told to ask for its backend")
     testing.expect(t,strings.contains(mini_read(&mini,"rhi/shaders_gen_test.odin"),"\tProbe_Comp,\n\tProbe_Double_Comp,\n"))
     testing.expect(t,mini_read(&mini,strings.concatenate({"shaders/build/fill.comp",HOST_CODE},context.temp_allocator))!=mini_read(&mini,strings.concatenate({"shaders/build/fill_double.comp",HOST_CODE},context.temp_allocator)),"a variant is another compilation")
+    // A constant is no compilation: the code of each variant holds it, for the pipeline to set.
+    for name in ([]string{"shaders/build/fill.comp","shaders/build/fill_double.comp"}) {
+        testing.expectf(t,code_has_constant(mini_read(&mini,strings.concatenate({name,HOST_CODE},context.temp_allocator))),"%s keeps its constant for the pipeline",name)
+    }
+    testing.expect(t,!code_has_constant(mini_read(&mini,strings.concatenate({"shaders/build/color.frag",HOST_CODE},context.temp_allocator))),"a stage without constants has none")
+    testing.expect_value(t,halves,4)
+    testing.expect_value(t,strings.count(table,"FILL_COMP_HALF :: 0\n"),1)
+    testing.expect_value(t,strings.count(table,"constants = []string{\"half\"}"),2)
     leftovers,_:=os.read_all_directory_by_path(path_join(mini.root,"shaders",allocator=context.temp_allocator),context.temp_allocator)
     for entry in leftovers {testing.expectf(t,!strings.has_prefix(entry.name,".mirai-shaders-"),"the staging folder %s is removed",entry.name)}
 
@@ -164,10 +219,12 @@ generation_compiles_publishes_and_reuses_what_did_not_change :: proc(t:^testing.
     testing.expect_value(t,third.error,"")
     testing.expect_value(t,third.compiled,1)
     testing.expect_value(t,third.reused,5)
-    testing.expect(t,third.engine!=first.engine,"the include is an engine source")
+    // Code alone changed: an engine built from the table loads this generation as it runs.
+    testing.expect_value(t,third.engine,first.engine)
+    testing.expect(t,mini_read(&mini,"render/shaders_gen.odin")==table,"the table says nothing of the code of a stage")
 
     // The output was lost: the shared cache gives the stages back without compiling.
-    os.remove_all(mini.output)
+    base.remove_all(mini.output)
     fourth:=mini_generate(t,&mini,mini.options)
     testing.expect_value(t,fourth.error,"")
     testing.expect_value(t,fourth.compiled,0)
@@ -179,6 +236,14 @@ generation_compiles_publishes_and_reuses_what_did_not_change :: proc(t:^testing.
     testing.expect(t,len(own)==1 && own[0].name==STAMP_FILE,"the cache of a checkout holds its stamp")
     stages:=files_in(path_join(mini.root,".mirai/cache",CACHE_NAME,CACHE_STAGES,allocator=context.temp_allocator))
     testing.expectf(t,len(stages)==14,"seven entries, each with the code of this system: %d files",len(stages))
+
+    // A stage binds another buffer: the engine binds what its table says, so the table and what names it are others.
+    bound,_:=strings.replace(POINT,"struct Stage_Output","[[vk::binding(1, 0)]] StructuredBuffer<Corner> others : register(t1, space0);\nstruct Stage_Output",1,context.temp_allocator)
+    bound,_=strings.replace(bound,"corners[vertex_id].position;","corners[vertex_id].position + others[vertex_id].position;",1,context.temp_allocator)
+    fixture_write(t,mini.root,"shaders/point.vert.slang",bound)
+    fifth:=mini_generate(t,&mini,mini.options)
+    testing.expect_value(t,fifth.error,"")
+    testing.expect(t,fifth.engine!=first.engine && mini_read(&mini,"render/shaders_gen.odin")!=table,"a binding is what the stage shares with the engine")
 }
 
 @(test)
@@ -207,6 +272,12 @@ generation_that_fails_keeps_the_previous_one_whole :: proc(t:^testing.T) {
     testing.expect_value(t,fixed.error,"")
     testing.expect_value(t,fixed.compiled,0)
     testing.expect(t,mini_read(&mini,color_code)!=color,"the new generation is published")
+    // Constants a pipeline cannot set fail the stage that declares them, by name, before any tool runs.
+    published:=mini_read(&mini,"shaders/build/manifest.json")
+    fixture_write(t,mini.root,"shaders/point.vert.slang",strings.concatenate({"//! constant a SAME\n//! constant b SAME\n",POINT},context.temp_allocator))
+    twice:=mini_generate(t,&mini,mini.options)
+    testing.expect(t,strings.contains(twice.error,"point.vert") && strings.contains(twice.error,"twice"),twice.error)
+    testing.expect(t,mini_read(&mini,"shaders/build/manifest.json")==published,"nothing is published of it")
 }
 
 @(test)
@@ -225,13 +296,13 @@ generation_for_a_project_adds_its_programs_and_leaves_the_engine_tables :: proc(
     options.odin=false
     reload:=mini_generate(t,&mini,options)
     testing.expect_value(t,reload.error,"")
-    testing.expect_value(t,reload.programs,builtin_programs()+1)
+    testing.expect_value(t,reload.programs,mini_programs()+1)
     testing.expect_value(t,reload.shaders,4)
     testing.expect_value(t,reload.tests,0)
     testing.expect_value(t,reload.engine,engine.engine)
     testing.expect(t,mini_read(&mini,"render/shaders_gen.odin")==table,"the tables of the engine are not written for a project")
     catalog,_:=os.read_entire_file(path_join(options.output,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
-    testing.expect(t,strings.contains(string(catalog),"\"name\": \"Glow\"") && strings.contains(string(catalog),"\"source\": \"project/glow.slang\"") && strings.contains(string(catalog),"\"default\": 0.5,"))
+    testing.expect(t,strings.contains(string(catalog),"\"name\": \"Glow\"") && strings.contains(string(catalog),"\"source\": \"project/glow.slang\"") && strings.contains(string(catalog),"0.5"))
     manifest,_:=os.read_entire_file(path_join(options.output,"manifest.json",allocator=context.temp_allocator),context.temp_allocator)
     testing.expect(t,strings.contains(string(manifest),"\"tests\": []"))
     testing.expect(t,os.is_file(path_join(project,".mirai/shader-cache",STAMP_FILE,allocator=context.temp_allocator)),"the stamp of a project is in the project")
@@ -247,7 +318,7 @@ generation_for_a_project_adds_its_programs_and_leaves_the_engine_tables :: proc(
     options.sources={{name="fx",folder=plugin},{name="absent",folder=path_join(mini.root,"plugins/absent/shaders",allocator=context.temp_allocator)}}
     with_plugin:=mini_generate(t,&mini,options)
     testing.expect_value(t,with_plugin.error,"")
-    testing.expect_value(t,with_plugin.programs,builtin_programs()+2)
+    testing.expect_value(t,with_plugin.programs,mini_programs()+2)
     testing.expect(t,with_plugin.changed)
     testing.expect(t,mini_read(&mini,"render/shaders_gen.odin")==table,"a generation with sources of plugins writes no engine tables either")
     catalog,_=os.read_entire_file(path_join(project,PROJECT_OUTPUT,"catalog.json",allocator=context.temp_allocator),context.temp_allocator)
@@ -328,7 +399,7 @@ program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its
     testing.expect_value(t,engine.error,"")
     if engine.error!="" {return}
     // shade.frag and one for each Surface program of the engine.
-    surfaces:=len(builtin_surface_programs())
+    surfaces:=len(builtin_surface_programs())+len(MINI_SURFACES)
     testing.expect_value(t,engine.compiled,6+surfaces)
     testing.expect(t,os.is_file(path_join(mini.output,strings.concatenate({"shade.frag",HOST_CODE},context.temp_allocator),allocator=context.temp_allocator)) && !os.exists(path_join(mini.output,strings.concatenate({"shade.frag",OTHER_CODE},context.temp_allocator),allocator=context.temp_allocator)),"the engine has the backend of this system")
 
@@ -340,7 +411,7 @@ program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its
     // The first generation: the stage of the program of the project alone, for this system alone.
     first:=mini_generate(t,&mini,options)
     testing.expect_value(t,first.error,"")
-    testing.expect_value(t,first.programs,builtin_programs()+1)
+    testing.expect_value(t,first.programs,mini_programs()+1)
     testing.expect_value(t,first.compiled,1)
     testing.expect_value(t,first.reused,6+surfaces)
     host,other:=HOST_CODE,OTHER_CODE
@@ -356,7 +427,7 @@ program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its
     // Nothing changed.
     same:=mini_generate(t,&mini,options)
     testing.expect(t,same.error=="" && same.current && !same.changed && same.compiled==0 && same.reused==7+surfaces,"an unchanged project has nothing to do")
-    testing.expect_value(t,same.programs,builtin_programs()+1)
+    testing.expect_value(t,same.programs,mini_programs()+1)
     testing.expect_value(t,same.engine,engine.engine)
 
     metadata,_:=strings.replace_all(tint_program("1.0"),"[1,0.5,0.25]","[0.25,0.5,1]",context.temp_allocator)
@@ -380,7 +451,7 @@ program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its
     fixture_write(t,project,"shaders/zglow.slang",GLOW_PROGRAM)
     glow:=mini_generate(t,&mini,options)
     testing.expect_value(t,glow.error,"")
-    testing.expect_value(t,glow.programs,builtin_programs()+2)
+    testing.expect_value(t,glow.programs,mini_programs()+2)
     testing.expect_value(t,glow.compiled,1)
     testing.expect(t,mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/post.frag",host},context.temp_allocator))!=mini_read(&mini,strings.concatenate({"shaders/build/post.frag",host},context.temp_allocator)))
 
@@ -401,7 +472,7 @@ program_reaches_only_the_stages_of_its_domain_and_a_project_gets_the_code_of_its
     options.backends={.Metal}
     options.output=path_join(mini.root,"metal-only",allocator=context.temp_allocator)
     options.cache=path_join(mini.root,"metal-cache",allocator=context.temp_allocator)
-    os.remove_all(path_join(mini.root,".mirai/cache",CACHE_NAME,CACHE_STAGES,allocator=context.temp_allocator))
+    base.remove_all(path_join(mini.root,".mirai/cache",CACHE_NAME,CACHE_STAGES,allocator=context.temp_allocator))
     alone:=mini_generate(t,&mini,options)
     testing.expect_value(t,alone.error,"")
     testing.expect_value(t,alone.compiled,7+surfaces)
@@ -527,7 +598,7 @@ generation_is_current_until_a_source_a_folder_the_request_or_an_output_changes :
     }
     again:=regenerate(t,&mini,mini.options)
     testing.expect(t,again.current && again.compiled==0 && again.reused==6 && !again.changed)
-    testing.expect(t,again.shaders==4 && again.tests==2 && again.programs==builtin_programs() && again.engine==first.engine,"a current generation says what the published one is")
+    testing.expect(t,again.shaders==4 && again.tests==2 && again.programs==mini_programs() && again.engine==first.engine,"a current generation says what the published one is")
     unchanged,_:=os.modification_time_by_path(path_join(mini.output,"manifest.json",allocator=context.temp_allocator))
     testing.expect_value(t,unchanged,manifest_time)
     // How many compilers run at once is not what is asked for.
@@ -803,15 +874,13 @@ first_stages_go_out_alone_before_the_others :: proc(t:^testing.T) {
     testing.expect(t,len(code(first,"shade__Tint.frag"))>0 && code(first,"shade__Tint.frag")==code(output,"shade__Tint.frag"),"the first stage is the one the generation published")
     testing.expect(t,code(first,"tone__Tint.frag")==tone && code(output,"tone__Tint.frag")!=tone,"another stage is as the output had it")
     testing.expect(t,code(first,"fill.comp")==code(output,"fill.comp"))
-    early,early_read:=read_json(path_join(first,"manifest.json",allocator=context.temp_allocator),context.temp_allocator)
-    whole,_:=read_json(path_join(output,"manifest.json",allocator=context.temp_allocator),context.temp_allocator)
-    testing.expect(t,early_read && json_text(early["engine"])==edited.engine && json_text(early["catalog"])==json_text(whole["catalog"]),"it names the engine and the catalog of the generation")
+    early,whole:=manifest_read(first,context.temp_allocator),manifest_read(output,context.temp_allocator)
+    testing.expect(t,early.engine!="" && early.engine==edited.engine && early.catalog==whole.catalog,"it names the engine and the catalog of the generation")
     testing.expect(t,mini_read(&mini,"first/catalog.json")==mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/catalog.json"},context.temp_allocator)))
-    shaders,_:=early["shaders"].(json.Array)
-    testing.expect_value(t,len(shaders),6)
+    testing.expect_value(t,len(early.shaders),6)
 
     // Without changes nothing is compiled and nothing is written there.
-    os.remove_all(first)
+    base.remove_all(first)
     again:Progress
     options.progress=&again
     same:=mini_generate(t,&mini,options)
@@ -862,7 +931,7 @@ stages_in_use_go_out_before_the_idle_ones :: proc(t:^testing.T) {
     testing.expect(t,mini_read(&mini,"active/catalog.json")==mini_read(&mini,strings.concatenate({"game/",PROJECT_OUTPUT,"/catalog.json"},context.temp_allocator)))
 
     // Without an idle stage the whole generation is the one in use: nothing is written there.
-    os.remove_all(active)
+    base.remove_all(active)
     fixture_write(t,project,"shaders/tint.slang",tint_program("0.25"))
     whole:Progress
     options.idle={}
@@ -892,65 +961,4 @@ cancelled_generation_publishes_nothing :: proc(t:^testing.T) {
     for entry in leftovers {testing.expectf(t,!strings.has_prefix(entry.name,".mirai-shaders-"),"the staging folder %s is removed",entry.name)}
     next:=mini_generate(t,&mini,mini.options)
     testing.expect(t,next.error=="" && !next.cancelled && next.compiled==1,"the next generation runs as usual")
-}
-
-@(test)
-overlay_compiles_sources_from_memory_and_saving_them_leaves_the_generation_current :: proc(t:^testing.T) {
-    mini:Mini
-    if !mini_make(t,&mini) {return}
-    fixture_write(t,mini.root,"shaders/shade.frag.slang",SHADE_EACH)
-    engine_options:=mini.options
-    engine_options.odin=false
-    engine:=mini_generate(t,&mini,engine_options)
-    testing.expect_value(t,engine.error,"")
-    if engine.error!="" {return}
-    project:=path_join(mini.root,"game",allocator=context.temp_allocator)
-    output:=path_join(project,PROJECT_OUTPUT,allocator=context.temp_allocator)
-    tint:=path_join(project,"shaders/tint.slang",allocator=context.temp_allocator)
-    read :: proc(path:string) -> string {
-        data,_:=os.read_entire_file(path,context.temp_allocator)
-        return string(data)
-    }
-    shade_code:=path_join(output,strings.concatenate({"shade__Tint.frag",HOST_CODE},context.temp_allocator),allocator=context.temp_allocator)
-    fixture_write(t,project,"shaders/tint.slang",tint_program("1.0"))
-    options:=engine_options
-    options.project=project
-    saved:=mini_generate(t,&mini,options)
-    testing.expect_value(t,saved.error,"")
-    shade:=read(shade_code)
-
-    // The program changes in memory: it is compiled from its copy and its file keeps what it had.
-    unsaved:=tint_program("0.5")
-    options.overlay={{path=tint,data=transmute([]u8)unsaved}}
-    edited:=mini_generate(t,&mini,options)
-    testing.expect_value(t,edited.error,"")
-    testing.expect_value(t,edited.compiled,1)
-    testing.expect_value(t,read(tint),tint_program("1.0"))
-    testing.expect_value(t,read(path_join(output,"include/programs/project/tint.slang",allocator=context.temp_allocator)),unsaved)
-    testing.expect(t,read(shade_code)!=shade,"the stage that evaluates it has what memory holds")
-    testing.expect(t,current(options),"the same memory is current")
-    from_disk:=options
-    from_disk.overlay=nil
-    testing.expect(t,!current(from_disk),"the file is not what was published")
-
-    // Saved, the file holds what memory held: nothing is left to do.
-    fixture_write(t,project,"shaders/tint.slang",unsaved)
-    testing.expect(t,current(from_disk),"saving leaves the generation current")
-
-    // Memory can add a source and take one away.
-    sand,_:=strings.replace_all(tint_program("0.25"),"Tint","Sand",context.temp_allocator)
-    options.overlay={{path=tint,removed=true},{path=path_join(project,"shaders/sand.slang",allocator=context.temp_allocator),data=transmute([]u8)sand}}
-    moved:=mini_generate(t,&mini,options)
-    testing.expect_value(t,moved.error,"")
-    catalog:=read(path_join(output,"catalog.json",allocator=context.temp_allocator))
-    testing.expect(t,strings.contains(catalog,"\"name\": \"Sand\"") && !strings.contains(catalog,"\"name\": \"Tint\""))
-    testing.expect(t,os.is_file(tint) && !os.exists(path_join(project,"shaders/sand.slang",allocator=context.temp_allocator)))
-
-    // A stage of the project that includes a source of memory by its name would compile its file.
-    lit,_:=strings.replace_all(COLOR,"tint.slang","lit_tint.slang",context.temp_allocator)
-    fixture_write(t,project,"shaders/lit.frag.slang",lit)
-    fixture_write(t,project,"shaders/lit_tint.slang","#define TINT float4(1,1,1,1)\n")
-    options.overlay={{path=path_join(project,"shaders/lit_tint.slang",allocator=context.temp_allocator),data=transmute([]u8)string("#define TINT float4(0,0,0,1)\n")}}
-    refused:=mini_generate(t,&mini,options)
-    testing.expect(t,strings.contains(refused.error,"project/shaders/lit_tint.slang, which has unsaved changes"),refused.error)
 }

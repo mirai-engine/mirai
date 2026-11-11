@@ -3,7 +3,7 @@ package abilities
 import "mirai:core"
 import inp "mirai:engine/input"
 import "mirai:std/base"
-import phys "plugins:physics/runtime"
+import locomotion "plugins:locomotion/runtime"
 
 // Abilities: what a character does on top of its locomotion (an attack, a dash, a block, a hit
 // reaction) as rows of game data. An Ability is a sheet: the input that starts it, what it
@@ -63,8 +63,8 @@ Ability_Attribute :: distinct u8
 Ability_Cue :: distinct u16
 @(name="none") CUE_NONE :: Ability_Cue(0)
 
-// Locomotion modes of the physics Character an ability may start in.
-@(name_bits="phys.Locomotion_Mode")
+// Locomotion modes of the Character an ability may start in.
+@(name_bits="locomotion.Locomotion_Mode")
 Ability_Modes :: distinct u32
 
 Ability_Trigger :: enum u8 {
@@ -140,7 +140,7 @@ Ability_Hitbox :: struct {
 
 Ability_Move :: struct {
     velocity:[3]f32 `mirai:"unit=m/s"`, // in the axes of the user when the window opens; zero: no move
-    mix:phys.Move_Mix,
+    mix:locomotion.Move_Mix,
 }
 
 // What the seconds of a window count.
@@ -175,8 +175,7 @@ Ability :: struct {
     cooldown:f32 `mirai:"min=0,unit=s"`,
     duration:f32 `mirai:"min=0,unit=s"`,
     hold:bool, // it ends when its input is let go
-    action:[ABILITY_NAME]u8 `mirai:"text"`, // an action of the user's Animation (a layer over locomotion)
-    clip:[ABILITY_NAME]u8 `mirai:"text"`,   // a clip of its .match played over the whole body (match_play)
+    action:[ABILITY_NAME]u8 `mirai:"text"`, // an action of the user's .character: in its layer over locomotion, or the whole body when it names none
     windows:[ABILITY_WINDOWS]Ability_Window,
     next:core.Record(Ability), // asked for when it completes, in the statuses its windows gave on its last tick
 }
@@ -269,8 +268,8 @@ Ability_Event :: struct {
 }
 
 // What the abilities did this tick; abilities_step clears and fills it.
-@(storage,events)
-Ability_Events :: struct {queue:core.Queue(Ability_Event)}
+@(storage)
+Ability_Events :: struct {queue:core.Events(Ability_Event)}
 
 // Asks entity to start ability as if its input fired: it waits for a moment it is valid as its
 // input.wait says (the kit's buffer, or also while the running ability goes on).

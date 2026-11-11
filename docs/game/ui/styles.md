@@ -35,11 +35,17 @@ The template's `assets/menu/theme.ui` is the example of tokens and styles, and i
   `extends` makes one start from another (`"focus": {"extends": "hover", ...}`). `focus` is the
   ring of keys and gamepad: give it a look that is not `hover`.
 - `move_x`, `move_y` and `scale` draw the node somewhere else without moving the layout or the
-  pointer; with `transition` they animate. `blur` blurs what is behind the node, for a pause
-  screen.
+  pointer; with `transition` they animate. `layout_transition` carries the node to a new place or
+  size when the layout changes (an item inserted above it in a `List` with `bind_key`, a panel that
+  grows), over its own
+  seconds: change its size in the layout, never with an animation. `blur` blurs what is behind the
+  node, for a pause screen.
 - Layout goes in a style too: `width`, `height`, `direction`, `gap`, `padding`, `align_x`,
   `align_y`. A node takes it and states only what differs; a change of the style reaches every node
   that uses it.
+- A `Text` or a `Rich_Text` with `"wrap": "words"` breaks at whatever width it ends with (`"grow"`,
+  `"50%"`, a number, or `"fit"` inside something narrower) and is as high as its lines.
+  `"align_y": "baseline"` on a row puts texts of different sizes on one baseline.
 - `variants`: `"variants": {"gold": {"fill": "#ffd700"}}` is a look a node picks with `variant` or
   `bind_variant`.
 
@@ -84,14 +90,18 @@ And a screen that uses it:
 ## Animations
 
 ```json
-"animations": {"pulse": {"scale": [1, 1.2], "seconds": 0.6, "ease": "In_Out_Quad",
+"animations": {"pulse": {"scale": [1, 1.2], "seconds": 0.6, "ease": "Quad_In_Out",
                          "loop": "Ping_Pong"}}
 ```
 
-A property (`offset`, `scale`, `rotation`, `opacity`, `color`, `width`, `height`, `value`, `frame`,
-`reveal`) goes from one value to another; nodes play it with `"events": {"shown": "pulse"}`. Keyed
-tracks go in `tracks` (`[{"property": "Scale", "keys": [{"time": 0, "value": [1, 1, 0, 0]}]}]`) and
-a `"kind": "Sequence"` or `"Parallel"` names others in `parts`.
+A property (`offset`, `scale`, `rotation`, `opacity`, `color`, `value`, `frame`, `reveal`) goes
+from one value to another; nodes play it with `"events": {"shown": "pulse"}`, and
+the triggers are `shown`, `hidden` and `clicked`. How a node looks hovered, pressed, focused or
+selected is a state of its style with a `transition`, never an animation. Keyed tracks go in
+`tracks` (`[{"property": "Scale", "keys": [{"time": 0, "value": [1, 1, 0, 0]}]}]`) and a
+`"kind": "Sequence"` or `"Parallel"` names others in `parts`. A key is the one of a clip of an
+`.anim`: `time`, `value`, `ease` (`Linear`, `Cubic_Out`, `Back_Out`, `Bounce_Out`... the eases of
+the engine) and `interpolation` (`Linear`, `Step`, `Cubic`).
 
 ## Pitfalls that fail silently
 

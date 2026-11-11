@@ -11,7 +11,7 @@ import wire "mirai:net"
 components_turned_off_on_the_server_turn_off_on_the_client :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     apps:[2]host.App
@@ -35,17 +35,15 @@ components_turned_off_on_the_server_turn_off_on_the_client :: proc(t:^testing.T)
     sessions[0].problems,sessions[1].problems=&problems[0],&problems[1]
     testing.expect_value(t,wire.host_connect(&sessions[1].host,wire.address_memory(0)),wire.Error.None)
     outbox:Net_Outbox;defer core.value_free(&outbox,type_info_of(Net_Outbox))
-    server_events,client_events:Net_Events
-    defer core.value_free(&server_events,type_info_of(Net_Events));defer core.value_free(&client_events,type_info_of(Net_Events))
     server,client:=&worlds[0],&worlds[1]
     client_state :: proc(client:^Net_Test_World,e:core.Entity) -> (on,turned_off,found:bool) {return core.raw_state(core.raw(&client.values),e)}
     for tick in 1..<120 {
         now:=f64(tick)/60
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
-        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server_events,&server.remote)
-        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
-        client_place(&sessions[1],core.world_ref(client,&info),wire.clock_interpolation_tick(&sessions[1].host,u32(tick)),nil)
+        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server.remote)
+        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
+        client_place(&sessions[1],core.world_ref(client,&info),wire.clock_interpolation_tick(&sessions[1].host,u32(tick)),nil,false)
         core.settle(&info,client,nil)
         switch tick {
         case 21: core.add(&server.objects,entities[0],net_test_replicate(audience=.Always))

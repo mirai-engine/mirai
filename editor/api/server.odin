@@ -38,22 +38,23 @@ server_init :: proc(s:^Server,desc:Server_Desc) -> Init_Error {
     if !base.arena_init(&s.scratch,max(or_default(desc.scratch,2<<20),2*s.max_request+64*1024),allocator) {server_destroy(s);return .Out_Of_Memory}
     if !base.arena_init(&s.text,2*s.max_request+4096,allocator) {server_destroy(s);return .Out_Of_Memory}
     serial.schema_init(&s.schema,allocator)
-    s.tags=make([dynamic]Field_Tags,allocator)
-    s.keys=make([dynamic]string,allocator)
+    s.schema.unsized,s.schema.sparse=true,true
     s.name=clone_text(allocator,desc.name!=""?desc.name:"mirai")
     s.version=clone_text(allocator,desc.version!=""?desc.version:"1")
     s.instructions=clone_text(allocator,desc.instructions!=""?desc.instructions:"engine_describe lists the methods and the plugins of the project; the tools of a plugin come with mirai mcp --plugins <names>.")
     s.docs_root=clone_text(allocator,desc.docs_root)
     serial.writer_init_fixed(&s.out,s.response[HEAD_ROOM:])
     serial.writer_init_fixed(&s.stage,s.staging)
-    err:net.Network_Error
-    s.listener,err=net.listen_tcp({address=net.IP4_Loopback,port=desc.port},16)
-    if err!=nil {server_destroy(s);return .Bind_Failed}
-    s.listening=true
-    socket_private(s.listener)
-    if net.set_blocking(s.listener,false)!=nil {server_destroy(s);return .Bind_Failed}
-    endpoint,_:=net.bound_endpoint(s.listener)
-    s.port=endpoint.port
+    if !desc.local {
+        err:net.Network_Error
+        s.listener,err=net.listen_tcp({address=net.IP4_Loopback,port=desc.port},16)
+        if err!=nil {server_destroy(s);return .Bind_Failed}
+        s.listening=true
+        socket_private(s.listener)
+        if net.set_blocking(s.listener,false)!=nil {server_destroy(s);return .Bind_Failed}
+        endpoint,_:=net.bound_endpoint(s.listener)
+        s.port=endpoint.port
+    }
     if !describe_register(s) {server_destroy(s);return .Out_Of_Memory}
     return .None
 }
@@ -63,16 +64,12 @@ server_destroy :: proc(s:^Server) {
     if s.listening {net.close(s.listener)}
     for &method in s.methods[:s.method_count] {
         delete(method.name,s.allocator);delete(method.summary,s.allocator);delete(method.plugin,s.allocator);delete(method.defaults,s.allocator)
-        delete(method.params_schema,s.allocator);delete(method.result_schema,s.allocator)
     }
     delete(s.name,s.allocator);delete(s.version,s.allocator);delete(s.instructions,s.allocator);delete(s.docs_root,s.allocator)
     plugins_free(s)
     guides_free(s)
     delete(s.methods,s.allocator);delete(s.conns,s.allocator);delete(s.conn_memory,s.allocator)
     delete(s.response,s.allocator);delete(s.staging,s.allocator)
-    delete(s.tags)
-    for key in s.keys {delete(key,s.allocator)}
-    delete(s.keys)
     base.arena_destroy(&s.scratch);base.arena_destroy(&s.text)
     if s.schema.types!=nil {serial.schema_destroy(&s.schema)}
     s^={}
@@ -114,15 +111,12 @@ plugins_free :: proc(s:^Server) {
 server_methods_reset :: proc(s:^Server) -> bool {
     for &method in s.methods[:s.method_count] {
         delete(method.name,s.allocator);delete(method.summary,s.allocator);delete(method.plugin,s.allocator);delete(method.defaults,s.allocator)
-        delete(method.params_schema,s.allocator);delete(method.result_schema,s.allocator)
         method={}
     }
     s.method_count=0
     serial.schema_destroy(&s.schema)
     serial.schema_init(&s.schema,s.allocator)
-    clear(&s.tags)
-    for key in s.keys {delete(key,s.allocator)}
-    clear(&s.keys)
+    s.schema.unsized,s.schema.sparse=true,true
     return describe_register(s)
 }
 

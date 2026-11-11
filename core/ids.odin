@@ -37,8 +37,8 @@ entity_of :: proc "contextless" (es:^Entities,id:base.Entity_Id) -> Entity {
 
 // The Id of an entity, 0 without one or without a table of Id: its row,
 // read without sealing it.
-id_of :: proc "contextless" (ids:Read(Id),e:Entity) -> base.Entity_Id {
-    if ids.table==nil {return 0}
+id_of :: proc "contextless" (ids:^Table(Id,$A),e:Entity) -> base.Entity_Id {
+    if ids==nil {return 0}
     value,_:=get(ids,e)
     return value.value
 }
@@ -66,7 +66,7 @@ id_next :: proc "contextless" (es:^Entities) -> base.Entity_Id {
 // whole table when it was copied, swapped or cleared. table_settle calls it
 // after settling a table of Id. Without memory the index reads the table
 // whole at the next settle.
-ids_follow :: proc(es:^Entities,table:Read(Id)) {
+ids_follow :: proc(es:^Entities,table:^Table(Id,$A)) {
     x:=&es.ids
     c:=changes(table,&x.seen)
     if c.all || x.whole {
@@ -74,9 +74,7 @@ ids_follow :: proc(es:^Entities,table:Read(Id)) {
         return
     }
     for e in c.gone {ids_drop(es,table,e)}
-    if c.since==version(table) {return}
-    for row in 0..<count(table) {
-        if stamp(table,row)<=c.since {continue}
+    for row in each_changed(table,&c) {
         if !ids_put(es,table,entity_at(table,row),at(table,row).value) {
             x.whole=true
             return
@@ -85,22 +83,20 @@ ids_follow :: proc(es:^Entities,table:Read(Id)) {
 }
 
 // Whether the index followed every change of the Id table.
-ids_synced :: proc "contextless" (es:^Entities,table:Read(Id)) -> bool {
-    t:=table.table
-    return !es.ids.whole && es.ids.seen==Seen{t.version,t.gone_first+u64(len(t.gone))}
+ids_synced :: proc "contextless" (es:^Entities,t:^Table(Id,$A)) -> bool {
+    return !es.ids.whole && es.ids.seen==Seen{t.version,log_end(t.gone)}
 }
 
 // The entities and the Id table of a World came together from another one,
 // copied or swapped: synced says whether the index had followed the table
 // there (ids_synced). Then it follows this one from here, and otherwise it
 // reads it whole at the next settle.
-ids_moved :: proc "contextless" (es:^Entities,table:Read(Id),synced:bool) {
+ids_moved :: proc "contextless" (es:^Entities,t:^Table(Id,$A),synced:bool) {
     if !synced {
         es.ids.whole=true
         return
     }
-    t:=table.table
-    es.ids.seen={t.version,t.gone_first+u64(len(t.gone))}
+    es.ids.seen={t.version,log_end(t.gone)}
 }
 
 @(private)
@@ -111,7 +107,7 @@ ids_clear :: proc "contextless" (x:^Id_Index) {
 }
 
 @(private)
-ids_rebuild :: proc(es:^Entities,table:Read(Id)) -> bool {
+ids_rebuild :: proc(es:^Entities,table:^Table(Id,$A)) -> bool {
     x:=&es.ids
     ids_clear(x)
     x.whole=false
@@ -162,7 +158,7 @@ ids_reserve :: proc(x:^Id_Index,n:int) -> bool {
 
 // Indexes an entity with an Id, in place of the one it had.
 @(private)
-ids_put :: proc(es:^Entities,table:Read(Id),e:Entity,id:base.Entity_Id) -> bool {
+ids_put :: proc(es:^Entities,table:^Table(Id,$A),e:Entity,id:base.Entity_Id) -> bool {
     x:=&es.ids
     i:=entity_index(e)
     if i>=len(x.of) && resize(&x.of,max(i+1,entities_capacity(es)))!=nil {return false}
@@ -188,7 +184,7 @@ ids_put :: proc(es:^Entities,table:Read(Id),e:Entity,id:base.Entity_Id) -> bool 
 
 // An entity whose row of Id went.
 @(private)
-ids_drop :: proc(es:^Entities,table:Read(Id),e:Entity) {
+ids_drop :: proc(es:^Entities,table:^Table(Id,$A),e:Entity) {
     x:=&es.ids
     i:=entity_index(e)
     if i>=len(x.of) || x.of[i]==0 {return}
@@ -200,7 +196,7 @@ ids_drop :: proc(es:^Entities,table:Read(Id),e:Entity) {
 // An entity is no longer indexed with an Id: if it held it, another one
 // indexed with it takes it, or the Id leaves the index.
 @(private)
-ids_unhold :: proc(es:^Entities,table:Read(Id),e:Entity,id:base.Entity_Id) {
+ids_unhold :: proc(es:^Entities,table:^Table(Id,$A),e:Entity,id:base.Entity_Id) {
     x:=&es.ids
     slot:=ids_slot(x,id)
     if slot<0 {return}

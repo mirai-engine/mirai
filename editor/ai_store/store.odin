@@ -13,8 +13,7 @@ import "mirai:third_party/sqlite"
 
 // The chats of a project live in one SQLite database, .mirai/ai/chat.db, in
 // WAL mode so that several editors of the project can share it: a write that
-// finds another one under way is kept and runs later (queue.odin). The review
-// of a conversation stays in .mirai/ai/chats/<id>.review.json.
+// finds another one under way is kept and runs later (queue.odin).
 VERSION :: 1 // PRAGMA user_version of the database
 
 @(private="file")
@@ -194,14 +193,10 @@ Conversation :: struct {
 // What a conversation spent, as its agent reports it over ACP: its tokens
 // across the turns, with the end of each turn, and its context, as it changes.
 Usage :: struct {
-    input:i64 `json:"input,omitempty"`,
-    output:i64 `json:"output,omitempty"`,
-    cache_read:i64 `json:"cache_read,omitempty"`,
-    cache_write:i64 `json:"cache_write,omitempty"`,
-    total:i64 `json:"total,omitempty"`,
-    context_used:i64 `json:"context_used,omitempty"`, // tokens in its context window
-    context_size:i64 `json:"context_size,omitempty"`,
-    cost:f64 `json:"cost,omitempty"`, // USD
+    input,output,cache_read,cache_write,total:i64,
+    context_used:i64, // tokens in its context window
+    context_size:i64,
+    cost:f64, // USD
 }
 
 LAST_BYTES :: 160

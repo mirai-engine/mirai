@@ -73,6 +73,9 @@ read :: proc(r:^importer.Reader,bytes:[]u8) -> bool {
         if buffer.uri!=nil && !strings.has_prefix(string(buffer.uri),"data:") && importer.unsafe_path(string(buffer.uri)) {return importer.fail(r,.Malformed,"a glTF buffer names the device %s",string(buffer.uri))}
     }
     path:=strings.clone_to_cstring(r.path,context.temp_allocator)
+    for buffer in data.buffers {
+        if buffer.uri!=nil && !strings.has_prefix(string(buffer.uri),"data:") {append(&r.files,importer.resolve_path(r,string(buffer.uri)))}
+    }
     if result=cg.load_buffers(options,data,path);result!=.success {
         return importer.fail(r,result==.file_not_found?importer.Error_Code.Read:importer.Error_Code.Malformed,"glTF buffers could not be loaded: %v",result)
     }
@@ -432,7 +435,15 @@ gltf_lit :: proc(g:^Gltf,info:^asset.Material_Info,images:^[asset.Material_Map_K
     if mat.has_transmission {info.transmission=clamp(mat.transmission.transmission_factor,0,1)}
     if mat.has_ior {
         info.ior=mat.ior.ior
-        if !importer.ior_valid(info.ior) {return importer.fail(r,.Malformed,"glTF material %s: the index of refraction must be 0 or at least 1",name)}
+        if info.ior==0 {
+            // The compatibility mode of KHR_materials_ior is no mode of the engine: it becomes metallic-roughness here.
+            textured:=images[.Specular]>=0 || images[.Specular_Color]>=0
+            importer.ior_zero_convert(info,textured)
+            if textured {
+                images[.Specular],images[.Specular_Color]=-1,-1
+                importer.warn(r,"glTF material %s: with an index of refraction of 0 its specular textures are not imported; it is a dielectric with its base color",name)
+            }
+        } else if !importer.ior_valid(info.ior) {return importer.fail(r,.Malformed,"glTF material %s: the index of refraction must be at least 1, or 0 for a specular-glossiness surface, which is converted",name)}
     }
     if mat.has_volume {
         info.thickness=max(mat.volume.thickness_factor,0)
@@ -1041,26 +1052,27 @@ gltf_weight_tracks :: proc(g:^Gltf,clip:string,channel:cg.animation_channel,trac
 }
 
 // The markers of a clip, from the extras of its glTF animation: {"markers": [{"name": "foot_l",
-// "time": 0.27}]}, as a source writes the events of its timeline (notifies, footsteps). They are
-// sorted by time; without the key there are none.
+// "time": 0.27}]}, as a source writes the events of its timeline (notifies, footsteps), and its
+// spans with a "duration" in seconds (a hit window, a section). They are sorted by time; without
+// the key there are none.
 @(private="file")
 gltf_markers :: proc(g:^Gltf,clip:string,extras:cg.extras_t,total:^int) -> (markers:[]asset.Animation_Marker_Desc,ok:bool) {
     r:=g.r
     if extras.data==nil {return nil,true}
     text:=string(cstring(extras.data))
     if !strings.contains(text,`"markers"`) {return nil,true}
-    Extras :: struct {markers:[]struct {name:string,time:f32}}
+    Extras :: struct {markers:[]struct {name:string,time,duration:f32}}
     value:Extras
     if json.unmarshal_string(text,&value,allocator=context.temp_allocator)!=nil {
-        return nil,importer.fail(r,.Malformed,"glTF animation %s has extras whose markers are not a list of {name, time}",clip)
+        return nil,importer.fail(r,.Malformed,"glTF animation %s has extras whose markers are not a list of {name, time, duration}",clip)
     }
     if len(value.markers)>asset.ANIMATION_MAX_MARKERS-total^ {return nil,importer.fail(r,.Limit,"too many glTF animation markers")}
     total^+=len(value.markers)
     out:=make([]asset.Animation_Marker_Desc,len(value.markers),r.out)
     for m,i in value.markers {
-        if m.time-m.time!=0 || m.time<0 {return nil,importer.fail(r,.Malformed,"glTF animation %s has a marker %s at a time that is not finite and nonnegative",clip,m.name)}
+        if m.time-m.time!=0 || m.time<0 || m.duration-m.duration!=0 || m.duration<0 {return nil,importer.fail(r,.Malformed,"glTF animation %s has a marker %s whose time or duration is not finite and nonnegative",clip,m.name)}
         if m.name=="" || len(m.name)>=asset.ANIMATION_NAME_CAPACITY {return nil,importer.fail(r,.Malformed,"glTF animation %s has a marker without a name or with one of %d bytes or more",clip,asset.ANIMATION_NAME_CAPACITY)}
-        out[i]={m.time,importer.own(r,m.name)}
+        out[i]={time=m.time,name=importer.own(r,m.name),duration=m.duration}
     }
     for i in 1..<len(out) {
         for j:=i;j>0 && out[j].time<out[j-1].time;j-=1 {out[j],out[j-1]=out[j-1],out[j]}

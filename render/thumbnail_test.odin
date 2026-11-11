@@ -6,7 +6,7 @@ import "mirai:rhi"
 @(test)
 gpu_geometry_thumbnail_evaluates_uv1_maps_and_custom_surface :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,64,64,DEFAULT_SETTINGS) {return}
+    if !fixture_init(t,&f,64,64,DEFAULT_SETTINGS, programs = true) {return}
     defer fixture_destroy(&f)
     renderer,device:=f.renderer,f.device
     state:Thumbnail_GPU;defer thumbnail_destroy(device,&state)
@@ -30,12 +30,12 @@ gpu_geometry_thumbnail_evaluates_uv1_maps_and_custom_surface :: proc(t:^testing.
     testing.expect(t,pixels[3]==0,"thumbnail background is transparent")
     buffers:=[3]rhi.Buffer{state.vertices,state.materials,state.frame}
     targets:=[2]rhi.Texture{state.color,state.depth}
-    ocean:=program_find(renderer,"Ocean",.Surface)
-    if !testing.expect(t,ocean!=nil) {return}
-    material.program_id=ocean.id
+    grid:=program_find(renderer,"Grid",.Surface)
+    if !testing.expect(t,grid!=nil) {return}
+    material.program_id=grid.id
     material.ior=1.333
-    material.custom_params[0]={0.02,0.03,1,0.7}
-    material.custom_params[1]={1,0.8,0,0}
+    material.custom_params[0]={0.02,0.03,1,1} // color and cell
+    material.custom_params[1]={0.02,0.03,1,0.7} // line color and roughness
     materials[0]=material
     ok=renderer_thumbnail(renderer,&state,vertices[:],materials[:],64,64,pixels)
     testing.expect(t,ok,rhi.device_error(device));if !ok {return}
@@ -51,7 +51,7 @@ gpu_geometry_thumbnail_evaluates_uv1_maps_and_custom_surface :: proc(t:^testing.
 @(test)
 gpu_material_capture_reads_what_a_material_gives_at_each_pixel :: proc(t:^testing.T) {
     f:Fixture
-    if !fixture_init(t,&f,64,64,DEFAULT_SETTINGS,hardware_rt=false) {return}
+    if !fixture_init(t,&f,64,64,DEFAULT_SETTINGS,hardware_rt=false, programs = true) {return}
     defer fixture_destroy(&f)
     renderer,device:=f.renderer,f.device
     state:Thumbnail_Values_GPU;defer thumbnail_values_destroy(device,&state)
@@ -92,16 +92,16 @@ gpu_material_capture_reads_what_a_material_gives_at_each_pixel :: proc(t:^testin
     testing.expectf(t,near(values[.Lit][center].x-unlit,0.5),"a relative emission of 0.5 shows %v",values[.Lit][center].x-unlit)
     material.emission={}
     // A program's values are as it writes them.
-    ocean:=program_find(renderer,"Ocean",.Surface)
-    if !testing.expect(t,ocean!=nil) {return}
-    material.program_id=ocean.id
-    material.custom_params[0]={0.02,0.03,1,0.7}
-    material.custom_params[1]={1,0.8,0,0}
+    grid:=program_find(renderer,"Grid",.Surface)
+    if !testing.expect(t,grid!=nil) {return}
+    material.program_id=grid.id
+    material.custom_params[0]={0.02,0.03,1,1} // color and cell
+    material.custom_params[1]={0.02,0.03,1,0.7} // line color and roughness
     materials[0]=material
     ok=renderer_thumbnail_values(renderer,&state,vertices[:],materials[:],SIDE,SIDE,pixels,values)
     testing.expect(t,ok,rhi.device_error(device));if !ok {return}
     testing.expectf(t,values[.Albedo][center].z>values[.Albedo][center].x && !near(values[.Albedo][center].x,0.25),"the program gives the base color %v",values[.Albedo][center])
-    testing.expectf(t,near(values[.Normal][center].w,1),"Ocean writes a normalized normal %v",values[.Normal][center])
+    testing.expectf(t,near(values[.Normal][center].w,1),"Grid writes a normalized normal %v",values[.Normal][center])
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
 }
 

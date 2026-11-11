@@ -1,46 +1,56 @@
 package volume
 
+import "core:math/linalg"
 import "core:testing"
 import "mirai:core"
+import scene "mirai:engine/scene"
 import mm "mirai:std/math"
+import "mirai:std/spatial"
 
-@(private="file")
-Level :: struct {value:f32}
+@(private)
+Level :: struct {value:f32,zone:Zone}
 
 @(private="file")
 mix_level :: proc(value:^Level,by:Level,weight:f32,add:bool) {mix_linear(&value.value,by.value,weight,add)}
 
-@(private="file")
+@(private)
+@(test_world)
 Fixture :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     volumes:core.Table(Volume),
     worlds:core.Table(core.World_Transform),
     levels:core.Table(Level),
+    parents:core.Table(core.Parent),
+    sections:core.Table(scene.Scene_Reference),
+    splines:core.Table(Spline),
 }
 
 @(private="file")
-place :: proc(f:^Fixture,level:f32,v:Maybe(Volume),position:[3]f32={},scale:f32=1) -> core.Entity {
+place :: proc(f:^Fixture,level:f32,v:Maybe(Volume),position:[3]f32={},scale:f32=1,zone:Zone={}) -> core.Entity {
     e:=core.create(&f.entities)
-    core.add(&f.levels,e,Level{level})
+    core.add(&f.levels,e,Level{level,zone})
     if v,ok:=v.?;ok {core.add(&f.volumes,e,v)}
     core.add(&f.worlds,e,core.World_Transform{transform={position=position,rotation=1,scale=scale}})
-    core.test_world_settle(f)
+    test_world_settle(f)
     return e
 }
 
 @(private="file")
+where_of :: proc(f:^Fixture) -> Where {return {core.read(&f.volumes),core.read(&f.worlds),core.read(&f.parents),core.read(&f.sections),core.read(&f.splines)}}
+
+@(private="file")
 level_at :: proc(f:^Fixture,point:[3]f32) -> f32 {
-    return at(core.read(&f.volumes),core.read(&f.worlds),core.read(&f.levels),point,Level{1},mix_level).value
+    return at(where_of(f),core.read(&f.levels),point,Level{value=1},mix_level).value
 }
 
 // The level at a point through an index, as a library that asks at many
 // points: the base where no bounded volume holds it.
 @(private="file")
 level_indexed :: proc(f:^Fixture,ix:^Index,point:[3]f32) -> f32 {
-    levels:=core.read(&f.levels)
-    of :: proc(levels:core.Read(Level),row:i32) -> Level {return core.at(levels,int(row))}
+    levels:=&f.levels
+    of :: proc(levels:^core.Table(Level),row:i32) -> Level {return core.at(levels,int(row))}
     h,_:=index_hits(ix,point)
-    return combine(h,Level{1},levels,of,mix_level).value
+    return combine(h,Level{value=1},levels,of,mix_level).value
 }
 
 // Without a Volume the value rules the world; a box replaces it inside and
@@ -48,32 +58,43 @@ level_indexed :: proc(f:^Fixture,ix:^Index,point:[3]f32) -> f32 {
 // What the shapes make, and an Unbounded volume with extents is a problem once.
 @(test)
 the_shapes_are_as_their_constructors_say_and_a_world_volume_with_extents_is_reported :: proc(t:^testing.T) {
-    testing.expect_value(t,box({1,2,3},0.5),Volume{shape=.Box,extents={1,2,3},blend=0.5})
+    testing.expect_value(t,box({1,2,3}),Volume{shape=.Box,extents={1,2,3}})
     testing.expect_value(t,sphere(4),Volume{shape=.Sphere,extents={4,0,0}})
+    testing.expect_value(t,plane(),Volume{shape=.Plane})
     testing.expect_value(t,world(),Volume{})
     f:Fixture
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
     check:Volume_Check
     problems:core.Problems
     place(&f,1,box({1,1,1}))
-    volumes_check(core.read(&f.volumes),&check,&problems)
+    volumes_check(core.read(&f.volumes),core.read(&f.splines),&check,&problems)
     testing.expect_value(t,problems.count,0)
     e:=place(&f,2,Volume{extents={4,4,4}})
-    volumes_check(core.read(&f.volumes),&check,&problems)
-    volumes_check(core.read(&f.volumes),&check,&problems)
+    volumes_check(core.read(&f.volumes),core.read(&f.splines),&check,&problems)
+    volumes_check(core.read(&f.volumes),core.read(&f.splines),&check,&problems)
     testing.expect(t,problems.count==1 && core.problem_find(&problems,e,"volume.unbounded_extents")!=nil && problems.entries[0].count==1)
+    // An outline holds nothing until its entity has a loop of points.
+    testing.expect_value(t,outline(4),Volume{shape=.Outline,extents={0,2,0}})
+    lake:=place(&f,3,outline(4))
+    volumes_check(core.read(&f.volumes),core.read(&f.splines),&check,&problems)
+    testing.expect(t,core.problem_find(&problems,lake,"volume.outline")!=nil,"an outline without a Spline is reported")
+    core.problems_clear(&problems)
+    core.add(&f.splines,lake,Spline{count=3,points={0={position={0,0,0}},1={position={1,0,0}},2={position={0,0,1}}}})
+    test_world_settle(&f)
+    volumes_check(core.read(&f.volumes),core.read(&f.splines),&check,&problems)
+    testing.expect(t,core.problem_find(&problems,lake,"volume.outline")==nil,"an outline with a loop of points is not reported")
 }
 
 @(test)
 a_box_replaces_the_level_inside_and_fades_at_its_border :: proc(t:^testing.T) {
     f:Fixture
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
     testing.expect_value(t,level_at(&f,{}),1)
     place(&f,2,nil)
     testing.expect_value(t,level_at(&f,{}),2)
-    place(&f,10,Volume{shape=.Box,extents={4,4,4},blend=2})
+    place(&f,10,box({4,4,4}),zone={blend=2})
     testing.expect_value(t,level_at(&f,{}),10)
     testing.expect_value(t,level_at(&f,{3,0,0}),6)
     testing.expect_value(t,level_at(&f,{5,0,0}),2)
@@ -87,13 +108,13 @@ a_box_replaces_the_level_inside_and_fades_at_its_border :: proc(t:^testing.T) {
 @(test)
 priority_orders_bounded_and_unbounded_and_add_sums :: proc(t:^testing.T) {
     f:Fixture
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
     place(&f,5,Volume{shape=.Sphere,extents={2,0,0}})
-    place(&f,3,Volume{shape=.Unbounded,priority=1})
+    place(&f,3,Volume{shape=.Unbounded},zone={priority=1})
     testing.expect_value(t,level_at(&f,{}),3)
     testing.expect_value(t,level_at(&f,{10,0,0}),3)
-    place(&f,4,Volume{shape=.Sphere,extents={1,0,0},priority=2,mode=.Add},position={0,0,0},scale=2)
+    place(&f,4,sphere(1),scale=2,zone={priority=2,mode=.Add})
     testing.expect_value(t,level_at(&f,{1.5,0,0}),7)
     testing.expect_value(t,level_at(&f,{2.5,0,0}),3)
 }
@@ -103,15 +124,18 @@ priority_orders_bounded_and_unbounded_and_add_sums :: proc(t:^testing.T) {
 @(test)
 an_unbounded_volume_of_a_section_rules_in_its_box :: proc(t:^testing.T) {
     f:Fixture
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
     section:=core.create(&f.entities)
     core.add(&f.worlds,section,core.World_Transform{transform={position={100,0,0},rotation=1,scale=1}})
-    core.test_world_settle(&f)
-    place(&f,9,Volume{shape=.Unbounded,scope=section,scope_extents={10,10,10}})
+    core.add(&f.sections,section,scene.Scene_Reference{extents={10,10,10}})
+    test_world_settle(&f)
+    e:=place(&f,9,world())
+    core.add(&f.parents,e,core.Parent{entity=section})
+    test_world_settle(&f)
     testing.expect_value(t,level_at(&f,{100,0,0}),9)
     testing.expect_value(t,level_at(&f,{0,0,0}),1)
-    core.get(&f.volumes,core.entity_at(core.read(&f.volumes),0)).scope_extents={}
+    core.edit(&f.sections,section).extents={}
     testing.expect_value(t,level_at(&f,{100,0,0}),1)
 }
 
@@ -121,25 +145,32 @@ an_unbounded_volume_of_a_section_rules_in_its_box :: proc(t:^testing.T) {
 @(test)
 the_index_finds_overlapping_volumes_by_priority_as_a_pass_over_them :: proc(t:^testing.T) {
     f:Fixture
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
     ix:Index;defer index_destroy(&ix)
     place(&f,2,nil)
-    place(&f,3,Volume{shape=.Unbounded,priority=5,mode=.Add})
-    place(&f,10,Volume{shape=.Box,extents={4,4,4},blend=2})
+    place(&f,3,Volume{shape=.Unbounded},zone={priority=5,mode=.Add})
+    place(&f,10,box({4,4,4}),zone={blend=2})
     place(&f,20,Volume{shape=.Box,extents={1,1,1}},position={1,0,0})
-    place(&f,40,Volume{shape=.Sphere,extents={3,0,0},priority=7},position={20,0,0})
-    place(&f,-6,Volume{shape=.Sphere,extents={2,0,0},priority=6,mode=.Add,blend=1},position={21,0,0})
-    turned:=place(&f,7,Volume{shape=.Box,extents={10,1,1},priority=1},position={-30,0,0})
-    core.get(&f.worlds,turned).rotation=mm.quat_axis_angle({0,0,1},mm.PI/2)
-    changed,ok:=index_update(&ix,core.read(&f.volumes),core.read(&f.worlds),core.read(&f.levels))
+    place(&f,40,sphere(3),position={20,0,0},zone={priority=7})
+    place(&f,-6,sphere(2),position={21,0,0},zone={priority=6,mode=.Add,blend=1})
+    turned:=place(&f,7,box({10,1,1}),position={-30,0,0},zone={priority=1})
+    core.edit(&f.worlds,turned).rotation=mm.quat_axis_angle({0,0,1},mm.PI/2)
+    // A sea under y=-50, and a wall: everything beyond x=60.
+    place(&f,90,plane(),position={0,-50,0},zone={blend=10,priority=8})
+    wall:=place(&f,70,plane(),position={60,0,0},zone={priority=9})
+    core.edit(&f.worlds,wall).rotation=mm.quat_axis_angle({0,0,1},mm.PI/2)
+    changed,ok:=index_update(&ix,where_of(&f),core.read(&f.levels))
     testing.expect(t,changed && ok)
-    points:=[?][3]f32{{},{0.5,0,0},{1.5,0,0},{3,0,0},{4.5,0,0},{19,0,0},{21,0,0},{22.5,0,0},{24,0,0},{-30,8,0},{-38,0,0},{100,100,100}}
+    points:=[?][3]f32{{},{0.5,0,0},{1.5,0,0},{3,0,0},{4.5,0,0},{19,0,0},{21,0,0},{22.5,0,0},{24,0,0},{-30,8,0},{-38,0,0},{100,100,100},{0,-55,0},{-500,-70,900},{61,-70,0}}
     for p in points {
         testing.expectf(t,level_indexed(&f,&ix,p)==level_at(&f,p),"at %v: %v indexed, %v gathered",p,level_indexed(&f,&ix,p),level_at(&f,p))
     }
     testing.expect_value(t,level_indexed(&f,&ix,{-30,8,0}),f32(10))
     testing.expect_value(t,level_indexed(&f,&ix,{-38,0,0}),f32(5))
+    testing.expect_value(t,level_indexed(&f,&ix,{-500,-70,900}),f32(90))
+    testing.expect_value(t,level_indexed(&f,&ix,{61,-70,0}),f32(70))
+    testing.expect(t,index_bounded(&ix))
 }
 
 // The index is made again only when a volume, a value or one of their places
@@ -148,15 +179,15 @@ the_index_finds_overlapping_volumes_by_priority_as_a_pass_over_them :: proc(t:^t
 @(test)
 the_index_is_made_again_only_when_its_volumes_change :: proc(t:^testing.T) {
     f:Fixture
-    if !core.test_world_init(t,&f,test_types) {return}
-    defer core.test_world_destroy(&f)
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
     ix:Index;defer index_destroy(&ix)
     update :: proc(f:^Fixture,ix:^Index) -> bool {
-        changed,_:=index_update(ix,core.read(&f.volumes),core.read(&f.worlds),core.read(&f.levels))
+        changed,_:=index_update(ix,where_of(f),core.read(&f.levels))
         return changed
     }
     place(&f,2,nil)
-    place(&f,4,Volume{shape=.Unbounded,priority=1,mode=.Add})
+    place(&f,4,Volume{shape=.Unbounded},zone={priority=1,mode=.Add})
     testing.expect(t,update(&f,&ix))
     testing.expect(t,!update(&f,&ix),"nothing changed")
     for p in ([?][3]f32{{},{1000,-50,3},{-7,7,7}}) {
@@ -167,27 +198,145 @@ the_index_is_made_again_only_when_its_volumes_change :: proc(t:^testing.T) {
 
     other:=core.create(&f.entities)
     core.add(&f.worlds,other,core.World_Transform{transform={rotation=1,scale=1}})
-    core.test_world_settle(&f)
-    core.get(&f.worlds,other).position={3,0,0}
+    test_world_settle(&f)
+    core.edit(&f.worlds,other).position={3,0,0}
     testing.expect(t,!update(&f,&ix),"what moves is not one of its volumes")
-    zone:=place(&f,10,Volume{shape=.Box,extents={1,1,1},priority=2})
+    zone:=place(&f,10,box({1,1,1}),zone={priority=2})
     testing.expect(t,update(&f,&ix),"a volume came")
     testing.expect_value(t,level_indexed(&f,&ix,{}),f32(10))
-    core.get(&f.worlds,zone).position={5,0,0}
+    core.edit(&f.worlds,zone).position={5,0,0}
     testing.expect(t,update(&f,&ix),"a volume moved")
     testing.expect_value(t,level_indexed(&f,&ix,{}),f32(6))
     testing.expect_value(t,level_indexed(&f,&ix,{5,0,0}),f32(10))
 }
 
-// The depth of a point in a box of a scale that mirrors it is measured with
-// the size of the box, as its weight.
+// The one test of what a region holds and what it meets, by shape: a point
+// inside at its depth and its weight, a point outside, a box of the world that
+// touches it and one that does not; turned, scaled and mirrored as its entity.
 @(test)
-a_mirrored_box_holds_what_is_inside_it :: proc(t:^testing.T) {
-    pose:=mm.Transform{position={2,0,0},rotation=1,scale={-2,1,1}}
-    v:=Volume{shape=.Box,extents={1,1,1}}
-    testing.expect_value(t,depth(v,pose,{3.5,0,0}),f32(0.5))
-    testing.expect(t,depth(v,pose,{4.5,0,0})<0)
-    testing.expect_value(t,weight(v,pose,{3.5,0,0}),f32(1))
+each_shape_holds_the_points_inside_it_and_meets_the_boxes_that_touch_it :: proc(t:^testing.T) {
+    quarter:=mm.quat_axis_angle({0,0,1},mm.PI/2)
+    eighth:=mm.quat_axis_angle({0,0,1},mm.PI/4)
+    Case :: struct {
+        name:string,
+        v:Volume,
+        pose:mm.Transform,
+        inside:[3]f32,
+        depth,weight:f32, // of inside
+        outside:[3]f32,
+        meets,misses:spatial.Aabb,
+        blend:f32,
+    }
+    cases:=[?]Case{
+        {"a box",box({1,2,3}),{position={10,0,0},rotation=1,scale=1},{10.5,0,0},0.5,1,{11.5,0,0},{{11,-1,-1},{12,1,1}},{{11.1,-1,-1},{12,1,1}},0},
+        // Along the diagonal of x and y: a box of the world beside the diagonal is in its bounds and not in it.
+        {"a turned box",box({10,1,1}),{position={},rotation=eighth,scale=1},{5,5,0},1,0.5,{5,-5,0},{{5,5,-0.5},{6,6,0.5}},{{5,-6,-0.5},{6,-5,0.5}},2},
+        {"a scaled box",box({1,1,1}),{position={},rotation=quarter,scale={8,1,1}},{0,7,0},1,1,{7,0,0},{{-0.5,7.5,-0.5},{0.5,9,0.5}},{{1.5,7.5,-0.5},{2,9,0.5}},0},
+        {"a mirrored box",box({1,1,1}),{position={2,0,0},rotation=1,scale={-2,1,1}},{3.5,0,0},0.5,1,{4.5,0,0},{{4,0,0},{5,0.5,0.5}},{{4.1,0,0},{5,0.5,0.5}},0},
+        // Its radius is scaled by the largest axis.
+        {"a sphere",sphere(2),{position={},rotation=1,scale={1,3,1}},{0,0,4},2,0.5,{0,0,6.5},{{6,-1,-1},{7,1,1}},{{5,5,5},{6,6,6}},4},
+        {"a plane",plane(),{position={0,3,0},rotation=1,scale=1},{100,1,-100},2,0.5,{0,3.5,0},{{0,3,0},{1,4,1}},{{0,3.1,0},{1,4,1}},4},
+        // Its up is -X: under it is +X of x=1.
+        {"a turned plane",plane(),{position={1,0,0},rotation=quarter,scale=1},{3,50,0},2,1,{0,0,0},{{0,0,0},{1.5,1,1}},{{-1,0,0},{0.5,1,1}},0},
+    }
+    check :: proc(t:^testing.T,c:Case,outline:[]mm.Path_Point=nil) {
+        testing.expectf(t,abs(depth(c.v,c.pose,c.inside,outline)-c.depth)<1e-4,"%s: %v is %v deep, not %v",c.name,c.inside,depth(c.v,c.pose,c.inside,outline),c.depth)
+        testing.expectf(t,abs(weight(c.v,c.pose,c.inside,c.blend,outline)-c.weight)<1e-4,"%s: %v weighs %v, not %v",c.name,c.inside,weight(c.v,c.pose,c.inside,c.blend,outline),c.weight)
+        testing.expectf(t,holds(c.v,c.pose,c.inside,outline) && !holds(c.v,c.pose,c.outside,outline) && weight(c.v,c.pose,c.outside,0,outline)==0,"%s: holds %v and not %v",c.name,c.inside,c.outside)
+        testing.expectf(t,overlaps(c.v,c.pose,c.meets,outline) && !overlaps(c.v,c.pose,c.misses,outline),"%s: meets %v and not %v",c.name,c.meets,c.misses)
+        testing.expectf(t,valid(c.v,c.pose,outline),"%s is valid",c.name)
+        // What it holds and what it meets are in its bounds.
+        b:=bounds(c.v,c.pose,outline)
+        testing.expectf(t,mm.aabb_overlaps(b,{c.inside,c.inside}) && mm.aabb_overlaps(b,c.meets),"%s: its bounds %v leave out what it holds",c.name,b)
+        // The shader weighs it as the processor does.
+        if outline!=nil {return}
+        testing.expectf(t,abs(gpu_weight(gpu_volume(c.v,c.pose,{blend=c.blend}),c.inside)-c.weight)<1e-4 && gpu_weight(gpu_volume(c.v,c.pose,{blend=c.blend}),c.outside)==0,"%s: the shader weighs %v at %v",c.name,gpu_weight(gpu_volume(c.v,c.pose,{blend=c.blend}),c.inside),c.inside)
+    }
+    for c in cases {check(t,c)}
+    // An L whose notch is the square from 2 to 4 on x and z: the notch and a box in it are inside its
+    // bounds and not in it; its height is 2.
+    l:=[6]mm.Path_Point{{position={0,0,0}},{position={4,0,0}},{position={4,0,2}},{position={2,0,2}},{position={2,0,4}},{position={0,0,4}}}
+    check(t,{"an outline",outline(2),{position={10,0,0},rotation=1,scale=1},{11,0,1},1,1,{13,0,3},{{13.5,-0.5,0.5},{15,0.5,1}},{{12.5,-0.5,2.5},{13.5,0.5,3.5}},1},l[:])
+    check(t,{"a turned scaled outline",outline(2),{position={},rotation=mm.quat_axis_angle({0,1,0},mm.PI/2),scale={2,1,2}},{2,0,-2},1,0.5,{6,0,-6},{{7.5,-0.5,-1},{9,0.5,0}},{{5,-0.5,-7},{7,0.5,-5}},2},l[:])
+    testing.expect(t,!valid(outline(2),mm.TRANSFORM_IDENTITY,l[:2]) && !valid(outline(0),mm.TRANSFORM_IDENTITY,l[:]) && !holds(outline(2),mm.TRANSFORM_IDENTITY,{1,0,1}),"an outline of two points, of no height or without its points holds nothing")
+    all:=spatial.Aabb{{-5,-5,-5},{5,5,5}}
+    testing.expect(t,holds(world(),mm.TRANSFORM_IDENTITY,{1e30,-1e30,0}) && overlaps(world(),mm.TRANSFORM_IDENTITY,all) && valid(world(),mm.TRANSFORM_IDENTITY))
+    testing.expect_value(t,weight(world(),mm.TRANSFORM_IDENTITY,{1,2,3}),f32(1))
+}
+
+// volume.slang volume_weight, on the processor.
+@(private="file")
+gpu_weight :: proc(g:Gpu_Volume,p:[3]f32) -> f32 {
+    if g.kind.x==0 {return 1}
+    local:[3]f32
+    for row,i in g.to_local {local[i]=row.x*p.x+row.y*p.y+row.z*p.z+row.w}
+    d:f32
+    switch g.kind.x {
+    case 1: d=min(g.shape.x-abs(local.x),g.shape.y-abs(local.y),g.shape.z-abs(local.z))
+    case 2: d=g.shape.x-linalg.length(local)
+    case 3: d=-local.y
+    case:   d=-1
+    }
+    if d<0 {return 0}
+    return g.shape.w>0?min(d/g.shape.w,1):1
+}
+
+// A size, a pose, a point or a box that is not a number, a size below zero
+// and a shape that is none hold nothing, meet nothing and are not valid; no
+// value makes them crash.
+@(test)
+a_hostile_volume_holds_and_meets_nothing :: proc(t:^testing.T) {
+    nan:=f32(0)
+    nan/=nan
+    inf:=max(f32)*2
+    still:=mm.TRANSFORM_IDENTITY
+    Case :: struct {name:string,v:Volume,pose:mm.Transform}
+    cases:=[?]Case{
+        {"a box of an extent that is not a number",box({nan,1,1}),still},
+        {"a box of a negative extent",box({1,-1,1}),still},
+        {"a sphere of a radius that is not a number",sphere(nan),still},
+        {"a sphere of a negative radius",sphere(-2),still},
+        {"a box at a place that is not a number",box({1,1,1}),{position={nan,0,0},rotation=1,scale=1}},
+        {"a sphere at a place that is not a number",sphere(1),{position={0,nan,0},rotation=1,scale=1}},
+        {"a plane at a place that is not a number",plane(),{position={0,nan,0},rotation=1,scale=1}},
+        {"a box of a turn that is not a number",box({1,1,1}),{rotation=quaternion(w=nan,x=0,y=0,z=0),scale=1}},
+        {"a plane of a turn that is not a number",plane(),{rotation=quaternion(w=nan,x=nan,y=nan,z=nan),scale=1}},
+        {"a box of a scale that is not a number",box({1,1,1}),{rotation=1,scale={nan,1,1}}},
+        {"a box of no size by a scale without end",box({0,1,1}),{rotation=1,scale={inf,1,1}}},
+        {"a shape that is none",Volume{shape=Volume_Shape(200),extents={1,1,1}},still},
+    }
+    points:=[?][3]f32{{},{0.5,-0.5,0.25},{0,-3,0},{nan,0,0},{inf,-inf,0}}
+    boxes:=[?]spatial.Aabb{{{-1,-1,-1},{1,1,1}},{{-inf,-inf,-inf},{inf,inf,inf}},{{nan,0,0},{1,1,1}},{{1,1,1},{-1,-1,-1}}}
+    for c in cases {
+        testing.expectf(t,!valid(c.v,c.pose),"%s is valid",c.name)
+        for p in points {
+            testing.expectf(t,weight(c.v,c.pose,p)==0 && !holds(c.v,c.pose,p),"%s holds %v",c.name,p)
+        }
+        for b in boxes {testing.expectf(t,!overlaps(c.v,c.pose,b),"%s meets %v",c.name,b)}
+        _=size(c.v,c.pose)
+        _=bounds(c.v,c.pose)
+        _=gpu_volume(c.v,c.pose,{})
+    }
+    // A sound volume holds no point and meets no box that is not a number.
+    for v in ([?]Volume{box({1,1,1}),sphere(1),plane(),world()}) {
+        testing.expect(t,v.shape==.Unbounded || !holds(v,still,{nan,nan,nan}))
+        testing.expect(t,!overlaps(v,still,{{nan,0,0},{1,1,1}}) && !overlaps(v,still,{{1,1,1},{-1,-1,-1}}))
+    }
+    // No size is not valid either, and a blend that is not a number or below zero leaves the weight whole.
+    for v in ([?]Volume{box({0,1,1}),sphere(0)}) {testing.expectf(t,!valid(v,still),"%v is valid",v)}
+    for blend in ([?]f32{nan,-1}) {testing.expect_value(t,weight(box({1,1,1}),still,{},blend),f32(1))}
+    // An index of hostile volumes is made, and its points are not in them.
+    f:Fixture
+    if !test_world_init(t,&f) {return}
+    defer test_world_destroy(&f)
+    ix:Index;defer index_destroy(&ix)
+    for c in cases {
+        e:=place(&f,50,c.v)
+        core.edit(&f.worlds,e).transform=c.pose
+    }
+    _,ok:=index_update(&ix,where_of(&f),core.read(&f.levels))
+    testing.expect(t,ok)
+    for p in points[:3] {testing.expectf(t,level_indexed(&f,&ix,p)==1 && level_at(&f,p)==1,"a hostile volume rules at %v",p)}
 }
 
 // Far from the centre of the world, a volume for a shader whose places are
@@ -196,7 +345,7 @@ a_mirrored_box_holds_what_is_inside_it :: proc(t:^testing.T) {
 @(test)
 a_volume_relative_to_the_origin_keeps_where_it_is :: proc(t:^testing.T) {
     pose:=mm.Transform{position={20000.5,3,-15000.25},rotation=mm.quat_axis_angle({0,1,0},0.7),scale=1}
-    g:=gpu_volume(Volume{shape=.Box,extents={2,1,3}},pose)
+    g:=gpu_volume(box({2,1,3}),pose,{})
     origin:=[3]f32{20480,0,-14336}
     relative:=gpu_volume_relative(g,origin)
     local_of :: proc(g:Gpu_Volume,p:[3]f64) -> (local:[3]f64) {
@@ -211,4 +360,71 @@ a_volume_relative_to_the_origin_keeps_where_it_is :: proc(t:^testing.T) {
     winds.count.x,winds.volumes[0],winds.volumes[1]=1,g,g
     moved:=gpu_wind_relative(winds,origin)
     testing.expect(t,moved.volumes[0]==relative && moved.volumes[1]==g,"the winds the frame has move, and only them")
+}
+
+// A spline samples only from 2 to SPLINE_POINTS finite points with a width; a
+// sample lies on the ground under it, or where it is without ground, raised by
+// its height.
+@(test)
+a_spline_samples_only_valid_points_and_lies_on_the_ground :: proc(t:^testing.T) {
+    nan:=f32(0);nan=nan/nan
+    Case :: struct {name:string,spline:Spline,samples:bool}
+    bad_width,bad_point,bad_height,too_many:=SPLINE_DEFAULT,SPLINE_DEFAULT,SPLINE_DEFAULT,SPLINE_DEFAULT
+    bad_width.points[1].width=0
+    bad_point.points[0].position.x=nan
+    bad_height.points[1].height=max(f32)
+    too_many.count=SPLINE_POINTS+1
+    for c in ([]Case{
+        {"two points",SPLINE_DEFAULT,true},{"none",{},false},{"one",{count=1,points={0={{0,0,0},1,0,0}}},false},
+        {"no width",bad_width,false},{"not a number",bad_point,false},{"too high",bad_height,false},{"too many",too_many,false},
+    }) {
+        s:=c.spline
+        out:[32]mm.Path_Point
+        testing.expectf(t,(spline_sample(&s,1,out[:])>0)==c.samples,"%s",c.name)
+        _,reaches:=spline_reach(&s,{scale={1,1,1},rotation=mm.QUAT_IDENTITY})
+        testing.expectf(t,reaches==c.samples,"%s: its reach",c.name)
+    }
+    // Its reach holds every sample of its curve with its width, at any height.
+    curve:=Spline{count=4,points={0={{0,0,0},2,0,0},1={{6,0,-4},1,0,0},2={{0,0,-8},1,0,0},3={{6,0,-12},4,0,0}}}
+    turned:=mm.Transform{{10,-3,5},mm.quat_axis_angle({0,1,0},0.7),{2,1,2}}
+    reach,_:=spline_reach(&curve,turned)
+    out:[256]mm.Path_Point
+    for p in out[:spline_sample(&curve,0.05,out[:])] {
+        for side in ([2]f32{-0.5,0.5}) {
+            at:=mm.transform_point(turned,p.position+{p.width*side,0,0})
+            testing.expectf(t,mm.aabb_contains_point(reach,at+{0,1e6,0}) && mm.aabb_contains_point(reach,at-{0,1e6,0}),"%v is out of %v",at,reach)
+        }
+    }
+    place:=mm.Transform{{1,2,3},mm.QUAT_IDENTITY,{1,1,1}}
+    testing.expect_value(t,spline_lay({},place,{0,5,0},0.5),[3]f32{1,7.5,3})
+    flat :: proc(user:rawptr,origin,down:[3]f32,coarse:bool) -> (core.Ground_Hit,core.Ground_Found) {return {point={origin.x,-1,origin.z}},.Ground}
+    testing.expect_value(t,spline_lay({probe=flat},place,{0,5,0},0.5),[3]f32{1,-0.5,3})
+}
+
+// The key of the curve nearest a point of the world: along a span, at the
+// ends beyond them, at each point of a turned and scaled curve, and none for
+// a spline that does not sample or a point or a place that is not finite.
+@(test)
+a_spline_finds_where_its_curve_passes_nearest_a_point :: proc(t:^testing.T) {
+    nan:=f32(0);nan=nan/nan
+    moved:=mm.Transform{{10,0,0},mm.QUAT_IDENTITY,{1,1,1}}
+    turned:=mm.Transform{{10,-3,5},mm.quat_axis_angle({0,1,0},0.7),{2,1,2}}
+    curve:=Spline{count=4,points={0={position={0,0,0},width=2},1={position={6,0,-4},width=1},2={position={0,0,-8},width=1},3={position={6,0,-12},width=4}}}
+    Case :: struct {name:string,spline:Spline,place:mm.Transform,point:[3]f32,key:f32,found:bool}
+    for c in ([]Case{
+        {"along",SPLINE_DEFAULT,moved,{10,5,-3},0.25,true},
+        {"before the first",SPLINE_DEFAULT,moved,{10,0,4},0,true},
+        {"after the last",SPLINE_DEFAULT,moved,{9,0,-30},1,true},
+        {"a point of a turned curve",curve,turned,mm.transform_point(turned,curve.points[2].position)+{0,2,0},2,true},
+        {"the last of a turned curve",curve,turned,mm.transform_point(turned,curve.points[3].position),3,true},
+        {"one point",{count=1,points={0={width=1}}},moved,{},0,false},
+        {"too many",{count=SPLINE_POINTS+1},moved,{},0,false},
+        {"a point not a number",SPLINE_DEFAULT,moved,{nan,0,0},0,false},
+        {"a point too far",SPLINE_DEFAULT,moved,{max(f32),max(f32),0},0,false},
+        {"a place not a number",SPLINE_DEFAULT,{{nan,0,0},mm.QUAT_IDENTITY,{1,1,1}},{},0,false},
+    }) {
+        s:=c.spline
+        key,found:=spline_nearest(&s,c.place,c.point)
+        testing.expectf(t,found==c.found && (!found || abs(key-c.key)<0.02),"%s: %v %v",c.name,key,found)
+    }
 }

@@ -8,7 +8,6 @@ import "mirai:editor/api"
 import "mirai:editor/history"
 import "mirai:platform"
 import "mirai:std/base"
-import "mirai:std/serial"
 import "mirai:ui"
 
 // The pins a user drops on the scene for the agent: a tool of the viewport
@@ -201,10 +200,9 @@ ai_annotations_visible :: proc(s:^Session) -> bool {
 ai_annotations_build :: proc(s:^Session) {
     m:=s.ai
     if m==nil || !s.has_project {return}
-    g:=s.gui;ctx:=g.ctx;th:=&ctx.theme
+    g:=s.gui;ctx:=g.ctx
     a:=&m.annotations
     annotating:=tool_on(s,AI_ANNOTATE_TOOL)
-    if tool_button(g,shell_id(g,"ai_annotate_tool"),ai_annotate_icon(),"Annotate","",annotating) {tool_set(s,AI_ANNOTATE_TOOL,!annotating)}
     ai_annotations_sync(s)
     if ai_annotations_visible(s) {
         v:=s.viewport
@@ -215,10 +213,10 @@ ai_annotations_build :: proc(s:^Session) {
             id:=ui.id(ctx,"ai_annotation",int(row.id))
             it:=ui.interact(ctx,id)
             open:=a.editing==row.id
-            fill:=open?th.text:th.accent
-            ink:=open?th.panel:th.on_accent
-            if ui.box(ctx,{id=id,width=ui.fixed(AI_ANNOTATION_PIN),height=ui.fixed(AI_ANNOTATION_PIN),align_x=.Center,align_y=.Center,float={to=.Surface,offset=p,pivot=.Center},fill=fill,stroke=th.panel,stroke_width=1.5,radius=AI_ANNOTATION_PIN*0.5}) {
-                ui.label(ctx,ui.text_store(ctx,fmt.tprintf("%d",index+1)),th.font_caption,ink,font=ui.FONT_SEMIBOLD)
+            fill:=open?ui.tone(ctx,"text"):ui.tone(ctx,"accent")
+            ink:=open?ui.tone(ctx,"panel"):ui.tone(ctx,"on_accent")
+            if ui.box(ctx,{id=id,width=ui.fixed(AI_ANNOTATION_PIN),height=ui.fixed(AI_ANNOTATION_PIN),align_x=.Center,align_y=.Center,float={to=.Surface,offset=p,pivot=.Center},fill=fill,stroke=ui.tone(ctx,"panel"),stroke_width=1.5,radius=AI_ANNOTATION_PIN*0.5}) {
+                ui.label(ctx,ui.text_store(ctx,fmt.tprintf("%d",index+1)),ui.metric(ctx,"font_caption"),ink,font=ui.FONT_SEMIBOLD)
             }
             if it.clicked {ai_annotation_edit(s,row.id)}
             if it.hot {
@@ -240,9 +238,9 @@ ai_annotations_build :: proc(s:^Session) {
         ui.id_push(ctx,popup)
         defer ui.id_pop(ctx)
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(24),gap=6,align_y=.Center}) {
-            ui.label(ctx,ui.text_store(ctx,fmt.tprintf("%d",a.number)),th.font_small,th.text,font=ui.FONT_SEMIBOLD)
+            ui.label(ctx,ui.text_store(ctx,fmt.tprintf("%d",a.number)),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
             if ui.text_field(ctx,ui.id(ctx,"group"),a.group[:len(a.group)-1],&a.group_length,{live=true,keep_caret=true,placeholder="Group",height=24}).committed && .Enter in ctx.input.keys_pressed {ui.popup_close(ctx,popup)}
-            if ui.button(ctx,ui.id(ctx,"remove"),{icon=ui.icon_user(u8(User_Icon.Trash)),icon_color=th.text_muted,icon_size=13,style=.Ghost,width=24,height=24}).clicked {
+            if ui.button(ctx,ui.id(ctx,"remove"),{icon=ui.icon_user(u8(User_Icon.Trash)),icon_color=ui.tone(ctx,"text_muted"),icon_size=13,variant="ghost",width=24,height=24}).clicked {
                 ai_annotation_remove(s,a.editing)
                 a.editing=0
                 ui.popup_close(ctx,popup)
@@ -260,9 +258,9 @@ ai_annotate_icon :: proc() -> ui.Icon {return ui.icon_user(u8(User_Icon.Annotate
 // The tool from the composer, beside the button that attaches an image.
 @(private)
 ai_annotate_button :: proc(s:^Session) {
-    ctx:=s.gui.ctx;th:=&ctx.theme
+    ctx:=s.gui.ctx
     on:=s.viewport!=nil && tool_on(s,AI_ANNOTATE_TOOL)
-    if ui.button(ctx,ui.id(ctx,"annotate"),{icon=ai_annotate_icon(),icon_color=th.text_muted,icon_size=14,style=.Ghost,width=24,height=24,active=on,disabled=s.mode!=.Edit || scene_covered(s)}).clicked {tool_set(s,AI_ANNOTATE_TOOL,!on)}
+    if ui.button(ctx,ui.id(ctx,"annotate"),{icon=ai_annotate_icon(),icon_color=ui.tone(ctx,"text_muted"),icon_size=14,variant="ghost",width=24,height=24,active=on,disabled=s.mode!=.Edit || scene_covered(s)}).clicked {tool_set(s,AI_ANNOTATE_TOOL,!on)}
 }
 
 @(private)
@@ -283,7 +281,7 @@ ai_annotation_group_rows :: proc(s:^Session,width:f32) -> int {
 @(private)
 ai_annotation_groups_build :: proc(s:^Session,width:f32,rows:int) {
     if rows<=0 {return}
-    m:=s.ai;ctx:=s.gui.ctx;th:=&ctx.theme
+    m:=s.ai;ctx:=s.gui.ctx
     a:=&m.annotations
     remove:=-1
     used:=f32(0);row:=0
@@ -293,11 +291,11 @@ ai_annotation_groups_build :: proc(s:^Session,width:f32,rows:int) {
         if used>0 && used+size>width {ui.box_end(ctx,{});row+=1;used=0}
         if row>=rows {break}
         if used==0 {ui.box_begin(ctx,{width=ui.GROW,height=ui.fixed(AI_CHIP_HEIGHT),gap=5,align_y=.Center})}
-        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=th.field,radius=th.radius_control}) {
-            ui.icon(ctx,ai_annotate_icon(),th.text_muted,12)
-            ui.label(ctx,ai_chat_menu_label(ctx,group,max(size-AI_CHIP_ROOM-AI_CHIP_PIN_ROOM,1),th.font_small),th.font_small,th.text_muted,size-40-AI_CHIP_PIN_ROOM)
+        if ui.box(ctx,{width=ui.fixed(size),height=ui.fixed(AI_CHIP_HEIGHT),padding={5,0,5,0},gap=4,align_y=.Center,fill=ui.tone(ctx,"field"),radius=ui.metric(ctx,"radius_control")}) {
+            ui.icon(ctx,ai_annotate_icon(),ui.tone(ctx,"text_muted"),12)
+            ui.label(ctx,ai_chat_menu_label(ctx,group,max(size-AI_CHIP_ROOM-AI_CHIP_PIN_ROOM,1),ui.metric(ctx,"font_small")),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),size-40-AI_CHIP_PIN_ROOM)
             ai_chip_pin(s,ui.id(ctx,"pin_annotation_group",i+1),AI_PIN_GROUP,group,group)
-            if ui.button(ctx,ui.id(ctx,"remove_annotation_group",i+1),{icon=.Cross,icon_color=th.text_muted,icon_size=10,padding=-1,style=.Ghost,width=12,height=12}).clicked {remove=i}
+            if ui.button(ctx,ui.id(ctx,"remove_annotation_group",i+1),{icon=.Cross,icon_color=ui.tone(ctx,"text_muted"),icon_size=10,padding=-1,variant="ghost",width=12,height=12}).clicked {remove=i}
         }
         used+=size+5
     }
@@ -326,15 +324,15 @@ Ai_Annotation_List_Params :: struct {
 Ai_Annotation_Result :: struct {
     id:int `mirai:"label=What annotation.remove takes"`,
     number:int `mirai:"label=The number the pin shows"`,
-    group:[AI_ANNOTATION_GROUP_BYTES]u8 `mirai:"text,label=Its group; empty without one"`,
-    document:[1024]u8 `mirai:"text"`,
+    group:string `mirai:"label=Its group; empty without one"`,
+    document:string,
     entity:base.Entity_Id `mirai:"optional,label=The entity it is on; absent on another surface"`,
-    entity_name:[256]u8 `mirai:"text,label=Its name; empty on another surface or when its document is closed"`,
+    entity_name:string `mirai:"label=Its name; empty on another surface or when its document is closed"`,
     position:[3]f32 `mirai:"label=In the world"`,
-    note:[AI_ANNOTATION_TEXT_BYTES]u8 `mirai:"text"`,
+    note:string,
 }
 Ai_Annotation_List_Result :: struct {
-    annotations:[1]Ai_Annotation_Result `mirai:"list,label=The pins of the document in the order of their numbers"`,
+    annotations:[]Ai_Annotation_Result `mirai:"label=The pins of the document in the order of their numbers"`,
 }
 Ai_Annotation_Remove_Params :: struct {
     id:int `mirai:"optional,min=0,label=One annotation by the id annotation.list gives; give id or group"`,
@@ -346,8 +344,8 @@ Ai_Annotation_Remove_Result :: struct {
 
 @(private)
 ai_annotations_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="annotation.list",summary="The pins the user dropped on a document for the agent, with their numbers, groups, positions, entities and notes.",params=Ai_Annotation_List_Params,result=Ai_Annotation_List_Result,writes_result=true,flags={.Read_Only,.Idempotent},run=ai_method_annotation_list})
-    api_register(s,st,{name="annotation.remove",summary="Takes out one annotation of the open document, or every annotation of one of its groups, when the agent is done with them.",params=Ai_Annotation_Remove_Params,result=Ai_Annotation_Remove_Result,run=ai_method_annotation_remove})
+    api_register(s,st,{name="annotation.list",summary="The pins the user dropped on a document for the agent, with their numbers, groups, positions, entities and notes.",params=type_info_of(Ai_Annotation_List_Params),result=type_info_of(Ai_Annotation_List_Result),flags={.Read_Only,.Idempotent},run=ai_method_annotation_list})
+    api_register(s,st,{name="annotation.remove",summary="Takes out one annotation of the open document, or every annotation of one of its groups, when the agent is done with them.",params=type_info_of(Ai_Annotation_Remove_Params),result=type_info_of(Ai_Annotation_Remove_Result),run=ai_method_annotation_remove})
 }
 
 @(private)
@@ -358,23 +356,11 @@ ai_method_annotation_list :: proc(s:^Session,call:^api.Call) {
     if document=="" {document=ai_annotations_document(s)}
     notes,message:=ai_store.annotations(&m.store,document)
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return}
-    w:=call.out
-    serial.text_write_raw(w,`{"annotations":[`)
+    listed:=make([]Ai_Annotation_Result,len(notes),call.allocator)
     for &note,index in notes {
-        if index>0 {serial.write_u8(w,',')}
-        serial.write_u8(w,'{')
-        api.write_int(w,"id",note.id,true)
-        api.write_int(w,"number",i64(index+1))
-        api.write_text(w,"group",note.group_name)
-        api.write_text(w,"document",note.document)
-        if note.entity!=0 {api.write_key(w,"entity");api.write_id(w,base.Entity_Id(note.entity))}
-        api.write_text(w,"entity_name",ai_annotation_entity_name(s,document,note.entity))
-        position:=[3]f32{f32(note.x),f32(note.y),f32(note.z)}
-        api.write_numbers(w,"position",position[:])
-        api.write_text(w,"note",note.text)
-        serial.write_u8(w,'}')
+        listed[index]={int(note.id),index+1,note.group_name,note.document,base.Entity_Id(note.entity),ai_annotation_entity_name(s,document,note.entity),{f32(note.x),f32(note.y),f32(note.z)},note.text}
     }
-    serial.text_write_raw(w,"]}")
+    api.call_result(call,Ai_Annotation_List_Result).annotations=listed
 }
 
 @(private)

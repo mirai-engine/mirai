@@ -6,6 +6,7 @@ import "mirai:editor"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 // The look of a node by variant and state, in the Style card: the Variant row
@@ -78,7 +79,6 @@ look_begin :: proc(p:^Pane,n:^ui.Tree_Node,states:ui.Style_States) {
     if p.style.row>=len(u.records.styles) {return}
     variant:=serial.text_field(n.variant[:])
     if variant=="" && states=={} {return}
-    th:=&p.s.gui.ctx.theme
     st:=style_values(p)
     list:=style_variants(p)
     row:=p.style.row
@@ -93,7 +93,7 @@ look_begin :: proc(p:^Pane,n:^ui.Tree_Node,states:ui.Style_States) {
             if int(v.style)!=row || v.states==states && serial.text_field(v.variant[:])==variant {continue}
             append(&rules,ui.Style_Variant{style=v.style,variant=ui.style_variant(serial.text_field(v.variant[:])),states=v.states,patch=v.patch})
         }
-        under=ui.style_resolve(th,st^,rules[:],u16(row),ui.style_variant(variant),states)
+        under=ui.style_resolve(st^,rules[:],u16(row),ui.style_variant(variant),states)
     }
     look.under=under
     look.at=state_rule(list[:],row,variant,states)
@@ -138,12 +138,12 @@ look_changed :: proc(p:^Pane,label:string,field:ui.Style_Field,changes:bool) {
     v,w:=&look.patch.values,&look.under
     differs:bool
     switch field {
-    case .Fill:         differs=v.fill!=w.fill;look.patch.tokens.fill=.Literal
-    case .Fill2:        differs=v.fill2!=w.fill2;look.patch.tokens.fill2=.Literal
-    case .Stroke:       differs=v.stroke!=w.stroke;look.patch.tokens.stroke=.Literal
-    case .Track:        differs=v.track!=w.track;look.patch.tokens.track=.Literal
-    case .Knob:         differs=v.knob!=w.knob;look.patch.tokens.knob=.Literal
-    case .Mark:         differs=v.mark!=w.mark;look.patch.tokens.mark=.Literal
+    case .Fill:         differs=v.fill!=w.fill
+    case .Fill2:        differs=v.fill2!=w.fill2
+    case .Stroke:       differs=v.stroke!=w.stroke
+    case .Track:        differs=v.track!=w.track
+    case .Knob:         differs=v.knob!=w.knob
+    case .Mark:         differs=v.mark!=w.mark
     case .Radius:       differs=v.radius!=w.radius
     case .Stroke_Width: differs=v.stroke_width!=w.stroke_width
     case .Shadow:       differs=v.shadow!=w.shadow || v.shadow_color!=w.shadow_color || v.shadow_blur!=w.shadow_blur || v.shadow_offset!=w.shadow_offset
@@ -151,7 +151,7 @@ look_changed :: proc(p:^Pane,label:string,field:ui.Style_Field,changes:bool) {
     case .Scale:        differs=v.scale!=w.scale
     case .Text_Font:    differs=v.text.font!=w.text.font
     case .Text_Size:    differs=v.text.size!=w.text.size
-    case .Text_Color:   differs=v.text.color!=w.text.color;look.patch.tokens.text=.Literal
+    case .Text_Color:   differs=v.text.color!=w.text.color
     case .Text_Outline: differs=v.text.outline!=w.text.outline || v.text.outline_color!=w.text.outline_color
     case .Text_Shadow:  differs=v.text.shadow!=w.text.shadow || v.text.shadow_color!=w.text.shadow_color
     }
@@ -163,7 +163,7 @@ look_changed :: proc(p:^Pane,label:string,field:ui.Style_Field,changes:bool) {
 look_end :: proc(p:^Pane) {
     look:=&p.look
     if !look.rule {return}
-    if look.patch.fields==look.before.fields && look.patch.values==look.before.values && look.patch.tokens==look.before.tokens {return}
+    if look.patch.fields==look.before.fields && look.patch.values==look.before.values {return}
     list:=style_variants(p)
     switch {
     case look.at<0:
@@ -196,7 +196,7 @@ look_head :: proc(p:^Pane,n:^ui.Tree_Node) {
     chosen:=0
     for name,i in choices[1:] {if name==variant {chosen=i+1}}
     icon :: proc(ctx:^ui.Context,name:string,icon:ui.Icon,tip:string,disabled:=false) -> bool {
-        return ui.button(ctx,ui.id(ctx,name),{icon=icon,icon_size=14,icon_color=ctx.theme.text_muted,tip=tip,style=.Ghost,width=ctx.theme.row,height=ctx.theme.row,disabled=disabled}).clicked
+        return ui.button(ctx,ui.id(ctx,name),{icon=icon,icon_size=14,icon_color=ui.tone(ctx,"text_muted"),tip=tip,variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row"),disabled=disabled}).clicked
     }
     about:="The look of its style it shows, by name, and the one this card edits; Default: the style itself, or the variant of its box or screen. Bound, a text or an enum of the game names it"
     if bindable(p,"Variant",n.bind_variant[:],.Name,about) {
@@ -249,65 +249,10 @@ look_head :: proc(p:^Pane,n:^ui.Tree_Node) {
     }
 }
 
-// ---------------------------------------------------------------- tokens
-
-// The color of a theme a field of a rule takes, or Literal: its own value.
-@(private)
-rule_token :: proc(p:^Pane,field:ui.Style_Field) -> ^ui.Color_Token {
-    t:=&p.look.patch.tokens
-    #partial switch field {
-    case .Fill:       return &t.fill
-    case .Fill2:      return &t.fill2
-    case .Stroke:     return &t.stroke
-    case .Track:      return &t.track
-    case .Knob:       return &t.knob
-    case .Mark:       return &t.mark
-    case .Text_Color: return &t.text
-    }
-    return nil
-}
-
-// A color of the look: in a rule, a color of the theme or its own, chosen
-// after it; the style has its own colors.
+// A color of the look, of a style or of a rule.
 @(private)
 look_color :: proc(p:^Pane,label:string,field:ui.Style_Field,c:^ui.Color,default:ui.Color,about:="",group:="Style") {
-    token:=rule_token(p,field)
-    if !p.look.rule || token==nil {
-        look_changed(p,group,field,color_row(p,label,c,default,about))
-        return
-    }
-    if !shown(p,label) {return}
-    ctx:=p.s.gui.ctx
-    th:=&ctx.theme
-    ui.id_push(ctx,ui.id(ctx,"token",int(field)+1))
-    defer ui.id_pop(ctx)
-    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4,align_y=.Center}) {
-        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column}) {
-            if token^==.Literal {
-                look_changed(p,group,field,color_row(p,label,c,default,about))
-            } else {
-                // The theme gives it: its color shows as the game will have it.
-                p.flush=true
-                if row(p,label,about) {
-                    color:=ui.style_token(th,token^,c^)
-                    _=ui.color_swatch(ctx,ui.id(ctx,"theme"),{f32(color.r)/255,f32(color.g)/255,f32(color.b)/255})
-                }
-            }
-        }
-        // A color of the theme instead of its own: a menu behind a small button, to keep the row narrow.
-        picker,menu:=ui.id(ctx,"which"),ui.id(ctx,"which_menu")
-        if ui.button(ctx,picker,{icon=.Palette,icon_size=13,icon_color=th.accent if token^!=.Literal else th.text_muted,tip=fmt.tprintf("Color of the theme: %v",token^),style=.Ghost,width=th.row,height=th.row,active=token^!=.Literal}).clicked {
-            if r,found:=ui.widget_rect(ctx,picker);found {ui.popup_open(ctx,menu,r)}
-        }
-        if ui.popup(ctx,menu,{min_width=160}) {
-            for name,i in ui.Color_Token {
-                if ui.menu_item(ctx,ui.id(ctx,"token",i+1),"Own color" if name==.Literal else fmt.tprintf("%v",name),{checked=token^==name}) {
-                    token^=name
-                    if token^!=.Literal {p.look.patch.fields+={field}} else {look_changed(p,group,field,true)}
-                }
-            }
-        }
-    }
+    look_changed(p,group,field,color_row(p,label,c,default,about))
 }
 
 // ---------------------------------------------------------------- several states
@@ -332,7 +277,6 @@ states_name :: proc(states:ui.Style_States) -> string {
 combo_rows :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
     s,u:=p.s,p.u
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     x:=&u.ux
     list:=style_variants(p)
     variant:=serial.text_field(n.variant[:])
@@ -375,7 +319,7 @@ combo_rows :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
         // The states chosen, in a field that opens one box for each, to fit the width of the panel.
         picker,menu:=ui.id(ctx,"combo_pick"),ui.id(ctx,"combo_menu")
         chosen:=states_name(x.combo) if card(x.combo)>0 else "Choose states"
-        if ui.button(ctx,picker,{label=chosen,icon=.Chevron_Down,icon_after=true,style=.Field,width=-1,height=th.row,size=th.font_small}).clicked {
+        if ui.button(ctx,picker,{label=chosen,icon=.Chevron_Down,icon_after=true,variant="field",width=-1,height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small")}).clicked {
             if r,found:=ui.widget_rect(ctx,picker);found {ui.popup_open(ctx,menu,r)}
         }
         if ui.popup(ctx,menu,{min_width=180,padding=12}) {
@@ -384,14 +328,14 @@ combo_rows :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
                 if state==.Normal {continue}
                 bit:=state_rule_states(state)
                 on:=bit&x.combo!={}
-                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=8,align_y=.Center}) {
+                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center}) {
                     if ui.checkbox(ctx,ui.id(ctx,"combo_state",int(state)),&on) {
                         if on {x.combo+=bit} else {x.combo-=bit}
                     }
-                    ui.label(ctx,names[state],th.font_small,th.text)
+                    ui.label(ctx,names[state],ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
                 }
             }
-            if ui.button(ctx,ui.id(ctx,"combo_add"),{label="Open",style=.Accent,width=-1,height=th.control,center=true,disabled=card(x.combo)<2}).clicked {
+            if ui.button(ctx,ui.id(ctx,"combo_add"),{label="Open",variant="accent",width=-1,height=ui.metric(ctx,"control"),center=true,disabled=card(x.combo)<2}).clicked {
                 x.combo_open[transmute(u8)x.combo]=true
                 x.combo_shown=x.combo
                 x.combo={}
@@ -448,22 +392,21 @@ section_events :: proc(p:^Pane,n:^ui.Tree_Node) {
         }
         if !x.sound.open || x.sound.row!=u.selected || x.sound.cue!=cue || shared<0 {return}
         ctx:=p.s.gui.ctx
-        th:=&ctx.theme
         p.flush=true
         if row(p,"Goes to","This node: a change of its own, marked * on its style until it is applied there. The style: every node that has it plays it") {
-            if ui.button(ctx,ui.id(ctx,"sound_node"),{label="This node",style=.Field,width=-1,height=th.row,size=th.font_small}).clicked {
+            if ui.button(ctx,ui.id(ctx,"sound_node"),{label="This node",variant="field",width=-1,height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small")}).clicked {
                 st.sounds[cue]=x.sound.sound
                 style_changed(p,"Sound",true)
                 x.sound={}
             }
-            if ui.button(ctx,ui.id(ctx,"sound_style"),{label=author.records_style_name(r,shared),style=.Field,width=-1,height=th.row,size=th.font_small}).clicked {
+            if ui.button(ctx,ui.id(ctx,"sound_style"),{label=author.records_style_name(r,shared),variant="field",width=-1,height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small")}).clicked {
                 r.styles[shared].sounds[cue]=x.sound.sound
                 // An override that had what the style had follows it.
                 if base_row>=0 && st.sounds[cue]==d.sounds[cue] {st.sounds[cue]=x.sound.sound}
                 changed(u,"Sound")
                 x.sound={}
             }
-            if ui.button(ctx,ui.id(ctx,"sound_cancel"),{icon=.Cross,icon_size=11,icon_color=th.text_muted,tip="Cancel",style=.Ghost,width=th.row,height=th.row}).clicked {x.sound={}}
+            if ui.button(ctx,ui.id(ctx,"sound_cancel"),{icon=.Cross,icon_size=11,icon_color=ui.tone(ctx,"text_muted"),tip="Cancel",variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {x.sound={}}
         }
     }
     // Each happening is a part that folds, as the states of the style.
@@ -483,24 +426,14 @@ section_events :: proc(p:^Pane,n:^ui.Tree_Node) {
         sound(p,n,st,&d,.Hide,"What its style plays when it goes")
     }
     if event(p,"Hover",3) {
-        list_row(p,"Animation",&set.hovered,names)
-        list_row(p,"On leave",&set.unhovered,names)
         sound(p,n,st,&d,.Hover,"What its style plays when the pointer comes over it")
     }
     if event(p,"Press",4) {
-        list_row(p,"Animation",&set.pressed,names)
-        list_row(p,"On release",&set.released,names)
         list_row(p,"On click",&set.clicked,names)
         sound(p,n,st,&d,.Press,"What its style plays when it is clicked")
     }
     if (focusable(n.kind) || ui.node_kind_holds(n.kind)) && event(p,"Focus",5) {
-        list_row(p,"Animation",&set.focused,names)
-        list_row(p,"On blur",&set.unfocused,names)
         sound(p,n,st,&d,.Focus,"What its style plays when navigation comes to it")
-    }
-    if event(p,"Selected",7) {
-        list_row(p,"Animation",&set.selected,names)
-        list_row(p,"On unselect",&set.unselected,names)
     }
     if focusable(n.kind) && event(p,"Change",6) {
         sound(p,n,st,&d,.Change,"What its style plays when its value changes")

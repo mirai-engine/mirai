@@ -1,10 +1,10 @@
 # Rigs and chain modifiers
 
 The tables `chain_ik`, `twist`, `springs`, `multi_ik`, `retarget_chains`, `spline_ik`,
-`correctives`, `follow`, `curve_poses`, `curve_drives` and `curve_materials` extend the
-[`.pose` profile](animation.md#components-and-shared-data): they are rows of a shared definition,
-without components per operation. A `.pose` of another `POSE_VERSION` is
-rejected and written again. Math: [std/anim](../../mirai-std/references/anim-rigs.md).
+`correctives`, `follow`, `curve_poses`, `curve_drives` and `curve_materials` extend the [modifiers
+of the `.character`](animation.md#components-and-shared-data): they are rows of a shared definition,
+without components per operation. A `.character` of another `CHARACTER_VERSION` is rejected and
+written again. Math: [std/anim](../../mirai-std/references/anim-rigs.md).
 
 Each row has a name, a weight and an activation; the name is unique in its table and is what an
 instance controls and inspects. The defaults are the `*_DEFAULT` constants of each type; bones are
@@ -18,8 +18,8 @@ other way to name it.
 
 - `kind`: `World`, `Entity` (in the space of `entity`), `Bone` (a bone of the rig `entity`) or
   `Socket` (a socket of its skeleton), with position, rotation and scale in that space.
-- The profile stores kind, bone or socket and transformation; the entity belongs to the instance and
-  arrives with the target. A profile accepts `Entity`, `Bone` and `Socket` without an entity; an
+- The set stores kind, bone or socket and transformation; the entity belongs to the instance and
+  arrives with the target. A set accepts `Entity`, `Bone` and `Socket` without an entity; an
   instance needs one (`spatial_target_valid`). `spatial_point`, `spatial_entity`, `spatial_bone`,
   etc. build them.
 - Bone and socket read the pose that their rig sampled in this tick (`Playing.sampled`; the warping,
@@ -53,9 +53,10 @@ other way to name it.
   independent weights of position and rotation. The root is resolved by name, not as an index of a
   skeleton, and its translation is `Fixed` or `Translate`. It diagnoses residual, angular error and
   convergence.
-- **Chain Retarget**: pairs of semantic chains, with the profile in `Animation.retarget` and the
-  source in `Animation.source`, like the bone retarget. It admits different topologies, keeps
-  translations and scale of the destination and separates the placement of both actors.
+- **Chain Retarget**: pairs of semantic chains of the destination's set, applied to the sampled
+  pose its `Pose_Source` of stage `Sampled` takes, where the bone names do not pair. It admits
+  different topologies, keeps translations and scale of the destination and separates the
+  placement of both actors.
 
 ## Curve poses and drives
 
@@ -63,13 +64,12 @@ The face of a character is poses that Float curves weigh, as a pose asset of oth
 its body animation; no solver evaluates it.
 
 - **Curve pose**: a row per bone of a pose (`curve`, `bone`, `delta`): at the value of its curve,
-  from 0 to 1, the bone moves by `delta` over its pose, in the space of its parent with its scale
-  a factor. With `full` the row is the transform of the bone itself: the full poses of a bone blend
-  by their weights, normalized past 1 so that only they count, before the additive ones (a pose
-  library of hands or props). The additive poses of a bone are summed (rotations by their
-  logarithms) and applied once, so the order of the rows does not change the pose. A curve can
-  name a pose, a phoneme or a corrective; `pose.profile.poses` makes the rows from the frames of a
-  clip.
+  from 0 to 1, the bone moves by `delta` over its pose, in the space of its parent with its scale a
+  factor. With `full` the row is the transform of the bone itself: the full poses of a bone blend by
+  their weights, normalized past 1 so that only they count, before the additive ones (a pose library
+  of hands or props). The additive poses of a bone are summed (rotations by their logarithms) and
+  applied once, so the order of the rows does not change the pose. A curve can name a pose, a
+  phoneme or a corrective; `animation.modifier.poses` makes the rows from the frames of a clip.
 - **Curve drive**: `to` receives what it reads of `from` (with `combine`, the product, least or
   most of `from` and `with`: a combination shape that two curves bring together), times `scale`
   plus `offset`, clamped to `low`..`high` with `clamp`; `mode` adds it, replaces the curve or keeps
@@ -89,13 +89,10 @@ its body animation; no solver evaluates it.
 - **Curve material**: a value of the material of the meshes of the rig (`parameter`: a value of the
   material or of its program, in `slot` or in every slot) is `offset` plus `scale` times the
   curve, rounded to multiples of `step` when it is positive: the frame of a flipbook face, a
-  switch, a blush. `animation_skin` draws it over the `Material_Override` of each mesh of the rig
-  (the rig and those that share its pose) without writing the component, whose writers stay the
-  game and the editor; past the capacity of the override it is the problem
-  `animation.curve_material`.
-- Each distinct material value is a derived material of the renderer, freed when no drawing uses
-  it: a stepped curve costs a few; one that changes in every frame makes one per frame and mesh,
-  which suits a few characters, not crowds (there are no per-instance parameters in the shader).
+  switch, a blush. `animation_skin` gives it to the `Material_Live` of each mesh of the rig (the
+  rig and those that share its pose) while the curve plays, over the value the entity authors
+  under that name, and takes it away when it does not. Past the capacity of the component it is
+  the problem `animation.curve_material`.
 - A face of a rig evaluator or of a control rig is baked to curves and poses or to morphs: the
   plugin has
   no rig evaluator. Poses driven by bone rotations are correctives (inverse distance), not an RBF
@@ -107,9 +104,9 @@ chain, a topology that is too long or an incompatible target is a bind failure o
 ## Order and state
 
 - Order: retarget of bones and chains (from `Playing.sampled`, before their constraints), removal of
-  root motion, the follow of a leader, curve drives and curve poses, grounding, contacts and
-  IK/look-at, Chain IK, Multi IK, twist, springs, Spline IK,
-  correctives, Follow and, at the end, limits and attachments.
+  root motion, the follow of a leader, curve drives and curve poses, grounding, IK/look-at, Chain
+  IK, Multi IK, twist, springs, Spline IK, correctives, Follow and, at the end, limits and
+  attachments.
 - `Modifier_Runtime` stores tables, bindings and spring state; `core.value_copy` copies it for Play
   and rollback and the assets stay shared. The rows are not components nor another owner of
   transforms.
@@ -150,14 +147,14 @@ chain, a topology that is too long or an incompatible target is a bind failure o
 
 ## Bake
 
-`animation.retarget.bake` accepts profiles with `retarget_chains` even if they have no Paths/Bone
-maps.
+`animation.retarget.bake` maps as a live `Pose_Source` of stage `Sampled` does: each bone by the
+bone of its name (or path), or by the `retarget_chains` of the destination's `.character` where the
+topology differs.
 
-- It prepares the correspondences of `std/anim` once, applies the bone maps before the chains and
-  resamples the destination poses. Chains keep translations and scales: to translate an animated
-  root its bone map with a translation policy is added.
+- It prepares the correspondences of `std/anim` once and resamples the destination poses. Chains
+  keep translations and scales of the destination.
 - Float/Vector curves, slots and markers keep their keys.
-- The root motion bone is remapped by bone maps or by exact chain correspondence; if it corresponds
+- The root motion bone is remapped by name or by exact chain correspondence; if it corresponds
   exactly to no destination, the bake turns off the root flags instead of choosing an intermediate
   root by proximity.
 - The new `.anim` has its own identity and is published with the editor's asset transaction; it does
@@ -169,13 +166,13 @@ maps.
 
 - `rig_profiles_roundtrip_typed_operations_and_reject_invalid_capacities` and the cases of
   `rig_shapes_test.odin` (spline, correctives, spatial targets, Follow, aligned IK, Look with an up
-  axis, targets by name after reordering the profile, curve poses and drives)
+  axis, targets by name after reordering the set, curve poses and drives)
 - Curve drives and poses over a follower, combinations, full poses in any order of the rows, the
   final curves laid out again only when they change, and curve materials: `follow_test.odin`
 - `chain_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls`
 - `semantic_retarget_bindings_ignore_actor_placement_and_replay_without_allocations`
 - `multi_ik_modifiers_accept_named_goals_keep_effectors_independent_and_clone_solver_scratch`
-- `modifier_controls_preserve_targets_contacts_and_fade_independently_through_world_copies`
+- `modifier_controls_preserve_targets_and_fade_independently_through_world_copies`
 - Also: `modifier_control_requests_*`, `rotation_limits_*`, `shared_profiles_*`,
   `rig_goal_persistence_*`, `profile_reload_allocation_failure_*`, `rigs_without_operations_*`,
   `rig_operations_preserve_*` and `multi_ik_full_and_partial_weights_*`.
@@ -184,9 +181,9 @@ maps.
 
 `plugins/animation/editor` (with `-collection:plugins=<root>/plugins`):
 
-- `baking_retargets_clips_once_and_preserves_curves_markers_and_root_metadata` and the two
-  `baking_semantic_chains_*`.
-- `rig_modifier_api_discovers_named_operations_effectors_and_retarget_without_pose_modifiers`.
+- `baking_without_chains_pairs_bones_by_name_once_and_preserves_curves_markers_and_root_metadata`
+  and the two `baking_semantic_chains_*`.
+- `rig_modifier_api_discovers_named_operations_effectors_and_retarget_chains_of_the_character`.
 - `curve_poses_are_made_from_the_frames_of_a_clip_and_replace_those_of_their_curves`.
 
 The CPU cases verify neither the GPU nor the visual quality of a model: that requires a build and a

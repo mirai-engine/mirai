@@ -1,24 +1,25 @@
 package physics_editor
 
 import "mirai:editor"
+import "mirai:editor/kit"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/history"
 import phys "plugins:physics/runtime"
 import "mirai:ui"
 
-@(private="file") Collision_Inspector_Row :: struct {layers:phys.Collision_Layers}
+@(private) Collision_Inspector_Row :: struct {layers:phys.Collision_Layers}
 @(private="file") INSPECTOR_WORLD :: phys.Collision_Category(1)
 @(private="file") INSPECTOR_CAMERA :: phys.Collision_Category(2)
-@(private="file") Collision_Inspector_World :: struct {
-    using world:core.Test_World,
+@(test_world,editor="Physics_Editor_Test_World") @(private) Collision_Inspector_World :: struct {
+    using world:Test_World,
     rows:core.Table(Collision_Inspector_Row),
     colliders:core.Table(phys.Collider),
     settings:phys.Collision_Settings,
 }
 
 // The storages physics gives the World of the editor.
-@(private="file")
+@(private)
 Physics_Editor_Test_World :: struct {
     inspector:Physics_Inspector,
 }
@@ -30,7 +31,7 @@ collision_inspector_frame :: proc(t:^testing.T,s:^editor.Session,input:ui.Input,
     c:=editor.inspect_component(s,editor.edited_world(s),type,s.selection.entities[:])
     defaults:[size_of(phys.Collider)]u8
     c.defaults=raw_data(defaults[:])
-    if ui.box(ctx,{width=ui.fixed(264),height=ui.FIT,direction=.Column}) {editor.fields_rows(&c,c.t.info,0,0,"")}
+    if ui.box(ctx,{width=ui.fixed(264),height=ui.FIT,direction=.Column}) {editor.fields_rows(&c,c.of,0,0,"")}
     output:=ui.frame_end(ctx)
     testing.expect(t,!output.overflow)
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
@@ -69,7 +70,7 @@ Collision_Inspector :: struct {
 
 @(private="file")
 collision_inspector_init :: proc(t:^testing.T,f:^Collision_Inspector) -> bool {
-    f.info=core.test_info(t,Collision_Inspector_World,core.Test_None,Physics_Editor_Test_World,test_types) or_return
+    f.info=test_info(t,Collision_Inspector_World) or_return
     f.names={
         {type=phys.Collision_Category,value=0,name="default"},{type=phys.Collision_Category,value=1,name="world"},
         {type=phys.Collision_Category,value=2,name="camera"},
@@ -79,9 +80,9 @@ collision_inspector_init :: proc(t:^testing.T,f:^Collision_Inspector) -> bool {
     f.named_types={{type=phys.Collision_Category,name="Collision_Category",prefix="CATEGORY_",limit=32},{type=phys.Collision_Preset,name="Collision_Preset",prefix="PRESET_",limit=256}}
     f.name_bits={{type=phys.Collision_Layers,of=phys.Collision_Category}}
     f.info.names,f.info.named_types,f.info.name_bits=f.names[:],f.named_types[:],f.name_bits[:]
-    core.test_info_index(&f.info)
+    test_info_index(&f.info)
     if !core.world_init(&f.info,.World,&f.world,context.allocator) {return false}
-    if !ui.context_init(&f.ctx,{}) {return false}
+    if !ui.context_init(&f.ctx,{}) || !kit.theme_set(&f.ctx) {return false}
     f.gui={ctx=&f.ctx}
     f.session={info=&f.info,edit_world=&f.world,editor_world=&f.editor_world,gui=&f.gui,selection=&f.selection,inspector=&f.inspector,document=&f.document,viewport=&f.viewport,edits=&f.edits}
     return true
@@ -94,7 +95,7 @@ collision_inspector_destroy :: proc(f:^Collision_Inspector) {
     core.value_free(&f.inspector,type_info_of(editor.Inspector))
     delete(f.selection.entities)
     core.world_destroy(&f.info,.World,&f.world)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 // The inspector shows the preset of a Collider by name, its sensor, belongs
@@ -119,10 +120,10 @@ the_inspector_shows_presets_and_masks_by_name :: proc(t:^testing.T) {
     bit:=ui.id_derive(&f.ctx,ui.id(&f.ctx,"collider_preset_layers"),"bit",1)
     box,boxes:=ui.widget_rect(&f.ctx,bit)
     testing.expect(t,boxes,"a preset shows what it gives, ready to change")
-    before:=core.get(&world.colliders,a)^
+    before:=core.at(&world.colliders,core.row_of(&world.colliders,a))
     center:=[2]f32{box.x+box.w*0.5,box.y+box.h*0.5}
     collision_inspector_frame(t,session,{size={800,600},pointer=center,pressed={.Left},down={.Left}},phys.Collider)
-    after:=core.get(&world.colliders,a)^
+    after:=core.at(&world.colliders,core.row_of(&world.colliders,a))
     testing.expect(t,after.preset==phys.PRESET_CUSTOM && after.belongs!=phys.collision_of_collider(collision_settings_of(editor.edited_world(session)),before).belongs,"changing what a preset gives makes the collider Custom with the change")
     for _ in 0..<3 {collision_inspector_frame(t,session,{size={800,600},pointer_absent=true},phys.Collider)}
     _,boxes=ui.widget_rect(&f.ctx,ui.id_derive(&f.ctx,ui.id(&f.ctx,"matrix",int(offset_of(phys.Collider,belongs))+1),"bit",1))
@@ -153,17 +154,17 @@ choosing_custom_keeps_what_the_preset_was_and_undoes_as_one_action :: proc(t:^te
     table:=&f.info.tables[1]
     collision_preset_apply(session,table,core.world_table_at(w,table),f.selection.entities[:],phys.PRESET_CUSTOM,&world.settings)
     history.edits_flush(&f.edits,w,&f.selection)
-    first,_:=core.get(core.read(&world.colliders),a)
-    second,_:=core.get(core.read(&world.colliders),b)
+    first,_:=core.get(&world.colliders,a)
+    second,_:=core.get(&world.colliders,b)
     testing.expect(t,first.preset==phys.PRESET_CUSTOM && first.sensor && first.belongs==1 && first.collides==phys.COLLISION_LAYERS_ALL)
     testing.expect_value(t,second,custom)
     testing.expect_value(t,len(f.edits.steps),1)
     collision_preset_apply(session,table,core.world_table_at(w,table),f.selection.entities[:],phys.PRESET_DEFAULT,&world.settings)
     history.edits_flush(&f.edits,w,&f.selection)
-    first,_=core.get(core.read(&world.colliders),a)
+    first,_=core.get(&world.colliders,a)
     testing.expect(t,first.preset==phys.PRESET_DEFAULT && phys.collision_filter(&world.settings,first)==phys.collision_filter(nil,phys.COLLIDER_DEFAULT))
     testing.expect(t,history.undo(&f.edits,w,&f.selection) && history.undo(&f.edits,w,&f.selection))
-    first,_=core.get(core.read(&world.colliders),a);second,_=core.get(core.read(&world.colliders),b)
+    first,_=core.get(&world.colliders,a);second,_=core.get(&world.colliders,b)
     testing.expect(t,first==trigger && second==custom)
 }
 
@@ -179,9 +180,10 @@ collision_settings_show_declared_values_and_remove_undeclared_entries :: proc(t:
     world.settings.presets[7]={preset=phys.Collision_Preset(9),belongs=1}
     defaults:=phys.COLLISION_SETTINGS_DEFAULT
     c:=editor.Inspect{s=&f.session,w=editor.edited_world(&f.session),storage=1,index=editor.SETTING_INDEX,type=phys.Collision_Settings,value=cast([^]u8)&world.settings,defaults=cast([^]u8)&defaults,size=size_of(phys.Collision_Settings)}
+    if !testing.expect(t,editor.inspect_schema(&c,type_info_of(phys.Collision_Settings))) {return}
     frame :: proc(t:^testing.T,f:^Collision_Inspector,c:^editor.Inspect,input:ui.Input) {
         ui.frame_begin(&f.ctx,input)
-        if ui.box(&f.ctx,{width=ui.fixed(440),height=ui.FIT,direction=.Column}) {editor.fields_rows(c,type_info_of(phys.Collision_Settings),0,0,"")}
+        if ui.box(&f.ctx,{width=ui.fixed(440),height=ui.FIT,direction=.Column}) {editor.fields_rows(c,c.of,0,0,"")}
         output:=ui.frame_end(&f.ctx)
         testing.expect(t,!output.overflow && f.ctx.stats.layout_errors==0)
     }

@@ -6,22 +6,20 @@ import "core:mem"
 import "core:slice"
 import "mirai:asset"
 import "mirai:core"
-import volume "mirai:engine/volume"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
 
 // A document as a world places it: its values in the layout of the world,
 // the row of the entity each reference names and the order of its children.
-// Instantiating reads a document into one and places it; a prefab spawned
+// Instantiating reads a document into one and places it; a scene spawned
 // while the world runs keeps its own (Prefab_Forms), so placing it again
 // reads nothing. It holds nothing of the world it is placed in, and all of
 // it is one block of memory.
 @(private)
 Form :: struct {
     scene:base.Asset_Id,
-    kind:asset.Fourcc,
-    root:u32,                  // the row the document names as its root, else its first root; NONE_ROW in an empty one
+    root:u32,                  // the row of its first root; NONE_ROW in an empty one
     ids:[]base.Entity_Id,
     names:[]asset.Entity_Name,
     parents:[]u32,             // rows; NONE_ROW for a root
@@ -30,7 +28,6 @@ Form :: struct {
     instanced:[]bool,          // a prefab instance of the document placed it
     placed:[]bool,             // it has a Transform
     components:[]Form_Component,
-    migrated,unknown:int,
     block:[]u8,
 }
 
@@ -102,7 +99,7 @@ form_make :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,alloc
 @(private)
 form_read :: proc(m:^Form_Memory,form:^Form,w:core.World_Ref,a:^asset.Asset,view:asset.Scene_View,types:^core.World_Schema) -> Error {
     count:=len(view.ids)
-    form.scene,form.kind,form.root=a.blob.header.id,a.blob.header.kind,NONE_ROW
+    form.scene,form.root=a.blob.header.id,NONE_ROW
     form.ids=form_take(m,base.Entity_Id,count)
     form.names=form_take(m,asset.Entity_Name,count)
     form.parents=form_take(m,u32,count)
@@ -137,17 +134,13 @@ form_read :: proc(m:^Form_Memory,form:^Form,w:core.World_Ref,a:^asset.Asset,view
             form.order[at]=place.row
             if parent==NONE_ROW && form.root==NONE_ROW {form.root=place.row}
         }
-        if root,found:=key_find(keys,view.info.root);found {form.root=root}
         off=make(map[Form_Off]bool,context.temp_allocator)
         for record in view.off {off[{record.entity,record.component}]=true}
     }
     known:=0
     for &component in view.components {
         at,found:=core.world_table_index_of_hash(w,component.name_hash)
-        if !found {
-            form.unknown+=1
-            continue
-        }
+        if !found {continue}
         info:=&w.info.tables[at]
         if is_structural(info.type) {continue}
         value_type:=&types.tables[at]
@@ -164,10 +157,7 @@ form_read :: proc(m:^Form_Memory,form:^Form,w:core.World_Ref,a:^asset.Asset,view
                 stored,stored_error:=asset.scene_component_values(a,&component)
                 if stored_error!=.None {return .Corrupt}
                 copy(c.values,stored)
-            } else {
-                if !component_read(a,&component,types,info,value_type,c.values) {return .Corrupt}
-                if !asset.asset_column_matches(a,component.table,1,value_type.hash) {form.migrated+=1}
-            }
+            } else if !component_read(a,&component,types,info,value_type,c.values) {return .Corrupt}
             named:=0
             for i in 0..<rows {
                 image:=c.values[i*size:][:size]
@@ -201,7 +191,8 @@ form_read :: proc(m:^Form_Memory,form:^Form,w:core.World_Ref,a:^asset.Asset,view
 Form_Section :: struct {entity:core.Entity,reference:Scene_Reference,id:base.Entity_Id}
 
 // Creates the entities of a form in a world, as desc says: entities receives
-// the entity of every row. It reads the form and leaves it as it was.
+// the entity of every row, desc.root that of its first root, which gets only
+// what it has no row or add of. It reads the form and leaves it as it was.
 @(private)
 form_place :: proc(w:core.World_Ref,form:^Form,asset_types:^asset.Types,desc:Instantiate_Desc,entities:[]core.Entity) -> (report:Report,error:Error) {
     es:=core.world_entities(w)
@@ -223,8 +214,16 @@ form_place :: proc(w:core.World_Ref,form:^Form,asset_types:^asset.Types,desc:Ins
         }
     }
     for row in 0..<count {
-        entities[row]=kept==nil || kept[row]?core.create(es):core.NONE
+        switch {
+        case desc.root!=core.NONE && u32(row)==(top!=NONE_ROW?top:form.root): entities[row]=desc.root
+        case kept==nil || kept[row]:                     entities[row]=core.create(es)
+        case:                                            entities[row]=core.NONE
+        }
         report.entities+=int(entities[row]!=core.NONE)
+    }
+    // What the given root has keeps its value.
+    has :: proc(table:^core.Raw_Table,info:^runtime.Type_Info,e,root:core.Entity) -> bool {
+        return e==root && root!=core.NONE && (core.raw_row(table,e)>=0 || core.raw_added(table,info,e)!=nil)
     }
 
     transforms:=core.world_table_of(w,core.Transform)
@@ -235,8 +234,8 @@ form_place :: proc(w:core.World_Ref,form:^Form,asset_types:^asset.Types,desc:Ins
     for row in 0..<count {
         e:=entities[row]
         if e==core.NONE {continue}
-        if names!=nil {core.add(names,e,core.Name{text=form.names[row]})}
-        if ids!=nil && !desc.transient {core.add(ids,e,core.Id{desc.fresh?core.id_next(es):id_in(desc.salt,form.ids[row])})}
+        if names!=nil && !has(core.raw(names),type_info_of(core.Name),e,desc.root) {core.add(names,e,core.Name{text=form.names[row]})}
+        if ids!=nil && !desc.transient && !has(core.raw(ids),type_info_of(core.Id),e,desc.root) {core.add(ids,e,core.Id{desc.fresh?core.id_next(es):id_in(desc.salt,form.ids[row])})}
         if members!=nil && desc.salt!=0 && !desc.transient {core.add(members,e,Section_Member{form.ids[row]})}
     }
 
@@ -244,7 +243,6 @@ form_place :: proc(w:core.World_Ref,form:^Form,asset_types:^asset.Types,desc:Ins
     sections:=make([dynamic]Form_Section,context.temp_allocator)
     // A copy is no instance: the prefabs its prefab places are not of this world.
     copied:=desc.fresh || desc.transient
-    report.migrated,report.unknown=form.migrated,form.unknown
     for &c in form.components {
         if copied && c.membership {continue}
         info:=&w.info.tables[c.table]
@@ -253,7 +251,7 @@ form_place :: proc(w:core.World_Ref,form:^Form,asset_types:^asset.Types,desc:Ins
         named:=0
         for row,i in c.rows {
             e:=entities[row]
-            if e==core.NONE {
+            if e==core.NONE || has(table,info.info,e,desc.root) {
                 for named<len(c.refs) && c.refs[named].value==u32(i) {named+=1}
                 continue
             }
@@ -267,15 +265,17 @@ form_place :: proc(w:core.World_Ref,form:^Form,asset_types:^asset.Types,desc:Ins
                 else {report.dangling+=1}
                 intrinsics.unaligned_store(cast(^u64)(uintptr(value)+uintptr(ref.offset)),u64(live))
             }
-            if info.type==volume.Volume && desc.scope!=core.NONE {
-                place:=(^volume.Volume)(value)
-                if place.shape==.Unbounded {place.scope,place.scope_extents=desc.scope,desc.scope_extents}
-            }
             if info.type==Scene_Reference && desc.only==0 {
                 reference:=(^Scene_Reference)(value)
+                if desc.transient {reference.rule=.With_Document} // without an Id to ask its section by later
                 if (desc.documents.open!=nil || desc.saved) && (reference.rule==.With_Document || desc.saved) && reference.state!=.Unloaded {reference.loaded=reference.scene}
                 // Only what loads with its document; the others wait for their state (scene_sections).
-                if reference.rule==.With_Document && reference.state!=.Unloaded {append(&sections,Form_Section{e,reference^,id_in(desc.salt,form.ids[row])})}
+                if reference.rule==.With_Document && reference.state!=.Unloaded {
+                    // The Ids of a section are made with the Id of its reference in the world, which in a copy is not the document's.
+                    salt:=id_in(desc.salt,form.ids[row])
+                    if given:=desc.fresh && ids!=nil?(^core.Id)(core.raw_added(core.raw(ids),type_info_of(core.Id),e)):nil;given!=nil {salt=given.value}
+                    append(&sections,Form_Section{e,reference^,salt})
+                }
             }
             // What the world uses one of (a sky, a sun) of a section or a prefab, placed or in the document, comes off: only enable turns it on.
             if c.off[i] || info.single && (desc.salt!=0 || copied || form.instanced[row]) {core.raw_disable(table,e)}
@@ -283,13 +283,13 @@ form_place :: proc(w:core.World_Ref,form:^Form,asset_types:^asset.Types,desc:Ins
     }
     if transforms!=nil {
         for row in 0..<count {
-            if entities[row]!=core.NONE && !form.placed[row] {core.add(transforms,entities[row],core.TRANSFORM_IDENTITY)}
+            if entities[row]!=core.NONE && !form.placed[row] && !has(core.raw(transforms),type_info_of(core.Transform),entities[row],desc.root) {core.add(transforms,entities[row],core.TRANSFORM_IDENTITY)}
         }
     }
     if parent_table!=nil {
         for row in form.order {
             e:=entities[row]
-            if e==core.NONE {continue}
+            if e==core.NONE || has(core.raw(parent_table),type_info_of(core.Parent),e,desc.root) {continue}
             parent_row:=row==top?NONE_ROW:form.parents[row]
             parent:=parent_row==NONE_ROW?desc.parent:entities[parent_row]
             if parent!=core.NONE {core.add(parent_table,e,core.Parent{parent,row==top?0:form.siblings[row]})}
@@ -302,7 +302,6 @@ form_place :: proc(w:core.World_Ref,form:^Form,asset_types:^asset.Types,desc:Ins
         if _,recorded:=records_add(w,desc.parent,form.ids);!recorded {return report,.Out_Of_Memory}
     }
     if len(sections)>0 {
-        if form.kind==asset.KIND_PREFAB {return report,.Invalid}
         sections_error:=sections_load(w,form.scene,asset_types,desc,sections[:],&report)
         if sections_error!=.None {return report,sections_error}
     }
@@ -334,6 +333,7 @@ Prefab_Form :: struct {
     form:Form,
     sources:[]Form_Source, // the prefab and every prefab it places, itself or through them
     used:u64,              // Prefab_Forms.clock when it was last spawned
+    revision:u64,          // of the assets when what it takes was last found loaded
 }
 
 // The prefabs a World spawned, each read once into the form the World places
@@ -349,6 +349,8 @@ Prefab_Forms :: struct {
     bytes:int,
     clock:u64,
     prepared:int, // prefabs read into a form since the World was made
+    pending:core.Shape, // of the rows of Prefab_Pending, and Prefab_Warms.ended, when spawns_fill last looked at them
+    ended:u64,
     allocator:runtime.Allocator,
 }
 
@@ -368,35 +370,54 @@ forms_drop :: proc(forms:^Prefab_Forms,at:int) {
     unordered_remove(&forms.items,at)
 }
 
-// Whether the files a form was read from are what they were.
+// Whether the files a form was read from are what they were, by the registry.
 @(private)
 sources_current :: proc(assets:^host.Assets,sources:[]Form_Source) -> bool {
     for source in sources {
-        file:=host.assets_scene(assets,source.id)
-        if (file!=nil?file.blob.header.content_hash:0)!=source.hash {return false}
+        hash:u64
+        if file,found:=asset.registry_find(&assets.registry,source.id);found {hash=file.content_hash}
+        if hash!=source.hash {return false}
     }
     return true
 }
 
-// The form of a prefab for the world, and room for the entities of its rows:
-// the one the World keeps while its files are what they were, else read now
-// and kept. Without forms, or for a prefab larger than they keep, it is read
-// into temporary memory.
+// Whether a prefab and everything it takes are loaded: placing it reads no
+// file. With documents, any scene, whatever roots it has.
 @(private)
-prefab_form :: proc(forms:^Prefab_Forms,w:core.World_Ref,assets:^host.Assets,prefab:base.Asset_Id,file:^asset.Asset) -> (form:^Form,entities:[]core.Entity,error:Error) {
+prefab_loaded :: proc(assets:^host.Assets,prefab:base.Asset_Id,documents:=false) -> bool {
+    lists:=assets_unloaded(assets,{prefab},documents)
+    for list in lists {if len(list)>0 {return false}}
+    return true
+}
+
+// The form of a prefab for the world, and room for the entities of its rows,
+// once the prefab and what it takes are loaded: the one the World keeps while
+// its files are what they were, else made now and kept. It reads no file:
+// loaded is false while something it takes is not. Without forms, or for a
+// prefab larger than they keep, it is made in temporary memory.
+@(private)
+prefab_form :: proc(forms:^Prefab_Forms,w:core.World_Ref,assets:^host.Assets,prefab:base.Asset_Id) -> (form:^Form,entities:[]core.Entity,loaded:bool,error:Error) {
     if forms!=nil {
         for &kept,at in forms.items {
             if kept.prefab!=prefab {continue}
-            if sources_current(assets,kept.sources) {
-                forms.clock+=1
-                kept.used=forms.clock
-                return &kept.form,forms.entities[:len(kept.form.ids)],.None
+            if kept.revision!=assets.revision {
+                if !sources_current(assets,kept.sources) {
+                    forms_drop(forms,at)
+                    break
+                }
+                if !prefab_loaded(assets,prefab) {return nil,nil,false,.None}
+                kept.revision=assets.revision
             }
-            forms_drop(forms,at)
-            break
+            forms.clock+=1
+            kept.used=forms.clock
+            return &kept.form,forms.entities[:len(kept.form.ids)],true,.None
         }
         if forms.allocator.procedure==nil {forms.allocator=context.allocator}
     }
+    if !prefab_loaded(assets,prefab) {return nil,nil,false,.None}
+    loaded=true
+    file:=host.assets_scene(assets,prefab)
+    if file==nil {return nil,nil,true,.Corrupt}
     sources:=Form_Sources{items=make([dynamic]Form_Source,context.temp_allocator)}
     append(&sources.items,Form_Source{prefab,file.blob.header.content_hash})
     resolved:asset.Asset
@@ -407,8 +428,8 @@ prefab_form :: proc(forms:^Prefab_Forms,w:core.World_Ref,assets:^host.Assets,pre
     count:=len(made.ids)
     if !keep || !held {
         no_form,no_entities:mem.Allocator_Error
-        if form,no_form=new_clone(made,context.temp_allocator);no_form!=nil {return nil,nil,.Out_Of_Memory}
-        if entities,no_entities=make([]core.Entity,count,context.temp_allocator);no_entities!=nil {return nil,nil,.Out_Of_Memory}
+        if form,no_form=new_clone(made,context.temp_allocator);no_form!=nil {return nil,nil,true,.Out_Of_Memory}
+        if entities,no_entities=make([]core.Entity,count,context.temp_allocator);no_entities!=nil {return nil,nil,true,.Out_Of_Memory}
         return
     }
     size:=len(made.block)+len(sources.items)*size_of(Form_Source)
@@ -426,15 +447,15 @@ prefab_form :: proc(forms:^Prefab_Forms,w:core.World_Ref,assets:^host.Assets,pre
     if !no_room && len(forms.entities)<count {no_room=resize(&forms.entities,count)!=nil}
     forms.clock+=1
     if !no_room {
-        _,no_item:=append(&forms.items,Prefab_Form{prefab,made,read_from,forms.clock})
+        _,no_item:=append(&forms.items,Prefab_Form{prefab,made,read_from,forms.clock,assets.revision})
         no_room=no_item!=nil
     }
     if no_room {
         mem.free_bytes(made.block,forms.allocator)
         delete(read_from,forms.allocator)
-        return nil,nil,.Out_Of_Memory
+        return nil,nil,true,.Out_Of_Memory
     }
     forms.bytes+=size
     forms.prepared+=1
-    return &forms.items[len(forms.items)-1].form,forms.entities[:count],.None
+    return &forms.items[len(forms.items)-1].form,forms.entities[:count],true,.None
 }

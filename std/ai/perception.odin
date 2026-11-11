@@ -11,7 +11,7 @@ import math "mirai:std/math"
 
 PERCEPTION_CAPACITY :: 16
 
-Sense :: enum u8 {Sight,Hearing,Told}
+Sense :: enum u8 {Sight,Hearing}
 Senses :: bit_set[Sense;u8]
 
 Observation :: struct {
@@ -19,7 +19,7 @@ Observation :: struct {
     position:math.Vec3, // where it was last perceived
     senses:Senses,      // by which it was perceived at the last time
     confidence:f32,     // 1 when just perceived, 0 when forgotten
-    first,last:f64,     // s: when it was first and last perceived
+    first,last:u64,     // the ticks it was first and last perceived at
 }
 
 Perception_Memory :: struct {
@@ -34,9 +34,9 @@ Memory_Change :: enum u8 {
     Again,   // known, perceived again
 }
 
-// Perceives a subject now. Full, a new subject takes the place of the
+// Perceives a subject at the tick now. Full, a new subject takes the place of the
 // observation it is least sure of, when that is less sure than `confidence`.
-memory_perceive :: proc "contextless" (m:^Perception_Memory,subject:u64,position:math.Vec3,sense:Sense,confidence:f32,now:f64) -> Memory_Change {
+memory_perceive :: proc "contextless" (m:^Perception_Memory,subject:u64,position:math.Vec3,sense:Sense,confidence:f32,now:u64) -> Memory_Change {
     if !(confidence>0) || !(abs(position.x)<=1e9 && abs(position.y)<=1e9 && abs(position.z)<=1e9) {return .None}
     sure:=min(confidence,1)
     count:=int(clamp(m.count,0,PERCEPTION_CAPACITY))
@@ -59,17 +59,18 @@ memory_perceive :: proc "contextless" (m:^Perception_Memory,subject:u64,position
     return .New
 }
 
-// Lowers the confidence of what was not perceived now so it reaches zero
-// `forget` seconds after it was, and removes what reached it: those go to
-// `forgotten` (as many as fit), and their count is returned.
-memory_forget :: proc "contextless" (m:^Perception_Memory,now:f64,forget:f32,forgotten:[]u64) -> (count:int) {
+// Lowers the confidence of what was not perceived at the tick now, of dt
+// seconds, so it reaches zero `forget` seconds after it was, and removes what
+// reached it: those go to `forgotten` (as many as fit), and their count is
+// returned.
+memory_forget :: proc "contextless" (m:^Perception_Memory,now:u64,dt,forget:f32,forgotten:[]u64) -> (count:int) {
     total:=int(clamp(m.count,0,PERCEPTION_CAPACITY))
     for i:=total-1;i>=0;i-=1 {
         o:=&m.items[i]
         if o.last==now {continue}
         o.senses={}
         left:=f32(1)
-        if forget>0 {left=1-f32(now-o.last)/forget} else {left=0}
+        if forget>0 {left=1-f32(now-min(o.last,now))*dt/forget} else {left=0}
         o.confidence=min(o.confidence,left)
         if o.confidence>0 {continue}
         if count<len(forgotten) {forgotten[count]=o.subject}

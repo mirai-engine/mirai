@@ -1,5 +1,7 @@
 package multiplayer
 
+import "core:bytes"
+import "core:mem"
 import "core:testing"
 import "mirai:core"
 import input "mirai:engine/input"
@@ -41,7 +43,7 @@ party_destroy :: proc(p:^Party) {
     wire.sim_network_destroy(&p.network)
     for &world in p.worlds {core.world_destroy(&p.info,.World,&world)}
     delete(p.info.messages)
-    core.test_info_destroy(&p.info)
+    test_info_destroy(&p.info)
 }
 
 // A client connects to the server.
@@ -72,15 +74,15 @@ party_frames :: proc(p:^Party,frames:int) {
         }
         server:=&p.worlds[0]
         p.sessions[0].now=p.now
-        server_commands(&p.sessions[0],core.world_ref(server,&p.info),nil,wire.host_poll(&p.sessions[0].host),&server.received,&server.remote)
+        server_commands(&p.sessions[0],core.world_ref(server,&p.info),nil,wire.host_poll(&p.sessions[0].host),&server.remote)
         for index in 1..<len(p.sessions) {
             session:=&p.sessions[index]
             if !session.host_ready || session.ended {continue}
             session.now=p.now
-            client_commands(session,core.world_ref(&p.worlds[index],&p.info),p.apps[index].assets,p.apps[index].allocator,wire.host_poll(&session.host),&p.worlds[index].received)
+            client_commands(session,core.world_ref(&p.worlds[index],&p.info),p.apps[index].assets,p.apps[index].allocator,wire.host_poll(&session.host))
         }
-        net_seats(&server.entities,&server.seats,&server.absents,&server.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),
-            core.ref(&p.bindings),core.ref(&server.remote),core.ref(&server.network),core.ref(&server.hierarchy),{},server.time)
+        net_seats({entities=&server.entities},&server.seats,&server.absents,&server.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),core.read(&server.remotes),
+            core.ref(&p.bindings),core.ref(&server.remote),core.ref(&server.network),{},server.time)
         core.settle(&p.info,server,nil)
         server.time.tick+=1
         server_world_update(&p.sessions[0])
@@ -128,6 +130,43 @@ a_client_that_presents_the_id_of_another_player_does_not_take_its_seat :: proc(t
     other,_:=seat_of_player(p,impostor)
     testing.expect(t,other!=core.NONE && other!=seat)
     testing.expect_value(t,core.count(&p.worlds[0].seats),2)
+}
+
+// A transport that looks for the secret of a player in what its host sends.
+@(private="file")
+Scan :: struct {inner:wire.Transport,secret:[2]u64,datagrams,readable:int}
+@(private="file")
+scan_transport :: proc(s:^Scan) -> wire.Transport {
+    return {s,proc(data:rawptr,to:wire.Address,sent:[]u8) -> bool {
+        s:=(^Scan)(data)
+        s.datagrams+=1
+        for half in s.secret {
+            half:=half
+            if bytes.index(sent,mem.ptr_to_bytes(&half))>=0 {s.readable+=1}
+        }
+        return s.inner.send(s.inner.data,to,sent)
+    },proc(data:rawptr,buffer:[]u8) -> (size:int,from:wire.Address,ok:bool) {
+        s:=(^Scan)(data)
+        return s.inner.receive(s.inner.data,buffer)
+    }}
+}
+
+// Every connection of a session is sealed: the secret a client presents as its player never
+// travels readable, and the server still takes it.
+@(test)
+the_secret_of_a_player_never_travels_readable :: proc(t:^testing.T) {
+    p:=new(Party)
+    defer free(p)
+    if !party_init(t,p) {return}
+    defer party_destroy(p)
+    p.worlds[1].identity.secret={0x0123456789abcdef,0x7edcba9876543210}
+    scan:=Scan{inner=p.sessions[1].host.desc.transport,secret=p.worlds[1].identity.secret}
+    p.sessions[1].host.desc.transport=scan_transport(&scan)
+    if !party_join(t,p,1) {return}
+    party_frames(p,30)
+    seat,_:=seat_of_player(p,player_id(scan.secret))
+    testing.expect(t,seat!=core.NONE,"the server takes the player")
+    testing.expectf(t,scan.datagrams>0 && scan.readable==0,"%d of %d datagrams carry the secret readable",scan.readable,scan.datagrams)
 }
 
 // A player that comes back with its secret gets its seat back, the same

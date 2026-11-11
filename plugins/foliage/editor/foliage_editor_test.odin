@@ -16,9 +16,10 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 import foliage "plugins:foliage/runtime"
 
-@(private="file")
+@(private)
+@(test_world)
 Foliage_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
@@ -26,7 +27,7 @@ Foliage_Test_World :: struct {
     foliages:core.Table(foliage.Foliage),
 }
 
-// The source the registry holds for a foliage, unsaved or on disk.
+// The source the registry answers for a foliage.
 @(private="file")
 held_source :: proc(t:^testing.T,a:^host.Assets,id:base.Asset_Id) -> (s:foliage.Source) {
     testing.expect(t,foliage.foliage_read(&s,a,id))
@@ -46,7 +47,7 @@ override_count :: proc(s:^foliage.Source,kind:foliage.Override_Kind) -> (count:i
 }
 
 @(test)
-foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing.T) {
+foliage_strokes_and_selections_are_steps_of_undo_written_at_the_flush :: proc(t:^testing.T) {
     root:=base.test_folder(t,"foliage-tool")
     path:=fmt.tprintf("%s/meadow.foliage",root)
     relative:="meadow.foliage"
@@ -69,24 +70,25 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     disk,_:=serial.file_read(path)
     defer delete(disk)
     world:Foliage_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     meadow:=core.create(&world.entities)
     core.add(&world.ids,meadow,core.Id{value=base.Entity_Id(100)})
     core.add(&world.transforms,meadow,core.TRANSFORM_IDENTITY)
     core.add(&world.foliages,meadow,foliage.Foliage{source=id,revision=1})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     selection:history.Selection;defer delete(selection.entities)
     edits:history.Edits;defer history.edits_free(&edits)
     history.edits_reset(&edits,ref)
     app:=host.App{allocator=context.allocator,assets=&assets}
-    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
+    document:editor.Document
+    s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits,document=&document}
     tool:Foliage_Tool;tool_ready(&tool);defer foliage_tool_free(&tool)
     history.selection_set(&selection,{meadow})
-    foliages:=core.read(&world.foliages)
+    foliages:=&world.foliages
     owner:=mm.Transform{rotation=1,scale={1,1,1}}
-    prepare :: proc(t:^testing.T,s:^editor.Session,tool:^Foliage_Tool,foliages:core.Read(foliage.Foliage),e:core.Entity) -> bool {
+    prepare :: proc(t:^testing.T,s:^editor.Session,tool:^Foliage_Tool,foliages:^core.Table(foliage.Foliage,$A),e:core.Entity) -> bool {
         foliage_sync(s,tool,foliages,s.app.assets)
         return testing.expect(t,edit_prepare(tool,s.app.assets,s.app.allocator,foliages,e))
     }
@@ -96,8 +98,9 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     }
     random:=mm.rng_make(9,1)
 
-    // A stroke of paint puts three instances in memory; the disk keeps what it had.
-    if !prepare(t,&s,&tool,foliages,meadow) {return}
+    // A stroke of paint puts three instances in the registry at once; the
+    // flush of its step writes them.
+    if !prepare(t,&s,&tool,core.read(foliages),meadow) {return}
     edit_baseline(&tool)
     for point in ([3][3]f32{{2,0,2},{4,0,3},{40,0,5}}) {paint_instance(&tool.edit.source,&tool.edit.source.types[0],point,{0,1,0},&random,nil)}
     step(t,&s,&tool,ref,"Paint foliage")
@@ -105,13 +108,16 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     testing.expect_value(t,manual_count(&held),3)
     testing.expect_value(t,held.info.revision,u32(2))
     foliage.source_destroy(&held)
-    _,unsaved:=asset.registry_memory_find(&assets.registry,relative)
-    testing.expect(t,unsaved,"the stroke stays in the memory of the registry")
+    _,buffered:=asset.registry_memory_find(&assets.registry,relative)
+    testing.expect(t,buffered,"the registry holds the stroke until its flush")
     on_disk,_:=serial.file_read(path);testing.expect(t,string(on_disk)==string(disk));delete(on_disk)
+    stroked,_:=asset.registry_read(&assets.registry,relative);defer delete(stroked)
+    testing.expect(t,editor.files_flush(&s,true))
+    on_disk,_=serial.file_read(path);testing.expect(t,string(on_disk)==string(stroked));delete(on_disk)
     testing.expect_value(t,core.at(foliages,0).revision,u32(2))
 
     // Erase takes out the manual instance under it and the generated ones near it.
-    if !prepare(t,&s,&tool,foliages,meadow) {return}
+    if !prepare(t,&s,&tool,core.read(foliages),meadow) {return}
     edit_baseline(&tool)
     draws:=mm.rng_make(1)
     testing.expect(t,erase_touch(&tool.edit.source,nil,[]u32{tool.type},{2,0,2},6,&tool.work,0,&draws))
@@ -122,7 +128,7 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     foliage.source_destroy(&held)
 
     // A generated instance moved inside its cell becomes Moved; out of it, Deleted and a manual one.
-    if !prepare(t,&s,&tool,foliages,meadow) {return}
+    if !prepare(t,&s,&tool,core.read(foliages),meadow) {return}
     edit_baseline(&tool)
     ref_generated,placed,found:=instance_of_batch(&tool.edit.source,nil,{0,0},tool.type,0,&tool.work)
     if !testing.expect(t,found && ref_generated.id&foliage.MANUAL==0) {return}
@@ -134,7 +140,7 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     held=held_source(t,&assets,id)
     testing.expect_value(t,override_count(&held,.Moved),1)
     foliage.source_destroy(&held)
-    if !prepare(t,&s,&tool,foliages,meadow) {return}
+    if !prepare(t,&s,&tool,core.read(foliages),meadow) {return}
     edit_baseline(&tool)
     world_place.position={70,0,70}
     next,moved=instance_set(&tool.edit.source,nil,next,instance_local(world_place,owner,placed.type))
@@ -146,7 +152,7 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     foliage.source_destroy(&held)
 
     // Delete takes out the manual one.
-    if !prepare(t,&s,&tool,foliages,meadow) {return}
+    if !prepare(t,&s,&tool,core.read(foliages),meadow) {return}
     edit_baseline(&tool)
     testing.expect(t,instance_delete(&tool.edit.source,next))
     step(t,&s,&tool,ref,"Delete foliage instance")
@@ -158,18 +164,22 @@ foliage_strokes_and_selections_are_steps_of_undo_kept_unsaved :: proc(t:^testing
     // Undo goes back through each step, and redo forward.
     for revision:=u32(5);revision>=1;revision-=1 {
         testing.expect(t,history.undo(&edits,ref,&selection))
-        foliage_sync(&s,&tool,foliages,app.assets)
+        foliage_sync(&s,&tool,core.read(foliages),app.assets)
         testing.expect_value(t,core.at(foliages,0).revision,revision)
         held=held_source(t,&assets,id)
         testing.expect_value(t,held.info.revision,revision)
         foliage.source_destroy(&held)
     }
+    testing.expect(t,editor.files_flush(&s,true))
     held=held_source(t,&assets,id)
     testing.expect_value(t,manual_count(&held),0)
     testing.expect_value(t,len(held.cells[0].overrides),0)
     foliage.source_destroy(&held)
     testing.expect(t,history.redo(&edits,ref,&selection))
-    foliage_sync(&s,&tool,foliages,app.assets)
+    foliage_sync(&s,&tool,core.read(foliages),app.assets)
+    testing.expect(t,editor.files_flush(&s,true))
+    _,buffered=asset.registry_memory_find(&assets.registry,relative)
+    testing.expect(t,!buffered)
     held=held_source(t,&assets,id)
     testing.expect_value(t,manual_count(&held),3)
     foliage.source_destroy(&held)
@@ -257,14 +267,14 @@ a_move_of_an_imported_foliage_is_undone_back_to_revision_zero :: proc(t:^testing
     delete(bytes)
     host.assets_scan(&assets)
     world:Foliage_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     patch:=core.create(&world.entities)
     core.add(&world.ids,patch,core.Id{value=base.Entity_Id(200)})
     core.add(&world.transforms,patch,core.TRANSFORM_IDENTITY)
     core.add(&world.foliages,patch,foliage.Foliage{source=id})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     selection:history.Selection;defer delete(selection.entities)
     edits:history.Edits;defer history.edits_free(&edits)
     history.edits_reset(&edits,ref)
@@ -272,14 +282,14 @@ a_move_of_an_imported_foliage_is_undone_back_to_revision_zero :: proc(t:^testing
     s:=editor.Session{app=&app,info=ref.info,edit_world=&world,assets_root=root,headless=true,selection=&selection,edits=&edits}
     tool:Foliage_Tool;tool_ready(&tool);defer foliage_tool_free(&tool)
     history.selection_set(&selection,{patch})
-    foliages:=core.read(&world.foliages)
+    foliages:=&world.foliages
     data:foliage.Foliage_Data
     defer {for &entry in data.entries {foliage.source_destroy(&entry.source)};delete(data.entries)}
     problems:core.Problems
     // A frame: the runtime reads the source before the tool syncs.
-    frame :: proc(s:^editor.Session,tool:^Foliage_Tool,data:^foliage.Foliage_Data,foliages:core.Read(foliage.Foliage),problems:^core.Problems) {
-        foliage.foliage_load(data,foliages,s.app.assets,s.app.allocator,problems)
-        foliage_sync(s,tool,foliages,s.app.assets)
+    frame :: proc(s:^editor.Session,tool:^Foliage_Tool,data:^foliage.Foliage_Data,foliages:^core.Table(foliage.Foliage,$A),problems:^core.Problems) {
+        foliage.foliage_load(data,core.read(foliages),s.app.assets,s.app.allocator,problems)
+        foliage_sync(s,tool,core.read(foliages),s.app.assets)
     }
     x_of :: proc(t:^testing.T,a:^host.Assets,id:base.Asset_Id) -> f32 {
         held:=held_source(t,a,id)
@@ -288,9 +298,9 @@ a_move_of_an_imported_foliage_is_undone_back_to_revision_zero :: proc(t:^testing
         if !testing.expect(t,cell!=nil && len(cell.manual)==1) {return -1}
         return cell.manual[0].position.x
     }
-    frame(&s,&tool,&data,foliages,&problems)
+    frame(&s,&tool,&data,core.read(foliages),&problems)
     testing.expect_value(t,core.at(foliages,0).revision,u32(0))
-    if !testing.expect(t,edit_prepare(&tool,app.assets,app.allocator,foliages,patch)) {return}
+    if !testing.expect(t,edit_prepare(&tool,app.assets,app.allocator,core.read(foliages),patch)) {return}
     edit_baseline(&tool)
     instance,placed,found:=instance_of_batch(&tool.edit.source,nil,{0,0},fern.id,0,&tool.work)
     if !testing.expect(t,found) {return}
@@ -299,7 +309,7 @@ a_move_of_an_imported_foliage_is_undone_back_to_revision_zero :: proc(t:^testing
     testing.expect(t,moved)
     testing.expect(t,edit_commit(&s,&tool,ref,app.assets,"Move foliage instance"))
     testing.expect(t,history.edits_commit(&edits,ref,&selection))
-    frame(&s,&tool,&data,foliages,&problems)
+    frame(&s,&tool,&data,core.read(foliages),&problems)
     testing.expect_value(t,core.at(foliages,0).revision,u32(1))
     testing.expect(t,abs(x_of(t,&assets,id)-5)<1e-4)
 
@@ -473,12 +483,4 @@ instances_are_counted_by_cell_and_again_only_where_a_cell_or_its_ground_changed 
     testing.expect_value(t,total(&c,fern_id),3+generated)
     testing.expect_value(t,count_text(1234567),"1,234,567")
     testing.expect_value(t,count_text(12),"12")
-}
-
-// What git and the tools know of the kinds of the plugin without loading it.
-@(test)
-the_manifest_declares_the_asset_kinds_the_plugin_registers :: proc(t:^testing.T) {
-    m,error:=project.plugin_read(#directory+"../plugin.mirai")
-    testing.expect_value(t,error.code,project.Error_Code.None)
-    testing.expect_value(t,editor.asset_kinds_differ(FOLIAGE_KINDS_DEFAULT.provider,&m),"")
 }

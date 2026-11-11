@@ -8,13 +8,13 @@ import "core:slice"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
-import volume "mirai:engine/volume"
 import "mirai:host"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
-// Scenes and prefabs between their document and a world.
+// Scenes between their document and a world: loaded whole, hung under a
+// Scene_Reference or, with exactly one root (a prefab), placed as a copy.
 //
 // A document names entities by Entity_Id and components by the name of their
 // type; a world names them by handle and by its tables. Instantiating creates
@@ -27,10 +27,10 @@ import "mirai:std/serial"
 Error :: enum u8 {
     None,
     No_Assets,    // the application has no assets folder
-    Not_Found,    // no scene or prefab with that id or path
-    Invalid,      // not a scene nor a prefab, a parent that is not alive, a prefab that references a scene
+    Not_Found,    // no scene with that id or path
+    Invalid,      // not a scene, or a parent that is not alive
     Cycle,        // a scene that references itself, or references nested past REFERENCE_DEPTH
-    Not_A_Prefab, // spawn: the id names a scene, which is referenced, not spawned
+    Not_A_Prefab, // spawn: the scene is not a prefab, the kind a copy is placed from by its one root
     Corrupt,      // the document contradicts itself
     Duplicate_Id, // capture: two entities have the same Id
     Out_Of_Memory,
@@ -49,16 +49,15 @@ Instantiate_Desc :: struct {
     documents:Documents,    // the scenes the document references, loaded under their references; none: they stay empty
     salt:base.Entity_Id,    // the Id of the reference the document hangs from: its Ids are combined with it (id_in)
     path:[]base.Asset_Id,   // the scenes that reference this one, outermost first
-    scope:core.Entity,      // the reference of a section: its unbounded volumes rule in its box (volume.Volume.scope)
-    scope_extents:[3]f32,
     saved:bool,             // a saved game: what hangs from its references came with it, loaded as it was
     only:base.Entity_Id,    // when given, only the entity whose Id in the world (id_in with salt) is this and what hangs from it, a root; its references stay unloaded
+    root:core.Entity,       // when given, the entity of the first root of the document, which keeps what it has: a spawned copy
+    stored:^[dynamic]Stored, // when given, receives each component the document and the scenes it loads store otherwise than the world reads them
 }
 
 Capture_Desc :: struct {
-    root:core.Entity,      // only this entity and what is under it, as the root of a prefab; none: every root with an Id
-    previous:^asset.Scene, // the document the world came from
-    kind:asset.Fourcc,     // 0: a prefab when root is given, else the kind of previous, else a scene
+    root:core.Entity,      // only this entity and what is under it, the one root of its scene: a prefab; none: every root with an Id
+    previous:^asset.Scene, // the document the world came from, whose kind (Header_Flag.Prefab) the capture keeps
     id:base.Asset_Id,      // zero: the id of previous
     entities:[]core.Entity, // when given, only these, as roots without what is under them; their Entity fields keep the Id of an entity left out
     sections:bool,          // also what hangs from a Scene_Reference, which its own scene keeps otherwise: a saved game
@@ -68,30 +67,21 @@ Capture_Desc :: struct {
 }
 
 Report :: struct {
-    root:core.Entity, // instantiate: the root of a prefab, or the first root of a scene
+    root:core.Entity, // instantiate: the first root of the document, the only one of a prefab
     entities:int,
     components:int,   // values attached or saved, Id, Name and Parent aside
-    migrated:int,     // instantiate: tables stored with another layout
-    unknown:int,      // tables the world has no component for
     dangling:int,     // entity references that named nothing inside: set to none
     sections:int,     // instantiate: referenced scenes loaded under their references
     missing:int,      // instantiate: references whose scene is not in the assets
     refused:Refusal,  // load_untrusted: what made it fail
 }
 
-// A prefab to place while the world runs.
+// A prefab, a scene with one root, to place while the world runs.
 Spawn :: struct {
     prefab:base.Asset_Id,
     parent:core.Entity,
     transform:core.Transform, // of the root; a zero scale counts as 1, a zero rotation as none
     transient:bool,
-}
-
-// The root of what spawn placed knows the prefab it came from: what
-// replicates a prefab (multiplayer) recognizes it by this, whoever spawned it.
-@(component,description="The prefab this entity was spawned from while the world runs.")
-Prefab_Source :: struct {
-    prefab:base.Asset_Id `mirai:"transient,readonly"`,
 }
 
 @(private) NONE_ROW :: u32(0xffffffff)
@@ -104,9 +94,14 @@ Spawner :: struct {
     problems:^core.Problems,
 }
 
-// Places a prefab of the assets, by its path ("pets/Dog.prefab") or its id,
-// and gives back its root, whose rows wait for the end of the function. NONE
-// when it did not spawn, which is the problem scene.spawn that says why.
+// Places a copy of a prefab, a scene of the assets with one root, by its path
+// ("pets/Dog.scene") or its id, and gives back its root, whose rows wait for
+// the end of the function. NONE when it did not spawn, which is the problem
+// scene.spawn that says why. A prefab that is not loaded, or that takes
+// something that is not, is read in jobs: its root comes at once with its
+// Transform, Parent, Id and Prefab_Pending, and nothing else, and takes the
+// rest of the prefab once it is read (scene_spawns); what was given to it
+// meanwhile stays, and its own value of a component wins over the prefab's.
 spawn :: proc{spawn_path,spawn_id}
 
 spawn_path :: proc(s:Spawner,path:string,at:core.Transform={},parent:=core.NONE,transient:=false) -> core.Entity {
@@ -132,13 +127,13 @@ spawn_report :: proc(s:Spawner,order:Spawn,name:string,found:Error) -> core.Enti
     fix:string
     #partial switch error {
     case .No_Assets:     fix="run the game from a project with an assets folder"
-    case .Not_Found:     fix="name a .prefab of the assets by its path or id: import or create it, or fix the name"
-    case .Invalid:       fix="spawn a .prefab under a parent that is alive, or with no parent"
-    case .Not_A_Prefab:  fix="name a .prefab: a scene is placed as a Scene_Reference, or turned into a prefab with asset.convert"
-    case .Corrupt:       fix="open the prefab in the editor and save it again"
-    case .Out_Of_Memory: fix="free memory or spawn fewer prefabs at once"
+    case .Not_Found:     fix="name a .scene of the assets by its path or id: import or create it, or fix the name"
+    case .Invalid:       fix="spawn a .scene under a parent that is alive, or with no parent"
+    case .Not_A_Prefab:  fix="make it a prefab in the editor (File > Prefab), with its entities under one root, or place it whole with a Scene_Reference (scene.section_request)"
+    case .Corrupt:       fix="open the scene in the editor and save it again"
+    case .Out_Of_Memory: fix="free memory or spawn fewer scenes at once"
     }
-    core.report(s.problems,order.parent,"scene.spawn","prefab %s did not spawn: %s; %s",name,error_text(error),fix)
+    core.report(s.problems,order.parent,"scene.spawn","scene %s did not spawn: %s; %s",name,error_text(error),fix)
     return core.NONE
 }
 
@@ -146,10 +141,10 @@ error_text :: proc(error:Error) -> string {
     switch error {
     case .None:          return ""
     case .No_Assets:     return "the application has no assets folder"
-    case .Not_Found:     return "no scene or prefab has that path or id"
-    case .Invalid:       return "not a scene nor a prefab, or a prefab that references a scene"
+    case .Not_Found:     return "no scene has that path or id"
+    case .Invalid:       return "not a scene, or a parent that is not alive"
     case .Cycle:         return "a scene references itself"
-    case .Not_A_Prefab:  return "it is a scene, not a prefab"
+    case .Not_A_Prefab:  return "it is not a prefab, and only a prefab is placed as a copy"
     case .Corrupt:       return "the document contradicts itself"
     case .Duplicate_Id:  return "two entities have the same Id"
     case .Out_Of_Memory: return "out of memory"
@@ -203,7 +198,8 @@ load_id :: proc(w:core.World_Ref,app:^host.App,id:base.Asset_Id) -> (report:Repo
 // entities, when given, receives the entity of every row of the document, as
 // the world has it once replaced. Without references the scenes the document
 // references are not loaded: a saved game, which keeps them as they were.
-replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset.Types,entities:[]core.Entity=nil,references:=true) -> (report:Report,error:Error) {
+// stored, when given, receives what Instantiate_Desc.stored does.
+replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset.Types,entities:[]core.Entity=nil,references:=true,stored:^[dynamic]Stored=nil) -> (report:Report,error:Error) {
     if app.info==nil || w.info!=app.info || w.place!=.World {return {},.Invalid}
     making:=host.load_phase_begin(app,.Instantiate)
     data:=host.app_world_create(app)
@@ -221,20 +217,39 @@ replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset
         host.load_phase_end(app,making)
         return {},.Out_Of_Memory
     }
-    report,error=instantiate(candidate,a,asset_types,{entities=entities,documents=references?assets_documents(app.assets):{},saved=!references})
+    report,error=instantiate(candidate,a,asset_types,{entities=entities,documents=references?assets_documents(app.assets):{},saved=!references,stored=stored})
     host.load_phase_end(app,making,core.world_entities(candidate).alive)
     settling:=host.load_phase_begin(app,.Settle)
     defer host.load_phase_end(app,settling)
     core.world_settle(candidate)
     if error!=.None {return}
-    if !references {scopes_restore(candidate)}
     root_set(candidate,a.blob.header.id)
     references_resolve(candidate)
     propagate(candidate,app)
+    prefabs_warm(candidate,app)
     core.world_swap(w.info,w.data,data)
     // A look without memory for it stays asked for: scene_sections looks again, and reports it.
     _=records_look(w)
     return
+}
+
+// The prefabs the fields of a World that was just loaded name, and what they
+// take, read now, as a load in phases reads them in jobs: their first spawn
+// is whole in its call.
+@(private)
+prefabs_warm :: proc(w:core.World_Ref,app:^host.App) {
+    if app.assets==nil {return}
+    names:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    host.world_asset_ids(w,&names)
+    prefabs:=make([dynamic]base.Asset_Id,context.temp_allocator)
+    for id in names {
+        if file,found:=asset.registry_find(&app.assets.registry,id);found && asset.registry_prefab(file) {append(&prefabs,id)}
+    }
+    if len(prefabs)==0 {return}
+    if job,begun:=assets_warm_begin(app,prefabs[:]);begun==.None {
+        load_step(job,true)
+        load_free(job)
+    }
 }
 
 // The world transforms of a World that was just loaded, now: the propagation
@@ -249,47 +264,70 @@ propagate :: proc(w:core.World_Ref,app:^host.App) {
 // What spawn runs, for the editor method that answers with the report and the
 // error: games and plugins call spawn. Its entities exist at once and their
 // rows wait for the end of the function: whoever spawned it reads and finishes
-// them with core.added.
+// them with core.added. A prefab that waits for jobs gives its root alone
+// (spawn).
 spawn_prefab :: proc(c:core.Commands,assets:^host.Assets,s:Spawn) -> (report:Report,error:Error) {
     return spawn_placed(c,assets,s,core.world_storage_of(core.world_ref(c.data,c.info),Prefab_Forms))
 }
 
-// spawn_prefab with the forms the prefab is prepared in; none: it is read now.
+// spawn_prefab with the forms the prefab is prepared in; none: it is made now.
 @(private)
 spawn_placed :: proc(c:core.Commands,assets:^host.Assets,s:Spawn,forms:^Prefab_Forms) -> (report:Report,error:Error) {
     if assets==nil {return {},.No_Assets}
-    file:=host.assets_scene(assets,s.prefab)
-    if file==nil {return {},.Not_Found}
-    if file.blob.header.kind!=asset.KIND_PREFAB {return {},.Not_A_Prefab}
+    file,found:=asset.registry_find(&assets.registry,s.prefab)
+    if !found || file.state!=.Asset || file.kind!=asset.KIND_SCENE {return {},.Not_Found}
+    if !asset.registry_prefab(file) {return {},.Not_A_Prefab}
     if s.parent!=core.NONE && !core.alive(c.entities,s.parent) {return {},.Invalid}
     w:=core.world_ref(c.data,c.info)
-    form,entities:=prefab_form(forms,w,assets,s.prefab,file) or_return
-    report,error=form_place(w,form,&assets.types,{parent=s.parent,transient=s.transient,fresh=!s.transient},entities)
-    if error!=.None {return}
-    if root:=core.commands_added(c,report.root,core.Transform);root!=nil {
-        root^=s.transform
-        if root.rotation==0 {root.rotation=1}
-        if root.scale=={} {root.scale={1,1,1}}
+    form,entities,loaded:=prefab_form(forms,w,assets,s.prefab) or_return
+    root:=core.create(c)
+    transform:=s.transform
+    if transform.rotation==0 {transform.rotation=1}
+    if transform.scale=={} {transform.scale={1,1,1}}
+    core.commands_add(c,root,transform)
+    if s.parent!=core.NONE {core.commands_add(c,root,core.Parent{s.parent,0})}
+    if !s.transient {core.commands_add(c,root,core.Id{core.id_next(c.entities)})}
+    core.commands_add(c,root,Prefab_Instance{prefab=s.prefab}) // no stamp, no members: of its prefab, linked to no document
+    if !loaded {
+        core.commands_add(c,root,Prefab_Pending{prefab=s.prefab})
+        return {root=root,entities=1},.None
     }
-    core.commands_add(c,report.root,Prefab_Source{s.prefab})
+    report,error=form_place(w,form,&assets.types,{transient=s.transient,fresh=!s.transient,documents=assets_documents(assets),root=root},entities)
+    if error!=.None {core.destroy(c,root)}
     return
 }
 
 // A copy of an entity of the scene of a section, by its Id in the world, and
 // of what hangs from it, as a root of the world without Ids (Spawn.transient):
 // what stands for it where its section is not loaded. salt is the Id of the
-// reference of the section.
+// reference of the section. Like spawn it reads no file: a scene that is not
+// loaded, or that takes something that is not, gives the root at once with
+// its Transform and Prefab_Pending, filled once jobs read them.
 spawn_member :: proc(c:core.Commands,assets:^host.Assets,section_scene:base.Asset_Id,salt,id:base.Entity_Id,transform:core.Transform) -> (report:Report,error:Error) {
     if assets==nil {return {},.No_Assets}
-    file:=host.assets_scene(assets,section_scene)
+    if file,found:=asset.registry_find(&assets.registry,section_scene);!found || file.state!=.Asset || file.kind!=asset.KIND_SCENE {return {},.Not_Found}
+    root:=core.create(c)
+    core.commands_add(c,root,transform)
+    pending:=Prefab_Pending{prefab=section_scene,salt=salt,member=id}
+    if !prefab_loaded(assets,section_scene,documents=true) {
+        core.commands_add(c,root,pending)
+        return {root=root,entities=1},.None
+    }
+    report,error=member_place(core.world_ref(c.data,c.info),assets,pending,root)
+    if error!=.None {core.destroy(c,root)}
+    return
+}
+
+// Places on root the entity of a section a pending copy stands for, with
+// what hangs from it.
+@(private)
+member_place :: proc(w:core.World_Ref,assets:^host.Assets,pending:Prefab_Pending,root:core.Entity) -> (report:Report,error:Error) {
+    file:=host.assets_scene(assets,pending.prefab)
     if file==nil {return {},.Not_Found}
     resolved:asset.Asset
     defer asset.asset_close(&resolved)
     document:=current(assets_documents(assets),file,&resolved) or_return
-    report,error=instantiate(core.world_ref(c.data,c.info),document,&assets.types,{transient=true,salt=salt,only=id})
-    if error!=.None {return}
-    if root:=core.commands_added(c,report.root,core.Transform);root!=nil {root^=transform}
-    return
+    return instantiate(w,document,&assets.types,{transient=true,salt=pending.salt,only=pending.member,root=root})
 }
 
 // The document a load or a spawn instantiates. With the assets of a project
@@ -354,7 +392,7 @@ is_structural :: proc(type:typeid) -> bool {
     return type==core.Parent || type==core.Id || type==core.Name || type==core.World_Transform
 }
 
-// Creates the entities of a scene or prefab in a world. Every entity gets
+// Creates the entities of a scene in a world. Every entity gets
 // Id, Name and Transform; each table the world has a component for is read
 // into it, migrating by field names when the layouts differ, and its Entity
 // fields become handles. Children keep the order of the document. The rows
@@ -363,6 +401,7 @@ is_structural :: proc(type:typeid) -> bool {
 instantiate :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Instantiate_Desc={}) -> (report:Report,error:Error) {
     if desc.parent!=core.NONE && !core.alive(core.world_entities(w),desc.parent) {return {},.Invalid}
     form,_:=form_make(w,a,asset_types,context.temp_allocator) or_return
+    if desc.stored!=nil && !stored_collect(w,a,asset_types,desc.stored) {return {},.Out_Of_Memory}
     count:=len(form.ids)
     if desc.entities!=nil && len(desc.entities)<count {return {},.Invalid}
     entities:=desc.entities
@@ -399,18 +438,16 @@ sections_load :: proc(w:core.World_Ref,scene:base.Asset_Id,asset_types:^asset.Ty
     for section in sections {
         if slice.contains(path,section.reference.scene) {return .Cycle}
         file:=desc.documents.open(desc.documents.user,section.reference.scene)
-        if file==nil || file.blob.header.kind!=asset.KIND_SCENE {
+        if file==nil {
             report.missing+=1
             continue
         }
         resolved:asset.Asset
         defer asset.asset_close(&resolved)
         document:=current(desc.documents,file,&resolved) or_return
-        inner,error:=instantiate(w,document,asset_types,{parent=section.entity,transient=desc.transient,documents=desc.documents,salt=section.id,path=path,scope=section.entity,scope_extents=section.reference.extents})
+        inner,error:=instantiate(w,document,asset_types,{parent=section.entity,transient=desc.transient,documents=desc.documents,salt=section.id,path=path,stored=desc.stored})
         report.entities+=inner.entities
         report.components+=inner.components
-        report.migrated+=inner.migrated
-        report.unknown+=inner.unknown
         report.dangling+=inner.dangling
         report.sections+=1+inner.sections
         report.missing+=inner.missing
@@ -456,11 +493,10 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
     parent_table:=core.world_table_of(w,core.Parent)
     hierarchy_storage:=core.world_storage_of(w,core.Hierarchy)
     if id_table==nil || parent_table==nil || hierarchy_storage==nil {return {},.Invalid}
-    ids,parents:=core.read(id_table),core.read(parent_table)
-    names:=core.read(core.world_table_of(w,core.Name))
+    ids,parents:=id_table,parent_table
+    names:=core.world_table_of(w,core.Name)
     previous:=desc.previous
-    kind,id:=desc.kind,desc.id
-    if kind==0 {kind=desc.root!=core.NONE?asset.KIND_PREFAB:previous!=nil?previous.doc.kind:asset.KIND_SCENE}
+    id:=desc.id
     if id=={} && previous!=nil {id=previous.doc.id}
     types:=schema_of(w)
     if types==nil {return {},.Out_Of_Memory}
@@ -469,9 +505,9 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
     roots:=make([dynamic]Root,context.temp_allocator)
     // The Id an entity has in the document: in a section, the one of its own scene.
     members:=core.world_table_of(w,Section_Member)
-    doc_id :: proc(ids:core.Read(core.Id),members:^core.Table(Section_Member),section:core.Entity,e:core.Entity) -> base.Entity_Id {
+    doc_id :: proc(ids:^core.Table(core.Id,$A),members:^core.Table(Section_Member),section:core.Entity,e:core.Entity) -> base.Entity_Id {
         if section!=core.NONE && members!=nil {
-            if member,ok:=core.get(core.read(members),e);ok && member.local!=0 {return member.local}
+            if member,ok:=core.get(members,e);ok && member.local!=0 {return member.local}
         }
         return core.id_of(ids,e)
     }
@@ -531,13 +567,14 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
         slice.reverse(stack[first:])
     }
 
-    if asset.scene_init(scene,asset_types,kind,id,allocator)!=.None {return {},.Invalid}
+    if asset.scene_init(scene,asset_types,id,allocator)!=.None {return {},.Out_Of_Memory}
+    if desc.previous!=nil {scene.doc.flags+=desc.previous.doc.flags&{.Prefab}}
     defer if error!=.None {
         asset.scene_destroy(scene)
         report={}
     }
     for visit in placed {
-        label:=names.table!=nil?core.name_get(names,visit.entity):""
+        label:=names!=nil?core.name_get(names,visit.entity):""
         parent:=visit.parent==NONE_ROW?0:asset.scene_ids(scene)[visit.parent]
         _,add_error:=asset.scene_entity_add(scene,doc_id(ids,members,desc.section,visit.entity),parent,label,int(visit.order))
         if add_error!=.None {return report,add_error==.Invalid?.Duplicate_Id:.Out_Of_Memory}
@@ -549,11 +586,11 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
     pending:=unresolved_map(core.world_storage_of(w,Unresolved_References))
     for &info,at in w.info.tables {
         value_type:=&types.tables[at]
-        if info.place!=w.place || is_structural(info.type) || value_type.type==serial.TYPE_NONE {continue}
+        if info.place!=w.place || is_structural(info.type) || info.derived || value_type.type==serial.TYPE_NONE {continue}
         if info.type==Section_Member && !desc.sections {continue}
+        linked:=info.type==Prefab_Instance?core.world_table_of(w,Prefab_Member):nil // a spawned copy has none: no document holds it
         if slice.contains(desc.excluded,info.type) {continue}
         size:=info.info.size
-        if size>0 && len(value_type.layout.runs)==0 {continue}
         table:=core.world_table_at(w,&info)
         hash:=base.name_hash(info.name)
         clear(&table_rows);clear(&images)
@@ -563,6 +600,7 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
         for visit,row in placed {
             value:=core.raw_find(table,info.info,visit.entity)
             if value==nil {continue}
+            if info.type==Prefab_Instance && (linked==nil || core.raw_find(core.raw(linked),type_info_of(Prefab_Member),visit.entity)==nil) {continue}
             append(&table_rows,u32(row))
             if size==0 {continue}
             start:=len(images)
@@ -595,7 +633,6 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
         report.components+=len(table_rows)
     }
 
-    if desc.root!=core.NONE {scene.info.root=core.id_of(ids,desc.root)}
     if previous!=nil {
         if carry(w,scene,previous,&report)!=.None {return report,.Out_Of_Memory}
     }
@@ -616,10 +653,7 @@ save :: proc(w:core.World_Ref,assets:^host.Assets,path:string,previous:^asset.Sc
 // What a world cannot hold, from the document it was loaded from.
 @(private)
 carry :: proc(w:core.World_Ref,scene,previous:^asset.Scene,report:^Report) -> asset.Error {
-    root:=scene.info.root
     scene.info=previous.info
-    if root!=0 {scene.info.root=root}
-    else if _,kept:=asset.scene_entity_find(scene,scene.info.root);!kept {scene.info.root=0}
     scene.doc.flags=previous.doc.flags
 
     link:serial.Schema_Import
@@ -653,7 +687,6 @@ carry :: proc(w:core.World_Ref,scene,previous:^asset.Scene,report:^Report) -> as
             }
             target:=asset.scene_component_add(scene,table.name,&previous.doc.schema,table.columns[1].type) or_return
             asset.scene_component_fill(scene,target,table_rows[:],images[:]) or_return
-            report.unknown+=1
             continue
         }
         target:=asset.document_table_add(&scene.doc,table.name,table.flags) or_return
@@ -679,20 +712,3 @@ carry :: proc(w:core.World_Ref,scene,previous:^asset.Scene,report:^Report) -> as
     return .None
 }
 
-// The unbounded volumes of the sections of a saved game, which does not keep
-// where they rule: each rules again in the box of the section it hangs from.
-@(private)
-scopes_restore :: proc(w:core.World_Ref) {
-    places:=core.world_table_of(w,volume.Volume)
-    references:=core.world_table_of(w,Scene_Reference)
-    parents:=core.world_table_of(w,core.Parent)
-    if places==nil || references==nil || parents==nil {return}
-    for row in 0..<core.count(places) {
-        if core.at(core.read(places),row).shape!=.Unbounded {continue}
-        section:=core.ancestor_with(core.read(parents),core.read(references),core.entity_at(places,row))
-        reference,found:=core.get(core.read(references),section)
-        if !found {continue}
-        place:=core.at(places,row)
-        place.scope,place.scope_extents=section,reference.extents
-    }
-}

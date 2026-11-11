@@ -26,7 +26,7 @@ Wet_Given :: struct {
 Water_Wet_Render :: struct {
     given:[WET_INSTANCES]Wet_Given,
     count:int,
-    seen:[6]u64,
+    seen:[5]u64,
     world:core.World_Id,
 }
 
@@ -38,7 +38,7 @@ wet_level :: proc "contextless" (wet:f32) -> f32 {
 // The body of Water_Wet an entity takes its wetness from: itself or the
 // nearest of its ancestors that is wet, and where it is in the marks.
 @(private)
-wet_owner :: proc(wet:^Water_Wet,parents:core.Read(core.Parent),entity:core.Entity) -> (owner:core.Entity,at:int,ok:bool) {
+wet_owner :: proc(wet:^Water_Wet,parents:^core.Table(core.Parent,$A),entity:core.Entity) -> (owner:core.Entity,at:int,ok:bool) {
     e:=entity
     for _ in 0..=core.count(parents) {
         for mark,i in wet.marks[:wet.count] {
@@ -60,19 +60,19 @@ wet_members :: proc "contextless" (wet:^Water_Wet) -> (sum:u64) {
     return
 }
 
-@(step="render",loops="game editor",after="render_sync")
-water_wet_render :: proc(state:^Water_Wet_Render,wet:core.Ref(Water_Wet),synced:core.Ref(render.Render_Sync),parents:core.Read(core.Parent),renderer:^render.Renderer) {
+@(step="render",loops="game editor")
+water_wet_render :: proc(state:^Water_Wet_Render,wet:core.Ref(Water_Wet),synced:core.Ref(render.Render_Sync),parents:^core.Table(core.Parent,.Read),renderer:^render.Renderer) {
     if renderer==nil || wet.ptr==nil || synced.ptr==nil {return}
     sync:=synced.ptr
-    seen:=[6]u64{sync.stats.scene_sets,sync.stats.instance_updates,u64(render.instance_count(sync)),core.layout(parents),core.version(parents),wet_members(wet.ptr)}
+    seen:=[5]u64{render.instance_revision(renderer),u64(render.instance_count(renderer)),core.layout(parents),core.version(parents),wet_members(wet.ptr)}
     if seen!=state.seen || sync.world!=state.world {
         // What it gave before, or another world the renderer drew, may have left wet instances: all are told.
         held:=state.count>0 || sync.world!=state.world
         state.seen,state.world,state.count=seen,sync.world,0
-        if seen[5]==0 && !held {return}
-        for i in 0..<render.instance_count(sync) {
+        if seen[4]==0 && !held {return}
+        for i in 0..<render.instance_count(renderer) {
             level:f32
-            if owner,at,ok:=wet_owner(wet.ptr,parents,core.Entity(render.instance_object(sync,i)));ok && state.count<WET_INSTANCES {
+            if owner,at,ok:=wet_owner(wet.ptr,parents,core.Entity(render.instance_object(renderer,i)));ok && state.count<WET_INSTANCES {
                 level=wet_level(wet.marks[at].wet)
                 state.given[state.count]={index=i,entity=owner,hint=at,wet=level}
                 state.count+=1

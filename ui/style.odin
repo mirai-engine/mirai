@@ -1,13 +1,10 @@
 package ui
 
 import "base:intrinsics"
+import "core:slice"
 import "mirai:std/base"
+import "mirai:std/serial"
 
-Color_Token :: enum u8 {
-    Literal, Backdrop, Panel, Popup, Raised, Field, Field_Hover, Field_Active,
-    Border, Divider, Text, Text_Muted, Text_Faint, Accent, Accent_Hover,
-    Accent_Soft, On_Accent, Danger, Shadow, Focus,
-}
 // In order of precedence: a later state wins over an earlier one.
 Style_State :: enum u8 {
     Selected,
@@ -28,11 +25,9 @@ Style_Field :: enum u8 {
     Scale,        // Node_Style.scale, around its center
 }
 Style_Fields :: bit_set[Style_Field; u16]
-Style_Tokens :: struct {fill,fill2,stroke,text,track,knob,mark:Color_Token}
 Style_Patch :: struct {
     fields:Style_Fields,
     values:Node_Style,
-    tokens:Style_Tokens,
 }
 Style_Variant :: struct {
     style:u16,
@@ -41,46 +36,20 @@ Style_Variant :: struct {
     patch:Style_Patch,
 }
 
-style_token :: proc "contextless" (theme:^Theme,token:Color_Token,literal:Color) -> Color {
-    switch token {
-    case .Literal:return literal
-    case .Backdrop:return theme.backdrop
-    case .Panel:return theme.panel
-    case .Popup:return theme.popup
-    case .Raised:return theme.raised
-    case .Field:return theme.field
-    case .Field_Hover:return theme.field_hover
-    case .Field_Active:return theme.field_active
-    case .Border:return theme.border
-    case .Divider:return theme.divider
-    case .Text:return theme.text
-    case .Text_Muted:return theme.text_muted
-    case .Text_Faint:return theme.text_faint
-    case .Accent:return theme.accent
-    case .Accent_Hover:return theme.accent_hover
-    case .Accent_Soft:return theme.accent_soft
-    case .On_Accent:return theme.on_accent
-    case .Danger:return theme.danger
-    case .Shadow:return theme.shadow
-    case .Focus:return theme.focus
-    }
-    return literal
-}
-
 // Sets in style what a patch gives.
-style_patch :: proc "contextless" (theme:^Theme,style:^Node_Style,patch:^Style_Patch) {
-    v:=&patch.values;t:=patch.tokens
+style_patch :: proc "contextless" (style:^Node_Style,patch:^Style_Patch) {
+    v:=&patch.values
     if .Text_Font in patch.fields {style.text.font=v.text.font}
     if .Text_Size in patch.fields {style.text.size=v.text.size}
-    if .Text_Color in patch.fields {style.text.color=style_token(theme,t.text,v.text.color)}
+    if .Text_Color in patch.fields {style.text.color=v.text.color}
     if .Text_Outline in patch.fields {style.text.outline,style.text.outline_color=v.text.outline,v.text.outline_color}
     if .Text_Shadow in patch.fields {style.text.shadow,style.text.shadow_color=v.text.shadow,v.text.shadow_color}
-    if .Fill in patch.fields {style.fill=style_token(theme,t.fill,v.fill)}
-    if .Fill2 in patch.fields {style.fill2=style_token(theme,t.fill2,v.fill2)}
-    if .Stroke in patch.fields {style.stroke=style_token(theme,t.stroke,v.stroke)}
-    if .Track in patch.fields {style.track=style_token(theme,t.track,v.track)}
-    if .Knob in patch.fields {style.knob=style_token(theme,t.knob,v.knob)}
-    if .Mark in patch.fields {style.mark=style_token(theme,t.mark,v.mark)}
+    if .Fill in patch.fields {style.fill=v.fill}
+    if .Fill2 in patch.fields {style.fill2=v.fill2}
+    if .Stroke in patch.fields {style.stroke=v.stroke}
+    if .Track in patch.fields {style.track=v.track}
+    if .Knob in patch.fields {style.knob=v.knob}
+    if .Mark in patch.fields {style.mark=v.mark}
     if .Radius in patch.fields {style.radius=v.radius}
     if .Stroke_Width in patch.fields {style.stroke_width=v.stroke_width}
     if .Shadow in patch.fields {style.shadow=v.shadow;style.shadow_color=v.shadow_color;style.shadow_blur=v.shadow_blur;style.shadow_offset=v.shadow_offset}
@@ -104,7 +73,7 @@ style_rule_holds :: #force_inline proc "contextless" (rule:^Style_Variant,style:
 // ordered false: one came before a rule it goes after, and result is not what
 // they resolve to.
 @(private)
-style_rules_apply :: proc "contextless" (theme:^Theme,result:^Node_Style,rules:[]Style_Variant,style:u16,variant:u64,states:Style_States) -> (held,ordered:bool) {
+style_rules_apply :: proc "contextless" (result:^Node_Style,rules:[]Style_Variant,style:u16,variant:u64,states:Style_States) -> (held,ordered:bool) {
     last:u8
     for &rule in rules {
         if !style_rule_holds(&rule,style,variant,states) {continue}
@@ -112,7 +81,7 @@ style_rules_apply :: proc "contextless" (theme:^Theme,result:^Node_Style,rules:[
         if order<last {return true,false}
         last=order
         held=true
-        style_patch(theme,result,&rule.patch)
+        style_patch(result,&rule.patch)
     }
     return held,true
 }
@@ -120,9 +89,9 @@ style_rules_apply :: proc "contextless" (theme:^Theme,result:^Node_Style,rules:[
 // Table order wins within a state; a named variant wins over an unnamed rule.
 // The rule of the latest active state in Style_State has precedence. Rules
 // that come in that order, as a tree keeps those of each style, take one pass.
-style_resolve :: proc "contextless" (theme:^Theme,base:Node_Style,rules:[]Style_Variant,style:u16=0,variant:u64=0,states:Style_States={}) -> (result:Node_Style) {
+style_resolve :: proc "contextless" (base:Node_Style,rules:[]Style_Variant,style:u16=0,variant:u64=0,states:Style_States={}) -> (result:Node_Style) {
     result=base
-    if _,ordered:=style_rules_apply(theme,&result,rules,style,variant,states);ordered {return}
+    if _,ordered:=style_rules_apply(&result,rules,style,variant,states);ordered {return}
     result=base
     orders:u32
     for &rule in rules {
@@ -132,7 +101,7 @@ style_resolve :: proc "contextless" (theme:^Theme,base:Node_Style,rules:[]Style_
         order:=u8(intrinsics.count_trailing_zeros(orders))
         orders&=orders-1
         for &rule in rules {
-            if style_rule_holds(&rule,style,variant,states) && style_rule_order(rule.states,rule.variant)==order {style_patch(theme,&result,&rule.patch)}
+            if style_rule_holds(&rule,style,variant,states) && style_rule_order(rule.states,rule.variant)==order {style_patch(&result,&rule.patch)}
         }
     }
     return
@@ -198,4 +167,91 @@ style_look_mix :: proc "contextless" (a,b:Style_Look,k:f32) -> (out:Style_Look) 
     out.move=a.move+(b.move-a.move)*k
     out.scale=a.scale+(b.scale-a.scale)*k
     return
+}
+
+// ---------------------------------------------------------------- sheet
+
+// The style file a context draws with what nothing else styles: its tokens
+// by name and its styles, with their states and variants, by the name of the
+// style. The editor's is its theme.ui; the controls of a game take their look
+// from the nodes of its .ui, so its contexts have none, and a name a sheet
+// lacks gives nothing: a transparent color, 0 or a look of no value.
+@(private)
+Sheet_Name :: struct {hash:u64,row:u16,token:bool}
+
+// Takes the records of a style file as the sheet of ctx, in place of the one
+// it had: a transaction that loads its styles as a tree does.
+context_sheet_set :: proc(ctx:^Context,data:Tree_Data) -> bool {
+    a:=ctx.allocator
+    tree:Widget_Tree
+    if !tree_load(&tree,{styles=data.styles,variants=data.variants,style_infos=data.style_infos},{},a) {return false}
+    names,names_error:=make([]Sheet_Name,len(data.style_infos)+len(data.tokens),a)
+    tokens,tokens_error:=make([]Tree_Token,len(data.tokens),a)
+    if names_error!=nil || tokens_error!=nil {
+        delete(names,a);delete(tokens,a);tree_destroy(&tree)
+        return false
+    }
+    copy(tokens,data.tokens)
+    count:=0
+    for &info,row in data.style_infos {
+        if name:=serial.text_field(info.name[:]);name!="" {names[count]={base.name_hash(name),u16(row),false};count+=1}
+    }
+    for &token,row in tokens {names[count]={base.name_hash(serial.text_field(token.name[:])),u16(row),true};count+=1}
+    names=names[:count]
+    slice.sort_by(names,proc(a,b:Sheet_Name) -> bool {return a.hash<b.hash})
+    sheet_destroy(ctx)
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    ctx.sheet=tree
+    ctx.sheet_names=names
+    ctx.sheet_tokens=tokens
+    return true
+}
+
+@(private)
+sheet_destroy :: proc(ctx:^Context) {
+    if ctx.sheet.allocator.procedure!=nil {tree_destroy(&ctx.sheet)}
+    delete(ctx.sheet_names,ctx.allocator)
+    delete(ctx.sheet_tokens,ctx.allocator)
+    ctx.sheet,ctx.sheet_names,ctx.sheet_tokens={},nil,nil
+}
+
+@(private)
+sheet_find :: proc "contextless" (ctx:^Context,name:string,token:bool) -> (row:int,found:bool) {
+    hash:=base.name_hash(name)
+    names:=ctx.sheet_names
+    low,high:=0,len(names)
+    for low<high {
+        middle:=(low+high)/2
+        if names[middle].hash<hash {low=middle+1} else {high=middle}
+    }
+    for at:=low;at<len(names) && names[at].hash==hash;at+=1 {
+        if names[at].token==token {return int(names[at].row),true}
+    }
+    return -1,false
+}
+
+// The color of a token of the sheet.
+tone :: proc "contextless" (ctx:^Context,name:string) -> Color {
+    if row,found:=sheet_find(ctx,name,true);found && !ctx.sheet_tokens[row].numeric {return ctx.sheet_tokens[row].color}
+    return {}
+}
+// The number of a token of the sheet: a size in layout units.
+metric :: proc "contextless" (ctx:^Context,name:string) -> f32 {
+    if row,found:=sheet_find(ctx,name,true);found && ctx.sheet_tokens[row].numeric {return ctx.sheet_tokens[row].number}
+    return 0
+}
+// Gives a number token of the sheet another value; returns the one it had.
+metric_set :: proc "contextless" (ctx:^Context,name:string,value:f32) -> (previous:f32) {
+    if row,found:=sheet_find(ctx,name,true);found && ctx.sheet_tokens[row].numeric {
+        previous=ctx.sheet_tokens[row].number
+        ctx.sheet_tokens[row].number=value
+    }
+    return
+}
+
+// A style of the sheet resolved for a variant and the states it is in.
+sheet_look :: proc "contextless" (ctx:^Context,style:string,variant:string="",states:Style_States={}) -> Node_Style {
+    row,found:=sheet_find(ctx,style,false)
+    if !found || row>=ctx.sheet.style_count {return {}}
+    return style_resolve(ctx.sheet.styles[row],tree_style_rules(&ctx.sheet,u16(row)),u16(row),style_variant(variant),states)
 }

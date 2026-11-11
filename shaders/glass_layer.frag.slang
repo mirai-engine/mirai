@@ -10,8 +10,10 @@
 // the others keep only the unlit bit.
 //! variant layers MIRAI_GLASS_LAYERS=1
 #ifndef MIRAI_GLASS_LAYERS
-#define MIRAI_MATERIAL_NO_LAYERS 1
+#define MIRAI_MATERIAL_NO_LAYERS true
 #endif
+// It reports the levels it samples of each texture (texture_feedback in scene.slang).
+#define MIRAI_TEXTURE_FEEDBACK
 #include "raster.slang"
 #include "gbuffer.slang"
 #include "depth.slang"
@@ -42,7 +44,7 @@ Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool 
     if (params.peeled != 0u && !behind_layer(depth, nearer_depth.Load(int3(p, 0)).r)) discard;
     uint bits = 0u;
     if (!fragment_blended(input, front_facing)) {
-        Material m = material_row(input.in_material);
+        Material m = fragment_material(input);
         if (params.peeled != 0u || input.in_instance + 1u != params.medium || m.alpha_mode != ALPHA_BLEND || !material_solid(m)) discard;
         bits = GBUFFER_GLASS_EXIT;
     }

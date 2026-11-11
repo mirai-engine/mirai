@@ -132,13 +132,13 @@ wall_measure :: proc(physics:core.Ref(phys.Physics_State),wall:core.Entity,porta
     return face,face+thickness,true
 }
 
-// The walls of the portals that lead somewhere get their hole and their
+// The walls of the portals that lead somewhere, not mirrors, get their hole and their
 // frame, made again only when an opening or its wall moves; those of the
 // portals that do not lose them. Each traveler halfway into an opening gets
 // its twin and its cut, and loses them when it is through.
-@(step="fixed",loops="game",stage="input",after="portals_travel")
+@(step="fixed",loops="game",stage="input")
 portals_collision :: proc(
-    commands:core.Commands,portals:core.Read(Portal),travelers:core.Read(Traveler),worlds:core.Read(core.World_Transform),
+    commands:core.Commands,portals:^core.Table(Portal,.Read),travelers:^core.Table(Traveler,.Read),worlds:^core.Table(core.World_Transform,.Read),
     crossings:core.Ref(Portal_Crossings),physics:core.Ref(phys.Physics_State),colliders:^core.Table(phys.Collider),
     frames:^core.Table(Portal_Frame),cuts:^core.Table(phys.Collider_Cuts),twins:^core.Table(phys.Body_Twin),
 ) {
@@ -153,12 +153,13 @@ portals_collision :: proc(
         portal:=core.at(portals,row)
         placed,has_place:=core.get(worlds,e)
         exit,has_exit:=core.get(worlds,portal.exit)
-        if !has_place || !has_exit || opening_count==len(openings) {continue}
+        if !has_place || !has_exit || portal.mirror || opening_count==len(openings) {continue}
         opening:=Opening{entity=e,entrance=placed.transform,exit=exit.transform}
         wall,has_wall:=core.get(worlds,portal.wall)
-        frame,framed:=core.get(core.read(frames),e)
+        held,framed:=core.get(frames,e)
+        frame:=held // the one the portal has when this ends
         if portal.wall!=core.NONE && has_wall && phys.collider_ready(physics,portal.wall) {
-            collider,_:=core.get(core.read(colliders),portal.wall)
+            collider,_:=core.get(colliders,portal.wall)
             key:=frame_key(placed.transform,wall.transform,collider)
             if !framed || frame.key!=key {
                 made:=Portal_Frame{key=key}
@@ -191,12 +192,12 @@ portals_collision :: proc(
         openings[opening_count]=opening
         opening_count+=1
     }
-    // A portal that leads nowhere, or is gone, takes its frame away.
+    // A portal that leads nowhere, is a mirror or is gone takes its frame away.
     for row:=core.count(frames)-1;row>=0;row-=1 {
         e:=core.entity_at(frames,row)
         portal,is_portal:=core.get(portals,e)
-        if is_portal && core.has(worlds,e) && core.has(worlds,portal.exit) && portal.wall!=core.NONE {continue}
-        frame_drop(es,frames,e,core.at(core.read(frames),row))
+        if is_portal && core.has(worlds,e) && core.has(worlds,portal.exit) && !portal.mirror && portal.wall!=core.NONE {continue}
+        frame_drop(es,frames,e,core.at(frames,row))
     }
     for wall in walls[:wall_count] {cuts_put(cuts,wall.entity,wall.cuts)}
     for row in 0..<core.count(travelers) {
@@ -222,7 +223,7 @@ portals_collision :: proc(
             if core.has(cuts,e) {core.remove(cuts,e)}
             continue
         }
-        if had,has:=core.get(core.read(twins),e);!has || had!=twin {core.add(twins,e,twin)}
+        if had,has:=core.get(twins,e);!has || had!=twin {core.add(twins,e,twin)}
         mine:=phys.Collider_Cuts{count=1}
         mine.boxes[0]=cut
         cuts_put(cuts,e,mine)
@@ -241,7 +242,7 @@ portals_collision :: proc(
 
 @(private)
 cuts_put :: proc(cuts:^core.Table(phys.Collider_Cuts),e:core.Entity,value:phys.Collider_Cuts) {
-    if had,has:=core.get(core.read(cuts),e);has && had==value {return}
+    if had,has:=core.get(cuts,e);has && had==value {return}
     core.add(cuts,e,value)
 }
 

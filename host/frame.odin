@@ -3,6 +3,7 @@ package host
 import "base:runtime"
 import "core:c"
 import "core:log"
+import "core:math"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -34,7 +35,6 @@ FRAME_DEBUG_CAPACITY :: 8
 FRAME_INSTANCE_RESERVE :: 256
 FRAME_UI_TEXTURE_CAPACITY :: 32
 FRAME_EFFECT_VIEW_CAPACITY :: 16
-FRAME_SLOT_TEXTURE_CAPACITY :: 32
 TEXTURE_VIEW_CAPACITY :: 8
 PIPELINE_CACHE_FILE :: "pipelines.bin"
 
@@ -59,33 +59,9 @@ Frame_Extras :: struct {
     effect_view_count:int,
     probes:[render.DEPTH_PROBE_CAPACITY]render.Depth_Probe,
     probe_count:int,
-    slot_textures:[FRAME_SLOT_TEXTURE_CAPACITY]Slot_Texture,
-    slot_texture_count:int,
-    slots_shown:[FRAME_SLOT_TEXTURE_CAPACITY]Slot_Shown, // of the last frame: render_sync writes them
-    slots_shown_count:int,
     texture_views:[TEXTURE_VIEW_CAPACITY]render.Frame_View, // the views this frame draws into a texture
     texture_view_count:int,
     dropped:u64, // what did not fit in its frame and was not drawn, since the application started
-}
-
-// A texture a slot of the mesh of an entity shows this frame over its
-// material: as its base color, or as its light. Whatever draws the entity
-// shows it: its mesh of the world, or what replaces it
-// (render.Instance_Desc.replace_source), as a skinned copy.
-Slot_Texture :: struct {
-    object:u64, // render.Instance_Desc.object_id
-    slot:u32,
-    texture:render.Texture_Handle,
-    emission:f32, // the light it gives, as Material_Info.emission; 0: it is the base color
-}
-
-// What drew the mesh of a Slot_Texture in the last frame, and where: the mesh
-// the renderer posed, if one replaced that of the world.
-Slot_Shown :: struct {
-    object:u64,
-    mesh:render.Mesh_Handle,
-    anchor:[3]f32,
-    transform:render.Mat4, // relative to anchor
 }
 
 // The atlas the renderer holds: that of the font all the UI contexts of the
@@ -107,6 +83,13 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
     // folder: building them all again takes the GPU driver many seconds.
     pipelines:string
     if folder:=app_user_folder(app.root,context.temp_allocator);folder!="" {pipelines,_=filepath.join({folder,PIPELINE_CACHE_FILE},context.temp_allocator)}
+    surface:rhi.Surface_Desc
+    if desc.window {
+        surface={
+            vulkan_create=source.vulkan_create,vulkan_user=source.vulkan_user,metal_layer=source.metal_layer,
+            width=u32(app.drawable.x),height=u32(app.drawable.y),vsync=desc.vsync,
+        }
+    }
     device,device_error:=rhi.device_create({
         app_name="Mirai",validation=desc.gpu_validation,allow_hardware_ray_tracing=true,
         vulkan_instance_extensions=platform.vulkan_instance_extensions(p),
@@ -114,22 +97,13 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
         on_message=desc.gpu_message!=nil?desc.gpu_message:rhi.message_print,
         loader_lock=desc.gpu_loader_lock,
         pipeline_cache_path=pipelines,
+        surface=surface,
     })
     if device==nil {
         log.errorf("GPU device: %s",device_error)
         return .Device_Failed
     }
     app.device=device
-    if desc.window {
-        surface:=rhi.Surface_Desc{
-            vulkan_create=source.vulkan_create,vulkan_user=source.vulkan_user,metal_layer=source.metal_layer,
-            width=u32(app.drawable.x),height=u32(app.drawable.y),vsync=desc.vsync,
-        }
-        if !rhi.swapchain_create(device,surface) {
-            log.errorf("swapchain: %s",rhi.device_error(device))
-            return .Device_Failed
-        }
-    }
     renderer,allocation_error:=new(render.Renderer,app.allocator)
     if allocation_error!=nil {return .Out_Of_Memory}
     app.renderer=renderer
@@ -261,20 +235,30 @@ app_game_frame :: proc(app:^App,world:rawptr,phases:=ALL_PHASES,step:=false,dt:=
     speed:=max(1+f64(f.dilation),0)
     if clock:=core.world_storage_of(ref,core.Clock);clock!=nil {speed=clock.paused?0:speed*f64(clock.scale)}
     lasted:=dt>=0?dt:f64(frame.dt)
+    tick:=f64(app.tick_dt)
+    due:int
     if replay!=nil {
-        lasted=replay.dt
-        f.accumulator=replay.accumulator
-    } else if step {f.accumulator=f64(app.tick_dt)} else {f.accumulator+=lasted*speed}
-    due:=int(f.accumulator/f64(app.tick_dt))
-    if due>app.max_ticks {
-        app.stats.ticks_dropped+=u64(due-app.max_ticks)
-        f.accumulator-=f64(due-app.max_ticks)*f64(app.tick_dt)
-        due=app.max_ticks
+        lasted,f.accumulator,f.lag,due=replay.dt,replay.accumulator,replay.lag,replay.ticks
+    } else {
+        if step {f.accumulator=tick} else {f.accumulator+=lasted*speed}
+        due=int(f.accumulator/tick)
+        if due>app.max_ticks {
+            app.stats.ticks_dropped+=u64(due-app.max_ticks)
+            f.accumulator-=f64(due-app.max_ticks)*tick
+            due,f.lag=app.max_ticks,0
+        } else if step {f.lag=0} else {due=speed>0?ticks_steady(f,tick,lasted*speed):0}
+    }
+    // A paused frame leaves the counts of the frames that ran, so they hold after it.
+    if due>0 || speed>0 {
+        for i:=core.TICK_HISTORY-1;i>0;i-=1 {f.ran[i]=f.ran[i-1]+i32(due)}
+        f.ran[0]=i32(due)
+        f.seen=min(f.seen+1,core.TICK_HISTORY)
+        for &typical,i in f.typical {typical=clamp(typical,f.ran[i]-1,f.ran[i])}
     }
     if c:=app.content;c!=nil && replay!=nil {c.replay=replay.content}
     defer if c:=app.content;c!=nil {c.replay=nil}
     if record!=nil {
-        record.dt,record.accumulator=lasted,f.accumulator
+        record.dt,record.accumulator,record.lag,record.ticks=lasted,f.accumulator,f.lag,due
         record.content=content_generation(app)
     }
     tick_input:core.Input
@@ -315,16 +299,63 @@ app_game_frame :: proc(app:^App,world:rawptr,phases:=ALL_PHASES,step:=false,dt:=
     t.playing,f.dt=true,f32(lasted)
     if app.played_count<len(app.played) {app.played[app.played_count]={world,phases};app.played_count+=1}
     run_phase(app,loop,.Input,phases,world,nil)
-    for tick in 0..<due {
-        if input!=nil && tick>0 {input_settle(input)}
+    for n in 0..<due {
+        if input!=nil && n>0 {input_settle(input)}
         t.dt=app.tick_dt
         run_phase(app,loop,.Fixed,phases,world,nil)
-        f.accumulator-=f64(app.tick_dt)
+        f.accumulator-=tick
         core.time_advance(t)
         app.stats.ticks+=1
     }
-    f.alpha=f32(f.accumulator/f64(app.tick_dt))
+    f.alpha=f32(clamp((f.accumulator-f.lag)/tick,0,1))
     for phase in ([4]core.Phase{.Frame,.Late,.Ui,.Render}) {run_phase(app,loop,phase,phases,world,nil)}
+    if app.info.events_age!=nil {app.info.events_age(world,due>0)}
+}
+
+// How far before or after its time, in ticks, a tick may run to keep the count of ticks per frame
+// steady: frames that last a tick, give or take the jitter of the clock, run one each.
+TICK_JITTER_FIX :: 0.5
+
+// The ticks a frame that added step to the accumulator runs: those it completes, unless the last
+// frames ran a steady count and the accumulator is within TICK_JITTER_FIX of a tick of keeping it.
+// Frame_Time.lag becomes how far the shown time trails the accumulator, so the shown time moves
+// at the typical rate and stays between the last two ticks. From Godot's MainTimerSync
+// advance_core, advance_checked and get_average_physics_steps (main/main_timer_sync.cpp, MIT).
+@(private)
+ticks_steady :: proc "contextless" (f:^core.Frame_Time,tick,step:f64) -> int {
+    exact:=f.accumulator/tick
+    due:=int(math.floor(exact))
+    // The counts that keep the ticks of the last 1 to seen frames typical.
+    low,high:=0,max(int)
+    for i in 0..<int(f.seen) {
+        left:=int(f.typical[i])-(i>0?int(f.ran[i-1]):0)
+        if left>high || left+1<low {break}
+        low,high=max(low,left),min(high,left+1)
+    }
+    if due<low {due=min(low,int(math.floor(exact+TICK_JITTER_FIX)))}
+    else if due>high {due=max(high,int(math.floor(exact-TICK_JITTER_FIX)))}
+    due=max(due,0)
+
+    owed:=step+f.lag
+    base:=owed-(f.accumulator-f64(due)*tick) // the shown step that leaves the shown time on the last tick
+    shown:=owed
+    // The ticks per frame the typical counts allow, while they agree over more than 3 frames.
+    least,most:=f64(f.typical[0]),f64(f.typical[0])+1
+    agree:=int(f.seen)
+    for i in 1..<int(f.seen) {
+        lower:=f64(f.typical[i])/f64(i+1)
+        if lower>most {agree=i;break}
+        least=max(least,lower)
+        upper:=(f64(f.typical[i])+1)/f64(i+1)
+        if upper<least {agree=i;break}
+        most=min(most,upper)
+    }
+    if agree>3 {shown=clamp(shown,least*tick,most*tick)}
+    shown=clamp(shown,owed-TICK_JITTER_FIX*tick,owed+TICK_JITTER_FIX*tick)
+    shown=max(clamp(shown,base,base+tick),step/8)
+    if over:=shown-base;over>tick {due+=int(over/tick)}
+    f.lag=owed-shown
+    return due
 }
 
 // A fixed tick of a world that already ran, again, from inside the phase that
@@ -385,6 +416,7 @@ app_editor_frame :: proc(app:^App,world,editor:rawptr,played:=false) {
         input^=tick
     }
     for phase in core.Phase {run_phase(app,loop,phase,ALL_PHASES,world,editor)}
+    if app.info.events_age!=nil {app.info.events_age(world,true)}
 }
 
 // The functions of the editor loop in a phase that the game loop does not also call, in order.
@@ -450,7 +482,7 @@ app_frame_end :: proc(app:^App) {
     base.profile_end(zone)
     app.extras.layer_count,app.extras.panel_count,app.extras.debug_count=0,0,0
     clear(&app.extras.instances)
-    app.extras.ui_texture_count,app.extras.effect_view_count,app.extras.probe_count,app.extras.slot_texture_count=0,0,0,0
+    app.extras.ui_texture_count,app.extras.effect_view_count,app.extras.probe_count=0,0,0
     app.camera_cut=false
     app.camera_carried={}
     app.inspection={}
@@ -632,23 +664,6 @@ extras_free :: proc(extras:^Frame_Extras) {
     extras.instances=nil
 }
 
-// A texture a slot of the mesh of an entity shows this frame (Slot_Texture).
-// False without room for another one.
-extras_slot_texture_add :: proc(extras:^Frame_Extras,texture:Slot_Texture) -> bool {
-    if extras.slot_texture_count>=len(extras.slot_textures) {extras.dropped+=1;return false}
-    extras.slot_textures[extras.slot_texture_count]=texture
-    extras.slot_texture_count+=1
-    return true
-}
-
-extras_slot_textures :: proc(extras:^Frame_Extras) -> []Slot_Texture {return extras.slot_textures[:extras.slot_texture_count]}
-
-// What drew the mesh of the Slot_Texture of object in the last frame.
-extras_slot_shown :: proc(extras:^Frame_Extras,object:u64) -> (Slot_Shown,bool) {
-    for shown in extras.slots_shown[:extras.slots_shown_count] {if shown.object==object {return shown,true}}
-    return {},false
-}
-
 // What the next frame is drawn from. cut: the view jumped and the history of
 // the image goes. carried: the rigid transform that carried the camera since
 // the last frame with what it sees, which keeps that history instead.
@@ -821,7 +836,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
         drawn=render.renderer_frame(r,desc)
         extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
         clear(&extras.instances)
-        extras.ui_texture_count,extras.effect_view_count,extras.probe_count,extras.slot_texture_count=0,0,0,0
+        extras.ui_texture_count,extras.effect_view_count,extras.probe_count=0,0,0
         app.camera_cut=false
         app.inspection={}
         app.view_count=0
@@ -886,13 +901,14 @@ app_world_draw :: proc(app:^App,world,editor:rawptr,texture:render.Texture_Handl
         t.dt,t.playing=0,false
         f.dt,f.alpha=max(dt,0),1
         run_phase(app,.Editor,.Fixed,{.Fixed},world,editor)
+        core.world_events_age(ref)
         offscreen_origin(app,ref)
         run_phase(app,.Game,.Render,{.Render},world,nil)
         seen:=[1]render.Frame_View{{camera=app.camera,camera_cut=cut && frame==0,rect={0,0,size.x,size.y},texture=texture}}
         drawn=render.renderer_frame(r,{camera=app.camera,camera_cut=cut && frame==0,time=app.time+f32(frame)*max(dt,0),views=seen[:],offscreen=true})
         extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
         clear(&extras.instances)
-        extras.ui_texture_count,extras.effect_view_count,extras.probe_count,extras.slot_texture_count=0,0,0,0
+        extras.ui_texture_count,extras.effect_view_count,extras.probe_count=0,0,0
         if !drawn {return}
     }
     return
@@ -921,7 +937,7 @@ app_png_write_start :: proc(app:^App,w:^Png_Write,path:string,pixels:[]u8,width,
         w.error=no_path
         return
     }
-    jobs.run(&app.jobs,jobs.OWNER,png_write,w,&w.counter)
+    jobs.run(&app.jobs,jobs.OWNER,.Background,png_write,w,&w.counter)
 }
 
 @(private="file")

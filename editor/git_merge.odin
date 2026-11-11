@@ -80,7 +80,7 @@ git_merge_load_start :: proc(s:^Session) {
     }
     if len(g.merge.files)==0 {return}
     for &file in g.merge.files {append(&g.load_paths,strings.clone(base.text_get(file.path[:]),git_merge_arena(g)))}
-    git.start(g,s.app.platform,git_roots(s),.Load)
+    git.start(g,git_roots(s),.Load)
 }
 
 git_merge_clear :: proc(g:^Git) {
@@ -236,7 +236,7 @@ git_merge_resolved :: proc(s:^Session,f:int,allocator:=context.temp_allocator) -
     doc:asset.Document
     if asset.document_read(&doc,file.merged,allocator)!=.None {return file.merged}
     scene:asset.Scene
-    is_scene:=doc.kind==asset.KIND_SCENE || doc.kind==asset.KIND_PREFAB
+    is_scene:=doc.kind==asset.KIND_SCENE
     if is_scene {
         if asset.scene_from_document(&scene,&a.types,&doc)!=.None {return file.merged}
     }
@@ -352,7 +352,7 @@ git_file_absolute :: proc(g:^Git,file:^Git_Merge_File) -> string {
 }
 
 // Replaces the edited World with a scene in memory, keeping the file of the
-// document, which is unsaved after; the item shown stays selected.
+// document, which finishing the merge writes; the item shown stays selected.
 @(private)
 git_scene_show :: proc(s:^Session,data:[]u8) {
     a:=s.app.assets
@@ -372,8 +372,8 @@ git_scene_show :: proc(s:^Session,data:[]u8) {
     document_previous_free(s.document)
     s.document.previous=loaded
     history.edits_reset(s.edits,w)
-    s.document.saved=history.edits_scene_state(s.edits)
-    s.document.unsaved=true
+    s.document.written=history.edits_scene_state(s.edits)
+    s.document.stale=false
     s.view_cut=true
     g:=s.git
     if g.merge.current>=0 && g.merge.current<len(g.merge.items) {git_select(s,g.merge.items[g.merge.current].key)}
@@ -400,7 +400,7 @@ git_merge_finish :: proc(s:^Session) -> string {
         if data!=nil && serial.file_write_atomic(git_file_absolute(g,&file),data)!=.None {return fmt.tprintf("%s could not be written",base.text_get(file.path[:]))}
         append(&g.finish_paths,strings.clone(base.text_get(file.path[:]),git_merge_arena(g)))
     }
-    git.start(s.git,s.app.platform,git_roots(s),.Finish)
+    git.start(s.git,git_roots(s),.Finish)
     return ""
 }
 
@@ -521,59 +521,59 @@ git_highlight_style :: proc(s:^Session) {
 // ---------------------------------------------------------------- the Git tab
 
 git_merge_build :: proc(s:^Session,width,room:f32) {
-    g:=s.git;ctx:=s.gui.ctx;th:=&ctx.theme
+    g:=s.git;ctx:=s.gui.ctx
     busy:=git.working(g)
     m:=&g.merge
     left:=0
     for item in m.items {if !item.accepted {left+=1}}
-    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=8,padding=ui.padding_all(10),fill=th.chip,radius=th.radius_control}) {
+    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=8,padding=ui.padding_all(10),fill=ui.tone(ctx,"chip"),radius=ui.metric(ctx,"radius_control")}) {
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=8,align_y=.Center}) {
-            ui.icon(ctx,ui.icon_user(u8(User_Icon.Branch)),th.danger,14)
+            ui.icon(ctx,ui.icon_user(u8(User_Icon.Branch)),ui.tone(ctx,"danger"),14)
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=2}) {
-                ui.label(ctx,"Merge conflicts",th.font,th.text,font=ui.FONT_SEMIBOLD)
+                ui.label(ctx,"Merge conflicts",ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
                 into:[128]u8
-                ui.label(ctx,fmt.bprintf(into[:],"origin into %s",base.text_get(g.branch[:])),th.font_small,th.text_faint)
+                ui.label(ctx,fmt.bprintf(into[:],"origin into %s",base.text_get(g.branch[:])),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
             }
             count:[32]u8
-            ui.label(ctx,!m.loaded?"Reading...":left==0?"Resolved":fmt.bprintf(count[:],"%d left",left),th.font_small,th.text_muted)
+            ui.label(ctx,!m.loaded?"Reading...":left==0?"Resolved":fmt.bprintf(count[:],"%d left",left),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
         }
         total:=max(len(m.items),1)
         done:=f32(len(m.items)-left)/f32(total)
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(3),fill=th.chip_on,radius=1.5}) {
-            if ui.box(ctx,{width=ui.fixed(max(done*(width-20),0)),height=ui.GROW,fill=th.accent,radius=1.5}) {}
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(3),fill=ui.tone(ctx,"chip_on"),radius=1.5}) {
+            if ui.box(ctx,{width=ui.fixed(max(done*(width-20),0)),height=ui.GROW,fill=ui.tone(ctx,"accent"),radius=1.5}) {}
         }
-        if ui.button(ctx,ui.id(ctx,"git_ai_all"),{label="Resolve all with AI",icon=.Sparkle,style=.Field,width=-1,center=true,disabled=busy || !m.loaded}).clicked {git_merge_ai(s,-1)}
+        if ui.button(ctx,ui.id(ctx,"git_ai_all"),{label="Resolve all with AI",icon=.Sparkle,variant="field",width=-1,center=true,disabled=busy || !m.loaded}).clicked {git_merge_ai(s,-1)}
     }
     previous:=-1
     for &item,i in m.items {
         if item.file!=previous {
             previous=item.file
-            ui.label(ctx,base.text_get(m.files[item.file].path[:]),th.font_caption,th.text_caption)
+            ui.label(ctx,base.text_get(m.files[item.file].path[:]),ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"))
         }
         ui.id_push(ctx,ui.id(ctx,"item",i))
         shown:=m.shown && m.current==i
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row+4),gap=6,align_y=.Center,padding={10,0,4,0},fill=shown?th.chip_on:th.chip,radius=th.radius_control}) {
-            if ui.button(ctx,ui.id(ctx,"pick"),{label=base.text_get(item.name[:]),icon=item.key!=0?.Cube:ui.icon_user(u8(User_Icon.Component)),icon_color=th.text_muted,style=.Ghost,width=-1,size=th.font_small,padding=-1}).clicked {
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")+4),gap=6,align_y=.Center,padding={10,0,4,0},fill=shown?ui.tone(ctx,"chip_on"):ui.tone(ctx,"chip"),radius=ui.metric(ctx,"radius_control")}) {
+            if ui.button(ctx,ui.id(ctx,"pick"),{label=base.text_get(item.name[:]),icon=item.key!=0?.Cube:ui.icon_user(u8(User_Icon.Component)),icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=-1,size=ui.metric(ctx,"font_small"),padding=-1}).clicked {
                 m.current=i
                 git_merge_focus(s)
             }
             file:=&m.files[item.file]
             if !item.accepted && file.merged==nil && file.text {
-                if ui.button(ctx,ui.id(ctx,"ai"),{label="AI",icon=.Sparkle,style=.Field,height=th.control-6,size=th.font_small,disabled=busy}).clicked {git_merge_ai(s,i)}
+                if ui.button(ctx,ui.id(ctx,"ai"),{label="AI",icon=.Sparkle,variant="field",height=ui.metric(ctx,"control")-6,size=ui.metric(ctx,"font_small"),disabled=busy}).clicked {git_merge_ai(s,i)}
             }
-            if item.accepted {ui.icon(ctx,.Check,th.accent_hover,13)} else {ui.box(ctx,{width=ui.fixed(6),height=ui.fixed(6),fill=th.danger,radius=3})}
+            if item.accepted {ui.icon(ctx,.Check,ui.tone(ctx,"accent_hover"),13)} else {ui.box(ctx,{width=ui.fixed(6),height=ui.fixed(6),fill=ui.tone(ctx,"danger"),radius=3})}
         }
         ui.id_pop(ctx)
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6}) {
-        if ui.button(ctx,ui.id(ctx,"git_abort"),{label="Abort",style=.Field,width=-1,center=true,disabled=busy}).clicked {
-            if message:=git.abort(s.git,s.app.platform,git_roots(s));message!="" {notify(s,message)}
+        if ui.button(ctx,ui.id(ctx,"git_abort"),{label="Abort",variant="field",width=-1,center=true,disabled=busy}).clicked {
+            if message:=git.abort(s.git,git_roots(s));message!="" {notify(s,message)}
         }
-        if ui.button(ctx,ui.id(ctx,"git_reject_all"),{label="Reject all",style=.Field,width=-1,center=true,disabled=busy || !m.loaded}).clicked {git_merge_settle_all(s,true)}
+        if ui.button(ctx,ui.id(ctx,"git_reject_all"),{label="Reject all",variant="field",width=-1,center=true,disabled=busy || !m.loaded}).clicked {git_merge_settle_all(s,true)}
         if left==0 {
-            if ui.button(ctx,ui.id(ctx,"git_finish"),{label="Finish merge",style=.Accent,width=-1,center=true,disabled=busy || !m.loaded}).clicked {
+            if ui.button(ctx,ui.id(ctx,"git_finish"),{label="Finish merge",variant="accent",width=-1,center=true,disabled=busy || !m.loaded}).clicked {
                 if message:=git_merge_finish(s);message!="" {notify(s,message)}
             }
-        } else if ui.button(ctx,ui.id(ctx,"git_accept_all"),{label="Accept all",style=.Accent,width=-1,center=true,disabled=busy || !m.loaded}).clicked {git_merge_settle_all(s,false)}
+        } else if ui.button(ctx,ui.id(ctx,"git_accept_all"),{label="Accept all",variant="accent",width=-1,center=true,disabled=busy || !m.loaded}).clicked {git_merge_settle_all(s,false)}
     }
 }

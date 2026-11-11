@@ -79,9 +79,14 @@ path_resolve :: proc(s:^Schema,type:Type_Index,path:string) -> (target:Path_Targ
         if name=="" {return target,.Syntax,start}
         #partial switch text_kind(current) {
         case .Struct:
+            // A path written before a field was renamed names it by a name it had (was=).
             found:^Field
-            for &field in s.fields[current.first:][:current.count] {
+            fields:=s.fields[current.first:][:current.count]
+            for &field in fields {
                 if field.name==name {found=&field;break}
+            }
+            for &field in fields {
+                if found==nil && names_hold(field.was,name) {found=&field}
             }
             if found==nil {return target,.Unknown_Field,start}
             target.offset+=int(found.offset)
@@ -180,7 +185,7 @@ value_get :: proc(s:^Schema,type:Type_Index,data:[]u8,path:string) -> (value:Val
     case .Entity: return base.Entity(scalar_unsigned(bytes)),.None
     case .Entity_Id: return base.Entity_Id(scalar_unsigned(bytes)),.None
     case .Asset: return intrinsics.unaligned_load((^base.Asset_Id)(raw_data(bytes))),.None
-    case .Struct,.Array:
+    case .Struct,.Array,.Slice,.String,.Json:
     }
     return nil,.Not_A_Value
 }
@@ -276,7 +281,7 @@ value_set :: proc(s:^Schema,type:Type_Index,data:[]u8,path:string,value:Value) -
         id,ok:=value.(base.Asset_Id)
         if !ok {return .Wrong_Type}
         intrinsics.unaligned_store((^base.Asset_Id)(raw_data(bytes)),id)
-    case .Struct,.Array:
+    case .Struct,.Array,.Slice,.String,.Json:
         return .Not_A_Value
     }
     return .None

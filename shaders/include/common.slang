@@ -182,7 +182,9 @@ struct Instance {
     float4 glass;         // rgb: what a crossing of one of its blended faces leaves of light, the mean over them (glass_mean.comp writes it after every upload); a: their area
     uint slot_materials[32]; // row+1 by source slot; zero inherits
     float wet;            // 0 dry to 1 soaked (render.scene_set_instance_wet)
-    uint reserved[3];
+    uint material_values; // 1 + the word of the index pool where the values it gives over the rows of its materials start; 0: none
+    uint colors;          // its own color of each vertex of its mesh in vertex_words, by index in the mesh (render.scene_set_instance_colors)
+    uint color_count;     // 0: the colors of its mesh
 };
 uint instance_mesh(Instance inst) { return inst.meta.x & INSTANCE_MESH_MASK; }
 uint instance_ray_cut(Instance inst) { return (inst.meta.x >> INSTANCE_RAY_SHIFT) & 3u; }
@@ -248,7 +250,7 @@ struct Material {
     float3 specular_color;      // multiplies the dielectric F0 of its IOR
     float specular_factor;
     float transmission;         // share of the light that goes through instead of being diffused
-    float ior;                  // 0: a constant Fresnel
+    float ior;                  // 1 and above
     float thickness;            // 0: a sheet
     float attenuation_distance; // 0: the solid absorbs nothing
     float3 attenuation_color;   // what a solid leaves of white light that crosses attenuation_distance of it
@@ -268,12 +270,15 @@ struct Material_Fuzz { float3 color; float weight; float roughness; };
 struct Material_Anisotropy { float amount; float2 rotation; }; // rotation: cosine and sine
 struct Material_Diffuse_Transmission { float3 color; float weight; };
 struct Material_Volume { float3 scatter; float pad; }; // what a solid scatters of what it stops
-struct Material_Row {
-    Material shared;
+struct Material_Blocks {
     Material_Coat coat;
     Material_Fuzz fuzz;
     Material_Anisotropy anisotropy;
     Material_Diffuse_Transmission diffuse_transmission;
+};
+struct Material_Row {
+    Material shared;
+    Material_Blocks blocks;
     Material_Volume volume;
     Material_Map_Transform map_transforms[MATERIAL_MAPS];
     float4 custom_params[16];
@@ -317,8 +322,8 @@ struct Bvh_Node {
 struct Bvh_Triangle {
     float3 v0;
     uint primitive; // index within the mesh (integer, never float bits)
-    float4 e1;
-    float4 e2;
+    float4 v1;      // w unused
+    float4 v2;
 };
 
 // Probe.cell.w flags: traced for its cell and seeing out of geometry; inside

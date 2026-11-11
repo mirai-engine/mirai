@@ -1,5 +1,6 @@
 #include "native.slang"
-//! variant highlight MIRAI_EDITOR_HIGHLIGHT=1
+// highlight: the mask of the editor's highlight, drawn without the jitter of the view.
+//! constant highlight MIRAI_EDITOR_HIGHLIGHT
 // batches: the G-buffer, which draws the visible clusters the cull listed,
 // those of the instances of batches too; clip: the same for a view with a
 // clip plane, which nothing is drawn behind.
@@ -46,12 +47,9 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
 #endif
     uint material = material_of(inst, cluster_material(mesh, c));
     bool drawn = corner < cluster_triangle_count(c) * 3u;
-#if !defined(MIRAI_BATCHES) && !defined(MIRAI_EDITOR_HIGHLIGHT)
-    drawn = drawn && cluster_in_cut(inst, instance_scale(inst), mesh, c, frame.cut.x);
-#elif defined(MIRAI_EDITOR_HIGHLIGHT)
-    drawn = drawn && cluster_finest_resident(mesh, c);
-#endif
 #ifndef MIRAI_BATCHES
+    if (MIRAI_EDITOR_HIGHLIGHT) drawn = drawn && cluster_finest_resident(mesh, c);
+    else drawn = drawn && cluster_in_cut(inst, instance_scale(inst), mesh, c, frame.cut.x);
     drawn = drawn && (draw.program == INVALID || materials[material].shared.program_id == draw.program);
 #endif
     if (!drawn) {
@@ -67,6 +65,7 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
         previous = mesh.part_word + mesh.vertex_count * POSED_WORDS;
     }
     Mesh_Point v = cluster_point_at(mesh, c, local, posed);
+    v.color = instance_vertex_color(inst, c.vertex_first + local, v.color);
     float3 world = transform_point(inst.world, v.position);
     float3 prev_world = transform_point(inst.prev_world, cluster_position_previous(mesh, c, local, previous));
     float fade = view_body_fade(inst.meta.w);

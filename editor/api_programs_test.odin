@@ -6,7 +6,6 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:testing"
-import "mirai:asset"
 import "mirai:core"
 import "mirai:cook/shaders"
 import "mirai:editor/api"
@@ -40,7 +39,7 @@ programs_test_call :: proc(t:^testing.T,state:^Api_State,method,params:string) -
 }
 
 @(test)
-programs_of_any_domain_are_made_and_changed_in_memory_as_steps_of_undo :: proc(t:^testing.T) {
+programs_of_any_domain_are_made_and_changed_on_disk_as_steps_of_undo :: proc(t:^testing.T) {
     cleaned,_:=filepath.clean(PROGRAMS_TEST_ENGINE,context.temp_allocator)
     engine,_:=strings.replace_all(cleaned,"\\","/",context.temp_allocator)
     if _,found:=shaders.tool_find(engine,.Slangc,context.temp_allocator);!found {log.warn("slangc is not installed: run `mirai setup slang`");return}
@@ -62,18 +61,17 @@ programs_of_any_domain_are_made_and_changed_in_memory_as_steps_of_undo :: proc(t
     programs_api_register(s,state)
     if !testing.expectf(t,state.refused==0,"%s",state.refusal) {return}
     path:=project.path(f.root,"shaders/glow_post.slang",allocator=context.temp_allocator)
-    held :: proc(r:^asset.Registry,path:string) -> string {
-        memory,found:=asset.registry_memory_find(r,path)
-        return found && !memory.removed?string(memory.data):"<none>"
+    held :: proc(path:string) -> string {
+        data,error:=os.read_entire_file(path,context.temp_allocator)
+        return error==nil?string(data):"<none>"
     }
 
-    // A PostProcess program from the template of its domain, in memory only.
+    // A PostProcess program from the template of its domain, written at once.
     reply,failure,ok:=programs_test_call(t,state,"material.program.create",`{"program":"Glow_Post","kind":"postprocess"}`)
     if !testing.expectf(t,ok,"%s %s",failure.message,failure.data) {return}
     testing.expect(t,reply["kind"].(json.String)=="postprocess" && reply["compiled"].(json.Boolean) && reply["file"].(json.String)=="shaders/glow_post.slang")
     template:=shaders.program_template(.Postprocess,"Glow_Post",context.temp_allocator)
-    testing.expect_value(t,held(&assets.registry,path),template)
-    testing.expect(t,!os.exists(path),"nothing is written until asset.save")
+    testing.expect_value(t,held(path),template)
     testing.expect_value(t,build.programs.serial,u64(1))
 
     // Its name is taken now, and a source has to declare the name it is made with.
@@ -84,27 +82,27 @@ programs_of_any_domain_are_made_and_changed_in_memory_as_steps_of_undo :: proc(t
     _,failure,ok=programs_test_call(t,state,"material.program.create",`{"program":"Bad","kind":"light"}`)
     testing.expect(t,!ok && strings.contains(failure.message,`"light" is not one of its names`),failure.message)
 
-    // It is found by its name before it is saved, as its domain.
+    // It is found by its name, as its domain.
     reply,failure,ok=programs_test_call(t,state,"material.program.inspect",`{"program":"Glow_Post"}`)
     testing.expectf(t,ok && reply["kind"].(json.String)=="postprocess" && reply["source"].(json.String)==template,"%s",failure.message)
 
     // An edit that does not compile changes nothing; one that does is a step of its own.
     _,failure,ok=programs_test_call(t,state,"material.program.edit",`{"program":"Glow_Post","edits":[{"old":"p.tint","new":"p.tint*brightness"}]}`)
-    testing.expect(t,!ok && failure.code==api.INVALID_PARAMS && strings.contains(failure.data,`"kind":"postprocess"`),failure.data)
-    testing.expect_value(t,held(&assets.registry,path),template)
+    testing.expect(t,!ok && failure.code==api.INVALID_PARAMS && strings.contains(failure.data,`"kind": "postprocess"`),failure.data)
+    testing.expect_value(t,held(path),template)
     _,failure,ok=programs_test_call(t,state,"material.program.edit",`{"program":"Glow_Post","source":"//! mirai surface Glow_Post\n"}`)
     testing.expect(t,!ok && strings.contains(failure.message,"//! mirai postprocess Glow_Post"),failure.message)
     reply,failure,ok=programs_test_call(t,state,"material.program.edit",`{"program":"Glow_Post","edits":[{"old":"p.tint","new":"p.tint*0.5"}]}`)
     testing.expectf(t,ok && reply["compiled"].(json.Boolean),"%s %s",failure.message,failure.data)
-    testing.expect(t,strings.contains(held(&assets.registry,path),"p.tint*0.5"))
+    testing.expect(t,strings.contains(held(path),"p.tint*0.5"))
 
     // Its undo takes the edit back, and then the program: the steps are of the API.
     w:=edited_world(s)
     f.edits.author=history.EDIT_AUTHOR_API
     testing.expect(t,programs_test_quiet_undo(&f,w))
-    testing.expect_value(t,held(&assets.registry,path),template)
+    testing.expect_value(t,held(path),template)
     testing.expect(t,programs_test_quiet_undo(&f,w))
-    testing.expect_value(t,held(&assets.registry,path),"<none>")
+    testing.expect_value(t,held(path),"<none>")
     _,_,ok=programs_test_call(t,state,"material.program.inspect",`{"program":"Glow_Post"}`)
     testing.expect(t,!ok,"an undone program is not there")
 

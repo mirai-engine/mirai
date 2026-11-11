@@ -57,11 +57,15 @@ owned_body_create :: proc(state:^Physics_State,body:Owned_Body,position:[3]f32,r
     made=sim.body_create(&state.world,{type=.Static,position=position,rotation=rotation,user_data=u64(body.entity)})
     if made=={} {return {},.Capacity}
     slot:=int(base.handle_index(base.Handle(made)))
-    if slot>=len(state.owned) && resize(&state.owned,min(max(slot+1,2*len(state.owned)),state.world.desc.body_capacity))!=nil {
-        sim.body_destroy(&state.world,made)
-        return {},.Out_Of_Memory
+    if slot>=len(state.owned) {
+        count:=min(max(slot+1,2*len(state.owned)),state.world.desc.body_capacity)
+        if resize(&state.owned,count)!=nil || resize(&state.owned_stamps,base.chunks_of(count))!=nil {
+            sim.body_destroy(&state.world,made)
+            return {},.Out_Of_Memory
+        }
     }
     state.owned[slot]={made,body.owner,body.user}
+    slot_stamp(state,state.owned_stamps[:],slot)
     return made,.None
 }
 
@@ -136,6 +140,9 @@ settings_capacities :: proc(settings:Physics_Settings) -> Physics_Settings {
     if s.joints<=0 {s.joints=i32(desc.joint_capacity)}
     if s.characters<=0 {s.characters=i32(desc.character_capacity)}
     if s.fluids<=0 {s.fluids=i32(desc.fluid_capacity)}
+    if s.breakables<=0 {s.breakables=i32(desc.breakable_capacity)}
+    if s.pieces<=0 {s.pieces=i32(desc.piece_capacity)}
+    if s.bonds<=0 {s.bonds=i32(desc.bond_capacity)}
     if s.hulls<=0 {s.hulls=i32(desc.hull_capacity)}
     if s.meshes<=0 {s.meshes=i32(desc.mesh_capacity)}
     if s.heightfields<=0 {s.heightfields=i32(desc.heightfield_capacity)}

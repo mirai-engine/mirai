@@ -14,16 +14,16 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 
 // What animation_skin reads of the World, with the poses it draws.
-@(private="file")
+@(private)
+@(test_world)
 Bind_Pose_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     meshes:core.Table(erender.Mesh_Renderer),
     skins:core.Table(Pose_Source),
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     worlds:core.Table(core.World_Transform),
-    tints:core.Table(erender.Tint),
-    overrides:core.Table(erender.Material_Override),
+    lives:core.Table(erender.Material_Live),
     hidden:core.Table(erender.Hidden),
     elsewhere:core.Table(erender.Drawn_Elsewhere),
     highlights:core.Table(erender.Highlight),
@@ -71,7 +71,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     device:=shared_device.take_or_skip(t,hardware_rt=false)
     if device==nil {return}
     renderer:=new(gpu.Renderer);defer free(renderer)
-    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings:=gpu.DEFAULT_SETTINGS;settings.gi_enabled,settings.taa=false,false
     if !testing.expect(t,gpu.renderer_init(renderer,{device=device,width=96,height=64,settings=settings}),renderer.error) {return}
     defer gpu.renderer_destroy(renderer)
     assets:host.Assets
@@ -81,10 +81,11 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     defer host.extras_free(&app.extras)
     cache:Skin_Runtime;defer skin_runtime_free(&cache)
     state:Skin_Instances;defer skin_instances_free(&state)
+    posed:erender.Posed_Meshes;defer core.value_free(&posed,type_info_of(erender.Posed_Meshes))
     skeleton_assets:Skeleton_Assets;defer skeleton_assets_free(&skeleton_assets)
     w:Bind_Pose_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     roots,draws:[RIGS]core.Entity
     for i in 0..<RIGS {
         roots[i]=core.create(&w.entities);draws[i]=core.create(&w.entities)
@@ -96,7 +97,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
         core.add(&w.worlds,roots[i],{transform=transform,previous=transform})
         core.add(&w.worlds,draws[i],{transform=transform,previous=transform})
     }
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     definition:=skeleton_content(&skeleton_assets,app.assets,app.allocator,skeleton_id)
     if !testing.expect(t,definition!=nil) {return}
     for rig in roots {
@@ -104,9 +105,10 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
         if !testing.expect(t,pose!=nil && skeleton_bind(&w.playback,pose,definition,nil,&w.transforms)) {return}
         copy(pose.previous[:],pose.local[:]);pose.pose_ready=true
     }
-    tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,w:^Bind_Pose_World,problems:^core.Problems,modifiers:^Modifier_Runtime=nil) {
+    tick :: proc(app:^host.App,cache:^Skin_Runtime,state:^Skin_Instances,w:^Bind_Pose_World,problems:^core.Problems,posed:^erender.Posed_Meshes,modifiers:^Modifier_Runtime=nil) {
         clear(&app.extras.instances)
-        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),core.read(&w.tints),core.read(&w.overrides),core.read(&w.hidden),core.read(&w.elsewhere),core.read(&w.highlights),core.read(&w.outlines),core.read(&w.offsets),cache,state,app.assets,app.renderer,&app.extras,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{},{},core.Ref(Modifier_Runtime){ptr=modifiers})
+        animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,{},core.FRAME_TIME_DEFAULT,core.Ref(Playback){ptr=&w.playback},{},problems,{},nil,ANIMATION_BUDGET_CONFIG_DEFAULT,{},core.Ref(Modifier_Runtime){ptr=modifiers})
+        skin_shown(app,posed,core.read(&w.meshes),core.read(&w.worlds),core.read(&w.offsets),core.read(&w.parents),core.FRAME_TIME_DEFAULT)
     }
     measure :: proc(renderer:^gpu.Renderer,label:string) -> int {
         s:=&renderer.scene
@@ -115,7 +117,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
         return len(s.skinned)
     }
     measure(renderer,"loaded")
-    tick(&app,&cache,&state,&w,&problems)
+    tick(&app,&cache,&state,&w,&problems,&posed)
     testing.expect_value(t,problems.count,0)
     testing.expect_value(t,measure(renderer,"64 rigs at the bind pose"),0)
     testing.expect_value(t,len(host.extras_instances(&app.extras)),0)
@@ -125,10 +127,11 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     pose.local[1].position.y=0.5
     copy(pose.previous[:],pose.local[:])
     pose.changed+=1
-    tick(&app,&cache,&state,&w,&problems)
+    tick(&app,&cache,&state,&w,&problems,&posed)
     testing.expect_value(t,measure(renderer,"one rig posed"),1)
     if !testing.expect_value(t,len(host.extras_instances(&app.extras)),1) {return}
-    gpu.scene_set(renderer,host.extras_instances(&app.extras),nil,{},gpu.Environment{sky={1,1,1}})
+    gpu.scene_set_environment(renderer,{},gpu.Environment{sky={1,1,1}})
+    gpu.scene_update(renderer,0,host.extras_instances(&app.extras),true)
     if !testing.expect(t,gpu.renderer_frame(renderer,{camera={position={1,2,8},forward={0,-1,-8},up={0,1,0},fov_y=50,near=0.1,far=100}}),renderer.error) {return}
     record:=renderer.scene.meshes[core.entity_map_get(&state.instances,draws[0]).mesh]
     result:[1]gpu.Gpu_Posed_Vertex
@@ -136,17 +139,25 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     testing.expect_value(t,result[0].position,vertices[0].position+[3]f32{0,0.5,0})
     testing.expect_value(t,problems.count,0)
 
-    // A rig at the bind whose curves move a material value is drawn with its copy, which has it.
+    // A rig at the bind whose curves move a material value stays the mesh of the world: the value is the Material_Live of its mesh.
     still:=constraint_playing(&w.playback,roots[1])
     append(&still.curves,Curve_Output{target=base.name_hash("blush"),property=.Float,value={1,0,0,0},weight=1})
     blush:=CURVE_MATERIAL_DEFAULT;blush.rig,blush.every,blush.scale=roots[1],true,{1,0,0,0}
     base.text_set(blush.curve[:],"blush");base.text_set(blush.parameter[:],"base_color")
     testing.expect(t,modifier_append(&w.modifiers.curve_materials,roots[1],blush))
-    tick(&app,&cache,&state,&w,&problems,&w.modifiers)
-    testing.expect_value(t,measure(renderer,"one rig posed and one with curve materials"),2)
-    testing.expect_value(t,len(host.extras_instances(&app.extras)),2)
+    tick(&app,&cache,&state,&w,&problems,&posed,&w.modifiers)
+    test_world_settle(&w)
+    testing.expect_value(t,measure(renderer,"one rig posed and one with curve materials"),1)
+    live,_:=core.get(&w.lives,draws[1])
+    given:=erender.material_value_find(&live,0,base.name_hash("base_color"))
+    testing.expect(t,given>=0 && live.values[given]==[4]f32{1,0,0,0},"the value of the curve is live on the entity")
     instance:=core.entity_map_get(&state.instances,draws[1])
-    testing.expect(t,instance!=nil && instance.copied,"the still rig with curve materials has its copy")
+    testing.expect(t,instance!=nil && !instance.copied,"the still rig with curve materials makes no copy")
+    // A curve that stops playing takes its value away.
+    still.curves[0].weight=0
+    tick(&app,&cache,&state,&w,&problems,&posed,&w.modifiers)
+    test_world_settle(&w)
+    testing.expect(t,!core.has(&w.lives,draws[1]))
     testing.expect_value(t,problems.count,0)
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))

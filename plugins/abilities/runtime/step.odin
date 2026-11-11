@@ -6,22 +6,22 @@ import "mirai:core"
 import inp "mirai:engine/input"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // What abilities_step reads of the rest of the world and asks of it.
 @(params)
 Ability_World :: struct {
     time:core.Time,
-    seats:core.Read(inp.Seat),
-    drivables:core.Read(inp.Drivable),
-    characters:core.Read(phys.Character),
-    worlds:core.Read(core.World_Transform),
-    remotes:core.Read(core.Remote),
-    paces:core.Read(core.Own_Pace), // the windows on the Own clock count the user's own time
+    seats:^core.Table(inp.Seat,.Read),
+    characters:^core.Table(phys.Character,.Read),
+    locomotions:^core.Table(locomotion.Locomotion_State,.Read), // the modes the characters are in
+    worlds:^core.Table(core.World_Transform,.Read),
+    remotes:^core.Table(core.Remote,.Read),
+    paces:^core.Table(core.Own_Pace,.Read), // the windows on the Own clock count the user's own time
     clock:core.Clock,
     physics:core.Ref(phys.Physics_State),
-    moves:^phys.Locomotion_Requests,
-    actions:^anim.Action_Requests,
+    moves:^locomotion.Locomotion_Requests,
     animations:^anim.Animation_Requests,
     problems:^core.Problems,
 }
@@ -59,6 +59,7 @@ Tick :: struct {
     kits:core.Records(Ability_Kit),
     requests:^Ability_Requests,
     events:^Ability_Events,
+    events_from:int, // the events the log held when the tick began
     w:^Ability_World,
     overlap:Hitbox_Overlap,
     tick:u64,
@@ -67,9 +68,8 @@ Tick :: struct {
 }
 
 abilities_tick :: proc(users:^core.Table(Ability_User),abilities:core.Records(Ability),kits:core.Records(Ability_Kit),requests:^Ability_Requests,events:^Ability_Events,w:^Ability_World,overlap:Hitbox_Overlap) {
-    if events!=nil {core.queue_clear(&events.queue)}
     if users==nil || w==nil || !(w.time.dt>0) || !finite(w.time.dt) {return}
-    t:=Tick{users=users,abilities=abilities,kits=kits,requests=requests,events=events,w=w,overlap=overlap,tick=w.time.tick,dt=w.time.dt}
+    t:=Tick{users=users,abilities=abilities,kits=kits,requests=requests,events=events,events_from=events!=nil?len(events.queue.items):0,w=w,overlap=overlap,tick=w.time.tick,dt=w.time.dt}
     if requests!=nil {
         for r in requests.queue.items {request_apply(&t,r)}
         core.queue_clear(&requests.queue)
@@ -78,7 +78,7 @@ abilities_tick :: proc(users:^core.Table(Ability_User),abilities:core.Records(Ab
         e:=core.entity_at(users,row)
         u:=users.values[row]
         if core.owned(w.remotes,e) {user_tick(&t,e,&u)} else {replica_tick(&t,e,&u)}
-        if mem.compare_ptrs(&u,&users.values[row],size_of(Ability_User))!=0 {core.at(users,row)^=u}
+        if mem.compare_ptrs(&u,&users.values[row],size_of(Ability_User))!=0 {core.edit_at(users,row)^=u}
     }
 }
 
@@ -88,18 +88,18 @@ request_apply :: proc(t:^Tick,r:Ability_Request) {
     switch r.kind {
     case .Use:
         // As if its input fired: it waits as its sheet says.
-        if u:=core.get(t.users,r.entity);u!=nil {
+        if u:=core.edit(t.users,r.entity);u!=nil {
             a:=ability_sheet(t.abilities,r.ability)
             buffer_add(u,r.ability,t.tick,a!=nil && a.input.wait==.Running)
         }
     case .Cancel:
-        u:=core.get(t.users,r.entity)
+        u:=core.edit(t.users,r.entity)
         if u==nil || u.ability=={} {return}
         ability_end(t,r.entity,u,ability_sheet(t.abilities,u.ability),time_of(t,u),.Canceled,nil)
     case .Effect:
         effect_apply(t,r.entity,r.source,r.effect)
     case .Kit:
-        if u:=core.get(t.users,r.entity);u!=nil {u.kit,u.buffer=r.kit,{}}
+        if u:=core.edit(t.users,r.entity);u!=nil {u.kit,u.buffer=r.kit,{}}
     }
 }
 
@@ -109,11 +109,11 @@ effect_apply :: proc(t:^Tick,target,source:core.Entity,effect:Ability_Effect) {
         core.report(t.w.problems,target,"abilities.effect","an effect asked for it %s",text)
         return
     }
-    u:=core.get(t.users,target)
+    u:=core.edit(t.users,target)
     if u!=nil && u.statuses&effect.blocked_by!=0 {return}
     amount:=effect.amount
     if effect.scale_by!=ATTRIBUTE_NONE && amount!=0 {
-        from,found:=core.get(core.read(t.users),source)
+        from,found:=core.get(t.users,source)
         scale,has:=ability_value(from,effect.scale_by)
         if !found || !has {core.report(t.w.problems,target,"abilities.effect","an effect scaled by an attribute its source does not have hit it: give the source that attribute, or clear scale_by")}
         amount*=scale
@@ -131,7 +131,7 @@ effect_apply :: proc(t:^Tick,target,source:core.Entity,effect:Ability_Effect) {
         }
         lasting:=effect.statuses!=0 || effect.modify.attribute!=ATTRIBUTE_NONE || effect.period>0 || effect.cue!=CUE_NONE || effect.tags!=0
         if effect.seconds>0 && lasting {
-            timer:=Ability_Timer{tags=effect.tags,statuses=effect.statuses,modify=effect.modify,cue=effect.cue,stacks=1,start=t.tick,until=t.tick+max(ticks_of(effect.seconds,t.dt),1)}
+            timer:=Ability_Timer{tags=effect.tags,statuses=effect.statuses,modify=effect.modify,cue=effect.cue,stacks=1,start=t.tick,until=core.deadline(t.w.time,effect.seconds)}
             if effect.period>0 {timer.attribute,timer.amount,timer.period=effect.attribute,amount,u32(max(ticks_of(effect.period,t.dt),1))}
             slot:=-1
             if effect.tags!=0 {
@@ -160,7 +160,7 @@ effect_apply :: proc(t:^Tick,target,source:core.Entity,effect:Ability_Effect) {
     if effect.knockback!={} && core.has(t.w.characters,target) {
         velocity:=effect.knockback
         if pose,found:=core.get(t.w.worlds,source);found && source!=core.NONE {velocity=mm.quat_rotate(pose.rotation,velocity)}
-        phys.add_move(t.w.moves,target,{velocity=velocity,ticks=u32(max(ticks_of(effect.knockback_seconds,t.dt),1)),mix=.Override,id=KNOCKBACK_ID})
+        locomotion.add_move(t.w.moves,target,{velocity=velocity,ticks=u32(max(ticks_of(effect.knockback_seconds,t.dt),1)),mix=.Override,id=KNOCKBACK_ID})
     }
 }
 
@@ -201,10 +201,7 @@ buffer_add :: proc "contextless" (u:^Ability_User,ability:core.Record(Ability),t
 }
 
 @(private)
-ticks_of :: #force_inline proc "contextless" (seconds,dt:f32) -> u64 {
-    if !(seconds>0) || !(dt>0) {return 0}
-    return u64(math.round(f64(seconds)/f64(dt)))
-}
+ticks_of :: #force_inline proc "contextless" (seconds,dt:f32) -> u64 {return core.ticks_of(core.Time{dt=dt},seconds)}
 
 // The ticks of a window from the start of its ability, on its clock: open while from<=time<to.
 @(private)
@@ -257,9 +254,9 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Ability_User) {
                 if entry.attribute==timer.attribute {base_add(t,e,&entry,timer.amount*f32(max(timer.stacks,1)))}
             }
         }
-        if timer.until<=t.tick {timer_end(t,e,&timer)}
+        if core.due(t.w.time,timer.until) {timer_end(t,e,&timer)}
     }
-    for &c in u.cooldowns {if c.until!=0 && c.until<=t.tick {c={}}}
+    for &c in u.cooldowns {if c.until!=0 && core.due(t.w.time,c.until) {c={}}}
     // An entry leaves after the kit's buffer or, when it waits for the run it came in, once that
     // run is over too.
     buffer:=ticks_of(kit.buffer,t.dt) if kit!=nil else 0
@@ -371,7 +368,7 @@ sheet_valid :: proc(t:^Tick,e:core.Entity,ref:core.Record(Ability)) -> ^Ability 
 
 @(private)
 input_state :: proc(t:^Tick,e:core.Entity,input:Ability_Input) -> inp.Action_State {
-    return inp.body_action({t.w.seats,t.w.drivables},e,input.action)
+    return inp.body_action(t.w.seats,e,input.action)
 }
 
 @(private)
@@ -383,12 +380,13 @@ input_down :: proc(t:^Tick,e:core.Entity,input:Ability_Input) -> bool {
 input_fired :: proc(t:^Tick,e:core.Entity,input:Ability_Input) -> bool {
     if input.on==.None {return false}
     s:=input_state(t,e,input)
-    hold:=u32(ticks_of(input.hold,t.dt))
+    // The tick nearest to input.hold crosses it.
+    crossed:=input.hold-t.dt*0.5
     switch input.on {
     case .None: return false
     case .Pressed: return s.pressed
-    case .Released: return s.released && s.released_held>=hold
-    case .Held: return hold==0?s.pressed:s.down && s.held_ticks==hold
+    case .Released: return s.released && s.released_held>=crossed
+    case .Held: return s.down && s.held>=crossed && (s.pressed || s.held-t.dt<crossed)
     case .Down: return s.down
     }
     return false
@@ -416,8 +414,8 @@ start_block :: proc(w:^Ability_World,tick:u64,dt:f32,e:core.Entity,u:^Ability_Us
     if u.statuses&a.requires!=a.requires {return .Status_Missing}
     if u.statuses&a.blocked_by!=0 {return .Status_Blocked}
     if a.modes!=0 {
-        if w.characters.table==nil {return .Mode}
-        c,found:=core.get(w.characters,e)
+        if w.locomotions==nil {return .Mode}
+        c,found:=core.get(w.locomotions,e)
         if !found || u32(c.mode)>=32 || a.modes&Ability_Modes(u32(1)<<u32(c.mode))==0 {return .Mode}
     }
     for c in a.conditions {
@@ -457,24 +455,18 @@ ability_start :: proc(t:^Tick,e:core.Entity,u:^Ability_User,ref:core.Record(Abil
             if c.ability==ref || c.until==0 {slot=i;break}
             if c.until<u.cooldowns[slot].until {slot=i}
         }
-        u.cooldowns[slot]={ref,t.tick+max(ticks_of(a.cooldown,t.dt),1)}
+        u.cooldowns[slot]={ref,core.deadline(t.w.time,a.cooldown)}
     }
     for &b in u.buffer {if b.ability==ref {b={}}}
     u.ability,u.start,u.own,u.hits,u.hit_count=ref,t.tick,0,{},0
     event_push(t,{kind=.Started,entity=e,ability=ref,window=-1})
-    if name:=ability_name_text(&a.action);name!="" {
-        anim.action_fire(t.w.actions,e,name)
-    } else if name:=ability_name_text(&a.clip);name!="" {
-        mode:u16
-        if c,found:=core.get(t.w.characters,e);found {mode=u16(c.mode)}
-        anim.match_play(t.w.animations,e,name,mode)
-    }
+    if name:=ability_name_text(&a.action);name!="" {anim.play(t.w.animations,e,name)}
 }
 
 // Ends the running ability at at: its open windows close, their moves stop and its animation
-// stops unless next plays the same action, or a clip of its own. An action next does not fire again
-// is cancelled even when next fires another: on another layer nothing would replace it, and a
-// looping section would play on, and on the same layer the one next fires takes the layer.
+// stops unless next plays the same action. An action next does not play again is stopped even when
+// next plays another: in another layer nothing would replace it, and a looping section would play
+// on, and in the same layer the one next plays takes the layer.
 @(private)
 ability_end :: proc(t:^Tick,e:core.Entity,u:^Ability_User,a:^Ability,at:Ability_Time,kind:Ability_Event_Kind,next:^Ability) {
     ref:=u.ability
@@ -482,11 +474,10 @@ ability_end :: proc(t:^Tick,e:core.Entity,u:^Ability_User,a:^Ability,at:Ability_
         for &w,i in a.windows {
             if !ability_window_open(w,t.dt,at) {continue}
             event_push(t,{kind=.Window_End,entity=e,ability=ref,window=i8(i),cue=w.cue})
-            if w.move.velocity!={} {phys.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
+            if w.move.velocity!={} {locomotion.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
         }
         if kind!=.Completed || a.hold {
-            if name:=ability_name_text(&a.action);name!="" && (next==nil || ability_name_text(&next.action)!=name) {anim.action_cancel(t.w.actions,e,name)}
-            if ability_name_text(&a.clip)!="" && (next==nil || ability_name_text(&next.clip)=="") {anim.match_stop(t.w.animations,e)}
+            if name:=ability_name_text(&a.action);name!="" && (next==nil || ability_name_text(&next.action)!=name) {anim.stop(t.w.animations,e,name)}
         }
     }
     u.ability,u.start,u.own,u.hits,u.hit_count={},0,0,{},0
@@ -522,12 +513,12 @@ windows_advance :: proc(t:^Tick,e:core.Entity,u:^Ability_User,a:^Ability,before,
                 ticks:=u32(to-from)
                 // On the Own clock it lasts until the window closes, which removes it.
                 if w.clock==.Own {ticks=u32(math.ceil(f32(to-from)/max(pace_tick(t,e),1.0/64)))}
-                phys.add_move(t.w.moves,e,{velocity=velocity,ticks=ticks,mix=w.move.mix,id=MOVE_ID+u32(i)})
+                locomotion.add_move(t.w.moves,e,{velocity=velocity,ticks=ticks,mix=w.move.mix,id=MOVE_ID+u32(i)})
             }
         }
         if was && !is {
             event_push(t,{kind=.Window_End,entity=e,ability=u.ability,window=i8(i),cue=w.cue})
-            if w.clock==.Own && w.move.velocity!={} {phys.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
+            if w.clock==.Own && w.move.velocity!={} {locomotion.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
         }
     }
 }
@@ -595,10 +586,8 @@ derive :: proc(t:^Tick,u:^Ability_User,active:^Ability,at:Ability_Time) {
 @(private)
 event_push :: proc(t:^Tick,event:Ability_Event) {
     if t.events==nil {return}
-    if cap(t.events.queue.items)==0 {
-        if reserve(&t.events.queue.items,EVENT_CAPACITY)!=nil {return}
-    }
-    if len(t.events.queue.items)>=EVENT_CAPACITY {
+    if cap(t.events.queue.items)<t.events_from+EVENT_CAPACITY && reserve(&t.events.queue.items,t.events_from+EVENT_CAPACITY)!=nil {return}
+    if len(t.events.queue.items)>=t.events_from+EVENT_CAPACITY {
         core.report(t.w.problems,core.NONE,"abilities.events","more than %d ability events in one tick: the rest were dropped",EVENT_CAPACITY)
         return
     }

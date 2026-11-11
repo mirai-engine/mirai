@@ -3,24 +3,17 @@
 // pass (CUSTOM_SLOT_n, custom_slots.slang) each resource takes, as fsr.odin
 // binds them; the constants go at slot 0 and the second block at slot 1.
 //
-// 32 bits: FFX_HALF stays undefined. The depth is reversed (1 nearest), the
-// input color is HDR in render units, and the motion vectors are offsets in
-// UV at the render size, without the jitter. The samplers are the renderer's
-// (SLOT_POINT_SAMPLER and SLOT_LINEAR_SAMPLER).
+// The headers are reduced to the configuration Mirai compiles: HLSL on the
+// GPU at 32 bits, the depth reversed (1 nearest), the input color HDR in
+// render units, the motion vectors offsets in UV at the render size without
+// the jitter, and SPD over shared memory instead of wave intrinsics. The
+// samplers are the renderer's (SLOT_POINT_SAMPLER and SLOT_LINEAR_SAMPLER).
 #ifndef MIRAI_FSR3_SLANG
 #define MIRAI_FSR3_SLANG
 
-#define FFX_GPU 1
-#define FFX_HLSL 1
-#define FFX_FSR3UPSCALER_OPTION_INVERTED_DEPTH 1
-#define FFX_FSR3UPSCALER_OPTION_HDR_COLOR_INPUT 1
 #ifndef FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING
 #define FFX_FSR3UPSCALER_OPTION_APPLY_SHARPENING 0
 #endif
-#define FFX_FSR3UPSCALER_OPTION_LOW_RESOLUTION_MOTION_VECTORS 1
-#define FFX_FSR3UPSCALER_OPTION_JITTERED_MOTION_VECTORS 0
-// The SPD reduction walks shared memory instead of wave intrinsics.
-#define SPD_NO_WAVE_OPERATIONS 1
 
 // HLSL qualifiers that have no meaning in SPIR-V: the shader clamps the values
 // it stores and the atomics are device-scope already.

@@ -12,7 +12,8 @@ import "mirai:std/serial"
 //   clips     Animation_Clip: its name and where its tracks and markers are
 //   tracks    Animation_Track: what it moves, by name, and where its keys or samples are
 //   keys      anim.Keyframe, those of a track in time order
-//   markers   Animation_Marker: a named moment of a clip
+//   markers   Animation_Marker: a named moment of a clip, or a named span of it, of the entity
+//             that plays it or of another one it names
 //   streams   bulk: the stream of each clip that has one (anim.Stream_Header), with
 //             anim.STREAM_PADDING bytes after the last
 //
@@ -24,8 +25,11 @@ import "mirai:std/serial"
 // if any: its rest pose holds what the clip does not move, and compression
 // measures the error on it. How a clip repeats belongs to whoever
 // plays it. A morph target's weight is the target "<path>/@morph/<target>".
+// A Float or Vector track whose target is "<path>/@field/<Component>.<field>"
+// writes that field of that component of the entity at path: a light's
+// intensity, a camera's field of view, any number, vector, color or flag.
 
-ANIMATION_VERSION :: 4
+ANIMATION_VERSION :: 6
 ANIMATION_NAME_CAPACITY :: 64
 // The path of a node or bone below the entity that plays, with its zero: a
 // track target, a skeleton bone, a root bone.
@@ -36,6 +40,8 @@ ANIMATION_MAX_KEYS :: 1<<24
 ANIMATION_MAX_MARKERS :: 1<<20
 ANIMATION_STREAMS_ALIGNMENT :: 8
 ANIMATION_MORPH_PATH :: "/@morph/"
+ANIMATION_FIELD_PATH :: "@field/"
+ANIMATION_FIELD_CAPACITY :: 128
 
 Animation_Clip :: struct {
     name:[ANIMATION_NAME_CAPACITY]u8 `mirai:"text"`,
@@ -56,9 +62,30 @@ Animation_Track :: struct {
     encoding:anim.Key_Encoding,
     first_key,key_count:u32, // a sampled track is in its clip's stream and has none
 }
+// A span is a marker with a duration: the sections and windows of an action and the warp windows
+// of a character name the spans of their clips. A marker with a target is on the entity the
+// tracks of that target move: a camera or an actor of a cinematic.
 Animation_Marker :: struct {
     time:f32,
     name:[ANIMATION_NAME_CAPACITY]u8 `mirai:"text"`,
+    duration:f32, // 0: a moment
+    target:[NODE_PATH_CAPACITY]u8 `mirai:"text"`, // empty: none
+}
+
+// The parts of a track target that drives a field, "<path>/@field/<Component>.<field>" or, for
+// the entity that plays the clip, "@field/<Component>.<field>": the path of the entity, the name of
+// the component and the path of the field inside it. False for any other target.
+animation_field_target :: proc "contextless" (target:string) -> (node,component,field:string,ok:bool) {
+    at:=-1
+    for i:=len(target)-len(ANIMATION_FIELD_PATH);i>=0;i-=1 {
+        if target[i:][:len(ANIMATION_FIELD_PATH)]==ANIMATION_FIELD_PATH && (i==0 || target[i-1]=='/') {at=i;break}
+    }
+    if at<0 {return}
+    named:=target[at+len(ANIMATION_FIELD_PATH):]
+    dot:=-1
+    for i in 0..<len(named) {if named[i]=='.' {dot=i;break}}
+    if dot<=0 || dot==len(named)-1 || dot>=ANIMATION_NAME_CAPACITY || len(named)-dot-1>=ANIMATION_FIELD_CAPACITY {return}
+    return target[:max(at-1,0)],named[:dot],named[dot+1:],true
 }
 
 Animation_Track_Desc :: struct {
@@ -67,7 +94,7 @@ Animation_Track_Desc :: struct {
     slot:u8,
     keys:[]anim.Keyframe,
 }
-Animation_Marker_Desc :: struct {time:f32,name:string}
+Animation_Marker_Desc :: struct {time:f32,name:string,duration:f32,target:string}
 Animation_Clip_Desc :: struct {
     name:string,
     tracks:[]Animation_Track_Desc,
@@ -120,9 +147,9 @@ animation_document :: proc(doc:^Document,types:^Types,desc:Animation_Desc,alloca
             append(&keys,..track.keys)
         }
         for marker in clip.markers {
-            if len(marker.name)==0 || len(marker.name)>=ANIMATION_NAME_CAPACITY {return .Invalid}
-            stored:=Animation_Marker{time=marker.time}
-            text_set(stored.name[:],marker.name)
+            if len(marker.name)==0 || len(marker.name)>=ANIMATION_NAME_CAPACITY || len(marker.target)>=NODE_PATH_CAPACITY {return .Invalid}
+            stored:=Animation_Marker{time=marker.time,duration=marker.duration}
+            text_set(stored.name[:],marker.name);text_set(stored.target[:],marker.target)
             append(&markers,stored)
         }
     }
@@ -204,7 +231,7 @@ animation_check :: proc(view:Animation_View) -> bool {
         }
     }
     for &marker in view.markers {
-        if !text_valid(marker.name[:]) || marker.name[0]==0 || !finite(marker.time) || marker.time<0 {return false}
+        if !text_valid(marker.name[:]) || marker.name[0]==0 || !text_valid(marker.target[:]) || !finite(marker.time,marker.duration) || marker.time<0 || marker.duration<0 {return false}
     }
     return true
 }
@@ -234,7 +261,7 @@ animation_descs :: proc(view:Animation_View,allocator:=context.allocator) -> (cl
         markers,e2:=make([]Animation_Marker_Desc,int(clip.marker_count),allocator)
         if e1!=nil || e2!=nil {return nil,false}
         for &track,j in view.tracks[clip.first_track:][:clip.track_count] {tracks[j]={target=base.text_get(track.target[:]),property=track.property,slot=track.slot,keys=view.keys[track.first_key:][:track.key_count]}}
-        for &marker,j in view.markers[clip.first_marker:][:clip.marker_count] {markers[j]={marker.time,base.text_get(marker.name[:])}}
+        for &marker,j in view.markers[clip.first_marker:][:clip.marker_count] {markers[j]={marker.time,base.text_get(marker.name[:]),marker.duration,base.text_get(marker.target[:])}}
         clips[i]={name=base.text_get(clip.name[:]),tracks=tracks,markers=markers,root=clip.root,skeleton=clip.skeleton}
     }
     return clips,true
@@ -264,7 +291,7 @@ animation_clips_add :: proc(view:Animation_View,lib:^anim.Library,loop:=anim.Loo
         }
         markers:=make([]anim.Marker,clip.marker_count,context.temp_allocator)
         for &marker,i in view.markers[clip.first_marker:][:clip.marker_count] {
-            markers[i]={marker.time,clip.first_marker+u32(i)}
+            markers[i]={marker.time,clip.first_marker+u32(i),marker.duration}
         }
         stream:=view.streams[clip.stream:][:clip.stream_bytes] if clip.stream_bytes>0 else nil
         added,_:=anim.clip_add(lib,{name=base.name_hash(serial.text_field(clip.name[:])),loop=loop,tracks=tracks,markers=markers,stream=stream})

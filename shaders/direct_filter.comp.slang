@@ -1,7 +1,7 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-//! variant unlayered MIRAI_GBUFFER_NO_LAYERS=1
-//! variant hw_unlayered MIRAI_HW_RT=1 MIRAI_GBUFFER_NO_LAYERS=1
+// unlayered: while no instance with layers is in sight (gbuffer.slang).
+//! constant unlayered MIRAI_GBUFFER_NO_LAYERS
 // The last pass of the direct light of a view (direct_samples.slang): each
 // pixel takes what its points hold (direct_points.comp, direct_spread.comp),
 // with a point for each 2x2 pixels from the four around it of its surface.

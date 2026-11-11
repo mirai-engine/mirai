@@ -43,7 +43,7 @@ Player_Options :: struct {
     capture:string,
     input:string,
     frames:int,
-    players:int,        // local players; 0: what the scene says
+    players:int,        // local players; 0: one
     window:[4]i32,      // where the window goes, in screen coordinates; zero: centered
     surface:[3]f32,     // pixels and density of the image another process shows (player_surface.odin); zero: none
     arguments:[dynamic]string, // what it does not read itself, for the libraries
@@ -77,7 +77,7 @@ PLAYER_MEMORY_TEXT :: "mirai: out of memory to start the game"
 @(private)
 PLAYER_USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] [--no-gpu] [--dedicated] [--frames <n>] [--capture <png>]
      [--validation] [--input <script>] [--players <n>] [--show-window] [--window <x>,<y>,<width>,<height>]
-     [--surface <width>,<height>,<density>] [--attached] [--library play|editor] [arguments of the project's plugins]
+     [--surface <width>,<height>,<density>] [--attached] [arguments of the project's plugins]
   --scene       start scene, relative to the project's assets folder, or the absolute path of a .scene file
   --headless    no window: draws offscreen with 1/60 s steps; what --frames, --input and --capture imply
   --no-gpu      no window or renderer: only simulates
@@ -89,15 +89,13 @@ PLAYER_USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] 
   --input       input script: lines "<first frame> <last frame> <what>...", with keys (W, Space),
                 buttons (mouse:Left), mouse movement per frame (look:dx,dy) and the position of the
                 pointer in window points (pointer:x,y), which stays there until another line moves it; no window
-  --players     local split-screen players, from 1 to 4; if omitted, as many as the scene says
+  --players     local split-screen players, from 1 to 4; if omitted, one
   --show-window  a window also with --frames, --input or --capture
   --window      window position and size, frame included, in screen coordinates; with --frames, --input
                 or --capture also give --show-window
   --surface     no window: draws into shared textures shown by the process that opened it,
                 which sends it input through stdin (used by the editor)
-  --attached    exits when its stdin closes: when the process that opened it is gone (used by the editor)
-  --library     the library of the project mirai-player loads: play, the default, or editor, the one
-                the editor loaded, of which it runs only the game (used by the editor)`
+  --attached    exits when its stdin closes: when the process that opened it is gone (used by the editor)`
 
 @(private)
 player_options :: proc(args:[]string) -> (options:Player_Options,ok:bool) {
@@ -124,7 +122,6 @@ player_options :: proc(args:[]string) -> (options:Player_Options,ok:bool) {
         case "--validation": options.validation=true
         case "--input":      options.input=value(args,&i) or_return
         case "--attached":    options.attached=true
-        case "--library":    _=value(args,&i) or_return // host.launch loads it
         case "--players":
             text:=value(args,&i) or_return
             options.players=strconv.parse_int(text,10) or_return
@@ -371,6 +368,7 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
         fixed_dt=windowed || options.dedicated?0:1.0/60,
         audio=windowed || surfaced?.Device:.None,
         assets_root=os.is_directory(assets)?assets:"",
+        assets_imported=project.imported_path(root,context.temp_allocator),
         animation_cache=project.cache_path(root,project.ANIMATION_CACHE,allocator=context.temp_allocator),
         asset_mounts=mounts,
         shaders_root=root,

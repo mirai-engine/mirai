@@ -14,6 +14,7 @@ import "mirai:platform"
 import gpu "mirai:render"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import "mirai:editor/kit"
 import "mirai:ui"
 
 
@@ -43,6 +44,12 @@ Library_Tab :: enum u8 {Editor,Content,Ai,Hierarchy,Git,World}
 LIBRARY_TAB_NAMES :: [Library_Tab]string{.Editor="Create",.Content="Content Browser",.Ai="AI",.Hierarchy="Hierarchy",.Git="Source control",.World="World"}
 Library_Tabs :: bit_set[Library_Tab]
 
+// The sections of Keyboard shortcuts, each a run of the entries of the editor from its first to its
+// last; Plugins takes what no run holds.
+Shortcut_Group :: struct {name,first,last:string}
+SHORTCUT_GROUPS :: [?]Shortcut_Group{{"File","new","quit"},{"Edit","undo","group"},{"Tools","tool_move","snap"},{"View","focus","find"},{"Play","play","camera_discard"},{"Content Browser","asset_delete","asset_paste"},{"Plugins","",""}}
+SHORTCUTS_WIDTH :: f32(640)
+
 // The tabs of the left panel each type of document has: what can be shown
 // beside it. An asset document has Hierarchy too when its plugin builds one.
 DOCUMENT_LIBRARY_TABS :: [Document_Type]Library_Tabs{
@@ -51,19 +58,8 @@ DOCUMENT_LIBRARY_TABS :: [Document_Type]Library_Tabs{
     .Asset={.Content,.Ai,.Git},
 }
 Bottom_Tab :: enum u8 {Console,Build}
-Modal :: enum u8 {None,Confirm,Save_Changes,Recovery,Shortcuts,Settings,Delete_Asset,Git_Discard}
+Modal :: enum u8 {None,Confirm,Shortcuts,Settings,Delete_Asset,Git_Discard,Pending,No_Repository}
 
-// Whether the world of a document uses unsaved assets, as last asked
-// (document_uses_unsaved): key is the revision of the registry and the state
-// of its history then.
-Unsaved_Use :: struct {
-    world:rawptr,
-    key:[2]u64,
-    uses:bool,
-}
-
-// The dot of unsaved changes, as the prototype draws it.
-UNSAVED_COLOR :: ui.Color{201,181,239,255}
 Splitter :: enum u8 {None,Bottom,Right}
 
 // How the right panel sits: over the scene, or docked to the edge of the window
@@ -92,8 +88,9 @@ DOCK_MIN :: f32(220) // the narrowest a docked panel is dragged
 
 Run_Kind :: enum u8 {Play,Simulate,Play_From_Camera}
 
+// The entry each one runs.
 @(rodata)
-RUN_ACTIONS := [Run_Kind]Action{.Play=.Play,.Simulate=.Simulate,.Play_From_Camera=.Play_From_Camera}
+RUN_COMMANDS := [Run_Kind]string{.Play="play",.Simulate="simulate",.Play_From_Camera="play_from_camera"}
 
 // Rectangles of the last frame, in window points; no size: not shown.
 Shell_Rects :: struct {bar,left,right,bottom:ui.Rect}
@@ -122,17 +119,6 @@ Placement :: struct {active:bool,using subject:Drag}
 @(private)
 Named :: struct {id:ui.Id,kind:platform.Window_Region_Kind,clip:ui.Id}
 
-@(private)
-Shell_Item :: struct {
-    id:ui.Id,
-    kind:enum u8 {Tool,View},
-    icon:ui.Icon,
-    label:[64]u8,
-    label_length:int,
-    shortcut:[8]u8,
-    shortcut_length:int,
-    active,clicked:bool,
-}
 
 // The UI of the editor. A plugin builds into ctx from the ui phase, between
 // editor_panels and editor_end.
@@ -148,12 +134,10 @@ Editor_Ui :: struct {
     modal:Modal,
     modal_scroll:f32,
     toolbar_height:f32, // of the toolbar under the document bar, its bottom on a whole pixel (bars_snap)
+    bar_height:f32,     // of the theme, before bars_snap puts its bottom on a whole pixel
     pending:Pending,
-    save_then:bool, // a Save As asked by the question about unsaved changes goes on with what waits
-    confirm_assets:[dynamic]string, // the unsaved assets the question lists, by their path in the registry
     delete_asset:base.Asset_Id,     // what Modal.Delete_Asset asks about
     discard_path:[git.PATH_BYTES]u8, // what Modal.Git_Discard asks about; empty: every change
-    unsaved_uses:[dynamic]Unsaved_Use,
     drag:Drag,
     placement:Placement,
     preview:Placement_Preview,
@@ -168,8 +152,6 @@ Editor_Ui :: struct {
     title:[256]u8,
     title_length:int,
     create_scroll:[2]f32,
-    items,next_items:[16]Shell_Item,
-    item_count,next_item_count:int,
     drawings:[DRAWING_CAPACITY]Drawing, // of the frame being built
     drawing_count:int,
     tool_top,tool_width:f32,          // where the panel of a tool goes, in place of Details
@@ -181,7 +163,7 @@ Editor_Ui :: struct {
     viewport_menu:Viewport_Menu, // of the right click on the scene (play_here.odin)
 }
 
-// Kinds draw_user receives.
+// The names draw_user draws: an icon from ui.Icon.User on, or a canvas.
 User_Icon :: enum u8 {
     Minimize,Maximize,Close,Pause,Gear,Search,Folder,Up,List,Save,Undo,Redo,Share,Camera,Graphics,Component,Simulate,
     Scene,Copy,Trash,Hammer,Terminal,Tree,Command,Unlink,Variant,
@@ -231,7 +213,13 @@ gui_init :: proc(g:^Editor_Ui,app:^host.App) -> bool {
         free(ctx,app.allocator)
         return false
     }
+    if !kit.theme_set(ctx) {
+        ui.context_destroy(ctx)
+        free(ctx,app.allocator)
+        return false
+    }
     g.ctx=ctx
+    g.bar_height=ui.metric(ctx,"bar_height")
     g.preview.parts=make([dynamic]Placement_Part,app.allocator)
     resize(&g.draws,host.UI_COMMAND_CAPACITY)
     resize(&g.panels,16)
@@ -254,52 +242,26 @@ gui_destroy :: proc(g:^Editor_Ui) {
     delete(g.preview.parts)
     g.preview={}
     g.draws,g.panels={},{}
-    confirm_assets_set(g,nil)
     core.value_free(g,type_info_of(Editor_Ui))
 }
 
 // The id of a widget of the shell, whatever scope is open.
 shell_id :: proc(g:^Editor_Ui,name:string,index:int=0) -> ui.Id {return ui.id_derive(g.ctx,SHELL_SCOPE,name,index)}
 
-@(private)
-shell_item :: proc(g:^Editor_Ui,item:Shell_Item) -> bool {
-    if !g.begun {return false}
-    if g.next_item_count>=len(g.next_items) {g.dropped+=1;return false}
-    g.next_items[g.next_item_count]=item
-    g.next_item_count+=1
-    for previous in g.items[:g.item_count] {
-        if previous.id==item.id {return previous.clicked}
-    }
-    return false
-}
-
-tool_button :: proc(g:^Editor_Ui,id:ui.Id,icon:ui.Icon,label,shortcut:string,active:bool) -> bool {
-    item:=Shell_Item{id=id,kind=.Tool,icon=icon,active=active}
-    item.label_length=copy(item.label[:],label)
-    item.shortcut_length=copy(item.shortcut[:],shortcut)
-    return shell_item(g,item)
-}
-
 // An area of a plugin's panel that draw paints with the ui.draw_ procedures,
 // in the rectangle the layout gives it and under the clip of its container.
 // The pointer on it is its interaction. Past DRAWING_CAPACITY in a frame the
 // area stays empty.
 drawing :: proc(g:^Editor_Ui,id:ui.Id,width,height:ui.Size,draw:Drawing_Proc,user:rawptr,flags:ui.Widget_Flags={}) -> ui.Interaction {
-    data:=u64(0)
+    data:[]u8
     if g.drawing_count<len(g.drawings) {
         g.drawings[g.drawing_count]={draw,user}
-        data=u64(uintptr(&g.drawings[g.drawing_count]))
+        data=([^]u8)(&g.drawings[g.drawing_count])[:size_of(Drawing)]
         g.drawing_count+=1
     } else {
         g.dropped+=1
     }
-    return ui.canvas(g.ctx,id,width,height,u32(User_Icon.Drawing),data,flags)
-}
-
-view_toggle :: proc(g:^Editor_Ui,id:ui.Id,label:string,active:bool) -> bool {
-    item:=Shell_Item{id=id,kind=.View,active=active}
-    item.label_length=copy(item.label[:],label)
-    return shell_item(g,item)
+    return ui.canvas(g.ctx,id,width,height,{name=u64(User_Icon.Drawing),data=data},flags)
 }
 
 // The layout of the panel of the active tool of a plugin, or of the shown
@@ -308,7 +270,7 @@ tool_panel :: proc(g:^Editor_Ui,id:ui.Id) -> ui.Panel_Float {
     ctx:=g.ctx
     if rect,found:=ui.widget_rect(ctx,id);found {g.rects.right=rect}
     if g.tool_dock>0 {return {width=ui.fixed(g.tool_width),height=ui.fixed(g.tool_dock),padding=ui.padding_all(PANEL_PADDING),gap=8,anchor=.Top_Right,pivot=.Top_Right,offset={0,g.tool_top},docked=true}}
-    radius:=ctx.theme.radius_panel
+    radius:=ui.metric(ctx,"radius_panel")
     return {width=ui.fixed(g.tool_width),height=ui.FIT,padding=ui.padding_all(PANEL_PADDING),gap=8,anchor=.Top_Right,pivot=.Top_Right,offset={-DETAILS_MARGIN,g.tool_top},docked=true,corners={radius,radius,radius,radius}}
 }
 
@@ -330,7 +292,9 @@ named_add :: proc(g:^Editor_Ui,id:ui.Id,kind:=platform.Window_Region_Kind.Client
 }
 
 @(private)
-draw_user :: proc(ctx:^ui.Context,rect:ui.Rect,kind:u32,data:u64,color:ui.Color) {
+draw_user :: proc(user:rawptr,ctx:^ui.Context,node:ui.Draw_Node) {
+    if node.name>=u64(len(User_Icon)) {return}
+    rect,kind,color:=node.rect,u32(node.name),node.fill
     c:=ui.rect_center(rect)
     s:=min(rect.w,rect.h)/16
     switch User_Icon(kind) {
@@ -339,13 +303,13 @@ draw_user :: proc(ctx:^ui.Context,rect:ui.Rect,kind:u32,data:u64,color:ui.Color)
          .Agent_Star_Ask,.Agent_Bolt_Ask,.Agent_Ghost_Ask,.Agent_Shield_Ask,.Agent_Leaf_Ask,.Agent_Butterfly_Ask,.Agent_Claude_Ask,.Agent_Codex_Ask:
         ai_agent_avatar_draw(ctx,rect,u8(kind-u32(User_Icon.Agent_Star)),color)
     case .Drawing:
-        if d:=(^Drawing)(uintptr(data));d!=nil && d.draw!=nil {d.draw(ctx,rect,d.user)}
+        if d,ok:=ui.draw_value(node,Drawing);ok && d.draw!=nil {d.draw(ctx,rect,d.user)}
     case .To_Start,.Step_Back,.Step_Forward,.To_End,.Loop,.Range,.Fit_Width,.Marker:
         timeline_icon_draw(ctx,User_Icon(kind),c,s,color)
     case .Mirai:
         mark_shape_draw(ctx,c,s,color,MARK_STAR)
     case .Wordmark:
-        wordmark_draw(ctx,rect,ctx.theme.text)
+        wordmark_draw(ctx,rect,ui.tone(ctx,"text"))
     case .Mirai_Shape:
         mark_shape_draw(ctx,c,s,color,color)
     case .Retry:
@@ -366,7 +330,7 @@ draw_user :: proc(ctx:^ui.Context,rect:ui.Rect,kind:u32,data:u64,color:ui.Color)
             ui.draw_polyline(ctx,bend[:],1.4*s,color)
         }
     case .Dashed_Box:
-        ai_dashed_box_draw(ctx,rect,transmute(ui.Color)u32(data))
+        ai_dashed_box_draw(ctx,rect,color)
     case .Close:
         ui.draw_line(ctx,c+{-3.5,-3.5},c+{3.5,3.5},1.2,color)
         ui.draw_line(ctx,c+{3.5,-3.5},c+{-3.5,3.5},1.2,color)
@@ -481,7 +445,7 @@ draw_user :: proc(ctx:^ui.Context,rect:ui.Rect,kind:u32,data:u64,color:ui.Color)
         ui.draw_polyline(ctx,p[:],1.5,color)
         ui.draw_line(ctx,p[0],c+{-2*s*sign,-6*s},1.5,color)
         ui.draw_line(ctx,p[0],c+{-2*s*sign,2*s},1.5,color)
-    // The icons of the prototype drawn on a 24 unit grid, at two thirds.
+    // Icons drawn on a 24 unit grid, at two thirds.
     case .Scene:
         for y in ([2]f32{-2,2}) {ui.draw_line(ctx,c+{-5.33*s,y*s},c+{5.33*s,y*s},1.3*s,color)}
         ui.draw_line(ctx,c+{-1.33*s,-6*s},c+{-2.67*s,6*s},1.3*s,color)
@@ -635,12 +599,11 @@ drag_chip :: proc(s:^Session,g:^Editor_Ui) {
     d:=&g.drag
     if d.kind==.None || !d.moved || d.released {return}
     ctx:=g.ctx
-    th:=&ctx.theme
     p:=ctx.pointer
-    if ui.box(ctx,{width=ui.FIT,height=ui.fixed(24),padding={8,0,10,0},gap=6,align_y=.Center,float={to=.Surface,offset={p.x+14,p.y+12},layer=ui.LAYER_TOOLTIP},fill=th.popup,stroke=th.border,radius=th.radius_control,shadow=true}) {
+    if ui.box(ctx,{width=ui.FIT,height=ui.fixed(24),padding={8,0,10,0},gap=6,align_y=.Center,float={to=.Surface,offset={p.x+14,p.y+12},layer=ui.LAYER_TOOLTIP},fill=ui.tone(ctx,"popup"),stroke=ui.tone(ctx,"border"),radius=ui.metric(ctx,"radius_control"),shadow=true}) {
         icon,color:=drag_icon(s,d)
         ui.icon(ctx,icon,color,14)
-        ui.label(ctx,string(d.label[:d.label_length]),th.font_small,th.text)
+        ui.label(ctx,string(d.label[:d.label_length]),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
     }
 }
 
@@ -661,18 +624,15 @@ drag_icon :: proc(s:^Session,d:^Drag) -> (ui.Icon,ui.Color) {
 shell_build :: proc(s:^Session,w:core.World_Ref) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     g.cursor=.Default
-    g.items,g.item_count=g.next_items,g.next_item_count
-    g.next_item_count=0
     g.drawing_count=0
     if s.projects!=nil && s.projects.launcher {
         projects_build(s)
         return
     }
-    // Behind a document in front, where the scene would be, the canvas of the prototype.
+    // Behind a document in front, where the scene would be, its canvas.
     if scene_covered(s) {
-        if ui.box(ctx,{width=ui.fixed(ctx.size.x),height=ui.fixed(ctx.size.y),fill=th.well,float={to=.Surface}}) {}
+        if ui.box(ctx,{width=ui.fixed(ctx.size.x),height=ui.fixed(ctx.size.y),fill=ui.tone(ctx,"well"),float={to=.Surface}}) {}
     }
     player_processes_view_build(s)
     bar_build(s,w)
@@ -686,9 +646,9 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
         if !ai_chat_open(s.ai) && l.library_tab==.Ai {library_select(s,l.previous_library_tab)}
         if !material_document_shown(s) && ai_material_open(s.ai) {ai_material_set(s.ai,{})}
     }
-    bars:=th.bar_height+toolbar_height(g)
+    bars:=ui.metric(ctx,"bar_height")+toolbar_height(g)
     top:=bars+DETAILS_MARGIN
-    bottom_limit:=ctx.size.y-th.margin
+    bottom_limit:=ctx.size.y-ui.metric(ctx,"margin")
     // A docked panel takes its edge of the window for the whole height under
     // the bars, and the scene what is left between them.
     _,right_dock:=dock_widths(s)
@@ -723,7 +683,7 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
             if header {
                 if ui.box(ctx,{width=ui.GROW,height=ui.fixed(PANEL_HEADER),padding={4,0,0,0},gap=2,align_y=.Center}) {
                     names:=LIBRARY_TAB_NAMES
-                    ui.label(ctx,names[shown_tab],th.font,th.text,font=ui.FONT_SEMIBOLD)
+                    ui.label(ctx,names[shown_tab],ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
                     ui.spacer(ctx)
                     #partial switch shown_tab {
                     case .Ai:
@@ -762,14 +722,14 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
         if rect,found:=ui.widget_rect(ctx,id);found {g.rects.left=rect}
     }
     if panels && l.bottom_open && !expanded {
-        x0:=RAIL_WIDTH+(l.left_open?left_width:0)+th.margin
-        x1:=ctx.size.x-(right_dock>0?right_dock:0)-th.margin
+        x0:=RAIL_WIDTH+(l.left_open?left_width:0)+ui.metric(ctx,"margin")
+        x1:=ctx.size.x-(right_dock>0?right_dock:0)-ui.metric(ctx,"margin")
         y:=bottom_limit-bottom_height
         id:=shell_id(g,"bottom")
         if ui.panel(ctx,id,{width=ui.fixed(max(x1-x0,120)),height=ui.fixed(bottom_height),padding={PANEL_PADDING,8,PANEL_PADDING,PANEL_PADDING},gap=8,anchor=.Top_Left,pivot=.Top_Left,offset={x0,y}}) {
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=8,align_y=.Center}) {
                 tab:=int(l.bottom_tab)
-                ui.tabs(ctx,shell_id(g,"bottom_tabs"),{"Console","Build"},&tab,ui.fixed(200),28)
+                kit.tabs(ctx,shell_id(g,"bottom_tabs"),{"Console","Build"},&tab,ui.fixed(200),28)
                 l.bottom_tab=Bottom_Tab(tab)
                 ui.spacer(ctx)
                 ui.id_push(ctx,id)
@@ -778,7 +738,7 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
                 case .Build:   build_tools(s)
                 }
                 ui.id_pop(ctx)
-                if ui.button(ctx,shell_id(g,"bottom_close"),{icon=.Cross,style=.Ghost,width=24,height=24}).clicked {l.bottom_open=false}
+                if ui.button(ctx,shell_id(g,"bottom_close"),{icon=.Cross,variant="ghost",width=24,height=24}).clicked {l.bottom_open=false}
             }
             room:=bottom_height-PANEL_PADDING-8-28-8
             ui.id_push(ctx,id)
@@ -800,11 +760,11 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
     content:=len(s.selection.entities)>0 || deletion || git_review_shown(s)
     if details && document==nil && l.right_open && ctx.size.x>=760 && (content || right_dock>0) && !s.viewport.pick.active && !tool_panel_shown(s) {
         max_height:=bottom_limit-top
-        if l.bottom_open {max_height-=bottom_height+th.margin}
+        if l.bottom_open {max_height-=bottom_height+ui.metric(ctx,"margin")}
         if right_dock>0 {max_height=ctx.size.y-bars}
         max_height=max(max_height,120)
         id:=shell_id(g,"right")
-        radius:=th.radius_panel
+        radius:=ui.metric(ctx,"radius_panel")
         style:=ui.Panel_Float{width=ui.fixed(right_width),height=ui.FIT,anchor=.Top_Right,pivot=.Top_Right,offset={-DETAILS_MARGIN,top},docked=true,corners={radius,radius,radius,radius}}
         if right_dock>0 {style.height,style.offset,style.corners=ui.fixed(max_height),{0,bars},{}}
         if ui.panel(ctx,id,style) {
@@ -839,20 +799,19 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
 rail_build :: proc(s:^Session,shown_tab:Library_Tab,bars:f32) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     l:=&g.layout
     play:=play_shown(s)
     tabs:=library_tabs(s)
     icons:=[Library_Tab]ui.Icon{.Editor=.Cube,.Content=ui.icon_user(u8(User_Icon.Folder)),.Hierarchy=ui.icon_user(u8(User_Icon.List)),.World=.Layers,.Ai=.Sparkle,.Git=ui.icon_user(u8(User_Icon.Branch))}
     tips:=LIBRARY_TAB_NAMES
-    if ui.box(ctx,{id=shell_id(g,"rail"),width=ui.fixed(RAIL_WIDTH),height=ui.fixed(max(ctx.size.y-bars,1)),padding={0,8,0,8},gap=4,direction=.Column,align_x=.Center,float={to=.Surface,offset={0,bars},layer=ui.LAYER_BAR},fill=th.bar_top,block=true}) {
+    if ui.box(ctx,{id=shell_id(g,"rail"),width=ui.fixed(RAIL_WIDTH),height=ui.fixed(max(ctx.size.y-bars,1)),padding={0,8,0,8},gap=4,direction=.Column,align_x=.Center,float={to=.Surface,offset={0,bars},layer=ui.LAYER_BAR},fill=ui.tone(ctx,"bar_top"),block=true}) {
         for tab in ([]Library_Tab{.Editor,.Content,.Hierarchy,.World,.Ai,.Git}) {
             if tab not_in tabs {continue}
             shown:=play?tab==.Ai && s.play_chat_open:l.left_open && shown_tab==tab
-            color:=shown?th.text:th.text_muted
+            color:=shown?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted")
             // A merge that waits for its conflicts marks the tab while it lasts.
-            if tab==.Git && s.git!=nil && s.git.merging {color=th.danger}
-            if !ui.button(ctx,shell_id(g,"library_tab",int(tab)+1),{icon=icons[tab],tip=tips[tab],style=.Toggle,active=shown,icon_color=color,width=RAIL_BUTTON,height=RAIL_BUTTON,icon_size=17,disabled=play && (tab!=.Ai || s.mode==.Play)}).clicked {continue}
+            if tab==.Git && s.git!=nil && s.git.merging {color=ui.tone(ctx,"danger")}
+            if !ui.button(ctx,shell_id(g,"library_tab",int(tab)+1),{icon=icons[tab],tip=tips[tab],variant="toggle",active=shown,icon_color=color,width=RAIL_BUTTON,height=RAIL_BUTTON,icon_size=17,disabled=play && (tab!=.Ai || s.mode==.Play)}).clicked {continue}
             switch {
             case play:  play_chat_set(s,!s.play_chat_open)
             case shown: l.left_open=false
@@ -880,7 +839,7 @@ shell_after :: proc(s:^Session) {
     g:=s.gui
     ctx:=g.ctx
     p:=s.app.platform
-    g.rects.bar={0,0,ctx.size.x,ctx.theme.bar_height+toolbar_height(g)}
+    g.rects.bar={0,0,ctx.size.x,ui.metric(ctx,"bar_height")+toolbar_height(g)}
     if g.cursor==.Default {
         switch ctx.cursor {
         case .Default:
@@ -892,8 +851,8 @@ shell_after :: proc(s:^Session) {
         platform.window_set_cursor(p,g.cursor)
         g.cursor_set=g.cursor
     }
-    title:=fmt.tprintf("%s%s - Mirai",document_title(s.document),document_dirty(s)?" *":"")
-    if s.projects!=nil && s.projects.launcher {title="Mirai"} else if d:=asset_document_active(s);d!=nil {title=fmt.tprintf("%s%s - Mirai",asset_document_title(s,d),asset_document_dirty(s,d)?" *":"")}
+    title:=fmt.tprintf("%s - Mirai",document_title(s.document))
+    if s.projects!=nil && s.projects.launcher {title="Mirai"} else if d:=asset_document_active(s);d!=nil {title=fmt.tprintf("%s - Mirai",asset_document_title(s,d))}
     if title!=string(g.title[:g.title_length]) {
         g.title_length=copy(g.title[:],title)
         platform.window_set_title(p,title)
@@ -912,7 +871,7 @@ shell_regions :: proc(s:^Session,regions:[]platform.Window_Region) -> int {
     bar:=g.rects.bar
     for entry in g.named[:g.named_count] {
         rect,found:=ui.widget_rect(g.ctx,entry.id)
-        if !found || rect.y>=g.ctx.theme.bar_height {continue}
+        if !found || rect.y>=ui.metric(g.ctx,"bar_height") {continue}
         if entry.clip!=0 {
             clip,clipped:=ui.widget_rect(g.ctx,entry.clip)
             if !clipped {continue}
@@ -922,7 +881,7 @@ shell_regions :: proc(s:^Session,regions:[]platform.Window_Region) -> int {
         regions[count]={{rect.x,rect.y,rect.w,rect.h},entry.kind}
         count+=1
     }
-    regions[count]={{bar.x,bar.y,bar.w,g.ctx.theme.bar_height},.Drag}
+    regions[count]={{bar.x,bar.y,bar.w,ui.metric(g.ctx,"bar_height")},.Drag}
     count+=1
     return count
 }
@@ -1014,18 +973,10 @@ dock_edge :: proc(s:^Session,width,top,height:f32) {
     g:=s.gui;ctx:=g.ctx
     x:=ctx.size.x-width
     height:=max(height,1)
-    if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(height),fill=ctx.theme.divider,float={to=.Surface,offset={x,top},layer=ui.LAYER_PANEL}}) {}
+    if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(height),fill=ui.tone(ctx,"divider"),float={to=.Surface,offset={x,top},layer=ui.LAYER_PANEL}}) {}
     if value,changed:=splitter(s,.Right,{x-SPLITTER_WIDTH/2,top,SPLITTER_WIDTH,height},width,-1);changed {
         g.layout.right_width=clamp(value,DOCK_MIN,max(ctx.size.x*0.4,DOCK_MIN))
     }
-}
-
-bottom_toggle :: proc(g:^Editor_Ui,tab:Bottom_Tab) {
-    if g.layout.bottom_open && g.layout.bottom_tab==tab {
-        g.layout.bottom_open=false
-        return
-    }
-    g.layout.bottom_open,g.layout.bottom_tab=true,tab
 }
 
 // The edge of a panel that resizes it. sign: whether the size grows with the pointer (1) or against it (-1).
@@ -1033,14 +984,13 @@ bottom_toggle :: proc(g:^Editor_Ui,tab:Bottom_Tab) {
 splitter :: proc(s:^Session,which:Splitter,rect:ui.Rect,size,sign:f32) -> (value:f32,changed:bool) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     id:=shell_id(g,"splitter",int(which))
     it:ui.Interaction
     horizontal:=which==.Bottom
     if ui.box(ctx,{width=ui.fixed(rect.w),height=ui.fixed(rect.h),float={to=.Surface,offset={rect.x,rect.y},layer=ui.LAYER_PANEL+1}}) {
         it=ui.interact(ctx,id)
         lit:=it.active || it.hot
-        if ui.box(ctx,{id=id,width=ui.GROW,height=ui.GROW,fill=lit?ui.color_alpha(th.accent,110):{}}) {}
+        if ui.box(ctx,{id=id,width=ui.GROW,height=ui.GROW,fill=lit?ui.color_alpha(ui.tone(ctx,"accent"),110):{}}) {}
     }
     if it.hot || it.active {g.cursor=horizontal?.Resize_Vertical:.Resize_Horizontal}
     if it.pressed {
@@ -1060,22 +1010,46 @@ splitter :: proc(s:^Session,which:Splitter,rect:ui.Rect,size,sign:f32) -> (value
 @(private)
 divider_vertical :: proc(ctx:^ui.Context) {
     if ui.box(ctx,{width=ui.FIT,height=ui.FIT,padding={4,0,4,0}}) {
-        if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(20),fill=ctx.theme.border}) {}
+        if ui.box(ctx,{width=ui.fixed(1),height=ui.fixed(20),fill=ui.tone(ctx,"border")}) {}
     }
 }
 
-@(private)
-action_button :: proc(s:^Session,action:Action,b:ui.Button,index:int) -> bool {
+// The button of an entry: off and checked as the entry is, and it runs it.
+// What it shows is of the entry, unless the place it is in gives another: its
+// icon, or its label when it has none, and as its tip its label and its key.
+// index tells apart two buttons of one entry.
+command_button :: proc(s:^Session,name:string,b:ui.Button,index:int=0) -> bool {
     g:=s.gui
-    state:=action_state(s,action)
-    id:=shell_id(g,"action",int(action)+1+index*64)
+    entry:=command_binding(s,name)
+    // Without its entry the button is there and off.
+    state:=Command_State{disabled=true}
+    id:=command_widget(g,name,index)
     named_add(g,id)
     button:=b
+    if entry!=nil {
+        state=binding_state(s,entry)
+        if button.icon==.None && button.label=="" {
+            if entry.icon!=.None {button.icon=entry.icon} else {button.label=entry.label}
+        }
+        if button.tip=="" && button.label=="" {
+            button.tip=entry.label
+            if entry.shortcut.set {button.tip=fmt.tprintf("%s (%s)",entry.label,shortcut_text(entry.shortcut))}
+        }
+    }
     button.disabled=button.disabled || state.disabled
-    if button.tip=="" && button.label=="" {labels:=ACTION_LABELS;button.tip=labels[action]}
     if button.label!="" && state.label!="" {button.label=state.label}
-    if button.style==.Tab || button.style==.Ghost {button.active=button.active || state.checked}
-    if ui.button(g.ctx,id,button).clicked {return action_run(s,action)}
+    if button.variant=="tab" || button.variant=="ghost" || button.variant=="" {button.active=button.active || state.checked}
+    if ui.button(g.ctx,id,button).clicked {return command_run(s,name)}
+    return false
+}
+
+// The entry of a menu for an entry of the commands: it runs it. label: in place of its own.
+command_menu_item :: proc(s:^Session,id:ui.Id,name:string,label:="") -> bool {
+    b:=command_binding(s,name)
+    if b==nil {return false}
+    state:=binding_state(s,b)
+    text:=label!=""?label:binding_label(b,state)
+    if ui.menu_item(s.gui.ctx,id,text,{icon=b.icon,shortcut=shortcut_text(b.shortcut),checked=state.checked,disabled=state.disabled}) {return command_run(s,name)}
     return false
 }
 
@@ -1083,7 +1057,6 @@ action_button :: proc(s:^Session,action:Action,b:ui.Button,index:int) -> bool {
 bar_build :: proc(s:^Session,w:core.World_Ref) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     v:=s.viewport
     if ui.menu_bar(ctx,shell_id(g,"bar")) {
         if !s.headless && platform.WINDOW_CONTROLS==.Left_Traffic_Lights {ui.spacer(ctx,78,0)}
@@ -1092,49 +1065,45 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
                 ui.icon(ctx,ui.icon_user(u8(User_Icon.Mirai)),MARK_ARM,30)
                 ui.spacer(ctx,6,0)
                 // Inset as the text of a menu is, so the tabs keep their distance.
-                if ui.box(ctx,{width=ui.FIT,height=ui.GROW,padding={10,0,10,0},align_y=.Center}) {ui.label(ctx,"Playing",th.font,th.accent)}
+                if ui.box(ctx,{width=ui.FIT,height=ui.GROW,padding={10,0,10,0},align_y=.Center}) {ui.label(ctx,"Playing",ui.metric(ctx,"font"),ui.tone(ctx,"accent"))}
             } else {menus_build(s,w)}
         }
         documents_build(s)
         if !s.headless && platform.WINDOW_CONTROLS==.Right {window_controls(s)}
     }
-    if ui.box(ctx,{id=shell_id(g,"document_toolbar"),width=ui.fixed(ctx.size.x),height=ui.fixed(toolbar_height(g)),padding={10,0,10,0},gap=4,align_y=.Center,float={to=.Surface,offset={0,th.bar_height},layer=ui.LAYER_BAR},fill=th.panel,block=true}) {
+    if ui.box(ctx,{id=shell_id(g,"document_toolbar"),width=ui.fixed(ctx.size.x),height=ui.fixed(toolbar_height(g)),padding={10,0,10,0},gap=4,align_y=.Center,float={to=.Surface,offset={0,ui.metric(ctx,"bar_height")},layer=ui.LAYER_BAR},fill=ui.tone(ctx,"panel"),block=true}) {
         document:=asset_document_active(s)
         if document!=nil {
-            // An asset document: its save, undo and redo, and what it plays after them.
+            // An asset document: its undo and redo, and what it plays after them.
             if ui.box(ctx,{width=ui.FIT,height=ui.GROW,gap=4,align_y=.Center}) {
-                action_button(s,.Save,{icon=ui.icon_user(u8(User_Icon.Save)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON},0)
-                action_button(s,.Undo,{icon=ui.icon_user(u8(User_Icon.Undo)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON},0)
-                action_button(s,.Redo,{icon=ui.icon_user(u8(User_Icon.Redo)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON},0)
+                command_button(s,"undo",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
+                command_button(s,"redo",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
             }
             if ui.box(ctx,{id=shell_id(g,"asset_toolbar"),width=ui.GROW,height=ui.GROW,gap=8,padding={10,0,0,0},align_y=.Center,track=true}) {
-                if material_document_shown(s) {ui.label(ctx,material_document_kind(s),th.font,th.text_muted)}
+                if material_document_shown(s) {ui.label(ctx,material_document_kind(s),ui.metric(ctx,"font"),ui.tone(ctx,"text_muted"))}
             }
         } else if ui.box(ctx,{width=ui.FIT,height=ui.GROW,gap=4,align_y=.Center}) {
-            action_button(s,.Save,{icon=ui.icon_user(u8(User_Icon.Save)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,disabled=!document_dirty(s)},0)
-            action_button(s,.Undo,{icon=ui.icon_user(u8(User_Icon.Undo)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON},0)
-            action_button(s,.Redo,{icon=ui.icon_user(u8(User_Icon.Redo)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON},0)
+            command_button(s,"undo",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
+            command_button(s,"redo",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON})
         }
         // The tools go at the left, after the document: Move, Rotate and Scale,
         // the snaps and the axes, the camera, and the tools of the plugins.
         if s.mode!=.Play && s.mode!=.Watch && !scene_covered(s) {
             divider_vertical(ctx)
             if ui.box(ctx,{width=ui.FIT,height=ui.GROW,gap=4,align_y=.Center}) {
-                tools:=[3]Action{.Tool_Move,.Tool_Rotate,.Tool_Scale}
-                icons:=[3]ui.Icon{.Move,.Rotate,.Scale}
-                // Up to 1050 points the prototype narrows them.
-                for action,i in tools {
-                    action_button(s,action,{icon=icons[i],style=.Tab,width=25 if ctx.size.x<=1050 else TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=16},0)
+                // Up to 1050 points they are narrower.
+                for tool in ([3]string{"tool_move","tool_rotate","tool_scale"}) {
+                    command_button(s,tool,{variant="tab",width=25 if ctx.size.x<=1050 else TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=16})
                 }
                 divider_vertical(ctx)
                 snap_menu_build(s)
-                action_button(s,.Space,{icon=v.space==.Local?.Relative:.Absolute,style=.Ghost,icon_color=th.text_muted,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,active=v.space==.Local},0)
+                command_button(s,"space",{icon=v.space==.Local?.Relative:.Absolute,variant="ghost",icon_color=ui.tone(ctx,"text_muted"),width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,active=v.space==.Local})
                 camera_speed_build(s)
                 divider_vertical(ctx)
                 // A prefab document: its variants and its light, just before the tools.
                 if document_is_prefab(s) {
                     prefab_variants_build(s)
-                    if ui.button(ctx,shell_id(g,"prefab_sun"),{icon=.Sun,tip="Preview sunlight",style=.Tab,active=v.preview_sun,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON}).clicked {v.preview_sun=!v.preview_sun}
+                    if ui.button(ctx,shell_id(g,"prefab_sun"),{icon=.Sun,tip="Preview sunlight",variant="tab",active=v.preview_sun,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON}).clicked {v.preview_sun=!v.preview_sun}
                     divider_vertical(ctx)
                 }
                 tools_menu_build(s)
@@ -1143,31 +1112,31 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
         // One distance between every control of the right end.
         if ui.box(ctx,{width=ui.GROW,height=ui.GROW,gap=8,align_x=.End,align_y=.Center}) {
             switch s.mode {
-            case .Edit: if name:=presence_followed_name(s);name!="" && ctx.size.x>=900 {ui.label(ctx,ai_chat_menu_label(ctx,fmt.tprintf("Following %s",name),220,th.font),th.font,th.accent)}
+            case .Edit: if name:=presence_followed_name(s);name!="" && ctx.size.x>=900 {ui.label(ctx,ai_chat_menu_label(ctx,fmt.tprintf("Following %s",name),220,ui.metric(ctx,"font")),ui.metric(ctx,"font"),ui.tone(ctx,"accent"))}
             case .Play:
-            case .Simulate: if ctx.size.x>=900 {ui.label(ctx,"Simulating",th.font,th.accent)}
-            case .Paused,.Simulation_Paused: if ctx.size.x>=900 {ui.label(ctx,"Paused",th.font,th.accent)}
-            case .Watch: if ctx.size.x>=900 {ui.label(ctx,ai_chat_menu_label(ctx,fmt.tprintf("Watching %s",watch_name(s)),220,th.font),th.font,th.accent)}
+            case .Simulate: if ctx.size.x>=900 {ui.label(ctx,"Simulating",ui.metric(ctx,"font"),ui.tone(ctx,"accent"))}
+            case .Paused,.Simulation_Paused: if ctx.size.x>=900 {ui.label(ctx,"Paused",ui.metric(ctx,"font"),ui.tone(ctx,"accent"))}
+            case .Watch: if ctx.size.x>=900 {ui.label(ctx,ai_chat_menu_label(ctx,fmt.tprintf("Watching %s",watch_name(s)),220,ui.metric(ctx,"font")),ui.metric(ctx,"font"),ui.tone(ctx,"accent"))}
             }
             if (ctx.size.x>=900 || s.mode==.Watch) && !scene_covered(s) {watch_bar_build(s)}
             // The finder looks for entities of the scene, which an asset document hides.
             if s.mode!=.Play && !scene_covered(s) {
-                action_button(s,.Find,{icon=ui.icon_user(u8(User_Icon.Search)),style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=14},0)
+                command_button(s,"find",{variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,icon_size=14})
             }
-            if !document_is_prefab(s) && (document==nil || !asset_document_flat(s,document.kind)) {
+            if document==nil || !asset_document_flat(s,document.kind) {
                 if document==nil && s.mode!=.Play {view_mode_build(s)}
                 // The rate of the frame goes with Graphics, where it is turned on.
                 if graphics:=graphics_settings(s);graphics!=nil && graphics.show_fps {
-                    if ui.box(ctx,{id=shell_id(g,"fps"),width=ui.fixed(54),height=ui.fixed(th.control),align_x=.End,align_y=.Center,track=true}) {ui.label(ctx,fmt.tprintf("%.0f fps",s.app.stats.fps),th.font_small,th.text_muted)}
+                    if ui.box(ctx,{id=shell_id(g,"fps"),width=ui.fixed(54),height=ui.fixed(ui.metric(ctx,"control")),align_x=.End,align_y=.Center,track=true}) {ui.label(ctx,fmt.tprintf("%.0f fps",s.app.stats.fps),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
                 }
                 graphics:=shell_id(g,"graphics")
-                if ui.button(ctx,graphics,{icon=ui.icon_user(u8(User_Icon.Graphics)),tip="Graphics",style=.Ghost,width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,active=ui.popup_is_open(ctx,graphics_popup(g))}).clicked {action_run(s,.Graphics)}
+                if ui.button(ctx,graphics,{icon=ui.icon_user(u8(User_Icon.Graphics)),tip="Graphics",variant="ghost",width=TOOLBAR_BUTTON,height=TOOLBAR_BUTTON,active=ui.popup_is_open(ctx,graphics_popup(g))}).clicked {command_run(s,"graphics")}
             }
             if s.mode!=.Play && ctx.size.x>=900 {share_button(s,BAR_BUTTON_HEIGHT)}
-            if !document_is_prefab(s) && document==nil {play_controls(s)}
+            if document==nil {play_controls(s)}
         }
     }
-    g.rects.bar={0,0,ctx.size.x,th.bar_height+toolbar_height(g)}
+    g.rects.bar={0,0,ctx.size.x,ui.metric(ctx,"bar_height")+toolbar_height(g)}
     stats_build(s,w)
     share_build(s)
     presence_menu_build(s)
@@ -1176,25 +1145,26 @@ bar_build :: proc(s:^Session,w:core.World_Ref) {
 }
 
 // One menu for the tools of the plugins and the panels of the project: the
-// one chosen takes the place of Details. As in the prototype: icon, name and
-// arrow, the name as wide as "Tools" so the button never grows and a longer
-// one is cut; below 900 points, the icon and the arrow.
+// one chosen takes the place of Details. Icon, name and arrow, the name as
+// wide as "Tools" so the button never grows and a longer one is cut; below
+// 900 points, the icon and the arrow.
 TOOLS_MENU_POPUP_WIDTH :: 240
-TOOLS_LABEL_WIDTH :: 28 // the width of "Tools" in the prototype
+TOOLS_LABEL_WIDTH :: 28 // the least width of "Tools"
 TOOLS_MENU_PARTS :: 58  // the width of the button besides its name: paddings, icon, gaps and arrow
 @(private)
 tools_menu_build :: proc(s:^Session) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     panels:=s.panels
     shown:=panel_shown(panels)
     count:=panels!=nil?len(panels.list):0
     label,icon:="Tools",ui.icon_user(u8(User_Icon.Hammer))
-    for &item in g.items[:g.item_count] {
-        if item.kind!=.Tool {continue}
+    // The tools work on the scene of the document: a game shows none.
+    tools:=!playing(s)
+    for &b in command_bindings(s) {
+        if b.menu!=.Tools || !tools {continue}
         count+=1
-        if item.active {label,icon=string(item.label[:item.label_length]),item.icon}
+        if binding_state(s,&b).checked {label,icon=b.label,b.icon}
     }
     if count==0 {return}
     if shown!=nil {label,icon=base.text_get(shown.title[:]),.Layers}
@@ -1202,16 +1172,16 @@ tools_menu_build :: proc(s:^Session) {
     wide:=ctx.size.x>=900
     active:=shown!=nil || s.viewport.plugin_tool!=0
     it:=ui.interact(ctx,id,{.Focusable})
-    color:=th.on_accent if active else th.text
-    fill:=th.accent if active else (th.field_hover if it.hot else ui.Color{})
-    stroke:=th.accent if active else ui.Color{}
-    if ui.box(ctx,{id=id,width=ui.FIT,height=ui.fixed(TOOLBAR_BUTTON),padding={10,0,8,0},gap=6,align_y=.Center,fill=fill,stroke=stroke,radius=th.radius_control}) {
+    color:=ui.tone(ctx,"on_accent") if active else ui.tone(ctx,"text")
+    fill:=ui.tone(ctx,"accent") if active else (ui.tone(ctx,"field_hover") if it.hot else ui.Color{})
+    stroke:=ui.tone(ctx,"accent") if active else ui.Color{}
+    if ui.box(ctx,{id=id,width=ui.FIT,height=ui.fixed(TOOLBAR_BUTTON),padding={10,0,8,0},gap=6,align_y=.Center,fill=fill,stroke=stroke,radius=ui.metric(ctx,"radius_control")}) {
         ui.icon(ctx,icon,color,16)
         if wide {
-            room:=max(ui.text_width(&ctx.font,"Tools",th.font),TOOLS_LABEL_WIDTH)
-            // A fifth wider than the prototype, all of it for the name.
+            room:=max(ui.text_width(&ctx.font,"Tools",ui.metric(ctx,"font")),TOOLS_LABEL_WIDTH)
+            // A fifth wider than its parts, all of it for the name.
             room+=(room+TOOLS_MENU_PARTS)*0.2
-            ui.label(ctx,ai_chat_menu_label(ctx,label,room,th.font),th.font,color,room)
+            ui.label(ctx,ai_chat_menu_label(ctx,label,room,ui.metric(ctx,"font")),ui.metric(ctx,"font"),color,room)
         }
         ui.icon(ctx,.Chevron_Down,color,12)
     }
@@ -1229,10 +1199,10 @@ tools_menu_build :: proc(s:^Session) {
             panel_show(s,panels,-1,false)
         }
         header:=false
-        for &item in g.items[:g.item_count] {
-            if item.kind!=.Tool {continue}
+        for &b in command_bindings(s) {
+            if b.menu!=.Tools || !tools {continue}
             if !header {ui.menu_header(ctx,"Plugin tools");header=true}
-            item.clicked=ui.menu_item(ctx,item.id,string(item.label[:item.label_length]),{icon=item.icon,shortcut=string(item.shortcut[:item.shortcut_length]),checked=item.active})
+            command_menu_item(s,command_widget(g,b.name),b.name)
         }
         if panels!=nil && len(panels.list)>0 {
             ui.menu_header(ctx,"Panels")
@@ -1247,15 +1217,14 @@ tools_menu_build :: proc(s:^Session) {
 // the choice clicked; -1: none.
 menu_choices :: proc(s:^Session,id:ui.Id,title:string,labels:[]string,current:int,disabled:=false) -> (chosen:int) {
     ctx:=s.gui.ctx
-    th:=&ctx.theme
     chosen=-1
     ui.menu_header(ctx,title)
     ui.id_push(ctx,id)
     defer ui.id_pop(ctx)
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={6,0,6,4}}) {
-        if ui.segments(ctx,ui.GROW,26) {
+        if kit.segments(ctx,ui.GROW,26) {
             for label,i in labels {
-                if ui.button(ctx,ui.id(ctx,"choice",i+1),{label=label,style=.Tab,active=i==current,width=-1,height=22,size=th.font_small,center=true,padding=2,disabled=disabled}).clicked {chosen=i}
+                if ui.button(ctx,ui.id(ctx,"choice",i+1),{label=label,variant="tab",active=i==current,width=-1,height=22,size=ui.metric(ctx,"font_small"),center=true,padding=2,disabled=disabled}).clicked {chosen=i}
             }
         }
     }
@@ -1272,8 +1241,9 @@ toolbar_height :: proc(g:^Editor_Ui) -> f32 {return g.toolbar_height if g.toolba
 bars_snap :: proc(g:^Editor_Ui,density:f32) {
     d:=density if density>0 else 1
     snap :: proc(points,d:f32) -> f32 {return max(math.round(points*d),1)/d}
-    g.ctx.theme.bar_height=snap(ui.THEME_EDITOR.bar_height,d)
-    g.toolbar_height=snap(ui.THEME_EDITOR.bar_height+DOCUMENT_TOOLBAR_HEIGHT,d)-g.ctx.theme.bar_height
+    bar:=snap(g.bar_height,d)
+    ui.metric_set(g.ctx,"bar_height",bar)
+    g.toolbar_height=snap(g.bar_height+DOCUMENT_TOOLBAR_HEIGHT,d)-bar
 }
 
 // The snaps of the three tools behind the magnet: a click on it turns them
@@ -1284,23 +1254,22 @@ SNAP_POPUP_WIDTH :: 236
 snap_menu_build :: proc(s:^Session) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     v:=s.viewport
     id,open,popup:=shell_id(g,"snap"),shell_id(g,"snap_open"),shell_id(g,"snap_popup")
     chosen:=v.snap || v.snap_rotate || v.snap_scale
     on:=chosen && !v.snap_off
-    color:=th.on_accent if on else th.text_label
+    color:=ui.tone(ctx,"on_accent") if on else ui.tone(ctx,"text_label")
     // One button of the bar, lit while it snaps: the magnet and its arrow.
-    if ui.box(ctx,{width=ui.FIT,height=ui.fixed(TOOLBAR_BUTTON),align_y=.Center,fill=th.accent_soft if on else {},stroke=th.accent if on else {},radius=th.radius_control}) {
+    if ui.box(ctx,{width=ui.FIT,height=ui.fixed(TOOLBAR_BUTTON),align_y=.Center,fill=ui.tone(ctx,"accent_soft") if on else {},stroke=ui.tone(ctx,"accent") if on else {},radius=ui.metric(ctx,"radius_control")}) {
         magnet:=ui.interact(ctx,id,{.Focusable})
-        if ui.box(ctx,{id=id,width=ui.fixed(TOOLBAR_BUTTON-2),height=ui.GROW,align_x=.Center,align_y=.Center,fill=th.field_hover if magnet.hot else {},radius=th.radius_control}) {ui.icon(ctx,.Magnet,color,16)}
+        if ui.box(ctx,{id=id,width=ui.fixed(TOOLBAR_BUTTON-2),height=ui.GROW,align_x=.Center,align_y=.Center,fill=ui.tone(ctx,"field_hover") if magnet.hot else {},radius=ui.metric(ctx,"radius_control")}) {ui.icon(ctx,.Magnet,color,16)}
         if magnet.hot {ui.tooltip(ctx,"Snap")}
         if magnet.clicked {
             v.snap_off=on
             if !on && !chosen {v.snap=true}
         }
         arrow:=ui.interact(ctx,open,{.Focusable})
-        if ui.box(ctx,{id=open,width=ui.fixed(14),height=ui.GROW,align_x=.Center,align_y=.Center,fill=th.field_hover if arrow.hot || ui.popup_is_open(ctx,popup) else {},radius=th.radius_control}) {ui.icon(ctx,.Chevron_Down,color,10)}
+        if ui.box(ctx,{id=open,width=ui.fixed(14),height=ui.GROW,align_x=.Center,align_y=.Center,fill=ui.tone(ctx,"field_hover") if arrow.hot || ui.popup_is_open(ctx,popup) else {},radius=ui.metric(ctx,"radius_control")}) {ui.icon(ctx,.Chevron_Down,color,10)}
         if arrow.clicked {
             from,_:=ui.widget_rect(ctx,id)
             to,_:=ui.widget_rect(ctx,open)
@@ -1322,14 +1291,14 @@ snap_menu_build :: proc(s:^Session) {
             }
             // As narrow as the typed field of a slider: the increment and its unit.
             field.width=ui.fixed(46+ui.text_width(&ctx.font,field.unit,ui.FIELD_UNIT)+4)
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=6,align_y=.Center}) {
-                if ui.button(ctx,shell_id(g,"snap_toggle",int(tool)+1),{icon=icons[tool],style=.Tab,active=enabled^,width=24,height=22,icon_size=14}).clicked {enabled^=!enabled^}
-                ui.label(ctx,names[tool],th.font,th.text,0)
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=6,align_y=.Center}) {
+                if ui.button(ctx,shell_id(g,"snap_toggle",int(tool)+1),{icon=icons[tool],variant="tab",active=enabled^,width=24,height=22,icon_size=14}).clicked {enabled^=!enabled^}
+                ui.label(ctx,names[tool],ui.metric(ctx,"font"),ui.tone(ctx,"text"),0)
                 value_id,presets_open,presets:=shell_id(g,"snap_value",int(tool)+1),shell_id(g,"snap_presets_open",int(tool)+1),shell_id(g,"snap_presets",int(tool)+1)
                 if ui.box(ctx,{width=ui.FIT,height=ui.FIT,gap=2,align_y=.Center}) {
                     typed:=f64(value^)
                     if ui.number_field(ctx,value_id,&typed,field).changed {value^=f32(typed)}
-                    if ui.button(ctx,presets_open,{icon=.Chevron_Down,icon_size=10,icon_color=th.text_muted,style=.Field,width=18,height=22,active=ui.popup_is_open(ctx,presets)}).clicked {
+                    if ui.button(ctx,presets_open,{icon=.Chevron_Down,icon_size=10,icon_color=ui.tone(ctx,"text_muted"),variant="field",width=18,height=22,active=ui.popup_is_open(ctx,presets)}).clicked {
                         from,_:=ui.widget_rect(ctx,value_id)
                         to,_:=ui.widget_rect(ctx,presets_open)
                         ui.popup_open(ctx,presets,{from.x,to.y+to.h,to.x+to.w-from.x,0})
@@ -1338,7 +1307,7 @@ snap_menu_build :: proc(s:^Session) {
                 if ui.popup(ctx,presets,{min_width=72,gap=1}) {
                     for choice,index in choices {
                         label:=fmt.tprintf("%s %s",ui.number_text(ctx,f64(choice)),field.unit)
-                        if ui.button(ctx,shell_id(g,"snap_choice",int(tool)*16+index+1),{label=label,style=.Ghost,active=value^==choice,width=-1,height=22,size=th.font_small}).clicked {
+                        if ui.button(ctx,shell_id(g,"snap_choice",int(tool)*16+index+1),{label=label,variant="ghost",active=value^==choice,width=-1,height=22,size=ui.metric(ctx,"font_small")}).clicked {
                             value^=choice
                             ui.popup_close(ctx,presets)
                         }
@@ -1356,12 +1325,12 @@ camera_speed_build :: proc(s:^Session) {
     id:=shell_id(g,"camera_speed")
     popup:=shell_id(g,"camera_speed_popup")
     speed:=f64(s.viewport.fly_speed>0?s.viewport.fly_speed:VIEW_FLY_SPEED)
-    if ui.button(ctx,id,{label=ui.number_text(ctx,speed,1),icon=ui.icon_user(u8(User_Icon.Camera)),style=.Ghost,height=TOOLBAR_BUTTON,size=ctx.theme.font,tip="Camera speed"}).clicked {
+    if ui.button(ctx,id,{label=ui.number_text(ctx,speed,1),icon=ui.icon_user(u8(User_Icon.Camera)),variant="ghost",height=TOOLBAR_BUTTON,size=ui.metric(ctx,"font"),tip="Camera speed"}).clicked {
         anchor,_:=ui.widget_rect(ctx,id)
         ui.popup_open(ctx,popup,anchor)
     }
     if ui.popup(ctx,popup,{width=200,padding=12,gap=5}) {
-        if ui.property(ctx,"Speed") {
+        if kit.property(ctx,"Speed") {
             if ui.number_field(ctx,shell_id(g,"camera_speed_value"),&speed,{min=f64(VIEW_FLY_SPEED)*0.2,max=f64(VIEW_FLY_SPEED)*2.5,has_min=true,has_max=true,decimals=1,speed=0.1}).changed {s.viewport.fly_speed=f32(speed)}
         }
     }
@@ -1371,49 +1340,46 @@ camera_speed_build :: proc(s:^Session) {
 play_controls :: proc(s:^Session) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
-    stop:=ui.Button{icon=.Stop,style=.Tab,icon_color=th.accent,width=BAR_BUTTON_HEIGHT,height=BAR_BUTTON_HEIGHT}
+    stop:=ui.Button{icon=.Stop,variant="tab",icon_color=ui.tone(ctx,"accent"),width=BAR_BUTTON_HEIGHT,height=BAR_BUTTON_HEIGHT}
     if s.mode==.Watch {
-        if ui.segments(ctx,ui.FIT,30) {action_button(s,.Stop,stop,0)}
+        if kit.segments(ctx,ui.FIT,30) {command_button(s,"stop",stop)}
         return
     }
     // Who has the keyboard and the mouse says how to get them back.
     eject :: proc(s:^Session) {
         if player_processes_captured(s) || s.mode==.Play && !s.play_input_released {
-            action_button(s,.Release_Input,{label="Eject (F1)",style=.Field,height=BAR_BUTTON_HEIGHT,size=s.gui.ctx.theme.font_small},0)
+            command_button(s,"release_input",{label=fmt.tprintf("%s (%s)",command_label(s,"release_input"),command_shortcut_text(s,"release_input")),variant="field",height=BAR_BUTTON_HEIGHT,size=ui.metric(s.gui.ctx,"font_small")})
         }
     }
     providers_:=providers(s)
     plugin:=&providers_.play
     plugin_label :: proc(s:^Session,plugin:^Play_Provider) -> string {return plugin.label!=nil?plugin.label(s):""}
     if s.mode==.Edit && play_plugin_active(s) {
-        if label:=plugin_label(s,plugin);ctx.size.x>=900 && label!="" {ui.label(ctx,label,th.font,th.accent)}
+        if label:=plugin_label(s,plugin);ctx.size.x>=900 && label!="" {ui.label(ctx,label,ui.metric(ctx,"font"),ui.tone(ctx,"accent"))}
         eject(s)
-        if ui.segments(ctx,ui.FIT,30) {action_button(s,.Stop,stop,0)}
+        if kit.segments(ctx,ui.FIT,30) {command_button(s,"stop",stop)}
         return
     }
     if s.mode==.Edit {
         kind:=&g.layout.run_kind
         players:=s.play_players
-        run:=RUN_ACTIONS[kind^]
+        run:=RUN_COMMANDS[kind^]
         // The mode keeps its icon whoever plays it: online players are said in the menu.
-        icon:=action_icon(run)
-        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(th.control),gap=0,align_y=.Center,fill=th.accent,radius=th.radius_control}) {
-            action_button(s,run,{icon=icon,style=.Accent,width=28,height=ctx.theme.control,icon_size=14},0)
+        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(ui.metric(ctx,"control")),gap=0,align_y=.Center,fill=ui.tone(ctx,"accent"),radius=ui.metric(ctx,"radius_control")}) {
+            command_button(s,run,{variant="accent",width=28,height=ui.metric(ctx,"control"),icon_size=14})
             id:=shell_id(g,"run_menu")
-            if ui.button(ctx,id,{icon=.Chevron_Down,style=.Accent,width=18,height=ctx.theme.control,icon_size=10,tip="Execution mode"}).clicked {
+            if ui.button(ctx,id,{icon=.Chevron_Down,variant="accent",width=18,height=ui.metric(ctx,"control"),icon_size=10,tip="Execution mode"}).clicked {
                 anchor,_:=ui.widget_rect(ctx,id)
                 ui.popup_open(ctx,shell_id(g,"run_popup"),anchor)
             }
         }
         if ui.popup(ctx,shell_id(g,"run_popup"),{align_right=true}) {
             // Choosing a mode also runs it.
-            labels:=ACTION_LABELS
             for k in Run_Kind {
-                action:=RUN_ACTIONS[k]
-                if ui.menu_item(ctx,shell_id(g,"run_kind",int(k)+1),labels[action],{icon=action_icon(action),shortcut=k==.Play?"F5":"",checked=kind^==k}) {
+                run:=RUN_COMMANDS[k]
+                if ui.menu_item(ctx,shell_id(g,"run_kind",int(k)+1),command_label(s,run),{icon=command_icon(s,run),shortcut=command_shortcut_text(s,run),checked=kind^==k}) {
                     kind^=k
-                    action_run(s,action)
+                    command_run(s,run)
                 }
             }
             if players!=nil {
@@ -1427,17 +1393,18 @@ play_controls :: proc(s:^Session) {
         }
         return
     }
-    if simulating(s) && !camera_previewing(s) {action_button(s,.Apply_Simulation,{label="Apply transforms",style=.Field,height=BAR_BUTTON_HEIGHT},0)}
+    if simulating(s) && !camera_previewing(s) {command_button(s,"apply_simulation",{variant="field",height=BAR_BUTTON_HEIGHT})}
     if camera_previewing(s) {
-        action_button(s,.Camera_Discard,{label="Discard",style=.Field,height=BAR_BUTTON_HEIGHT},0)
-        action_button(s,.Camera_Keep,{label="Keep",style=.Accent,height=BAR_BUTTON_HEIGHT},0)
+        command_button(s,"camera_discard",{label="Discard",variant="field",height=BAR_BUTTON_HEIGHT})
+        command_button(s,"camera_keep",{label="Keep",variant="accent",height=BAR_BUTTON_HEIGHT})
     }
-    if label:=plugin_label(s,plugin);play_plugin_active(s) && ctx.size.x>=900 && label!="" {ui.label(ctx,label,th.font,th.accent)}
+    if label:=plugin_label(s,plugin);play_plugin_active(s) && ctx.size.x>=900 && label!="" {ui.label(ctx,label,ui.metric(ctx,"font"),ui.tone(ctx,"accent"))}
     eject(s)
-    if ui.segments(ctx,ui.FIT,30) {
-        pause:=play_paused(s)?ui.Icon.Play:ui.icon_user(u8(User_Icon.Pause))
-        action_button(s,.Pause,{icon=pause,style=.Tab,icon_color=th.text,width=BAR_BUTTON_HEIGHT,height=BAR_BUTTON_HEIGHT},0)
-        action_button(s,.Stop,stop,0)
+    if kit.segments(ctx,ui.FIT,30) {
+        // One button: Pause while it plays, Resume while it is paused.
+        pause:=play_paused(s)?"resume":"pause"
+        command_button(s,pause,{variant="tab",icon_color=ui.tone(ctx,"text"),width=BAR_BUTTON_HEIGHT,height=BAR_BUTTON_HEIGHT})
+        command_button(s,"stop",stop)
     }
 }
 
@@ -1449,16 +1416,15 @@ window_controls :: proc(s:^Session) {
     g:=s.gui
     ctx:=g.ctx
     p:=s.app.platform
-    th:=&ctx.theme
     window:=platform.input_frame(p).window
     // Flush with the top right corner of the window, past the 10 points of
     // padding of the bar, so a pointer thrown at the corner lands on Close.
     ui.spacer(ctx,3*WINDOW_CONTROL_WIDTH-10,0)
-    if ui.box(ctx,{width=ui.FIT,height=ui.fixed(th.bar_height),float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right}}) {
+    if ui.box(ctx,{width=ui.FIT,height=ui.fixed(ui.metric(ctx,"bar_height")),float={to=.Parent,anchor=.Top_Right,pivot=.Top_Right}}) {
         for control in ([3]User_Icon{.Minimize,.Maximize,.Close}) {
             id:=shell_id(g,"window_control",int(control)+1)
             named_add(g,id,.Control)
-            if !ui.button(ctx,id,{icon=ui.icon_user(u8(control)),icon_color=th.text_muted,style=.Ghost,width=WINDOW_CONTROL_WIDTH,height=th.bar_height,center=true}).clicked {continue}
+            if !ui.button(ctx,id,{icon=ui.icon_user(u8(control)),icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=WINDOW_CONTROL_WIDTH,height=ui.metric(ctx,"bar_height"),center=true}).clicked {continue}
             #partial switch control {
             case .Minimize: platform.window_minimize(p)
             case .Maximize: platform.window_set_maximized(p,!window.maximized)
@@ -1469,47 +1435,40 @@ window_controls :: proc(s:^Session) {
 }
 
 @(private)
-Menu_Entry :: struct {action:Action,group:int}
-
-@(private)
 menus_build :: proc(s:^Session,w:core.World_Ref) {
-    g:=s.gui
-    ctx:=g.ctx
-    file:=[?]Menu_Entry{{.New,0},{.Open,0},{.Projects,0},{.Save,1},{.Save_All,1},{.Save_As,1},{.Import,2},{.Build,3},{.Settings,3},{.Quit,4}}
-    view:=[?]Menu_Entry{{.Focus,0},{.Reset_Camera,0},{.Scene_Thumbnail,0},{.Grid,1},{.Indicators,1},{.Output_Frame,1},{.Game_Detail,1},{.Studio_Light,1},{.Graphics,1},{.Inspector_Panel,2},{.Console_Panel,2},{.Build_Panel,2}}
-    menu_entries(s,"Mirai",1,file[:],{icon=ui.icon_user(u8(User_Icon.Mirai)),icon_color=MARK_ARM,icon_size=30,padding=4})
-    menu_entries(s,"View",4,view[:])
+    menu_entries(s,"Mirai",1,.File,{icon=ui.icon_user(u8(User_Icon.Mirai)),icon_color=MARK_ARM,icon_size=30,padding=4})
+    menu_entries(s,"View",4,.View)
 }
 
+// A menu of the bar: the entries given to it, of the editor and of the
+// plugins, by group. View shows Stats, a popup of its own and not a command,
+// after the panels of the plugins.
 @(private)
-menu_entries :: proc(s:^Session,title:string,index:int,entries:[]Menu_Entry,look:ui.Button={}) {
+menu_entries :: proc(s:^Session,title:string,index:int,menu:Menu,look:ui.Button={}) {
     g:=s.gui
     ctx:=g.ctx
     id:=shell_id(g,"menu",index)
     named_add(g,id)
     if ui.menu(ctx,id,title,look.icon!=.None?BAR_MARK_HEIGHT:26,look) {
-        labels,shortcuts:=ACTION_LABELS,ACTION_SHORTCUTS
-        group:=entries[0].group
-        for entry,at in entries {
-            if entry.group!=group {ui.menu_separator(ctx)}
-            group=entry.group
-            state:=action_state(s,entry.action)
-            label:=state.label!=""?state.label:labels[entry.action]
-            shortcut:=entry.action==.Deselect?"Esc":shortcut_text(shortcuts[entry.action])
-            if ui.menu_item(ctx,shell_id(g,"menu_item",index*100+at+1),label,{icon=action_icon(entry.action),shortcut=shortcut,checked=state.checked,disabled=state.disabled}) {action_run(s,entry.action)}
-        }
-        if title=="View" {
-            ui.menu_separator(ctx)
-            for &item in g.items[:g.item_count] {
-                if item.kind!=.View {continue}
-                item.clicked=ui.menu_item(ctx,item.id,string(item.label[:item.label_length]),{checked=item.active})
+        shown:=false
+        for group in 0..<u8(MENU_GROUPS) {
+            parted:=false
+            part :: proc(ctx:^ui.Context,shown,parted:^bool) {
+                if shown^ && !parted^ {ui.menu_separator(ctx)}
+                shown^,parted^=true,true
             }
-            if ui.menu_item(ctx,shell_id(g,"stats"),"Stats",{icon=.Gauge}) {
-                anchor,_:=ui.widget_rect(ctx,id)
-                ui.popup_open(ctx,stats_popup(g),anchor)
+            for &b,at in command_bindings(s) {
+                if b.menu!=menu || b.group!=group {continue}
+                part(ctx,&shown,&parted)
+                command_menu_item(s,shell_id(g,"menu_item",index*1000+at+1),b.name)
             }
-            ui.menu_separator(ctx)
-            if ui.menu_item(ctx,shell_id(g,"shortcuts"),labels[.Shortcuts],{icon=action_icon(.Shortcuts),shortcut=shortcut_text(shortcuts[.Shortcuts])}) {action_run(s,.Shortcuts)}
+            if menu==.View && group==MENU_GROUP_PLUGINS {
+                part(ctx,&shown,&parted)
+                if ui.menu_item(ctx,shell_id(g,"stats"),"Stats",{icon=.Gauge}) {
+                    anchor,_:=ui.widget_rect(ctx,id)
+                    ui.popup_open(ctx,stats_popup(g),anchor)
+                }
+            }
         }
     }
 }
@@ -1523,19 +1482,17 @@ stats_popup :: proc(g:^Editor_Ui) -> ui.Id {return shell_id(g,"stats_popup")}
 stats_build :: proc(s:^Session,w:core.World_Ref) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     popup:=stats_popup(g)
     if !ui.popup_is_open(ctx,popup) {return}
     row :: proc(ctx:^ui.Context,name,value:string) {
-        th:=&ctx.theme
-        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=8,align_y=.Center}) {
-            ui.label(ctx,name,th.font_small,th.text_muted)
+        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center}) {
+            ui.label(ctx,name,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
             ui.spacer(ctx)
-            ui.label(ctx,value,th.font_small,th.text)
+            ui.label(ctx,value,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
         }
     }
     if ui.popup(ctx,popup,{width=260,align_right=true,padding=12,gap=2}) {
-        ui.label(ctx,"Stats",th.font_title,th.text,font=ui.FONT_SEMIBOLD)
+        ui.label(ctx,"Stats",ui.metric(ctx,"font_title"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
         app:=s.app
         row(ctx,"Frames per second",fmt.tprintf("%.0f",s.app.stats.fps))
         row(ctx,"Frame",fmt.tprintf("%.2f ms",app.stats.frame_ms))
@@ -1562,98 +1519,71 @@ stats_build :: proc(s:^Session,w:core.World_Ref) {
 modal_build :: proc(s:^Session) {
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     switch g.modal {
     case .None:
-    case .Recovery:
-        if ui.modal(ctx,shell_id(g,"recovery"),{width=440}) {
-            ui.label(ctx,"Recover unsaved changes?",th.font_title,th.text,font=ui.FONT_SEMIBOLD)
-            if s.recovery.tabs {
-                ui.label(ctx,"Every tab of the editor that ended",th.font_small,th.text_muted)
-            } else {
-                for &found in s.recovery.found {
-                    path:=base.text_get(found.scene?found.info.source[:]:found.source[:])
-                    ui.label(ctx,path!=""?filepath.base(path):"Untitled",th.font_small,th.text_muted)
-                }
-            }
-            if len(s.recovery.assets)>0 {ui.label(ctx,"Assets with unsaved changes",th.font_small,th.text_muted)}
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=8,align_x=.End,align_y=.Center}) {
-                if ui.button(ctx,shell_id(g,"recovery_later"),{label="Later",style=.Field,width=92,height=28,center=true}).clicked {g.modal=.None}
-                if ui.button(ctx,shell_id(g,"recover"),{label="Recover",style=.Accent,width=92,height=28,center=true}).clicked {s.requests+={.Recover}}
-                if ui.button(ctx,shell_id(g,"discard_recovery"),{label="Discard",style=.Field,width=92,height=28,center=true}).clicked {s.requests+={.Discard_Recovery}}
-            }
-        }
     case .Confirm:
         if ui.modal(ctx,shell_id(g,"confirm"),{width=380}) {
-            // Agents still working are asked about too, with nothing unsaved.
-            scene:=document_dirty(s) && !pending_plugin(g.pending) && g.pending!=.Asset_Close
-            unsaved:=scene || len(g.confirm_assets)>0
             working,waiting:=ai_working_count(s),ai_review_waiting_count(s)
             agents:=working==1?"An agent is working":fmt.tprintf("%d agents are working",working)
             others:=scene_switch_others(s,g.pending)
-            ui.label(ctx,unsaved?"Unsaved changes":others!=""?"Change the scene?":agents,th.font_title,th.text,font=ui.FONT_SEMIBOLD)
-            if others!="" {ui.paragraph(ctx,others,th.font_small,th.text_muted)}
-            if pending_plugin(g.pending) {
-                ui.label(ctx,"The players read the saved files",th.font_small,th.text_muted)
-            } else if unsaved {
-                ui.label(ctx,len(g.confirm_assets)>0?"Save the changes before going on?":document_title(s.document),th.font_small,th.text_muted)
-            }
-            if unsaved {unsaved_list(s,scene)} else {ui.label(ctx,document_title(s.document),th.font_small,th.text_muted)}
-            if (unsaved || others!="") && working>0 {ui.label(ctx,fmt.tprintf("%s: %s",agents,working==1?"it stops":"they stop"),th.font_small,th.text_muted)}
-            if waiting>0 {ui.label(ctx,fmt.tprintf("%d agent %s waiting for review",waiting,waiting==1?"change":"changes"),th.font_small,th.text_muted)}
+            ui.label(ctx,others!=""?"Change the scene?":agents,ui.metric(ctx,"font_title"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
+            if others!="" {ui.text(ctx,others,ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted")))}
+            ui.label(ctx,document_title(s.document),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+            if others!="" && working>0 {ui.label(ctx,fmt.tprintf("%s: %s",agents,working==1?"it stops":"they stop"),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
+            if waiting>0 {ui.label(ctx,fmt.tprintf("%d agent %s waiting for review",waiting,waiting==1?"change":"changes"),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=8,align_x=.End,align_y=.Center}) {
-                choices:=[3]Choice{.Save,.Discard,.Cancel}
-                labels:=[3]string{"Save","Discard","Cancel"}
-                widths:=[3]f32{92,92,92}
-                shown:=choices[:]
-                verb:="Play"
-                if p:=providers(s);g.pending==.Play_Plugin && p.plays && p.play.verb!=nil {verb=p.play.verb(s)}
-                if g.pending==.Play_Plugin {labels[0],labels[1],widths[1]=fmt.tprintf("Save and %s",strings.to_lower(verb,context.temp_allocator)),fmt.tprintf("%s without",verb),110}
-                if !unsaved {
-                    // Nothing to save: going on is all that is asked.
-                    pending_labels:=[Pending]string{.None="Continue",.New="New",.Close="Close",.Quit="Quit",.Play_Plugin="Play",.Asset_Close="Close",.Open_Scene="Open"}
-                    labels[1]=pending_labels[g.pending]
-                    if g.pending==.Play_Plugin {labels[1]=verb}
-                    shown=choices[1:]
-                }
-                for choice in shown {
-                    if ui.button(ctx,shell_id(g,"confirm_choice",int(choice)+1),{label=labels[int(choice)],style=choice==.Save || !unsaved && choice==.Discard?.Accent:.Field,width=widths[int(choice)],height=28,center=true}).clicked {confirm_resolve(s,choice)}
-                }
-            }
-        }
-    case .Save_Changes:
-        if ui.modal(ctx,shell_id(g,"save_changes"),{width=380}) {
-            ui.label(ctx,"Save changes",th.font_title,th.text,font=ui.FONT_SEMIBOLD)
-            ui.label(ctx,"The scene uses assets with unsaved changes.",th.font_small,th.text_muted)
-            unsaved_list(s,true)
-            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=8,align_x=.End,align_y=.Center}) {
-                if ui.button(ctx,shell_id(g,"save_changes_cancel"),{label="Cancel",style=.Field,width=92,height=28,center=true}).clicked {modal_close(g)}
-                if ui.button(ctx,shell_id(g,"save_changes_scene"),{label="Scene only",style=.Field,width=92,height=28,center=true}).clicked {save_changes_resolve(s,false)}
-                if ui.button(ctx,shell_id(g,"save_changes_all"),{label="Save all",style=.Accent,width=92,height=28,center=true}).clicked {save_changes_resolve(s,true)}
+                labels:=[Pending]string{.None="Continue",.New="New",.Quit="Quit",.Open_Scene="Open"}
+                if ui.button(ctx,shell_id(g,"confirm_choice",2),{label=labels[g.pending],variant="accent",width=92,height=28,center=true}).clicked {confirm_resolve(s,true)}
+                if ui.button(ctx,shell_id(g,"confirm_choice",3),{label="Cancel",variant="field",width=92,height=28,center=true}).clicked {confirm_resolve(s,false)}
             }
         }
     case .Shortcuts:
         closed:=false
         defer if closed {g.modal=.None}
         if ui.modal(ctx,shell_id(g,"shortcuts"),{width=SHORTCUTS_WIDTH,scroll=&g.modal_scroll,close=&closed}) {
-            ui.label(ctx,"Keyboard shortcuts",th.font_title,th.text,font=ui.FONT_SEMIBOLD)
-            labels,shortcuts:=ACTION_LABELS,ACTION_SHORTCUTS
+            ui.label(ctx,"Keyboard shortcuts",ui.metric(ctx,"font_title"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
+            bindings:=command_bindings(s)
+            groups:=SHORTCUT_GROUPS
+            of:=make([]int,len(bindings),context.temp_allocator)
+            for &o in of {o=len(groups)-1}
+            for group,k in groups[:len(groups)-1] {
+                first,last:=-1,-1
+                for &b,i in bindings {
+                    if b.name==group.first {first=i}
+                    if b.name==group.last {last=i}
+                }
+                if first>=0 {for i in first..=max(first,last) {of[i]=k}}
+            }
+            // An entry by its key: two entries of one key in a section are what it does by turns (Pause and Resume).
+            listed:=make([]bool,len(bindings),context.temp_allocator)
+            filled:[len(SHORTCUT_GROUPS)]bool
+            for &b,at in bindings {
+                if !b.shortcut.set {continue}
+                repeated:=false
+                for &other,i in bindings[:at] {repeated||=other.shortcut==b.shortcut && of[i]==of[at]}
+                listed[at]=!repeated
+                filled[of[at]]||=!repeated
+            }
+            // The sections with entries fill the two columns by turns.
+            column_of:[len(SHORTCUT_GROUPS)]int
+            n:=0
+            for k in 0..<len(groups) {if filled[k] {column_of[k]=n%2;n+=1}}
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=28}) {
                 for column in 0..<2 {
                     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=2}) {
-                        for group,k in SHORTCUT_GROUPS {
-                            if k%2!=column {continue}
-                            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),padding={0,8,0,0},align_y=.End}) {
-                                ui.label(ctx,group.name,th.font_caption,th.text_faint,font=ui.FONT_SEMIBOLD)
+                        for group,k in groups {
+                            if !filled[k] || column_of[k]!=column {continue}
+                            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),padding={0,8,0,0},align_y=.End}) {
+                                ui.label(ctx,group.name,ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_faint"),font=ui.FONT_SEMIBOLD)
                             }
-                            for action in group.first..=group.last {
-                                if !shortcuts[action].set {continue}
-                                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.row),gap=4,align_y=.Center}) {
-                                    ui.label(ctx,labels[action],th.font_small,th.text)
+                            for &b,at in bindings {
+                                if !listed[at] || of[at]!=k {continue}
+                                if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=4,align_y=.Center}) {
+                                    ui.label(ctx,b.label,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
                                     ui.spacer(ctx)
-                                    for key in strings.split(shortcut_text(shortcuts[action]),"+",context.temp_allocator) {
-                                        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(20),padding={6,0,6,0},align_y=.Center,fill=th.field,stroke=th.border,radius=4}) {
-                                            ui.label(ctx,key,th.font_caption,th.text_muted)
+                                    for key in strings.split(shortcut_text(b.shortcut),"+",context.temp_allocator) {
+                                        if ui.box(ctx,{width=ui.FIT,height=ui.fixed(20),padding={6,0,6,0},align_y=.Center,fill=ui.tone(ctx,"field"),stroke=ui.tone(ctx,"border"),radius=4}) {
+                                            ui.label(ctx,key,ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_muted"))
                                         }
                                     }
                                 }
@@ -1666,45 +1596,25 @@ modal_build :: proc(s:^Session) {
     case .Settings: settings_modal(s)
     case .Delete_Asset: asset_delete_modal(s)
     case .Git_Discard:  git_discard_modal(s)
-    }
-}
-
-// What a question about unsaved changes saves or discards: the scene when
-// scene is set, and its assets, a row each with the kind of the file.
-@(private)
-unsaved_list :: proc(s:^Session,scene:bool) {
-    g:=s.gui
-    ctx:=g.ctx
-    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=2,padding={0,6,0,6}}) {
-        if scene {modal_row(ctx,document_is_prefab(s)?.Prefab:.Scene,document_title(s.document),document_is_prefab(s)?"Prefab":"Scene")}
-        registry:=&s.app.assets.registry
-        for path in g.confirm_assets {
-            if asset.registry_outside(path) {
-                modal_row(ctx,.Material,asset_name(path),"Program")
-            } else if file,found:=asset.registry_find_path(registry,path);found && file.state==.Asset {
-                modal_asset_row(s,ctx,file)
-            } else {
-                modal_row(ctx,.None,asset_name(path),"File")
-            }
-        }
+    case .Pending:      git_pending_modal(s)
+    case .No_Repository: git_missing_modal(s)
     }
 }
 
 // A file a question names: its icon, its name and its kind.
 @(private)
 modal_row :: proc(ctx:^ui.Context,icon:ui.Icon,name,kind:string) {
-    th:=&ctx.theme
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(th.control),gap=8,padding={8,0,8,0},align_y=.Center,fill=th.field,radius=4}) {
-        ui.icon(ctx,icon,th.text_muted,14)
-        ui.label(ctx,name,th.font_small,th.text,0)
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),gap=8,padding={8,0,8,0},align_y=.Center,fill=ui.tone(ctx,"field"),radius=4}) {
+        ui.icon(ctx,icon,ui.tone(ctx,"text_muted"),14)
+        ui.label(ctx,name,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0)
         ui.spacer(ctx)
-        ui.label(ctx,kind,th.font_small,th.text_muted)
+        ui.label(ctx,kind,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
     }
 }
 
 @(private)
 modal_asset_row :: proc(s:^Session,ctx:^ui.Context,file:^asset.Registry_File) {
-    icon,_:=asset_icon(s,file.kind)
+    icon,_:=asset_file_icon(s,file)
     kind:="File"
     if info,known:=asset.kind_info(file.kind);known {kind=strings.to_upper_camel_case(info.name,context.temp_allocator)}
     modal_row(ctx,icon,asset_name(file.path),kind)
@@ -1728,10 +1638,9 @@ toast_build :: proc(s:^Session) {
     if s.toast_seconds<=0 || s.toast_length==0 {return}
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
-    offset:=-2*th.margin
-    if g.layout.bottom_open {offset-=g.rects.bottom.h+th.margin}
+    offset:=-2*ui.metric(ctx,"margin")
+    if g.layout.bottom_open {offset-=g.rects.bottom.h+ui.metric(ctx,"margin")}
     if ui.panel(ctx,shell_id(g,"toast"),{width=ui.FIT,height=ui.FIT,padding={12,8,12,8},anchor=.Bottom_Center,pivot=.Bottom_Center,offset={0,offset},layer=ui.LAYER_TOAST,popup=true}) {
-        ui.label(ctx,string(s.toast[:s.toast_length]),th.font,th.text)
+        ui.label(ctx,string(s.toast[:s.toast_length]),ui.metric(ctx,"font"),ui.tone(ctx,"text"))
     }
 }

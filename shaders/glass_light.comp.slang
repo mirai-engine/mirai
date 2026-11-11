@@ -1,7 +1,7 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-//! variant color MIRAI_GLASS_MEANS=1
-//! variant color_hw MIRAI_GLASS_MEANS=1 MIRAI_HW_RT=1
+// color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
+//! constant color MIRAI_GLASS_MEANS
 // The light of each pixel of a layer of glass itself, with its traced
 // reflection, before glass.comp adds over it what the layer lets through. Its
 // lights take their shadows from the maps of the view where these hold the
@@ -26,7 +26,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     // The back faces of the solid the camera is in are left to glass_inside.comp.
     if ((gbuffer_bits_unpack(normal) & GBUFFER_GLASS_EXIT) != 0u) return;
     float2 uv = (float2(p) + 0.5) * frame.inv_resolution;
-    Material m = material_row(layer_ids.Load(int3(p, 0)).x);
+    uint2 ids = layer_ids.Load(int3(p, 0));
+    Material m = material_row(ids.x, material_values_of(ids.y));
     Glass g = glass_of(p, uv, depth, layer_albedo.Load(int3(p, 0)), normal, layer_emission.Load(int3(p, 0)));
     float traced = params.traced != 0u ? reflection_weight(g.roughness) : 0.0;
     float3 reflected = traced > 0.0 ? reflection.Load(int3(p, 0)).rgb : float3(0.0);

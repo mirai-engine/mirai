@@ -4,7 +4,6 @@ import "base:runtime"
 import "core:mem"
 import "core:slice"
 import "mirai:asset"
-import "mirai:cook/author"
 import "mirai:core"
 
 // Undo and redo by rows, over the journal of the edited World (journal.odin).
@@ -25,7 +24,7 @@ import "mirai:core"
 // Edits made while a Play runs are made to its World and are not kept: the
 // history is that of the World of the document.
 
-EDITS_STEP_CAPACITY :: 256    // steps kept: the oldest goes first
+EDITS_STEP_CAPACITY :: 256    // steps kept: the oldest of the author with the most goes first
 EDITS_BYTE_CAPACITY :: 512<<20 // bytes the steps may hold
 EDIT_LABEL_BYTES :: 48
 
@@ -79,14 +78,12 @@ Edits :: struct {
     image:[dynamic]Journal_Table, // by table of the world info
     image_entities:Journal_Entities,
     ranges:[dynamic]Edit_Transient_Ranges, // by table a scene saves
-    changes:[dynamic]Journal_Change,       // what the image took since collaboration or the recovery log read, while they read
+    changes:[dynamic]Journal_Change,       // what the image took since collaboration read, while it reads
     changes_first:u64,            // how many changes went before changes[0]
     change_values:[dynamic]u8,    // what the rows of the changes held before, one after another (Journal_Change.value)
     change_values_first:u64,      // how many bytes went before change_values[0]
     reading:bool,                 // collaboration reads the changes
     read_done:u64,                // up to where it read them
-    logging:bool,                 // the recovery log of the editor reads the changes
-    logged:u64,                   // up to where it wrote them
     steps:[dynamic]Edit_Step,
     cursor:int,               // the steps done are steps[:cursor]; steps[cursor:] were undone in order
     author:Edit_Author,       // of what changes now: a method of the API sets its own while it runs
@@ -357,7 +354,7 @@ edits_image_take :: proc(edits:^Edits,w:core.World_Ref) {
     ids:=core.world_table_of(w,core.Id)
     authors:=History_Authors{current=ids!=nil?core.raw(ids):nil}
     for &t,i in w.info.tables {
-        edits.saved[i]=t.place==.World && author.type_saved(t.info)
+        edits.saved[i]=t.place==.World && !t.derived
         if edits.saved[i] {journal_table_take(&edits.image[i],core.world_table_at(w,&t),t.info.size,authors,ids!=nil && t.type!=core.Id)} else {journal_table_free(&edits.image[i])}
     }
     journal_ranges(edits,w)
@@ -472,7 +469,7 @@ step_exact :: proc(edits:^Edits,w:core.World_Ref,step:^Edit_Step) -> bool {
         table:=core.world_table_at(w,info)
         size:=info.info.size
         ranges:=edits.ranges[rows.table].ranges
-        offsets:=saved_entity_offsets(info.info)
+        offsets:=saved_entity_offsets(w.info,info.info)
         for e,k in rows.entities {
             row:=core.raw_row(table,e)
             if (row>=0)!=rows.held.present[k] {return false}
@@ -520,7 +517,7 @@ rows_swap :: proc(r:^Step_Rows,t:^core.Raw_Table,info:^runtime.Type_Info,had:[]u
         _,was_off,_:=core.raw_state(t,e)
         if current!=nil {mem.copy(raw_data(had),current,size)}
         switch {
-        case r.present[k] && current!=nil: saved_copy(core.raw_get(t,info,e),raw_data(value),size,transient)
+        case r.present[k] && current!=nil: saved_copy(core.raw_author(t,info,e),raw_data(value),size,transient)
         case r.present[k]:                 core.raw_add(t,info,e,raw_data(value))
         case current!=nil:                 core.raw_remove(t,e)
         }

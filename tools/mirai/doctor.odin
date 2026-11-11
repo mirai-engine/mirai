@@ -111,23 +111,26 @@ cmd_doctor :: proc(root:string,args:[]string) -> int {
         fmt.printfln("  info   MIRAI_ODIN_FLAGS=%s is added to every build (except -thread-count, it does not change the fingerprint)",extra)
     }
     built:=false
+    built_modes:bit_set[build.Engine_Mode]
     if installed {
         _,present:=build.engine_state(root,build.ENGINE_MODE_INSTALLED)
         report(&errors,present,fmt.tprintf("engine binaries in %s",build.engine_paths(root,build.ENGINE_MODE_INSTALLED,context.temp_allocator).folder),"unpack the package of the engine again")
         built=true
+        built_modes={build.ENGINE_MODE_INSTALLED}
     }
     for mode in ([2]build.Engine_Mode{.Dev,.Release}) {
         if installed {break}
-        flag:=mode==.Dev?"--dev":"--release"
+        flag:=mode==.Dev?"dev":"release"
         stamped,current:=build.engine_state(root,mode)
         built||=stamped
+        if stamped {built_modes+={mode}}
         switch {
         case !stamped:
         case current: fmt.printfln("  ok     engine binaries %s up to date in %s",flag,build.engine_paths(root,mode,context.temp_allocator).folder)
-        case:         fmt.printfln("  warn   engine binaries %s older than their sources -> mirai build engine %s",flag,flag)
+        case:         fmt.printfln("  warn   engine binaries %s older than their sources -> mirai build engine%s",flag,mode==.Dev?"":" --release")
         }
     }
-    if !built {fmt.println("  warn   engine binaries: not built -> mirai build engine --dev")}
+    if !built {fmt.println("  warn   engine binaries: not built -> mirai build engine")}
     if entries,cache_error:=os.read_all_directory_by_path(workspace.cache_folder(root,"engine",context.temp_allocator),context.temp_allocator);cache_error==nil {
         fmt.printfln("  info   shared engine cache: %d builds",len(entries))
     }
@@ -152,8 +155,13 @@ cmd_doctor :: proc(root:string,args:[]string) -> int {
         report(&errors,os.is_file(project.path(project.folder_path(p.root,.Assets),scene)),fmt.tprintf("start scene %s",scene),fmt.tprintf("save that scene or change start_scene in %s",project.PROJECT_FILE))
     }
     state_name:=[build.Target_State]string{.Missing="not built",.Stale="older than its sources",.Current="up to date"}
-    editor:=build.target_state(&p,.Editor,compiler,engine=build.engine_mode_resolve(root,.Keep))
-    fmt.printfln("  %s  editor %s%s",editor==.Current?"ok   ":"warn ",state_name[editor],editor==.Current?"":fmt.tprintf(" -> mirai build editor %s",folder))
+    // The editor of the project in each mode the engine is built in.
+    for mode in build.Engine_Mode {
+        if mode not_in built_modes {continue}
+        flag:=mode==.Dev?"dev":"release"
+        editor:=build.target_state(&p,.Editor,compiler,mode==.Dev,mode)
+        fmt.printfln("  %s  editor %s %s%s",editor==.Current?"ok   ":"warn ",flag,state_name[editor],editor==.Current?"":fmt.tprintf(" -> mirai build editor %s%s",folder,mode==.Dev?"":" --release"))
+    }
     return errors>0?1:0
 }
 

@@ -16,9 +16,12 @@
 //     (set 0, push descriptors) and to Metal [[buffer(N)]]/[[texture(N)]]/
 //     [[sampler(N)]]. Shaders take parameters from uniform buffers, never push
 //     constants, so the same SPIR-V/MSL pair works everywhere.
-//   - Hazards are declared with cmd_barrier_*: the backend tracks the current
-//     access of every resource and emits only the barriers that are needed.
-//     Metal tracks hazards itself and treats these calls as validation.
+//   - Hazards follow from what dispatches and draws bind: the backend tracks the
+//     current access of every resource and emits only the barriers that are
+//     needed, those of a render pass before it begins. cmd_barrier_* declares
+//     the accesses nothing binds: the host reading a buffer, a texture sampled
+//     through the texture table or by another process. Metal tracks hazards
+//     itself and treats these calls as validation.
 //   - Clip space is Y-up with depth in [0,1] on both backends (Vulkan uses a
 //     negative viewport height), so projection matrices are shared.
 //   - Textures a shader picks by index at run time (material maps) live in the
@@ -49,7 +52,9 @@ Pipeline :: distinct base.Handle
 Accel    :: distinct base.Handle
 
 MAX_FRAMES_IN_FLIGHT :: 2
-MAX_BINDING_SLOTS    :: 34 // Shared texture slots precede the texture table.
+MAX_LABEL_DEPTH :: 16 // labels open at once; deeper ones are not kept
+PIPELINE_NAME_BYTES :: 64 // of the name a pipeline keeps; past them it is cut
+MAX_BINDING_SLOTS    :: 35 // Shared texture slots precede the texture table.
 MAX_BUFFER_BINDING_SLOTS :: 30 // Metal buffer index 30, its last, holds the texture table.
 MAX_SAMPLER_BINDING_SLOTS :: 16
 MAX_COLOR_TARGETS    :: 8
@@ -62,7 +67,7 @@ MAX_TEXTURE_MIPS     :: 14
 // when its list begins, after the GPU finished the work that read it, so
 // changing the table waits for nothing. Growing makes new copies with every
 // entry and lets the old ones go once the GPU no longer reads them.
-TEXTURE_TABLE_SLOT         :: 34
+TEXTURE_TABLE_SLOT         :: MAX_BINDING_SLOTS
 TEXTURE_TABLE_METAL_BUFFER :: MAX_BUFFER_BINDING_SLOTS
 TEXTURE_TABLE_COPIES       :: MAX_FRAMES_IN_FLIGHT + 1 // the last one, of immediate lists
 // The entries a table starts with: a small scene never grows it.
@@ -121,6 +126,27 @@ table_take :: proc "contextless" (changes: ^Table_Changes, copy: int, out: []u32
 		}
 	}
 	return
+}
+
+// What the table knows of a texture: how many entries name it and the last one
+// it was put in, so destroying it looks at that entry alone in the common case.
+@(private)
+Table_Refs :: struct {count, last: u32}
+
+// An entry moves from the texture it named to the one it names now (nil: the default).
+@(private)
+table_refs_move :: proc "contextless" (before, after: ^Table_Refs, index: u32) {
+	if before != nil {before.count -= 1}
+	if after != nil {after.count += 1; after.last = index}
+}
+
+// The entries to look at for a texture that goes: none when no entry names it,
+// the last one it was put in when that is its only one, else the whole table.
+@(private)
+table_refs_range :: proc "contextless" (entries: []Texture, texture: Texture, refs: Table_Refs) -> (from, to: int) {
+	if refs.count == 0 {return 0, 0}
+	if refs.count == 1 && int(refs.last) < len(entries) && entries[refs.last] == texture {return int(refs.last), int(refs.last) + 1}
+	return 0, len(entries)
 }
 
 // The copy of the table a list reads: that of its frame slot, or the last
@@ -187,6 +213,9 @@ Memory :: enum u8 {
 
 Buffer_Usage_Flag :: enum u8 {Index, Uniform, Storage, Indirect, Transfer_Src, Transfer_Dst, Accel_Input}
 Buffer_Usage :: bit_set[Buffer_Usage_Flag; u16]
+// What transient memory may be bound or copied as.
+@(private)
+TRANSIENT_USAGE :: Buffer_Usage{.Uniform, .Storage, .Index, .Indirect, .Transfer_Src, .Transfer_Dst, .Accel_Input}
 
 // A new buffer reads zero in every byte, whatever its memory. One of GPU
 // memory is zeroed by the GPU unless an upload writes all of it first, and is
@@ -315,7 +344,63 @@ Shader_Code :: struct {
 	stage:       Shader_Stage,
 	threadgroup: [3]u32,
 	bindings:    []Binding_Info,
+	constants:   []string, // the names of its constants (`//! constant`), by id
 }
+
+// The most constants a shader declares; shaders/include/native.slang has as many.
+MAX_SHADER_CONSTANTS :: 8
+// The constants of a shader that are true in a pipeline, by id: the driver
+// compiles the shader with them folded, so one code serves every combination.
+// A SPIR-V specialization constant, a Metal function constant.
+Shader_Constants :: distinct bit_set[0 ..< MAX_SHADER_CONSTANTS; u32]
+
+// The constant of a shader by its name; false when it declares none so named.
+shader_constant :: proc "contextless" (code: ^Shader_Code, name: string) -> (constants: Shader_Constants, found: bool) {
+	if code == nil {return}
+	for constant, id in code.constants[:min(len(code.constants), MAX_SHADER_CONSTANTS)] {
+		if constant == name {return {id}, true}
+	}
+	return
+}
+
+// Whether a pipeline may set constants of code; false with the error of the device.
+@(private)
+shader_constants_valid :: proc(d: ^Device, pipeline: string, code: ^Shader_Code, constants: Shader_Constants) -> bool {
+	if len(code.constants) > MAX_SHADER_CONSTANTS {
+		set_error(d, "shader %s declares %d constants: at most %d", code.name, len(code.constants), MAX_SHADER_CONSTANTS)
+		return false
+	}
+	for id in constants {
+		if id >= len(code.constants) {
+			set_error(d, "pipeline %s sets constant %d of shader %s, which declares %d", pipeline, id, code.name, len(code.constants))
+			return false
+		}
+	}
+	if d.refuse.shader != "" && code.name == d.refuse.shader && constants == d.refuse.constants {
+		sync.atomic_add(&d.refuse.count, 1)
+		return false
+	}
+	return true
+}
+
+// What device_refuse_pipeline refuses.
+@(private)
+Pipeline_Refusal :: struct {
+	shader:    string,
+	constants: Shader_Constants,
+	count:     int, // pipelines refused (atomic)
+}
+
+// Makes the device refuse every pipeline of the shader so named with these
+// constants, as a driver that fails to compile it, without an error of the
+// device, and counts them: what a test of the reaction to a refused pipeline
+// provokes. "" refuses none.
+device_refuse_pipeline :: proc(d: ^Device, shader: string, constants: Shader_Constants) {
+	d.refuse = {shader = shader, constants = constants}
+}
+
+// The pipelines device_refuse_pipeline refused since it was called.
+device_refused_pipelines :: proc(d: ^Device) -> int {return sync.atomic_load(&d.refuse.count)}
 // The code of a shader as bytes, and the entry point its MSL names ("" for SPIR-V).
 shader_code_bytes :: proc "contextless" (code: Shader_Code) -> []u8 {
 	when SHADER_FORMAT == .Msl {return transmute([]u8)code.msl} else {return code.spirv}
@@ -335,12 +420,14 @@ Blend_Mode :: enum u8 {Opaque, Alpha, Premultiplied, Additive, Multiply, Alpha_C
 Topology :: enum u8 {Triangles, Lines}
 
 Compute_Pipeline_Desc :: struct {
-	shader: ^Shader_Code,
-	name:   string,
+	shader:    ^Shader_Code,
+	constants: Shader_Constants,
+	name:      string,
 }
 
 Graphics_Pipeline_Desc :: struct {
 	vertex, fragment: ^Shader_Code,
+	vertex_constants, fragment_constants: Shader_Constants,
 	color_formats:    [MAX_COLOR_TARGETS]Format,
 	color_count:      int,
 	blend:            [MAX_COLOR_TARGETS]Blend_Mode,
@@ -383,8 +470,11 @@ access_is_write :: proc "contextless" (a: Access) -> bool {
 Load_Op :: enum u8 {Clear, Load, Dont_Care}
 Store_Op :: enum u8 {Store, Dont_Care}
 
+// A target is one mip of one layer (a face of a cube) of its texture.
 Color_Attachment :: struct {
 	texture: Texture,
+	mip:     u32,
+	layer:   u32,
 	load:    Load_Op,
 	store:   Store_Op,
 	clear:   [4]f32,
@@ -396,9 +486,18 @@ format_is_uint :: proc "contextless" (f: Format) -> bool {return f == .R32_Uint 
 
 Depth_Attachment :: struct {
 	texture: Texture,
+	mip:     u32,
+	layer:   u32,
 	load:    Load_Op,
 	store:   Store_Op,
 	clear:   f32,
+}
+
+// The size of the mip a target names; false when the texture lacks that mip or layer.
+@(private)
+attachment_extent :: proc "contextless" (desc: Texture_Desc, mip, layer: u32) -> (size: [2]u32, ok: bool) {
+	if mip >= max(desc.mip_levels, 1) || layer >= max(desc.layers, 1) {return}
+	return {max(desc.width >> mip, 1), max(desc.height >> mip, 1)}, true
 }
 
 Render_Pass_Desc :: struct {
@@ -507,6 +606,7 @@ Features :: struct {
 	timestamps:          bool, // cmd_timestamp intervals while timestamps_want is on; else one "frame" interval
 	validation:          bool, // API validation is active
 	clip_distance:       bool, // a vertex shader can clip by planes of its own
+	stop_place:          bool, // a loss names where the GPU stopped (device_failure); Vulkan with VK_AMD_buffer_marker
 }
 
 Device_Type :: enum u8 {Other, Integrated, Discrete, Virtual, CPU}
@@ -550,10 +650,13 @@ DEFAULT_DEVICE_CAPACITIES :: Device_Capacities{buffers = 4096, textures = 8192, 
 Device_Desc :: struct {
 	app_name:                   cstring,
 	validation:                 bool,     // also enabled with MIRAI_VALIDATION=1
-	allow_hardware_ray_tracing: bool,     // MIRAI_RT=software forces it off
+	allow_hardware_ray_tracing: bool,     // Vulkan: false, or MIRAI_RT=software, has the device report no ray queries, so rays are traced by software; Metal always traces them by hardware
 	vulkan_instance_extensions: []cstring, // window system extensions from the platform layer
 	upload_bytes_per_frame:     u64,      // transient ring capacity per frame in flight
 	preferred_device:           string,   // substring of the adapter name; MIRAI_GPU overrides
+	// The window the device presents to, made with the device: only a GPU that
+	// presents to it is chosen. Zero: no window, frames draw only into textures.
+	surface:                    Surface_Desc,
 	pipeline_cache_path:        string,   // Vulkan: compiled pipelines persisted across runs ("" = memory only)
 	capacities:                 Device_Capacities,
 	allocator:                  runtime.Allocator, // of the device and its tables; context.allocator when unset
@@ -640,8 +743,10 @@ device_fail :: proc(d: ^Device, failure: Device_Failure, format: string, args: .
 
 Device_Stats :: struct {
 	buffers, textures, samplers, pipelines, accels: int, // alive, of those the user made: what it has to destroy
-	exhausted:          int, // creations refused because a pool or the frame ring was full
+	exhausted:          int, // creations refused because a pool was full, and transients refused
 	deletion_overflows: int, // times a frame slot held more destroyed objects than its capacity
+	oversized:          int, // transients past the frame ring, each given a buffer for its frame
+	host_memory:        int, // Vulkan: resources of GPU memory placed in system memory because device memory was full
 }
 
 @(private)
@@ -674,8 +779,8 @@ device_stats :: proc(d: ^Device) -> Device_Stats {
 	return s
 }
 
-// Transient memory allocated from the current frame's upload ring. Valid until
-// the frame slot is reused (MAX_FRAMES_IN_FLIGHT frames later).
+// Transient memory of the frame being recorded. Valid until the frame slot is
+// reused (MAX_FRAMES_IN_FLIGHT frames later).
 Transient :: struct {
 	ptr:    rawptr,
 	buffer: Buffer,
@@ -698,6 +803,45 @@ Gpu_Timing :: struct {
 MAX_TIMESTAMPS :: 256
 // Bytes of the name of a timestamp that are kept; a longer one is cut.
 MAX_TIMESTAMP_NAME_BYTES :: 64
+
+// Oversized transients one frame holds.
+MAX_FRAME_OVERSIZED :: 16
+
+// Transient memory from the ring of the frame being recorded. Past the room of
+// the ring it gets a buffer of its own, released with the frame, so an upload
+// of any size reaches the GPU in the frame that asks for it: a load, or a
+// growth that dirties whole tables, is a frame that may allocate.
+frame_alloc :: proc(d: ^Device, size: u64, alignment: u64 = 256) -> Transient {
+	// Between frames the slot may still be in flight and frame_begin resets
+	// the ring, so transient memory only exists while a frame is recorded.
+	if !d.in_frame {set_error(d, "frame_alloc outside a frame: transient memory exists between frame_begin and frame_end"); return {}}
+	f := &d.frames[d.slot]
+	align := max(alignment, d.info.uniform_alignment, d.info.storage_alignment, 16)
+	offset := align_up(f.upload_used, align)
+	if offset <= f.upload_size && size <= f.upload_size - offset {
+		f.upload_used = offset + size
+		return {ptr = &f.upload_ptr[offset], buffer = f.upload, offset = offset, size = size}
+	}
+	if size > d.info.max_storage_range || f.oversized_count == MAX_FRAME_OVERSIZED {
+		d.stats.exhausted += 1
+		set_error(d, "transient of %d bytes refused: past the frame ring of %d bytes one takes a buffer of at most %d bytes, %d per frame", size, f.upload_size, d.info.max_storage_range, MAX_FRAME_OVERSIZED)
+		return {}
+	}
+	buffer := buffer_create(d, {size = size, usage = TRANSIENT_USAGE, memory = .Upload, name = "frame upload past the ring"})
+	if buffer == 0 {return {}}
+	f.oversized[f.oversized_count] = buffer
+	f.oversized_count += 1
+	d.stats.oversized += 1
+	return {ptr = buffer_mapped(d, buffer), buffer = buffer, size = size}
+}
+
+// The oversized transients go once the GPU finished the frame that ends.
+@(private)
+frame_oversized_release :: proc(d: ^Device) {
+	f := &d.frames[d.slot]
+	for buffer in f.oversized[:f.oversized_count] {buffer_destroy(d, buffer)}
+	f.oversized_count = 0
+}
 
 // Optional helper for typed transient writes.
 frame_alloc_typed :: proc(d: ^Device, $T: typeid, count: int) -> ([]T, Transient) {
@@ -741,12 +885,14 @@ format_linear :: proc "contextless" (f: Format) -> Format {
 	return f
 }
 
-// Why cmd_copy_texture cannot copy a texture into another, "" when it can:
-// both are 2D, with one size and as many layers, and their formats hold the
-// same bytes (one format, or two that differ only in the sRGB encoding).
-texture_copy_problem :: proc "contextless" (src, dst: Texture_Desc) -> string {
+// Why cmd_copy_texture cannot copy `mips` mips of a texture from src_mip
+// into another from dst_mip, "" when it can: both are 2D and have those mips,
+// of one size and as many layers, and their formats hold the same bytes (one
+// format, or two that differ only in the sRGB encoding).
+texture_copy_problem :: proc "contextless" (src, dst: Texture_Desc, src_mip: u32 = 0, dst_mip: u32 = 0, mips: u32 = 1) -> string {
 	if src.depth > 1 || dst.depth > 1 {return "a 3D texture is written by shaders"}
-	if src.width != dst.width || src.height != dst.height || max(src.layers, 1) != max(dst.layers, 1) {return "the two textures differ in size or layers"}
+	if mips == 0 || u64(src_mip) + u64(mips) > u64(max(src.mip_levels, 1)) || u64(dst_mip) + u64(mips) > u64(max(dst.mip_levels, 1)) {return "the mips copied are past those of a texture"}
+	if max(src.width >> src_mip, 1) != max(dst.width >> dst_mip, 1) || max(src.height >> src_mip, 1) != max(dst.height >> dst_mip, 1) || max(src.layers, 1) != max(dst.layers, 1) {return "the two textures differ in size or layers at the mips copied"}
 	if format_linear(src.format) != format_linear(dst.format) {return "the two formats differ in more than the sRGB encoding"}
 	return ""
 }

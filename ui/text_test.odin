@@ -109,7 +109,7 @@ test_text_init :: proc(t:^testing.T,ctx:^Context,s:^Test_Text,input:^Input) {
     desc.clipboard_user=s
     desc.clipboard_set=proc(user:rawptr,text:string) {s:=cast(^Test_Text)user;s.clipboard_length=copy(s.clipboard[:],text)}
     desc.clipboard_get=proc(user:rawptr,buffer:[]u8) -> int {s:=cast(^Test_Text)user;return copy(buffer,s.clipboard[:s.clipboard_length])}
-    testing.expect(t,context_init(ctx,desc))
+    testing.expect(t,test_context_init(ctx,desc))
     s.name_length=copy(s.name[:],"hello world")
     input^=test_input()
     test_text_frame(ctx,input,s)
@@ -129,8 +129,9 @@ the_first_click_on_a_field_selects_all_and_the_next_places_the_caret :: proc(t:^
     lo,hi:=text_edit_selection(e)
     testing.expect(t,lo==0 && hi==11)
     testing.expect_value(t,ctx.focus,id(&ctx,"name"))
-    field:=test_paint(&ctx,"hello world")
-    testing.expect(t,field.kind==.Field && field.caret==11 && field.selection==[2]int{0,11} && field.fill==THEME_EDITOR.well && field.stroke==THEME_EDITOR.accent,"The selection shows over the fill of the field")
+    field:^Paint
+    for &p in ctx.paints[:ctx.paint_count] {if p.kind==.Field && p.stroke==tone(&ctx,"accent") {field=&p}}
+    testing.expect(t,field!=nil && field.fill==tone(&ctx,"well") && test_paint(&ctx,"hello world").fill==tone(&ctx,"text_select"),"The selection shows over the fill of the field")
     test_release(&input)
     test_text_frame(&ctx,&input,&s)
     // A second click places the caret at the nearest boundary.
@@ -240,7 +241,7 @@ the_keyboard_edits_the_field_and_enter_applies_it :: proc(t:^testing.T) {
     testing.expect_value(t,string(s.name[:s.name_length]),"New name")
     testing.expect_value(t,ctx.edit.id,Id(0))
     test_text_frame(&ctx,&input,&s)
-    testing.expect(t,!s.result.committed && test_paint(&ctx,"New name").caret==-1)
+    testing.expect(t,!s.result.committed && test_caret(&ctx)==nil)
 }
 
 @(test)
@@ -301,9 +302,8 @@ a_live_field_follows_every_key_and_shows_its_placeholder :: proc(t:^testing.T) {
     ctx:Context;s:Test_Text;input:Input
     test_text_init(t,&ctx,&s,&input)
     defer context_destroy(&ctx)
-    placeholder:^Paint
-    for &p in ctx.paints[:ctx.paint_count] {if p.placeholder=="Find" {placeholder=&p}}
-    testing.expect(t,placeholder!=nil && placeholder.text=="")
+    placeholder:=test_paint(&ctx,"Find")
+    testing.expect(t,placeholder!=nil && placeholder.style.color==tone(&ctx,"text_faint"))
     s.filter_length=copy(s.filter[:],"cr")
     test_text_point(&ctx,&input,id(&ctx,"filter"),0)
     test_text_frame(&ctx,&input,&s)
@@ -361,6 +361,46 @@ the_clipboard_goes_through_the_callbacks_of_the_host :: proc(t:^testing.T) {
 }
 
 @(test)
+a_field_undoes_its_edits_and_goes_by_words :: proc(t:^testing.T) {
+    ctx:Context;s:Test_Text;input:Input
+    test_text_init(t,&ctx,&s,&input)
+    defer context_destroy(&ctx)
+    e:=&ctx.edit
+    // One frame each: what is typed, or a key; want: the text after it.
+    Step :: struct {typed:string,key:Key,modifiers:Modifiers,clip:string,want:Maybe(string)}
+    Case :: struct {name,initial:string,steps:[]Step,cursor:int}
+    P :: Modifiers{.Primary}
+    undo,redo:=Step{key=.Z,modifiers=P},Step{key=.Y,modifiers=P}
+    cases:=[]Case{
+        {"undo takes back a paste and a run of typing","",{{typed="a"},{typed="b"},{typed="c"},{key=.V,modifiers=P,clip="xyz",want="abcxyz"},
+            {key=.Z,modifiers=P,want="abc"},{key=.Z,modifiers=P,want=""},{key=.Y,modifiers=P,want="abc"},{key=.Z,modifiers=P+{.Shift},want="abcxyz"}},6},
+        {"a paste over a selection is one step","hello world",{{key=.V,modifiers=P,clip="xyz",want="xyz"},undo},11},
+        {"a run of Backspace is one step","hello world",{{key=.End},{key=.Backspace},{key=.Backspace},{key=.Delete},{key=.Backspace,want="hello wo"},undo},11},
+        {"a moved caret ends a run","",{{typed="a"},{typed="b"},{key=.Left},{key=.Right},{typed="c",want="abc"},undo},2},
+        {"undo past the first edit and redo past the last do nothing","ab",{{key=.End},{typed="c"},undo,undo,undo,{key=.Z,modifiers=P,want="ab"},redo,{key=.Y,modifiers=P,want="abc"}},3},
+        {"an edit forgets what was undone","",{{typed="a"},undo,{typed="b"},{key=.Y,modifiers=P,want="b"}},1},
+        {"the caret goes by words","hello big world",{{key=.End},{key=.Left,modifiers=P},{key=.Left,modifiers=P},{key=.Backspace,modifiers=P,want="big world"},
+            {key=.Right,modifiers=P},{key=.Delete,modifiers=P,want="big"},undo,{key=.Right,modifiers=P+{.Shift}}},9},
+    }
+    for c in cases {
+        s.name_length=copy(s.name[:],c.initial)
+        edit_request(&ctx,id(&ctx,"name"))
+        test_text_frame(&ctx,&input,&s)
+        for step,i in c.steps {
+            if step.clip!="" {s.clipboard_length=copy(s.clipboard[:],step.clip)}
+            if step.typed!="" {test_type(&input,step.typed)} else {test_key(&input,step.key)}
+            input.modifiers=step.modifiers
+            test_text_frame(&ctx,&input,&s)
+            input.modifiers={}
+            if want,ok:=step.want.?;ok {testing.expectf(t,text_edit_value(e)==want,"%s, step %v: %q",c.name,i+1,text_edit_value(e))}
+        }
+        testing.expectf(t,e.cursor==c.cursor,"%s: the caret at %v",c.name,e.cursor)
+        test_key(&input,.Escape)
+        test_text_frame(&ctx,&input,&s)
+    }
+}
+
+@(test)
 long_text_scrolls_to_keep_the_caret_in_sight :: proc(t:^testing.T) {
     ctx:Context;s:Test_Text;input:Input
     test_text_init(t,&ctx,&s,&input)
@@ -381,8 +421,6 @@ long_text_scrolls_to_keep_the_caret_in_sight :: proc(t:^testing.T) {
     test_key(&input,.End)
     test_text_frame(&ctx,&input,&s)
     testing.expect_value(t,e.scroll,f32(46))
-    paint:=test_paint(&ctx,"abcdefghijklmnopqrstuvwxyz0123")
-    testing.expect_value(t,paint.scroll,f32(46))
     // A click lands on the character that is drawn there.
     test_text_point(&ctx,&input,id(&ctx,"name"),2)
     test_text_frame(&ctx,&input,&s)
@@ -468,7 +506,7 @@ a_multiline_field_keeps_its_breaks_wraps_and_moves_by_lines :: proc(t:^testing.T
 @(test)
 a_multiline_edit_holds_a_long_message_and_moves_through_all_its_lines :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     long:[1024]u8
     for i in 0..<len(long) {long[i]='x' if i%2==0 else '\n'}

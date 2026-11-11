@@ -31,21 +31,21 @@ PARAMS_CORE :: `package core
 @(storage) Tally :: struct {count:i32}
 @(component) Spot :: struct {value:f32}
 @(component) Mark :: struct {value:f32}
-@(params) Looker :: struct {spots:Read(Spot),asks:Ref(Asks),clock:Clock}
+@(params) Looker :: struct {spots:^Table(Spot,.Read),asks:Ref(Asks),clock:Clock}
 @(params) Mover :: struct {spots:^Table(Spot),asks:^Asks,tally:^Tally}
 `
 
 // A @(params) struct reaches a step as its fields would one by one: the call
 // builds it with each field bound as that parameter alone, and what it
 // writes is written by the step, with its settle, its check of writes and
-// its one writer.
+// its writing library.
 @(test)
 a_params_struct_binds_each_field_as_its_parameter :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"params")
     if folder=="" {return}
     game_source:=`package game
 import "mirai:core"
-@(step="fixed") game_look :: proc(marks:^core.Table(core.Mark),look:core.Looker,spots:core.Read(core.Spot)) {}
+@(step="fixed") game_look :: proc(marks:^core.Table(core.Mark),look:core.Looker,spots:^core.Table(core.Spot,.Read)) {}
 @(step="fixed") game_move :: proc(move:core.Mover,asks:^core.Asks,clock:core.Clock) {}
 `
     p,ok:=params_project(t,folder,PARAMS_CORE,game_source)
@@ -62,15 +62,13 @@ import "mirai:core"
         testing.expect(t,strings.contains(call,"p_core.write_check_begin(p_core.raw(&w.spot),size_of(p_core.Spot))"),call)
         testing.expect(t,strings.contains(call,"p_core.table_settle(&w.spot,&w.entities)"),call)
     }
-    // The table a @(params) writes has one writer, as if the step received it alone.
+    // The table a @(params) writes is written by its library, as if the step received it alone.
     errors:=params_errors(t,&p,`package game
 import "mirai:core"
 @(step="fixed") game_move :: proc(move:core.Mover) {}
 @(step="fixed") game_push :: proc(spots:^core.Table(core.Spot)) {}
 `)
-    found:=false
-    for message in errors {found||=strings.contains(message,"game_move and game_push write Spot")}
-    testing.expectf(t,found,"%v",errors)
+    testing.expectf(t,len(errors)==0,"%v",errors)
 }
 
 // What a step writes reaches it once: by itself and in a @(params), or in two
@@ -84,10 +82,10 @@ a_written_datum_reaches_a_step_once :: proc(t:^testing.T) {
     if !ok {return}
     errors:=params_errors(t,&p,`package game
 import "mirai:core"
-@(step="fixed") game_loose :: proc(move:core.Mover,spots:core.Read(core.Spot)) {}
+@(step="fixed") game_loose :: proc(move:core.Mover,spots:^core.Table(core.Spot,.Read)) {}
 @(step="fixed") game_twice :: proc(a:core.Mover,b:core.Mover) {}
-@(step="fixed") game_pushes :: proc(look:core.Looker,asks:^core.Asks,spots:core.Read(core.Spot)) {}
-@(params) Itself :: struct {marks:^core.Table(core.Mark),seen:core.Read(core.Mark)}
+@(step="fixed") game_pushes :: proc(look:core.Looker,asks:^core.Asks,spots:^core.Table(core.Spot,.Read)) {}
+@(params) Itself :: struct {marks:^core.Table(core.Mark),seen:^core.Table(core.Mark,.Read)}
 @(step="fixed") game_itself :: proc(it:Itself) {}
 `)
     loose,twice,pushes,itself:=false,false,false,false
@@ -111,21 +109,23 @@ a_params_struct_has_only_parameters_and_does_not_nest :: proc(t:^testing.T) {
     if !ok {return}
     errors:=params_errors(t,&p,`package game
 import "mirai:core"
-@(params) Outer :: struct {look:core.Looker,marks:core.Read(core.Mark)}
+@(params) Outer :: struct {look:core.Looker,marks:^core.Table(core.Mark,.Read)}
 @(params) Odd :: struct {count:int}
 @(params) Empty :: struct {}
 @(params,component) Both :: struct {value:f32}
 @(step="fixed") game_pointer :: proc(move:^core.Mover) {}
+@(step="fixed") game_untyped :: proc(marks:^core.Table(core.Mark,.Read),count:=3) {}
 `)
-    found:[5]bool
+    found:[6]bool
     for message in errors {
         found[0]||=strings.contains(message,"Outer has a field of Looker, another @(params): they do not nest")
         found[1]||=strings.contains(message,"the field count of Odd is int")
         found[2]||=strings.contains(message,"Empty is @(params) and has no fields")
         found[3]||=strings.contains(message,"Both is @(params) and a component")
         found[4]||=strings.contains(message,"game_pointer receives ^core.Mover, a @(params) struct, by pointer: receive it by value, core.Mover")
+        found[5]||=strings.contains(message,"game_untyped gives a default to count")
     }
-    testing.expectf(t,found==[5]bool{true,true,true,true,true},"%v",errors)
+    testing.expectf(t,found==[6]bool{true,true,true,true,true,true},"%v",errors)
 }
 
 // What the application owns reaches a step by the type that names it, alone
@@ -142,7 +142,7 @@ import "mirai:host"
 import mixer "mirai:audio"
 import erender "mirai:engine/render"
 import "mirai:std/jobs"
-@(params) Loader :: struct {assets:^host.Assets,allocator:runtime.Allocator,spots:core.Read(core.Spot)}
+@(params) Loader :: struct {assets:^host.Assets,allocator:runtime.Allocator,spots:^core.Table(core.Spot,.Read)}
 @(step="frame") game_load :: proc(loader:Loader,job_system:^jobs.Job_System) {}
 @(step="render") game_draw :: proc(renderer:^erender.Renderer,extras:^host.Frame_Extras,m:^mixer.Mixer,app:^host.App) {}
 `

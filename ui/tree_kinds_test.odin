@@ -37,7 +37,7 @@ test_kinds_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 a_grid_puts_its_children_in_rows_of_cells_of_one_width :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     build :: proc(ctx:^Context,user:rawptr) {
         if box(ctx,{id=id(ctx,"grid"),width=fixed(320),height=FIT,direction=.Grid,columns=3,gap=10,padding=padding_all(5),align_x=.Center,track=true}) {
@@ -55,22 +55,21 @@ a_grid_puts_its_children_in_rows_of_cells_of_one_width :: proc(t:^testing.T) {
     cell:=f32(320-10-20)/3
     testing.expect_value(t,grid.h,f32(5+40+10+30+5))
     first:=test_rect(t,&ctx,id(&ctx,"cell",1))
-    testing.expect_value(t,first,Rect{5+(cell-50)*0.5,5,50,20})
+    testing.expect(t,test_rect_snapped(first,{5+(cell-50)*0.5,5,50,20}))
     third:=test_rect(t,&ctx,id(&ctx,"cell",3))
-    testing.expect_value(t,third.x,5+2*(cell+10)+(cell-50)*0.5)
+    testing.expect(t,test_near(third.x,5+2*(cell+10)+(cell-50)*0.5,PIXEL_EDGE))
     fourth:=test_rect(t,&ctx,id(&ctx,"cell",4))
     testing.expect_value(t,fourth.y,f32(5+40+10))
     wide:=test_rect(t,&ctx,id(&ctx,"wide"))
-    testing.expect_value(t,wide.w,cell)
-    testing.expect_value(t,wide.x,5+2*(cell+10))
+    testing.expect(t,test_rect_snapped(wide,{5+2*(cell+10),wide.y,cell,wide.h}))
 }
 
 @(test)
 a_list_builds_its_node_for_each_element_and_a_switcher_one_child :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     s:Test_Kinds
     serial.schema_init(&s.schema)
     defer serial.schema_destroy(&s.schema)
@@ -98,9 +97,7 @@ a_list_builds_its_node_for_each_element_and_a_switcher_one_child :: proc(t:^test
     test_frame(&ctx,&input,test_kinds_build,&s)
     test_frame(&ctx,&input,test_kinds_build,&s)
     testing.expect(t,test_paint(&ctx,"Sword")!=nil && test_paint(&ctx,"Potion")!=nil)
-    found_count:=false
-    for &p in ctx.paints[:ctx.paint_count] {found_count|=p.text=="3"}
-    testing.expect(t,found_count,"Each element shows its own fields")
+    testing.expect(t,test_paint(&ctx,"3")!=nil,"Each element shows its own fields")
     testing.expect(t,test_paint(&ctx,"Nothing here")==nil)
     // The second element sits in the second column of the grid, the third under the first.
     element :: proc(t:^testing.T,ctx:^Context,item:int) -> Rect {
@@ -119,7 +116,7 @@ a_list_builds_its_node_for_each_element_and_a_switcher_one_child :: proc(t:^test
 @(test)
 a_switcher_bound_to_an_enum_or_a_text_builds_the_child_of_that_name :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     s:Test_Kinds
     serial.schema_init(&s.schema)
@@ -163,9 +160,9 @@ a_switcher_bound_to_an_enum_or_a_text_builds_the_child_of_that_name :: proc(t:^t
 @(test)
 the_buttons_of_a_list_report_their_element :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     s:Test_Kinds
     serial.schema_init(&s.schema)
     defer serial.schema_destroy(&s.schema)
@@ -199,7 +196,7 @@ the_buttons_of_a_list_report_their_element :: proc(t:^testing.T) {
 @(test)
 a_scroll_node_moves_what_does_not_fit_with_the_wheel :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Kinds
     testing.expect(t,tree_init(&s.tree))
@@ -276,7 +273,7 @@ a_widget_of_another_file_joins_the_tree_with_its_styles_and_overrides :: proc(t:
 @(test)
 what_floats_on_the_surface_of_a_tree_floats_on_its_area :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     s:Test_Kinds
     testing.expect(t,tree_init(&s.tree))
@@ -455,4 +452,146 @@ a_widget_reads_with_at_the_data_its_instance_gives_it :: proc(t:^testing.T) {
     instance:Tree_Instance
     testing.expect(t,!tree_instance_init(&instance,&tree,host))
     testing.expect(t,instance.failure.node==4 && instance.failure.binding==.Visible)
+}
+
+@(private="file")
+Draw_Seen :: struct {calls:int,last:Draw_Node,slots:[6]i32,items:[6]i32,used:i32,sized:bool}
+
+// A Draw is a leaf the layout places and its container clips: the game draws
+// it from the colors of its style and the bytes of what it binds, a struct,
+// an array or a number alike, once per element inside a List; one that binds
+// nothing, a name no procedure has and a value of another size draw nothing
+// and end nothing.
+@(test)
+a_draw_node_hands_the_game_its_rectangle_its_style_and_the_bytes_it_binds :: proc(t:^testing.T) {
+    ctx:Context
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
+    defer context_destroy(&ctx)
+    s:Test_Kinds
+    serial.schema_init(&s.schema)
+    defer serial.schema_destroy(&s.schema)
+    ok:bool
+    s.type,ok=serial.schema_add(&s.schema,Test_Bag)
+    testing.expect(t,ok)
+    testing.expect(t,tree_init(&s.tree))
+    defer tree_destroy(&s.tree)
+    style,_:=tree_style(&s.tree,{text={size=12,color={1,2,3,255}},fill={40,50,60,255},stroke={7,8,9,255},mark={10,20,30,255},track={4,4,4,255},knob={5,5,5,255},radius={3,3,3,3},stroke_width=2})
+    root:=tree_node(&s.tree,-1,{kind=.Box,name="hud",clip=true,layout={width=fixed(200),height=fixed(100),direction=.Column}})
+    tree_node(&s.tree,root,{kind=.Draw,name="map",draw="minimap",style=style,bind_value="Test.slots",layout={width=fixed(120),height=fixed(40)}})
+    tree_node(&s.tree,root,{kind=.Draw,name="count",draw="count",bind_value="Test.used",layout={width=GROW,height=fixed(10)}})
+    tree_node(&s.tree,root,{kind=.Draw,name="plain",draw="plain",layout={width=fixed(10),height=fixed(10)}})
+    list:=tree_node(&s.tree,root,{kind=.List,name="rows",bind_items="Test.slots",layout={direction=.Row}})
+    row:=tree_node(&s.tree,list,{kind=.Draw,name="row",draw="row",bind_value="count",layout={width=fixed(8),height=fixed(8)}})
+    testing.expect(t,tree_node(&s.tree,row,{kind=.Text,text="in a leaf"})<0,"A Draw holds no nodes")
+    testing.expect(t,tree_instance_init(&s.instance,&s.tree,test_host(&s.host,&s.schema,s.type,&s.values)))
+    defer tree_instance_destroy(&s.instance)
+    for &slot,i in s.values.slots {slot.count=i32(10+i)}
+    s.values.used=4
+    seen:Draw_Seen
+    ctx.draw_user_data=&seen
+    ctx.draw_user=proc(user:rawptr,ctx:^Context,node:Draw_Node) {
+        seen:=(^Draw_Seen)(user)
+        seen.calls+=1
+        switch node.name {
+        case base.name_hash("minimap"):
+            seen.last=node
+            if slots,ok:=draw_value(node,[6]Test_Slot);ok {for slot,i in slots {seen.slots[i]=slot.count}}
+            _,wrong:=draw_value(node,Test_Bag)
+            seen.sized=!wrong
+            draw_rect(ctx,{node.rect.x-500,node.rect.y,node.rect.w+1000,node.rect.h},node.fill) // wider than what clips it
+        case base.name_hash("count"):
+            if used,ok:=draw_value(node,i32);ok {seen.used=used^}
+        case base.name_hash("plain"):
+            if node.data!=nil || node.item!=-1 {seen.calls+=100}
+        case base.name_hash("row"):
+            if count,ok:=draw_value(node,i32);ok && node.item>=0 && int(node.item)<len(seen.items) {seen.items[node.item]=count^}
+        }
+    }
+    input:=test_input()
+    test_frame(&ctx,&input,test_kinds_build,&s)
+    frame:=test_frame(&ctx,&input,test_kinds_build,&s)
+    testing.expect_value(t,seen.calls,2*(3+6))
+    placed:=test_rect(t,&ctx,tree_element_id(&ctx,"map"))
+    testing.expect_value(t,seen.last.rect,placed)
+    testing.expect(t,placed.w==120 && placed.h==40)
+    testing.expect(t,seen.last.fill==Color{40,50,60,255} && seen.last.stroke==Color{7,8,9,255} && seen.last.mark==Color{10,20,30,255} && seen.last.track==Color{4,4,4,255} && seen.last.knob==Color{5,5,5,255})
+    testing.expect(t,seen.last.text.size==12 && seen.last.radius==[4]f32{3,3,3,3} && seen.last.stroke_width==2 && seen.last.item==-1)
+    testing.expect(t,seen.slots==[6]i32{10,11,12,13,14,15} && seen.sized,"The procedure reads the array the node binds, and not as a type of another size")
+    testing.expect_value(t,seen.used,i32(4))
+    testing.expect(t,seen.items==[6]i32{10,11,12,13,14,15},"Each element of a List draws with its own value and its item")
+    // The clip of its container cuts what the procedure draws past it.
+    clipped:=false
+    for command in frame.commands {if command.count>0 && test_rect_near(command.scissor,{0,0,200,100}) {clipped=true}}
+    testing.expect(t,clipped,"What a Draw draws is cut to what clips it")
+    // What it binds changes: the next build hands the new bytes.
+    s.values.used=9
+    test_frame(&ctx,&input,test_kinds_build,&s)
+    testing.expect_value(t,seen.used,i32(9))
+    // Without a procedure the node keeps its place and draws nothing.
+    ctx.draw_user=nil
+    calls:=seen.calls
+    test_frame(&ctx,&input,test_kinds_build,&s)
+    testing.expect_value(t,seen.calls,calls)
+    testing.expect_value(t,test_rect(t,&ctx,tree_element_id(&ctx,"map")),placed)
+}
+
+// A Button that binds a value writes its choice there when it is clicked, as
+// a Radio does: the page of a menu changes without code. It reports Clicked
+// and then Changed with what it wrote, which a host that commits writes into
+// the game; one that binds nothing only clicks.
+@(test)
+a_button_that_binds_a_value_writes_its_choice_when_clicked :: proc(t:^testing.T) {
+    ctx:Context
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
+    defer context_destroy(&ctx)
+    ctx.release_activates=true
+    s:Test_Kinds
+    serial.schema_init(&s.schema)
+    defer serial.schema_destroy(&s.schema)
+    ok:bool
+    s.type,ok=serial.schema_add(&s.schema,Test_Bag)
+    testing.expect(t,ok)
+    testing.expect(t,tree_init(&s.tree))
+    defer tree_destroy(&s.tree)
+    style,_:=tree_style(&s.tree,{text={size=12,color={255,255,255,255}},fill={40,40,40,255}})
+    root:=tree_node(&s.tree,-1,{kind=.Box,name="menu",layout={width=fixed(300),height=fixed(200),direction=.Column,gap=4}})
+    tree_node(&s.tree,root,{kind=.Button,name="to_playing",style=style,text="Play",bind_value="Test.screen",choice=u16(Test_Screen.Playing),layout={width=fixed(120),height=fixed(24)}})
+    tree_node(&s.tree,root,{kind=.Button,name="next_page",style=style,text="Next",bind_value="Test.page",choice=3,layout={width=fixed(120),height=fixed(24)}})
+    tree_node(&s.tree,root,{kind=.Button,name="plain",style=style,text="Plain",layout={width=fixed(120),height=fixed(24)}})
+    host:=test_host(&s.host,&s.schema,s.type,&s.values)
+    host.source=proc(user:rawptr,name:u64) -> (type:serial.Type_Index,storage,ok:bool) {
+        if name!=base.name_hash("Test") {return}
+        return (^Test_Host)(user).type,true,true
+    }
+    host.commits=proc(user:rawptr,name:u64) -> bool {return name==base.name_hash("Test")}
+    testing.expect(t,tree_instance_init(&s.instance,&s.tree,host))
+    defer tree_instance_destroy(&s.instance)
+    input:=test_input()
+    test_frame(&ctx,&input,test_kinds_build,&s)
+    click :: proc(t:^testing.T,ctx:^Context,input:^Input,s:^Test_Kinds,name:string) -> []Tree_Event {
+        test_point(input,test_rect(t,ctx,tree_element_id(ctx,name)))
+        test_frame(ctx,input,test_kinds_build,s)
+        test_press(input)
+        test_frame(ctx,input,test_kinds_build,s)
+        test_release(input)
+        test_frame(ctx,input,test_kinds_build,s)
+        return s.events[:s.event_count]
+    }
+    Case :: struct {name:string,writes:bool,value:f64}
+    cases:=[]Case{{"to_playing",true,f64(Test_Screen.Playing)},{"next_page",true,3},{"plain",false,0}}
+    for c in cases {
+        clicked,changed:=-1,-1
+        events:=click(t,&ctx,&input,&s,c.name)
+        for event,i in events {
+            if event.name!=base.name_hash(c.name) {continue}
+            if event.kind==.Clicked {clicked=i}
+            if event.kind==.Changed {
+                changed=i
+                testing.expectf(t,event.value==c.value,"%s wrote %v",c.name,event.value)
+                testing.expect(t,tree_commit_event(&s.instance,event,host))
+            }
+        }
+        testing.expectf(t,clicked>=0 && (changed>clicked)==c.writes && (changed>=0)==c.writes,"%s: clicked %d, changed %d",c.name,clicked,changed)
+    }
+    testing.expect(t,s.values.screen==.Playing && s.values.page==3,"What the buttons wrote reached the game")
 }

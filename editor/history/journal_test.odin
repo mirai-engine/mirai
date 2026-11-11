@@ -10,7 +10,7 @@ journal_readers_keep_cursors_of_their_own :: proc(t:^testing.T) {
     f:=new(Test_Journal);defer free(f)
     if !test_journal_init(t,f,20) {return}
     defer test_journal_free(f)
-    w:=core.test_world_ref(&f.world)
+    w:=test_world_ref(&f.world)
     // The image keeps the authors: the derived rows never enter it.
     testing.expect_value(t,len(f.edits.image[1].entities),18)
     testing.expect_value(t,len(f.edits.image[3].entities),18)
@@ -19,8 +19,8 @@ journal_readers_keep_cursors_of_their_own :: proc(t:^testing.T) {
     // Undo reads the steps, the review of an agent and prefabs the state of a step, collaboration the changes.
     review:=edits_state(&f.edits)
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Move"))
-    core.get(&f.world.transforms,first).position.y=5
-    core.get(&f.world.lamps,first).glow=99 // transient: not a change
+    core.edit(&f.world.transforms,first).position.y=5
+    core.edit(&f.world.lamps,first).glow=99 // transient: not a change
     edits_end(&f.edits)
     testing.expect(t,edits_commit(&f.edits,w,&f.selection))
     testing.expect_value(t,f.edits.cursor,1)
@@ -35,7 +35,7 @@ journal_readers_keep_cursors_of_their_own :: proc(t:^testing.T) {
     observed:=edits_state(&f.edits)
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Turn off"))
     core.disable(&f.world.lamps,test_journal_entity(f,2))
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     edits_end(&f.edits)
     testing.expect(t,edits_commit(&f.edits,w,&f.selection))
     after_review:=0
@@ -56,14 +56,14 @@ journal_readers_keep_cursors_of_their_own :: proc(t:^testing.T) {
     journal_read_done(&f.edits,collab)
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Cancelled"))
     testing.expect_value(t,edits_cancel_prepare(&f.edits,w),Edit_Error.None)
-    core.get(&f.world.transforms,first).position.y=7
+    core.edit(&f.world.transforms,first).position.y=7
     edits_cancel(&f.edits,w)
-    testing.expect_value(t,core.get(&f.world.transforms,first).position.y,f32(5))
+    testing.expect_value(t,core.at(&f.world.transforms,core.row_of(&f.world.transforms,first)).position.y,f32(5))
     testing.expect_value(t,len(journal_read(&f.edits,&collab)),0)
     testing.expect(t,journal_settled(&f.edits,w))
     journal_reading(&f.edits,false)
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Unread"))
-    core.get(&f.world.transforms,first).position.y=8
+    core.edit(&f.world.transforms,first).position.y=8
     edits_end(&f.edits)
     testing.expect(t,edits_commit(&f.edits,w,&f.selection))
     testing.expect(t,len(f.edits.changes)==0 && len(f.edits.change_values)==0)
@@ -74,18 +74,18 @@ journal_steps_hold_what_changed_whatever_the_size_of_the_world :: proc(t:^testin
     f:=new(Test_Journal);defer free(f)
     if !test_journal_init(t,f,4000) {return}
     defer test_journal_free(f)
-    w:=core.test_world_ref(&f.world)
+    w:=test_world_ref(&f.world)
     // A step that makes and destroys entities keeps those indices, not the entities of the World.
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Replace"))
     gone:=test_journal_entity(f,51)
     core.destroy(&f.world.entities,gone)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     made:=core.create(&f.world.entities)
     core.add(&f.world.ids,made,{value=9001})
     core.add(&f.world.transforms,made,core.TRANSFORM_IDENTITY)
     derived:=core.create(&f.world.entities)
     core.add(&f.world.transforms,derived,core.TRANSFORM_IDENTITY)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     edits_end(&f.edits)
     testing.expect(t,edits_commit(&f.edits,w,&f.selection))
     step:=&f.edits.steps[0]
@@ -97,14 +97,14 @@ journal_steps_hold_what_changed_whatever_the_size_of_the_world :: proc(t:^testin
     testing.expect_value(t,rows,5) // Id, Transform and Lamp of the one gone; Id and Transform of the one made
     testing.expect(t,undo(&f.edits,w,&f.selection))
     testing.expect(t,core.alive(&f.world.entities,gone) && !core.alive(&f.world.entities,made) && !core.alive(&f.world.entities,derived))
-    testing.expect_value(t,core.get(&f.world.transforms,gone).position.x,f32(51))
+    testing.expect_value(t,core.at(&f.world.transforms,core.row_of(&f.world.transforms,gone)).position.x,f32(51))
     testing.expect(t,redo(&f.edits,w,&f.selection))
     testing.expect(t,!core.alive(&f.world.entities,gone) && core.alive(&f.world.entities,made) && core.has(&f.world.ids,made))
     testing.expect(t,!core.alive(&f.world.entities,derived),"what a library derived is derived again")
     testing.expect(t,journal_settled(&f.edits,w))
     // A move of a World this size compares only the row it wrote.
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Move"))
-    core.get(&f.world.transforms,test_journal_entity(f,7)).position.z=3
+    core.edit(&f.world.transforms,test_journal_entity(f,7)).position.z=3
     edits_end(&f.edits)
     compared:=f.edits.stats.compared
     testing.expect(t,edits_commit(&f.edits,w,&f.selection))
@@ -132,27 +132,27 @@ journal_cancel_and_undo_put_the_world_back_in_the_room_they_reserved :: proc(t:^
     context.allocator={journal_allocator,&failure}
     if !test_journal_init(t,f,300) {return}
     defer test_journal_free(f)
-    w:=core.test_world_ref(&f.world)
+    w:=test_world_ref(&f.world)
     lamp,moved,gone,parent:=test_journal_entity(f,3),test_journal_entity(f,4),test_journal_entity(f,5),test_journal_entity(f,6)
     core.disable(&f.world.lamps,gone)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     edits_reset(&f.edits,w)
     // A gesture that turns, writes, removes off rows, destroys, reuses and
     // makes more entities than it reserved.
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Everything"))
     testing.expect_value(t,edits_cancel_prepare(&f.edits,w,2),Edit_Error.None)
     core.disable(&f.world.lamps,lamp)
-    core.get(&f.world.transforms,moved).position.y=4
+    core.edit(&f.world.transforms,moved).position.y=4
     core.add(&f.world.parents,moved,{entity=parent})
     core.destroy(&f.world.entities,gone)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     for _ in 0..<40 {
         e:=core.create(&f.world.entities)
         core.add(&f.world.ids,e,{value=base.Entity_Id(1000+core.entity_index(e))})
         core.add(&f.world.transforms,e,core.TRANSFORM_IDENTITY)
         core.add(&f.world.lamps,e,{power=2})
     }
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     failure.fail=true
     edits_cancel(&f.edits,w)
     failure.fail=false
@@ -164,18 +164,18 @@ journal_cancel_and_undo_put_the_world_back_in_the_room_they_reserved :: proc(t:^
     _,off,found:=core.raw_state(core.raw(&f.world.lamps),gone)
     testing.expect(t,found && off,"an off row that went comes back off")
     testing.expect(t,core.has(&f.world.lamps,lamp) && !core.has(&f.world.parents,moved))
-    testing.expect_value(t,core.get(&f.world.transforms,moved).position.y,f32(0))
+    testing.expect_value(t,core.at(&f.world.transforms,core.row_of(&f.world.transforms,moved)).position.y,f32(0))
     // Undo and redo of that gesture, committed, do not allocate either once prepared.
     testing.expect(t,edits_begin(&f.edits,&f.selection,"Everything"))
     core.disable(&f.world.lamps,lamp)
     core.destroy(&f.world.entities,gone)
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     for _ in 0..<40 {
         e:=core.create(&f.world.entities)
         core.add(&f.world.ids,e,{value=base.Entity_Id(1000+core.entity_index(e))})
         core.add(&f.world.transforms,e,core.TRANSFORM_IDENTITY)
     }
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     edits_end(&f.edits)
     testing.expect(t,edits_commit(&f.edits,w,&f.selection))
     step:=&f.edits.steps[f.edits.cursor-1]
@@ -198,3 +198,25 @@ journal_cancel_and_undo_put_the_world_back_in_the_room_they_reserved :: proc(t:^
 // Two ends of a session, each with its document: what one edits reaches the
 // other from the journal, as Sets, Fields, Turns and Removes, and what
 // arrives is not sent back.
+
+// An agent's turn of many steps past the capacity evicts its own oldest, never the user's.
+@(test)
+the_steps_of_one_author_never_evict_those_of_another :: proc(t:^testing.T) {
+    f:=new(Test_Journal);defer free(f)
+    if !test_journal_init(t,f,2) {return}
+    defer test_journal_free(f)
+    w:=test_world_ref(&f.world)
+    first:=test_journal_entity(f,1)
+    for i in 0..<5+EDITS_STEP_CAPACITY+44 {
+        f.edits.author=i<5?EDIT_AUTHOR_USER:EDIT_AUTHOR_API
+        testing.expect(t,edits_begin(&f.edits,&f.selection,"Move"))
+        core.edit(&f.world.transforms,first).position.y=f32(i+1)
+        edits_end(&f.edits)
+        testing.expect(t,edits_commit(&f.edits,w,&f.selection))
+    }
+    users:=0
+    for step in f.edits.steps {if step.author==EDIT_AUTHOR_USER {users+=1}}
+    testing.expect_value(t,users,5)
+    testing.expect_value(t,len(f.edits.steps),EDITS_STEP_CAPACITY)
+    testing.expect_value(t,f.edits.cursor,EDITS_STEP_CAPACITY)
+}

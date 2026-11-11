@@ -20,8 +20,8 @@ rigs_without_operations_evaluate_with_null_allocators_and_leave_solver_scratch_e
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<64 {
-        stable &&=rigs_apply(&state,&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)
-        stable &&=rigs_retarget(&state,&playback,&modifiers,&problems)
+        stable &&=rigs_apply(&state,&modifiers,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)
+        stable &&=!rigs_retarget(&state,&playback,&modifiers,&problems)
     }
     context=saved
     testing.expect(t,stable && problems.count==0)
@@ -41,6 +41,8 @@ rig_operations_preserve_local_slots_generations_and_copied_state_with_dense_rang
     kinds:=[?]Modifier_Kind{.Chain_IK,.Twist,.Spring,.Multi_IK,.Chain_Retarget}
     for i in 0..<3 {
         entity:=core.entity_make(i+1,1);append(&states,rig_test_state(entity,5,.5))
+        // It takes the sampled pose of the source, chain by chain.
+        states[len(states)-1].leader,states[len(states)-1].stage=source_entity,.Sampled
         for slot in 0..<2 {
             name:="first" if slot==0 else "second"
             chain:=CHAIN_IK_CONSTRAINT_DEFAULT
@@ -58,14 +60,14 @@ rig_operations_preserve_local_slots_generations_and_copied_state_with_dense_rang
             multi.effectors[0]=MULTI_IK_EFFECTOR_DEFAULT;multi.effectors[0].bone=chain.end
             base.text_set(multi.name[:],name)
             retarget:=CHAIN_RETARGET_CONSTRAINT_DEFAULT
-            retarget.rig,retarget.source=entity,source_entity
+            retarget.rig=entity
             retarget.source_root,retarget.source_end,retarget.target_root,retarget.target_end=bone_ref("joint1"),bone_ref("joint3"),bone_ref("joint1"),bone_ref("joint5")
             base.text_set(retarget.name[:],name)
             if !testing.expect(t,modifier_append(&modifiers.chain_ik,entity,chain) && modifier_append(&modifiers.twist,entity,twist) && modifier_append(&modifiers.springs,entity,spring) && modifier_append(&modifiers.multi_ik,entity,multi) && modifier_append(&modifiers.retarget_chains,entity,retarget)) {return}
         }
     }
     for &state in states {
-        if !testing.expect(t,rigs_apply(&state,&modifiers,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60) && rigs_retarget(&state,&playback,&modifiers,&problems)) {return}
+        if !testing.expect(t,rigs_apply(&state,&modifiers,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60) && rigs_retarget(&state,&playback,&modifiers,&problems)) {return}
         for kind in kinds {
             slot,named:=modifier_named_slot(&modifiers,state.entity,kind,"second")
             testing.expect(t,named && slot==1)
@@ -84,7 +86,7 @@ rig_operations_preserve_local_slots_generations_and_copied_state_with_dense_rang
     rigs_apply_goal(&modifiers,{rig=rig,kind=.Multi_IK,slot=1,target=spatial_point({.4,1,0})},.5,true,&problems)
     testing.expect_value(t,modifiers.multi_ik.values[3].effectors[0].target.position,mm.Vec3{.4,1,0})
     rigs_apply_goal(&modifiers,{rig=rig,kind=.Spring,slot=1,position={1,0,0}},.5,true,&problems)
-    testing.expect(t,rigs_apply(&states[1],&modifiers,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
+    testing.expect(t,rigs_apply(&states[1],&modifiers,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
     copied_state:Playing;core.value_copy(&copied_state,&states[1],type_info_of(Playing));defer playing_free(&copied_state)
     testing.expect(t,raw_data(copied.multi_ik.rows)!=raw_data(modifiers.multi_ik.rows))
@@ -93,14 +95,14 @@ rig_operations_preserve_local_slots_generations_and_copied_state_with_dense_rang
     for _ in 0..<16 {
         copy(states[1].local[:],states[1].rest[:]);copy(copied_state.local[:],copied_state.rest[:])
         stable &&=rigs_retarget(&states[1],&playback,&modifiers,&problems) && rigs_retarget(&copied_state,&playback,&copied,&problems)
-        stable &&=rigs_apply(&states[1],&modifiers,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60) && rigs_apply(&copied_state,&copied,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)
+        stable &&=rigs_apply(&states[1],&modifiers,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60) && rigs_apply(&copied_state,&copied,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)
     }
     context=saved;testing.expect(t,stable && problems.count==0)
     for local,i in states[1].local {testing.expect_value(t,local,copied_state.local[i])}
     count,version,layout:=len(modifiers.chain_ik.values),modifiers.chain_ik.version,modifiers.chain_ik.layout
     testing.expect(t,!modifier_append(&modifiers.chain_ik,states[0].entity,modifiers.chain_ik.values[0]))
     testing.expect(t,len(modifiers.chain_ik.values)==count && modifiers.chain_ik.version==version && modifiers.chain_ik.layout==layout)
-    core.at(&modifiers.springs,3).enabled=false
+    core.edit_at(&modifiers.springs,3).enabled=false
     testing.expect(t,modifiers.spring_states[3].springs[0].ready)
     testing.expect(t,rigs_apply(&states[1],&modifiers,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,0))
     testing.expect_value(t,modifiers.spring_states[3].springs,([RIG_CHAIN_BONES]lib.Spring_Joint_State{}))
@@ -132,7 +134,7 @@ multi_ik_full_and_partial_weights_preserve_solver_pose_and_diagnostics :: proc(t
         effectors[0]={bone=4,position=multi.effectors[0].target.position,rotation=1,position_weight=1}
         settings:=multi.settings;settings.root=1
         result,valid:=lib.multi_ik(playing_skeleton(&reference),reference.local[:],reference.world[:],joints[:],effectors[:],settings,residuals[:])
-        if !testing.expect(t,valid && rigs_apply(&state,&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)) {return}
+        if !testing.expect(t,valid && rigs_apply(&state,&modifiers,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)) {return}
         if weight!=1 {
             for &local,i in reference.local {local=mm.transform_interpolate(reference.sampled[i],local,weight)}
             testing.expect(t,lib.skeleton_world(playing_skeleton(&reference),reference.local[:],reference.world[:]))
@@ -146,55 +148,54 @@ multi_ik_full_and_partial_weights_preserve_solver_pose_and_diagnostics :: proc(t
     }
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Rigs_World :: struct {
-    using world:core.Test_World,
-    configs:core.Table(Pose_Modifiers),
+    using world:Test_World,
     animations:core.Table(Animation),
     attachments:core.Table(Bone_Attachment),
     playback:Playback,
     modifiers:Modifier_Runtime,
-    requests:Modifier_Requests,
+    requests:Animation_Requests,
 }
 
 @(test)
 profile_reload_allocation_failure_preserves_spring_state_controls_and_recovers_after_retry :: proc(t:^testing.T) {
     directory:=base.test_folder(t,"rigs-oom")
-    path:=fmt.tprintf("%s/rig.pose",directory)
     spring:=SPRING_CONSTRAINT_DEFAULT;base.text_set(spring.name[:],"tail");spring.root,spring.end=bone_ref("joint1"),bone_ref("joint3")
     id:=base.Asset_Id{91,92}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    if !testing.expect_value(t,pose_profile_save(path,&types,id,{springs={spring}}),asset.Error.None) {return}
+    if !test_character_save(t,directory,"rig",&types,id,{pose={springs={spring}}}) {return}
     assets:host.Assets;if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return};defer host.assets_destroy(&assets)
     app:=host.App{assets=&assets,allocator=context.allocator}
     w:Rigs_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     entity:=core.create(&w.entities)
-    core.add(&w.configs,entity,Pose_Modifiers{profile=id,weight=1,enabled=true});core.test_world_settle(&w)
+    player:=ANIMATION_DEFAULT;player.asset=id;core.add(&w.animations,entity,player);test_world_settle(&w)
     append(&w.playback.states,rig_test_state(entity,3,1))
-    profiles:Pose_Assets;defer pose_assets_free(&profiles)
+    profiles:Character_Assets;defer character_assets_free(&profiles)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
-    if !testing.expect(t,modifier_prepare(&w.modifiers,core.read(&w.configs),core.read(&w.animations),core.read(&w.attachments),&profiles,&skeletons,&w.playback,app.assets,app.allocator,nil)) {return}
-    if !testing.expect(t,rigs_apply(&w.playback.states[0],&w.modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)) {return}
+    if !testing.expect(t,modifier_prepare(&w.modifiers,core.read(&w.animations),core.read(&w.attachments),&profiles,&skeletons,&w.playback,app.assets,app.allocator,nil)) {return}
+    if !testing.expect(t,rigs_apply(&w.playback.states[0],&w.modifiers,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)) {return}
     modifier_control(&w.requests,{rig=entity,kind=.Spring,weight=.4,enabled=true,fade=0})
-    modifier_take(&w.modifiers,&w.requests,core.read(&w.configs),nil,.1)
+    modifier_take(&w.modifiers,&w.requests,nil,.1)
     geometry,inputs:=w.modifiers.geometry,w.modifiers.inputs
     control,joint:=w.modifiers.controls[0],w.modifiers.spring_states[0].springs[2]
     buffer:=raw_data(w.modifiers.spring_states)
     assets.revision+=1
     record,found:=asset.registry_find(&assets.registry,id);if !testing.expect(t,found) {return};record.time+=1
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator();app.allocator=runtime.nil_allocator()
-    prepared:=modifier_prepare(&w.modifiers,core.read(&w.configs),core.read(&w.animations),core.read(&w.attachments),&profiles,&skeletons,&w.playback,app.assets,app.allocator,nil)
+    prepared:=modifier_prepare(&w.modifiers,core.read(&w.animations),&w.attachments,&profiles,&skeletons,&w.playback,app.assets,app.allocator,nil)
     context=saved;app.allocator=saved.allocator;profiles.allocator=saved.allocator
     testing.expect(t,!prepared)
     testing.expect(t,w.modifiers.geometry==geometry && w.modifiers.inputs==inputs && len(w.modifiers.springs.values)==1 && len(w.modifiers.controls)==1 && len(w.modifiers.spring_states)==1)
     if len(w.modifiers.controls)>0 {testing.expect_value(t,w.modifiers.controls[0],control)}
     if len(w.modifiers.spring_states)>0 {testing.expect(t,raw_data(w.modifiers.spring_states)==buffer);testing.expect_value(t,w.modifiers.spring_states[0].springs[2],joint)}
-    if !testing.expect(t,modifier_prepare(&w.modifiers,core.read(&w.configs),core.read(&w.animations),core.read(&w.attachments),&profiles,&skeletons,&w.playback,app.assets,app.allocator,nil)) {return}
+    if !testing.expect(t,modifier_prepare(&w.modifiers,&w.animations,&w.attachments,&profiles,&skeletons,&w.playback,app.assets,app.allocator,nil)) {return}
     testing.expect_value(t,w.modifiers.controls[0],control)
     testing.expect_value(t,w.modifiers.springs.values[0].weight,f32(.4))
-    testing.expect(t,rigs_apply(&w.playback.states[0],&w.modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
+    testing.expect(t,rigs_apply(&w.playback.states[0],&w.modifiers,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
 }
 
 @(private)
@@ -223,11 +224,10 @@ rig_profiles_roundtrip_typed_operations_and_reject_invalid_capacities :: proc(t:
     profile:=Pose_Profile{chain_ik={chain},twist={twist},springs={spring},multi_ik={multi},retarget_chains={retarget}}
     testing.expect(t,pose_profile_check(profile))
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    doc:asset.Document;testing.expect_value(t,pose_profile_document(&doc,&types,{42,43},profile),asset.Error.None);defer asset.document_destroy(&doc)
-    path:=fmt.tprintf("%s/rig.pose",base.test_folder(t,"rigs"))
-    testing.expect_value(t,asset.document_save(&doc,path),asset.Error.None)
-    file:asset.Asset;testing.expect_value(t,asset.asset_load(&file,path),asset.Error.None);defer asset.asset_close(&file)
-    view,error:=pose_profile_view(&file,&types);testing.expect_value(t,error,asset.Error.None)
+    directory:=base.test_folder(t,"rigs")
+    if !test_character_save(t,directory,"rig",&types,{42,43},{pose=profile}) {return}
+    file:asset.Asset;testing.expect_value(t,asset.asset_load(&file,fmt.tprintf("%s/rig.character",directory)),asset.Error.None);defer asset.asset_close(&file)
+    set,error:=character_view(&file,&types);testing.expect_value(t,error,asset.Error.None);view:=set.pose
     testing.expect(t,len(view.chain_ik)==1 && len(view.multi_ik)==1 && len(view.retarget_chains)==1)
     testing.expect_value(t,view.springs[0],spring)
     invalid:=multi;invalid.effector_count=RIG_EFFECTORS+1
@@ -245,8 +245,8 @@ named_modifier_controls_preserve_full_bone_paths_and_reject_ambiguous_references
     left.bone,right.bone=bone_ref(fmt.tprintf("%sleft",prefix)),bone_ref(fmt.tprintf("%sright",prefix))
     left.rig,right.rig=rig,rig
     testing.expect(t,modifier_append(&modifiers.look,rig,right) && modifier_append(&modifiers.look,rig,left))
-    ground:=FOOT_GROUNDING_DEFAULT;ground.rig=rig;testing.expect(t,modifier_append(&modifiers.grounding,rig,ground))
-    requests:Modifier_Requests;defer delete(requests.controls.items)
+    ground:=FOOT_GROUNDING_DEFAULT;testing.expect(t,modifier_append(&modifiers.grounding,rig,ground))
+    requests:Animation_Requests;defer delete(requests.controls.items)
     modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Look,weight=.5,enabled=true},modifier_operation_name(&left))
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     slot,ok:=modifier_named_slot(&modifiers,rig,.Look,modifier_operation_name(&left))
@@ -270,27 +270,27 @@ chain_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls
     chain:=CHAIN_IK_CONSTRAINT_DEFAULT;base.text_set(chain.name[:],"arm");chain.rig,chain.root,chain.end=rig,bone_ref("joint1"),bone_ref("joint4")
     chain.target=spatial_point({1.5,1,0});chain.pole,chain.use_pole={0,0,2},true
     testing.expect(t,modifier_append(&modifiers.chain_ik,rig,chain))
-    testing.expect(t,rigs_apply(&state,&modifiers,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
+    testing.expect(t,rigs_apply(&state,&modifiers,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
     diagnostic,found:=animation_rig_diagnostic(&modifiers,rig,.Chain_IK,0)
     testing.expect(t,found && diagnostic.valid && diagnostic.reached && diagnostic.residual<.001)
-    core.at(&modifiers.chain_ik,0).enabled=false
+    core.edit_at(&modifiers.chain_ik,0).enabled=false
     spring:=SPRING_CONSTRAINT_DEFAULT;base.text_set(spring.name[:],"tail");spring.rig,spring.root,spring.end=rig,chain.root,chain.end;spring.settings.gravity={};spring.settings.force={2,0,0}
     testing.expect(t,modifier_append(&modifiers.springs,rig,spring))
-    copy(state.local[:],state.rest[:]);testing.expect(t,rigs_apply(&state,&modifiers,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
+    copy(state.local[:],state.rest[:]);testing.expect(t,rigs_apply(&state,&modifiers,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
     copied_state:Playing;core.value_copy(&copied_state,&state,type_info_of(Playing));defer playing_free(&copied_state)
     empty:Modifier_Runtime;testing.expect(t,modifier_controls_prepare(&modifiers,&empty))
-    requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)
+    requests:Animation_Requests;defer delete(requests.goals.items);defer delete(requests.controls.items)
     modifier_control_named(&requests,&modifiers,{rig=rig,kind=.Chain_IK,weight=.2,enabled=true},"arm")
     modifier_controls_take(&modifiers,&requests,&problems,0)
     testing.expect_value(t,modifiers.chain_ik.values[0].weight,f32(.2))
-    core.at(&modifiers.chain_ik,0).enabled=false
+    core.edit_at(&modifiers.chain_ik,0).enabled=false
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<120 {
         copy(state.local[:],state.rest[:]);copy(copied_state.local[:],copied_state.rest[:])
-        stable &&=rigs_apply(&state,&modifiers,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)
-        stable &&=rigs_apply(&copied_state,&copied,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)
+        stable &&=rigs_apply(&state,&modifiers,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)
+        stable &&=rigs_apply(&copied_state,&copied,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)
     }
     context=saved
     testing.expect(t,stable && problems.count==0)
@@ -313,7 +313,8 @@ semantic_retarget_bindings_ignore_actor_placement_and_replay_without_allocations
     source.local[0].position={100,0,0};source.sampled[0]=source.local[0];source.sampled[2].rotation=mm.quat_axis_angle({0,0,1},.8)
     target.local[0].position={-20,3,0};actor:=target.local[0]
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
-    chain:=CHAIN_RETARGET_CONSTRAINT_DEFAULT;base.text_set(chain.name[:],"arm");chain.rig,chain.source=target_id,source_id
+    target.leader,target.stage=source_id,.Sampled
+    chain:=CHAIN_RETARGET_CONSTRAINT_DEFAULT;base.text_set(chain.name[:],"arm");chain.rig=target_id
     chain.source_root,chain.source_end,chain.target_root,chain.target_end=bone_ref("joint1"),bone_ref("joint3"),bone_ref("joint1"),bone_ref("joint5")
     testing.expect(t,modifier_append(&modifiers.retarget_chains,target_id,chain))
     testing.expect(t,rigs_retarget(target,&playback,&modifiers,&problems))
@@ -328,13 +329,12 @@ semantic_retarget_bindings_ignore_actor_placement_and_replay_without_allocations
 }
 
 @(test)
-rig_goal_persistence_keeps_independent_effectors_and_accepts_retarget_without_pose_modifiers :: proc(t:^testing.T) {
+rig_goal_persistence_keeps_independent_effectors_and_accepts_chain_retarget_goals :: proc(t:^testing.T) {
     problems:core.Problems
     w:Rigs_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     body,transfer:=core.create(&w.entities),core.create(&w.entities)
-    core.add(&w.configs,body,{weight=.5,enabled=true});core.test_world_settle(&w)
     multi:=MULTI_IK_CONSTRAINT_DEFAULT;multi.rig=body;multi.effector_count=2
     multi.effectors[0],multi.effectors[1]=MULTI_IK_EFFECTOR_DEFAULT,MULTI_IK_EFFECTOR_DEFAULT
     testing.expect(t,modifier_append(&w.modifiers.multi_ik,body,multi))
@@ -344,17 +344,17 @@ rig_goal_persistence_keeps_independent_effectors_and_accepts_retarget_without_po
     modifier_goal(&w.requests,{rig=body,kind=.Multi_IK,effector=0,target=spatial_point({1,2,3}),weight=1,enabled=true})
     modifier_goal(&w.requests,{rig=body,kind=.Multi_IK,effector=1,target=spatial_point({4,5,6}),weight=1,enabled=true})
     modifier_goal(&w.requests,{rig=transfer,kind=.Chain_Retarget,weight=.4,enabled=true})
-    modifier_take(&w.modifiers,&w.requests,core.read(&w.configs),&problems)
+    modifier_take(&w.modifiers,&w.requests,&problems,0)
     testing.expect_value(t,len(w.modifiers.goals),3)
     testing.expect_value(t,w.modifiers.multi_ik.values[0].effectors[0].target.position,mm.Vec3{1,2,3})
     testing.expect_value(t,w.modifiers.multi_ik.values[0].effectors[1].target.position,mm.Vec3{4,5,6})
-    testing.expect_value(t,w.modifiers.multi_ik.values[0].weight,f32(.5))
+    testing.expect_value(t,w.modifiers.multi_ik.values[0].weight,f32(1))
     testing.expect_value(t,w.modifiers.retarget_chains.values[0].weight,f32(.4))
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<64 {
         modifier_goal(&w.requests,{rig=body,kind=.Multi_IK,effector=0,target=spatial_point({7,8,9}),weight=1,enabled=true})
-        modifier_take(&w.modifiers,&w.requests,core.read(&w.configs),&problems)
+        modifier_take(&w.modifiers,&w.requests,&problems,0)
         stable &&=len(w.modifiers.goals)==3 && w.modifiers.multi_ik.values[0].effectors[1].target.position==mm.Vec3{4,5,6} && w.modifiers.retarget_chains.values[0].enabled
     }
     context=saved;testing.expect(t,stable && problems.count==0)
@@ -368,14 +368,14 @@ multi_ik_modifiers_accept_named_goals_keep_effectors_independent_and_clone_solve
     for &joint,i in multi.joints[:3] {joint=MULTI_IK_JOINT_DEFAULT;joint.bone=bone_ref(fmt.tprintf("joint%d",i+1))}
     multi.effectors[0]=MULTI_IK_EFFECTOR_DEFAULT;base.text_set(multi.effectors[0].name[:],"hand");multi.effectors[0].bone=bone_ref("joint4");multi.effectors[0].target=spatial_point({1.2,1.7,0})
     testing.expect(t,modifier_append(&modifiers.multi_ik,rig,multi))
-    testing.expect(t,rigs_apply(&state,&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
+    testing.expect(t,rigs_apply(&state,&modifiers,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
     diagnostic,found:=animation_rig_diagnostic(&modifiers,rig,.Multi_IK,0);testing.expect(t,found && diagnostic.valid && diagnostic.reached)
     empty:Modifier_Runtime;testing.expect(t,modifier_controls_prepare(&modifiers,&empty))
-    requests:Modifier_Requests;defer delete(requests.queue.items);defer delete(requests.controls.items)
+    requests:Animation_Requests;defer delete(requests.goals.items);defer delete(requests.controls.items)
     modifier_goal_named(&requests,&modifiers,{rig=rig,kind=.Multi_IK,target=spatial_point({.5,1.8,0}),weight=1,enabled=true},"body")
-    for goal in core.take(&requests.queue) {modifier_apply_goal(&modifiers,goal,nil)}
+    for goal in core.take(&requests.goals) {modifier_apply_goal(&modifiers,goal,nil)}
     testing.expect_value(t,modifiers.multi_ik.values[0].effectors[0].target.position,mm.Vec3{.5,1.8,0})
-    copy(state.local[:],state.rest[:]);testing.expect(t,rigs_apply(&state,&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
+    copy(state.local[:],state.rest[:]);testing.expect(t,rigs_apply(&state,&modifiers,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
     copied_state:Playing;core.value_copy(&copied_state,&state,type_info_of(Playing));defer playing_free(&copied_state)
     testing.expect(t,raw_data(copied.multi_states[0].backup)!=raw_data(modifiers.multi_states[0].backup))
@@ -383,8 +383,8 @@ multi_ik_modifiers_accept_named_goals_keep_effectors_independent_and_clone_solve
     stable:=true
     for _ in 0..<60 {
         copy(state.local[:],state.rest[:]);copy(copied_state.local[:],copied_state.rest[:])
-        stable &&=rigs_apply(&state,&modifiers,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)
-        stable &&=rigs_apply(&copied_state,&copied,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)
+        stable &&=rigs_apply(&state,&modifiers,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)
+        stable &&=rigs_apply(&copied_state,&copied,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)
     }
     context=saved
     testing.expect(t,stable)
@@ -417,11 +417,16 @@ look_and_ik_publish_their_residual_and_whether_they_reach_in_the_constraints_of_
     testing.expect(t,aimed_found && aimed.valid && aimed.reached && aimed.residual<1e-3 && aimed.angular_error<1e-3)
     _,beyond:=animation_rig_diagnostic(nil,rig,.Look,1,&cache);_,elsewhere:=animation_rig_diagnostic(nil,rig,.IK,0)
     testing.expect(t,!beyond && !elsewhere)
-    core.at(&looks,0).target=spatial_point({5,1,0});core.at(&looks,0).max_angle=.2
+    // With an offset (eyes above the bone) the ray from the offset passes through the target.
+    core.edit_at(&looks,0).offset={0,.2,-.1}
+    copy(state.local[:],state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0)
+    aimed,_=animation_rig_diagnostic(nil,rig,.Look,0,&cache)
+    testing.expect(t,problems.count==0 && aimed.valid && aimed.reached && aimed.residual<1e-3,"the eyes aim at the target")
+    core.edit_at(&looks,0).target=spatial_point({5,1,0});core.edit_at(&looks,0).max_angle=.2
     copy(state.local[:],state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0)
     aimed,_=animation_rig_diagnostic(nil,rig,.Look,0,&cache)
     testing.expect(t,problems.count==0 && aimed.valid && !aimed.reached && aimed.angular_error>1 && aimed.residual>1,"a look held by max_angle says how far it misses")
-    core.at(&looks,0).enabled=false
+    core.edit_at(&looks,0).enabled=false
     copy(state.local[:],state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0)
     aimed,_=animation_rig_diagnostic(nil,rig,.Look,0,&cache)
     testing.expect(t,!aimed.valid)

@@ -41,7 +41,7 @@
   (`OpImageTexelPointer`) comes out in MSL 3.1: before, SPIRV-Cross emulates them with a linear
   texture over a buffer that the RHI does not create, and the RHI gives `ShaderAtomic` to the
   `R32_Uint` storage textures.
-- The reflection fixes slots and threadgroups of each variant; the emitted Metal entry point is
+- The reflection fixes slots and threadgroups of each stage; the emitted Metal entry point is
   stored in the table.
 - **Structs shared with the CPU** (`SHARED_STRUCTS` of `cook/shaders/layouts.odin`, each with the
   `render` type that replicates it field by field): each variant that uses one must have the same
@@ -68,8 +68,33 @@
   (`owned_constants` of `cook/shaders/extensions.odin`). Only the stages that include it follow
   it, and the stamp follows the Odin source. The same test forbids a plugin's `.slang` from
   defining a name its Odin declares.
-- The resources of a stage stay within the `rhi` limits. `//! variant <name> <DEFINE>...` adds
-  another compilation of a stage.
+- The resources of a stage stay within the `rhi` limits.
+- **Constants and variants.** What a pass chooses of a stage is a constant:
+  `//! constant <name> <DEFINE>` makes `DEFINE` a boolean the code reads as `if (DEFINE)`, false
+  unless the pipeline sets it ([rhi](rhi.md#shader-constants)), and the driver folds it. One code
+  serves every combination: a constant adds no compilation of the stage. Its id is the order of its
+  line, the manifest names it and `render/shaders_gen.odin` gives it as `<STAGE>_<NAME>`
+  (`REFLECT_COMP_COLOR`). The renderer has one `Pipeline_Id` per stage: a pass asks
+  `pipeline_of` for the stage with its constants. The renderer starts with the pipelines of the
+  tracer in use without constants and with the sets the settings select (`variants_listed`); the
+  other sets go to the pipeline thread behind what frames ask for. A frame does not wait for one
+  being made (unless the renderer has no `pipeline_thread`): it takes the stage without the
+  constants that only spare work or degrade (`optional`: `unlayered`, `color`), or skips the
+  pass, with `Stats.problem`. One the device refuses is not asked for again until the shaders
+  change and is reported once. The stage includes
+  `native.slang`, which declares them; a source shared with stages that do not declare the
+  constant asks `#ifdef DEFINE` before reading it. What the
+  constants of a stage read is bound for every pipeline of it (a stand-in where it is off).
+- `//! variant <name> <DEFINE>...` is another compilation of the stage, `<stage>_<name>`, with
+  those defines: only for what a constant cannot choose, because it changes what the stage declares
+  to the device. A capability (`hw`: ray queries; `clip`: a clip distance), a module without which
+  loads where the device lacks it. Its fragment outputs (`plain`, `layers`, `values`, `impostor`):
+  Vulkan discards what is written to a target the pass lacks, but SPIRV-Cross fixes the outputs
+  in the Metal source and Metal may refuse a pipeline whose function writes a target it does not
+  have. The kind of a slot (`batches`), or a target the pass must not write (`sharpen`).
+- The source itself of a stage with the variant `hw`, and one that says `//! software rays`, serve
+  only the software tracer: they get no Metal code, since Metal traces rays by hardware alone
+  ([RHI](rhi.md#hardware-ray-tracing)).
 - Ray queries use Slang's `RayQuery` and share traversal and material filters with the software
   BVH. Validating SPIR-V does not certify GPU execution on any backend.
 
@@ -101,12 +126,11 @@
   [`vfx` plugin](../../mirai-world/references/vfx.md#vfx-programs), and `Orbit`
   (`plugins/vfx/shaders/orbit.slang`) is its own.
 - A Vfx program declares what it reads besides its parameters with `//! resource name surface`,
-  `channel`, `bones`, `grid`, `emitter` or `data words` (up to `PROGRAM_RESOURCES`). The
+  `channel`, `grid`, `emitter` or `data words` (up to `PROGRAM_RESOURCES`). The
   generation gives each one a constant with its index in the program's namespace (`hits` inside
   `Gather`) and the catalog lists them in `resources`. A surface is read with
   `mirai_vfx_surface_sample` (a point per area) and `mirai_vfx_surface_at` (the same triangle and
-  barycentrics where it is now, with its normal and velocity); bones, with `mirai_vfx_bone_sample`
-  (by length) and `mirai_vfx_bone_at` (the same bone and fraction); a channel, with
+  barycentrics where it is now, with its normal and velocity); a channel, with
   `mirai_vfx_channel_count` and `mirai_vfx_channel_birth`; a grid (`grid`), with
   `mirai_vfx_grid_load`, `_sample`, `_splatted`, `_store` and `_splat`; the particles of another
   emitter (`emitter`), with `mirai_vfx_emitter_particle` and `_word`; a data channel (`data`),
@@ -114,19 +138,19 @@
   `_store`. `mirai_vfx_trace` gives the first opaque thing a ray finds in the scene (distance,
   normal and whether it started inside a closed mesh) in `initialize`, `update` and the stages,
   which include `trace.slang` and declare the `hw` variant; in `render` it finds nothing. Which
-  mesh, which skin, which channel or which grid each one is is resolved by the
+  mesh, which channel or which grid each one is is resolved by the
   [plugin](../../mirai-world/references/vfx.md#surfaces-bones-and-resources).
-- Its stages (`//! stage name over particles|resource [iterations N] [neighbors radius]`, up to
-  `MAX_STAGES`) are functions of the namespace: over particles with the signature of `update` (and
-  `mirai_vfx_neighbors` with `mirai_vfx_neighbor_next` if it declares `neighbors`), over the cells
-  of a grid `(Mirai_Vfx_Cell, Parameters)`. The generation dispatches them in
+- Its stages (`//! stage name over particles|resource [iterations N]`, up to `MAX_STAGES`) are
+  functions of the namespace: over particles with the signature of `update`, over the cells of a
+  grid `(Mirai_Vfx_Cell, Parameters)`. The generation dispatches them in
   `mirai_vfx_particle_stage` and `mirai_vfx_cell_stage` and the catalog lists them in `stages`; the
   [plugin](../../mirai-world/references/vfx.md#grids-and-stages) runs them.
 - A Surface program that moves vertices says `//! vertex [animated] [reach <metres>|reach
   <parameter>]` and declares `vertex` ([vertex functions](materials.md#vertex-functions)): reach is
   a number from 0 or a parameter of one float; another word, a reach of another type or the line
   in another domain leave the program out, and the check asks for `vertex` with its signature. The
-  catalog gives it in `vertex` (`animated`, `reach`: a number or the name of the parameter).
+  catalog gives it in `vertex` (`animated`, `reach` in metres or `reach_offset`, the bytes of
+  the parameter that gives it).
 - `mirai_sample_texture(ctx,index,uv,lod)` receives the explicit context:
   - Surface in raster: derivatives and bias.
   - Surface with `ctx.ray` (also hits rebuilt in fragment shaders): LOD of the ray footprint.
@@ -138,6 +162,11 @@
   a texture laid over the world (uv = position over `u` and `v`, meters per repetition) with the
   gradients of that footprint: it filters the same in raster and in rays and works inside a
   branch, where implicit derivatives do not.
+- The library of a program (`mirai_material.slang`) makes a look a few lines:
+  `mirai_surface_standard(ctx)` (the standard model of its own material, to change only what the
+  program is about), `mirai_surface_mix`, `mirai_noise(ctx,metres)` (value noise of the world on
+  the lattice of the origin), `mirai_sample_triplanar(ctx,index,metres,sharpness)` and
+  `mirai_height_blend(first,second,mask,contrast)`.
 - `ctx.world_position` is relative to the render origin and `ctx.origin` is that origin in whole
   steps of `ORIGIN_STEP`. What a program does with the world place (a wave, a pattern, a noise
   lattice) takes what the origin adds from `origin.slang`: `origin_phase`, `origin_wrap` and
@@ -193,10 +222,11 @@
     `ctx.color` for an id it does not know. `ui.frag` includes it.
 - `scene.slang` includes `<surface_programs.slang>`: the stage itself evaluates no programs. A
   source marked `//! per surface program` is also compiled once per Surface program,
-  `<root>__<Program>[_<variant>]<suffix>` (`gbuffer__Ocean_layers.frag`), with the include of that
-  program in front; `//! per surface program only` compiles only those. They are the raster stages
-  that draw materials (G-buffer, glass layers and filter, translucents, overlays, highlight,
-  thumbnails, UI and the `vfx` sprites) and `surface_points.comp`, that of the ray material points
+  `<root>__<Program>[_<variant>]<suffix>` (`gbuffer__Water_Surface_layers.frag`), with the include
+  of that program in front; `//! per surface program only` compiles only those. They are the
+  raster stages that draw materials (G-buffer, glass layers and filter, translucents, overlays,
+  highlight, thumbnails, UI and the `vfx` sprites) and `surface_points.comp`, that of the ray
+  material points
   ([programs in rays and raster](materials.md#surface-programs-in-rays-and-raster)). A source
   marked `//! per vertex program` is compiled only for the Surface programs with `vertex`, with
   the same include, and has no stage of its own: `surface_vertices.comp`, which calls
@@ -224,10 +254,13 @@
   that `shader_assets_load` reads.
 - The engine generation also compiles the RHI test shaders and writes `render/shaders_gen.odin`
   and `rhi/shaders_gen_test.odin`, `@(rodata)` tables.
-- The `render` table embeds the code of its stages and then of its program stages as one LZ
-  stream per backend (`shaders/build/shaders.spv.lz`, `.metal.lz`), each stage an
-  `Embedded_Shader` with its size in it. It is packed `PACK_EDIT`, and `SHIP` when the generation is
-  asked to ship (`Options.ship`: the release builds of the engine); either serves every build.
+- The `render` table embeds the code of its stages and then of its program stages as one file
+  per backend (`shaders/build/shaders.spv.lz`, `.metal.lz`, returned by `shaders_packed`): the
+  size of each stage, then the code as one LZ stream. Nothing in the table follows the code, so a
+  change of code alone leaves the `render` table byte for byte and a dev engine is not rebuilt
+  (the code it embeds is that of its last compile). It is packed `PACK_EDIT`, and `SHIP` when
+  the generation is asked to ship (`Options.ship`: the release builds of the engine); either
+  serves every build.
   `renderer_init` decodes it once (`embedded_shaders_decode`) unless it starts with a loaded
   generation. The `rhi` test table loads each stage as it is.
 - The `rhi` table stays under `rhi.TEST_SHADERS` (`MIRAI_TEST_SHADERS`, true in test builds and in
@@ -317,19 +350,6 @@
 - `cancel(&progress)`, from another thread, stops the generation: no more stages start, the running
   tools are killed and it ends with `Result.cancelled`, without publishing.
 
-## In-memory sources
-
-- `Options.overlay` gives sources that the generation reads instead of their files: what an editor
-  has unsaved. It goes through `Sources`, so fingerprints, stamp, listings and the copy of the
-  programs see that content under the file name; a new one appears, also in a folder the disk
-  does not have yet, and a `removed` one does not. A project whose only program is a new one from
-  the overlay has its own generation.
-- What compiles stays in the cache with the fingerprint of that content: saving it leaves the
-  generation up to date without compiling.
-- If a literal include or import of a stage names a source of the overlay outside the copies, the
-  stage fails (`it includes ..., which has unsaved changes`) instead of storing in the cache the
-  code of the file with the fingerprint of the memory.
-
 ## Generation without changes
 
 - A published generation leaves `generation.json` with the request, the tools, the hash of each
@@ -345,8 +365,13 @@
   contains a complete generation. If the filesystem prevents the rollback, the error names the
   folders that keep the previous copies.
 - A generation identical by content keeps the output and its dates. The executable embeds the
-  fingerprint of the engine sources (`SHADERS_FINGERPRINT`) and `shader_assets_load` rejects
-  shaders from other sources.
+  interface of its engine stages (`SHADERS_INTERFACE`, `engine_interface`: the generator contract,
+  the binding ABI, the shared structs as Slang lays them out and, of each stage, its kind,
+  workgroup, bindings and constants) and `shader_assets_load` rejects a generation that names
+  another; the code of the stages may be any. A project generation names the interface of the
+  engine generation of the same sources, which it runs first. So an engine shader edit that keeps
+  the interface is published into a running editor like a project shader (`mirai shaders`, or
+  `mirai build editor`); one that changes it rebuilds `render` and restarts the editor.
 
 ## Diagnostics
 
@@ -398,7 +423,9 @@ it. The domain is the one the source declares.
   ([programs and stages](#programs-and-stages)). The manifest lists the program stages separately
   (`program_stages`).
 - Program names are unique among engine, project and plugins; `pbr` is reserved. Examples:
-  `templates/empty/shaders/pulse.slang`, `plugins/terrain/shaders/terrain_slope.slang`.
+  `templates/empty/shaders/pulse.slang`, `plugins/terrain/shaders/terrain_slope.slang`. The engine
+  has no Surface program of its own: every one is of a project, a plugin or the tests
+  (`render/testdata/`, [verification](verification.md)).
 - The same folders extend the renderer with their own stages (`name.comp.slang`, `.vert`, `.frag`,
   of unique name) and sources with [hooks and constants](views.md#extension-hooks-and-constants).
   With hooks, constants or nested views only the stages that read them are recompiled
@@ -407,11 +434,10 @@ it. The domain is the one the source declares.
 ### Publication from the editor
 
 `editor/material_programs.odin`: when a program source changes through the editor
-(`material.program.create` or `edit`, undo, reverting an AI turn, discarding it), a job generates
-the project shaders again without stopping the editor. The edited source goes as an
-[in-memory source](#in-memory-sources): the project's `.slang` does not change until Save, which
-does not publish again
-([unsaved programs](../../mirai-editor/references/document.md#unsaved-programs)).
+(`material.program.create` or `edit`, undo, reverting an AI turn), a job generates
+the project shaders again without stopping the editor. The edited source is written to the
+project's `.slang` at once, so generation reads the file
+([programs](../../mirai-editor/references/document.md#programs)).
 
 - The preview stages (`render.preview_shader`) are the [early ones](#early-stages-and-cancellation),
   also those of each program (`thumbnail__<Program>.frag` is early with `thumbnail.frag`): the
@@ -462,7 +488,7 @@ does not publish again
   another makes obsolete. A load that changes only preview or idle stages keeps the temporal
   accumulation and the probes; another discards them. Afterwards, `assets_programs_refresh`
   resolves again the program and parameters of each material (the ids change).
-- **State** (`app.shaders.state`): `Stale` is a generation from other engine sources, which is
+- **State** (`app.shaders.state`): `Stale` is a generation of another engine interface, which is
   ignored with a warning until the next build; `Failed`, an unreadable one or one with rejected
   pipelines, which keeps what was there. A generation that disappears does not return the renderer
   to the embedded ones until restart.

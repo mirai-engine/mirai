@@ -2,27 +2,35 @@ package foliage
 
 import "mirai:core"
 import "mirai:std/base"
+import mm "mirai:std/math"
 
 // The ground the instances of each Foliage stand on, in the space of its
-// entity: a tile of heights over each cell, with the weights of the layers
-// of the terrain there. Foliage does not know where it comes from: one
-// library writes it (a bridge such as foliage_terrain, from the terrains of
-// the world) and raises the revision of each tile it changes, and foliage
-// builds again the cells whose tile changed. A tile may be coarser than the
-// others (the ground far from where it is seen). Without a tile the plane
-// y = 0 of the entity is the ground.
+// entity: a tile of heights over each cell, with the weights of the layers of
+// the ground there, read from core.Ground_Queries (ground_read.odin). Each
+// tile it changes raises its revision, and foliage builds again the cells
+// whose tile changed. A tile may be coarser than the others (the ground far
+// from where it is seen). Without a tile, where no ground covers a cell, the
+// plane y = 0 of the entity is the ground.
 @(storage)
 Foliage_Ground :: struct {
     owners:[dynamic]Ground_Owner,
+    foliage:[2]u64,    // Foliage_Data: entries made and loads
+    seen:[2]core.Seen, // the tables of Foliage and World_Transform
+    streamed:u64,      // the revision of the streaming sources
+    queue:[dynamic]Ground_Task,  // tiles to read, in the order they were asked
+    queued:[dynamic]Ground_Task, // the same, sorted
 }
 Ground_Owner :: struct {
     entity:core.Entity,
     samples:u32,                // per side of a tile written without saying how many; a cell is samples-1 steps across
     revision:u32,               // raised with the revision of any of its tiles
-    layers:[RULE_LAYERS]base.Asset_Id, // what the weights of its tiles are of: the material of each layer of the terrain under it
+    layers:[RULE_LAYERS]base.Asset_Id, // what the weights of its tiles are of: the material of each layer of the ground under it
     layer_count:u32,
     tiles:[dynamic]Ground_Tile, // in the order of their coordinates, z then x
     pools:[dynamic]Ground_Pool, // the samples of its tiles, a pool for each count of them
+    transform:mm.Transform,     // of its entity when its tiles were last asked for
+    epoch:u64,                  // and of its entry of Foliage_Data
+    loads:u32,
 }
 Ground_Tile :: struct {
     coord:[2]i32,
@@ -34,13 +42,13 @@ Ground_Tile :: struct {
 Ground_Pool :: struct {
     samples:u32,             // per side
     heights:[dynamic]f32,    // samples*samples of each block, x first; NaN where there is no ground
-    weights:[dynamic][4]u8,  // of each height: of the layers of the terrain there, adding up to 255; 0 where it has none or there is no ground
+    weights:[dynamic][4]u8,  // of each height: of the layers of the ground there, adding up to 255; 0 where it has none or there is no ground
     coords:[dynamic][2]i32,  // the tile of each block
 }
 
 // The cells whose ground someone needs before it shows instances there: the
 // editor asks for those under its brush, so that what it paints knows the
-// ground. The writer of Foliage_Ground takes them.
+// ground. foliage_ground takes them.
 @(storage,queue)
 Foliage_Ground_Requests :: struct {cells:core.Queue(Ground_Request)}
 Ground_Request :: struct {entity:core.Entity,coord:[2]i32}

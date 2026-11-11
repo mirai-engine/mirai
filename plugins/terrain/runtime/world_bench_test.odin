@@ -48,12 +48,12 @@ bench_terrain_world_of_tiles :: proc(t:^testing.T) {
             core.add(&w.worlds,e,core.World_Transform{transform={position=place.position,rotation=place.rotation,scale=place.scale}})
             core.add(&w.terrains,e,Terrain{source=id,solid=true})
         }
-        core.test_world_settle(&w.w)
+        test_world_settle(&w.w)
         w.settings={} // the defaults of Physics_Settings
         settings:=Terrain_Settings{}
         tick :: proc(w:^Terrain_Test_World,resident:^Terrain_Resident,app:^host.App,settings:Terrain_Settings,view:core.View) {
-            test_step(&w.terrain,core.commands_of(core.test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view)
-            core.test_world_settle(&w.w)
+            test_step(&w.terrain,core.commands_of(test_world_ref(&w.w)),resident,app,&w.problems,settings,view=view)
+            test_world_settle(&w.w)
         }
         for position in ([3][3]f32{{0,250,-700},{0,900,-1800},{-900,40,-900}}) {
             view:=core.VIEW_DEFAULT

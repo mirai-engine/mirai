@@ -97,11 +97,11 @@ Environment_Preview :: struct {
 
 // The sky the preview names, when it has one.
 @(private)
-sky_previewed :: proc(skies:core.Read(Sky),preview:core.Ref(Environment_Preview)) -> (e:core.Entity,sky:Sky,found:bool) {
-    if preview.ptr==nil || preview.sky==core.NONE || skies.table==nil {return}
-    row:=core.raw_row(core.raw(skies.table),preview.sky)
+sky_previewed :: proc(skies:^core.Table(Sky,$A),preview:core.Ref(Environment_Preview)) -> (e:core.Entity,sky:Sky,found:bool) {
+    if preview.ptr==nil || preview.sky==core.NONE || skies==nil {return}
+    row:=core.raw_row(core.raw(skies),preview.sky)
     if row<0 {return}
-    return preview.sky,skies.table.values[row],true
+    return preview.sky,skies.values[row],true
 }
 
 // Turns on a sky, a sun or both, each turning off the one that was on. seconds
@@ -119,7 +119,7 @@ activate :: proc(r:^Environment_Requests,sky:core.Entity=core.NONE,sun:core.Enti
 }
 
 // The sky that lights the world: the one on, unless it or what it hangs from is hidden.
-sky_active :: proc(skies:core.Read(Sky),hidden:core.Read(Hidden),parents:core.Read(core.Parent)) -> (e:core.Entity,sky:Sky,found:bool) {
+sky_active :: proc(skies:^core.Table(Sky,$A),hidden:^core.Table(Hidden,$B),parents:^core.Table(core.Parent,$C)) -> (e:core.Entity,sky:Sky,found:bool) {
     if core.count(skies)==0 {return}
     e=core.entity_at(skies,0)
     if is_hidden(hidden,parents,e) {return core.NONE,{},false}
@@ -148,17 +148,17 @@ environment_activate :: proc(
         }
         if core.count(skies)>0 && core.entity_at(skies,0)==r.sky {continue}
         // Only how it arrives is written, in its row, on or off: the rest stays as what drives it wrote it.
-        next:=(^Sky)(core.raw_get(core.raw(skies),type_info_of(Sky),r.sky))
+        next:=(^Sky)(core.raw_edit(core.raw(skies),type_info_of(Sky),r.sky))
         next.arrival,next.arrival_rate=0,0
         if r.seconds>0 && core.count(skies)>0 {
-            next.arrival_from=sky_look_now(core.at(core.read(skies),0))
+            next.arrival_from=sky_look_now(core.at(skies,0))
             next.arrival,next.arrival_rate=1,1/r.seconds
         }
         core.enable(skies,r.sky)
     }
     if core.count(skies)==0 || frame.dt<=0 {return}
-    if on:=core.at(core.read(skies),0);on.arrival>0 {
-        sky:=core.get(skies,core.entity_at(skies,0))
+    if on:=core.at(skies,0);on.arrival>0 {
+        sky:=core.edit(skies,core.entity_at(skies,0))
         sky.arrival=max(sky.arrival-sky.arrival_rate*frame.dt,0)
     }
 }
@@ -175,7 +175,7 @@ sky_look_now :: proc(sky:Sky) -> Sky_Look {
 
 // What the renderer draws of the sky on: luminance, image and the turn of
 // its entity, mixed with what it arrives or changes from. Without one, black.
-sky_environment :: proc(e:core.Entity,sky:Sky,found,sunlit:bool,worlds:core.Read(core.World_Transform),a:^host.Assets) -> gpu.Environment {
+sky_environment :: proc(e:core.Entity,sky:Sky,found,sunlit:bool,worlds:^core.Table(core.World_Transform,$A),a:^host.Assets) -> gpu.Environment {
     if !found {return {use_background=true}}
     // The air shows only when lit, and then nothing shows behind it.
     atmosphere:=sky.atmosphere && sunlit

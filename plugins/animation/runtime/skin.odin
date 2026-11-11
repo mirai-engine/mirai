@@ -57,7 +57,7 @@ Skin_Instance :: struct {
 
 Skin_Update :: struct {slot:int,drawn,basis:mm.Transform,exact:u64}
 // morphed: its weights changed, and go to the renderer with the palette or on their own.
-Skin_Draw :: struct {shown:erender.Instance_Desc,work,slot:int,morphed:bool}
+Skin_Draw :: struct {work,slot:int,morphed:bool}
 
 // The rigs of the meshes the application loaded, by asset: one per
 // application, which every world reads.
@@ -206,16 +206,19 @@ skin_rig_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.As
 
 // Poses the meshes with a skin or morph targets on the GPU: a rig shows its
 // own pose, a mesh with Pose_Source the pose of its rig, and a mesh with
-// targets and no skin its weights alone, by one joint.
+// targets and no skin its weights alone, by one joint. The copy it poses is
+// the mesh the renderer draws its entity with (erender.Posed_Meshes): placed,
+// tinted, hidden and outlined as any mesh of an entity. The material values
+// the curves of a rig move are the Material_Live of its meshes.
 @(step="render",loops="game editor",before="render_sync")
 animation_skin :: proc(
-    meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),parents:core.Read(core.Parent),
-    worlds:core.Read(core.World_Transform),tints:core.Read(erender.Tint),overrides:core.Read(erender.Material_Override),
-    hidden:core.Read(erender.Hidden),elsewhere:core.Read(erender.Drawn_Elsewhere),highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),
-    offsets:core.Read(erender.Draw_Offset),cache:^Skin_Runtime,state:^Skin_Instances,assets:^host.Assets,renderer:^erender.Renderer,extras:^host.Frame_Extras,job_system:^jobs.Job_System,allocator:runtime.Allocator,time:core.Time,frame:core.Frame_Time,playback:core.Ref(Playback),
+    meshes:^core.Table(erender.Mesh_Renderer,.Read),skins:^core.Table(Pose_Source,.Read),parents:^core.Table(core.Parent,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),lives:^core.Table(erender.Material_Live),
+    hidden:^core.Table(erender.Hidden,.Read),elsewhere:^core.Table(erender.Drawn_Elsewhere,.Read),
+    cache:^Skin_Runtime,state:^Skin_Instances,assets:^host.Assets,renderer:^erender.Renderer,poses:^erender.Posed_Meshes,job_system:^jobs.Job_System,allocator:runtime.Allocator,time:core.Time,frame:core.Frame_Time,playback:core.Ref(Playback),
     morphs:core.Ref(Morph_Playback),problems:^core.Problems,
-    policies:core.Read(Animation_Budget),budget:^Budget_Runtime,config:Animation_Budget_Config,parts:core.Read(Skin_Part),
-    locals:core.Read(core.Transform),cameras:core.Read(erender.Camera),modifiers:core.Ref(Modifier_Runtime),
+    policies:^core.Table(Animation_Budget,.Read),budget:^Budget_Runtime,config:Animation_Budget_Config,parts:^core.Table(Skin_Part,.Read),
+    modifiers:core.Ref(Modifier_Runtime),
 ) {
     if state==nil || renderer==nil || assets==nil {return}
     context.allocator=allocator
@@ -268,7 +271,7 @@ animation_skin :: proc(
         instance:=&state.instances.values[slot]
         // The bone of its part, which its copy is made with or without.
         part,part_layers:=0,u32(0)
-        if parts.table!=nil && !rigid {
+        if parts!=nil && !rigid {
             if config,has_part:=core.get(parts,entity);has_part && config.layers!=0 {
                 bone:=bone_resolve(pose,config.bone)
                 if bone<0 {
@@ -284,22 +287,11 @@ animation_skin :: proc(
             instance.reset=true
         }
         instance.seen=state.frame
-        tint:=erender.TINT_DEFAULT
-        if value,exists:=core.get(tints,entity);exists {tint=value}
-        override,_:=core.get(overrides,entity)
-        // The material values the curves of its rig move, drawn over its own.
-        materialed:=false
-        if !rigid && modifiers.ptr!=nil {
-            mesh:=host.assets_mesh(assets,static.mesh)
-            fits:bool
-            if fits,materialed=curve_materials_apply(modifiers.ptr,pose,int(mesh.slot_count) if mesh!=nil else 1,&override);!fits {
-                core.report(problems,entity,"animation.curve_material","the curve materials of the pose profile of the rig of this entity, with its Material_Override, set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_OVERRIDE_CAPACITY)
-            }
+        source:=host.assets_mesh(assets,static.mesh)
+        if source==nil || source.handle==host.ASSETS_MESH_NONE {continue}
+        if !rigid && modifiers.ptr!=nil && !curve_materials_apply(modifiers.ptr,pose,int(source.slot_count),lives,entity) {
+            core.report(problems,entity,"animation.curve_material","the curve materials of the .character of the rig of this entity set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_VALUES_CAPACITY)
         }
-        anchor,transform:=erender.instance_place(world,frame,offsets,parents,worlds,locals,cameras,entity)
-        shown,usable:=erender.mesh_instance(assets,static,transform,tint,override)
-        if !usable {continue}
-        shown.anchor=anchor
         bones:=len(pose.local) if !rigid else 0
         // Not drawn in the last frame (new, or shown again): it shows the pose and the weights of the
         // tick, not an interpolation from those of a tick it was not drawn in, as the rest pose of a
@@ -312,7 +304,7 @@ animation_skin :: proc(
             weights,weight_error:=make([]f32,len(rig.morphs),allocator)
             if local_error!=nil || world_error!=nil || palette_error!=nil || weight_error!=nil {delete(local);delete(world_pose);delete(palette);delete(weights);memory_problem(problems,entity,"its skinned mesh");continue}
             if rigid {palette[0]=1}
-            instance.source,instance.valid,instance.local,instance.world,instance.palette,instance.morph_weights=shown.mesh,true,local,world_pose,palette,weights
+            instance.source,instance.valid,instance.local,instance.world,instance.palette,instance.morph_weights=source.handle,true,local,world_pose,palette,weights
             instance.part,instance.part_layers=part,part_layers
             if part>0 {
                 in_part,in_error:=make([]bool,len(rig.joints),allocator)
@@ -328,8 +320,6 @@ animation_skin :: proc(
             // Morphs deform from their first weights; a pose waits for a palette off the bind.
             if (rigid || len(rig.morphs)>0) && !skin_copy(renderer,instance,rig,problems,entity) {skin_instance_free(renderer,instance);continue}
         }
-        // Curve materials are drawn with the copy: the mesh of the world shared at the bind has none.
-        if materialed && !instance.copied && !skin_copy(renderer,instance,rig,problems,entity) {skin_instance_free(renderer,instance);continue}
         if !rigid && (instance.pose!=owner || instance.bound!=pose.bound) {
             instance.pose=owner;instance.bound=pose.bound;instance.reset=true
         }
@@ -364,17 +354,14 @@ animation_skin :: proc(
                     continue
                 }
                 policy:=ANIMATION_BUDGET_DEFAULT
-                if policies.table!=nil {if value,present:=core.get(policies,owner);present {policy=value}}
+                if policies!=nil {if value,present:=core.get(policies,owner);present {policy=value}}
                 work_index=len(state.work)
                 append(&state.work,Pose_Palette_Work{parents=pose.parents[:],previous=pose.previous[:],current=pose.local[:],local=instance.local,world=instance.world,joints=rig.joints,palette=instance.palette,basis=basis,inverse=inverse,alpha=1 if exact else alpha,bone_offset=1,enabled=true})
                 append(&state.updates,Skin_Update{slot=slot,drawn=drawn,basis=basis,exact=pose.changed+1 if exact else 0})
                 append(&state.candidates,Budget_Candidate{entity=entity,slot=u32(slot),policy=policy,force=instance.reset || !instance.copied || !time.playing})
             }
         }
-        shown.object_id=u64(entity)
-        shown.copy_owner=base.name_hash("animation.skin");shown.replace_source=true
-        shown.highlight=erender.instance_outline(highlights,outlines,entity)
-        append(&state.draws,Skin_Draw{shown=shown,work=work_index,slot=slot,morphed=morphed})
+        append(&state.draws,Skin_Draw{work=work_index,slot=slot,morphed=morphed})
     }
     if !palette_workspace_prepare(&state.workspace,len(state.instances.values),allocator) {memory_problem(problems,core.NONE,"the skinned meshes of the world, so none is drawn in this frame");return}
     if budget!=nil {
@@ -414,9 +401,7 @@ animation_skin :: proc(
         instance.reset=false;instance.exact=update.exact;instance.drawn,instance.basis=update.drawn,update.basis
     }
     for &draw in state.draws {
-        // At the bind pose the mesh of the world is drawn, shared with the other rigs of the mesh.
         if !state.instances.values[draw.slot].copied {continue}
-        draw.shown.mesh=state.instances.values[draw.slot].mesh
         if draw.work>=0 && state.work[draw.work].enabled {
             if !state.work[draw.work].ok {continue}
         } else if draw.morphed {
@@ -428,13 +413,16 @@ animation_skin :: proc(
             }
             instance.reset=false
         }
-        // A copy that still goes to the GPU replaces the mesh of the world too: the renderer
-        // draws neither until all of the copy went, and it shows posed.
-        if !host.extras_instance_add(extras,draw.shown) {
-            core.report(problems,state.instances.entities[draw.slot],"animation.skin_draw","the skinned mesh of this entity is not drawn in this frame: the renderer has no room for more instances; draw fewer meshes")
+        // A copy that still goes to the GPU is the mesh of its entity too: the renderer
+        // draws nothing of it until all of the copy went, and it shows posed.
+        if !erender.posed_set(poses,state.instances.entities[draw.slot],{mesh=state.instances.values[draw.slot].mesh}) {
+            memory_problem(problems,state.instances.entities[draw.slot],"its skinned mesh")
         }
     }
     #reverse for &instance,at in state.instances.values {
+        // At the bind pose the mesh of the world is drawn, shared with the other rigs of the mesh.
+        if instance.seen==state.frame && instance.copied {continue}
+        erender.posed_drop(poses,state.instances.entities[at])
         if instance.seen==state.frame {continue}
         skin_instance_free(renderer,&instance)
         core.entity_map_remove_at(&state.instances,at)

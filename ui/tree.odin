@@ -17,7 +17,7 @@ import "mirai:std/serial"
 // the same widget procedures as code does.
 
 Node_Flag :: enum u8 {
-    Localized,   // its text, and each of its options, has translations in its tree, by text_id
+    Localized,   // its text is a key of the texts of the game (Game_Source.texts): it shows what the key says in the language of now
     Draggable,   // the pointer drags it: Dragged, and Dropped on the node it is let go over
     Drop,        // takes what is let go over it
     Focus_First, // takes the focus when its tree takes input and nothing there has it, or when the page of a Switcher that had it gives way to its own
@@ -63,6 +63,7 @@ Node_Style :: struct {
     program_values:[4]f32,                         // the first parameters of that program
     sounds:[Sound_Cue]base.Asset_Id,
     transition:f32, // seconds its colors, its shadow and how it moves take to go from one state to the next
+    layout_transition:f32, // seconds its rectangle takes to go to a new place or size the layout gives it
     move:[2]f32,    // drawn this far from where the layout put it; the layout and the pointer stay
     scale:f32,      // drawn this size around its center, as move; 0: 1
 }
@@ -98,18 +99,18 @@ Node :: struct {
     image:u16,        // index in images plus one; 0: none
     anims:u16,        // index in anim_sets plus one; 0: none
     text_offset,text_length:u32, // in strings
-    text_id:u64,      // Localized: its text among the translations of the tree
     tab:Name_Ref,     // of a node a Tabs holds: its name, in strings, which its tab shows when it has no text
     binds:[Binding]Name_Ref, // the fields it binds, by their names in strings
     fields:[TREE_TEXT_FIELDS]Node_Field_Ref, // what the names in braces of its text show
     index:u16,        // what a Switcher or a Tabs builds when it binds no value
     count:u16,        // elements a List builds when it binds no array; of one that binds a table, the most rows it shows (TREE_TABLE_ROWS when 0)
-    choice:u16,       // what a Radio writes
+    choice:u16,       // what a Radio writes, and a Button that binds a value when it is clicked
     limit:u16,        // bytes a Field takes; 0: as many as its value holds
     delay:f32,        // seconds a Tooltip waits; 0: TOOLTIP_DELAY
     tag,accepts:u64,  // name_hash of what a Draggable carries and of what a Drop takes; 0: anything
     ghost:u64,        // name of the node built under the pointer while it is dragged; 0: a copy of it
     particle:base.Asset_Id, // what a Particles plays
+    draw:u64,         // name_hash of the procedure of the game that draws a Draw
     flags:Node_Flags,
     action:u64,       // name_hash of the input action a Button takes or a Prompt shows
     action_name:Name_Ref, // that name, in strings
@@ -119,16 +120,8 @@ Node :: struct {
     order:i16,        // where Tab reaches it among the others; 0: in the order of the tree
 }
 
-// The text of a localized node in a language.
-Translation :: struct {
-    id:u64,       // the text_id of the node
-    language:u64, // name_hash of its code
-    text:Name_Ref,
-}
-
 Widget_Tree :: struct {
     nodes:[]Node,node_count:int,
-    translations:[]Translation,translation_count:int,
     styles:[]Node_Style,style_count:int,
     variants:[]Style_Variant,variant_count:int, // by style and, within one, in the order style_resolve applies them
     style_rules:[]Style_Rules, // of each style: its rules in variants
@@ -148,7 +141,6 @@ Widget_Tree_Desc :: struct {
     allocator:runtime.Allocator, // context.allocator when unset
     max_nodes,max_styles,max_images,max_anim_sets,max_strings:int, // 256, 64, 64, 32 and 4096 when 0
     max_variants:int,
-    max_translations:int, // 64 when 0
     max_grid_tracks:int,  // 8 when 0
     anims:Anim_Library_Desc,
 }
@@ -156,15 +148,14 @@ Widget_Tree_Desc :: struct {
 tree_init :: proc(tree:^Widget_Tree,desc:Widget_Tree_Desc={}) -> bool {
     a:=desc.allocator if desc.allocator.procedure!=nil else context.allocator
     tree^={allocator=a}
-    e:[8]runtime.Allocator_Error
+    e:[7]runtime.Allocator_Error
     tree.nodes,e[0]=make([]Node,desc.max_nodes if desc.max_nodes>0 else 256,a)
     tree.styles,e[1]=make([]Node_Style,desc.max_styles if desc.max_styles>0 else 64,a)
     tree.images,e[2]=make([]Node_Image,desc.max_images if desc.max_images>0 else 64,a)
     tree.anim_sets,e[3]=make([]Anim_Set,desc.max_anim_sets if desc.max_anim_sets>0 else 32,a)
     tree.strings,e[4]=make([]u8,desc.max_strings if desc.max_strings>0 else 4096,a)
     tree.variants,e[5]=make([]Style_Variant,desc.max_variants if desc.max_variants>0 else 64,a)
-    tree.translations,e[6]=make([]Translation,desc.max_translations if desc.max_translations>0 else 64,a)
-    tree.grid_tracks,e[7]=make([]Grid_Tracks,desc.max_grid_tracks if desc.max_grid_tracks>0 else 8,a)
+    tree.grid_tracks,e[6]=make([]Grid_Tracks,desc.max_grid_tracks if desc.max_grid_tracks>0 else 8,a)
     anims:=desc.anims
     if anims.allocator.procedure==nil {anims.allocator=a}
     e2:[3]runtime.Allocator_Error
@@ -176,7 +167,7 @@ tree_init :: proc(tree:^Widget_Tree,desc:Widget_Tree_Desc={}) -> bool {
 }
 tree_destroy :: proc(tree:^Widget_Tree) {
     a:=tree.allocator
-    delete(tree.nodes,a);delete(tree.styles,a);delete(tree.variants,a);delete(tree.images,a);delete(tree.anim_sets,a);delete(tree.strings,a);delete(tree.translations,a);delete(tree.grid_tracks,a)
+    delete(tree.nodes,a);delete(tree.styles,a);delete(tree.variants,a);delete(tree.images,a);delete(tree.anim_sets,a);delete(tree.strings,a);delete(tree.grid_tracks,a)
     delete(tree.anim_names,a);delete(tree.programs,a);delete(tree.style_rules,a)
     if tree.anims.allocator.procedure!=nil {anim_library_destroy(&tree.anims)}
     tree^={}
@@ -247,15 +238,16 @@ Node_Desc :: struct {
     image:u16,
     anims:u16,
     text:string,
-    text_id:u64, // Localized: its text among the translations of the tree
     fields:[TREE_TEXT_FIELDS]Node_Field_Desc, // the names in braces of its text and the paths they show
     bind_text,bind_value,bind_visible,bind_selected,bind_disabled:string, // names of fields of the bound value
     bind_items:string, // of a List: an array; the nodes it holds bind fields of its elements
+    bind_key:string,   // of a List: the field of its element that tells its items apart, a number, an entity or a text
     bind_image,bind_tint,bind_variant:string,
     index,count,choice,limit:u16,
     delay:f32,
     tag,accepts,ghost:string,
     particle:base.Asset_Id,
+    draw:string,
     flags:Node_Flags,
     action:string,
     hold:f32,
@@ -271,7 +263,7 @@ tree_node_strings :: proc "contextless" (desc:^Node_Desc,tab:bool) -> int {
     fields:=len(desc.name) if tab else 0
     for f in desc.fields {fields+=len(f.path)}
     return len(desc.text)+len(desc.bind_text)+len(desc.bind_value)+len(desc.bind_visible)+len(desc.bind_selected)+len(desc.bind_disabled)+
-        len(desc.bind_items)+len(desc.bind_image)+len(desc.bind_tint)+len(desc.bind_variant)+len(desc.action)+fields
+        len(desc.bind_items)+len(desc.bind_key)+len(desc.bind_image)+len(desc.bind_tint)+len(desc.bind_variant)+len(desc.action)+fields
 }
 
 // The path a name in braces of the text of a node shows; empty for none.
@@ -310,13 +302,13 @@ tree_node :: proc(tree:^Widget_Tree,parent:i32,desc:Node_Desc) -> i32 {
     }
     node:=Node{kind=desc.kind,name=hashed(desc.name),parent=parent,layout=desc.layout,float=desc.float,clip=desc.clip,block=desc.block,
         style=desc.style,image=desc.image,anims=desc.anims,layer=desc.layer,variant=style_variant(desc.variant),selected=desc.selected,disabled=desc.disabled,
-        index=desc.index,count=desc.count,choice=desc.choice,limit=desc.limit,delay=desc.delay,tag=hashed(desc.tag),accepts=hashed(desc.accepts),ghost=hashed(desc.ghost),particle=desc.particle,
-        flags=desc.flags,action=hashed(desc.action),hold=desc.hold,range=desc.range,text_id=desc.text_id,
+        index=desc.index,count=desc.count,choice=desc.choice,limit=desc.limit,delay=desc.delay,tag=hashed(desc.tag),accepts=hashed(desc.accepts),ghost=hashed(desc.ghost),particle=desc.particle,draw=hashed(desc.draw),
+        flags=desc.flags,action=hashed(desc.action),hold=desc.hold,range=desc.range,
         nav={hashed(desc.nav[0]),hashed(desc.nav[1]),hashed(desc.nav[2]),hashed(desc.nav[3])},order=desc.order}
     text:=keep(tree,desc.text)
     node.text_offset,node.text_length=text.offset,text.length
     names:=[Binding]string{.Text=desc.bind_text,.Value=desc.bind_value,.Visible=desc.bind_visible,.Selected=desc.bind_selected,.Disabled=desc.bind_disabled,
-        .Items=desc.bind_items,.Image=desc.bind_image,.Tint=desc.bind_tint,.Variant=desc.bind_variant}
+        .Items=desc.bind_items,.Key=desc.bind_key,.Image=desc.bind_image,.Tint=desc.bind_tint,.Variant=desc.bind_variant}
     for name,binding in names {node.binds[binding]=keep(tree,name)}
     for f,i in desc.fields {
         if f.name=="" {continue}
@@ -371,6 +363,13 @@ Bar_Entry :: struct {
     length:u16,
 }
 
+// Of a slot of the node a List with a key holds: the key of the item whose
+// states it holds (0: none) and the build that found that item last; and, by
+// element, the slot the element took in the last build. An item keeps its
+// slot while it is in the list, wherever it moves.
+@(private)
+Item_Key :: struct {key:u64,seen,slot:u32}
+
 // What one use of a tree owns: where its nodes read their values and what
 // each of them is playing. A node inside a List has a slot per element of
 // the list, and per element of each list around it.
@@ -390,12 +389,15 @@ Tree_Instance :: struct {
     dirty_any:bool,
     failure:Bind_Failure,     // why the tree was not taken
     replan:bool,              // a localized text names a path the plan does not read: make the instance again
-    language:u64,             // Game_Source.language the localized texts were read in
-    texts:[]Name_Ref,         // of each node: the text it shows in that language
+    language:u64,             // name_hash of the Game_Source.language the localized texts were read in
+    texts_generation:u32,     // of Game_Source.texts then
+    texts:[]string,           // of each node: the text it shows by itself, in that language
     slots:[]u32,              // of each node: its first slot
     states:[]Anim_State,      // by slot
     scrolls:[][2]f32,         // by slot: how far a Scroll or a List that clips moved its content, left and up
     slot:[]Slot,              // by slot
+    keys:[]Item_Key,          // by slot, of the node a List with a key holds
+    builds:u32,               // of tree_build: what tells the items a List found in this build
     kept:[]Kept_Text,         // by slot: the text it formatted, while values do not change
     kept_bytes:[]u8,
     bar,bar_next:[TREE_BAR]Bar_Entry,
@@ -403,41 +405,26 @@ Tree_Instance :: struct {
     allocator:runtime.Allocator,
 }
 
-// Adds the text of a localized node in a language (name_hash of its code).
-// False when the tree is full.
-tree_translation_add :: proc(tree:^Widget_Tree,id,language:u64,text:string) -> bool {
-    if tree.translation_count>=len(tree.translations) || tree.string_length+len(text)>len(tree.strings) {return false}
-    ref:=Name_Ref{u32(tree.string_length),u32(len(text))}
-    copy(tree.strings[tree.string_length:],text)
-    tree.string_length+=len(text)
-    tree.translations[tree.translation_count]={id,language,ref}
-    tree.translation_count+=1
-    return true
-}
-
-// The text a node shows in a language: its translation, or its own.
-tree_localized :: proc "contextless" (tree:^Widget_Tree,node:^Node,language:u64) -> Name_Ref {
-    if .Localized in node.flags && language!=0 && node.text_id!=0 {
-        for t in tree.translations[:tree.translation_count] {
-            if t.id==node.text_id && t.language==language {return t.text}
-        }
-    }
-    return {node.text_offset,node.text_length}
+// The text a node shows by itself: its own, or for a Localized one what its
+// key says in a language (base.text); a key the texts lack shows as it is.
+tree_text :: proc "contextless" (tree:^Widget_Tree,node:^Node,texts:^base.Texts,language:string) -> string {
+    own:=string(tree.strings[node.text_offset:][:node.text_length])
+    if .Localized not_in node.flags {return own}
+    return base.text(texts,own,language) or_else own
 }
 
 // Resolves the paths of the tree against what host gives and makes the plan
 // of the copy (tree_bind); what a List holds binds the elements of its
-// array. texts: those of the language of now, for the paths of the localized
-// templates. A transaction: fails, leaving nothing but failure, when a node
+// array. texts and language: what the localized nodes read their keys in
+// (Game_Source.texts and Game_Source.language). A transaction: fails, leaving nothing but failure, when a node
 // names a path the game does not have or one it cannot show, or the lists
 // need more than TREE_SLOTS slots. Without a host a path binds nothing.
-// language: that of the localized texts (Game_Source.language).
-tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_Host,language:u64=0,allocator:=context.allocator) -> bool {
-    instance^={allocator=allocator,host=host,failure={node=-1},language=language}
+tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_Host,texts:^base.Texts=nil,language:="",allocator:=context.allocator) -> bool {
+    instance^={allocator=allocator,host=host,failure={node=-1},language=base.name_hash(language),texts_generation=texts.generation if texts!=nil else 0}
     if host!=nil {instance.schema=host.schema}
     count:=tree.node_count
     e:[6]runtime.Allocator_Error
-    instance.texts,e[5]=make([]Name_Ref,count,allocator)
+    instance.texts,e[5]=make([]string,count,allocator)
     instance.bounds,e[0]=make([]Node_Bound,count,allocator)
     instance.items,e[1]=make([]Node_Items,count,allocator)
     instance.slots,e[2]=make([]u32,count,allocator)
@@ -465,15 +452,25 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
         name :: proc(tree:^Widget_Tree,node:^Node,binding:Binding) -> string {return tree_binding(tree,node,binding)}
         if node.kind==.List {
             if path:=name(tree,&node,.Items);path!="" {
-                instance.items[i],instance.scopes[i],ok=tree_bind_items(instance,scope,path,u32(node.count) if node.count>0 else TREE_TABLE_ROWS)
+                // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+                items,element,bound:=tree_bind_items(instance,scope,path,u32(node.count) if node.count>0 else TREE_TABLE_ROWS)
+                instance.items[i]=items
+                instance.scopes[i]=element
+                ok=bound
                 if !ok {instance.failure={node=i,binding=.Items};break}
+                if key:=name(tree,&node,.Key);key!="" {
+                    instance.items[i].key,ok=tree_bind_field(instance,instance.scopes[i],key,.Key)
+                    if !ok {instance.failure={node=i,binding=.Key};break}
+                }
             } else {instance.items[i].count=u32(node.count)}
         }
         b:=&instance.bounds[i]
         o:[Binding]bool
         o[.Items]=true
+        o[.Key]=name(tree,&node,.Key)=="" || instance.items[i].bound
         b.text,o[.Text]=tree_bind_field(instance,scope,name(tree,&node,.Text),.Shown)
         b.value,o[.Value]=tree_bind_field(instance,scope,name(tree,&node,.Value),tree_value_want(node.kind))
+        if node.kind==.Progress && b.value.kind==.Float && b.value.size==4 && instance.host!=nil {instance.ranges[len(instance.ranges)-1].step=-1}
         if b.value.text && node.kind!=.Switcher && strings.index_byte(string(tree.strings[node.text_offset:][:node.text_length]),'=')<0 {o[.Value]=false}
         b.visible,o[.Visible]=tree_bind_field(instance,scope,name(tree,&node,.Visible),.Number)
         b.selected,o[.Selected]=tree_bind_field(instance,scope,name(tree,&node,.Selected),.Number)
@@ -487,10 +484,9 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
         }
         if !ok {break}
         // A localized text is read in the language of now, and its paths with it.
-        instance.texts[i]=tree_localized(tree,&node,language)
-        text:=string(tree.strings[instance.texts[i].offset:][:instance.texts[i].length])
+        instance.texts[i]=tree_text(tree,&node,texts,language)
         first:=len(instance.parts)
-        template,parsed:=tree_template_parse(&instance.parts,text,instance,scope,tree,&node)
+        template,parsed:=tree_template_parse(&instance.parts,instance.texts[i],instance,scope,tree,&node)
         if !parsed {ok=false;instance.failure={node=i,binding=.Text,template=true};break}
         if template {instance.templates[i]={u32(first),u32(len(instance.parts)-first),true}}
         kept[i]=b.text.bound || instance.templates[i].template || .Localized in node.flags
@@ -502,7 +498,8 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
     }
     instance.host=nil
     if ok {
-        e2:[5]runtime.Allocator_Error
+        e2:[6]runtime.Allocator_Error
+        instance.keys,e2[5]=make([]Item_Key,slots,allocator)
         instance.states,e2[0]=make([]Anim_State,slots,allocator)
         instance.scrolls,e2[1]=make([][2]f32,slots,allocator)
         instance.slot,e2[2]=make([]Slot,slots,allocator)
@@ -527,24 +524,26 @@ tree_instance_init :: proc(instance:^Tree_Instance,tree:^Widget_Tree,host:^Bind_
 tree_instance_destroy :: proc(instance:^Tree_Instance) {
     a:=instance.allocator
     delete(instance.bounds,a);delete(instance.items,a);delete(instance.slots,a);delete(instance.states,a);delete(instance.scrolls,a)
-    delete(instance.templates,a);delete(instance.scopes,a);delete(instance.parts);delete(instance.slot,a);delete(instance.kept,a);delete(instance.kept_bytes,a);delete(instance.texts,a)
+    delete(instance.templates,a);delete(instance.scopes,a);delete(instance.parts);delete(instance.slot,a);delete(instance.kept,a);delete(instance.kept_bytes,a);delete(instance.texts,a);delete(instance.keys,a)
     delete(instance.regions);delete(instance.ranges);delete(instance.values,a);delete(instance.sources,a);delete(instance.dirty,a)
     instance^={}
 }
 
 // The texts of the localized nodes, and their templates, read again in the
-// language of now. A path the plan does not read asks for the instance
-// again (replan).
+// language and from the texts of now. A path the plan does not read asks for
+// the instance again (replan).
 @(private)
 tree_instance_texts :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance) {
-    if instance.language==ctx.game.language || len(instance.texts)<tree.node_count {return}
-    instance.language=ctx.game.language
+    generation:=ctx.game.texts.generation if ctx.game.texts!=nil else 0
+    language:=base.name_hash(ctx.game.language)
+    if instance.language==language && instance.texts_generation==generation || len(instance.texts)<tree.node_count {return}
+    instance.language,instance.texts_generation=language,generation
     for &kept in instance.kept {kept.valid=false}
     for &node,i in tree.nodes[:tree.node_count] {
         if .Localized not_in node.flags {continue}
         instance.templates[i]={}
-        instance.texts[i]=tree_localized(tree,&node,instance.language)
-        found:=string(tree.strings[instance.texts[i].offset:][:instance.texts[i].length])
+        instance.texts[i]=tree_text(tree,&node,ctx.game.texts,ctx.game.language)
+        found:=instance.texts[i]
         first:=len(instance.parts)
         scope:=instance.scopes[node.parent] if node.parent>=0 else Bind_Scope{}
         template,parsed:=tree_template_parse(&instance.parts,found,instance,scope,tree,&node)
@@ -555,7 +554,7 @@ tree_instance_texts :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instan
 
 Tree_Event_Kind :: enum u8 {
     Clicked,   // a Button, by the pointer, by navigation or by its action
-    Changed,   // a Checkbox, Slider, Number, Field, Selector, Dropdown or Radio wrote its bound value
+    Changed,   // a Checkbox, Slider, Number, Field, Selector, Dropdown or Radio wrote its bound value, or a Button its choice
     Submitted, // Enter in a Field
     Hovered,   // the pointer came over the node
     Unhovered,
@@ -649,6 +648,7 @@ Tree_Build :: struct {
 // that floats counts from the layer the tree is built in.
 tree_build :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance,desc:Tree_Build_Desc) -> Tree_Build_Result {
     b:=Tree_Build{ctx=ctx,tree=tree,instance=instance,desc=desc,floor=int(ctx.layer),ghost=-1}
+    instance.builds+=1
     tree_instance_texts(ctx,tree,instance)
     tree_kept_invalidate(tree,instance,desc.changed)
     b.tracks=ctx.layout.track_count
@@ -662,6 +662,15 @@ tree_build :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance,desc:T
     if desc.passive {ctx.unfocusable+=1}
     for index:=0;index<tree.node_count; {index=tree_build_node(ctx,&b,index,raw_data(instance.values),0,-1)}
     if desc.passive {ctx.unfocusable-=1}
+    // An Action_Bar showed the buttons the last build found: when this one
+    // found others, or other texts (another language), the next frame shows them.
+    bar_changed:=instance.bar_next_count!=instance.bar_count
+    for i in 0..<instance.bar_next_count {
+        if bar_changed {break}
+        was,found:=&instance.bar[i],&instance.bar_next[i]
+        bar_changed=was.action!=found.action || string(was.text[:was.length])!=string(found.text[:found.length])
+    }
+    if bar_changed {b.animating=true}
     instance.bar,instance.bar_count=instance.bar_next,instance.bar_next_count
     if ctx.drag.id!=0 && ctx.drag.owner==ctx.owner {b.animating=true}
     return {count=b.count,dropped=b.dropped,present=b.built>0,animating=b.animating}
@@ -695,9 +704,9 @@ tree_kept_invalidate :: proc(tree:^Widget_Tree,instance:^Tree_Instance,every:boo
 
 // Plays the animation of the tree called anim (name_hash) on the node called
 // node, instead of what its set plays, until it ends: then the tree reports
-// Finished. item: for a node inside lists, which of its copies, counted as
-// the elements of its list (of the lists inside lists, the outer ones first);
-// -1 or 0: the first. False when the tree has no such node or animation.
+// Finished. item: for a node inside lists, the element of the innermost one
+// (Tree_Event.item), in the first element of the others; -1: the first.
+// False when the tree has no such node, element or animation.
 tree_play :: proc(tree:^Widget_Tree,instance:^Tree_Instance,node,anim:u64,item:i32=-1) -> bool {
     played:Anim
     for name,i in tree.anim_names[:min(tree.anims.node_count,len(tree.anim_names))] {
@@ -706,12 +715,10 @@ tree_play :: proc(tree:^Widget_Tree,instance:^Tree_Instance,node,anim:u64,item:i
     if played==0 {return false}
     for &n,i in tree.nodes[:tree.node_count] {
         if n.name!=node {continue}
-        first:=int(instance.slots[i])
-        // The slots of a node follow one another, one per copy, up to those of the next node.
         end:=int(instance.slots[i+1]) if i+1<tree.node_count else len(instance.slot)
-        slot:=first+max(int(item),0)
-        if slot>=end {return false}
-        anim_play(&instance.slot[slot].played,played)
+        c:=tree_node_copy(tree,instance,i,int(item))
+        if !c.present || c.slot>=end {return false}
+        anim_play(&instance.slot[c.slot].played,played)
         return true
     }
     return false
@@ -730,20 +737,14 @@ tree_sound :: proc(ctx:^Context,style:^Node_Style,cue:Sound_Cue) {
     if id:=style.sounds[cue];id!={} && ctx.game.sound!=nil {ctx.game.sound(ctx.game.user,id)}
 }
 
-// The text a node shows: its own, its translation in the language of now,
-// its bound field or its template, kept while the values do not change.
+// The text a node shows: its own or what its key says in the language of
+// now, its bound field or its template, kept while the values do not change.
 @(private)
 tree_node_text :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,values:rawptr) -> string {
-    tree,instance:=b.tree,b.instance
-    own:=string(tree.strings[node.text_offset:][:node.text_length])
+    instance:=b.instance
     bound:=&instance.bounds[index]
     template:=instance.templates[index]
-    localized:=.Localized in node.flags
-    if !bound.text.bound && !template.template {
-        if !localized || index>=len(instance.texts) {return own}
-        shown:=instance.texts[index]
-        return string(tree.strings[shown.offset:][:shown.length])
-    }
+    if !bound.text.bound && !template.template {return instance.texts[index]}
     kept:=&instance.kept[slot]
     if kept.valid {return string(instance.kept_bytes[kept.offset:][:kept.length])}
     made:string
@@ -806,8 +807,7 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
     if !playing && node.anims!=0 && int(node.anims)<=tree.anim_set_count {
         anim:=&instance.states[slot]
         set:=tree.anim_sets[node.anims-1]
-        // Without animations of its own, the focus plays those of the pointer.
-        flags:=Anim_Flags{shown=visible,hovered=hovered || focused && set.focused==0 && set.unfocused==0,pressed=ctx.active==node_id,focused=focused,selected=selected,clicked=clicked}
+        flags:=Anim_Flags{shown=visible,clicked=clicked}
         present:=anim_react(&tree.anims,anim,set,flags,ctx.input.dt)
         if !present && !room {return next}
         if anim.playing {b.animating=true}
@@ -817,14 +817,6 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
         }
     } else if !playing && !visible && !room {return next}
     defer if animated {animated_end(ctx)}
-    // Width and Height take the place of its size: the layout around it follows.
-    sized:Node
-    if playing && value.set&{.Width,.Height}!={} {
-        sized=node^
-        if .Width in value.set {sized.layout.width=fixed(max(value.width,0))}
-        if .Height in value.set {sized.layout.height=fixed(max(value.height,0))}
-        node=&sized
-    }
     unseen:=room && !animated
     if unseen {ctx.invisible+=1}
     defer if unseen {ctx.invisible-=1}
@@ -866,12 +858,13 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
     if rules:=tree_style_rules(tree,node.style);len(rules)>0 {
         plain:=Slot_Plain{variant=variant,rules=u32(len(rules)),states=states,seen=true}
         if state.plain!=plain {
-            held,_:=style_rules_apply(&ctx.theme,&resolved,rules,node.style,variant,states)
+            held,_:=style_rules_apply(&resolved,rules,node.style,variant,states)
             state.plain=plain if !held else {}
         }
     }
     if bound.tint.bound {resolved.fill=bound_color(values,bound.tint)}
     if base_style.transition>0 && style_transition(&state.look,&resolved,base_style.transition,ctx.input.dt) {b.animating=true}
+    if base_style.layout_transition>0 && !layout_transition_ask(&ctx.layout,node_id,base_style.layout_transition,ctx.stats.frame) {ctx.stats.dropped_transitions+=1}
     style:=&resolved
     // A style moves what its node draws, not where the layout or the pointer find it.
     moved:=false
@@ -1022,6 +1015,7 @@ tree_value_want :: proc "contextless" (kind:Node_Kind) -> Bound_Want {
     case .View:              return .Entity
     case .Switcher:          return .Shown
     case .Selector,.Dropdown:return .Option
+    case .Draw:              return .Data
     }
     return .Number
 }
@@ -1084,9 +1078,12 @@ tree_list_axis :: proc(tree:^Widget_Tree,node:^Node) -> (axis:int,virtual:bool) 
 tree_build_list :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,values:rawptr,copy:int,axis:int,virtual:bool,layout:Layout,area:Id) {
     instance:=b.instance
     items:=instance.items[index]
+    capacity:=int(max(items.count,1))
     count:=int(items.count)
     if items.rows {count=min(count,int(instance.regions[instance.regions[items.region].parent].count))}
     if value:=instance.bounds[index].value;value.bound {count=clamp(int(bound_number(values,value)),0,count)}
+    keys:[]Item_Key
+    if items.key.bound {keys=tree_list_claim(b,index,values,copy,count)}
     first,last:=0,count
     holder:=id(ctx,"items",index+1)
     columns,rows:=1,count
@@ -1095,15 +1092,16 @@ tree_build_list :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,val
         layout:=layout
         if layout.direction==.Grid {columns=grid_columns(&ctx.layout,&layout)}
         rows=(count+columns-1)/columns
-        first,last,pitch=tree_list_window(ctx,b,node,index,slot,copy,axis,holder,columns,count,area)
+        first,last,pitch=tree_list_window(ctx,b,node,index,slot,values,copy,axis,holder,columns,count,area)
         tree_list_room(ctx,axis,f32(first/columns)*pitch)
         box_begin(ctx,{id=holder,layout=layout,track=true})
     }
     for element in first..<last {
         at:=values
         if items.bound {at=rawptr(uintptr(values)+uintptr(items.offset)+uintptr(element)*uintptr(items.stride))}
-        id_push(ctx,id(ctx,"item",element+1))
-        tree_build_node(ctx,b,index+1,at,copy*int(max(items.count,1))+element,i32(element))
+        place:=int(keys[element].slot) if keys!=nil else element
+        id_push(ctx,id(ctx,"item",int(u32(tree_item_key(&items,values,element)))))
+        tree_build_node(ctx,b,index+1,at,copy*capacity+place,i32(element))
         id_pop(ctx)
     }
     if virtual {
@@ -1111,6 +1109,71 @@ tree_build_list :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,val
         tree_list_room(ctx,axis,f32(rows-(last+columns-1)/columns)*pitch)
         state:=&instance.slot[slot]
         state.first,state.built=i32(first),i32(last-first)
+    }
+}
+
+// What tells an element of a List apart, never 0: the hash of its key, or
+// its index plus one. values: the frame of the List.
+@(private)
+tree_item_key :: proc(items:^Node_Items,values:rawptr,element:int) -> u64 {
+    if !items.key.bound {return u64(element+1)}
+    bytes:=mem.byte_slice(rawptr(uintptr(values)+uintptr(items.offset)+uintptr(element)*uintptr(items.stride)+uintptr(items.key.offset)),int(items.key.size))
+    if cut:=strings.index_byte(string(bytes),0);items.key.text && cut>=0 {bytes=bytes[:cut]}
+    return max(hash.fnv64a(bytes),1)
+}
+
+// Gives each element of a List with a key the slot its item had, found from
+// the hash of the key, or else one no item of this build holds, whose states
+// start again. An item that moved formats its texts again, as the copy tells
+// what changed by place. Returns the keys of the list, by element.
+@(private)
+tree_list_claim :: proc(b:^Tree_Build,index:int,values:rawptr,copy,count:int) -> []Item_Key {
+    instance:=b.instance
+    items:=&instance.items[index]
+    capacity:=int(max(items.count,1))
+    keys:=instance.keys[int(instance.slots[index+1])+copy*capacity:][:capacity]
+    build:=instance.builds
+    // The slot of the item with key, or with free any that no item of this build holds.
+    find :: proc(keys:[]Item_Key,key:u64,build:u32,free:bool) -> int {
+        for i,at:=0,int(key%u64(len(keys)));i<len(keys);i,at=i+1,(at+1)%len(keys) {
+            if keys[at].seen!=build && (free || keys[at].key==key) {return at}
+            if keys[at].key==0 {break}
+        }
+        return -1
+    }
+    for e in 0..<count {
+        s:=find(keys,tree_item_key(items,values,e),build,false)
+        if s<0 {keys[e].slot=max(u32);continue}
+        keys[s].seen=build
+        if keys[e].slot!=u32(s) {tree_element_reset(b,index,copy*capacity+s,false)}
+        keys[e].slot=u32(s)
+    }
+    for e in 0..<count {
+        if keys[e].slot!=max(u32) {continue}
+        key:=tree_item_key(items,values,e)
+        s:=find(keys,key,build,true)
+        keys[s].key,keys[s].seen,keys[e].slot=key,build,u32(s)
+        tree_element_reset(b,index,copy*capacity+s,true)
+    }
+    return keys
+}
+
+// The states of the nodes of an element of the List at index, at copy of the
+// node it holds: all of them for a new item, the texts they kept for one that
+// moved.
+@(private)
+tree_element_reset :: proc(b:^Tree_Build,index,copy:int,fresh:bool) {
+    instance:=b.instance
+    copies :: proc(instance:^Tree_Instance,count,n:int) -> int {return (int(instance.slots[n+1]) if n+1<count else len(instance.slot))-int(instance.slots[n])}
+    count:=b.tree.node_count
+    holder:=copies(instance,count,index+1)
+    for n in index+1..=index+int(b.tree.nodes[index].subtree) {
+        per:=copies(instance,count,n)/holder
+        first:=int(instance.slots[n])+copy*per
+        for s in first..<first+per {
+            if fresh {instance.slot[s],instance.states[s],instance.scrolls[s]={},{},{}}
+            instance.kept[s].valid=false
+        }
     }
 }
 
@@ -1126,7 +1189,7 @@ tree_list_room :: proc(ctx:^Context,axis:int,room:f32) {
 // now. While it does not know them, the first few. An element the code just
 // gave the focus to, out of sight, is brought into it the next frame.
 @(private)
-tree_list_window :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot,copy,axis:int,holder:Id,columns,count:int,area:Id) -> (first,last:int,pitch:f32) {
+tree_list_window :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot:int,values:rawptr,copy,axis:int,holder:Id,columns,count:int,area:Id) -> (first,last:int,pitch:f32) {
     instance:=b.instance
     state:=&instance.slot[slot]
     view_id,scroll:=area,&instance.scrolls[slot]
@@ -1157,7 +1220,7 @@ tree_list_window :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,slot,copy,a
         // The focus may be on any node of the element, other than those inside a List of its own.
         nodes:=b.tree.nodes[index+1:][:int(node.subtree)]
         for element in 0..<count {
-            id_push(ctx,id(ctx,"item",element+1))
+            id_push(ctx,id(ctx,"item",int(u32(tree_item_key(&instance.items[index],values,element)))))
             focused:=false
             for at:=0;at<len(nodes) && !focused; {
                 focused=tree_node_id(ctx,&nodes[at],index+1+at)==ctx.focus
@@ -1206,7 +1269,7 @@ tree_build_tabs :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next,slot:in
             if label=="" {label=tree_node_text(ctx,b,c,child,int(instance.slots[child])+copy,values)}
             if label=="" {label=string(tree.strings[c.tab.offset:][:c.tab.length])}
             if label=="" {label=number_text(ctx,f64(at+1),0)}
-            look:=style_resolve(&ctx.theme,base_style,tree_style_rules(tree,node.style),node.style,variant,widget_states(ctx,tab,at==chosen))
+            look:=style_resolve(base_style,tree_style_rules(tree,node.style),node.style,variant,widget_states(ctx,tab,at==chosen))
             if button(ctx,tab,{label=label,look=&look,layout=&Layout{padding=TREE_TAB_PADDING},block=true}).clicked {picked=at}
             if ctx.focus==tab && ctx.focus_moved {picked=at}
             child+=int(c.subtree)+1
@@ -1355,7 +1418,7 @@ tree_build_modal :: proc(ctx:^Context,b:^Tree_Build,node:^Node,index,next:int,no
     backdrop:=id_derive(ctx,node_id,"backdrop")
     // Nothing it was built in clips it.
     clips_suspend(ctx)
-    box_begin(ctx,{id=backdrop,width=fixed(size.x),height=fixed(size.y),float={to=.Surface,layer=LAYER_MODAL},fill=ctx.theme.backdrop,block=true})
+    box_begin(ctx,{id=backdrop,width=fixed(size.x),height=fixed(size.y),float={to=.Surface,layer=LAYER_MODAL},fill=tone(ctx,"backdrop"),block=true})
     box_end(ctx,{id=backdrop,float={to=.Surface}})
     box.float={to=.Surface,anchor=.Center,pivot=.Center,offset=node.float.offset,layer=LAYER_MODAL+1}
     box.block=true
@@ -1401,23 +1464,52 @@ tree_element_id :: proc(ctx:^Context,name:string) -> Id {
     return tree_name_id(ctx,base.name_hash(name))
 }
 
+// Where the copy of the node at index is for element item of the innermost
+// List around it (below 0: the first) and the first element of the others:
+// its slot, the frame of its values and what tells each of those elements
+// apart, outermost first. Not present when a list has no such element.
+@(private)
+Node_Copy :: struct {slot:int,values:rawptr,keys:[TREE_DEPTH]u64,depth:int,present:bool}
+@(private)
+tree_node_copy :: proc(tree:^Widget_Tree,instance:^Tree_Instance,index,item:int) -> (c:Node_Copy) {
+    lists:[TREE_DEPTH]int
+    for parent:=int(tree.nodes[index].parent);parent>=0 && c.depth<TREE_DEPTH;parent=int(tree.nodes[parent].parent) {
+        if tree.nodes[parent].kind==.List {lists[c.depth]=parent;c.depth+=1}
+    }
+    c.present=true
+    built:=instance!=nil && len(instance.items)>=tree.node_count && len(instance.keys)==len(instance.slot)
+    if built {c.values=raw_data(instance.values)}
+    copy:=0
+    for i:=c.depth-1;i>=0;i-=1 {
+        element:=max(item,0) if i==0 else 0
+        at:=c.depth-1-i
+        c.keys[at]=u64(element+1)
+        if !built {continue}
+        items:=&instance.items[lists[i]]
+        capacity:=int(max(items.count,1))
+        if element>=int(items.count) {c.present=false;return}
+        c.keys[at]=tree_item_key(items,c.values,element)
+        place:=element
+        if items.key.bound {
+            if s:=int(instance.keys[int(instance.slots[lists[i]+1])+copy*capacity+element].slot);s<capacity {place=s}
+        }
+        copy=copy*capacity+place
+        if items.bound {c.values=rawptr(uintptr(c.values)+uintptr(items.offset)+uintptr(element)*uintptr(items.stride))}
+    }
+    if built {c.slot=int(instance.slots[index])+copy}
+    return
+}
+
 // The id of the node at index where its tree is built, as the node is for
-// element 0 of the lists around it.
-tree_node_element :: proc(ctx:^Context,tree:^Widget_Tree,index:int) -> Id {
+// element item of the innermost list around it (-1: the first) and the first
+// element of the others. instance: what it was built with; nil, as if no
+// list had a key.
+tree_node_element :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance,index:int,item:=-1) -> Id {
     if index<0 || index>=tree.node_count {return 0}
-    // The lists around the node push the scope of their first element.
-    lists:[TREE_DEPTH]bool
-    depth:=0
-    for parent:=tree.nodes[index].parent;parent>=0 && depth<TREE_DEPTH;parent=tree.nodes[parent].parent {
-        lists[depth]=tree.nodes[parent].kind==.List
-        depth+=1
-    }
-    pushed:=0
-    for i:=depth-1;i>=0;i-=1 {
-        if lists[i] {id_push(ctx,id(ctx,"item",1));pushed+=1}
-    }
+    c:=tree_node_copy(tree,instance,index,item)
+    for key in c.keys[:c.depth] {id_push(ctx,id(ctx,"item",int(u32(key))))}
     element:=tree_node_id(ctx,&tree.nodes[index],index)
-    for _ in 0..<pushed {id_pop(ctx)}
+    for _ in 0..<c.depth {id_pop(ctx)}
     return element
 }
 
@@ -1444,41 +1536,26 @@ tree_node_state :: proc(tree:^Widget_Tree,instance:^Tree_Instance,index:int) -> 
     }
     node:=&tree.nodes[index]
     state.disabled=node.disabled
-    // The values of element 0: each list around the node moves them to its first element.
-    values:=rawptr(raw_data(instance.values))
-    present:=true
-    lists:[TREE_DEPTH]i32
-    depth:=0
-    for parent:=node.parent;parent>=0 && depth<TREE_DEPTH;parent=tree.nodes[parent].parent {
-        if tree.nodes[parent].kind==.List {lists[depth]=parent;depth+=1}
-    }
-    for i:=depth-1;i>=0;i-=1 {
-        items:=instance.items[lists[i]]
-        if !items.bound {continue}
-        if items.count==0 {present=false;break}
-        values=rawptr(uintptr(values)+uintptr(items.offset))
-    }
+    c:=tree_node_copy(tree,instance,index,-1)
     bound:=&instance.bounds[index]
-    if present && bound.disabled.bound {state.disabled=bound_number(values,bound.disabled)!=0}
-    if first<end && first<len(instance.kept) {
-        if kept:=instance.kept[first];kept.valid && int(kept.offset)+int(kept.length)<=len(instance.kept_bytes) {
+    if c.present && bound.disabled.bound {state.disabled=bound_number(c.values,bound.disabled)!=0}
+    if c.present && c.slot<end && c.slot<len(instance.kept) {
+        if kept:=instance.kept[c.slot];kept.valid && int(kept.offset)+int(kept.length)<=len(instance.kept_bytes) {
             state.text=string(instance.kept_bytes[kept.offset:][:kept.length])
             return state,true
         }
     }
     if bound.text.bound || instance.templates[index].template {return state,true}
-    shown:=Name_Ref{node.text_offset,node.text_length}
-    if .Localized in node.flags && index<len(instance.texts) {shown=instance.texts[index]}
-    if int(shown.offset)+int(shown.length)<=len(tree.strings) {state.text=string(tree.strings[shown.offset:][:shown.length])}
+    state.text=instance.texts[index]
     return state,true
 }
 
 // The deepest node of the tree whose element held point when the last frame
 // was laid out, built with Tree_Build_Desc.track; -1 for none.
-tree_hit :: proc(ctx:^Context,tree:^Widget_Tree,point:[2]f32) -> int {
+tree_hit :: proc(ctx:^Context,tree:^Widget_Tree,instance:^Tree_Instance,point:[2]f32) -> int {
     best:=-1
     for i in 0..<tree.node_count {
-        r,found:=widget_rect(ctx,tree_node_element(ctx,tree,i))
+        r,found:=widget_rect(ctx,tree_node_element(ctx,tree,instance,i))
         if !found || !rect_contains(r,point) {continue}
         // Later nodes in pre-order are inside or after earlier ones.
         best=i

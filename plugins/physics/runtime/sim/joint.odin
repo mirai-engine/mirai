@@ -2,14 +2,17 @@ package mirai_physics
 
 import cmath "core:math"
 
-// Fixed: the two frames coincide. Spherical: the origins coincide; optional cone and twist limits.
-// Revolute: rotation about the shared X axis; limit, motor and spring on the angle. Prismatic: translation
-// along the X axis of frame A; limit, motor and spring on the translation. Distance: the origins stay at
-// `length`, or between `lower` and `upper` pulled toward `length` by the spring.
-Joint_Type :: enum u32 {Fixed,Spherical,Revolute,Prismatic,Distance,SixDOF}
+// A joint is one six-axis record: the three linear and the three angular axes of frame A, each free, locked
+// or limited and with an optional drive. Two or three limited linear axes share one limit, on the length of
+// the offset across them (a rope, a rod), whose drive is that of the first of them; the two swings (Y and Z)
+// limited together share one, a cone around X whose angle toward each side is the limit of that side, and
+// which is round when the four are equal. The solver picks a kernel in lanes by the pattern of the axes (a
+// fixed, ball, hinge, slider or distance joint) and solves any other pattern one axis at a time.
 Joint_Motion :: enum u32 {Free,Locked,Limited}
 Joint_Drive_Flag :: enum u32 {Position,Velocity,Disabled}
 Joint_Drive :: bit_set[Joint_Drive_Flag;u32]
+// lower, upper and position are meters or radians; velocity m/s or rad/s; max_force N or N m. A drive
+// pulls toward position with hertz and damping_ratio, toward velocity, or both, with at most max_force.
 Joint_Axis :: struct {
     motion:Joint_Motion,
     drive:Joint_Drive,
@@ -19,24 +22,14 @@ Joint_Axis :: struct {
 Joint_Error :: enum u8 {None,Invalid_Value,Unsupported_Option,Invalid_Axis,Invalid_Bodies,Capacity}
 @(private) Axis_Impulse :: struct {drive,lower,upper,lock:f32}
 
-Joint_Flag :: enum u32 {Collide_Connected,Limit,Motor,Spring,Cone,Angular_Drive}
+@(private) Joint_Kernel :: enum u32 {Fixed,Spherical,Revolute,Prismatic,Distance,General}
+Joint_Flag :: enum u32 {Collide_Connected,Limit,Drive,Cone}
 Joint_Flags :: bit_set[Joint_Flag;u32]
 
 Joint_Desc :: struct {
-    type:Joint_Type,
     body_a,body_b:Body_Handle,
     frame_a,frame_b:Transform, // in the frame of each body; a zero rotation means identity
     collide_connected:bool,
-    enable_limit:bool,
-    lower,upper:f32,           // radians (revolute, spherical twist) or meters (prismatic, distance)
-    cone:f32,                  // spherical: largest angle between the X axes, radians; zero is no limit
-    enable_motor:bool,
-    motor_speed:f32,           // rad/s or m/s
-    max_motor:f32,             // N m or N
-    enable_spring:bool,
-    hertz,damping_ratio:f32,
-    target:f32,                // angle or translation the spring pulls toward
-    length:f32,                // distance joint; zero takes the current distance
     break_force,break_torque:f32, // N and N m that break the joint; zero is unbreakable
     user_data:u64,
     linear,angular:[3]Joint_Axis,
@@ -46,20 +39,17 @@ Joint :: struct {
     user_data:u64,
     body_a,body_b:i32,
     edges:[2]Contact_Edge,
-    type:Joint_Type,
+    kernel:Joint_Kernel, // by the pattern of its axes
     flags:Joint_Flags,
     generation:u32,
     frame_a,frame_b:Transform,
-    lower,upper,cone,length:f32,
-    hertz,damping_ratio,target:f32,
-    motor_speed,max_motor:f32,
     break_force,break_torque:f32,
-    // Impulses of the last substep, for warm starting.
+    // Impulses of the last substep of a kernel in lanes, for warm starting.
     linear_impulse,angular_impulse:Vec3,
-    lower_impulse,upper_impulse,motor_impulse,spring_impulse,cone_impulse:f32,
+    lower_impulse,upper_impulse,drive_impulse,cone_impulse:f32,
     _:u32,
 }
-#assert(size_of(Joint)==192)
+#assert(size_of(Joint)==152)
 
 @(private)
 Joint_Axes :: struct {
@@ -68,48 +58,101 @@ Joint_Axes :: struct {
 }
 #assert(size_of(Joint_Axes)==312)
 
-joint_configuration_error :: proc "contextless" (desc:Joint_Desc) -> Joint_Error {
-    finite :: proc "contextless" (value:f32) -> bool {return value>=-max(f32) && value<=max(f32)}
-    if desc.type>.SixDOF {return .Invalid_Value}
-    for value in ([14]f32{desc.lower,desc.upper,desc.cone,desc.motor_speed,desc.max_motor,desc.hertz,desc.damping_ratio,desc.target,desc.length,desc.break_force,desc.break_torque,desc.frame_a.p.x,desc.frame_a.p.y,desc.frame_a.p.z}) {if !finite(value) {return .Invalid_Value}}
-    for value in desc.frame_b.p {if !finite(value) {return .Invalid_Value}}
-    for q in ([2]Quat{desc.frame_a.q,desc.frame_b.q}) {
-        for value in ([4]f32{q.x,q.y,q.z,q.w}) {if !finite(value) {return .Invalid_Value}}
+@(private) axis_driven :: #force_inline proc "contextless" (axis:Joint_Axis) -> bool {return axis.drive!={} && .Disabled not_in axis.drive}
+@(private) axis_free :: #force_inline proc "contextless" (axis:Joint_Axis) -> bool {return axis.motion==.Free && !axis_driven(axis)}
+// The two swings share a cone.
+@(private) axes_cone :: #force_inline proc "contextless" (angular:[3]Joint_Axis) -> bool {return angular[1].motion==.Limited && angular[2].motion==.Limited}
+// The first of the limited linear axes that share a limit on their length, or -1.
+@(private)
+axes_distance :: proc "contextless" (linear:[3]Joint_Axis) -> int {
+    first,count:=-1,0
+    for axis,i in linear {
+        if axis.motion!=.Limited {continue}
+        if first<0 {first=i}
+        count+=1
     }
-    if desc.cone<0 || desc.cone>PI || desc.max_motor<0 || desc.hertz<0 || desc.damping_ratio<0 || desc.length<0 || desc.break_force<0 || desc.break_torque<0 || desc.enable_spring && desc.hertz<=0 || desc.enable_limit && desc.lower>desc.upper {return .Invalid_Value}
-    if desc.cone>0 && desc.type!=.Spherical {return .Unsupported_Option}
-    if desc.enable_motor && desc.type!=.Revolute && desc.type!=.Prismatic {return .Unsupported_Option}
-    if desc.enable_spring && desc.type!=.Revolute && desc.type!=.Prismatic && desc.type!=.Distance {return .Unsupported_Option}
-    if desc.enable_limit && desc.type==.Fixed || desc.type==.SixDOF && (desc.enable_limit || desc.enable_motor || desc.enable_spring) {return .Unsupported_Option}
+    return count>=2?first:-1
+}
+
+@(private)
+joint_kernel_of :: proc "contextless" (linear,angular:[3]Joint_Axis) -> Joint_Kernel {
+    locked :: proc "contextless" (axes:[3]Joint_Axis,first:int) -> bool {
+        for i in first..<3 {if axes[i].motion!=.Locked {return false}}
+        return true
+    }
+    if locked(linear,0) && locked(angular,0) {return .Fixed}
+    if locked(linear,0) && locked(angular,1) {return .Revolute}
+    if locked(angular,0) && locked(linear,1) {return .Prismatic}
+    round:=angular[1].upper==angular[2].upper && angular[1].lower==angular[2].lower && angular[1].lower== -angular[1].upper
+    swings:=axis_free(angular[1]) && axis_free(angular[2]) || axes_cone(angular) && round && !axis_driven(angular[1]) && !axis_driven(angular[2])
+    if locked(linear,0) && angular[0].motion!=.Locked && !axis_driven(angular[0]) && swings {return .Spherical}
+    if axis_free(angular[0]) && axis_free(angular[1]) && axis_free(angular[2]) && axes_distance(linear)==0 && linear[1].motion==.Limited && linear[2].motion==.Limited && !axis_driven(linear[1]) && !axis_driven(linear[2]) {return .Distance}
+    return .General
+}
+
+// The axis whose limit and drive a kernel in lanes solves.
+@(private)
+joint_kernel_axis :: proc "contextless" (kernel:Joint_Kernel,linear,angular:[3]Joint_Axis) -> Joint_Axis {
+    #partial switch kernel {
+    case .Revolute,.Spherical: return angular[0]
+    case .Prismatic,.Distance: return linear[0]
+    }
+    return {}
+}
+
+@(private)
+joint_flags_of :: proc "contextless" (kernel:Joint_Kernel,axes:^Joint_Axes,collide:bool) -> (flags:Joint_Flags) {
+    if collide {flags+={.Collide_Connected}}
+    axis:=joint_kernel_axis(kernel,axes.linear_axes,axes.angular_axes)
+    if axis.motion==.Limited && (kernel!=.Distance || axis.lower<axis.upper) {flags+={.Limit}}
+    if axis_driven(axis) {flags+={.Drive}}
+    if kernel==.Spherical && axes_cone(axes.angular_axes) {flags+={.Cone}}
+    return
+}
+
+joint_configuration_error :: proc "contextless" (desc:Joint_Desc) -> Joint_Error {
+    if !finite(desc.break_force,desc.break_torque) || !finite(desc.frame_a,desc.frame_b) {return .Invalid_Value}
+    if desc.break_force<0 || desc.break_torque<0 {return .Invalid_Value}
     for axes,angular in ([2][3]Joint_Axis{desc.linear,desc.angular}) {
         for axis in axes {
-            if desc.type!=.SixDOF && !(desc.type==.Spherical && angular==1) && axis!=(Joint_Axis{}) {return .Unsupported_Option}
-            if desc.type==.Spherical && angular==1 && axis.motion!=.Free {return .Unsupported_Option}
             if axis.motion>.Limited || axis.drive&~(Joint_Drive{.Position,.Velocity,.Disabled})!={} {return .Invalid_Axis}
-            for value in ([7]f32{axis.lower,axis.upper,axis.position,axis.velocity,axis.hertz,axis.damping_ratio,axis.max_force}) {if !finite(value) {return .Invalid_Axis}}
+            if !finite(axis.lower,axis.upper,axis.position,axis.velocity,axis.hertz,axis.damping_ratio,axis.max_force) {return .Invalid_Axis}
             if axis.motion==.Limited && (axis.lower>axis.upper || angular==1 && (axis.lower< -PI || axis.upper>PI)) {return .Invalid_Axis}
             if axis.hertz<0 || axis.damping_ratio<0 || axis.max_force<0 || axis.drive!={} && (axis.motion==.Locked || axis.max_force<=0) || .Position in axis.drive && axis.hertz<=0 {return .Invalid_Axis}
+        }
+    }
+    if axes_cone(desc.angular) {
+        for i in 1..<3 {if desc.angular[i].lower>0 || desc.angular[i].upper<0 {return .Invalid_Axis}}
+    }
+    if first:=axes_distance(desc.linear);first>=0 {
+        shared:=desc.linear[first]
+        if shared.lower<0 {return .Invalid_Axis}
+        for axis,i in desc.linear {
+            if axis.motion!=.Limited || i==first {continue}
+            if axis.lower!=shared.lower || axis.upper!=shared.upper {return .Invalid_Axis}
+            if axis.drive!={} {return .Unsupported_Option}
         }
     }
     return .None
 }
 
+// Drives the axes toward a translation and a rotation of frame B in frame A: linear drives with max_force,
+// angular ones with max_torque, each axis left out when its force is zero. A locked axis it drives becomes
+// free.
 joint_drive_pose :: proc "contextless" (desc:^Joint_Desc,translation:Vec3,rotation:Quat,hertz,damping_ratio,max_force,max_torque:f32) -> Joint_Error {
     if desc==nil {return .Invalid_Value}
     for value in translation {if !(value>=-max(f32) && value<=max(f32)) {return .Invalid_Value}}
     for value in ([4]f32{hertz,damping_ratio,max_force,max_torque}) {if !(value>=0 && value<=max(f32)) {return .Invalid_Value}}
     if (max_force>0 || max_torque>0) && hertz==0 {return .Invalid_Value}
-    next:=desc^
-    if next.type!=.SixDOF && next.type!=.Spherical {return .Unsupported_Option}
     for value in ([4]f32{rotation.x,rotation.y,rotation.z,rotation.w}) {if !(value>=-max(f32) && value<=max(f32)) {return .Invalid_Value}}
+    next:=desc^
     target:=q_rotation_vector(q_normalize(rotation))
+    driven :: proc "contextless" (axis:Joint_Axis,position,hertz,damping_ratio,max_force:f32) -> Joint_Axis {
+        return {motion=axis.motion==.Locked?.Free:axis.motion,drive={.Position},lower=axis.lower,upper=axis.upper,position=position,hertz=hertz,damping_ratio=damping_ratio,max_force=max_force}
+    }
     for i in 0..<3 {
-        if next.type==.SixDOF && max_force>0 {
-            next.linear[i]={motion=next.linear[i].motion==.Locked?.Free:next.linear[i].motion,drive={.Position},lower=next.linear[i].lower,upper=next.linear[i].upper,position=translation[i],hertz=hertz,damping_ratio=damping_ratio,max_force=max_force}
-        }
-        if max_torque>0 {
-            next.angular[i]={motion=next.angular[i].motion==.Locked?.Free:next.angular[i].motion,drive={.Position},lower=next.angular[i].lower,upper=next.angular[i].upper,position=target[i],hertz=hertz,damping_ratio=damping_ratio,max_force=max_torque}
-        }
+        if max_force>0 {next.linear[i]=driven(next.linear[i],translation[i],hertz,damping_ratio,max_force)}
+        if max_torque>0 {next.angular[i]=driven(next.angular[i],target[i],hertz,damping_ratio,max_torque)}
     }
     if error:=joint_configuration_error(next);error!=.None {return error}
     desc^=next
@@ -124,7 +167,7 @@ joint_frames :: proc(w:^World,body_a,body_b:Body_Handle,anchor,axis:Vec3) -> (fr
 }
 
 joint_local_frames :: proc(w:^World,h:Joint_Handle) -> (frame_a,frame_b:Transform,ok:bool) {
-    joint,_:=joint_get(w,h)
+    joint,_:=joint_read(w,h)
     if joint==nil {return}
     return joint.frame_a,joint.frame_b,true
 }
@@ -146,28 +189,19 @@ joint_create :: proc(w:^World,desc:Joint_Desc) -> Joint_Handle {
     }
     w.joint_count+=1
     joint:=&w.joints[index]
+    stamp(w,joint)
+    axes:=&w.joint_axes[index]
+    axes^={linear_axes=desc.linear,angular_axes=desc.angular}
     joint^={
-        user_data=desc.user_data,body_a=index_a,body_b=index_b,type=desc.type,generation=joint.generation+1,
+        user_data=desc.user_data,body_a=index_a,body_b=index_b,generation=joint.generation+1,
         frame_a={desc.frame_a.p,q_normalize(desc.frame_a.q)},frame_b={desc.frame_b.p,q_normalize(desc.frame_b.q)},
-        lower=min(desc.lower,desc.upper),upper=max(desc.lower,desc.upper),cone=max(desc.cone,0),length=desc.length,
-        hertz=max(desc.hertz,0),damping_ratio=max(desc.damping_ratio,0),target=desc.target,
-        motor_speed=desc.motor_speed,max_motor=max(desc.max_motor,0),
-        break_force=max(desc.break_force,0),break_torque=max(desc.break_torque,0),
+        break_force=desc.break_force,break_torque=desc.break_torque,kernel=joint_kernel_of(desc.linear,desc.angular),
     }
-    w.joint_axes[index]={linear_axes=desc.linear,angular_axes=desc.angular}
-    if desc.collide_connected {joint.flags+={.Collide_Connected}}
-    if desc.enable_limit {joint.flags+={.Limit}}
-    if desc.enable_motor {joint.flags+={.Motor}}
-    if desc.enable_spring && desc.hertz>0 {joint.flags+={.Spring}}
-    if desc.cone>0 {joint.flags+={.Cone}}
-    for axis in desc.angular {if axis.drive!={} && .Disabled not_in axis.drive {joint.flags+={.Angular_Drive};break}}
-    if desc.type==.Distance && joint.length<=0 {
-        joint.length=length(xf_point(body_transform_of(body_b),joint.frame_b.p)-xf_point(body_transform_of(body_a),joint.frame_a.p))
-    }
+    joint.flags=joint_flags_of(joint.kernel,axes,desc.collide_connected)
     for body,side in ([2]^Body{body_a,body_b}) {
         key:=index<<1|i32(side)
         joint.edges[side]={-1,body.joint_list}
-        if body.joint_list>=0 {w.joints[body.joint_list>>1].edges[body.joint_list&1].prev=key}
+        if body.joint_list>=0 {stamp(w,.Joints,body.joint_list>>1);w.joints[body.joint_list>>1].edges[body.joint_list&1].prev=key}
         body.joint_list=key
     }
     if !desc.collide_connected {
@@ -193,17 +227,19 @@ joint_destroy :: proc(w:^World,h:Joint_Handle) {
 @(private)
 joint_destroy_index :: proc(w:^World,index:i32) {
     joint:=&w.joints[index]
+    stamp(w,joint)
     island_unlink(w,joint.body_a,joint.body_b)
     for body_index,side in ([2]i32{joint.body_a,joint.body_b}) {
         body:=&w.bodies[body_index]
+        stamp(w,body)
         edge:=joint.edges[side]
-        if edge.prev>=0 {w.joints[edge.prev>>1].edges[edge.prev&1].next=edge.next} else {body.joint_list=edge.next}
-        if edge.next>=0 {w.joints[edge.next>>1].edges[edge.next&1].prev=edge.prev}
+        if edge.prev>=0 {stamp(w,.Joints,edge.prev>>1);w.joints[edge.prev>>1].edges[edge.prev&1].next=edge.next} else {body.joint_list=edge.next}
+        if edge.next>=0 {stamp(w,.Joints,edge.next>>1);w.joints[edge.next>>1].edges[edge.next&1].prev=edge.prev}
         body_wake(w,body_index)
     }
     if .Collide_Connected not_in joint.flags {
         // The bodies may collide again: their pairs are searched at the next step.
-        for s:=w.bodies[joint.body_a].shape_list;s>=0;s=w.shapes[s].next {w.shapes[s].flags+={.Moved}}
+        for s:=w.bodies[joint.body_a].shape_list;s>=0;s=w.shapes[s].next {shape_moved(w,s)}
     }
     joint^={generation=joint.generation+1,body_a=w.joint_free}
     w.joint_free=index
@@ -211,75 +247,45 @@ joint_destroy_index :: proc(w:^World,index:i32) {
 }
 
 joint_bodies :: proc(w:^World,h:Joint_Handle) -> (Body_Handle,Body_Handle) {
-    joint,_:=joint_get(w,h)
+    joint,_:=joint_read(w,h)
     if joint==nil {return {},{}}
     return body_handle(w,joint.body_a),body_handle(w,joint.body_b)
 }
-joint_type :: proc(w:^World,h:Joint_Handle) -> Joint_Type {
-    joint,_:=joint_get(w,h)
-    return joint==nil?.Fixed:joint.type
-}
 joint_user_data :: proc(w:^World,h:Joint_Handle) -> u64 {
-    joint,_:=joint_get(w,h)
+    joint,_:=joint_read(w,h)
     return joint==nil?0:joint.user_data
 }
 
-@(private)
-joint_wake :: proc(w:^World,joint:^Joint) {
-    body_wake(w,joint.body_a)
-    body_wake(w,joint.body_b)
-}
-
-joint_set_limit :: proc(w:^World,h:Joint_Handle,enabled:bool,lower,upper:f32) {
-    joint,_:=joint_get(w,h)
-    if joint==nil || joint.type==.Fixed || joint.type==.SixDOF || !(lower>=-max(f32) && upper<=max(f32) && lower<=upper) {return}
-    joint.lower,joint.upper=min(lower,upper),max(lower,upper)
-    if enabled {joint.flags+={.Limit}} else {joint.flags-={.Limit};joint.lower_impulse,joint.upper_impulse=0,0}
-    joint_wake(w,joint)
-}
-joint_set_motor :: proc(w:^World,h:Joint_Handle,enabled:bool,speed,max_motor:f32) {
-    joint,_:=joint_get(w,h)
-    if joint==nil || joint.type!=.Revolute && joint.type!=.Prismatic || !(speed>=-max(f32) && speed<=max(f32) && max_motor>=0 && max_motor<=max(f32)) {return}
-    joint.motor_speed,joint.max_motor=speed,max(max_motor,0)
-    if enabled {joint.flags+={.Motor}} else {joint.flags-={.Motor};joint.motor_impulse=0}
-    joint_wake(w,joint)
-}
-joint_set_spring :: proc(w:^World,h:Joint_Handle,enabled:bool,hertz,damping_ratio,target:f32) {
-    joint,_:=joint_get(w,h)
-    if joint==nil || joint.type!=.Revolute && joint.type!=.Prismatic && joint.type!=.Distance || !(hertz>=0 && hertz<=max(f32) && damping_ratio>=0 && damping_ratio<=max(f32) && target>=-max(f32) && target<=max(f32)) || enabled && hertz==0 {return}
-    joint.hertz,joint.damping_ratio,joint.target=max(hertz,0),max(damping_ratio,0),target
-    if enabled && hertz>0 {joint.flags+={.Spring}} else {joint.flags-={.Spring};joint.spring_impulse=0}
-    joint_wake(w,joint)
-}
-joint_set_length :: proc(w:^World,h:Joint_Handle,length:f32) {
-    joint,_:=joint_get(w,h)
-    if joint==nil || !(length>0) {return}
-    joint.length=length
-    joint_wake(w,joint)
-}
-joint_set_break :: proc(w:^World,h:Joint_Handle,force,torque:f32) {
+joint_set_break :: proc(w:^World,h:Joint_Handle,force,torque:f32) -> bool {
+    if !finite(force,torque) {return false}
     joint,_:=joint_get(w,h)
     if joint!=nil {joint.break_force,joint.break_torque=max(force,0),max(torque,0)}
+    return joint!=nil
 }
 
+// New axes for a joint: the impulses of an axis whose motion, drive or limits changed start again, and all of
+// them when its kernel changes.
 joint_set_axes :: proc(w:^World,h:Joint_Handle,linear,angular:[3]Joint_Axis) -> Joint_Error {
     joint,index:=joint_get(w,h)
     if joint==nil {return .Invalid_Bodies}
-    if error:=joint_configuration_error({type=joint.type,linear=linear,angular=angular});error!=.None {return error}
+    if error:=joint_configuration_error({linear=linear,angular=angular});error!=.None {return error}
     axes:=&w.joint_axes[index]
     if axes.linear_axes==linear && axes.angular_axes==angular {return .None}
-    for axis,i in linear {
-        old:=axes.linear_axes[i]
-        if old.motion!=axis.motion || old.drive!=axis.drive || old.lower!=axis.lower || old.upper!=axis.upper {axes.linear_axes_impulse[i]={}}
+    changed :: proc "contextless" (old,axis:Joint_Axis) -> bool {
+        return old.motion!=axis.motion || old.drive!=axis.drive || old.lower!=axis.lower || old.upper!=axis.upper
     }
-    for axis,i in angular {
-        old:=axes.angular_axes[i]
-        if old.motion!=axis.motion || old.drive!=axis.drive || old.lower!=axis.lower || old.upper!=axis.upper {axes.angular_axes_impulse[i]={}}
+    kernel:=joint_kernel_of(linear,angular)
+    if kernel!=joint.kernel || changed(joint_kernel_axis(kernel,axes.linear_axes,axes.angular_axes),joint_kernel_axis(kernel,linear,angular)) {
+        joint.linear_impulse,joint.angular_impulse={},{}
+        joint.lower_impulse,joint.upper_impulse,joint.drive_impulse,joint.cone_impulse=0,0,0,0
     }
+    for axis,i in linear {if kernel!=joint.kernel || changed(axes.linear_axes[i],axis) {axes.linear_axes_impulse[i]={}}}
+    for axis,i in angular {if kernel!=joint.kernel || changed(axes.angular_axes[i],axis) {axes.angular_axes_impulse[i]={}}}
     axes.linear_axes,axes.angular_axes=linear,angular
-    joint.flags-={.Angular_Drive}
-    for axis in angular {if axis.drive!={} && .Disabled not_in axis.drive {joint.flags+={.Angular_Drive};break}}
-    joint_wake(w,joint)
+    joint.kernel=kernel
+    joint.flags=joint_flags_of(kernel,axes,.Collide_Connected in joint.flags)
+    body_wake(w,joint.body_a)
+    body_wake(w,joint.body_b)
     return .None
 }
 
@@ -289,15 +295,15 @@ twist_angle :: proc "contextless" (qa,qb:Quat) -> f32 {
     return 2*cmath.atan2(rel.w<0?-rel.x:rel.x,abs(rel.w))
 }
 
-// Angle of a revolute joint or twist of a spherical one, radians in (-pi,pi].
+// Rotation of frame B about the X axis of frame A, radians in (-pi,pi].
 joint_angle :: proc(w:^World,h:Joint_Handle) -> f32 {
-    joint,_:=joint_get(w,h)
+    joint,_:=joint_read(w,h)
     if joint==nil {return 0}
     return twist_angle(w.bodies[joint.body_a].rotation*joint.frame_a.q,w.bodies[joint.body_b].rotation*joint.frame_b.q)
 }
-// Translation of a prismatic joint along its axis, meters.
+// Translation of frame B along the X axis of frame A, meters.
 joint_translation :: proc(w:^World,h:Joint_Handle) -> f32 {
-    joint,_:=joint_get(w,h)
+    joint,_:=joint_read(w,h)
     if joint==nil {return 0}
     a,b:=&w.bodies[joint.body_a],&w.bodies[joint.body_b]
     d:=xf_point(body_transform_of(b),joint.frame_b.p)-xf_point(body_transform_of(a),joint.frame_a.p)
@@ -305,18 +311,17 @@ joint_translation :: proc(w:^World,h:Joint_Handle) -> f32 {
 }
 // Distance between the two anchors, meters.
 joint_distance :: proc(w:^World,h:Joint_Handle) -> f32 {
-    joint,_:=joint_get(w,h)
+    joint,_:=joint_read(w,h)
     if joint==nil {return 0}
     a,b:=&w.bodies[joint.body_a],&w.bodies[joint.body_b]
     return length(xf_point(body_transform_of(b),joint.frame_b.p)-xf_point(body_transform_of(a),joint.frame_a.p))
 }
 
-// A SixDOF joint, or the angular drives of a spherical joint, solved one at a time.
+// A joint of a pattern no kernel in lanes solves, solved one axis at a time.
 @(private)
 Joint_Solver :: struct {
     joint:i32,
     a,b:i32,
-    type:Joint_Type,
     ma,mb:f32,
     ia,ib:Mat3,
     ra,rb:Vec3, // anchors from the centers of mass at the start of the step, world axes
@@ -379,7 +384,7 @@ axis_solve :: proc "contextless" (st:^Step,js:^Joint_Solver,row:Axis_Row,v:^Join
         row_apply(js,row,v,impulse)
         return
     }
-    if axis.drive!={} && .Disabled not_in axis.drive {
+    if axis_driven(axis) {
         softness:=Softness{0,1,0}
         target:=axis.position
         if axis.motion==.Limited {target=clamp(target,axis.lower,axis.upper)}
@@ -404,13 +409,45 @@ angular_axes_solve :: proc "contextless" (st:^Step,js:^Joint_Solver,v:^Joint_Vel
         angle:=cmath.sqrt(angle2)
         coefficient=(1-0.5*angle/cmath.tan(0.5*angle))/angle2
     }
+    cone:=axes_cone(js.axes.angular_axes)
     for axis,i in js.axes.angular_axes {
-        if axis.motion==.Free && (axis.drive=={} || .Disabled in axis.drive) {continue}
+        // The swings of a cone keep their drives; the cone limits them together below.
+        axis:=axis
+        if cone && i>0 {axis.motion=.Free}
+        if axis_free(axis) {continue}
         basis:Vec3
         basis[i]=1
         jacobian:=q_rotate(qa,basis+0.5*cross(rotation,basis)+coefficient*cross(rotation,cross(rotation,basis)))
         axis_solve(st,js,row_make(js,{},jacobian,jacobian),v,axis,&js.axes.angular_axes_impulse[i],rotation[i],warm,use_bias)
     }
+    if !cone {return}
+    // The swing between the X axes stays inside the cone, whose angle toward the side it swings to is that of
+    // the ellipse of the limits of that side; its impulse is kept as the upper one of axis Y.
+    impulse:=&js.axes.angular_axes_impulse[1].upper
+    ax,bx:=q_rotate(qa,Vec3{1,0,0}),q_rotate(qb,Vec3{1,0,0})
+    normal,sine:=normalize_length(cross(ax,bx))
+    if sine<=1e-6 {
+        if dot(ax,bx)>0 {
+            if !warm {impulse^=0}
+            return
+        }
+        // Folded exactly back the swing has no side of its own: it opens about the Y axis of frame A.
+        normal=q_rotate(qa,Vec3{0,1,0})
+    }
+    row:=row_make(js,{},normal,normal)
+    if warm {
+        row_apply(js,row,v,-impulse^)
+        return
+    }
+    side:=q_inv_rotate(qa,normal)
+    y,z:=js.axes.angular_axes[1],js.axes.angular_axes[2]
+    reach_y,reach_z:=max(side.y>0?y.upper:-y.lower,1e-4),max(side.z>0?z.upper:-z.lower,1e-4)
+    reach:=1/cmath.sqrt(side.y*side.y/(reach_y*reach_y)+side.z*side.z/(reach_z*reach_z))
+    c:=reach-cmath.atan2(sine,dot(ax,bx))
+    bias:f32=c>0?c*st.inv_h:(use_bias?st.joint_softness.bias_rate*c:0)
+    next:=max(impulse^-row.mass*(bias-row_speed(row,v)),0)
+    row_apply(js,row,v,-(next-impulse^))
+    impulse^=next
 }
 
 @(private)
@@ -421,7 +458,6 @@ joints_prepare_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check 
         joint:=&w.joints[js.joint]
         body_a,body_b:=&w.bodies[joint.body_a],&w.bodies[joint.body_b]
         js.a,js.b=body_a.solver_index,body_b.solver_index
-        js.type=joint.type
         js.ma,js.mb=0,0
         js.ia,js.ib={},{}
         if js.a>=0 {js.ma,js.ia=st.params[js.a].inv_mass,st.params[js.a].inv_inertia}
@@ -443,17 +479,30 @@ joint_solve :: proc "contextless" (st:^Step,js:^Joint_Solver,warm,use_bias:bool)
     v:=Joint_Velocity{body_a.v,body_a.w,body_b.v,body_b.w}
     qa,qb:=body_a.dq*js.qa,body_b.dq*js.qb
     angular_axes_solve(st,js,&v,qa,qb,warm,use_bias)
-    if js.type==.SixDOF {
-        ra,rb:=q_rotate(body_a.dq,js.ra),q_rotate(body_b.dq,js.rb)
-        d:=body_b.dp-body_a.dp+js.dc+rb-ra
-        for axis,i in js.axes.linear_axes {
-            if axis.motion==.Free && (axis.drive=={} || .Disabled in axis.drive) {continue}
-            basis:Vec3
-            basis[i]=1
-            direction:=q_rotate(qa,basis)
-            row:=row_make(js,direction,cross(d+ra,direction),cross(rb,direction))
-            axis_solve(st,js,row,&v,axis,&js.axes.linear_axes_impulse[i],dot(d,direction),warm,use_bias)
+    ra,rb:=q_rotate(body_a.dq,js.ra),q_rotate(body_b.dq,js.rb)
+    d:=body_b.dp-body_a.dp+js.dc+rb-ra
+    shared:=axes_distance(js.axes.linear_axes)
+    across:Vec3
+    for axis,i in js.axes.linear_axes {
+        basis:Vec3
+        basis[i]=1
+        direction:=q_rotate(qa,basis)
+        if shared>=0 && axis.motion==.Limited {
+            across+=dot(d,direction)*direction
+            continue
         }
+        if axis_free(axis) {continue}
+        row:=row_make(js,direction,cross(d+ra,direction),cross(rb,direction))
+        axis_solve(st,js,row,&v,axis,&js.axes.linear_axes_impulse[i],dot(d,direction),warm,use_bias)
+    }
+    if shared>=0 {
+        // The length of the offset across the limited axes, along it.
+        distance:=length(across)
+        basis:Vec3
+        basis[shared]=1
+        direction:=distance>1e-6?across/distance:q_rotate(qa,basis)
+        row:=row_make(js,direction,cross(d+ra,direction),cross(rb,direction))
+        axis_solve(st,js,row,&v,js.axes.linear_axes[shared],&js.axes.linear_axes_impulse[shared],distance,warm,use_bias)
     }
     if js.ma>0 {st.bodies[js.a].v,st.bodies[js.a].w=v.va,v.wa}
     if js.mb>0 {st.bodies[js.b].v,st.bodies[js.b].w=v.vb,v.wb}
@@ -469,24 +518,21 @@ joints_scalar_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
 
 // Force in newtons and torque in newton meters that the joint applied in the last step.
 joint_reaction :: proc(w:^World,h:Joint_Handle) -> (force,torque:f32) {
-    joint,index:=joint_get(w,h)
+    joint,index:=joint_read(w,h)
     if joint==nil || w.step.inv_h==0 {return}
     return joint_load(joint,&w.joint_axes[index],w.step.inv_h)
 }
 
 @(private)
 joint_load :: proc "contextless" (joint:^Joint,axes:^Joint_Axes,inv_h:f32) -> (force,torque:f32) {
-    axial:=abs(joint.spring_impulse+joint.motor_impulse+joint.lower_impulse-joint.upper_impulse)
-    switch joint.type {
+    axial:=abs(joint.drive_impulse+joint.lower_impulse-joint.upper_impulse)
+    switch joint.kernel {
     case .Fixed: force,torque=length(joint.linear_impulse),length(joint.angular_impulse)
-    case .Spherical:
-        driven:Vec3
-        if .Angular_Drive in joint.flags {for accumulated,i in axes.angular_axes_impulse {driven[i]=accumulated.drive}}
-        force,torque=length(joint.linear_impulse),axial+joint.cone_impulse+length(driven)
+    case .Spherical: force,torque=length(joint.linear_impulse),axial+joint.cone_impulse
     case .Revolute: force,torque=length(joint.linear_impulse),length(Vec3{axial,joint.angular_impulse.y,joint.angular_impulse.z})
     case .Prismatic: force,torque=length(Vec3{axial,joint.linear_impulse.y,joint.linear_impulse.z}),length(joint.angular_impulse)
     case .Distance: force=abs(joint.linear_impulse.x)+axial
-    case .SixDOF:
+    case .General:
         linear,angular:Vec3
         for accumulated,i in axes.linear_axes_impulse {linear[i]=accumulated.drive+accumulated.lower-accumulated.upper+accumulated.lock}
         for accumulated,i in axes.angular_axes_impulse {angular[i]=accumulated.drive+accumulated.lower-accumulated.upper+accumulated.lock}

@@ -79,20 +79,16 @@ Api_Play_History_Info :: struct {
 
 @(private)
 api_play_history_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="play.seek",summary="Takes the game of the caller, or the last Play of the user after it stopped, to a tick it played, paused, to look at it and play on from there: the copy of the World before it and the frames between played again.",params=Api_Play_Seek_Params,result=Api_Play_Seek_Result,run=api_play_seek})
+    api_register(s,st,{name="play.seek",summary="Takes the game of the caller, or the last Play of the user after it stopped, to a tick it played, paused, to look at it and play on from there: the copy of the World before it and the frames between played again.",params=type_info_of(Api_Play_Seek_Params),result=type_info_of(Api_Play_Seek_Result),run=api_play_seek})
     history_default:=Api_Play_History_Params{trace={every=1}}
-    api_register(s,st,{name="play.history",summary="The ticks the game of the caller, or the last Play of the user after it stopped, keeps to go back to and what they take; with trace, values of entities at those ticks, and with verify, whether playing them again repeats them: the game stays as it is.",params=Api_Play_History_Params,result=Api_Play_History_Result,writes_result=true,defaults=&history_default,flags={.Read_Only},run=api_play_history})
-    if _,ok:=api.schema_register(&st.server,Api_Play_History_Info);!ok {
-        st.refused+=1
-        if st.refused==1 {st.refusal=fmt.bprintf(st.refusal_buffer[:],"play.history: its result has no schema: %s",st.server.schema.error)}
-    }
+    api_register(s,st,{name="play.history",summary="The ticks the game of the caller, or the last Play of the user after it stopped, keeps to go back to and what they take; with trace, values of entities at those ticks, and with verify, whether playing them again repeats them: the game stays as it is.",params=type_info_of(Api_Play_History_Params),result=type_info_of(Api_Play_History_Result),defaults=&history_default,flags={.Read_Only},run=api_play_history})
 }
 
 @(private)
 api_play_seek :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Seek_Params)
     r,own,stopped:=api_history_run(s,call,p.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,API_NO_GAME);return}
+    if r==nil {api_no_game(call);return}
     if !own && stopped {api.call_fail(call,api.SERVER_ERROR,"A turn reads the last Play of the user with play.history; it opens again only from outside a turn");return}
     if !own {api_play_refused(call);return}
     if reason:=history_reason(s,r);reason!="" {api.call_fail(call,api.SERVER_ERROR,reason);return}
@@ -205,15 +201,9 @@ api_play_history :: proc(s:^Session,call:^api.Call) {
 
 @(private)
 api_play_history_write :: proc(s:^Session,call:^api.Call,info:^Api_Play_History_Info,trace:^Api_Trace) {
-    sc:=&api_state(s).server.schema
-    index,found:=sc.lookup[Api_Play_History_Info]
-    if !found {api.call_fail(call,api.INTERNAL_ERROR,"the result of play.history has no schema");return}
-    out:=call.out
-    serial.text_write(out,sc,index,mem.ptr_to_bytes(info),.Line)
-    if trace==nil {return}
-    out.count-=1 // the brace that closes it
-    api_trace_write(s,out,trace)
-    serial.write_u8(out,'}')
+    result:=api.call_result(call,Api_Play_History_Result)
+    result.info=info^
+    if trace!=nil {result.trace=api_trace_table(s,trace,call.allocator)}
 }
 
 // The rows of a trace at the frames kept from the one at or before from to
@@ -231,14 +221,14 @@ api_history_trace :: proc(s:^Session,call:^api.Call,r:^Run,p:^Api_Play_Trace,raw
     walk:=history_walk(h,first,to,every)
     pending:=u64(0) // a frame played after the last row, whose tick is the last of the trace
     for f,due in history_walk_next(&walk) {
-        if due && trace.row_count==API_TRACE_ROWS {next^,pending=f.tick,0;break}
+        if due && len(trace.rows)==API_TRACE_ROWS {next^,pending=f.tick,0;break}
         if !history_seek(s,r,walk.at).ok {return "No memory to play the past again"}
         if !due {pending=walk.at;continue}
         if problem:=api_trace_take(s,trace,run_ref(s,r),0);problem!="" {return problem}
         pending=0
     }
     if pending==0 {return ""}
-    if trace.row_count==API_TRACE_ROWS {
+    if len(trace.rows)==API_TRACE_ROWS {
         next^=history_frame_of(h,pending).tick
         return ""
     }
@@ -248,7 +238,7 @@ api_history_trace :: proc(s:^Session,call:^api.Call,r:^Run,p:^Api_Play_Trace,raw
 // Plays again the frames from each keyframe to the next that reach from to
 // to, as Jolt's state recorder validates a replay: after each frame the hash
 // of the transforms against the one it kept, and at the next keyframe every
-// entity and storage, as play.inspect writes them, against that copy. The
+// entity and storage, as scene.inspect writes them, against that copy. The
 // copy of the World the frames leave is made as keyframes are, so that what
 // a copy leaves out does not differ. Stops at the first span that differs.
 @(private)

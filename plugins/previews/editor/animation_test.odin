@@ -2,7 +2,9 @@ package previews_editor
 
 import "core:mem"
 import "core:testing"
+import "mirai:core"
 import "mirai:editor"
+import "mirai:editor/kit"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:ui"
@@ -10,14 +12,15 @@ import "mirai:ui"
 @(test)
 animation_details_show_the_clip_in_cards_that_fold :: proc(t:^testing.T) {
     ctx:ui.Context
-    if !testing.expect(t,ui.context_init(&ctx,{})) {return}
+    if !testing.expect(t,ui.context_init(&ctx,{}) && kit.theme_set(&ctx)) {return}
     defer ui.context_destroy(&ctx)
     g:=editor.Editor_Ui{ctx=&ctx}
     inspector:editor.Inspector
     app:host.App
     s:=new(editor.Session)
     defer free(s)
-    s.gui,s.inspector,s.app=&g,&inspector,&app
+    info:core.World_Info
+    s.gui,s.inspector,s.app,s.info=&g,&inspector,&app,&info
     clips:=[1]Clip_Info{{duration=7.57,tracks=3,keys=40,marker_count=2}}
     base.text_set(clips[0].name[:],"idle")
     base.text_set(clips[0].root.bone[:],"root")

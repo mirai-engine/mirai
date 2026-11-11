@@ -2,6 +2,7 @@ package mirai_physics
 
 import "core:testing"
 import cmath "core:math"
+import "mirai:std/spatial"
 
 @(private="file")
 Test_Triangles :: struct {
@@ -372,6 +373,18 @@ static_changes_log_static_shapes_made_destroyed_moved_retyped_and_refiltered_but
     body_destroy(&w,ground)
     testing.expect_value(t,read(&w,&cursor,&boxes),1)
     testing.expect_value(t,boxes[0],Aabb{{9,-1,-1},{14,1,1}})
+
+    // A sensor is no collision: made, moved, refiltered among sensors or destroyed, it logs nothing; turned
+    // to block and back, it does.
+    sensor,sensor_shape:=test_static_box(&w,{0,0,0},{layers=1,overlap=~Collision_Layers(0)})
+    body_set_transform(&w,sensor,{10,0,0},QUAT_IDENTITY)
+    shape_set_filter(&w,sensor_shape,{layers=2,overlap=~Collision_Layers(0)})
+    testing.expect_value(t,read(&w,&cursor,&boxes),0)
+    shape_set_filter(&w,sensor_shape,{layers=2,block=~Collision_Layers(0)})
+    shape_set_filter(&w,sensor_shape,{layers=2,overlap=~Collision_Layers(0)})
+    testing.expect_value(t,read(&w,&cursor,&boxes),2)
+    body_destroy(&w,sensor)
+    testing.expect_value(t,read(&w,&cursor,&boxes),0)
 }
 
 @(test)
@@ -431,15 +444,15 @@ restoring_a_snapshot_or_copying_a_state_leaves_every_static_change_reader_behind
     defer world_destroy(&other)
     boxes:[4]Aabb
     test_static_box(&w,{0,0,0})
-    buffer:=make([]byte,world_snapshot_capacity(&w))
-    defer delete(buffer)
-    _,saved:=world_snapshot(&w,buffer)
+    buffer:World
+    defer world_destroy(&buffer)
+    saved:=test_keep(&buffer,&w)
     testing.expect(t,saved)
     test_static_box(&w,{5,0,0})
     current,_,_:=static_changes(&w,0,boxes[:])
     testing.expect_value(t,current,u64(2))
 
-    testing.expect(t,world_restore(&w,buffer))
+    testing.expect(t,test_restore(&w,&buffer))
     count:int
     overflow:bool
     for since in ([2]u64{0,current}) {
@@ -452,7 +465,8 @@ restoring_a_snapshot_or_copying_a_state_leaves_every_static_change_reader_behind
     testing.expect_value(t,boxes[0].min.x,f32(8))
 
     head,_,_:=static_changes(&other,0,boxes[:])
-    testing.expect(t,world_state_copy(&other,&w))
+    _,copied:=world_state_copy(&other,&w)
+    testing.expect(t,copied)
     _,count,overflow=static_changes(&other,head,boxes[:])
     testing.expect(t,overflow && count==0)
 }
@@ -486,6 +500,39 @@ the_static_change_log_changes_no_simulation_result :: proc(t:^testing.T) {
         if world_hash(&a)!=world_hash(&b) {
             testing.expectf(t,false,"the worlds diverged at step %v",step)
             return
+        }
+    }
+}
+
+// A level of static boxes made one by one: their tree is built again once those insertions reach half of it,
+// which lowers its area, a box made afterwards only goes in, and what rests on them moves as in the world that
+// kept the tree as it was filled.
+@(test)
+rebuilding_the_static_tree_after_a_load_lowers_its_area_and_changes_no_result :: proc(t:^testing.T) {
+    worlds:[2]World
+    bodies:[2][40]Body_Handle
+    for &w,k in worlds {
+        testing.expect(t,test_world(&w,512))
+        for i in 0..<400 {test_static_box(&w,{f32(i%20)*2.5-25,0,f32(i/20)*2.5-25},half={1,0.5+0.05*f32(i%7),1})}
+        for i in 0..<40 {bodies[k][i]=test_body(&w,Box{{0.3,0.3,0.3}},{f32(i%8)*3-12,2+f32(i/8),f32(i%5)*3-6})}
+    }
+    defer for &w in worlds {world_destroy(&w)}
+    tree:=&worlds[0].trees[STATIC_TREE]
+    before:=spatial.dynamic_tree_area_ratio(tree)
+    testing.expect(t,world_rebuild_static(&worlds[0]))
+    testing.expect(t,spatial.dynamic_tree_validate(tree))
+    testing.expectf(t,spatial.dynamic_tree_area_ratio(tree)<0.9*before,"area ratio %v, %v before",spatial.dynamic_tree_area_ratio(tree),before)
+    testing.expect_value(t,tree.placed,0)
+    for &w in worlds {test_static_box(&w,{0,0,30})}
+    testing.expect(t,world_rebuild_static(&worlds[0]))
+    testing.expect_value(t,tree.placed,1)
+    for step in 0..<90 {
+        for &w in worlds {world_step(&w,1.0/60)}
+        for i in 0..<40 {
+            if body_transform(&worlds[0],bodies[0][i])!=body_transform(&worlds[1],bodies[1][i]) {
+                testing.expectf(t,false,"body %v moved apart at step %v",i,step)
+                return
+            }
         }
     }
 }

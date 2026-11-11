@@ -28,7 +28,8 @@ Ui_Draw_Kind :: enum u8 {Triangles,Begin_Layer,End_Layer}
 @(private)
 Ui_Shape_Upload :: struct {source:rawptr,length,base,count:int}
 @(private)
-Ui_Params :: struct {viewport:Vec2,shape_base,shape_count:u32}
+// Params_Block of ui.vert and ui.frag; origin, right and down are of a panel in the world.
+Ui_Params :: struct {viewport:Vec2,shape_base,shape_count:u32,origin,right,down:Vec4}
 
 // The material of the vertices that show a texture; a texture that does not
 // exist gives the plain color of the vertex.
@@ -150,7 +151,6 @@ ui_composite :: proc(r:^Renderer,cmd:^rhi.Command_List,s:Ui_Surface,source:rhi.T
 ui_backdrop :: proc(r:^Renderer,cmd:^rhi.Command_List,s:Ui_Surface,input:rhi.Texture,blur:f32,scale:f32) -> rhi.Texture {
     source:=input
     for i in 0..<2 {
-        rhi.cmd_barrier_texture(cmd,source,.Shader_Read)
         pass:=rhi.Render_Pass_Desc{color_count=1,name="UI backdrop blur"}
         pass.colors[0]={texture=s.blur[i],load=.Dont_Care,store=.Store}
         rhi.cmd_begin_render_pass(cmd,&pass)
@@ -163,7 +163,6 @@ ui_backdrop :: proc(r:^Renderer,cmd:^rhi.Command_List,s:Ui_Surface,input:rhi.Tex
         rhi.cmd_end_render_pass(cmd)
         source=s.blur[i]
     }
-    rhi.cmd_barrier_texture(cmd,source,.Shader_Read)
     return source
 }
 
@@ -177,7 +176,7 @@ ui_layers_pass :: proc(r:^Renderer,cmd:^rhi.Command_List,s:Ui_Surface,slot:int,w
         if len(layer.vertices)==0 && len(layer.draws)==0 {continue}
         base,count:=ui_upload(r,slot,written,layer.vertices)
         shape_base,shape_count:=ui_shapes_upload(r,slot,layer.shapes)
-        params:=Ui_Params{points,u32(shape_base),u32(shape_count)}
+        params:=Ui_Params{viewport=points,shape_base=u32(shape_base),shape_count=u32(shape_count)}
         depth,skipped:=0,0
         Stack :: struct {effect:u16,scissor:[4]f32}
         stack:[UI_LAYER_DEPTH_CAPACITY]Stack
@@ -190,6 +189,8 @@ ui_layers_pass :: proc(r:^Renderer,cmd:^rhi.Command_List,s:Ui_Surface,slot:int,w
             rhi.cmd_bind_buffer(cmd,SLOT_PASS4,r.ui_shape_buffers[slot])
             rhi.cmd_bind_texture(cmd,SLOT_PASS1,r.font)
             rhi.cmd_bind_texture(cmd,SLOT_PASS2,thumbnails)
+            // The depth of the scene, which only a panel in the world reads.
+            rhi.cmd_bind_texture(cmd,SLOT_PASS3,r.font)
             rhi.cmd_bind_texture(cmd,SLOT_PASS5,r.display_lut)
             pipeline=r.pipelines[.Ui]
             ui_programs_draw(r,cmd,&r.pipelines[.Ui],layer.vertices,base,0,count,&pipeline)
@@ -227,7 +228,6 @@ ui_layers_pass :: proc(r:^Renderer,cmd:^rhi.Command_List,s:Ui_Surface,slot:int,w
                 source:=s.layers[depth]
                 parent:=s.ldr if depth==0 else s.layers[depth-1]
                 rhi.cmd_end_render_pass(cmd)
-                rhi.cmd_barrier_texture(cmd,source,.Shader_Read)
                 ui_target_begin(r,cmd,parent,false)
                 ui_composite(r,cmd,s,source,layer.effects[draw.layer],points,stack[depth].scissor,scale)
                 bound=false
@@ -243,6 +243,7 @@ ui_layers_pass :: proc(r:^Renderer,cmd:^rhi.Command_List,s:Ui_Surface,slot:int,w
                     rhi.cmd_bind_buffer(cmd,SLOT_PASS4,r.ui_shape_buffers[slot])
                     rhi.cmd_bind_texture(cmd,SLOT_PASS1,r.font)
                     rhi.cmd_bind_texture(cmd,SLOT_PASS2,thumbnails)
+                    rhi.cmd_bind_texture(cmd,SLOT_PASS3,r.font)
                     rhi.cmd_bind_texture(cmd,SLOT_PASS5,r.display_lut)
                     bound=true
                 }
@@ -293,9 +294,8 @@ world_panels_pass :: proc(r:^Renderer,cmd:^rhi.Command_List,t:^Targets,slot:int,
             right=camera_right*linalg.length(panel.right)
             down=-camera_up*linalg.length(panel.down)
         }
-        Params :: struct {viewport:Vec2,shape_base,shape_count:u32,origin,right,down:Vec4}
         place:=origin_point(panel.origin,r.origin)
-        params:=Params{
+        params:=Ui_Params{
             viewport={f32(t.output_width),f32(t.output_height)},shape_base=u32(shape_base),shape_count=u32(shape_count),
             origin={place.x,place.y,place.z,1 if panel.depth_test else 0},
             right={right.x,right.y,right.z,panel.pivot.x},

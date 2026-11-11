@@ -1,7 +1,19 @@
 package main
 
+import "core:odin/ast"
+import "core:odin/parser"
 import "core:strings"
 import "core:testing"
+
+// A source parsed as mirai check parses it; nil when it does not parse.
+source_parse :: proc(path,text:string) -> ^ast.File {
+    context.allocator=context.temp_allocator
+    file:=new(ast.File)
+    file^={src=text,fullpath=path}
+    p:=parser.default_parser()
+    if !parser.parse_file(&p,file) || file.syntax_error_count>0 {return nil}
+    return file
+}
 
 // The source is the body of a file after its package line; flagged, the
 // calls the lint reports, in order.
@@ -13,7 +25,9 @@ expect_flagged :: proc(t:^testing.T,cases:[]Case) {
     for c in cases {
         findings:=make([dynamic]Alloc_Finding,context.temp_allocator)
         source:=strings.concatenate({"package sample\n",c.source,"\n"},context.temp_allocator)
-        if !testing.expectf(t,alloc_lint_source("sample.odin",source,&findings),"%s: it parses",c.name) {continue}
+        file:=source_parse("sample.odin",source)
+        if !testing.expectf(t,file!=nil,"%s: it parses",c.name) {continue}
+        alloc_lint_file(file,&findings)
         if !testing.expectf(t,len(findings)==len(c.flagged),"%s: %d flagged, %d expected: %v",c.name,len(findings),len(c.flagged),findings[:]) {continue}
         for f,i in findings {
             testing.expectf(t,f.call==c.flagged[i],"%s: flagged %s, expected %s",c.name,f.call,c.flagged[i])
@@ -225,7 +239,10 @@ a_finding_names_the_place_of_its_call :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     findings:=make([dynamic]Alloc_Finding,context.temp_allocator)
     source:="package sample\n\nf :: proc(n:int) {\n    a:=make([]int,n);b:=new(int)\n}\n"
-    if !testing.expect(t,alloc_lint_source("sample.odin",source,&findings)) || !testing.expect_value(t,len(findings),2) {return}
+    file:=source_parse("sample.odin",source)
+    if !testing.expect(t,file!=nil) {return}
+    alloc_lint_file(file,&findings)
+    if !testing.expect_value(t,len(findings),2) {return}
     testing.expect_value(t,findings[0].line,4)
     testing.expect_value(t,findings[0].column,8)
     testing.expect_value(t,findings[1].line,4)

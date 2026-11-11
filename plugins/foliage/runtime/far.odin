@@ -156,7 +156,7 @@ kind_make :: proc(kind:^Resident_Kind,assets:^host.Assets,renderer:^render.Rende
         for &p in bake.positions[first:] {p=(part.placement*[4]f32{p.x,p.y,p.z,1}).xyz}
     }
     kind.bake=bake
-    if jobs.worker_count(job_system)>1 {jobs.run(job_system,jobs.OWNER,kind_bake,bake,&bake.counter)} else {kind_bake(bake,jobs.OWNER)}
+    if jobs.worker_count(job_system)>1 {jobs.run(job_system,jobs.OWNER,.Background,kind_bake,bake,&bake.counter)} else {kind_bake(bake,jobs.OWNER)}
     return true
 }
 
@@ -346,7 +346,7 @@ foliage_impostors_record :: proc(pass:^render.Pass,user:rawptr) {
     }
     if d.written==0 {return}
     rows,uploaded:=render.pass_rows_upload(pass,raw_data(d.rows),len(d.rows)*size_of(Impostor_Row))
-    if !uploaded || !render.pass_buffer_ready(pass,desc) {return}
+    if !uploaded {return}
     render.pass_gbuffer_begin(pass,"foliage impostors")
     render.pass_pipeline(pass,pipeline)
     render.pass_buffer(pass,0,desc)

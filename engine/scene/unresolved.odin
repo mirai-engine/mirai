@@ -23,7 +23,7 @@ Unresolved_Reference :: struct {
 @(storage)
 Unresolved_References :: struct {
     items:[dynamic]Unresolved_Reference,
-    ids:u64, // the version of the table of Id the last resolve saw
+    ids:core.Seen, // the table of Id the last resolve saw
     resolved:[dynamic]Unresolved_Reference, // the fields that the loads and drops of sections of this frame gave their entity or none, not whoever edits the world; scene_sections empties it
     written:u64, // advances each time resolved takes fields
 }
@@ -76,7 +76,7 @@ references_resolve :: proc(w:core.World_Ref) {
     u:=core.world_storage_of(w,Unresolved_References)
     ids:=core.world_table_of(w,core.Id)
     if u==nil || ids==nil || len(u.items)==0 {return}
-    u.ids=core.version(ids)
+    _=core.touched(ids,&u.ids)
     taken:=len(u.resolved)
     es:=core.world_entities(w)
     dormants:=core.world_table_of(w,Dormant)
@@ -111,7 +111,7 @@ references_resolve :: proc(w:core.World_Ref) {
 // as they are; one whose target has no Id names none.
 references_release :: proc(w:core.World_Ref,inside,gone:[]bool) {
     es:=core.world_entities(w)
-    ids:=core.read(core.world_table_of(w,core.Id))
+    ids:=core.world_table_of(w,core.Id)
     u:=core.world_storage_of(w,Unresolved_References)
     types:=schema_of(w)
     if types==nil {return}
@@ -150,7 +150,8 @@ references_release :: proc(w:core.World_Ref,inside,gone:[]bool) {
 // The fields that wait for a section resolve once the entities of the world
 // change: a section that loads brings their targets.
 @(step="frame",loops="game editor")
-scene_references :: proc(world:core.World_Ref,unresolved:^Unresolved_References,ids:core.Read(core.Id)) {
-    if len(unresolved.items)==0 || core.version(ids)==unresolved.ids {return}
+scene_references :: proc(world:core.World_Ref,unresolved:^Unresolved_References,ids:^core.Table(core.Id,.Read)) {
+    seen:=unresolved.ids
+    if len(unresolved.items)==0 || !core.touched(ids,&seen) {return}
     references_resolve(world)
 }

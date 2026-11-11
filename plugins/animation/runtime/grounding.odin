@@ -8,23 +8,26 @@ import mm "mirai:std/math"
 GROUNDING_LEGS :: 16
 Grounding_Mode :: enum u8 {Animated,Procedural}
 
+// A leg: bones left empty in the first two legs are those of the left and the right leg of the
+// body of the skeleton, the contact its toe; in the others they are needed.
 Grounded_Leg :: struct {
     hip,knee,foot,contact_bone:Bone_Ref,
     pole_offset,foot_up:mm.Vec3,
     sole_height,contact_offset,contact_height,plant_speed,max_tilt:f32,
     phase,step_distance,step_height,step_duration,max_distance,contact:f32,
+    reach:lib.Chain_Reach, // a softened approach to full extension and how far the leg may stretch past it
 }
 GROUNDED_LEG_DEFAULT :: Grounded_Leg{
     foot_up={0,1,0},sole_height=0.05,contact_height=0.08,plant_speed=0.6,max_tilt=mm.PI*.5,
     step_distance=0.2,step_height=0.15,step_duration=0.2,max_distance=0.7,contact=1,
 }
 
+// The grounding of the feet of the rig that plays the .character: none while count is 0.
 Foot_Grounding :: struct {
-    rig:core.Entity `mirai:"transient"`,
     mode:Grounding_Mode,
     legs:[GROUNDING_LEGS]Grounded_Leg `mirai:"hidden"`,
     count:i32 `mirai:"min=0,max=16"`,
-    body:Bone_Ref,
+    body:Bone_Ref, // empty: the pelvis of the body of the skeleton
     up:mm.Vec3, // in the frame of the rig as it is placed, not as its bones move; the rig of a character plants its feet along the up of its vertical (core.Vertical)
     trace_above,trace_below,minimum_ground_dot:f32,
     collision_mask:u32, // the collision categories the feet stand on, a bit each
@@ -47,7 +50,7 @@ Grounding_Alignment :: struct {offset:mm.Vec3,turn:mm.Quat,weight:f32}
 Grounding_Hierarchy :: struct {bound:u64,first,count:int}
 
 Grounding_Record :: struct {
-    config,rig:core.Entity `mirai:"transient"`,
+    rig:core.Entity `mirai:"transient"`,
     bound,version:u64,
     count,body:i32,
     mode:Grounding_Mode,
@@ -77,9 +80,9 @@ Grounding_Runtime :: struct {
 }
 
 // What the rays of a rig skip: the nearest of it and its parents with a body.
-ground_ignore :: proc(ground:core.World_Query,parents:core.Read(core.Parent),rig:core.Entity) -> core.Entity {
+ground_ignore :: proc(ground:core.World_Query,parents:^core.Table(core.Parent,$A),rig:core.Entity) -> core.Entity {
     ignore:=rig
-    if ground.solid==nil || parents.table==nil {return ignore}
+    if ground.solid==nil || parents==nil {return ignore}
     for attempts:=0;attempts<256;attempts+=1 {
         if ground.solid(ground.user,ignore) {break}
         parent,ok:=core.get(parents,ignore)
@@ -90,33 +93,28 @@ ground_ignore :: proc(ground:core.World_Query,parents:core.Read(core.Parent),rig
 }
 
 Grounding_Inputs :: struct {
-    configs:core.Read(Foot_Grounding),
+    configs:^core.Table(Foot_Grounding,.Read),
     ground:core.World_Query, // the feet stand on what it hits; without a library that gives it no foot is grounded
-    transforms:core.Read(core.Transform),
-    parents:core.Read(core.Parent),
+    transforms:^core.Table(core.Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),
     geometry:u64,
     problems:^core.Problems,
-    verticals:core.Read(core.Vertical),
+    verticals:^core.Table(core.Vertical,.Read),
 }
 
 grounding_free :: proc(cache:^Grounding_Runtime) {
     delete(cache.records);delete(cache.rows);delete(cache.hierarchies);delete(cache.links);cache^={}
 }
 
-grounding_prepare :: proc(cache:^Grounding_Runtime,configs:core.Read(Foot_Grounding),problems:^core.Problems) -> bool {
+grounding_prepare :: proc(cache:^Grounding_Runtime,configs:^core.Table(Foot_Grounding,$A),problems:^core.Problems) -> bool {
     if cache==nil {return false}
     count:=constraint_count(configs)
     stamp:=constraint_stamp(configs)
     if cache.stamp==stamp {return true}
-    layout:=core.layout(configs) if configs.table!=nil else 0
+    layout:=core.layout(configs) if configs!=nil else 0
     rebuild:=cache.layout!=layout || len(cache.records)!=count || len(cache.hierarchies)!=count
     if !rebuild {
-        for i in 0..<count {
-            config:=core.at(configs,i)
-            entity:=core.entity_at(configs,i)
-            rig:=config.rig if config.rig!=core.NONE else entity
-            if cache.records[i].config!=entity || cache.records[i].rig!=rig {rebuild=true;break}
-        }
+        for i in 0..<count {if cache.records[i].rig!=core.entity_at(configs,i) {rebuild=true;break}}
     }
     if !rebuild {cache.stamp=stamp;return true}
     records:[dynamic]Grounding_Record;rows:[dynamic]i32
@@ -124,19 +122,13 @@ grounding_prepare :: proc(cache:^Grounding_Runtime,configs:core.Read(Foot_Ground
     defer {delete(records);delete(rows);delete(hierarchies);delete(links)}
     if resize(&records,count)!=nil || resize(&hierarchies,count)!=nil {memory_problem(problems,core.NONE,"the grounding of the rigs, so no foot is grounded");return false}
     for i in 0..<count {
-        config:=core.at(configs,i)
-        entity:=core.entity_at(configs,i)
-        rig:=config.rig if config.rig!=core.NONE else entity
+        rig:=core.entity_at(configs,i)
         index:=core.entity_index(rig)
         if index>=len(rows) && resize(&rows,index+1)!=nil {memory_problem(problems,core.NONE,"the grounding of the rigs, so no foot is grounded");return false}
-        if rows[index]!=0 {
-            core.report(problems,rig,"animation.grounding_twice","two Foot_Grounding ground this rig, so no foot of any rig is grounded; keep one of them")
-            return false
-        }
         rows[index]=i32(i+1)
-        records[i]={config=entity,rig=rig}
+        records[i]={rig=rig}
         for previous,j in cache.records {
-            if previous.config!=entity || previous.rig!=rig {continue}
+            if previous.rig!=rig {continue}
             records[i]=previous
             if j<len(cache.hierarchies) {hierarchies[i]=cache.hierarchies[j]}
             break
@@ -186,7 +178,7 @@ grounding_config_valid :: proc(config:Foot_Grounding) -> bool {
     if config.trace_above+config.trace_below<=0 || !finite(config.trace_above+config.trace_below) || config.minimum_ground_dot>1 || config.global_contact>1 || config.weight>1 || config.replant_distance>config.release_distance || config.cycle_duration<=0 || config.swing_fraction<=0 || config.swing_fraction>1 || config.max_swinging<=0 {return false}
     for i in 0..<int(config.count) {
         leg:=config.legs[i]
-        values:=[?]f32{leg.sole_height,leg.contact_offset,leg.contact_height,leg.plant_speed,leg.max_tilt,leg.phase,leg.step_distance,leg.step_height,leg.step_duration,leg.max_distance,leg.contact}
+        values:=[?]f32{leg.sole_height,leg.contact_offset,leg.contact_height,leg.plant_speed,leg.max_tilt,leg.phase,leg.step_distance,leg.step_height,leg.step_duration,leg.max_distance,leg.contact,leg.reach.soft_distance,leg.reach.max_stretch}
         for value in values {if !finite(value) || value<0 {return false}}
         if leg.phase>=1 || leg.step_duration<=0 || leg.max_distance<leg.step_distance || leg.contact>1 || linalg.length(leg.foot_up)<1e-6 {return false}
         for value in leg.foot_up {if !finite(value) {return false}}
@@ -229,15 +221,23 @@ grounding_bind :: proc(cache:^Grounding_Runtime,row:int,state:^Playing,config:Fo
     }
     bones:[GROUNDING_LEGS][3]int
     contacts:[GROUNDING_LEGS]int
+    // A bone a table leaves empty is the part of the body of the skeleton it stands for.
+    part :: proc(state:^Playing,ref:Bone_Ref,default:lib.Body_Part) -> int {
+        if ref!={} {return bone_resolve(state,ref)}
+        return int(state.body[default]) if state.body[default]>0 else -1
+    }
+    LEGS :: [2][4]lib.Body_Part{{.Hip_L,.Knee_L,.Foot_L,.Toe_L},{.Hip_R,.Knee_R,.Foot_R,.Toe_R}}
     for i in 0..<int(config.count) {
         leg:=config.legs[i]
-        bones[i]={bone_resolve(state,leg.hip),bone_resolve(state,leg.knee),bone_resolve(state,leg.foot)}
+        sides:=LEGS;side:=sides[min(i,1)]
+        if i<2 {bones[i]={part(state,leg.hip,side[0]),part(state,leg.knee,side[1]),part(state,leg.foot,side[2])}} else {bones[i]={bone_resolve(state,leg.hip),bone_resolve(state,leg.knee),bone_resolve(state,leg.foot)}}
         hip,knee,foot:=bones[i][0],bones[i][1],bones[i][2]
         if hip<=0 || knee<=0 || foot<=0 || state.parents[knee]!=i32(hip) || state.parents[foot]!=i32(knee) {
             core.report(problems,state.entity,"animation.grounding_bones","leg %d of Foot_Grounding: its hip, knee and foot are not a chain of bones of this skeleton, each the parent of the next; name such a chain (animation.asset.inspect lists the bones)",i)
             return false
         }
         contacts[i]=foot
+        if toe:=int(state.body[side[3]]);leg.contact_bone=={} && i<2 && toe>0 && state.parents[toe]==i32(foot) {contacts[i]=toe}
         if leg.contact_bone!={} {
             contacts[i]=bone_resolve(state,leg.contact_bone)
             ancestor:=contacts[i]
@@ -248,13 +248,13 @@ grounding_bind :: proc(cache:^Grounding_Runtime,row:int,state:^Playing,config:Fo
             }
         }
     }
-    body:=bone_resolve(state,config.body)
+    body:=part(state,config.body,.Pelvis)
     if !grounding_hierarchy_prepare(cache,row,state) {
         core.report(problems,state.entity,"animation.grounding_bones","the skeleton of this rig cannot be grounded: its bones are not ordered parents first, or memory ran out; import the skeleton again, or free memory")
         return false
     }
     if record.count!=config.count || record.mode!=config.mode || record.bound!=state.bound || record.bones!=bones || record.contact_bones!=contacts || record.body!=i32(body) {
-        record^=Grounding_Record{config=record.config,rig=record.rig}
+        record^=Grounding_Record{rig=record.rig}
     }
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     record.bones=bones
@@ -301,18 +301,18 @@ grounding_limb_hit :: proc(ground:core.World_Query,hip,knee,foot:mm.Vec3,ignore:
 // the frame of the rig under basis, the world of its parent; never as the
 // bones of the rig turn in its animation.
 grounding_up :: proc(inputs:Grounding_Inputs,rig:core.Entity,basis:mm.Transform,up:mm.Vec3) -> mm.Vec3 {
-    if inputs.verticals.table!=nil {
+    if inputs.verticals!=nil {
         e:=rig
         for _ in 0..<GROUNDING_DEPTH {
             if core.has(inputs.verticals,e) {return mm.quat_rotate(core.vertical_of(inputs.verticals,e),{0,1,0})}
-            if inputs.parents.table==nil {break}
+            if inputs.parents==nil {break}
             parent,found:=core.get(inputs.parents,e)
             if !found || parent.entity==core.NONE {break}
             e=parent.entity
         }
     }
     rotation:=basis.rotation
-    if inputs.transforms.table!=nil {
+    if inputs.transforms!=nil {
         if local,found:=core.get(inputs.transforms,rig);found {rotation*=local.rotation}
     }
     return linalg.normalize0(mm.quat_rotate(rotation,up))
@@ -342,7 +342,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
     if prepared.first<0 || prepared.count!=len(state.parents) || prepared.first>len(cache.links) || prepared.count>len(cache.links)-prepared.first {grounding_inconsistent(problems,state.entity);return false}
     hierarchy:=lib.Pose_Hierarchy{state.parents[:],cache.links[prepared.first:prepared.first+prepared.count]}
     basis:=mm.TRANSFORM_IDENTITY
-    if inputs.parents.table!=nil {
+    if inputs.parents!=nil {
         if parent,ok:=core.get(inputs.parents,state.entity);ok && parent.entity!=core.NONE {
             basis,ok=core.world_of(inputs.transforms,inputs.parents,parent.entity)
             if !ok {
@@ -544,12 +544,12 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
             if !valid {return grounding_unsolved(problems,state.entity,"the pole of the knee",i)}
             poles[i]=pole+mm.quat_rotate(root.rotation,leg.pole_offset)
         }
-        original,ok:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],target.position,poles[i],target.weight)
+        original,ok:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],target.position,poles[i],target.weight,leg.reach)
         if !ok {return grounding_unsolved(problems,state.entity,"the IK",i)}
         if config.mode==.Procedural {
             replacement:lib.Surface_Contact
             if !original.reached && target.weight==1 && !record.legs[i].swinging && record.legs[i].anchor.active && contacts[i].valid {
-                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],contacts[i].position,poles[i],target.weight)
+                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],contacts[i].position,poles[i],target.weight,leg.reach)
                 if valid && solved.reached {
                     _,blocked:=grounding_limb_hit(ground,solved.root.position,solved.joint.position,solved.end.position,ignore,mask)
                     if !blocked {replacement=contacts[i];original=solved}
@@ -560,7 +560,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
                         hit,found:=ground.probe(ground.user,probe+up*config.trace_above,-up,config.trace_above+config.trace_below,0,ignore,mask)
                         if found && linalg.dot(hit.normal,up)>=config.minimum_ground_dot {
                             position:=hit.point+hit.normal*leg.sole_height
-                            candidate,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],position,poles[i],target.weight)
+                            candidate,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],position,poles[i],target.weight,leg.reach)
                             if valid && candidate.reached {
                                 _,blocked:=grounding_limb_hit(ground,candidate.root.position,candidate.joint.position,candidate.end.position,ignore,mask)
                                 if !blocked {
@@ -577,7 +577,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
             if blocked && linalg.dot(hit.normal,up)<config.minimum_ground_dot {
                 length:=linalg.length(state.world[knee].position-state.world[hip].position)+linalg.length(state.world[foot].position-state.world[knee].position)
                 pole:=state.world[hip].position+hit.normal*length
-                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],target.position,pole,target.weight)
+                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],target.position,pole,target.weight,leg.reach)
                 if valid && solved.reached {
                     _,intersects:=grounding_limb_hit(ground,solved.root.position,solved.joint.position,solved.end.position,ignore,mask)
                     if !intersects {poles[i]=pole;original=solved;blocked=false}
@@ -585,7 +585,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
             }
             if blocked && linalg.dot(hit.normal,up)>=config.minimum_ground_dot {
                 position:=hit.point+hit.normal*leg.sole_height
-                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],position,poles[i],target.weight)
+                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],position,poles[i],target.weight,leg.reach)
                 if valid && solved.reached {
                     _,intersects:=grounding_limb_hit(ground,solved.root.position,solved.joint.position,solved.end.position,ignore,mask)
                     if !intersects {
@@ -626,7 +626,7 @@ grounding_apply :: proc(state:^Playing,cache:^Grounding_Runtime,inputs:Grounding
                 pole,pole_valid:=lib.two_bone_pole_from_pose(state.world[hip],state.world[knee],state.world[foot],goal)
                 if !pole_valid {return grounding_unsolved(problems,state.entity,"the pole of the knee",i)}
                 pole+=mm.quat_rotate(root.rotation,leg.pole_offset)
-                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],goal,pole)
+                solved,valid:=lib.two_bone_ik(state.world[hip],state.world[knee],state.world[foot],goal,pole,1,leg.reach)
                 if !valid {return grounding_unsolved(problems,state.entity,"the IK",i)}
                 if !solved.reached {break}
                 if !lib.pose_ik_apply(hierarchy,state.local[:],state.world[:],hip,knee,foot,solved,basis) {return grounding_unsolved(problems,state.entity,"the IK",i)}

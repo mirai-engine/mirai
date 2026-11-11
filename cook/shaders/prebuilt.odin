@@ -5,6 +5,8 @@ import "core:os"
 import "core:strings"
 import "core:time"
 import "mirai:cook/workspace"
+import "mirai:std/base"
+import "mirai:std/serial"
 
 // An official prebuilt package of a tool, pinned by its version and SHA-256,
 // that installs into <deps>/<folder>.
@@ -35,11 +37,11 @@ prebuilt_install :: proc(root:string,p:Prebuilt,archive:string="",allocator:=con
         runner:Runner
         output,downloaded:=tool_run(&runner,{system_tool("curl"),"--location","--fail","--silent","--show-error","--output",source,p.url},context.temp_allocator)
         if !downloaded {
-            os.remove_all(download)
+            base.remove_all(download)
             return fmt.aprintf("Could not download %s with curl: %s",p.url,strings.trim_space(output),allocator=allocator),false
         }
     }
-    defer if download!="" {os.remove_all(download)}
+    defer if download!="" {base.remove_all(download)}
     return prebuilt_install_archive(target,source,p,allocator)
 }
 
@@ -48,10 +50,17 @@ prebuilt_folder :: proc(root:string,p:Prebuilt,allocator:=context.allocator) -> 
     return path_join(workspace.deps_folder(path_clean(root,context.temp_allocator),context.temp_allocator),p.folder,allocator=allocator)
 }
 
+// What an installed package says of itself, in PREBUILT_MARKER.
+@(private)
+Prebuilt_Marker :: struct {version,asset,sha256:string}
+@(private)
+PREBUILT_MARKER :: "mirai-package.json"
+
 @(private)
 prebuilt_installed :: proc(target,sha256:string) -> bool {
-    marker,readable:=read_json(path_join(target,"mirai-package.json",allocator=context.temp_allocator),context.temp_allocator)
-    return readable && json_text(marker["sha256"])==sha256
+    data,error:=os.read_entire_file(path_join(target,PREBUILT_MARKER,allocator=context.temp_allocator),context.temp_allocator)
+    marker:Prebuilt_Marker
+    return error==nil && serial.text_decode(string(data),&marker,context.temp_allocator)=="" && marker.sha256==sha256
 }
 
 // Checks, unpacks and puts a package in place of `target`. The previous
@@ -66,7 +75,7 @@ prebuilt_install_archive :: proc(target,archive:string,p:Prebuilt,allocator:=con
     folder,folder_error:=os.make_directory_temp(path_parent(target),fmt.tprintf("%s-install-*",p.folder),context.temp_allocator)
     if folder_error!=nil {return fmt.aprintf("Could not create a temporary folder next to %s",target,allocator=allocator),false}
     temporary:=path_clean(folder,context.temp_allocator)
-    defer os.remove_all(temporary)
+    defer base.remove_all(temporary)
     unpacked:=path_join(temporary,"package",allocator=context.temp_allocator)
     os.make_directory(unpacked)
     runner:Runner
@@ -82,13 +91,8 @@ prebuilt_install_archive :: proc(target,archive:string,p:Prebuilt,allocator:=con
     }
     staged:=p.top!=""?path_join(unpacked,p.top,allocator=context.temp_allocator):unpacked
     if !os.is_file(path_join(staged,p.required,allocator=context.temp_allocator)) {return fmt.aprintf("The package does not contain %s",p.required,allocator=allocator),false}
-    writer:=json_writer(context.temp_allocator)
-    json_object_begin(&writer)
-    json_key(&writer,"version");json_string(&writer,p.version)
-    json_key(&writer,"asset");json_string(&writer,p.asset)
-    json_key(&writer,"sha256");json_string(&writer,p.sha256)
-    json_object_end(&writer)
-    if !write_file(path_join(staged,"mirai-package.json",allocator=context.temp_allocator),json_finish(&writer)) {return strings.clone("Could not write mirai-package.json",allocator),false}
+    marker,_:=serial.text_encode(Prebuilt_Marker{p.version,p.asset,p.sha256},.Pretty,context.temp_allocator)
+    if !write_file(path_join(staged,PREBUILT_MARKER,allocator=context.temp_allocator),marker) {return strings.clone("Could not write "+PREBUILT_MARKER,allocator),false}
     previous:=path_join(temporary,"previous",allocator=context.temp_allocator)
     had_previous:=os.exists(target)
     if had_previous && !rename_patiently(target,previous) {return fmt.aprintf("Could not replace %s: it is in use; close what uses it and try again",target,allocator=allocator),false}

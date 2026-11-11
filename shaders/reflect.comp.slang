@@ -2,13 +2,11 @@
 // The camera looks along its rays: they show a relative emission (hit_emission).
 #define MIRAI_HITS_SHOW_RELATIVE_EMISSION 1
 //! variant hw MIRAI_HW_RT=1
-//! variant color MIRAI_GLASS_MEANS=1
-//! variant color_hw MIRAI_GLASS_MEANS=1 MIRAI_HW_RT=1
+// color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
+//! constant color MIRAI_GLASS_MEANS
 // unlayered: while no instance of the scene has layers (gbuffer.slang, scene.slang).
-//! variant unlayered MIRAI_GBUFFER_NO_LAYERS=1 MIRAI_MATERIAL_NO_LAYERS=1
-//! variant unlayered_hw MIRAI_GBUFFER_NO_LAYERS=1 MIRAI_MATERIAL_NO_LAYERS=1 MIRAI_HW_RT=1
-//! variant unlayered_color MIRAI_GBUFFER_NO_LAYERS=1 MIRAI_MATERIAL_NO_LAYERS=1 MIRAI_GLASS_MEANS=1
-//! variant unlayered_color_hw MIRAI_GBUFFER_NO_LAYERS=1 MIRAI_MATERIAL_NO_LAYERS=1 MIRAI_GLASS_MEANS=1 MIRAI_HW_RT=1
+//! constant unlayered MIRAI_GBUFFER_NO_LAYERS
+#define MIRAI_MATERIAL_NO_LAYERS MIRAI_GBUFFER_NO_LAYERS
 // Traced specular reflections. A pixel smoother than the roughness limit
 // picks a direction of its GGX lobe (the visible normals of Heitz 2018, with
 // the tail of the lobe cut short to keep the noise down), traces
@@ -36,6 +34,8 @@
 // resume (params.resume) shades the hit from what the program gave there.
 // The exact filters of glass with a program are added then too.
 #define MIRAI_RAY_FILTERS
+// It reports the levels it samples of each texture (texture_feedback in scene.slang).
+#define MIRAI_TEXTURE_FEEDBACK
 #define POINTS_SLOT SLOT_POINTS
 #define MIRAI_DEFER_FILTERS
 #define MIRAI_LIGHT_MAPS
@@ -157,7 +157,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
             float ratio = (g.layers.coat_ior - 1.0) / (g.layers.coat_ior + 1.0);
             fresnel = float3(g.layers.coat * fresnel_schlick(float3(ratio * ratio), 1.0, saturate(dot(n, -view))).r);
         } else {
-            fresnel = fresnel_schlick(g.f0, specular_grazing(g.f0, g.f90, g.base_color, g.metallic), saturate(dot(n, -view)));
+            fresnel = fresnel_schlick(g.f0, g.f90, saturate(dot(n, -view)));
         }
         float reflectance = max(fresnel.r, max(fresnel.g, fresnel.b));
         // At an exit face of the solid the camera is in (params.medium) the view is reflected back into
@@ -167,7 +167,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         float reach = params.max_distance;
         Material medium = (Material)0;
         if (inside) {
-            medium = material_row(material_of(scene_instance(params.medium - 1u), 0u));
+            Instance solid = scene_instance(params.medium - 1u);
+            medium = material_row(material_of(solid, 0u), solid.material_values);
             reach = min(reach, material_reach(medium, REFLECT_MEDIUM_CUT));
         }
         Ray_Path path;

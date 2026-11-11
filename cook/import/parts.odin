@@ -3,8 +3,6 @@ package importer
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
-import "core:slice"
-import "core:strings"
 import "mirai:asset"
 import "mirai:cook/textures"
 import "mirai:std/base"
@@ -14,8 +12,7 @@ import "mirai:std/base"
 // model alone is a part; anything in doubt is of its own and shows.
 //   - Its meshes and skeletons always are.
 //   - A material, with its textures, is a part when one mesh of the model uses
-//     it, no other import of the project has its textures (compared by their
-//     bytes), its UVs fall inside 0..1 where its map places them, the islands
+//     it, its UVs fall inside 0..1 where its map places them, the islands
 //     they draw over the texture leave room unused and none reaches from an
 //     edge to the opposite one (an unwrapped atlas: this region is the handle,
 //     that one the door), and its base color, or else its normal map, does not
@@ -50,10 +47,9 @@ Verdict :: struct {
 }
 
 // Whether material m of the model is surely of the model alone. pixels:
-// RGBA8 rows of the image its base color shows, or else its normal map;
-// shared: one of its textures is the one another import wrote.
+// RGBA8 rows of the image its base color shows, or else its normal map.
 @(private)
-material_verdict :: proc(model:^Imported_Model,m:int,pixels:[]u8,width,height:int,shared:bool) -> Verdict {
+material_verdict :: proc(model:^Imported_Model,m:int,pixels:[]u8,width,height:int) -> Verdict {
     material:=&model.materials[m]
     textured:=false
     for row in material.images {if row>=0 {textured=true}}
@@ -65,7 +61,6 @@ material_verdict :: proc(model:^Imported_Model,m:int,pixels:[]u8,width,height:in
         }
     }
     if meshes!=1 {return {false,fmt.tprintf("%d meshes use it",meshes)}}
-    if shared {return {false,"another import has its textures"}}
     analyzed:=material_analyzed(material)
     info:=&material.info
     shown:=material_map(info,analyzed)^
@@ -95,7 +90,7 @@ material_verdict :: proc(model:^Imported_Model,m:int,pixels:[]u8,width,height:in
                 at:[3]i32
                 for k in 0..<3 {
                     vertex:=mesh.vertices[mesh.indices[i+k]]
-                    uv[k]=map_uv(info,shown,vertex.uv1 if shown.uv_set==1 else vertex.uv)
+                    uv[k]=map_uv(shown,vertex.uv1 if shown.uv_set==1 else vertex.uv)
                     for c in uv[k] {
                         if !(c>=-PARTS_UV_SLACK && c<=1+PARTS_UV_SLACK) {return {false,"its UVs leave 0..1"}}
                     }
@@ -132,11 +127,11 @@ material_verdict :: proc(model:^Imported_Model,m:int,pixels:[]u8,width,height:in
 }
 
 // Where a UV of a mesh falls on the image of a map, as the renderer places it:
-// rotation * (map scale * (scale * uv + offset)) + map offset.
+// rotation * (map scale * uv) + map offset.
 @(private="file")
-map_uv :: proc(info:^asset.Material_Info,shown:asset.Material_Map,uv:[2]f32) -> [2]f32 {
+map_uv :: proc(shown:asset.Material_Map,uv:[2]f32) -> [2]f32 {
     sine,cosine:=math.sin(shown.rotation),math.cos(shown.rotation)
-    p:=(uv*info.uv_scale+info.uv_offset)*shown.scale
+    p:=uv*shown.scale
     return {cosine*p.x-sine*p.y,sine*p.x+cosine*p.y}+shown.offset
 }
 
@@ -238,89 +233,47 @@ job_pixels :: proc(job:^Texture_Job) -> (pixels:[]u8,width,height:int) {
 }
 
 // The owner of each part, before anything is written. An asset an earlier
-// import wrote keeps the owner it has, unless settings.parts forces it. A new
-// material whose textures all are of another import takes the material of the
-// project that names those same textures, when its source gave that material
-// what this one gives. What this import shares stops being a part of another
-// import, with the materials of that import that name it. reasons: why each
-// material is or is not a part.
+// import wrote keeps the owner it has, unless settings.parts forces it.
+// reasons: why each material is or is not a part.
 @(private)
 parts_own :: proc(w:^Writer,model:^Imported_Model,jobs:[]Texture_Job,parts:[]Part,first_material:int,reasons:[]string) {
     mode:=w.options.settings.parts
     row_part:=make([]int,len(model.images),context.temp_allocator)
     for &at in row_part {at=-1}
     for job,i in jobs {row_part[job.index]=i}
-    image_ids:=make([]base.Asset_Id,len(model.images),context.temp_allocator)
-    for job,i in jobs {image_ids[job.index]=parts[i].id}
-    // Another import of the very file of an image is no other model.
-    of_another_model :: proc(w:^Writer,p:^Part) -> bool {
-        e:=&w.earlier[p.shared]
-        return p.file=="" || !strings.equal_fold(base.text_get(e.info.source[:]),p.file)
-    }
-
-    for &material,m in model.materials {
-        p:=&parts[first_material+m]
-        if p.earlier>=0 {continue}
-        ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
-        for row in material.images {
-            if row<0 {continue}
-            at:=row_part[row]
-            if at<0 || parts[at].shared<0 {clear(&ids);break}
-            if !slice.contains(ids[:],parts[at].id) {append(&ids,parts[at].id)}
-        }
-        if len(ids)==0 {continue}
-        given:=material_given(&material,image_ids)
-        for &e,at in w.earlier {
-            if e.taken || e.kind!=asset.KIND_MATERIAL || len(e.dependencies)!=len(ids) {continue}
-            same:=true
-            for id in ids {same&&=slice.contains(e.dependencies,id)}
-            if !same || !material_gave(w,&e,given) {continue}
-            p.shared,p.id=at,e.id
-            break
-        }
-    }
-
     for &p in parts {
-        switch {
-        case p.shared>=0: p.owner=w.earlier[p.shared].owner
-        case p.kind==asset.KIND_MESH || p.kind==asset.KIND_SKELETON: p.owner=p.earlier>=0?w.earlier[p.earlier].owner:w.owner
-        case p.kind==asset.KIND_ANIMATION: p.owner=p.earlier>=0?w.earlier[p.earlier].owner:{}
+        switch p.kind {
+        case asset.KIND_MESH,asset.KIND_SKELETON: p.owner=p.decided && !p.part?{}:w.owner
+        case asset.KIND_ANIMATION: p.owner=p.decided && p.part?w.owner:{}
         }
     }
     for &material,m in model.materials {
         p:=&parts[first_material+m]
         switch {
-        case p.shared>=0:
-            reasons[m]=fmt.tprintf("%s, of the project, has its textures",w.earlier[p.shared].path)
         case w.owner=={}:
             p.owner,reasons[m]={},"the model has no prefab"
         case mode==.All:
             p.owner,reasons[m]=w.owner,"the import makes every material a part"
         case mode==.None:
             p.owner,reasons[m]={},"the import makes no material a part"
-        case p.earlier>=0:
-            p.owner,reasons[m]=w.earlier[p.earlier].owner,"as decided when it was first imported"
+        case p.decided:
+            p.owner,reasons[m]=p.part?w.owner:{},"as decided when it was first imported"
         case:
-            shared:=false
-            for row in material.images {
-                if row>=0 && row_part[row]>=0 && parts[row_part[row]].shared>=0 && of_another_model(w,&parts[row_part[row]]) {shared=true}
-            }
             pixels:[]u8
             width,height:int
             if row:=material.images[material_analyzed(&material)];row>=0 && row_part[row]>=0 {
                 pixels,width,height=job_pixels(&jobs[row_part[row]])
             }
-            verdict:=material_verdict(model,m,pixels,width,height,shared)
+            verdict:=material_verdict(model,m,pixels,width,height)
             p.owner,reasons[m]=verdict.part?w.owner:{},verdict.reason
         }
     }
     for job,i in jobs {
         p:=&parts[i]
         switch {
-        case p.shared>=0:
         case mode==.All: p.owner=w.owner
         case mode==.None: p.owner={}
-        case p.earlier>=0: p.owner=w.earlier[p.earlier].owner
+        case p.decided: p.owner=p.part?w.owner:{}
         case:
             users,owned:=0,0
             for material,m in model.materials {
@@ -328,53 +281,9 @@ parts_own :: proc(w:^Writer,model:^Imported_Model,jobs:[]Texture_Job,parts:[]Par
                 for row in material.images {uses||=row==job.index}
                 if !uses {continue}
                 users+=1
-                if q:=&parts[first_material+m];q.shared<0 && q.owner!={} && q.owner==w.owner {owned+=1}
+                if parts[first_material+m].owner!={} {owned+=1}
             }
             p.owner=users>0 && owned==users?w.owner:{}
-        }
-    }
-
-    for &p in parts {
-        if p.shared<0 {continue}
-        if e:=&w.earlier[p.shared];e.owner!={} && e.owner!=w.owner {earlier_unpart(w,e)}
-    }
-}
-
-// Whether the material an earlier import wrote at e got from its source what
-// this import gives: its imported layer.
-@(private="file")
-material_gave :: proc(w:^Writer,e:^Earlier,given:asset.Material_Info) -> bool {
-    file:asset.Asset
-    if asset.asset_load(&file,e.key,context.temp_allocator)!=.None {return false}
-    defer asset.asset_close(&file)
-    view,error:=asset.material_view(&file,&w.types)
-    return error==.None && view.imported!=nil && view.imported^==given
-}
-
-// What two imports use is a part of neither: e leaves the asset that owns it,
-// and so do the materials of that owner that name it, and the textures that
-// then no part of it names.
-@(private="file")
-earlier_unpart :: proc(w:^Writer,e:^Earlier) {
-    owner:=e.owner
-    if asset.file_owner_set(e.key,{})!=.None {
-        writer_warn(w,"%s is shared with %s but it could not be taken out of the asset it is a part of",e.path,w.named)
-        return
-    }
-    e.owner={}
-    append(&w.report.others,strings.clone(e.path,w.allocator))
-    writer_warn(w,"%s is shared with %s: it is no longer a part of another import",e.path,w.named)
-    for &other in w.earlier {
-        if other.owner!=owner {continue}
-        switch {
-        case e.kind==asset.KIND_TEXTURE && other.kind==asset.KIND_MATERIAL && slice.contains(other.dependencies,e.id):
-            earlier_unpart(w,&other)
-        case e.kind==asset.KIND_MATERIAL && other.kind==asset.KIND_TEXTURE && slice.contains(e.dependencies,other.id):
-            named:=false
-            for &material in w.earlier {
-                if material.kind==asset.KIND_MATERIAL && material.owner==owner && slice.contains(material.dependencies,other.id) {named=true}
-            }
-            if !named {earlier_unpart(w,&other)}
         }
     }
 }

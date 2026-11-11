@@ -25,8 +25,8 @@ serves people and agents, with no second API that replicates the functionality.
 - **Component**: a flat struct with `@(component)`; one row per entity in a `core.Table(T)`.
   It reaches the game if it is in a library.
 - **Storage**: a flat struct with `@(storage)`; one per world.
-  It is the state of a library, a queue of requests (`queue`) or events (`events`) or the loop
-  parameters. It reaches the game if it is in a library.
+  It is the state of a library, a queue of requests (`queue`), the occurrences it reports
+  (`core.Events` fields) or the loop parameters. It reaches the game if it is in a library.
 - **Library**: a package with components, storages and game functions. It reaches the game.
 - **Plugin**: libraries (`runtime/`) plus an `editor/` package with editor-only components,
   storages and functions. Only its libraries reach the game.
@@ -36,7 +36,7 @@ is libraries (`engine/*`) and an editor that is the engine's editor part.
 
 The attributes belong to the compiler (`-custom-attribute`): `component`, `storage`, `step`,
 `loops`, `stage`, `after`, `before`, `server`, `shared`, `locks`, `host`, `by_world`, `copy`,
-`swap`, `free`, `replicated`, `setting`, `single`, `description`, `queue`, `events`, `keep`,
+`swap`, `free`, `replicated`, `setting`, `single`, `description`, `queue`, `keep`,
 `persist`, `reset`, `net_message`, `from`, `reliable`, `params`. The CLI and `cook/build` pass them
 on their own; a manual build needs the flag with `build.CUSTOM_ATTRIBUTES`.
 
@@ -45,10 +45,11 @@ on their own; a manual build needs the flag with `build.CUSTOM_ATTRIBUTES`.
 `mirai generate <project>` reads the engine's libraries, the project's and those of its active
 plugins, and writes to `<project>/.mirai/gen`:
 
-- `world` packages: `game_world` (nothing from the editor), `editor_world` and, for the shipped
-  game, `shipped_world` (without the development plugins).
-- Three root packages: `editor` and `play`, which export `mirai_project_info` (it returns the
-  `core.World_Info` of their world), and `game`, the `main` of the shipped game.
+- `world` packages: `editor_world` and, for the shipped game, `shipped_world` (nothing from the
+  editor nor the development plugins).
+- Two root packages: `editor`, which exports `mirai_project_info` (it returns the
+  `core.World_Info` of its world) for the editor and the player, and `game`, the `main` of the
+  shipped game.
 
 Each `world` has:
 
@@ -139,8 +140,8 @@ The field of each type is its `snake_case` name, with the package in front if tw
 ```odin
 @(step="fixed", stage="react")
 door_move :: proc(
-    doors:core.Read(Door), states:^core.Table(Door_State),
-    transforms:^core.Table(core.Transform), requests:^Door_Requests, time:core.Time,
+    doors:^core.Table(Door), transforms:^core.Table(core.Transform),
+    requests:^Door_Requests, time:core.Time,
 ) {...}
 ```
 
@@ -162,13 +163,14 @@ door_move :: proc(
 | Parameter | Meaning |
 | --- | --- |
 | `^core.Table(C)` | Writes the table of component `C` |
-| `core.Read(C)` | Reads the table of `C` |
+| `^core.Table(C,.Read)` | Reads the table of `C` |
 | `^S` | Writes storage `S` |
 | `core.Ref(S)` | Reads storage `S` without copying it |
 | `S` | Reads a copy of storage `S`; for small ones (`Time`, `Input`, `View`) |
-| `^core.Entities` | Creates and destroys entities |
+| `core.Stamp(S)` | Asks `core.touched` whether storage `S` was written since it looked |
+| `core.Inbox(M)` | Reads the messages of the `@(net_message)` type `M` that arrived for the tick |
 | `core.Ref(core.Entities)` | Reads which entities are alive |
-| `core.Commands` | Creates entities with rows of any component |
+| `core.Commands` | Creates and destroys entities, with rows of any component |
 | `core.World_Ref` | The whole world by reflection: scenes, saving, network, editor |
 | `^host.Assets`, `^host.Frame_Extras`, `^render.Renderer`, `^audio.Mixer`, `^jobs.Job_System`, `runtime.Allocator` | A part of the application: its assets, what is added to the frame, its renderer, its mixer, its job system, its allocator |
 | `^host.App` | The application itself: its worlds, its window and views, its clock, its content |
@@ -228,8 +230,8 @@ Table :: struct($T:typeid) {
 
 - `values` and `entities` are parallel and dense, with the enabled rows first: traversing a
   component is traversing `0..<core.count(t)`.
-- `core.get(t,e)` on a `^Table` gives the row to write or `nil`; on a `Read`, the value.
-  `core.has(t,e)` answers in constant time.
+- `core.get(t,e)` gives the value and whether it is on, on either access; `core.edit(t,e)` the row
+  to write or `nil`. `core.has(t,e)` answers in constant time.
 - **Turning off without losing data.** `core.disable(t,e)`/`core.enable(t,e)` turn a component off
   and on; `core.Disabled` turns off an entity and what hangs from it, except its identity,
   transform and hierarchy. What is off keeps its values and no loop function sees it; reflection
@@ -239,19 +241,20 @@ Table :: struct($T:typeid) {
 - **Adding and removing are applied when the function ends** (`core.add`, `core.remove`,
   `core.destroy`): no traversal or pointer is invalidated inside a function.
   Created entities have a handle right away; their components appear for the next function, and
-  the same function reads and writes them where they are expected (`core.added`, `core.staged`),
+  the same function reads and writes them where they are expected (`core.staged`),
   without settling the world in between.
 - Between functions, handles are kept (`core.Entity`: index and generation), never pointers.
 
 **How a change is detected.**
 
 - Each write raises the table's `version` and the written row takes that value as its stamp
-  (`stamps`). These write: `core.get`, `core.at`, `core.free` or `core.staged` on a `^Table`,
-  `core.writable` (all rows), `core.raw_get` and `core.raw_touch` by reflection, and the `add`
-  that replaces a row.
-- Reading (`Read`, `core.row_of`, `core.raw_find`, traversing `values`) does not stamp.
+  (`stamps`). These write: `core.edit`, `core.edit_at`, `core.free` or `core.staged`, whose row
+  keeps its stamp when it settles with the bytes it had, `core.writable` (all rows),
+  `core.raw_edit` and `core.raw_touch` by reflection, and the `add` that replaces a row.
+- Reading (`core.get`, `core.row_of`, `core.raw_find`, traversing `values`) does not stamp.
 - `layout` rises when rows are added or removed or the whole table is replaced.
-  `version` and `layout` only grow, also in a table copied over.
+  `version` and `layout` only grow, also in a table copied over, except that the edits of a
+  function that wrote nothing take `version` back; a version a reader saw is never given again.
 - Whoever reads keeps what it saw in a `core.Seen` and `core.changes` gives it the rows stamped
   since then and the entities whose row stopped being enabled or was removed while off, or asks it
   to read everything if the table was replaced. It is also valid to keep the version it saw and
@@ -340,9 +343,10 @@ Numbered layers; a package only imports lower layers.
 - **4** `host`: the application (window, device, renderer, mixer, assets, content, shaders), the
   game and editor loops and the player, which does not know the network: it leaves the arguments
   it does not read to the libraries (`Launch`).
-- **5** `engine/*`: the engine libraries `scene`, `volume` (per-zone values: where they apply, how
-  they combine, and wind), `render`, `audio`, `gui`, `input` (devices, actions, seats, driving and
-  `Move_Input`), `camera` (each seat's camera and the game view), `save`.
+- **5** `engine/*`: the engine libraries `scene`, `volume` (the regions of the world, the per-zone
+  values in them, how they combine, and wind), `render`, `audio`, `gui`, `input` (devices,
+  actions, seats, driving and `Move_Input`), `camera` (each seat's camera and the game view),
+  `save`.
 - **6** `cook/*`: engine-time; world generator and project build, `cook/cache` (what is built,
   stored by what makes it), `cook/compressor/lz` (the optimal levels of the LZ encoder, which only
   a cook writes with), textures (with the encoders `cook/compressor/texture`, of BC1 to BC7, and
@@ -353,12 +357,14 @@ Numbered layers; a package only imports lower layers.
   project's plugins that come from git, and the catalog). The importers are `cook/import` (core,
   no formats), one package per format (`cook/import/obj`, `gltf`, `usd`, `fbx`, which reads with
   the C library of `third_party/ufbx`) and `cook/import/sources` (the table of formats and
-  `import_source`, on top of `cook/prefab`). `cook/author` is what an interface, a scene or a
-  prefab is authored with as a nested document, between its text and the file of the asset, on
+  `import_source`, on top of `cook/prefab`). `cook/author` is what an interface or a scene
+  is authored with as a nested document, between its text and the file of the asset, on
   top of `asset`, `ui`, `core`, `host` and `engine/*`: the editor's `ui.*` methods and `mirai ui`
   and `mirai scene` go through it, and the presets an entity is made from are there.
 - **6** `editor` and `editor/*`: engine-time; the editor, the JSON-RPC and MCP API,
   collaboration, prefabs and AI, whose chat search uses the C library of `third_party/sqlite`.
+  `editor/kit` holds the widgets only the editor and its plugins use and reads its theme, a style
+  file of the kind a game's interfaces use, so `ui` is what a game contains.
 - **7** `plugins/<name>`: first-party plugins, imported as `plugins:<name>/runtime` and
   `plugins:<name>/editor`. What only some games use is a plugin and adds nothing to the core, so
   physics, game networking and player spawning are plugins too. A plugin imports the layers below

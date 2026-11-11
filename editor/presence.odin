@@ -107,14 +107,11 @@ presence_prepare :: proc(s:^Session,figure:^Presence,eyes:[3]f32,yaw:f32,color:u
     id,_,_,loaded:=presence_mesh(a)
     if !loaded {return false}
     linear:=mm.srgb_to_linear([3]f32{f32(color[0])/255,f32(color[1])/255,f32(color[2])/255})
-    accent:=erender.Material_Override{count=u32(len(PRESENCE_COLOR_SLOTS)+1)}
-    for slot,i in PRESENCE_COLOR_SLOTS {
-        accent.slots[i],accent.names[i],accent.values[i]=slot,base.name_hash("base_color"),{linear.x,linear.y,linear.z,1}
-    }
-    star:=len(PRESENCE_COLOR_SLOTS)
-    accent.slots[star],accent.names[star],accent.values[star]=PRESENCE_STARS_SLOT,base.name_hash("emission"),{linear.x,linear.y,linear.z,1}
+    accent:=erender.MATERIAL_VALUES_DEFAULT
+    for slot in PRESENCE_COLOR_SLOTS {erender.material_value(&accent,"base_color",{linear.x,linear.y,linear.z,1},int(slot))}
+    erender.material_value(&accent,"emission",{linear.x,linear.y,linear.z,1},int(PRESENCE_STARS_SLOT))
     place:=mm.Transform{position=eyes,rotation=mm.quat_axis_angle({0,1,0},yaw),scale=1}
-    instance,ok:=erender.mesh_instance(a,{mesh=id},mm.transform_matrix(place),erender.TINT_DEFAULT,accent)
+    instance,ok:=erender.mesh_instance(a,{mesh=id},mm.transform_matrix(place),accent)
     if !ok {return false}
     instance.copy_owner,instance.copy_variant=PRESENCE_OWNER,variant
     instance.highlight=level
@@ -170,9 +167,9 @@ presence_name_draw :: proc(s:^Session,glyph:ui.Rect,name:string,color:ui.Color) 
     ctx:=s.gui.ctx
     width:=ui.text_width(&ctx.font,name,PRESENCE_NAME,ui.FONT_SEMIBOLD)
     plate:=ui.Rect{glyph.x+glyph.w*0.5-width*0.5-7,glyph.y+glyph.h+3,width+14,PRESENCE_NAME+7}
-    ui.draw_rounded(ctx,plate,plate.h*0.5,ui.color_alpha(ctx.theme.panel,215))
+    ui.draw_rounded(ctx,plate,plate.h*0.5,ui.color_alpha(ui.tone(ctx,"panel"),215))
     ui.draw_rounded_stroke(ctx,plate,plate.h*0.5,1,ui.color_alpha(color,150))
-    ui.draw_text(ctx,name,plate.x+7,plate.y+3,PRESENCE_NAME,ctx.theme.text,ui.FONT_SEMIBOLD)
+    ui.draw_text(ctx,name,plate.x+7,plate.y+3,PRESENCE_NAME,ui.tone(ctx,"text"),ui.FONT_SEMIBOLD)
 }
 
 // The glyph of a figure over its head: a circle of its color, faint inside
@@ -186,7 +183,7 @@ presence_disc_draw :: proc(s:^Session,rect:ui.Rect,color:ui.Color) {
     ctx:=s.gui.ctx
     center:=ui.rect_center(rect)
     radius:=rect.w*0.5
-    ui.draw_circle(ctx,center,radius,ui.color_alpha(ctx.theme.panel,235))
+    ui.draw_circle(ctx,center,radius,ui.color_alpha(ui.tone(ctx,"panel"),235))
     ui.draw_circle(ctx,center,radius,ui.color_alpha(color,PRESENCE_GLYPH_FILL))
     ui.draw_ring(ctx,center,radius,2.2,color)
 }
@@ -195,7 +192,7 @@ presence_disc_draw :: proc(s:^Session,rect:ui.Rect,color:ui.Color) {
 presence_icon_draw :: proc(s:^Session,rect:ui.Rect,icon:ui.Icon,color:ui.Color) {
     presence_disc_draw(s,rect,color)
     inset:=rect.w*0.2
-    ui.draw_icon(s.gui.ctx,icon,{rect.x+inset,rect.y+inset,rect.w-2*inset,rect.h-2*inset},s.gui.ctx.theme.text)
+    ui.draw_icon(s.gui.ctx,icon,{rect.x+inset,rect.y+inset,rect.w-2*inset,rect.h-2*inset},ui.tone(s.gui.ctx,"text"))
 }
 
 @(private)
@@ -204,6 +201,6 @@ presence_initial_draw :: proc(s:^Session,rect:ui.Rect,name:string,color:ui.Color
     ctx:=s.gui.ctx
     center:=ui.rect_center(rect)
     initial:=strings.to_upper(name[:min(len(name),1)] if name!="" else "?",context.temp_allocator)
-    size:=ctx.theme.font
-    ui.draw_text(ctx,initial,center.x-ui.text_width(&ctx.font,initial,size,ui.FONT_SEMIBOLD)*0.5,center.y-size*0.62,size,ctx.theme.text,ui.FONT_SEMIBOLD)
+    size:=ui.metric(ctx,"font")
+    ui.draw_text(ctx,initial,center.x-ui.text_width(&ctx.font,initial,size,ui.FONT_SEMIBOLD)*0.5,center.y-size*0.62,size,ui.tone(ctx,"text"),ui.FONT_SEMIBOLD)
 }

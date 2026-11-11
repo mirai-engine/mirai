@@ -57,6 +57,12 @@ Each view is recorded with an explicit `Pass` (`render/frame.odin`) with its `Vi
 and constants: no pass reads targets or camera from the renderer. The targets of a technique are
 created the first time a view uses it (`ensure_*_targets`).
 
+The targets whose contents live within the frame of a view (`targets_frame`: G-buffer, direct
+light, display, rays of the frame, contact, the stack's pair) are shared by the views of one size:
+views are recorded one after another and each writes them before it reads them. Nothing reads
+them once its view is recorded; what outlives it (histories, LDR, coverage, selection mask) is
+the view's own.
+
 ## Cameras and layers
 
 `Camera` describes the projection (perspective, orthographic or a custom matrix), its off-center
@@ -92,7 +98,7 @@ Rules:
   current and the previous camera (`view_depth`, `previous_depth`).
 - `frame.footprint`: width of a pixel at depth 0 and its growth per unit of depth; texture LOD,
   ray cones and bias come from it.
-- **Clip plane.** A view with `clip_plane` uses the `clip` variants of the G-buffer
+- **Clip plane.** A view with `clip_plane` uses the `clip` variant of the G-buffer vertex stage
   (`SV_ClipDistance`), which exist with `Features.clip_distance`; the cull uses it as the sixth
   frustum plane.
 - **Layers.** `Instance_Desc.layers` (16 bits; 0: only the first) says in which layers an instance
@@ -107,7 +113,7 @@ Rules:
   `Gpu_Frame.layers`, `own_hidden`. The renderer does not know what a head is: it decides by
   layers. The body still gives shadow and reflection and is seen whole in nested views (which set
   `own` to 0). `engine/render` marks the instances from `View_Bodies`, and a replacement of an
-  entity's mesh (`replace_source`, like the skinned copy) takes its `Layers` and its owner.
+  entity's mesh (`replace_source`) takes its `Layers` and its owner.
 - **The part of a skinned mesh.** A pose with a part has another copy of its vertices, deformed
   with the palette that collapses the part into its bone, in the layers of its mesh. A view that
   does not draw those layers rasterizes that copy; the rays use the whole pose
@@ -175,7 +181,7 @@ discarding them. Zero: there was none.
      hardware depth with that of the opening.
   3. For each nested view: cull with its camera; a second depth buffer (the farthest where the mask
      named it, the nearest elsewhere, scissor in `Nested_View.rect`); G-buffer with the `nested`
-     variants, which write negated depth and index.
+     constant, which writes negated depth and index.
 - **Opening.** `Nested_View.opening` is the plane of the face through which the nested view is seen.
   What is drawn without history (lines, panels) stays in front of a nested pixel only if it is in
   front of that plane; without a plane it is compared with the distance of what the pixel shows.
@@ -202,6 +208,11 @@ in the declared order. Each renderer stage (`Render_Stage`) declares what it rea
 - **Image.** `Output` finishes the last image written: an own pass that writes `Taa` takes the
   place of `Resolve`, like an upscaler, and one that writes `Display` returns to the unresolved
   image.
+- **Given light.** An own pass that writes `Direct` takes the place of `Direct`; one that writes
+  `Gi`, of `Indirect` (both is an error): `Gi` is then the diffuse indirect light itself, which the
+  composite takes instead of the probe volume's (`FRAME_FLAG_GI_GIVEN`), and it keeps what the pass
+  left the frame before. The references of the tests are such passes
+  ([indirect reference](gi.md#indirect-reference)).
 - **Request.** A pipeline is requested in every frame that uses it; the renderer compiles it the
   first time, identifies it by a hash of the description (including `record` and `user`: a project
   reload gives another) and keeps up to `RENDER_PIPELINE_CAPACITY` (16); one that no recent frame
@@ -339,12 +350,12 @@ frame and the current one:
 - **`Lit`**: each view, after composite and before the `Blend` stage and TAA, except in a view with
   an inspection mode. It dispatches over the lit opaque image, which `pass_image_bind(pass, slot)`
   binds to read and write (`rgba16f`, render units before exposure), and reads the G-buffer with
-  `pass_surface_read`, also the direct light already in the image (`Direct`). It does not change
-  `Hdr`. With glass in view it runs twice, like `Blend`: behind the nearest layer (`glass`
-  `Behind`), with the layers already rasterized and before the glass reads what is behind it, and
-  in front (`Front`), over the lit glass; without glass, once (`All`). `.Glass_Depth` gives the
-  layer: a medium applies its share of the path on each side, and what only changes opaque surfaces
-  does nothing in front. The [fog](../../mirai-plugins/references/render-plugins.md#fog) and the
+  `pass_surface_read`, also the direct light already in the image (`Direct`). With glass in view
+  it runs twice, like `Blend`: behind the nearest layer (`glass` `Behind`), with the layers
+  already rasterized and before the glass reads what is behind it, and in front (`Front`), over
+  the lit glass; without glass, once (`All`). `.Glass_Depth` gives the layer: a medium applies its
+  share of the path on each side, and what only changes opaque surfaces does nothing in front.
+  The [fog](../../mirai-plugins/references/render-plugins.md#fog) and the
   [water](../../mirai-world/references/water.md) caustics use it.
 - **`Blend`**: each view, over the lit image before TAA, except in a view with an inspection mode.
   With glass in view it runs twice: behind the nearest layer, after its raster and before the glass
@@ -392,14 +403,17 @@ frame and the current one:
   the renderer's scene: it lasts the frame, it is not the instance's identity. From
   `frame.instance_count` it is an instance of a [batch](scene.md#instance-batches); `scene_instance`
   reads any.
-- `instance_values_set(renderer, index, values)` gives four numbers to an instance of the
-  renderer (by its index, that of `instance_object`), which the shaders read with
-  `instance_values(instance)` of `scene.slang`: the instance's row carries them, they continue
-  while the instance keeps its identity and they change neither its light nor its rays.
-- `instance_wet_set(renderer, index, wet)` says how wet an instance of the renderer is, from 0
-  to 1, with the same rules of identity, light and rays; every material applies it
+- `instance_wet_set(renderer, index, wet)` says how wet an instance of the renderer is (by its
+  index, that of `instance_object`), from 0 to 1: it continues while the instance keeps its
+  identity and changes neither its light nor its rays; every material applies it
   ([wet](materials.md#evaluation)). It has a single writer, the
   [water](../../mirai-world/references/water.md#what-physics-shows) plugin.
+- `colors_load(renderer, colors)` puts one color per vertex of a mesh, by index in the mesh
+  (cluster order, every level), in the vertex pool, and `instance_colors_set(renderer, index,
+  colors)` (the index of `instance_of`) makes an instance show them in place of the mesh's, at
+  every level and in rays, while it keeps its identity and a mesh of as many vertices; other
+  instances of the mesh keep theirs. Its single writer is the
+  [paint](../../mirai-plugins/references/plugins.md#paint) plugin.
 - `pass_scissor` limits the pixels (without size: the whole view); `pass_draw` and `pass_dispatch`
   execute. After a stage the renderer binds the scene tables again.
 - `pass_timestamp(pass, name)`: the GPU time of what the pass records from there counts under that
@@ -421,9 +435,16 @@ frame and the current one:
   - the renderer creates it at the first request (up to `EXTENSION_TEXTURE_CAPACITY` = 8 per view),
     keeps it while the view's passes request it every frame and frees it after a frame of the view
     without requesting it, or with the view;
-  - `pass_texture_sample(pass, slot, desc, previous)` binds it so that the draws of the next pass
-    read what the earlier dispatches wrote: it goes before `pass_surface_begin` or
-    `pass_mask_begin`, which no longer admit barriers.
+  - `pass_texture_sample(pass, slot, desc, previous)` binds it for the dispatches or draws that
+    read it.
+    `pass_volume_sample(pass, slot, name)` binds a volume another extension of the view asked
+    for, or a stand-in.
+- **The media of a view** (`engine/render/media.odin`, `shaders/include/media_grid.slang`): one
+  volume along the frustum, in the cells of `media_grid`, holding from the eye to each cell what
+  the media scatter towards the eye and let through. The plugin that has media writes it in the
+  `Lit` stage as `MEDIA_TEXTURE` ([fog](../../mirai-plugins/references/render-plugins.md#fog));
+  what is blended later binds it with `pass_media` before its pass and calls `media_over` at its
+  place, so it goes behind the same haze as the opaque scene.
 - **Buffers of a world.** `pass_buffer(pass, slot, Buffer_Desc{name, size})` binds in `SLOT_PASS0 +
   slot` a buffer that the renderer keeps for the extension under that name and the pass's world,
   until it releases it (`buffer_release(renderer, world, name)`, in the world's `release`) or the
@@ -433,9 +454,7 @@ frame and the current one:
   - a world that is not drawn keeps its own: its state waits, still, for its next frame;
   - `pass_buffer_write` copies rows to a part, through frame memory, and `pass_buffer_fill` fills it
     with a value; both outside a draw pass;
-  - `pass_buffer_ready(pass, desc, indirect)` makes readable what the dispatches wrote for the draws
-    of the next pass, or as their indirect arguments: it goes before `pass_gbuffer_begin` or
-    `pass_blend_begin`, which do not admit barriers;
+  - `pass_buffer_held(pass, desc)` says whether the world holds the buffer with that size;
   - `pass_dispatch_indirect` and `pass_draw_indexed_indirect` take their arguments from a buffer;
     `pass_indices(pass, .Scene)` binds the scene indices (`mesh_draw_range` gives those of a mesh)
     and `.Quad`, the six of a quad.
@@ -475,11 +494,11 @@ frame and the current one:
     writing it);
   - for `Geometry`, `Simulate`, `Lit`, `Post`, `Custom` and `Inspect`, and for `Surface` with
     `compute`, that of `<shader>.comp`. `Gbuffer` takes `pass_gbuffer_pipeline`. A stage that traces
-    declares the `hw`, `color` and `color_hw` variants (`//! variant`, like
-    `direct_samples.comp`) and receives that of the rays the renderer traces: by hardware, and
-    through the colored-shadow glass filters (`colored_shadows` and some blend instance). Without
-    the variant, the stage itself: one that traces without `hw` does not see the scene with ray
-    queries.
+    declares the `hw` variant and the `color` constant (`//! variant`, `//! constant`, like
+    `direct_samples.comp`) and receives the pipeline of the rays the renderer traces: by hardware,
+    and through the colored-shadow glass filters (`colored_shadows` and some blend instance).
+    Without the variant, the stage itself: one that traces without `hw` does not see the scene
+    with ray queries.
   - with `program`, that of a graphics stage with the fragment of that Surface program, if the stage
     marks it `//! per surface program`; that of the stage without it while it is not made.
 - The renderer creates the pipeline at the first request, keeps it (up to `STAGE_PIPELINE_CAPACITY`

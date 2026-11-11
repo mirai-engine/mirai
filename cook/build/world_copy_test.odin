@@ -25,7 +25,7 @@ Owner :: struct {}
 Id :: struct {value:u64}
 @(storage,copy=false,free="local_free")
 Local :: struct {socket:rawptr}
-@(storage,copy="state_copy",copy_kept="state_copy_kept",swap="state_swap")
+@(storage,copy="state_copy",copy_kept="state_copy_kept",swap="state_swap",diff="state_diff")
 State :: struct {value:i32}
 @(storage)
 Plain :: struct {values:[512]f32}
@@ -62,8 +62,9 @@ Both :: struct {plain:^Plain,state:Ref(State)}
         testing.expect(t,strings.contains(text,"copy_state :: proc(a,b:rawptr) -> bool {return p_core.state_copy(cast(^p_core.State)a,cast(^p_core.State)b)}"),text)
         testing.expect(t,strings.contains(text,"copy_kept_state :: proc(a,b:rawptr) -> bool {return p_core.state_copy_kept(cast(^p_core.State)a,cast(^p_core.State)b)}"))
         testing.expect(t,strings.contains(text,"swap_state :: proc(a,b:rawptr) {p_core.state_swap(cast(^p_core.State)a,cast(^p_core.State)b)}"))
+        testing.expect(t,strings.contains(text,"diff_state :: proc(a,b:rawptr,buf:[]byte) -> string {return p_core.state_diff(cast(^p_core.State)a,cast(^p_core.State)b,buf)}"))
         testing.expect(t,strings.contains(text,"free_local :: proc(value:rawptr) {p_core.local_free(cast(^p_core.Local)value)}"))
-        testing.expect(t,strings.contains(text,"offset_of(World,state),.World,.None,nil,false,nil,false,false,\"\",false,false,{copy=copy_state,copy_kept=copy_kept_state,swap=swap_state},false}"),text)
+        testing.expect(t,strings.contains(text,"offset_of(World,state),.World,.None,nil,false,nil,false,false,\"\",false,false,{copy=copy_state,copy_kept=copy_kept_state,swap=swap_state,diff=diff_state},false}"),text)
         testing.expect(t,strings.contains(text,"offset_of(World,plain),.World,.None,nil,false,nil,false,false,\"\",false,false,{},false}"))
         // What says copy=false is local: no copy or swap of the World touches it.
         testing.expect(t,strings.contains(text,"offset_of(World,local),.World,.None,nil,false,nil,false,false,\"\",false,true,{free=free_local},false}"))

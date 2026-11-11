@@ -65,11 +65,20 @@ Mirai_Surface_Context fragment_instance(Mirai_Surface_Context ctx, Raster_Input 
 #endif
 }
 
+// The material of a fragment, as its instance shows it.
+Material fragment_material(Raster_Input input) {
+#ifdef MIRAI_RASTER_STUDIO
+    return material_row(input.in_material);
+#else
+    return material_row(input.in_material, material_values_of(input.in_instance));
+#endif
+}
+
 // Coverage for object masks. Opaque geometry needs no texture fetch; masked
 // surfaces use the same alpha/cutoff as the scene, and empty blend fragments
 // contribute no selection silhouette.
 bool fragment_mask_covers(Raster_Input input, float mip_bias) {
-    Material material = material_row(input.in_material);
+    Material material = fragment_material(input);
     if (material.alpha_mode == ALPHA_OPAQUE) return true;
     float alpha;
     if (material.program_id == 0u) {
@@ -88,7 +97,7 @@ bool behind_layer(float depth, float layer) { return layer > 0.0 && depth > laye
 // Whether the fragment is a blended surface. The back faces of a solid are
 // not: a ray leaves the solid there, and tracing finds where.
 bool fragment_blended(Raster_Input input, bool front_facing) {
-    Material m = material_row(input.in_material);
+    Material m = fragment_material(input);
     if (m.alpha_mode != ALPHA_BLEND) return false;
     return !material_solid(m) || front_facing != ((input.in_flags & RASTER_FLAG_MIRRORED) != 0u);
 }
@@ -138,7 +147,7 @@ Mirai_Surface_Context material_context_over(Mirai_Surface_Context ctx, float opa
 Fragment fragment_evaluate(Raster_Input input, float opaque) {
     Fragment f;
     f.to_camera = to_eye(input.in_world);
-    f.material = material_row(input.in_material);
+    f.material = fragment_material(input);
     float3 n;
     Mirai_Surface_Context ctx = material_context_over(fragment_context(input, f.material, f.to_camera, n), opaque);
     f.values = material_sample(f.material, ctx, input.in_color, input.in_emission, n);

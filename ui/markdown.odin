@@ -5,11 +5,12 @@ import "core:strings"
 
 // Markdown laid out in a width, as the answers of an agent: paragraphs,
 // headings, lists, quotes, fenced code and rules, with bold, code, links and
-// pills inline. The text is parsed while it is laid out, line by line into
-// fixed buffers: nothing is kept and nothing is allocated, and what is built
-// points into the text, which must last until the frame is drawn.
-// markdown_height walks the same procedures without building, so it gives
-// the height markdown builds.
+// pills inline. The text is parsed line by line and nothing of it is kept: each
+// paragraph and each heading is one text (text.odin) whose spans are its
+// words, its code, its links and its pills, which the layout breaks into
+// lines; each line of fenced code is a text that breaks at no space and is
+// cut where its lines end. Its height is the one the layout gives what it
+// builds.
 
 Markdown_Link :: struct {
     label:string,   // what it shows; empty: the text of the link
@@ -20,7 +21,7 @@ Markdown_Link :: struct {
     icon:Icon,      // before the label of a pill
     button:bool,    // a pill that does something: the fill of the accent
 }
-// Called while text is measured and built, with the same answer for the same target within a frame.
+// Called while text is built, with the same answer for the same target within a frame.
 Markdown_Resolve :: #type proc(data:rawptr,target,text:string,buffer:[]u8) -> Markdown_Link
 Markdown_Style :: struct {
     size:f32,                 // of the body; 0: theme.font_small
@@ -38,19 +39,10 @@ MARKDOWN_BAR :: f32(2)             // width of the rule left of a quote
 MARKDOWN_CODE_LINE :: f32(1.5)     // line of code, in sizes
 MARKDOWN_HEADING_LINE :: f32(1.35) // line of a heading, in sizes
 
-// Height of text as markdown lays it out in width, without building it.
-markdown_height :: proc(ctx:^Context,text:string,width:f32,style:Markdown_Style={}) -> f32 {
-    m:Md
-    md_init(&m,ctx,width,style)
-    md_walk(&m,text)
-    return m.height
-}
-
 // Builds text laid out in width. Returns the target of the link clicked this frame, or "".
 markdown :: proc(ctx:^Context,id:Id,text:string,width:f32,style:Markdown_Style={}) -> (clicked:string) {
     m:Md
     md_init(&m,ctx,width,style)
-    m.build=true
     box_begin(ctx,{id=id,width=fixed(m.width),height=FIT,direction=.Column})
     id_push(ctx,id)
     md_walk(&m,text)
@@ -68,20 +60,6 @@ markdown :: proc(ctx:^Context,id:Id,text:string,width:f32,style:Markdown_Style={
 }
 
 @(private="file")
-Md_Kind :: enum u8 {Text,Code,Link,Pill}
-// What the pieces of a run are drawn with.
-@(private="file")
-Md_Run :: struct {
-    target:string,  // of a link or a pill
-    kind:Md_Kind,
-    link:u16,       // the link it is part of, plus one
-    live,selected,button:bool,
-    icon:Icon,
-    color:Color,
-}
-@(private="file")
-Md_Piece :: Flow_Piece(Md_Run)
-@(private="file")
 Md_Block :: enum u8 {Paragraph,Heading,Code,Rule}
 @(private="file")
 Md_Line_Kind :: enum u8 {Text,Fence,Heading,Rule,Item}
@@ -92,17 +70,15 @@ Md :: struct {
     ctx:^Context,
     resolve:Markdown_Resolve,
     data:rawptr,
-    build:bool,
     clicked:string,
     copied:int,       // the code block whose copy button was clicked, plus one
-    collect:int,      // the code block whose text goes to code, plus one
+    collect:int,      // the code block whose text goes to code, plus one: nothing is built
     code:^[dynamic]u8,
     copy_lines:int,
     body:f32,
     color:Color,
     width:f32,
-    height:f32,       // of the blocks so far
-    blocks,codes,widgets,links:int,
+    blocks,codes,widgets:int,
     last_quote,last_depth:int,
     // The block being laid out.
     open:bool,
@@ -113,20 +89,18 @@ Md :: struct {
     size:f32,
     font:u8,
     text_color:Color,
-    lines:int,
-    flow:Flow(Md_Run), // the line being filled
+    lines:int,        // of a block of code, as its source has them
+    texting:bool,     // the text of its paragraph or heading is begun
     bold,em:int,      // where the ** and the * that close the open ones are on their line; -1: none
     labels:[MARKDOWN_LABELS]u8,labels_used:int,
 }
 
 @(private="file")
 md_init :: proc(m:^Md,ctx:^Context,width:f32,style:Markdown_Style) {
-    th:=&ctx.theme
     m.ctx,m.resolve,m.data,m.width=ctx,style.resolve,style.data,max(width,1)
-    m.body=style.size if style.size>0 else th.font_small
-    m.color=style.color if style.color!={} else th.text_body
+    m.body=style.size if style.size>0 else metric(ctx,"font_small")
+    m.color=style.color if style.color!={} else tone(ctx,"text_body")
     m.bold,m.em=-1,-1
-    m.flow.cut=true
 }
 
 // A face of the defaults, or the first font when the context has fonts of its own.
@@ -183,7 +157,7 @@ md_walk :: proc(m:^Md,text:string) {
         }
         // A line of text goes on with the paragraph before it, also out of its quote.
         if kind==.Text && m.open && m.block==.Paragraph && !blank && q<=m.quote {
-            flow_space(&m.flow,text_width(&m.ctx.font," ",m.size,int(m.font)))
+            text_space(m.ctx)
             md_inline(m,strings.trim_space(content))
             continue
         }
@@ -229,7 +203,7 @@ md_walk :: proc(m:^Md,text:string) {
 
 @(private="file")
 md_open :: proc(m:^Md,block:Md_Block,level,quote,depth:int,marker:string,blank:bool) {
-    ctx:=m.ctx;th:=&ctx.theme
+    ctx:=m.ctx
     s:=m.body
     gap:f32
     if m.blocks>0 {
@@ -240,13 +214,13 @@ md_open :: proc(m:^Md,block:Md_Block,level,quote,depth:int,marker:string,blank:b
     // The rules of the quotes the block before was in go on through the gap.
     continued:=min(quote,m.last_quote) if m.blocks>0 else 0
     m.block,m.quote,m.depth,m.open=block,quote,depth,true
-    m.size,m.font,m.text_color=s,md_face(m,FONT_REGULAR),th.text_muted if quote>0 else m.color
+    m.size,m.font,m.text_color=s,md_face(m,FONT_REGULAR),tone(ctx,"text_muted") if quote>0 else m.color
     m.line=math.floor(s*PARAGRAPH_LINE)
     pad:=math.floor(s*2/3)
     switch block {
     case .Heading:
         m.size=s+(5 if level==1 else 3 if level==2 else 1)
-        m.font,m.text_color=md_face(m,FONT_SEMIBOLD),th.text
+        m.font,m.text_color=md_face(m,FONT_SEMIBOLD),tone(ctx,"text")
         m.line=math.floor(m.size*MARKDOWN_HEADING_LINE)
     case .Code:
         m.size=max(s-1,1)
@@ -259,16 +233,14 @@ md_open :: proc(m:^Md,block:Md_Block,level,quote,depth:int,marker:string,blank:b
     outer:=m.width-f32(quote)*quote_width
     m.room=max(outer-f32(depth)*list_width-(2*pad if block==.Code else 0),1)
     m.lines,m.labels_used=0,0
-    m.flow.count,m.flow.used,m.flow.ready,m.flow.glued,m.flow.width=0,0,0,false,m.room
-    m.height+=gap
     m.blocks+=1
     m.last_quote,m.last_depth=quote,depth
-    if !m.build {return}
+    if m.collect>0 {return}
     box_begin(ctx,{width=fixed(m.width),height=FIT})
     for k in 0..<quote {
         box_begin(ctx,{width=fixed(quote_width),height=GROW,direction=.Column})
         if k>=continued && gap>0 {spacer(ctx,MARKDOWN_BAR,gap)}
-        element_leaf(ctx,{layout={width=fixed(MARKDOWN_BAR),height=GROW},custom=paint_add(ctx,{kind=.Rect,fill=th.border})})
+        element_leaf(ctx,{layout={width=fixed(MARKDOWN_BAR),height=GROW},custom=paint_add(ctx,{kind=.Rect,fill=tone(ctx,"border")})})
         box_end(ctx,{})
     }
     box_begin(ctx,{width=fixed(outer),height=FIT,direction=.Column,padding={0,gap,0,0}})
@@ -276,18 +248,20 @@ md_open :: proc(m:^Md,block:Md_Block,level,quote,depth:int,marker:string,blank:b
         box_begin(ctx,{width=fixed(outer),height=FIT})
         if depth>1 {spacer(ctx,f32(depth-1)*list_width,0)}
         if marker!="" {
-            paint:=paint_add(ctx,{kind=.Text,text=marker,text_color=th.text_muted,size=s,center=true,style={font=md_face(m,FONT_REGULAR)}})
-            element_leaf(ctx,{layout={width=fixed(list_width-math.floor(s/4)),height=fixed(math.floor(s*PARAGRAPH_LINE))},custom=paint})
+            text(ctx,marker,{font=md_face(m,FONT_REGULAR),size=s,color=tone(ctx,"text_muted"),align_x=.Center,align_y=.Center},fixed(list_width-math.floor(s/4)),fixed(math.floor(s*PARAGRAPH_LINE)))
             spacer(ctx,math.floor(s/4),0)
         } else {
             spacer(ctx,list_width,0)
         }
     }
     if block==.Code {
-        box_begin(ctx,{id=id(ctx,"code",m.codes),track=true,width=fixed(m.room+2*pad),height=FIT,direction=.Stack,fill=th.well,radius=th.radius_popup})
+        box_begin(ctx,{id=id(ctx,"code",m.codes),track=true,width=fixed(m.room+2*pad),height=FIT,direction=.Stack,fill=tone(ctx,"well"),radius=metric(ctx,"radius_popup")})
         box_begin(ctx,{width=fixed(m.room+2*pad),height=FIT,direction=.Column,padding=padding_all(pad)})
     } else {
         box_begin(ctx,{width=fixed(m.room),height=FIT,direction=.Column})
+    }
+    if block==.Paragraph || block==.Heading {
+        m.texting=text_begin(ctx,{font=m.font,size=m.size,color=m.text_color,wrap=.Words},m.line)
     }
 }
 
@@ -295,18 +269,16 @@ md_open :: proc(m:^Md,block:Md_Block,level,quote,depth:int,marker:string,blank:b
 md_close :: proc(m:^Md) {
     if !m.open {return}
     m.open=false
-    if m.block!=.Rule && (m.flow.count>0 || m.lines==0) {md_line(m)}
+    if m.collect>0 {return}
+    ctx:=m.ctx
     pad:=math.floor(m.body*2/3)
-    switch m.block {
-    case .Paragraph,.Heading: m.height+=f32(m.lines)*m.line
-    case .Code: m.height+=f32(m.lines)*m.line+2*pad
-    case .Rule: m.height+=m.line
-    }
-    if !m.build {return}
-    ctx:=m.ctx;th:=&ctx.theme
+    if m.texting {text_end(ctx,{width=fixed(m.room)})}
+    m.texting=false
+    // A block of code without lines keeps the height of one.
+    if m.block==.Code && m.lines==0 {spacer(ctx,m.room,m.line)}
     if m.block==.Rule {
         if box(ctx,{width=fixed(m.room),height=fixed(m.line),align_y=.Center}) {
-            element_leaf(ctx,{layout={width=fixed(m.room),height=fixed(1)},custom=paint_add(ctx,{kind=.Rect,fill=th.divider})})
+            element_leaf(ctx,{layout={width=fixed(m.room),height=fixed(1)},custom=paint_add(ctx,{kind=.Rect,fill=tone(ctx,"divider")})})
         }
     }
     box_end(ctx,{})
@@ -314,9 +286,9 @@ md_close :: proc(m:^Md) {
         // While the pointer is on the block, a button at its corner copies its code.
         copy:=id(ctx,"copy",m.codes)
         if widget_under(ctx,id(ctx,"code",m.codes)) || ctx.hot==copy || ctx.active==copy {
-            side:=min(th.row-4,m.line+2*pad-8)
+            side:=min(metric(ctx,"row")-4,m.line+2*pad-8)
             if box(ctx,{width=FIT,height=FIT,self_x=.End,self_y=.Start,padding=padding_all(4)}) {
-                if button(ctx,copy,{icon=.Copy,style=.Ghost,width=side,height=side,icon_size=min(14,side),icon_color=th.text_muted}).clicked {m.copied=m.codes}
+                if button(ctx,copy,{icon=.Copy,variant="ghost",width=side,height=side,icon_size=min(14,side),icon_color=tone(ctx,"text_muted")}).clicked {m.copied=m.codes}
             }
         }
         box_end(ctx,{})
@@ -326,8 +298,8 @@ md_close :: proc(m:^Md) {
     box_end(ctx,{})
 }
 
-// A line of a fenced code block: wrapped at characters, its tabs at every
-// four spaces.
+// A line of a fenced code block: a text that breaks at no space, cut where
+// each of its lines ends.
 @(private="file")
 md_code_line :: proc(m:^Md,line:string) {
     if m.collect>0 {
@@ -338,40 +310,26 @@ md_code_line :: proc(m:^Md,line:string) {
         }
         return
     }
-    font:=&m.ctx.font
+    ctx:=m.ctx
+    font:=&ctx.font
     f:=int(m.font)
+    m.lines+=1
+    if !text_begin(ctx,{font=m.font,size=m.size,color=m.text_color,wrap=.Words},m.line) {return}
+    // A tab is room up to the next stop of four spaces of its line.
     tab:=4*text_width(font," ",m.size,f)
-    pen:=text_pen(font,m.size,f)
-    x,run_x:=f32(0),f32(0)
+    x:f32
     start:=0
-    for c,i in line {
-        if c=='\t' {
-            md_code_run(m,line[start:i],run_x,x-run_x)
-            x=(math.floor(x/tab)+1)*tab if tab>0 else x
-            if x>m.room {md_line(m);x=0}
-            start,run_x=i+1,x
-            pen=text_pen(font,m.size,f)
-            continue
-        }
-        kern,advance:=text_pen_step(&pen,c)
-        if x+kern+advance>m.room+0.01 && x>0 {
-            md_code_run(m,line[start:i],run_x,x-run_x)
-            md_line(m)
-            x,run_x,start=0,0,i
-            pen=text_pen(font,m.size,f)
-            kern,advance=text_pen_step(&pen,c)
-        }
-        x+=kern+advance
+    for i in 0..<len(line) {
+        if line[i]!='\t' {continue}
+        run:=line[start:i]
+        text_span(ctx,run,{solid=true})
+        x+=text_width(font,run,m.size,f)
+        stop:=(math.floor(x/tab)+1)*tab if tab>0 else x
+        text_box(ctx,min(stop-x,m.room),0,{})
+        x,start=stop,i+1
     }
-    md_code_run(m,line[start:],run_x,x-run_x)
-    md_line(m)
-}
-@(private="file")
-md_code_run :: proc(m:^Md,text:string,x,width:f32) {
-    if text=="" {return}
-    if m.flow.count==FLOW_PIECES {md_line(m)}
-    m.flow.used=x
-    flow_add(&m.flow,{text=text,width=width,size=m.size,font=m.font,run={kind=.Text,color=m.text_color}})
+    text_span(ctx,line[start:],{solid=true})
+    text_end(ctx,{width=fixed(m.room)})
 }
 
 // ---------------------------------------------------------------- inlines
@@ -379,6 +337,7 @@ md_code_run :: proc(m:^Md,text:string,x,width:f32) {
 // One line of a paragraph or a heading: what closes on it opens on it.
 @(private="file")
 md_inline :: proc(m:^Md,s:string) {
+    if m.collect>0 {return}
     m.bold,m.em=-1,-1
     start,i:=0,0
     for i<len(s) {
@@ -425,20 +384,27 @@ md_inline :: proc(m:^Md,s:string) {
     md_emit(m,s[start:])
 }
 
-// A run of text in the style the line has here.
+// What the words of the line are drawn with here: nothing of their own, or the bold face.
 @(private="file")
-md_emit :: proc(m:^Md,text:string) {
-    md_words(m,text,md_face(m,FONT_SEMIBOLD) if m.bold>=0 else m.font,{kind=.Text,color=m.text_color})
+md_span :: proc(m:^Md) -> Text_Span {
+    if m.bold<0 {return {}}
+    return {font=md_face(m,FONT_SEMIBOLD),size=m.size,color=m.text_color}
 }
 
+// A run of text in the style the line has here.
 @(private="file")
-md_code :: proc(m:^Md,text:string) {
-    text:=text
-    if len(text)>=2 && text[0]==' ' && text[len(text)-1]==' ' && strings.trim_space(text)!="" {text=text[1:len(text)-1]}
-    if text=="" {return}
+md_emit :: proc(m:^Md,run:string) {
+    text_span(m.ctx,run,md_span(m))
+}
+
+// Inline code: a chip, which does not break at its spaces.
+@(private="file")
+md_code :: proc(m:^Md,code:string) {
+    code:=code
+    if len(code)>=2 && code[0]==' ' && code[len(code)-1]==' ' && strings.trim_space(code)!="" {code=code[1:len(code)-1]}
+    if code=="" {return}
     size:=max(m.size-1,1)
-    font:=md_face(m,FONT_MONO)
-    md_put(m,{text=text,width=text_width(&m.ctx.font,text,size,int(font))+2*MARKDOWN_CHIP_PAD,pad=2*MARKDOWN_CHIP_PAD,size=size,font=font,run={kind=.Code,color=m.ctx.theme.text}})
+    text_span(m.ctx,code,{font=md_face(m,FONT_MONO),size=size,color=tone(m.ctx,"text"),back=tone(m.ctx,"chip_on"),radius=metric(m.ctx,"radius_control"),pad=2*MARKDOWN_CHIP_PAD,height=min(math.floor(size*TEXT_LINE)+2,m.line)})
 }
 
 // [text](target) at i, after the text from start; returns where it ends, or 0.
@@ -447,111 +413,51 @@ md_link :: proc(m:^Md,s:string,i,start:int) -> int {
     close:=strings.index_byte(s[i+1:],']')
     if close<=0 {return 0}
     close+=i+1
-    text:=s[i+1:close]
-    if strings.index_byte(text,'[')>=0 || close+1>=len(s) || s[close+1]!='(' {return 0}
+    label:=s[i+1:close]
+    if strings.index_byte(label,'[')>=0 || close+1>=len(s) || s[close+1]!='(' {return 0}
     end:=strings.index_byte(s[close+2:],')')
     if end<0 {return 0}
     end+=close+2
     target:=strings.trim_space(s[close+2:end])
     if target=="" {return 0}
     md_emit(m,s[start:i])
-    th:=&m.ctx.theme
+    ctx:=m.ctx
     link:=Markdown_Link{live=true}
-    if m.resolve!=nil {link=m.resolve(m.data,target,text,m.labels[m.labels_used:])}
-    shown:=text
+    if m.resolve!=nil {link=m.resolve(m.data,target,label,m.labels[m.labels_used:])}
+    shown:=label
     if link.label!="" {
         shown=link.label
         // A label written in the room of the labels keeps its bytes until the block ends.
         base,at:=uintptr(raw_data(m.labels[:])),uintptr(raw_data(link.label))
         if at>=base+uintptr(m.labels_used) && at+uintptr(len(link.label))<=base+MARKDOWN_LABELS {m.labels_used=int(at-base)+len(link.label)}
     }
-    m.links+=1
-    run:=Md_Run{target=target,link=u16(m.links),live=link.live,selected=link.selected,button=link.button,icon=link.icon,color=link.color}
+    // What leads somewhere takes the pointer: lit under it, and reported when clicked.
+    widget:Id
+    lit:=false
+    if link.live {
+        m.widgets+=1
+        widget=id(ctx,"link",m.widgets)
+        lit=ctx.hot==widget
+    }
+    color:=link.color
     if link.pill {
-        run.kind=.Pill
-        if run.color=={} {run.color=th.on_accent if run.button else th.text}
-        width:=text_width(&m.ctx.font,shown,m.size,int(m.font))+2*MARKDOWN_PILL_PAD+(m.size+6 if run.icon!=.None else 0)
-        md_put(m,{text=shown,width=min(width,m.room),gap=MARKDOWN_PILL_GAP,size=m.size,font=m.font,box=true,run=run})
+        if color=={} {color=tone(ctx,"on_accent") if link.button else tone(ctx,"text")}
+        span:=Text_Span{font=m.font,size=m.size,color=color,back=color_alpha(tone(ctx,"accent"),61 if lit else 36),radius=metric(ctx,"radius_control"),pad=2*MARKDOWN_PILL_PAD,height=m.line,icon=link.icon}
+        if link.button {span.back=tone(ctx,"accent_hover") if lit else tone(ctx,"accent")}
+        if link.selected {span.edge=tone(ctx,"text")}
+        if widget==0 {
+            text_span(ctx,shown,span)
+        } else if text_link(ctx,widget,shown,span).clicked {m.clicked=target}
+        if ctx.text_open.open {text_put(ctx,{width=MARKDOWN_PILL_GAP})}
         return end+1
     }
-    run.kind=.Link
-    if run.color=={} {run.color=th.accent}
-    md_words(m,shown,md_face(m,FONT_SEMIBOLD) if m.bold>=0 else m.font,run)
+    if color=={} {color=tone(ctx,"accent")}
+    span:=Text_Span{font=md_face(m,FONT_SEMIBOLD) if m.bold>=0 else m.font,size=m.size,color=color,radius=metric(ctx,"radius_control")}
+    if lit {span.back=tone(ctx,"chip_on")}
+    if widget==0 {
+        text_span(ctx,shown,span)
+    } else if text_link(ctx,widget,shown,span).clicked {m.clicked=target}
     return end+1
-}
-
-// ---------------------------------------------------------------- words and lines
-
-// The words of a run go on the line one by one, as the layout walks them.
-@(private="file")
-md_words :: proc(m:^Md,text:string,font:u8,run:Md_Run) {
-    f:=&m.ctx.font
-    walk:=Layout_Walk{font=f,text=text,size=m.size,face=int(font),space=text_width(f," ",m.size,int(font))}
-    for {
-        word,_,more:=layout_walk(&walk)
-        if !more {break}
-        md_put(m,{text=text[word.start:][:word.length],width=word.width,size=m.size,font=font,run=run})
-    }
-}
-
-// Puts a piece on the line, after ending the lines it does not fit in.
-@(private="file")
-md_put :: proc(m:^Md,piece:Md_Piece) {
-    piece:=piece
-    for !flow_put(&m.flow,&m.ctx.font,&piece) {md_line(m)}
-}
-
-// Ends the line being filled: a row of its pieces, each in its box.
-@(private="file")
-md_line :: proc(m:^Md) {
-    line:=flow_line(&m.flow,&m.ctx.font)
-    if m.build {
-        ctx:=m.ctx
-        box_begin(ctx,{width=fixed(m.room),height=fixed(m.line),align_y=.Center})
-        x:=f32(0)
-        for &piece in line {
-            if piece.x>x+0.001 {spacer(ctx,piece.x-x,0)}
-            md_piece_build(m,&piece)
-            x=piece.x+piece.width
-        }
-        box_end(ctx,{})
-    }
-    m.lines+=1
-    flow_next(&m.flow)
-}
-
-@(private="file")
-md_piece_build :: proc(m:^Md,p:^Md_Piece) {
-    run:=&p.run
-    ctx:=m.ctx;th:=&ctx.theme
-    switch run.kind {
-    case .Text:
-        paint:=paint_add(ctx,{kind=.Text,text=p.text,text_color=run.color,size=p.size,style={font=p.font}})
-        element_leaf(ctx,{layout={width=fixed(p.width),height=fixed(m.line)},custom=paint})
-    case .Code:
-        paint:=paint_add(ctx,{kind=.Box,fill=th.chip_on,radius=th.radius_control,text=p.text,text_color=run.color,size=p.size,padding=MARKDOWN_CHIP_PAD,style={font=p.font}})
-        element_leaf(ctx,{layout={width=fixed(p.width),height=fixed(min(math.floor(p.size*TEXT_LINE)+2,m.line))},custom=paint})
-    case .Link,.Pill:
-        m.widgets+=1
-        widget:=id(ctx,"link",m.widgets)
-        it:Interaction
-        if run.live {
-            it=interact(ctx,widget)
-            if it.clicked {m.clicked=run.target}
-        }
-        lit:=it.hot && run.live
-        paint:=Paint{kind=.Box,radius=th.radius_control,text=p.text,text_color=run.color,size=p.size,style={font=p.font}}
-        if run.kind==.Pill {
-            paint.fill=color_alpha(th.accent,61 if lit else 36)
-            if run.button {paint.fill=th.accent_hover if lit else th.accent}
-            paint.padding=MARKDOWN_PILL_PAD
-            paint.icon,paint.icon_color,paint.icon_size=run.icon,run.color,p.size
-            if run.selected {paint.stroke,paint.stroke_width=th.text,1.5}
-        } else if lit {
-            paint.fill=th.chip_on
-        }
-        element_leaf(ctx,{id=widget,layout={width=fixed(p.width),height=fixed(m.line)},custom=paint_add(ctx,paint)})
-    }
 }
 
 // ---------------------------------------------------------------- lines of the text

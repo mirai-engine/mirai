@@ -43,7 +43,7 @@ test_animation :: proc(s:^Test_Animation) -> Animation_Desc {
     s.turn={{time=0,value={0,0,0,1}},{time=2,value={0,1,0,0},ease=.Quad_Out}}
     s.grow={{time=0,value={1,1,1,0}},{time=0.5,value={2,2,2,0},interpolation=.Step}}
     s.lift_tracks={{target="platform",property=.Position,keys=s.rise[:]},{target="",property=.Rotation,keys=s.turn[:]}}
-    s.lift_markers={{2,"down"},{1,"top"}}
+    s.lift_markers={{time=2,name="down"},{time=1,name="top"}}
     s.pulse_tracks={{target="lamp",property=.Scale,keys=s.grow[:]}}
     s.clips={{name="lift",tracks=s.lift_tracks[:],markers=s.lift_markers[:]},{name="pulse",tracks=s.pulse_tracks[:]}}
     return {id={0xa11,1},clips=s.clips[:]}
@@ -87,7 +87,7 @@ animation_round_trips_and_fills_a_library :: proc(t:^testing.T) {
     testing.expect_value(t,anim.clip_evaluate(&lib,tracks[0],0.5),[4]f32{0,1,0,0})
     // Markers come sorted by time and name their row.
     markers:=anim.clip_markers(&lib,1)
-    testing.expect(t,len(markers)==2 && markers[0]==anim.Marker{1,1} && markers[1]==anim.Marker{2,0})
+    testing.expect(t,len(markers)==2 && markers[0]==anim.Marker{1,1,0} && markers[1]==anim.Marker{2,0,0})
     testing.expect_value(t,animation_clips_add(view,&lib),anim.Clip(0))
 
     doc:Document
@@ -114,8 +114,8 @@ animation_refuses_what_contradicts_itself :: proc(t:^testing.T) {
     refuse(t,&types,{{name="",tracks={}}},"a clip without name")
     refuse(t,&types,{{name="a"},{name="a"}},"two clips of one name")
     refuse(t,&types,{{name="a",tracks={{property=.Position,keys=unordered[:]}}}},"keys out of order")
-    refuse(t,&types,{{name="a",markers={{-1,"m"}}}},"a marker before the start")
-    refuse(t,&types,{{name="a",markers={{0,""}}}},"a marker without name")
+    refuse(t,&types,{{name="a",markers={{time=-1,name="m"}}}},"a marker before the start")
+    refuse(t,&types,{{name="a",markers={{time=0,name=""}}}},"a marker without name")
     testing.expect_value(t,animation_document(&doc,&types,{id={1,1}}),Error.None)
     document_destroy(&doc)
 
@@ -187,7 +187,7 @@ sound_round_trips_lossless_and_as_a_file :: proc(t:^testing.T) {
     testing.expect(t,a.blob.header.kind==KIND_SOUND && .Cooked in a.blob.header.flags)
     view,error:=sound_view(&a,&types)
     testing.expect_value(t,error,Error.None)
-    testing.expect(t,view.info^==Sound_Info{2,48000,480,.Lossless,{}} && len(view.file)==0 && view.source!=nil)
+    testing.expect(t,view.info^==Sound_Info{2,48000,480,0,.Lossless,{}} && len(view.file)==0 && view.source!=nil)
     testing.expect(t,mem.compare(view.lossless,lossless)==0)
     // Stored without LZ, the coded samples are read from the file without a copy.
     testing.expect(t,uintptr(raw_data(view.lossless))>=uintptr(raw_data(a.file)) && uintptr(raw_data(view.lossless))%SOUND_BULK_ALIGNMENT==uintptr(raw_data(a.file))%SOUND_BULK_ALIGNMENT)

@@ -28,6 +28,8 @@ Clock :: struct {
     placed:bool,       // the client's tick was put where it should be since synced
     rate:f64,          // ticks per second
     lead:f64,          // ticks of input the server should have in hand
+    input_delay:f64,   // whole ticks ahead of its own the client submits its input for, by the round trip (Replication_Desc.input_delay)
+    delay_min,delay_cover,delay_predict:f64, // the bounds of the input delay, in ticks
     delay:f64,         // ticks behind the server that remote objects are shown, besides the jitter
     now:f64,           // seconds, as last given to clock_advance
     server:f64,        // estimate of the server's tick now
@@ -58,6 +60,8 @@ CLOCK_SCALE_LIMIT :: f32(64)
 clock_init :: proc(c:^Clock,h:^Host) {
     d:=&h.desc.replication
     c^={rate=f64(h.desc.tick_rate),lead=f64(d.input_lead),delay=f64(d.interpolation_delay),scale=1,margin_low=max(f64)}
+    c.delay_min,c.delay_cover,c.delay_predict=f64(d.input_delay.min)*c.rate,f64(d.input_delay.cover)*c.rate,f64(d.input_delay.predict)*c.rate
+    c.input_delay=min(math.round(c.delay_min),INPUT_DELAY_MAX)
     c.display_jump=f64(d.display_jump)*c.rate
     c.display_max=f64(d.display_dilation)
 }
@@ -72,7 +76,7 @@ clock_pace :: #force_inline proc(c:^Clock) -> f64 {
 }
 @(private)
 clock_target :: #force_inline proc(c:^Clock) -> f64 {
-    return c.server+(c.rtt*0.5+c.jitter*2)*clock_pace(c)+c.lead+c.bias
+    return c.server+(c.rtt*0.5+c.jitter*2)*clock_pace(c)+c.lead+c.bias-c.input_delay
 }
 @(private)
 clock_display_target :: #force_inline proc(c:^Clock) -> f64 {
@@ -82,6 +86,11 @@ clock_display_target :: #force_inline proc(c:^Clock) -> f64 {
 clock_sync :: proc(c:^Clock,sample:Sync_Sample) {
     c.rtt,c.jitter=sample.rtt,sample.jitter
     c.paused,c.scale=sample.paused,sample.scale>0?sample.scale:1
+    // The input delay covers the round trip up to cover, prediction the next predict, delay again the rest. It
+    // moves by whole ticks once it is a tick off, so the input stream skips or repeats a tick only then.
+    trip:=sample.rtt*c.rate
+    wanted:=min(max(min(trip,c.delay_cover),c.delay_min)+max(trip-c.delay_cover-c.delay_predict,0),INPUT_DELAY_MAX)
+    if !c.synced || abs(wanted-c.input_delay)>=1 {c.input_delay=math.round(wanted)}
     // For the moment of the last clock_advance: the next one adds the time since.
     estimate:=f64(sample.server_tick)+(sample.rtt*0.5+clamp(c.now-sample.time,-0.25,0.25))*clock_pace(c)
     if !c.synced || abs(estimate-c.server)>CLOCK_JUMP_TICKS {

@@ -22,10 +22,11 @@ game_saves :: proc(actions:inp.Frame_Input_Of(Action),saves:^save.Save_Requests,
 
 ## What a save keeps
 
-- The components of every entity that has an `Id` (scene entities). A `transient` field is not
-  stored and a component stored by an older layout migrates by field name.
-- Never a storage: what must survive is a component. Bodies, caches and voices are rebuilt by
-  their libraries from the components.
+- The components of every entity, the ones code made too. A `transient` field is not stored and a
+  component stored by an older layout migrates by field name.
+- Never a storage: what must survive is a component, the state of a run on a `core.Keep` root
+  ([below](#the-state-of-a-run)). Bodies, caches and voices are rebuilt by their libraries from the
+  components.
 - Loading replaces the world: every handle changes and events in flight name entities that are
   gone. Hold `core.Id`s, not `core.Entity`, across a load; `core.entity_of(es, id)` finds one.
 - The clock returns to the saved tick. A slot that does not load whole leaves the world as it was.
@@ -42,6 +43,26 @@ game_saves :: proc(actions:inp.Frame_Input_Of(Action),saves:^save.Save_Requests,
   `.Unavailable` a client of a network session.
 - Autosave is a project setting (`Save_Settings`): it rotates slots by time and
   when a scene replaces another.
+
+## The state of a run
+
+A score, an inventory or the lives are components on a `core.Keep` root: it passes to the scene
+that replaces this one with what hangs from it, a save keeps it and it replicates as any entity.
+The seat of a player is one (`inp.seat_of(seats,body)`); for the run of all, make one once.
+`@(storage,keep)` is for state only an interface shows, as the page of a menu.
+
+```odin
+@(component)
+Run :: struct {score:i32}
+
+@(step="fixed",server)
+game_run :: proc(runs:^core.Table(Run,.Read),commands:core.Commands) {
+    if core.count(runs)>0 {return}
+    root:=core.commands_create(commands)
+    core.commands_add(commands,root,core.Keep{})
+    core.commands_add(commands,root,Run{})
+}
+```
 
 ## Progress that is not a save
 

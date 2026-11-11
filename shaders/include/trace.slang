@@ -12,7 +12,10 @@
 #include <surface_coverage.slang>
 
 // Colored shadows filter their rays through glass; a pass can ask for the
-// same filters for rays of its own.
+// same filters for rays of its own. MIRAI_COLORED_SHADOWS and
+// MIRAI_GLASS_MEANS are constants of the stages that declare them
+// (`//! constant`): declared, the stage has what they need; true in a
+// pipeline, its rays do it.
 #if defined(MIRAI_COLORED_SHADOWS) && !defined(MIRAI_RAY_FILTERS)
 #define MIRAI_RAY_FILTERS
 #endif
@@ -153,8 +156,11 @@ float hit_alpha(Instance inst, Material m, Mesh_Triangle tri, float3 weights, fl
     float3 position = transform_point(inst.world, tri.a.position * weights.x + tri.b.position * weights.y + tri.c.position * weights.z);
     float4 vertex_color = tri.a.color * weights.x + tri.b.color * weights.y + tri.c.color * weights.z;
     Mirai_Surface_Context ctx = material_context_cone(material_context_instance(material_context(position, normal, uv, uv1, lod, true), inst, vertex_color), t * 0.004);
+    ctx.material = m.row;
     float alpha;
-    return mirai_program_alpha(m.program_id, materials[m.row].custom_params, ctx, alpha) ? alpha : MATERIAL_DEFAULT_OPACITY;
+    float4 parameters[16];
+    material_parameters(m.row, inst.material_values, parameters);
+    return mirai_program_alpha(m.program_id, parameters, ctx, alpha) ? alpha : MATERIAL_DEFAULT_OPACITY;
 }
 
 // What a ray that finds this triangle at distance t does: stop, or go through
@@ -167,11 +173,11 @@ bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, uint 
     if (blend == BLEND_MEANS && (inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u) return hit_mean(inst, t);
 #endif
     Mesh mesh = meshes[instance_mesh(inst)];
-    Material m = material_row(material_of(inst, mesh_primitive_material(mesh, primitive)));
+    Material m = material_row(material_of(inst, mesh_primitive_material(mesh, primitive)), inst.material_values);
     if (m.alpha_mode == ALPHA_BLEND) {
 #ifdef MIRAI_RAY_FILTERS
         if (blend == BLEND_FILTERS) {
-            Mesh_Triangle tri = mesh_triangle(mesh, primitive);
+            Mesh_Triangle tri = mesh_triangle(inst, mesh, primitive);
             // The ray leaves a solid where its face looks along it.
             float3 face = transform_normal(inst.world_inv, cross(tri.b.position - tri.a.position, tri.c.position - tri.a.position));
             bool exit = dot(face, ray_filter_direction) >= 0.0;
@@ -198,7 +204,7 @@ bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, uint 
         return blend == BLEND_STOPS;
     }
     if (m.alpha_mode == ALPHA_OPAQUE) return true;
-    Mesh_Triangle tri = mesh_triangle(mesh, primitive);
+    Mesh_Triangle tri = mesh_triangle(inst, mesh, primitive);
     float3 weights = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
     float3 edge1 = transform_vector(inst.world, tri.b.position - tri.a.position);
     float3 edge2 = transform_vector(inst.world, tri.c.position - tri.a.position);
@@ -301,27 +307,36 @@ float3 safe_inverse(float3 d) {
                 1.0 / (abs(d.z) > eps ? d.z : (d.z >= 0.0 ? eps : -eps)));
 }
 
-// Möller-Trumbore, double sided. Barycentrics follow the ray query convention.
+// The axes of v turned so that the largest of dir (axis kz) is the last.
+float3 ray_axes(float3 v, uint kz) { return kz == 0u ? v.yzx : (kz == 1u ? v.zxy : v); }
+
+// Watertight and double sided (Woop, Benthin and Wald 2013, as pbrt-v4 has
+// it): the corners move into a space where the ray runs along +z, and an edge
+// two triangles share gives both the same value with opposite signs, so a ray
+// through it or through a corner meets one of them. precise keeps the products
+// of the edge values unfused, or the two would round apart. Barycentrics
+// follow the ray query convention.
 bool ray_triangle(float3 origin, float3 dir, Bvh_Triangle tri, float t_min, float t_max, out float t, out float2 bary) {
     t = 0.0;
     bary = float2(0.0);
-    float3 e1 = tri.e1.xyz;
-    float3 e2 = tri.e2.xyz;
-    float3 p = cross(dir, e2);
-    float det = dot(e1, p);
-    if (abs(det) < 1e-12) return false;
-    float inv_det = 1.0 / det;
-    float3 s = origin - tri.v0;
-    float u = dot(s, p) * inv_det;
-    // Shared edges must not fall between both triangles after float rounding
-    // (notably an angled point/spot shadow through a planar quad).
-    const float edge_epsilon = 2e-7;
-    if (u < -edge_epsilon || u > 1.0 + edge_epsilon) return false;
-    float3 q = cross(s, e1);
-    float v = dot(dir, q) * inv_det;
-    if (v < -edge_epsilon || u + v > 1.0 + edge_epsilon) return false;
-    t = dot(e2, q) * inv_det;
-    bary = float2(u, v);
+    float3 m = abs(dir);
+    uint kz = m.x > m.y ? (m.x > m.z ? 0u : 2u) : (m.y > m.z ? 1u : 2u);
+    float3 d = ray_axes(dir, kz);
+    float3 shear = float3(-d.x, -d.y, 1.0) / d.z;
+    float3 a = ray_axes(tri.v0 - origin, kz);
+    float3 b = ray_axes(tri.v1.xyz - origin, kz);
+    float3 c = ray_axes(tri.v2.xyz - origin, kz);
+    a.xy += shear.xy * a.z;
+    b.xy += shear.xy * b.z;
+    c.xy += shear.xy * c.z;
+    precise float e0 = b.x * c.y - b.y * c.x;
+    precise float e1 = c.x * a.y - c.y * a.x;
+    precise float e2 = a.x * b.y - a.y * b.x;
+    if ((e0 < 0.0 || e1 < 0.0 || e2 < 0.0) && (e0 > 0.0 || e1 > 0.0 || e2 > 0.0)) return false;
+    float det = e0 + e1 + e2;
+    if (det == 0.0) return false;
+    t = (e0 * a.z + e1 * b.z + e2 * c.z) * shear.z / det;
+    bary = float2(e1, e2) / det;
     return t > t_min && t < t_max;
 }
 
@@ -550,8 +565,8 @@ struct Ray_Path {
 // glass as the mean filter of its instance (MIRAI_GLASS_MEANS): its detail
 // averages away after a diffuse bounce. Without it they go through glass.
 #ifdef MIRAI_GLASS_MEANS
-#define RAY_CROSSES (RAY_SEEN | RAY_GLASS)
-#define RAY_CROSSING BLEND_MEANS
+#define RAY_CROSSES (MIRAI_GLASS_MEANS ? (RAY_SEEN | RAY_GLASS) : RAY_SEEN)
+#define RAY_CROSSING (MIRAI_GLASS_MEANS ? BLEND_MEANS : BLEND_PASSES)
 #else
 #define RAY_CROSSES RAY_SEEN
 #define RAY_CROSSING BLEND_PASSES
@@ -572,11 +587,13 @@ Hit trace_segment(float3 from, float3 direction, float t_min, float reach, bool 
         Hit found = trace_ray_impl(from, direction, t_min, reach, any_hit, RAY_CROSSING, RAY_CROSSES);
         if (attempt == 0u) hit = found;
 #ifdef MIRAI_GLASS_MEANS
-        if (attempt == 0u && hit.instance != INVALID && ray_filter_far > hit.t) {
-            reach = hit.t;
-            continue;
+        if (MIRAI_GLASS_MEANS) {
+            if (attempt == 0u && hit.instance != INVALID && ray_filter_far > hit.t) {
+                reach = hit.t;
+                continue;
+            }
+            path.glass *= ray_filter;
         }
-        path.glass *= ray_filter;
 #endif
         break;
     }
@@ -675,17 +692,28 @@ float3 trace_transmission(float3 origin, float3 direction, float t_max, bool gat
     float gate;
     if (gated && ray_gated(origin, direction, t_max, gate)) return float3(0.0);
 #endif
-#if defined(MIRAI_COLORED_SHADOWS)
-    ray_filter = float3(1.0);
-    ray_filter_direction = direction;
-    bool blocked = trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_FILTERS, RAY_SHADOWS | RAY_GLASS).instance != INVALID;
-#ifdef MIRAI_FILTER_POINTS
-    if (blocked) filters_blocked();
+#if defined(MIRAI_COLORED_SHADOWS) || defined(MIRAI_GLASS_MEANS)
+    // One traversal in the source, whatever the constants of the pipeline make of it.
+    uint blend = BLEND_PASSES;
+    uint classes = RAY_SHADOWS;
+#ifdef MIRAI_GLASS_MEANS
+    if (MIRAI_GLASS_MEANS) {
+        blend = BLEND_MEANS;
+        classes = RAY_SHADOWS | RAY_GLASS;
+    }
 #endif
-    return blocked ? float3(0.0) : ray_filter;
-#elif defined(MIRAI_GLASS_MEANS)
+#ifdef MIRAI_COLORED_SHADOWS
+    if (MIRAI_COLORED_SHADOWS) {
+        blend = BLEND_FILTERS;
+        classes = RAY_SHADOWS | RAY_GLASS;
+        ray_filter_direction = direction;
+    }
+#endif
     ray_filter = float3(1.0);
-    bool blocked = trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_MEANS, RAY_SHADOWS | RAY_GLASS).instance != INVALID;
+    bool blocked = trace_ray_impl(origin, direction, 0.0, t_max, true, blend, classes).instance != INVALID;
+#if defined(MIRAI_COLORED_SHADOWS) && defined(MIRAI_FILTER_POINTS)
+    if (MIRAI_COLORED_SHADOWS && blocked) filters_blocked();
+#endif
     return blocked ? float3(0.0) : ray_filter;
 #else
     return trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_PASSES, RAY_SHADOWS).instance == INVALID ? float3(1.0) : float3(0.0);
@@ -711,16 +739,18 @@ float3 trace_transmission_blocker(float3 origin, float3 direction, float t_max, 
     stopper = hit.instance;
     return float3(0.0);
 #else
+    // One traversal in the source: without colored shadows in the pipeline no
+    // filter is met, and the filter and its distance stay as they start.
     ray_filter = float3(1.0);
     ray_filter_direction = direction;
     ray_filter_distance = FLT_MAX;
-    Hit hit = trace_ray_impl(origin, direction, 0.0, t_max, true, BLEND_FILTERS, RAY_SHADOWS | RAY_GLASS);
+    Hit hit = trace_ray_impl(origin, direction, 0.0, t_max, true, MIRAI_COLORED_SHADOWS ? BLEND_FILTERS : BLEND_PASSES, MIRAI_COLORED_SHADOWS ? (RAY_SHADOWS | RAY_GLASS) : RAY_SHADOWS);
     blocker = ray_filter_distance;
     if (hit.instance == INVALID) return ray_filter;
     blocker = min(blocker, hit.t);
     stopper = hit.instance;
 #ifdef MIRAI_FILTER_POINTS
-    filters_blocked();
+    if (MIRAI_COLORED_SHADOWS) filters_blocked();
 #endif
     return float3(0.0);
 #endif

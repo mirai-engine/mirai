@@ -76,7 +76,10 @@ a_body_floats_on_the_waves_and_repeats_from_a_snapshot :: proc(t:^testing.T) {
     waves.count,waves.steepness=1,0.5
     sea:=fluid_create(&w,{shape=.Plane,density=1000,waves=waves})
     testing.expect(t,sea!={})
-    testing.expect_value(t,fluid_create(&w,{shape=.Box,half_extents={1,1,1},density=1000,waves=waves}),Fluid_Handle{})
+    dry:=box_loop({},{1,1,1})
+    testing.expect_value(t,fluid_create(&w,{shape=.Prism,depth=2,waves=waves},dry[:]),Fluid_Handle{}) // a dry prism holds no waves
+    lake:=box_loop({100,0,100},{10,1,10})
+    testing.expect(t,fluid_create(&w,{shape=.Prism,position={100,0,100},depth=2,density=1000,waves=waves},lake[:])!={},"a lake takes waves")
     desc:=BODY_DESC_DEFAULT
     body:=body_create(&w,desc)
     shape:=SHAPE_DESC_DEFAULT
@@ -94,13 +97,13 @@ a_body_floats_on_the_waves_and_repeats_from_a_snapshot :: proc(t:^testing.T) {
     }
     testing.expectf(t,high-low>0.6,"it went from %v to %v",low,high)
     testing.expect(t,world_time(&w)>9.99 && world_time(&w)<10.01)
-    buffer:=make([]byte,world_snapshot_capacity(&w))
-    defer delete(buffer)
-    written,ok:=world_snapshot(&w,buffer)
+    buffer:World
+    defer world_destroy(&buffer)
+    ok:=test_keep(&buffer,&w)
     testing.expect(t,ok)
     for _ in 0..<60 {world_step(&w,1.0/60)}
     first:=world_hash(&w)
-    testing.expect(t,world_restore(&w,buffer[:written]))
+    testing.expect(t,test_restore(&w,&buffer))
     for _ in 0..<60 {world_step(&w,1.0/60)}
     testing.expect_value(t,world_hash(&w),first)
 }

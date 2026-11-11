@@ -1,9 +1,11 @@
 package vfx
 
+import "core:math"
 import "core:reflect"
 import "core:strconv"
 import "core:strings"
 import "core:testing"
+import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -11,13 +13,13 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "plugins:vfx/runtime/effect"
 
-@(private="file")
+@(private)
+@(test_world)
 Emitters_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     emitters:core.Table(Particle_Emitter),
     worlds:core.Table(core.World_Transform),
     overrides:core.Table(Particle_Override),
-    parameters:core.Table(Particle_Parameters),
     hidden:core.Table(erender.Hidden),
     parents:core.Table(core.Parent),
     bindings:core.Table(Particle_Bindings),
@@ -26,7 +28,7 @@ Emitters_World :: struct {
     volumes:core.Table(Particle_Volume),
     textures:core.Table(Particle_World_Texture),
     meshes:core.Table(erender.Mesh_Renderer),
-    channels:Particle_Channels,
+    births:core.Births,
     hierarchy:core.Hierarchy,
     clocks:Particle_Clocks,
     requests:Particle_Requests,
@@ -44,17 +46,17 @@ Emitters_Fixture :: struct {
 }
 
 @(private="file")
-fixture_init :: proc(t:^testing.T,f:^Emitters_Fixture) -> bool {return core.test_world_init(t,&f.w,test_types)}
+fixture_init :: proc(t:^testing.T,f:^Emitters_Fixture) -> bool {return test_world_init(t,&f.w)}
 
 @(private="file")
 fixture_destroy :: proc(f:^Emitters_Fixture) {
     particle_reports_free(&f.reports)
     particle_sync_free(&f.sync)
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
 }
 
 @(private="file")
-fixture_settle :: proc(f:^Emitters_Fixture) {core.test_world_settle(&f.w)}
+fixture_settle :: proc(f:^Emitters_Fixture) {test_world_settle(&f.w)}
 
 @(private="file")
 fixture_emitter :: proc(f:^Emitters_Fixture,emitter:Particle_Emitter,position:[3]f32={}) -> core.Entity {
@@ -69,13 +71,13 @@ fixture_emitter :: proc(f:^Emitters_Fixture,emitter:Particle_Emitter,position:[3
 
 @(private="file")
 fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
-    particles_tick(core.read(&f.emitters),&f.overrides,&f.parameters,core.read(&f.worlds),core.ref(&f.hierarchy),&f.entities,&f.clocks,&f.requests,&f.channels,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
+    particles_tick(&f.emitters,&f.overrides,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.requests,&f.births,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
     fixture_settle(f)
 }
 
 @(private="file")
 fixture_sync :: proc(f:^Emitters_Fixture,id:core.World_Id,time:core.Time,frame:=FRAME) {
-    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.parameters),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{})
+    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{})
 }
 
 @(private="file")
@@ -100,7 +102,7 @@ new_emitters_start_at_the_current_pose_then_interpolate_motion :: proc(t:^testin
     testing.expect_value(t,len(f.sync.shown.values),1)
     testing.expect_value(t,f.sync.shown.values[0].transform,mm.transform_matrix(current))
     next:=current;next.position.x+=2
-    core.get(&f.worlds,e)^=core.World_Transform{next,current}
+    core.edit(&f.worlds,e)^=core.World_Transform{next,current}
     frame.alpha=.5
     fixture_sync(&f,{0,1},time,frame)
     midpoint:=current;midpoint.position.x+=1
@@ -121,7 +123,7 @@ a_rollback_does_not_start_the_same_burst_twice :: proc(t:^testing.T) {
     f.clocks.playing=true
     clock:=clock_find(&f.clocks,e)
     clock.resolved=emission_key({},nil,0)
-    clock.emission={duration=0.5,longest=1,tail=1,rate_over_cycle=effect.PARTICLE_CURVE_ONE}
+    clock.emission={duration=0.5,longest=1,tail=1}
     clock.emission.bursts[0]={count=7}
     id:=core.World_Id{0,1}
     tick :: proc(f:^Emitters_Fixture,e:core.Entity,at:int) {
@@ -170,7 +172,7 @@ a_frame_that_sees_an_older_copy_starts_only_what_comes_after_it :: proc(t:^testi
     for _ in 0..<2 {fixture_tick(&f,TICK)}
     clock:=clock_find(&f.clocks,e)
     clock.resolved=emission_key({},nil,0)
-    clock.emission={duration=1,rate=60,longest=1,tail=1,rate_over_cycle=effect.PARTICLE_CURVE_ONE}
+    clock.emission={duration=1,rate=60,longest=1,tail=1}
     f.app.assets=nil
     for _ in 0..<30 {fixture_tick(&f,TICK)}
     saved:Particle_Clocks
@@ -223,7 +225,6 @@ steps :: proc(e:^Emission,looping:bool,clock:^Emitter_Clock,frames:int,moved:f32
 @(private="file")
 emission :: proc(info:effect.Particle_Info) -> Emission {
     copy:=info
-    copy.rate_over_cycle=effect.PARTICLE_CURVE_ONE
     return emission_of(nil,&copy)
 }
 
@@ -253,15 +254,26 @@ emission_follows_rate_bursts_and_distance :: proc(t:^testing.T) {
     testing.expect_value(t,steps(&e,true,&clock,10,moved=1),u64(18))
 }
 
+// The CPU reads curves and gradients as particles.slang does, at their ends
+// and between keys closer than it divides by.
 @(test)
-the_rate_follows_its_curve_along_the_cycle :: proc(t:^testing.T) {
-    info:=effect.Particle_Info{duration=1,rate=40,lifetime={1,1}}
-    // Twice the rate in the first half of the cycle, none in the second.
-    info.rate_over_cycle={values={2,2,0,0,0,0,0,0},times={0,0.5,0.5,1,1,1,1,1}}
-    e:=emission_of(nil,&info)
-    clock:Emitter_Clock
-    testing.expect_value(t,steps(&e,true,&clock,4),u64(40))
-    testing.expect_value(t,steps(&e,true,&clock,4),u64(0))
+curves_read_on_the_cpu_as_the_shader_reads_them :: proc(t:^testing.T) {
+    c:=effect.Particle_Curve{values={2,4,8,6,6,6,6,6},times={0.25,0.5,0.500002,1,1,1,1,1}}
+    testing.expect_value(t,keys_at(c.times[:],c.values[:],-1),2)
+    testing.expect_value(t,keys_at(c.times[:],c.values[:],0.25),2)
+    testing.expect_value(t,keys_at(c.times[:],c.values[:],0.375),3)
+    testing.expect_value(t,keys_at(c.times[:],c.values[:],0.5),4)
+    testing.expect_value(t,keys_at(c.times[:],c.values[:],2),6)
+    // Two microseconds apart, the shader ramps over ten: a tenth of the way.
+    near:=keys_at(c.times[:],c.values[:],0.500001)
+    testing.expectf(t,abs(near-4.4)<0.05,"between keys closer than 1e-5: %v",near)
+    g:effect.Particle_Gradient
+    for &key in g.colors {key={0,0,1,0}}
+    g.colors[0]={1,0,0,1}
+    g.times={0.5,1,1,1,1,1,1,1}
+    testing.expect_value(t,keys_at(g.times[:],g.colors[:],0),[4]f32{1,0,0,1})
+    testing.expect_value(t,keys_at(g.times[:],g.colors[:],0.75),[4]f32{0.5,0,0.5,0.5})
+    testing.expect_value(t,keys_at(g.times[:],g.colors[:],3),[4]f32{0,0,1,0})
 }
 
 // particles.slang copies values of the plugin by hand: each is the Odin one.
@@ -285,9 +297,9 @@ the_values_particles_slang_copies_are_those_of_the_plugin :: proc(t:^testing.T) 
         {"PARTICLE_FLAG_MOVED",FLAG_MOVED},{"PARTICLE_FLAG_BIRTHS",FLAG_BIRTHS},{"PARTICLE_FLAG_PREPARE",FLAG_PREPARE},
         {"PARTICLE_STATE_BYTES",STATE_BYTES},{"PARTICLE_SPAWNS",SPAWNS},
         {"PARTICLE_EVENT_CAPACITY",EVENT_CAPACITY},{"PARTICLE_EVENTS_AT",EVENTS_AT/4},{"PARTICLE_EVENT_WORDS",size_of(Gpu_Event)/4},
-        {"PARTICLE_REPORT_CAPACITY",REPORT_CAPACITY},{"PARTICLE_REPORT_WORDS",size_of(Gpu_Report)/4},
+        {"PARTICLE_REPORT_WORDS",REPORT_WORDS},
         {"PARTICLE_RESOURCES",RESOURCE_ROWS},{"PARTICLE_RESOURCE_BYTES",size_of(Gpu_Resource)},
-        {"PARTICLE_DATA_ENTRIES",DATA_ENTRIES},{"PARTICLE_DATA_GAME_ENTRIES",DATA_GAME_ENTRIES},{"PARTICLE_SEGMENT_BYTES",size_of(Gpu_Segment)},
+        {"PARTICLE_DATA_ENTRIES",DATA_ENTRIES},{"PARTICLE_SEGMENT_BYTES",size_of(Gpu_Segment)},
         {"PARTICLE_STAGES",erender.PROGRAM_STAGES},{"PARTICLE_STAGE_BYTES",size_of(Gpu_Stage)},{"PARTICLE_BIRTH_BYTES",size_of(Gpu_Birth)},
         {"PARTICLE_SORT_MAX",SORT_MAX},
     }) {expect(t,defines,each.name,each.value)}
@@ -305,28 +317,6 @@ the_values_particles_slang_copies_are_those_of_the_plugin :: proc(t:^testing.T) 
     kinds(t,defines,Stage_Kind,"PARTICLE_STAGE_",true)
 }
 
-// The CPU reads curves and gradients as particles.slang does, at their ends
-// and between keys closer than it divides by.
-@(test)
-curves_read_on_the_cpu_as_the_shader_reads_them :: proc(t:^testing.T) {
-    c:=effect.Particle_Curve{values={2,4,8,6,6,6,6,6},times={0.25,0.5,0.500002,1,1,1,1,1}}
-    testing.expect_value(t,curve_at(&c,-1),2)
-    testing.expect_value(t,curve_at(&c,0.25),2)
-    testing.expect_value(t,curve_at(&c,0.375),3)
-    testing.expect_value(t,curve_at(&c,0.5),4)
-    testing.expect_value(t,curve_at(&c,2),6)
-    // Two microseconds apart, the shader ramps over ten: a tenth of the way.
-    near:=curve_at(&c,0.500001)
-    testing.expectf(t,abs(near-4.4)<0.05,"between keys closer than 1e-5: %v",near)
-    g:effect.Particle_Gradient
-    for &key in g.colors {key={0,0,1,0}}
-    g.colors[0]={1,0,0,1}
-    g.times={0.5,1,1,1,1,1,1,1}
-    testing.expect_value(t,gradient_at(&g,0),[4]f32{1,0,0,1})
-    testing.expect_value(t,gradient_at(&g,0.75),[4]f32{0.5,0,0.5,0.5})
-    testing.expect_value(t,gradient_at(&g,3),[4]f32{0,0,1,0})
-}
-
 @(test)
 a_single_cycle_ends_when_its_last_particles_die :: proc(t:^testing.T) {
     e:=emission({duration=1,rate=10,lifetime={0.25,0.5}})
@@ -342,7 +332,7 @@ a_single_cycle_ends_when_its_last_particles_die :: proc(t:^testing.T) {
 
 @(test)
 a_prewarmed_emitter_starts_full :: proc(t:^testing.T) {
-    info:=effect.Particle_Info{prewarm=true,duration=1,rate=20,lifetime={2,2},rate_over_cycle=effect.PARTICLE_CURVE_ONE}
+    info:=effect.Particle_Info{prewarm=true,duration=1,rate=20,lifetime={2,2}}
     e:=emission(info)
     clock:Emitter_Clock
     emission_step(&clock,&e,true,true,{},1.0/60)
@@ -376,10 +366,12 @@ clocks_keep_a_bounded_list_of_births_without_losing_any :: proc(t:^testing.T) {
 @(test)
 an_instance_shows_its_values_over_those_of_its_effect :: proc(t:^testing.T) {
     override:Particle_Override
-    testing.expect_value(t,override_set(&override,"rate",f32(55)),Error.None)
-    testing.expect_value(t,override_set(&override,"colors.1",[4]f32{1,0,0,1}),Error.None)
-    testing.expect_value(t,override_set(&override,"bursts.2.count",u32(7)),Error.None)
-    testing.expect_value(t,override_set(&override,"size_over_life.values.3",f32(2)),Error.None)
+    testing.expect_value(t,value_set(&override,"rate",f32(55)),Error.None)
+    testing.expect_value(t,value_set(&override,"colors.1",[4]f32{1,0,0,1}),Error.None)
+    testing.expect_value(t,value_set(&override,"bursts.2.count",u32(7)),Error.None)
+    testing.expect_value(t,value_set(&override,"size_over_life.values.3",f32(2)),Error.None)
+    // A parameter of its program is a value too, which the fields leave out.
+    testing.expect_value(t,value_set(&override,"parameters.heat",f32(0.8)),Error.None)
     info:=particle_resolve(nil,{},&override)
     testing.expect_value(t,info.rate,f32(55))
     testing.expect_value(t,info.colors[1],[4]f32{1,0,0,1})
@@ -387,56 +379,67 @@ an_instance_shows_its_values_over_those_of_its_effect :: proc(t:^testing.T) {
     testing.expect_value(t,info.bursts[2].count,u32(7))
     testing.expect_value(t,info.size_over_life.values[3],f32(2))
     testing.expect_value(t,info.lifetime,effect.PARTICLE_DEFAULTS.lifetime)
-    rate,error:=override_get(override,"rate",f32)
-    testing.expect(t,error==.None && rate==55)
-    testing.expect_value(t,override_remove(&override,"rate"),Error.None)
-    _,error=override_get(override,"rate",f32)
-    testing.expect_value(t,error,Error.Missing_Override)
-    // A hash of a path the effect does not have is left out.
-    override.names[override.count]=base.name_hash("not_a_field")
-    override.count+=1
-    testing.expect_value(t,particle_resolve(nil,{},&override).rate,effect.PARTICLE_DEFAULTS.rate)
     checked:effect.Particle_Info
-    testing.expect_value(t,particle_resolve_checked(nil,{},&override,&checked),Error.Unknown_Field)
+    testing.expect_value(t,particle_resolve_checked(nil,{},&override,&checked),Error.None)
+    value_remove(&override,"rate")
+    testing.expect_value(t,override.count,u32(4))
+    testing.expect_value(t,particle_resolve(nil,{},&override).rate,effect.PARTICLE_DEFAULTS.rate)
+    // Without a program, a parameter has nothing to give.
+    program:Program
+    testing.expect(t,particle_program_check(nil,&info,nil,&override,&program)!="")
 }
 
 @(test)
 invalid_instance_values_say_what_to_correct :: proc(t:^testing.T) {
     override:Particle_Override
-    testing.expect_value(t,override_set(&override,"rates",f32(1)),Error.Unknown_Field)
-    testing.expect_value(t,override_set(&override,"rate",u32(1)),Error.Type_Mismatch)
-    testing.expect_value(t,override_set(&override,"rate",f32(-1)),Error.Invalid_Value)
-    testing.expect_value(t,override_set(&override,"size_over_life.times.1",f32(2)),Error.Invalid_Value)
-    testing.expect_value(t,override_set(&override,"material",base.Asset_Id{1,2}),Error.Effect_Field)
-    testing.expect_value(t,override_set(&override,"render",effect.Particle_Render.Mesh),Error.None)
+    long:[effect.PARTICLE_NAME_BYTES]u8
+    for &c in long {c='a'}
+    testing.expect_value(t,value_set(&override,"rates",f32(1)),Error.Unknown_Field)
+    testing.expect_value(t,value_set(&override,"parameters.",f32(1)),Error.Unknown_Field)
+    testing.expect_value(t,value_set(&override,strings.concatenate({"parameters.",string(long[:])},context.temp_allocator),f32(1)),Error.Unknown_Field)
+    testing.expect_value(t,value_set(&override,"rate",u32(1)),Error.Type_Mismatch)
+    testing.expect_value(t,value_set(&override,"parameters.heat","hot"),Error.Type_Mismatch)
+    testing.expect_value(t,value_set(&override,"parameters.heat",[5]f32{}),Error.Type_Mismatch)
+    testing.expect_value(t,value_set(&override,"parameters.heat",[2]f32{1,math.nan_f32()}),Error.Invalid_Value)
+    testing.expect_value(t,value_set(&override,"rate",f32(-1)),Error.Invalid_Value)
+    testing.expect_value(t,value_set(&override,"rate",math.inf_f32(1)),Error.Invalid_Value)
+    testing.expect_value(t,value_set(&override,"size_over_life.times.1",f32(2)),Error.Invalid_Value)
+    testing.expect_value(t,value_set(&override,"material",base.Asset_Id{1,2}),Error.Effect_Field)
+    testing.expect_value(t,override.count,u32(0))
+    testing.expect_value(t,value_set(&override,"render",effect.Particle_Render.Mesh),Error.None)
     for path in ([?]string{"drag","shell","soft","stretch","bounce","friction","noise","gravity","intensity","inherit_velocity","duration","rate","noise_speed","collision_life","noise_frequency"}) {
-        testing.expect_value(t,override_set(&override,path,f32(0.5)),Error.None)
+        testing.expect_value(t,value_set(&override,path,f32(0.5)),Error.None)
     }
-    testing.expect_value(t,override_set(&override,"attractor_strength",f32(1)),Error.Override_Capacity)
+    testing.expect_value(t,value_set(&override,"attractor_strength",f32(1)),Error.Override_Capacity)
+    testing.expect_value(t,value_set(&override,"parameters.heat",f32(1)),Error.Override_Capacity)
     testing.expect(t,len(error_message(.Override_Capacity))>0)
+    // A hostile row: a count past the room is refused, not read past.
+    override.count=PARTICLE_OVERRIDE_CAPACITY+3
+    testing.expect_value(t,value_set(&override,"rate",f32(1)),Error.Invalid_Value)
 }
 
+// The parameters an instance gives come back as its program declares them:
+// numbers of their kind, or a texture.
 @(test)
-program_parameters_of_an_instance_keep_their_kind :: proc(t:^testing.T) {
-    parameters:Particle_Parameters
-    testing.expect_value(t,parameter_set(&parameters,"speed",f32(3)),Error.None)
-    testing.expect_value(t,parameter_set(&parameters,"tint",[3]f32{1,0.5,0}),Error.None)
-    testing.expect_value(t,parameter_set(&parameters,"count",u32(4)),Error.None)
-    testing.expect_value(t,parameter_set(&parameters,"pattern",base.Asset_Id{7,8}),Error.None)
-    testing.expect_value(t,parameter_set(&parameters,"speed",f32(5)),Error.None)
-    testing.expect_value(t,parameters.count,u32(4))
-    speed,error:=parameter_get(parameters,"speed")
-    testing.expect(t,error==.None && speed.kind==.Float && speed.value[0]==5 && speed.components==1)
-    tint,_:=parameter_get(parameters,"tint")
-    testing.expect(t,tint.components==3 && tint.value[1]==0.5)
-    pattern,_:=parameter_get(parameters,"pattern")
-    testing.expect(t,pattern.kind==.Texture && pattern.texture==base.Asset_Id{7,8})
-    parameter_remove(&parameters,"tint")
-    _,error=parameter_get(parameters,"tint")
-    testing.expect_value(t,error,Error.Missing_Override)
-    testing.expect_value(t,parameter_set(&parameters,"",f32(1)),Error.Invalid_Parameter)
-    for name in ([?]string{"a","b","c","d","e"}) {testing.expect_value(t,parameter_set(&parameters,name,f32(1)),Error.None)}
-    testing.expect_value(t,parameter_set(&parameters,"overflow",f32(1)),Error.Parameter_Capacity)
+program_parameters_of_an_instance_come_back_as_their_program_declares_them :: proc(t:^testing.T) {
+    override:Particle_Override
+    testing.expect_value(t,value_set(&override,"parameters.speed",f32(3)),Error.None)
+    testing.expect_value(t,value_set(&override,"parameters.tint",[3]f32{1,0.5,0}),Error.None)
+    testing.expect_value(t,value_set(&override,"parameters.count",u32(4)),Error.None)
+    testing.expect_value(t,value_set(&override,"parameters.pattern",base.Asset_Id{7,8}),Error.None)
+    testing.expect_value(t,value_set(&override,"parameters.speed",f32(5)),Error.None)
+    testing.expect_value(t,override.count,u32(4))
+    declared:=[?]erender.Program_Parameter{{name="speed",kind=.Float,components=1},{name="tint",kind=.Float,components=3},{name="count",kind=.Uint,components=1},{name="pattern",kind=.Texture,components=1}}
+    program:=erender.Program{name="Test",parameters=declared[:]}
+    Want :: struct {name:string,kind:asset.Parameter_Kind,components:u8,value:[4]f64,texture:base.Asset_Id}
+    for want in ([?]Want{{"speed",.Float,1,{5,0,0,0},{}},{"tint",.Float,3,{1,0.5,0,0},{}},{"count",.Uint,1,{4,0,0,0},{}},{"pattern",.Texture,1,{},{7,8}}}) {
+        at:=-1
+        for name,i in override.names[:override.count] {if name==parameter_hash(want.name) {at=i}}
+        parameter,ok:=value_parameter(&program,override.names[max(at,0)],override.values[max(at,0)])
+        testing.expectf(t,at>=0 && ok && base.text_get(parameter.name[:])==want.name && parameter.kind==want.kind && parameter.components==want.components && parameter.value==want.value && parameter.texture==want.texture,"%s comes back as %v",want.name,parameter)
+    }
+    _,undeclared:=value_parameter(&program,parameter_hash("heat"),{})
+    testing.expect(t,!undeclared)
 }
 
 @(test)
@@ -447,12 +450,12 @@ requests_control_an_emitter_from_the_next_step :: proc(t:^testing.T) {
     e:=fixture_emitter(&f,Particle_Emitter{loop=true})
     fixture_tick(&f,TICK)
     clock:=clock_find(&f.clocks,e)
-    testing.expect(t,clock!=nil && clock.control==.Authored)
+    testing.expect(t,clock!=nil && clock.emitted==0)
+    // Start and stop set active, the field the emitter emits by.
     start(&f.requests,e)
     fixture_tick(&f,TICK)
-    clock=clock_find(&f.clocks,e)
-    testing.expect_value(t,clock.control,Particle_Control.Playing)
-    status_now,_:=status(&f.clocks,core.at(core.read(&f.emitters),0),e)
+    testing.expect(t,core.at(&f.emitters,0).active)
+    status_now,_:=status(&f.clocks,core.at(&f.emitters,0),e)
     testing.expect_value(t,status_now.state,Particle_State.Playing)
     pause(&f.requests,e)
     fixture_tick(&f,TICK)
@@ -476,7 +479,10 @@ requests_control_an_emitter_from_the_next_step :: proc(t:^testing.T) {
     testing.expect_value(t,sync_shown(&f.sync,e).generation,generation+1)
     stop(&f.requests,e)
     fixture_tick(&f,TICK)
-    testing.expect_value(t,clock_find(&f.clocks,e).control,Particle_Control.Stopped)
+    testing.expect(t,!core.at(&f.emitters,0).active)
+    // Nothing it started since its restart is alive.
+    status_now,_=status(&f.clocks,core.at(&f.emitters,0),e)
+    testing.expect_value(t,status_now.state,Particle_State.Idle)
     // An entity without an emitter is refused.
     other:=core.create(&f.entities)
     burst(&f.requests,other,3)
@@ -501,9 +507,9 @@ a_sorted_effect_past_its_room_is_a_problem :: proc(t:^testing.T) {
     for c in cases {
         e:=fixture_emitter(&f,PARTICLE_EMITTER_DEFAULT)
         override:Particle_Override
-        testing.expect_value(t,override_set(&override,"render",c.render),Error.None)
-        testing.expect_value(t,override_set(&override,"sort",c.sort),Error.None)
-        testing.expect_value(t,override_set(&override,"max_particles",c.max_particles),Error.None)
+        testing.expect_value(t,value_set(&override,"render",c.render),Error.None)
+        testing.expect_value(t,value_set(&override,"sort",c.sort),Error.None)
+        testing.expect_value(t,value_set(&override,"max_particles",c.max_particles),Error.None)
         core.add(&f.overrides,e,override)
         fixture_settle(&f)
         fixture_sync(&f,{0,1},TICK)
@@ -517,25 +523,24 @@ requests_change_the_values_of_an_instance :: proc(t:^testing.T) {
     if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     e:=fixture_emitter(&f,PARTICLE_EMITTER_DEFAULT)
-    testing.expect_value(t,request_override(&f.requests,e,"rate",f32(80)),Error.None)
-    testing.expect_value(t,request_override(&f.requests,e,"rate",f32(-1)),Error.Invalid_Value)
-    testing.expect_value(t,request_parameter(&f.requests,e,"speed",f32(4)),Error.None)
+    testing.expect_value(t,request_value(&f.requests,e,"rate",f32(80)),Error.None)
+    testing.expect_value(t,request_value(&f.requests,e,"rate",f32(-1)),Error.Invalid_Value)
+    testing.expect_value(t,request_value(&f.requests,e,"parameters.speed",f32(4)),Error.None)
+    // Both in one step: the second finds the row the first adds.
     fixture_tick(&f,TICK)
-    override,has:=core.get(core.read(&f.overrides),e)
-    testing.expect(t,has && override.count==1)
-    rate,_:=override_get(override,"rate",f32)
-    testing.expect_value(t,rate,f32(80))
-    given,has_given:=core.get(core.read(&f.parameters),e)
-    testing.expect(t,has_given && given.count==1)
+    override,has:=core.get(&f.overrides,e)
+    testing.expect(t,has && override.count==2)
     // The clock follows the value of the instance from the next step.
     fixture_tick(&f,TICK)
     testing.expect_value(t,clock_find(&f.clocks,e).emission.rate,f32(80))
-    request_override_clear(&f.requests,e)
-    request_parameter_clear(&f.requests,e)
+    request_value_remove(&f.requests,e,"parameters.speed")
     fixture_tick(&f,TICK)
-    override,_=core.get(core.read(&f.overrides),e)
-    given,_=core.get(core.read(&f.parameters),e)
-    testing.expect(t,override.count==0 && given.count==0)
+    override,_=core.get(&f.overrides,e)
+    testing.expect_value(t,override.count,u32(1))
+    request_values_clear(&f.requests,e)
+    fixture_tick(&f,TICK)
+    override,_=core.get(&f.overrides,e)
+    testing.expect_value(t,override.count,u32(0))
 }
 
 // The clocks of the editor's preview go with the frames and do not reach a
@@ -564,7 +569,7 @@ done_effects_take_their_entity_with_them :: proc(t:^testing.T) {
     fixture_tick(&f,TICK)
     clock:=clock_find(&f.clocks,e)
     clock.resolved=emission_key({},nil,0)
-    clock.emission={duration=0.1,rate=30,longest=0.1,tail=0.1,rate_over_cycle=effect.PARTICLE_CURVE_ONE}
+    clock.emission={duration=0.1,rate=30,longest=0.1,tail=0.1}
     f.app.assets=nil
     for _ in 0..<20 {fixture_tick(&f,TICK)}
     testing.expect(t,!core.alive(&f.entities,e))
@@ -579,32 +584,33 @@ channel_births_start_once_through_a_rollback :: proc(t:^testing.T) {
     if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     e:=fixture_emitter(&f,Particle_Emitter{})
-    IMPACTS,NOBODY :: Particle_Channel_Name(CHANNEL_GAME),Particle_Channel_Name(CHANNEL_GAME+1)
-    listener:=Particle_Channel{name=IMPACTS}
+    IMPACTS,NOBODY:=core.birth_channel("impacts"),core.birth_channel("nobody")
+    listener:Particle_Channel
+    base.text_set(listener.name[:],"impacts")
     core.add(&f.listeners,e,listener)
     fixture_settle(&f)
     f.app.assets=nil
     id:=core.World_Id{0,1}
-    tick :: proc(f:^Emitters_Fixture,at:int) {
-        if at%2==0 {channel_emit(&f.channels,IMPACTS,Channel_Birth{position={f32(at),0,0},count=3})}
-        channel_emit(&f.channels,NOBODY,Channel_Birth{count=1})
+    tick :: proc(f:^Emitters_Fixture,at:int,impacts,nobody:core.Birth_Channel) {
+        if at%2==0 {core.push(&f.births.queue,core.Birth{channel=impacts,position={f32(at),0,0},count=3})}
+        core.push(&f.births.queue,core.Birth{channel=nobody,count=1})
         fixture_tick(f,TICK)
     }
-    for at in 0..<4 {tick(&f,at)}
+    for at in 0..<4 {tick(&f,at,IMPACTS,NOBODY)}
     saved:Particle_Clocks
     defer core.value_free(&saved,type_info_of(Particle_Clocks))
     testing.expect(t,core.value_copy(&saved,&f.clocks,type_info_of(Particle_Clocks)))
-    for at in 4..<8 {tick(&f,at)}
+    for at in 4..<8 {tick(&f,at,IMPACTS,NOBODY)}
     testing.expect_value(t,len(f.clocks.channels),1)
     fixture_sync(&f,id,TICK)
     testing.expect_value(t,len(f.sync.births),4)
     testing.expect(t,f.sync.births[3].position=={6,0,0} && f.sync.births[3].count==3 && f.sync.births[3].number==3)
     // The rollback: four ticks in, and the same ticks again.
     testing.expect(t,core.value_copy(&f.clocks,&saved,type_info_of(Particle_Clocks)))
-    for at in 4..<8 {tick(&f,at)}
+    for at in 4..<8 {tick(&f,at,IMPACTS,NOBODY)}
     fixture_sync(&f,id,TICK)
     testing.expect_value(t,len(f.sync.births),0)
-    tick(&f,8)
+    tick(&f,8,IMPACTS,NOBODY)
     fixture_sync(&f,id,TICK)
     testing.expect_value(t,len(f.sync.births),1)
     testing.expect_value(t,f.sync.births[0].number,u32(4))
@@ -612,7 +618,7 @@ channel_births_start_once_through_a_rollback :: proc(t:^testing.T) {
 
 // The places of the reports come back to the world from the origin of the
 // frame they were written in, but those of an effect view, which are of the
-// view; what does not fit is lost and counted.
+// view; what does not fit is lost and counted, and a frame comes once.
 @(test)
 reports_come_back_to_the_world_from_the_origin_of_their_frame :: proc(t:^testing.T) {
     pool:Pool
@@ -622,20 +628,25 @@ reports_come_back_to_the_world_from_the_origin_of_their_frame :: proc(t:^testing
     view_at:=pool_slot_take(&pool,2,8)
     pool.slots[world_at].desc.owner=core.Entity(7)
     pool.slots[view_at].desc.owner,pool.slots[view_at].desc.view=core.Entity(9),1
-    Bytes :: struct {head:Reports_Head,rows:[3]Gpu_Report}
-    bytes:=Bytes{head={count=REPORT_CAPACITY+5,origin={-20480,1024,15360}}}
-    bytes.rows[0]={position={1.5,-2,0.25},slot=u32(world_at),kind=u32(effect.Particle_Event.Death)}
-    bytes.rows[1]={position={0.5,0.5,0},slot=u32(view_at),kind=u32(effect.Particle_Event.Collision)}
-    bytes.rows[2]={position={3,3,3},slot=u32(world_at)}
+    row :: proc(slot:int,kind:effect.Particle_Event,position:[3]f32) -> (r:[REPORT_WORDS]u32) {
+        p:=transmute([3]u32)position
+        r[0],r[1],r[2],r[3],r[4]=u32(slot),u32(kind),p.x,p.y,p.z
+        return
+    }
+    origin:=transmute([3]u32)[3]f32{-20480,1024,15360}
+    Bytes :: struct {head:[4]u32,rows:[3][REPORT_WORDS]u32}
+    bytes:=Bytes{head={DATA_ENTRIES+5,origin.x,origin.y,origin.z}}
+    bytes.rows={row(world_at,.Death,{1.5,-2,0.25}),row(view_at,.Collision,{0.5,0.5,0}),row(world_at,.None,{3,3,3})}
     reports:Particle_Reports
     defer particle_reports_free(&reports)
-    reports_take(&reports,&pool,([^]u8)(&bytes)[:size_of(bytes)])
+    reports_take(&reports,&pool,([^]u8)(&bytes)[:size_of(bytes)],1)
+    reports_take(&reports,&pool,([^]u8)(&bytes)[:size_of(bytes)],1)
     if !testing.expect_value(t,len(reports.reports),3) {return}
     testing.expect_value(t,reports.reports[0].position,[3]f32{-20478.5,1022,15360.25})
     testing.expect_value(t,reports.reports[0].entity,core.Entity(7))
     testing.expect_value(t,reports.reports[1].position,[3]f32{0.5,0.5,0})
     testing.expect_value(t,reports.reports[1].entity,core.Entity(9))
-    testing.expect_value(t,reports.lost,u32(REPORT_CAPACITY+2))
+    testing.expect_value(t,reports.lost,u32(DATA_ENTRIES+2))
 }
 
 // The textures of the world reach a view relative to its origin: the region
@@ -665,44 +676,19 @@ emitter_rows_are_relative_to_the_origin :: proc(t:^testing.T) {
     testing.expect_value(t,rows[2],[4]f32{0,0,2,215.75})
 }
 
-// What an effect says of how its Mesh particles face and turn reaches the row
-// of their emitter, its zeros as what they stand for: Random, X, no turn and
-// a scale of one, which is how they turned before they could say more.
-@(test)
-mesh_facing_reaches_the_row_of_the_emitter :: proc(t:^testing.T) {
-    // Without assets, the effect draws sprites: the mesh fields reach the row all the same.
-    info:=effect.PARTICLE_DEFAULTS
-    app:host.App
-    s:Pool_Slot
-    s.desc,_=emitter_desc(&info,app.assets,app.renderer,1)
-    g:Gpu_Emitter
-    emitter_row(&g,&s,8)
-    testing.expect_value(t,g.mesh.z,u32(effect.Particle_Facing.Random))
-    testing.expect_value(t,g.mesh_rotation,[4]f32{0,0,0,1})
-    testing.expect_value(t,g.mesh_axis,[4]f32{1,0,0,0})
-    testing.expect_value(t,g.mesh_scale,[4]f32{1,1,1,1})
-    info.facing,info.spin_axis,info.mesh_rotation,info.mesh_scale=.Camera_Position,{0,2,0},{0,0,2,0},{0.5,3,1}
-    s.desc,_=emitter_desc(&info,app.assets,app.renderer,1)
-    emitter_row(&g,&s,8)
-    testing.expect_value(t,g.mesh.z,u32(effect.Particle_Facing.Camera_Position))
-    testing.expect_value(t,g.mesh_rotation,[4]f32{0,0,1,0})
-    testing.expect_value(t,g.mesh_axis,[4]f32{0,1,0,0})
-    testing.expect_value(t,g.mesh_scale,[4]f32{0.5,3,1,3})
-}
-
 // The lights with shadows of an emitter lie around it as far as its particles
 // may go in their life, and anywhere where they are born on a surface.
 @(test)
 emitter_lights_lie_around_it_or_anywhere :: proc(t:^testing.T) {
     slots:[2]Pool_Slot
     for &s in slots {
-        s.live,s.desc.lights,s.desc.shadows=true,4,true
+        s.live,s.desc.info.lights,s.desc.info.light_shadows=true,4,true
         s.desc.transform=1
         s.desc.transform[0,3]=10
         s.desc.previous=s.desc.transform
-        s.desc.lifetime,s.desc.speed,s.desc.gravity,s.desc.light={1,2},{0,3},1,{10,5,0}
+        s.desc.info.lifetime,s.desc.info.speed,s.desc.info.gravity,s.desc.info.light_range={1,2},{0,3},1,5
     }
-    slots[1].desc.shape=.Surface
+    slots[1].desc.info.shape=.Surface
     fields:Gpu_Fields
     fields.fallback.xyz={0,-10,0}
     box,reach:=lights_box(slots[:1],fields,1.0/60)
@@ -724,31 +710,28 @@ emitters_take_their_lights_from_the_part_of_the_room_of_their_kind :: proc(t:^te
     info:=effect.PARTICLE_DEFAULTS
     info.lights=3
     app:host.App
-    desc,_:=emitter_desc(&info,app.assets,app.renderer,1)
-    testing.expect(t,desc.lights==3 && !desc.shadows,"the lights of an effect cast no shadows unless it asks")
-    info.light_shadows=true
-    desc,_=emitter_desc(&info,app.assets,app.renderer,1)
-    testing.expect(t,desc.shadows)
+    desc,_:=emitter_desc(info,app.assets,app.renderer,1)
+    testing.expect_value(t,desc.info.lights,u32(3))
     info.light_range=0
-    desc,_=emitter_desc(&info,app.assets,app.renderer,1)
-    testing.expect_value(t,desc.lights,u32(0))
+    desc,_=emitter_desc(info,app.assets,app.renderer,1)
+    testing.expect_value(t,desc.info.lights,u32(0))
 
     Want :: struct {lights:u32,shadows,live:bool}
     wants:=[?]Want{{3,true,true},{2,false,true},{7,true,false},{4,true,true},{5,false,true}}
     slots:[len(wants)]Pool_Slot
-    for want,at in wants {slots[at].live,slots[at].desc.lights,slots[at].desc.shadows=want.live,want.lights,want.shadows}
+    for want,at in wants {slots[at].live,slots[at].desc.info.lights,slots[at].desc.info.light_shadows=want.live,want.lights,want.shadows}
     asked:=lights_asked(slots[:])
     testing.expect_value(t,asked,[2]u32{7,7})
     taken:[2]u32
     shares:[len(wants)][4]u32
-    for &s,at in slots {shares[at]=light_share(s.desc.lights if s.live else 0,s.desc.shadows,&taken,asked)}
+    for &s,at in slots {shares[at]=light_share(s.desc.info.lights if s.live else 0,s.desc.info.light_shadows,&taken,asked)}
     testing.expect_value(t,shares,[len(wants)][4]u32{{0,3,0,0},{3,0,0,2},{3,0,2,0},{3,4,2,0},{7,0,2,5}})
     for part in 0..<2 {
         for i in 0..<asked[part] {
             found:=-1
             for share,at in shares {if share[2*part]<=i {found=at}}
             share:=shares[max(found,0)]
-            testing.expectf(t,found>=0 && i>=share[2*part] && i<share[2*part]+share[2*part+1] && slots[found].desc.shadows==(part==0),"light %d of part %d is of slot %d",i,part,found)
+            testing.expectf(t,found>=0 && i>=share[2*part] && i<share[2*part]+share[2*part+1] && slots[found].desc.info.light_shadows==(part==0),"light %d of part %d is of slot %d",i,part,found)
         }
     }
     // What is left of what the world asked for, and no more.
@@ -756,8 +739,8 @@ emitters_take_their_lights_from_the_part_of_the_room_of_their_kind :: proc(t:^te
     testing.expect_value(t,light_share(5,true,&taken,{4,0}),[4]u32{0,4,0,0})
     testing.expect_value(t,light_share(2,true,&taken,{4,0}),[4]u32{4,0,0,0})
     many:[2]Pool_Slot
-    many[0].live,many[0].desc.lights,many[0].desc.shadows=true,erender.LIGHTS_ASKED_MAX+5,true
-    many[1].live,many[1].desc.lights=true,erender.LIGHTS_ASKED_MAX+5
+    many[0].live,many[0].desc.info.lights,many[0].desc.info.light_shadows=true,erender.LIGHTS_ASKED_MAX+5,true
+    many[1].live,many[1].desc.info.lights=true,erender.LIGHTS_ASKED_MAX+5
     testing.expect_value(t,lights_asked(many[:]),[2]u32{erender.LIGHTS_ASKED_MAX,erender.LIGHTS_ASKED_MAX})
 }
 
@@ -782,9 +765,8 @@ particle_ranges_join_again_when_they_return_to_the_pool :: proc(t: ^testing.T) {
 	p.capacity = 1000
 	p.slots = make([]Pool_Slot, 8)
 	p.order = make([]u16, 8)
-	p.free = make([][2]u32, 9)
-	defer {delete(p.slots); delete(p.order); delete(p.free)}
-	p.free[0], p.free_count = {0, 1000}, 1
+	base.ranges_reset(&p.free, 1000, 8)
+	defer {delete(p.slots); delete(p.order); base.ranges_free(&p.free)}
 	a, b, c := pool_slot_take(&p, 30, 100), pool_slot_take(&p, 10, 200), pool_slot_take(&p, 20, 300)
 	testing.expect_value(t, p.slots[a].offset, u32(0))
 	testing.expect_value(t, p.slots[b].offset, u32(100))
@@ -793,14 +775,14 @@ particle_ranges_join_again_when_they_return_to_the_pool :: proc(t: ^testing.T) {
 	testing.expect_value(t, pool_slot_find(&p, 99), -1)
 	testing.expect_value(t, pool_slot_take(&p, 40, 500), -1)
 	pool_slot_release(&p, b)
-	testing.expect_value(t, p.free_count, 2)
+	testing.expect_value(t, len(p.free.free), 2)
 	pool_slot_release(&p, a)
-	testing.expect_value(t, p.free_count, 2)
-	testing.expect_value(t, p.free[0], [2]u32{0, 300})
+	testing.expect_value(t, len(p.free.free), 2)
+	testing.expect_value(t, p.free.free[0], base.Range{0, 300})
 	testing.expect_value(t, p.pool_end, u32(600))
 	pool_slot_release(&p, c)
-	testing.expect_value(t, p.free_count, 1)
-	testing.expect_value(t, p.free[0], [2]u32{0, 1000})
+	testing.expect_value(t, len(p.free.free), 1)
+	testing.expect_value(t, p.free.free[0], base.Range{0, 1000})
 	testing.expect_value(t, p.slot_end, 0)
 	whole := pool_slot_take(&p, 40, 1000)
 	testing.expect_value(t, p.slots[whole].offset, u32(0))

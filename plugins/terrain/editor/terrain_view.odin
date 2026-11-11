@@ -63,7 +63,7 @@ terrain_view_modes :: proc(s:^editor.Session,view:^Terrain_View,renderer:^erende
     view.overlay=.None
     current:=editor.view_mode_current(s.viewport)
     shown:=false
-    if s.mode!=.Play && !editor.document_is_prefab(s) {
+    if s.mode!=.Play {
         for desc,mode in TERRAIN_VIEW_MODES {
             if strings.equal_fold(current,desc.name) {view.mode,shown=mode,true}
         }
@@ -116,14 +116,11 @@ terrain_view_lit :: proc(pass:^erender.Pass,user:rawptr) {
     erender.pass_dispatch(pass,(pass.width+7)/8,(pass.height+7)/8)
 }
 
-// The override of Terrain_Weights for an overlay: a color for each layer, or
-// the layer of the panel alone.
+// What Terrain_Weights takes for an overlay: a color for each layer, or the
+// layer of the panel alone.
 @(private)
-weights_override :: proc(overlay:Terrain_Overlay,layer:int) -> (o:erender.Material_Override) {
-    o.count=1
-    o.names[0]=base.name_hash("inspect")
-    o.values[0]={overlay==.Layer?2:1,f32(layer),0,0}
-    return
+weights_values :: proc(look:^erender.Material_Values,overlay:Terrain_Overlay,layer:int) {
+    erender.material_value(look,"inspect",{overlay==.Layer?2:1,f32(layer),0,0})
 }
 
 @(private)
@@ -134,14 +131,13 @@ overlay_weights :: proc "contextless" (overlay:Terrain_Overlay) -> bool {return 
 // theirs, or the outlines of every piece. A chunk the preview of a stroke
 // shows is the preview's.
 @(step="frame",after="terrain_sculpt")
-terrain_overlay :: proc(s:^editor.Session,view:^Terrain_View,tool:^Terrain_Tool,world:core.World_Ref,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk),worlds:core.Read(core.World_Transform),data:core.Ref(terrain.Terrain_Data),assets:^host.Assets,extras:^host.Frame_Extras) {
+terrain_overlay :: proc(s:^editor.Session,view:^Terrain_View,tool:^Terrain_Tool,world:core.World_Ref,terrains:^core.Table(terrain.Terrain,.Read),chunks:^core.Table(terrain.Terrain_Chunk,.Read),worlds:^core.Table(core.World_Transform,.Read),data:core.Ref(terrain.Terrain_Data),assets:^host.Assets,extras:^host.Frame_Extras) {
     if view.overlay==.None || !s.gui.begun || editor.playing(s) || data.ptr==nil {return}
     a:=assets
     if a==nil {return}
     statics:=core.world_table_of(world,erender.Mesh_Renderer)
-    tints:=core.world_table_of(world,erender.Tint)
+    looks:=core.world_table_of(world,erender.Material_Values)
     if statics==nil {return}
-    override:=weights_override(view.overlay,tool.layer)
     for row in 0..<core.count(chunks) {
         chunk:=core.at(chunks,row)
         owner,known:=core.get(terrains,chunk.owner)
@@ -158,12 +154,13 @@ terrain_overlay :: proc(s:^editor.Session,view:^Terrain_View,tool:^Terrain_Tool,
         if tool.stroke.active && owner.source==tool.stroke.id && chunk.depth==0 {
             if at:=preview_find(&tool.stroke,chunk.coord);at>=0 && tool.stroke.previews[at].ready {continue}
         }
-        static,has_static:=core.get(core.read(statics),e)
+        static,has_static:=core.get(statics,e)
         if !has_static || static.mesh=={} {continue}
         static.materials[0]=WEIGHTS_MATERIAL
-        tint:=erender.TINT_DEFAULT
-        if tints!=nil {if value,ok:=core.get(core.read(tints),e);ok {tint=value}}
-        if instance,ok:=erender.mesh_instance(a,static,mm.transform_matrix(placed.transform),tint,override);ok {
+        look:=erender.MATERIAL_VALUES_DEFAULT
+        if looks!=nil {if value,ok:=core.get(core.read(looks),e);ok {look.color,look.emission=value.color,value.emission}}
+        weights_values(&look,view.overlay,tool.layer)
+        if instance,ok:=erender.mesh_instance(a,static,mm.transform_matrix(placed.transform),look);ok {
             instance.object_id,instance.copy_owner,instance.copy_variant=u64(e),PREVIEW_OWNER,2
             instance.replace_source=true
             host.extras_instance_add(extras,instance)
@@ -191,9 +188,6 @@ chunk_outline_draw :: proc(s:^editor.Session,source:^terrain.Source,chunk:terrai
     inset:=source.cell*0.15
     low,high:=[2]f32{inset,inset},[2]f32{size.x-inset,size.z-inset}
     flat:=f32(0)
-    if source.kind==.Mesh {
-        if index:=terrain.chunk_index(source,chunk.coord);index>=0 && index<len(source.mesh_chunks) {flat=(source.mesh_chunks[index].low.y+source.mesh_chunks[index].high.y)*0.5-corner.y}
-    }
     color:=LEVEL_COLORS[int(chunk.lod.level)%len(LEVEL_COLORS)]
     width:=chunk.depth>0?f32(3):f32(1.5)
     corners:=[4][2]f32{{low.x,low.y},{high.x,low.y},{high.x,high.y},{low.x,high.y}}

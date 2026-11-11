@@ -83,7 +83,7 @@ assets_read_the_files_the_registry_holds_in_memory :: proc(t:^testing.T) {
     testing.expect_value(t,asset.registry_memory_set(&a.registry,"stone.mat",bytes_of(t,&types,stone,changed)),asset.Error.None)
     testing.expect(t,assets_reload(&a,stone))
     testing.expect_value(t,assets_material_values(&a,row).roughness,f32(0.25))
-    testing.expect(t,len(assets_unsaved(&a))==1 && assets_unsaved(&a)[0].path=="stone.mat")
+    testing.expect(t,len(a.registry.memory)==1 && a.registry.memory[0].path=="stone.mat")
 
     // An asset only memory holds loads like one on disk.
     created:=info

@@ -1,5 +1,6 @@
 #include "native.slang"
-//! variant unlayered MIRAI_GBUFFER_NO_LAYERS=1
+// unlayered: while no instance with layers is in sight (gbuffer.slang).
+//! constant unlayered MIRAI_GBUFFER_NO_LAYERS
 // The first pass of the direct light of a view (direct_samples.slang), while
 // the view drew maps (Frame.sun_maps.z): the light of each point from the sun
 // and the local lights a map of the view holds there, each once and exact,

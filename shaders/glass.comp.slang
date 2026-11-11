@@ -1,7 +1,7 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-//! variant color MIRAI_GLASS_MEANS=1
-//! variant color_hw MIRAI_GLASS_MEANS=1 MIRAI_HW_RT=1
+// color: with colored shadows, the rays cross glass as the mean of its instance (trace.slang).
+//! constant color MIRAI_GLASS_MEANS
 // What one layer of glass lets through of the scene behind it, over the light
 // of the layer that glass_light.comp left, once per pixel whatever the number
 // of surfaces drawn there, without rays. A sheet shows the scene where it is,
@@ -53,7 +53,7 @@ float pane_thickness(uint instance, float3 normal, out float3 across) {
 Glass_Walk glass_entry(Material m, Glass g, uint instance, float3 direction, float bias) {
     float3 across;
     float pane = pane_thickness(instance, g.normal, across);
-    float3 outside = refract(direction, across, material_ior(m));
+    float3 outside = refract(direction, across, m.ior);
     if (pane > 0.0 && dot(outside, outside) > 0.0) {
         float path = pane / max(dot(direction, -across), 1e-3);
         Glass_Walk w = walk_start(g.position + direction * path + outside * bias, outside, 0u);
@@ -72,7 +72,7 @@ Glass_Walk glass_entry(Material m, Glass g, uint instance, float3 direction, flo
         origin += direction * hit.t;
         path += hit.t;
         if (!blended) break;
-        float3 out_direction = refract(direction, normal, material_ior(m));
+        float3 out_direction = refract(direction, normal, m.ior);
         if (dot(out_direction, out_direction) > 0.0) {
             Glass_Walk w = walk_start(origin + out_direction * bias, out_direction, 0u);
             w.path = path;
@@ -95,35 +95,35 @@ Glass_Walk glass_entry(Material m, Glass g, uint instance, float3 direction, flo
 void main(uint3 dispatch_id : SV_DispatchThreadID) {
     int2 p = int2(dispatch_id.xy);
     if (any(p >= int2(frame.resolution))) return;
-    if (params.snapshot != 0u) { out_color[p] = scene.Load(int3(p, 0)); return; }
+    // The scene, and in alpha whether the layer stands in front of it (glass_levels.comp).
+    if (params.snapshot != 0u) { out_color[p] = float4(scene.Load(int3(p, 0)).rgb, layer_depth.Load(int3(p, 0)).r > 0.0 ? 1.0 : 0.0); return; }
     float depth = layer_depth.Load(int3(p, 0)).r;
     if (depth <= 0.0) return;
     float4 normal = layer_normal.Load(int3(p, 0));
     if ((gbuffer_bits_unpack(normal) & GBUFFER_GLASS_EXIT) != 0u) return;
     float2 uv = (float2(p) + 0.5) * frame.inv_resolution;
     uint2 ids = layer_ids.Load(int3(p, 0));
-    Material m = material_row(ids.x);
+    Material m = material_row(ids.x, material_values_of(ids.y));
     Glass g = glass_of(p, uv, depth, layer_albedo.Load(int3(p, 0)), normal, layer_emission.Load(int3(p, 0)));
-    uint seed = seed_for(uint2(p), frame.frame_index, 23u);
     float3 through = glass_through(m, g, glass_shading(m, g));
     float3 color = out_color[p].rgb;
     if (!material_solid(m)) {
-        out_color[p] = float4(finite_or_zero(color + scene_through(uv, depth, m.transmission > 0.0 ? g.roughness : 0.0, seed) * through), 1.0);
+        out_color[p] = float4(finite_or_zero(color + scene_through(uv, depth, m.transmission > 0.0 ? g.roughness : 0.0) * through), 1.0);
         return;
     }
     // What the solid absorbed of the scene on the way and scattered towards the eye on it.
     float bias = 1e-3 + 2e-4 * depth;
-    float3 direction = refract(-g.view, g.normal, 1.0 / material_ior(m));
+    float3 direction = refract(-g.view, g.normal, 1.0 / m.ior);
     Glass_Walk w = glass_entry(m, g, ids.y, direction, bias);
     float3 radiance;
     float path;
     if ((w.flags & WALK_OPEN) != 0u) {
-        Sheet_Seen seen = sheet_through(m, g, uv, p);
+        Sheet_Seen seen = sheet_through(m, g, uv);
         radiance = seen.radiance;
         path = seen.travelled;
         direction = seen.direction;
     } else {
-        walk_show(w, depth, g.roughness, uv, seed);
+        walk_show(w, depth, g.roughness, uv);
         radiance = w.radiance;
         path = w.path;
     }

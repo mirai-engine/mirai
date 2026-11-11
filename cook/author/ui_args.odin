@@ -6,6 +6,7 @@ import "core:mem"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
+import std_anim "mirai:std/anim"
 import "mirai:core"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -24,6 +25,7 @@ Tree_Args :: struct {
     asset:base.Asset_Id, // the .ui edited
     assets:Assets,
     info:^core.World_Info,  // the types of the game the paths of a document are checked against; nil: none are
+    texts:^Texts,           // of the assets: what a node with a key sets; whoever writes the document writes texts_written
     libs:^[dynamic]Doc_Lib, // the files a document takes names from
 }
 
@@ -54,9 +56,10 @@ tree_object :: proc(reading:^Reading,text:string,what:string) -> (keys,values:[d
     }
 }
 
-// The params of a reading, read against the assets and the types of the game.
-tree_args :: proc(reading:^Reading,a:Assets,info:^core.World_Info) -> (args:Tree_Args,ok:bool) {
-    args.reading,args.info=reading,info
+// The params of a reading, read against the assets, the types of the game
+// and its texts.
+tree_args :: proc(reading:^Reading,a:Assets,info:^core.World_Info,texts:^Texts) -> (args:Tree_Args,ok:bool) {
+    args.reading,args.info,args.texts=reading,info,texts
     if a.registry!=nil {args.types,args.registry,args.assets=a.types,a.registry,a}
     args.keys,args.values,ok=tree_object(reading,reading.raw,"params")
     return
@@ -177,10 +180,9 @@ tree_broadcast :: proc(types:^asset.Types,index:serial.Type_Index,text:string) -
 // ---------------------------------------------------------------- nodes
 
 // What a node does not give by the keys of a document, with where it goes instead.
-TREE_NODE_REFUSED :: [?]string{"parent","text_id","anims","component"}
+TREE_NODE_REFUSED :: [?]string{"parent","anims","component"}
 TREE_NODE_WHY :: [?]string{
     "what a node holds goes in its children",
-    "the id of its text goes with its translations: a document gives both, and ui.text.set sets one text",
     "give what it plays with the key events",
     "a use names its widget by the name of its file in kind",
 }
@@ -213,7 +215,7 @@ tree_kinds_read :: proc(reading:^Reading,text:string,family:ui.Style_Family) -> 
 
 tree_kind :: proc(reading:^Reading,name:string) -> (kind:ui.Node_Kind,ok:bool) {
     for k in ui.Node_Kind {if k!=.Component && fmt.tprintf("%v",k)==name {return k,true}}
-    reading_failf(reading,"kind '%s' is none of Box, Text, Image, Button, Progress, Checkbox, Slider, Field, Number, Selector, Dropdown, Radio, Rich_Text, Prompt, Action_Bar, Scroll, List, Switcher, Tabs, Popup, Modal, Context_Menu, Radial, Tooltip, View, Particles, Spacer, or the name of the file of a widget the document uses",name)
+    reading_failf(reading,"kind '%s' is none of Box, Text, Image, Button, Progress, Checkbox, Slider, Field, Number, Selector, Dropdown, Radio, Rich_Text, Prompt, Action_Bar, Scroll, List, Switcher, Tabs, Popup, Modal, Context_Menu, Radial, Tooltip, View, Particles, Draw, Spacer, or the name of the file of a widget the document uses",name)
     return
 }
 
@@ -258,7 +260,7 @@ tree_anim_apply :: proc(args:^Tree_Args,r:^Records) -> int {
     }
     if text,found,loop_ok:=tree_arg_string(args,"loop");!loop_ok {return -1} else if found {
         known:=false
-        for l in ui.Anim_Loop {if fmt.tprintf("%v",l)==text {anim.loop,known=l,true}}
+        for l in std_anim.Loop {if fmt.tprintf("%v",l)==text {anim.loop,known=l,true}}
         if !known {reading_failf(reading,"loop '%s' is none of Once, Loop, Ping_Pong",text);return -1}
     }
     types:=args.types
@@ -268,7 +270,7 @@ tree_anim_apply :: proc(args:^Tree_Args,r:^Records) -> int {
         if !found && row<0 {reading_fail(reading,"tracks is required for a new Clip");return -1}
         if found {
             tracks:=make([dynamic]ui.Tree_Track,reading.allocator)
-            keys:=make([dynamic]ui.Keyframe,reading.allocator)
+            keys:=make([dynamic]std_anim.Keyframe,reading.allocator)
             if !tree_tracks_read(reading,types,text,&tracks,&keys) {return -1}
             anim.first,anim.count=u32(len(r.tracks)),u32(len(tracks))
             for &t in tracks {t.first_key+=u32(len(r.keys))}
@@ -298,7 +300,7 @@ tree_anim_apply :: proc(args:^Tree_Args,r:^Records) -> int {
 }
 
 // Reads the tracks of a clip: each a property and its keys, put in time order.
-tree_tracks_read :: proc(reading:^Reading,types:^asset.Types,text:string,tracks:^[dynamic]ui.Tree_Track,keys:^[dynamic]ui.Keyframe) -> bool {
+tree_tracks_read :: proc(reading:^Reading,types:^asset.Types,text:string,tracks:^[dynamic]ui.Tree_Track,keys:^[dynamic]std_anim.Keyframe) -> bool {
     items:=doc_items(reading,text,"tracks","{property, keys}") or_return
     for item,count in items {
         if count>=ui.TREE_CLIP_TRACKS {reading_failf(reading,"a clip has at most %d tracks",ui.TREE_CLIP_TRACKS);return false}
@@ -313,10 +315,10 @@ tree_tracks_read :: proc(reading:^Reading,types:^asset.Types,text:string,tracks:
                 for p in ui.Anim_Property {if fmt.tprintf("%v",p)==name {track.property,has_property=p,true}}
                 if !has_property {reading_failf(reading,"%s.property '%s' is none of Offset, Scale, Rotation, Opacity, Color, Width, Height, Value, Frame, Reveal",what,name);return false}
             case "keys":
-                key_items:=doc_items(reading,object_values[i],fmt.tprintf("%s.keys",what),"{time, value, ease}") or_return
+                key_items:=doc_items(reading,object_values[i],fmt.tprintf("%s.keys",what),"{time, value, ease, interpolation}") or_return
                 for key_item,k in key_items {
-                    key:ui.Keyframe
-                    if !tree_fields_read(reading,types,ui.Keyframe,&key,key_item,fmt.tprintf("%s.keys[%d]",what,k)) {return false}
+                    key:std_anim.Keyframe
+                    if !tree_fields_read(reading,types,std_anim.Keyframe,&key,key_item,fmt.tprintf("%s.keys[%d]",what,k)) {return false}
                     if key.time<0 || key.time-key.time!=0 {reading_failf(reading,"%s.keys[%d].time must be a finite number of seconds, 0 or more",what,k);return false}
                     append(keys,key)
                 }
@@ -328,7 +330,7 @@ tree_tracks_read :: proc(reading:^Reading,types:^asset.Types,text:string,tracks:
         if !has_property {reading_failf(reading,"%s.property is required",what);return false}
         track.key_count=u32(len(keys))-track.first_key
         run:=keys[track.first_key:]
-        slice.sort_by(run,proc(a,b:ui.Keyframe) -> bool {return a.time<b.time})
+        slice.sort_by(run,proc(a,b:std_anim.Keyframe) -> bool {return a.time<b.time})
         append(tracks,track)
     }
     return true

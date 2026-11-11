@@ -154,7 +154,7 @@ exit 0
         testing.expect(t,os.write_entire_file(executable,script)==nil)
         testing.expect(t,os.chmod(executable,{.Read_User,.Write_User,.Execute_User})==nil)
         testing.expect(t,os.write_entire_file(project.path(folder,"installation.json",allocator=context.temp_allocator),string(`{"codex_binary":"test-codex"}`))==nil)
-        p,error:=platform.create({headless=true,process_capacity=2})
+        p,error:=platform.create({headless=true})
         testing.expect_value(t,error,platform.Error.None);if p==nil {return}
         defer platform.destroy(p)
         m.initialized=true;m.connections[AI_CODEX].installed=true
@@ -163,16 +163,16 @@ exit 0
         defer ai_destroy(&s)
         wait :: proc(s:^Session) {
             until:=platform.clock_seconds()+5
-            for s.ai.login_process!=0 && platform.clock_seconds()<until {ai_login_poll(s);platform.sleep_coarse(1_000_000)}
+            for s.ai.login_process.pid!=0 && platform.clock_seconds()<until {ai_login_poll(s);platform.sleep_coarse(1_000_000)}
         }
         testing.expect_value(t,ai_login_start(&s,AI_CODEX),"")
-        testing.expect(t,m.login && m.login_process!=0 && !m.workers[0].created && !ai_process_running(m))
+        testing.expect(t,m.login && m.login_process.pid!=0 && !m.workers[0].created && !ai_process_running(m))
         wait(&s)
         testing.expect(t,!m.connections[AI_CODEX].configured && strings.contains(base.text_get(m.connection_ui.error[:]),"login\" in a terminal"),"without a sign-in the user is told to sign in")
         testing.expect(t,os.write_entire_file(project.path(root,"signed-in",allocator=context.temp_allocator),"")==nil)
         testing.expect_value(t,ai_login_start(&s,AI_CODEX),"")
         wait(&s)
-        testing.expect(t,m.login_process==0 && !m.login && m.connections[AI_CODEX].configured)
+        testing.expect(t,m.login_process.pid==0 && !m.login && m.connections[AI_CODEX].configured)
         testing.expect(t,!os.exists(project.path(root,".mirai","ai","codex-account",allocator=context.temp_allocator)),"no account of its own")
     }
 }
@@ -193,7 +193,7 @@ cat >/dev/null
 `
         testing.expect(t,os.write_entire_file(executable,script)==nil)
         testing.expect(t,os.chmod(executable,{.Read_User,.Write_User,.Execute_User})==nil)
-        p,error:=platform.create({headless=true,process_capacity=2})
+        p,error:=platform.create({headless=true})
         testing.expect_value(t,error,platform.Error.None);if p==nil {return}
         defer platform.destroy(p)
         m:=new(Ai);defer free(m)
@@ -223,7 +223,7 @@ cat >/dev/null
         testing.expect_value(t,ai_start_client(&s,&m.workers[0],provider),"")
         until:=platform.clock_seconds()+5
         for m.workers[0].client.phase!=.Initialized && platform.clock_seconds()<until {
-            acp.poll(&m.workers[0].client,p,nil,nil)
+            acp.poll(&m.workers[0].client,nil,nil)
             platform.sleep_coarse(1_000_000)
         }
         testing.expect_value(t,m.workers[0].client.phase,acp.Phase.Initialized)
@@ -381,6 +381,9 @@ ai_stream_does_not_wait_for_another_editor_and_loses_no_line :: proc(t:^testing.
 
     testing.expect(t,sqlite.exec(other,"COMMIT",nil,nil,nil)==sqlite.OK)
     ai_persist_poll(&s,m,now+AI_FLUSH_SECONDS)
+    testing.expect(t,ai_store.pending(&m.store)==0 && task.dirty,"the poll writes what was kept, and leaves the chat to what happens to it")
+    // The turn ends.
+    ai_task_persist(&s,task)
     testing.expect(t,ai_store.pending(&m.store)==0 && !task.dirty)
     count,_=ai_store.page(&m.store,1,-1,lines)
     testing.expect_value(t,count,400)

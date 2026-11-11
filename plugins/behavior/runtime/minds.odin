@@ -1,22 +1,24 @@
 package behavior
 
-import "base:intrinsics"
 import "base:runtime"
 import "mirai:core"
 import "mirai:std/ai"
 import "mirai:std/base"
+import mm "mirai:std/math"
+import "mirai:engine/volume"
 import nav "plugins:navigation/runtime"
 
 // The minds of a game and the agents that run them. A mind is an enum of
 // actions, a procedure for each and a think procedure that proposes them
-// (ai.mind_tick); the game ticks the agents of each in a function of its own
-// with minds_tick, which registers the mind by name the first time, checks
-// it, and gives the actions what the function received (the agents far from
-// the players included). The registry is the same for every world; the
-// state of each agent is plain data in its Mind_Agent and copies with the
-// world. Minds decide on the server alone: the function that ticks them is
-// `server`, a tick that runs again decides nothing, and the clients see what
-// each one does in its Mind_Presentation.
+// (ai.mind_tick). The game declares its think with @(mind="name") and each
+// action with @(act="Value"), and the world generator ticks the agents of each
+// mind in a fixed, server step named after its think: it binds what the
+// procedures of the mind receive, as for any step, and calls minds_tick,
+// which registers the mind by name and gives the agents far from the players
+// their tick. The registry is the same for every world; the state of each
+// agent is plain data in its Mind_Agent and copies with the world. A tick
+// that runs again decides nothing. What an action plays (anim.play, anim.look)
+// reaches the clients through the replicated state of the animation.
 
 MINDS_CAPACITY :: 16
 MIND_NAME :: 16
@@ -46,54 +48,22 @@ Mind_Agent :: struct {
     state:ai.Mind `mirai:"hidden"`,
 }
 
-// What the players see of what the mind of an agent does, written where it
-// decides and replicated: the clients show it (an animation, where the head
-// turns) without running the mind. It travels if the entity has it when it
-// is first replicated: its prefab carries it with its Mind_Agent.
-@(component,shared,replicated,description="What the players see of what the mind of this agent does: its action and step, what it looks at and the animation it asks for. Written on the server, replicated to the clients.")
-Mind_Presentation :: struct {
-    action:u16 `mirai:"readonly"`,         // the value of the enum of the action that runs, ai.MIND_NONE
-    step:u16 `mirai:"readonly"`,           // of the step it runs, ai.MIND_NONE
-    look:core.Entity `mirai:"readonly"`,  // what it looks at, or none
-    look_point:[3]f32 `mirai:"readonly,unit=m,precision=0.01"`, // where it looks without an entity
-    animation:u16 `mirai:"readonly"`,     // the game's id of the animation it asks for
-    animations:u16 `mirai:"readonly"`,    // times it asked for one: the same animation asked again shows again
-}
-MIND_PRESENTATION_DEFAULT :: Mind_Presentation{action=ai.MIND_NONE,step=ai.MIND_NONE,animation=ai.MIND_NONE}
-
-Mind_Problem :: enum u8 {
-    None,
-    Name,           // empty or longer than a Mind_Name holds
-    Missing_Action, // a value of the enum without a procedure
-    No_Think,
-    Full,           // MINDS_CAPACITY minds are registered
-}
+MIND_KEEP :: f32(0.05) // the margin of the running action of an agent over the others
 
 // Registers a mind under a name, or replaces the one there (a game that
-// changed its code), after checking it: every action has its procedure and
-// there is a think procedure. On a problem, `action` is the value of the
-// enum without a procedure; mind_problem_text says how to fix it.
-mind_register :: proc(minds:^Minds,name:string,acts:^[$A]$P,think:proc(t:^ai.Think(A))) -> (problem:Mind_Problem,action:int) {
-    #assert(intrinsics.type_is_enum(A) && int(min(A))>=0 && int(max(A))<ai.MIND_ACTIONS)
-    #assert(P==proc(a:^ai.Act(A)) -> ai.Status)
-    action=-1
+// changed its code). The generated world checks the name and how many minds
+// there are when it builds.
+mind_register :: proc(minds:^Minds,name:string,$A:typeid) {
     key,ok:=name_make(name)
-    if !ok {return .Name,action}
-    if acts==nil {return .Missing_Action,int(min(A))}
-    for procedure,a in acts {
-        if procedure==nil {return .Missing_Action,int(a)}
-    }
-    if think==nil {return .No_Think,action}
-    if minds==nil {return .Full,action}
+    if !ok || minds==nil {return}
     for &entry in minds.entries[:clamp(minds.count,0,MINDS_CAPACITY)] {
         if entry.name!=key {continue}
         if entry.actions!=A {entry_set(&entry,key,A,type_info_of(A))}
         return
     }
-    if minds.count>=MINDS_CAPACITY {return .Full,action}
+    if minds.count>=MINDS_CAPACITY {return}
     entry_set(&minds.entries[minds.count],key,A,type_info_of(A))
     minds.count+=1
-    return
 }
 
 // The names come from the type info of the binary that registers: the editor
@@ -121,18 +91,6 @@ mind_action_name :: proc(entry:^Mind_Entry,action:u16) -> string {
     return base.text_get(entry.names[action][:])
 }
 
-// What to do about a problem of mind_register.
-mind_problem_text :: proc "contextless" (problem:Mind_Problem) -> string {
-    switch problem {
-    case .None: return ""
-    case .Name: return "the name of a mind is 1 to 15 bytes"
-    case .Missing_Action: return "an action of the enum has no procedure: set it in the array of actions, or take the value out of the enum"
-    case .No_Think: return "it has no think procedure: pass the procedure that proposes its actions"
-    case .Full: return "no room is left: a game registers at most MINDS_CAPACITY minds, so join those that share their actions"
-    }
-    return ""
-}
-
 // The mind registered under a name, or nil.
 mind_of :: proc "contextless" (minds:^Minds,name:Mind_Name) -> ^Mind_Entry {
     if minds==nil {return nil}
@@ -147,186 +105,93 @@ mind_name :: proc "contextless" (name:string) -> Mind_Name {
     return key
 }
 
-// Ticks every agent of a mind, after registering it: before each tick,
-// w.entity is that agent, so the actions know whom they move, and ctx.holder
-// is the agent, as the holder of what it claims; after it, its
-// Mind_Presentation (when w.presentations has the table, and an agent without
-// one gets it before) shows the action and the step it runs. An agent far
+// What every mind reads and asks for: its agents, how they walk,
+// the smart objects and the claims. The generated step of a mind binds it
+// first in the context of the mind, which the procedures of the mind reach
+// through their ai.Mind_Context: the helpers of behavior take only the
+// action or the think.
+@(params)
+Mind_World :: struct {
+    minds:^Minds,
+    agents:^core.Table(Mind_Agent),
+    requests:^nav.Nav_Requests,
+    paths:^core.Table(nav.Nav_Path,.Read),
+    fars:^core.Table(nav.Nav_Far,.Read),
+    objects:^core.Table(Smart_Object,.Read),
+    states:^core.Table(Smart_State,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),
+    patrols:^core.Table(Patrol),
+    splines:^core.Table(volume.Spline,.Read),
+    claims:^Claims,
+    problems:^core.Problems,
+    time:core.Time,
+}
+
+// Ticks every agent of a mind, after registering it: ctx.holder is the agent,
+// as the holder of what it claims, and ctx.user is w, the start of the
+// context of the mind. An agent far
 // from the players (nav.Nav_Far) is off and decides on: its mind ticks once
-// every step of what is far (nav.nav_far_decide), with w.far, and what it
-// claims lasts until its next tick. A tick that runs again (time.resimulating)
-// decides nothing: its actions would repeat what they did. A mind that does
-// not register, and agents of a name never registered, are the problem
-// behavior.mind.
-minds_tick :: proc(minds:^Minds,agents:^core.Table(Mind_Agent),name:string,acts:^[$A]$P,think:proc(t:^ai.Think(A)),ctx:^ai.Mind_Context,w:^Act_World,time:core.Time,problems:^core.Problems) {
-    if time.resimulating || ctx==nil || w==nil {return}
-    problem,action:=mind_register(minds,name,acts,think)
-    if problem!=.None {
-        if action>=0 {
-            core.report(problems,core.NONE,"behavior.mind","The mind %q does not run: %s (%v)",name,mind_problem_text(problem),A(action))
-        } else {
-            core.report(problems,core.NONE,"behavior.mind","The mind %q does not run: %s",name,mind_problem_text(problem))
-        }
-        return
-    }
+// every step of what is far (nav.nav_far_decide), and what it claims lasts
+// until its next tick. Only a world that plays decides, and a tick that runs
+// again (time.resimulating) does not: its actions would repeat what they did.
+minds_tick :: proc(w:^Mind_World,name:string,acts:^[$A]$P,think:proc(t:^ai.Think(A))) {
+    mind_register(w.minds,name,A)
+    time:=w.time
+    if !time.playing || time.resimulating || time.dt<=0 {return}
     key:=mind_name(name)
-    ctx.time,ctx.tick,ctx.lease=time.seconds,time.tick,1
-    w.far=false
+    agents:=w.agents
+    ctx:=ai.Mind_Context{user=w,tick=time.tick,dt=time.dt,keep=MIND_KEEP,lease=1}
+    if w.claims!=nil {ctx.reservations=&w.claims.reservations}
     for row in 0..<core.count(agents) {
         if agents.values[row].mind!=key {continue}
-        w.entity=core.entity_at(agents,row)
-        mind_run(&core.at(agents,row).state,acts,think,ctx,w)
+        mind_run(w,core.entity_at(agents,row),&core.edit_at(agents,row).state,acts,think,&ctx)
     }
-    if w.fars.table==nil || !nav.nav_far_decide(time) {return}
+    if w.fars==nil || !nav.nav_far_decide(time) {return}
     // Until its next tick, once every step of what is far.
     ctx.lease=u32(nav.NAV_FAR_PERIOD/max(time.dt,1e-6)+0.5)+1
     // The rows after those on are off: of them, the agents far.
     for row in core.count(agents)..<len(agents.entities) {
         if agents.values[row].mind!=key {continue}
         e:=agents.entities[row]
-        if core.raw_find(core.raw(w.fars.table),type_info_of(nav.Nav_Far),e)==nil {continue}
-        w.entity,w.far=e,true
-        mind_run(&core.at(agents,row).state,acts,think,ctx,w)
+        if core.raw_find(core.raw(w.fars),type_info_of(nav.Nav_Far),e)==nil {continue}
+        mind_run(w,e,&core.edit_at(agents,row).state,acts,think,&ctx)
     }
-    w.far=false
-    ctx.lease=1
 }
 
-// Reports the agents whose mind nobody ticks with minds_tick: call it once
-// after the minds of a tick, with the names they ran.
-minds_unknown :: proc(minds:^Minds,agents:^core.Table(Mind_Agent),problems:^core.Problems) {
+// Reports the agents of a name no mind of the game declares.
+@(step="fixed",stage="apply",server)
+minds_unknown :: proc(minds:core.Ref(Minds),agents:^core.Table(Mind_Agent,.Read),time:core.Time,problems:^core.Problems) {
+    if !time.playing || time.resimulating {return}
     for row in 0..<core.count(agents) {
         name:=agents.values[row].mind
-        if mind_of(minds,name)!=nil {continue}
-        name_text:=name
-        core.report(problems,core.entity_at(agents,row),"behavior.mind","No mind is registered as %q: tick it with behavior.minds_tick, or fix the name of its Mind_Agent",base.text_get(name_text[:]))
+        if mind_of(minds.ptr,name)!=nil {continue}
+        text:=base.text_get(name[:])
+        core.report(problems,core.entity_at(agents,row),"behavior.mind","No mind is declared as %q: give the think procedure of a mind @(mind=%q), or fix the name of its Mind_Agent",text,text)
     }
 }
 
 @(private)
-mind_run :: proc(m:^ai.Mind,acts:^[$A]$P,think:proc(t:^ai.Think(A)),ctx:^ai.Mind_Context,w:^Act_World) {
-    ctx.holder=u64(w.entity)
-    present_ensure(w)
+mind_run :: proc(w:^Mind_World,e:core.Entity,m:^ai.Mind,acts:^[$A]$P,think:proc(t:^ai.Think(A)),ctx:^ai.Mind_Context) {
+    ctx.holder=u64(e)
     ai.mind_tick(m,acts,think,ctx)
-    shown,found:=presentation_read(w)
-    if !found {return}
-    next:=shown
-    next.action,next.step=ai.mind_running(m)
-    if next!=shown {presentation_write(w,next)}
 }
 
-// Gives the agent of w its Mind_Presentation before its first tick, so its actions can write it.
-@(private)
-present_ensure :: proc(w:^Act_World) {
-    if w.presentations==nil {return}
-    if _,found:=presentation_read(w);!found {core.add(w.presentations,w.entity,MIND_PRESENTATION_DEFAULT)}
-}
-
-// The Mind_Presentation of the agent of w: the one it is given in this
-// function, or its row, on or off while it is far.
-@(private)
-presentation_read :: proc(w:^Act_World) -> (shown:Mind_Presentation,ok:bool) {
-    if w.presentations==nil {return}
-    t:=core.raw(w.presentations)
-    found:=core.raw_added(t,type_info_of(Mind_Presentation),w.entity)
-    if found==nil {found=core.raw_find(t,type_info_of(Mind_Presentation),w.entity)}
-    if found==nil {return}
-    return (cast(^Mind_Presentation)found)^,true
-}
+// The agent a procedure of a mind runs for: of its ai.Act or its ai.Think.
+agent :: #force_inline proc "contextless" (a:^$T) -> core.Entity {return core.Entity(a.holder)}
 
 @(private)
-presentation_write :: proc(w:^Act_World,shown:Mind_Presentation) {
-    if row:=cast(^Mind_Presentation)core.raw_staged(core.raw(w.presentations),type_info_of(Mind_Presentation),w.entity);row!=nil {row^=shown}
-}
+world_of :: #force_inline proc "contextless" (a:^$T) -> ^Mind_World {return (^Mind_World)(a.user)}
 
-// The agent of w looks at an entity, or at a point without one, as the
-// players see it. Without its Mind_Presentation, nothing.
-present_look :: proc(w:^Act_World,target:core.Entity,point:[3]f32={}) {
-    shown,found:=presentation_read(w)
-    if !found || shown.look==target && shown.look_point==point {return}
-    shown.look,shown.look_point=target,point
-    presentation_write(w,shown)
-}
+// The Nav_Path of the agent of an action or a think procedure: on, or off
+// while it is far.
+agent_path :: proc(a:^$T) -> (nav.Nav_Path,bool) {return read_any(world_of(a).paths,agent(a))}
 
-// The agent of w asks for an animation by the game's id: the players see it
-// start, again each time it is asked. Without its Mind_Presentation, nothing.
-present_animation :: proc(w:^Act_World,animation:u16) {
-    shown,found:=presentation_read(w)
-    if !found {return}
-    shown.animation=animation
-    shown.animations+=1
-    presentation_write(w,shown)
-}
-
-// What every mind of a game reads and asks for: a loop function receives it
-// and adds only the tables of the game (mind_tick).
-@(params)
-Mind_World :: struct {
-    minds:^Minds,
-    agents:^core.Table(Mind_Agent),
-    presentations:^core.Table(Mind_Presentation),
-    requests:^nav.Nav_Requests,
-    paths:core.Read(nav.Nav_Path),
-    fars:core.Read(nav.Nav_Far),
-    nav_agents:core.Read(nav.Nav_Agent),
-    links:core.Read(nav.Nav_Link),
-    perceptions:core.Read(Perception),
-    perceivables:core.Read(Perceivable),
-    worlds:core.Read(core.World_Transform),
-    places:^Place_Requests,
-    results:core.Read(Place_Result),
-    objects:core.Read(Smart_Object),
-    states:core.Read(Smart_State),
-    claims:^Claims,
-    uses:^Smart_Uses,
-    noises:^Noises,
-    influence:core.Ref(Influence),
-    time:core.Time,
-    problems:^core.Problems,
-}
-
-// What the actions of a tick read, from a Mind_World. A game makes its context begin with it
-// (using) and adds its own tables.
-Mind_Tick :: struct {
-    using act:Act_World,
-    smart:Smart_View,
-    world:Mind_World,
-    worlds:core.Read(core.World_Transform),
-    perceptions:core.Read(Perception),
-    perceivables:core.Read(Perceivable),
-    agents:core.Read(nav.Nav_Agent),
-    links:core.Read(nav.Nav_Link),
-    places:^Place_Requests,
-    results:core.Read(Place_Result),
-    uses:^Smart_Uses,
-    noises:^Noises,
-    influence:^Influence,
-}
-
-mind_tick :: proc(world:Mind_World) -> Mind_Tick {
-    return {
-        act={requests=world.requests,paths=world.paths,fars=world.fars,presentations=world.presentations},
-        smart={objects=world.objects,states=world.states,worlds=world.worlds,claims=world.claims,time=world.time.seconds,tick=world.time.tick},
-        world=world,worlds=world.worlds,perceptions=world.perceptions,perceivables=world.perceivables,agents=world.nav_agents,links=world.links,
-        places=world.places,results=world.results,uses=world.uses,noises=world.noises,influence=world.influence.ptr,
-    }
-}
-
-// What the actions of a game usually need of the world, which its context
-// can begin with (using) so the actions below work on it.
-Act_World :: struct {
-    entity:core.Entity,
-    requests:^nav.Nav_Requests,
-    paths:core.Read(nav.Nav_Path),
-    fars:core.Read(nav.Nav_Far),
-    presentations:^core.Table(Mind_Presentation), // none: the agents present nothing
-    far:bool, // the agent is far from the players: its components are off
-}
-
-// The Nav_Path of the agent: on, or off while it is far.
-agent_path :: proc(w:^Act_World) -> (p:nav.Nav_Path,ok:bool) {
-    if p,ok=core.get(w.paths,w.entity);ok || !w.far || w.paths.table==nil {return}
-    found:=cast(^nav.Nav_Path)core.raw_find(core.raw(w.paths.table),type_info_of(nav.Nav_Path),w.entity)
+// The row of e, on or off while it is far.
+@(private)
+read_any :: proc(r:^core.Table($T,$A),e:core.Entity) -> (v:T,ok:bool) {
+    if r==nil {return}
+    if v,ok=core.get(r,e);ok {return}
+    found:=cast(^T)core.raw_find(core.raw(r),type_info_of(T),e)
     if found==nil {return}
     return found^,true
 }
@@ -334,45 +199,146 @@ agent_path :: proc(w:^Act_World) -> (p:nav.Nav_Path,ok:bool) {
 // Walks the agent to `goal`: Success when it arrives, Failure when
 // navigation cannot take it there; it stops the agent when the action is
 // interrupted.
-move_act :: proc(w:^Act_World,a:^ai.Act($A),goal:[3]f32) -> ai.Status {
+move_act :: proc(a:^ai.Act($A),goal:[3]f32) -> ai.Status {
+    w,e:=world_of(a),agent(a)
     switch a.phase {
     case .Enter:
-        nav.nav_move_to(w.requests,w.entity,goal)
+        nav.nav_move_to(w.requests,e,goal)
         return .Running
     case .Update:
-        return path_status(w)
+        return path_status(a)
     case .Exit:
-        if a.cause==.Aborted {nav.nav_stop(w.requests,w.entity)}
+        if a.cause==.Aborted {nav.nav_stop(w.requests,e)}
     }
     return .Success
 }
 
-// Follows `target`, keeping `distance`: Running while it follows, Failure
-// when navigation cannot; it stops the agent on Exit.
-follow_act :: proc(w:^Act_World,a:^ai.Act($A),target:core.Entity,distance:f32) -> ai.Status {
-    switch a.phase {
-    case .Enter:
-        nav.nav_follow(w.requests,w.entity,target,distance)
-        return .Running
-    case .Update:
-        p,ok:=agent_path(w)
-        if ok && p.state==.Failed {return .Failure}
-        return .Running
-    case .Exit:
-        nav.nav_stop(w.requests,w.entity)
+// Follows `target`, keeping `distance`, and follows the new one when the
+// target changes: Running while it follows, Failure without a target or when
+// navigation cannot; it stops the agent on Exit. It keeps the target in the
+// first word of its memory.
+chase_act :: proc(a:^ai.Act($A),target:core.Entity,distance:f32) -> ai.Status {
+    w,e:=world_of(a),agent(a)
+    if a.phase==.Exit {
+        nav.nav_stop(w.requests,e)
+        return .Success
     }
-    return .Success
+    if target==core.NONE {return .Failure}
+    if a.phase==.Enter || u64(target)!=a.memory[0] {
+        a.memory[0]=u64(target)
+        nav.nav_follow(w.requests,e,target,distance)
+        return .Running
+    }
+    p,ok:=agent_path(a)
+    return .Failure if ok && p.state==.Failed else .Running
 }
 
 // Running while the agent walks or waits for its path, Success once there
 // (Failure when it could only get near), Failure when navigation failed.
-path_status :: proc(w:^Act_World) -> ai.Status {
-    p,ok:=agent_path(w)
+path_status :: proc(a:^$T) -> ai.Status {
+    p,ok:=agent_path(a)
     if !ok {return .Running}
     #partial switch p.state {
     case .Arrived: return .Failure if p.partial else .Success
     case .Failed,.Idle: return .Failure
     }
+    return .Running
+}
+
+Patrol_Mode :: enum u8 {Loop,Back_And_Forth,Once}
+
+// An agent with a mind walks it while the mind's patrol_act runs; one without
+// a mind walks it by itself (patrols_walk). Shared: the step of each mind
+// writes those of its agents.
+@(component,shared,description="Walks the points of the Spline of the entity `path` in turn: around (Loop), to the last point and back (Back_And_Forth) or to the last point once (Once), from the point after where it is nearest the path. An agent with a mind walks it while its mind patrols; one without a mind, always.")
+Patrol :: struct {
+    path:core.Entity, // that has the Spline
+    mode:Patrol_Mode,
+    next:u16 `mirai:"transient,readonly"`,  // the point it walks to
+    back:bool `mirai:"transient,readonly"`, // toward the first point
+}
+
+// Walks the agent along the Spline of its Patrol (patrol_walk). An exit stops
+// the agent, unless it crosses a link: the crossing goes on.
+patrol_act :: proc(a:^ai.Act($A)) -> ai.Status {
+    w,e:=world_of(a),agent(a)
+    p,walking:=agent_path(a)
+    if a.phase==.Exit {
+        if a.cause==.Aborted && !(walking && p.state==.Crossing) {nav.nav_stop(w.requests,e)}
+        return .Success
+    }
+    if a.phase==.Update && !walking {return .Running}
+    patrol,found:=read_any(w.patrols,e)
+    if !found {return .Failure}
+    walked:=patrol
+    status:=patrol_walk(&walked,e,a.phase==.Enter,p,w.splines,w.worlds,w.requests,w.problems)
+    if walked==patrol {return status}
+    if row:=core.edit(w.patrols,e);row!=nil {row^=walked} else {(cast(^Patrol)core.raw_find(core.raw(w.patrols),type_info_of(Patrol),e))^=walked}
+    return status
+}
+
+// Walks the agents with a Patrol and no mind.
+@(step="fixed",server)
+patrols_walk :: proc(
+    patrols:^core.Table(Patrol),minds:^core.Table(Mind_Agent,.Read),paths:^core.Table(nav.Nav_Path,.Read),
+    splines:^core.Table(volume.Spline,.Read),worlds:^core.Table(core.World_Transform,.Read),requests:^nav.Nav_Requests,problems:^core.Problems,time:core.Time,
+) {
+    if !time.playing || time.resimulating {return}
+    for row in 0..<core.count(patrols) {
+        e:=core.entity_at(patrols,row)
+        if core.has(minds,e) {continue}
+        p,_:=core.get(paths,e)
+        walked:=patrols.values[row]
+        patrol_walk(&walked,e,false,p,splines,worlds,requests,problems)
+        if walked!=patrols.values[row] {core.edit_at(patrols,row)^=walked}
+    }
+}
+
+// Walks e along the Spline of patrol: from where it is when it starts, or
+// when navigation is idle, to the point after the span of the curve nearest
+// it; on to each next point when it gets there or cannot, and again to its
+// point when the path moves or is edited. Running while it patrols (on a path
+// of one point it stands there), Success at the end of a Once path, Failure
+// without a Spline to walk (the problem behavior.patrol).
+@(private)
+patrol_walk :: proc(patrol:^Patrol,e:core.Entity,start:bool,p:nav.Nav_Path,splines:^core.Table(volume.Spline,$A),worlds:^core.Table(core.World_Transform,$B),requests:^nav.Nav_Requests,problems:^core.Problems) -> ai.Status {
+    spline,_:=read_any(splines,patrol.path)
+    place,_:=read_any(worlds,patrol.path)
+    count,next:=int(spline.count),int(patrol.next)
+    goal:[3]f32
+    on:=!start && next<count
+    if on {goal=mm.transform_point(place,spline.points[next].position);on=goal-goal=={}}
+    if on {
+        #partial switch p.state {
+        case .Moving,.Waiting,.Crossing:
+            if p.state==.Moving && p.goal!=goal {nav.nav_move_to(requests,e,goal)}
+            return .Running
+        case .Arrived,.Failed:
+            // There, as near as it gets, or where it cannot get: the next point.
+            next+=-1 if patrol.back else 1
+            if next<0 || next>=count {
+                switch patrol.mode {
+                case .Once: return .Success
+                case .Loop: next=(next+count)%count
+                case .Back_And_Forth: patrol.back,next=!patrol.back,clamp(int(patrol.next)+(1 if patrol.back else -1),0,count-1)
+                }
+            }
+            if next==int(patrol.next) {return .Running}
+        }
+    }
+    if !on || p.state==.Idle {
+        pose,_:=read_any(worlds,e)
+        key,near:=volume.spline_nearest(&spline,place,pose.position)
+        if count==1 {key,near=0,true}
+        next=min(int(key)+(0 if patrol.back else 1),count-1) if near else -1
+    }
+    if next>=0 {goal=mm.transform_point(place,spline.points[next].position)}
+    if next<0 || !(goal-goal=={}) {
+        core.report(problems,e,"behavior.patrol","Its Patrol has no path to walk: name in path an entity with a Spline of finite points, each with a width (or of one point to stand at)")
+        return .Failure
+    }
+    patrol.next=u16(next)
+    nav.nav_move_to(requests,e,goal)
     return .Running
 }
 

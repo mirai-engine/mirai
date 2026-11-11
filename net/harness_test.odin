@@ -125,7 +125,7 @@ test_packet_data :: proc(bytes:[]u8) -> bool {return bytes[0]==u8(Packet_Type.Da
 // What comes before the checksum or the tag of a datagram, deciphered in place as the host would.
 @(private)
 test_unseal :: proc(h:^Host,bytes:[]u8,from:Address) -> (plain:int,ok:bool) {
-    if !test_packet_data(bytes) || h.desc.security.mode!=.Encrypted {return len(bytes)-CHECKSUM_BYTES,true}
+    if !test_packet_data(bytes) {return len(bytes)-CHECKSUM_BYTES,true}
     p:=peer_find(&h.back,from)
     plain=len(bytes)-TAG_BYTES
     if p==nil || p.state!=.Connected || plain<DATA_HEADER {return}
@@ -139,7 +139,7 @@ test_unseal :: proc(h:^Host,bytes:[]u8,from:Address) -> (plain:int,ok:bool) {
 test_reseal :: proc(h:^Host,buffer:[]u8,plain:int,from:Address) -> int {
     p:=peer_find(&h.back,from)
     data:=test_packet_data(buffer)
-    if data && h.desc.security.mode==.Encrypted {
+    if data {
         if p!=nil && p.state==.Connected && plain>=DATA_HEADER {
             counter,valid:=counter_expand(p.recv_counter,u16(buffer[1])|u16(buffer[2])<<8)
             if valid && counter/h.back.secure.rekey_interval==p.secure.receive_epoch {
@@ -148,7 +148,7 @@ test_reseal :: proc(h:^Host,buffer:[]u8,plain:int,from:Address) -> int {
         }
         return plain+TAG_BYTES
     }
-    checksum_write(buffer[:plain+CHECKSUM_BYTES],data && p!=nil?p.key:h.back.key)
+    checksum_write(buffer[:plain+CHECKSUM_BYTES],h.back.key)
     return plain+CHECKSUM_BYTES
 }
 // Seals a handshake datagram written from buffer[1] on, as a host does.
@@ -192,13 +192,16 @@ Test_Secret :: struct {ammo:u16,stamina:f32 `mirai:"precision=0.01"`}
 Test_Input :: struct {move:[2]f32 `mirai:"min=-1,max=1,precision=0.01"`,buttons:u8}
 @(private)
 Test_Hit :: struct {damage:i32,from:base.Entity,point:[3]f32 `mirai:"precision=0.01"`}
+// 6 KB, 4 KB of it an array of bytes: more than a datagram carries.
+@(private)
+Test_Big :: struct {values:[511]u32,count:u32,bytes:[4096]u8}
 
 @(private)
 Test_Protocol :: struct {
     schema:serial.Schema,
     protocol:Protocol,
     actor,prop:Type_Id,
-    hit,ping,use,notice:Event_Id,
+    hit,ping,use,notice,big:Event_Id,
 }
 // Actor: transform, vitals and an owner-only fragment. Prop: a transform.
 @(private)
@@ -210,12 +213,14 @@ test_protocol_init :: proc(tp:^Test_Protocol) {
     secret,_:=serial.schema_add(&tp.schema,Test_Secret)
     input,_:=serial.schema_add(&tp.schema,Test_Input)
     hit,_:=serial.schema_add(&tp.schema,Test_Hit)
+    big,_:=serial.schema_add(&tp.schema,Test_Big)
     tp.actor,_=type_register(&tp.protocol,"Actor",{{schema=&tp.schema,type=transform},{schema=&tp.schema,type=vitals},{schema=&tp.schema,type=secret,condition=.Owner}})
     tp.prop,_=type_register(&tp.protocol,"Prop",{{schema=&tp.schema,type=transform}})
     tp.hit,_=event_register(&tp.protocol,"Hit",&tp.schema,hit,{.Reliable})
     tp.ping,_=event_register(&tp.protocol,"Ping",&tp.schema,hit,{.From_Client})
     tp.use,_=event_register(&tp.protocol,"Use",&tp.schema,hit,{.Reliable,.From_Client,.Owner_Only})
     tp.notice,_=event_register(&tp.protocol,"Notice",&tp.schema,hit,{.Reliable,.Held})
+    tp.big,_=event_register(&tp.protocol,"Big",&tp.schema,big,{.Reliable,.From_Client})
     input_register(&tp.protocol,&tp.schema,input)
     protocol_seal(&tp.protocol)
 }

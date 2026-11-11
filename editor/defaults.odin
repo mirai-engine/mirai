@@ -19,6 +19,7 @@ inspect_component :: proc(s:^Session,w:core.World_Ref,type:typeid,entities:[]cor
         if t.place!=w.place || t.type!=type {continue}
         c={s=s,w=w,t=&t,index=index,table=core.world_table_at(w,&t),entities=entities,type=type,size=t.info.size,name=t.name}
         if len(entities)>0 {c.value=cast([^]u8)core.raw_find(c.table,t.info,entities[len(entities)-1])}
+        inspect_schema(&c,t.info)
         return
     }
     return
@@ -124,13 +125,13 @@ field_reset_button :: proc(c:^Inspect,offset,size:int) {
     // While a turn waits for review the arrow is its own: it takes the field
     // back to the value the turn found. Afterwards the usual one returns.
     if task,ok:=inspect_agent(c,offset,size);ok {
-        if ui.button(ctx,ui.id(ctx,"revert_agent",int(key&0x7fffffff)),{icon=.Revert,icon_color=ai_agent_color(task),icon_size=12,style=.Ghost,width=REVERT_SIDE,height=REVERT_SIDE}).clicked {
+        if ui.button(ctx,ui.id(ctx,"revert_agent",int(key&0x7fffffff)),{icon=.Revert,icon_color=ai_agent_color(task),icon_size=12,variant="ghost",width=REVERT_SIDE,height=REVERT_SIDE}).clicked {
             if _,kept:=ai_review_field_revert(c.s,c.s.ai,c.w,c.t,c.entities,offset,size);kept {notify(c.s,"A newer value was kept")}
         }
         return
     }
     if !inspect_changed(c,offset,size) {ui.spacer(ctx,REVERT_SIDE,1);return}
-    if ui.button(ctx,ui.id(ctx,"revert_value",int(key&0x7fffffff)),{icon=.Revert,icon_size=12,icon_color=ctx.theme.text_muted,style=.Ghost,width=REVERT_SIDE,height=REVERT_SIDE}).clicked {inspect_reset(c,offset,size)}
+    if ui.button(ctx,ui.id(ctx,"revert_value",int(key&0x7fffffff)),{icon=.Revert,icon_size=12,icon_color=ui.tone(ctx,"text_muted"),variant="ghost",width=REVERT_SIDE,height=REVERT_SIDE}).clicked {inspect_reset(c,offset,size)}
 }
 
 // The turn that changed this field of the active entity and still waits.

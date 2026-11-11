@@ -54,7 +54,7 @@ run_tool :: proc(tool:Tool,stdin:string,args:..string) -> (code:int,stdout,stder
 }
 
 Session :: struct {
-    process:os.Process,
+    process:subprocess.Process,
     stdin,stdout,stderr:^os.File,
     pending:[dynamic]u8,
 }
@@ -104,8 +104,7 @@ session_read :: proc(s:^Session,wait:=10*time.Second) -> string {
 }
 
 session_stop :: proc(s:^Session) {
-    _=os.process_kill(s.process)
-    _,_=os.process_wait(s.process)
+    subprocess.release(&s.process)
     os.close(s.stdin);os.close(s.stdout);os.close(s.stderr)
 }
 
@@ -167,39 +166,40 @@ rpc_command_cases :: proc(t:^testing.T,tool:Tool,f:^Fixture,port:string) {
     rpc_batch_cases(t,tool,f,port)
 }
 
-// A batch goes over one connection, from a file or from stdin; a call can name
-// a result of the one before it, and the first that fails says its line and
-// ends it.
+// rpc batch --file sends the params of one batch as written: a call can name a
+// result of the one before it, and the first that fails says which one it is
+// and what the ones before it answered.
 rpc_batch_cases :: proc(t:^testing.T,tool:Tool,f:^Fixture,port:string) {
     folder:=base.test_folder(t,"batch")
     if folder=="" {return}
-    file:=strings.concatenate({folder,"/calls.jsonl"},context.temp_allocator)
+    file:=strings.concatenate({folder,"/calls.json"},context.temp_allocator)
     write :: proc(file,text:string) {_=os.write_entire_file(file,transmute([]u8)text)}
-    write(file,`{"method":"test.add","params":{"a":2,"b":3}}`+"\n"+`{"method":"test.add","params":{"a":"$0.sum","b":10}}`+"\n"+`{"method":"test.shapes","params":{"position":["$0.sum",0,0]}}`+"\n")
-    code,out,err:=run_tool(tool,"","rpc","--batch",file,"--port",port)
+    write(file,`{"calls":[{"method":"test.add","params":{"a":2,"b":3}},{"method":"test.add","params":{"a":"$0.sum","b":10}},{"method":"test.shapes","params":{"position":["$0.sum",0,0]}}]}`)
+    code,out,err:=run_tool(tool,"","rpc","batch","--file",file,"--port",port)
     testing.expectf(t,code==0,"%d %s %s",code,out,err)
     answers:=parse_json(t,out)
-    testing.expect_value(t,integer(at(answers,1,"result","sum")),15)
-    testing.expect_value(t,integer(at(answers,2,"result","position",0)),5)
+    testing.expect_value(t,integer(at(answers,"results",1,"result","sum")),15)
+    testing.expect_value(t,integer(at(answers,"results",2,"result","position",0)),5)
     connections:=f.server.stats.connections
-    code,out,err=run_tool(tool,`{"method":"test.add","params":{"a":4,"b":5}}`+"\n\n"+`{"method":"missing.method"}`+"\n"+`{"method":"test.add"}`+"\n","rpc","--batch","-","--port",port)
+    code,out,err=run_tool(tool,`{"calls":[{"method":"test.add","params":{"a":4,"b":5}},{"method":"missing.method"},{"method":"test.add"}]}`,"rpc","batch","-","--port",port)
     testing.expectf(t,code==1,"%d %s %s",code,out,err)
-    answers=parse_json(t,out)
-    testing.expect_value(t,integer(at(answers,0,"result","sum")),9)
-    testing.expect_value(t,integer(at(answers,1,"line")),3)
-    testing.expect_value(t,len(answers.(json.Array)),2)
+    failed:=parse_json(t,err)
+    testing.expect(t,strings.contains(err,"calls[1] missing.method: "),err)
+    testing.expect_value(t,integer(at(failed,"error","data","failed")),1)
+    testing.expect_value(t,integer(at(failed,"error","data","results",0,"result","sum")),9)
     testing.expect_value(t,f.server.stats.connections-connections,1)
-    code,out,err=run_tool(tool,"not a call\n","rpc","--batch","-","--port",port)
-    testing.expect_value(t,code,1)
-    testing.expect(t,strings.contains(out,`"line": 1`) && strings.contains(out,"not a call"),out)
-    write(file,`{"method":"test.add","params":{"a":2,"b":3}}`+"\n"+`{"method":"test.add","params":{"a":"$0.total","b":1}}`+"\n")
     code,out,err=run_tool(tool,"","rpc","--batch",file,"--port",port)
+    testing.expect(t,code==2 && strings.contains(err,"is not an option of rpc"),err)
+    write(file,`{"calls":[{"method":"test.add","params":{"a":2,"b":3}},{"method":"test.add","params":{"a":"$0.total","b":1}}]}`)
+    code,out,err=run_tool(tool,"","rpc","batch","--file",file,"--port",port)
     testing.expect_value(t,code,1)
-    testing.expect(t,strings.contains(out,"$0.total") && strings.contains(out,`"line": 2`),out)
-    write(file,`{"method":"test.add","params":{"a":"$1.sum","b":1}}`+"\n")
-    code,out,err=run_tool(tool,"","rpc","--batch",file,"--port",port)
+    testing.expect(t,strings.contains(err,"$0.total") && strings.contains(err,"calls[1] test.add"),err)
+    write(file,`{"calls":[{"method":"test.add","params":{"a":"$1.sum","b":1}}]}`)
+    code,out,err=run_tool(tool,"","rpc","batch","--file",file,"--port",port)
     testing.expect_value(t,code,1)
-    testing.expect(t,strings.contains(out,"$1.sum: the batch has 0 results"),out)
+    testing.expect(t,strings.contains(err,"$1.sum: the batch has 0 results"),err)
+    code,out,err=run_tool(tool,"","rpc","batch",`{"transaction":true,"calls":[{"method":"test.add","params":{"a":1,"b":1}}]}`,"--port",port)
+    testing.expect(t,code==1 && strings.contains(err,"transaction is of a server that edits a scene"),err)
 }
 
 // --select, --wait-until, describe and the hints of the errors.

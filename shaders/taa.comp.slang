@@ -3,8 +3,9 @@
 // the current frame from the jittered render-resolution samples around it
 // (Gaussian-weighted), reprojects the output-resolution history with a
 // Catmull-Rom filter and clips it to the YCoCg variance box of the
-// neighborhood. Blending happens in a luminance-compressed space so bright
-// outliers do not ghost. The history keeps the depth of each pixel in its
+// neighborhood. Blending happens in a luminance-compressed space of exposed
+// light so outliers bright on screen do not ghost, whatever the light scale;
+// the history stays in render units, with the depth of each pixel in its
 // alpha: where it shows something nearer than everything around the pixel
 // now, and wider than a pixel, what stood in front moved away, and the pixel
 // starts again from this frame.
@@ -61,8 +62,8 @@ static const float TAA_STILL_FRAMES = 64.0;
 static const float TAA_STILL_GAMMA = 3.0;
 static const float TAA_STILL_WIDEN = 16.0;
 
-float3 compress(float3 c) { return c / (1.0 + luminance(c)); }
-float3 expand(float3 c) { return c / max(1.0 - luminance(c), 1e-4); }
+float3 compress(float3 c) { c *= frame.exposure; return c / (1.0 + luminance(c)); }
+float3 expand(float3 c) { return c / (max(1.0 - luminance(c), 1e-4) * frame.exposure); }
 
 // Five bilinear taps approximating a 4x4 Catmull-Rom filter.
 float3 sample_catmull_rom(float2 uv, float2 size) {

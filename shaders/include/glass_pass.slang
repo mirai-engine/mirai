@@ -37,7 +37,7 @@ Glass glass_of(int2 p, float2 uv, float depth, float4 albedo, float4 normal, flo
     g.roughness = normal.z;
     g.emission = emission.rgb;
     g.occlusion = 1.0;
-    float4 specular = specular_unpack(layer_specular.Load(int3(p, 0)));
+    float4 specular = layer_specular.Load(int3(p, 0));
     g.f0 = specular.rgb;
     g.f90 = specular.a;
     // The layers target of the layer is bound in place of the G-buffer's.
@@ -49,7 +49,6 @@ Glass glass_of(int2 p, float2 uv, float depth, float4 albedo, float4 normal, flo
 [[vk::binding(SLOT_PASS5, 0)]] Texture2D<float4> scene : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);          // everything behind the layer, lit
 [[vk::binding(SLOT_PASS8, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS8), space0);        // the opaque scene
 
-#define SCATTER_TAPS 8
 // Width of the lobe a rough surface scatters transmitted light into, per unit
 // of its GGX alpha.
 static const float SCATTER_SPREAD = 0.6;
@@ -105,29 +104,34 @@ bool screen_crossing(float3 origin, float3 direction, float nearest, out float2 
     return true;
 }
 
+// What lies behind the layer around uv spread over a disc `radius` pixels
+// wide, the same every frame: four taps half the disc out, each from the
+// level of the scene (glass_levels.comp) about half the disc wide, which
+// holds the pixels the layer stands in front of alone; the scene at uv where
+// none of those is near.
+float3 scene_blurred(float2 uv, float radius) {
+    float3 sharp = scene.SampleLevel(linear_sampler, uv, 0.0).rgb;
+    if (!(radius >= 0.75)) return sharp;
+    uint width, height, levels;
+    scene.GetDimensions(0u, width, height, levels);
+    if (levels < 2u) return sharp;
+    radius = min(radius, 0.08 * frame.resolution.y);
+    float level = clamp(log2(radius) - 0.5, 1.0, float(levels - 1u));
+    float2 reach = 0.5 * radius * frame.inv_resolution;
+    float4 sum = scene.SampleLevel(linear_sampler, uv + float2(0.8, 0.6) * reach, level) + scene.SampleLevel(linear_sampler, uv + float2(-0.6, 0.8) * reach, level)
+        + scene.SampleLevel(linear_sampler, uv + float2(-0.8, -0.6) * reach, level) + scene.SampleLevel(linear_sampler, uv + float2(0.6, -0.8) * reach, level);
+    if (!(sum.a > 1e-4)) return sharp;
+    return lerp(sharp, sum.rgb / sum.a, saturate((radius - 0.75) / 1.25));
+}
+
 // The scene around uv as a rough layer at layer_distance shows it: spread over
 // a disc that grows with what is between the layer and the scene behind it.
-// Pixels of what stands in front of the layer are not part of it.
-float3 scene_through(float2 uv, float layer_distance, float roughness, inout uint seed) {
-    float3 center = scene.SampleLevel(linear_sampler, uv, 0.0).rgb;
-    if (roughness <= MIRROR_ROUGHNESS) return center;
+float3 scene_through(float2 uv, float layer_distance, float roughness) {
+    if (roughness <= MIRROR_ROUGHNESS) return scene.SampleLevel(linear_sampler, uv, 0.0).rgb;
     float alpha = roughness * roughness;
     float behind = opaque_depth(uv);
     // Pixels a world radius covers at the depth of the scene.
-    float radius = max(behind - layer_distance, 0.0) * alpha * SCATTER_SPREAD / max(frame.footprint.x + frame.footprint.y * max(behind, 1e-3), 1e-9);
-    if (radius < 0.75) return center;
-    radius = min(radius, 0.08 * frame.resolution.y);
-    float3 sum = center;
-    float count = 1.0;
-    float rotation = random01(seed) * 2.0 * PI;
-    for (int i = 0; i < SCATTER_TAPS; i++) {
-        float angle = rotation + float(i) * 2.399963;
-        float2 at = uv + float2(cos(angle), sin(angle)) * (radius * sqrt((float(i) + 0.5) / float(SCATTER_TAPS))) * frame.inv_resolution;
-        if (any(((at) < (float2(0.0)))) || any(((at) > (float2(1.0)))) || opaque_depth(at) < layer_distance) continue;
-        sum += scene.SampleLevel(linear_sampler, at, 0.0).rgb;
-        count += 1.0;
-    }
-    return sum / count;
+    return scene_blurred(uv, max(behind - layer_distance, 0.0) * alpha * SCATTER_SPREAD / max(frame.footprint.x + frame.footprint.y * max(behind, 1e-3), 1e-9));
 }
 
 
@@ -143,7 +147,6 @@ float3 scene_through(float2 uv, float layer_distance, float roughness, inout uin
 // deep. travelled: the way through the medium to what the pixel holds.
 #define SHEET_SHIFT_MOST 0.04 // of the height of the view
 #define SHEET_BLUR 0.03       // metres of blur on what lies behind for each metre of the way to it
-#define SHEET_TAPS 6
 struct Sheet_Seen {
     float3 radiance;
     float travelled;
@@ -156,12 +159,12 @@ bool sheet_behind(float2 uv) {
     return layer_depth.Load(int3(min(int2(uv * frame.resolution), int2(frame.resolution) - 1), 0)).r > 0.0;
 }
 
-Sheet_Seen sheet_through(Material m, Glass g, float2 uv, int2 p) {
+Sheet_Seen sheet_through(Material m, Glass g, float2 uv) {
     Sheet_Seen seen;
     float behind = opaque_depth(uv);
     float3 held = position_from_depth(uv, behind);
     seen.travelled = length(held - g.position);
-    float ior = material_ior(m);
+    float ior = m.ior;
     float3 flat = abs(g.normal.y) > 0.3 ? float3(0.0, g.normal.y >= 0.0 ? 1.0 : -1.0, 0.0) : g.normal;
     float3 bent = refract(-g.view, g.normal, 1.0 / ior);
     float3 even = refract(-g.view, flat, 1.0 / ior);
@@ -176,21 +179,8 @@ Sheet_Seen sheet_through(Material m, Glass g, float2 uv, int2 p) {
         float2 moved = clamp(uv + shift, 0.5 * frame.inv_resolution, 1.0 - 0.5 * frame.inv_resolution);
         if (sheet_behind(moved)) at = moved;
     }
-    float3 sum = scene.SampleLevel(linear_sampler, at, 0.0).rgb;
-    float count = 1.0;
-    float radius = min(SHEET_BLUR * seen.travelled / max(frame.footprint.x + frame.footprint.y * max(behind, 1e-3), 1e-9), 0.08 * frame.resolution.y);
-    if (radius >= 0.75 && seen.travelled < material_clear_reach(m)) {
-        // Turned by a hash of the pixel, the same every frame.
-        float rotation = float(hash_u32(uint(p.x) * 73856093u ^ uint(p.y) * 19349663u)) * (2.0 * PI / 4294967296.0);
-        for (int i = 0; i < SHEET_TAPS; i++) {
-            float angle = rotation + float(i) * 2.399963;
-            float2 tap = at + float2(cos(angle), sin(angle)) * (radius * sqrt((float(i) + 0.5) / float(SHEET_TAPS))) * frame.inv_resolution;
-            if (any(tap < float2(0.0)) || any(tap > float2(1.0)) || !sheet_behind(tap)) continue;
-            sum += scene.SampleLevel(linear_sampler, tap, 0.0).rgb;
-            count += 1.0;
-        }
-    }
-    seen.radiance = sum / count;
+    float radius = SHEET_BLUR * seen.travelled / max(frame.footprint.x + frame.footprint.y * max(behind, 1e-3), 1e-9);
+    seen.radiance = scene_blurred(at, seen.travelled < material_clear_reach(m) ? radius : 0.0);
     return seen;
 }
 
@@ -220,10 +210,10 @@ Glass_Walk walk_start(float3 origin, float3 direction, uint flags) {
 
 // What a walk shows, behind the layer. depth: of the layer, which rough glass
 // blurs the scene behind by; uv: of the pixel.
-void walk_show(inout Glass_Walk w, float depth, float roughness, float2 uv, inout uint seed) {
+void walk_show(inout Glass_Walk w, float depth, float roughness, float2 uv) {
     float2 at;
     if (!screen_crossing(w.origin, w.direction, depth, at)) at = uv;
-    w.radiance = scene_through(at, depth, roughness, seed);
+    w.radiance = scene_through(at, depth, roughness);
 }
 #endif
 

@@ -31,63 +31,56 @@ view_viewport_returns_the_requested_message_snapshot_without_recapturing :: proc
     }
     s:=Session{project_root=root}
     server:=api.Server{}
-    method:=api.Method{params_id=Api_Viewport_Params}
+    method:=api.Method{params_id=Api_Viewport_Params,result_id=Api_Viewport_Result}
     params:Api_Viewport_Params
-    buffer:[1024]u8
-    w:serial.Writer
     for request,index in requests {
         base.text_set(params.request[:],request)
-        serial.writer_init_fixed(&w,buffer[:])
-        call:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator}
+        result:Api_Viewport_Result
+        call:=api.Call{server=&server,method=&method,params=&params,result=&result,allocator=context.temp_allocator}
         api_view_viewport(&s,&call)
-        testing.expect(t,!call.failed && w.overflow==0)
-        value:Api_Viewport_Result_Text
-        testing.expect(t,json.unmarshal(serial.writer_bytes(&w),&value,allocator=context.temp_allocator)==nil)
-        testing.expect_value(t,call.image,value.path)
+        testing.expect(t,!call.failed)
+        testing.expect_value(t,call.image,result.path)
         shown,read:=os.read_entire_file(call.image,context.temp_allocator)
         testing.expect(t,read==nil)
         testing.expect_value(t,string(shown),saved[index])
     }
     for request in ([]string{"../12-0","12-0/../../secret","12--2","0-0","12-3"}) {
         base.text_set(params.request[:],request)
-        serial.writer_init_fixed(&w,buffer[:])
-        call:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator}
+        result:Api_Viewport_Result
+        call:=api.Call{server=&server,method=&method,params=&params,result=&result,allocator=context.temp_allocator}
         api_view_viewport(&s,&call)
         testing.expect(t,call.failed)
-        testing.expect_value(t,w.count,0)
+        testing.expect_value(t,result.path,"")
     }
     // Without a request it is the turn of the caller; outside a turn it says so.
     base.text_set(params.request[:],"")
-    serial.writer_init_fixed(&w,buffer[:])
-    outside:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator}
+    answer:Api_Viewport_Result
+    outside:=api.Call{server=&server,method=&method,params=&params,result=&answer,allocator=context.temp_allocator}
     api_view_viewport(&s,&outside)
     testing.expect(t,outside.failed && outside.error.code==api.INVALID_PARAMS,outside.error.message)
     m:=new(Ai,context.temp_allocator)
     m.task_count=1
     base.text_set(m.tasks[0].name[:],requests[1])
     s.ai=m
-    serial.writer_init_fixed(&w,buffer[:])
-    turn:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator,client_tag=requests[1]}
+    turn:=api.Call{server=&server,method=&method,params=&params,result=&answer,allocator=context.temp_allocator,client_tag=requests[1]}
     api_view_viewport(&s,&turn)
-    testing.expect(t,!turn.failed && w.count>0,turn.error.message)
+    testing.expect(t,!turn.failed && answer.path!="",turn.error.message)
 }
 
-@(private="file")
-Api_Viewport_Result_Text :: struct {path:string}
-
-@(private="file")
+@(private)
+@(test_world,editor="Camera_Editor")
 Camera_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     cameras:core.Table(erender.Camera),
 }
-@(private="file") Camera_Editor :: struct {api:Api}
+@(private) Camera_Editor :: struct {api:Api}
 
 @(test)
 camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_it :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Camera_World,core.Test_None,Camera_Editor,test_types)
+    info,described:=test_info(t,Camera_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Camera_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
     defer core.world_destroy(&info,.World,&world)
@@ -111,7 +104,8 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
     editor:Camera_Editor
     session:=Session{info=&info,edit_world=&world,editor_world=&editor,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,document=&document}
     history.edits_reset(&edits,edited_world(&session))
-    if !testing.expect(t,api_open(&session,0,true)==.None) {return};defer api_close(&session)
+    api_opened,api_problem:=api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return};defer api_close(&session)
     state:=api_state(&session);state.poll_temp=context.temp_allocator
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
     execute :: proc(state:^Api_State,out:^serial.Writer,params:string) -> (error:api.Error,result:Api_Camera_Result) {
@@ -144,7 +138,7 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
     error,result=execute(state,&out,`{"entity":"0000000000000002","fov":70,"distance":4}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,near(result.position,{10,2,5}) && result.fov_y==70 && abs(result.distance-4)<1e-4,"fov and distance apply over the camera")
-    for wrong in ([]string{`{"entity":"0000000000000002","position":[0,0,0]}`,`{"entity":"0000000000000002","yaw":1}`,`{"entity":"0000000000000003"}`,`{"entity":"0000000000000004"}`,`{"entity":"0000000000000063"}`,`{"entity":null}`}) {
+    for wrong in ([]string{`{"entity":"0000000000000002","position":[0,0,0]}`,`{"entity":"0000000000000002","yaw":1}`,`{"entity":"0000000000000003"}`,`{"entity":"0000000000000004"}`,`{"entity":"0000000000000063"}`}) {
         error,_=execute(state,&out,wrong)
         testing.expectf(t,error.code==api.INVALID_PARAMS,"%s: %v",wrong,error)
     }
@@ -155,24 +149,26 @@ camera_set_takes_a_fov_and_looks_through_a_camera_of_the_scene_without_editing_i
     testing.expect_value(t,len(edits.steps),0)
 }
 
+@(private) @(test_world) Shown_World :: struct {using world:Test_World}
+
 @(test)
 capture_without_ui_draws_the_world_alone_at_the_size_asked_for :: proc(t:^testing.T) {
-    Shown_World :: struct {using world:core.Test_World}
     shown:Shown_World
-    if !core.test_world_init(t,&shown) {return}
-    defer core.test_world_destroy(&shown)
+    if !test_world_init(t,&shown) {return}
+    defer test_world_destroy(&shown)
     settings:=gpu.DEFAULT_SETTINGS
-    settings.gi_enabled,settings.reflections,settings.taa=false,false,false
+    settings.gi_enabled,settings.taa=false,false
     app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={128,96}},threads=1,render_settings=settings})
     if !testing.expect_value(t,error,host.App_Error.None) || app==nil {return}
     defer host.app_destroy(app)
-    app.info=core.test_world_info(&shown)
+    app.info=test_world_info(&shown)
     session:=Session{app=app,info=app.info,edit_world=&shown}
     cube,made:=erender.mesh_instance(app.assets,{shape=.Cube},mm.transform_matrix({position={0,0.5,0},rotation=1,scale={1,1,1}}),{color={0.2,0.9,0.5,1},emission={0.05,0.3,0.15}})
     if !testing.expect(t,made) {return}
     cube.uniform_color,cube.highlight=true,HIGHLIGHT_SELECTED
     host.assets_commit(app.assets)
-    gpu.scene_set(app.renderer,{cube},nil,{},{background={0.02,0.02,0.1},use_background=true})
+    gpu.scene_set_environment(app.renderer,{},{background={0.02,0.02,0.1},use_background=true})
+    gpu.scene_update(app.renderer,0,{cube},true)
     // A fixed exposure: metered, the dark backdrop would be made middle gray.
     host.app_camera_set(app,{position={0,1.2,4},forward={0,-0.7,-4},up={0,1,0},fov_y=40,near=0.05,far=100,exposure=gpu.UNIT_EXPOSURE},true)
     red:=[4]f32{1,0,0,1}

@@ -667,14 +667,60 @@ uint light_cut(float3 position, float3 normal, uint budget, inout uint cut[LIGHT
     return count;
 }
 
+// The cone of a light for light_weight_at: none; a rectangle, which lights
+// the side its axis faces; or a spot, which fades between two cosines.
+#define LIGHT_CONE_NONE 0u
+#define LIGHT_CONE_RECT 1u
+#define LIGHT_CONE_SPOT 2u
+
+// About what a light gives a point with that normal, with nothing in its way,
+// to choose among lights by: its power over the square of the distance, no
+// nearer than the radius of the sphere that holds it, by the share of that
+// sphere above the horizon of the surface (all of it for a point of a medium,
+// whose normal is zero), by its cone and by the window of its range. None
+// only where it gives nothing. The samples of the grid of the lights
+// (light_weight) and the walks of the tree (node_weight) weigh a light so.
+float light_weight_at(float3 center, float range, float power, float extent, uint cone, float3 axis, float2 cosines, float3 position, float3 normal) {
+    float3 to = center - position;
+    float d2 = dot(to, to);
+    if (d2 >= range * range) return 0.0;
+    float inverse = rsqrt(max(d2, 1e-12));
+    float facing = dot(normal, normal) > 0.5 ? saturate((dot(normal, to) + extent) * inverse) : 1.0;
+    if (!(facing > 0.0)) return 0.0;
+    float shown = 1.0;
+    if (cone != LIGHT_CONE_NONE) {
+        float along = -dot(to, axis) * inverse;
+        if (cone == LIGHT_CONE_RECT) {
+            if (!(along > 0.0)) return 0.0;
+            shown = saturate(along + extent * inverse);
+        } else {
+            shown = smoothstep(cosines.x, cosines.y, along);
+            if (!(shown > 0.0)) return 0.0;
+        }
+    }
+    return power * facing * shown * light_window(d2 * inverse, range) / max(d2, extent * extent);
+}
+
+// light_weight_at of a light: a spot fades from 0.8 of its angle out, as its
+// light does (light_contribution).
+float light_weight_of(Light l, float3 position, float3 normal) {
+    bool rect = light_is_rect(l);
+    bool spot = !rect && l.direction_cone.w > 0.5 * LIGHT_POINT;
+    float2 cosines = spot ? float2(l.direction_cone.w, cos(acos(l.direction_cone.w) * 0.8)) : float2(0.0);
+    uint cone = rect ? LIGHT_CONE_RECT : spot ? LIGHT_CONE_SPOT : LIGHT_CONE_NONE;
+    return light_weight_at(l.position_range.xyz, l.position_range.w, luminance(l.color_intensity.rgb) * l.color_intensity.w, light_extent(l), cone, l.direction_cone.xyz, cosines, position, normal);
+}
+
 // The leaf under a node that `pick`, from 0 to 1, falls on when each light
-// takes a share about as large as the light it gives the point: as bright as
-// its group, over the square of the distance to it, by the cosine of its
-// sphere and in the window of its range. The center of a group can lie
-// inside the lamp of its brightest light: its shadow rays go to a light. A
-// normal of zero is a point of a medium, which takes light from every side.
-// A group a walk does not open (light_node_opens) is where it ends.
+// takes a share about as large as the light it gives the point: a light as
+// light_weight_of weighs it; a group as bright as its lights, over the square
+// of the distance to it, by the cosine of its sphere and in the window of its
+// range. The center of a group can lie inside the lamp of its brightest
+// light: its shadow rays go to a light. A normal of zero is a point of a
+// medium, which takes light from every side. A group a walk does not open
+// (light_node_opens) is where it ends.
 float node_weight(Light_Node node, float3 position, float3 normal) {
+    if ((node.flags & LIGHT_NODE_LEAF) != 0u) return light_weight_of(lights[node.child], position, normal);
     float3 delta = node.center_radius.xyz - position;
     float distance = length(delta);
     float rising = dot(normal, normal) > 0.5 ? saturate((dot(delta, normal) + node.center_radius.w) / max(distance, 1e-6)) : 1.0;
@@ -870,7 +916,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
             beyond_reach = light.beyond_reach;
         }
 #ifdef MIRAI_SHADOW_FILTER_POINTS
-        filters_begin();
+        if (MIRAI_COLORED_SHADOWS) filters_begin();
 #endif
         float3 through = float3(1.0);
         for (uint segment = 0u; segment < 2u && mapped < 0.0; segment++) {
@@ -885,12 +931,12 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which = LIGHTS_A
         else
 #else
 #ifdef MIRAI_SHADOW_FILTER_POINTS
-        filters_begin();
+        if (MIRAI_COLORED_SHADOWS) filters_begin();
 #endif
         float3 through = mapped >= 0.0 ? float3(mapped) : trace_transmission(origin, direction, reach);
 #endif
 #ifdef MIRAI_SHADOW_FILTER_POINTS
-        filters_weigh(radiance);
+        if (MIRAI_COLORED_SHADOWS) filters_weigh(radiance);
 #endif
         if (item == 0u) sun = radiance * through;
         else local += radiance * through;
@@ -974,10 +1020,10 @@ float3 shade_hit_glossy(Surface s, float3 ray_dir, float hit_distance, uint ligh
             directions.wants |= 1u << PROBE_COAT;
         }
     }
-    float3 around[PROBE_READS];
+    float4 around[PROBE_READS];
     sample_probes_around(s.position, n, -ray_dir, directions, around, hit_distance);
-    Indirect light = indirect_make(around[PROBE_DIFFUSE], around[PROBE_SPECULAR] * shown, 1.0);
-    light.coat_radiance = around[PROBE_COAT] * shown;
+    Indirect light = indirect_make(around[PROBE_DIFFUSE].rgb, probe_specular(around[PROBE_SPECULAR], directions.at[PROBE_SPECULAR], point.roughness) * shown, 1.0);
+    light.coat_radiance = probe_specular(around[PROBE_COAT], directions.at[PROBE_COAT], point.coat_roughness) * shown;
     return radiance + indirect_compose(point, light);
 }
 

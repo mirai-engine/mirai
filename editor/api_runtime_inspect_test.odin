@@ -11,24 +11,34 @@ import erender "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-@(private="file")
+@(private)
 Inspect_Config :: struct {speed:f32,compiled:[2]u32 `mirai:"hidden"`,diagnostics:u32 `mirai:"transient,hidden"`}
-@(private="file")
+@(private)
 Inspect_Runtime :: struct {ticks:u32 `mirai:"transient"`}
-@(private="file")
+@(component,derived)
+Inspect_Derived :: struct {steps:u32 `mirai:"transient"`}
+@(private)
+@(test_world,editor="Inspect_Editor")
 Inspect_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     transforms:core.Table(core.Transform),
     config:core.Table(Inspect_Config),
     state:core.Table(Inspect_Runtime),
+    derived:core.Table(Inspect_Derived),
 }
-@(private="file") Inspect_Editor :: struct {api:Api}
+@(private) Inspect_Editor :: struct {api:Api}
+
+@(private) Hidden_State :: struct {value:u32}
+@(test_world,editor="Lights_Editor") @(private) Lights_World :: struct {using world:Test_World,points:core.Table(erender.Point_Light),spots:core.Table(erender.Spot_Light)}
+@(private) Lights_Editor :: struct {hidden:core.Table(Hidden_State)}
 
 @(test)
 a_name_of_a_component_or_a_key_resolves_as_it_is_written_or_says_the_nearest :: proc(t:^testing.T) {
-    tables:=[]core.Table_Info{{name="Point_Light",place=.World},{name="Spot_Light",place=.World},{name="Hidden_State",place=.Editor}}
-    info:=core.World_Info{tables=tables}
+    info,described:=test_info(t,Lights_World)
+    if !described {return}
+    defer test_info_destroy(&info)
+    tables:=info.tables
     w:=core.World_Ref{info=&info,place=.World}
     cases:=[]struct{name:string,found:^core.Table_Info,says:string}{
         {"Point_Light",&tables[0],""},
@@ -49,9 +59,9 @@ a_name_of_a_component_or_a_key_resolves_as_it_is_written_or_says_the_nearest :: 
 
 @(test)
 api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Inspect_World,core.Test_None,Inspect_Editor,test_types)
+    info,described:=test_info(t,Inspect_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world,running:Inspect_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator) && core.world_init(&info,.World,&running,context.allocator)) {return}
     defer {core.world_destroy(&info,.World,&world);core.world_destroy(&info,.World,&running)}
@@ -68,9 +78,10 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     core.add(&world.transforms,entity,core.Transform{rotation=1,scale={1,1,1}})
     core.add(&world.config,entity,Inspect_Config{speed=2,compiled={8,9},diagnostics=13})
     core.add(&world.state,entity,Inspect_Runtime{ticks=21})
+    core.add(&world.derived,entity,Inspect_Derived{steps=5})
     core.settle(&info,&world,nil)
-    testing.expect(t,!inspector_listed(&session,&tables[3]))
-    testing.expect(t,!api_component_listed(&session,&tables[3]))
+    // A component with no saved field is data by its presence: listed, its values are not.
+    testing.expect(t,inspector_listed(&session,&tables[3]) && api_component_listed(&session,&tables[3]))
     testing.expect(t,api_component_listed(&session,&tables[3],true))
     testing.expect(t,!api_component_listed(&session,&tables[1],true))
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
@@ -79,37 +90,33 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     version:=world.config.version
     api_entity_write(&session,w,&out,entity,true,scratch,true)
     text:=string(serial.writer_bytes(&out))
-    testing.expect(t,strings.contains(text,`"Inspect_Config":{"speed": 2}`))
-    testing.expect(t,!strings.contains(text,"compiled") && !strings.contains(text,"diagnostics") && !strings.contains(text,"Inspect_Runtime"))
+    testing.expect(t,strings.contains(text,`"Inspect_Config": {"speed": 2}`))
+    testing.expect(t,!strings.contains(text,"compiled") && !strings.contains(text,"diagnostics") && strings.contains(text,`"Inspect_Runtime": {}`) && !strings.contains(text,"Inspect_Derived"),text)
     out.count=0
     api_entity_write(&session,w,&out,entity,true,scratch,true,true)
     text=string(serial.writer_bytes(&out))
     testing.expect(t,strings.contains(text,`"diagnostics": 13`))
     testing.expect(t,strings.contains(text,`"compiled": [8, 9]`))
-    testing.expect(t,strings.contains(text,`"Inspect_Runtime":{"ticks": 21}`))
+    testing.expect(t,strings.contains(text,`"Inspect_Runtime": {"ticks": 21}`) && strings.contains(text,`"Inspect_Derived": {"steps": 5}`),text)
     testing.expect_value(t,world.config.version,version)
-    config,_:=core.get(core.read(&world.config),entity)
+    config,_:=core.get(&world.config,entity)
     testing.expect_value(t,config.diagnostics,u32(13))
     testing.expect_value(t,config.compiled,[2]u32{8,9})
-    out.count=0;first:=true
-    api_fields_write(&out,&state.schema,state.types[2],"",&first)
-    text=string(serial.writer_bytes(&out))
+    text=api_fields_text(&state.schema,state.types[2])
     testing.expect(t,strings.contains(text,`"path":"speed"`) && !strings.contains(text,"compiled") && !strings.contains(text,"diagnostics"))
-    out.count=0;first=true
-    api_fields_write(&out,&state.schema,state.types[2],"",&first,true)
-    text=string(serial.writer_bytes(&out))
+    text=api_fields_text(&state.schema,state.types[2],true)
     testing.expect(t,strings.contains(text,"compiled") && strings.contains(text,"diagnostics"))
     testing.expect(t,core.world_copy(&info,&running,&world))
-    core.get(&running.transforms,entity).position.x=8
-    core.get(&running.config,entity).diagnostics=99
-    core.get(&running.state,entity).ticks=42
+    core.edit(&running.transforms,entity).position.x=8
+    core.edit(&running.config,entity).diagnostics=99
+    core.edit(&running.state,entity).ticks=42
     session.mode=.Play
     session.runs[0]={world=&running}
     params:=Api_Inspect_Params{include_runtime=true,limit=1}
-    method:=api.Method{params_id=Api_Inspect_Params}
+    method:=api.Method{params_id=Api_Inspect_Params,result_id=Api_Inspect_Result}
     selections:=[]struct{raw,has,lacks,fails:string}{
         {`{"components":true}`,`"ticks": 42`,"",""},
-        {`{}`,`"components":["`,`"ticks"`,""},
+        {`{}`,`"components": ["`,`"ticks"`,""},
         {`{"components":false}`,"","","components must be true"},
         {`{"components":["inspect config"]}`,`"speed"`,`"ticks"`,""},
         {`{"components":"Inspect_Runtime"}`,`"ticks": 42`,`"speed"`,""},
@@ -119,9 +126,7 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
     }
     for selection in selections {
         call:=api.Call{method=&method,raw=selection.raw,params=&params,out=&out,allocator=context.temp_allocator}
-        out.count=0
-        api_play_inspect(&session,&call)
-        text:=string(serial.writer_bytes(&out))
+        text:=api_inspect_text(&session,&call,true)
         if selection.fails!="" {
             testing.expectf(t,call.failed && strings.contains(call.error.message,selection.fails),"%s: %s",selection.raw,call.error.message)
             continue
@@ -131,25 +136,22 @@ api_inspection_can_read_transient_state_without_making_it_editable_or_saved :: p
         testing.expectf(t,selection.lacks=="" || !strings.contains(text,selection.lacks),"%s: %s",selection.raw,text)
     }
     call:=api.Call{method=&method,raw=`{"components":true}`,params=&params,out=&out,allocator=context.temp_allocator}
-    out.count=0
-    api_play_inspect(&session,&call)
+    text=api_inspect_text(&session,&call,true)
     testing.expect(t,!call.failed,call.error.message)
-    text=string(serial.writer_bytes(&out))
-    testing.expect(t,strings.contains(text,`"position":[8,0,0]`),text)
+    testing.expect(t,strings.contains(text,`"position": [8, 0, 0]`),text)
     testing.expect(t,strings.contains(text,`"diagnostics": 99`) && strings.contains(text,`"ticks": 42`))
-    out.count=0
-    api_scene_inspect(&session,&call)
-    text=string(serial.writer_bytes(&out))
-    testing.expect(t,strings.contains(text,`"position":[0,0,0]`))
+    text=api_inspect_text(&session,&call,false)
+    testing.expect(t,strings.contains(text,`"position": [0, 0, 0]`))
     testing.expect(t,strings.contains(text,`"diagnostics": 13`) && strings.contains(text,`"ticks": 21`))
     testing.expect_value(t,world.config.version,version)
-    config,_=core.get(core.read(&world.config),entity)
+    config,_=core.get(&world.config,entity)
     testing.expect_value(t,config.diagnostics,u32(13))
 }
 
-@(private="file")
+@(private)
+@(test_world,editor="Inspect_Editor")
 Filter_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     cameras:core.Table(erender.Camera),
 }
@@ -168,9 +170,9 @@ filter_entity :: proc(w:^Filter_World,id:u64,name:string,parent:=core.NONE) -> c
 
 @(test)
 inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Filter_World,core.Test_None,Inspect_Editor,test_types)
+    info,described:=test_info(t,Filter_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world,running:Filter_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator) && core.world_init(&info,.World,&running,context.allocator)) {return}
     defer {core.world_destroy(&info,.World,&world);core.world_destroy(&info,.World,&running)}
@@ -186,7 +188,8 @@ inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^t
     editor:Inspect_Editor
     session:=Session{info=&info,edit_world=&world,editor_world=&editor,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits,document=&document}
     history.edits_reset(&edits,edited_world(&session))
-    if !testing.expect(t,api_open(&session,0,true)==.None) {return};defer api_close(&session)
+    api_opened,api_problem:=api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return};defer api_close(&session)
     state:=api_state(&session);state.poll_temp=context.temp_allocator
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
     inspect :: proc(state:^Api_State,out:^serial.Writer,method,params:string) -> (error:api.Error,result:json.Object,text:string) {
@@ -223,10 +226,10 @@ inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^t
     testing.expect_value(t,names(result),"Main Camera")
     error,result,text=inspect(state,&out,"scene.inspect",`{"component":"Camera"}`)
     testing.expect_value(t,names(result),"Main Camera")
-    testing.expectf(t,strings.contains(text,`"parent":"0x0000000000000001","position":[`) && strings.contains(text,`"components":["Camera"]}`),"the place and the names of the components: %s",text)
+    testing.expectf(t,strings.contains(text,`"parent": "0x0000000000000001", "position": [`) && strings.contains(text,`"components": ["Camera"]}`),"the place and the names of the components: %s",text)
     testing.expectf(t,!strings.contains(text,"near"),"without the values: %s",text)
     _,result,text=inspect(state,&out,"scene.inspect",`{"component":"Camera","components":true}`)
-    testing.expect(t,strings.contains(text,`"components":{"Camera":{`) && strings.contains(text,`"near"`),"the values when it asks for them")
+    testing.expect(t,strings.contains(text,`"components": {"Camera": {`) && strings.contains(text,`"near"`),"the values when it asks for them")
     error,_,text=inspect(state,&out,"scene.inspect",`{"component":"Light"}`)
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
     testing.expect(t,strings.contains(error.message,"component.list"),"the error says where the components are")
@@ -241,40 +244,41 @@ inspect_filters_by_name_and_component_and_summarizes_without_values :: proc(t:^t
 
     session.mode=.Play
     session.runs[0]={world=&running}
-    _,result,text=inspect(state,&out,"play.inspect",`{}`)
+    _,result,text=inspect(state,&out,"scene.inspect",`{"world":"Game"}`)
     testing.expect_value(t,[3]int{number(result["shown"]),number(result["matched"]),number(result["omitted"])},[3]int{API_INSPECT_BRIEF,300,300-API_INSPECT_BRIEF})
     testing.expectf(t,len(text)<256*API_INSPECT_BRIEF,"with no filter it stays small: %d bytes",len(text))
     testing.expectf(t,strings.contains(result["left_out"].(string),"more entities"),"it says what it left out: %s",text)
-    _,result,_=inspect(state,&out,"play.inspect",`{"name":"Body*"}`)
+    _,result,_=inspect(state,&out,"scene.inspect",`{"world":"Game","name":"Body*"}`)
     testing.expect_value(t,number(result["shown"]),API_INSPECT_DEFAULT)
     _,result,text=inspect(state,&out,"component.list",`{}`)
-    testing.expectf(t,strings.contains(text,`"name":"Camera"`) && !strings.contains(text,`"fields"`) && strings.contains(text,`"left_out"`),"the index of the components: %s",text)
+    testing.expectf(t,strings.contains(text,`"name": "Camera"`) && !strings.contains(text,`"fields"`) && strings.contains(text,`"left_out"`),"the index of the components: %s",text)
     _,result,text=inspect(state,&out,"component.list",`{"name":"Camera"}`)
     testing.expectf(t,strings.contains(text,`"default"`) && strings.contains(text,`"fields"`) && !strings.contains(text,`"left_out"`),"one whole: %s",text)
     _,result,text=inspect(state,&out,"component.list",`{"names":["Camera","Transform"]}`)
     testing.expectf(t,strings.count(text,`"fields"`)==2,"several in one call: %s",text)
-    _,result,_=inspect(state,&out,"play.inspect",`{"name":"Body 29*"}`)
+    _,result,_=inspect(state,&out,"scene.inspect",`{"world":"Game","name":"Body 29*"}`)
     testing.expect_value(t,number(result["matched"]),11)
     testing.expect_value(t,result["entities"].(json.Array)[0].(json.Object)["name"].(string),"Body 29")
 }
 
-@(private="file") Inspect_Drivable :: struct {seat,camera:core.Entity}
-@(private="file")
+@(private) Inspect_Link :: struct {seat,camera:core.Entity}
+@(private)
+@(test_world,editor="Inspect_Editor")
 Spawned_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     parents:core.Table(core.Parent),
-    drivables:core.Table(Inspect_Drivable),
+    links:core.Table(Inspect_Link),
 }
 
-// A prefab spawned while playing has no Ids: play.inspect names its parent
+// A prefab spawned while playing has no Ids: an inspect of the game names its parent
 // and the entities its fields hold by handle, as it names the entity, and
 // scene.inspect keeps the Ids of an edited world.
 @(test)
 play_inspection_names_the_references_of_spawned_entities_by_handle :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Spawned_World,core.Test_None,Inspect_Editor,test_types)
+    info,described:=test_info(t,Spawned_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Spawned_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
     defer core.world_destroy(&info,.World,&world)
@@ -287,7 +291,7 @@ play_inspection_names_the_references_of_spawned_entities_by_handle :: proc(t:^te
     defer api_schema_free(&state)
     root,camera:=core.create(&world.entities),core.create(&world.entities)
     core.add(&world.parents,camera,core.Parent{entity=root})
-    core.add(&world.drivables,root,Inspect_Drivable{camera=camera})
+    core.add(&world.links,root,Inspect_Link{camera=camera})
     core.settle(&info,&world,nil)
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
     scratch:=make([]u8,state.largest);defer delete(scratch)
@@ -298,11 +302,23 @@ play_inspection_names_the_references_of_spawned_entities_by_handle :: proc(t:^te
     out.count=0
     api_entity_write(&session,w,&out,camera,false,scratch,true)
     text=string(serial.writer_bytes(&out))
-    testing.expectf(t,strings.contains(text,fmt.tprintf(`"parent":"0x%016x"`,u64(root))),"the parent is the handle: %s",text)
+    testing.expectf(t,strings.contains(text,fmt.tprintf(`"parent": "0x%016x"`,u64(root))),"the parent is the handle: %s",text)
     core.add(&world.ids,root,core.Id{5});core.add(&world.ids,camera,core.Id{6})
     core.settle(&info,&world,nil)
     out.count=0
     api_entity_write(&session,w,&out,root,true,scratch,false)
     text=string(serial.writer_bytes(&out))
     testing.expectf(t,strings.contains(text,`"camera": "0x0000000000000006"`),"an edited world shows Ids: %s",text)
+}
+
+// The answer of scene.inspect, with play of the game, as the API writes it.
+@(private)
+api_inspect_text :: proc(s:^Session,call:^api.Call,play:bool) -> string {
+    result:Api_Inspect_Result
+    call.result=&result
+    defer call.result=nil
+    (^Api_Inspect_Params)(call.params).world=.Game if play else .Scene
+    api_scene_inspect(s,call)
+    text,_:=serial.text_encode(result,.Line,context.temp_allocator,sparse=true)
+    return string(text)
 }

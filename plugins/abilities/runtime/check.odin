@@ -2,7 +2,7 @@ package abilities
 
 import "core:fmt"
 import "core:mem"
-import phys "plugins:physics/runtime"
+import locomotion "plugins:locomotion/runtime"
 
 // What is wrong with a sheet and how to fix it, written into out; empty when it is valid. The
 // step reports it as a problem of the user and the API returns it, so both say the same.
@@ -15,7 +15,6 @@ ability_check :: proc(a:^Ability,out:[]u8) -> string {
     if a.input.on==.None && (a.input.after!=0 || a.input.wait!=.Buffer) {return "input.after or input.wait is set but input.on is none, so no input fires: give the trigger, or clear them"}
     if !finite(a.duration) || a.duration<=0 {return fmt.bprintf(out,"duration is %v: give the seconds the ability lasts, above 0",a.duration)}
     if !seconds_ok(a.cooldown) {return fmt.bprintf(out,"cooldown is %v: give the seconds before it starts again, 0 or more",a.cooldown)}
-    if len(ability_name_text(&a.action))>0 && len(ability_name_text(&a.clip))>0 {return fmt.bprintf(out,"plays both the action %q and the clip %q: keep the action for a layer over locomotion or the clip for the whole body",ability_name_text(&a.action),ability_name_text(&a.clip))}
     for c,i in a.conditions {
         if !finite(c.at_least) || !finite(c.at_most) {return fmt.bprintf(out,"conditions[%d] has a bound that is not a number: give finite at_least and at_most",i)}
         if c.attribute==ATTRIBUTE_NONE && (c.at_least!=0 || c.at_most!=0) {return fmt.bprintf(out,"conditions[%d] has bounds and names no attribute: name the attribute it measures",i)}
@@ -44,7 +43,7 @@ ability_check :: proc(a:^Ability,out:[]u8) -> string {
             if text:=effect_check(h.effect,out);text!="" {return fmt.bprintf(out,"windows[%d].hitbox.effect %s",i,text)}
         }
         for v in w.move.velocity {if !finite(v) {return fmt.bprintf(out,"windows[%d].move.velocity is not a velocity: give finite metres per second",i)}}
-        if w.move.mix>max(phys.Move_Mix) {return fmt.bprintf(out,"windows[%d].move.mix is %d: use additive or override",i,u8(w.move.mix))}
+        if w.move.mix>max(locomotion.Move_Mix) {return fmt.bprintf(out,"windows[%d].move.mix is %d: use additive or override",i,u8(w.move.mix))}
     }
     return ""
 }

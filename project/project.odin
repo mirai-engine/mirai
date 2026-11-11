@@ -9,8 +9,7 @@ import "mirai:std/base"
 // The standard layout of a project. A plugin has the same shape below its
 // own folder: plugin.mirai, runtime/, editor/, shaders/ and assets/.
 Folder :: enum u8 {
-    Assets,    // cooked assets
-    Source,    // art sources with their import options
+    Assets,    // assets, with the art sources they are imported from and their import options
     Game,      // the runtime module of the project
     Editor,    // its engine-time module
     Plugins,
@@ -19,10 +18,10 @@ Folder :: enum u8 {
     Generated, // module roots, libraries and caches: never edited, never versioned
 }
 FOLDER_NAMES :: [Folder]string{
-    .Assets="assets",.Source="source",.Game="game",.Editor="editor",
+    .Assets="assets",.Game="game",.Editor="editor",
     .Plugins="plugins",.Shaders="shaders",.Panels="panels",.Generated=".mirai",
 }
-PART_NAMES :: [Plugin_Part]string{.Runtime="runtime",.Editor="editor",.Shaders="shaders",.Assets="assets"}
+PART_NAMES :: [Plugin_Part]string{.Runtime="runtime",.Editor="editor",.Shaders="shaders",.Assets="assets",.Recipes="recipes"}
 
 // Under the generated folder, beside the libraries of the project: the libraries of the engine's plugins it links.
 PLUGIN_LIBRARIES :: "plugins/lib"
@@ -33,7 +32,14 @@ REGISTRY_CACHE :: "registry"   // in it: what the registry of the assets saw
 TEXTURE_CACHE :: "textures"    // in it: built textures, by image and settings
 MESH_CACHE :: "meshes"         // in it: built meshes, by geometry and settings
 ANIMATION_CACHE :: "animations" // in it: compressed .anim libraries, by asset and inputs
+FAR_CACHE :: "far"             // in it: the far meshes of scenes the editor made, by what they are made of (asset.far_key)
+FAR_PREFIX :: "mirai-far"      // where the registry of a project that is not cooked mounts the far cache
 THUMBNAIL_FOLDER :: "thumbs"   // beside it: the previews of the editor
+// Under the generated folder of a project or a plugin: what the imports of its
+// sources build that nobody edits (meshes, textures, sounds, fonts), each at
+// the path it has among the assets. Built again from the sources and their
+// sidecars wherever it is missing (cook/import/sources.sync).
+IMPORTED_FOLDER :: "imported"
 
 Plugin :: struct {
     manifest:Plugin_Manifest,
@@ -303,6 +309,12 @@ library_file :: proc(name:string,allocator:=context.allocator) -> string {
     return file
 }
 
+// What each package of a library of the engine built to be taken in place
+// exports, after its link name (mirai.core.__slots): the table its exports
+// call through, and the hash of what its slots are.
+LIBRARY_SLOTS :: ".__slots"
+Library_Slots :: #type proc "contextless" () -> (slots:[]rawptr,key:u64)
+
 // A library of the project, in .mirai: editor, which the editor loads, or
 // play, which the player loads.
 project_library :: proc(root,name:string,allocator:=context.allocator) -> string {
@@ -319,6 +331,11 @@ cache_path :: proc(root:string,parts:..string,allocator:=context.allocator) -> s
         strings.write_string(&b,part)
     }
     return strings.to_string(b)
+}
+
+// The imported folder of the project or the plugin at root.
+imported_path :: proc(root:string,allocator:=context.allocator) -> string {
+    return path(folder_path(root,.Generated,context.temp_allocator),IMPORTED_FOLDER,allocator=allocator)
 }
 
 folder_path :: proc(root:string,folder:Folder,allocator:=context.allocator) -> string {
@@ -374,9 +391,26 @@ path_absolute :: proc(location:string,allocator:=context.allocator) -> string {
     return copy
 }
 
+// The folders of the recipes Create and the preset of a document place: that
+// of the engine, then the one of each active plugin that declares the part,
+// in the order of p.active. A recipe is a scene of one entity, which is
+// copied where it is placed; the name of its file is its name.
+recipe_folders :: proc(p:^Project,allocator:=context.allocator) -> []string {
+    folders:=make([dynamic]string,allocator)
+    parts:=PART_NAMES
+    if p.engine_root!="" {append(&folders,path(p.engine_root,parts[.Recipes],allocator=allocator))}
+    for index in p.active {
+        plugin:=&p.plugins[index]
+        if .Recipes in plugin.manifest.parts {append(&folders,path(plugin.folder,parts[.Recipes],allocator=allocator))}
+    }
+    return folders[:]
+}
+
 // A folder of assets of a project, and the path its files have among the
 // assets: "" for the ones of the project, plugins/<name> for those of a plugin.
-Asset_Folder :: struct {path,prefix:string}
+// imported: the imported folder that goes with it, whose files are assets at
+// the same paths. root: the project or the plugin the folder is of.
+Asset_Folder :: struct {path,prefix,imported,root:string}
 
 // The assets folder of the project, when it has one, and the one of each
 // active plugin that declares the part, in the order of p.active.
@@ -384,13 +418,15 @@ asset_folders :: proc(p:^Project,allocator:=context.allocator) -> []Asset_Folder
     folders:=make([dynamic]Asset_Folder,allocator)
     names:=FOLDER_NAMES
     parts:=PART_NAMES
-    if own:=folder_path(p.root,.Assets,allocator);os.is_dir(own) {append(&folders,Asset_Folder{own,""})}
+    if own:=folder_path(p.root,.Assets,allocator);os.is_dir(own) {append(&folders,Asset_Folder{own,"",imported_path(p.root,allocator),p.root})}
     for index in p.active {
         plugin:=&p.plugins[index]
         if .Assets not_in plugin.manifest.parts {continue}
         append(&folders,Asset_Folder{
             path(plugin.folder,parts[.Assets],allocator=allocator),
             path(names[.Plugins],base.text_get(plugin.manifest.name[:]),allocator=allocator),
+            imported_path(plugin.folder,allocator),
+            plugin.folder,
         })
     }
     return folders[:]

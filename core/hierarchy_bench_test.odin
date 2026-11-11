@@ -70,7 +70,7 @@ bench_hierarchy :: proc(t:^testing.T) {
     }
     settle :: proc(locals:^Table(Transform),parents:^Table(Parent),worlds:^Table(World_Transform),h:^Hierarchy,es:^Entities) {
         table_settle(parents,es)
-        hierarchy_settle(h,read(parents),es)
+        hierarchy_settle(h,parents,es)
         table_settle(locals,es)
         table_settle(worlds,es)
         entities_settle(es)
@@ -85,13 +85,13 @@ bench_hierarchy :: proc(t:^testing.T) {
     b:Bench
     for bench_round(&b) {
         for pass in 0..<PASSES {
-            for k in 0..<64 {get(&locals,groups[(pass*64+k)%GROUPS]).position.y+=1}
+            for k in 0..<64 {edit(&locals,groups[(pass*64+k)%GROUPS]).position.y+=1}
             transforms_propagate(read(&locals),ref(&h),&worlds,&p,&jumps,tick)
         }
     }
     bench_report("propagate, 64 groups moved",b,PASSES)
 
-    // A tick after a part changed parent: the order and every world again.
+    // A tick after a part changed parent: its world, and those of what hangs from it.
     b={}
     for bench_round(&b) {
         for pass in 0..<PASSES/8 {
@@ -106,7 +106,7 @@ bench_hierarchy :: proc(t:^testing.T) {
     // The settle of a function that did not touch Parent.
     b={}
     for bench_round(&b) {
-        for _ in 0..<PASSES*16 {hierarchy_settle(&h,read(&parents),&es)}
+        for _ in 0..<PASSES*16 {hierarchy_settle(&h,&parents,&es)}
     }
     bench_report("hierarchy_settle, nothing changed",b,PASSES*16)
 

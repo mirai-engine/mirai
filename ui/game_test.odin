@@ -55,7 +55,7 @@ test_count_quad :: proc(vertices:[]Vertex,kind:Quad_Kind) -> int {
 @(test)
 images_show_a_part_of_a_texture_with_a_tint :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     frame:=test_frame(&ctx,&input,proc(ctx:^Context,user:rawptr) {
@@ -80,7 +80,7 @@ images_show_a_part_of_a_texture_with_a_tint :: proc(t:^testing.T) {
 @(test)
 a_box_takes_an_image_or_a_nine_slice_as_its_background :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     input:=test_input()
     frame:=test_frame(&ctx,&input,proc(ctx:^Context,user:rawptr) {
@@ -100,7 +100,7 @@ a_box_takes_an_image_or_a_nine_slice_as_its_background :: proc(t:^testing.T) {
 @(test)
 a_progress_bar_is_its_shape_cut_at_its_value :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
     Bars :: struct {value:f32,images:bool}
     s:=Bars{value=0.25}
@@ -152,14 +152,14 @@ test_styles_build :: proc(ctx:^Context,user:rawptr) {
 @(test)
 styled_text_is_aligned_and_wrapped_inside_its_box :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     white:=Color{255,255,255,255}
     s:=Test_Styles{style={size=16,color=white},content="Score",width=FIT,height=FIT}
     input:=test_input()
     frame:=test_frame(&ctx,&input,test_styles_build,&s)
     width:=text_width(&ctx.font,"Score",16)
-    testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"text")),{20,20,width+1,16*TEXT_LINE+2}),"A box that fits holds one line")
+    testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"text")),{20,20,math.ceil(width+1),math.ceil(16*TEXT_LINE)}),"A box that fits holds one line, up to whole pixels")
     testing.expect_value(t,len(frame.vertices),5*6)
     // Aligned in a larger box.
     s.width,s.height=fixed(300),fixed(100)
@@ -177,22 +177,23 @@ styled_text_is_aligned_and_wrapped_inside_its_box :: proc(t:^testing.T) {
     // Wrapped to a fixed width, the box grows by the lines the text takes.
     s={style={size=16,color=white,wrap=.Words},content="The quick brown fox jumps over the lazy dog",width=fixed(120),height=FIT}
     frame=test_frame(&ctx,&input,test_styles_build,&s)
-    lines:=text_line_count(&ctx.font,s.content,16,120,.Words)
+    broken:[8]string
+    lines:=test_text_lines(&ctx,id(&ctx,"text"),broken[:])
     testing.expect(t,lines>=3)
-    testing.expect(t,test_near(test_rect(t,&ctx,id(&ctx,"text")).h,f32(lines)*16*TEXT_LINE+2))
+    testing.expect(t,test_near(test_rect(t,&ctx,id(&ctx,"text")).h,math.ceil(f32(lines)*16*TEXT_LINE)))
     bounds:=test_bounds(frame.vertices)
     testing.expect(t,bounds.x>=18 && bounds.x+bounds.w<=20+120+2 && bounds.h>f32(lines-1)*16*TEXT_LINE,"Every line stays inside the width")
     testing.expect_value(t,len(frame.vertices),(len(s.content)-8)*6)
     // A line height of its own.
     s.style.line_height=2
     test_frame(&ctx,&input,test_styles_build,&s)
-    testing.expect(t,test_near(test_rect(t,&ctx,id(&ctx,"text")).h,f32(lines)*32+2))
+    testing.expect(t,test_near(test_rect(t,&ctx,id(&ctx,"text")).h,f32(lines)*32))
 }
 
 @(test)
 styled_text_takes_outline_shadow_and_ellipsis :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     white:=Color{255,255,255,255}
     s:=Test_Styles{style={size=16,color=white},content="Level",width=fixed(200),height=fixed(40)}
@@ -233,7 +234,7 @@ styled_text_takes_outline_shadow_and_ellipsis :: proc(t:^testing.T) {
 @(test)
 the_scale_turns_layout_units_into_window_points :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     testing.expect_value(t,scale_to_fit({1920,1080},{1280,720}),f32(1.5))
     testing.expect_value(t,scale_to_fit({1920,800},{1280,720}),f32(800.0/720))
@@ -243,7 +244,7 @@ the_scale_turns_layout_units_into_window_points :: proc(t:^testing.T) {
     build :: proc(ctx:^Context,user:rawptr) {
         s:=cast(^Scaled)user
         if anchored(ctx,id(ctx,"corner"),.Bottom_Right,{-10,-10},{direction=.Column}) {
-            if button(ctx,id(ctx,"go"),{label="Go",width=100,height=40,style=.Accent}).clicked {s.clicks+=1}
+            if button(ctx,id(ctx,"go"),{label="Go",width=100,height=40,variant="accent"}).clicked {s.clicks+=1}
         }
     }
     input:=test_input(1280,720)
@@ -278,9 +279,9 @@ the_scale_turns_layout_units_into_window_points :: proc(t:^testing.T) {
 @(test)
 a_skinned_button_changes_its_image_with_its_state :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_SMALL))
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
     defer context_destroy(&ctx)
-    ctx.theme.activate_on_press=false
+    ctx.release_activates=true
     State :: struct {clicks:int,disabled:bool}
     s:State
     build :: proc(ctx:^Context,user:rawptr) {
@@ -322,32 +323,32 @@ a_skinned_button_changes_its_image_with_its_state :: proc(t:^testing.T) {
 }
 
 @(private="file")
-Canvas_Seen :: struct {rect:Rect,kind:u32,data:u64,calls:int}
+Canvas_Seen :: struct {rect:Rect,name:u64,calls:int}
 
 @(test)
 a_canvas_is_drawn_by_its_owner_inside_the_clip_of_its_container :: proc(t:^testing.T) {
     seen:Canvas_Seen
-    draw :: proc(ctx:^Context,rect:Rect,kind:u32,data:u64,color:Color) {
-        s:=(^Canvas_Seen)(uintptr(data))
-        s.rect,s.kind,s.calls=rect,kind,s.calls+1
-        draw_rect(ctx,{rect.x-50,rect.y,rect.w+100,rect.h},{255,255,255,255}) // wider than the clip
+    draw :: proc(user:rawptr,ctx:^Context,node:Draw_Node) {
+        s:=(^Canvas_Seen)(user)
+        s.rect,s.name,s.calls=node.rect,node.name,s.calls+1
+        draw_rect(ctx,{node.rect.x-50,node.rect.y,node.rect.w+100,node.rect.h},{255,255,255,255}) // wider than the clip
     }
     desc:=TEST_SMALL
-    desc.draw_user=draw
+    desc.draw_user,desc.draw_user_data=draw,&seen
     ctx:Context
-    testing.expect(t,context_init(&ctx,desc));defer context_destroy(&ctx)
+    testing.expect(t,test_context_init(&ctx,desc));defer context_destroy(&ctx)
     input:=test_input()
     Build :: struct {seen:^Canvas_Seen,it:Interaction}
     b:=Build{seen=&seen}
     build :: proc(ctx:^Context,user:rawptr) {
         b:=(^Build)(user)
         if box(ctx,{id=id(ctx,"area"),width=fixed(200),height=fixed(100),clip_x=true,clip_y=true}) {
-            b.it=canvas(ctx,id(ctx,"canvas"),GROW,GROW,7,u64(uintptr(b.seen)))
+            b.it=canvas(ctx,id(ctx,"canvas"),GROW,GROW,{name=7})
         }
     }
     test_frame(&ctx,&input,build,&b)
     frame:=test_frame(&ctx,&input,build,&b)
-    testing.expect_value(t,seen.kind,u32(7))
+    testing.expect_value(t,seen.name,u64(7))
     testing.expect(t,seen.calls==2 && test_rect_near(seen.rect,{0,0,200,100}),"the owner draws the area the layout gave it")
     clipped:=false
     for command in frame.commands {if command.count>0 && test_rect_near(command.scissor,{0,0,200,100}) {clipped=true}}

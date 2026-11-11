@@ -214,6 +214,26 @@ a_slope_steeper_than_the_limit_slides_the_character_down :: proc(t:^testing.T) {
     test_walk(&w,ch,{0,0,-1},45)
     testing.expect(t,character_velocity(&w,ch).z>2 && character_position(&w,ch).y<start.y-2)
     testing.expect(t,!test_standing(&w,ch))
+
+    // Two such faces in a V hold it: it stands in the groove within half a second, and jumps out of it.
+    v:World
+    testing.expect(t,test_character_world(&v))
+    defer world_destroy(&v)
+    for side in ([2]f32{-1,1}) {
+        n:=Vec3{-side*cmath.sin(angle),cmath.cos(angle),0}
+        along:=Vec3{side*cmath.cos(angle),cmath.sin(angle),0}
+        test_static_box(&v,{1.5,0.25,3},along*1.5-n*0.25,q_axis_angle({0,0,1},side*angle))
+    }
+    wedged:=test_character(&v,{0,1,0})
+    test_walk(&v,wedged,{},30)
+    held:=character_position(&v,wedged)
+    for _ in 0..<30 {
+        test_walk(&v,wedged,{},1)
+        testing.expectf(t,test_standing(&v,wedged),"it stands in the groove at %v",character_position(&v,wedged))
+    }
+    testing.expectf(t,length(character_position(&v,wedged)-held)<0.01,"it stays where the groove holds it: %v from %v",character_position(&v,wedged),held)
+    test_walk(&v,wedged,{},1,jump=true)
+    testing.expectf(t,character_velocity(&v,wedged).y>4,"it jumps out: %v",character_velocity(&v,wedged))
 }
 
 @(test)
@@ -370,24 +390,23 @@ two_characters_of_a_yielding_pair_pass_through_each_other_and_end_apart :: proc(
     test_steps(&w,30)
     character_set_move(&w,a,test_move(&w,a,{1,0,0}))
     character_set_move(&w,b,test_move(&w,b,{-1,0,0}))
-    buffer:=make([]byte,world_snapshot_capacity(&w))
-    defer delete(buffer)
-    size:int
+    buffer:World
+    defer world_destroy(&buffer)
+    kept:=false
     highest:f32
     for _ in 0..<120 {
         pa,pb:=character_position(&w,a),character_position(&w,b)
         highest=max(highest,pa.y,pb.y)
         // Halfway through each other: what follows repeats bit for bit from here.
-        if size==0 && pb.x-pa.x<0.3 {
-            ok:bool
-            size,ok=world_snapshot(&w,buffer)
-            testing.expect(t,ok)
+        if !kept && pb.x-pa.x<0.3 {
+            kept=true
+            testing.expect(t,test_keep(&buffer,&w))
             hashes:[40]u64
             for &hash in hashes {
                 test_steps(&w,1)
                 hash=world_hash(&w)
             }
-            testing.expect(t,world_restore(&w,buffer[:size]))
+            testing.expect(t,test_restore(&w,&buffer))
             for hash,i in hashes {
                 test_steps(&w,1)
                 highest=max(highest,character_position(&w,a).y,character_position(&w,b).y)
@@ -400,7 +419,7 @@ two_characters_of_a_yielding_pair_pass_through_each_other_and_end_apart :: proc(
         test_steps(&w,1)
     }
     pa,pb:=character_position(&w,a),character_position(&w,b)
-    testing.expect(t,size>0)
+    testing.expect(t,kept)
     testing.expectf(t,highest<0.02,"one went over the other: %v m up",highest)
     testing.expectf(t,pa.x-pb.x>2 && near(pa.y,0,0.02) && near(pb.y,0,0.02),"positions %v and %v",pa,pb)
     testing.expectf(t,character_velocity(&w,a).x>4.5 && character_velocity(&w,b).x< -4.5,"velocities %v and %v",character_velocity(&w,a),character_velocity(&w,b))
@@ -501,9 +520,9 @@ restoring_in_the_middle_of_a_jump_repeats_the_trajectory_exactly :: proc(t:^test
     }
     state:=character_state(&w,chs[0])
     testing.expect(t,.Standing not_in state.ground && character_position(&w,chs[0]).y>0.3)
-    buffer:=make([]byte,world_snapshot_capacity(&w))
-    defer delete(buffer)
-    size,ok:=world_snapshot(&w,buffer)
+    buffer:World
+    defer world_destroy(&buffer)
+    ok:=test_keep(&buffer,&w)
     testing.expect(t,ok)
     Sample :: struct {positions:[3]Vec3,hash:u64}
     first:[100]Sample
@@ -513,7 +532,7 @@ restoring_in_the_middle_of_a_jump_repeats_the_trajectory_exactly :: proc(t:^test
         for ch,j in chs {sample.positions[j]=character_position(&w,ch)}
         sample.hash=world_hash(&w)
     }
-    testing.expect(t,world_restore(&w,buffer[:size]))
+    testing.expect(t,test_restore(&w,&buffer))
     testing.expect_value(t,character_state(&w,chs[0]),state)
     for sample,i in first {
         test_character_script(&w,chs,20+i)

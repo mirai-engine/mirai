@@ -89,7 +89,7 @@ ai_scene_anchor :: proc(s:^Session,task:^Ai_Task) -> [3]f32 {
             if pivot,found:=selection_pivot(s,world);found {point=pivot}
         }
         if task.play {
-            if player:=play_player_snapshot(run_ref(s,ai_task_run(s,task)));player.available {point=player.body.entity!=""?player.body.world_position:player.seat.world_position}
+            if player:=play_player_snapshot(run_ref(s,ai_task_run(s,task)));player.available {point=player.body.entity!=core.NONE?player.body.world_position:player.seat.world_position}
         }
         entities:[]core.Entity
         if !task.play && s.selection!=nil {entities=s.selection.entities[:]}
@@ -112,7 +112,7 @@ ai_scene_place :: proc(s:^Session,task:^Ai_Task,w:core.World_Ref,point:[3]f32,en
     if g.visible {direction=g.axes[axis]}
     distance:=max(f32(1.25),g.size+0.55)
     height:=point.y+g.size+0.35
-    if len(entities)>0 && s.picker!=nil && s.app!=nil && s.app.assets!=nil {
+    if len(entities)>0 && s.app!=nil && s.app.assets!=nil {
         if low,high,found:=entities_bounds(s,w,entities);found {
             edge:=[3]f32{direction.x>=0?high.x:low.x,direction.y>=0?high.y:low.y,direction.z>=0?high.z:low.z}
             distance=max(distance,direction.x*(edge.x-point.x)+direction.y*(edge.y-point.y)+direction.z*(edge.z-point.z)+0.55)

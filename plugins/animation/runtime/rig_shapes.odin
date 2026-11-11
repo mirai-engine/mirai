@@ -96,11 +96,11 @@ rig_shapes_check :: proc(profile:Pose_Profile) -> bool {
 }
 
 @(private)
-rig_shapes_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),root_transform:mm.Transform,playback:^Playback) -> bool {
+rig_shapes_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,$A),root_transform:mm.Transform,playback:^Playback) -> bool {
     spline_first,spline_end:=rig_rows(&runtime.spline_ik,state.entity)
     corrective_first,corrective_end:=rig_rows(&runtime.correctives,state.entity)
     if spline_first<spline_end && len(runtime.spline_states)!=len(runtime.spline_ik.values) && resize(&runtime.spline_states,len(runtime.spline_ik.values))!=nil ||
-       corrective_first<corrective_end && len(runtime.corrective_states)!=len(runtime.correctives.values) && resize(&runtime.corrective_states,len(runtime.correctives.values))!=nil {memory_problem(inputs.problems,state.entity,"the Spline IK and Corrective operations of its pose profile");return false}
+       corrective_first<corrective_end && len(runtime.corrective_states)!=len(runtime.correctives.values) && resize(&runtime.corrective_states,len(runtime.correctives.values))!=nil {memory_problem(inputs.problems,state.entity,"the Spline IK and Corrective operations of its .character");return false}
     valid:=true
     skeleton:=playing_skeleton(state)
     for &config,slot in runtime.spline_ik.values[spline_first:spline_end] {
@@ -116,7 +116,7 @@ rig_shapes_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constra
         settings:=lib.Spline_Chain{up=config.up,twist=config.twist}
         found:=true
         for &control,i in config.controls {
-            target,ok:=spatial_target_sample(control,&binding.targets[i],playback,inputs.skeletons,core.read(transforms),parents,inputs.worlds)
+            target,ok:=spatial_target_sample(control,&binding.targets[i],playback,inputs.skeletons,transforms,parents,inputs.worlds)
             settings.controls[i]=target.position;found &&=ok
         }
         if !found {modifier_request_rejected(runtime,state.entity,.Missing_Target);rig_problem(inputs.problems,state.entity,.Spline_IK,&config,.Target);valid=false;continue}

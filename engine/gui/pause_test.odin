@@ -95,26 +95,25 @@ the_menu_action_is_reported_unless_an_interface_used_escape :: proc(t:^testing.T
 @(test)
 the_mouse_is_captured_while_the_seat_with_it_drives_a_body_with_look :: proc(t:^testing.T) {
     w:Seats_Test_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     bindings:inp.Input_Map
     LOOK :: inp.Action(0)
     inp.input_map_action(&bindings,LOOK,.Axis2)
     state:=inp.Seats{local_count=1}
     seat,body:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.seats,seat,inp.Seat{})
-    core.add(&w.drivables,body,inp.Drivable{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
 
-    wants:=proc(seats:^core.Table(inp.Seat),drivables:^core.Table(inp.Drivable),state:^inp.Seats,bindings:^inp.Input_Map,modal:bool) -> bool {
-        return mouse_wanted(core.read(seats),core.read(drivables),state,bindings,LOOK,modal)
+    wants:=proc(seats:^core.Table(inp.Seat),state:^inp.Seats,bindings:^inp.Input_Map,modal:bool) -> bool {
+        return mouse_wanted(core.read(seats),state,bindings,LOOK,modal)
     }
-    testing.expect(t,!wants(&w.seats,&w.drivables,&state,&bindings,false),"the mouse does not turn its look")
+    testing.expect(t,!wants(&w.seats,&state,&bindings,false),"the mouse does not turn its look")
     inp.input_map_bind(&bindings,LOOK,inp.binding_gamepad_stick(.Right))
-    testing.expect(t,!wants(&w.seats,&w.drivables,&state,&bindings,false),"a stick does not need the mouse")
+    testing.expect(t,!wants(&w.seats,&state,&bindings,false),"a stick does not need the mouse")
     inp.input_map_bind(&bindings,LOOK,inp.binding_mouse_delta())
-    testing.expect(t,!wants(&w.seats,&w.drivables,&state,&bindings,false),"no body driven")
-    core.get(&w.drivables,body).seat=seat
-    testing.expect(t,wants(&w.seats,&w.drivables,&state,&bindings,false))
-    testing.expect(t,!wants(&w.seats,&w.drivables,&state,&bindings,true),"a Modal frees it")
+    testing.expect(t,!wants(&w.seats,&state,&bindings,false),"no body driven")
+    core.edit(&w.seats,seat).body=body
+    testing.expect(t,wants(&w.seats,&state,&bindings,false))
+    testing.expect(t,!wants(&w.seats,&state,&bindings,true),"a Modal frees it")
 }

@@ -1,7 +1,7 @@
 # Networking: current behavior
 
-Descriptors, defaults and statistics (`Host_Desc`, `Replication_Desc`, `Security_Desc`,
-`Object_Desc`, `Channel_Desc`, `Sim_Conditions`, `Clock`, `Host_Stats`) are commented in `net/`.
+Descriptors, defaults and statistics (`Host_Desc`, `Replication_Desc`, `Object_Desc`,
+`Channel_Desc`, `Sim_Conditions`, `Clock`, `Host_Stats`) are commented in `net/`.
 
 ## Bitstream (`std/serial/bitstream.odin`)
 
@@ -62,37 +62,68 @@ like `replication.hysteresis`) and the values it admits.
 
 ## Connections
 
-- **Four-datagram handshake.** The client's request and response are padded. The server answers
-  the request with a SipHash cookie of the address, the client salt and the time, and stores
-  nothing: only whoever returns the cookie gets a slot, so a spoofed address neither reserves
-  memory nor receives more bytes than it sent.
-  - A server reached through its router's address may answer from its own address on the network
-    (hairpin): a Challenge, Accepted or Denied with the salt of a request in progress is for it,
-    and the connection continues with the address that answered (`Host_Stats.readdressed`).
+- **Four-datagram handshake, always sealed.** The client's request and response are padded.
+  - *Request*: the client salt, to every address `host_connect` got at once: one, or the two of
+    an invitation. The client proves itself to each that answers and goes on with the one that
+    accepts; answers from any other address are ignored. A denial or another version ends the
+    attempt once every candidate gave one: the other may be the host while this one is another
+    machine at a private address of the client's own network.
+  - *Challenge*: a SipHash cookie of the address, the salt and the
+    time, the server's version and its lasting X25519 key; every request gets it and the server
+    stores nothing.
+  - *Response*: the cookie, the protocol hash, the client's key for the attempt and its proof,
+    sealed with a key from the exchange of that key with the server's lasting one and the
+    invitation.
+  - *Accepted*: the server's key for the connection and, sealed with the session keys, its salt,
+    object capacity, history and the slot of the connection.
+  - Nothing but the challenge answers an address that has not returned a valid cookie, and
+    nothing at all a proof that does not open (a wrong invitation): both count in
+    `handshakes_dropped`. Denials (`Denied_Protocol`, `Denied_Full`) go only to a returned cookie,
+    and `Denied_Full` only to a proof that opened; they count in `handshakes_refused`. The idea
+    is netcode's: answer only when necessary, and deny only a request that passed every check
+    ([standard](https://raw.githubusercontent.com/mas-bandwidth/netcode/main/STANDARD.md)).
+  - A wrong proof costs its address (the IP without the port, an IPv6 /64): a few back to back,
+    then one per interval; what comes sooner is put off before the key exchange
+    (`handshakes_deferred`). The allowance is a token bucket kept as one time per address in a
+    fixed table of sets; a full set gives its slot that frees soonest to the newcomer, so a crowd
+    of guessers never shuts out who brings the invitation, which joins with no added round trip.
 - **Format.** Every datagram starts with a type byte. The handshake ends in an XXH3 checksum keyed
-  with `protocol_id`; data carries a checksum keyed with the salts of both ends or, encrypted, the
-  ChaCha20-Poly1305 tag. The protocol hash includes fragments, events, input, channels and
-  `TRANSPORT_VERSION`, which rises when the format of data datagrams changes.
-- **Encryption** (`net/secure.odin`, only with `core:crypto`): keys come from HKDF-SHA256 over the
-  exchange of two ephemeral X25519 keys and, if the client pins the server's public key
-  (`Credentials.server_key`), also over that of its ephemeral key with the server's fixed key:
-  only its owner ends up with the same keys, and a client that does not pin it accepts whoever
-  answers. One key per direction, with the 64-bit sequence as nonce, which every `REKEY_INTERVAL`
-  datagrams is derived from the previous one; the receiver's only advances when a datagram with
-  the new one turns out authentic. A tampered, truncated, repeated or older-than-the-last-accepted
-  datagram is discarded.
-- **Invitations** (`net/invite.odin`): a server with `Host_Desc.invite` lets in only whoever brings
-  the same one (`Denied_Invite`). It is a short secret so that whoever received the code gets in,
-  not a credential: it does not replace encryption or tokens. The code (`invite_encode`) carries
-  IP, port, token and a check in Crockford base32, tolerant of case, separators and confusable
-  characters; `address_reachable` gives the address the router mapped or the LAN one.
-- **Connection tokens**: the game's backend signs with Ed25519 (`token_issue`) a token that the
-  server verifies with `token_key` and requires with `require_token`. The client must pin the
-  server's key, because the token travels sealed for it and nobody on the path can read and use it
-  first. The `client_id` arrives with `Connected`; if the same id comes back, the previous
-  connection closes with `Replaced`.
+  with `protocol_id`, which only filters strays; data ends in the ChaCha20-Poly1305 tag, with the
+  type, sequence and the slot of the connection at the receiver as associated data. The protocol
+  hash includes fragments, events, input, channels and `TRANSPORT_VERSION`, which rises when the
+  format of the handshake or of data datagrams changes.
+- **Roaming.** A data datagram from an address no connection has goes to the connection of the
+  slot it names; if it opens under that key and is newer than any the connection accepted, the
+  connection moves to that address, as WireGuard roams: a router that changes the port, or a
+  switch of network, loses nothing and costs no round trip. A forged datagram does not open, and
+  one replayed from elsewhere is not newer, so neither moves a connection.
+- **Sealing** (`net/secure.odin`, only with `core:crypto`; there is no unsealed mode): the session
+  keys come from HKDF-SHA256 over the exchange of the two keys made for the connection and that of
+  the client's key with the server's lasting one, salted with the key of the invitation. The
+  client takes the server's key from the challenge, so only an active attacker on the path could
+  pose as the server, and only knowing the invitation. One key per direction, with the 64-bit
+  sequence as nonce, which every `REKEY_INTERVAL` datagrams is derived from the previous one; the
+  receiver's only advances when a datagram with the new one turns out authentic. A tampered,
+  truncated, repeated or older-than-the-last-accepted datagram is discarded. A system without
+  secure random bytes cannot make a host (`host_init` refuses `invite`) nor an invitation
+  (`invite_token` is not ok).
+- **Two ways in.** By address: a server whose `Host_Desc.invite` is zero admits anyone who reaches
+  it, and the client calls `host_connect` with that address. By invitation: `Host_Desc.invite` is
+  in every key, so both ends must have the same one, and a client without it times out with
+  `Connect_Timeout`. It is a 64-bit secret so that whoever received the code gets in, not a
+  credential: nobody can try invitations from the server's answers, and neither the guesses the
+  server lets through nor whoever poses as the server on the path, trying them against the
+  client's proof offline, get near it.
+- **Invitation codes** (`net/invite.odin`): the host says where it is, as ICE gathers a host and a
+  reflexive candidate: `invite_make` takes its address on its network (`address_lan`) and, once
+  the router mapped its port, the mapped one; `invite_encode` writes both with the token and a
+  CRC-15 in Crockford base32, tolerant of case, separators and confusable characters, and the
+  client passes both addresses of `invite_decode` to `host_connect`. On the host's network the LAN
+  address answers; from outside, the mapped one; a router that does not loop its public address
+  back does not matter, and the client asks no other address.
 - **Amplification.** The Challenge is smaller than the padded request, and the server does X25519
-  exchanges only for whoever returned the cookie, `handshakes_per_update` at a time per update.
+  exchanges (two per accepted client, one per refused proof) only for whoever returned the cookie,
+  `handshakes_per_update` at a time per update.
 - **Acks.** Each data datagram carries its sequence, the last one received and a variable number of
   ack bits: from what the other end might not have resolved when reading the last ack this end
   received (`ack_known`), capped by `ACK_WINDOW`. Everything the sender has in flight arrives this
@@ -126,11 +157,22 @@ command. `budget` limits the bytes of a channel per update.
 
 - `Unreliable` is sent once; `Sequenced` too, and a message that is still waiting is replaced by
   the next one.
-- `Reliable` is resent until its ack, delivered in order and cut into chunks with a window: a
-  message can exceed the datagram. `message_send` returns `Full` and sends nothing if the message
-  does not fit in the queue of some destination connection (it knows from
-  `Connection_Stats.queue_free` of the last `host_poll` minus what was queued since): the sender
-  retries after `host_poll`.
+- `Reliable` is resent until its ack, delivered in order and cut into chunks as the window draws
+  them from the queue: the one fragmentation of the transport. `message_send` returns `Full` and
+  sends nothing if the message does not fit in the queue of some destination connection (it knows
+  from `Connection_Stats.queue_free` of the last `host_poll` minus what was queued since): the
+  sender retries after `host_poll`. With `sent`, a message to one connection streams: each call
+  queues what has room, and the channel takes nothing else until it is in, so a message has no
+  size limit. A message longer than `PIECE_BYTES` arrives in pieces (`Command.more`), which the
+  receiver joins; the library's own reliable channel takes only whole messages.
+- **Window.** The chunks a reliable channel keeps in flight grow by what the path acknowledges
+  (`channel_window`, each congestion interval), so they double each round trip while they hold the
+  channel back. Twice what the connection's rate sends in a round trip bounds them,
+  so congestion control and `send_rate` decide what a stream takes, and `Channel_Desc.window`, a
+  power of two the same at both ends, is the most a channel holds and receives ahead. A loss does
+  not shrink the window: its resend waits a round trip with the chunks after it acknowledged.
+- While objects wait for the update, the reliable game channels leave half of each datagram to
+  them: a part that streams does not starve the state.
 - The library channels count their queue the same way: `event_send` of a `Reliable` event and the
   authority requests return `Full` and send nothing if they do not fit in the queue of some
   connection they may go to, and the sender retries. The connection is not closed;
@@ -155,6 +197,9 @@ register the same in the same order.
   types and `TYPE_LEAVES` leaves. `type_register` registers and composes before sealing (tests).
 - Each replicated field (without `local`) produces leaves with a serializer according to its type
   and its tags (`bits`, `min`/`max`, `precision`, `text`; an array inherits those of its field).
+  - An array of one-byte values (a `text` too, and a `rotation` sent whole) is one field of its
+    bytes, packed four to a word: whole it travels up to its last nonzero byte, and as a delta the
+    run from the first to the last byte that changed. Its bytes must fit a part of a state.
   - A `base.Entity` travels as the network object of that game id, and the client receives its own
     id (`object_bind`). If the referenced replica does not exist yet it reads zero and the
     reference stays pending (`object_references_pending`); an entity that the sender does not
@@ -168,6 +213,17 @@ register the same in the same order.
   zero is empty): it does not shift entries, keeps no pointers and does not allocate, and
   inserting, changing or removing an entry dirties only its change group. The game declares its
   ids and writes the row of its component with the normal `core` operations.
+
+**Re-typing.** `object_retype` gives a live object another type (another list of fragments) with
+its whole state: the object, its parent, owner, scope and events go on.
+
+- Each link that has the replica takes the creation again, which carries the list; the client
+  reads the creation of a live object of the same generation as a re-typing and says so
+  (`Command.retyped`), keeping what the game bound the replica to. A creation in flight is
+  followed by the new one once it is acked, and a link that was leaving takes it if it returns.
+- The baselines of the object are dropped: they are of the words of the type before.
+- It bumps the epoch, and the server reads what an older epoch still sends (the client that holds
+  the object, which keeps it) with the type before, to drop it.
 
 **Large states** (`Object_Type.large`, whose maximum encoding exceeds `MAX_STATE_BYTES`):
 
@@ -232,10 +288,10 @@ object are sent until its creation was acked.
   removals, and filter and cell changes, with slots reserved at start, and its cell table (a
   `base.Hash_Map`, without tombstones) does not degrade even if objects traverse new cells all
   session long.
-- `Custom`: only the connections the game names with `object_set_relevance`, one bit per
-  connection and object, like Iris's connection filters. A new object and a connection that
-  arrives, even if it takes another's slot, start with none; with another filter the bit is kept
-  without counting. A change evaluates that connection on the next tick.
+- **Visibility bits**, like collision layers: an object with bits (`Object_Desc.visibility`,
+  `object_set_visibility`) is seen, of the connections its filter and its groups let, only by
+  those that share one (`connection_set_visibility`), and so its children. An object with none
+  asks for none; a connection that arrives, even in another's slot, has none.
 - A spatial object that is already seen keeps being seen until `leave_margin` beyond the view's
   reach and, past that margin, `hysteresis` more evaluations.
 - An object with a parent follows its parent's scope and is never created before it.
@@ -301,8 +357,14 @@ object are sent until its creation was acked.
   on the server those that do not come from the owner. Only `Held` ones reach a held connection:
   what the server says while it loads the world the connection will see.
 - They arrive as an `Event` command and are read with `event_read`.
-- They name their object by handle and travel apart from the state: on the same object they arrive
-  in order, but there is no order between events and updates.
+- An unreliable event encodes within `EVENT_MAX_BYTES`, a datagram; a reliable one within
+  `RELIABLE_EVENT_MAX_BYTES`, which its channel cuts in chunks as for any reliable message, and
+  every event within `MAX_STATE_WORDS`. `event_register` refuses one past them.
+- They name their object by handle. A server event carries the tick it was sent in (the one after
+  the last `host_publish`), and fanning it out about an object marks the link (`LINK_TICK`): the
+  next update goes even without changes and carries every field changed since what the connection
+  is known to have (`Command.complete`), so the receiver can wait for a state of that tick that a
+  lost update before it cannot leave incomplete.
 - A reliable event that arrives before its replica waits for it up to 5 s; one sent in the tick in
   which the object was created waits on the server for that tick's scope evaluation.
 
@@ -335,7 +397,13 @@ connection is for a replica.
 - The client estimates the server tick (`Clock.server`, corrected 10 % per sample; the estimate
   jumps if it strays more than 30 ticks) and wants its own tick ahead: half the RTT, twice the
   jitter, `input_lead` ticks and `bias`, a slow correction according to the margin the server
-  reports. That target (`Clock.target`) is smoothed with a constant of 0.5 s.
+  reports, less `Clock.input_delay`, the whole ticks ahead of its own it submits its input for.
+  That target (`Clock.target`) is smoothed with a constant of 0.5 s.
+- The input delay follows the round trip (`Replication_Desc.input_delay`, lightyear's
+  `InputDelayConfig`): delay covers it up to `cover` (at least `min`), prediction the next
+  `predict`, delay again the rest, up to `INPUT_DELAY_MAX`. It moves only once it is a whole tick
+  off. A tick an increase skips takes the next input submitted; a tick submitted again keeps the
+  first.
 - The client tick is stored by whoever uses it, with a fraction (the last simulated plus what its
   time already covers of the next). `clock_advance(h,now,local)` returns:
   - `shift`: whole ticks to add to it now. On synchronizing, what puts it on the target (also
@@ -362,19 +430,18 @@ connection is for a replica.
   place of its own, up to what `HISTORY_MAX_SECONDS` gives at its tick rate; more ends the
   attempt with `Capacity`.
 
-## Prediction (`rollback.odin`)
+## Smoothing and interpolation (`interpolation.odin`)
 
-- **`Rollback`**: history of inputs and states in rings over flat bytes, with callbacks.
-  `rollback_reconcile` compares the authoritative state of a tick with the predicted one:
-  `Confirmed`, `Corrected` (restores and resimulates to the present with the stored inputs),
-  `Snapped` (more ticks than `max_resimulate` or no history: takes the state as the present) or
-  `Stale`. `rollback_correct` restores a tick that the caller decided to correct and resimulates
-  without comparing: the runtime bridge uses it, which compares per replica.
+The client predicts with copies of the world and interpolates with `replica_blend`
+([multiplayer](multiplayer.md)); these are the pieces of `net` it uses for that.
+
 - **`Smoothing`** fades the difference between the displayed pose and the corrected one without
-  touching the simulated state; beyond `snap_distance` it does not smooth.
+  touching the simulated state; beyond `snap_distance` it does not smooth. A correction may ask
+  for its own half life (a change of timeline fades slower): the error under way fades as slowly
+  as the slowest that made it up, until it is gone.
 - **`Interpolation`**: ring of snapshots per tick and object. `interpolation_sample` gives the two
   that surround a tick (`Between`), the oldest (`Before`) or the newest and how much time has
-  passed since it (`After`), and `fragment_interpolate` blends them according to the descriptor.
+  passed since it (`After`); `interpolation_entry` gives each one kept, from the oldest.
   `interpolation_spacing` gives the ticks between snapshots: a longer gap counts at once and a
   shorter one, gradually.
 

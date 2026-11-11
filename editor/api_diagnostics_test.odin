@@ -12,12 +12,13 @@ import "mirai:std/serial"
 
 Api_Diagnostics_Test_Editor :: struct {api:Api}
 
-@(private="file")
-Api_Diagnostics_Test_World :: struct {using world:core.Test_World}
+@(private)
+@(test_world,editor="Api_Diagnostics_Test_Editor")
+Api_Diagnostics_Test_World :: struct {using world:Test_World}
 
 @(private="file")
 api_diagnostics_session :: proc(t:^testing.T,world:^Api_Diagnostics_Test_Editor,edits:^history.Edits,info:^core.World_Info) -> (s:Session,ok:bool) {
-    info^=core.test_info(t,Api_Diagnostics_Test_World,core.Test_None,Api_Diagnostics_Test_Editor) or_return
+    info^=test_info(t,Api_Diagnostics_Test_World) or_return
     return {info=info,editor_world=world,edits=edits},true
 }
 
@@ -28,8 +29,9 @@ editor_api_registers_every_method_and_refuses_loudly_when_full :: proc(t:^testin
     info:core.World_Info
     session,described:=api_diagnostics_session(t,&world,&edits,&info)
     if !described {return}
-    defer core.test_info_destroy(&info)
-    if !testing.expect_value(t,api_open(&session,0,true),Api_Open_Error.None) {return}
+    defer test_info_destroy(&info)
+    api_opened,api_problem:=api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return}
     defer api_close(&session)
     state:=api_state(&session)
     testing.expect_value(t,state.refused,0)
@@ -61,9 +63,10 @@ editor_engine_diagnostics_lists_the_console_after_a_serial :: proc(t:^testing.T)
     defer console_destroy(&console)
     session,described:=api_diagnostics_session(t,&world,&edits,&info)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     session.console=&console
-    if !testing.expect_value(t,api_open(&session,0,true),Api_Open_Error.None) {return}
+    api_opened,api_problem:=api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return}
     defer api_close(&session)
     state:=api_state(&session)
     state.poll_temp=context.temp_allocator
@@ -105,33 +108,29 @@ editor_engine_diagnostics_lists_the_console_after_a_serial :: proc(t:^testing.T)
     testing.expect_value(t,len(root["problems"].(json.Array)),0)
 }
 
-@(private="file")
-Problems_Test_World :: struct {using world:core.Test_World,ids:core.Table(core.Id),names:core.Table(core.Name)}
+@(private)
+@(test_world)
+Problems_Test_World :: struct {using world:Test_World,ids:core.Table(core.Id),names:core.Table(core.Name)}
 
 @(test)
 editor_engine_diagnostics_names_the_entity_of_each_problem :: proc(t:^testing.T) {
     world:Problems_Test_World
-    if !core.test_world_init(t,&world) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     hero:=core.create(&world.entities)
     name:core.Name
     base.text_set(name.text[:],"Hero")
     core.add(&world.ids,hero,{value=7})
     core.add(&world.names,hero,name)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     problems:core.Problems
-    core.report(&problems,core.NONE,"scene.spawn","The prefab 'props/crate.prefab' did not spawn: the file is missing. Import it again.")
+    core.report(&problems,core.NONE,"scene.spawn","The prefab 'props/crate.scene' did not spawn: the file is missing. Import it again.")
     core.report(&problems,hero,"animation.clip","Animation.clip is '%s', which the skeleton does not have; name one of its clips.","run")
     core.report(&problems,hero,"animation.clip","Animation.clip is '%s', which the skeleton does not have; name one of its clips.","walk")
-    out:serial.Writer
-    serial.writer_init(&out)
-    defer serial.writer_destroy(&out)
-    serial.write_u8(&out,'{')
-    api.write_text(&out,"world","edit",true)
-    api_problems_write(core.test_world_ref(&world),&problems,&out)
-    serial.write_u8(&out,'}')
-    value,parsed:=json.parse(serial.writer_bytes(&out),allocator=context.temp_allocator)
-    if !testing.expectf(t,parsed==.None,"%v: %s",parsed,string(serial.writer_bytes(&out))) {return}
+    listed:=api_problems_of(test_world_ref(&world),&problems,"edit",context.temp_allocator)
+    text,_:=serial.text_encode(listed,.Line,context.temp_allocator)
+    value,parsed:=json.parse(text,allocator=context.temp_allocator)
+    if !testing.expectf(t,parsed==.None,"%v: %s",parsed,string(text)) {return}
     root:=value.(json.Object)
     testing.expect_value(t,int(root["serial"].(json.Float)),3)
     testing.expect_value(t,int(root["evicted"].(json.Float)),0)
@@ -139,9 +138,7 @@ editor_engine_diagnostics_names_the_entity_of_each_problem :: proc(t:^testing.T)
     if !testing.expect_value(t,len(entries),2) {return}
     spawn,clip:=entries[0].(json.Object),entries[1].(json.Object)
     testing.expect_value(t,spawn["code"].(json.String),"scene.spawn")
-    _,null_id:=spawn["id"].(json.Null)
-    _,null_entity:=spawn["entity"].(json.Null)
-    testing.expect(t,null_id && null_entity && !spawn["alive"].(json.Boolean))
+    testing.expect(t,spawn["id"].(json.String)=="" && spawn["entity"].(json.String)=="" && !spawn["alive"].(json.Boolean),"a problem about no entity names none")
     testing.expect_value(t,clip["code"].(json.String),"animation.clip")
     testing.expect_value(t,clip["id"].(json.String),"0x0000000000000007")
     testing.expect_value(t,clip["entity"].(json.String),fmt.tprintf("0x%016x",u64(hero)))

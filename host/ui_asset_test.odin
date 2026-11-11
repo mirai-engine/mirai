@@ -3,6 +3,7 @@ package host
 import "core:mem"
 import "core:testing"
 import "mirai:asset"
+import anim "mirai:std/anim"
 import "mirai:std/base"
 import "mirai:ui"
 
@@ -10,7 +11,7 @@ import "mirai:ui"
 ROUNDTRIP_ID :: base.Asset_Id{0x51,7}
 
 // Records of a .ui with a node of each family, named styles with a variant,
-// a font, an image, a clip, a sequence, a translation, a grid and paths of
+// a font, an image, a clip, a sequence, a localized text, a grid and paths of
 // the game.
 @(private="file")
 Roundtrip_Records :: struct {
@@ -22,10 +23,9 @@ Roundtrip_Records :: struct {
     fonts:[1]ui.Tree_Font,
     anims:[3]ui.Tree_Anim,
     tracks:[2]ui.Tree_Track,
-    keys:[4]ui.Keyframe,
+    keys:[4]anim.Keyframe,
     parts:[2]ui.Anim,
     anim_sets:[1]ui.Anim_Set,
-    translations:[2]ui.Tree_Translation,
     grid_tracks:[1]ui.Grid_Tracks,
     text:[dynamic]u8,
 }
@@ -48,12 +48,9 @@ roundtrip_records :: proc(r:^Roundtrip_Records) -> ui.Tree_Data {
     r.parts={1,2}
     r.anim_sets={{shown=3,hidden=1}}
     r.grid_tracks={{count=2,columns={0=ui.fixed(40),1=ui.GROW}}}
-    TITLE_ID :: 0x7171
-    r.translations={{id=TITLE_ID,text=ui.tree_string_add(t,"Puntos")},{id=TITLE_ID,text=ui.tree_string_add(t,"Очки")}}
-    ui.tree_text_set(r.translations[0].language[:],"es");ui.tree_text_set(r.translations[1].language[:],"ru")
     r.nodes={
         ui.tree_node_record(t,-1,{kind=.Box,name="hud",layout={width=ui.GROW,height=ui.GROW,direction=.Column,gap=4},anims=1}),
-        ui.tree_node_record(t,0,{kind=.Text,name="title",text="Score: {coins}",style=1,flags={.Localized},text_id=TITLE_ID,fields={0={"coins","Game.coins"}}}),
+        ui.tree_node_record(t,0,{kind=.Text,name="title",text="hud.score",style=1,flags={.Localized},fields={0={"coins","Game.coins"}}}),
         ui.tree_node_record(t,0,{kind=.Image,name="coin",image=1}),
         ui.tree_node_record(t,0,{kind=.Progress,name="health",bind_value="Game.health",layout={width=ui.fixed(120),height=ui.fixed(8)}}),
         ui.tree_node_record(t,0,{kind=.Button,name="play",text="Play",style=2,variant="big",action="Confirm",nav={2="grid"}}),
@@ -65,7 +62,7 @@ roundtrip_records :: proc(r:^Roundtrip_Records) -> ui.Tree_Data {
     }
     return {nodes=r.nodes[:],styles=r.styles[:],style_infos=r.style_infos[:],
         variants=r.variants[:],images=r.images[:],fonts=r.fonts[:],anims=r.anims[:],tracks=r.tracks[:],keys=r.keys[:],parts=r.parts[:],anim_sets=r.anim_sets[:],
-        translations=r.translations[:],grid_tracks=r.grid_tracks[:],text=r.text[:]}
+        grid_tracks=r.grid_tracks[:],text=r.text[:]}
 }
 
 @(private="file")
@@ -88,7 +85,6 @@ same_data :: proc(t:^testing.T,a,b:ui.Tree_Data) {
     testing.expect(t,same_rows(a.keys,b.keys),"keys")
     testing.expect(t,same_rows(a.parts,b.parts),"parts")
     testing.expect(t,same_rows(a.anim_sets,b.anim_sets),"anim_sets")
-    testing.expect(t,same_rows(a.translations,b.translations),"translations")
     testing.expect(t,same_rows(a.grid_tracks,b.grid_tracks),"grid_tracks")
     testing.expect(t,same_rows(a.text,b.text),"text")
 }
@@ -118,7 +114,6 @@ a_ui_written_to_its_file_reads_back_the_same_records_and_tree :: proc(t:^testing
     read,read_error:=ui_tree_view(&file,&types)
     if !testing.expect_value(t,read_error,asset.Error.None) {return}
     same_data(t,data,read)
-    testing.expect_value(t,ui.tree_string(read.text,read.translations[1].text),"Очки")
 
     // Both build the same tree, the template and its override expanded.
     a,b:ui.Widget_Tree
@@ -150,7 +145,7 @@ raw_ui :: proc(t:^testing.T,types:^asset.Types,data:ui.Tree_Data,file:^asset.Ass
     }
     ok:=put(&doc,types,asset.UI_TABLE_NODES,data.nodes) && put(&doc,types,asset.UI_TABLE_STYLES,data.styles) && put(&doc,types,asset.UI_TABLE_ANIMS,data.anims) &&
         put(&doc,types,asset.UI_TABLE_TRACKS,data.tracks) && put(&doc,types,asset.UI_TABLE_KEYS,data.keys) && put(&doc,types,asset.UI_TABLE_ANIM_SETS,data.anim_sets) &&
-        put(&doc,types,asset.UI_TABLE_TRANSLATIONS,data.translations) && put(&doc,types,asset.UI_TABLE_TEXT,data.text,{.Bulk})
+        put(&doc,types,asset.UI_TABLE_TEXT,data.text,{.Bulk})
     if !testing.expect(t,ok) {return false}
     bytes,error:=asset.document_bytes(&doc,context.temp_allocator)
     return testing.expect_value(t,error,asset.Error.None) && testing.expect_value(t,asset.asset_take(file,bytes,context.temp_allocator),asset.Error.None)
@@ -184,7 +179,7 @@ the_check_of_a_ui_refuses_rows_outside_their_tables_as_the_tree_does :: proc(t:^
     styles:=[1]ui.Node_Style{}
     anims:=[1]ui.Tree_Anim{{kind=.Clip,first=0,count=1}}
     tracks:=[1]ui.Tree_Track{{.Opacity,0,2}}
-    keys:=[2]ui.Keyframe{{time=0},{time=0.5,value={1,0,0,0}}}
+    keys:=[2]anim.Keyframe{{time=0},{time=0.5,value={1,0,0,0}}}
     sets:=[1]ui.Anim_Set{{shown=1}}
     good:=ui.Tree_Data{nodes=nodes[:],styles=styles[:],anims=anims[:],tracks=tracks[:],keys=keys[:],anim_sets=sets[:],text=text}
     check_agrees(t,&types,good,true,"valid records")
@@ -216,7 +211,4 @@ the_check_of_a_ui_refuses_rows_outside_their_tables_as_the_tree_does :: proc(t:^
     far:=sets
     far[0].hidden=2
     check_agrees(t,&types,{nodes=nodes[:],styles=styles[:],anims=anims[:],tracks=tracks[:],keys=keys[:],anim_sets=far[:],text=text},false,"a set that names an animation that does not exist")
-    translations:=[1]ui.Tree_Translation{{id=1,text={4,9}}}
-    ui.tree_text_set(translations[0].language[:],"es")
-    check_agrees(t,&types,{nodes=nodes[:],styles=styles[:],translations=translations[:],text=text},false,"a translation past the end of the texts")
 }

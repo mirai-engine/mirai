@@ -8,15 +8,21 @@ import "mirai:asset"
 // once a cell is a hole.
 
 source_hole :: #force_inline proc "contextless" (s:^Source,x,z:int) -> bool {
-    return len(s.holes.pages)>0 && grid_get(&s.holes,x,z)!=0
+    return !grid_none(&s.holes) && grid_get(&s.holes,x,z)!=0
 }
 
 @(private)
 hole_valid :: proc "contextless" (value:u8) -> bool {return value<=1}
 
+// The cells of the grid of holes of a source; none for a Volume.
+@(private)
+holes_size :: proc "contextless" (s:^Source) -> [3]int {
+    return s.kind==.Heightfield?{int(s.samples.x)-1,1,int(s.samples.z)-1}:{}
+}
+
 // Whether chunk index has a hole: it stays at level 0, the holes exact.
 chunk_holed :: proc "contextless" (s:^Source,index:int) -> bool {
-    if s.kind!=.Heightfield || len(s.holes.pages)==0 {return false}
+    if grid_none(&s.holes) {return false}
     low,high,valid:=chunk_region(s,chunk_coord(s,index))
     if !valid {return false}
     for pz in low.z/PAGE..=(high.z-1)/PAGE {for px in low.x/PAGE..=(high.x-1)/PAGE {
@@ -38,12 +44,12 @@ chunk_holed :: proc "contextless" (s:^Source,index:int) -> bool {
 // within brush.radius of brush.center, over X/Z.
 @(private)
 source_holes_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
-    finite :: proc "contextless" (value:f32) -> bool {return value-value==0}
-    if s.kind!=.Heightfield || !(brush.radius>0) || !finite(brush.radius) || !finite(brush.center.x) || !finite(brush.center.z) || !source_samples_held(s) {change.error=.Invalid;return}
-    size:=[2]int{int(s.samples.x)-1,int(s.samples.z)-1}
-    if len(s.holes.pages)==0 {
+    cells:=holes_size(s)
+    if cells=={} {change.error=.Kind;return}
+    size:=cells.xz
+    if grid_none(&s.holes) {
         if brush.kind==.Fill {return}
-        if !grid_init(&s.holes,{size.x,1,size.y},0,s.allocator) {change.error=.Out_Of_Memory;return}
+        if !grid_init(&s.holes,cells,0,s.allocator) {change.error=.Out_Of_Memory;return}
     }
     origin:=source_origin(s)
     center:=[2]f32{(brush.center.x-origin.x)/s.cell-0.5,(brush.center.z-origin.z)/s.cell-0.5}
@@ -74,14 +80,13 @@ source_holes_edit :: proc(s:^Source,brush:Brush) -> (change:Change) {
 
 @(private)
 source_holes_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator,paged:=false) -> bool {
-    if s.kind!=.Heightfield {return true}
     if _,found:=asset.asset_table(file,"hole_pages");!found {return true}
-    return grid_read_document(&s.holes,file,types,{int(s.samples.x)-1,1,int(s.samples.z)-1},"hole_pages","hole_blocks",hole_valid,allocator,paged)
+    return holes_size(s)!={} && grid_read_document(&s.holes,file,types,holes_size(s),"hole_pages","hole_blocks",hole_valid,allocator,paged)
 }
 
 @(private)
 source_holes_put :: proc(document:^asset.Document,types:^asset.Types,s:^Source,keep:=false) -> asset.Error {
-    if s.kind!=.Heightfield || len(s.holes.pages)==0 {return .None}
-    if s.holes.size!={int(s.samples.x)-1,1,int(s.samples.z)-1} {return .Invalid}
+    if grid_none(&s.holes) {return .None}
+    if s.holes.size!=holes_size(s) {return .Invalid}
     return grid_put_document(document,types,&s.holes,"hole_pages","hole_blocks",hole_valid,s.file,s.allocator,keep)
 }

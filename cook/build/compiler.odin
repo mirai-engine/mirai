@@ -152,6 +152,38 @@ compiler_find :: proc(root:string,allocator:=context.allocator) -> (path:string,
     return "",false
 }
 
+// Whether what links against a library links against an import library made
+// from its declarations before it compiles, and so compiles beside it: on
+// Windows. Elsewhere a shared library links against the others themselves
+// and waits for them.
+@(private)
+IMPORT_LIBRARIES_AHEAD :: ODIN_OS==.Windows
+
+// Makes the import libraries of libraries from the module definitions
+// declare wrote, {definition, import library} each, with the linker the
+// compiler carries, all at once. Returns the one that could not be made; ""
+// when all were.
+@(private)
+import_libraries_make :: proc(compiler:string,made:[][2]string) -> string {
+    when !IMPORT_LIBRARIES_AHEAD {return ""}
+    linker:=strings.concatenate({compiler[:max(strings.last_index_byte(compiler,'/'),0)],"/bin/lld-link.exe"},context.temp_allocator)
+    processes:=make([dynamic]subprocess.Process,0,len(made),context.temp_allocator)
+    failed:=""
+    for pair in made {
+        process,error:=subprocess.start({command={linker,"/lib","/nologo","/machine:x64",fmt.tprintf("/def:%s",pair[0]),fmt.tprintf("/out:%s",pair[1])}})
+        if error!=nil {
+            failed=pair[1]
+            break
+        }
+        append(&processes,process)
+    }
+    for &process,i in processes {
+        state,error:=subprocess.wait(&process)
+        if failed=="" && (error!=nil || state.exit_code!=0) {failed=made[i][1]}
+    }
+    return failed
+}
+
 @(private)
 slashes :: proc(path:string,allocator:runtime.Allocator) -> string {
     result,_:=strings.replace_all(path,"\\","/",allocator)
@@ -217,13 +249,11 @@ dependencies_read :: proc(file:string,allocator:runtime.Allocator) -> (sources:[
     return list[:],true
 }
 
-// Whether an Odin file of a folder under root that the build of output read a
-// source from, or a file it loaded, changed after output was written, or a
-// source it read is gone. Test files count only for a build of tests, which
-// reads those of every package it imports: the helpers a package gives the
-// tests of others are there. known is false when the list the compiler
-// exported for it cannot be read or output does not exist.
-sources_newer :: proc(sources_file,output,root:string,tests:=false) -> (newer,known:bool) {
+// Whether an Odin file that is no test, of a folder under root that the build
+// of output read a source from, or a file it loaded, changed after output was
+// written, or a source it read is gone. known is false when the list the
+// compiler exported for it cannot be read or output does not exist.
+sources_newer :: proc(sources_file,output,root:string) -> (newer,known:bool) {
     // The compiler lists its sources with forward slashes, whatever the root was given with.
     root:=slashes(root,context.temp_allocator)
     built,stat_error:=os.modification_time_by_path(output)
@@ -247,7 +277,7 @@ sources_newer :: proc(sources_file,output,root:string,tests:=false) -> (newer,kn
         entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
         if error!=nil {return true,true}
         for entry in entries {
-            if !strings.has_suffix(entry.name,".odin") || !tests && strings.has_suffix(entry.name,"_test.odin") {continue}
+            if !strings.has_suffix(entry.name,".odin") || strings.has_suffix(entry.name,"_test.odin") {continue}
             if time.diff(built,entry.modification_time)>0 {return true,true}
         }
     }
@@ -264,8 +294,9 @@ sources_newer :: proc(sources_file,output,root:string,tests:=false) -> (newer,kn
 // read. latest is the newest modification among those files. The sources
 // under masked count with the names of the plugin libraries in their foreign
 // imports masked (link_names_mask): what tells a compile from a link (relink.odin).
+// tests: the build is of tests, which also reads the _test.odin files.
 @(private)
-fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:="") -> (hash:u64,latest:time.Time) {
+fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:="",tests:=false) -> (hash:u64,latest:time.Time) {
     root:=slashes(root,context.temp_allocator)
     masked:=slashes(masked,context.temp_allocator)
     file_mix :: proc(hash:u64,name,path:string,latest:^time.Time,masked:string) -> u64 {
@@ -311,7 +342,7 @@ fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:
         if error!=nil {continue}
         slice.sort_by(entries,proc(a,b:os.File_Info) -> bool {return a.name<b.name})
         for entry in entries {
-            if strings.has_suffix(entry.name,".odin") && !strings.has_suffix(entry.name,"_test.odin") {hash=file_mix(hash,entry.name,slashes(entry.fullpath,context.temp_allocator),&latest,masked)}
+            if strings.has_suffix(entry.name,".odin") && (tests || !strings.has_suffix(entry.name,"_test.odin")) {hash=file_mix(hash,entry.name,slashes(entry.fullpath,context.temp_allocator),&latest,masked)}
         }
     }
     return
@@ -344,4 +375,104 @@ root_relative :: proc(text,root:string) -> string {
     }
     if at<0 {return text}
     return strings.concatenate({slashed[:at],"<root>",slashed[at+len(root):]},context.temp_allocator)
+}
+
+// A compiler that runs, with the files its error and output streams go to:
+// of a library, a program, the target of a job or a test executable.
+@(private)
+Compile :: struct {
+    process:subprocess.Process,
+    streams:[2]string, // its error and output streams
+    staged:string,     // what it writes, which it must leave; "": it writes nothing (a check)
+    library:int,       // of a job: a plugin library, -1 its target; of the engine: a library, -1 a program
+    folder:string,     // of a library: where its objects stay (relink.odin)
+    relink:bool,       // it links again the objects of folder
+}
+
+// Starts a compiler with its streams going to their files, in the root of the
+// engine and within what it may use (compiler_limits). environment nil: that
+// of this process. False when a stream cannot be written or it does not start.
+@(private)
+compile_start :: proc(c:^Compile,root:string,command:[]string,environment:[]string) -> bool {
+    streams:[2]^os.File
+    for file,i in c.streams {
+        stream,error:=os.open(file,{.Write,.Create,.Trunc})
+        if error!=nil {
+            if i>0 {os.close(streams[0])}
+            return false
+        }
+        streams[i]=stream
+    }
+    process,error:=subprocess.start({working_dir=root,command=command,env=environment,stderr=streams[0],stdout=streams[1]},compiler_limits(root))
+    os.close(streams[0]);os.close(streams[1])
+    if error!=nil {return false}
+    c.process=process
+    return true
+}
+
+// What a compiler that ended left in its streams, which it removes: its
+// diagnostics, what it said besides them and how it failed: .Compile for an
+// error among them, an exit code that is not 0 or no file where it writes,
+// .Out_Of_Memory when it ran out. links: the text goes without the calls to
+// the linker it printed; output: all it wrote to its error stream.
+@(private)
+compile_end :: proc(c:^Compile,exit_code:int,allocator:=context.allocator,links:=false) -> (diagnostics:[]Diagnostic,text:string,failure:Failure,output:string) {
+    said:[2]string
+    for file,i in c.streams {
+        data,_:=os.read_entire_file(file,context.temp_allocator)
+        said[i]=string(data)
+        _=os.remove(file)
+    }
+    rest:string
+    diagnostics,rest=diagnostics_parse(said[0],allocator)
+    text=strings.trim_space(strings.concatenate({links?link_calls_strip(rest,context.temp_allocator):rest,"\n",strings.trim_space(said[1])},allocator))
+    errors:=exit_code!=0
+    for diagnostic in diagnostics {errors||=diagnostic.severity==.Error}
+    switch {
+    case errors:
+        if text=="" && len(diagnostics)==0 && exit_code!=0 {text=compiler_silent_failure(exit_code,allocator)}
+        failure=.Out_Of_Memory if compiler_out_of_memory(text) else .Compile
+    case c.staged!="" && !os.is_file(c.staged):
+        text=fmt.aprintf("the compiler succeeded and %s is missing%s",c.staged,ODIN_OS==.Windows?"; an antivirus may have quarantined it: exclude its folder from real-time scanning":"",allocator=allocator)
+        failure=.Compile
+    }
+    return diagnostics,text,failure,said[0]
+}
+
+// Puts what a compiler wrote at staged in place of published. Windows does
+// not replace a file a program has loaded, and lets it be renamed: the
+// previous one goes to retired first. False when it cannot be replaced.
+@(private)
+publish :: proc(staged,published,retired:string) -> bool {
+    if os.rename(staged,published)==nil {return true}
+    return os.rename(published,retired)==nil && os.rename(staged,published)==nil
+}
+
+// What a published build is stamped with: the fingerprint of the sources its
+// compiler read (fingerprint), with root, compiler, flags and tests.
+@(private)
+Stamp_Desc :: struct {
+    file:string,           // the stamp: the fingerprint and what was published
+    sources_file:string,   // what the last build that stamped read
+    sources_staged:string, // what this compiler read, which takes the place of sources_file; "": sources_file stands (a link again)
+    root,compiler:string,
+    flags:[]string,
+    tests:bool,
+    started:time.Time,     // when the compiler started
+}
+
+// Publishes and stamps with what the compiler read. A source saved while it
+// ran is not what was built: without the stamp the next build compiles again.
+@(private)
+publish_and_stamp :: proc(staged,published,retired:string,sources:[]string,stamp:Stamp_Desc) -> (published_ok,stamped:bool) {
+    if !publish(staged,published,retired) {return false,false}
+    hash,latest:=fingerprint(stamp.root,stamp.compiler,stamp.flags,sources,tests=stamp.tests)
+    if stamp.sources_staged!="" {_=os.remove(stamp.sources_file)}
+    stamped=len(sources)>0 && time.diff(latest,stamp.started)>0 && (stamp.sources_staged=="" || os.rename(stamp.sources_staged,stamp.sources_file)==nil)
+    if stamped {stamped=os.write_entire_file(stamp.file,fmt.tprintf("%x %s",hash,published))==nil}
+    if !stamped {
+        _=os.remove(stamp.file)
+        if stamp.sources_staged!="" {_=os.remove(stamp.sources_staged)}
+    }
+    return true,stamped
 }

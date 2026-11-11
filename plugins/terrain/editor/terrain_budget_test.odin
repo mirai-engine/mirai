@@ -7,9 +7,10 @@ import phys "plugins:physics/runtime"
 import terrain "plugins:terrain/runtime"
 import "mirai:std/base"
 
-@(private="file")
+@(private)
+@(test_world)
 Budget_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     terrains:core.Table(terrain.Terrain),
     data:terrain.Terrain_Data,
     settings:terrain.Terrain_Settings,
@@ -19,8 +20,8 @@ Budget_World :: struct {
 @(test)
 terrain_editor_budget_counts_sources_chunks_and_replacement_without_double_charging :: proc(t:^testing.T) {
     w:Budget_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     // A Heightfield costs the samples of its pages that hold their own values.
     w.settings={sources=2,chunks=8,samples=13000}
     ids:=[2]base.Asset_Id{{11,12},{13,14}}
@@ -38,9 +39,9 @@ terrain_editor_budget_counts_sources_chunks_and_replacement_without_double_charg
     page,cost:=terrain.source_cost(&w.data.entries[0].source),terrain.source_cost(&source)
     testing.expect(t,page==25 && cost==81)
     session:editor.Session
-    world:=core.test_world_ref(&w)
-    testing.expect_value(t,terrain_vertex_budget(world,{}),13000-2*page)
-    testing.expect_value(t,terrain_vertex_budget(world,ids[0]),13000-page)
+    world:=test_world_ref(&w)
+    testing.expect_value(t,terrain_samples_left(world,{}),13000-2*page)
+    testing.expect_value(t,terrain_samples_left(world,ids[0]),13000-page)
     testing.expect(t,!terrain_budget(&session,world,&source))
     testing.expect(t,terrain_budget(&session,world,&source,ids[0]))
     w.settings.sources=3
@@ -49,26 +50,23 @@ terrain_editor_budget_counts_sources_chunks_and_replacement_without_double_charg
     testing.expect(t,!terrain_budget(&session,world,&source))
     testing.expect(t,terrain_budget(&session,world,&source,ids[0]))
     w.data.ready=true;w.data.settings={sources=8,chunks=64,samples=20000}
-    testing.expect_value(t,terrain_vertex_budget(world,{}),20000-2*page)
+    testing.expect_value(t,terrain_samples_left(world,{}),20000-2*page)
     testing.expect(t,terrain_budget(&session,world,&source))
 }
 
 @(test)
-terrain_editor_budget_leaves_chunks_and_colliders_of_a_heightfield_to_the_runtime :: proc(t:^testing.T) {
+terrain_editor_budget_leaves_chunks_and_colliders_to_the_runtime :: proc(t:^testing.T) {
     w:Budget_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     testing.expect(t,phys.test_state_make(&w.physics,{bodies=4,shapes=4,contacts=4,joints=1,characters=1,hulls=1,meshes=1,heightfields=16}))
     w.settings={chunks=64}
     source:terrain.Source;defer terrain.source_destroy(&source)
     testing.expect(t,terrain.source_make(&source,.Heightfield,{1025,1,1025},1,64))
-    world:=core.test_world_ref(&w)
+    world:=test_world_ref(&w)
     session:editor.Session
     testing.expect(t,terrain_budget(&session,world,&source),"256 chunks show as nodes past 64 pieces, and the nearest take the 16 heightfields")
-    // A Volume has no nodes to show in place of its chunks.
     volume:terrain.Source;defer terrain.source_destroy(&volume)
     testing.expect(t,terrain.source_make(&volume,.Volume,{65,65,65},1,8))
-    testing.expect(t,!terrain_budget(&session,world,&volume),"512 chunks of a Volume pass 64")
-    w.settings.resident_distance=100
-    testing.expect(t,terrain_budget(&session,world,&volume),"a streamed Volume keeps its nearest")
+    testing.expect(t,terrain_budget(&session,world,&volume),"512 chunks of a Volume show as nodes past 64 pieces too")
 }

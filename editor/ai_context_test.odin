@@ -1,6 +1,6 @@
 package editor
 
-import "core:encoding/json"
+import "mirai:std/serial"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -12,8 +12,9 @@ import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
 
+@(test_world,editor="Ai_Context_Test_Editor")
 Ai_Context_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     time:core.Time,
 }
@@ -22,7 +23,7 @@ Ai_Context_Test_Editor :: struct {api:Api}
 
 // The World_Info of Ai_Context_Test_World with what a session over it holds of the editor.
 ai_context_test_info :: proc(t:^testing.T) -> (info:core.World_Info,ok:bool) {
-    return core.test_info(t,Ai_Context_Test_World,core.Test_None,Ai_Context_Test_Editor,test_types)
+    return test_info(t,Ai_Context_Test_World)
 }
 
 @(test)
@@ -39,7 +40,7 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     testing.expect(t,os.write_entire_file(tool,"")==nil)
     info,described:=ai_context_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world,live:Ai_Context_Test_World
     defer core.world_destroy(&info,.World,&world);defer core.world_destroy(&info,.World,&live)
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator) && core.world_init(&info,.World,&live,context.allocator)) {return}
@@ -131,7 +132,7 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     play_context,play_read_error:=os.read_entire_file(ai_task_path(s,playing,AI_FILE_CONTEXT),context.temp_allocator)
     testing.expect(t,play_read_error==nil)
     value:Ai_Context
-    testing.expect(t,json.unmarshal(play_context,&value,allocator=context.temp_allocator)==nil)
+    testing.expect_value(t,serial.text_decode(string(play_context),&value,context.temp_allocator),"")
     testing.expect_value(t,value.mode,"play")
     testing.expect_value(t,len(value.entities),1)
     testing.expect_value(t,value.entities[0].name,"Live player")
@@ -150,8 +151,8 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     paused,paused_error:=ai_task_create(s,ai,{0,0,800,600},"Why is it here?","codex",first.id)
     if !testing.expect(t,paused!=nil && paused_error=="") {return}
     snapshot,snapshot_error:=os.read_entire_file(ai_task_path(s,paused,AI_FILE_STATE),context.temp_allocator)
-    testing.expect(t,snapshot_error==nil && strings.contains(string(snapshot),`"tick":120`))
-    testing.expect(t,strings.contains(string(snapshot),"Live player") && strings.contains(string(snapshot),`"position":[42,0,0]`))
+    testing.expect(t,snapshot_error==nil && strings.contains(string(snapshot),`"tick": 120`))
+    testing.expect(t,strings.contains(string(snapshot),"Live player") && strings.contains(string(snapshot),`"position": [42, 0, 0]`))
     paused_prompt,_:=os.read_entire_file(ai_task_path(s,paused,AI_FILE_PROMPT),context.temp_allocator)
     testing.expect(t,strings.contains(string(paused_prompt),"paused at tick 120") && strings.contains(string(paused_prompt),AI_FILE_STATE))
     paused.state=.Done

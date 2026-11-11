@@ -4,6 +4,7 @@ import "core:mem"
 import "mirai:core"
 import "mirai:editor/history"
 import ecamera "mirai:engine/camera"
+import input "mirai:engine/input"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import "mirai:ui"
@@ -17,7 +18,7 @@ import "mirai:ui"
 Camera_Preview_Run :: struct {
     camera:core.Entity,         // the camera shown; none: not previewing
     blend:ecamera.Camera_Blend, // how the view came to it
-    request:core.Entity,        // the camera to preview once the requests run
+    asked:core.Entity,          // the camera the focused seat was last asked to see through
 }
 
 CAMERA_PREVIEW_CAPACITY :: 12 // cameras the bar offers
@@ -38,16 +39,22 @@ camera_preview_start :: proc(s:^Session,camera:core.Entity) -> bool {
     return true
 }
 
-// Each frame: the view of the copy is drawn from the camera shown.
+// Each frame: the focused seat of the copy sees through the camera shown, an
+// override of its own.
 camera_preview_frame :: proc(s:^Session) {
     if s.camera_run.camera==core.NONE {return}
     if s.mode==.Edit {
         s.camera_run={}
         return
     }
-    if preview:=core.world_storage_of(shown_world(s),ecamera.Camera_Preview);preview!=nil {
-        preview.camera,preview.blend=s.camera_run.camera,s.camera_run.blend
-    }
+    if s.camera_run.asked==s.camera_run.camera {return}
+    w:=shown_world(s)
+    seats,state,requests:=core.world_table_of(w,input.Seat),core.world_storage_of(w,input.Seats),core.world_storage_of(w,ecamera.Camera_Requests)
+    if seats==nil || state==nil || requests==nil {return}
+    seat:=input.focused(state,core.read(seats))
+    if seat==core.NONE {return}
+    ecamera.camera_override(requests,seat,seat,s.camera_run.camera,blend=s.camera_run.blend)
+    s.camera_run.asked=s.camera_run.camera
 }
 
 // Shows a camera: with the blend of its activation coming into it, or with
@@ -84,9 +91,8 @@ camera_preview_button :: proc(c:^Inspect,camera:core.Entity) {
     s:=c.s
     if s.mode!=.Edit {return}
     ctx:=s.gui.ctx
-    if ui.button(ctx,ui.id(ctx,"camera_preview"),{label="Preview",icon=.Play,style=.Field,width=-1,height=ctx.theme.row,size=ctx.theme.font_small,center=true}).clicked {
-        s.camera_run.request=camera
-        s.requests+={.Camera_Preview}
+    if ui.button(ctx,ui.id(ctx,"camera_preview"),{label="Preview",icon=.Play,variant="field",width=-1,height=ui.metric(ctx,"row"),size=ui.metric(ctx,"font_small"),center=true}).clicked {
+        camera_preview_start(s,camera)
     }
 }
 
@@ -95,12 +101,11 @@ camera_preview_bar :: proc(s:^Session) {
     if !camera_previewing(s) {return}
     g:=s.gui
     ctx:=g.ctx
-    th:=&ctx.theme
     w:=shown_world(s)
     cameras,count:=camera_preview_cameras(s,w)
-    if ui.panel(ctx,shell_id(g,"camera_preview"),{row=true,width=ui.FIT,height=ui.FIT,padding=ui.padding_all(PANEL_PADDING),gap=4,align_y=.Center,anchor=.Bottom_Center,pivot=.Bottom_Center,offset={0,-th.margin}}) {
+    if ui.panel(ctx,shell_id(g,"camera_preview"),{row=true,width=ui.FIT,height=ui.FIT,padding=ui.padding_all(PANEL_PADDING),gap=4,align_y=.Center,anchor=.Bottom_Center,pivot=.Bottom_Center,offset={0,-ui.metric(ctx,"margin")}}) {
         for e,i in cameras[:count] {
-            if ui.button(ctx,shell_id(g,"camera_preview_camera",i+1),{label=entity_name(w,e),style=.Tab,active=e==s.camera_run.camera,height=th.control,size=th.font_small,padding=10}).clicked {camera_preview_show(s,w,e)}
+            if ui.button(ctx,shell_id(g,"camera_preview_camera",i+1),{label=entity_name(w,e),variant="tab",active=e==s.camera_run.camera,height=ui.metric(ctx,"control"),size=ui.metric(ctx,"font_small"),padding=10}).clicked {camera_preview_show(s,w,e)}
         }
     }
 }
@@ -126,11 +131,14 @@ camera_preview_end :: proc(s:^Session,keep:bool) {
     kept:=make([dynamic]Kept,context.temp_allocator)
     cameras,count:=camera_preview_cameras(s,w)
     for e in cameras[:count] {
-        k:=Kept{id=api_entity_id(w,e)}
-        k.lens,_=entity_get(w,e,erender.Camera)
+        // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+        lens,_:=entity_get(w,e,erender.Camera)
         follow,follows:=entity_get(w,e,ecamera.Camera_Follow)
-        k.follow,k.follows=ecamera.camera_follow_config(follow),follows
-        k.activation,k.activated=entity_get(w,e,ecamera.Camera_Activation)
+        activation,activated:=entity_get(w,e,ecamera.Camera_Activation)
+        k:=Kept{id=api_entity_id(w,e),follows=follows,activated=activated}
+        k.lens=lens
+        k.follow=ecamera.camera_follow_config(follow)
+        k.activation=activation
         append(&kept,k)
     }
     play_stop(s,true)

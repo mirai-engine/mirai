@@ -56,7 +56,7 @@ Api_Play_Record_Result :: struct {
 @(private)
 api_play_record_register :: proc(s:^Session,st:^Api_State) {
     record_default:=Api_Play_Record_Params{format=.Png16,fps=30,duration={0='2',1='s'},width=1280,height=720,audio=true,sheet=16}
-    api_register(s,st,{name="play.record",summary="Records the game of the caller as a sequence of images and its sound, frame after frame at a fixed rate whatever the clock: it pauses the game, advances it 1/fps each frame and draws it alone through its camera. Ends paused.",params=Api_Play_Record_Params,result=Api_Play_Record_Result,defaults=&record_default,run=api_play_record})
+    api_register(s,st,{name="play.record",summary="Records the game of the caller as a sequence of images and its sound, frame after frame at a fixed rate whatever the clock: it pauses the game, advances it 1/fps each frame and draws it alone through its camera. Ends paused.",params=type_info_of(Api_Play_Record_Params),result=type_info_of(Api_Play_Record_Result),defaults=&record_default,flags={.Draws},run=api_play_record})
 }
 
 // A frame on its way to a file, and to its tile of the sheet.
@@ -131,7 +131,7 @@ Record_Manifest_Input :: struct {
 api_play_record :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Play_Record_Params)
     r,own:=api_play_run(s,call,p.player)
-    if r==nil {api.call_fail(call,api.SERVER_ERROR,"No game is playing; play.start first");return}
+    if r==nil {api_no_game(call);return}
     if !own {api_play_refused(call);return}
     if s.app==nil || s.app.renderer==nil {api.call_fail(call,api.SERVER_ERROR,"play.record requires a GPU; start without --no-gpu");return}
     recorded,timed:=api_call_duration(call,p.duration[:],"for",s.app.tick_dt,1,API_RECORD_TICKS)
@@ -267,7 +267,7 @@ api_play_record :: proc(s:^Session,call:^api.Call) {
         append(&shown,shot)
         append(&spans,[2]int{holds_from,len(held)})
         w.sheet,w.tile,w.tick=&sheet,shot.tile,shot.tick
-        jobs.run(&s.app.jobs,jobs.OWNER,record_write,w,&w.counter)
+        jobs.run(&s.app.jobs,jobs.OWNER,.Background,record_write,w,&w.counter)
         done+=1
     }
     for &w in writes {
@@ -326,11 +326,10 @@ record_holds :: proc(s:^Session,w:core.World_Ref,out:^[dynamic]Record_Manifest_I
     tick:u64
     if t:=core.world_storage_of(w,core.Time);t!=nil {tick=t.tick}
     requests:=core.world_storage_of(w,input.Hold_Requests)
-    read:=core.read(seats)
-    for row in 0..<core.count(read) {
-        seat:=core.at(read,row)
+    for row in 0..<core.count(seats) {
+        seat:=core.at(seats,row)
         if !input.seat_local(seat) {continue}
-        holds,count:=input.holds_at(seat,core.entity_at(read,row),requests,tick)
+        holds,count:=input.holds_at(seat,core.entity_at(seats,row),requests,tick)
         for h in holds[:count] {
             name,_:=core.name_of(s.info,input.Action,i64(h.action))
             append(out,Record_Manifest_Input{slot=int(seat.slot),action=name,value=h.value,until=h.until})

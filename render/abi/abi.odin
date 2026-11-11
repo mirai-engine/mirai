@@ -30,7 +30,7 @@ SLOT_TLAS_NODES       :: 13
 SLOT_TLAS_REFS        :: 14
 SLOT_MATERIAL_SAMPLER :: 15
 SLOT_PROBES           :: 16
-SLOT_IRRADIANCE       :: 17
+TEXTURE_FEEDBACK_SLOT :: 17
 SLOT_POINTS           :: 18
 SLOT_PASS0            :: 19
 SLOT_PASS1            :: 20
@@ -47,7 +47,21 @@ SLOT_SURFACE          :: 30
 SLOT_VIEWS            :: 31
 SLOT_LAYERS           :: 32
 SLOT_DISTANCE         :: 33
+SLOT_IRRADIANCE       :: 34
 SLOT_DRAW             :: SLOT_PASS9
+
+// The finest level the passes that shade surfaces sample of each texture
+// (render/texture_residency.odin): words before the first texture (the first
+// says how many textures the passes may write), and the code of a level:
+// steps of 1/TEXTURE_FEEDBACK_STEPS from TEXTURE_FEEDBACK_LOW, below
+// TEXTURE_FEEDBACK_CODES. Its buffer has a slot of its own, not a SLOT_PASS
+// one: the material points bind it between the dispatches of any pass.
+TEXTURE_FEEDBACK_FIRST :: 1
+TEXTURE_FEEDBACK_LOW   :: -32
+TEXTURE_FEEDBACK_STEPS :: 16
+TEXTURE_FEEDBACK_CODES :: 64 * TEXTURE_FEEDBACK_STEPS
+// Of the material sampler: the samples anisotropic filtering spreads along the longer axis of a footprint.
+MATERIAL_ANISOTROPY    :: 8
 
 // The texture table: its first entries hold the tables of the renderer.
 TEXTURE_RESERVED          :: 4
@@ -70,7 +84,7 @@ ORIGIN_STEP          :: f32(1024)
 
 // Gpu_Frame.flags.
 FRAME_FLAG_GI           :: 1
-FRAME_FLAG_GI_REFERENCE :: 2   // Settings.reference_gi: the composite takes the reference of the indirect light
+FRAME_FLAG_GI_GIVEN     :: 2   // a custom pass of the pipeline wrote Gi: the composite takes it as the diffuse indirect light
 FRAME_FLAG_HW_RT        :: 4
 FRAME_FLAG_STUDIO       :: 8   // a preview lit by the analytic studio
 FRAME_FLAG_GRID         :: 16
@@ -156,8 +170,7 @@ LIGHT_WEIGHT_ROWS          :: 2
 // word for each light, four to a row, 0 for a light without maps, else its
 // first map + 1 and, from bit SHADOW_LIGHT_FACES, which faces of its cube have
 // one; then SHADOW_MAP_ROWS for each map. The constants of a view hold those of
-// the cascades of the sun, SUN_MAP_ROWS. The maps draw SHADOW_ENTRIES clusters
-// at most, SHADOW_TESTED_ENTRIES of them of masked or blended materials.
+// the cascades of the sun, SUN_MAP_ROWS.
 SHADOW_MAP_ROWS            :: 6
 SHADOW_LIGHT_FACES         :: 16
 // The face of a spot whose one map lies along its cone, after the six of the cube.
@@ -165,8 +178,6 @@ SHADOW_SPOT_FACE           :: 6
 SHADOW_MAP_ORTHOGRAPHIC    :: 1
 SHADOW_SUN_MAPS            :: 6
 SUN_MAP_ROWS               :: SHADOW_SUN_MAPS * SHADOW_MAP_ROWS
-SHADOW_ENTRIES             :: u32(1 << 18)
-SHADOW_TESTED_ENTRIES      :: u32(1 << 16)
 REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 
 // The probe volume, and the rays of its contact occlusion at each pixel.
@@ -190,6 +201,9 @@ EXPOSURE_BINS          :: 128
 DEPTH_PROBE_CAPACITY :: 8
 DEPTH_PROBE_CELLS    :: 32
 DEPTH_PROBE_CELL     :: 2
+
+// The points of the outlines of one table of volumes a shader weighs (engine/volume).
+VOLUME_OUTLINE_POINTS :: 64
 
 // The winds a shader combines (engine/volume).
 WIND_VOLUMES :: 8
@@ -228,9 +242,146 @@ PROGRAMS_COUNT    :: 0 // a word a phase
 PROGRAMS_DISPATCH :: 2 // three words a phase
 PROGRAMS_HEADER   :: 8
 
+// What an instance gives over the rows of its materials, in the index pool:
+// how many rows it shows otherwise than the table holds them, how much it
+// fades every row out, then INSTANCE_ROW_WORDS each: the row and its words
+// as the instance shows them, whole: the values shading holds
+// (MATERIAL_WORDS), the blocks of its layers (MATERIAL_BLOCK_WORDS) and the
+// parameters of its program. A shader reads of them what it reads of a row.
+INSTANCE_VALUES_MAX    :: 16
+INSTANCE_VALUES_HEADER :: 2
+INSTANCE_ROW_WORDS     :: 1 + MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + PROGRAM_PARAMETER_BYTES / 4
+// The words of a row of the material table (render.Gpu_Material_Row): the
+// values shading holds, then the blocks of its layers, and from
+// MATERIAL_PARAMETERS_WORD the parameters of its program.
+MATERIAL_WORDS           :: 28 + len(asset.Material_Map_Kind)
+MATERIAL_BLOCK_WORDS     :: 19
+MATERIAL_PARAMETERS_WORD :: MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + 4 + 8 * len(asset.Material_Map_Kind)
+
 // The limits of a program of the catalog.
 PROGRAM_PARAMETER_BYTES  :: 256
 PARTICLE_ATTRIBUTE_BYTES :: 1024
 PROGRAM_RESOURCES        :: 16
 PROGRAM_STAGES           :: 32
 PROGRAM_DATA_WORDS       :: 32
+
+// What a generation of shaders publishes in its folder (SHADER_MANIFEST): its
+// stages with their bindings and the files of their code, which the renderer
+// loads and the next generation reuses.
+SHADER_MANIFEST :: "manifest.json"
+
+Shader_Manifest :: struct {
+    version:int,
+    compiler:string,
+    engine:string, // what the engine stages bind and lay out: the renderer loads only those of its own
+    catalog:string,
+    shaders,program_stages,extensions,tests:[]Shader_Entry,
+}
+
+Shader_Stage :: enum u8 {Vertex,Fragment,Compute}
+Shader_Binding :: struct {slot:int,kind:string}
+
+// A stage of a generation.
+Shader_Entry :: struct {
+    id,name:string,
+    stage:Shader_Stage,
+    spv,msl:string,     // file names in the folder of the generation
+    entry:string,       // the entry point SPIRV-Cross gave the Metal source
+    bindings:[]Shader_Binding,
+    constants:[]string, // the names of its constants, by id
+    group:[3]int,
+    fingerprint,spv_hash,msl_hash:string,
+    staged:bool `mirai:"transient"`, // of the generator: its files are in the staging folder, to be published
+}
+
+// What a generation of shaders says of its material programs and of what it
+// adds to the constants of every view, in SHADER_CATALOG of its folder. A
+// material, a post-process effect or an emitter of particles names a program
+// by its id and gives it up to PROGRAM_PARAMETER_BYTES of parameters, laid
+// out as the program reflects them.
+SHADER_CATALOG :: "catalog.json"
+SHADER_CATALOG_VERSION :: 2
+
+Shader_Catalog :: struct {
+    version:int,
+    fingerprint:string, // of the compiler, the shared includes and every program source
+    compiler:string,
+    programs:[]Program,
+    frame:Frame_Catalog,
+}
+
+// The constants of a view: Gpu_Frame, then the nested views when the
+// generation has them, then the struct each extension declared. size 0
+// without nested views: Gpu_Frame alone.
+Frame_Catalog :: struct {
+    size:int,
+    nested:bool,
+    instance_ids:bool, // the G-buffer keeps the instance that drew each pixel
+    extensions:[]Frame_Extension,
+}
+Frame_Extension :: struct {name:string,offset,size:int}
+
+Program_Domain :: enum u8 {Surface,Postprocess,Vfx,Ui}
+Program_Kind :: enum u8 {Float,Int,Uint,Bool,Texture}
+// The surface of a mesh or of what an entity draws, the births a game gives,
+// a grid of the world, the particles of another emitter, or a data channel.
+Program_Resource_Kind :: enum u8 {Surface,Channel,Grid,Emitter,Data}
+PROGRAM_STAGE_PARTICLES :: 255 // Program_Stage.over of a stage over the particles
+
+Program :: struct {
+    id:u32, // 1-based, in the order of the catalog
+    name:string,
+    domain:Program_Domain,
+    source:string, // builtin/<file>, project/<file> or plugins/<name>/<file>, below include/programs
+    size:int,
+    parameters:[]Program_Parameter,
+    layers:asset.Material_Layers, // of a Surface program: those of the OpenPBR model its source writes
+    coverage:bool,                // of a Surface program: its alpha is not that of the default material
+    standard:bool,                // of a Surface program: it builds on the standard model of its material (mirai_surface_standard), whose maps it reads
+    attributes:int,               // of a Vfx program: bytes of what it keeps of each particle
+    resources:[]Program_Resource, // of a Vfx program, in the order it declares them
+    stages:[]Program_Stage,       // of a Vfx program, in the order they run
+    moves:bool,                   // of a Vfx program: it moves and ages its particles itself
+    births:bool,                  // of a Vfx program: it gives how many particles its emitter starts
+    prepare:bool,                 // of a Vfx program: it prepares each frame what its emitter keeps
+    vertex:Program_Vertex,        // of a Surface program: its function vertex, which moves the vertices of what shows it
+}
+
+Program_Parameter :: struct {
+    name:string,
+    kind:Program_Kind,
+    components:u8,   // 1 to 4; a texture is one word
+    offset:u16,      // bytes into the parameters of the program
+    defaults:[4]f64, // a texture has none
+    min,max:f64,
+    srgb,normal,color:bool,
+    group:string, // the section of Details that shows it; empty: the first, without a title
+}
+
+// A resource of a Vfx program, which each emitter binds by its name: its
+// index is its place among those of the program. A grid that is cleared
+// starts at zero each stage that writes it.
+Program_Resource :: struct {
+    name:string,
+    kind:Program_Resource_Kind,
+    cleared:bool,
+    words:u32, // of an entry of a data channel
+}
+
+// A stage of a Vfx program: a pass of its own each step before update, over
+// the particles of its emitter or over the cells of one of its grids.
+Program_Stage :: struct {
+    name:string,
+    over:u8,         // the resource of the grid; PROGRAM_STAGE_PARTICLES: the particles
+    iterations:u8,   // each after the one before
+    writes:u32,      // the grid resources it writes besides the one it goes over, one bit each
+}
+
+// The function vertex of a Surface program (`//! vertex`). reach: how far it
+// moves a vertex from its rest, in the space of the mesh; with reach_offset,
+// the float parameter at those bytes gives it instead.
+Program_Vertex :: struct {
+    declared,animated:bool,
+    reach:f32,
+    reach_offset:i32, // -1: reach
+}

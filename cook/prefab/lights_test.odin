@@ -26,7 +26,7 @@ imported_lights_are_the_lights_of_their_entities :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"lights")
     if folder=="" {return}
     source:=fmt.tprintf("%s/lights.gltf",folder)
-    path:=fmt.tprintf("%s/lights.prefab",folder)
+    path:=fmt.tprintf("%s/lights.scene",folder)
     positions:=[9]f32{0,0,0,1,0,0,0,1,0}
     encoded,_:=base64.encode(mem.slice_to_bytes(positions[:]),allocator=context.temp_allocator)
     text:=strings.concatenate({`{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,1,2,3]}],"meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}],"bufferViews":[{"buffer":0,"byteLength":36}],"buffers":[{"byteLength":36,"uri":"data:application/octet-stream;base64,`,encoded,`"}],
@@ -43,7 +43,7 @@ imported_lights_are_the_lights_of_their_entities :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     assets:=importer.Import_Report{allocator=context.allocator}
     defer importer.report_destroy(&assets)
-    _,write_error:=model_prefab(&model,&assets,&types,{1,2},"lights",path)
+    _,write_error:=model_prefab(&model,&assets,&types,import_world(t),{1,2},"lights",path)
     if !testing.expect_value(t,write_error,Error.None) {return}
     scene:asset.Scene
     if !testing.expect_value(t,asset.scene_load(&scene,&types,path),asset.Error.None) {return}
@@ -68,7 +68,7 @@ imported_rectangles_are_rect_lights_sized_by_their_entity :: proc(t:^testing.T) 
     folder:=base.test_folder(t,"rect-lights")
     if folder=="" {return}
     source:=fmt.tprintf("%s/rect-lights.usda",folder)
-    path:=fmt.tprintf("%s/rect-lights.prefab",folder)
+    path:=fmt.tprintf("%s/rect-lights.scene",folder)
     text:=`#usda 1.0
 (
     metersPerUnit = 1
@@ -103,7 +103,7 @@ def Mesh "Floor"
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     assets:=importer.Import_Report{allocator=context.allocator}
     defer importer.report_destroy(&assets)
-    _,write_error:=model_prefab(&model,&assets,&types,{1,2},"rect-lights",path)
+    _,write_error:=model_prefab(&model,&assets,&types,import_world(t),{1,2},"rect-lights",path)
     if !testing.expect_value(t,write_error,Error.None) {return}
     scene:asset.Scene
     if !testing.expect_value(t,asset.scene_load(&scene,&types,path),asset.Error.None) {return}

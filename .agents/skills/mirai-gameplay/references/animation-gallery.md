@@ -1,9 +1,12 @@
 # Animation gallery
 
 `demo/assets/animation_gallery/animation.scene` is the only animation scene of the demo: a hall that
-the player walks with Mirai (`source/models/mirai/mirai.glb`), with one numbered station per feature
-on each side of the walkway. `tools/demo_content --animation-only` writes it with its clips,
-programs and profiles ([generated content](demo.md#generated-content)).
+the player walks with Mirai (`assets/characters/mirai/mirai.glb`), with one numbered station per
+feature on each side of the walkway. The scene is authored; `tools/demo_content --animation-only`
+writes its clips, `.character` sets, rigs and meshes
+([generated content](demo.md#generated-content)).
+Each station's actor plays its own `.character` (`Animation.asset`) over the gallery's clips: the
+sets of the stations show one feature each.
 
 ## Invariants
 
@@ -25,17 +28,21 @@ programs and profiles ([generated content](demo.md#generated-content)).
   turns each hand around its bind instead of around its mean. Regenerating them never edits the
   glTF.
 - The physical Mirais (the player, the slope and the jump stations) walk by motion matching over
-  `mirai_matching.match` and the game has no locomotion code: `animation_physics` gives them the
+  `mirai_matching.character` and the game has no locomotion code: `animation_physics` gives them the
   mode, velocity and request of their `Character`. The matching station has no `Character`: the
-  game asks it for the velocity with `match_goal` over `mirai_gallery.match`.
-- The tall Mirai is stretched upward with its skeleton, so the same paths retarget with scaled
-  translations; its clips are baked when generating the content ([plugin
-  retarget](../../mirai-animation/references/animation.md#offline-and-live-retarget)).
+  game asks it for the velocity with `match_goal` over `mirai_gallery.character`.
+- The tall Mirai is stretched upward with its skeleton, so each bone retargets by the bone of its
+  name, keeping the lengths of the tall skeleton; its clips are baked when generating the content
+  ([plugin retarget](../../mirai-animation/references/animation.md#offline-and-live-retarget)).
 - The warp station walks between goals on either side of its origin and is never put back: it
   turns in place toward the next goal with its motor off, then strides by root motion warped to
-  end there. Each goal is a share of what its stride covers unwarped (`stride`, measured when
-  generating), 0.8 to 1.2 on its own and 0.7 to 1.3 from its panel: a warp corrects what a clip
-  nearly covers, and a goal far from it makes the feet slide.
+  end there. Each goal is a share of what its stride covers unwarped (`stride` of its
+  `Animation_Gallery`, which the scene keeps equal to what the stride clip covers), 0.8 to 1.2 on
+  its own and 0.7 to 1.3 from its panel: a warp corrects what a clip nearly covers, and a goal far
+  from it makes the feet slide.
+- The constraints of the IK station and of the three rigs aim at points of the world: the tool
+  puts them where the scene has those stations (`gallery_place`), so moving one of them in the
+  scene moves its points in the tool too.
 - The manual adjustments and the UI queue belong to the Play world and are discarded when it stops.
 
 ## Code (`demo/game`)
@@ -49,7 +56,8 @@ programs and profiles ([generated content](demo.md#generated-content)).
   (`gallery_panel_input`) and what each panel shows (`gallery_panels`).
 - `animation_gallery_player.odin`: `Gallery_Player`, the walk of its body, the station it stands at
   and what E does there (`gallery_interact`).
-- `animation_gallery_view.odin`: the HUD with the station and what E does.
+- `animation_gallery_view.odin`: `Gallery_Hud`, what `animation_hud.ui` shows of the station and
+  of what E does.
 - `animation_motor.odin`: [the motor](#demo-animation-motor) of the actions and warp stations.
 
 ## API walkthrough
@@ -62,8 +70,8 @@ schemas and `scene.inspect` for the ids of the stations, which are named after w
    `{"entity":"<rig>","motion":[{"name":"Reach","target":t}]}`, where `t` is
    `{"kind":"Entity","entity":"<Reach goal>"}`, then `animation.play` of `stride`. Its gallery
    restarts the stride every few seconds with the goal at another distance. `animation.inspect`
-   part `Motion` publishes the window and the predicted error; `play.inspect` reports the position
-   reached by physics.
+   part `Motion` publishes the window and the predicted error; `scene.inspect` of the game reports
+   the position reached by physics.
 2. `Mirai named actions`: `animation.request` with `{"entity":"<rig>","actions":[{"name":"Greet"}]}`
    starts the `Greeting` section; `Step` emits `Movement` windows. `animation.inspect` part
    `Actions` after one tick reads state and events.
@@ -83,7 +91,7 @@ schemas and `scene.inspect` for the ids of the stations, which are named after w
 
 `Animation_Motor` is a gameplay capability of the demo, shared by the characters with root motion.
 
-- `Move_Input` is `shared`: `locomotion_seat` (or the AI, or the network) writes the tick's
+- `Move_Input` is `shared`: `camera_drive` (or the AI, or the network) writes the tick's
   request, and `animation_motor_drive`, after `animation_sample` and before `physics_step`,
   replaces it in the characters with a motor turned on by the horizontal delta and the yaw of their
   root motion, relative to the `max_speed` of their `Walk`. It writes only the rows that change.
@@ -95,9 +103,9 @@ schemas and `scene.inspect` for the ids of the stations, which are named after w
 
 ## Verification
 
-- `mirai test demo/game -collection:plugins=plugins`: `animation_gallery_controls_test.odin`
+- `mirai test demo/game`: `animation_gallery_controls_test.odin`
   (manual and automatic stations, bounded queue), `animation_gallery_matching_test.odin` (the speed
-  asked picks idle, walk or jog of `mirai_gallery.match`), `mirai_matching_test.odin`,
+  asked picks idle, walk or jog of `mirai_gallery.character`), `mirai_matching_test.odin`,
   `mirai_character_test.odin`, `grounding_physics_test.odin` and `animation_motor_test.odin`.
 - New assets: `mirai asset verify`.
 - Generate and build the demo editor and walk the gallery in Play with graphics validation: E at a

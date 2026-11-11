@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:strings"
 import "core:testing"
 import "mirai:core"
+import volume "mirai:engine/volume"
 import "mirai:std/base"
 import "mirai:std/serial"
 import sim "plugins:physics/runtime/sim"
@@ -109,18 +110,19 @@ collision_settings_reject_repeated_presets_custom_entries_and_bad_pushes :: proc
     testing.expect_value(t,defaults,Collision_Filter{layers=1,block=COLLISION_LAYERS_ALL})
 }
 
+@(private) @(test_world) Named_World :: struct {
+    using world:Test_World,
+    colliders:core.Table(Collider),
+}
+
 // The settings, a Collider and a Query_Filter speak in text by the names the
 // code declares, and keep the numbers.
 @(test)
 categories_and_presets_take_the_names_the_code_declares_in_text :: proc(t:^testing.T) {
-    Named_World :: struct {
-        using world:core.Test_World,
-        colliders:core.Table(Collider),
-    }
     names,types,bits:=collision_test_names()
-    info,described:=core.test_info(t,Named_World,test_types)
+    info,described:=test_info(t,Named_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.names,info.named_types,info.name_bits=names[:],types[:],bits[:]
     ws:=core.world_schema_make(&info,context.temp_allocator)
     if !testing.expect(t,ws!=nil) {return}
@@ -183,7 +185,7 @@ a_setting_or_a_collider_of_an_undeclared_value_is_a_problem :: proc(t:^testing.T
         if base.text_get(p.code[:])=="physics.collision" {collider_problem=p.entity==e && strings.contains(text,"preset 12")}
     }
     testing.expect(t,settings_problem && collider_problem)
-    testing.expect_value(t,link_find(&f.state,e).filter,Collision_Filter{layers=1,block=COLLISION_LAYERS_ALL})
+    testing.expect_value(t,sim.shape_filter(&f.state.world,link_find(&f.state,e).shape),Collision_Filter{layers=1,block=COLLISION_LAYERS_ALL})
 }
 
 @(test)
@@ -222,7 +224,7 @@ a_wall_blocks_the_player_reports_a_sensor_and_a_new_collision_keeps_the_shape ::
     testing.expect(t,physics_test_pose(&f,movers[1]).position.x>1)
     created:=f.state.stats.shapes_created
     teleport(&f.requests,movers[1],{-2,1,0})
-    core.get(&f.colliders,movers[1]).sensor=false
+    core.edit(&f.colliders,movers[1]).sensor=false
     physics_test_step(&f)
     set_velocity(&f.requests,movers[1],{3,0,0})
     for _ in 0..<60 {physics_test_step(&f)}
@@ -261,14 +263,13 @@ a_character_takes_its_capsule_and_its_collision_from_its_collider :: proc(t:^tes
     testing.expect_value(t,desc.filter,collision_filter(&f.collision,capsule))
     testing.expect(t,desc.mass>100 && desc.mass<1000)
     created:=f.state.stats.characters_created
-    core.get(&f.colliders,e).collides=COLLISION_LAYERS_ALL
-    // The locomotion writes the rest of the row every tick; that does not make it again.
-    core.get(&f.characters,e).coyote=0.05
+    core.edit(&f.colliders,e).collides=COLLISION_LAYERS_ALL
+    // A change of its collision filters it again, without making it again.
     physics_test_step(&f,0)
     testing.expect_value(t,f.state.stats.characters_created,created)
-    current,_:=core.get(core.read(&f.colliders),e)
+    current,_:=core.get(&f.colliders,e)
     testing.expect_value(t,sim.character_desc(&f.state.world,link_find(&f.state,e).character).filter,collision_filter(&f.collision,current))
-    core.get(&f.colliders,e).size.x=0.3
+    core.edit(&f.colliders,e).size.x=0.3
     physics_test_step(&f,0)
     testing.expect_value(t,f.state.stats.characters_created,created+1)
 }
@@ -299,8 +300,8 @@ contact_rules_of_a_collider_reach_its_shape_without_making_it_again :: proc(t:^t
     v:=sim.body_linear_velocity(w,link_find(&f.state,box).body)
     testing.expectf(t,abs(v.x-2)<0.05,"carried at %v",v)
     created:=f.state.stats.shapes_created
-    core.get(&f.colliders,belt).surface_speed={}
-    core.get(&f.colliders,belt).one_way=true
+    core.edit(&f.colliders,belt).surface_speed={}
+    core.edit(&f.colliders,belt).one_way=true
     for _ in 0..<60 {physics_test_step(&f)}
     testing.expect_value(t,f.state.stats.shapes_created,created)
     speed,one_way,_:=sim.shape_surface(w,link_find(&f.state,belt).shape)
@@ -309,4 +310,55 @@ contact_rules_of_a_collider_reach_its_shape_without_making_it_again :: proc(t:^t
     testing.expectf(t,abs(v.x)<0.05,"stopped at %v",v)
     // The floor blocks from its +Y side: the box still rests on it.
     testing.expect(t,abs(physics_test_pose(&f,box).position.y-0.25)<0.03)
+}
+
+// A box, a sphere or an outline Volume without a Collider of its own reports the bodies that go in and out
+// of it and blocks nothing; a plane, which has no end, reports nothing. An outline reports by its loop: a
+// body that crosses the notch of an L, inside its box, is never in it.
+@(test)
+a_volume_reports_the_bodies_that_go_in_and_out :: proc(t:^testing.T) {
+    f:Physics_Test
+    if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    zones:=[2]core.Entity{core.create(&f.entities),core.create(&f.entities)}
+    core.add(&f.transforms,zones[0],core.Transform{{0,0,0},1,{1,1,1}})
+    core.add(&f.volumes,zones[0],volume.box({1,5,5}))
+    core.add(&f.transforms,zones[1],core.Transform{{0,1,0},1,{1,1,1}})
+    core.add(&f.volumes,zones[1],volume.plane())
+    mover:=core.create(&f.entities)
+    core.add(&f.transforms,mover,core.Transform{{-3,0,0},1,{1,1,1}})
+    core.add(&f.colliders,mover,collider_sphere(0.25))
+    core.add(&f.rigids,mover,RIGID_BODY_DYNAMIC)
+    // The L: its arm from -1 to 1 on x, its foot from -3 to -1 on z out to x 4, its notch the rest of its box.
+    l:=core.create(&f.entities)
+    core.add(&f.transforms,l,core.Transform{{0,0,20},1,{1,1,1}})
+    core.add(&f.volumes,l,volume.outline(4))
+    core.add(&f.splines,l,volume.Spline{count=6,points={0={position={-1,0,-3}},1={position={4,0,-3}},2={position={4,0,-1}},3={position={1,0,-1}},4={position={1,0,3}},5={position={-1,0,3}}}})
+    notch,foot:=core.create(&f.entities),core.create(&f.entities)
+    for e,i in ([2]core.Entity{notch,foot}) {
+        core.add(&f.transforms,e,core.Transform{i==0?{2,0,21}:{-3,0,18},1,{1,1,1}})
+        core.add(&f.colliders,e,collider_sphere(0.25))
+        core.add(&f.rigids,e,RIGID_BODY_DYNAMIC)
+    }
+    physics_test_step(&f,0)
+    set_velocity(&f.requests,mover,{6,0,0})
+    set_velocity(&f.requests,notch,{9,0,0})
+    set_velocity(&f.requests,foot,{9,0,0})
+    began,ended,plane:=0,0,0
+    in_l:[2][2]int // of the notch and the foot: begun and ended
+    for _ in 0..<60 {
+        physics_test_step(&f)
+        for event in f.events.overlap_begin.items {
+            if event.collider==zones[0] && event.other==mover {began+=1}
+            if event.collider==zones[1] || event.other==zones[1] {plane+=1}
+            if event.collider==l {in_l[event.other==notch?0:1][0]+=1}
+        }
+        for event in f.events.overlap_end.items {
+            if event.collider==zones[0] && event.other==mover {ended+=1}
+            if event.collider==l {in_l[event.other==notch?0:1][1]+=1}
+        }
+    }
+    testing.expect(t,began==1 && ended==1 && plane==0)
+    testing.expectf(t,in_l=={{0,0},{1,1}},"the L reports the body across its foot and not the one across its notch: %v",in_l)
+    testing.expect(t,physics_test_pose(&f,mover).position.x>1.5,"the volume blocks nothing")
 }

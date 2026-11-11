@@ -18,7 +18,6 @@ modifier_name_at :: proc(runtime:^Modifier_Runtime,rig:core.Entity,kind:Modifier
     switch kind {
     case .IK: return name(&runtime.ik,rig,slot)
     case .Look: return name(&runtime.look,rig,slot)
-    case .Contact: return name(&runtime.feet,rig,slot)
     case .Grounding: return name(&runtime.grounding,rig,slot)
     case .Limit: return name(&runtime.limits,rig,slot)
     case .Chain_IK: return name(&runtime.chain_ik,rig,slot)
@@ -33,7 +32,7 @@ modifier_name_at :: proc(runtime:^Modifier_Runtime,rig:core.Entity,kind:Modifier
     return "",false
 }
 
-// Whether a slot names the same operation after its profile was read again:
+// Whether a slot names the same operation after its .character was read again:
 // what a goal or a fade kept for it still applies.
 @(private)
 modifier_same_operation :: proc(previous,next:^Modifier_Runtime,rig:core.Entity,kind:Modifier_Kind,slot:u16) -> bool {
@@ -52,7 +51,7 @@ modifier_same_goal :: proc(previous,next:^Modifier_Runtime,goal:Modifier_Goal) -
     return goal.effector<old.effector_count && goal.effector<current.effector_count && int(goal.effector)<RIG_EFFECTORS && old.effectors[goal.effector].name==current.effectors[goal.effector].name
 }
 
-// A goal by name takes the slot and effector of that name in the profile the rig has now.
+// A goal by name takes the slot and effector of that name in the .character the rig plays now.
 @(private)
 modifier_goal_resolve :: proc(runtime:^Modifier_Runtime,goal:^Modifier_Goal) -> Modifier_Request_Error {
     if goal.name[0]==0 {return .None}
@@ -75,12 +74,12 @@ modifier_request_rejected :: proc(runtime:^Modifier_Runtime,rig:core.Entity,erro
 }
 
 // Reports a goal or control by name that names no operation, or no effector,
-// of the pose profile the rig has now.
+// of the .character the rig plays now.
 @(private)
 modifier_name_problem :: proc(problems:^core.Problems,rig:core.Entity,kind:Modifier_Kind,name,effector:[]u8,error:Modifier_Request_Error) {
     #partial switch error {
     case .Missing_Operation:
-        core.report(problems,rig,"animation.modifier_name","a goal or control for %v '%s' was refused: the pose profile of this rig has no %v with that name; name one it has (animation.inspect lists them)",kind,base.text_get(name),kind)
+        core.report(problems,rig,"animation.modifier_name","a goal or control for %v '%s' was refused: the .character of this rig has no %v with that name; name one it has (animation.inspect lists them)",kind,base.text_get(name),kind)
     case .Missing_Effector:
         core.report(problems,rig,"animation.modifier_effector","a goal for effector '%s' of %v '%s' was refused: it has no effector with that name; name one it has",base.text_get(effector),kind,base.text_get(name))
     }

@@ -9,9 +9,8 @@ import "mirai:platform"
 // it starts again with its documents as they are (restart), so a reset of
 // the GPU costs a moment and none of the work. An editor that a failure
 // started (--gpu-lost) and whose GPU fails again within GPU_FAILURE_AGAIN_NS
-// of being ready would loop on the same work: it keeps every tab and the
-// unsaved assets for the recovery of the next start and ends with
-// EDITOR_GPU_LOST, naming the likely cause.
+// of being ready would loop on the same work: it ends with EDITOR_GPU_LOST,
+// naming where the GPU stopped.
 
 GPU_FAILURE_AGAIN_NS :: u64(60_000_000_000)
 
@@ -28,12 +27,10 @@ gpu_failure_react :: proc(s:^Session) {
         if restart(s,{"--gpu-lost",text}) {s.gpu_failure=.Restarted;return}
     }
     s.gpu_failure=.Ended
-    // The next start offers the recovery of every tab and of the unsaved assets.
-    recovery_tabs_keep(s)
     ended:=fmt.tprintf("the editor ends: %s",text)
     if again {ended=fmt.tprintf("the editor ends: the GPU stopped working again %d s after the editor started again for it, so the same work stops it: %s",(platform.clock_ns()-s.ready_ns)/1_000_000_000,text)}
     log.error(ended)
-    fmt.eprintfln("mirai: %s. The next start offers to recover the tabs and the unsaved assets",ended)
+    fmt.eprintfln("mirai: %s",ended)
     s.quit=true
 }
 

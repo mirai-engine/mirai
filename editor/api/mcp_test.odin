@@ -43,7 +43,7 @@ large_mcp_images_keep_the_complete_content_with_small_socket_buffers :: proc(t:^
     bytes:=make([]u8,230*1024*3,context.temp_allocator)
     for i in 0..<len(bytes) {bytes[i]=u8(i%3+1)}
     testing.expect(t,os.write_entire_file(file,bytes)==nil)
-    testing.expect_value(t,method_register(&server,{name="view.viewport",handler=mcp_image_handler,user=&file}),Register_Error.None)
+    testing.expect_value(t,method_register(&server,{name="view.viewport",result=type_info_of(Raw_Result),writes_result=true,handler=mcp_image_handler,user=&file}),Register_Error.None)
     // The receiver window must be negotiated before the TCP handshake.
     receiver,listen_error:=net.listen_tcp({address=net.IP4_Loopback,port=0},1)
     if !testing.expect(t,listen_error==nil) {return}
@@ -92,7 +92,7 @@ large_mcp_images_keep_the_complete_content_with_small_socket_buffers :: proc(t:^
         head:=strings.index(text,"\r\n\r\n")
         if !testing.expect(t,head>=0) {return}
         body:=text[head+4:]
-        _,declared_length,_:=response_head(text[:head])
+        _,declared_length:=response_head(text[:head])
         testing.expect_value(t,len(body),declared_length)
         if !testing.expect(t,!strings.contains(body,"HTTP/1.1"),"a partial send never repeats the HTTP header") {return}
         reply,parse_error:=json.parse(transmute([]u8)body,parse_integers=true,allocator=context.temp_allocator)
@@ -119,7 +119,7 @@ image_handler :: proc(call:^Call) {
 a_typed_result_carries_its_image_over_mcp_and_only_the_result_over_json_rpc :: proc(t:^testing.T) {
     f:Fixture;if !fixture_start(&f,t,{max_response=MIN_RESPONSE}) {return}
     defer fixture_finish(&f)
-    testing.expect_value(t,method_register(&f.server,{name="shot.take",params=Image_Params,result=Add_Result,handler=image_handler}),Register_Error.None)
+    testing.expect_value(t,method_register(&f.server,{name="shot.take",params=type_info_of(Image_Params),result=type_info_of(Add_Result),handler=image_handler}),Register_Error.None)
     folder:=base.test_folder(t,"image")
     if folder=="" {return}
     small:=fmt.tprintf("%s/small.png",folder)
@@ -149,7 +149,7 @@ a_typed_result_carries_its_image_over_mcp_and_only_the_result_over_json_rpc :: p
 // A method of the plugin animation and the plugins the project finds.
 @(private)
 fixture_plugins :: proc(t:^testing.T,f:^Fixture) {
-    testing.expect_value(t,method_register(&f.server,{name="anim.play",summary="Plays a clip.",plugin="animation",params=Add_Params,result=Add_Result,handler=add_handler}),Register_Error.None)
+    testing.expect_value(t,method_register(&f.server,{name="anim.play",summary="Plays a clip.",plugin="animation",params=type_info_of(Add_Params),result=type_info_of(Add_Result),handler=add_handler}),Register_Error.None)
     server_plugins_set(&f.server,{{"animation",true},{"terrain",false}})
 }
 
@@ -318,7 +318,7 @@ mcp_lists_the_tools_of_the_plugins_that_x_mirai_plugins_names :: proc(t:^testing
     f:Fixture;if !fixture_start(&f,t) {return}
     defer fixture_finish(&f)
     fixture_plugins(t,&f)
-    testing.expect_value(t,method_register(&f.server,{name="body.push",summary="Pushes a body.",plugin="physics",handler=raw_handler}),Register_Error.None)
+    testing.expect_value(t,method_register(&f.server,{name="body.push",summary="Pushes a body.",plugin="physics",params=type_info_of(Raw_Params),result=type_info_of(Raw_Result),writes_result=true,handler=raw_handler}),Register_Error.None)
     names :: proc(t:^testing.T,f:^Fixture,plugins:string) -> []string {
         status,body,err:=client_post(server_port(&f.server),"/mcp",`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,3000,context.temp_allocator,"",plugins)
         testing.expectf(t,err.code==0 && status==200,"HTTP %d %s: %s",status,err.message,string(body))
@@ -335,7 +335,9 @@ mcp_lists_the_tools_of_the_plugins_that_x_mirai_plugins_names :: proc(t:^testing
     testing.expect(t,slice.contains(one,"anim_play") && !slice.contains(one,"body_push"))
     two:=names(t,&f,"physics, animation")
     testing.expect_value(t,len(two),11)
-    testing.expect_value(t,len(names(t,&f,"*")),11)
+    all:=names(t,&f,"*")
+    testing.expect_value(t,len(all),12)
+    testing.expect(t,slice.contains(all,"batch") && !slice.contains(two,"batch"),"* also lists the tools of the editor that are not basic")
     reply:=mcp(t,&f,`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"anim_play","arguments":{"a":1,"b":2}}}`)
     testing.expect_value(t,integer(at(tool_text(t,reply),"sum")),3)
     status,_,_:=client_post(server_port(&f.server),"/mcp",`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`,3000,context.temp_allocator,"","anim;rm")
@@ -346,7 +348,7 @@ mcp_lists_the_tools_of_the_plugins_that_x_mirai_plugins_names :: proc(t:^testing
 mcp_lists_tools_in_pages_when_they_do_not_fit :: proc(t:^testing.T) {
     f:Fixture;if !fixture_start(&f,t,{max_response=4096}) {return}
     defer fixture_finish(&f)
-    for i in 0..<10 {testing.expect_value(t,method_register(&f.server,{name=fmt.tprintf("bulk.%d",i),params=Shapes,result=Shapes,handler=shapes_handler,flags={.Core}}),Register_Error.None)}
+    for i in 0..<10 {testing.expect_value(t,method_register(&f.server,{name=fmt.tprintf("bulk.%d",i),params=type_info_of(Shapes),result=type_info_of(Shapes),handler=shapes_handler,flags={.Core}}),Register_Error.None)}
     seen:[dynamic]string
     seen.allocator=context.temp_allocator
     cursor:=""
@@ -461,7 +463,7 @@ mcp_rejects_malformed_results :: proc(t:^testing.T) {
     s,ok:=test_server(t);if !ok {return}
     defer server_destroy(&s)
     text:=`{"value":7}`
-    testing.expect_value(t,method_register(&s,{name="free",handler=mcp_json_handler,user=&text}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="free",result=type_info_of(Raw_Result),writes_result=true,handler=mcp_json_handler,user=&text}),Register_Error.None)
     values:=[]string{`[1,2]`,`"hello"`,`3`,`true`,`null`}
     for value in values {
         text=value
@@ -489,7 +491,7 @@ mcp_results_remain_bounded_and_recover_after_scratch_failure_without_allocations
     for _ in 0..<1700 {raw(&w,`\n`)}
     raw(&w,`"}`)
     text:=string(serial.writer_bytes(&w))
-    testing.expect_value(t,method_register(&s,{name="object",result_schema=`{"type":"object"}`,handler=mcp_json_handler,user=&text}),Register_Error.None)
+    testing.expect_value(t,method_register(&s,{name="object",result=type_info_of(Raw_Result),writes_result=true,handler=mcp_json_handler,user=&text}),Register_Error.None)
     saved_allocator:=context.allocator
     context.allocator=mem.nil_allocator()
     serial.writer_reset(&s.out)
@@ -531,7 +533,7 @@ is_bool :: proc(value:json.Value,want:bool) -> bool {
 mcp_lists_the_core_and_call_runs_any_other_method_by_its_name :: proc(t:^testing.T) {
     f:Fixture;if !fixture_start(&f,t) {return}
     defer fixture_finish(&f)
-    testing.expect_value(t,method_register(&f.server,{name="rare.sum",summary="Adds two integers.",params=Add_Params,result=Add_Result,handler=add_handler}),Register_Error.None)
+    testing.expect_value(t,method_register(&f.server,{name="rare.sum",summary="Adds two integers.",params=type_info_of(Add_Params),result=type_info_of(Add_Result),handler=add_handler}),Register_Error.None)
     reply:=mcp(t,&f,`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
     tools,_:=at(reply,"result","tools").(json.Array)
     for tool in tools {testing.expect(t,string_of(at(tool,"name"))!="rare_sum","a method outside the core is not a tool of the list")}
@@ -598,7 +600,7 @@ a_call_with_a_progress_token_streams_its_progress_and_one_without_answers_as_alw
     f:=new(Fixture);defer free(f)
     if !fixture_start(f,t,{timeout_ms=5000}) {return}
     defer fixture_finish(f)
-    testing.expect_value(t,method_register(&f.server,{name="test.slow",summary="Works for a while.",handler=slow_handler,flags={.Core}}),Register_Error.None)
+    testing.expect_value(t,method_register(&f.server,{name="test.slow",summary="Works for a while.",result=type_info_of(Raw_Result),writes_result=true,handler=slow_handler,flags={.Core}}),Register_Error.None)
     port:=server_port(&f.server)
     events:Slow_Events
     events.lines.allocator=context.temp_allocator
@@ -628,7 +630,7 @@ a_cancelled_call_stops_at_its_safe_point_and_says_so :: proc(t:^testing.T) {
     f:=new(Fixture);defer free(f)
     if !fixture_start(f,t,{timeout_ms=5000}) {return}
     defer fixture_finish(f)
-    testing.expect_value(t,method_register(&f.server,{name="test.slow",summary="Works for a while.",handler=slow_handler,flags={.Core}}),Register_Error.None)
+    testing.expect_value(t,method_register(&f.server,{name="test.slow",summary="Works for a while.",result=type_info_of(Raw_Result),writes_result=true,handler=slow_handler,flags={.Core}}),Register_Error.None)
     Canceller :: struct {port:int}
     canceller:=Canceller{server_port(&f.server)}
     cancel :: proc(c:^Canceller) {
@@ -706,8 +708,8 @@ a_request_that_arrives_during_a_wait_is_answered_after_it_intact :: proc(t:^test
     if !fixture_start(f,t,{timeout_ms=5000}) {return}
     defer fixture_finish(f)
     order:Wait_Order
-    testing.expect_value(t,method_register(&f.server,{name="test.wait",summary="Waits.",handler=waiting_handler,user=&order,flags={.Core}}),Register_Error.None)
-    testing.expect_value(t,method_register(&f.server,{name="test.meanwhile",summary="Wraps its params.",handler=meanwhile_handler,user=&order,flags={.Core}}),Register_Error.None)
+    testing.expect_value(t,method_register(&f.server,{name="test.wait",summary="Waits.",result=type_info_of(Raw_Result),writes_result=true,handler=waiting_handler,user=&order,flags={.Core}}),Register_Error.None)
+    testing.expect_value(t,method_register(&f.server,{name="test.meanwhile",summary="Wraps its params.",params=type_info_of(Raw_Params),result=type_info_of(Raw_Result),writes_result=true,handler=meanwhile_handler,user=&order,flags={.Core}}),Register_Error.None)
     port:=server_port(&f.server)
     cases:=[?]struct{path,body:string,status:int,says:string,runs:int}{
         {"/mcp",`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"test_meanwhile","arguments":{"text":"kept whole"}}}`,200,"kept whole",1},

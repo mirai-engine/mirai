@@ -34,6 +34,21 @@ counted in `overflow`, an alignment that is not a power of two fails without wri
 `refs_visit` visits nothing if the data does not suffice. `hostile_test.odin` tests it with random
 inputs.
 
+**Tags.** `field_tag` is the only reader of the `mirai:"..."` tag of a field: the schema, the
+inspector, the undo journal, the scene author and the API take what it says in `Field` (`flags`,
+`hints` and its texts). Options are separated by commas; `label=` is the last one and takes the
+rest of the tag, commas included. A tag that is not one is an error that names the field and the
+tags there are (`FIELD_TAGS`): `schema_add` fails with it, and the world generator reports it when
+a project builds or checks.
+
+**Unsized schemas.** A schema that sets `unsized` also takes slices and dynamic arrays, `string`
+and `serial.Json` (any JSON value, as its text): what the API describes its params and results
+with, and what a file Mirai defines holds. They live in memory and in text only: `schema_validate`
+refuses them, so no asset or replicated type has them, and a type that holds itself is not added.
+Text reads them into the allocator of its reader (`Text_Reader.values`); `text_encode` and
+`text_decode` write and read one value through a schema of their own, which is how a file or a
+message Mirai defines is read and written. `core:encoding/json` is for formats others define.
+
 **`requires`.** The tag `mirai:"requires=Camera"` on an `Entity` field keeps the hash of the
 required component in `Field.required_component`; it travels in the binary schema, imports and
 clones, and is invalid on another field type. It is authoring metadata: the document validates
@@ -45,8 +60,16 @@ copied as a block or used in place.
 
 **Migration** (`Migration`, compiled once per pair of types and applied per row):
 
-- Fields are paired by name. One without a source keeps the default given by whoever reads (zero if
-  none is given); one without a destination is discarded.
+- Fields are paired by name, or by a name the destination field had: the tag `was=` lists them
+  (`mirai:"was=strength power"`), so a value stored before a rename, or before several, is read.
+  An earlier name that is another field of the struct is refused when the type is added. The
+  names are in the binary schema (a struct with renames, or with renamed fields, carries them;
+  any other is written as if there were none), so a source that had the destination's name
+  pairs too: a file of a newer layout reads into an older one. `path_resolve` takes them as well.
+- One without a source keeps the default given by whoever reads (zero if none is given). One
+  without a destination is lost, and `Migration.removed` lists it by its path, as
+  `Migration.incompatible` lists the fields whose shapes do not convert; whoever reads a document
+  reports both (scene loads: `engine/scene` `Stored`).
 - Numbers are converted by value and saturate in the destination's range (NaN to integer is 0);
   bool is nonzero.
 - Enums and bit sets go by member name: a member the destination does not have leaves the default
@@ -78,7 +101,9 @@ refuses. Whoever takes values from outside (an untrusted scene) checks them with
   `"bits:0x…"`; an enum without a member for its value is its number; a bit without a member is its
   index; a text that is not UTF-8 is the list of its bytes. Reading what was written returns the
   same bytes.
-- On reading, an absent field keeps what it had and an unknown field is an error.
+- On reading, an absent field keeps what it had and an unknown field is an error. A reader that
+  says so takes `null` as a field left out (`nulls`, what the API reads) or skips a field its type
+  lacks (`skip_unknown`, for whoever reads part of what another wrote).
 - **Read errors.** `Text_Error` keeps the code, the offset, where in the value (`path`;
   `text_error_within` prepends the field or section of whoever reads on their own) and, for a name
   the type does not have, those it has, copied into the reader. `text_error_message` is the only

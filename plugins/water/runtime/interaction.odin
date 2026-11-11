@@ -4,7 +4,6 @@ import "core:math"
 import "core:math/linalg"
 import "mirai:core"
 import phys "plugins:physics/runtime"
-import vfx "plugins:vfx/runtime"
 
 // What the bodies in the water show of it, read from the physics after its
 // step and never given back: one that enters the water fast throws a splash
@@ -15,9 +14,9 @@ import vfx "plugins:vfx/runtime"
 // WET_SECONDS (water_wet_render). Presentation alone: nothing of it enters
 // the simulation, a snapshot or a rollback.
 
-CHANNEL_SPLASHES :: vfx.Particle_Channel_Name(3)
-CHANNEL_BUBBLES :: vfx.Particle_Channel_Name(4)
-CHANNEL_MOTES :: vfx.Particle_Channel_Name(5)
+CHANNEL_SPLASHES :: "splashes"
+CHANNEL_BUBBLES :: "bubbles"
+CHANNEL_MOTES :: "motes"
 SPLASH_SPEED :: f32(1.5)   // m/s down through the surface below which a body makes no splash
 SPLASH_ENTERED :: f32(0.05) // share of a body under the surface past which it is in
 SPLASH_PAUSE :: 30          // ticks a body makes no other splash after one
@@ -55,13 +54,14 @@ Water_Wet :: struct {
 
 // The birth of the splash of a body that had `before` of itself under the
 // surface in the tick before; false when it does not splash.
-splash_of :: proc "contextless" (body:phys.Fluid_Body,before:f32) -> (birth:vfx.Channel_Birth,ok:bool) {
+splash_of :: proc "contextless" (body:phys.Fluid_Body,before:f32) -> (birth:core.Birth,ok:bool) {
     if !(body.whole>0) {return}
     share:=body.volume/body.whole
     down:=-body.velocity.y
     if before>SPLASH_ENTERED || share<=SPLASH_ENTERED || down<SPLASH_SPEED {return}
     drops:=f32(SPLASH_DROPS)*math.cbrt(body.whole)*(down/SPLASH_SPEED)
     birth={
+        channel=core.birth_channel(CHANNEL_SPLASHES),
         position={body.center.x,body.surface,body.center.z},
         velocity={0.3*body.velocity.x,0.35*down,0.3*body.velocity.z},
         size=clamp(math.cbrt(body.whole),0.5,3),
@@ -72,7 +72,7 @@ splash_of :: proc "contextless" (body:phys.Fluid_Body,before:f32) -> (birth:vfx.
 
 // The bubbles a body under the surface leaves behind it as it moves, by its
 // size and its speed; false when it is out of the water or still.
-bubbles_of :: proc "contextless" (body:phys.Fluid_Body) -> (birth:vfx.Channel_Birth,ok:bool) {
+bubbles_of :: proc "contextless" (body:phys.Fluid_Body) -> (birth:core.Birth,ok:bool) {
     if !(body.whole>0) || body.volume/body.whole<BUBBLE_UNDER {return}
     speed:=linalg.length(body.velocity)
     if !(speed>=BUBBLE_SPEED) {return}
@@ -80,6 +80,7 @@ bubbles_of :: proc "contextless" (body:phys.Fluid_Body) -> (birth:vfx.Channel_Bi
     behind:=body.center-body.velocity*(0.5*body.reach/speed)
     behind.y=min(behind.y,body.surface-BUBBLE_DEPTH)
     birth={
+        channel=core.birth_channel(CHANNEL_BUBBLES),
         position=behind,
         velocity=0.25*body.velocity,
         size=clamp(size,0.5,1.5),
@@ -95,18 +96,18 @@ wet_after :: proc "contextless" (before,share,dt:f32) -> f32 {
 }
 
 @(step="fixed",loops="game editor",stage="simulate",after="physics_step")
-water_bodies :: proc(wet:^Water_Wet,physics:core.Ref(phys.Physics_State),channels:^vfx.Particle_Channels,view:core.View,time:core.Time) {
+water_bodies :: proc(wet:^Water_Wet,physics:core.Ref(phys.Physics_State),births:^core.Births,view:core.View,time:core.Time) {
     if !time.playing || !(time.dt>0) {return}
     found:[WET_CAPACITY]phys.Fluid_Body
     count:=min(phys.fluid_bodies(physics,found[:]),WET_CAPACITY)
-    bodies_step(wet,found[:count],physics,channels,time.dt)
+    bodies_step(wet,found[:count],physics,births,time.dt)
     camera,_,known:=phys.fluid_at(physics,view.position)
     if !known || !(camera.density>0) {
         wet.motes=0
     } else if wet.motes>0 {
         wet.motes-=1
     } else {
-        vfx.channel_emit(channels,CHANNEL_MOTES,{position=view.position,count=MOTE_COUNT})
+        core.push(&births.queue,core.Birth{channel=core.birth_channel(CHANNEL_MOTES),position=view.position,count=MOTE_COUNT})
         wet.motes=MOTE_PAUSE
     }
 }
@@ -116,7 +117,7 @@ water_bodies :: proc(wet:^Water_Wet,physics:core.Ref(phys.Physics_State),channel
 // longer finds left the water and dries, unless it sleeps where the tick
 // before found it under the surface.
 @(private)
-bodies_step :: proc(wet:^Water_Wet,found:[]phys.Fluid_Body,physics:core.Ref(phys.Physics_State),channels:^vfx.Particle_Channels,dt:f32) {
+bodies_step :: proc(wet:^Water_Wet,found:[]phys.Fluid_Body,physics:core.Ref(phys.Physics_State),births:^core.Births,dt:f32) {
     marks:[WET_CAPACITY]Wet_Mark
     taken:[WET_CAPACITY]bool // the marks of the tick before that a body found again takes
     count:=0
@@ -134,11 +135,11 @@ bodies_step :: proc(wet:^Water_Wet,found:[]phys.Fluid_Body,physics:core.Ref(phys
             pause=before.pause>0?before.pause-1:0,bubbles=before.bubbles>0?before.bubbles-1:0,
         }
         if birth,splashes:=splash_of(body,before.share);splashes && mark.pause==0 {
-            vfx.channel_emit(channels,CHANNEL_SPLASHES,birth)
+            core.push(&births.queue,birth)
             mark.pause=SPLASH_PAUSE
         }
         if birth,bubbles:=bubbles_of(body);bubbles && mark.bubbles==0 {
-            vfx.channel_emit(channels,CHANNEL_BUBBLES,birth)
+            core.push(&births.queue,birth)
             mark.bubbles=BUBBLE_PAUSE
         }
         marks[count]=mark

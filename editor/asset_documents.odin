@@ -11,15 +11,13 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:ui"
 
-// Assets open in tabs next to the scenes, as the prototype opens them. The
+// Assets open in tabs next to the scenes. The
 // document in front takes the place of the scene: the scene that was active
 // stays loaded under it, with its history, its Play stopped and its tools
 // quiet, and the API and the agents keep working on it. The left panel stays;
 // Details and the tools of the viewport leave. A document has its own
 // history: the files its UI writes outside a gesture of the scene are steps
-// of it (file_write), and Save writes its asset. What is unsaved is what the
-// registry holds in memory (assets_unsaved.odin), so the dot of a tab, Save
-// all and the questions about unsaved changes are those of every asset.
+// of it (file_write), written when each ends (files_flush).
 //
 // The editor draws the documents of materials, and of the source of a program
 // alone; a plugin opens the kinds its storage declares with an
@@ -62,10 +60,6 @@ Asset_Document :: struct {
     // its time of an animation. The plugin of its kind writes it while the
     // document is in front.
     shown:[256]u8,
-    // The last action of the Edit menu run on it (Asset_Document_Provider.actions):
-    // its plugin runs it once for each serial.
-    request:Action,
-    request_serial:u64,
 }
 ASSET_DOCUMENT_PICKS :: 8
 
@@ -74,10 +68,10 @@ ASSET_DOCUMENT_PICKS :: 8
 // whose hierarchy it builds in hierarchy_room and the ones that draw no
 // world (flat: the bar leaves Graphics out), the ones Create of the content
 // browser and asset.create make (creates: kinds of asset.KINDS, whose empty
-// file create gives, made with the id it is given; nil: it could not), and the
-// actions of the Edit menu its documents take: the editor runs none of them
-// on the scene while one is in front, and hands them over as
-// Asset_Document.request. between, when given, runs between frames while one
+// file create gives, made with the id it is given; nil: it could not). What
+// works on what its documents have chosen is entries its plugin binds
+// (Binding.document), with the keys of those of the scene, which are off
+// while a document is in front. between, when given, runs between frames while one
 // of its documents is in front: what needs frames of its own (a world drawn
 // into a texture, host.app_world_draw).
 Asset_Document_Provider :: struct {
@@ -87,7 +81,6 @@ Asset_Document_Provider :: struct {
     flat:bit_set[0..<ASSET_DOCUMENT_KINDS],
     creates:bit_set[0..<ASSET_DOCUMENT_KINDS],
     create:proc(s:^Session,kind:asset.Fourcc,id:base.Asset_Id) -> []u8, // in the temporary allocator
-    actions:bit_set[Action],
     between:proc(s:^Session,d:^Asset_Document),
 }
 
@@ -226,8 +219,6 @@ asset_document_active :: proc "contextless" (s:^Session) -> ^Asset_Document {
 // picking and edits by hand wait.
 scene_covered :: proc "contextless" (s:^Session) -> bool {return asset_document_active(s)!=nil}
 
-// The path its unsaved changes are kept by: in the registry, or the absolute
-// one of the source of a program alone. Empty for an asset that is gone.
 // What the plugin of a document says it shows now (Asset_Document.shown).
 asset_document_show_say :: proc(d:^Asset_Document,text:string) {base.text_set(d.shown[:],text)}
 
@@ -257,36 +248,6 @@ asset_document_title :: proc(s:^Session,d:^Asset_Document) -> string {
     return asset_name(path)
 }
 
-asset_document_dirty :: proc(s:^Session,d:^Asset_Document) -> bool {
-    for path in asset_document_paths(s,d) {
-        for held in assets_unsaved(s) {
-            if held.path==path {return true}
-        }
-    }
-    return false
-}
-
-// What Save writes of a document: its file, and the others its steps
-// changed (the texts a .ui edits in their languages), by registry path.
-asset_document_paths :: proc(s:^Session,d:^Asset_Document) -> []string {
-    paths:=make([dynamic]string,context.temp_allocator)
-    path:=asset_document_path(s,d)
-    if path=="" {return nil}
-    append(&paths,path)
-    if s.app==nil || s.app.assets==nil {return paths[:]}
-    r:=&s.app.assets.registry
-    add :: proc(paths:^[dynamic]string,r:^asset.Registry,files:[]history.Edit_File) {
-        for &file in files {
-            relative,ok:=asset.registry_relative(r,file.path)
-            if !ok || slice.contains(paths[:],relative) {continue}
-            append(paths,relative)
-        }
-    }
-    for &step in d.history.steps {add(&paths,r,step.files[:])}
-    add(&paths,r,d.history.files[:])
-    return paths[:]
-}
-
 asset_document_icon :: proc(s:^Session,d:^Asset_Document) -> ui.Icon {
     if d.id=={} {return .Material}
     icon,_:=asset_icon(s,d.kind)
@@ -308,18 +269,6 @@ asset_document_kinds :: proc(s:^Session,allocator:=context.temp_allocator) -> []
         append(&kinds,..provider.kinds[:clamp(provider.count,0,len(provider.kinds))])
     }
     return kinds[:]
-}
-
-// The actions of the Edit menu the documents of a kind take.
-asset_document_actions :: proc(s:^Session,kind:asset.Fourcc) -> (actions:bit_set[Action]) {
-    if s.info==nil {return}
-    found:[PROVIDER_CAPACITY]Asset_Document_Provider
-    for &provider in found[:provided_all(s,found[:])] {
-        for i in 0..<clamp(provider.count,0,len(provider.kinds)) {
-            if provider.kinds[i]==kind {actions|=provider.actions}
-        }
-    }
-    return
 }
 
 // Whether the documents of a kind show a hierarchy their plugin builds.
@@ -411,11 +360,11 @@ asset_drop_take :: proc(s:^Session,kind:asset.Fourcc) -> (drop:Asset_Drop,ok:boo
 }
 
 // The document in front when another asset of its kind may take its tab: it
-// has nothing unsaved and no history.
+// has no history.
 @(private)
 asset_document_reusable :: proc(s:^Session,kind:asset.Fourcc) -> ^Asset_Document {
     front:=asset_document_active(s)
-    if front==nil || front.kind!=kind || asset_document_dirty(s,front) {return nil}
+    if front==nil || front.kind!=kind {return nil}
     if front.history.open || len(front.history.steps)>0 {return nil}
     return front
 }
@@ -523,43 +472,9 @@ asset_document_activate :: proc(s:^Session,index:int) {
     material_document_follow(s)
 }
 
-// Closes a document, asking first about its asset when it is unsaved and no
-// open scene uses it: what a scene uses stays unsaved.
+// Closes a document. The one before it comes to the front, or the scene
+// after the last.
 asset_document_close :: proc(s:^Session,index:int) {
-    if index<0 || index>=len(s.asset_documents) {return}
-    d:=&s.asset_documents[index]
-    if asset_document_dirty(s,d) && !asset_document_used(s,d) {
-        s.asset_request=index
-        path:=[1]string{asset_document_path(s,d)}
-        confirm_open(s,.Asset_Close,path[:])
-        return
-    }
-    asset_document_close_now(s,index)
-}
-
-// Whether a document of a scene shows the unsaved asset of a document.
-@(private)
-asset_document_used :: proc(s:^Session,d:^Asset_Document) -> bool {
-    path:=asset_document_path(s,d)
-    used:=make([dynamic]string,context.temp_allocator)
-    for index in 0..<max(len(s.documents),1) {
-        world:=s.edit_world
-        if index!=s.active_document {
-            if index>=len(s.documents) || s.documents[index].world==nil {continue}
-            world=s.documents[index].world
-        }
-        if world==nil {continue}
-        world_unsaved_assets(s,{data=world,info=s.info},&used)
-        for held in used {
-            if held==path {return true}
-        }
-    }
-    return false
-}
-
-// Closes a document without asking. The one before it comes to the front,
-// or the scene after the last.
-asset_document_close_now :: proc(s:^Session,index:int) {
     if index<0 || index>=len(s.asset_documents) {return}
     shown:=s.asset_shown
     if shown==index+1 {asset_document_activate(s,-1)}
@@ -581,19 +496,6 @@ asset_documents_free :: proc(s:^Session) {
     s.asset_documents,s.asset_shown=nil,0
 }
 
-// Writes the unsaved asset of the document in front.
-asset_document_save :: proc(s:^Session) {
-    d:=asset_document_active(s)
-    if d==nil {return}
-    asset_history_end(&d.history)
-    paths:=asset_document_paths(s,d)
-    if len(paths)==0 {return}
-    switch saved,ok:=assets_save(s,paths);{
-    case !ok:     notify(s,fmt.tprintf("%s could not be saved; it stays unsaved",asset_document_title(s,d)))
-    case saved>0: notify(s,fmt.tprintf("Saved %s",asset_document_title(s,d)))
-    }
-}
-
 // Documents whose asset left the registry close: deleted or moved away.
 @(private)
 asset_documents_prune :: proc(s:^Session) {
@@ -601,7 +503,7 @@ asset_documents_prune :: proc(s:^Session) {
     for i:=len(s.asset_documents)-1;i>=0;i-=1 {
         d:=&s.asset_documents[i]
         if d.id=={} {continue}
-        if _,found:=asset.registry_find(&s.app.assets.registry,d.id);!found {asset_document_close_now(s,i)}
+        if _,found:=asset.registry_find(&s.app.assets.registry,d.id);!found {asset_document_close(s,i)}
     }
 }
 
@@ -614,7 +516,7 @@ asset_workspace_rect :: proc(g:^Editor_Ui) -> ui.Rect {
     ctx:=g.ctx
     x0:f32
     if r:=g.rects.left;r.w>0 && r.h>0 {x0=r.x+r.w-asset_workspace_under(g)}
-    y0:=ctx.theme.bar_height+toolbar_height(g)
+    y0:=ui.metric(ctx,"bar_height")+toolbar_height(g)
     return {x0,y0,max(ctx.size.x-x0,120),max(ctx.size.y-y0,120)}
 }
 
@@ -655,13 +557,13 @@ asset_workspace_details :: proc(s:^Session) -> (document,details:ui.Panel_Float,
         dock_edge(s,width,r.y,room)
         return document,details,room
     }
-    radius:=ctx.theme.radius_panel
+    radius:=ui.metric(ctx,"radius_panel")
     details={width=ui.fixed(width_of(RIGHT_WIDTH,ctx.size.x)),height=ui.FIT,anchor=.Top_Right,pivot=.Top_Right,offset={-DETAILS_MARGIN,r.y+DETAILS_MARGIN},docked=true,corners={radius,radius,radius,radius}}
     return document,details,max(room-2*DETAILS_MARGIN,120)
 }
 
-// The room the toolbar leaves to the document in front, after save, undo
-// and redo, as the last frame laid it out: a plugin builds what plays there
+// The room the toolbar leaves to the document in front, after undo and
+// redo, as the last frame laid it out: a plugin builds what plays there
 // in a box that floats over it.
 asset_toolbar :: proc(g:^Editor_Ui) -> (rect:ui.Rect,ok:bool) {
     return ui.widget_rect(g.ctx,shell_id(g,"asset_toolbar"))
@@ -675,22 +577,21 @@ asset_toolbar_whole :: proc(g:^Editor_Ui) -> (rect:ui.Rect,ok:bool) {
 
 ASSET_HEADING :: f32(33)
 
-// The row of the heading of a part of a document, as the prototype draws it:
+// The row of the heading of a part of a document:
 // the caller fills it, and asset_heading_end draws the line under it.
 asset_heading_box :: proc(ctx:^ui.Context,id:ui.Id=0) -> ui.Box {
-    return {id=id,width=ui.GROW,height=ui.fixed(ASSET_HEADING-1),padding={12,0,12,0},gap=8,align_y=.Center,fill=ctx.theme.card}
+    return {id=id,width=ui.GROW,height=ui.fixed(ASSET_HEADING-1),padding={12,0,12,0},gap=8,align_y=.Center,fill=ui.tone(ctx,"card")}
 }
 asset_heading_end :: proc(ctx:^ui.Context) {
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ctx.theme.border}) {}
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(1),fill=ui.tone(ctx,"border")}) {}
 }
 
 // A heading with its title and, at the right, a note.
 asset_heading :: proc(ctx:^ui.Context,title:string,note:="") {
-    th:=&ctx.theme
     if ui.box(ctx,asset_heading_box(ctx)) {
-        ui.label(ctx,title,th.font,th.text,font=ui.FONT_MEDIUM)
+        ui.label(ctx,title,ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_MEDIUM)
         ui.spacer(ctx)
-        if note!="" {ui.label(ctx,note,th.font_label,th.text_muted)}
+        if note!="" {ui.label(ctx,note,ui.metric(ctx,"font_label"),ui.tone(ctx,"text_muted"))}
     }
     asset_heading_end(ctx)
 }

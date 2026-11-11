@@ -27,7 +27,7 @@ history_step :: proc(f:^Play_Test,r:^Run,held:bool) {
 // Read, not written: a write between frames is an edit.
 @(private="file")
 history_x :: proc(f:^Play_Test,r:^Run) -> f32 {
-    transform,_:=core.get(core.read(&(cast(^Play_Test_World)r.world).transforms),f.original)
+    transform,_:=core.get(&(cast(^Play_Test_World)r.world).transforms,f.original)
     return transform.position.x
 }
 
@@ -96,7 +96,7 @@ a_frame_changed_from_outside_its_input_while_it_plays_does_not_match_when_played
     r.history.interval=100
     history_step(f,r,false)
     // An edit between frames of a game that plays is not in what the frames gave the World.
-    core.get(&(cast(^Play_Test_World)r.world).transforms,f.original).position.y=3
+    core.edit(&(cast(^Play_Test_World)r.world).transforms,f.original).position.y=3
     history_step(f,r,false)
     play_pause(s,true)
     seek:=history_seek(s,r,history_frame_for(r.history,12))
@@ -176,7 +176,7 @@ an_edit_where_a_run_went_back_is_kept_as_a_keyframe_and_drops_the_frames_after_i
     testing.expect_value(t,r.history.count,keys-1) // the keyframe of tick 9 led past the frame now played
     testing.expect(t,history_seek(s,r,history_frame_for(r.history,6)).ok)
     edited:=history_x(f,r)+100
-    core.get(&w.transforms,f.original).position.x=edited
+    core.edit(&w.transforms,f.original).position.x=edited
     history_step(f,r,false)
     _,newest,_,_,_:=history_span(r.history)
     testing.expect_value(t,newest,u64(7))
@@ -237,14 +237,14 @@ a_paused_play_resumes_from_its_newest_frame_or_from_where_it_went_back :: proc(t
     newest:=history_x(f,r)
     testing.expect(t,history_seek(s,r,history_frame_for(r.history,4)).ok)
     // Resume goes back to the newest frame, and an edit made where it went back is dropped.
-    core.get(&w.transforms,f.original).position.x+=100
+    core.edit(&w.transforms,f.original).position.x+=100
     play_pause(s,false)
     testing.expect(t,s.mode==.Play && w.time.tick==10 && history_x(f,r)==newest)
     play_pause(s,true)
     testing.expect(t,history_seek(s,r,history_frame_for(r.history,4)).ok)
     at_four:=history_x(f,r)
     // From here: the frames after it go, the edit stays and the next frame starts from it.
-    core.get(&w.transforms,f.original).position.x+=100
+    core.edit(&w.transforms,f.original).position.x+=100
     play_pause(s,false,here=true)
     _,last,_,_,_:=history_span(r.history)
     testing.expect(t,s.mode==.Play && w.time.tick==4 && last==4 && history_x(f,r)==at_four+100)
@@ -319,7 +319,7 @@ space_plays_and_stops_the_strip_of_the_past_unless_a_text_field_takes_it :: proc
     settings:=PLAY_HISTORY_DEFAULT
     s.play_history=&settings
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{draw_user=draw_user}))
+    testing.expect(t,test_ui_init(&ctx,{draw_user=draw_user}))
     defer ui.context_destroy(&ctx)
     f.gui.ctx=&ctx
     defer f.gui.ctx=nil

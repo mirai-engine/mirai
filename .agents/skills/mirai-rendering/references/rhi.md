@@ -11,16 +11,19 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   invalid. A destroyed handle returns `nil`; destruction is deferred until the GPU has finished
   the frames that could use the resource.
 - **Fixed capacities** (`Device_Desc.capacities`, `DEFAULT_DEVICE_CAPACITIES` by default),
-  allocated once with `Device_Desc.allocator`. Creating one more, or a `frame_alloc` with no room
-  in the ring, returns the zero handle, leaves the message in `device_error` and adds to
-  `device_stats().exhausted`. The live counts of `device_stats` are those the user made: what the
-  device does for itself (rings, scratch, upload staging, structure blocks, the table default)
+  allocated once with `Device_Desc.allocator`. Creating one more returns the zero handle, leaves
+  the message in `device_error` and adds to `device_stats().exhausted`. The live counts of
+  `device_stats` are those the user made: what the device does for itself (rings and what goes
+  past them, scratch, upload staging, structure blocks, the table default)
   does not count.
 - **Device memory.** On Vulkan, buffers and textures take ranges of blocks of memory, per memory
   type (`rhi/vulkan_memory.odin`), with the range allocator of the acceleration structures
   (`rhi/arena.odin`). Only a resource too large for a block, or one the driver prefers alone,
   takes an allocation of the driver, and their count never passes `maxMemoryAllocationCount`; a
-  refusal says in `device_error` whether the memory or that count ran out.
+  refusal says in `device_error` whether the memory or that count ran out. `GPU` memory is
+  device memory, never the small heap the CPU sees of a discrete GPU (BAR); with device memory
+  full a resource goes to system memory instead of being refused, counted in
+  `device_stats().host_memory` and reported in the renderer's `Stats.problem`.
 - **New contents.** A new buffer reads zero on both backends; the texels of a new texture are
   undefined until something writes them (`Buffer_Desc`, `Texture_Desc`). On Vulkan a range held
   another resource before, so the device zeroes a buffer of `GPU` memory with a fill in the next
@@ -33,7 +36,9 @@ compile time with build tags, without virtual dispatch. `render` does not see na
 
 - **Selection.** Discrete, integrated, virtual GPU and finally CPU. `Device_Desc.preferred_device`
   selects by part of the name; `MIRAI_GPU=<text>` overrides it. Without a GPU, Linux can use
-  lavapipe. The selection does not look at presentation support: the surface is created later.
+  lavapipe. The window comes in `Device_Desc.surface` and is made with the device: on Vulkan
+  its surface exists before the selection, which passes over every device without a
+  graphics+compute queue that presents to it, the preferred one included.
 - **Messages.** The device does not print: errors and validation reach `Device_Desc.on_message`;
   `message_print` writes them to stderr.
 - **Per-device tables.** Vulkan calls through the tables loaded per device (`Device.ivk`,
@@ -60,6 +65,16 @@ compile time with build tags, without virtual dispatch. `render` does not see na
   with an error. `device_failure` returns it typed: `Lost` (the API reported it: a watchdog reset,
   an access fault, a removed GPU) or `Hung` (the work did not finish). With
   `VK_EXT_device_fault` the text carries what the driver says about the fault.
+- **Where the GPU stopped.** The text of a loss or a hang names the labels open, the section
+  (`cmd_timestamp`) and the pipeline where the GPU stopped (`Features.stop_place`), by the name
+  the pipeline keeps a copy of (a program's stage names its program). Marks go per pass, section
+  and pipeline, not per draw: the renderer draws tens of indirect draws a frame. Vulkan writes,
+  with `VK_AMD_buffer_marker` at the bottom of the pipe, the serial of the frame into a word of its
+  own for each label, section and pipeline bind, in a host-visible buffer
+  of the frame slot (`rhi/vulkan_marks.odin`): the first word of the oldest frame without it is
+  where the GPU stopped, and with every frame done, the labels the last one left open. Metal makes
+  frames with `MTLCommandBufferErrorOptionEncoderExecutionStatus` and names the encoder that
+  faulted by its label and its debug groups.
 - **Afterwards nothing is waited on or submitted.** `frame_begin`, `immediate_end`,
   `device_wait_idle`, uploads and reads return `false` at once, without aborting; destroying is
   still allowed.
@@ -80,14 +95,21 @@ compile time with build tags, without virtual dispatch. `render` does not see na
 
 - Two frames in flight (`MAX_FRAMES_IN_FLIGHT`); the CPU does not wait for the GPU on every
   frame. Each frame has an upload ring for constants and dynamic data, which a GPU copy
-  (`cmd_copy_buffer`) can write before the shaders read it.
+  (`cmd_copy_buffer`) can write before the shaders read it. A `frame_alloc` past the room of the
+  ring takes a buffer of its own, released with the frame, so an upload of any size (a load, a
+  table that grew) reaches the GPU in the frame that asks for it; only a size past
+  `max_storage_range`, or more of them in a frame than `MAX_FRAME_OVERSIZED`, is refused and adds
+  to `device_stats().exhausted`.
 - **Blocking transactions** (immediate uploads, initial BLAS builds, readback and capture): only
   between frames.
 - **Presentation on Metal.** A thread acquires at most one drawable ahead. With VSync,
   `frame_begin` waits for the delivery; without VSync, a frame with no free image renders
   offscreen (`swapchain_texture` zero) and keeps its LDR for capture.
 - **Vulkan swapchain.** Without `VK_EXT_swapchain_maintenance1`: the presentation semaphores are
-  recycled after `vkDeviceWaitIdle`.
+  recycled after `vkDeviceWaitIdle`. A surface the platform reports lost (a display change, a
+  driver reset) skips that frame; the next one makes surface and swapchain again from the window
+  through `Surface_Desc.vulkan_create`. After `VK_SURFACE_TRIES` frames that cannot, the window
+  stays without images and `device_error` says so; the device keeps working.
 
 ## Paced presentation
 
@@ -158,10 +180,16 @@ For a renderer that generates frames (`rhi/present.odin`):
 
 ## Synchronization and commands
 
-- **Hazards.** Each resource keeps its last access; barriers are derived from the bindings before
-  each dispatch and `cmd_barrier_*` emits only the necessary ones. Inside a render pass there are
-  no barriers: the RHI validates that what is read was declared earlier and reports an error
-  instead of a silent hazard. Metal tracks hazards by itself.
+- **Hazards.** Each resource keeps its last access; barriers are derived from what each dispatch
+  and draw binds (and its index and indirect buffers) and only the necessary ones go out. A render
+  pass holds no barriers, so Vulkan records it and sends it at `cmd_end_render_pass`, after the
+  barriers of everything its draws used; a resource it writes takes one. A texture keeps that
+  state per mip, its layers as one: a binding or a copy of one mip touches that mip alone, and a
+  run of mips in one state takes one barrier, so a texture used whole takes one. A target is one
+  mip of one layer (`Color_Attachment.mip`, `layer`); a draw may sample the other mips of its
+  target, and sampling the mip it draws into, or two mips of it in one pass, is an error.
+  `cmd_barrier_*` declares what nothing binds: a buffer the host reads, a texture sampled through
+  the texture table or by another process. Metal tracks hazards by itself.
 - **Clip space.** Y up and depth in [0,1] on both backends; the renderer uses reversed Z.
 - `cmd_fill_buffer` repeats a byte; a word of another value is written with `buffer_upload`
   before the frame, from a shader or by copying a buffer that has it (the GPU-counted indirect
@@ -185,8 +213,13 @@ For a renderer that generates frames (`rhi/present.odin`):
 
 - Vulkan: `VK_KHR_acceleration_structure` + `VK_KHR_ray_query`; Metal: `MTLAccelerationStructure`
   instanced with user IDs.
-- It is enabled if the device supports it and the self-test at start (`render/selftest.odin`)
-  gives the expected hits; otherwise, the software BVH. `MIRAI_RT=software` forces it.
+- Vulkan: it is enabled if the device supports it, the self-test at start (`render/selftest.odin`)
+  gives the expected hits and its pipelines are made; otherwise, the software BVH, whose pipelines
+  are made only then ([tracer in use](gi.md#bvh-and-acceleration-structures)).
+  `MIRAI_RT=software` forces the software BVH.
+- Metal traces rays by hardware alone: its shaders have no software tracer, `MIRAI_RT` is not read,
+  and a device without ray tracing, a failed self-test or a missing `_hw` pipeline is an error of
+  `renderer_create` that says which, never a switch of tracer.
 - **TLAS instances.** `cmd_build_tlas` reads the instances from a GPU buffer in a neutral layout
   (`Tlas_Instance`: row-wise transform, the BLAS `accel_id`, mask and flags, own index), which the
   caller writes with the CPU or with a compute. An RHI compute (`tlas_instances.comp.slang`, a
@@ -206,19 +239,37 @@ For a renderer that generates frames (`rhi/present.odin`):
   `Stats.problem`, which `engine.status` (`renderer_problem`) and `engine.diagnostics`
   (`renderer`) show.
 
+## Shader constants
+
+- A shader names boolean constants (`Shader_Code.constants`, by id; up to `MAX_SHADER_CONSTANTS`)
+  and a pipeline says which are true (`Shader_Constants` of `Compute_Pipeline_Desc.constants`,
+  `Graphics_Pipeline_Desc.vertex_constants` and `fragment_constants`); the others are false. The
+  driver compiles the code with them folded: one code, a pipeline per combination.
+- Vulkan gives them as specialization constants (`VkSpecializationInfo`, each a `VkBool32` at
+  constant id = its id). Metal, as function constants: SPIRV-Cross emits each specialization
+  constant of the SPIR-V as `[[function_constant(id)]]` and the function is made with
+  `MTLFunctionConstantValues`; the library of a source is compiled once and each set of constants
+  is a function of it.
+- A constant the shader does not declare makes no pipeline: the error names both.
+  `shader_constant(code, name)` finds one by name, for the stages found by name.
+
 ## Pipeline cache
 
 - Vulkan keeps in `Device_Desc.pipeline_cache_path` one driver blob per pipeline
-  (`rhi/pipeline_store.odin`), under a key of the code and state it compiles, never its name: each
-  pipeline is created with a `VkPipelineCache` of its own, because a driver cache returns every
-  entry it was ever given and grows without end. Blobs are stored as chunks cut by their content,
-  each once: a driver repeats in every blob what they all share (NVIDIA a dictionary of megabytes).
+  (`rhi/pipeline_store.odin`), under a key of the code, constants and state it compiles, never its
+  name: each pipeline is created with a `VkPipelineCache` of its own, because a driver cache
+  returns every entry it was ever given and grows without end. Blobs are stored as chunks cut by
+  their content, each once: a driver repeats in every blob what they all share (NVIDIA a
+  dictionary of megabytes).
 - The file belongs to one device, driver and cache UUID, and is read whole or not at all: another
   device, another version or a file that does not read back exactly is ignored and replaced.
-- Destroying the device rewrites it in one rename: the blobs this run used, the last used first,
-  then those of earlier runs that are still young; a pipeline no run asks for (its shader changed)
-  ages out, and nothing past `PIPELINE_STORE_BYTES` goes in. Several processes share the file and
-  the last to end writes it.
+- It is rewritten in one rename each time the run added a part of its limit
+  (`PIPELINE_STORE_SAVE_PARTS`), from the thread that compiled, and when the device is destroyed:
+  a run that crashes, is killed or loses its device keeps what it compiled. A write holds the
+  blobs this run used, the last used first, then those of earlier runs that are still young; a
+  pipeline no run asks for (its shader changed) ages out, and nothing past `PIPELINE_STORE_BYTES`
+  goes in. Several processes share the file: a write first takes in the entries another process
+  wrote there since this one read or wrote it.
 - Reading it removes the staging files of writers that ended (`serial.file_remove_stale`); that
   of a process that runs stays. `host` uses `pipelines.bin` in the
   [project user folder](../../mirai-core/references/host.md#the-application).

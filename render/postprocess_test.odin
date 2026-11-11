@@ -6,7 +6,7 @@ import "mirai:rhi"
 
 @(test)
 postprocess_gpu_order_stage_filter_and_hdr_ldr_precision :: proc(t:^testing.T) {
-    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false;settings.reflections=false;settings.occlusion_culling=false;settings.trace_mode=.Software
+    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false;settings.trace_mode=.Software
     f:Fixture
     if !fixture_init(t,&f,8,8,settings,hardware_rt=false) {return}
     defer fixture_destroy(&f)
@@ -75,7 +75,7 @@ postprocess_gpu_order_stage_filter_and_hdr_ldr_precision :: proc(t:^testing.T) {
 // spreads an edge between black and white and leaves what is far from it.
 @(test)
 postprocess_reads_the_image_around_its_pixel :: proc(t:^testing.T) {
-    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false;settings.reflections=false;settings.occlusion_culling=false;settings.trace_mode=.Software
+    settings:=DEFAULT_SETTINGS;settings.gi_enabled=false;settings.taa=false;settings.trace_mode=.Software
     f:Fixture
     if !fixture_init(t,&f,16,8,settings,hardware_rt=false) {return}
     defer fixture_destroy(&f)

@@ -298,12 +298,15 @@ draw_shape :: proc(ctx:^Context,r:Rect,style:Shape_Style) {
     if r.w<=0 || r.h<=0 || style.fill[3]==0 && style.fill2[3]==0 && style.stroke[3]==0 {return}
     radius:=style.radii
     for &v in radius {v=clamp(v,0,min(r.w,r.h)*0.5)}
+    // A border is whole device pixels wide, as the edges of the boxes are.
+    stroke:=style.stroke_width
+    if stroke>0 {stroke=max(math.round(stroke*ctx.draw.ppu),1)*ctx.draw.pixel}
     shape:=Shape{
         bounds={r.x,r.y,r.w,r.h},radii=radius,
         fill=[4]f32{f32(style.fill[0]),f32(style.fill[1]),f32(style.fill[2]),f32(style.fill[3])}/255,
         fill2=[4]f32{f32(style.fill2[0]),f32(style.fill2[1]),f32(style.fill2[2]),f32(style.fill2[3])}/255,
         stroke=[4]f32{f32(style.stroke[0]),f32(style.stroke[1]),f32(style.stroke[2]),f32(style.stroke[3])}/255,
-        params={clamp(style.stroke_width,0,min(r.w,r.h)*0.5),0,0,f32(style.gradient)},
+        params={clamp(stroke,0,min(r.w,r.h)*0.5),0,0,f32(style.gradient)},
     }
     shape_emit(ctx,shape,ctx.draw.pixel)
 }
@@ -514,7 +517,8 @@ draw_nine_slice :: proc(ctx:^Context,rect:Rect,image:Quad,border,border_uv:[4]f3
 // Draws one run of text with its top-left corner at (x, y); a newline starts
 // the next line TEXT_LINE sizes below. The pen advances in layout units with
 // the kerning of the font; the baseline snaps to device pixels and each glyph
-// to the nearest phase its face keeps. A glyph the atlas does not have yet is
+// to the nearest phase its face keeps. A glyph f lacks is drawn from the face
+// of the font that has it, at the same size. A glyph the atlas does not have yet is
 // asked for: the owner of the font rasterizes it then (Context_Desc.font_ask)
 // or before the next frame, and until then it is left out.
 draw_text :: proc(ctx:^Context,text:string,x,y,size:f32,color:Color,f:int=0) {
@@ -522,14 +526,15 @@ draw_text :: proc(ctx:^Context,text:string,x,y,size:f32,color:Color,f:int=0) {
     if !font.ready || size<=0 || f<0 || f>=font.font_count || color[3]==0 {return}
     d:=&ctx.draw
     ppu:=d.ppu
-    face:=font_face(font,f,size*ppu)
-    if face==nil {return}
-    // A size no face is close to is asked for: until it comes, the nearest one is scaled.
-    if pixels:=size*ppu;abs(face.pixel_size-pixels)>max(1,pixels*0.05) {font_face_ask(font,f,pixels)}
-    face_index:=mem.ptr_sub(face,&font.faces[0])
-    scale:=size*ppu/face.pixel_size // 1 when the face matches the size
-    // A scaled face is resampled anyway: its glyphs only snap to whole pixels.
-    exact:=abs(scale-1)<1e-3
+    pixels:=size*ppu
+    // The faces of f and of the font that draws what f lacks (font_glyph), taken
+    // when a glyph needs them.
+    faces:[2]^Face
+    face_from:=-1
+    face:^Face
+    face_index:int
+    scale:f32
+    exact:bool
     metrics:=&font.metrics[f]
     pen:=text_pen(font,size,f)
     at:=x
@@ -539,6 +544,18 @@ draw_text :: proc(ctx:^Context,text:string,x,y,size:f32,color:Color,f:int=0) {
         kern,advance:=text_pen_step(&pen,character)
         if character=='\n' {at=x;baseline+=math.round(size*TEXT_LINE*ppu);d.shear_base=baseline/ppu;continue}
         at+=kern
+        if pen.from!=face_from {
+            other:=int(pen.from!=f)
+            if faces[other]==nil {faces[other]=font_face(font,pen.from,pixels)}
+            face,face_from=faces[other],pen.from
+            if face==nil {return}
+            // A size no face is close to is asked for: until it comes, the nearest one is scaled.
+            if abs(face.pixel_size-pixels)>max(1,pixels*0.05) {font_face_ask(font,face_from,pixels)}
+            face_index=mem.ptr_sub(face,&font.faces[0])
+            scale=pixels/face.pixel_size // 1 when the face matches the size
+            // A scaled face is resampled anyway: its glyphs only snap to whole pixels.
+            exact=abs(scale-1)<1e-3
+        }
         if index:=pen.previous;index>=0 {
             glyph:=&face.glyphs[index]
             if glyph.phases==0 {

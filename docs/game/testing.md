@@ -1,7 +1,7 @@
 ---
 name: testing
 description: Verify a Mirai game cheaply - scenario files and mirai play test, play.explore,
-  play.qa.start and play.qa.report, the playtester agent, play.observe, play.get, captures.
+  play.qa.start and play.qa.report, the playtester agent, play.observe, play.check, captures.
 ---
 
 # Testing a game
@@ -21,10 +21,24 @@ Prefer the first that answers the question:
    goal ([playtester.md](testing/playtester.md)).
 5. One look at the state: [Look](#look) and [playtester.md](testing/playtester.md#inspect).
 6. Menus and HUD: [UI and menus](#ui-and-menus).
+7. A rule of one step, in milliseconds and without the editor: [Tests of steps](#tests-of-steps).
+
+## Tests of steps
+
+A `@(test)` in a `_test.odin` of the game builds a world of the tables the step reads and writes,
+runs the step and checks them; `mirai test game` (or `mirai test` inside the project) runs it.
+
+- The world is a struct marked `@(test_world)` at the top of the test file, which starts with
+  `using world:Test_World` and has a `core.Table(T)` per component and the value of each storage:
+  `mirai test` writes what the attributes of its types say into `worlds_gen_test.odin` of the
+  package (not for git), `test_world_init(t,&w)` makes the world and `test_world_destroy(&w)`
+  frees it.
+- A path in a test is relative to the root of the engine, not of the project.
 
 ## Look
 
-- `play.get` reads one field of one entity; `play.check` tests conditions on the game now.
+- `play.check` tests conditions on the game now and answers the value each one read: one field
+  of one entity is a condition with no `compare`.
 
 ## Play by hand
 

@@ -9,6 +9,7 @@ import math "mirai:std/math"
 @(private)
 contact_mix_material :: proc "contextless" (w:^World,contact:^Contact) {
     a,b:=&w.shapes[contact.shape_a],&w.shapes[contact.shape_b]
+    stamp(w,contact)
     contact.friction=cmath.sqrt(a.friction*b.friction)
     contact.restitution=max(a.restitution,b.restitution)
     contact.rolling_resistance=max(a.rolling_resistance,b.rolling_resistance)
@@ -46,13 +47,14 @@ contact_create :: proc(w:^World,shape_a,shape_b:i32) -> i32 {
         } else {
             w.stats.manifold_capacity_exhausted+=1
         }
-        if contact.extra>=0 {w.blocks[contact.extra]={}}
+        if contact.extra>=0 {stamp(w,.Blocks,contact.extra);w.blocks[contact.extra]={}}
     }
     for body_index,side in ([2]i32{contact.body_a,contact.body_b}) {
         body:=&w.bodies[body_index]
+        stamp(w,body)
         key:=index<<1|i32(side)
         contact.edges[side]={-1,body.contact_list}
-        if body.contact_list>=0 {w.contacts[body.contact_list>>1].edges[body.contact_list&1].prev=key}
+        if body.contact_list>=0 {stamp(w,.Contacts,body.contact_list>>1);w.contacts[body.contact_list>>1].edges[body.contact_list&1].prev=key}
         body.contact_list=key
         body.contact_count+=1
     }
@@ -72,15 +74,18 @@ contact_destroy :: proc(w:^World,index:i32,wake:=true) {
     }
     for body_index,side in ([2]i32{contact.body_a,contact.body_b}) {
         body:=&w.bodies[body_index]
+        stamp(w,body)
         edge:=contact.edges[side]
-        if edge.prev>=0 {w.contacts[edge.prev>>1].edges[edge.prev&1].next=edge.next} else {body.contact_list=edge.next}
-        if edge.next>=0 {w.contacts[edge.next>>1].edges[edge.next&1].prev=edge.prev}
+        if edge.prev>=0 {stamp(w,.Contacts,edge.prev>>1);w.contacts[edge.prev>>1].edges[edge.prev&1].next=edge.next} else {body.contact_list=edge.next}
+        if edge.next>=0 {stamp(w,.Contacts,edge.next>>1);w.contacts[edge.next>>1].edges[edge.next&1].prev=edge.prev}
         body.contact_count-=1
     }
     if contact.extra>=0 {
+        stamp(w,.Blocks,contact.extra)
         w.blocks[contact.extra].next_free=w.block_free
         w.block_free=contact.extra
     }
+    stamp(w,contact)
     contact^={shape_a=w.contact_free,shape_b=-1,extra=-1}
     w.contact_free=index
     w.contact_count-=1
@@ -175,9 +180,9 @@ pairs_task :: proc(data:rawptr,first,last,worker:int) #no_bounds_check {
 pairs_update :: proc(w:^World) {
     st:=&w.step
     moved:=0
-    for i in 0..<w.shape_high {
-        shape:=&w.shapes[i]
-        if shape.generation&1!=0 && .Moved in shape.flags {st.moved[moved]=i;moved+=1}
+    for i:=w.moved_head;i>=0;i=w.shapes[i].moved_next {
+        st.moved[moved]=i
+        moved+=1
     }
     if moved==0 {return}
     st.pair_count=0
@@ -196,7 +201,8 @@ pairs_update :: proc(w:^World) {
     }
     // Pairs that did not fit are searched again at the next step.
     if !overflow {
-        for i in st.moved[:moved] {w.shapes[i].flags-={.Moved}}
+        for i in st.moved[:moved] {stamp(w,.Shapes,i);w.shapes[i].flags-={.Moved}}
+        w.moved_head=-1
     }
 }
 
@@ -252,11 +258,13 @@ shapes_collide :: proc(w:^World,a,b:^Shape,xf:Transform,speculative:f32,out:^[1+
 manifold_state_update :: proc "contextless" (state:^Manifold_State,local:^Local_Manifold) #no_bounds_check {
     old:=state^
     state.count=local.count
+    state.normal=local.count>0?local.normal:{}
     used,matched:[MANIFOLD_MAX_POINTS]bool
     for i in 0..<int(local.count) {
         id:=local.points[i].id
         state.ids[i]=id
         state.points[i]=local.points[i].point
+        state.separations[i]=local.points[i].separation
         state.normal_impulses[i]=0
         for j in 0..<int(old.count) {
             if old.ids[j]==id && !used[j] {
@@ -296,11 +304,33 @@ manifold_to_world :: proc "contextless" (out:^Manifold,local:^Local_Manifold,xf:
     }
 }
 
+@(private) CARRY_DISTANCE :: 0.001 // m that B may move in the frame of A before its manifolds are collided again
+@(private) CARRY_COS :: 0.9998477 // cosine of half the 2 degrees that B may turn in the frame of A
+
+// The manifolds of the last narrow phase with B at `relative` in the frame of A: each point keeps its place on
+// A and its place on B moves with B, so the separation follows the motion along the normal.
+@(private)
+manifolds_carry :: proc "contextless" (w:^World,contact:^Contact,relative:Transform,out:^[1+EXTRA_MANIFOLDS]Local_Manifold,count:int) #no_bounds_check {
+    move:=xf_mul(relative,xf_inv(contact.relative))
+    for m in 0..<count {
+        state:=m==0?&contact.manifold:&w.blocks[contact.extra].manifolds[m-1]
+        local:=&out[m]
+        local.normal,local.count=state.normal,state.count
+        for i in 0..<int(state.count) {
+            half:=0.5*state.separations[i]*state.normal
+            on_a,on_b:=state.points[i]-half,xf_point(move,state.points[i]+half)
+            local.points[i]={0.5*(on_a+on_b),dot(on_b-on_a,state.normal),state.ids[i]}
+        }
+    }
+}
+
 // Narrow phase of one contact. Writes only to the contact and its manifolds, so contacts update in parallel.
 @(private)
 contact_update :: proc(w:^World,index:i32) #no_bounds_check {
     contact:=&w.contacts[index]
     a,b:=&w.shapes[contact.shape_a],&w.shapes[contact.shape_b]
+    stamp(w,contact)
+    if contact.extra>=0 {stamp(w,.Blocks,contact.extra)}
     contact.flags-={.Started,.Stopped,.Disjoint}
     was_touching:=.Touching in contact.flags
     if !math.aabb_overlaps(a.fat,b.fat) {
@@ -315,7 +345,21 @@ contact_update :: proc(w:^World,index:i32) #no_bounds_check {
     locals:[1+EXTRA_MANIFOLDS]Local_Manifold=---
     speculative:f32=SPECULATIVE_DISTANCE
     if .Character in (body_a.flags+body_b.flags) {speculative+=length(body_b.linear_velocity-body_a.linear_velocity)*w.step.dt}
-    count:=shapes_collide(w,a,b,xf_inv_mul(xf_a,xf_b),overlap?0:speculative,&locals,&contact.sat)
+    relative:=xf_inv_mul(xf_a,xf_b)
+    // Jolt's body pair cache: a pair that barely moved since its last narrow phase keeps its manifolds,
+    // moved with B. What the narrow phase decides beyond geometry (overlaps, one-way shapes, characters, twins
+    // and cuts) always collides.
+    carry:=!overlap && w.cut_count==0 && (a.flags+b.flags)&{.One_Way,.Twin}=={} && .Character not_in (body_a.flags+body_b.flags)
+    count:int
+    if carry && length2(relative.p-contact.relative.p)<=CARRY_DISTANCE*CARRY_DISTANCE && abs(q_dot(relative.q,contact.relative.q))>=CARRY_COS {
+        count=int(contact.manifold_count)
+        manifolds_carry(w,contact,relative,&locals,count)
+        contact.flags+={.Carried}
+    } else {
+        count=shapes_collide(w,a,b,relative,overlap?0:speculative,&locals,&contact.sat)
+        contact.relative=carry?relative:{}
+        contact.flags-={.Carried}
+    }
     if count>0 && (w.cut_count>0 || .Twin in (a.flags+b.flags)) {count=manifolds_cut(w,contact,a,b,xf_a,&locals,count)}
     // A shape that meets a one-way shape from its back goes through it for as long as the two touch.
     if count>0 && !overlap && .One_Way in (a.flags+b.flags) {
@@ -342,13 +386,14 @@ contact_update :: proc(w:^World,index:i32) #no_bounds_check {
             center_a=xf_point(to,xf_point(twin_through(w,a),center_a))
             center_b=xf_point(to,xf_point(twin_through(w,b),center_b))
         }
-        manifold_state_update(&contact.manifold,&locals[0])
+        carried:=.Carried in contact.flags
+        if !carried {manifold_state_update(&contact.manifold,&locals[0])}
         manifold_to_world(&w.manifolds[index],&locals[0],frame,center_a,center_b)
         if contact.extra>=0 {
             block:=&w.blocks[contact.extra]
             for i in 1..=EXTRA_MANIFOLDS {
                 if i>=count {locals[i].count=0}
-                manifold_state_update(&block.manifolds[i-1],&locals[i])
+                if !carried {manifold_state_update(&block.manifolds[i-1],&locals[i])}
                 manifold_to_world(&w.extra_manifolds[contact.extra][i-1],&locals[i],frame,center_a,center_b)
             }
         }
@@ -396,15 +441,45 @@ contact_handles :: proc(w:^World,contact:^Contact) -> (shape_a,shape_b:Shape_Han
     return shape_handle(w,contact.shape_a),shape_handle(w,contact.shape_b),body_handle(w,contact.body_a),body_handle(w,contact.body_b)
 }
 
+// The user data of two shapes and of their bodies, and the same seen from the second shape.
+@(private)
+event_users :: proc "contextless" (w:^World,shape_a,shape_b:i32) -> (users,swapped:Event_Users) #no_bounds_check {
+    a,b:=&w.shapes[shape_a],&w.shapes[shape_b]
+    users={w.bodies[a.body].user_data,w.bodies[b.body].user_data,a.user_data,b.user_data}
+    return users,{users.body_b,users.body_a,users.shape_b,users.shape_a}
+}
+
+// Whether two bodies overlap by another pair of shapes of the same users as those of contact: the pieces of
+// one sensor (an outline, a hull of several pieces) are one overlap, which begins with the first pair and
+// ends with the last. Of pairs that begin, or end, in the same step, the first in the contacts speaks.
+@(private)
+overlap_shared :: proc "contextless" (w:^World,contact:^Contact,ending:bool) -> bool #no_bounds_check {
+    users:=[2]u64{w.shapes[contact.shape_a].user_data,w.shapes[contact.shape_b].user_data}
+    self:=(uintptr(contact)-uintptr(&w.contacts[0]))/size_of(Contact)
+    for key:=w.bodies[contact.body_a].contact_list;key>=0; {
+        other:=&w.contacts[key>>1]
+        earlier:=uintptr(key>>1)<self
+        key=other.edges[key&1].next
+        if other==contact || .Overlap not_in other.flags {continue}
+        pair:=[2]u64{w.shapes[other.shape_a].user_data,w.shapes[other.shape_b].user_data}
+        if pair!=users && pair!=users.yx {continue}
+        if .Touching in other.flags && (ending || .Started not_in other.flags || earlier) {return true}
+        if ending && .Stopped in other.flags && earlier {return true}
+    }
+    return false
+}
+
 @(private)
 contact_end_events :: proc(w:^World,contact:^Contact) {
     if .Debris in (w.bodies[contact.body_a].flags+w.bodies[contact.body_b].flags) {return}
     shape_a,shape_b,body_a,body_b:=contact_handles(w,contact)
+    users,swapped:=event_users(w,contact.shape_a,contact.shape_b)
     if .Overlap in contact.flags {
-        event_push(w,w.events.overlap_end,3,Overlap_Event{shape_a,shape_b,body_a,body_b,false})
-        event_push(w,w.events.overlap_end,3,Overlap_Event{shape_b,shape_a,body_b,body_a,false})
+        if overlap_shared(w,contact,true) {return}
+        event_push(w,w.events.overlap_end,3,Overlap_Event{shape_a,shape_b,body_a,body_b,false,users})
+        event_push(w,w.events.overlap_end,3,Overlap_Event{shape_b,shape_a,body_b,body_a,false,swapped})
     } else {
-        event_push(w,w.events.contact_end,1,Contact_End_Event{shape_a,shape_b,body_a,body_b})
+        event_push(w,w.events.contact_end,1,Contact_End_Event{shape_a,shape_b,body_a,body_b,users})
     }
 }
 
@@ -415,20 +490,24 @@ contact_stopped :: proc(w:^World,contact:^Contact) {
     if .Overlap not_in contact.flags {island_unlink(w,contact.body_a,contact.body_b)}
 }
 
-// Narrow phase of the step: updates every contact with an awake body, then applies in order the
-// consequences that touch shared state: events, wake-ups and the removal of separated pairs.
+// Narrow phase of the step: updates every contact with an awake body, in the order of the awake bodies, then
+// applies in order the consequences that touch shared state: events, wake-ups and the removal of separated pairs.
 @(private)
 contacts_update :: proc(w:^World) #no_bounds_check {
     st:=&w.step
     count:=0
-    for i in 0..<w.contact_high {
-        contact:=&w.contacts[i]
-        if contact.shape_b<0 {continue}
-        contact.flags-={.Visited,.Continuous}
-        if .Awake in (w.bodies[contact.body_a].flags+w.bodies[contact.body_b].flags) {
-            st.active[count]=i
-            count+=1
-            contact.flags+={.Visited}
+    // One of two awake bodies comes from the lower slot.
+    for index:=w.awake_head;index>=0;index=w.bodies[index].awake_next {
+        for key:=w.bodies[index].contact_list;key>=0; {
+            contact:=&w.contacts[key>>1]
+            other:=key&1==0?contact.body_b:contact.body_a
+            if .Awake not_in w.bodies[other].flags || other>index {
+                st.active[count]=key>>1
+                count+=1
+                stamp(w,contact)
+                contact.flags+={.Visited}
+            }
+            key=contact.edges[key&1].next
         }
     }
     world_parallel(w,count,32,w,narrow_task)
@@ -445,10 +524,11 @@ contacts_update :: proc(w:^World) #no_bounds_check {
         kept+=1
         if .Touching not_in contact.flags {continue}
         if .Overlap in contact.flags {
-            if .Started in contact.flags {
+            if .Started in contact.flags && !overlap_shared(w,contact,false) {
                 shape_a,shape_b,body_a,body_b:=contact_handles(w,contact)
-                event_push(w,w.events.overlap_begin,2,Overlap_Event{shape_a,shape_b,body_a,body_b,false})
-                event_push(w,w.events.overlap_begin,2,Overlap_Event{shape_b,shape_a,body_b,body_a,false})
+                users,swapped:=event_users(w,contact.shape_a,contact.shape_b)
+                event_push(w,w.events.overlap_begin,2,Overlap_Event{shape_a,shape_b,body_a,body_b,false,users})
+                event_push(w,w.events.overlap_begin,2,Overlap_Event{shape_b,shape_a,body_b,body_a,false,swapped})
             }
             continue
         }
@@ -467,10 +547,13 @@ contacts_update :: proc(w:^World) #no_bounds_check {
             contact:=&w.contacts[contact_index]
             key=contact.edges[key&1].next
             if .Visited in contact.flags {continue}
-            contact.flags+={.Visited}
             contact_update(w,contact_index)
             if .Stopped in contact.flags {contact_stopped(w,contact)}
-            if .Disjoint in contact.flags {continue}
+            if .Disjoint in contact.flags {
+                contact_destroy(w,contact_index,false)
+                continue
+            }
+            contact.flags+={.Visited}
             st.active[kept]=contact_index
             kept+=1
         }

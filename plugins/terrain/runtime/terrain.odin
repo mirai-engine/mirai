@@ -20,7 +20,7 @@ Terrain :: struct {
 }
 TERRAIN_DEFAULT :: Terrain{solid=true}
 
-@(component)
+@(component,derived)
 Terrain_Chunk :: struct {
     owner:core.Entity `mirai:"transient"`,
     coord:[3]i32 `mirai:"transient"`, // of its first chunk
@@ -72,7 +72,6 @@ Source_Load :: struct {
     types:asset.Types, // of the job
     js:^jobs.Job_System,
     ok:bool,
-    whole:bool, // a Mesh: read on the main thread (data_load)
     counter:jobs.Counter,
 }
 Terrain_Data_Stats :: struct {loads,edits,saves,pages_read,pages_left:u64}
@@ -105,12 +104,18 @@ Layer_Request :: struct {owner:core.Entity,change:Layer_Change}
 @(storage,queue)
 Terrain_Requests :: struct {edits:core.Queue(Edit_Request),saves:core.Queue(Save_Request),layers:core.Queue(Layer_Request)}
 
-// Edits a terrain with a brush in the world, on the next tick. owner: the
-// terrain to edit; none: the one the brush touches. What it took out comes in
+// Asks for an edit of a terrain with a brush in the world, on the next tick:
+// the same call carves, adds, raises, flattens or paints a Heightfield or a
+// Volume. owner: the terrain to edit; none: the one the brush touches. What
+// is wrong with the brush comes back and nothing is asked (edit_error_fix
+// says how to fix it); a brush the terrain under it lacks is a problem of
+// that terrain when the edit is applied. What it took out comes in
 // Terrain_Digs.
-dig :: proc(requests:^Terrain_Requests,brush:Brush,owner:=core.NONE) {
-    if brush.alpha!=nil {core.refuse(&requests.edits);return}
+dig :: proc(requests:^Terrain_Requests,brush:Brush,owner:=core.NONE) -> Edit_Error {
+    if brush.alpha!=nil {return .Alpha}
+    if error:=brush_check(brush);error!=.None {return error}
     core.offer(&requests.edits,Edit_Request{owner,brush})
+    return .None
 }
 // Sets layer index of the source of a terrain, or adds one with index equal to its count.
 request_layer :: proc(requests:^Terrain_Requests,owner:core.Entity,index:int,layer:Terrain_Layer) {
@@ -129,12 +134,11 @@ request_save :: proc(requests:^Terrain_Requests,owner:core.Entity,path:string=""
 
 // The room of the requests of a tick, and what did not fit in it.
 @(step="input fixed",loops="game editor",stage="begin")
-terrain_requests_serve :: proc(requests:^Terrain_Requests,digs:^Terrain_Digs,settings:Terrain_Settings,problems:^core.Problems) {
+terrain_requests_serve :: proc(requests:^Terrain_Requests,settings:Terrain_Settings,problems:^core.Problems) {
     capacity,setting:=int(settings.requests),"Terrain_Settings.requests"
-    core.queue_serve(&requests.edits,capacity,problems,"terrain.requests","terrain edits",setting,"a game edits with a brush without an alpha")
+    core.queue_serve(&requests.edits,capacity,problems,"terrain.requests","terrain edits",setting)
     core.queue_serve(&requests.layers,capacity,problems,"terrain.requests","terrain layer changes",setting)
     core.queue_serve(&requests.saves,capacity,problems,"terrain.requests","terrain saves",setting,"a save names a path shorter than 512 bytes")
-    core.queue_serve(&digs.digs,capacity,problems,"terrain.requests","terrain digs of a tick",setting)
 }
 
 // A brush of the world as the terrain at place reads it, and the other way.
@@ -147,10 +151,9 @@ brush_world :: proc(brush:Brush,place:mm.Transform) -> Brush {
 @(private)
 brush_placed :: proc(brush:Brush,to:matrix[4,4]f32,rotation:quaternion128,factor:f32) -> (moved:Brush) {
     moved=brush
-    c,d,n:=brush.center,brush.delta,brush.normal
+    c,d:=brush.center,brush.delta
     moved.center=(to*[4]f32{c.x,c.y,c.z,1}).xyz
     moved.delta=(to*[4]f32{d.x,d.y,d.z,0}).xyz
-    moved.normal=linalg.normalize0((to*[4]f32{n.x,n.y,n.z,0}).xyz)
     moved.target=(to*[4]f32{c.x,brush.target,c.z,1}).y
     moved.rotation=rotation*brush.rotation
     moved.radius*=factor
@@ -158,7 +161,6 @@ brush_placed :: proc(brush:Brush,to:matrix[4,4]f32,rotation:quaternion128,factor
     moved.blend*=factor
     moved.interval*=factor
     moved.scale*=factor
-    moved.max_edge*=factor
     #partial switch brush.kind {
     case .Raise,.Lower,.Noise: moved.amount*=factor
     }
@@ -182,12 +184,12 @@ Terrain_Dig :: struct {
 // What the edits of dig and the replays of the tick took out, in
 // their order. terrain_replay empties it at the start of each tick of a world
 // that plays.
-@(storage,events)
-Terrain_Digs :: struct {digs:core.Queue(Terrain_Dig)}
+@(storage)
+Terrain_Digs :: struct {digs:core.Events(Terrain_Dig)}
 
 // The dig of the last edit of the source of entry, if it took something out.
 @(private)
-dig_push :: proc(digs:^Terrain_Digs,owner:core.Entity,entry:^Data_Source,worlds:core.Read(core.World_Transform)) {
+dig_push :: proc(digs:^Terrain_Digs,owner:core.Entity,entry:^Data_Source,worlds:^core.Table(core.World_Transform,$A)) {
     s:=&entry.source
     d:=s.dug
     if !(d.volume>0) {return}
@@ -198,7 +200,7 @@ dig_push :: proc(digs:^Terrain_Digs,owner:core.Entity,entry:^Data_Source,worlds:
     dig.center=mm.transform_point(place,d.sum/d.volume)
     dig.radius=(linalg.length(d.high-d.low)*0.5+s.cell)*scale
     for i in 0..<int(s.layer_count) {dig.materials[i]=s.layers[i].material}
-    core.offer(&digs.digs,dig)
+    core.push(&digs.digs,dig)
 }
 
 // The meshes of the pieces of the terrains of a world: each world keeps its
@@ -214,12 +216,14 @@ Terrain_Resident :: struct {
     owners:[dynamic]Resident_Owner,
     ready:bool,
     pass:u32,
-    gc_stamps:[6]u64,
-    shown:[3]u64, // the versions of Terrain, Tint and Material_Override after the owners last showed their chunks
+    gc_shapes:[4]core.Shape, // of the transforms, the chunks, the ids and the terrains at the last prune
+    gc_parents:core.Seen,
+    shown:[2]core.Seen, // Terrain and Material_Values after the owners last showed their chunks
     stats:Terrain_Resident_Stats,
     lod_view:[3]f32,  // where the view was at the last evaluation of levels
-    lod_stamp:[5]u64, // the version of the transforms, the revision of the streaming sources, the count of owners, marks, the version of the colliders
-    marks:u64,        // advances when what the levels are chosen from changes: a page, a source, a chunk that empties or fills
+    lod_stamp:[3]u64, // the revision of the streaming sources, the count of owners, marks
+    lod_seen:[2]core.Seen, // the transforms and the colliders
+    marks:u64,        // advances when what the levels or the unloaded ground are chosen from changes: a page, a source, an owner, a chunk that empties, fills or goes
     lod_distances:[3]f32, // of Terrain_Settings then
     focus:Terrain_Focus,  // then
     room:Collider_Room,
@@ -227,6 +231,7 @@ Terrain_Resident :: struct {
     splits:[dynamic]Split,  // room for a node of every owner: the order of the budget and of the colliders
     border:Piece_Border,    // of a node, while its pages are looked for
     picking:bool,           // chunks without a collider keep their triangles on the CPU: while the world does not play, for the picking of the editor
+    ground:Ground,          // what core.Ground_Queries answers (ground.odin)
 }
 // stale: results of jobs whose chunk changed while they ran; starved: chunks
 // shown without the collider Physics_Settings had no slot for.
@@ -257,9 +262,8 @@ Resident_Source :: struct {
     changed:[dynamic]u32,    // nodes published or let go since the owner last showed them
     dirty:[]bool,            // by node: in pending
     pending:[dynamic]u32,    // nodes whose mesh may show something else than what is wanted
-    pages:[]bool,            // of a paged source, by page of its heights: those a resident chunk reads
     leave:bool,              // a chunk was let go: pages may leave with it
-    override:render.Material_Override, // of its layers
+    override:render.Material_Values, // of its layers
     override_info:Source_Info,         // the layers it was made from
     override_assets:[2]u64,            // and the revision and structure of the assets
     join:Terrain_Join,
@@ -272,8 +276,8 @@ Resident_Owner :: struct {
     nodes:[]Owner_Node,   // by node: what this terrain wants and shows of it
     changed:[dynamic]u32, // nodes it began or stopped showing since it last published
     materials:[render.MATERIAL_SLOTS]base.Asset_Id, // its chunks show, chunk_materials
-    tint:render.Tint,
-    override:render.Material_Override,
+    tint:render.Material_Values,     // the color and the light of its entity, which its chunks take
+    override:render.Material_Values, // of its layers: what its chunks show over them
     solid:bool,
     far:bool,  // of a section that is not loaded (scene.Far_Kept): its far form alone, without colliders
     pass:u32,
@@ -304,7 +308,7 @@ Split :: struct {near,far:f32,depth:i32,owner,node:u32}
 
 // What the registry of the assets records of the file of a source: it
 // differs once the file changes, on disk or in the memory of the registry
-// (an edit, undo, Save, Discard, a recovery).
+// (an edit, undo, its write, a change outside the editor).
 File_Stamp :: struct {size,time:i64,found:bool}
 
 terrain_stamp :: proc(a:^host.Assets,id:base.Asset_Id) -> File_Stamp {
@@ -319,30 +323,26 @@ terrain_file :: proc(a:^host.Assets,id:base.Asset_Id,allocator:=context.temp_all
 }
 
 // Reads the source of a terrain as the registry of the assets holds it: what
-// its memory keeps unsaved, or the file. paged leaves the pages of a
+// its memory holds until the file is written, or the file. paged leaves the pages of a
 // Heightfield or Volume on disk in the file, read when needed; one only the
 // memory of the registry holds is read whole.
-terrain_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=context.allocator,editable:=true,paged:=false) -> bool {
+terrain_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=context.allocator,paged:=false) -> bool {
     if paged {
         record,found:=asset.registry_find(&a.registry,id)
-        if !found || record.kind!=KIND {return false}
+        if !found || record.kind!=TERRAIN_KIND {return false}
         if _,held:=asset.registry_memory_find(&a.registry,record.path);!held {
             path:=asset.registry_file_path(&a.registry,record.path,context.temp_allocator)
             front:asset.Asset
             if asset.asset_load_front(&front,path,a.allocator)!=.None {return false}
             defer asset.asset_close(&front)
-            info,error:=asset.asset_row(&front,&a.types,"terrain",Source_Info)
-            if error!=.None || info==nil {return false}
-            if info.kind!=.Mesh {
-                loaded,ok:=source_read(s,&front,&a.types,allocator,editable,path)
-                return ok && loaded==id
-            }
+            loaded,ok:=source_read(s,&front,&a.types,allocator,path)
+            return ok && loaded==id
         }
     }
     file:asset.Asset
-    if host.assets_file(a,id,KIND,&file)!=.None {return false}
+    if host.assets_file(a,id,TERRAIN_KIND,&file)!=.None {return false}
     defer asset.asset_close(&file)
-    loaded,ok:=source_read(s,&file,&a.types,allocator,editable)
+    loaded,ok:=source_read(s,&file,&a.types,allocator)
     return ok && loaded==id
 }
 terrain_source :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id) -> ^Source {
@@ -384,18 +384,9 @@ terrain_changed :: proc(data:core.Ref(Terrain_Data),id:base.Asset_Id,since:u32) 
         anew:=entry.change<since
         for version,index in entry.versions {
             if version<=since && !anew {continue}
-            from,to:[3]f32
-            if s.kind==.Mesh {
-                if index>=len(s.mesh_chunks) {continue}
-                from,to=s.mesh_chunks[index].low,s.mesh_chunks[index].high
-            } else {
-                a,b,valid:=chunk_region(s,chunk_coord(s,index))
-                if !valid {continue}
-                origin:=source_origin(s)
-                from=origin+[3]f32{f32(a.x),f32(a.y),f32(a.z)}*s.cell
-                to=origin+[3]f32{f32(b.x),f32(b.y),f32(b.z)}*s.cell
-                if s.kind==.Heightfield {from.y,to.y=-HEIGHT_LIMIT,HEIGHT_LIMIT}
-            }
+            a,b,valid:=chunk_region(s,chunk_coord(s,index))
+            if !valid {continue}
+            from,to:=source_box(s,a,b)
             if !changed {low,high,changed=from,to,true;continue}
             for axis in 0..<3 {low[axis]=min(low[axis],from[axis]);high[axis]=max(high[axis],to[axis])}
         }
@@ -493,7 +484,7 @@ data_chunks_allocate :: proc(entry:^Data_Source,allocator:runtime.Allocator,js:^
 data_load_begin :: proc(data:^Terrain_Data,a:^host.Assets,id:base.Asset_Id) -> ^Source_Load {
     if load:=data_loading(data,id);load!=nil {return load}
     record,found:=asset.registry_find(&a.registry,id)
-    if !found || record.kind!=KIND {return nil}
+    if !found || record.kind!=TERRAIN_KIND {return nil}
     if _,held:=asset.registry_memory_find(&a.registry,record.path);held {return nil}
     heap:=runtime.heap_allocator()
     load,allocation_error:=new(Source_Load,heap)
@@ -506,7 +497,7 @@ data_load_begin :: proc(data:^Terrain_Data,a:^host.Assets,id:base.Asset_Id) -> ^
         data_load_free(load)
         return nil
     }
-    if data.jobs!=nil {jobs.run(data.jobs,jobs.OWNER,source_load_job,load,&load.counter)} else {source_load_job(load,jobs.OWNER)}
+    if data.jobs!=nil {jobs.run(data.jobs,jobs.OWNER,.Background,source_load_job,load,&load.counter)} else {source_load_job(load,jobs.OWNER)}
     return load
 }
 
@@ -523,10 +514,7 @@ source_load_job :: proc(load:^Source_Load,worker:int) {
     front:asset.Asset
     if asset.asset_load_front(&front,load.path,context.allocator)!=.None {return}
     defer asset.asset_close(&front)
-    info,error:=asset.asset_row(&front,&load.types,"terrain",Source_Info)
-    if error!=.None || info==nil {return}
-    if info.kind==.Mesh {load.whole=true;return}
-    id,read:=source_read(&load.entry.source,&front,&load.types,context.allocator,true,load.path)
+    id,read:=source_read(&load.entry.source,&front,&load.types,context.allocator,load.path)
     if !read || id!=load.id {return}
     load.entry.id,load.entry.stamp,load.entry.change=load.id,load.stamp,1
     load.ok=data_chunks_allocate(&load.entry,context.allocator,load.js,worker)
@@ -539,9 +527,8 @@ data_load_end :: proc(data:^Terrain_Data,load:^Source_Load,a:^host.Assets,proble
     if jobs.pending(&load.counter) {jobs.wait(load.js,jobs.OWNER,&load.counter)}
     for held,i in data.loads {if held==load {ordered_remove(&data.loads,i);break}}
     defer data_load_free(load)
-    e:=source_owner(core.read(terrains),load.id)
+    e:=source_owner(terrains,load.id)
     switch {
-    case load.whole: entry=data_load(data,a,load.id,problems,e)
     case !load.ok: source_unread(problems,e,a,load.id)
     case len(data.entries)>=int(data.settings.sources):
         name:[base.ASSET_ID_TEXT]u8
@@ -559,7 +546,7 @@ data_load_end :: proc(data:^Terrain_Data,load:^Source_Load,a:^host.Assets,proble
         append(&data.unread,load.id)
         return
     }
-    for shared,index in terrains.values[:core.count(terrains)] {if shared.source==entry.id && shared.revision!=entry.source.revision {core.at(terrains,index).revision=entry.source.revision}}
+    for shared,index in terrains.values[:core.count(terrains)] {if shared.source==entry.id && shared.revision!=entry.source.revision {core.edit_at(terrains,index).revision=entry.source.revision}}
     return
 }
 
@@ -611,13 +598,12 @@ data_errors_edit :: proc(entry:^Data_Source,low,high:[3]int) {
     }
 }
 
-// The ranges of the nodes from those of their children, and of the chunks of
-// a Mesh from its sections; a Volume chunk spans its region.
+// The ranges of the nodes from those of their children; a Volume chunk spans
+// its region.
 @(private)
 data_ranges :: proc(entry:^Data_Source) {
     s:=&entry.source
     q:=&entry.quad
-    if s.kind==.Mesh {for i in 0..<min(q.first[1],len(s.mesh_chunks)) {entry.ranges[i]={s.mesh_chunks[i].low.y,s.mesh_chunks[i].high.y}}}
     if s.kind==.Volume {for &range in entry.ranges {range={-HEIGHT_LIMIT,HEIGHT_LIMIT}}}
     for d in 1..=q.depth {for i in q.first[d]..<q.first[d+1] {
         range:=[2]f32{max(f32),-max(f32)}
@@ -637,18 +623,13 @@ data_ready :: proc(data:^Terrain_Data,settings:Terrain_Settings,allocator:=conte
     data.settings,data.entries,data.ready=settings,entries,true
     return true
 }
-// Every chunk of the inclusive region of samples of change, or the sections a
-// Mesh change marked, takes the next change of the source.
+// Every chunk of the inclusive region of samples of change takes the next
+// change of the source.
 // The nodes above take it too, and the heights the chunks and nodes reach
 // follow the samples.
 @(private)
 data_mark :: proc(entry:^Data_Source,change:Change) {
     entry.change+=1
-    if change.mesh {
-        for dirty,index in entry.source.mesh_changed {if dirty {data_mark_chunk(entry,index);data_mark_nodes(entry,index)}}
-        data_ranges(entry)
-        return
-    }
     low,high:=chunk_range(&entry.source,change)
     for z in low.z..=high.z {for y in low.y..=high.y {for x in low.x..=high.x {
         if index:=chunk_index(&entry.source,{i32(x),i32(y),i32(z)});index>=0 {data_mark_chunk(entry,index);data_mark_nodes(entry,index)}
@@ -673,18 +654,13 @@ data_mark_nodes :: proc(entry:^Data_Source,index:int) {
 }
 @(private)
 data_mark_all :: proc(entry:^Data_Source) {
-    if entry.source.kind==.Mesh {
-        for &dirty in entry.source.mesh_changed {dirty=true}
-        data_mark(entry,{changed=true,mesh=true})
-        return
-    }
     s:=&entry.source
     data_mark(entry,{changed=true,high={int(s.samples.x)-1,int(s.samples.y)-1,int(s.samples.z)-1}})
 }
 // The first terrain of a source: the entity a problem of the source is reported on.
 @(private)
-source_owner :: proc(terrains:core.Read(Terrain),id:base.Asset_Id) -> core.Entity {
-    for value,row in terrains.table.values[:core.count(terrains)] {if value.source==id {return core.entity_at(terrains,row)}}
+source_owner :: proc(terrains:^core.Table(Terrain,$A),id:base.Asset_Id) -> core.Entity {
+    for value,row in terrains.values[:core.count(terrains)] {if value.source==id {return core.entity_at(terrains,row)}}
     return core.NONE
 }
 
@@ -732,13 +708,13 @@ data_load :: proc(data:^Terrain_Data,a:^host.Assets,id:base.Asset_Id,problems:^c
 // Reads a source again; what fails keeps the one read before and is a
 // problem of the first of terrains that shows it. The jobs that read it ended.
 @(private)
-data_reload :: proc(data:^Terrain_Data,entry:^Data_Source,a:^host.Assets,problems:^core.Problems,terrains:core.Read(Terrain)) -> bool {
+data_reload :: proc(data:^Terrain_Data,entry:^Data_Source,a:^host.Assets,problems:^core.Problems,terrains:^core.Table(Terrain,$A)) -> bool {
     entry.stamp=terrain_stamp(a,entry.id)
     if !entry.stamp.found {return false}
     owner:=source_owner(terrains,entry.id)
     next:Source
     if !terrain_read(&next,a,entry.id,a.allocator,paged=true) {source_destroy(&next);source_unread(problems,owner,a,entry.id);return false}
-    shape_changed:=next.kind!=entry.source.kind || next.samples!=entry.source.samples || next.cell!=entry.source.cell || next.chunk_cells!=entry.source.chunk_cells || next.mesh_origin!=entry.source.mesh_origin
+    shape_changed:=next.kind!=entry.source.kind || next.samples!=entry.source.samples || next.cell!=entry.source.cell || next.chunk_cells!=entry.source.chunk_cells
     // Comparing gives next only pages of the source it replaces: it fits as they did.
     if !data_fits(data,entry,source_cost(&next),problems,owner,a,entry.id) {source_destroy(&next);return false}
     change:Change
@@ -771,30 +747,11 @@ data_reload :: proc(data:^Terrain_Data,entry:^Data_Source,a:^host.Assets,problem
 }
 
 // What differs between next, read again, and s, of the same shape: the
-// region of samples, or the sections of a Mesh it marks. Pages of next in
+// region of samples. Pages of next in
 // their blocks take the values s holds of the same block. ok is false
 // without memory.
 @(private)
 source_compare :: proc(next,s:^Source) -> (change:Change,ok:bool) {
-    if next.kind==.Mesh {
-        change.mesh=true
-        for &chunk,i in next.mesh_chunks {if !mesh_equal(&chunk.geometry,&s.mesh_chunks[i].geometry) {next.mesh_changed[i]=true;change.changed=true}}
-        if change.changed {
-            geometry_changed,allocated:=mesh_selection(next)
-            if !allocated {return}
-            copy(geometry_changed,next.mesh_changed)
-            mesh_mark_halo(next,s.mesh_chunks,geometry_changed)
-        }
-        whole:=len(next.slots)!=len(s.slots) || layers_reshape(next.info,s.info)
-        if !whole {for value,i in next.slots {if value!=s.slots[i] {whole=true;break}}}
-        if whole {
-            for &dirty in next.mesh_changed {dirty=true}
-            change.changed=true
-        } else if low,high,differ:=grid_diff(&next.weights,&s.weights);differ {
-            change.changed=mesh_mark_weights(next,low.xz,high.xz) || change.changed
-        }
-        return change,true
-    }
     last:=[3]int{int(next.samples.x)-1,int(next.samples.y)-1,int(next.samples.z)-1}
     change.low=last
     widen :: proc(change:^Change,low,high:[3]int) {
@@ -806,18 +763,17 @@ source_compare :: proc(next,s:^Source) -> (change:Change,ok:bool) {
     writer:Page_Writer
     if !page_writer_init(&writer,context.temp_allocator) {return}
     defer page_writer_destroy(&writer)
-    low,high,differ:=grid_take(&next.heights,&s.heights,&writer,true)
+    low,high,differ:=grid_take(&next.field,&s.field,&writer,next.kind==.Heightfield)
     if differ {widen(&change,low,high)}
-    if len(next.holes.pages)!=len(s.holes.pages) {
+    if grid_none(&next.holes)!=grid_none(&s.holes) {
         widen(&change,{},{last.x,0,last.z})
     } else if low,high,differ=grid_take(&next.holes,&s.holes,&writer,false);differ {
         widen(&change,low,high+{1,0,1})
     }
-    if low,high,differ=grid_take(&next.distances,&s.distances,&writer,false);differ {widen(&change,low,high)}
     if layers_reshape(next.info,s.info) {
         widen(&change,{},last)
     } else if low,high,differ=grid_take(&next.weights,&s.weights,&writer,false);differ {
-        if next.kind==.Volume {widen(&change,low,high)} else {widen(&change,{low.x,0,low.z},{high.x,last.y,high.z})}
+        widen(&change,low,high)
     }
     return change,true
 }
@@ -836,6 +792,7 @@ terrain_resident_free :: proc(resident:^Terrain_Resident) {
     for &source in resident.sources {resident_source_free(resident,&source)}
     for &owner in resident.owners {resident_owner_free(&owner)}
     delete(resident.sources);delete(resident.owners);delete(resident.splits)
+    delete(resident.ground.views);delete(resident.ground.unloaded)
     piece_border_destroy(&resident.border)
     resident^={}
 }
@@ -850,7 +807,7 @@ resident_source_free :: proc(resident:^Terrain_Resident,source:^Resident_Source)
         host.assets_mesh_release(resident.assets,chunk.mesh)
         resident.stats.released+=1;resident.stats.meshes-=1
     }
-    delete(source.chunks);delete(source.levels);delete(source.deep);delete(source.changed);delete(source.pages);delete(source.dirty);delete(source.pending)
+    delete(source.chunks);delete(source.levels);delete(source.deep);delete(source.changed);delete(source.dirty);delete(source.pending)
     delete(source.join.cuts)
     source^={}
 }

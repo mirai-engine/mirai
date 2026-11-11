@@ -52,9 +52,9 @@ an_edit_of_another_end_makes_entities_that_its_other_rows_name_by_id :: proc(t:^
     made,named:=core.entity_of(&world.entities,50),core.entity_of(&world.entities,51)
     if !testing.expect(t,made!=core.NONE && named!=core.NONE && made!=f.original) {return}
     testing.expect_value(t,world.entities.alive,3)
-    link,linked:=core.get(core.read(&world.parents),named)
+    link,linked:=core.get(&world.parents,named)
     testing.expect(t,linked && link.entity==made)
-    local,_:=core.get(core.read(&world.transforms),named)
+    local,_:=core.get(&world.transforms,named)
     testing.expect_value(t,local.position,[3]f32{0,2,0})
     testing.expect_value(t,core.entity_of(&world.entities,base.Entity_Id(1)),f.original)
 }
@@ -79,7 +79,7 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
     st:=new(Collab_State);defer free(st)
 
     host_scene:asset.Scene
-    asset.scene_init(&host_scene,&assets.types,asset.KIND_SCENE,{0x1c,1})
+    asset.scene_init(&host_scene,&assets.types,{0x1c,1})
     defer asset.scene_destroy(&host_scene)
     placed:=core.Transform{{0,3,0},1,{1,1,1}}
     for i in 1..=64 {
@@ -112,7 +112,7 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
     testing.expect_value(t,world.entities.alive,64)
     testing.expect(t,!core.alive(&world.entities,f.original))
     box:=core.entity_of(&world.entities,base.Entity_Id(101))
-    local,found:=core.get(core.read(&world.transforms),box)
+    local,found:=core.get(&world.transforms,box)
     testing.expect(t,found && local.position==[3]f32{0,3,0})
 }
 
@@ -165,10 +165,10 @@ what_another_editor_selected_is_edited_and_stays_outlined :: proc(t:^testing.T) 
             done=field_write(s,component_table(s,"Transform"),{e},int(offset_of(core.Transform,scale)),mem.ptr_to_bytes(&scale))
         case .Rename: done=entity_rename(s,e,"Crate")
         case .Write:
-            method:=api.Method{result_id=Api_Write_Result,writes_result=true}
-            out:serial.Writer
-            serial.writer_init(&out,0,context.temp_allocator)
-            call:=api.Call{method=&method,out=&out,raw=fmt.tprintf(`{{"root":"0x%016x","entities":[{{"name":"Crate","position":[0,9,0]}}]}}`,u64(id)),allocator=context.temp_allocator}
+            method:=api.Method{params_id=Api_Scene_Write_Params,result_id=Api_Write_Result}
+            params:Api_Scene_Write_Params
+            result:Api_Write_Result
+            call:=api.Call{method=&method,params=&params,result=&result,raw=fmt.tprintf(`{{"root":"0x%016x","replace":true,"entities":[{{"name":"Crate","position":[0,9,0]}}]}}`,u64(id)),allocator=context.temp_allocator}
             api_scene_write(s,&call)
             done=!call.failed
             testing.expect(t,done,call.error.message)
@@ -213,7 +213,7 @@ a_file_too_large_to_travel_is_told_to_every_editor :: proc(t:^testing.T) {
         st:=f.collab.state
         for &peer in st.peers {
             for message in peer.out {delete(message)}
-            delete(peer.out);delete(peer.file_bytes)
+            delete(peer.out);delete(peer.incoming)
         }
         for path in st.files_out {delete(path)}
         delete(st.files_out)
@@ -264,4 +264,53 @@ a_file_too_large_to_travel_is_told_to_every_editor :: proc(t:^testing.T) {
             testing.expectf(t,(!found || len(held.data)!=len(c.bytes)) && passed==(told?1:0),"case %d: %d messages passed on",at,passed)
         }
     }
+}
+
+// A file of COLLAB_FILE_BYTES crosses a session as one message, under loss:
+// the reliable channel streams it from the queue of its peer and the other
+// end takes it whole from its pieces.
+@(test)
+a_file_as_large_as_a_session_carries_crosses_as_one_message :: proc(t:^testing.T) {
+    network:wire.Sim_Network
+    if !testing.expect(t,wire.sim_network_init(&network,{seed=3,endpoints=2,packets=8192})) {return}
+    defer wire.sim_network_destroy(&network)
+    host,guest:=new(Collab_State),new(Collab_State)
+    defer free(host);defer free(guest)
+    host.role,guest.role=.Host,.Guest
+    for st,i in ([2]^Collab_State{host,guest}) {
+        desc:=wire.Host_Desc{mode=i==0?.Server:.Client,transport=wire.sim_endpoint_transport(&network,i),protocol_id=0x4d495241,seed=u64(7+i),channels=COLLAB_CHANNELS,send_rate=1<<30,packets_per_update=64}
+        testing.expect_value(t,wire.host_init(&st.host,desc),wire.Error.None)
+    }
+    defer {wire.host_destroy(&host.host);wire.host_destroy(&guest.host)}
+    defer {collab_peer_free(&host.peers[1]);collab_peer_free(&guest.peers[0])}
+    wire.sim_endpoint_conditions(&network,0,{loss=0.05})
+    wire.host_connect(&guest.host,wire.address_memory(0))
+    w:serial.Writer
+    collab_begin(&w,.File,COLLAB_FILE_BYTES+8)
+    for i in 0..<COLLAB_FILE_BYTES {serial.write_scalar(&w,u8(i*13+i>>16))}
+    file:=serial.writer_bytes(&w)
+    now:=0.0
+    queued,arrived:=false,false
+    for _ in 0..<40000 {
+        now+=1.0/60
+        wire.sim_network_advance(&network,now)
+        wire.host_update(&host.host,now);wire.host_update(&guest.host,now)
+        for command in wire.host_poll(&host.host) {
+            if command.kind==.Connected {host.peers[1]={used=true,connection=command.connection}}
+        }
+        if host.peers[1].used {
+            if !queued {collab_queue(&host.peers[1],file);queued=true}
+            collab_flush(host,&host.peers[1])
+        }
+        for command in wire.host_poll(&guest.host) {
+            if command.kind==.Disconnected {testing.expect(t,false,"the guest keeps the connection");return}
+            if command.kind!=.Message {continue}
+            message,whole:=collab_incoming(guest,&guest.peers[0],command)
+            if !whole {continue}
+            testing.expect(t,len(message)==len(file) && mem.compare(message,file)==0,"the file arrives whole and as it was sent")
+            arrived=true
+        }
+        if arrived {break}
+    }
+    testing.expect(t,arrived,"the file arrives")
 }

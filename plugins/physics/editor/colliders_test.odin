@@ -11,14 +11,15 @@ import sim "plugins:physics/runtime/sim"
 import "mirai:std/base"
 import "mirai:std/geom"
 
-@(private="file")
+@(private)
+@(test_world,editor="Collider_Editor")
 Collider_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using physics:phys.Test_Physics,
     ids:core.Table(core.Id),
 }
 
-@(private="file")
+@(private)
 Collider_Editor :: struct {preview:Collider_Preview}
 
 // A physics world, what the application holds for its step and the session that draws its colliders.
@@ -34,7 +35,7 @@ Collider_Test :: struct {
 
 @(private="file")
 collider_test_init :: proc(t:^testing.T,f:^Collider_Test) -> bool {
-    f.info=core.test_info(t,Collider_World,core.Test_None,Collider_Editor,test_types) or_return
+    f.info=test_info(t,Collider_World) or_return
     if !testing.expect(t,core.world_init(&f.info,.World,&f.w,context.allocator)) {
         collider_test_destroy(f)
         return false
@@ -52,7 +53,7 @@ collider_test_destroy :: proc(f:^Collider_Test) {
     free(f.tools)
     phys.test_host_destroy(&f.application)
     core.world_destroy(&f.info,.World,&f.w)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 @(private="file")
@@ -95,7 +96,7 @@ selected_colliders_show_their_physics_shape_even_with_the_grid_hidden :: proc(t:
         testing.expect(t,abs(vertex.position.x-7)==1 && abs(vertex.position.y-4)==1 && abs(vertex.position.z-6)==1)
     }
     f.app.extras.debug_count=0
-    core.get(&f.transforms,selected).position.x=2
+    core.edit(&f.transforms,selected).position.x=2
     collider_test_step(&f)
     collider_lines_draw(&f.session,core.world_ref(&f.w,&f.info))
     testing.expect_value(t,f.app.extras.debug_count,2)
@@ -175,7 +176,7 @@ selected_author_colliders_exclude_derived_geometry_and_never_draw_partial_shapes
     mesh,generated:=host.assets_mesh_generate(&assets,geom.mesh_buffer_view(&geometry),options={no_lods=true,collision=true})
     if !testing.expect(t,generated) {return}
     core.add(&f.statics,first,erender.Mesh_Renderer{mesh=mesh});collider_test_settle(&f)
-    core.get(&f.colliders,first)^=phys.collider_mesh()
+    core.edit(&f.colliders,first)^=phys.collider_mesh()
     collider_test_step(&f)
     collider_lines_draw(&f.session,core.world_ref(&f.w,&f.info))
     if !testing.expect_value(t,f.app.extras.debug_count,2) {return}

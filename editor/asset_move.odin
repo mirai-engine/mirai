@@ -7,6 +7,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "mirai:asset"
+import importer "mirai:cook/import"
 import "mirai:editor/api"
 import "mirai:editor/history"
 import "mirai:host"
@@ -20,8 +21,8 @@ import "mirai:std/serial"
 // asset names its id, which moving keeps: references, Recent, Favorites and
 // open documents follow it. An asset moves with the parts it owns, which keep
 // where they are beside it; an import keeps its source, which Import_Info
-// names from the project. What has unsaved changes does not move until it is
-// saved or discarded. A duplicate is a new asset with ids of its own, and no
+// names from the project. What is being edited does not move until its step
+// ends. A duplicate is a new asset with ids of its own, and no
 // output of an import.
 
 Api_Asset_Move_Params :: struct {
@@ -67,15 +68,15 @@ asset_owned_refusal :: proc(r:^asset.Registry,file:^asset.Registry_File) -> stri
     return ""
 }
 
-// The first file of paths or inside folder that is unsaved, as why it cannot
-// move; "" for none.
+// The first file of paths or inside folder that an open edit holds unwritten,
+// as why it cannot move; "" for none.
 @(private)
-asset_unsaved_refusal :: proc(r:^asset.Registry,paths:[]string,folder:="") -> string {
+asset_held_refusal :: proc(r:^asset.Registry,paths:[]string,folder:="") -> string {
     for held in r.memory {
         if asset.registry_outside(held.path) {continue}
         inside:=folder!="" && asset_path_inside(held.path,folder)
         for path in paths {inside||=held.path==path}
-        if inside {return fmt.tprintf("%s has unsaved changes: save or discard them first",held.path)}
+        if inside {return fmt.tprintf("%s is being edited: finish the edit first",held.path)}
     }
     return ""
 }
@@ -83,12 +84,13 @@ asset_unsaved_refusal :: proc(r:^asset.Registry,paths:[]string,folder:="") -> st
 // Why an asset cannot be renamed or moved now; "" when it can.
 @(private)
 asset_move_refusal :: proc(s:^Session,r:^asset.Registry,file:^asset.Registry_File) -> string {
+    if file.imported!=0 {return "It is a part of what its source gives, listed in the folder of its source: move that folder, or duplicate it to have a copy that moves"}
     if refusal:=asset_create_refusal(s);refusal!="" {return refusal}
     if refusal:=asset_delete_refusal(s,r,file);refusal!="" {return refusal}
     files:=asset_delete_files(r,file.id)
     paths:=make([]string,len(files),context.temp_allocator)
     for at,i in files {paths[i]=r.files[at].path}
-    return asset_unsaved_refusal(r,paths)
+    return asset_held_refusal(r,paths)
 }
 
 // Moves the asset id and the parts it owns to folder, under name without its
@@ -100,6 +102,21 @@ asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,mess
     if r==nil {return "","The editor has no asset folder it can change"}
     file,found:=asset.registry_find(r,id)
     if !found {return "","The asset is not in the registry: asset.list lists them"}
+    // What a source gives is listed where the source is: its source moves, with its sidecar, and nothing is imported.
+    if sidecar,_:=import_root(s,r,id);file.imported!=0 && sidecar!="" {
+        into,refused:=asset_folder_clean(r,folder)
+        if refused!="" {return "",fmt.tprintf("folder: %s",refused)}
+        if busy:=import_busy(s);busy!="" {return "",busy}
+        source:=strings.trim_suffix(sidecar,importer.SIDECAR_EXTENSION)
+        target:=fmt.tprintf("%s/%s",asset.registry_file_path(r,into,context.temp_allocator),filepath.base(source))
+        if dir:=filepath.dir(target);!os.is_dir(dir) {_=os.make_directory_all(dir)}
+        if os.exists(target) || os.rename(source,target)!=nil || os.rename(sidecar,fmt.tprintf("%s%s",target,importer.SIDECAR_EXTENSION))!=nil {
+            return "",fmt.tprintf("%s could not be moved to %s: a file is there, or another program has it open",source,target)
+        }
+        host.assets_scan(s.app.assets)
+        if moved,listed:=asset.registry_find(r,id);listed {path=strings.clone(moved.path,context.temp_allocator)}
+        return
+    }
     if refusal:=asset_move_refusal(s,r,file);refusal!="" {return "",refusal}
     into,refused:=asset_folder_clean(r,folder)
     if refused!="" {return "",fmt.tprintf("folder: %s",refused)}
@@ -112,6 +129,8 @@ asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,mess
     source:=content_folder_of(file.path)
     moves:=make([dynamic]Asset_Move,context.temp_allocator)
     for at,i in asset_delete_files(r,id) {
+        // A part of the imported folder stays at the path its sidecar lists.
+        if i>0 && r.files[at].imported!=0 {continue}
         from:=strings.clone(r.files[at].path,context.temp_allocator)
         to:=asset_create_join(into,named,extension)
         if i>0 {to=asset_create_join(into,from[len(source)+1:] if source!="" && asset_path_inside(from,source) else asset_path_base(from),"")}
@@ -168,14 +187,17 @@ asset_folder_move :: proc(s:^Session,from,folder,name:string) -> (path,message:s
     if path==source {return}
     if asset_path_inside(path,source) {return "",fmt.tprintf("%s cannot go inside itself: give a folder outside it",source)}
     if asset_path_taken(r,path) && !strings.equal_fold(path,source) {return "",fmt.tprintf("%s already exists: give another name or folder",path)}
-    if refusal=asset_unsaved_refusal(r,nil,source);refusal!="" {return "",refusal}
+    if refusal=asset_held_refusal(r,nil,source);refusal!="" {return "",refusal}
     for &file in r.files {
         if file.state==.Asset && asset_path_inside(file.path,source) && scene_tab(s,file.id)>=0 {return "",fmt.tprintf("%s is open in a tab: close the tab first",file.path)}
     }
     full:=asset.registry_file_path(r,source,context.temp_allocator)
     target:=asset.registry_file_path(r,path,context.temp_allocator)
-    if dir:=filepath.dir(target);!os.is_dir(dir) {_=os.make_directory_all(dir)}
-    if os.rename(full,target)!=nil {return "",fmt.tprintf("%s could not be moved to %s; another program may have a file of it open",source,path)}
+    // The sources of the folder go with it, with their sidecars: what they give is listed where they are, and nothing is imported.
+    if os.is_dir(full) {
+        if dir:=filepath.dir(target);!os.is_dir(dir) {_=os.make_directory_all(dir)}
+        if os.rename(full,target)!=nil {return "",fmt.tprintf("%s could not be moved to %s; another program may have a file of it open",source,path)}
+    }
     asset_history_moved(s,full,target,true)
     asset_start_scene_moved(s,source,path,true)
     host.assets_scan(s.app.assets)
@@ -187,7 +209,7 @@ asset_folder_move :: proc(s:^Session,from,folder,name:string) -> (path,message:s
 // free name, or into folder (of the registry) under name without its
 // extension ("": a free one); the parts keep where they are beside it. Every
 // copy has a new id, and what the copies name of each other they name of the
-// copies. What memory holds unsaved of them is what is copied. Returns the
+// copies. What memory holds of them is what is copied. Returns the
 // copy, or what failed.
 asset_duplicate :: proc(s:^Session,id:base.Asset_Id,folder:Maybe(string)=nil,name:="") -> (copy:base.Asset_Id,path,message:string) {
     if refusal:=asset_create_refusal(s);refusal!="" {return {},"",refusal}
@@ -281,7 +303,7 @@ asset_folder_duplicate :: proc(s:^Session,from:string,folder:Maybe(string)=nil,n
             if os.copy_file(to,asset.registry_file_path(r,file,context.temp_allocator))!=nil {problem=fmt.tprintf("%s could not be copied",file)}
         }
         if problem!="" {
-            _=os.remove_all(target)
+            _=base.remove_all(target)
             return "",problem
         }
     }

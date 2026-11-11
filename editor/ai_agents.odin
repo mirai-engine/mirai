@@ -51,7 +51,7 @@ ai_agents_read :: proc(m:^Ai) {
     if home=="" {return}
     disk:Ai_Agents_Disk
     data,error:=os.read_entire_file(project.path(home,AI_AGENTS_FILE,allocator=context.temp_allocator),context.temp_allocator)
-    if error!=nil || json.unmarshal(data,&disk,allocator=context.temp_allocator)!=nil || disk.version!=1 {return}
+    if error!=nil || serial.text_decode(string(data),&disk,context.temp_allocator)!="" || disk.version!=1 {return}
     for name,runtime in AI_RUNTIME_NAMES {if disk.runtime==name {m.default_runtime=runtime}}
     names:=AI_CAPABILITY_NAMES
     for item in disk.agents {
@@ -81,8 +81,9 @@ ai_agents_write :: proc(m:^Ai) -> bool {
         entries[index]={provider=base.text_get(c.id[:]),configured=c.configured,adapter=base.text_get(c.known_adapter[:]),version=base.text_get(c.known_version[:]),capabilities=capabilities[index][:count]}
     }
     runtimes:=AI_RUNTIME_NAMES
-    data,error:=json.marshal(Ai_Agents_Disk{version=1,runtime=runtimes[m.default_runtime],agents=entries[:]},{pretty=true},context.temp_allocator)
-    if error!=nil {return false}
+    disk:=Ai_Agents_Disk{version=1,runtime=runtimes[m.default_runtime],agents=entries[:]}
+    data,encoded:=serial.text_encode(disk,.Pretty,context.temp_allocator)
+    if !encoded {return false}
     return serial.file_write_atomic(project.path(home,AI_AGENTS_FILE,allocator=context.temp_allocator),data)==.None
 }
 
@@ -225,7 +226,7 @@ ai_codex_binary :: proc(s:^Session) -> string {
     ids:=AI_AGENT_IDS
     folder:=ai_agents_folder(s.ai,ids[.Codex])
     disk:struct{version,runtime,codex_binary:string}
-    if data,error:=os.read_entire_file(project.path(folder,"installation.json",allocator=context.temp_allocator),context.temp_allocator);error==nil {json.unmarshal(data,&disk,allocator=context.temp_allocator)}
+    if data,error:=os.read_entire_file(project.path(folder,"installation.json",allocator=context.temp_allocator),context.temp_allocator);error==nil {serial.text_decode(string(data),&disk,context.temp_allocator,skip_unknown=true)}
     if disk.codex_binary=="" {return ""}
     binary:=project.path(folder,disk.codex_binary,allocator=context.temp_allocator)
     return os.is_file(binary)?binary:""

@@ -6,8 +6,8 @@ import "mirai:std/base"
 
 // The scene assets/showcase/showcase.scene: a lift that an Animation moves, a
 // HUD (UI_Screen) and a sign above the lift (World_Widget) that show this
-// component, and a speaker with a sound. tools/demo_content writes the scene
-// and every asset it uses.
+// component, and a speaker with a sound. tools/demo_content writes the images,
+// the clip and the sound it uses.
 
 SHOWCASE_LIFT :: "Lift"         // the entity with the Animation
 SHOWCASE_RIDE_SECONDS :: f32(4) // length of its clip; the lift is at the top half way
@@ -23,15 +23,15 @@ Showcase :: struct {
 
 // The button of the sign stops and resumes the lift; every arrival at the
 // top, a marker of the clip, is counted.
-@(step="fixed",stage="react",after="animation_advance")
+@(step="fixed",stage="react")
 game_showcase :: proc(
-    shown:^core.Table(Showcase),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),
-    markers:core.Ref(anim.Animation_Events),names:core.Read(core.Name),
+    shown:^core.Table(Showcase),animations:^core.Table(anim.Animation,.Read),playback:core.Ref(anim.Playback),
+    markers:core.Ref(anim.Animation_Events),names:^core.Table(core.Name,.Read),
 ) {
     if core.count(shown)==0 {return}
     arrivals:=i32(0)
     for marker in markers.items {
-        if marker.marker==base.name_hash("top") {arrivals+=1}
+        if marker.kind==.Marker && marker.name==base.name_hash("top") {arrivals+=1}
     }
     lift:=core.entity_named(names,SHOWCASE_LIFT)
     animation,animated:=core.get(animations,lift)

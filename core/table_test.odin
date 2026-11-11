@@ -16,31 +16,59 @@ rows_written_take_a_stamp_above_the_version_a_reader_saw :: proc(t:^testing.T) {
     add(&names,a,name_make("a"));add(&names,b,name_make("b"));add(&names,c,name_make("c"))
     testing.expect(t,table_settle(&names,&es))
 
-    seen:=version(&names)
-    _,found:=get(read(&names),a)
-    testing.expect(t,found && has(&names,b) && row_of(&names,c)==2 && name_get(read(&names),a)=="a")
-    testing.expect_value(t,version(&names),seen)
+    // Reading a table received to write stamps nothing, by entity or by row.
+    seen:=names.version
+    looked:Seen;shape:Shape
+    testing.expect(t,touched(&names,&looked) && reshaped(&names,&shape))
+    value,found:=get(&names,a)
+    _,missing:=get(&names,NONE)
+    testing.expect(t,found && !missing && value==at(&names,0) && has(&names,b) && row_of(&names,c)==2 && name_get(&names,a)=="a")
+    testing.expect_value(t,names.version,seen)
+    testing.expect(t,!touched(&names,&looked) && !reshaped(&names,&shape))
 
-    get(&names,b)^=name_make("d")
-    testing.expect(t,version(&names)>seen)
+    // A row asked for to write is written, at the settle, when its bytes differ
+    // from those it had when it was first asked for, or when it was new to its
+    // writer; otherwise it keeps its stamp and the table its version.
+    Case :: struct {entity:Entity,values:[]string,written:bool}
+    for c in ([?]Case{{b,{"b"},true},{b,{"b"},false},{b,{"d"},true},{b,{"d"},false},{b,{"x","d"},false},{b,{"d","y"},true}}) {
+        before:=names.version
+        for value in c.values {edit(&names,c.entity)^=name_make(value)}
+        table_settle(&names,&es)
+        testing.expect_value(t,names.version>before,c.written)
+        testing.expect_value(t,touched(&names,&looked),c.written)
+    }
+    // A reader that looks between the ask and the settle is never given that version again.
+    peek:Seen
+    before:=names.version
+    edit(&names,b)^=at(&names,row_of(&names,b))
+    testing.expect(t,touched(&names,&peek))
+    table_settle(&names,&es)
+    testing.expect_value(t,names.version,before)
+    edit(&names,b)^=name_make("z")
+    table_settle(&names,&es)
+    testing.expect(t,touched(&names,&peek) && touched(&names,&looked))
     testing.expect(t,stamp(&names,row_of(&names,a))<=seen)
     testing.expect(t,stamp(&names,row_of(&names,b))>seen)
+    testing.expect(t,edit(&names,NONE)==nil && !reshaped(&names,&shape))
 
     // A row that takes the place of one removed keeps its stamp.
     written:=stamp(&names,row_of(&names,b))
-    shape:=layout(&names)
     remove(&names,a)
     table_settle(&names,&es)
-    testing.expect(t,layout(&names)>shape)
+    testing.expect(t,reshaped(&names,&shape) && touched(&names,&looked))
     testing.expect_value(t,row_of(&names,c),0)
     testing.expect(t,stamp(&names,0)<=seen)
     testing.expect_value(t,stamp(&names,row_of(&names,b)),written)
 
     // An add over a row writes it.
-    seen=version(&names)
+    seen=names.version
     add(&names,c,name_make("e"))
     testing.expect(t,!table_settle(&names,&es))
-    testing.expect(t,stamp(&names,row_of(&names,c))>seen && version(&names)>seen)
+    testing.expect(t,stamp(&names,row_of(&names,c))>seen && names.version>seen)
+    testing.expect(t,touched(&names,&looked) && !reshaped(&names,&shape))
+    // A table the World does not have never changes.
+    absent:^Table(Name,.Read)
+    testing.expect(t,!touched(absent,&looked) && !reshaped(absent,&shape) && !touched((^Table(Name))(nil),&looked))
 
     // Copied over, a table only grows its version and layout.
     other:Table(Name)
@@ -50,6 +78,144 @@ rows_written_take_a_stamp_above_the_version_a_reader_saw :: proc(t:^testing.T) {
     table_copy(&other,&names)
     testing.expect(t,other.version>1000 && other.layout>1000)
     for row in 0..<count(&other) {testing.expect(t,stamp(&other,row)<=other.version)}
+}
+
+// An edit is followed until its table settles: what the check of writes keeps
+// at a settle finds, at the next, a row written through a pointer asked for
+// before it, unless the row was asked for and written again since.
+@(test)
+a_row_written_through_an_edit_asked_for_before_the_last_settle_is_found :: proc(t:^testing.T) {
+    es:Entities
+    entities_init(&es)
+    defer entities_destroy(&es)
+    Case :: struct {after:proc(names:^Table(Name),es:^Entities,e:Entity,late:^Name),stale:bool}
+    cases:=[?]Case{
+        {proc(names:^Table(Name),es:^Entities,e:Entity,late:^Name) {late^=name_make("late");table_settle(names,es)},true},
+        {proc(names:^Table(Name),es:^Entities,e:Entity,late:^Name) {late^=name_make("late");_=edit(names,e);table_settle(names,es)},true},
+        {proc(names:^Table(Name),es:^Entities,e:Entity,late:^Name) {late^=name_make("late");edit(names,e)^=name_make("asked");table_settle(names,es)},false},
+        {proc(names:^Table(Name),es:^Entities,e:Entity,late:^Name) {edit(names,e)^=name_make("asked");table_settle(names,es)},false},
+    }
+    for c in cases {
+        names:Table(Name)
+        table_init(&names,"Name")
+        defer table_destroy(&names)
+        kept:Settled_Rows
+        defer delete(kept.values)
+        a,b:=create(&es),create(&es)
+        add(&names,a,name_make("a"));add(&names,b,name_make("b"))
+        table_settle(&names,&es)
+        testing.expect_value(t,settled_check(raw(&names),&kept,size_of(Name)),NONE)
+        late:=edit(&names,b)
+        table_settle(&names,&es)
+        testing.expect_value(t,settled_check(raw(&names),&kept,size_of(Name)),NONE)
+        c.after(&names,&es,b,late)
+        testing.expect_value(t,settled_check(raw(&names),&kept,size_of(Name))==b,c.stale)
+    }
+}
+
+// What each_changed goes through is what a walk of every stamp finds, and no
+// page is below a stamp of its rows, whatever wrote, moved or took the rows.
+@(test)
+a_reader_goes_through_the_rows_changed_and_skips_the_pages_written_before :: proc(t:^testing.T) {
+    Probe :: struct {value:u32}
+    ROWS :: 5*STAMP_PAGE+17
+    es:Entities
+    entities_init(&es)
+    defer entities_destroy(&es)
+    table,copied:Table(Probe)
+    table_init(&table,"Probe");table_init(&copied,"Probe")
+    defer {table_destroy(&table);table_destroy(&copied)}
+    all:=make([dynamic]Entity);defer delete(all)
+    for i in 0..<ROWS {
+        append(&all,create(&es))
+        add(&table,all[i],Probe{u32(i)})
+    }
+    testing.expect(t,table_settle(&table,&es))
+    entities_settle(&es)
+
+    // The rows a reader is given, against those a walk of every stamp finds since it looked.
+    same :: proc(t:^testing.T,table:^Table(Probe),seen:^Seen,off:=false,loc:=#caller_location) -> (rows:int) {
+        raw_table:=raw(table)
+        testing.expect_value(t,len(table.page_stamps),stamp_pages(len(table.stamps)),loc)
+        for stamp,row in table.stamps {
+            if !testing.expect(t,table.page_stamps[row>>STAMP_PAGE_BITS]>=stamp,loc=loc) {return}
+        }
+        since:=seen.version
+        c:=raw_changes(raw_table,seen,off)
+        limit:=off?len(table.stamps):table.on
+        expected:=0
+        for row,ok:=raw_each_changed(raw_table,&c);ok;row,ok=raw_each_changed(raw_table,&c) {
+            for expected<limit && !(c.all || table.stamps[expected]>since) {expected+=1}
+            if !testing.expect_value(t,row,expected,loc) {return}
+            testing.expect(t,changed(table,c,row),loc=loc)
+            expected+=1
+            rows+=1
+        }
+        for expected<limit && !(c.all || table.stamps[expected]>since) {expected+=1}
+        testing.expect_value(t,expected,limit,loc)
+        return
+    }
+    seen:Seen
+    testing.expect_value(t,same(t,&table,&seen),ROWS)
+    testing.expect_value(t,same(t,&table,&seen),0)
+
+    // One row in a page, the last row, a page whole, and nothing.
+    edit_at(&table,STAMP_PAGE+3).value=1
+    testing.expect_value(t,same(t,&table,&seen),1)
+    edit_at(&table,ROWS-1).value=1
+    edit(&table,all[0]).value=1
+    testing.expect_value(t,same(t,&table,&seen),2)
+    for row in 2*STAMP_PAGE..<3*STAMP_PAGE {edit_at(&table,row)^=Probe{9}}
+    table_settle(&table,&es)
+    testing.expect_value(t,same(t,&table,&seen),STAMP_PAGE)
+    for row in 2*STAMP_PAGE..<3*STAMP_PAGE {edit_at(&table,row)^=Probe{9}}
+    table_settle(&table,&es)
+    _,_=get(&table,all[7]);_=at(&table,7)
+    testing.expect_value(t,same(t,&table,&seen),0)
+    for &value in writable(&table) {value.value+=1}
+    testing.expect_value(t,same(t,&table,&seen),ROWS)
+
+    // Rows written, taken, turned off and added in any order: the stamps move with their rows.
+    state:=u64(t.seed)|1
+    next :: proc(state:^u64,below:int) -> int {
+        state^=state^*6364136223846793005+1442695040888963407
+        return int((state^>>33)%u64(below))
+    }
+    for round in 0..<200 {
+        for _ in 0..<next(&state,6) {
+            e:=all[next(&state,len(all))]
+            switch next(&state,6) {
+            case 0: remove(&table,e)
+            case 1: disable(&table,e)
+            case 2: enable(&table,e)
+            case 3: add(&table,e,Probe{u32(round)})
+            case 4: if row:=row_of(&table,e);row>=0 {edit_at(&table,row).value+=1}
+            case 5: if row:=edit(&table,e);row!=nil {row^=Probe{u32(round%3)}}
+            }
+        }
+        if round%40==39 {
+            e:=create(&es)
+            append(&all,e)
+            add(&table,e,Probe{})
+        }
+        table_settle(&table,&es)
+        entities_settle(&es)
+        same(t,&table,&seen,round%2==0)
+        if round%50==49 {
+            testing.expect(t,table_copy(&copied,&table))
+            other:Seen
+            same(t,&copied,&other,true)
+            table_swap(&copied,&table)
+            same(t,&table,&seen)
+            same(t,&copied,&other)
+        }
+    }
+    // A copy of what changed leaves the pages of the rows it copied as theirs.
+    mark:Copy_Mark
+    testing.expect(t,table_copy(&copied,&table) && table_copy_changed(&copied,&table,&mark))
+    edit_at(&table,1).value+=1
+    testing.expect(t,table_copy_changed(&copied,&table,&mark))
+    for stamp,page in table.page_stamps {testing.expect_value(t,copied.page_stamps[page],stamp)}
 }
 
 @(test)
@@ -67,12 +233,12 @@ transforms_compute_what_was_written_and_what_hangs_from_it :: proc(t:^testing.T)
     p:Propagation
     defer value_free(&p,type_info_of(Propagation))
     pass :: proc(locals:^Table(Transform),parents:^Table(Parent),worlds:^Table(World_Transform),h:^Hierarchy,p:^Propagation,es:^Entities,tick:bool) {
-        hierarchy_settle(h,read(parents),es)
-        transforms_compute(read(locals),ref(h),worlds,p,tick)
+        hierarchy_settle(h,parents,es)
+        transforms_compute(locals,ref(h),worlds,p,tick)
         table_settle(worlds,es)
     }
     at :: proc(worlds:^Table(World_Transform),e:Entity) -> World_Transform {
-        value,_:=get(read(worlds),e)
+        value,_:=get(worlds,e)
         return value
     }
 
@@ -89,7 +255,7 @@ transforms_compute_what_was_written_and_what_hangs_from_it :: proc(t:^testing.T)
     pass(&locals,&parents,&worlds,&h,&p,&es,true)
     testing.expect_value(t,version(&worlds),seen)
 
-    get(&locals,root).position={2,0,0}
+    edit(&locals,root).position={2,0,0}
     pass(&locals,&parents,&worlds,&h,&p,&es,false)
     testing.expect_value(t,at(&worlds,child).position,[3]f32{2,1,0})
     testing.expect_value(t,at(&worlds,child).previous.position,[3]f32{1,1,0})
@@ -165,7 +331,7 @@ reflected_immediate_removal_moves_the_last_row_releases_locks_and_never_allocate
     table_settle(&names,&es)
     testing.expect_value(t,count(&names),1)
     testing.expect_value(t,owners[entity_index(a)],Row_Owner{})
-    testing.expect_value(t,name_get(read(&names),c),"new c")
+    testing.expect_value(t,name_get(&names,c),"new c")
 }
 
 @(test)
@@ -195,7 +361,7 @@ a_row_put_back_at_once_takes_its_place_its_lock_and_no_memory :: proc(t:^testing
     }
     testing.expect(t,put && !again)
     testing.expect_value(t,tracker.total_allocation_count,i64(0))
-    testing.expect(t,has(&names,b) && name_get(read(&names),b)=="b" && count(&names)==2)
+    testing.expect(t,has(&names,b) && name_get(&names,b)=="b" && count(&names)==2)
     testing.expect_value(t,owner.owners[entity_index(b)].id,u16(1))
     c1:=changes(&names,&seen)
     testing.expect(t,changed(&names,c1,row_of(&names,b)) && !changed(&names,c1,row_of(&names,a)))
@@ -228,7 +394,7 @@ a_single_table_keeps_on_the_row_turned_on_last :: proc(t:^testing.T) {
     table:Table(i32)
     table_init(&table,"Sky");defer table_destroy(&table)
     table.single=true
-    on :: proc(table:^Table(i32)) -> Entity {return count(table)==1?entity_at(read(table),0):NONE}
+    on :: proc(table:^Table(i32)) -> Entity {return count(table)==1?entity_at(table,0):NONE}
     a,b,c:=create(&es),create(&es),create(&es)
     add(&table,a,1)
     add(&table,b,2)
@@ -295,7 +461,7 @@ a_settle_without_changes_leaves_a_single_table_as_it_was :: proc(t:^testing.T) {
     // Turning on the one that is on changes nothing.
     enable(&skies,a)
     table_settle(&skies,&es)
-    testing.expect(t,skies.layout==shape && entity_at(read(&skies),0)==a)
+    testing.expect(t,skies.layout==shape && entity_at(&skies,0)==a)
 }
 
 // What a function asked waits for the settle: staged_has answers as has will after it.
@@ -334,8 +500,8 @@ first_sole_and_entity_named_find_the_entity_a_function_asks_for :: proc(t:^testi
     table_init(&names,"Name")
     defer table_destroy(&names)
     _,any:=first(&names)
-    _,one:=sole(read(&names))
-    testing.expect(t,!any && !one && entity_named(read(&names),"lift")==NONE)
+    _,one:=sole(&names)
+    testing.expect(t,!any && !one && entity_named(&names,"lift")==NONE)
 
     a,b:=create(&es),create(&es)
     add(&names,a,name_make("lift"))
@@ -345,11 +511,11 @@ first_sole_and_entity_named_find_the_entity_a_function_asks_for :: proc(t:^testi
 
     add(&names,b,name_make("door"))
     table_settle(&names,&es)
-    e,found=first(read(&names))
+    e,found=first(&names)
     testing.expect(t,found && e==a)
     _,found=sole(&names)
     testing.expect(t,!found,"sole is the only one")
-    testing.expect_value(t,entity_named(read(&names),"door"),b)
+    testing.expect_value(t,entity_named(&names,"door"),b)
 }
 
 @(test)
@@ -375,8 +541,8 @@ a_component_added_without_a_value_is_zeroed_whatever_its_size :: proc(t:^testing
         testing.expectf(t,table_settle(&table,&es) && has(&table,second),"%s: added",name)
         if size_of(T)==0 {return}
         zero:T
-        testing.expectf(t,mem.compare_ptrs(raw_get(raw(&table),info,second),&zero,size_of(T))==0,"%s: zeroed",name)
-        testing.expectf(t,mem.compare_ptrs(raw_get(raw(&table),info,first),&filled,size_of(T))==0,"%s: the value given stays",name)
+        testing.expectf(t,mem.compare_ptrs(raw_edit(raw(&table),info,second),&zero,size_of(T))==0,"%s: zeroed",name)
+        testing.expectf(t,mem.compare_ptrs(raw_edit(raw(&table),info,first),&filled,size_of(T))==0,"%s: the value given stays",name)
     }
     check(t,Empty,"Empty")
     check(t,Small,"Small")
@@ -402,16 +568,16 @@ a_table_holds_rows_by_entity_only_where_it_has_rows :: proc(t:^testing.T) {
     pages:=0
     for page in names.rows {if len(page)>0 {pages+=1}}
     testing.expect_value(t,pages,2)
-    testing.expect(t,cap(names.gone)==0,"no entity went: there is no room for them yet")
-    value,found:=get(read(&names),far)
+    testing.expect(t,cap(names.gone.items)==0,"no entity went: there is no room for them yet")
+    value,found:=get(&names,far)
     testing.expect(t,found && value==2 && !has(&names,entity_make(2*ROWS_PAGE,1)))
     testing.expect(t,table_copy(&copied,&names))
-    value,found=get(read(&copied),far)
+    value,found=get(&copied,far)
     testing.expect(t,found && value==2 && has(&copied,near))
     // A table a storage holds is copied and freed as any value is.
     held:Table(i32)
     testing.expect(t,value_copy(&held,&names,type_info_of(Table(i32))))
-    value,found=get(read(&held),far)
+    value,found=get(&held,far)
     testing.expect(t,found && value==2 && raw_data(held.rows[0])!=raw_data(names.rows[0]))
     value_free(&held,type_info_of(Table(i32)))
     seen:Seen
@@ -422,4 +588,127 @@ a_table_holds_rows_by_entity_only_where_it_has_rows :: proc(t:^testing.T) {
     testing.expect(t,!has(&names,far) && has(&names,near) && !c.all && len(c.gone)==1 && c.gone[0]==far)
     testing.expect(t,table_copy(&copied,&names))
     testing.expect(t,!has(&copied,far) && has(&copied,near) && raw_row(raw(&copied),far)<0)
+}
+
+// A row is added, new to its writer, from the add that gives it its value
+// until it is written: by any write but its author's (the editor), and not by
+// a read, a turn, a settle of other rows or a move of its row. It is of the row, so a copy of the table,
+// a copy of what changed and a swap keep it, as a rollback does.
+@(test)
+a_row_is_added_until_its_writer_writes_it :: proc(t:^testing.T) {
+    es:Entities
+    entities_init(&es)
+    defer entities_destroy(&es)
+    names,kept,rolled:Table(Name)
+    table_init(&names,"Name");table_init(&kept,"Name");table_init(&rolled,"Name")
+    defer {table_destroy(&names);table_destroy(&kept);table_destroy(&rolled)}
+    entities:[7]Entity
+    for &e in entities {
+        e=create(&es)
+        add(&names,e,name_make("new"))
+    }
+    testing.expect(t,table_settle(&names,&es))
+    for row in 0..<count(&names) {testing.expect(t,added(&names,row) && added(&names,row))}
+    Write :: enum {Edit,Edit_At,Edit_Same,Read,Raw_Edit,Raw_Touch,Raw_Author}
+    for write in Write {
+        e:=entities[int(write)]
+        _,_=get(&names,e)
+        testing.expect(t,added(&names,row_of(&names,e)),"reading is not writing")
+        switch write {
+        case .Edit:      edit(&names,e)^=name_make("a")
+        case .Edit_At:   edit_at(&names,row_of(&names,e))^=name_make("b")
+        case .Edit_Same: edit(&names,e)^=name_make("new")
+        case .Read:
+        case .Raw_Edit:  raw_edit(raw(&names),type_info_of(Name),e)
+        case .Raw_Touch: raw_touch(raw(&names),e)
+        case .Raw_Author:
+            // What the editor writes is still new to the writer, and its readers see it.
+            seen:Seen
+            _=touched(&names,&seen)
+            (^Name)(raw_author(raw(&names),type_info_of(Name),e))^=name_make("d")
+            c:=changes(&names,&seen)
+            row,found:=each_changed(&names,&c)
+            testing.expect(t,found && entity_at(&names,row)==e && !touched(&names,&seen))
+        }
+        // Until the table settles, a row asked for with edit is still new, before and after the ask.
+        testing.expectf(t,added(&names,row_of(&names,e))==(write<=.Read || write==.Raw_Author),"%v",write)
+    }
+    // Written by its writer, with other bytes or the same, it is no longer new.
+    testing.expect(t,!table_settle(&names,&es))
+    for write in Write {testing.expectf(t,added(&names,row_of(&names,entities[int(write)]))==(write==.Read || write==.Raw_Author),"%v",write)}
+    // A row turned off and on, and one whose row moved when another went, are as they were.
+    mark:Copy_Mark
+    testing.expect(t,table_copy_changed(&kept,&names,&mark))
+    disable(&names,entities[3]);remove(&names,entities[0])
+    testing.expect(t,table_settle(&names,&es))
+    enable(&names,entities[3])
+    testing.expect(t,table_settle(&names,&es))
+    testing.expect(t,added(&names,row_of(&names,entities[3])) && !added(&names,row_of(&names,entities[5])) && !added(&names,row_of(&names,entities[1])))
+    // An add over a row gives it a value again; writable hands out every row.
+    add(&names,entities[1],name_make("again"))
+    testing.expect(t,!table_settle(&names,&es) && added(&names,row_of(&names,entities[1])))
+    testing.expect(t,table_copy(&rolled,&names) && table_copy_changed(&kept,&names,&mark))
+    for other in ([2]^Table(Name){&rolled,&kept}) {
+        for row in 0..<count(&names) {testing.expect_value(t,added(other,row_of(other,entity_at(&names,row))),added(&names,row))}
+    }
+    _=writable(&names)
+    for row in 0..<count(&names) {testing.expect(t,!added(&names,row))}
+    table_swap(&names,&rolled)
+    testing.expect(t,added(&names,row_of(&names,entities[1])) && added(&names,row_of(&names,entities[3])))
+    // Every stamp a reader compares still grows.
+    seen:Seen
+    testing.expect(t,touched(&names,&seen))
+    add(&names,create(&es),name_make("late"))
+    testing.expect(t,table_settle(&names,&es) && touched(&names,&seen))
+    c:=changes(&names,&seen)
+    testing.expect(t,!c.written)
+    edit_at(&names,0).text[0]='z'
+    c=changes(&names,&seen)
+    row,found:=each_changed(&names,&c)
+    testing.expect(t,found && row==0 && !added(&names,0))
+}
+
+// A join goes through the rows on of its first table whose entity has the
+// others on, whatever the access to each, and gives their values and the row
+// of the first: reading stamps nothing, and edit_at of that row writes it.
+@(test)
+a_join_gives_the_entities_that_have_every_table_on :: proc(t:^testing.T) {
+    es:Entities
+    testing.expect(t,entities_init(&es))
+    defer entities_destroy(&es)
+    a,b:Table(i32)
+    c:Table(f32)
+    table_init(&a,"a");table_init(&b,"b");table_init(&c,"c")
+    defer {table_destroy(&a);table_destroy(&b);table_destroy(&c)}
+    all:[8]Entity
+    for &e,i in all {
+        e=create(&es)
+        add(&a,e,i32(i))
+        if i%2==0 {add(&b,e,i32(10*i))}
+        if i%3!=2 {add(&c,e,f32(i))}
+    }
+    table_settle(&a,&es);table_settle(&b,&es);table_settle(&c,&es)
+    disable(&b,all[4]);table_settle(&b,&es)
+    version:=a.version
+    j:=join(&a,&b,&c)
+    seen:[dynamic]Entity
+    defer delete(seen)
+    for e,x,y,z in each_joined(&j) {
+        testing.expect(t,entity_at(&a,j.row)==e && x==at(&a,j.row) && y==10*x && z==f32(x))
+        append(&seen,e)
+        edit_at(&a,j.row)^+=100
+    }
+    testing.expect(t,len(seen)==2 && seen[0]==all[0] && seen[1]==all[6] && a.version>version,"the entities with all three on, written through the row of the first")
+    pairs:=join(&c,&b)
+    n:=0
+    for e,z,y in each_joined(&pairs) {
+        testing.expect(t,has(&b,e) && y==10*i32(z))
+        n+=1
+    }
+    testing.expect_value(t,n,2)
+    empty:Table(i32)
+    table_init(&empty,"empty")
+    defer table_destroy(&empty)
+    none:=join(&empty,&b,&c)
+    for _ in each_joined(&none) {testing.fail(t)}
 }

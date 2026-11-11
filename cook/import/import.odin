@@ -38,6 +38,7 @@ import_model :: proc(path:string,formats:[]Format,options:Import_Options={},allo
     r.meshes.allocator=context.temp_allocator;r.materials.allocator=context.temp_allocator;r.images.allocator=context.temp_allocator
     r.nodes.allocator=context.temp_allocator;r.warnings.allocator=context.temp_allocator;r.image_rows.allocator=context.temp_allocator
     r.programs.allocator=context.temp_allocator
+    r.files.allocator=context.temp_allocator
     r.animations.allocator=context.temp_allocator
     r.skeletons.allocator=context.temp_allocator
     r.material_names.allocator=context.temp_allocator;r.mesh_names.allocator=context.temp_allocator
@@ -129,6 +130,7 @@ read_model :: proc(r:^Reader,formats:[]Format,model:^Imported_Model) -> bool {
     model.source_size=u64(len(bytes))
     model.source_hash=base.hash64(bytes)
     model.format=format.name
+    model.folder=own(r,format.folder(r.path) if format.folder!=nil else r.stem)
     model.version=import_version(format.version)
     r.data=format.data
     space:=format.space
@@ -169,5 +171,7 @@ model_finish :: proc(r:^Reader,model:^Imported_Model) -> bool {
     model.warnings=own_slice(r,r.warnings[:])
     model.programs=make([]string,len(r.programs),r.out)
     for program,i in r.programs {model.programs[i]=own(r,program)}
+    model.files=make([]string,len(r.files),r.out)
+    for file,i in r.files {model.files[i]=own(r,file)}
     return true
 }

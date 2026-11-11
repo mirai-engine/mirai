@@ -78,7 +78,7 @@ bool fade_pixel_left(uint2 pixel, float fade) {
 // itself; the G-buffer keeps what each pixel evaluated (`stored`) while some
 // surface departs from it: specular maps and factors, another IOR, a program.
 float4 pixel_reflectance(int2 p, float4 albedo, bool stored) {
-    if (stored) return specular_unpack(surface_specular.Load(int3(p, 0)));
+    if (stored) return surface_specular.Load(int3(p, 0));
     return float4(specular_f0(albedo.rgb, albedo.a), 1.0);
 }
 
@@ -431,16 +431,112 @@ Material material_row(uint row) {
 
 bool material_has(uint texture_index) { return texture_index != INVALID; }
 
+// What an instance gives over the rows of its materials
+// (render.Instance_Material_Values): `block` is Instance.material_values. A
+// stage that draws no instance of a scene (MIRAI_NO_INSTANCES: the previews)
+// reads none, and does not bind the pool they are in.
+// Those the instance at an index gives; INVALID (a surface an extension
+// draws) gives none.
+uint material_values_of(uint instance_index) {
+#ifdef MIRAI_NO_INSTANCES
+    return 0u;
+#else
+    return instance_index == INVALID ? 0u : scene_instance(instance_index).material_values;
+#endif
+}
+// Where the words of row `row` as an instance shows it start in the pool: 0
+// for a row it shows as the table holds it. The CPU makes them whole when
+// the instance is given what it gives (render.instance_material_values_give).
+uint material_given(uint block, uint row) {
+#ifndef MIRAI_NO_INSTANCES
+    if (block != 0u) {
+        uint rows = min(indices[block - 1u], INSTANCE_VALUES_MAX);
+        for (uint i = 0u; i < rows; i++) {
+            uint at = block - 1u + INSTANCE_VALUES_HEADER + i * INSTANCE_ROW_WORDS;
+            if (indices[at] == row) return at + 1u;
+        }
+    }
+#endif
+    return 0u;
+}
+// The N words of the pool from `at`, as a T: a stage loads those it reads.
+T material_words<T, let N : int>(uint at) {
+    uint words[N];
+    [ForceUnroll] for (int k = 0; k < N; k++) {
+#ifdef MIRAI_NO_INSTANCES
+        words[k] = 0u;
+#else
+        words[k] = indices[at + uint(k)];
+#endif
+    }
+    return reinterpret<T>(words);
+}
+// A row as an instance shows it: its own of it, and its fade.
+Material material_row(uint row, uint block) {
+    uint at = material_given(block, row);
+    Material m;
+    if (at == 0u) m = material_row(row);
+    else m = material_words<Material, MATERIAL_WORDS>(at);
+    m.row = row;
+#ifndef MIRAI_NO_INSTANCES
+    if (block != 0u) {
+        float fade = asfloat(indices[block]);
+        m.opacity *= 1.0 - fade;
+        if (fade > 0.0 && m.alpha_mode == ALPHA_OPAQUE) m.alpha_mode = ALPHA_BLEND;
+    }
+#endif
+    return m;
+}
+// The parameters the program of a row reads at a point of an instance: those
+// of the row, or the instance's own of it.
+void material_parameters(uint row, uint block, out float4 parameters[16]) {
+    uint at = material_given(block, row);
+    if (at == 0u) parameters = materials[row].custom_params;
+    else parameters = material_words<float4[16], PROGRAM_PARAMETER_BYTES / 4>(at + MATERIAL_WORDS + MATERIAL_BLOCK_WORDS);
+}
+#ifdef MIRAI_TEXTURE_FEEDBACK
+// The finest level a stage that shades surfaces samples of each texture, for
+// its residency (render/texture_residency.odin): the first word says how
+// many textures it may write, then one per texture past the reserved entries
+// of the table. Any pass, in any order: an atomic minimum.
+[[vk::binding(TEXTURE_FEEDBACK_SLOT, 0)]] RWStructuredBuffer<uint> texture_feedback_words : register(MIRAI_REGISTER(u, TEXTURE_FEEDBACK_SLOT), space0);
+#endif
+
+// That a texture was sampled at `level`: log2 of the texels across its width
+// a sample spans at the level it reads, less log2 of that width, which no
+// level held changes; -FLT_MAX for every level.
+void texture_feedback(uint texture_index, float level) {
+#ifdef MIRAI_TEXTURE_FEEDBACK
+    uint entry = texture_index - TEXTURE_TABLE_RESERVED;
+    if (entry >= texture_feedback_words[0] || isnan(level)) return;
+    uint code = uint(clamp(floor((level - TEXTURE_FEEDBACK_LOW) * TEXTURE_FEEDBACK_STEPS), 0.0, float(TEXTURE_FEEDBACK_CODES - 1u)));
+    uint at = TEXTURE_FEEDBACK_FIRST + entry;
+    if (code < texture_feedback_words[at]) InterlockedMin(texture_feedback_words[at], code);
+#endif
+}
+
 // Ray hits have no screen-space derivatives: `lod` is the level of a texture
 // of one texel, which the size of the texture then shifts (see hit_lod).
 float4 material_texel_at(uint texture_index, float2 uv, float lod) {
     float2 size = float2(texture_size(material_textures[mirai_nonuniform(texture_index)], 0));
+    texture_feedback(texture_index, lod + 0.5 * log2(size.y / size.x));
     return material_textures[mirai_nonuniform(texture_index)].SampleLevel(material_sampler, uv, lod + 0.5 * log2(size.x * size.y));
 }
 // Rasterized surfaces (MATERIAL_RASTER, fragment shaders only) filter with the
 // screen-space derivatives of uv, and `lod` is a bias.
 float4 material_texel(uint texture_index, float2 uv, float lod) {
 #ifdef MATERIAL_RASTER
+#ifdef MIRAI_TEXTURE_FEEDBACK
+    // The level anisotropic filtering reads: over the shorter axis of the
+    // footprint, or the longer one over its samples, each axis the shortest
+    // a device may take of it (the larger of its two steps in texels).
+    float2 size = float2(texture_size(material_textures[mirai_nonuniform(texture_index)], 0));
+    float2 dx = abs(ddx(uv) * size), dy = abs(ddy(uv) * size);
+    float across = max(dx.x, dx.y), down = max(dy.x, dy.y);
+    float longer = max(across, down);
+    // Where the uv do not change no level is asked.
+    if (longer > 0.0) texture_feedback(texture_index, log2(max(min(across, down), longer / MATERIAL_ANISOTROPY)) + lod - log2(size.x));
+#endif
     return material_textures[mirai_nonuniform(texture_index)].SampleBias(material_sampler, uv, lod);
 #else
     return material_texel_at(texture_index, uv, lod);
@@ -508,8 +604,10 @@ float3 material_ray_normal(Material m, Instance inst, float3 normal, float3 w, M
 }
 // Sampling follows the evaluated surface's explicit context, including a
 // ray hit reconstructed inside a fragment shader.
+// A program keeps every level of the textures it samples: its uv and levels are its own.
 float4 mirai_sample_texture_at(uint index, float2 uv, float lod, bool ray) {
     if (!material_has(index)) return float4(1.0);
+    texture_feedback(index, -FLT_MAX);
 #ifdef MATERIAL_RASTER
     if (!ray) return material_textures[mirai_nonuniform(index)].SampleBias(material_sampler, uv, lod);
 #endif
@@ -535,13 +633,19 @@ float4 mirai_sample_texture(Mirai_PostProcess_Context ctx, uint index, float2 uv
     return mirai_sample_texture_at(index, uv, lod, false);
 }
 float4 mirai_sample_texture_level(uint index, float2 uv, float level) {
-    return material_has(index) ? material_textures[mirai_nonuniform(index)].SampleLevel(material_sampler, uv, level) : float4(1);
+    if (!material_has(index)) return float4(1);
+    texture_feedback(index, -FLT_MAX);
+    return material_textures[mirai_nonuniform(index)].SampleLevel(material_sampler, uv, level);
 }
 float4 mirai_sample_texture_grad(uint index, float2 uv, float2 dx, float2 dy) {
-    return material_has(index) ? material_textures[mirai_nonuniform(index)].SampleGrad(material_sampler, uv, dx, dy) : float4(1);
+    if (!material_has(index)) return float4(1);
+    texture_feedback(index, -FLT_MAX);
+    return material_textures[mirai_nonuniform(index)].SampleGrad(material_sampler, uv, dx, dy);
 }
 float2 mirai_texture_size(uint index) {
-    return material_has(index) ? float2(texture_size(material_textures[mirai_nonuniform(index)], 0)) : float2(1);
+    if (!material_has(index)) return float2(1);
+    texture_feedback(index, -FLT_MAX);
+    return float2(texture_size(material_textures[mirai_nonuniform(index)], 0));
 }
 float4 mirai_sample_texture_projected(Mirai_Surface_Context ctx, uint index, float3 u, float3 v, float metres) {
     float scale = 1.0 / max(metres, 1e-6);
@@ -561,16 +665,16 @@ float4 material_base_color(Material m, float2 uv0, float2 uv1, float2 lod, float
 }
 
 // The layers a pass shades of those a material holds: all of them, or the
-// unlit bit alone in a pass that only sees surfaces without layers.
+// unlit bit alone in a pass that only sees surfaces without layers
+// (MIRAI_MATERIAL_NO_LAYERS: true, or a constant of the stage).
 uint material_layers_allowed(uint layers) {
 #ifdef MIRAI_MATERIAL_NO_LAYERS
-    return layers & MATERIAL_LAYER_UNLIT;
-#else
-    return layers;
+    if (MIRAI_MATERIAL_NO_LAYERS) return layers & MATERIAL_LAYER_UNLIT;
 #endif
+    return layers;
 }
 // The layers a material holds at a point (MATERIAL_LAYER_* of its row): the
-// blocks of the row, by their maps. The coat follows the surface under the
+// blocks of the row, under the values of the instance, by their maps. The coat follows the surface under the
 // normal map of the base, or its own map; the tangent of an anisotropic lobe
 // is that of the surface turned by its rotation and its map, across the
 // shading normal.
@@ -580,8 +684,15 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
     l.bits = bits;
     if (bits == 0u || (bits & MATERIAL_LAYER_UNLIT) != 0u) return l;
     float2 lod = float2(ctx.lod, ctx.lod1);
+    uint given = material_given(ctx.material_values, m.row);
+    Material_Blocks blocks;
+    if (given == 0u) blocks = materials[m.row].blocks;
+    else blocks = material_words<Material_Blocks, MATERIAL_BLOCK_WORDS>(given + MATERIAL_WORDS);
+    Material_Coat coat = blocks.coat;
+    Material_Fuzz fuzz = blocks.fuzz;
+    Material_Diffuse_Transmission transmission = blocks.diffuse_transmission;
+    Material_Anisotropy anisotropy = blocks.anisotropy;
     if ((bits & MATERIAL_LAYER_COAT) != 0u) {
-        Material_Coat coat = materials[m.row].coat;
         l.coat = coat.weight;
         l.coat_roughness = coat.roughness;
         if (material_has(m.textures[MATERIAL_MAP_COAT])) l.coat *= material_map_texel(m, MATERIAL_MAP_COAT, m.textures[MATERIAL_MAP_COAT], ctx.uv0, ctx.uv1, lod, ctx.ray).r;
@@ -595,7 +706,6 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
         }
     }
     if ((bits & MATERIAL_LAYER_FUZZ) != 0u) {
-        Material_Fuzz fuzz = materials[m.row].fuzz;
         l.fuzz = fuzz.weight;
         l.fuzz_color = fuzz.color;
         l.fuzz_roughness = fuzz.roughness;
@@ -603,14 +713,12 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
         if (material_has(m.textures[MATERIAL_MAP_FUZZ_ROUGHNESS])) l.fuzz_roughness *= material_map_texel(m, MATERIAL_MAP_FUZZ_ROUGHNESS, m.textures[MATERIAL_MAP_FUZZ_ROUGHNESS], ctx.uv0, ctx.uv1, lod, ctx.ray).a;
     }
     if ((bits & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) != 0u) {
-        Material_Diffuse_Transmission transmission = materials[m.row].diffuse_transmission;
         l.diffuse_transmission = transmission.weight;
         l.diffuse_transmission_color = transmission.color;
         if (material_has(m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION])) l.diffuse_transmission *= material_map_texel(m, MATERIAL_MAP_DIFFUSE_TRANSMISSION, m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION], ctx.uv0, ctx.uv1, lod, ctx.ray).a;
         if (material_has(m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR])) l.diffuse_transmission_color *= material_map_texel(m, MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR, m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR], ctx.uv0, ctx.uv1, lod, ctx.ray).rgb;
     }
     if ((bits & MATERIAL_LAYER_ANISOTROPY) != 0u) {
-        Material_Anisotropy anisotropy = materials[m.row].anisotropy;
         float2 direction = float2(1.0, 0.0);
         l.anisotropy = anisotropy.amount;
         if (material_has(m.textures[MATERIAL_MAP_ANISOTROPY])) {
@@ -630,22 +738,24 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
 // The specular reflectance of a sample (OpenPBR): the dielectric F0 of its
 // IOR, specular color and factor, and the base color of a metal. Under a
 // coat the base meets the coat instead of the air, so its IOR is relative to
-// the coat where the coat covers it, and the coat roughens it. An IOR of zero
-// keeps a constant Fresnel.
+// the coat where the coat covers it, and the coat roughens it.
 void material_specular(inout Material_Sample s, float3 color, float ior, float factor) {
     float eta = ior;
     if (s.layers.coat > 0.0) {
-        if (ior > 0.0) eta = lerp(ior, ior / max(s.layers.coat_ior, 1.0), saturate(s.layers.coat));
+        eta = lerp(ior, ior / max(s.layers.coat_ior, 1.0), saturate(s.layers.coat));
         float base = s.roughness * s.roughness, coat = s.layers.coat_roughness * s.layers.coat_roughness;
         s.roughness = lerp(s.roughness, min(1.0, sqrt(sqrt(base * base + 2.0 * coat * coat))), saturate(s.layers.coat));
     }
-    float ratio = (max(eta, 0.0) - 1.0) / (max(eta, 0.0) + 1.0);
+    float ratio = (max(eta, 1.0) - 1.0) / (max(eta, 1.0) + 1.0);
     float3 f0 = saturate(color * (ratio * ratio)) * saturate(factor);
     s.f0 = lerp(f0, saturate(s.base_color), s.metallic);
-    s.f90 = ior == 0.0 ? -1.0 : lerp(saturate(factor), 1.0, s.metallic);
+    s.f90 = lerp(saturate(factor), 1.0, s.metallic);
 }
-Material_Sample material_evaluate(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission) {
-    Material_Sample s;
+// The standard model of a row at a point, its maps read: what the engine
+// makes a sample from (material_evaluate), and what a program builds on
+// (mirai_surface_standard). layers: those of the row there.
+Mirai_Surface material_standard(Material m, Mirai_Surface_Context ctx, float3 tint, out Material_Layers layers) {
+    Mirai_Surface s = mirai_surface_default(ctx);
     float2 uv0 = ctx.uv0, uv1 = ctx.uv1, lod = float2(ctx.lod, ctx.lod1);
     bool ray = ctx.ray;
     float4 base = material_base_color(m, uv0, uv1, lod, tint, ray);
@@ -670,14 +780,46 @@ Material_Sample material_evaluate(Material m, Mirai_Surface_Context ctx, float3 
     s.metallic = saturate(s.metallic);
     s.emission = m.emission;
     if (material_has(m.textures[MATERIAL_MAP_EMISSION])) s.emission *= material_map_texel(m, MATERIAL_MAP_EMISSION, m.textures[MATERIAL_MAP_EMISSION], uv0, uv1, lod, ray).rgb;
-    s.emission += added_emission;
-    s.layers = material_layers(m, ctx);
-    float3 specular_color = m.specular_color;
-    float specular_factor = m.specular_factor;
-    if (material_has(m.textures[MATERIAL_MAP_SPECULAR])) specular_factor *= material_map_texel(m, MATERIAL_MAP_SPECULAR, m.textures[MATERIAL_MAP_SPECULAR], uv0, uv1, lod, ray).a;
-    if (material_has(m.textures[MATERIAL_MAP_SPECULAR_COLOR])) specular_color *= material_map_texel(m, MATERIAL_MAP_SPECULAR_COLOR, m.textures[MATERIAL_MAP_SPECULAR_COLOR], uv0, uv1, lod, ray).rgb;
-    material_specular(s, specular_color, m.ior, specular_factor);
+    layers = material_layers(m, ctx);
+    s.specular_color = m.specular_color;
+    s.specular_factor = m.specular_factor;
+    if (material_has(m.textures[MATERIAL_MAP_SPECULAR])) s.specular_factor *= material_map_texel(m, MATERIAL_MAP_SPECULAR, m.textures[MATERIAL_MAP_SPECULAR], uv0, uv1, lod, ray).a;
+    if (material_has(m.textures[MATERIAL_MAP_SPECULAR_COLOR])) s.specular_color *= material_map_texel(m, MATERIAL_MAP_SPECULAR_COLOR, m.textures[MATERIAL_MAP_SPECULAR_COLOR], uv0, uv1, lod, ray).rgb;
+    s.specular_ior = m.ior;
+    // The layers the row holds there, as a program gives them.
+    s.unlit = (layers.bits & MATERIAL_LAYER_UNLIT) != 0u;
+    if ((layers.bits & MATERIAL_LAYER_COAT) != 0u) {
+        s.coat_weight = layers.coat; s.coat_roughness = layers.coat_roughness; s.coat_color = layers.coat_color; s.coat_ior = layers.coat_ior; s.coat_normal = layers.coat_normal;
+    }
+    if ((layers.bits & MATERIAL_LAYER_FUZZ) != 0u) {
+        s.fuzz_weight = layers.fuzz; s.fuzz_color = layers.fuzz_color; s.fuzz_roughness = layers.fuzz_roughness;
+    }
+    if ((layers.bits & MATERIAL_LAYER_ANISOTROPY) != 0u) {
+        s.specular_anisotropy = layers.anisotropy; s.specular_tangent = layers.tangent;
+    }
+    if ((layers.bits & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) != 0u) {
+        s.diffuse_transmission_weight = layers.diffuse_transmission; s.diffuse_transmission_color = layers.diffuse_transmission_color;
+    }
     return s;
+}
+Material_Sample material_evaluate(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission) {
+    Material_Sample s;
+    Material_Layers layers;
+    Mirai_Surface standard = material_standard(m, ctx, tint, layers);
+    s.base_color = standard.base_color;
+    s.alpha = standard.alpha;
+    s.roughness = standard.roughness;
+    s.metallic = standard.metallic;
+    s.occlusion = standard.occlusion;
+    s.emission = standard.emission + added_emission;
+    s.layers = layers;
+    material_specular(s, standard.specular_color, m.ior, standard.specular_factor);
+    return s;
+}
+Mirai_Surface mirai_surface_standard(Mirai_Surface_Context ctx) {
+    if (ctx.material == INVALID) return mirai_surface_default(ctx);
+    Material_Layers layers;
+    return material_standard(material_row(ctx.material, ctx.material_values), ctx, float3(1.0), layers);
 }
 // The context of a point for its material. vertex_normal: the interpolated
 // normal of the surface, facing like `normal`; tangent: its MikkTSpace
@@ -690,6 +832,7 @@ Mirai_Surface_Context material_context(float3 position, float3 normal, float3 ve
     ctx.vertex_color = float4(1.0);
     ctx.object_position = float3(0.0); ctx.object_x = float3(1.0, 0.0, 0.0); ctx.object_y = float3(0.0, 1.0, 0.0); ctx.object_z = float3(0.0, 0.0, 1.0);
     ctx.object_center = float3(0.0); ctx.object_radius = 0.0; ctx.object_low = float3(0.0); ctx.object_high = float3(0.0); ctx.wet = 0.0;
+    ctx.material_values = 0u; ctx.material = INVALID;
     ctx.particle_data[0] = float4(0.0); ctx.particle_data[1] = float4(0.0); ctx.particle_data[2] = float4(0.0); ctx.particle_data[3] = float4(0.0); ctx.particle_given = 0u; ctx.particle_random = 0.0; ctx.particle_radius = 0.0;
     float4 clip = view_clip(position);
     float2 ndc = clip.xy / max(clip.w, 1e-6);
@@ -710,6 +853,7 @@ Mirai_Surface_Context material_context_instance(Mirai_Surface_Context ctx, Insta
     ctx.object_radius = length(float3(length(ctx.object_x) * half_size.x, length(ctx.object_y) * half_size.y, length(ctx.object_z) * half_size.z));
     ctx.object_low = mesh.bounds_min.xyz; ctx.object_high = mesh.bounds_max.xyz;
     ctx.wet = saturate(inst.wet);
+    ctx.material_values = inst.material_values;
     return ctx;
 }
 // The same for an instance an index names; INVALID (a surface an extension
@@ -760,15 +904,18 @@ void material_program_apply(Material m, Mirai_Surface result, float3 tint, float
     if ((l.bits & MATERIAL_LAYER_ANISOTROPY) == 0u) l.anisotropy = 0.0;
     if ((l.bits & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) == 0u) l.diffuse_transmission = 0.0;
     values.layers = l;
-    material_specular(values, result.specular_color, max(result.specular_ior, 0.0), result.specular_factor);
+    material_specular(values, result.specular_color, max(result.specular_ior, 1.0), result.specular_factor);
 }
 // The program of a material at a point; false without one, or in a stage that
 // runs none (it includes the empty surface_programs.slang).
 bool material_program(Material m, Mirai_Surface_Context ctx, float3 tint, float3 added_emission, out Material_Sample values, inout float3 normal) {
     values = (Material_Sample)0;
     if (m.program_id == 0u) return false;
+    ctx.material = m.row;
     Mirai_Surface result = mirai_surface_default(ctx);
-    if (!mirai_evaluate_program(m.program_id, materials[m.row].custom_params, ctx, result)) return false;
+    float4 parameters[16];
+    material_parameters(m.row, ctx.material_values, parameters);
+    if (!mirai_evaluate_program(m.program_id, parameters, ctx, result)) return false;
     material_program_apply(m, result, tint, added_emission, values, normal);
     return true;
 }
@@ -864,7 +1011,6 @@ bool material_covers(Material m, float alpha) {
 
 // A blended material with transmission and thickness is the boundary of a
 // solid: its front faces are where light enters it.
-float material_ior(Material m) { return m.ior == 0.0 ? 1e10 : m.ior; }
 
 bool material_solid(Material m) { return m.transmission > 0.0 && m.thickness > 0.0; }
 
@@ -962,11 +1108,6 @@ float hit_lod(float3 world_edge1, float3 world_edge2, float2 uv_edge1, float2 uv
     return 0.5 * log2(max(uv_area, 1e-12) / max(world_area, 1e-12)) + log2(max(footprint, 1e-6));
 }
 
-// The four numbers an extension gave the instance (scene_set_instance_values).
-float4 instance_values(uint instance_index) {
-    Instance inst = scene_instance(instance_index);
-    return float4(inst.tint.w, inst.emission.w, inst.bounds_min.w, inst.bounds_max.w);
-}
 
 // What multiplies the base color of a material at a vertex of that color: the
 // color, but for a program, which reads it in its context.
@@ -1003,7 +1144,7 @@ float3 hit_normal_turned(float3 face, float3 n, float3 direction) {
 float3 hit_normal(uint instance_index, uint primitive, float2 bary, float3 direction, out bool blended) {
     uint material;
     float3 face = triangle_face(instance_index, primitive, material);
-    blended = material_row(material).alpha_mode == ALPHA_BLEND;
+    blended = material_row(material, material_values_of(instance_index)).alpha_mode == ALPHA_BLEND;
     return hit_normal_turned(face, surface_from_triangle(instance_index, primitive, bary, 1e-4).normal, direction);
 }
 
@@ -1059,7 +1200,7 @@ struct Hit_Point {
 Hit_Point hit_point(uint instance_index, uint primitive, float2 bary, float footprint) {
     Hit_Point h;
     h.inst = scene_instance(instance_index);
-    Mesh_Triangle tri = mesh_triangle(meshes[instance_mesh(h.inst)], primitive);
+    Mesh_Triangle tri = mesh_triangle(h.inst, meshes[instance_mesh(h.inst)], primitive);
     float3 w = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
     float3 local = tri.a.position * w.x + tri.b.position * w.y + tri.c.position * w.z;
     float3 n = tri.a.normal * w.x + tri.b.normal * w.y + tri.c.normal * w.z;
@@ -1071,7 +1212,7 @@ Hit_Point hit_point(uint instance_index, uint primitive, float2 bary, float foot
     float3 edge2 = tri.c.position - tri.a.position;
     float3 face = cross(edge1, edge2);
     h.geometric_normal = dot(face, face) > 1e-20 ? transform_normal(h.inst.world_inv, face) : h.normal;
-    h.m = material_row(material_of(h.inst, tri.material));
+    h.m = material_row(material_of(h.inst, tri.material), h.inst.material_values);
     float3 world_edge1 = transform_vector(h.inst.world, edge1);
     float3 world_edge2 = transform_vector(h.inst.world, edge2);
     float2 lod = float2(hit_lod(world_edge1, world_edge2, tri.b.uv - tri.a.uv, tri.c.uv - tri.a.uv, footprint), hit_lod(world_edge1, world_edge2, tri.b.uv1 - tri.a.uv1, tri.c.uv1 - tri.a.uv1, footprint));
@@ -1091,8 +1232,12 @@ Hit_Point hit_point(uint instance_index, uint primitive, float2 bary, float foot
 // What the program of the material at a hit gives there: only a stage of that
 // program runs it (surface_points.comp).
 Mirai_Surface hit_program(Hit_Point h) {
-    Mirai_Surface result = mirai_surface_default(h.ctx);
-    mirai_evaluate_program(h.m.program_id, materials[h.m.row].custom_params, h.ctx, result);
+    Mirai_Surface_Context ctx = h.ctx;
+    ctx.material = h.m.row;
+    Mirai_Surface result = mirai_surface_default(ctx);
+    float4 parameters[16];
+    material_parameters(h.m.row, ctx.material_values, parameters);
+    mirai_evaluate_program(h.m.program_id, parameters, ctx, result);
     return result;
 }
 
@@ -1210,7 +1355,8 @@ Probe_Directions probe_directions(float3 direction) {
 bool probe_wants(Probe_Directions directions, int d) { return (directions.wants & (1u << uint(d))) != 0u; }
 
 // What the probes of a cascade around a point give around each direction it
-// wants, where they see it, and its weight: zero where none of them holds
+// wants (w: the share of it that comes from the sky, blended as it is),
+// where they see it, and its weight: zero where none of them holds
 // light. The weights are those of DDGI (wrapped cosine, Chebyshev visibility,
 // small weights crushed); the irradiance blends as its square root, so that a
 // bright probe does not stain dark neighbors, and the point moves off its
@@ -1228,7 +1374,7 @@ bool probe_wants(Probe_Directions directions, int d) { return (directions.wants 
 #define PROBE_SEEN_MARGIN 0.1
 #define PROBE_SEEN_GAIN 4.0
 #define PROBE_HIDDEN_SHARE 0.055
-float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 view_dir, float viewer_distance, Probe_Directions directions, bool surface, out float3 light[PROBE_READS]) {
+float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 view_dir, float viewer_distance, Probe_Directions directions, bool surface, out float4 light[PROBE_READS]) {
     float spacing = probe_spacing(cascade);
     float limit = probe_distance_limit(cascade);
     float toward_eye = lerp(0.0, 0.8, saturate(viewer_distance / spacing));
@@ -1244,19 +1390,19 @@ float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 vi
     float2 irr_size = float2(texture_size(irradiance_atlas, 0));
     float2 dist_size = float2(texture_size(distance_atlas, 0));
     float2 toward[PROBE_READS];
-    float3 sum[PROBE_READS];
+    float4 sum[PROBE_READS];
     [ForceUnroll]
     for (int d = 0; d < PROBE_READS; d++) {
         toward[d] = probe_wants(directions, d) ? probe_atlas_direction(directions.at[d]) : float2(0.0);
-        sum[d] = float3(0.0);
-        light[d] = float3(0.0);
+        sum[d] = float4(0.0);
+        light[d] = float4(0.0);
     }
     float weight_sum = 0.0;
     // The same weighed by how much each probe sees the point, and the share
     // of the trilinear weight of those that see it.
-    float3 seen_sum[PROBE_READS];
+    float4 seen_sum[PROBE_READS];
     [ForceUnroll]
-    for (int d = 0; d < PROBE_READS; d++) seen_sum[d] = float3(0.0);
+    for (int d = 0; d < PROBE_READS; d++) seen_sum[d] = float4(0.0);
     float seen_weight = 0.0;
     float seen_share = 0.0;
     uint held = 0u;
@@ -1302,8 +1448,8 @@ float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 vi
         [ForceUnroll]
         for (int d = 0; d < PROBE_READS; d++) {
             if (!probe_wants(directions, d)) continue;
-            float3 stored = irradiance_atlas.SampleLevel(linear_sampler, probe_atlas_texel(tile, toward[d], frame.volume_atlas.y, irr_size), 0.0).rgb;
-            float3 root = probe_light_root(stored) * weight;
+            float4 stored = irradiance_atlas.SampleLevel(linear_sampler, probe_atlas_texel(tile, toward[d], frame.volume_atlas.y, irr_size), 0.0);
+            float4 root = float4(probe_light_root(stored.rgb), stored.a) * weight;
             sum[d] += root;
             seen_sum[d] += root * sees;
         }
@@ -1319,8 +1465,8 @@ float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 vi
     float shown = PROBE_HIDDEN_SHARE > 0.0 ? saturate(seen_share / PROBE_HIDDEN_SHARE) : 1.0;
     [ForceUnroll]
     for (int d = 0; d < PROBE_READS; d++) {
-        float3 root = lerp(sum[d], seen_sum[d], open) / total;
-        light[d] = root * root * shown;
+        float4 root = lerp(sum[d], seen_sum[d], open) / total;
+        light[d] = float4(root.rgb * root.rgb, root.a) * shown;
     }
     return 1.0;
 }
@@ -1330,9 +1476,9 @@ float probe_cascade_read(uint cascade, float3 position, float3 normal, float3 vi
 // it, blending into the next one over the last cells before its edge, and the
 // next one where none of its probes holds light yet; 0 where none holds any
 // and -1 beyond the cascades.
-float probe_volume_read(float3 position, float3 normal, float3 view_dir, float viewer_distance, Probe_Directions directions, bool surface, out float3 light[PROBE_READS]) {
+float probe_volume_read(float3 position, float3 normal, float3 view_dir, float viewer_distance, Probe_Directions directions, bool surface, out float4 light[PROBE_READS]) {
     [ForceUnroll]
-    for (int d = 0; d < PROBE_READS; d++) light[d] = float3(0.0);
+    for (int d = 0; d < PROBE_READS; d++) light[d] = float4(0.0);
     float3 counts = float3(frame.volume_counts.xyz);
     uint cascades = probe_cascades();
     uint cascade = cascades;
@@ -1361,7 +1507,7 @@ float probe_volume_read(float3 position, float3 normal, float3 view_dir, float v
     // The finest cascade, then the next one where it blends or holds nothing.
     [loop]
     for (uint k = 0u; k < 2u; k++) {
-        float3 read[PROBE_READS];
+        float4 read[PROBE_READS];
         float a = probe_cascade_read(cascade + k, position, normal, view_dir, viewer_distance, directions, surface, read);
         if (k == 0u || held == 0.0) {
             held = a;
@@ -1380,18 +1526,19 @@ float probe_volume_read(float3 position, float3 normal, float3 view_dir, float v
 // Irradiance (in Lambert-normalized radiance units) arriving around each
 // direction a surface point wants, from the probe volume, or zero when no
 // cache exists (callers add their own ambient floor) or no probe holds light
-// yet; beyond the cascades, the sky's. The normal places the lookup and
-// weights the probes; the directions are what the irradiance is read for.
+// yet; beyond the cascades, the sky's. w is the share of it that comes from
+// the sky. The normal places the lookup and weights the probes; the
+// directions are what the irradiance is read for.
 // `view_dir` points towards the eye or the origin of the ray that found the
 // point, `viewer_distance` away; below 0, the eye of the view.
 // The share of it that comes through a gate of an extension is that of the
 // place beyond the gate, so the light of a point at a gate is the same on both
 // of its sides.
-void probe_volume_light(float3 position, float3 normal, float3 view_dir, float viewer_distance, Probe_Directions directions, bool surface, out float3 light[PROBE_READS]) {
+void probe_volume_light(float3 position, float3 normal, float3 view_dir, float viewer_distance, Probe_Directions directions, bool surface, out float4 light[PROBE_READS]) {
     if (probe_volume_read(position, normal, view_dir, viewer_distance, directions, surface, light) >= 0.0) return;
     [ForceUnroll]
     for (int d = 0; d < PROBE_READS; d++) {
-        if (probe_wants(directions, d)) light[d] = sky_irradiance(directions.at[d]);
+        if (probe_wants(directions, d)) light[d] = float4(sky_irradiance(directions.at[d]), 1.0);
     }
 }
 

@@ -34,7 +34,7 @@ edits_world_fingerprint :: proc(edits:^Edits,w:core.World_Ref) -> u64 {
     for &table,index in w.info.tables {
         if index>=len(edits.saved) || !edits.saved[index] {continue}
         current:=core.world_table_at(w,&table)
-        key=base.hash_u64(key~current.version~base.hash_u64(current.layout)~u64(index)~base.hash_u64(u64(len(current.pending)))~u64(uintptr(table.info)))
+        key=base.hash_u64(key~current.version~u64(index)~base.hash_u64(u64(len(current.pending)))~u64(uintptr(table.info)))
         image:=&edits.image[index]
         key=base.hash_u64(key~image.seen.version~base.hash_u64(image.seen.gone)~base.hash_u64(u64(len(image.entities))))
     }
@@ -83,6 +83,7 @@ edits_prepare :: proc(edits:^Edits,w:core.World_Ref,selection:^Selection,externa
         rows:=Step_Rows{table=index}
         adds:=0
         d:=journal_diff(current,image,size,edits.ranges[index].ranges,authors,only_authors && index!=id)
+        if !journal_diff_once(&d) {return edits_prepare_failed(&prepared,.Memory)}
         for r in journal_diff_next(&d) {
             if r.image_row<0 {adds+=1}
             value:=r.image_row>=0?journal_value(image,size,r.image_row):nil
@@ -107,7 +108,7 @@ edits_prepare :: proc(edits:^Edits,w:core.World_Ref,selection:^Selection,externa
             prepared.step.bytes+=len(prepared.step.entities.indices)*(size_of(u32)*3+2)
         }
     }
-    if (edits.reading || edits.logging) && reserve(&edits.changes,len(edits.changes)+notes)!=nil {return edits_prepare_failed(&prepared,.Memory)}
+    if edits.reading && reserve(&edits.changes,len(edits.changes)+notes)!=nil {return edits_prepare_failed(&prepared,.Memory)}
     prepared.changed=len(prepared.step.tables)>0 || len(prepared.step.entities.indices)>0 || external_change || len(edits.files)>0
     if prepared.changed {
         prepared.step.label=edits.label
@@ -178,13 +179,24 @@ edits_publish_prepared :: proc(edits:^Edits,w:core.World_Ref,prepared:^Edit_Prep
     prepared.step={}
     edits.cursor=len(edits.steps)
     edits.stats.steps+=1
+    // The oldest step of the author with the most goes: the steps of one never evict those of another.
     for len(edits.steps)>1 && (len(edits.steps)>EDITS_STEP_CAPACITY || edits.bytes>EDITS_BYTE_CAPACITY) {
-        first:=edits.steps[0]
-        edits.initial=first.state
-        edits.bytes-=first.bytes
-        step_free(&first)
-        ordered_remove(&edits.steps,0)
-        edits.cursor-=1
+        counts:=make(map[Edit_Author]int,8,context.temp_allocator)
+        most:=0
+        for step in edits.steps {
+            counts[step.author]+=1
+            most=max(most,counts[step.author])
+        }
+        at:=0
+        for step,i in edits.steps {
+            if counts[step.author]==most {at=i;break}
+        }
+        evicted:=edits.steps[at]
+        if at==0 {edits.initial=evicted.state}
+        edits.bytes-=evicted.bytes
+        step_free(&evicted)
+        ordered_remove(&edits.steps,at)
+        if at<edits.cursor {edits.cursor-=1}
         edits.stats.discarded+=1
     }
     edits.error=.None
@@ -230,8 +242,7 @@ edits_cancel_prepare :: proc(edits:^Edits,w:core.World_Ref,additional_entities:i
         rows:=max(len(image.entities),len(current.entities)+missing)+additional_entities
         size:=table.info.size
         if size>0 && rows>max(int)/size {return .Memory}
-        if !runtime.__dynamic_array_reserve(&current.values,size,table.info.align,rows) || reserve(&current.entities,rows)!=nil || reserve(&current.stamps,rows)!=nil || reserve(&current.off,rows)!=nil || reserve(&current.pending,len(current.entities)+additional_entities)!=nil {return .Memory}
-        if current.single && reserve(&current.turns,rows)!=nil {return .Memory}
+        if !core.raw_rows_reserve(current,size,table.info.align,rows) || reserve(&current.pending,len(current.entities)+additional_entities)!=nil {return .Memory}
         if !core.raw_room(current,len(image.entities)>0?limit:0) {return .Memory}
         if len(image.entities)>0 {
             for lock in current.locks {if reserve(core.lock_owners(current,lock),limit)!=nil {return .Memory}}
@@ -260,12 +271,12 @@ edits_step_prepare :: proc(edits:^Edits,w:core.World_Ref,step:^Edit_Step,selecti
         notes+=rows
         if rows>0 && !journal_room(&edits.image[index],len(edits.image[index].entities)+adds,table.info.size,edits.cancel_limit) {return .Memory}
     }
-    if (edits.reading || edits.logging) && reserve(&edits.changes,len(edits.changes)+notes)!=nil {return .Memory}
+    if edits.reading && reserve(&edits.changes,len(edits.changes)+notes)!=nil {return .Memory}
     for rows in step.tables {
         table:=&w.info.tables[rows.table]
         current:=core.world_table_at(w,table)
         count:=len(current.entities)+len(rows.entities)
-        if !runtime.__dynamic_array_reserve(&current.values,table.info.size,table.info.align,count) || !runtime.__dynamic_array_reserve(&current.added,table.info.size,table.info.align,len(rows.entities)) || reserve(&current.entities,count)!=nil || reserve(&current.stamps,count)!=nil || reserve(&current.off,count)!=nil || reserve(&current.pending,len(current.pending)+2*len(rows.entities))!=nil || !core.raw_room(current,edits.cancel_limit) {return .Memory}
+        if !core.raw_rows_reserve(current,table.info.size,table.info.align,count) || !runtime.__dynamic_array_reserve(&current.added,table.info.size,table.info.align,len(rows.entities)) || reserve(&current.pending,len(current.pending)+2*len(rows.entities))!=nil || !core.raw_room(current,edits.cancel_limit) {return .Memory}
         for lock in current.locks {if reserve(core.lock_owners(current,lock),edits.cancel_limit)!=nil {return .Memory}}
     }
     return .None
@@ -310,7 +321,7 @@ edits_cancel_reserved :: proc(edits:^Edits,w:core.World_Ref) -> bool {
                 }
                 if r.image_row<0 {core.raw_remove(current,r.entity);continue}
                 value:=journal_value(image,size,r.image_row)
-                if !saved_equal(table_value(current,size,r.row),value,size,ranges) {saved_copy(core.raw_get(current,info.info,r.entity),value,size,ranges)}
+                if !saved_equal(table_value(current,size,r.row),value,size,ranges) {saved_copy(core.raw_author(current,info.info,r.entity),value,size,ranges)}
                 if image.off[r.image_row]!=current.off[r.row] {
                     if image.off[r.image_row] {core.raw_disable(current,r.entity)} else {core.raw_enable(current,r.entity)}
                 }

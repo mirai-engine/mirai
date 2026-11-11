@@ -2,9 +2,9 @@
 name: mirai-plugins
 description: The Mirai plugin system - manifests (`plugin.mirai`), the runtime and editor parts,
   dependencies and order, plugins from git and the catalog (`cook/install`, `mirai plugin`) - and
-  the tool, physics add-on and renderer plugins `paint`, `physics_placement`, `physics_cache`,
-  `physics_fields`, `ragdoll`, `playtest`, `previews`, `profiler`, `tracy`, `ui_inspector`,
-  `prompts_kenney`, `decals`, `deform`, `monitors`, `portals`, `mirror`, `fog`, `fsr` and `lens`.
+  the tool, physics add-on and renderer plugins `paint`, `physics_cache`, `ragdoll`, `playtest`,
+  `previews`, `profiler`, `tracy`, `ui_inspector`, `prompts_kenney`, `decals`, `deform`,
+  `monitors`, `portals` (also mirrors), `fog`, `fsr` and `lens`.
   Use when creating, changing, splitting, installing or publishing a plugin, when a plugin must
   extend the engine or integrate with the project world, or when working on one of those plugins.
   The plugins of terrain, vegetation, water, particles, navigation and AI are in `mirai-world`.
@@ -34,15 +34,13 @@ project world. Layout, manifests and build:
 - World content (`terrain`, `foliage`, `water`, `imprint`, `vfx`, `navigation`, `behavior`,
   `shapes` and their bridges): [mirai-world](../mirai-world/SKILL.md)
 - `paint` (vertex color brush, `paint.*`): [plugins.md#paint](references/plugins.md#paint)
-- `physics_placement` (`placement.drop`):
-  [plugins.md#physics-placement](references/plugins.md#physics-placement)
 - `previews` (animation documents, animation and skeleton thumbnails; `animation.capture`):
   [animation document](references/previews.md#animation-document),
   [thumbnails](references/previews.md#animation-thumbnails),
   [capture](references/previews.md#animation-capture) and
   [sound documents](references/previews.md#sound-documents)
-- `animation_physics` (automatic bridge: the mode, velocity and request of each `Character` feed
-  the motion matching of its `Animation`):
+- `animation_physics` (automatic bridge of `animation` and `locomotion`: the mode, velocity and
+  request of each `Character` feed the motion matching of its `Animation`):
   [locomotion](../mirai-animation/references/animation.md#locomotion-by-motion-matching)
 - `unreal` and its `unreal_*` bridges (import Unreal packages and maps in the editor) are not part
   of the engine: they are installed from the catalog (`mirai plugin add unreal`); code and
@@ -53,9 +51,6 @@ project world. Layout, manifests and build:
   [recording](references/physics-cache.md#recording),
   [relation with animation](references/physics-cache.md#relation-with-animation) and
   [playback](references/physics-cache.md#playback)
-- `physics_fields` (force and strain regions): [component](references/physics-fields.md#component),
-  [fixed step](references/physics-fields.md#fixed-step) and
-  [selection preview](references/physics-fields.md#selection-preview)
 - `ragdoll` (components and `ragdoll.setup`): [components](references/ragdoll.md#components),
   [setup by API](references/ragdoll.md#setup-by-api),
   [state and errors](references/ragdoll.md#state-and-errors) and
@@ -69,10 +64,10 @@ project world. Layout, manifests and build:
 - `profiler` and `tracy` (development: captures panel and Tracy client in Odin):
   [profiler in the editor](references/profiling.md#profiler-editor) and
   [Tracy at runtime](references/profiling.md#tracy-runtime)
-- `decals`, `deform`, `monitors`, `portals`, `mirror`, `fog`, `fsr`, `lens` and plugins that
-  extend the renderer: [decals](references/render-plugins.md#decals),
+- `decals`, `deform`, `monitors`, `portals` (portals and mirrors), `fog`, `fsr`, `lens` and
+  plugins that extend the renderer: [decals](references/render-plugins.md#decals),
   [deform](references/render-plugins.md#deform), [monitors](references/render-plugins.md#monitors),
-  [portals](references/render-plugins.md#portals), [mirror](references/render-plugins.md#mirror),
+  [portals and mirrors](references/render-plugins.md#portals),
   [fog](references/render-plugins.md#fog), [fsr](references/render-plugins.md#fsr) and [renderer
   extensions](../mirai-rendering/references/views.md#extension-stages)
 - `prompts_kenney` (Kenney prompt pack and how it is regenerated):
@@ -80,7 +75,7 @@ project world. Layout, manifests and build:
 - `abilities` (attacks, combos, dashes and reactions as rows of game data: sheets with timeline
   windows, cancel rules, statuses, attributes and effects; `abilities.*`):
   [abilities skill](../mirai-abilities/SKILL.md)
-- `animation` (clips, graphs, rigs, morphs, actions, authoring and its API):
+- `animation` (clips, motion matching, rigs, morphs, actions, authoring and its API):
   [animation skill](../mirai-animation/SKILL.md)
 - `lens` (depth of field, motion blur, bloom, vignette, distortion and aberration; settings per
   camera and per volume, consistent with exposure): [lens](references/render-plugins.md#lens)
@@ -147,5 +142,3 @@ project world. Layout, manifests and build:
   [mirai-editor](../mirai-editor/SKILL.md#verification).
 - Before declaring a method available, generate and build the demo editor and check it with
   `engine.describe`.
-- Direct gestures (clicks on surfaces, drags) are tested by the user; the rest, by API and
-  captures.

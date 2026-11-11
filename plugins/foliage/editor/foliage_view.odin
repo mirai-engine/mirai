@@ -21,7 +21,7 @@ Foliage_View :: struct {cells:bool}
 
 @(step="frame")
 foliage_view_modes :: proc(s:^editor.Session,view:^Foliage_View) {
-    view.cells=s.mode!=.Play && !editor.document_is_prefab(s) && strings.equal_fold(editor.view_mode_current(s.viewport),VIEW_CELLS)
+    view.cells=s.mode!=.Play && strings.equal_fold(editor.view_mode_current(s.viewport),VIEW_CELLS)
     editor.view_mode_declare(s,{name=VIEW_CELLS,label="Foliage cells",title="Foliage: cells",group="Advanced",submenu="Foliage",icon=.Grid,record=foliage_view_lit,user=view})
 }
 
@@ -29,8 +29,8 @@ foliage_view_modes :: proc(s:^editor.Session,view:^Foliage_View) {
 @(private)
 foliage_view_lit :: proc(pass:^erender.Pass,user:rawptr) {}
 
-@(step="frame",after="editor_tools")
-foliage_cells_view :: proc(s:^editor.Session,view:^Foliage_View,foliages:core.Read(foliage.Foliage),worlds:core.Read(core.World_Transform),grounds:core.Ref(foliage.Foliage_Ground),data:core.Ref(foliage.Foliage_Data),input:core.Input) {
+@(step="frame")
+foliage_cells_view :: proc(s:^editor.Session,view:^Foliage_View,foliages:^core.Table(foliage.Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),grounds:core.Ref(foliage.Foliage_Ground),data:core.Ref(foliage.Foliage_Data),input:core.Input) {
     if !view.cells || !s.gui.begun || editor.playing(s) || data.ptr==nil {return}
     eye:=s.viewport.orbit.target
     for row in 0..<core.count(foliages) {

@@ -10,6 +10,7 @@ import inp "mirai:engine/input"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // A blade with Mirai's own numbers, in the shape of a melee weapon with techniques, branches,
@@ -46,20 +47,20 @@ import phys "plugins:physics/runtime"
 @(private="file")
 ref :: proc(i:int) -> core.Record(Ability) {return {ABILITY_TABLE,core.Record_Id(i+1)}}
 
-@(private="file")
+@(private)
+@(test_world)
 Abilities_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     users:core.Table(Ability_User),
     seats:core.Table(inp.Seat),
-    drivables:core.Table(inp.Drivable),
     characters:core.Table(phys.Character),
+    locomotions:core.Table(locomotion.Locomotion_State),
     worlds:core.Table(core.World_Transform),
     remotes:core.Table(core.Remote),
     paces:core.Table(core.Own_Pace),
     requests:Ability_Requests,
     events:Ability_Events,
-    moves:phys.Locomotion_Requests,
-    actions:anim.Action_Requests,
+    moves:locomotion.Locomotion_Requests,
     animations:anim.Animation_Requests,
     time:core.Time,
 }
@@ -99,7 +100,7 @@ blade :: proc(f:^Fixture) {
     s[CHARGE].conditions[0]={attribute=CHARGES,at_least=1}
     s[CHARGE].windows[0]={from=0,to=1,statuses=status_bit(CHARGING),cancel_into=tag_bit(DASH_ATTACK)}
     s[DASH_STRIKE]={input={action=SECONDARY,on=.Released},tags=tag_bit(DASH_ATTACK),duration=0.4,cooldown=0.1}
-    base.text_set(s[DASH_STRIKE].clip[:],"dash")
+    base.text_set(s[DASH_STRIKE].action[:],"dash")
     s[DASH_STRIKE].costs[0]={CHARGES,1}
     s[DASH_STRIKE].costs[1]={DURABILITY,10}
     s[DASH_STRIKE].windows[0]={from=0,to=0.24,move={velocity={0,0,-40},mix=.Override},hitbox={shape=.Box,center={0,1,-1},size={0.5,1,1},effect={attribute=HEALTH,amount=-60}}}
@@ -111,7 +112,7 @@ blade :: proc(f:^Fixture) {
 
 @(private="file")
 fixture_make :: proc(t:^testing.T,f:^Fixture) -> bool {
-    if !core.test_world_init(t,&f.w,test_types) {return false}
+    if !test_world_init(t,&f.w) {return false}
     blade(f)
     for i in 0..<SHEETS {
         f.sheet_rows[i]={table=ABILITY_TABLE,row=core.Record_Id(i+1)}
@@ -130,22 +131,21 @@ fixture_make :: proc(t:^testing.T,f:^Fixture) -> bool {
     dummy.attributes[0]={attribute=HEALTH,base=100,max=100}
     core.add(&f.users,f.player,player)
     core.add(&f.users,f.dummy,dummy)
-    core.add(&f.seats,f.seat,inp.Seat{})
-    core.add(&f.drivables,f.player,inp.Drivable{seat=f.seat})
+    core.add(&f.seats,f.seat,inp.Seat{body=f.player})
     core.add(&f.characters,f.player,phys.character_default())
     core.add(&f.characters,f.dummy,phys.character_default())
     // The player faces +X: its -Z is the world +X.
     turn:=mm.Quat(linalg.quaternion_angle_axis_f32(-math.PI/2,{0,1,0}))
     core.add(&f.worlds,f.player,core.World_Transform{transform={rotation=turn,scale=1}})
     core.add(&f.worlds,f.dummy,core.World_Transform{transform={position={1.5,0,0},rotation=1,scale=1}})
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
     f.time={tick=1,dt=1.0/RATE,playing=true}
     return true
 }
 
 @(private="file")
 fixture_destroy :: proc(f:^Fixture) {
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
     delete(f.log)
 }
 
@@ -171,21 +171,22 @@ test_overlap :: proc(w:^Ability_World,hitbox:Ability_Hitbox,pose:mm.Transform,re
 
 @(private="file")
 world_of :: proc(f:^Fixture) -> Ability_World {
-    return {time=f.time,seats=core.read(&f.seats),drivables=core.read(&f.drivables),characters=core.read(&f.characters),worlds=core.read(&f.worlds),remotes=core.read(&f.remotes),paces=core.read(&f.paces),clock=core.CLOCK_DEFAULT,moves=&f.moves,actions=&f.actions,animations=&f.animations,problems=&f.problems}
+    return {time=f.time,seats=core.read(&f.seats),characters=core.read(&f.characters),locomotions=core.read(&f.locomotions),worlds=core.read(&f.worlds),remotes=core.read(&f.remotes),paces=core.read(&f.paces),clock=core.CLOCK_DEFAULT,moves=&f.moves,animations=&f.animations,problems=&f.problems}
 }
 
 @(private="file")
 step :: proc(f:^Fixture,ticks:=1) {
     for _ in 0..<ticks {
-        seat:=core.get(&f.seats,f.seat)
+        seat:=core.edit(&f.seats,f.seat)
         seat.actions.count=2
         for a in 0..<2 {
             st:=&seat.actions.states[a]
             st^={down=f.down[a],pressed=f.down[a] && !f.was[a],released=!f.down[a] && f.was[a]}
-            if f.down[a] {f.held[a]+=1;st.held_ticks=f.held[a]} else {if f.was[a] {st.released_held=f.held[a]};f.held[a]=0}
+            if f.down[a] {f.held[a]+=1;st.held=f32(f.held[a])*f.time.dt} else {if f.was[a] {st.released_held=f32(f.held[a])*f.time.dt};f.held[a]=0}
             f.was[a]=f.down[a]
         }
         w:=world_of(f)
+        clear(&f.events.queue.items) // the log of a tick, as its readers are handed it
         abilities_tick(&f.users,{&f.sheet_set},{&f.kit_set},&f.requests,&f.events,&w,test_overlap)
         for e in f.events.queue.items {append(&f.log,e)}
         core.time_advance(&f.time)
@@ -194,7 +195,7 @@ step :: proc(f:^Fixture,ticks:=1) {
 
 @(private="file")
 user :: proc(f:^Fixture,e:core.Entity) -> Ability_User {
-    u,_:=core.get(core.read(&f.users),e)
+    u,_:=core.get(&f.users,e)
     return u
 }
 
@@ -220,7 +221,7 @@ a_blade_combo_hits_once_per_window_and_branches_only_inside_cancel_windows :: pr
     step(f)
     testing.expect_value(t,user(f,f.player).ability,ref(SLASH_1))
     testing.expect_value(t,logged(f,.Started,f.player,SLASH_1),1)
-    testing.expect(t,len(f.actions.queue.items)==1 && base.text_get(f.actions.queue.items[0].action[:])=="slash_1")
+    testing.expect(t,len(f.animations.plays.items)==1 && base.text_get(f.animations.plays.items[0].action[:])=="slash_1")
     // Letting go too early leaves nothing: the buffer is shorter than the wait to the window.
     step(f,seconds(0.2))
     f.down[0]=false
@@ -239,10 +240,10 @@ a_blade_combo_hits_once_per_window_and_branches_only_inside_cancel_windows :: pr
     step(f)
     testing.expect_value(t,user(f,f.player).ability,ref(SLASH_2))
     testing.expect_value(t,logged(f,.Interrupted,f.player,SLASH_1),1)
-    // The opener's action is cancelled before the follow-up fires its own: on another layer it would
+    // The opener's action is stopped before the follow-up plays its own: in another layer it would
     // otherwise play on.
-    asked:=f.actions.queue.items[:]
-    testing.expectf(t,len(asked)==3 && asked[1].kind==.Cancel && base.text_get(asked[1].action[:])=="slash_1" && asked[2].kind==.Fire && base.text_get(asked[2].action[:])=="slash_2","%v",asked)
+    asked:=f.animations.plays.items[:]
+    testing.expectf(t,len(asked)==3 && asked[1].stop && base.text_get(asked[1].action[:])=="slash_1" && !asked[2].stop && base.text_get(asked[2].action[:])=="slash_2","%v",asked)
     step(f,seconds(0.2))
     testing.expect_value(t,user(f,f.dummy).attributes[0].base,30)
     testing.expect(t,ability_has(user(f,f.dummy),STUNNED))
@@ -278,7 +279,7 @@ a_charged_dash_spends_charges_and_is_blocked_without_them :: proc(t:^testing.T) 
     dash:=false
     for m in f.moves.queue.items {if m.entity==f.player && m.kind==.Add_Move && m.move.id==MOVE_ID && m.move.velocity.x>39 && m.move.ticks==u32(seconds(0.24)) {dash=true}}
     testing.expect(t,dash)
-    testing.expect(t,len(f.animations.match_plays.items)==1)
+    testing.expect(t,len(f.animations.plays.items)==1 && base.text_get(f.animations.plays.items[0].action[:])=="dash")
     charges,_:=ability_value(user(f,f.player),CHARGES)
     testing.expect(t,charges>1.9 && charges<2.1)
     // Holding through the whole charge dashes when it ends.
@@ -322,7 +323,7 @@ a_copy_of_the_state_halfway_runs_the_same_future_and_a_cancel_leaves_nothing :: 
     a.down[1]=true
     step(a,10)
     // b takes a's world as a rollback would: tables, queues, clock and input edges.
-    testing.expect(t,core.test_world_copy(&b.w,&a.w))
+    testing.expect(t,test_world_copy(&b.w,&a.w))
     b.down,b.was,b.held=a.down,a.was,a.held
     clear(&a.log);clear(&b.log)
     for f in ([]^Fixture{a,b}) {
@@ -351,7 +352,7 @@ a_copy_of_the_state_halfway_runs_the_same_future_and_a_cancel_leaves_nothing :: 
     testing.expect(t,removed)
     testing.expect_value(t,logged(a,.Window_Begin,a.player,DASH_STRIKE),logged(a,.Window_End,a.player,DASH_STRIKE))
     // A replica derives its statuses but neither starts nor hits.
-    core.add(&a.remotes,a.dummy,core.Remote{});core.test_world_settle(&a.w)
+    core.add(&a.remotes,a.dummy,core.Remote{});test_world_settle(&a.w)
     ability_use(&a.requests,a.dummy,ref(REACT))
     step(a,2)
     testing.expect_value(t,user(a,a.dummy).ability,core.Record(Ability){})
@@ -380,7 +381,6 @@ invalid_sheets_and_requests_are_problems_and_never_run :: proc(t:^testing.T) {
         {proc(a:^Ability,nan:f32) {a.windows[5].cue=SLASH},"to is 0"},
         {proc(a:^Ability,nan:f32) {a.costs[1]={ATTRIBUTE_NONE,4}},"costs[1]"},
         {proc(a:^Ability,nan:f32) {a.conditions[0]={HEALTH,10,5}},"conditions[0]"},
-        {proc(a:^Ability,nan:f32) {base.text_set(a.clip[:],"also")},"both"},
         {proc(a:^Ability,nan:f32) {a.windows[0].hitbox.effect.period=nan},"period"},
         {proc(a:^Ability,nan:f32) {a.windows[0].hitbox.effect.max_stacks=3},"stacks but has no tags"},
         {proc(a:^Ability,nan:f32) {a.windows[0].hitbox.effect.cue=SLASH},"lasts 0 seconds"},
@@ -418,11 +418,11 @@ invalid_sheets_and_requests_are_problems_and_never_run :: proc(t:^testing.T) {
     step(f)
     testing.expect(t,core.problem_find(&f.problems,f.player,"abilities.kit")!=nil)
     f.kit[0].buffer=0.2
-    p:=core.get(&f.users,f.player)
+    p:=core.edit(&f.users,f.player)
     p.kit={KIT_TABLE,99}
     step(f)
     testing.expect(t,core.problem_find(&f.problems,f.player,"records.missing")!=nil)
-    p=core.get(&f.users,f.player)
+    p=core.edit(&f.users,f.player)
     p.attributes[1].regen=math.inf_f32(1)
     step(f)
     testing.expect(t,core.problem_find(&f.problems,f.player,"abilities.attributes")!=nil)
@@ -458,7 +458,7 @@ a_stable_tick_allocates_nothing :: proc(t:^testing.T) {
     if !fixture_make(t,f) {return}
     defer fixture_destroy(f)
     reserve(&f.log,4096)
-    reserve(&f.moves.queue.items,64);reserve(&f.actions.queue.items,64);reserve(&f.animations.match_plays.items,64)
+    reserve(&f.moves.queue.items,64);reserve(&f.animations.plays.items,64)
     reserve(&f.requests.queue.items,int(ABILITY_SETTINGS_DEFAULT.requests))
     f.down[0]=true
     step(f,2)
@@ -551,7 +551,7 @@ a_window_on_the_own_clock_follows_the_pace_of_the_user :: proc(t:^testing.T) {
     d:=&f.sheets[DASH_STRIKE]
     d.requires=status_bit(CHARGING)
     d.input.wait=.Running
-    core.add(&f.paces,f.player,core.Own_Pace{rate=0.5});core.test_world_settle(&f.w)
+    core.add(&f.paces,f.player,core.Own_Pace{rate=0.5});test_world_settle(&f.w)
     started:=f.time.tick
     f.down[1]=true
     step(f)

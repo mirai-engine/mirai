@@ -1,20 +1,20 @@
 # Render plugins
 
-Eight engine plugins extend the renderer without code of their own in the core.
+Seven engine plugins extend the renderer without code of their own in the core.
 
 - They use the [stages, hooks, views and deformable meshes][ext] through [`engine/render`][stages],
   without importing `render` or `rhi`.
 - They have no GPU resources: on each frame they ask for the pipeline of the stages in their
   `shaders/` and the textures of each view (`pass_texture`), which the renderer keeps, and they
   upload the rows of their passes to the frame memory.
-- What they upload on their own (decal boxes, fog volumes, mirror faces, portal gates) they build
+- What they upload on their own (decal boxes, fog volumes, portal gates) they build
   in the world in the `render` step and each pass leaves it relative to its `Pass.origin`, like
   their shaders; what they give to the renderer's procedures goes in the world.
 - What their shaders share goes in the includes of `engine/render/shaders`, which every stage finds
   like those of `shaders/include`: the mask of a face seen through a nested view
   (`nested_face.slang`), with its Odin part, `pass_nested_faces`.
-- Each one has a scene in the demo, except `mirror`, which is in the `main` gallery, `lens`, which
-  the demo does not enable, and `fsr`, which is chosen in Graphics.
+- Each one has a scene in the demo (a mirror is in the `main` gallery), except `lens`, which the
+  demo does not enable, and `fsr`, which is chosen in Graphics.
 
 | Plugin | Component | Uses |
 | --- | --- | --- |
@@ -22,14 +22,13 @@ Eight engine plugins extend the renderer without code of their own in the core.
 | `deform` | `Deform` | deformable meshes and `Geometry` stage |
 | `monitors` | `Screen` | texture views |
 | `portals` | `Portal`, `Traveler` | nested views, `Mask` stage, ray, light and probe hooks |
-| `mirror` | `Mirror` | nested views and `Mask` stage |
 | `fog` | `Fog_Volume` | `Lit` stage, view 3D textures with history, traced shadows |
 | `fsr` | `Fsr_Settings` setting | a [pipeline][pipelines] with its own passes, no `Resolve` |
 | `lens` | `Lens`, `Lens_Volume` | `Post` stage, view textures with levels |
 
 The `Editor` part of each one is its [Create card][cards] in Logic and what a selected entity shows
 (a decal's box and where it projects, the arrow from the camera to its screen, a portal's opening
-with its front and the path to its exit, a mirror's face, a fog volume's box). The `portals` editor
+with its front and the path to its exit, a fog volume's box). The `portals` editor
 also declares the `nested` inspection mode: the color of the nested view that drew each pixel. An
 entity relates to another through a slot (`core.Entity`): `Screen.camera`, `Portal.exit`.
 
@@ -53,8 +52,8 @@ scale), through its local Y axis.
 `Deform` deforms on the GPU the mesh of its entity, for raster and for rays: shadows, reflections
 and motion vectors follow the shape.
 
-- `deform_render` creates per entity a deformable copy of its mesh (`deformable_create`), hands it
-  over as a visual replacement (`host.extras_instance_add` with `replace_source`) and, while the
+- `deform_render` creates per entity a deformable copy of its mesh (`deformable_create`), gives it
+  as the posed mesh of its entity (`posed_set`) and, while the
   shape changes, requests a `Geometry` pass where the stage of its shape writes the vertices from
   the rest ones, as `render.Gpu_Posed_Vertex` in the words of the vertex pool that
   `pass_deformable` gives. With `speed` 0 the shape stays fixed and is only written when its
@@ -83,7 +82,9 @@ reads as it likes. Without the stage in the shaders in use, the mesh is drawn at
 - A camera's image is a **feed**. The screens that show the same camera with the same aspect share
   one: it is drawn once, at the largest size, with the highest cadence and the fullest quality
   that any of them asks for.
-- `monitors_render` hands over each feed as a [texture view][vtex] at the size at which it is
+- `monitors_render` gives the image of each screen as the screen of the `Material_Live` of its
+  entity (`render.material_screen`), in any world, and takes it away when the `Screen` goes. It
+  hands over each feed as a [texture view][vtex] at the size at which it is
   seen: the smallest level (each half the previous) that still gives one texel per pixel to the
   screen that shows it largest, with margin to shrink. The textures of each level are kept with
   their histories, and a new level is drawn `WARM_IMAGES` times before being shown, so that its
@@ -100,26 +101,35 @@ reads as it likes. Without the stage in the shaders in use, the mesh is drawn at
 
 ## Portals
 
-`Portal{exit, ellipse, layers, wall}` is an opening that shows the place of another entity and
-leads to it: the unit square of its entity seen from its +Z, of its scale (`ellipse`: the
+`Portal{exit, mirror, ellipse, layers, wall}` is an opening that shows the place of another entity
+and leads to it: the unit square of its entity seen from its +Z, of its scale (`ellipse`: the
 inscribed ellipse).
 
 - `exit` is the exit slot: another portal or any entity; without it nothing is shown. What is in
   front continues behind `exit`, turned half a turn about its local Y and without scale
   (`through_of`). Two portals that name each other join two places, also a floor with a wall.
+- With `mirror` it is a flat mirror: its exit is its own plane, reflected (`reflection`), and
+  `exit` is not read. It is drawn and traced like any portal; nothing travels through it, it cuts
+  no wall and brings no lights (their reflection would be a caustic). The Mirror card makes one.
 - `wall` is the collider in which it is open, of any type, or `NONE`. `Traveler{point}` goes
   through the portals that its point crosses.
 
-**Render** (`gpu.odin`), up to `PORTAL_CAPACITY` portals per scene:
+**Render** (`gpu.odin`), up to `PORTAL_CAPACITY` portals and mirrors per scene:
 
-- Each view receives in its `Mask` stage one nested view per portal that faces it (the nearest
-  ones): the scene from its camera carried through the portal, cut by the exit plane and with the
-  portal's layers. The mask is a screen triangle with scissor that intersects each pixel's ray
-  with the opening's plane (`nested_face.slang`): it stays whole with the eye on the plane, where
-  a quad would be clipped against the near plane.
+- Each view receives in its `Mask` stage one [nested view][nested] per portal that faces it (the
+  nearest ones): the scene from its camera carried through the portal, cut by the exit plane and
+  with the portal's layers. What is shown goes once through the view's lighting, filters and TAA,
+  and costs one more G-buffer over those pixels instead of a ray with per-pixel shading. The mask
+  is a screen triangle with scissor that intersects each pixel's ray with the opening's plane
+  (`nested_face.slang`): it stays whole with the eye on the plane, where a quad would be clipped
+  against the near plane.
 - Each view's constants carry the gates (`frame.portals`). The ray hook makes a ray that enters
   through the front of an opening continue from the exit: reflections, GI, probes and shadows
   cross once, with the accumulated distance.
+- Just behind the face of a mirror `portals_render` draws a thin metal body with roughness 0,
+  which the mask covers. Through it the views without room for another nested view, what a nested
+  view or the second stretch of a ray sees of the mirror reflect it: one more level of reflection,
+  without the detail of the first.
 - Probe hook (`portals_probes.slang`): the part of a point's irradiance that arrives through the
   opening is the opening's form factor seen from the point, read at the point behind it, on the
   exit side. On the plane, the parts of the two sides add up to one: a body half-crossed receives
@@ -134,7 +144,7 @@ inscribed ellipse).
 
 **Travel** (`portals.odin`):
 
-- `portals_travel` (`fixed`, before `locomotion_seat`: before the game input and the physics)
+- `portals_travel` (`fixed`, before `camera_drive`: before the game input and the physics)
   looks at the stretch that each traveler covered in the previous tick. If its point entered
   through the front of an opening, it places it on the other side with `core.place` (a
   [jump][jump]: the `previous` goes with it, so drawing interpolates on the other side), asks
@@ -189,8 +199,9 @@ inscribed ellipse).
   `core.View.cut`. A view that comes out turned or shifted relative to where the portal would have
   carried it is straightened in `RIGHTING_TIME`.
 
-**Limits.** Glass, particles and overlays are not seen through a portal, nor a portal through
-another, and the exit does not scale. Each part of a body that crosses is lit where it is. The hole
+**Limits.** Glass, particles, decals and overlays are not seen through a portal, nor a portal
+through another, and the exit does not scale. A mirror reflects everything, without tint or
+roughness, and only with flat faces. Each part of a body that crosses is lit where it is. The hole
 and its frame are the opening's square: at the corners of an `ellipse` opening the hole can be
 entered without traveling. The frame is flat, at the height of the wall's face at the opening's
 center: on a curved surface it does not follow it. A traveler has one twin at a time, that of the
@@ -198,36 +209,15 @@ portal to whose plane it is nearest, and `sim.TWIN_CAPACITY` half-crossed travel
 several window views none gets ahead of the tick or carries its history (`portals_view` acts on
 `core.View`). A covered portal still costs its nested view.
 
-## Mirror
-
-`Mirror{ellipse, layers}` is a flat mirror: the unit XY square of its entity seen from +Z, of its
-scale, or the inscribed ellipse. The entity carries no mesh; `mirrors_render` does two things with
-each visible mirror:
-
-- **In the views that face it** it adds in the `Mask` stage a [nested view][nested] reflected in
-  the face's plane and cut by it. What is reflected goes once through the view's lighting, filters
-  and TAA, with soft shadows, GI and its own reflections, and costs one more G-buffer over those
-  pixels instead of a ray with per-pixel shading. The mask finds the face by ray, like that of the
-  portals.
-- **For everything else** it draws behind the face a thin metal body with roughness 0, which the
-  mask covers. Through it the rays (reflections of other surfaces, GI), the views without room
-  for another nested view and those that look at it through a portal or another mirror see the
-  mirror.
-- A view's nested views are shared between portals and mirrors in the order in which their plugins
-  ask for them; among the mirrors, the nearest first.
-
-**Limits.** What a nested view does not draw (glass, particles, decals, overlays) is not
-reflected. A mirror inside another, or through a portal, is the traced body: one more level of
-reflection, without the detail of the first. It reflects everything, without tint or roughness,
-and only with flat faces.
-
 ## Fog
 
 `Fog_Volume` is a medium that darkens what is behind it and shows the light that crosses it, with
 the shafts that what blocks the sun and the lights cuts in it. It is a
 [volume](../../mirai-gameplay/references/libraries.md#volume) value: the `Volume` of its entity says
-where it is (without one, the whole world), its edge and whether it replaces or adds to what is
-below; the shaders combine it at each point with `volume_weight` and `volume_mix`.
+where it is (a box, a sphere or everything under a plane), its edge and whether it replaces or adds
+to what is below; the shaders combine it at each point with `volume_weight` and `volume_mix`. The
+haze of the whole world is the air of the sky, not a fog: one without a bounded `Volume` is the
+`fog.volume` problem and fills nothing.
 
 - `density` (per meter): of the light that crosses a meter, more or less the part it stops.
 - `color`: of what it stops, the part it scatters in each channel; it absorbs the rest.
@@ -255,8 +245,6 @@ lit:
 - `Every_Frame`: like those that are seen.
 - `Every_Fourth` (default): one frame in four, in turns; in the others it keeps its reprojected
   light. When the camera shows it, it already has its light settled.
-- `Never`: it is not lit, and on being shown its light starts again: a few frames with more grain
-  than the rest.
 
 ### Media from other plugins
 
@@ -293,8 +281,8 @@ boxes.
 - `fog_light.comp` takes at each froxel a fixed point of the cell and writes two textures: the
   medium of the volumes there, with the wisps of the variable ones as they are now, and the light
   that point receives for each meter of what it scatters (except a hidden cell out of its turn,
-  which copies its reprojected light and leaves the medium empty, or with `Never` is marked as not
-  lit; one without history is lit at once). The light is weighted with the mean medium of each
+  which copies its reprojected light and leaves the medium empty; one without history is lit at
+  once). The light is weighted with the mean medium of each
   volume, not that of this frame: it does not depend on where the wisps are. Where there is a medium
   that scatters, it lights it with the light of the engine's media (`shaders/include/media.slang`,
   the same as the volumes of [`vfx`](../../mirai-world/references/vfx.md#volumes)):
@@ -337,6 +325,10 @@ boxes.
   up to the end of the view): `image · transmittance + light`. With an atmosphere the fog is
   composited over the aerial perspective that the composite already applied, and the sun of both
   comes from `sun_light`.
+- What `fog_integrate` leaves, the grid and its far slices, is the
+  [media of the view](../../mirai-rendering/references/views.md#restrictions-of-the-pass_)
+  (`render.MEDIA_TEXTURE`, in the cells of `render.media_grid`): the sprites and volumes of `vfx`
+  drawn after it go behind the same fog.
 - With glass in view the `Lit` stage runs on each side of the nearest layer and `fog_apply` splits
   at that point, with the same composition: behind it applies the fog from the glass to the
   surface (what the grid gives up to the surface without the part up to the glass, divided by what
@@ -436,7 +428,7 @@ object leaves faint bands. The editor grid is composited afterward and is not bl
 - Check types of each `runtime/` and `editor/`, generate and build the demo and open each scene in
   the editor without a window with validation (`--headless --validation --api-port`): zero
   validation errors in all of them.
-- The cards: `scene.add` (`preset` `decal`, `screen`, `portal` or `mirror`), `scene.set` to give
+- The cards: `scene.write` (`preset` `decal`, `screen`, `portal` or `mirror`), which gives
   the slot and `capture` with the entity selected.
 - What to look at per scene:
   - `decals/decals.scene`: decals on floor, wall, steps and a sphere; order between two
@@ -452,12 +444,12 @@ object leaves faint bands. The editor grid is composited afterward and is not bl
   - `gallery/main.scene`: the gallery mirror from the front, from the side and with the camera
     moving: reflections with their reflections, sharp edges, no trail; with `ellipse`.
   - `church/church.scene`: the sun shafts of the stained glass windows cross the nave with their
-    colors and the candles have their halo. Hiding `Haze` (`scene.set` with `Hidden`) isolates its
-    cost.
+    colors and the candles have their halo. Hiding `Haze` (`scene.write` with `visible` false)
+    isolates its cost.
 - In Play, by API (`editor.input` with keys, one frame per tick): walk toward a door and capture
   the frames of the crossing, which must be continuous (the position continues on the other side,
   the gaze turns with the portal and the velocity is preserved); come back through the other one;
-  throw a cube through. Measure with the portal visible and hidden (`scene.set` with `visible`).
+  throw a cube through. Measure with the portal visible and hidden (`scene.write` with `visible`).
 - Lens, in a project that enables it: `mirai test plugins/lens/runtime` (who decides, the volume
   blend and the circle of confusion) and, in `lights/night.scene` with a `Lens_Volume`, a capture
   per effect against the same view without it (`--reference`) and `--repeat` (the image does not

@@ -7,7 +7,7 @@ import "mirai:asset"
 import render "mirai:render"
 import "mirai:std/jobs"
 
-// The levels of the textures of assets follow their distance
+// The levels of the textures of assets follow what the GPU samples of them
 // (render/texture_residency.odin): between frames the renderer says which
 // textures need other levels of their files, jobs read and decode them,
 // TEXTURE_READS at once, and the renderer takes them as the loads give it
@@ -99,7 +99,7 @@ app_textures_stream :: proc(app:^App) {
         for st.reads[next].busy {next+=1}
         read:=&st.reads[next]
         read^={request=request,prepared={source=source,level=request.level},limits=limits,busy=true}
-        if threads {jobs.run(&app.jobs,jobs.OWNER,texture_read,read,&st.counter)} else {texture_read(read,jobs.OWNER)}
+        if threads {jobs.run(&app.jobs,jobs.OWNER,.Background,texture_read,read,&st.counter)} else {texture_read(read,jobs.OWNER)}
     }
 }
 

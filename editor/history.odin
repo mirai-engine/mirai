@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:slice"
 import "core:strings"
 import "mirai:editor/history"
+import "mirai:std/base"
 
 // Undo and redo of one author (Edits.author: the user, or the author of a
 // method of the API while it runs). Undo takes back the newest step of the
@@ -156,7 +157,54 @@ history_by_ids :: proc(s:^Session,state:u64,forward:bool) -> (move:History_Move)
 @(private="file")
 history_prefab_step :: proc(step:^history.Edit_Step) -> bool {
     for &file in step.files {
-        if strings.has_suffix(file.path,PREFAB_EXTENSION) {return true}
+        if strings.has_suffix(file.path,SCENE_EXTENSION) {return true}
     }
     return false
+}
+
+// Takes back what the steps of an author still hold of some entities, by
+// their ids, or of every entity with none: in one step of whoever asks,
+// newest first, keeping what others wrote since. Returns how many rows it
+// went through and how many of their fields, components and entities stayed
+// as others left them, or why nothing changed.
+history_revert_author :: proc(s:^Session,author:history.Edit_Author,ids:[]base.Entity_Id,label:string) -> (rows,kept:int,message:string) {
+    edits,w:=s.edits,edited_world(s)
+    if w.data!=edits.world {return 0,0,"A game plays: stop it first"}
+    sets:=make([dynamic]history.Change_Set,context.temp_allocator)
+    defer for &set in sets {history.change_set_free(&set)}
+    steps:=edits.steps[:edits.cursor]
+    for &step in steps {
+        if step.author!=author || step.reverted || step.swapped || step.kind==.Undo {continue}
+        set:history.Change_Set
+        if !history.change_set_take(w,s.project_root,&set,&step,steps) {
+            history.change_set_free(&set)
+            return 0,0,fmt.tprintf("%s cannot be taken back by ids: its components are not plain data; change them back by hand",history.edits_label(&step))
+        }
+        if len(ids)>0 {
+            #reverse for &row,at in set.rows {
+                if slice.contains(ids,row.id) {continue}
+                delete(row.before);delete(row.after)
+                ordered_remove(&set.rows,at)
+            }
+            for &file in set.files {history.change_file_free(&file)}
+            clear(&set.files)
+        }
+        if history.change_set_empty(&set) {
+            history.change_set_free(&set)
+            continue
+        }
+        rows+=len(set.rows)
+        append(&sets,set)
+    }
+    if len(sets)==0 {return 0,0,"That author has no step in the history that holds them"}
+    history.edits_cancel(edits,w)
+    opened,ready:=edit_open(s,label)
+    if !ready {return 0,0,history_error(edits)}
+    if error:=history.edits_cancel_prepare(edits,w);error!=.None {
+        edits.open=false
+        return 0,0,history.edits_error_text(error)
+    }
+    kept=change_sets_apply(s,sets[:],false,label)
+    edit_close(s,opened)
+    return
 }

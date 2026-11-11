@@ -18,7 +18,7 @@ import wire "mirai:net"
 an_entity_off_on_the_server_stays_off_on_the_clients_and_comes_back_where_it_got :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     apps:[2]host.App
@@ -59,8 +59,6 @@ an_entity_off_on_the_server_stays_off_on_the_clients_and_comes_back_where_it_got
     sessions[0].problems,sessions[1].problems=&problems[0],&problems[1]
     testing.expect_value(t,wire.host_connect(&sessions[1].host,wire.address_memory(0)),wire.Error.None)
     outbox:Net_Outbox;defer core.value_free(&outbox,type_info_of(Net_Outbox))
-    server_events,client_events:Net_Events
-    defer core.value_free(&server_events,type_info_of(Net_Events));defer core.value_free(&client_events,type_info_of(Net_Events))
     // The entity the client has for an Id and where the server last put it.
     replica :: proc(s:^Net_Session,id:u64) -> (e:core.Entity,position:[3]f32,found:bool) {
         for r in s.client.replicas[:s.client.replica_high] {
@@ -73,9 +71,9 @@ an_entity_off_on_the_server_stays_off_on_the_clients_and_comes_back_where_it_got
         now:=f64(tick)/60
         wire.sim_network_advance(&network,now)
         for &session in sessions {wire.host_update(&session.host,now)}
-        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server_events,&server.remote)
-        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host),&client_events)
-        client_place(&sessions[1],core.world_ref(client,&info),wire.clock_interpolation_tick(&sessions[1].host,u32(tick)),nil)
+        server_commands(&sessions[0],core.world_ref(server,&info),nil,wire.host_poll(&sessions[0].host),&server.remote)
+        client_commands(&sessions[1],core.world_ref(client,&info),apps[1].assets,apps[1].allocator,wire.host_poll(&sessions[1].host))
+        client_place(&sessions[1],core.world_ref(client,&info),wire.clock_interpolation_tick(&sessions[1].host,u32(tick)),nil,false)
         core.settle(&info,client,nil)
         switch tick {
         case 21:
@@ -88,12 +86,12 @@ an_entity_off_on_the_server_stays_off_on_the_clients_and_comes_back_where_it_got
             testing.expect(t,found)
             core.add(&server.disabled,agent,core.Disabled{})
             core.add(&server.disabled,held,core.Disabled{})
-            core.add(&server.held,held,scene.Section_Held{})
+            core.add(&server.section_held,held,scene.Section_Held{})
         case 60:
             published=sessions[0].stats.fragments_published
         case 70, 80:
             // Moved while off: nothing goes until it turns on.
-            core.get(&server.transforms,agent).position={f32(tick-60),0,0}
+            core.edit(&server.transforms,agent).position={f32(tick-60),0,0}
         case 90:
             testing.expect_value(t,sessions[0].stats.fragments_published,published)
             e,_,found:=replica(&sessions[1],5)
@@ -103,7 +101,7 @@ an_entity_off_on_the_server_stays_off_on_the_clients_and_comes_back_where_it_got
             _,_,found=replica(&sessions[1],6)
             testing.expect(t,!found,"what its section turned off leaves the clients")
             testing.expect_value(t,sessions[0].stats.objects,1)
-            core.get(&server.transforms,agent).position={20,0,0}
+            core.edit(&server.transforms,agent).position={20,0,0}
             core.remove(&server.disabled,agent)
         case 149:
             e,position,found:=replica(&sessions[1],5)
@@ -111,7 +109,7 @@ an_entity_off_on_the_server_stays_off_on_the_clients_and_comes_back_where_it_got
             testing.expect(t,core.alive(&client.entities,mine) && !core.entity_off(&client.entities,mine),"on again")
             testing.expect(t,core.has(&client.statics,mine),"with its own Mesh_Renderer")
             testing.expectf(t,abs(position.x-20)<0.01,"the client has it at %v",position)
-            value,has:=core.get(core.read(&client.values),mine)
+            value,has:=core.get(&client.values,mine)
             testing.expect(t,has && value.force==2)
         }
         core.settle(&info,server,nil)

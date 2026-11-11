@@ -15,8 +15,9 @@ Clipboard_Test_Lamp :: struct {
     mesh:base.Asset_Id,
 }
 
+@(test_world)
 Clipboard_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
@@ -39,10 +40,10 @@ clipboard_test_set :: proc(user:rawptr,text:string) {
 @(test)
 inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) {
     world:Clipboard_Test_World
-    if !core.test_world_init(t,&world) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     LAMP :: 3
-    info:=core.test_world_info(&world)
+    info:=test_world_info(&world)
     a,b,c:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     for e,i in ([3]core.Entity{a,b,c}) {
         core.add(&world.ids,e,core.Id{base.Entity_Id(i+1)})
@@ -50,11 +51,11 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
     }
     core.add(&world.lamps,a,Clipboard_Test_Lamp{color={1,0.5,0.25},intensity=3,target=c,mesh={7,9}})
     core.add(&world.lamps,b,Clipboard_Test_Lamp{})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
 
     board:Clipboard_Test_Board
     ctx:ui.Context
-    testing.expect(t,ui.context_init(&ctx,{no_font=true,clipboard_get=clipboard_test_get,clipboard_set=clipboard_test_set,clipboard_user=&board}))
+    testing.expect(t,test_ui_init(&ctx,{no_font=true,clipboard_get=clipboard_test_get,clipboard_set=clipboard_test_set,clipboard_user=&board}))
     defer ui.context_destroy(&ctx)
     gui:=Editor_Ui{ctx=&ctx}
     edits:history.Edits
@@ -74,10 +75,11 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
     }
     clipboard :: proc(b:^Clipboard_Test_Board) -> string {return string(b.text[:b.length])}
     put :: proc(b:^Clipboard_Test_Board,text:string) {b.length=copy(b.text[:],text)}
-    lamp :: proc(w:^Clipboard_Test_World,e:core.Entity) -> Clipboard_Test_Lamp {value,_:=core.get(core.read(&w.lamps),e);return value}
+    lamp :: proc(w:^Clipboard_Test_World,e:core.Entity) -> Clipboard_Test_Lamp {value,_:=core.get(&w.lamps,e);return value}
     component:=Value_Menu{kind=.Component,table=LAMP}
-    color:=Value_Menu{kind=.Field,table=LAMP,offset=int(offset_of(Clipboard_Test_Lamp,color)),info=type_info_of([3]f32)}
-    intensity:=Value_Menu{kind=.Field,table=LAMP,offset=int(offset_of(Clipboard_Test_Lamp,intensity)),info=type_info_of(f32)}
+    schema:=&info.schema.schema
+    color:=Value_Menu{kind=.Field,table=LAMP,offset=int(offset_of(Clipboard_Test_Lamp,color)),type=schema.lookup[[3]f32]}
+    intensity:=Value_Menu{kind=.Field,table=LAMP,offset=int(offset_of(Clipboard_Test_Lamp,intensity)),type=schema.lookup[f32]}
 
     // A component goes under its name, as `components` of the API, with the
     // entity it names by its id.
@@ -141,7 +143,7 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
     history.selection_set(&selection,{c})
     put(&board,`{"Clipboard_Test_Lamp":{"intensity":5}}`)
     testing.expect_value(t,paste(&s,{kind=.Components}),"")
-    testing.expect(t,core.has(core.read(&world.lamps),c) && lamp(&world,c).intensity==5)
+    testing.expect(t,core.has(&world.lamps,c) && lamp(&world,c).intensity==5)
     put(&board,`{"Unknown":{}}`)
     testing.expect(t,paste(&s,{kind=.Components})!="")
 }

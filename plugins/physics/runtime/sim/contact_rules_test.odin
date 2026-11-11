@@ -122,7 +122,7 @@ a_dominant_body_still_rests_on_static_ground :: proc(t:^testing.T) {
 }
 
 @(test)
-a_bullet_that_goes_through_a_thin_trigger_begins_and_ends_the_overlap_in_the_step :: proc(t:^testing.T) {
+a_fast_body_that_goes_through_a_thin_trigger_begins_and_ends_the_overlap_in_the_step :: proc(t:^testing.T) {
     for bullet in ([2]bool{false,true}) {
         w:World
         testing.expect(t,test_world(&w))
@@ -137,10 +137,6 @@ a_bullet_that_goes_through_a_thin_trigger_begins_and_ends_the_overlap_in_the_ste
         ball:=test_bullet(&w,{-1,0,0},{200,0,0},bullet)
         world_step(&w,1.0/60)
         events:=world_events(&w)
-        if !bullet {
-            testing.expect_value(t,len(events.overlap_begin),0)
-            continue
-        }
         testing.expect_value(t,len(events.overlap_begin),2)
         testing.expect_value(t,len(events.overlap_end),2)
         if len(events.overlap_begin)==2 {
@@ -220,13 +216,13 @@ contact_rules_replay_identically_after_restore :: proc(t:^testing.T) {
     rules_box(&w,{0.25,0.25,0.25},{0.6,0.5,0},{0,9,0})
     body_set_bullet(&w,a,true)
     test_steps(&w,10)
-    buffer:=make([]byte,world_snapshot_capacity(&w))
-    defer delete(buffer)
-    _,ok:=world_snapshot(&w,buffer)
+    buffer:World
+    defer world_destroy(&buffer)
+    ok:=test_keep(&buffer,&w)
     testing.expect(t,ok)
     test_steps(&w,60)
     expected:=world_hash(&w)
-    testing.expect(t,world_restore(&w,buffer))
+    testing.expect(t,test_restore(&w,&buffer))
     test_steps(&w,60)
     testing.expect_value(t,world_hash(&w),expected)
 }
