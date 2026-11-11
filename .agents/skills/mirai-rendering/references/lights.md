@@ -113,6 +113,11 @@ rays do:
 
 `light_cut`:
 
+- The points of the view with neighbours and a filter take their light from samples of the grid
+  of the lights ([direct light of a view](#direct-light-of-a-view)), whose cost does not grow with
+  the lights but which shows a pattern without the filter; a point alone (glass, overlays, the
+  other side of a surface, hits of reflections and probes) needs all of its light on its own, and
+  takes it from the cut, which groups the far lights.
 - The nodes to which a point traces a ray: each light that reaches it as long as they fit in the
   budget; if there are more, from the root the node that needs it most is opened (brightest and
   widest seen from the point, those that contain a spot first). Every light that arrives lies
@@ -142,10 +147,12 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
 - **Grid of lights** (`render/light_grid.odin`, `light_grid.comp`). The world in cells whose lists
   hold the lights that reach them; past `DIRECT_FEW` a cell holds an alias table to draw from.
   The GPU rebuilds it in the frame the lights change; `light_weight.slang` weighs each light at a
-  point. It covers the ranges of the lights of the scene and the part of the scene that the lights
-  with shadows a pass writes on the GPU light, from the box and reach of `lights_ask` (all of the
-  scene for `LIGHTS_ANYWHERE`), held with a margin so that a moving box does not place it again
-  every frame. A cell whose entries would not fit the rows counted on the CPU lists none.
+  point by `light_weight_at`, which also weighs a light of the tree (`node_weight`): a light is
+  weighed in one place. It covers the ranges of the lights of the scene and the part of the scene
+  that the lights with shadows a pass writes on the GPU light, from the box and reach of
+  `lights_ask` (all of the scene for `LIGHTS_ANYWHERE`), held with a margin so that a moving box
+  does not place it again every frame. A cell whose entries would not fit the rows counted on the
+  CPU lists none.
 - **Spread.** A point weighs the lights of its cell and spreads its samples over them by weight,
   systematically (one at each m-th of the sum of weights, from the place of the pixel in a 3x3
   pattern): a light that gives much takes many samples and none depends on chance. A light that
