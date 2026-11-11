@@ -99,9 +99,12 @@ counterclockwise seen from above, and the queries do not depend on the winding.
 - `nav_find_nearest`, `nav_poly_height` (through the detail mesh), `nav_closest_point_on_poly`,
   `nav_move_along_surface` (moving without crossing walls or links), `nav_raycast` (over the surface
   seen from above), `nav_random_point`, `nav_random_point_around` and `nav_distance_to_wall`.
-- `nav_walls_near` gives the edges of the mesh around a point that lead to nothing the filter
+- `Nav_Boundary` holds the edges of the mesh around an agent that lead to nothing the filter
   walks, nearest first and with the surface to their right: the walls of
-  [avoidance](#avoidance-between-agents-avoidanceodin).
+  [avoidance](#avoidance-between-agents-avoidanceodin). `nav_boundary_update` gathers them within
+  twice the reach asked and keeps them while they cover it: until the agent went on past them or a
+  tile they come from was built again (Detour's local boundary), so a walker does not walk the
+  polygons around it every tick.
 
 ### Corridor (`nav_corridor.odin`)
 
@@ -112,6 +115,8 @@ counterclockwise seen from above, and the queries do not depend on the winding.
   corridor is not straightened again while it is followed.
 - Each tick: `nav_corridor_move` takes the start to where the agent is (what it walked off the path
   is added ahead) and `nav_corridor_corners` gives the next corners up to the first link.
+  `nav_corridor_move_target` slides the end after a target that moves, over the surface from the
+  last polygon (Detour's moving target): no search while nothing walls it off.
 - `nav_corridor_cross` crosses the link at the front and leaves the agent at its end;
   `nav_corridor_valid` says whether the first steps still exist and the filter walks them.
 
@@ -273,10 +278,10 @@ It is a rewrite in Odin of Recast and of the tile closing of Detour
 ## Avoidance between agents (`avoidance.odin`)
 
 - `avoid_velocity(self, preferred, max_speed, neighbors, horizon, dt, walls, wall_horizon)`
-  applies ORCA, with `neighbors []Avoid_Agent(N){position, velocity, radius}`: a single code for N=2
-  (disks on the plane) and N=3 (spheres in a volume). Each neighbor forbids a half-space of
-  velocities that would bring the two together before `horizon` seconds, and each agent takes half
-  of the change.
+  applies ORCA, with `neighbors []Avoid_Agent(N)`: a single code for N=2 (disks on the plane) and
+  N=3 (spheres in a volume). Each neighbor forbids a half-space of velocities that would bring the
+  two together before `horizon` seconds, and each agent takes half of the change; toward one that
+  `ignores` it (it does not step aside: a player, a moving body), all of it, at its real velocity.
 - **Walls come first.** On the plane, each `Avoid_Wall` (a segment, walked on the side to its
   right) forbids the velocities that cross it before `wall_horizon` seconds, as the edges of the
   obstacles of RVO2 do. An agent on a wall may not move into it; at the corner of two walls that
@@ -287,7 +292,6 @@ It is a rewrite in Odin of Recast and of the tile closing of Detour
   none remains, the one that violates the neighbors least: the walls stay as they are.
 - Agents that already overlap are separated in one step `dt`.
 - Only the `AVOID_MAX_NEIGHBORS` nearest neighbors and the first `AVOID_MAX_WALLS` walls count.
-- A neighbor that does not avoid receives only half of the space: block it in the navmesh.
 - Whoever moves the agent moves it at the velocity returned, speed included: a faster body is not
   where the others, and the walls, were told it would be.
 
@@ -430,11 +434,12 @@ What those models gave, with a mind:
 - `nav_volume_test.odin`: free zone only far from the enlarged obstacles, the same one with any
   order of triangles, a path that passes under a wall between zones without crossing it, corridor
   following, expired references, nearest free point, no allocations and hostile calls.
-  `avoidance_test.odin` covers ORCA in 2D and in 3D, a crowd that meets in a corridor without
-  crossing its walls and the corners of walls.
+  `avoidance_test.odin` covers ORCA in 2D and in 3D, a mover that does not step aside, a crowd
+  that meets in a corridor without crossing its walls and the corners of walls.
 - `nav_mesh_test.odin`: one search toward an end that gives every follower the way its own search
-  does, over one-way and two-way links, and the walls near a point. `nav_build_test.odin`: a tile
-  built again from its field, equal to the one its triangles give, and damaged fields.
+  does, over one-way and two-way links, and the walls near a point, kept while they cover it.
+  `nav_build_test.odin`: a tile built again from its field, equal to the one its triangles give,
+  and damaged fields.
 - `nav_space_link_test.odin`: a path that leaves the mesh through a link, passes under a wall
   through the volume and returns to the mesh through another, the return, a one-way link and a start
   in the volume.

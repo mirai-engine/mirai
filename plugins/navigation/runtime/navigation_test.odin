@@ -541,6 +541,23 @@ links_are_generated_between_roofs_for_what_the_class_can_do :: proc(t:^testing.T
     // One that cannot jump stays on its roof.
     _,status=nav_test_path(t,&f,{-5,0,0},{5,1,0},{})
     testing.expect_value(t,status,ai.Search_Status.No_Path)
+    // An agent jumps as far as its gravity lets it: under four times the gravity
+    // (Character.gravity_scale) the gap is too wide, and it stays on its roof.
+    for scale in ([?]f32{1,4}) {
+        e:=agents_test_walker(&f,{-5,0,0})
+        nav_test_settle(&f)
+        core.edit(&f.characters,e).gravity_scale=scale
+        nav_move_to(&f.nav_requests,e,{5,1,0})
+        arrived,_,crossed,_:=agents_test_travel(&f,e,8)
+        pose,_:=core.get(&f.worlds,e)
+        if scale==1 {
+            testing.expectf(t,arrived && len(crossed)==1 && crossed[0]==LINK_JUMP,"it arrives %v by the links %v",arrived,crossed)
+        } else {
+            p,_:=core.get(&f.paths,e)
+            testing.expectf(t,!arrived && p.state==.Arrived && p.partial && pose.position.x<0 && pose.position.y>-0.5,"it is %v at %v",p.state,pose.position)
+        }
+        core.destroy(&f.entities,e)
+    }
     // A wall between the roofs closes the arc: the links go.
     nav_test_box(&f,{0,0,0},{0.25,6,6})
     nav_test_settled(t,&f)
@@ -1787,6 +1804,9 @@ followers_of_one_target_share_one_search_toward_it :: proc(t:^testing.T) {
     defer nav_test_destroy(&f)
     nav_test_box(&f,{0,-0.5,0},{20,0.5,12})
     nav_test_box(&f,{0,1,-3},{0.3,1,9})
+    // A yard 100 m away, where a crate moves.
+    nav_test_box(&f,{100,-0.5,0},{5,0.5,5})
+    crate:=nav_test_box(&f,{100,0.5,0},{0.5,0.5,0.5})
     nav_test_settled(t,&f)
     runner:=core.create(&f.entities)
     core.add(&f.transforms,runner,core.Transform{{14,0,-8},1,{1,1,1}})
@@ -1827,8 +1847,44 @@ followers_of_one_target_share_one_search_toward_it :: proc(t:^testing.T) {
         replans+=p.replans
         testing.expectf(t,(p.state==.Arrived || p.state==.Moving) && linalg.distance(pose.position,at.position)<4,"walker %d is %v at %v, the runner at %v",i,p.state,pose.position,at.position)
     }
-    testing.expectf(t,trees==1 && begun>=3 && begun<=2*SECONDS+1,"%d searches shared, begun %d times",trees,begun)
+    testing.expectf(t,trees==1 && begun>=1 && begun<=2,"%d searches shared, begun %d times",trees,begun)
     testing.expectf(t,own<=4,"%d searches of their own beside the shared one",own)
+    searched :: proc(f:^Nav_Test) -> (searches:u64) {
+        for &tree in f.run.trees {searches+=tree.query.search.stats.searches}
+        return searches+f.run.query.search.stats.searches
+    }
+    // It steps 2 m aside: the ends of their corridors slide after it, with no search and no wait.
+    before:=searched(&f)
+    waited:=0
+    for tick in 0..<60*3 {
+        core.edit(&f.transforms,runner).position.x=14-min(f32(tick)/30,1)*2
+        agents_test_step(&f)
+        for e in walkers {
+            p,_:=core.get(&f.paths,e)
+            if p.state==.Waiting {waited+=1}
+        }
+    }
+    at,_=core.get(&f.worlds,runner)
+    for e,i in walkers {
+        pose,_:=core.get(&f.worlds,e)
+        testing.expectf(t,linalg.distance(pose.position,at.position)<4,"walker %d is at %v, the runner at %v",i,pose.position,at.position)
+    }
+    testing.expectf(t,waited==0 && searched(&f)==before,"they waited %d ticks and searched %d times",waited,searched(&f)-before)
+    // Asked again, they begin the search where it stands; a tile built again 100 m away
+    // does not begin it again for those asked after.
+    for e in walkers {nav_follow(&f.nav_requests,e,runner,1)}
+    for _ in 0..<60 {agents_test_step(&f)}
+    begun=0
+    for &tree in f.run.trees {begun+=tree.query.search.stats.searches}
+    built:=f.nav.stats.built
+    core.edit(&f.transforms,crate).position.x=102
+    for _ in 0..<60 {agents_test_step(&f)}
+    testing.expect(t,f.nav.stats.built>built)
+    for e in walkers {nav_follow(&f.nav_requests,e,runner,1)}
+    for _ in 0..<30 {agents_test_step(&f)}
+    again:=u64(0)
+    for &tree in f.run.trees {again+=tree.query.search.stats.searches}
+    testing.expectf(t,again==begun,"the shared search began %d more times",again-begun)
     testing.expect_value(t,f.problems.count,0)
 }
 
@@ -2076,9 +2132,10 @@ agents_step_aside_from_those_they_meet_within_the_horizon :: proc(t:^testing.T) 
 }
 
 // The neighbors an agent gathers from the grid are, among those it may meet
-// within the horizon, the nearest ones ORCA counts: the same as a look at
-// every other agent finds, in a crowd, far apart, on two floors, in the air,
-// beside an obstacle and with positions that are not numbers or are huge.
+// within the horizon at their real velocities, the nearest ones ORCA counts:
+// the same as a look at every other agent finds, in a crowd, far apart, on two
+// floors, in the air, beside an obstacle and with positions that are not
+// numbers or are huge.
 @(test)
 agents_gather_the_nearest_neighbors_they_may_meet :: proc(t:^testing.T) {
     f:Nav_Test
@@ -2116,7 +2173,7 @@ agents_gather_the_nearest_neighbors_they_may_meet :: proc(t:^testing.T) {
         agents_avoid(&f.nav,&f.run,&f.paths,1.0/60,&f.problems)
         fastest,widest:f32
         for near in f.run.near {
-            if near.avoids {fastest=max(fastest,linalg.length(near.velocity))}
+            fastest=max(fastest,linalg.length(near.velocity))
             widest=max(widest,near_sphere(near))
         }
         for near,i in f.run.near {
@@ -2126,12 +2183,15 @@ agents_gather_the_nearest_neighbors_they_may_meet :: proc(t:^testing.T) {
             gathered,every:[dynamic]f32
             defer delete(gathered)
             defer delete(every)
-            for other in f.run.neighbors {append(&gathered,linalg.length2(other.position-near.position.xz))}
+            for other in f.run.neighbors {
+                append(&gathered,linalg.length2(other.position-near.position.xz))
+                // The obstacle, which does not step aside, comes with its real velocity.
+                if other.radius==1.5 {testing.expectf(t,other.velocity==[2]f32{5,0} && other.ignores,"%v: the obstacle is met at %v, ignoring %v",c,other.velocity,other.ignores)}
+            }
             for other in f.run.neighbors_air {append(&gathered,linalg.length2(other.position-near.position))}
             for other,j in f.run.near {
                 if j==i {continue}
-                velocity:=other.velocity if other.avoids else {}
-                reach:=NAV_AGENT_HORIZON*(top+linalg.length(velocity))
+                reach:=NAV_AGENT_HORIZON*(top+linalg.length(other.velocity))
                 distance2:f32
                 if near.flies {
                     reach+=near_sphere(near)+near_sphere(other)
