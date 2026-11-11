@@ -26,11 +26,14 @@ BLOCK_CAPACITY :: 64
 // it, the game, an AI, the network or a replay, each for the bodies it
 // drives. The body turns toward the look yaw at its own rate (a Character of
 // the locomotion plugin at its turn_speed): a driver that wants it to face
-// where it goes gives the yaw of its move.
+// where it goes gives the yaw of its move. A seat asks for a share of the top
+// speed of the body; whatever plans the velocity itself (an AI on its path)
+// asks for that velocity, which the mover takes up to its top speed.
 @(component,shared,description="What the body is asked this tick: where to go in the world and where to look, from the seat that drives it, an AI, the network or a replay.")
 Move_Input :: struct {
-    move:[3]f32 `mirai:"readonly"`,                // in the world, up to 1 long: across the up of the body (core.Vertical) it walks; along it, modes that fly
+    move:[3]f32 `mirai:"readonly"`,                // in the world: across the up of the body (core.Vertical) it walks; along it, modes that fly. A share of the top speed, up to 1 long, or m/s with velocity
     look_yaw,look_pitch:f32 `mirai:"readonly,angle"`, // where it looks and faces: yaw turns left about the up of the body, pitch looks up; at 0 it looks along -Z, as everything does. Ground that turns adds to it (core.Vertical.turn) through whoever writes it
+    velocity:bool `mirai:"readonly"`,              // move is a velocity, m/s
     buttons:Action_Mask `mirai:"readonly"`,        // the button actions held
 }
 #assert(size_of(Move_Input)==32)
@@ -387,7 +390,7 @@ body_assign :: proc(a:^Apply,seat,body:core.Entity) -> Refusal {
     previous:=source.body
     if previous==body {return .None}
     source.body=body
-    if left:=core.edit(a.moves,previous);left!=nil {left.move,left.buttons={},{}}
+    if left:=core.edit(a.moves,previous);left!=nil {left.move,left.velocity,left.buttons={},false,{}}
     rearm(a,seat)
     return .None
 }

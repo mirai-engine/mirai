@@ -86,7 +86,7 @@ Project :: struct {
     assets:Assets,
     library:host.Project_Library,
     info:^core.World_Info, // the types of the game as it was built last; nil: none
-    languages:[]string,    // the codes of the languages of the game, the one its texts are written in first
+    source:string,         // the code of the language its texts are written in (UI_Settings.source)
     untyped:string,        // why it has none, with what gives them
     recipes:[]Recipe,       // of the engine and of its active plugins
     scratch:Scratch_World,  // where a recipe is run; made the first time
@@ -109,9 +109,9 @@ project_open :: proc(p:^Project,root,engine:string,library:=true) -> (problem:st
     asset.types_init(&p.types)
     p.assets={&p.registry,&p.types}
     if os.is_dir(p.assets_root) && asset.registry_scan(&p.registry)!=.None {return fmt.tprintf("the assets of %s could not be read",p.assets_root)}
-    ui_settings:=gui.UI_SETTINGS_DEFAULT
-    project.settings_load({{name="UI_Settings",info=type_info_of(gui.UI_Settings),value=&ui_settings}},p.root,engine,{.Project})
-    p.languages=slice.clone(texts_languages(ui_settings))
+    ui_settings:gui.UI_Settings
+    project.settings_load({{name="UI_Settings",info=type_info_of(gui.UI_Settings),value=&ui_settings,default=proc(dst:rawptr) {(^gui.UI_Settings)(dst)^=gui.UI_SETTINGS_DEFAULT}}},p.root,engine,{.Project})
+    p.source=strings.clone(base.text_get(ui_settings.source[:]))
     if library {project_library_open(p)}
     p.recipes=recipes_read(project.recipe_folders(&opened,context.temp_allocator))
     return ""
@@ -126,7 +126,7 @@ project_close :: proc(p:^Project) {
     delete(p.root)
     delete(p.name)
     delete(p.assets_root)
-    delete(p.languages)
+    delete(p.source)
     delete(p.untyped)
     p^={}
 }
@@ -169,7 +169,7 @@ ui_read :: proc(p:^Project,named:string,out:^serial.Writer) -> (problem:string) 
     reading:=Reading{allocator=context.temp_allocator}
     args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,asset=id}
     libs:=doc_libs(&args,&r)
-    texts:=texts_read(p.assets,p.languages[0])
+    texts:=texts_read(p.assets,p.source)
     document_write(out,&p.types,&r,-1,libs[:],p.assets,&texts)
     return ""
 }
@@ -210,7 +210,7 @@ ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:strin
         record,_=asset.registry_find(&p.registry,id)
         path=strings.clone(record.path,context.temp_allocator)
     }
-    texts:=texts_read(p.assets,p.languages[0])
+    texts:=texts_read(p.assets,p.source)
     params:=widget_params(p.assets,id)
     bytes:[]u8
     imports:[]ui.Tree_Data
@@ -276,13 +276,13 @@ texts_put :: proc(p:^Project,t:^Texts) -> (problem:string) {
 // something is.
 @(private="file")
 texts_command :: proc(p:^Project,args:[]string,output,errors:io.Writer) -> int {
-    t:=texts_read(p.assets,p.languages[0])
+    t:=texts_read(p.assets,p.source)
     problem:=""
     switch {
     case len(args)==1 && args[0]=="list":
         fmt.wprint(output,texts_csv(&t))
     case len(args)==1 && args[0]=="missing":
-        lines:=texts_missing(&t,texts_uses(p.assets),p.languages)
+        lines:=texts_missing(&t,texts_uses(p.assets))
         for line in lines {fmt.wprintln(output,line)}
         return 1 if len(lines)>0 else 0
     case len(args)==2 && args[0]=="export":

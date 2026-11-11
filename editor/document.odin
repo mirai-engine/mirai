@@ -557,6 +557,7 @@ scene_load_file :: proc(s:^Session,file:string) -> (loaded:^asset.Scene,error:Do
         prefab_reader_begin(s,&reader)
         defer prefab_reader_end(&reader)
         if changed,_:=asset.scene_resolve(&reader.resolver,loaded);changed {
+            if moved:=reader.resolver.reparented;moved>0 {log.warnf("%s: %d entities it added under members its prefabs removed hang from the nearest member left now; save it to keep them there",file,moved)}
             data,encoded:=asset.scene_bytes(loaded)
             if encoded!=.None || asset.asset_take(&resolved,data)!=.None {
                 asset.scene_destroy(loaded)

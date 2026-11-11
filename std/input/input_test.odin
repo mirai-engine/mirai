@@ -134,6 +134,16 @@ analog_axes_apply_scale_and_dead_zone_continuously :: proc(t:^testing.T) {
     input_set_axis(&in_,axis_gamepad(0,2),0)
     input_update(&in_,TEST_DT)
     testing.expect(t,!action_down(&in_,look) && action_released(&in_,look))
+    // The scale multiplies what is past the dead zone, beyond 1 too: a sensitivity of 3.
+    fast:=input_add_action(&in_,.Axis)
+    input_bind_axis(&in_,fast,axis_gamepad(0,2),0.2,3)
+    stick:=input_add_action(&in_,.Axis2)
+    input_bind_axes_2d(&in_,stick,axis_gamepad(0,2),axis_gamepad(0,3),0.2,3)
+    for sample in ([][2]f32{{0.1,0},{0.6,1.5},{1,3},{-1,-3}}) {
+        input_set_axis(&in_,axis_gamepad(0,2),sample[0])
+        input_update(&in_,TEST_DT)
+        testing.expectf(t,near(action_value(&in_,fast),sample[1]) && near(action_vector(&in_,stick).x,sample[1]),"axis %f read %f and %v",sample[0],action_value(&in_,fast),action_vector(&in_,stick))
+    }
 }
 
 @(test)

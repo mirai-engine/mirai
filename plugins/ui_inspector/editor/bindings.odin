@@ -221,7 +221,7 @@ bind_binding :: proc(p:^Pane,field:[]u8) -> ui.Binding {
     n:=selected_node(p.u)
     if n==nil {return .Text}
     fields:=[ui.Binding][]u8{.Text=n.bind_text[:],.Value=n.bind_value[:],.Visible=n.bind_visible[:],.Selected=n.bind_selected[:],.Disabled=n.bind_disabled[:],
-        .Items=n.bind_items[:],.Image=n.bind_image[:],.Tint=n.bind_tint[:],.Variant=n.bind_variant[:]}
+        .Items=n.bind_items[:],.Key=n.bind_key[:],.Image=n.bind_image[:],.Tint=n.bind_tint[:],.Variant=n.bind_variant[:]}
     for f,binding in fields {if raw_data(f)==raw_data(field) {return binding}}
     return .Text
 }
@@ -248,7 +248,7 @@ bind_pick :: proc(p:^Pane,field:[]u8,kind:author.Bind_Kind) {
     info:=s.app.info
     a:=s.app.assets
     nodes:=scope_nodes(u)
-    root,rooted:=author.node_scope(info,nodes,u.selected)
+    root,rooted:=author.node_scope(info,nodes,u.selected+1 if kind==.Key else u.selected)
     data:=widget_scope(u,a,info) if a!=nil else author.Path_Scope{}
     if ui.popup(ctx,popup,{min_width=280,search="Search",side=.Below}) {
         needle,searched:=ui.popup_search(ctx,popup)
@@ -508,14 +508,15 @@ api_node :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,name:string,r
 api_paths :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Ui_Paths_Params)
     binding,data,known:=api_binding(serial.text_field(p.binding[:]))
-    if !known {api.call_fail(call,api.INVALID_PARAMS,"binding is one of Text, Value, Visible, Selected, Disabled, Items, Image, Tint, Variant or Data");return}
+    if !known {api.call_fail(call,api.INVALID_PARAMS,"binding is one of Text, Value, Visible, Selected, Disabled, Items, Key, Image, Tint, Variant or Data");return}
     records:author.Records
     row,ok:=api_node(s,call,p.asset,serial.text_field(p.node[:]),&records)
     if !ok {return}
     info:=s.app.info
     kind:=author.Bind_Kind.Data if data else author.bind_kind(binding,records.nodes[row].kind)
     widget:=author.widget_scope_of(author.assets_of(s.app.assets),info,p.asset)
-    root,rooted:=author.node_scope(info,records.nodes[:],row,widget)
+    // A key is a field of the element of its List: where the node it holds starts.
+    root,rooted:=author.node_scope(info,records.nodes[:],row+1 if kind==.Key else row,widget)
     if !rooted {api.call_fail(call,api.INVALID_PARAMS,"the node is inside a List that binds no array: bind its Items first");return}
     prefix:=serial.text_field(p.prefix[:])
     scope:=root

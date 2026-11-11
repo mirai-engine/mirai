@@ -409,6 +409,7 @@ client_world :: proc(s:^Net_Session,w:core.World_Ref,root:scene.Scene_Root) {
         r={}
     }
     c.replica_high,c.waiting=0,0
+    clear(&s.held);clear(&s.held_bytes)
     clear(&c.sections)
     c.sections_seen={}
     history_reset(s)

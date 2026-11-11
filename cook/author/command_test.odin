@@ -513,7 +513,7 @@ ui_round_trip :: proc(p:^Project,path:string,id:base.Asset_Id) -> (bytes:[]u8,te
     if why=ui_read(p,path,&out);why!="" {return}
     r:Records
     if !records_read(p.assets,id,&r,context.temp_allocator) {return nil,nil,"it does not read"}
-    keys:=texts_read(p.assets,p.languages[0])
+    keys:=texts_read(p.assets,p.source)
     written:Written
     if bytes,_,why=ui_apply(p,id,&r,string(serial.writer_bytes(&out)),&keys,&written);why!="" {return}
     texts,why=texts_written(&keys,&p.types,{})

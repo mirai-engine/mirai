@@ -961,11 +961,10 @@ of an instance" are `-32602`; the rest, `-32000`
   nothing.
 - **Particle effects** (`.particle`): registered by the `vfx` plugin with its `Api_Provider`;
   without it they do not exist ([vfx in the editor](../../mirai-world/references/vfx-editor.md)).
-  - `particle.inspect`: `{particle,path,values,parameters,hidden,resources,problem}`. `values` is
-    the text of `effect.Particle_Info` (enums by name, ids in hexadecimal); `parameters`, those of
-    the Vfx program by name; `hidden`, the fields its instances do not show; `resources`, the mesh
-    of each surface resource of the program, by name; `problem`, why its program would not run
-    (empty if it runs or has none).
+  - `particle.inspect`: `{particle,path,values,parameters,hidden,problem}`. `values` is the text
+    of `effect.Particle_Info` (enums by name, ids in hexadecimal); `parameters`, those of the Vfx
+    program by name; `hidden`, the fields its instances do not show; `problem`, why its program
+    would not run (empty if it runs or has none).
   - `particle.set` with `path`: `values` are the fields that change over `PARTICLE_DEFAULTS`. Fails
     if the file exists.
   - `particle.set`: changes the effect for all the entities that show it; `hidden` replaces the
@@ -973,8 +972,7 @@ of an instance" are `-32602`; the rest, `-32000`
   - In both, `parameters` is `{name: value}` as the program declares it: a number, a list of two to
     four, `true`/`false` or a texture by path or id; `null` removes one. An out-of-range value, of
     another type or a parameter the program does not have is `-32602` and writes nothing; a program
-    the shaders do not have yet is named all the same. `resources` is `{name: mesh}`, by path or id,
-    of a `surface` resource the program declares; `null` removes one.
+    the shaders do not have yet is named all the same.
   - `particle.programs`: the Vfx programs of the shaders, with `attributes` (bytes per particle),
     their parameters (`kind`, `components`, `default`, `min`, `max`), their resources (`name`,
     `kind` `Surface`, `Channel`, `Bones` or `Grid`) and their stages (`name`, `over`: `particles`
@@ -989,15 +987,16 @@ of an instance" are `-32602`; the rest, `-32000`
 - **Emitters** (`entity`; `world` `Edit`, the document, or `Play`, the caller's):
   - `particle.instance.inspect` (`world` `Edit` by default): `values` (what it shows), `overrides`
     (its own values by path), `parameters` (its own), `problem` and `status` (`state` `Idle`,
-    `Playing`, `Paused`, `Finishing` or `Done`, `control`, `seconds`, `generation`, `births`).
+    `Playing`, `Paused`, `Finishing` or `Done`, `seconds`, `generation`, `births`).
   - `particle.instance.set` (Edit, one undo step): of `values` (as inspect gives them) what differs
-    from the effect becomes its own, up to 16; its assets and its program are the effect's
-    (`-32602`). `parameters` is added to its own, up to 8.
+    from the effect becomes its own and `parameters` is added to its own, up to 16 together
+    (`Particle_Override`); its assets and its program are the effect's (`-32602`).
   - `particle.instance.revert` and `particle.instance.apply` (Edit): give their values back to the
     effect, or write them into it and revert them, the file and the entity in one undo step.
-  - `particle.instance.control` (`world` `Play` by default): `action` `Start`, `Stop`, `Restart`,
-    `Pause`, `Resume`, `Authored` or `Burst` with `count`; the emitter takes it on its next fixed
-    step (in Edit, the next frame of the preview). Returns `{id,queued}`.
+  - `particle.instance.control` (`world` `Play` by default): `action` `Start` or `Stop` (they set
+    its `active`; Play only, `-32602` in Edit), `Restart`, `Pause`, `Resume` or `Burst` with
+    `count`; the emitter takes it on its next fixed step (in Edit, the next frame of the preview).
+    Returns `{id,queued}`.
 - `material.inspect`: `{material,path,values}`. `values` is the text of `asset.Material_Info`: the
   base, the layers (`coat`, `fuzz`, `anisotropy`, `unlit`), the maps with their textures by id and
   the program ([model](../../mirai-rendering/references/materials.md#layers-openpbr)). For an
