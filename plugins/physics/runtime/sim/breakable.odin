@@ -26,7 +26,6 @@ Breakable_Desc :: struct {
     strength:f32,          // N s per m2 of shared face that a bond takes before it breaks
     impact_damage:bool,
     damage_threshold:f32,  // N s of a contact in one step below which it does no damage
-    damage_radius:f32,     // m around a contact point where its damage starts
     propagation:f32,       // 0 to 1: share of the strain left over by a bond that breaks that goes on to the other bonds of its two pieces, by their area
     debris_volume:f32,     // m3: a group that comes off smaller than this is debris
     debris_ticks:u32,      // steps that debris lasts
@@ -45,7 +44,7 @@ Breakable_Desc :: struct {
 
 BREAKABLE_DESC_DEFAULT :: Breakable_Desc{
     rotation=QUAT_IDENTITY,density=2000,friction=0.6,gravity_scale=1,filter=FILTER_DEFAULT,
-    strength=500,impact_damage=true,damage_threshold=50,damage_radius=0.5,debris_volume=0.001,debris_ticks=300,hull_vertices=32,
+    strength=500,impact_damage=true,damage_threshold=50,propagation=1,debris_volume=0.001,debris_ticks=300,hull_vertices=32,
 }
 
 Breakable_Error :: enum {None,Invalid_Desc,Invalid_Mesh,No_Pieces,Capacity,Out_Of_Memory}
@@ -141,7 +140,7 @@ Breakable :: struct {
     bond_list,bond_tail,bond_count:i32,
     density,friction,restitution:f32,
     gravity_scale:f32,
-    strength,damage_threshold,damage_radius,propagation,debris_volume:f32,
+    strength,damage_threshold,propagation,debris_volume:f32,
     debris_ticks:u32,
     removal_ticks:u32,
     flags:Breakable_Flags,
@@ -153,7 +152,7 @@ Breakable :: struct {
     generation:u32, // odd while the slot is in use
     next_free:i32,
 }
-#assert(size_of(Breakable)==232)
+#assert(size_of(Breakable)==224)
 
 Piece_Info :: struct {
     id:i32,             // stable while the breakable lives
@@ -646,9 +645,9 @@ cluster_hull_build :: proc(w:^World,index,cluster:i32,points:[]Vec3,counts,indic
 // of the mesh as shape, connected to the pieces it shares a face with. It starts as one body, static if
 // any piece is anchored and dynamic otherwise. A transaction that allocates: not for the middle of a tick.
 breakable_create :: proc(w:^World,desc:Breakable_Desc) -> (handle:Breakable_Handle,error:Breakable_Error) {
-    if !(desc.density>0) || !finite(desc.density,desc.friction,desc.restitution,desc.gravity_scale,desc.strength,desc.damage_threshold,desc.damage_radius,desc.propagation,desc.debris_volume,
+    if !(desc.density>0) || !finite(desc.density,desc.friction,desc.restitution,desc.gravity_scale,desc.strength,desc.damage_threshold,desc.propagation,desc.debris_volume,
        desc.position.x,desc.position.y,desc.position.z,desc.rotation.x,desc.rotation.y,desc.rotation.z,desc.rotation.w) ||
-       desc.friction<0 || desc.restitution<0 || desc.restitution>1 || desc.strength<0 || desc.damage_threshold<0 || desc.damage_radius<0 || desc.debris_volume<0 ||
+       desc.friction<0 || desc.restitution<0 || desc.restitution>1 || desc.strength<0 || desc.damage_threshold<0 || desc.debris_volume<0 ||
        desc.propagation<0 || desc.propagation>1 {return {},.Invalid_Desc}
     if desc.fracture==nil && (len(desc.sites)==0 || !geom.mesh_is_valid(desc.mesh) || len(desc.mesh.indices)==0) {return {},.Invalid_Desc}
     if len(desc.anchors)>BREAKABLE_ANCHOR_CAPACITY || w.kept {return {},.Invalid_Desc}
@@ -691,7 +690,7 @@ breakable_create :: proc(w:^World,desc:Breakable_Desc) -> (handle:Breakable_Hand
     d^={
         user_data=desc.user_data,piece_list=-1,piece_tail=-1,bond_list=-1,bond_tail=-1,
         density=desc.density,friction=desc.friction,restitution=desc.restitution,gravity_scale=desc.gravity_scale,
-        strength=desc.strength,damage_threshold=desc.damage_threshold,damage_radius=desc.damage_radius,propagation=desc.propagation,
+        strength=desc.strength,damage_threshold=desc.damage_threshold,propagation=desc.propagation,
         debris_volume=desc.debris_volume,debris_ticks=desc.debris_ticks,removal_ticks=desc.removal_ticks,
         hull_vertices=i32(clamp(desc.hull_vertices==0?32:desc.hull_vertices,4,HULL_MAX_VERTICES)),
         filter=desc.filter,anchor_count=i32(len(desc.anchors)),generation=d.generation+1,next_free=-1,
@@ -937,19 +936,30 @@ break_apply :: proc(w:^World,event:Break_Event) -> (applied:Break_Event,changed,
 break_damage :: proc(w:^World,index:i32,event:^Break_Event) -> (broke,strained:bool) {
     d:=&w.breakables[index]
     size:=event.strain
-    if !(size>0) || !(event.blend>=0) || !finite(size,event.blend,event.radius,event.rotation.x,event.rotation.y,event.rotation.z,event.rotation.w) ||
-       !finite(event.point) || !finite(event.vector) || !finite(event.half_extents) {return}
-    if event.half_extents=={} {if !(event.radius>0) {return}}
-    else if !(event.half_extents.x>0 && event.half_extents.y>0 && event.half_extents.z>0) {return}
+    if !(size>0) || !finite(size) || !finite(event.point) || !finite(event.vector) {return}
+    // An impact strains the bonds of the piece it hit, by their area: the contacts of a step already name
+    // every piece a body touched. Any other strain reaches what is in its region.
+    impact:=event.kind==.Impact
+    if impact {
+        if event.piece<0 {return}
+    } else if !(event.blend>=0) || !finite(event.blend,event.radius,event.rotation.x,event.rotation.y,event.rotation.z,event.rotation.w) || !finite(event.half_extents) ||
+              (event.half_extents=={}?!(event.radius>0):!(event.half_extents.x>0 && event.half_extents.y>0 && event.half_extents.z>0)) {return}
     only:=piece_body(w,index,event.piece)
     broke,strained=break_clusters_damage(w,index,event,only)
+    bonded:f32
+    for slot:=d.bond_list;impact && slot>=0;slot=w.bonds[slot].next {
+        c:=&w.bonds[slot]
+        if c.flags&{.Broken,.Cluster}=={} && c.cluster<0 && (c.a==event.piece || c.b==event.piece) {bonded+=c.area}
+    }
     broken:=0
     for slot:=d.bond_list;slot>=0;slot=w.bonds[slot].next {
         c:=&w.bonds[slot]
         if c.flags&{.Broken,.Cluster}!={} || c.cluster>=0 {continue}
         body:=shape_body(w,w.pieces[c.a].shape)
         if body=={} || event.piece>=0 && body!=only {continue}
-        weight:=break_region_weight(&event.region,xf_point(body_transform(w,body),c.center))
+        weight:f32
+        if !impact {weight=break_region_weight(&event.region,xf_point(body_transform(w,body),c.center))}
+        else if c.a==event.piece || c.b==event.piece {weight=c.area/bonded}
         if weight<=0 {continue}
         c.strain=min(max(f32),c.strain+size*weight)
         strained=true
@@ -1037,7 +1047,7 @@ breakable_regroup :: proc(w:^World,index:i32,event:^Break_Event) {
         }
     }
     // The groups leave with the velocity their body had where they were, and share the impulse of the
-    // event by volume and closeness to its point.
+    // event by volume and closeness to its point; that of an impact goes to the group of the piece it hit.
     weight:f32
     for slot:=d.piece_list;slot>=0;slot=w.pieces[slot].next {
         if s.group[slot]!=0 {continue}
@@ -1049,7 +1059,7 @@ breakable_regroup :: proc(w:^World,index:i32,event:^Break_Event) {
             body_set_velocity(w,body,body_linear_velocity(w,parent)+cross(angular,center-body_center(w,parent)),angular)
         }
         if event.kind==.Damage || (event.kind==.Impact && parent_type==.Static) {
-            s.volume[slot]*=break_region_weight(&event.region,center)
+            s.volume[slot]*=event.kind==.Impact?(union_find(s.parent,event.piece)==slot?1:0):break_region_weight(&event.region,center)
             weight+=s.volume[slot]
         } else {
             s.volume[slot]=0
@@ -1220,8 +1230,8 @@ break_push :: proc(w:^World,index:i32,event:Break_Event) {
     if w.events.counts[8]==count {w.breaking.lost[index]+=1}
 }
 
-// The end of a step: its hits on a piece harder than the threshold of its breakable damage it around the
-// hit point, and what expired leaves. The events are those of world_events(w).breaks.
+// The end of a step: its hits on a piece harder than the threshold of its breakable damage the bonds of
+// that piece, and what expired leaves. The events are those of world_events(w).breaks.
 @(private)
 breakables_update :: proc(w:^World) {
     s:=&w.breaking
@@ -1243,7 +1253,7 @@ breakables_update :: proc(w:^World) {
             // The normal goes from shape A to shape B: the impulse on each one points into it.
             s.hits[count]={
                 breakable=breakable_handle(w,piece.breakable),tick=u32(w.breaking.tick),piece=i32(tag-1),point=hit.point,
-                vector=hit.normal*(side==0?-hit.impulse:hit.impulse),radius=d.damage_radius,blend=d.damage_radius,kind=.Impact,strain=hit.impulse,
+                vector=hit.normal*(side==0?-hit.impulse:hit.impulse),kind=.Impact,strain=hit.impulse,
             }
             count+=1
         }

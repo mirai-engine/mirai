@@ -167,7 +167,9 @@ break_clusters_damage :: proc(w:^World,index:i32,event:^Break_Event,only:Body_Ha
             for ancestor:=piece.cluster;ancestor>=0;ancestor=w.bonds[ancestor].cluster {
                 if ancestor==slot {belongs=true;break}
             }
-            if belongs {weight=max(weight,break_region_weight(&event.region,xf_point(body_transform(w,body),piece.center)))}
+            if !belongs {continue}
+            if event.kind!=.Impact {weight=max(weight,break_region_weight(&event.region,xf_point(body_transform(w,body),piece.center)))}
+            else if piece_slot==event.piece {weight=1}
         }
         if weight<=0 {continue}
         c.strain=min(max(f32),c.strain+event.strain*weight)

@@ -301,23 +301,32 @@ authored_piece_cluster_bond_and_hull_capacity_failures_leave_no_live_destructibl
     }
 }
 
-// A crack runs along the bonds: a strain at the free end of a beam anchored at the other breaks it at the
-// anchor only while what a bond leaves over goes on, and a replay repeats where it stopped.
+// A crack runs along the bonds: a strain at the free end of a beam anchored at the other, or an impact on
+// its last piece, breaks it at the anchor only while what a bond leaves over goes on, and a replay
+// repeats where it stopped.
 @(test)
 a_crack_runs_along_the_bonds_by_the_propagation :: proc(t:^testing.T) {
     PARTS :: 10
     anchors:[PARTS]bool
     anchors[0]=true
-    Case :: struct {propagation,strain:f32,anchor_breaks:bool,groups:int}
-    cases:=[?]Case{{0,6000,false,2},{1,6000,true,PARTS},{1,2100,false,5},{0.5,6000,false,4}}
+    Case :: struct {propagation,strain:f32,anchor_breaks:bool,groups:int,impact:bool}
+    cases:=[?]Case{{0,6000,false,2,false},{1,6000,true,PARTS,false},{1,2100,false,5,false},{0.5,6000,false,4,false},{0,6000,false,2,true},{1,6000,true,PARTS,true}}
     for c in cases {
         w,kept:World;testing.expect(t,test_destruct_world(&w))
         settings:=BREAKABLE_DESC_DEFAULT;settings.gravity_scale,settings.propagation,settings.piece_anchors=0,c.propagation,anchors[:]
         h,error:=test_authored_destructible(&w,false,settings,PARTS)
         testing.expect_value(t,error,Breakable_Error.None)
         testing.expect(t,test_keep(&kept,&w))
-        // Only the bond between the last two pieces is in the region.
-        event,broke:=breakable_strain(&w,h,{0.5*PARTS*1.1-1.1,3,0},0.3,c.strain)
+        // Only the bond between the last two pieces is in the region, and the last piece has no other.
+        event:Break_Event
+        broke:bool
+        if c.impact {
+            pieces:[PARTS]Piece_Info
+            breakable_pieces(&w,h,pieces[:])
+            event,broke,_=break_apply(&w,{breakable=h,piece=pieces[PARTS-1].id,vector={0,0,-c.strain},strain=c.strain,kind=.Impact})
+        } else {
+            event,broke=breakable_strain(&w,h,{0.5*PARTS*1.1-1.1,3,0},0.3,c.strain)
+        }
         bonds:[PARTS-1]Bond_Info
         breakable_bonds(&w,h,bonds[:])
         testing.expectf(t,broke && bonds[PARTS-2].broken && bonds[0].broken==c.anchor_breaks && break_group_count(&w,h)==c.groups,"%v: the anchor bond broke %v, %v groups",c,bonds[0].broken,break_group_count(&w,h))
@@ -389,7 +398,7 @@ a_whole_cluster_collides_as_one_hull_with_the_mass_of_its_pieces_until_it_breaks
 @(test)
 an_impact_on_a_whole_cluster_names_one_of_its_pieces_and_breaks_it :: proc(t:^testing.T) {
     w:World;testing.expect(t,test_destruct_world(&w));defer world_destroy(&w)
-    settings:=BREAKABLE_DESC_DEFAULT;settings.gravity_scale=0;settings.damage_threshold=10;settings.damage_radius=3
+    settings:=BREAKABLE_DESC_DEFAULT;settings.gravity_scale=0;settings.damage_threshold=10
     h,_:=test_authored_destructible(&w,true,settings)
     test_cannonball(&w,{0.55,6,0},{0,-30,0})
     found:=false

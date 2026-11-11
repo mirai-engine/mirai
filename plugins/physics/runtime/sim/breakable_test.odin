@@ -41,7 +41,6 @@ test_destructible :: proc(w:^World,size,position:Vec3,count:int,anchored:bool,de
 @(private)
 test_wall :: proc(w:^World,count:=24) -> Breakable_Handle {
     desc:=BREAKABLE_DESC_DEFAULT
-    desc.damage_radius=1
     h,_:=test_destructible(w,{4,2,0.4},{0,1,0},count,true,desc)
     return h
 }
@@ -137,7 +136,7 @@ an_anchored_wall_hit_by_a_fast_sphere_loses_pieces_and_keeps_its_mass :: proc(t:
     for _ in 0..<20 {
         world_step(&w,1.0/60)
         for event in world_events(&w).breaks {
-            testing.expect(t,event.breakable==wall && event.kind==.Impact && event.radius==1)
+            testing.expect(t,event.breakable==wall && event.kind==.Impact && event.piece>=0 && event.radius==0)
             if events==0 {
                 // The ball: into the wall, on its front face. What it frees leaves with its impulse.
                 testing.expect(t,event.vector.z<-1000 && abs(event.point.z-0.2)<0.05 && u64(event.tick)+1==world_tick(&w) && event.piece>=0)
@@ -184,7 +183,7 @@ disabling_impact_damage_preserves_collision_manual_damage_and_snapshot_replay ::
     if !testing.expect(t,test_destruct_world(&w)) {return}
     defer world_destroy(&w)
     test_ground(&w)
-    desc:=BREAKABLE_DESC_DEFAULT;desc.impact_damage=false;desc.damage_radius=1
+    desc:=BREAKABLE_DESC_DEFAULT;desc.impact_damage=false
     wall,error:=test_destructible(&w,{4,2,.4},{0,1,0},24,true,desc)
     if !testing.expect_value(t,error,Breakable_Error.None) {return}
     ball:=test_cannonball(&w,{0,1.2,3},{0,0,-30})

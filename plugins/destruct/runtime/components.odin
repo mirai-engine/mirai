@@ -41,8 +41,7 @@ Destructible :: struct {
     strength:f32 `mirai:"min=0,unit=N s/m2,section=Damage"`,    // N s per m2 of shared face that a connection takes before it breaks
     impact_damage:bool,
     damage_threshold:f32 `mirai:"min=0,unit=N s"`, // N s of an impact in one tick below which it does no damage
-    damage_radius:f32 `mirai:"min=0,unit=m"`,   // around the point of an impact: where its damage starts
-    propagation:f32 `mirai:"min=0,max=1"`,      // share of the strain a connection that breaks leaves over that goes on to its neighbours: 0 stops a crack at the damage radius
+    propagation:f32 `mirai:"min=0,max=1"`,      // share of the strain a broken connection held beyond its strength that goes on to its neighbours: 1 brittle, 0 a crack that stops at the piece hit
     debris_volume:f32 `mirai:"min=0,unit=m3,section=Debris"`,  // a group that comes off smaller than this is debris: it touches only static bodies
     debris_lifetime:f32 `mirai:"min=0,unit=s"`, // and disappears after this long
     removal_lifetime:f32 `mirai:"min=0,unit=s"`,
@@ -55,7 +54,7 @@ destructible :: proc "contextless" (pieces:u32=16,anchored:=false,seed:u64=1) ->
     d:=phys.BREAKABLE_DESC_DEFAULT
     return {
         pieces=pieces,seed=seed,anchored=anchored,hull_vertices=u32(d.hull_vertices),strength=d.strength,
-        impact_damage=d.impact_damage,damage_threshold=d.damage_threshold,damage_radius=d.damage_radius,propagation=d.propagation,debris_volume=d.debris_volume,debris_lifetime=5,
+        impact_damage=d.impact_damage,damage_threshold=d.damage_threshold,propagation=d.propagation,debris_volume=d.debris_volume,debris_lifetime=5,
     }
 }
 
