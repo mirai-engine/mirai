@@ -122,8 +122,11 @@ what it perceives; `think` only reads and proposes, and the actions write.
 - `perception_update` (`fixed`, `input`, `server`) adds `Perception` to each `Perceiver` and is
   its sole writer. Sight sees what is in its cone, around the perceiver's -Z (its front), if a
   physics ray from the eyes does not hit something else first; the rays of a tick
-  (`Behavior_Settings.rays`) are shared among the
-  perceivers in turns. Hearing takes the noises of `Noises` (`noise`) within its range by volume.
+  (`Behavior_Settings.rays`) are shared among the perceivers in turns, and one the rays cut short
+  goes first in the next tick, on from where it stopped: every subject in sight is looked at again
+  within as many ticks as there are candidates per ray. What it saw last stays in sight up to
+  `SIGHT_KEEP` times its range and angle, so that at the edge it is not noticed and forgotten in
+  turn. Hearing takes the noises of `Noises` (`noise`) within its range by volume.
   Memory lowers confidence until forgetting, only on the perceiver's turn: what it could not look
   at it does not forget before looking at it again. A destroyed subject is forgotten at once.
 - Each perceiver looks only at the `Perceivable`s around it: those of the tick are put in a

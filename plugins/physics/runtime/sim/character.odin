@@ -282,6 +282,18 @@ character_desc :: proc(w:^World,h:Character_Handle) -> Character_Desc {
     ch,_:=character_read(w,h)
     return ch!=nil?ch.desc:{}
 }
+// Holds the character where it is, kinematic and at rest: no step moves it, and it still collides. Let go,
+// it is dynamic again, at rest, with its mass.
+character_set_held :: proc(w:^World,h:Character_Handle,held:bool) {
+    ch,_:=character_get(w,h)
+    if ch==nil {return}
+    type:=Body_Type.Kinematic if held else .Dynamic
+    if body_type(w,ch.body)==type {return}
+    body_set_velocity(w,ch.body,{},{})
+    body_set_type(w,ch.body,type)
+    if !held {character_mass_set(w,ch.body,&ch.desc)}
+}
+
 // Changes how the capsule meets the ground. Its size, mass and filter stay as created.
 character_set_desc :: proc(w:^World,h:Character_Handle,desc:Character_Desc) -> bool {
     d:=desc

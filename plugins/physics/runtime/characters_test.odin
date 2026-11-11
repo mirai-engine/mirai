@@ -4,6 +4,7 @@ import cmath "core:math"
 import "core:math/linalg"
 import "core:testing"
 import "mirai:core"
+import scene "mirai:engine/scene"
 import sim "plugins:physics/runtime/sim"
 import mm "mirai:std/math"
 
@@ -148,4 +149,37 @@ a_place_moves_a_character_locked_along_z_to_another_plane_where_it_stays :: proc
     for _ in 0..<30 {physics_test_step(&f)}
     free:=physics_test_pose(&f,e).position
     testing.expectf(t,free.z>3.5,"without the lock it walks along Z again: %v",free)
+}
+
+// A character its section holds stands where it is, on and drawn, while gravity and its move would take it:
+// its body is kinematic. A place moves it while it is held, and it stays there; let go, it falls.
+@(test)
+a_character_its_section_holds_stays_where_it_is_and_a_place_moves_it :: proc(t:^testing.T) {
+    f:Physics_Test
+    if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    f.gravity={0,-9.81,0}
+    e:=core.create(&f.entities)
+    core.add(&f.transforms,e,core.Transform{{0,5,0},1,{1,1,1}})
+    core.add(&f.colliders,e,collider_character())
+    core.add(&f.characters,e,character_default())
+    core.add(&f.moves,e,Character_Move{value={ground={velocity={2,0,0},force=3200},air={velocity={2,0,0},force=800}}})
+    step :: proc(f:^Physics_Test) {
+        physics_test_settle(f)
+        physics_section_holds(&f.state,core.read(&f.section_held),core.read(&f.rigids))
+        physics_test_step(f)
+    }
+    step(&f)
+    core.add(&f.section_held,e,scene.Section_Held{})
+    step(&f)
+    held:=physics_test_pose(&f,e).position
+    for _ in 0..<30 {step(&f)}
+    testing.expect_value(t,physics_test_pose(&f,e).position,held)
+    testing.expect(t,!core.entity_off(&f.entities,e),"it stays on, drawn")
+    teleport(&f.requests,e,{10,8,0})
+    for _ in 0..<30 {step(&f)}
+    testing.expect_value(t,physics_test_pose(&f,e).position,[3]f32{10,8,0})
+    core.remove(&f.section_held,e)
+    for _ in 0..<30 {step(&f)}
+    testing.expectf(t,physics_test_pose(&f,e).position.y<7,"let go, it falls: %v",physics_test_pose(&f,e).position)
 }

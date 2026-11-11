@@ -304,7 +304,7 @@ match_fixture :: proc(t:^testing.T,f:^Match_Fixture,memory:u32=MATCH_INFO_DEFAUL
     set:=Action_Profile{layers=make([]Stack_Layer,2),actions=make([]Action_Definition,9)}
     set.layers[0]=STACK_LAYER_DEFAULT;base.text_set(set.layers[0].name[:],"Aim");base.text_set(set.layers[0].space[:],"aim");set.layers[0].mode,set.layers[0].fade=.Additive,0
     base.text_set(set.layers[0].reference_clip[:],"aim_center")
-    set.layers[1]=STACK_LAYER_DEFAULT;base.text_set(set.layers[1].name[:],"Leg");set.layers[1].over=bone_ref("foot_l")
+    set.layers[1]=STACK_LAYER_DEFAULT;base.text_set(set.layers[1].name[:],"Leg");set.layers[1].over[0].bone=bone_ref("foot_l")
     Action :: struct {name,clip,layer:string,priority:i16,cancel:Action_Cancel_Policy,entry:Action_Entry,exit:f32,marker:string,fade:f32}
     for value,i in ([9]Action{
         {name="Vault",clip="vault",exit=1,fade=.15},{name="Vault to release",clip="vault",exit=1,marker="release",fade=.15},

@@ -553,27 +553,30 @@ one_search_toward_an_end_gives_every_follower_the_way_its_own_search_does :: pro
     testing.expect(t,!ok && nav_toward_reach(&empty,from,8)==.Invalid)
 }
 
+// The walls near a point come nearest first with the surface to their right;
+// they are kept while the agent stays within what they cover, and gathered
+// again when it goes on or a tile they come from is built again.
 @(test)
-the_walls_near_a_point_come_nearest_first_with_the_surface_to_their_right :: proc(t:^testing.T) {
+the_walls_near_a_point_come_nearest_first_and_are_kept_while_they_cover_it :: proc(t:^testing.T) {
     mesh:Nav_Mesh
     filter,_,_,_:=toward_yard(t,&mesh)
     defer nav_mesh_destroy(&mesh)
     // Beside the wall of x=5 and near the border of z=0.
     center:=math.Vec3{4.6,0,0.7}
     ref:=nearest(t,&mesh,center)
-    walls:[AVOID_MAX_WALLS]Avoid_Wall
-    count:=nav_walls_near(&mesh,ref,center,1.5,&filter,walls[:])
-    testing.expect(t,count>=3)
+    boundary:Nav_Boundary
+    walls,gathered:=nav_boundary_update(&boundary,&mesh,ref,center,0.75,&filter)
+    testing.expect(t,gathered && len(walls)>=3)
     previous:f32
     beside,border:=false,false
-    for wall in walls[:count] {
+    for wall in walls {
         along:=wall.b-wall.a
         open:=math.Vec2{along.y,-along.x}
         here:=math.Vec2{center.x,center.z}
         testing.expectf(t,linalg.dot(here-wall.a,open)>0,"The surface is not to the right of the wall %v",wall)
         on,_:=math.closest_point_segment(center,{{wall.a.x,0,wall.a.y},{wall.b.x,0,wall.b.y}})
         d:=linalg.distance(on,center)
-        testing.expect(t,d>=previous-1e-4 && d<=1.5+1e-4,"The walls are not nearest first within the radius")
+        testing.expect(t,d>=previous-1e-4 && d<=1.5+1e-4,"The walls are not nearest first within twice the reach")
         previous=d
         beside||=wall.a.x==5 && wall.b.x==5
         border||=wall.a.y==0 && wall.b.y==0
@@ -583,23 +586,51 @@ the_walls_near_a_point_come_nearest_first_with_the_surface_to_their_right :: pro
     self:=Avoid_Agent(2){position={center.x,center.z},radius=0.4}
     for k in 0..<16 {
         s,c:=math.sincos_det(f32(k)*math.TAU/16)
-        v:=avoid_velocity(self,{c*3,s*3},3,nil,1.5,1.0/60,walls[:count],0.5)
+        v:=avoid_velocity(self,{c*3,s*3},3,nil,1.5,1.0/60,walls,0.5)
         after:=self.position+v*0.5
         testing.expectf(t,after.x<=5+1e-3 && after.y>=-1e-3,"Preferring %v it moves at %v, through a wall",math.Vec2{c*3,s*3},v)
     }
+    // A step of 0.1 m keeps them; past what they cover, or asked farther, they are gathered again.
+    first:=boundary
+    held,again:=nav_boundary_update(&boundary,&mesh,ref,center+{0,0,0.1},0.75,&filter)
+    testing.expect(t,!again && len(held)==len(walls) && boundary==first)
+    _,again=nav_boundary_update(&boundary,&mesh,ref,center+{-0.8,0,0},0.75,&filter)
+    testing.expect(t,again)
+    _,again=nav_boundary_update(&boundary,&mesh,ref,center,2,&filter)
+    testing.expect(t,again)
     // A filter that keeps out of the strip that costs has walls where it begins.
     closed:=filter
     closed.excluded=1<<2
     strip:=math.Vec3{5.9,0,2.5}
-    count=nav_walls_near(&mesh,nearest(t,&mesh,strip),strip,0.5,&closed,walls[:])
-    testing.expect(t,count>=1 && walls[0].a.x==6 && walls[0].b.x==6)
-    testing.expect_value(t,nav_walls_near(&mesh,nearest(t,&mesh,strip),strip,0.05,&filter,walls[:]),0)
-    // Fewer than are near, the nearest; nothing for what is not asked well.
-    testing.expect_value(t,nav_walls_near(&mesh,ref,center,3,&filter,walls[:1]),1)
-    testing.expect(t,walls[0].a.x==5)
+    strip_walls:Nav_Boundary
+    walls,_=nav_boundary_update(&strip_walls,&mesh,nearest(t,&mesh,strip),strip,0.25,&closed)
+    testing.expect(t,len(walls)>=1 && walls[0].a.x==6 && walls[0].b.x==6)
+    strip_walls={}
+    walls,_=nav_boundary_update(&strip_walls,&mesh,nearest(t,&mesh,strip),strip,0.025,&filter)
+    testing.expect_value(t,len(walls),0)
+    // The tile under it built again, without the wall: they are gathered again.
+    testing.expect(t,nav_mesh_add_tile(&mesh,cell_tile(t,{0,0},16,16,size=16)))
+    walls,again=nav_boundary_update(&boundary,&mesh,nearest(t,&mesh,center),center,0.75,&filter)
+    testing.expect(t,again)
+    for wall in walls {testing.expectf(t,wall.a.x!=5 || wall.b.x!=5,"the wall of the old tile %v stays",wall)}
+    // Nothing for what is not asked well, nor from a copy that holds nonsense.
     nan:=transmute(f32)u32(0x7fc00000)
-    testing.expect(t,nav_walls_near(&mesh,ref,center,3,&filter,nil)==0 && nav_walls_near(&mesh,ref,center,3,nil,walls[:])==0 && nav_walls_near(&mesh,0,center,3,&filter,walls[:])==0)
-    testing.expect(t,nav_walls_near(&mesh,ref,{nan,0,0},3,&filter,walls[:])==0 && nav_walls_near(&mesh,ref,center,nan,&filter,walls[:])==0 && nav_walls_near(&mesh,ref,center,-1,&filter,walls[:])==0)
+    hostile:=[?]struct{mesh:^Nav_Mesh,ref:Nav_Ref,center:math.Vec3,reach:f32,filter:^Nav_Filter}{
+        {nil,ref,center,1,&filter},{&mesh,0,center,1,&filter},{&mesh,ref,center,1,nil},
+        {&mesh,ref,{nan,0,0},1,&filter},{&mesh,ref,center,nan,&filter},{&mesh,ref,center,-1,&filter},
+    }
+    for h,i in hostile {
+        broken:=Nav_Boundary{count=-7,range=nan,center={nan,0,0}}
+        walls,_=nav_boundary_update(&broken,h.mesh,h.ref,h.center,h.reach,h.filter)
+        testing.expectf(t,len(walls)==0 && broken.count==0,"case %d gives %d walls",i,len(walls))
+    }
+    broken:=Nav_Boundary{count=99,range=1e30,center=center}
+    walls,_=nav_boundary_update(&broken,&mesh,ref,center,1,&filter)
+    testing.expect(t,len(walls)<=AVOID_MAX_WALLS)
+    walls,gathered=nav_boundary_update(nil,&mesh,ref,center,1,&filter)
+    testing.expect(t,walls==nil && !gathered)
     empty:Nav_Mesh
-    testing.expect_value(t,nav_walls_near(&empty,ref,center,3,&filter,walls[:]),0)
+    empty_walls:Nav_Boundary
+    walls,_=nav_boundary_update(&empty_walls,&empty,ref,center,3,&filter)
+    testing.expect_value(t,len(walls),0)
 }

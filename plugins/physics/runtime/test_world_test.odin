@@ -5,6 +5,7 @@ import "mirai:host"
 import "mirai:std/jobs"
 import cam "mirai:engine/camera"
 import render "mirai:engine/render"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import sim "plugins:physics/runtime/sim"
 
@@ -19,6 +20,7 @@ Test_Physics :: struct {
     joints:core.Table(Joint),
     statics:core.Table(render.Mesh_Renderer),
     disabled:core.Table(core.Disabled),
+    section_held:core.Table(scene.Section_Held),
     parents:core.Table(core.Parent),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),

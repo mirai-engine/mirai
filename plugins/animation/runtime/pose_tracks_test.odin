@@ -84,7 +84,7 @@ reference_pose :: proc(state:^Playing,library:^lib.Library,animation:Animation,o
     for &layer,i in state.layers[:state.stack] {
         if layer.clip==0 || layer.weight<=0 {continue}
         asked:=state.asked[i]
-        over:=bone_named(state,asked.over) if asked.over!=0 else -1
+        over:=bone_named(state,asked.over[0].bone) if asked.over!={} else -1
         count=layer_players(&layer,&players)
         from:=lib.clip_find(library,asked.reference_clip) if asked.reference_clip!=0 else 0
         for binding,b in state.bindings {
@@ -159,7 +159,7 @@ poses_by_track_match_the_pose_each_track_gives_by_name :: proc(t:^testing.T) {
         advance(&playback,&state,&content,animation,&events,.1,nil)
         layers_advance(&playback,&state,&content,animation,&events,.1,nil)
         result:=pose_sample(&playback,&state,&content,animation,{})
-        faults.memory||=result.memory;faults.layer_bone|=result.layer_bone;faults.layer_reference|=result.layer_reference
+        faults.memory||=result.memory;faults.layer_reference|=result.layer_reference
         reference_pose(&state,&content.lib,animation,expected[:])
         for value,b in expected {
             got:=state.local[b]
