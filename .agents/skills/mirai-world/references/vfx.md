@@ -342,8 +342,7 @@ To the GPU:
   - a new `id` takes a range (first free gap; freed gaps join their neighbors) and starts empty; an
     `id` that is missing returns its range;
   - one that changes capacity or `generation` starts again.
-- An emitter that does not fit in the pool or in the table (`EMITTER_CAPACITY` per world) is left
-  out.
+- An emitter that does not fit in the pool or the table (`EMITTER_CAPACITY` per world) is left out.
 - Nothing allocates in a stable frame: the pool's tables are built when it is created, the emitter
   table goes up to the frame memory once (`pass_rows_upload`) and all its passes bind it, and a
   program's parameters go up only when they change (`pass_buffer_write`).
