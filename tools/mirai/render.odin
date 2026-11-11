@@ -281,7 +281,7 @@ render_check :: proc(root:string,args:[]string) -> int {
         head.checkout,head.project=root,folder
         mode:=Build_Mode.Release if o.release else .Dev
         if code,_,_:=build_project(root,.Editor,{folder},mode);code!=0 {return code}
-        head.editor=build.engine_paths(root,mode,context.temp_allocator).editor_program
+        head.editor=project_engine_paths(root,folder,mode).editor_program
     }
     device:=render_device()
     base_target:Render_Target

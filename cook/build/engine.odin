@@ -1,6 +1,7 @@
 package build
 
 import "core:fmt"
+import "core:hash/xxhash"
 import "core:os"
 import "mirai:std/subprocess"
 import "core:slice"
@@ -41,6 +42,13 @@ import "mirai:std/base"
 // body of a procedure builds its library and no other, and one of a
 // declaration builds, besides, the libraries and the programs that name it or
 // something that reaches it.
+//
+// A define is one value for every library of a build. The defines of a
+// project that a #config of the engine reads (engine_defines) build its
+// binaries in a folder of their own, <mode>-<hash of them>: a library is
+// compiled with the defines its own sources read, and its declarations carry
+// the value each #config took, so a define compiles the libraries that read
+// it and those that name what it changed, and the cache gives the rest.
 //
 // A project then compiles its generated world, its game and its plugins
 // alone, into a library the editor or the player loads.
@@ -151,7 +159,7 @@ engine_libraries :: proc(mode:Engine_Mode,allocator:=context.allocator) -> []Eng
 // Changes when what declare writes changes, so that binaries built by an
 // earlier version are built again.
 @(private)
-DECLARE_VERSION :: 12
+DECLARE_VERSION :: 13
 
 // The collection a stage is compiled as (Declare_Desc.staged): of the engine, and of a plugin library.
 @(private)
@@ -168,6 +176,7 @@ Engine_Paths :: struct {
     import_program:string,            // runs cook/import/sources.command: what mirai import does
     author_program:string,            // runs cook/author.command: what mirai ui and mirai scene do
     stamp:string,
+    defines:[]string,                 // what the binaries are built with (engine_defines)
 }
 
 // What a program links against to use a library: the import library on Windows, the library elsewhere.
@@ -220,12 +229,15 @@ engine_mode_resolve :: proc(engine_root:string,mode:Engine_Mode) -> Engine_Mode 
     return ENGINE_MODE_INSTALLED if project.engine_installed(engine_root) else mode
 }
 
-// The folder of the binaries of a mode.
-engine_paths :: proc(engine_root:string,mode:Engine_Mode,allocator:=context.allocator) -> (paths:Engine_Paths) {
+// The folder of the binaries of a mode built with defines (engine_defines).
+engine_paths :: proc(engine_root:string,mode:Engine_Mode,allocator:=context.allocator,defines:[]string=nil) -> (paths:Engine_Paths) {
     context.allocator=allocator
     folders:=ENGINE_MODE_FOLDERS
     paths.mode=engine_mode_resolve(engine_root,mode)
-    paths.folder=project.path(engine_root,".mirai","engine",folders[paths.mode])
+    paths.defines=slice.clone(defines)
+    folder:=folders[paths.mode]
+    if len(defines)>0 {folder=fmt.tprintf("%s-%x",folder,xxhash.XXH3_64_default(transmute([]u8)strings.join(defines,"\n",context.temp_allocator)))}
+    paths.folder=project.path(engine_root,".mirai","engine",folder)
     paths.decl=project.path(paths.folder,"decl")
     paths.declared=project.path(paths.folder,"engine.declared")
     paths.stage=project.path(paths.folder,"stage")
@@ -238,10 +250,69 @@ engine_paths :: proc(engine_root:string,mode:Engine_Mode,allocator:=context.allo
     return
 }
 
+// The defines of a project that a #config of an engine package reads, sorted:
+// what the binaries of the engine it links are built with (engine_paths).
+engine_defines :: proc(engine_root:string,defines:[]string,allocator:=context.allocator) -> []string {
+    if len(defines)==0 {return nil}
+    packages:=make([]string,ENGINE_PACKAGE_COUNT,context.temp_allocator)
+    for &path,index in packages {path=engine_package(index)}
+    return defines_read(engine_root,packages,defines,allocator)
+}
+
+// The binaries of the engine a project links in a mode.
+project_engine :: proc(p:^project.Project,mode:Engine_Mode,allocator:=context.allocator) -> Engine_Paths {
+    return engine_paths(p.engine_root,mode,allocator,engine_defines(p.engine_root,manifest_defines(&p.manifest,context.temp_allocator),context.temp_allocator))
+}
+
+// The defines of build.defines of a manifest as NAME=value: a NAME alone is
+// true, which the compiler takes only written so.
+manifest_defines :: proc(m:^project.Manifest,allocator:=context.allocator) -> []string {
+    list:=make([dynamic]string,allocator)
+    for &define in m.build.defines {
+        text:=base.text_get(define[:])
+        if text=="" {continue}
+        append(&list,strings.clone(text,allocator) if strings.contains_rune(text,'=') else strings.concatenate({text,"=true"},allocator))
+    }
+    return list[:]
+}
+
+// Those of defines whose name a #config of the sources of the packages reads, sorted.
+@(private)
+defines_read :: proc(root:string,packages,defines:[]string,allocator:=context.allocator) -> []string {
+    if len(defines)==0 {return nil}
+    read:=make([dynamic]string,allocator)
+    for path in packages {
+        entries,_:=os.read_all_directory_by_path(project.path(root,path,allocator=context.temp_allocator),context.temp_allocator)
+        for entry in entries {
+            if entry.type==.Directory || !strings.has_suffix(entry.name,".odin") || strings.has_suffix(entry.name,"_test.odin") {continue}
+            text,_:=os.read_entire_file(entry.fullpath,context.temp_allocator)
+            rest:=string(text)
+            for {
+                at:=strings.index(rest,"#config(")
+                if at<0 {break}
+                rest=rest[at+len("#config("):]
+                name:=strings.trim_space(rest[:max(strings.index_byte(rest,','),0)])
+                for define in defines {
+                    if define_name(define)==name && !slice.contains(read[:],define) {append(&read,define)}
+                }
+            }
+        }
+    }
+    slice.sort(read[:])
+    return read[:]
+}
+
+@(private)
+define_name :: proc(define:string) -> string {
+    if at:=strings.index_byte(define,'=');at>=0 {return define[:at]}
+    return define
+}
+
 Engine_Desc :: struct {
     engine_root:string,
-    compiler:string, // empty: compiler_find
+    compiler:string,  // empty: compiler_find
     mode:Engine_Mode,
+    defines:[]string, // engine_defines of the project the binaries are for
     force:bool,
 }
 
@@ -249,6 +320,7 @@ Engine_Result :: struct {
     status:Status,
     shaders:shaders.Result,   // the generation of shaders/build and of the tables that embed it
     mode:Engine_Mode,         // of the binaries
+    folder:string,            // of the binaries
     compiled:[]string,        // the libraries it compiled, by their files
     restored:int,             // the libraries it copied from the cache the checkouts of the repository share
     programs:bool,            // it compiled the programs
@@ -298,7 +370,8 @@ Engine_Stamp :: struct {
 Engine_Plan :: struct {
     previous:Engine_Stamp,
     stamped:bool, // previous is of a build of this version of declare
-    flags:[dynamic]string,
+    flags:[dynamic]string,     // of the programs
+    library_flags:[][]string,  // those and the defines the sources of each library read
     libraries:[]Library_Stamp, // sources and tools: what they name is known once they are declared
     programs:u64,
     current:bool,
@@ -324,10 +397,14 @@ engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths,lib
     embedded:=[2]string{project.path(root,"shaders/build/manifest.json",allocator=context.temp_allocator),project.path(root,"shaders/build",names[shaders.HOST_BACKEND],allocator=context.temp_allocator)}
     plan.programs,_=fingerprint(root,compiler,plan.flags[:],nil)
     plan.libraries=make([]Library_Stamp,len(libraries),context.temp_allocator)
+    plan.library_flags=make([][]string,len(libraries),context.temp_allocator)
     for &library,which in plan.libraries {
+        flags:=slice.clone_to_dynamic(plan.flags[:],context.temp_allocator)
+        for define in defines_read(root,libraries[which].packages,paths.defines,context.temp_allocator) {append(&flags,fmt.tprintf("-define:%s",define))}
+        plan.library_flags[which]=flags[:]
         loads:=embedded[:] if mode==.Release && slice.contains(libraries[which].packages,ENGINE_EMBEDS_SHADERS) else nil
-        library.sources,_=fingerprint(root,compiler,plan.flags[:],engine_sources(root,libraries[which].packages,..loads))
-        library.tools,_=fingerprint(root,compiler,plan.flags[:],loads)
+        library.sources,_=fingerprint(root,compiler,flags[:],engine_sources(root,libraries[which].packages,..loads))
+        library.tools,_=fingerprint(root,compiler,flags[:],loads)
     }
     previous,stamped:=engine_stamp_read(paths.stamp,libraries)
     // Without the declarations nothing compiles against what stands.
@@ -346,16 +423,16 @@ engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths,lib
     return
 }
 
-// Whether engine_build of a mode would find everything as it is, the shaders
-// of the engine and the binaries: what tells whether a build takes its turn.
-// Takes no turn and writes nothing.
-engine_current :: proc(engine_root:string,mode:Engine_Mode) -> bool {
+// Whether engine_build of a mode and defines would find everything as it is,
+// the shaders of the engine and the binaries: what tells whether a build
+// takes its turn. Takes no turn and writes nothing.
+engine_current :: proc(engine_root:string,mode:Engine_Mode,defines:[]string=nil) -> bool {
     root:=slashes(engine_root,context.temp_allocator)
-    if project.engine_installed(root) {return engine_installed_present(root)}
+    if project.engine_installed(root) {return len(defines)==0 && engine_installed_present(root)}
     if root=="" || !shaders.current({root=root,odin=true,ship=mode==.Release}) {return false}
     compiler,found:=compiler_find(root,context.temp_allocator)
     if !found {return false}
-    return engine_plan(root,compiler,mode,engine_paths(root,mode,context.temp_allocator),engine_libraries(mode,context.temp_allocator)).current
+    return engine_plan(root,compiler,mode,engine_paths(root,mode,context.temp_allocator,defines),engine_libraries(mode,context.temp_allocator)).current
 }
 
 // Whether the binaries of a mode there were built from these sources,
@@ -408,7 +485,7 @@ main :: proc() {os.exit(author.command(os.args[1:],os.to_writer(os.stdout),os.to
 @(private)
 engine_library_stage :: proc(root:string,paths:Engine_Paths,library:Engine_Library) -> (errors:[]string,changed:Declare_Changed,ok:bool) {
     _,linked:=engine_library_files(paths,library,context.temp_allocator)
-    errors,changed=declare({root=root,packages=library.packages,binary="mirai",library=linked,stage=paths.stage,decl=paths.decl,staged=STAGE_COLLECTION,names=true,slots=paths.mode==.Dev,definition=engine_definition(paths,library)})
+    errors,changed=declare({root=root,packages=library.packages,binary="mirai",library=linked,stage=paths.stage,decl=paths.decl,staged=STAGE_COLLECTION,names=true,slots=paths.mode==.Dev,definition=engine_definition(paths,library),defines=paths.defines})
     if len(errors)>0 {return errors,changed,true}
     entry,written:=entry_write(paths.stage,engine_library_entry(library,context.temp_allocator),entry_imports(STAGE_COLLECTION,library.packages)[:])
     changed.stage||=entry
@@ -499,6 +576,7 @@ engine_build :: proc(desc:Engine_Desc,allocator:=context.allocator) -> (result:E
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     result.shaders=done.shaders
     result.mode,result.restored,result.programs=done.mode,done.restored,done.programs
+    result.folder=engine_paths(desc.engine_root,desc.mode,allocator,desc.defines).folder
     result.compiled=compiled[:]
     result.seconds=time.duration_seconds(time.tick_since(tick))
     return
@@ -514,6 +592,9 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
     // An installed engine carries its binaries and the shaders they embed.
     if project.engine_installed(root) {
         done.mode=ENGINE_MODE_INSTALLED
+        if len(desc.defines)>0 {
+            return engine_fail(.Engine_Defines,"binaries of the installed engine",fmt.tprintf("the engine reads %s of build.defines and its installed binaries are built without it: remove it from project.mirai, or build the project with a checkout of the engine",strings.join(desc.defines,", ",context.temp_allocator)))
+        }
         if engine_installed_present(root) {
             result.status=.Up_To_Date
             return
@@ -527,7 +608,7 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
         result.status,result.failure,result.step,result.text=.Failed,.Shaders,"shaders of the engine",done.shaders.error
         return
     }
-    paths:=engine_paths(root,mode,context.temp_allocator)
+    paths:=engine_paths(root,mode,context.temp_allocator,desc.defines)
     compiler:=desc.compiler
     if compiler=="" {
         found,ok:=compiler_find(root,context.temp_allocator)
@@ -659,7 +740,7 @@ engine_build_parts :: proc(desc:Engine_Desc,done:^Engine_Result,compiled:^[dynam
         task:=Engine_Task{name=fmt.tprintf("library %s",library.file),compile={streams=engine_streams(paths,library.file),staged=output,library=which},state=.Done}
         if compile[which] {
             task.state=.Pending
-            task.command=engine_library_command(compiler,paths,library,slice.contains(reach.needs[which],true),mode,plan.flags[:])
+            task.command=engine_library_command(compiler,paths,library,slice.contains(reach.needs[which],true),mode,plan.library_flags[which])
         }
         append(&tasks,task)
     }

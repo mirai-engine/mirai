@@ -11,6 +11,7 @@ import "core:testing"
 import "core:time"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/subprocess"
 
 // Each mode has its folder and its libraries: release one per layer, dev one
 // per package or per few packages that change together. Every package is in
@@ -113,6 +114,11 @@ an_installed_engine_builds_nothing_and_says_what_it_lacks :: proc(t:^testing.T) 
     testing.expect(t,engine_current(root,.Dev))
     stamped,current:=engine_state(root,.Release)
     testing.expect(t,stamped && current)
+    // Its binaries are built without the defines of any project: one the engine reads is refused, by name.
+    defined:=[]string{"MIRAI_MIND_WORDS=8"}
+    testing.expect(t,!engine_current(root,.Dev,defined))
+    result=engine_build({engine_root=root,mode=.Dev,defines=defined})
+    testing.expect(t,result.failure==.Engine_Defines && strings.contains(result.text,"MIRAI_MIND_WORDS=8"),result.text)
 }
 
 // What the build of the engine keeps between runs is what declare writes and
@@ -782,6 +788,76 @@ a_library_of_the_engine_is_shared_by_what_it_is_built_from :: proc(t:^testing.T)
     here,there:=engine_cache_entry(first,library,.Dev,built,3),engine_cache_entry(second,library,.Dev,built,3)
     testing.expect_value(t,here[strings.last_index_byte(here,'/'):],there[strings.last_index_byte(there,'/'):])
 
+}
+
+// A define of a project that a #config of the engine reads builds the engine
+// apart, in a folder of those defines: the library whose sources read it
+// compiles with it, the one that names a declaration it changed compiles
+// again, and the rest are the libraries every project shares. The library
+// and what compiles against its declarations, without the define, lay its
+// struct out alike. A define nothing of the engine reads builds nothing apart.
+@(test)
+a_define_the_engine_reads_builds_what_reads_it_with_one_layout :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    root:=base.test_folder(t,"engine-defines")
+    if root=="" {return}
+    source_write(t,root,"std/ai","mind.odin","package ai\n\nMIND_WORDS :: #config(MIRAI_MIND_WORDS, 4)\n\nAct_Frame :: struct {memory:[MIND_WORDS]u64, action:u8}\n")
+    source_write(t,root,"core","core.odin","package core\n\ncount :: proc() -> int {return 1}\n")
+    source_write(t,root,"engine/scene","scene.odin","package scene\n\nimport \"mirai:std/ai\"\n\nHolder :: struct {frame:ai.Act_Frame}\n")
+    source_write(t,root,"host","host.odin","package host\n\nimport \"mirai:core\"\n\nrun :: proc() -> int {return core.count()}\n")
+    defines:=engine_defines(root,{"GAME_ONLY=true","MIRAI_MIND_WORDS=8"})
+    testing.expect(t,slice.equal(defines,[]string{"MIRAI_MIND_WORDS=8"}),"only what the engine reads")
+    testing.expect_value(t,len(engine_defines(root,{"GAME_ONLY=true"})),0)
+    libraries:=engine_libraries(.Dev)
+    // What a build of these binaries keys each library by: its sources and flags, and what it names.
+    keys :: proc(t:^testing.T,root:string,paths:Engine_Paths,libraries:[]Engine_Library) -> []Library_Stamp {
+        plan:=engine_plan(root,"",.Dev,paths,libraries)
+        desc:=describe(root,{"std/ai","core","engine/scene","host"})
+        desc.stage,desc.decl,desc.names,desc.defines=paths.stage,paths.decl,true,paths.defines
+        errors,_:=declaring(desc)
+        if !declared_ok(t,errors) || !testing.expect(t,declared_write(paths.decl,paths.declared)) {return nil}
+        declared:=declared_read(paths.declared,context.temp_allocator)
+        reach:=engine_reach(root,libraries)
+        stamps:=make([]Library_Stamp,len(libraries))
+        for &stamp,which in stamps {stamp={plan.libraries[which].sources,plan.libraries[which].tools,declared_key(declared,reach.names[which])}}
+        return stamps
+    }
+    shared,apart,other:=engine_paths(root,.Dev),engine_paths(root,.Dev,defines=defines),engine_paths(root,.Dev,defines={"MIRAI_MIND_WORDS=16"})
+    testing.expect(t,shared.folder!=apart.folder && apart.folder!=other.folder,"each set of defines has binaries of its own")
+    before,after:=keys(t,root,shared,libraries),keys(t,root,apart,libraries)
+    if len(before)==0 || len(after)==0 {return}
+    built:=make([dynamic]string)
+    for library,which in libraries {
+        if before[which]!=after[which] {append(&built,library.name)}
+    }
+    testing.expectf(t,slice.equal(built[:],[]string{"std","engine"}),"the library that reads it and the one that names what it changed: %v",built)
+    std:=0
+    for library,which in libraries {
+        if library.name=="std" {std=which}
+    }
+    testing.expect(t,engine_cache_entry(root,libraries[std],.Dev,before[std],0)!=engine_cache_entry(root,libraries[std],.Dev,after[std],0),"the cache does not give one for the other")
+    testing.expect(t,strings.contains(declared(apart.decl,"std/ai","mind.odin"),"MIND_WORDS :: 8") && strings.contains(declared(shared.decl,"std/ai","mind.odin"),"MIND_WORDS :: 4"),"a declaration carries the value it was compiled with")
+
+    // Both sides of the library, compiled as a build compiles them, see one size.
+    engine_root:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
+    compiler,found:=compiler_find(engine_root,context.temp_allocator)
+    if !testing.expect(t,found,"no Odin compiler") {return}
+    plan:=engine_plan(root,"",.Dev,apart,libraries)
+    sides:=[]struct{what,collection:string,flags:[]string}{
+        {"the library, from its stage with its flags",fmt.tprintf("-collection:mirai=%s",apart.stage),plan.library_flags[std]},
+        {"what compiles against its declarations",fmt.tprintf("-collection:mirai=%s",apart.decl),nil},
+    }
+    for side,index in sides {
+        folder:=project.path(root,fmt.tprintf("side-%d",index))
+        source_write(t,folder,".","main.odin","package main\n\nimport \"mirai:std/ai\"\n\n#assert(size_of(ai.Act_Frame)==8*8+8)\n\nmain :: proc() {}\n")
+        command:=make([dynamic]string)
+        append(&command,compiler,"check",folder,side.collection)
+        for flag in side.flags {
+            if strings.has_prefix(flag,"-define:") {append(&command,flag)}
+        }
+        state,_,errors,error:=subprocess.exec({command=command[:],env=child_environment(engine_root,context.temp_allocator)},context.temp_allocator)
+        testing.expectf(t,error==nil && state.exit_code==0,"%s lays Act_Frame out with 8 words:\n%s",side.what,string(errors))
+    }
 }
 
 // A source without a package clause, a comment alone, is an error that names the file for the

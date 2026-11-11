@@ -110,7 +110,7 @@ a_plugin_library_is_linked_against_an_import_library_made_ahead :: proc(t:^testi
         lib:=Plugin_Library{name="thing",path="thing/runtime",packages={"thing/runtime"},root=sources,file="plugin-thing-runtime-minimal-00000001",
             stage=project.path(folder,"a folder","minimal","stage-thing-runtime"),linked=project.path(folder,"a folder","lib","plugin-thing-runtime-minimal-00000001.lib")}
         testing.expect(t,os.make_directory_all(project.path(folder,"a folder","lib"))==nil)
-        if failed:=plugin_library_prepare(&lib);!testing.expectf(t,len(failed)==0,"%v",failed) {return}
+        if failed:=plugin_library_prepare(&lib,nil);!testing.expectf(t,len(failed)==0,"%v",failed) {return}
         testing.expect_value(t,import_libraries_make(compiler,{{plugin_definition(&lib),lib.linked}}),"")
         import_library,read:=os.read_entire_file(lib.linked,context.temp_allocator)
         testing.expect(t,read==nil && strings.contains(string(import_library),"plugin-thing-runtime-minimal-00000001.dll") && strings.contains(string(import_library),"plugins.thing.runtime.answer"),"the import library names the published file and what it exports")
@@ -538,7 +538,7 @@ a_plugin_library_follows_the_declarations_of_the_packages_it_reaches :: proc(t:^
         .Tool={part=.Editor,root=sources,packages={"tool/editor"},stage=project.path(plugins,"stage-tool-editor")},
     }
     // drawn declares what over compiles against, as its build does.
-    if errors:=plugin_library_prepare(&libraries[.Drawn]);!testing.expectf(t,len(errors)==0,"drawn declares: %v",errors) {return}
+    if errors:=plugin_library_prepare(&libraries[.Drawn],nil);!testing.expectf(t,len(errors)==0,"drawn declares: %v",errors) {return}
     built:=project.path(folder,"built")
     engine:=Engine_Paths{decl=project.path(built,"decl"),declared=project.path(built,"engine.declared"),stamp=project.path(built,ENGINE_STAMP)}
     keys :: proc(p:^project.Project,libraries:^[Part]Plugin_Library,engine:Engine_Paths) -> (keys:[Part]u64) {
