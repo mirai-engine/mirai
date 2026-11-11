@@ -71,10 +71,19 @@ Mirai_Vfx_Surface mirai_vfx_surface_at(Mirai_Vfx_Context ctx, uint resource, uin
     return particle_surface_at(particle_resource(ctx.emitter, 1u + resource), triangle, barycentric, particle_emitters[ctx.emitter].step.x);
 }
 
+// A point of a bone of the Bones shape: where it is in the world, the way the
+// bone goes (from the joint of its parent to its own) and how fast it moves.
+struct Particle_Bone {
+    float3 position;
+    float3 axis;
+    float3 velocity;   // m/s
+    bool valid;
+};
+
 // The point of a bone at along (0: the joint of its parent, 1: its own), as
 // it is this frame, and how fast it moves since the frame before over dt.
-Mirai_Vfx_Bone particle_bone_at(Particle_Resource r, uint bone, float along, float dt) {
-    Mirai_Vfx_Bone b = (Mirai_Vfx_Bone)0;
+Particle_Bone particle_bone_at(Particle_Resource r, uint bone, float along, float dt) {
+    Particle_Bone b = (Particle_Bone)0;
     if (r.kind != PARTICLE_RESOURCE_BONES || bone >= r.count) return b;
     Particle_Segment s = particle_segment_at(r.first + bone * PARTICLE_SEGMENT_BYTES);
     b.position = transform_point(r.world, lerp(s.start, s.end, along));
@@ -82,16 +91,14 @@ Mirai_Vfx_Bone particle_bone_at(Particle_Resource r, uint bone, float along, flo
     b.velocity = dt > 0.0 ? (b.position - before) / dt : float3(0.0);
     float3 axis = transform_vector(r.world, s.end - s.start);
     b.axis = dot(axis, axis) > 1e-12 ? normalize(axis) : float3(0.0, 1.0, 0.0);
-    b.bone = bone;
-    b.along = along;
     b.valid = true;
     return b;
 }
 
 // A point of the bones chosen by length: the bone whose running length
 // passes a random share of the whole, and a point of it chosen evenly.
-Mirai_Vfx_Bone particle_bone_sample(Particle_Resource r, inout uint seed, float dt) {
-    if (r.kind != PARTICLE_RESOURCE_BONES || r.count == 0u) return (Mirai_Vfx_Bone)0;
+Particle_Bone particle_bone_sample(Particle_Resource r, inout uint seed, float dt) {
+    if (r.kind != PARTICLE_RESOURCE_BONES || r.count == 0u) return (Particle_Bone)0;
     float wanted = random01(seed) * particle_segment_at(r.first + (r.count - 1u) * PARTICLE_SEGMENT_BYTES).length;
     uint low = 0u, high = r.count - 1u;
     while (low < high) {

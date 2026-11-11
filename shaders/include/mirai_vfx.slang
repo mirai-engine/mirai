@@ -119,18 +119,6 @@ struct Mirai_Vfx_Surface {
     float2 barycentric;
     bool valid;
 };
-// A point of a bone: where it is in the world, the way the bone goes (from
-// the joint of its parent to its own), how fast it moves, and the bone and
-// the share of it along it (0 at the joint of its parent) that find it again
-// as the skin moves. valid is false while the resource has no bones.
-struct Mirai_Vfx_Bone {
-    float3 position;
-    float3 axis;
-    float3 velocity;   // m/s
-    uint bone;
-    float along;
-    bool valid;
-};
 // A grid resource: its cells (one along an axis that is flat), the size of a
 // cell, and the cell of the world (a position over the size of a cell) where
 // its region starts: the region follows the entity of the grid by whole
