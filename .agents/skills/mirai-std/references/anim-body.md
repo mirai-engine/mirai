@@ -77,7 +77,9 @@ its comment what it does and its durations. A zero `Time_Range` is the whole cli
 - `Lock_Feet` fixes each foot horizontally on its contact with leg IK, keeping the animated height
   and rotation: the ankle over its anchor while the heel rests, and turning on the toe as it lifts.
   The hip lowers or rises the minimum for the feet to reach; a distant target (or beyond
-  `EDIT_SOFT_REACH` of the leg) is approached softly, without locking the knee.
+  `EDIT_SOFT_REACH` of the leg) is approached softly, without locking the knee. The contacts are
+  those of the clip, or the feet and frames given in `contacts` (those of the clip a retarget was
+  baked from), with their anchors where the feet of this clip stand.
 - `Mirror` applies `pose_mirror` per frame and also reflects the roots from their rest.
 - `Face_Rest` takes out the turn about up of the joint that turns the body away from its rest
   facing: the highest of the pelvis and its ancestors turned more than `FACE_REST_TURN` in some

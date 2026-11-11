@@ -211,7 +211,12 @@ edit_lock_feet :: proc "contextless" (rig:Body_Rig,e:Lock_Feet,input,output:Fram
     if !usable {return {error=.Missing_Part,part=missing}}
     ground,ok:=frames_ground(rig,input,buffers.world)
     if !ok {return {error=.Numeric}}
-    contacts:=buffers.contacts[:frames_contacts(rig,input,buffers.world,ground,buffers.contacts)]
+    contacts:[]Contact
+    if len(e.contacts)>0 {
+        contacts=buffers.contacts[:len(e.contacts)]
+        copy(contacts,e.contacts)
+        if !frames_contacts_place(rig,input,buffers.world,ground,contacts) {return {error=.Invalid_Range}}
+    } else {contacts=buffers.contacts[:frames_contacts(rig,input,buffers.world,ground,buffers.contacts)]}
     copy(output.local,input.local);copy(output.values,input.values)
     count,n:=frames_count(input),input.bones
     rest:=buffers.world[count*n:][:n]

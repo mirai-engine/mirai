@@ -157,9 +157,15 @@ equal length, at least one bone, finite transforms and unit quaternions. No proc
   the ground and the grips belongs to the gameplay integration.
 - `retarget_prepare` receives correspondences by index and both reference poses and prepares per
   destination bone the orientation offset, the change of basis and the scale. `retarget_pose` keeps
-  the length of the destination bones; translations are kept, copied or scaled
-  (`Retarget_Translation`), and a source index `-1` keeps the reference. The work buffers and the
-  references do not overlap the output. It does not infer names or solve full-body IK.
+  the rest of the destination bones and adds the translation each source bone moved from its rest,
+  scaled by the ratio of the rest lengths of both bones (1 for a source bone of zero length), and a
+  source index `-1` keeps the reference. The work buffers and the references do not overlap the
+  output. It does not infer names or solve full-body IK.
+- `retarget_crotch_prepare` and `retarget_crotch_pose` (`retarget_crotch.odin`) keep the crotch of
+  a retargeted body off its floor as the source's: below its rest, the pelvis of the target rises
+  until its hips keep the share of their rest height that the source's keep, and the legs turn so
+  the feet stay. The floor is the lowest foot or toe joint at rest; pelvis or hips not above it are
+  `Hips_Height`, and bodies without pelvis, hips or feet keep nothing.
 - `follow_prepare` pairs the bones of a follower skeleton with those of a leader by name, or by path
   where a name repeats in either; `follow_pose` gives each paired bone the leader's pose: its local
   transform as is when its parent is paired with the leader's parent, else its place in the world
@@ -220,6 +226,7 @@ section: [rigs](anim-rigs.md#verification), [motion](anim-motion.md#verification
 [storage](anim-storage.md#verification).
 
 - Follow and pose deltas in any order, with hostile inputs: `follow_test.odin`.
+- The crotch of a retargeted body over its floor, with hostile inputs: `retarget_crotch_test.odin`.
 - Hostile cases: `ANIM_HOSTILE_ROUNDS` (skeletons and solvers), `ANIM_BLEND_HOSTILE_ROUNDS` (blend
   spaces) and `ANIM_PROCEDURAL_HOSTILE_ROUNDS`; when changing validation or memory, `--release` and
   20000.
