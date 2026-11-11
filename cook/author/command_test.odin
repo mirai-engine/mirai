@@ -193,8 +193,17 @@ the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T)
                 written:=on(&q,named.kind,"write",form,document)
                 testing.expectf(t,read.code==0 && written.code==0 && strings.has_prefix(written.out,strings.concatenate({named.path,": "},context.temp_allocator)) && !strings.contains(written.out,": made"),"%s: %s%s%s",form,read.err,written.out,written.err)
             }
+            // A file outside them, as a recipe, is written back where it is, as it was read.
+            outside_read:=on(&q,named.kind,"read",outside,"--out",document)
             outside_write:=on(&q,named.kind,"write",outside,document)
-            testing.expectf(t,outside_write.code==1 && strings.contains(outside_write.err,"is outside the assets of the project"),"%s%s",outside_write.out,outside_write.err)
+            again:=on(&q,named.kind,"read",outside)
+            if named.kind==.Scene {
+                testing.expectf(t,outside_read.code==0 && outside_write.code==0 && again.code==0 && again.out==of_file.out,"%s%s%s",outside_write.out,outside_write.err,again.err)
+            } else {
+                testing.expectf(t,outside_write.code==1 && strings.contains(outside_write.err,"is outside the assets of the project"),"%s%s",outside_write.out,outside_write.err)
+            }
+
+
         }
         // A file under the assets that does not exist yet is made there.
         made:=on(&q,.Scene,"write",project.path(root,"assets","arena","annex.scene",allocator=context.temp_allocator),project.path(root,"document.json",allocator=context.temp_allocator))

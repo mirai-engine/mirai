@@ -394,7 +394,8 @@ project_choose :: proc(roots:[]string,engine,named:string) -> string {
 // of read, write and check: a path of the registry, with or without assets/,
 // an id or a name the registry resolves, or a file, there or not yet, under
 // the assets of the project or of a plugin. An existing file outside them, or
-// one the registry leaves out, is read in memory; a write refuses it. problem: why the name gives no asset of the kind.
+// one the registry leaves out (a recipe), is read in memory; a write puts it
+// back in that file. problem: why the name gives no asset of the kind.
 @(private)
 asset_named :: proc(p:^Project,named:string,kind:Document_Kind,writing:bool) -> (path,problem:string) {
     path=asset_path(named)
@@ -405,20 +406,25 @@ asset_named :: proc(p:^Project,named:string,kind:Document_Kind,writing:bool) -> 
         if _,known:=asset.registry_find_path(&p.registry,relative);known || writing || !os.is_file(named) {return relative,""}
     }
     if !os.is_file(named) {return path,""}
-    if writing {
-        return "",fmt.tprintf("%s is outside the assets of the project; name the %s by its path under assets/ (with or without assets/), by its id, or by its file under the assets folder of the project or of a plugin",named,kind_extension(kind))
+    // A .ui is written by the id the project knows it by; a scene, as a recipe, also where it is.
+    if writing && kind==.Ui {
+        return "",fmt.tprintf("%s is outside the assets of the project; name the .ui by its path under assets/ (with or without assets/), by its id, or by its file under the assets folder of the project or of a plugin",named)
     }
     bytes,read:=os.read_entire_file(named,context.temp_allocator)
+
     if read!=nil {return "",fmt.tprintf("%s could not be read",named)}
     file:asset.Asset
     if asset.asset_take(&file,bytes,context.temp_allocator)!=.None {return "",fmt.tprintf("%s is not a Mirai asset",named)}
     id,file_kind:=file.blob.header.id,file.blob.header.kind
     asset.asset_close(&file)
     if file_kind!=(asset.KIND_UI if kind==.Ui else asset.KIND_SCENE) {return "",fmt.tprintf("%s is not a %s",named,kind_extension(kind))}
-    // In place of the asset with its id, or as one more asset named by its id, which no file of the project is.
+    // Written, by its file, which the registry saves to; read, in place of the asset with its id, or as one
+    // more asset named by its id, which no file of the project is.
     buffer:[base.ASSET_ID_TEXT]u8
     path=strings.concatenate({base.asset_id_format(id,buffer[:]),kind_extension(kind)},context.temp_allocator)
     if record,known:=asset.registry_find(&p.registry,id);known {path=strings.clone(record.path,context.temp_allocator)}
+    if writing {path=absolute}
+
     if asset.registry_memory_set(&p.registry,path,bytes)!=.None {return "",fmt.tprintf("%s could not be read: memory ran out",named)}
     return path,""
 }
