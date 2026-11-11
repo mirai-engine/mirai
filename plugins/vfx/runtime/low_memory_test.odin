@@ -34,7 +34,7 @@ a_pool_without_memory_is_refused_and_holds_no_table :: proc(t:^testing.T) {
             limit.remaining=max(int)
             if made {break}
             refused=true
-            testing.expectf(t,pool.slots==nil && pool.order==nil && pool.free==nil && pool.attribute_free==nil && pool.gpu==nil && pool.draws==nil,"a pool of %d with %d requests served keeps tables",capacity,served)
+            testing.expectf(t,pool.slots==nil && pool.order==nil && pool.free.free==nil && pool.attribute_free.free==nil && pool.gpu==nil && pool.draws==nil,"a pool of %d with %d requests served keeps tables",capacity,served)
         }
         testing.expectf(t,made && refused && pool.capacity==capacity && len(pool.slots)==EMITTER_CAPACITY,"a pool of %d: refused without memory, and made with it",capacity)
         pool_free(&pool,limited)

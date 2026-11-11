@@ -306,10 +306,8 @@ Pool :: struct {
     slots:[]Pool_Slot,
     order:[]u16,             // live slots by id
     order_count:int,
-    free:[][2]u32,           // gaps of the pool by offset: first slot, count
-    free_count:int,
-    attribute_free:[][2]u32, // gaps of the Attributes of the pool by offset: bytes to the first, bytes
-    attribute_free_count:int,
+    free:base.Ranges,           // the slots of the pool the emitters' ranges take
+    attribute_free:base.Ranges, // the bytes of the Attributes of the pool their ranges take
     slot_end:int,            // slots ever used, live or not
     pool_end:u32,            // end of the pool in use
     regroup:bool,            // a range, a program or an event target changed since the spans of the programs were found
@@ -350,32 +348,25 @@ pool_make :: proc(pool:^Pool,capacity:u32,allocator:=context.allocator) -> bool 
     previous,refused:=pool.capacity,pool.refused
     pool_free(pool,allocator)
     pool^={capacity=capacity,previous=previous,refused=refused}
-    errors:[6]runtime.Allocator_Error
+    errors:[4]runtime.Allocator_Error
     pool.slots,errors[0]=make([]Pool_Slot,EMITTER_CAPACITY,allocator)
     pool.order,errors[1]=make([]u16,EMITTER_CAPACITY,allocator)
-    pool.free,errors[2]=make([][2]u32,EMITTER_CAPACITY+1,allocator)
-    pool.attribute_free,errors[3]=make([][2]u32,EMITTER_CAPACITY+1,allocator)
-    pool.gpu,errors[4]=make([]Gpu_Emitter,EMITTER_CAPACITY,allocator)
-    pool.draws,errors[5]=make([]Pool_Draw,EMITTER_CAPACITY,allocator)
-    starved:=false
+    pool.gpu,errors[2]=make([]Gpu_Emitter,EMITTER_CAPACITY,allocator)
+    pool.draws,errors[3]=make([]Pool_Draw,EMITTER_CAPACITY,allocator)
+    starved:=!base.ranges_reset(&pool.free,u64(capacity),EMITTER_CAPACITY,allocator) || !base.ranges_reset(&pool.attribute_free,pool_attribute_bytes(capacity),EMITTER_CAPACITY,allocator)
     for error in errors {starved||=error!=nil}
     if starved {
         pool_free(pool,allocator)
         return false
     }
-    pool.free[0]={0,capacity}
-    pool.free_count=capacity>0?1:0
-    pool.attribute_free[0]={0,u32(pool_attribute_bytes(capacity))}
-    pool.attribute_free_count=1
     return true
 }
 
 pool_free :: proc(pool:^Pool,allocator:=context.allocator) {
-    delete(pool.slots,allocator);delete(pool.order,allocator);delete(pool.free,allocator);delete(pool.attribute_free,allocator)
-    delete(pool.gpu,allocator);delete(pool.draws,allocator)
+    delete(pool.slots,allocator);delete(pool.order,allocator);delete(pool.gpu,allocator);delete(pool.draws,allocator)
+    base.ranges_free(&pool.free);base.ranges_free(&pool.attribute_free)
     delete(pool.frame_bytes)
     pool^={capacity=pool.capacity,previous=pool.previous,refused=pool.refused}
-    pool.slots,pool.order,pool.free,pool.attribute_free,pool.gpu,pool.draws=nil,nil,nil,nil,nil,nil
 }
 
 // The emitters of a world for the next frame, and the seconds it simulates.
@@ -503,16 +494,23 @@ pool_slot_find :: proc(p:^Pool,id:u64) -> int {
 pool_slot_take :: proc(p:^Pool,id:u64,capacity:u32,stride:u32=0) -> int {
     if capacity==0 || p.order_count>=len(p.order) {return -1}
     bytes:=u64(capacity)*u64(stride)
-    if bytes>u64(max(u32)) || !gaps_fit(p.free[:p.free_count],capacity) || !gaps_fit(p.attribute_free[:p.attribute_free_count],u32(bytes)) {return -1}
+    if bytes>u64(max(u32)) {return -1}
+    offset,fits:=base.ranges_take(&p.free,u64(capacity))
+    if !fits {return -1}
+    attributes:u64
+    if bytes>0 {
+        if attributes,fits=base.ranges_take(&p.attribute_free,bytes);!fits {
+            base.ranges_give(&p.free,offset,u64(capacity))
+            return -1
+        }
+    }
     at:=-1
     for slot,i in p.slots[:p.slot_end] {
         if !slot.live {at=i;break}
     }
     if at<0 {at=p.slot_end;p.slot_end+=1}
-    offset:=gaps_take(p.free,&p.free_count,capacity)
-    attributes:=gaps_take(p.attribute_free,&p.attribute_free_count,u32(bytes))
-    p.slots[at]={id=id,offset=offset,capacity=capacity,attributes=attributes,stride=stride,live=true,fresh=true}
-    p.pool_end=max(p.pool_end,offset+capacity)
+    p.slots[at]={id=id,offset=u32(offset),capacity=capacity,attributes=u32(attributes),stride=stride,live=true,fresh=true}
+    p.pool_end=max(p.pool_end,u32(offset)+capacity)
     p.regroup=true
     low,high:=0,p.order_count
     for low<high {
@@ -533,61 +531,14 @@ pool_slot_release :: proc(p:^Pool,at:int) {
         p.order_count-=1
         break
     }
-    gaps_give(p.free,&p.free_count,slot.offset,slot.capacity)
-    gaps_give(p.attribute_free,&p.attribute_free_count,slot.attributes,slot.capacity*slot.stride)
+    base.ranges_give(&p.free,u64(slot.offset),u64(slot.capacity))
+    base.ranges_give(&p.attribute_free,u64(slot.attributes),u64(slot.capacity)*u64(slot.stride))
     slot.live=false
     p.regroup=true
     for p.slot_end>0 && !p.slots[p.slot_end-1].live {p.slot_end-=1}
     p.pool_end=0
     for s in p.slots[:p.slot_end] {
         if s.live {p.pool_end=max(p.pool_end,s.offset+s.capacity)}
-    }
-}
-
-// Whether a gap of a list ordered by offset takes size.
-@(private)
-gaps_fit :: proc(gaps:[][2]u32,size:u32) -> bool {
-    if size==0 {return true}
-    for g in gaps {if g[1]>=size {return true}}
-    return false
-}
-
-// The first gap that takes size gives its start (gaps_fit says there is one).
-@(private)
-gaps_take :: proc(gaps:[][2]u32,count:^int,size:u32) -> u32 {
-    if size==0 {return 0}
-    for g in 0..<count^ {
-        if gaps[g][1]<size {continue}
-        offset:=gaps[g][0]
-        gaps[g][0]+=size
-        gaps[g][1]-=size
-        if gaps[g][1]==0 {
-            copy(gaps[g:count^-1],gaps[g+1:count^])
-            count^-=1
-        }
-        return offset
-    }
-    return 0
-}
-
-// A gap goes back in order, joined to its neighbours.
-@(private)
-gaps_give :: proc(gaps:[][2]u32,count:^int,offset,size:u32) {
-    if size==0 {return}
-    g:=0
-    for g<count^ && gaps[g][0]<offset {g+=1}
-    copy(gaps[g+1:count^+1],gaps[g:count^])
-    gaps[g]={offset,size}
-    count^+=1
-    if g+1<count^ && gaps[g][0]+gaps[g][1]==gaps[g+1][0] {
-        gaps[g][1]+=gaps[g+1][1]
-        copy(gaps[g+1:count^-1],gaps[g+2:count^])
-        count^-=1
-    }
-    if g>0 && gaps[g-1][0]+gaps[g-1][1]==gaps[g][0] {
-        gaps[g-1][1]+=gaps[g][1]
-        copy(gaps[g:count^-1],gaps[g+1:count^])
-        count^-=1
     }
 }
 

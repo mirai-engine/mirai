@@ -764,9 +764,8 @@ particle_ranges_join_again_when_they_return_to_the_pool :: proc(t: ^testing.T) {
 	p.capacity = 1000
 	p.slots = make([]Pool_Slot, 8)
 	p.order = make([]u16, 8)
-	p.free = make([][2]u32, 9)
-	defer {delete(p.slots); delete(p.order); delete(p.free)}
-	p.free[0], p.free_count = {0, 1000}, 1
+	base.ranges_reset(&p.free, 1000, 8)
+	defer {delete(p.slots); delete(p.order); base.ranges_free(&p.free)}
 	a, b, c := pool_slot_take(&p, 30, 100), pool_slot_take(&p, 10, 200), pool_slot_take(&p, 20, 300)
 	testing.expect_value(t, p.slots[a].offset, u32(0))
 	testing.expect_value(t, p.slots[b].offset, u32(100))
@@ -775,14 +774,14 @@ particle_ranges_join_again_when_they_return_to_the_pool :: proc(t: ^testing.T) {
 	testing.expect_value(t, pool_slot_find(&p, 99), -1)
 	testing.expect_value(t, pool_slot_take(&p, 40, 500), -1)
 	pool_slot_release(&p, b)
-	testing.expect_value(t, p.free_count, 2)
+	testing.expect_value(t, len(p.free.free), 2)
 	pool_slot_release(&p, a)
-	testing.expect_value(t, p.free_count, 2)
-	testing.expect_value(t, p.free[0], [2]u32{0, 300})
+	testing.expect_value(t, len(p.free.free), 2)
+	testing.expect_value(t, p.free.free[0], base.Range{0, 300})
 	testing.expect_value(t, p.pool_end, u32(600))
 	pool_slot_release(&p, c)
-	testing.expect_value(t, p.free_count, 1)
-	testing.expect_value(t, p.free[0], [2]u32{0, 1000})
+	testing.expect_value(t, len(p.free.free), 1)
+	testing.expect_value(t, p.free.free[0], base.Range{0, 1000})
 	testing.expect_value(t, p.slot_end, 0)
 	whole := pool_slot_take(&p, 40, 1000)
 	testing.expect_value(t, p.slots[whole].offset, u32(0))
