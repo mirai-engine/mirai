@@ -113,6 +113,11 @@ rays do:
 
 `light_cut`:
 
+- The points of the view with neighbours and a filter take their light from samples of the grid
+  of the lights ([direct light of a view](#direct-light-of-a-view)), whose cost does not grow with
+  the lights but which shows a pattern without the filter; a point alone (glass, overlays, the
+  other side of a surface, hits of reflections and probes) needs all of its light on its own, and
+  takes it from the cut, which groups the far lights.
 - The nodes to which a point traces a ray: each light that reaches it as long as they fit in the
   budget; if there are more, from the root the node that needs it most is opened (brightest and
   widest seen from the point, those that contain a spot first). Every light that arrives lies
@@ -142,10 +147,12 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
 - **Grid of lights** (`render/light_grid.odin`, `light_grid.comp`). The world in cells whose lists
   hold the lights that reach them; past `DIRECT_FEW` a cell holds an alias table to draw from.
   The GPU rebuilds it in the frame the lights change; `light_weight.slang` weighs each light at a
-  point. It covers the ranges of the lights of the scene and the part of the scene that the lights
-  with shadows a pass writes on the GPU light, from the box and reach of `lights_ask` (all of the
-  scene for `LIGHTS_ANYWHERE`), held with a margin so that a moving box does not place it again
-  every frame. A cell whose entries would not fit the rows counted on the CPU lists none.
+  point by `light_weight_at`, which also weighs a light of the tree (`node_weight`): a light is
+  weighed in one place. It covers the ranges of the lights of the scene and the part of the scene
+  that the lights with shadows a pass writes on the GPU light, from the box and reach of
+  `lights_ask` (all of the scene for `LIGHTS_ANYWHERE`), held with a margin so that a moving box
+  does not place it again every frame. A cell whose entries would not fit the rows counted on the
+  CPU lists none.
 - **Spread.** A point weighs the lights of its cell and spreads its samples over them by weight,
   systematically (one at each m-th of the sum of weights, from the place of the pixel in a 3x3
   pattern): a light that gives much takes many samples and none depends on chance. A light that
@@ -173,15 +180,20 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   adds the [lights that cast no shadows](#gpu-lights) as they are, the lights of
   [extensions](views.md#extension-hooks-and-constants) each with its hard ray, and the other side
   of a surface that lets light through (`direct_lighting`).
-- **Shadow maps** (`render/shadow_maps.odin`, `Settings.shadow_maps`; the Graphics settings always
-  turn it on). Every frame, from the camera and the lights alone, the lights whose sphere covers a
+- **Shadow maps** (`render/shadow_maps.odin`; every renderer draws them). Every frame, from the
+  camera and the lights alone, the lights whose sphere covers a
   share of the view, and the sun in cascades, get depth maps in one atlas, so the cost does not
   depend on what moves. A light turned off takes none; a spot no wider than a face of the cube takes
   one map along its cone; the cascades of the sun end where the scene ends. They draw the clusters
   of the cut of the view, of the instances of the scene and of the batches that cast shadows: what
   casts a shadow is what the view draws, at the detail its distance from the eye asks for. Those of
   an instance with masked or blended materials are drawn apart, with their coverage as a shadow ray
-  asks it (`hit_covers`). A point under a map takes taps around it: all lit, lit; all blocked,
+  asks it (`hit_covers`). They are culled as the view culls its own: by instance and map, which
+  hands the clusters its cut can take (`instance_clusters`) to a pass by cluster in chunks, into
+  lists that count what does not fit and grow, like those of the view. A light takes each face it
+  lights what the view sees through whole, since one that takes maps lights much of the view; a
+  map holds a point only within its face and range, and samples tell elsewhere. A point under a
+  map takes taps around it: all lit, lit; all blocked,
   hidden; where they disagree (a penumbra) it takes the hard shadow of the map at the point, and
   `direct_spread` averages that evenly over the points of its surface within the penumbra width the
   blockers give, the wider of that of the point and that of each neighbour, so the penumbra is the
@@ -197,7 +209,7 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   with `Surface_Source.Shadow_Atlas`): the fog lights its cells so. The atlas, its tint and the
   depth of its nearest glass are targets of the frame of a view, like the points and samples of the
   direct light: the views share them (`targets_frame`), since each draws its maps before it reads
-  them.
+  them, and so the buffers of the maps (`Renderer.shadow_buffers`) and the lists of their cull.
 - **Skinned meshes.** The skin writes the posed box and normal cone of each cluster, grown by the
   reach of its vertex programs, so that the view cull and the shadow map cull leave posed clusters
   out like static ones.

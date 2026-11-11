@@ -31,14 +31,8 @@ struct Params_Block {
 #define CULL_CANDIDATE_COUNT 15u
 #define CULL_VISIBLE_COUNT 16u      // of each phase, before its capacity
 #define CULL_DROPPED 18u            // chunks, visible clusters, candidates and clusters of programs past their capacities
-#define CULL_CHUNK 64u
-#define CULL_DISPATCH_X 32768u
 [[vk::binding(SLOT_PASS0, 0)]] RWStructuredBuffer<uint> cull_state : register(MIRAI_REGISTER(u, SLOT_PASS0), space0);
-// kinds: instances, clusters and triangles drawn of each CULL_KIND_*; late:
-// those phase 1 drew; dropped: chunks, visible clusters, candidates and
-// clusters of programs past the capacities of their lists, which the
-// renderer grows from them.
-struct Stats_Block { uint visible_instances; uint visible_triangles; uint culled_instances; uint occluded_instances; uint probes_traced; uint visible_clusters; uint kinds[9]; uint late[3]; uint dropped[4]; };
+#include "cull_stats.slang"
 // What an instance is, for the counts of the frame: of the scene with a mesh
 // of levels, of the scene with a mesh of one (terrain pieces and other meshes
 // made at run time), or of a batch.

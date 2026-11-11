@@ -102,7 +102,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint local : SV_GroupIndex) {
         uint2 ids = layer_ids.Load(int3(p, 0));
         Material m = material_row(ids.x, material_values_of(ids.y));
         Glass g = glass_of(p, uv, depth, layer_albedo.Load(int3(p, 0)), normal, layer_emission.Load(int3(p, 0)));
-        uint seed = seed_for(uint2(p), frame.frame_index, 23u);
         float bias = 1e-3 + 2e-4 * depth;
         bool out_way;
         float3 reflectance = leaving_reflectance(m, g, out_way);
@@ -111,7 +110,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint local : SV_GroupIndex) {
         if (out_way) {
             float3 out_direction = refract(-g.view, g.normal, m.ior);
             Glass_Walk w = walk_start(g.position + out_direction * bias, out_direction, 0u);
-            walk_show(w, depth, g.roughness, uv, seed);
+            walk_show(w, depth, g.roughness, uv);
             seen += w.radiance * surface_filter(m, g.base_color, g.alpha, reflectance) * near_absorbed;
         }
         // Back in, its reflection, traced with the layer (reflect.comp), which takes what the solid
