@@ -59,7 +59,7 @@ Nav_World :: struct {
     nav_requests:Nav_Requests,
     nav_events:Nav_Events,
     nav_crossings:Nav_Crossings,
-    sources:scene.Streaming_Sources,
+    sources:scene.Simulation_Sources,
     loco:locomotion.Locomotion_Requests,
 }
 

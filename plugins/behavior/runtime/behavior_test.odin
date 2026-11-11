@@ -70,7 +70,7 @@ Behavior_World :: struct {
     moves:nav.Nav_Requests,
     navigation:nav.Navigation,
     physics:phys.Physics_State,
-    sources:scene.Streaming_Sources,
+    sources:scene.Simulation_Sources,
 }
 
 // A world whose perceivers look: with what the application keeps for them.
@@ -215,17 +215,20 @@ the_mind_of_an_agent_far_ticks_at_the_steps_of_what_is_far :: proc(t:^testing.T)
 @(private="file")
 Hold_Act :: enum u8 {Hold}
 
-// Counts the decisions of each agent: its think, by the index of its entity.
+// Counts, by the index of its entity, the decisions of each agent, the tick
+// of its first and the ticks its action ran.
 @(private="file")
 Holding :: struct {
     world:Mind_World,
-    thinks:[8]int,
+    thinks,runs:[8]int,
+    first:[8]u64,
 }
 
 @(private="file")
 holding_think :: proc(t:^ai.Think(Hold_Act)) {
-    c:=(^Holding)(t.user)
-    c.thinks[core.entity_index(agent(t))%len(c.thinks)]+=1
+    c,i:=(^Holding)(t.user),core.entity_index(agent(t))%len(Holding{}.thinks)
+    if c.thinks[i]==0 {c.first[i]=t.tick}
+    c.thinks[i]+=1
     ai.propose(t,.Hold,1)
 }
 
@@ -233,16 +236,17 @@ holding_think :: proc(t:^ai.Think(Hold_Act)) {
 @(private="file")
 holding_act :: proc(a:^ai.Act(Hold_Act)) -> ai.Status {
     if a.phase==.Enter && !ai.claim(a,1000+u64(core.entity_index(agent(a))),1,1) {return .Failure}
+    if a.phase!=.Exit {(^Holding)(a.user).runs[core.entity_index(agent(a))%len(Holding{}.runs)]+=1}
     return .Running
 }
 
 @(private="file")
 HOLDING_ACTS := [Hold_Act]proc(a:^ai.Act(Hold_Act)) -> ai.Status{.Hold=holding_act}
 
-// An agent decides less often the farther it is from the streaming sources,
-// on the ticks of its phase: what it claims lasts until it decides again, a
-// copy of the world decides the same ticks, and without sources every agent
-// decides every tick. A position, a source or a setting that is not a number
+// An agent decides less often the farther it is from the simulation sources,
+// on the ticks of its phase, while its action runs every tick: what it claims
+// lasts while it runs, a copy of the world decides the same ticks, and without
+// sources every agent decides every tick. A position, a source or a setting that is not a number
 // stays in range, and the ticks after the first do not allocate.
 @(test)
 a_mind_decides_less_often_far_from_the_sources :: proc(t:^testing.T) {
@@ -275,14 +279,22 @@ a_mind_decides_less_often_far_from_the_sources :: proc(t:^testing.T) {
     testing.expect_value(t,calls,0)
     Want :: struct {e:core.Entity,thinks:int}
     for want in ([]Want{{near,8},{far,2},{lost,1},{nowhere,8}}) {
-        testing.expectf(t,c.thinks[core.entity_index(want.e)]==want.thinks,"%v thinks %d times",want.e,c.thinks[core.entity_index(want.e)])
+        i:=core.entity_index(want.e)
+        testing.expectf(t,c.thinks[i]==want.thinks,"%v thinks %d times",want.e,c.thinks[i])
+        testing.expectf(t,c.runs[i]==int(9-c.first[i]),"%v runs %d ticks from tick %d",want.e,c.runs[i],c.first[i])
     }
-    // Its claim holds between its decisions: nobody else takes it.
-    for tick in u64(9)..<12 {testing.expectf(t,!ai.reserve_open(&world.claims.reservations,{1000+u64(core.entity_index(far)),1},999,1,tick),"tick %d",tick)}
+    // Its claim holds between its decisions, as its action runs: nobody else takes it.
+    decided:=0
+    for tick in u64(9)..<13 {
+        h,_:=run(&world,minds,tick,tick+1)
+        decided+=h.thinks[core.entity_index(far)]
+        testing.expectf(t,!ai.reserve_open(&world.claims.reservations,{1000+u64(core.entity_index(far)),1},999,1,tick+1),"tick %d",tick)
+    }
+    testing.expect_value(t,decided,1)
     // A copy decides the same ticks as the world it was copied from.
     testing.expect(t,test_world_copy(&copied,&world))
-    a,_:=run(&world,minds,9,40)
-    b,_:=run(&copied,minds,9,40)
+    a,_:=run(&world,minds,13,40)
+    b,_:=run(&copied,minds,13,40)
     testing.expect(t,a.thinks==b.thinks && len(world.mind_agents.values)==len(copied.mind_agents.values))
     for agent,row in world.mind_agents.values {testing.expectf(t,agent==copied.mind_agents.values[row],"row %d",row)}
     // Without sources, or with a near that is not a number, all decide every tick.

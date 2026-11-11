@@ -28,12 +28,13 @@ reservations) belongs to
   its target and the new one when it changes), `patrol_act`, `path_status`, `agent_path`,
   `smart_offer`, `smart_nearest`, `offer_act`, `cross_act`. An action shows what it does with
   `anim.play` and `anim.look`, taking `^anim.Animation_Requests` as any other parameter.
-- An agent decides less often the farther it is from the
-  [streaming sources](../../mirai-gameplay/references/libraries.md#sources-and-residency) (the
-  view, the bodies the seats drive, each `Streaming_Source`): once every `ai.cadence_period`
-  ticks by `Behavior_Settings.think_near`, up to `think_slowest`, on the ticks of its own phase
-  (`ai.cadence_due`); what it claims lasts until it decides again. Without sources, or with
-  `think_near` 0, every agent decides every tick.
+- An agent thinks less often the farther it is from the
+  [simulation sources](../../mirai-gameplay/references/libraries.md#sources-and-residency) (the
+  bodies the seats drive, each `Streaming_Source`, never the view): once every
+  `ai.cadence_period` ticks by `Behavior_Settings.think_near`, up to `think_slowest`, on the ticks
+  of its own phase (`ai.cadence_due`). Only `think` is spaced: its running action runs every tick,
+  and it thinks too when that action ends, so a wait or an attack lasts what it says. Without
+  sources, or with `think_near` 0, every agent decides every tick.
 - What those actions request goes on when the agent's section unloads
   ([the far field](navigation.md#the-far-field)): `minds_tick` also runs the agents with
   `Nav_Far`, on the tick after each far step (`nav.nav_far_decide`), and what they reserve lasts

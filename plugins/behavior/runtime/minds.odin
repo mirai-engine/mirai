@@ -124,7 +124,7 @@ Mind_World :: struct {
     patrols:^core.Table(Patrol),
     splines:^core.Table(volume.Spline,.Read),
     claims:^Claims,
-    sources:core.Ref(scene.Streaming_Sources),
+    sources:core.Ref(scene.Simulation_Sources),
     settings:core.Ref(Behavior_Settings),
     problems:^core.Problems,
     time:core.Time,
@@ -132,15 +132,15 @@ Mind_World :: struct {
 
 // Ticks every agent of a mind, after registering it: ctx.holder is the agent,
 // as the holder of what it claims, and ctx.user is w, the start of the
-// context of the mind. An agent decides less often the farther it is from
-// the streaming sources (the view, the bodies the seats drive): once every
-// ai.cadence_period ticks of Behavior_Settings.think_near, each on the ticks
-// of its own phase, and what it claims lasts until it decides again. An agent
-// far from the players (nav.Nav_Far) is off and decides on: its mind ticks
-// once every step of what is far (nav.nav_far_decide), and what it claims
-// lasts until its next tick. Only a world that plays decides, and a tick that
-// runs again (time.resimulating) does not: its actions would repeat what they
-// did.
+// context of the mind. An agent thinks less often the farther it is from the
+// simulation sources (the bodies the seats drive, each Streaming_Source):
+// once every ai.cadence_period ticks of Behavior_Settings.think_near, each on
+// the ticks of its own phase; its running action runs every tick, and it
+// thinks too when that action ends. An agent far from the players
+// (nav.Nav_Far) is off and decides on: its mind ticks once every step of
+// what is far (nav.nav_far_decide), and what it claims lasts until its next
+// tick. Only a world that plays decides, and a tick that runs again
+// (time.resimulating) does not: its actions would repeat what they did.
 minds_tick :: proc(w:^Mind_World,name:string,acts:^[$A]$P,think:proc(t:^ai.Think(A))) {
     mind_register(w.minds,name,A)
     time:=w.time
@@ -156,12 +156,9 @@ minds_tick :: proc(w:^Mind_World,name:string,acts:^[$A]$P,think:proc(t:^ai.Think
         e:=core.entity_at(agents,row)
         period:=u64(1)
         if near>0 && w.worlds!=nil {
-            if at,ok:=core.get(w.worlds,e);ok {period=ai.cadence_period(nav.sources_distance(w.sources.ptr,at.position),near,slowest)}
+            if at,ok:=core.get(w.worlds,e);ok {period=ai.cadence_period(scene.sources_distance(w.sources.ptr,at.position,at.position),near,slowest)}
         }
-        if !ai.cadence_due(time.tick,u64(core.entity_index(e)),period) {continue}
-        // Until its next decision, also when it went a little farther: its period grows by little.
-        ctx.lease=1 if period<=1 else u32(min(2*period,u64(max(u32))))
-        mind_run(w,e,&core.edit_at(agents,row).state,acts,think,&ctx)
+        mind_run(w,e,&core.edit_at(agents,row).state,acts,think,&ctx,ai.cadence_due(time.tick,u64(core.entity_index(e)),period))
     }
     if w.fars==nil || !nav.nav_far_decide(time) {return}
     // Until its next tick, once every step of what is far.
@@ -188,9 +185,9 @@ minds_unknown :: proc(minds:core.Ref(Minds),agents:^core.Table(Mind_Agent,.Read)
 }
 
 @(private)
-mind_run :: proc(w:^Mind_World,e:core.Entity,m:^ai.Mind,acts:^[$A]$P,think:proc(t:^ai.Think(A)),ctx:^ai.Mind_Context) {
+mind_run :: proc(w:^Mind_World,e:core.Entity,m:^ai.Mind,acts:^[$A]$P,think:proc(t:^ai.Think(A)),ctx:^ai.Mind_Context,decide:=true) {
     ctx.holder=u64(e)
-    ai.mind_tick(m,acts,think,ctx)
+    ai.mind_tick(m,acts,think,ctx,decide)
 }
 
 // The agent a procedure of a mind runs for: of its ai.Act or its ai.Think.
