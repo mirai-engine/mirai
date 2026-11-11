@@ -355,7 +355,8 @@ no GOAP. What those models gave is written this way, without implementing them o
 ### Trace
 
 - The mind stores the best proposals of its last decision (`proposals`, from highest to lowest) and
-  its last exits with the cause and the action that interrupted them (`mind_exit_trace`).
+  its last exits with the tick, the cause and the action that interrupted them
+  (`mind_exit_trace`).
   `mind_running` gives the running action and step as numbers, what is presented; `mind_doing`, as
   enum values.
 

@@ -173,10 +173,19 @@ what it perceives; `think` only reads and proposes, and the actions write.
 
 - `behavior.minds` (names, actions and agents of each one), `behavior.inspect` (the action and
   step they run, their stage and since when, the commit, the best proposals of the last decision
-  with their scores, the latest exits with the cause and what interrupted them, and what it has
-  reserved), `behavior.perception`, `behavior.offers` (the offers of a smart object, their uses
-  and who holds them), `behavior.influence` (the influence of each team and the cover at a point)
-  and `behavior.query` (runs a query at once).
+  with their scores, the latest exits with their tick, the cause and what interrupted them, and
+  what it has reserved), `behavior.perception`, `behavior.offers` (the offers of a smart object,
+  their uses and who holds them), `behavior.influence` (the influence of each team and the cover
+  at a point) and `behavior.query` (runs a query at once).
+- Why, on request and never recorded: `behavior.perception` with `subject` says why it sees that
+  one or not at this tick (`sight_why`, over the same `sight_reach` its turns use: range, cone or
+  `aware`, team, the entity a ray hits first); `behavior.query` with `explain` gives every
+  candidate with each test's input and response, its fate and the vetoing test, the first that
+  scored 0 (`place_run` fills a `Place_Explain` only when given one). What was decided at an
+  earlier tick is asked after `play.seek`.
+- The viewport mode `behavior.perception` draws, for the selected `Perceiver`s, the cone, the
+  reach within which it keeps what it saw, `aware` and a line to each subject it remembers, as
+  bright as its confidence; only while the mode is on.
 - There is no method that sends events: an event is a field of a game component, written like any
   other.
 - The entities that the game creates at runtime need a `core.Id` for the API to name them.
@@ -188,8 +197,11 @@ what it perceives; `think` only reads and proposes, and the actions write.
   far agents and their lease, movement, chase and patrol actions, sight by cone and team, noise,
   forgetting, a remembered subject that is
   destroyed, ray turns, random crowds that remember by the grid whom they would among every
-  perceivable, a tick with nothing to do that goes through no row, places by budget, from the
-  navmesh, from entities, from memory and from offers, rays only where they change the answer, a
+  perceivable, why a subject is seen or not (`sight_why_names_what_hides_a_subject`), a tick
+  with nothing to do that goes through no row, places by budget, from the
+  navmesh, from entities, from memory and from offers, rays only where they change the answer,
+  the explanation of each candidate
+  (`a_query_explains_each_candidate_and_the_test_that_vetoed_it`), a
   place
   target that is destroyed, the offers by team, ability, capacity, uses and cooldown, and the
   influence maps without allocating.

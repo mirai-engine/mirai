@@ -488,14 +488,18 @@ the_trace_says_why_a_mind_changed :: proc(t:^testing.T) {
     w:Zombie_World
     mind:Mind
     ctx:=Mind_Context{user=&w,keep=0.05}
+    exited_at:u64
     for tick in 0..=60 {
         zombie_script(&w,tick)
         ctx.tick,ctx.dt=u64(w.tick),1.0/MIND_HZ
+        seen:=mind.exits_seen
         mind_tick(&mind,&ZOMBIE_ACTS,zombie_think,&ctx)
+        if mind.exits_seen!=seen {exited_at=ctx.tick}
     }
     testing.expect(t,mind.proposals[0]==Mind_Proposal{u16(Zombie_Act.Chase),0.5} && mind.proposals[1]==Mind_Proposal{u16(Zombie_Act.Wander),0.1} && mind.proposals[2].score==0)
     exit,ok:=mind_exit_trace(&mind,0)
     testing.expect(t,ok && exit.action==u16(Zombie_Act.Wander) && exit.cause==.Aborted && exit.by==u16(Zombie_Act.Chase))
+    testing.expectf(t,exit.tick==exited_at && exited_at>0,"the exit says tick %d, it happened at %d",exit.tick,exited_at)
     action,step:=mind_running(&mind)
     testing.expect(t,action==u16(Zombie_Act.Chase) && step==MIND_NONE)
 }

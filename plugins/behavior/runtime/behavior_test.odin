@@ -432,6 +432,53 @@ a_perceiver_sees_all_around_within_aware :: proc(t:^testing.T) {
     }
 }
 
+// Asked about one subject, a perceiver says why it sees it or not: out of
+// range, out of its cone or within `aware`, a team it does not notice, or the
+// entity a ray from its eyes hits first.
+@(test)
+sight_why_names_what_hides_a_subject :: proc(t:^testing.T) {
+    f:Sight_World
+    if !test_world_init(t,&f.behavior) {return}
+    defer sight_world_destroy(&f)
+    if !testing.expect(t,phys.test_state_make(&f.physics)) {return}
+    guard:=placed(&f,{})
+    watch:=PERCEIVER_DEFAULT
+    watch.notices=Teams(1<<1)
+    watch.aware=2
+    core.add(&f.perceivers,guard,watch)
+    wall:=core.create(&f.entities)
+    body,_:=phys.owned_body_create(&f.physics,{1,wall,0},{2,1.5,-4},1)
+    collision:=phys.COLLISION_SETTINGS_DEFAULT
+    phys.owned_shape_create(&f.physics,&collision,body,{collider=phys.collider_box({1,2,0.1}),rotation=1})
+    Case :: struct {at:mm.Vec3,team:Team,reason:Sight_Reason,blocker:core.Entity}
+    cases:=[]Case{
+        {{0,0,-5},1,.Seen,core.NONE},
+        {{0,0,1},1,.Aware,core.NONE},
+        {{0,0,5},1,.Out_Of_Cone,core.NONE},
+        {{0,0,-30},1,.Out_Of_Range,core.NONE},
+        {{1,0,-5},2,.Team,core.NONE},
+        {{4,0,-8},1,.Blocked,wall},
+    }
+    subjects:[6]core.Entity
+    for c,i in cases {
+        subjects[i]=placed(&f,c.at)
+        core.add(&f.perceivables,subjects[i],Perceivable{team=c.team,point=1})
+    }
+    test_world_settle(&f)
+    for c,i in cases {
+        why:=sight_why(core.read(&f.perceivers),core.read(&f.perceptions),core.read(&f.perceivables),core.read(&f.worlds),core.read(&f.fars),core.ref(&f.physics),guard,subjects[i])
+        testing.expectf(t,why.reason==c.reason && why.blocker==c.blocker,"%v: %v by %v, %v by %v expected",c.at,why.reason,why.blocker,c.reason,c.blocker)
+    }
+    // What it says is what its turn does: it remembers those it sees, not the hidden one.
+    sight_tick(&f,0)
+    sight_tick(&f,0.1)
+    mine:=core.edit(&f.perceptions,guard)
+    for c,i in cases {
+        found:=mine!=nil && ai.memory_find(&mine.memory,u64(subjects[i]))!=nil
+        testing.expectf(t,found==(c.reason==.Seen || c.reason==.Aware),"%v: remembered %v",c.at,found)
+    }
+}
+
 // A noise reaches the perceivers that notice the team of its maker: by ear
 // within their hearing, or only its listener wherever it is (a hit), without
 // a ray; one of long ago is remembered as of then.
@@ -876,6 +923,55 @@ places_cast_rays_only_where_they_can_change_the_answer :: proc(t:^testing.T) {
         }
         testing.expectf(t,evals<=near && (!c.fewer || evals<near),"keep %d: %d rays for %d places near enough",c.keep,evals,near)
     }
+}
+
+// Asked to explain, a query gives the same answer and every candidate with
+// each test it measured: the vetoing test is the first that scored 0, and one
+// a cheaper test vetoed takes no ray.
+@(test)
+a_query_explains_each_candidate_and_the_test_that_vetoed_it :: proc(t:^testing.T) {
+    f:Places_Test
+    if !test_world_init(t,&f.w) {return}
+    defer {
+        places_free(&f.places)
+        test_world_destroy(&f.w)
+    }
+    if !testing.expect(t,phys.test_state_make(&f.physics)) {return}
+    querier,wall:=placed(&f.w,{}),core.create(&f.entities)
+    body,_:=phys.owned_body_create(&f.physics,{1,wall,0},{0,2,-2},1)
+    collision:=phys.COLLISION_SETTINGS_DEFAULT
+    phys.owned_shape_create(&f.physics,&collision,body,{collider=phys.collider_box({1.2,2,0.1}),rotation=1})
+    test_world_settle(&f.w)
+    falling:=ai.Response{kind=.Linear,slope=-1,shift_y=1}
+    // Near the querier, seen by it and near a point behind the wall: two cheap tests around a ray.
+    q:=Place_Query{querier=querier,center=.Querier,layout=.Grid,outer=4,spacing=1,keep=2}
+    q.tests[0]={measure=.Distance,from=.Querier,min=0,max=3,response=falling}
+    q.tests[1]={measure=.Visible,from=.Querier,min=0,max=1,response={kind=.Linear,slope=1}}
+    q.tests[2]={measure=.Distance,from=.Point,point={0,0,-3},min=0,max=3,response=falling}
+    q.test_count=3
+    run :: proc(f:^Places_Test,q:Place_Query,result:^Place_Result,explain:^Place_Explain) -> int {
+        filter:ai.Nav_Filter
+        evals,_:=place_run(&f.places,q,result,core.read(&f.worlds),core.read(&f.perceivers),core.read(&f.perceptions),core.read(&f.perceivables),core.read(&f.paths),core.ref(&f.navigation),core.ref(&f.physics),&filter,{},core.read(&f.agents),nil,explain)
+        return evals
+    }
+    plain,explained:Place_Result
+    explain:Place_Explain
+    evals:=run(&f,q,&plain,nil)
+    testing.expect(t,run(&f,q,&explained,&explain)==evals && explained==plain,"explaining changes nothing of the answer")
+    points:[PLACE_CANDIDATES]mm.Vec3
+    testing.expectf(t,explain.count==ai.places_grid({},4,1,points[:]),"%d candidates explained",explain.count)
+    first_of_two,cheap_veto,ray_veto,kept:=false,false,false,0
+    for e in explain.candidates[:explain.count] {
+        first:=i8(-1)
+        for k in 0..<3 {if k in e.measured && e.responses[k]==0 {first=i8(k);break}}
+        testing.expectf(t,e.veto==first && (e.fate==.Vetoed)==(first>=0),"%v: veto %d, the first test with response 0 is %d",e.point,e.veto,first)
+        testing.expectf(t,1 in e.measured || e.fate==.Vetoed || e.fate==.Below,"%v: %v without its ray",e.point,e.fate)
+        first_of_two|=e.veto==0 && 2 in e.measured && e.responses[2]==0
+        cheap_veto|=e.veto==2 && 1 not_in e.measured
+        ray_veto|=e.veto==1
+        if e.fate==.Kept {kept+=1}
+    }
+    testing.expect(t,first_of_two && cheap_veto && ray_veto && kept==int(plain.count))
 }
 
 @(private="file")

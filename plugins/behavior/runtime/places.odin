@@ -180,6 +180,35 @@ place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,pat
     return nav.agent_filter(navigation.ptr,class,agent,walk,core.has(swims,querier),nav.agent_gravity(physics,querier,character))
 }
 
+Place_Tests :: bit_set[0..<PLACE_TESTS;u8]
+
+// What became of a candidate of a query.
+Place_Fate :: enum u8 {
+    Off_Mesh, // not on the navigation of the querier
+    Vetoed,   // a test scored it 0: the tests it had not taken were not measured
+    Below,    // the best score its measured tests allow stays below the kept: the rest were not measured
+    Scored,   // measured, not among the best
+    Kept,     // among the best
+}
+
+Place_Explained :: struct {
+    point:[3]f32,
+    entity:core.Entity, // it was laid out from; none for a point
+    offer:i8,           // of the smart object it was laid out from; -1 for none
+    fate:Place_Fate,
+    veto:i8,            // the first test that scored it 0; -1 for none
+    measured:Place_Tests,
+    inputs,responses:[PLACE_TESTS]f32, // of each test measured
+    score:f32,          // when Scored or Kept
+}
+
+// Every candidate of one query with what each test measured and scored:
+// place_run fills it when it is given one, for whoever asks why.
+Place_Explain :: struct {
+    candidates:[PLACE_CANDIDATES]Place_Explained,
+    count:int,
+}
+
 // The candidates of a query, laid one after another.
 @(private)
 Place_Candidates :: struct {
@@ -192,10 +221,12 @@ Place_Candidates :: struct {
 }
 
 // Runs one query into a result; evals counts the rays and searches it took.
-place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^core.Table(core.World_Transform,$A),perceivers:^core.Table(Perceiver,$B),perceptions:^core.Table(Perception,$F),perceivables:^core.Table(Perceivable,$C),paths:^core.Table(nav.Nav_Path,$D),navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),filter:^ai.Nav_Filter,smart:Smart_View,agents:^core.Table(nav.Nav_Agent,$E),influence:^Influence) -> (evals:int,memory:bool) {
+// With explain, every candidate goes there too, with what became of it.
+place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^core.Table(core.World_Transform,$A),perceivers:^core.Table(Perceiver,$B),perceptions:^core.Table(Perception,$F),perceivables:^core.Table(Perceivable,$C),paths:^core.Table(nav.Nav_Path,$D),navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),filter:^ai.Nav_Filter,smart:Smart_View,agents:^core.Table(nav.Nav_Agent,$E),influence:^Influence,explain:^Place_Explain=nil) -> (evals:int,memory:bool) {
     query:=query
     memory=true
     result^={request=query.request,status=.Empty,offers=-1}
+    if explain!=nil {explain.count=0}
     at_context :: proc(worlds:^core.Table(core.World_Transform,$A),querier:core.Entity,from:Place_Context,target:core.Entity,point:[3]f32) -> (pose:mm.Transform,ok:bool) {
         switch from {
         case .Querier: if p,found:=core.get(worlds,querier);found {return p.transform,true}
@@ -279,9 +310,12 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^
     keep:[PLACE_CANDIDATES]bool
     if volume!=nil || mesh!=nil {
         for i in 0..<c.count {
-            if volume!=nil {_,c.points[i],keep[i]=ai.nav_volume_find_nearest(volume,c.points[i],{0.5,1,0.5})}
-            if mesh!=nil {c.refs[i],c.points[i],keep[i]=ai.nav_find_nearest_any(mesh,c.points[i],{0.5,2,0.5})}
+            at:mm.Vec3
+            if volume!=nil {_,at,keep[i]=ai.nav_volume_find_nearest(volume,c.points[i],{0.5,1,0.5})}
+            if mesh!=nil {c.refs[i],at,keep[i]=ai.nav_find_nearest_any(mesh,c.points[i],{0.5,2,0.5})}
+            if keep[i] {c.points[i]=at}
         }
+        place_explain_dropped(explain,&c,keep[:],nil,{},.Off_Mesh)
         place_sift(&c,keep[:])
     }
     considerations:[PLACE_TESTS]ai.Consideration
@@ -289,7 +323,8 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^
     rule:=considerations[:len(tests)]
     // A ray, or a search through a volume, is one for each candidate; the
     // other measures read numbers, and the search over a mesh serves all.
-    costly,measured:[PLACE_TESTS]bool
+    costly:[PLACE_TESTS]bool
+    measured:Place_Tests
     expensive:=false
     for test,k in tests {
         costly[k]=test.measure==.Visible || test.measure==.Path && volume!=nil
@@ -300,7 +335,7 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^
     for search in ([]bool{false,true}) {
         for test,k in tests {
             if costly[k] || (test.measure==.Path)!=search || c.count==0 {continue}
-            measured[k]=true
+            measured+={k}
             if test.measure!=.Path {
                 for i in 0..<c.count {c.inputs[i*c.stride+k]=place_measure(test,froms[k],c.points[i],query.querier,perceivers,physics,influence)}
                 continue
@@ -308,7 +343,8 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^
             if mesh!=nil {evals+=1}
             if !place_paths(places,froms[k].position,c.points[:c.count],c.refs[:c.count],mesh,nil,filter,c.inputs[k:],c.stride) {memory=false}
         }
-        for i in 0..<c.count {keep[i]=place_bound(rule,measured[:],c.inputs[i*c.stride:][:c.stride])>0}
+        for i in 0..<c.count {keep[i]=place_bound(rule,measured,c.inputs[i*c.stride:][:c.stride])>0}
+        place_explain_dropped(explain,&c,keep[:],rule,measured,.Vetoed)
         place_sift(&c,keep[:])
     }
     // Then the costly ones, candidate by candidate from the highest score the
@@ -318,7 +354,7 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^
         bounds:[PLACE_CANDIDATES]f32
         order:[PLACE_CANDIDATES]u8
         for i in 0..<c.count {
-            bounds[i]=place_bound(rule,measured[:],c.inputs[i*c.stride:][:c.stride])
+            bounds[i]=place_bound(rule,measured,c.inputs[i*c.stride:][:c.stride])
             at:=i
             for at>0 && bounds[order[at-1]]<bounds[i] {order[at]=order[at-1];at-=1}
             order[at]=u8(i)
@@ -326,10 +362,14 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^
         keep={}
         top:[PLACE_KEPT]f32
         tops:=0
-        candidates: for o in order[:c.count] {
+        candidates: for o,n in order[:c.count] {
             i:=int(o)
-            if tops==wanted && place_below(bounds[i],top[wanted-1]) {break}
+            if tops==wanted && place_below(bounds[i],top[wanted-1]) {
+                for below in order[n:c.count] {place_explain_add(explain,&c,int(below),rule,measured,.Below)}
+                break
+            }
             row:=c.inputs[i*c.stride:][:c.stride]
+            taken:=measured
             for measure in ([]Place_Measure{.Visible,.Path}) {
                 for test,k in tests {
                     if !costly[k] || test.measure!=measure {continue}
@@ -337,7 +377,11 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^
                     if measure==.Path {
                         if !place_paths(places,froms[k].position,c.points[i:][:1],c.refs[i:][:1],nil,volume,filter,row[k:],c.stride) {memory=false}
                     } else {row[k]=place_measure(test,froms[k],c.points[i],query.querier,perceivers,physics,influence)}
-                    if !(ai.consideration_score(rule[k],row)>0) {continue candidates}
+                    taken+={k}
+                    if !(ai.consideration_score(rule[k],row)>0) {
+                        place_explain_add(explain,&c,i,rule,taken,.Vetoed)
+                        continue candidates
+                    }
                 }
             }
             keep[i]=true
@@ -356,6 +400,11 @@ place_run :: proc(places:^Places,query:Place_Query,result:^Place_Result,worlds:^
         result.scores[i]=score.score
         result.entities[i]=c.sources[score.index]
         result.offers[i]=c.offers[score.index]
+    }
+    if explain!=nil {
+        chosen:[PLACE_CANDIDATES]bool
+        for score in best[:kept] {chosen[score.index]=true}
+        for i in 0..<c.count {place_explain_add(explain,&c,i,rule,~Place_Tests{},.Kept if chosen[i] else .Scored)}
     }
     result.count=u8(kept)
     result.status=.Found if kept>0 else .Empty
@@ -378,10 +427,34 @@ place_sift :: proc(c:^Place_Candidates,keep:[]bool) {
 // The highest score a candidate can reach once the tests not yet measured
 // are: theirs taken as 1, since each multiplies it by at most that.
 @(private)
-place_bound :: proc(rule:[]ai.Consideration,measured:[]bool,row:[]f32) -> f32 {
+place_bound :: proc(rule:[]ai.Consideration,measured:Place_Tests,row:[]f32) -> f32 {
     product:f32=1
-    for c,k in rule {if measured[k] {product*=ai.consideration_score(c,row)}}
+    for c,k in rule {if k in measured {product*=ai.consideration_score(c,row)}}
     return ai.score_product(product,len(rule),1)
+}
+
+// Into explain, a candidate with the tests measured of it.
+@(private)
+place_explain_add :: proc(explain:^Place_Explain,c:^Place_Candidates,i:int,rule:[]ai.Consideration,measured:Place_Tests,fate:Place_Fate) {
+    if explain==nil || explain.count>=PLACE_CANDIDATES {return}
+    row:=c.inputs[i*c.stride:][:c.stride]
+    e:=&explain.candidates[explain.count]
+    explain.count+=1
+    e^={point=c.points[i],entity=c.sources[i],offer=c.offers[i],fate=fate,veto=-1}
+    for k in 0..<len(rule) {
+        if k not_in measured {continue}
+        e.measured+={k}
+        e.inputs[k],e.responses[k]=row[k],ai.consideration_score(rule[k],row)
+        if e.veto<0 && !(e.responses[k]>0) {e.veto=i8(k)}
+    }
+    if fate==.Scored || fate==.Kept {e.score=ai.score_considerations(rule,1,row)}
+}
+
+// Into explain, the candidates keep drops.
+@(private)
+place_explain_dropped :: proc(explain:^Place_Explain,c:^Place_Candidates,keep:[]bool,rule:[]ai.Consideration,measured:Place_Tests,fate:Place_Fate) {
+    if explain==nil {return}
+    for i in 0..<c.count {if !keep[i] {place_explain_add(explain,c,i,rule,measured,fate)}}
 }
 
 // Whether a score from a product no greater than that of bound stays below

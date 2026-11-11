@@ -43,6 +43,7 @@ Act_Frame :: struct {
 }
 
 Mind_Exit :: struct {
+    tick:u64, // it exited at
     action:u16,
     by:u16, // the action that interrupted it, MIND_NONE when none did
     cause:Exit_Cause,
@@ -321,7 +322,7 @@ frame_exit :: proc(m:^Mind,acts:^[$A]$P,ctx:^Mind_Context,frame:^Act_Frame,cause
     if frame.reserved.target!=0 && ctx.reservations!=nil {reserve_release(ctx.reservations,frame.reserved,ctx.holder)}
     m.ended[action]=ctx.tick
     m.exited|=1<<uint(action)
-    m.exits[m.exits_seen%MIND_TRACE]={action=u16(action),by=by,cause=cause,step=frame==&m.step}
+    m.exits[m.exits_seen%MIND_TRACE]={tick=ctx.tick,action=u16(action),by=by,cause=cause,step=frame==&m.step}
     m.exits_seen+=1
     frame^={}
 }

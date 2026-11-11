@@ -1,5 +1,6 @@
 package behavior
 
+import "core:math"
 import "core:math/linalg"
 import "core:slice"
 import "mirai:core"
@@ -313,11 +314,66 @@ noticed :: #force_inline proc "contextless" (p:Perceiver,team:Team) -> bool {ret
 // Whether a point is in the cone of a perceiver, wider and farther for a
 // subject it saw last, or within its `aware` all around.
 @(private)
-sees :: proc(memory:^ai.Perception_Memory,subject:core.Entity,p:Perceiver,eye,forward,point:mm.Vec3) -> bool {
+sees :: #force_inline proc(memory:^ai.Perception_Memory,subject:core.Entity,p:Perceiver,eye,forward,point:mm.Vec3) -> bool {
+    reach:=sight_reach(memory,subject,p,eye,forward,point)
+    return reach==.Seen || reach==.Aware
+}
+
+// Why a perceiver sees a subject or not, as its turn decides it.
+Sight_Reason :: enum u8 {
+    Seen,         // in its cone, and nothing hides it
+    Aware,        // outside its cone but within `aware`, and nothing hides it
+    Out_Of_Range, // farther than its sight
+    Out_Of_Cone,  // within its sight, outside its cone and beyond `aware`
+    Team,         // of a team it does not notice
+    Blocked,      // a ray from its eyes hits another entity first
+    Unseeable,    // not a placed Perceivable, or the perceiver itself
+}
+
+// Where a point stands for the sight of a perceiver, before any ray.
+@(private)
+sight_reach :: proc(memory:^ai.Perception_Memory,subject:core.Entity,p:Perceiver,eye,forward,point:mm.Vec3) -> Sight_Reason {
     keep:=f32(1)
     if o:=ai.memory_find(memory,u64(subject));o!=nil && .Sight in o.senses {keep=SIGHT_KEEP}
-    if p.aware>0 && ai.sight_in_cone(eye,forward,point,min(p.aware,p.sight*keep),mm.PI) {return true}
-    return ai.sight_in_cone(eye,forward,point,p.sight*keep,p.angle*keep)
+    if ai.sight_in_cone(eye,forward,point,p.sight*keep,p.angle*keep) {return .Seen}
+    if p.aware>0 && ai.sight_in_cone(eye,forward,point,min(p.aware,p.sight*keep),mm.PI) {return .Aware}
+    return .Out_Of_Cone if ai.sight_in_cone(eye,forward,point,p.sight*keep,mm.PI) else .Out_Of_Range
+}
+
+Sight_Why :: struct {
+    reason:Sight_Reason,
+    blocker:core.Entity, // what the ray hit first, when Blocked
+    distance:f32,        // m from its eyes to the point of the subject
+    angle:f32,           // radians between where it faces and the way to the subject
+}
+
+// Why a perceiver sees a subject or not at this tick: what its next turn
+// finds, a ray included (none for a far perceiver, as for its turns). On
+// request, never from the tick.
+sight_why :: proc(perceivers:^core.Table(Perceiver,$A),perceptions:^core.Table(Perception,$B),perceivables:^core.Table(Perceivable,$C),worlds:^core.Table(core.World_Transform,$D),fars:^core.Table(nav.Nav_Far,$E),physics:core.Ref(phys.Physics_State),perceiver,subject:core.Entity) -> (why:Sight_Why) {
+    why.reason=.Unseeable
+    p,is_perceiver:=core.get(perceivers,perceiver)
+    pose,placed:=core.get(worlds,perceiver)
+    seen,perceivable:=core.get(perceivables,subject)
+    at,there:=core.get(worlds,subject)
+    if !is_perceiver || !placed || !perceivable || !there || subject==perceiver {return}
+    eye:=pose.position+mm.Vec3{0,p.eyes,0}
+    forward:=mm.quat_forward(pose.rotation)
+    point:=at.position+mm.Vec3{0,seen.point,0}
+    to:=point-eye
+    why.distance=linalg.length(to)
+    if why.distance>1e-4 && linalg.length(forward)>1e-6 {
+        why.angle=math.acos(clamp(linalg.dot(to/why.distance,linalg.normalize(forward)),-1,1))
+    }
+    if !noticed(p,seen.team) {why.reason=.Team;return}
+    memory:ai.Perception_Memory
+    if mine,found:=core.get(perceptions,perceiver);found {memory=mine.memory}
+    why.reason=sight_reach(&memory,subject,p,eye,forward,point)
+    if why.reason!=.Seen && why.reason!=.Aware || far_of(fars,perceiver) || !(why.distance>1e-4) {return}
+    if hit,blocked:=phys.raycast(physics,eye,to/why.distance,why.distance,perceiver);blocked && hit.entity!=subject {
+        why.reason,why.blocker=.Blocked,hit.entity
+    }
+    return
 }
 
 @(private)
