@@ -1760,7 +1760,7 @@ asset_card_float :: proc(s:^Session) -> ui.Float {
 // cut and the pointer on the cell shows it whole.
 @(private)
 content_name_cut :: proc(ctx:^ui.Context,name:string,cell:f32,names:u8=2) -> bool {
-    lines:=ui.text_lines(&ctx.font,content_name_breaks(ctx,name,cell-2,names),ctx.theme.font_small,cell-2,.Words)
+    lines:=ui.text_lines(&ctx.font,name,ctx.theme.font_small,cell-2,.Words)
     count:=0
     for {
         _,_,ok:=ui.text_lines_next(&lines)
@@ -1780,36 +1780,8 @@ content_name :: proc(ctx:^ui.Context,name:string,selected:bool,cell:f32,names:u8
     if color=={} {color=th.text if selected else th.text_muted}
     if ui.box(ctx,{width=ui.fixed(cell),height=ui.fixed(f32(names if names>0 else 2)*CONTENT_NAME_LINE),padding={1,0,1,0}}) {
         style:=ui.Text_Style{font=ui.FONT_MEDIUM if selected else 0,size=th.font_small,color=color,wrap=.Words,ellipsis=true,line_height=CONTENT_NAME_LINE/th.font_small}
-        ui.text(ctx,content_name_breaks(ctx,name,cell-2,names),style,ui.GROW,ui.GROW)
+        ui.text(ctx,name,style,ui.GROW,ui.GROW)
     }
-}
-
-// A name of up to lines lines with its words too wide for width broken where
-// a name breaks: after a _ or a -, and between a small letter and a capital.
-// In one line it is cut at its end instead.
-@(private)
-content_name_breaks :: proc(ctx:^ui.Context,name:string,width:f32,lines:u8) -> string {
-    font,size:=&ctx.font,ctx.theme.font_small
-    if lines==1 || ui.text_width(font,name,size)<=width {return name}
-    b:=strings.builder_make(context.temp_allocator)
-    words:=name
-    for word in strings.split_iterator(&words," ") {
-        if len(b.buf)>0 {strings.write_byte(&b,' ')}
-        rest:=word
-        for ui.text_width(font,rest,size)>width {
-            cut:=0
-            for i in 1..<len(rest) {
-                a,c:=rest[i-1],rest[i]
-                if (a=='_' || a=='-' || a>='a' && a<='z' && c>='A' && c<='Z') && ui.text_width(font,rest[:i],size)<=width {cut=i}
-            }
-            if cut==0 {break}
-            strings.write_string(&b,rest[:cut])
-            strings.write_byte(&b,'\n')
-            rest=rest[cut:]
-        }
-        strings.write_string(&b,rest)
-    }
-    return strings.to_string(b)
 }
 
 // The border of a thumbnail and its width: faint, lighter under the
