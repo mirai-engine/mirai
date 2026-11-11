@@ -13,6 +13,7 @@ import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:ui"
 
 // The commands mirai ui, mirai scene and mirai texts, which the author
 // program of the engine runs: a project reads, checks and writes the
@@ -93,7 +94,7 @@ Project :: struct {
 }
 
 // What builds the library the types of a game come from.
-BUILD_FIX :: "mirai build editor <project> --dev builds it"
+BUILD_FIX :: "mirai build editor <project> builds it"
 
 
 // Opens the project at root with the assets of its plugins. library false
@@ -209,14 +210,11 @@ ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:strin
         record,_=asset.registry_find(&p.registry,id)
         path=strings.clone(record.path,context.temp_allocator)
     }
-    reading:=Reading{allocator=context.temp_allocator,raw=text,assets=registry_assets(&p.registry)}
     texts:=texts_read(p.assets,p.languages[0])
-    args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,info=p.info,asset=id,texts=&texts}
-    applied:bool
-    if written.made,written.removed,applied=document_apply(&args,&r,-1,text);!applied {return {},reading.problem}
     params:=widget_params(p.assets,id)
-    bytes,imports,loads:=document_bytes(&args,id,&r)
-    if !loads {return {},reading.problem}
+    bytes:[]u8
+    imports:[]ui.Tree_Data
+    if bytes,imports,problem=ui_apply(p,id,&r,text,&texts,&written);problem!="" {return {},problem}
     written.path,written.fresh=path,fresh
     file:=project.path(p.assets_root,path,allocator=context.temp_allocator) if fresh else asset.registry_file_path(&p.registry,path,context.temp_allocator)
     if problem=file_put(p,file,path,bytes,&written);problem!="" {return}
@@ -232,6 +230,18 @@ ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:strin
         put:Written
         return file_put(p,asset.registry_file_path(&p.registry,path,context.temp_allocator),path,bytes,&put)==""
     },p)
+    return
+}
+
+// The bytes of the .ui id once the document text declares it in r, with what
+// its keys say set in texts. problem: why the document is refused.
+@(private)
+ui_apply :: proc(p:^Project,id:base.Asset_Id,r:^Records,text:string,texts:^Texts,written:^Written) -> (bytes:[]u8,imports:[]ui.Tree_Data,problem:string) {
+    reading:=Reading{allocator=context.temp_allocator,raw=text,assets=registry_assets(&p.registry)}
+    args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,info=p.info,asset=id,texts=texts}
+    applied,loads:bool
+    if written.made,written.removed,applied=document_apply(&args,r,-1,text);!applied {return nil,nil,reading.problem}
+    if bytes,imports,loads=document_bytes(&args,id,r);!loads {return nil,nil,reading.problem}
     return
 }
 
@@ -299,14 +309,12 @@ texts_command :: proc(p:^Project,args:[]string,output,errors:io.Writer) -> int {
 
 // Checks the .ui of the project, or those of ids, against the types of the
 // game: what does not load, the names that resolve to nothing, the paths
-// they bind that it lacks and the procedures their Draw nodes name; checking
-// all of them, also the node names the code of the game asks them for.
+// they bind that it lacks and the procedures their Draw nodes name.
 ui_check :: proc(p:^Project,ids:[]base.Asset_Id,problems:^[dynamic]Bind_Problem) {
     types:Bind_Types
     defer bind_types_free(&types)
     if len(ids)==0 {
         bind_check_all(problems,&types,context.allocator,p.assets,p.info)
-        code_names_check(problems,p.assets,{project.folder_path(p.root,.Game,context.temp_allocator)})
     } else {
         for id in ids {bind_check_file(problems,&types,context.allocator,p.assets,p.info,id)}
     }

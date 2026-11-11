@@ -124,19 +124,6 @@ bind_scene_table :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_DISTANCE, g.distance if g.valid else r.dummy_texture)
 }
 
-@(private)
-shadow_pipeline :: proc(r:^Renderer,software,hardware,colored_software,colored_hardware:Pipeline_Id)->rhi.Pipeline {
-    return shadow_target(r,software,hardware,colored_software,colored_hardware)^
-}
-
-// The same, as where the renderer keeps it.
-@(private)
-shadow_target :: proc(r:^Renderer,software,hardware,colored_software,colored_hardware:Pipeline_Id)->^rhi.Pipeline {
-    id:=colored_hardware if r.hardware_rt else colored_software
-    if !shadows_colored(r) {id=hardware if r.hardware_rt else software}
-    return &r.pipelines[id]
-}
-
 // Whether shadow rays take the color of the glass they cross.
 @(private)
 shadows_colored :: proc(r: ^Renderer) -> bool {
@@ -202,6 +189,7 @@ gbuffer_pass :: proc(p: ^Pass, phase: u32, clear, keep_depth: bool) {
 		if clipped := &r.pipelines[.Gbuffer_Layers_Clip if p.layered else .Gbuffer_Clip if p.reflectance else .Gbuffer_Plain_Clip]; p.camera.clip_plane != {} && clipped^ != 0 {target = clipped}
 		rhi.cmd_bind_pipeline(cmd, target^)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
+		textures_feedback_bind(r, cmd)
 		rhi.cmd_draw_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)) + u64(phase) * size_of(Gpu_Draw), 1, size_of(Gpu_Draw))
 		gbuffer_programs_draw(p, target, phase)
 	}
@@ -295,6 +283,7 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 		rhi.cmd_bind_pipeline(p.cmd, pipeline)
 		set_params(p.cmd, params)
 		points_bind(p)
+		textures_feedback_bind(p.r, p.cmd)
 		run(p, glass, half, x, y)
 		points_rounds(p, batch, pipeline, params, 1)
 	}
@@ -309,12 +298,10 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 	if settings.reflections == .Detailed {params.detail_below = REFLECTION_SHARED_ROUGHNESS} else {split = shared_from}
 	// Its rays shade what they hit with the layers of its material, and a
 	// layer of glass traces the lobe its own layers shape.
-	pipeline: rhi.Pipeline
-	if scene_layered(s) || (glass && glass_layered(s)) {
-		pipeline = shadow_pipeline(r,.Reflect,.Reflect_Hw,.Reflect_Color,.Reflect_Color_Hw)
-	} else {
-		pipeline = shadow_pipeline(r,.Reflect_Unlayered,.Reflect_Unlayered_Hw,.Reflect_Unlayered_Color,.Reflect_Unlayered_Color_Hw)
-	}
+	constants: rhi.Shader_Constants
+	if shadows_colored(r) {constants += {REFLECT_COMP_COLOR}}
+	if !scene_layered(s) && !(glass && glass_layered(s)) {constants += {REFLECT_COMP_UNLAYERED}}
+	pipeline := pipeline_of(r, .Reflect, constants)^
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, albedo)
@@ -339,7 +326,7 @@ reflect_pass :: proc(p: ^Pass, normal, depth, albedo, history_previous, history_
 	// The disc keeps its size on screen at any resolution, down to the few
 	// pixels a filter needs to have neighbours at all.
 	resolve := Resolve{history_valid = 1 if history_valid else 0, max_radius = max(7 * f32(t.height) / 900, 3), blend = 0.08, shared_from = split}
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Reflect_Resolve_Glass if glass else .Reflect_Resolve])
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Reflect_Resolve, {REFLECT_RESOLVE_COMP_GLASS} if glass else {})^)
 	set_params(cmd, &resolve)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.reflect_raw)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, normal)
@@ -396,6 +383,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     texture_uploads_install(r)
     geometry_uploads_install(r)
     pipelines_install(r)
+    if r.variants_wanted {pipeline_variants_ask(r)}
     // What the extensions asked of this frame lasts for it alone.
     defer {
         r.pass_count=0;r.main_pipeline=0;r.gbuffer_asked={}
@@ -417,7 +405,6 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         for view in frame.views {if view.texture==0 && !view.disabled {eye=view.camera.position;break}}
         renderer_origin_follow(r,eye)
     }
-    textures_views_record(r,frame)
     frame,framed:=origin_frame(r,frame)
     if !framed {return false}
     displaced_prepare(r)
@@ -426,7 +413,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     if !frame.ui_only {r.frame_occluders,r.scene.occluders=r.scene.occluders,{}}
     batches_build(r)
     // The room for the lights of the GPU sizes the light buffers: it is taken before they are made.
-    if !scene_light_region(r) || !ensure_scene_capacity(r) {return false}
+    if !scene_lights_settle(r) || !scene_light_region(r) || !ensure_scene_capacity(r) {return false}
     if !frame.offscreen && !frame.ui_only {
         // The cuts rays trace follow the eye of the first view of the window, as the probes.
         eye:=frame.camera.position
@@ -464,6 +451,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     read_stats(r,slot)
     points_read(r,slot)
     pages_update(r,slot)
+    textures_feedback_read(r,slot)
     extension_counters_begin(r,cmd,slot)
     // A frame none of whose views culls reports no counts, not those of the last one that did.
     rhi.cmd_fill_buffer(cmd,r.stats_buffer,0,size_of(Gpu_Cull_Stats),0)
@@ -480,6 +468,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     texture_uploads_record(r,cmd)
     recorded_ok:=renderer_commit_geometry(r,cmd,slot) && font_record(r,cmd,slot) && upload_scene(r,cmd) && (frame.ui_only || air_frame(r,cmd))
     if recorded_ok {pages_record_begin(r,cmd)}
+    recorded_ok=recorded_ok && textures_feedback_begin(r,cmd,frame)
     // The BLASes built frames ago become their compacted copies; the TLAS of this frame names those.
     if recorded_ok && r.hardware_rt {
         if replaced,freed:=rhi.cmd_compact_blases(cmd);replaced>0 {s.tlas_dirty=true;geometry_released(s,freed)}
@@ -560,6 +549,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         rhi.cmd_copy_buffer(cmd,r.stats_buffer,0,r.stats_readback[slot],0,size_of(Gpu_Cull_Stats))
         rhi.cmd_barrier_buffer(cmd,r.stats_readback[slot],.Host_Read)
         pages_record_end(r,cmd,slot)
+        textures_feedback_end(r,cmd,slot)
         points_end(r,cmd,slot)
         extension_counters_end(r,cmd,slot)
         depth_probes_end(r,cmd,slot)
@@ -1029,7 +1019,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 		if !upload_transient(r, cmd, restart[:], s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, chunk_dispatch))) {return false}
 		params := Cull_Params{phase = 1, occlusion = 1, hiz_levels = t.hiz_levels, glass_groups = glass_groups}
 		cull_record(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
-		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Clusters_Candidates])
+		rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Cull_Clusters, {CULL_CLUSTERS_COMP_CANDIDATES})^)
 		cull_bind(p, params, t.hiz[p.current], r.stats_buffer, p.view.glass_dispatch)
 		rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, candidate_dispatch)))
 		cull_programs_bin(p, 1)
@@ -1192,6 +1182,7 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 			target := &r.pipelines[.Gbuffer_Nested_Layers if p.layered else .Gbuffer_Nested if p.reflectance else .Gbuffer_Nested_Plain]
 			rhi.cmd_bind_pipeline(cmd, target^)
 			rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
+			textures_feedback_bind(r, cmd)
 			rhi.cmd_draw_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, draws)), 1, size_of(Gpu_Draw))
 			gbuffer_programs_draw(p, target, 0)
 		}
@@ -1232,7 +1223,7 @@ pass_shadow_set :: proc(p: ^Pass, set: ^Shadow_Set) {
 		params := Params{light_budget = settings.light_budget, sun_radius = settings.sun_radius, block = set.block}
 		// The filters of glass with a program wait for it.
 		batch := shadows_colored(r) && points_begin(p, filters = true)
-		pipeline := shadow_pipeline(r, .Shadow_Trace, .Shadow_Trace_Hw, .Shadow_Trace_Color, .Shadow_Trace_Color_Hw)
+		pipeline := pipeline_of(r, .Shadow_Trace, {SHADOW_TRACE_COMP_COLOR} if shadows_colored(r) else {})^
 		rhi.cmd_bind_pipeline(cmd, pipeline)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
@@ -1301,7 +1292,7 @@ pass_direct :: proc(p: ^Pass, mode: Direct_Mode) -> bool {
 		if !ensure_direct_list(r, t) {return false}
 		rhi.cmd_fill_buffer(cmd, t.direct_traced, 0, 4, 0)
 		rhi.cmd_copy_buffer(cmd, r.dispatch_start, 0, t.direct_dispatch, 0, 16)
-		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Lighting if p.layered else .Lighting_Unlayered])
+		rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Lighting, {} if p.layered else {LIGHTING_COMP_UNLAYERED})^)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct)
@@ -1320,7 +1311,7 @@ pass_direct :: proc(p: ^Pass, mode: Direct_Mode) -> bool {
 		Params :: struct {light_budget, listed, reference: u32, sun_radius: f32, resume, pad0, pad1, pad2: u32}
 		params := Params{light_budget = settings.light_budget, listed = u32(blocks), reference = u32(settings.reference_lights), sun_radius = settings.sun_radius}
 		batch := shadows_colored(r) && points_begin(p, filters = true)
-		pipeline := shadow_pipeline(r, .Lighting_Traced, .Lighting_Traced_Hw, .Lighting_Traced_Color, .Lighting_Traced_Color_Hw)
+		pipeline := pipeline_of(r, .Lighting_Traced, {LIGHTING_TRACED_COMP_COLOR} if shadows_colored(r) else {})^
 		rhi.cmd_bind_pipeline(cmd, pipeline)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
@@ -1425,9 +1416,10 @@ pass_contact :: proc(p: ^Pass) -> bool {
 	if !ok {return false}
 	rhi.cmd_timestamp(cmd, "contact")
 	Params :: struct {mode, pad0, pad1, pad2: u32}
+	contact := pipeline_of(r, .Contact)^
 	for mode in u32(0) ..< 2 {
 		params := Params{mode = mode}
-		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Contact_Hw] if mode == 0 && r.hardware_rt else r.pipelines[.Contact])
+		rhi.cmd_bind_pipeline(cmd, contact)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
@@ -1449,7 +1441,8 @@ GI_REFERENCE_BOUNCES :: u32(32)
 @(private)
 pass_gi_reference :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
-	if !ensure_pipelines(r, {.Gi_Reference_Hw} if r.hardware_rt else {.Gi_Reference}) {return false}
+	pipeline := pipeline_of(r, .Gi_Reference)^
+	if pipeline == 0 {return false}
 	if !target(r, cmd, &t.gi_reference, t.width, t.height, .RGBA32_Float, HISTORY_USAGE, "gi reference", true) {return false}
 	restart := !t.gi_reference_valid || r.scene_uploads_change || t.gi_reference_view != p.frame.view_proj_unjittered || t.gi_reference_eye != p.camera.position
 	t.gi_reference_view, t.gi_reference_eye = p.frame.view_proj_unjittered, p.camera.position
@@ -1457,7 +1450,6 @@ pass_gi_reference :: proc(p: ^Pass) -> bool {
 	Params :: struct {paths, bounces, reset: u32, sun_radius: f32, resume, pad0, pad1, pad2: u32}
 	params := Params{paths = GI_REFERENCE_PATHS, bounces = GI_REFERENCE_BOUNCES, reset = u32(restart), sun_radius = r.settings.sun_radius}
 	batch := points_begin(p)
-	pipeline := r.pipelines[.Gi_Reference_Hw] if r.hardware_rt else r.pipelines[.Gi_Reference]
 	rhi.cmd_bind_pipeline(cmd, pipeline)
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
@@ -1478,7 +1470,7 @@ pass_gi_reference :: proc(p: ^Pass) -> bool {
 pass_composite :: proc(p: ^Pass) {
 	r, cmd, t := p.r, p.cmd, p.t
 	rhi.cmd_timestamp(cmd, "composite")
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Composite if p.layered else .Composite_Unlayered])
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Composite, {} if p.layered else {COMPOSITE_COMP_UNLAYERED})^)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.albedo)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.emission)

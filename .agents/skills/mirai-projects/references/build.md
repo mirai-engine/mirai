@@ -19,7 +19,7 @@ errors of the attributes.
   `mirai-player` runs its game (`mirai play`, `player.start`, the editor's attached players).
   Optimized (`Size`, `Speed`, `Aggressive`) it is a single LLVM module, as the shipped game
   compiles it, because a `#force_inline` procedure of another package is not inlined across
-  modules; with `--dev` (`minimal`) or `None`, one module per package
+  modules; in dev (`minimal`) or `None`, one module per package
   (`library_optimization_append`).
 - `Game`: a `main` that calls `host.player_run` over `gen/shipped_world`, the world without the
   development plugins, which only this target generates. It compiles the whole engine, the
@@ -202,7 +202,7 @@ build.shaders_destroy(job)            // waits for a generation in progress
 ## Shipped game
 
 The `Game` folder (`Desc.output`, or `.mirai/game`) receives the executable, `project.mirai`, the
-icon it names if it exists, `input.mirai` if it exists, `settings.mirai` with the
+icon it names if it exists, `settings.mirai` with the
 [combined](projects.md#project-settings) settings, `assets/` with what was
 [cooked](#asset-cooking) of the project and of each active plugin that declares `Assets` (in
 `assets/plugins/<name>/`), `shaders/` with the manifest, the catalog and the code of this system of
@@ -221,7 +221,7 @@ The copy replaces files and merges folders without deleting anything from the de
 ([player](../../mirai-core/references/host.md#arguments)). It leaves out what is only seen or
 heard: neither the icon nor `shaders/` (it does not generate the project's), and its cooking leaves
 behind the `presentation` asset kinds of `asset.KINDS` (textures, sounds, interfaces, fonts and
-prompts) without counting them as missing. It carries `input.mirai`, with the bindings Project
+prompts) without counting them as missing. It carries `settings.mirai`, with the bindings Project
 Settings > Input changed, and SDL3, which the executable links.
 
 ## Imported sources
@@ -266,7 +266,7 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
 - **Parallel.** Files are cooked on a job system (`Cook_Desc.worker`, else one of the cook with a
   thread per core), the largest first; what is written and the report are those of a cook on one
   thread, and an error is the first by path. Prefab resolution and texture cache writes take a lock.
-  A `--dev` game is cooked with the pack `QUICK` of `cook/compressor/lz` (`Cook_Desc.quick`), a
+  A dev game is cooked with the pack `QUICK` of `cook/compressor/lz` (`Cook_Desc.quick`), a
   release one with `SHIP`.
 - **Scope.** The roots and, transitively, the dependencies each asset declares; the rest goes to
   `dropped`. A dependency that is not any file goes to `missing` and does not stop the cooking.

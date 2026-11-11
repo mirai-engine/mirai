@@ -298,6 +298,7 @@ scene_reads_components_stored_with_another_layout :: proc(t:^testing.T) {
 @(private="file")
 lamp_prefab :: proc(prefab:^Scene,types:^Types,radius:f32,color:[3]f32) {
     scene_init(prefab,types,{0xa,0xa})
+    prefab.doc.flags+={.Prefab}
     scene_entity_add(prefab,1,0,"Lamp")
     scene_entity_add(prefab,2,1,"Bulb")
     scene_entity_add(prefab,3,1,"Shade")
@@ -872,6 +873,7 @@ stale_prefab_instances_resolve_against_the_files_of_their_prefabs :: proc(t:^tes
     test_file_put(t,&files,&lamp)
     // Room holds a Lamp at intensity 2; the level holds a Room and a Lamp.
     room:Scene;scene_init(&room,&types,{0xc,0xc});defer scene_destroy(&room)
+    room.doc.flags+={.Prefab}
     scene_entity_add(&room,1,0,"Room")
     inner,_:=scene_instantiate(&room,&lamp,{0xa,0xa},1)
     room_lamp,_:=scene_instance(&room,inner)
@@ -944,13 +946,13 @@ stale_prefab_instances_resolve_against_the_files_of_their_prefabs :: proc(t:^tes
     testing.expect(t,!resolver_instance_stale(&other,of_room))
 }
 
-// A prefab is a scene while it has one root, and nothing more: a variant is
-// a prefab whose root is an instance of another, entities that are there
-// become an instance of a prefab that says which of its entities each stands
-// for, and a prefab that gains a second root places nothing from then on,
-// while what it placed before stays as it is.
+// A prefab is a scene its header says is one, with one root: a variant is a
+// prefab whose root is an instance of another, entities that are there become
+// an instance of a prefab that says which of its entities each stands for,
+// and a prefab made a scene places nothing from then on, while what it placed
+// before stays as it is.
 @(test)
-a_prefab_is_a_scene_with_one_root_and_stops_being_one_with_a_second :: proc(t:^testing.T) {
+a_prefab_is_a_scene_of_that_kind_and_stops_being_one_when_made_a_scene :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     files:Test_Files
     files.assets=make(map[base.Asset_Id]^Asset)
@@ -964,6 +966,7 @@ a_prefab_is_a_scene_with_one_root_and_stops_being_one_with_a_second :: proc(t:^t
     testing.expect(t,asset_prefab(files.assets[LAMP]))
 
     tall:Scene;scene_init(&tall,&types,TALL);defer scene_destroy(&tall)
+    tall.doc.flags+={.Prefab}
     _,placed:=scene_instantiate(&tall,&lamp,LAMP,0)
     testing.expect_value(t,placed,Error.None)
     base_of,variant:=prefab_variant_base(&tall)
@@ -994,8 +997,9 @@ a_prefab_is_a_scene_with_one_root_and_stops_being_one_with_a_second :: proc(t:^t
     testing.expect(t,held==Prefab_Instance{LAMP,lamp.stamp} && member(&level,root,2)==11 && member(&level,root,3)==12)
     testing.expect(t,scene_overridden(&level,11,light_hash(),"range") && !scene_overridden(&level,11,light_hash(),"intensity"))
 
-    // The lamp gains a second root: it is a scene, and no prefab.
+    // The lamp gains a second root and is made a scene: no prefab.
     scene_entity_add(&lamp,4,0,"Second root")
+    lamp.doc.flags-={.Prefab}
     test_file_put(t,&files,&lamp)
     testing.expect(t,!asset_prefab(files.assets[LAMP]))
     _,rooted:=prefab_root(&lamp)

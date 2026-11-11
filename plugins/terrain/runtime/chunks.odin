@@ -250,7 +250,7 @@ chunk_build_terrain :: proc(s:^Source,coord:[3]i32,mesh:^Chunk_Mesh,collision:=t
     if !collision {return true}
     // The collider keeps every sample, whatever the level shown.
     if resize(&mesh.heights,columns*rows)!=nil {return false}
-    for row in 0..<rows {for column in 0..<columns {mesh.heights[row*columns+column]=grid_get(&s.heights,low.x+column,low.z+row)}}
+    for row in 0..<rows {for column in 0..<columns {mesh.heights[row*columns+column]=grid_get(&s.field,low.x+column,low.z+row)}}
     if !grid_none(&s.holes) || len(join.cuts)>0 {
         if resize(&mesh.holes,(columns-1)*(rows-1))!=nil {return false}
         for row in 0..<rows-1 {for column in 0..<columns-1 {mesh.holes[row*(columns-1)+column]=u8(cell_hole(s,join.cuts,low.x+column,low.z+row))}}
@@ -322,8 +322,8 @@ heightfield_tangents :: proc "contextless" (normals:[][3]f32,out:[][4]f32) {
 heightfield_normal :: proc "contextless" (s:^Source,x,z,step:int) -> [3]f32 {
     nx,nz:=int(s.samples.x),int(s.samples.z)
     x0,x1,z0,z1:=max(x-step,0),min(x+step,nx-1),max(z-step,0),min(z+step,nz-1)
-    west,east:=grid_get(&s.heights,x0,z),grid_get(&s.heights,x1,z)
-    north,south:=grid_get(&s.heights,x,z0),grid_get(&s.heights,x,z1)
+    west,east:=grid_get(&s.field,x0,z),grid_get(&s.field,x1,z)
+    north,south:=grid_get(&s.field,x,z0),grid_get(&s.field,x,z1)
     return linalg.normalize0([3]f32{(west-east)/(f32(x1-x0)*s.cell),1,(north-south)/(f32(z1-z0)*s.cell)})
 }
 
@@ -334,12 +334,12 @@ heightfield_normal :: proc "contextless" (s:^Source,x,z,step:int) -> [3]f32 {
 // to extract.
 @(private)
 chunk_volume_window :: proc(s:^Source,low,high:[3]int,samples:^[dynamic]f32,grid:^geom.Scalar_Grid,join:=Chunk_Join{}) -> (surface,ok:bool) {
-    g:=&s.distances
+    g:=&s.field
     halo:=VOLUME_HALO
     last:[3]int
     grid^={samples={int(s.samples.x),int(s.samples.y),int(s.samples.z)},cell={s.cell,s.cell,s.cell},origin=source_origin(s)}
     for axis in 0..<3 {grid.first[axis],last[axis]=max(low[axis]-halo,0),min(high[axis]+halo,int(s.samples[axis])-1)}
-    if !volume_held(s,grid.first,last) {return}
+    if !source_region_held(s,grid.first,last) {return}
     from,to:=grid_pages(g,grid.first,last)
     sign:=0
     for pz in from.z..=to.z {for py in from.y..=to.y {for px in from.x..=to.x {

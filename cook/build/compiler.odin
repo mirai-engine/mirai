@@ -376,3 +376,103 @@ root_relative :: proc(text,root:string) -> string {
     if at<0 {return text}
     return strings.concatenate({slashed[:at],"<root>",slashed[at+len(root):]},context.temp_allocator)
 }
+
+// A compiler that runs, with the files its error and output streams go to:
+// of a library, a program, the target of a job or a test executable.
+@(private)
+Compile :: struct {
+    process:os.Process,
+    streams:[2]string, // its error and output streams
+    staged:string,     // what it writes, which it must leave; "": it writes nothing (a check)
+    library:int,       // of a job: a plugin library, -1 its target; of the engine: a library, -1 a program
+    folder:string,     // of a library: where its objects stay (relink.odin)
+    relink:bool,       // it links again the objects of folder
+}
+
+// Starts a compiler with its streams going to their files, in the root of the
+// engine and within what it may use (compiler_limits). environment nil: that
+// of this process. False when a stream cannot be written or it does not start.
+@(private)
+compile_start :: proc(c:^Compile,root:string,command:[]string,environment:[]string) -> bool {
+    streams:[2]^os.File
+    for file,i in c.streams {
+        stream,error:=os.open(file,{.Write,.Create,.Trunc})
+        if error!=nil {
+            if i>0 {os.close(streams[0])}
+            return false
+        }
+        streams[i]=stream
+    }
+    process,error:=subprocess.start({working_dir=root,command=command,env=environment,stderr=streams[0],stdout=streams[1]},compiler_limits(root))
+    os.close(streams[0]);os.close(streams[1])
+    if error!=nil {return false}
+    c.process=process
+    return true
+}
+
+// What a compiler that ended left in its streams, which it removes: its
+// diagnostics, what it said besides them and how it failed: .Compile for an
+// error among them, an exit code that is not 0 or no file where it writes,
+// .Out_Of_Memory when it ran out. links: the text goes without the calls to
+// the linker it printed; output: all it wrote to its error stream.
+@(private)
+compile_end :: proc(c:^Compile,exit_code:int,allocator:=context.allocator,links:=false) -> (diagnostics:[]Diagnostic,text:string,failure:Failure,output:string) {
+    said:[2]string
+    for file,i in c.streams {
+        data,_:=os.read_entire_file(file,context.temp_allocator)
+        said[i]=string(data)
+        _=os.remove(file)
+    }
+    rest:string
+    diagnostics,rest=diagnostics_parse(said[0],allocator)
+    text=strings.trim_space(strings.concatenate({links?link_calls_strip(rest,context.temp_allocator):rest,"\n",strings.trim_space(said[1])},allocator))
+    errors:=exit_code!=0
+    for diagnostic in diagnostics {errors||=diagnostic.severity==.Error}
+    switch {
+    case errors:
+        if text=="" && len(diagnostics)==0 && exit_code!=0 {text=compiler_silent_failure(exit_code,allocator)}
+        failure=.Out_Of_Memory if compiler_out_of_memory(text) else .Compile
+    case c.staged!="" && !os.is_file(c.staged):
+        text=fmt.aprintf("the compiler succeeded and %s is missing%s",c.staged,ODIN_OS==.Windows?"; an antivirus may have quarantined it: exclude its folder from real-time scanning":"",allocator=allocator)
+        failure=.Compile
+    }
+    return diagnostics,text,failure,said[0]
+}
+
+// Puts what a compiler wrote at staged in place of published. Windows does
+// not replace a file a program has loaded, and lets it be renamed: the
+// previous one goes to retired first. False when it cannot be replaced.
+@(private)
+publish :: proc(staged,published,retired:string) -> bool {
+    if os.rename(staged,published)==nil {return true}
+    return os.rename(published,retired)==nil && os.rename(staged,published)==nil
+}
+
+// What a published build is stamped with: the fingerprint of the sources its
+// compiler read (fingerprint), with root, compiler, flags and tests.
+@(private)
+Stamp_Desc :: struct {
+    file:string,           // the stamp: the fingerprint and what was published
+    sources_file:string,   // what the last build that stamped read
+    sources_staged:string, // what this compiler read, which takes the place of sources_file; "": sources_file stands (a link again)
+    root,compiler:string,
+    flags:[]string,
+    tests:bool,
+    started:time.Time,     // when the compiler started
+}
+
+// Publishes and stamps with what the compiler read. A source saved while it
+// ran is not what was built: without the stamp the next build compiles again.
+@(private)
+publish_and_stamp :: proc(staged,published,retired:string,sources:[]string,stamp:Stamp_Desc) -> (published_ok,stamped:bool) {
+    if !publish(staged,published,retired) {return false,false}
+    hash,latest:=fingerprint(stamp.root,stamp.compiler,stamp.flags,sources,tests=stamp.tests)
+    if stamp.sources_staged!="" {_=os.remove(stamp.sources_file)}
+    stamped=len(sources)>0 && time.diff(latest,stamp.started)>0 && (stamp.sources_staged=="" || os.rename(stamp.sources_staged,stamp.sources_file)==nil)
+    if stamped {stamped=os.write_entire_file(stamp.file,fmt.tprintf("%x %s",hash,published))==nil}
+    if !stamped {
+        _=os.remove(stamp.file)
+        if stamp.sources_staged!="" {_=os.remove(stamp.sources_staged)}
+    }
+    return true,stamped
+}

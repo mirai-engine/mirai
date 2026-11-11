@@ -354,7 +354,7 @@ of pieces) is not a fixed cap, and a frame that does not load does not allocate.
   - A texture of more than `LOAD_FRAME_BYTES` that a load takes over several frames
     (`assets_take(..., over_frames=true)`) costs in its frame only its levels of side
     `TEXTURE_TAIL` (`assets_prepared_cost`); the others go up with the renderer's uploads
-    ([residency](../../mirai-rendering/references/materials.md#residency-by-distance)) and the
+    ([residency](../../mirai-rendering/references/materials.md#residency-by-sampling)) and the
     load ends when they have gone up (`app_assets_uploading`). Without room in that queue, it waits
     a frame. Whoever needs the result right away takes it whole.
   - A mesh that gives the pools more than `LOAD_FRAME_BYTES` right away (with skeleton, morphs,
@@ -470,8 +470,8 @@ row.
 - BC textures on a device that does not sample them are decoded to RGBA8, and BC6H to RGBA16F. An
   array or a cube is loaded whole; where a 2D image is sampled (material, program parameter, UI,
   decal, sky) it is `Unsupported` (`assets_texture_image`). The levels of a single-layer texture
-  follow its distance
-  ([residency](../../mirai-rendering/references/materials.md#residency-by-distance)):
+  follow what the GPU samples of it
+  ([residency](../../mirai-rendering/references/materials.md#residency-by-sampling)):
   `app_textures_stream` reads them from its file in jobs between frames and shares with the loads
   their part of each frame.
 

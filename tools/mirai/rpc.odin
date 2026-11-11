@@ -178,11 +178,11 @@ connection_ended :: proc(connection:Connection,method:string,err:api.Error) -> b
 // stderr, where all that mirai session start prints goes too: stdout is the
 // answer of the call.
 connection_session_start :: proc(connection:Connection) -> api.Error {
-    fmt.eprintfln("mirai: %s has no open editor; starting its headless session (mirai session start %s --dev)",connection.project,connection.project)
+    fmt.eprintfln("mirai: %s has no open editor; starting its headless session (mirai session start %s)",connection.project,connection.project)
     self,error:=os.get_executable_path(context.temp_allocator)
     if error!=nil {return {api.UNREACHABLE,fmt.tprintf("could not start the session of %s: %v",connection.project,error),""}}
-    if run_with(connection.root,{self,"session","start",connection.project,"--dev"},os.stderr)!=0 {
-        return {api.UNREACHABLE,fmt.tprintf("mirai session start %s --dev failed; what it said is above",connection.project),""}
+    if run_with(connection.root,{self,"session","start",connection.project},os.stderr)!=0 {
+        return {api.UNREACHABLE,fmt.tprintf("mirai session start %s failed; what it said is above",connection.project),""}
     }
     return {}
 }

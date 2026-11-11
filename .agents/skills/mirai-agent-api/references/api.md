@@ -170,10 +170,9 @@ first when it is not current, as `mirai import` does. What a game-writing agent 
   file stays as it was; a file that already says the document is not written. An asset that does
   not exist is made with an id that follows from its path. A `.ui` written with other `params`
   takes along the files that use it as a widget, as the editor does.
-- **`ui check` reads the code too.** Checking every `.ui`, it also parses the Odin of `game/`
-  (`cook/author/ui_code_names.odin`): a literal a call of `gui.clicked` and its like names a node
-  by is a node of some `.ui` of the project, a node inside a widget as `use/node`; and the `draw`
-  of each `Draw` node is a `@(draw)` procedure of the built game.
+- **`ui check` checks the `draw` of each `Draw` node** against the `@(draw)` procedures of the
+  built game. The node names game code asks a screen for are checked at run time, per screen:
+  `gui.names` in `engine.diagnostics`.
 - **Types of the game.** The paths an interface binds and the components of a scene are read
   against the `editor` library of the project, which also has the cards of its plugins. Only
   `ui read` runs without it: the tool refuses every other command, with the `mirai build editor`
@@ -213,7 +212,7 @@ mirai rpc --batch <calls.jsonl|-> [the same options]
   its text to a field that takes only a string. A value that a shell would split or that needs a
   list of texts goes in the object form.
 - `--project P` takes the port from its `api.json` and, when the project has no editor open,
-  starts its headless `--dev` session as `mirai session start` does and then makes the call,
+  starts its headless dev session as `mirai session start` does and then makes the call,
   saying so on stderr; a method that only makes sense with an editor already open
   (`RPC_NEEDS_OPEN_EDITOR`) never starts one and fails without an editor. Without `--project` or
   `--port`, the port is that of `MIRAI_API_PORT` or the editor of the project at or above the
@@ -430,5 +429,5 @@ when the server opens; code reload rebuilds methods and schemas without closing 
 - During Play or Simulate, scene edits, history, saving, prefabs and asset authoring **work on the
   document and the assets**: the game runs on its copy and sees an asset that changes when it is
   read again, as with any write on disk. What opens a view over the viewport (a section, a material
-  document) or simulates on the document (`placement.drop`) waits for Edit; `simulation.apply`
+  document) or simulates on the document (`physics.settle`) waits for Edit; `simulation.apply`
   commits transforms into the document with one undo ([methods](methods.md#simulation)).

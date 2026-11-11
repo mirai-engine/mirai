@@ -47,8 +47,6 @@ state_and_owner_refused_by_a_full_frame_are_sent_on_the_next_interval :: proc(t:
     sessions[0].problems,sessions[1].problems=&problems[0],&problems[1]
     testing.expect_value(t,wire.host_connect(&sessions[1].host,wire.address_memory(0)),wire.Error.None)
     outbox:Net_Outbox;defer core.value_free(&outbox,type_info_of(Net_Outbox))
-    server_events,client_events:Net_Events
-    defer core.value_free(&server_events,type_info_of(Net_Events));defer core.value_free(&client_events,type_info_of(Net_Events))
     server,client:=&worlds[0],&worlds[1]
     connected:Connection
     for tick in 1..<80 {
@@ -119,8 +117,6 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
     sessions[0].problems,sessions[1].problems=&problems[0],&problems[1]
     testing.expect_value(t,wire.host_connect(&sessions[1].host,wire.address_memory(0)),wire.Error.None)
     outbox:Net_Outbox;defer core.value_free(&outbox,type_info_of(Net_Outbox))
-    server_events,client_events:Net_Events
-    defer core.value_free(&server_events,type_info_of(Net_Events));defer core.value_free(&client_events,type_info_of(Net_Events))
     server,client:=&worlds[0],&worlds[1]
     source,target:=entities[0][0],entities[0][1]
     replica,visitor:=entities[1][0],entities[1][1]
@@ -241,8 +237,6 @@ a_body_replicates_the_collision_and_contact_rules_of_its_collider :: proc(t:^tes
     sessions[0].problems,sessions[1].problems=&problems[0],&problems[1]
     testing.expect_value(t,wire.host_connect(&sessions[1].host,wire.address_memory(0)),wire.Error.None)
     outbox:Net_Outbox;defer core.value_free(&outbox,type_info_of(Net_Outbox))
-    server_events,client_events:Net_Events
-    defer core.value_free(&server_events,type_info_of(Net_Events));defer core.value_free(&client_events,type_info_of(Net_Events))
     server,client:=&worlds[0],&worlds[1]
     changed:=phys.collider_box({0.1,0.1,0.1})
     changed.preset,changed.surface_speed,changed.one_way,changed.dominance=1,{0,0,2},true,4

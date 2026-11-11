@@ -450,8 +450,8 @@ Each imported asset carries the `Cooked` flag and its `Import_Info` ([cache](#im
 engine build leaves next to the editor: the importers are engine code, and the tool compiles
 without them.
 
-- It first builds the engine if it is not up to date, in the mode of `--dev` (`--release`
-  without it); what that build says goes to stderr and stdout is left with the report.
+- It first builds the engine if it is not up to date, in dev unless `--release` is given;
+  what that build says goes to stderr and stdout is left with the report.
 - It starts from the settings of the sidecar, applies the given options (`IMPORT_USAGE`) and writes
   the sidecar again: repeating the command without options gives the same assets. With `--root`,
   the project or the plugin the import belongs to, `--out` may be left out for a source in its

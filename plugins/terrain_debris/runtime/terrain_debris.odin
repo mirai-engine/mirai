@@ -28,9 +28,9 @@ Terrain_Debris :: struct {
 }
 
 Debris_Layer :: struct {
-    piece:base.Asset_Id `mirai:"kind=prefab"`, // a prefab with a Rigid_Body; none: no pieces
+    piece:base.Asset_Id `mirai:"kind=.scene"`, // a prefab with a Rigid_Body; none: no pieces
     piece_volume:f32 `mirai:"min=0,unit=m3"`, // cubic metres taken for each piece
-    drop:base.Asset_Id `mirai:"kind=prefab"`,  // a prefab to pick up; none: no drops
+    drop:base.Asset_Id `mirai:"kind=.scene"`,  // a prefab to pick up; none: no drops
     drop_volume:f32 `mirai:"min=0,unit=m3"`,  // cubic metres taken for each drop
 }
 

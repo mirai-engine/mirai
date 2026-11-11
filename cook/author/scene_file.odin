@@ -371,6 +371,14 @@ scene_target :: proc(f:^Scene_File) -> Scene_Target {
             f.stale=true
             return removed,"memory ran out" if error!=.None else ""
         },
+        kind=proc(user:rawptr,prefab:bool) -> (bool,string) {
+            f:=(^Scene_File)(user)
+            if (.Prefab in f.scene.doc.flags)==prefab {return false,""}
+            if !prefab {f.scene.doc.flags-={.Prefab};return true,""}
+            if refused:=asset.prefab_refused(&f.scene);refused!="" {return false,refused}
+            f.scene.doc.flags+={.Prefab}
+            return true,""
+        },
     }
 }
 
@@ -385,7 +393,7 @@ scene_read :: proc(p:^Project,named:string,out:^serial.Writer) -> (problem:strin
     f:Scene_File
     if problem=scene_open(p,&f,path,true);problem!="" {return}
     target:=scene_target(&f)
-    serial.text_write_raw(out,`{"entities":[`)
+    serial.text_write_raw(out,`{"kind":"Prefab","entities":[` if .Prefab in f.scene.doc.flags else `{"entities":[`)
     for node,i in target.children(&f,0,context.temp_allocator) {
         if i>0 {serial.write_u8(out,',')}
         scene_entity_write(&target,out,node,target.tables)
@@ -456,6 +464,9 @@ scene_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:st
     if exists && applied.made==0 && applied.removed==0 && !applied.changed && len(relaid)==0 {
         written.same=true
         return written,""
+    }
+    if .Prefab in f.scene.doc.flags {
+        if refused:=asset.prefab_refused(&f.scene);refused!="" {return {},fmt.tprintf("%s: %s",path,refused)}
     }
     bytes:[]u8
     if bytes,problem=scene_file_bytes(&f);problem!="" {return {},problem}

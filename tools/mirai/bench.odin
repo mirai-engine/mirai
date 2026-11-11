@@ -15,10 +15,10 @@ import "mirai:editor/api"
 import "mirai:project"
 import "mirai:std/subprocess"
 
-BENCH_USAGE :: "bench compare [project] [--base main|<ref>|<checkout>] [--scene S] [--camera x,y,z,tx,ty,tz[,fov]] [--size WxH] [--pairs N] [--frames N] [--warmup N] [--dev|--release] [--out folder]"
+BENCH_USAGE :: "bench compare [project] [--base main|<ref>|<checkout>] [--scene S] [--camera x,y,z,tx,ty,tz[,fov]] [--size WxH] [--pairs N] [--frames N] [--warmup N] [--release] [--out folder]"
 
 // mirai bench compare: the cost of the frames of a project in this checkout
-// against --base, both built alike (--dev unless --release) and measured alone among the checkouts
+// against --base, both built alike (dev unless --release) and measured alone among the checkouts
 // in headless editors, which pace nothing and validate nothing. The two
 // editors stay open and take turns, head, base, base, head..., so that what
 // drifts while they measure (clocks, heat, the rest of the machine) falls on
@@ -41,7 +41,7 @@ Bench_Options :: struct {
     camera:[]f64, // position and target, and the vertical fov in degrees when there is a seventh
     size:[2]int,
     pairs,frames,warmup:int,
-    release:bool, // both builds at --release; --dev otherwise, as a render check
+    release:bool, // both builds at --release; dev otherwise, as a render check
 }
 
 Bench_Section :: enum u8 {Frame,Parts,Passes,Zones}
@@ -121,7 +121,7 @@ bench_options :: proc(args:[]string) -> (o:Bench_Options,error:string) {
             o.folder,folder_given=option,true
             continue
         }
-        if option=="--release" || option=="--dev" {o.release=option=="--release";continue}
+        if option=="--release" {o.release=true;continue}
         switch option {
         case "--base","--scene","--out","--camera","--size","--pairs","--frames","--warmup":
         case: return o,fmt.tprintf("there is no option %s",option)
@@ -217,7 +217,7 @@ bench_compare :: proc(root:string,args:[]string) -> int {
         base.project=join(base.checkout,relative)
         base.editor=build.engine_paths(base.checkout,mode).editor_program
         if !os.is_file(base.editor) {
-            fmt.eprintfln("mirai bench: %s has no editor built at %s; build it there (mirai build editor %s %s)",base.checkout,render_mode_flag(o.release),relative,render_mode_flag(o.release))
+            fmt.eprintfln("mirai bench: %s has no editor built at %s; build it there (mirai build editor %s%s)",base.checkout,render_mode_name(o.release),relative,render_mode_flag(o.release))
             return 1
         }
     } else {
@@ -485,7 +485,7 @@ bench_markdown :: proc(r:Bench_Report) -> string {
         camera=fmt.tprintf("camera `%s`",strings.join(numbers,",",context.temp_allocator))
     }
     device:=r.device!=""?r.device:"an unnamed GPU"
-    bench_wrap(&b,fmt.tprintf("`mirai bench compare` of %s on %s: %d alternating pairs (head, base, base, head…) of %d frames at %dx%d, %s and %s, after %d frames of warmup. Headless editors built at `%s`, without VSync, frame limit or validation. Each cell is the median of the captures ± the median of their distances to it; Δ is the median of the head - base differences of each pair, and the last column, the smallest and the largest: if they cross 0, the pairs do not agree on the sign.",r.date,device,r.pairs,r.frames,r.size.x,r.size.y,scene,camera,r.warmup,render_mode_flag(r.release)),BENCH_LINE)
+    bench_wrap(&b,fmt.tprintf("`mirai bench compare` of %s on %s: %d alternating pairs (head, base, base, head…) of %d frames at %dx%d, %s and %s, after %d frames of warmup. Headless editors built `%s`, without VSync, frame limit or validation. Each cell is the median of the captures ± the median of their distances to it; Δ is the median of the head - base differences of each pair, and the last column, the smallest and the largest: if they cross 0, the pairs do not agree on the sign.",r.date,device,r.pairs,r.frames,r.size.x,r.size.y,scene,camera,r.warmup,render_mode_name(r.release)),BENCH_LINE)
     titles:=BENCH_TITLES
     for section in Bench_Section {
         first:=true

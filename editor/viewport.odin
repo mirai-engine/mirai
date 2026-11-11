@@ -147,12 +147,17 @@ Viewport :: struct {
     dt:f32,
     gizmo:Gizmo_State,
     indicators:[dynamic]core.Entity, // the entities without a body, as last found
-    indicators_key:[6]u64,
+    indicators_key:[2]u64,           // the world and the hierarchy the indicators were found in, and whether ghosts counted
+    indicators_seen:[3]core.Seen,    // the meshes, the parents and Disabled then
+    indicators_shapes:[3]core.Shape, // the transforms, Hidden and the ids then
     levels:[dynamic]u8,              // highlight by entity index, as last written
     levels_key:Highlight_Key,
+    levels_seen:[6]core.Seen,        // the parents, the ids, and in a box the transforms, the poses, Hidden and the meshes
+    levels_shape:core.Shape,         // the meshes
     levels_serial:u64,               // grows each time levels are written again
     ghosts:[dynamic]gpu.Instance_Desc, // of what is hidden or turned off, as last made
-    ghosts_key:[8]u64,
+    ghosts_key:[4]u64,
+    ghosts_seen:[5]core.Seen,        // the poses, the meshes, Hidden, the parents and Disabled the ghosts were made from
     lines_storage:[dynamic]gpu.Debug_Vertex,
     lines:gpu.Debug_Lines,
     pick:Entity_Pick,               // a field of the inspector waiting for an entity
@@ -182,7 +187,7 @@ viewport_exposure :: proc(v:^Viewport) -> core.View_Exposure {
 
 @(private)
 Highlight_Key :: struct {
-    sources:[14]u64,
+    sources:[6]u64,
     marquee,add,indicators,play,isolated:bool,
     rect:ui.Rect,
     view_projection:mm.Mat4,
@@ -731,13 +736,9 @@ placement_commit :: proc(s:^Session,w:core.World_Ref,d:Drag,hit:Pick,select:bool
     }
     point:=placement_point(s,d,hit)
     if d.kind==.Asset {content_used(s,d.asset_id)}
-    if d.kind==.Asset && d.asset_kind==SHOWN_PREFAB {
-        root:=prefab_place_linked(s,d.asset_id,point)
-        if select && root!=core.NONE {history.selection_set(s.selection,{root})}
-        return
-    }
     if d.kind==.Asset && d.asset_kind==asset.KIND_SCENE {
-        root:=section_place(s,d.asset_id,point,asset_label(&d))
+        file,found:=asset.registry_find(&s.app.assets.registry,d.asset_id)
+        root:=prefab_place_linked(s,d.asset_id,point) if found && asset.registry_prefab(file) else section_place(s,d.asset_id,point,asset_label(&d))
         if select && root!=core.NONE {history.selection_set(s.selection,{root})}
         return
     }
@@ -873,8 +874,11 @@ indicators_sync :: proc(s:^Session,w:core.World_Ref,ghosts:bool) {
         clear(&v.indicators)
         return
     }
-    key:=[6]u64{u64(uintptr(w.data)),transforms.layout,meshes!=nil?meshes.layout+meshes.version:0,(hidden!=nil?hidden.layout:0)+(parents!=nil?parents.layout+parents.version:0),ids!=nil?ids.layout:0,(core.world_entities(w).activity.version+core.world_entities(w).activity_tree)<<1|u64(ghosts)}
-    if key==v.indicators_key {return}
+    seen,shapes:=&v.indicators_seen,&v.indicators_shapes
+    moved:=core.touched(meshes,&seen[0]) | core.touched(parents,&seen[1]) | core.touched(core.world_table_of(w,core.Disabled),&seen[2])
+    moved|=core.reshaped(transforms,&shapes[0]) | core.reshaped(hidden,&shapes[1]) | core.reshaped(ids,&shapes[2])
+    key:=[2]u64{u64(uintptr(w.data)),core.world_entities(w).activity_tree<<1|u64(ghosts)}
+    if !moved && key==v.indicators_key {return}
     v.indicators_key=key
     clear(&v.indicators)
     items:=scene_items(s,w,ghosts)
@@ -901,24 +905,20 @@ highlight_sync :: proc(s:^Session,w:core.World_Ref) {
     play:=play_viewed(s) || camera_previewing(s)
     marquee:=v.capture==.Select && v.moved && !play
     ids:=core.world_table_of(w,core.Id)
-    key:=Highlight_Key{sources={s.selection.serial,u64(uintptr(w.data)),parents!=nil?parents.layout+parents.version:0,meshes!=nil?meshes.layout:0,u64(len(es.generation)),0,0,0,0,0,0,ai_scene_serial(s.ai),ids!=nil?ids.layout+ids.version:0,collab_highlights_key(s)},marquee=marquee,play=play,isolated=play_shown(s)}
+    seen:=&v.levels_seen
+    moved:=core.touched(parents,&seen[0]) | core.touched(ids,&seen[1]) | core.reshaped(meshes,&v.levels_shape)
+    key:=Highlight_Key{sources={s.selection.serial,u64(uintptr(w.data)),u64(len(es.generation)),ai_scene_serial(s.ai),collab_highlights_key(s),0},marquee=marquee,play=play,isolated=play_shown(s)}
     if marquee {
-        transforms:=core.world_table_of(w,core.Transform)
-        worlds:=core.world_table_of(w,core.World_Transform)
-        hidden:=core.world_table_of(w,erender.Hidden)
-        key.sources[5]=transforms!=nil?transforms.layout+transforms.version:0
-        key.sources[6]=worlds!=nil?worlds.layout+worlds.version:0
-        key.sources[7]=ids!=nil?ids.layout:0
-        key.sources[8]=hidden!=nil?hidden.layout+hidden.version:0
-        key.sources[9]=meshes!=nil?meshes.version:0
-        key.sources[10]=s.app.assets!=nil?s.app.assets.revision+s.app.assets.structure:0
+        moved|=core.touched(core.world_table_of(w,core.Transform),&seen[2]) | core.touched(core.world_table_of(w,core.World_Transform),&seen[3])
+        moved|=core.touched(core.world_table_of(w,erender.Hidden),&seen[4]) | core.touched(meshes,&seen[5])
+        key.sources[5]=s.app.assets!=nil?s.app.assets.revision+s.app.assets.structure:0
         key.add=v.add || v.toggle
         key.indicators=v.show_indicators
         key.rect=rect_from_points(v.press,v.pointer)
         key.view_projection=v.view_projection
         key.size=v.size
     }
-    if key==v.levels_key {return}
+    if !moved && key==v.levels_key {return}
     v.levels_key=key
     v.levels_serial+=1
     resize(&v.levels,len(es.generation))
