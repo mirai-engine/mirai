@@ -221,7 +221,8 @@ are `copy=false`: they are neither copied nor cleared. `Jumps` and `Hierarchy` a
     What stays in the `World` (a prefab, a counter, the clock of a particle emitter) is repeated the
     same as the first time.
 - `Frame_Time` (`copy=false`): the frame the world runs, not its simulation. `accumulator` (seconds
-  of frames that the ticks have not simulated yet), `dt` (of the frame), `alpha` (fraction of the
+  of frames that the ticks have not simulated yet, up to half a tick past either end while the
+  [ticks are kept steady](host.md)), `dt` (of the frame), `alpha` (fraction of the
   frame between the last two ticks; 1 in the editor loop and when creating the world), `phase` (the
   one that is running) and `dilation` (how much faster or slower than the frames the ticks run; -1
   stops them). A Play and a rollback neither copy nor swap it: it stays as the frame has it. `host`

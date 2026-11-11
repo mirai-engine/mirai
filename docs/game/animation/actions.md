@@ -31,6 +31,8 @@ the span ([events](../animation.md#one-event-loop)).
 
 - A parameter that names no layer and no axis of the set is a problem of the entity
   (`animation.parameter`).
-- An action with `root_motion` takes the whole body, or an `Override` layer without `over`.
+- An action with `root_motion` takes the whole body, or an `Override` layer without `over`, and
+  moves the root bone of the clip under it: one whose clip moves another is stopped
+  (`animation.action_clip`).
 - Many actions with many windows in one tick overflow the event queue
   (`animation.events_lost`): play fewer or use fewer windows.

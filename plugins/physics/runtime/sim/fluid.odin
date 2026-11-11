@@ -79,12 +79,12 @@ fluid_get :: #force_inline proc "contextless" (w:^World,h:Fluid_Handle) -> (^Flu
 
 @(private)
 fluid_desc_valid :: proc "contextless" (d:Fluid_Desc,path:[]Path_Point) -> bool {
-    if !is_finite3(d.position) || !is_finite3(d.current) || !(abs(d.yaw)<=max(f32)) {return false}
+    if !finite(d.position) || !finite(d.current) || !(abs(d.yaw)<=max(f32)) {return false}
     if !(d.density>=0 && d.density<=max(f32)) {return false}
     if !waves_valid(d.waves) {return false}
     switch d.shape {
     case .Plane: return d.density>0
-    case .Box:   return d.waves.count==0 && d.half_extents.x>0 && d.half_extents.y>0 && d.half_extents.z>0 && is_finite3(d.half_extents)
+    case .Box:   return d.waves.count==0 && d.half_extents.x>0 && d.half_extents.y>0 && d.half_extents.z>0 && finite(d.half_extents)
     case .Path:  return d.waves.count==0 && d.density>0 && d.current.z==0 && path_valid(path)
     }
     return false

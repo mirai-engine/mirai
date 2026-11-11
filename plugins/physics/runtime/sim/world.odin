@@ -201,7 +201,7 @@ world_destroy :: proc(w:^World) {
         if slot.generation&1!=0 {hull_free(&slot.hull,a)}
     }
     for &slot in w.meshes {
-        if slot.generation&1!=0 {mesh_free(&slot.mesh,a)}
+        if slot.generation&1!=0 {mesh_release(&slot.mesh,a)}
     }
     for &slot in w.heightfields {
         if slot.generation&1!=0 {heightfield_free(&slot.field,a)}
@@ -223,7 +223,11 @@ world_destroy :: proc(w:^World) {
 }
 
 world_gravity :: proc(w:^World) -> Vec3 {return w.gravity}
-world_set_gravity :: proc(w:^World,gravity:Vec3) {w.gravity=gravity}
+world_set_gravity :: proc(w:^World,gravity:Vec3) -> bool {
+    if !finite(gravity) {return false}
+    w.gravity=gravity
+    return true
+}
 
 // Replaces the push rules of the world. False, changing nothing, for more than PUSH_RULE_CAPACITY rules,
 // a rule without layers on a side or a force that is not positive and finite.
