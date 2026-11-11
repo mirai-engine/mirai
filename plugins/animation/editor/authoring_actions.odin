@@ -8,7 +8,6 @@ import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 Action_Section_Params :: struct {action,name:[64]u8 `mirai:"text,label=The action and the span of its clip of that name"`,next:[64]u8 `mirai:"text,optional,label=The section of the same action that follows in any row; empty completes the action"`}
@@ -33,8 +32,8 @@ action_write_defaults :: proc() -> ^Action_Write_Params {
     return defaults
 }
 authoring_actions_register :: proc(s:^editor.Session) {
-    defaults:=action_write_defaults();inspect:=Authoring_Inspect_Params{limit=64}
-    editor.api_method_register(s,Action_Write_Params,Authoring_Write_Result,{name="animation.action.set",summary="Replaces what plays over the base of a .character that entities share: the stack of layers (a clip or a space of the set each, over a branch or the whole body, replacing or adding) and the named actions of clips with their layer, priorities, cancel policies, entry and exit, and sections, spans of their clips. In Edit.",defaults=defaults,run=authoring_action_set,writes_result=true})
+    defaults:=action_write_defaults()
+    editor.api_method_register(s,{params=type_info_of(Action_Write_Params),result=type_info_of(Authoring_Write_Result),name="animation.action.set",summary="Replaces what plays over the base of a .character that entities share: the stack of layers (a clip or a space of the set each, over a branch or the whole body, replacing or adding) and the named actions of clips with their layer, priorities, cancel policies, entry and exit, and sections, spans of their clips. In Edit.",defaults=defaults,run=authoring_action_set})
 }
 @(private)
 action_named_index :: proc(values:[]anim.Action_Definition,name:[64]u8) -> int {for value,i in values {if value.name==name {return i}};return -1}
@@ -111,10 +110,9 @@ authoring_action_set :: proc(s:^editor.Session,call:^api.Call) {
 }
 // The events of the tick of an entity, from Animation_Events: those of its actions, or with markers all.
 @(private)
-action_events_write :: proc(call:^api.Call,world:core.World_Ref,entity:core.Entity,set:base.Asset_Id,markers:bool) {
-    out:=call.out;written:=0
+action_events :: proc(call:^api.Call,world:core.World_Ref,entity:core.Entity,set:base.Asset_Id,markers:bool) -> []Action_Event_Result {
+    rows:=make([dynamic]Action_Event_Result,call.allocator)
     events:=core.world_storage_of(world,anim.Animation_Events);runtime:=core.world_storage_of(world,anim.Action_Runtime)
-    serial.text_write_raw(out,"[")
     if events!=nil {for event in events.items {
         if event.entity!=entity || event.kind==.Marker && !markers {continue}
         value:=Action_Event_Result{kind=event.kind,time=event.time,weight=event.weight}
@@ -123,30 +121,28 @@ action_events_write :: proc(call:^api.Call,world:core.World_Ref,entity:core.Enti
             for &action in plan.profile.actions {if base.name_hash(base.text_get(action.name[:]))==event.action {value.action=action.name}}
             for &section in plan.profile.sections {if base.name_hash(base.text_get(section.name[:]))==event.name && event.kind!=.Span_Begin && event.kind!=.Span_End {value.name=section.name}}
         }}
-        if written>0 {serial.text_write_raw(out,",")};written+=1;authoring_write_value(call,&value,type_info_of(Action_Event_Result))
+        append(&rows,value)
     }}
-    serial.text_write_raw(out,"]")
+    return rows[:]
 }
-authoring_action_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Entity_Params);w,e,ok:=subject(s,call,p.entity[:],p.handle);if !ok {return}
+@(private)
+authoring_action_inspect :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.Entity) -> (r:Instance_Actions) {
     description,present:=editor.entity_get(w,e,anim.Animation);if !present {authoring_failure(call,"entity","Missing_Component","an Animation component","none","The entity has no Animation component");return}
     runtime:=core.world_storage_of(w,anim.Action_Runtime);playback:=core.world_storage_of(w,anim.Playback)
-    out:=call.out;serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,e));api.write_key(out,"character");serial.write_u8(out,'"');serial.text_write_asset_id(out,description.asset);serial.write_u8(out,'"')
-    problems:[PREVIEW_PROBLEMS]Problem_Result
-    shown,_:=entity_problems(s.app,w,e,"animation.action",problems[:])
-    serial.text_write_raw(out,",\"problems\":[")
-    for &problem,i in problems[:shown] {if i>0 {serial.write_u8(out,',')};authoring_write_value(call,&problem,type_info_of(Problem_Result))}
-    serial.text_write_raw(out,"],\"parameters\":[")
-    parameters:[anim.STACK_PARAMETERS*2]anim.Stack_Parameter_Info
+    r.id,r.character=editor.api_entity_id(w,e),description.asset
+    problems:=make([]Problem_Result,PREVIEW_PROBLEMS,call.allocator)
+    shown,_:=entity_problems(s.app,w,e,"animation.action",problems)
+    r.problems=problems[:shown]
+    parameters:=make([]anim.Stack_Parameter_Info,anim.STACK_PARAMETERS*2,call.allocator)
     characters:=core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Character_Assets)
-    for &parameter,i in parameters[:anim.stack_parameters(runtime,characters,playback,e,parameters[:])] {if i>0 {serial.write_u8(out,',')};authoring_write_value(call,&parameter,type_info_of(anim.Stack_Parameter_Info))}
-    serial.text_write_raw(out,"],\"playing\":[");written:=0
+    r.parameters=parameters[:anim.stack_parameters(runtime,characters,playback,e,parameters)]
+    playing:=make([dynamic]Action_Playing_Result,call.allocator)
     if runtime!=nil {for &state in runtime.states {if state.entity!=e || state.plan<0 || int(state.plan)>=len(runtime.plans) {continue};profile:=runtime.plans[state.plan].profile
         for slot,i in state.slots {if !slot.active {continue};definition:=profile.actions[slot.action];value:=Action_Playing_Result{name=definition.name,layer=definition.layer,time=slot.time,finishing=slot.finishing,root_motion=definition.root_motion};if slot.section>=0 {value.section=profile.sections[slot.section].name}
             if playback!=nil {for played in playback.states {if played.entity==e {value.weight=played.layers[i].weight;break}}}
-            if written>0 {serial.text_write_raw(out,",")};written+=1;authoring_write_value(call,&value,type_info_of(type_of(value)))
+            append(&playing,value)
         }
     }}
-    serial.text_write_raw(out,"],\"events\":");action_events_write(call,w,e,description.asset,false)
-    serial.text_write_raw(out,"}");
+    r.playing,r.events=playing[:],action_events(call,w,e,description.asset,false)
+    return
 }

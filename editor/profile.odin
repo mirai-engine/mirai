@@ -1,6 +1,5 @@
 package editor
 
-import "base:runtime"
 import "core:fmt"
 import "core:math"
 import vmem "core:mem/virtual"
@@ -402,7 +401,7 @@ profile_spread :: proc(values:[]f64) -> (s:Profile_Spread) {
 }
 
 // Rounded to the microsecond, which is what a time in milliseconds needs and keeps the answer short.
-profile_ms :: proc(ms:f64) -> f64 {return math.round(ms*1000)/1000}
+profile_ms :: proc(ms:f64) -> f32 {return f32(math.round(ms*1000)/1000)}
 
 // The zones of one name and thread kind, frame by frame.
 Profile_Aggregate :: struct {

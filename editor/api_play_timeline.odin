@@ -3,7 +3,6 @@ package editor
 import "core:encoding/json"
 import "core:fmt"
 import "core:math"
-import "core:mem"
 import "core:mem/virtual"
 import "core:strings"
 import "mirai:core"
@@ -58,19 +57,19 @@ Api_Play_Step_Result :: struct {
     trace:Api_Play_Trace_Table `mirai:"optional,label=With trace: the values it read"`,
 }
 Api_Play_Trace_Table :: struct {
-    columns:[1]Api_Play_Trace_Column `mirai:"list,label=What each value of a row is: every field of the first entity and then of the next"`,
-    rows:[1]Api_Play_Trace_Row `mirai:"list,label=One before the first tick and one every every ticks and one after the last"`,
+    columns:[]Api_Play_Trace_Column `mirai:"label=What each value of a row is: every field of the first entity and then of the next"`,
+    rows:[]Api_Play_Trace_Row `mirai:"label=One before the first tick and one every every ticks and one after the last"`,
 }
 Api_Play_Trace_Column :: struct {
     entity:core.Entity `mirai:"optional,label=The handle of the entity"`,
-    name:[64]u8 `mirai:"optional,text,label=The name of the entity"`,
-    storage:[64]u8 `mirai:"optional,text,label=The storage in place of an entity"`,
+    name:string `mirai:"optional,label=The name of the entity"`,
+    storage:string `mirai:"optional,label=The storage in place of an entity"`,
     view:bool `mirai:"optional,label=The view in place of an entity"`,
-    field:[128]u8 `mirai:"text"`,
+    field:string,
 }
 Api_Play_Trace_Row :: struct {
     tick:u64 `mirai:"label=The tick of the game it was read at"`,
-    values:u8 `mirai:"any,label=One per column as play.inspect writes it; null where the entity or its component is gone"`,
+    values:serial.Json `mirai:"label=One per column as play.inspect writes it; null where the entity or its component is gone"`,
 }
 
 // One segment of input of a step, checked.
@@ -380,8 +379,7 @@ Api_Trace :: struct {
     field_count:int,
     include_runtime:bool,
     scratch:[]u8,
-    rows:serial.Writer, // their JSON, in the memory of the call
-    row_count:int,
+    rows:[dynamic]Api_Play_Trace_Row, // in the memory of the call
 }
 
 // Reads the trace of params (raw: its JSON) for a step of ticks at most and
@@ -442,7 +440,7 @@ api_trace_read :: proc(s:^Session,call:^api.Call,w:core.World_Ref,p:^Api_Play_Tr
         if memory!=nil {return "the request needs more scratch memory than the server has"}
         trace.scratch=scratch
     }
-    serial.writer_init(&trace.rows,4096,call.allocator)
+    trace.rows=make([dynamic]Api_Play_Trace_Row,call.allocator)
     return api_trace_take(s,trace,w,0)
 }
 
@@ -452,12 +450,13 @@ api_trace_read :: proc(s:^Session,call:^api.Call,w:core.World_Ref,p:^Api_Play_Tr
 @(private)
 api_trace_take :: proc(s:^Session,trace:^Api_Trace,w:core.World_Ref,ran:int) -> string {
     st:=api_state(s)
-    out:=&trace.rows
-    tick:u64
-    if t:=core.world_storage_of(w,core.Time);t!=nil {tick=t.tick}
-    if trace.row_count>0 {serial.write_u8(out,',')}
-    serial.text_write_raw(out,`{"tick":`);serial.text_write_uint(out,tick)
-    api.write_key(out,"values");serial.write_u8(out,'[')
+    row:Api_Play_Trace_Row
+    if t:=core.world_storage_of(w,core.Time);t!=nil {row.tick=t.tick}
+    // The values are what the world names: one per column, as play.inspect writes it.
+    values:serial.Writer
+    serial.writer_init(&values,0,trace.rows.allocator)
+    out:=&values
+    serial.write_u8(out,'[')
     doc:serial.Writer
     serial.writer_init(&doc,0,context.temp_allocator)
     omitted:=serial.Field_Flags{.Transient,.Hidden} if !trace.include_runtime else serial.Field_Flags{}
@@ -492,70 +491,45 @@ api_trace_take :: proc(s:^Session,trace:^Api_Trace,w:core.World_Ref,ran:int) -> 
             switch {
             case missing=="" && there_value:
                 serial.text_write_raw(out,api_json_text(leaf))
-            case missing!="" && trace.row_count==0:
+            case missing!="" && len(trace.rows)==0:
                 return fmt.tprintf("trace.fields[%d] %q: %s",i,field,missing)
             case:
                 serial.text_write_raw(out,"null")
             }
         }
     }
-    serial.text_write_raw(out,"]}")
-    trace.row_count+=1
+    serial.write_u8(out,']')
+    row.values=serial.Json(string(serial.writer_bytes(&values)))
+    append(&trace.rows,row)
     return ""
 }
 
 // The result of play.step: that of the other play methods, and its trace.
 @(private)
 api_play_step_write :: proc(s:^Session,call:^api.Call,r:^Run,ran:int,met:bool,trace:^Api_Trace,drive:^Api_Drive=nil) {
-    result:Api_Play_Result
-    api_play_result_fill(s,&result,r)
-    sc:=&api_state(s).server.schema
-    index,found:=sc.lookup[Api_Play_Result]
-    if !found {api.call_fail(call,api.INTERNAL_ERROR,"the result of the play methods has no schema");return}
-    out:=call.out
-    serial.text_write(out,sc,index,mem.ptr_to_bytes(&result),.Line)
-    out.count-=1 // the brace that closes it
-    api.write_int(out,"ran",i64(ran))
-    api.write_bool(out,"met",met)
-    if drive!=nil {api_drive_write(out,api_drive_result(drive))}
-    if trace!=nil {api_trace_write(s,out,trace)}
-    serial.write_u8(out,'}')
+    result:=api.call_result(call,Api_Play_Step_Result)
+    api_play_result_fill(s,&result.play,r)
+    result.ran,result.met=ran,met
+    if drive!=nil {result.drive=api_drive_result(drive)}
+    if trace!=nil {result.trace=api_trace_table(s,trace,call.allocator)}
 }
 
+// The columns and the rows of a trace.
 @(private)
-api_drive_write :: proc(out:^serial.Writer,drive:Api_Play_Drive_Result) {
-    drive:=drive
-    api.write_key(out,"drive")
-    serial.write_u8(out,'{')
-    api.write_text(out,"stopped",fmt.tprint(drive.stopped),true)
-    api.write_key(out,"position");api.write_list(out,drive.position[:])
-    api.write_key(out,"distance");api.write_number(out,drive.distance)
-    api.write_key(out,"height");api.write_number(out,drive.height)
-    serial.write_u8(out,'}')
-}
-
-// The trace of a result, as its last key: its columns and its rows.
-@(private)
-api_trace_write :: proc(s:^Session,out:^serial.Writer,trace:^Api_Trace) {
-    api.write_key(out,"trace");serial.text_write_raw(out,`{"columns":[`)
-    first:=true
+api_trace_table :: proc(s:^Session,trace:^Api_Trace,allocator:=context.temp_allocator) -> Api_Play_Trace_Table {
+    columns:=make([dynamic]Api_Play_Trace_Column,allocator)
     for d in 0..<(trace.storage>=0 || trace.view?1:trace.count) {
         for field in trace.fields[:trace.field_count] {
-            if !first {serial.write_u8(out,',')}
-            first=false
-            if trace.view {
-                serial.text_write_raw(out,`{"view":true`)
-            } else if trace.storage>=0 {
-                serial.text_write_raw(out,`{"storage":`);serial.text_write_string(out,s.info.storages[trace.storage].name)
-            } else {
-                serial.text_write_raw(out,`{"entity":"`);serial.text_write_hex(out,u64(trace.entities[d]))
-                serial.text_write_raw(out,`","name":`);serial.text_write_string(out,trace.names[d])
+            column:=Api_Play_Trace_Column{view=trace.view,field=field}
+            switch {
+            case trace.view:
+            case trace.storage>=0: column.storage=s.info.storages[trace.storage].name
+            case: column.entity,column.name=trace.entities[d],trace.names[d]
             }
-            api.write_key(out,"field");serial.text_write_string(out,field)
-            serial.write_u8(out,'}')
+            append(&columns,column)
         }
     }
-    serial.text_write_raw(out,`],"rows":[`)
-    serial.text_write_raw(out,string(serial.writer_bytes(&trace.rows)))
-    serial.text_write_raw(out,"]}")
+    return {columns[:],trace.rows[:]}
 }
+
+

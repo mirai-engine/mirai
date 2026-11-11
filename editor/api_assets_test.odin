@@ -4,6 +4,7 @@ import "core:mem"
 import "core:strings"
 import "core:testing"
 import "mirai:core"
+import "mirai:editor/api"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
@@ -40,10 +41,7 @@ component_list_fields_say_their_kind_unit_and_description :: proc(t:^testing.T) 
     session:=Session{info=&info,editor_world=&editor,edit_world=&world}
     api_schema_build(&session,&state)
     defer api_schema_free(&state)
-    out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
-    first:=true
-    api_fields_write(&out,&state.schema,state.types[0],"",&first)
-    text:=string(serial.writer_bytes(&out))
+    text:=api_fields_text(&state.schema,state.types[0])
     for part in ([]string{`{"path":"tint","type":"Color"}`,`{"path":"turn","type":"Quaternion"}`,`"unit":"rad","description":"from its axis to the edge"}`,`"unit":"s","read_only":true}`}) {
         testing.expectf(t,strings.contains(text,part),"%s in %s",part,text)
     }
@@ -54,4 +52,12 @@ component_list_fields_say_their_kind_unit_and_description :: proc(t:^testing.T) 
     testing.expect_value(t,read_only_written(&state.schema,state.types[0],mem.ptr_to_bytes(&before),mem.ptr_to_bytes(&after),""),"")
     after.age=4
     testing.expect_value(t,read_only_written(&state.schema,state.types[0],mem.ptr_to_bytes(&before),mem.ptr_to_bytes(&after),""),"age")
+}
+
+// The fields component.list gives of a type, as JSON without spaces.
+api_fields_text :: proc(schema:^serial.Schema,type:serial.Type_Index,include_runtime:=false) -> string {
+    fields:=make([dynamic]Api_Component_Field,context.temp_allocator)
+    api_fields(schema,type,"",&fields,include_runtime)
+    text,_:=serial.text_encode(struct{fields:[]Api_Component_Field}{fields[:]},.Line,context.temp_allocator,sparse=true)
+    return api.json_compact(string(text))
 }

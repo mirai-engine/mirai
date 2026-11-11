@@ -89,7 +89,7 @@ ai_scene_anchor :: proc(s:^Session,task:^Ai_Task) -> [3]f32 {
             if pivot,found:=selection_pivot(s,world);found {point=pivot}
         }
         if task.play {
-            if player:=play_player_snapshot(run_ref(s,ai_task_run(s,task)));player.available {point=player.body.entity!=""?player.body.world_position:player.seat.world_position}
+            if player:=play_player_snapshot(run_ref(s,ai_task_run(s,task)));player.available {point=player.body.entity!=core.NONE?player.body.world_position:player.seat.world_position}
         }
         entities:[]core.Entity
         if !task.play && s.selection!=nil {entities=s.selection.entities[:]}

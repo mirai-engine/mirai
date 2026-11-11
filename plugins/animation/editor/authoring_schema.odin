@@ -1,14 +1,13 @@
 package animation_editor
 
 import "core:fmt"
-import "core:strings"
 import "mirai:editor/api"
 import "mirai:std/base"
 import "mirai:std/serial"
 
 Authoring_Write_Result :: struct {
     asset:base.Asset_Id,
-    path:[1024]u8 `mirai:"text"`,
+    path:string,
     dry_run:bool `mirai:"optional,label=Only on a dry run: nothing was written"`,
     replaced:bool `mirai:"optional,label=The path already held one: it was replaced whole, keeping its id"`,
 }
@@ -19,17 +18,9 @@ Authoring_Page :: struct($T:typeid) {index:u32,value:T}
 // Fails a call with where (path), what (code), what was expected and found,
 // and how to correct it: fix, or the usual correction of the code.
 authoring_failure :: proc(call:^api.Call,path,code,expected,actual,message:string,rpc_code:=api.INVALID_PARAMS,fix:="") {
-    writer:serial.Writer
-    serial.writer_init(&writer,256,call.allocator)
-    defer serial.writer_destroy(&writer)
-    serial.text_write_raw(&writer,"{")
-    api.write_text(&writer,"path",path,true)
-    api.write_text(&writer,"code",code)
-    api.write_text(&writer,"expected",expected)
-    api.write_text(&writer,"actual",actual)
-    api.write_text(&writer,"fix",fix if fix!="" else authoring_fix(code,path,expected))
-    serial.text_write_raw(&writer,"}")
-    api.call_fail(call,rpc_code,message,string(serial.writer_bytes(&writer)))
+    Failure :: struct {path,code,expected,actual,fix:string}
+    data,_:=serial.text_encode(Failure{path,code,expected,actual,fix if fix!="" else authoring_fix(code,path,expected)},.Line,call.allocator)
+    api.call_fail(call,rpc_code,message,api.json_compact(string(data)))
 }
 
 // The usual correction of an error code.

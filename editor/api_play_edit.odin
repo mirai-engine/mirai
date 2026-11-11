@@ -52,13 +52,27 @@ Api_Play_Push_Result :: struct {
     pushed:int `mirai:"label=Items pushed; the functions that take the queue read them in the next tick"`,
 }
 
+Api_Play_Set_Params :: struct {
+    entity:string `mirai:"entity,label=the entity by its name, a path Parent/Child, its id or its handle; a name several entities have is an error listing them"`,
+    position:[3]f32 `mirai:"optional,label=where in the world it goes, as a teleport: a body of physics jumps there in the next tick"`,
+    rotation_deg:[3]f32 `mirai:"optional,label=its rotation in the world in degrees, with the teleport"`,
+    components:serial.Json `mirai:"optional,label=by name the fields of each component to change as component.list describes them, with Entity fields holding handles; null removes it"`,
+    player:int `mirai:"optional,min=0,max=3,label=the run of that player of a game a turn plays on the network"`,
+}
+
+Api_Play_Push_Params :: struct {
+    storage:string `mirai:"label=the name of a queue storage of the game: Seat_Requests, Spawns or one of the project"`,
+    items:[]serial.Json `mirai:"label=At most 64. its requests as the schema of the type of its items, with Entity fields holding handles; play.inspect with storages names them"`,
+    player:int `mirai:"optional,min=0,max=3,label=the run of that player of a game a turn plays on the network"`,
+}
+
 @(private)
 api_play_edit_register :: proc(s:^Session,st:^Api_State) {
     spawn_default:=Api_Play_Spawn_Params{scale={1,1,1}}
-    api_register(s,st,{name="play.set",params_schema=API_PLAY_SET_SCHEMA,summary="Changes an entity of the game of the caller between two ticks: values of its components, and a teleport to a place of the world. Not the document, and not in the history.",result=Api_Play_Set_Result,run=api_play_set})
-    api_register(s,st,{name="play.spawn",summary="Places a prefab in the game of the caller now, as the game spawns one; returns its root.",params=Api_Play_Spawn_Params,result=Api_Play_Spawn_Result,defaults=&spawn_default,run=api_play_spawn})
-    api_register(s,st,{name="play.destroy",summary="Destroys an entity of the game of the caller with what hangs from it.",params=Api_Play_Entity_Params,result=Api_Play_Destroy_Result,flags={.Destructive},run=api_play_destroy})
-    api_register(s,st,{name="play.push",params_schema=API_PLAY_PUSH_SCHEMA,summary="Pushes requests to a queue storage of the game of the caller, as its functions push them (Seat_Requests, Spawns or one of the game); the functions that take it read them in the next tick.",result=Api_Play_Push_Result,run=api_play_push})
+    api_register(s,st,{name="play.set",params=type_info_of(Api_Play_Set_Params),summary="Changes an entity of the game of the caller between two ticks: values of its components, and a teleport to a place of the world. Not the document, and not in the history.",result=type_info_of(Api_Play_Set_Result),run=api_play_set})
+    api_register(s,st,{name="play.spawn",summary="Places a prefab in the game of the caller now, as the game spawns one; returns its root.",params=type_info_of(Api_Play_Spawn_Params),result=type_info_of(Api_Play_Spawn_Result),defaults=&spawn_default,run=api_play_spawn})
+    api_register(s,st,{name="play.destroy",summary="Destroys an entity of the game of the caller with what hangs from it.",params=type_info_of(Api_Play_Entity_Params),result=type_info_of(Api_Play_Destroy_Result),flags={.Destructive},run=api_play_destroy})
+    api_register(s,st,{name="play.push",params=type_info_of(Api_Play_Push_Params),summary="Pushes requests to a queue storage of the game of the caller, as its functions push them (Seat_Requests, Spawns or one of the game); the functions that take it read them in the next tick.",result=type_info_of(Api_Play_Push_Result),run=api_play_push})
     api_play_input_register(s,st)
 }
 
@@ -68,7 +82,7 @@ api_play_own_run :: proc(s:^Session,call:^api.Call,player:int) -> (r:^Run,ok:boo
     own:bool
     r,own=api_play_run(s,call,player)
     switch {
-    case r==nil: api.call_fail(call,api.SERVER_ERROR,API_NO_GAME)
+    case r==nil: api_no_game(call)
     case !own:   api_play_refused(call)
     case:        return r,true
     }
@@ -114,30 +128,11 @@ Api_Play_Change :: struct {
 
 @(private)
 api_play_set :: proc(s:^Session,call:^api.Call) {
-    a:Rpc_Args
-    rpc_init(&a,call,call.raw)
-    selector:[API_ENTITY_TEXT]u8
-    selected,components:string
-    player:int
-    position,rotation_deg:[3]f32
-    has_position,has_rotation:bool
-    object:Rpc_Object
-    if !rpc_object_begin(&a,"params") {return}
-    for key in rpc_next(&a,&object) {
-        switch key {
-        case "entity":       selected,_=rpc_text(&a,key,selector[:])
-        case "player":
-            value,_:=rpc_unsigned(&a,key)
-            if value>3 {rpc_fail(&a,"player is 0 to 3")}
-            player=int(value)
-        case "position":     has_position=rpc_vector(&a,key,position[:])
-        case "rotation_deg": has_rotation=rpc_vector(&a,key,rotation_deg[:])
-        case "components":   components,_=rpc_raw(&a)
-        case:                rpc_fail_type(&a,"unknown field %q: play.set takes entity, position, rotation_deg, components and player",key)
-        }
-    }
-    if a.failed {return}
-    r,ok:=api_play_own_run(s,call,player)
+    p:=api.call_params(call,Api_Play_Set_Params)
+    selected,components:=p.entity,string(p.components)
+    position,rotation_deg:=p.position,p.rotation_deg
+    has_position,has_rotation:=api.call_given(call,"position"),api.call_given(call,"rotation_deg")
+    r,ok:=api_play_own_run(s,call,p.player)
     if !ok {return}
     w:=run_ref(s,r)
     e,problem:=api_entity_select(w,selected,game=true,allocator=call.allocator)
@@ -263,27 +258,9 @@ api_queue_of :: proc(info:^runtime.Type_Info) -> (offset:uintptr,item:^runtime.T
 
 @(private)
 api_play_push :: proc(s:^Session,call:^api.Call) {
-    a:Rpc_Args
-    rpc_init(&a,call,call.raw)
-    name:[64]u8
-    storage,items:string
-    player:int
-    object:Rpc_Object
-    if !rpc_object_begin(&a,"params") {return}
-    for key in rpc_next(&a,&object) {
-        switch key {
-        case "storage": storage,_=rpc_text(&a,key,name[:])
-        case "items":   items,_=rpc_raw(&a)
-        case "player":
-            value,_:=rpc_unsigned(&a,key)
-            if value>3 {rpc_fail(&a,"player is 0 to 3")}
-            player=int(value)
-        case: rpc_fail_type(&a,"unknown field %q: play.push takes storage, items and player",key)
-        }
-    }
-    if a.failed {return}
-    if storage=="" || items=="" {api.call_fail(call,api.INVALID_PARAMS,"give storage, the name of a queue storage, and items, an array of its requests");return}
-    r,ok:=api_play_own_run(s,call,player)
+    p:=api.call_params(call,Api_Play_Push_Params)
+    storage:=p.storage
+    r,ok:=api_play_own_run(s,call,p.player)
     if !ok {return}
     w:=run_ref(s,r)
     st:=api_state(s)
@@ -300,33 +277,26 @@ api_play_push :: proc(s:^Session,call:^api.Call) {
     // Every item is read before any is pushed: a failure pushes nothing.
     size:=item.size
     values:=make([dynamic]u8,call.allocator)
-    count:=0
-    c:Rpc_Args
-    rpc_init(&c,call,items)
-    if !serial.text_accept(&c.r,'[') {api.call_fail(call,api.INVALID_PARAMS,"items must be an array of requests");return}
-    if !serial.text_accept(&c.r,']') {
-        for {
-            if count==API_PLAY_PUSH_LIMIT {api.call_failf(call,api.INVALID_PARAMS,"items holds %d requests at most: push the rest in another call",API_PLAY_PUSH_LIMIT);return}
-            resize(&values,(count+1)*size)
-            bytes:=values[count*size:][:size]
-            path:=fmt.aprintf("items[%d]",count,allocator=call.allocator)
-            if !serial.text_read(&c.r,&st.schema,type,bytes) {
-                line,column:=serial.text_position(c.r.text,c.r.error.offset)
-                api.call_failf(call,api.INVALID_PARAMS,"%s at line %d column %d",serial.text_error_message(&c.r,path,call.allocator),line,column)
+    count:=len(p.items)
+    if count>API_PLAY_PUSH_LIMIT {api.call_failf(call,api.INVALID_PARAMS,"items holds %d requests at most: push the rest in another call",API_PLAY_PUSH_LIMIT);return}
+    resize(&values,count*size)
+    for text,i in p.items {
+        bytes:=values[i*size:][:size]
+        path:=fmt.aprintf("items[%d]",i,allocator=call.allocator)
+        reader:serial.Text_Reader
+        api.call_reader_init(call,&reader,string(text))
+        if !serial.text_read(&reader,&st.schema,type,bytes) {
+            line,column:=serial.text_position(reader.text,reader.error.offset)
+            api.call_failf(call,api.INVALID_PARAMS,"%s at line %d column %d",serial.text_error_message(&reader,path,call.allocator),line,column)
+            return
+        }
+        if message,valid:=api.value_check(&st.schema,type,bytes,path,call.allocator);!valid {api.call_fail(call,api.INVALID_PARAMS,message);return}
+        for at in entity_offsets(item) {
+            named:=core.Entity((cast(^u64)&bytes[at])^)
+            if named!=core.NONE && !core.alive(core.world_entities(w),named) {
+                api.call_failf(call,api.INVALID_PARAMS,"%s names 0x%016x, which is not alive in the game: Entity fields hold handles as play.inspect gives them",path,u64(named))
                 return
             }
-            if message,valid:=api.value_check(&st.schema,type,bytes,path,call.allocator);!valid {api.call_fail(call,api.INVALID_PARAMS,message);return}
-            for at in entity_offsets(item) {
-                named:=core.Entity((cast(^u64)&bytes[at])^)
-                if named!=core.NONE && !core.alive(core.world_entities(w),named) {
-                    api.call_failf(call,api.INVALID_PARAMS,"%s names 0x%016x, which is not alive in the game: Entity fields hold handles as play.inspect gives them",path,u64(named))
-                    return
-                }
-            }
-            count+=1
-            if serial.text_accept(&c.r,',') {continue}
-            if !serial.text_accept(&c.r,']') {api.call_fail(call,api.INVALID_PARAMS,"items must be an array of requests");return}
-            break
         }
     }
     queue:=cast(^runtime.Raw_Dynamic_Array)(uintptr(core.world_storage_at(w,at))+offset)
@@ -338,5 +308,3 @@ api_play_push :: proc(s:^Session,call:^api.Call) {
     api.call_result(call,Api_Play_Push_Result).pushed=count
 }
 
-@(private) API_PLAY_SET_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["entity"],"properties":{"entity":{"type":"string","description":"the entity by its name, a path Parent/Child, its id or its handle; a name several entities have is an error listing them"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"where in the world it goes, as a teleport: a body of physics jumps there in the next tick"},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"its rotation in the world in degrees, with the teleport"},"components":{"type":"object","description":"by name the fields of each component to change as component.list describes them, with Entity fields holding handles; null removes it","additionalProperties":{"type":["object","null"]}},"player":{"type":"integer","minimum":0,"maximum":3,"description":"the run of that player of a game a turn plays on the network"}}}`
-@(private) API_PLAY_PUSH_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["storage","items"],"properties":{"storage":{"type":"string","description":"the name of a queue storage of the game: Seat_Requests, Spawns or one of the project"},"items":{"type":"array","maxItems":64,"items":{"type":"object"},"description":"its requests as the schema of the type of its items, with Entity fields holding handles; play.inspect with storages names them"},"player":{"type":"integer","minimum":0,"maximum":3,"description":"the run of that player of a game a turn plays on the network"}}}`

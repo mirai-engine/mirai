@@ -814,7 +814,7 @@ of an instance" are `-32602`; the rest, `-32000`
   - `type` is `Color` for a color, `Quaternion` for a rotation and `Text` for a text; the other
     arrays are `Array` with `element` and `count`. An angle carries `unit:"rad"`.
   - `default`: the value it starts with when added.
-  - A component that is not plain data brings `plain_data:false`, without `default` or `fields`.
+  - A component that is not plain data brings `opaque:true`, without `default` or `fields`.
   - A component declared `@(component,derived)` and hidden and transient fields appear only
     with `include_runtime:true`; asking for a derived one by `name` without it
     fails saying so. A component with no saved field (a marker) is listed, added and saved.

@@ -14,9 +14,9 @@ import "mirai:std/serial"
 // string of at most N bytes; an
 // array of numbers has exactly its length and any other array at most that.
 // An array has no default of its own: its items carry the default of an
-// element when every element has the same one. A list (an array tagged list)
-// has no bounds on its length and its texts may be empty, and a field tagged
-// any takes any JSON value.
+// element when every element has the same one. A slice is a list with no
+// bounds on its length, whose texts may be empty; a string has no bound on
+// its length, and a serial.Json field takes any JSON value.
 
 @(private)
 raw :: #force_inline proc(w:^serial.Writer,text:string) {serial.text_write_raw(w,text)}
@@ -81,9 +81,9 @@ array_element :: proc(sc:^serial.Schema,type:serial.Type,image:[]u8) -> []u8 {
 // field: the field that holds the value; it gives the bounds, the text flag
 // and, when decor is set, the description. image: the value of a struct or
 // an array as the defaults hold it. default: the value to show as the
-// default of an optional field. list: an array of any length. params: the
-// value is of the params of a method.
-schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^serial.Field=nil,image:[]u8=nil,decor:=false,default:[]u8=nil,list:=false,params:=false) {
+// default of an optional field. params: the value is of the params of a
+// method.
+schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^serial.Field=nil,image:[]u8=nil,decor:=false,default:[]u8=nil,params:=false) {
     sc:=&s.schema
     type:=sc.types[index]
     count:=0
@@ -104,7 +104,7 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
             }
         } else if type.size==16 {
             entry(w,&count,"type");raw(w,`"string"`)
-            entry(w,&count,"pattern");raw(w,`"^0x[0-9a-fA-F]{32}$"`)
+            entry(w,&count,"pattern");serial.text_write_string(w,PATTERN_WIDE)
         } else {
             lo,hi:=integer_bounds(type,field)
             entry(w,&count,"type");raw(w,`"integer"`)
@@ -125,7 +125,7 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
         entry(w,&count,"uniqueItems");raw(w,"true")
     case .Entity,.Entity_Id:
         entry(w,&count,"type");raw(w,`"string"`)
-        entry(w,&count,"pattern");raw(w,`"^(0x)?[0-9a-fA-F]{1,16}$"`)
+        entry(w,&count,"pattern");serial.text_write_string(w,PATTERN_ENTITY_ID)
     case .Asset:
         entry(w,&count,"type");raw(w,`"string"`)
         entry(w,&count,"x-asset");serial.text_write_string(w,field!=nil && field.asset_kinds!=""?field.asset_kinds:"any")
@@ -134,43 +134,38 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
         fields:=sc.fields[type.first:][:type.count]
         entry(w,&count,"properties");raw(w,"{")
         emitted:=0
-        for &f,i in fields {
+        for &f in fields {
             if !field_visible(&f) {continue}
             if emitted>0 {raw(w,",")}
             emitted+=1
-            serial.text_write_string(w,field_key(s,&f,int(type.first)+i));raw(w,":")
-            tags:=s.tags[int(type.first)+i]
-            if .Any in tags {
-                described:=0
-                raw(w,"{");write_decor(w,&described,&f);raw(w,"}")
-                continue
-            }
+            serial.text_write_string(w,f.name);raw(w,":")
             part:[]u8
             if image!=nil {part=image[f.offset:][:sc.types[f.type].size]}
             value:[]u8
-            if part!=nil && .Optional in tags && sc.types[f.type].kind!=.Struct && !all_zero(part) {value=part}
-            schema_write(w,s,f.type,&f,part,true,value,.List in tags,params)
+            kind:=sc.types[f.type].kind
+            if part!=nil && .Optional in f.hints && kind!=.Struct && kind!=.Slice && kind!=.String && kind!=.Json && !all_zero(part) {value=part}
+            schema_write(w,s,f.type,&f,part,true,value,params)
         }
         raw(w,"}")
         required:=0
-        for &f,i in fields {
-            if !field_visible(&f) || .Optional in s.tags[int(type.first)+i] {continue}
+        for &f in fields {
+            if !field_visible(&f) || .Optional in f.hints {continue}
             if required==0 {entry(w,&count,"required");raw(w,"[")} else {raw(w,",")}
             required+=1
-            serial.text_write_string(w,field_key(s,&f,int(type.first)+i))
+            serial.text_write_string(w,f.name)
         }
         if required>0 {raw(w,"]")}
         entry(w,&count,"additionalProperties");raw(w,"false")
     case .Array:
         if decor && field!=nil && .Text in field.flags && serial.type_is_bytes(sc,index) {
             entry(w,&count,"type");raw(w,`"string"`)
-            if field.entity_name {entry(w,&count,"x-entity");raw(w,ENTITY_NAMES)}
+            if .Entity in field.hints {entry(w,&count,"x-entity");raw(w,ENTITY_NAMES)}
             entry(w,&count,"maxLength");serial.text_write_uint(w,u64(type.count))
         } else if field!=nil && .Text in field.flags && serial.type_is_texts(sc,index) {
             shown=nil
             entry(w,&count,"type");raw(w,`"array"`)
-            entry(w,&count,"items");raw(w,list?`{"type":"string","maxLength":`:`{"type":"string","minLength":1,"maxLength":`);serial.text_write_uint(w,u64(sc.types[type.elem].count));raw(w,"}")
-            if !list {entry(w,&count,"maxItems");serial.text_write_uint(w,u64(type.count))}
+            entry(w,&count,"items");raw(w,`{"type":"string","minLength":1,"maxLength":`);serial.text_write_uint(w,u64(sc.types[type.elem].count));raw(w,"}")
+            entry(w,&count,"maxItems");serial.text_write_uint(w,u64(type.count))
         } else {
             shown=nil
             elem:=sc.types[type.elem]
@@ -178,14 +173,27 @@ schema_write :: proc(w:^serial.Writer,s:^Server,index:serial.Type_Index,field:^s
             element_default:[]u8
             if default!=nil && elem.kind!=.Struct && value!=nil && !all_zero(value) {element_default=value}
             entry(w,&count,"type");raw(w,`"array"`)
-            entry(w,&count,"items");schema_write(w,s,type.elem,field,value,false,element_default,false,params)
-            if !list {
-                if elem.kind==.Float || elem.kind==.Int || elem.kind==.Uint {
-                    entry(w,&count,"minItems");serial.text_write_uint(w,u64(type.count))
-                }
-                entry(w,&count,"maxItems");serial.text_write_uint(w,u64(type.count))
+            entry(w,&count,"items");schema_write(w,s,type.elem,field,value,false,element_default,params)
+            if elem.kind==.Float || elem.kind==.Int || elem.kind==.Uint {
+                entry(w,&count,"minItems");serial.text_write_uint(w,u64(type.count))
             }
+            entry(w,&count,"maxItems");serial.text_write_uint(w,u64(type.count))
         }
+    case .Slice:
+        shown=nil
+        entry(w,&count,"type");raw(w,`"array"`)
+        entry(w,&count,"items")
+        if field!=nil && .Text in field.flags && serial.type_is_bytes(sc,type.elem) {
+            raw(w,`{"type":"string","maxLength":`);serial.text_write_uint(w,u64(sc.types[type.elem].count));raw(w,"}")
+        } else {
+            schema_write(w,s,type.elem,field,nil,false,nil,params)
+        }
+    case .String:
+        shown=nil
+        entry(w,&count,"type");raw(w,`"string"`)
+        if field!=nil && .Entity in field.hints {entry(w,&count,"x-entity");raw(w,ENTITY_NAMES)}
+    case .Json:
+        shown=nil
     }
     if decor && field!=nil {write_decor(w,&count,field)}
     if shown!=nil {
@@ -205,7 +213,8 @@ write_names :: proc(w:^serial.Writer,choices:[]serial.Choice) {
     raw(w,"]")
 }
 
-// The schema of the params or result of a method; free-form JSON when there is no type.
+// The schema of the params or result of a method: that of its type. Without
+// one it takes no params, and it answers null.
 method_schema_write :: proc(w:^serial.Writer,s:^Server,method:^Method,result:bool) {
     start:=w.count
     defer if !result {
@@ -215,17 +224,18 @@ method_schema_write :: proc(w:^serial.Writer,s:^Server,method:^Method,result:boo
     }
     index:=result?method.result:method.params
     if index==serial.TYPE_NONE {
-        written:=result?method.result_schema:method.params_schema
-        raw(w,written!=""?written:result?"{}":`{"type":"object"}`)
+        raw(w,result?`{"type":"null"}`:`{"type":"object","properties":{},"additionalProperties":false}`)
         return
     }
     schema_write(w,s,index,nil,result?nil:method.defaults,params=!result)
 }
 
-// x-entity says of a param what it takes; a schema written by hand spreads
-// ENTITY_SCHEMA into the object of the param.
+// The patterns of the ids, which describe.odin tells apart by them.
+PATTERN_ENTITY_ID :: "^(0x)?[0-9a-fA-F]{1,16}$"
+PATTERN_WIDE :: "^0x[0-9a-fA-F]{32}$"
+
+// x-entity says of a param what it takes.
 @(private="file") ENTITY_NAMES :: `"a name, a path Parent/Child or an id"`
-ENTITY_SCHEMA :: `"type":"string","x-entity":` + ENTITY_NAMES
 
 // The key of a result that says which params took their maximum.
 @(private) CLAMPED_SCHEMA :: `"_clamped":{"type":"object","description":"The params past their maximum by name: what was asked and what was used"}`

@@ -450,74 +450,73 @@ SECTION_RULE_NAMES :: [scene.Section_Rule]string{.With_Document="With_Document",
 
 // One section, as editor.sections and the answers of its methods write it.
 @(private)
-api_section_write :: proc(s:^Session,out:^serial.Writer,w:core.World_Ref,e:core.Entity,costs:bool) {
-    r,_:=entity_get(w,e,scene.Scene_Reference)
+Api_Section :: struct {
+    id:base.Entity_Id `mirai:"label=The entity with the Scene_Reference"`,
+    name:string,
+    scene_:string `mirai:"name=scene,label=The path of its scene under the assets folder; empty when the registry does not have it"`,
+    rule:scene.Section_Rule,
+    asked:scene.Section_State `mirai:"label=What its reference asks"`,
+    view:string `mirai:"label=What the view of the editor asks instead: Active, Loaded or Unloaded; Auto when it follows the reference"`,
+    shown:Section_Shown `mirai:"label=What the editor shows of it now"`,
+    edited:bool `mirai:"label=Whether it is the section edited in its world"`,
+    position:[3]f32 `mirai:"label=In the world"`,
+    min:[3]f32 `mirai:"optional,label=Of the box of its extents in the world; without extents it has none"`,
+    max:[3]f32 `mirai:"optional"`,
+    cost:Api_Section_Cost `mirai:"optional,label=editor.sections: what loading it takes"`,
+}
+Api_Section_Cost :: struct {
+    entities,meshes,textures:int,
+    gpu_bytes,file_bytes:i64,
+}
+Api_Sections_Result :: struct {
+    sections:[]Api_Section,
+    sources:[]Api_Sections_Source `mirai:"label=The streaming sources of the edited world"`,
+    camera:Api_Sections_Camera `mirai:"label=The camera of the editor"`,
+}
+Api_Sections_Source :: struct {
+    position:[3]f32,
+    distance:f32,
+}
+Api_Sections_Camera :: struct {
+    position,forward:[3]f32,
+}
+
+api_section_of :: proc(s:^Session,w:core.World_Ref,e:core.Entity,costs:bool) -> (r:Api_Section) {
+    reference,_:=entity_get(w,e,scene.Scene_Reference)
     pose:=entity_world(w,e)
-    rules,states,shown_names:=SECTION_RULE_NAMES,SECTION_STATE_NAMES,SECTION_SHOWN_NAMES
-    serial.write_u8(out,'{')
-    api.write_key(out,"id",true)
-    api.write_id(out,api_entity_id(w,e))
-    api.write_text(out,"name",entity_label(w,e))
-    scene_path:=""
-    if s.app.assets!=nil {
-        if file,found:=asset.registry_find(&s.app.assets.registry,r.scene);found {scene_path=file.path}
-    }
-    api.write_text(out,"scene",scene_path)
-    api.write_text(out,"rule",rules[r.rule])
-    api.write_text(out,"asked",states[r.state])
+    states:=SECTION_STATE_NAMES
     view,overridden:=section_view(s,w,e)
-    api.write_text(out,"view",overridden?states[view]:"Auto")
-    api.write_text(out,"shown",shown_names[section_shown(s,w,e)])
-    api.write_bool(out,"edited",section_editing(s)==e)
-    api.write_numbers(out,"position",pose.position)
-    if r.extents!={} {
-        box:=section_box(r,pose)
-        low,high:=box[0],box[0]
-        for corner in box[1:] {low,high=linalg.min(low,corner),linalg.max(high,corner)}
-        api.write_numbers(out,"min",low)
-        api.write_numbers(out,"max",high)
+    r={id=api_entity_id(w,e),name=entity_label(w,e),rule=reference.rule,asked=reference.state,view=overridden?states[view]:"Auto",shown=section_shown(s,w,e),edited=section_editing(s)==e,position=pose.position}
+    if s.app.assets!=nil {
+        if file,found:=asset.registry_find(&s.app.assets.registry,reference.scene);found {r.scene_=file.path}
+    }
+    if reference.extents!={} {
+        box:=section_box(reference,pose)
+        r.min,r.max=box[0],box[0]
+        for corner in box[1:] {r.min,r.max=linalg.min(r.min,corner),linalg.max(r.max,corner)}
     }
     if costs {
         cost:=section_cost(s,w,e)
-        api.write_key(out,"cost")
-        serial.write_u8(out,'{')
-        api.write_int(out,"entities",i64(cost.entities),true)
-        api.write_int(out,"meshes",i64(cost.meshes))
-        api.write_int(out,"textures",i64(cost.textures))
-        api.write_int(out,"gpu_bytes",cost.gpu)
-        api.write_int(out,"file_bytes",cost.files)
-        serial.write_u8(out,'}')
+        r.cost={cost.entities,cost.meshes,cost.textures,cost.gpu,cost.files}
     }
-    serial.write_u8(out,'}')
+    return
 }
 
 api_sections :: proc(s:^Session,call:^api.Call) {
     w:=edited_world(s)
-    out:=call.out
-    serial.text_write_raw(out,`{"sections":[`)
+    r:=api.call_result(call,Api_Sections_Result)
     if references:=core.world_table_of(w,scene.Scene_Reference);references!=nil {
-        for row in 0..<core.count(references) {
-            if row>0 {serial.write_u8(out,',')}
-            api_section_write(s,out,w,core.entity_at(references,row),true)
-        }
+        r.sections=make([]Api_Section,core.count(references),call.allocator)
+        for &section,row in r.sections {section=api_section_of(s,w,core.entity_at(references,row),true)}
     }
-    serial.text_write_raw(out,`],"sources":[`)
     if sources:=core.world_storage_of(w,scene.Streaming_Sources);sources!=nil {
-        for source,i in sources.items[:min(sources.count,len(sources.items))] {
-            if i>0 {serial.write_u8(out,',')}
-            serial.write_u8(out,'{')
-            api.write_numbers(out,"position",source.position,true)
-            api.write_key(out,"distance")
-            api.write_number(out,source.distance)
-            serial.write_u8(out,'}')
-        }
+        listed:=sources.items[:min(sources.count,len(sources.items))]
+        r.sources=make([]Api_Sections_Source,len(listed),call.allocator)
+        for source,i in listed {r.sources[i]={source.position,source.distance}}
     }
     o:=s.viewport.orbit
     forward,_,_:=orbit_basis(o)
-    serial.text_write_raw(out,`],"camera":{`)
-    api.write_numbers(out,"position",orbit_position(o),true)
-    api.write_numbers(out,"forward",forward)
-    serial.text_write_raw(out,`}}`)
+    r.camera={orbit_position(o),forward}
 }
 
 api_section_view :: proc(s:^Session,call:^api.Call) {
@@ -543,7 +542,7 @@ api_section_view :: proc(s:^Session,call:^api.Call) {
         return
     }
     api_sections_settle(s)
-    api_section_write(s,call.out,edited_world(s),e,false)
+    api.call_result(call,Api_Section)^=api_section_of(s,edited_world(s),e,false)
 }
 
 api_section_travel :: proc(s:^Session,call:^api.Call) {
@@ -557,7 +556,7 @@ api_section_travel :: proc(s:^Session,call:^api.Call) {
     }
     if m:=world_map_of(s);m!=nil {m.chosen=api_entity_id(w,e)}
     api_sections_settle(s)
-    api_section_write(s,call.out,edited_world(s),e,false)
+    api.call_result(call,Api_Section)^=api_section_of(s,edited_world(s),e,false)
 }
 
 // What a section asked for is there when the call answers: its load, over

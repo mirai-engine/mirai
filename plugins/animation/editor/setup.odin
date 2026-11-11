@@ -64,23 +64,23 @@ Setup_Params :: struct {
     replace:bool `mirai:"optional,label=Overwrites the .character of a previous setup"`,
     dry_run:bool `mirai:"optional,label=Plans and answers without writing"`,
 }
-Setup_Asset_Result :: struct {kind:[16]u8 `mirai:"text"`,path:[1024]u8 `mirai:"text"`,asset:base.Asset_Id,replaced:bool}
-Setup_Capability_Result :: struct {want:Setup_Want,status:Setup_Status,detail:[4096]u8 `mirai:"text"`,fix:[1024]u8 `mirai:"text,label=How to make it Ready"`}
+Setup_Asset_Result :: struct {kind,path:string,asset:base.Asset_Id,replaced:bool}
+Setup_Capability_Result :: struct {want:Setup_Want,status:Setup_Status,detail:string,fix:string `mirai:"label=How to make it Ready"`}
 // A locomotion clip: the Locomotion_Mode it serves; entry: it starts that mode; told: its
 // speed came from speeds; rates: its own from rates.
-Setup_Match_Clip_Result :: struct {clip:[64]u8 `mirai:"text"`,mode:[32]u8 `mirai:"text"`,entry,loop:bool,speed:f32 `mirai:"unit=m/s"`,told:bool `mirai:"optional"`,rates:[2]f32 `mirai:"optional"`}
+Setup_Match_Clip_Result :: struct {clip,mode:string,entry,loop:bool,speed:f32 `mirai:"unit=m/s"`,told:bool `mirai:"optional"`,rates:[2]f32 `mirai:"optional"`}
 // A blend of locomotion clips: its clips, the mode they serve, how many samples it has and its own rates.
-Setup_Blend_Result :: struct {clips:[anim.MATCH_BLEND][64]u8 `mirai:"text"`,mode:[32]u8 `mirai:"text"`,samples:u32,rates:[2]f32 `mirai:"optional"`}
-Setup_Clips_Result :: struct {locomotion:[anim.MATCH_CLIPS]Setup_Match_Clip_Result,blends:[SETUP_BLENDS]Setup_Blend_Result `mirai:"optional"`,gestures:[SETUP_GESTURES][64]u8 `mirai:"text"`}
+Setup_Blend_Result :: struct {clips:[]string,mode:string,samples:u32,rates:[2]f32 `mirai:"optional"`}
+Setup_Clips_Result :: struct {locomotion:[]Setup_Match_Clip_Result,blends:[]Setup_Blend_Result `mirai:"optional"`,gestures:[]string}
 Setup_Result :: struct {
-    id:base.Entity_Id `mirai:"optional"`,skeleton:base.Asset_Id `mirai:"optional"`,dry_run:bool `mirai:"optional"`,body:[16]u8 `mirai:"text,label=stored or detected"`,
-    assets:[1]Setup_Asset_Result,capabilities:[len(Setup_Want)]Setup_Capability_Result,clips:Setup_Clips_Result,
+    id:base.Entity_Id `mirai:"optional"`,skeleton:base.Asset_Id `mirai:"optional"`,dry_run:bool `mirai:"optional"`,body:string `mirai:"label=stored or detected"`,
+    assets:[]Setup_Asset_Result,capabilities:[]Setup_Capability_Result,clips:Setup_Clips_Result,
 }
 
 @(private)
 setup_register :: proc(s:^editor.Session) {
     defaults:=Setup_Params{want=SETUP_ALL}
-    editor.api_method_register(s,Setup_Params,Setup_Result,{name="animation.character.setup",summary="Makes a character move: writes the .character of each capability from its skeleton's body and its clips (the locomotion of its clips, which its Character of the physics plugin drives, its gestures, and the modifiers of the intents of animation.request), sets it as its Animation.asset, and says how ready each is. One step of undo.",defaults=&defaults,run=setup,writes_result=true})
+    editor.api_method_register(s,{params=type_info_of(Setup_Params),result=type_info_of(Setup_Result),name="animation.character.setup",summary="Makes a character move: writes the .character of each capability from its skeleton's body and its clips (the locomotion of its clips, which its Character of the physics plugin drives, its gestures, and the modifiers of the intents of animation.request), sets it as its Animation.asset, and says how ready each is. One step of undo.",defaults=&defaults,run=setup})
 }
 
 // What a clip of the library is by the words of its name. Landing enters walking and Jumping enters
@@ -580,9 +580,10 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             say(&capabilities[.Gestures],.Ready,fmt.tprintf("%d gestures over the upper body or one arm",len(clips.gestures)),"")
         }
     }
-    if anim.character_document(&file.doc,&s.app.assets.types,file.id,set,call.allocator)!=.None {authoring_failure(call,"clips","Invalid_Character","clips of the library with names shorter than 64 bytes","refused","The .character could not be built",api.SERVER_ERROR);return}
+    // A document outgrows the scratch of a request.
+    if anim.character_document(&file.doc,&s.app.assets.types,file.id,set,context.temp_allocator)!=.None {authoring_failure(call,"clips","Invalid_Character","clips of the library with names shorter than 64 bytes","refused","The .character could not be built",api.SERVER_ERROR);return}
     defer asset.document_destroy(&file.doc)
-    bytes:serial.Writer;serial.writer_init(&bytes,4096,call.allocator)
+    bytes:serial.Writer;serial.writer_init(&bytes,4096,context.temp_allocator)
     if asset.document_write(&file.doc,&bytes)!=.None {authoring_failure(call,file.kind,"Serialization","a valid document","refused","The .character could not be serialized",api.SERVER_ERROR);return}
     file.bytes=serial.writer_bytes(&bytes)
     dry_run:=authoring_dry_run(call)
@@ -609,55 +610,41 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         }
         if gesture && !editor.api_edit_end(s,call,true) {return}
     }
-    out:=call.out
-    serial.text_write_raw(out,"{")
-    if rigged {api.write_key(out,"id",true);api.write_id(out,editor.api_entity_id(w,e))} else {api.write_key(out,"skeleton",true);serial.write_u8(out,'"');serial.text_write_asset_id(out,p.skeleton);serial.write_u8(out,'"')}
-    if dry_run {api.write_bool(out,"dry_run",true)}
-    api.write_text(out,"body",body_source)
-    api.write_key(out,"assets");serial.text_write_raw(out,"[{")
-    api.write_text(out,"kind",file.kind,true);api.write_text(out,"path",file.path)
-    api.write_key(out,"asset");serial.write_u8(out,'"');serial.text_write_asset_id(out,file.id);serial.write_u8(out,'"');api.write_bool(out,"replaced",file.replaced);serial.text_write_raw(out,"}]")
-    api.write_key(out,"capabilities");serial.text_write_raw(out,"[")
-    written:=0
+    // The answer is written after the library closes and the temporary memory goes: its texts are copies.
+    r:=api.call_result(call,Setup_Result)
+    if rigged {r.id=editor.api_entity_id(w,e)} else {r.skeleton=p.skeleton}
+    r.dry_run,r.body=dry_run,body_source
+    r.assets=make([]Setup_Asset_Result,1,call.allocator)
+    r.assets[0]={file.kind,file.path,file.id,file.replaced}
+    shown:=make([dynamic]Setup_Capability_Result,call.allocator)
     for &value,which in capabilities {
-        if value.status==.Skipped {continue}
-        if written>0 {serial.text_write_raw(out,",")};written+=1
-        serial.text_write_raw(out,"{");api.write_text(out,"want",fmt.tprintf("%v",which),true);api.write_text(out,"status",fmt.tprintf("%v",value.status))
-        api.write_text(out,"detail",value.detail);api.write_text(out,"fix",value.fix);serial.text_write_raw(out,"}")
+        if value.status!=.Skipped {append(&shown,Setup_Capability_Result{which,value.status,strings.clone(value.detail,call.allocator),strings.clone(value.fix,call.allocator)})}
     }
-    serial.text_write_raw(out,"]")
-    api.write_key(out,"clips");serial.text_write_raw(out,`{"locomotion":[`)
+    r.capabilities=shown[:]
     modes:=locomotion_modes(s.info)
-    listed:=0
+    matched:=make([dynamic]Setup_Match_Clip_Result,call.allocator)
     for clip in clips.locomotion {
         if setup_blended(p,blend_count,blend_members,clip.name) {continue}
-        if listed>0 {serial.text_write_raw(out,",")};listed+=1
         mode,_:=locomotion_mode_name(modes,clip.mode)
-        serial.text_write_raw(out,"{");api.write_text(out,"clip",clip.name,true);api.write_text(out,"mode",mode)
-        api.write_bool(out,"entry",clip.class==.Landing || clip.class==.Jumping || clip.class==.Sliding && !clip.loop);api.write_bool(out,"loop",clip.loop)
-        api.write_key(out,"speed");api.write_number(out,clip.speed)
-        if clip.told {api.write_bool(out,"told",true)}
-        if clip.rates[0]>0 {api.write_numbers(out,"rates",[]f32{clip.rates[0],clip.rates[1]})}
-        serial.text_write_raw(out,"}")
+        append(&matched,Setup_Match_Clip_Result{clip=strings.clone(clip.name,call.allocator),mode=mode,entry=clip.class==.Landing || clip.class==.Jumping || clip.class==.Sliding && !clip.loop,loop=clip.loop,speed=clip.speed,told=clip.told,rates=clip.rates[0]>0?{clip.rates[0],clip.rates[1]}:{}})
     }
-    serial.text_write_raw(out,`],"blends":[`)
+    r.clips.locomotion=matched[:]
+    r.clips.blends=make([]Setup_Blend_Result,blend_count,call.allocator)
     for &blend,b in p.blends[:blend_count] {
-        if b>0 {serial.text_write_raw(out,",")}
-        serial.text_write_raw(out,`{"clips":[`)
-        mode:string
+        shown:=&r.clips.blends[b]
+        shown.clips=make([]string,blend_members[b],call.allocator)
         for k in 0..<blend_members[b] {
-            name:=base.text_get(blend.clips[k][:])
-            if k>0 {serial.text_write_raw(out,",")}
-            serial.text_write_string(out,name)
-            for clip in clips.locomotion {if clip.name==name {mode,_=locomotion_mode_name(modes,clip.mode)}}
+            name:=strings.clone(base.text_get(blend.clips[k][:]),call.allocator)
+            shown.clips[k]=name
+            for clip in clips.locomotion {if clip.name==name {shown.mode,_=locomotion_mode_name(modes,clip.mode)}}
         }
-        serial.text_write_raw(out,"]");api.write_text(out,"mode",mode);api.write_uint(out,"samples",u64(blend_samples[b]))
-        if blend.min_rate>0 {api.write_numbers(out,"rates",[]f32{blend.min_rate,blend.max_rate})}
-        serial.text_write_raw(out,"}")
+        shown.samples=u32(blend_samples[b])
+        if blend.min_rate>0 {shown.rates={blend.min_rate,blend.max_rate}}
     }
-    serial.text_write_raw(out,`],"gestures":[`)
-    if .Gestures in want do for gesture,i in clips.gestures {if i>0 {serial.text_write_raw(out,",")};serial.write_u8(out,'"');serial.text_write_raw(out,gesture);serial.write_u8(out,'"')}
-    serial.text_write_raw(out,"]}}")
+    if .Gestures in want {
+        r.clips.gestures=make([]string,len(clips.gestures),call.allocator)
+        for name,i in clips.gestures {r.clips.gestures[i]=strings.clone(name,call.allocator)}
+    }
 }
 
 // The locomotion modes of the project: the names of Locomotion_Mode, the type of the physics plugin,

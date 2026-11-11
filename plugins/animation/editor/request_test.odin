@@ -64,7 +64,7 @@ request_intents_compile_to_goals_controls_actions_parameters_and_motion :: proc(
     authoring_test_register(a,t,"request",Request_Params,request,defaults)
     result:=authoring_test_execute(a,"request",`{"entity":"0000000000000011","look":{"target":{"kind":"Entity","entity":"0000000000000012"}},"reach":[{"hand":"Right","target":{"position":[0.4,1.3,-0.3]}}],"gesture":{"clip":"wave"},"locomote":{"target":{"position":[0,0,-5]},"speed":1.2}}`)
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
-    testing.expect_value(t,result_shape_mismatch(Request_Result,string(serial_bytes(a))),"")
+    testing.expect_value(t,result_shape_mismatch(Request_Result,api.json_compact(string(serial_bytes(a)))),"")
     goals:=f.world.requests.goals.items
     if !testing.expect(t,len(goals)==2 && len(f.world.requests.controls.items)==0) {return}
     testing.expect(t,goals[0].kind==.Look && goals[0].enabled && goals[0].weight==1 && abs(goals[0].fade-.3)<1e-6 && goals[0].target.kind==.Entity && goals[0].target.entity==friend)
@@ -74,7 +74,7 @@ request_intents_compile_to_goals_controls_actions_parameters_and_motion :: proc(
     locomotion,targets:=f.world.requests.locomotion.items,f.world.requests.warps.items
     testing.expectf(t,len(locomotion)==1 && abs(locomotion[0].velocity.z+1.2)<1e-5 && abs(locomotion[0].velocity.x)<1e-5 && abs(locomotion[0].source_velocity.z+1.2)<1e-5,"locomotion %v",locomotion)
     testing.expect(t,len(targets)==1 && targets[0].target.target.kind==.World && targets[0].target.target.position=={0,0,-5})
-    text:=string(serial_bytes(a))
+    text:=api.json_compact(string(serial_bytes(a)))
     testing.expect(t,strings.contains(text,`"kind":"Look"`) && strings.contains(text,`"kind":"Reach"`) && strings.contains(text,`"kind":"Gesture","name":"wave"`) && strings.contains(text,`"kind":"Locomotion"`))
 
     // Letting go: a goal fades the operation out from where it aims.

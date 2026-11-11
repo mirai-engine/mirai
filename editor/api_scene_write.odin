@@ -25,11 +25,36 @@ Api_Write_Result :: struct {
     made:int `mirai:"label=Entities the document made"`,
     removed:int `mirai:"label=Entities it took away with what hung from them"`,
     disabled:int `mirai:"label=Members of an instance of a prefab it turned off instead of taking them away"`,
-    created:[1]Api_Write_Made `mirai:"list,label=The entities of the document it made in its order; of a prefab it placed the root of the instance, whose members hang from it"`,
+    created:[]Api_Write_Made `mirai:"label=The entities of the document it made in its order; of a prefab it placed the root of the instance, whose members hang from it"`,
 }
 Api_Write_Made :: struct {
     id:base.Entity_Id,
-    name:[64]u8 `mirai:"text"`,
+    name:string,
+}
+
+// The params of scene.write: a document of scene_document.odin, which
+// cook/author reads from the text.
+Api_Scene_Write_Params :: struct {
+    root:string `mirai:"entity,optional,label=by its name, a path Parent/Child or its id, the entity the document declares with what hangs from it: entities holds that one entity. Left out: entities are those at the top of the scene"`,
+    merge:bool `mirai:"optional,label=true: what the document leaves out stays as it is (entities, components, fields, places): it names only what it changes or adds. Left out: the document declares all there is under root, or in the scene without root, and what it leaves out goes"`,
+    kind:Document_Kind `mirai:"optional,label=what the document is from now on, which Save writes: a scene, shown in its own light, or a prefab, with exactly one root, shown in the studio light and placed as instances. Left out: it stays what it is"`,
+    entities:[]Api_Scene_Write_Entity `mirai:"label=the entities, nesting what hangs from each by children; matched by id, else by name among siblings, else (not in a merge) by place, and the others are made"`,
+}
+Api_Scene_Write_Entity :: struct {
+    id:string `mirai:"optional,label=matches the entity with this id, which goes under the entity the document nests it in; in a merge, one at the top of the document stays under the parent it has"`,
+    name:string `mirai:"optional,label=without id, matches the entity of this name among those of its parent; none: it is made"`,
+    preset:string `mirai:"optional,label=a preset or the card of a plugin (cube, sphere, plane, point_light, sun, camera, spawn...): it gives a new entity its components, whose fields components changes, and the rotation and scale it has when those are left out"`,
+    prefab:serial.Json `mirai:"optional,label=on a new entity, the path or the id of a prefab: it is placed as a linked instance, and what the entity and those under it leave out stays as the prefab gives it, also in a later write that names it the same way; on an entity that is there, {asset, root} as scene.inspect gives it declares all it has; a write changes no link of an entity that is there"`,
+    copy:string `mirai:"optional,label=on a new entity, the entity it is a copy of, by its name, a path Parent/Child or its id: copied with what hangs from it and new ids, beside that entity unless the document nests it under another; what the entity and those under it say changes the copy"`,
+    delete:bool `mirai:"optional,label=true takes the entity away with what hangs from it; it declares nothing else. A member of an instance of a prefab is turned off instead"`,
+    position:[3]f32 `mirai:"optional,label=local to the parent; [0,0,0] when left out"`,
+    rotation_deg:[3]f32 `mirai:"optional,label=[0,0,0] or that of its preset when left out"`,
+    scale:[3]f32 `mirai:"optional,label=[1,1,1] or that of its preset when left out"`,
+    visible:bool `mirai:"optional,label=true when left out"`,
+    enabled:bool `mirai:"optional,label=true when left out; false turns the entity and everything under it off: their components keep their values and no system sees them"`,
+    components:serial.Json `mirai:"optional,label=by name the components it has besides those of its preset, each with the fields that differ from the value it starts with; those it leaves out go. In a merge: the fields to change of each, and null takes a component away"`,
+    off:[]string `mirai:"optional,label=the components it declares that are turned off by themselves, keeping their values; those it declares and does not list are on. In a merge without off nothing turns"`,
+    children:[]serial.Json `mirai:"optional,label=the entities that hang from it, in order, each with these keys"`,
 }
 
 // What the rows of a write are changed with.
@@ -43,7 +68,7 @@ Api_Write :: struct {
 
 @(private)
 api_scene_write_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="scene.write",flags={.Core,.Destructive},params_schema=API_WRITE_SCHEMA,summary="The one way to change the entities of the scene: makes it say what a document of nested entities declares, as scene.inspect with root gives it. Entities are matched by id or name, the others made (with preset, with prefab as a linked instance, with copy from another entity). What the document leaves out goes, or with merge stays: then it names only what changes, and delete takes an entity away. One step of undo; the result names what it made.",result=Api_Write_Result,writes_result=true,run=api_scene_write})
+    api_register(s,st,{name="scene.write",flags={.Core,.Destructive},params=type_info_of(Api_Scene_Write_Params),summary="The one way to change the entities of the scene: makes it say what a document of nested entities declares, as scene.inspect with root gives it. Entities are matched by id or name, the others made (with preset, with prefab as a linked instance, with copy from another entity). What the document leaves out goes, or with merge stays: then it names only what changes, and delete takes an entity away. One step of undo; the result names what it made.",result=type_info_of(Api_Write_Result),run=api_scene_write})
 }
 
 // The entities of the part of the scene a document declares: root and what
@@ -93,19 +118,9 @@ api_scene_write :: proc(s:^Session,call:^api.Call) {
     // A person goes on with what the step made: it is what it leaves selected.
     if ready && api_person(s) && len(applied.created)>0 {history.selection_set(document_selection(s),transmute([]core.Entity)applied.created[:])}
     if !api_edit_end(s,call,ready) {return}
-    out:=call.out
-    serial.text_write_raw(out,`{"id":`);api.write_id(out,applied.id)
-    api.write_int(out,"made",i64(applied.made))
-    api.write_int(out,"removed",i64(applied.removed))
-    api.write_int(out,"disabled",i64(applied.disabled))
-    api.write_key(out,"created");serial.write_u8(out,'[')
-    for node,i in applied.created {
-        if i>0 {serial.write_u8(out,',')}
-        serial.text_write_raw(out,`{"id":`);api.write_id(out,api_entity_id(w,core.Entity(node)))
-        api.write_text(out,"name",entity_name(w,core.Entity(node)))
-        serial.write_u8(out,'}')
-    }
-    serial.text_write_raw(out,"]}")
+    created:=make([]Api_Write_Made,len(applied.created),call.allocator)
+    for node,i in applied.created {created[i]={api_entity_id(w,core.Entity(node)),entity_name(w,core.Entity(node))}}
+    api.call_result(call,Api_Write_Result)^={applied.id,applied.made,applied.removed,applied.disabled,created}
 }
 
 // Why nothing is added or moved under parent, the top for 0, now; "" when it can be.
@@ -332,21 +347,15 @@ api_inspect_tree :: proc(s:^Session,call:^api.Call,w:core.World_Ref,params:^Api_
     a:Api_Write
     target,ready:=api_write_target(s,call,&a)
     if !ready {return}
-    out:=call.out
-    serial.text_write_raw(out,`{"path":`);serial.text_write_string(out,document_path(s.document))
-    api.write_key(out,"dirty");api.write_flag(out,document_dirty(s))
-    api.write_key(out,"playing");api.write_flag(out,s.mode!=.Edit)
-    api.write_key(out,"total");serial.text_write_int(out,i64(core.world_entities(w).alive))
-    api.write_key(out,"offset");serial.write_u8(out,'0')
-    api.write_key(out,"entities");serial.write_u8(out,'[')
-    author.scene_entity_write(&target,out,author.Node(root),values.only if values.listed else target.tables)
-    serial.write_u8(out,']')
-    api.write_key(out,"shown");serial.text_write_int(out,i64(len(part)))
-    api.write_key(out,"matched");serial.text_write_int(out,i64(len(part)))
-    api.write_key(out,"omitted");serial.write_u8(out,'0')
-    serial.write_u8(out,'}')
+    tree:serial.Writer
+    serial.writer_init(&tree,0,call.allocator)
+    serial.write_u8(&tree,'[')
+    author.scene_entity_write(&target,&tree,author.Node(root),values.only if values.listed else target.tables)
+    serial.write_u8(&tree,']')
+    r:=api.call_result(call,Api_Inspect_Result)
+    base.text_set(r.path[:],document_path(s.document))
+    r.dirty,r.playing,r.total=document_dirty(s),s.mode!=.Edit,core.world_entities(w).alive
+    r.shown,r.matched,r.tree=len(part),len(part),serial.Json(string(serial.writer_bytes(&tree)))
 }
 
 // The shape of the params of scene.write.
-@(private) API_WRITE_ENTITY :: `{"type":"object","additionalProperties":false,"properties":{"id":{"type":"string","description":"matches the entity with this id, which goes under the entity the document nests it in; in a merge, one at the top of the document stays under the parent it has"},"name":{"type":"string","description":"without id, matches the entity of this name among those of its parent; none: it is made"},"preset":{"type":"string","description":"a preset or the card of a plugin (cube, sphere, plane, point_light, sun, camera, spawn...): it gives a new entity its components, whose fields components changes, and the rotation and scale it has when those are left out"},"prefab":{"type":["string","object"],"description":"on a new entity, the path or the id of a prefab: it is placed as a linked instance, and what the entity and those under it leave out stays as the prefab gives it, also in a later write that names it the same way; on an entity that is there, {asset, root} as scene.inspect gives it declares all it has; a write changes no link of an entity that is there"},"copy":{"type":"string","description":"on a new entity, the entity it is a copy of, by its name, a path Parent/Child or its id: copied with what hangs from it and new ids, beside that entity unless the document nests it under another; what the entity and those under it say changes the copy"},"delete":{"type":"boolean","description":"true takes the entity away with what hangs from it; it declares nothing else. A member of an instance of a prefab is turned off instead"},"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"local to the parent; [0,0,0] when left out"},"rotation_deg":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"[0,0,0] or that of its preset when left out"},"scale":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3,"description":"[1,1,1] or that of its preset when left out"},"visible":{"type":"boolean","description":"true when left out"},"enabled":{"type":"boolean","description":"true when left out; false turns the entity and everything under it off: their components keep their values and no system sees them"},"components":{"type":"object","additionalProperties":{"type":["object","null"]},"description":"by name the components it has besides those of its preset, each with the fields that differ from the value it starts with; those it leaves out go. In a merge: the fields to change of each, and null takes a component away"},"off":{"type":"array","items":{"type":"string"},"description":"the components it declares that are turned off by themselves, keeping their values; those it declares and does not list are on. In a merge without off nothing turns"},"children":{"type":"array","items":{"type":"object"},"description":"the entities that hang from it, in order, each with these keys"}}}`
-@(private) API_WRITE_SCHEMA :: `{"type":"object","additionalProperties":false,"required":["entities"],"properties":{"root":{"type":["string","null"],"description":"by its name, a path Parent/Child or its id, the entity the document declares with what hangs from it: entities holds that one entity. Left out: entities are those at the top of the scene"},"merge":{"type":"boolean","description":"true: what the document leaves out stays as it is (entities, components, fields, places): it names only what it changes or adds. Left out: the document declares all there is under root, or in the scene without root, and what it leaves out goes"},"kind":{"enum":["Scene","Prefab"],"description":"what the document is from now on, which Save writes: a scene, shown in its own light, or a prefab, with exactly one root, shown in the studio light and placed as instances. Left out: it stays what it is"},"entities":{"type":"array","items":` + API_WRITE_ENTITY + `,"description":"the entities, nesting what hangs from each by children; matched by id, else by name among siblings, else (not in a merge) by place, and the others are made"}}}`

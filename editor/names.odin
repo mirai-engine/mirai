@@ -258,14 +258,14 @@ Api_Names_Params :: struct {
 
 // Written by hand: a field of Odin cannot be named package.
 @(private)
-Api_Names_Result :: struct {types:[1]Api_Names_Type `mirai:"list"`}
+Api_Names_Result :: struct {types:[]Api_Names_Type}
 Api_Names_Type :: struct {
-    type:[128]u8 `mirai:"text"`,
-    path:[API_PATH_BYTES]u8 `mirai:"text,key=package,label=The import path of the package that declares it"`,
-    names:[1]Api_Names_Value `mirai:"list,label=The values the code declares"`,
+    type:string,
+    path:string `mirai:"name=package,label=The import path of the package that declares it"`,
+    names:[]Api_Names_Value `mirai:"label=The values the code declares"`,
 }
 Api_Names_Value :: struct {
-    name:[128]u8 `mirai:"text,label=What a field of the type takes in scene.write and gives back"`,
+    name:string `mirai:"label=What a field of the type takes in scene.write and gives back"`,
     value:i64,
     project:bool `mirai:"label=Whether the project declares it: names.rename renames only those"`,
 }
@@ -285,9 +285,9 @@ Api_Name_Rename_Result :: struct {building:bool}
 
 @(private)
 api_names_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="names.list",summary="The types @(names) of the project (locomotion modes, input actions, collision categories...) with the named values the code declares for each.",params=Api_Names_Params,result=Api_Names_Result,writes_result=true,flags={.Read_Only},run=api_names_list})
-    api_register(s,st,{name="names.create",summary="Declares a new value of a type @(names) in game/names.odin, the first free one after its highest, and starts the build of the game; an input action is declared in code, as a member of the enum @(actions) of the game.",params=Api_Name_Create_Params,result=Api_Name_Create_Result,run=api_name_create})
-    api_register(s,st,{name="names.rename",summary="Renames a value of a type @(names) that the project declared, with @(name) on its constant, and starts the build of the game; saved data keeps its number. An input action is renamed in code first (its member of the enum @(actions)); once built, this follows it: Input_Settings of the project takes the new name, and the documents that keep it too, as edits, unsaved.",params=Api_Name_Rename_Params,result=Api_Name_Rename_Result,run=api_name_rename})
+    api_register(s,st,{name="names.list",summary="The types @(names) of the project (locomotion modes, input actions, collision categories...) with the named values the code declares for each.",params=type_info_of(Api_Names_Params),result=type_info_of(Api_Names_Result),flags={.Read_Only},run=api_names_list})
+    api_register(s,st,{name="names.create",summary="Declares a new value of a type @(names) in game/names.odin, the first free one after its highest, and starts the build of the game; an input action is declared in code, as a member of the enum @(actions) of the game.",params=type_info_of(Api_Name_Create_Params),result=type_info_of(Api_Name_Create_Result),run=api_name_create})
+    api_register(s,st,{name="names.rename",summary="Renames a value of a type @(names) that the project declared, with @(name) on its constant, and starts the build of the game; saved data keeps its number. An input action is renamed in code first (its member of the enum @(actions)); once built, this follows it: Input_Settings of the project takes the new name, and the documents that keep it too, as edits, unsaved.",params=type_info_of(Api_Name_Rename_Params),result=type_info_of(Api_Name_Rename_Result),run=api_name_rename})
 }
 
 @(private)
@@ -298,26 +298,17 @@ api_names_list :: proc(s:^Session,call:^api.Call) {
         api.call_failf(call,api.INVALID_PARAMS,"%s",names_error_text(.Not_A_Type,wanted,""))
         return
     }
-    out:=call.out
-    serial.text_write_raw(out,`{"types":[`)
-    first:=true
+    types:=make([dynamic]Api_Names_Type,call.allocator)
     if info!=nil {
         for t in info.named_types {
             if wanted!="" && t.name!=wanted {continue}
-            if !first {serial.write_u8(out,',')};first=false
-            serial.write_u8(out,'{');api.write_text(out,"type",t.name,true);api.write_text(out,"package",t.path)
-            api.write_key(out,"names");serial.write_u8(out,'[')
-            for entry,i in core.names_of(info,t.type) {
-                if i>0 {serial.write_u8(out,',')}
-                serial.write_u8(out,'{');api.write_text(out,"name",entry.name,true)
-                api.write_key(out,"value");serial.text_write_int(out,entry.value)
-                api.write_bool(out,"project",entry.project)
-                serial.write_u8(out,'}')
-            }
-            serial.text_write_raw(out,"]}")
+            entries:=core.names_of(info,t.type)
+            names:=make([]Api_Names_Value,len(entries),call.allocator)
+            for entry,i in entries {names[i]={entry.name,entry.value,entry.project}}
+            append(&types,Api_Names_Type{t.name,t.path,names})
         }
     }
-    serial.text_write_raw(out,"]}")
+    api.call_result(call,Api_Names_Result).types=types[:]
 }
 
 @(private)

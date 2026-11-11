@@ -58,10 +58,10 @@ Api_Save_Deleted :: struct {
 
 @(private)
 save_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="save.list",summary="The saved games of the project: each slot of the folder of its saves with what its header says without loading it, also those that do not load with why.",params=Api_Save_List_Params,result=Api_Save_List,flags={.Read_Only},run=api_save_list})
-    api_register(s,st,{name="save.delete",summary="Deletes a saved game: through the game of the caller while it plays, as the game asks, otherwise its file.",params=Api_Save_Slot_Params,result=Api_Save_Deleted,flags={.Destructive},run=api_save_delete})
-    api_register(s,st,{name="save.write",summary="Saves the game of the caller into a slot as the game asks for it and returns the slot once written. Needs Play.",params=Api_Save_Write_Params,result=Api_Save_Slot,run=api_save_write})
-    api_register(s,st,{name="save.load",summary="Replaces the world of the game of the caller with a saved game as the game asks for it: its entities get new handles. Needs Play.",params=Api_Save_Slot_Params,result=Api_Save_Slot,flags={.Destructive},run=api_save_load})
+    api_register(s,st,{name="save.list",summary="The saved games of the project: each slot of the folder of its saves with what its header says without loading it, also those that do not load with why.",params=type_info_of(Api_Save_List_Params),result=type_info_of(Api_Save_List),flags={.Read_Only},run=api_save_list})
+    api_register(s,st,{name="save.delete",summary="Deletes a saved game: through the game of the caller while it plays, as the game asks, otherwise its file.",params=type_info_of(Api_Save_Slot_Params),result=type_info_of(Api_Save_Deleted),flags={.Destructive},run=api_save_delete})
+    api_register(s,st,{name="save.write",summary="Saves the game of the caller into a slot as the game asks for it and returns the slot once written. Needs Play.",params=type_info_of(Api_Save_Write_Params),result=type_info_of(Api_Save_Slot),run=api_save_write})
+    api_register(s,st,{name="save.load",summary="Replaces the world of the game of the caller with a saved game as the game asks for it: its entities get new handles. Needs Play.",params=type_info_of(Api_Save_Slot_Params),result=type_info_of(Api_Save_Slot),flags={.Destructive},run=api_save_load})
 }
 
 // The state of the saves as the game has it, where it may have set its own
@@ -170,7 +170,7 @@ api_save_run :: proc(s:^Session,call:^api.Call) -> (r:^Run,ok:bool) {
     own:bool
     r,own=api_play_run(s,call)
     switch {
-    case r==nil: api.call_fail(call,api.SERVER_ERROR,"No game is playing: start Play with play.start first; save.list and save.delete work without it")
+    case r==nil: api_no_game(call,"save.list and save.delete work without it")
     case !own: api_play_refused(call)
     case core.world_storage_of(run_ref(s,r),save.Save_Requests)==nil: api.call_fail(call,api.SERVER_ERROR,"The game of this project has no save library: generate the project again so that its world has engine/save")
     case: return r,true

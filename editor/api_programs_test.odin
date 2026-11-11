@@ -90,7 +90,7 @@ programs_of_any_domain_are_made_and_changed_in_memory_as_steps_of_undo :: proc(t
 
     // An edit that does not compile changes nothing; one that does is a step of its own.
     _,failure,ok=programs_test_call(t,state,"material.program.edit",`{"program":"Glow_Post","edits":[{"old":"p.tint","new":"p.tint*brightness"}]}`)
-    testing.expect(t,!ok && failure.code==api.INVALID_PARAMS && strings.contains(failure.data,`"kind":"postprocess"`),failure.data)
+    testing.expect(t,!ok && failure.code==api.INVALID_PARAMS && strings.contains(failure.data,`"kind": "postprocess"`),failure.data)
     testing.expect_value(t,held(&assets.registry,path),template)
     _,failure,ok=programs_test_call(t,state,"material.program.edit",`{"program":"Glow_Post","source":"//! mirai surface Glow_Post\n"}`)
     testing.expect(t,!ok && strings.contains(failure.message,"//! mirai postprocess Glow_Post"),failure.message)

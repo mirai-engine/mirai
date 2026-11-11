@@ -1,13 +1,11 @@
 package navigation_editor
 
-import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:project"
 import "mirai:std/ai"
-import "mirai:std/serial"
 import nav "plugins:navigation/runtime"
 
 @(private)
@@ -42,15 +40,14 @@ nav_agent_tells_what_a_far_agent_does :: proc(t:^testing.T) {
     core.disable(&world.agents,e);core.disable(&world.paths,e);core.disable(&world.fars,e)
     test_world_settle(&world)
     testing.expect(t,!core.has(&world.agents,e))
-    out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
     params:Agent_Params;copy(params.entity[:],"0000000000000007")
-    method:=api.Method{params_id=Agent_Params}
-    call:=api.Call{method=&method,params=&params,out=&out,allocator=context.temp_allocator}
+    result:Nav_Agent_Result
+    method:=api.Method{params_id=Agent_Params,result_id=Nav_Agent_Result}
+    call:=api.Call{method=&method,params=&params,result=&result,allocator=context.temp_allocator}
     agent(&session,&call)
     testing.expect(t,!call.failed,call.error.message)
-    text:=string(serial.writer_bytes(&out))
-    testing.expectf(t,strings.contains(text,`"state":"Moving"`) && strings.contains(text,`"far":true`),"%s",text)
-    testing.expectf(t,strings.contains(text,`"position":[30,0,0]`) && !strings.contains(text,`"position":[10,0,0]`),"%s",text)
+    testing.expectf(t,result.state=="Moving" && result.far,"%v",result)
+    testing.expectf(t,len(result.corners)==1 && result.corners[0].position=={30,0,0},"%v",result.corners)
 }
 
 // The way a drive takes is the first corner past where the body stands, with

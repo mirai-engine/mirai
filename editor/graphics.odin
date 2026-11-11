@@ -191,12 +191,11 @@ graphics_rows_of :: proc(s:^Session,offered:[]erender.Antialiasing_Desc=nil) -> 
             if !is_struct {continue}
             section:=""
             for i in 0..<int(fields.field_count) {
-                tag:=reflect.Struct_Tag(fields.tags[i])
-                if named,has:=core.field_option(tag,"section");has {section=named}
-                label,tagged:=core.field_option(tag,"graphics")
-                if !tagged {continue}
-                row:=Graphics_Row{storage=index,type=fields.types[i],offset=fields.offsets[i],label=label if label!="" else readable(fields.names[i]),rate=section==GRAPHICS_RATE_SECTION}
-                if graphics_row_choices(&row,tag,offered) {append(&rows,row)}
+                tag:=field_tagged(fields.tags[i])
+                if tag.section!="" {section=tag.section}
+                if tag.graphics=="" {continue}
+                row:=Graphics_Row{storage=index,type=fields.types[i],offset=fields.offsets[i],label=tag.graphics,rate=section==GRAPHICS_RATE_SECTION}
+                if graphics_row_choices(&row,tag.choices,offered) {append(&rows,row)}
             }
         }
     }
@@ -205,8 +204,8 @@ graphics_rows_of :: proc(s:^Session,offered:[]erender.Antialiasing_Desc=nil) -> 
 
 // The choices of a row from its type and its tag; false for a type without them.
 @(private="file")
-graphics_row_choices :: proc(row:^Graphics_Row,tag:reflect.Struct_Tag,offered:[]erender.Antialiasing_Desc) -> bool {
-    listed,_:=core.field_option(tag,"choices")
+graphics_row_choices :: proc(row:^Graphics_Row,listed:string,offered:[]erender.Antialiasing_Desc) -> bool {
+    listed:=listed
     labels:=make([dynamic]string,context.temp_allocator)
     values:=make([dynamic]f64,context.temp_allocator)
     for entry in strings.split_iterator(&listed,"|") {
