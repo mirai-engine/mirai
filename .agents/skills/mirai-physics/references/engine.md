@@ -197,10 +197,9 @@ Overlaps:
 - They are evaluated when at least one body is awake. A zone that appears over a sleeping dynamic
   body or an idle `Character` may not emit an entry until it wakes. Gameplay keeps its occupants
   if it needs to know who is still inside.
-- A `bullet` that crosses a trigger in one tick emits both events in that tick, with `crossed`:
-  whoever counts occupants processes the `overlap_begin` before the `overlap_end`. A body that is
-  not a bullet and travels in one tick more than the thickness of the trigger and its own can cross
-  it without events.
+- A dynamic body that crosses a static trigger in one tick emits both events in that tick, with
+  `crossed`: whoever counts occupants processes the `overlap_begin` before the `overlap_end`. Only
+  a `bullet` does it also for a trigger on a moving body.
 
 ## Binding and world step
 
