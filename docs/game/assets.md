@@ -45,7 +45,7 @@ mirai import source/sounds/step.wav --out assets/player --root .
 
 ## Kinds
 - Engine: `.mesh` `.skeleton` `.mat` `.tex` `.anim` `.sound` `.sound_set` `.ui` `.font` `.strings`
-  `.prompts` `.records` `.scene` (one root: a prefab, `kind=prefab`).
+  `.prompts` `.records` `.scene` (its header says Scene or Prefab).
 - Plugins add `.particle`, `.terrain`, `.foliage`, `.navmesh`, `.character` (`animation`),
   `.fracture` (`destruct`), `.physics_cache`.
 - Folders are named after what they hold (`player`, `arena`), never after a kind. An import goes
@@ -70,9 +70,9 @@ mirai import source/sounds/step.wav --out assets/player --root .
 
 ## Inspect
 
-- `mirai asset ls <folder>`, `info`, `verify <file>...`, `deps <file> --users`, `dump`,
-  `get <file> <path>`, `set <file> <path>=<value>` (`entities[@0x20].name=Lamp`); rows are
-  added by `unpack`, editing `asset.json`, `pack`.
+- `mirai asset ls <folder>`, `info`, `verify <file>...`, `deps <file> --users`, `dump`, `get <file>
+  <path>`, `set <file> <path>=<value>`; rows are added by `unpack`, editing `asset.json`, `pack`; a
+  scene or a `.ui`, by the document `dump` prints ([text](assets/text-sources.md)).
 
 ## Pitfalls that fail silently
 - A hard-coded id of an imported asset matches nothing in another checkout: ids are random.

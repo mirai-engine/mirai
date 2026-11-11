@@ -5,6 +5,8 @@ import "core:math/linalg"
 import "core:mem"
 import "mirai:core"
 import erender "mirai:engine/render"
+import "mirai:host"
+import "mirai:std/base"
 import mm "mirai:std/math"
 
 // The portals in the renderer. Every stage of every view gets the gates of
@@ -12,6 +14,13 @@ import mm "mirai:std/math"
 // the hooks of portals_hooks.slang read. Each view also gets, in its Mask
 // stage, a nested view for each portal it sees: the scene from the camera of
 // the view carried through the portal, drawn in the pixels of its opening.
+// Just behind the face of a mirror there is a thin body that reflects: the
+// views that have no nested view left for it, and what is seen in a nested
+// view or along the second stretch of a ray, see the mirror through it.
+
+// How far behind the face of a mirror its body is, so that the mask of the face covers it, and how thick.
+BODY_BEHIND :: 0.002
+BODY_DEPTH :: 0.01
 
 // Two portals in one room each bring its lights: twice the lights that reach them.
 PORTAL_LIGHT_CAPACITY :: 16
@@ -44,6 +53,7 @@ Gate :: struct {
     plane,exit_plane:[4]f32,   // of the opening and of that of the exit, facing their fronts
     corners:[4][3]f32,
     layers:u32,
+    mirror:bool,
 }
 
 @(storage,host)
@@ -69,39 +79,66 @@ light_keep :: proc(state:^Portals_Gpu,weights:^[PORTAL_LIGHT_CAPACITY]f32,weight
     state.constants.light_count=u32(count)
 }
 
+// What carries the front of a gate to behind its exit: a rigid turn, or the reflection of a mirror.
+@(private)
+gate_through :: proc "contextless" (entrance,exit:mm.Transform,mirror:bool) -> mm.Mat4 {
+    if !mirror {return mm.transform_matrix(through_of(entrance,exit))}
+    normal:=mm.quat_rotate(entrance.rotation,[3]f32{0,0,1})
+    return reflection({normal.x,normal.y,normal.z,-linalg.dot(normal,entrance.position)})
+}
+
 // The portals of the world into the frame: its gates, the lights behind each
-// one, and the pass that gives every view its nested views.
+// one but the mirrors, the body of each mirror, and the pass that gives every
+// view its nested views.
 @(step="render",loops="game editor",after="render_sync")
 portals_render :: proc(
     state:^Portals_Gpu,portals:core.Read(Portal),worlds:core.Read(core.World_Transform),
     suns:core.Read(erender.Sun),points:core.Read(erender.Point_Light),spots:core.Read(erender.Spot_Light),rects:core.Read(erender.Rect_Light),
-    hidden:core.Read(erender.Hidden),parents:core.Read(core.Parent),renderer:^erender.Renderer,frame:core.Frame_Time,
+    layers:core.Read(erender.Layers),highlights:core.Read(erender.Highlight),outlines:core.Read(erender.Outline),
+    hidden:core.Read(erender.Hidden),parents:core.Read(core.Parent),assets:^host.Assets,renderer:^erender.Renderer,extras:^host.Frame_Extras,frame:core.Frame_Time,
 ) {
     state.last,state.last_count=state.gates,state.count
     state.count=0
-    if core.count(portals)==0 {return}
-    // 0 while the shaders in use have no portals.
+    if renderer==nil || assets==nil || core.count(portals)==0 {return}
+    // 0 while the shaders in use have no portals: the bodies of the mirrors reflect by themselves.
     state.pipeline=erender.stage_pipeline(renderer,{stage=.Mask,shader="portal_mask",name="portal masks"})
-    if state.pipeline==0 {return}
     state.constants={}
+    surface:=host.assets_material_values(assets,0)
+    surface.base_color,surface.metallic,surface.roughness={1,1,1},1,0
+    material,has_material:=host.assets_material_derive(assets,surface)
     exits,throughs:[PORTAL_CAPACITY]mm.Transform
     sizes:[PORTAL_CAPACITY][2]f32
     for row in 0..<core.count(portals) {
         if state.count>=PORTAL_CAPACITY {break}
         e:=core.entity_at(portals,row)
         portal:=core.at(portals,row)
+        mirror:=portal.mirror
         world,placed:=core.get(worlds,e)
-        exit_world,has_exit:=core.get(worlds,portal.exit)
+        exit_world,has_exit:=core.get(worlds,mirror?e:portal.exit)
         if !placed || !has_exit || erender.is_hidden(hidden,parents,e) {continue}
         entrance,exit:=erender.drawn_transform(world,frame),erender.drawn_transform(exit_world,frame)
         size:=[2]f32{abs(entrance.scale.x),abs(entrance.scale.y)}
         _,invertible:=mm.transform_inverse_matrix({entrance.position,entrance.rotation,{size.x,size.y,1}})
         if size.x<1e-5 || size.y<1e-5 || !invertible {continue}
-        through:=through_of(entrance,exit)
-        normal,exit_normal:=mm.quat_rotate(entrance.rotation,[3]f32{0,0,1}),mm.quat_rotate(exit.rotation,[3]f32{0,0,1})
+        normal:=mm.quat_rotate(entrance.rotation,[3]f32{0,0,1})
+        if mirror && has_material {
+            // The cylinder stands along its Y: lying down, its caps are the ellipse.
+            behind:=entrance.position-normal*(BODY_BEHIND+0.5*BODY_DEPTH)
+            body:=mm.Transform{behind,entrance.rotation,{size.x,size.y,BODY_DEPTH}}
+            if portal.ellipse {body={behind,entrance.rotation*mm.quat_axis_angle({1,0,0},0.5*math.PI),{size.x,BODY_DEPTH,size.y}}}
+            if instance,usable:=erender.mesh_instance(assets,{shape=portal.ellipse?.Cylinder:.Cube},mm.transform_matrix(body));usable {
+                instance.material=erender.Material_Handle(material)
+                instance.object_id,instance.copy_owner=u64(e),base.name_hash("mirror")
+                instance.highlight=erender.instance_outline(highlights,outlines,e)
+                if in_layers,exists:=core.get(layers,e);exists {instance.layers=in_layers.mask}
+                erender.instance_add(extras,instance)
+            }
+        }
+        if state.pipeline==0 {continue}
+        exit_normal:=mm.quat_rotate(exit.rotation,[3]f32{0,0,1})
         gate:=&state.gates[state.count]
         gate^={
-            entity=e,entrance={entrance.position,entrance.rotation,{size.x,size.y,1}},exit=exit,through=mm.transform_matrix(through),layers=portal.layers,
+            entity=e,entrance={entrance.position,entrance.rotation,{size.x,size.y,1}},exit=exit,through=gate_through(entrance,exit,mirror),layers=portal.layers,mirror=mirror,
             plane={normal.x,normal.y,normal.z,-linalg.dot(normal,entrance.position)},
             exit_plane={exit_normal.x,exit_normal.y,exit_normal.z,-linalg.dot(exit_normal,exit.position)},
         }
@@ -111,13 +148,14 @@ portals_render :: proc(
             corner=entrance.position+mm.quat_rotate(entrance.rotation,[3]f32{(i&1!=0?0.5:-0.5)*size.x,(i&2!=0?0.5:-0.5)*size.y,0})
         }
         state.constants.gates[state.count]={shape={portal.ellipse?1:0,0,0,0}}
-        exits[state.count],throughs[state.count],sizes[state.count]=exit,through,size
+        exits[state.count],throughs[state.count],sizes[state.count]=exit,through_of(entrance,exit),size
         state.count+=1
     }
+    host.assets_commit(assets)
     state.constants.count=u32(state.count)
     if state.count==0 {return}
 
-    // The lights in front of the exit of each gate, near enough to reach its opening, as they are seen from in front of the gate.
+    // The lights in front of the exit of each portal, near enough to reach its opening, as they are seen from in front of the portal.
     gates:=Gate_Lights{state=state,exits=exits[:state.count],throughs=throughs[:state.count],sizes=sizes[:state.count]}
     sun_radius:=erender.sun_radius(renderer)
     for row in 0..<core.count(suns) {
@@ -129,7 +167,7 @@ portals_render :: proc(
         power:=sun.illuminance*luma(sun.color)
         for gate in 0..<state.count {
             facing:=linalg.dot(mm.quat_rotate(exits[gate].rotation,[3]f32{0,0,1}),to_sun)
-            if facing<=0.02 {continue}
+            if facing<=0.02 || state.gates[gate].mirror {continue}
             seen:=mm.quat_rotate(conj(throughs[gate].rotation),to_sun)
             light_keep(state,&gates.weights,power*facing*1e3,{position_range={seen.x,seen.y,seen.z,0},color_intensity={sun.color.r,sun.color.g,sun.color.b,sun.illuminance},direction_cone={0,0,0,erender.LIGHT_POINT},extra={sun_radius,f32(gate),0,0}})
         }
@@ -171,7 +209,7 @@ constants_relative :: proc "contextless" (state:^Portals_Gpu,origin:[3]f32) -> (
         exit.position=erender.origin_point(exit.position,origin)
         to_local,_:=mm.transform_inverse_matrix(entrance)
         c.gates[i].to_local=mm.mat4_rows(to_local)
-        c.gates[i].through=mm.mat4_rows(mm.transform_matrix(through_of(entrance,exit)))
+        c.gates[i].through=mm.mat4_rows(gate_through(entrance,exit,gate.mirror))
     }
     for &light in c.lights[:c.light_count] {
         if light.position_range.w>0 {light.position_range.xyz=erender.origin_point(light.position_range.xyz,origin)}
@@ -227,6 +265,8 @@ gate_lights_add :: proc(g:^Gate_Lights,light:erender.Light_Desc,kind:Gate_Light_
     if light.intensity<=0 {return}
     power:=light.intensity*luma(light.color)
     for gate in 0..<len(g.exits) {
+        // A mirror brings no lights: what it would cast of them is a caustic, which no glossy surface casts either.
+        if g.state.gates[gate].mirror {continue}
         exit,through:=g.exits[gate],g.throughs[gate]
         local:=mm.quat_rotate(conj(exit.rotation),light.position-exit.position)
         if local.z<=0.01 {continue}

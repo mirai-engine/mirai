@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:slice"
+import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -11,7 +12,7 @@ import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-@(private="file") Scene_Test_Lamp :: struct {range,intensity:f32}
+@(private="file") Scene_Test_Lamp :: struct {range:f32,intensity:f32 `mirai:"was=power"`}
 @(private="file") Scene_Test_Link :: struct {target:core.Entity}
 @(private="file") Scene_Test_Shape :: enum u8 {Cube,Ramp}
 @(private="file")
@@ -41,6 +42,7 @@ Scene_Test :: struct {
 @(private="file")
 lamp_write :: proc(t:^testing.T,types:^asset.Types,path:string,range:f32) -> (lamp:asset.Scene) {
     asset.scene_init(&lamp,types,TEST_LAMP)
+    lamp.doc.flags+={.Prefab}
     asset.scene_entity_add(&lamp,1,0,"Lamp")
     asset.scene_entity_add(&lamp,2,1,"Bulb")
     light:=Scene_Test_Lamp{range,1}
@@ -118,12 +120,15 @@ a_load_brings_instances_up_to_date_with_their_prefabs_unless_the_assets_are_cook
     testing.expect(t,slice.equal(scene_test_ranges(p.world),[]f32{1}))
 }
 
-// A lamp as a scene saved it before its fields changed.
-@(private="file") Scene_Test_Old_Lamp :: struct {intensity:f32,flicker:i32}
+// A lamp as a scene saved it before its fields changed: power is intensity
+// now, and flicker is gone.
+@(private="file") Scene_Test_Old_Lamp :: struct {power:f32,flicker:i32}
+@(private="file") Scene_Test_Gone :: struct {speed:f32}
 
 // A component the scene keeps with another layout loads by field names: what
-// both have comes back, a field the scene lacks starts at its default, one
-// the world lacks is left out, and the load counts the table it migrated.
+// both have comes back, a renamed field by the name it had, a field the scene
+// lacks starts at its default, and one the world lacks is reported with the
+// scene and the component, as is a component the world does not have.
 @(test)
 a_scene_saved_with_another_layout_of_a_component_loads_it_by_field_names :: proc(t:^testing.T) {
     p:Scene_Test_Project
@@ -131,13 +136,25 @@ a_scene_saved_with_another_layout_of_a_component_loads_it_by_field_names :: proc
     defer scene_test_project_close(&p)
     old:asset.Scene;asset.scene_init(&old,&p.types,{0x3a,1});defer asset.scene_destroy(&old)
     asset.scene_entity_add(&old,1,0,"Lamp")
-    testing.expect_value(t,asset.scene_set(&old,1,"Scene_Test_Lamp",&Scene_Test_Old_Lamp{intensity=4,flicker=7}),asset.Error.None)
-    testing.expect_value(t,asset.scene_save(&old,fmt.tprintf("%s/old.scene",p.folder)),asset.Error.None)
+    testing.expect_value(t,asset.scene_set(&old,1,"Scene_Test_Lamp",&Scene_Test_Old_Lamp{power=4,flicker=7}),asset.Error.None)
+    testing.expect_value(t,asset.scene_set(&old,1,"Scene_Test_Gone",&Scene_Test_Gone{speed=2}),asset.Error.None)
+    path:=fmt.tprintf("%s/old.scene",p.folder)
+    testing.expect_value(t,asset.scene_save(&old,path),asset.Error.None)
 
-    report,error:=load(host.app_world_ref(&p.app,p.world),&p.app,"old.scene")
+    file:asset.Asset
+    if !testing.expect_value(t,asset.asset_load(&file,path),asset.Error.None) {return}
+    defer asset.asset_close(&file)
+    stored:=make([dynamic]Stored,context.temp_allocator)
+    _,error:=instantiate(host.app_world_ref(&p.app,p.world),&file,&p.types,{stored=&stored})
     testing.expect_value(t,error,Error.None)
-    testing.expect_value(t,report.migrated,1)
-    testing.expect_value(t,report.unknown,0)
+    core.world_settle(host.app_world_ref(&p.app,p.world))
+    if !testing.expect_value(t,len(stored),2) {return}
+    lamp,gone:=stored[0],stored[1]
+    if lamp.unknown {lamp,gone=gone,lamp}
+    testing.expect(t,lamp.component=="Scene_Test_Lamp" && !lamp.unknown && slice.equal(lamp.removed,[]string{"flicker"}) && len(lamp.incompatible)==0 && lamp.scene==base.Asset_Id{0x3a,1})
+    testing.expect(t,gone.component=="Scene_Test_Gone" && gone.unknown)
+    text,warning:=stored_text(lamp,"old.scene")
+    testing.expect(t,warning && strings.contains(text,"old.scene") && strings.contains(text,"Scene_Test_Lamp") && strings.contains(text,"flicker"),text)
     lamps:=core.read(&p.world.lamps)
     if !testing.expect_value(t,core.count(lamps),1) {return}
     testing.expect_value(t,core.at(lamps,0),Scene_Test_Lamp{range=0,intensity=4})
@@ -551,12 +568,14 @@ spawned_prefabs_keep_their_entity_references_inside :: proc(t:^testing.T) {
     if !testing.expect_value(t,capture_error,Error.None) {return}
     testing.expect_value(t,captured.dangling,1)
     defer asset.scene_destroy(&document)
+    document.doc.flags+={.Prefab}
     out:serial.Writer;serial.writer_init(&out,0,context.allocator);defer serial.writer_destroy(&out)
     if !testing.expect(t,asset.scene_write(&document,&out)==.None) {return}
     file:asset.Asset
     if !testing.expect(t,asset.asset_open(&file,serial.writer_bytes(&out),context.allocator)==.None) {return}
     defer asset.asset_close(&file)
-    testing.expect(t,asset.asset_prefab(&file),"what is under one entity is a scene with one root: a prefab")
+    _,rooted:=asset.prefab_root(&document)
+    testing.expect(t,rooted && asset.asset_prefab(&file),"what is under one entity is a scene with one root, written as a prefab")
 
     core.test_world_clear(w)
     made:[2][2]core.Entity

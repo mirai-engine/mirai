@@ -1,13 +1,11 @@
 package navigation
 
 import "mirai:core"
-import phys "plugins:physics/runtime"
-import einput "mirai:engine/input"
+import locomotion "plugins:locomotion/runtime"
 
 // What the declarations of this library and of those it uses name: core.Test_Types.
 test_types :: proc(types:^[dynamic]core.Test_Type) {
-    phys.test_types(types)
-    einput.test_types(types)
+    locomotion.test_types(types)
     append(types,
         core.test_type(Navigation_Settings,default=proc(dst:^Navigation_Settings) {dst^=NAVIGATION_SETTINGS_DEFAULT}),
         core.test_type(Nav_Bounds,default=proc(dst:^Nav_Bounds) {dst^=NAV_BOUNDS_DEFAULT}),

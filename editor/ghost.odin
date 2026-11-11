@@ -39,7 +39,7 @@ Placement_Preview :: struct {
 
 @(private)
 placement_subject :: proc(d:Drag) -> bool {
-    return d.kind==.Preset || d.kind==.Asset && (d.asset_kind==asset.KIND_MESH || d.asset_kind==SHOWN_PREFAB || d.asset_kind==asset.KIND_SCENE || placement_sound(d))
+    return d.kind==.Preset || d.kind==.Asset && (d.asset_kind==asset.KIND_MESH || d.asset_kind==asset.KIND_SCENE || placement_sound(d))
 }
 
 // A .sound or a .sound_set placed in the scene makes an entity of the sound recipe that plays it.
@@ -106,7 +106,7 @@ placement_prepare :: proc(s:^Session,d:Drag) -> ^Placement_Preview {
         measure(s,p,&file)
     } else if d.asset_kind==asset.KIND_MESH {
         placement_measure(s,p,{mesh={mesh=d.asset_id},tint=erender.TINT_DEFAULT,transform=mm.TRANSFORM_IDENTITY})
-    } else if d.asset_kind==SHOWN_PREFAB || d.asset_kind==asset.KIND_SCENE {
+    } else if d.asset_kind==asset.KIND_SCENE {
         if file:=host.assets_scene(a,d.asset_id);file!=nil {measure(s,p,file)}
     }
     return p
@@ -157,12 +157,10 @@ hidden_ghosts_draw :: proc(s:^Session,w:core.World_Ref) {
     worlds:=core.world_table_of(w,core.World_Transform)
     meshes:=core.world_table_of(w,erender.Mesh_Renderer)
     parents:=core.world_table_of(w,core.Parent)
-    key:=[8]u64{
-        u64(uintptr(w.data)),worlds!=nil?worlds.layout+worlds.version:0,meshes!=nil?meshes.layout+meshes.version:0,
-        hidden!=nil?hidden.layout+hidden.version:0,parents!=nil?parents.layout+parents.version:0,
-        core.world_entities(w).activity.version+core.world_entities(w).activity_tree,v.levels_serial,a.revision+a.structure,
-    }
-    if key!=v.ghosts_key {
+    seen:=&v.ghosts_seen
+    moved:=core.touched(worlds,&seen[0]) | core.touched(meshes,&seen[1]) | core.touched(hidden,&seen[2]) | core.touched(parents,&seen[3]) | core.touched(disabled,&seen[4])
+    key:=[4]u64{u64(uintptr(w.data)),core.world_entities(w).activity_tree,v.levels_serial,a.revision+a.structure}
+    if moved || key!=v.ghosts_key {
         v.ghosts_key=key
         clear(&v.ghosts)
         items:=scene_items(s,w,true)

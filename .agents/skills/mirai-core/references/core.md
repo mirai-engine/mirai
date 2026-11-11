@@ -191,8 +191,10 @@ back with the world, and a save keeps it with the clock.
 - The row is written when the wait starts and when it ends: nothing counts down tick by tick.
 - An entity with an `Own_Pace` waits on `own_time(time, clock, paces, e)`, the clock at the pace it
   has now. What must follow a pace that changes during the wait adds its own time up every tick.
-- A request is never delayed: a queue is taken in the tick it was pushed in. What must happen
-  later keeps its deadline in a component.
+- A request may wait in its queue: `later(&q, time, seconds, item)` carries its due tick, and the
+  owner takes with `take_due(&q, time)` what was pushed and what is due. An owner that takes with
+  `take` refuses what was pushed for later, and its `queue_serve` reports it. A queue is not
+  saved: a wait that a save must keep is a deadline in a component.
 - There is no coroutine and no `await`: what waits and then acts is a component with its tick.
 
 ## Core storages
@@ -540,7 +542,8 @@ the schema and the editor and the API, the rows.
   (`host.app_records_failed`). The demo uses rows for its inventory, a dialogue and the waves of a
   horde ([demo](../../mirai-gameplay/references/demo.md#game-data)).
 - If the struct changes, the rows are read by field name, like every asset: a new field takes the
-  default of the type (`NAME_DEFAULT`) and a renamed one starts over.
+  default of the type (`NAME_DEFAULT`) and a renamed one keeps its values only with
+  `mirai:"was=<earlier name>"` ([migration](../../mirai-assets/references/serial.md#stdserial)).
 - `World_Info.records` describes each type; `Record_Info.ref` is the `typeid` of its `Record(T)`,
   because reflection does not know which `T` it is: `core.record_of_ref` gives the type of a field.
 

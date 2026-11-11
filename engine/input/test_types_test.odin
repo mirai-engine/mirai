@@ -6,6 +6,7 @@ import "mirai:core"
 test_types :: proc(types:^[dynamic]core.Test_Type) {
     append(types,
         core.test_type(Local_Multiplayer,default=proc(dst:^Local_Multiplayer) {dst^=LOCAL_MULTIPLAYER_DEFAULT}),
+        core.test_type(Drivable,default=proc(dst:^Drivable) {dst^=DRIVABLE_DEFAULT}),
     )
 }
 

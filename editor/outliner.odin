@@ -38,7 +38,10 @@ Outliner :: struct {
     rows:[dynamic]Outliner_Row,
     node_of:[dynamic]i32,    // by entity index: node+1
     expanded:[dynamic]core.Entity,
-    key:[5]u64,
+    world:rawptr,            // the world the tree was made from; nil: to make again
+    shapes:[3]core.Shape,    // of the transforms, the names and the ids then
+    parents:core.Seen,
+    tree_serial:u64,         // grows each time the tree is made again
     rows_key:[3]u64,
     expanded_serial:u64,
     scroll:f32,
@@ -56,7 +59,7 @@ Outliner :: struct {
 outliner_reset :: proc(o:^Outliner) {
     clear(&o.expanded)
     o.expanded_serial+=1
-    o.key={}
+    o.world=nil
     o.rename,o.menu,o.reveal,o.scope=core.NONE,core.NONE,core.NONE,core.NONE
     o.scroll=0
 }
@@ -110,9 +113,10 @@ outliner_sync :: proc(o:^Outliner,w:core.World_Ref) {
     names:=core.world_table_of(w,core.Name)
     parents:=core.world_table_of(w,core.Parent)
     ids:=core.world_table_of(w,core.Id)
-    key:=[5]u64{u64(uintptr(w.data)),transforms!=nil?transforms.layout:0,names!=nil?names.layout:0,parents!=nil?parents.layout+parents.version:0,ids!=nil?ids.layout:0}
-    if key==o.key {return}
-    o.key=key
+    moved:=core.reshaped(transforms,&o.shapes[0]) | core.reshaped(names,&o.shapes[1]) | core.reshaped(ids,&o.shapes[2]) | core.touched(parents,&o.parents)
+    if !moved && w.data==o.world {return}
+    o.world=w.data
+    o.tree_serial+=1
     es:=core.world_entities(w)
     clear(&o.nodes)
     resize(&o.node_of,core.entities_capacity(es))
@@ -181,7 +185,7 @@ outliner_scope_bar :: proc(s:^Session,o:^Outliner,w:core.World_Ref) {
 @(private)
 outliner_rows :: proc(o:^Outliner,w:core.World_Ref) {
     filter:=string(o.filter[:o.filter_length])
-    key:=[3]u64{o.key[0]~o.key[1]~o.key[2]~o.key[3]~u64(o.scope),o.expanded_serial,base.hash64(transmute([]u8)filter)}
+    key:=[3]u64{o.tree_serial~u64(o.scope)<<32,o.expanded_serial,base.hash64(transmute([]u8)filter)}
     if filter!="" {key[1]=0}
     if key==o.rows_key {return}
     o.rows_key=key

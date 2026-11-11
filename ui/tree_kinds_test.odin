@@ -489,8 +489,8 @@ a_draw_node_hands_the_game_its_rectangle_its_style_and_the_bytes_it_binds :: pro
     for &slot,i in s.values.slots {slot.count=i32(10+i)}
     s.values.used=4
     seen:Draw_Seen
-    ctx.game.user=&seen
-    ctx.game.draw=proc(user:rawptr,ctx:^Context,node:Draw_Node) {
+    ctx.draw_user_data=&seen
+    ctx.draw_user=proc(user:rawptr,ctx:^Context,node:Draw_Node) {
         seen:=(^Draw_Seen)(user)
         seen.calls+=1
         switch node.name {
@@ -529,7 +529,7 @@ a_draw_node_hands_the_game_its_rectangle_its_style_and_the_bytes_it_binds :: pro
     test_frame(&ctx,&input,test_kinds_build,&s)
     testing.expect_value(t,seen.used,i32(9))
     // Without a procedure the node keeps its place and draws nothing.
-    ctx.game.draw=nil
+    ctx.draw_user=nil
     calls:=seen.calls
     test_frame(&ctx,&input,test_kinds_build,&s)
     testing.expect_value(t,seen.calls,calls)

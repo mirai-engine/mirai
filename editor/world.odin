@@ -521,7 +521,7 @@ field_write :: proc(s:^Session,t:^core.Table_Info,entities:[]core.Entity,offset:
     written:=false
     for e in entities {
         if t.type==core.Transform && s.mode!=.Edit && core.owner(cast(^core.Table(core.Transform))table,e)!=0 {continue}
-        value:=core.raw_edit(table,t.info,e)
+        value:=core.raw_author(table,t.info,e)
         if value==nil {continue}
         mem.copy(rawptr(uintptr(value)+uintptr(offset)),raw_data(bytes),len(bytes))
         written=true

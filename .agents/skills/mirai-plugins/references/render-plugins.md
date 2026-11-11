@@ -1,20 +1,20 @@
 # Render plugins
 
-Eight engine plugins extend the renderer without code of their own in the core.
+Seven engine plugins extend the renderer without code of their own in the core.
 
 - They use the [stages, hooks, views and deformable meshes][ext] through [`engine/render`][stages],
   without importing `render` or `rhi`.
 - They have no GPU resources: on each frame they ask for the pipeline of the stages in their
   `shaders/` and the textures of each view (`pass_texture`), which the renderer keeps, and they
   upload the rows of their passes to the frame memory.
-- What they upload on their own (decal boxes, fog volumes, mirror faces, portal gates) they build
+- What they upload on their own (decal boxes, fog volumes, portal gates) they build
   in the world in the `render` step and each pass leaves it relative to its `Pass.origin`, like
   their shaders; what they give to the renderer's procedures goes in the world.
 - What their shaders share goes in the includes of `engine/render/shaders`, which every stage finds
   like those of `shaders/include`: the mask of a face seen through a nested view
   (`nested_face.slang`), with its Odin part, `pass_nested_faces`.
-- Each one has a scene in the demo, except `mirror`, which is in the `main` gallery, `lens`, which
-  the demo does not enable, and `fsr`, which is chosen in Graphics.
+- Each one has a scene in the demo (a mirror is in the `main` gallery), except `lens`, which the
+  demo does not enable, and `fsr`, which is chosen in Graphics.
 
 | Plugin | Component | Uses |
 | --- | --- | --- |
@@ -22,14 +22,13 @@ Eight engine plugins extend the renderer without code of their own in the core.
 | `deform` | `Deform` | deformable meshes and `Geometry` stage |
 | `monitors` | `Screen` | texture views |
 | `portals` | `Portal`, `Traveler` | nested views, `Mask` stage, ray, light and probe hooks |
-| `mirror` | `Mirror` | nested views and `Mask` stage |
 | `fog` | `Fog_Volume` | `Lit` stage, view 3D textures with history, traced shadows |
 | `fsr` | `Fsr_Settings` setting | a [pipeline][pipelines] with its own passes, no `Resolve` |
 | `lens` | `Lens`, `Lens_Volume` | `Post` stage, view textures with levels |
 
 The `Editor` part of each one is its [Create card][cards] in Logic and what a selected entity shows
 (a decal's box and where it projects, the arrow from the camera to its screen, a portal's opening
-with its front and the path to its exit, a mirror's face, a fog volume's box). The `portals` editor
+with its front and the path to its exit, a fog volume's box). The `portals` editor
 also declares the `nested` inspection mode: the color of the nested view that drew each pixel. An
 entity relates to another through a slot (`core.Entity`): `Screen.camera`, `Portal.exit`.
 
@@ -53,8 +52,8 @@ scale), through its local Y axis.
 `Deform` deforms on the GPU the mesh of its entity, for raster and for rays: shadows, reflections
 and motion vectors follow the shape.
 
-- `deform_render` creates per entity a deformable copy of its mesh (`deformable_create`), hands it
-  over as a visual replacement (`host.extras_instance_add` with `replace_source`) and, while the
+- `deform_render` creates per entity a deformable copy of its mesh (`deformable_create`), gives it
+  as the posed mesh of its entity (`posed_set`) and, while the
   shape changes, requests a `Geometry` pass where the stage of its shape writes the vertices from
   the rest ones, as `render.Gpu_Posed_Vertex` in the words of the vertex pool that
   `pass_deformable` gives. With `speed` 0 the shape stays fixed and is only written when its
@@ -100,26 +99,35 @@ reads as it likes. Without the stage in the shaders in use, the mesh is drawn at
 
 ## Portals
 
-`Portal{exit, ellipse, layers, wall}` is an opening that shows the place of another entity and
-leads to it: the unit square of its entity seen from its +Z, of its scale (`ellipse`: the
+`Portal{exit, mirror, ellipse, layers, wall}` is an opening that shows the place of another entity
+and leads to it: the unit square of its entity seen from its +Z, of its scale (`ellipse`: the
 inscribed ellipse).
 
 - `exit` is the exit slot: another portal or any entity; without it nothing is shown. What is in
   front continues behind `exit`, turned half a turn about its local Y and without scale
   (`through_of`). Two portals that name each other join two places, also a floor with a wall.
+- With `mirror` it is a flat mirror: its exit is its own plane, reflected (`reflection`), and
+  `exit` is not read. It is drawn and traced like any portal; nothing travels through it, it cuts
+  no wall and brings no lights (their reflection would be a caustic). The Mirror card makes one.
 - `wall` is the collider in which it is open, of any type, or `NONE`. `Traveler{point}` goes
   through the portals that its point crosses.
 
-**Render** (`gpu.odin`), up to `PORTAL_CAPACITY` portals per scene:
+**Render** (`gpu.odin`), up to `PORTAL_CAPACITY` portals and mirrors per scene:
 
-- Each view receives in its `Mask` stage one nested view per portal that faces it (the nearest
-  ones): the scene from its camera carried through the portal, cut by the exit plane and with the
-  portal's layers. The mask is a screen triangle with scissor that intersects each pixel's ray
-  with the opening's plane (`nested_face.slang`): it stays whole with the eye on the plane, where
-  a quad would be clipped against the near plane.
+- Each view receives in its `Mask` stage one [nested view][nested] per portal that faces it (the
+  nearest ones): the scene from its camera carried through the portal, cut by the exit plane and
+  with the portal's layers. What is shown goes once through the view's lighting, filters and TAA,
+  and costs one more G-buffer over those pixels instead of a ray with per-pixel shading. The mask
+  is a screen triangle with scissor that intersects each pixel's ray with the opening's plane
+  (`nested_face.slang`): it stays whole with the eye on the plane, where a quad would be clipped
+  against the near plane.
 - Each view's constants carry the gates (`frame.portals`). The ray hook makes a ray that enters
   through the front of an opening continue from the exit: reflections, GI, probes and shadows
   cross once, with the accumulated distance.
+- Just behind the face of a mirror `portals_render` draws a thin metal body with roughness 0,
+  which the mask covers. Through it the views without room for another nested view, what a nested
+  view or the second stretch of a ray sees of the mirror reflect it: one more level of reflection,
+  without the detail of the first.
 - Probe hook (`portals_probes.slang`): the part of a point's irradiance that arrives through the
   opening is the opening's form factor seen from the point, read at the point behind it, on the
   exit side. On the plane, the parts of the two sides add up to one: a body half-crossed receives
@@ -188,37 +196,15 @@ inscribed ellipse).
   `core.View.cut`. A view that comes out turned or shifted relative to where the portal would have
   carried it is straightened in `RIGHTING_TIME`.
 
-**Limits.** Glass, particles and overlays are not seen through a portal, nor a portal through
-another, and the exit does not scale. Each part of a body that crosses is lit where it is. The hole
+**Limits.** Glass, particles, decals and overlays are not seen through a portal, nor a portal
+through another, and the exit does not scale. A mirror reflects everything, without tint or
+roughness, and only with flat faces. Each part of a body that crosses is lit where it is. The hole
 and its frame are the opening's square: at the corners of an `ellipse` opening the hole can be
 entered without traveling. The frame is flat, at the height of the wall's face at the opening's
 center: on a curved surface it does not follow it. A traveler has one twin at a time, that of the
 portal to whose plane it is nearest, and `sim.TWIN_CAPACITY` half-crossed travelers fit. With
 several window views none gets ahead of the tick or carries its history (`portals_view` acts on
 `core.View`). A covered portal still costs its nested view.
-
-## Mirror
-
-`Mirror{ellipse, layers}` is a flat mirror: the unit XY square of its entity seen from +Z, of its
-scale, or the inscribed ellipse. The entity carries no mesh; `mirrors_render` does two things with
-each visible mirror:
-
-- **In the views that face it** it adds in the `Mask` stage a [nested view][nested] reflected in
-  the face's plane and cut by it. What is reflected goes once through the view's lighting, filters
-  and TAA, with soft shadows, GI and its own reflections, and costs one more G-buffer over those
-  pixels instead of a ray with per-pixel shading. The mask finds the face by ray, like that of the
-  portals.
-- **For everything else** it draws behind the face a thin metal body with roughness 0, which the
-  mask covers. Through it the rays (reflections of other surfaces, GI), the views without room
-  for another nested view and those that look at it through a portal or another mirror see the
-  mirror.
-- A view's nested views are shared between portals and mirrors in the order in which their plugins
-  ask for them; among the mirrors, the nearest first.
-
-**Limits.** What a nested view does not draw (glass, particles, decals, overlays) is not
-reflected. A mirror inside another, or through a portal, is the traced body: one more level of
-reflection, without the detail of the first. It reflects everything, without tint or roughness,
-and only with flat faces.
 
 ## Fog
 

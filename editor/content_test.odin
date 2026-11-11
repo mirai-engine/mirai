@@ -26,7 +26,7 @@ content_test_registry :: proc() -> asset.Registry {
         asset.Registry_File{path="Materials/red.mat",state=.Asset,kind=asset.KIND_MATERIAL,id={1,2}},
         asset.Registry_File{path="Meshes/box.mesh",state=.Asset,kind=asset.KIND_MESH,id={1,3}},
         asset.Registry_File{path="Meshes/nested/sphere.mesh",state=.Asset,kind=asset.KIND_MESH,id={1,4}},
-        asset.Registry_File{path="Prefabs/robot.scene",state=.Asset,kind=asset.KIND_SCENE,flags={.One_Root},id={1,5}},
+        asset.Registry_File{path="Prefabs/robot.scene",state=.Asset,kind=asset.KIND_SCENE,flags={.Prefab},id={1,5}},
         asset.Registry_File{path="Sounds/hit.sound",state=.Asset,kind=asset.KIND_SOUND,id={1,6}},
         asset.Registry_File{path="Textures/color.tex",state=.Asset,kind=asset.KIND_TEXTURE,id={1,7}},
         asset.Registry_File{path="UI/hud.ui",state=.Asset,kind=asset.KIND_UI,id={1,8}},
@@ -846,8 +846,8 @@ content_test_parts_registry :: proc() -> asset.Registry {
         asset.Registry_File{path="Robot/SKM_Robot.mesh",state=.Asset,kind=asset.KIND_MESH,id={2,4},owner=CONTENT_TEST_ROBOT},
         asset.Registry_File{path="Robot/SK_Robot.skeleton",state=.Asset,kind=asset.KIND_SKELETON,id={2,5},owner=CONTENT_TEST_ROBOT},
         asset.Registry_File{path="Robot/T_Robot_01_D.tex",state=.Asset,kind=asset.KIND_TEXTURE,id={2,6},owner=CONTENT_TEST_ROBOT},
-        asset.Registry_File{path="Robot/robot.scene",state=.Asset,kind=asset.KIND_SCENE,flags={.One_Root},id=CONTENT_TEST_ROBOT},
-        asset.Registry_File{path="Spider/spider.scene",state=.Asset,kind=asset.KIND_SCENE,flags={.One_Root},id={3,1}},
+        asset.Registry_File{path="Robot/robot.scene",state=.Asset,kind=asset.KIND_SCENE,flags={.Prefab},id=CONTENT_TEST_ROBOT},
+        asset.Registry_File{path="Spider/spider.scene",state=.Asset,kind=asset.KIND_SCENE,flags={.Prefab},id={3,1}},
         asset.Registry_File{path="Stray/orphan.mesh",state=.Asset,kind=asset.KIND_MESH,id={4,1},owner={9,9}},
     )
     registry:=asset.Registry{files=files,allocator=context.allocator}
@@ -1042,7 +1042,7 @@ a_right_click_on_a_folder_creates_an_asset_named_in_place :: proc(t:^testing.T) 
     popup:=content_create_id(&g)
     testing.expect(t,ui.popup_is_open(&ctx,popup) && string(c.create_into[:c.create_into_length])=="Materials")
     content_test_still(&session)
-    content_test_click(t,&session,ui.id_derive(&ctx,popup,"create",3))
+    content_test_click(t,&session,ui.id_derive(&ctx,popup,"create",4))
     testing.expect(t,c.creating && c.create_kind==asset.KIND_MATERIAL && string(c.create_name[:c.create_name_length])=="New Material")
     content_test_still(&session)
     testing.expect_value(t,ctx.edit.id,ui.id_derive(&ctx,100,"content_create_name"))

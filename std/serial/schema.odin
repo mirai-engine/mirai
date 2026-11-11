@@ -73,8 +73,10 @@ Field :: struct {
     asset_kinds:string, // the extensions an Asset_Id field holds, separated by spaces (kind=); not in the binary schema
     required_component:u64,
     trim:bool, // a fixed array the text writes up to its last element with a byte set; not in the binary schema
+    keyed:bool, // a fixed array of structs whose first field, a text, names each entry (empty: none): a layer of settings replaces the entries it names; not in the binary schema
     any_value:bool, // tagged any: text_read takes any JSON there and leaves the bytes, for whoever reads it from the text; not in the binary schema
     entity_name:bool, // a text that names an entity: the API says so in its schema
+    was:string, // the names the field had before, separated by spaces (was=): a migration reads a stored field by any of them; not in the binary schema
 }
 
 Choice :: struct {name:string,value:i64}
@@ -108,7 +110,7 @@ schema_init :: proc(s:^Schema,allocator:=context.allocator) {
 
 schema_destroy :: proc(s:^Schema) {
     for type in s.types {delete(type.name,s.allocator)}
-    for field in s.fields {delete(field.name,s.allocator);delete(field.label,s.allocator);delete(field.unit,s.allocator);delete(field.description,s.allocator);delete(field.asset_kinds,s.allocator)}
+    for field in s.fields {schema_field_free(s,field)}
     for choice in s.choices {delete(choice.name,s.allocator)}
     delete(s.error,s.allocator)
     delete(s.types);delete(s.fields);delete(s.choices);delete(s.lookup)
@@ -165,6 +167,7 @@ schema_field_free :: proc(s:^Schema,field:Field) {
     delete(field.unit,s.allocator)
     delete(field.description,s.allocator)
     delete(field.asset_kinds,s.allocator)
+    delete(field.was,s.allocator)
 }
 
 // A choice with a copy of its name, after the others. False without memory for it.
@@ -394,6 +397,14 @@ schema_add_info :: proc(s:^Schema,info:^runtime.Type_Info,path:string) -> (Type_
             delete(type.name,s.allocator)
             return TYPE_NONE,false
         }
+        if clash:=was_clash(fields[:]);clash!="" {
+            for added in fields {schema_field_free(s,added)}
+            delete(type.name,s.allocator)
+            if s.error=="" {
+                if text,error:=strings.clone(fmt.tprintf("%s: %s",path==""?type_label(info):path,clash),s.allocator);error==nil {s.error=text}
+            }
+            return TYPE_NONE,false
+        }
         type.kind=.Struct
         type.first,type.count=u32(len(s.fields)),u32(len(fields))
         append(&s.fields,..fields[:])
@@ -422,6 +433,21 @@ field_inlined :: proc(variant:runtime.Type_Info_Struct,i:int) -> (nested:runtime
         }
     }
     return
+}
+
+// A field whose earlier name (was=) is the name of a field of the struct: a
+// stored value would go to both. "" when there is none.
+@(private)
+was_clash :: proc(fields:[]Field) -> string {
+    for field in fields {
+        rest:=field.was
+        for name in strings.fields_iterator(&rest) {
+            for other in fields {
+                if other.name==name {return fmt.tprintf("field %s: was=%s is the name of a field the struct has, and a stored value would go to both; give the earlier name to one field only",field.name,name)}
+            }
+        }
+    }
+    return ""
 }
 
 // The fields of a struct at offset of the one that holds them, in order.
@@ -467,9 +493,10 @@ schema_add_floats :: proc(s:^Schema,info:^runtime.Type_Info,type:Type,count:int,
 }
 
 // Field options come from the struct tag `mirai:"..."`: a comma separated
-// list of flags (transient, local, readonly, hidden, color, angle, text, trim, any, inline) and
+// list of flags (transient, local, readonly, hidden, color, angle, text, trim, keyed, any, inline) and
 // of key=value pairs (min, max, step, precision, bits, label, unit, name: the
-// key of a param whose word is reserved in Odin). False without memory for a text.
+// key of a param whose word is reserved in Odin; was: the names the field had,
+// newest first). False without memory for a text.
 @(private)
 schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) -> bool {
     options,found:=reflect.struct_tag_lookup(reflect.Struct_Tag(tag),"mirai")
@@ -487,6 +514,7 @@ schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) -> bool {
         case "angle":     field.flags+={.Angle}
         case "text":      field.flags+={.Text}
         case "trim":      field.trim=true
+        case "keyed":     field.keyed=true
         case "any":       field.any_value=true
         case "entity":    field.entity_name=true
         case "min":       field.min,field.has_min=strconv.parse_f64(value)
@@ -501,6 +529,7 @@ schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) -> bool {
             field.name_hash=base.name_hash(value)
         case "unit":      schema_text_keep(s,&field.unit,value) or_return
         case "kind":      schema_text_keep(s,&field.asset_kinds,value) or_return
+        case "was":       schema_text_keep(s,&field.was,value) or_return
         case "requires":  if value!="" {field.required_component=base.name_hash(value)}
         }
     }

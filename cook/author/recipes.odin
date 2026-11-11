@@ -11,7 +11,7 @@ import "mirai:core"
 import escene "mirai:engine/scene"
 import "mirai:std/base"
 
-// A recipe: a scene of one entity in a recipes folder of the engine or of a
+// A recipe: a prefab of one entity in a recipes folder of the engine or of a
 // plugin (project.recipe_folders). Create, the API and a document place a
 // copy of its entity: its components, and of its transform the rotation and
 // the scale; its height is how far above what it is placed on one with no body
@@ -24,7 +24,7 @@ Recipe :: struct {
 }
 
 // The recipes of the folders, each folder in the order of its names; a name
-// an earlier folder has, and a file that is not a scene of one entity, are
+// an earlier folder has, and a file that is not a prefab of one entity, are
 // left out.
 recipes_read :: proc(folders:[]string,allocator:=context.allocator) -> []Recipe {
     out:=make([dynamic]Recipe,allocator)
@@ -40,7 +40,7 @@ recipes_read :: proc(folders:[]string,allocator:=context.allocator) -> []Recipe 
             for known in out {if known.name==name {continue next}}
             path:=strings.concatenate({folder,"/",entry.name},context.temp_allocator)
             scene:asset.Scene
-            if asset.scene_load(&scene,&types,path,context.temp_allocator)!=.None || asset.scene_entity_count(&scene)!=1 {continue}
+            if asset.scene_load(&scene,&types,path,context.temp_allocator)!=.None || .Prefab not_in scene.doc.flags || asset.scene_entity_count(&scene)!=1 {continue}
             record:=asset.scene_entity(&scene,0)
             identity:=core.TRANSFORM_IDENTITY
             local,_:=asset.scene_get(&scene,record.id,"Transform",core.Transform,&identity)

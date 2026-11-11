@@ -38,7 +38,7 @@ the same attributes and no private paths. Declaration and parameter binding:
   (plugin `spawn`), their networking: [seats](references/control.md#seats),
   [driving](references/control.md#driving), [spawn points](references/control.md#spawn-points),
   [cameras](references/control.md#cameras) and [networking](references/control.md#networking).
-- Declare an input action (`inp.Action`), its default bindings, `input.mirai` and renaming it:
+- Declare an input action (`inp.Action`), its default bindings, `Input_Settings` and renaming it:
   [actions](references/control.md#actions). Input contexts (menus, vehicles) and chords:
   [contexts](references/control.md#contexts), [chords](references/control.md#chords).
 - Walking, jumping and flying a character (`Character`, seat control, game modes):
@@ -46,7 +46,8 @@ the same attributes and no private paths. Declaration and parameter binding:
 - Slow or fast world time with the player at normal speed (bullet time: `core.Clock` and
   `core.Own_Pace`): [own pace](../mirai-core/references/core.md#core-storages).
 - Cinematics (plugin `cinematics`): [components](references/cinematics.md#components),
-  [playback](references/cinematics.md#playback), [viewers](references/cinematics.md#viewers),
+  [playback](references/cinematics.md#playback),
+  [shots and actions](references/cinematics.md#shots-and-actions),
   [events](references/cinematics.md#events), [networking](references/cinematics.md#networking) and
   [editor and API](references/cinematics.md#editor-and-api).
 - Attacks, combos, dashes, skills and hit reactions with costs, cooldowns, charges and damage
@@ -123,17 +124,19 @@ the same attributes and no private paths. Declaration and parameter binding:
   - `animation_sample`/`animation_advance`: buffers and results of `Playback`.
   - The rest is requested.
 - **Input arrives through actions**, members of an enum `@(actions)` of each library, with their
-  kind and default bindings beside the enum (`<enum>_defaults() -> [E]inp.Action_Default`, by the
+  kind and default bindings beside the enum (`<enum>_defaults() -> [E]inp.Action_Bindings`, by the
   naming rule of defaults; never a storage), read by member through `inp.Input_Of(E)`;
-  nobody writes an action's number. `input.mirai` is not
-  written by hand: it holds only what Project Settings > Input, `input.set` or the player changed.
+  nobody writes an action's number. What Project Settings > Input, `settings.set` or the player
+  changes is the machine setting `Input_Settings`, layered like any setting.
   The menu of the game is the engine's `Menu` action (`gui.menu_pressed`); pausing and capturing
   the mouse are the engine's too (`UI_Screen.pause`, `input=.Modal`), never game code.
 - **Seats and movement.** A player is a seat (`inp.Seat`), of this machine or of a connection,
-  without telling them apart; it drives a body with `Drivable` and carries its actions. Locomotion
-  turns the body's `Move_Input` into movement: the seat writes it according to `move_relative_to`,
-  the game does (with `Game`, from `inp.seat_*` or `inp.pressed(players, body, ...)`), or an AI for
-  its own bodies; an own mode (swimming, climbing) is requested with `phys.set_mode`. Player bodies
+  without telling them apart; it drives a body with `Drivable` and carries its actions. The
+  `locomotion` plugin turns the `Move_Input` of a `Character` with a `Walk` (or `Fly`, `Swim`)
+  into movement: the seat writes it according to the `move_relative_to` of the `Drivable`, the
+  game does (with `Game`, from `inp.seat_*` or `inp.pressed(players, body, ...)`), or an AI for
+  its own bodies; an own mode (swimming, climbing) is requested with `locomotion.set_mode`. Player
+  bodies
   appear at the `Spawn_Point`s of the `spawn` plugin, not through game code
   ([control](references/control.md)).
 - **Volumes: one algorithm and an unbounded base value.** Gravity, wind, reverb, view and fog
@@ -161,7 +164,7 @@ the same attributes and no private paths. Declaration and parameter binding:
   `mirai check tools/demo_content -collection:plugins=plugins`.
 - `engine/input`: `mirai test engine/input` (map built with the defaults, read by id, names that
   the code does not declare, devices per slot, re-arming, contexts and their capture, chords in
-  `input.mirai` and the problems of a rejected request); the chord tie-break, in
+  `Input_Settings` and the problems of a rejected request); the chord tie-break, in
   `mirai test std/input`.
 - `engine/scene` and `engine/save`: `mirai test engine/scene engine/save` (instantiating leaves the
   poses to propagation; a prefab spawned again from the form its World keeps is the one read anew;

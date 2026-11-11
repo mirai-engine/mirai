@@ -49,16 +49,19 @@ registry).
 
 1. **Look before touching.** Inspect with the [CLI](references/cli.md); the file's schema allows
    reading any type.
-2. **Editing an existing asset.** `mirai asset set` or `unpack`/`pack`
-   ([CLI](references/cli.md)). From code: `asset.Document`, or `asset.Scene` for scenes. Scenes
-   and prefabs, the demo's too, are files of `assets/` written by `scene.write`,
+2. **Editing an existing asset.** `mirai asset set` or `unpack`/`pack`; a scene or a `.ui`, by
+   its document (`mirai scene|ui read` and `write`), its only text: `dump` and the diffs of git
+   print it ([CLI](references/cli.md)). From code: `asset.Document`, or `asset.Scene` for
+   scenes. Scenes and prefabs, the demo's too, are files of `assets/` written by `scene.write`,
    `mirai scene write` or the editor; no code builds them. Meshes from code go through
    `asset.content_mesh` over the shapes of `std/geom`
    ([content tool](../../../docs/game/assets/content-tool.md)).
 3. **Changing a serialized struct.** A component or a record of a game changes without a version
    or a converter: the reader migrates its rows by field name.
-   - Renaming a field makes it another one: the previous value is lost and the new one takes the
-     default.
+   - Renaming a field keeps its values only when it says the names it had:
+     `mirai:"was=<earlier name> <one before>"`. A stored field the type has under no name is a
+     loss, never silent: the editor's console says it on load (`engine.diagnostics` for an
+     agent) and `mirai asset verify` prints it, with the scene, the component and the field.
    - A change in what an asset type stores (a field of its rows too) or in what a value means
      raises its `*_VERSION`: files of another version fail with `Version` and are made again
      ([version rule](references/formats.md#versions)).
@@ -118,9 +121,8 @@ registry).
 - **Atomic writing.** `document_save` and `scene_save` write a temporary and rename;
   `mirai asset set` does not leave the file half-written if a value is invalid.
 - **A scene is one file**, not one per entity.
-- **One kind of scene.** A prefab is a scene with exactly one root, never another kind or
-  extension: `Header_Flag.One_Root` says it, derived from the entities on every write and checked
-  on every read, so the registry answers it without opening the file
+- **The header says Scene or Prefab.** One `.scene` extension and kind; `Header_Flag.Prefab` is
+  what whoever made the file chose, never guessed from its roots, and a prefab has exactly one root
   ([prefab](references/scenes.md#prefab)).
 - **A guest mount never takes an id the registry has**: what the program shipped wins over what a
   player adds ([guest mounts](references/formats.md#registry)).
@@ -142,7 +144,12 @@ registry).
     `std/base/texts_test.odin` and `host/content_interface_test.odin`; the tools of the texts
     (keys, CSV, what is missing): `cook/author/texts_test.odin`; game data tables:
     `asset/records_test.odin`;
-  - versions: `asset/versions_test.odin`; a plugin's own steps, in its plugin (`.character`);
+  - versions: `asset/versions_test.odin`; a plugin's own steps, in its plugin (`.character`); a
+    renamed field and what a load reports it loses:
+    `a_renamed_field_keeps_its_value_through_each_name_it_had` of `std/serial` and
+    `a_scene_saved_with_another_layout_of_a_component_loads_it_by_field_names` of `engine/scene`;
+  - the document of a scene or a `.ui` from a file outside the assets (what `dump` and git
+    show): `the_commands_read_write_and_check_the_document_of_an_asset` of `cook/author`;
   - registry: `asset/registry_test.odin` and, in the editor, `editor/content_test.odin`;
   - layers of an imported material: `asset/kinds_test.odin`, and the overrides shared with prefabs
     in the editor, `editor/prefabs_test.odin`;

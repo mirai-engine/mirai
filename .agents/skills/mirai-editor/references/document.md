@@ -20,12 +20,12 @@ have.
 Procedures:
 
 - `scene_open(s, path)`: replaces the edited world with a scene, by file or by path under
-  `assets/`; one whose file has a single root is a
+  `assets/`; one whose header says Prefab is a
   [prefab document](prefabs.md#prefab-document). Stops a Play, starts a new history and
   deselects. It loads with `scene.replace`, like the game: if reading, instantiating or copying
   fails, memory included, the world stays as it was.
-- `scene_new(s)`: a scene without a file with two entities, `Sky` (with `SKY_DEFAULT`) and `Sun`
-  (the sun recipe), without changes or history.
+- `scene_new(s, prefab)`: a scene without a file with two entities, `Sky` (with `SKY_DEFAULT`) and
+  `Sun` (the sun recipe), or a prefab with one empty root, without changes or history.
 - `scene_save(s, path="")`: writes to the document's file or to `path`, adding `.scene` when it
   has no extension; a new file is another asset with its own id. With neither, it opens the save
   dialog.

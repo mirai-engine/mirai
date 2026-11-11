@@ -14,9 +14,7 @@ type with the component's name, `scene` (`Scene_Info`), those of instances if th
 - `off`, if some component is turned off by itself: a `Component_Off {entity, component}` (the
   entity's Id and the component's `name_hash`) for each one. Without the table, everything is on;
   turning off a whole entity is its `Disabled` component.
-- What governs a whole scene (its sky, its sun, its rules) are components of its entities. A
-  one-row table (`Single`) with a single `value` column is a scene setting from an earlier version
-  of the format: nothing reads it and saving the document discards it (`scene_lone_value`).
+- What governs a whole scene (its sky, its sun, its rules) are components of its entities.
 - The other tables are kept as they are.
 
 `asset.Scene` is the editable document, independent of the data world:
@@ -32,21 +30,24 @@ type with the component's name, `scene` (`Scene_Info`), those of instances if th
 
 ## Prefab
 
-A prefab is a scene with **exactly one root**: no kind, extension or table of its own. The same
-file is loaded whole, hangs under a `Scene_Reference` as a section, or is placed as a copy: a
-linked instance in a document, or a spawned copy in a running world
-([running scenes](../../mirai-gameplay/references/libraries.md#scene)). Only a copy needs the one
-root, which is what it is placed by.
+A prefab is a `.scene` whose header says so (`Header_Flag.Prefab`): the same extension, kind and
+tables as any scene. Its maker chooses it (Create, `scene.new` with `kind`, making a prefab of a
+selection, an import) and `editor.document` `Kind` changes it; nothing derives it from the
+entities. A prefab is placed as a copy by its one root: a linked instance in a document, or a
+spawned copy in a running world
+([running scenes](../../mirai-gameplay/references/libraries.md#scene)); any scene, a prefab too,
+can hang whole under a `Scene_Reference` as a section.
 
-- `Header_Flag.One_Root` in the header of the file says it. `document_write` derives it from the
-  `parent` column of the entities on every write, whoever writes (a `Scene`, `mirai asset set`,
-  `pack`, a merge), and `scene_view` fails with `Corrupt` on a header that disagrees with its
-  entities: the flag cannot differ from the document.
+- A prefab has exactly one root. The writers that author files refuse another count with how to
+  fix it (`prefab_refused`: the editor's Save and Kind, `mirai scene write`) and
+  `mirai asset verify` reports it; a reader does not refuse it, so a recovery copy of a prefab
+  being edited reads back.
+- `scene.capture` keeps the kind of `previous`; a new document sets it itself.
 - `registry_prefab(file)` answers from the header the registry read, for a file on disk and for one
   held in memory alike, so a browser tells a prefab from a scene without opening files;
-  `asset_prefab(a)` asks an open asset, `scene_roots` and `prefab_root` a `Scene`.
-- A scene that gains a second root is no prefab from its next write: a resolver takes it as a
-  missing prefab and its instances stay as they are, until it has one root again.
+  `asset_prefab(a)` asks an open asset and `prefab_root` a `Scene`.
+- A prefab made a scene is no prefab from its next write: a resolver takes it as a missing prefab
+  and its instances stay as they are.
 
 ## Prefab instances
 
@@ -113,7 +114,7 @@ or not its prefab was saved again, and saving that prefab as it resolves gives t
 - `resolver_check` looks only at the `Prefab_Instance` table of a prefab whose instances are up to
   date (`Current`); one that places a stale instance (`Stale`) is resolved then, and its stamp is
   that of what it resolves to. `Checking` is a prefab that contains itself. An instance of a
-  missing prefab, or of a scene that no longer has one root, stays as it is.
+  missing prefab, or of a scene that is no longer a prefab, stays as it is.
 - `scene_resolve` updates each stale instance of a document and gives it the stamp of its prefab
   as resolved: resolved again with the same files, nothing is stale.
 - It is used by `engine/scene` on loading

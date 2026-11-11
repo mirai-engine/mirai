@@ -51,8 +51,9 @@ scene_open :: proc(p:^Project,f:^Scene_File,path:string,exists:bool) -> (problem
     if p.info==nil || p.info.schema==nil {return "the types of the game are needed to read its components"}
     f.p,f.info,f.ws=p,p.info,p.info.schema
     if exists {
-        file:=asset.registry_file_path(&p.registry,path,context.temp_allocator)
-        if error:=asset.scene_load(&f.scene,&p.types,file,context.temp_allocator);error!=.None {
+        bytes,error:=asset.registry_read(&p.registry,path,context.temp_allocator)
+        if error==.None {error=asset.scene_read(&f.scene,&p.types,bytes,context.temp_allocator)}
+        if error!=.None {
             return fmt.tprintf("asset %s is not a scene that loads (%v); mirai asset verify says what its file has",path,error)
         }
     } else {
@@ -374,6 +375,14 @@ scene_target :: proc(f:^Scene_File) -> Scene_Target {
             f.stale=true
             return removed,"memory ran out" if error!=.None else ""
         },
+        kind=proc(user:rawptr,prefab:bool) -> (bool,string) {
+            f:=(^Scene_File)(user)
+            if (.Prefab in f.scene.doc.flags)==prefab {return false,""}
+            if !prefab {f.scene.doc.flags-={.Prefab};return true,""}
+            if refused:=asset.prefab_refused(&f.scene);refused!="" {return false,refused}
+            f.scene.doc.flags+={.Prefab}
+            return true,""
+        },
     }
 }
 
@@ -388,7 +397,7 @@ scene_read :: proc(p:^Project,named:string,out:^serial.Writer) -> (problem:strin
     f:Scene_File
     if problem=scene_open(p,&f,path,true);problem!="" {return}
     target:=scene_target(&f)
-    serial.text_write_raw(out,`{"entities":[`)
+    serial.text_write_raw(out,`{"kind":"Prefab","entities":[` if .Prefab in f.scene.doc.flags else `{"entities":[`)
     for node,i in target.children(&f,0,context.temp_allocator) {
         if i>0 {serial.write_u8(out,',')}
         scene_entity_write(&target,out,node,target.tables)
@@ -453,11 +462,28 @@ scene_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:st
         written.same=true
         return written,""
     }
+    if .Prefab in f.scene.doc.flags {
+        if refused:=asset.prefab_refused(&f.scene);refused!="" {return {},fmt.tprintf("%s: %s",path,refused)}
+    }
     bytes:[]u8
     if bytes,problem=scene_file_bytes(&f);problem!="" {return {},problem}
     file:=asset.registry_file_path(&p.registry,path,context.temp_allocator) if exists else fmt.tprintf("%s/%s",p.assets_root,path)
     problem=file_put(p,file,path,bytes,&written)
     return
+}
+
+// The components a scene of the project stores otherwise than the game reads
+// them (escene.Stored); none without the types of the game, or a file that
+// does not read, which scene_verify reports.
+scene_stored :: proc(p:^Project,path:string) -> []escene.Stored {
+    stored:=make([dynamic]escene.Stored,context.temp_allocator)
+    if p.info==nil || p.info.schema==nil {return nil}
+    bytes,read:=asset.registry_read(&p.registry,path,context.temp_allocator)
+    file:asset.Asset
+    if read!=.None || asset.asset_take(&file,bytes,context.temp_allocator)!=.None {return nil}
+    defer asset.asset_close(&file)
+    escene.stored_collect(core.world_ref(nil,p.info),&file,&p.types,&stored)
+    return stored[:]
 }
 
 // Whether the document of a scene reads and writes it back

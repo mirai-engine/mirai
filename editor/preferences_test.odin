@@ -75,13 +75,13 @@ preferences_keep_what_differs_from_the_code_and_come_back :: proc(t:^testing.T) 
     testing.expect(t,f.v.snap && f.v.fly_speed==9 && f.v.grid==0.5)
     testing.expect(t,f.console.hidden=={.Debug,.Info} && f.n.players==3 && !f.ai.show_agents_in_scene)
     // Nothing changed: nothing is written; a Play keeps its layout out of the file.
-    written:=f.p.written
+    written:=f.p.kept.written
     preferences_save(&f.s)
-    testing.expect_value(t,f.p.written,written)
+    testing.expect_value(t,f.p.kept.written,written)
     f.s.mode=.Play
     f.g.layout.left_open=false
     preferences_save(&f.s)
-    testing.expect_value(t,f.p.written,written)
+    testing.expect_value(t,f.p.kept.written,written)
 }
 
 // A headless editor, as agents and tests run it, keeps the preferences of
@@ -178,9 +178,9 @@ the_navigation_of_the_browser_is_kept_in_the_project :: proc(t:^testing.T) {
     content_navigation_restore(&f.c,&registry)
     expect_kept(t,&f.c)
     testing.expect(t,!f.c.restore)
-    written:=f.p.marks_written
+    written:=f.p.marks.written
     preferences_save(&f.s)
-    testing.expect_value(t,f.p.marks_written,written)
+    testing.expect_value(t,f.p.marks.written,written)
 }
 
 @(private="file") Preferences_World :: struct {using world:core.Test_World}

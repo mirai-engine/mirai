@@ -35,6 +35,49 @@ a_request_queue_takes_what_comes_before_its_owner_reserves_room :: proc(t:^testi
     testing.expect_value(t,q.dropped,0)
 }
 
+// A request pushed for later is taken at its tick, after what was pushed
+// before it, by the owner that takes with take_due. It is plain data of the
+// World: a rollback to a copy taken before brings it back, with the clock. An
+// owner that takes with take refuses it instead of keeping it for ever.
+@(test)
+a_request_pushed_for_later_is_taken_at_its_tick_and_rolls_back :: proc(t:^testing.T) {
+    World :: struct {using world:Test_World,time:Time,requests:Clock_Requests}
+    w,kept:World
+    if !test_world_init(t,&w) || !test_world_init(t,&kept) {return}
+    defer test_world_destroy(&w)
+    defer test_world_destroy(&kept)
+    w.time={tick=10,dt=1.0/60,playing=true}
+    later(&w.requests.queue,w.time,1,Clock_Request{kind=.Scale,scale=2})
+    later(&w.requests.queue,w.time,0.5,Clock_Request{kind=.Pause})
+    push(&w.requests.queue,Clock_Request{kind=.Resume})
+    if !testing.expect(t,test_world_copy(&kept,&w)) {return}
+    for round in 0..<2 {
+        taken:=make([dynamic]Clock_Request,context.temp_allocator)
+        at:=make([dynamic]u64,context.temp_allocator)
+        for w.time.tick<100 {
+            for request in take_due(&w.requests.queue,w.time) {
+                append(&taken,request)
+                append(&at,w.time.tick)
+            }
+            time_advance(&w.time)
+        }
+        testing.expectf(t,len(taken)==3 && taken[0].kind==.Resume && taken[1].kind==.Pause && taken[2].kind==.Scale,"round %d: %v",round,taken[:])
+        testing.expectf(t,len(at)==3 && at[0]==10 && at[1]==40 && at[2]==70,"round %d: %v",round,at[:])
+        testing.expect_value(t,len(w.requests.queue.waiting),0)
+        // Back to the copy: the clock and what waited come with it.
+        if !testing.expect(t,test_world_copy(&w,&kept)) {return}
+        testing.expect_value(t,w.time.tick,u64(10))
+    }
+    // A wait that is not a number is due at once; one past what a tick counts, never.
+    later(&w.requests.queue,w.time,f32(0h7fc00000),Clock_Request{kind=.Pause})
+    later(&w.requests.queue,w.time,max(f32),Clock_Request{kind=.Resume})
+    now:=take_due(&w.requests.queue,w.time)
+    testing.expect(t,len(now)==2 && now[0].kind==.Resume && now[1].kind==.Pause && len(w.requests.queue.waiting)==3)
+    testing.expect_value(t,len(take(&w.requests.queue)),0)
+    testing.expect_value(t,w.requests.queue.refused,3)
+    testing.expect_value(t,len(w.requests.queue.waiting),0)
+}
+
 // An occurrence reaches each reader once, whatever its cadence: a function of
 // the tick, one of the frame and one of late that reads before the owner
 // runs, with frames at half and at four times the pace of the ticks, with

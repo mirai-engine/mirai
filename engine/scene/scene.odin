@@ -31,7 +31,7 @@ Error :: enum u8 {
     Not_Found,    // no scene with that id or path
     Invalid,      // not a scene, or a parent that is not alive
     Cycle,        // a scene that references itself, or references nested past REFERENCE_DEPTH
-    Not_One_Root, // spawn: the scene has no root or several, and a copy has one
+    Not_A_Prefab, // spawn: the scene is not a prefab, the kind a copy is placed from by its one root
     Corrupt,      // the document contradicts itself
     Duplicate_Id, // capture: two entities have the same Id
     Out_Of_Memory,
@@ -54,11 +54,12 @@ Instantiate_Desc :: struct {
     scope_extents:[3]f32,
     saved:bool,             // a saved game: what hangs from its references came with it, loaded as it was
     only:base.Entity_Id,    // when given, only the entity whose Id in the world (id_in with salt) is this and what hangs from it, a root; its references stay unloaded
+    stored:^[dynamic]Stored, // when given, receives each component the document and the scenes it loads store otherwise than the world reads them
 }
 
 Capture_Desc :: struct {
     root:core.Entity,      // only this entity and what is under it, the one root of its scene: a prefab; none: every root with an Id
-    previous:^asset.Scene, // the document the world came from
+    previous:^asset.Scene, // the document the world came from, whose kind (Header_Flag.Prefab) the capture keeps
     id:base.Asset_Id,      // zero: the id of previous
     entities:[]core.Entity, // when given, only these, as roots without what is under them; their Entity fields keep the Id of an entity left out
     sections:bool,          // also what hangs from a Scene_Reference, which its own scene keeps otherwise: a saved game
@@ -71,8 +72,6 @@ Report :: struct {
     root:core.Entity, // instantiate: the first root of the document, the only one of a prefab
     entities:int,
     components:int,   // values attached or saved, Id, Name and Parent aside
-    migrated:int,     // instantiate: tables stored with another layout
-    unknown:int,      // tables the world has no component for
     dangling:int,     // entity references that named nothing inside: set to none
     sections:int,     // instantiate: referenced scenes loaded under their references
     missing:int,      // instantiate: references whose scene is not in the assets
@@ -128,7 +127,7 @@ spawn_report :: proc(s:Spawner,order:Spawn,name:string,found:Error) -> core.Enti
     case .No_Assets:     fix="run the game from a project with an assets folder"
     case .Not_Found:     fix="name a .scene of the assets by its path or id: import or create it, or fix the name"
     case .Invalid:       fix="spawn a .scene under a parent that is alive, or with no parent"
-    case .Not_One_Root:  fix="put its entities under one root in the editor, or place it whole with a Scene_Reference (scene.section_request)"
+    case .Not_A_Prefab:  fix="make it a prefab in the editor (File > Prefab), with its entities under one root, or place it whole with a Scene_Reference (scene.section_request)"
     case .Corrupt:       fix="open the scene in the editor and save it again"
     case .Out_Of_Memory: fix="free memory or spawn fewer scenes at once"
     }
@@ -143,7 +142,7 @@ error_text :: proc(error:Error) -> string {
     case .Not_Found:     return "no scene has that path or id"
     case .Invalid:       return "not a scene, or a parent that is not alive"
     case .Cycle:         return "a scene references itself"
-    case .Not_One_Root:  return "it does not have exactly one root, and a copy is placed by its root"
+    case .Not_A_Prefab:  return "it is not a prefab, and only a prefab is placed as a copy"
     case .Corrupt:       return "the document contradicts itself"
     case .Duplicate_Id:  return "two entities have the same Id"
     case .Out_Of_Memory: return "out of memory"
@@ -197,7 +196,8 @@ load_id :: proc(w:core.World_Ref,app:^host.App,id:base.Asset_Id) -> (report:Repo
 // entities, when given, receives the entity of every row of the document, as
 // the world has it once replaced. Without references the scenes the document
 // references are not loaded: a saved game, which keeps them as they were.
-replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset.Types,entities:[]core.Entity=nil,references:=true) -> (report:Report,error:Error) {
+// stored, when given, receives what Instantiate_Desc.stored does.
+replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset.Types,entities:[]core.Entity=nil,references:=true,stored:^[dynamic]Stored=nil) -> (report:Report,error:Error) {
     if app.info==nil || w.info!=app.info || w.place!=.World {return {},.Invalid}
     making:=host.load_phase_begin(app,.Instantiate)
     data:=host.app_world_create(app)
@@ -215,7 +215,7 @@ replace :: proc(w:core.World_Ref,app:^host.App,a:^asset.Asset,asset_types:^asset
         host.load_phase_end(app,making)
         return {},.Out_Of_Memory
     }
-    report,error=instantiate(candidate,a,asset_types,{entities=entities,documents=references?assets_documents(app.assets):{},saved=!references})
+    report,error=instantiate(candidate,a,asset_types,{entities=entities,documents=references?assets_documents(app.assets):{},saved=!references,stored=stored})
     host.load_phase_end(app,making,core.world_entities(candidate).alive)
     settling:=host.load_phase_begin(app,.Settle)
     defer host.load_phase_end(app,settling)
@@ -255,7 +255,7 @@ spawn_placed :: proc(c:core.Commands,assets:^host.Assets,s:Spawn,forms:^Prefab_F
     file:=host.assets_scene(assets,s.prefab)
     if file==nil {return {},.Not_Found}
     if s.parent!=core.NONE && !core.alive(c.entities,s.parent) {return {},.Invalid}
-    if !asset.asset_prefab(file) {return {},.Not_One_Root}
+    if !asset.asset_prefab(file) {return {},.Not_A_Prefab}
     w:=core.world_ref(c.data,c.info)
     form,entities:=prefab_form(forms,w,assets,s.prefab,file) or_return
     report,error=form_place(w,form,&assets.types,{parent=s.parent,transient=s.transient,fresh=!s.transient,documents=assets_documents(assets)},entities)
@@ -357,6 +357,7 @@ is_structural :: proc(type:typeid) -> bool {
 instantiate :: proc(w:core.World_Ref,a:^asset.Asset,asset_types:^asset.Types,desc:Instantiate_Desc={}) -> (report:Report,error:Error) {
     if desc.parent!=core.NONE && !core.alive(core.world_entities(w),desc.parent) {return {},.Invalid}
     form,_:=form_make(w,a,asset_types,context.temp_allocator) or_return
+    if desc.stored!=nil && !stored_collect(w,a,asset_types,desc.stored) {return {},.Out_Of_Memory}
     count:=len(form.ids)
     if desc.entities!=nil && len(desc.entities)<count {return {},.Invalid}
     entities:=desc.entities
@@ -400,11 +401,9 @@ sections_load :: proc(w:core.World_Ref,scene:base.Asset_Id,asset_types:^asset.Ty
         resolved:asset.Asset
         defer asset.asset_close(&resolved)
         document:=current(desc.documents,file,&resolved) or_return
-        inner,error:=instantiate(w,document,asset_types,{parent=section.entity,transient=desc.transient,documents=desc.documents,salt=section.id,path=path,scope=section.entity,scope_extents=section.reference.extents})
+        inner,error:=instantiate(w,document,asset_types,{parent=section.entity,transient=desc.transient,documents=desc.documents,salt=section.id,path=path,scope=section.entity,scope_extents=section.reference.extents,stored=desc.stored})
         report.entities+=inner.entities
         report.components+=inner.components
-        report.migrated+=inner.migrated
-        report.unknown+=inner.unknown
         report.dangling+=inner.dangling
         report.sections+=1+inner.sections
         report.missing+=inner.missing
@@ -525,6 +524,7 @@ capture :: proc(w:core.World_Ref,scene:^asset.Scene,asset_types:^asset.Types,des
     }
 
     if asset.scene_init(scene,asset_types,id,allocator)!=.None {return {},.Out_Of_Memory}
+    if desc.previous!=nil {scene.doc.flags+=desc.previous.doc.flags&{.Prefab}}
     defer if error!=.None {
         asset.scene_destroy(scene)
         report={}
@@ -644,7 +644,6 @@ carry :: proc(w:core.World_Ref,scene,previous:^asset.Scene,report:^Report) -> as
             }
             target:=asset.scene_component_add(scene,table.name,&previous.doc.schema,table.columns[1].type) or_return
             asset.scene_component_fill(scene,target,table_rows[:],images[:]) or_return
-            report.unknown+=1
             continue
         }
         target:=asset.document_table_add(&scene.doc,table.name,table.flags) or_return

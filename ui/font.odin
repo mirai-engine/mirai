@@ -765,22 +765,25 @@ text_leading :: proc "contextless" (size,height:f32) -> f32 {
 }
 
 // The next line of text no wider than width: broken at a newline, or with
-// Words where the layout breaks a paragraph (layout_break_next). A line keeps
-// the spaces before its newline and none of those it wraps at.
+// Words where the layout breaks a text (Flow). A line keeps the spaces before
+// its newline and none of those it wraps at.
 text_line :: proc "contextless" (font:^Font,text:string,size,width:f32,wrap:Text_Wrap,f:int=0) -> (line,rest:string,line_width:f32) {
-    space:=text_width(font," ",size,f)
-    b:=layout_break(font,text,size,f,space,width if wrap==.Words else max(f32))
-    start,length,taken,_:=layout_break_next(&b)
-    end:=int(start+length)
-    switch {
-    case end+1<len(text) && text[end]==' ' && text[end+1]=='\n':
-        end+=1
-        taken+=space
-    case b.more:
-        for end>int(start) && text[end-1]==' ' {end-=1;taken-=space}
+    spans:=[1]Layout_Span{{text=text,look={font=u8(f),size=size}}}
+    flow:=Flow{spans=spans[:],width=width if wrap==.Words else max(f32)}
+    walk:=Layout_Walk{font=font,text=text,size=size,face=f,space=text_width(font," ",size,f)}
+    wrapped:bool
+    for {
+        w,_,more:=layout_walk(&walk)
+        if !more {break}
+        if w.length==0 {rest=text[w.start:];break}
+        p:=Flow_Piece{text=text[w.start:][:w.length],width=w.width}
+        if !flow_put(&flow,font,&p) {rest,wrapped=text[w.start:],true;break}
     }
-    if b.more {rest=text[b.start:]}
-    return text[start:end],rest,taken
+    end:int
+    for p in flow.pieces[:flow.count] {end+=len(p.text)}
+    line_width=flow.used
+    if wrapped {for end>0 && text[end-1]==' ' {end-=1;line_width-=walk.space}}
+    return text[:end],rest,line_width
 }
 
 // Walks the lines of a wrapped text in order without storing them: each call

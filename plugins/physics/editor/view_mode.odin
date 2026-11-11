@@ -56,7 +56,7 @@ collision_view_modes :: proc(s:^editor.Session,view:^Collision_View) {
         editor.view_mode_declare(s,{name=mode,label=label,title=fmt.tprintf("Collision: %s",label),group="Advanced",submenu="Collision",icon=.Layers,reason=reason,record=collision_view_record})
         if strings.equal_fold(current,mode) {shown,layers=true,sim.Collision_Layers(1)<<uint(entry.value)}
     }
-    view.shown=layers if shown && ready && s.mode!=.Play && !editor.document_is_prefab(s) else 0
+    view.shown=layers if shown && ready && s.mode!=.Play else 0
 }
 
 @(step="render",after="render_sync")

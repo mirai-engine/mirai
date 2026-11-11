@@ -72,7 +72,7 @@ Stroke :: struct {
     builds:[dynamic]Preview_Build,
     previews:[dynamic]Preview,
     preview_at:[dynamic]i32, // the preview of each chunk of the grid, by preview_slot; -1: none
-    levels_seen:u64,         // the version of the chunks when the levels of the previews were last chosen
+    levels_seen:core.Seen,   // the chunks when the levels of the previews were last chosen
     to_local,to_world:mm.Mat4,
     scale,target:f32,
     normal:[3]f32,
@@ -325,8 +325,7 @@ preview_find :: proc(stroke:^Stroke,coord:[3]i32) -> int {
 preview_levels :: proc(stroke:^Stroke,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk)) {
     dirty:=false
     for preview in stroke.previews {dirty||=preview.dirty}
-    if !dirty && core.version(chunks)==stroke.levels_seen {return}
-    stroke.levels_seen=core.version(chunks)
+    if !core.touched(chunks,&stroke.levels_seen) && !dirty {return}
     s:=&stroke.source
     if s.kind!=.Heightfield {return}
     counts:=terrain.chunk_counts(s)

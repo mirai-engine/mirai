@@ -22,7 +22,7 @@ import nav "plugins:navigation/runtime"
 Nav_Bake_Kept :: struct {
     world:rawptr,
     revision:u64,
-    bakes:u64, // the version and layout of the Navigation_Bake rows written
+    bakes:core.Seen, // what the Navigation_Bake rows written were
 }
 
 // Whether no tile waits for a build or for its links; those that wait for
@@ -95,8 +95,8 @@ navigation_bake_keep :: proc(s:^editor.Session,kept:^Nav_Bake_Kept) {
     n:=core.world_storage_of(w,nav.Navigation)
     bakes:=core.world_table_of(w,nav.Navigation_Bake)
     if n==nil || bakes==nil || core.count(bakes)==0 || !n.ready {return}
-    seen:=core.version(bakes)+core.layout(bakes)
-    if kept.world==w.data && kept.revision==n.revision && kept.bakes==seen {return}
+    seen:=kept.bakes
+    if !core.touched(bakes,&seen) && kept.world==w.data && kept.revision==n.revision {return}
     if !settled(n) {return}
     written:=true
     for row in 0..<core.count(bakes) {

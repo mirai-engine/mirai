@@ -18,7 +18,7 @@ mode :: proc "contextless" (level:Level) -> lz.Mode {
 }
 
 // What a cook writes with: SHIP to the smallest stream at a decode the loader sustains (the
-// cooking of a shipped game), QUICK for a cook that checks a change (a --dev game): a few times
+// cooking of a shipped game), QUICK for a cook that checks a change (a dev game): a few times
 // faster to write and a little larger.
 SHIP :: lz.Mode{level=compressor.LEVEL_OPTIMAL5,parser={setup=setup,encode_chunk=encode_chunk},
     whole=compress_whole}

@@ -32,7 +32,7 @@ hold_test_init :: proc(t:^testing.T,f:^Hold_Test,jump:..Input_Binding) -> bool {
     input_map_action(&f.bindings,HOLD_JUMP,.Button)
     for binding in jump {input_map_bind(&f.bindings,HOLD_JUMP,binding)}
     input_map_action(&f.bindings,HOLD_CONFIRM,.Button)
-    f.bindings.contexts[HOLD_CONFIRM]=HOLD_MENU
+    f.bindings.actions[HOLD_CONFIRM].input_context=HOLD_MENU
     f.time.tick=10
     return true
 }

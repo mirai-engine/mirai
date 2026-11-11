@@ -12,13 +12,15 @@ a_texture_copy_takes_two_textures_that_hold_the_same_bytes :: proc(t: ^testing.T
 		src, dst: Texture_Desc,
 		copies:   bool,
 	}
-	encoded, wider, array, volume, float, blocks, blocks_encoded := image, image, image, image, image, image, image
+	encoded, wider, array, volume, float, blocks, blocks_encoded, chain, half := image, image, image, image, image, image, image, image, image
 	encoded.format = .RGBA8_Srgb
 	wider.width = 128
 	array.layers = 2
 	volume.depth = 4
 	float.format = .R32_Float
 	blocks.format, blocks_encoded.format = .BC7_Unorm, .BC7_Srgb
+	chain.mip_levels = 7
+	half.width, half.height, half.mip_levels = 32, 16, 6
 	cases := []Case {
 		{"one format", image, image, true},
 		{"into the sRGB encoding", image, encoded, true},
@@ -33,6 +35,20 @@ a_texture_copy_takes_two_textures_that_hold_the_same_bytes :: proc(t: ^testing.T
 	}
 	for c in cases {
 		problem := texture_copy_problem(c.src, c.dst)
+		testing.expectf(t, (problem == "") == c.copies, "%s: %q", c.name, problem)
+	}
+	// The mips of a chain from one on into those of the chain of its half size, and none past either.
+	Mips :: struct {name: string, src_mip, dst_mip, mips: u32, copies: bool}
+	mips := []Mips{
+		{"from mip 1 into mip 0 of the half", 1, 0, 6, true},
+		{"from mip 2 into mip 1 of the half", 2, 1, 5, true},
+		{"mips of other sizes", 0, 0, 1, false},
+		{"past the mips of the half", 1, 0, 7, false},
+		{"no mip", 1, 0, 0, false},
+		{"far past", max(u32), 0, 2, false},
+	}
+	for c in mips {
+		problem := texture_copy_problem(chain, half, c.src_mip, c.dst_mip, c.mips)
 		testing.expectf(t, (problem == "") == c.copies, "%s: %q", c.name, problem)
 	}
 }

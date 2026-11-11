@@ -415,14 +415,14 @@ a_merge_changes_what_the_document_names_and_leaves_the_rest :: proc(t:^testing.T
         // A field of a component, and the rest of it, of the entity and of its siblings stays.
         {`{"root":"Root","merge":true,"entities":[{"children":[{"name":"A","components":{"Prefab_Test_Lamp":{"intensity":5}}}]}]}`,0,0,"A,B","C",{5,3},false,0},
         // A name no sibling has is a new entity; one without a name is too.
-        {`{"root":"Root","merge":true,"entities":[{"children":[{"name":"New","position":[1,2,3]},{}]}]}`,2,0,"A,B,New,Group","C",{5,3},false,0},
+        {`{"root":"Root","merge":true,"entities":[{"children":[{"name":"New","position":[1,2,3]},{}]}]}`,2,0,"A,B,New,Entity","C",{5,3},false,0},
         // At the top an id names the entity where it is.
-        {fmt.tprintf(`{{"merge":true,"entities":[{{"id":"0x%016x","position":[7,0,0]}}]}}`,u64(a_id)),0,0,"A,B,New,Group","C",{5,3},false,7},
+        {fmt.tprintf(`{{"merge":true,"entities":[{{"id":"0x%016x","position":[7,0,0]}}]}}`,u64(a_id)),0,0,"A,B,New,Entity","C",{5,3},false,7},
         // off turns a component off, and declared without it in off, on again.
-        {`{"root":"Root/A","merge":true,"entities":[{"off":["Prefab_Test_Lamp"]}]}`,0,0,"A,B,New,Group","C",{5,3},true,7},
-        {`{"root":"Root/A","merge":true,"entities":[{"components":{"Prefab_Test_Lamp":{"range":4}},"off":[]}]}`,0,0,"A,B,New,Group","C",{5,4},false,7},
+        {`{"root":"Root/A","merge":true,"entities":[{"off":["Prefab_Test_Lamp"]}]}`,0,0,"A,B,New,Entity","C",{5,3},true,7},
+        {`{"root":"Root/A","merge":true,"entities":[{"components":{"Prefab_Test_Lamp":{"range":4}},"off":[]}]}`,0,0,"A,B,New,Entity","C",{5,4},false,7},
         // delete takes entities away, and one that is not there is not an error.
-        {`{"root":"Root","merge":true,"entities":[{"children":[{"name":"B","delete":true},{"name":"Group","delete":true},{"name":"Nobody","delete":true}]}]}`,0,2,"A,New","C",{5,4},false,7},
+        {`{"root":"Root","merge":true,"entities":[{"children":[{"name":"B","delete":true},{"name":"Entity","delete":true},{"name":"Nobody","delete":true}]}]}`,0,2,"A,New","C",{5,4},false,7},
         // A copy stays beside what it copies, with what hangs from it, and takes what the document says.
         {`{"merge":true,"entities":[{"copy":"Root/A","name":"A2","position":[9,0,0],"children":[{"name":"C","enabled":false}]}]}`,2,0,"A,New,A2","C",{5,4},false,7},
         // null takes a component away.
@@ -452,6 +452,13 @@ a_merge_changes_what_the_document_names_and_leaves_the_rest :: proc(t:^testing.T
         held:=entity_children(w,child)
         testing.expect(t,lamp.intensity==5 && entity_local(w,child).position.x==9 && len(held)==1 && entity_has(w,held[0],core.Disabled))
     }
+    // kind makes the document a prefab only with one root, and a scene again.
+    _,many,made:=write_scene(f,`{"merge":true,"kind":"Prefab","entities":[]}`)
+    testing.expectf(t,!made && strings.contains(many,"exactly one root") && !s.document.prefab,"gave '%s'",many)
+    _,why,ok:=write_scene(f,`{"merge":true,"kind":"Prefab","entities":[{"name":"Other","delete":true}]}`)
+    testing.expectf(t,ok && s.document.prefab && document_dirty(s),"gave '%s'",why)
+    _,why,ok=write_scene(f,`{"merge":true,"kind":"Scene","entities":[]}`)
+    testing.expectf(t,ok && !s.document.prefab,"gave '%s'",why)
 }
 
 // The same document written to the file with no editor gives the bytes the

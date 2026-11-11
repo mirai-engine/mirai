@@ -57,7 +57,7 @@ author_needs_library :: proc(kind:string,rest:[]string) -> bool {return kind!="t
 // the editor of the project, with the command that builds it; "" when the
 // library is the one its code gives now.
 author_library_problem :: proc(state:build.Target_State,owner:string,dev:bool) -> string {
-    fix:=fmt.tprintf(`mirai build editor "%s" %s`,owner,dev?"--dev":"--release")
+    fix:=fmt.tprintf(`mirai build editor "%s"%s`,owner,dev?"":" --release")
     switch state {
     case .Missing: return fmt.tprintf("the project was never built, and its documents are checked against the types of its game: %s builds its library",fix)
     case .Stale:   return fmt.tprintf("the code of the project changed since its library was built, and its documents are checked against the types of its game: %s builds it again",fix)
@@ -66,10 +66,19 @@ author_library_problem :: proc(state:build.Target_State,owner:string,dev:bool) -
     return ""
 }
 
+// Builds the engine unless it is current, as mirai import does: what the build
+// says goes to stderr. The exit code of a build that failed, 0 otherwise.
+author_engine :: proc(root,kind:string,mode:Build_Mode) -> int {
+    if c_libraries_current(root) && build.engine_current(root,mode) {return 0}
+    lock:=build_lock(root,kind)
+    defer workspace.lock_release(&lock)
+    if !ensure_runtime_dependencies(root) {return 1}
+    return engine_report(build.engine_build({engine_root=root,mode=mode}),root,os.stderr)
+}
+
 @(private="file")
 author_run :: proc(root,kind,usage:string,args:[]string) -> int {
-    mode,without_mode,ok:=build_mode_take(args)
-    if !ok {fmt.eprintfln("mirai %s: --dev and --release do not go together; pass one of them",kind);return 2}
+    mode,without_mode:=build_mode_take(args)
     folder,rest,named:=author_project_take(without_mode)
     if !named || len(rest)==0 {
         fmt.eprintfln("Usage: mirai %s",usage)
@@ -81,12 +90,7 @@ author_run :: proc(root,kind,usage:string,args:[]string) -> int {
         return 1
     }
     mode=build.engine_mode_resolve(root,mode)
-    if !c_libraries_current(root) || !build.engine_current(root,mode) {
-        lock:=build_lock(root,kind)
-        defer workspace.lock_release(&lock)
-        if !ensure_runtime_dependencies(root) {return 1}
-        if code:=engine_report(build.engine_build({engine_root=root,mode=mode}),root,os.stderr);code!=0 {return code}
-    }
+    if code:=author_engine(root,kind,mode);code!=0 {return code}
     if author_needs_library(kind,rest) {
         p,error:=project.open(owner,root,context.temp_allocator)
         if error.code!=.None {

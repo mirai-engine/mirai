@@ -130,31 +130,31 @@ fft_matches_the_discrete_fourier_transform_and_inverts :: proc(t:^testing.T) {
 
 @(test)
 hrtf_covers_every_direction_with_weights_that_add_up_to_one :: proc(t:^testing.T) {
-    for rate in ([?]int{24000,44100,48000}) {
-        h:Hrtf
-        testing.expect_value(t,hrtf_load(&h,rate,context.allocator),Error.None)
-        defer hrtf_destroy(&h,context.allocator)
-        testing.expect(t,h.count==1250 && h.samples>0 && h.rings*len(h.azimuths)==h.count)
-        for i in 0..<400 {
-            // Directions all around, the poles and the interaural axis included.
-            z:=f32(i%20)/9.5-1
-            angle:=f32(i/20)*math.PI/10
-            r:=math.sqrt(max(1-z*z,0))
-            direction:=[3]f32{r*math.cos(angle),z,r*math.sin(angle)}
-            indices,weights:=hrtf_weights(&h,direction)
-            sum:=f32(0)
-            for w,j in weights {
-                testing.expect(t,w>=-1e-5 && w<=1+1e-5 && indices[j]>=0 && indices[j]<h.count)
-                sum+=w
-            }
-            if !test_near(t,sum,1,1e-4) {break}
-        }
-    }
     h:Hrtf
-    testing.expect_value(t,hrtf_load(&h,22050,context.allocator),Error.Unsupported_Format)
-    hrtf_destroy(&h,context.allocator)
-    _,error:=mixer_create({sample_rate=22050})
-    testing.expect_value(t,error,Error.Invalid_Desc)
+    testing.expect_value(t,hrtf_load(&h,RATE,context.allocator),Error.None)
+    defer hrtf_destroy(&h,context.allocator)
+    testing.expect(t,h.count==1250 && h.samples>0 && h.rings*len(h.azimuths)==h.count)
+    for i in 0..<400 {
+        // Directions all around, the poles and the interaural axis included.
+        z:=f32(i%20)/9.5-1
+        angle:=f32(i/20)*math.PI/10
+        r:=math.sqrt(max(1-z*z,0))
+        direction:=[3]f32{r*math.cos(angle),z,r*math.sin(angle)}
+        indices,weights:=hrtf_weights(&h,direction)
+        sum:=f32(0)
+        for w,j in weights {
+            testing.expect(t,w>=-1e-5 && w<=1+1e-5 && indices[j]>=0 && indices[j]<h.count)
+            sum+=w
+        }
+        if !test_near(t,sum,1,1e-4) {break}
+    }
+    other:Hrtf
+    testing.expect_value(t,hrtf_load(&other,44100,context.allocator),Error.Unsupported_Format)
+    hrtf_destroy(&other,context.allocator)
+    // Speakers build no HRTF; headphones build it the first time they are chosen.
+    m:=test_mixer(t)
+    defer mixer_destroy(m)
+    testing.expect(t,m.conv.n==0 && m.binaural_spectra==nil && mixer_set_output(m,.Headphones) && m.conv.n>0)
 }
 
 // The part of each band the source keeps: what the direct effect does to it.

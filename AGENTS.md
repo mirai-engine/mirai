@@ -85,7 +85,7 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 - **Performance.** If the task seeks performance or adds measurable work per frame or tick, measure
   once, when it is finished, with `mirai bench compare --base main`
   ([profiling](.agents/skills/mirai-agent-api/references/methods.md#profiling)): it alternates
-  pairs of both builds, built alike at `--dev`, without validation, VSync or frame limit, and
+  pairs of both builds, built alike in dev, without validation, VSync or frame limit, and
   writes the table. Never after
   each step nor with homemade pair scripts. A change that does not move the cost (UI, tools) needs
   no base: `profile.capture` in the open session is enough. If other tasks are compiling or
@@ -129,10 +129,10 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 The shell, the command table, the flow of a session and how to hand a command to the user:
 [common commands](.agents/skills/mirai-projects/references/projects.md#common-commands).
 
-- Every command builds `--dev` unless `--release` is given; `render check` and `bench compare`
+- Every command builds in dev unless `--release` is given; `render check` and `bench compare`
   build both sides alike: two builds of the same mode compare. **`--release` only when the task
   cannot do without it or the user asks for it**: a budget in absolute numbers.
-  If the user's editor holds the `--dev` build of the checkout, work in a worktree.
+  If the user's editor holds the dev build of the checkout, work in a worktree.
 - Against an editor: `mirai session start`, `mirai rpc` or `mirai capture`, and
   `mirai session stop`. Do not launch `mirai-editor` by hand, write HTTP clients, or parse the
   output of `rpc` with scripts: `--select` and `--wait-until` instead of `json.load` and `sleep`.
@@ -147,7 +147,7 @@ Verify in steps and stop at the first one that is enough for what changed:
 
 1. `mirai check` of each touched package. Always, before building or testing.
 2. The focal tests the area's skill names, with `mirai test`.
-3. If the change runs in the engine: `mirai build editor --dev` of the affected project and one
+3. If the change runs in the engine: `mirai build editor` of the affected project and one
    real call per touched method or flow, in a session.
 4. If the change is visible: a capture without validation errors compared with its reference. For
    rendering or importing, `mirai capture` from the reference camera with `--reference` and an SSIM
@@ -183,7 +183,7 @@ load.
   the task: it is reported.
 - **Iterate on what is visible in seconds.** Before touching a shader or a material, confirm in the
   scene what draws what is seen (`scene.inspect` of the entity, its material and its program).
-  While iterating, a single `--dev` session open on that scene: a material program is changed with
+  While iterating, a single dev session open on that scene: a material program is changed with
   `material.program.edit`, another shader of the project or of a plugin with
   `mirai shaders --project P`, which asks the open editor for it; both publish first what the
   viewport draws. An engine shader (`shaders/`) is published by `mirai build editor` into the

@@ -8,10 +8,12 @@ import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:engine/gui"
+import escene "mirai:engine/scene"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:ui"
 
 // The commands mirai ui, mirai scene and mirai texts, which the author
 // program of the engine runs: a project reads, checks and writes the
@@ -46,6 +48,12 @@ import "mirai:std/serial"
 //
 // Results go to output and failures to errors as "mirai ui write: <asset>:
 // <reason>". Exit codes: 0 done, 1 failed, 2 misuse.
+
+// The asset may also be a file outside the assets of the project: that file
+// read in place of the asset with its id (another version of it, as git
+// gives one to diff), or as one more asset when the project has no asset with
+// its id. Given several --project, the command runs on the first whose assets
+// have the asset of the first file it names.
 
 COMMAND_USAGE :: `Usage: mirai ui|scene read <asset> [--out <file>]
        mirai ui|scene write <asset> <document file>
@@ -85,7 +93,7 @@ Project :: struct {
 }
 
 // What builds the library the types of a game come from.
-BUILD_FIX :: "mirai build editor <project> --dev builds it"
+BUILD_FIX :: "mirai build editor <project> builds it"
 
 
 // Opens the project at root with the assets of its plugins. library false
@@ -200,14 +208,11 @@ ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:strin
         record,_=asset.registry_find(&p.registry,id)
         path=strings.clone(record.path,context.temp_allocator)
     }
-    reading:=Reading{allocator=context.temp_allocator,raw=text,assets=registry_assets(&p.registry)}
     texts:=texts_read(p.assets,p.languages[0])
-    args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,info=p.info,asset=id,texts=&texts}
-    applied:bool
-    if written.made,written.removed,applied=document_apply(&args,&r,-1,text);!applied {return {},reading.problem}
     params:=widget_params(p.assets,id)
-    bytes,imports,loads:=document_bytes(&args,id,&r)
-    if !loads {return {},reading.problem}
+    bytes:[]u8
+    imports:[]ui.Tree_Data
+    if bytes,imports,problem=ui_apply(p,id,&r,text,&texts,&written);problem!="" {return {},problem}
     written.path,written.fresh=path,fresh
     file:=project.path(p.assets_root,path,allocator=context.temp_allocator) if fresh else asset.registry_file_path(&p.registry,path,context.temp_allocator)
     if problem=file_put(p,file,path,bytes,&written);problem!="" {return}
@@ -223,6 +228,18 @@ ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:strin
         put:Written
         return file_put(p,asset.registry_file_path(&p.registry,path,context.temp_allocator),path,bytes,&put)==""
     },p)
+    return
+}
+
+// The bytes of the .ui id once the document text declares it in r, with what
+// its keys say set in texts. problem: why the document is refused.
+@(private)
+ui_apply :: proc(p:^Project,id:base.Asset_Id,r:^Records,text:string,texts:^Texts,written:^Written) -> (bytes:[]u8,imports:[]ui.Tree_Data,problem:string) {
+    reading:=Reading{allocator=context.temp_allocator,raw=text,assets=registry_assets(&p.registry)}
+    args:=Tree_Args{reading=&reading,types=&p.types,registry=&p.registry,assets=p.assets,info=p.info,asset=id,texts=texts}
+    applied,loads:bool
+    if written.made,written.removed,applied=document_apply(&args,r,-1,text);!applied {return nil,nil,reading.problem}
+    if bytes,imports,loads=document_bytes(&args,id,r);!loads {return nil,nil,reading.problem}
     return
 }
 
@@ -290,14 +307,12 @@ texts_command :: proc(p:^Project,args:[]string,output,errors:io.Writer) -> int {
 
 // Checks the .ui of the project, or those of ids, against the types of the
 // game: what does not load, the names that resolve to nothing, the paths
-// they bind that it lacks and the procedures their Draw nodes name; checking
-// all of them, also the node names the code of the game asks them for.
+// they bind that it lacks and the procedures their Draw nodes name.
 ui_check :: proc(p:^Project,ids:[]base.Asset_Id,problems:^[dynamic]Bind_Problem) {
     types:Bind_Types
     defer bind_types_free(&types)
     if len(ids)==0 {
         bind_check_all(problems,&types,context.allocator,p.assets,p.info)
-        code_names_check(problems,p.assets,{project.folder_path(p.root,.Game,context.temp_allocator)})
     } else {
         for id in ids {bind_check_file(problems,&types,context.allocator,p.assets,p.info,id)}
     }
@@ -322,13 +337,14 @@ run_fail :: proc(run:^Run,what,why:string) {
 }
 
 command :: proc(args:[]string,output,errors:io.Writer) -> int {
-    root,engine:string
+    engine:string
+    roots:=make([dynamic]string,context.temp_allocator)
     rest:=make([dynamic]string,context.temp_allocator)
     for at:=0;at<len(args);at+=1 {
         switch args[at] {
         case "--project","--engine":
             if at+1>=len(args) {fmt.wprintln(errors,COMMAND_USAGE);return 2}
-            if args[at]=="--project" {root=args[at+1]} else {engine=args[at+1]}
+            if args[at]=="--project" {append(&roots,args[at+1])} else {engine=args[at+1]}
             at+=1
         case: append(&rest,args[at])
         }
@@ -340,7 +356,8 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
         fmt.wprintfln(errors,"mirai %s: there is no '%s'; it has read, write and check\n%s",rest[0],verb,COMMAND_USAGE)
         return 2
     }
-    if root=="" {root="."}
+    if len(roots)==0 {append(&roots,".")}
+    root:=project_choose(roots[:],engine,rest[2] if len(rest)>2 else "")
     p:Project
     reads:=kind==.Ui && verb=="read" || rest[0]=="texts"
     if problem:=project_open(&p,root,engine,!reads);problem!="" {
@@ -350,6 +367,46 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
     defer project_close(&p)
     if rest[0]=="texts" {return texts_command(&p,rest[1:],output,errors)}
     return project_run(&p,kind,verb,rest[2:],output,errors)
+}
+
+// Of several projects, the one whose assets have the asset of a file: the
+// first when none has it, or named is no file.
+@(private="file")
+project_choose :: proc(roots:[]string,engine,named:string) -> string {
+    if len(roots)==1 || !os.is_file(named) {return roots[0]}
+    file:asset.Asset
+    if asset.asset_load(&file,named,context.temp_allocator)!=.None {return roots[0]}
+    id:=file.blob.header.id
+    asset.asset_close(&file)
+    for root in roots {
+        p:Project
+        problem:=project_open(&p,root,engine,false)
+        _,has:=asset.registry_find(&p.registry,id)
+        project_close(&p)
+        if problem=="" && has {return root}
+    }
+    return roots[0]
+}
+
+// The path of the registry an asset named by a command has: the name itself
+// when it is one of the project, else a file outside its assets, which the
+// registry then holds in memory in place of the asset with its id, or as one
+// more asset. problem: why a file cannot be read as an asset of the kind.
+@(private)
+outside_take :: proc(p:^Project,named:string,kind:Document_Kind) -> (path,problem:string) {
+    path=asset_path(named)
+    if _,found:=asset.registry_find_path(&p.registry,path);found || !os.is_file(named) {return named,""}
+    bytes,read:=os.read_entire_file(named,context.temp_allocator)
+    if read!=nil {return "",fmt.tprintf("%s could not be read",named)}
+    file:asset.Asset
+    if asset.asset_take(&file,bytes,context.temp_allocator)!=.None {return "",fmt.tprintf("%s is not a Mirai asset",named)}
+    id,file_kind:=file.blob.header.id,file.blob.header.kind
+    asset.asset_close(&file)
+    if file_kind!=(asset.KIND_UI if kind==.Ui else asset.KIND_SCENE) {return "",fmt.tprintf("%s is not a %s",named,kind_extension(kind))}
+    path,_=strings.replace_all(project.path_absolute(named,context.temp_allocator),"\\","/",context.temp_allocator)
+    if record,known:=asset.registry_find(&p.registry,id);known {path=strings.clone(record.path,context.temp_allocator)}
+    if asset.registry_memory_set(&p.registry,path,bytes)!=.None {return "",fmt.tprintf("%s could not be read: memory ran out",named)}
+    return path,""
 }
 
 // Runs read, write or check on an open project. All but reading an interface
@@ -400,7 +457,9 @@ command_read :: proc(run:^Run,args:[]string) -> int {
         }
     }
     if named=="" {fmt.wprintln(run.errors,COMMAND_USAGE);return 2}
-    text,problem:=document_text(run,named)
+    path,taken:=outside_take(run.p,named,run.kind)
+    if taken!="" {run_fail(run,named,taken);return 1}
+    text,problem:=document_text(run,path)
     if problem!="" {run_fail(run,named,problem);return 1}
     if out=="" {
         fmt.wprintln(run.output,text)
@@ -463,7 +522,9 @@ command_check :: proc(run:^Run,args:[]string) -> int {
     case .Ui:
         ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
         for arg in args {
-            id,unknown:=asset.registry_resolve(&run.p.registry,asset_path(arg),".ui")
+            path,taken:=outside_take(run.p,arg,.Ui)
+            if taken!="" {run_fail(run,arg,taken);continue}
+            id,unknown:=asset.registry_resolve(&run.p.registry,asset_path(path),".ui")
             if unknown!="" {run_fail(run,arg,unknown);continue}
             append(&ids,id)
         }
@@ -484,11 +545,17 @@ command_check :: proc(run:^Run,args:[]string) -> int {
 }
 
 // Checks the scenes args name, all without one: each reads as its
-// document and that document writes it back. How many do not.
+// document and that document writes it back, and what it stores otherwise
+// than the game reads it is said, a problem when a save loses values or
+// nothing reads them. How many problems.
 @(private="file")
 scene_check :: proc(run:^Run,args:[]string) -> (count:int) {
     paths:=make([dynamic]string,context.temp_allocator)
-    for arg in args {append(&paths,asset_path(arg))}
+    for arg in args {
+        path,taken:=outside_take(run.p,arg,.Scene)
+        if taken!="" {run_fail(run,arg,taken);continue}
+        append(&paths,asset_path(path))
+    }
     if len(args)==0 {
         for &file in run.p.registry.files {
             if file.state==.Asset && asset.registry_listed(&file) && path_of_kind(file.path,.Scene) && !path_mounted(&run.p.registry,file.path) {append(&paths,strings.clone(file.path,context.temp_allocator))}
@@ -498,6 +565,11 @@ scene_check :: proc(run:^Run,args:[]string) -> (count:int) {
         if problem:=scene_verify(run.p,path);problem!="" {
             fmt.wprintfln(run.output,"%s: %s",path,problem)
             count+=1
+        }
+        for entry in scene_stored(run.p,path) {
+            text,warning:=escene.stored_text(entry,path)
+            fmt.wprintln(run.output,text)
+            if warning {count+=1}
         }
     }
     return
