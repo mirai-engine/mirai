@@ -24,7 +24,6 @@ Shapes_Cache :: struct {
     entries:core.Entity_Map(Shape_Entry), // by shape or spline entity
     brushes:core.Entity_Map(Brush_Entry), // by brush entity
     shapes_seen,splines_seen,bodies_seen,colliders_seen,brushes_seen,places_seen,parents_seen:core.Seen,
-    ground:u64, // the revision of the ground the splines last lay on
     dirty:[dynamic]core.Entity,
     gathered:[dynamic]Brush,     // the brushes of the solid being looked at, in order
     builds:[dynamic]Shape_Build, // slots kept between passes
@@ -48,6 +47,7 @@ Shape_Entry :: struct {
     pass:u32,           // the last pass that took it
     spline:bool,        // of a Spline without a Shape
     place:mm.Transform, // of a spline, in the world: where it lies
+    laid:u32,           // of a spline, how many changes of the ground under it it was laid again on
 }
 
 @(private)
@@ -122,8 +122,8 @@ shapes_update :: proc(
     lying:=core.count(splines)>0
     q:=lying?core.ground_query(world,ground):{}
     placed:=lying && (core.touched(transforms,&cache.places_seen) | core.touched(parents,&cache.parents_seen))
-    grounded:=lying && q.revision!=cache.ground
-    cache.ground=q.revision
+    under:=lying && ground.ptr!=nil?ground.changed.items[:]:nil
+    grounded:=len(under)>0
     if !all && !following && !placed && !grounded && quiet(cs) && quiet(cp) && quiet(cb) && quiet(cc) {return}
     context.allocator=allocator
     u:=Update{cache=cache,assets=assets,commands=commands,shapes=shapes,brushes=brushes,parts=parts,rigids=rigids,colliders=colliders,meshes=meshes,transforms=transforms,parents=parents,hierarchy=hierarchy,problems=problems,splines=splines}
@@ -160,7 +160,13 @@ shapes_update :: proc(
         for &entry,i in cache.entries.values {
             if !entry.spline {continue}
             e:=cache.entries.entities[i]
-            if place,_:=core.world_of(transforms,parents,e);grounded || place!=entry.place {mark(&u,e)}
+            place,_:=core.world_of(transforms,parents,e)
+            if place!=entry.place {
+                mark(&u,e)
+            } else if grounded && volume.spline_under(splines,e,place,under) {
+                entry.laid+=1
+                mark(&u,e)
+            }
         }
     }
     if following {brushes_follow(&u,cr)}
@@ -200,7 +206,7 @@ shapes_update :: proc(
                 continue
             }
             material=spline.material
-            key=base.hash64(mem.ptr_to_bytes(&entry.place),q.revision)
+            key=base.hash64(mem.ptr_to_bytes(&entry.place),u64(entry.laid))
             key=base.hash64(mem.ptr_to_bytes(&material),key)
             key=base.hash64(slice.to_bytes(spline.points[:min(int(spline.count),volume.SPLINE_POINTS)]),key)
         }

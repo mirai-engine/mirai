@@ -221,7 +221,7 @@ fluid_bodies :: proc(physics:core.Ref(Physics_State),out:[]Fluid_Body) -> int {
 fluids_sync :: proc(
     state:^Physics_State,fluids:core.Read(Fluid),volumes:core.Read(volume.Volume),locals:core.Read(core.Transform),parents:core.Read(core.Parent),problems:^core.Problems,
     waves:core.Read(Fluid_Waves)={},winds:core.Read(volume.Wind)={},worlds:core.Read(core.World_Transform)={},
-    splines:core.Read(volume.Spline)={},ground:core.Ground_Query={},
+    splines:core.Read(volume.Spline)={},ground:core.Ground_Query={},under:[]mm.Aabb=nil,
 ) {
     if fluids.table==nil {return}
     seen:=core.version(fluids)+core.layout(fluids)+core.version(locals)+core.layout(locals)+core.version(parents)+core.layout(parents)+u64(state.epoch)
@@ -233,9 +233,11 @@ fluids_sync :: proc(
             seen+=core.version(winds)+core.layout(winds)+core.version(worlds)+core.layout(worlds)
         }
     }
-    // A river lies on the ground: it is laid again when the ground changes.
-    if splines.table!=nil {seen+=core.version(splines)+core.layout(splines)+ground.revision}
-    if seen==state.fluids_synced {return}
+    if splines.table!=nil {seen+=core.version(splines)+core.layout(splines)}
+    // A river lies on the ground: when nothing else changed, only the rivers
+    // whose reach a box under where the ground changed overlaps are laid again.
+    only_ground:=seen==state.fluids_synced
+    if only_ground && (splines.table==nil || len(under)==0) {return}
     w:=&state.world
     #reverse for &link,at in state.fluids.values {
         if core.has(fluids,state.fluids.entities[at]) {continue}
@@ -252,13 +254,14 @@ fluids_sync :: proc(
     samples:[FLUID_PATH_SAMPLES]mm.Path_Point
     for row in 0..<core.count(fluids) {
         e:=core.entity_at(fluids,row)
+        world,_:=core.world_of(locals,parents,e)
+        if only_ground && !volume.spline_under(splines,e,world,under) {continue}
         fluid:=core.at(fluids,row)
         region:volume.Volume
         has_region:=false
         if volumes.table!=nil {region,has_region=core.get(volumes,e)}
         // The simulation has a sea and a pool: the fluid of a region of another shape is not made.
         shaped:=has_region && (region.shape==.Plane || region.shape==.Box)
-        world,_:=core.world_of(locals,parents,e)
         desc:=sim.Fluid_Desc{
             shape=region.shape==.Plane?.Plane:.Box,position=world.position,yaw=yaw_of(world.rotation),
             density=fluid.density,current=fluid.current,priority=region.priority,user_data=u64(e),

@@ -82,9 +82,10 @@ roads and paths along a `volume.Spline`
   each laid with `spline_lay`, u across and v along in metres (the material repeats them). It has no
   collider: what stands on it stands on the ground. Without a material nothing here draws it (a
   river, which the water draws, or a route).
-- The step lays it again when its `Spline`, its place (`Transform`, `Parent`) or the revision of the
-  ground changes; with no spline it does not look at places or the ground. An entity with both a
-  `Shape` and a drawn `Spline` draws the `Shape` and reports `shapes.both`.
+- The step lays it again when its `Spline` or its place (`Transform`, `Parent`) changes, or when a
+  box of `core.Ground_Queries.changed` overlaps its reach (`volume.spline_under`); a tick without
+  changes probes nothing. With no spline it does not look at places or the ground. An entity with
+  both a `Shape` and a drawn `Spline` draws the `Shape` and reports `shapes.both`.
 
 ## Editing
 

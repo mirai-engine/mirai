@@ -36,6 +36,15 @@ Step_Test :: struct {
     cache:Shapes_Cache,
     problems:core.Problems,
     app:^host.App,
+    ground_seen:u64, // the cursor the generated call keeps in ground.changed
+    pit:Pit,
+}
+
+@(private="file")
+Pit :: struct {
+    box:mm.Aabb,
+    depth:f32,
+    probes:int,
 }
 
 @(private="file")
@@ -79,9 +88,11 @@ world_settle :: proc(w:^Step_Test) {
 @(private="file")
 world_step :: proc(w:^Step_Test) {
     world_settle(w)
+    ground:=w.ground
+    core.events_read(&ground.changed,&w.ground_seen)
     shapes_update(&w.cache,w.app.assets,&w.app.jobs,w.app.allocator,core.commands(&w.rows,core.test_world_info(&w.rows)),core.read(&w.shapes),core.read(&w.brushes),core.read(&w.parts),core.read(&w.rigids),
         &w.colliders,&w.meshes,core.read(&w.transforms),core.read(&w.parents),core.ref(&w.hierarchy),&w.problems,
-        core.read(&w.splines),core.ref(&w.ground),core.test_world_ref(&w.rows))
+        core.read(&w.splines),core.ref(&ground),core.test_world_ref(&w.rows))
     world_settle(w)
 }
 
@@ -369,21 +380,26 @@ polygons_without_brushes_do_no_work_and_allocate_nothing_while_nothing_changes :
     testing.expect_value(t,len(w.cache.brushes.values),0)
 }
 
-// Ground of a test that rises toward +x, and the same ground a meter higher after a change.
+// Ground of a test that rises toward +x.
 @(private="file")
 slope_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
     probe :: proc(user:rawptr,origin,down:[3]f32,coarse:bool) -> (core.Ground_Hit,core.Ground_Found) {
         return {point={origin.x,origin.x/10,origin.z},normal={0,1,0}},.Ground
     }
-    return {probe=probe,spacing=0.5,revision=1},true
+    return {probe=probe,spacing=0.5},true
 }
 
+// Flat ground at 0 with a pit dug in it, which counts what it was probed.
 @(private="file")
-raised_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
+pit_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
     probe :: proc(user:rawptr,origin,down:[3]f32,coarse:bool) -> (core.Ground_Hit,core.Ground_Found) {
-        return {point={origin.x,origin.x/10+1,origin.z},normal={0,1,0}},.Ground
+        pit:=cast(^Pit)user
+        pit.probes+=1
+        b:=pit.box
+        inside:=origin.x>=b.min.x && origin.x<=b.max.x && origin.z>=b.min.z && origin.z<=b.max.z
+        return {point={origin.x,inside?-pit.depth:0,origin.z},normal={0,1,0}},.Ground
     }
-    return {probe=probe,spacing=0.5,revision=2},true
+    return {user=&(cast(^Step_Test)w.data).pit,probe=probe,spacing=0.5},true
 }
 
 // A spline with a material is a ribbon that lies on the ground, follows it
@@ -417,18 +433,11 @@ a_spline_with_a_material_lies_on_the_ground_as_a_ribbon :: proc(t:^testing.T) {
     testing.expectf(t,abs(lo.y-(-5-0.15+0.05))<1e-3 && abs(hi.y-(-5+0.15+0.05))<1e-3,"it follows the ground across: %v %v",lo,hi)
     testing.expect(t,ribbon.vertex_count>=2*7,"points across as the ground has samples")
 
-    // The ground changes: the ribbon lies on it again.
-    first:=mesh_of(&w,child)
-    w.ground.open=raised_open
-    world_step(&w)
-    raised:=host.assets_mesh(&a.assets,mesh_of(&w,child))
-    testing.expect(t,mesh_of(&w,child)!=first && raised!=nil && abs(raised.bounds_min.y-(lo.y+1))<1e-3)
-
     // It moves with its entity, and lies on the ground there.
     core.edit(&w.transforms,road).position.y=9
     world_step(&w)
     moved:=host.assets_mesh(&a.assets,mesh_of(&w,child))
-    testing.expect(t,moved!=nil && abs(moved.bounds_min.y-(lo.y-3))<1e-3)
+    testing.expect(t,moved!=nil && abs(moved.bounds_min.y-(lo.y-4))<1e-3)
 
     // A point without width is refused, and the ribbon it had stays.
     core.edit(&w.splines,road).points[1].width=0
@@ -440,4 +449,50 @@ a_spline_with_a_material_lies_on_the_ground_as_a_ribbon :: proc(t:^testing.T) {
     world_step(&w)
     _,count=parts_of(&w,road)
     testing.expect_value(t,count,0)
+}
+
+// A ribbon lies again only where the ground announces a change under it: a
+// pit dug away from the road probes nothing, one dug under it lays the road
+// on its bottom, and a tick without changes does no work.
+@(test)
+a_ribbon_lies_again_only_where_the_ground_changed_under_it :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    a:App
+    if !testing.expect(t,app_init(&a)) {return}
+    defer app_destroy(&a)
+    w:Step_Test
+    if !world_init(t,&w,&a.app) {return}
+    defer world_destroy(&w)
+    w.ground.open=pit_open
+    road:=core.create(&w.entities)
+    core.add(&w.transforms,road,core.Transform{{0,0,0},mm.QUAT_IDENTITY,{1,1,1}})
+    spline:=volume.SPLINE_DEFAULT
+    spline.material={1,1}
+    core.add(&w.splines,road,spline)
+    world_step(&w)
+    world_step(&w)
+    child,count:=parts_of(&w,road)
+    if !testing.expect_value(t,count,1) {return}
+    first:=mesh_of(&w,child)
+
+    Case :: struct {what:string,pit:mm.Aabb,laid:bool}
+    cases:=[?]Case{
+        {"a tick without changes",{},false},
+        {"a pit away from the road",{{20,-10,-4},{24,10,0}},false},
+        {"a pit under the road",{{-1,-10,-7},{1,10,-5}},true},
+        {"a tick without changes after the dig",{},false},
+    }
+    for c in cases {
+        if c.pit!={} {
+            w.pit.box,w.pit.depth=c.pit,2
+            core.push(&w.ground.changed,c.pit)
+        }
+        w.pit.probes=0
+        before:=mesh_of(&w,child)
+        world_step(&w)
+        after:=mesh_of(&w,child)
+        testing.expectf(t,(w.pit.probes>0)==c.laid && (after!=before)==c.laid,"%s: %d probes, mesh %v to %v",c.what,w.pit.probes,before,after)
+    }
+    dug:=host.assets_mesh(&a.assets,mesh_of(&w,child))
+    testing.expect(t,mesh_of(&w,child)!=first && dug!=nil && abs(dug.bounds_min.y-(-2+0.05))<1e-3,"the road lies on the bottom of the pit")
 }

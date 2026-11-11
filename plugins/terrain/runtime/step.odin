@@ -147,6 +147,7 @@ resident_owner_remove :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,index:i
     resident_owner_free(owner)
     unordered_remove(&resident.owners,index)
     resident.cut=true
+    resident.marks+=1
 }
 
 // Publishes what a job built for a chunk or a node. Its owners show it with
@@ -190,7 +191,7 @@ piece_take_empty :: proc(resident:^Terrain_Resident,entry:^Data_Source,source:^R
 @(private)
 chunk_evict :: proc(resident:^Terrain_Resident,source:^Resident_Source,index:int) {
     chunk:=&source.chunks[index]
-    if chunk.mesh!={} {host.assets_mesh_release(resident.assets,chunk.mesh);resident.stats.released+=1;resident.stats.meshes-=1}
+    if chunk.mesh!={} {host.assets_mesh_release(resident.assets,chunk.mesh);resident.stats.released+=1;resident.stats.meshes-=1} else if chunk.shown {resident.marks+=1}
     chunk.mesh,chunk.revision,chunk.built,chunk.shown={},0,{},false
     append(&source.changed,u32(index))
     source.leave=true
@@ -899,7 +900,7 @@ terrain_update :: proc(
     // What the owners wrote as they showed is not a change for the next call.
     _=shown_touched(terrains,&c,&resident.shown)
     if resident.room.starved {_=core.touched(c.colliders,&resident.room.seen)}
-    ground_update(resident,data,core.read(terrains),colliders,worlds,focus)
+    ground_update(resident,data,core.read(terrains),colliders,worlds,focus,queries)
     host.assets_commit(app.assets)
 }
 
@@ -923,5 +924,6 @@ resident_owner :: proc(resident:^Terrain_Resident,e:core.Entity,entry:^Data_Sour
         return nil
     }
     resident.cut=true
+    resident.marks+=1
     return &resident.owners[len(resident.owners)-1]
 }

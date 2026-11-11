@@ -223,7 +223,7 @@ Terrain_Resident :: struct {
     lod_view:[3]f32,  // where the view was at the last evaluation of levels
     lod_stamp:[3]u64, // the revision of the streaming sources, the count of owners, marks
     lod_seen:[2]core.Seen, // the transforms and the colliders
-    marks:u64,        // advances when what the levels are chosen from changes: a page, a source, a chunk that empties or fills
+    marks:u64,        // advances when what the levels or the unloaded ground are chosen from changes: a page, a source, an owner, a chunk that empties, fills or goes
     lod_distances:[3]f32, // of Terrain_Settings then
     focus:Terrain_Focus,  // then
     room:Collider_Room,
