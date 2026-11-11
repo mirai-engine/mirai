@@ -4,18 +4,13 @@ import "base:runtime"
 import "core:mem"
 import "mirai:std/base"
 
-// Pages of a Heightfield and blocks of a Volume read from its file when a
-// resident chunk needs them and let go when none does; a page with edits
-// leaves them in a block of its own, so it comes back as it was. The weights
-// of a Volume, in blocks as its distances, come and go with them.
+// The pages of the grids of a source, its field, weights and holes, read
+// from its file when a resident chunk needs them and let go when none does; a
+// page with edits leaves them in a block of its own, so it comes back as it
+// was. The grids of a source share its pages: they come and go together.
 
-Grid_Kind :: enum u8 {Heights,Weights,Holes,Distances}
-
-// The grid of the samples of a Heightfield or Volume, whose pages the
-// chunks mark as those they read.
-source_samples_grid :: #force_inline proc "contextless" (s:^Source) -> ^Grid(f32) {
-    return s.kind==.Volume?&s.distances:&s.heights
-}
+// The grids of a source, which paging, the network, residency and saves go through alike.
+Grid_Kind :: enum u8 {Field,Weights,Holes}
 
 // The samples a build of a Volume chunk reads past its own along each axis:
 // its gradients, and the cells its collider looks at across its faces.
@@ -28,7 +23,7 @@ source_samples_grid :: #force_inline proc "contextless" (s:^Source) -> ^Grid(f32
 chunk_pages_region :: proc "contextless" (s:^Source,index:int) -> (low,high:[3]int,ok:bool) {
     from,to,valid:=chunk_region(s,chunk_coord(s,index))
     if !valid {return}
-    halo:=s.kind==.Volume?VOLUME_HALO:max(int(s.chunk_cells)/2,LAYER_RULE_SAMPLES)+2
+    halo:=chunk_halo(s)
     for axis in 0..<3 {low[axis],high[axis]=max(from[axis]-halo,0),min(to[axis]+halo,int(s.samples[axis])-1)}
     return low,high,true
 }
@@ -46,7 +41,7 @@ node_pages_region :: proc "contextless" (s:^Source,q:^Quad,index:int) -> (low,hi
 // its own, or blocks on both sides of it.
 @(private)
 volume_region_surface :: proc "contextless" (s:^Source,low,high:[3]int) -> bool {
-    g:=&s.distances
+    g:=&s.field
     from,to:=grid_pages(g,low,high)
     sign:=0
     for pz in from.z..=to.z {for py in from.y..=to.y {for px:=from.x;px<=to.x; {
@@ -69,33 +64,30 @@ volume_region_surface :: proc "contextless" (s:^Source,low,high:[3]int) -> bool 
 
 // Whether a source reads pages from its file.
 @(private)
-source_paged :: #force_inline proc "contextless" (s:^Source) -> bool {return source_samples_grid(s).paged}
+source_paged :: #force_inline proc "contextless" (s:^Source) -> bool {return s.field.paged}
 
 @(private)
-distance_finite :: proc "contextless" (value:f32) -> bool {return value-value==0}
+value_finite :: proc "contextless" (value:f32) -> bool {return value-value==0}
 
-// Whether the distances of a Volume stay within its band.
+// Whether values of the field stay within its limit (field_limit).
 @(private)
-distances_within :: proc "contextless" (values:[]f32,band:f32) -> bool {
-    for value in values {if !(abs(value)<=band) {return false}}
+values_within :: proc "contextless" (values:[]f32,limit:f32) -> bool {
+    for value in values {if !(abs(value)<=limit) {return false}}
     return true
 }
 
-// Whether every distance a grid holds, in its pages in memory and for the
-// parts without them, stays within the band.
+// Whether every value of the field, in its pages in memory and for the parts
+// without them, stays within its limit.
 @(private)
-grid_distances_within :: proc(g:^Grid(f32),band:f32) -> bool {
-    for page in g.pages {if !(abs(page.fill)<=band) || !distances_within(page.values,band) {return false}}
-    band:=band
-    return grid_tiles_all(g,&band,proc(user:rawptr,fill:f32) -> bool {return abs(fill)<=(^f32)(user)^})
+grid_within :: proc(g:^Grid(f32),limit:f32) -> bool {
+    for page in g.pages {if !(abs(page.fill)<=limit) || !values_within(page.values,limit) {return false}}
+    limit:=limit
+    return grid_tiles_all(g,&limit,proc(user:rawptr,fill:f32) -> bool {return abs(fill)<=(^f32)(user)^})
 }
 
-// Whether every page of the grids of a source over the region is in memory.
-@(private)
-source_region_held :: proc(s:^Source,low,high:[3]int) -> bool {
-    if !source_paged(s) {return true}
-    if s.kind==.Volume {return volume_held(s,low,high)}
-    return !grid_region_absent(&s.heights,low,high) && !grid_region_absent(&s.weights,low,high) && !grid_region_absent(&s.holes,low,high)
+// Whether every page of the grids of a source over the inclusive region of samples is in memory.
+source_region_held :: proc "contextless" (s:^Source,low,high:[3]int) -> bool {
+    return !grid_region_absent(&s.field,low,high) && !grid_region_absent(&s.weights,low,high) && !grid_region_absent(&s.holes,low,high)
 }
 
 // A page whose values are in its block, into memory: false when the block
@@ -141,7 +133,7 @@ grid_page_install :: proc(g:^Grid($T),id:int,values:[]T) {
 // given, the chunks that read it (data_pages_arrived).
 source_region_read :: proc(s:^Source,low,high:[3]int,entry:^Data_Source=nil) -> bool {
     if !source_paged(s) {return true}
-    read :: proc(g:^Grid($T),low,high:[3]int,file:string,valid:proc "contextless" (value:T) -> bool,allocator:runtime.Allocator,entry:^Data_Source,band:f32=0) -> bool {
+    read :: proc(g:^Grid($T),low,high:[3]int,file:string,valid:proc "contextless" (value:T) -> bool,allocator:runtime.Allocator,entry:^Data_Source,limit:f32=0) -> bool {
         if !g.paged {return true}
         from,to:=grid_pages(g,low,high)
         for pz in from.z..=to.z {for py in from.y..=to.y {for px:=from.x;px<=to.x; {
@@ -156,7 +148,7 @@ source_region_read :: proc(s:^Source,low,high:[3]int,entry:^Data_Source=nil) -> 
             if !grid_absent(g,id) {continue}
             if !grid_page_read(g,id,file,valid,allocator) {return false}
             when T==f32 {
-                if band>0 && !distances_within(g.pages[slot].values,band) {
+                if limit>0 && !values_within(g.pages[slot].values,limit) {
                     shared_free(g.pages[slot].values)
                     g.pages[slot].values=nil
                     return false
@@ -169,8 +161,7 @@ source_region_read :: proc(s:^Source,low,high:[3]int,entry:^Data_Source=nil) -> 
         }}}
         return true
     }
-    if s.kind==.Volume {return read(&s.distances,low,high,s.file,distance_finite,s.allocator,entry,s.cell*SDF_BAND_CELLS) && read(&s.weights,low,high,s.file,weights_full,s.allocator,entry)}
-    return read(&s.heights,low,high,s.file,height_valid,s.allocator,entry) && read(&s.weights,low,high,s.file,weights_full,s.allocator,entry) && read(&s.holes,low,high,s.file,hole_valid,s.allocator,entry)
+    return read(&s.field,low,high,s.file,value_finite,s.allocator,entry,field_limit(s.info)) && read(&s.weights,low,high,s.file,weights_full,s.allocator,entry) && read(&s.holes,low,high,s.file,hole_valid,s.allocator,entry)
 }
 
 // What chunks read of the samples low..high came into memory: the chunks
@@ -180,7 +171,7 @@ source_region_read :: proc(s:^Source,low,high:[3]int,entry:^Data_Source=nil) -> 
 @(private)
 data_pages_arrived :: proc(entry:^Data_Source,low,high:[3]int) {
     s:=&entry.source
-    halo:=s.kind==.Volume?VOLUME_HALO:max(int(s.chunk_cells)/2,LAYER_RULE_SAMPLES)+2
+    halo:=chunk_halo(s)
     cells:=int(s.chunk_cells)
     counts:=chunk_counts(s)
     from,to:[3]int
@@ -251,8 +242,7 @@ source_pages_leave :: proc(s:^Source) -> (left:int) {
         }
         return
     }
-    if s.kind==.Volume {return leave(&s.distances,s.allocator)+leave(&s.weights,s.allocator)}
-    return leave(&s.heights,s.allocator)+leave(&s.weights,s.allocator)+leave(&s.holes,s.allocator)
+    return leave(&s.field,s.allocator)+leave(&s.weights,s.allocator)+leave(&s.holes,s.allocator)
 }
 
 // Marks the pages of the grids of a source a build of chunk index reads, for
@@ -275,8 +265,7 @@ region_pages_mark :: proc(s:^Source,low,high:[3]int) {
             if slot,_:=grid_find(g,{px,py,pz});slot>=0 {g.pages[slot].kept=true}
         }}}
     }
-    if s.kind==.Volume {mark(&s.distances,low,high);mark(&s.weights,low,high);return}
-    mark(&s.heights,low,high);mark(&s.weights,low,high);mark(&s.holes,low,high)
+    mark(&s.field,low,high);mark(&s.weights,low,high);mark(&s.holes,low,high)
 }
 
 // What differs between next, read again, and g of the same size: next takes
@@ -342,27 +331,4 @@ grid_take :: proc(next,g:^Grid($T),writer:^Page_Writer,quantize:bool) -> (low,hi
 source_pages_edited :: proc(s:^Source) {
     if !s.weights.paged {return}
     for &block,slot in s.weights.blocks {if s.weights.pages[slot].values!=nil {block.edited=true}}
-}
-
-// Whether the four samples around cell c,r of a Heightfield are in memory.
-cell_held :: #force_inline proc "contextless" (s:^Source,c,r:int) -> bool {
-    g:=&s.heights
-    if !g.paged {return true}
-    return !grid_absent(g,c/PAGE+g.counts.x*(r/PAGE)) && !grid_absent(g,(c+1)/PAGE+g.counts.x*(r/PAGE)) && !grid_absent(g,c/PAGE+g.counts.x*((r+1)/PAGE)) && !grid_absent(g,(c+1)/PAGE+g.counts.x*((r+1)/PAGE))
-}
-
-// Whether the samples of a Volume from low to high, inclusive, are in memory.
-volume_held :: proc "contextless" (s:^Source,low,high:[3]int) -> bool {
-    return !grid_region_absent(&s.distances,low,high) && !grid_region_absent(&s.weights,low,high)
-}
-
-// The height of a Heightfield at a local point x,z, as source_height; ok is
-// false outside the source or where its pages are not in memory.
-source_height_held :: proc "contextless" (s:^Source,x,z:f32) -> (height:f32,ok:bool) {
-    if s.kind!=.Heightfield || !source_valid(s.info) || len(s.heights.pages)==0 {return}
-    origin:=source_origin(s)
-    column,row:=(x-origin.x)/s.cell,(z-origin.z)/s.cell
-    if !(column>=0 && row>=0 && column<=f32(s.samples.x-1) && row<=f32(s.samples.z-1)) {return}
-    if !cell_held(s,min(int(column),int(s.samples.x)-2),min(int(row),int(s.samples.z)-2)) {return}
-    return source_height(s,x,z),true
 }

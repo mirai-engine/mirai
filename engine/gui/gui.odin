@@ -207,19 +207,17 @@ UI_Event :: struct {
     rect:[4]f32,        // where the node was in the last frame: x, y, width, height in window points on a UI_Screen, in layout units of its panel on a World_Widget; zero before
 }
 
-// The events of the frame that was drawn last, for the first fixed tick that
-// follows it and no other; a tick that runs again (Time.resimulating) gets
-// the ones it got the first time: read them in a fixed step. While no tick
-// runs (the time of the world stopped, as under a pause menu), they go to the
-// frame phase of the next frame instead, for a frame step to read once.
-// gui_events_deliver and gui_events_frame clear and fill it.
+// What the widgets of the frame drawn last did, pushed as they reach the
+// game: in the first fixed tick that follows it, or, when no tick runs (the
+// time of the world stopped, as under a pause menu), in the frame phase of
+// the next frame. A step of either phase gets each once; a tick that runs
+// again (Time.resimulating) gets the ones it got the first time.
 @(storage)
 UI_Events :: struct {
-    using queue:core.Queue(UI_Event),
+    using queue:core.Events(UI_Event),
     pointer_consumed:bool,  // the pointer was over the UI or held by a widget
     keyboard_consumed:bool, // a field, a popup or the navigation focus had the keyboard
-    asked:[EVENT_ASKS]Asked_Name, // the names steps asked of it, which the frame checks against the screen
-    asked_count:int,
+    asked:^Asked_Names,     // of the Gui of its world, where the names steps ask of it go
 }
 
 // What the game asked an interface by name: gui_frame_begin says once what a
@@ -230,7 +228,10 @@ Asked_Name :: struct {
     text:[ui.TREE_NAME_CAPACITY]u8,
     checked:bool,
 }
-EVENT_ASKS :: 16
+Asked_Names :: struct {
+    names:[GUI_ASKS]Asked_Name,
+    count:int,
+}
 GUI_ASKS :: 128
 
 // The particle effects the interfaces show in this frame, each drawn into
@@ -328,10 +329,7 @@ Gui :: struct {
     candidates:[dynamic]Widget_Candidate, // the World_Widgets in sight, while they are planned
     frame:u64,
     deliveries:u64,            // times the events of a frame went to the game: what a widget wrote waits for one past it
-    frame_tick:u64,            // Time.tick at the last frame phase: no tick ran while it holds
-    pending:[dynamic]UI_Event, // of the frame drawn, until the next fixed tick
-    arrived:UI_Events,         // what reached the game since the last frame phase: events_this_frame
-    arrived_read:bool,         // the frame phase went by: what arrived starts again
+    pending:[dynamic]UI_Event, // of the frame drawn, until they go to UI_Events
     delivered:[DELIVERED_CAPACITY]Delivered_Event, // a ring, in the order of the ticks that took them
     delivered_count:int,
     requests:[dynamic]UI_Request, // taken, until the interface they name builds
@@ -342,8 +340,7 @@ Gui :: struct {
     actions:[dynamic]Action_Name, // the input actions by the name_hash of their names
     actions_ready:bool,
     pointer_consumed,keyboard_consumed:bool,
-    names_asked:[GUI_ASKS]Asked_Name, // what steps asked by name, each checked once against the screen that shows
-    names_asked_count:int,
+    names_asked:Asked_Names, // what steps asked by name, each checked once against the screen that shows
     pausing:bool,              // a Modal screen with pause shows this frame
     clock_held:bool,           // it stopped the clock, and gives it back when none shows
     modal_up:bool,             // a Modal is on top this frame
@@ -371,9 +368,6 @@ gui_consumed :: proc "contextless" (events:^UI_Events) -> (pointer,keyboard:bool
     return events.pointer_consumed,events.keyboard_consumed
 }
 
-// Every helper below takes the events of a tick (the UI_Events storage) or
-// those of a frame (events_this_frame).
-
 // The last event of a kind of the node called name of an interface of the
 // entity: of several in one frame, the one that came last says what the
 // widget asks for now. Every helper below reads that one.
@@ -397,20 +391,20 @@ event_find :: proc(events:[]UI_Event,entity:core.Entity,name:string,kind:UI_Even
 @(private)
 event_asked :: proc(events:^UI_Events,entity:core.Entity,name:string,kind:UI_Event_Kind) -> ^UI_Event {
     if events==nil {return nil}
-    asked_add(events.asked[:],&events.asked_count,entity,name)
+    if events.asked!=nil {asked_add(events.asked,entity,name)}
     return event_find(events.items[:],entity,name,kind)
 }
 
 // A name a step asked: an unnamed event, one the frame already knows and one
 // that does not fit go by without work; the frame checks the rest.
 @(private)
-asked_add :: proc "contextless" (list:[]Asked_Name,count:^int,entity:core.Entity,name:string) {
+asked_add :: proc "contextless" (asked:^Asked_Names,entity:core.Entity,name:string) {
     if name=="" || entity==core.NONE {return}
     hash:=base.name_hash(name)
-    for &a in list[:count^] {if a.entity==entity && a.name==hash {return}}
-    if count^>=len(list) {return}
-    a:=&list[count^]
-    count^+=1
+    for &a in asked.names[:asked.count] {if a.entity==entity && a.name==hash {return}}
+    if asked.count>=len(asked.names) {return}
+    a:=&asked.names[asked.count]
+    asked.count+=1
     a^={entity=entity,name=hash}
     ui.tree_text_set(a.text[:],name)
 }
@@ -480,72 +474,47 @@ back :: proc(events:^UI_Events,entity:core.Entity) -> bool {
 // game does with it is its own: open or close a menu.
 menu_pressed :: proc(events:^UI_Events) -> bool {return event_asked(events,core.NONE,"",.Menu)!=nil}
 
-// The events that reached the game in this frame, each once: read them from a
-// frame step, not a fixed one, and the ticks of the frame (none while the clock
-// is stopped, or several) make no difference. Valid until the next frame phase.
-events_this_frame :: proc(gui:^Gui) -> ^UI_Events {
-    return gui!=nil?&gui.arrived:nil
-}
-
-@(private)
-events_arrive :: proc(gui:^Gui) {
-    if gui.arrived_read {
-        clear(&gui.arrived.items)
-        gui.arrived_read=false
-    }
-    append(&gui.arrived.items,..gui.pending[:])
-}
-
-// What the steps asked of these events joins what the frame checks.
-@(private)
-asked_merge :: proc(gui:^Gui,events:^UI_Events) {
-    for &a in events.asked[:events.asked_count] {asked_add(gui.names_asked[:],&gui.names_asked_count,a.entity,base.text_get(a.text[:]))}
-    events.asked_count=0
-}
-
-// The events of the last frame become those of the tick, once; a tick that
-// runs again gets those it got.
+// The events of the last frame go to the game once, in the first tick that
+// follows it; a tick that runs again gets those it got.
 @(step="fixed",stage="input")
 gui_events_deliver :: proc(events:^UI_Events,gui:^Gui,time:core.Time) {
-    clear(&events.items)
-    if gui==nil {return}
-    asked_merge(gui,events)
-    events.pointer_consumed,events.keyboard_consumed=gui.pointer_consumed,gui.keyboard_consumed
-    first:=max(gui.delivered_count-DELIVERED_CAPACITY,0)
+    if !events_follow(events,gui) {return}
     if time.resimulating {
-        for i in first..<gui.delivered_count {
-            if d:=gui.delivered[i%DELIVERED_CAPACITY];d.tick==time.tick {append(&events.items,d.event)}
+        for i in max(gui.delivered_count-DELIVERED_CAPACITY,0)..<gui.delivered_count {
+            if d:=gui.delivered[i%DELIVERED_CAPACITY];d.tick==time.tick {core.push(&events.queue,d.event)}
         }
         return
     }
     // The clock went back, as a save loads: the ticks kept are of another run.
     if gui.delivered_count>0 && gui.delivered[(gui.delivered_count-1)%DELIVERED_CAPACITY].tick>=time.tick {gui.delivered_count=0}
-    events_arrive(gui)
-    if len(gui.pending)==0 {return}
-    append(&events.items,..gui.pending[:])
     for event in gui.pending {
         gui.delivered[gui.delivered_count%DELIVERED_CAPACITY]={time.tick,event}
         gui.delivered_count+=1
     }
-    clear(&gui.pending)
-    gui.deliveries+=1
+    events_pending(events,gui)
 }
 
-// In a frame no tick ran in, the events of the last frame go to its frame
-// phase instead, once; a tick that runs again later does not get them.
+// In a frame no tick ran in, the events of the last frame go in its frame phase.
 @(step="frame",stage="input")
-gui_events_frame :: proc(events:^UI_Events,gui:^Gui,time:core.Time) {
-    if gui==nil {return}
-    asked_merge(gui,events)
-    defer gui.arrived_read=true
-    ticked:=time.tick!=gui.frame_tick
-    gui.frame_tick=time.tick
-    if ticked {return}
-    events_arrive(gui)
-    clear(&events.items)
-    events.pointer_consumed,events.keyboard_consumed=gui.pointer_consumed,gui.keyboard_consumed
+gui_events_frame :: proc(events:^UI_Events,gui:^Gui) {
+    if events_follow(events,gui) {events_pending(events,gui)}
+}
+
+// What the last frame knew of the UI, for the steps that read the events.
+@(private)
+events_follow :: proc(events:^UI_Events,gui:^Gui) -> bool {
+    if gui==nil {
+        events.asked=nil
+        return false
+    }
+    events.pointer_consumed,events.keyboard_consumed,events.asked=gui.pointer_consumed,gui.keyboard_consumed,&gui.names_asked
+    return true
+}
+
+@(private)
+events_pending :: proc(events:^UI_Events,gui:^Gui) {
     if len(gui.pending)==0 {return}
-    append(&events.items,..gui.pending[:])
+    for event in gui.pending {core.push(&events.queue,event)}
     clear(&gui.pending)
     gui.deliveries+=1
 }
@@ -590,7 +559,6 @@ frame_begin :: proc(
 ) {
     if gui==nil {return}
     if effects!=nil {clear(&effects.items)}
-    asked_merge(gui,&gui.arrived)
     asked_check(gui,app,problems)
     gui.frame+=1
     gui.pausing=false
@@ -832,7 +800,6 @@ gui_release :: proc(gui:^Gui,renderer:^render.Renderer) {
     if gui==nil {return}
     instances_clear(gui)
     clear(&gui.pending)
-    clear(&gui.arrived.items)
     for view in gui.views_shown {render.view_texture_remove(renderer,view.texture)}
     clear(&gui.views_shown)
     for &shown in gui.particles {if shown.texture!=0 {render.ui_texture_remove(renderer,shown.texture)};shown={}}
@@ -856,7 +823,7 @@ gui_free :: proc(gui:^Gui) {
         free(s.ctx,a)
         delete(s.draws,a);delete(s.panels,a);delete(s.offscreen,a);delete(s.offscreen_draws,a)
     }
-    delete(gui.sources);delete(gui.source_index);delete(gui.instances);delete(gui.plan);delete(gui.candidates);delete(gui.pending);delete(gui.arrived.items)
+    delete(gui.sources);delete(gui.source_index);delete(gui.instances);delete(gui.plan);delete(gui.candidates);delete(gui.pending)
     delete(gui.requests);delete(gui.unblock);delete(gui.views_shown);delete(gui.actions)
     core.entity_map_destroy(&gui.index)
     if gui.schema_ready {serial.schema_destroy(&gui.schema)}

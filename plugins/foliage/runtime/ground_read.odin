@@ -54,17 +54,9 @@ foliage_ground :: proc(
     streamed:=sources.ptr!=nil?sources.ptr.revision:0
     sources_moved:=streamed!=ground.streamed
     ground.streamed=streamed
-    if q.revision==ground.revision && foliage_now==ground.foliage && !moved && !sources_moved && len(asked)==0 && core.count(foliages)==len(ground.owners) {return}
-    // What the ground announced since; everything when it no longer keeps that far back.
-    changes:[]core.Ground_Change
-    everything:=false
-    if q.revision!=ground.revision {
-        first:=len(q.changes)
-        for first>0 && q.changes[first-1].revision>ground.revision {first-=1}
-        everything=q.revision<ground.revision || len(q.changes)==0 || q.changes[0].revision>ground.revision+1
-        changes=q.changes[first:]
-    }
-    ground.revision,ground.foliage=q.revision,foliage_now
+    changes:=queries.changed.items[:]
+    if len(changes)==0 && foliage_now==ground.foliage && !moved && !sources_moved && len(asked)==0 && core.count(foliages)==len(ground.owners) {return}
+    ground.foliage=foliage_now
     for i:=len(ground.owners)-1;i>=0;i-=1 {
         if core.has(foliages,ground.owners[i].entity) {continue}
         ground_owner_destroy(&ground.owners[i])
@@ -92,11 +84,11 @@ foliage_ground :: proc(
         cells:=owner.epoch!=entry.epoch || owner.loads!=entry.loads
         asked_here:=false
         for request in asked {asked_here||=request.entity==e}
-        if !fresh && !cells && !asked_here && !sources_moved && len(changes)==0 && !everything && owner.transform==world.transform {continue}
+        if !fresh && !cells && !asked_here && !sources_moved && len(changes)==0 && owner.transform==world.transform {continue}
         // As many samples as the ground has under a cell, in the space of this Foliage.
         step:=q.spacing/max(abs(world.transform.scale.x),abs(world.transform.scale.z),1e-6) if q.spacing>0 else CELL_SIZE
         samples:=u32(clamp(int(math.ceil(CELL_SIZE/max(step,1e-3)))+1,SAMPLES_MIN,SAMPLES_MAX))
-        all:=everything || owner.transform!=world.transform || owner.samples!=samples
+        all:=owner.transform!=world.transform || owner.samples!=samples
         if owner.samples!=samples {ground_owner_reset(owner,samples)}
         owner.transform,owner.epoch,owner.loads=world.transform,entry.epoch,entry.loads
         // The tiles and cells the changes cover, of the ones this Foliage has.
@@ -108,8 +100,8 @@ foliage_ground :: proc(
             c:=CELL_SIZE
             near:=mm.aabb_transform({{f32(lo.x)*c,-POSITION_MAX,f32(lo.y)*c},{f32(hi.x+1)*c,POSITION_MAX,f32(hi.y+1)*c}},owner_world)
             for change in changes {
-                if lo.x>hi.x || !mm.aabb_overlaps(change.box,near) {continue}
-                box:=mm.aabb_transform(change.box,owner_local)
+                if lo.x>hi.x || !mm.aabb_overlaps(change,near) {continue}
+                box:=mm.aabb_transform(change,owner_local)
                 first:=[2]i32{i32(clamp(math.floor(box.min.x/c)-1,f32(lo.x),f32(hi.x)+1)),i32(clamp(math.floor(box.min.z/c)-1,f32(lo.y),f32(hi.y)+1))}
                 last:=[2]i32{i32(clamp(math.floor(box.max.x/c)+1,f32(lo.x)-1,f32(hi.x))),i32(clamp(math.floor(box.max.z/c)+1,f32(lo.y)-1,f32(hi.y)))}
                 for z in first.y..=last.y {for x in first.x..=last.x {if covers_tile(box,{x,z}) {touched[{x,z}]={}}}}

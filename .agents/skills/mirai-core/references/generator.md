@@ -252,6 +252,8 @@ Each parameter is bound by its type; the order in the signature is free.
   and the views of the frame, its clock, its content, the launch).
 - `core.Records(T)`, with `T` a `@(record)`: the rows of its tables, read-only
   (`host.app_record_set`).
+- `core.Inbox(M)`, with `M` a `@(net_message)`: the messages of that type that arrived for the
+  tick, read-only; a read of `core.Net_Messages`, which the network writes.
 - A `@(params)` struct, by value ([groups](#parameter-groups)).
 
 ### Parameter groups

@@ -178,6 +178,9 @@ register the same in the same order.
   types and `TYPE_LEAVES` leaves. `type_register` registers and composes before sealing (tests).
 - Each replicated field (without `local`) produces leaves with a serializer according to its type
   and its tags (`bits`, `min`/`max`, `precision`, `text`; an array inherits those of its field).
+  - An array of one-byte values (a `text` too, and a `rotation` sent whole) is one field of its
+    bytes, packed four to a word: whole it travels up to its last nonzero byte, and as a delta the
+    run from the first to the last byte that changed. Its bytes must fit a part of a state.
   - A `base.Entity` travels as the network object of that game id, and the client receives its own
     id (`object_bind`). If the referenced replica does not exist yet it reads zero and the
     reference stays pending (`object_references_pending`); an entity that the sender does not
@@ -335,6 +338,9 @@ object are sent until its creation was acked.
   on the server those that do not come from the owner. Only `Held` ones reach a held connection:
   what the server says while it loads the world the connection will see.
 - They arrive as an `Event` command and are read with `event_read`.
+- An unreliable event encodes within `EVENT_MAX_BYTES`, a datagram; a reliable one within
+  `RELIABLE_EVENT_MAX_BYTES`, which its channel cuts in chunks as for any reliable message, and
+  every event within `MAX_STATE_WORDS`. `event_register` refuses one past them.
 - They name their object by handle and travel apart from the state: on the same object they arrive
   in order, but there is no order between events and updates.
 - A reliable event that arrives before its replica waits for it up to 5 s; one sent in the tick in

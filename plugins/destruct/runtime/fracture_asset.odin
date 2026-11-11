@@ -7,8 +7,6 @@ import "mirai:std/geom"
 import mm "mirai:std/math"
 
 // A .fracture: the pieces of a mesh, their connections and clusters, authored or baked.
-FRACTURE_KIND :: asset.Fourcc(u32('F')|u32('R')<<8|u32('A')<<16|u32('C')<<24)
-FRACTURE_EXTENSION :: ".fracture"
 FRACTURE_VERSION :: 4
 FRACTURE_CLUSTER_POINTS :: 64 // most points kept of the hull of a cluster
 

@@ -105,7 +105,7 @@ a_cave_deeper_than_the_old_limit_is_dug_saved_read_by_pages_and_dug_again :: pro
     s,paged:Source;defer source_destroy(&s);defer source_destroy(&paged)
     // 512 cells deep: its ground from the middle of the box down.
     if !testing.expect(t,source_make(&s,.Volume,{65,513,65},1,32)) {return}
-    g:=&s.distances
+    g:=&s.field
     blocks:=g.counts.x*g.counts.y*g.counts.z
     held_before:=0
     for page in g.pages {if page.values!=nil {held_before+=1}}
@@ -138,14 +138,14 @@ a_cave_deeper_than_the_old_limit_is_dug_saved_read_by_pages_and_dug_again :: pro
     got,ok:=source_read(&paged,&front,&types,pages=path)
     asset.asset_close(&front)
     if !testing.expect(t,ok && got==id) {return}
-    testing.expect_value(t,grid_dense(&paged.distances),0)
-    testing.expect(t,len(paged.distances.pages)<=len(g.pages),"it holds no more pages than the one saved")
+    testing.expect_value(t,grid_dense(&paged.field),0)
+    testing.expect(t,len(paged.field.pages)<=len(g.pages),"it holds no more pages than the one saved")
     low,high:=middle-{12,196,12},middle-{-12,164,-12}
     testing.expect(t,!source_region_held(&paged,low,high) && source_region_read(&paged,low,high))
     same:=true
     for z in low.z..=high.z {for y in low.y..=high.y {for x in low.x..=high.x {same&&=source_value(&paged,{x,y,z})==source_value(&s,{x,y,z})}}}
     testing.expect(t,same,"the cave reads as it was saved")
-    testing.expect(t,grid_dense(&paged.distances)<with_values*PAGE_VALUES/2,"the rest of the shaft stays in the file")
+    testing.expect(t,grid_dense(&paged.field)<with_values*PAGE_VALUES/2,"the rest of the shaft stays in the file")
     // Dug again down there, and shown: the chunk that deep builds its walls.
     room:=source_edit(&paged,{kind=.Carve,center={0,-180,0},radius=8,amount=1})
     testing.expect(t,room.error==.None && room.changed)
@@ -165,7 +165,7 @@ a_large_volume_holds_and_stores_only_the_blocks_of_its_surfaces :: proc(t:^testi
     s,loaded:Source;defer source_destroy(&s);defer source_destroy(&loaded)
     if !testing.expect(t,source_make(&s,.Volume,{513,513,513},1,64)) {return}
     testing.expect(t,source_edit(&s,{kind=.Carve,center={100,0,-60},radius=10,amount=1}).changed)
-    g:=&s.distances
+    g:=&s.field
     blocks:=g.counts.x*g.counts.y*g.counts.z
     dense:=513*513*513*size_of(f32)
     // What a table of every block took before, without one value.
@@ -180,10 +180,10 @@ a_large_volume_holds_and_stores_only_the_blocks_of_its_surfaces :: proc(t:^testi
     testing.expect_value(t,source_save(&s,path,id,&types),asset.Error.None)
     got,ok:=source_load(&loaded,path,&types)
     if !testing.expect(t,ok && got==id) {return}
-    testing.expect(t,grid_equal(&loaded.distances,g) && grid_equal(&loaded.weights,&s.weights),"the file gives back every sample")
-    testing.expect(t,len(loaded.distances.pages)<=len(g.pages) && len(loaded.distances.tables)<=len(g.tables),"and holds no more than it had")
+    testing.expect(t,grid_equal(&loaded.field,g) && grid_equal(&loaded.weights,&s.weights),"the file gives back every sample")
+    testing.expect(t,len(loaded.field.pages)<=len(g.pages) && len(loaded.field.tables)<=len(g.tables),"and holds no more than it had")
     // Saved again it is the same file: what a grid holds of pages of one value does not change it.
-    testing.expect(t,grid_prepare(&loaded.distances,{4,4,4},{5,5,5},loaded.allocator))
+    testing.expect(t,grid_prepare(&loaded.field,{4,4,4},{5,5,5},loaded.allocator))
     a,a_error:=source_bytes(&s,id,&types)
     b,b_error:=source_bytes(&loaded,id,&types)
     defer delete(a);defer delete(b)

@@ -63,9 +63,13 @@ keeps its default; one the struct does not have is an error.
 - `test_dependencies`: plugins that its tests import besides its dependencies; they are never
   activated with it
   ([imports](../../mirai-plugins/references/plugins.md#dependencies-and-compatibility)).
-- `asset_kinds`: the kinds of asset a plugin adds, each by its extension and whether it is a
-  document git merges and diffs ([git and assets](../../mirai-assets/references/cli.md#git)):
-  what the CLI, the cook and the editor know of them without loading the plugin.
+- `asset_kinds`: the kinds of asset a plugin adds, its one declaration of them: each by its
+  extension, the four letters its files begin with (`kind`), whether it is a document git merges
+  and diffs ([git and assets](../../mirai-assets/references/cli.md#git)) and how the editor shows
+  it ([asset types](../../mirai-editor/references/extensions.md#asset-types-of-a-plugin)). A build
+  writes from it `kinds_gen.odin` into the package `folder` names (`runtime` without it), with
+  `<STEM>_KIND` and `<STEM>_EXTENSION` for each `.stem`; git keeps the file, so the plugin tests
+  without a build.
 - `development`: a tool for making the game (`profiler`, `tracy`). It goes into the `editor` and
   `play` libraries; the shipped game is generated with `shipped_world`, the world without them, and
   if its code reaches them the build fails with `Engine_Time_Code`.

@@ -2,6 +2,6 @@
   "name": "physics_cache",
   "version": "0.1.0",
   "dependencies": [],
-  "parts": ["Runtime", "Editor"],
-  "asset_kinds": [{"extension": ".physics_cache"}]
+  "parts": ["Runtime"],
+  "asset_kinds": [{"extension": ".physics_cache", "kind": "PCAC", "label": "Physics cache", "color": [255, 127, 40], "icon": "History"}]
 }

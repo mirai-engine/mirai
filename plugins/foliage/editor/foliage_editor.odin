@@ -614,7 +614,7 @@ foliage_create :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref
     a:=assets
     table:=core.world_table_of(world,foliage.Foliage)
     if a==nil || table==nil {editor.notify(s,"The project has no foliage library");return core.NONE}
-    label,path:=editor.asset_new_file(s,fmt.tprintf("%s/foliage",a.registry.root),name!=""?name:"Foliage",foliage.EXTENSION,name!="")
+    label,path:=editor.asset_new_file(s,fmt.tprintf("%s/foliage",a.registry.root),name!=""?name:"Foliage",foliage.FOLIAGE_EXTENSION,name!="")
     seed:=base.hash_combine(base.name_hash(path),platform.clock_ns())
     id:=base.Asset_Id{seed,base.hash_combine(seed,base.name_hash("Foliage"))}
     source:foliage.Source
@@ -626,7 +626,7 @@ foliage_create :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref
     history.edits_begin(s.edits,editor.document_selection(s),"Add foliage")
     if !editor.file_write(s,path,bytes,"Add foliage") {history.edits_cancel(s.edits,world);editor.notify(s,"The foliage could not be written");return core.NONE}
     position:=placed?at:[3]f32{s.viewport.orbit.target.x,0,s.viewport.orbit.target.z}
-    e:=editor.entity_create(s,{preset=.Empty,name=label,transform={position=position,rotation=1,scale={1,1,1}}})
+    e:=editor.entity_create(s,{name=label,transform={position=position,rotation=1,scale={1,1,1}}})
     core.add(table,e,foliage.Foliage{source=id,revision=1})
     history.edits_end(s.edits)
     history.selection_set(editor.document_selection(s),{e})
@@ -638,13 +638,9 @@ foliage_create :: proc(s:^editor.Session,tool:^Foliage_Tool,world:core.World_Ref
 // prefab of one when they show no mesh of their own.
 @(storage)
 Foliage_Thumbnails :: struct {provider:editor.Thumbnail_Provider}
-FOLIAGE_THUMBNAILS_DEFAULT :: Foliage_Thumbnails{provider={kinds={0=foliage.KIND},count=1,subject=foliage_thumbnail}}
+FOLIAGE_THUMBNAILS_DEFAULT :: Foliage_Thumbnails{provider={kinds={0=foliage.FOLIAGE_KIND},count=1,subject=foliage_thumbnail}}
 
 // A .foliage in the browser, with the color of Unreal's foliage types.
-@(storage)
-Foliage_Kinds :: struct {provider:editor.Asset_Kind_Provider}
-FOLIAGE_KINDS_DEFAULT :: Foliage_Kinds{provider={kinds={0={kind=foliage.KIND,label="Foliage",color={12,173,12,255},icon=ui.Icon(u8(ui.Icon.User)+u8(editor.User_Icon.Agent_Leaf)),extension=foliage.EXTENSION,scene_data=true}},count=1}}
-
 // The menu of a mesh in the browser adds it as a type to the foliage the tool
 // edits, or makes a foliage of it when none is selected.
 @(storage)
@@ -675,7 +671,7 @@ foliage_menu :: proc(s:^editor.Session,file:^asset.Registry_File) {
 @(private)
 foliage_thumbnail :: proc(s:^editor.Session,file:^asset.Registry_File,clip:u32,subject:^editor.Thumbnail_Subject) -> bool {
     a:=s.app.assets
-    if a==nil || file.kind!=foliage.KIND {return false}
+    if a==nil || file.kind!=foliage.FOLIAGE_KIND {return false}
     prefab:base.Asset_Id
     for id in asset.registry_dependencies(&a.registry,file) {
         used,found:=asset.registry_find(&a.registry,id)

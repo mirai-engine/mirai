@@ -35,10 +35,10 @@ terrain_sources_save_load_and_clone_preserve_both_representations :: proc(t:^tes
         testing.expect_value(t,source_value(&loaded,at),f32(-0.75))
         testing.expect_value(t,source_value(&original,at),f32(-0.75))
         if kind==.Heightfield {
-            _,page_samples:=grid_page_extent(&loaded.heights,0)
-            testing.expect_value(t,grid_dense(&loaded.heights),page_samples)
-            testing.expect_value(t,raw_data(cloned.heights.pages[0].values)==raw_data(loaded.heights.pages[0].values),false)
-        } else {testing.expect_value(t,raw_data(cloned.distances.pages[0].values)==raw_data(loaded.distances.pages[0].values),false)}
+            _,page_samples:=grid_page_extent(&loaded.field,0)
+            testing.expect_value(t,grid_dense(&loaded.field),page_samples)
+            testing.expect_value(t,raw_data(cloned.field.pages[0].values)==raw_data(loaded.field.pages[0].values),false)
+        } else {testing.expect_value(t,raw_data(cloned.field.pages[0].values)==raw_data(loaded.field.pages[0].values),false)}
     }
 }
 
@@ -57,11 +57,11 @@ terrain_sources_reject_invalid_dimensions_values_and_unavailable_memory :: proc(
     testing.expect(t,source_value(&source,{1,1,1})<0)
     source_destroy(&source)
     testing.expect(t,source_make(&source,.Heightfield,{5,1,5},1,4))
-    source.heights.pages[0].fill=f32(0h7fc00000)
+    source.field.pages[0].fill=f32(0h7fc00000)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     path:=fmt.tprintf("%s/invalid.terrain",base.test_folder(t,"terrain"))
     testing.expect_value(t,source_save(&source,path,{1,2},&types),asset.Error.Invalid)
-    source.heights.pages[0].fill=0
+    source.field.pages[0].fill=0
     testing.expect(t,source_set(&source,{0,0,0},HEIGHT_LIMIT+1))
     testing.expect_value(t,source_save(&source,path,{1,2},&types),asset.Error.Invalid)
 }
@@ -196,16 +196,16 @@ terrain_brushes_mark_only_touched_chunks_including_border_normals :: proc(t:^tes
     for z in 0..<4 {for x in 0..<4 {if chunk_touched(&source,{i32(x),0,i32(z)},change) {count+=1}}}
     testing.expect_value(t,count,4)
     testing.expect(t,source_edit(&source,{kind=.Smooth,center={0,50,0},radius=0.4,amount=1}).changed)
-    held:=raw_data(source.heights.pages[0].values)
+    held:=raw_data(source.field.pages[0].values)
     scratch:=raw_data(source.scratch)
     source.allocator=runtime.nil_allocator()
     testing.expect(t,source_edit(&source,{kind=.Lower,center={0,50,0},radius=0.4,amount=0.5}).changed)
     testing.expect(t,source_edit(&source,{kind=.Smooth,center={0,50,0},radius=0.4,amount=1}).changed)
     source.allocator=context.allocator
     testing.expect_value(t,source_value(&source,{32,0,32}),f32(0))
-    testing.expect_value(t,raw_data(source.heights.pages[0].values),held);testing.expect_value(t,raw_data(source.scratch),scratch)
-    _,page_samples:=grid_page_extent(&source.heights,0)
-    testing.expect_value(t,grid_dense(&source.heights),page_samples)
+    testing.expect_value(t,raw_data(source.field.pages[0].values),held);testing.expect_value(t,raw_data(source.scratch),scratch)
+    _,page_samples:=grid_page_extent(&source.field,0)
+    testing.expect_value(t,grid_dense(&source.field),page_samples)
     source.allocator=runtime.nil_allocator()
     testing.expect_value(t,source_edit(&source,{kind=.Raise,center={32,0,32},radius=0.4,amount=1}).error,Edit_Error.Out_Of_Memory)
     source.allocator=context.allocator
@@ -245,7 +245,7 @@ volume_removal_creates_a_cavity_with_a_roof_and_addition_refills_it :: proc(t:^t
 @(test)
 volume_picking_hits_the_tetra_surface :: proc(t:^testing.T) {
     source:Source;testing.expect(t,source_make(&source,.Volume,{3,3,3},1,4));defer source_destroy(&source)
-    testing.expect(t,grid_init(&source.distances,source.distances.size,1,source.allocator))
+    testing.expect(t,grid_init(&source.field,source.field.size,1,source.allocator))
     testing.expect(t,source_set(&source,{0,0,0},-1))
     context.allocator=runtime.nil_allocator()
     for _ in 0..<4 {

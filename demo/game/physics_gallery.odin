@@ -109,13 +109,11 @@ physics_gallery_piece_center :: proc(view:destruct.Destruct_View,e:core.Entity,f
 }
 
 @(step="fixed")
-physics_gallery_motion :: proc(motions:core.Read(Physics_Gallery_Motion),transforms:^core.Table(core.Transform),time:core.Time) {
+physics_gallery_motion :: proc(motions:core.Read(Physics_Gallery_Motion),bodies:^phys.Body_Requests,time:core.Time) {
     if !time.playing {return}
     for row in 0..<core.count(motions) {
         motion:=core.at(motions,row)
-        if local:=core.free(transforms,core.entity_at(motions,row));local!=nil {
-            local.position=motion.origin+motion.axis*(motion.amplitude*math.sin(f32(time.tick)*time.dt*motion.frequency))
-        }
+        phys.move_kinematic(bodies,core.entity_at(motions,row),motion.origin+motion.axis*(motion.amplitude*math.sin(f32(time.tick)*time.dt*motion.frequency)))
     }
 }
 

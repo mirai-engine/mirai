@@ -29,7 +29,6 @@ import "core:math/linalg"
 import "core:os"
 import "core:reflect"
 import "core:sync"
-import "core:thread"
 import "mirai:asset"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
@@ -1169,7 +1168,6 @@ create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays]) -> bool {
 		list:  ^Pipeline_List,
 		order: [len(Pipeline_List{}.items)]int,
 		count: int,
-		next:  int, // atomic, into order
 	}
 	work := Work{r = r, list = &list}
 	for &item, i in list.items[:list.count] {
@@ -1185,29 +1183,22 @@ create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays]) -> bool {
 		work.order[at] = i
 		work.count += 1
 	}
-	run :: proc(work: ^Work) {
-		for {
-			at := sync.atomic_add(&work.next, 1)
-			if at >= work.count {return}
-			r, item := work.r, &work.list.items[work.order[at]]
+	run :: proc(work: ^Work, first, last: int, worker: int) {
+		r := work.r
+		for at in first ..< last {
 			if r.reload_stop != nil && sync.atomic_load(r.reload_stop) {return}
+			item := &work.list.items[work.order[at]]
 			graphics, compute := pipeline_desc(r, item^)
 			pipeline_make(r, item.target, graphics, compute, now = true)
 		}
 	}
-	threads: [PIPELINE_THREADS_MAX]^thread.Thread
-	helpers := clamp(os.get_processor_core_count() / 2, 1, min(PIPELINE_THREADS_MAX, max(work.count, 1))) - 1
-	for &t in threads[:helpers] {
-		t = thread.create_and_start_with_poly_data(&work, proc(work: ^Work) {
-			defer free_all(context.temp_allocator)
-			run(work)
-		})
-	}
-	run(&work)
-	for t in threads[:helpers] {
-		if t == nil {continue}
-		thread.join(t)
-		thread.destroy(t)
+	// A system of its own: a reload makes them on a thread that is not the owner of r.jobs.
+	js: jobs.Job_System
+	if jobs.system_init(&js, {threads = clamp(os.get_processor_core_count() / 2, 1, min(PIPELINE_THREADS_MAX, max(work.count, 1))) - 1}) {
+		jobs.parallel_for(&js, jobs.OWNER, work.count, 1, run, &work)
+		jobs.system_destroy(&js)
+	} else {
+		run(&work, 0, work.count, jobs.OWNER)
 	}
 	for item in list.items[:list.count] {
 		if item.rays == .Hardware || item.rays not_in make || !item.required || !pipeline_possible(info, item) || item.target == nil || item.target^ != 0 {continue}
@@ -1216,6 +1207,10 @@ create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays]) -> bool {
 	}
 	return true
 }
+
+// Threads that make the pipelines of a renderer at most, with the one that asks.
+@(private)
+PIPELINE_THREADS_MAX :: 16
 
 @(private)
 pipeline_name :: proc(r: ^Renderer, item: Pipeline_Make) -> string {
@@ -1267,10 +1262,6 @@ tracer_settle :: proc(r: ^Renderer, settings: Settings, retry: bool) -> (hardwar
 	}
 	return false, true
 }
-
-// Threads that make the pipelines of a renderer at most, with the one that asks.
-@(private)
-PIPELINE_THREADS_MAX :: 16
 
 // The stages of r that none of the pipelines its frames run now is made of:
 // those of the rays it does not trace, of pipelines the device does not make

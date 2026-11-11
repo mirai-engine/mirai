@@ -35,8 +35,6 @@ components_turned_off_on_the_server_turn_off_on_the_client :: proc(t:^testing.T)
     sessions[0].problems,sessions[1].problems=&problems[0],&problems[1]
     testing.expect_value(t,wire.host_connect(&sessions[1].host,wire.address_memory(0)),wire.Error.None)
     outbox:Net_Outbox;defer core.value_free(&outbox,type_info_of(Net_Outbox))
-    server_events,client_events:Net_Events
-    defer core.value_free(&server_events,type_info_of(Net_Events));defer core.value_free(&client_events,type_info_of(Net_Events))
     server,client:=&worlds[0],&worlds[1]
     client_state :: proc(client:^Net_Test_World,e:core.Entity) -> (on,turned_off,found:bool) {return core.raw_state(core.raw(&client.values),e)}
     for tick in 1..<120 {

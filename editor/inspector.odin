@@ -2356,7 +2356,7 @@ asset_kind_takes :: proc "contextless" (field:Asset_Kinds,kind:asset.Fourcc) -> 
 
 // The kinds of asset a field takes: the extensions its tag names, apart by
 // spaces (`kind=.anim .character`), each of the engine or one a plugin declares
-// (Asset_Kind_Provider); without one known, what its name suggests.
+// in its plugin.mirai; without one known, what its name suggests.
 field_asset_kinds :: proc(s:^Session,tag:reflect.Struct_Tag,name:string) -> (kinds:Asset_Kinds) {
     if extensions,found:=core.field_option(tag,"kind");found {
         count:=0

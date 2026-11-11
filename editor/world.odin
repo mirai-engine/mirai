@@ -2,7 +2,6 @@ package editor
 
 import "base:runtime"
 import "core:fmt"
-import "core:math/linalg"
 import "core:mem"
 import "core:strconv"
 import "core:strings"
@@ -10,8 +9,6 @@ import "mirai:cook/author"
 import "mirai:core"
 import "mirai:editor/history"
 import eaudio "mirai:engine/audio"
-import evolume "mirai:engine/volume"
-import ecamera "mirai:engine/camera"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -21,16 +18,6 @@ import "mirai:ui"
 // open. They work on any World through its tables, and on the components of
 // the engine that every scene entity has: Id, Name, Transform and Parent.
 
-// What the Create panel and the API make: recipes of components, not kinds.
-Preset :: author.Preset
-
-Preset_Card :: struct {
-    label:string,
-    icon:ui.Icon,
-    color:ui.Color,
-    lift:f32, // m above what it is placed on, for what has no body
-}
-
 MESH_COLOR :: ui.Color{140,180,240,255}
 PREFAB_COLOR :: ui.Color{120,200,255,255} // a linked prefab: its icon and the name of its root
 GROUP_COLOR :: ui.Color{175,165,230,255}
@@ -39,43 +26,11 @@ CAMERA_ICON :: ui.Icon(u8(ui.Icon.User)+u8(User_Icon.Camera))
 LIGHT_COLOR :: ui.Color{255,214,140,255}
 SOUND_COLOR :: ui.Color{150,140,240,255}
 
-PRESETS :: [Preset]Preset_Card{
-    .Empty={"Group",.Group,GROUP_COLOR,0},
-    .Cube={"Cube",.Cube,MESH_COLOR,0},
-    .Sphere={"Sphere",.Sphere,MESH_COLOR,0},
-    .Cylinder={"Cylinder",.Cylinder,MESH_COLOR,0},
-    .Cone={"Cone",.Cone,MESH_COLOR,0},
-    .Capsule={"Capsule",.Cylinder,MESH_COLOR,0},
-    .Plane={"Plane",.Plane,MESH_COLOR,0},
-    .Prism={"Prism",.Prism,MESH_COLOR,0},
-    .Pyramid={"Pyramid",.Pyramid,MESH_COLOR,0},
-    .Point_Light={"Point light",.Light,LIGHT_COLOR,1.5},
-    .Spot_Light={"Spot light",.Spot,LIGHT_COLOR,3},
-    .Sun={"Sun",.Sun,LIGHT_COLOR,2},
-    .Rect_Light={"Rectangle light",.Area_Light,LIGHT_COLOR,1.5},
-    .Camera={"Camera",CAMERA_ICON,CAMERA_COLOR,1.6},
-    .Isometric_Camera={"Isometric",CAMERA_ICON,CAMERA_COLOR,1.6},
-    .Top_Down_Camera={"Top-down",CAMERA_ICON,CAMERA_COLOR,1.6},
-    .Side_Camera={"Side view",CAMERA_ICON,CAMERA_COLOR,1.6},
-    .First_Person_Camera={"First person",CAMERA_ICON,CAMERA_COLOR,1.6},
-    .Third_Person_Camera={"Third person",CAMERA_ICON,CAMERA_COLOR,1.6},
-    .Aim_Camera={"Aim",CAMERA_ICON,CAMERA_COLOR,1.6},
-    .Sound={"Sound",.Sound,SOUND_COLOR,1},
-    .Reverb_Zone={"Reverb zone",.Collider,SOUND_COLOR,3},
-}
-
-// The mode of engine/camera a camera preset follows the player in.
-@(private)
-preset_camera_mode :: proc "contextless" (preset:Preset) -> (ecamera.Camera_Preset,bool) {
-    return author.preset_camera_mode(preset)
-}
-
 SHAPE_ICONS :: [erender.Shape]ui.Icon{.None=.Mesh,.Cube=.Cube,.Sphere=.Sphere,.Cylinder=.Cylinder,.Cone=.Cone,.Capsule=.Cylinder,.Plane=.Plane,.Prism=.Prism,.Pyramid=.Pyramid}
 
 Create_Desc :: struct {
-    preset:Preset,
-    card:int,              // its place in cards(), for the card of a plugin; 0: the preset
-    name:string,           // the name of the preset when empty; a number follows a name that is taken
+    recipe:string,         // the name of the recipe it is made from; empty: an entity with no components
+    name:string,           // the label of the recipe when empty; a number follows a name that is taken
     named:bool,            // name is taken as it is, even when another entity has it
     parent:core.Entity,
     transform:core.Transform, // the identity when zero
@@ -232,16 +187,19 @@ order_next :: proc(w:core.World_Ref,parent:core.Entity) -> i32 {
 
 // ---------------------------------------------------------------- edits
 
-// Creates an entity of a preset with Id, Name and Transform, under parent
+// Creates an entity of a recipe with Id, Name and Transform, under parent
 // when it is given. Its components appear when the function ends.
 entity_create :: proc(s:^Session,desc:Create_Desc) -> core.Entity {
     if watching(s) {return core.NONE}
     // While a section is edited in its world, what is added without a parent goes inside it.
     if parent:=desc.parent!=core.NONE?desc.parent:section_editing(s);section_target_refused(s,parent) {return core.NONE}
-    index:=max(desc.card,int(desc.preset))
-    all:=cards(s)
-    if index>=len(all) {return core.NONE}
-    opened,edit_ready:=edit_open(s,fmt.tprintf("Add %s",all[index].label))
+    label:=desc.name if desc.name!="" else "Entity"
+    if desc.recipe!="" {
+        recipe,found:=recipe_of(s,desc.recipe)
+        if !found {return core.NONE}
+        if desc.name=="" {label=recipe.label}
+    }
+    opened,edit_ready:=edit_open(s,fmt.tprintf("Add %s",label))
     if !edit_ready {return core.NONE}
     defer edit_close(s,opened)
     return entity_make(s,editing_world(s),desc)
@@ -252,57 +210,38 @@ entity_create :: proc(s:^Session,desc:Create_Desc) -> core.Entity {
 entity_make :: proc(s:^Session,w:core.World_Ref,desc:Create_Desc) -> core.Entity {
     desc:=desc
     if desc.transform=={} {desc.transform=core.TRANSFORM_IDENTITY}
-    if index:=max(desc.card,int(desc.preset));index<len(Preset) && desc.transform.rotation==1 {desc.transform.rotation=preset_rotation(Preset(index))}
+    label:="Entity"
+    parts:[]author.Part
+    if desc.recipe!="" {
+        recipe,found:=recipe_of(s,desc.recipe)
+        if !found || s.app==nil || s.app.assets==nil {return core.NONE}
+        problem:string
+        if parts,problem=author.recipe_parts(w,&s.app.assets.types,recipe,context.temp_allocator);problem!="" {return core.NONE}
+        label=recipe.label
+        if desc.transform.rotation==1 {desc.transform.rotation=recipe.local.rotation}
+        if card,carded:=card_of_recipe(s,desc.recipe);carded {card_place(s,card,parts,&desc.transform)}
+    }
     root:=core.NONE
     if w.data==s.edit_world {root=section_editing(s)}
     if root!=core.NONE && desc.parent==core.NONE && !playing(s) {
-        transform:=desc.transform=={}?core.TRANSFORM_IDENTITY:desc.transform
-        local,ok:=mm.transform_relative(core.to_math(transform),entity_world(w,root))
+        local,ok:=mm.transform_relative(core.to_math(desc.transform),entity_world(w,root))
         if !ok {return core.NONE}
         desc.parent,desc.transform=root,core.from_math(local)
     }
+    if recipe,found:=recipe_of(s,desc.recipe);found {desc.transform.scale*=recipe.local.scale}
     es:=core.world_entities(w)
-    all:=cards(s)
-    index:=max(desc.card,int(desc.preset))
-    if index>=len(all) {return core.NONE}
-    card:=all[index]
     e:=core.create(es)
-    transform:=desc.transform
-    if transform=={} {transform=core.TRANSFORM_IDENTITY}
-    if card.scale!={} {transform.scale*=card.scale}
-    if t:=core.world_table_of(w,core.Transform);t!=nil {core.add(t,e,transform)}
+    if t:=core.world_table_of(w,core.Transform);t!=nil {core.add(t,e,desc.transform)}
     if t:=core.world_table_of(w,core.Id);t!=nil {core.add(t,e,core.Id{core.id_new(es,&s.id_state)})}
     if t:=core.world_table_of(w,core.Name);t!=nil {
-        name:=desc.named?desc.name:name_free(w,desc.name!=""?desc.name:card.label)
+        name:=desc.named?desc.name:name_free(w,desc.name!=""?desc.name:label)
         core.add(t,e,core.name_make(name))
     }
     if desc.parent!=core.NONE && core.alive(es,desc.parent) {
         if t:=core.world_table_of(w,core.Parent);t!=nil {core.add(t,e,core.Parent{desc.parent,order_next(w,desc.parent)})}
     }
-    if card.make!=nil {card.make(s,w,e)} else {preset_components(w,e,Preset(index))}
+    for part in parts {core.raw_add(core.world_table_at(w,part.t),part.t.info,e,raw_data(part.value))}
     return e
-}
-
-@(private)
-preset_components :: proc(w:core.World_Ref,e:core.Entity,preset:Preset) {
-    author.preset_components(w,e,preset)
-}
-
-// A sound placed in the scene: a spatial source in a loop that the room
-// reverberates and walls hide.
-sound_components :: proc(w:core.World_Ref,e:core.Entity,sound:base.Asset_Id) {
-    author.sound_components(w,e,sound)
-}
-
-// How a preset turns what it makes when no rotation is given: a sun shines
-// from the morning of SUN_DIRECTION and a spot down. Lights shine toward -Z.
-preset_rotation :: proc(preset:Preset) -> mm.Quat {
-    return author.preset_rotation(preset)
-}
-
-// The primitive a preset shows; None for one without a body.
-preset_shape :: proc "contextless" (preset:Preset) -> erender.Shape {
-    return author.preset_shape(preset)
 }
 
 // Destroys entities and everything under them.

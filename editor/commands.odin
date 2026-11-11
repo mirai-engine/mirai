@@ -671,7 +671,7 @@ entities_group :: proc(s:^Session,w:core.World_Ref,entities:[]core.Entity) -> co
     for e in entities[1:] {
         if entity_parent(w,e)!=parent {parent=core.NONE;break}
     }
-    group:=entity_create(s,{preset=.Empty,parent=parent,transform={position=center,rotation=1,scale={1,1,1}}})
+    group:=entity_create(s,{name="Group",parent=parent,transform={position=center,rotation=1,scale={1,1,1}}})
     if group==core.NONE {return core.NONE}
     // The group exists once settled: its children are placed relative to where it will be.
     core.world_settle(w)
