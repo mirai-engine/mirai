@@ -536,13 +536,13 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
     b:=&h.back
     if len(bytes)<DATA_HEADER+1+CHECKSUM_BYTES || len(bytes)>PACKET_BYTES || bytes[0]>u8(max(Packet_Type)) {b.stats.packets_invalid+=1;return}
     type:=Packet_Type(bytes[0])
-    p:=peer_find(b,from)
     r:serial.Bit_Reader
     if type==.Data || type==.Disconnect {
-        // From an address no connection has: the connection of the slot it names, if it opens under its key.
-        roamed:=p==nil
-        if slot:=int(bytes[3])|int(bytes[4])<<8;roamed && slot<len(b.peers) {p=&b.peers[slot]}
+        // The connection of the slot it names; from another address, only if it opens under its key.
+        slot:=int(bytes[3])|int(bytes[4])<<8
+        p:=slot<len(b.peers)?&b.peers[slot]:nil
         if p==nil || p.state!=.Connected {b.stats.packets_invalid+=1;return}
+        roamed:=p.address!=from
         body,counter,authentic:=data_open(h,p,bytes)
         if !authentic || roamed && p.recv_any && counter<=p.recv_counter {
             b.stats.packets_invalid+=1
@@ -565,6 +565,7 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
         return
     }
     if !checksum_check(bytes,b.key) {b.stats.packets_invalid+=1;return}
+    p:=peer_find(b,from)
     serial.bit_reader_init(&r,bytes[1:len(bytes)-CHECKSUM_BYTES])
     salt:=serial.bit_read(&r,64)
     server:=h.desc.mode==.Server
