@@ -195,9 +195,8 @@ text_height :: proc(ctx:^Context,content:string,style:Text_Style,width:f32) -> f
 // PARAGRAPH_LINE sizes apart in whole units. size: font_small when 0; color:
 // text_muted when transparent.
 prose :: proc(ctx:^Context,size:f32=0,color:Color={},font:u8=0) -> Text_Style {
-    th:=&ctx.theme
-    size:=size if size>0 else th.font_small
-    return {font=font,size=size,color=color if color!={} else th.text_muted,wrap=.Words,line_height=math.floor(size*PARAGRAPH_LINE)/size}
+    size:=size if size>0 else metric(ctx,"font_small")
+    return {font=font,size=size,color=color if color!={} else tone(ctx,"text_muted"),wrap=.Words,line_height=math.floor(size*PARAGRAPH_LINE)/size}
 }
 
 // ---------------------------------------------------------------- drawing

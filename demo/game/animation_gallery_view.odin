@@ -27,13 +27,13 @@ Gallery_Hud :: struct {
 }
 
 @(step="frame")
-gallery_hud :: proc(huds:^core.Table(Gallery_Hud),players:core.Read(Gallery_Player),gallery:core.Read(Animation_Gallery),panels:core.Read(Gallery_Panel),drivables:core.Read(inp.Drivable)) {
+gallery_hud :: proc(huds:^core.Table(Gallery_Hud),players:core.Read(Gallery_Player),gallery:core.Read(Animation_Gallery),panels:core.Read(Gallery_Panel),seats:core.Read(inp.Seat)) {
     shown:=core.read(huds)
     for row in 0..<core.count(shown) {
         seat:=core.entity_at(shown,row)
         player,found:=core.get(players,seat)
         if !found {continue}
-        body:=inp.body_of(drivables,seat)
+        body:=inp.body_of(seats,seat)
         next:Gallery_Hud
         if body==player.spider && body!=core.NONE {
             next.place=.Spider

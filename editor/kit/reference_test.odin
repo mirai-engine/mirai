@@ -1,7 +1,8 @@
-package ui
+package kit
 
 import "core:log"
 import "core:testing"
+import "mirai:ui"
 
 UI_UPDATE_REFERENCES :: #config(UI_UPDATE_REFERENCES,false)
 
@@ -14,17 +15,17 @@ TEST_REFERENCES :: [?]Test_Reference{
 
 @(test)
 the_editor_widgets_match_the_current_reference :: proc(t:^testing.T) {
-    ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
-    defer context_destroy(&ctx)
+    ctx:ui.Context
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
+    defer ui.context_destroy(&ctx)
     e:=test_editor_default()
     input:=test_input(1440,900)
     test_frame(&ctx,&input,test_editor_build,&e)
     frame:=test_frame(&ctx,&input,test_editor_build,&e)
     testing.expect(t,!frame.overflow)
     testing.expect_value(t,ctx.stats.layout_errors,u32(0))
-    testing.expect(t,test_rect_near(test_rect(t,&ctx,id(&ctx,"content")),{16,100,320,302}))
-    details:=test_rect(t,&ctx,id(&ctx,"details"))
+    testing.expect(t,test_rect_near(test_rect(t,&ctx,ui.id(&ctx,"content")),{16,100,320,302}))
+    details:=test_rect(t,&ctx,ui.id(&ctx,"details"))
     testing.expectf(t,test_rect_near(details,{1112,100,312,369}),"Details bounds: %v",details)
     image:=test_raster(&ctx,frame,1440,900,1,{0,0,0,255})
     defer test_image_destroy(&image)
@@ -32,7 +33,7 @@ the_editor_widgets_match_the_current_reference :: proc(t:^testing.T) {
     if UI_UPDATE_REFERENCES {testing.expect(t,UI_DUMP_DIR!="","UI_UPDATE_REFERENCES needs UI_DUMP_DIR")}
     references:=TEST_REFERENCES
     for reference in references {
-        rect:=Rect{f32(reference.origin.x),f32(reference.origin.y),f32(reference.size.x),f32(reference.size.y)}
+        rect:=ui.Rect{f32(reference.origin.x),f32(reference.origin.y),f32(reference.size.x),f32(reference.size.y)}
         ours:=test_image_crop(&image,rect,1)
         defer test_image_destroy(&ours)
         test_image_dump(&ours,reference.name)

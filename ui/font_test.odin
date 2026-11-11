@@ -165,7 +165,7 @@ font_weights_are_faces_of_their_own :: proc(t:^testing.T) {
 @(test)
 font_atlas_is_rebuilt_as_a_transaction_when_the_density_changes :: proc(t:^testing.T) {
     ctx:Context
-    testing.expect(t,context_init(&ctx,TEST_FONT))
+    testing.expect(t,test_context_init(&ctx,TEST_FONT))
     defer context_destroy(&ctx)
     revision,height:=ctx.font.revision,ctx.font.height
     testing.expect(t,context_set_density(&ctx,1),"The same density changes nothing")
@@ -276,7 +276,7 @@ a_font_on_demand_rasterizes_what_the_contexts_that_borrow_it_draw :: proc(t:^tes
     a,b:Context
     desc:=TEST_FONT
     desc.font=&owner
-    testing.expect(t,context_init(&a,desc) && context_init(&b,desc))
+    testing.expect(t,test_context_init(&a,desc) && test_context_init(&b,desc))
     draw :: proc(ctx:^Context,user:rawptr) {draw_text(ctx,"Transform",10,10,11,{255,255,255,255})}
     input:=test_input()
     // The first frame asks for the glyphs; the owner rasterizes them and the next one draws them.
@@ -349,7 +349,7 @@ a_context_that_asks_its_owner_draws_new_glyphs_in_the_same_frame :: proc(t:^test
     desc.font=&owner
     desc.font_ask=proc(user:rawptr) {font_update((^Font)(user),grow=false)}
     desc.font_user=&owner
-    testing.expect(t,context_init(&ctx,desc))
+    testing.expect(t,test_context_init(&ctx,desc))
     defer context_destroy(&ctx)
     draw :: proc(ctx:^Context,user:rawptr) {draw_text(ctx,"Transform",10,10,11,{255,255,255,255},FONT_SEMIBOLD)}
     input:=test_input()

@@ -1,13 +1,11 @@
 # /// script
 # requires-python = ">=3.11"
 # ///
-"""Warns when the UI code of the editor writes by hand what the theme defines.
+"""Warns when the UI code of the editor writes a color by hand.
 
-The colors, heights and font sizes of the controls come from `ui.Theme`
-(`ui/theme.odin`) and buttons take a `Button_Style`, not a look of their own; a menu is `menu_button`
-or `popup` with `menu_item`. Each pattern has a maximum: the existing code that
-has not moved to the theme yet. A new line that goes past it fails; when code
-is migrated, the maximum goes down.
+The colors of the editor come from the tokens of its theme (`assets/editor/theme.ui`,
+`ui.tone`). The pattern has a maximum: the code that has not moved to the theme yet. A
+new line that goes past it fails; when code is migrated, the maximum goes down.
 
 Usage: uv run scripts/check_ui_style.py
 """
@@ -21,15 +19,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 # Pattern, current maximum and what to use instead.
 RULES = [
     (re.compile(r"(?<!:: )ui\.Color\{\d"), 4,
-     "a color of ui.Theme, or a named constant of the palette of the domain"),
-    (re.compile(r"ui\.button\(.*look=&"), 14,
-     "a Button_Style (Ghost, Field, Accent, Tab, Well)"),
-    (re.compile(r"(?:ui\.button|ui\.text_field|action_button)\(.*height=2[5-7][,}]"), 0,
-     "height=ctx.theme.control"),
-    (re.compile(r"(?:ui\.label\(.*,|size=)(?:13\.5|9\.5)[,)}]"), 0,
-     "ctx.theme.font_heading or ctx.theme.font_caption"),
-    (re.compile(r"ui\.popup\(ctx,[^)]*padding=(?!12\b)[^)]*\)"), 0,
-     "the default popup padding (a menu) or 12 (a panel with controls)"),
+     "a token of the theme (ui.tone), or a named constant of the palette of the domain"),
 ]
 
 
