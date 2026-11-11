@@ -129,7 +129,7 @@ pair_destroy :: proc(p:^Toy_Pair) {
     if !p.udp {wire.sim_network_destroy(&p.network)}
     delete(p.rewinds.queue.items)
     delete(p.info.messages)
-    core.test_info_destroy(&p.info)
+    test_info_destroy(&p.info)
 }
 
 // A tick of both ends: the network, the head of the tick, the toy and the

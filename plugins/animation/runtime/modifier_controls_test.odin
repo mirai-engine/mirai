@@ -5,17 +5,18 @@ import "core:testing"
 import "mirai:core"
 import mm "mirai:std/math"
 
-@(private="file")
+@(private)
+@(test_world)
 Modifier_Controls_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
 }
 
 @(test)
 modifier_controls_preserve_targets_and_fade_independently_through_world_copies :: proc(t:^testing.T) {
     problems:core.Problems
     w:Modifier_Controls_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     rig:=core.create(&w.entities)
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
     for _ in 0..<2 {value:=IK_CONSTRAINT_DEFAULT;value.rig,value.pole=rig,{4,5,6};value.target=spatial_point({1,2,3});testing.expect(t,modifier_append(&modifiers.ik,rig,value))}

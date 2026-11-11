@@ -5,7 +5,8 @@ import "core:mem"
 import "core:testing"
 
 // A World and the next version of it: a table changes its type, one goes and one comes.
-@(private="file")
+@(private)
+@(test_world)
 Memory_From :: struct {
     using world:Test_World,
     kept:Table(i32) `mirai:"name=Kept"`,
@@ -13,7 +14,8 @@ Memory_From :: struct {
     score:i32 `mirai:"name=Score"`,
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Memory_To :: struct {
     using world:Test_World,
     kept:Table(i64) `mirai:"name=Kept"`,

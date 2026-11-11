@@ -7,19 +7,20 @@ import "mirai:core"
 import mm "mirai:std/math"
 import "mirai:std/serial"
 
-@(private="file")
+@(private)
 List_Lamp :: struct {
     tint:[3]f32 `mirai:"color"`,
     turn:mm.Quat,
     cone:f32 `mirai:"angle,min=0.1,max=1"`,
     age:f32 `mirai:"unit=s,readonly"`,
 }
-@(private="file")
+@(private)
+@(test_world,editor="List_Editor")
 List_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     lamps:core.Table(List_Lamp),
 }
-@(private="file") List_Editor :: struct {api:Api}
+@(private) List_Editor :: struct {api:Api}
 
 // component.list says what a field is in what it already reads: a color, a
 // rotation, an angle in radians, read only when it is, and the comment of its
@@ -27,9 +28,9 @@ List_World :: struct {
 @(test)
 component_list_fields_say_their_kind_unit_and_description :: proc(t:^testing.T) {
     descriptions:=[1]core.Field_Description{{"cone","from its axis to the edge"}}
-    info,described:=core.test_info(t,List_World,core.Test_None,List_Editor)
+    info,described:=test_info(t,List_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     info.tables[0].fields=descriptions[:]
     state:Api_State
     editor:=List_Editor{api={state=&state}}

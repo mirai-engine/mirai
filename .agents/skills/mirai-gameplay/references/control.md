@@ -393,15 +393,6 @@ game with its own mode passes its setup. The editor offers them as recipes in Cr
 - Seeing a camera and passing to others without playing:
   [camera preview](../../mirai-editor/references/editor.md#camera-preview).
 
-### Environment that changes on passing
-
-`Environment_Trigger{sky, sun, seconds}` (`engine/camera`, `environment_triggers`, `frame`): when
-the focused player's body enters the [`Volume`](libraries.md#volume) of its entity by more than
-`TRIGGER_MARGIN`, it requests turning on the `Sky` and the `Sun` it names, the sky in
-`seconds`; to leave it has to move away by as much, so the edge does not alternate. It goes by the
-body and not by the camera, and belongs to each end of a session. It is placed in a narrow passage,
-where the geometry covers the change.
-
 ## Networking
 
 - The server decides who drives what and makes the bodies appear. On the server the network derives

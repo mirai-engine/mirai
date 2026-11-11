@@ -23,7 +23,7 @@ replicated_joints_suspend_missing_targets_and_preserve_explicit_world_targets ::
 state_and_owner_refused_by_a_full_frame_are_sent_on_the_next_interval :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     apps:[2]host.App
@@ -89,7 +89,7 @@ state_and_owner_refused_by_a_full_frame_are_sent_on_the_next_interval :: proc(t:
 net_test_late_reference :: proc(t:^testing.T,body:bool) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     apps:[2]host.App
@@ -212,7 +212,7 @@ net_test_late_reference :: proc(t:^testing.T,body:bool) {
 a_body_replicates_the_collision_and_contact_rules_of_its_collider :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     worlds:[2]Net_Test_World
     shares:[2]Net_Test_Shared
     apps:[2]host.App
@@ -274,7 +274,7 @@ an_object_the_host_has_no_room_for_names_the_capacity_to_raise :: proc(t:^testin
     full :: proc(t:^testing.T,settings:Net_Settings,entities:int) -> (problems:core.Problems,last:core.Entity) {
         info,described:=net_test_info(t)
         if !described {return}
-        defer core.test_info_destroy(&info)
+        defer test_info_destroy(&info)
         world:Net_Test_World
         net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
         for index in 0..<entities {
@@ -315,7 +315,7 @@ settings_the_host_refuses_name_their_field_and_its_range :: proc(t:^testing.T) {
     refused :: proc(t:^testing.T,replication:wire.Replication_Desc,field,range:string) {
         info,described:=net_test_info(t)
         if !described {return}
-        defer core.test_info_destroy(&info)
+        defer test_info_destroy(&info)
         world:Net_Test_World
         net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
         app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60}
@@ -359,7 +359,7 @@ the_port_of_the_game_is_a_setting_that_must_be_a_udp_port :: proc(t:^testing.T) 
     testing.expect_value(t,settings_resolve({},1.0/60).port,DEFAULT_PORT)
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info);defer core.world_destroy(&info,.World,&world)
     app:=host.App{info=&info,allocator=context.allocator,tick_dt=1.0/60}

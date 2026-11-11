@@ -6,8 +6,9 @@ import "mirai:editor/history"
 import "mirai:host"
 import "mirai:platform"
 
+@(test_world)
 Play_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     time:core.Time,
     frame:core.Frame_Time,
@@ -36,12 +37,12 @@ Play_Test :: struct {
 }
 
 play_test_open :: proc(t:^testing.T,f:^Play_Test) -> bool {
-    f.info=core.test_info(t,Play_Test_World) or_return
+    f.info=test_info(t,Play_Test_World) or_return
     error:platform.Error
     f.p,error=platform.create({headless=true,fixed_dt=0.1,pacing=platform.Frame_Pacing{}})
     testing.expect_value(t,error,platform.Error.None)
     if f.p==nil {
-        core.test_info_destroy(&f.info)
+        test_info_destroy(&f.info)
         return false
     }
     f.info.loops[.Game][.Fixed]=play_test_tick
@@ -70,7 +71,7 @@ play_test_close :: proc(f:^Play_Test) {
     host.app_world_free(&f.app,f.data)
     delete(f.app.worlds)
     platform.destroy(f.p)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 @(test)
@@ -168,13 +169,14 @@ the_user_and_agents_play_their_own_runs_at_once :: proc(t:^testing.T) {
     testing.expect(t,!running(s) && host.app_world_count(app)==1)
 }
 
+@(private) @(test_world) Detail_World :: struct {using world:Test_World,view:core.View}
+
 @(test)
 a_paused_play_draws_the_detail_its_camera_saw_while_the_editor_looks_elsewhere :: proc(t:^testing.T) {
-    Detail_World :: struct {using world:core.Test_World,view:core.View}
     world:Detail_World
-    if !core.test_world_init(t,&world) {return}
-    defer core.test_world_destroy(&world)
-    ref:=core.test_world_ref(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    ref:=test_world_ref(&world)
     app:host.App
     v:Viewport;defer viewport_free(&v)
     v.orbit=ORBIT_DEFAULT

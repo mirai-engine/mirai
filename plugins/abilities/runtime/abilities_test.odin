@@ -47,9 +47,10 @@ import phys "plugins:physics/runtime"
 @(private="file")
 ref :: proc(i:int) -> core.Record(Ability) {return {ABILITY_TABLE,core.Record_Id(i+1)}}
 
-@(private="file")
+@(private)
+@(test_world)
 Abilities_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     users:core.Table(Ability_User),
     seats:core.Table(inp.Seat),
     characters:core.Table(phys.Character),
@@ -111,7 +112,7 @@ blade :: proc(f:^Fixture) {
 
 @(private="file")
 fixture_make :: proc(t:^testing.T,f:^Fixture) -> bool {
-    if !core.test_world_init(t,&f.w,test_types) {return false}
+    if !test_world_init(t,&f.w) {return false}
     blade(f)
     for i in 0..<SHEETS {
         f.sheet_rows[i]={table=ABILITY_TABLE,row=core.Record_Id(i+1)}
@@ -137,14 +138,14 @@ fixture_make :: proc(t:^testing.T,f:^Fixture) -> bool {
     turn:=mm.Quat(linalg.quaternion_angle_axis_f32(-math.PI/2,{0,1,0}))
     core.add(&f.worlds,f.player,core.World_Transform{transform={rotation=turn,scale=1}})
     core.add(&f.worlds,f.dummy,core.World_Transform{transform={position={1.5,0,0},rotation=1,scale=1}})
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
     f.time={tick=1,dt=1.0/RATE,playing=true}
     return true
 }
 
 @(private="file")
 fixture_destroy :: proc(f:^Fixture) {
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
     delete(f.log)
 }
 
@@ -322,7 +323,7 @@ a_copy_of_the_state_halfway_runs_the_same_future_and_a_cancel_leaves_nothing :: 
     a.down[1]=true
     step(a,10)
     // b takes a's world as a rollback would: tables, queues, clock and input edges.
-    testing.expect(t,core.test_world_copy(&b.w,&a.w))
+    testing.expect(t,test_world_copy(&b.w,&a.w))
     b.down,b.was,b.held=a.down,a.was,a.held
     clear(&a.log);clear(&b.log)
     for f in ([]^Fixture{a,b}) {
@@ -351,7 +352,7 @@ a_copy_of_the_state_halfway_runs_the_same_future_and_a_cancel_leaves_nothing :: 
     testing.expect(t,removed)
     testing.expect_value(t,logged(a,.Window_Begin,a.player,DASH_STRIKE),logged(a,.Window_End,a.player,DASH_STRIKE))
     // A replica derives its statuses but neither starts nor hits.
-    core.add(&a.remotes,a.dummy,core.Remote{});core.test_world_settle(&a.w)
+    core.add(&a.remotes,a.dummy,core.Remote{});test_world_settle(&a.w)
     ability_use(&a.requests,a.dummy,ref(REACT))
     step(a,2)
     testing.expect_value(t,user(a,a.dummy).ability,core.Record(Ability){})
@@ -550,7 +551,7 @@ a_window_on_the_own_clock_follows_the_pace_of_the_user :: proc(t:^testing.T) {
     d:=&f.sheets[DASH_STRIKE]
     d.requires=status_bit(CHARGING)
     d.input.wait=.Running
-    core.add(&f.paces,f.player,core.Own_Pace{rate=0.5});core.test_world_settle(&f.w)
+    core.add(&f.paces,f.player,core.Own_Pace{rate=0.5});test_world_settle(&f.w)
     started:=f.time.tick
     f.down[1]=true
     step(f)

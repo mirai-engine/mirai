@@ -16,7 +16,7 @@ bench_sections_run :: proc(t:^testing.T,sections,objects:int) {
     SAMPLES :: 200
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)

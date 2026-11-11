@@ -35,7 +35,7 @@ a_keyed_value_is_evaluated_one_way :: proc(t:^testing.T) {
         {name="Step holds until its key",keys={key(0,1),key(1,5,.Step),key(2,9,.Step)},time=.99,want={1,0,0,0}},
         {name="Step arrives at its key",keys={key(0,1),key(1,5,.Step),key(2,9,.Step)},time=1,want={5,0,0,0}},
         {name="Cubic passes through a key",keys={key(0,0),key(1,1,.Cubic),key(2,0,.Cubic)},time=1,want={1,0,0,0}},
-        {name="Cubic takes its slopes from the neighbors",keys={key(0,0),key(1,1,.Cubic),key(2,0,.Cubic)},time=.5,want={.625,0,0,0}},
+        {name="Cubic is flat at an end and at a peak",keys={key(0,0),key(1,1,.Cubic),key(2,0,.Cubic)},time=.5,want={.5,0,0,0}},
         {name="Cubic along a line is the line",keys={key(0,0),key(1,1,.Cubic),key(2,2,.Cubic),key(3,3,.Cubic)},time=1.5,want={1.5,0,0,0}},
         {name="Cubic with its own slopes",keys={{time=10,out_slope={3,0,0,0},tangents=true},{time=14,value={12,0,0,0},in_slope={3,0,0,0},tangents=true,interpolation=.Cubic}},time=12,want={6,0,0,0}},
         {name="Cubic_Spline with its own slopes",keys={{time=0,tangents=true},{time=2,value={8,0,0,0},tangents=true,interpolation=.Cubic_Spline}},time=1,want={4,0,0,0}},
@@ -64,6 +64,27 @@ a_keyed_value_is_evaluated_one_way :: proc(t:^testing.T) {
         keys:=[]Keyframe{key(0,2),key(4,10,.Linear,ease)}
         testing.expectf(t,near(track_evaluate(keys,.Float,1).x,2+8*math.ease_apply(ease,.25)),"%v at a quarter",ease)
         testing.expectf(t,near(track_evaluate(keys,.Float,0).x,2) && near(track_evaluate(keys,.Float,4).x,10),"%v at its ends",ease)
+    }
+    // Without slopes a segment stays between the values of its keys and leaves an end flat: a door
+    // that opens and holds (0, 1, 1) does not pass 1.
+    overshoots:=[][]Keyframe{
+        {key(0,0),key(1,1,.Cubic),key(2,1,.Cubic)},
+        {key(0,0),key(.2,1,.Cubic),key(3,1,.Cubic)},
+        {key(0,1),key(1,0,.Cubic),key(1.5,0,.Cubic),key(4,2,.Cubic)},
+        {key(0,0),key(1,.2,.Cubic),key(1.1,1,.Cubic),key(2,1.05,.Cubic)},
+    }
+    for keys,n in overshoots {
+        worst:f32
+        for i in 0..<len(keys)-1 {
+            low,high:=min(keys[i].value.x,keys[i+1].value.x),max(keys[i].value.x,keys[i+1].value.x)
+            for step in 0..=100 {
+                value:=track_evaluate(keys,.Float,keys[i].time+(keys[i+1].time-keys[i].time)*f32(step)/100).x
+                worst=max(worst,value-high,low-value)
+            }
+        }
+        h:=(keys[1].time-keys[0].time)*1e-3
+        flat:=abs(track_evaluate(keys,.Float,h).x-keys[0].value.x)/h<.05
+        testing.expectf(t,worst<=1e-6 && flat,"curve %d passes its keys by %.5f, flat at its start %v",n,worst,flat)
     }
     // Keys out of order, of times that are not numbers or of an interpolation that does not exist give a value without failing.
     hostile:=[]Keyframe{key(3,1),key(nan,2,.Cubic),key(-1,3,Interpolation(200),math.Ease(200)),key(max(f32),4,.Cubic_Spline),key(0,5)}

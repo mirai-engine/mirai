@@ -150,7 +150,7 @@ character_view :: proc(file:^asset.Asset,types:^asset.Types) -> (set:Character_S
 Space_Ready :: struct {space:lib.Blend_Space,first:int,names:[]u64,axis_names:[2]u64}
 // A database built for a library and a skeleton.
 @(private)
-Match_Built :: struct {key:[7]u64,database:lib.Match_Database,error:lib.Match_Build_Error,fault:Match_Blend_Fault}
+Match_Built :: struct {key:[7]u64,database:lib.Match_Database,error:lib.Match_Build_Error,fault:Match_Fault}
 // What a set reads into while it is the asset: the open file its tables are views into, its
 // spaces ready to sample and the motion matching databases built for it.
 Character_Content :: struct {

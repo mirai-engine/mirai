@@ -22,8 +22,9 @@ import phys "plugins:physics/runtime"
 // collision the tests make, the meshes built from it, and the agents with
 // the tables and queues of navigation_agents and of the locomotion.
 @(private)
+@(test_world)
 Nav_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using physics:phys.Test_Physics,
     bounds:core.Table(Nav_Bounds),
     areas:core.Table(Nav_Area),
@@ -72,7 +73,7 @@ Nav_Test :: struct {
 
 @(private)
 nav_test_init :: proc(t:^testing.T,f:^Nav_Test) -> bool {
-    if !core.test_world_init(t,&f.w,test_types) {return false}
+    if !test_world_init(t,&f.w) {return false}
     f.settings={bodies=64,shapes=64,contacts=256,joints=4,characters=8}
     f.nav_settings.tile_cells=48
     jobs.system_init(&f.app.jobs,{threads=0})
@@ -89,12 +90,12 @@ nav_test_destroy :: proc(f:^Nav_Test) {
     delete(f.unloaded);delete(f.ground.unloaded.items)
     agents_free(&f.run)
     phys.test_host_destroy(&f.host)
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
     jobs.system_destroy(&f.app.jobs)
 }
 
 @(private)
-nav_test_settle :: proc(f:^Nav_Test) {core.test_world_settle(&f.w)}
+nav_test_settle :: proc(f:^Nav_Test) {test_world_settle(&f.w)}
 
 // One tick of physics and of the build, then as many more as the builds take.
 @(private)
@@ -105,7 +106,7 @@ nav_test_step :: proc(f:^Nav_Test,ticks:=1) {
             &f.state,core.ref(&f.settings),&f.requests,&f.events,&f.meshes,&f.app,{dt=0,playing=false},
             core.read(&f.rigids),core.read(&f.colliders),core.read(&f.characters),core.read(&f.moves),
             &f.joints,core.read(&f.statics),core.read(&f.parents),core.read(&f.names),
-            &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),{},{},{},
+            &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),{},{},{},{},
         )
         nav_test_settle(f)
         navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),f.time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
@@ -448,16 +449,17 @@ a_blocked_area_takes_the_surface_under_the_volume_of_its_entity :: proc(t:^testi
     _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
     testing.expect_value(t,status,ai.Search_Status.No_Path)
     for shapeless in ([2]bool{false,true}) {
-        if shapeless {core.remove(&f.volumes,zone)} else {core.edit(&f.volumes,zone)^=volume.sphere(10)}
+        if shapeless {core.remove(&f.volumes,zone)} else {core.edit(&f.volumes,zone)^=volume.plane()}
         nav_test_settled(t,&f)
         _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
         testing.expect_value(t,status,ai.Search_Status.Found)
         testing.expect(t,core.problem_find(&f.problems,zone,"navigation.volume")!=nil)
     }
-    core.add(&f.volumes,zone,volume.box({1,2,10}))
+    // A sphere blocks by the octagon around it: this one leaves no floor where the path starts.
+    core.add(&f.volumes,zone,volume.sphere(10))
     nav_test_settled(t,&f)
     _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
-    testing.expect_value(t,status,ai.Search_Status.No_Path)
+    testing.expect_value(t,status,ai.Search_Status.Invalid)
     core.remove(&f.areas,zone)
     nav_test_settled(t,&f)
     _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
@@ -754,7 +756,7 @@ agents_test_step :: proc(f:^Nav_Test) {
         &f.state,core.ref(&f.settings),&f.requests,&f.events,&f.meshes,&f.app,time,
         core.read(&f.rigids),core.read(&f.colliders),core.read(&f.characters),core.read(&f.moves),
         &f.joints,core.read(&f.statics),core.read(&f.parents),core.read(&f.names),
-        &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),{},{},{},
+        &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),{},{},{},{},
     )
 }
 
@@ -863,8 +865,8 @@ swimmers_leave_a_u_shaped_cave_under_its_wall_and_keep_out_of_a_dry_box :: proc(
     core.add(&f.volumes,pool,volume.box({5,5,2}))
     dry:=core.create(&f.entities)
     core.add(&f.transforms,dry,core.Transform{{8.5,2,2},1,{1,1,1}})
-    core.add(&f.fluids,dry,phys.Fluid{})
-    core.add(&f.volumes,dry,volume.box({1.5,1.5,2},priority=1))
+    core.add(&f.fluids,dry,phys.Fluid{priority=1})
+    core.add(&f.volumes,dry,volume.box({1.5,1.5,2}))
     nav_test_step(&f)
     nav_test_settled(t,&f)
     testing.expect(t,f.nav.count>=2 && class_in_volume(&f.nav,1))

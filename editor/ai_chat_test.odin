@@ -349,12 +349,12 @@ ai_chat_hides_tools_and_viewport_context_and_only_lists_supported_codex_models :
 @(test)
 ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testing.T) {
     world:Shell_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     entity:=core.create(&world.entities)
     core.add(&world.names,entity,core.name_make("Selected entity"))
     core.add(&world.transforms,entity,core.TRANSFORM_IDENTITY)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     ctx:ui.Context
     testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
@@ -365,7 +365,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     viewport:Viewport
     selection:history.Selection
     defer delete(selection.entities)
-    session:=Session{info=core.test_world_info(&world),edit_world=&world,app=&app,gui=&g,viewport=&viewport,selection=&selection,ai=ai}
+    session:=Session{info=test_world_info(&world),edit_world=&world,app=&app,gui=&g,viewport=&viewport,selection=&selection,ai=ai}
     history.selection_set(&selection,{entity})
     for _ in 0..<3 {
         ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
@@ -414,7 +414,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
     second:=core.create(&world.entities)
     core.add(&world.names,second,core.name_make("A"))
     core.add(&world.transforms,second,core.TRANSFORM_IDENTITY)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     history.selection_set(&selection,{entity,second})
     for _ in 0..<2 {
         ui.frame_begin(&ctx,{size={800,600},pointer_absent=true})
@@ -479,7 +479,7 @@ ai_chat_uses_live_selection_and_keeps_tasks_with_their_document :: proc(t:^testi
         core.add(&world.transforms,extra,core.TRANSFORM_IDENTITY)
         history.selection_add(&selection,extra)
     }
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     for height in ([2]f32{300,390}) {
         for region in ([2]bool{false,true}) {
             ai.has_region=region

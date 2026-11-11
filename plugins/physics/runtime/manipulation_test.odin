@@ -6,8 +6,9 @@ import sim "plugins:physics/runtime/sim"
 import mm "mirai:std/math"
 
 @(private)
+@(test_world)
 Physics_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using physics:Test_Physics,
 }
 
@@ -19,7 +20,7 @@ Physics_Test :: struct {
 
 @(private)
 physics_test_init :: proc(t:^testing.T,f:^Physics_Test) -> bool {
-    if !core.test_world_init(t,&f.w,test_types) {return false}
+    if !test_world_init(t,&f.w) {return false}
     f.settings={bodies=32,shapes=32,contacts=128,joints=8,characters=2}
     return true
 }
@@ -27,11 +28,11 @@ physics_test_init :: proc(t:^testing.T,f:^Physics_Test) -> bool {
 @(private)
 physics_test_destroy :: proc(f:^Physics_Test) {
     test_host_destroy(&f.host)
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
 }
 
 @(private)
-physics_test_settle :: proc(f:^Physics_Test) {core.test_world_settle(&f.w)}
+physics_test_settle :: proc(f:^Physics_Test) {test_world_settle(&f.w)}
 
 @(private)
 physics_test_step :: proc(f:^Physics_Test,dt:f32=1.0/60) {

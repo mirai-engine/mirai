@@ -72,7 +72,8 @@ a_jump_carries_where_an_entity_and_what_hangs_from_it_were :: proc(t:^testing.T)
     testing.expect(t,near(moved.position-moved.previous.position,{0,0,1}))
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Hierarchy_Fixture :: struct {
     using world:Test_World,
     disabled:Table(Disabled),

@@ -12,22 +12,23 @@ import "mirai:host"
 import "mirai:std/base"
 import phys "plugins:physics/runtime"
 
-@(private="file")
+@(private)
+@(test_world,host="Settle_Test_Shared",editor="Settle_Test_Editor")
 Settle_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using physics:phys.Test_Physics,
     ids:core.Table(core.Id),
     time:core.Time,
     id:core.World_Id,
 }
 
-@(private="file")
+@(private)
 Settle_Test_Shared :: struct {
     meshes:phys.Collider_Meshes,
     problems:core.By_World(core.Problems),
 }
 
-@(private="file") Settle_Test_Editor :: struct {simulation:Physics_Simulation}
+@(private) Settle_Test_Editor :: struct {simulation:Physics_Simulation}
 
 // physics_step as the editor loop of a generated world calls it: what step_world runs.
 @(private="file")
@@ -36,7 +37,7 @@ settle_test_physics :: proc(data,shared,editor,app:rawptr) {
     a:=cast(^host.App)app
     phys.physics_step(&w.state,core.ref(&w.settings),&w.requests,&w.events,&(cast(^Settle_Test_Shared)shared).meshes,a,w.time,
         core.read(&w.rigids),core.read(&w.colliders),core.read(&w.characters),core.read(&w.moves),&w.joints,core.read(&w.statics),core.read(&w.parents),core.read(&w.names),
-        &w.transforms,&w.bodies,core.read(&w.replicas),&w.character_states,&w.joint_states,{},nil,{},{},nil,nil,host.app_world_storage(a,data,core.Problems),{},{},{},{},{},{},{},{},{})
+        &w.transforms,&w.bodies,core.read(&w.replicas),&w.character_states,&w.joint_states,{},nil,{},{},nil,nil,host.app_world_storage(a,data,core.Problems),{},{},{},{},{},{},{},{},{},{})
     core.settle(a.info,data,nil)
 }
 
@@ -59,12 +60,12 @@ Settle_Test :: struct {
 
 @(private="file")
 settle_test_open :: proc(t:^testing.T,f:^Settle_Test) -> bool {
-    f.info=core.test_info(t,Settle_Test_World,Settle_Test_Shared,Settle_Test_Editor,test_types) or_return
+    f.info=test_info(t,Settle_Test_World) or_return
     f.steps={{name="physics_step",library="physics",call=settle_test_physics}}
     f.info.steps=f.steps[:]
     f.info.order[.Editor][.Fixed]=f.order[:]
     if !testing.expect(t,core.world_init(&f.info,.World,&f.world,context.allocator)) {
-        core.test_info_destroy(&f.info)
+        test_info_destroy(&f.info)
         return false
     }
     f.world.settings={bodies=32,shapes=64,contacts=256,joints=8,characters=2}
@@ -84,7 +85,7 @@ settle_test_close :: proc(f:^Settle_Test) {
     core.world_destroy(&f.info,.World,&f.world)
     core.world_destroy(&f.info,.Shared,&f.shared)
     delete(f.app.worlds)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 @(private="file")

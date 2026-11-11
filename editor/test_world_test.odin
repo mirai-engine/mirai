@@ -9,29 +9,6 @@ import egui "mirai:engine/gui"
 import escene "mirai:engine/scene"
 import "mirai:ui"
 
-// What the declarations of the editor and of the libraries it uses name: core.Test_Types.
-test_types :: proc(types:^[dynamic]core.Test_Type) {
-    ecamera.test_types(types)
-    egui.test_types(types)
-    escene.test_types(types)
-    append(types,
-        core.test_type(Session,free=session_free),
-        core.test_type(Ai,default=proc(dst:^Ai) {dst^=AI_DEFAULT}),
-        core.test_type(Console,default=proc(dst:^Console) {dst^=CONSOLE_DEFAULT}),
-        core.test_type(Content,default=proc(dst:^Content) {dst^=CONTENT_DEFAULT}),
-        core.test_type(Play_Players,default=proc(dst:^Play_Players) {dst^=PLAY_PLAYERS_DEFAULT}),
-        core.test_type(Play_History,default=proc(dst:^Play_History) {dst^=PLAY_HISTORY_DEFAULT}),
-        core.test_type(Post_Process_Provider,default=proc(dst:^Post_Process_Provider) {dst^=POST_PROCESS_PROVIDER_DEFAULT}),
-        core.test_type(Records_Documents,default=proc(dst:^Records_Documents) {dst^=RECORDS_DOCUMENTS_DEFAULT}),
-        core.test_type(Records_Document,free=records_document_free),
-        core.test_type(Materials,free=materials_free),
-        core.test_type(Project_Panels,free=panels_free),
-        core.test_type(Editor_Ui,free=gui_destroy),
-        core.test_type(Viewport,free=viewport_free),
-        core.test_type(View_Modes,free=view_modes_free),
-    )
-}
-
 // A context of the interface with the theme of the editor, as gui_init makes it.
 test_ui_init :: proc(ctx:^ui.Context,desc:ui.Context_Desc={}) -> bool {
     if !ui.context_init(ctx,desc) {return false}

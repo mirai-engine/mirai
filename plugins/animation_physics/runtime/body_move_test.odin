@@ -9,23 +9,24 @@ import anim "plugins:animation/runtime"
 import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
+@(private) @(test_world) Body_Move_World :: struct {
+    using world:Test_World,
+    characters:core.Table(phys.Character),
+    states:core.Table(locomotion.Locomotion_State),
+    worlds:core.Table(core.World_Transform),
+    paces:core.Table(core.Own_Pace),
+    playback:anim.Playback,
+    moves:locomotion.Locomotion_Requests,
+}
+
 // The root motion the actions of a Character give its body is one tick of a layered move of their
 // mix: in the world from where the body stands, in the body's own time and across its up unless the
 // action keeps the vertical. A climbing Character, or one no such action moves, gets none.
 @(test)
 the_root_motion_of_an_action_that_moves_its_body_moves_its_character_for_one_tick :: proc(t:^testing.T) {
-    World :: struct {
-        using world:core.Test_World,
-        characters:core.Table(phys.Character),
-        states:core.Table(locomotion.Locomotion_State),
-        worlds:core.Table(core.World_Transform),
-        paces:core.Table(core.Own_Pace),
-        playback:anim.Playback,
-        moves:locomotion.Locomotion_Requests,
-    }
-    w:World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    w:Body_Move_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     walker,climber,still:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     yaw:=mm.quat_axis_angle({0,1,0},math.PI/2) // its -Z, its front, is -X of the world
     resize(&w.playback.rows,core.entity_index(still)+1)
@@ -38,7 +39,7 @@ the_root_motion_of_an_action_that_moves_its_body_moves_its_character_for_one_tic
         append(&w.playback.states,state);w.playback.rows[core.entity_index(e)]=i32(i+1)
     }
     core.add(&w.paces,walker,core.Own_Pace{rate=.5})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     animation_body_move(core.read(&w.characters),core.read(&w.states),core.read(&w.worlds),{},core.read(&w.paces),core.ref(&w.playback),&w.moves,{playing=true,dt=.1},core.CLOCK_DEFAULT)
     if !testing.expect_value(t,len(w.moves.queue.items),1) {return}
     // .05 forward (-Z) at twice its size in .05 s of its own time; its .1 up is dropped. Its force takes

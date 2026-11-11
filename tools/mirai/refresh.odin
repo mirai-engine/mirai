@@ -48,7 +48,8 @@ self_refresh :: proc(root:string) -> (code:int,refreshed:bool) {
             log:=strings.builder_make(context.temp_allocator)
             // After a merge the shader tables of render, which git does not keep, may name shaders
             // that changed: this tool generates them again before a second try.
-            if run_logged(root,command[:],&log)!=0 && (!engine_shaders(root) || run_logged(root,command[:],&log)!=0) {
+            // The same goes for the test worlds of the packages it is built from, whose tests it reads.
+            if run_logged(root,command[:],&log)!=0 && (!engine_shaders(root) || !test_worlds(root,join(root,"tools","mirai")) || run_logged(root,command[:],&log)!=0) {
                 os.remove(staging);os.remove(staged_sources)
                 fmt.eprintln("mirai: the sources of the tool do not build now; the existing one runs. `mirai build tools` shows the error.")
                 return

@@ -43,7 +43,7 @@ party_destroy :: proc(p:^Party) {
     wire.sim_network_destroy(&p.network)
     for &world in p.worlds {core.world_destroy(&p.info,.World,&world)}
     delete(p.info.messages)
-    core.test_info_destroy(&p.info)
+    test_info_destroy(&p.info)
 }
 
 // A client connects to the server.

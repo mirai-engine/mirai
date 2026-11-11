@@ -8,8 +8,9 @@ import "mirai:host"
 import "mirai:platform"
 import "mirai:ui"
 
+@(test_world)
 Shell_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     graphics:erender.Graphics_Settings,
 }
@@ -36,12 +37,12 @@ shell_test_click :: proc(t:^testing.T,s:^Session,id:ui.Id) {
 @(test)
 the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.T) {
     world:Shell_Test_World
-    if !core.test_world_init(t,&world,test_types) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     selected:=core.create(&world.entities)
     core.add(&world.names,selected,core.name_make("Object"))
     core.add(&world.transforms,selected,core.TRANSFORM_IDENTITY)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     ctx:ui.Context
     testing.expect(t,test_ui_init(&ctx,{}))
     defer ui.context_destroy(&ctx)
@@ -61,7 +62,7 @@ the_editor_shell_keeps_the_compact_create_and_details_panels :: proc(t:^testing.
     graphics:Graphics
     materials:Materials
     content:Content
-    session:=Session{info=core.test_world_info(&world),edit_world=&world,headless=true,app=&app,gui=&g,viewport=&viewport,selection=&selection,inspector=&inspector,edits=&edits,document=&document,build=&build,ai=ai,finder=&finder,graphics=&graphics,materials=&materials,content=&content}
+    session:=Session{info=test_world_info(&world),edit_world=&world,headless=true,app=&app,gui=&g,viewport=&viewport,selection=&selection,inspector=&inspector,edits=&edits,document=&document,build=&build,ai=ai,finder=&finder,graphics=&graphics,materials=&materials,content=&content}
     defer delete(selection.entities)
     defer core.value_free(&inspector,type_info_of(Inspector))
     defer core.value_free(&content,type_info_of(Content))

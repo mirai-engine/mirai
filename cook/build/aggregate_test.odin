@@ -63,7 +63,7 @@ no_store_of_an_aggregate_of_more_than_64_bytes :: proc(t:^testing.T) {
         plugin_library_name(p.root,&lib,0,context.temp_allocator)
         failed:=plugin_library_prepare(&lib,nil)
         if !testing.expectf(t,len(failed)==0,"%v",failed) {return}
-        if !ir(t,root,compiler,project.path(lib.stage,PLUGIN_ENTRY),project.path(folder,"ir",lib.family),flags[:],fmt.tprintf("-collection:mirai=%s",decl),fmt.tprintf("-collection:plugins=%s",lib.stage)) {return}
+        if !ir(t,root,compiler,project.path(lib.stage,PLUGIN_ENTRY),project.path(folder,"ir",lib.family),flags[:],fmt.tprintf("-collection:mirai=%s",decl),fmt.tprintf("-collection:%s=%s",STAGE_COLLECTION,lib.stage),fmt.tprintf("-collection:plugins=%s",project.path(folder,"plugins","decl"))) {return}
     }
     // The project sees the plugins through the declarations of their libraries, as it builds.
     extra:=generated_flags(p.root,context.temp_allocator)

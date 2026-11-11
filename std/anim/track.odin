@@ -24,7 +24,8 @@ Keyframe :: struct {
     ease:math.Ease,
     interpolation:Interpolation,
     // Cubic: the slopes of the curve as it arrives at this key and as it
-    // leaves it, per second. Without them a slope comes from the neighbors.
+    // leaves it, per second. Without them a slope comes from the neighbors
+    // and the curve does not pass the value of a key.
     // A rotation ignores them: its spline takes its controls from the neighbors.
     tangents:bool,
     in_slope,out_slope:math.Vec4,
@@ -77,14 +78,19 @@ keyframe_segment :: proc "contextless" (keys:[]Keyframe,index:int,property:Prope
     }
     return a.value
 }
-// Slope at the middle key: the line through its neighbors, or through its only neighbor at an end.
+// Slope at the middle key, per component: the line through its neighbors, clamped so that neither
+// segment passes the value of a key (Fritsch-Carlson); zero at an end, at a peak or a valley, and
+// beside an equal neighbor, so a value keyed to hold stays still.
 @(private)
-keyframe_tangent :: proc "contextless" (t0:f32,v0:math.Vec4,t1:f32,v1:math.Vec4,t2:f32,v2:math.Vec4) -> math.Vec4 {
-    low,high:=v0,v2
-    span:=t2-t0
-    if t0==t1 {low=v1;span=t2-t1} else if t1==t2 {high=v1;span=t1-t0}
-    if span<=0 {return {}}
-    return (high-low)/span
+keyframe_tangent :: proc "contextless" (t0:f32,v0:math.Vec4,t1:f32,v1:math.Vec4,t2:f32,v2:math.Vec4) -> (slope:math.Vec4) {
+    if !(t1>t0) || !(t2>t1) {return}
+    before,after:=(v1-v0)/(t1-t0),(v2-v1)/(t2-t1)
+    line:=(v2-v0)/(t2-t0)
+    for i in 0..<4 {
+        if !(before[i]*after[i]>0) {continue}
+        slope[i]=min(line[i],3*before[i],3*after[i]) if before[i]>0 else max(line[i],3*before[i],3*after[i])
+    }
+    return
 }
 // The same rotation with the sign that puts it in the hemisphere of `reference`.
 quat_align :: #force_inline proc "contextless" (v,reference:math.Vec4) -> math.Vec4 {return -v if linalg.dot(v,reference)<0 else v}

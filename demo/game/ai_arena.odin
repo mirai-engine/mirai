@@ -16,7 +16,9 @@ import phys "plugins:physics/runtime"
 import spawn "plugins:spawn/runtime"
 
 // AI arenas: an entity with an AI_Arena builds, when its world runs, a place
-// and the agents that show one kind of AI, each deciding with a mind:
+// and the agents that show one kind of AI, each deciding with a mind. The
+// runner of a Horde or a Swarm and the guards of Paths patrol the Spline of
+// the arena entity:
 // - Horde: zombies on the roofs and in the street of a block chase a runner
 //   they see, jumping from roof to roof and dropping to the street, around a
 //   cart that parks in a street; three bite at once and the rest circle the
@@ -96,9 +98,8 @@ Boss :: struct {
     staggered:bool `mirai:"transient,hidden"`, // by the hero: it is stunned at its next decision
 }
 
-@(component,description="What the AI of an arena chases or fights: it walks its round and hurts the boss near it.")
+@(component,description="The hero of a boss arena: it walks around the boss and hurts it while near.")
 Arena_Target :: struct {
-    next:i32 `mirai:"transient,hidden"`,
     again:u64 `mirai:"transient,hidden"`, // the tick the hero picks another point at
     center:[3]f32 `mirai:"transient,hidden"`,
 }
@@ -514,7 +515,7 @@ boss_dead :: proc(a:^ai.Act(Boss_Act),bosses:^core.Table(Boss,.Read)) -> ai.Stat
 
 // ------------------------------------------------------------------ guards
 
-// Walks its points in turn; at the fence on its way it waits for the one
+// Walks the Spline of its arena; at the fence on its way it waits for the one
 // before it to vault, then vaults, and walks on to the same point.
 Guard_Act :: enum u8 {Patrol,Vault}
 
@@ -524,22 +525,8 @@ guard_think :: proc(t:^ai.Think(Guard_Act)) {
     ai.propose(t,.Patrol,0.1)
 }
 
-// Its way goes on while it vaults: an exit leaves navigation as it is.
 @(act="Patrol")
-guard_patrol :: proc(a:^ai.Act(Guard_Act),patrols:^core.Table(Arena_Patrol),requests:^nav.Nav_Requests) -> ai.Status {
-    e:=behavior.agent(a)
-    patrol:=core.edit(patrols,e)
-    if patrol==nil || a.phase==.Exit {return .Success if a.phase==.Exit else .Failure}
-    if a.phase==.Enter {
-        nav.nav_move_to(requests,e,patrol.points[patrol.next])
-        return .Running
-    }
-    status:=behavior.path_status(a)
-    if status==.Running {return .Running}
-    // There, or where it cannot get: the next point.
-    patrol.next=(patrol.next+1)%4
-    return .Success
-}
+guard_patrol :: proc(a:^ai.Act(Guard_Act)) -> ai.Status {return behavior.patrol_act(a)}
 
 // Once begun it lasts until navigation takes the guard on from the other side.
 @(act="Vault")
@@ -567,7 +554,7 @@ arena_build :: proc(
             arena_place(a.kind,origin,&pieces)
             for piece in pieces {arena_piece_add(commands,piece)}
         }
-        arena_agents(commands,a.kind,origin,int(a.agents))
+        arena_agents(commands,e,a.kind,origin,int(a.agents))
     }
 }
 
@@ -721,13 +708,7 @@ Arena_Cart :: struct {
     from,to:[3]f32 `mirai:"unit=m"`,
 }
 
-// Guards patrol their points in turn; bells ring in turn for whoever hears.
-@(component,description="A guard of the AI arenas: it walks to each of its points in turn.")
-Arena_Patrol :: struct {
-    points:[4][3]f32 `mirai:"unit=m"`,
-    next:i32 `mirai:"transient,hidden"`,
-}
-
+// Bells ring in turn for whoever hears.
 @(component,description="A bell of the AI arenas: it rings, a noise of `loudness` m, when its turn comes among `count` bells, every `period` s.")
 Arena_Bell :: struct {
     turn,count:i32,
@@ -772,10 +753,10 @@ arena_animated :: proc(c:core.Commands,e:core.Entity) {
 }
 
 @(private)
-arena_target :: proc(c:core.Commands,position:mm.Vec3,team:behavior.Team) -> core.Entity {
+arena_target :: proc(c:core.Commands,position:mm.Vec3,route:core.Entity) -> core.Entity {
     e:=arena_body(c,position,{0.2,0.6,1,1},5)
-    core.commands_add(c,e,Arena_Target{center=position})
-    core.commands_add(c,e,behavior.Perceivable{team=team,point=1})
+    if route!=core.NONE {core.commands_add(c,e,behavior.Patrol{path=route})} else {core.commands_add(c,e,Arena_Target{center=position})}
+    core.commands_add(c,e,behavior.Perceivable{team=TEAM_RUNNER,point=1})
     return e
 }
 
@@ -838,10 +819,10 @@ arena_zombie :: proc(c:core.Commands,e:core.Entity,sight:f32,hearing:f32=1,forge
 
 // The agents of an arena around its origin.
 @(private)
-arena_agents :: proc(c:core.Commands,kind:Arena_Kind,origin:mm.Vec3,count:int) {
+arena_agents :: proc(c:core.Commands,arena:core.Entity,kind:Arena_Kind,origin:mm.Vec3,count:int) {
     switch kind {
     case .Horde:
-        arena_target(c,origin+{-22,0,-22},TEAM_RUNNER)
+        arena_target(c,origin+{-22,0,-22},arena)
         for i in 0..<count {
             spot:mm.Vec3
             if i%2==0 {
@@ -873,23 +854,21 @@ arena_agents :: proc(c:core.Commands,kind:Arena_Kind,origin:mm.Vec3,count:int) {
             }
         }
     case .Boss:
-        hero:=arena_target(c,origin+{0,0.05,8},TEAM_RUNNER)
+        hero:=arena_target(c,origin+{0,0.05,8},core.NONE)
         boss:=arena_body(c,origin+{0,0.05,-6},{0.6,0.15,0.6,1},3)
         core.commands_add(c,boss,Boss{health=BOSS_HEALTH,hero=hero})
         core.commands_add(c,boss,behavior.Mind_Agent{mind=behavior.mind_name("boss")})
         arena_animated(c,boss)
     case .Swarm:
-        arena_target(c,origin+{-22,0,-22},TEAM_RUNNER)
+        arena_target(c,origin+{-22,0,-22},arena)
         for i in 0..<count {arena_zombie(c,arena_drone(c,origin+{f32(i%8)*4-14,4+f32((i/8)%3)*3,8+f32(i/24)*3}),30)}
     case .Paths:
-        // Up the ladder, off the platform by a drop, past the blocked area, over the fence and through the lane of the cart.
-        points:=[4][3]f32{origin+{-15,0,-10},origin+{-7,3.5,1},origin+{17,0,10},origin+{17,0,-10}}
         for i in 0..<max(count,1) {
             e:=arena_body(c,origin+{-15+f32(i%4)*1.5,0.05,-12+f32(i/4)*1.5},{0.85,0.75,0.3,1},3.5)
             agent:=core.default(c,nav.Nav_Agent)
             agent.abilities=nav.Nav_Abilities(1<<u32(nav.ABILITY_LADDER))
             core.commands_add(c,e,agent)
-            core.commands_add(c,e,Arena_Patrol{points=points,next=i32(i%4)})
+            core.commands_add(c,e,behavior.Patrol{path=arena})
             core.commands_add(c,e,behavior.Mind_Agent{mind=behavior.mind_name("guard")})
         }
     case .Senses:
@@ -949,13 +928,12 @@ arena_carts :: proc(carts:^core.Table(Arena_Cart,.Read),bodies:^phys.Body_Reques
     }
 }
 
-// The runner walks its round; the hero walks around the boss, hurts it while
-// near and staggers it now and then; a fallen boss rises again after a while.
+// The hero walks around the boss, hurts it while near and staggers it now
+// and then; a fallen boss rises again after a while.
 @(step="fixed",server)
 arena_targets :: proc(
     targets:^core.Table(Arena_Target),bosses:^core.Table(Boss),worlds:^core.Table(core.World_Transform,.Read),
-    paths:^core.Table(nav.Nav_Path,.Read),requests:^nav.Nav_Requests,
-    state:^Arena_State,time:core.Time,
+    requests:^nav.Nav_Requests,state:^Arena_State,time:core.Time,
 ) {
     if !time.playing || time.dt<=0 {return}
     for row in 0..<core.count(bosses) {
@@ -972,25 +950,11 @@ arena_targets :: proc(
             if every:=core.ticks_of(time,3);every>0 && time.tick%every==0 {b.staggered=true}
         }
     }
-    round:=[4]mm.Vec3{{-22,0,-22},{22,0,-22},{22,0,22},{-22,0,22}}
     for row in 0..<core.count(targets) {
-        e:=core.entity_at(targets,row)
+        if !core.due(time,targets.values[row].again) {continue}
         t:=core.edit_at(targets,row)
-        p,ok:=core.get(paths,e)
-        hunting:=false
-        for b in bosses.values[:core.count(bosses)] {hunting|=b.hero==e}
-        if hunting {
-            if core.due(time,t.again) {
-                t.again=core.deadline(time,2.5)
-                angle:=mm.random_range(&state.rng,0,2*math.PI)
-                s,c:=mm.sincos_det(angle)
-                nav.nav_move_to(requests,e,t.center+{0,0,-14}+{c,0,s}*6)
-            }
-            continue
-        }
-        if !ok || p.state==.Idle || p.state==.Arrived || p.state==.Failed {
-            t.next=(t.next+1)%4
-            nav.nav_move_to(requests,e,t.center+{22,0,22}+round[t.next])
-        }
+        t.again=core.deadline(time,2.5)
+        s,c:=mm.sincos_det(mm.random_range(&state.rng,0,2*math.PI))
+        nav.nav_move_to(requests,core.entity_at(targets,row),t.center+{0,0,-14}+{c,0,s}*6)
     }
 }

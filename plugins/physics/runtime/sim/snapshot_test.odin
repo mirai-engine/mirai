@@ -1,6 +1,9 @@
 package mirai_physics
 
+import "core:fmt"
+import "core:math"
 import "core:testing"
+import "mirai:std/spatial"
 
 @(test)
 worlds_with_zero_optional_capacities_hash_and_restore :: proc(t:^testing.T) {
@@ -70,10 +73,7 @@ two_worlds_stepped_alike_keep_identical_hashes :: proc(t:^testing.T) {
         test_scene_edit(&b,step)
         world_step(&a,1.0/60)
         world_step(&b,1.0/60)
-        if world_hash(&a)!=world_hash(&b) {
-            testing.expectf(t,false,"the worlds diverged at step %v",step)
-            return
-        }
+        if !test_same(t,&a,&b,"the worlds diverged at step %v",step) {return}
     }
     // The hash does see the state: one more step on one side changes it.
     world_step(&a,1.0/60)
@@ -142,9 +142,50 @@ the_split_of_the_work_does_not_change_the_result :: proc(t:^testing.T) {
         test_scene_edit(&b,step)
         world_step(&a,1.0/60)
         world_step(&b,1.0/60)
-        if world_hash(&a)!=world_hash(&b) {
-            testing.expectf(t,false,"the split changed the result at step %v",step)
-            return
-        }
+        if !test_same(t,&a,&b,"the split changed the result at step %v",step) {return}
     }
+}
+
+// Whether a and b hold the same state; if not, fails naming the first slot and field that differ and both values.
+@(private)
+test_same :: proc(t:^testing.T,a,b:^World,format:string,args:..any,loc:=#caller_location) -> bool {
+    buf:[256]byte
+    diff,differ:=world_diff(a,b,buf[:])
+    if !differ {return true}
+    testing.expectf(t,false,"%s: %v %v%s is %v, and %v in the other",fmt.tprintf(format,..args),diff.type,diff.slot,diff.field,diff.a,diff.b,loc=loc)
+    return false
+}
+
+@(test)
+world_diff_names_the_first_field_that_differs_and_both_values :: proc(t:^testing.T) {
+    a,b:World
+    testing.expect(t,test_world(&a) && test_world(&b))
+    defer world_destroy(&a)
+    defer world_destroy(&b)
+    for i in 0..<80 {test_body(&a,Box{{0.2,0.2,0.2}},{f32(i%10),0.5+f32(i/10),0})}
+    test_steps(&a,3)
+    nothing,never_made:World
+    _,differ:=world_diff(&nothing,&never_made,nil)
+    testing.expect(t,!differ,"two worlds never made hold the same")
+    _,differ=world_diff(&a,&never_made,nil)
+    testing.expect(t,differ)
+    Case :: struct {name:string,edit:proc(w:^World),type:typeid,slot:i32,field:string}
+    cases:=[?]Case{
+        {"one float of body 70",proc(w:^World) {w.bodies[70].linear_velocity.y+=1},Body,70,".linear_velocity[1]"},
+        {"a NaN mass",proc(w:^World) {w.bodies[3].mass=math.nan_f32()},Body,3,".mass"},
+        {"a node of the dynamic tree",proc(w:^World) {w.trees[DYNAMIC_TREE].nodes[5].aabb.max.z+=1},spatial.Tree_Node,5,"dynamic tree.aabb.max[2]"},
+        {"gravity",proc(w:^World) {w.gravity.y=-1},World_State,0,".gravity[1]"},
+    }
+    for c in cases {
+        _,ok:=world_state_copy(&b,&a)
+        testing.expect(t,ok)
+        c.edit(&b)
+        buf:[64]byte
+        diff,found:=world_diff(&a,&b,buf[:])
+        testing.expectf(t,found && diff.type==c.type && diff.slot==c.slot && diff.field==c.field,"%s: %v",c.name,diff)
+        testing.expectf(t,fmt.tprint(diff.a)!=fmt.tprint(diff.b),"%s: both values are %v",c.name,diff.a)
+    }
+    // A buffer too short for the path still names the slot.
+    diff,_:=world_diff(&a,&b,nil)
+    testing.expect(t,diff.type==World_State && diff.field=="")
 }
