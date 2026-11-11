@@ -7,7 +7,9 @@ import "mirai:project"
 import "mirai:std/base"
 
 // A message and a component for some ends reach the World_Info of both
-// worlds; what the network cannot send is an error that says what to write.
+// worlds, and a step that receives the inbox of a message reads its messages
+// by its index; what the network cannot send is an error that says what to
+// write.
 @(test)
 messages_and_replicated_components_reach_the_world_info :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"replication")
@@ -17,9 +19,10 @@ messages_and_replicated_components_reach_the_world_info :: proc(t:^testing.T) {
     for path in ([]string{project.path(engine,"core",allocator=context.temp_allocator),project.path(game,"game",allocator=context.temp_allocator)}) {
         if !testing.expect(t,os.make_directory_all(path)==nil) {return}
     }
-    testing.expect(t,os.write_entire_file(project.path(engine,"core","data.odin",allocator=context.temp_allocator),"package core\n")==nil)
+    testing.expect(t,os.write_entire_file(project.path(engine,"core","data.odin",allocator=context.temp_allocator),"package core\n@(storage)\nNet_Messages :: struct {count:int}\nInbox :: struct($T:typeid) {items:[]T}\n")==nil)
     file:=project.path(game,"game","game.odin",allocator=context.temp_allocator)
     source:=`package game
+import "mirai:core"
 @(net_message,from="client",reliable)
 Ping :: struct {value:u32}
 @(net_message)
@@ -28,6 +31,8 @@ Tick :: struct {value:u32}
 Secret :: struct {value:f32}
 @(component,replicated="object")
 Taken :: struct {count:u32}
+@(step="fixed")
+heard :: proc(ticks:core.Inbox(Tick)) {}
 `
     testing.expect(t,os.write_entire_file(file,source)==nil)
     p:=project.Project{root=game,engine_root=engine}
@@ -39,6 +44,7 @@ Taken :: struct {count:u32}
         testing.expect(t,strings.contains(text,`.World,false,.Owner,true,nil,"",nil,false,false,`))
         testing.expect(t,strings.contains(text,`.World,false,.Object,true,`))
     }
+    testing.expectf(t,strings.contains(output.game_world,`p_core.inbox(&w.`) && strings.contains(output.game_world,`,1,p_game.Tick))`),"%s",output.game_world)
 
     wrong:=`package game
 @(storage,replicated)

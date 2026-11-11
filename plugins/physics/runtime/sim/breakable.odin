@@ -833,6 +833,13 @@ breakable_body :: proc(w:^World,h:Breakable_Handle) -> Body_Handle {
     return d!=nil?d.body:{}
 }
 
+// The surface and collision its pieces were made with; false for one that is gone.
+breakable_surface :: proc(w:^World,h:Breakable_Handle) -> (density,friction,restitution:f32,filter:Filter,ok:bool) {
+    d,_:=breakable_read(w,h)
+    if d==nil {return}
+    return d.density,d.friction,d.restitution,d.filter,true
+}
+
 // Changes what every piece meets, those that came off included.
 breakable_set_filter :: proc(w:^World,h:Breakable_Handle,filter:Filter) {
     d,_:=breakable_get(w,h)

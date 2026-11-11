@@ -35,9 +35,9 @@ bench_terrain_snapshots :: proc(t:^testing.T) {
             if !testing.expect(t,source_make(s,c.kind,c.samples,1,c.chunk_cells)) {return}
             if c.kind==.Heightfield {
                 last:=c.samples-1
-                testing.expect(t,grid_prepare(&s.heights,{},last,s.allocator))
+                testing.expect(t,grid_prepare(&s.field,{},last,s.allocator))
                 for z in 0..<c.samples.z {for x in 0..<c.samples.x {
-                    grid_set(&s.heights,x,z,math.sin(f32(x)*0.01)*20+math.cos(f32(z)*0.013)*15)
+                    grid_set(&s.field,x,z,math.sin(f32(x)*0.01)*20+math.cos(f32(z)*0.013)*15)
                 }}
             }
             entry.change=1
