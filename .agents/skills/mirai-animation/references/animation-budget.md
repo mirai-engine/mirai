@@ -4,10 +4,13 @@
 
 `Animation_Budget` goes on the rig that has `Animation` (its meshes with `Pose_Source` read that
 policy): `period` is the minimum of render frames between palette updates and `significance` its
-priority; when disabled, the defaults apply. `Animation_Budget_Config` is the project configuration:
-`max_palette_updates` at 0 leaves all palettes eligible and, otherwise, limits how many meshes are
-updated per frame (each mesh may have other joints and another space); `job_grain` is how many jobs
-a range takes and `parallel` uses the application's scheduler.
+priority; when disabled, the defaults apply. `period` 0, the default, is automatic: each mesh takes
+a period from the share of the height of `core.View` its bounds cover at their distance
+(`BUDGET_SCREEN`), and the rig a `Seat` drives, or one under its body, keeps every frame.
+`Animation_Budget_Config` is the project configuration: `max_palette_updates` at 0 leaves all
+palettes eligible and, otherwise, limits how many meshes are updated per frame (each mesh may have
+other joints and another space); `job_grain` is how many jobs a range takes and `parallel` uses the
+application's scheduler.
 
 ## Selection
 
@@ -23,6 +26,8 @@ a range takes and `parallel` uses the application's scheduler.
   significances and repeated slots in linear time; a frame that goes backwards resets the ages; it
   sorts by priority only when the limit excludes eligible palettes. Stable frames reuse the buffers
   that `budget_prepare` sizes.
+- The automatic period is presentation only, like the rest: the world after the same ticks does not
+  depend on it, so replays and seeks match. It does not test visibility.
 - It only reduces the presentation rate: clocks, curves, events, actions, root motion, grounding,
   constraints and sockets are evaluated on every fixed tick. The full palette is computed; bones are
   not removed or LODs chosen.
@@ -67,10 +72,11 @@ last takes pose requests, root motion and warping.
   the owner thread and in jobs of two grains, without allocations in a stable tick;
   `poses_by_track_match_the_pose_each_track_gives_by_name` (`pose_tracks_test.odin`): the blend
   by bone against each track found by name, under cross-fades, masks and additive layers.
-- `budget_test.odin` (`plugins/animation/runtime`): period, priority, limit, forced update, frame
+- `budget_test.odin` (`plugins/animation/runtime`): automatic period by size and seat, period,
+  priority, limit, forced update, frame
   going backwards, sparse slots, copies without allocations, identical poses and palettes with zero
   and two workers, rejection of aliases and invalid inputs, and workspace intact on a growth
-  failure.
+  failure; `automatic_palette_period_leaves_the_world_as_every_frame_does` (`skeleton_test.odin`).
 - `world_poses_validate_topology_values_and_aliases_without_a_reference_skeleton` (`std/anim`):
   size, topology, TRS, overflow and aliases of the public composition, including `pose_world`.
 - `skeletal_instances_use_independent_dense_poses_and_eighth_influence`: preparation, batch, upload

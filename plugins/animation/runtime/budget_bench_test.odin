@@ -63,7 +63,7 @@ bench_presentation_budget_unlimited_and_limited :: proc(t:^testing.T) {
         budget:Budget_Runtime;defer budget_runtime_free(&budget)
         candidates:=make([]Budget_Candidate,count);defer delete(candidates)
         if !testing.expect(t,budget_prepare(&budget,count,nil)) {return}
-        for &candidate,i in candidates {candidate={entity=core.entity_make(i+1,1),slot=u32(i),policy=ANIMATION_BUDGET_DEFAULT}}
+        for &candidate,i in candidates {candidate={entity=core.entity_make(i+1,1),slot=u32(i),policy={period=1,significance=1,enabled=true}}}
         for limited in ([2]bool{false,true}) {
             config:=ANIMATION_BUDGET_CONFIG_DEFAULT
             if limited {config.max_palette_updates=u32(max(count/4,1))}

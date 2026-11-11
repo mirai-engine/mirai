@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
+import inp "mirai:engine/input"
 import lib "mirai:std/anim"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
@@ -13,7 +14,7 @@ presentation_budget_respects_period_priority_capacity_force_and_snapshot_state_w
     budget:Budget_Runtime;defer budget_runtime_free(&budget)
     if !testing.expect(t,budget_prepare(&budget,3,nil)) {return}
     candidates:=[3]Budget_Candidate{}
-    for &candidate,i in candidates {candidate={entity=core.entity_make(i+1,1),slot=u32(i),policy=ANIMATION_BUDGET_DEFAULT}}
+    for &candidate,i in candidates {candidate={entity=core.entity_make(i+1,1),slot=u32(i),policy={period=1,significance=1,enabled=true}}}
     config:=ANIMATION_BUDGET_CONFIG_DEFAULT;config.max_palette_updates=1
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true;chosen:[4]int
@@ -36,7 +37,7 @@ presentation_budget_respects_period_priority_capacity_force_and_snapshot_state_w
     testing.expect(t,budget_select(&copied,candidates[:],9,config,nil))
     testing.expect(t,budget.states[0].last_update==4 && copied.states[0].last_update==9)
     candidates[1].slot=0;testing.expect(t,!budget_select(&budget,candidates[:],7,config,nil));candidates[1].slot=1
-    candidates[0].policy.period=0;testing.expect(t,!budget_select(&budget,candidates[:],7,config,nil));candidates[0].policy.period=1
+    candidates[0].policy.period=121;testing.expect(t,!budget_select(&budget,candidates[:],7,config,nil));candidates[0].policy.period=1
     candidates[0].policy.significance=f32(0h7fc00000);testing.expect(t,!budget_select(&budget,candidates[:],7,config,nil));candidates[0].policy.significance=1
     testing.expect(t,budget_select(&budget,candidates[:],1,config,nil) && budget.states[0].last_update==1)
 }
@@ -116,8 +117,8 @@ unlimited_presentation_selects_only_eligible_slots_and_preserves_state_on_invali
     if !testing.expect(t,budget_prepare(&budget,4,nil)) {return}
     candidates:=[3]Budget_Candidate{
         {entity=core.entity_make(4,1),slot=3,policy={period=2,significance=0,enabled=true}},
-        {entity=core.entity_make(2,1),slot=1,policy=ANIMATION_BUDGET_DEFAULT},
-        {entity=core.entity_make(1,1),slot=0,policy=ANIMATION_BUDGET_DEFAULT},
+        {entity=core.entity_make(2,1),slot=1,policy={period=1,significance=1,enabled=true}},
+        {entity=core.entity_make(1,1),slot=0,policy={period=1,significance=1,enabled=true}},
     }
     config:=ANIMATION_BUDGET_CONFIG_DEFAULT
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
@@ -134,4 +135,41 @@ unlimited_presentation_selects_only_eligible_slots_and_preserves_state_on_invali
     resize(&budget.keys,key_count)
     context=saved
     testing.expect(t,ok)
+}
+
+@(private)
+@(test_world)
+Seat_World :: struct {
+    using world:Test_World,
+    parents:core.Table(core.Parent),
+    seats:core.Table(inp.Seat),
+}
+
+// A far rig gets a longer automatic period than a near one; one under the body a seat drives keeps
+// every frame, and an authored period wins over the size.
+@(test)
+automatic_period_grows_with_distance_and_spares_the_rig_a_seat_drives :: proc(t:^testing.T) {
+    w:Seat_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    near,far,driven,authored,body,seat:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.parents,driven,{entity=body});core.add(&w.seats,seat,{body=body})
+    test_world_settle(&w)
+    testing.expect(t,budget_seated(core.read(&w.seats),core.read(&w.parents),driven) && !budget_seated(core.read(&w.seats),core.read(&w.parents),far))
+    view:=core.VIEW_DEFAULT;view.position={}
+    close,distant:=budget_screen(view,{0,0,-1.5},1),budget_screen(view,{0,0,-30},1)
+    candidates:=[4]Budget_Candidate{
+        {entity=near,slot=0,policy=ANIMATION_BUDGET_DEFAULT,screen=close},
+        {entity=far,slot=1,policy=ANIMATION_BUDGET_DEFAULT,screen=distant},
+        {entity=driven,slot=2,policy=ANIMATION_BUDGET_DEFAULT,screen=distant,exempt=budget_seated(core.read(&w.seats),core.read(&w.parents),driven)},
+        {entity=authored,slot=3,policy={period=2,significance=1,enabled=true},screen=distant},
+    }
+    budget:Budget_Runtime;defer budget_runtime_free(&budget)
+    if !testing.expect(t,budget_prepare(&budget,len(candidates),nil)) {return}
+    made:[4]int
+    for frame in 1..=12 {
+        if !testing.expect(t,budget_select(&budget,candidates[:],u64(frame),ANIMATION_BUDGET_CONFIG_DEFAULT,nil)) {return}
+        for chosen,i in budget.selected[:len(candidates)] {if chosen {made[i]+=1}}
+    }
+    testing.expectf(t,made==[4]int{12,4,12,6},"palettes made: %v",made)
 }
