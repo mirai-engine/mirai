@@ -103,10 +103,10 @@ shapes_release :: proc(cache:^Shapes_Cache,assets:^host.Assets) {
 @(step="fixed frame",loops="game editor",stage="simulate",before="physics_prepare")
 shapes_update :: proc(
     cache:^Shapes_Cache,assets:^host.Assets,job_system:^jobs.Job_System,allocator:runtime.Allocator,commands:core.Commands,
-    shapes:core.Read(Shape),brushes:core.Read(Shape_Brush),parts:core.Read(Shape_Part),rigids:core.Read(physics.Rigid_Body),
+    shapes:^core.Table(Shape,.Read),brushes:^core.Table(Shape_Brush,.Read),parts:^core.Table(Shape_Part,.Read),rigids:^core.Table(physics.Rigid_Body,.Read),
     colliders:^core.Table(physics.Collider),meshes:^core.Table(render.Mesh_Renderer),
-    transforms:core.Read(core.Transform),parents:core.Read(core.Parent),hierarchy:core.Ref(core.Hierarchy),problems:^core.Problems,
-    splines:core.Read(volume.Spline),ground:core.Ref(core.Ground_Queries),world:core.World_Ref,
+    transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),problems:^core.Problems,
+    splines:^core.Table(volume.Spline,.Read),ground:core.Ref(core.Ground_Queries),world:core.World_Ref,
 ) {
     if cache==nil || assets==nil {return}
     cs:=core.changes(shapes,&cache.shapes_seen)
@@ -188,7 +188,7 @@ shapes_update :: proc(
             if has_spline && spline.material!={} {
                 core.report(problems,e,"shapes.both","the entity has a Shape and a Spline with a material, and draws only the Shape: move the Spline to an entity of its own")
             }
-            shape:=&shapes.table.values[row]
+            shape:=&shapes.values[row]
             body=core.has(rigids,e)
             gathered:bool
             cut_first,gathered=brushes_gather(&u,e,shape)
@@ -234,7 +234,7 @@ shapes_update :: proc(
             core.report(problems,e,"shapes.memory","no memory to build the shape: it keeps its previous mesh; free memory or remove brushes")
             continue
         } else {
-            b.shape=shapes.table.values[row]
+            b.shape=shapes.values[row]
         }
         used+=1
     }
@@ -254,17 +254,17 @@ Update :: struct {
     cache:^Shapes_Cache,
     assets:^host.Assets,
     commands:core.Commands,
-    shapes:core.Read(Shape),
-    brushes:core.Read(Shape_Brush),
-    parts:core.Read(Shape_Part),
-    rigids:core.Read(physics.Rigid_Body),
+    shapes:^core.Table(Shape,.Read),
+    brushes:^core.Table(Shape_Brush,.Read),
+    parts:^core.Table(Shape_Part,.Read),
+    rigids:^core.Table(physics.Rigid_Body,.Read),
     colliders:^core.Table(physics.Collider),
     meshes:^core.Table(render.Mesh_Renderer),
-    transforms:core.Read(core.Transform),
-    parents:core.Read(core.Parent),
+    transforms:^core.Table(core.Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),
     hierarchy:core.Ref(core.Hierarchy),
     problems:^core.Problems,
-    splines:core.Read(volume.Spline),
+    splines:^core.Table(volume.Spline,.Read),
 }
 
 // Nothing was written, added or removed since the reader looked.

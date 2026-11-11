@@ -82,7 +82,7 @@ world_destroy :: proc(w:^Step_Test) {
 @(private="file")
 world_settle :: proc(w:^Step_Test) {
     core.test_world_settle(&w.rows)
-    core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities)
+    core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
 }
 
 @(private="file")

@@ -86,13 +86,13 @@ spatial_same_reference :: proc(a,b:Spatial_Target) -> bool {
 
 // The world transform a target names now. A bone or socket reads the pose
 // its rig sampled in the tick frame (0: this one).
-spatial_target_sample :: proc(target:Spatial_Target,binding:^Spatial_Target_Binding,playback:^Playback,skeletons:^Skeleton_Assets,transforms:core.Read(core.Transform),parents:core.Read(core.Parent),worlds:core.Read(core.World_Transform),frame:u64=0) -> (result:mm.Transform,ok:bool) {
+spatial_target_sample :: proc(target:Spatial_Target,binding:^Spatial_Target_Binding,playback:^Playback,skeletons:^Skeleton_Assets,transforms:^core.Table(core.Transform,$A),parents:^core.Table(core.Parent,.Read),worlds:^core.Table(core.World_Transform,$C),frame:u64=0) -> (result:mm.Transform,ok:bool) {
     if binding==nil || !spatial_target_valid(target) {return mm.TRANSFORM_IDENTITY,false}
     switch target.kind {
     case .World,.Entity:
         result=spatial_offset(target)
         if target.kind==.Entity {
-            basis,found:=constraint_world(transforms,parents,worlds,target.entity)
+            basis,found:=constraint_world(transforms,parents,core.read(worlds),target.entity)
             if !found {return mm.TRANSFORM_IDENTITY,false}
             result=mm.transform_compose(basis,spatial_offset(target))
             if !spatial_transform_valid(result) {return mm.TRANSFORM_IDENTITY,false}
@@ -131,7 +131,7 @@ spatial_target_sample :: proc(target:Spatial_Target,binding:^Spatial_Target_Bind
     result=mm.TRANSFORM_IDENTITY
     #reverse for index in binding.path {
         if index==0 && source.skeleton!={} {
-            actor,found:=constraint_world(transforms,parents,worlds,source.entity)
+            actor,found:=constraint_world(transforms,parents,core.read(worlds),source.entity)
             if !found {return mm.TRANSFORM_IDENTITY,false}
             result=actor
         } else {result=mm.transform_compose(result,source.sampled[index])}
@@ -162,7 +162,7 @@ Follow_Binding :: struct {
 }
 
 @(private)
-follow_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),parents:core.Read(core.Parent),root_transform:mm.Transform,playback:^Playback) -> bool {
+follow_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,$A),root_transform:mm.Transform,playback:^Playback) -> bool {
     first,end:=rig_rows(&runtime.follow,state.entity)
     if first==end {return true}
     if len(runtime.follow_states)!=len(runtime.follow.values) && resize(&runtime.follow_states,len(runtime.follow.values))!=nil {memory_problem(inputs.problems,state.entity,"the Follow operations of its .character");return false}
@@ -181,11 +181,11 @@ follow_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,inputs:Constraint_
         changed:=!binding.target.ready || !spatial_same_reference(binding.target.target,config.target)
         kept:=state.world[binding.bone]
         if changed && binding.space_ready && config.keep_world {
-            previous,found:=spatial_target_sample(binding.target.target,&binding.target,playback,inputs.skeletons,core.read(transforms),parents,inputs.worlds)
+            previous,found:=spatial_target_sample(binding.target.target,&binding.target,playback,inputs.skeletons,transforms,parents,inputs.worlds)
             if !found {rig_problem(inputs.problems,state.entity,.Follow,&config,.Target);valid=false;continue}
             kept=mm.transform_compose(previous,binding.offset)
         }
-        target,ok:=spatial_target_sample(config.target,&binding.target,playback,inputs.skeletons,core.read(transforms),parents,inputs.worlds)
+        target,ok:=spatial_target_sample(config.target,&binding.target,playback,inputs.skeletons,transforms,parents,inputs.worlds)
         if !ok {modifier_request_rejected(runtime,state.entity,.Missing_Target);rig_problem(inputs.problems,state.entity,.Follow,&config,.Target);valid=false;continue}
         if !binding.space_ready || changed {
             binding.offset=mm.TRANSFORM_IDENTITY

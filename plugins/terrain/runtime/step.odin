@@ -20,9 +20,9 @@ import mm "mirai:std/math"
 Chunk_Tables :: struct {
     commands:core.Commands,
     chunks:^core.Table(Terrain_Chunk),
-    locals:core.Read(core.Transform),
-    parents:core.Read(core.Parent),
-    ids:core.Read(core.Id),
+    locals:^core.Table(core.Transform,.Read),
+    parents:^core.Table(core.Parent,.Read),
+    ids:^core.Table(core.Id,.Read),
     colliders:^core.Table(phys.Collider),
     meshes:^core.Table(render.Mesh_Renderer),
     looks:^core.Table(render.Material_Values),
@@ -152,7 +152,7 @@ resident_owner_remove :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,index:i
 // Publishes what a job built for a chunk or a node. Its owners show it with
 // their colliders as they show it (owner_chunk_show).
 @(private)
-chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source,source:^Resident_Source,slot:^Work_Slot,physics:phys.Physics_Settings,problems:^core.Problems,terrains:core.Read(Terrain)) {
+chunk_take :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,entry:^Data_Source,source:^Resident_Source,slot:^Work_Slot,physics:phys.Physics_Settings,problems:^core.Problems,terrains:^core.Table(Terrain,$A)) {
     index:=slot.index
     chunk:=&source.chunks[index]
     s:=&entry.source
@@ -201,7 +201,7 @@ chunk_evict :: proc(resident:^Terrain_Resident,source:^Resident_Source,index:int
 // Takes what a slot holds: a chunk it built, or a page it read, if what it
 // read did not change meanwhile.
 @(private)
-work_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident,slot:^Work_Slot,physics:phys.Physics_Settings,problems:^core.Problems,terrains:core.Read(Terrain)) {
+work_take :: proc(c:^Chunk_Tables,data:^Terrain_Data,resident:^Terrain_Resident,slot:^Work_Slot,physics:phys.Physics_Settings,problems:^core.Problems,terrains:^core.Table(Terrain,$A)) {
     defer work_release(slot)
     entry:=data_find(data,slot.id)
     fresh:=slot.epoch==data.epoch && entry!=nil && &entry.source==slot.source
@@ -286,7 +286,7 @@ pages_start :: proc(data:^Terrain_Data,entry:^Data_Source,low,high:[3]int,phase:
 // Whether the pages of a region of samples are in memory: if not, a build
 // that can wait starts reading them in jobs, and one that cannot reads them now.
 @(private)
-pages_ready :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_Source,low,high:[3]int,urgent:bool,phase:core.Phase,problems:^core.Problems,terrains:core.Read(Terrain)) -> bool {
+pages_ready :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_Source,low,high:[3]int,urgent:bool,phase:core.Phase,problems:^core.Problems,terrains:^core.Table(Terrain,$A)) -> bool {
     s:=&entry.source
     if source_region_held(s,low,high) {return true}
     if !urgent {
@@ -306,7 +306,7 @@ pages_ready :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_So
 // Whether the samples a node of a Heightfield reads along the segments of
 // its border below COARSE_LEVEL are in memory, as pages_ready.
 @(private)
-node_border_ready :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_Source,index:int,border:^Piece_Border,urgent:bool,phase:core.Phase,problems:^core.Problems,terrains:core.Read(Terrain)) -> bool {
+node_border_ready :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_Source,index:int,border:^Piece_Border,urgent:bool,phase:core.Phase,problems:^core.Problems,terrains:^core.Table(Terrain,$A)) -> bool {
     s:=&entry.source
     if !source_paged(s) {return true}
     low,high:=quad_region(s,&entry.quad,index)
@@ -335,7 +335,7 @@ node_border_ready :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^D
 // of the pages it needs first; lets go of the pieces no owner wants or shows.
 // urgent_left is set when a piece that cannot wait found no slot.
 @(private)
-terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_Source,source:^Resident_Source,phase:core.Phase,stream:bool,problems:^core.Problems,terrains:core.Read(Terrain),urgent_left:^bool) {
+terrain_schedule :: proc(data:^Terrain_Data,resident:^Terrain_Resident,entry:^Data_Source,source:^Resident_Source,phase:core.Phase,stream:bool,problems:^core.Problems,terrains:^core.Table(Terrain,$A),urgent_left:^bool) {
     s:=&entry.source
     q:=&source.quad
     chunks:=q.first[1]
@@ -554,14 +554,14 @@ owner_chunk_show :: proc(c:^Chunk_Tables,resident:^Terrain_Resident,owner:^Resid
 // The terrain a request edits and its brush as its source reads it: what an
 // edit keys on from here on, also on the network.
 @(private)
-edit_resolve :: proc(request:Edit_Request,data:^Terrain_Data,terrains:core.Read(Terrain),worlds:core.Read(core.World_Transform)) -> (resolved:Edit_Request,ok:bool) {
+edit_resolve :: proc(request:Edit_Request,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),worlds:^core.Table(core.World_Transform,$B)) -> (resolved:Edit_Request,ok:bool) {
     owner:=request.owner
     if owner==core.NONE {owner=dig_owner(request.brush,data,terrains,worlds) or_return}
     return {owner,brush_local(request.brush,edit_place(worlds,owner))},true
 }
 
 @(private)
-edit_place :: proc(worlds:core.Read(core.World_Transform),owner:core.Entity) -> mm.Transform {
+edit_place :: proc(worlds:^core.Table(core.World_Transform,$A),owner:core.Entity) -> mm.Transform {
     if world,found:=core.get(worlds,owner);found {return world.transform}
     return mm.TRANSFORM_IDENTITY
 }
@@ -570,9 +570,9 @@ edit_place :: proc(worlds:core.Read(core.World_Transform),owner:core.Entity) -> 
 // center, then the one of the smallest footprint (a Volume over the ground it
 // joins). A Heightfield reaches any height.
 @(private)
-dig_owner :: proc(brush:Brush,data:^Terrain_Data,terrains:core.Read(Terrain),worlds:core.Read(core.World_Transform)) -> (owner:core.Entity,ok:bool) {
+dig_owner :: proc(brush:Brush,data:^Terrain_Data,terrains:^core.Table(Terrain,$A),worlds:^core.Table(core.World_Transform,$B)) -> (owner:core.Entity,ok:bool) {
     best,smallest:=max(f32),max(f32)
-    for marker,row in terrains.table.values[:core.count(terrains)] {
+    for marker,row in terrains.values[:core.count(terrains)] {
         entry:=data_find(data,marker.source)
         if entry==nil {continue}
         e:=core.entity_at(terrains,row)
@@ -592,7 +592,7 @@ dig_owner :: proc(brush:Brush,data:^Terrain_Data,terrains:core.Read(Terrain),wor
 }
 
 @(private)
-request_source :: proc(data:^Terrain_Data,terrains:core.Read(Terrain),owner:core.Entity,request:string,problems:^core.Problems,a:^host.Assets) -> (entry:^Data_Source,ok:bool) {
+request_source :: proc(data:^Terrain_Data,terrains:^core.Table(Terrain,$A),owner:core.Entity,request:string,problems:^core.Problems,a:^host.Assets) -> (entry:^Data_Source,ok:bool) {
     marker,known:=core.get(terrains,owner)
     if !known {
         core.report(problems,owner,"terrain.request_owner","%s of a terrain named this entity, which has no Terrain; name the entity of the terrain",request)
@@ -680,10 +680,10 @@ brush_pages_read :: proc(entry:^Data_Source,brush:Brush) -> bool {
 @(step="fixed frame",loops="game editor",stage="simulate",before="physics_prepare")
 terrain_update :: proc(
     commands:core.Commands,terrains:^core.Table(Terrain),chunks:^core.Table(Terrain_Chunk),
-    locals:core.Read(core.Transform),parents:core.Read(core.Parent),ids:core.Read(core.Id),colliders:^core.Table(phys.Collider),
+    locals:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),ids:^core.Table(core.Id,.Read),colliders:^core.Table(phys.Collider),
     meshes:^core.Table(render.Mesh_Renderer),looks:^core.Table(render.Material_Values),
     data:^Terrain_Data,resident:^Terrain_Resident,requests:^Terrain_Requests,digs:^Terrain_Digs,settings:Terrain_Settings,app:^host.App,time:core.Time,frame:core.Frame_Time,
-    view:core.View,worlds:core.Read(core.World_Transform),sources:core.Ref(scene.Streaming_Sources),kept:core.Read(scene.Far_Kept),physics:phys.Physics_Settings,
+    view:core.View,worlds:^core.Table(core.World_Transform,.Read),sources:core.Ref(scene.Streaming_Sources),kept:^core.Table(scene.Far_Kept,.Read),physics:phys.Physics_Settings,
     loads:core.Ref(scene.Section_Loads),waits:^scene.Load_Waits,problems:^core.Problems,focus:Terrain_Focus,queries:^core.Ground_Queries,
 ) {
     c:=Chunk_Tables{commands,chunks,locals,parents,ids,colliders,meshes,looks}
@@ -711,7 +711,7 @@ terrain_update :: proc(
     resident.pass+=1
     resident.picking=!time.playing
     // What the jobs of the calls before made shows before the sources change again.
-    for &slot in data.work {if work_due(data,&slot,frame.phase) {work_take(&c,data,resident,&slot,physics,problems,core.read(terrains))}}
+    for &slot in data.work {if work_due(data,&slot,frame.phase) {work_take(&c,data,resident,&slot,physics,problems,terrains)}}
     // A source is read again when its file changes, on disk or in the memory
     // of the registry; the revision of an owner is the key of the history of
     // its editor.
@@ -721,7 +721,7 @@ terrain_update :: proc(
         for &entry in data.entries {
             if terrain_stamp(app.assets,entry.id)==entry.stamp {continue}
             work_wait(data,&entry.source)
-            data_reload(data,&entry,app.assets,problems,core.read(terrains))
+            data_reload(data,&entry,app.assets,problems,terrains)
         }
     }
     // What the jobs read joins the sources; what the loads of sections name is
@@ -765,8 +765,8 @@ terrain_update :: proc(
     }
     if !time.playing || frame.phase==.Fixed {
         for asked_edit in core.take(&requests.edits) {
-            request:=edit_resolve(asked_edit,data,core.read(terrains),worlds) or_continue
-            entry:=request_source(data,core.read(terrains),request.owner,"an edit",problems,app.assets) or_continue
+            request:=edit_resolve(asked_edit,data,terrains,worlds) or_continue
+            entry:=request_source(data,terrains,request.owner,"an edit",problems,app.assets) or_continue
             change:=data_edit(data,entry,request.brush)
             if change.error!=.None {
                 edit_report(problems,request.owner,app.assets,entry,request.brush,change.error)
@@ -778,7 +778,7 @@ terrain_update :: proc(
             for value,row in terrains.values[:core.count(terrains)] {if value.source==entry.id {core.edit_at(terrains,row).revision=entry.source.revision}}
         }
         for request in core.take(&requests.layers) {
-            entry:=request_source(data,core.read(terrains),request.owner,"a layer change",problems,app.assets) or_continue
+            entry:=request_source(data,terrains,request.owner,"a layer change",problems,app.assets) or_continue
             applied,error:=data_layer(data,entry,request.change)
             layer_report(problems,request.owner,app.assets,entry,request.change,error)
             if !applied {continue}
@@ -815,16 +815,16 @@ terrain_update :: proc(
         for &entry in data.entries {changed||=len(entry.pending)>0}
         data_pending_spread(data,resident)
         // What stands for a section that is not loaded collides with nothing.
-        for &owner in resident.owners {owner.far=kept.table!=nil && core.has(kept,owner.entity)}
-        resident_joins(resident,data,core.read(terrains),ids,worlds,locals,problems)
-        resident_lod(resident,data,worlds,view,sources,settings,core.read(terrains),&c,physics,problems,changed || first,focus)
+        for &owner in resident.owners {owner.far=kept!=nil && core.has(kept,owner.entity)}
+        resident_joins(resident,data,terrains,ids,worlds,locals,problems)
+        resident_lod(resident,data,worlds,view,sources,settings,terrains,&c,physics,problems,changed || first,focus)
         resident_cut(resident,data)
         stream:=settings.resident_distance>0
         // A piece that is wanted where nothing shows is built in this call.
         for round:=0;;round+=1 {
             urgent_left:=false
             data_pending_spread(data,resident)
-            for &source in resident.sources {if entry:=data_find(data,source.id);entry!=nil {terrain_schedule(data,resident,entry,&source,frame.phase,stream,problems,core.read(terrains),&urgent_left)}}
+            for &source in resident.sources {if entry:=data_find(data,source.id);entry!=nil {terrain_schedule(data,resident,entry,&source,frame.phase,stream,problems,terrains,&urgent_left)}}
             took:=false
             for &slot in data.work {
                 if slot.kind==.None {continue}
@@ -834,7 +834,7 @@ terrain_update :: proc(
                     if source==nil || slot.index>=len(source.chunks) || !source.chunks[slot.index].urgent {continue}
                 }
                 if jobs.pending(&slot.counter) {jobs.wait(data.jobs,jobs.OWNER,&slot.counter)}
-                work_take(&c,data,resident,&slot,physics,problems,core.read(terrains))
+                work_take(&c,data,resident,&slot,physics,problems,terrains)
                 took=true
             }
             resident_cut(resident,data)
@@ -861,7 +861,7 @@ terrain_update :: proc(
         }
     }
     for &request in core.take(&requests.saves) {
-        entry:=request_source(data,core.read(terrains),request.owner,"a save",problems,app.assets) or_continue
+        entry:=request_source(data,terrains,request.owner,"a save",problems,app.assets) or_continue
         work_wait(data,&entry.source)
         path:=base.text_get(request.path[:])
         own,_:=terrain_file(app.assets,entry.id)
@@ -886,7 +886,7 @@ terrain_update :: proc(
         last:=&data.entries[len(data.entries)-1].source
         for &slot in data.work {
             if slot.kind==.None {continue}
-            if slot.source==&entry.source {work_release(&slot)} else if slot.source==last {work_take(&c,data,resident,&slot,physics,problems,core.read(terrains))}
+            if slot.source==&entry.source {work_release(&slot)} else if slot.source==last {work_take(&c,data,resident,&slot,physics,problems,terrains)}
         }
         for j:=len(resident.sources)-1;j>=0;j-=1 {
             if resident.sources[j].id!=entry.id {continue}
@@ -900,7 +900,7 @@ terrain_update :: proc(
     // What the owners wrote as they showed is not a change for the next call.
     _=shown_touched(terrains,&c,&resident.shown)
     if resident.room.starved {_=core.touched(c.colliders,&resident.room.seen)}
-    ground_update(resident,data,core.read(terrains),colliders,worlds,focus,queries)
+    ground_update(resident,data,terrains,colliders,worlds,focus,queries)
     host.assets_commit(app.assets)
 }
 

@@ -189,7 +189,7 @@ Terrain_Digs :: struct {digs:core.Events(Terrain_Dig)}
 
 // The dig of the last edit of the source of entry, if it took something out.
 @(private)
-dig_push :: proc(digs:^Terrain_Digs,owner:core.Entity,entry:^Data_Source,worlds:core.Read(core.World_Transform)) {
+dig_push :: proc(digs:^Terrain_Digs,owner:core.Entity,entry:^Data_Source,worlds:^core.Table(core.World_Transform,$A)) {
     s:=&entry.source
     d:=s.dug
     if !(d.volume>0) {return}
@@ -530,7 +530,7 @@ data_load_end :: proc(data:^Terrain_Data,load:^Source_Load,a:^host.Assets,proble
     if jobs.pending(&load.counter) {jobs.wait(load.js,jobs.OWNER,&load.counter)}
     for held,i in data.loads {if held==load {ordered_remove(&data.loads,i);break}}
     defer data_load_free(load)
-    e:=source_owner(core.read(terrains),load.id)
+    e:=source_owner(terrains,load.id)
     switch {
     case !load.ok: source_unread(problems,e,a,load.id)
     case len(data.entries)>=int(data.settings.sources):
@@ -662,8 +662,8 @@ data_mark_all :: proc(entry:^Data_Source) {
 }
 // The first terrain of a source: the entity a problem of the source is reported on.
 @(private)
-source_owner :: proc(terrains:core.Read(Terrain),id:base.Asset_Id) -> core.Entity {
-    for value,row in terrains.table.values[:core.count(terrains)] {if value.source==id {return core.entity_at(terrains,row)}}
+source_owner :: proc(terrains:^core.Table(Terrain,$A),id:base.Asset_Id) -> core.Entity {
+    for value,row in terrains.values[:core.count(terrains)] {if value.source==id {return core.entity_at(terrains,row)}}
     return core.NONE
 }
 
@@ -711,7 +711,7 @@ data_load :: proc(data:^Terrain_Data,a:^host.Assets,id:base.Asset_Id,problems:^c
 // Reads a source again; what fails keeps the one read before and is a
 // problem of the first of terrains that shows it. The jobs that read it ended.
 @(private)
-data_reload :: proc(data:^Terrain_Data,entry:^Data_Source,a:^host.Assets,problems:^core.Problems,terrains:core.Read(Terrain)) -> bool {
+data_reload :: proc(data:^Terrain_Data,entry:^Data_Source,a:^host.Assets,problems:^core.Problems,terrains:^core.Table(Terrain,$A)) -> bool {
     entry.stamp=terrain_stamp(a,entry.id)
     if !entry.stamp.found {return false}
     owner:=source_owner(terrains,entry.id)

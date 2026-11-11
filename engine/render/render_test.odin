@@ -299,7 +299,7 @@ hiding_and_showing_update_what_hangs_from_it_without_a_new_scene :: proc(t:^test
     }
     core.add(&w.parents,child,core.Parent{parent,0})
     core.test_world_settle(&w)
-    testing.expect(t,core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities))
+    testing.expect(t,core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities))
     sets:u64
     for pass in 0..<4 {
         host.app_frame_begin(app)

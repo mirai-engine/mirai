@@ -46,7 +46,7 @@ clock_apply :: proc(gui:^Gui,paused:bool,requests:^core.Clock_Requests,role:core
 }
 
 // Whether the game should hold the mouse.
-mouse_wanted :: proc(seats:core.Read(inp.Seat),state:^inp.Seats,bindings:^inp.Input_Map,look:inp.Action,modal:bool) -> bool {
+mouse_wanted :: proc(seats:^core.Table(inp.Seat,.Read),state:^inp.Seats,bindings:^inp.Input_Map,look:inp.Action,modal:bool) -> bool {
     if modal || !inp.action_reads_mouse(bindings,look) {return false}
     return inp.body_of(seats,inp.focused(state,seats))!=core.NONE
 }
@@ -55,7 +55,7 @@ mouse_wanted :: proc(seats:core.Read(inp.Seat),state:^inp.Seats,bindings:^inp.In
 // The mouse waits while the editor has it, or for a world the window does not see.
 @(step="ui",stage="end",after="gui_frame_end")
 gui_window_apply :: proc(
-    gui:^Gui,app:^host.App,menu:inp.Frame_Input_Of(Menu_Action),look:inp.Frame_Input_Of(inp.Look_Action),seats:core.Read(inp.Seat),state:core.Ref(inp.Seats),bindings:core.Ref(inp.Input_Map),
+    gui:^Gui,app:^host.App,menu:inp.Frame_Input_Of(Menu_Action),look:inp.Frame_Input_Of(inp.Look_Action),seats:^core.Table(inp.Seat,.Read),state:core.Ref(inp.Seats),bindings:core.Ref(inp.Input_Map),
     clock:core.Ref(core.Clock),clock_requests:^core.Clock_Requests,network:core.Ref(core.Network),
 ) {
     if gui==nil {return}

@@ -18,8 +18,8 @@ storage_of :: #force_inline proc "contextless" (data:rawptr,s:^Storage_Info) -> 
 entities_of :: #force_inline proc "contextless" (info:^World_Info,world:rawptr) -> ^Entities {return cast(^Entities)(uintptr(world)+info.entities)}
 
 @(private="file")
-ids_of :: #force_inline proc "contextless" (info:^World_Info,world:rawptr,id:int) -> Read(Id) {
-    return {cast(^Table(Id))table_of(world,&info.tables[id])}
+ids_of :: #force_inline proc "contextless" (info:^World_Info,world:rawptr,id:int) -> ^Table(Id) {
+    return cast(^Table(Id))table_of(world,&info.tables[id])
 }
 
 @(private="file")

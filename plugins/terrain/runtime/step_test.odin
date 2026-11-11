@@ -75,7 +75,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
         }
         core.test_world_settle(&w.w)
         terrain_test_update(w,&resident,app)
-        core.hierarchy_settle(&hierarchies[current],core.read(&w.parents),&w.entities)
+        core.hierarchy_settle(&hierarchies[current],&w.parents,&w.entities)
         core.transforms_propagate(core.read(&w.transforms),core.ref(&hierarchies[current]),&poses[current],&propagations[current],&jumps,{})
         core.table_settle(&poses[current],&w.entities)
         testing.expect_value(t,len(w.chunks.values),pass==0?4:8)
@@ -106,7 +106,7 @@ shared_terrain_chunks_remain_visible_after_duplicate_copy_and_preview_retirement
             outlines:core.Table(render.Outline);defer core.table_destroy(&outlines)
             outline_styles:=render.OUTLINE_STYLES_DEFAULT
             shows:render.Frame_Values_Requests
-            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},core.read(&poses[current]),core.read(&w.statics),core.read(&w.looks),core.read(&hidden),core.read(&elsewhere),core.read(&w.parents),{},core.read(&suns),core.read(&points),core.read(&spots),core.read(&rects),core.read(&emissions),core.read(&skies),core.read(&posts),{},core.read(&highlights),core.read(&outlines),{&outline_styles},core.read(&offsets),core.read(&layers),{},{},{},{},nil,&shows)
+            render.render_sync(&sync,app,{},core.FRAME_TIME_DEFAULT,{},&poses[current],&w.statics,&w.looks,&hidden,&elsewhere,&w.parents,{},&suns,&points,&spots,&rects,&emissions,&skies,&posts,{},&highlights,&outlines,{&outline_styles},&offsets,&layers,{},{},{},{},nil,&shows)
             host.app_frame_end(app)
         }
         if pass==4 {continue}

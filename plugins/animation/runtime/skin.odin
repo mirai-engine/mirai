@@ -212,12 +212,12 @@ skin_rig_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.As
 // tinted, hidden and outlined as any mesh of an entity.
 @(step="render",loops="game editor",before="render_sync")
 animation_skin :: proc(
-    meshes:core.Read(erender.Mesh_Renderer),skins:core.Read(Pose_Source),parents:core.Read(core.Parent),
-    worlds:core.Read(core.World_Transform),looks:core.Read(erender.Material_Values),
-    hidden:core.Read(erender.Hidden),elsewhere:core.Read(erender.Drawn_Elsewhere),
+    meshes:^core.Table(erender.Mesh_Renderer,.Read),skins:^core.Table(Pose_Source,.Read),parents:^core.Table(core.Parent,.Read),
+    worlds:^core.Table(core.World_Transform,.Read),looks:^core.Table(erender.Material_Values,.Read),
+    hidden:^core.Table(erender.Hidden,.Read),elsewhere:^core.Table(erender.Drawn_Elsewhere,.Read),
     cache:^Skin_Runtime,state:^Skin_Instances,assets:^host.Assets,renderer:^erender.Renderer,poses:^erender.Posed_Meshes,job_system:^jobs.Job_System,allocator:runtime.Allocator,time:core.Time,frame:core.Frame_Time,playback:core.Ref(Playback),
     morphs:core.Ref(Morph_Playback),problems:^core.Problems,
-    policies:core.Read(Animation_Budget),budget:^Budget_Runtime,config:Animation_Budget_Config,parts:core.Read(Skin_Part),
+    policies:^core.Table(Animation_Budget,.Read),budget:^Budget_Runtime,config:Animation_Budget_Config,parts:^core.Table(Skin_Part,.Read),
     modifiers:core.Ref(Modifier_Runtime),
 ) {
     if state==nil || renderer==nil || assets==nil {return}
@@ -271,7 +271,7 @@ animation_skin :: proc(
         instance:=&state.instances.values[slot]
         // The bone of its part, which its copy is made with or without.
         part,part_layers:=0,u32(0)
-        if parts.table!=nil && !rigid {
+        if parts!=nil && !rigid {
             if config,has_part:=core.get(parts,entity);has_part && config.layers!=0 {
                 bone:=bone_resolve(pose,config.bone)
                 if bone<0 {
@@ -363,7 +363,7 @@ animation_skin :: proc(
                     continue
                 }
                 policy:=ANIMATION_BUDGET_DEFAULT
-                if policies.table!=nil {if value,present:=core.get(policies,owner);present {policy=value}}
+                if policies!=nil {if value,present:=core.get(policies,owner);present {policy=value}}
                 work_index=len(state.work)
                 append(&state.work,Pose_Palette_Work{parents=pose.parents[:],previous=pose.previous[:],current=pose.local[:],local=instance.local,world=instance.world,joints=rig.joints,palette=instance.palette,basis=basis,inverse=inverse,alpha=1 if exact else alpha,bone_offset=1,enabled=true})
                 append(&state.updates,Skin_Update{slot=slot,drawn=drawn,basis=basis,exact=pose.changed+1 if exact else 0})

@@ -137,7 +137,7 @@ bone_inspector :: proc(c:editor.Inspector_Context,info:^runtime.Type_Info,offset
 // edit of the scene: the journal takes it, so the next step of the user or
 // the API does not hold it and the document stays without changes.
 @(step="frame",stage="begin",before="editor_tools")
-animation_attachments_derived :: proc(s:^editor.Session,attachments:core.Read(anim.Bone_Attachment),world:core.World_Ref) {
+animation_attachments_derived :: proc(s:^editor.Session,attachments:^core.Table(anim.Bone_Attachment,.Read),world:core.World_Ref) {
     if s.edits==nil || world.data!=s.edits.world {return}
     for row in 0..<core.count(attachments) {
         if core.at(attachments,row).enabled {history.edits_take_derived(s.edits,world,core.Transform,core.entity_at(attachments,row))}
