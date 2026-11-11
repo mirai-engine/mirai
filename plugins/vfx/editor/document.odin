@@ -51,7 +51,7 @@ PARTICLE_ROWS :: [?]Particle_Row{
     {.Motion,"lifetime"},{.Motion,"speed"},{.Motion,"velocity"},{.Motion,"inherit_velocity"},{.Motion,"local_space"},{.Motion,"gravity"},
     {.Motion,"acceleration"},{.Motion,"drag"},{.Motion,"noise"},{.Motion,"noise_frequency"},{.Motion,"noise_speed"},{.Motion,"attractor"},{.Motion,"attractor_strength"},
     {.Look,"size"},{.Look,"rotation"},{.Look,"spin"},{.Look,"colors"},{.Look,"intensity"},{.Look,"emission_mode"},{.Look,"size_over_life"},{.Look,"color_over_life"},
-    {.Look,"render"},{.Look,"blend"},{.Look,"lit"},{.Look,"lights"},{.Look,"light_shadows"},{.Look,"light_intensity"},{.Look,"light_range"},{.Look,"light_radius"},{.Look,"sort"},{.Look,"material"},{.Look,"mesh"},{.Look,"facing"},{.Look,"spin_axis"},{.Look,"mesh_rotation"},{.Look,"mesh_scale"},{.Look,"stretch"},{.Look,"soft"},{.Look,"flipbook"},{.Look,"flipbook_speed"},
+    {.Look,"render"},{.Look,"blend"},{.Look,"lit"},{.Look,"lights"},{.Look,"light_shadows"},{.Look,"light_intensity"},{.Look,"light_range"},{.Look,"light_radius"},{.Look,"sort"},{.Look,"material"},{.Look,"mesh"},{.Look,"stretch"},{.Look,"soft"},{.Look,"flipbook"},{.Look,"flipbook_speed"},
     {.Collision,"collision"},{.Collision,"bounce"},{.Collision,"friction"},{.Collision,"collision_life"},{.Collision,"trigger"},{.Collision,"sub_particle"},{.Collision,"sub_count"},{.Collision,"report"},
     {.Program,"program"},
 }

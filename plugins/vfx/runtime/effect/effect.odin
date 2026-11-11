@@ -37,13 +37,6 @@ Particle_Blend :: enum u32 {Additive,Alpha}
 Particle_Collision :: enum u32 {None,World}
 Particle_Event :: enum u32 {None,Death,Collision}
 
-// What a Mesh particle turns its mesh about. Random: an axis of each particle
-// of its own. The others give it a frame, in the space of the simulation:
-// Entity, its axes; Camera_Position, X toward the camera and Y as near the
-// up of the world as it can; Camera_Plane, X against the forward of the
-// camera and Y along its up.
-Particle_Facing :: enum u32 {Random,Entity,Camera_Position,Camera_Plane}
-
 // Particles started at once, when the cycle reaches time. cycles above one
 // repeat it every interval seconds.
 Particle_Burst :: struct {
@@ -117,10 +110,6 @@ Particle_Info :: struct {
     sort:bool,                                // blended particles drawn back to front (2048 at most)
     material:base.Asset_Id,                   // its base color texture is the flipbook; none: a soft puff
     mesh:base.Asset_Id,                       // of Mesh particles; none: a cube
-    facing:Particle_Facing,                   // Mesh: the frame its mesh turns in
-    spin_axis:[3]f32,                         // Mesh: what rotation and spin turn it about in the frame of facing; zeros: X. Random ignores it
-    mesh_rotation:[4]f32,                     // Mesh: a quaternion (x y z w) the mesh takes before rotation; zeros: none
-    mesh_scale:[3]f32 `mirai:"min=0"`,        // Mesh: of the mesh on each axis, times size; zeros: 1 on each
     stretch:f32 `mirai:"min=0,unit=s"`,       // Velocity: seconds of motion a sprite spans
     soft:f32 `mirai:"min=0,unit=m"`,          // a sprite fades over this distance into what is behind it
     flipbook:[2]u32,                          // columns and rows
@@ -229,7 +218,6 @@ particle_validate :: proc(view:Particle_View) -> Particle_Problem {
     if field,ok:=particle_finite(p);!ok {return {field,"Use finite numbers"}}
     if p.shape>max(Particle_Shape) {return {"shape","Use Point, Sphere, Hemisphere, Cone, Box, Circle, Line, Surface or Bones"}}
     if p.render>max(Particle_Render) {return {"render","Use Billboard, Velocity, Horizontal, Ribbon or Mesh"}}
-    if p.facing>max(Particle_Facing) {return {"facing","Use Random, Entity, Camera_Position or Camera_Plane"}}
     if p.blend>max(Particle_Blend) {return {"blend","Use Additive or Alpha"}}
     if p.collision>max(Particle_Collision) {return {"collision","Use None or World"}}
     if p.trigger>max(Particle_Event) {return {"trigger","Use None, Death or Collision"}}
@@ -243,7 +231,6 @@ particle_validate :: proc(view:Particle_View) -> Particle_Problem {
     if p.shell<0 || p.shell>1 {return {"shell","Use a value from 0 to 1"}}
     if p.lifetime[0]<0 || p.lifetime[1]<0 {return {"lifetime","Use lifetimes of zero or more seconds"}}
     if p.size[0]<0 || p.size[1]<0 {return {"size","Use sizes of zero or more"}}
-    for scale in p.mesh_scale {if scale<0 {return {"mesh_scale","Use scales of zero or more"}}}
     if p.intensity<0 {return {"intensity","Use an intensity of zero or more"}}
     if p.light_intensity<0 || p.light_range<0 || p.light_radius<0 {return {"light_intensity","Use zero or more for light_intensity, light_range and light_radius"}}
     if p.drag<0 || p.noise_frequency<0 || p.stretch<0 || p.soft<0 || p.flipbook_speed<0 {return {"drag","Use zero or more for drag, noise_frequency, stretch, soft and flipbook_speed"}}
@@ -269,17 +256,6 @@ particle_times_valid :: proc(times:[PARTICLE_CURVE_KEYS]f32) -> bool {
         if time<0 || time>1 || at>0 && time<times[at-1] {return false}
     }
     return true
-}
-
-// What the zeros of the mesh fields of an effect stand for: spin_axis X,
-// mesh_rotation none and mesh_scale 1 on each axis; the axis and the
-// quaternion of length one.
-particle_mesh_placement :: proc(spin_axis:[3]f32,mesh_rotation:[4]f32,mesh_scale:[3]f32) -> (axis:[3]f32,rotation:[4]f32,scale:[3]f32) {
-    axis,rotation,scale=spin_axis,mesh_rotation,mesh_scale
-    if length:=axis.x*axis.x+axis.y*axis.y+axis.z*axis.z;length>1e-12 {axis/=math.sqrt(length)} else {axis={1,0,0}}
-    if length:=rotation.x*rotation.x+rotation.y*rotation.y+rotation.z*rotation.z+rotation.w*rotation.w;length>1e-12 {rotation/=math.sqrt(length)} else {rotation={0,0,0,1}}
-    if scale=={} {scale={1,1,1}}
-    return
 }
 
 // The first field of the effect with a number that is not finite.

@@ -100,56 +100,6 @@ particle_lights_cast_shadows_only_when_the_effect_asks :: proc(t:^testing.T) {
     testing.expect(t,found && value.kind==.Bool && value.offset==offset_of(Particle_Info,light_shadows))
 }
 
-// The facing, spin axis, rotation and scale of the mesh of Mesh particles
-// are written and read back as they are; their zeros stand for X, no turn
-// and a scale of one.
-@(test)
-mesh_particles_keep_their_facing_axis_rotation_and_scale :: proc(t:^testing.T) {
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    info:=PARTICLE_DEFAULTS
-    info.render,info.facing,info.spin_axis=.Mesh,.Camera_Plane,{0,0,2}
-    info.mesh_rotation,info.mesh_scale={0,0.70710677,0,0.70710677},{0.5,3,0.25}
-    path:=fmt.tprintf("%s/blade.particle",base.test_folder(t,"effect"))
-    testing.expect_value(t,particle_save(path,&types,{id={3,4},info=info}),asset.Error.None)
-    a:asset.Asset
-    testing.expect_value(t,asset.asset_load(&a,path),asset.Error.None)
-    defer asset.asset_close(&a)
-    view,error:=particle_view(&a,&types)
-    testing.expect_value(t,error,asset.Error.None)
-    if error!=.None {return}
-    testing.expect(t,view.info^==info)
-    testing.expect_value(t,view.info.facing,Particle_Facing.Camera_Plane)
-    testing.expect_value(t,view.info.mesh_scale,[3]f32{0.5,3,0.25})
-    for field in ([?]string{"facing","spin_axis","mesh_rotation","mesh_scale"}) {
-        _,found:=particle_value_at(field)
-        testing.expectf(t,found,"an instance can change %s",field)
-    }
-
-    axis,rotation,scale:=particle_mesh_placement(info.spin_axis,info.mesh_rotation,info.mesh_scale)
-    testing.expect_value(t,axis,[3]f32{0,0,1})
-    testing.expect(t,abs(rotation.y-0.70710677)<1e-6 && abs(rotation.w-0.70710677)<1e-6)
-    testing.expect_value(t,scale,info.mesh_scale)
-    axis,rotation,scale=particle_mesh_placement({},{},{})
-    testing.expect(t,axis==[3]f32{1,0,0} && rotation==[4]f32{0,0,0,1} && scale==[3]f32{1,1,1})
-
-    bad:=info
-    bad.mesh_scale.y=math.inf_f32(1)
-    testing.expect_value(t,particle_validate({info=&bad}).field,"mesh_scale")
-    bad=info
-    bad.mesh_rotation.w=math.nan_f32()
-    testing.expect_value(t,particle_validate({info=&bad}).field,"mesh_rotation")
-    bad=info
-    bad.spin_axis.x=math.nan_f32()
-    testing.expect_value(t,particle_validate({info=&bad}).field,"spin_axis")
-    bad=info
-    bad.mesh_scale.z=-1
-    testing.expect_value(t,particle_validate({info=&bad}).field,"mesh_scale")
-    bad=info
-    bad.facing=Particle_Facing(7)
-    testing.expect_value(t,particle_validate({info=&bad}).field,"facing")
-    testing.expect_value(t,particle_save(path,&types,{id={3,4},info=bad}),asset.Error.Invalid)
-}
-
 @(test)
 invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
     Case :: struct {change:proc(p:^Particle_Info),field:string}

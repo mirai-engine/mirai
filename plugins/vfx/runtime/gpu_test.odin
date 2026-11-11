@@ -361,63 +361,6 @@ mesh_particles_of_a_blending_material_cover_by_their_alpha :: proc(t: ^testing.T
 	expect_clean(t, f.device)
 }
 
-// A Mesh particle facing its entity scales its mesh on each axis, turns it by
-// the rotation of the mesh, then by its own rotation about the spin axis: a
-// cube stretched along X, turned to Z by the mesh and to Y by its rotation
-// about X, stands as a bar. One facing the camera points its X at it and its
-// Z across, level: a cube stretched along Z lies across the view.
-@(test)
-mesh_particles_face_scale_and_turn_their_mesh_as_their_effect_says :: proc(t: ^testing.T) {
-	f := new(Gpu_Fixture)
-	defer free(f)
-	settings := test_settings()
-	settings.taa = false
-	if !gpu_fixture_init(t, f, 128, 96, settings) {return}
-	defer gpu_fixture_destroy(f)
-	r := &f.renderer
-	red := gpu.DEFAULT_MATERIAL
-	red.base_color, red.alpha_mode = {1, 0.05, 0.05}, .Blend
-	gpu.materials_set(r, {red})
-	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
-	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, 0, -2}, {12, 12, 0.2}), tint = {0.1, 0.1, 0.1}}},true)
-	camera := gpu.Camera{position = {0, 0, 5}, forward = {0, 0, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	bar := test_emitter(1, {-1, 0.4, 0})
-	bar.render, bar.mesh, bar.material, bar.blended, bar.blend = .Mesh, f.cube_range, 1, true, .Alpha
-	bar.lifetime, bar.size, bar.soft, bar.relative, bar.intensity = {10, 10}, {0.5, 0.5}, 0, true, 1
-	half := math.sqrt(f32(0.5))
-	bar.facing, bar.mesh_scale, bar.mesh_rotation = .Entity, {4, 1, 1}, {0, half, 0, half}
-	bar.spin_axis, bar.rotation = {3, 0, 0}, {math.PI / 2, math.PI / 2}
-	across := bar
-	across.id, across.transform, across.previous = 2, trs({1.2, -1.6, 0}, {1, 1, 1}), trs({1.2, -1.6, 0}, {1, 1, 1})
-	across.facing, across.mesh_scale, across.mesh_rotation, across.spin_axis, across.rotation = .Camera_Position, {1, 1, 4}, {}, {}, {}
-	DT :: f32(1.0 / 60)
-	for i in 0 ..< 8 {
-		bar.spawns = test_burst(1) if i == 0 else {}
-		across.spawns = bar.spawns
-		testing.expect(t, frame_emitters(f, &f.sync, {bar, across}, DT))
-		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) * DT}), r.error)
-	}
-	rhi.device_wait_idle(f.device)
-	pixels, w, _, ok := gpu.renderer_capture(r)
-	testing.expect(t, ok, r.error)
-	if !ok {return}
-	defer delete(pixels)
-	red_at :: proc(pixels: []u8, w: int, r: ^gpu.Renderer, camera: gpu.Camera, p: [3]f32) -> bool {
-		c := pixel(pixels, w, project(r, camera, p))
-		return c[0] > c[1] + 60
-	}
-	// The bar stands 2 m tall and 0.5 m wide about its particle.
-	testing.expect(t, red_at(pixels, w, r, camera, {-1, 1.2, 0.25}), "the bar must reach up to 0.8 m above its particle")
-	testing.expect(t, red_at(pixels, w, r, camera, {-1, -0.4, 0.25}), "the bar must reach down to 0.8 m below its particle")
-	testing.expect(t, !red_at(pixels, w, r, camera, {-1.7, 0.4, 0.25}), "the bar must not lie along X")
-	testing.expect(t, !red_at(pixels, w, r, camera, {-1, 1.7, 0.25}), "the bar must end 1 m above its particle")
-	// The one facing the camera lies 2 m across, level, and 0.5 m tall.
-	testing.expect(t, red_at(pixels, w, r, camera, {1.9, -1.6, 0.25}), "the mesh facing the camera must lie across the view")
-	testing.expect(t, red_at(pixels, w, r, camera, {0.5, -1.6, 0.25}), "the mesh facing the camera must lie across the view")
-	testing.expect(t, !red_at(pixels, w, r, camera, {1.2, -0.9, 0.25}), "the mesh facing the camera must be level")
-	expect_clean(t, f.device)
-}
-
 @(test)
 particle_lists_given_between_frames_add_up :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)

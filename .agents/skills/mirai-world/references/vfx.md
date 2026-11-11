@@ -30,18 +30,7 @@ version asks to write it again). An effect is like a material: entities name it
     without light: nits, or what the exposed image shows, the default), size and color curves over
     life, how it is drawn (`render`, `blend`, `lit`, `sort`, `material`, `mesh`) and sub-UV
     (`flipbook`, `flipbook_speed`);
-  - placement of `Mesh` particles: `facing` (`Particle_Facing`),
-    `spin_axis`, `mesh_rotation` (a quaternion x y z w) and `mesh_scale` (per axis, times `size`).
-    A vertex `v` goes to `position + W(F · R_axis(rotation) · Q_mesh · (v ⊙ mesh_scale · size))`:
-    `W` is the sim-to-world vector transform (`local_space`), `rotation` already holds `spin · age`,
-    `R_axis` turns about the normalized `spin_axis`, and `F` is the frame of `facing`: `Entity` the
-    axes of the simulation space; `Camera_Position` X toward the camera, Z = X × up with up = world
-    +Y (world ∓X when X is within 0.99 of it), Y = Z × X; `Camera_Plane` the same with X = −camera
-    forward and up = camera up. `Random` (the default) keeps the old turn about an axis of each
-    particle's own instead of `F · R_axis` and ignores `spin_axis`; `mesh_rotation` and
-    `mesh_scale` apply to every facing. Zeros stand for X, no turn and a scale of one
-    (`particle_mesh_placement`).
-    `mesh_scale` takes zero or more; the editor's preview reach grows by its largest component;
+  - a `Mesh` particle turns its mesh by its `rotation` (and `spin`) about an axis of its own;
   - lights: up to `lights` of its particles light the scene; they cast shadows only with
     `light_shadows` ([lights](#particle-lights));
   - sub effect (`trigger`, `sub_particle`, `sub_count`), what the game hears from its particles
@@ -506,8 +495,8 @@ In each view:
 - **meshes** (`Gbuffer`): `Mesh` particles (but those whose material blends) in the G-buffer with
   `particle_mesh.vert` and the
   engine's fragment, or that of the Surface program of their materials, one draw per program
-  (`pass_mesh_programs`): placed by their facing, rotation and mesh scale (`particle_mesh_turn` of
-  `particles.slang`, normals by the inverse of the scale), motion vectors from their velocity
+  (`pass_mesh_programs`): turned by their rotation about an axis of their own
+  (`particle_rotation` of `particles.slang`), motion vectors from their velocity
   and the emitter's material or the mesh's, which the plugin tells the renderer each frame
   (`frame_gbuffer_mesh`) so that the views store their reflectance and their layers. Everything
   that follows lights, shades and reflects them. Each one draws without indices the level 0

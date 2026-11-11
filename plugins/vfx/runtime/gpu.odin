@@ -145,10 +145,6 @@ Emitter_Desc :: struct {
     material:erender.Material_Handle, // its Surface program, or its base color (its texture is the flipbook), opacity and emission
     mesh:[3]u32,              // of Mesh particles: the vertices of a draw of its clusters (erender.mesh_draw_range) and the mesh of the scene
     blended:bool,             // of Mesh particles: its material blends (alpha mode Blend), so they are drawn over the lit scene with the sprites
-    facing:effect.Particle_Facing, // of Mesh particles: the frame their mesh turns in
-    spin_axis:[3]f32,         // of Mesh particles: what rotation and spin turn them about in that frame; zeros: X
-    mesh_rotation:[4]f32,     // of Mesh particles: a quaternion (x y z w) the mesh takes before rotation; zeros: none
-    mesh_scale:[3]f32,        // of Mesh particles: of the mesh on each axis, times size; zeros: 1 on each
     stretch:f32,              // Velocity: seconds of motion the sprite spans
     soft:f32,                 // metres over which a sprite fades into the surface behind it
     intensity:f32,            // multiplies the color
@@ -217,7 +213,7 @@ Gpu_Emitter :: struct {
     collide:[4]f32,     // bounce, friction, life lost
     look:[4]f32,        // stretch, soft, intensity, flipbook speed
     attractor:[4]f32,
-    mesh:[4]u32,        // vertex count (index count of a sprite), the mesh, Particle_Facing, material row
+    mesh:[4]u32,        // vertex count (index count of a sprite), the mesh, 0, material row
     flipbook:[4]u32,    // columns, rows
     size_curve,size_times:[2][4]f32,
     gradient:[effect.PARTICLE_CURVE_KEYS][4]f32,
@@ -229,11 +225,8 @@ Gpu_Emitter :: struct {
     light:[4]f32,       // intensity (cd), range (m), radius (m; 0: half the size of the particle)
     lights:[4]u32,      // its share of the room of the frame (light_share): x the first of its lights with shadows, y how many; z, w those without
     data:[4]u32,        // bytes of the data buffer to the Attributes of its range, bytes of those of a particle, its age (f32 bits), particles it started
-    mesh_rotation:[4]f32, // of Mesh particles: the quaternion (x y z w) of length one the mesh takes before the rotation of the particle
-    mesh_axis:[4]f32,   // of Mesh particles: xyz the axis of length one rotation turns them about in the frame of mesh.z
-    mesh_scale:[4]f32,  // of Mesh particles: xyz of the mesh on each axis, times the size of the particle; w the largest
 }
-#assert(size_of(Gpu_Emitter)==912)
+#assert(size_of(Gpu_Emitter)==864)
 
 // Per emitter on the GPU: counters and its draw.
 Gpu_State :: struct {
@@ -805,11 +798,7 @@ emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
     g.collide={clamp(d.bounce,0,1),clamp(d.friction,0,1),clamp(d.collision_life,0,1),0}
     g.look={max(d.stretch,0),max(d.soft,0),d.intensity,max(d.flipbook_speed,0)}
     g.attractor={d.attractor.x,d.attractor.y,d.attractor.z,d.attractor_strength}
-    g.mesh={vertex_count,mesh,u32(d.facing),u32(d.material)}
-    axis,rotation,scale:=effect.particle_mesh_placement(d.spin_axis,d.mesh_rotation,d.mesh_scale)
-    g.mesh_rotation=rotation
-    g.mesh_axis={axis.x,axis.y,axis.z,0}
-    g.mesh_scale={scale.x,scale.y,scale.z,max(scale.x,scale.y,scale.z)}
+    g.mesh={vertex_count,mesh,0,u32(d.material)}
     g.flipbook={max(d.flipbook[0],1),max(d.flipbook[1],1),0,0}
     g.size_curve=transmute([2][4]f32)d.size_curve.values
     g.size_times=transmute([2][4]f32)d.size_curve.times

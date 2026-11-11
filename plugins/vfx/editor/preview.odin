@@ -152,10 +152,6 @@ effect_reach :: proc(a:^host.Assets,info:^effect.Particle_Info) -> (low,high:[3]
     size:f32=0
     for value in info.size_over_life.values {size=max(size,value)}
     size*=max(info.size[0],info.size[1],0)*0.5
-    if info.render==.Mesh {
-        _,_,scale:=effect.particle_mesh_placement(info.spin_axis,info.mesh_rotation,info.mesh_scale)
-        size*=max(scale.x,scale.y,scale.z)
-    }
     start_low,start_high:=low,high
     for axis in 0..<3 {
         fastest:=[2]f32{min(info.velocity[0][axis],info.velocity[1][axis])-speed,max(info.velocity[0][axis],info.velocity[1][axis])+speed}

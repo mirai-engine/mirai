@@ -45,9 +45,8 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     uint index = particle_drawn(params.emitter, instance_id);
     Particle p = particles[index];
     Particle_Look look = particle_program_look(params.emitter, index, p);
-    float3x3 turn = particle_mesh_turn(params.emitter, p);
-    float3 scale = e.mesh_scale.xyz;
-    float3 world = particle_world(params.emitter, p.position) + particle_world_vector(params.emitter, mul(turn, v.position * scale * look.size));
+    float3x3 rotation = particle_rotation(p.seed, p.rotation);
+    float3 world = particle_world(params.emitter, p.position) + particle_world_vector(params.emitter, mul(rotation, v.position * look.size));
     output.position = view_clip(world);
     // The color of the mesh tints it as it tints the mesh in the G-buffer.
     output.out_color = float4(material_vertex_tint(material_row(e.mesh.w), v.color.rgb), 1.0) * look.color;
@@ -58,6 +57,6 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     output.out_world = world;
     output.out_data0 = look.data[0]; output.out_data1 = look.data[1]; output.out_data2 = look.data[2]; output.out_data3 = look.data[3];
     output.out_given = look.given;
-    output.out_random_radius = float2(look.random, look.size * e.mesh_scale.w * 0.5);
+    output.out_random_radius = float2(look.random, look.size * 0.5);
     return output;
 }

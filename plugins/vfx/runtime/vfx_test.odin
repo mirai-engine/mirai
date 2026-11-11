@@ -632,31 +632,6 @@ emitter_rows_are_relative_to_the_origin :: proc(t:^testing.T) {
     testing.expect_value(t,rows[2],[4]f32{0,0,2,215.75})
 }
 
-// What an effect says of how its Mesh particles face and turn reaches the row
-// of their emitter, its zeros as what they stand for: Random, X, no turn and
-// a scale of one, which is how they turned before they could say more.
-@(test)
-mesh_facing_reaches_the_row_of_the_emitter :: proc(t:^testing.T) {
-    // Without assets, the effect draws sprites: the mesh fields reach the row all the same.
-    info:=effect.PARTICLE_DEFAULTS
-    app:host.App
-    s:Pool_Slot
-    s.desc,_=emitter_desc(&info,app.assets,app.renderer,1)
-    g:Gpu_Emitter
-    emitter_row(&g,&s,8)
-    testing.expect_value(t,g.mesh.z,u32(effect.Particle_Facing.Random))
-    testing.expect_value(t,g.mesh_rotation,[4]f32{0,0,0,1})
-    testing.expect_value(t,g.mesh_axis,[4]f32{1,0,0,0})
-    testing.expect_value(t,g.mesh_scale,[4]f32{1,1,1,1})
-    info.facing,info.spin_axis,info.mesh_rotation,info.mesh_scale=.Camera_Position,{0,2,0},{0,0,2,0},{0.5,3,1}
-    s.desc,_=emitter_desc(&info,app.assets,app.renderer,1)
-    emitter_row(&g,&s,8)
-    testing.expect_value(t,g.mesh.z,u32(effect.Particle_Facing.Camera_Position))
-    testing.expect_value(t,g.mesh_rotation,[4]f32{0,0,1,0})
-    testing.expect_value(t,g.mesh_axis,[4]f32{0,1,0,0})
-    testing.expect_value(t,g.mesh_scale,[4]f32{0.5,3,1,3})
-}
-
 // The room for the lights of the particles has two parts: an emitter takes
 // its share from the part of its kind, in the order of the slots and as many
 // as the world asked for, and one of the other kind has an empty share where
