@@ -401,6 +401,7 @@ section_node :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
         bind_only(p,"Open",n.bind_value[:],.Number,"A bool of the game: it is open while it is true; unbound, a click on its parent opens it")
     case .List:
         bind_only(p,"Items",n.bind_items[:],.Items,"An array of structs or of entities: it builds the node it holds once for each, and that node's paths start at its element")
+        bind_only(p,"Key",n.bind_key[:],.Key,"A field of its element that tells its items apart, so an item that moves keeps its focus, states and transition; an entity tells itself apart")
         if bindable(p,"Elements",n.bind_value[:],.Number,"How many of the items it builds") {edit(u,"Elements",value_row(p,"Elements",Count_Value,&n.count,d.count,"How many times it builds the node it holds"))}
     case .View:
         bind_only(p,"Camera",n.bind_value[:],.Entity,"The entity whose camera it shows")

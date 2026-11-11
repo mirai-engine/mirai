@@ -958,7 +958,7 @@ records_override_field :: proc(r:^Records,override:int,field:ui.Node_Field,on:bo
     case .Animations: v.anims=merge_set(&m,n.anims) if source!=nil else n.anims
     case .Bindings:
         v.bind_text=n.bind_text;v.bind_value=n.bind_value;v.bind_visible=n.bind_visible;v.bind_selected=n.bind_selected;v.bind_disabled=n.bind_disabled
-        v.bind_items=n.bind_items;v.bind_image=n.bind_image;v.bind_tint=n.bind_tint;v.bind_variant=n.bind_variant;v.data=n.data
+        v.bind_items=n.bind_items;v.bind_key=n.bind_key;v.bind_image=n.bind_image;v.bind_tint=n.bind_tint;v.bind_variant=n.bind_variant;v.data=n.data
     case .Visibility: v.selected,v.disabled=n.selected,n.disabled
     case .Variant:    v.variant=n.variant
     case .Layer:      v.layer=n.layer

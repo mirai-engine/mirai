@@ -85,7 +85,7 @@ call_read :: proc(call:^api.Call,reading:^author.Reading) -> bool {
 // texts: those of the project, which a document reads the text of a key from and sets it in.
 @(private)
 tree_args :: proc(s:^editor.Session,reading:^author.Reading,texts:^author.Texts) -> (args:author.Tree_Args,ok:bool) {
-    texts^,_=editor.texts_open(s)
+    texts^=editor.texts_open(s)
     return author.tree_args(reading,author.assets_of(s.app.assets),s.app.info,texts)
 }
 
