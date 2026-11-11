@@ -2,10 +2,12 @@ package render
 
 import "base:runtime"
 import "core:math/rand"
+import "core:mem"
 import "core:testing"
 import "mirai:core"
 import "mirai:host"
 import gpu "mirai:render"
+import "mirai:std/base"
 
 // What render_sync gives the renderer is what changed: nothing in a frame
 // where nothing did, the instances that moved, and of the lights only the one
@@ -58,13 +60,19 @@ the_sync_gives_the_renderer_only_what_changed :: proc(t:^testing.T) {
     testing.expect_value(t,len(s.lights),7)
 }
 
-// The instances the renderer has, by the object each is drawn for.
+// The instances the renderer has, by the object each is drawn for, with what
+// each gives over its rows in place of where the pool holds it.
 @(private="file")
 given :: proc(t:^testing.T,s:^gpu.Scene_State) -> (by_object:map[u64]gpu.Gpu_Instance) {
     for instance,i in s.instances {
         object:=s.instance_keys[i].object
         testing.expectf(t,object not_in by_object,"object %x is drawn twice",object)
-        by_object[object]=instance
+        held:=instance
+        if at:=held.material_values;at!=0 {
+            block:=s.indices[at-1:][:gpu.INSTANCE_VALUES_HEADER+int(s.indices[at-1])*gpu.INSTANCE_VALUE_WORDS]
+            held.material_values=u32(base.hash64(mem.slice_to_bytes(block)))|1
+        }
+        by_object[object]=held
     }
     return
 }
@@ -237,8 +245,10 @@ a_posed_mesh_is_the_instance_of_its_entity_and_a_visual_one_hides_it :: proc(t:^
     for pass in 0..<4 {
         shown:=pass==1 || pass==2
         if shown {
-            // Faded: it shows a row derived for it, which goes when it stops coming.
-            extra,usable:=mesh_instance(&f.assets,{shape=.Cone},1,Material_Values{color={0,1,0,0.5}})
+            // With a texture of its own it shows a row derived for it, which goes when it stops coming.
+            look:=Material_Values{color={0,1,0,1}}
+            material_screen(&look,0,7)
+            extra,usable:=mesh_instance(&f.assets,{shape=.Cone},1,look)
             extra.object_id,extra.replace_source=u64(a),true
             // One of a mesh the renderer does not have is not drawn, and takes nothing with it.
             lost:=extra
@@ -254,7 +264,9 @@ a_posed_mesh_is_the_instance_of_its_entity_and_a_visual_one_hides_it :: proc(t:^
     // One that replaces nothing leaves the world as it is, and still gives back its row.
     for pass in 0..<3 {
         if pass==0 {
-            ghost,usable:=mesh_instance(&f.assets,{shape=.Cone},1,Material_Values{color={1,0,0,0.25}})
+            look:=Material_Values{color={1,0,0,1}}
+            material_screen(&look,0,9)
+            ghost,usable:=mesh_instance(&f.assets,{shape=.Cone},1,look)
             testing.expect(t,usable && host.extras_instance_add(&f.app.extras,ghost))
         }
         touched:=frame(f,&posed)

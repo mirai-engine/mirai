@@ -150,7 +150,7 @@ bool hit_mean(Instance inst, float t) {
 // of its program (surface_coverage.slang), which is that of the default
 // material when the program does not change it.
 float hit_alpha(Instance inst, Material m, Mesh_Triangle tri, float3 weights, float2 uv, float2 uv1, float2 lod, float t) {
-    if (m.program_id == 0u) return material_base_color(material_instanced(m, inst.material_values), uv, uv1, lod, float3(1), true).a;
+    if (m.program_id == 0u) return material_base_color(m, uv, uv1, lod, float3(1), true).a;
     float3 normal = transform_normal(inst.world_inv, tri.a.normal * weights.x + tri.b.normal * weights.y + tri.c.normal * weights.z);
     normal = material_ray_normal(m, inst, normal, weights, tri, uv, uv1, lod);
     float3 position = transform_point(inst.world, tri.a.position * weights.x + tri.b.position * weights.y + tri.c.position * weights.z);
@@ -173,7 +173,7 @@ bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, uint 
     if (blend == BLEND_MEANS && (inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u) return hit_mean(inst, t);
 #endif
     Mesh mesh = meshes[instance_mesh(inst)];
-    Material m = material_row(material_of(inst, mesh_primitive_material(mesh, primitive)));
+    Material m = material_row(material_of(inst, mesh_primitive_material(mesh, primitive)), inst.material_values);
     if (m.alpha_mode == ALPHA_BLEND) {
 #ifdef MIRAI_RAY_FILTERS
         if (blend == BLEND_FILTERS) {

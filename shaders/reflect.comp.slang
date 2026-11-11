@@ -167,7 +167,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
         float reach = params.max_distance;
         Material medium = (Material)0;
         if (inside) {
-            medium = material_row(material_of(scene_instance(params.medium - 1u), 0u));
+            Instance solid = scene_instance(params.medium - 1u);
+            medium = material_row(material_of(solid, 0u), solid.material_values);
             reach = min(reach, material_reach(medium, REFLECT_MEDIUM_CUT));
         }
         Ray_Path path;

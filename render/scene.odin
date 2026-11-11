@@ -783,8 +783,8 @@ tlas_refs_classify :: proc(s: ^Scene_State) {
 @(private)
 // reflectance: one of its opaque materials reflects other than the default
 // dielectric, which the albedo and metallic of the G-buffer give by themselves.
-// glass_layered: one of its blended materials has layers. given: the values
-// the instance gives its rows (instance_material_values_words).
+// glass_layered: one of its blended materials has layers. given: what the
+// instance gives its rows (Gpu_Instance.material_values).
 instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:[32]u32, given: u32 = 0) -> (tested, blended, glass, reflectance, layered, solid, glass_layered: bool) {
     palette:=slots
     defaults:=asset.MATERIAL_DEFAULTS
@@ -794,18 +794,18 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
         m:=asset.Alpha_Mode.Opaque
         if int(row)<len(s.materials) {
             values:=&s.materials[row]
-            m=asset.Alpha_Mode(values.alpha_mode)
-            given_specular,given_layers:=instance_values_class(s,given,row)
-            departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior || given_specular
+            shown:=instance_values_class(s,given,row)
+            m=shown.mode
+            departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || shown.ior!=defaults.ior || shown.specular
             if m != .Blend && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {reflectance=true}
             lit:=transmute(asset.Material_Layers)values.layers-{.Unlit}
-            if card(lit)>0 || given_layers {
+            if card(lit)>0 || shown.layered {
                 if m == .Blend {glass_layered=true} else {layered=true}
             }
+            if m == .Blend {solid ||= shown.transmission > 0 && values.thickness > 0}
         }
         tested ||= m != .Opaque
         blended ||= m == .Blend
-        if m == .Blend && int(row)<len(s.materials) {solid ||= s.materials[row].transmission > 0 && s.materials[row].thickness > 0}
         glass &&= m == .Blend
     }
     // The layers of a material reach the G-buffer with its reflectance.
@@ -1407,8 +1407,7 @@ tlas_settle :: proc(s: ^Scene_State) {
 // their indices. It touches each instance alone: no row of the material
 // table, no texture, no other instance. False, with nothing changed, when the
 // lists differ in length or name an instance that the set did not have.
-// Values that change whether it reflects or has layers class every instance
-// again.
+// Values that change how it is traced and drawn class every instance again.
 scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, values: []Instance_Material_Values = nil) -> bool {
 	s := &r.scene
 	if len(descs) != len(tints) || len(descs) != len(emissions) || values != nil && len(descs) != len(values) {return false}
@@ -1426,10 +1425,12 @@ scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, values:
 		if values != nil {
 			given := values[at]
 			mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
-			_, _, _, reflected, layered, _, glass_layered := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
+			was: [7]bool
+			was[0], was[1], was[2], was[3], was[4], was[5], was[6] = instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
 			changed ||= instance_material_values_give(r, inst, &given)
-			_, _, _, reflects, layers, _, glass_layers := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
-			classify ||= reflects != reflected || layers != layered || glass_layers != glass_layered
+			now: [7]bool
+			now[0], now[1], now[2], now[3], now[4], now[5], now[6] = instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
+			classify ||= now != was
 		}
 		if !changed {continue}
 		instance_changed_near(s, inst, glowed || instance_material_values_glow(s, inst.material_values))
@@ -1439,27 +1440,54 @@ scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, values:
 	return true
 }
 
-// The words of the values of an instance in the index pool (Gpu_Instance.values); none for 0.
+// What an instance gives over its rows in the index pool
+// (Gpu_Instance.material_values): its header and its values; none for 0.
 @(private)
-instance_material_values_words :: proc "contextless" (s: ^Scene_State, values: u32) -> []u32 {
-	if values == 0 || int(values) > len(s.indices) {return nil}
-	count := int(min(s.indices[values - 1], INSTANCE_VALUES_MAX))
-	if int(values) + count * INSTANCE_VALUE_WORDS > len(s.indices) {return nil}
-	return s.indices[values:][:count * INSTANCE_VALUE_WORDS]
+instance_material_values_block :: proc "contextless" (s: ^Scene_State, values: u32) -> []u32 {
+	if values == 0 || int(values) + INSTANCE_VALUES_HEADER - 1 > len(s.indices) {return nil}
+	size := INSTANCE_VALUES_HEADER + int(min(s.indices[values - 1], INSTANCE_VALUES_MAX)) * INSTANCE_VALUE_WORDS
+	if int(values) - 1 + size > len(s.indices) {return nil}
+	return s.indices[values - 1:][:size]
 }
 
-// What the values an instance gives a row change of how it is drawn: a
-// specular of its own reflects, and a layer reaches the layers target.
+// The words of its values alone.
+@(private)
+instance_material_values_words :: proc "contextless" (s: ^Scene_State, values: u32) -> []u32 {
+	block := instance_material_values_block(s, values)
+	return block[INSTANCE_VALUES_HEADER:] if len(block) > 0 else nil
+}
+
+// What of a row decides how an instance that shows it is traced and drawn,
+// with what the instance gives it: a specular of its own reflects, and a
+// layer reaches the layers target.
 @(private = "file")
-instance_values_class :: proc "contextless" (s: ^Scene_State, values, row: u32) -> (specular, layered: bool) {
-	words := instance_material_values_words(s, values)
+Instance_Row :: struct {
+	mode:              asset.Alpha_Mode,
+	transmission, ior: f32,
+	specular, layered: bool,
+}
+
+@(private = "file")
+instance_values_class :: proc "contextless" (s: ^Scene_State, values, row: u32) -> (c: Instance_Row) {
+	held := &s.materials[row]
+	c.mode, c.transmission, c.ior = asset.Alpha_Mode(held.alpha_mode), held.transmission, held.ior
+	block := instance_material_values_block(s, values)
+	if len(block) == 0 {return}
+	words := block[INSTANCE_VALUES_HEADER:]
 	for at := 0; at + INSTANCE_VALUE_WORDS <= len(words); at += INSTANCE_VALUE_WORDS {
 		if words[at] != row {continue}
+		value := transmute(f32)words[at + 2]
 		#partial switch Instance_Material_Value_Target(words[at + 1] & 0xff) {
-		case .Specular: specular = true
-		case .Coat ..= .Anisotropy_Rotation, .Diffuse_Transmission, .Diffuse_Transmission_Color: layered = true
+		case .Specular: c.specular = true
+		case .Coat ..= .Anisotropy_Rotation, .Diffuse_Transmission, .Diffuse_Transmission_Color: c.layered = true
+		case .Ior: c.ior = max(value, 1)
+		case .Transmission: c.transmission = clamp(value, 0, 1)
+		case .Alpha_Mode: c.mode = asset.Alpha_Mode(int(clamp(value, 0, f32(len(asset.Alpha_Mode) - 1)) + 0.5))
 		}
 	}
+	// As gpu_material gives a row its mode, and then its fade.
+	if c.mode == .Mask {c.transmission = 0} else if c.transmission > 0 && c.mode == .Opaque {c.mode = .Blend}
+	if c.mode == .Opaque && transmute(f32)block[1] > 0 {c.mode = .Blend}
 	return
 }
 
@@ -1473,28 +1501,29 @@ instance_material_values_glow :: proc "contextless" (s: ^Scene_State, values: u3
 	return false
 }
 
-// Puts the values of an instance in the index pool in place of those it had:
-// over them when they are as many, else in room of their own. False when
-// they are those it had, or without room for them (stats.problem says what
-// is missing): the instance keeps what it had.
+// Puts what an instance gives over its rows in the index pool in place of
+// what it had: over it when it is as much, else in room of its own. False
+// when it is what it had, or without room for it (stats.problem says what is
+// missing): the instance keeps what it had.
 @(private)
 instance_material_values_give :: proc(r: ^Renderer, inst: ^Gpu_Instance, given: ^Instance_Material_Values) -> (changed: bool) {
 	s := &r.scene
-	count := min(int(given.count), len(given.entries))
-	entries := slice.reinterpret([]u32, given.entries[:count])
-	held := instance_material_values_words(s, inst.material_values)
-	if slice.equal(held, entries) {return false}
-	if len(held) == len(entries) {
-		copy(held, entries)
-		range_add(&s.pool_dirty[.Index], {inst.material_values, u32(len(held))})
+	given.count = min(given.count, len(given.entries))
+	given.fade = min(given.fade, 1) if given.fade > 0 else 0
+	block := (cast([^]u32)given)[:INSTANCE_VALUES_HEADER + int(given.count) * INSTANCE_VALUE_WORDS]
+	if given.count == 0 && given.fade == 0 {block = nil}
+	held := instance_material_values_block(s, inst.material_values)
+	if slice.equal(held, block) {return false}
+	if len(held) == len(block) {
+		copy(held, block)
+		range_add(&s.pool_dirty[.Index], {inst.material_values - 1, u32(len(held))})
 		return true
 	}
 	stored: u32
-	if count > 0 {
-		if !pool_room(r, .Index, len(entries) + 1) || reserve(&s.indices, len(s.indices) + len(entries) + 1) != nil {return false}
+	if len(block) > 0 {
+		if !pool_room(r, .Index, len(block)) || reserve(&s.indices, len(s.indices) + len(block)) != nil {return false}
 		first := u32(len(s.indices))
-		append(&s.indices, u32(count))
-		append(&s.indices, ..entries)
+		append(&s.indices, ..block)
 		stored = pool_store(&s.indices, &s.pool_free[.Index], &s.pool_dirty[.Index], first) + 1
 	}
 	instance_material_values_release(s, inst)
@@ -1502,11 +1531,11 @@ instance_material_values_give :: proc(r: ^Renderer, inst: ^Gpu_Instance, given: 
 	return true
 }
 
-// Gives back the words of the values of an instance, which has none after.
+// Gives back the words of what an instance gives over its rows: it gives nothing after.
 @(private)
 instance_material_values_release :: proc(s: ^Scene_State, inst: ^Gpu_Instance) {
-	if words := instance_material_values_words(s, inst.material_values); inst.material_values != 0 {
-		pool_release(&s.indices, &s.pool_free[.Index], inst.material_values - 1, u32(len(words)) + 1)
+	if block := instance_material_values_block(s, inst.material_values); len(block) > 0 {
+		pool_release(&s.indices, &s.pool_free[.Index], inst.material_values - 1, u32(len(block)))
 	}
 	inst.material_values = 0
 }

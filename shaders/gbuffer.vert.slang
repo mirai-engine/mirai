@@ -84,7 +84,7 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
     output.out_normal = transform_normal(inst.world_inv, v.normal);
     output.out_tangent = instance_tangent(inst, v.tangent);
     output.out_material = material;
-    output.out_color = instance_color(inst, material_row(output.out_material), v.color.rgb);
+    output.out_color = instance_color(inst, material_row(output.out_material, inst.material_values), v.color.rgb);
     output.out_vertex_color = v.color;
     // A far mesh: its emission joins that of the instance, and its roughness
     // and metallic replace those of its material.

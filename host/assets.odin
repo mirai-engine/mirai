@@ -1796,16 +1796,6 @@ assets_material_values :: proc(a:^Assets,row:u32) -> render.Material_Desc {
     return row>0 && int(row)<=len(a.material_descs)?a.material_descs[row-1]:render.DEFAULT_MATERIAL
 }
 
-// The row of a material seen through an opacity: its alpha is scaled and an
-// opaque material blends. Without room the material stays as it is.
-assets_material_faded :: proc(a:^Assets,row:u32,alpha:f32) -> u32 {
-    values:=assets_material_values(a,row)
-    values.opacity*=clamp(alpha,0,1)
-    if values.alpha_mode==.Opaque {values.alpha_mode=.Blend}
-    faded,ok:=assets_material_derive(a,values)
-    return ok?faded:row
-}
-
 // The layers a material draws over the instance that shows it: one per
 // enabled overlay whose material loads, in order. A layer is the row of its
 // material, or a derived row when the material that owns the overlay stores

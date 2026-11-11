@@ -17,7 +17,7 @@
 bool shadow_blended(uint2 place, out bool programmed) {
     Instance inst = scene_instance(place.x);
     Mesh mesh = meshes[instance_mesh(inst)];
-    Material m = material_row(material_of(inst, mesh_primitive_material(mesh, place.y)));
+    Material m = material_row(material_of(inst, mesh_primitive_material(mesh, place.y)), inst.material_values);
     programmed = m.program_id != 0u;
     return m.alpha_mode == ALPHA_BLEND;
 }

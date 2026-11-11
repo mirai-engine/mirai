@@ -149,7 +149,7 @@ Gpu_Instance :: struct {
 	glass:      Vec4, // written on the GPU by glass_mean.comp after every upload (glass_means_record)
 	slot_materials: [32]u32,
 	wet:        f32,    // 0 dry to 1 soaked, which the materials read (scene_set_instance_wet)
-	material_values: u32, // 1 + the word of the index pool where the values it gives over the rows of its materials start (Instance_Material_Values); 0: none
+	material_values: u32, // 1 + the word of the index pool where what it gives over the rows of its materials starts (Instance_Material_Values); 0: nothing
 	colors:     u32,    // its own color of each vertex of its mesh in the vertex pool, by index in the mesh (scene_set_instance_colors)
 	color_count: u32,   // the vertices of its mesh; 0: the colors of the mesh
 }
@@ -264,9 +264,10 @@ MESH_FLAG_COLORS :: abi.MESH_FLAG_COLORS
 MESH_FLAG_STREAMED :: abi.MESH_FLAG_STREAMED
 
 // What an instance gives over the rows of its materials, which the shaders
-// read where they evaluate one of those rows at a point of it. It costs the
+// read where they read one of those rows at a point of it. It costs the
 // instance its words in the index pool and no row of the material table.
 INSTANCE_VALUES_MAX :: abi.INSTANCE_VALUES_MAX
+INSTANCE_VALUES_HEADER :: abi.INSTANCE_VALUES_HEADER
 INSTANCE_VALUE_WORDS :: abi.INSTANCE_VALUE_WORDS
 // A value of the standard model an instance gives: the others are of the row.
 Instance_Material_Value_Target :: abi.Instance_Value
@@ -278,8 +279,10 @@ Instance_Material_Value :: struct {
 #assert(size_of(Instance_Material_Value) == INSTANCE_VALUE_WORDS * size_of(u32))
 Instance_Material_Values :: struct {
 	count:   u32,
+	fade:    f32, // how much of every row it fades out, 0 none to 1 all: an opaque row it fades blends
 	entries: [INSTANCE_VALUES_MAX]Instance_Material_Value,
 }
+#assert(offset_of(Instance_Material_Values, entries) == abi.INSTANCE_VALUES_HEADER * size_of(u32))
 
 // A value of the standard model, or of a number of the program of row
 // (target: the parameter), for the points of an instance that show row.

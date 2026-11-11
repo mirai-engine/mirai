@@ -3,6 +3,8 @@ package render
 import "core:reflect"
 import "core:strings"
 import "core:testing"
+import "mirai:asset"
+import "mirai:core"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
@@ -39,38 +41,48 @@ each_writer_of_material_values_changes_only_the_names_it_gives :: proc(t:^testin
     testing.expect(t,material_value(&o,"strength",1))
 }
 
-// What makes an entity show a row of its own and what its instance holds:
-// a value of the standard model the instance holds, or one a program may
-// have, asks for no row; a texture, or a value that changes how the surface
-// is drawn, does.
+// What an entity gives its materials by name, and its fade, are held by its
+// instance, which is traced and drawn by them; only a texture makes it show
+// a row of its own.
 @(test)
-only_what_changes_how_a_surface_is_drawn_asks_for_a_row :: proc(t:^testing.T) {
-    Case :: struct {name:string,row:bool}
-    cases:=[?]Case{
-        {"base_color",false},{"opacity",false},{"metallic",false},{"roughness",false},{"emission",false},
-        {"dissolve",false},{"progress",false},
-        {"specular",false},{"coat",false},{"anisotropy_rotation",false},{"unlit",false},{"emission_mode",false},
-        {"ior",true},{"transmission",true},{"alpha_mode",true},
-    }
-    for c in cases {
-        o:=MATERIAL_VALUES_DEFAULT
-        testing.expect(t,material_value(&o,c.name,0.5,1))
-        testing.expectf(t,material_values_slot(&o,1) && material_values_slot(&o,1,true)==c.row && !material_values_slot(&o,0,true),"%s",c.name)
-        testing.expect(t,!material_values_plain(&o))
-        _,instanced:=material_value_instanced(base.name_hash(c.name))
-        testing.expectf(t,!(instanced && c.row),"%s",c.name)
-    }
+only_a_texture_makes_an_entity_show_a_row_of_its_own :: proc(t:^testing.T) {
+    f:=new(Sync_Fixture);defer free(f)
+    if !sync_fixture_init(t,f) {return}
+    defer sync_fixture_destroy(f)
+    e:=sync_cube(f,0)
+    values:=MATERIAL_VALUES_DEFAULT
+    for name in ([]string{"ior","transmission","opacity","roughness","coat","dissolve"}) {testing.expect(t,material_value(&values,name,0.5))}
+    core.add(&f.world.values,e,values)
+    sync_frame(f)
+    s:=&f.renderer.scene
+    testing.expect(t,f.assets.stats.derived==0 && s.instances[0].material_values!=0 && len(s.translucent)==1,"its transmission makes the instance glass")
+    testing.expect(t,material_value(core.edit(&f.world.values,e),"transmission",0))
+    sync_frame(f)
+    testing.expect(t,f.assets.stats.derived==0 && len(s.translucent)==0)
+    core.edit(&f.world.values,e).color.a=0.5
+    sync_frame(f)
+    testing.expect(t,f.assets.stats.derived==0 && len(s.translucent)==1,"a fade blends the instance, and derives no row")
+    testing.expect(t,material_value(core.edit(&f.world.values,e),"alpha_mode",f32(asset.Alpha_Mode.Mask)))
+    sync_frame(f)
+    testing.expect(t,f.assets.stats.derived==0 && len(s.translucent)==0,"a masked one stays masked as it fades")
+    material_screen(core.edit(&f.world.values,e),0,7)
+    sync_frame(f)
+    testing.expect_value(t,f.assets.stats.derived,1)
     for field in MATERIAL_VALUE_FIELDS {
-        if field.held=={} {continue}
         target,_:=reflect.enum_name_from_value(field.held)
         testing.expectf(t,strings.to_lower(target,context.temp_allocator)==field.name,"%s is held as %s",field.name,target)
     }
+}
+
+// The names an entity gives a slot, and the textures it gives and takes away.
+@(test)
+values_and_textures_are_of_their_slot :: proc(t:^testing.T) {
     o:=MATERIAL_VALUES_DEFAULT
     testing.expect(t,material_values_plain(&o))
     o.color.g=0.5
     testing.expect(t,!material_values_plain(&o) && !material_values_slot(&o,0),"a color is of no slot")
     emission,normal:=base.name_hash("maps.emission"),base.name_hash("maps.normal")
-    testing.expect(t,material_texture(&o,emission,2,{},7) && material_values_slot(&o,2,true))
+    testing.expect(t,material_texture(&o,emission,2,{},7) && material_values_slot(&o,2))
     testing.expect(t,material_texture(&o,emission,2,{},9) && o.texture_count==1 && o.shown[0]==9,"a texture given again takes its place")
     for i in 1..<MATERIAL_VALUES_TEXTURES {testing.expect(t,material_texture(&o,normal,i%MATERIAL_SLOTS,{3,3}))}
     testing.expect(t,!material_texture(&o,base.name_hash("maps.coat"),0,{3,3}) && !material_texture(&o,emission,MATERIAL_SLOTS,{3,3}))

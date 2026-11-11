@@ -25,16 +25,17 @@ mode.
   instance gives over the rows of its materials lives with the instance, in words of the index
   pool that `Gpu_Instance.material_values` names: each value is for the points of the instance
   that show one row, and is a word of the parameters of the program of that row or a value of
-  `Instance_Material_Value_Target`. The shaders read them where they evaluate a row at a point of
-  an instance (`material_instanced`, `material_parameters`, from `ctx.material_values`), so raster,
-  ray hits, coverage and the vertex functions see the same. Another value touches the words of its
+  `Instance_Material_Value_Target`. The shaders read them wherever they read a row at a point of
+  an instance (`material_row(row, block)`, `material_parameters`, with `Instance.material_values`),
+  so culling, raster, ray hits, coverage, glass and the vertex functions see the same. Another value touches the words of its
   instance alone: no row, no texture residency, no other instance. A stage that draws no instance
   of a scene (the previews: `MIRAI_NO_INSTANCES`) reads none and does not bind the pool. A row
   holds its layer blocks also with their weight at zero, so a weight an instance gives takes the
-  rest from them. What chooses the passes and the glass media of a surface (alpha mode,
-  transmission, index of refraction) and textures are of the row. A specular or a layer an
-  instance gives counts, like the row's, for the passes of what reflects or has layers
-  (`instance_alpha`): one that changes them classes every instance again.
+  rest from them. Textures are of the row. The fade of an instance
+  (`Instance_Material_Values.fade`) scales the opacity of every row it shows and blends the
+  opaque ones. What an instance gives counts, like the row's, for how it is traced and drawn
+  (`instance_alpha`: masked, blended, glass, reflecting, with layers): a value that changes that
+  classes every instance again.
 
 ## Evaluation
 

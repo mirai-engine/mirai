@@ -102,7 +102,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     if ((gbuffer_bits_unpack(normal) & GBUFFER_GLASS_EXIT) != 0u) return;
     float2 uv = (float2(p) + 0.5) * frame.inv_resolution;
     uint2 ids = layer_ids.Load(int3(p, 0));
-    Material m = material_row(ids.x);
+    Material m = material_row(ids.x, material_values_of(ids.y));
     Glass g = glass_of(p, uv, depth, layer_albedo.Load(int3(p, 0)), normal, layer_emission.Load(int3(p, 0)));
     uint seed = seed_for(uint2(p), frame.frame_index, 23u);
     float3 through = glass_through(m, g, glass_shading(m, g));

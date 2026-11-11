@@ -363,15 +363,13 @@ Components that describe the scene and `render_sync`, which carries it to the re
   a texture (`material_texture`: a map of `MATERIAL_MAP_NAMES` or a texture of the program, an
   asset or one the renderer made at run time) and, with `own_overlays`, its overlays instead of
   those of the first slot's material.
-  - **What the instance holds.** The color, the emission, the parameters of a program and the
-    values of the standard model an instance holds (`material_value_instanced`) go to the
-    instance of the entity
+  - **What the instance holds.** The color and its fade, the emission, the parameters of a
+    program and the values of the standard model go to the instance of the entity
     ([values of an instance](../../mirai-rendering/references/materials.md#material-row)):
     `render_sync` gives them in place when they change (`values_settle`), without making the
-    instance again or deriving a row. A texture, overlays, an alpha below 1 or a value of the
-    standard model that chooses passes (`ior`, `transmission`, `alpha_mode`) make the entity show
-    a derived row, shared by content. What an instance
-    holds is for a row: the slots of a mesh that show the same material share it.
+    instance again or deriving a row. A texture or overlays make the entity show a derived row,
+    shared by content. What an instance holds is for a row: the slots of a mesh that show the
+    same material share it.
   - It is `shared`: several game functions animate values of one entity, each setting and dropping
     only its own names with `material_value` and `material_value_drop` instead of writing the
     whole component over what another gave. A zero value is black and hidden: start from

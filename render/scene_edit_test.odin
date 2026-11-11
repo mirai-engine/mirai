@@ -783,7 +783,7 @@ the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^
     // What a thousand entities with a roughness of their own cost: before, a row of the table each.
     held:=(len(s.indices)-words)*size_of(u32)
     testing.expect_value(t,len(s.materials),rows)
-    testing.expect_value(t,held,COUNT*(1+INSTANCE_VALUE_WORDS)*size_of(u32))
+    testing.expect_value(t,held,COUNT*(INSTANCE_VALUES_HEADER+INSTANCE_VALUE_WORDS)*size_of(u32))
     testing.expect(t,held*20<COUNT*size_of(Gpu_Material_Row),"a value is far smaller than the row it was")
     block:=instance_material_values_words(s,s.instances[7].material_values)
     if testing.expect_value(t,len(block),INSTANCE_VALUE_WORDS) {
@@ -799,7 +799,7 @@ the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^
     next:=descs[7].material_values
     next.entries[0]=instance_material_value(1,Instance_Material_Value_Target.Roughness,{0.5,0,0,0})
     testing.expect(t,scene_tint(r,{7,8},{{1,1,1},{1,1,1}},{{},{}},{next,descs[8].material_values}))
-    testing.expect(t,len(s.pool_dirty[.Index])==1 && s.pool_dirty[.Index][0].count==INSTANCE_VALUE_WORDS,"the words of that value alone")
+    testing.expect(t,len(s.pool_dirty[.Index])==1 && s.pool_dirty[.Index][0].count==INSTANCE_VALUES_HEADER+INSTANCE_VALUE_WORDS,"the words of that instance alone")
     testing.expect_value(t,s.touched_count,1)
     testing.expect_value(t,len(s.materials),rows)
     testing.expect_value(t,s.material_versions[1] if len(s.material_versions)>1 else 0,version)
@@ -813,11 +813,18 @@ the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^
     coat.entries[1],coat.count=instance_material_value(1,Instance_Material_Value_Target.Coat,{1,0,0,0}),2
     testing.expect(t,len(s.reflective)==0 && scene_tint(r,{7},{{1,1,1}},{{}},{coat}))
     testing.expect(t,len(s.reflective)==1 && s.reflective[0].instance==u32(7) && s.reflective[0].layered && len(s.materials)==rows)
+    // A fade given in place blends every row it shows, but one a mode of its own masks.
+    faded:=next
+    faded.fade=0.5
+    testing.expect(t,len(s.translucent)==0 && scene_tint(r,{7},{{1,1,1}},{{}},{faded}) && len(s.translucent)==1 && s.translucent[0].instance==7)
+    testing.expect(t,s.instances[7].meta.w&INSTANCE_FLAG_BLENDED!=0)
+    faded.entries[1],faded.count=instance_material_value(1,Instance_Material_Value_Target.Alpha_Mode,{f32(asset.Alpha_Mode.Mask),0,0,0}),2
+    testing.expect(t,scene_tint(r,{7},{{1,1,1}},{{}},{faded}) && s.instances[7].meta.w&INSTANCE_FLAG_BLENDED==0 && len(s.materials)==rows)
     testing.expect(t,!scene_tint(r,{COUNT},{{1,1,1}},{{}},{next}) && !scene_tint(r,{1},{{1,1,1}},{{}},{next,next}),"a descriptor the scene does not have, lists that differ")
 
     // What goes gives its words back.
     testing.expect(t,scene_given(r,descs[:COUNT/2],nil,{},{}))
-    testing.expect_value(t,len(s.indices)-words,COUNT/2*(1+INSTANCE_VALUE_WORDS))
+    testing.expect_value(t,len(s.indices)-words,COUNT/2*(INSTANCE_VALUES_HEADER+INSTANCE_VALUE_WORDS))
     testing.expect(t,scene_update(r,0,nil,true))
     testing.expect(t,scene_given(r,nil,nil,{},{}))
     testing.expect_value(t,len(s.indices),words)
@@ -827,5 +834,5 @@ the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^
     full.count=max(u32)
     only:=Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1),tint={1,1,1},material_values=full}
     testing.expect(t,scene_given(r,{only},nil,{},{}))
-    testing.expect_value(t,len(s.indices)-words,1+INSTANCE_VALUES_MAX*INSTANCE_VALUE_WORDS)
+    testing.expect_value(t,len(s.indices)-words,INSTANCE_VALUES_HEADER+INSTANCE_VALUES_MAX*INSTANCE_VALUE_WORDS)
 }
