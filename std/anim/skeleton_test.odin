@@ -108,6 +108,45 @@ two_bone_ik_preserves_lengths_and_clamps_unreachable_targets :: proc(t:^testing.
     testing.expect(t,skel_near(world[2].position,{1,1,0}))
 }
 
+// A target that crosses full extension turns the bones at a bounded rate with reach, as a chain
+// does; without it the knee snaps straight in the last millimetre.
+@(test)
+two_bone_reach_bounds_the_turn_of_the_bones_as_the_target_crosses_full_extension :: proc(t:^testing.T) {
+    root:=math.TRANSFORM_IDENTITY
+    joint:=math.Transform{{1,0,0},1,{1,1,1}}
+    end:=math.Transform{{2,0,0},1,{1,1,1}}
+    Case :: struct {name:string,reach:Chain_Reach,fastest:f32,above:bool,stretched:bool}
+    cases:=[]Case{
+        {name="no reach",fastest=50,above=true},
+        {name="soft",reach={soft_distance=.2},fastest=5},
+        {name="soft and stretch",reach={soft_distance=.2,max_stretch=.1},fastest=5,stretched=true},
+    }
+    STEP :: f32(1e-4)
+    for c in cases {
+        previous,_:=two_bone_ik(root,joint,end,{1.9,0,0},{0,1,0},1,c.reach)
+        fastest:f32
+        ok:=true
+        for distance:=1.9+STEP;distance<=2.1;distance+=STEP {
+            solved,valid:=two_bone_ik(root,joint,end,{distance,0,0},{0,1,0},1,c.reach)
+            ok &&=valid
+            turn:=max(math.quat_angle(previous.root.rotation,solved.root.rotation),math.quat_angle(previous.joint.rotation,solved.joint.rotation))
+            fastest=max(fastest,turn/STEP)
+            previous=solved
+        }
+        testing.expectf(t,ok && (fastest>c.fastest)==c.above,"%s: the bones turn at up to %.1f rad/m of target",c.name,fastest)
+        length:=linalg.length(previous.joint.position)+linalg.length(previous.end.position-previous.joint.position)
+        testing.expectf(t,(length>2.01)==c.stretched && !previous.reached,"%s: %.3f m long at 2.1 m, reached %v",c.name,length,previous.reached)
+    }
+    nan:=f32(0h7fc00000)
+    soft:=Chain_Reach{soft_distance=.2,max_stretch=.1}
+    _,ok:=two_bone_ik(root,joint,end,{nan,0,0},{0,1,0},1,soft);testing.expect(t,!ok,"a NaN target")
+    _,ok=two_bone_ik(root,root,end,{1,1,0},{0,1,0},1,soft);testing.expect(t,!ok,"a bone of no length")
+    _,ok=two_bone_ik(root,joint,end,{1,1,0},{0,1,0},1,{soft_distance=3});testing.expect(t,!ok,"a soft distance longer than the bones")
+    _,ok=two_bone_ik(root,joint,end,{1,1,0},{0,1,0},1,{soft_distance=nan});testing.expect(t,!ok,"a NaN soft distance")
+    at_root,at_root_ok:=two_bone_ik(root,joint,end,{},{0,1,0},1,soft)
+    testing.expect(t,at_root_ok && anim_transform_valid(at_root.joint) && anim_transform_valid(at_root.end),"a target at the root")
+}
+
 @(test)
 look_at_and_swing_twist_limits_respect_angular_bounds :: proc(t:^testing.T) {
     rotation,ok:=look_at(1,{0,0,1},{1,0,0},0.4)

@@ -15,6 +15,7 @@ Wav :: struct {
     format:Wav_Format,
     channels,sample_rate:int,
     frames:int,
+    loop_start:int, // of the first loop its smpl chunk names; 0 without one
 }
 
 @(private)
@@ -58,12 +59,17 @@ wav_parse :: proc(file:[]u8) -> (wav:Wav,error:Error) {
             has_format=true
         case "data":
             if !has_data {wav.data=body[:size];has_data=true}
+        case "smpl":
+            // Nine fields, the count of loops among them, and the first loop:
+            // its cue, its type and its start, as Godot reads it.
+            if size>=60 && wav_u32(body[28:])>0 {wav.loop_start=int(wav_u32(body[44:]))}
         }
         at+=8+size+(size&1)
     }
     if !has_format || !has_data {return {},.Invalid_Data}
     sizes:=WAV_SAMPLE_BYTES
     wav.frames=len(wav.data)/(sizes[wav.format]*wav.channels)
+    if wav.loop_start>=wav.frames {wav.loop_start=0}
     return wav,.None
 }
 
@@ -116,5 +122,5 @@ wav_decode :: proc(file:[]u8,allocator:runtime.Allocator) -> (pcm:Pcm,error:Erro
     samples,failed:=make([]f32,wav.frames*wav.channels,allocator)
     if failed!=nil {return {},.Out_Of_Memory}
     wav_convert(&wav,0,samples)
-    return {samples,wav.channels,wav.sample_rate},.None
+    return {samples,wav.channels,wav.sample_rate,wav.loop_start},.None
 }

@@ -69,15 +69,15 @@ static_triangles_and_changes_come_from_the_static_colliders_of_the_world :: proc
     v,i,complete=static_triangles(physics,everything,vertices[:],indices[:],colliders=colliders[:10])
     testing.expect(t,i==0 && !complete)
 
-    // The three static colliders were made, the sensor too; then the floor moves and the crate falls in
-    // place without a change.
+    // The two static colliders were made, not the sensor, which blocks nothing; then the floor moves and the
+    // crate falls in place without a change.
     cursor,count,overflow=static_changes(physics,cursor,boxes[:])
-    testing.expect(t,count==3 && !overflow)
+    testing.expect(t,count==2 && !overflow)
     found:=0
-    for box in boxes[:3] {
-        if box_near(box,{{-5,-1,-5},{5,0,5}}) || box_near(box,{{-2,2,-1},{2,4,1}}) || box_near(box,{{2.5,0.5,2.5},{3.5,1.5,3.5}}) {found+=1}
+    for box in boxes[:2] {
+        if box_near(box,{{-5,-1,-5},{5,0,5}}) || box_near(box,{{-2,2,-1},{2,4,1}}) {found+=1}
     }
-    testing.expect_value(t,found,3)
+    testing.expect_value(t,found,2)
     core.add(&f.transforms,floor,core.Transform{{0,-1.5,0},1,{1,1,1}})
     core.add(&f.transforms,crate,core.Transform{{0,4,0},1,{1,1,1}})
     physics_test_step(&f,0)
@@ -88,6 +88,13 @@ static_triangles_and_changes_come_from_the_static_colliders_of_the_world :: proc
     physics_test_step(&f,0)
     cursor,count,overflow=static_changes(physics,cursor,boxes[:])
     testing.expect(t,count==1 && !overflow && box_near(boxes[0],{{-2,2,-1},{2,4,1}}))
+    // The sensor moved and removed leaves the log as it was.
+    core.add(&f.transforms,sensor,core.Transform{{-3,1,-3},1,{1,1,1}})
+    physics_test_step(&f,0)
+    core.remove(&f.colliders,sensor)
+    physics_test_step(&f,0)
+    cursor,count,overflow=static_changes(physics,cursor,boxes[:])
+    testing.expect(t,count==0 && !overflow)
 
     // A simulation made again leaves the cursors of the last one behind.
     state_reset(&f.state)
@@ -101,7 +108,7 @@ static_triangles_and_changes_come_from_the_static_colliders_of_the_world :: proc
 }
 
 @(test)
-static_bounds_hold_every_static_collider :: proc(t:^testing.T) {
+static_bounds_hold_every_static_collider_but_the_sensors :: proc(t:^testing.T) {
     f:Physics_Test
     if !physics_test_init(t,&f) {return}
     defer physics_test_destroy(&f)
@@ -109,10 +116,25 @@ static_bounds_hold_every_static_collider :: proc(t:^testing.T) {
     _,ok:=static_bounds(physics)
     testing.expect(t,!ok)
     physics_test_box(&f,{0,-0.5,0},{5,0.5,5})
-    physics_test_box(&f,{20,3,0},{1,1,1})
+    far:=physics_test_box(&f,{20,3,0},{1,1,1})
     physics_test_box(&f,{0,40,0},{0.5,0.5,0.5},RIGID_BODY_DYNAMIC)
+    sensor:=core.create(&f.entities)
+    trigger:=collider_box({1,1,1})
+    trigger.preset=PRESET_TRIGGER
+    core.add(&f.transforms,sensor,core.Transform{{-30,0,0},1,{1,1,1}})
+    core.add(&f.colliders,sensor,trigger)
     physics_test_step(&f,0)
     box:mm.Aabb
     box,ok=static_bounds(physics)
-    testing.expect(t,ok && box.min.x<=-5 && box.max.x>=21 && box.min.y<=-1 && box.max.y>=4 && box.max.y<10)
+    testing.expect(t,ok && box.min.x<=-5 && box.min.x>-10 && box.max.x>=21 && box.min.y<=-1 && box.max.y>=4 && box.max.y<10)
+    // Moved and removed, the sensor leaves them as they were; a solid collider that goes takes its part.
+    core.add(&f.transforms,sensor,core.Transform{{0,30,0},1,{1,1,1}})
+    physics_test_step(&f,0)
+    moved,_:=static_bounds(physics)
+    testing.expect_value(t,moved,box)
+    core.remove(&f.colliders,sensor)
+    core.destroy(&f.entities,far)
+    physics_test_step(&f,0)
+    box,ok=static_bounds(physics)
+    testing.expect(t,ok && box.max.x<10)
 }

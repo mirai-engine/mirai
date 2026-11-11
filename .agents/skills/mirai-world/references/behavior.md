@@ -25,9 +25,9 @@ reservations) belongs to
 - `Mind_World` is what every mind reads (its agents, paths, smart objects, claims, time); the
   procedures of a mind reach it through `ai.Mind_Context.user`, and `ctx.holder` is the agent
   (`agent(a)`). So the helpers take only the action or the think: `move_act`, `chase_act` (follows
-  its target and the new one when it changes), `path_status`, `agent_path`, `smart_offer`,
-  `smart_nearest`, `offer_act`, `cross_act`. An action shows what it does with `anim.play` and
-  `anim.look`, taking `^anim.Animation_Requests` as any other parameter.
+  its target and the new one when it changes), `patrol_act`, `path_status`, `agent_path`,
+  `smart_offer`, `smart_nearest`, `offer_act`, `cross_act`. An action shows what it does with
+  `anim.play` and `anim.look`, taking `^anim.Animation_Requests` as any other parameter.
 - What those actions request goes on when the agent's section unloads
   ([the far field](navigation.md#the-far-field)): `minds_tick` also runs the agents with
   `Nav_Far`, on the tick after each far step (`nav.nav_far_decide`), and what they reserve lasts
@@ -47,8 +47,14 @@ what it perceives; `think` only reads and proposes, and the actions write.
 - **Patrol, chase and attack** (zombie, guard): `Patrol` or `Wander` always with a low score,
   `Chase` with a higher one if it remembers someone (`ai.memory_best` of its `Perception`) and
   `Attack` with the highest if it is close. Walking is `move_act`; chasing, `chase_act`;
-  attacking, `ai.after`. The patrol stores its point in a component and moves to the next one on
-  arrival.
+  attacking, `ai.after`. A patrol is a `Patrol` that names the entity of a `volume.Spline`, never
+  points of its own: `patrol_act` walks it while the mind patrols, and `patrols_walk` walks the
+  agents with a `Patrol` and no `Mind_Agent`. Each starts at the point after the span of the curve
+  nearest the agent (`volume.spline_nearest`), so one pushed off its way goes back to it; it
+  walks point to point and moves on when navigation arrives or fails; it asks again when the
+  path moves; a path of one point is a post. Its progress (`next`, `back`) is in the `Patrol`, so
+  an interrupted back and forth keeps its direction. `Patrol` is shared: every mind step writes
+  it.
 - **Hordes with tokens:** the attack takes a token of the target on entering (`ai.token_take(a,
   target, N)`) and `think` proposes it only if there is room (`ai.reserve_free`); the others
   propose surrounding it (`chase_act` at a greater distance) until one is released. The token is
@@ -165,7 +171,7 @@ what it perceives; `think` only reads and proposes, and the actions write.
 
 - `mirai test plugins/behavior/runtime`: registration by name and unknown names, agent tick
   without allocating, that it does not decide when resimulating or stopped,
-  far agents and their lease, movement and chase actions, sight by cone and team, noise,
+  far agents and their lease, movement, chase and patrol actions, sight by cone and team, noise,
   forgetting, a remembered subject that is
   destroyed, ray turns, random crowds that remember by the grid whom they would among every
   perceivable, a tick with nothing to do that goes through no row, places by budget, from the

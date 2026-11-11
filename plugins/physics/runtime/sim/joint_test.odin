@@ -270,6 +270,33 @@ a_spherical_joint_keeps_the_anchor_and_its_cone :: proc(t:^testing.T) {
     testing.expectf(t,twisted<0.25,"twisted to %v",twisted)
 }
 
+// A cone whose frames start turned 180 degrees about Y, exactly folded back, opens to its limit: in lanes for
+// a round cone and one axis at a time for an uneven one.
+@(test)
+a_cone_folded_exactly_back_opens_to_its_limit :: proc(t:^testing.T) {
+    Case :: struct {y,z:f32,kernel:Joint_Kernel}
+    for c in ([2]Case{{0.4,0.4,.Spherical},{0.3,0.5,.General}}) {
+        w:World
+        testing.expect(t,test_world(&w))
+        defer world_destroy(&w)
+        world_set_gravity(&w,{})
+        anchor:=test_anchor(&w,{})
+        body:=test_body(&w,Box{{0.5,0.1,0.1}},{})
+        body_set_sleep_disabled(&w,body,true)
+        desc:=test_joint(&w,.Spherical,anchor,body,{})
+        desc.frame_b.q=desc.frame_b.q*quaternion(w=0,x=0,y=1,z=0)
+        desc.angular[1],desc.angular[2]={motion=.Limited,lower=-c.y,upper=c.y},{motion=.Limited,lower=-c.z,upper=c.z}
+        joint:=joint_create(&w,desc)
+        _,slot:=joint_get(&w,joint)
+        testing.expect_value(t,w.joints[slot].kernel,c.kernel)
+        test_steps(&w,120)
+        ax:=q_rotate(desc.frame_a.q,Vec3{1,0,0})
+        bx:=q_rotate(body_rotation(&w,body)*desc.frame_b.q,Vec3{1,0,0})
+        swing:=cmath.acos(clamp(dot(ax,bx),-1,1))
+        testing.expectf(t,abs(swing-c.y)<0.03,"the %v cone swings %v, its limit about Y is %v",c.kernel,swing,c.y)
+    }
+}
+
 @(test)
 a_distance_joint_keeps_or_springs_its_length :: proc(t:^testing.T) {
     w:World

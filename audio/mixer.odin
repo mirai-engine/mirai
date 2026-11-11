@@ -146,7 +146,7 @@ Mixer :: struct {
     listener_serial:u32,
     output_now:Output_Kind,
     binaural_ready:bool, // binaural_init was done before output_now was ever headphones
-    spatial_mono,spatial_old:[]f32, // CHUNK_FRAMES: a spatial voice before it is placed
+    spatial_mono,spatial_old:[]f32, // CHUNK_FRAMES per channel: a spatial voice before it is placed
     hrtf:Hrtf,
     conv:Fft, // of the binaural convolution
     // Per voice slot (binaural.odin): the HRTF spectra of both ears and the last input.
@@ -263,8 +263,8 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
     for &bus in m.buses {bus.volume=1;bus.gain=1;bus.duck_gain=1;bus.duck_gain_now=1}
     m.listener.rotation=1
     m.limiter.gain=1
-    if m.spatial_mono,failed=make([]f32,CHUNK_FRAMES,allocator);failed!=nil {return .Out_Of_Memory}
-    if m.spatial_old,failed=make([]f32,CHUNK_FRAMES,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.spatial_mono,failed=make([]f32,CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.spatial_old,failed=make([]f32,CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
     if desc.output==.Headphones {
         binaural_init(m) or_return
         m.binaural_ready=true
@@ -290,12 +290,12 @@ binaural_init :: proc(m:^Mixer) -> (error:Error) {
     if m.binaural_rings,failed=make([]f32,buses*2*m.binaural_ring,allocator);failed!=nil {return .Out_Of_Memory}
     if m.binaural_used,failed=make([]bool,buses,allocator);failed!=nil {return .Out_Of_Memory}
     if m.binaural_left,failed=make([]i32,buses,allocator);failed!=nil {return .Out_Of_Memory}
-    if m.binaural_input,failed=make([]f32,CHUNK_FRAMES,allocator);failed!=nil {return .Out_Of_Memory}
-    if m.binaural_dry,failed=make([]f32,voices*BINAURAL_OVERLAP,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_input,failed=make([]f32,CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_dry,failed=make([]f32,voices*2*BINAURAL_OVERLAP,allocator);failed!=nil {return .Out_Of_Memory}
     if m.binaural_window,failed=make([]f32,BINAURAL_OVERLAP,allocator);failed!=nil {return .Out_Of_Memory}
     if m.binaural_windowed,failed=make([]f32,m.conv.n,allocator);failed!=nil {return .Out_Of_Memory}
     if m.binaural_wet,failed=make([]f32,m.conv.n,allocator);failed!=nil {return .Out_Of_Memory}
-    if m.binaural_dry_spectrum,failed=make([]f32,2*bins,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.binaural_dry_spectrum,failed=make([]f32,2*2*bins,allocator);failed!=nil {return .Out_Of_Memory}
     for &w,i in m.binaural_window {w=0.5*(1+math.cos(math.PI*(f32(i)/f32(BINAURAL_OVERLAP-1)-1)))}
     return .None
 }

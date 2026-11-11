@@ -1,6 +1,7 @@
 package vfx
 
 import "mirai:core"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import gui "mirai:engine/gui"
 import erender "mirai:engine/render"
@@ -186,7 +187,7 @@ particles_sync :: proc(
     bindings:^core.Table(Particle_Bindings,.Read),meshes:^core.Table(erender.Mesh_Renderer,.Read),drawn:core.Ref(erender.Render_Sync),listeners:^core.Table(Particle_Channel,.Read),grids:^core.Table(Particle_Grid,.Read),volumes:^core.Table(Particle_Volume,.Read),textures:^core.Table(Particle_World_Texture,.Read),
     clocks:core.Ref(Particle_Clocks),settings:core.Ref(Particle_Settings),sync:^Particle_Sync,reports:^Particle_Reports,data:^Particle_Data,watch:^Particle_Data_Watch,read:^Particle_Data_Read,ui_effects:^UI_Particles,ui_requests:core.Ref(gui.UI_Effects),id:core.World_Id,time:core.Time,frame:core.Frame_Time,
     view:core.View,problems:^core.Problems,app:^host.App,
-    winds:^core.Table(volume.Wind,.Read),places:^core.Table(volume.Volume,.Read),gravities:^core.Table(volume.Gravity,.Read),
+    winds:^core.Table(volume.Wind,.Read),places:^core.Table(volume.Volume,.Read),gravities:^core.Table(volume.Gravity,.Read),sections:^core.Table(scene.Scene_Reference,.Read),
 ) {
     if sync==nil {return}
     if reports!=nil {reports_read(reports,sync,app.renderer,id)}
@@ -199,7 +200,7 @@ particles_sync :: proc(
     clear(&sync.stage_rows)
     clear(&sync.segments)
     grids_sync(&sync.grids,grids,volumes,textures,worlds,view,problems)
-    sync.fields=fields_of(gravities,winds,places,worlds)
+    sync.fields=fields_of(gravities,winds,{places,worlds,parents,sections})
     world_textures_keep(sync,app.renderer,id)
     // Rigs are read again once the assets change.
     if a!=nil {
