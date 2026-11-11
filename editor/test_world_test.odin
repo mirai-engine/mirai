@@ -68,6 +68,7 @@ test_command :: proc(s:^Session,name:string) -> bool {
 test_session_open :: proc(f:^Test_Session,w:core.World_Ref) {
     history.edits_reset(&f.edits,w)
     f.s=Session{info=w.info,edit_world=w.data,edits=&f.edits,selection=&f.selection,document=&f.document,viewport=&f.viewport,gui=&f.gui}
+    f.document.written=history.edits_scene_state(&f.edits)
 }
 
 test_session_close :: proc(f:^Test_Session) {

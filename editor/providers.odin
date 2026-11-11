@@ -40,7 +40,6 @@ Play_Provider :: struct {
     // with why it could not. online and ping come from play.start: -1, what
     // its menu says.
     start:proc(s:^Session,online,ping:int) -> (taken:bool,error:string),
-    verb:proc(s:^Session) -> string, // what that question goes on to do: "Play", "Join"
     menu:proc(s:^Session),      // its rows in the menu of the Play button
     active:proc(s:^Session) -> bool, // its game runs: Play and Simulate wait, and Stop ends it
     stop:proc(s:^Session),

@@ -24,7 +24,7 @@ Apply_Test_World :: struct {
 }
 
 @(test)
-an_imported_material_keeps_unsaved_changes_over_an_import_and_goes_back_by_field :: proc(t:^testing.T) {
+an_imported_material_keeps_a_change_not_yet_written_over_an_import_and_goes_back_by_field :: proc(t:^testing.T) {
     root:=base.test_folder(t,"material-base")
     if root=="" {return}
     folder:=project.path(root,"assets",allocator=context.temp_allocator)
@@ -52,7 +52,7 @@ an_imported_material_keeps_unsaved_changes_over_an_import_and_goes_back_by_field
     info:core.World_Info
     s:=Session{app=&app,materials=&materials,info=&info}
 
-    // A person makes the material rougher and does not save it.
+    // A person makes the material rougher, and the registry holds it until its step ends.
     rough:=given
     rough.roughness=0.9
     testing.expect(t,file_write(&s,path,bytes(t,&types,body,rough,&given,&source),"Material"))
@@ -69,15 +69,17 @@ an_imported_material_keeps_unsaved_changes_over_an_import_and_goes_back_by_field
     if !testing.expect(t,asset_read(&s,"body.mat",&file)) {return}
     view,error:=asset.material_view(&file,&assets.types)
     testing.expect(t,error==.None && view.imported!=nil && view.imported^==now)
-    testing.expect(t,view.info.roughness==0.9 && view.info.maps.base_color.texture==base.Asset_Id{2,2},"unsaved, the change stays and the new texture arrives")
+    testing.expect(t,view.info.roughness==0.9 && view.info.maps.base_color.texture==base.Asset_Id{2,2},"the change stays and the new texture arrives")
     asset.asset_close(&file)
-    testing.expect(t,asset_unsaved(&s,body))
+    _,held:=asset.registry_memory_find(&assets.registry,"body.mat")
+    testing.expect(t,held)
     imported=material_base(&s,body)
     testing.expect(t,imported!=nil && imported^==now,"the reference follows the file")
 
-    // Going back to what the source gave leaves what the disk holds: nothing unsaved.
+    // Going back to what the source gave leaves what the disk holds: nothing to write.
     testing.expect(t,material_write(&s,body,{kind=.Revert,paths={"roughness"}}))
-    testing.expect(t,!asset_unsaved(&s,body))
+    _,held=asset.registry_memory_find(&assets.registry,"body.mat")
+    testing.expect(t,!held)
     testing.expect_value(t,host.assets_material_values(&assets,host.assets_material_row(&assets,body)).roughness,f32(0.5))
 }
 
