@@ -232,7 +232,7 @@ records_fold :: proc(w:core.World_Ref,record:^Section_Record,content:[]core.Enti
     for &info,at in w.info.tables {
         if info.place!=w.place || fold_skips(&info,&types.tables[at]) {continue}
         t:=core.world_table_at(w,&info)
-        seen:=core.Seen{record.seen[at],t.gone_first+u64(len(t.gone))}
+        seen:=core.Seen{record.seen[at],core.log_end(t.gone)}
         c:=core.raw_changes(t,&seen)
         record.seen[at]=seen.version
         if t.version<=c.since {continue}

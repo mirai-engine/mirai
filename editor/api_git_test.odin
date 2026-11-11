@@ -43,15 +43,3 @@ git_merges_the_document_kinds_of_the_engine_and_of_the_plugins :: proc(t:^testin
     for c in cases {testing.expectf(t,git_merges_entities(plugins,c.path)==c.merged,"%s",c.path)}
 }
 
-// A plugin registers exactly the kinds its manifest declares.
-@(test)
-asset_kinds_differ_says_what_a_manifest_and_its_plugin_disagree_on :: proc(t:^testing.T) {
-    provider:=Asset_Kind_Provider{kinds={0={extension=".particle"},1={extension=".grid"}},count=2}
-    m:project.Plugin_Manifest
-    base.text_set(m.asset_kinds[0].extension[:],".grid")
-    testing.expect(t,asset_kinds_differ(provider,&m)!="","a kind the manifest lacks")
-    base.text_set(m.asset_kinds[1].extension[:],".particle")
-    testing.expect_value(t,asset_kinds_differ(provider,&m),"")
-    base.text_set(m.asset_kinds[2].extension[:],".cache")
-    testing.expect(t,asset_kinds_differ(provider,&m)!="","a kind the plugin does not register")
-}

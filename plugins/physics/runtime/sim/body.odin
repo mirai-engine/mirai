@@ -157,6 +157,9 @@ body_update_mass :: proc(w:^World,index:i32) {
     }
     if body.min_extent==max(f32) {body.min_extent=0}
     if .Mass_Override not_in body.flags {
+        // Only a dynamic body keeps a given mass: one made dynamic again is given it anew.
+        given:=.Mass_Given in body.flags && body.type==.Dynamic?body.mass:0
+        if given==0 {body.flags-={.Mass_Given}}
         body.mass,body.inv_mass=0,0
         body.inertia,body.inv_inertia={},{}
         body.local_center={}
@@ -165,9 +168,13 @@ body_update_mass :: proc(w:^World,index:i32) {
                 body.local_center=center/mass
                 body.mass=mass
                 body.inertia=inertia-mat3_point_inertia(mass,body.local_center)
+                if given>0 {
+                    for row in 0..<3 {for column in 0..<3 {body.inertia[row,column]*=given/mass}}
+                    body.mass=given
+                }
             } else {
-                body.mass=1
-                body.inertia=mat3_diagonal({1,1,1})
+                body.mass=given>0?given:1
+                body.inertia=mat3_diagonal({body.mass,body.mass,body.mass})
             }
             body.inv_mass=1/body.mass
             body.inv_inertia=mat3_inverse(body.inertia)
@@ -412,10 +419,23 @@ body_mass_update :: proc(w:^World,h:Body_Handle) {
     body_wake(w,index)
 }
 
+// Gives a dynamic body a mass, kg, whose center and inertia its shapes give, now and whenever they change;
+// zero or less takes the mass of its shapes too. A mass it already has changes nothing.
+body_set_mass :: proc(w:^World,h:Body_Handle,mass:f32) {
+    body,index:=body_read(w,h)
+    if body==nil || body.type!=.Dynamic || !(mass<=max(f32)) {return}
+    given:=mass>0
+    if .Mass_Override not_in body.flags && given==(.Mass_Given in body.flags) && (!given || body.mass==mass) {return}
+    body,_=body_get(w,h)
+    body.flags-={.Mass_Override,.Mass_Given}
+    if given {body.flags+={.Mass_Given};body.mass=mass}
+    body_update_mass(w,index)
+}
+
 body_reset_mass_properties :: proc(w:^World,h:Body_Handle) {
     body,index:=body_get(w,h)
     if body==nil {return}
-    body.flags-={.Mass_Override}
+    body.flags-={.Mass_Override,.Mass_Given}
     body_update_mass(w,index)
 }
 

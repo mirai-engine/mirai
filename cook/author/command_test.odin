@@ -322,10 +322,11 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     testing.expect(t,has_root && asset.scene_entity_count(&annex)==2)
 }
 
-// A preset and the card of a plugin stand for the components their recipes
-// give, and a new entity with prefab is a linked instance of that prefab.
+// A preset stands for the components of the recipe it names, one of the
+// engine or another, and a new entity with prefab is a linked instance of
+// that prefab.
 @(test)
-a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testing.T) {
+a_scene_document_makes_entities_from_recipes_and_prefabs :: proc(t:^testing.T) {
     root,engine,copied:=template_copy(t,"recipes")
     if !copied {return}
     info,described:=core.test_info(t,Game_World,erender.test_types)
@@ -335,11 +336,16 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
     p.info=&info
-    labels:=[]string{"Scoreboard"}
-    scales:=[][3]f32{{2,2,2}}
-    p.plugins={labels=labels,scales=scales,make=proc(user:rawptr,index:int,w:core.World_Ref,e:core.Entity) {
-        if statuses:=core.world_table_of(w,Game_Status);statuses!=nil {core.add(statuses,e,Game_Status{hits=3})}
-    }}
+    // A recipe besides those of the engine, as a plugin has them.
+    _,recipe_why:=scene_write(&p,"recipes/scoreboard.scene",`{"kind":"Prefab","entities":[{"name":"Scoreboard","scale":[2,2,2],"components":{"Status":{"hits":3}}}]}`)
+    if !testing.expect(t,recipe_why=="",recipe_why) {return}
+    own:=recipes_read({project.path(p.assets_root,"recipes",allocator=context.temp_allocator)})
+    all:=make([]Recipe,len(p.recipes)+len(own))
+    copy(all,p.recipes)
+    copy(all[len(p.recipes):],own)
+    delete(p.recipes)
+    delete(own)
+    p.recipes=all
     written,problem:=scene_write(&p,"arena/yard.scene",`{"entities":[
         {"name":"Lamp","preset":"point_light","position":[0,3,0],"components":{"Point_Light":{"intensity":7}}},
         {"name":"Box","preset":"cube","scale":[1,2,1]},
@@ -361,7 +367,7 @@ a_scene_document_makes_entities_from_presets_cards_and_prefabs :: proc(t:^testin
     testing.expect(t,has_mesh && mesh.shape==.Cube)
     status,has_status:=asset.scene_get(&yard,board,"Status",Game_Status)
     placed,_:=asset.scene_get(&yard,board,"Transform",core.Transform)
-    testing.expect(t,has_status && status.hits==3 && placed.scale==[3]f32{2,2,2},"the card of a plugin gives its components and its scale")
+    testing.expect(t,has_status && status.hits==3 && placed.scale==[3]f32{2,2,2},"a recipe gives its components and its scale")
     // The instance: its root where the document says, linked to its prefab, with the members the prefab has.
     prefab:asset.Scene
     if !testing.expect_value(t,asset.scene_load(&prefab,&p.types,project.path(p.assets_root,"player/Player.scene",allocator=context.temp_allocator),context.temp_allocator),asset.Error.None) {return}

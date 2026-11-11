@@ -415,7 +415,7 @@ outliner_menu :: proc(s:^Session,w:core.World_Ref) {
         if ui.menu_item(ctx,ui.id(ctx,"menu_child"),"Add child",{disabled=playing}) {
             tool_preview_cancel(s)
             if !entity_alive(w,e) {return}
-            child:=entity_create(s,{preset=.Empty,parent=e})
+            child:=entity_create(s,{name="Group",parent=e})
             history.selection_set(s.selection,{child})
             outliner_reveal(o,w,child)
         }
@@ -444,38 +444,28 @@ Create_Group :: struct {
     count:int,
 }
 
-// The sections of the editor with its presets in their order; the cards of
-// plugins go after them in the section they name, or in one of their own.
+// The sections of Create in the order their first cards come in; a card
+// with no group goes in Logic.
 @(private)
 create_groups :: proc(s:^Session,groups:^[CARD_GROUP_CAPACITY]Create_Group) -> (count:int) {
-    all:=cards(s)
-    presets:=[?]struct{title:string,presets:[]Preset}{
-        {"Logic",{.Empty,.Point_Light,.Sun,.Spot_Light,.Rect_Light,.Sound,.Reverb_Zone}},
-        {"Shapes",{.Cube,.Sphere,.Cylinder,.Cone,.Prism,.Pyramid}},
-        {"Cameras",{.Camera,.Third_Person_Camera,.Aim_Camera,.First_Person_Camera,.Isometric_Camera,.Top_Down_Camera,.Side_Camera}},
-    }
-    for group,index in presets {
-        groups[index].title=group.title
-        for preset in group.presets {groups[index].cards[groups[index].count]=int(preset);groups[index].count+=1}
-    }
-    count=len(presets)
-    for card,at in all[len(Preset):] {
-        found:=0 if card.group=="" else -1
-        for group,index in groups[:count] {if group.title==card.group {found=index}}
+    for card,at in cards(s) {
+        title:=card.group if card.group!="" else "Logic"
+        found:=-1
+        for group,index in groups[:count] {if group.title==title {found=index}}
         if found<0 {
             if count>=len(groups) {continue}
-            groups[count].title=card.group
+            groups[count].title=title
             found=count
             count+=1
         }
         g:=&groups[found]
-        g.cards[g.count]=len(Preset)+at
+        g.cards[g.count]=at
         g.count+=1
     }
     return
 }
 
-// The Create tab: the presets as the content browser shows assets, under the
+// The Create tab: the cards as the content browser shows assets, under the
 // headers of their groups and at the zoom and in the mode of its cells;
 // dragged onto the scene or clicked to place one where the camera looks.
 @(private)
@@ -538,7 +528,7 @@ create_header :: proc(s:^Session,id:ui.Id,name:string,open:bool,width:f32) -> ui
     return it
 }
 
-// A preset as the browser shows an asset: a row of its list, or its icon on a
+// A card as the browser shows an asset: a row of its list, or its icon on a
 // thumbnail with the line of the color of its group and its name under it.
 @(private)
 create_card :: proc(s:^Session,id:ui.Id,card:Card,carried:bool,view:Content_View,cell:f32) -> (it:ui.Interaction) {

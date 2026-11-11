@@ -30,7 +30,7 @@ A game is a struct in memory and a list of functions that transform it
   [requested places](references/core.md#requested-places).
 - Rays and spheres against the world regardless of physics (`World_Queries`, `world_query`):
   [world queries](references/core.md#world-queries); the ground regardless of terrain
-  (`Ground_Queries`, `ground_query`, unloaded and changed boxes):
+  (`Ground_Queries`, `ground_query`, the boxes where it changed or is not loaded):
   [ground](references/core.md#ground); births of effects regardless of vfx (`Births`,
   `Birth_Channel`): [births](references/core.md#births).
 - Transforms and hierarchy: [transform](references/core.md#transform-and-hierarchy); children,

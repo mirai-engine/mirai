@@ -107,12 +107,11 @@ to the overrides).
   `GROUND_REACH`, and where the editor requests it; far away it has `COARSE_SAMPLES` per side,
   asked `coarse`. Without sources all are fine. Those that cross the limit are read again when the
   sources move.
-- It reads again only the cells under the boxes the ground announced since its revision
-  (`Ground_Query.changes`), or all those of a `Foliage` that moves or arrives, and all when the
-  ground no longer keeps that far back. The cells to read wait in a queue and are read
-  `GROUND_TILES` per call, in jobs: a world that loads much ground and many `Foliage` at once keeps
-  responding. A grid (heights and weights) equal to the previous one does not raise its revision,
-  and a frame without changes reads nothing.
+- It reads again only the cells under the boxes the ground announced since it last ran
+  (`Ground_Queries.changed`), or all those of a `Foliage` that moves or arrives. The cells to read
+  wait in a queue and are read `GROUND_TILES` per call, in jobs: a world that loads much ground and
+  many `Foliage` at once keeps responding. A grid (heights and weights) equal to the previous one
+  does not raise its revision, and a frame without changes reads nothing.
 
 ## Drawing
 

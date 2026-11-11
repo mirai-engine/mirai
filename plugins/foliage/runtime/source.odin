@@ -19,8 +19,6 @@ import "mirai:std/serial"
 // its place. An override whose id the generator no longer makes is kept, as
 // an orphan.
 
-KIND :: asset.Fourcc(u32('F')|u32('O')<<8|u32('L')<<16|u32('I')<<24)
-EXTENSION :: ".foliage"
 VERSION :: 3
 CELL_SIZE :: f32(32)    // metres across x and z of a cell
 TYPES_MAX :: 1024
@@ -409,7 +407,7 @@ source_bytes :: proc(s:^Source,id:base.Asset_Id,types:^asset.Types,allocator:=co
         for o in cell.overrides {planes_put(&override_planes,OVERRIDE_CODES,overrides,override_words(o));overrides+=1}
     }
     document:asset.Document
-    asset.document_init(&document,KIND,id,allocator)
+    asset.document_init(&document,FOLIAGE_KIND,id,allocator)
     defer asset.document_destroy(&document)
     document.kind_version=VERSION
     info:=s.info
@@ -525,7 +523,7 @@ rows_or_none :: proc(file:^asset.Asset,types:^asset.Types,name:string,$T:typeid)
 // The source an open .foliage holds, checked whole: s is replaced only by a
 // valid one. Its id, or false.
 source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=context.allocator) -> (id:base.Asset_Id,ok:bool) {
-    if asset.kind_check(file,KIND,VERSION)!=.None {return}
+    if asset.kind_check(file,FOLIAGE_KIND,VERSION)!=.None {return}
     info,error:=asset.asset_row(file,types,"foliage",Foliage_Info)
     if error!=.None || info==nil {return}
     kinds:=rows_or_none(file,types,"types",Foliage_Type) or_return

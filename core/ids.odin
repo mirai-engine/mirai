@@ -85,7 +85,7 @@ ids_follow :: proc(es:^Entities,table:Read(Id)) {
 // Whether the index followed every change of the Id table.
 ids_synced :: proc "contextless" (es:^Entities,table:Read(Id)) -> bool {
     t:=table.table
-    return !es.ids.whole && es.ids.seen==Seen{t.version,t.gone_first+u64(len(t.gone))}
+    return !es.ids.whole && es.ids.seen==Seen{t.version,log_end(t.gone)}
 }
 
 // The entities and the Id table of a World came together from another one,
@@ -98,7 +98,7 @@ ids_moved :: proc "contextless" (es:^Entities,table:Read(Id),synced:bool) {
         return
     }
     t:=table.table
-    es.ids.seen={t.version,t.gone_first+u64(len(t.gone))}
+    es.ids.seen={t.version,log_end(t.gone)}
 }
 
 @(private)

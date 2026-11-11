@@ -223,7 +223,7 @@ Terrain_Resident :: struct {
     lod_view:[3]f32,  // where the view was at the last evaluation of levels
     lod_stamp:[3]u64, // the revision of the streaming sources, the count of owners, marks
     lod_seen:[2]core.Seen, // the transforms and the colliders
-    marks:u64,        // advances when what the levels are chosen from changes: a page, a source, a chunk that empties or fills
+    marks:u64,        // advances when what the levels or the unloaded ground are chosen from changes: a page, a source, an owner, a chunk that empties, fills or goes
     lod_distances:[3]f32, // of Terrain_Settings then
     focus:Terrain_Focus,  // then
     room:Collider_Room,
@@ -329,7 +329,7 @@ terrain_file :: proc(a:^host.Assets,id:base.Asset_Id,allocator:=context.temp_all
 terrain_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=context.allocator,paged:=false) -> bool {
     if paged {
         record,found:=asset.registry_find(&a.registry,id)
-        if !found || record.kind!=KIND {return false}
+        if !found || record.kind!=TERRAIN_KIND {return false}
         if _,held:=asset.registry_memory_find(&a.registry,record.path);!held {
             path:=asset.registry_file_path(&a.registry,record.path,context.temp_allocator)
             front:asset.Asset
@@ -340,7 +340,7 @@ terrain_read :: proc(s:^Source,a:^host.Assets,id:base.Asset_Id,allocator:=contex
         }
     }
     file:asset.Asset
-    if host.assets_file(a,id,KIND,&file)!=.None {return false}
+    if host.assets_file(a,id,TERRAIN_KIND,&file)!=.None {return false}
     defer asset.asset_close(&file)
     loaded,ok:=source_read(s,&file,&a.types,allocator)
     return ok && loaded==id
@@ -487,7 +487,7 @@ data_chunks_allocate :: proc(entry:^Data_Source,allocator:runtime.Allocator,js:^
 data_load_begin :: proc(data:^Terrain_Data,a:^host.Assets,id:base.Asset_Id) -> ^Source_Load {
     if load:=data_loading(data,id);load!=nil {return load}
     record,found:=asset.registry_find(&a.registry,id)
-    if !found || record.kind!=KIND {return nil}
+    if !found || record.kind!=TERRAIN_KIND {return nil}
     if _,held:=asset.registry_memory_find(&a.registry,record.path);held {return nil}
     heap:=runtime.heap_allocator()
     load,allocation_error:=new(Source_Load,heap)

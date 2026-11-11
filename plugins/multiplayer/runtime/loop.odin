@@ -79,7 +79,6 @@ net_tick_head :: proc(world:core.World_Ref,app:^host.App,session:^Net_Session,in
     outbox_follow(world)
     // A tick run again has those it had.
     if connections!=nil && !time.resimulating {
-        core.queue_clear(&connections.events)
         for event in session.arrived {core.push(&connections.events,event)}
         clear(&session.arrived)
     }

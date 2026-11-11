@@ -4,6 +4,6 @@
   "dependencies": [],
   "parts": ["Runtime", "Editor"],
   "asset_kinds": [
-    {"extension": ".character", "merged": true}
+    {"extension": ".character", "kind": "CHAR", "merged": true}
   ]
 }

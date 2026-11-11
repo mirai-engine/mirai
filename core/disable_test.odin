@@ -304,7 +304,7 @@ changes_read_the_table_whole_when_a_reader_falls_behind_or_it_is_replaced :: pro
     // each settle reading the table whole; one that falls behind more than
     // the room does.
     pushed:=0
-    for pushed<=cap(probes.gone) {
+    for pushed<=cap(probes.gone.items) {
         clear(&made)
         for i in 0..<GONE_CAPACITY+2 {
             e:=create(&es)
