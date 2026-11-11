@@ -22,7 +22,7 @@ import "mirai:std/base"
 //   decl/            the declarations projects compile against instead of those sources
 //   engine.declared  what each declaration is with what it reaches (declared.odin)
 //   mirai-editor, mirai-player  the programs that load the library of a project
-//   mirai-import     the program of mirai import, on the libraries of the editor
+//   mirai-import     the program of mirai import and of the sync of builds, on the libraries of the editor
 //   mirai-author     the program of mirai ui and mirai scene, on the libraries of the editor
 //   stage/           the copy the libraries are built from (declare.odin)
 //
@@ -464,8 +464,9 @@ engine_program_sources :: proc(paths:Engine_Paths) -> [4]Engine_Program {
 
 import "core:os"
 import "mirai:cook/import/sources"
+import "mirai:editor"
 
-main :: proc() {os.exit(sources.command(os.args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr)))}
+main :: proc() {os.exit(sources.command(os.args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr),editor.plugin_import_formats))}
 `,paths.import_program},
         {"author program","author",`package main
 

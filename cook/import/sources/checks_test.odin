@@ -10,7 +10,7 @@ import importer "mirai:cook/import"
 
 @(test)
 every_imported_mesh_passes_the_checks_of_the_asset :: proc(t:^testing.T) {
-    paths:=[]string{FIXTURES+"hierarchy.gltf",FIXTURES+"concave.obj",FIXTURES+"skeletal-analytic.glb",FIXTURES+"hierarchy.fbx",FIXTURES+"skinned.fbx",DEMO+"models/plant.gltf"}
+    paths:=[]string{FIXTURES+"hierarchy.gltf",FIXTURES+"concave.obj",FIXTURES+"skeletal-analytic.glb",FIXTURES+"hierarchy.fbx",FIXTURES+"skinned.fbx",DEMO+"gallery/plant.gltf"}
     for path in paths {
         model,ok:=import_ok(t,path)
         if !ok {continue}

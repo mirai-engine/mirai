@@ -1,0 +1,15 @@
+{
+  "version": 3,
+  "settings": {},
+  "folder": "gltf",
+  "inputs": ["robot.bin"],
+  "outputs": [
+    {"kind": "SCEN", "name": "robot", "index": 0, "id": "b0f0241df6e014392af304b56cf59eab"},
+    {"kind": "MAT", "name": "robot blue", "index": 0, "id": "c67757fb8b041b0d6b6178fe958bd91e"},
+    {"kind": "MAT", "name": "robot gold", "index": 1, "id": "feebc67eaeb9081ec3d1f1edac208b2a"},
+    {"kind": "MAT", "name": "robot joints", "index": 2, "id": "a453277713f405f86fd3dc27c2506977"},
+    {"kind": "MAT", "name": "robot visor", "index": 3, "id": "0bf1bd3d54bcb875b34957598640c69d"},
+    {"kind": "SKEL", "name": "13 joint robot rig", "index": 0, "id": "cf5b1fe881d020461927fe9b85c42136"},
+    {"kind": "MESH", "name": "Mirai robot", "index": 0, "id": "3a94f8ad990aede6566ad2af8010bb23", "part": true}
+  ]
+}

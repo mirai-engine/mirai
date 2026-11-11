@@ -211,9 +211,9 @@ the published generation (no Slang sources; `mirai build game` generates the sha
 SDL3 if the system does not provide it.
 
 The copy replaces files and merges folders without deleting anything from the destination, except
-`assets/`, which ends up exactly with what was cooked. `source/`, the code, `cook.mirai` and the
-`plugin.mirai` are not copied. `mirai play` copies nothing: `mirai-player` runs with
-`--project <project>` and reads assets and shaders from the project.
+`assets/`, which ends up exactly with what was cooked, without the sources and sidecars among the
+assets. The code, `cook.mirai` and the `plugin.mirai` are not copied. `mirai play` copies nothing:
+`mirai-player` runs with `--project <project>` and reads assets and shaders from the project.
 
 ## Dedicated server
 
@@ -231,12 +231,13 @@ The meshes, textures, sounds and fonts an import builds are not versioned: they 
 `.mirai/imported/` of the project and of each plugin with assets, and are built again from the
 sources and their sidecars ([sync](../../mirai-imports/references/imports.md#sync)).
 
-- **A build imports first, and says so.** Every build of a project starts by running the sync of
-  the project and of its active plugins (`job_start`, `build.imports_sync`): the editor, the game,
-  the server, `mirai play` and the builds the editor starts. It uses the engine's import program,
-  since the tool builds without the importers, and builds the engine first when that program is
-  not current. A source that does not import fails the build naming it (`Import_Failed`). There is
-  no other step: a checkout that was just cloned runs after any build.
+- **A build imports, and says so.** Every build of a project runs the sync of the project and of
+  its active plugins once its target stands (`job_imports`, `build.imports_sync`): the editor,
+  the game, the server, `mirai play` and the builds the editor starts. It uses the engine's import
+  program, since the tool builds without the importers, which reads the formats the plugins of
+  the project add from its editor library. A source that does not import fails the build naming
+  it (`Import_Failed`). There is no other step: a checkout that was just cloned runs after any
+  build.
 - **What ships.** A game has no imported folder and no sources: the cook writes every asset it
   reaches at its path in the assets of the game, whichever of the two folders it came from.
 - **The installed engine** carries the imported folder of each of its plugins, built when it is

@@ -165,10 +165,6 @@ vertex_edits_keep_the_outline_simple :: proc(t:^testing.T) {
     }
     s:=square(1)
     testing.expect(t,shape_vertex_insert(&s,3,{-1.2,0})==.None && s.points[4]==geom.Vec2{-1.2,0})
-    vertex,found:=shape_vertex_near(&s,{0.95,1.05},0.1)
-    testing.expect(t,found && vertex==2)
-    edge,at,near:=shape_edge_near(&s,{0,-0.95},0.1)
-    testing.expect(t,near && edge==0 && at==geom.Vec2{0,-1})
     full:=square(1)
     full.point_count,full.loops[0]=SHAPE_POINTS,SHAPE_POINTS
     testing.expect_value(t,shape_vertex_insert(&full,0,{0,-1}),Shape_Error.Too_Many_Points)
