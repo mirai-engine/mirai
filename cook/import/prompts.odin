@@ -159,8 +159,8 @@ prompts_pack :: proc(sizes:[][2]int,allocator:=context.allocator) -> (places:[]P
     return places,list[:],true
 }
 
-// Imports a manifest of prompts as <name>.prompts and its atlases in folder.
-import_prompts :: proc(path,folder:string,options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
+// Imports a manifest of prompts as <name>.prompts and its atlases.
+import_prompts :: proc(path:string,options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
     caller:=context.temp_allocator
     scratch:mem.Dynamic_Arena
     mem.dynamic_arena_init(&scratch,allocator,allocator,block_size=1<<20,out_band_size=1<<20)
@@ -218,7 +218,7 @@ import_prompts :: proc(path,folder:string,options:Import_Options={},allocator:=c
 
     report_init(&report,allocator)
     w:Writer
-    ok:=writer_init(&w,path,folder,options,&report,allocator)
+    ok:=writer_init(&w,path,"",options,&report,allocator)
     w.options.textures,w.options.max_texture_size=.Uncompressed,PROMPTS_ATLAS_MAX
     defer asset.types_destroy(&w.types)
     if ok {
@@ -264,13 +264,12 @@ prompts_write :: proc(w:^Writer,path:string,bytes:[]u8,entries:[]Prompts_Entry,o
     }
     parts:=make([]Part,len(pages),context.temp_allocator)
     for &job,page in jobs {
-        parts[page]=Part{kind=asset.KIND_TEXTURE,name=job.name,index=page,extension=".tex",size=job.size,hash=job.hash,settings=textures.settings_hash(texture_options(w,job))}
+        parts[page]=Part{kind=asset.KIND_TEXTURE,name=job.name,index=page,extension=".tex"}
     }
     parts_plan(w,parts)
     for &part in parts {part.owner=w.owner}
     parts_record(w,parts)
     for &part,page in parts {
-        if part.shared!=NOT_SHARED {continue}
         if !write_texture(w,jobs[page],part.id,w.owner,part.path,source) {
             if w.error.code==.None {writer_fail(w,.Write,"the atlas %s could not be built",part.path)}
             return false

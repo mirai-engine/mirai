@@ -37,6 +37,10 @@ import "mirai:render/abi"
 
 Trace_Mode :: enum u8 {Auto, Software, Hardware}
 
+// Rays are traced by software only on Vulkan: Metal traces them by hardware
+// alone, and its shaders have no code of the stages of the software tracer.
+SOFTWARE_TRACER :: rhi.SHADER_FORMAT != .Msl
+
 // Whether smooth surfaces trace their reflection; off, every reflection comes
 // from the probe volume.
 Reflections :: enum u8 {
@@ -45,23 +49,13 @@ Reflections :: enum u8 {
 	Detailed, // every pixel traces its ray, and those sharper than REFLECTION_SHARED_ROUGHNESS show the glass it crosses and the gloss of what it finds
 }
 
-// What the views of the window draw the scene at: a scale of their points, or
-// a target of lines.
-Resolution :: union #no_nil {Render_Scale, Render_Lines}
-// Of the points of the window along each axis, 0.25 to 2.
-Render_Scale :: distinct f32
-// The lines the views of the window aim for together, as a fraction of the
-// lines they span, never above one pixel per point nor under the least
-// Render_Scale: the cost per pixel does not grow with the output.
-Render_Lines :: distinct u32
-
 // Every effect has an explicit budget so cost scales with settings, not scene
 // size alone.
 Settings :: struct {
 	gi_enabled:           bool,
 	gi_strength:          f32,
 	trace_mode:           Trace_Mode,
-	resolution:           Resolution,
+	resolution:           u32,    // the lines the views of the window aim for together, as a fraction of the lines they span, never above one pixel per point nor under RENDER_SCALE_MIN of one: the cost per pixel does not grow with the output
 	taa:                  bool,   // temporal anti-aliasing / upscaling to the window resolution
 	lod_error_pixels:     f32,    // raster LOD switch threshold (0 = always full detail)
 	batch_min_pixels:     f32,    // an instance of a batch whose box is fewer pixels across is not rasterized, and fades out from twice that; rays still meet it. 0: every one is drawn
@@ -83,8 +77,6 @@ Settings :: struct {
 	colored_shadows:       bool, // thin RGB filters along shadow rays through blended surfaces
 	glass_layers:          u32,  // nearest blended surfaces of a pixel lit once per pixel with traced reflection and refraction (1 to GLASS_LAYERS_MAX); the ones behind are drawn forward
 	sun_radius:           f32, // angular radius of the sun, radians
-	reference_lights:     bool, // what the lighting approximates, for tests and comparisons: every pixel traces rays to sixteen points of every local light, others each frame
-	reference_gi:         bool, // what the diffuse indirect light approximates, for tests and comparisons: paths from every pixel in place of the probe volume, their mean while the scene and the camera stay (Targets.gi_reference)
 }
 
 // Outlines drawn after tonemapping around instances with an outline level:
@@ -109,7 +101,7 @@ DEFAULT_HIGHLIGHT_STYLE :: Highlight_Style{
 }
 
 DEFAULT_SETTINGS :: Settings{
-	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, resolution = Render_Scale(1), taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
+	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, resolution = 1080, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 5, probe_rays = 128, probe_budget = 512,
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 8,
 	firefly_clamp = 20, texture_max_size = 2048,
@@ -135,7 +127,7 @@ REFLECTION_SHARED_ROUGHNESS :: abi.REFLECTION_SHARED_ROUGHNESS
 
 // Conservative budgets for software rasterizers (lavapipe, SwiftShader).
 CPU_DEVICE_SETTINGS :: Settings{
-	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, resolution = Render_Scale(0.5), taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
+	gi_enabled = true, gi_strength = 1, trace_mode = .Auto, resolution = 360, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.5, probe_grid = 12, probe_cascades = 3, probe_rays = 64, probe_budget = 64,
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 4,
 	firefly_clamp = 20, texture_max_size = 1024,
@@ -313,7 +305,6 @@ Pipeline_Id :: enum {
 	Gbuffer_Clip, Gbuffer_Plain_Clip, // of a view with a clip plane
 	Gbuffer_Nested, Gbuffer_Nested_Plain, Nested_Prime, Nested_Reflectance, // of the nested views of a view
 	Debug_Views,
-	Gi_Reference,
 	History_Scale,
 	Air_Transmittance, Air_Scattering, Air_Sky, Air_Aerial,
 	Depth_Probe, Ui_Particles,
@@ -376,7 +367,6 @@ Targets :: struct {
 	hiz_width, hiz_height:   u32,
 	hiz_levels:              u32,
 	hiz_valid:               bool, // the previous pyramid holds last frame's depth
-	gi_reference_valid:      bool, // gi_reference holds the paths of the frames before
 	contact:                 [2]rhi.Texture, // the contact occlusion of the probe volume: raw / blurred (contact.comp)
 	ldr:                     rhi.Texture,
 	generated:               rhi.Texture, // the image shown before ldr, while the pipeline generates frames: made with the first one
@@ -386,9 +376,7 @@ Targets :: struct {
 	highlight_depth:         rhi.Texture,
 	highlight_filtered:      rhi.Texture, // premultiplied editor coat, window-point resolution
 	highlight_width, highlight_height: u32,
-	gi_reference:            rhi.Texture, // Settings.reference_gi: the mean of its paths at full resolution, frames in a
-	gi_reference_view:       Mat4,        // the unjittered view-projection it was accumulated from
-	gi_reference_eye:        Vec3,        // and the eye it takes points from
+	gi_given:                rhi.Texture, // what a custom pass writes as Gi in place of the Indirect stage (Render_Resource.Gi); made when one first does
 	needs_clear:             bool,
 	glass:                   [GLASS_LAYERS_MAX]Glass_Layer,
 	glass_zbuffer:           rhi.Texture,
@@ -536,7 +524,7 @@ view_camera_cut :: proc(v:^View_State) {
     v.exposure_generation+=1
     v.prev_jitter={}
     t:=&v.targets
-    t.taa_valid,t.reflect_valid,t.gi_reference_valid=false,false,false
+    t.taa_valid,t.reflect_valid=false,false
     t.shadow.valid,t.glass_valid,t.hiz_valid=false,false,false
 }
 
@@ -610,7 +598,6 @@ Renderer :: struct {
 	world_switched:       bool, // the next frame follows another world: it keeps the delta time of the one before
 	kept:                 [WORLDS_MAX - 1]World_Light, // the light of the worlds not shown
 	kept_count:           int,
-	scene_uploads_change: bool, // the frame uploads a change of the instances, materials or lights: Settings.reference_gi starts over
 	glass_stale:          bool, // Gpu_Instance.glass waits for glass_mean.comp: instances, materials or geometry went up since it last ran
 	points:               Material_Points, // where the passes of a frame need a material program evaluated (points.odin)
 	vertex_stages:        Program_Computes, // of surface_vertices__<program>.comp, which move the vertices of instances (displace.odin)
@@ -737,6 +724,12 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 		verified, note := hardware_rt_self_test(r)
 		r.hardware_rt_verified = verified
 		r.hardware_rt_note = string(r.note_buffer[:copy(r.note_buffer[:], note)])
+	}
+	when !SOFTWARE_TRACER {
+		if !r.hardware_rt_verified {
+			set_error(r, "Metal traces rays by hardware alone, and the GPU %s %s", info.name, fmt.tprintf("failed their self-test (%s): a newer macOS may pass it", r.hardware_rt_note) if info.features.ray_query else "does not trace them (MTLDevice.supportsRaytracing): it needs an Apple GPU that does")
+			return false
+		}
 	}
 	if !create_pipelines(r, {.Any, tracer_wanted(r, r.settings)}) || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR) {return false}
 	hardware, made := tracer_settle(r, r.settings, retry = false)
@@ -919,7 +912,6 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Skin_Triangles, .Skin_Triangles_Comp, .Software)
 	compute(list, r, .Skin_Refit, .Skin_Refit_Comp, .Software)
 	compute(list, r, .Debug_Views, .Debug_Views_Comp, lazy = true)
-	traced(list, r, .Gi_Reference, .Gi_Reference_Comp, .Gi_Reference_Hw_Comp, lazy = true)
 	ids := r.frame_layout.instance_ids
 	gbuffer := rhi.Graphics_Pipeline_Desc{
 		vertex = &r.shader_codes[.Gbuffer_Batches_Vert], fragment = &r.shader_codes[.Gbuffer_Frag],
@@ -1157,7 +1149,7 @@ pipelines_destroy :: proc(r: ^Renderer) {
 
 @(private)
 pipeline_possible :: proc(info: ^rhi.Device_Info, item: Pipeline_Make) -> bool {
-	return (item.rays != .Hardware || info.features.ray_query) && (!item.clip || info.features.clip_distance)
+	return (item.rays != .Hardware || info.features.ray_query) && (item.rays != .Software || SOFTWARE_TRACER) && (!item.clip || info.features.clip_distance)
 }
 
 // Makes the pipelines of r of the rays in make that it lacks and the device
@@ -1257,6 +1249,11 @@ tracer_settle :: proc(r: ^Renderer, settings: Settings, retry: bool) -> (hardwar
 		missing := tracer_missing(r, .Hardware)
 		if missing == "" {r.hardware_rt_note = ""; return true, true}
 		r.hardware_rt_note = fmt.bprintf(r.note_buffer[:], "the pipeline %s of rays traced by hardware was not made (%s): rays are traced by software. A newer GPU driver may make it", missing, rhi.device_error(r.device))
+	}
+	when !SOFTWARE_TRACER {
+		if settings.trace_mode == .Software {set_error(r, "rays are traced by software only on Vulkan: on Metal Settings.trace_mode is Auto or Hardware")}
+		else {set_error(r, "Metal traces rays by hardware alone, and the pipeline %s of them was not made (%s): a newer macOS may make it", tracer_missing(r, .Hardware), rhi.device_error(r.device))}
+		return false, false
 	}
 	if tracer_missing(r, .Software) == "" {return false, true}
 	if !create_pipelines(r, {.Software}) || tracer_missing(r, .Software) != "" {
@@ -1383,11 +1380,7 @@ renderer_set_thumbnails :: proc(r: ^Renderer, pixels: []u8, width, height: int, 
 // what was made with the fields that changed: histories, probes and targets
 // that do not depend on them stay.
 renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
-	switch v in settings.resolution {
-	case Render_Scale: if !(v >= 0.25 && v <= 2) {return false}
-	case Render_Lines: if v == 0 {return false}
-	}
-	if settings.gi_strength < 0 || settings.probe_spacing <= 0 {return false}
+	if settings.resolution == 0 || settings.gi_strength < 0 || settings.probe_spacing <= 0 {return false}
 	if settings.probe_grid < 4 || settings.probe_grid > PROBE_GRID_MAX || settings.probe_grid % 2 != 0 || settings.probe_cascades < 1 || settings.probe_cascades > VOLUME_CASCADES_MAX {return false}
 	if !(settings.reflection_roughness >= 0 && settings.reflection_roughness <= 1) {return false}
 	if settings.light_budget > LIGHT_CUT_MAX || settings.reflection_light_budget > LIGHT_CUT_MAX || settings.glass_layers < 1 || settings.glass_layers > GLASS_LAYERS_MAX {return false}
@@ -1404,8 +1397,7 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	if volume {ddgi_release(r)} else if gathered {scene_changed(&r.scene)}
 	// The worlds not shown kept light gathered with the settings before.
 	if volume || gathered {world_light_destroy(r)}
-	shadows := old.reference_lights != settings.reference_lights || old.sun_shadows != settings.sun_shadows
-	reference := old.reference_gi != settings.reference_gi || old.sun_radius != settings.sun_radius
+	shadows := old.sun_shadows != settings.sun_shadows
 	traced := old.colored_shadows != settings.colored_shadows || old.sun_shadows != settings.sun_shadows || old.reflection_light_budget != settings.reflection_light_budget || old.reflections != settings.reflections
 	layers := old.glass_layers != settings.glass_layers
 	resolution := old.resolution != settings.resolution
@@ -1414,7 +1406,6 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	for view in views_all(r) {
 		t := &view.targets
 		if shadows {t.shadow.valid = false}
-		if reference || traced {t.gi_reference_valid = false}
 		if traced {t.reflect_valid, t.taa_valid, t.glass_valid = false, false, false}
 		if layers {destroy_glass_targets(r, t)}
 	}
@@ -1510,7 +1501,7 @@ targets_textures :: proc(t: ^Targets) -> (all: [TARGET_TEXTURES]rhi.Texture) {
 	s := &t.shadow
 	fixed := [?]rhi.Texture{
 		t.reflect_history[0], t.reflect_history[1], t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.generated,
-		t.highlight, t.highlight_depth, t.highlight_filtered, t.gi_reference, t.reactive, t.aerial, t.ui_blur[0], t.ui_blur[1],
+		t.highlight, t.highlight_depth, t.highlight_filtered, t.gi_given, t.reactive, t.aerial, t.ui_blur[0], t.ui_blur[1],
 		s.geometry[0], s.geometry[1], s.history[0], s.history[1], s.widths[0], s.widths[1],
 	}
 	#assert(len(fixed) + UI_LAYER_DEPTH_CAPACITY <= TARGET_TEXTURES)
@@ -1705,17 +1696,15 @@ window_render_scale :: proc(r: ^Renderer, height: f32) -> f32 {
 	return views_render_scale(r.settings.resolution, height, pixel_density(r))
 }
 
-// Of the device pixels of views that span `height` of them, what a resolution
-// draws the scene at.
-views_render_scale :: proc "contextless" (resolution: Resolution, height, density: f32) -> f32 {
-	switch v in resolution {
-	case Render_Lines:
-		if v > 0 && height > 0 {return min(max(f32(v) / height, 0.25 / density), 1 / density)}
-	case Render_Scale:
-		return clamp(f32(v), 0.25, 2) / density
-	}
-	return 1 / density
+// Of the device pixels of views that span `height` of them, what a target of
+// lines draws the scene at.
+views_render_scale :: proc "contextless" (lines: u32, height, density: f32) -> f32 {
+	if height <= 0 {return 1 / density}
+	return min(max(f32(lines) / height, RENDER_SCALE_MIN / density), 1 / density)
 }
+
+// The least of a pixel per point the views of the window are drawn at.
+RENDER_SCALE_MIN :: f32(0.25)
 
 @(private)
 render_extent :: proc "contextless" (output: u32, scale: f32) -> u32 {return max(u32(f32(output) * scale + 0.5), 8)}

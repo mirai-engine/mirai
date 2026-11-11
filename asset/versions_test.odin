@@ -16,19 +16,18 @@ version_set :: proc(path:string,version:u16) -> bool {
     return os.write_entire_file(path,data)==nil
 }
 
-// root/assets/models/box.obj/Box.mesh, of the version before this build's,
-// imported from root/source/models/box.obj.
+// root/assets/models/box/Box.mesh, of the version before this build's,
+// imported from root/assets/models/box.obj.
 @(private="file")
 stale_mesh :: proc(t:^testing.T,types:^Types,root:string) -> (path:string,ok:bool) {
-    os.make_directory_all(fmt.tprintf("%s/source/models",root))
-    os.make_directory_all(fmt.tprintf("%s/assets/models/box.obj",root))
-    _=os.write_entire_file(fmt.tprintf("%s/source/models/box.obj",root),"v 0 0 0\n")
+    os.make_directory_all(fmt.tprintf("%s/assets/models/box",root))
+    _=os.write_entire_file(fmt.tprintf("%s/assets/models/box.obj",root),"v 0 0 0\n")
     vertices,indices:=test_grid(1);defer delete(vertices);defer delete(indices)
     source:Import_Info
-    text_set(source.source[:],"source/models/box.obj")
+    text_set(source.source[:],"assets/models/box.obj")
     text_set(source.name[:],"Box")
     text_set(source.importer[:],"mirai-import")
-    path=fmt.tprintf("%s/assets/models/box.obj/Box.mesh",root)
+    path=fmt.tprintf("%s/assets/models/box/Box.mesh",root)
     if !testing.expect_value(t,mesh_save(path,types,{id={1,2},geometry=test_geometry(vertices,indices),source=&source}),Error.None) {return}
     return path,testing.expect(t,version_set(path,MESH_VERSION-1))
 }
@@ -46,7 +45,7 @@ an_asset_of_another_version_says_which_it_is_and_how_to_import_it_again :: proc(
     _,view_error:=mesh_view(&a,&types)
     testing.expect_value(t,view_error,Error.Version)
     message:=version_message(&a,&types,path,allocator=context.temp_allocator)
-    wanted:=fmt.tprintf("mirai import %s/source/models/box.obj --out %s/assets/models/box.obj --root %s",root,root,root)
+    wanted:=fmt.tprintf("mirai import %s/assets/models/box.obj",root)
     testing.expect(t,strings.has_prefix(message,path) && strings.contains(message,fmt.tprintf("a mesh of version %d",MESH_VERSION-1)) && strings.contains(message,wanted),message)
 
     // An asset nobody imported is named, with nothing to import; an older one says to make it
@@ -129,14 +128,14 @@ an_asset_of_another_version_named_by_a_relative_path_says_how_to_import_it_again
     working,_:=os.get_working_directory(context.temp_allocator)
     if relative,error:=filepath.rel(working,root,context.temp_allocator);error==.None {
         relative,_=strings.replace_all(relative,"\\","/",context.temp_allocator)
-        named:=fmt.tprintf("%s/assets/models/box.obj/Box.mesh",relative)
+        named:=fmt.tprintf("%s/assets/models/box/Box.mesh",relative)
         found:=version_message(&a,&types,named,allocator=context.temp_allocator)
-        wanted:=fmt.tprintf("mirai import %s/source/models/box.obj --out %s/assets/models/box.obj --root %s",relative,relative,relative)
+        wanted:=fmt.tprintf("mirai import %s/assets/models/box.obj",relative)
         testing.expect(t,strings.contains(found,wanted),found)
-        os.remove(fmt.tprintf("%s/source/models/box.obj",root))
+        os.remove(fmt.tprintf("%s/assets/models/box.obj",root))
         lost:=version_message(&a,&types,named,allocator=context.temp_allocator)
-        testing.expect(t,strings.has_suffix(lost,fmt.tprintf("import its source source/models/box.obj again with mirai import into %s/assets/models/box.obj",relative)),lost)
+        testing.expect(t,strings.has_suffix(lost,"import its source assets/models/box.obj again with mirai import"),lost)
     }
     bare:=version_message(&a,&types,"Box.mesh",allocator=context.temp_allocator)
-    testing.expect(t,strings.has_suffix(bare,"again with mirai import into ."),bare)
+    testing.expect(t,strings.has_suffix(bare,"again with mirai import"),bare)
 }

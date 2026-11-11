@@ -42,7 +42,7 @@ difference with the catalog, it rules.
   document=@<file>
   save=true`, `ui.inspect` reads it back): [writing-ui](../../../docs/game/ui/writing-ui.md).
 - Reading, checking or writing the documents of interfaces and scenes with no editor,
-  from files of text under `source/`:
+  from files of text:
   [`mirai ui` and `mirai scene`](references/api.md#mirai-ui-and-mirai-scene).
 - Testing a game as a person plays it (a click, a double click, a hold of some seconds, a look)
   and asserting on what the camera shows: [testing like a player](#testing-like-a-player).

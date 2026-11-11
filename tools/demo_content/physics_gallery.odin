@@ -7,12 +7,10 @@ import destruct "plugins:destruct/runtime"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
-import "plugins:vfx/runtime/effect"
 
 // The fractures, the meshes, the baked cuts, the dust and the ragdoll of the physics gallery.
 write_physics_gallery :: proc(o:^Out) {
     physics_sources(o)
-    physics_dust(o)
     physics_ragdoll(o)
 }
 
@@ -64,14 +62,4 @@ physics_mixed_build :: proc(b:^destruct.Fracture_Builder,cube:geom.Mesh) -> bool
         if error!=.None {return false}
     }}
     return destruct.fracture_connect_proximity(b,.04,.3,60)==.None
-}
-
-// The dust a fracture of the gallery raises, which its burst prefab plays.
-@(private)
-physics_dust :: proc(o:^Out) {
-    dust:=effect.PARTICLE_DEFAULTS;dust.duration=.05;dust.rate=0;dust.bursts[0]={count=50,cycles=1}
-    dust.shape=.Sphere;dust.shape_size={.5,.5,.5};dust.lifetime={1.5,2};dust.speed={.7,1.4};dust.size={.15,.25};dust.gravity=.1
-    dust.colors={{.9,.72,.42,.85},{1,.9,.65,.65}};dust.drag=1
-    id:=asset.content_id(PROJECT,"particle","physics_dust")
-    asset.content_check(&o.content,"physics dust",effect.particle_save(path(o,"assets/physics_gallery/physics_dust.particle"),&o.content.types,{id=id,info=dust}))
 }
