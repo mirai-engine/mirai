@@ -1819,6 +1819,40 @@ an_agent_that_walks_in_place_against_a_body_fails :: proc(t:^testing.T) {
     testing.expect(t,core.problem_find(&f.problems,e,"navigation.blocked")!=nil)
 }
 
+// An agent takes a turn of a corridor a metre wide without leaving its mesh:
+// neither carried past the turn nor led into the outer wall before it (as a
+// turn taken wide would, with nothing to clamp its body to the mesh).
+@(test)
+an_agent_takes_a_narrow_turn_within_its_mesh :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
+    // A corridor a metre wide along x that turns along z at x=0.
+    nav_test_box(&f,{0,1,-1},{10,1,0.5})
+    nav_test_box(&f,{1,1,4},{0.5,1,5.5})
+    nav_test_box(&f,{-5.25,1,5.25},{4.75,1,4.75})
+    nav_test_settled(t,&f)
+    e:=agents_test_walker(&f,{-8,0,0})
+    nav_move_to(&f.nav_requests,e,{0,0,8})
+    mesh:=&f.nav.classes[0].mesh
+    filter:=filter_make(&f.nav_settings,{},ai.NAV_CAN_ALL)
+    off,worst:=0,f32(0)
+    for _ in 0..<60*8 {
+        agents_test_step(&f)
+        pose,_:=core.get(&f.worlds,e)
+        _,on,found:=ai.nav_find_nearest(mesh,pose.position,{1,2,1},&filter)
+        away:=linalg.length(pose.position.xz-on.xz) if found else 1
+        // Half a voxel: the edge of the mesh against a wall the body touches.
+        if away>0.075 {off+=1}
+        worst=max(worst,away)
+        p,_:=core.get(&f.paths,e)
+        if p.state==.Arrived {break}
+    }
+    p,_:=core.get(&f.paths,e)
+    testing.expectf(t,off==0 && p.state==.Arrived,"%d ticks off its mesh, %.2f m at most; it is %v",off,worst,p.state)
+}
+
 // A path that says it crosses a link is driven only while navigation counts
 // one crossing: with none, the crossing of links looks at no path.
 @(test)

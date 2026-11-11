@@ -542,7 +542,12 @@ agent_follow :: proc(n:^Navigation,p:^Nav_Path,e:core.Entity,agent:Nav_Agent,pos
         core.push(&events.queue,Nav_Event{kind=.Crossing,entity=e,link=kind,manual=p.manual,from=from,to=to})
         return
     }
-    if .End in next.flags && distance<1 {speed*=max(distance,0.2)}
+    // Straight at the next corner: a turn taken wide (Detour's anticipated turns)
+    // leads a body nothing clamps to its mesh into the outer wall. Slower within
+    // twice its radius of the end.
+    if last:=corners[count-1];.End in last.flags && !p.corridor.cut {
+        speed*=clamp(linalg.length(mm.Vec2{last.position.x-position.x,last.position.z-position.z})/max(2*class.radius,1e-3),0.2,1)
+    }
     p.velocity=flat/max(distance,1e-4)*speed
 }
 
