@@ -57,10 +57,10 @@ copy_and_paste_duplicate_the_copied_roots_as_one_step :: proc(t:^testing.T) {
     testing.expect(t,history.undo(&edits,w,&selection))
     testing.expect_value(t,core.world_entities(w).alive,1)
 
-    // Once the source is gone there is nothing to paste and no step.
+    // Once the source is gone there is nothing to paste: the entry is off, and there is no step.
     core.destroy(&world.entities,original)
     core.world_settle(w)
-    testing.expect(t,test_command(&s,"paste"))
+    testing.expect(t,command_state(&s,"paste").disabled && !test_command(&s,"paste"))
     testing.expect_value(t,edits.cursor,0)
-    testing.expect(t,len(s.copied)==1 && s.toast_length>0)
+    testing.expect_value(t,len(s.copied),1)
 }

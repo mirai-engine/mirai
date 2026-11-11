@@ -12,7 +12,7 @@ import "mirai:editor/api"
 import "mirai:project"
 import "mirai:std/serial"
 
-RPC_USAGE :: "rpc <method> [key=value...|json|-|--file F] [--select FIELDS] [--wait-until CONDITION] | rpc describe [plugin|method|prefix|method...] | rpc --batch <calls.jsonl|-> [--project P|--port N] [--timeout S] [--client NAME]"
+RPC_USAGE :: "rpc <method> [key=value...|json|-|--file F] [--select FIELDS] [--wait-until CONDITION] | rpc describe [plugin|method|prefix|method...] [--project P|--port N] [--timeout S] [--client NAME]"
 
 RPC_ENDING_WAIT :: 3*time.Second // how long an editor that stopped listening may go on counting as alive
 RPC_RESTART_PAUSE :: 250*time.Millisecond // between the calls of a --wait-until whose editor restarts
@@ -215,9 +215,6 @@ cmd_rpc :: proc(root:string,args:[]string) -> int {
         return 2
     }
     switch connection.rest[0] {
-    case "--batch":
-        if len(connection.rest)!=2 {fmt.eprintfln("Usage: mirai %s",RPC_USAGE);return 2}
-        return rpc_batch(connection,connection.rest[1])
     case "describe":
         return rpc_describe(connection,connection.rest[1:])
     }
@@ -541,41 +538,6 @@ rpc_describe_text :: proc(result,name:string) -> string {
         }
     }
     return strings.to_string(b)
-}
-
-// mirai rpc --batch <file or ->: one call per line, {"method": "...", "params": {...}},
-// sent as the calls of one batch of the API, which runs them in order, gives
-// a call what those before it answered ("$N", "$N.path") and stops at the
-// first that fails, saying which.
-@(private="file")
-rpc_batch :: proc(connection:Connection,file:string) -> int {
-    text:string
-    if file=="-" {
-        text=read_stdin()
-    } else {
-        data,error:=os.read_entire_file(file,context.allocator)
-        if error!=nil {fmt.eprintfln("mirai rpc: could not read %s",file);return 2}
-        text=string(data)
-    }
-    calls:=strings.builder_make()
-    strings.write_string(&calls,`{"calls":[`)
-    number,count:=0,0
-    for line in strings.split_lines_iterator(&text) {
-        number+=1
-        call:=strings.trim_space(line)
-        if call=="" {continue}
-        if !params_is_object(call) || !api.json_valid(context.allocator,call) {
-            return rpc_fail({api.INVALID_PARAMS,fmt.tprintf(`line %d is not a call: write {{"method": "...", "params": {{...}}}}`,number),""})
-        }
-        if count>0 {strings.write_byte(&calls,',')}
-        strings.write_string(&calls,call)
-        count+=1
-    }
-    strings.write_string(&calls,"]}")
-    result,err,called:=rpc_call_waiting(connection,"batch",strings.to_string(calls),1)
-    if !called {return rpc_fail(err)}
-    fmt.println(result)
-    return 0
 }
 
 params_is_object :: proc(text:string) -> bool {

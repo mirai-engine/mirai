@@ -213,10 +213,14 @@ process_one :: proc(s:^Server,r:^serial.Text_Reader,route:Route,comma:bool) -> b
     return true
 }
 
-// What an error adds about the methods whose names look like name; "" without one.
+// What an error adds about a method that is not there: what does what it did when it is one that
+// went (Server.moved), else the methods whose names look like name; "" without one.
 @(private)
 methods_similar :: proc(s:^Server,name:string) -> string {
     allocator:=base.arena_allocator(&s.scratch)
+    for moved in s.moved {
+        if moved.was==name {return format_text(allocator,"; it is gone: use %s",moved.now)}
+    }
     names:=make([]string,s.method_count,allocator)
     for &method,i in s.methods[:s.method_count] {names[i]=method.name}
     similar:=names_similar(names,name,allocator)
@@ -344,6 +348,9 @@ method_execute :: proc(s:^Server,method:^Method,params:string,out:^serial.Writer
     sc:=&s.schema
     params_bytes,shaped,read_error,read:=params_read(s,method,params)
     if !read {return read_error,false}
+    if method.can!=nil {
+        if why:=method.can(method.user,raw_data(params_bytes));why!="" {return {NOT_NOW,clone_text(allocator,why),""},false}
+    }
     clamped:=s.clamped
     call:=Call{server=s,method=method,user=method.user,raw=shaped,client_tag=s.client_tag,client_name=s.client_name,measure=s.client_measure,allocator=allocator}
     if params_bytes!=nil {call.params=raw_data(params_bytes)}
@@ -446,6 +453,7 @@ Describe_Method :: struct {
     plugin:[MAX_NAME]u8 `mirai:"text,label=The plugin that registers it; editor for those of the editor"`,
     tool:[MAX_NAME]u8 `mirai:"text,optional,label=Its name as an MCP tool"`,
     summary:[1024]u8 `mirai:"text"`,
+    unavailable:[256]u8 `mirai:"text,optional,label=Why it cannot be called as the editor is now whatever its params; absent when it can"`,
     flags:[][16]u8 `mirai:"text,optional,label=read_only; destructive; idempotent"`,
     params:serial.Json `mirai:"optional,label=The JSON Schema of its params"`,
     result:serial.Json `mirai:"optional,label=The JSON Schema of its result"`,
@@ -524,6 +532,9 @@ describe_handler :: proc(call:^Call) {
         raw(w,`,"plugin":`);serial.text_write_string(w,method_plugin(&method))
         if schemas {raw(w,`,"tool":`);serial.text_write_string(w,tool_name(method.name,buffer[:]))}
         raw(w,`,"summary":`);serial.text_write_string(w,method.summary)
+        if method.can!=nil {
+            if why:=method.can(method.user,nil);why!="" {raw(w,`,"unavailable":`);serial.text_write_string(w,why)}
+        }
         raw(w,`,"flags":`);write_flags(w,method.flags)
         if schemas {
             raw(w,`,"params":`);method_schema_write(w,s,&method,false)

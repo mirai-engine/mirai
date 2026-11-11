@@ -426,7 +426,7 @@ object leaves faint bands. The editor grid is composited afterward and is not bl
 - Check types of each `runtime/` and `editor/`, generate and build the demo and open each scene in
   the editor without a window with validation (`--headless --validation --api-port`): zero
   validation errors in all of them.
-- The cards: `scene.write` (`preset` `decal`, `screen`, `portal` or `mirror`), with `merge` to give
+- The cards: `scene.write` (`preset` `decal`, `screen`, `portal` or `mirror`), which gives
   the slot and `capture` with the entity selected.
 - What to look at per scene:
   - `decals/decals.scene`: decals on floor, wall, steps and a sphere; order between two

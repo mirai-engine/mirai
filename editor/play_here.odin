@@ -81,7 +81,7 @@ viewport_menu_items :: proc(s:^Session,m:^Viewport_Menu) {
         ui.menu_separator(ctx)
     }
     if ui.menu_item(ctx,ui.id(ctx,"here"),"Play from here",{icon=.Play,disabled=!m.hit || command_state(s,"play").disabled}) {
-        command_call(s,"play.start",fmt.tprintf(`{{"from":"Point","point":[%v,%v,%v]}}`,m.here.x,m.here.y,m.here.z))
+        command_call(s,"play.start",fmt.tprintf(`{{"from":"Point","point":[%v,%v,%v],"online":-1,"ping_ms":-1}}`,m.here.x,m.here.y,m.here.z))
     }
     command_menu_item(s,ui.id(ctx,"camera"),"play_from_camera")
     if m.count>0 {ui.menu_separator(ctx)}

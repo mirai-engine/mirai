@@ -825,6 +825,6 @@ terrain): `terrains_of_a_shared_source_keep_one_set_of_pieces_each_across_world_
   raster and in rays; its image, the joins between levels and the holes need a GPU capture.
 - By API and captures: preview, file and revision until confirming, cancellation, undo/redo and
   entities that share a source. Unsaved: `editor.input` creates and sculpts, `asset.unsaved` and
-  the disk do not change, `play.inspect` and `capture` see it, `asset.save` writes and
+  the disk do not change, `scene.inspect` of the game and `capture` see it, `asset.save` writes and
   `asset.discard` returns to the disk. Direct gestures are tested by the user; a Darwin ARM64 check
   only verifies types.

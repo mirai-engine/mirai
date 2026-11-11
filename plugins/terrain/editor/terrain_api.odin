@@ -504,7 +504,7 @@ api_play_terrain :: proc(call:^api.Call,w:core.World_Ref,named:[]u8) -> (e:core.
     if e,named_found=editor.api_call_entity(call,w,named,game=true);!named_found {return}
     given:=base.text_get(named)
     marker,found:=core.get(terrains,e)
-    if !found {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Terrain in the game: play.inspect lists them",given);return}
+    if !found {api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with a Terrain in the game: scene.inspect with world Game lists them",given);return}
     placed,has:=core.get(worlds,e)
     source=terrain.terrain_source(core.ref(data),marker.source)
     if !has || source==nil {api.call_failf(call,api.INVALID_PARAMS,"The source of terrain %s is not loaded in the game yet: step it and call again",given);return}

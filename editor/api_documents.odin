@@ -80,12 +80,6 @@ api_document :: proc(s:^Session,call:^api.Call) {
     }
     switch p.action {
     case .Open:
-        // A person picks the file.
-        if api_asks(s,path) {
-            file_open(s)
-            api_documents(s,call)
-            return
-        }
         if path=="" {api.call_fail(call,api.INVALID_PARAMS,"An asset path is required");return}
         // An asset that is not a scene opens as an asset document.
         if !strings.has_suffix(path,".scene") {

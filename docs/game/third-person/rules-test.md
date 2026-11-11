@@ -56,8 +56,8 @@ run on its root, one `@(step="fixed")` that reads them. The HUD binds a field by
   {"name": "walk forward", "method": "play.step", "params": {"for": "1s", "keys": ["W"]}},
   {"name": "it walked", "method": "play.check", "params": {"conditions": [
     {"entity": "Player", "field": "world_position.2", "compare": "Below", "number": 4.5}]}},
-  {"name": "into the water", "method": "play.set",
-   "params": {"entity": "Player", "position": [16, 2, 0]}},
+  {"name": "into the water", "method": "scene.write",
+   "params": {"world": "Game", "root": "Player", "entities": [{"position": [16, 2, 0]}]}},
   {"name": "it falls and comes back", "method": "play.step", "params": {"for": 300, "until": [
     {"entity": "Run", "field": "Run.deaths", "compare": "Equal", "number": 1}]}}
 ]}

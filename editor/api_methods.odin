@@ -206,8 +206,8 @@ Api_Play_Result :: struct {
 
 Api_Play_Start_Params :: struct {
     players:int `mirai:"optional,min=0,max=4,label=Local players sharing the screen; 0: the last chosen (a turn: the scene)"`,
-    online:int `mirai:"optional,min=0,max=3,label=Players on the network besides them; the run serves the game. A turn gets a run per online player (player 1 and on) that is a client of its run"`,
-    ping_ms:int `mirai:"optional,min=0,max=1000,label=Round trip the online players simulate"`,
+    online:int `mirai:"optional,min=-1,max=3,label=Players on the network besides them; the run serves the game. A turn gets a run per online player (player 1 and on) that is a client of its run. -1 outside a turn: those the Play menu of the editor has, asking the person at the editor first about unsaved assets the players would not have"`,
+    ping_ms:int `mirai:"optional,min=-1,max=1000,label=Round trip the online players simulate; -1: that of the Play menu"`,
     saved_only:bool `mirai:"optional,label=Outside a turn a game on the network plays with what the files hold although assets have unsaved changes"`,
     simulate:bool `mirai:"optional,label=Simulate the scene instead: the editor camera and no player input; outside a turn and without players or online"`,
     from:Api_Play_From `mirai:"optional,label=Where player 1 gets its first body outside a turn: Scene (the default) at a Spawn_Point or without one at the editor camera; Camera and Point there before any Spawn_Point, standing on what is under it"`,
@@ -321,8 +321,8 @@ Api_Editor_Layout :: struct {
 }
 Api_Editor_Command :: struct {
     name:string `mirai:"label=Of the entry: layout.widgets names its button command.<name>"`,
-    method:string `mirai:"label=The method it calls"`,
-    params:string `mirai:"optional,label=The params it calls it with as JSON; $roots and $selection and $active and $copied and $all stand for entities of the selection of the person; $toggle for the opposite of checked; $ask for a file the person picks: a call names them itself"`,
+    method:string `mirai:"label=The method it calls; empty for an entry that only changes what the person sees or asks them first, which has no method"`,
+    params:string `mirai:"optional,label=The params it calls it with as JSON, with the names of what the person has in front that the entry puts ids in place of before the call ($roots and $selection and $copied are entities and $active one; $shown the world the editor shows; $document and $card an asset): a call gives values of its own. Of an entry that flips a preference or a tool: what it would call with now"`,
     label:string,
     shortcut:string `mirai:"optional"`,
     disabled:bool `mirai:"label=The person cannot run it now"`,
@@ -406,8 +406,8 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="editor.select",summary="Sets the selection of the editor: the entities the panels and the tools act on.",params=type_info_of(Api_Select_Params),result=type_info_of(Api_Select_Result),flags={.Idempotent,.View},run=api_editor_select})
     api_register(s,st,{name="editor.input",params=type_info_of(Api_Editor_Input_Params),summary="Runs a frame per event of synthetic input through the path of real input. Manual execution only (headless).",result=type_info_of(Api_Editor_Inspect),flags={.As_User},run=api_editor_input})
     api_register(s,st,{name="camera.set",params=type_info_of(Api_Camera_Set_Params),summary="Moves the camera of the editor, or looks through a Camera of the scene without changing it, and chooses how the view is exposed.",result=type_info_of(Api_Camera_Result),flags={.Idempotent,.View},run=api_camera_set})
-    api_register(s,st,{name="history.undo",flags={.Core},summary="Undoes the last edit of the caller (its turn, or the API outside a turn), even after edits of others, keeping every field they changed since.",result=type_info_of(Api_History_Result),run=api_undo})
-    api_register(s,st,{name="history.redo",summary="Redoes the edit the last undo of the caller took back, keeping every field others changed since; a new edit of the caller drops what it can redo.",result=type_info_of(Api_History_Result),run=api_redo})
+    api_register(s,st,{name="history.undo",flags={.Core},summary="Undoes the last edit of the caller (its turn, or the API outside a turn), even after edits of others, keeping every field they changed since.",params=type_info_of(Api_History_Params),result=type_info_of(Api_History_Result),run=api_undo})
+    api_register(s,st,{name="history.redo",summary="Redoes the edit the last undo of the caller took back, keeping every field others changed since; a new edit of the caller drops what it can redo.",params=type_info_of(Api_History_Params),result=type_info_of(Api_History_Result),run=api_redo})
     api_register(s,st,{name="play.start",flags={.Core,.Draws},summary="Plays a copy of the scene: a game the caller already plays goes on and answers its state while the document is as it was when it started, and starts again when it changed. Outside a turn, in the editor; in a turn, a run of its own the editor does not show and only play.step advances. Up to three turns play besides the user. When an Odin source changed since the last build, it builds first and answers when the game plays, or fails with what the compiler said.",params=type_info_of(Api_Play_Start_Params),result=type_info_of(Api_Play_Result),run=api_play_start})
     api_register(s,st,{name="play.stop",flags={.Core,.Idempotent},summary="Ends the game of the caller (its turn, or the user outside a turn, with its game on the network) and discards what it changed.",result=type_info_of(Api_Play_Result),run=api_play_stop})
     api_register(s,st,{name="play.pause",summary="Pauses the game, or resumes it with paused false: from the newest tick it played, or with here from the tick play.seek went to.",params=type_info_of(Api_Pause_Params),result=type_info_of(Api_Play_Result),defaults=&pause_default,run=api_play_pause})
@@ -589,11 +589,6 @@ api_step :: proc(s:^Session,call:^api.Call) {
 api_shutdown :: proc(s:^Session,call:^api.Call) {
     if api_turn_refused(s,call,"quit the editor") {return}
     params:=api.call_params(call,Api_Shutdown_Params)
-    // A person is asked about what is unsaved.
-    if api_person(s) {
-        quit_request(s)
-        return
-    }
     if documents_dirty(s) && !params.discard {
         api.call_fail(call,api.SERVER_ERROR,"The scene has unsaved changes; save it first or pass discard")
         return
@@ -636,17 +631,26 @@ api_history_result :: proc(s:^Session,call:^api.Call,kept:=0) {
     api.call_result(call,Api_History_Result)^={history.edits_undo_count(s.edits),history.edits_redo_count(s.edits),kept}
 }
 
-// The history a gesture of the person moves in: that of the asset document in front, when one is.
+Api_History_Params :: struct {
+    asset:[API_PATH_BYTES]u8 `mirai:"text,optional,label=An asset with a document open in the editor (editor.documents lists them): its history, which is that of the document and not of a caller, in place of that of the scene"`,
+}
+
+// The history of the document of the asset a call names; nil for the scene, and after failing the call.
 @(private)
-api_document_history :: proc(s:^Session) -> ^Asset_History {
-    if d:=asset_document_active(s);d!=nil && api_person(s) {return &d.history}
+api_document_history :: proc(s:^Session,call:^api.Call) -> ^Asset_History {
+    name:=base.text_get(api.call_params(call,Api_History_Params).asset[:])
+    if name=="" {return nil}
+    if _,shown:=api_document_named(s,name);shown>=0 {return &s.asset_documents[shown].history}
+    api.call_failf(call,api.INVALID_PARAMS,"asset: %q has no document open: editor.documents lists them; without asset the history is that of the scene",name)
     return nil
 }
 
 @(private)
 api_undo :: proc(s:^Session,call:^api.Call) {
     preview:=s.edits.preview
-    if h:=api_document_history(s);h!=nil {
+    h:=api_document_history(s,call)
+    if call.failed {return}
+    if h!=nil {
         tools_release(s)
         if asset_history_undo(h) {notify(s,fmt.tprintf("Undo %s",history.cstring_text(h.steps[h.cursor].label[:])))}
         api.call_result(call,Api_History_Result)^={h.cursor,len(h.steps)-h.cursor,0}
@@ -655,7 +659,7 @@ api_undo :: proc(s:^Session,call:^api.Call) {
     if !api_guard(s,call) {return}
     if preview {api_history_result(s,call);return}
     move:=history_undo(s)
-    if text:=history_text(move,"Undo");text!="" && api_person(s) {notify(s,text)}
+    if text:=history_text(move,"Undo");text!="" {notify(s,text)}
     if !move.done {
         api.call_fail(call,api.SERVER_ERROR,move.error if move.error!="" else "Nothing to undo: the caller has no edit of its own left (an agent's turn undoes its own edits, the API outside a turn its own)")
         return
@@ -665,7 +669,9 @@ api_undo :: proc(s:^Session,call:^api.Call) {
 
 @(private)
 api_redo :: proc(s:^Session,call:^api.Call) {
-    if h:=api_document_history(s);h!=nil {
+    h:=api_document_history(s,call)
+    if call.failed {return}
+    if h!=nil {
         tools_release(s)
         if asset_history_redo(h) {notify(s,fmt.tprintf("Redo %s",history.cstring_text(h.steps[h.cursor-1].label[:])))}
         api.call_result(call,Api_History_Result)^={h.cursor,len(h.steps)-h.cursor,0}
@@ -673,7 +679,7 @@ api_redo :: proc(s:^Session,call:^api.Call) {
     }
     if !api_guard(s,call) {return}
     move:=history_redo(s)
-    if text:=history_text(move,"Redo");text!="" && api_person(s) {notify(s,text)}
+    if text:=history_text(move,"Redo");text!="" {notify(s,text)}
     if !move.done {
         api.call_fail(call,api.SERVER_ERROR,move.error if move.error!="" else "Nothing to redo: the caller undid nothing since its last edit")
         return
@@ -961,8 +967,7 @@ api_camera_set :: proc(s:^Session,call:^api.Call) {
     v.orbit=orbit
     v.exposure,v.exposure_source,v.ev100=exposure,source,ev100
     viewport_camera(v)
-    // Framing what is selected keeps the image; a camera that jumps cuts its history.
-    if framed==0 || !api_person(s) {s.view_cut=true}
+    s.view_cut=true
     api.call_result(call,Api_Camera_Result)^={orbit_position(orbit),orbit.target,orbit.yaw,orbit.pitch,orbit.distance,orbit.fov,source,ev100}
 }
 
@@ -1122,10 +1127,6 @@ api_play_start :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.INVALID_PARAMS,"players and online are 4 at most")
         return
     }
-    if api_person(s) && (s.mode!=.Edit || play_plugin_active(s)) {
-        api.call_fail(call,api.SERVER_ERROR,"A game already plays")
-        return
-    }
     if running!=nil {
         if owner==0 {
             play_stop(s,true)
@@ -1146,9 +1147,11 @@ api_play_start :: proc(s:^Session,call:^api.Call) {
     case .Camera: s.play_asked=camera_origin(s);s.play_asked.asked=true
     case .Point:  s.play_asked=point_origin(s,params.point)
     }
-    // A person plays with the players the Play menu has, and is asked about unsaved assets (-1).
     online,ping:=params.online,params.ping_ms
-    if api_person(s) {online,ping=-1,-1}
+    if owner!=0 && (online<0 || ping<0) {
+        api.call_fail(call,api.INVALID_PARAMS,"online and ping_ms -1 are the Play menu of the person at the editor: a turn gives its own")
+        return
+    }
     if play_build_first(s,{owner=owner,players=params.players,online=online,ping_ms=ping,saved_only=params.saved_only}) {
         api_play_after_build(s,call,owner)
         return
@@ -1167,8 +1170,8 @@ api_play_start :: proc(s:^Session,call:^api.Call) {
 api_play_after_build :: proc(s:^Session,call:^api.Call,owner:int) {
     build_play_waits :: proc(s:^Session,user:rawptr) -> bool {return s.build.play.pending}
     if !api_wait(s,API_BUILD_SECONDS,nil,build_play_waits,"building to play") {
-        // A person sees the build and the game that follows it.
-        if api_person(s) {return}
+        // Whoever does not wait sees the build and the game that follows it.
+        if api_state(s).left_going {return}
         // Cancelled, the game does not start by itself when the build ends.
         if api_stop_asked(s) {s.build.play.pending=false;s.play_asked={};return}
         api.call_failf(call,api.SERVER_ERROR,"The build still runs after %d s: the game starts when it stands and play.status says so",API_BUILD_SECONDS)
@@ -1243,16 +1246,13 @@ play_begin :: proc(s:^Session,owner,players,online,ping_ms:int,saved_only:bool) 
 
 @(private)
 api_play_stop :: proc(s:^Session,call:^api.Call) {
-    // Stop of the bar ends what the editor shows: a watch, the game, or that of a plugin.
-    if api_person(s) {
-        shown_stop(s)
-        api_play_result(s,call,run_find(s,0))
-        return
-    }
     r,own:=api_play_run(s,call)
     if r!=nil && !own {api_play_refused(call);return}
-    if r!=nil {
-        if r.owner==0 {play_stop(s,true)} else {run_stop(s,r.owner)}
+    // Outside a turn it ends what the editor shows: a watch, the game, and that of a plugin.
+    switch {
+    case r!=nil && r.owner!=0:  run_stop(s,r.owner)
+    case s.mode==.Watch:        watch_stop(s)
+    case r!=nil:                play_stop(s,true)
     }
     if ai_task_of_call(s,call)==0 {play_plugin_stop(s)}
     api_play_result(s,call,nil)

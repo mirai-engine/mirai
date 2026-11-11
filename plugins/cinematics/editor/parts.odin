@@ -1,6 +1,5 @@
 package cinematics_editor
 
-import "core:mem"
 import "core:strings"
 import "mirai:core"
 import "mirai:editor"
@@ -11,8 +10,9 @@ import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 import cine "plugins:cinematics/runtime"
 
-// What the tool and the methods write into a timeline: the entity with its Cinematic and its
-// Animation, and the actors its clip moves by reference. The keys and the markers (its shots on
+// What the tool writes into a timeline: the entity of the recipe cinematic, with its Cinematic and
+// its Animation, and the actors its clip moves by reference (an Animation_Target that names the
+// timeline); scene.write writes the same components. The keys and the markers (its shots on
 // cameras, the actions of its actors) are those of the clip: the animation methods write them.
 
 Part :: enum u8 {Timeline,Actor}
@@ -24,50 +24,32 @@ timeline_of :: proc(w:core.World_Ref,e:core.Entity) -> core.Entity {
     return core.NONE
 }
 
-component_write :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity,value:$T) -> bool {
-    value:=value
-    _,info:=core.world_table(w,T)
-    return editor.field_write(s,info,{e},0,mem.ptr_to_bytes(&value))
-}
-
 Part_Desc :: struct {
     part:Part,
     timeline:core.Entity,
     target:core.Entity, // the entity of an actor
-    clip:base.Asset_Id, // the .anim of a timeline
-    playing:bool,       // a timeline: it starts by itself
-    name:string,        // of an actor: what the tracks and markers of the clip call it; empty: the name of its entity
 }
 
 // Makes a timeline at the root of the document or an actor of an entity of the scene, inside the
 // step that is open. e: the timeline, or the entity that became an actor.
 part_add :: proc(s:^editor.Session,w:core.World_Ref,desc:Part_Desc) -> (e:core.Entity,problem:string) {
-    add :: proc(s:^editor.Session,w:core.World_Ref,e:core.Entity,value:$T) {
-        value:=value
-        _,info:=core.world_table(w,T)
-        editor.component_add(s,e,info,&value)
+    if desc.part==.Timeline {
+        e=editor.entity_create(s,{recipe="cinematic"})
+        return e,"the entity could not be created" if e==core.NONE else ""
     }
-    if desc.part!=.Timeline && !editor.entity_has(w,desc.timeline,cine.Cinematic) {return core.NONE,"the timeline has no Cinematic"}
-    switch desc.part {
-    case .Timeline:
-        e=editor.entity_create(s,{name="Cinematic"})
-        if e==core.NONE {return core.NONE,"the entity could not be created"}
-        animation:=anim.ANIMATION_DEFAULT
-        animation.asset,animation.playing,animation.loop,animation.fade=desc.clip,desc.playing,false,0
-        add(s,w,e,animation)
-        add(s,w,e,cine.Cinematic{})
-    case .Actor:
-        if !editor.entity_alive(w,desc.target) {return core.NONE,"the actor is not an entity of the scene"}
-        if desc.target==desc.timeline {return core.NONE,"the timeline is the entity its clip moves with the tracks without a target: it needs no actor"}
-        name:=desc.name if desc.name!="" else editor.entity_name(w,desc.target)
-        target,had:=editor.entity_get(w,desc.target,anim.Animation_Target)
-        if name=="" || len(name)>=len(target.path) {return core.NONE,"an actor needs a name, of its entity or given, shorter than a track target"}
-        base.text_set(target.path[:],name)
-        target.animation=desc.timeline
-        if had {component_write(s,w,desc.target,target)} else {add(s,w,desc.target,target)}
-        e=desc.target
+    switch {
+    case !editor.entity_has(w,desc.timeline,cine.Cinematic): return core.NONE,"the timeline has no Cinematic"
+    case !editor.entity_alive(w,desc.target):                return core.NONE,"the actor is not an entity of the scene"
+    case desc.target==desc.timeline:                         return core.NONE,"the timeline is the entity its clip moves with the tracks without a target: it needs no actor"
     }
-    return e,""
+    target,_:=editor.entity_get(w,desc.target,anim.Animation_Target)
+    name:=editor.entity_name(w,desc.target)
+    if name=="" || len(name)>=len(target.path) {return core.NONE,"an actor needs a name of its entity shorter than a track target"}
+    base.text_set(target.path[:],name)
+    target.animation=desc.timeline
+    _,info:=core.world_table(w,anim.Animation_Target)
+    editor.component_add(s,desc.target,info,&target)
+    return desc.target,""
 }
 
 // What the clip of a timeline calls an actor: the target of its tracks and markers.
