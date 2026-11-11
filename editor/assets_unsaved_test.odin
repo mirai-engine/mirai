@@ -175,3 +175,36 @@ the_unsaved_assets_a_world_owns_are_those_of_its_owned_fields :: proc(t:^testing
     world_owned_unsaved(&s,world,&owned)
     testing.expectf(t,len(owned)==1 && owned[0]=="made.mat","the world owns the one of its owned field: %v",owned)
 }
+
+// What uses an asset that a delete names: the files that reference it, and an open document
+// whose unsaved changes do.
+@(test)
+deleting_an_asset_names_the_open_documents_that_use_it_unsaved :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"delete-users")
+    if root=="" {return}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    stone,clay:=base.Asset_Id{1,1},base.Asset_Id{2,2}
+    with_clay:=asset.MATERIAL_DEFAULTS
+    with_clay.maps.base_color.texture=clay
+    testing.expect_value(t,asset.material_save(fmt.tprintf("%s/stone.mat",root),&types,{id=stone,info=with_clay}),asset.Error.None)
+    testing.expect_value(t,asset.material_save(fmt.tprintf("%s/clay.mat",root),&types,{id=clay,info=asset.MATERIAL_DEFAULTS}),asset.Error.None)
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=root,capacity=8})) {return}
+    defer host.assets_destroy(&assets)
+    app:=host.App{assets=&assets}
+    w:Unsaved_Test_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    core.add(&w.looks,core.create(&w.entities),Unsaved_Test_Look{material=clay})
+    test_world_settle(&w)
+    edits:history.Edits
+    defer history.edits_free(&edits)
+    document:Document
+    s:=Session{app=&app,info=test_world_info(&w),edit_world=&w,edits=&edits,document=&document}
+    r:=&assets.registry
+    users:=asset_delete_users(&s,r,asset_delete_files(r,clay))
+    testing.expect(t,len(users)==1 && users[0]=="stone.mat","a clean document is what its file says")
+    document.unsaved=true
+    users=asset_delete_users(&s,r,asset_delete_files(r,clay))
+    testing.expect(t,len(users)==2 && users[1]=="Untitled","an unsaved reference names its document")
+}

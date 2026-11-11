@@ -10,8 +10,9 @@ import "mirai:std/serial"
 // takes a component, a storage or a plugin that changed without starting
 // again. A table or a storage that keeps its name, its place and the hash of
 // the layout of its type moves whole; one whose type changed is converted by
-// the names of its fields (serial.Migration); a new one starts as the new
-// library makes it, and one that is gone is freed with the old library.
+// the names of its fields (serial.Migration); a table is also found by a name
+// it had (@(component,was=)); a new one starts as the new library makes it,
+// and one that is gone is freed with the old library.
 //
 // A place migrates into a struct the new library initialized (fresh): what
 // moves is swapped into it, so the old struct keeps what the new library made
@@ -63,7 +64,7 @@ world_migration_make :: proc(m:^World_Migration,from,to:^World_Info,allocator:=c
     for &t,i in to.tables {
         m.table_sources[i]=-1
         for &old,j in from.tables {
-            if old.name!=t.name || old.place!=t.place {continue}
+            if old.name!=t.name && !serial.names_hold(t.was,old.name) || old.place!=t.place {continue}
             m.table_sources[i]=j
             m.table_map[j]=i
             m.tables[i]=layout_kept(m,old.info,t.info,renumbered)?.Move:.Convert

@@ -1,6 +1,5 @@
 package editor
 
-import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:reflect"
@@ -12,6 +11,7 @@ import "mirai:project"
 import gpu "mirai:render"
 import "mirai:rhi"
 import "mirai:std/base"
+import "mirai:std/serial"
 import "mirai:editor/kit"
 import "mirai:ui"
 
@@ -169,7 +169,7 @@ graphics_build :: proc(s:^Session) {
 // GRAPHICS_RATE_SECTION go to the Frame rate card, the others to Quality.
 Graphics_Row :: struct {
     storage:int,
-    type:^runtime.Type_Info, // of the field
+    type:serial.Type, // of the field
     offset:uintptr,
     label:string,
     rate:bool,
@@ -187,15 +187,14 @@ graphics_rows_of :: proc(s:^Session,offered:[]erender.Antialiasing_Desc=nil) -> 
         for &info,index in s.info.storages {
             if info.setting!=.Machine || (info.type==erender.Graphics_Settings)!=engine {continue}
             // By its type info: the type of a plugin is of the module of its library.
-            fields,is_struct:=runtime.type_info_base(info.info).variant.(runtime.Type_Info_Struct)
-            if !is_struct {continue}
+            schema,type:=type_schema(s.info,info.info)
+            if schema==nil {continue}
             section:=""
-            for i in 0..<int(fields.field_count) {
-                tag:=field_tagged(fields.tags[i])
-                if tag.section!="" {section=tag.section}
-                if tag.graphics=="" {continue}
-                row:=Graphics_Row{storage=index,type=fields.types[i],offset=fields.offsets[i],label=tag.graphics,rate=section==GRAPHICS_RATE_SECTION}
-                if graphics_row_choices(&row,tag.choices,offered) {append(&rows,row)}
+            for field in serial.schema_fields(schema,type) {
+                if field.section!="" {section=field.section}
+                if field.graphics=="" {continue}
+                row:=Graphics_Row{storage=index,type=schema.types[field.type],offset=uintptr(field.offset),label=field.graphics,rate=section==GRAPHICS_RATE_SECTION}
+                if graphics_row_choices(&row,schema,field.choices,offered) {append(&rows,row)}
             }
         }
     }
@@ -204,7 +203,7 @@ graphics_rows_of :: proc(s:^Session,offered:[]erender.Antialiasing_Desc=nil) -> 
 
 // The choices of a row from its type and its tag; false for a type without them.
 @(private="file")
-graphics_row_choices :: proc(row:^Graphics_Row,listed:string,offered:[]erender.Antialiasing_Desc) -> bool {
+graphics_row_choices :: proc(row:^Graphics_Row,schema:^serial.Schema,listed:string,offered:[]erender.Antialiasing_Desc) -> bool {
     listed:=listed
     labels:=make([dynamic]string,context.temp_allocator)
     values:=make([dynamic]f64,context.temp_allocator)
@@ -214,19 +213,20 @@ graphics_row_choices :: proc(row:^Graphics_Row,listed:string,offered:[]erender.A
         number,_:=strconv.parse_f64(value if value!="" else label)
         append(&values,number)
     }
-    #partial switch v in runtime.type_info_base(row.type).variant {
-    case runtime.Type_Info_Boolean:
+    #partial switch row.type.kind {
+    case .Bool:
         row.choices,row.values=make([]string,2,context.temp_allocator),make([]f64,2,context.temp_allocator)
         row.choices[0],row.choices[1],row.values[1]="Off","On",1
         if len(labels)==2 {row.choices[0],row.choices[1]=labels[0],labels[1]}
-    case runtime.Type_Info_Enum:
-        row.choices,row.values=make([]string,len(v.names),context.temp_allocator),make([]f64,len(v.values),context.temp_allocator)
-        for name,i in v.names {row.choices[i],row.values[i]=i<len(labels)?labels[i]:readable(name),f64(v.values[i])}
-    case runtime.Type_Info_Integer,runtime.Type_Info_Float:
+    case .Enum:
+        members:=schema.choices[row.type.first:][:row.type.count]
+        row.choices,row.values=make([]string,len(members),context.temp_allocator),make([]f64,len(members),context.temp_allocator)
+        for member,i in members {row.choices[i],row.values[i]=i<len(labels)?labels[i]:readable(member.name),f64(member.value)}
+    case .Int,.Uint,.Float:
         if len(labels)==0 {return false}
         row.choices,row.values=labels[:],values[:]
-    case runtime.Type_Info_Array:
-        if v.elem.size!=1 {return false}
+    case .Array:
+        if schema.types[row.type.elem].size!=1 {return false}
         row.choices=make([]string,2+len(offered),context.temp_allocator)
         row.texts=make([]string,len(row.choices),context.temp_allocator)
         row.choices[0],row.texts[0]="Off",erender.ANTIALIASING_OFF
@@ -242,15 +242,14 @@ graphics_row_choices :: proc(row:^Graphics_Row,listed:string,offered:[]erender.A
 graphics_row_choice :: proc(row:^Graphics_Row,data:rawptr) -> int {
     at:=rawptr(uintptr(data)+row.offset)
     if row.texts!=nil {
-        name:=base.text_get(([^]u8)(at)[:row.type.size])
+        name:=base.text_get(([^]u8)(at)[:int(row.type.size)])
         for text,i in row.texts {if text==name {return i}}
         return 1
     }
     value:=f64(0)
-    #partial switch v in runtime.type_info_base(row.type).variant {
-    case runtime.Type_Info_Float:
+    if row.type.kind==.Float {
         value=row.type.size==8?(^f64)(at)^:f64((^f32)(at)^)
-    case:
+    } else {
         switch row.type.size {
         case 1: value=f64((^u8)(at)^)
         case 2: value=f64((^u16)(at)^)
@@ -267,16 +266,15 @@ graphics_row_choice :: proc(row:^Graphics_Row,data:rawptr) -> int {
 graphics_row_write :: proc(row:^Graphics_Row,data:rawptr,choice:int) {
     at:=rawptr(uintptr(data)+row.offset)
     if row.texts!=nil {
-        text:=([^]u8)(at)[:row.type.size]
+        text:=([^]u8)(at)[:int(row.type.size)]
         for &b in text {b=0}
         base.text_set(text,row.texts[choice])
         return
     }
     value:=row.values[choice]
-    #partial switch v in runtime.type_info_base(row.type).variant {
-    case runtime.Type_Info_Float:
+    if row.type.kind==.Float {
         if row.type.size==8 {(^f64)(at)^=value} else {(^f32)(at)^=f32(value)}
-    case:
+    } else {
         switch row.type.size {
         case 1: (^u8)(at)^=u8(value)
         case 2: (^u16)(at)^=u16(value)

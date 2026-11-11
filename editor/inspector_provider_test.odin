@@ -25,12 +25,12 @@ inspector_extensions_use_current_metadata_and_preserve_the_generic_fallback :: p
     provider:=&info.storages[info.storages_by_type[Inspector_Test_Provider]]
     session:=Session{info=&info}
     inspected:=Inspect{s=&session}
-    testing.expect(t,inspector_extension(&inspected) && session.frame==1)
+    testing.expect(t,inspector_extension(&inspected,nil) && session.frame==1)
     provider.default=inspector_test_provider_v2
     session.library_generation+=1
-    testing.expect(t,inspector_extension(&inspected) && session.frame==3)
-    testing.expect(t,!inspector_extension(&inspected,type_info_of(f32)))
+    testing.expect(t,inspector_extension(&inspected,nil) && session.frame==3)
+    testing.expect(t,!inspector_extension(&inspected,f32))
     provider.place=.World
     session.library_generation+=1
-    testing.expect(t,!inspector_extension(&inspected))
+    testing.expect(t,!inspector_extension(&inspected,nil))
 }

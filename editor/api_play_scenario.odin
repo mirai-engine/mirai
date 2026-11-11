@@ -63,13 +63,11 @@ Api_Scenario_Step :: struct {
 }
 
 // A scenario file; the params of a step are those of its method.
-@(private)
 Scenario :: struct {
     scene:string `mirai:"optional"`,
     start:serial.Json `mirai:"optional"`,
     steps:[]Scenario_Step,
 }
-@(private)
 Scenario_Step :: struct {
     name:string `mirai:"optional"`,
     method:string,

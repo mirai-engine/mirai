@@ -1,11 +1,11 @@
 package main
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:math"
 import "core:strconv"
 import "core:strings"
 import img "mirai:cook/image"
+import "mirai:std/serial"
 
 // mirai image: compares and describes PNG captures. Results go to stdout as
 // JSON; what went wrong goes to stderr as "mirai image <subcommand>: <reason>".
@@ -125,10 +125,7 @@ image_load_or_report :: proc(command,path:string) -> (image:img.Image,ok:bool) {
 }
 
 @(private="file")
-json_text :: proc(text:string) -> string {
-    data,error:=json.marshal(text,{},context.temp_allocator)
-    return error==nil?string(data):"\"\""
-}
+json_text :: proc(text:string) -> string {return serial.text_quote(text)}
 
 // JSON has no infinity: the PSNR of equal images is null.
 @(private="file")

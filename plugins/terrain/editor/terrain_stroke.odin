@@ -208,11 +208,7 @@ stroke_under :: proc(tool:^Terrain_Tool,v:^editor.Viewport,at:[2]f32) -> (point,
 // now: on a grid, its height there.
 @(private)
 stroke_carry :: proc(tool:^Terrain_Tool,point,normal:[3]f32) -> ([3]f32,[3]f32,bool) {
-    stroke:=&tool.stroke
-    point:=point
-    if stroke.source.kind==.Heightfield {point.y=terrain.source_height(&stroke.source,point.x,point.z);return point,normal,true}
-    reach:=brush_of(tool).radius/stroke.scale
-    if hit,hit_normal,on:=terrain.source_ray(&stroke.source,point+normal*reach,-normal);on && linalg.length(hit-point)<=reach*2 {return hit,hit_normal,true}
+    point,normal:=terrain.source_carry(&tool.stroke.source,point,normal,brush_of(tool).radius/tool.stroke.scale)
     return point,normal,true
 }
 
@@ -257,7 +253,7 @@ brush_make :: proc(tool:^Terrain_Tool,kind:terrain.Brush_Kind,point,normal:[3]f3
         seed=u32(stroke.id[0]),turn=b.turn,
     }
     brush.alpha=alpha_of(tool,b)
-    if b.slope_filter && stroke.source.kind==.Heightfield {
+    if b.slope_filter {
         low,high:=clamp(min(b.slope.x,b.slope.y),0,math.PI/2),clamp(max(b.slope.x,b.slope.y),0,math.PI/2)
         // A zero slope is no filter for the runtime: the flat alone is a range a little above it.
         brush.slope,brush.slope_invert={low,max(high,low+1e-6)},b.slope_invert

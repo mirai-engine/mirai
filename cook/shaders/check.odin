@@ -672,10 +672,12 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
                 result.error=fmt.aprintf("could not write %s for the check",failed,allocator=allocator)
                 return
             }
-            // own: the include of the Vfx program, before those of the generation.
-            command :: proc(slangc,source,stage,output:string,own,include,root,project,folder:string,sources:[]Source) -> []string {
+            // own: the include of the Vfx program, before those of the generation. A stage reads
+            // its constants (`//! constant`) as the build gives them.
+            command :: proc(slangc,source,stage,output:string,own,include,root,project,folder:string,sources:[]Source,constants:[]Constant=nil) -> []string {
                 out:=make([dynamic]string,context.temp_allocator)
                 append(&out,slangc,source,"-entry","main","-matrix-layout-column-major","-O0","-line-directive-mode","none","-warnings-disable","40100,41035",SLANG_DIAGNOSTICS_FLAG,"-stage",stage)
+                for constant,id in constants {append(&out,fmt.tprintf("-D%s="+CONSTANT_SYMBOL,constant.define,id))}
                 if own!="" {append(&out,"-I",own)}
                 append(&out,"-I",include)
                 for engine in ENGINE_INCLUDES {append(&out,"-I",path_join(root,engine,allocator=context.temp_allocator))}
@@ -713,7 +715,7 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
                 stage:=path_name(source)
                 _,kind,_:=stage_of(stage)
                 output:=path_join(temporary,stage,allocator=context.temp_allocator)
-                append(&compiles,Check_Compile{runner=&runner,stage=strings.trim_suffix(stage,".slang"),command=command(slangc,source,kinds[kind],output,own_folder if c.domain==.Vfx else "",include,options.root,options.project,folder,options.sources)})
+                append(&compiles,Check_Compile{runner=&runner,stage=strings.trim_suffix(stage,".slang"),command=command(slangc,source,kinds[kind],output,own_folder if c.domain==.Vfx else "",include,options.root,options.project,folder,options.sources,constants(string(sources_file(&files,source).data),context.temp_allocator))})
             }
             // Every compilation at once: each waits on slangc.
             js:jobs.Job_System

@@ -1,6 +1,5 @@
 package editor
 
-import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "mirai:asset"
@@ -376,7 +375,7 @@ post_process_group :: proc(s:^Session,after:bool) {
 }
 
 // The layers of a View_Volume as a stack of effects.
-post_process_array :: proc(c:^Inspect,info:^runtime.Type_Info,name,label:string,offset:uintptr) -> bool {
+post_process_array :: proc(c:^Inspect,type:typeid,name,label:string,offset:uintptr) -> bool {
 	if c.t==nil || c.t.type!=erender.View_Volume || name!="layers" || offset!=offset_of(erender.View_Volume,layers) {return false}
 	s:=c.s
 	ctx:=s.gui.ctx

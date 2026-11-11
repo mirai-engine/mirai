@@ -1,12 +1,12 @@
 package editor
 
-import "core:reflect"
 import "core:strings"
 import "mirai:asset"
 import "mirai:cook/author"
 import "mirai:core"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/serial"
 import mm "mirai:std/math"
 import "mirai:ui"
 
@@ -158,11 +158,13 @@ card_place :: proc(s:^Session,card:Card,parts:[]author.Part,transform:^core.Tran
         if record,found:=asset.registry_find(&s.app.assets.registry,s.content.selected);found {
             extension:=asset_create_extension(s,record.kind)
             for part in parts {
-                for field in reflect.struct_fields_zipped(part.t.type) {
-                    if field.type.id!=base.Asset_Id || int(field.offset)+size_of(base.Asset_Id)>len(part.value) {continue}
-                    kinds:=field_tagged(string(field.tag)).asset_kinds
+                schema,type:=type_schema(s.info,part.t.info)
+                if schema==nil {continue}
+                for field in serial.schema_fields(schema,type) {
+                    if schema.types[field.type].kind!=.Asset || int(field.offset)+size_of(base.Asset_Id)>len(part.value) {continue}
                     at:=(^base.Asset_Id)(&part.value[field.offset])
-                    for kind in strings.fields(kinds,context.temp_allocator) {
+                    kinds:=field.asset_kinds
+                    for kind in strings.fields_iterator(&kinds) {
                         if at^=={} && kind==extension {at^=record.id}
                     }
                 }

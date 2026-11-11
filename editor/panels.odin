@@ -345,74 +345,56 @@ panel_file_of :: proc(p:^Project_Panel,allocator:=context.temp_allocator) -> (fi
 
 // ---------------------------------------------------------------- fields and entities
 
-// The field of a target in the value of its component or setting.
+// The field of a target in the value of its component or setting: its
+// description, where it is in the value and its bytes.
 @(private)
 Panel_Field :: struct {
-    info:^runtime.Type_Info,
-    tag:reflect.Struct_Tag,
-    name:string,
+    field:serial.Field,
     offset:uintptr,
+    size:int,
 }
 
-// A field by its path of names joined by dots, through nested structs and
-// the fields they take with using; problem says why there is none.
+// A field by its path of names joined by dots, through nested structs, in
+// the type of a value; problem says why there is none.
 @(private)
-panel_field_find :: proc(info:^runtime.Type_Info,owner,path:string) -> (field:Panel_Field,problem:string) {
-    find :: proc(info:^runtime.Type_Info,name:string) -> (field:Panel_Field,found:bool) {
-        v,is_struct:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
-        if !is_struct {return}
-        for i in 0..<int(v.field_count) {
-            if v.usings[i] {
-                if inner,ok:=find(v.types[i],name);ok {
-                    inner.offset+=v.offsets[i]
-                    return inner,true
-                }
-                continue
-            }
-            if v.names[i]==name {return {v.types[i],reflect.Struct_Tag(v.tags[i]),v.names[i],v.offsets[i]},true}
-        }
-        return
-    }
-    names :: proc(info:^runtime.Type_Info,out:^strings.Builder) {
-        v,_:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
-        for i in 0..<int(v.field_count) {
-            tag:=reflect.Struct_Tag(v.tags[i])
-            tagged:=field_tagged(v.tags[i])
-            if .Hidden in tagged.flags {continue}
-            if .Transient in tagged.flags {continue}
-            if v.usings[i] {names(v.types[i],out);continue}
-            if strings.builder_len(out^)>0 {strings.write_string(out,", ")}
-            strings.write_string(out,v.names[i])
-        }
-    }
-    current:=info
+panel_field_find :: proc(s:^serial.Schema,type:serial.Type_Index,owner,path:string) -> (found:Panel_Field,problem:string) {
+    type:=type
     shown:=owner
     rest:=path
-    offset:uintptr
     for {
         name:=rest
-        dot:=strings.index_byte(rest,'.')
-        if dot>=0 {name,rest=rest[:dot],rest[dot+1:]} else {rest=""}
-        if _,is_struct:=runtime.type_info_base(current).variant.(runtime.Type_Info_Struct);!is_struct {
-            return {},fmt.tprintf("%s has no fields: it is a value",shown)
+        if dot:=strings.index_byte(rest,'.');dot>=0 {name,rest=rest[:dot],rest[dot+1:]} else {rest=""}
+        if s==nil || s.types[type].kind!=.Struct {return {},fmt.tprintf("%s has no fields: it is a value",shown)}
+        fields:=serial.schema_fields(s,type)
+        at:=-1
+        for field,i in fields {
+            if field.name==name && field_shown(field) {at=i;break}
         }
-        found,ok:=find(current,name)
-        tagged:=field_tagged(string(found.tag))
-        hidden:=.Hidden in tagged.flags
-        transient:=.Transient in tagged.flags
-        if !ok || hidden || transient {
+        if at<0 {
             b:=strings.builder_make(context.temp_allocator)
-            names(current,&b)
+            for field in fields {
+                if !field_shown(field) {continue}
+                if strings.builder_len(b)>0 {strings.write_string(&b,", ")}
+                strings.write_string(&b,field.name)
+            }
             return {},fmt.tprintf("%s has no field %q; its fields are %s",shown,name,strings.to_string(b))
         }
-        offset+=found.offset
+        found.field=fields[at]
+        found.offset+=uintptr(fields[at].offset)
+        type=fields[at].type
         if rest=="" {
-            found.offset=offset
+            found.size=int(s.types[type].size)
             return found,""
         }
-        current=found.info
         shown=fmt.tprintf("%s.%s",shown,name)
     }
+}
+
+// The field of a target in the value of a component or a setting of type info.
+@(private)
+panel_field_of :: proc(w:core.World_Ref,info:^runtime.Type_Info,owner,path:string) -> (found:Panel_Field,problem:string) {
+    s,type:=type_schema(w.info,info)
+    return panel_field_find(s,type,owner,path)
 }
 
 @(private)
@@ -496,11 +478,11 @@ panel_match :: proc(w:core.World_Ref,table:^core.Table_Info,current:rawptr,match
         serial.text_space(&r)
         start:=r.offset
         if !serial.text_skip(&r) {return false,"where is malformed"}
-        field,missing:=panel_field_find(table.info,table.name,path)
+        field,missing:=panel_field_of(w,table.info,table.name,path)
         if missing!="" {return false,fmt.tprintf("where: %s",missing)}
         bytes,message:=panel_value_read(w,table,table.info,current,path,r.text[start:r.offset],fmt.tprintf("where.%s",path))
         if message!="" {return false,message}
-        if current!=nil && string(([^]u8)(current)[field.offset:][:field.info.size])!=string(bytes[field.offset:][:field.info.size]) {matched=false}
+        if current!=nil && string(([^]u8)(current)[field.offset:][:field.size])!=string(bytes[field.offset:][:field.size]) {matched=false}
         if serial.text_accept(&r,',') {continue}
         if !serial.text_expect(&r,'}') {return false,"where is malformed"}
         return
@@ -547,8 +529,7 @@ panel_inspect :: proc(s:^Session,w:core.World_Ref,t:^Panel_Target,defaults:[]u8)
         table:^core.Table_Info
         table,problem=panel_component(s,t)
         if problem!="" {return}
-        field,problem=panel_field_find(table.info,target,path)
-        if problem!="" {return}
+        if _,problem=panel_field_of(w,table.info,target,path);problem!="" {return}
         entities,missing:=panel_entities(s,w,table,t)
         if missing!="" {return {},{},missing}
         if len(entities)==0 {return {},{},fmt.tprintf("No entity has %s",target)}
@@ -556,14 +537,14 @@ panel_inspect :: proc(s:^Session,w:core.World_Ref,t:^Panel_Target,defaults:[]u8)
         at:=0
         for &other,i in w.info.tables {if &other==table {at=i;break}}
         c={s=s,w=w,t=table,index=at,table=raw,entities=entities[:],name=table.name,type=table.type,value=cast([^]u8)core.raw_find(raw,table.info,entities[0]),size=table.info.size}
+        inspect_schema(&c,table.info)
     case .Setting:
         storage:int
         storage,problem=panel_setting(s,t)
         if problem!="" {return}
         info:=&s.info.storages[storage]
-        field,problem=panel_field_find(info.info,target,path)
-        if problem!="" {return}
         c={s=s,w=w,index=SETTING_INDEX+storage,storage=storage+1,name=info.name,type=info.type,value=cast([^]u8)setting_data(s,storage),size=info.info.size}
+        inspect_schema(&c,info.info)
         if engine:=setting_engine_value(s,info.name);s.settings_layer==.Project && engine!=nil {
             c.defaults=cast([^]u8)engine
         } else if info.info.size<=len(defaults) {
@@ -571,14 +552,8 @@ panel_inspect :: proc(s:^Session,w:core.World_Ref,t:^Panel_Target,defaults:[]u8)
             c.defaults=raw_data(defaults)
         }
     }
+    if t.kind!=.Heading {field,problem=panel_field_find(c.schema,c.of,target,path)}
     return
-}
-
-@(private)
-panel_label :: proc(label:string,field:Panel_Field) -> string {
-    if label!="" {return label}
-    if custom:=field_tagged(string(field.tag)).label;custom!="" {return custom}
-    return readable(field.name)
 }
 
 // ---------------------------------------------------------------- buttons
@@ -608,7 +583,7 @@ panel_writes :: proc(s:^Session,w:core.World_Ref,b:^Panel_Button) -> (writes:[dy
         case .Component:
             table,missing:=panel_component(s,&set.place)
             if missing!="" {return writes,fmt.tprintf("%s: %s",at,missing)}
-            field,no_field:=panel_field_find(table.info,target,path)
+            field,no_field:=panel_field_of(w,table.info,target,path)
             if no_field!="" {return writes,fmt.tprintf("%s: %s",at,no_field)}
             entities,unknown:=panel_entities(s,w,table,&set.place)
             if unknown!="" {return writes,fmt.tprintf("%s: %s",at,unknown)}
@@ -616,17 +591,17 @@ panel_writes :: proc(s:^Session,w:core.World_Ref,b:^Panel_Button) -> (writes:[dy
             for e in entities {
                 bytes,message:=panel_value_read(w,table,table.info,core.raw_find(raw,table.info,e),path,value,what)
                 if message!="" {return writes,fmt.tprintf("%s: %s",at,message)}
-                append(&writes,Panel_Write{table=table,entity=e,offset=int(field.offset),bytes=bytes[field.offset:][:field.info.size]})
+                append(&writes,Panel_Write{table=table,entity=e,offset=int(field.offset),bytes=bytes[field.offset:][:field.size]})
             }
         case .Setting:
             storage,missing:=panel_setting(s,&set.place)
             if missing!="" {return writes,fmt.tprintf("%s: %s",at,missing)}
             info:=&s.info.storages[storage]
-            field,no_field:=panel_field_find(info.info,target,path)
+            field,no_field:=panel_field_of(w,info.info,target,path)
             if no_field!="" {return writes,fmt.tprintf("%s: %s",at,no_field)}
             bytes,message:=panel_value_read(w,nil,info.info,setting_data(s,storage),path,value,what)
             if message!="" {return writes,fmt.tprintf("%s: %s",at,message)}
-            append(&writes,Panel_Write{storage=storage,offset=int(field.offset),bytes=bytes[field.offset:][:field.info.size]})
+            append(&writes,Panel_Write{storage=storage,offset=int(field.offset),bytes=bytes[field.offset:][:field.size]})
         }
     }
     return
@@ -762,7 +737,7 @@ panel_check :: proc(s:^Session,p:^Project_Panel) -> string {
         if row.kind==.Component {
             table,missing:=panel_component(s,&row.place)
             if missing!="" {return fmt.tprintf("rows[%d]: %s",i,missing)}
-            if _,problem:=panel_field_find(table.info,table.name,base.text_get(row.field[:]));problem!="" {return fmt.tprintf("rows[%d]: %s",i,problem)}
+            if _,problem:=panel_field_of(w,table.info,table.name,base.text_get(row.field[:]));problem!="" {return fmt.tprintf("rows[%d]: %s",i,problem)}
         }
         if _,_,problem:=panel_inspect(s,w,&row.place,defaults);problem!="" && !strings.has_prefix(problem,"No entity has") {
             return fmt.tprintf("rows[%d]: %s",i,problem)
@@ -778,13 +753,13 @@ panel_check :: proc(s:^Session,p:^Project_Panel) -> string {
                 storage,missing:=panel_setting(s,&set.place)
                 if missing!="" {return fmt.tprintf("%s: %s",at,missing)}
                 info:=&s.info.storages[storage]
-                if _,problem:=panel_field_find(info.info,target,path);problem!="" {return fmt.tprintf("%s: %s",at,problem)}
+                if _,problem:=panel_field_of(w,info.info,target,path);problem!="" {return fmt.tprintf("%s: %s",at,problem)}
                 if _,problem:=panel_value_read(w,nil,info.info,setting_data(s,storage),path,base.text_get(set.value[:]),what);problem!="" {return fmt.tprintf("%s.value: %s",at,problem)}
                 continue
             }
             table,missing:=panel_component(s,&set.place)
             if missing!="" {return fmt.tprintf("%s: %s",at,missing)}
-            if _,problem:=panel_field_find(table.info,target,path);problem!="" {return fmt.tprintf("%s: %s",at,problem)}
+            if _,problem:=panel_field_of(w,table.info,target,path);problem!="" {return fmt.tprintf("%s: %s",at,problem)}
             if _,problem:=panel_value_read(w,table,table.info,nil,path,base.text_get(set.value[:]),what);problem!="" {return fmt.tprintf("%s.value: %s",at,problem)}
             if match:=base.text_get(set.match[:]);match!="" {
                 if _,problem:=panel_match(w,table,nil,match);problem!="" {return fmt.tprintf("%s.%s",at,problem)}
@@ -934,15 +909,15 @@ panel_target_row :: proc(s:^Session,w:core.World_Ref,p:^Project_Panel,t:^Panel_T
     c.panel=p
     c.held=base.hash_combine(base.name_hash(base.text_get(p.id[:])),u64(uintptr(t)-uintptr(p)))|1
     held_take(&c)
-    shown:=panel_label(label,field)
+    shown:=label if label!="" else field_label(field.field)
     for e in c.entities[min(1,len(c.entities)):] {
         other:=([^]u8)(core.raw_find(c.table,c.t.info,e))
-        if string(other[field.offset:][:field.info.size])!=string(c.value[field.offset:][:field.info.size]) {
+        if string(other[field.offset:][:field.size])!=string(c.value[field.offset:][:field.size]) {
             shown=fmt.tprintf("%s (mixed)",shown)
             break
         }
     }
-    field_row(&c,field.info,field.tag,field.name,shown,field.offset,0)
+    field_row(&c,field.field,shown,field.offset,0)
 }
 
 // Folded at first: the fields the buttons set, each once, as rows; one a

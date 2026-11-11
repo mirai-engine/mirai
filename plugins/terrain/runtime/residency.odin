@@ -83,7 +83,7 @@ resident_lod :: proc(resident:^Terrain_Resident,data:^Terrain_Data,worlds:^core.
             // their residency opens to them.
             minimum:=node_lod_min(s,q,i)
             // A node of a Volume shows every sample at the levels of its clusters: only a chunk under it opens it.
-            finer:=s.kind==.Heightfield && node_lod_min(s,q,quad_children(q,i)[0])<minimum && (d>1 || !stream)
+            finer:=node_lod_min(s,q,quad_children(q,i)[0])<minimum && (d>1 || !stream)
             if !node.want && finer {
                 switch {
                 case settings.lod_distance<0: node.want=true

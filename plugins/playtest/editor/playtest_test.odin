@@ -361,8 +361,15 @@ repro_replay_case :: proc(t:^testing.T,late:bool) {
     testing.expect_value(t,report.repro,fmt.tprintf("tests/scenarios/bug_%d.mirai",failing))
     written,read_error:=os.read_entire_file(fmt.tprintf("%s/%s",root,report.repro),context.temp_allocator)
     testing.expect(t,read_error==nil,report.repro)
-    testing.expect(t,strings.contains(string(written),`"method":"play.qa.report"`) && strings.contains(string(written),`"name":"move"`),string(written))
-    first_step,monitors:=strings.index(string(written),`"method":"play.step"`),strings.index(string(written),`"method":"play.qa.start"`)
+    scenario:editor.Scenario
+    testing.expect_value(t,serial.text_decode(string(written),&scenario,context.temp_allocator),"")
+    first_step,monitors,moves:=-1,-1,false
+    for step,i in scenario.steps {
+        if step.method=="play.step" && first_step<0 {first_step=i}
+        if step.method=="play.qa.start" && monitors<0 {monitors=i}
+        moves||=step.method=="play.input" && strings.contains(string(step.params),`"move"`)
+    }
+    testing.expect(t,len(scenario.steps)>0 && scenario.steps[len(scenario.steps)-1].method=="play.qa.report" && moves,string(written))
     testing.expectf(t,late==(first_step>=0 && first_step<monitors),"late %v: %s",late,string(written))
     error,_=probe_call(f,"play.stop",`{}`)
     testing.expect_value(t,error.code,0)

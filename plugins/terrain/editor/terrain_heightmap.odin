@@ -57,7 +57,7 @@ heightmap_import :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_R
     if stroke.id=={} || stroke.active || stroke.source.kind!=.Heightfield {return false}
     bytes,error:=serial.file_read(path,context.temp_allocator,limit=64*1024*1024)
     if error!=.None {editor.notify(s,fmt.tprintf("The heightmap %s could not be read: %v",path,error));return false}
-    heightmap,decode:=textures.heightmap_decode(bytes,terrain.HEIGHT_SAMPLES_MAX,context.temp_allocator)
+    heightmap,decode:=textures.heightmap_decode(bytes,terrain.SAMPLES_MAX,context.temp_allocator)
     if decode!=.None {editor.notify(s,fmt.tprintf("Heightmap: %v",decode));return false}
     if !stroke_baseline(tool) {editor.notify(s,"The terrain history could not be stored");return false}
     next:terrain.Source
@@ -120,15 +120,15 @@ resize_fields :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,
     current:=[2]int{int(stroke.source.samples.x),int(stroke.source.samples.z)}
     for &n,axis in tool.resize {if n<2 {n=current[axis]}}
     x,z:=f64(tool.resize.x),f64(tool.resize.y)
-    if kit.property(ctx,"Samples X") {if ui.number_field(ctx,ui.id(ctx,"resize_x"),&x,{width=ui.fixed(FIELD_WIDTH),min=3,max=f64(terrain.HEIGHT_SAMPLES_MAX),has_min=true,has_max=true,speed=1,integer=true}).changed {tool.resize.x=resize_even(int(x),current.x)}}
-    if kit.property(ctx,"Samples Z") {if ui.number_field(ctx,ui.id(ctx,"resize_z"),&z,{width=ui.fixed(FIELD_WIDTH),min=3,max=f64(terrain.HEIGHT_SAMPLES_MAX),has_min=true,has_max=true,speed=1,integer=true}).changed {tool.resize.y=resize_even(int(z),current.y)}}
+    if kit.property(ctx,"Samples X") {if ui.number_field(ctx,ui.id(ctx,"resize_x"),&x,{width=ui.fixed(FIELD_WIDTH),min=3,max=f64(terrain.SAMPLES_MAX),has_min=true,has_max=true,speed=1,integer=true}).changed {tool.resize.x=resize_even(int(x),current.x)}}
+    if kit.property(ctx,"Samples Z") {if ui.number_field(ctx,ui.id(ctx,"resize_z"),&z,{width=ui.fixed(FIELD_WIDTH),min=3,max=f64(terrain.SAMPLES_MAX),has_min=true,has_max=true,speed=1,integer=true}).changed {tool.resize.y=resize_even(int(z),current.y)}}
     if tool.resize!=current && ui.button(ctx,ui.id(ctx,"resize"),{label="Resize",variant="field",width=-1,center=true}).clicked {terrain_resize(s,tool,world,assets,tool.resize)}
 }
 
 @(private)
 resize_even :: proc "contextless" (wanted,current:int) -> int {
-    n:=clamp(wanted,3,terrain.HEIGHT_SAMPLES_MAX)
-    if (n-current)%2!=0 {n+=n<terrain.HEIGHT_SAMPLES_MAX?1:-1}
+    n:=clamp(wanted,3,terrain.SAMPLES_MAX)
+    if (n-current)%2!=0 {n+=n<terrain.SAMPLES_MAX?1:-1}
     return n
 }
 
