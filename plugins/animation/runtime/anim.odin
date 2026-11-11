@@ -64,7 +64,7 @@ Layer_Ask :: struct {
     reference:f32,       // Additive: seconds into the reference clip whose pose it adds its clip over
     reference_clip:u64,  // Additive: name in the library of that clip; 0: its own clip
     curves:Curve_Blend,
-    mesh_space:bool, // Override: the rotations of its branch blend in the space of the rig
+    mesh_space:bool, // its rotations blend or add in the space of the rig
     space:u8,        // instead of clip: 1 + the space of the set its parameters sample
 }
 
@@ -989,6 +989,29 @@ pose_layer_mesh_rotation :: proc(rotations:[]mm.Quat,state:^Playing,blend:lib.Bo
     return true
 }
 
+// The rotation of bone b after an Additive layer added in the space of the rig, written to its
+// local pose. The turn its clip gives a bone from its reference is carried to the rig through the
+// reference pose and goes before the base there, so an aim turns about the axes of the rig whatever
+// the base bends below it. rotations holds by binding the reference pose in that space, turned
+// into the base as each bone is done, the turns added up to each bone, and the result. A bone the
+// layer leaves out follows its parent as in the base. False when its parent comes after it.
+@(private)
+pose_layer_mesh_additive :: proc(rotations:[]mm.Quat,state:^Playing,added:lib.Bone_Blend,b:int,share:f32) -> bool {
+    n:=len(state.bindings)
+    reference,turns,result:=rotations[:n],rotations[n:2*n],rotations[2*n:3*n]
+    parent:=int(state.parents[b])
+    if parent<0 {reference[b],turns[b],result[b]=1,1,1;return true}
+    if parent>=b {return false}
+    own:=state.local[b].rotation
+    turn:=turns[parent]
+    if value,ok:=lib.bone_added_rotation(added);ok && share>0 {turn*=reference[b]*value*mm.quat_inverse(reference[b])}
+    turns[b],reference[b]=turn,reference[parent]*own
+    if share<=0 {result[b]=result[parent]*own;return true}
+    result[b]=mm.quat_slerp(1,turn,share)*reference[b]
+    state.local[b].rotation=linalg.normalize0(mm.quat_inverse(result[parent])*result[b])
+    return true
+}
+
 // The slots of the stack of state over its local pose, in order: each moves only what its clips
 // animate, by the share of its weight each bone of its branches takes, replacing by it or adding its
 // change from its reference.
@@ -1016,7 +1039,20 @@ pose_layers :: proc(playback:^Playback,state:^Playing,content:^host.Content_Anim
         scratch,bones,shared,ready:=pose_room(playback,state,worker)
         if !ready {faults.memory=true;continue}
         tracks:=shared.bones[:]
-        mesh:=!additive && asked.mesh_space && len(state.parents)==n
+        mesh:=asked.mesh_space && len(state.parents)==n
+        rotations:=scratch.rig_rotations[:3*n]
+        if mesh && additive {
+            // The reference pose in the space of the rig, which carries the turns of the clip there.
+            for player in players[:count] {lib.bones_blend(bones,tracks,library,{clip=from if from!=0 else player.clip,time=asked.reference,weight=1 if from!=0 else player.weight})}
+            tracks_twins(shared,bones)
+            for b in 0..<n {
+                parent:=int(state.parents[b])
+                if parent<0 || parent>=b {rotations[b]=1;continue}
+                value,_,ok:=lib.bone_rotation(bones[b])
+                rotations[b]=rotations[parent]*(value if ok else state.rest[b].rotation)
+            }
+            mem.zero_slice(bones)
+        }
         for player in players[:count] {
             if additive {lib.bones_blend_additive(bones,tracks,library,player,asked.reference,1,from,scratch.references[:])} else {lib.bones_blend(bones,tracks,library,player)}
         }
@@ -1027,7 +1063,7 @@ pose_layers :: proc(playback:^Playback,state:^Playing,content:^host.Content_Anim
         reference:=root_reference(state,root_bone,transforms) if root_bone>=0 else mm.TRANSFORM_IDENTITY
         for b in 0..<n {
             share:=layer.weight*mm.saturate(animation.weight)*(mask[b] if mask!=nil else 1)
-            if mesh && !pose_layer_mesh_rotation(scratch.rig_rotations[:3*n],state,bones[b],b,share) {continue}
+            if mesh && !(pose_layer_mesh_additive(rotations,state,bones[b],b,share) if additive else pose_layer_mesh_rotation(rotations,state,bones[b],b,share)) {continue}
             if share<=0 {continue}
             turned:=state.local[b].rotation
             state.local[b]=pose_layer_transform(bones[b],state.local[b],share,additive,&root if b==root_bone else nil,reference)

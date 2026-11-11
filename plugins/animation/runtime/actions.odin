@@ -53,7 +53,7 @@ Stack_Layer :: struct {
     over:[LAYER_BRANCHES]Layer_Branch `mirai:"optional"`, // the branches of the body it moves, each fading in over its depth; none: the whole pose
     mode:Layer_Mode `mirai:"optional"`,
     curves:Curve_Blend `mirai:"optional"`,
-    mesh_space:bool `mirai:"optional"`,     // Override: the rotations of its branch blend in the space of the rig, so it keeps the turn its clip gives them whatever the base turns above it
+    mesh_space:bool `mirai:"optional"`,     // its rotations go in the space of the rig: Override keeps the turn its clip gives them whatever the base turns above, Additive turns them about the axes of the rig
     weight:f32 `mirai:"optional,min=0,max=1"`, // until set gives it another
     fade:f32 `mirai:"optional,min=0,unit=s"`,  // seconds its weight takes to follow, and of a change of what it plays
     clip:[64]u8 `mirai:"text,optional"`,    // what it plays while no action does; empty: nothing

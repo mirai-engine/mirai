@@ -281,18 +281,21 @@ a_layer_fades_in_along_its_branch_over_its_depth :: proc(t:^testing.T) {
     testing.expectf(t,abs(edges[0]-mm.PI/6)<1e-4 && abs(edges[1]-mm.PI/18)<1e-4,"the step between neighbouring bones at the edge: %v cut, %v over a depth of 3",edges[0],edges[1])
 }
 
-// In the space of the rig an Override layer holds the turn its clip gives a bone whatever the base
-// turns above it.
+// In the space of the rig a layer keeps what its clip means whatever the base turns above: an
+// Override holds the turn its clip gives a bone, and an aim offset turns about the axes of the rig,
+// so the muzzle of a leaning spine points where the aim says.
 @(test)
 a_layer_in_the_space_of_the_rig_keeps_its_clip_whatever_the_base_turns_above :: proc(t:^testing.T) {
     side:=mm.quat_axis_angle({0,1,0},mm.PI/2)
+    lean:=mm.quat_axis_angle(-mm.FORWARD,mm.PI/12)
+    up:=mm.quat_axis_angle({1,0,0},mm.PI/4)
     content:host.Content_Animation
-    state:=chain_fixture(t,&content,{"hip","arm"},{{"turn",{{"hip",side}}},{"pose",{{"hip",1},{"arm",1}}}})
+    state:=chain_fixture(t,&content,{"hip","arm"},{{"turn",{{"hip",side}}},{"pose",{{"hip",1},{"arm",1}}},{"lean",{{"hip",lean}}},{"aim_up",{{"hip",up}}},{"aim_center",{{"hip",1}}}})
     defer lib.library_destroy(&content.lib);defer playing_free(&state)
     playback:Playback;defer playback_free(&playback)
     testing.expect(t,tracks_bind(&playback,&state,&content))
     events:Animation_Events;defer delete(events.items)
-    turns:[2]f32
+    turns,errors:[2]f32
     for mesh,i in ([2]bool{false,true}) {
         // The base turns the hip sideways; the layer holds hip and arm straight, over the arm alone.
         animation:=ANIMATION_DEFAULT
@@ -300,8 +303,14 @@ a_layer_in_the_space_of_the_rig_keeps_its_clip_whatever_the_base_turns_above :: 
         layer_step(&playback,&state,&content,animation,&events,0)
         turns[i]=mm.quat_angle(state.local[1].rotation*state.local[2].rotation,1)
         testing.expect(t,mm.quat_angle(state.local[1].rotation,side)<1e-4)
+        // The base leans the spine; an aim offset adds its aim up over it.
+        testing.expect(t,animation_clip(&animation,"lean",fade=0) && test_layer(&state,1,"aim_up",mode=.Additive,reference_clip="aim_center",mesh_space=mesh))
+        layer_step(&playback,&state,&content,animation,&events,0)
+        muzzle:=mm.quat_rotate(state.local[1].rotation*state.local[2].rotation,mm.FORWARD)
+        errors[i]=linalg.angle_between(muzzle,mm.quat_rotate(up,mm.FORWARD))
     }
     testing.expectf(t,abs(turns[0]-mm.PI/2)<1e-4 && turns[1]<1e-4,"in its own space the arm turns with the hip, in the space of the rig it stays straight: %v",turns)
+    testing.expectf(t,errors[0]>.15 && errors[1]<1e-4,"the aim error of the muzzle over a lean of 15 degrees: %v in its own space, %v in the space of the rig",errors[0],errors[1])
 }
 
 @(test)
