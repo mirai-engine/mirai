@@ -4,6 +4,7 @@ import "core:math/linalg"
 import "mirai:core"
 import scene "mirai:engine/scene"
 import gpu "mirai:render"
+import "mirai:render/abi"
 import mm "mirai:std/math"
 import "mirai:std/spatial"
 
@@ -540,21 +541,48 @@ ordered :: proc(at:Where,table:^core.Table($T,$A),rows:[]i32) -> int {
 
 // volume.slang Gpu_Volume: where a volume is, for volume_weight on the GPU.
 Gpu_Volume :: struct {
-    to_local:[3][4]f32, // rows: from the world to the volume, turned and moved, not scaled
-    shape:[4]f32,       // xyz half its size along each axis, metres (x the radius of a sphere); w its blend
-    kind:[4]u32,        // x 0 unbounded, 1 box, 2 sphere, 3 plane; y 1 when it adds
+    to_local:[3][4]f32, // rows: from the world to the volume, turned and moved, not scaled; of an outline, to the middle of its box
+    shape:[4]f32,       // xyz half its size along each axis, metres (x the radius of a sphere; of an outline, of its box); w its blend
+    kind:[4]u32,        // x 0 unbounded, 1 box, 2 sphere, 3 plane, 4 outline, 5 an outline past the room of its table; y 1 when it adds; of an outline z its first point in its Gpu_Outlines, w how many
 }
 #assert(size_of(Gpu_Volume)==80)
 
-gpu_volume :: proc "contextless" (v:Volume,pose:mm.Transform,zone:Zone) -> (g:Gpu_Volume) {
+VOLUME_OUTLINE_POINTS :: abi.VOLUME_OUTLINE_POINTS // of the outlines of one table; past it an outline weighs 0
+
+// volume.slang Gpu_Outlines: the points of the outlines of the volumes of one block that a shader weighs.
+Gpu_Outlines :: struct {
+    count:[4]u32,                                // x points written
+    rows:[VOLUME_OUTLINE_POINTS/2][4]f32,        // x and z of two points each, metres from the middle of the box of their outline, scaled
+}
+
+// A volume for volume_weight on the GPU; the points of an outline go into outlines.
+gpu_volume :: proc "contextless" (v:Volume,pose:mm.Transform,zone:Zone,outline:[]mm.Path_Point=nil,outlines:^Gpu_Outlines=nil) -> (g:Gpu_Volume) {
     scale:=linalg.abs(pose.scale)
+    pose:=pose
+    g.kind={u32(v.shape),u32(zone.mode==.Add),0,0}
     switch v.shape {
-    case .Unbounded,.Plane,.Outline:
+    case .Unbounded,.Plane:
     case .Box:    g.shape.xyz=v.extents*scale
     case .Sphere: g.shape.x=v.extents.x*max(scale.x,scale.y,scale.z)
+    case .Outline:
+        first:=outlines!=nil?int(outlines.count.x):VOLUME_OUTLINE_POINTS
+        if !valid(v,pose,outline) || first+len(outline)>VOLUME_OUTLINE_POINTS {
+            g.kind.x=5
+            break
+        }
+        low,high:=[2]f32{max(f32),max(f32)},[2]f32{-max(f32),-max(f32)}
+        for p in outline {low,high=linalg.min(low,p.position.xz*scale.xz),linalg.max(high,p.position.xz*scale.xz)}
+        middle:=0.5*(low+high)
+        for p,i in outline {
+            at:=p.position.xz*scale.xz-middle
+            if (first+i)&1==0 {outlines.rows[(first+i)>>1].xy=at} else {outlines.rows[(first+i)>>1].zw=at}
+        }
+        outlines.count.x+=u32(len(outline))
+        g.shape.xyz={0.5*(high.x-low.x),v.extents.y*scale.y,0.5*(high.y-low.y)}
+        g.kind.zw={u32(first),u32(len(outline))}
+        pose.position+=mm.quat_rotate(pose.rotation,[3]f32{middle.x,0,middle.y})
     }
     g.shape.w=max(zone.blend,0)
-    g.kind={u32(v.shape),u32(zone.mode==.Add),0,0}
     back:=mm.quat_inverse(pose.rotation)
     x,y,z:=mm.quat_rotate(back,{1,0,0}),mm.quat_rotate(back,{0,1,0}),mm.quat_rotate(back,{0,0,1})
     // The columns of the inverse rotation: row i of the matrix is axis i of the world seen from the volume.

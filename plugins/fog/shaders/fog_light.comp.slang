@@ -48,7 +48,8 @@ float4 fog_medium(float3 position, float taken, float footprint, out float4 mean
     for (uint i = 0u; i < fog.grid.w; i++) {
         Fog_Volume v = fog_volumes[i];
         if (fog_taken(v, taken)) continue;
-        float w = volume_weight(v.volume, position);
+        Fog_Outlines outlines;
+        float w = volume_weight(v.volume, position, outlines);
         if (!(w > 0.0)) continue;
         float4 medium = v.medium * exp(-v.params.z * max(position.y - v.params.w, 0.0));
         float4 varied = medium * fog_wisps(v, position, footprint);
