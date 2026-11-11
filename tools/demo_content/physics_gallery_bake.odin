@@ -60,7 +60,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) {
     tables:=[3]core.Table_Info{
         {name="Mesh_Renderer",type=render.Mesh_Renderer,info=type_info_of(render.Mesh_Renderer),offset=offset_of(Physics_Bake,meshes)},
         {name="Parent",type=core.Parent,info=type_info_of(core.Parent),offset=offset_of(Physics_Bake,parents)},
-        {name="Tint",type=render.Material_Values,info=type_info_of(render.Material_Values),offset=offset_of(Physics_Bake,tints)},
+        {name="Material_Values",type=render.Material_Values,info=type_info_of(render.Material_Values),offset=offset_of(Physics_Bake,tints)},
     }
     info:=core.World_Info{entities=offset_of(Physics_Bake,entities),tables=tables[:]}
     physics:phys.Physics_State;defer phys.state_destroy(&physics)
@@ -110,7 +110,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) {
         }
         if frame==120 {
             for e in world.groups.entities {
-                if e!=owner && destruct.remove(&requests,core.read(&world.groups),e)==.None {break}
+                if e!=owner && destruct.remove(&requests,&world.groups,e)==.None {break}
             }
         }
         destruct.destruct_step(&physics,&geometry,&requests,&events,core.ref(&alone),app.assets,&app.jobs,{playing=true,dt=1.0/30,tick=u64(frame)},core.commands(&world,&info),

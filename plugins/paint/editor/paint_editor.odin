@@ -101,7 +101,7 @@ paint_pointer :: proc(s:^editor.Session,tool:^Paint_Tool,input:core.Input) {
 
 @(step="frame")
 paint_brush :: proc(
-    s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,meshes:core.Read(erender.Mesh_Renderer),painted:core.Read(paint.Painted),worlds:core.Read(core.World_Transform),
+    s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,meshes:^core.Table(erender.Mesh_Renderer,.Read),painted:^core.Table(paint.Painted,.Read),worlds:^core.Table(core.World_Transform,.Read),
     assets:^host.Assets,extras:^host.Frame_Extras,allocator:runtime.Allocator,input:core.Input,frame:core.Frame_Time,
 ) {
     erender.debug_lines_clear(&tool.lines)
@@ -155,8 +155,8 @@ ring :: proc(tool:^Paint_Tool,position,normal:[3]f32) {
 // first stamp. Nothing is held when the entity has no mesh that can be painted.
 @(private)
 stroke_begin :: proc(
-    s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,meshes:core.Read(erender.Mesh_Renderer),
-    painted:core.Read(paint.Painted),worlds:core.Read(core.World_Transform),hit:editor.Pick,
+    s:^editor.Session,tool:^Paint_Tool,world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,meshes:^core.Table(erender.Mesh_Renderer,$A),
+    painted:^core.Table(paint.Painted,$B),worlds:^core.Table(core.World_Transform,$C),hit:editor.Pick,
 ) {
     a:=assets
     shown,has_mesh:=core.get(meshes,hit.entity)

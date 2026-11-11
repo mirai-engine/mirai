@@ -70,11 +70,11 @@ action_test_layered :: proc(profile:^Action_Profile,action:int) {
 }
 // actions_prepare over the events of a tick of its own, as animation_tick clears them.
 @(private="file")
-prepare :: proc(actions:^Action_Runtime,requests:^Animation_Requests,cache:^Character_Assets,descriptions:^core.Table(Animation),playback:^Playback,events:^Animation_Events,app:^host.App,problems:^core.Problems,remotes:core.Read(core.Remote)={},played:^core.Table(Animation_Played)=nil,tick:u64=1) -> bool {
+prepare :: proc(actions:^Action_Runtime,requests:^Animation_Requests,cache:^Character_Assets,descriptions:^core.Table(Animation),playback:^Playback,events:^Animation_Events,app:^host.App,problems:^core.Problems,remotes:^core.Table(core.Remote,.Read)={},played:^core.Table(Animation_Played)=nil,tick:u64=1) -> bool {
     clear(&events.items)
     unheard:core.Table(Animation_Played);defer core.table_destroy(&unheard)
     local:core.Table(core.Remote);defer core.table_destroy(&local)
-    return actions_prepare(actions,requests,cache,core.read(descriptions),playback,events,app,remotes if remotes.table!=nil else core.read(&local),played if played!=nil else &unheard,{tick=tick,dt=.1,playing=true},problems)
+    return actions_prepare(actions,requests,cache,core.read(descriptions),playback,events,app,remotes if remotes!=nil else core.read(&local),played if played!=nil else &unheard,{tick=tick,dt=.1,playing=true},problems)
 }
 // How many events of a kind the tick left.
 @(private="file")
@@ -449,7 +449,7 @@ a_new_actions_asset_or_revision_interrupts_the_playing_action_and_fades_its_laye
         requests:Animation_Requests;defer delete(requests.plays.items);actions:Action_Runtime;defer actions_runtime_free(&actions)
         tick :: proc(actions:^Action_Runtime,requests:^Animation_Requests,cache:^Character_Assets,descriptions:^core.Table(Animation),playback:^Playback,app:^host.App,content:^host.Content_Animation,events:^Animation_Events,dt:f32) -> bool {
             if !prepare(actions,requests,cache,descriptions,playback,events,app,nil) {return false}
-            state:=&playback.states[0];sampled,_:=core.get(core.read(descriptions),state.entity)
+            state:=&playback.states[0];sampled,_:=core.get(descriptions,state.entity)
             stack_asks(actions,state,sampled,content)
             actions_sample(actions,state,sampled,dt,nil,content,playback,events,nil,1);layers_advance(playback,state,content,sampled,events,dt,nil);actions_finish(actions,playback,dt)
             return true
@@ -534,7 +534,7 @@ actions_retry_a_first_fire_when_profile_preparation_has_no_memory :: proc(t:^tes
     actions:Action_Runtime;defer actions_runtime_free(&actions);requests:Animation_Requests;defer delete(requests.plays.items)
     events:Animation_Events;defer delete(events.items)
     reserve(&events.items,EVENT_BATCH)
-    testing.expect(t,actions_discover(&actions,core.read(&w.descriptions),&playback,&events,&host_assets,nil))
+    testing.expect(t,actions_discover(&actions,&w.descriptions,&playback,&events,&host_assets,nil))
     play(&requests,entity,"attack")
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;app.allocator=context.allocator
     prepared:=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)

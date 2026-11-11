@@ -32,14 +32,14 @@ Ctx :: struct {
     es:^core.Entities,
     commands:core.Commands,
     authority:core.Network_Role, // in a network session the server damages, and a client only applies what it is told
-    destructibles:core.Read(Destructible),
-    colliders:core.Read(physics.Collider),
-    rigids:core.Read(physics.Rigid_Body),
+    destructibles:^core.Table(Destructible,.Read),
+    colliders:^core.Table(physics.Collider,.Read),
+    rigids:^core.Table(physics.Rigid_Body,.Read),
     collision:^physics.Collision_Settings,
     meshes:^core.Table(render.Mesh_Renderer),
     tints:^core.Table(render.Material_Values),
-    parents:core.Read(core.Parent),
-    locals:core.Read(core.Transform),
+    parents:^core.Table(core.Parent,.Read),
+    locals:^core.Table(core.Transform,.Read),
     states:^core.Table(Destructible_State),
     groups:^core.Table(Destructible_Group),
     elsewhere:^core.Table(render.Drawn_Elsewhere),
@@ -56,10 +56,10 @@ Ctx :: struct {
 destruct_step :: proc(
     state:^physics.Physics_State,cache:^Destruct_Cache,requests:^Destruct_Requests,events:^Destruct_Events,
     authority:core.Ref(core.Network),assets:^host.Assets,job_system:^jobs.Job_System,time:core.Time,commands:core.Commands,
-    destructibles:core.Read(Destructible),meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Material_Values),parents:core.Read(core.Parent),
+    destructibles:^core.Table(Destructible,.Read),meshes:^core.Table(render.Mesh_Renderer),tints:^core.Table(render.Material_Values),parents:^core.Table(core.Parent,.Read),
     states:^core.Table(Destructible_State),groups:^core.Table(Destructible_Group),
     elsewhere:^core.Table(render.Drawn_Elsewhere),transforms:^core.Table(core.Transform),ids:^core.Table(core.Id),
-    colliders:core.Read(physics.Collider),rigids:core.Read(physics.Rigid_Body),collision:core.Ref(physics.Collision_Settings),problems:^core.Problems,
+    colliders:^core.Table(physics.Collider,.Read),rigids:^core.Table(physics.Rigid_Body,.Read),collision:core.Ref(physics.Collision_Settings),problems:^core.Problems,
 ) {
     if cache==nil || !state.ready || !time.playing || time.dt<=0 {return}
     room:=physics.breakable_room(core.ref(state))
@@ -78,7 +78,7 @@ destruct_step :: proc(
     c:=Ctx{
         state=state,view=core.ref(state),cache=cache,events=events,assets=assets,job_system=job_system,time=time,es=commands.entities,commands=commands,
         authority=authority.role,
-        destructibles=destructibles,colliders=colliders,rigids=rigids,collision=collision.ptr,meshes=meshes,tints=tints,parents=parents,locals=core.read(transforms),
+        destructibles=destructibles,colliders=colliders,rigids=rigids,collision=collision.ptr,meshes=meshes,tints=tints,parents=parents,
         states=states,groups=groups,elsewhere=elsewhere,transforms=transforms,ids=ids,problems=problems,
     }
     if left:=core.changes(groups,&cache.seen[.Groups]);!left.all && len(left.gone)>0 {
@@ -175,7 +175,7 @@ reconcile :: proc(c:^Ctx,e:core.Entity,remake:bool) {
     held,has:=core.get(c.states,e)
     st:=held
     static,has_mesh:=core.get(c.meshes,e)
-    world,placed:=core.world_of(c.locals,c.parents,e)
+    world,placed:=core.world_of(c.transforms,c.parents,e)
     scale:=linalg.abs(world.scale)
     collider,has_collider:=core.get(c.colliders,e)
     if !has_collider {collider=physics.COLLIDER_DEFAULT}
@@ -438,7 +438,7 @@ group_sync :: proc(c:^Ctx,owner:core.Entity,entry:^Entry,group:^Scratch_Group) {
     pose:=core.TRANSFORM_IDENTITY
     if group.group==0 {
         // The pieces are at their size already: the entity undoes the scale of the one it hangs from.
-        if above,ok:=core.world_of(c.locals,c.parents,owner);ok {
+        if above,ok:=core.world_of(c.transforms,c.parents,owner);ok {
             for axis in 0..<3 {
                 if above.scale[axis]!=0 {pose.scale[axis]=1/abs(above.scale[axis])}
             }

@@ -329,7 +329,7 @@ part_add :: proc(a:^host.Assets,scene:Scene,sub:^Subject,e:core.Entity,parent:i3
         if target,ok:=core.get(scene.targets,e);ok {part.target=base.name_hash(base.text_get(target.path[:]))}
     }
     if part.target==0 && scene.names!=nil {
-        if text:=core.name_get(core.read(scene.names),e);text!="" {part.target=base.name_hash(text)}
+        if text:=core.name_get(scene.names,e);text!="" {part.target=base.name_hash(text)}
     }
     if scene.meshes==nil {return}
     mesh,has_mesh:=core.get(scene.meshes,e)
@@ -484,7 +484,7 @@ animation_document :: proc(s:^editor.Session,previews:^Previews,w:core.World_Ref
     animation_toolbar(s,p,clip)
     animation_clips(s,p,clip)
     subject_name:=""
-    if p.mesh!={} {subject_name=editor.asset_name_of(a,p.mesh)} else if scene.names!=nil {subject_name=core.name_get(core.read(scene.names),root)}
+    if p.mesh!={} {subject_name=editor.asset_name_of(a,p.mesh)} else if scene.names!=nil {subject_name=core.name_get(scene.names,root)}
     animation_say(d,p,clip,duration,subject_name)
     document,details,room:=editor.asset_workspace_details(s)
     id:=ui.id_derive(ctx,DOCUMENT_SCOPE,"animation")

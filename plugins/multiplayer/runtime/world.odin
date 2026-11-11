@@ -315,7 +315,7 @@ client_sections :: proc(s:^Net_Session,w:core.World_Ref) {
     for row in 0..<core.count(references) {
         reference:=core.at(references,row)
         if reference.loaded=={} {continue}
-        if id:=core.id_of(core.read(ids),core.entity_at(references,row));id!=0 {append(&loaded,id)}
+        if id:=core.id_of(ids,core.entity_at(references,row));id!=0 {append(&loaded,id)}
     }
     tell :: proc(s:^Net_Session,id:base.Entity_Id,loaded:bool) -> bool {
         message:=Net_Section{id=id,changes=s.client.changes,loaded=loaded}

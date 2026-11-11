@@ -314,10 +314,10 @@ animation_bind_is_transactional_when_allocations_fail_and_stops_at_nested_player
     defer lib.library_destroy(&content.lib)
     still,_:=lib.clip_add(&content.lib,{tracks={{target=base.name_hash("10"),property=.Position,keys={{time=0,value={1,0,0,0}}}}}})
     testing.expect(t,still!=0)
-    testing.expect(t,core.hierarchy_settle(&w.hierarchy,core.read(&w.parents),&w.entities))
+    testing.expect(t,core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities))
     state:=Playing{entity=root}
     defer playing_free(&state)
-    testing.expect(t,bind(&w.playback,&state,&content,core.ref(&w.hierarchy),&w.transforms,core.read(&w.names),core.read(&w.targets),core.read(&w.animations),nil))
+    testing.expect(t,bind(&w.playback,&state,&content,core.ref(&w.hierarchy),&w.transforms,&w.names,&w.targets,&w.animations,nil))
     testing.expect_value(t,len(state.bindings),2)
     testing.expect_value(t,state.bindings[1].entity,bone)
     core.edit(&w.transforms,bone).position={9,0,0}
@@ -331,7 +331,7 @@ animation_bind_is_transactional_when_allocations_fail_and_stops_at_nested_player
         saved_context:=context
         context.allocator={runtime_failure_allocator,&failure}
         context.temp_allocator=context.allocator
-        ok:=bind(&w.playback,&state,&content,core.ref(&w.hierarchy),&w.transforms,core.read(&w.names),core.read(&w.targets),core.read(&w.animations),nil)
+        ok:=bind(&w.playback,&state,&content,core.ref(&w.hierarchy),&w.transforms,&w.names,&w.targets,&w.animations,nil)
         context=saved_context
         if ok {succeeded=true;break}
         testing.expect_value(t,raw_data(state.bindings),old_pointer)
@@ -342,7 +342,7 @@ animation_bind_is_transactional_when_allocations_fail_and_stops_at_nested_player
     testing.expect_value(t,state.rest[1],old_rest)
     core.remove(&w.animations,nested);core.test_world_settle(&w)
     append(&w.playback.rigs,Rig{entity=nested,skeleton={1,2}})
-    testing.expect(t,bind(&w.playback,&state,&content,core.ref(&w.hierarchy),&w.transforms,core.read(&w.names),core.read(&w.targets),core.read(&w.animations),nil))
+    testing.expect(t,bind(&w.playback,&state,&content,core.ref(&w.hierarchy),&w.transforms,&w.names,&w.targets,&w.animations,nil))
     testing.expect_value(t,len(state.bindings),2)
     testing.expect_value(t,len(state.previous),len(state.local))
     saved_context:=context

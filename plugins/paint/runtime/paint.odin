@@ -55,7 +55,7 @@ Paint_Render :: struct {
 }
 
 @(step="render",loops="game editor",after="render_sync")
-paint_render :: proc(state:^Paint_Render,painted:core.Read(Painted),synced:core.Ref(render.Render_Sync),assets:^host.Assets,renderer:^render.Renderer) {
+paint_render :: proc(state:^Paint_Render,painted:^core.Table(Painted,.Read),synced:core.Ref(render.Render_Sync),assets:^host.Assets,renderer:^render.Renderer) {
     if renderer==nil || assets==nil || synced.ptr==nil {return}
     sync:=synced.ptr
     loaded:=[2]u64{assets.registry.revision,core.version(painted)}

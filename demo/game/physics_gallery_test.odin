@@ -229,16 +229,16 @@ gallery_fragments_remain_while_sleeping_and_fade_before_their_physical_expiry ::
     core.table_settle(&stations,&entities);core.table_settle(&states,&entities);core.table_settle(&groups,&entities);core.table_settle(&tints,&entities)
     for tick in 0..<480 {
         physics_gallery_fade(core.read(&stations),destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)},&tints,{playing=true,dt=1.0/60})
-        if tick==360 {testing.expect_value(t,core.at(core.read(&tints),core.row_of(&tints,fragment)).color.a,f32(1))}
-        if tick==420 {testing.expect(t,abs(core.at(core.read(&tints),core.row_of(&tints,fragment)).color.a-.5)<.001)}
+        if tick==360 {testing.expect_value(t,core.at(&tints,core.row_of(&tints,fragment)).color.a,f32(1))}
+        if tick==420 {testing.expect(t,abs(core.at(&tints,core.row_of(&tints,fragment)).color.a-.5)<.001)}
         info,valid:=phys.body_info(core.ref(&physics),body)
         if tick==360 {testing.expect(t,!info.awake)}
         testing.expect(t,valid)
-        testing.expect_value(t,core.at(core.read(&tints),core.row_of(&tints,target)),original)
+        testing.expect_value(t,core.at(&tints,core.row_of(&tints,target)),original)
         gallery_step(&physics,gravity={})
     }
     physics_gallery_fade(core.read(&stations),destruct.Destruct_View{core.ref(&physics),core.read(&states),core.read(&groups)},&tints,{playing=true,dt=1.0/60})
-    testing.expect_value(t,core.at(core.read(&tints),core.row_of(&tints,fragment)).color.a,f32(0))
+    testing.expect_value(t,core.at(&tints,core.row_of(&tints,fragment)).color.a,f32(0))
     gallery_step(&physics,gravity={})
     _,kept:=phys.body_info(core.ref(&physics),body)
     _,stays:=phys.body_info(core.ref(&physics),root)

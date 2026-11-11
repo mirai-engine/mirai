@@ -70,7 +70,7 @@ rewind_make :: proc(history:^Rewind_History,slots,entities:int,allocator:runtime
 // At the end of a tick, with what the server publishes: the Transform of
 // every entity with Rewind, under the number of the tick.
 @(step="fixed",loops="game",stage="end",before="net_tick_tail")
-rewind_record :: proc(session:core.Ref(Net_Session),time:core.Time,marked:core.Read(Rewind),transforms:core.Read(core.Transform),history:^Rewind_History,allocator:runtime.Allocator,problems:^core.Problems) {
+rewind_record :: proc(session:core.Ref(Net_Session),time:core.Time,marked:^core.Table(Rewind,.Read),transforms:^core.Table(core.Transform,.Read),history:^Rewind_History,allocator:runtime.Allocator,problems:^core.Problems) {
     if session.ptr==nil || !session.host_ready || session.mode!=.Server || time.resimulating {return}
     if slots:=session_history(session)+1;len(history.frames)!=slots && !rewind_make(history,slots,session.desc.rewind_entities,allocator) {
         core.report(problems,core.NONE,"multiplayer.rewind","the poses of %d ticks for lag compensation were not made (out of memory); free memory, or lower Net_Settings.replication.history_seconds or rewind_entities",slots-1)

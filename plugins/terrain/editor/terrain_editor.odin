@@ -156,7 +156,7 @@ terrain_write :: proc(s:^editor.Session,a:^host.Assets,id:base.Asset_Id,source:^
     return editor.file_set(s,path,bytes)
 }
 @(step="frame",stage="begin",after="editor_tools")
-terrain_sync :: proc(s:^editor.Session,tool:^Terrain_Tool,terrains:core.Read(terrain.Terrain),assets:^host.Assets) {
+terrain_sync :: proc(s:^editor.Session,tool:^Terrain_Tool,terrains:^core.Table(terrain.Terrain,.Read),assets:^host.Assets) {
     a:=assets
     if a==nil || tool.stroke.active || editor.playing(s) {return}
     // The source the tool edits follows its head without reading the file again.
@@ -171,7 +171,7 @@ terrain_sync :: proc(s:^editor.Session,tool:^Terrain_Tool,terrains:core.Read(ter
     editor.revision_sync(s,&tool.history,terrains,a,REVISIONS,tool,follow)
 }
 @(step="frame")
-terrain_sculpt :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk),worlds:core.Read(core.World_Transform),assets:^host.Assets,extras:^host.Frame_Extras,job_system:^jobs.Job_System,allocator:runtime.Allocator,input:core.Input,view:core.View,frame:core.Frame_Time) {
+terrain_sculpt :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,terrains:^core.Table(terrain.Terrain,.Read),chunks:^core.Table(terrain.Terrain_Chunk,.Read),worlds:^core.Table(core.World_Transform,.Read),assets:^host.Assets,extras:^host.Frame_Extras,job_system:^jobs.Job_System,allocator:runtime.Allocator,input:core.Input,view:core.View,frame:core.Frame_Time) {
     stroke:=&tool.stroke
     defer terrain_focus(s,tool,world,input)
     if !tool.active || editor.playing(s) {if stroke.id!={} {stroke_free(tool)};tool.adjust={};return}
@@ -236,7 +236,7 @@ terrain_sculpt :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref
     cursor_draw(s,tool,input,view)
 }
 @(private)
-stroke_prepare :: proc(tool:^Terrain_Tool,assets:^host.Assets,allocator:runtime.Allocator,terrains:core.Read(terrain.Terrain),worlds:core.Read(core.World_Transform),hit:editor.Pick) -> bool {
+stroke_prepare :: proc(tool:^Terrain_Tool,assets:^host.Assets,allocator:runtime.Allocator,terrains:^core.Table(terrain.Terrain,$A),worlds:^core.Table(core.World_Transform,$B),hit:editor.Pick) -> bool {
     a:=assets
     marker,has_marker:=core.get(terrains,hit.entity)
     placed,has_placed:=core.get(worlds,hit.entity)
@@ -322,7 +322,7 @@ preview_find :: proc(stroke:^Stroke,coord:[3]i32) -> int {
 // the border it shows, lowered only where a hole takes a chunk to level 0;
 // the nodes of the quadtree are not previewed. A Volume has no levels.
 @(private)
-preview_levels :: proc(stroke:^Stroke,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk)) {
+preview_levels :: proc(stroke:^Stroke,terrains:^core.Table(terrain.Terrain,$A),chunks:^core.Table(terrain.Terrain_Chunk,$B)) {
     dirty:=false
     for preview in stroke.previews {dirty||=preview.dirty}
     if !core.touched(chunks,&stroke.levels_seen) && !dirty {return}
@@ -371,7 +371,7 @@ preview_levels :: proc(stroke:^Stroke,terrains:core.Read(terrain.Terrain),chunks
     }
 }
 @(private)
-stroke_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,terrains:core.Read(terrain.Terrain),chunks:core.Read(terrain.Terrain_Chunk),worlds:core.Read(core.World_Transform),assets:^host.Assets,extras:^host.Frame_Extras,job_system:^jobs.Job_System) {
+stroke_preview :: proc(s:^editor.Session,tool:^Terrain_Tool,world:core.World_Ref,terrains:^core.Table(terrain.Terrain,$A),chunks:^core.Table(terrain.Terrain_Chunk,$B),worlds:^core.Table(core.World_Transform,$C),assets:^host.Assets,extras:^host.Frame_Extras,job_system:^jobs.Job_System) {
     stroke:=&tool.stroke
     a:=assets
     if a==nil || a.renderer==nil {return}

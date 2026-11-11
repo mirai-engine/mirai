@@ -35,7 +35,7 @@ TERRAIN_DUST_DEFAULT :: Terrain_Dust{
 }
 
 @(step="fixed",loops="game",stage="react")
-terrain_dust :: proc(digs:core.Ref(Terrain_Digs),dusts:core.Read(Terrain_Dust),births:^core.Births) {
+terrain_dust :: proc(digs:core.Ref(Terrain_Digs),dusts:^core.Table(Terrain_Dust,.Read),births:^core.Births) {
     for dig in digs.digs.items {
         dust,found:=core.get(dusts,dig.owner)
         if !found {continue}

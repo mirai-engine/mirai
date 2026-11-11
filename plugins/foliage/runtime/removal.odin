@@ -139,13 +139,13 @@ removals_destroy :: proc(r:^Foliage_Removals) {
 
 // Makes the instances taken out of each Foliage again from the entities
 // that name them, when they or the Foliage changed.
-removals_index :: proc(r:^Foliage_Removals,removed:core.Read(Foliage_Removed),foliages:core.Read(Foliage),es:^core.Entities) -> (enough:bool) {
+removals_index :: proc(r:^Foliage_Removals,removed:^core.Table(Foliage_Removed,$A),foliages:^core.Table(Foliage,$B),es:^core.Entities) -> (enough:bool) {
     enough=true
     if !(core.touched(removed,&r.seen[0]) | core.touched(foliages,&r.seen[1])) && r.made {return}
     r.made=true
     for &owner in r.owners {clear(&owner.items);clear(&owner.pages)}
     for row in 0..<core.count(removed) {
-        page:=&removed.table.values[row]
+        page:=&removed.values[row]
         e:=core.entity_of(es,page.foliage)
         if e==core.NONE || !core.has(foliages,e) {continue}
         owner:=removed_owner(r,e)
@@ -197,12 +197,12 @@ removals_index :: proc(r:^Foliage_Removals,removed:core.Read(Foliage_Removed),fo
 // nothing; what the server took out arrives.
 @(step="fixed frame",loops="game editor",stage="simulate",before="physics_prepare")
 foliage_removals :: proc(
-    r:^Foliage_Removals,requests:^Foliage_Requests,removed:^core.Table(Foliage_Removed),foliages:core.Read(Foliage),ids:core.Read(core.Id),
+    r:^Foliage_Removals,requests:^Foliage_Requests,removed:^core.Table(Foliage_Removed),foliages:^core.Table(Foliage,.Read),ids:^core.Table(core.Id,.Read),
     data:core.Ref(Foliage_Data),authority:core.Ref(core.Network),commands:core.Commands,allocator:runtime.Allocator,problems:^core.Problems,
 ) {
     asked:=core.take(&requests.removes)
     context.allocator=allocator
-    if !removals_index(r,core.read(removed),foliages,commands.entities) {
+    if !removals_index(r,removed,foliages,commands.entities) {
         memory_problem(problems,core.NONE,"the instances taken out of the foliage: some show again")
     }
     if len(asked)==0 || authority.ptr!=nil && authority.role==.Client || data.ptr==nil {return}
