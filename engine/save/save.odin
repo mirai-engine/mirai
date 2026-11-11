@@ -8,7 +8,6 @@ import "core:strings"
 import "core:time"
 import "mirai:asset"
 import "mirai:core"
-import inp "mirai:engine/input"
 import "mirai:engine/scene"
 import "mirai:host"
 import "mirai:std/base"
@@ -344,7 +343,7 @@ delete_slot :: proc(state:^Save_State,app:^host.App,slot:string) -> Error {
 @(step="input",loops="game")
 saves_serve :: proc(
     world:core.World_Ref,app:^host.App,requests:^Save_Requests,results:^Save_Results,state:^Save_State,work:^Save_Work,
-    thumbnails:^Save_Thumbnails,game:^Save_Game,settings:core.Ref(Save_Settings),profile:^Profile_State,bindings:core.Ref(inp.Input_Map),
+    thumbnails:^Save_Thumbnails,game:^Save_Game,settings:core.Ref(Save_Settings),profile:^Profile_State,
     authority:core.Ref(core.Network),frame:core.Ref(core.Frame_Time),clock:core.Ref(core.Clock),
     references:core.Read(scene.Scene_Reference),problems:^core.Problems,
 ) {
@@ -389,7 +388,7 @@ saves_serve :: proc(
         if !queued {core.push(&results.queue,result)}
     }
     if work==nil {return}
-    kept_watch(work,world,app,state,bindings.ptr,frame.dt,problems)
+    kept_watch(work,world,app,state,frame.dt,problems)
     root:scene.Scene_Root
     if r:=core.world_storage_of(world,scene.Scene_Root);r!=nil {root=r^}
     due:=autosave_watch(work,game,settings.ptr^,root,references)

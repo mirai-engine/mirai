@@ -80,9 +80,6 @@ udp_open :: proc(u:^Udp,bind:Address) -> bool {
         cnet.close(socket)
         return false
     }
-    // A client looks for its server on its network too (connect_candidates). A system that refuses it
-    // only leaves that candidate out; an IPv6 socket has no broadcast.
-    if bind.kind==.IP4 {cnet.set_option(socket,.Broadcast,true)}
     u.socket,u.open,u.dual,u.address=socket,true,dual,bind
     if bound,bound_error:=cnet.bound_endpoint(socket);bound_error==nil {u.address.port=u16(bound.port)}
     return true

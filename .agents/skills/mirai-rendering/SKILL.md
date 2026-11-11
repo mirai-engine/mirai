@@ -65,7 +65,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   thread) → [programs](references/materials.md#surface-programs-in-rays-and-raster); programs that
   move vertices (`//! vertex`, `displace.odin`) →
   [vertex functions](references/materials.md#vertex-functions); texture levels
-  by distance, `textures_pending` → [residency](references/materials.md#residency-by-distance)
+  by what the GPU samples, `textures_pending` →
+  [residency](references/materials.md#residency-by-sampling)
 - OpenPBR layers (coat, fuzz, anisotropy, diffuse transmission, unlit), tangents and normal maps →
   [layers](references/materials.md#layers-openpbr),
   [normal maps](references/materials.md#normal-maps-and-specular-antialiasing)
@@ -153,7 +154,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - A geometry regeneration registers an immutable version and withdraws the previous one, with free
   ranges and dirty ranges of the common pools, without compacting other geometry.
 - `render_sync` gives the renderer the world only by what changed: the rows written, added or gone
-  of the tables it reads, through `scene_update`, `scene_move`, `scene_tint` and `scene_set_lights`.
+  of the tables it reads, through `scene_update`, `scene_move`, `scene_tint`, `scene_light_update`
+  and `scene_light_remove`.
   Another world, tables replaced whole and assets loaded again are the same changes, of every row:
   there is no second path that builds the scene. A frame where nothing changed looks at no row.
 - Geometry publication is a common immediate transaction with reused staging, without
@@ -196,8 +198,9 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   with `MIRAI_VALIDATION=1` (Vulkan) or `MTL_DEBUG_LAYER=1` (Metal). No GPU test may report
   validation errors; a new one takes the shared device
   ([GPU environment](references/verification.md#gpu-environment)).
-- A change of `render_sync` runs `engine/render/sync_test.odin`, without a device: the rows it
-  looks at in a frame (`Sync_Stats.rows`) and what the renderer has against a world given whole.
+- A change of `render_sync` runs `engine/render/sync_test.odin`, without a device: what the
+  renderer is given in a frame (the instances it touched, the light it marks) and what it has
+  against a world given whole.
 - A change that must preserve the image is checked with `MIRAI_GOLDEN=write:<dir>` before and
   `MIRAI_GOLDEN=compare:<dir>` after, on the same machine.
 - After regenerating shaders, the diff contains only the outputs of the touched sources, the

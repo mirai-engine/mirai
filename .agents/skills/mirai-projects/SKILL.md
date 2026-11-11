@@ -26,7 +26,7 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 - Shipping and cooking: [shipped game](references/build.md#shipped-game),
   [dedicated server](references/build.md#dedicated-server) and
   [cooking](references/build.md#asset-cooking).
-- `--dev`/`--release` modes, per-part currency and the shared engine cache:
+- Dev and `--release` modes, per-part currency and the shared engine cache:
   [engine binaries](references/projects.md#engine-binaries) and
   [plugin libraries](references/projects.md#plugin-libraries).
 - Engine shipped as a binary, `engine.mirai`, `mirai package engine`, engine root and release
@@ -90,9 +90,9 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   carry a typeid its type table lacks (`%v` of a plugin's enum prints nothing).
 - A private procedure is declared and exported only when the declarations of its package name it:
   what `declare` copies as text and what it looks for names in are the same set.
-- What compiles against the engine declarations follows the declarations it names and what they
-  reach, by the names in the text: a name that is hidden or inside a comment still counts, and a
-  type reached through a pointer too. More is followed, never less.
+- What compiles against declarations, of the engine, its plugins or the project (one index),
+  follows the declarations its parsed sources name and what they reach: a name a local hides still
+  counts, and a type reached through a pointer too. More is followed, never less.
 - In dev a package that is edited often is a library of its own, and a library imports only
   packages listed before its own in `ENGINE_PACKAGES`; an optimized build never splits a layer.
 - The project libraries and the engine ones share flags (`engine_flags`: `-custom-attribute` and
@@ -149,7 +149,7 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   `the_tests_of_runtime_packages_import_no_engine_time_package` of `cook/build`.
 - Cache: changing an engine source and opening the editor rebuilds; repeating without changes
   reuses both builds ([reload](../mirai-editor/references/editor.md#build-and-reload)).
-- Fingerprint and shared cache: `mirai build engine --dev` twice (the second says "unchanged"
+- Fingerprint and shared cache: `mirai build engine` twice (the second says "unchanged"
   without waiting for a turn), a change in the body of a procedure (rebuilds only the library of
   its package) and in a worktree from `mirai worktree new` (reports "copied from the shared
   cache").
@@ -160,8 +160,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   counts by its manifest, not its date) and `plugins_test.odin` (a plugin library is the same in
   every project). If the package changes, by hand:
   `mirai package engine --out <short folder>`, compress it, decompress it into another folder and,
-  with its `bin/mirai`, `new` of each template and `build editor --dev`, which does not compile
-  plugin libraries; then `edit --dev` opens the editor. The workflow YAML is validated with
+  with its `bin/mirai`, `new` of each template and `build editor`, which does not compile
+  plugin libraries; then `edit` opens the editor. The workflow YAML is validated with
   `actionlint`.
 - ACP installer in a temporary project: install, search, cancel and uninstall Codex, and
   `initialize` of the adapter with `CODEX_PATH` pointing at the binary, with Bun and with Bundled.

@@ -71,6 +71,7 @@ spawn_test_close :: proc(p:^Spawn_Test) {
 @(private="file")
 spawn_test_bulb :: proc(bulb:^asset.Scene,types:^asset.Types,range:f32) {
     asset.scene_init(bulb,types,SPAWN_BULB)
+    bulb.doc.flags+={.Prefab}
     asset.scene_entity_add(bulb,1,0,"Bulb")
     asset.scene_entity_add(bulb,2,1,"Glass")
     light:=Spawn_Test_Light{range,1}
@@ -83,6 +84,7 @@ spawn_test_bulb :: proc(bulb:^asset.Scene,types:^asset.Types,range:f32) {
 @(private="file")
 spawn_test_lamp :: proc(t:^testing.T,lamp:^asset.Scene,types:^asset.Types,bulb:^asset.Scene) {
     asset.scene_init(lamp,types,SPAWN_LAMP)
+    lamp.doc.flags+={.Prefab}
     asset.scene_entity_add(lamp,1,0,"Lamp")
     inner,placed:=asset.scene_instantiate(lamp,bulb,SPAWN_BULB,1)
     testing.expect_value(t,placed,asset.Error.None)
@@ -241,6 +243,7 @@ the_forms_a_world_keeps_are_bounded_and_the_one_spawned_longest_ago_goes :: proc
     for at in 0..=PREFAB_FORMS {
         crate:asset.Scene
         asset.scene_init(&crate,&p.types,{0x5c,u64(at)+1})
+        crate.doc.flags+={.Prefab}
         asset.scene_entity_add(&crate,1,0,"Crate")
         testing.expect_value(t,asset.scene_save(&crate,fmt.tprintf("%s/crate%d.scene",p.folder,at)),asset.Error.None)
         asset.scene_destroy(&crate)

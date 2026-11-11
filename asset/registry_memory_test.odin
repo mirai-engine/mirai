@@ -117,6 +117,7 @@ registry_tells_which_files_place_a_prefab_while_memory_holds_them :: proc(t:^tes
     yard:Scene
     testing.expect_value(t,scene_init(&yard,&types,yard_id),Error.None)
     defer scene_destroy(&yard)
+    yard.doc.flags+={.Prefab}
     scene_entity_add(&yard,1,0,"Yard")
     scene_entity_add(&yard,2,1,"Lamp")
     testing.expect_value(t,scene_instance_set(&yard,2,{prefab=lamp}),Error.None)
@@ -131,12 +132,11 @@ registry_tells_which_files_place_a_prefab_while_memory_holds_them :: proc(t:^tes
     testing.expect_value(t,len(registry_dependents(&r,lamp)),0)
 }
 
-// A prefab is a scene with one root, and the registry knows it from the
-// header of each write: an edit that adds a second root makes it a plain
-// scene for whoever lists the assets, and one that takes it away a prefab
-// again, without anything opening the file.
+// A prefab is a scene whose header says so, as whoever made it chose: the
+// registry knows it from the header of each write, without opening the file,
+// and what its entities are never changes it.
 @(test)
-registry_knows_a_prefab_by_its_one_root_as_edits_change_it :: proc(t:^testing.T) {
+registry_knows_a_prefab_by_the_kind_its_header_says :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     root:=base.test_folder(t,"registry-one-root")
     os.make_directory_all(root)
@@ -156,31 +156,22 @@ registry_knows_a_prefab_by_its_one_root_as_edits_change_it :: proc(t:^testing.T)
         testing.expect(t,found)
         return file
     }
-    testing.expect(t,!registry_prefab(held(t,&r,&lamp,id)),"an empty scene places nothing")
     scene_entity_add(&lamp,1,0,"Lamp")
     scene_entity_add(&lamp,2,1,"Bulb")
+    file:=held(t,&r,&lamp,id)
+    testing.expect(t,!registry_prefab(file) && file.kind==KIND_SCENE,"one root makes no prefab of a scene")
+    testing.expect_value(t,prefab_refused(&lamp),"")
+    lamp.doc.flags+={.Prefab}
     testing.expect(t,registry_prefab(held(t,&r,&lamp,id)))
     scene_entity_add(&lamp,3,0,"Second root")
-    file:=held(t,&r,&lamp,id)
-    testing.expect(t,!registry_prefab(file) && file.kind==KIND_SCENE)
-    _,rooted:=prefab_root(&lamp)
-    testing.expect(t,!rooted)
+    testing.expect(t,registry_prefab(held(t,&r,&lamp,id)),"its entities do not change what it is")
+    testing.expect(t,prefab_refused(&lamp)!="")
     testing.expect_value(t,scene_entity_reparent(&lamp,3,1,1),Error.None)
-    testing.expect(t,registry_prefab(held(t,&r,&lamp,id)))
     // On disk as in memory, and for a scan that reads the file again.
     testing.expect_value(t,registry_memory_write(&r,"lamp.scene"),Error.None)
     testing.expect_value(t,registry_scan(&r),Error.None)
     written,found:=registry_find(&r,id)
     testing.expect(t,found && registry_prefab(written))
-    // A header that says one root of a scene with two is no scene to read.
-    scene_entity_add(&lamp,4,0,"Another root")
-    data,_:=scene_bytes(&lamp,context.temp_allocator)
-    header:=(^Header)(raw_data(data))
-    header.flags+={.One_Root}
-    a:Asset
-    if testing.expect_value(t,asset_open(&a,data,context.temp_allocator),Error.None) {
-        _,viewed:=scene_view(&a,&types)
-        testing.expect_value(t,viewed,Error.Corrupt)
-        asset_close(&a)
-    }
+    lamp.doc.flags-={.Prefab}
+    testing.expect(t,!registry_prefab(held(t,&r,&lamp,id)))
 }

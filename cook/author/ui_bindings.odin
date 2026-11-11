@@ -329,10 +329,7 @@ BIND_PROBLEMS :: 16 // problems a check of one .ui reports at most
 // What fails: a path the game does not have, a name in braces of a text, a
 // widget it uses, records that do not load, or a name of a style, a token, a
 // component or a parameter that resolves to nothing.
-Bind_Fault :: enum u8 {
-    Path,Template,Widget,Load,Name,
-    Code, // of the code of the game, not of a .ui: a name it asks the interfaces for that none has
-}
+Bind_Fault :: enum u8 {Path,Template,Widget,Load,Name}
 
 // Why the widgets the records name do not read: the first one missing, one
 // that is not a .ui that loads, or one that uses the file back.
@@ -346,8 +343,6 @@ widget_why :: proc(a:Assets,data:ui.Tree_Data) -> string {
     return fmt.tprintf("'%s', which it uses, does not load",record.path)
 }
 
-BIND_PROBLEM_TEXT :: 512
-
 // What the paths of a .ui fail at, against the types of the world: a node
 // of its records whose binding the game does not have, or why it does not load.
 Bind_Problem :: struct {
@@ -359,7 +354,7 @@ Bind_Problem :: struct {
     binding:ui.Binding,
     takes:Bind_Kind,      // Path: what that binding takes at that node
     fault:Bind_Fault,
-    path:[BIND_PROBLEM_TEXT]u8, // Path: what it binds; Widget, Load, Name and Code: why
+    path:[ui.TREE_PATH_CAPACITY]u8, // Path: what it binds; Widget, Load and Name: why
 }
 
 // Checks the records of a .ui, linked with the widgets they use (imports, as
@@ -474,7 +469,6 @@ bind_problem_text :: proc(a:Assets,problem:^Bind_Problem) -> string {
     switch problem.fault {
     case .Widget,.Load: return fmt.tprintf("%s does not load: %s",file,serial.text_field(problem.path[:]))
     case .Name:         return fmt.tprintf("%s: %s",file,serial.text_field(problem.path[:]))
-    case .Code:         return fmt.tprintf("%s",serial.text_field(problem.path[:]))
     case .Template:     return fmt.tprintf("%s: node '%s' has a name in braces of its text without a field, or whose field names a path the game does not have or cannot show",file,serial.text_field(problem.name[:]))
     case .Path:
     }
@@ -514,6 +508,28 @@ bind_check_all :: proc(problems:^[dynamic]Bind_Problem,types:^Bind_Types,allocat
     }
 }
 
+
+// The Draw nodes of the records of a .ui whose procedure the game does not
+// declare: without it the node shows nothing. How many went to out.
+draw_names_check :: proc(info:^core.World_Info,r:^Records,out:[]Bind_Problem) -> (count:int) {
+    if info==nil {return}
+    for &n in r.nodes {
+        if n.kind!=.Draw || count>=len(out) {continue}
+        name:=serial.text_field(n.draw[:])
+        known:=false
+        for d in info.draws {known||=d.name==name}
+        if known {continue}
+        out[count]={row=-1,use=-1,node=-1,fault=.Name}
+        node:=serial.text_field(n.name[:])
+        if name=="" {
+            ui.tree_text_set(out[count].path[:],fmt.tprintf("Draw '%s' has no draw: name the @(draw) procedure of the game that draws it",node))
+        } else {
+            ui.tree_text_set(out[count].path[:],fmt.tprintf("Draw '%s' names '%s': write @(draw=\"%s\") on a procedure of game/ and build",node,name,name))
+        }
+        count+=1
+    }
+    return
+}
 // The names of a .ui that resolve to nothing: of styles, tokens, components
 // and parameters, with where. What the file named in another that changed
 // since it was written shows here, before it fails to load. How many went to out.
@@ -718,7 +734,7 @@ problems_write :: proc(out:^serial.Writer,a:Assets,problems:[]Bind_Problem) {
     for &problem,i in problems {
         if i>0 {serial.write_u8(out,',')}
         serial.write_u8(out,'{')
-        serial.json_text(out,"asset",file_name_of(a,problem.asset,"missing") if problem.fault!=.Code else "",true)
+        serial.json_text(out,"asset",file_name_of(a,problem.asset,"missing"),true)
         serial.json_text(out,"node",serial.text_field(problem.name[:]))
         serial.json_text(out,"binding","Text (in braces)" if problem.fault==.Template else fmt.tprintf("%v",problem.binding) if problem.fault==.Path else "")
         serial.json_text(out,"path",serial.text_field(problem.path[:]) if problem.fault==.Path else "")
