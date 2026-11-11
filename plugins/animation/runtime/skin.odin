@@ -1,10 +1,10 @@
 package anim
 
+import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "mirai:asset"
 import "mirai:core"
-import inp "mirai:engine/input"
 import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:std/base"
@@ -220,7 +220,7 @@ animation_skin :: proc(
     cache:^Skin_Runtime,state:^Skin_Instances,assets:^host.Assets,renderer:^erender.Renderer,poses:^erender.Posed_Meshes,job_system:^jobs.Job_System,allocator:runtime.Allocator,time:core.Time,frame:core.Frame_Time,playback:core.Ref(Playback),
     morphs:core.Ref(Morph_Playback),problems:^core.Problems,
     policies:^core.Table(Animation_Budget,.Read),budget:^Budget_Runtime,config:Animation_Budget_Config,parts:^core.Table(Skin_Part,.Read),
-    modifiers:core.Ref(Modifier_Runtime),view:core.Ref(core.View),seats:^core.Table(inp.Seat,.Read),
+    modifiers:core.Ref(Modifier_Runtime),view:core.Ref(core.View),
 ) {
     if state==nil || renderer==nil || assets==nil {return}
     context.allocator=allocator
@@ -361,19 +361,19 @@ animation_skin :: proc(
                 append(&state.work,Pose_Palette_Work{parents=pose.parents[:],previous=pose.previous[:],current=pose.local[:],local=instance.local,world=instance.world,joints=rig.joints,palette=instance.palette,basis=basis,inverse=inverse,alpha=1 if exact else alpha,bone_offset=1,enabled=true})
                 append(&state.updates,Skin_Update{slot=slot,drawn=drawn,basis=basis,exact=pose.changed+1 if exact else 0})
                 // How large its bounds show in the view of the frame: without a view, as large as it gets.
-                screen:=f32(1)
+                pixels:=math.INF_F32
                 if view.ptr!=nil {
                     radius:=.5*linalg.length(source.bounds_max-source.bounds_min)*max(abs(drawn.scale.x),abs(drawn.scale.y),abs(drawn.scale.z))
-                    screen=budget_screen(view.ptr^,mm.transform_point(drawn,.5*(source.bounds_min+source.bounds_max)),radius)
+                    pixels=budget_pixels(view.ptr^,mm.transform_point(drawn,.5*(source.bounds_min+source.bounds_max)),radius)
                 }
-                append(&state.candidates,Budget_Candidate{entity=entity,slot=u32(slot),policy=policy,screen=screen,exempt=budget_seated(seats,parents,owner),force=instance.reset || !instance.copied || !time.playing})
+                append(&state.candidates,Budget_Candidate{entity=entity,slot=u32(slot),policy=policy,pixels=pixels,force=instance.reset || !instance.copied || !time.playing})
             }
         }
         append(&state.draws,Skin_Draw{work=work_index,slot=slot,morphed=morphed})
     }
     if !palette_workspace_prepare(&state.workspace,len(state.instances.values),allocator) {memory_problem(problems,core.NONE,"the skinned meshes of the world, so none is drawn in this frame");return}
     if budget!=nil {
-        if budget_prepare(budget,len(state.instances.values),problems) && budget_select(budget,state.candidates[:],state.frame,config,problems) {
+        if budget_prepare(budget,len(state.instances.values),problems) && budget_select(budget,state.candidates[:],state.frame,frame.dt,config,problems) {
             for &work,i in state.work {work.enabled=budget.selected[i]}
         }
     }

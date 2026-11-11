@@ -5,33 +5,35 @@ import "core:math/linalg"
 import "core:mem"
 import "mirai:asset"
 import "mirai:core"
-import inp "mirai:engine/input"
 import "mirai:std/base"
 import lib "mirai:std/anim"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
 
-// period: the fewest render frames between palette updates; 0: automatic, by how large the mesh
-// shows in the view (BUDGET_SCREEN), every frame for the body a seat drives.
-@(component,description="Controls skeletal presentation frequency and priority, automatically by how large the mesh shows or every period frames. Simulation clocks, events, root motion and constraints still run every fixed tick.")
-Animation_Budget :: struct {period:u16 `mirai:"max=120"`,significance:f32 `mirai:"min=0,max=1000"`,enabled:bool}
-ANIMATION_BUDGET_DEFAULT :: Animation_Budget{significance=1,enabled=true}
-// Share of the height of the view, at its distance, that the bounds of a mesh cover above which its
-// automatic period is 1, and 2; a smaller one gets 3.
-BUDGET_SCREEN :: [2]f32{.98,.69}
+// period: the fewest render frames between palette updates; 0: automatic, as often as its size on
+// screen needs (budget_interval).
+@(component,description="Controls skeletal presentation frequency and priority: automatically, as often as the size of the mesh on screen needs, or every period frames. Simulation clocks, events, root motion and constraints still run every fixed tick.")
+Animation_Budget :: struct {period:u16 `mirai:"max=120"`,significance:f32 `mirai:"min=0,max=1000"`}
+ANIMATION_BUDGET_DEFAULT :: Animation_Budget{significance=1}
+// An automatic palette waits while its pose moves less on screen than the eye tells from a
+// continuous motion: BUDGET_STEP pixels, for limbs that cross BUDGET_SPEED times the height of
+// the mesh a second, as in a run. A mesh of a few pixels waits at most BUDGET_LONGEST seconds.
+BUDGET_STEP :: 1
+BUDGET_SPEED :: 2
+BUDGET_LONGEST :: .25
 @(storage,setting)
 Animation_Budget_Config :: struct {max_palette_updates:u32 `mirai:"advanced"`,job_grain:u16 `mirai:"advanced"`,parallel:bool `mirai:"advanced"`}
 ANIMATION_BUDGET_CONFIG_DEFAULT :: Animation_Budget_Config{job_grain=4,parallel=true}
-Budget_State :: struct {entity:core.Entity,last_update:u64}
-// screen: share of the height of the view its bounds cover (budget_screen); exempt: a seat drives
-// it, or what it hangs from. Both choose an automatic period.
-Budget_Candidate :: struct {entity:core.Entity,slot:u32,policy:Animation_Budget,screen:f32,exempt,force:bool}
+Budget_State :: struct {entity:core.Entity,last_update:u64,last_clock:f64}
+// pixels: the height its bounds cover on screen (budget_pixels), which sets an automatic period.
+Budget_Candidate :: struct {entity:core.Entity,slot:u32,policy:Animation_Budget,pixels:f32,force:bool}
 @(storage,free="budget_runtime_free")
 Budget_Runtime :: struct {
     states:[dynamic]Budget_State,
     selected:[dynamic]bool,
     keys,scratch:[dynamic]base.Sort_Key64,
     frame:u64,
+    clock:f64, // seconds of the frames it chose for, since the start
     evaluated,throttled:u64, // palettes made and left for a later frame, since the start
 }
 budget_runtime_free :: proc(runtime:^Budget_Runtime) {if runtime!=nil {delete(runtime.states);delete(runtime.selected);delete(runtime.keys);delete(runtime.scratch);runtime^={}}}
@@ -46,9 +48,9 @@ budget_prepare :: proc(runtime:^Budget_Runtime,count:int,problems:^core.Problems
     return true
 }
 
-// Chooses the palettes made in this frame. False, with every one made, for a
-// candidate whose policy is out of range or that comes twice.
-budget_select :: proc(runtime:^Budget_Runtime,candidates:[]Budget_Candidate,frame:u64,config:Animation_Budget_Config,problems:^core.Problems) -> bool {
+// Chooses the palettes made in this frame, which lasts dt seconds. False, with every one made, for
+// a candidate whose policy is out of range or that comes twice.
+budget_select :: proc(runtime:^Budget_Runtime,candidates:[]Budget_Candidate,frame:u64,dt:f32,config:Animation_Budget_Config,problems:^core.Problems) -> bool {
     if runtime==nil || len(candidates)>len(runtime.selected) || len(candidates)>len(runtime.keys) || len(candidates)>len(runtime.scratch) {return false}
     if config.job_grain==0 {
         core.report(problems,core.NONE,"animation.budget_config","Animation_Budget_Config.job_grain is 0, so the budget is off and every skinned mesh is posed each frame; give it 1 or more")
@@ -56,7 +58,7 @@ budget_select :: proc(runtime:^Budget_Runtime,candidates:[]Budget_Candidate,fram
     }
     for candidate in candidates {
         if candidate.entity==core.NONE || int(candidate.slot)>=len(runtime.states) || int(candidate.slot)>=len(runtime.keys) {budget_inconsistent(problems);return false}
-        if candidate.policy.enabled && (candidate.policy.period>120 || !finite(candidate.policy.significance) || candidate.policy.significance<0 || candidate.policy.significance>1000) {
+        if candidate.policy.period>120 || !finite(candidate.policy.significance) || candidate.policy.significance<0 || candidate.policy.significance>1000 {
             core.report(problems,candidate.entity,"animation.budget_policy","Animation_Budget of this rig has period %d and significance %f; period goes from 0 (automatic) to 120 and significance from 0 to 1000; until it is fixed the budget is off and every skinned mesh is posed each frame",candidate.policy.period,candidate.policy.significance)
             return false
         }
@@ -66,17 +68,17 @@ budget_select :: proc(runtime:^Budget_Runtime,candidates:[]Budget_Candidate,fram
         if runtime.keys[candidate.slot].key!=0 {budget_inconsistent(problems);return false}
         runtime.keys[candidate.slot].key=1
     }
-    if frame<runtime.frame {for &state in runtime.states {state.last_update=0}}
+    if frame<runtime.frame {for &state in runtime.states {state.last_update,state.last_clock=0,0}}
     runtime.frame=frame
+    step:=f64(dt) if finite(dt) && dt>0 else 0
+    runtime.clock+=step
     eligible,forced:=0,0
     for candidate,i in candidates {
         runtime.selected[i]=false
         state:=&runtime.states[candidate.slot]
         if state.entity!=candidate.entity {state^={entity=candidate.entity}}
-        period:=budget_period(candidate)
         if candidate.force {runtime.selected[i]=true;forced+=1;continue}
-        age:=frame-state.last_update if frame>=state.last_update else u64(0)
-        if age<period {continue}
+        if !budget_due(state^,candidate,frame,runtime.clock,step) {continue}
         runtime.selected[i]=true
         eligible+=1
     }
@@ -89,9 +91,7 @@ budget_select :: proc(runtime:^Budget_Runtime,candidates:[]Budget_Candidate,fram
             runtime.selected[i]=false
             if limit==0 {continue}
             state:=&runtime.states[candidate.slot]
-            period:=budget_period(candidate)
-            significance:=candidate.policy.significance if candidate.policy.enabled else f32(1)
-            score:=f32(f64(frame-state.last_update)/f64(period)*(1+f64(significance)))
+            score:=f32(budget_waited(state^,candidate,frame,runtime.clock)*(1+f64(candidate.policy.significance)))
             runtime.keys[count]={key=u64(~base.sort_key_f32(score))<<32|u64(core.entity_index(candidate.entity)),index=u32(i)}
             count+=1
         }
@@ -100,43 +100,45 @@ budget_select :: proc(runtime:^Budget_Runtime,candidates:[]Budget_Candidate,fram
             for item in runtime.keys[:limit] {runtime.selected[item.index]=true}
         }
     }
-    for candidate,i in candidates {if runtime.selected[i] {runtime.states[candidate.slot].last_update=frame}}
+    for candidate,i in candidates {if runtime.selected[i] {state:=&runtime.states[candidate.slot];state.last_update,state.last_clock=frame,runtime.clock}}
     runtime.evaluated+=u64(forced+limit);runtime.throttled+=u64(len(candidates)-forced-limit)
     return true
 }
 
-// The period of a candidate: that of its policy, or the automatic one; disabled, the default.
-budget_period :: proc "contextless" (candidate:Budget_Candidate) -> u64 {
-    policy:=candidate.policy if candidate.policy.enabled else ANIMATION_BUDGET_DEFAULT
-    if policy.period>0 {return u64(policy.period)}
-    if candidate.exempt {return 1}
-    for limit,i in BUDGET_SCREEN {if candidate.screen>=limit {return u64(i+1)}}
-    return len(BUDGET_SCREEN)+1
+// Seconds an automatic palette may wait for a mesh whose bounds cover pixels of the screen
+// height: until its pose moves BUDGET_STEP pixels.
+budget_interval :: proc "contextless" (pixels:f32) -> f32 {
+    if !(pixels>0) {return BUDGET_LONGEST}
+    return min(BUDGET_STEP/(BUDGET_SPEED*pixels),BUDGET_LONGEST)
 }
 
-// The share of the height the view sees at the distance of a sphere that the sphere covers.
-budget_screen :: proc "contextless" (view:core.View,center:mm.Vec3,radius:f32) -> f32 {
+// Whether a candidate waited enough: its period in frames or, automatic, a frame and as long as the
+// next frame, step seconds later, would pass budget_interval: fewer frames a second never make it
+// wait longer than that.
+@(private)
+budget_due :: proc "contextless" (state:Budget_State,candidate:Budget_Candidate,frame:u64,clock,step:f64) -> bool {
+    age:=frame-state.last_update if frame>=state.last_update else 0
+    if candidate.policy.period>0 {return age>=u64(candidate.policy.period)}
+    return age>=1 && clock-state.last_clock+step>f64(budget_interval(candidate.pixels))
+}
+
+// How many of its waits a candidate has waited.
+@(private)
+budget_waited :: proc "contextless" (state:Budget_State,candidate:Budget_Candidate,frame:u64,clock:f64) -> f64 {
+    if candidate.policy.period>0 {return f64(frame-state.last_update if frame>=state.last_update else 0)/f64(candidate.policy.period)}
+    return (clock-state.last_clock)/f64(max(budget_interval(candidate.pixels),1e-3))
+}
+
+// The height in pixels of the view that a sphere covers; without a size, as large as it gets.
+budget_pixels :: proc "contextless" (view:core.View,center:mm.Vec3,radius:f32) -> f32 {
+    if !(view.size.y>0) {return math.INF_F32}
     distance:=max(linalg.length(center-view.position),1e-3)
     switch view.projection {
-    case .Orthographic: if view.height>0 {return 2*radius/view.height}
-    case .Custom: return abs(view.custom[1,1])*radius/distance
+    case .Orthographic: if view.height>0 {return 2*radius/view.height*view.size.y}
+    case .Custom: return abs(view.custom[1,1])*radius/distance*view.size.y
     case .Perspective:
     }
-    return radius/(distance*math.tan(.5*(view.fov if view.fov>0 else core.VIEW_DEFAULT.fov)))
-}
-
-// Whether a seat drives e or an entity it hangs from.
-budget_seated :: proc(seats:^core.Table(inp.Seat,$A),parents:^core.Table(core.Parent,$B),e:core.Entity) -> bool {
-    if seats==nil || core.count(seats)==0 {return false}
-    at:=e
-    for _ in 0..=(core.count(parents) if parents!=nil else 0) {
-        for row in 0..<core.count(seats) {if core.at(seats,row).body==at {return true}}
-        if parents==nil {break}
-        parent,has:=core.get(parents,at)
-        if !has || parent.entity==core.NONE {break}
-        at=parent.entity
-    }
-    return false
+    return radius/(distance*math.tan(.5*(view.fov if view.fov>0 else core.VIEW_DEFAULT.fov)))*view.size.y
 }
 
 @(private)
