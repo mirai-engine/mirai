@@ -1,4 +1,10 @@
 //! mirai constant PARTICLE_CURVE_KEYS uint ../runtime/effect/effect.odin
+//! mirai constant RIBBON_SHIFT uint ../runtime/gpu.odin
+//! mirai constant RIBBON_PIECES_SHIFT uint ../runtime/gpu.odin
+//! mirai constant RIBBON_LOOK_BYTES uint ../runtime/gpu.odin
+//! mirai constant SORT_SLOT_BITS uint ../runtime/gpu.odin
+//! mirai constant RIBBON_PIECES uint ../runtime/gpu.odin
+//! mirai constant TRAILS_PER_SECOND uint ../runtime/gpu.odin
 // Particles: the pool, the emitters and what the passes share. Layouts are
 // those of gpu.odin of the vfx plugin (sizes asserted there).
 #ifndef MIRAI_PARTICLES_SLANG
@@ -14,7 +20,7 @@ struct Particle {
     uint color;                     // rgba8 of the square root of the linear color
     uint light;                     // rgb with a shared exponent: the light it receives
     uint emitter;                   // slot
-    uint flags;                     // 1: light holds a value
+    uint flags;                     // 1: light holds a value; from RIBBON_PIECES_SHIFT, the pieces of the segment it starts; above RIBBON_SHIFT, the ribbon it joins
 };
 
 #define PARTICLE_SPAWNS 8u
@@ -66,7 +72,11 @@ struct Particle_State {
 struct Particle_Event {
     float3 position; uint target; // slot of the emitter it starts particles in, and how many above 16 bits
     float3 velocity; uint color;
+    uint ribbon;                  // that the particles it starts join
 };
+// An event a trail makes at the end of each frame: the point it starts lives
+// until the next step, drawn where its head is now.
+#define PARTICLE_EVENT_LEADER 0x80000000u
 
 #define PARTICLE_FLAG_ACTIVE 1u
 #define PARTICLE_FLAG_RESET 2u
@@ -102,10 +112,11 @@ struct Particle_Event {
 #define PARTICLE_COLLISION_WORLD 1u
 #define PARTICLE_EVENT_DEATH 1u
 #define PARTICLE_EVENT_COLLISION 2u
+#define PARTICLE_EVENT_TRAIL 3u
 
 #define PARTICLE_EVENT_CAPACITY 16384u
 #define PARTICLE_EVENTS_AT 64u // words of particle_queue before the events: their counts and dispatches
-#define PARTICLE_EVENT_WORDS 8u
+#define PARTICLE_EVENT_WORDS 9u
 
 // The resources of an emitter in particle_frame: the surface of its shape,
 // then those of its program, in the order it declares them.
@@ -145,6 +156,9 @@ struct Particle_Event {
 #else
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<Particle> particles : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS3, 0)]] StructuredBuffer<uint> particle_lists : register(MIRAI_REGISTER(t, SLOT_PASS3), space0);
+#ifdef PARTICLE_STATES_READ
+[[vk::binding(SLOT_PASS2, 0)]] StructuredBuffer<Particle_State> particle_states : register(MIRAI_REGISTER(t, SLOT_PASS2), space0);
+#endif
 #endif
 [[vk::binding(SLOT_PASS1, 0)]] StructuredBuffer<Particle_Emitter> particle_emitters : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 #ifndef PARTICLES_COUNTED
@@ -367,6 +381,7 @@ Particle_Event particle_event_load(uint half, uint at) {
     ev.target = particle_queue[base + 3u];
     ev.velocity = asfloat(uint3(particle_queue[base + 4u], particle_queue[base + 5u], particle_queue[base + 6u]));
     ev.color = particle_queue[base + 7u];
+    ev.ribbon = particle_queue[base + 8u];
     return ev;
 }
 
@@ -376,10 +391,30 @@ void particle_event_store(uint half, uint at, Particle_Event ev) {
     particle_queue[base + 3u] = ev.target;
     particle_queue[base + 4u] = asuint(ev.velocity.x); particle_queue[base + 5u] = asuint(ev.velocity.y); particle_queue[base + 6u] = asuint(ev.velocity.z);
     particle_queue[base + 7u] = ev.color;
+    particle_queue[base + 8u] = ev.ribbon;
 }
 #endif
 
 uint particle_emitter_of(Particle p) { return p.emitter; }
+
+// The ribbon a particle joins (0: the one of its emitter), and the ribbon of
+// its own that the particles its events start join: never 0, the same while
+// it lives, apart from those of the others alive in all but rare cases.
+#define PARTICLE_RIBBON_MASK (0xFFFFFFFFu >> RIBBON_SHIFT)
+uint particle_ribbon(Particle p) { return p.flags >> RIBBON_SHIFT; }
+uint particle_own_ribbon(uint seed) { return max(hash_u32(seed) & PARTICLE_RIBBON_MASK, 1u); }
+
+// The pieces of the segment of a ribbon a particle starts, last frame.
+#define PARTICLE_PIECES_MASK 15u
+uint particle_pieces(Particle p) { return (p.flags >> RIBBON_PIECES_SHIFT) & PARTICLE_PIECES_MASK; }
+
+// The direction a ribbon leaves a particle at here in, between those it came
+// from before and goes on to after: the mean of both.
+float3 ribbon_tangent(float3 before, float3 here, float3 after) {
+    float3 in_dir = here - before, out_dir = after - here;
+    float3 mean = (length(in_dir) > 1e-6 ? normalize(in_dir) : float3(0.0)) + (length(out_dir) > 1e-6 ? normalize(out_dir) : float3(0.0));
+    return length(mean) > 1e-6 ? normalize(mean) : out_dir;
+}
 
 // The pool index of the i-th particle an emitter draws.
 uint particle_drawn(uint slot, uint i) { return particle_lists[particle_emitters[slot].program.y + particle_emitters[slot].range.x + i]; }

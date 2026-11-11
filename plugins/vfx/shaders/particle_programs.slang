@@ -576,6 +576,7 @@ Mirai_Vfx_Particle particle_program_value(uint slot, Particle p) {
     v.age = p.age; v.lifetime = p.lifetime;
     v.size = p.size; v.rotation = p.rotation; v.spin = p.spin; v.seed = p.seed;
     v.color = particle_emitters[slot].program.x != 0u ? particle_color(p) : float4(0.0);
+    v.ribbon = particle_ribbon(p);
     return v;
 }
 
@@ -593,6 +594,7 @@ void particle_program_store(uint slot, Mirai_Vfx_Particle v, bool color, inout P
     }
     p.age = v.age; p.lifetime = v.lifetime;
     p.size = max(v.size, 0.0); p.rotation = v.rotation; p.spin = v.spin; p.seed = v.seed;
+    p.flags = (p.flags & ((1u << RIBBON_SHIFT) - 1u)) | ((v.ribbon & PARTICLE_RIBBON_MASK) << RIBBON_SHIFT);
     if (color) p.color = particle_color_pack(v.color);
 }
 
@@ -621,6 +623,29 @@ void particle_program_update(uint slot, uint index, float time, float dt, inout 
     Mirai_Vfx_Context ctx = particle_program_context(slot, time, dt);
     ctx.particle = index;
     mirai_vfx_update(program, packed, particle_attributes(slot, index), ctx, v);
+}
+#endif
+
+// What a particle of a ribbon shows, kept after the Attributes of its program
+// (RIBBON_LOOK_BYTES): its vertices read it for both ends of their segment.
+uint particle_ribbon_look_at(uint slot, uint index) {
+    return particle_attributes(slot, index) + particle_emitters[slot].data.y - RIBBON_LOOK_BYTES;
+}
+Particle_Look particle_ribbon_look(uint slot, uint index) {
+    uint at = particle_ribbon_look_at(slot, index);
+    Particle_Look look;
+    look.color = asfloat(particle_data.Load4(at));
+    float4 w = asfloat(particle_data.Load4(at + 16u));
+    look.size = w.x; look.frame = w.y; look.random = w.z; look.given = asuint(w.w);
+    for (uint i = 0u; i < 4u; i++) look.data[i] = asfloat(particle_data.Load4(at + 32u + i * 16u));
+    return look;
+}
+#ifdef PARTICLES_WRITABLE
+void particle_ribbon_look_store(uint slot, uint index, Particle_Look look) {
+    uint at = particle_ribbon_look_at(slot, index);
+    particle_data.Store4(at, asuint(look.color));
+    particle_data.Store4(at + 16u, uint4(asuint(look.size), asuint(look.frame), asuint(look.random), look.given));
+    for (uint i = 0u; i < 4u; i++) particle_data.Store4(at + 32u + i * 16u, asuint(look.data[i]));
 }
 #endif
 

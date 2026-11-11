@@ -17,6 +17,7 @@ sends requests. Imports: `plugins:vfx/runtime` as `vfx`,
 - Other color or rate for one entity: [values](#values-of-one-instance).
 - Many hits per tick, each with its place and velocity: [channels](vfx/channels.md).
 - A sound or decal where a particle dies or hits: [reports](vfx/reports.md).
+- A trail behind each spark or comet: [trails](#trails).
 - Write or tune an effect: [authoring](#author-an-effect).
 
 ## One-shot effect
@@ -62,6 +63,12 @@ fx:=effect.PARTICLE_DEFAULTS
 fx.duration, fx.rate, fx.bursts[0] = .05, 0, {count=50, cycles=1}
 err:=effect.particle_save("assets/particles/dust.particle", &types, {id=id, info=fx})
 ```
+
+## Trails
+
+A trail behind each particle: a second effect drawn as `Ribbon` (`Point` shape, speed 0, the tail's
+lifetime), named by `sub_particle` of the first with `trigger` `Trail` and `sub_count` 1. Each
+spark gets a smooth band of its own; a program may set `particle.ribbon` in `initialize`.
 
 ## Pitfalls
 

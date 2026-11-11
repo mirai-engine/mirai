@@ -323,6 +323,8 @@ To the GPU:
   capacity that the device does not take leaves the pool that there was and is the `vfx.capacity`
   problem, like an emitter that does not fit in the pool or in the emitter table, or a `sort` or
   `Ribbon` effect that needs more alive than `SORT_MAX`: its emitter is left with `SORT_MAX`.
+- The sub effect of a `trigger` gets the room of the events of the effect's live particles: one
+  each, or with `Trail`, those of a whole life of the sub effect at `TRAILS_PER_SECOND`.
 
 ## GPU
 
@@ -442,8 +444,8 @@ In the `Simulate` stage, per step:
     step) bounces and hits: event, report and lost life. Slower it stays on the surface without a
     hit, so a particle at rest is silent and keeps its life at any step. Friction takes tangent
     speed in proportion to the normal speed stopped (Coulomb), the same per second at any step.
-  - Deaths to the free list; death or hit events, and reports of those that the emitter's `report`
-    names.
+  - Deaths to the free list; death, hit and `Trail` events ([ribbons](#ribbons)), and reports
+    of those that the emitter's `report` names.
   - In the last step: the live ones to the draw list and, the `lit` ones, their light (sun with
     shadow ray, local lights without rays, probe volume and ambient), renewed for half of them each
     frame and stored as RGB with shared exponent.
@@ -455,16 +457,16 @@ Once per frame, in `Simulate`:
   moved since the last time the GPU cleared them.
 - **volume light**: after the steps, the light of the cells of each volume; `_hw` variant.
 - **finish**: one group per emitter.
+  - Sorted list in shared memory (bitonic, up to `SORT_MAX`): back to front, or a ribbon as
+    [ribbons](#ribbons) says.
   - Indirect draw of what is alive and the counters.
-  - Sorted list in shared memory (bitonic, up to `SORT_MAX`): back to front, or by age for a
-    ribbon.
 
 In each view:
 
 - **volumes** (`Blend`): the volumes' media, before the sprites.
 - **sprites** (`Blend`): over the lit image, before TAA; the emitters from farthest to nearest.
   - `Billboard` (faces the camera, with rotation), `Velocity` (stretched according to `stretch`),
-    `Horizontal` (plane in XZ) and `Ribbon` (each particle joined to the next in the list).
+    `Horizontal` (plane in XZ) and `Ribbon` ([ribbons](#ribbons)).
   - `Mesh` particles whose material blends (alpha mode `blend`, `Emitter_Desc.blended`): their
     mesh with `particle_mesh_blend.vert` and the sprites' fragment, placed as in the G-buffer, so
     their color, opacity and curves fade them as a sprite's, additive or covering by alpha as the
@@ -524,6 +526,26 @@ they light everything within their reach, without shadow rays or a place in thos
 - Each group sorts its lights by a Z curve over the box of those of this frame and builds its tree
   by halves, each node what its lights give together, like the CPU tree.
 
+## Ribbons
+
+- A particle joins a ribbon (`flags` above `RIBBON_SHIFT`; 0, that of the emitter): that of the
+  particle whose event started it (`particle_own_ribbon` of its seed), or what its program gives
+  `particle.ribbon`. `Trail` makes an event each time a particle's age (before a hit takes life
+  from it) passes a multiple of `1/TRAILS_PER_SECOND`, and at the end of each frame a leader:
+  the events of the last step start their points after it, drawn in the frame, and the point of a
+  leader lives until the next step, so a trail reaches its head.
+- **finish** sorts a ribbon's list by its ribbon (as wide as the word leaves above the slot,
+  `SORT_SLOT_BITS`), its age and its slot, so a burst keeps one order. Each segment within a ribbon
+  takes the pieces its turn needs for straight pieces to stay within about a pixel of its curve at
+  its distance (up to `RIBBON_PIECES`; none between ribbons), rising at once and coming down one a
+  frame (kept in its first particle's `flags`); where the quads of each segment start goes in the
+  lists quarter after the births, and the draw has their sum.
+- The vertices of a segment find it by binary search and lie on the cubic that leaves each point
+  along the mean of the directions to its neighbours (toward its one neighbour at an end), with
+  width, color and light lerped; what each particle shows is kept by the last step and by its
+  birth after the Attributes of its program (`RIBBON_LOOK_BYTES`), so no program runs per vertex.
+- A death needs no state: the next frame's list joins the neighbours of a dead point.
+
 ## Verification
 
 - `mirai test plugins/vfx/runtime/effect`: format, validation and value paths.
@@ -532,7 +554,8 @@ they light everything within their reach, without shadow rays or a place in thos
   and the parts of the lights' place that each emitter takes, without a renderer (`vfx_test.odin`,
   `data_test.odin`), and on the GPU (`gpu_test.odin`), with the generation of the engine and plugin
   shaders that `mirai test` does in `.mirai/tmp/vfx-test-shaders`: births, steps, generations and
-  pauses, events, pools per world, rejected capacity, ribbons, programs, the `Surface` shape and a
+  pauses, events, pools per world, rejected capacity, ribbons (trails of two heads, curves, pieces
+  and the order of two ribbons, `two_ribbons.slang`), programs, the `Surface` shape and a
   program that follows a moving surface (`testdata/stick.slang`), the `Bones` and `Surface` shapes
   with the rig of a mesh and a skeleton written in the test and a posed skin, `World` hits that
   fall to the floor and slide according to their friction, sprites that run the Surface program of

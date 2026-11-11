@@ -1,5 +1,6 @@
 package vfx
 
+import "core:math"
 import "mirai:core"
 import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
@@ -360,7 +361,10 @@ shown_resolve :: proc(shown:^Emitter_Shown,a:^host.Assets,renderer:^erender.Rend
         shown.sub_desc=sub_desc
         sub:=&shown.sub_desc
         if sub_problem:=particle_program(a,d.info.sub_particle,&sub.info,nil,&sub.program);problem=="" {problem=sub_problem}
-        sub.capacity+=min(d.capacity*d.info.sub_count,1<<16)
+        // Those of the events of its live particles: one each, or of a trail, those of a life of the sub effect.
+        events:=u64(d.capacity)*u64(d.info.sub_count)
+        if d.info.trigger==.Trail {events*=u64(min(math.ceil(f32(TRAILS_PER_SECOND)*max(sub.info.lifetime[0],sub.info.lifetime[1],0)),1<<16))}
+        sub.capacity+=u32(min(events,1<<16))
         d.event_target=sub.id
         ready&&=sub_ready
     }
