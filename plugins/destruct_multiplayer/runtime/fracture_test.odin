@@ -17,9 +17,10 @@ import "mirai:std/jobs"
 
 // One end of a session with one destructible: its tables, its simulation and
 // what this library keeps, stepped as the fixed loop does.
-@(private="file")
+@(private)
+@(test_world)
 End_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using rows:destruct.Test_Destruct,
     objects:core.Table(multiplayer.Replicate),
     spawns:multiplayer.Net_Spawns,
@@ -47,7 +48,7 @@ end_init :: proc(t:^testing.T,f:^End,name:string,role:core.Network_Role) -> bool
     for part in 0..<2 {destruct.fracture_piece_add(&b,geom.mesh_buffer_view(&cube),{{f32(part)*1.02-.51,0,0},1,{1,1,1}},anchor=part==0)}
     if destruct.fracture_connect_proximity(&b,.03,.5,10)!=.None {return false}
     if destruct.fracture_save(fmt.tprintf("%s/source.fracture",folder),&types,destruct.fracture_builder_desc(&b,{1,2}))!=.None {return false}
-    if !core.test_world_init(t,&f.w,test_types) {return false}
+    if !test_world_init(t,&f.w) {return false}
     f.app.assets,f.app.allocator=&f.assets,context.allocator
     if !jobs.system_init(&f.app.jobs,{threads=0}) {return false}
     if !host.assets_init(&f.assets,{root=folder,capacity=32}) {return false}
@@ -61,7 +62,7 @@ end_destroy :: proc(f:^End) {
     destruct.cache_destroy(f.app.assets,&f.app.jobs,&f.cache);jobs.system_destroy(&f.app.jobs)
     parts_forget(&f.session);delete(f.session.parts);f.session.parts=nil
     outbox_forget(f);delete(f.outbox.parts);f.outbox.parts=nil
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
     host.assets_destroy(&f.assets)
     net_free(&f.net)
 }
@@ -70,19 +71,19 @@ end_destroy :: proc(f:^End) {
 @(private="file")
 end_tick :: proc(f:^End,resimulating:=false) {
     physics.simulate(&f.physics,nil,&f.app.jobs,1.0/60)
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
     f.tick+=1
     time:=core.Time{dt=1.0/60,playing=true,tick=f.tick,resimulating=resimulating}
     f.outbox.replaying=resimulating // as a correction of the network leaves it
-    commands:=core.commands_of(core.test_world_ref(&f.w))
+    commands:=core.commands_of(test_world_ref(&f.w))
     destruct_net_follow(core.ref(&f.authority),&f.net,time,&f.requests,core.ref(&f.physics),core.read(&f.configs),core.read(&f.states),core.read(&f.ids),core.ref(&f.root))
     // The logs of a tick, as their readers are handed them.
     clear(&f.events.fractured.items);clear(&f.events.applied.items);clear(&f.events.replayed.items);clear(&f.events.grouped.items)
     destruct.test_step(&f.rows,&f.application,commands,time)
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
     destruct_net_send(core.ref(&f.authority),&f.net,time,&f.outbox,&f.spawns,core.ref(&f.session),core.ref(&f.connections),core.ref(&f.events),core.ref(&f.physics),commands,
         core.read(&f.states),core.read(&f.ids),core.read(&f.objects),core.ref(&f.entities),core.ref(&f.root),&f.problems)
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
 }
 
 // What a correction brings back of an end: its World, at the tick it was saved.
@@ -94,20 +95,20 @@ Saved :: struct {
 
 @(private="file")
 end_save :: proc(t:^testing.T,saved:^Saved,f:^End) -> bool {
-    if !core.test_world_init(t,&saved.w,test_types) {return false}
-    core.test_world_settle(&f.w)
+    if !test_world_init(t,&saved.w) {return false}
+    test_world_settle(&f.w)
     saved.tick=f.tick
-    return core.test_world_copy(&saved.w,&f.w)
+    return test_world_copy(&saved.w,&f.w)
 }
 
 @(private="file")
 end_restore :: proc(f:^End,saved:^Saved) -> bool {
     f.tick=saved.tick
-    return core.test_world_copy(&f.w,&saved.w)
+    return test_world_copy(&f.w,&saved.w)
 }
 
 @(private="file")
-saved_destroy :: proc(saved:^Saved) {core.test_world_destroy(&saved.w)}
+saved_destroy :: proc(saved:^Saved) {test_world_destroy(&saved.w)}
 
 // The destructible of an end, whole, with the Id both ends give it.
 @(private="file")

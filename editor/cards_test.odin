@@ -7,6 +7,7 @@ import "mirai:cook/author"
 import "mirai:core"
 
 Card_Test_Provider :: struct {provider:Card_Provider}
+card_test_provider_default :: proc() -> (p:Card_Test_Provider) {card_test_provider_v1(&p);return}
 Card_Test_Component :: struct {value:f32}
 
 card_test_provider_v1 :: proc(dst:rawptr) {
@@ -24,24 +25,20 @@ card_test_provider_v2 :: proc(dst:rawptr) {
     out.provider.cards[0]={recipe="cone",icon=.Edit}
 }
 
-@(private="file")
-Card_Test_World :: struct {using world:core.Test_World,components:core.Table(Card_Test_Component)}
+@(private)
+@(test_world,editor="Card_Test_Editor")
+Card_Test_World :: struct {using world:Test_World,components:core.Table(Card_Test_Component)}
 
-@(private="file")
+@(private)
 Card_Test_Editor :: struct {provider:Card_Test_Provider}
-
-@(private="file")
-card_test_types :: proc(types:^[dynamic]core.Test_Type) {
-    append(types,core.test_type(Card_Test_Provider,default=proc(dst:^Card_Test_Provider) {card_test_provider_v1(dst)}))
-}
 
 @(test)
 cards_place_the_recipes_of_the_engine_and_those_of_the_library_in_use :: proc(t:^testing.T) {
     engine,found:=os.lookup_env("MIRAI_ROOT",context.temp_allocator)
     if !testing.expect(t,found,"MIRAI_ROOT names the engine whose recipes the cards place: mirai test sets it") {return}
-    info,described:=core.test_info(t,Card_Test_World,core.Test_None,Card_Test_Editor,card_test_types)
+    info,described:=test_info(t,Card_Test_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     provider:=&info.storages[info.storages_by_type[Card_Test_Provider]]
     component:=&info.tables[info.tables_by_type[Card_Test_Component]]
     session:=Session{info=&info,engine_root=engine}

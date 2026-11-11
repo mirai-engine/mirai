@@ -18,14 +18,11 @@ AGENT_VERSIONS :: [2]string{"2.2.2","0.89.1"}
 AGENT_NAMES :: [2]string{"codex","claude"}
 AGENT_BUN_VERSION :: "1.4.3"
 
-Agent_Operation :: struct {cancel_file:string,parent:int,cancelled:bool}
+Agent_Operation :: struct {cancel_file:string,cancelled:bool}
 
 agent_cancelled :: proc(operation:^Agent_Operation) -> bool {
     if operation.cancelled {return true}
     operation.cancelled=operation.cancel_file!="" && os.exists(operation.cancel_file)
-    when ODIN_OS!=.Windows {
-        operation.cancelled=operation.cancelled || os.get_ppid()!=operation.parent
-    }
     return operation.cancelled
 }
 
@@ -34,11 +31,10 @@ agent_exec :: proc(operation:^Agent_Operation,directory:string,command:[]string)
     process,error:=subprocess.start({working_dir=directory,command=command,stdout=os.stdout,stderr=os.stderr})
     if error!=nil {fmt.eprintfln("Could not start %s: %v",command[0],error);return false}
     for {
-        state,wait_error:=os.process_wait(process,50*time.Millisecond)
+        state,wait_error:=subprocess.wait(&process,50*time.Millisecond)
         if wait_error==nil {return state.exit_code==0 && !agent_cancelled(operation)}
         if wait_error!=.Timeout || agent_cancelled(operation) {
-            _=os.process_kill(process)
-            _,_=os.process_wait(process)
+            subprocess.release(&process)
             return false
         }
     }
@@ -130,7 +126,7 @@ cmd_agent :: proc(engine_root:string,args:[]string) -> int {
     if index<0 && !(name=="all"&&operation=="updates") && !(name=="bun"&&operation=="runtime") {fmt.eprintln("Unknown agent");return 2}
     runtime,version,home:="Automatic","",""
     claude_code:=false
-    operation_state:=Agent_Operation{parent=os.get_ppid()}
+    operation_state:=Agent_Operation{}
     for i:=2;i<len(args);i+=1 {
         switch args[i] {
         case "--runtime": i+=1;if i>=len(args) {return 2};runtime=args[i]

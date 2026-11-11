@@ -42,7 +42,7 @@ PARAMETER_BYTES :: abi.PROGRAM_PARAMETER_BYTES
 ATTRIBUTE_BYTES :: abi.PARTICLE_ATTRIBUTE_BYTES
 MAX_PARAMETER_RANGE :: 1e30
 MAX_RESOURCES :: abi.PROGRAM_RESOURCES
-RESOURCE_KINDS :: [?]string{"surface","channel","bones","grid","emitter","data"}
+RESOURCE_KINDS :: [?]string{"surface","channel","grid","emitter","data"}
 DATA_WORDS :: abi.PROGRAM_DATA_WORDS // of an entry of a data channel
 MAX_STAGES :: abi.PROGRAM_STAGES
 MAX_ITERATIONS :: 64

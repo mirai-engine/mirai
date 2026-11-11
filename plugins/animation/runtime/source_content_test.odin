@@ -153,9 +153,10 @@ source_plans_share_exact_sets_rebuild_for_source_generations_and_survive_world_c
 }
 
 // An actor with a bone under it, with what animation_tick reads and writes of the World.
-@(private="file")
+@(private)
+@(test_world)
 Source_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
     names:core.Table(core.Name),
@@ -184,14 +185,14 @@ an_animation_that_compresses_in_a_job_plays_once_it_is_ready_without_problems ::
     if !testing.expect(t,jobs.system_init(&app.jobs,{threads=2})) {return}
     defer {host.app_content_destroy(&app);jobs.system_destroy(&app.jobs)}
     w:Source_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     actor,hip:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.transforms,actor,core.TRANSFORM_IDENTITY);core.add(&w.transforms,hip,core.TRANSFORM_IDENTITY);core.add(&w.parents,hip,{entity=actor})
     name:core.Name;base.text_set(name.text[:],"hip");core.add(&w.names,hip,name)
     animation:=ANIMATION_DEFAULT;animation.asset=id;animation.loop=false;animation.fade=0;base.text_set(animation.clip[:],"walk")
     core.add(&w.animations,actor,animation)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     problems:core.Problems
@@ -236,14 +237,14 @@ a_library_that_compresses_in_a_job_keeps_what_plays_until_it_is_ready :: proc(t:
     if !testing.expect(t,jobs.system_init(&app.jobs,{threads=2})) {return}
     defer {host.app_content_destroy(&app);jobs.system_destroy(&app.jobs)}
     w:Source_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     actor,hip:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.transforms,actor,core.TRANSFORM_IDENTITY);core.add(&w.transforms,hip,core.TRANSFORM_IDENTITY);core.add(&w.parents,hip,{entity=actor})
     name:core.Name;base.text_set(name.text[:],"hip");core.add(&w.names,hip,name)
     animation:=ANIMATION_DEFAULT;animation.asset=CHARACTER;animation.fade=0
     core.add(&w.animations,actor,animation)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
     skeletons:Skeleton_Assets;defer skeleton_assets_free(&skeletons)
     problems:core.Problems

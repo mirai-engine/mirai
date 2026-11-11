@@ -13,6 +13,7 @@ Character_Capsule :: struct {
     feet:[3]f32,
     up_frame:mm.Quat,
     radius,height,step_height,max_slope:f32,
+    mass:f32, // kg, also when its Character takes it from the density of the capsule
     filter:Query_Filter,
 }
 
@@ -25,7 +26,7 @@ character_capsule :: proc(physics:core.Ref(Physics_State),e:core.Entity) -> (cap
     desc:=sim.character_desc(w,l.character)
     return {
         feet=sim.character_position(w,l.character),up_frame=sim.character_state(w,l.character).up_frame,
-        radius=desc.radius,height=desc.height,step_height=desc.step_height,max_slope=desc.max_slope,
+        radius=desc.radius,height=desc.height,step_height=desc.step_height,max_slope=desc.max_slope,mass=desc.mass,
         filter={filter=desc.filter,ignore_body=sim.character_body(w,l.character)},
     },true
 }

@@ -80,7 +80,7 @@ git_merge_load_start :: proc(s:^Session) {
     }
     if len(g.merge.files)==0 {return}
     for &file in g.merge.files {append(&g.load_paths,strings.clone(base.text_get(file.path[:]),git_merge_arena(g)))}
-    git.start(g,s.app.platform,git_roots(s),.Load)
+    git.start(g,git_roots(s),.Load)
 }
 
 git_merge_clear :: proc(g:^Git) {
@@ -400,7 +400,7 @@ git_merge_finish :: proc(s:^Session) -> string {
         if data!=nil && serial.file_write_atomic(git_file_absolute(g,&file),data)!=.None {return fmt.tprintf("%s could not be written",base.text_get(file.path[:]))}
         append(&g.finish_paths,strings.clone(base.text_get(file.path[:]),git_merge_arena(g)))
     }
-    git.start(s.git,s.app.platform,git_roots(s),.Finish)
+    git.start(s.git,git_roots(s),.Finish)
     return ""
 }
 
@@ -567,7 +567,7 @@ git_merge_build :: proc(s:^Session,width,room:f32) {
     }
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6}) {
         if ui.button(ctx,ui.id(ctx,"git_abort"),{label="Abort",variant="field",width=-1,center=true,disabled=busy}).clicked {
-            if message:=git.abort(s.git,s.app.platform,git_roots(s));message!="" {notify(s,message)}
+            if message:=git.abort(s.git,git_roots(s));message!="" {notify(s,message)}
         }
         if ui.button(ctx,ui.id(ctx,"git_reject_all"),{label="Reject all",variant="field",width=-1,center=true,disabled=busy || !m.loaded}).clicked {git_merge_settle_all(s,true)}
         if left==0 {

@@ -21,9 +21,9 @@ PROGRAM_STAGES :: abi.PROGRAM_STAGES    // that a Vfx program has at most
 PROGRAM_STAGE_PARTICLES :: 255 // Program_Stage.over of a stage over the particles
 
 // What a resource of a Vfx program is: the surface of a mesh or of what an
-// entity draws, the births a game gives, the bones of a skin, a grid of the
-// world, or the particles of another emitter.
-Program_Resource_Kind :: enum u8 {Surface,Channel,Bones,Grid,Emitter,Data}
+// entity draws, the births a game gives, a grid of the world, the particles
+// of another emitter, or a data channel.
+Program_Resource_Kind :: enum u8 {Surface,Channel,Grid,Emitter,Data}
 PROGRAM_DATA_WORDS :: abi.PROGRAM_DATA_WORDS // of an entry of a data channel
 
 // A stage of a Vfx program: a pass of its own each step before update, over
@@ -208,7 +208,6 @@ catalog_read :: proc(catalog:^Program_Catalog,bytes:[]u8) -> (ok:bool) {
                 switch source["kind"].(json.String) or_return {
                 case "surface": resource.kind=.Surface
                 case "channel": resource.kind=.Channel
-                case "bones": resource.kind=.Bones
                 case "grid": resource.kind=.Grid
                 case "emitter": resource.kind=.Emitter
                 case "data": resource.kind=.Data

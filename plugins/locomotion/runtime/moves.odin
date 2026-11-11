@@ -161,7 +161,6 @@ ledge_ready_update :: proc(loco:^Locomotion_State,ledge:Ledge_Jump,ground:phys.C
 @(private) LEDGE_TOP_STEP :: f32(0.05) // m off the height of the top at which a ray has left it
 @(private) LEDGE_SWEEP :: f32(0.9)     // share of its radius the capsule swept along the way has
 @(private) MANTLE_TOLERANCE :: f32(0.4) // m off the way at which a climb is given up: something pushed it
-@(private) MANTLE_FORCE :: f32(10)     // times its traction force that drives the climb
 @(private) MANTLE_RISE :: f32(0.6)     // share of the climb by which it has risen
 @(private) MANTLE_ACROSS :: f32(0.4)   // and from which it moves across onto the top
 
@@ -298,13 +297,13 @@ mantle_move :: proc(loco:^Locomotion_State,body:phys.Character,mantle:Mantle,fra
     if loco.mantle_time>=length || !driven && linalg.dot(off,off)>MANTLE_TOLERANCE*MANTLE_TOLERANCE {
         // It stops where the climb left it, up and across, and falls from there.
         loco.mode,loco.air_time=MODE_FALLING,0
-        move.air={{},max(body.traction_force,1)*MANTLE_FORCE}
+        move.air={{},body.traction_force}
         move.flags={.Airborne,.Drive_Vertical}
         return
     }
     loco.mantle_time+=dt
     next:=mantle_point(loco.mantle_from,loco.mantle_to,up,min(loco.mantle_time/length,1))
-    drive:=phys.Drive{(next-position)/dt,max(body.traction_force,1)*MANTLE_FORCE}
+    drive:=phys.Drive{(next-position)/dt,body.traction_force}
     move.ground,move.air=drive,drive
     move.flags={.Airborne,.Drive_Vertical,.No_Gravity}
     return

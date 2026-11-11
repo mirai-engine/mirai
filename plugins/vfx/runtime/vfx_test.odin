@@ -1,9 +1,11 @@
 package vfx
 
+import "core:math"
 import "core:reflect"
 import "core:strconv"
 import "core:strings"
 import "core:testing"
+import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -11,13 +13,13 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "plugins:vfx/runtime/effect"
 
-@(private="file")
+@(private)
+@(test_world)
 Emitters_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     emitters:core.Table(Particle_Emitter),
     worlds:core.Table(core.World_Transform),
     overrides:core.Table(Particle_Override),
-    parameters:core.Table(Particle_Parameters),
     hidden:core.Table(erender.Hidden),
     parents:core.Table(core.Parent),
     bindings:core.Table(Particle_Bindings),
@@ -44,17 +46,17 @@ Emitters_Fixture :: struct {
 }
 
 @(private="file")
-fixture_init :: proc(t:^testing.T,f:^Emitters_Fixture) -> bool {return core.test_world_init(t,&f.w,test_types)}
+fixture_init :: proc(t:^testing.T,f:^Emitters_Fixture) -> bool {return test_world_init(t,&f.w)}
 
 @(private="file")
 fixture_destroy :: proc(f:^Emitters_Fixture) {
     particle_reports_free(&f.reports)
     particle_sync_free(&f.sync)
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
 }
 
 @(private="file")
-fixture_settle :: proc(f:^Emitters_Fixture) {core.test_world_settle(&f.w)}
+fixture_settle :: proc(f:^Emitters_Fixture) {test_world_settle(&f.w)}
 
 @(private="file")
 fixture_emitter :: proc(f:^Emitters_Fixture,emitter:Particle_Emitter,position:[3]f32={}) -> core.Entity {
@@ -69,13 +71,13 @@ fixture_emitter :: proc(f:^Emitters_Fixture,emitter:Particle_Emitter,position:[3
 
 @(private="file")
 fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
-    particles_tick(core.read(&f.emitters),&f.overrides,&f.parameters,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.requests,&f.births,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
+    particles_tick(&f.emitters,&f.overrides,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.requests,&f.births,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
     fixture_settle(f)
 }
 
 @(private="file")
 fixture_sync :: proc(f:^Emitters_Fixture,id:core.World_Id,time:core.Time,frame:=FRAME) {
-    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.parameters),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{})
+    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.read(&f.bindings),core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{})
 }
 
 @(private="file")
@@ -121,7 +123,7 @@ a_rollback_does_not_start_the_same_burst_twice :: proc(t:^testing.T) {
     f.clocks.playing=true
     clock:=clock_find(&f.clocks,e)
     clock.resolved=emission_key({},nil,0)
-    clock.emission={duration=0.5,longest=1,tail=1,rate_over_cycle=effect.PARTICLE_CURVE_ONE}
+    clock.emission={duration=0.5,longest=1,tail=1}
     clock.emission.bursts[0]={count=7}
     id:=core.World_Id{0,1}
     tick :: proc(f:^Emitters_Fixture,e:core.Entity,at:int) {
@@ -170,7 +172,7 @@ a_frame_that_sees_an_older_copy_starts_only_what_comes_after_it :: proc(t:^testi
     for _ in 0..<2 {fixture_tick(&f,TICK)}
     clock:=clock_find(&f.clocks,e)
     clock.resolved=emission_key({},nil,0)
-    clock.emission={duration=1,rate=60,longest=1,tail=1,rate_over_cycle=effect.PARTICLE_CURVE_ONE}
+    clock.emission={duration=1,rate=60,longest=1,tail=1}
     f.app.assets=nil
     for _ in 0..<30 {fixture_tick(&f,TICK)}
     saved:Particle_Clocks
@@ -223,7 +225,6 @@ steps :: proc(e:^Emission,looping:bool,clock:^Emitter_Clock,frames:int,moved:f32
 @(private="file")
 emission :: proc(info:effect.Particle_Info) -> Emission {
     copy:=info
-    copy.rate_over_cycle=effect.PARTICLE_CURVE_ONE
     return emission_of(nil,&copy)
 }
 
@@ -253,15 +254,26 @@ emission_follows_rate_bursts_and_distance :: proc(t:^testing.T) {
     testing.expect_value(t,steps(&e,true,&clock,10,moved=1),u64(18))
 }
 
+// The CPU reads curves and gradients as particles.slang does, at their ends
+// and between keys closer than it divides by.
 @(test)
-the_rate_follows_its_curve_along_the_cycle :: proc(t:^testing.T) {
-    info:=effect.Particle_Info{duration=1,rate=40,lifetime={1,1}}
-    // Twice the rate in the first half of the cycle, none in the second.
-    info.rate_over_cycle={values={2,2,0,0,0,0,0,0},times={0,0.5,0.5,1,1,1,1,1}}
-    e:=emission_of(nil,&info)
-    clock:Emitter_Clock
-    testing.expect_value(t,steps(&e,true,&clock,4),u64(40))
-    testing.expect_value(t,steps(&e,true,&clock,4),u64(0))
+curves_read_on_the_cpu_as_the_shader_reads_them :: proc(t:^testing.T) {
+    c:=effect.Particle_Curve{values={2,4,8,6,6,6,6,6},times={0.25,0.5,0.500002,1,1,1,1,1}}
+    testing.expect_value(t,keys_at(c.times[:],c.values[:],-1),2)
+    testing.expect_value(t,keys_at(c.times[:],c.values[:],0.25),2)
+    testing.expect_value(t,keys_at(c.times[:],c.values[:],0.375),3)
+    testing.expect_value(t,keys_at(c.times[:],c.values[:],0.5),4)
+    testing.expect_value(t,keys_at(c.times[:],c.values[:],2),6)
+    // Two microseconds apart, the shader ramps over ten: a tenth of the way.
+    near:=keys_at(c.times[:],c.values[:],0.500001)
+    testing.expectf(t,abs(near-4.4)<0.05,"between keys closer than 1e-5: %v",near)
+    g:effect.Particle_Gradient
+    for &key in g.colors {key={0,0,1,0}}
+    g.colors[0]={1,0,0,1}
+    g.times={0.5,1,1,1,1,1,1,1}
+    testing.expect_value(t,keys_at(g.times[:],g.colors[:],0),[4]f32{1,0,0,1})
+    testing.expect_value(t,keys_at(g.times[:],g.colors[:],0.75),[4]f32{0.5,0,0.5,0.5})
+    testing.expect_value(t,keys_at(g.times[:],g.colors[:],3),[4]f32{0,0,1,0})
 }
 
 // particles.slang copies values of the plugin by hand: each is the Odin one.
@@ -305,28 +317,6 @@ the_values_particles_slang_copies_are_those_of_the_plugin :: proc(t:^testing.T) 
     kinds(t,defines,Stage_Kind,"PARTICLE_STAGE_",true)
 }
 
-// The CPU reads curves and gradients as particles.slang does, at their ends
-// and between keys closer than it divides by.
-@(test)
-curves_read_on_the_cpu_as_the_shader_reads_them :: proc(t:^testing.T) {
-    c:=effect.Particle_Curve{values={2,4,8,6,6,6,6,6},times={0.25,0.5,0.500002,1,1,1,1,1}}
-    testing.expect_value(t,curve_at(&c,-1),2)
-    testing.expect_value(t,curve_at(&c,0.25),2)
-    testing.expect_value(t,curve_at(&c,0.375),3)
-    testing.expect_value(t,curve_at(&c,0.5),4)
-    testing.expect_value(t,curve_at(&c,2),6)
-    // Two microseconds apart, the shader ramps over ten: a tenth of the way.
-    near:=curve_at(&c,0.500001)
-    testing.expectf(t,abs(near-4.4)<0.05,"between keys closer than 1e-5: %v",near)
-    g:effect.Particle_Gradient
-    for &key in g.colors {key={0,0,1,0}}
-    g.colors[0]={1,0,0,1}
-    g.times={0.5,1,1,1,1,1,1,1}
-    testing.expect_value(t,gradient_at(&g,0),[4]f32{1,0,0,1})
-    testing.expect_value(t,gradient_at(&g,0.75),[4]f32{0.5,0,0.5,0.5})
-    testing.expect_value(t,gradient_at(&g,3),[4]f32{0,0,1,0})
-}
-
 @(test)
 a_single_cycle_ends_when_its_last_particles_die :: proc(t:^testing.T) {
     e:=emission({duration=1,rate=10,lifetime={0.25,0.5}})
@@ -342,7 +332,7 @@ a_single_cycle_ends_when_its_last_particles_die :: proc(t:^testing.T) {
 
 @(test)
 a_prewarmed_emitter_starts_full :: proc(t:^testing.T) {
-    info:=effect.Particle_Info{prewarm=true,duration=1,rate=20,lifetime={2,2},rate_over_cycle=effect.PARTICLE_CURVE_ONE}
+    info:=effect.Particle_Info{prewarm=true,duration=1,rate=20,lifetime={2,2}}
     e:=emission(info)
     clock:Emitter_Clock
     emission_step(&clock,&e,true,true,{},1.0/60)
@@ -376,10 +366,12 @@ clocks_keep_a_bounded_list_of_births_without_losing_any :: proc(t:^testing.T) {
 @(test)
 an_instance_shows_its_values_over_those_of_its_effect :: proc(t:^testing.T) {
     override:Particle_Override
-    testing.expect_value(t,override_set(&override,"rate",f32(55)),Error.None)
-    testing.expect_value(t,override_set(&override,"colors.1",[4]f32{1,0,0,1}),Error.None)
-    testing.expect_value(t,override_set(&override,"bursts.2.count",u32(7)),Error.None)
-    testing.expect_value(t,override_set(&override,"size_over_life.values.3",f32(2)),Error.None)
+    testing.expect_value(t,value_set(&override,"rate",f32(55)),Error.None)
+    testing.expect_value(t,value_set(&override,"colors.1",[4]f32{1,0,0,1}),Error.None)
+    testing.expect_value(t,value_set(&override,"bursts.2.count",u32(7)),Error.None)
+    testing.expect_value(t,value_set(&override,"size_over_life.values.3",f32(2)),Error.None)
+    // A parameter of its program is a value too, which the fields leave out.
+    testing.expect_value(t,value_set(&override,"parameters.heat",f32(0.8)),Error.None)
     info:=particle_resolve(nil,{},&override)
     testing.expect_value(t,info.rate,f32(55))
     testing.expect_value(t,info.colors[1],[4]f32{1,0,0,1})
@@ -387,56 +379,67 @@ an_instance_shows_its_values_over_those_of_its_effect :: proc(t:^testing.T) {
     testing.expect_value(t,info.bursts[2].count,u32(7))
     testing.expect_value(t,info.size_over_life.values[3],f32(2))
     testing.expect_value(t,info.lifetime,effect.PARTICLE_DEFAULTS.lifetime)
-    rate,error:=override_get(override,"rate",f32)
-    testing.expect(t,error==.None && rate==55)
-    testing.expect_value(t,override_remove(&override,"rate"),Error.None)
-    _,error=override_get(override,"rate",f32)
-    testing.expect_value(t,error,Error.Missing_Override)
-    // A hash of a path the effect does not have is left out.
-    override.names[override.count]=base.name_hash("not_a_field")
-    override.count+=1
-    testing.expect_value(t,particle_resolve(nil,{},&override).rate,effect.PARTICLE_DEFAULTS.rate)
     checked:effect.Particle_Info
-    testing.expect_value(t,particle_resolve_checked(nil,{},&override,&checked),Error.Unknown_Field)
+    testing.expect_value(t,particle_resolve_checked(nil,{},&override,&checked),Error.None)
+    value_remove(&override,"rate")
+    testing.expect_value(t,override.count,u32(4))
+    testing.expect_value(t,particle_resolve(nil,{},&override).rate,effect.PARTICLE_DEFAULTS.rate)
+    // Without a program, a parameter has nothing to give.
+    program:Program
+    testing.expect(t,particle_program_check(nil,&info,nil,&override,&program)!="")
 }
 
 @(test)
 invalid_instance_values_say_what_to_correct :: proc(t:^testing.T) {
     override:Particle_Override
-    testing.expect_value(t,override_set(&override,"rates",f32(1)),Error.Unknown_Field)
-    testing.expect_value(t,override_set(&override,"rate",u32(1)),Error.Type_Mismatch)
-    testing.expect_value(t,override_set(&override,"rate",f32(-1)),Error.Invalid_Value)
-    testing.expect_value(t,override_set(&override,"size_over_life.times.1",f32(2)),Error.Invalid_Value)
-    testing.expect_value(t,override_set(&override,"material",base.Asset_Id{1,2}),Error.Effect_Field)
-    testing.expect_value(t,override_set(&override,"render",effect.Particle_Render.Mesh),Error.None)
+    long:[effect.PARTICLE_NAME_BYTES]u8
+    for &c in long {c='a'}
+    testing.expect_value(t,value_set(&override,"rates",f32(1)),Error.Unknown_Field)
+    testing.expect_value(t,value_set(&override,"parameters.",f32(1)),Error.Unknown_Field)
+    testing.expect_value(t,value_set(&override,strings.concatenate({"parameters.",string(long[:])},context.temp_allocator),f32(1)),Error.Unknown_Field)
+    testing.expect_value(t,value_set(&override,"rate",u32(1)),Error.Type_Mismatch)
+    testing.expect_value(t,value_set(&override,"parameters.heat","hot"),Error.Type_Mismatch)
+    testing.expect_value(t,value_set(&override,"parameters.heat",[5]f32{}),Error.Type_Mismatch)
+    testing.expect_value(t,value_set(&override,"parameters.heat",[2]f32{1,math.nan_f32()}),Error.Invalid_Value)
+    testing.expect_value(t,value_set(&override,"rate",f32(-1)),Error.Invalid_Value)
+    testing.expect_value(t,value_set(&override,"rate",math.inf_f32(1)),Error.Invalid_Value)
+    testing.expect_value(t,value_set(&override,"size_over_life.times.1",f32(2)),Error.Invalid_Value)
+    testing.expect_value(t,value_set(&override,"material",base.Asset_Id{1,2}),Error.Effect_Field)
+    testing.expect_value(t,override.count,u32(0))
+    testing.expect_value(t,value_set(&override,"render",effect.Particle_Render.Mesh),Error.None)
     for path in ([?]string{"drag","shell","soft","stretch","bounce","friction","noise","gravity","intensity","inherit_velocity","duration","rate","noise_speed","collision_life","noise_frequency"}) {
-        testing.expect_value(t,override_set(&override,path,f32(0.5)),Error.None)
+        testing.expect_value(t,value_set(&override,path,f32(0.5)),Error.None)
     }
-    testing.expect_value(t,override_set(&override,"attractor_strength",f32(1)),Error.Override_Capacity)
+    testing.expect_value(t,value_set(&override,"attractor_strength",f32(1)),Error.Override_Capacity)
+    testing.expect_value(t,value_set(&override,"parameters.heat",f32(1)),Error.Override_Capacity)
     testing.expect(t,len(error_message(.Override_Capacity))>0)
+    // A hostile row: a count past the room is refused, not read past.
+    override.count=PARTICLE_OVERRIDE_CAPACITY+3
+    testing.expect_value(t,value_set(&override,"rate",f32(1)),Error.Invalid_Value)
 }
 
+// The parameters an instance gives come back as its program declares them:
+// numbers of their kind, or a texture.
 @(test)
-program_parameters_of_an_instance_keep_their_kind :: proc(t:^testing.T) {
-    parameters:Particle_Parameters
-    testing.expect_value(t,parameter_set(&parameters,"speed",f32(3)),Error.None)
-    testing.expect_value(t,parameter_set(&parameters,"tint",[3]f32{1,0.5,0}),Error.None)
-    testing.expect_value(t,parameter_set(&parameters,"count",u32(4)),Error.None)
-    testing.expect_value(t,parameter_set(&parameters,"pattern",base.Asset_Id{7,8}),Error.None)
-    testing.expect_value(t,parameter_set(&parameters,"speed",f32(5)),Error.None)
-    testing.expect_value(t,parameters.count,u32(4))
-    speed,error:=parameter_get(parameters,"speed")
-    testing.expect(t,error==.None && speed.kind==.Float && speed.value[0]==5 && speed.components==1)
-    tint,_:=parameter_get(parameters,"tint")
-    testing.expect(t,tint.components==3 && tint.value[1]==0.5)
-    pattern,_:=parameter_get(parameters,"pattern")
-    testing.expect(t,pattern.kind==.Texture && pattern.texture==base.Asset_Id{7,8})
-    parameter_remove(&parameters,"tint")
-    _,error=parameter_get(parameters,"tint")
-    testing.expect_value(t,error,Error.Missing_Override)
-    testing.expect_value(t,parameter_set(&parameters,"",f32(1)),Error.Invalid_Parameter)
-    for name in ([?]string{"a","b","c","d","e"}) {testing.expect_value(t,parameter_set(&parameters,name,f32(1)),Error.None)}
-    testing.expect_value(t,parameter_set(&parameters,"overflow",f32(1)),Error.Parameter_Capacity)
+program_parameters_of_an_instance_come_back_as_their_program_declares_them :: proc(t:^testing.T) {
+    override:Particle_Override
+    testing.expect_value(t,value_set(&override,"parameters.speed",f32(3)),Error.None)
+    testing.expect_value(t,value_set(&override,"parameters.tint",[3]f32{1,0.5,0}),Error.None)
+    testing.expect_value(t,value_set(&override,"parameters.count",u32(4)),Error.None)
+    testing.expect_value(t,value_set(&override,"parameters.pattern",base.Asset_Id{7,8}),Error.None)
+    testing.expect_value(t,value_set(&override,"parameters.speed",f32(5)),Error.None)
+    testing.expect_value(t,override.count,u32(4))
+    declared:=[?]erender.Program_Parameter{{name="speed",kind=.Float,components=1},{name="tint",kind=.Float,components=3},{name="count",kind=.Uint,components=1},{name="pattern",kind=.Texture,components=1}}
+    program:=erender.Program{name="Test",parameters=declared[:]}
+    Want :: struct {name:string,kind:asset.Parameter_Kind,components:u8,value:[4]f64,texture:base.Asset_Id}
+    for want in ([?]Want{{"speed",.Float,1,{5,0,0,0},{}},{"tint",.Float,3,{1,0.5,0,0},{}},{"count",.Uint,1,{4,0,0,0},{}},{"pattern",.Texture,1,{},{7,8}}}) {
+        at:=-1
+        for name,i in override.names[:override.count] {if name==parameter_hash(want.name) {at=i}}
+        parameter,ok:=value_parameter(&program,override.names[max(at,0)],override.values[max(at,0)])
+        testing.expectf(t,at>=0 && ok && base.text_get(parameter.name[:])==want.name && parameter.kind==want.kind && parameter.components==want.components && parameter.value==want.value && parameter.texture==want.texture,"%s comes back as %v",want.name,parameter)
+    }
+    _,undeclared:=value_parameter(&program,parameter_hash("heat"),{})
+    testing.expect(t,!undeclared)
 }
 
 @(test)
@@ -447,11 +450,11 @@ requests_control_an_emitter_from_the_next_step :: proc(t:^testing.T) {
     e:=fixture_emitter(&f,Particle_Emitter{loop=true})
     fixture_tick(&f,TICK)
     clock:=clock_find(&f.clocks,e)
-    testing.expect(t,clock!=nil && clock.control==.Authored)
+    testing.expect(t,clock!=nil && clock.emitted==0)
+    // Start and stop set active, the field the emitter emits by.
     start(&f.requests,e)
     fixture_tick(&f,TICK)
-    clock=clock_find(&f.clocks,e)
-    testing.expect_value(t,clock.control,Particle_Control.Playing)
+    testing.expect(t,core.at(&f.emitters,0).active)
     status_now,_:=status(&f.clocks,core.at(&f.emitters,0),e)
     testing.expect_value(t,status_now.state,Particle_State.Playing)
     pause(&f.requests,e)
@@ -476,7 +479,10 @@ requests_control_an_emitter_from_the_next_step :: proc(t:^testing.T) {
     testing.expect_value(t,sync_shown(&f.sync,e).generation,generation+1)
     stop(&f.requests,e)
     fixture_tick(&f,TICK)
-    testing.expect_value(t,clock_find(&f.clocks,e).control,Particle_Control.Stopped)
+    testing.expect(t,!core.at(&f.emitters,0).active)
+    // Nothing it started since its restart is alive.
+    status_now,_=status(&f.clocks,core.at(&f.emitters,0),e)
+    testing.expect_value(t,status_now.state,Particle_State.Idle)
     // An entity without an emitter is refused.
     other:=core.create(&f.entities)
     burst(&f.requests,other,3)
@@ -501,9 +507,9 @@ a_sorted_effect_past_its_room_is_a_problem :: proc(t:^testing.T) {
     for c in cases {
         e:=fixture_emitter(&f,PARTICLE_EMITTER_DEFAULT)
         override:Particle_Override
-        testing.expect_value(t,override_set(&override,"render",c.render),Error.None)
-        testing.expect_value(t,override_set(&override,"sort",c.sort),Error.None)
-        testing.expect_value(t,override_set(&override,"max_particles",c.max_particles),Error.None)
+        testing.expect_value(t,value_set(&override,"render",c.render),Error.None)
+        testing.expect_value(t,value_set(&override,"sort",c.sort),Error.None)
+        testing.expect_value(t,value_set(&override,"max_particles",c.max_particles),Error.None)
         core.add(&f.overrides,e,override)
         fixture_settle(&f)
         fixture_sync(&f,{0,1},TICK)
@@ -517,25 +523,24 @@ requests_change_the_values_of_an_instance :: proc(t:^testing.T) {
     if !fixture_init(t,&f) {return}
     defer fixture_destroy(&f)
     e:=fixture_emitter(&f,PARTICLE_EMITTER_DEFAULT)
-    testing.expect_value(t,request_override(&f.requests,e,"rate",f32(80)),Error.None)
-    testing.expect_value(t,request_override(&f.requests,e,"rate",f32(-1)),Error.Invalid_Value)
-    testing.expect_value(t,request_parameter(&f.requests,e,"speed",f32(4)),Error.None)
+    testing.expect_value(t,request_value(&f.requests,e,"rate",f32(80)),Error.None)
+    testing.expect_value(t,request_value(&f.requests,e,"rate",f32(-1)),Error.Invalid_Value)
+    testing.expect_value(t,request_value(&f.requests,e,"parameters.speed",f32(4)),Error.None)
+    // Both in one step: the second finds the row the first adds.
     fixture_tick(&f,TICK)
     override,has:=core.get(&f.overrides,e)
-    testing.expect(t,has && override.count==1)
-    rate,_:=override_get(override,"rate",f32)
-    testing.expect_value(t,rate,f32(80))
-    given,has_given:=core.get(&f.parameters,e)
-    testing.expect(t,has_given && given.count==1)
+    testing.expect(t,has && override.count==2)
     // The clock follows the value of the instance from the next step.
     fixture_tick(&f,TICK)
     testing.expect_value(t,clock_find(&f.clocks,e).emission.rate,f32(80))
-    request_override_clear(&f.requests,e)
-    request_parameter_clear(&f.requests,e)
+    request_value_remove(&f.requests,e,"parameters.speed")
     fixture_tick(&f,TICK)
     override,_=core.get(&f.overrides,e)
-    given,_=core.get(&f.parameters,e)
-    testing.expect(t,override.count==0 && given.count==0)
+    testing.expect_value(t,override.count,u32(1))
+    request_values_clear(&f.requests,e)
+    fixture_tick(&f,TICK)
+    override,_=core.get(&f.overrides,e)
+    testing.expect_value(t,override.count,u32(0))
 }
 
 // The clocks of the editor's preview go with the frames and do not reach a
@@ -564,7 +569,7 @@ done_effects_take_their_entity_with_them :: proc(t:^testing.T) {
     fixture_tick(&f,TICK)
     clock:=clock_find(&f.clocks,e)
     clock.resolved=emission_key({},nil,0)
-    clock.emission={duration=0.1,rate=30,longest=0.1,tail=0.1,rate_over_cycle=effect.PARTICLE_CURVE_ONE}
+    clock.emission={duration=0.1,rate=30,longest=0.1,tail=0.1}
     f.app.assets=nil
     for _ in 0..<20 {fixture_tick(&f,TICK)}
     testing.expect(t,!core.alive(&f.entities,e))
@@ -664,31 +669,6 @@ emitter_rows_are_relative_to_the_origin :: proc(t:^testing.T) {
     testing.expect_value(t,rows[0],[4]f32{2,0,0,544.5})
     testing.expect_value(t,rows[1],[4]f32{0,2,0,-3})
     testing.expect_value(t,rows[2],[4]f32{0,0,2,215.75})
-}
-
-// What an effect says of how its Mesh particles face and turn reaches the row
-// of their emitter, its zeros as what they stand for: Random, X, no turn and
-// a scale of one, which is how they turned before they could say more.
-@(test)
-mesh_facing_reaches_the_row_of_the_emitter :: proc(t:^testing.T) {
-    // Without assets, the effect draws sprites: the mesh fields reach the row all the same.
-    info:=effect.PARTICLE_DEFAULTS
-    app:host.App
-    s:Pool_Slot
-    s.desc,_=emitter_desc(&info,app.assets,app.renderer,1)
-    g:Gpu_Emitter
-    emitter_row(&g,&s,8)
-    testing.expect_value(t,g.mesh.z,u32(effect.Particle_Facing.Random))
-    testing.expect_value(t,g.mesh_rotation,[4]f32{0,0,0,1})
-    testing.expect_value(t,g.mesh_axis,[4]f32{1,0,0,0})
-    testing.expect_value(t,g.mesh_scale,[4]f32{1,1,1,1})
-    info.facing,info.spin_axis,info.mesh_rotation,info.mesh_scale=.Camera_Position,{0,2,0},{0,0,2,0},{0.5,3,1}
-    s.desc,_=emitter_desc(&info,app.assets,app.renderer,1)
-    emitter_row(&g,&s,8)
-    testing.expect_value(t,g.mesh.z,u32(effect.Particle_Facing.Camera_Position))
-    testing.expect_value(t,g.mesh_rotation,[4]f32{0,0,1,0})
-    testing.expect_value(t,g.mesh_axis,[4]f32{0,1,0,0})
-    testing.expect_value(t,g.mesh_scale,[4]f32{0.5,3,1,3})
 }
 
 // The room for the lights of the particles has two parts: an emitter takes

@@ -33,7 +33,8 @@ check and a test build read the project itself, with its tests.
 
 ## Flags and environment
 
-- Every target gets the `defines` of the manifest, `platform_flags`, `MIRAI_ODIN_FLAGS` and
+- Every target gets the `defines` of the manifest (a library of the engine, those its sources
+  read: [defines](projects.md#engine-binaries)), `platform_flags`, `MIRAI_ODIN_FLAGS` and
   `Desc.flags`; `mirai` applies the same flags and the same environment (`platform_environment`) to
   `test`, `check` and `build`. SDL3 comes from `.deps/linux-amd64/sdl3` on Linux (from
   `scripts/setup_linux_deps.py`, with its folder as `rpath`), on macOS from
@@ -298,6 +299,12 @@ texture cache of the project; a failure is `Cook_Failed` with `Result.cook.error
   ([registry](../../mirai-assets/references/formats.md#registry)).
 - **Check.** Each written asset is read again and must have the same id, type and hash. The files
   of a previous cooking that this one did not write are deleted.
+- **Only what changed.** The key of a file is what it is made of: how the cook writes it, its
+  content and that of every asset it needs (`registry_closure`); `Cook_Desc.keys` (in the build
+  folder of the project) keeps it with the output as it was left. A file whose key and output did
+  not change is neither read nor written again (`reused`); `COOK_KEYS_VERSION` rises when the
+  cook writes a file otherwise from the same inputs.
+- Two files with one id stop the cook (`Duplicate_Id`), naming both.
 - `mirai build game` prints the report (`cook_summary`), verifies each cooked asset with the rules
   of `mirai asset verify` (it ends with 1 if one fails) and says how much the game weighs.
 

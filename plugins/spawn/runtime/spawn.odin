@@ -35,7 +35,7 @@ Spawn_Point :: struct {
 
 // A body that appeared for a seat: it goes when its seat goes (a player who
 // left the game).
-@(component,description="A body the spawn library gave to a seat: it is destroyed when that seat goes away.")
+@(component,derived,description="A body the spawn library gave to a seat: it is destroyed when that seat goes away.")
 Seat_Body :: struct {
     seat:core.Entity `mirai:"transient,readonly"`,
 }
@@ -88,7 +88,8 @@ spawn :: proc(r:^Spawn_Requests,seat:core.Entity,path:="",point:=core.NONE) {
     base.text_set(request.path[:],path)
     core.push(&r.queue,request)
 }
-// Places body at point (none: the next one in turn).
+// Places body at point (none: the next one in turn) at rest: it stops there, and what moves it
+// (its locomotion) starts over.
 respawn :: proc(r:^Spawn_Requests,body:core.Entity,point:=core.NONE) {
     core.push(&r.queue,Spawn_Request{kind=.Respawn,entity=body,point=point})
 }
@@ -251,7 +252,7 @@ respawn_body :: proc(a:^Apply,r:Spawn_Request) -> bool {
     point:=spawn_pick(a,r.entity,r.point,input.seat_of(a.seats,r.entity)!=core.NONE,false) or_return
     placed:=mm.Transform{a.origin.position,a.origin.rotation,{1,1,1}}
     if point!=core.NONE {placed=spawn_place(a,point) or_return}
-    if !core.place(a.placer,r.entity,placed.position,placed.rotation) {
+    if !core.place(a.placer,r.entity,placed.position,placed.rotation,at_rest=true) {
         core.report(a.problems,r.entity,"spawn.respawn_place","this body could not be placed at Spawn_Point 0x%016x: it has no Transform, or a parent of it has a scale of zero; give it a Transform and its parents a scale",u64(point))
         return false
     }

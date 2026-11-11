@@ -15,9 +15,10 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
-@(private="file")
+@(private)
+@(test_world,editor="Tracks_Test_Editor")
 Tracks_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
     parents:core.Table(core.Parent),
@@ -26,14 +27,8 @@ Tracks_Test_World :: struct {
     targets:core.Table(anim.Animation_Target),
     requests:anim.Animation_Requests,
 }
-@(private="file")
+@(private)
 Tracks_Test_Editor :: struct {api:editor.Api,tracks:Tracks,provider:Tracks_Api}
-
-@(private="file")
-tracks_test_types :: proc(types:^[dynamic]core.Test_Type) {
-    anim.test_types(types)
-    append(types,core.test_type(Tracks,default=proc(dst:^Tracks) {dst^=TRACKS_DEFAULT},free=tracks_free),core.test_type(Tracks_Api,default=proc(dst:^Tracks_Api) {dst^=TRACKS_API_DEFAULT}))
-}
 
 // A door whose clip moves its panel below it, a camera that names it as an actor, and an entity
 // the clip does not reach, in an editor with its API: tracks of the panel, the actor and the
@@ -57,7 +52,7 @@ Tracks_Fixture :: struct {
 tracks_test_open :: proc(f:^Tracks_Fixture,t:^testing.T,name:string) -> bool {
     authoring_test_init(&f.authoring,t,name) or_return
     described:bool
-    if f.info,described=core.test_info(t,Tracks_Test_World,core.Test_None,Tracks_Test_Editor,tracks_test_types);!described {return false}
+    if f.info,described=test_info(t,Tracks_Test_World);!described {return false}
     w:=&f.document
     if !testing.expect(t,core.world_init(&f.info,.World,w,context.allocator) && core.world_init(&f.info,.Editor,&f.editor_world,context.allocator)) {return false}
     entity :: proc(w:^Tracks_Test_World,id:u64,name:string,parent:core.Entity) -> core.Entity {
@@ -103,7 +98,7 @@ tracks_test_close :: proc(f:^Tracks_Fixture) {
     serial.writer_destroy(&f.out)
     history.edits_free(&f.edits);delete(f.selection.entities);delete(f.viewport.gizmo.items)
     core.world_destroy(&f.info,.World,&f.document);core.world_destroy(&f.info,.Editor,&f.editor_world)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
     authoring_test_destroy(&f.authoring)
 }
 

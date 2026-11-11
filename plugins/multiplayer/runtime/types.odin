@@ -59,7 +59,6 @@ NET_PROTOCOL_ID :: 0x4d495241
 DEFAULT_PORT :: 27500 // of Net_Settings.port
 PLAYER_NET :: 5 // the exit code of a player whose client could not join its server, or lost it with nobody watching
 COMPONENTS :: wire.MAX_FRAGMENTS-3 // replicated components of an entity, besides its pose, motion and driver
-INPUT_DELAY_MAX :: 15 // ticks, of Net_Settings.input_delay
 PENDING_EVENTS :: 1024 // messages of a type that wait for the next tick (a paused game runs none); later ones are dropped and reported
 
 // An entity the network replicates. The game gives it with the entity (in its
@@ -73,14 +72,14 @@ Replicate :: struct {
     audience:Audience,
     priority:f32 `mirai:"min=0"`,
     update_hz:f32 `mirai:"min=0"`, // 0: publish every tick
-    radius:f32 `mirai:"min=0,unit=m"`,
+    radius:f32 `mirai:"min=0,unit=m"`, // of its bounds: added to the reach of the views that see it, and swept by a client to tell it is about to touch what it drives
     predict:bool, // clients simulate it ahead of the server always, not only while it is in reach of what they drive: a ball to intercept
 }
 
 REPLICATE_DEFAULT :: Replicate{priority=1,radius=1}
 
 // What the network knows of an entity it replicates: its object. Only this library writes it.
-@(component)
+@(component,derived)
 Net_Link :: struct {
     object:Object `mirai:"transient,readonly,local"`,
 }
@@ -102,6 +101,7 @@ Pose :: struct {
     rotation:mm.Quat `mirai:"bits=15"`,
     scale:[3]f32,
     off:u16 `mirai:"bits=13"`, // a bit by replicated component of its type: turned off by itself
+    absent:u16 `mirai:"bits=13"`, // a bit by replicated component of its type the entity lacks: the replica drops it
     disabled:bool,
     predict:bool, // Replicate.predict
 }
@@ -162,10 +162,6 @@ Net_Settings :: struct {
     resimulate_budget:int,   // client: ticks it may simulate again per second. The tick rate
     critical_ticks:int,      // client: ticks a replica stays critical after it last shared an island of the simulation with what the client drives. Half a second
     predicted_capacity:int,  // client: replicas simulated ahead of the server at once. 256
-    // client: ticks between taking the input of a player and acting on it, here and on the server
-    // alike. The client runs that many ticks less ahead of the server, so it predicts less and
-    // is corrected less, and the player feels them as latency. 0; at most INPUT_DELAY_MAX
-    input_delay:int `mirai:"min=0,max=15"`,
     rewind_entities:int,     // server: entities with Rewind whose pose each tick remembers. 64
     view_radius:f32,         // server: meters around what a connection owns that count as near. 128
     position_tolerance:f32,  // client: meters a prediction may be off before it is corrected. 0.05
@@ -250,7 +246,7 @@ Remote_Input :: struct {
     look:[2]f32, // yaw and pitch of the body it drives, as its client left them look_behind ticks before this one
     has_look:bool,
     look_behind:u8,
-    looks:[INPUT_DELAY_MAX+1][2]f32, // by tick modulo its length: the look that body had here after each of the last ticks
+    looks:[wire.INPUT_DELAY_MAX+1][2]f32, // by tick modulo its length: the look that body had here after each of the last ticks
     looks_kept:u8,                   // how many of them are of this connection
 }
 
@@ -326,7 +322,7 @@ Net_Identity :: struct {secret:[2]u64}
 // (predict_spawn, predict_kept). The replica the server sends for it takes it;
 // when none does within the history, one the replica would own goes, and one
 // a library keeps loses only this mark. Only the network writes it.
-@(component,description="An entity this client made ahead of its server: the replica the server sends takes it, or it goes.")
+@(component,derived,description="An entity this client made ahead of its server: the replica the server sends takes it, or it goes.")
 Predicted_Spawn :: struct {
     tick:u64 `mirai:"transient,readonly"`,
     kept:bool `mirai:"transient,readonly"`, // the library that made it keeps it: it outlives its replica
@@ -342,15 +338,18 @@ Spawn :: struct {
 }
 
 // Requests: at the end of the tick the network gives each spawn of a seat the
-// Id both ends draw, from the connection of the seat, the tick and how many
-// that seat made before it in the tick, and marks on a client what it made.
+// Id both ends draw, from the connection of the seat, the tick, what it is and
+// how many of its kind that seat made before it in the tick, and marks on a
+// client what it made.
 @(storage,queue)
 Net_Spawns :: struct {queue:core.Queue(Spawn)}
 
 // The Id both ends give an entity a player makes in a tick: from the
-// connection of that player, the tick and which of its spawns of the tick it is.
-spawn_id :: proc(connection:Connection,tick:u64,sequence:u32) -> base.Entity_Id {
-    key:=[3]u64{u64(connection),tick,u64(sequence)}
+// connection of that player, the tick, its kind (spawn_kind) and which of the
+// player's spawns of that kind in the tick it is. A spawn the server skips
+// does not shift the others: a bullet never takes the place of a grenade.
+spawn_id :: proc(connection:Connection,tick:u64,kind:u64,sequence:u32) -> base.Entity_Id {
+    key:=[4]u64{u64(connection),tick,kind,u64(sequence)}
     return base.Entity_Id(base.hash64(mem.ptr_to_bytes(&key),NET_PROTOCOL_ID)|1)
 }
 

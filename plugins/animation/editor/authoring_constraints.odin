@@ -17,6 +17,7 @@ Profile_Grounded_Leg :: struct {
     hip,knee,foot:anim.Bone_Ref,contact_bone:anim.Bone_Ref `mirai:"optional"`,
     pole_offset,foot_up:mm.Vec3 `mirai:"optional"`,sole_height,contact_offset,contact_height,plant_speed,max_tilt:f32 `mirai:"optional"`,
     phase,step_distance,step_height,step_duration,max_distance,contact:f32 `mirai:"optional"`,
+    reach:lib.Chain_Reach `mirai:"optional"`,
 }
 Profile_Grounding_Params :: struct {
     mode:anim.Grounding_Mode `mirai:"optional"`,legs:[anim.GROUNDING_LEGS]Profile_Grounded_Leg `mirai:"trim"`,body:anim.Bone_Ref `mirai:"optional"`,up:mm.Vec3 `mirai:"optional"`,

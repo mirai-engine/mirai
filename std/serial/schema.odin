@@ -53,6 +53,7 @@ Type :: struct {
     size,align:u32,
     name:string,     // "" for anonymous types
     name_hash:u64,
+    was:string,      // Struct: the names it had, separated by spaces (@(component,was=)): a table of a document under one of them is its table
     first,count:u32, // Struct: fields; Enum, Bit_Set and a named integer: choices; Array: count is its length
     elem:Type_Index, // Array
 }
@@ -150,7 +151,7 @@ schema_init :: proc(s:^Schema,allocator:=context.allocator) {
 }
 
 schema_destroy :: proc(s:^Schema) {
-    for type in s.types {delete(type.name,s.allocator)}
+    for type in s.types {delete(type.name,s.allocator);delete(type.was,s.allocator)}
     for field in s.fields {schema_field_free(s,field)}
     for choice in s.choices {delete(choice.name,s.allocator)}
     delete(s.error,s.allocator)
@@ -239,6 +240,7 @@ schema_choice_add :: proc(s:^Schema,name:string,value:i64) -> bool {
 @(private)
 schema_type_drop :: proc(s:^Schema,type:Type) {
     delete(type.name,s.allocator)
+    delete(type.was,s.allocator)
     if type.kind==.Struct && int(type.first)<=len(s.fields) {
         for field in s.fields[type.first:] {schema_field_free(s,field)}
         base.truncate(&s.fields,type.first)

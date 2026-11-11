@@ -84,8 +84,9 @@ two_dimensional_space_authoring_samples_triangles_and_rejects_collinear_replacem
     testing.expect_value(t,authoring_test_revision(f,"hero.character"),revision)
 }
 
+@(test_world)
 Program_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     animations:core.Table(anim.Animation),
     animation_requests:anim.Animation_Requests,
@@ -94,13 +95,13 @@ Program_Test_World :: struct {
 // The World_Info of a document and of the World its Play runs, and both made.
 @(private="file")
 program_test_worlds :: proc(t:^testing.T,info:^core.World_Info,document,play:^Program_Test_World) -> bool {
-    info^=core.test_info(t,Program_Test_World,anim.test_types) or_return
+    info^=test_info(t,Program_Test_World) or_return
     return testing.expect(t,core.world_init(info,.World,document,context.allocator) && core.world_init(info,.World,play,context.allocator))
 }
 @(private="file")
 program_test_worlds_destroy :: proc(info:^core.World_Info,document,play:^Program_Test_World) {
     if info.sizes[.World]>0 {core.world_destroy(info,.World,document);core.world_destroy(info,.World,play)}
-    core.test_info_destroy(info)
+    test_info_destroy(info)
 }
 @(private)
 program_test_register_result :: proc(f:^Authoring_Test,t:^testing.T,name:string,$P,$R:typeid,run:editor.Api_Handler,defaults:^P=nil) {

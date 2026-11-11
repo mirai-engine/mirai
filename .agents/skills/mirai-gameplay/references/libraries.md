@@ -633,16 +633,16 @@ one per local player that has screens or sees a `World_Widget`.
   safe area floats over its player's part. Each player's camera is that of their view in the last
   split frame (`App.local_cameras`).
 - **`UI_Settings`** (project setting): `reference` is the design size in points, which
-  `ui.scale_to_fit` brings to the window or the player's part. `languages` are the languages the
-  game is in (`Language`, those the fonts have the glyphs of, with their code in
-  `LANGUAGE_CODES`; English by default) and `source` the one the interfaces are written in.
-  What each text says in them is in the `.strings`
-  ([texts](../../mirai-assets/references/kinds.md#texts)). `prompts` picks the prompt
-  pack (none: they are drawn). `prompt_images` gives loose entries a texture that wins over that of
-  the pack; Project Settings > UI shows them in a table with the entries the game binds.
+  `ui.scale_to_fit` brings to the window or the player's part. `source` is the code of the
+  language the texts are written in (`en` by default); the languages of the game are the columns
+  of its `.strings`, any code ([texts](../../mirai-assets/references/kinds.md#texts)).
+  `prompts` picks the prompt pack (none: they are drawn). `prompt_images` gives loose entries a
+  texture that wins over that of the pack; Project Settings > UI shows them in a table with the
+  entries the game binds.
 - **`UI_Preferences`** (machine setting): what the player chose, `language` (the language they
-  show) and `scale` (over which it adjusts them). The game's options menu writes it, `save` stores
-  it in the player's options and `gui` only reads it.
+  show, by its code; empty: the one the texts are written in) and `scale` (over which it adjusts
+  them). The game's options menu writes it (a `Dropdown` written `English=en|Español=es` that binds
+  `UI_Preferences.language`), `save` stores it in the player's options and `gui` only reads it.
 - **Game source** (`ui.Game_Source` of each context): `family` follows live the player's last used
   device (keyboard and mouse: `Keyboard`; a gamepad, the family SDL recognizes for it: Xbox,
   PlayStation or Nintendo), and a retained screen is redone when the family or the language
@@ -675,8 +675,8 @@ one per local player that has screens or sees a `World_Widget`.
 - **Requests (`UI_Requests`).** `gui.play_animation(r, e, node, anim, item)` plays an animation of
   the `.ui` on a node (`ui.tree_play`; its end arrives as `Finished` with the animation in `from`)
   and `gui.focus(r, e, node, item)` moves the focus; they are applied when the interface of `e` is
-  built in the frame. `item` counts the copies of a node inside lists; focus only reaches a node of
-  a list, not of nested lists.
+  built in the frame. `item` is the element of the innermost list around the node, as
+  `UI_Event.item` says, in the first element of the lists around that one.
 - **Repeated frames.** A context without changes in its interfaces, without trees that say
   `animating`, without input reaching it (pointer, buttons, keys, wheel, gamepad, text), without
   shown cameras or particles, with the same size, scale, density, atlas, family, view and ray of
@@ -810,35 +810,44 @@ Saves: the `World` written in a slot, a file `saves/<slot>.save` in the project'
 
 ## `volume`
 
-`Volume` is the only region of the world: unbounded, a box or a sphere by the entity's scale, or a
-plane (everything under the entity, along its up), with `blend` meters of edge where its weight
-goes from 1 to 0. What happens in it is another component of the same entity, of the library that
-does it.
+`Volume` is the only region of the world and only a shape: unbounded, a box or a sphere by the
+entity's scale, or a plane (everything under the entity, along its up). What happens in it is
+another component of the same entity, of the library that does it, which keeps its own data: how
+a zone value combines is its `Zone`, a `Fluid` has its priority, a `Force_Field` its blend.
 
 - **No component carries a shape of its own.** A library that needs a region reads the `Volume`
   of its entity and asks `depth`, `weight`, `holds` (a point) or `overlaps` (a box of the world),
-  the one containment and overlap test; `valid` says whether a volume can hold anything. A size, a
-  pose or a point that is not a number is outside. Who reads it: the per-zone values below,
-  `Fluid`, `Force_Field` and the area requests of
-  [physics](../../mirai-physics/references/engine.md#requests), `Strain_Field` of destruct,
-  `Environment_Trigger`, the `Nav_Bounds`, `Nav_Area` and `Nav_Obstacle` of
-  [navigation](../../mirai-world/references/navigation.md) and `Foliage_Bender`. Each says which
-  shapes it takes and reports a problem for another.
+  the one containment and overlap test, or `bounds` (the box of the world it is in); `valid` says
+  whether a volume can hold anything. A size, a pose or a point that is not a number is outside.
+  Who reads it: the per-zone values below, `Fluid`, `Force_Field` and the area requests of
+  [physics](../../mirai-physics/references/engine.md#requests), `Strain_Field` of destruct, the
+  `Nav_Bounds`, `Nav_Area` and `Nav_Obstacle` of
+  [navigation](../../mirai-world/references/navigation.md) and `Foliage_Bender`. Every reader takes
+  any shape; only a real limit refuses one, with a problem: a fluid is a plane or a box, a strain
+  region travels as a box or a sphere, a navmesh and a fog need a shape with an end.
+- **Something went in.** With physics, a box or sphere `Volume` on an entity without a `Collider`,
+  `Rigid_Body` or `Character` is a sensor of the solver: `Physics_Events.overlap_begin` and
+  `overlap_end` name it as `collider` when a body goes in and out
+  ([physics](../../mirai-physics/references/engine.md#events-physics_events)). A reaction to
+  entering (a sky, a heal) is game code on that event; no component reacts to a zone by itself.
 - **`Spline`** (`spline.odin`) is the one path, as `Volume` is the one region: points in the frame
   of its entity, each with a width and a height over the ground. What goes along it is another
   component: a `Fluid` makes it a river ([physics](../../mirai-physics/references/physics.md)),
   its `material` a ribbon on the ground ([shapes](../../mirai-world/references/shapes.md#splines)),
-  a patrol walks it. Every reader samples it with `spline_sample` (the one sampler,
-  `mm.path_sample`) and lays each sample with `spline_lay` on `core.Ground_Queries`, never with a
-  copy of its own, and nothing in it names a reader.
+  a `behavior.Patrol` of another entity walks it
+  ([enemies with minds](../../mirai-world/references/behavior.md#enemies-with-minds)). Every
+  reader samples it with `spline_sample` (the one sampler, `mm.path_sample`) and lays each sample
+  with `spline_lay` on `core.Ground_Queries`, or finds where its curve passes nearest a point with
+  `spline_nearest`, never with a copy of its own, and nothing in it names a reader.
 
 The values that change per zone are gravity, wind, reverb, how views look and fog (`Fog_Volume` of
 the `fog` plugin):
 
 - **A single algorithm** (`volume.odin`): at a point those that contain it are applied from lowest
-  to highest `priority`, and among equals the largest first, over the library's default. Each one
-  replaces what is below by its weight or adds (`mode`). A value without `Volume` applies in the
-  whole world, replacing, with priority 0.
+  to highest `zone.priority`, and among equals the largest first, over the library's default. Each
+  one replaces what is below by its weight, which rises over `zone.blend` inside the border, or
+  adds (`zone.mode`). A value without `Volume` applies in the whole world. The readers pass the
+  tables of `Where`: an unbounded volume under a section takes the box of its `Scene_Reference`.
 - `gather` collects in one pass those that contain a point and `combine` applies them, with the
   value of each row given by whoever asks (gravity toward a center depends on the point). `at` is
   both for a value that is its row: what is asked at one point per frame (the game's view, once
@@ -848,7 +857,7 @@ the `fog` plugin):
   value or a place changes. A point asks the tree for the bounded ones that may contain it;
   without any, it is worth what the library combined of the unbounded ones when redoing it, and
   without bounded ones nobody asks.
-- The value and its `Volume` are replicated; `scope` belongs to each end.
+- The value and its `Volume` are replicated.
 - **On the GPU** (`shaders/include/volume.slang`): `ordered` gives the rows in the order in which
   they are applied, which does not depend on the point, and `gpu_volume` their shape;
   `volume_weight` and `volume_mix` are the same weight and the same mix.

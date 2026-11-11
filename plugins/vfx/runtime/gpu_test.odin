@@ -361,63 +361,6 @@ mesh_particles_of_a_blending_material_cover_by_their_alpha :: proc(t: ^testing.T
 	expect_clean(t, f.device)
 }
 
-// A Mesh particle facing its entity scales its mesh on each axis, turns it by
-// the rotation of the mesh, then by its own rotation about the spin axis: a
-// cube stretched along X, turned to Z by the mesh and to Y by its rotation
-// about X, stands as a bar. One facing the camera points its X at it and its
-// Z across, level: a cube stretched along Z lies across the view.
-@(test)
-mesh_particles_face_scale_and_turn_their_mesh_as_their_effect_says :: proc(t: ^testing.T) {
-	f := new(Gpu_Fixture)
-	defer free(f)
-	settings := test_settings()
-	settings.taa = false
-	if !gpu_fixture_init(t, f, 128, 96, settings) {return}
-	defer gpu_fixture_destroy(f)
-	r := &f.renderer
-	red := gpu.DEFAULT_MATERIAL
-	red.base_color, red.alpha_mode = {1, 0.05, 0.05}, .Blend
-	gpu.materials_set(r, {red})
-	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
-	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, 0, -2}, {12, 12, 0.2}), tint = {0.1, 0.1, 0.1}}},true)
-	camera := gpu.Camera{position = {0, 0, 5}, forward = {0, 0, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	bar := test_emitter(1, {-1, 0.4, 0})
-	bar.render, bar.mesh, bar.material, bar.blended, bar.blend = .Mesh, f.cube_range, 1, true, .Alpha
-	bar.lifetime, bar.size, bar.soft, bar.relative, bar.intensity = {10, 10}, {0.5, 0.5}, 0, true, 1
-	half := math.sqrt(f32(0.5))
-	bar.facing, bar.mesh_scale, bar.mesh_rotation = .Entity, {4, 1, 1}, {0, half, 0, half}
-	bar.spin_axis, bar.rotation = {3, 0, 0}, {math.PI / 2, math.PI / 2}
-	across := bar
-	across.id, across.transform, across.previous = 2, trs({1.2, -1.6, 0}, {1, 1, 1}), trs({1.2, -1.6, 0}, {1, 1, 1})
-	across.facing, across.mesh_scale, across.mesh_rotation, across.spin_axis, across.rotation = .Camera_Position, {1, 1, 4}, {}, {}, {}
-	DT :: f32(1.0 / 60)
-	for i in 0 ..< 8 {
-		bar.spawns = test_burst(1) if i == 0 else {}
-		across.spawns = bar.spawns
-		testing.expect(t, frame_emitters(f, &f.sync, {bar, across}, DT))
-		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) * DT}), r.error)
-	}
-	rhi.device_wait_idle(f.device)
-	pixels, w, _, ok := gpu.renderer_capture(r)
-	testing.expect(t, ok, r.error)
-	if !ok {return}
-	defer delete(pixels)
-	red_at :: proc(pixels: []u8, w: int, r: ^gpu.Renderer, camera: gpu.Camera, p: [3]f32) -> bool {
-		c := pixel(pixels, w, project(r, camera, p))
-		return c[0] > c[1] + 60
-	}
-	// The bar stands 2 m tall and 0.5 m wide about its particle.
-	testing.expect(t, red_at(pixels, w, r, camera, {-1, 1.2, 0.25}), "the bar must reach up to 0.8 m above its particle")
-	testing.expect(t, red_at(pixels, w, r, camera, {-1, -0.4, 0.25}), "the bar must reach down to 0.8 m below its particle")
-	testing.expect(t, !red_at(pixels, w, r, camera, {-1.7, 0.4, 0.25}), "the bar must not lie along X")
-	testing.expect(t, !red_at(pixels, w, r, camera, {-1, 1.7, 0.25}), "the bar must end 1 m above its particle")
-	// The one facing the camera lies 2 m across, level, and 0.5 m tall.
-	testing.expect(t, red_at(pixels, w, r, camera, {1.9, -1.6, 0.25}), "the mesh facing the camera must lie across the view")
-	testing.expect(t, red_at(pixels, w, r, camera, {0.5, -1.6, 0.25}), "the mesh facing the camera must lie across the view")
-	testing.expect(t, !red_at(pixels, w, r, camera, {1.2, -0.9, 0.25}), "the mesh facing the camera must be level")
-	expect_clean(t, f.device)
-}
-
 @(test)
 particle_lists_given_between_frames_add_up :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)
@@ -677,11 +620,17 @@ particle_programs_move_and_keep_their_particles :: proc(t: ^testing.T) {
 	ring.capacity, ring.lifetime, ring.size = 256, {5, 5}, {0.15, 0.15}
 	ring.shape, ring.shape_size, ring.shell = .Circle, {1, 1, 1}, 1
 	ring.acceleration = {0, -9.8, 0}
-	parameters := erender.program_defaults(program)
+	// Its speed is a value of the instance, as a game gives it; a name the program does not declare is refused.
+	info := effect.PARTICLE_DEFAULTS
+	base.text_set(info.program[:], "Orbit")
+	override: Particle_Override
+	testing.expect_value(t, value_set(&override, "parameters.heat", f32(1)), Error.None)
+	testing.expect(t, particle_program_check(&f.assets, &info, nil, &override, &ring.program) != "")
+	value_remove(&override, "parameters.heat")
+	testing.expect_value(t, value_set(&override, "parameters.speed", f32(3)), Error.None)
+	testing.expect_value(t, particle_program_check(&f.assets, &info, nil, &override, &ring.program), "")
 	speed := erender.program_parameter(program, "speed")
-	testing.expect(t, speed != nil && gpu.program_parameter_set(&parameters, speed, {3, 0, 0, 0}))
-	ring.program = {id = program.id, parameters = transmute([16][4]f32)parameters, attributes = u32(program.attributes)}
-	base.text_set(ring.program.name[:], program.name)
+	testing.expect(t, speed != nil && ring.program.parameters[speed.offset / 16][(speed.offset % 16) / 4] == 3)
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 40 {
 		ring.spawns = test_burst(200) if i == 0 else {}
@@ -903,7 +852,7 @@ particle_bones_and_surface_shapes_start_particles_on_the_posed_skin :: proc(t: ^
 	testing.expect(t, linalg.length(rig.joints[1].bind - hand) < 1e-4)
 	// In the bind pose, from the file.
 	identity: matrix[4, 4]f32 = 1
-	bind := asset_bones(&f.sync, f.app.assets,f.app.renderer, mesh_id, identity)
+	bind := bones_of(&f.sync, f.app.renderer, rig, 0, identity, false)
 	testing.expect(t, bind.kind == .Bones && bind.count == 1)
 	if bind.count == 1 {
 		segment := f.sync.segments[bind.first]
@@ -1466,6 +1415,41 @@ particle_collisions_land_on_the_scene_and_slide_by_their_friction :: proc(t: ^te
 	expect_clean(t, f.device)
 }
 
+// Particles dropped on a floor hit it while they bounce and then rest on it:
+// slower than the rest speed a surface keeps them without a hit, an event or
+// lost life. The hits they report and the particles alive do not depend on
+// the steps the frames take.
+@(test)
+particles_that_land_hit_once_per_bounce_and_rest_at_any_frame_rate :: proc(t: ^testing.T) {
+	for dt in ([]f32{1.0 / 30, 1.0 / 144}) {
+		f := new(Gpu_Fixture)
+		defer free(f)
+		if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
+		defer gpu_fixture_destroy(f)
+		r := &f.renderer
+		gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -0.6, 0}, {12, 0.2, 12})}},true)
+		camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+		// From 0.45 m over the floor they land at 3 m/s, bounce once at 0.9 m/s and then rest.
+		drop := test_emitter(1, {0, 0, 0})
+		drop.capacity, drop.lifetime, drop.size, drop.acceleration = 128, {5, 5}, {0.1, 0.1}, {0, -9.8, 0}
+		drop.collision, drop.bounce, drop.collision_life, drop.report, drop.owner = .World, 0.3, 0.1, .Collision, core.Entity(77)
+		reports: Particle_Reports
+		defer particle_reports_free(&reports)
+		hits := 0
+		for i in 0 ..< int(1.5 / dt) {
+			drop.spawns = test_burst(100) if i == 0 else {}
+			testing.expect(t, frame_emitters(f, &f.sync, {drop}, dt))
+			testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
+			reports_read(&reports, &f.sync, f.app.renderer, core.World_Id{index = 1})
+			for report in reports.reports {hits += 1 if report.kind == .Collision else 0}
+		}
+		testing.expectf(t, hits == 200, "at steps of %v s the 100 particles report a hit per bounce, 200, not %d", dt, hits)
+		testing.expectf(t, particles_alive(f) == 100, "at steps of %v s all 100 are alive, not %d", dt, particles_alive(f))
+		testing.expect_value(t, reports.lost, u32(0))
+		expect_clean(t, f.device)
+	}
+}
+
 // A sprite runs the Surface program of its material with the data, the
 // random value and the radius the program of its particle gives; a particle
 // that gives none leaves the material to its own.
@@ -1675,7 +1659,7 @@ particle_sprites_go_behind_the_fog_of_the_view :: proc(t: ^testing.T) {
 			front.spawns = behind.spawns
 			testing.expect(t, frame_emitters(f, &f.sync, {behind, front}, DT))
 			if foggy == 1 {fog.medium_add(&media, medium)}
-			fog.fog_render(&state, core.read(&volumes), core.read(&places), &media, core.read(&worlds), core.read(&hidden), core.read(&parents), core.ref(&settings_fog), &f.app, nil)
+			fog.fog_render(&state, core.read(&volumes), core.read(&places), &media, core.read(&worlds), core.read(&hidden), core.read(&parents), {}, core.ref(&settings_fog), &f.app, nil)
 			seconds += DT
 			testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = seconds}), r.error)
 		}

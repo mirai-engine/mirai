@@ -15,9 +15,10 @@ import "mirai:host"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-@(private="file")
+@(private)
+@(test_world,editor="Sections_Editor")
 Sections_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     references:core.Table(scene.Scene_Reference),
     links:core.Table(Sections_Link),
@@ -26,10 +27,10 @@ Sections_World :: struct {
 }
 
 // A component of the document that names an entity.
-@(private="file")
+@(private)
 Sections_Link :: struct {target:core.Entity}
 
-@(private="file")
+@(private)
 Sections_Editor :: struct {prefabs:Prefabs}
 
 // A scene with a root entity A and a section, R, of the scene X whose
@@ -57,7 +58,7 @@ SECTIONS_TEST_LOCAL :: base.Entity_Id(0xc0)
 @(private="file")
 sections_fixture_init :: proc(t:^testing.T,f:^Sections_Fixture,name:string,state:=scene.Section_State.Active) -> bool {
     w:=&f.world
-    f.info=core.test_info(t,Sections_World,core.Test_None,Sections_Editor,test_types) or_return
+    f.info=test_info(t,Sections_World) or_return
     if !core.world_init(&f.info,.World,w,context.allocator) {return false}
     f.root=base.test_folder(t,fmt.tprintf("sections-%s",name))
     if f.root=="" {return false}
@@ -106,7 +107,7 @@ sections_fixture_destroy :: proc(f:^Sections_Fixture) {
     delete(f.app.worlds)
     host.assets_destroy(&f.assets)
     core.world_destroy(&f.info,.World,&f.world)
-    core.test_info_destroy(&f.info)
+    test_info_destroy(&f.info)
 }
 
 // Whether a step of the history holds a row or the life of e.

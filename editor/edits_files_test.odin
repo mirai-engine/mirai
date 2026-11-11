@@ -13,8 +13,9 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
+@(test_world)
 Files_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
 }
 
@@ -30,10 +31,10 @@ Files_Test :: struct {
 @(private)
 files_test_open :: proc(t:^testing.T,f:^Files_Test,name:string) -> bool {
     f.root=base.test_folder(t,name)
-    if f.root=="" || !core.test_world_init(t,&f.world) {return false}
+    if f.root=="" || !test_world_init(t,&f.world) {return false}
     f.ai=new(Ai)
     os.make_directory_all(project.path(f.root,"assets",allocator=context.temp_allocator))
-    test_session_open(&f.edited,core.test_world_ref(&f.world))
+    test_session_open(&f.edited,test_world_ref(&f.world))
     f.s.ai,f.s.project_root=f.ai,f.root
     return true
 }
@@ -43,7 +44,7 @@ files_test_close :: proc(f:^Files_Test) {
     for &task in f.ai.tasks {ai_review_free(&task.review)}
     free(f.ai)
     test_session_close(&f.edited)
-    core.test_world_destroy(&f.world)
+    test_world_destroy(&f.world)
 }
 
 @(private="file")

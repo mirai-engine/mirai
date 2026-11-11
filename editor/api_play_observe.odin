@@ -218,7 +218,7 @@ play_ui_top :: proc(v:^Play_Ui_View,player:int,hidden:bool) -> (top:Play_Ui_Top,
             if !play_ui_pressable(tree.nodes[row].kind) || !shown[row] && !hidden {continue}
             button:=Play_Ui_Button{row=row,name=name,text=state.text,shown=shown[row],disabled=disabled[row]}
             if shown[row] && ctx!=nil {
-                if r,laid:=egui.screen_node_rect(ctx,tree,instance.entity,row);laid {button.rect,button.laid={r.x,r.y,r.w,r.h},true}
+                if r,laid:=egui.screen_node_rect(ctx,tree,&instance.instance,instance.entity,row);laid {button.rect,button.laid={r.x,r.y,r.w,r.h},true}
             }
             append(&buttons,button)
         }
@@ -351,7 +351,7 @@ play_ui_interface :: proc(v:^Play_Ui_View,instance:^egui.Instance,tree:^ui.Widge
         value:=Api_Play_Ui_Node{row=row,parent=parent,name=names[row] if row<len(names) else "",kind=node.kind,shown=shown[row],hovered=shown[row] && state.hovered,focused=shown[row] && state.focused,disabled=disabled[row],text=strings.clone(state.text,v.allocator)}
         // A World_Widget is laid out on its panel, not in the window.
         if shown[row] && !instance.world && ctx!=nil {
-            if laid_out,laid:=egui.screen_node_rect(ctx,tree,instance.entity,row);laid {value.rect={laid_out.x,laid_out.y,laid_out.w,laid_out.h}}
+            if laid_out,laid:=egui.screen_node_rect(ctx,tree,&instance.instance,instance.entity,row);laid {value.rect={laid_out.x,laid_out.y,laid_out.w,laid_out.h}}
         }
         append(&nodes,value)
     }

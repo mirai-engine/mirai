@@ -22,11 +22,11 @@ Hold_Test :: struct {
 
 @(private="file")
 hold_test_init :: proc(t:^testing.T,f:^Hold_Test,jump:..Input_Binding) -> bool {
-    core.test_world_init(t,&f.w,test_types) or_return
+    test_world_init(t,&f.w) or_return
     f.local,f.remote=core.create(&f.entities),core.create(&f.entities)
     core.add(&f.seats,f.local,Seat{})
     core.add(&f.seats,f.remote,Seat{peer=7})
-    core.test_world_settle(&f.w)
+    test_world_settle(&f.w)
     input_map_action(&f.bindings,HOLD_MOVE,.Axis2)
     input_map_bind(&f.bindings,HOLD_MOVE,binding_keys(.A,.D,.S,.W))
     input_map_action(&f.bindings,HOLD_JUMP,.Button)
@@ -56,7 +56,7 @@ a_held_action_reaches_its_seat_from_the_next_tick_whatever_its_bindings :: proc(
     for jump in rebound {
         f:Hold_Test
         if !hold_test_init(t,&f,..jump) {return}
-        defer core.test_world_destroy(&f.w)
+        defer test_world_destroy(&f.w)
         read:=&f.seats
         typed:=Input_Of(Hold_Test_Action){seats=core.read(read)}
         hold(&f.hold_requests,f.local,HOLD_JUMP,{1,0},3)
@@ -93,7 +93,7 @@ a_held_action_reaches_its_seat_from_the_next_tick_whatever_its_bindings :: proc(
 a_held_action_keeps_the_contexts_blocks_and_capacity_of_its_seat :: proc(t:^testing.T) {
     f:Hold_Test
     if !hold_test_init(t,&f,binding_key(.Space)) {return}
-    defer core.test_world_destroy(&f.w)
+    defer test_world_destroy(&f.w)
     read:=&f.seats
     typed:=Input_Of(Hold_Test_Action){seats=core.read(read)}
     hold(&f.hold_requests,f.local,HOLD_CONFIRM,{1,0})
@@ -122,7 +122,7 @@ the_same_holds_on_the_same_seats_give_the_same_ticks :: proc(t:^testing.T) {
     run :: proc(t:^testing.T) -> (states:[12][2]Action_State) {
         f:Hold_Test
         if !hold_test_init(t,&f,binding_key(.Space)) {return}
-        defer core.test_world_destroy(&f.w)
+        defer test_world_destroy(&f.w)
         read:=&f.seats
         typed:=Input_Of(Hold_Test_Action){seats=core.read(read)}
         for tick in 0..<len(states) {

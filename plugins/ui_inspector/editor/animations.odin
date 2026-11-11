@@ -423,6 +423,7 @@ override_rows :: proc(p:^Pane,a:^host.Assets,o:^ui.Tree_Override,field:ui.Node_F
         edit(u,"Override",binding_row(p,"Selected field",&v.bind_selected,"A bool: it is in the Selected state while it is true"))
         edit(u,"Override",binding_row(p,"Disabled field",&v.bind_disabled,"A bool: it takes no input while it is true"))
         edit(u,"Override",binding_row(p,"Items field",&v.bind_items,"An array a List builds its node for"))
+        edit(u,"Override",binding_row(p,"Key field",&v.bind_key,"A field of the element of a List that tells its items apart"))
         edit(u,"Override",binding_row(p,"Image field",&v.bind_image,"An asset id of a texture it shows"))
         edit(u,"Override",binding_row(p,"Tint field",&v.bind_tint,"A color in place of its fill"))
         edit(u,"Override",binding_row(p,"Variant field",&v.bind_variant,"A text or an enum that names its variant"))

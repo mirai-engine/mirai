@@ -66,8 +66,9 @@ motion_authoring_warps_the_body_of_the_skeleton_and_rejects_invalid_ranges_and_t
     testing.expect_value(t,result.code,api.INVALID_PARAMS)
 }
 
-@(private="file")
-Motion_Authoring_World :: struct {using world:core.Test_World,ids:core.Table(core.Id),animations:core.Table(anim.Animation),playback:anim.Playback,requests:anim.Animation_Requests}
+@(private)
+@(test_world)
+Motion_Authoring_World :: struct {using world:Test_World,ids:core.Table(core.Id),animations:core.Table(anim.Animation),playback:anim.Playback,requests:anim.Animation_Requests}
 
 @(test)
 motion_distance_api_queues_forward_playback_rejects_backward_clock_and_allows_explicit_seek :: proc(t:^testing.T) {
@@ -80,13 +81,13 @@ motion_distance_api_queues_forward_playback_rejects_backward_clock_and_allows_ex
     result:=authoring_test_execute(f,"set",fmt.tprintf(`{{"path":"distance.character","animation":"%s","distances":[{{"clip":"walk","name":"stop","keys":[{{"time":0,"distance":3}},{{"time":2,"distance":0}}]}}]}}`,authoring_test_id_text(source_id)))
     if !testing.expect_value(t,result.code,0) {return}
     character_id:=authoring_test_id(f,"distance.character")
-    world:Motion_Authoring_World;if !core.test_world_init(t,&world,anim.test_types) {return};defer core.test_world_destroy(&world)
+    world:Motion_Authoring_World;if !test_world_init(t,&world) {return};defer test_world_destroy(&world)
     entity:=core.create(&world.entities);core.add(&world.ids,entity,{value=17})
     config:=anim.ANIMATION_DEFAULT;config.asset=character_id;core.add(&world.animations,entity,config)
-    core.test_world_settle(&world)
+    test_world_settle(&world)
     state:=anim.Playing{entity=entity,asset=source_id,clip=0,fader={current=lib.player_make(1)},was_playing=true,time=.5,duration=2};state.fader.current.time=.5
     append(&world.playback.states,state);resize(&world.playback.rows,core.entity_index(entity)+1);world.playback.rows[core.entity_index(entity)]=1
-    f.session.info,f.session.mode=core.test_world_info(&world),.Play;f.session.runs[0]={world=&world}
+    f.session.info,f.session.mode=test_world_info(&world),.Play;f.session.runs[0]={world=&world}
     result=authoring_test_execute(f,"request",`{"entity":"0000000000000011","distance":{"name":"stop","distance":1.5}}`)
     testing.expect(t,result.code==0,fmt.tprintf("%s %s",result.message,result.data));testing.expect_value(t,len(world.requests.distances.items),1)
     if len(world.requests.distances.items)>0 {testing.expect_value(t,world.requests.distances.items[0],anim.Animation_Distance_Request{entity=entity,clip=base.name_hash("walk"),time=1})}

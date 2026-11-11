@@ -5,9 +5,10 @@ import "mirai:core"
 import input "mirai:engine/input"
 
 // The tables of the players of a server and of what a client drives.
-@(private="file")
+@(private)
+@(test_world)
 Seated :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     seats:core.Table(input.Seat),
     moves:core.Table(input.Move_Input),
     absents:core.Table(Seat_Absent),
@@ -28,7 +29,7 @@ Seated :: struct {
 
 @(private="file")
 seated_init :: proc(t:^testing.T,w:^Seated) -> bool {
-    core.test_world_init(t,w,test_types) or_return
+    test_world_init(t,w) or_return
     w.network={role=.Server}
     w.time={dt=1.0/60}
     return true
@@ -46,7 +47,7 @@ seated_connect :: proc(w:^Seated,connection:Connection,player:u64) {
 seated_tick :: proc(w:^Seated,settings:^Net_Settings) {
     net_seats({entities=&w.entities},&w.seats,&w.absents,&w.disabled,&w.objects,&w.transforms,&w.keeps,core.read(&w.links),core.read(&w.remotes),
         core.ref(&w.bindings),core.ref(&w.connections),core.ref(&w.network),core.ref(&w.hierarchy),core.ref(settings),w.time)
-    core.test_world_settle(w)
+    test_world_settle(w)
     w.time.tick+=1
 }
 
@@ -59,7 +60,7 @@ seated_tick :: proc(w:^Seated,settings:^Net_Settings) {
 a_seat_waits_for_its_player_and_is_given_back_when_it_connects_again :: proc(t:^testing.T) {
     w:Seated
     if !seated_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
+    defer test_world_destroy(&w)
     settings:Net_Settings
     settings.absent_seconds=1
     // A handle with its generation above the low 32 bits.
@@ -76,7 +77,7 @@ a_seat_waits_for_its_player_and_is_given_back_when_it_connects_again :: proc(t:^
     testing.expect(t,replicated && replicate.audience==.Always && core.has(&w.transforms,seat) && core.has(&w.keeps,seat))
     body:=core.create(&w.entities)
     core.edit(&w.seats,seat).body=body
-    core.test_world_settle(&w)
+    test_world_settle(&w)
 
     clear(&w.connections.entries)
     left:=w.time.tick
@@ -115,12 +116,12 @@ a_seat_waits_for_its_player_and_is_given_back_when_it_connects_again :: proc(t:^
 the_seats_of_a_saved_game_wait_for_their_players :: proc(t:^testing.T) {
     w:Seated
     if !seated_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
+    defer test_world_destroy(&w)
     settings:Net_Settings
     saved,other:=core.create(&w.entities),core.create(&w.entities)
     core.add(&w.seats,saved,input.Seat{player=42})
     core.add(&w.seats,other,input.Seat{player=7})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     connection:=Connection(u64(1)<<32|2)
     seated_connect(&w,connection,42)
     seated_tick(&w,&settings)
@@ -136,13 +137,13 @@ the_seats_of_a_saved_game_wait_for_their_players :: proc(t:^testing.T) {
 a_client_keeps_the_seats_of_the_server :: proc(t:^testing.T) {
     w:Seated
     if !seated_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
+    defer test_world_destroy(&w)
     settings:Net_Settings
     w.network.role=.Client
     replica:=core.create(&w.entities)
     core.add(&w.seats,replica,input.Seat{peer=5})
     core.add(&w.links,replica,Net_Link{object=1})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     seated_tick(&w,&settings)
     testing.expect(t,core.alive(&w.entities,replica))
     testing.expect_value(t,input.local_seat(&w.seats,0),core.NONE)
@@ -154,7 +155,7 @@ a_client_keeps_the_seats_of_the_server :: proc(t:^testing.T) {
 a_server_owns_each_body_to_the_connection_of_its_seat :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)
@@ -174,7 +175,7 @@ a_server_owns_each_body_to_the_connection_of_its_seat :: proc(t:^testing.T) {
 a_client_drives_what_it_predicts :: proc(t:^testing.T) {
     w:Seated
     if !seated_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
+    defer test_world_destroy(&w)
     requests:input.Seat_Requests
     defer delete(requests.queue.items)
     w.network={role=.Client}
@@ -187,7 +188,7 @@ a_client_drives_what_it_predicts :: proc(t:^testing.T) {
     core.add(&w.replicas,shown,core.Pose_Target{follow=true})
     core.add(&w.remotes,shown,core.Remote{})
     core.add(&w.moves,shown,input.Move_Input{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     net_driving(core.read(&w.links),core.read(&w.replicas),core.read(&w.remotes),core.read(&w.moves),core.read(&w.seats),&requests,core.ref(&w.network))
     asked:=core.take(&requests.queue)
     if !testing.expect_value(t,len(asked),2) {return}
@@ -202,7 +203,7 @@ a_client_drives_what_it_predicts :: proc(t:^testing.T) {
 a_client_plays_through_the_replica_of_its_own_seat :: proc(t:^testing.T) {
     w:Seated
     if !seated_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
+    defer test_world_destroy(&w)
     w.network={role=.Client}
     made,own,other,body:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
     core.add(&w.seats,made,input.Seat{slot=0,held=input.action_bit(2),body=body})
@@ -211,7 +212,7 @@ a_client_plays_through_the_replica_of_its_own_seat :: proc(t:^testing.T) {
     core.add(&w.seats,other,input.Seat{})
     core.add(&w.links,other,Net_Link{object=2})
     core.add(&w.remotes,other,core.Remote{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     seated_tick(&w,&Net_Settings{})
     seats:=core.read(&w.seats)
     testing.expect(t,!core.alive(&w.entities,made),"the seat made before the replica goes")
@@ -229,7 +230,7 @@ a_client_plays_through_the_replica_of_its_own_seat :: proc(t:^testing.T) {
 a_seat_the_game_turned_off_stays_off_when_its_player_comes_back :: proc(t:^testing.T) {
     w:Seated
     if !seated_init(t,&w) {return}
-    defer core.test_world_destroy(&w)
+    defer test_world_destroy(&w)
     settings:Net_Settings
     first:=Connection(u64(1)<<32|3)
     seated_connect(&w,first,42)
@@ -237,7 +238,7 @@ a_seat_the_game_turned_off_stays_off_when_its_player_comes_back :: proc(t:^testi
     if !testing.expect_value(t,core.count(&w.seats),1) {return}
     seat:=core.entity_at(&w.seats,0)
     core.add(&w.disabled,seat,core.Disabled{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     seated_tick(&w,&settings)
     testing.expect_value(t,len(w.seats.entities),1)
 

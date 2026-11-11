@@ -1,5 +1,6 @@
 package serial
 
+import "core:slice"
 import "core:strings"
 import "mirai:std/base"
 
@@ -33,6 +34,9 @@ Schema_Error :: enum u8 {
 }
 
 @(private="file") BY_NAME :: 0x40
+// A struct that, or one of whose fields, had other names: its record and those of its fields
+// end with them (was=). A schema without renames is written as before there were any.
+@(private="file") RENAMED :: 0x80
 @(private="file") HAS_MIN :: 1
 @(private="file") HAS_MAX :: 2
 @(private="file") HAS_STEP :: 4
@@ -47,16 +51,24 @@ schema_write :: proc(w:^Writer,s:^Schema) {
     write_varint(w,u64(len(s.types)))
     write_varint(w,u64(len(s.fields)))
     write_varint(w,u64(len(s.choices)))
+    renamed:=make([]bool,len(s.fields),context.temp_allocator)
     for type in s.types {
-        write_u8(w,u8(type.kind)|u8(type.named)<<4|u8(type.by_name?BY_NAME:0))
+        names:=false
+        if type.kind==.Struct && u64(type.first)+u64(type.count)<=u64(len(s.fields)) {
+            names=type.was!=""
+            for field in s.fields[type.first:][:type.count] {names||=field.was!=""}
+            if names {slice.fill(renamed[type.first:][:type.count],true)}
+        }
+        write_u8(w,u8(type.kind)|u8(type.named)<<4|u8(type.by_name?BY_NAME:0)|u8(names?RENAMED:0))
         write_varint(w,u64(type.size))
         write_varint(w,u64(type.align))
         write_string(w,type.name)
         write_varint(w,type.count>0 && type.kind!=.Array?u64(type.first):0)
         write_varint(w,u64(type.count))
         write_varint(w,type.elem==TYPE_NONE?0:u64(type.elem)+1)
+        if names {write_string(w,type.was)}
     }
-    for field in s.fields {
+    for field,at in s.fields {
         present:=u8(0)
         if field.has_min {present|=HAS_MIN}
         if field.has_max {present|=HAS_MAX}
@@ -79,6 +91,7 @@ schema_write :: proc(w:^Writer,s:^Schema) {
         if field.label!="" {write_string(w,field.label)}
         if field.unit!="" {write_string(w,field.unit)}
         if field.required_component!=0 {write_u64(w,field.required_component)}
+        if renamed[at] {write_string(w,field.was)}
     }
     for choice in s.choices {
         write_string(w,choice.name)
@@ -106,14 +119,24 @@ schema_read_tables :: proc(r:^Reader,s:^Schema) -> Schema_Error {
     if r.failed {return .Truncated}
     if type_count>=int(TYPE_NONE) {return .Invalid_Type}
     if resize(&s.types,type_count)!=nil || resize(&s.fields,field_count)!=nil || resize(&s.choices,choice_count)!=nil {return .Out_Of_Memory}
+    renamed,no_renamed:=make([]bool,field_count,context.temp_allocator)
+    if no_renamed!=nil {return .Out_Of_Memory}
     for &type in s.types {
         kind_byte:=read_u8(r)
         kind,named:=kind_byte&0x0F,kind_byte>>4&0x03
         size,align:=read_varint(r),read_varint(r)
         name:=read_string(r)
         first,count,elem:=read_varint(r),read_varint(r),read_varint(r)
+        names:=kind_byte&RENAMED!=0
+        was:=names?read_string(r):""
         if r.failed {return .Truncated}
-        if kind>u8(max(Type_Kind)) || named>u8(max(Named_Kind)) || kind_byte&0x80!=0 || size>u64(max(u32)) || align>SCHEMA_MAX_ALIGN || first>u64(max(u32)) || count>u64(max(u32)) || elem>u64(TYPE_NONE) {return .Invalid_Type}
+        if kind>u8(max(Type_Kind)) || named>u8(max(Named_Kind)) || names && kind!=u8(Type_Kind.Struct) || size>u64(max(u32)) || align>SCHEMA_MAX_ALIGN || first>u64(max(u32)) || count>u64(max(u32)) || elem>u64(TYPE_NONE) {return .Invalid_Type}
+        if names {
+            if first+count>u64(field_count) {return .Invalid_Field}
+            slice.fill(renamed[first:][:count],true)
+            type.was=schema_string(s,was)
+            if len(type.was)!=len(was) {return .Out_Of_Memory}
+        }
         type.kind,type.named,type.by_name=Type_Kind(kind),Named_Kind(named),kind_byte&BY_NAME!=0
         type.size,type.align=u32(size),u32(align)
         type.first,type.count=u32(first),u32(count)
@@ -122,7 +145,7 @@ schema_read_tables :: proc(r:^Reader,s:^Schema) -> Schema_Error {
         if len(type.name)!=len(name) {return .Out_Of_Memory}
         if name!="" {type.name_hash=base.name_hash(name)}
     }
-    for &field in s.fields {
+    for &field,at in s.fields {
         name:=read_string(r)
         type,offset:=read_varint(r),read_varint(r)
         flags,present:=read_u8(r),read_u8(r)
@@ -134,6 +157,7 @@ schema_read_tables :: proc(r:^Reader,s:^Schema) -> Schema_Error {
         label:=present&HAS_LABEL!=0?read_string(r):""
         unit:=present&HAS_UNIT!=0?read_string(r):""
         if present&HAS_REQUIRED_COMPONENT!=0 {field.required_component=read_u64(r)}
+        was:=renamed[at]?read_string(r):""
         if r.failed {return .Truncated}
         if type>=u64(type_count) || offset>u64(max(u32)) {return .Invalid_Field}
         field.name=schema_string(s,name)
@@ -141,8 +165,8 @@ schema_read_tables :: proc(r:^Reader,s:^Schema) -> Schema_Error {
         field.name_hash=base.name_hash(name)
         field.type,field.offset=Type_Index(type),u32(offset)
         field.flags=transmute(Field_Flags)flags
-        field.label,field.unit=schema_string(s,label),schema_string(s,unit)
-        if len(field.label)!=len(label) || len(field.unit)!=len(unit) {return .Out_Of_Memory}
+        field.label,field.unit,field.was=schema_string(s,label),schema_string(s,unit),schema_string(s,was)
+        if len(field.label)!=len(label) || len(field.unit)!=len(unit) || len(field.was)!=len(was) {return .Out_Of_Memory}
     }
     for &choice in s.choices {
         name:=read_string(r)
@@ -331,9 +355,9 @@ schema_import :: proc(link:^Schema_Import,type:Type_Index) -> Type_Index {
         copied.elem=schema_import(link,source.elem)
         if copied.elem==TYPE_NONE {return TYPE_NONE}
     }
-    copied.name=schema_string(dst,source.name)
+    copied.name,copied.was=schema_string(dst,source.name),schema_string(dst,source.was)
     index:=Type_Index(len(dst.types))
-    if len(copied.name)!=len(source.name) || reserve(&dst.types,len(dst.types)+1)!=nil {
+    if len(copied.name)!=len(source.name) || len(copied.was)!=len(source.was) || reserve(&dst.types,len(dst.types)+1)!=nil {
         schema_type_drop(dst,copied)
         return TYPE_NONE
     }
@@ -354,9 +378,9 @@ schema_clone :: proc(dst:^Schema,src:^Schema,allocator:=context.allocator) -> Sc
     whole:=true
     for type in src.types {
         copied:=type
-        copied.name=schema_string(dst,type.name)
+        copied.name,copied.was=schema_string(dst,type.name),schema_string(dst,type.was)
         append(&dst.types,copied)
-        whole&&=len(copied.name)==len(type.name)
+        whole&&=len(copied.name)==len(type.name) && len(copied.was)==len(type.was)
     }
     for field in src.fields {
         copied:=field

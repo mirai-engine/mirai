@@ -65,7 +65,9 @@ every_text_survives_its_strings_and_its_csv :: proc(t:^testing.T) {
     texts:=texts_read(a,"en")
     for s in said {testing.expect_value(t,texts_set(&texts,s.key,s.code,s.text),"")}
     refused:=[]struct{key,code,text,why:string}{
-        {"menu.start","spanish","Empezar","'spanish' is no language a game can be in; give its code: en,"},
+        {"menu.start","spanish","Empezar","'spanish' is no code of a language"},
+        {"menu.start","ES","Empezar","'ES' is no code of a language"},
+        {"menu.start","es-","Empezar","'es-' is no code of a language"},
         {"","en","Start","a key is a name shorter than 64 bytes"},
     }
     for c in refused {
@@ -145,6 +147,10 @@ a_missing_text_names_the_document_and_who_shows_it :: proc(t:^testing.T) {
 
     texts:=texts_read(a,"en")
     texts_set(&texts,"menu.start","en","Start")
+    // The languages of the game are those its .strings name.
+    for s in ([?][3]string{{"menu.back","en","Back"},{"menu.back","es","Atrás"},{"menu.back","es-419","Volver"},{"menu.back","pl","Wróć 戻"},{"menu.opt","en","Options"},{"menu.opt","es","Opciones"}}) {
+        testing.expect_value(t,texts_set(&texts,s[0],s[1],s[2]),"")
+    }
     if !texts_project_put(t,&p,&texts) {return}
     // The same key in a second file.
     languages:=[1]asset.String_Language{}
@@ -158,13 +164,17 @@ a_missing_text_names_the_document_and_who_shows_it :: proc(t:^testing.T) {
     testing.expect_value(t,texts_text(&texts,"menu.start","en"),"Start")
     uses:=texts_uses(a)
     testing.expect_value(t,len(uses),4)
-    lines:=strings.join(texts_missing(&texts,uses,{"en","es"}),"\n",context.temp_allocator)
+    lines:=strings.join(texts_missing(&texts,uses),"\n",context.temp_allocator)
     wanted:=[]string{
         "menu.ui: quit shows the key menu.quit, which no .strings has",
         "items.records: sword.title shows the key item.sword, which no .strings has",
-        "the key menu.start of texts.strings says nothing in es",
+        "the key menu.start of texts.strings says nothing in es,",
+        "the key menu.start of texts.strings says nothing in es-419, where it shows what it says in en",
+        "the key menu.start of texts.strings says nothing in pl,",
         "the key menu.start is in texts.strings and in z_more.strings",
+        "the texts in pl have characters the glyphs of the interfaces lack, which show as '?': '戻' U+623B (menu.back);",
     }
     for want in wanted {testing.expectf(t,strings.contains(lines,want),"%q is not in:\n%s",want,lines)}
     testing.expectf(t,!strings.contains(lines,"start shows") && !strings.contains(lines,"lines[1]") && !strings.contains(lines,"version"),"A key with its text is not missing, and a node that is not localized shows no key:\n%s",lines)
+    testing.expectf(t,!strings.contains(lines,"menu.opt of texts.strings says nothing in es-419") && !strings.contains(lines,"'ó'"),"A region shows what its language says, and Polish letters have their glyphs:\n%s",lines)
 }

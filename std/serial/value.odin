@@ -382,7 +382,8 @@ migration_build :: proc(b:^Build,src_index,dst_index:Type_Index,src_offset,dst_o
 }
 
 // The source field a destination field reads: the one with its name, else the
-// one with a name it had; -1 for none.
+// one with a name it had, else the one that had its name (a source newer than
+// the destination); -1 for none.
 @(private="file")
 field_source :: proc(fields:[]Field,lookup:map[u64]int,field:Field) -> int {
     find :: proc(fields:[]Field,lookup:map[u64]int,hash:u64) -> int {
@@ -397,7 +398,19 @@ field_source :: proc(fields:[]Field,lookup:map[u64]int,field:Field) -> int {
     for name in strings.fields_iterator(&rest) {
         if at:=find(fields,lookup,base.name_hash(name));at>=0 {return at}
     }
+    for candidate,at in fields {
+        if names_hold(candidate.was,field.name) {return at}
+    }
     return -1
+}
+
+// Whether a list of names separated by spaces (was=) holds a name.
+names_hold :: proc(names,name:string) -> bool {
+    rest:=names
+    for held in strings.fields_iterator(&rest) {
+        if held==name {return true}
+    }
+    return false
 }
 
 @(private="file")

@@ -17,7 +17,7 @@ import wire "mirai:net"
 a_session_without_memory_is_refused_and_a_connection_without_room_is_closed :: proc(t:^testing.T) {
     info,described:=net_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Net_Test_World
     net_test_init(&world,&info)
     defer core.world_destroy(&info,.World,&world)

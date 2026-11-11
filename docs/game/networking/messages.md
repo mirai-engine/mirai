@@ -13,6 +13,9 @@ seat.
 - A `fixed` function that receives `core.Inbox(T)` reads the messages of type `T` that arrived
   since the tick before, each with its `value`, its `sender` (on a server, the connection) and the
   entity it is `about`.
+- A client reads a message from the server `about` an entity once that entity shows the state of
+  the tick the message was sent in: `Died` comes with the health at zero, an effect where the body
+  is seen. One about no entity is read at once: put the entity in a field to skip the wait.
 
 ```odin
 @(net_message,reliable)

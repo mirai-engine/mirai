@@ -145,7 +145,7 @@ change_set_take :: proc(w:core.World_Ref,project_root:string,set:^Change_Set,ste
     for &rows in step.tables {
         if rows.table<0 || rows.table>=len(w.info.tables) {continue}
         descriptor:=&w.info.tables[rows.table]
-        if descriptor.place!=.World || !author.type_saved(descriptor.info) {continue}
+        if descriptor.place!=.World || descriptor.derived {continue}
         info:=descriptor.info
         if !core.value_flat(info) {complete=false;continue}
         layout:=change_layout(info)
@@ -233,7 +233,7 @@ change_restore_fields :: proc(info:^runtime.Type_Info,current,before,after:rawpt
 @(private)
 change_entity_clean :: proc(w:core.World_Ref,set:^Change_Set,id:base.Entity_Id,e:core.Entity,forward:bool) -> bool {
     for &descriptor,i in w.info.tables {
-        if descriptor.place!=.World || !author.type_saved(descriptor.info) {continue}
+        if descriptor.place!=.World || descriptor.derived {continue}
         table:=core.world_table_at(w,&descriptor)
         current:=core.raw_find(table,descriptor.info,e)
         if current!=nil && !core.value_flat(descriptor.info) {return false}
@@ -308,7 +308,7 @@ entities_named_keep :: proc(w:core.World_Ref,marks:[]u8,step:^Edit_Step=nil) -> 
     for {
         changed:=false
         for &descriptor,index in w.info.tables {
-            if descriptor.place!=w.place || !author.type_saved(descriptor.info) {continue}
+            if descriptor.place!=w.place || descriptor.derived {continue}
             offsets:=saved_entity_offsets(descriptor.info)
             if len(offsets)==0 {continue}
             table:=core.world_table_at(w,&descriptor)

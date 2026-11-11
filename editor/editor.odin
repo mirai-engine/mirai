@@ -374,13 +374,13 @@ run :: proc(info:^core.World_Info,args:[]string,frame:proc(s:^Session) -> bool) 
     gpu_failure_notify(s)
     for frame(s) {}
     context.logger=previous
-    next:os.Process
+    next:subprocess.Process
     starts:=s.projects!=nil && s.projects.starts
     if starts {next=s.projects.started}
     code=close(s)
     // The editor it started writes to the same terminal: mirai edit ends with it.
     if starts {
-        if state,error:=os.process_wait(next);error==nil {code=state.exit_code}
+        if state,error:=subprocess.wait(&next);error==nil {code=state.exit_code}
     }
     return code
 }
@@ -1053,7 +1053,7 @@ restart :: proc(s:^Session,extra:[]string=nil) -> bool {
     append(&command,exe,"--project",s.project_root,"--documents",file)
     for arg in s.args {append(&command,arg)}
     append(&command,..extra)
-    process,error:=subprocess.start({command=command[:],stdin=os.stdin,stdout=os.stdout,stderr=os.stderr})
+    process,error:=subprocess.detached({command=command[:],stdin=os.stdin,stdout=os.stdout,stderr=os.stderr})
     if error!=nil {
         log.errorf("%s could not be started: %v",exe,error)
         notify(s,"The built editor could not be started")

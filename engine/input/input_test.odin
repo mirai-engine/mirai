@@ -25,9 +25,10 @@ test_action_defaults :: proc(dst:rawptr) {
     }
 }
 
-@(private="file")
+@(private)
+@(test_world)
 Defaults_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
 }
 
 @(private="file")
@@ -38,11 +39,12 @@ TEST_NAMES :: [3]core.Name_Info{
 }
 
 @(private="file")
-test_info :: proc(t:^testing.T,$W:typeid,names:[]core.Name_Info,defaults:proc(dst:rawptr)=test_action_defaults) -> (info:core.World_Info,ok:bool) {
-    @(static) actions:=[1]core.Actions_Info{{type=Test_Action,base=3,library="test"}}
-    actions[0].info,actions[0].defaults=type_info_of(Test_Action),defaults
-    info=core.test_info(t,W) or_return
-    info.names,info.actions=names,actions[:]
+named_info :: proc(t:^testing.T,$W:typeid,names:[]core.Name_Info,defaults:proc(dst:rawptr)=test_action_defaults) -> (info:core.World_Info,ok:bool) {
+    // Of this call: the tests run at once, each with its defaults.
+    actions:=make([]core.Actions_Info,1,context.temp_allocator)
+    actions[0]={type=Test_Action,info=type_info_of(Test_Action),base=3,library="test",defaults=defaults}
+    info=test_info(t,W) or_return
+    info.names,info.actions=names,actions
     return info,true
 }
 
@@ -52,9 +54,9 @@ test_info :: proc(t:^testing.T,$W:typeid,names:[]core.Name_Info,defaults:proc(ds
 @(test)
 input_settings_replace_the_defaults_of_the_actions_they_name :: proc(t:^testing.T) {
     names:=TEST_NAMES
-    info,made:=test_info(t,Defaults_World,names[:])
+    info,made:=named_info(t,Defaults_World,names[:])
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     problems:core.Problems
     settings:Input_Settings
     testing.expect(t,input_settings_put(&settings,"hit",action_default(.Button,binding_mouse_button(.Left))))
@@ -118,9 +120,9 @@ defaults_are_given_by_member_of_an_enum_of_actions :: proc(t:^testing.T) {
     names:=TEST_NAMES
     cases:=[]struct{defaults:proc(dst:rawptr),bound:bool}{{test_action_defaults,true},{nil,false}}
     for c in cases {
-        info,made:=test_info(t,Defaults_World,names[:],c.defaults)
+        info,made:=named_info(t,Defaults_World,names[:],c.defaults)
         if !made {return}
-        defer core.test_info_destroy(&info)
+        defer test_info_destroy(&info)
         problems:core.Problems
         m:Input_Map
         input_map_make(&m,&info,nil,&problems)
@@ -137,15 +139,15 @@ defaults_are_given_by_member_of_an_enum_of_actions :: proc(t:^testing.T) {
 @(test)
 typed_reads_take_the_actions_of_their_enum :: proc(t:^testing.T) {
     names:=TEST_NAMES
-    info,made:=test_info(t,Defaults_World,names[:])
+    info,made:=named_info(t,Defaults_World,names[:])
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     w:Test_Seats
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     seat:=core.create(&w.entities)
     core.add(&w.seats,seat,Seat{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     m:Input_Map
     input_map_make(&m,&info,nil,nil)
     device:=core.Input{keys_down={.D,.Space},keys_pressed={.D,.Space}}
@@ -174,15 +176,15 @@ typed_reads_take_the_actions_of_their_enum :: proc(t:^testing.T) {
 @(test)
 a_frame_without_a_tick_leaves_input_of_at_the_last_tick :: proc(t:^testing.T) {
     names:=TEST_NAMES
-    info,made:=test_info(t,Defaults_World,names[:])
+    info,made:=named_info(t,Defaults_World,names[:])
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     w:Test_Seats
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     seat:=core.create(&w.entities)
     core.add(&w.seats,seat,Seat{})
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     m:Input_Map
     input_map_make(&m,&info,nil,nil)
     state:=Seats{local_count=1}
@@ -211,9 +213,9 @@ a_frame_without_a_tick_leaves_input_of_at_the_last_tick :: proc(t:^testing.T) {
 @(test)
 what_the_code_does_not_take_is_a_problem :: proc(t:^testing.T) {
     names:=TEST_NAMES
-    info,made:=test_info(t,Defaults_World,names[:])
+    info,made:=named_info(t,Defaults_World,names[:])
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     problems:core.Problems
     settings:Input_Settings
     input_settings_put(&settings,"jump",action_default(.Button,binding_key(.J)))
@@ -288,9 +290,9 @@ the_bindings_the_player_changed_come_back_over_those_of_the_project :: proc(t:^t
     root,player:=project.path(folder,"game",allocator=context.temp_allocator),project.path(folder,"player",allocator=context.temp_allocator)
     testing.expect(t,os.make_directory_all(root)==nil && os.make_directory_all(player)==nil)
     names:=TEST_NAMES
-    info,made:=test_info(t,Defaults_World,names[:])
+    info,made:=named_info(t,Defaults_World,names[:])
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     settings:Input_Settings
     list:=[]project.Setting{{name="Input_Settings",info=type_info_of(Input_Settings),value=&settings,machine=true}}
 
@@ -345,9 +347,9 @@ an_old_input_mirai_is_refused_with_where_its_bindings_go :: proc(t:^testing.T) {
     if folder=="" {return}
     defer base.remove_all(folder)
     names:=TEST_NAMES
-    info,made:=test_info(t,Defaults_World,names[:])
+    info,made:=named_info(t,Defaults_World,names[:])
     if !made {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     testing.expect(t,os.write_entire_file(project.path(folder,"input.mirai",allocator=context.temp_allocator),`{"actions":[]}`)==nil)
     app:host.App
     app.info,app.root=&info,folder
@@ -357,4 +359,33 @@ an_old_input_mirai_is_refused_with_where_its_bindings_go :: proc(t:^testing.T) {
     input_map_build(&m,core.ref(&settings),{},&app,&problems)
     old:=core.problem_find(&problems,core.NONE,"input.old_file")
     testing.expect(t,old!=nil && strings.contains(core.problem_text(old),"Input_Settings of") && strings.contains(core.problem_text(old),project.SETTINGS_FILE))
+}
+
+// Bound with the mouse to look, a stick turns at a rate: held for a second it turns LOOK_STICK points
+// at 30 frames a second as at 144, and keys the same; the mouse moves it by what it moved.
+@(test)
+a_look_stick_turns_as_far_in_a_second_at_any_frame_rate :: proc(t:^testing.T) {
+    m:Input_Map
+    look:=Action(0)
+    input_map_action(&m,look,.Axis2)
+    m.actions[look]=look_action_defaults()[.Look]
+    testing.expect(t,input_map_bind(&m,look,binding_keys(.Left,.Right,.Down,.Up,LOOK_STICK)))
+    actions:Actions
+    for fps in ([2]int{30,144}) {
+        stick:core.Input
+        stick.gamepads[0].connected=true
+        stick.gamepads[0].axes[.Right_X]=1
+        for held in ([2]core.Input{stick,{keys_down={.Right}}}) {
+            device:=held
+            turned:f32
+            for _ in 0..<fps {
+                actions_update(&actions,&m,&device,1/f32(fps))
+                turned+=action(&actions,look).vector.x
+            }
+            testing.expectf(t,abs(turned-LOOK_STICK)<LOOK_STICK*1e-4,"at %d frames a second it turned %v points in a second, not %v",fps,turned,LOOK_STICK)
+        }
+    }
+    device:=core.Input{mouse_delta={12,0}}
+    actions_update(&actions,&m,&device,1.0/144)
+    testing.expect_value(t,action(&actions,look).vector,[2]f32{12,0})
 }

@@ -557,8 +557,10 @@ import_library :: proc(root:string,allocator:mem.Allocator) -> (formats:[]import
     if !os.is_file(path) {return nil,nil,nil,nil,"the project has no built editor library, where the formats of its plugins and the types of its game are: mirai build editor builds it"}
     held:=new(Import_Library_Held,allocator)
     held.allocator=allocator
-    error:host.Library_Error
-    if held.library,error=host.project_library_load(path,0);error!=.None {return nil,nil,nil,nil,host.library_error_text(error,path)}
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    library,error:=host.project_library_load(path,0)
+    if error!=.None {return nil,nil,nil,nil,host.library_error_text(error,path)}
+    held.library=library
     asset.registry_init(&held.registry,project.folder_path(root,.Assets,context.temp_allocator),"",allocator,project.imported_path(root,context.temp_allocator))
     asset.registry_scan(&held.registry)
     found:[PROVIDER_CAPACITY]Import_Format_Provider

@@ -9,17 +9,24 @@ import "mirai:std/base"
 import lib "mirai:std/anim"
 import anim "plugins:animation/runtime"
 
-// The .character id names, read from its file: its tables are views into file.
+// The .character id names, read from its file: its tables are views into file. A set is too
+// large to pass through a multiple assignment: one store per value until odin-lang/Odin#7937
+// (see ODIN_WORKAROUNDS).
 @(private)
 character_open :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,file:^Authoring_File) -> (set:anim.Character_Set,ok:bool) {
     if !authoring_open(s,call,id,anim.CHARACTER_KIND,file) {return}
-    return character_read(s,call,file)
+    read,found:=character_read(s,call,file)
+    set=read
+    ok=found
+    return
 }
 @(private)
 character_read :: proc(s:^editor.Session,call:^api.Call,file:^Authoring_File) -> (set:anim.Character_Set,ok:bool) {
-    error:asset.Error
-    if set,error=anim.character_view(&file.file,&s.app.assets.types);error!=.None {authoring_failure(call,"asset","Invalid_Asset","a valid .character",fmt.tprintf("%v",error),"The .character is invalid");return}
-    return set,true
+    read,error:=anim.character_view(&file.file,&s.app.assets.types)
+    if error!=.None {authoring_failure(call,"asset","Invalid_Asset","a valid .character",fmt.tprintf("%v",error),"The .character is invalid");return}
+    set=read
+    ok=true
+    return
 }
 
 // The .character a set method edits: the one at path, whose other parts it keeps, or a new one
@@ -28,12 +35,15 @@ character_read :: proc(s:^editor.Session,call:^api.Call,file:^Authoring_File) ->
 character_target :: proc(s:^editor.Session,call:^api.Call,path:string,animation:base.Asset_Id,file:^Authoring_File,clips:=true) -> (set:anim.Character_Set,id:base.Asset_Id,ok:bool) {
     id,ok=authoring_set_target(s,call,path,anim.CHARACTER_KIND,".character",file);if !ok {return}
     if file.replaced {
-        if set,ok=character_read(s,call,file);!ok {return}
+        read,found:=character_read(s,call,file)
+        if !found {ok=false;return}
+        set=read
         if animation!={} {set.info.animation=animation}
-        return set,id,true
+        return
     }
-    if animation=={} && clips {authoring_failure(call,"animation","Required","the .anim of the clips of a new .character","empty","A new .character needs the animation of its clips");return {},{},false}
-    return anim.character_set_make(animation),id,true
+    if animation=={} && clips {authoring_failure(call,"animation","Required","the .anim of the clips of a new .character","empty","A new .character needs the animation of its clips");id,ok={},false;return}
+    set=anim.character_set_make(animation)
+    return
 }
 
 // Publishes a set as a step of the history; false, with the failure of the call, when it is

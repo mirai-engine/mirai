@@ -1,11 +1,13 @@
 package git
 
 import "core:fmt"
+import "core:os"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "mirai:cook/build"
-import "mirai:platform"
 import "mirai:std/base"
+import "mirai:std/subprocess"
 
 // Git as child processes, with the git installed. An operation is a list of
 // git commands that run one after another without stopping a frame: poll
@@ -57,7 +59,7 @@ Repository :: struct {
     settings_stale:u8,     // the settings of build.git_settings the last read found missing or with another value, a bit each
     operation:Operation,
     step:int,
-    process:platform.Process,
+    process:subprocess.Process,
     out,err:[dynamic]u8,
     error:[512]u8,         // what the last operation that failed said
     finished:Operation,    // the operation that ended and ended has not given yet
@@ -85,32 +87,32 @@ change_path :: proc(r:^Repository,change:^Change) -> string {
     return strings.trim_prefix(base.text_get(change.path[:]),base.text_get(r.prefix[:]))
 }
 
-push :: proc(r:^Repository,p:^platform.Platform,roots:Roots) -> string {
+push :: proc(r:^Repository,roots:Roots) -> string {
     if working(r) {return "Wait for git to finish"}
     if base.text_get(r.remote[:])=="" {return "The repository has no remote to push to"}
-    start(r,p,roots,.Push)
+    start(r,roots,.Push)
     return ""
 }
 
 // Leaves the merge: the files go back to the commit before the pull.
-abort :: proc(r:^Repository,p:^platform.Platform,roots:Roots) -> string {
+abort :: proc(r:^Repository,roots:Roots) -> string {
     if working(r) {return "Wait for git to finish"}
     if !r.merging {return "No merge to abort"}
-    start(r,p,roots,.Abort)
+    start(r,roots,.Abort)
     return ""
 }
 
-start :: proc(r:^Repository,p:^platform.Platform,roots:Roots,operation:Operation) {
-    if r.process!=0 {platform.process_release(p,r.process);r.process=0}
+start :: proc(r:^Repository,roots:Roots,operation:Operation) {
+    subprocess.release(&r.process)
     r.operation,r.step=operation,0
     r.error={}
-    next(r,p,roots)
+    next(r,roots)
 }
 
 // Starts the command of the step the operation is at, skipping steps without
 // one; with none left, the operation ends.
 @(private)
-next :: proc(r:^Repository,p:^platform.Platform,roots:Roots) {
+next :: proc(r:^Repository,roots:Roots) {
     for r.operation!=.None {
         arguments:=command(r,roots,r.operation,r.step)
         if arguments==nil {
@@ -125,12 +127,14 @@ next :: proc(r:^Repository,p:^platform.Platform,roots:Roots) {
         append(&full,..arguments)
         clear(&r.out);clear(&r.err)
         // A fetch nobody asked for never opens a window of the credential manager.
-        environment:=[]string{"GIT_TERMINAL_PROMPT=0","LC_ALL=C","GIT_EDITOR=true","GCM_INTERACTIVE=never"}
-        if r.operation!=.Fetch {environment=environment[:3]}
-        process,error:=platform.process_start(p,{command=full[:],working_directory=folder,environment=environment})
-        if error!=.None {
+        settings:=[]string{"GIT_TERMINAL_PROMPT=0","LC_ALL=C","GIT_EDITOR=true","GCM_INTERACTIVE=never"}
+        if r.operation!=.Fetch {settings=settings[:3]}
+        inherited,_:=os.environ(context.temp_allocator)
+        environment:=slice.concatenate([][]string{inherited,settings},context.temp_allocator)
+        process,error:=subprocess.start({command=full[:],working_dir=folder,env=environment},pipes=.Separate)
+        if error!=nil {
             if r.operation==.Check {r.checked,r.available=true,false;r.operation=.None;return}
-            fail(r,p,"Git could not be started")
+            fail(r,"Git could not be started")
             return
         }
         r.process=process
@@ -259,44 +263,43 @@ push_command :: proc(r:^Repository) -> []string {
 
 // Reads what the command that runs wrote. Once it exited, its output is in
 // out and err until advance, which the caller owes it.
-poll :: proc(r:^Repository,p:^platform.Platform) -> (exited:bool,code:int) {
-    if r.operation==.None || r.process==0 {return}
+poll :: proc(r:^Repository) -> (exited:bool,code:int) {
+    if r.operation==.None || r.process.pid==0 {return}
     buffer:[8192]u8
-    for stream in platform.Process_Stream {
+    for stream in subprocess.Stream {
         into:=stream==.Stdout?&r.out:&r.err
         for _ in 0..<64 {
-            count,_:=platform.process_read(p,r.process,stream,buffer[:])
+            count,_:=subprocess.read(&r.process,stream,buffer[:])
             if count==0 {break}
             if len(into)+count<=OUTPUT_LIMIT {append(into,..buffer[:count])}
         }
     }
-    exited,code=platform.process_poll(p,r.process)
-    if !exited {return}
-    for stream in platform.Process_Stream {
+    state,_:=subprocess.wait(&r.process,0)
+    if !state.exited {return}
+    for stream in subprocess.Stream {
         into:=stream==.Stdout?&r.out:&r.err
         for {
-            count,_:=platform.process_read(p,r.process,stream,buffer[:])
+            count,_:=subprocess.read(&r.process,stream,buffer[:])
             if count==0 {break}
             if len(into)+count<=OUTPUT_LIMIT {append(into,..buffer[:count])}
         }
     }
-    platform.process_release(p,r.process)
-    r.process=0
-    return
+    subprocess.release(&r.process)
+    return true,state.exit_code
 }
 
 // After the command of a step exited with code: reads what it left and
 // starts the next one, or ends the operation.
-advance :: proc(r:^Repository,p:^platform.Platform,roots:Roots,code:int) {
-    if !step_done(r,p,roots,code) {return}
+advance :: proc(r:^Repository,roots:Roots,code:int) {
+    if !step_done(r,roots,code) {return}
     r.step+=1
     if r.step>=steps(r) {end(r);return}
-    next(r,p,roots)
+    next(r,roots)
 }
 
 // Reads what a step left. False when the operation ended here.
 @(private)
-step_done :: proc(r:^Repository,p:^platform.Platform,roots:Roots,code:int) -> bool {
+step_done :: proc(r:^Repository,roots:Roots,code:int) -> bool {
     out:=string(r.out[:])
     #partial switch r.operation {
     case .Load,.Fetch:
@@ -323,7 +326,7 @@ step_done :: proc(r:^Repository,p:^platform.Platform,roots:Roots,code:int) -> bo
             base.text_set(r.root[:],len(lines)>0?lines[0]:"")
             base.text_set(r.prefix[:],len(lines)>1?strings.trim_space(lines[1]):"")
         case 1:
-            if code!=0 {fail(r,p,"Git could not read the changes of the project");return false}
+            if code!=0 {fail(r,"Git could not read the changes of the project");return false}
             status_read(r,out)
         case 2:
             clear(&r.history)
@@ -381,10 +384,10 @@ ended :: proc(r:^Repository) -> (operation:Operation,failed:bool) {
 }
 
 @(private)
-fail :: proc(r:^Repository,p:^platform.Platform,message:string) {
+fail :: proc(r:^Repository,message:string) {
     base.text_set(r.error[:],message)
     r.operation,r.step=.None,0
-    if r.process!=0 {platform.process_release(p,r.process);r.process=0}
+    subprocess.release(&r.process)
 }
 
 // The first line git wrote that says what went wrong, after what the editor says.

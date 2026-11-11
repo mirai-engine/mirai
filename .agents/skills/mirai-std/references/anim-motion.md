@@ -12,6 +12,9 @@ temporal state. The world integration and the authoring are in
   in the frame of the character (its place on the ground and its facing, -Z forward), normalized per
   type so that each type weighs what its weight says. The present and the past say what the body
   did, the future what it is asked for: a body held still that is asked to walk is not a walk.
+  A `Match_Clip` with `mirror` has the rows of its pose reflected by `pose_mirror` with the pairs
+  of its `Match_Rig`, so one clip gives both sides. `match_query_pose` gives the pose lanes of a
+  query from the pose a rig has and the one before, for a search with no row playing.
   `match_database_build` is a load transaction: it rejects with `Memory_Limit` a database larger
   than its cap (`match_database_bytes` estimates it before allocating) and leaves the database empty
   on any error.
@@ -21,12 +24,13 @@ temporal state. The world integration and the authoring are in
   never along the noise of its supports. A loop continues in its following passes and one without a
   loop retains its ends.
 - A `Match_Clip` is one clip or a blended sample of up to `MATCH_BLEND`: the clips with a weight
-  (`match_clip_duration` refuses those that do not loop, last more than a row apart, or weights out
-  of 0..1) are sampled at the same share of their durations and mixed as the program mixes the
-  leaves of a group (`bones_blend`, then `bone_transform` from the rest), so its rows, speed and
-  travel are those of the blended pose. Its `Match_Range` keeps the clips and the weights as
-  shares of 1, which the player plays together. Its `rates`, when set, replace the
-  `min_rate`..`max_rate` of the request for that range (`match_range_rates`).
+  (`match_clip_duration` refuses those that do not loop, or weights out of 0..1) are sampled at the
+  same share of their durations and mixed as the program mixes the leaves of a group
+  (`bones_blend`, then `bone_transform` from the rest), over the mean of their durations by weight
+  as a `Weighted` group lasts, so its rows, speed and travel are those of the blended pose. Its
+  `Match_Range` keeps the clips and the weights as shares of 1, which the player plays together.
+  Its `rates`, when set, replace the `min_rate`..`max_rate` of the request for that range
+  (`match_range_rates`).
 - `match_trajectory` predicts the trajectory with the acceleration and braking of the locomotion and
   the turn at its rate: the same numbers that move the body. A wall normal takes out of the
   velocity and of the desired one what goes into the wall, so a body pushing against it stands and
@@ -116,6 +120,9 @@ rig; `fraction` is the part of the remaining time that this step consumes.
   - It turns the pelvis and distributes the inverse compensation over the spine.
   - The stride scales the projection of each foot with respect to its own hip over the direction of
     travel, keeping the separation that comes from the pelvis.
+  - No leg ends more extended than the clip has it: the pelvis drops along `up` by the least that
+    brings every warped foot within its source hip-to-foot distance, and a foot still beyond it
+    (a stride that no height reaches) is pulled back toward its hip.
   - The pole of the knee comes from the source flexion plane ([common pole](anim.md)), without
     configuring another plane.
   - It keeps the lengths and the world rotation of each foot after the pelvis turn.

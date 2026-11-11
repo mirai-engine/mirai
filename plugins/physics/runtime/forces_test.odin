@@ -90,24 +90,25 @@ area_requests_push_by_the_weight_of_their_volume_its_range_and_its_noise :: proc
         range:Weight_Range,
         axis:int,
         gained:[2]f32, // m/s in the tick, on axis
+        blend:f32,
     }
     cases:=[?]Case{
         // Under a plane at y=1 whose weight rises over 1 m: 0.5 and 0.1 of 120 N on 2 kg.
-        {"a plane along a direction",volume.plane(blend=1),{position={0,1,0}},120,{1,0,0},.Linear,{},0,{0.5,0.1}},
+        {"a plane along a direction",volume.plane(),{position={0,1,0}},120,{1,0,0},.Linear,{},0,{0.5,0.1},1},
         // Away from a plane is along its up; the same weights squared.
-        {"a plane away",volume.plane(blend=1),{position={0,1,0}},120,{},.Squared,{},1,{0.25,0.01}},
+        {"a plane away",volume.plane(),{position={0,1,0}},120,{},.Squared,{},1,{0.25,0.01},1},
         // A plane turned on its side holds only what is under it: +X of x=1.
-        {"a turned plane",volume.plane(),{position={1,0,0},rotation=mm.quat_axis_angle({0,0,1},0.5*mm.PI)},120,{0,0,1},.Linear,{},2,{0,1}},
+        {"a turned plane",volume.plane(),{position={1,0,0},rotation=mm.quat_axis_angle({0,0,1},0.5*mm.PI)},120,{0,0,1},.Linear,{},2,{0,1},0},
         // The whole of a range of one weight, wherever in the sphere.
-        {"a range",volume.sphere(5,blend=5),{position={1,0.5,0}},120,{1,0,0},.Linear,{0.25,0.25},0,{0.25,0.25}},
+        {"a range",volume.sphere(5),{position={1,0.5,0}},120,{1,0,0},.Linear,{0.25,0.25},0,{0.25,0.25},5},
         // A box of half 1 scaled by 2 in x, without blend: whole inside, nothing outside.
-        {"a scaled box",volume.box({0.5,1,1}),{position={-0.5,0.5,0},rotation=1,scale={2,1,1}},120,{1,0,0},.Linear,{},0,{1,0}},
+        {"a scaled box",volume.box({0.5,1,1}),{position={-0.5,0.5,0},rotation=1,scale={2,1,1}},120,{1,0,0},.Linear,{},0,{1,0},0},
         // Away from the center of a sphere, pulled in by a negative strength.
-        {"a pull",volume.sphere(1),{position={0,1.2,0}},-120,{},.Linear,{},1,{1,0}},
+        {"a pull",volume.sphere(1),{position={0,1.2,0}},-120,{},.Linear,{},1,{1,0},0},
     }
     for c in cases {
         before:=speeds(w,bodies,c.axis)
-        apply_area(&f.requests,c.area,c.pose,c.strength,c.along,falloff=c.falloff,range=c.range)
+        apply_area(&f.requests,c.area,c.pose,c.strength,c.along,blend=c.blend,falloff=c.falloff,range=c.range)
         physics_test_step(&f)
         gained:=speeds(w,bodies,c.axis)-before
         testing.expectf(t,abs(gained[0]-c.gained[0])<2e-3 && abs(gained[1]-c.gained[1])<2e-3,"%s: gained %v, not %v",c.name,gained,c.gained)
@@ -133,6 +134,7 @@ area_requests_push_by_the_weight_of_their_volume_its_range_and_its_noise :: proc
     apply_area(&f.requests,volume.sphere(5),{position={nan,0,0}},10)
     apply_area(&f.requests,volume.sphere(5),{},nan)
     apply_area(&f.requests,volume.sphere(5),{},10,{nan,0,0})
+    apply_area(&f.requests,volume.sphere(5),{},10,blend=nan)
     apply_area(&f.requests,volume.Volume{shape=volume.Volume_Shape(9)},{},10)
     apply_area(&f.requests,volume.sphere(5),{},10,velocity_change=true)
     physics_test_step(&f)
@@ -140,37 +142,38 @@ area_requests_push_by_the_weight_of_their_volume_its_range_and_its_noise :: proc
     testing.expect_value(t,speeds(w,bodies),[2]f32{})
 }
 
+@(private) @(test_world) Field_World :: struct {
+    using world:Test_World,
+    fields:core.Table(Force_Field),
+    volumes:core.Table(volume.Volume),
+    worlds:core.Table(core.World_Transform),
+    requests:Body_Requests,
+}
+
 // A Force_Field asks, each tick, for the area of the Volume of its entity where the entity is: its
 // direction turns with the entity, and one that is off or without force asks for nothing.
 @(test)
 a_force_field_pushes_in_the_volume_of_its_entity :: proc(t:^testing.T) {
-    Field_World :: struct {
-        using world:core.Test_World,
-        fields:core.Table(Force_Field),
-        volumes:core.Table(volume.Volume),
-        worlds:core.Table(core.World_Transform),
-        requests:Body_Requests,
-    }
     w:Field_World
-    if !core.test_world_init(t,&w,test_types) {return}
-    defer core.test_world_destroy(&w)
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
     turn:=mm.quat_axis_angle({0,1,0},0.5*mm.PI)
     lift,idle:=core.create(&w.entities),core.create(&w.entities)
     config:=FORCE_FIELD_DEFAULT
-    config.force,config.along,config.falloff_range,config.filter.objects=10,{0,0,-2},{0.5,1},4
+    config.force,config.along,config.blend,config.falloff_range,config.filter.objects=10,{0,0,-2},1,{0.5,1},4
     core.add(&w.fields,lift,config)
-    core.add(&w.volumes,lift,volume.box({1,2,3},blend=1))
+    core.add(&w.volumes,lift,volume.box({1,2,3}))
     core.add(&w.worlds,lift,core.World_Transform{transform={{3,4,5},turn,{2,1,0.5}}})
     core.add(&w.fields,idle,FORCE_FIELD_DEFAULT)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     step :: proc(w:^Field_World,time:core.Time) {
-        force_fields_step(core.read(&w.fields),core.read(&w.volumes),core.read(&w.worlds),&w.requests,time)
+        force_fields_step(core.read(&w.fields),core.read(&w.volumes),core.read(&w.worlds),{},{},&w.requests,time)
     }
     step(&w,{playing=true,dt=0.25})
     if !testing.expect_value(t,len(w.requests.queue.items),1) {return}
     request:=w.requests.queue.items[0]
     testing.expect_value(t,request.kind,Body_Request_Kind.Area_Force)
-    testing.expect_value(t,request.area,volume.box({1,2,3},blend=1))
+    testing.expect(t,request.area==volume.box({1,2,3}) && request.blend==1)
     testing.expect(t,request.position==[3]f32{3,4,5} && request.rotation==turn && request.scale==[3]f32{2,1,0.5})
     testing.expectf(t,linalg.length(request.linear-[3]f32{-1,0,0})<1e-5,"its forward, a quarter turn to the left: %v",request.linear)
     testing.expect(t,request.strength==10 && request.falloff_range==Weight_Range{0.5,1} && request.filter.objects==4)
@@ -178,7 +181,7 @@ a_force_field_pushes_in_the_volume_of_its_entity :: proc(t:^testing.T) {
     step(&w,{playing=false,dt=0.25})
     testing.expect_value(t,len(w.requests.queue.items),0)
     core.disable(&w.fields,lift)
-    core.test_world_settle(&w)
+    test_world_settle(&w)
     step(&w,{playing=true,dt=0.25})
     testing.expect_value(t,len(w.requests.queue.items),0)
 }

@@ -12,8 +12,9 @@ import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
 
+@(test_world,editor="Ai_Context_Test_Editor")
 Ai_Context_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     time:core.Time,
 }
@@ -22,7 +23,7 @@ Ai_Context_Test_Editor :: struct {api:Api}
 
 // The World_Info of Ai_Context_Test_World with what a session over it holds of the editor.
 ai_context_test_info :: proc(t:^testing.T) -> (info:core.World_Info,ok:bool) {
-    return core.test_info(t,Ai_Context_Test_World,core.Test_None,Ai_Context_Test_Editor,test_types)
+    return test_info(t,Ai_Context_Test_World)
 }
 
 @(test)
@@ -39,7 +40,7 @@ ai_context_continues_project_chats_and_passes_instructions_skills_and_live_play 
     testing.expect(t,os.write_entire_file(tool,"")==nil)
     info,described:=ai_context_test_info(t)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world,live:Ai_Context_Test_World
     defer core.world_destroy(&info,.World,&world);defer core.world_destroy(&info,.World,&live)
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator) && core.world_init(&info,.World,&live,context.allocator)) {return}

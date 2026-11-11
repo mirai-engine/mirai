@@ -17,8 +17,6 @@ import "mirai:std/serial"
 //   particle    Particle_Info, one row
 //   parameters  Particle_Parameter: values for its Vfx program, by name
 //   hidden      Particle_Field: fields an instance does not show
-//   resources   Particle_Resource: what the resources of its program read
-//               when an instance binds nothing else, by name
 //
 // A field of an instance is named by its path in Particle_Info: field names
 // and array indices joined by dots ("lifetime", "colors.1",
@@ -26,7 +24,7 @@ import "mirai:std/serial"
 // paths an instance can change, each a value of at most PARTICLE_VALUE_BYTES;
 // text fields (the program) are of the effect alone.
 
-VERSION :: 3
+VERSION :: 4
 PARTICLE_BURSTS :: 4
 PARTICLE_CURVE_KEYS :: 8
 PARTICLE_VALUE_BYTES :: 16
@@ -39,13 +37,6 @@ Particle_Blend :: enum u32 {Additive,Alpha}
 Particle_Collision :: enum u32 {None,World}
 Particle_Event :: enum u32 {None,Death,Collision}
 
-// What a Mesh particle turns its mesh about. Random: an axis of each particle
-// of its own. The others give it a frame, in the space of the simulation:
-// Entity, its axes; Camera_Position, X toward the camera and Y as near the
-// up of the world as it can; Camera_Plane, X against the forward of the
-// camera and Y along its up.
-Particle_Facing :: enum u32 {Random,Entity,Camera_Position,Camera_Plane}
-
 // Particles started at once, when the cycle reaches time. cycles above one
 // repeat it every interval seconds.
 Particle_Burst :: struct {
@@ -55,7 +46,7 @@ Particle_Burst :: struct {
     interval:f32 `mirai:"min=0,unit=s"`,
 }
 
-// A value over the life of a particle, or over the cycle of an effect:
+// A value over the life of a particle:
 // piecewise linear between keys at ascending times from 0 to 1. Keys past the
 // last one used repeat it at time 1.
 Particle_Curve :: struct {
@@ -79,12 +70,10 @@ Particle_Info :: struct {
     prewarm:bool,                             // a looping instance starts as if it had run a whole life
     max_particles:u32,                        // alive at once; 0: what the rate, the bursts and the lifetime need
     rate:f32 `mirai:"min=0,unit=1/s"`,
-    rate_over_cycle:Particle_Curve,           // multiplies rate along the cycle
     rate_over_distance:f32 `mirai:"min=0,unit=1/m"`, // per metre the entity travels
     bursts:[PARTICLE_BURSTS]Particle_Burst,
     shape:Particle_Shape,
     shape_size:[3]f32 `mirai:"min=0,unit=m"`, // radius in x, half extents of a box, half length of a line
-    surface_mesh:base.Asset_Id,               // of a Surface or Bones shape, where the entity is, in its bind pose; none: what the entity draws
     shape_angle:f32 `mirai:"angle,min=0"`,    // of a cone, from its axis
     shell:f32 `mirai:"min=0,max=1"`,          // 0: from the volume of the shape, 1: from its surface
     lifetime:[2]f32 `mirai:"min=0,unit=s"`,   // each particle takes a value between both
@@ -108,7 +97,7 @@ Particle_Info :: struct {
     attractor_strength:f32 `mirai:"unit=m/s²"`,
     collision:Particle_Collision,             // World: against the traced scene
     bounce:f32 `mirai:"min=0,max=1"`,
-    friction:f32 `mirai:"min=0,max=1"`,
+    friction:f32 `mirai:"min=0,max=1"`,       // tangent speed lost per normal speed a surface stops
     collision_life:f32 `mirai:"min=0,max=1"`, // share of its life a particle loses per hit
     render:Particle_Render,
     blend:Particle_Blend,
@@ -121,10 +110,6 @@ Particle_Info :: struct {
     sort:bool,                                // blended particles drawn back to front (2048 at most)
     material:base.Asset_Id,                   // its base color texture is the flipbook; none: a soft puff
     mesh:base.Asset_Id,                       // of Mesh particles; none: a cube
-    facing:Particle_Facing,                   // Mesh: the frame its mesh turns in
-    spin_axis:[3]f32,                         // Mesh: what rotation and spin turn it about in the frame of facing; zeros: X. Random ignores it
-    mesh_rotation:[4]f32,                     // Mesh: a quaternion (x y z w) the mesh takes before rotation; zeros: none
-    mesh_scale:[3]f32 `mirai:"min=0"`,        // Mesh: of the mesh on each axis, times size; zeros: 1 on each
     stretch:f32 `mirai:"min=0,unit=s"`,       // Velocity: seconds of motion a sprite spans
     soft:f32 `mirai:"min=0,unit=m"`,          // a sprite fades over this distance into what is behind it
     flipbook:[2]u32,                          // columns and rows
@@ -141,7 +126,7 @@ Particle_Info :: struct {
 PARTICLE_CURVE_ONE :: Particle_Curve{values={1,1,1,1,1,1,1,1},times={0,1,1,1,1,1,1,1}}
 
 PARTICLE_DEFAULTS :: Particle_Info{
-    duration=2,rate=20,rate_over_cycle=PARTICLE_CURVE_ONE,
+    duration=2,rate=20,
     shape=.Cone,shape_size={0.1,0.1,0.1},shape_angle=0.35,
     lifetime={1.5,2},speed={1,2},size={0.2,0.35},colors={{1,1,1,1},{1,1,1,1}},intensity=1,emission_mode=.Relative,
     blend=.Alpha,lit=true,light_intensity=100,light_range=4,soft=0.3,flipbook={1,1},
@@ -153,14 +138,6 @@ PARTICLE_DEFAULTS :: Particle_Info{
 }
 
 Particle_Field :: struct {name:[PARTICLE_NAME_BYTES]u8 `mirai:"text"`}
-
-// What a resource of the program of the effect reads, by its name, when an
-// instance binds nothing else (vfx.Particle_Bindings): a surface, the
-// triangles of a mesh where the entity is.
-Particle_Resource :: struct {
-    name:[PARTICLE_NAME_BYTES]u8 `mirai:"text"`,
-    mesh:base.Asset_Id,
-}
 
 // A value for a parameter of the Vfx program of the effect, by its name.
 Particle_Parameter :: struct {
@@ -176,7 +153,6 @@ Particle_Desc :: struct {
     info:Particle_Info,
     parameters:[]Particle_Parameter,
     hidden:[]Particle_Field,
-    resources:[]Particle_Resource,
     source:^asset.Import_Info, // of an effect an import wrote; nil for one made here
 }
 
@@ -184,12 +160,11 @@ Particle_View :: struct {
     info:^Particle_Info,
     parameters:[]Particle_Parameter,
     hidden:[]Particle_Field,
-    resources:[]Particle_Resource,
 }
 
 particle_document :: proc(doc:^asset.Document,types:^asset.Types,desc:Particle_Desc,allocator:=context.allocator) -> asset.Error {
     info:=desc.info
-    if !particle_check({info=&info,parameters=desc.parameters,hidden=desc.hidden,resources=desc.resources}) {return .Invalid}
+    if !particle_check({info=&info,parameters=desc.parameters,hidden=desc.hidden}) {return .Invalid}
     asset.document_init(doc,PARTICLE_KIND,desc.id,allocator)
     doc.kind_version=VERSION
     error:=particle_tables(doc,types,&info,desc)
@@ -202,7 +177,6 @@ particle_tables :: proc(doc:^asset.Document,types:^asset.Types,info:^Particle_In
     asset.document_put_row(doc,types,"particle",info) or_return
     asset.document_put(doc,types,"parameters",desc.parameters) or_return
     asset.document_put(doc,types,"hidden",desc.hidden) or_return
-    asset.document_put(doc,types,"resources",desc.resources) or_return
     if desc.source!=nil {asset.import_put(doc,types,desc.source) or_return}
     return .None
 }
@@ -227,7 +201,6 @@ particle_view :: proc(a:^asset.Asset,types:^asset.Types) -> (view:Particle_View,
     view.info=asset.asset_row(a,types,"particle",Particle_Info,whole=true) or_return
     view.parameters=table_rows(a,types,"parameters",Particle_Parameter) or_return
     view.hidden=table_rows(a,types,"hidden",Particle_Field) or_return
-    view.resources=table_rows(a,types,"resources",Particle_Resource) or_return
     if !particle_check(view) {return {},.Corrupt}
     return view,.None
 }
@@ -247,7 +220,6 @@ particle_validate :: proc(view:Particle_View) -> Particle_Problem {
     if field,ok:=particle_finite(p);!ok {return {field,"Use finite numbers"}}
     if p.shape>max(Particle_Shape) {return {"shape","Use Point, Sphere, Hemisphere, Cone, Box, Circle, Line, Surface or Bones"}}
     if p.render>max(Particle_Render) {return {"render","Use Billboard, Velocity, Horizontal, Ribbon or Mesh"}}
-    if p.facing>max(Particle_Facing) {return {"facing","Use Random, Entity, Camera_Position or Camera_Plane"}}
     if p.blend>max(Particle_Blend) {return {"blend","Use Additive or Alpha"}}
     if p.collision>max(Particle_Collision) {return {"collision","Use None or World"}}
     if p.trigger>max(Particle_Event) {return {"trigger","Use None, Death or Collision"}}
@@ -261,7 +233,6 @@ particle_validate :: proc(view:Particle_View) -> Particle_Problem {
     if p.shell<0 || p.shell>1 {return {"shell","Use a value from 0 to 1"}}
     if p.lifetime[0]<0 || p.lifetime[1]<0 {return {"lifetime","Use lifetimes of zero or more seconds"}}
     if p.size[0]<0 || p.size[1]<0 {return {"size","Use sizes of zero or more"}}
-    for scale in p.mesh_scale {if scale<0 {return {"mesh_scale","Use scales of zero or more"}}}
     if p.intensity<0 {return {"intensity","Use an intensity of zero or more"}}
     if p.light_intensity<0 || p.light_range<0 || p.light_radius<0 {return {"light_intensity","Use zero or more for light_intensity, light_range and light_radius"}}
     if p.drag<0 || p.noise_frequency<0 || p.stretch<0 || p.soft<0 || p.flipbook_speed<0 {return {"drag","Use zero or more for drag, noise_frequency, stretch, soft and flipbook_speed"}}
@@ -269,22 +240,12 @@ particle_validate :: proc(view:Particle_View) -> Particle_Problem {
     for burst in p.bursts {
         if burst.time<0 || burst.interval<0 {return {"bursts","Use burst times and intervals of zero or more seconds"}}
     }
-    for curve in ([2]struct {name:string,times:[PARTICLE_CURVE_KEYS]f32}{{"rate_over_cycle",p.rate_over_cycle.times},{"size_over_life",p.size_over_life.times}}) {
-        if !particle_times_valid(curve.times) {return {curve.name,"Use key times that go up from 0 to 1"}}
-    }
+    if !particle_times_valid(p.size_over_life.times) {return {"size_over_life","Use key times that go up from 0 to 1"}}
     if !particle_times_valid(p.color_over_life.times) {return {"color_over_life","Use key times that go up from 0 to 1"}}
-    for value in p.rate_over_cycle.values {if value<0 {return {"rate_over_cycle","Use multipliers of zero or more"}}}
     for value in p.size_over_life.values {if value<0 {return {"size_over_life","Use sizes of zero or more"}}}
     if problem:=particle_parameters_validate(view.parameters);problem.message!="" {return problem}
     for &hidden in view.hidden {
         if name:=serial.text_field(hidden.name[:]);name=="" || len(name)==len(hidden.name) {return {"hidden","Name each hidden field in fewer than 64 bytes"}}
-    }
-    for &resource,at in view.resources {
-        name:=serial.text_field(resource.name[:])
-        if name=="" || len(name)==len(resource.name) {return {"resources","Name each resource as its program declares it, in fewer than 64 bytes"}}
-        for &other in view.resources[:at] {
-            if other.name==resource.name {return {"resources",fmt.tprintf("Give resource %q once",name)}}
-        }
     }
     return {}
 }
@@ -297,17 +258,6 @@ particle_times_valid :: proc(times:[PARTICLE_CURVE_KEYS]f32) -> bool {
         if time<0 || time>1 || at>0 && time<times[at-1] {return false}
     }
     return true
-}
-
-// What the zeros of the mesh fields of an effect stand for: spin_axis X,
-// mesh_rotation none and mesh_scale 1 on each axis; the axis and the
-// quaternion of length one.
-particle_mesh_placement :: proc(spin_axis:[3]f32,mesh_rotation:[4]f32,mesh_scale:[3]f32) -> (axis:[3]f32,rotation:[4]f32,scale:[3]f32) {
-    axis,rotation,scale=spin_axis,mesh_rotation,mesh_scale
-    if length:=axis.x*axis.x+axis.y*axis.y+axis.z*axis.z;length>1e-12 {axis/=math.sqrt(length)} else {axis={1,0,0}}
-    if length:=rotation.x*rotation.x+rotation.y*rotation.y+rotation.z*rotation.z+rotation.w*rotation.w;length>1e-12 {rotation/=math.sqrt(length)} else {rotation={0,0,0,1}}
-    if scale=={} {scale={1,1,1}}
-    return
 }
 
 // The first field of the effect with a number that is not finite.
@@ -370,14 +320,6 @@ particle_parameter_validate :: proc(parameter:^Particle_Parameter) -> Particle_P
 table_rows :: proc(a:^asset.Asset,types:^asset.Types,name:string,$T:typeid) -> (rows:[]T,error:asset.Error) {
     if _,found:=asset.asset_table(a,name);!found {return nil,.None}
     return asset.asset_rows(a,types,name,"",T)
-}
-
-// The source an effect gives a resource of its program; nil without one.
-particle_resource_find :: proc(resources:[]Particle_Resource,name:string) -> ^Particle_Resource {
-    for &resource in resources {
-        if serial.text_field(resource.name[:])==name {return &resource}
-    }
-    return nil
 }
 
 // The stored value of a program parameter of the effect; nil without one.

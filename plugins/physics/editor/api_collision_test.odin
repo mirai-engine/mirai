@@ -10,11 +10,11 @@ import phys "plugins:physics/runtime"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-@(private="file") Collision_Test_Filter :: struct {filter:phys.Query_Filter,unchanged:u32}
-@(private="file") Collision_Test_Nested :: struct {region:Collision_Test_Filter}
-@(private="file") Collision_Test_Wrong :: struct {layers,mask:u32}
-@(private="file") Collision_Test_World :: struct {
-    using world:core.Test_World,
+@(private) Collision_Test_Filter :: struct {filter:phys.Query_Filter,unchanged:u32}
+@(private) Collision_Test_Nested :: struct {region:Collision_Test_Filter}
+@(private) Collision_Test_Wrong :: struct {layers,mask:u32}
+@(test_world,editor="Collision_Test_Editor") @(private) Collision_Test_World :: struct {
+    using world:Test_World,
     ids:core.Table(core.Id),
     colliders:core.Table(phys.Collider),
     filters:core.Table(Collision_Test_Filter),
@@ -23,13 +23,13 @@ import "mirai:std/serial"
     settings:phys.Collision_Settings,
 }
 
-@(private="file") Collision_Test_Editor :: struct {api:editor.Api}
+@(private) Collision_Test_Editor :: struct {api:editor.Api}
 
 @(test)
 collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step :: proc(t:^testing.T) {
-    info,described:=core.test_info(t,Collision_Test_World,core.Test_None,Collision_Test_Editor,test_types)
+    info,described:=test_info(t,Collision_Test_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     world:Collision_Test_World
     if !testing.expect(t,core.world_init(&info,.World,&world,context.allocator)) {return}
     defer core.world_destroy(&info,.World,&world)
@@ -42,7 +42,7 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     }
     named_types:=[2]core.Named_Type_Info{{type=phys.Collision_Category,name="Collision_Category",prefix="CATEGORY_",limit=32},{type=phys.Collision_Preset,name="Collision_Preset",prefix="PRESET_",limit=256}}
     info.names,info.named_types=names[:],named_types[:]
-    core.test_info_index(&info)
+    test_info_index(&info)
     entity,held:=core.create(&world.entities),core.create(&world.entities)
     alone:=core.create(&world.entities)
     collider:=phys.COLLIDER_DEFAULT;collider.group=held;collider.friction=.8

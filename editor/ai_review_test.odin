@@ -13,12 +13,13 @@ import "mirai:core"
 import "mirai:project"
 import "mirai:std/base"
 
-@(private="file")
+@(private)
 Ai_Review_Test_Lamp :: struct {intensity:f32}
 
-@(private="file")
+@(private)
+@(test_world)
 Ai_Review_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using scene_tables:Test_Scene,
     lamps:core.Table(Ai_Review_Test_Lamp) `mirai:"name=Lamp"`,
 }
@@ -33,8 +34,8 @@ Ai_Review_Fixture :: struct {
 @(private="file")
 ai_review_test_open :: proc(t:^testing.T) -> ^Ai_Review_Fixture {
     f:=new(Ai_Review_Fixture)
-    if !core.test_world_init(t,&f.w) {free(f);return nil}
-    test_session_open(&f.edited,core.test_world_ref(&f.w))
+    if !test_world_init(t,&f.w) {free(f);return nil}
+    test_session_open(&f.edited,test_world_ref(&f.w))
     f.s.ai=&f.ai
     return f
 }
@@ -43,7 +44,7 @@ ai_review_test_open :: proc(t:^testing.T) -> ^Ai_Review_Fixture {
 ai_review_test_close :: proc(f:^Ai_Review_Fixture) {
     delete(f.ai.marks)
     test_session_close(&f.edited)
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
     free(f)
 }
 
@@ -373,7 +374,7 @@ ai_scene_places_figures_on_gizmo_axes_above_the_handles_at_different_zooms :: pr
     f:=ai_review_test_open(t);if f==nil {return}
     defer ai_review_test_close(f)
     e:=ai_review_test_entity(&f.w,11)
-    ref:=core.test_world_ref(&f.w)
+    ref:=test_world_ref(&f.w)
     core.world_settle(ref)
     targets:=[1]core.Entity{e}
     f.viewport.orbit,f.viewport.size=ORBIT_DEFAULT,{1440,900}
@@ -483,8 +484,8 @@ the_document_is_edited_while_a_run_belongs_to_an_agent :: proc(t:^testing.T) {
     f:=ai_review_test_open(t);if f==nil {return}
     defer ai_review_test_close(f)
     live:Ai_Review_Test_World
-    if !core.test_world_init(t,&live) {return}
-    defer core.test_world_destroy(&live)
+    if !test_world_init(t,&live) {return}
+    defer test_world_destroy(&live)
     defer viewport_free(&f.viewport)
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
     call:=api.Call{out=&out,allocator=context.temp_allocator}

@@ -7,6 +7,7 @@ import "mirai:core"
 import audio "mirai:engine/audio"
 import inp "mirai:engine/input"
 import render "mirai:engine/render"
+import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
 import "mirai:host"
 import "mirai:platform"
@@ -98,23 +99,14 @@ World_Widget :: struct {
 
 WORLD_WIDGET_DEFAULT :: World_Widget{size={200,100},scale=0.01,facing=.Billboard,pivot=.Center,depth_test=true,preview=true}
 
-// The languages a game can be in, as the stores list them: those the fonts
-// of the engine have the glyphs of (ui.FONT_RANGES).
-Language :: enum u8 {English,Russian,Spanish,Latam_Spanish,German,French,Portuguese,Italian}
-Languages :: bit_set[Language;u16]
-
-// The code of each language: what a .strings names it by.
-LANGUAGE_CODES :: [Language]string{
-    .English="en",.Russian="ru",.Spanish="es",.Latam_Spanish="es-419",
-    .German="de",.French="fr",.Portuguese="pt-BR",.Italian="it",
-}
-
 // How the interfaces of the game are sized and what they read their texts from.
 @(storage,setting)
 UI_Settings :: struct {
     reference:[2]f32 `mirai:"min=0"`, // the size in points the interfaces are designed for: they scale to fit the window, or the part of a player; zero: one unit per point
-    languages:Languages, // the languages the game is in: a key of its .strings has a text for each
-    source:Language,     // the one its texts are written in: the first of its .strings, what a key shows where another lacks it
+    // The code of the language its texts are written in ("en"): the first
+    // of the .strings the tools write, what a key shows where another lacks
+    // it. The languages of the game are those its .strings name.
+    source:[LANGUAGE_CODE]u8 `mirai:"text"`,
     prompts:base.Asset_Id, // the images of the prompts (.prompts); none: they are drawn
     // Images of inputs that win over those of the pack: Project Settings > UI
     // shows them with the inputs the game binds.
@@ -139,26 +131,24 @@ prompt_image_find :: proc "contextless" (settings:^UI_Settings,family:ui.Prompt_
     return -1
 }
 
-UI_SETTINGS_DEFAULT :: UI_Settings{languages={.English}}
+UI_SETTINGS_DEFAULT :: UI_Settings{source={0='e',1='n'}}
+
+LANGUAGE_CODE :: 16 // bytes of the code of a language, its NUL included, as a .strings keeps it
 
 // What the player chose for the interfaces: the language they show and a
 // scale over the one that fits them. An option of the player, which the
 // options menu of the game writes and save keeps in the options of the player.
 @(storage,setting="machine")
 UI_Preferences :: struct {
-    language:Language, // the one the interfaces show
+    language:[LANGUAGE_CODE]u8 `mirai:"text"`, // the code of the one the interfaces show; empty: the one their texts are written in
     scale:f32 `mirai:"min=0.25,max=4"`, // over the one that fits the window or the part of a player
 }
 
 UI_PREFERENCES_DEFAULT :: UI_Preferences{scale=1}
 
-// What the localized texts of the interfaces show: the name_hash of the code
-// of the language the player chose, or 0 for the one they are written in.
-ui_language :: proc(settings:^UI_Settings,preferences:^UI_Preferences) -> u64 {
-    if preferences.language==settings.source {return 0}
-    codes:=LANGUAGE_CODES
-    return base.name_hash(codes[preferences.language])
-}
+// What the localized texts of the interfaces show: the code of the language
+// the player chose, as base.text finds it.
+ui_language :: proc(preferences:^UI_Preferences) -> string {return base.text_get(preferences.language[:])}
 
 // The first kinds are those of ui.Tree_Event_Kind.
 UI_Event_Kind :: enum u8 {
@@ -264,7 +254,7 @@ UI_Request :: struct {
     entity:core.Entity, // the one with the UI_Screen or the World_Widget
     node:[REQUEST_NAME_CAPACITY]u8,
     anim:[REQUEST_NAME_CAPACITY]u8,
-    item:i32,           // of a node in lists, which of its copies (ui.tree_play); -1: the first
+    item:i32,           // of a node in lists, the element of the innermost one (UI_Event.item); -1: the first
 }
 
 @(storage,queue)
@@ -528,10 +518,10 @@ gui_frame_begin :: proc(
     world:core.World_Ref,screens:^core.Table(UI_Screen,.Read),widgets:^core.Table(World_Widget,.Read),worlds:^core.Table(core.World_Transform,.Read),
     hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),meshes:^core.Table(render.Mesh_Renderer,.Read),settings:UI_Settings,preferences:UI_Preferences,time:core.Time,
     seat_state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,.Read),moves:^core.Table(inp.Move_Input,.Read),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
-    device:core.Frame_Input,cameras:^core.Table(render.Camera,.Read),exposures:^core.Table(render.Exposure,.Read),view_volumes:^core.Table(render.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),
+    device:core.Frame_Input,cameras:^core.Table(render.Camera,.Read),exposures:^core.Table(render.Exposure,.Read),view_volumes:^core.Table(render.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),
     requests:^UI_Requests,effects:^UI_Effects,sounds:^audio.Sound_Requests,gui:^Gui,app:^host.App,problems:^core.Problems,
 ) {
-    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,moves,bindings,actions,device,cameras,exposures,view_volumes,volumes,requests,effects,sounds,gui,app,problems,false)
+    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,moves,bindings,actions,device,cameras,exposures,view_volumes,volumes,sections,requests,effects,sounds,gui,app,problems,false)
 }
 
 // The preview of the editor's world, while it does not play: the
@@ -542,11 +532,11 @@ gui_preview_begin :: proc(
     world:core.World_Ref,screens:^core.Table(UI_Screen,.Read),widgets:^core.Table(World_Widget,.Read),worlds:^core.Table(core.World_Transform,.Read),
     hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),meshes:^core.Table(render.Mesh_Renderer,.Read),settings:UI_Settings,preferences:UI_Preferences,time:core.Time,
     seat_state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,.Read),moves:^core.Table(inp.Move_Input,.Read),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
-    device:core.Frame_Input,cameras:^core.Table(render.Camera,.Read),exposures:^core.Table(render.Exposure,.Read),view_volumes:^core.Table(render.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),
+    device:core.Frame_Input,cameras:^core.Table(render.Camera,.Read),exposures:^core.Table(render.Exposure,.Read),view_volumes:^core.Table(render.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),
     requests:^UI_Requests,effects:^UI_Effects,sounds:^audio.Sound_Requests,gui:^Gui,app:^host.App,problems:^core.Problems,
 ) {
     if time.playing {return}
-    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,moves,bindings,actions,device,cameras,exposures,view_volumes,volumes,requests,effects,sounds,gui,app,problems,true)
+    frame_begin(world,screens,widgets,worlds,hidden,parents,meshes,settings,preferences,time,seat_state,seats,moves,bindings,actions,device,cameras,exposures,view_volumes,volumes,sections,requests,effects,sounds,gui,app,problems,true)
 }
 
 @(private)
@@ -554,7 +544,7 @@ frame_begin :: proc(
     world:core.World_Ref,screens:^core.Table(UI_Screen,.Read),widgets:^core.Table(World_Widget,.Read),worlds:^core.Table(core.World_Transform,.Read),
     hidden:^core.Table(render.Hidden,.Read),parents:^core.Table(core.Parent,.Read),meshes:^core.Table(render.Mesh_Renderer,.Read),settings:UI_Settings,preferences:UI_Preferences,time:core.Time,
     seat_state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,.Read),moves:^core.Table(inp.Move_Input,.Read),bindings:core.Ref(inp.Input_Map),actions:core.Ref(inp.Frame_Actions),
-    device:core.Frame_Input,cameras:^core.Table(render.Camera,.Read),exposures:^core.Table(render.Exposure,.Read),view_volumes:^core.Table(render.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),
+    device:core.Frame_Input,cameras:^core.Table(render.Camera,.Read),exposures:^core.Table(render.Exposure,.Read),view_volumes:^core.Table(render.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),
     requests:^UI_Requests,effects:^UI_Effects,sounds:^audio.Sound_Requests,gui:^Gui,app:^host.App,problems:^core.Problems,preview:bool,
 ) {
     if gui==nil {return}
@@ -613,7 +603,7 @@ frame_begin :: proc(
         s.key=key
         s.input=input
         s.viewed,s.animating=false,false
-        source_bind(&s,gui,app,p,seat_state,seats,bindings,actions,cameras,exposures,view_volumes,volumes,worlds,settings,preferences,gamepad,effects,sounds)
+        source_bind(&s,gui,app,p,seat_state,seats,bindings,actions,cameras,exposures,view_volumes,{volumes,worlds,parents,sections},settings,gamepad,effects,sounds)
         if world_panels && !preview {meshes_aim(gui,app.assets,app.renderer,&app.extras,&s,p,input.ray,meshes,worlds)}
         ui.frame_begin(s.ctx,input)
         s.open=true

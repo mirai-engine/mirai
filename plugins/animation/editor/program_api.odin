@@ -233,9 +233,11 @@ program_modifier_profile :: proc(s:^editor.Session,call:^api.Call,world:core.Wor
     value,present:=editor.entity_get(world,entity,anim.Animation)
     if present {id=anim.animation_character(s.app.assets,value)}
     if id=={} {authoring_failure(call,"entity","Missing_Character","an Animation that plays a .character","none","The entity has no modifiers: it plays no .character",fix="Set Animation.asset to a .character (animation.character.setup makes one)");return}
-    set:anim.Character_Set
-    set,ok=character_open(s,call,id,file)
-    return set.pose,id,ok
+    // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+    set,opened:=character_open(s,call,id,file)
+    profile=set.pose
+    ok=opened
+    return
 }
 
 @(private)

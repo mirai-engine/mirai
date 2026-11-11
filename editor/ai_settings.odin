@@ -135,7 +135,7 @@ ai_connection_add :: proc(s:^Session,name,command,arguments:string) -> (provider
 ai_connection_remove :: proc(s:^Session,provider:Ai_Provider) -> string {
     m:=s.ai
     if int(provider)>=m.connection_count || m.connections[provider].agent!=.Command {return "Only agents added by their command can be removed"}
-    if ai_running_count(m)!=0 || m.login || m.installer!=0 || m.connection_pending.kind!=.None {return "Wait for the current operation to finish"}
+    if ai_running_count(m)!=0 || m.login || m.installer.pid!=0 || m.connection_pending.kind!=.None {return "Wait for the current operation to finish"}
     // Workers name their connection by its place, which the ones after it lose.
     ai_workers_stop(s,provider,all=true)
     for &worker in m.workers {worker.provider=AI_CODEX}

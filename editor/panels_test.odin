@@ -10,11 +10,12 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-@(private="file") Panel_Test_Exposure :: struct {compensation:f32 `mirai:"unit=EV"`,auto:bool}
-@(private="file") Panel_Test_Look :: struct {sky:[3]f32 `mirai:"color"`,tint:[3]f32 `mirai:"color"`,group:i32,exposure:Panel_Test_Exposure,secret:f32 `mirai:"hidden"`}
-@(private="file") @(storage,setting) Panel_Test_Quality :: struct {level:i32 `mirai:"min=0,max=3"`,sharp:bool}
-@(private="file") Panel_Test_World :: struct {
-    using world:core.Test_World,
+@(private) Panel_Test_Exposure :: struct {compensation:f32 `mirai:"unit=EV"`,auto:bool}
+@(private) Panel_Test_Look :: struct {sky:[3]f32 `mirai:"color"`,tint:[3]f32 `mirai:"color"`,group:i32,exposure:Panel_Test_Exposure,secret:f32 `mirai:"hidden"`}
+@(private) @(storage,setting) Panel_Test_Quality :: struct {level:i32 `mirai:"min=0,max=3"`,sharp:bool}
+@(private) PANEL_TEST_QUALITY_DEFAULT :: Panel_Test_Quality{level=1}
+@(test_world) @(private) Panel_Test_World :: struct {
+    using world:Test_World,
     ids:core.Table(core.Id),
     looks:core.Table(Panel_Test_Look) `mirai:"name=Look"`,
     quality:Panel_Test_Quality `mirai:"name=Quality"`,
@@ -29,20 +30,15 @@ import "mirai:std/serial"
 }
 
 @(private="file")
-panel_test_types :: proc(types:^[dynamic]core.Test_Type) {
-    append(types,core.test_type(Panel_Test_Quality,default=proc(dst:^Panel_Test_Quality) {dst^={level=1}}))
-}
-
-@(private="file")
 panel_test_init :: proc(t:^testing.T,f:^Panel_Test_Fixture) -> bool {
-    if !core.test_world_init(t,&f.world,panel_test_types) {return false}
+    if !test_world_init(t,&f.world) {return false}
     for &e,i in f.entities {
         e=core.create(&f.world.entities)
         core.add(&f.world.ids,e,{value=base.Entity_Id(0x10*(i+1))})
         core.add(&f.world.looks,e,{sky={1,1,1},group=i==1?2:1})
     }
-    core.test_world_settle(&f.world)
-    f.session=Session{info=core.test_world_info(&f.world),edit_world=&f.world,edits=&f.edits,selection=&f.selection,panels=&f.panels}
+    test_world_settle(&f.world)
+    f.session=Session{info=test_world_info(&f.world),edit_world=&f.world,edits=&f.edits,selection=&f.selection,panels=&f.panels}
     history.edits_reset(&f.edits,edited_world(&f.session))
     return true
 }
@@ -52,7 +48,7 @@ panel_test_free :: proc(f:^Panel_Test_Fixture) {
     history.edits_free(&f.edits)
     panels_free(&f.panels)
     delete(f.selection.entities)
-    core.test_world_destroy(&f.world)
+    test_world_destroy(&f.world)
 }
 
 @(private="file")
@@ -202,7 +198,7 @@ panel_buttons_set_their_fields_as_one_step :: proc(t:^testing.T) {
     late:=core.create(&f.world.entities)
     core.add(&f.world.ids,late,{value=0x40})
     core.add(&f.world.looks,late,{group=1})
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     history.edits_flush(&f.edits,w,&f.selection)
     _,problem=panel_press(s,p,0)
     testing.expect_value(t,problem,"")
@@ -276,7 +272,7 @@ panel_restore_puts_back_what_it_changed :: proc(t:^testing.T) {
     late:=core.create(&f.world.entities)
     core.add(&f.world.ids,late,{value=0x40})
     core.add(&f.world.looks,late,{tint={0,1,0},group=1})
-    core.test_world_settle(&f.world)
+    test_world_settle(&f.world)
     history.edits_flush(&f.edits,w,&f.selection)
     for button in 0..<2 {
         _,problem=panel_press(s,p,button)

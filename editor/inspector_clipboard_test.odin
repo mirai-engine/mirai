@@ -15,8 +15,9 @@ Clipboard_Test_Lamp :: struct {
     mesh:base.Asset_Id,
 }
 
+@(test_world)
 Clipboard_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     ids:core.Table(core.Id),
     transforms:core.Table(core.Transform),
     parents:core.Table(core.Parent),
@@ -39,10 +40,10 @@ clipboard_test_set :: proc(user:rawptr,text:string) {
 @(test)
 inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) {
     world:Clipboard_Test_World
-    if !core.test_world_init(t,&world) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     LAMP :: 3
-    info:=core.test_world_info(&world)
+    info:=test_world_info(&world)
     a,b,c:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
     for e,i in ([3]core.Entity{a,b,c}) {
         core.add(&world.ids,e,core.Id{base.Entity_Id(i+1)})
@@ -50,7 +51,7 @@ inspector_copies_and_pastes_values_as_the_json_of_the_api :: proc(t:^testing.T) 
     }
     core.add(&world.lamps,a,Clipboard_Test_Lamp{color={1,0.5,0.25},intensity=3,target=c,mesh={7,9}})
     core.add(&world.lamps,b,Clipboard_Test_Lamp{})
-    core.test_world_settle(&world)
+    test_world_settle(&world)
 
     board:Clipboard_Test_Board
     ctx:ui.Context

@@ -93,8 +93,8 @@ cmd_build_engine :: proc(root:string,args:[]string) -> int {
     }
     mode=build.engine_mode_resolve(root,mode)
     // What has nothing to compile takes no turn.
-    if !force && c_libraries_current(root) && build.engine_current(root,mode) {return engine_report({status=.Up_To_Date,mode=mode},root)}
-    engine_release(root,"",mode,"build engine")
+    if !force && c_libraries_current(root) && build.engine_current(root,mode) {return engine_report({status=.Up_To_Date,mode=mode,folder=build.engine_paths(root,mode,context.temp_allocator).folder},root)}
+    engine_release("",build.engine_paths(root,mode,context.temp_allocator).folder,"build engine")
     lock:=build_lock(root,"build engine")
     defer workspace.lock_release(&lock)
     // ui links the FreeType library, the importer that of ufbx and the editor that of SQLite.
@@ -105,12 +105,11 @@ cmd_build_engine :: proc(root:string,args:[]string) -> int {
 // Says how the build of the engine went, in out; 0 when its binaries are there.
 engine_report :: proc(result:build.Engine_Result,root:string,out:=os.stdout) -> int {
     if !engine_shaders_report(result.shaders,out) {return 1}
-    paths:=build.engine_paths(root,result.mode,context.temp_allocator)
     mode:="dev" if result.mode==.Dev else "release"
     switch result.status {
-    case .Up_To_Date: fmt.fprintfln(out,"%s unchanged (%s).",paths.folder,mode);return 0
+    case .Up_To_Date: fmt.fprintfln(out,"%s unchanged (%s).",result.folder,mode);return 0
     case .Built:
-        fmt.fprintfln(out,"%s ready (%s, %.1f s): %d libraries compiled%s%s%s, %d copied from the shared cache%s.",paths.folder,mode,result.seconds,len(result.compiled),len(result.compiled)>0?" (":"",strings.join(result.compiled,", ",context.temp_allocator),len(result.compiled)>0?")":"",result.restored,result.programs?", the programs compiled":"")
+        fmt.fprintfln(out,"%s ready (%s, %.1f s): %d libraries compiled%s%s%s, %d copied from the shared cache%s.",result.folder,mode,result.seconds,len(result.compiled),len(result.compiled)>0?" (":"",strings.join(result.compiled,", ",context.temp_allocator),len(result.compiled)>0?")":"",result.restored,result.programs?", the programs compiled":"")
         return 0
     case .Running,.Failed:
     }
@@ -161,7 +160,7 @@ cmd_edit :: proc(root:string,args:[]string) -> int {
     if code!=0 {return code}
     if slice.contains(rest,"--headless") {layers_isolate(root)}
     command:=make([dynamic]string)
-    append(&command,build.engine_paths(root,mode).editor_program,"--project",project.path_absolute(folder))
+    append(&command,project_engine_paths(root,folder,mode).editor_program,"--project",project.path_absolute(folder))
     append(&command,..extra)
     append(&command,..rest)
     return run(root,command[:])
@@ -191,7 +190,7 @@ cmd_play :: proc(root:string,args:[]string) -> int {
     if code!=0 {return code}
     if play_runs_headless(rest) {layers_isolate(root)}
     command:=make([dynamic]string)
-    append(&command,build.engine_paths(root,mode).player_program,"--project",project.path_absolute(folder))
+    append(&command,project_engine_paths(root,folder,mode).player_program,"--project",project.path_absolute(folder))
     append(&command,..play_arguments(rest))
     return run(root,command[:])
 }
@@ -246,27 +245,28 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
     defer project.close(&p)
     // The binaries of the engine the libraries are built against.
     engine:=build.engine_mode_resolve(root,mode)
-    engine_current:=target==.Game || build.engine_current(root,engine)
+    paths:=build.project_engine(&p,engine,context.temp_allocator)
+    engine_current:=target==.Game || build.engine_current(root,engine,paths.defines)
     // A project with sources goes on: its build imports what changed among them before it finds the library current.
     if target!=.Game && engine_current && len(build.imports_roots(&p))==0 && library_current(root,&p,target,engine,mode==.Dev) {
-        _=engine_report({status=.Up_To_Date,mode=engine},root)
+        _=engine_report({status=.Up_To_Date,mode=engine,folder=paths.folder},root)
         if os.is_file(project.path(project.shader_generation(p.root,context.temp_allocator),project.SHADERS_MANIFEST,allocator=context.temp_allocator)) {
             fmt.printfln("%s unchanged.",project.shader_generation(p.root,context.temp_allocator))
         }
         output=build.target_output(&p,target,"",context.allocator)
         fmt.printfln("%s unchanged.",output)
-        session_take(root,p.root,engine)
+        session_take(p.root,paths)
         return 0,output,false
     }
-    if !engine_current {engine_release(root,p.root,engine,"build")}
-    code,output,shaders_failed=build_project_run(root,&p,target,out,mode,engine,engine_current,server)
-    if code==0 && target!=.Game {session_take(root,p.root,engine)}
+    if !engine_current {engine_release(p.root,paths.folder,"build")}
+    code,output,shaders_failed=build_project_run(root,&p,target,out,mode,paths,engine_current,server)
+    if code==0 && target!=.Game {session_take(p.root,paths)}
     return
 }
 
 // What build_project does once it has to compile, in its turn.
 @(private="file")
-build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out:string,mode,engine:Build_Mode,engine_current:bool,server:=false) -> (code:int,output:string,shaders_failed:bool) {
+build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out:string,mode:Build_Mode,engine:build.Engine_Paths,engine_current:bool,server:=false) -> (code:int,output:string,shaders_failed:bool) {
     lock:=build_lock(root,fmt.tprintf("build %v %s",target,p.root),{p.root})
     defer workspace.lock_release(&lock)
     // ui links the FreeType library, the importer that of ufbx and the editor that of SQLite.
@@ -274,9 +274,9 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
     // The libraries of a project are built against the binaries of the engine;
     // the game, against its sources.
     if target!=.Game && engine_current {
-        _=engine_report({status=.Up_To_Date,mode=engine},root)
+        _=engine_report({status=.Up_To_Date,mode=engine.mode,folder=engine.folder},root)
     } else if target!=.Game {
-        if code:=engine_report(build.engine_build({engine_root=root,mode=engine}),root);code!=0 {return code,"",false}
+        if code:=engine_report(build.engine_build({engine_root=root,mode=engine.mode,defines=engine.defines}),root);code!=0 {return code,"",false}
     } else if !engine_shaders(root,turn_held=true) {
         return 1,"",false
     }
@@ -297,7 +297,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
     }
     rebuilt:bool
     {
-        job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,engine=engine})
+        job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,engine=engine.mode})
         defer build.job_destroy(job)
         result:=&job.result
         for diagnostic in result.diagnostics {
@@ -315,6 +315,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
             switch result.failure {
             case .None,.Compile,.Shaders,.Tests:
             case .Out_Of_Memory:    fmt.eprintln(out_of_memory_text("mirai build"))
+            case .Engine_Defines:
             case .Engine_Missing:   fmt.eprintln("mirai build: the engine root is unknown")
             case .Engine_Incomplete: fmt.eprintln("mirai build: the installed engine lacks some of its binaries: unpack its package again")
             case .Generate:         fmt.eprintln("mirai build: the attributes of the project packages do not generate a world")
@@ -347,8 +348,8 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
 // its plugins: each library has its own types, which only a run of the
 // libraries together shows. It prints the methods that did not register.
 @(private="file")
-editor_methods_register :: proc(root,folder:string,engine:Build_Mode) -> bool {
-    command:=[]string{build.engine_paths(root,engine).editor_program,"--project",folder,"--headless","--no-gpu","--frames","1","--no-api"}
+editor_methods_register :: proc(root,folder:string,engine:build.Engine_Paths) -> bool {
+    command:=[]string{engine.editor_program,"--project",folder,"--headless","--no-gpu","--frames","1","--no-api"}
     state,_,stderr,error:=subprocess.exec({command=command,working_dir=root},context.temp_allocator)
     if error!=nil {
         fmt.eprintfln("mirai build: could not run %s to check its API: %v",command[0],error)
@@ -365,6 +366,13 @@ out_of_memory_text :: proc(command:string) -> string {
     stopped:=memory>0?fmt.tprintf("went past its limit of %.1f GiB of memory and was stopped",f64(memory)/(1<<30)):"ran out of memory"
     return fmt.tprintf("%s: the compiler %s. Most likely it is a multiple assignment of values larger than 64 bytes (odin-lang/Odin#7937), like a,b=b,a with large structs or a ternary between them: write one value per assignment. mirai test cook/build no_store_of_an_aggregate_of_more_than_64_bytes finds it in the engine and the demo. If the build really needs more, raise %s (GiB; 0: no limit).",
         command,stopped,build.COMPILER_MEMORY_ENV)
+}
+
+// The binaries of the engine the project at folder runs in mode: those built
+// with the defines of its manifest the engine reads.
+project_engine_paths :: proc(root,folder:string,mode:Build_Mode) -> build.Engine_Paths {
+    manifest,_:=project.manifest_read(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator))
+    return build.engine_paths(root,mode,context.temp_allocator,build.engine_defines(root,build.manifest_defines(&manifest,context.temp_allocator),context.temp_allocator))
 }
 
 // Whether building a library of a project against a current engine would

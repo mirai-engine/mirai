@@ -4,10 +4,11 @@ import "base:runtime"
 import "core:mem"
 import "core:testing"
 
-@(private="file") Union_Link :: struct {target:Entity,weight:f32}
-@(private="file") @(component,single) Union_Sky :: struct {light:f32}
+@(private) Union_Link :: struct {target:Entity,weight:f32}
+@(private) @(component,single) Union_Sky :: struct {light:f32}
 
-@(private="file")
+@(private)
+@(test_world)
 Union_World :: struct {
     using world:Test_World,
     parents:Table(Parent),
@@ -93,7 +94,7 @@ a_join_makes_an_entity_for_each_one_and_allocates_nothing_with_room :: proc(t:^t
     tracker:mem.Tracking_Allocator
     mem.tracking_allocator_init(&tracker,context.allocator);defer mem.tracking_allocator_destroy(&tracker)
     live,apart:Union_World
-    if !test_world_init(t,&live,allocator=mem.tracking_allocator(&tracker)) {return}
+    if !test_world_init(t,&live) {return}
     defer test_world_destroy(&live)
     info:=test_world_info(&live)
     if !test_world_init(t,&apart) {return}

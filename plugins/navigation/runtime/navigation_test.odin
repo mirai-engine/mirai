@@ -22,8 +22,9 @@ import phys "plugins:physics/runtime"
 // collision the tests make, the meshes built from it, and the agents with
 // the tables and queues of navigation_agents and of the locomotion.
 @(private)
+@(test_world)
 Nav_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     using physics:phys.Test_Physics,
     bounds:core.Table(Nav_Bounds),
     areas:core.Table(Nav_Area),
@@ -72,7 +73,7 @@ Nav_Test :: struct {
 
 @(private)
 nav_test_init :: proc(t:^testing.T,f:^Nav_Test) -> bool {
-    if !core.test_world_init(t,&f.w,test_types) {return false}
+    if !test_world_init(t,&f.w) {return false}
     f.settings={bodies=64,shapes=64,contacts=256,joints=4,characters=8}
     f.nav_settings.tile_cells=48
     jobs.system_init(&f.app.jobs,{threads=0})
@@ -89,12 +90,12 @@ nav_test_destroy :: proc(f:^Nav_Test) {
     delete(f.unloaded);delete(f.ground.unloaded.items)
     agents_free(&f.run)
     phys.test_host_destroy(&f.host)
-    core.test_world_destroy(&f.w)
+    test_world_destroy(&f.w)
     jobs.system_destroy(&f.app.jobs)
 }
 
 @(private)
-nav_test_settle :: proc(f:^Nav_Test) {core.test_world_settle(&f.w)}
+nav_test_settle :: proc(f:^Nav_Test) {test_world_settle(&f.w)}
 
 // One tick of physics and of the build, then as many more as the builds take.
 @(private)
@@ -105,7 +106,7 @@ nav_test_step :: proc(f:^Nav_Test,ticks:=1) {
             &f.state,core.ref(&f.settings),&f.requests,&f.events,&f.meshes,&f.app,{dt=0,playing=false},
             core.read(&f.rigids),core.read(&f.colliders),core.read(&f.characters),core.read(&f.moves),
             &f.joints,core.read(&f.statics),core.read(&f.parents),core.read(&f.names),
-            &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),{},{},{},
+            &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),{},{},{},{},
         )
         nav_test_settle(f)
         navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),f.time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
@@ -448,16 +449,17 @@ a_blocked_area_takes_the_surface_under_the_volume_of_its_entity :: proc(t:^testi
     _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
     testing.expect_value(t,status,ai.Search_Status.No_Path)
     for shapeless in ([2]bool{false,true}) {
-        if shapeless {core.remove(&f.volumes,zone)} else {core.edit(&f.volumes,zone)^=volume.sphere(10)}
+        if shapeless {core.remove(&f.volumes,zone)} else {core.edit(&f.volumes,zone)^=volume.plane()}
         nav_test_settled(t,&f)
         _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
         testing.expect_value(t,status,ai.Search_Status.Found)
         testing.expect(t,core.problem_find(&f.problems,zone,"navigation.volume")!=nil)
     }
-    core.add(&f.volumes,zone,volume.box({1,2,10}))
+    // A sphere blocks by the octagon around it: this one leaves no floor where the path starts.
+    core.add(&f.volumes,zone,volume.sphere(10))
     nav_test_settled(t,&f)
     _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
-    testing.expect_value(t,status,ai.Search_Status.No_Path)
+    testing.expect_value(t,status,ai.Search_Status.Invalid)
     core.remove(&f.areas,zone)
     nav_test_settled(t,&f)
     _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
@@ -748,13 +750,13 @@ agents_test_step :: proc(f:^Nav_Test) {
         &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,&f.nav_crossings,time,&f.problems)
     nav_test_settle(f)
     navigation_crossing(core.read(&f.paths),&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
-    locomotion.locomotion_step(core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),{},{},&f.loco,time,core.CLOCK_DEFAULT,&f.problems)
+    locomotion.locomotion_step(core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.ref(&f.places),{},{},&f.loco,time,core.CLOCK_DEFAULT,&f.problems)
     nav_test_settle(f)
     phys.physics_step(
         &f.state,core.ref(&f.settings),&f.requests,&f.events,&f.meshes,&f.app,time,
         core.read(&f.rigids),core.read(&f.colliders),core.read(&f.characters),core.read(&f.moves),
         &f.joints,core.read(&f.statics),core.read(&f.parents),core.read(&f.names),
-        &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),{},{},{},
+        &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),{},{},{},{},
     )
 }
 
@@ -863,8 +865,8 @@ swimmers_leave_a_u_shaped_cave_under_its_wall_and_keep_out_of_a_dry_box :: proc(
     core.add(&f.volumes,pool,volume.box({5,5,2}))
     dry:=core.create(&f.entities)
     core.add(&f.transforms,dry,core.Transform{{8.5,2,2},1,{1,1,1}})
-    core.add(&f.fluids,dry,phys.Fluid{})
-    core.add(&f.volumes,dry,volume.box({1.5,1.5,2},priority=1))
+    core.add(&f.fluids,dry,phys.Fluid{priority=1})
+    core.add(&f.volumes,dry,volume.box({1.5,1.5,2}))
     nav_test_step(&f)
     nav_test_settled(t,&f)
     testing.expect(t,f.nav.count>=2 && class_in_volume(&f.nav,1))
@@ -1526,6 +1528,28 @@ a_seated_agent_walks_where_it_is_asked_while_its_seat_drives_it :: proc(t:^testi
     testing.expect_value(t,f.problems.count,0)
 }
 
+// Crouched, a walker could go at its crouch_speed (2.5 m/s), and its path goes at 2 (the max_speed of
+// its Walk): it goes at 2, for navigation asks for the velocity it planned, which the locomotion
+// takes up to the top speed it has.
+@(test)
+an_agent_goes_at_the_speed_of_its_path_under_its_top_speed :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
+    nav_test_settled(t,&f)
+    e:=agents_test_walker(&f,{-6,0,0})
+    nav_test_settle(&f)
+    core.edit(&f.walks,e).max_speed=2
+    core.edit(&f.inputs,e).buttons=input.action_bit(input.Action(locomotion.Walk_Action.Crouch)) // its actions start at 0
+    nav_move_to(&f.nav_requests,e,{6,0,0})
+    for _ in 0..<120 {agents_test_step(&f)}
+    motion,_:=core.get(&f.bodies,e)
+    state,_:=core.get(&f.loco_states,e)
+    testing.expect_value(t,state.mode,locomotion.MODE_CROUCHING)
+    testing.expectf(t,abs(linalg.length(motion.linear.xz)-2)<0.05,"it goes at %v",motion.linear)
+}
+
 // Six walkers patrol the paths of the AI arena of the demo, each from another
 // point: up a ladder onto a platform, off it by a drop, around a blocked area
 // and over a fence by a link the game crosses. Where they crowd at the start
@@ -1708,7 +1732,8 @@ a_kept_navigation_copies_its_meshes_again_only_when_a_build_changed_them :: proc
 
 // Eight walkers follow a runner around a wall: the first plans its own way
 // and the rest read theirs from one search toward the runner, begun again no
-// more than twice a second as it moves; all of them walk to it.
+// more than twice a second as it moves; all of them walk to it, and none
+// stops while it plans again.
 @(test)
 followers_of_one_target_share_one_search_toward_it :: proc(t:^testing.T) {
     f:Nav_Test
@@ -1726,11 +1751,20 @@ followers_of_one_target_share_one_search_toward_it :: proc(t:^testing.T) {
     }
     nav_test_settle(&f)
     SECONDS :: 12
+    halts,moved:=0,[8]bool{}
     for tick in 0..<60*SECONDS {
         // It runs along the far side for a while, then waits for them.
         core.edit(&f.transforms,runner).position.z=-8+min(f32(tick)/60,6)*2
         agents_test_step(&f)
+        at,_:=core.get(&f.worlds,runner)
+        for e,i in walkers {
+            mi,_:=core.get(&f.inputs,e)
+            pose,_:=core.get(&f.worlds,e)
+            moved[i]||=mi.move!={}
+            if moved[i] && mi.move=={} && linalg.distance(pose.position,at.position)>3 {halts+=1}
+        }
     }
+    testing.expectf(t,halts==0,"followers stood still for %d ticks while they planned again",halts)
     trees,begun:=0,u64(0)
     // Let go once they all arrived, the search keeps its count.
     for &tree in f.run.trees {
@@ -1750,6 +1784,97 @@ followers_of_one_target_share_one_search_toward_it :: proc(t:^testing.T) {
     testing.expectf(t,trees==1 && begun>=3 && begun<=2*SECONDS+1,"%d searches shared, begun %d times",trees,begun)
     testing.expectf(t,own<=4,"%d searches of their own beside the shared one",own)
     testing.expect_value(t,f.problems.count,0)
+}
+
+// A way of more polygons than its corridor holds: the agent plans the rest
+// before the end of the part it holds, and arrives once, at its goal.
+@(test)
+an_agent_arrives_once_at_the_end_of_a_way_longer_than_its_corridor :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{42,0.5,3})
+    // Pillars on either side in turn cut the floor into many polygons.
+    for i in 0..<32 {nav_test_box(&f,{-39+f32(i)*2.5,1,1.5 if i%2==0 else -1.5},{0.3,1,0.3})}
+    f.nav_settings.tile_cells=16
+    nav_test_settled(t,&f)
+    from,to:=mm.Vec3{-41,0,0},mm.Vec3{41,0,0}
+    mesh:=&f.nav.classes[0].mesh
+    filter:=filter_make(&f.nav_settings,{},ai.NAV_CAN_ALL)
+    a,start,_:=ai.nav_find_nearest(mesh,from,{1,2,1},&filter)
+    b,end,_:=ai.nav_find_nearest(mesh,to,{1,2,1},&filter)
+    q:ai.Nav_Query
+    ai.nav_query_init(&q,4096)
+    defer ai.nav_query_destroy(&q)
+    refs:[1024]ai.Nav_Ref
+    count,_,_:=ai.nav_find_path(&q,mesh,a,b,start,end,&filter,refs[:])
+    testing.expectf(t,count>ai.NAV_CORRIDOR_CAPACITY,"the way has only %d polygons",count)
+    e:=agents_test_walker(&f,from)
+    nav_move_to(&f.nav_requests,e,to)
+    arrivals:=0
+    for _ in 0..<60*25 {
+        agents_test_step(&f)
+        for event in f.nav_events.queue.items {if event.entity==e && event.kind==.Arrived {arrivals+=1}}
+    }
+    pose,_:=core.get(&f.worlds,e)
+    p,_:=core.get(&f.paths,e)
+    testing.expectf(t,arrivals==1 && p.state==.Arrived && !p.partial && linalg.distance(pose.position.xz,to.xz)<0.5,"it arrived %d times, is %v at %v",arrivals,p.state,pose.position)
+    testing.expect_value(t,f.problems.count,0)
+}
+
+// An agent pushed against a body its navmesh does not hold walks in place: it
+// plans once more and then fails, and says why.
+@(test)
+an_agent_that_walks_in_place_against_a_body_fails :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{10,0.5,1})
+    nav_test_box(&f,{0,1,1.3},{10,1,0.3})
+    nav_test_box(&f,{0,1,-1.3},{10,1,0.3})
+    nav_test_settled(t,&f)
+    crate:=nav_test_box(&f,{0,0.6,0},{0.5,0.6,1})
+    core.add(&f.rigids,crate,phys.RIGID_BODY_KINEMATIC)
+    e:=agents_test_walker(&f,{-3,0,0})
+    nav_move_to(&f.nav_requests,e,{6,0,0})
+    arrived,_,_,failed:=agents_test_travel(&f,e,5)
+    p,_:=core.get(&f.paths,e)
+    testing.expectf(t,!arrived && failed && p.state==.Failed && p.replans>=1,"it is %v after %d plans",p.state,p.replans)
+    testing.expect(t,core.problem_find(&f.problems,e,"navigation.blocked")!=nil)
+}
+
+// An agent takes a turn of a corridor a metre wide without leaving its mesh:
+// neither carried past the turn nor led into the outer wall before it (as a
+// turn taken wide would, with nothing to clamp its body to the mesh).
+@(test)
+an_agent_takes_a_narrow_turn_within_its_mesh :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{10,0.5,10})
+    // A corridor a metre wide along x that turns along z at x=0.
+    nav_test_box(&f,{0,1,-1},{10,1,0.5})
+    nav_test_box(&f,{1,1,4},{0.5,1,5.5})
+    nav_test_box(&f,{-5.25,1,5.25},{4.75,1,4.75})
+    nav_test_settled(t,&f)
+    e:=agents_test_walker(&f,{-8,0,0})
+    nav_move_to(&f.nav_requests,e,{0,0,8})
+    mesh:=&f.nav.classes[0].mesh
+    filter:=filter_make(&f.nav_settings,{},ai.NAV_CAN_ALL)
+    off,worst:=0,f32(0)
+    for _ in 0..<60*8 {
+        agents_test_step(&f)
+        pose,_:=core.get(&f.worlds,e)
+        _,on,found:=ai.nav_find_nearest(mesh,pose.position,{1,2,1},&filter)
+        away:=linalg.length(pose.position.xz-on.xz) if found else 1
+        // Half a voxel: the edge of the mesh against a wall the body touches.
+        if away>0.075 {off+=1}
+        worst=max(worst,away)
+        p,_:=core.get(&f.paths,e)
+        if p.state==.Arrived {break}
+    }
+    p,_:=core.get(&f.paths,e)
+    testing.expectf(t,off==0 && p.state==.Arrived,"%d ticks off its mesh, %.2f m at most; it is %v",off,worst,p.state)
 }
 
 // A path that says it crosses a link is driven only while navigation counts

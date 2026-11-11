@@ -228,14 +228,18 @@ Contact_Flag :: enum u32 {
     Disjoint, // the fat boxes stopped overlapping
     Visited,  // in the active contacts of the step being taken
     Pass,     // met a one-way shape from its back: goes through it until the shapes stop touching
+    Carried,  // its manifolds are those of its last narrow phase moved to the poses of the step
 }
 Contact_Flags :: bit_set[Contact_Flag;u32]
 
-// What a manifold carries from one step to the next: feature ids and impulses for warm starting.
+// What a manifold carries from one step to the next: feature ids and impulses for warm starting, and the
+// geometry of its last narrow phase, in the frame of shape A, that a contact that barely moved reuses.
 Manifold_State :: struct {
     count:i32,
     ids:[MANIFOLD_MAX_POINTS]u32,
-    points:[MANIFOLD_MAX_POINTS]Vec3, // on shape A, in its frame
+    points:[MANIFOLD_MAX_POINTS]Vec3, // midway between the surfaces
+    separations:[MANIFOLD_MAX_POINTS]f32,
+    normal:Vec3,
     normal_impulses:[MANIFOLD_MAX_POINTS]f32,
     friction_impulse:Vec3, // world
     twist_impulse:f32,
@@ -257,9 +261,12 @@ Contact :: struct {
     manifold:Manifold_State,
     extra:i32, // block of further manifolds of a contact with a mesh, or -1
     manifold_count:i32,
+    // Pose of shape B in the frame of shape A at the last narrow phase; a null rotation when its manifolds
+    // may not be carried.
+    relative:Transform,
     sat:Sat_Cache,
 }
-#assert(size_of(Contact)==180)
+#assert(size_of(Contact)==236)
 
 // Geometry of a manifold, recomputed every step for awake contacts. Anchors are relative to the centers of
 // mass of the bodies, in world axes.
@@ -309,6 +316,7 @@ Stats :: struct {
     bodies,shapes,contacts,joints,characters,fluids:int,
     breakables,pieces:int,
     awake_bodies,active_contacts,constraints,islands:int,
+    carried_contacts:int, // active contacts that reused their manifolds in the last step instead of colliding
     colors,overflow_constraints:int,
     // Requests refused because a capacity was exhausted, since the world was created.
     body_capacity_exhausted,shape_capacity_exhausted,contact_capacity_exhausted,joint_capacity_exhausted:int,

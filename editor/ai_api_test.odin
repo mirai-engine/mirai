@@ -7,12 +7,13 @@ import "mirai:editor/api"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-@(private="file")
+@(private)
 Ai_Api_Test_Sky :: struct {level:f32}
 
-@(private="file")
+@(private)
+@(test_world)
 Ai_Api_Test_World :: struct {
-    using world:core.Test_World,
+    using world:Test_World,
     sky:Ai_Api_Test_Sky `mirai:"name=Sky"`,
 }
 
@@ -21,10 +22,10 @@ ai_methods_write_the_results_they_declare :: proc(t:^testing.T) {
     temporary:=context.temp_allocator
     defer {context.temp_allocator=temporary}
     world:Ai_Api_Test_World
-    if !core.test_world_init(t,&world) {return}
-    defer core.test_world_destroy(&world)
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
     m:=new(Ai);defer free(m)
-    s:=Session{ai=m,info=core.test_world_info(&world)}
+    s:=Session{ai=m,info=test_world_info(&world)}
     m.task_count,m.workers[0].task=2,7
     task:=&m.tasks[0];task.id=7;task.state=.Running
     m.tasks[1].id,m.tasks[1].state=8,.Queued

@@ -297,6 +297,37 @@ headphones_mirror_left_and_right_with_level_and_time_differences :: proc(t:^test
     testing.expectf(t,right_lag>=15 && right_lag<=45 && abs(right_lag-left_lag)<=3,"interaural delays %d and %d samples",right_lag,left_lag)
 }
 
+// A stereo sound placed up close is heard wide, each channel from its side,
+// also through its EQ and on headphones; far away its spread narrows to a point.
+@(test)
+stereo_spatial_voice_keeps_its_width_up_close :: proc(t:^testing.T) {
+    // How much louder its left channel alone is in the left output than in the right, in dB.
+    Case :: struct {output:Output_Kind,distance,spread,occlusion,low,high:f32}
+    cases:=[?]Case{
+        {.Speakers,2,4,0,6,100},   // 45 degrees to each side
+        {.Speakers,2,4,1,6,100},
+        {.Headphones,2,4,0,6,100},
+        {.Speakers,2,0,0,-1,1},    // one source, ahead
+        {.Speakers,200,4,0,-1,1},
+        {.Headphones,200,4,0,-1.5,1.5},
+    }
+    for c in cases {
+        m:=test_mixer(t,{output=c.output})
+        samples:=make([]f32,RATE*2,context.temp_allocator)
+        for i in 0..<RATE {samples[i*2]=test_noise(i)}
+        sound,_:=sound_create(m,samples,2,RATE)
+        desc:=VOICE_DEFAULT
+        desc.loop,desc.spatial,desc.position,desc.occlusion=true,true,{0,0,-c.distance},c.occlusion
+        desc.attenuation={model=.None,min_distance=1,max_distance=1000,near_radius=1,spread=c.spread}
+        testing.expect(t,voice_play(m,sound,desc)!=0)
+        test_render(m,CHUNK_FRAMES*2)
+        out:=test_render(m,8192)
+        db:=f32(10*math.log10(energy(out,2,0)/max(energy(out,2,1),1e-30)))
+        testing.expectf(t,db>=c.low && db<=c.high,"%v at %v m with spread %v and occlusion %v: %v dB",c.output,c.distance,c.spread,c.occlusion,db)
+        mixer_destroy(m)
+    }
+}
+
 // Balance of a stretch of output: -1 all left, 1 all right.
 @(private="file")
 balance :: proc(out:[]f32) -> f32 {

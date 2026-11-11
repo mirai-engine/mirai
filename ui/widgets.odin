@@ -89,7 +89,7 @@ button :: proc(ctx:^Context,id:Id,b:Button) -> Interaction {
     padding:f32
     if l:=b.layout;l!=nil {
         width,height,padding=l.width,l.height,l.padding[0]
-        if width=={} {width=fixed(text_width(&ctx.font,b.label,size,int(look.text.font))+l.padding[0]+l.padding[2]+1)}
+        if width=={} {width=fixed(context_whole(ctx,text_width(&ctx.font,b.label,size,int(look.text.font))+l.padding[0]+l.padding[2]+1))}
         if height=={} {height=fixed(size*TEXT_LINE+l.padding[1]+l.padding[3])}
     } else {
         row:=b.height if b.height>0 else metric(ctx,"row")
@@ -102,7 +102,7 @@ button :: proc(ctx:^Context,id:Id,b:Button) -> Interaction {
             if b.quad.kind!=.Solid {content+=row-8+6}
             if b.label!="" {content+=text_width(&ctx.font,b.label,size);if b.icon!=.None {content+=6}}
             if b.detail!="" {content+=text_width(&ctx.font,b.detail,metric(ctx,"font_small"))+(16 if b.label!="" else 6)}
-            width=fixed(content+2*padding)
+            width=fixed(context_whole(ctx,content+2*padding))
         } else if b.width<0 {width=GROW}
     }
     style:=look.text

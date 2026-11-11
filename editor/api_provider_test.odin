@@ -10,6 +10,7 @@ import "mirai:editor/history"
 import "mirai:std/serial"
 
 Api_Test_Provider :: struct {provider:Api_Provider}
+api_test_provider_default :: proc() -> (p:Api_Test_Provider) {api_test_provider_v1(&p);return}
 Api_Test_Editor :: struct {api:Api,provider:Api_Test_Provider}
 Api_Test_Params :: struct {value:i32 `mirai:"optional"`}
 Api_Test_Result :: struct {value:i32}
@@ -80,21 +81,17 @@ methods_are_described_read_and_written_by_their_structs :: proc(t:^testing.T) {
     }
 }
 
-@(private="file")
-Api_Test_World :: struct {using world:core.Test_World}
-
-@(private="file")
-api_test_types :: proc(types:^[dynamic]core.Test_Type) {
-    append(types,core.test_type(Api_Test_Provider,default=proc(dst:^Api_Test_Provider) {api_test_provider_v1(dst)}))
-}
+@(private)
+@(test_world,editor="Api_Test_Editor")
+Api_Test_World :: struct {using world:Test_World}
 
 @(test)
 editor_plugin_methods_exist_before_frames_and_reload_from_current_metadata :: proc(t:^testing.T) {
     world:Api_Test_Editor
     edits:history.Edits
-    info,described:=core.test_info(t,Api_Test_World,core.Test_None,Api_Test_Editor,api_test_types)
+    info,described:=test_info(t,Api_Test_World)
     if !described {return}
-    defer core.test_info_destroy(&info)
+    defer test_info_destroy(&info)
     provider:=&info.storages[info.storages_by_type[Api_Test_Provider]]
     provider.plugin="test_plugin"
     session:=Session{info=&info,editor_world=&world,edits=&edits}

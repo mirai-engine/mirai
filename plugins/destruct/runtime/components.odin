@@ -41,7 +41,7 @@ Destructible :: struct {
     strength:f32 `mirai:"min=0,unit=N s/m2,section=Damage"`,    // N s per m2 of shared face that a connection takes before it breaks
     impact_damage:bool,
     damage_threshold:f32 `mirai:"min=0,unit=N s"`, // N s of an impact in one tick below which it does no damage
-    damage_radius:f32 `mirai:"min=0,unit=m"`,   // around the point of an impact
+    propagation:f32 `mirai:"min=0,max=1"`,      // share of the strain a broken connection held beyond its strength that goes on to its neighbours: 1 brittle, 0 a crack that stops at the piece hit
     debris_volume:f32 `mirai:"min=0,unit=m3,section=Debris"`,  // a group that comes off smaller than this is debris: it touches only static bodies
     debris_lifetime:f32 `mirai:"min=0,unit=s"`, // and disappears after this long
     removal_lifetime:f32 `mirai:"min=0,unit=s"`,
@@ -54,14 +54,14 @@ destructible :: proc "contextless" (pieces:u32=16,anchored:=false,seed:u64=1) ->
     d:=phys.BREAKABLE_DESC_DEFAULT
     return {
         pieces=pieces,seed=seed,anchored=anchored,hull_vertices=u32(d.hull_vertices),strength=d.strength,
-        impact_damage=d.impact_damage,damage_threshold=d.damage_threshold,damage_radius=d.damage_radius,debris_volume=d.debris_volume,debris_lifetime=5,
+        impact_damage=d.impact_damage,damage_threshold=d.damage_threshold,propagation=d.propagation,debris_volume=d.debris_volume,debris_lifetime=5,
     }
 }
 
 destructible_default :: proc "contextless" () -> Destructible {return destructible()}
 
 // What this library keeps of a destructible. Only it writes it.
-@(component)
+@(component,derived)
 Destructible_State :: struct {
     handle:phys.Breakable_Handle `mirai:"transient,readonly,hidden"`,
     revision:u32 `mirai:"transient,readonly,hidden"`,         // of the simulation destructible that the groups mirror
@@ -77,7 +77,7 @@ Destructible_State :: struct {
 // body that is still the destructible's own is a child of it (group 0), each
 // one that came off an entity of its own with the Transform of its body. It is
 // a proxy of that body in physics, which writes its Transform.
-@(component,locks="core.Transform")
+@(component,derived,locks="core.Transform")
 Destructible_Group :: struct {
     owner:core.Entity `mirai:"transient,readonly"`, // the destructible
     group:u32 `mirai:"transient,readonly"`,         // physics.Piece_Info.group: the same on every end of a network session

@@ -231,7 +231,7 @@ ui_frame_convert :: proc(frame:ui.Frame,draws:[]render.Ui_Draw,panels:[]render.W
 @(private)
 UI_KEYS :: [ui.Key]platform.Key{
     .Left=.Left,.Right=.Right,.Up=.Up,.Down=.Down,.Home=.Home,.End=.End,.Page_Up=.Page_Up,.Page_Down=.Page_Down,
-    .Backspace=.Backspace,.Delete=.Delete,.Enter=.Enter,.Escape=.Escape,.Tab=.Tab,.Space=.Space,.A=.A,.C=.C,.V=.V,.X=.X,
+    .Backspace=.Backspace,.Delete=.Delete,.Enter=.Enter,.Escape=.Escape,.Tab=.Tab,.Space=.Space,.A=.A,.C=.C,.V=.V,.X=.X,.Y=.Y,.Z=.Z,
 }
 
 // The input of a tick as the frame of a window that held it, for what reads the
