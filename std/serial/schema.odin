@@ -3,6 +3,7 @@ package serial
 import "base:runtime"
 import "core:fmt"
 import "core:reflect"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "mirai:std/base"
@@ -26,7 +27,17 @@ Type_Kind :: enum u8 {
     Asset,     // base.Asset_Id
     Struct,    // fields
     Array,     // count elements of type elem; vectors, quaternions and matrices are arrays of floats
+    // Only in a schema that takes them (Schema.unsized): values that live in
+    // memory and in text, with no image, no binary schema and no migration.
+    Slice,     // []T or [dynamic]T: any number of elements of type elem
+    String,    // string
+    Json,      // serial.Json
 }
+
+// Any JSON value, as its text: what a field holds when only whoever reads it
+// knows its shape (the values of a component, by the schema of the world).
+// Empty is null. Read, it is a view of the text it was read from.
+Json :: distinct string
 
 // An integer whose values have names (core @(names)) or whose bits do: text
 // and paths read and write it by those names. Saved data keeps the number and
@@ -59,25 +70,51 @@ Field_Flag :: enum u8 {
 }
 Field_Flags :: bit_set[Field_Flag;u8]
 
+// What the tag of a field says besides its flags. Not in the binary schema.
+Field_Hint :: enum u8 {
+    Trim,     // a fixed array the text writes up to its last element with a byte set
+    Keyed,    // a fixed array of structs whose first field, a text, names each entry (empty: none): a layer of settings replaces the entries it names
+    Entity,   // a text that names an entity: the API says so in its schema
+    Optional, // a param a caller may leave out, or a part of a result that is not always there
+    Clamp,    // an integer param that only bounds how much a method answers: past its max it takes the max
+    Advanced, // the inspector shows it with the advanced fields of its component
+    Owned,    // an asset the component makes and owns: a copy of the entity takes a copy of it
+    Game,     // a table or a storage of a test world that the game of a project declares
+    Hex,      // a u64 the inspector edits as exact hexadecimal
+    Data,     // a text that names a component or a storage of the world
+    Inline,   // a struct whose fields stand in place of it (field_inlined): no field of a schema has it
+}
+Field_Hints :: bit_set[Field_Hint;u16]
+
 Field :: struct {
     name:string,
     name_hash:u64,
     type:Type_Index,
     offset:u32,
     flags:Field_Flags,
+    hints:Field_Hints,
     has_min,has_max:bool,
     min,max,step:f64,
     precision:f32, // replication quantum of a float; 0 sends it whole
     bits:u8,       // replication width of an integer; 0 sends it whole
     label,unit:string,
-    description:string, // what the comment on the line of the field says; not in the binary schema
-    asset_kinds:string, // the extensions an Asset_Id field holds, separated by spaces (kind=); not in the binary schema
     required_component:u64,
-    trim:bool, // a fixed array the text writes up to its last element with a byte set; not in the binary schema
-    keyed:bool, // a fixed array of structs whose first field, a text, names each entry (empty: none): a layer of settings replaces the entries it names; not in the binary schema
-    any_value:bool, // tagged any: text_read takes any JSON there and leaves the bytes, for whoever reads it from the text; not in the binary schema
-    entity_name:bool, // a text that names an entity: the API says so in its schema
-    was:string, // the names the field had before, separated by spaces (was=): a migration reads a stored field by any of them, and a path names it by any of them
+    // Not in the binary schema:
+    description:string, // what the comment on the line of the field says
+    asset_kinds:string, // the extensions an Asset_Id field holds, separated by spaces (kind=)
+    section:string,     // the title the inspector opens over the field and those after it
+    icons:string,       // the icons of the members of an enum, in their order, separated by spaces
+    axes:string,        // the letters of the cells of a vector, one each
+    graphics:string,    // the label of the field in the graphics popup of the viewport
+    choices:string,     // what the graphics popup offers: labels separated by |, each label:value or a label that is its value
+    was:string,         // the names the field had before, separated by spaces (was=): a migration reads a stored field by any of them
+    mode:string,        // the values of the field mode of its struct the inspector shows it with, separated by |
+}
+
+// The texts a field owns in its schema.
+@(private)
+field_texts :: #force_inline proc "contextless" (field:^Field) -> [11]^string {
+    return {&field.name,&field.label,&field.unit,&field.description,&field.asset_kinds,&field.section,&field.icons,&field.axes,&field.graphics,&field.was,&field.mode}
 }
 
 Choice :: struct {name:string,value:i64}
@@ -98,6 +135,9 @@ Schema :: struct {
     lookup:map[typeid]Type_Index,
     named:map[typeid]Named, // whoever builds it sets and keeps it before adding types; the schema copies the names it takes
     error:string, // set when schema_add fails: the path of the field that is not plain data; empty when it had no memory
+    unsized:bool, // its types may hold slices, strings and Json; whoever builds it sets it before adding types
+    sparse:bool,  // text leaves out a field tagged optional that holds nothing: all its bytes are zero
+    adding:[dynamic]typeid, // the structs schema_add is inside of: one that holds itself is not added
     allocator:runtime.Allocator,
 }
 
@@ -107,6 +147,7 @@ schema_init :: proc(s:^Schema,allocator:=context.allocator) {
     s.fields=make([dynamic]Field,allocator)
     s.choices=make([dynamic]Choice,allocator)
     s.lookup=make(map[typeid]Type_Index,allocator)
+    s.adding=make([dynamic]typeid,allocator)
 }
 
 schema_destroy :: proc(s:^Schema) {
@@ -114,7 +155,7 @@ schema_destroy :: proc(s:^Schema) {
     for field in s.fields {schema_field_free(s,field)}
     for choice in s.choices {delete(choice.name,s.allocator)}
     delete(s.error,s.allocator)
-    delete(s.types);delete(s.fields);delete(s.choices);delete(s.lookup)
+    delete(s.types);delete(s.fields);delete(s.choices);delete(s.lookup);delete(s.adding)
     s^={}
 }
 
@@ -163,12 +204,23 @@ schema_text_keep :: proc(s:^Schema,target:^string,text:string) -> bool {
 
 @(private)
 schema_field_free :: proc(s:^Schema,field:Field) {
-    delete(field.name,s.allocator)
-    delete(field.label,s.allocator)
-    delete(field.unit,s.allocator)
-    delete(field.description,s.allocator)
-    delete(field.asset_kinds,s.allocator)
-    delete(field.was,s.allocator)
+    field:=field
+    for text in field_texts(&field) {delete(text^,s.allocator)}
+}
+
+// Gives a field copies in the schema of its texts, which were views or the
+// texts of another schema. False without memory for one: the field then
+// holds the copies it got and no other text.
+@(private)
+schema_field_keep :: proc(s:^Schema,field:^Field) -> bool {
+    whole:=true
+    for text in field_texts(field) {
+        if text^=="" {text^="";continue}
+        copied,error:=strings.clone(text^,s.allocator)
+        text^=error==nil?copied:""
+        whole&&=error==nil
+    }
+    return whole
 }
 
 // A choice with a copy of its name, after the others. False without memory for it.
@@ -229,7 +281,9 @@ schema_choice_rename :: proc(s:^Schema,old,name:string) -> (renamed:int) {
 
 // Adds T and every type it contains. Fails, with s.error set, when T holds
 // anything that is not plain data: pointers, slices, strings, maps, unions;
-// and without memory, with the types it had added before kept whole.
+// and without memory, with the types it had added before kept whole. A
+// schema that is unsized also takes slices, strings and Json, in types that do not
+// hold themselves.
 schema_add :: proc(s:^Schema,$T:typeid) -> (index:Type_Index,ok:bool) {
     return schema_add_type_info(s,type_info_of(T))
 }
@@ -254,7 +308,7 @@ schema_layout_hash :: proc(s:^Schema,index:Type_Index) -> u64 {
             hash=base.hash_combine(hash,u64(field.offset))
             hash=base.hash_combine(hash,schema_layout_hash(s,field.type))
         }
-    case .Array:
+    case .Array,.Slice:
         hash=base.hash_combine(hash,schema_layout_hash(s,type.elem))
     }
     if layout_named(type) {hash=layout_choices(s,type,hash)}
@@ -337,6 +391,9 @@ schema_add_info :: proc(s:^Schema,info:^runtime.Type_Info,path:string) -> (Type_
     case base.Entity:    return schema_push(s,info.id,{kind=.Entity,size=size,align=align,elem=TYPE_NONE})
     case base.Entity_Id: return schema_push(s,info.id,{kind=.Entity_Id,size=size,align=align,elem=TYPE_NONE})
     case base.Asset_Id:  return schema_push(s,info.id,{kind=.Asset,size=size,align=align,elem=TYPE_NONE})
+    case Json:
+        if !s.unsized {return schema_fail(s,path,info)}
+        return schema_push(s,info.id,{kind=.Json,size=size,align=align,elem=TYPE_NONE})
     }
     type:=Type{size=size,align=align,elem=TYPE_NONE}
     if named,is_named:=info.variant.(runtime.Type_Info_Named);is_named {
@@ -388,13 +445,41 @@ schema_add_info :: proc(s:^Schema,info:^runtime.Type_Info,path:string) -> (Type_
             return schema_fail(s,path,info)
         }
         return schema_add_elements(s,info,type,variant.elem,variant.count,path)
+    case runtime.Type_Info_String:
+        if !s.unsized || variant.is_cstring || variant.encoding!=.UTF_8 {
+            delete(type.name,s.allocator)
+            return schema_fail(s,path,info)
+        }
+        type.kind=.String
+    case runtime.Type_Info_Slice:
+        if !s.unsized {
+            delete(type.name,s.allocator)
+            return schema_fail(s,path,info)
+        }
+        elem_type,ok:=schema_add_info(s,variant.elem,path)
+        if !ok {delete(type.name,s.allocator);return TYPE_NONE,false}
+        type.kind,type.elem=.Slice,elem_type
+    case runtime.Type_Info_Dynamic_Array:
+        if !s.unsized {
+            delete(type.name,s.allocator)
+            return schema_fail(s,path,info)
+        }
+        elem_type,ok:=schema_add_info(s,variant.elem,path)
+        if !ok {delete(type.name,s.allocator);return TYPE_NONE,false}
+        type.kind,type.elem=.Slice,elem_type
     case runtime.Type_Info_Struct:
-        if .raw_union in variant.flags || variant.soa_kind!=.None {
+        if .raw_union in variant.flags || variant.soa_kind!=.None || slice.contains(s.adding[:],info.id) {
             delete(type.name,s.allocator)
             return schema_fail(s,path,info)
         }
         fields:=make([dynamic]Field,0,int(variant.field_count),context.temp_allocator)
-        if !schema_fields_add(s,variant,0,path,&fields) || reserve(&s.fields,len(s.fields)+len(fields))!=nil {
+        if _,no_room:=append(&s.adding,info.id);no_room!=nil {
+            delete(type.name,s.allocator)
+            return TYPE_NONE,false
+        }
+        added:=schema_fields_add(s,variant,0,path,&fields)
+        pop(&s.adding)
+        if !added || reserve(&s.fields,len(s.fields)+len(fields))!=nil {
             for added in fields {schema_field_free(s,added)}
             delete(type.name,s.allocator)
             return TYPE_NONE,false
@@ -425,16 +510,8 @@ schema_add_info :: proc(s:^Schema,info:^runtime.Type_Info,path:string) -> (Type_
 // if they were declared there: what an API answers flat and shares with other
 // answers. No struct with saved data is tagged: its fields would move.
 field_inlined :: proc(variant:runtime.Type_Info_Struct,i:int) -> (nested:runtime.Type_Info_Struct,inlined:bool) {
-    options,found:=reflect.struct_tag_lookup(reflect.Struct_Tag(variant.tags[i]),"mirai")
-    if !found {return}
-    rest:=options
-    for option in strings.split_iterator(&rest,",") {
-        if strings.trim_space(option)=="inline" {
-            nested,inlined=runtime.type_info_base(variant.types[i]).variant.(runtime.Type_Info_Struct)
-            return
-        }
-    }
-    return
+    if tagged,_:=field_tag(variant.tags[i]);.Inline not_in tagged.hints {return}
+    return runtime.type_info_base(variant.types[i]).variant.(runtime.Type_Info_Struct)
 }
 
 // A field whose earlier name (was=) is the name of a field of the struct: a
@@ -457,15 +534,29 @@ was_clash :: proc(fields:[]Field) -> string {
 schema_fields_add :: proc(s:^Schema,variant:runtime.Type_Info_Struct,offset:uintptr,path:string,fields:^[dynamic]Field) -> bool {
     for i in 0..<int(variant.field_count) {
         at:=offset+variant.offsets[i]
-        if nested,inlined:=field_inlined(variant,i);inlined {
+        field_path:=path==""?variant.names[i]:fmt.tprintf("%s.%s",path,variant.names[i])
+        field,problem:=field_tag(variant.tags[i])
+        if problem!="" {
+            if s.error=="" {
+                if text,error:=strings.clone(fmt.tprintf("%s: %s",field_path,problem),s.allocator);error==nil {s.error=text}
+            }
+            return false
+        }
+        if .Inline in field.hints {
+            nested,is_struct:=runtime.type_info_base(variant.types[i]).variant.(runtime.Type_Info_Struct)
+            if !is_struct {
+                schema_fail(s,field_path,variant.types[i])
+                return false
+            }
             schema_fields_add(s,nested,at,path,fields) or_return
             continue
         }
-        field_path:=path==""?variant.names[i]:fmt.tprintf("%s.%s",path,variant.names[i])
-        field_type:=schema_add_info(s,variant.types[i],field_path) or_return
-        field:=Field{name_hash=base.name_hash(variant.names[i]),type=field_type,offset=u32(at)}
+        field.type=schema_add_info(s,variant.types[i],field_path) or_return
+        field.offset=u32(at)
+        if field.name=="" {field.name=variant.names[i]}
+        field.name_hash=base.name_hash(field.name)
         if _,is_quaternion:=runtime.type_info_base(variant.types[i]).variant.(runtime.Type_Info_Quaternion);is_quaternion {field.flags+={.Rotation}}
-        if schema_text_keep(s,&field.name,variant.names[i]) && schema_field_tag(s,&field,variant.tags[i]) {
+        if schema_field_keep(s,&field) {
             if _,no_room:=append(fields,field);no_room==nil {continue}
         }
         schema_field_free(s,field)
@@ -494,19 +585,35 @@ schema_add_floats :: proc(s:^Schema,info:^runtime.Type_Info,type:Type,count:int,
     return schema_fail(s,path,info)
 }
 
-// Field options come from the struct tag `mirai:"..."`: a comma separated
-// list of flags (transient, local, readonly, hidden, color, angle, text, trim, keyed, any, inline) and
-// of key=value pairs (min, max, step, precision, bits, label, unit, name: the
-// key of a param whose word is reserved in Odin; was: the names the field had,
-// newest first). False without memory for a text.
-@(private)
-schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) -> bool {
+// The options a tag takes, as an error names them.
+FIELD_TAGS :: "transient, local, readonly, hidden, color, angle, text, trim, keyed, entity, inline, optional, clamp, advanced, owned, game, hex, data, min=, max=, step=, precision=, bits=, unit=, name=, kind=, requires=, was=, section=, icons=, axes=, graphics=, choices=, mode= and, last, label="
+
+// What the tag of a field says: the only reader of `mirai:"..."`, for the
+// schema and for whoever walks the type information of a struct itself. The
+// tag is a list of options separated by commas: flags, and key=value pairs.
+// label= is the last one and takes the rest of the tag, commas included;
+// name= is the name the field goes by in text when its word is reserved in
+// Odin. The texts of the field are views of the tag, and its type and offset
+// are not set. problem, in temporary memory, says which option is not one
+// and the ones there are; the field then holds the options before it.
+field_tag :: proc(tag:string) -> (field:Field,problem:string) {
     options,found:=reflect.struct_tag_lookup(reflect.Struct_Tag(tag),"mirai")
-    if !found {return true}
+    if !found {return}
     rest:=options
-    for option in strings.split_iterator(&rest,",") {
+    for rest!="" {
+        option:=rest
+        if strings.has_prefix(strings.trim_left_space(rest),"label=") {
+            rest=""
+        } else if comma:=strings.index_byte(rest,',');comma>=0 {
+            option,rest=rest[:comma],rest[comma+1:]
+        } else {
+            rest=""
+        }
         key,value:=strings.trim_space(option),""
-        if equals:=strings.index_byte(key,'=');equals>=0 {key,value=strings.trim_space(key[:equals]),strings.trim_space(key[equals+1:])}
+        equals:=strings.index_byte(key,'=')
+        if equals>=0 {key,value=strings.trim_space(key[:equals]),strings.trim_space(key[equals+1:])}
+        if key=="" && equals<0 {continue}
+        flag:=true
         switch key {
         case "transient": field.flags+={.Transient}
         case "local":     field.flags+={.Local}
@@ -515,25 +622,56 @@ schema_field_tag :: proc(s:^Schema,field:^Field,tag:string) -> bool {
         case "color":     field.flags+={.Color}
         case "angle":     field.flags+={.Angle}
         case "text":      field.flags+={.Text}
-        case "trim":      field.trim=true
-        case "keyed":     field.keyed=true
-        case "any":       field.any_value=true
-        case "entity":    field.entity_name=true
-        case "min":       field.min,field.has_min=strconv.parse_f64(value)
-        case "max":       field.max,field.has_max=strconv.parse_f64(value)
-        case "step":      field.step,_=strconv.parse_f64(value)
-        case "precision": precision,_:=strconv.parse_f64(value);field.precision=f32(precision)
-        case "bits":      bits,_:=strconv.parse_int(value);field.bits=u8(bits)
-        case "label":     schema_text_keep(s,&field.label,value) or_return
-        case "name":
-            if value=="" {continue} // a comma inside a label
-            schema_text_keep(s,&field.name,value) or_return
-            field.name_hash=base.name_hash(value)
-        case "unit":      schema_text_keep(s,&field.unit,value) or_return
-        case "kind":      schema_text_keep(s,&field.asset_kinds,value) or_return
-        case "was":       schema_text_keep(s,&field.was,value) or_return
-        case "requires":  if value!="" {field.required_component=base.name_hash(value)}
+        case "trim":      field.hints+={.Trim}
+        case "keyed":     field.hints+={.Keyed}
+        case "entity":    field.hints+={.Entity}
+        case "inline":    field.hints+={.Inline}
+        case "optional":  field.hints+={.Optional}
+        case "clamp":     field.hints+={.Clamp}
+        case "advanced":  field.hints+={.Advanced}
+        case "owned":     field.hints+={.Owned}
+        case "game":      field.hints+={.Game}
+        case "hex":       field.hints+={.Hex}
+        case "data":      field.hints+={.Data}
+        case: flag=false
         }
+        if flag {
+            if equals>=0 {return field,fmt.tprintf("the tag %q takes no value",key)}
+            continue
+        }
+        number,is_number:=strconv.parse_f64(value)
+        numeric:=true
+        switch key {
+        case "min":       field.min,field.has_min=number,is_number
+        case "max":       field.max,field.has_max=number,is_number
+        case "step":      field.step=number
+        case "precision": field.precision=f32(number)
+        case "bits":
+            is_number&&=number>=0 && number<=64 && number==f64(int(number))
+            if is_number {field.bits=u8(number)}
+        case: numeric=false
+        }
+        if numeric {
+            if !is_number {return field,fmt.tprintf("the tag %s=%q is not a number it takes",key,value)}
+            continue
+        }
+        switch key {
+        case "label":    field.label=value
+        case "unit":     field.unit=value
+        case "name":     field.name=value
+        case "kind":     field.asset_kinds=value
+        case "section":  field.section=value
+        case "icons":    field.icons=value
+        case "axes":     field.axes=value
+        case "graphics": field.graphics=value
+        case "choices":  field.choices=value
+        case "was":      field.was=value
+        case "mode":     field.mode=value
+        case "requires": field.required_component=value!=""?base.name_hash(value):0
+        case:
+            return field,fmt.tprintf("%q is not a tag of a field: the tags are %s",key,FIELD_TAGS)
+        }
+        if value=="" && key!="label" {return field,fmt.tprintf("the tag %s= has no value",key)}
     }
-    return true
+    return
 }

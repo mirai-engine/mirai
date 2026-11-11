@@ -55,7 +55,8 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     tools:Collision_Test_Editor
     session:=editor.Session{info=&info,edit_world=&world,editor_world=&tools,selection=&selection,viewport=&viewport,gui=&gui,edits=&edits}
     history.edits_reset(&edits,editor.edited_world(&session))
-    if !testing.expect_value(t,editor.api_open(&session,0,true),editor.Api_Open_Error.None) {return};defer editor.api_close(&session)
+    api_opened,api_problem:=editor.api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return};defer editor.api_close(&session)
     state:=editor.api_state(&session);state.poll_temp=context.temp_allocator
     if api.method_find(&state.server,"physics.collision.get")==nil {api_collision_register(&session)}
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)
@@ -67,7 +68,7 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     }
     error:=execute(state,&out,"physics.collision.inspect","{}")
     testing.expect_value(t,error.code,0)
-    text:=string(serial.writer_bytes(&out))
+    text:=api.json_compact(string(serial.writer_bytes(&out)))
     testing.expectf(t,strings.contains(text,`"categories":["default","player","world","camera"]`),"%s",text)
     testing.expectf(t,strings.contains(text,`{"name":"default","sensor":false,"belongs":["default"],"collides":["*"]}`),"%s",text)
     testing.expectf(t,strings.contains(text,`{"name":"trigger","sensor":true,"belongs":["default"],"collides":["*"]}`),"%s",text)
@@ -75,12 +76,12 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     testing.expectf(t,strings.contains(text,`"undeclared":[{"field":"presets","index":4,"value":9}]`),"%s",text)
     error=execute(state,&out,"physics.collision.get",`{"entity":"0000000000000007","component":"Collider"}`)
     testing.expect_value(t,error.code,0)
-    text=string(serial.writer_bytes(&out))
-    testing.expectf(t,strings.contains(text,`"preset":"default","sensor":false,"belongs":["default"],"collides":["*"],"pushes":{},"group":"0x0000000000000009"`),"%s",text)
+    text=api.json_compact(string(serial.writer_bytes(&out)))
+    testing.expectf(t,strings.contains(text,`"preset":"default","belongs":["default"],"collides":["*"],"pushes":{},"group":"0x0000000000000009"`),"%s",text)
     // Without component: the only one of the entity, or an error that lists them.
     error=execute(state,&out,"physics.collision.get",`{"entity":"000000000000000b"}`)
     testing.expect_value(t,error.code,0)
-    text=string(serial.writer_bytes(&out));testing.expectf(t,strings.contains(text,`"component":"Collider"`),"%s",text)
+    text=api.json_compact(string(serial.writer_bytes(&out)));testing.expectf(t,strings.contains(text,`"component":"Collider"`),"%s",text)
     error=execute(state,&out,"physics.collision.get",`{"entity":"0000000000000007"}`)
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
     testing.expectf(t,strings.contains(error.message,"Collider, Collision_Test_Filter"),"%s",error.message)
@@ -136,7 +137,7 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     testing.expect(t,filtered.filter.debris && filtered.unchanged==93)
     error=execute(state,&out,"physics.collision.get",`{"entity":"0000000000000007","component":"Collision_Test_Filter"}`)
     testing.expect_value(t,error.code,0)
-    text=string(serial.writer_bytes(&out));testing.expectf(t,strings.contains(text,`"prefix":"filter","hits":["player","world"],"sensors":false`),"%s",text)
+    text=api.json_compact(string(serial.writer_bytes(&out)));testing.expectf(t,strings.contains(text,`"prefix":"filter","hits":["player","world"]}`),"%s",text)
     error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collision_Test_Nested","prefix":"region.filter","hits":["camera"],"sensors":true}`)
     testing.expect_value(t,error.code,0)
     nested,_:=core.get(&world.nested,entity)
@@ -144,14 +145,14 @@ collision_api_reads_and_edits_presets_masks_and_queries_by_name_in_one_undo_step
     testing.expect(t,nested.region.filter.debris && nested.region.unchanged==93)
     error=execute(state,&out,"physics.collision.get",`{"entity":"0000000000000007","component":"Collision_Test_Nested","prefix":"region.filter"}`)
     testing.expect_value(t,error.code,0)
-    text=string(serial.writer_bytes(&out));testing.expectf(t,strings.contains(text,`"hits":["camera"],"sensors":true`),"%s",text)
+    text=api.json_compact(string(serial.writer_bytes(&out)));testing.expectf(t,strings.contains(text,`"hits":["camera"],"sensors":true`),"%s",text)
     error=execute(state,&out,"physics.collision.set",`{"entity":"000000000000000b","sensor":true}`)
     testing.expect_value(t,error.code,0)
     testing.expect(t,core.at(&world.colliders,core.row_of(&world.colliders,alone)).sensor)
     session.mode=.Play;session.runs[0]={world=&world}
     error=execute(state,&out,"physics.collision.get",`{"entity":"0000000000000007","component":"Collider"}`)
     testing.expect_value(t,error.code,0)
-    text=string(serial.writer_bytes(&out));testing.expect(t,strings.contains(text,`"playing":true`))
+    text=api.json_compact(string(serial.writer_bytes(&out)));testing.expect(t,strings.contains(text,`"playing":true`))
     world.settings.presets[3]={preset=phys.PRESET_CUSTOM,belongs=1}
     error=execute(state,&out,"physics.collision.set",`{"entity":"0000000000000007","component":"Collider","preset":"trigger"}`)
     testing.expect_value(t,error.code,api.SERVER_ERROR)

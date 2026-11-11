@@ -9,7 +9,6 @@ import "mirai:editor/api"
 import scene "mirai:engine/scene"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 import nav "plugins:navigation/runtime"
 
 // Keeps the .navmesh of each Navigation_Bake of the edited world as its
@@ -112,8 +111,6 @@ navigation_bake_keep :: proc(s:^editor.Session,kept:^Nav_Bake_Kept) {
     if written {kept^={w.data,n.revision,seen}}
 }
 
-@(private) BAKE_SCHEMA :: `{"type":"object","properties":{"asset":{"type":"string"},"path":{"type":"string"},"tiles":{"type":"integer"},"settled":{"type":"boolean"}},"required":["asset","path","tiles","settled"]}`
-
 // The scene, or the section edited in its world, saves its meshes: the first
 // time it gets a .navmesh beside it and an entity whose Navigation_Bake names
 // it, in one undo step; the file stays in memory until the scene is saved,
@@ -161,11 +158,5 @@ bake_call :: proc(s:^editor.Session,call:^api.Call) {
     editor.api_edit_end(s,call,written)
     tiles:=0
     for i in 0..<n.count {for &tile in n.classes[i].mesh.tiles {if tile.used && (!filter.within || mm.aabb_overlaps(filter.inside,tile.data.bounds)) {tiles+=1}}}
-    out:=call.out
-    serial.text_write_raw(out,"{")
-    api.write_text(out,"asset",fmt.tprintf("%016x%016x",id[0],id[1]),true)
-    api.write_text(out,"path",path)
-    api.write_int(out,"tiles",i64(tiles))
-    api.write_bool(out,"settled",settled(n))
-    serial.text_write_raw(out,"}")
+    api.call_result(call,Nav_Bake_Result)^={id,path,tiles,settled(n)}
 }

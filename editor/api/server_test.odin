@@ -14,13 +14,13 @@ methods_reload_replaces_handlers_and_schemas_without_reopening_connections :: pr
     if error:=server_init(&server,{port=0});!testing.expect_value(t,error,Init_Error.None) {return}
     defer server_destroy(&server)
     port:=server_port(&server)
-    testing.expect_value(t,method_register(&server,{name="reload.method",params=Add_Params,result=Add_Result,handler=add_handler}),Register_Error.None)
+    testing.expect_value(t,method_register(&server,{name="reload.method",params=type_info_of(Add_Params),result=type_info_of(Add_Result),handler=add_handler}),Register_Error.None)
     testing.expect(t,server_methods_reset(&server))
     testing.expect_value(t,server_port(&server),port)
     testing.expect(t,method_find(&server,"reload.method")==nil)
     testing.expect(t,method_find(&server,"engine.describe")!=nil)
     defaults:=Echo_Params{times=3}
-    testing.expect_value(t,method_register(&server,{name="reload.method",params=Echo_Params,result=Echo_Result,defaults=&defaults,handler=echo_handler}),Register_Error.None)
+    testing.expect_value(t,method_register(&server,{name="reload.method",params=type_info_of(Echo_Params),result=type_info_of(Echo_Result),defaults=&defaults,handler=echo_handler}),Register_Error.None)
     out:serial.Writer
     serial.writer_init(&out,allocator=context.allocator)
     defer serial.writer_destroy(&out)
@@ -122,7 +122,7 @@ invalid_params_are_reported_with_the_field_that_caused_them :: proc(t:^testing.T
         {"test.add",`{"a":1,"b":2,"c":3}`,`"c" is not a field: the fields are a, b`},
         {"test.add",`{"a":1}`,"b is required"},
         {"test.add",`{}`,"is required"},
-        {"test.add",`{"a":null,"b":1}`,"expected a number"},
+        {"test.add",`{"a":null,"b":1}`,"a is required"},
         {"test.echo",`{"text":"x","times":9}`,"times must be at most 4"},
         {"test.echo",`{"text":"x","times":0}`,"times must be at least 1"},
         {"test.echo",`{"text":"this text is longer than thirty-two bytes"}`,"text too long"},

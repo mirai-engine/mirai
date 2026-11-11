@@ -160,7 +160,7 @@ card_place :: proc(s:^Session,card:Card,parts:[]author.Part,transform:^core.Tran
             for part in parts {
                 for field in reflect.struct_fields_zipped(part.t.type) {
                     if field.type.id!=base.Asset_Id || int(field.offset)+size_of(base.Asset_Id)>len(part.value) {continue}
-                    kinds,_:=core.field_option(field.tag,"kind")
+                    kinds:=field_tagged(string(field.tag)).asset_kinds
                     at:=(^base.Asset_Id)(&part.value[field.offset])
                     for kind in strings.fields(kinds,context.temp_allocator) {
                         if at^=={} && kind==extension {at^=record.id}

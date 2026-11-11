@@ -13,7 +13,6 @@ import "mirai:host"
 import gpu "mirai:render"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 
 // What the tools of the editor do each frame besides drawing: the atlas of
 // previews the renderer is given, the files that arrive to be imported, and the popups and panels that float over
@@ -54,27 +53,27 @@ Import_Params :: struct {
 Import_Status_Result :: struct {
     importing:bool,
     ok:bool `mirai:"label=The last import that ended wrote its assets"`,
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=The source"`,
-    scene:[API_PATH_BYTES]u8 `mirai:"text,label=The scene a map became; empty for another source"`,
-    message:[IMPORT_MESSAGE_BYTES]u8 `mirai:"text"`,
-    warnings:[1][IMPORT_MESSAGE_BYTES]u8 `mirai:"list,text,label=What the last import that ended warned of: what it left out or assumed, and how to change it"`,
+    path:string `mirai:"label=The source"`,
+    scene:string `mirai:"label=The scene a map became; empty for another source"`,
+    message:string,
+    warnings:[]string `mirai:"label=What the last import that ended warned of: what it left out or assumed, and how to change it"`,
     seconds:f64 `mirai:"label=From the request until the editor took what it wrote"`,
     unzoned:f64 `mirai:"label=Of seconds, those no zone covers on the thread that imports and the editor's; with profile"`,
     publishing:bool `mirai:"label=The programs the last import wrote are being published; with profile, programs.publish is a zone once they are"`,
-    assets:[1]Import_Status_Asset `mirai:"list,label=What the last import that ended wrote"`,
-    zones:[1]Import_Status_Zone `mirai:"list,label=With profile: each zone of the last import by name and the zone that held it, the zones a zone held after it and one deeper, heaviest first"`,
+    assets:[]Import_Status_Asset `mirai:"label=What the last import that ended wrote"`,
+    zones:[]Import_Status_Zone `mirai:"label=With profile: each zone of the last import by name and the zone that held it, the zones a zone held after it and one deeper, heaviest first"`,
 }
 Import_Status_Zone :: struct {
-    name:[48]u8 `mirai:"text"`,
+    name:string,
     depth:int,
     seconds:f64 `mirai:"label=Summed over the threads"`,
     owner:f64 `mirai:"label=Of seconds, those on the thread that imports or the editor's"`,
     count:int,
 }
 Import_Status_Asset :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=Under the asset folder"`,
+    path:string `mirai:"label=Under the asset folder"`,
     asset:base.Asset_Id,
-    kind:[32]u8 `mirai:"text"`,
+    kind:string,
     kept:bool `mirai:"label=Its file already was what the import gives"`,
 }
 
@@ -111,9 +110,9 @@ tools_api_register :: proc(s:^Session,st:^Api_State) {
     programs_api_register(s,st)
     material_document_register(s,st)
     import_default:=Import_Params{seconds=API_IMPORT_SECONDS}
-    api_register(s,st,{name="asset.import",flags={.Core},summary="Imports a source file from anywhere on disk into the asset folder as the Import button of the content browser does: a model, an image, a sound, a font, prompts or a source a plugin imports. Answers when it ends, with whether it wrote its assets, what it said and what it wrote; importing it again updates those assets.",params=Import_Params,result=Import_Status_Result,writes_result=true,defaults=&import_default,run=api_asset_import})
-    api_register(s,st,{name="asset.import_status",summary="Whether an import runs, and of the last one that ended: whether it wrote its assets, what it said and what it wrote.",result=Import_Status_Result,writes_result=true,flags={.Read_Only},run=api_asset_import_status})
-    api_register(s,st,{name="graphics.status",summary="The graphics settings the renderer runs with (those of the game that plays while one does), the pacing of the frames and the cost of the last ones.",result=Graphics_Status,flags={.Read_Only},run=api_graphics_status})
+    api_register(s,st,{name="asset.import",flags={.Core},summary="Imports a source file from anywhere on disk into the asset folder as the Import button of the content browser does: a model, an image, a sound, a font, prompts or a source a plugin imports. Answers when it ends, with whether it wrote its assets, what it said and what it wrote; importing it again updates those assets.",params=type_info_of(Import_Params),result=type_info_of(Import_Status_Result),defaults=&import_default,run=api_asset_import})
+    api_register(s,st,{name="asset.import_status",summary="Whether an import runs, and of the last one that ended: whether it wrote its assets, what it said and what it wrote.",result=type_info_of(Import_Status_Result),flags={.Read_Only},run=api_asset_import_status})
+    api_register(s,st,{name="graphics.status",summary="The graphics settings the renderer runs with (those of the game that plays while one does), the pacing of the frames and the cost of the last ones.",result=type_info_of(Graphics_Status),flags={.Read_Only},run=api_graphics_status})
 }
 
 // A source is absolute or relative to the project, not to where the editor runs.
@@ -130,7 +129,7 @@ api_asset_import :: proc(s:^Session,call:^api.Call) {
     // A person picks the files.
     if api_asks(s,base.text_get(params.path[:])) {
         import_ask(s)
-        api_import_status_write(s,call.out)
+        api_import_status_answer(s,call)
         return
     }
     path:=asset_import_source(s,base.text_get(params.path[:]))
@@ -192,50 +191,23 @@ api_asset_import :: proc(s:^Session,call:^api.Call) {
     }
     importing :: proc(s:^Session,user:rawptr) -> bool {return s.importer.running!=nil}
     api_wait(s,f64(params.seconds),nil,importing,"importing")
-    api_import_status_write(s,call.out)
+    api_import_status_answer(s,call)
 }
 
 @(private)
-api_asset_import_status :: proc(s:^Session,call:^api.Call) {api_import_status_write(s,call.out)}
+api_asset_import_status :: proc(s:^Session,call:^api.Call) {api_import_status_answer(s,call)}
 
 @(private)
-api_import_status_write :: proc(s:^Session,w:^serial.Writer) {
+api_import_status_answer :: proc(s:^Session,call:^api.Call) {
     status:=&s.importer.status
-    serial.text_write_raw(w,`{"importing":`);serial.text_write_raw(w,status.importing?"true":"false")
-    api.write_key(w,"ok");serial.text_write_raw(w,status.ok?"true":"false")
-    api.write_key(w,"path");serial.text_write_string(w,base.text_get(status.path[:]))
-    api.write_key(w,"scene");serial.text_write_string(w,base.text_get(status.scene[:]))
-    api.write_key(w,"message");serial.text_write_string(w,base.text_get(status.message[:]))
-    api.write_key(w,"warnings");serial.write_u8(w,'[')
-    for warning,i in s.importer.warnings {
-        if i>0 {serial.write_u8(w,',')}
-        serial.text_write_string(w,warning)
+    r:=api.call_result(call,Import_Status_Result)
+    r^={
+        importing=status.importing,ok=status.ok,path=base.text_get(status.path[:]),scene=base.text_get(status.scene[:]),message=base.text_get(status.message[:]),
+        warnings=s.importer.warnings[:],seconds=status.seconds,unzoned=status.unzoned,publishing=s.importer.publishing!={},
+        assets=make([]Import_Status_Asset,len(s.importer.written),call.allocator),zones=make([]Import_Status_Zone,len(s.importer.zones),call.allocator),
     }
-    serial.write_u8(w,']')
-    api.write_key(w,"seconds");serial.text_write_float(w,transmute(u64)status.seconds,8)
-    api.write_key(w,"unzoned");serial.text_write_float(w,transmute(u64)status.unzoned,8)
-    api.write_key(w,"publishing");serial.text_write_raw(w,s.importer.publishing!={}?"true":"false")
-    api.write_key(w,"assets");serial.write_u8(w,'[')
-    for written,i in s.importer.written {
-        if i>0 {serial.write_u8(w,',')}
-        serial.text_write_raw(w,`{"path":`);serial.text_write_string(w,written.path)
-        api.write_key(w,"asset");api_asset_write(w,written.id)
-        api.write_key(w,"kind");serial.text_write_string(w,api_asset_kind_name(s,written.kind))
-        api.write_key(w,"kept");serial.text_write_raw(w,written.kept?"true":"false")
-        serial.write_u8(w,'}')
-    }
-    serial.write_u8(w,']')
-    api.write_key(w,"zones");serial.write_u8(w,'[')
-    for zone,i in s.importer.zones {
-        if i>0 {serial.write_u8(w,',')}
-        serial.text_write_raw(w,`{"name":`);serial.text_write_string(w,zone.name)
-        api.write_key(w,"depth");serial.text_write_int(w,i64(zone.depth))
-        api.write_key(w,"seconds");serial.text_write_float(w,transmute(u64)zone.seconds,8)
-        api.write_key(w,"owner");serial.text_write_float(w,transmute(u64)zone.owner,8)
-        api.write_key(w,"count");serial.text_write_int(w,i64(zone.count))
-        serial.write_u8(w,'}')
-    }
-    serial.text_write_raw(w,"]}")
+    for written,i in s.importer.written {r.assets[i]={written.path,written.id,api_asset_kind_name(s,written.kind),written.kept}}
+    for zone,i in s.importer.zones {r.zones[i]={zone.name,int(zone.depth),zone.seconds,zone.owner,int(zone.count)}}
 }
 
 @(private)

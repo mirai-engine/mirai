@@ -334,12 +334,12 @@ A plugin adds modes to the [mode menu](panels.md#inspection-mode) and to
 - `editor.Api_Provider` declares its registry in the default, for example
   `ANIMATION_API_DEFAULT :: Animation_Api{provider={register=register}}`. On opening the API the
   editor invokes that initializer, which the generator publishes in `World_Info`, and the provider
-  calls `editor.api_method_register(s, Params, Result, descriptor)` per method (or without
-  `Result`, or without either for free-form JSON), without running a frame. Reload rebuilds the
-  registry between calls with those of the new library.
-- The `Type_Info` of params and result must come from the library that declares the structs:
-  `api_method_register` is parapoly in them, so it instantiates in that library and takes them
-  itself. `engine.describe` and MCP expose those schemas.
+  calls `editor.api_method_register(s, descriptor)` per method, without running a frame. Reload
+  rebuilds the registry between calls with those of the new library.
+- The descriptor's `params` and `result` are the `type_info_of` of their structs, taken in the
+  library that declares them: each library has its own type table, so the editor cannot look up a
+  plugin's type. `mirai build editor` opens the built editor once with the project and fails with
+  every method that did not register. `engine.describe` and MCP expose those schemas.
 - A method a person runs too carries its entry in the same descriptor (`entry`: label, icon,
   shortcut, menu, params and what it shows): the plugin writes the gesture once, in the method.
   `editor.command_bind` gives a method more entries, with other params.

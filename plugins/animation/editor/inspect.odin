@@ -11,7 +11,6 @@ import "mirai:host"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
 // Parts of a definition: Default is the whole of it (the clip of an .anim, the
@@ -46,75 +45,80 @@ Instance_Inspect_Params :: struct {
 Asset_Inspect_Result :: struct {
     asset:base.Asset_Id,
     path:[1024]u8 `mirai:"text"`,
-    clips:[1]Asset_Clip_Name `mirai:"list,optional,label=.anim: every clip"`,
+    clips:[]Asset_Clip_Name `mirai:"optional,label=.anim: every clip"`,
     clip:[aa.ANIMATION_NAME_CAPACITY]u8 `mirai:"text,optional,label=.anim: the clip read"`,
     root:aa.Animation_Root `mirai:"optional,label=.anim: the root motion of the clip"`,
     tracks_total,markers_total:u32 `mirai:"optional,label=.anim: of the clip"`,
-    tracks:[1]Asset_Clip_Track `mirai:"list,optional,label=.anim: a page of the tracks of the clip"`,
-    markers:[1]aa.Animation_Marker `mirai:"list,optional,label=.anim: a page of the markers of the clip"`,
+    tracks:[]Asset_Clip_Track `mirai:"optional,label=.anim: a page of the tracks of the clip"`,
+    markers:[]aa.Animation_Marker `mirai:"optional,label=.anim: a page of the markers of the clip"`,
     target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=.anim section Track: the bone path or curve of the track"`,
     property:lib.Property `mirai:"optional"`,
     slot:u8 `mirai:"optional"`,
     keys_total:u32 `mirai:"optional"`,
-    keys:[1]lib.Keyframe `mirai:"list,optional,label=.anim section Track: a page of the keys"`,
+    keys:[]lib.Keyframe `mirai:"optional,label=.anim section Track: a page of the keys"`,
     bones_total,sockets_total:u32 `mirai:"optional,label=.skeleton"`,
-    bones:[1]Authoring_Bone `mirai:"list,optional,label=.skeleton: a page of the bones with their rest pose"`,
-    sockets:[1]aa.Skeleton_Socket `mirai:"list,optional,label=.skeleton: a page of the sockets; offsets are local"`,
+    bones:[]Authoring_Bone `mirai:"optional,label=.skeleton: a page of the bones with their rest pose"`,
+    sockets:[]aa.Skeleton_Socket `mirai:"optional,label=.skeleton: a page of the sockets; offsets are local"`,
     up:mm.Vec3 `mirai:"optional,label=.skeleton section Body: the up of the body at rest; it faces -Z"`,
     axes_confidence:f32 `mirai:"optional,label=0 to 1: how sure detection was of how the body stands"`,
-    parts:[1]Body_Part_Result `mirai:"list,optional,label=.skeleton section Body: each part found"`,
-    missing:[1]lib.Body_Part `mirai:"list,optional,label=Parts without a bone"`,
+    parts:[]Body_Part_Result `mirai:"optional,label=.skeleton section Body: each part found"`,
+    missing:[]lib.Body_Part `mirai:"optional,label=Parts without a bone"`,
     unassigned_total:u32 `mirai:"optional"`,
-    unassigned:[1][aa.NODE_PATH_CAPACITY]u8 `mirai:"text,list,optional,label=The first bones outside the body; unassigned_total counts them all"`,
-    fix:[256]u8 `mirai:"text,optional,label=How to complete or correct the body; empty when it needs nothing"`,
+    unassigned:[]string `mirai:"optional,label=The first bones outside the body; unassigned_total counts them all"`,
+    fix:string `mirai:"optional,label=How to complete or correct the body; empty when it needs nothing"`,
     stored:bool `mirai:"optional,label=Whether the .skeleton holds a body: skeleton.body.detect saves it"`,
     animation:base.Asset_Id `mirai:"optional,label=.character: the .anim of its clips"`,
     match:anim.Match_Info `mirai:"optional,label=.character: its locomotion: the rate of its database, the interval of its searches, the blend of a jump, its memory and weights"`,
     match_clips_total:u32 `mirai:"optional,label=.character"`,
-    match_clips:[1]Asset_Match_Clip `mirai:"list,optional,label=.character: a page of its locomotion clips with the Locomotion_Mode each serves"`,
-    databases:[1]Asset_Match_Database `mirai:"list,optional,label=.character: the database built for each skeleton a rig played it on"`,
+    match_clips:[]Asset_Match_Clip `mirai:"optional,label=.character: a page of its locomotion clips with the Locomotion_Mode each serves"`,
+    databases:[]Asset_Match_Database `mirai:"optional,label=.character: the database built for each skeleton a rig played it on"`,
     layers_total,actions_total,sections_total:u32 `mirai:"optional,label=.character"`,
-    layers:[1]Authoring_Page(anim.Stack_Layer) `mirai:"list,optional,label=.character: its stack over the base, in order"`,
-    actions:[1]Authoring_Page(anim.Action_Definition) `mirai:"list,optional"`,
-    sections:[1]Authoring_Page(Action_Section_Params) `mirai:"list,optional"`,
-    spaces:[1]Asset_Space `mirai:"list,optional,label=.character: the spaces its layers sample"`,
+    layers:[]Authoring_Page(anim.Stack_Layer) `mirai:"optional,label=.character: its stack over the base, in order"`,
+    actions:[]Authoring_Page(anim.Action_Definition) `mirai:"optional"`,
+    sections:[]Authoring_Page(Action_Section_Params) `mirai:"optional"`,
+    spaces:[]Asset_Space `mirai:"optional,label=.character: the spaces its layers sample"`,
     warp:anim.Pose_Warp_Profile `mirai:"optional,label=.character: pose warping"`,
     windows_total:u32 `mirai:"optional,label=.character"`,
-    windows:[1]Authoring_Page(anim.Motion_Window) `mirai:"list,optional,label=.character: warp windows, each over the spans of its name on the clips"`,
+    windows:[]Authoring_Page(anim.Motion_Window) `mirai:"optional,label=.character: warp windows, each over the spans of its name on the clips"`,
     distances_total:u32 `mirai:"optional,label=.character"`,
-    distances:[1]Authoring_Page(Motion_Distance_Params) `mirai:"list,optional,label=.character: distance tracks"`,
+    distances:[]Authoring_Page(Motion_Distance_Params) `mirai:"optional,label=.character: distance tracks"`,
     counts:Profile_Counts `mirai:"optional,label=.character: the rows of each table of its modifiers"`,
     table:Profile_Table `mirai:"optional,label=.character: the table read; only its field has rows"`,
-    ik:[1]Authoring_Page(anim.IK_Constraint) `mirai:"list,optional"`,
-    look:[1]Authoring_Page(anim.Look_Constraint) `mirai:"list,optional"`,
-    limits:[1]Authoring_Page(anim.Rotation_Constraint) `mirai:"list,optional"`,
-    grounding:[1]Authoring_Page(Profile_Grounding_Params) `mirai:"list,optional"`,
-    chain_ik:[1]Authoring_Page(Profile_Chain_Params) `mirai:"list,optional"`,
-    twist:[1]Authoring_Page(Profile_Twist_Params) `mirai:"list,optional"`,
-    springs:[1]Authoring_Page(Profile_Spring_Params) `mirai:"list,optional"`,
-    multi_ik:[1]Authoring_Page(Profile_Multi_Params) `mirai:"list,optional"`,
-    retarget_chains:[1]Authoring_Page(anim.Chain_Retarget_Constraint) `mirai:"list,optional"`,
-    spline_ik:[1]Authoring_Page(Profile_Spline_Params) `mirai:"list,optional"`,
-    correctives:[1]Authoring_Page(Profile_Corrective_Params) `mirai:"list,optional"`,
-    follow:[1]Authoring_Page(Profile_Follow_Params) `mirai:"list,optional"`,
-    curve_poses:[1]Authoring_Page(anim.Curve_Pose) `mirai:"list,optional"`,
-    curve_drives:[1]Authoring_Page(anim.Curve_Drive) `mirai:"list,optional"`,
-    curve_materials:[1]Authoring_Page(anim.Curve_Material) `mirai:"list,optional"`,
+    ik:[]Authoring_Page(anim.IK_Constraint) `mirai:"optional"`,
+    look:[]Authoring_Page(anim.Look_Constraint) `mirai:"optional"`,
+    limits:[]Authoring_Page(anim.Rotation_Constraint) `mirai:"optional"`,
+    grounding:[]Authoring_Page(Profile_Grounding_Params) `mirai:"optional"`,
+    chain_ik:[]Authoring_Page(Profile_Chain_Params) `mirai:"optional"`,
+    twist:[]Authoring_Page(Profile_Twist_Params) `mirai:"optional"`,
+    springs:[]Authoring_Page(Profile_Spring_Params) `mirai:"optional"`,
+    multi_ik:[]Authoring_Page(Profile_Multi_Params) `mirai:"optional"`,
+    retarget_chains:[]Authoring_Page(anim.Chain_Retarget_Constraint) `mirai:"optional"`,
+    spline_ik:[]Authoring_Page(Profile_Spline_Params) `mirai:"optional"`,
+    correctives:[]Authoring_Page(Profile_Corrective_Params) `mirai:"optional"`,
+    follow:[]Authoring_Page(Profile_Follow_Params) `mirai:"optional"`,
+    curve_poses:[]Authoring_Page(anim.Curve_Pose) `mirai:"optional"`,
+    curve_drives:[]Authoring_Page(anim.Curve_Drive) `mirai:"optional"`,
+    curve_materials:[]Authoring_Page(anim.Curve_Material) `mirai:"optional"`,
 }
 // A space of a .character with its samples.
-Asset_Space :: struct {info:anim.Blend_Info,samples:[1]Authoring_Page(anim.Blend_Sample) `mirai:"list,label=Positions in the units of the axes"`}
+Asset_Space :: struct {info:anim.Blend_Info,samples:[]Authoring_Page(anim.Blend_Sample) `mirai:"label=Positions in the units of the axes"`}
 Asset_Clip_Name :: struct {name:[aa.ANIMATION_NAME_CAPACITY]u8 `mirai:"text"`}
 // entry: it starts its modes, searched from its start when the body enters one of them.
 Asset_Match_Clip :: struct {
-    clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id `mirai:"optional,label=Empty is that of the .character"`,modes:[1][32]u8 `mirai:"text,list"`,loop,entry:bool,
+    clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id `mirai:"optional,label=Empty is that of the .character"`,modes:[][32]u8 `mirai:"text"`,loop,entry:bool,
     speed:f32 `mirai:"optional,unit=m/s,label=The speed it travels at, set by hand; omitted is measured"`,
-    blend:[1][64]u8 `mirai:"text,list,optional,label=The clips it blends with in phase, at the weights of each sample"`,
-    samples:[1]Asset_Match_Sample `mirai:"list,optional,label=A blend: its points the search picks"`,
+    blend:[][64]u8 `mirai:"text,optional,label=The clips it blends with in phase, at the weights of each sample"`,
+    samples:[]Asset_Match_Sample `mirai:"optional,label=A blend: its points the search picks"`,
 }
 Asset_Match_Sample :: struct {weights:[anim.MATCH_BLEND]f32 `mirai:"label=Of clip, then of each of blend"`,speed:f32 `mirai:"optional,unit=m/s,label=Set by hand; omitted is measured from the blended feet"`}
 Asset_Match_Database :: struct {rows:u32,bytes:u64 `mirai:"optional"`,error:lib.Match_Build_Error `mirai:"label=Memory_Limit: it keeps more than memory; Invalid: a bone or clip is missing on the skeleton"`}
 Asset_Clip_Track :: struct {target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text"`,property:lib.Property,slot:u8,keys_total:u32}
-// Each part asked; one the entity lacks holds only available, code and reason.
+// What a part the entity lacks holds instead of its fields.
+Instance_Missing :: struct {
+    code:[32]u8 `mirai:"text,optional,label=Why the entity lacks the part"`,
+    reason:[256]u8 `mirai:"text,optional"`,
+}
+// Each part asked; one the entity lacks holds only code and reason.
 Instance_Inspect_Result :: struct {
     id:base.Entity_Id `mirai:"optional"`,
     entity:[18]u8 `mirai:"text,optional,label=The handle asked"`,
@@ -129,21 +133,20 @@ Instance_Inspect_Result :: struct {
 // The fields of Preview_Match_Result, then the clips of the database of its skeleton and the last
 // search matching had to make.
 Instance_Match :: struct {
+    using missing:Instance_Missing `mirai:"inline"`,
     available:bool `mirai:"optional,label=false when the entity plays no locomotion"`,
-    code:[32]u8 `mirai:"text,optional"`,
-    reason:[256]u8 `mirai:"text,optional"`,
     clip:[64]u8 `mirai:"text,optional"`,mode:[32]u8 `mirai:"text,optional"`,forced:bool `mirai:"optional"`,
     time:f32 `mirai:"optional,unit=s"`,rate:f32 `mirai:"optional"`,speed:f32 `mirai:"optional,unit=m/s"`,cost:f32 `mirai:"optional"`,
     searches,jumps:u32 `mirai:"optional"`,
-    ranges:[1]Instance_Match_Range `mirai:"list,optional,label=Each clip or blended sample of the database, by its index"`,
+    ranges:[]Instance_Match_Range `mirai:"optional,label=Each clip or blended sample of the database, by its index"`,
     search:Instance_Match_Search `mirai:"optional,label=The last search it had to make: entering a mode, starting, stopping, or leaving a clip that ends"`,
 }
 // clips: of a blended sample, each clip with its share; travel: where it goes in the space of the
 // rig (-Z forward).
 Instance_Match_Range :: struct {
     clip:[64]u8 `mirai:"text"`,
-    clips:[1]Instance_Match_Member `mirai:"list,optional"`,
-    modes:[1][32]u8 `mirai:"text,list"`,
+    clips:[]Instance_Match_Member `mirai:"optional"`,
+    modes:[][32]u8 `mirai:"text"`,
     loop,entry:bool,
     speed:f32 `mirai:"unit=m/s"`,
     travel:mm.Vec3 `mirai:"unit=m/s"`,
@@ -155,7 +158,7 @@ Instance_Match_Search :: struct {
     mode:[32]u8 `mirai:"text"`,
     entry:bool `mirai:"label=It searched the starts of the entry clips of mode"`,
     time_to_land:f32 `mirai:"optional,unit=s,label=It searched the rows that reach their landing marker this many seconds ahead"`,
-    candidates:[1]Instance_Match_Candidate `mirai:"list,label=The best row of each clip it could pick, least cost first (the first is the one it chose), then that of each clip it left out with its reason"`,
+    candidates:[]Instance_Match_Candidate `mirai:"label=The best row of each clip it could pick, least cost first (the first is the one it chose), then that of each clip it left out with its reason"`,
 }
 // costs: of each kind of feature by its weight; they sum cost.
 Instance_Match_Candidate :: struct {
@@ -169,11 +172,9 @@ Instance_Match_Candidate :: struct {
 }
 Instance_Match_Costs :: struct {foot_position,foot_velocity,hip_velocity,body_velocity,trajectory_position,trajectory_direction:f32}
 Instance_Pose :: struct {
-    available:bool `mirai:"optional,label=false when the entity lacks the part"`,
-    code:[32]u8 `mirai:"text,optional"`,
-    reason:[256]u8 `mirai:"text,optional"`,
+    using missing:Instance_Missing `mirai:"inline"`,
     skeleton:base.Asset_Id `mirai:"optional"`,
-    transforms:[1]Instance_Pose_Transform `mirai:"list,optional,label=One per name asked, in its order"`,
+    transforms:[]Instance_Pose_Transform `mirai:"optional,label=One per name asked, in its order"`,
 }
 Pose_Kind :: enum u8 {Bone,Socket}
 Instance_Pose_Transform :: struct {
@@ -184,13 +185,11 @@ Instance_Pose_Transform :: struct {
     entity:mm.Transform `mirai:"label=In the space of the entity"`,
 }
 Instance_Rig :: struct {
-    available:bool `mirai:"optional,label=false when the entity lacks the part"`,
-    code:[32]u8 `mirai:"text,optional"`,
-    reason:[256]u8 `mirai:"text,optional"`,
-    clips:[1]Instance_Clip `mirai:"list,optional"`,
+    using missing:Instance_Missing `mirai:"inline"`,
+    clips:[]Instance_Clip `mirai:"optional"`,
     bones_total:u32 `mirai:"optional"`,
     joints:u32 `mirai:"optional,label=Joints of the skinned mesh"`,
-    bones:[1]Instance_Bone `mirai:"list,optional,label=A page of the bones"`,
+    bones:[]Instance_Bone `mirai:"optional,label=A page of the bones"`,
 }
 Instance_Clip :: struct {name:[aa.ANIMATION_NAME_CAPACITY]u8 `mirai:"text"`,duration:f32 `mirai:"unit=s"`,tracks,markers:u32}
 Instance_Bone :: struct {
@@ -203,14 +202,12 @@ Instance_Bone :: struct {
     rotation:[4]f32 `mirai:"label=Quaternion XYZW"`,
 }
 Instance_Modifiers :: struct {
-    available:bool `mirai:"optional,label=false when the entity lacks the part"`,
-    code:[32]u8 `mirai:"text,optional"`,
-    reason:[256]u8 `mirai:"text,optional"`,
+    using missing:Instance_Missing `mirai:"inline"`,
     id:base.Entity_Id `mirai:"optional"`,
     character:base.Asset_Id `mirai:"optional,label=The .character of its Animation"`,
     total:u32 `mirai:"optional"`,
     last_request_error:anim.Modifier_Request_Error `mirai:"optional,label=Missing_Operation or Missing_Effector: a goal or control names what the .character lacks; Missing_Target: its target is not found"`,
-    modifiers:[1]Instance_Modifier `mirai:"list,optional,label=A page of the operations"`,
+    modifiers:[]Instance_Modifier `mirai:"optional,label=A page of the operations"`,
 }
 Instance_Modifier :: struct {
     kind:anim.Modifier_Kind,
@@ -221,23 +218,19 @@ Instance_Modifier :: struct {
     requested_enabled:bool `mirai:"optional"`,
     fade_remaining:f32 `mirai:"optional,unit=s"`,
     diagnostic:Modifier_Diagnostic_Result `mirai:"optional,label=With diagnostics: how the solver did"`,
-    effectors:[1]Modifier_Effector_Result `mirai:"list,label=Effectors of Multi_IK and controls of Spline_IK"`,
+    effectors:[]Modifier_Effector_Result `mirai:"label=Effectors of Multi_IK and controls of Spline_IK"`,
 }
 Instance_Actions :: struct {
-    available:bool `mirai:"optional,label=false when the entity lacks the part"`,
-    code:[32]u8 `mirai:"text,optional"`,
-    reason:[256]u8 `mirai:"text,optional"`,
+    using missing:Instance_Missing `mirai:"inline"`,
     id:base.Entity_Id `mirai:"optional"`,
     character:base.Asset_Id `mirai:"optional,label=The .character of its Animation"`,
-    problems:[1]Problem_Result `mirai:"list,optional,label=What its actions reported; the most recent first"`,
-    parameters:[1]anim.Stack_Parameter_Info `mirai:"list,optional,label=What animation.request parameters sets: the weight of each layer and the axes of their spaces"`,
-    playing:[1]Action_Playing_Result `mirai:"list,optional,label=The actions playing with their effective weight"`,
-    events:[1]Action_Event_Result `mirai:"list,optional,label=What its actions told in this tick"`,
+    problems:[]Problem_Result `mirai:"optional,label=What its actions reported; the most recent first"`,
+    parameters:[]anim.Stack_Parameter_Info `mirai:"optional,label=What animation.request parameters sets: the weight of each layer and the axes of their spaces"`,
+    playing:[]Action_Playing_Result `mirai:"optional,label=The actions playing with their effective weight"`,
+    events:[]Action_Event_Result `mirai:"optional,label=What its actions told in this tick"`,
 }
 Instance_Motion :: struct {
-    available:bool `mirai:"optional,label=false when the entity lacks the part"`,
-    code:[32]u8 `mirai:"text,optional"`,
-    reason:[256]u8 `mirai:"text,optional"`,
+    using missing:Instance_Missing `mirai:"inline"`,
     id:base.Entity_Id `mirai:"optional"`,
     character:base.Asset_Id `mirai:"optional,label=The .character of its Animation"`,
     ready:bool `mirai:"optional"`,
@@ -247,7 +240,7 @@ Instance_Motion :: struct {
     source_velocity:mm.Vec3 `mirai:"optional,unit=m/s"`,
     locomotion:Request_Locomotion `mirai:"optional,label=The locomotion asked"`,
     targets_total:u32 `mirai:"optional"`,
-    targets:[1]Instance_Motion_Target `mirai:"list,optional"`,
+    targets:[]Instance_Motion_Target `mirai:"optional"`,
 }
 Instance_Motion_Target :: struct {
     name:[32]u8 `mirai:"text"`,
@@ -257,39 +250,26 @@ Instance_Motion_Target :: struct {
     enabled,resolved:bool,
 }
 Instance_Morphs :: struct {
-    available:bool `mirai:"optional,label=false when the entity lacks the part"`,
-    code:[32]u8 `mirai:"text,optional"`,
-    reason:[256]u8 `mirai:"text,optional"`,
+    using missing:Instance_Missing `mirai:"inline"`,
     id:base.Entity_Id `mirai:"optional"`,
     mesh:base.Asset_Id `mirai:"optional"`,
     source:base.Entity_Id `mirai:"optional,label=The entity whose animation drives the weights"`,
     source_kind:Morph_Source_Kind `mirai:"optional"`,
     path:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=Of the curves of its weights"`,
     total:u32 `mirai:"optional"`,
-    targets:[1]Morph_Target_Result `mirai:"list,optional,label=A page of the targets"`,
+    targets:[]Morph_Target_Result `mirai:"optional,label=A page of the targets"`,
     diagnostic:Morph_Diagnostic_Result `mirai:"optional,label=With diagnostics"`,
-    unresolved:[1]Morph_Unresolved_Result `mirai:"list,optional,label=With diagnostics: weights that name no target"`,
+    unresolved:[]Morph_Unresolved_Result `mirai:"optional,label=With diagnostics: weights that name no target"`,
 }
 
 @(private)
 inspect_register :: proc(s:^editor.Session) {
     asset_defaults:=Asset_Inspect_Params{limit=128}
     instance_defaults:=Instance_Inspect_Params{limit=128}
-    editor.api_method_register(s,Asset_Inspect_Params,Asset_Inspect_Result,{name="animation.asset.inspect",summary="Reads an animation definition: an .anim, a .skeleton or a .character.",defaults=&asset_defaults,flags={.Read_Only},run=asset_inspect,writes_result=true})
-    editor.api_method_register(s,Instance_Inspect_Params,Instance_Inspect_Result,{name="animation.inspect",summary="Reads what an animated entity does now, part by part; a part the entity lacks says why instead of failing the call.",defaults=&instance_defaults,flags={.Read_Only},run=instance_inspect,writes_result=true})
+    editor.api_method_register(s,{params=type_info_of(Asset_Inspect_Params),result=type_info_of(Asset_Inspect_Result),name="animation.asset.inspect",summary="Reads an animation definition: an .anim, a .skeleton or a .character.",defaults=&asset_defaults,flags={.Read_Only},run=asset_inspect})
+    editor.api_method_register(s,{params=type_info_of(Instance_Inspect_Params),result=type_info_of(Instance_Inspect_Result),name="animation.inspect",summary="Reads what an animated entity does now, part by part; a part the entity lacks says why instead of failing the call.",defaults=&instance_defaults,flags={.Read_Only},run=instance_inspect})
 }
 
-// Runs a handler with params of its own, in the call.
-@(private)
-inspect_with :: proc(s:^editor.Session,call:^api.Call,params:^$T,run:proc(s:^editor.Session,call:^api.Call)) {
-    saved,method:=call.params,call.method
-    inner:api.Method
-    if method!=nil {inner=method^}
-    inner.params_id=T
-    call.params,call.method=params,&inner
-    run(s,call)
-    call.params,call.method=saved,method
-}
 
 @(private)
 asset_inspect :: proc(s:^editor.Session,call:^api.Call) {
@@ -297,24 +277,22 @@ asset_inspect :: proc(s:^editor.Session,call:^api.Call) {
     if s.app==nil || s.app.assets==nil || !host.assets_scan(s.app.assets) {authoring_failure(call,"asset","Unavailable","an asset registry","unavailable","Assets are unavailable",api.SERVER_ERROR);return}
     record,found:=aa.registry_find(&s.app.assets.registry,p.asset)
     if !found {authoring_failure(call,"asset","Missing_Asset","an animation asset of the registry",fmt.tprintf("%v",p.asset),"The asset does not exist");return}
-    limit:=min(p.limit,256)
+    r:=api.call_result(call,Asset_Inspect_Result)
+    r.asset=p.asset
+    page:=p^
+    if record.kind!=aa.KIND_ANIMATION || p.section!=.Track {page.limit=min(p.limit,256)}
     switch record.kind {
     case aa.KIND_ANIMATION:
-        if p.section==.Track {inner:=Track_Inspect_Params{asset=p.asset,clip=p.clip,target=p.target,property=p.property,slot=p.slot,offset=p.offset,limit=p.limit};inspect_with(s,call,&inner,authoring_track_inspect);return}
-        inner:=Clip_Inspect_Params{asset=p.asset,clip=p.clip,offset=p.offset,limit=limit};inspect_with(s,call,&inner,authoring_clip_inspect)
+        if p.section==.Track {authoring_track_inspect(s,call,&page,r)} else {authoring_clip_inspect(s,call,&page,r)}
     case aa.KIND_SKELETON:
-        if p.section==.Body {
-            file:Authoring_File;defer aa.asset_close(&file.file)
-            view,ok:=authoring_skeleton_open(s,call,p.asset,&file);if !ok {return}
-            serial.text_write_raw(call.out,"{");authoring_result(call,p.asset,file.path)
-            body_write(call,view,aa.skeleton_body_map(view.bones,view.body,view.body_parts))
-            api.write_bool(call.out,"stored",view.body!=nil)
-            serial.text_write_raw(call.out,"}")
-            return
-        }
-        inner:=Authoring_Inspect_Params{asset=p.asset,offset=p.offset,limit=limit};inspect_with(s,call,&inner,authoring_skeleton_inspect)
-    case anim.CHARACTER_KIND:
-        character_inspect(s,call,p.asset,p.table,p.offset,limit)
+        if p.section!=.Body {authoring_skeleton_inspect(s,call,&page,r);return}
+        file:Authoring_File;defer aa.asset_close(&file.file)
+        view,ok:=authoring_skeleton_open(s,call,p.asset,&file);if !ok {return}
+        base.text_set(r.path[:],file.path)
+        body:=body_fields(call,view,aa.skeleton_body_map(view.bones,view.body,view.body_parts))
+        r.up,r.axes_confidence,r.parts,r.missing=body.up,body.axes_confidence,body.parts,body.missing
+        r.unassigned_total,r.unassigned,r.fix,r.stored=body.unassigned_total,body.unassigned,body.fix,view.body!=nil
+    case anim.CHARACTER_KIND: character_inspect(s,call,&page,r)
     case:
         authoring_failure(call,"asset","Invalid_Kind","an .anim, .skeleton or .character",fmt.tprintf("%v",record.kind),"The asset is not an animation definition",fix="Use asset.list to find animation assets")
     }
@@ -325,113 +303,89 @@ instance_inspect :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Instance_Inspect_Params)
     w:=editor.shown_world(s)
     e,ok:=editor.api_call_entity(call,w,p.entity[:],game=s.mode!=.Edit);if !ok {return}
-    id:=editor.api_entity_id(w,e)
     parts:=p.parts if authoring_field_present(call,"parts") else INSTANCE_PARTS_DEFAULT
     // Names that do not exist fail the call; a rig without a pose says so in its part.
     query:Pose_Query
     if .Pose in parts {query=pose_query(s,call,w,e,&p.names);if call.failed {return}}
-    out:=call.out
-    serial.text_write_raw(out,"{");api.write_key(out,"id",true);api.write_id(out,id)
-    if id==0 {api.write_text(out,"entity",fmt.tprintf("0x%016x",u64(e)))}
+    r:=api.call_result(call,Instance_Inspect_Result)
+    r.id=editor.api_entity_id(w,e)
+    if r.id==0 {base.text_set(r.entity[:],fmt.tprintf("0x%016x",u64(e)))}
+    // A part the entity lacks says why; the rest stays.
+    missing :: proc(call:^api.Call) -> (m:Instance_Missing) {
+        base.text_set(m.code[:],strings.trim(api.json_member(call.error.data,"code"),`"`))
+        base.text_set(m.reason[:],call.error.message)
+        call.failed,call.error=false,{}
+        return
+    }
     for part in parts {
-        api.write_key(out,strings.to_lower(fmt.tprintf("%v",part),call.allocator))
-        mark:=out.count
         switch part {
-        case .Rig: inner:=Describe_Params{handle=e,offset=p.offset,limit=p.limit};inspect_with(s,call,&inner,describe)
-        case .Match: instance_match(s,call,w,e)
-        case .Modifiers: inner:=Modifier_Inspect_Params{handle=e,offset=p.offset,limit=p.limit,diagnostics=p.diagnostics};inspect_with(s,call,&inner,program_modifier_inspect)
-        case .Actions: inner:=Entity_Params{handle=e};inspect_with(s,call,&inner,authoring_action_inspect)
-        case .Motion: inner:=Entity_Params{handle=e};inspect_with(s,call,&inner,authoring_motion_inspect)
-        case .Morphs: inner:=Morph_Inspect_Params{handle=e,offset=p.offset,limit=p.limit,diagnostics=p.diagnostics};inspect_with(s,call,&inner,morph_inspect)
-        case .Pose: instance_pose(call,w,e,&query)
-        }
-        // A part the entity lacks says why; the rest stays.
-        if call.failed {
-            reason,code:=call.error.message,""
-            if value:=api.json_member(call.error.data,"code");value!="" {code=strings.trim(value,`"`)}
-            call.failed,call.error=false,{}
-            out.count=mark
-            serial.text_write_raw(out,"{");api.write_bool(out,"available",false,true);api.write_text(out,"code",code);api.write_text(out,"reason",reason);serial.text_write_raw(out,"}")
+        case .Rig: r.rig=instance_rig(s,call,w,e,p);if call.failed {r.rig={missing=missing(call)}}
+        case .Match: r.match=instance_match(s,call,w,e);if call.failed {r.match={missing=missing(call)}}
+        case .Modifiers: r.modifiers=program_modifier_inspect(s,call,w,e,p);if call.failed {r.modifiers={missing=missing(call)}}
+        case .Actions: r.actions=authoring_action_inspect(s,call,w,e);if call.failed {r.actions={missing=missing(call)}}
+        case .Motion: r.motion=authoring_motion_inspect(s,call,w,e);if call.failed {r.motion={missing=missing(call)}}
+        case .Morphs: r.morphs=morph_inspect(s,call,w,e,p);if call.failed {r.morphs={missing=missing(call)}}
+        case .Pose: r.pose=instance_pose(call,w,e,&query);if call.failed {r.pose={missing=missing(call)}}
         }
     }
-    serial.text_write_raw(out,"}")
 }
 
 // What the motion matching of an entity plays, the clips of its database and its last search.
 @(private)
-instance_match :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity) {
+instance_match :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity) -> (r:Instance_Match) {
     value,present:=editor.entity_get(world,entity,anim.Animation)
     if !present {authoring_failure(call,"entity","Missing_Component","an Animation component","missing component","The entity has no Animation component");return}
     if anim.animation_character(s.app.assets,value)=={} {authoring_failure(call,"entity","Not_Matching","an Animation.asset that is a .character with locomotion","another asset","The entity plays no motion matching",fix="Make one with animation.character.setup");return}
     result,matching:=preview_match(world,s.app,entity)
     if !matching {authoring_failure(call,"entity","Not_Running","locomotion the world plays","not sampled or without locomotion clips","Matching runs in Play, Simulation, the preview of the editor or animation.preview, for a .character with locomotion clips");return}
-    out:=call.out
-    if !authoring_write_value(call,&result,type_info_of(Preview_Match_Result)) || out.count==0 {return}
-    // The object goes on past the fields of Preview_Match_Result.
-    out.count-=1
+    authoring_struct_fields(&r,result)
     playback:=core.world_storage_of(world,anim.Playback)
     state:^anim.Playing;for &playing in playback.states {if playing.entity==entity {state=&playing;break}}
     shared:=core.world_ref(s.app.shared,world.info,.Shared)
     library:=anim.animation_playing_content(core.world_storage_of(shared,anim.Source_Assets),s.app,state)
     db:=anim.animation_match_database(core.world_storage_of(shared,anim.Character_Assets),library,state)
+    if db==nil {return}
     modes:=locomotion_modes(world.info)
-    api.write_key(out,"ranges");serial.write_u8(out,'[')
-    if db!=nil {
-        for &r,i in db.ranges {
-            if i>0 {serial.write_u8(out,',')}
-            label:=anim.source_clip_label(library,r.clips[0])
-            serial.text_write_raw(out,"{");api.write_text(out,"clip",base.text_get(label[:]),true)
-            if r.weights!={0=1} {
-                api.write_key(out,"clips");serial.write_u8(out,'[');listed:=0
-                for clip,k in r.clips {
-                    if r.weights[k]<=0 {continue}
-                    if listed>0 {serial.write_u8(out,',')};listed+=1
-                    member:=Instance_Match_Member{clip=anim.source_clip_label(library,clip),weight=r.weights[k]}
-                    authoring_write_value(call,&member,type_info_of(Instance_Match_Member))
-                }
-                serial.write_u8(out,']')
-            }
-            api.write_key(out,"modes");match_modes_write(out,modes,r.modes)
-            api.write_bool(out,"loop",r.loop);api.write_bool(out,"entry",r.entry)
-            api.write_key(out,"speed");api.write_number(out,r.speed)
-            api.write_key(out,"travel");serial.write_u8(out,'[')
-            for axis,k in r.travel {if k>0 {serial.write_u8(out,',')};api.write_number(out,axis)}
-            serial.write_u8(out,']');api.write_key(out,"duration");api.write_number(out,f32(max(r.count-1,0))/db.rate)
-            serial.write_u8(out,'}')
-        }
+    r.ranges=make([]Instance_Match_Range,len(db.ranges),call.allocator)
+    for &row,i in r.ranges {
+        range:=&db.ranges[i]
+        row={clip=anim.source_clip_label(library,range.clips[0]),modes=match_modes(call,modes,range.modes),loop=range.loop,entry=range.entry,speed=range.speed,travel=range.travel,duration=f32(max(range.count-1,0))/db.rate}
+        if range.weights=={0=1} {continue}
+        members:=make([dynamic]Instance_Match_Member,call.allocator)
+        for clip,k in range.clips {if range.weights[k]>0 {append(&members,Instance_Match_Member{clip=anim.source_clip_label(library,clip),weight=range.weights[k]})}}
+        row.clips=members[:]
     }
-    serial.write_u8(out,']')
-    if db!=nil && state.program.match.searched.search>0 {
-        searched:=&state.program.match.searched
-        mode:=u16(intrinsics.count_trailing_zeros(searched.request.modes))
-        name,named:=locomotion_mode_name(modes,mode)
-        api.write_key(out,"search");serial.text_write_raw(out,"{");api.write_uint(out,"search",u64(searched.search),true)
-        api.write_text(out,"mode",name if named else fmt.tprintf("%d",mode));api.write_bool(out,"entry",searched.request.entry)
-        if searched.request.event>0 {api.write_key(out,"time_to_land");api.write_number(out,searched.request.event)}
-        api.write_key(out,"candidates");serial.write_u8(out,'[');written:=0
-        noted:=anim.match_searched_candidates(db,searched^)
-        for &candidate in noted.items[:clamp(noted.count,0,lib.MATCH_CANDIDATES)] {
-            range:=lib.match_range_of(db,int(candidate.row));if range<0 {continue}
-            if written>0 {serial.write_u8(out,',')};written+=1
-            r:=db.ranges[range];c:=candidate.costs
-            row:=Instance_Match_Candidate{range=u32(range),clip=anim.source_clip_label(library,r.clips[0]),time=f32(int(candidate.row)-int(r.first))/db.rate,rate=candidate.rate,cost=candidate.cost,reason=candidate.reason}
-            row.costs={c[.Foot_Position],c[.Foot_Velocity],c[.Hip_Velocity],c[.Body_Velocity],c[.Trajectory_Position],c[.Trajectory_Direction]}
-            authoring_write_value(call,&row,type_info_of(Instance_Match_Candidate))
-        }
-        serial.text_write_raw(out,"]}")
+    searched:=&state.program.match.searched
+    if searched.search==0 {return}
+    mode:=u16(intrinsics.count_trailing_zeros(searched.request.modes))
+    name,named:=locomotion_mode_name(modes,mode)
+    r.search={search=u32(searched.search),entry=searched.request.entry}
+    base.text_set(r.search.mode[:],name if named else fmt.tprintf("%d",mode))
+    if searched.request.event>0 {r.search.time_to_land=searched.request.event}
+    candidates:=make([dynamic]Instance_Match_Candidate,call.allocator)
+    noted:=anim.match_searched_candidates(db,searched^)
+    for &candidate in noted.items[:clamp(noted.count,0,lib.MATCH_CANDIDATES)] {
+        index:=lib.match_range_of(db,int(candidate.row));if index<0 {continue}
+        range:=db.ranges[index];c:=candidate.costs
+        append(&candidates,Instance_Match_Candidate{
+            range=u32(index),clip=anim.source_clip_label(library,range.clips[0]),time=f32(int(candidate.row)-int(range.first))/db.rate,rate=candidate.rate,cost=candidate.cost,reason=candidate.reason,
+            costs={c[.Foot_Position],c[.Foot_Velocity],c[.Hip_Velocity],c[.Body_Velocity],c[.Trajectory_Position],c[.Trajectory_Direction]},
+        })
     }
-    serial.write_u8(out,'}')
+    r.search.candidates=candidates[:]
+    return
 }
 
-// The names of the locomotion modes of bits, as a list.
+// The names of the locomotion modes of bits.
 @(private)
-match_modes_write :: proc(out:^serial.Writer,modes:[]core.Name_Info,bits:u32) {
-    serial.write_u8(out,'[');written:=0
+match_modes :: proc(call:^api.Call,modes:[]core.Name_Info,bits:u32) -> [][32]u8 {
+    names:=make([dynamic][32]u8,call.allocator)
     for bit in u16(0)..<32 {
         if bits&(u32(1)<<bit)==0 {continue}
-        if written>0 {serial.write_u8(out,',')};written+=1
         name,named:=locomotion_mode_name(modes,bit)
-        serial.write_u8(out,'"');serial.text_write_raw(out,name if named else fmt.tprintf("%d",bit));serial.write_u8(out,'"')
+        text:[32]u8
+        base.text_set(text[:],name if named else fmt.tprintf("%d",bit))
+        append(&names,text)
     }
-    serial.write_u8(out,']')
+    return names[:]
 }

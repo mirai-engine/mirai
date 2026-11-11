@@ -5,7 +5,6 @@ import "mirai:editor/api"
 import "mirai:asset"
 import "mirai:editor/history"
 import "mirai:std/base"
-import "mirai:std/serial"
 
 Api_Document_Params :: struct {
     action:enum u8 {Open,Activate,Close,Preview_Sun} `mirai:"label=Open takes a scene or a prefab or an asset that opens as a document (a material or a kind a plugin declares); Preview_Sun turns the preview sun of a prefab on or off"`,
@@ -15,63 +14,49 @@ Api_Document_Params :: struct {
 }
 
 Api_Documents_Result :: struct {
-    active:[DOCUMENT_PATH_BYTES]u8 `mirai:"text,label=The file of the active tab; empty before it has one"`,
-    documents:[1]Api_Document_Tab `mirai:"list,label=The tabs of scenes and prefabs"`,
-    asset:[API_PATH_BYTES]u8 `mirai:"text,label=The asset document in front; empty when the active tab is in front"`,
-    assets:[1]Api_Asset_Document_Tab `mirai:"list,label=The asset documents"`,
+    active:string `mirai:"label=The file of the active tab; empty before it has one"`,
+    documents:[]Api_Document_Tab `mirai:"label=The tabs of scenes and prefabs"`,
+    asset:string `mirai:"label=The asset document in front; empty when the active tab is in front"`,
+    assets:[]Api_Asset_Document_Tab `mirai:"label=The asset documents"`,
 }
 Api_Document_Tab :: struct {
-    path:[DOCUMENT_PATH_BYTES]u8 `mirai:"text,label=Its file; empty before it has one"`,
+    path:string `mirai:"label=Its file; empty before it has one"`,
     dirty:bool `mirai:"label=Whether it has unsaved changes"`,
     kind:Document_Kind `mirai:"label=A scene, shown in its own light, or a prefab, shown in the studio light"`,
     preview_sun:bool `mirai:"label=Whether a prefab shows with the preview sun"`,
 }
 Api_Asset_Document_Tab :: struct {
-    path:[API_PATH_BYTES]u8 `mirai:"text,label=Under the asset folder; of a Slang program the path of its .slang"`,
-    kind:[32]u8 `mirai:"text,label=The kind of the asset; program for a Slang program"`,
+    path:string `mirai:"label=Under the asset folder; of a Slang program the path of its .slang"`,
+    kind:string `mirai:"label=The kind of the asset; program for a Slang program"`,
     dirty:bool `mirai:"label=Whether it has unsaved changes"`,
     undo:int `mirai:"label=Steps it can undo"`,
     redo:int `mirai:"label=Steps it can redo"`,
 }
 
 documents_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="editor.documents",summary="The open documents: the tabs of scenes and prefabs and the asset documents next to them.",result=Api_Documents_Result,writes_result=true,flags={.Read_Only},run=api_documents})
-    api_register(s,st,{name="editor.document",summary="Opens, activates or closes a document, or turns the preview sun of a prefab on or off.",params=Api_Document_Params,result=Api_Documents_Result,writes_result=true,run=api_document})
+    api_register(s,st,{name="editor.documents",summary="The open documents: the tabs of scenes and prefabs and the asset documents next to them.",result=type_info_of(Api_Documents_Result),flags={.Read_Only},run=api_documents})
+    api_register(s,st,{name="editor.document",summary="Opens, activates or closes a document, or turns the preview sun of a prefab on or off.",params=type_info_of(Api_Document_Params),result=type_info_of(Api_Documents_Result),run=api_document})
 }
 
 api_documents :: proc(s:^Session,call:^api.Call) {
-    out:=call.out
-    serial.text_write_raw(out,`{"active":`);serial.text_write_string(out,s.document!=nil?document_path(s.document):"")
-    api.write_key(out,"documents");serial.write_u8(out,'[')
+    r:=api.call_result(call,Api_Documents_Result)
+    r.active=s.document!=nil?document_path(s.document):""
+    r.documents=make([]Api_Document_Tab,len(s.documents),call.allocator)
     for &tab,index in s.documents {
         d:=index==s.active_document?s.document:&tab.document
         e:=index==s.active_document?s.edits:&tab.edits
         v:=index==s.active_document?s.viewport:&tab.viewport
-        if index>0 {serial.write_u8(out,',')}
-        serial.text_write_raw(out,`{"path":`);serial.text_write_string(out,document_path(d))
-        api.write_key(out,"dirty");api.write_flag(out,d.unsaved || history.edits_scene_state(e)!=d.saved)
-        api.write_key(out,"kind");serial.text_write_string(out,d.prefab?"Prefab":"Scene")
-        api.write_key(out,"preview_sun");api.write_flag(out,v.preview_sun)
-        serial.write_u8(out,'}')
+        r.documents[index]={document_path(d),d.unsaved || history.edits_scene_state(e)!=d.saved,.Prefab if d.prefab else .Scene,v.preview_sun}
     }
-    serial.write_u8(out,']')
-    api.write_key(out,"asset");serial.text_write_string(out,api_asset_document_front(s))
-    api.write_key(out,"assets");serial.write_u8(out,'[')
+    r.asset=api_asset_document_front(s)
+    r.assets=make([]Api_Asset_Document_Tab,len(s.asset_documents),call.allocator)
     for &d,index in s.asset_documents {
-        if index>0 {serial.write_u8(out,',')}
-        serial.text_write_raw(out,`{"path":`);serial.text_write_string(out,unsaved_name(s,asset_document_path(s,&d)))
         kind:="program"
         if d.id!={} {
             if info,known:=asset.kind_info(d.kind);known {kind=info.name}
         }
-        api.write_key(out,"kind");serial.text_write_string(out,kind)
-        api.write_key(out,"dirty");api.write_flag(out,asset_document_dirty(s,&d))
-        api.write_key(out,"undo");serial.text_write_int(out,i64(d.history.cursor))
-        api.write_key(out,"redo");serial.text_write_int(out,i64(len(d.history.steps)-d.history.cursor))
-        serial.write_u8(out,'}')
+        r.assets[index]={unsaved_name(s,asset_document_path(s,&d)),kind,asset_document_dirty(s,&d),d.history.cursor,len(d.history.steps)-d.history.cursor}
     }
-    serial.write_u8(out,']')
-    serial.write_u8(out,'}')
 }
 
 api_document :: proc(s:^Session,call:^api.Call) {

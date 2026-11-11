@@ -3,11 +3,12 @@ package api
 import "base:intrinsics"
 import "base:runtime"
 import "core:math"
+import "core:mem"
 import "mirai:std/serial"
 
 // What reading params into a struct does not prove: required fields, the
 // length of arrays of numbers, finite floats, ranges, and members of enums and
-// bit sets. Both passes run on params that serial.text_read already accepted.
+// bit sets. It runs on params that serial.text_read already accepted.
 
 @(private)
 Checker :: struct {
@@ -18,6 +19,7 @@ Checker :: struct {
     path_len:int,
     message:string,
     clamped:string, // what the params asked past a maximum, as members of _clamped
+    ranged:bool,    // what failed is the value of a field, not the shape of the params
 }
 
 @(private)
@@ -53,10 +55,21 @@ check_fail :: proc(c:^Checker,format:string,args:..any) -> bool {
 @(private)
 is_number_kind :: #force_inline proc(kind:serial.Type_Kind) -> bool {return kind==.Float || kind==.Int || kind==.Uint}
 
+// One walk of the text of the params with the value read from it: a field
+// that is not optional is there, an array of numbers has its length, and what
+// the caller gave keeps its range. A field left out, or null, holds what the
+// params started with, which is not asked its range.
 @(private)
-check_required :: proc(c:^Checker,r:^serial.Text_Reader,index:serial.Type_Index) -> bool {
+check_given :: proc(c:^Checker,r:^serial.Text_Reader,index:serial.Type_Index,bytes:[]u8,field:^serial.Field=nil,clamp:=false) -> bool {
     s:=c.schema
     type:=s.types[index]
+    // A value with nothing inside to be left out is checked whole.
+    leaf :: proc(c:^Checker,r:^serial.Text_Reader,index:serial.Type_Index,bytes:[]u8,field:^serial.Field,clamp:bool) -> bool {
+        serial.text_skip(r) or_return
+        if check_value(c,index,bytes,field,clamp) {return true}
+        c.ranged=true
+        return false
+    }
     #partial switch type.kind {
     case .Struct:
         if !serial.text_accept(r,'{') {return serial.text_skip(r)}
@@ -70,13 +83,15 @@ check_required :: proc(c:^Checker,r:^serial.Text_Reader,index:serial.Type_Index)
                 serial.text_expect(r,':')
                 if found<0 {
                     serial.text_skip(r) or_return
+                } else if serial.text_peek(r)=='n' && s.types[fields[found].type].kind!=.Json {
+                    // null is a field left out.
+                    serial.text_skip(r) or_return
                 } else {
                     seen+={found}
                     f:=&fields[found]
                     mark:=c.path_len
                     path_name(c,f.name)
-                    ok:=false
-                    if .Text in f.flags && serial.type_is_bytes(s,f.type) {ok=serial.text_skip(r)} else {ok=check_required(c,r,f.type)}
+                    ok:=check_given(c,r,f.type,bytes[f.offset:][:s.types[f.type].size],f,c.server!=nil && .Clamp in f.hints)
                     c.path_len=mark
                     if !ok {return false}
                 }
@@ -86,22 +101,24 @@ check_required :: proc(c:^Checker,r:^serial.Text_Reader,index:serial.Type_Index)
             }
         }
         for &f,i in fields {
-            if field_visible(&f) && .Optional not_in c.server.tags[int(type.first)+i] && i not_in seen {
+            if field_visible(&f) && .Optional not_in f.hints && i not_in seen {
                 path_name(c,f.name)
                 return check_fail(c,"is required")
             }
         }
         return true
     case .Array:
-        if !serial.text_accept(r,'[') {return serial.text_skip(r)}
+        if field!=nil && .Text in field.flags && serial.type_is_bytes(s,index) {return serial.text_skip(r)}
+        if serial.text_peek(r)!='[' {return serial.text_skip(r)}
         elem:=s.types[type.elem]
-        nested:=elem.kind==.Struct || elem.kind==.Array
+        size:=int(elem.size)
+        r.offset+=1
         n:=0
         if !serial.text_accept(r,']') {
             for {
                 mark:=c.path_len
                 path_index(c,n)
-                ok:=nested?check_required(c,r,type.elem):serial.text_skip(r)
+                ok:=n<int(type.count)?check_given(c,r,type.elem,bytes[n*size:][:size],field,clamp):serial.text_skip(r)
                 c.path_len=mark
                 if !ok {return false}
                 n+=1
@@ -112,8 +129,23 @@ check_required :: proc(c:^Checker,r:^serial.Text_Reader,index:serial.Type_Index)
         }
         if is_number_kind(elem.kind) && n!=int(type.count) {return check_fail(c,"must have %d elements, not %d",type.count,n)}
         return true
+    case .Slice:
+        if serial.text_peek(r)!='[' {return serial.text_skip(r)}
+        held:=(^runtime.Raw_Slice)(raw_data(bytes))^
+        size:=int(s.types[type.elem].size)
+        r.offset+=1
+        if serial.text_accept(r,']') {return true}
+        for n:=0;;n+=1 {
+            mark:=c.path_len
+            path_index(c,n)
+            ok:=held.data!=nil && n<held.len?check_given(c,r,type.elem,mem.byte_slice(rawptr(uintptr(held.data)+uintptr(n*size)),size),field,clamp):serial.text_skip(r)
+            c.path_len=mark
+            if !ok {return false}
+            if serial.text_accept(r,',') {continue}
+            return serial.text_expect(r,']')
+        }
     }
-    return serial.text_skip(r)
+    return leaf(c,r,index,bytes,field,clamp)
 }
 
 @(private)
@@ -179,11 +211,11 @@ check_value :: proc(c:^Checker,index:serial.Type_Index,bytes:[]u8,field:^serial.
         for choice in s.choices[type.first:][:type.count] {mask|=1<<uint(choice.value)}
         if load_u64(bytes)&~mask!=0 {return check_fail(c,"has bits that are not members of its set")}
     case .Struct:
-        for &f,i in s.fields[type.first:][:type.count] {
+        for &f in s.fields[type.first:][:type.count] {
             if !field_visible(&f) {continue}
             mark:=c.path_len
             path_name(c,f.name)
-            ok:=check_value(c,f.type,bytes[f.offset:][:s.types[f.type].size],&f,c.server!=nil && .Clamp in c.server.tags[int(type.first)+i])
+            ok:=check_value(c,f.type,bytes[f.offset:][:s.types[f.type].size],&f,c.server!=nil && .Clamp in f.hints)
             c.path_len=mark
             if !ok {return false}
         }
@@ -197,6 +229,18 @@ check_value :: proc(c:^Checker,index:serial.Type_Index,bytes:[]u8,field:^serial.
             c.path_len=mark
             if !ok {return false}
         }
+    case .Slice:
+        if field!=nil && .Text in field.flags && serial.type_is_bytes(s,type.elem) {return true}
+        held:=(^runtime.Raw_Slice)(raw_data(bytes))^
+        elem:=int(s.types[type.elem].size)
+        for i in 0..<(held.data==nil?0:held.len) {
+            mark:=c.path_len
+            path_index(c,i)
+            ok:=check_value(c,type.elem,mem.byte_slice(rawptr(uintptr(held.data)+uintptr(i*elem)),elem),field,clamp)
+            c.path_len=mark
+            if !ok {return false}
+        }
+    case .String,.Json:
     }
     return true
 }

@@ -1,6 +1,5 @@
 package editor
 
-import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
@@ -96,7 +95,7 @@ Ai_Context :: struct {
     project:Ai_Context_Project,
     api:Ai_Context_Api,
     engine:string,
-    player:Play_Player_Snapshot,
+    player:Api_Play_Player_Result,
     material:Ai_Context_Material,
     asset:Ai_Context_Asset,
     references:[]string, // the images the user attached, in the folder of the turn
@@ -322,8 +321,8 @@ ai_context_write :: proc(s:^Session,task:^Ai_Task,entities:[]Ai_Entity) -> bool 
         for &name,i in picked {name=base.text_get(front.picked[i][:])}
         context_value.asset={path=asset_document_path(s,front),dirty=asset_document_dirty(s,front),picked=picked,shown=strings.clone(base.text_get(front.shown[:]),context.temp_allocator)}
     }
-    data,error:=json.marshal(context_value,{pretty=true},context.temp_allocator)
-    if error!=nil {return false}
+    data,encoded:=serial.text_encode(context_value,.Pretty,context.temp_allocator)
+    if !encoded {return false}
     return os.write_entire_file(ai_task_path(s,task,AI_FILE_CONTEXT),data)==nil && ai_state_write(s,task,w)
 }
 
@@ -352,19 +351,13 @@ ai_state_write :: proc(s:^Session,task:^Ai_Task,w:core.World_Ref) -> bool {
     }
     scratch,memory:=make([]u8,max(st.largest,1),context.temp_allocator)
     if memory!=nil {return false}
-    out:serial.Writer
-    serial.writer_init(&out,0,context.temp_allocator)
-    serial.text_write_raw(&out,`{"tick":`);serial.text_write_int(&out,i64(tick))
-    api.write_key(&out,"entities");serial.write_u8(&out,'[')
-    first:=true
+    State :: struct {tick:u64,entities:[]Api_Inspect_Entity}
+    entities:=make([dynamic]Api_Inspect_Entity,context.temp_allocator)
     for e in s.selection.entities {
-        if !entity_alive(w,e) {continue}
-        if !first {serial.write_u8(&out,',')}
-        first=false
-        api_entity_write(s,w,&out,e,true,scratch,true,true)
+        if entity_alive(w,e) {append(&entities,api_entity_inspect(s,w,e,true,scratch,true,true))}
     }
-    serial.text_write_raw(&out,"]}")
-    return os.write_entire_file(path,serial.writer_bytes(&out))==nil
+    text,encoded:=serial.text_encode(State{tick,entities[:]},.Line,context.temp_allocator,sparse=true)
+    return encoded && os.write_entire_file(path,text)==nil
 }
 
 // The methods a turn uses most, named in the instructions by their MCP tool.

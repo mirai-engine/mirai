@@ -2,6 +2,7 @@ package physics_editor
 
 import "mirai:editor"
 import "base:runtime"
+import "core:fmt"
 import "core:mem"
 import "core:reflect"
 import "core:strings"
@@ -10,15 +11,6 @@ import "mirai:editor/api"
 import phys "plugins:physics/runtime"
 import "mirai:std/base"
 import "mirai:std/serial"
-
-@(private) API_COLLISION_LIST :: `"type":"array","maxItems":32,"items":{"type":"string","minLength":1,"maxLength":31}`
-@(private) API_COLLISION_NAMES :: `{`+API_COLLISION_LIST+`}`
-@(private) API_COLLISION_TARGET :: `"entity":{`+api.ENTITY_SCHEMA+`},"component":{"type":"string","minLength":1,"maxLength":63,"description":"The component that holds the collision; omitted: the only one of the entity"},"prefix":{"type":"string","maxLength":127,"description":"Dotted path of the field of the component that holds a nested collision"}`
-@(private) API_COLLISION_GET_SCHEMA :: `{"type":"object","properties":{`+API_COLLISION_TARGET+`},"required":["entity"],"additionalProperties":false}`
-@(private) API_COLLISION_SET_SCHEMA :: `{"type":"object","properties":{`+API_COLLISION_TARGET+`,"preset":{"type":"string","minLength":1,"maxLength":31,"description":"Of a Collider; 'custom' keeps what it is as its own"},"sensor":{"type":"boolean","description":"Of a Collider, as belongs and collides: of its own, which make it custom from what it is"},"belongs":`+API_COLLISION_NAMES+`,"collides":`+API_COLLISION_NAMES+`,"hits":{`+API_COLLISION_LIST+`,"description":"Of a Query_Filter: the categories it hits; '*' is all"},"sensors":{"type":"boolean","description":"Of a Query_Filter: whether it reports sensors"}},"required":["entity"],"additionalProperties":false}`
-@(private) API_COLLISION_SETTINGS_SCHEMA :: `{"type":"object","properties":{"categories":{"type":"array","items":{"type":"string"},"description":"Declared in code; names.create declares one"},"presets":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"sensor":{"type":"boolean"},"belongs":`+API_COLLISION_NAMES+`,"collides":`+API_COLLISION_NAMES+`},"required":["name","sensor","belongs","collides"]},"description":"What colliders can use, declared in code; Collision_Settings, written with settings.set, says by name what each is"},"pushes":{"type":"array","items":{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"string"},"force":{"type":"number","exclusiveMinimum":0,"x-unit":"N","description":"The most they push with"}},"required":["a","b","force"]},"description":"Pairs of categories whose dynamic bodies yield to each other"},"undeclared":{"type":"array","items":{"type":"object","properties":{"field":{"enum":["presets","pushes"]},"index":{"type":"integer","minimum":0},"value":{"type":"integer","minimum":0}},"required":["field","index","value"]},"description":"Entries of Collision_Settings for values no code declares"}},"required":["categories","presets","pushes","undeclared"],"additionalProperties":false}`
-@(private) API_COLLISION_PUSHES :: `{"type":"object","additionalProperties":{"type":"number","exclusiveMinimum":0,"x-unit":"N"},"description":"Of a Collider: the categories its dynamic body yields to, with the force"}`
-@(private) API_COLLISION_RESULT_SCHEMA :: `{"type":"object","properties":{"id":{"type":"string"},"playing":{"type":"boolean"},"component":{"type":"string"},"prefix":{"type":"string"},"preset":{"type":"string","description":"Of a Collider"},"sensor":{"type":"boolean","description":"Of a Collider, as belongs and collides: from its preset, or its own when custom"},"belongs":`+API_COLLISION_NAMES+`,"collides":`+API_COLLISION_NAMES+`,"pushes":`+API_COLLISION_PUSHES+`,"group":{"type":["string","null"],"description":"Of a Collider"},"hits":{`+API_COLLISION_LIST+`,"description":"Of a Query_Filter: the categories it hits"},"sensors":{"type":"boolean","description":"Of a Query_Filter: whether it reports sensors"}},"required":["id","playing","component","prefix"],"additionalProperties":false}`
 
 @(private)
 Api_Collision_Request :: struct {
@@ -46,84 +38,93 @@ Api_Collision_Target :: struct {
     prefix:string,
 }
 
+Physics_Collision_Inspect_Result_Presets :: struct {
+    name:string,
+    sensor:bool,
+    belongs,collides:[]string `mirai:"label=At most 32."`,
+}
+Physics_Collision_Inspect_Result_Pushes :: struct {
+    a,b:string,
+    force:f64 `mirai:"label=Above 0. The most they push with"`,
+}
+Physics_Collision_Inspect_Result_Undeclared :: struct {
+    field:string `mirai:"label=presets or pushes"`,
+    index,value:int `mirai:"min=0"`,
+}
+Physics_Collision_Inspect_Result :: struct {
+    categories:[]string `mirai:"label=Declared in code; names.create declares one"`,
+    presets:[]Physics_Collision_Inspect_Result_Presets `mirai:"label=What colliders can use, declared in code; Collision_Settings, written with settings.set, says by name what each is"`,
+    pushes:[]Physics_Collision_Inspect_Result_Pushes `mirai:"label=Pairs of categories whose dynamic bodies yield to each other"`,
+    undeclared:[]Physics_Collision_Inspect_Result_Undeclared `mirai:"label=Entries of Collision_Settings for values no code declares"`,
+}
+
+Physics_Collision_Get_Result :: struct {
+    id:base.Entity_Id,
+    playing:bool,
+    component,prefix:string,
+    preset:string `mirai:"optional,label=Of a Collider"`,
+    sensor:bool `mirai:"optional,label=Of a Collider, as belongs and collides: from its preset, or its own when custom"`,
+    belongs,collides:[]string `mirai:"optional,label=At most 32."`,
+    pushes:serial.Json `mirai:"optional,label=Of a Collider: the categories its dynamic body yields to, with the force"`,
+    group:base.Entity_Id `mirai:"optional,label=Of a Collider"`,
+    hits:[]string `mirai:"optional,label=At most 32. Of a Query_Filter: the categories it hits"`,
+    sensors:bool `mirai:"optional,label=Of a Query_Filter: whether it reports sensors"`,
+}
+
+Physics_Collision_Get_Params :: struct {
+    entity:editor.Api_Entity_Text `mirai:"text,entity"`,
+    component:[64]u8 `mirai:"text,optional,label=The component that holds the collision; omitted: the only one of the entity"`,
+    prefix:[128]u8 `mirai:"text,optional,label=Dotted path of the field of the component that holds a nested collision"`,
+}
+
+Physics_Collision_Set_Params :: struct {
+    target:Physics_Collision_Get_Params `mirai:"inline"`,
+    preset:string `mirai:"optional,label=Of a Collider; 'custom' keeps what it is as its own"`,
+    sensor:bool `mirai:"optional,label=Of a Collider, as belongs and collides: of its own, which make it custom from what it is"`,
+    belongs,collides:[]string `mirai:"optional,label=At most 32."`,
+    hits:[]string `mirai:"optional,label=At most 32. Of a Query_Filter: the categories it hits; '*' is all"`,
+    sensors:bool `mirai:"optional,label=Of a Query_Filter: whether it reports sensors"`,
+}
+
 @(private)
 api_collision_register :: proc(s:^editor.Session) {
-    editor.api_method_register(s,{name="physics.collision.inspect",summary="The collision categories and presets the code declares, the pushes between categories and the entries of Collision_Settings no code declares. Read the names here before editing collision.",result_schema=API_COLLISION_SETTINGS_SCHEMA,flags={.Read_Only},run=api_collision_settings_list})
-    editor.api_method_register(s,{name="physics.collision.get",summary="Reads by name the collision of a component of the shown world: what a Collider is and collides with, or what a Query_Filter hits. Without component, that of the only collision component of the entity.",params_schema=API_COLLISION_GET_SCHEMA,result_schema=API_COLLISION_RESULT_SCHEMA,flags={.Read_Only},run=api_collision_get})
-    editor.api_method_register(s,{name="physics.collision.set",summary="Edits by name the collision of a Collider or a Query_Filter of a component, or of the only collision component of the entity without one; other fields are kept. One step of undo.",params_schema=API_COLLISION_SET_SCHEMA,result=editor.Api_Edit_Result,run=api_collision_set})
+    editor.api_method_register(s,{name="physics.collision.inspect",summary="The collision categories and presets the code declares, the pushes between categories and the entries of Collision_Settings no code declares. Read the names here before editing collision.",result=type_info_of(Physics_Collision_Inspect_Result),flags={.Read_Only},run=api_collision_settings_list})
+    editor.api_method_register(s,{params=type_info_of(Physics_Collision_Get_Params),result=type_info_of(Physics_Collision_Get_Result),name="physics.collision.get",summary="Reads by name the collision of a component of the shown world: what a Collider is and collides with, or what a Query_Filter hits. Without component, that of the only collision component of the entity.",flags={.Read_Only},run=api_collision_get})
+    editor.api_method_register(s,{params=type_info_of(Physics_Collision_Set_Params),result=type_info_of(editor.Api_Edit_Result),name="physics.collision.set",summary="Edits by name the collision of a Collider or a Query_Filter of a component, or of the only collision component of the entity without one; other fields are kept. One step of undo.",run=api_collision_set})
 }
 
 @(private)
-api_collision_names_read :: proc(a:^editor.Rpc_Args,key:string,names:[]string) -> (count:int,ok:bool) {
-    if !serial.text_accept(&a.r,'[') {return 0,editor.rpc_fail_type(a,"%s must be an array of collision category names",key)}
-    for !serial.text_accept(&a.r,']') {
-        if count>=len(names) {return 0,editor.rpc_fail(a,"%s accepts at most %d collision category names",key,len(names))}
-        if count>0 && !serial.text_accept(&a.r,',') {return 0,editor.rpc_fail_type(a,"%s must be an array of collision category names",key)}
-        name,read:=serial.text_string(&a.r)
-        if !read || len(name)==0 || len(name)>31 {return 0,editor.rpc_fail(a,"%s[%d] must be a collision category name of 1 to 31 bytes",key,count)}
-        names[count]=name
-        count+=1
+api_collision_request :: proc(call:^api.Call,target:Physics_Collision_Get_Params,set:^Physics_Collision_Set_Params) -> (request:Api_Collision_Request,ok:bool) {
+    request={entity=target.entity,component=target.component,prefix=target.prefix,has_prefix=api.call_given(call,"prefix")}
+    if api.call_given(call,"component") && target.component[0]==0 {
+        api.call_fail(call,api.INVALID_PARAMS,"component must name a component, or be left out for the only collision component of the entity")
+        return
     }
-    return count,true
-}
-
-@(private)
-api_collision_request_read :: proc(call:^api.Call,set:bool) -> (request:Api_Collision_Request,ok:bool) {
-    a:editor.Rpc_Args;editor.rpc_init(&a,call,call.raw)
-    object:editor.Rpc_Object
-    if !editor.rpc_object_begin(&a,"params") {return}
-    seen:u16
-    for key in editor.rpc_next(&a,&object) {
-        at:=0
-        switch key {
-        case "entity":at=0
-        case "component":at=1
-        case "prefix":at=2
-        case "preset":at=3
-        case "sensor":at=4
-        case "belongs":at=5
-        case "collides":at=6
-        case "hits":at=7
-        case "sensors":at=8
-        case:editor.rpc_fail_type(&a,"unknown parameter %q",key);return
+    if set==nil {return request,true}
+    names :: proc(call:^api.Call,key:string,given:[]string,into:[]string) -> (count:int,ok:bool) {
+        if len(given)>len(into) {api.call_failf(call,api.INVALID_PARAMS,"%s accepts at most %d collision category names",key,len(into));return}
+        for name,i in given {
+            if len(name)==0 || len(name)>31 {api.call_failf(call,api.INVALID_PARAMS,"%s[%d] must be a collision category name of 1 to 31 bytes",key,i);return}
+            into[i]=name
         }
-        bit:=u16(1)<<uint(at)
-        if seen&bit!=0 {editor.rpc_fail_type(&a,"%s was supplied more than once",key);return}
-        seen|=bit
-        if !set && at>=3 {editor.rpc_fail_type(&a,"unknown parameter %q",key);return}
-        switch key {
-        case "entity":
-            _ = editor.rpc_text(&a,key,request.entity[:]) or_return
-        case "component":_ = editor.rpc_text(&a,key,request.component[:63]) or_return
-        case "prefix":
-            _ = editor.rpc_text(&a,key,request.prefix[:127]) or_return
-            request.has_prefix=true
-        case "preset":
-            value,read:=serial.text_string(&a.r)
-            if !read || len(value)==0 || len(value)>31 {editor.rpc_fail(&a,"preset must be a name of 1 to 31 bytes");return}
-            request.preset=value
-        case "sensor":request.sensor,request.has_sensor=editor.rpc_bool(&a,key) or_return,true
-        case "sensors":request.sensors,request.has_sensors=editor.rpc_bool(&a,key) or_return,true
-        case "belongs":request.belongs_count,request.has_belongs=api_collision_names_read(&a,key,request.belongs[:]) or_return,true
-        case "collides":request.collides_count,request.has_collides=api_collision_names_read(&a,key,request.collides[:]) or_return,true
-        case "hits":request.hits_count,request.has_hits=api_collision_names_read(&a,key,request.hits[:]) or_return,true
-        }
+        return len(given),true
     }
-    if a.failed {return}
-    if seen&1==0 || request.entity[0]==0 {editor.rpc_fail(&a,"entity is required");return}
-    if seen&2!=0 && base.text_get(request.component[:])=="" {editor.rpc_fail(&a,"component must name a component, or be left out for the only collision component of the entity");return}
-    if set {
-        own:=request.has_sensor || request.has_belongs || request.has_collides
-        collider:=request.preset!="" || own
-        query:=request.has_hits || request.has_sensors
-        switch {
-        case collider && query: editor.rpc_fail(&a,"give a collider preset, sensor, belongs or collides, or a query hits or sensors, not both");return
-        case !collider && !query: editor.rpc_fail(&a,"give preset, or sensor, belongs or collides, for a Collider; hits or sensors for a Query_Filter");return
-        case request.preset!="" && own: editor.rpc_fail(&a,"preset replaces sensor, belongs and collides: give one or the others");return
-        }
+    if len(set.preset)>31 {api.call_fail(call,api.INVALID_PARAMS,"preset must be a name of 1 to 31 bytes");return}
+    request.preset=set.preset
+    request.sensor,request.has_sensor=set.sensor,api.call_given(call,"sensor")
+    request.sensors,request.has_sensors=set.sensors,api.call_given(call,"sensors")
+    request.has_belongs,request.has_collides,request.has_hits=api.call_given(call,"belongs"),api.call_given(call,"collides"),api.call_given(call,"hits")
+    request.belongs_count=names(call,"belongs",set.belongs,request.belongs[:]) or_return
+    request.collides_count=names(call,"collides",set.collides,request.collides[:]) or_return
+    request.hits_count=names(call,"hits",set.hits,request.hits[:]) or_return
+    own:=request.has_sensor || request.has_belongs || request.has_collides
+    collider:=request.preset!="" || own
+    query:=request.has_hits || request.has_sensors
+    switch {
+    case collider && query: api.call_fail(call,api.INVALID_PARAMS,"give a collider preset, sensor, belongs or collides, or a query hits or sensors, not both");return
+    case !collider && !query: api.call_fail(call,api.INVALID_PARAMS,"give preset, or sensor, belongs or collides, for a Collider; hits or sensors for a Query_Filter");return
+    case request.preset!="" && own: api.call_fail(call,api.INVALID_PARAMS,"preset replaces sensor, belongs and collides: give one or the others");return
     }
-    serial.text_space(&a.r)
-    if a.r.offset!=len(call.raw) {editor.rpc_fail(&a,"unexpected text after params");return}
     return request,true
 }
 
@@ -134,9 +135,9 @@ api_collision_member :: proc(info:^runtime.Type_Info,name:string,origin:int,set:
     for field in 0..<int(record.field_count) {
         if record.names[field]!=name {continue}
         tag:=reflect.Struct_Tag(record.tags[field])
-        if _,hidden:=core.field_option(tag,"hidden");hidden {return}
-        if _,transient:=core.field_option(tag,"transient");transient {return}
-        if _,readonly:=core.field_option(tag,"readonly");set && readonly {return}
+        if tagged,_:=serial.field_tag(string(tag));.Hidden in tagged.flags {return}
+        if tagged,_:=serial.field_tag(string(tag));.Transient in tagged.flags {return}
+        if tagged,_:=serial.field_tag(string(tag));set && .Read_Only in tagged.flags {return}
         return record.types[field],origin+int(record.offsets[field]),true
     }
     return
@@ -241,16 +242,16 @@ api_collision_name :: proc(info:^core.World_Info,type:typeid,value:i64) -> strin
 }
 
 @(private)
-api_collision_names_write :: proc(out:^serial.Writer,info:^core.World_Info,value:phys.Collision_Layers) {
-    if value==phys.COLLISION_LAYERS_ALL {serial.text_write_raw(out,`["*"]`);return}
-    serial.write_u8(out,'[')
-    first:=true
-    for index in 0..<phys.COLLISION_CATEGORY_CAPACITY {
-        if value&(phys.Collision_Layers(1)<<uint(index))==0 {continue}
-        if !first {serial.write_u8(out,',')};first=false
-        serial.text_write_string(out,api_collision_name(info,phys.Collision_Category,i64(index)))
+api_collision_names :: proc(call:^api.Call,info:^core.World_Info,value:phys.Collision_Layers) -> []string {
+    names:=make([dynamic]string,call.allocator)
+    if value==phys.COLLISION_LAYERS_ALL {
+        append(&names,"*")
+        return names[:]
     }
-    serial.write_u8(out,']')
+    for index in 0..<phys.COLLISION_CATEGORY_CAPACITY {
+        if value&(phys.Collision_Layers(1)<<uint(index))!=0 {append(&names,api_collision_name(info,phys.Collision_Category,i64(index)))}
+    }
+    return names[:]
 }
 
 // The value the code declares with a name: a category of Collision_Layers or a preset.
@@ -281,46 +282,26 @@ api_collision_settings_list :: proc(s:^editor.Session,call:^api.Call) {
     settings,valid:=api_collision_settings(call,w)
     if !valid {return}
     info:=w.info
-    out:=call.out
-    serial.text_write_raw(out,`{"categories":[`)
-    for entry,i in collision_categories(info) {
-        if i>0 {serial.write_u8(out,',')}
-        serial.text_write_string(out,entry.name)
-    }
-    serial.text_write_raw(out,"]")
-    api.write_key(out,"presets");serial.write_u8(out,'[')
-    first:=true
+    r:=api.call_result(call,Physics_Collision_Inspect_Result)
+    categories:=collision_categories(info)
+    r.categories=make([]string,len(categories),call.allocator)
+    for entry,i in categories {r.categories[i]=entry.name}
+    presets:=make([dynamic]Physics_Collision_Inspect_Result_Presets,call.allocator)
     for entry in core.names_of(info,phys.Collision_Preset) {
         if phys.Collision_Preset(entry.value)==phys.PRESET_CUSTOM {continue}
-        if !first {serial.write_u8(out,',')};first=false
         preset:=phys.collision_preset_setting(settings,phys.Collision_Preset(entry.value))
-        serial.write_u8(out,'{');api.write_text(out,"name",entry.name,true);api.write_bool(out,"sensor",preset.sensor)
-        api.write_key(out,"belongs");api_collision_names_write(out,info,preset.belongs)
-        api.write_key(out,"collides");api_collision_names_write(out,info,preset.collides)
-        serial.write_u8(out,'}')
+        append(&presets,Physics_Collision_Inspect_Result_Presets{entry.name,preset.sensor,api_collision_names(call,info,preset.belongs),api_collision_names(call,info,preset.collides)})
     }
-    serial.text_write_raw(out,"]")
-    api.write_key(out,"pushes");serial.write_u8(out,'[')
-    first=true
+    pushes:=make([dynamic]Physics_Collision_Inspect_Result_Pushes,call.allocator)
     for push in settings.pushes {
-        if push.force==0 {continue}
-        if !first {serial.write_u8(out,',')};first=false
-        serial.write_u8(out,'{');api.write_text(out,"a",api_collision_name(info,phys.Collision_Category,i64(push.a)),true);api.write_text(out,"b",api_collision_name(info,phys.Collision_Category,i64(push.b)))
-        api.write_key(out,"force");api.write_number(out,push.force)
-        serial.write_u8(out,'}')
+        if push.force!=0 {append(&pushes,Physics_Collision_Inspect_Result_Pushes{api_collision_name(info,phys.Collision_Category,i64(push.a)),api_collision_name(info,phys.Collision_Category,i64(push.b)),f64(push.force)})}
     }
-    serial.text_write_raw(out,"]")
-    api.write_key(out,"undeclared");serial.write_u8(out,'[')
-    first=true
+    undeclared:=make([dynamic]Physics_Collision_Inspect_Result_Undeclared,call.allocator)
     at:=0
     for field,index,value in phys.collision_settings_undeclared(settings,info,&at) {
-        if !first {serial.write_u8(out,',')};first=false
-        serial.write_u8(out,'{');api.write_text(out,"field",field,true)
-        api.write_key(out,"index");serial.text_write_int(out,i64(index))
-        api.write_key(out,"value");serial.text_write_int(out,value)
-        serial.write_u8(out,'}')
+        append(&undeclared,Physics_Collision_Inspect_Result_Undeclared{field,int(index),int(value)})
     }
-    serial.text_write_raw(out,"]}")
+    r.presets,r.pushes,r.undeclared=presets[:],pushes[:],undeclared[:]
 }
 
 // The collision of the collider fields at the target.
@@ -335,7 +316,7 @@ api_collision_collider :: proc(target:Api_Collision_Target,value:uintptr) -> (co
 
 @(private)
 api_collision_get :: proc(s:^editor.Session,call:^api.Call) {
-    request,read:=api_collision_request_read(call,false)
+    request,read:=api_collision_request(call,api.call_params(call,Physics_Collision_Get_Params)^,nil)
     if !read {return}
     w:=editor.shown_world(s)
     settings,valid:=api_collision_settings(call,w)
@@ -344,44 +325,32 @@ api_collision_get :: proc(s:^editor.Session,call:^api.Call) {
     if !found {return}
     info:=w.info
     value:=uintptr(core.raw_find(core.world_table_at(w,target.table),target.table.info,target.entity))
-    out:=call.out
-    serial.text_write_raw(out,`{"id":`);api.write_id(out,editor.api_entity_id(w,target.entity))
-    api.write_key(out,"playing");api.write_flag(out,editor.playing(s))
-    api.write_key(out,"component");serial.text_write_string(out,base.text_get(request.component[:]))
-    api.write_key(out,"prefix");serial.text_write_string(out,target.prefix)
+    r:=api.call_result(call,Physics_Collision_Get_Result)
+    r^={id=editor.api_entity_id(w,target.entity),playing=editor.playing(s),component=strings.clone(base.text_get(request.component[:]),call.allocator),prefix=strings.clone(target.prefix,call.allocator)}
     switch target.kind {
     case .Collider:
         collider:=api_collision_collider(target,value)
         of:=phys.collision_of_collider(settings,collider)
-        api.write_text(out,"preset",api_collision_name(info,phys.Collision_Preset,i64(collider.preset)))
-        api.write_bool(out,"sensor",of.sensor)
-        api.write_key(out,"belongs");api_collision_names_write(out,info,of.belongs)
-        api.write_key(out,"collides");api_collision_names_write(out,info,of.collides)
-        api.write_key(out,"pushes");serial.write_u8(out,'{')
-        first:=true
+        r.preset,r.sensor=api_collision_name(info,phys.Collision_Preset,i64(collider.preset)),of.sensor
+        r.belongs,r.collides=api_collision_names(call,info,of.belongs),api_collision_names(call,info,of.collides)
+        pushes:=strings.builder_make(call.allocator)
+        strings.write_byte(&pushes,'{')
         for entry in collision_categories(info) {
             force:f32
             for index in 0..<phys.COLLISION_CATEGORY_CAPACITY {
                 if of.belongs&(phys.Collision_Layers(1)<<uint(index))==0 {continue}
                 force=max(force,phys.collision_push(settings,phys.Collision_Category(index),phys.Collision_Category(entry.value)))
             }
-            if force==0 {continue}
-            api.write_key(out,entry.name,first);api.write_number(out,force)
-            first=false
+            if force!=0 {fmt.sbprintf(&pushes,"%s%q:%v",strings.builder_len(pushes)>1?",":"",entry.name,force)}
         }
-        serial.write_u8(out,'}')
-        if target.group>=0 {
-            group:=(cast(^core.Entity)(value+uintptr(target.group)))^
-            api.write_key(out,"group")
-            if id:=editor.api_entity_id(w,group);group!=core.NONE && id!=0 {api.write_id(out,id)} else {serial.text_write_raw(out,"null")}
-        }
+        strings.write_byte(&pushes,'}')
+        r.pushes=serial.Json(strings.to_string(pushes))
+        if target.group>=0 {r.group=editor.api_entity_id(w,(cast(^core.Entity)(value+uintptr(target.group)))^)}
     case .Query:
         filter:=(cast(^phys.Query_Filter)(value+uintptr(target.query)))^
         hits,sensors:=phys.query_layers(filter)
-        api.write_key(out,"hits");api_collision_names_write(out,info,hits)
-        api.write_bool(out,"sensors",sensors)
+        r.hits,r.sensors=api_collision_names(call,info,hits),sensors
     }
-    serial.write_u8(out,'}')
 }
 
 // What the request makes of the value at the target, with precise errors for names the code does not declare.
@@ -421,7 +390,8 @@ api_collision_apply :: proc(call:^api.Call,info:^core.World_Info,settings:^phys.
 
 @(private)
 api_collision_set :: proc(s:^editor.Session,call:^api.Call) {
-    request,read:=api_collision_request_read(call,true)
+    params:=api.call_params(call,Physics_Collision_Set_Params)
+    request,read:=api_collision_request(call,params.target,params)
     if !read {return}
     w:=editor.edited_world(s)
     settings,valid:=api_collision_settings(call,w)

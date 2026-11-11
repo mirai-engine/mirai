@@ -2,6 +2,7 @@ package editor
 
 import "core:fmt"
 import "core:math"
+import "core:strings"
 import "mirai:asset"
 import "mirai:editor/api"
 import "mirai:host"
@@ -9,7 +10,6 @@ import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
-import "mirai:std/serial"
 
 // material.preview.capture: a material on the sphere of the studio, the one
 // of its previews, as an image and as what it gives at each pixel. Each view
@@ -31,24 +31,24 @@ Api_Material_Capture_Params :: struct {
 
 Api_Material_Capture_Result :: struct {
     material:base.Asset_Id,
-    path:[API_PATH_BYTES]u8 `mirai:"text,optional,label=Its file under the assets folder"`,
-    program:[256]u8 `mirai:"text,label=The program it shows; empty for a material without one"`,
-    image:[API_PATH_BYTES]u8 `mirai:"text,label=The PNG written with the views three per row and NaN pixels in magenta; MCP also returns the image"`,
+    path:string `mirai:"optional,label=Its file under the assets folder"`,
+    program:string `mirai:"label=The program it shows; empty for a material without one"`,
+    image:string `mirai:"label=The PNG written with the views three per row and NaN pixels in magenta; MCP also returns the image"`,
     size:int `mirai:"label=Pixels of a side of each view"`,
-    views:[1]Api_Material_Capture_View `mirai:"list,label=What each view gives over the pixels the sphere covers"`,
+    views:[]Api_Material_Capture_View `mirai:"label=What each view gives over the pixels the sphere covers"`,
 }
 Api_Material_Capture_View :: struct {
-    view:[16]u8 `mirai:"text"`,
+    view:string,
     pixels:int `mirai:"label=Pixels with finite values"`,
     nan_count:int,
-    min,max,mean:[1]f32 `mirai:"list,label=One number per component"`,
+    min,max,mean:[]f32 `mirai:"label=One number per component"`,
     uniform:bool `mirai:"label=The same value at every pixel"`,
 }
 
 @(private)
 material_capture_register :: proc(s:^Session,st:^Api_State) {
     defaults:=Api_Material_Capture_Params{size=256,wait=180}
-    api_register(s,st,{name="material.preview.capture",summary="Draws a material on the sphere of the studio and returns the image with what it gives at each pixel by views, once the previews have the last change of its program.",params=Api_Material_Capture_Params,result=Api_Material_Capture_Result,writes_result=true,defaults=&defaults,flags={.Read_Only},run=api_material_capture})
+    api_register(s,st,{name="material.preview.capture",summary="Draws a material on the sphere of the studio and returns the image with what it gives at each pixel by views, once the previews have the last change of its program.",params=type_info_of(Api_Material_Capture_Params),result=type_info_of(Api_Material_Capture_Result),defaults=&defaults,flags={.Read_Only,.Draws},run=api_material_capture})
 }
 
 // The shape previews draw a material on; captures draw it on the sphere.
@@ -199,33 +199,18 @@ api_material_capture :: proc(s:^Session,call:^api.Call) {
     if problem:=api_png_write(s,path,image,width,height);problem!="" {api.call_fail(call,api.SERVER_ERROR,problem);return}
     info,_:=material_file(s,id)
     program:=base.text_get(info.program[:])
-    report:=call.out
     names:=MATERIAL_VIEW_NAMES
-    asset_named_write(s,report,"material",id)
-    api.write_text(report,"program",program)
-    api.write_text(report,"image",path)
-    api.write_int(report,"size",i64(side))
-    api.write_key(report,"views");serial.write_u8(report,'[')
+    measured:=make([]Api_Material_Capture_View,len(shown),call.allocator)
     for view,i in shown {
         st:=&stats[view]
-        if i>0 {serial.write_u8(report,',')}
-        serial.write_u8(report,'{')
-        api.write_text(report,"view",names[view],true)
-        api.write_int(report,"pixels",i64(st.pixels))
-        api.write_int(report,"nan_count",i64(st.nan_count))
-        low,high,mean:[3]f32
-        uniform:=st.pixels>0
+        shown_view:=&measured[i]
+        shown_view^={view=names[view],pixels=st.pixels,nan_count=st.nan_count,uniform=st.pixels>0}
+        shown_view.min,shown_view.max,shown_view.mean=make([]f32,st.components,call.allocator),make([]f32,st.components,call.allocator),make([]f32,st.components,call.allocator)
         for c in 0..<st.components {
-            if st.pixels>0 {low[c],high[c],mean[c]=f32(st.min[c]),f32(st.max[c]),f32(st.sum[c]/f64(st.pixels))}
-            uniform&&=st.max[c]-st.min[c]<=1e-3*max(1,abs(st.max[c]))
+            if st.pixels>0 {shown_view.min[c],shown_view.max[c],shown_view.mean[c]=f32(st.min[c]),f32(st.max[c]),f32(st.sum[c]/f64(st.pixels))}
+            shown_view.uniform&&=st.max[c]-st.min[c]<=1e-3*max(1,abs(st.max[c]))
         }
-        api.write_numbers(report,"min",low[:st.components])
-        api.write_numbers(report,"max",high[:st.components])
-        api.write_numbers(report,"mean",mean[:st.components])
-        api.write_bool(report,"uniform",uniform)
-        serial.write_u8(report,'}')
     }
-    serial.write_u8(report,']')
-    serial.write_u8(report,'}')
+    api.call_result(call,Api_Material_Capture_Result)^={id,asset_path(s,id),strings.clone(program,call.allocator),strings.clone(path,call.allocator),int(side),measured}
     api.call_image(call,path)
 }

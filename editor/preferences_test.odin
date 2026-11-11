@@ -211,7 +211,8 @@ preferences_are_read_and_changed_through_the_api :: proc(t:^testing.T) {
     f.s.info,f.s.edit_world,f.s.editor_world,f.s.app=&info,&world,&editor,&app
     f.s.selection,f.s.edits,f.s.inspector=&selection,&edits,&inspector
     history.edits_reset(&edits,edited_world(&f.s))
-    if !testing.expect(t,api_open(&f.s,0,true)==.None) {return};defer api_close(&f.s)
+    api_opened,api_problem:=api_open(&f.s,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return};defer api_close(&f.s)
     state:=api_state(&f.s);state.poll_temp=context.temp_allocator
     if api.method_find(&state.server,"preferences.get")==nil {preferences_api_register(&f.s,state)}
     out:serial.Writer;serial.writer_init(&out);defer serial.writer_destroy(&out)

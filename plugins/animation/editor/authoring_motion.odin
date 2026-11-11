@@ -5,14 +5,12 @@ import "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
-import "mirai:host"
 import "mirai:std/base"
 import lib "mirai:std/anim"
-import mm "mirai:std/math"
 import "mirai:std/serial"
 import anim "plugins:animation/runtime"
 
-Motion_Distance_Params :: struct {clip:[64]u8 `mirai:"text"`,name:[32]u8 `mirai:"text"`,keys:[256]lib.Distance_Key,animation:base.Asset_Id `mirai:"optional"`}
+Motion_Distance_Params :: struct {clip:[64]u8 `mirai:"text"`,name:[32]u8 `mirai:"text"`,keys:[256]lib.Distance_Key `mirai:"trim"`,animation:base.Asset_Id `mirai:"optional"`}
 Motion_Write_Params :: struct {
     path:[1024]u8 `mirai:"text,label=Ending in .character: its warping is replaced, its other parts kept"`,
     animation:base.Asset_Id `mirai:"optional,label=The .anim of the clips of a new .character"`,
@@ -33,8 +31,8 @@ motion_write_defaults :: proc() -> ^Motion_Write_Params {
 
 authoring_motion_register :: proc(s:^editor.Session) {
     defaults:=motion_write_defaults();if defaults==nil {return}
-    editor.api_method_register(s,Motion_Write_Params,Authoring_Write_Result,{name="animation.motion.set",summary="Replaces the warping of a .character that entities share: pose warping, warp windows over the spans of clips and distance tracks. An invalid one changes nothing. In Edit.",defaults=defaults,run=authoring_motion_set,writes_result=true})
-    editor.api_method_register(s,Motion_Distance_Params_Query,Motion_Distance_Result,{name="animation.motion.distance",summary="The clip and time at which a distance track of a .character reaches a distance, without advancing the world.",flags={.Read_Only},run=authoring_motion_distance})
+    editor.api_method_register(s,{params=type_info_of(Motion_Write_Params),result=type_info_of(Authoring_Write_Result),name="animation.motion.set",summary="Replaces the warping of a .character that entities share: pose warping, warp windows over the spans of clips and distance tracks. An invalid one changes nothing. In Edit.",defaults=defaults,run=authoring_motion_set})
+    editor.api_method_register(s,{params=type_info_of(Motion_Distance_Params_Query),result=type_info_of(Motion_Distance_Result),name="animation.motion.distance",summary="The clip and time at which a distance track of a .character reaches a distance, without advancing the world.",flags={.Read_Only},run=authoring_motion_distance})
 }
 
 @(private)
@@ -87,28 +85,22 @@ authoring_motion_distance :: proc(s:^editor.Session,call:^api.Call) {
 }
 
 @(private)
-authoring_motion_inspect :: proc(s:^editor.Session,call:^api.Call) {
-    p:=api.call_params(call,Entity_Params);world,entity,ok:=subject(s,call,p.entity[:],p.handle);if !ok {return}
+authoring_motion_inspect :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity) -> (r:Instance_Motion) {
     instance,ready:=anim.motion_inspect(core.world_storage_of(world,anim.Motion_Runtime),entity)
-    serial.text_write_raw(call.out,"{");api.write_key(call.out,"id",true);api.write_id(call.out,editor.api_entity_id(world,entity))
-    api.write_key(call.out,"character");serial.write_u8(call.out,'"');serial.text_write_asset_id(call.out,instance.profile);serial.write_u8(call.out,'"')
-    api.write_bool(call.out,"ready",ready);api.write_int(call.out,"window",i64(instance.window));api.write_key(call.out,"error");authoring_write_value(call,&instance.error,type_info_of(anim.Motion_Error))
-    api.write_key(call.out,"remaining_error");api.write_number(call.out,instance.remaining_error);api.write_numbers(call.out,"source_velocity",instance.source_velocity)
+    r.id,r.character,r.ready,r.window,r.error=editor.api_entity_id(world,entity),instance.profile,ready,i32(instance.window),instance.error
+    r.remaining_error,r.source_velocity=instance.remaining_error,instance.source_velocity
     goal:=instance.locomotion
-    api.write_key(call.out,"locomotion");serial.text_write_raw(call.out,"{");api.write_numbers(call.out,"velocity",goal.velocity,true);api.write_numbers(call.out,"source_velocity",goal.source_velocity)
-    api.write_key(call.out,"weight");api.write_number(call.out,goal.weight);api.write_bool(call.out,"enabled",goal.enabled);serial.text_write_raw(call.out,"}")
-    api.write_uint(call.out,"targets_total",u64(len(instance.targets)));api.write_key(call.out,"targets");serial.text_write_raw(call.out,"[")
+    r.locomotion={velocity=goal.velocity,source_velocity=goal.source_velocity,weight=goal.weight,enabled=goal.enabled}
+    r.targets_total=u32(len(instance.targets))
+    r.targets=make([]Instance_Motion_Target,len(instance.targets),call.allocator)
     ids:=core.world_table_of(world,core.Id)
-    for &target,i in instance.targets {
-        if i>0 {serial.text_write_raw(call.out,",")};serial.text_write_raw(call.out,"{");api.write_text(call.out,"name",base.text_get(target.name[:]),true)
+    for &row,i in r.targets {
+        target:=instance.targets[i]
         named:=SPATIAL_TARGET_PARAMS_DEFAULT
         named.kind=target.target.kind;named.bone=target.target.bone;named.socket=target.target.socket
         named.position,named.rotation,named.scale=target.target.position,target.target.rotation,target.target.scale
         if id,found:=core.get(ids,target.target.entity);found {base.text_set(named.entity[:],fmt.tprintf("%016x",u64(id.value)))}
-        api.write_key(call.out,"target");authoring_write_value(call,&named,type_info_of(Spatial_Target_Params))
-        api.write_numbers(call.out,"world_position",target.world.position)
-        rotation:=target.world.rotation;api.write_key(call.out,"world_rotation");authoring_write_value(call,&rotation,type_info_of(mm.Quat))
-        api.write_bool(call.out,"enabled",target.enabled);api.write_bool(call.out,"resolved",target.resolved);serial.text_write_raw(call.out,"}")
+        row={name=target.name,target=named,world_position=target.world.position,world_rotation=target.world.rotation,enabled=target.enabled,resolved=target.resolved}
     }
-    serial.text_write_raw(call.out,"]}")
+    return
 }

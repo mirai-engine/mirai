@@ -397,7 +397,7 @@ text_trims_a_tagged_array_after_its_last_element_with_a_byte_set :: proc(t:^test
 
 @(private="file") Loose_Mode :: enum u8 {Walk,Run_Fast}
 @(private="file") Loose_Flag :: enum u8 {Fire,Ice_Cold}
-@(private="file") Loose :: struct {mode:Loose_Mode,flags:bit_set[Loose_Flag;u8],free:u8 `mirai:"any"`,last:u8}
+@(private="file") Loose :: struct {mode:Loose_Mode,flags:bit_set[Loose_Flag;u8],last:u8}
 
 @(test)
 a_reader_of_loose_names_takes_members_as_a_person_writes_them_and_no_other_does :: proc(t:^testing.T) {
@@ -424,10 +424,103 @@ a_reader_of_loose_names_takes_members_as_a_person_writes_them_and_no_other_does 
         }
         testing.expect(t,value.mode==c.mode && value.flags==c.flags,c.text)
     }
-    value:=Loose{free=9}
-    r:Text_Reader;text_reader_init(&r,`{"free":[true,{"a":1}],"last":3}`,context.temp_allocator)
-    testing.expect(t,text_read(&r,&s,type,bytes_of(&value)) && text_end(&r),"a field tagged any takes any JSON")
-    testing.expect(t,value.free==9 && value.last==3)
+}
+
+@(private="file") Listed_Part :: struct {name:string,weights:[]f32,at:[2]i32}
+@(private="file") Listed :: struct {
+    title:string,
+    parts:[]Listed_Part,
+    names:[][8]u8 `mirai:"text"`,
+    lines:[]string,
+    free:Json,
+    count:u8,
+}
+@(private="file") Nested :: struct {inner:struct {child:[]Nested}}
+
+// A schema that is unsized takes slices, strings and any JSON: text reads
+// them into the allocator of its reader and writes them back the same.
+@(test)
+an_unsized_schema_reads_and_writes_slices_strings_and_any_json :: proc(t:^testing.T) {
+    plain:Schema;schema_init(&plain);defer schema_destroy(&plain)
+    _,taken:=schema_add(&plain,Listed)
+    testing.expect(t,!taken && plain.error=="title: string is not plain data",plain.error)
+    s:Schema;schema_init(&s);defer schema_destroy(&s)
+    s.unsized=true
+    type,ok:=schema_add(&s,Listed)
+    if !testing.expect(t,ok,s.error) {return}
+    testing.expect_value(t,schema_type(&s,schema_fields(&s,type)[1].type).kind,Type_Kind.Slice)
+    testing.expect(t,schema_validate(&s)==.Invalid_Type,"an unsized type has no binary schema")
+    _,recursive:=schema_add(&s,Nested)
+    testing.expect(t,!recursive && strings.contains(s.error,"inner.child"),s.error)
+
+    text:=`{"title": "a \"b\"", "parts": [{"name": "x", "weights": [1, 2.5], "at": [3, 4]}, {"name": "", "weights": [], "at": [0, 0]}], "names": ["ab", ""], "lines": ["one", "two"], "free": {"k":[true,null, 1e3]}, "count": 7}`
+    value:Listed
+    r:Text_Reader;text_reader_init(&r,text,context.temp_allocator)
+    if !testing.expect(t,text_read(&r,&s,type,bytes_of(&value)) && text_end(&r),text_error_message(&r,allocator=context.temp_allocator)) {return}
+    testing.expect(t,value.title==`a "b"` && len(value.parts)==2 && value.parts[0].name=="x" && len(value.parts[0].weights)==2 && value.parts[0].weights[1]==2.5 && value.parts[0].at=={3,4})
+    testing.expect(t,len(value.names)==2 && base.text_get(value.names[0][:])=="ab" && len(value.lines)==2 && value.lines[1]=="two")
+    testing.expect_value(t,string(value.free),`{"k":[true,null, 1e3]}`)
+    testing.expect_value(t,value.count,7)
+    w:Writer;writer_init(&w,allocator=context.temp_allocator)
+    text_write(&w,&s,type,bytes_of(&value),.Line)
+    testing.expect_value(t,string(writer_bytes(&w)),text)
+    // Nothing held writes as empty lists, an empty string and null.
+    empty:Listed
+    w.count=0
+    text_write(&w,&s,type,bytes_of(&empty),.Line)
+    testing.expect_value(t,string(writer_bytes(&w)),`{"title": "", "parts": [], "names": [], "lines": [], "free": null, "count": 0}`)
+
+    refused:=[]struct{text:string,code:Text_Error_Code,path:string}{
+        {`{"parts": {}}`,.Expected_Array,"parts"},
+        {`{"parts": [{"weights": [1, "x"]}]}`,.Expected_Number,"parts[0].weights[1]"},
+        {`{"parts": [{}, {"nope": 1}]}`,.Unknown_Field,"parts[1]"},
+        {`{"names": ["123456789"]}`,.Text_Too_Long,"names[0]"},
+        {`{"lines": ["a", 2]}`,.Expected_String,"lines[1]"},
+        {`{"title": 4}`,.Expected_String,"title"},
+        {`{"free": [1,}`,.Expected_Number,""},
+        {`{"parts": [`,.Expected_Number,""},
+    }
+    for c in refused {
+        into:Listed
+        reader:Text_Reader;text_reader_init(&reader,c.text,context.temp_allocator)
+        testing.expectf(t,!text_read(&reader,&s,type,bytes_of(&into)) && reader.error.code==c.code,"%s: %v",c.text,reader.error.code)
+        if c.path!="" {testing.expectf(t,string(reader.error.path[:reader.error.path_length])==c.path,"%s: %s",c.text,string(reader.error.path[:reader.error.path_length]))}
+    }
+    // The same through the schema a call makes for one value: what a file of Mirai is read and written with.
+    decoded:struct {title:string,lines:[dynamic]string,count:u8}
+    testing.expect_value(t,text_decode(`{"title":"a","lines":["x","y"],"count":2}`,&decoded,context.temp_allocator),"")
+    append(&decoded.lines,"z")
+    encoded,encoded_ok:=text_encode(decoded,.Line,context.temp_allocator)
+    testing.expect(t,encoded_ok && string(encoded)==`{"title": "a", "lines": ["x", "y", "z"], "count": 2}`,string(encoded))
+    testing.expect_value(t,text_decode("{\n \"title\":\"a\",\n \"more\":1}",&decoded,context.temp_allocator),`"more" is not a field: the fields are title, lines, count at line 3 column 2`)
+    testing.expect_value(t,text_decode(`{"more":{"deep":[1]},"count":9}`,&decoded,context.temp_allocator,skip_unknown=true),"")
+    testing.expect_value(t,decoded.count,9)
+    pointer:struct {p:^int}
+    testing.expect(t,text_decode(`{}`,&pointer)!="","a type no schema takes is a problem, not a crash")
+    // Without memory for what a slice or a string holds it says so and reads no further.
+    for limit in ([]int{0,8,40,64}) {
+        buffer:[64]u8
+        arena:mem.Arena
+        mem.arena_init(&arena,buffer[:limit])
+        into:Listed
+        reader:Text_Reader;text_reader_init(&reader,text,context.temp_allocator)
+        reader.values=mem.arena_allocator(&arena)
+        testing.expect(t,!text_read(&reader,&s,type,bytes_of(&into)) && reader.error.code==.Out_Of_Memory)
+    }
+    // Any bytes: it reads or it fails, inside its text.
+    h:=base.Hostile{31}
+    for _ in 0..<3000 {
+        bytes:=make([]u8,len(text),context.temp_allocator)
+        copy(bytes,text)
+        for _ in 0..<1+base.hostile_int(&h,4) {bytes[base.hostile_int(&h,len(bytes))]=u8(base.hostile_int(&h,128))}
+        into:Listed
+        reader:Text_Reader;text_reader_init(&reader,string(bytes[:base.hostile_int(&h,len(bytes))+1]),context.temp_allocator)
+        if text_read(&reader,&s,type,bytes_of(&into)) {
+            out:Writer;writer_init(&out,allocator=context.temp_allocator)
+            text_write(&out,&s,type,bytes_of(&into),.Line)
+        }
+        free_all(context.temp_allocator)
+    }
 }
 
 // An integer with names is read and written by them, a number that has none

@@ -1,5 +1,6 @@
 package serial
 
+import "core:strings"
 import "core:testing"
 import "mirai:std/base"
 
@@ -71,6 +72,80 @@ schema_rejects_types_that_are_not_plain_data :: proc(t:^testing.T) {
     _,ok:=schema_add(&s,Not_Plain)
     testing.expect(t,!ok)
     testing.expect_value(t,s.error,"inner.names: []string is not plain data")
+}
+
+// What each option of a tag sets, read by the one reader of tags.
+@(test)
+a_tag_is_read_option_by_option :: proc(t:^testing.T) {
+    Case :: struct {tag:string,flags:Field_Flags,hints:Field_Hints,check:proc(field:Field) -> bool}
+    cases:=[]Case{
+        {`mirai:"transient,local,readonly,hidden"`,{.Transient,.Local,.Read_Only,.Hidden},{},nil},
+        {`mirai:"color"`,{.Color},{},nil},
+        {`mirai:"angle,text"`,{.Angle,.Text},{},nil},
+        {`mirai:"trim,entity,inline"`,{},{.Trim,.Entity,.Inline},nil},
+        {`mirai:"optional,clamp"`,{},{.Optional,.Clamp},nil},
+        {`mirai:"advanced,owned,game,hex,data"`,{},{.Advanced,.Owned,.Game,.Hex,.Data},nil},
+        {`mirai:"min=-1.5,max=20,step=0.5"`,{},{},proc(f:Field) -> bool {return f.has_min && f.min==-1.5 && f.has_max && f.max==20 && f.step==0.5}},
+        {`mirai:"precision=0.01,bits=12"`,{},{},proc(f:Field) -> bool {return f.precision==0.01 && f.bits==12}},
+        {`mirai:"unit=m/s,name=where,kind=.anim .match"`,{},{},proc(f:Field) -> bool {return f.unit=="m/s" && f.name=="where" && f.asset_kinds==".anim .match"}},
+        {`mirai:"requires=Camera"`,{},{},proc(f:Field) -> bool {return f.required_component==base.name_hash("Camera")}},
+        {`mirai:"section=Exposure,mode=Follow|Orbit,icons=Play Stop,axes=LTRB,graphics=Fog"`,{},{},proc(f:Field) -> bool {return f.section=="Exposure" && f.mode=="Follow|Orbit" && f.icons=="Play Stop" && f.axes=="LTRB" && f.graphics=="Fog"}},
+        // label is the last option and takes the rest of the tag, commas and equals included.
+        {`mirai:"text, optional , label=Around it; omitted: the querier, or point=x"`,{.Text},{.Optional},proc(f:Field) -> bool {return f.label=="Around it; omitted: the querier, or point=x"}},
+        {`mirai:"label="`,{},{},proc(f:Field) -> bool {return f.label==""}},
+        {`json:"x" mirai:"hidden" other:"y"`,{.Hidden},{},nil},
+        {`json:"x"`,{},{},nil},
+        {``,{},{},nil},
+    }
+    for c in cases {
+        field,problem:=field_tag(c.tag)
+        testing.expectf(t,problem=="","%s: %s",c.tag,problem)
+        testing.expectf(t,field.flags==c.flags && field.hints==c.hints,"%s: %v %v",c.tag,field.flags,field.hints)
+        testing.expectf(t,c.check==nil || c.check(field),"%s: %v",c.tag,field)
+    }
+}
+
+// A tag that is not one says which, and the tags there are; a schema does not
+// take the type and names the field.
+@(test)
+a_tag_that_is_not_one_is_refused :: proc(t:^testing.T) {
+    refused:=[][2]string{
+        {`mirai:"unti=m"`,`"unti" is not a tag of a field: the tags are`},
+        {`mirai:"hiden"`,`"hiden" is not a tag of a field`},
+        {`mirai:"min=0,=,max=1"`,`"" is not a tag of a field`},
+        {`mirai:"key=where"`,`"key" is not a tag of a field`},
+        {`mirai:"list"`,`"list" is not a tag of a field`},
+        {`mirai:"any"`,`"any" is not a tag of a field`},
+        {`mirai:"min=low"`,`min="low" is not a number`},
+        {`mirai:"max="`,`max="" is not a number`},
+        {`mirai:"bits=999"`,`bits="999" is not a number`},
+        {`mirai:"bits=-5"`,`bits="-5" is not a number`},
+        {`mirai:"precision=garbage"`,`precision="garbage" is not a number`},
+        {`mirai:"hidden=true"`,`"hidden" takes no value`},
+        {`mirai:"unit="`,`unit= has no value`},
+        {`mirai:"label=Values,unit=m,section="`,``},
+    }
+    for c in refused {
+        _,problem:=field_tag(c[0])
+        testing.expectf(t,(c[1]=="")==(problem=="") && strings.contains(problem,c[1]),"%s: %q",c[0],problem)
+    }
+    _,problem:=field_tag(`mirai:"nope"`)
+    testing.expect(t,strings.contains(problem,FIELD_TAGS))
+    // Bytes that are no tag at all read as nothing or as a problem, never past them.
+    h:=base.Hostile{7}
+    for _ in 0..<2000 {
+        bytes:[48]u8
+        for &b in bytes {b=u8(base.hostile_int(&h,96)+32)}
+        copy(bytes[:],`mirai:"`)
+        field_tag(string(bytes[:base.hostile_int(&h,len(bytes))+1]))
+    }
+    Mistagged :: struct {inner:struct {speed:f32 `mirai:"min=0,unti=m/s"`}}
+    s:Schema;schema_init(&s);defer schema_destroy(&s)
+    _,ok:=schema_add(&s,Mistagged)
+    testing.expect(t,!ok)
+    testing.expect(t,strings.has_prefix(s.error,`inner.speed: "unti" is not a tag of a field: the tags are transient, `),s.error)
+    testing.expect_value(t,len(s.types),0)
+    testing.expect_value(t,len(s.fields),0)
 }
 
 @(test)

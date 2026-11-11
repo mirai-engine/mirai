@@ -562,6 +562,8 @@ leaves_add :: proc(p:^Protocol,s:^serial.Schema,index:serial.Type_Index,field:^s
     whole:=int(type.size)*8
     ranged:=field!=nil && field.has_min && field.has_max && field.max>field.min
     switch type.kind {
+    case .Slice,.String,.Json:
+        return false
     case .Bool:
         leaf.kind,leaf.bits=.Bool,1
     case .Int,.Uint:

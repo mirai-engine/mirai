@@ -36,17 +36,15 @@ Key_Capture_Params :: struct {
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
 }
 Key_Capture_Result :: struct {
-    asset:base.Asset_Id,
-    path:[1024]u8 `mirai:"text"`,
-    dry_run:bool `mirai:"optional"`,
+    using written:Authoring_Write_Result `mirai:"inline"`,
     keys:u32 `mirai:"label=The tracks keyed"`,
 }
 
 @(private)
 tracks_register :: proc(s:^editor.Session) {
     editor.tool_entry(s,TRACKS_TOOL,"Tracks",.Play)
-    editor.api_method_register(s,Tracks_Show_Params,Tracks_Show_Result,{name="animation.tracks.show",summary="Turns on the Tracks tool on the clip of an entity's Animation and moves its head: the scene shows the clip at the head without changing the document. Edit only.",run=tracks_show})
-    editor.api_method_register(s,Key_Capture_Params,Key_Capture_Result,{name="animation.key.capture",summary="Keys at a time every track of the clip of an Animation that moves an entity, with the transform and the fields the entity has now: a key there is updated, else one is inserted. One step of undo.",run=key_capture,writes_result=true})
+    editor.api_method_register(s,{params=type_info_of(Tracks_Show_Params),result=type_info_of(Tracks_Show_Result),name="animation.tracks.show",summary="Turns on the Tracks tool on the clip of an entity's Animation and moves its head: the scene shows the clip at the head without changing the document. Edit only.",run=tracks_show})
+    editor.api_method_register(s,{params=type_info_of(Key_Capture_Params),result=type_info_of(Key_Capture_Result),name="animation.key.capture",summary="Keys at a time every track of the clip of an Animation that moves an entity, with the transform and the fields the entity has now: a key there is updated, else one is inserted. One step of undo.",run=key_capture})
 }
 
 @(private)
@@ -131,7 +129,9 @@ key_capture :: proc(s:^editor.Session,call:^api.Call) {
     doc:aa.Document
     defer aa.document_destroy(&doc)
     if error:=aa.animation_document(&doc,&s.app.assets.types,{id=animation.asset,clips=clips,source=view.source},s.app.allocator);error!=.None {authoring_failure(call,"clips","Invalid_Definition","keys within the clip capacities",fmt.tprintf("%v",error),"The keys could not be stored",api.SERVER_ERROR if error==.Out_Of_Memory else api.INVALID_PARAMS);return}
-    authoring_publish(s,call,file,&doc,proc(call:^api.Call,data:rawptr) {api.write_uint(call.out,"keys",u64((^u32)(data)^))},&keyed)
+    r:=api.call_result(call,Key_Capture_Result)
+    r.keys=keyed
+    authoring_publish(s,call,file,&doc,&r.written)
 }
 
 // The node a track target names, and for a "@field" track the component and its field.
