@@ -60,6 +60,7 @@ Cook_Desc :: struct {
     server:bool, // for a dedicated server: what is only shown or heard (asset.Kind_Info.presentation) stays behind, and is not missing
     quick:bool,  // a cook that checks a change (a dev game): lz_optimal.QUICK in place of SHIP
     far:bool,    // the far meshes of the scenes sections reference: the game streams sections (plugin streaming)
+    keys:string, // the file where the cook keeps what each file it wrote was made of: a later cook writes again only what changed. "": every file
     allocator:runtime.Allocator, // of the report. Unset: context.allocator
 }
 
@@ -87,6 +88,7 @@ Cook_File :: struct {
     source_bytes,bytes:i64,
     compressed:bool,  // a texture that was RGBA8 and is blocks now, or an animation that is sampled
     resolved:bool,    // a scene or prefab whose stale prefab instances follow their prefabs now
+    reused:bool,      // written by an earlier cook from what it is made of now, and left as it was
 }
 
 Cook_Dropped :: struct {
@@ -114,6 +116,7 @@ Cook_Report :: struct {
     animations_compressed:int,
     scenes_resolved:int,      // scenes and prefabs written with their prefab instances up to date
     reparented:int,           // entities those scenes added under members their prefabs removed, now under the nearest member left
+    reused:int,               // files an earlier cook wrote from what they are made of now, left as they were
     far_meshes:int,           // far meshes written beside the scenes sections reference
     source_bytes:i64,         // of the whole assets folder
     output_bytes:i64,         // of what was written, with the index
@@ -293,6 +296,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     // The largest first, so that no worker starts a long file when the others are done.
     slice.sort_by(order[:],proc(a,b:Cook_Order) -> bool {return a.bytes>b.bytes || a.bytes==b.bytes && a.at<b.at})
     work.order,work.probed=order[:],probed[:]
+    keys_reuse(&work)
 
     jobs.parallel_for(on.system,on.worker,len(work.probed),1,texture_probe,&work)
     jobs.parallel_for(on.system,on.worker,len(work.order),1,files_cook,&work)
@@ -310,6 +314,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
         if result.error!=.None {cook_fail(&report,result.error,result.detail,allocator);return}
         entry:=result.entry
         entry.path=strings.clone(file.path,allocator)
+        if entry.reused {report.reused+=1}
         if entry.compressed {
             if entry.kind==asset.KIND_ANIMATION {report.animations_compressed+=1} else {report.textures_compressed+=1}
         }
@@ -322,7 +327,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
         if error!=.None {cook_fail(&report,error,detail,allocator);return}
         append(&written,..made)
         report.far_meshes=len(made)
-        for entry in made {report.output_bytes+=entry.bytes}
+        for entry in made {report.output_bytes,report.reused=report.output_bytes+entry.bytes,report.reused+int(entry.reused)}
         slice.sort_by(written[:],proc(a,b:Cook_File) -> bool {return a.path<b.path})
     }
     report.files,report.dropped,report.reparented=written[:],dropped[:],work.resolver.reparented
@@ -341,6 +346,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     }
     if stale && asset.registry_scan(&cooked)!=.None {cook_fail(&report,.Write_Failed,desc.output,allocator);return}
     if !asset.registry_save(&cooked,index) {cook_fail(&report,.Write_Failed,asset.REGISTRY_INDEX,allocator);return}
+    keys_write(&work)
     if info,stat_error:=os.stat(index,temp);stat_error==nil {report.output_bytes+=info.size}
     return
 }
@@ -367,6 +373,8 @@ Cook_Work :: struct {
     prefabs:asset.Registry_Prefabs,
     cache:sync.Mutex,      // over the writes of the texture cache and cached
     cached:map[u64]struct{}, // the keys this cook wrote into the texture cache
+    previous:map[string]Cook_Key, // what an earlier cook wrote, by path in the output
+    far_keys:[dynamic]Far_Key,    // of the far meshes this cook shipped
 }
 
 @(private="file")
@@ -375,6 +383,7 @@ Cook_Order :: struct {bytes:i64,at:u32}
 @(private="file")
 Cook_Result :: struct {
     entry:Cook_File, // without its path
+    key:u64,         // of what the file is made of (cook_key)
     error:Cook_Error,
     detail:string,   // in the allocator of the work
     problem:string,  // of a texture: why it cannot be shipped; in the allocator of the work
@@ -415,6 +424,7 @@ texture_probe :: proc(work:^Cook_Work,first,last:int,worker:int) {
     types:=work_types(work,worker)
     for at in work.probed[first:last] {
         result:=&work.results[at]
+        if result.entry.reused {continue}
         file:asset.Asset
         if asset.asset_load(&file,asset.registry_file_path(work.registry,work.files[at].path,context.temp_allocator),context.temp_allocator)!=.None {
             result.problem=work_text(work,"it cannot be read")
@@ -436,6 +446,7 @@ files_cook :: proc(work:^Cook_Work,first,last:int,worker:int) {
         // A file after one that failed is not needed: the cook reports the first.
         if at>intrinsics.atomic_load(&work.first_error) {continue}
         result:=&work.results[at]
+        if result.entry.reused {continue}
         result.error,result.detail=file_cook(work,at,worker,&result.entry)
         if result.error==.None {continue}
         failed:=intrinsics.atomic_load(&work.first_error)
@@ -475,8 +486,8 @@ file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:
         entry.compressed=compressed
     }
     if !entry.compressed {
-        data,read_error:=os.read_entire_file(source,context.temp_allocator)
-        if read_error!=nil {return .Read_Failed,work_text(work,"%s",file.path)}
+        data,read_error:=serial.file_read(source,context.temp_allocator)
+        if read_error!=.None {return .Read_Failed,work_text(work,"%s",file.path)}
         if file.state==.Asset && (file.kind==asset.KIND_SCENE) {
             sync.mutex_lock(&work.resolve)
             resolved,resolve_ok:=scene_cook(&work.resolver,&work.resolver_types,data)
@@ -504,6 +515,94 @@ file_cook :: proc(work:^Cook_Work,at:int,worker:int,entry:^Cook_File) -> (error:
     return .None,""
 }
 
+// Raise it when the cook writes a file otherwise from the same inputs: every key changes.
+@(private="file")
+COOK_KEYS_VERSION :: 1
+
+// What an earlier cook wrote of a file: the key of what it was made of, and the output as it left it.
+@(private="file")
+Cook_Key :: struct {key:u64,bytes,time:i64,compressed,resolved:bool}
+
+// What a file of the output is made of: how the cook writes it, the file and, for an asset,
+// every asset it needs, by content.
+@(private="file")
+cook_key :: proc(work:^Cook_Work,at:int,closure:^[dynamic]u32,far:=false) -> u64 {
+    file:=&work.files[at]
+    key:=base.hash_combine(COOK_KEYS_VERSION,u64(work.desc.quick)|u64(work.textures)<<1|u64(work.drawn[at])<<8|u64(work.shown[at])<<9|u64(far)<<10)
+    if file.state!=.Asset {return base.hash_combine(base.hash_combine(key,u64(file.size)),u64(file.time))}
+    key=base.hash_combine(key,file.content_hash)
+    asset.registry_closure(work.registry,file.id,closure)
+    for needed in closure^ {key=base.hash_combine(key,work.files[needed].content_hash)}
+    return key
+}
+
+// Marks the files whose output an earlier cook wrote from what they are made of now and that
+// are as it left them: the workers neither read nor write them.
+@(private="file")
+keys_reuse :: proc(work:^Cook_Work) {
+    previous:=make(map[string]Cook_Key,context.temp_allocator)
+    work.previous=previous
+    work.far_keys=make([dynamic]Far_Key,context.temp_allocator)
+    if data,error:=serial.file_read(work.desc.keys,context.temp_allocator);work.desc.keys!="" && error==.None {
+        r:=serial.reader_init(data)
+        count:=serial.read_varint(&r)==COOK_KEYS_VERSION?serial.read_count(&r,11):0
+        for _ in 0..<count {
+            path:=serial.read_string(&r)
+            entry:=Cook_Key{key=serial.read_u64(&r),bytes=i64(serial.read_varint(&r)),time=i64(serial.read_u64(&r))}
+            flags:=serial.read_u8(&r)
+            entry.compressed,entry.resolved=flags&1!=0,flags&2!=0
+            if r.failed {break}
+            work.previous[path]=entry
+        }
+    }
+    closure:=make([dynamic]u32,context.temp_allocator)
+    for order in work.order {
+        at:=int(order.at)
+        file:=&work.files[at]
+        result:=&work.results[at]
+        result.key=cook_key(work,at,&closure)
+        old,kept:=output_kept(work,file.path,result.key)
+        if !kept {continue}
+        result.entry={source_bytes=file.size,bytes=old.bytes,compressed=old.compressed,resolved=old.resolved,reused=true}
+        if file.state==.Asset {result.entry.id,result.entry.kind=file.id,file.kind}
+    }
+}
+
+// What an earlier cook wrote at a path of the output, when it was made of what key says and is
+// as it left it.
+@(private="file")
+output_kept :: proc(work:^Cook_Work,path:string,key:u64) -> (old:Cook_Key,kept:bool) {
+    old=work.previous[path] or_return
+    info,error:=os.stat(fmt.tprintf("%s/%s",work.desc.output,path),context.temp_allocator)
+    return old,old.key==key && error==nil && info.type==.Regular && info.size==old.bytes && time.time_to_unix_nano(info.modification_time)==old.time
+}
+
+@(private="file")
+Far_Key :: struct {path:string,key:u64}
+
+// Keeps the key of every file of a cook that succeeded, with its output as it is now.
+@(private="file")
+keys_write :: proc(work:^Cook_Work) {
+    if work.desc.keys=="" {return}
+    w:serial.Writer;serial.writer_init(&w,allocator=context.temp_allocator)
+    serial.write_varint(&w,COOK_KEYS_VERSION)
+    serial.write_varint(&w,u64(len(work.order)+len(work.far_keys)))
+    entry :: proc(w:^serial.Writer,work:^Cook_Work,path:string,key:u64,flags:u8) {
+        info,_:=os.stat(fmt.tprintf("%s/%s",work.desc.output,path),context.temp_allocator)
+        serial.write_string(w,path)
+        serial.write_u64(w,key)
+        serial.write_varint(w,u64(max(info.size,0)))
+        serial.write_u64(w,u64(time.time_to_unix_nano(info.modification_time)))
+        serial.write_u8(w,flags)
+    }
+    for order in work.order {
+        result:=&work.results[order.at]
+        entry(&w,work,work.files[order.at].path,result.key,u8(result.entry.compressed)|u8(result.entry.resolved)<<1)
+    }
+    for far in work.far_keys {entry(&w,work,far.path,far.key,0)}
+    _=serial.file_write_atomic(work.desc.keys,serial.writer_bytes(&w))
+}
+
 // The far mesh of each scene a cooked scene references, written beside it
 // (<scene>.far.mesh, far.far_mesh_id) and read back; one without static
 // meshes has none.
@@ -520,10 +619,21 @@ far_meshes_cook :: proc(work:^Cook_Work,reached,left:[]bool,allocator:runtime.Al
     }
     Far_Work :: struct {work:^Cook_Work,scenes:[]base.Asset_Id,entries:[]Cook_File,errors:[]Cook_Error}
     fw:=Far_Work{work=work,scenes=scenes[:],entries=make([]Cook_File,len(scenes),context.temp_allocator),errors=make([]Cook_Error,len(scenes),context.temp_allocator)}
+    // A far mesh is made of its scene and what that needs: one an earlier cook made of the same is kept.
+    keys:=make([]u64,len(scenes),context.temp_allocator)
+    closure:=make([dynamic]u32,context.temp_allocator)
+    for id,at in scenes {
+        record,found:=asset.registry_find(work.registry,id)
+        if !found {continue}
+        path:=strings.concatenate({strings.trim_suffix(record.path,".scene"),far.FAR_EXTENSION},context.temp_allocator)
+        keys[at]=cook_key(work,int(work.registry.by_id[id]),&closure,far=true)
+        if old,kept:=output_kept(work,path,keys[at]);kept {fw.entries[at]={path=strings.clone(path,work.allocator),id=asset.far_mesh_id(id),kind=asset.KIND_MESH,bytes=old.bytes,reused=true}}
+    }
     each :: proc(fw:^Far_Work,first,last:int,worker:int) {
         context.allocator=fw.work.allocator
         for at in first..<last {
             id:=fw.scenes[at]
+            if fw.entries[at].reused {continue}
             record,found:=asset.registry_find(fw.work.registry,id)
             if !found {continue}
             g:asset.Mesh_Geometry
@@ -547,6 +657,7 @@ far_meshes_cook :: proc(work:^Cook_Work,reached,left:[]bool,allocator:runtime.Al
     out:=make([dynamic]Cook_File,allocator)
     defer for entry in fw.entries {delete(entry.path,work.allocator)}
     for entry,at in fw.entries {
+        if entry.path!="" && fw.errors[at]==.None {append(&work.far_keys,Far_Key{strings.clone(entry.path,context.temp_allocator),keys[at]})}
         if fw.errors[at]!=.None {return nil,fw.errors[at],strings.clone(entry.path,allocator)}
         if entry.path=="" {continue}
         kept:=entry
@@ -614,6 +725,7 @@ cook_summary :: proc(report:^Cook_Report,allocator:=context.allocator) -> string
     if report.scenes_resolved>0 {fmt.sbprintf(&b,", %d scenes and prefabs with their prefab instances brought up to date",report.scenes_resolved)}
     if report.reparented>0 {fmt.sbprintf(&b,", %d entities they added under members their prefabs removed under the nearest member left (open and save them in the editor to keep that)",report.reparented)}
     if report.removed>0 {fmt.sbprintf(&b,", %d files of an earlier cook removed",report.removed)}
+    if report.reused>0 {fmt.sbprintf(&b,", %d files kept from an earlier cook: what they are made of did not change",report.reused)}
     strings.write_byte(&b,'\n')
     for shown in ([2]bool{false,true}) {
         bytes,count:=i64(0),0
