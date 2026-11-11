@@ -53,6 +53,7 @@ Sync :: struct {
     colliders:^core.Table(Collider,.Read),
     characters:^core.Table(Character,.Read),
     volumes:^core.Table(volume.Volume,.Read),
+    splines:^core.Table(volume.Spline,.Read), // whose points close the loop of an Outline
     statics:^core.Table(render.Mesh_Renderer,.Read),
     parents:^core.Table(core.Parent,.Read),
     hierarchy:core.Ref(core.Hierarchy), // without it every sync is whole
@@ -113,7 +114,7 @@ physics_step :: proc(
     state.pass+=1
     s:=Sync{
         state=state,app=app,meshes=meshes,playing=time.playing && time.dt>0,dt=time.dt,
-        rigids=rigids,colliders=colliders,characters=characters,volumes=volumes,statics=statics,parents=parents,hierarchy=hierarchy,names=names,
+        rigids=rigids,colliders=colliders,characters=characters,volumes=volumes,splines=splines,statics=statics,parents=parents,hierarchy=hierarchy,names=names,
         transforms=transforms,motions=motions,targets=targets,character_states=character_states,jumps=jumps,problems=problems,
         budget=BODIES_PER_TICK,
     }
@@ -1100,6 +1101,7 @@ Area_Place :: struct {
     area:volume.Volume,
     pose:mm.Transform,
     blend:f32,
+    outline:[]mm.Path_Point,
 }
 
 // Applies a request of an area, which names no entity; false for any other request.
@@ -1107,19 +1109,19 @@ Area_Place :: struct {
 area_apply :: proc(s:^Sync,request:Body_Request) -> bool {
     if request.kind==.Area_Strain {return true}
     if request.kind!=.Area_Force && request.kind!=.Area_Impulse {return false}
-    place:=Area_Place{request.area,{request.position,request.rotation==0?mm.QUAT_IDENTITY:request.rotation,request.scale=={}?[3]f32{1,1,1}:request.scale},request.blend}
+    place:=Area_Place{request.area,{request.position,request.rotation==0?mm.QUAT_IDENTITY:request.rotation,request.scale=={}?[3]f32{1,1,1}:request.scale},request.blend,volume.spline_outline(s.splines,request.entity)}
     weight :: proc "contextless" (user:rawptr,point:[3]f32) -> f32 {
         p:=(^Area_Place)(user)
-        return volume.weight(p.area,p.pose,point,p.blend)
+        return volume.weight(p.area,p.pose,point,p.blend,p.outline)
     }
-    ok:=volume.valid(place.area,place.pose) && request.blend>=0 && request.blend<=max(f32) && request.strength>=-max(f32) && request.strength<=max(f32)
+    ok:=volume.valid(place.area,place.pose,place.outline) && request.blend>=0 && request.blend<=max(f32) && request.strength>=-max(f32) && request.strength<=max(f32)
     for value in request.linear {ok=ok && value>=-max(f32) && value<=max(f32)}
     if ok {
         radial:=request.linear=={}
         force:=radial?[3]f32{request.strength,0,0}:linalg.normalize0(request.linear)*request.strength
         // Away from a plane is along its normal.
         if radial && place.area.shape==.Plane {radial,force=false,mm.quat_rotate(place.pose.rotation,[3]f32{0,1,0})*request.strength}
-        area:=sim.Area{bounds=volume.bounds(place.area,place.pose),center=place.pose.position,rotation=place.pose.rotation,weight=weight,user=&place}
+        area:=sim.Area{bounds=volume.bounds(place.area,place.pose,place.outline),center=place.pose.position,rotation=place.pose.rotation,weight=weight,user=&place}
         _,ok=sim.world_apply_area(&s.state.world,area,force,radial,request.kind==.Area_Impulse,request.override,request.falloff,request.filter,request.falloff_range,request.noise)
     }
     if !ok {area_problem(s,request)}
@@ -1240,7 +1242,7 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
 // A force or impulse over a volume that the simulation refused.
 @(private)
 area_problem :: proc(s:^Sync,request:Body_Request) {
-    core.report(s.problems,core.NONE,"physics.request_area","a %v request of Body_Requests did nothing: its volume has no size or a pose that is not finite, its blend, its strength or its direction is not finite, a velocity change is not an impulse, its falloff is not a Radial_Falloff, or its noise scale is negative; send apply_area a volume of volume.box, volume.sphere or volume.plane with a positive size, finite values and a falloff and noise of physics",request.kind)
+    core.report(s.problems,core.NONE,"physics.request_area","a %v request of Body_Requests did nothing: its volume has no size or a pose that is not finite, its blend, its strength or its direction is not finite, a velocity change is not an impulse, its falloff is not a Radial_Falloff, or its noise scale is negative; send apply_area a volume of volume.box, volume.sphere, volume.plane or volume.outline (with outline_of the entity of its Spline) with a positive size, finite values and a falloff and noise of physics",request.kind)
 }
 
 // Brings back into the rows what the step left: the pose, the Motion and the state of the bodies it moved or

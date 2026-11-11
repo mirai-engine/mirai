@@ -34,6 +34,6 @@ force_fields_step :: proc(fields:^core.Table(Force_Field,.Read),volumes:^core.Ta
         if !rules {continue}
         along:=linalg.normalize0(field.along)
         if world,placed:=core.get(worlds,e);placed {along=mm.quat_rotate(world.rotation,along)}
-        apply_area(bodies,area,pose,field.force,along,blend=field.blend,falloff=field.falloff,filter=field.filter,range=field.falloff_range,noise=field.noise)
+        apply_area(bodies,area,pose,field.force,along,blend=field.blend,falloff=field.falloff,filter=field.filter,range=field.falloff_range,noise=field.noise,outline_of=e)
     }
 }
