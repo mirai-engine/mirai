@@ -10,7 +10,7 @@ import mm "mirai:std/math"
 // character takes the rotation, its up and its yaw, and no angular velocity. A
 // following target makes its body head for the pose in the step as a
 // kinematic body, pushing what it touches, until it no longer follows; a
-// manipulation underneath holds it again then. A following character is put at
+// manipulation underneath holds or pulls it again then. A following character is put at
 // its pose after every step (step_followed), so neither its own move nor what
 // it touches takes it away from what the other owner shows. A body that was not made yet
 // is made at the pose, with the velocities of its target (target_made). An
@@ -26,7 +26,7 @@ physics_pose_targets :: proc(
         for &h in state.held {
             if core.has(targets,h.entity) {continue}
             if l:=link_find(state,h.entity);l!=nil {
-                hold_end(state,&h,l,.Target,true,rigids)
+                hold_end(state,&h,l,.Target,rigids)
                 link_touch(state,l)
             }
             h.placed=0
@@ -72,10 +72,13 @@ target_made :: proc(s:^Sync,l:^Link,e:core.Entity) {
 @(private)
 target_follow :: proc(state:^Physics_State,h:^Held,l:^Link,target:core.Pose_Target,rigids:core.Read(Rigid_Body)) {
     if !target.follow {
-        hold_end(state,h,l,.Target,true,rigids)
+        hold_end(state,h,l,.Target,rigids)
         return
     }
-    hold_begin(&state.world,h,l,.Target,{target.position,target.rotation==0?mm.QUAT_IDENTITY:linalg.normalize(target.rotation)})
+    was:=held_kinematic(h^)
+    h.by+={.Target}
+    h.pose[.Target]={target.position,target.rotation==0?mm.QUAT_IDENTITY:linalg.normalize(target.rotation)}
+    hold_type(state,h,l,was,rigids)
     h.linear=target.linear
 }
 

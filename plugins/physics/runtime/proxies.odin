@@ -43,10 +43,11 @@ proxy_remove :: proc(state:^Physics_State,e:core.Entity) {
     if at<0 || state.links.values[at].kind!=.Proxy {return}
     body:=state.links.values[at].body
     if h:=held_of(state,e);h!=nil {
-        if h.by!={} && sim.body_valid(&state.world,body) {
+        if held_kinematic(h^) && sim.body_valid(&state.world,body) {
             sim.body_set_velocity(&state.world,body,{},{})
             sim.body_set_type(&state.world,body,h.type_before)
         }
+        if sim.joint_valid(&state.world,h.pull) {sim.joint_destroy(&state.world,h.pull)}
         h^={entity=e}
     }
     for &joint in state.joints.values {

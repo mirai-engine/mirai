@@ -8,6 +8,7 @@ import "core:os"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
+import "mirai:asset"
 import "mirai:core"
 import "mirai:project"
 import "mirai:std/base"
@@ -308,6 +309,7 @@ world_generate :: proc(p:^project.Project,allocator:=context.allocator,shipped:=
     for pkg in g.packages {draws_read(&g,pkg)}
     rules_check(&g)
     defaults_check(&g)
+    asset_paths_check(&g,p)
     out.errors=g.errors[:]
     if len(g.errors)>0 {return}
     out.game_world=world_write(&g,false)
@@ -2753,6 +2755,56 @@ defaults_check :: proc(g:^Generator) {
                 if decl,is_value:=stmt.derived.(^ast.Value_Decl);is_value && len(decl.names)==1 {w.decl=ident_name(decl.names[0])}
                 ast.walk(&visitor,stmt)
             }
+        }
+    }
+}
+
+// The paths of assets the code of the project writes: a string literal that
+// ends in the extension of an asset ("pets/Dog.scene") names an asset of the
+// project or of its plugins, or the build fails where it is written, with the
+// path that has the same name when there is one.
+@(private="file")
+asset_paths_check :: proc(g:^Generator,p:^project.Project) {
+    assets:=project.folder_path(p.root,.Assets,context.temp_allocator)
+    if !os.is_dir(assets) {return}
+    registry:asset.Registry
+    asset.registry_init(&registry,assets,"",context.temp_allocator,project.imported_path(p.root,context.temp_allocator))
+    defer asset.registry_destroy(&registry)
+    for folder in project.asset_folders(p,context.temp_allocator) {
+        if folder.prefix!="" {asset.registry_mount(&registry,folder.path,folder.prefix,folder.imported)}
+    }
+    if asset.registry_scan(&registry)!=.None {return}
+    extensions:=make(map[string]bool,context.temp_allocator)
+    for info in asset.KINDS {extensions[info.extension]=true}
+    for file in registry.files {
+        if dot:=strings.last_index_byte(file.path,'.');dot>0 {extensions[file.path[dot:]]=true}
+    }
+    Walk :: struct {g:^Generator,file:^ast.File,registry:^asset.Registry,extensions:^map[string]bool}
+    visit :: proc(v:^ast.Visitor,node:^ast.Node) -> ^ast.Visitor {
+        if node==nil {return nil}
+        w:=(^Walk)(v.data)
+        lit,is_lit:=node.derived.(^ast.Basic_Lit)
+        if !is_lit || lit.tok.kind!=.String || len(lit.tok.text)<2 {return v}
+        path:=lit.tok.text[1:len(lit.tok.text)-1]
+        dot:=strings.last_index_byte(path,'.')
+        slash:=strings.last_index_byte(path,'/')
+        if dot<=slash+1 || !w.extensions[path[dot:]] || strings.contains_any(path,"%{}:\\\n") {return v}
+        if _,known:=w.registry.by_path[path];known {return v}
+        name:=path[slash+1:]
+        like:=""
+        for file in w.registry.files {
+            if file.path==name || strings.has_suffix(file.path,name) && file.path[len(file.path)-len(name)-1]=='/' {like=file.path;break}
+        }
+        hint:=like!=""?fmt.tprintf("; the asset of that name is %q",like):""
+        append(&w.g.errors,fmt.aprintf("%s(%d:%d): %q names no asset of the project or of its plugins%s: write the path of the asset from the assets folder, or create or import it",w.file.fullpath,lit.pos.line,lit.pos.column,path,hint))
+        return v
+    }
+    for pkg in g.packages {
+        if !strings.has_prefix(pkg.path,"project:") {continue}
+        for file in pkg.files {
+            w:=Walk{g,file,&registry,&extensions}
+            visitor:=ast.Visitor{visit=visit,data=&w}
+            for stmt in file.decls {ast.walk(&visitor,stmt)}
         }
     }
 }

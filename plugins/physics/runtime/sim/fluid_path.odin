@@ -19,7 +19,7 @@ Path_Point :: math.Path_Point
 path_valid :: proc "contextless" (path:[]Path_Point) -> bool {
     if len(path)<2 || len(path)>FLUID_PATH_SAMPLES {return false}
     for p,i in path {
-        if !is_finite3(p.position) || !(p.width>0 && p.width<=max(f32)) || !(p.height>0 && p.height<=max(f32)) {return false}
+        if !finite(p.position) || !(p.width>0 && p.width<=max(f32)) || !(p.height>0 && p.height<=max(f32)) {return false}
         if i>0 {
             q:=path[i-1].position
             if !((p.position.x-q.x)*(p.position.x-q.x)+(p.position.z-q.z)*(p.position.z-q.z)>1e-6) {return false}
