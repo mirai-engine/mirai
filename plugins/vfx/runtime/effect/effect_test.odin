@@ -14,7 +14,7 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     info.rate,info.render,info.material,info.sub_particle,info.trigger=120,.Ribbon,{3,4},{5,6},.Death
     info.bursts[1]={time=0.5,count=9,cycles=2,interval=0.1}
     info.velocity={{-1,2,0},{1,3,0}}
-    info.rate_over_cycle.values[1]=0.25
+    info.size_over_life.values[1]=0.25
     base.text_set(info.program[:],"Swirl")
     hidden:[2]Particle_Field
     base.text_set(hidden[0].name[:],"noise")
@@ -158,7 +158,7 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
         {proc(p:^Particle_Info) {p.shell=2},"shell"},
         {proc(p:^Particle_Info) {p.size_over_life.times[2]=0.1},"size_over_life"},
         {proc(p:^Particle_Info) {p.color_over_life.times[0]=-1},"color_over_life"},
-        {proc(p:^Particle_Info) {p.rate_over_cycle.values[3]=-1},"rate_over_cycle"},
+        {proc(p:^Particle_Info) {p.size_over_life.values[3]=-1},"size_over_life"},
         {proc(p:^Particle_Info) {p.render=Particle_Render(9)},"render"},
         {proc(p:^Particle_Info) {p.emission_mode=asset.Emission_Mode(7)},"emission_mode"},
         {proc(p:^Particle_Info) {p.bursts[3].interval=-1},"bursts"},

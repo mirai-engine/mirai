@@ -53,7 +53,7 @@ Particle_Burst :: struct {
     interval:f32 `mirai:"min=0,unit=s"`,
 }
 
-// A value over the life of a particle, or over the cycle of an effect:
+// A value over the life of a particle:
 // piecewise linear between keys at ascending times from 0 to 1. Keys past the
 // last one used repeat it at time 1.
 Particle_Curve :: struct {
@@ -77,7 +77,6 @@ Particle_Info :: struct {
     prewarm:bool,                             // a looping instance starts as if it had run a whole life
     max_particles:u32,                        // alive at once; 0: what the rate, the bursts and the lifetime need
     rate:f32 `mirai:"min=0,unit=1/s"`,
-    rate_over_cycle:Particle_Curve,           // multiplies rate along the cycle
     rate_over_distance:f32 `mirai:"min=0,unit=1/m"`, // per metre the entity travels
     bursts:[PARTICLE_BURSTS]Particle_Burst,
     shape:Particle_Shape,
@@ -135,10 +134,8 @@ Particle_Info :: struct {
     program:[PARTICLE_NAME_BYTES]u8 `mirai:"text"`, // a Vfx program of the shaders; "" for none
 }
 
-PARTICLE_CURVE_ONE :: Particle_Curve{values={1,1,1,1,1,1,1,1},times={0,1,1,1,1,1,1,1}}
-
 PARTICLE_DEFAULTS :: Particle_Info{
-    duration=2,rate=20,rate_over_cycle=PARTICLE_CURVE_ONE,
+    duration=2,rate=20,
     shape=.Cone,shape_size={0.1,0.1,0.1},shape_angle=0.35,
     lifetime={1.5,2},speed={1,2},size={0.2,0.35},colors={{1,1,1,1},{1,1,1,1}},intensity=1,emission_mode=.Relative,
     blend=.Alpha,lit=true,light_intensity=100,light_range=4,soft=0.3,flipbook={1,1},
@@ -254,11 +251,8 @@ particle_validate :: proc(view:Particle_View) -> Particle_Problem {
     for burst in p.bursts {
         if burst.time<0 || burst.interval<0 {return {"bursts","Use burst times and intervals of zero or more seconds"}}
     }
-    for curve in ([2]struct {name:string,times:[PARTICLE_CURVE_KEYS]f32}{{"rate_over_cycle",p.rate_over_cycle.times},{"size_over_life",p.size_over_life.times}}) {
-        if !particle_times_valid(curve.times) {return {curve.name,"Use key times that go up from 0 to 1"}}
-    }
+    if !particle_times_valid(p.size_over_life.times) {return {"size_over_life","Use key times that go up from 0 to 1"}}
     if !particle_times_valid(p.color_over_life.times) {return {"color_over_life","Use key times that go up from 0 to 1"}}
-    for value in p.rate_over_cycle.values {if value<0 {return {"rate_over_cycle","Use multipliers of zero or more"}}}
     for value in p.size_over_life.values {if value<0 {return {"size_over_life","Use sizes of zero or more"}}}
     if problem:=particle_parameters_validate(view.parameters);problem.message!="" {return problem}
     for &hidden in view.hidden {

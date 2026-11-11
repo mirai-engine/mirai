@@ -121,7 +121,7 @@ a_rollback_does_not_start_the_same_burst_twice :: proc(t:^testing.T) {
     f.clocks.playing=true
     clock:=clock_find(&f.clocks,e)
     clock.resolved=emission_key({},nil,0)
-    clock.emission={duration=0.5,longest=1,tail=1,rate_over_cycle=effect.PARTICLE_CURVE_ONE}
+    clock.emission={duration=0.5,longest=1,tail=1}
     clock.emission.bursts[0]={count=7}
     id:=core.World_Id{0,1}
     tick :: proc(f:^Emitters_Fixture,e:core.Entity,at:int) {
@@ -170,7 +170,7 @@ a_frame_that_sees_an_older_copy_starts_only_what_comes_after_it :: proc(t:^testi
     for _ in 0..<2 {fixture_tick(&f,TICK)}
     clock:=clock_find(&f.clocks,e)
     clock.resolved=emission_key({},nil,0)
-    clock.emission={duration=1,rate=60,longest=1,tail=1,rate_over_cycle=effect.PARTICLE_CURVE_ONE}
+    clock.emission={duration=1,rate=60,longest=1,tail=1}
     f.app.assets=nil
     for _ in 0..<30 {fixture_tick(&f,TICK)}
     saved:Particle_Clocks
@@ -223,7 +223,6 @@ steps :: proc(e:^Emission,looping:bool,clock:^Emitter_Clock,frames:int,moved:f32
 @(private="file")
 emission :: proc(info:effect.Particle_Info) -> Emission {
     copy:=info
-    copy.rate_over_cycle=effect.PARTICLE_CURVE_ONE
     return emission_of(nil,&copy)
 }
 
@@ -251,17 +250,6 @@ emission_follows_rate_bursts_and_distance :: proc(t:^testing.T) {
     clock={}
     // The first frame places the emitter; the nine after it travel a metre each.
     testing.expect_value(t,steps(&e,true,&clock,10,moved=1),u64(18))
-}
-
-@(test)
-the_rate_follows_its_curve_along_the_cycle :: proc(t:^testing.T) {
-    info:=effect.Particle_Info{duration=1,rate=40,lifetime={1,1}}
-    // Twice the rate in the first half of the cycle, none in the second.
-    info.rate_over_cycle={values={2,2,0,0,0,0,0,0},times={0,0.5,0.5,1,1,1,1,1}}
-    e:=emission_of(nil,&info)
-    clock:Emitter_Clock
-    testing.expect_value(t,steps(&e,true,&clock,4),u64(40))
-    testing.expect_value(t,steps(&e,true,&clock,4),u64(0))
 }
 
 // particles.slang copies values of the plugin by hand: each is the Odin one.
@@ -305,28 +293,6 @@ the_values_particles_slang_copies_are_those_of_the_plugin :: proc(t:^testing.T) 
     kinds(t,defines,Stage_Kind,"PARTICLE_STAGE_",true)
 }
 
-// The CPU reads curves and gradients as particles.slang does, at their ends
-// and between keys closer than it divides by.
-@(test)
-curves_read_on_the_cpu_as_the_shader_reads_them :: proc(t:^testing.T) {
-    c:=effect.Particle_Curve{values={2,4,8,6,6,6,6,6},times={0.25,0.5,0.500002,1,1,1,1,1}}
-    testing.expect_value(t,curve_at(&c,-1),2)
-    testing.expect_value(t,curve_at(&c,0.25),2)
-    testing.expect_value(t,curve_at(&c,0.375),3)
-    testing.expect_value(t,curve_at(&c,0.5),4)
-    testing.expect_value(t,curve_at(&c,2),6)
-    // Two microseconds apart, the shader ramps over ten: a tenth of the way.
-    near:=curve_at(&c,0.500001)
-    testing.expectf(t,abs(near-4.4)<0.05,"between keys closer than 1e-5: %v",near)
-    g:effect.Particle_Gradient
-    for &key in g.colors {key={0,0,1,0}}
-    g.colors[0]={1,0,0,1}
-    g.times={0.5,1,1,1,1,1,1,1}
-    testing.expect_value(t,gradient_at(&g,0),[4]f32{1,0,0,1})
-    testing.expect_value(t,gradient_at(&g,0.75),[4]f32{0.5,0,0.5,0.5})
-    testing.expect_value(t,gradient_at(&g,3),[4]f32{0,0,1,0})
-}
-
 @(test)
 a_single_cycle_ends_when_its_last_particles_die :: proc(t:^testing.T) {
     e:=emission({duration=1,rate=10,lifetime={0.25,0.5}})
@@ -342,7 +308,7 @@ a_single_cycle_ends_when_its_last_particles_die :: proc(t:^testing.T) {
 
 @(test)
 a_prewarmed_emitter_starts_full :: proc(t:^testing.T) {
-    info:=effect.Particle_Info{prewarm=true,duration=1,rate=20,lifetime={2,2},rate_over_cycle=effect.PARTICLE_CURVE_ONE}
+    info:=effect.Particle_Info{prewarm=true,duration=1,rate=20,lifetime={2,2}}
     e:=emission(info)
     clock:Emitter_Clock
     emission_step(&clock,&e,true,true,{},1.0/60)
@@ -564,7 +530,7 @@ done_effects_take_their_entity_with_them :: proc(t:^testing.T) {
     fixture_tick(&f,TICK)
     clock:=clock_find(&f.clocks,e)
     clock.resolved=emission_key({},nil,0)
-    clock.emission={duration=0.1,rate=30,longest=0.1,tail=0.1,rate_over_cycle=effect.PARTICLE_CURVE_ONE}
+    clock.emission={duration=0.1,rate=30,longest=0.1,tail=0.1}
     f.app.assets=nil
     for _ in 0..<20 {fixture_tick(&f,TICK)}
     testing.expect(t,!core.alive(&f.entities,e))

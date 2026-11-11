@@ -29,7 +29,6 @@ Particle_Control :: enum u8 {
 // What of its effect the clock of an emitter follows.
 Emission :: struct {
     duration,rate,rate_over_distance:f32,
-    rate_over_cycle:effect.Particle_Curve,
     bursts:[effect.PARTICLE_BURSTS]effect.Particle_Burst,
     prewarm:bool,
     longest:f32, // lifetime of its particles at most
@@ -59,7 +58,7 @@ Emitter_Clock :: struct {
 // What a clock follows of an effect: its emission, and how long its last
 // particles and those their sub effect starts live.
 emission_of :: proc(a:^host.Assets,info:^effect.Particle_Info) -> (e:Emission) {
-    e={duration=max(info.duration,0.001),rate=info.rate,rate_over_distance=info.rate_over_distance,rate_over_cycle=info.rate_over_cycle,bursts=info.bursts,prewarm=info.prewarm}
+    e={duration=max(info.duration,0.001),rate=info.rate,rate_over_distance=info.rate_over_distance,bursts=info.bursts,prewarm=info.prewarm}
     e.longest=max(info.lifetime[0],info.lifetime[1],0)
     e.tail=e.longest
     if info.trigger!=.None && info.sub_particle!={} {
@@ -68,22 +67,6 @@ emission_of :: proc(a:^host.Assets,info:^effect.Particle_Info) -> (e:Emission) {
     }
     return
 }
-
-// Piecewise linear between keys at ascending times; past the ends, the end
-// keys. As particle_curve and particle_gradient of particles.slang, edges
-// included: keys closer than 1e-5 ramp over 1e-5.
-keys_at :: proc "contextless" (times:[]f32,values:[]$T,x:f32) -> T {
-    previous_time,previous:=times[0],values[0]
-    if x<=previous_time {return previous}
-    for i in 1..<len(times) {
-        if x<=times[i] {return previous+(values[i]-previous)*math.saturate((x-previous_time)/max(times[i]-previous_time,1e-5))}
-        previous_time,previous=times[i],values[i]
-    }
-    return previous
-}
-
-// The value of a curve at x.
-curve_at :: proc "contextless" (c:^effect.Particle_Curve,x:f32) -> f32 {return keys_at(c.times[:],c.values[:],x)}
 
 // Starts the clock again: another generation, which the renderer starts empty.
 clock_restart :: proc(clock:^Emitter_Clock) {
@@ -118,7 +101,7 @@ births_add :: proc(clock:^Emitter_Clock,time:f64,count,per:u32,spacing:f32) {
 birth_instants :: proc "contextless" (b:Particle_Birth) -> u32 {return (b.count+max(b.per,1)-1)/max(b.per,1)}
 
 // Advances the clock of an emitter dt seconds, with the births of that time:
-// its rate along the cycle, the bursts the cycle reaches, the distance the
+// its rate, the bursts the cycle reaches, the distance the
 // emitter moved and, at the start of a looping generation that asks it, a
 // whole life of births before it (a prewarm).
 emission_step :: proc(clock:^Emitter_Clock,e:^Emission,emitting,looping:bool,position:[3]f32,dt:f32) {
@@ -134,17 +117,13 @@ emission_step :: proc(clock:^Emitter_Clock,e:^Emission,emitting,looping:bool,pos
             count:=u32(min(f64(e.rate)*f64(e.longest),f64(1<<20)))
             if count>0 {births_add(clock,-f64(e.longest),count,1,e.longest/f32(count))}
         }
-        // The rate, at the middle of the step along the cycle.
         end:=looping?after:min(after,duration)
         if active:=end-before;active>0 && e.rate>0 {
-            middle:=math.mod(before+active*0.5,duration)/duration
-            rate:=f64(e.rate)*f64(max(curve_at(&e.rate_over_cycle,f32(middle)),0))
-            if rate>0 {
-                total:=clock.pending+rate*active
-                whole:=math.floor(total)
-                if whole>0 {births_add(clock,before+(1-clock.pending)/rate,u32(min(whole,f64(max(u32)))),1,f32(1/rate))}
-                clock.pending=total-whole
-            }
+            rate:=f64(e.rate)
+            total:=clock.pending+rate*active
+            whole:=math.floor(total)
+            if whole>0 {births_add(clock,before+(1-clock.pending)/rate,u32(min(whole,f64(max(u32)))),1,f32(1/rate))}
+            clock.pending=total-whole
         }
         for burst in e.bursts {
             if burst.count==0 || f64(burst.time)>=duration {continue}
@@ -197,9 +176,7 @@ burst_births :: proc(clock:^Emitter_Clock,burst:effect.Particle_Burst,duration:f
 emitter_capacity :: proc(info:^effect.Particle_Info) -> u32 {
     if info.max_particles>0 {return info.max_particles}
     longest:=max(info.lifetime[0],info.lifetime[1],0.001)
-    peak:=f32(0)
-    for value in info.rate_over_cycle.values {peak=max(peak,value)}
-    total:=info.rate*peak*longest
+    total:=info.rate*longest
     for burst in info.bursts {total+=f32(burst.count)*f32(max(burst.cycles,1))}
     if info.rate_over_distance>0 {total+=info.rate_over_distance*longest*20}
     return u32(clamp(total*1.25+16,16,f32(1<<20)))
@@ -218,6 +195,3 @@ row_stamp :: proc "contextless" (rows:core.Read($T),e:core.Entity) -> u64 {
     at:=core.row_of(rows,e)
     return at>=0?core.stamp(rows,at):0
 }
-
-// The color of a gradient at x.
-gradient_at :: proc "contextless" (g:^effect.Particle_Gradient,x:f32) -> [4]f32 {return keys_at(g.times[:],g.colors[:],x)}

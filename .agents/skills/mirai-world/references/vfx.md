@@ -15,7 +15,7 @@ version asks to write it again). An effect is like a material: entities name it
 (`Particle_Parameter`) and `hidden` (`Particle_Field`).
 
 - `Particle_Info` is the destination of what is imported from other engines:
-  - cycle (`duration`, `prewarm`), rate (`rate`, multiplied along the cycle by `rate_over_cycle`),
+  - cycle (`duration`, `prewarm`), a constant `rate` (a program's `births` gives any other shape),
     `rate_over_distance` and four `bursts` (time, count, repetitions, interval);
   - shape (`Surface`: the triangles of what the entity binds or draws; `Bones`: its bones,
     [surfaces and bones](#surfaces-bones-and-resources)), life, initial velocity (`speed`
@@ -304,8 +304,7 @@ Clocks (`Particle_Clocks`, of the world):
 - `particles_tick` (`fixed`, both loops, after `transforms_propagate`) takes the requests and
   advances the clocks: while playing, with `time.dt`; while not playing (the editor), with
   `frame.dt` and `preview`. A mode change restarts them: Play starts without those of the preview.
-- `emission_step` adds the step's births: the rate times `rate_over_cycle` at the middle of the
-  step, the bursts that the cycle reaches (the repetitions of a step in a group), the distance
+- `emission_step` adds the step's births: the rate, the bursts that the cycle reaches (the repetitions of a step in a group), the distance
   traveled and, on starting a generation with `prewarm` and `loop`, a whole life of earlier births.
   `emitter_capacity` gives the particles it needs.
 - A copy, a Play and a rollback take the clocks.

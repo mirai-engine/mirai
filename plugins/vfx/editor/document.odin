@@ -46,7 +46,7 @@ PARTICLE_GROUP_TITLES :: [Particle_Group]string{.Spawn="SPAWN",.Shape="SHAPE",.M
 // A field of Particle_Info in the group the panel shows it in, in order.
 Particle_Row :: struct {group:Particle_Group,field:string}
 PARTICLE_ROWS :: [?]Particle_Row{
-    {.Spawn,"duration"},{.Spawn,"prewarm"},{.Spawn,"max_particles"},{.Spawn,"rate"},{.Spawn,"rate_over_cycle"},{.Spawn,"rate_over_distance"},{.Spawn,"bursts"},
+    {.Spawn,"duration"},{.Spawn,"prewarm"},{.Spawn,"max_particles"},{.Spawn,"rate"},{.Spawn,"rate_over_distance"},{.Spawn,"bursts"},
     {.Shape,"shape"},{.Shape,"shape_size"},{.Shape,"shape_angle"},{.Shape,"shell"},
     {.Motion,"lifetime"},{.Motion,"speed"},{.Motion,"velocity"},{.Motion,"inherit_velocity"},{.Motion,"local_space"},{.Motion,"gravity"},
     {.Motion,"acceleration"},{.Motion,"drag"},{.Motion,"noise"},{.Motion,"noise_frequency"},{.Motion,"noise_speed"},{.Motion,"attractor"},{.Motion,"attractor_strength"},
