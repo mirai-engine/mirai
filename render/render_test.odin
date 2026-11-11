@@ -690,6 +690,27 @@ render_spot_light_lights_only_its_cone :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// A light with no place takes no shadow map: the atlas is the others'.
+@(test)
+render_a_light_with_no_place_takes_no_shadow_map :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	if !cube_fixture_init(t, &f, 64, 48, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	lamp := Light_Desc{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 8 * math.PI, range = 10}
+	lost := lamp
+	lost.position.x = math.nan_f32()
+	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {1, 1, 1}}
+	scene_given(r, []Instance_Desc{floor}, []Light_Desc{lamp, lost}, {}, {})
+	camera := Camera{position = {0, 6, 0.01}, forward = {0, -6, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	b := &r.targets.shadow_buffers
+	testing.expectf(t, b.rastered == 1 && b.raster[0] == 0, "only the placed light takes maps: %v", b.raster[:b.rastered])
+	expect_clean(t, f.device)
+}
+
 @(test)
 render_resize_and_settings_changes_stay_valid :: proc(t: ^testing.T) {
 	f: Cube_Fixture

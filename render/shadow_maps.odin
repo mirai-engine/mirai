@@ -89,7 +89,6 @@ Shadow_Want :: struct {
 @(private)
 shadow_light_share :: proc(light: Gpu_Light, eye, forward: Vec3, tan_y, aspect: f32, frustum: [6]Vec4) -> f32 {
 	c, range := light.position_range.xyz, light.position_range.w
-	if range <= 0 {return 0}
 	for plane in frustum {if linalg.dot(plane.xyz, c) + plane.w < -range {return 0}}
 	d := linalg.length(c - eye)
 	if d <= range {return 1}
@@ -295,8 +294,8 @@ shadow_maps_plan :: proc(p: ^Pass) -> (maps: Shadow_Maps, ok: bool) {
 	}
 	for light, i in s.lights {
 		if orthographic {break}
-		// A light turned off casts no shadow and takes no room of the atlas.
-		if !(light.color_intensity.w > 0) || !(max(light.color_intensity.x, light.color_intensity.y, light.color_intensity.z) > 0) {continue}
+		// A light turned off or with no place casts no shadow and takes no room of the atlas.
+		if !light_placed(light) || !(light.color_intensity.w > 0) || !(max(light.color_intensity.x, light.color_intensity.y, light.color_intensity.z) > 0) {continue}
 		share := shadow_light_share(light, eye, forward, tan_y, aspect, p.frame.frustum)
 		keep := SHADOW_RASTER_KEEP if was(b, i) else SHADOW_RASTER_SHARE
 		if share < keep {continue}
