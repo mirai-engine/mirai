@@ -5,7 +5,8 @@ import "mirai:core"
 import phys "plugins:physics/runtime"
 
 @(private="file")
-born :: proc(births:^core.Births,channel:core.Birth_Channel) -> (count:int) {
+born :: proc(births:^core.Births,name:string) -> (count:int) {
+    channel:=core.birth_channel(name)
     for birth in births.queue.items {if birth.channel==channel {count+=1}}
     return
 }

@@ -3,6 +3,7 @@ package importer
 import "core:fmt"
 import "core:mem"
 import "mirai:asset"
+import "mirai:core"
 import "mirai:cook/textures"
 import "mirai:std/base"
 import "mirai:std/jobs"
@@ -56,7 +57,8 @@ Import_Options :: struct {
     // folder (sidecar.odin).
     root:string,
     registry:^asset.Registry, // the scanned assets of root, which the import does not change; nil: it scans them
-    rebuild:bool,         // writes every asset, also one whose file already is the one the import would write
+    world:^core.World_Info,   // the types of the game of root, which the prefab of a model is written in
+    rebuild:bool,        // writes every asset, also one whose file already is the one the import would write
     texture_cache:string, // folder of textures built before, kept by image and settings (textures.cache_read); "": none
     // A texture is built Fast unless the texture cache keeps it as Final
     // (textures.Encode_Speed): the imports of the editor, which a cook

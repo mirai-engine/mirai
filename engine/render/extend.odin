@@ -173,6 +173,7 @@ pass_image_bind :: gpu.pass_image_bind
 pass_image_write :: gpu.pass_image_write
 pass_texture :: gpu.pass_texture
 pass_texture_sample :: gpu.pass_texture_sample
+pass_volume_sample :: gpu.pass_volume_sample
 pass_vertices_begin :: gpu.pass_vertices_begin
 pass_deformable :: gpu.pass_deformable
 pass_end :: gpu.pass_end

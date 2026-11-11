@@ -81,7 +81,10 @@ world_debug_draw :: proc(w:^World,out:^Debug_Draw,flags:Debug_Draw_Flags,region:
             if f.generation&1==0 {continue}
             if f.shape==.Plane {
                 debug_fluid_plane(out,w,&f,region,everywhere)
-            } else if meets(fluid_aabb(&f),region,everywhere) {
+            } else if !meets(fluid_aabb(&f),region,everywhere) {
+            } else if f.shape==.Path {
+                debug_fluid_path(out,&f)
+            } else {
                 debug_fluid_box(out,&f,f.density>0?.Fluid:.Dry)
             }
         }
@@ -127,6 +130,23 @@ debug_kind :: proc "contextless" (shape:^Shape,body:^Body) -> Debug_Kind {
 @(private) DEBUG_PLANE_REACH :: 64 // m
 @(private) DEBUG_PLANE_LINES :: 32 // across each axis of the surface of a plane
 @(private) DEBUG_PLANE_PIECES :: 8 // of each line, which follow the height of the surface
+
+// The banks of water along a path.
+@(private)
+debug_fluid_path :: proc "contextless" (out:^Debug_Draw,f:^Fluid) {
+    count:=int(f.path_count)
+    bank :: proc "contextless" (f:^Fluid,j,count:int,side:f32) -> Vec3 {
+        a,b:=f.path[max(j-1,0)].position,f.path[min(j+1,count-1)].position
+        across:=normalize(Vec3{a.z-b.z,0,b.x-a.x})
+        return f.path[j].position+across*(side*0.5*f.path[j].width)
+    }
+    for j in 0..<count-1 {
+        debug_line(out,bank(f,j,count,1),bank(f,j+1,count,1),.Fluid)
+        debug_line(out,bank(f,j,count,-1),bank(f,j+1,count,-1),.Fluid)
+    }
+    debug_line(out,bank(f,0,count,1),bank(f,0,count,-1),.Fluid)
+    debug_line(out,bank(f,count-1,count,1),bank(f,count-1,count,-1),.Fluid)
+}
 
 @(private)
 debug_fluid_box :: proc "contextless" (out:^Debug_Draw,f:^Fluid,kind:Debug_Kind) {

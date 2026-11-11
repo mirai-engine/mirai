@@ -1197,6 +1197,10 @@ raw_value :: proc "contextless" (t:^Raw_Table,type:^runtime.Type_Info,row:int) -
     return rawptr(uintptr(t.values.data)+uintptr(row)*uintptr(type.size))
 }
 
+// The stamp the next settle gives what it adds or turns: a reader that is to
+// see past what that settle makes takes it as seen.
+raw_settle_stamp :: #force_inline proc "contextless" (t:^Raw_Table) -> u64 {return ((t.version+2)&~u64(1))+1}
+
 // Says that the row of an entity was written in place, through a pointer
 // raw_find gave: a widget bound to its fields.
 raw_touch :: proc "contextless" (t:^Raw_Table,e:Entity) {

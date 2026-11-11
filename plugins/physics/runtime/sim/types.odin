@@ -282,7 +282,7 @@ Contact_Begin_Event :: struct {
     users:Event_Users,
 }
 Contact_End_Event :: struct {shape_a,shape_b:Shape_Handle,body_a,body_b:Body_Handle,users:Event_Users}
-// One for each shape of a pair that overlaps, as `shape`. `crossed`: a bullet went through the other
+// One for each shape of a pair that overlaps, as `shape`. `crossed`: a swept body went through the other
 // shape within the step, so the pair begins and ends in the same step. In users, A is `shape` and its body.
 Overlap_Event :: struct {shape,other:Shape_Handle,body,other_body:Body_Handle,crossed:bool,users:Event_Users}
 Joint_Break_Event :: struct {joint:Joint_Handle,body_a,body_b:Body_Handle,force,torque:f32}
@@ -316,7 +316,7 @@ Stats :: struct {
     character_capacity_exhausted,fluid_capacity_exhausted:int,
     // Breakables, breaks and cuts refused because a capacity of theirs or of the world ran out.
     breakable_capacity_exhausted:int,
-    // Shapes a bullet went through in a step beyond the CCD_OVERLAP_CAPACITY it keeps, without their overlap
+    // Shapes a swept body went through in a step beyond the CCD_OVERLAP_CAPACITY it keeps, without their overlap
     // events, since the world was created.
     ccd_overlaps_dropped:int,
 }

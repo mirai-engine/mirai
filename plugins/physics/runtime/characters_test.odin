@@ -97,6 +97,30 @@ the_capsule_of_a_character_is_where_it_stands_and_leaves_its_own_body_out :: pro
     }
 }
 
+// An impulse changes the velocity of a Character by itself over the mass of its body, also when that mass
+// comes from the density of its capsule.
+@(test)
+an_impulse_moves_a_character_by_the_mass_of_its_body :: proc(t:^testing.T) {
+    f:Physics_Test
+    if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    e:=core.create(&f.entities)
+    core.add(&f.transforms,e,core.Transform{{0,5,0},1,{1,1,1}})
+    core.add(&f.colliders,e,collider_character())
+    config:=character_default()
+    config.mass=0
+    core.add(&f.characters,e,config)
+    physics_test_step(&f)
+    l:=link_find(&f.state,e)
+    if !testing.expect(t,l!=nil && l.kind==.Character) {return}
+    mass:=sim.character_desc(&f.state.world,l.character).mass
+    testing.expect(t,mass>1)
+    apply_impulse(&f.requests,e,{100,0,0})
+    physics_test_step(&f)
+    v:=sim.character_velocity(&f.state.world,l.character)
+    testing.expectf(t,abs(v.x-100/mass)<0.02*100/mass,"an impulse of 100 N s on %v kg gives %v m/s",mass,v.x)
+}
+
 // A Character locked along Z walks on the plane where it was made; a place puts it on another plane, where
 // it stays, and the lock taken away lets its move take it along Z again.
 @(test)

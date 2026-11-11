@@ -86,7 +86,7 @@ Bones and modifiers:
 
 Targets and controls:
 
-- `modifier_goal` changes the target of an operation of an instance through `Modifier_Requests`;
+- `modifier_goal` changes the target of an operation of an instance through `Animation_Requests`;
   `modifier_control` regulates an independent influence multiplier, with a smoothstep fade from the
   current influence. They are chosen by name or slot
   ([rigs](animation-rigs.md#requests-and-diagnostics)).
@@ -206,13 +206,12 @@ Per tick:
   the entity or its weapon names that library (a component field, `kind=.anim`), so it loads with
   the scene and Play and is cooked; a library still compressing when it is swapped in takes over
   once loaded, and meanwhile the entity plays on the library it had, with its actions.
-- `animation_match` says which clip plays, its rate, its mode, whether a whole-body action plays
-  instead of the search (`forced`) and how many searches and jumps it made.
+- `animation_match` says which clip plays, its rate, its mode, whether a whole-body action covers
+  the search (`forced`) and how many searches and jumps it made.
 
-A whole-body action (`play` of an action that names no layer: vault, hit, death) takes the rig
-from the search through the same inertial transition and gives it back when it ends
-([requests and lifecycle](animation-actions.md#requests-and-lifecycle)): the program plays its
-clip between the times the action goes through, and the search resumes in the mode the body is in.
+A whole-body action (`play` of an action that names no layer: vault, hit, death) fades in over the
+search, which goes on under it in the mode the body is in, and fades out when it ends
+([requests and lifecycle](animation-actions.md#requests-and-lifecycle)).
 
 ### Landing
 
@@ -370,11 +369,14 @@ Order in `fixed`:
 Root motion:
 
 - `Animation.root_motion` is None, Extract or In_Place; the clip stores the bone and channels of its
-  root. `animation_root_delta` gives the translation and rotation of the tick; In_Place also leaves
-  those channels of the bone at the reference, clip by clip as the fader blends them (`Pose_Lock`):
-  a clip with root motion that fades out under one without it does not carry the root along, and
-  the one without it keeps its own.
-- The sources that contribute a root must coincide in bone and channels: otherwise,
+  root. `Playing.root` is the root of the stack in the tick and `animation_root_delta` its
+  translation and rotation; In_Place also leaves those channels of the bone at the reference, clip
+  by clip as the fader blends them (`Pose_Lock`), or after the pose of a program: a clip with root
+  motion that fades out under one without it does not carry the root along, and the one without it
+  keeps its own. A root bound to the entity keeps, at the finish, where the owner of its Transform
+  put it. The layers blend theirs over it
+  ([root and movement](animation-actions.md#root-and-movement)).
+- The clips a program blends with a root must coincide in bone and channels: otherwise,
   `Incompatible_Root` rejects the evaluation. Loops, reversal and fades use the extraction of
   `std/anim`; inertialization corrects the delta with the decaying offset. A seek gives no
   displacement.

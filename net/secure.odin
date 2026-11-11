@@ -5,6 +5,7 @@ import "core:crypto/chacha20poly1305"
 import "core:crypto/hkdf"
 import "core:crypto/x25519"
 import "core:encoding/endian"
+import "core:mem"
 
 // Every connection is sealed.
 //
@@ -29,12 +30,24 @@ Key :: [KEY_BYTES]u8
 @(private) LABEL_INVITE :: "mirai-net-2 invite"
 @(private) LABEL_REKEY :: "mirai-net-2 rekey"
 
+// A wrong proof costs its sender: an address (its IP, an IPv6 /64) presents
+// FAILED_BURST of them back to back and then one every FAILED_INTERVAL; the
+// server drops what comes sooner before any key exchange. It is the rate of a
+// token bucket kept as the time the address has spent its allowance up to
+// (due), in a table of fixed size: nothing is kept per guess.
+@(private) FAILED_WAYS :: 8
+@(private) FAILED_SETS :: 512
+@(private) FAILED_BURST :: 4
+@(private) FAILED_INTERVAL :: 1.0 // s
+@(private) Failed :: struct {key:u64,due:f64}
+
 @(private)
 Host_Secure :: struct {
     private,public:Key,
     invite:Key, // what Host_Desc.invite gives: every key of a connection depends on it
     rekey_interval:u64,
     handshakes:int, // key exchanges left in this update
+    failed:[]Failed, // server: FAILED_SETS sets of FAILED_WAYS, by the address_key of the address
 }
 
 @(private)
@@ -52,15 +65,35 @@ secure_host_init :: proc(h:^Host) {
     s:=&h.back.secure
     s.rekey_interval=REKEY_INTERVAL
     if h.desc.handshakes_per_update<=0 {h.desc.handshakes_per_update=8}
-    invite:[4]u8
-    endian.unchecked_put_u32le(invite[:],h.desc.invite)
+    invite:[8]u8
+    endian.unchecked_put_u64le(invite[:],h.desc.invite)
     info:[len(LABEL_INVITE)+4]u8
     endian.unchecked_put_u32le(info[copy(info[:],LABEL_INVITE):],h.desc.protocol_id)
     hkdf.extract_and_expand(.SHA256,nil,invite[:],info[:],s.invite[:])
     if h.desc.mode==.Server {
         crypto.rand_bytes(s.private[:])
         x25519.scalarmult_basepoint(s.public[:],s.private[:])
+        s.failed=host_make(h,Failed,FAILED_SETS*FAILED_WAYS)
     }
+}
+
+// The record of the wrong proofs of an address: its own, a free one of its
+// set, or else the one of its set that frees soonest, so a crowd of guessers
+// never shuts out a newcomer who brings the right invitation.
+@(private)
+failed_record :: proc(b:^Back,from:Address) -> ^Failed {
+    sender:=from
+    if sender.kind!=.Memory {sender.port=0}
+    if sender.kind==.IP6 {mem.zero_slice(sender.ip[8:])}
+    key:=address_key(b,sender)
+    set:=b.secure.failed[key%FAILED_SETS*FAILED_WAYS:][:FAILED_WAYS]
+    record:=&set[0]
+    for &other in set {
+        if other.key==key {return &other}
+        if other.due<record.due {record=&other}
+    }
+    record^={key=key,due=b.now}
+    return record
 }
 
 // False when the other end sent a point that leaves nothing secret.

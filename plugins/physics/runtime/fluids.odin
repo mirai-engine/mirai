@@ -4,6 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "mirai:core"
 import volume "mirai:engine/volume"
+import "core:slice"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import sim "plugins:physics/runtime/sim"
@@ -20,6 +21,13 @@ wave_terms :: sim.wave_terms
 wave_point :: sim.wave_point
 wave_surface :: sim.wave_surface
 Surface_Waves :: sim.Fluid_Waves
+FLUID_PATH_SAMPLES :: sim.FLUID_PATH_SAMPLES
+
+// The samples of the path a fluid fills (Fluid_Info.fluid), which its surface follows from its first to
+// its last; zero for another fluid.
+fluid_path :: proc(physics:core.Ref(Physics_State),fluid:sim.Fluid_Handle,out:^[FLUID_PATH_SAMPLES]mm.Path_Point) -> int {
+    return physics.ptr!=nil && physics.ready?sim.fluid_path(&physics.world,fluid,out):0
+}
 
 // How far the waves reach over and under the still surface.
 waves_reach :: proc "contextless" (waves:Surface_Waves) -> f32 {
@@ -30,13 +38,15 @@ waves_reach :: proc "contextless" (waves:Surface_Waves) -> f32 {
 // Water, or another fluid, that bodies float in by their density and
 // characters swim in, where the Volume of its entity says: a Plane is
 // everything under the height of the entity, a Box its volume, with the top
-// as the surface; the yaw of the entity turns a box and its current. With
-// density zero, the air of a box that takes the fluid of lower priority
+// as the surface (a lake in its basin, a pool); the yaw of the entity turns a
+// box and its current. A volume.Spline on the entity makes it water along its
+// path instead (a river), as deep as the height of the spline, whose current is
+// in the frame of the path: -Z along it toward its end. With density zero, the air of a box that takes the fluid of lower priority
 // (Volume.priority) out of where it is: a base under the sea, a room that
 // floods as the floor of its air rises. Where two fluids meet, or two dry
 // boxes, the one of higher priority decides. A fluid ends at its border: the
 // blend and the mode of its Volume do nothing to it.
-@(component,replicated,description="Water or another fluid in the Volume of its entity, a Plane (a sea) or a Box (a pool): bodies float in it by their density and characters swim in it. With density 0, a dry box that takes out the fluid of lower priority, as the air of a base under the sea.")
+@(component,replicated,description="Water or another fluid in the Volume of its entity, a Plane (a sea) or a Box (a lake, a pool), or along the Spline of its entity (a river): bodies float in it by their density and characters swim in it. With density 0, a dry box that takes out the fluid of lower priority, as the air of a base under the sea.")
 Fluid :: struct {
     density:f32 `mirai:"min=0,unit=kg/m3"`, // 1000 fresh water, 1025 the sea; 0: dry, only in a box
     current:[3]f32 `mirai:"unit=m/s"`,      // in the frame of the entity
@@ -119,6 +129,7 @@ fluid_waves_of :: proc "contextless" (waves:Fluid_Waves,yaw:f32,wind:[2]f32) -> 
 Fluid_Link :: struct {
     fluid:sim.Fluid_Handle,
     desc:sim.Fluid_Desc,
+    path_key:u64, // of the samples of its spline
     refused:bool,
 }
 
@@ -154,8 +165,9 @@ fluids_in :: proc(physics:core.Ref(Physics_State),box:mm.Aabb,out:[]Fluid_Info) 
         if batch<=0 {break}
         for handle,i in found[:batch] {
             desc,_:=sim.fluid_desc(w,handle)
-            top:=desc.position.y+(desc.shape==.Box?desc.half_extents.y:0)
-            out[written+i]={entity=core.Entity(desc.user_data),fluid=handle,desc=desc,bounds=sim.fluid_bounds(w,handle),top=top}
+            bounds:=sim.fluid_bounds(w,handle)
+            top:=desc.shape==.Path?bounds.max.y:desc.position.y+(desc.shape==.Box?desc.half_extents.y:0)
+            out[written+i]={entity=core.Entity(desc.user_data),fluid=handle,desc=desc,bounds=bounds,top=top}
         }
         written+=batch
     }
@@ -209,6 +221,7 @@ fluid_bodies :: proc(physics:core.Ref(Physics_State),out:[]Fluid_Body) -> int {
 fluids_sync :: proc(
     state:^Physics_State,fluids:core.Read(Fluid),volumes:core.Read(volume.Volume),locals:core.Read(core.Transform),parents:core.Read(core.Parent),problems:^core.Problems,
     waves:core.Read(Fluid_Waves)={},winds:core.Read(volume.Wind)={},worlds:core.Read(core.World_Transform)={},
+    splines:core.Read(volume.Spline)={},ground:core.Ground_Query={},under:[]mm.Aabb=nil,
 ) {
     if fluids.table==nil {return}
     seen:=core.version(fluids)+core.layout(fluids)+core.version(locals)+core.layout(locals)+core.version(parents)+core.layout(parents)+u64(state.epoch)
@@ -220,7 +233,11 @@ fluids_sync :: proc(
             seen+=core.version(winds)+core.layout(winds)+core.version(worlds)+core.layout(worlds)
         }
     }
-    if seen==state.fluids_synced {return}
+    if splines.table!=nil {seen+=core.version(splines)+core.layout(splines)}
+    // A river lies on the ground: when nothing else changed, only the rivers
+    // whose reach a box under where the ground changed overlaps are laid again.
+    only_ground:=seen==state.fluids_synced
+    if only_ground && (splines.table==nil || len(under)==0) {return}
     w:=&state.world
     #reverse for &link,at in state.fluids.values {
         if core.has(fluids,state.fluids.entities[at]) {continue}
@@ -234,27 +251,41 @@ fluids_sync :: proc(
         return
     }
     changed:=false
+    samples:[FLUID_PATH_SAMPLES]mm.Path_Point
     for row in 0..<core.count(fluids) {
         e:=core.entity_at(fluids,row)
+        world,_:=core.world_of(locals,parents,e)
+        if only_ground && !volume.spline_under(splines,e,world,under) {continue}
         fluid:=core.at(fluids,row)
         region:volume.Volume
         has_region:=false
         if volumes.table!=nil {region,has_region=core.get(volumes,e)}
         // The simulation has a sea and a pool: the fluid of a region of another shape is not made.
         shaped:=has_region && (region.shape==.Plane || region.shape==.Box)
-        world,_:=core.world_of(locals,parents,e)
         desc:=sim.Fluid_Desc{
             shape=region.shape==.Plane?.Plane:.Box,position=world.position,yaw=yaw_of(world.rotation),
             density=fluid.density,current=fluid.current,priority=region.priority,user_data=u64(e),
         }
         if shaped && region.shape==.Box {desc.half_extents=region.extents*linalg.abs(world.scale)}
+        path:[]mm.Path_Point
+        path_key:u64
+        has_path:=false
+        if splines.table!=nil {
+            if row:=core.row_of(splines,e);row>=0 {
+                path=samples[:volume.spline_sample(&splines.table.values[row],1,samples[:])]
+                for &p in path {p.position=volume.spline_lay(ground,world,p.position,p.height)}
+                path_key=base.hash64(slice.to_bytes(path))
+                has_path,shaped=true,true
+                desc.shape,desc.position,desc.yaw=.Path,{},0
+            }
+        }
         raised:Fluid_Waves
         has_waves:=false
         if waves.table!=nil {raised,has_waves=core.get(waves,e)}
-        if has_waves && shaped && region.shape==.Plane {
+        if has_waves && shaped && desc.shape==.Plane {
             desc.waves=fluid_waves_of(raised,desc.yaw,volume_wind(winds,volumes,worlds,world.position))
         } else if has_waves && shaped {
-            core.report(problems,e,"physics.fluid_waves","its Fluid_Waves makes no waves: a Box holds still water; make its Volume a Plane, or remove the Fluid_Waves")
+            core.report(problems,e,"physics.fluid_waves","its Fluid_Waves makes no waves: a Box or a path holds still water; make its Volume a Plane, or remove the Fluid_Waves")
         }
         l:=core.entity_map_get(&state.fluids,e)
         if l==nil {
@@ -264,24 +295,27 @@ fluids_sync :: proc(
             l,_=core.entity_map_put(&state.fluids,e,Fluid_Link{})
         }
         if sim.fluid_valid(w,l.fluid) {
-            if l.desc==desc {continue}
-            if sim.fluid_set(w,l.fluid,desc) {
+            if l.desc==desc && l.path_key==path_key {continue}
+            if sim.fluid_set(w,l.fluid,desc,path) {
                 // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
                 l.desc=desc
-                l.refused,changed=false,true
+                l.path_key,l.refused,changed=path_key,false,true
                 continue
             }
             sim.fluid_destroy(w,l.fluid)
             l.fluid={}
-        } else if l.refused && l.desc==desc {continue}
-        l.fluid=sim.fluid_create(w,desc)
+        } else if l.refused && l.desc==desc && l.path_key==path_key {continue}
+        l.fluid=sim.fluid_create(w,desc,path)
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         l.desc=desc
+        l.path_key=path_key
         l.refused=l.fluid=={}
         changed=true
         if !l.refused {continue}
-        if !shaped {
-            core.report(problems,e,"physics.fluid","its Fluid is not made: a fluid fills a Volume of shape Plane (a sea: everything under its entity) or Box (a pool); add that Volume to its entity (volume.plane, volume.box)")
+        if has_path {
+            core.report(problems,e,"physics.fluid_path","its Fluid is not made along its path: water along a path needs a Fluid of density above 0, and from 2 to %d points of its Spline, each finite with width and height above 0 and apart from the next; fix its density or its points",volume.SPLINE_POINTS)
+        } else if !shaped {
+            core.report(problems,e,"physics.fluid","its Fluid is not made: a fluid fills a Volume of shape Plane (a sea: everything under its entity) or Box (a lake, a pool), or follows the Spline of its entity (a river); add that Volume (volume.plane, volume.box) or make its entity a Spline")
         } else if region.shape==.Plane && fluid.density<=0 || region.shape==.Box && (desc.half_extents.x<=0 || desc.half_extents.y<=0 || desc.half_extents.z<=0) {
             core.report(problems,e,"physics.fluid","its Fluid is not made: %s; give it %s",region.shape==.Plane?"a plane of density 0 would be dry everywhere":"a box needs extents above 0 on every axis","a density above 0, or a Volume of shape Box for a dry volume" if region.shape==.Plane else "extents")
         } else {

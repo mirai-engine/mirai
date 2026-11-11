@@ -10,7 +10,6 @@ test_types :: proc(types:^[dynamic]core.Test_Type) {
         core.test_type(Perceiver,default=proc(dst:^Perceiver) {dst^=PERCEIVER_DEFAULT}),
         core.test_type(Perceivable,default=proc(dst:^Perceivable) {dst^=PERCEIVABLE_DEFAULT}),
         core.test_type(Behavior_Settings,default=proc(dst:^Behavior_Settings) {dst^=BEHAVIOR_SETTINGS_DEFAULT}),
-        core.test_type(Mind_Presentation,default=proc(dst:^Mind_Presentation) {dst^=MIND_PRESENTATION_DEFAULT}),
         core.test_type(Places,free=places_free),
         core.test_type(Influence,free=influence_free),
     )
