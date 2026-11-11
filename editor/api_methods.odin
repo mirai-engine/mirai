@@ -321,8 +321,8 @@ Api_Editor_Layout :: struct {
 }
 Api_Editor_Command :: struct {
     name:string `mirai:"label=Of the entry: layout.widgets names its button command.<name>"`,
-    method:string `mirai:"label=The method it calls"`,
-    params:string `mirai:"optional,label=The params it calls it with as JSON; $roots and $selection and $active and $copied and $all stand for entities of the selection of the person; $toggle for the opposite of checked; $ask for a file the person picks: a call names them itself"`,
+    method:string `mirai:"label=The method it calls; empty for an entry that only changes what the person sees or asks them first, which has no method"`,
+    params:string `mirai:"optional,label=The params it calls it with as JSON, with the names of what the person has in front that the entry puts ids in place of before the call ($roots and $selection and $copied are entities and $active one; $shown the world the editor shows; $document and $card an asset): a call gives values of its own. Of an entry that flips a preference or a tool: what it would call with now"`,
     label:string,
     shortcut:string `mirai:"optional"`,
     disabled:bool `mirai:"label=The person cannot run it now"`,
