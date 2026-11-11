@@ -112,7 +112,7 @@ nav_test_step :: proc(f:^Nav_Test,ticks:=1) {
             &f.transforms,&f.bodies,core.read(&f.replicas),&f.character_states,&f.joint_states,core.read(&f.fluids),&f.joint_requests,core.ref(&f.collision),core.ref(&f.sync_check),&f.simulation_hash,nil,&f.problems,{},core.read(&f.volumes),{},{},{},core.ref(&f.hierarchy),{},{},{},{},
         )
         nav_test_settle(f)
-        navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),f.time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
+        navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),f.time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
         clear(&f.ground.unloaded.items)
     }
 }
@@ -494,7 +494,16 @@ a_blocked_area_takes_the_surface_under_the_volume_of_its_entity :: proc(t:^testi
     nav_test_settled(t,&f)
     _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
     testing.expect_value(t,status,ai.Search_Status.No_Path)
+    // An outline blocks by its loop: an L across the floor whose notch, inside its box, keeps its floor.
+    core.edit(&f.volumes,zone)^=volume.outline(4)
+    core.add(&f.splines,zone,volume.Spline{count=6,points={0={position={-1,0,-10}},1={position={1,0,-10}},2={position={1,0,8}},3={position={6,0,8}},4={position={6,0,10}},5={position={-1,0,10}}}})
+    nav_test_settled(t,&f)
+    _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
+    testing.expect_value(t,status,ai.Search_Status.No_Path)
+    _,status=nav_test_path(t,&f,{3,0,0},{5,0,0},{})
+    testing.expect_value(t,status,ai.Search_Status.Found)
     for shapeless in ([2]bool{false,true}) {
+
         if shapeless {core.remove(&f.volumes,zone)} else {core.edit(&f.volumes,zone)^=volume.plane()}
         nav_test_settled(t,&f)
         _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0},{})
@@ -791,8 +800,8 @@ agents_test_step :: proc(f:^Nav_Test) {
         if w:=core.edit(&f.worlds,e);w!=nil {w.transform=t} else {core.add(&f.worlds,e,core.World_Transform{transform=t})}
     }
     nav_test_settle(f)
-    navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
-    navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.seats),core.read(&f.characters),core.read(&f.loco_states),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),core.read(&f.volumes),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
+    navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
+    navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.seats),core.read(&f.characters),core.read(&f.loco_states),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
         &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,&f.nav_crossings,time,&f.problems)
     nav_test_settle(f)
     navigation_crossing(core.read(&f.paths),&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)

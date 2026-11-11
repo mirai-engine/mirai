@@ -72,7 +72,7 @@ Navigation_Builds :: struct {
     region_class:int,
     region_sections:u64,                 // the hash of the sections it began with
     // What each look last saw of its tables: a tick that changed none of them skips it.
-    bounds_seen,areas_seen,obstacles_seen,links_seen:[4]core.Seen,
+    bounds_seen,areas_seen,obstacles_seen,links_seen:[5]core.Seen,
     bounds_unloaded:u64,  // Unloaded.revision the bounds were last made with
     settling:int,         // obstacles that are not blocking yet
     unloaded:u64,         // advances with each tick the unloaded ground changed in (core.Ground_Queries.unloaded)
@@ -105,20 +105,29 @@ Tile_Field :: struct {
 // place them or the Volumes that size them (when there are) changed since
 // seen, which it moves to now.
 @(private)
-boxes_touched :: proc "contextless" (rows:^core.Table($T,.Read),volumes:^core.Table(volume.Volume,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),seen:^[4]core.Seen) -> bool {
-    return core.touched(rows,&seen[0]) | core.touched(transforms,&seen[1]) | core.touched(parents,&seen[2]) | core.touched(volumes,&seen[3])
+boxes_touched :: proc "contextless" (rows:^core.Table($T,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),seen:^[5]core.Seen) -> bool {
+    return core.touched(rows,&seen[0]) | core.touched(transforms,&seen[1]) | core.touched(parents,&seen[2]) | core.touched(volumes,&seen[3]) | core.touched(splines,&seen[4])
 }
 
 // The upright prism the Volume of e covers placed at pose, as the navigation
-// marks it: a box by its corners, a sphere by the octagon around it. False
+// marks it: a box by its corners, a sphere by the octagon around it, an
+// outline by the loop of its points. False
 // without a Volume or for one without an end, a plane or the whole world,
 // which no navmesh can bound.
 @(private)
-volume_prism :: proc(volumes:^core.Table(volume.Volume,$A),e:core.Entity,pose:mm.Transform,area:u8) -> (box:mm.Aabb,prism:ai.Nav_Area_Volume,ok:bool) {
+volume_prism :: proc(volumes:^core.Table(volume.Volume,$A),splines:^core.Table(volume.Spline,.Read),e:core.Entity,pose:mm.Transform,area:u8) -> (box:mm.Aabb,prism:ai.Nav_Area_Volume,ok:bool) {
     v,found:=core.get(volumes,e)
-    if !found || !volume.valid(v,pose) {return}
-    box=volume.bounds(v,pose)
+    outline:=volume.spline_outline(splines,e)
+    if !found || !volume.valid(v,pose,outline) {return}
+    box=volume.bounds(v,pose,outline)
     #partial switch v.shape {
+    case .Outline:
+        for p,i in outline {
+            q:=pose.position+mm.quat_rotate(pose.rotation,mm.Vec3{p.position.x*pose.scale.x,0,p.position.z*pose.scale.z})
+            prism.points[i]={q.x,q.z}
+        }
+        prism.count=u8(len(outline))
+
     case .Box:
         // Upright, turned only by the yaw the rotation gives its corners.
         h:=v.extents*pose.scale
@@ -150,7 +159,7 @@ volume_prism :: proc(volumes:^core.Table(volume.Volume,$A),e:core.Entity,pose:mm
 
 @(private)
 prism_missing :: proc(problems:^core.Problems,e:core.Entity,what:string) {
-    core.report(problems,e,"navigation.volume","its %s has no Volume with an end, so the navigation does not see it: give its entity a Volume of shape Box or Sphere (volume.box, volume.sphere)",what)
+    core.report(problems,e,"navigation.volume","its %s has no Volume with an end, so the navigation does not see it: give its entity a Volume of shape Box, Sphere or Outline (volume.box, volume.sphere, volume.outline with a Spline)",what)
 }
 
 @(private)
@@ -472,7 +481,7 @@ tile_inside :: proc "contextless" (c:^Class_Mesh,coord:[2]i32,limits:[]mm.Aabb) 
 @(step="fixed",loops="game editor",stage="react",server)
 navigation_build :: proc(
     n:^Navigation,b:^Navigation_Builds,settings:core.Ref(Navigation_Settings),bakes:^core.Table(Navigation_Bake,.Read),physics:core.Ref(phys.Physics_State),requests:^Nav_Build_Requests,
-    bounds:^core.Table(Nav_Bounds,.Read),areas:^core.Table(Nav_Area,.Read),links:^core.Table(Nav_Link,.Read),obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),time:core.Time,transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),
+    bounds:^core.Table(Nav_Bounds,.Read),areas:^core.Table(Nav_Area,.Read),links:^core.Table(Nav_Link,.Read),obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),time:core.Time,transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),
     ground:core.Ref(core.Ground_Queries),world:core.World_Ref,references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),ids:^core.Table(core.Id,.Read),app:^host.App,problems:^core.Problems,
 ) {
     if ground.ptr!=nil && len(ground.unloaded.items)>0 {b.unloaded+=1}
@@ -517,13 +526,13 @@ navigation_build :: proc(
     }
     bakes_update(n,b,bakes,app,problems,fresh && !reset)
     next,count,overflow:=phys.static_changes(physics,b.cursor,b.boxes[:])
-    limits:=bounds_update(n,b,bounds,volumes,transforms,parents,physics,gone,fresh,count>0 || overflow,problems)
+    limits:=bounds_update(n,b,bounds,volumes,splines,transforms,parents,physics,gone,fresh,count>0 || overflow,problems)
     if fresh {
         for limit in limits.surface {mark_box(n,limit,limits)}
         for limit in limits.air {mark_box(n,limit,limits)}
     }
-    areas_update(n,b,areas,volumes,transforms,parents,limits,fresh,problems)
-    obstacles_update(n,b,obstacles,volumes,transforms,parents,limits,time,fresh,problems)
+    areas_update(n,b,areas,volumes,splines,transforms,parents,limits,fresh,problems)
+    obstacles_update(n,b,obstacles,volumes,splines,transforms,parents,limits,time,fresh,problems)
     for asked in core.take(&requests.queue) {
         if asked.box=={} {
             for limit in limits.surface {mark_box(n,limit,limits,true)}
@@ -568,9 +577,9 @@ navigation_build :: proc(
 // surface, with its dry boxes. Tiles and zones that leave them are removed;
 // those that enter are marked.
 @(private)
-bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:^core.Table(Nav_Bounds,$A),volumes:^core.Table(volume.Volume,$B),transforms:^core.Table(core.Transform,$C),parents:^core.Table(core.Parent,$D),physics:core.Ref(phys.Physics_State),unloaded:Unloaded,fresh,collision_changed:bool,problems:^core.Problems) -> Limits {
+bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:^core.Table(Nav_Bounds,$A),volumes:^core.Table(volume.Volume,$B),splines:^core.Table(volume.Spline,.Read),transforms:^core.Table(core.Transform,$C),parents:^core.Table(core.Parent,$D),physics:core.Ref(phys.Physics_State),unloaded:Unloaded,fresh,collision_changed:bool,problems:^core.Problems) -> Limits {
     // The water and the box of the collision change with the collision, through its change log.
-    moved:=boxes_touched(bounds,volumes,transforms,parents,&b.bounds_seen) || unloaded.revision!=b.bounds_unloaded
+    moved:=boxes_touched(bounds,volumes,splines,transforms,parents,&b.bounds_seen) || unloaded.revision!=b.bounds_unloaded
     if !fresh && !collision_changed && !moved {return {b.bounds[:],b.air[:],b.water[:],b.dry[:]}}
     b.bounds_unloaded=unloaded.revision
     b.looked+=u64(core.count(bounds))+1
@@ -581,7 +590,7 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:^core.Table(Nav_
         pose,ok:=core.world_of(transforms,parents,e)
         if !ok {continue}
         bound:=bounds.values[i]
-        box,_,bounded:=volume_prism(volumes,e,pose,0)
+        box,_,bounded:=volume_prism(volumes,splines,e,pose,0)
         if !bounded {
             prism_missing(problems,e,"Nav_Bounds")
             continue
@@ -685,8 +694,8 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:^core.Table(Nav_
 
 // Marks where a Nav_Area was and is, when it moved, changed or went.
 @(private)
-areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:^core.Table(Nav_Area,.Read),volumes:^core.Table(volume.Volume,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),limits:Limits,fresh:bool,problems:^core.Problems) {
-    if !boxes_touched(areas,volumes,transforms,parents,&b.areas_seen) && !fresh {return}
+areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:^core.Table(Nav_Area,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),limits:Limits,fresh:bool,problems:^core.Problems) {
+    if !boxes_touched(areas,volumes,splines,transforms,parents,&b.areas_seen) && !fresh {return}
     seen,enough:=seen_reset(b,len(b.areas.values),problems)
     if !enough {b.areas_seen={};return}
     b.looked+=u64(core.count(areas))+u64(len(seen))
@@ -695,7 +704,7 @@ areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:^core.Table(Nav_Ar
         pose,ok:=core.world_of(transforms,parents,e)
         if !ok {continue}
         area:=areas.values[i]
-        box,prism,bounded:=volume_prism(volumes,e,pose,u8(area.area))
+        box,prism,bounded:=volume_prism(volumes,splines,e,pose,u8(area.area))
         if !bounded {
             prism_missing(problems,e,"Nav_Area")
             continue
@@ -1086,8 +1095,8 @@ zone_publish :: proc(n:^Navigation,c:^Class_Mesh,build:^Build,problems:^core.Pro
 // Obstacles block the surface under them once they have been still long
 // enough, and stop when they move; outside a run (the editor) they are still.
 @(private)
-obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),limits:Limits,time:core.Time,fresh:bool,problems:^core.Problems) {
-    moved:=boxes_touched(obstacles,volumes,transforms,parents,&b.obstacles_seen) || fresh
+obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),limits:Limits,time:core.Time,fresh:bool,problems:^core.Problems) {
+    moved:=boxes_touched(obstacles,volumes,splines,transforms,parents,&b.obstacles_seen) || fresh
     // Unmoved, only those that settle need the tick.
     if !moved && b.settling==0 {return}
     seen,enough:=seen_reset(b,len(b.obstacles.values) if moved else 0,problems)
@@ -1102,7 +1111,7 @@ obstacles_update :: proc(n:^Navigation,b:^Navigation_Builds,obstacles:^core.Tabl
         if moved {
             pose,ok:=core.world_of(transforms,parents,e)
             if !ok {continue}
-            box,volume,bounded:=volume_prism(volumes,e,pose,ai.NAV_AREA_BLOCKED)
+            box,volume,bounded:=volume_prism(volumes,splines,e,pose,ai.NAV_AREA_BLOCKED)
             if !bounded {
                 prism_missing(problems,e,"Nav_Obstacle")
                 continue
