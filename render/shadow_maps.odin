@@ -121,13 +121,14 @@ shadow_face_of :: proc(v: Vec3) -> u32 {
 }
 
 // The faces of the cube of a light through which it lights what the view
-// sees, each fitted to the points of the view it lights: points spread over
-// the part of the view its sphere covers, at the depths it spans within the
-// box of the scene (scene_low, scene_high), where its surfaces are.
+// sees, each whole: the part of the view its sphere covers, at the depths it
+// spans within the box of the scene (scene_low, scene_high), where its
+// surfaces are. A face fitted to a part of what the view sees through it left
+// out points the view sees there, which then traced rays; a light that takes
+// maps lights much of the view, which it sees through most of each face.
 @(private)
 shadow_light_faces :: proc(wants: ^[SHADOW_MAPS_MAX]Shadow_Want, count: ^int, light: Gpu_Light, index: int, share: f32, eye, forward, right, up: Vec3, tan_x, tan_y, near: f32, scene_low, scene_high: Vec3, has_bounds: bool) {
-	ACROSS :: 7
-	DEPTHS :: 5
+	SIDE :: 9
 	c, range := light.position_range.xyz, light.position_range.w
 	light_near := max(f32(0.05), light.size.x * 1.1)
 	radius := linalg.length(light.size.yz) if light.direction_cone.w == GPU_LIGHT_RECT else max(light.size.x, 0.01) + light.size.y
@@ -172,45 +173,61 @@ shadow_light_faces :: proc(wants: ^[SHADOW_MAPS_MAX]Shadow_Want, count: ^int, li
 		count^ += 1
 		return
 	}
-	bounds: [6]Vec4 // low x, low y, high x, high y of x / z, y / z
-	far: [6]f32
-	hits: [6]int
-	for f in 0 ..< 6 {bounds[f] = {1, 1, -1, -1}}
-	total := 0
-	for k in 0 ..< DEPTHS {
-		z := z0 + (z1 - z0) * f32(k) / f32(DEPTHS - 1)
-		for j in 0 ..< ACROSS {
-			for i in 0 ..< ACROSS {
-				s := Vec2{low.x + (high.x - low.x) * f32(i) / f32(ACROSS - 1), low.y + (high.y - low.y) * f32(j) / f32(ACROSS - 1)}
-				point := eye + forward * z + right * (s.x * tan_x * z) + up * (s.y * tan_y * z)
-				v := point - c
-				distance := linalg.length(v)
-				if distance > range || distance < 1e-4 {continue}
-				if spot && linalg.dot(v / distance, light.direction_cone.xyz) < light.direction_cone.w - 0.05 {continue}
-				if rect && linalg.dot(v, light.direction_cone.xyz) < 0 {continue}
-				f := shadow_face_of(v)
-				fr, fu, ff := shadow_face_axes(f)
-				lz := max(linalg.dot(v, ff), light_near)
-				at := Vec2{clamp(linalg.dot(v, fr) / lz, -1, 1), clamp(linalg.dot(v, fu) / lz, -1, 1)}
-				bounds[f] = {min(bounds[f].x, at.x), min(bounds[f].y, at.y), max(bounds[f].z, at.x), max(bounds[f].w, at.y)}
-				far[f] = max(far[f], lz)
-				hits[f] += 1
-				total += 1
+	// The faces it lights that part through, and the share of the atlas each
+	// takes. From inside it, every way from the light: each face it lights
+	// through, alike. From outside it, what it holds lies within what its
+	// sides show: points over its sides tell the faces, by how many fall on
+	// each.
+	weights: [6]f32
+	lateral := Vec2{linalg.dot(to, right) / (max(depth, 1e-6) * tan_x), linalg.dot(to, up) / (max(depth, 1e-6) * tan_y)}
+	if depth >= z0 && depth <= z1 && lateral.x >= low.x && lateral.x <= high.x && lateral.y >= low.y && lateral.y <= high.y {
+		for f in 0 ..< 6 {
+			fr, fu, ff := shadow_face_axes(u32(f))
+			// A spot or a rectangle lights through a face where one of its
+			// corners, the middles of its edges or its middle lies in its cone
+			// or before its plane.
+			for k in 0 ..< 9 {
+				d := linalg.normalize(ff + fr * f32(k % 3 - 1) + fu * f32(k / 3 - 1))
+				if spot && linalg.dot(d, light.direction_cone.xyz) < light.direction_cone.w - 0.05 {continue}
+				if rect && linalg.dot(d, light.direction_cone.xyz) < 0 {continue}
+				weights[f] = 1
+				break
+			}
+		}
+	} else {
+		// Along the depths, as far apart as the view widens.
+		ratio := z1 / z0
+		for side in 0 ..< 6 {
+			for j in 0 ..< SIDE {
+				for i in 0 ..< SIDE {
+					a, b := f32(i) / f32(SIDE - 1), f32(j) / f32(SIDE - 1)
+					z := z0 * math.pow(ratio, b)
+					s: Vec2
+					switch side {
+					case 0: z, s = z0, {low.x + (high.x - low.x) * a, low.y + (high.y - low.y) * b}
+					case 1: z, s = z1, {low.x + (high.x - low.x) * a, low.y + (high.y - low.y) * b}
+					case 2: s = {low.x, low.y + (high.y - low.y) * a}
+					case 3: s = {high.x, low.y + (high.y - low.y) * a}
+					case 4: s = {low.x + (high.x - low.x) * a, low.y}
+					case:   s = {low.x + (high.x - low.x) * a, high.y}
+					}
+					v := eye + forward * z + right * (s.x * tan_x * z) + up * (s.y * tan_y * z) - c
+					distance := linalg.length(v)
+					if distance > range || distance < 1e-4 {continue}
+					if spot && linalg.dot(v / distance, light.direction_cone.xyz) < light.direction_cone.w - 0.05 {continue}
+					if rect && linalg.dot(v, light.direction_cone.xyz) < 0 {continue}
+					weights[shadow_face_of(v)] += 1
+				}
 			}
 		}
 	}
-	if total == 0 {return}
-	for f in 0 ..< 6 {
-		if hits[f] == 0 || count^ >= SHADOW_MAPS_MAX {continue}
-		// A step of the grid of points around those that fell on it: what lies
-		// between them, and the taps of the soft shadows past the last.
-		b := bounds[f]
-		grow := max(0.25 * max(b.z - b.x, b.w - b.y), 0.1)
-		span := Vec4{max(b.x - grow, -1), max(b.y - grow, -1), min(b.z + grow, 1), min(b.w + grow, 1)}
+	total := weights[0] + weights[1] + weights[2] + weights[3] + weights[4] + weights[5]
+	for weight, f in weights {
+		if weight == 0 || count^ >= SHADOW_MAPS_MAX {continue}
 		fr, fu, ff := shadow_face_axes(u32(f))
 		wants[count^] = {
-			m = {origin = c, near = light_near, right = fr, far = min(range, far[f] * 1.25 + 0.1), up = fu, forward = ff, skip = skip, span = span},
-			light = index, face = u32(f), weight = share * f32(hits[f]) / f32(total),
+			m = {origin = c, near = light_near, right = fr, far = range, up = fu, forward = ff, skip = skip, span = {-1, -1, 1, 1}},
+			light = index, face = u32(f), weight = share * weight / total,
 		}
 		count^ += 1
 	}

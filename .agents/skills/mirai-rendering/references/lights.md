@@ -190,10 +190,10 @@ fixed number of samples (`direct_samples`) spread over the lights that reach it:
   an instance with masked or blended materials are drawn apart, with their coverage as a shadow ray
   asks it (`hit_covers`). They are culled as the view culls its own: by instance and map, which
   hands the clusters its cut can take (`instance_clusters`) to a pass by cluster in chunks, into
-  lists that count what does not fit and grow, like those of the view. A face is fitted to points
-  of the view within the box of the scene; a map holds a point only within the part of its face it
-  was fitted to and its depths, and samples tell elsewhere. A point under a map takes taps around
-  it: all lit, lit; all blocked,
+  lists that count what does not fit and grow, like those of the view. A light takes each face it
+  lights what the view sees through whole, since one that takes maps lights much of the view; a
+  map holds a point only within its face and range, and samples tell elsewhere. A point under a
+  map takes taps around it: all lit, lit; all blocked,
   hidden; where they disagree (a penumbra) it takes the hard shadow of the map at the point, and
   `direct_spread` averages that evenly over the points of its surface within the penumbra width the
   blockers give, the wider of that of the point and that of each neighbour, so the penumbra is the
