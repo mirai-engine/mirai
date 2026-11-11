@@ -2268,7 +2268,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             fmt.sbprintf(w,"    %s:=make([]%s.Lock,%d)\n",locks,core_alias,len(t.locks))
             for lock,li in t.locks {
                 target:=g.by_key[lock]
-                fmt.sbprintf(w,"    %s[%d]=%s\n",locks,li,lock_text(struct_names[int(t.place)],target.field,t.field,t.lock_id,"LOCK_NAMES",target.name))
+                fmt.sbprintf(w,"    %s[%d]={{int(offset_of(%s,%s))-int(offset_of(%s,%s)),%d,LOCK_NAMES[:],\"%s\"}}\n",locks,li,struct_names[int(t.place)],target.field,struct_names[int(t.place)],t.field,t.lock_id,target.name)
             }
         }
         table_row(w,i,t,t.name,fmt.tprintf("offset_of(%s,%s)",struct_names[int(t.place)],t.field),t.place,false,locks)
@@ -2445,13 +2445,6 @@ storage_row :: proc(w:^strings.Builder,index:int,t:^Type,name,offset:string,plac
     type:=type_text(t)
     NAMED :: "    storages[%d]={{name=%q,library=%q,type=typeid_of(%s),info=type_info_of(%s),offset=%s,place=.%v,setting=.%v,default=%s,by_world=%v,for_device=%s,persist=%v,keep=%v,plugin=%q,game=%v,local=%v,procs={{%s}}}}\n"
     fmt.sbprintf(w,named?NAMED:"    storages[%d]={{%q,%q,typeid_of(%s),type_info_of(%s),%s,.%v,.%v,%s,%v,%s,%v,%v,%q,%v,%v,{{%s}},false}}\n",index,name,t.pkg!=nil?t.pkg.name:"",type,type,offset,place,t.setting,t.default,t.by_world,t.for_device,t.persist,t.keep,t.pkg!=nil?project.import_plugin(t.pkg.path):"",game || of_game(t),t.copy=="false",t.procs)
-}
-
-// A core.Lock: a row of the table at field own of a struct owns that of the
-// table at field target, which the World_Info names target_name.
-@(private="file")
-lock_text :: proc(struct_name,target,own:string,id:int,names,target_name:string) -> string {
-    return fmt.tprintf("{{int(offset_of(%s,%s))-int(offset_of(%s,%s)),%d,%s[:],%q}}",struct_name,target,struct_name,own,id,names,target_name)
 }
 
 // The file mirai writes in the folder of a package whose tests declare a
