@@ -50,7 +50,7 @@ tree_node_patch :: proc "contextless" (node:^Tree_Node,fields:Node_Fields,v:^Tre
     if .Animations in fields {node.anims=v.anims}
     if .Bindings in fields {
         node.bind_text=v.bind_text;node.bind_value=v.bind_value;node.bind_visible=v.bind_visible;node.bind_selected=v.bind_selected;node.bind_disabled=v.bind_disabled
-        node.bind_items=v.bind_items;node.bind_image=v.bind_image;node.bind_tint=v.bind_tint;node.bind_variant=v.bind_variant
+        node.bind_items=v.bind_items;node.bind_key=v.bind_key;node.bind_image=v.bind_image;node.bind_tint=v.bind_tint;node.bind_variant=v.bind_variant
         node.data=v.data
     }
     if .Visibility in fields {node.selected=v.selected;node.disabled=v.disabled}

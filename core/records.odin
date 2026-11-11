@@ -25,12 +25,11 @@ TEXT_KEY :: 64 // bytes of a key, its NUL included
 // receives to show a text. The generator binds it.
 Texts :: base.Texts
 
-// What a text says in a language, by the name_hash of its code (that of
-// gui.ui_language), and in the language its key was written in when that one
-// lacks it. found is false for a key no .strings has, and for no text.
+// What a text says in a language, by its code (gui.ui_language), as
+// base.text finds it. found is false for a key no .strings has, and for no text.
 text :: proc{text_of,base.text}
 
-text_of :: proc "contextless" (texts:^Texts,text:Text,language:u64) -> (value:string,found:bool) {
+text_of :: proc "contextless" (texts:^Texts,text:Text,language:string) -> (value:string,found:bool) {
     text:=text
     return base.text(texts,base.text_get(text.key[:]),language)
 }

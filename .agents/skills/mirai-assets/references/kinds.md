@@ -267,9 +267,14 @@ a key without text in a language has no entry.
   `base.Texts`, read again when one changes, on disk or in memory; `base.text` finds a key in a
   language. A key is in one `.strings`: with two, the first by path is read and
   `mirai texts missing` says so.
-- **One fallback.** The first language of a `.strings` is the one its texts are written in
-  (`UI_Settings.source`, which the tools write first): a language that lacks a key, and the
-  language 0, show what the key says in the first language of its file that has it.
+- **Languages are data.** The languages of a game are the codes its `.strings` name (`pl` as much
+  as `es`); the engine lists none. `mirai texts missing` names the characters of a language that
+  the glyphs of the interfaces lack (`ui.FONT_RANGES`), which show as `?`.
+- **One fallback.** A region that lacks a key shows what its language says (`es-419` and `es-AR`
+  as `es`, `base.text` cutting the code at its last `-`). The first language of a `.strings` is
+  the one its texts are written in (`UI_Settings.source`, which the tools write first): a language
+  that lacks a key, and the code `""`, show what the key says in the first language of its file
+  that has it.
 - **One way to edit.** `cook/author/texts.odin` reads the `.strings` as rows of keys, sets a text,
   makes the key of a text (`texts_key`: equal texts share it, another text under that name takes a
   number), writes the files that changed, moves them through a CSV and lists what is missing with

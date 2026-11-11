@@ -63,17 +63,17 @@ Particle_Texture :: struct {
 source_bind :: proc(
     s:^Surface,gui:^Gui,app:^host.App,p:int,seat_state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,.Read),bindings:core.Ref(inp.Input_Map),
     actions:core.Ref(inp.Frame_Actions),cameras:^core.Table(render.Camera,.Read),exposures:^core.Table(render.Exposure,.Read),
-    view_volumes:^core.Table(render.View_Volume,.Read),zones:volume.Where,settings:UI_Settings,preferences:UI_Preferences,gamepad:int,effects:^UI_Effects,sounds:^audio.Sound_Requests,
+    view_volumes:^core.Table(render.View_Volume,.Read),zones:volume.Where,settings:UI_Settings,gamepad:int,effects:^UI_Effects,sounds:^audio.Sound_Requests,
 ) {
     seat:=p>0?inp.local_seat(seats,p-1):core.NONE
-    settings,preferences:=settings,preferences
+    settings:=settings
     s.source={
         gui=gui,app=app,surface=s,effects=effects,sounds=sounds,player=p,seat=seat,gamepad=gamepad,bindings=bindings.ptr,actions=&actions.ptr.slots[clamp(seat_state.focus,0,inp.LOCAL_CAPACITY-1)],seat_state=seat_state.ptr,seats=seats,
         cameras=cameras,exposures=exposures,view_volumes=view_volumes,zones=zones,pixels=s.key.scale*max(app.density,0.01),
         pack=host.content_prompts(app,settings.prompts),
     }
     s.ctx.game={
-        user=&s.source,family=s.family,prompts=source_prompts,action=source_action,texts=host.app_texts(app),language=ui_language(&settings,&preferences),
+        user=&s.source,family=s.family,prompts=source_prompts,action=source_action,texts=host.app_texts(app),language=ui_language(&gui.preferences),
         texture=source_texture,view=source_view,particles=source_particles,sound=source_sound,
     }
     s.ctx.draw_user,s.ctx.draw_user_data=source_draw,&s.source

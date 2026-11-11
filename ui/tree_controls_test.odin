@@ -162,13 +162,14 @@ templates_format_numbers_bools_enums_and_plurals_as_the_language_does :: proc(t:
     defer context_destroy(&ctx)
     input:=test_input()
     shows :: proc(t:^testing.T,ctx:^Context,input:^Input,s:^Test_Shop,language:string,texts:..string) {
-        ctx.game.language=base.name_hash(language) if language!="" else 0
+        ctx.game.language=language
         test_frame(ctx,input,test_shop_build,s)
         for text in texts {testing.expectf(t,test_paint(ctx,text)!=nil,"%s shows %q",language,text)}
     }
     shows(t,&ctx,&input,&s,"","12,345.25","1,234","Yes On","Arco Bow","1,234 coins","25.6%")
     shows(t,&ctx,&input,&s,"de","12.345,25","1.234")
     shows(t,&ctx,&input,&s,"es","12.345,25","1234","1234 coins")
+    shows(t,&ctx,&input,&s,"es-AR","12.345,25","1234") // a region without a row writes as its language
     shows(t,&ctx,&input,&s,"fr","12\u00a0345,25")
     s.values={coins=1,alive=false,weapon=.Staff}
     shows(t,&ctx,&input,&s,"en","1 coin","No Off","Staff Staff")
@@ -376,6 +377,88 @@ a_layout_transition_carries_the_rectangle_of_a_node_to_a_new_layout :: proc(t:^t
     lead_width=100
     frame=test_frame(&ctx,&input,built,&lead_width)
     testing.expect(t,test_rect(t,&ctx,id(&ctx,"code_box")).x==100 && !frame.transitioning,"a widget of code goes to its new place at once")
+}
+
+// Where a field lies is chosen so that each one a test reads is a range of its own.
+Test_Row :: struct {number:i32,who:base.Entity,weight:f32,name:[8]u8 `mirai:"text"`}
+Test_Board :: struct {rows:[3]Test_Row,units:[3]base.Entity,count:i32}
+
+// The first of three rows goes and another comes in last: with a key, a number, a text or an
+// entity (an array of entities keys itself), the row after it is drawn between its old and its
+// new place and keeps the focus, and every row shows its own text, also where the bytes of its
+// place did not change. Without a key the rows stay with their places. A key that is no field
+// a List tells its items apart by fails the instance.
+@(test)
+a_list_with_a_key_carries_its_items_where_they_move :: proc(t:^testing.T) {
+    Case :: struct {items,key:string,follows:bool}
+    cases:=[?]Case{{"Test.rows","number",true},{"Test.rows","name",true},{"Test.rows","who",true},{"Test.units","",true},{"Test.rows","",false}}
+    Board :: struct {tree:^Widget_Tree,instance:^Tree_Instance,host:^Test_Host}
+    build :: proc(ctx:^Context,user:rawptr) {
+        b:=cast(^Board)user
+        tree_values_refresh(b.instance,&b.host.host,0)
+        tree_build(ctx,b.tree,b.instance,{})
+    }
+    schema:serial.Schema
+    serial.schema_init(&schema)
+    defer serial.schema_destroy(&schema)
+    type,_:=serial.schema_add(&schema,Test_Board)
+    for c in cases {
+        tree:Widget_Tree
+        testing.expect(t,tree_init(&tree))
+        defer tree_destroy(&tree)
+        tree_style(&tree,{})
+        moving,_:=tree_style(&tree,{layout_transition=0.25})
+        list:=tree_node(&tree,-1,{kind=.List,name="board",bind_items=c.items,bind_key=c.key,bind_value="Test.count",layout={direction=.Column}})
+        named:=c.items=="Test.rows"
+        row:=int(tree_node(&tree,list,{kind=.Button,name="row",style=moving,bind_text="name" if named else "",layout={width=fixed(40),height=fixed(10)}}))
+        board:=Test_Board{count=3}
+        rows :: proc(board:^Test_Board,names:[3]string,first:int) {
+            for &r,i in board.rows {
+                r={number=i32(first+i),who=base.Entity(first+i)}
+                copy(r.name[:],names[i])
+                board.units[i]=r.who
+            }
+        }
+        rows(&board,{"ann","bea","cid"},10)
+        host:Test_Host
+        instance:Tree_Instance
+        testing.expect(t,tree_instance_init(&instance,&tree,test_host(&host,&schema,type,&board)))
+        defer tree_instance_destroy(&instance)
+        ctx:Context
+        test_shop_context(t,&ctx)
+        defer context_destroy(&ctx)
+        input:=test_input()
+        b:=Board{&tree,&instance,&host}
+        test_frame(&ctx,&input,build,&b)
+        focus_set(&ctx,tree_node_element(&ctx,&tree,&instance,row,1))
+        test_frame(&ctx,&input,build,&b)
+        // Keyed by its name, a row is another item when its name changes; else each name moves up a row.
+        rows(&board,{"bea","cid","dot"} if c.key=="name" else {"ann","bea","cid"},11)
+        test_frame(&ctx,&input,build,&b)
+        moved:=tree_node_element(&ctx,&tree,&instance,row,0)
+        y:=test_rect(t,&ctx,moved).y
+        if c.follows {
+            testing.expectf(t,y>0 && y<10 && ctx.focus==moved,"%v: the row that moved up is on its way, %v, with the focus",c,y)
+        } else {
+            testing.expectf(t,y==0 && ctx.focus!=moved,"%v: without a key the place keeps its rectangle and its focus: %v",c,y)
+        }
+        for e in 0..<3 {
+            if !named {break}
+            kept:=instance.kept[tree_node_copy(&tree,&instance,row,e).slot]
+            shown:=string(instance.kept_bytes[kept.offset:][:kept.length])
+            testing.expectf(t,kept.valid && shown==serial.text_field(board.rows[e].name[:]),"%v: row %d shows %s",c,e,shown)
+        }
+    }
+    for bad in ([?][2]string{{"Test.rows","weight"},{"Test.rows","missing"},{"","number"}}) {
+        tree:Widget_Tree
+        testing.expect(t,tree_init(&tree))
+        defer tree_destroy(&tree)
+        tree_node(&tree,-1,{kind=.List,name="board",bind_items=bad[0],bind_key=bad[1],count=2})
+        board:Test_Board
+        host:Test_Host
+        instance:Tree_Instance
+        testing.expectf(t,!tree_instance_init(&instance,&tree,test_host(&host,&schema,type,&board)) && instance.failure.binding==.Key,"%v is refused as a key",bad)
+    }
 }
 
 @(test)

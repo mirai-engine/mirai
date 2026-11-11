@@ -134,8 +134,8 @@ sequence or together parts of earlier rows (`records_part_add`, `records_part_re
 ### Texts
 
 - The bubble of the text row says whether the node is localized and opens a window with its key
-  and one row per language of `UI_Settings.languages`: what the key says in each, read from and
-  written to the `.strings` of the project
+  and one row per language its `.strings` name, plus one that adds a language by its code: what
+  the key says in each, read from and written to the `.strings` of the project
   ([one store](../../mirai-assets/references/kinds.md#texts)) as a step of history of that file.
   Turning Localized on makes the key from the text of the node; turning it off leaves the node
   what the key said.

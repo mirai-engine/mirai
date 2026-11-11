@@ -92,6 +92,7 @@ Ui_Inspector :: struct {
     drag:Node_Drag,
     request_seen:u64,      // the last Asset_Document.request_serial run
     texts:Texts_Edit,      // what the popup of texts of a localized node edits
+    languages:Texts_Languages,
     pick_prefix:[ui.TREE_PATH_CAPACITY]u8, // the path the list of a binding walked so far
     pick_length:int,
     pick_scroll:[2]f32,

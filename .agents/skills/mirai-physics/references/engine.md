@@ -99,8 +99,8 @@ own the `Transform` (`locks="core.Transform"`): the game moves through requests.
 - Without a body of its own or of an ancestor, the collider is static. A compound body can have
   surfaces with different frictions. The graphic material does not determine friction or bounce;
   there is no physical material asset.
-- The capsule of a `Character` has zero friction: its drives move it, with `traction_force` as the
-  cap, and the friction of the ground does not define how much it slips.
+- The capsule of a `Character` has zero friction: its drives move it, each with a force cap, and the
+  friction of the ground does not define how much it slips.
 - `COLLIDER_DEFAULT` (also when adding it from the inspector) uses the `Default` preset without
   group: a door with a new collider blocks everything. The inspector shows all fields, also those
   that do not correspond to the `kind`. Adding a `Character` (editor or API) adds
@@ -432,7 +432,10 @@ the solver. A game with bodies and no walkers leaves the plugin out.
   [vertical](character.md#the-vertical), the velocity of `core.Motion` and gravity. The look turns
   around the up of that frame; ground, jump and air are measured along it. It writes the two
   drives: the step chooses the ground or air one according to the support it finds, so leaving an
-  edge already moves as in the air even if locomotion saw it supported.
+  edge already moves as in the air even if locomotion saw it supported. The force of each drive is
+  raised to what reaches its velocity within the tick (`drives_reach`): the acceleration of the
+  mode decides how fast the character gets there, and `Character.traction_force` only how hard it
+  holds its drive against what pushes it.
   - Walking (with `Walk`): velocity over the ground plane relative to it, with acceleration or
     braking. Holding the `sprint` action (or always, with `Walk.sprint_default`, Fortnite's
     "Sprint by Default"; the action then only asks for a `Tactical_Sprint`) raises the top speed
@@ -496,11 +499,10 @@ the solver. A game with bodies and no walkers leaves the plugin out.
   modes whose component the entity has.
 - Layered movements (`Layered_Move`): `add_move` and `remove_moves` enqueue in
   `Locomotion_Requests`; they last their `ticks`. `Additive` adds its velocity to that of the two
-  drives (wind, belt) and its `force` to theirs, to follow a velocity that changes faster than
-  traction (root motion); `Override` replaces it on the three axes, without gravity or ground
-  (dash). The locomotion counts as its own only the velocity the additive ones did not put in the
-  body (`additive_delivered`): one held back by a wall or by its force does not turn into the walk
-  going the other way.
+  drives (wind, belt, root motion); `Override` replaces it on the three axes, without gravity or
+  ground (dash). The body reaches either within the tick. The locomotion counts as its own only the
+  velocity the additive ones did not put in the body (`additive_delivered`): one held back by a
+  wall does not turn into the walk going the other way.
   The root motion of an action that moves its body arrives as one of them
   ([actions](../../mirai-animation/references/animation-actions.md#root-and-movement)).
   A request to an entity that is no `Character` with a mode, without ticks or with the array full
@@ -532,8 +534,9 @@ the world ([own pace](../../mirai-core/references/core.md#core-storages)).
 
 - Whoever drives a `Character` writes its `Move_Input`: the seat through `camera_drive` of
   `engine/camera` ([driving](../../mirai-gameplay/references/control.md#driving)), an AI or the game
-  for one no seat drives, the network for a replica. `move` is in the world; `look_yaw` is where it
-  is asked to face and `look_pitch` where it looks.
+  for one no seat drives, the network for a replica. `move` is in the world, a share of the top
+  speed of its mode or, with `velocity`, m/s up to it (`move_wish`); `look_yaw` is where it is
+  asked to face and `look_pitch` where it looks.
 - `locomotion_step` turns the yaw the body faces (`Locomotion_State.yaw`) toward `look_yaw` at
   `Character.turn_speed` of own time (0: at once), plus the `ground_turn` of what it stands on; the
   modes read the move in the axes of that yaw (`move_facing`), and its `Character_Move.yaw` is it.

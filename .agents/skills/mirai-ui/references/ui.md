@@ -476,6 +476,14 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
     previous frame built and, while it does not know it, it builds `TREE_LIST_PROBE`. The focus that
     code puts on a node of an element that was not built, outside another inner `List`, scrolls the
     list until it is shown.
+  - **An item is told apart by its key**: `bind_key` names a field of the element (a whole number,
+    an enum, an `Entity` or a text), and an array of entities keys itself; without one, its index.
+    The id of an element comes from the hash of its key, and its slots (states, kept texts,
+    animations) from a table of the list by that hash, where an item keeps its slot while it is in
+    the list: an item that moves keeps its focus, hover and style fade, and its `layout_transition`
+    carries it from its old row. An item that comes in takes a slot no item of the build holds and
+    starts its states afresh; one that moved formats its texts again, because what the copy says
+    changed is by place. Two items with one key are two elements with one id.
   - Each tab of a `Tabs` shows its option, like those of a `Selector` (its text separated by `|` or
     the array it binds), and without it the text of its node, its name or its number.
   - A `Popup` that the player closed stays closed until the game hides it; `Modal` takes all the
@@ -498,9 +506,9 @@ The node types are in `Node_Kind` (`tree.odin`) and the events in `Tree_Event`.
     it moves a shown step (its decimals, a second of a clock), and the value of a Progress when its
     fill moves a pixel; below that nothing is copied and no node is built. Games never round.
   - The formats after the colon are in `tree_bind.odin`: numbers with the separators of the
-    language of `Game_Source.language` (`NUMBER_LOCALES`), times, texts by value and CLDR plurals
-    (`{n:one=# coin|other=# coins}`). An enum name or a category that does not exist fails like a
-    path.
+    language of `Game_Source.language` (`NUMBER_LOCALES`, a region writing as its language),
+    times, texts by value and CLDR plurals (`{n:one=# coin|other=# coins}`). An enum name or a
+    category that does not exist fails like a path.
   - A text with braces is a template of names (`{health:0}/{most}`): each name is a field of the
     node with its path, so the text names the same in every language without paths. It is
     interpreted when creating the instance and in the frame only what changed is formatted;
@@ -563,13 +571,14 @@ that `tree_node` takes: the loaded tree is, byte for byte, the one the same call
   the style it showed to the new one when its state or variant changes; a change under way starts
   from where it was and a transparent end only fades.
 - `Node_Style.layout_transition` carries the rectangle of the node to a new layout (an item inserted
-  above it, a page that grows, a size that changes), as Clay's transitions do: the layout keeps the
-  last rectangle of each element that asks (`layout_transition_ask`, in a table by id of
-  `Context_Desc.max_transitions`), and the node goes from where it was drawn to where the layout
-  puts it with the `Cubic_Out` ease. Its place is kept from the corner of its parent's content, so a
-  parent that moves or scrolls carries it without starting it; a size on its way is fixed for a
-  second layout, so what surrounds it follows. The first time, after a frame it was not asked for (a
-  node shown again), and on a surface of another size, it is where the layout puts it at once.
+  above it in a `List` with a key, a page that grows, a size that changes), as Clay's transitions
+  do: the layout keeps the last rectangle of each element that asks (`layout_transition_ask`, in a
+  table by id of `Context_Desc.max_transitions`), and the node goes from where it was drawn to
+  where the layout puts it with the `Cubic_Out` ease. Its place is kept from the corner of its
+  parent's content, so a parent that moves or scrolls carries it without starting it; a size on
+  its way is fixed for a second layout, so what surrounds it follows. The first time, after a
+  frame it was not asked for (a node shown again), and on a surface of another size, it is where
+  the layout puts it at once.
   `Frame.transitioning` says the next frame differs, and `engine/gui` keeps no screen of that
   context. Only tree nodes ask: what code builds, as the editor, goes to its new place at once.
 - `Node_Style.move` and `scale` draw a node through a scope around its center that the layout and
