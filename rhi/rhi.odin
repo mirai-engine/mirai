@@ -52,7 +52,7 @@ Pipeline :: distinct base.Handle
 Accel    :: distinct base.Handle
 
 MAX_FRAMES_IN_FLIGHT :: 2
-MAX_BINDING_SLOTS    :: 34 // Shared texture slots precede the texture table.
+MAX_BINDING_SLOTS    :: 35 // Shared texture slots precede the texture table.
 MAX_BUFFER_BINDING_SLOTS :: 30 // Metal buffer index 30, its last, holds the texture table.
 MAX_SAMPLER_BINDING_SLOTS :: 16
 MAX_COLOR_TARGETS    :: 8
@@ -65,7 +65,7 @@ MAX_TEXTURE_MIPS     :: 14
 // when its list begins, after the GPU finished the work that read it, so
 // changing the table waits for nothing. Growing makes new copies with every
 // entry and lets the old ones go once the GPU no longer reads them.
-TEXTURE_TABLE_SLOT         :: 34
+TEXTURE_TABLE_SLOT         :: MAX_BINDING_SLOTS
 TEXTURE_TABLE_METAL_BUFFER :: MAX_BUFFER_BINDING_SLOTS
 TEXTURE_TABLE_COPIES       :: MAX_FRAMES_IN_FLIGHT + 1 // the last one, of immediate lists
 // The entries a table starts with: a small scene never grows it.

@@ -19,8 +19,8 @@ Zombie_Act :: enum u8 {Patrol, Chase, Bite}
 // What the zombie reads of the world: a group of parameters, as for a step.
 @(params)
 Senses :: struct {
-    worlds:core.Read(core.World_Transform),
-    perceptions:core.Read(behavior.Perception),
+    worlds:^core.Table(core.World_Transform,.Read),
+    perceptions:^core.Table(behavior.Perception,.Read),
 }
 
 // The subject the agent remembers best, where it was seen, how sure, and where the agent is.

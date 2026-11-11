@@ -43,7 +43,7 @@ entity_alive :: proc(w:core.World_Ref,e:core.Entity) -> bool {return core.alive(
 entity_name :: proc(w:core.World_Ref,e:core.Entity) -> string {
     names:=core.world_table_of(w,core.Name)
     if names==nil {return ""}
-    return core.name_get(core.read(names),e)
+    return core.name_get(names,e)
 }
 
 // The name of an entity, or one made of its index when it has none.
@@ -72,7 +72,7 @@ entity_children :: proc(w:core.World_Ref,e:core.Entity,allocator:=context.temp_a
 entity_under :: proc(w:core.World_Ref,e,ancestor:core.Entity) -> bool {
     parents:=core.world_table_of(w,core.Parent)
     if parents==nil {return e==ancestor && e!=core.NONE}
-    return core.is_under(core.read(parents),e,ancestor)
+    return core.is_under(parents,e,ancestor)
 }
 
 entity_local :: proc(w:core.World_Ref,e:core.Entity) -> mm.Transform {
@@ -87,7 +87,7 @@ entity_world :: proc(w:core.World_Ref,e:core.Entity) -> mm.Transform {
     transforms:=core.world_table_of(w,core.Transform)
     parents:=core.world_table_of(w,core.Parent)
     if transforms==nil || parents==nil {return mm.TRANSFORM_IDENTITY}
-    world,_:=core.world_of(core.read(transforms),core.read(parents),e)
+    world,_:=core.world_of(transforms,parents,e)
     return world
 }
 
@@ -379,7 +379,7 @@ entity_reparent :: proc(s:^Session,e,parent:core.Entity) -> bool {
     if entity_parent(w,e)==parent {return true}
     if section_refused(s,e) || section_target_refused(s,parent) || prefab_member_locked(s,w,e) {return false}
     local:=mm.TRANSFORM_IDENTITY
-    if transforms!=nil {local=core.local_under(core.read(transforms),core.read(parents),parent,entity_world(w,e)) or_return}
+    if transforms!=nil {local=core.local_under(transforms,parents,parent,entity_world(w,e)) or_return}
     opened,edit_ready:=edit_open(s,"Parent")
     if !edit_ready {return false}
     defer edit_close(s,opened)

@@ -36,7 +36,7 @@ data_has_one_writing_library_and_commands_make_entities :: proc(t:^testing.T) {
 @(storage) Reports :: struct {log:Events(i32),lost:Events(i32)}
 @(component) Thing :: struct {value:f32}
 @(step="fixed") state_step :: proc(state:^State,requests:^Requests,board:^Board,reports:^Reports) {}
-@(step="fixed") things_make :: proc(commands:Commands,entities:Ref(Entities),things:Read(Thing)) {}
+@(step="fixed") things_make :: proc(commands:Commands,entities:Ref(Entities),things:^Table(Thing,.Read)) {}
 @(step="fixed") things_count :: proc(entities:Ref(Entities),things:^Table(Thing)) {}
 @(step="fixed") things_age :: proc(things:^Table(Thing)) {}
 `

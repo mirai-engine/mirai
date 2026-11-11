@@ -211,7 +211,7 @@ mesh_surface_get :: proc(gui:^Gui,renderer:^render.Renderer,e:core.Entity,widget
 // carried (host.extras_slot_shown). A mesh the renderer cannot meet leaves the
 // plane of the panel to the ray.
 @(private)
-meshes_aim :: proc(gui:^Gui,assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,s:^Surface,p:int,ray:ui.World_Ray,meshes:core.Read(render.Mesh_Renderer),worlds:core.Read(core.World_Transform)) {
+meshes_aim :: proc(gui:^Gui,assets:^host.Assets,renderer:^render.Renderer,extras:^host.Frame_Extras,s:^Surface,p:int,ray:ui.World_Ray,meshes:^core.Table(render.Mesh_Renderer,$A),worlds:^core.Table(core.World_Transform,$B)) {
     if p!=0 || !ray.valid || assets==nil {return}
     for &entry in gui.plan {
         if entry.player!=p || entry.mesh<0 {continue}

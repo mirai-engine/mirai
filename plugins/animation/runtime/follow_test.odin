@@ -87,7 +87,7 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
         playback.frame+=1
         for &state in playback.states {state.seen=playback.frame}
         copy(constraint_playing(playback,head).local[:],sampled)
-        animation_finish(playback,{problems=problems},cache,transforms,core.read(parents),1.0/60,nil,{},modifiers)
+        animation_finish(playback,{problems=problems},cache,transforms,parents,1.0/60,nil,{},modifiers)
     }
     check :: proc(t:^testing.T,playback:^Playback,body,head:core.Entity,body_place,holder_place:mm.Transform,jaw:mm.Quat) -> bool {
         leader,follower:=constraint_playing(playback,body),constraint_playing(playback,head)

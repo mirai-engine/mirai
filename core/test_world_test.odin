@@ -115,7 +115,7 @@ a_test_world_is_described_as_the_declarations_of_its_types_say :: proc(t:^testin
             defer test_world_destroy(&copied)
             testing.expect(t,test_world_copy(&copied,&array))
             for &table,k in copied.sent {
-                value,found:=get(read(&table),e)
+                value,found:=get(&table,e)
                 testing.expectf(t,found && value.value==i32(k),"each element copies as a table of its own: %d",k)
             }
         }

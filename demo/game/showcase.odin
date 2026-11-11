@@ -25,8 +25,8 @@ Showcase :: struct {
 // top, a marker of the clip, is counted.
 @(step="fixed",stage="react")
 game_showcase :: proc(
-    shown:^core.Table(Showcase),animations:core.Read(anim.Animation),playback:core.Ref(anim.Playback),
-    markers:core.Ref(anim.Animation_Events),names:core.Read(core.Name),
+    shown:^core.Table(Showcase),animations:^core.Table(anim.Animation,.Read),playback:core.Ref(anim.Playback),
+    markers:core.Ref(anim.Animation_Events),names:^core.Table(core.Name,.Read),
 ) {
     if core.count(shown)==0 {return}
     arrivals:=i32(0)
