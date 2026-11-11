@@ -210,7 +210,7 @@ particles_of_every_kind_draw_around_glass_without_validation_errors :: proc(t: ^
 	},true)
 	camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	smoke := test_emitter(1, {0, 0, 0})
-	smoke.blend, smoke.lit, smoke.sort, smoke.collision = .Alpha, true, true, .Screen
+	smoke.blend, smoke.lit, smoke.sort, smoke.collision = .Alpha, true, true, .World
 	smoke.speed, smoke.shape, smoke.shape_angle, smoke.acceleration = {1, 2}, .Cone, 0.4, {0, -4, 0}
 	smoke.noise_strength, smoke.noise_frequency, smoke.noise_speed = 2, 1, 1
 	smoke.event, smoke.event_target, smoke.event_count = .Death, 2, 4

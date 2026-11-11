@@ -13,15 +13,19 @@
 // is behind by alpha. The second target is the share of the pixel covered.
 // An additive emitter adds the light of its material whatever its opacity,
 // and an unlit one shows the emission of its material in its own units
-// (Particle_Info.emission_mode), as it shows its color.
+// (Particle_Info.emission_mode), as it shows its color. The media of the view
+// between it and the eye take what it sends and add what they scatter over
+// what it covers, as over the opaque scene behind.
 #define MATERIAL_RASTER
 #include "particles.slang"
 #include "depth.slang"
+#include "media_grid.slang"
 
-struct Params_Block { uint emitter; uint pass; uint pad0; uint pad1; };
+struct Params_Block { uint emitter; uint pass; uint pad0; uint pad1; Media_Grid media; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS7, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS7), space0);
 [[vk::binding(SLOT_PASS8, 0)]] Texture2D<float4> glass_depth : register(MIRAI_REGISTER(t, SLOT_PASS8), space0);
+[[vk::binding(SLOT_PASS5, 0)]] Texture3D<float4> media : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);
 
 struct Stage_Input {
     [[vk::location(0)]] float4 in_color : TEXCOORD0;
@@ -103,6 +107,8 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
     if (alpha <= 1e-4) discard;
     bool relative = lit ? m.emission_mode == EMISSION_RELATIVE : (e.range.w & PARTICLE_FLAG_RELATIVE) != 0u;
     float3 radiance = finite_or_zero(surface * input.in_light + emission_render_units(emission * tint.rgb, relative));
+    float4 medium = media_over(media, params.media, input.in_world);
+    radiance = radiance * medium.a + (additive ? float3(0.0) : medium.rgb);
     output.out_color = float4(radiance * alpha, additive ? 0.0 : alpha);
     output.out_coverage = float4(additive ? saturate(alpha * luminance(radiance)) : alpha, 0.0, 0.0, 0.0);
     return output;
