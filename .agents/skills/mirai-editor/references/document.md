@@ -170,7 +170,9 @@ What the editor has is what its files hold.
   end of a frame and of an API call, when no gesture is open and no game plays, the asset files a
   step changed are written, then the document if its history state is not the one its file holds
   (`document_flush`). Each file is atomic; a step of several is not atomic across them. A write
-  that fails is told once and tried again.
+  that fails is told once and tried again. At the end of a frame the document, like a file, waits
+  a short window after it last changed, so steps that follow one another cost one capture of the
+  world; the end of an API call does not wait.
 - **Inside an open gesture an asset file lives in the registry of the assets**
   (`asset.registry_memory_*`): what draws it reads through the registry, and the flush writes it
   100 ms after it last changed, so what a tool keeps writing during a stroke reaches the disk
