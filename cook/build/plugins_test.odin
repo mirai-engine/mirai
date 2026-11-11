@@ -196,7 +196,7 @@ a_part_with_folders_is_one_library_that_the_shared_cache_keeps :: proc(t:^testin
     job_plugins_start(job)
     if !testing.expect_value(t,len(job.compiles),1) {return}
     compile:=pop(&job.compiles)
-    state,_:=os.process_wait(compile.process)
+    state,_:=subprocess.wait(&compile.process)
     job_plugin_finish(job,compile,state.exit_code)
     if !testing.expectf(t,job.result.status==.Running,"the library builds: %v %s",job.result.diagnostics,job.result.text) {return}
     lib:=&job.plugins[0]
@@ -364,7 +364,7 @@ a_plugin_step_receives_a_params_struct_through_its_library :: proc(t:^testing.T)
     if !testing.expect_value(t,len(job.compiles),1) {return}
     compile:=job.compiles[0]
     ordered_remove(&job.compiles,0)
-    state,_:=os.process_wait(compile.process)
+    state,_:=subprocess.wait(&compile.process)
     job_plugin_finish(job,compile,state.exit_code)
     if !testing.expectf(t,job.result.status==.Running,"the library builds: %v %s",job.result.diagnostics,job.result.text) {return}
 
@@ -492,7 +492,7 @@ a_plugin_library_compiles_once_those_it_links_against_are_published :: proc(t:^t
         if running(job,middle_index) && !IMPORT_LIBRARIES_AHEAD {testing.expect(t,job.plugin_published[base_index],"it starts once that one is published")}
         compile:=job.compiles[0]
         ordered_remove(&job.compiles,0)
-        state,_:=os.process_wait(compile.process)
+        state,_:=subprocess.wait(&compile.process)
         job_plugin_finish(job,compile,state.exit_code)
         if !testing.expectf(t,job.result.status==.Running,"%s builds: %v %s",job.plugins[compile.library].path,job.result.diagnostics,job.result.text) {return}
         job_plugins_start(job)

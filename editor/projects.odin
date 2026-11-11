@@ -116,7 +116,7 @@ Projects :: struct {
     error:[1024]u8,
     error_length:int,
     next:bool,      // built: this editor starts it when it ends
-    started:os.Process, // the editor started on it, which this process waits for once it closes
+    started:subprocess.Process, // the editor started on it, which this process waits for once it closes
     starts:bool,
     starting:bool,  // the build starts once the dialog of the opening was drawn
     start_frame:u64,

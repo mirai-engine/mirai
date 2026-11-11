@@ -81,7 +81,7 @@ git_changes_build :: proc(s:^Session,width,room:f32) {
             if message:=git_pull(s);message!="" {notify(s,message)}
         }
         if ui.button(ctx,ui.id(ctx,"git_push"),{label="Push",icon=ui.icon_user(u8(User_Icon.Up)),icon_size=13,detail=g.ahead>0?fmt.bprintf(ahead[:],"↑%d",g.ahead):"",style=.Field,disabled=busy || !has_remote || g.upstream && g.ahead==0}).clicked {
-            if message:=git.push(s.git,s.app.platform,git_roots(s));message!="" {notify(s,message)}
+            if message:=git.push(s.git,git_roots(s));message!="" {notify(s,message)}
         }
     }
     if documents_dirty(s) || len(assets_unsaved(s))>0 {

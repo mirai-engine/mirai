@@ -15,7 +15,7 @@ agent_publication_keeps_the_previous_install_on_failure_or_cancel :: proc(t:^tes
     testing.expect(t,os.write_entire_file(join(stage,"installation.json"),"replacement")==nil)
     cancel:=join(folder,"cancel")
     testing.expect(t,os.write_entire_file(cancel,"")==nil)
-    operation:=Agent_Operation{cancel_file=cancel,parent=os.get_ppid()}
+    operation:=Agent_Operation{cancel_file=cancel}
     testing.expect(t,!agent_publish(&operation,stage,target,previous))
     bytes,_:=os.read_entire_file(join(target,"installation.json"),context.temp_allocator)
     testing.expect_value(t,string(bytes),"previous")

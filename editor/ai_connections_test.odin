@@ -86,7 +86,7 @@ esac
 `
         testing.expect(t,os.write_entire_file(installer,script)==nil)
         testing.expect(t,os.chmod(installer,{.Read_User,.Write_User,.Execute_User})==nil)
-        p,platform_error:=platform.create({headless=true,process_capacity=2})
+        p,platform_error:=platform.create({headless=true})
         testing.expect_value(t,platform_error,platform.Error.None);if p==nil {return}
         defer platform.destroy(p)
         ctx:ui.Context
@@ -106,20 +106,20 @@ esac
         ai_connections_test_frame(&s,ui.rect_center(rect),true)
         ai_connections_open(&s)
         ai_connections_test_frame(&s)
-        testing.expect(t,m.installer!=0 && m.connection_ui.screen==.Overview && m.connection_ui.advanced)
+        testing.expect(t,m.installer.pid!=0 && m.connection_ui.screen==.Overview && m.connection_ui.advanced)
         testing.expect(t,ai_chat_test_paint(&ctx,"Check for updates").icon==ui.icon_user(u8(User_Icon.Waiting)))
         until:=platform.clock_seconds()+5
-        for m.installer!=0 && platform.clock_seconds()<until {ai_install_poll(&s);platform.sleep_coarse(1_000_000)}
-        testing.expect(t,m.installer==0 && m.connection_ui.screen==.Overview && m.connection_ui.advanced)
+        for m.installer.pid!=0 && platform.clock_seconds()<until {ai_install_poll(&s);platform.sleep_coarse(1_000_000)}
+        testing.expect(t,m.installer.pid==0 && m.connection_ui.screen==.Overview && m.connection_ui.advanced)
         testing.expect_value(t,base.text_get(m.connections[AI_CODEX].latest[:]),"2.2.2")
         testing.expect(t,m.tasks[0].state==.Running && m.workers[0].task==1,"checking versions preserves ongoing work")
         m.tasks[0].state=.Done;m.workers[0].task=0
         ai_connections_test_frame(&s);ai_connections_test_frame(&s)
         rect,found=ui.widget_rect(&ctx,update_id);testing.expect(t,found)
         ai_connections_test_frame(&s,ui.rect_center(rect),true)
-        testing.expect(t,m.installer!=0 && m.connection_ui.screen==.Overview,"Update immediately starts its process from its card")
+        testing.expect(t,m.installer.pid!=0 && m.connection_ui.screen==.Overview,"Update immediately starts its process from its card")
         until=platform.clock_seconds()+5
-        for m.installer!=0 && platform.clock_seconds()<until {ai_install_poll(&s);platform.sleep_coarse(1_000_000)}
+        for m.installer.pid!=0 && platform.clock_seconds()<until {ai_install_poll(&s);platform.sleep_coarse(1_000_000)}
         request,read_error:=os.read_entire_file(project.path(home,"request",allocator=context.temp_allocator),context.temp_allocator)
         testing.expect(t,read_error==nil && strings.contains(string(request),"agent\ninstall\ncodex\n") && strings.contains(string(request),"--version\n2.2.2\n"))
     }

@@ -40,7 +40,7 @@ ai_connections_open :: proc(s:^Session) {
     state:=&s.ai.connection_ui
     if state.busy {
         ai_connections_runtimes_refresh(s)
-        state.screen=s.ai.login || s.ai.connection_pending.kind==.Login?.Login:(s.ai.installer!=0 && base.text_get(s.ai.install_operation[:])=="uninstall"?.Transfer:.Overview)
+        state.screen=s.ai.login || s.ai.connection_pending.kind==.Login?.Login:(s.ai.installer.pid!=0 && base.text_get(s.ai.install_operation[:])=="uninstall"?.Transfer:.Overview)
         return
     }
     state^={screen=.Overview,runtime=s.ai.default_runtime}
@@ -95,7 +95,7 @@ ai_connections_install :: proc(s:^Session,provider:Ai_Provider,operation:string)
 ai_connection_installing :: proc(m:^Ai,provider:Ai_Provider) -> bool {
     if m.connection_pending.kind==.Install {return m.connection_pending.provider==provider && base.text_get(m.connection_pending.operation[:])!="uninstall"}
     operation:=base.text_get(m.install_operation[:])
-    return m.installer!=0 && m.install_provider==provider && (operation=="download" || operation=="update")
+    return m.installer.pid!=0 && m.install_provider==provider && (operation=="download" || operation=="update")
 }
 
 @(private)
@@ -264,7 +264,7 @@ ai_connections_wait :: proc(s:^Session) {
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(38),align_x=.End,align_y=.Center}) {
         if ai_connections_back(s,state.busy?"Cancel":"Done") {
             if state.busy {ai_install_cancel(s)}
-            if s.ai.installer!=0 || s.ai.login {
+            if s.ai.installer.pid!=0 || s.ai.login {
                 state.busy=true
                 state.screen=s.ai.login?.Login:.Transfer
             } else {

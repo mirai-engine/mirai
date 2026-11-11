@@ -11,6 +11,7 @@ import "mirai:platform"
 import "mirai:project"
 import gpu "mirai:render"
 import "mirai:rhi"
+import "mirai:std/subprocess"
 import "mirai:ui"
 
 // Players of other processes the editor shows. A plugin that plays a game
@@ -32,7 +33,7 @@ PLAY_HOST_SCENE :: "host.scene"  // the copy of the scene of the game of the hos
 
 @(private)
 Player_Process :: struct {
-    handle:platform.Process,
+    handle:subprocess.Process,
     line:[PLAYER_PROCESS_LINE]u8, // output not ended by a newline yet
     length:int,
     // A player the editor shows: the textures it draws, as entries of the table of the renderer.
@@ -84,8 +85,8 @@ player_processes_open :: proc(s:^Session,commands:[][]string,focus:bool) -> stri
     display,tiled:=platform.display_usable(s.app.platform)
     for args,k in commands[:min(len(commands),p.count)] {
         command:=player_process_command(s,player,args,k,display,tiled)
-        process,error:=platform.process_start(s.app.platform,{command=command,working_directory=s.project_root,merge_stderr=true})
-        if error!=.None {
+        process,error:=subprocess.start({command=command,working_dir=s.project_root},pipes=.Merged)
+        if error!=nil {
             player_processes_close(s)
             return "A player could not be started"
         }
@@ -127,14 +128,14 @@ player_processes_poll :: proc(s:^Session) -> (exits:[PLAYER_PROCESSES]Player_Exi
     if !p.opened {return}
     platform_:=s.app.platform
     for &process,i in p.processes[:p.count] {
-        if process.handle==0 {continue}
+        if process.handle.pid==0 {continue}
         player_drain(s,&process,i)
-        exited,code:=platform.process_poll(platform_,process.handle)
-        if !exited {continue}
+        state,_:=subprocess.wait(&process.handle,0)
+        if !state.exited {continue}
         player_drain(s,&process,i)
-        platform.process_release(platform_,process.handle)
+        subprocess.release(&process.handle)
         player_images_free(s,&process)
-        process.handle=0
+        code:=state.exit_code
         if code!=0 {log.warnf("%s ended with code %d",player_name(p,i),code)}
         if p.focus==i+1 {
             if p.captured {platform.window_set_relative_mouse(platform_,false)}
@@ -150,9 +151,9 @@ player_processes_poll :: proc(s:^Session) -> (exits:[PLAYER_PROCESSES]Player_Exi
 player_processes_alive :: proc(s:^Session) -> (alive:int) {
     p:=s.processes
     if p==nil {return}
-    for process in p.processes[:p.count] {
-        if process.handle==0 {continue}
-        if exited,_:=platform.process_poll(s.app.platform,process.handle);!exited {alive+=1}
+    for &process in p.processes[:p.count] {
+        if process.handle.pid==0 {continue}
+        if state,_:=subprocess.wait(&process.handle,0);!state.exited {alive+=1}
     }
     return
 }
@@ -162,7 +163,7 @@ player_processes_close :: proc(s:^Session) {
     p:=s.processes
     if p==nil {return}
     for &process in p.processes {
-        if process.handle!=0 {platform.process_release(s.app.platform,process.handle)}
+        subprocess.release(&process.handle)
         player_images_free(s,&process)
         process={}
     }
@@ -206,7 +207,7 @@ player_pixels :: proc(s:^Session,r:ui.Rect) -> [2]i32 {
 player_drain :: proc(s:^Session,process:^Player_Process,at:int) {
     buffer:[2048]u8
     for {
-        count,open:=platform.process_read(s.app.platform,process.handle,.Stdout,buffer[:])
+        count,open:=subprocess.read(&process.handle,.Stdout,buffer[:])
         for b in buffer[:count] {
             if b=='\n' || process.length==len(process.line) {
                 text:=strings.trim_right_space(string(process.line[:process.length]))
@@ -358,7 +359,7 @@ player_processes_input :: proc(s:^Session) {
     for k in 0..<p.count {
         process:=&p.processes[k]
         pixels:=player_pixels(s,player_tile(region,tiles,p.first+k))
-        if process.handle!=0 && pixels!=process.asked {
+        if process.handle.pid!=0 && pixels!=process.asked {
             process.asked=pixels
             player_send(s,process,fmt.tprintf("size %d %d",pixels.x,pixels.y))
         }
@@ -416,9 +417,9 @@ player_processes_input :: proc(s:^Session) {
 
 @(private)
 player_send :: proc(s:^Session,process:^Player_Process,line:string) {
-    if process.handle==0 {return}
+    if process.handle.pid==0 {return}
     bytes:=transmute([]u8)fmt.tprintf("%s\n",line)
-    _=platform.process_write(s.app.platform,process.handle,bytes)
+    _=subprocess.write(&process.handle,bytes)
 }
 
 // A copy of the scene a game of players of other processes runs, in the

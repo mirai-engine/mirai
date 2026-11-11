@@ -180,7 +180,7 @@ ai_chat_choose :: proc(s:^Session,provider:Ai_Provider,model,effort:string) {
 @(private)
 ai_chat_submit :: proc(s:^Session) {
     m:=s.ai
-    if m.pending || m.prompt_length==0 || ai_task_busy(m,m.selected) || m.login || m.installer!=0 || !s.has_project {return}
+    if m.pending || m.prompt_length==0 || ai_task_busy(m,m.selected) || m.login || m.installer.pid!=0 || !s.has_project {return}
     provider,connected:=ai_chat_provider(m)
     if !connected {return}
     base.text_set(m.agent[:],ai_connection_id(m,provider))
@@ -710,7 +710,7 @@ ai_composer_build :: proc(s:^Session,width:f32,context_rows:int,fill,stroke:ui.C
                 if ui.button(ctx,ui.id(ctx,"stop"),{icon=.Stop,icon_size=11,style=.Accent,width=24,height=24}).clicked {
                     if task:=ai_task_find(m,m.selected);task!=nil {ai_task_cancel(s,m,task)}
                 }
-            } else if ui.button(ctx,ui.id(ctx,"send"),{icon=ui.icon_user(u8(User_Icon.Up)),icon_size=15,style=.Accent,width=24,height=24,disabled=m.pending || m.prompt_length==0 || !connected || m.login || m.installer!=0 || !s.has_project}).clicked {ai_chat_send(s)}
+            } else if ui.button(ctx,ui.id(ctx,"send"),{icon=ui.icon_user(u8(User_Icon.Up)),icon_size=15,style=.Accent,width=24,height=24,disabled=m.pending || m.prompt_length==0 || !connected || m.login || m.installer.pid!=0 || !s.has_project}).clicked {ai_chat_send(s)}
         }
     }
 }
