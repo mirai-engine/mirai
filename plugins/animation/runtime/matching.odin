@@ -58,7 +58,8 @@ MATCH_SAMPLES :: 128
 // ends them), the source is a blend: its clip and those loop and are in phase (the same share of
 // each is the same moment of the step), and each Match_Sample of it is searched as a clip of its
 // own, measured from their pose blended at its weights over the mean of their durations by
-// weight, and played as those clips together at its weights. A blend loops, is no entry and takes its speeds per sample.
+// weight, and played as those clips together at its weights. A blend loops, is no entry and takes
+// its speeds per sample.
 // min_rate and max_rate, when positive, replace those of the .character for it and its samples: a set
 // authored slower than the body moves in it (a crouch), or a jog kept from beating a sprint.
 // mirror: Both also searches it with left and right swapped (a left turn makes the right one), Only
