@@ -336,6 +336,8 @@ Scene_State :: struct {
 	cluster_candidate_buffer: rhi.Buffer, // the clusters phase 0 found hidden
 	program_bins:         rhi.Buffer, // the visible clusters of Surface programs as the cull lists them, their counts by program and the draws of each (cull_programs.slang)
 	program_visible:      rhi.Buffer, // and the same, by program: the list those draws read
+	shadow_chunks:        rhi.Buffer, // the chunks the instance pass of the cull of the maps of the shadows hands its cluster pass
+	shadow_entries:       rhi.Buffer, // the clusters the maps of the shadows draw (shadow_cull.slang)
 	cull_capacity:        [Cull_List]u32, // of those lists, in entries
 	cull_wanted:          [Cull_List]u32, // what a frame that dropped asked for: they grow to it
 	candidate_buffer:     rhi.Buffer, // per instance and slot of a batch: rejected by the phase 0 occlusion test
@@ -2216,13 +2218,14 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 	}
 	start := CULL_START
 	for list in Cull_List {
-		buffer := [Cull_List]^rhi.Buffer{.Chunks = &s.chunk_buffer, .Visible = &s.visible_buffer, .Candidates = &s.cluster_candidate_buffer, .Programs = &s.program_visible}[list]
+		buffer := [Cull_List]^rhi.Buffer{.Chunks = &s.chunk_buffer, .Visible = &s.visible_buffer, .Candidates = &s.cluster_candidate_buffer, .Programs = &s.program_visible, .Shadow_Chunks = &s.shadow_chunks, .Shadow_Entries = &s.shadow_entries}[list]
 		wanted := max(start[list], s.cull_wanted[list])
 		if buffer^ != 0 && wanted <= s.cull_capacity[list] {continue}
 		capacity := max(wanted + wanted / 2, start[list], s.cull_capacity[list])
 		if buffer^ != 0 {rhi.buffer_destroy(d, buffer^)}
-		names := [Cull_List]string{.Chunks = "cull chunks", .Visible = "visible clusters", .Candidates = "cluster occlusion candidates", .Programs = "visible clusters by program"}
-		buffer^ = rhi.buffer_create(d, {size = u64(capacity) * size_of([2]u32), usage = {.Storage}, name = names[list]})
+		names := [Cull_List]string{.Chunks = "cull chunks", .Visible = "visible clusters", .Candidates = "cluster occlusion candidates", .Programs = "visible clusters by program", .Shadow_Chunks = "shadow map chunks", .Shadow_Entries = "shadow map clusters"}
+		entry := u64(size_of([4]u32) if list >= .Shadow_Chunks else size_of([2]u32))
+		buffer^ = rhi.buffer_create(d, {size = u64(capacity) * entry, usage = {.Storage}, name = names[list]})
 		made := buffer^ != 0
 		if list == .Programs {
 			if s.program_bins != 0 {rhi.buffer_destroy(d, s.program_bins)}
@@ -2491,7 +2494,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	if s.tlas != 0 {rhi.accel_destroy(d, s.tlas)}
 	for b in s.geometry_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for move in s.pool_moves {if move.from != 0 {rhi.buffer_destroy(d, move.from)}}
-	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.cluster_candidate_buffer, s.program_bins, s.program_visible, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
+	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.cluster_candidate_buffer, s.program_bins, s.program_visible, s.shadow_chunks, s.shadow_entries, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
 		if b != 0 {rhi.buffer_destroy(d, b)}
 	}
 	delete(s.vertices)

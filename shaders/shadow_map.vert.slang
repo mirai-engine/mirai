@@ -11,11 +11,8 @@
 // The clusters to draw: the instance, the cluster and the map.
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<uint4> entries : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
 [[vk::binding(SLOT_PASS1, 0)]] StructuredBuffer<uint4> shadow_data : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
-// rows: of the words of the lights in shadow_data; glass: 1 for the draws of
-// the tint and of the nearest glass, the only ones the instances all of glass
-// draw in.
-struct Params_Block { uint instances; uint maps; uint rows; uint glass; };
-[[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
+// The instances all of glass draw only in the tint and the nearest glass (params.glass).
+#include "shadow_cull.slang"
 
 struct Shadow_Vertex {
     float4 position : SV_Position;
@@ -42,11 +39,11 @@ Shadow_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vul
     output.bary = float2(0.0);
     output.reach = 0.0;
     output.toward = float3(0.0, 0.0, 1.0);
-    if (instance_id >= SHADOW_TESTED_ENTRIES) return output;
-    uint4 entry = entries[SHADOW_ENTRIES - 1u - instance_id];
+    if (instance_id >= shadow_room(true)) return output;
+    uint4 entry = entries[shadow_entry(true, instance_id)];
 #else
-    if (instance_id >= SHADOW_ENTRIES - SHADOW_TESTED_ENTRIES) return output;
-    uint4 entry = entries[instance_id];
+    if (instance_id >= shadow_room(false)) return output;
+    uint4 entry = entries[shadow_entry(false, instance_id)];
 #endif
     Instance inst = scene_instance(entry.x);
 #ifdef MIRAI_SHADOW_TESTED
