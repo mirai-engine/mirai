@@ -252,10 +252,10 @@ water_render :: proc(
             }
         }
         if !dry {
-            // The solid of the glass absorbs and scatters what the view crosses; fog gives the shafts of the sun,
-            // and the light of the sun that the water takes on its way down.
-            shafts:=look.scatter_color/max(max(look.scatter_color.r,look.scatter_color.g,look.scatter_color.b),1e-3)
-            fog.medium_add(media,{box=box,density=look.shafts,color=shafts,anisotropy=0.6,priority=desc.priority,carved=true,sun_only=true,shade=extinction(look)})
+            // The solid of the glass absorbs what the view crosses along its bent way and scatters the light
+            // around; the fog scatters the light of the sun in the water, with its shafts, and takes what the
+            // water takes of it on its way down.
+            fog.medium_add(media,{box=box,density=extinction(look),color=look.scatter_color,anisotropy=0.6,priority=desc.priority,carved=true,sun_only=true,shade=extinction(look),glass=true})
         } else {
             fog.medium_add(media,{box=box,priority=desc.priority,dry=true})
         }

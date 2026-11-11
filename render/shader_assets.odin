@@ -353,7 +353,7 @@ renderer_publish_shader_reload :: proc(r:^Renderer,assets:^Shader_Assets,candida
     r.overlay_hw_pipelines=candidate.overlay_hw_pipelines
     candidate.pipelines={};candidate.overlay_pipelines={};candidate.overlay_hw_pipelines={};candidate.variant_count=0
     if !scene {return true}
-    r.targets.reflect_valid=false;r.targets.taa_valid=false;r.targets.glass_valid=false
+    r.targets.taa_valid=false;r.targets.glass_valid=false
     renderer_camera_cut(r)
     world_light_stale(r)
     return true

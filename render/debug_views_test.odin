@@ -63,7 +63,7 @@ debug_views_show_their_buffers_and_say_what_they_cannot_show :: proc(t: ^testing
 	testing.expect(t, renderer_main_pipeline(r, renderer_standard_pipeline(r, .Light)))
 	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	shadows, _ = renderer_debug_view_status(r, .Shadows)
-	testing.expect(t, !shadows, "the Light pipeline has no blocks of shadows")
+	testing.expect(t, shadows, "the Light pipeline takes the direct light from its samples too")
 
 	// Shadows: the floor beside the box is lit, under its shadow less.
 	for _ in 0 ..< 4 {renderer_frame(r, {camera = camera, inspection = {mode = .Shadows}})}

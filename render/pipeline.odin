@@ -22,18 +22,12 @@ Render_Stage :: enum u8 {
 	Direct,       // the sun and the local lights
 	Reflections,  // traced reflections of the smoothest surfaces
 	World,        // the probe volume, with the first view of the window
-	Indirect,     // the contact occlusion of the probe volume
+	Indirect,     // the light of the probe volume at each pixel, with its contact occlusion
 	Composite,    // direct and indirect light, emission
 	Lit,          // the Lit passes of extensions: what lies between the eye and the lit opaque scene
 	Transparency, // overlays, glass and the Blend stage of extensions
 	Resolve,      // temporal anti-aliasing and upscaling
 	Output,       // PostProcess stack, tonemap, selection outline and what is drawn over the image
-}
-
-// How the Direct stage shadows its lights.
-Direct_Mode :: enum u8 {
-	Blocks, // each block of 2x2 pixels traces the rays of the frame and the filters share them; thin geometry traces its own
-	Traced, // every pixel traces hard shadows of its own: for views shown small
 }
 
 // What the passes of a pipeline read and write. Custom0 to Custom47 are made
@@ -52,7 +46,7 @@ Render_Resource :: enum u8 {
 	Highlight,    // the selection mask
 	Direct,       // reflected direct light
 	Reflections,  // the filtered traced reflections, for the share of each lobe they stand for
-	Gi,           // the light around each pixel beside the probe volume: its contact occlusion (r); written by a custom pass in place of the Indirect stage, the diffuse indirect light itself (rgb, RGBA32_Float), which the composite takes in place of the probe volume's and which keeps what the pass left in the frame before
+	Gi,           // the light of the probe volume at each pixel: around the normal by its contact occlusion and around the specular lobe, packed (light_pack); written by a custom pass in place of the Indirect stage, the diffuse indirect light itself (rgb, RGBA32_Float), which the composite takes in place of the probe volume's and which keeps what the pass left in the frame before
 	Probes,       // the irradiance of the probe volume, shared by every view
 	Display,      // the image before temporal resolve
 	Taa,          // the resolved image at output size, kept for the next frame
@@ -107,7 +101,6 @@ Render_Jitter :: enum u8 {
 
 Render_Pass_Desc :: struct {
 	stage:  Render_Stage,
-	direct: Direct_Mode,  // Direct
 	name:   string,       // Custom: for its timing and its errors
 	uses:   []Render_Use, // Custom: everything it reads and writes; a stage of the renderer declares its own
 	record: Stage_Proc,   // Custom
@@ -131,7 +124,7 @@ Render_Pipeline_Handle :: distinct u64
 // The pipelines of the renderer, which are always there.
 Standard_Pipeline :: enum u8 {
 	Full,  // everything the settings ask for
-	Light, // without contact occlusion or traced reflections, each pixel tracing hard shadows: for views shown small
+	Light, // without contact occlusion or traced reflections: for views shown small
 }
 
 RENDER_PIPELINE_CAPACITY :: 16
@@ -143,7 +136,6 @@ RENDER_PASS_NAME_CAPACITY :: 32
 @(private)
 Plan_Pass :: struct {
 	stage:     Render_Stage,
-	direct:    Direct_Mode,
 	record:    Stage_Proc,
 	user:      rawptr,
 	uses:      [RENDER_USE_CAPACITY]Render_Use,
@@ -165,7 +157,6 @@ Render_Plan :: struct {
 	order:       [RENDER_PASS_CAPACITY]u8, // the passes recorded, in their order
 	order_count: int,
 	stages:      bit_set[Render_Stage],
-	direct:      Direct_Mode,
 	jitter:      Render_Jitter,
 	generates:   bool, // passes after the Output stage write Generated
 	gi_given:    bool, // a custom pass writes Gi
@@ -221,6 +212,7 @@ stage_contract :: proc(stage: Render_Stage, pass: ^Plan_Pass) {
 		writes(pass, .Probes)
 	case .Indirect:
 		reads(pass, .Normal, .Linear_Depth, .Motion)
+		use(pass, .Probes, .Read, optional = true)
 		writes(pass, .Gi)
 	case .Composite:
 		reads(pass, .Albedo, .Normal, .Emission, .Linear_Depth, .Motion, .Direct)
@@ -312,7 +304,7 @@ plan_compile :: proc(plan: ^Render_Plan, desc: Render_Pipeline_Desc, buffer: []u
 	output_at := -1
 	for &pass, at in desc.passes {
 		target := &plan.passes[at]
-		target.stage, target.direct = pass.stage, pass.direct
+		target.stage = pass.stage
 		if pass.stage != .Custom {
 			if pass.stage in seen {return fail(buffer, "render pipeline: pass %d is a second %v stage; a pipeline has each stage once", at, pass.stage)}
 			if len(pass.uses) > 0 || pass.record != nil {
@@ -412,7 +404,6 @@ plan_compile :: proc(plan: ^Render_Plan, desc: Render_Pipeline_Desc, buffer: []u
 		plan.order[plan.order_count] = u8(at)
 		plan.order_count += 1
 		plan.stages += {pass.stage}
-		if pass.stage == .Direct {plan.direct = pass.direct}
 		for use in pass.uses[:pass.use_count] {
 			plan.generates ||= use.resource == .Generated && use.access == .Write
 			plan.gi_given ||= pass.stage == .Custom && use.resource == .Gi && use.access == .Write
@@ -447,7 +438,6 @@ pipeline_key :: proc(desc: Render_Pipeline_Desc) -> u64 {
 	value :: proc(h: u64, v: ^$T) -> u64 {return hash.fnv64a(([^]u8)(v)[:size_of(T)], h)}
 	for &pass in desc.passes {
 		h = value(h, &pass.stage)
-		h = value(h, &pass.direct)
 		h = mix(h, transmute([]u8)pass.name)
 		for &use in pass.uses {h = value(h, &use)}
 		record := rawptr(pass.record)
@@ -515,7 +505,7 @@ standard_pipeline_passes :: proc(kind: Standard_Pipeline) -> []Render_Pass_Desc 
 		{stage = .Indirect}, {stage = .Composite}, {stage = .Lit}, {stage = .Transparency}, {stage = .Resolve}, {stage = .Output},
 	}
 	@(static, rodata) light := [?]Render_Pass_Desc{
-		{stage = .Geometry}, {stage = .Nested}, {stage = .Surface}, {stage = .Direct, direct = .Traced}, {stage = .World},
+		{stage = .Geometry}, {stage = .Nested}, {stage = .Surface}, {stage = .Direct}, {stage = .World},
 		{stage = .Composite}, {stage = .Lit}, {stage = .Transparency}, {stage = .Resolve}, {stage = .Output},
 	}
 	switch kind {

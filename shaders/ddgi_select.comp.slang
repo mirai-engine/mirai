@@ -4,10 +4,13 @@
 // for comes first, then one a change keeps awake (params.awake frames after it
 // reached it, the nearer to it the sooner, or the next frame while its light
 // moves), then the longest untraced against how much pixels use it, finer
-// cascades first. What is left
-// of the budget keeps tracing the probes by turns while nothing changes: each
-// trace takes one more bounce from the volume, and once the volume holds them
-// all its rays, the same every update, give back what it holds.
+// cascades first. Of what is left of the budget, PROBE_WAITING_SHARE at most
+// keeps tracing those by turns while nothing changes: a probe whose light moves
+// wakes the ones beside it (ddgi_irradiance.comp), so that a change spreads
+// with its bounces, and the turns only catch what that missed; a probe the
+// volume holds the light of gives back the same. The updates that gather the
+// light of a world shown anew take the whole budget (params.whole): each is a
+// bounce more for every probe it reaches.
 // In the order of params.mode, over one dispatch each:
 //  0. per probe: its bucket (buckets[probe]) and the count of each bucket;
 //  1. one thread: the last bucket that fits and how many of it fit;
@@ -25,6 +28,8 @@
 #define PROBE_NEAR_LEVELS 4u
 #define PROBE_WAITING_FIRST (2u + 2u * PROBE_NEAR_LEVELS)
 #define NO_BUCKET 0xFFFFFFFFu
+// The share of the budget the probes waiting by turns take at most.
+#define PROBE_WAITING_SHARE 8u
 // Frames since a pixel used a probe for it to count as in use.
 #define PROBE_IN_USE 8u
 
@@ -36,7 +41,7 @@ struct Params_Block {
     uint rays_per_probe;
     uint total;
     uint awake;      // frames a change keeps the probes it reaches traced
-    uint pad0;
+    uint whole;      // 1: the probes waiting by turns take all that is left of the budget (render.gi_warm)
 };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] RWStructuredBuffer<uint> buckets : register(MIRAI_REGISTER(u, SLOT_PASS0), space0);
@@ -72,11 +77,14 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         if (bucket != NO_BUCKET) InterlockedAdd(histogram[bucket], 1u);
     } else if (params.mode == 1u) {
         if (index != 0u) return;
+        uint urgent = 0u;
+        for (uint b = 0u; b < PROBE_WAITING_FIRST; b++) urgent += histogram[b];
+        uint budget = params.whole != 0u ? params.budget : min(params.budget, urgent + max(params.budget / PROBE_WAITING_SHARE, 1u));
         uint taken = 0u;
         uint last = PROBE_BUCKETS;
         uint room = 0u;
         for (uint b = 0u; b < PROBE_BUCKETS; b++) {
-            if (taken + histogram[b] > params.budget) { last = b; room = params.budget - taken; break; }
+            if (taken + histogram[b] > budget) { last = b; room = budget - taken; break; }
             taken += histogram[b];
         }
         histogram[PROBE_BUCKETS] = last;
