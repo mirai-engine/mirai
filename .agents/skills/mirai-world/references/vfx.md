@@ -143,15 +143,14 @@ one cell is flat), the size of a cell and its layers of four floats.
   the previous frame, whatever the order of the rows; a new grid enters as an entry of its own,
   without what another entity's stored.
 
-A program declares stages (`//! stage name over particles|grid [iterations N] [neighbors
-radius]`): on each step, after the births and before `update`, stage k of each emitter that has it,
-k in order, `iterations` times in separate dispatches: each iteration sees what the previous one
-left (a constraint solver reads the other particles already moved).
+A program declares stages (`//! stage name over particles|grid [iterations N]`): on each step,
+after the births and before `update`, stage k of each emitter that has it, k in order,
+`iterations` times in separate dispatches: each iteration sees what the previous one left (a
+constraint solver reads the other particles already moved).
 
-- Over particles: once per live particle, like `update`. With `neighbors`, a hash of the particles
-  of the emitters that read them, made once per step before the first stage that reads it, gives
-  those of its emitter within the radius (the largest of its stages) of where they were then,
-  without the particle itself.
+- Over particles: once per live particle, like `update`. Neighbours go through a grid: one stage
+  adds each particle to the words of its cell (`mirai_vfx_grid_word_add`) and a later one reads
+  the cells around it; the cook refuses a stage that declares `neighbors`.
 - Over a grid: once per cell of its region; each iteration reads what the previous one left and
   leaves its cell's layers in the other copy, which keeps those it does not leave.
   A single emitter walks a grid with its stages; another that does so in the same frame is the
@@ -193,9 +192,6 @@ had, from its first cell (x fastest, then y and z), with their layers.
   another: `particles_frame` reads it and puts it in the order in which the grid stores its cells,
   and the pass writes it into its two copies. One of other cells or layers is the `vfx.grid`
   problem.
-- `particle.grid.bake` asks for the cells that the next frame's steps leave (`grid_bake_ask`) and
-  holds the call, advancing frames, until they come back from the GPU (`grid_bake_take`): it
-  writes the `.grid` as a project edit and answers its path, or fails if they do not come back.
 - `follow_view` centers the region, instead of on its entity, toward where the view's center looks
   at the plane at the entity's height, without passing what leaves inside what the view's bottom
   edge sees (`VIEW_NEAR`; the water waves): a high camera sees the waves where it looks and a low
@@ -251,9 +247,9 @@ resource.
 
 A program reads and writes entries of words in the world's data channel of a name
 (`//! resource name data words`, `data.odin`): what the programs add in a frame is read in the next
-(`update` and the stages add only in the last step of the frame, so as not to repeat entries), and
-what a game pushes (`data_push` over `Particle_Data`) is read in the frame that reaches the GPU,
-after those of the programs. A game reads back a channel it watches (`data_watch` on each frame,
+(`update` and the stages add only in the last step of the frame, so as not to repeat entries). A
+game does not write a channel: it gives programs data through the `values` of its
+[births](#channels). A game reads back a channel it watches (`data_watch` on each frame,
 `data_entries` over `Particle_Data_Read`): what the programs added in a frame arrives once, frames
 later and without waiting for the GPU; like the reports, it is presentation. The channel exists
 while some program of the world uses it, with the most words that any asks for; remaking it empties
@@ -279,10 +275,12 @@ A `Particles` node of a `.ui` asks on each frame it is shown for its effect in a
 `report` of an effect (or of its sub effect) names what the game hears from its particles: deaths
 or hits, with position, velocity and normal, through the emitter's entity.
 
-- The GPU writes them in the step they pass and the CPU reads them frames later without waiting for
-  it ([reads](../../mirai-rendering/references/views.md#extension-stages)): `Particle_Reports`
-  has those of the last frame that finished, once each. A frame stores `REPORT_CAPACITY`; the rest
-  are counted in `lost`.
+- The GPU writes them in the step they pass into a [data channel](#data-channels) of their own
+  (`REPORTS_CHANNEL`, which exists while some emitter reports), and the CPU reads them frames later
+  without waiting for it, as it reads a watched channel
+  ([reads](../../mirai-rendering/references/views.md#extension-stages)): `Particle_Reports` has
+  those of the last frame that finished, once each, placed in the world from the origin the head
+  of the channel's copy stores. A frame stores `DATA_ENTRIES`; the rest are counted in `lost`.
 - They are presentation (a decal, a sound, another effect): they are not deterministic or part of
   the world and decide nothing of the game. `Particle_Reports` is `presentation`: the generator
   rejects a `fixed` function that receives it
@@ -378,8 +376,8 @@ To the GPU:
   them. The pool's particles and events store the origin they are at (`Pool.origin`) and, when the
   origin moved, the **shift** pass (`Geometry`, before every view) moves them once, with no visible
   motion; a world that was not drawn takes it on returning. Grids store absolute cells and locate
-  a cell from the first one's corner (`Gpu_Grid.corner`). The reports and the particles that the
-  editor copies (`watched`) return to the world adding the origin.
+  a cell from the first one's corner (`Gpu_Grid.corner`). The reports and the particles that
+  `particle.instance.inspect` copies return to the world adding the origin.
 - A program also sees relative to the origin its emitter's transformation (`ctx.world`) and the
   view (`mirai_vfx_view`). Its `Attributes`, the words of its state and the entries of the data
   channels pass as they are: a place that they store is theirs to keep relative to the emitter or
@@ -426,8 +424,9 @@ To the GPU:
   of its program have (in the pool or in the emitter table) and filters those of others; events are
   dispatched only for the programs of some destination emitter. The spans and pipelines are looked
   up again when a range, a program or a destination, or the shaders change.
-- `particle.instance.inspect` copies the particles of the emitter it looks at
-  (`Particle_Sync.watch`) with their Attributes, to debug a program.
+- `particle.instance.inspect` copies the particles of the emitter it looks at with their
+  Attributes, to debug a program: the editor part asks for that readback in a `Simulate` pass of
+  its own (`editor/watch.odin`), so a game binary has none of it.
 - The resource functions of `mirai_vfx.slang` are defined by `particle_programs.slang` over the
   emitter's resource rows (`ctx.emitter`), the areas buffer and the frame's channel births.
 
@@ -445,8 +444,7 @@ In the `Simulate` stage, per step:
   - the frame's channel births, in the first step;
   - an indirect dispatch starts those of the previous step's events in their destination emitter.
 - **stage**: the programs' stages, k in order: over particles, one thread per slot; over cells, one
-  thread per cell of each emitter and, after each iteration, the copy swap of its grid; before the
-  first one with neighbors, the hash (count per bucket, sums per block and place of each particle).
+  thread per cell of each emitter and, after each iteration, the copy swap of its grid.
 - **simulate**: one thread per slot of each program's span; `_hw` variant.
   - Program, acceleration, value-noise rotor with analytic derivatives (no sources), attractor and
     drag.
@@ -471,7 +469,6 @@ Once per frame, in `Simulate`:
   - Indirect draw of what is alive and the counters.
   - Sorted list in shared memory (bitonic, up to `SORT_MAX`): back to front, or by age for a
     ribbon.
-  - With some emitter that reports, the readback of the frame's reports (`pass_readback`).
 
 In each view:
 
@@ -548,7 +545,7 @@ they light everything within their reach, without shadow rays or a place in thos
   fall to the floor and slide according to their friction, sprites that run the Surface program of
   their material with what their particle gives, its random value and its radius
   (`hand_over.slang`, `particle_data.slang`), stages over cells with iterations (`tally.slang`),
-  splats that a stage stores (`spread.slang`) and neighbors per emitter (`crowd.slang`), rays from a
+  splats that a stage stores (`spread.slang`), rays from a
   stage against a cube (`probe.slang`), read back with `pass_readback`, a volume that glows
   (`puff.slang`), particle lights with shadow that light the floor within their reach and not
   behind a cube, and without shadow, also behind it, a floor whose Surface program reads a grid's

@@ -5,11 +5,10 @@ import erender "mirai:engine/render"
 
 // The stages of the Vfx programs of a world: in each step, after the births
 // and before update, stage k of every emitter whose program has one, k in
-// order. A stage over particles goes over those of its emitter; with
-// neighbors, a hash of the particles of the emitters that read them, made
-// once a step before the first stage that reads it, finds those within the
-// radius (the largest of the stages of the emitter) of where each was then.
-// A stage over a grid goes over the cells of its region. A stage runs
+// order. A stage over particles goes over those of its emitter; a stage over
+// a grid goes over the cells of its region. Neighbours are found through a
+// grid: a stage over particles adds each to the words of its cell, and a later
+// one reads the cells around. A stage runs
 // iterations times, each reading what the one before left. One emitter at a time goes over a
 // grid in its stages; another that does is a problem and its stages over it
 // do not run. The stages of a sub effect do not run.
@@ -21,7 +20,6 @@ Stage_Need :: struct {
     kind:Stage_Kind,
     over:u8,       // a stage over cells: the resource of its grid
     iterations:u8,
-    neighbors:f32, // a stage over particles: the radius of the neighbors it reads; 0: none
     writes:u32,    // the grid resources it writes besides its own, a bit each
 }
 
@@ -35,29 +33,17 @@ Program_Needs :: struct {
 // shaders/particles.slang: Particle_Stage, after the resource rows of its emitter.
 Gpu_Stage :: struct {
     kind,row,iterations:u32, // row: of the resource of its grid
-    neighbors:f32,
     writes,clears:u32,       // the grid resources it writes besides its own, and those of them that start at zero
-    pad:[2]u32,
+    pad:[3]u32,
 }
 #assert(size_of(Gpu_Stage)==32)
 
 // What a stage index runs in a step across the emitters of the pool.
 Stage_Plan :: struct {
-    particles,cells,neighbors:bool,
+    particles,cells:bool,
     iterations:u32, // the most among its stages
     cells_max:u32,  // the most cells among their grids
     written_max:u32,// the most cells among the grids its stages write besides their own; 0: none
-}
-
-NEIGHBOR_BUCKETS :: 1<<16
-NEIGHBOR_BLOCK :: 256 // buckets a group adds up
-
-// The hash of the neighbors: how many particles each bucket has, where its
-// first is among the entries, what each block of buckets adds up to, then
-// the entries, a slot of the pool each.
-@(private)
-neighbors_buffer :: proc "contextless" (pool:^Pool) -> erender.Buffer_Desc {
-    return {"vfx particle neighbors",u64(2*NEIGHBOR_BUCKETS+NEIGHBOR_BUCKETS/NEIGHBOR_BLOCK+max(pool.capacity,1))*4}
 }
 
 // The stage rows of an emitter, which take the grids its stages go over:
@@ -70,7 +56,7 @@ emitter_stages :: proc(sync:^Particle_Sync,needs:^Program_Needs,resources:u32,id
         row:Gpu_Stage
         switch need.kind {
         case .None:
-        case .Particles: row={kind=u32(Stage_Kind.Particles),iterations=u32(need.iterations),neighbors=need.neighbors,writes=need.writes,clears=need.writes&needs.cleared}
+        case .Particles: row={kind=u32(Stage_Kind.Particles),iterations=u32(need.iterations),writes=need.writes,clears=need.writes&needs.cleared}
         case .Cells:
             if resources==0 {break}
             grid:=sync.resources[resources+u32(need.over)]
@@ -93,22 +79,14 @@ STAGE_PARTICLES :: 0
 STAGE_CELLS :: 1
 STAGE_SWAP :: 2
 STAGE_CLEAR :: 3
-STAGE_HASH_CLEAR :: 4
-STAGE_HASH_COUNT :: 5
-STAGE_HASH_SCAN :: 6
-STAGE_HASH_TOP :: 7
-STAGE_HASH_ADD :: 8
-STAGE_HASH_SCATTER :: 9
-STAGE_PREPARE :: 10
-STAGE_SWAP_PARTICLES :: 11
+STAGE_PREPARE :: 4
+STAGE_SWAP_PARTICLES :: 5
 
 // The stages of a step, k in order, over the particles and over the cells.
 @(private)
 stages_step :: proc(sync:^Particle_Sync,pass:^erender.Pass,params:^Simulate_Params) {
     pool:=&sync.pool
     erender.pass_pipeline(pass,sync.pipelines.stage)
-    erender.pass_buffer(pass,7,neighbors_buffer(pool))
-    hashed:=false
     for k in 0..<pool.stage_count {
         plan:=pool.plan[k]
         params.stage=k
@@ -148,10 +126,6 @@ stages_step :: proc(sync:^Particle_Sync,pass:^erender.Pass,params:^Simulate_Para
         program_groups_of:=program_groups(&sync.pipelines,&all)
         params.iteration=0
         if plan.particles {
-            if plan.neighbors && !hashed {
-                neighbors_hash(pass,pool,params)
-                hashed=true
-            }
             for iteration in 0..<max(plan.iterations,1) {
                 params.iteration=iteration
                 prepare(pass,pool,params,plan.written_max)
@@ -172,28 +146,6 @@ stages_step :: proc(sync:^Particle_Sync,pass:^erender.Pass,params:^Simulate_Para
         }
     }
     params.stage,params.iteration=0,0
-}
-
-// The hash of where the particles of the emitters that read neighbors are:
-// counted by bucket, added up, then each in its place.
-@(private)
-neighbors_hash :: proc(pass:^erender.Pass,pool:^Pool,params:^Simulate_Params) {
-    run :: proc(pass:^erender.Pass,params:^Simulate_Params,mode,threads:u32) {
-        params.mode=mode
-        erender.pass_params(pass,params,size_of(params^))
-        erender.pass_dispatch(pass,groups(threads,64))
-    }
-    run(pass,params,STAGE_HASH_CLEAR,NEIGHBOR_BUCKETS)
-    params.count=pool.pool_end
-    run(pass,params,STAGE_HASH_COUNT,pool.pool_end)
-    params.mode=STAGE_HASH_SCAN
-    erender.pass_params(pass,params,size_of(params^))
-    erender.pass_dispatch(pass,NEIGHBOR_BUCKETS/NEIGHBOR_BLOCK)
-    params.mode=STAGE_HASH_TOP
-    erender.pass_params(pass,params,size_of(params^))
-    erender.pass_dispatch(pass,1)
-    run(pass,params,STAGE_HASH_ADD,NEIGHBOR_BUCKETS)
-    run(pass,params,STAGE_HASH_SCATTER,pool.pool_end)
 }
 
 // The world buffer of the frame: the areas of the surfaces it does not have
@@ -238,7 +190,6 @@ world_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,params:^Simulate_Pa
     if !moved {return true}
     params.mode,params.count,params.stage=STAGE_CLEAR,cells,sync.pool.grids_at
     erender.pass_pipeline(pass,sync.pipelines.stage)
-    erender.pass_buffer(pass,7,neighbors_buffer(&sync.pool))
     erender.pass_params(pass,params,size_of(params^))
     erender.pass_dispatch(pass,groups(cells,64),u32(len(g.entries)))
     params.stage=0
