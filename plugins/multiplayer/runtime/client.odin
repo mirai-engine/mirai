@@ -383,6 +383,8 @@ client_commands :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,allo
             }
         case .Event:
             event_deliver(s,w,&command,nil)
+        case .Message:
+            part_arrive(s,&command)
         }
     }
     core.world_settle(w)
