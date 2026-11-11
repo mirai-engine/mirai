@@ -98,6 +98,7 @@ api_material_write :: proc(s:^Session,call:^api.Call,id:base.Asset_Id) {
         r.imported=view.imported^
         overrides:=make([dynamic]string,call.allocator)
         asset.material_overrides(&s.app.assets.types,view,&overrides)
+        for &path in overrides {path=api.clone_text(call.allocator,path)}
         r.overrides=overrides[:]
     }
     out:serial.Writer

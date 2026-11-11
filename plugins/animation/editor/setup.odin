@@ -609,6 +609,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         }
         if gesture && !editor.api_edit_end(s,call,true) {return}
     }
+    // The answer is written after the library closes and the temporary memory goes: its texts are copies.
     r:=api.call_result(call,Setup_Result)
     if rigged {r.id=editor.api_entity_id(w,e)} else {r.skeleton=p.skeleton}
     r.dry_run,r.body=dry_run,body_source
@@ -616,7 +617,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     r.assets[0]={file.kind,file.path,file.id,file.replaced}
     shown:=make([dynamic]Setup_Capability_Result,call.allocator)
     for &value,which in capabilities {
-        if value.status!=.Skipped {append(&shown,Setup_Capability_Result{which,value.status,value.detail,value.fix})}
+        if value.status!=.Skipped {append(&shown,Setup_Capability_Result{which,value.status,strings.clone(value.detail,call.allocator),strings.clone(value.fix,call.allocator)})}
     }
     r.capabilities=shown[:]
     modes:=locomotion_modes(s.info)
@@ -624,7 +625,7 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
     for clip in clips.locomotion {
         if setup_blended(p,blend_count,blend_members,clip.name) {continue}
         mode,_:=locomotion_mode_name(modes,clip.mode)
-        append(&matched,Setup_Match_Clip_Result{clip=clip.name,mode=mode,entry=clip.class==.Landing || clip.class==.Jumping || clip.class==.Sliding && !clip.loop,loop=clip.loop,speed=clip.speed,told=clip.told,rates=clip.rates[0]>0?{clip.rates[0],clip.rates[1]}:{}})
+        append(&matched,Setup_Match_Clip_Result{clip=strings.clone(clip.name,call.allocator),mode=mode,entry=clip.class==.Landing || clip.class==.Jumping || clip.class==.Sliding && !clip.loop,loop=clip.loop,speed=clip.speed,told=clip.told,rates=clip.rates[0]>0?{clip.rates[0],clip.rates[1]}:{}})
     }
     r.clips.locomotion=matched[:]
     r.clips.blends=make([]Setup_Blend_Result,blend_count,call.allocator)
@@ -639,7 +640,10 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
         shown.samples=u32(blend_samples[b])
         if blend.min_rate>0 {shown.rates={blend.min_rate,blend.max_rate}}
     }
-    if .Gestures in want {r.clips.gestures=clips.gestures[:]}
+    if .Gestures in want {
+        r.clips.gestures=make([]string,len(clips.gestures),call.allocator)
+        for name,i in clips.gestures {r.clips.gestures[i]=strings.clone(name,call.allocator)}
+    }
 }
 
 // The locomotion modes of the project: the names of Locomotion_Mode, the type of the physics plugin,

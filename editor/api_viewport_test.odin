@@ -31,49 +31,41 @@ view_viewport_returns_the_requested_message_snapshot_without_recapturing :: proc
     }
     s:=Session{project_root=root}
     server:=api.Server{}
-    method:=api.Method{params_id=Api_Viewport_Params}
+    method:=api.Method{params_id=Api_Viewport_Params,result_id=Api_Viewport_Result}
     params:Api_Viewport_Params
-    buffer:[1024]u8
-    w:serial.Writer
     for request,index in requests {
         base.text_set(params.request[:],request)
-        serial.writer_init_fixed(&w,buffer[:])
-        call:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator}
+        result:Api_Viewport_Result
+        call:=api.Call{server=&server,method=&method,params=&params,result=&result,allocator=context.temp_allocator}
         api_view_viewport(&s,&call)
-        testing.expect(t,!call.failed && w.overflow==0)
-        value:Api_Viewport_Result_Text
-        testing.expect(t,json.unmarshal(serial.writer_bytes(&w),&value,allocator=context.temp_allocator)==nil)
-        testing.expect_value(t,call.image,value.path)
+        testing.expect(t,!call.failed)
+        testing.expect_value(t,call.image,result.path)
         shown,read:=os.read_entire_file(call.image,context.temp_allocator)
         testing.expect(t,read==nil)
         testing.expect_value(t,string(shown),saved[index])
     }
     for request in ([]string{"../12-0","12-0/../../secret","12--2","0-0","12-3"}) {
         base.text_set(params.request[:],request)
-        serial.writer_init_fixed(&w,buffer[:])
-        call:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator}
+        result:Api_Viewport_Result
+        call:=api.Call{server=&server,method=&method,params=&params,result=&result,allocator=context.temp_allocator}
         api_view_viewport(&s,&call)
         testing.expect(t,call.failed)
-        testing.expect_value(t,w.count,0)
+        testing.expect_value(t,result.path,"")
     }
     // Without a request it is the turn of the caller; outside a turn it says so.
     base.text_set(params.request[:],"")
-    serial.writer_init_fixed(&w,buffer[:])
-    outside:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator}
+    answer:Api_Viewport_Result
+    outside:=api.Call{server=&server,method=&method,params=&params,result=&answer,allocator=context.temp_allocator}
     api_view_viewport(&s,&outside)
     testing.expect(t,outside.failed && outside.error.code==api.INVALID_PARAMS,outside.error.message)
     m:=new(Ai,context.temp_allocator)
     m.task_count=1
     base.text_set(m.tasks[0].name[:],requests[1])
     s.ai=m
-    serial.writer_init_fixed(&w,buffer[:])
-    turn:=api.Call{server=&server,method=&method,params=&params,out=&w,allocator=context.temp_allocator,client_tag=requests[1]}
+    turn:=api.Call{server=&server,method=&method,params=&params,result=&answer,allocator=context.temp_allocator,client_tag=requests[1]}
     api_view_viewport(&s,&turn)
-    testing.expect(t,!turn.failed && w.count>0,turn.error.message)
+    testing.expect(t,!turn.failed && answer.path!="",turn.error.message)
 }
-
-@(private="file")
-Api_Viewport_Result_Text :: struct {path:string}
 
 @(private)
 @(test_world,editor="Camera_Editor")
